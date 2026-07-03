@@ -229,28 +229,56 @@ class PythonParser(BaseParser):
 
     def _extract_raw_calls(self, root, source: bytes,
                            module_path: str) -> List[Dict[str, Any]]:
-        """提取原始调用关系"""
+        """提取原始调用关系
+
+        与 _walk_symbols 保持一致的类处理逻辑：
+        - function_definition: qualified = parent_qualified.name 或 module_path.name
+        - class_definition: 递归进类体，parent_qualified 传递类名
+        - decorated_definition: 解包装饰器后处理内部定义
+
+        输出字段：
+        - caller_name: 简名（如 detect_cycles），与 symbols.name 对应
+        - caller_qualified: 完整限定名（如 analyzers.call_chain.CallChainMixin.detect_cycles），
+          与 symbols.qualified_name 对应，用于精确匹配
+        """
         calls = []
 
-        def walk(node, current_fn: str = ""):
+        def make_qualified(name: str, parent_qualified: str) -> str:
+            """参照 _parse_function 的 qualified_name 拼装逻辑"""
+            if parent_qualified:
+                return f"{parent_qualified}.{name}"
+            if module_path:
+                return f"{module_path}.{name}"
+            return name
+
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
                 if child.type == "function_definition":
                     name_node = self._find_child_by_type(child, "identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    if module_path:
-                        qual = f"{module_path}.{fn_name}"
-                    else:
-                        qual = fn_name
-                    walk(child, qual)
+                    qual = make_qualified(fn_name, current_qualified)
+                    walk(child, fn_name, qual)
+                elif child.type == "class_definition":
+                    name_node = self._find_child_by_type(child, "identifier")
+                    cls_name = self._node_text(name_node, source) if name_node else ""
+                    qual = make_qualified(cls_name, current_qualified)
+                    # 递归进类体，current_fn 保持为类名（仅用于类体内裸 call 的兜底），
+                    # current_qualified 传递类的完整限定名，让类内方法的 qualified 带类名
+                    walk(child, cls_name, qual)
+                elif child.type == "decorated_definition":
+                    # 装饰器包裹的定义，递归处理（保持 current_fn/current_qualified 不变，
+                    # 内部的 function/class_definition 分支会更新）
+                    walk(child, current_fn, current_qualified)
                 elif child.type == "call":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

@@ -843,6 +843,7 @@ class BuildMixin:
         """构造调用关系记录"""
         return {
             "caller_name": raw.get("caller_name", ""),
+            "caller_qualified": raw.get("caller_qualified", ""),
             "caller_module": raw.get("caller_module", ""),
             "callee_name": raw.get("callee_name", ""),
             "callee_module": raw.get("callee_module", ""),
@@ -1330,6 +1331,7 @@ class BuildMixin:
             (file_instance_id,)
         )
 
+        # 同文件内 name -> id（fallback 用，无法区分同名方法）
         sym_id_map = {}
         cur = self.conn.execute(
             "SELECT id, name FROM symbols WHERE file_instance_id = ?", (file_instance_id,)
@@ -1337,22 +1339,29 @@ class BuildMixin:
         for row in cur:
             sym_id_map[row["name"]] = row["id"]
 
+        # 全局 qualified_name -> id（精确匹配，能区分同名方法）
         qname_id_map = {}
         cur = self.conn.execute("SELECT id, qualified_name FROM symbols")
         for row in cur:
             qname_id_map[row["qualified_name"]] = row["id"]
 
         for call in calls:
-            caller_id = sym_id_map.get(call["caller_name"], 0)
+            # 优先用 caller_qualified 精确匹配（与 symbols.qualified_name 一致）
+            # fallback 用 caller_name 匹配同文件 symbols.name（兼容旧 parser 输出）
+            caller_qname = call.get("caller_qualified", "")
+            if caller_qname and caller_qname in qname_id_map:
+                caller_id = qname_id_map[caller_qname]
+            else:
+                caller_id = sym_id_map.get(call["caller_name"], 0)
             if caller_id == 0:
                 continue
 
             callee_id = qname_id_map.get(call["callee_qualified"], 0) if call["callee_qualified"] else 0
 
             self.conn.execute(
-                """INSERT INTO calls 
-                   (caller_id, caller_name, caller_module, callee_name, 
-                    callee_module, callee_qualified, callee_file, callee_id, 
+                """INSERT INTO calls
+                   (caller_id, caller_name, caller_module, callee_name,
+                    callee_module, callee_qualified, callee_file, callee_id,
                     call_line, is_cross_file)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (caller_id, call["caller_name"], call["caller_module"],
@@ -1374,7 +1383,14 @@ class BuildMixin:
                     fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
 
         for call in calls:
-            caller_qualified = f"{result['module_path']}::{call['caller_name']}"
+            # 直接用 parser 输出的 caller_qualified（与 symbols.qualified_name 一致）
+            # fallback：旧 parser 没有 caller_qualified 字段时拼装 module_path::caller_name
+            caller_qualified = call.get("caller_qualified", "")
+            if not caller_qualified:
+                if call.get("caller_name"):
+                    caller_qualified = f"{result['module_path']}::{call['caller_name']}"
+                else:
+                    caller_qualified = ""
             caller_hash = fn_hash_map.get(caller_qualified, "")
 
             self.conn.execute(
