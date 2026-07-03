@@ -110,6 +110,7 @@ class TaskMixin:
         description: str = "",
         steps: Optional[List[Dict[str, Any]]] = None,
         creator: str = "agent",
+        parent_id: str = "",
     ) -> str:
         """创建任务和步骤
 
@@ -123,6 +124,7 @@ class TaskMixin:
                    - target_symbol: 目标符号限定名
                    - check_items: 检查项（列表或字符串）
             creator: 创建者标识
+            parent_id: 父任务 ID（可选），用于构建任务树
 
         Returns:
             新建任务的 task_id
@@ -130,13 +132,33 @@ class TaskMixin:
         now = time.time()
         task_id = _gen_task_id()
 
+        # 计算 depth 和 sort_order
+        depth = 0
+        sort_order = 0
+        if parent_id:
+            cur = self.conn.execute(
+                "SELECT depth FROM tasks WHERE id = ?",
+                (parent_id,),
+            )
+            parent_row = cur.fetchone()
+            if parent_row:
+                depth = parent_row["depth"] + 1
+            # 计算同级排序
+            cur = self.conn.execute(
+                "SELECT COALESCE(MAX(sort_order), -1) as max_order FROM tasks WHERE parent_id = ?",
+                (parent_id,),
+            )
+            sort_order = cur.fetchone()["max_order"] + 1
+
         # 插入任务记录，初始状态为 open
         self.conn.execute(
             """
-            INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, title, description, creator, status, created_at, updated_at,
+                               parent_id, depth, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (task_id, title, description, creator, TASK_STATUS_OPEN, now, now),
+            (task_id, title, description, creator, TASK_STATUS_OPEN, now, now,
+             parent_id, depth, sort_order),
         )
 
         # 逐个插入步骤（step_index 从 0 开始递增）
@@ -176,7 +198,12 @@ class TaskMixin:
     def task_next_step(self, task_id: str) -> Optional[Dict[str, Any]]:
         """领取当前待执行的步骤
 
-        查找该任务中第一个 status=pending 的步骤，将其状态改为 in_progress。
+        若任务有子任务，采用深度优先遍历：
+        - 优先下钻到最底层子任务（按 sort_order 从左到右）
+        - 子任务全部完成后才回到父任务的自身步骤
+        - 这样保证 Agent 永远在处理最具体的小任务，不会遗漏
+
+        查找该任务树中第一个 status=pending 的步骤，将其状态改为 in_progress。
         如果任务状态是 open，改为 in_progress。
 
         Before-Edit Contract（编辑前契约）：
@@ -188,35 +215,24 @@ class TaskMixin:
         - decision == "pass" 或非编辑类步骤：正常流程。
 
         Args:
-            task_id: 任务 ID
+            task_id: 任务 ID（可以是根任务或任意子任务）
 
         Returns:
             步骤详情 dict，包含：
             - step_id, action, target_file, target_symbol, check_items
             - task_id, task_title, step_index
+            - parent_task_chain: 从根到当前步骤所属任务的祖先链（含自身）
             - guardrail_alert（仅 block 时存在）：{decision, message, findings}
             - guardrail_warning（仅 warn 时存在）：{decision, message, findings}
             如果没有待执行步骤，返回 None
         """
-        # 查找第一个 pending 步骤（按 step_index 升序）
-        cur = self.conn.execute(
-            """
-            SELECT ts.id as step_id, ts.task_id, ts.step_index, ts.action,
-                   ts.target_file, ts.target_symbol, ts.check_items,
-                   t.title as task_title
-            FROM task_steps ts
-            JOIN tasks t ON ts.task_id = t.id
-            WHERE ts.task_id = ? AND ts.status = ?
-            ORDER BY ts.step_index ASC
-            LIMIT 1
-            """,
-            (task_id, STEP_STATUS_PENDING),
-        )
-        row = cur.fetchone()
+        # 深度优先遍历任务树，找到第一个 pending 步骤
+        row = self._find_next_pending_step_tree(task_id)
         if not row:
             return None
 
         step_id = row["step_id"]
+        actual_task_id = row["task_id"]
         now = time.time()
         action = row["action"] or ""
         target_file = row["target_file"] or ""
@@ -227,12 +243,10 @@ class TaskMixin:
         new_status = STEP_STATUS_IN_PROGRESS
 
         if action.lower() in EDIT_ACTIONS and target_file:
-            # 调用 GuardrailMixin.check_before_edit（Mixin 组合保证 self 具备该方法）
             try:
                 gr_result = self.check_before_edit(target_file, proposed_change="")
                 decision = (gr_result.get("decision") or "pass").lower()
                 if decision == "block":
-                    # 阻断：步骤进入 blocked 状态，Agent 必须处理告警后调用 task_resolve_block
                     new_status = STEP_STATUS_BLOCKED
                     guardrail_alert = {
                         "decision": "block",
@@ -240,14 +254,12 @@ class TaskMixin:
                         "findings": gr_result.get("findings", []),
                     }
                 elif decision == "warn":
-                    # 警告：步骤仍可执行，但返回告警信息供 Agent 知悉
                     guardrail_warning = {
                         "decision": "warn",
                         "message": gr_result.get("message", ""),
                         "findings": gr_result.get("findings", []),
                     }
             except Exception as exc:
-                # 护栏检查自身异常不应阻塞任务流，降级为警告
                 guardrail_warning = {
                     "decision": "warn",
                     "message": f"护栏检查异常，已降级放行：{exc}",
@@ -260,7 +272,7 @@ class TaskMixin:
             (new_status, step_id),
         )
 
-        # 如果任务状态是 open，改为 in_progress
+        # 根任务状态从 open → in_progress
         cur = self.conn.execute(
             "SELECT status FROM tasks WHERE id = ?",
             (task_id,),
@@ -272,11 +284,27 @@ class TaskMixin:
                 (TASK_STATUS_IN_PROGRESS, now, task_id),
             )
 
+        # 步骤所属任务也改为 in_progress（如果还是 open）
+        if actual_task_id != task_id:
+            cur = self.conn.execute(
+                "SELECT status FROM tasks WHERE id = ?",
+                (actual_task_id,),
+            )
+            actual_task_row = cur.fetchone()
+            if actual_task_row and actual_task_row["status"] == TASK_STATUS_OPEN:
+                self.conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                    (TASK_STATUS_IN_PROGRESS, now, actual_task_id),
+                )
+
         self.conn.commit()
+
+        # 构建父任务链（从根到当前任务）
+        parent_chain = self._build_parent_chain(actual_task_id)
 
         result: Dict[str, Any] = {
             "step_id": step_id,
-            "task_id": row["task_id"],
+            "task_id": actual_task_id,
             "step_index": row["step_index"],
             "action": row["action"],
             "target_file": row["target_file"],
@@ -284,19 +312,62 @@ class TaskMixin:
             "check_items": _deserialize_check_items(row["check_items"]),
             "task_title": row["task_title"],
             "status": new_status,
+            "parent_task_chain": parent_chain,
         }
         if guardrail_alert:
             result["guardrail_alert"] = guardrail_alert
         if guardrail_warning:
             result["guardrail_warning"] = guardrail_warning
 
-        # F7: 构建结构化指令（Agent 必须遵循的操作约束，替代自由文本提示）
+        # 构建结构化指令
         try:
             result["structured_instruction"] = self.build_structured_instruction(result)
         except Exception:
             result["structured_instruction"] = None
 
         return result
+
+    def _build_parent_chain(self, task_id: str) -> List[Dict[str, Any]]:
+        """构建从根任务到当前任务的祖先链（含自身）
+
+        Args:
+            task_id: 当前任务 ID
+
+        Returns:
+            祖先列表，按根→叶顺序排列，每个元素为 {task_id, title, status, depth}
+        """
+        chain = []
+        current_id = task_id
+
+        # 从当前任务向上追溯到根
+        temp_chain = []
+        while current_id:
+            cur = self.conn.execute(
+                "SELECT id, title, status, depth FROM tasks WHERE id = ?",
+                (current_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                break
+            temp_chain.append({
+                "task_id": row["id"],
+                "title": row["title"],
+                "status": row["status"],
+                "depth": row["depth"],
+            })
+            # 取父任务 ID
+            cur2 = self.conn.execute(
+                "SELECT parent_id FROM tasks WHERE id = ?",
+                (current_id,),
+            )
+            parent_row = cur2.fetchone()
+            if not parent_row or not parent_row["parent_id"]:
+                break
+            current_id = parent_row["parent_id"]
+
+        # 反转成根→叶顺序
+        chain = list(reversed(temp_chain))
+        return chain
 
     def task_resolve_block(self, task_id: str, step_id: str, resolution: str = "ack") -> Optional[Dict[str, Any]]:
         """处理 blocked 步骤的告警，将其恢复为 pending 以便重新领取
@@ -462,9 +533,11 @@ class TaskMixin:
         - 如果 changes 不为空，记录到 change_audit 表
         - 如果失败，自动插入一个 fix_defect 步骤（step_index 在当前之后）
         - 如果成功且没有更多 pending 步骤，将任务状态改为 review
+        - 父子任务支持：子任务完成后递归向上检查，所有子任务完成则父任务进入 review
+        - task_id 可以是根任务 ID 或任意子任务 ID，通过 step_id 反查真实所属任务
 
         Args:
-            task_id: 任务 ID
+            task_id: 任务 ID（根任务或子任务均可）
             step_id: 步骤 ID
             result: 执行结果描述
             success: 是否成功
@@ -478,6 +551,14 @@ class TaskMixin:
         now = time.time()
         new_status = STEP_STATUS_DONE if success else STEP_STATUS_FAILED
 
+        # 通过 step_id 找到步骤实际所属的任务 ID（支持父子任务）
+        cur = self.conn.execute(
+            "SELECT task_id FROM task_steps WHERE id = ?",
+            (step_id,),
+        )
+        step_row = cur.fetchone()
+        actual_task_id = step_row["task_id"] if step_row else task_id
+
         # 更新步骤状态、结果和完成时间
         self.conn.execute(
             """
@@ -485,7 +566,7 @@ class TaskMixin:
             SET status = ?, result = ?, completed_at = ?
             WHERE id = ? AND task_id = ?
             """,
-            (new_status, result, now, step_id, task_id),
+            (new_status, result, now, step_id, actual_task_id),
         )
 
         # 记录变更审计（每条变更生成一条 change_audit 记录）
@@ -501,7 +582,7 @@ class TaskMixin:
                     """,
                     (
                         change_id,
-                        task_id,
+                        actual_task_id,
                         step_id,
                         change.get("file_path", ""),
                         change.get("hash_before", ""),
@@ -514,10 +595,9 @@ class TaskMixin:
 
         # 失败时自动插入"修复缺陷"步骤
         if not success:
-            # 计算新的 step_index（当前最大值 + 1）
             cur = self.conn.execute(
                 "SELECT MAX(step_index) as max_idx FROM task_steps WHERE task_id = ?",
-                (task_id,),
+                (actual_task_id,),
             )
             max_row = cur.fetchone()
             max_idx = max_row["max_idx"] if max_row and max_row["max_idx"] is not None else -1
@@ -533,7 +613,7 @@ class TaskMixin:
                 """,
                 (
                     fix_step_id,
-                    task_id,
+                    actual_task_id,
                     new_step_index,
                     "fix_defect",
                     "",
@@ -546,27 +626,30 @@ class TaskMixin:
                 ),
             )
 
-        # 更新任务的 updated_at
+        # 更新步骤所属任务的 updated_at
         self.conn.execute(
             "UPDATE tasks SET updated_at = ? WHERE id = ?",
-            (now, task_id),
+            (now, actual_task_id),
         )
+        # 也更新根任务的 updated_at
+        if task_id != actual_task_id:
+            self.conn.execute(
+                "UPDATE tasks SET updated_at = ? WHERE id = ?",
+                (now, task_id),
+            )
 
         # ---- F6 检查门禁 ----
-        # 步骤成功且存在文件变更时，自动运行语法+Semgrep 检查。
-        # 门禁失败则插入 fix_gate_failure 步骤，且不转为 review。
         gate_failed = False
         if success and changes:
             changed_files = [c.get("file_path", "") for c in changes if c.get("file_path")]
             if changed_files and hasattr(self, "run_check_gate"):
                 try:
-                    gate_result = self.run_check_gate(task_id, step_id, changed_files)
+                    gate_result = self.run_check_gate(actual_task_id, step_id, changed_files)
                     if not gate_result["passed"]:
                         gate_failed = True
-                        # 插入 fix_gate_failure 步骤（step_index 取当前最大值 + 1）
                         cur = self.conn.execute(
                             "SELECT MAX(step_index) as max_idx FROM task_steps WHERE task_id = ?",
-                            (task_id,),
+                            (actual_task_id,),
                         )
                         max_idx = cur.fetchone()["max_idx"] or 0
                         fix_step_id = _gen_step_id()
@@ -586,7 +669,7 @@ class TaskMixin:
                             """,
                             (
                                 fix_step_id,
-                                task_id,
+                                actual_task_id,
                                 max_idx + 1,
                                 "fix_gate_failure",
                                 changed_files[0],
@@ -599,39 +682,33 @@ class TaskMixin:
                             ),
                         )
                 except Exception:
-                    pass  # 门禁检查自身异常不阻塞任务流
+                    pass
 
         # 成功且没有更多 pending 步骤时，将任务状态改为 review
-        # （门禁失败时不转 review，留待 Agent 领取 fix_gate_failure 步骤）
         if success and not gate_failed:
             cur = self.conn.execute(
                 "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ? AND status = ?",
-                (task_id, STEP_STATUS_PENDING),
+                (actual_task_id, STEP_STATUS_PENDING),
             )
             pending_count = cur.fetchone()["cnt"]
             if pending_count == 0:
-                self.conn.execute(
-                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
-                    (TASK_STATUS_REVIEW, now, task_id),
+                cur = self.conn.execute(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (actual_task_id,),
                 )
+                t_status = cur.fetchone()["status"]
+                if t_status in (TASK_STATUS_OPEN, TASK_STATUS_IN_PROGRESS):
+                    self.conn.execute(
+                        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                        (TASK_STATUS_REVIEW, now, actual_task_id),
+                    )
+                # 子任务完成后，递归向上更新父任务状态
+                self._update_parent_status(actual_task_id)
 
         self.conn.commit()
 
-        # 返回下一步步骤信息（不修改状态，留给后续 task_next_step 领取）
-        cur = self.conn.execute(
-            """
-            SELECT ts.id as step_id, ts.task_id, ts.step_index, ts.action,
-                   ts.target_file, ts.target_symbol, ts.check_items,
-                   t.title as task_title
-            FROM task_steps ts
-            JOIN tasks t ON ts.task_id = t.id
-            WHERE ts.task_id = ? AND ts.status = ?
-            ORDER BY ts.step_index ASC
-            LIMIT 1
-            """,
-            (task_id, STEP_STATUS_PENDING),
-        )
-        next_row = cur.fetchone()
+        # 返回任务树中的下一步步骤信息（深度优先）
+        next_row = self._find_next_pending_step_tree(task_id)
         if not next_row:
             return None
 
@@ -836,4 +913,304 @@ class TaskMixin:
             "updated_at": task_row["updated_at"],
             "closed_at": task_row["closed_at"],
             "steps": steps,
+        }
+
+    # --------------------------------------------------------------------
+    # 父子任务相关方法
+    # --------------------------------------------------------------------
+
+    def _get_direct_subtasks(self, task_id: str) -> List[Dict[str, Any]]:
+        """获取任务的直接子任务列表（按 sort_order 排序）
+
+        Args:
+            task_id: 父任务 ID
+
+        Returns:
+            子任务列表，每个元素为任务基本信息 dict
+        """
+        cur = self.conn.execute(
+            """
+            SELECT id, title, description, status, depth, sort_order, created_at, updated_at
+            FROM tasks
+            WHERE parent_id = ?
+            ORDER BY sort_order ASC
+            """,
+            (task_id,),
+        )
+        return [dict(row) for row in cur]
+
+    def _compute_task_progress(self, task_id: str) -> Dict[str, Any]:
+        """计算任务的完成进度（包括子任务和自身步骤）
+
+        进度 = 已完成步骤 / 总步骤数。若有子任务，则子任务的步骤也计入。
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            {"total": 总步骤数, "done": 已完成数, "progress": 0.0~1.0}
+        """
+        total = 0
+        done = 0
+
+        # 自身步骤
+        cur = self.conn.execute(
+            "SELECT status FROM task_steps WHERE task_id = ?",
+            (task_id,),
+        )
+        for row in cur:
+            total += 1
+            if row["status"] in (STEP_STATUS_DONE, STEP_STATUS_SKIPPED):
+                done += 1
+
+        # 递归累加子任务
+        subtasks = self._get_direct_subtasks(task_id)
+        for st in subtasks:
+            sub_progress = self._compute_task_progress(st["id"])
+            total += sub_progress["total"]
+            done += sub_progress["done"]
+
+        progress = (done / total) if total > 0 else 0.0
+        return {"total": total, "done": done, "progress": progress}
+
+    def _find_next_pending_step_tree(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """深度优先遍历任务树，找到下一个待执行步骤
+
+        优先下钻到最底层子任务，从左到右（按 sort_order），
+        子任务全部完成才回到父任务的自身步骤。
+
+        Args:
+            task_id: 根任务 ID
+
+        Returns:
+            步骤信息 dict（含 task_id, step_id, step_index 等），没有则返回 None
+        """
+        subtasks = self._get_direct_subtasks(task_id)
+
+        # 1. 先遍历所有子任务（深度优先）
+        for st in subtasks:
+            # 跳过已完成或已关闭的子任务
+            if st["status"] in (TASK_STATUS_CLOSED, TASK_STATUS_APPLIED, TASK_STATUS_REVERTED):
+                continue
+            sub_step = self._find_next_pending_step_tree(st["id"])
+            if sub_step:
+                return sub_step
+
+        # 2. 子任务都没有 pending 步骤，则看自身步骤
+        cur = self.conn.execute(
+            """
+            SELECT ts.id as step_id, ts.task_id, ts.step_index, ts.action,
+                   ts.target_file, ts.target_symbol, ts.check_items,
+                   t.title as task_title
+            FROM task_steps ts
+            JOIN tasks t ON ts.task_id = t.id
+            WHERE ts.task_id = ? AND ts.status = ?
+            ORDER BY ts.step_index ASC
+            LIMIT 1
+            """,
+            (task_id, STEP_STATUS_PENDING),
+        )
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+
+        return None
+
+    def task_create_subtask(
+        self,
+        parent_task_id: str,
+        title: str,
+        description: str = "",
+        steps: Optional[List[Dict[str, Any]]] = None,
+        creator: str = "agent",
+    ) -> str:
+        """在父任务下创建子任务
+
+        子任务的 depth = 父任务 depth + 1，sort_order 自动递增。
+
+        Args:
+            parent_task_id: 父任务 ID
+            title: 子任务标题
+            description: 子任务描述
+            steps: 子任务步骤列表
+            creator: 创建者标识
+
+        Returns:
+            新建子任务的 task_id
+        """
+        return self.task_create(
+            title=title,
+            description=description,
+            steps=steps,
+            creator=creator,
+            parent_id=parent_task_id,
+        )
+
+    def task_split(
+        self,
+        task_id: str,
+        subtasks: List[Dict[str, Any]],
+    ) -> List[str]:
+        """将一个大任务拆分为多个子任务
+
+        当检测到任务过大时使用。原任务的自身步骤保留为汇总/验证步骤，
+        具体工作拆分为子任务执行。
+
+        Args:
+            task_id: 要拆分的父任务 ID
+            subtasks: 子任务定义列表，每个元素为 dict：
+                     {title, description, steps}
+                     - title: 子任务标题
+                     - description: 子任务描述（可选）
+                     - steps: 子任务步骤列表（可选）
+
+        Returns:
+            新建子任务的 ID 列表（顺序与输入一致）
+        """
+        new_ids = []
+        for st_def in subtasks:
+            sub_id = self.task_create_subtask(
+                parent_task_id=task_id,
+                title=st_def.get("title", ""),
+                description=st_def.get("description", ""),
+                steps=st_def.get("steps", []),
+            )
+            new_ids.append(sub_id)
+
+        # 如果原任务如果是 open，确保保持 open；其自身步骤在所有子任务之后执行
+        # （_find_next_pending_step_tree 的深度优先策略自然保证）
+        return new_ids
+
+    def _update_parent_status(self, task_id: str):
+        """递归更新父任务状态：当所有子任务+自身步骤都完成时，父任务进入 review
+
+        从当前任务向上递归，检查每一层父任务是否满足完成条件。
+        完成条件：所有直接子任务已关闭 + 自身步骤全部 done。
+
+        Args:
+            task_id: 当前完成的任务 ID
+        """
+        now = time.time()
+
+        # 获取当前任务的父任务
+        cur = self.conn.execute(
+            "SELECT parent_id FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        if not row or not row["parent_id"]:
+            return  # 没有父任务，停止
+
+        parent_id = row["parent_id"]
+
+        # 检查父任务的所有子任务状态
+        subtasks = self._get_direct_subtasks(parent_id)
+        all_subtasks_done = True
+        for st in subtasks:
+            if st["status"] not in (
+                TASK_STATUS_CLOSED, TASK_STATUS_APPLIED,
+                TASK_STATUS_REVIEW, TASK_STATUS_REVERTED
+            ):
+                all_subtasks_done = False
+                break
+
+        # 检查父任务自身的步骤
+        cur = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ? AND status = ?",
+            (parent_id, STEP_STATUS_PENDING),
+        )
+        own_pending = cur.fetchone()["cnt"]
+
+        # 所有子任务完成 且 自身没有 pending 步骤 → 父任务进入 review
+        if all_subtasks_done and own_pending == 0:
+            cur = self.conn.execute(
+                "SELECT status FROM tasks WHERE id = ?",
+                (parent_id,),
+            )
+            parent_status = cur.fetchone()["status"]
+            if parent_status in (TASK_STATUS_OPEN, TASK_STATUS_IN_PROGRESS):
+                self.conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                    (TASK_STATUS_REVIEW, now, parent_id),
+                )
+                self.conn.commit()  # 立即提交，保证上层递归时能读到最新状态
+
+        # 继续向上递归
+        self._update_parent_status(parent_id)
+
+    def task_status_tree(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取任务树详情（含子任务树和进度）
+
+        Args:
+            task_id: 根任务 ID
+
+        Returns:
+            任务树 dict，包含：
+            - task_id, title, description, status, creator
+            - depth, sort_order
+            - progress: {total, done, progress}
+            - steps: 自身步骤列表
+            - subtasks: 子任务树列表（递归结构）
+            任务不存在返回 None
+        """
+        # 获取自身详情
+        cur = self.conn.execute(
+            "SELECT * FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        task_row = cur.fetchone()
+        if not task_row:
+            return None
+
+        # 自身步骤
+        cur = self.conn.execute(
+            """
+            SELECT id as step_id, step_index, action, target_file, target_symbol,
+                   check_items, status, result, created_at, completed_at
+            FROM task_steps
+            WHERE task_id = ?
+            ORDER BY step_index ASC
+            """,
+            (task_id,),
+        )
+        steps = []
+        for row in cur:
+            steps.append({
+                "step_id": row["step_id"],
+                "step_index": row["step_index"],
+                "action": row["action"],
+                "target_file": row["target_file"],
+                "target_symbol": row["target_symbol"],
+                "check_items": _deserialize_check_items(row["check_items"]),
+                "status": row["status"],
+                "result": row["result"],
+                "created_at": row["created_at"],
+                "completed_at": row["completed_at"],
+            })
+
+        # 递归子任务
+        subtasks = self._get_direct_subtasks(task_id)
+        subtask_trees = []
+        for st in subtasks:
+            sub_tree = self.task_status_tree(st["id"])
+            if sub_tree:
+                subtask_trees.append(sub_tree)
+
+        # 进度
+        progress = self._compute_task_progress(task_id)
+
+        return {
+            "task_id": task_row["id"],
+            "title": task_row["title"],
+            "description": task_row["description"],
+            "status": task_row["status"],
+            "creator": task_row["creator"],
+            "depth": task_row["depth"],
+            "sort_order": task_row["sort_order"],
+            "created_at": task_row["created_at"],
+            "updated_at": task_row["updated_at"],
+            "closed_at": task_row["closed_at"],
+            "progress": progress,
+            "steps": steps,
+            "subtasks": subtask_trees,
         }

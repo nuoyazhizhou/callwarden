@@ -300,7 +300,7 @@ CREATE INDEX IF NOT EXISTS idx_summaries_current ON symbol_summaries(is_current)
 -- v7: 任务管理表（任务驱动 MCP 的核心）
 -- ============================================
 
--- 任务表：管理 agent 创建的结构化任务
+-- 任务表：管理 agent 创建的结构化任务（支持父子任务树）
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -309,8 +309,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     status TEXT NOT NULL DEFAULT 'open',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
-    closed_at REAL
+    closed_at REAL,
+    parent_id TEXT DEFAULT '',
+    depth INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 
 -- 任务步骤表：每个任务包含多个有序步骤
 CREATE TABLE IF NOT EXISTS task_steps (
@@ -581,7 +586,8 @@ CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_has
 # v12: 安全文件编辑审计表（file_edit_audit，propose_edit 安全编辑流水线）
 # v13: 跨仓库分析表（cross_repo_deps，跨仓库依赖关系）
 # v14: 归档表（archived_files，被 .gitignore/.callwardenignore 命中的文件迁出主表，类 Java GC 老年代）
-SCHEMA_VERSION = 14
+# v15: 父子任务支持（tasks 表增加 parent_id/depth/sort_order，支持任务树嵌套）
+SCHEMA_VERSION = 15
 
 
 # ============================================

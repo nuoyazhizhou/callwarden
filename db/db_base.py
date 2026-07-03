@@ -956,6 +956,34 @@ def _migrate_v13_to_v14(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_hash)")
 
 
+def _migrate_v14_to_v15(conn: sqlite3.Connection):
+    """v14 -> v15: 父子任务支持
+
+    - tasks 表增加 parent_id / depth / sort_order 三列
+    - 已有任务默认 parent_id='', depth=0, sort_order=0
+    - 增加 parent_id 和 status 索引，加速任务树遍历
+    """
+    # SQLite 不支持 ADD COLUMN IF NOT EXISTS，用 PRAGMA table_info 检测
+    cur = conn.execute("PRAGMA table_info(tasks)")
+    cols = {row[1] for row in cur.fetchall()}
+
+    if "parent_id" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN parent_id TEXT DEFAULT ''")
+    if "depth" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN depth INTEGER NOT NULL DEFAULT 0")
+    if "sort_order" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+
+    # 已有任务设置默认值
+    conn.execute("UPDATE tasks SET parent_id = '' WHERE parent_id IS NULL OR parent_id = ''")
+    conn.execute("UPDATE tasks SET depth = 0 WHERE depth IS NULL")
+    conn.execute("UPDATE tasks SET sort_order = 0 WHERE sort_order IS NULL")
+
+    # 索引
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -963,6 +991,20 @@ class CodeGraphBase:
     """
 
     def __init__(self, db_path: str = "", workspace_root: Optional[str] = None):
+        """初始化代码图谱数据库实例
+
+        工作流程：
+        1. 检测并设置工作区根目录（优先使用传入路径，否则从调用路径向上探测）
+        2. 计算数据库文件路径（默认 ~/.callwarden/<hash>/callwarden.db）
+        3. 建立 SQLite 连接并应用性能优化 PRAGMA
+        4. 初始化解析器、模块解析器、调用关系解析器
+        5. 初始化 schema（自动版本化迁移，保留数据）
+        6. 初始化工作区记录
+
+        Args:
+            db_path: 数据库文件路径，为空时按工作区自动计算
+            workspace_root: 工作区根目录，为空时自动探测
+        """
         # 自动检测项目根目录
         if workspace_root:
             self.workspace_root = norm_path(os.path.abspath(workspace_root))
@@ -1136,6 +1178,10 @@ class CodeGraphBase:
             14: {
                 "description": "归档表（archived_files：被 ignore 规则命中的文件迁出主表，类 Java GC 老年代）",
                 "func": _migrate_v13_to_v14,
+            },
+            15: {
+                "description": "父子任务支持（tasks 增加 parent_id/depth/sort_order，任务树嵌套）",
+                "func": _migrate_v14_to_v15,
             },
         }
 
