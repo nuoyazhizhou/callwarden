@@ -25,10 +25,10 @@ from ..config import (
     detect_project_root, get_default_workspace_name, get_project_db_path,
 )
 
-# 计算项目根目录
+# 计算项目根目录（callwarden 包自身的根目录）
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PACKAGES_DIR = os.path.dirname(SCRIPT_DIR)  # scripts/
-PROJECT_ROOT = os.path.abspath(os.path.join(PACKAGES_DIR, ".."))
+PACKAGES_DIR = os.path.dirname(SCRIPT_DIR)  # callwarden/ 根目录
+PROJECT_ROOT = PACKAGES_DIR
 
 # 为 config 模块补充 PROJECT_ROOT（兼容其他模块的导入）
 import sys
