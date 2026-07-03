@@ -8,8 +8,8 @@
 - Elixir：defmodule、def、defp、alias/import、调用关系
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_p1_p3_languages
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_p1_p3_languages
 
 依赖:
     pip install tree-sitter-php tree-sitter-swift tree-sitter-scala \\

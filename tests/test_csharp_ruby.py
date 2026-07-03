@@ -8,8 +8,8 @@
 - install.py 一键安装器核心组件
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_csharp_ruby
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_csharp_ruby
 
 依赖:
     pip install tree-sitter-c-sharp tree-sitter-ruby

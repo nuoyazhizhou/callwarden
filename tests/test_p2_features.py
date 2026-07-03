@@ -7,8 +7,8 @@
 - F5: 安全文件编辑 propose_edit（Agent OS 核心，Schema v11→v12）
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_p2_features
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_p2_features
 """
 import os
 import sys

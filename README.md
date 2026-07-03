@@ -27,16 +27,16 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 
 ```bash
 # 1. 一键安装依赖（核心 + 16 种语言 grammar + 可选依赖）
-python -m code_graph.install            # 默认安装
-# python -m code_graph.install --all    # 含 semgrep / 向量搜索等可选依赖
+cw install            # 默认安装
+# cw install --all    # 含 semgrep / 向量搜索等可选依赖
 
 # 2. 初始化数据库（构建代码图谱）
 cd /path/to/your/project
-python -m code_graph.cli.main --init
+cw --init
 
 # 3. 查询符号
-python -m code_graph.cli.main --search "login"
-python -m code_graph.cli.main --call-chain "module::function_name"
+cw --search "login"
+cw --call-chain "module::function_name"
 ```
 
 详细流程见 [快速开始](docs/quickstart.md)。
@@ -82,11 +82,12 @@ $HOME/.code_graph/<16位hash>/code_graph.db
 ## 工作目录结构
 
 ```
-
-├── README.md                  # 本文件（子项目入口）
+callwarden/
+├── README.md                  # 本文件（项目入口）
 ├── LICENSE                    # MIT
 ├── CONTRIBUTING.md            # 贡献指南
 ├── CHANGELOG.md               # 版本演化
+├── cw.py                      # 统一命令行入口（cw 命令）
 ├── config.py                  # 配置：路径常量、多语言配置
 ├── install.py                 # 一键级联安装器
 ├── requirements.txt           # 依赖清单

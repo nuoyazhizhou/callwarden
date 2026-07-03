@@ -5,7 +5,7 @@
 ## 项目结构
 
 ```
-
+callwarden/
 ├── analyzers/        # 分析层：调用链 / 覆盖率 / 缺陷 / ignore 规则
 ├── cicd/             # CI/CD：SARIF / 增量 / PR 检查
 ├── cli/              # CLI 命令行入口
@@ -25,10 +25,10 @@ git clone <repo-url>
 cd /path/to/callwarden
 
 # 2. 安装开发依赖
-python -m code_graph.install --all
+cw install --all
 
 # 3. 验证安装
-python -m code_graph.cli.main --version
+cw --version
 ```
 
 ## 代码规范
@@ -78,15 +78,15 @@ python -m code_graph.cli.main --version
 ```bash
 # 全套测试
 cd /path/to/callwarden
-python -m code_graph.tests.test_p0_bugfixes
-python -m code_graph.tests.test_p1_features
-python -m code_graph.tests.test_p2_features
-python -m code_graph.tests.test_p3_features
-python -m code_graph.tests.test_csharp_ruby
-python -m code_graph.tests.test_p1_p3_languages
-python -m code_graph.tests.test_gc
-python -m code_graph.tests.test_stress       # 10w 符号压力
-python -m code_graph.tests.test_fuzz          # 安全 fuzz
+cw test test_p0_bugfixes
+cw test test_p1_features
+cw test test_p2_features
+cw test test_p3_features
+cw test test_csharp_ruby
+cw test test_p1_p3_languages
+cw test test_gc
+cw test test_stress       # 10w 符号压力
+cw test test_fuzz          # 安全 fuzz
 ```
 
 提交前请确保所有测试通过，无回归。

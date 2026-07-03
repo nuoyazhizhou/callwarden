@@ -6,8 +6,8 @@
 - B3: db_git.py git_symbol_changes 表只读不写
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_p0_bugfixes
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_p0_bugfixes
 """
 import os
 import sys

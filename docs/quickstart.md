@@ -13,13 +13,13 @@ Call Warden 提供级联安装脚本，自动安装核心依赖 + 全部已支�
 cd /path/to/callwarden
 
 # 一键安装：核心依赖 + 9 种已支持语言 + C# / Ruby 扩展语言
-python -m code_graph.install
+cw install
 
 # 包含可选依赖（semgrep / 向量搜索等）
-python -m code_graph.install --all
+cw install --all
 
 # 仅检查依赖状态，不安装
-python -m code_graph.install --check
+cw install --check
 ```
 
 安装脚本特性：
@@ -33,10 +33,10 @@ python -m code_graph.install --check
 
 ```bash
 # 仅安装 C# 和 Ruby 的 grammar
-python -m code_graph.install --lang csharp ruby
+cw install --lang csharp ruby
 
 # 仅安装 Rust 和 Python
-python -m code_graph.install --lang rust python
+cw install --lang rust python
 ```
 
 #### 支持的语言与对应包
@@ -74,7 +74,7 @@ pip install semgrep
 pip install sentence-transformers sqlite-vec
 
 # 或通过一键脚本安装全部可选依赖
-python -m code_graph.install --all
+cw install --all
 ```
 
 | 可选包 | 功能 | 未安装时行为 |
@@ -87,20 +87,20 @@ python -m code_graph.install --all
 ### 1.4 获取代码
 
 ```bash
-git clone <repo-url> TokenSlim
-cd /path/to/callwarden/code_graph
+git clone https://github.com/nuoyazhizhou/callwarden.git
+cd callwarden
 ```
 
-Call Warden 作为 `scripts/code_graph` 包提供，无需单独安装，直接通过 `python -m code_graph.<module>` 调用。
+Call Warden 通过 `cw.py` 入口脚本运行，使用 `cw` 命令调用所有功能。
 
 ### 1.5 验证安装
 
 ```bash
 # 验证 CLI
-python -m code_graph.cli.main --help
+cw --help
 
 # 验证依赖状态
-python -m code_graph.install --check
+cw install --check
 ```
 
 如果看到 CLI 帮助信息（含子命令概览和 --flag 列表），且 `--check` 输出全部 `[OK]`，说明安装成功。
@@ -113,7 +113,7 @@ python -m code_graph.install --check
 
 ```bash
 cd /path/to/your/project
-python -m code_graph.cli.main --init
+cw --init
 ```
 
 - `--init`：增量构建（仅解析有变化的文件）
@@ -130,7 +130,7 @@ python -m code_graph.cli.main --init
 ### 2.2 查看构建状态
 
 ```bash
-python -m code_graph.cli.main --status
+cw --status
 ```
 
 输出示例：
@@ -178,42 +178,42 @@ $HOME/.code_graph/<16位hash>/code_graph.db
 
 ```bash
 # 模糊搜索符号名
-python -m code_graph.cli.main --search "login"
+cw --search "login"
 
 # 按类型过滤（fn/method/class/struct/enum/trait/interface）
-python -m code_graph.cli.main --search "User" --search-kind class
+cw --search "User" --search-kind class
 
 # 限制返回数量
-python -m code_graph.cli.main --search "handle" --search-limit 20
+cw --search "handle" --search-limit 20
 ```
 
 ### 3.2 调用链分析
 
 ```bash
 # 向上追踪：谁调用了我
-python -m code_graph.cli.main --impact "module::function_name"
+cw --impact "module::function_name"
 
 # 向下追踪：我调用了谁
-python -m code_graph.cli.main --call-chain "module::function_name"
+cw --call-chain "module::function_name"
 
 # 设置最大深度
-python -m code_graph.cli.main --call-chain "module::function_name" --chain-depth 5
+cw --call-chain "module::function_name" --chain-depth 5
 ```
 
 ### 3.3 缺陷扫描
 
 ```bash
 # Semgrep 快速扫描（只显示汇总）
-python -m code_graph.cli.main --semgrep --semgrep-quick
+cw --semgrep --semgrep-quick
 
 # 详细扫描并存入数据库
-python -m code_graph.cli.main --semgrep --semgrep-save
+cw --semgrep --semgrep-save
 
 # 查看 Semgrep 统计
-python -m code_graph.cli.main --semgrep-stats
+cw --semgrep-stats
 
 # 查看缺陷列表
-python -m code_graph.cli.main --semgrep-list
+cw --semgrep-list
 ```
 
 ## 4. 启动 MCP Server
@@ -223,13 +223,13 @@ MCP（Model Context Protocol）Server 模式让 AI Agent 通过标准协议调�
 ### 4.1 stdio 模式（默认）
 
 ```bash
-python -m code_graph.server
+cw server
 ```
 
 或显式指定：
 
 ```bash
-python -m code_graph.server --transport stdio
+cw server --transport stdio
 ```
 
 stdio 模式适用于 MCP client 直接启动并管理 Server 进程的场景（如 Claude Desktop、Trae IDE）。
@@ -237,7 +237,7 @@ stdio 模式适用于 MCP client 直接启动并管理 Server 进程的场景（
 ### 4.2 SSE 模式
 
 ```bash
-python -m code_graph.server --transport sse
+cw server --transport sse
 ```
 
 SSE 模式适用于远程访问或多客户端共享同一个 Server 实例。
@@ -270,13 +270,13 @@ SSE 模式适用于远程访问或多客户端共享同一个 Server 实例。
 
 ```bash
 cd /home/user/my_project
-python -m code_graph.cli.main --init
+cw --init
 ```
 
 ### 5.2 步骤 2：查找目标函数
 
 ```bash
-python -m code_graph.cli.main --search "process_payment"
+cw --search "process_payment"
 ```
 
 输出：
@@ -294,7 +294,7 @@ python -m code_graph.cli.main --search "process_payment"
 ### 5.3 步骤 3：查看符号详情
 
 ```bash
-python -m code_graph.cli.main --symbol "my_project::payment::process_payment"
+cw --symbol "my_project::payment::process_payment"
 ```
 
 输出包含：类型、深度、文件位置、签名、注释、调用的函数、被谁调用。
@@ -303,7 +303,7 @@ python -m code_graph.cli.main --symbol "my_project::payment::process_payment"
 
 ```bash
 # 向上追踪所有调用者（影响半径）
-python -m code_graph.cli.main --impact "my_project::payment::process_payment"
+cw --impact "my_project::payment::process_payment"
 ```
 
 ### 5.5 步骤 5：通过 MCP 执行安全编辑

@@ -9,8 +9,8 @@
   - 所有数据通过 SQL 批量插入生成，不经过解析器
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_stress
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_stress
 """
 import os
 import sys

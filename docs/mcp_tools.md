@@ -14,8 +14,8 @@ Server 通过 `FastMCP` 框架实现，所有工具以 Python 函数形式注册
 启动 Server：
 
 ```bash
-python -m code_graph.server                    # stdio 模式
-python -m code_graph.server --transport sse    # SSE 模式
+cw server                    # stdio 模式
+cw server --transport sse    # SSE 模式
 ```
 
 ## 工具分类总览
@@ -817,7 +817,7 @@ RAG 管道：基于调用链增强的代码库问答上下文组装。组装完�
 
 ```bash
 # 启动 SSE Server
-python -m code_graph.server --transport sse
+cw server --transport sse
 ```
 
 Client 配置指向 `http://localhost:<port>/sse`（默认端口由 FastMCP 决定）。

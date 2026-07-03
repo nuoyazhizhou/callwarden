@@ -3,9 +3,9 @@
 MCP 服务器启动入口（支持 stdio 传输，适用于多容器共享部署）
 
 使用方式：
-  python -m code_graph.server.mcp_server
-  python -m code_graph.server.mcp_server --transport stdio  # 默认
-  python -m code_graph.server.mcp_server --transport sse    # SSE 模式
+  cw server
+  cw server --transport stdio  # 默认
+  cw server --transport sse    # SSE 模式
 
 多容器共享部署：
   1. 在宿主机安装: pip install code-graph（或直接用此脚本）

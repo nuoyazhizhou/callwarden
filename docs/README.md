@@ -38,16 +38,16 @@ Call Warden 是一个面向 AI Agent 的代码知识图谱工具。它通过 tre
 ```bash
 # 1. 一键安装依赖（核心 + 16 种语言 grammar + 可选依赖）
 cd /path/to/callwarden
-python -m code_graph.install            # 默认安装
-# python -m code_graph.install --all    # 含 semgrep / 向量搜索等可选依赖
+cw install            # 默认安装
+# cw install --all    # 含 semgrep / 向量搜索等可选依赖
 
 # 2. 初始化数据库（构建代码图谱）
 cd /path/to/your/project
-python -m code_graph.cli.main --init
+cw --init
 
 # 3. 查询符号
-python -m code_graph.cli.main --search "login"
-python -m code_graph.cli.main --call-chain "module::function_name"
+cw --search "login"
+cw --call-chain "module::function_name"
 ```
 
 详细流程见 [快速开始](quickstart.md)。

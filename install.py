@@ -2,15 +2,15 @@
 install.py
 ==========
 
-Code Graph 一键安装脚本：级联安装核心依赖 + 各语言 tree-sitter grammar + 可选依赖。
+Call Warden 一键安装脚本：级联安装核心依赖 + 各语言 tree-sitter grammar + 可选依赖。
 
 使用方式：
-    python -m code_graph.install              # 安装核心 + 全部已支持语言
-    python -m code_graph.install --all        # 安装核心 + 全部语言 + 全部可选依赖
-    python -m code_graph.install --lang csharp ruby  # 仅安装指定语言的 grammar
-    python -m code_graph.install --check      # 仅检查依赖状态，不安装
-    python -m code_graph.install --no-optional  # 跳过可选依赖（默认行为）
-    python -m code_graph.install --verbose    # 显示详细安装日志
+    cw install              # 安装核心 + 全部已支持语言
+    cw install --all        # 安装核心 + 全部语言 + 全部可选依赖
+    cw install --lang csharp ruby  # 仅安装指定语言的 grammar
+    cw install --check      # 仅检查依赖状态，不安装
+    cw install --no-optional  # 跳过可选依赖（默认行为）
+    cw install --verbose    # 显示详细安装日志
 
 设计原则：
 1. 级联安装：核心 → 已支持语言 → 扩展语言 → 可选依赖
@@ -215,7 +215,7 @@ class CodeGraphInstaller:
         self._check_group(OPTIONAL_PACKAGES)
         print()
 
-        print("提示：运行 `python -m code_graph.install` 安装缺失的依赖")
+        print("提示：运行 `cw install` 安装缺失的依赖")
 
     # ------------------------------------------------------------------
     # 内部方法
@@ -318,13 +318,13 @@ class CodeGraphInstaller:
             print("✓ 全部依赖安装成功")
             print()
             print("下一步：")
-            print("  1. 验证安装: python -m code_graph.cli.main --help")
-            print("  2. 构建图谱: cd /path/to/project && python -m code_graph.cli.main --init")
-            print("  3. 启动 MCP: python -m code_graph.server")
+            print("  1. 验证安装: cw --help")
+            print("  2. 构建图谱: cd /path/to/project && cw --init")
+            print("  3. 启动 MCP: cw server")
         else:
             print(f"⚠ 部分依赖安装失败（{self.result.failed} 个）")
             print("  失败的包可稍后手动安装: pip install <package-name>")
-            print("  或重新运行: python -m code_graph.install")
+            print("  或重新运行: cw install")
         print()
 
 
@@ -337,14 +337,14 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Code Graph 一键安装脚本",
+        description="Call Warden 一键安装脚本",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python -m code_graph.install              # 安装核心 + 全部已支持语言
-  python -m code_graph.install --all        # 安装核心 + 全部语言 + 全部可选依赖
-  python -m code_graph.install --lang csharp ruby  # 仅安装指定语言的 grammar
-  python -m code_graph.install --check      # 仅检查依赖状态，不安装
+  cw install              # 安装核心 + 全部已支持语言
+  cw install --all        # 安装核心 + 全部语言 + 全部可选依赖
+  cw install --lang csharp ruby  # 仅安装指定语言的 grammar
+  cw install --check      # 仅检查依赖状态，不安装
         """,
     )
     parser.add_argument("--all", action="store_true",

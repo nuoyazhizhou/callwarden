@@ -3,7 +3,7 @@
 
 GitHub Actions 集成入口。
 
-在 CI 中由 workflow 调用 `python -m code_graph.cicd.github_action` 触发，
+在 CI 中由 workflow 调用 `cw cicd github-action` 触发，
 完成以下工作：
 1. 从环境变量读取 PR 上下文（base / head / workspace）
 2. 创建 CodeGraphDB 实例
@@ -103,7 +103,7 @@ def run_github_action() -> int:
 
 
 def main() -> None:
-    """命令行入口：供 `python -m code_graph.cicd.github_action` 调用"""
+    """命令行入口：供 `cw cicd github-action` 调用"""
     sys.exit(run_github_action())
 
 

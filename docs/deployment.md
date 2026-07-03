@@ -12,16 +12,16 @@ Call Warden 提供级联安装脚本，自动安装核心依赖 + 全部已支�
 cd /path/to/callwarden
 
 # 默认安装：核心依赖 + 9 种已支持语言 + C# / Ruby 扩展语言
-python -m code_graph.install
+cw install
 
 # 包含可选依赖（semgrep / 向量搜索等）
-python -m code_graph.install --all
+cw install --all
 
 # 仅检查依赖状态
-python -m code_graph.install --check
+cw install --check
 
 # 仅安装指定语言的 grammar
-python -m code_graph.install --lang csharp ruby
+cw install --lang csharp ruby
 ```
 
 详见 [快速开始 - 安装](quickstart.md#1-安装)。
@@ -65,42 +65,42 @@ pip install sqlite-vec               # 向量索引扩展
 ### 2. 获取代码
 
 ```bash
-git clone <repo-url> TokenSlim
-cd TokenSlim
+git clone https://github.com/nuoyazhizhou/callwarden.git
+cd callwarden
 ```
 
-Call Warden 位于 ``，作为 Python 包直接使用，无需单独安装。
+Call Warden 通过 `cw.py` 入口脚本运行，使用 `cw` 命令调用所有功能。
 
 ### 3. 验证安装
 
 ```bash
 # 验证 CLI
-python -m code_graph.cli.main --help
+cw --help
 
 # 验证 MCP Server（应能启动并等待 stdio 输入）
-python -m code_graph.server --help
+cw server --help
 
 # 验证依赖状态（全部应为 [OK]）
-python -m code_graph.install --check
+cw install --check
 ```
 
 ### 4. 设置别名（可选）
 
-为方便使用，设置 `cg` 别名：
+`cw` 命令通过 `cw.py` 入口脚本运行。建议设置别名以便全局使用：
 
 ```bash
 # Linux/macOS（写入 ~/.bashrc 或 ~/.zshrc）
-alias cg="python -m code_graph.cli.main"
+alias cw="python /path/to/callwarden/cw.py"
 
 # Windows PowerShell（写入 $PROFILE）
-function cg { python -m code_graph.cli.main @args }
+Set-Alias -Name cw -Value "python C:\path\to\callwarden\cw.py"
 ```
 
 ### 5. 构建代码图谱
 
 ```bash
 cd /path/to/your/project
-python -m code_graph.cli.main --init
+cw --init
 ```
 
 数据库将创建在 `$HOME/.code_graph/<16位hash>/code_graph.db`。
@@ -124,8 +124,8 @@ maturin develop --release
 Dockerfile 见 [Dockerfile](Dockerfile)。
 
 ```bash
-cd TokenSlim
-docker build -t code-graph:latest -f docs/Dockerfile .
+cd callwarden
+docker build -t call-warden:latest -f docs/Dockerfile .
 ```
 
 ### 2. 运行容器（CLI 模式）
@@ -238,7 +238,7 @@ docker run --rm \
 
 ```bash
 # 启动 SSE Server
-python -m code_graph.server --transport sse
+cw server --transport sse
 ```
 
 Client 配置指向 `http://<host>:<port>/sse`。
@@ -303,7 +303,7 @@ Call Warden 的 Schema 迁移在启动时自动执行：
 ```bash
 # 升级代码后，首次运行会自动检测版本并迁移
 git pull
-python -m code_graph.cli.main --status    # 自动迁移并显示状态
+cw --status    # 自动迁移并显示状态
 ```
 
 迁移逻辑在 `db_base.py` 中：
@@ -321,20 +321,20 @@ python -m code_graph.cli.main --status    # 自动迁移并显示状态
 sqlite3 $HOME/.code_graph/<hash>/code_graph.db ".backup '/tmp/cg_backup.db'"
 
 # 2. 拉取新代码
-cd TokenSlim
+cd callwarden
 git pull
 
 # 3. 更新依赖（重新运行一键安装脚本）
-python -m code_graph.install
+cw install
 
 # 4. （可选）重新编译 Rust 扩展
 cd rust_ext && maturin develop --release && cd -
 
 # 5. 触发 Schema 迁移
-python -m code_graph.cli.main --status
+cw --status
 
 # 6. （可选）增量更新图谱
-python -m code_graph.cli.main --init
+cw --init
 ```
 
 ### Docker 升级
@@ -414,7 +414,7 @@ rustup component add rust-analyzer  # Rust
 pip install sentence-transformers sqlite-vec
 
 # 重新生成嵌入
-python -m code_graph.cli.main --embed-force
+cw --embed-force
 ```
 
 向量服务不可用时，语义搜索自动回退到关键词匹配。

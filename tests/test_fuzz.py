@@ -16,8 +16,8 @@ test_fuzz.py
     6. 原子写入并发安全（SEC-001）：多线程并发写入同一文件，最终内容一致
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_fuzz
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_fuzz
 """
 import os
 import sys

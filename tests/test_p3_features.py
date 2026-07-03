@@ -5,8 +5,8 @@
 - LSP1: LSP 集成 lsp_integration（LspMixin，JSON-RPC over stdio）
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_p3_features
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_p3_features
 """
 import os
 import sys
@@ -379,7 +379,7 @@ def test_lsp1_path_uri_conversion():
     from code_graph.db.db_lsp import LspMixin
 
     # 路径转 URI
-    uri = LspMixin._path_to_uri("C:\\git_work\\TokenSlim\\test.py")
+    uri = LspMixin._path_to_uri("C:\\git_work\\callwarden\\test.py")
     assert uri.startswith("file://"), f"URI 应以 file:// 开头，实际 {uri}"
     assert "test.py" in uri, f"URI 应包含文件名，实际 {uri}"
 
@@ -387,7 +387,7 @@ def test_lsp1_path_uri_conversion():
     path = LspMixin._uri_to_path(uri)
     assert "test.py" in path, f"路径应包含文件名，实际 {path}"
 
-    print(f"  路径 → URI: C:\\git_work\\TokenSlim\\test.py → {uri}")
+    print(f"  路径 → URI: C:\\git_work\\callwarden\\test.py → {uri}")
     print(f"  URI → 路径: {uri} → {path}")
     print(f"PASS LSP1.8: 路径 ↔ URI 转换正确\n")
 

@@ -6,8 +6,8 @@
 - CLI: 6 个新命令接线（task create/next/report/rollback + vuln-blast + symbol-history）
 
 运行方式:
-    cd c:\\git_work\\TokenSlim\\scripts
-    python -m code_graph.tests.test_p1_features
+    cd c:\\git_work\\callwarden\\scripts
+    cw test test_p1_features
 """
 import os
 import sys

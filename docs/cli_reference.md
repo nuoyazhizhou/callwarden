@@ -2,10 +2,10 @@
 
 Call Warden CLI 提供两种命令风格：
 
-1. **子命令风格**：`python -m code_graph.cli.main <subcommand> [options]`（12 个子命令，对应"代码守护者架构"四大支柱）
-2. **Flag 风格**：`python -m code_graph.cli.main --flag [options]`（传统命令，覆盖构建/查询/编辑/度量等）
+1. **子命令风格**：`cw <subcommand> [options]`（12 个子命令，对应"代码守护者架构"四大支柱）
+2. **Flag 风格**：`cw --flag [options]`（传统命令，覆盖构建/查询/编辑/度量等）
 
-> 下文用 `cg` 代指 `python -m code_graph.cli.main`。你也可以设置别名：`alias cg="python -m code_graph.cli.main"`。
+> 下文用 `cw` 作为命令前缀。
 
 ## 命令概览（按功能分组）
 
@@ -92,7 +92,7 @@ Call Warden CLI 提供两种命令风格：
 | | `install --lang <LANG...>` | sub | 仅安装指定语言 grammar |
 | | `install --check` | sub | 检查依赖状态 |
 
-> `install` 是独立子命令，调用方式为 `python -m code_graph.install [options]`（注意不是 `cg install`）。
+> `install` 是独立子命令，调用方式为 `cw install [options]`。
 
 ---
 
@@ -102,29 +102,29 @@ Call Warden CLI 提供两种命令风格：
 
 Call Warden 提供独立的安装器脚本，级联安装核心依赖 + 各语言 tree-sitter grammar + 可选依赖。
 
-**调用方式**：`python -m code_graph.install [options]`（注意：不是 `cg install`）
+**调用方式**：`cw install [options]`
 
 #### 默认安装
 
 ```bash
 # 安装核心依赖 + 9 种已支持语言 + C# / Ruby 扩展语言
-python -m code_graph.install
+cw install
 ```
 
 #### 安装全部依赖（含可选）
 
 ```bash
-python -m code_graph.install --all
+cw install --all
 ```
 
 #### 按语言安装 grammar
 
 ```bash
 # 仅安装 C# 和 Ruby 的 grammar
-python -m code_graph.install --lang csharp ruby
+cw install --lang csharp ruby
 
 # 仅安装 Rust 和 Python
-python -m code_graph.install --lang rust python
+cw install --lang rust python
 ```
 
 支持的语言名：`rust` / `typescript` / `javascript` / `python` / `kotlin` / `go` / `java` / `c` / `cpp` / `csharp` / `ruby` / `php` / `swift` / `scala` / `hcl` / `elixir`
@@ -132,7 +132,7 @@ python -m code_graph.install --lang rust python
 #### 检查依赖状态
 
 ```bash
-python -m code_graph.install --check
+cw install --check
 ```
 
 输出示例：

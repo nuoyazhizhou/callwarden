@@ -1,8 +1,8 @@
 """
-code_graph
+callwarden
 ==========
 
-代码知识图谱工具包：基于 tree-sitter 的多语言代码分析、版本管理、缺陷检测。
+Call Warden：面向 AI Agent 的代码知识图谱工具，基于 tree-sitter 的多语言代码分析、版本管理、缺陷检测。
 
 核心类：
 - CodeGraphDB：代码知识图谱数据库（主入口）
