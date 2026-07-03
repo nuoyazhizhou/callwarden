@@ -328,22 +328,40 @@ class JavaParser(BaseParser):
         calls = []
         pkg_name = self._extract_package(root, source)
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
-                if child.type in ("method_declaration", "constructor_declaration"):
+                if child.type == "class_declaration":
+                    name_node = self._find_child_by_type(child, "identifier")
+                    class_name = self._node_text(name_node, source) if name_node else ""
+                    if class_name:
+                        if current_qualified:
+                            new_qualified = f"{current_qualified}.{class_name}"
+                        else:
+                            new_qualified = f"{pkg_name}.{class_name}" if pkg_name else class_name
+                        body = self._find_child_by_type(child, "class_body")
+                        if body:
+                            walk(body, class_name, new_qualified)
+                elif child.type in ("method_declaration", "constructor_declaration"):
                     name_node = self._find_child_by_type(child, "identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{pkg_name}.{fn_name}" if pkg_name else fn_name
-                    walk(child, qual)
+                    if fn_name:
+                        if current_qualified:
+                            new_qualified = f"{current_qualified}.{fn_name}"
+                        else:
+                            new_qualified = f"{pkg_name}.{fn_name}" if pkg_name else fn_name
+                        walk(child, fn_name, new_qualified)
+                    else:
+                        walk(child, current_fn, current_qualified)
                 elif child.type == "method_invocation":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = pkg_name
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

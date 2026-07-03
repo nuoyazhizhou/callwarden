@@ -423,7 +423,7 @@ class CParser(BaseParser):
         """提取原始调用关系"""
         calls = []
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
                 if child.type == "function_definition":
                     declarator = self._find_child_by_type(child, "function_declarator")
@@ -440,16 +440,17 @@ class CParser(BaseParser):
                                     name_node = self._find_child_by_type(pointer_declarator, "field_identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
                     qual = f"{module_path}.{fn_name}" if module_path else fn_name
-                    walk(child, qual)
+                    walk(child, fn_name, qual)
                 elif child.type == "call_expression":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls
@@ -680,9 +681,22 @@ class CppParser(CParser):
         """提取原始调用关系（C++ 扩展版）"""
         calls = []
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = "",
+                 current_scope: str = ""):
             for child in node.named_children:
-                if child.type == "function_definition":
+                if child.type == "namespace_definition":
+                    ns_name = self._extract_namespace_name(child, source)
+                    new_scope = f"{current_scope}.{ns_name}" if current_scope else ns_name
+                    walk(child, current_fn, current_qualified, new_scope)
+                elif child.type in ("class_specifier", "struct_specifier"):
+                    name_node = self._find_child_by_type(child, "type_identifier")
+                    if name_node:
+                        cls_name = self._node_text(name_node, source)
+                        new_scope = f"{current_scope}.{cls_name}" if current_scope else cls_name
+                        body = self._find_child_by_type(child, "field_declaration_list")
+                        if body:
+                            walk(body, current_fn, current_qualified, new_scope)
+                elif child.type == "function_definition":
                     declarator = self._find_child_by_type(child, "function_declarator")
                     name_node = None
                     if declarator:
@@ -696,17 +710,21 @@ class CppParser(CParser):
                                 if not name_node:
                                     name_node = self._find_child_by_type(pointer_declarator, "field_identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{module_path}.{fn_name}" if module_path else fn_name
-                    walk(child, qual)
+                    if current_scope:
+                        qual = f"{module_path}.{current_scope}.{fn_name}" if module_path else f"{current_scope}.{fn_name}"
+                    else:
+                        qual = f"{module_path}.{fn_name}" if module_path else fn_name
+                    walk(child, fn_name, qual, current_scope)
                 elif child.type == "call_expression":
                     call_info = self._parse_call_cpp(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified, current_scope)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified, current_scope)
 
         walk(root)
         return calls

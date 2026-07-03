@@ -229,25 +229,52 @@ class SwiftParser(BaseParser):
         """
         calls: List[Dict[str, Any]] = []
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
                 if child.type == "function_declaration":
                     name_node = self._find_child_by_type(child, "simple_identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{module_path}.{fn_name}" if module_path else fn_name
-                    walk(child, qual)
+                    if current_qualified:
+                        qual = f"{current_qualified}.{fn_name}"
+                    elif module_path:
+                        qual = f"{module_path}.{fn_name}"
+                    else:
+                        qual = fn_name
+                    walk(child, fn_name, qual)
                 elif child.type == "init_declaration":
-                    qual = f"{module_path}.init" if module_path else "init"
-                    walk(child, qual)
+                    fn_name = "init"
+                    if current_qualified:
+                        qual = f"{current_qualified}.{fn_name}"
+                    elif module_path:
+                        qual = f"{module_path}.{fn_name}"
+                    else:
+                        qual = fn_name
+                    walk(child, fn_name, qual)
+                elif child.type in ("class_declaration", "struct_declaration",
+                                    "protocol_declaration", "enum_declaration",
+                                    "actor_declaration"):
+                    name_node = self._find_child_by_type(child, "type_identifier")
+                    type_name = self._node_text(name_node, source) if name_node else ""
+                    if type_name:
+                        if current_qualified:
+                            type_qual = f"{current_qualified}.{type_name}"
+                        elif module_path:
+                            type_qual = f"{module_path}.{type_name}"
+                        else:
+                            type_qual = type_name
+                        walk(child, current_fn, type_qual)
+                    else:
+                        walk(child, current_fn, current_qualified)
                 elif child.type == "call_expression":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

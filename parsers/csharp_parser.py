@@ -305,25 +305,41 @@ class CSharpParser(BaseParser):
         namespace = self._extract_namespace(root, source)
         effective_module = namespace or module_path
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
-                if child.type in ("method_declaration", "constructor_declaration"):
-                    # 用 _find_name_before 取方法名，避免把返回类型当方法名
+                if child.type in ("class_declaration", "struct_declaration",
+                                  "interface_declaration", "enum_declaration"):
+                    name_node = self._find_child_by_type(child, "identifier")
+                    type_name = self._node_text(name_node, source) if name_node else ""
+                    if type_name:
+                        if current_qualified:
+                            next_qualified = f"{current_qualified}.{type_name}"
+                        else:
+                            next_qualified = f"{effective_module}.{type_name}" if effective_module else type_name
+                    else:
+                        next_qualified = current_qualified
+                    walk(child, current_fn, next_qualified)
+                elif child.type in ("method_declaration", "constructor_declaration"):
                     name_node = self._find_name_before(child, source, "parameter_list")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{effective_module}.{fn_name}" if effective_module else fn_name
-                    # 进入方法体时，parent_qualified 应包含类名以保持 caller_qualified 一致
-                    # 此处保留 effective_module.fn_name 形式以兼容下游解析
-                    walk(child, qual)
+                    if fn_name:
+                        if current_qualified:
+                            fn_qualified = f"{current_qualified}.{fn_name}"
+                        else:
+                            fn_qualified = f"{effective_module}.{fn_name}" if effective_module else fn_name
+                    else:
+                        fn_qualified = current_qualified
+                    walk(child, fn_name, fn_qualified)
                 elif child.type == "invocation_expression":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = effective_module
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

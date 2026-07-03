@@ -231,7 +231,7 @@ class ElixirParser(BaseParser):
         """
         calls: List[Dict[str, Any]] = []
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
                 if child.type == "call":
                     ident = self._find_child_by_type(child, "identifier")
@@ -246,19 +246,39 @@ class ElixirParser(BaseParser):
                                     func_ident = self._find_child_by_type(func_call, "identifier")
                                     if func_ident:
                                         fn_name = self._node_text(func_ident, source)
-                                        qual = f"{module_path}.{fn_name}" if module_path else fn_name
+                                        if current_qualified:
+                                            qual = f"{current_qualified}.{fn_name}"
+                                        elif module_path:
+                                            qual = f"{module_path}.{fn_name}"
+                                        else:
+                                            qual = fn_name
                                         do_block = self._find_child_by_type(child, "do_block")
                                         if do_block:
-                                            walk(do_block, qual)
+                                            walk(do_block, fn_name, qual)
                                         continue
                             # 未能提取函数名的 def，仍递归处理
-                            walk(child, current_fn)
+                            walk(child, current_fn, current_qualified)
                             continue
                         elif keyword == "defmodule":
                             # 模块定义：递归进入 do_block 但不更新 current_fn
+                            # 更新 current_qualified（模块名前缀）
+                            args = self._find_child_by_type(child, "arguments")
+                            module_name = ""
+                            if args:
+                                alias_node = self._find_child_by_type(args, "alias")
+                                if alias_node:
+                                    module_name = self._node_text(alias_node, source)
+                            new_qualified = current_qualified
+                            if module_name:
+                                if current_qualified:
+                                    new_qualified = f"{current_qualified}.{module_name}"
+                                elif module_path:
+                                    new_qualified = f"{module_path}.{module_name}"
+                                else:
+                                    new_qualified = module_name
                             do_block = self._find_child_by_type(child, "do_block")
                             if do_block:
-                                walk(do_block, current_fn)
+                                walk(do_block, current_fn, new_qualified)
                             continue
                         else:
                             # 普通函数调用（非 def/defp/defmodule）
@@ -266,19 +286,20 @@ class ElixirParser(BaseParser):
                                 calls.append({
                                     "caller_name": current_fn,
                                     "caller_module": module_path,
+                                    "caller_qualified": current_qualified,
                                     "callee_name": keyword,
                                     "callee_module": "",
                                     "call_line": child.start_point[0] + 1,
                                 })
                             # 递归处理 call 内部可能嵌套的子 call（如 arguments 内的 call）
-                            walk(child, current_fn)
+                            walk(child, current_fn, current_qualified)
                             continue
                     # 没有 identifier 的 call，递归处理
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
                     # 所有其他节点类型（do_block/stab_clause/binary_operator 等）
                     # 递归遍历以发现内部嵌套的 call
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

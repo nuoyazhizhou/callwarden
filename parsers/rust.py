@@ -119,6 +119,21 @@ class RustParser:
         return symbols
     
     def _parse_function(self, node, source: bytes, source_str: str, module_path: str, leading_attrs: List = None) -> Dict[str, Any]:
+        """解析 Rust function_item 节点为符号字典
+
+        提取函数名、可见性、签名、注释、内容 hash 等信息。
+        若前导属性包含 #[test]，则标记为 test_fn 类型。
+
+        Args:
+            node: tree-sitter function_item 节点
+            source: 源代码字节串
+            source_str: 源代码字符串
+            module_path: 所属模块路径
+            leading_attrs: 前导属性节点列表（用于检测 #[test] 等）
+
+        Returns:
+            符号信息字典
+        """
         name_node = node.child_by_field_name("name")
         name = self._get_text(name_node, source) if name_node else ""
         visibility = self._get_visibility(node, source)
@@ -157,6 +172,19 @@ class RustParser:
         }
     
     def _parse_struct(self, node, source: bytes, source_str: str, module_path: str) -> Dict[str, Any]:
+        """解析 Rust struct_item 节点为符号字典
+
+        提取结构体名称、可见性、字段签名、注释等信息。
+
+        Args:
+            node: tree-sitter struct_item 节点
+            source: 源代码字节串
+            source_str: 源代码字符串
+            module_path: 所属模块路径
+
+        Returns:
+            符号信息字典，kind 为 "struct"
+        """
         name_node = node.child_by_field_name("name")
         name = self._get_text(name_node, source) if name_node else ""
         visibility = self._get_visibility(node, source)
@@ -184,6 +212,19 @@ class RustParser:
         }
     
     def _parse_enum(self, node, source: bytes, source_str: str, module_path: str) -> Dict[str, Any]:
+        """解析 Rust enum_item 节点为符号字典
+
+        提取枚举名称、可见性、变体签名、注释等信息。
+
+        Args:
+            node: tree-sitter enum_item 节点
+            source: 源代码字节串
+            source_str: 源代码字符串
+            module_path: 所属模块路径
+
+        Returns:
+            符号信息字典，kind 为 "enum"
+        """
         name_node = node.child_by_field_name("name")
         name = self._get_text(name_node, source) if name_node else ""
         visibility = self._get_visibility(node, source)
@@ -211,6 +252,19 @@ class RustParser:
         }
     
     def _parse_trait(self, node, source: bytes, source_str: str, module_path: str) -> Dict[str, Any]:
+        """解析 Rust trait_item 节点为符号字典
+
+        提取 trait 名称、可见性、方法签名、注释等信息。
+
+        Args:
+            node: tree-sitter trait_item 节点
+            source: 源代码字节串
+            source_str: 源代码字符串
+            module_path: 所属模块路径
+
+        Returns:
+            符号信息字典，kind 为 "trait"
+        """
         name_node = node.child_by_field_name("name")
         name = self._get_text(name_node, source) if name_node else ""
         visibility = self._get_visibility(node, source)
@@ -238,6 +292,19 @@ class RustParser:
         }
     
     def _parse_const(self, node, source: bytes, source_str: str, module_path: str) -> Dict[str, Any]:
+        """解析 Rust const_item 节点为符号字典
+
+        提取常量名称、可见性、类型签名、注释等信息。
+
+        Args:
+            node: tree-sitter const_item 节点
+            source: 源代码字节串
+            source_str: 源代码字符串
+            module_path: 所属模块路径
+
+        Returns:
+            符号信息字典，kind 为 "const"
+        """
         name_node = node.child_by_field_name("name")
         name = self._get_text(name_node, source) if name_node else ""
         visibility = self._get_visibility(node, source)

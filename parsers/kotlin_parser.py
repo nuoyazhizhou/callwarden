@@ -198,22 +198,38 @@ class KotlinParser(BaseParser):
         calls = []
         pkg_name = self._extract_package(root, source)
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
                 if child.type == "function_declaration":
                     name_node = self._find_child_by_type(child, "identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{pkg_name}.{fn_name}" if pkg_name else fn_name
-                    walk(child, qual)
+                    if current_qualified:
+                        qual = f"{current_qualified}.{fn_name}"
+                    elif pkg_name:
+                        qual = f"{pkg_name}.{fn_name}"
+                    else:
+                        qual = fn_name
+                    walk(child, fn_name, qual)
+                elif child.type == "class_declaration":
+                    name_node = self._find_child_by_type(child, "identifier")
+                    class_name = self._node_text(name_node, source) if name_node else ""
+                    if current_qualified:
+                        qual = f"{current_qualified}.{class_name}"
+                    elif pkg_name:
+                        qual = f"{pkg_name}.{class_name}"
+                    else:
+                        qual = class_name
+                    walk(child, class_name, qual)
                 elif child.type == "call_expression":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = pkg_name
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

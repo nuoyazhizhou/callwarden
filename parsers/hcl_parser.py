@@ -168,15 +168,15 @@ class HclParser(BaseParser):
         if not body:
             return calls
 
-        def walk(node, current_block: str = ""):
+        def walk(node, current_block: str = "", current_qualified: str = ""):
             for child in node.named_children:
                 if child.type == "block":
                     # 进入 block 时记录当前块名
                     block_sym = self._parse_block(child, source, module_path)
                     if block_sym:
-                        walk(child, block_sym["qualified_name"])
+                        walk(child, block_sym["qualified_name"], block_sym["qualified_name"])
                         continue
-                    walk(child, current_block)
+                    walk(child, current_block, current_qualified)
                 elif child.type == "attribute":
                     # attribute = identifier expression
                     # 提取 expression 中的引用
@@ -187,14 +187,15 @@ class HclParser(BaseParser):
                             if current_block:
                                 calls.append({
                                     "caller_name": current_block,
+                                    "caller_qualified": current_qualified,
                                     "caller_module": module_path,
                                     "callee_name": ref,
                                     "callee_module": "",
                                     "call_line": child.start_point[0] + 1,
                                 })
-                    walk(child, current_block)
+                    walk(child, current_block, current_qualified)
                 else:
-                    walk(child, current_block)
+                    walk(child, current_block, current_qualified)
 
         walk(body)
         return calls

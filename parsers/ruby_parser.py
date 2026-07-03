@@ -277,24 +277,43 @@ class RubyParser(BaseParser):
         """提取原始调用关系"""
         calls: List[Dict[str, Any]] = []
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = "", current_scope: str = ""):
             for child in node.named_children:
-                if child.type in ("method", "singleton_method"):
+                if child.type in ("module", "class"):
+                    name_node = self._find_child_by_type(child, "constant") \
+                                or self._find_child_by_type(child, "scope_resolution")
+                    if name_node:
+                        name = self._node_text(name_node, source)
+                        if current_scope:
+                            new_scope = f"{current_scope}::{name}"
+                        elif module_path:
+                            new_scope = f"{module_path}::{name}"
+                        else:
+                            new_scope = name
+                        walk(child, current_fn, current_qualified, new_scope)
+                    else:
+                        walk(child, current_fn, current_qualified, current_scope)
+                elif child.type in ("method", "singleton_method"):
                     name_node = self._find_child_by_type(child, "identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    # 用 # 表示实例方法（与符号的 qualified_name 一致）
                     sep = "#" if child.type == "method" else "."
-                    qual = f"{module_path}{sep}{fn_name}" if module_path else fn_name
-                    walk(child, qual)
+                    if current_scope:
+                        new_qualified = f"{current_scope}{sep}{fn_name}"
+                    elif module_path:
+                        new_qualified = f"{module_path}{sep}{fn_name}"
+                    else:
+                        new_qualified = fn_name
+                    walk(child, fn_name, new_qualified, current_scope)
                 elif child.type == "call":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified, current_scope)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified, current_scope)
 
         walk(root)
         return calls

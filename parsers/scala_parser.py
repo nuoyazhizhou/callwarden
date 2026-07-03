@@ -209,22 +209,45 @@ class ScalaParser(BaseParser):
         package = self._extract_package(root, source)
         effective_module = package or module_path
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
-                if child.type == "function_definition":
+                if child.type in ("class_definition", "object_definition",
+                                  "trait_definition"):
+                    name_node = self._find_child_by_type(child, "identifier")
+                    type_name = self._node_text(name_node, source) if name_node else ""
+                    if type_name:
+                        if current_qualified:
+                            new_qualified = f"{current_qualified}.{type_name}"
+                        elif effective_module:
+                            new_qualified = f"{effective_module}.{type_name}"
+                        else:
+                            new_qualified = type_name
+                        walk(child, current_fn, new_qualified)
+                    else:
+                        walk(child, current_fn, current_qualified)
+                elif child.type == "function_definition":
                     name_node = self._find_child_by_type(child, "identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{effective_module}.{fn_name}" if effective_module else fn_name
-                    walk(child, qual)
+                    if fn_name:
+                        if current_qualified:
+                            new_qualified = f"{current_qualified}.{fn_name}"
+                        elif effective_module:
+                            new_qualified = f"{effective_module}.{fn_name}"
+                        else:
+                            new_qualified = fn_name
+                        walk(child, fn_name, new_qualified)
+                    else:
+                        walk(child, current_fn, current_qualified)
                 elif child.type == "call_expression":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = effective_module
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

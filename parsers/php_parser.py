@@ -271,31 +271,45 @@ class PhpParser(BaseParser):
         namespace = self._extract_namespace(root, source)
         effective_module = namespace or module_path
 
-        def walk(node, current_fn: str = ""):
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
-                if child.type == "method_declaration":
+                if child.type in ("class_declaration", "interface_declaration",
+                                  "trait_declaration"):
+                    name_node = self._find_child_by_type(child, "name")
+                    class_name = self._node_text(name_node, source) if name_node else ""
+                    if class_name:
+                        class_qualified = f"{current_qualified}.{class_name}" if current_qualified else (
+                            f"{effective_module}.{class_name}" if effective_module else class_name
+                        )
+                        body = self._find_child_by_type(child, "declaration_list")
+                        if body:
+                            walk(body, "", class_qualified)
+                    walk(child, current_fn, current_qualified)
+                elif child.type == "method_declaration":
                     name_node = self._find_name_before(child, source, "formal_parameters")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{effective_module}.{fn_name}" if effective_module else fn_name
-                    walk(child, qual)
+                    method_qualified = f"{current_qualified}.{fn_name}" if current_qualified else (
+                        f"{effective_module}.{fn_name}" if effective_module else fn_name
+                    )
+                    walk(child, fn_name, method_qualified)
                 elif child.type == "member_call_expression":
-                    # 形如 $this->method() 或 $obj->method()
                     call_info = self._parse_member_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = effective_module
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 elif child.type == "function_call_expression":
-                    # 形如 func()
                     call_info = self._parse_function_call(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = effective_module
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls

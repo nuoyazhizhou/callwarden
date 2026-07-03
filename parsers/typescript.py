@@ -273,30 +273,54 @@ class TypeScriptParser(BaseParser):
 
     def _extract_raw_calls(self, root, source: bytes,
                            module_path: str) -> List[Dict[str, Any]]:
-        """提取原始调用关系"""
+        """提取原始调用关系
+
+        与 _walk_symbols 保持一致的类处理逻辑：
+        - function_declaration: qualified = module_path.name
+        - class_declaration: 递归进类体，current_qualified 传递类名
+        - method_definition: qualified = current_qualified.name
+
+        输出字段：
+        - caller_name: 简名（如 foo），与 symbols.name 对应
+        - caller_qualified: 完整限定名（如 module.Class.foo），
+          与 symbols.qualified_name 对应，用于精确匹配
+        """
         calls = []
 
-        def walk(node, current_fn: str = ""):
+        def make_qualified(name: str, parent_qualified: str) -> str:
+            if parent_qualified:
+                return f"{parent_qualified}.{name}"
+            if module_path:
+                return f"{module_path}.{name}"
+            return name
+
+        def walk(node, current_fn: str = "", current_qualified: str = ""):
             for child in node.named_children:
                 if child.type == "function_declaration":
                     name_node = self._find_child_by_type(child, "identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{module_path}.{fn_name}" if module_path else fn_name
-                    walk(child, qual)
+                    qual = make_qualified(fn_name, current_qualified)
+                    walk(child, fn_name, qual)
+                elif child.type == "class_declaration":
+                    name_node = self._find_child_by_type(child, "type_identifier")
+                    cls_name = self._node_text(name_node, source) if name_node else ""
+                    qual = make_qualified(cls_name, current_qualified)
+                    walk(child, cls_name, qual)
                 elif child.type == "method_definition":
                     name_node = self._find_child_by_type(child, "property_identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
-                    qual = f"{current_fn}.{fn_name}" if current_fn else fn_name
-                    walk(child, qual)
+                    qual = make_qualified(fn_name, current_qualified)
+                    walk(child, fn_name, qual)
                 elif child.type == "call_expression":
                     call_info = self._parse_call_expression(child, source)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
+                        call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
                 else:
-                    walk(child, current_fn)
+                    walk(child, current_fn, current_qualified)
 
         walk(root)
         return calls
