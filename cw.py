@@ -50,7 +50,8 @@ def main():
     if args and args[0] == "test":
         test_name = args[1] if len(args) > 1 else ""
         if not test_name:
-            print("用法: cw test <module>  如 cw test test_p0_bugfixes")
+            from .i18n import t
+            print(t("cli_test_usage"))
             sys.exit(1)
         sys.argv = ["cw"] + args[2:]
         mod = importlib.import_module(f"{_PKG}.tests.{test_name}")

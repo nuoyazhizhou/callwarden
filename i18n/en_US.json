@@ -107,7 +107,8 @@
       "delete_not_found": "Delete failed: workspace '{name}' not found",
       "set_success": "Switched to workspace: {name}",
       "watch_started": "File watcher started, press Ctrl+C to stop",
-      "stats_title": "=== Statistics ==="
+      "stats_title": "=== Statistics ===",
+      "test_usage": "Usage: cw test <module>  e.g. cw test test_p0_bugfixes"
     }
   },
   "errors": {

@@ -107,7 +107,8 @@
       "delete_not_found": "删除失败: 未找到工作区 '{name}'",
       "set_success": "已切换到工作区: {name}",
       "watch_started": "文件监控已启动，按 Ctrl+C 停止",
-      "stats_title": "=== 统计信息 ==="
+      "stats_title": "=== 统计信息 ===",
+      "test_usage": "用法: cw test <module>  如 cw test test_p0_bugfixes"
     }
   },
   "errors": {
