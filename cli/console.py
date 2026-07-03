@@ -69,6 +69,15 @@ def should_use_color() -> bool:
 
 
 def colorize(text: str, color: str) -> str:
+    """为文本添加 ANSI 颜色转义序列
+
+    Args:
+        text: 原始文本
+        color: 颜色名称，对应 _COLORS 中的键（如 red/green/bold/dim）
+
+    Returns:
+        带颜色转义序列的文本，非 TTY 环境下直接返回原文本
+    """
     if not should_use_color():
         return text
     code = _COLORS.get(color, "")
@@ -78,6 +87,14 @@ def colorize(text: str, color: str) -> str:
 
 
 def cprint(text: str = "", color: Optional[str] = None, bold: bool = False, **kwargs):
+    """带颜色的 print 封装
+
+    Args:
+        text: 要输出的文本
+        color: 前景色名称（red/green/blue 等）
+        bold: 是否加粗
+        **kwargs: 透传给 print 的额外参数（end/flush/file 等）
+    """
     if bold:
         text = colorize(text, "bold")
     if color:
@@ -86,26 +103,74 @@ def cprint(text: str = "", color: Optional[str] = None, bold: bool = False, **kw
 
 
 def success(msg: str) -> str:
+    """生成成功消息（绿色 ✓ 前缀）
+
+    Args:
+        msg: 消息内容
+
+    Returns:
+        带绿色 ✓ 前缀的格式化字符串
+    """
     return colorize(f"✓ {msg}", "green")
 
 
 def error(msg: str) -> str:
+    """生成错误消息（红色 ✗ 前缀）
+
+    Args:
+        msg: 消息内容
+
+    Returns:
+        带红色 ✗ 前缀的格式化字符串
+    """
     return colorize(f"✗ {msg}", "red")
 
 
 def warning(msg: str) -> str:
+    """生成警告消息（黄色 ⚠ 前缀）
+
+    Args:
+        msg: 消息内容
+
+    Returns:
+        带黄色 ⚠ 前缀的格式化字符串
+    """
     return colorize(f"⚠ {msg}", "yellow")
 
 
 def info(msg: str) -> str:
+    """生成信息消息（青色 ℹ 前缀）
+
+    Args:
+        msg: 消息内容
+
+    Returns:
+        带青色 ℹ 前缀的格式化字符串
+    """
     return colorize(f"ℹ {msg}", "cyan")
 
 
 def dim(msg: str) -> str:
+    """生成暗色文本（低亮度）
+
+    Args:
+        msg: 消息内容
+
+    Returns:
+        低亮度的格式化字符串
+    """
     return colorize(msg, "dim")
 
 
 def bold(msg: str) -> str:
+    """生成加粗文本
+
+    Args:
+        msg: 消息内容
+
+    Returns:
+        加粗的格式化字符串
+    """
     return colorize(msg, "bold")
 
 
@@ -114,6 +179,13 @@ _last_line_len = [0]
 
 
 def print_progress(current: int, total: int, message: str = ""):
+    """显示进度条（TTY 下实时刷新，非 TTY 下按间隔打印）
+
+    Args:
+        current: 当前进度值
+        total: 总进度值（<=0 时直接返回）
+        message: 进度条右侧附加的消息文本
+    """
     global _progress_active, _last_line_len
     if total <= 0:
         return
@@ -146,6 +218,7 @@ def print_progress(current: int, total: int, message: str = ""):
 
 
 def clear_progress():
+    """清除当前行的进度条显示（仅 TTY 环境有效）"""
     global _progress_active, _last_line_len
     if should_use_color() and _progress_active[0]:
         sys.stdout.write("\r" + " " * _last_line_len[0] + "\r")
@@ -155,6 +228,16 @@ def clear_progress():
 
 
 def format_duration(seconds: float) -> str:
+    """将秒数格式化为人类可读的时长字符串
+
+    自动选择合适的单位：毫秒(ms) / 秒(s) / 分钟(m) / 小时(h)
+
+    Args:
+        seconds: 秒数（浮点数）
+
+    Returns:
+        格式化的时长字符串，如 "120ms", "3.5s", "2m30s", "1h15m"
+    """
     if seconds < 0.001:
         return f"{seconds*1000:.1f}ms"
     if seconds < 1:
@@ -171,6 +254,14 @@ def format_duration(seconds: float) -> str:
 
 
 def format_size(n: int) -> str:
+    """将字节数格式化为人类可读的大小字符串
+
+    Args:
+        n: 字节数
+
+    Returns:
+        格式化的大小字符串，如 "128 B", "1.5 KB", "2.0 MB"
+    """
     if n < 1024:
         return f"{n} B"
     if n < 1024 * 1024:
@@ -180,6 +271,18 @@ def format_size(n: int) -> str:
 
 def print_build_summary(parsed: int, unchanged: int, skipped: int, failed: int,
                         symbols: int, calls: int, resolved_calls: int, duration: float):
+    """打印构建完成后的总结报告
+
+    Args:
+        parsed: 成功解析的文件数（新增/更新）
+        unchanged: 未变化而跳过的文件数
+        skipped: 不支持的语言而跳过的文件数
+        failed: 解析失败的文件数
+        symbols: 符号总数
+        calls: 调用关系总数
+        resolved_calls: 已解析（成功匹配）的调用关系数
+        duration: 构建总耗时（秒）
+    """
     print()
     cprint(f"  ═══════ 构建总结 ═══════", "cyan", bold=True)
     print()
@@ -208,6 +311,14 @@ def print_build_summary(parsed: int, unchanged: int, skipped: int, failed: int,
 
 
 class Spinner:
+    """终端旋转加载动画（Braille 字符），用于耗时操作的视觉反馈
+
+    TTY 环境下实时刷新动画，非 TTY 环境下仅打印一次起始消息。
+
+    Attributes:
+        message: 加载提示消息
+    """
+
     def __init__(self, message: str = ""):
         self.message = message
         self._frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -216,6 +327,7 @@ class Spinner:
         self._active = False
 
     def start(self):
+        """启动旋转动画"""
         self._active = True
         self._start = time.time()
         if not should_use_color():

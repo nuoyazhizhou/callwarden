@@ -6,11 +6,12 @@ i18n.py
 """
 
 import json
+import locale
 import os
 from typing import Dict, Optional
 
-# 默认语言
-DEFAULT_LANG = "zh_CN"
+# 支持的语言列表
+SUPPORTED_LANGS = ["zh_CN", "en_US"]
 
 # 缓存已加载的语言资源
 _lang_cache: Dict[str, Dict] = {}
@@ -19,6 +20,66 @@ _lang_cache: Dict[str, Dict] = {}
 def _get_i18n_dir() -> str:
     """获取 i18n 资源目录"""
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n")
+
+
+def _detect_system_language() -> str:
+    """自动检测操作系统语言
+
+    检测优先级：
+    1. 环境变量 CALLWARDEN_LANG
+    2. 环境变量 LANG / LC_ALL / LC_MESSAGES
+    3. locale.getdefaultlocale()
+    4. 回退到 en_US
+
+    Returns:
+        语言代码，如 "zh_CN" 或 "en_US"
+    """
+    # 1. 项目专属环境变量优先级最高
+    env_lang = os.environ.get("CALLWARDEN_LANG", "").strip()
+    if env_lang:
+        if env_lang in SUPPORTED_LANGS:
+            return env_lang
+        # 兼容 zh-CN / zh / en 等格式
+        env_norm = env_lang.replace("-", "_")
+        if env_norm in SUPPORTED_LANGS:
+            return env_norm
+
+    # 2. 标准 locale 环境变量
+    for env_var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        val = os.environ.get(env_var, "").strip()
+        if val:
+            # 提取语言部分（如 zh_CN.UTF-8 -> zh_CN）
+            lang_code = val.split(".")[0]
+            if lang_code in SUPPORTED_LANGS:
+                return lang_code
+            # 兼容 zh-CN 格式
+            lang_norm = lang_code.replace("-", "_")
+            if lang_norm in SUPPORTED_LANGS:
+                return lang_norm
+
+    # 3. Python locale 模块
+    try:
+        # Python 3.11+ 推荐用 getlocale()，3.15 将移除 getdefaultlocale()
+        if hasattr(locale, "getlocale"):
+            loc = locale.getlocale()
+        else:
+            loc = locale.getdefaultlocale()
+        if loc and loc[0]:
+            lang_code = loc[0]
+            if lang_code in SUPPORTED_LANGS:
+                return lang_code
+            lang_norm = lang_code.replace("-", "_")
+            if lang_norm in SUPPORTED_LANGS:
+                return lang_norm
+    except Exception:
+        pass
+
+    # 4. 回退
+    return "en_US"
+
+
+# 默认语言：根据操作系统自动检测
+DEFAULT_LANG = _detect_system_language()
 
 
 def set_language(lang: str):
@@ -61,7 +122,7 @@ def _load_lang(lang: str) -> Dict:
         return {}
 
 
-# 当前语言（初始化为默认）
+# 当前语言（初始化为默认语言，即自动检测的系统语言）
 _current_lang = DEFAULT_LANG
 
 

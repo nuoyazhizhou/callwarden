@@ -1279,6 +1279,16 @@ class BuildMixin:
 
 
     def _insert_symbol(self, file_instance_id: int, sym: Dict[str, Any]):
+        """向 symbols 表插入单个符号记录
+
+        若符号 dict 中没有 content_hash，则根据 content 字段自动计算。
+        comment_status 初始化为 'pending'，后续由注释恢复流程更新。
+
+        Args:
+            file_instance_id: 所属文件实例 ID
+            sym: 符号信息字典，需包含 name/kind/visibility/start_line/end_line/
+                 start_col/end_col/signature/has_comment/module_path/qualified_name
+        """
         if "content_hash" not in sym:
             sym["content_hash"] = compute_content_hash(sym.get("content", ""))
         self.conn.execute(
@@ -1331,7 +1341,7 @@ class BuildMixin:
             (file_instance_id,)
         )
 
-        # 同文件内 name -> id（fallback 用，无法区分同名方法）
+        # 同文件内 name -> id（最后一级 fallback，无法区分同名方法）
         sym_id_map = {}
         cur = self.conn.execute(
             "SELECT id, name FROM symbols WHERE file_instance_id = ?", (file_instance_id,)
@@ -1346,17 +1356,30 @@ class BuildMixin:
             qname_id_map[row["qualified_name"]] = row["id"]
 
         for call in calls:
-            # 优先用 caller_qualified 精确匹配（与 symbols.qualified_name 一致）
-            # fallback 用 caller_name 匹配同文件 symbols.name（兼容旧 parser 输出）
+            # 多级 fallback 策略匹配 caller_id：
+            # 1. caller_qualified 精确匹配 qname_id_map（最优，带类名）
+            # 2. caller_name 直接匹配 qname_id_map（无类语言：C/Go/HCL 等）
+            # 3. 提取 caller_name 最后一段（简名）匹配同文件 sym_id_map（兜底）
+            caller_id = 0
             caller_qname = call.get("caller_qualified", "")
+            caller_name_raw = call.get("caller_name", "")
+
             if caller_qname and caller_qname in qname_id_map:
                 caller_id = qname_id_map[caller_qname]
-            else:
-                caller_id = sym_id_map.get(call["caller_name"], 0)
+            elif caller_name_raw and caller_name_raw in qname_id_map:
+                caller_id = qname_id_map[caller_name_raw]
+            elif caller_name_raw:
+                # 提取简名（最后一段），兼容不同分隔符
+                simple_name = caller_name_raw
+                for sep in ("::", ".", "#"):
+                    if sep in simple_name:
+                        simple_name = simple_name.rsplit(sep, 1)[-1]
+                caller_id = sym_id_map.get(simple_name, 0)
+
             if caller_id == 0:
                 continue
 
-            callee_id = qname_id_map.get(call["callee_qualified"], 0) if call["callee_qualified"] else 0
+            callee_id = qname_id_map.get(call["callee_qualified"], 0) if call.get("callee_qualified") else 0
 
             self.conn.execute(
                 """INSERT INTO calls
@@ -1364,10 +1387,11 @@ class BuildMixin:
                     callee_module, callee_qualified, callee_file, callee_id,
                     call_line, is_cross_file)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (caller_id, call["caller_name"], call["caller_module"],
-                 call["callee_name"], call["callee_module"], call["callee_qualified"],
-                 call["callee_file"], callee_id, call["call_line"],
-                 call["is_cross_file"]),
+                (caller_id, caller_name_raw, call.get("caller_module", ""),
+                 call["callee_name"], call.get("callee_module", ""),
+                 call.get("callee_qualified", ""), call.get("callee_file", ""),
+                 callee_id, call.get("call_line", 0),
+                 call.get("is_cross_file", 0)),
             )
 
 
@@ -1531,6 +1555,7 @@ class BuildMixin:
             return
 
         new_fv_id = self._save_file_version(file_instance_id, result)
+        result["file_version_id"] = new_fv_id
         self._save_symbols_for_version(new_fv_id, file_instance_id, result)
 
         # 增量方式：从DB加载其他文件结果 + 新解析的当前文件
@@ -1587,6 +1612,7 @@ class BuildMixin:
             return
 
         new_fv_id = self._save_file_version(file_instance_id, result)
+        result["file_version_id"] = new_fv_id
         self._save_symbols_for_version(new_fv_id, file_instance_id, result)
 
         # 增量方式：从DB加载其他文件结果
