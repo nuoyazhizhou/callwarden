@@ -1,0 +1,112 @@
+# Call Warden
+
+> 面向 AI Agent 的代码知识图谱工具 · 基于 tree-sitter + SQLite + MCP
+
+Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关系、文件版本、Git 历史、缺陷模式、变更影响等信息结构化存储到 SQLite，为 AI Agent 提供符号搜索、调用链分析、变更影响半径、安全编辑审计、Semgrep 集成等能力，解决 Agent 在大型代码库中"找不到符号、看不懂依赖、改了不知道影响谁"的核心问题。
+
+## 核心能力
+
+- **16 种语言解析**：Rust / TypeScript / JavaScript / Python / Kotlin / Go / Java / C / C++ / C# / Ruby / PHP / Swift / Scala / HCL / Elixir（100% 覆盖 Semgrep GA）
+- **调用链分析**：四级解析策略 + 向上/向下 BFS 分层 + 跨文件标记 + 循环检测
+- **版本历史**：content_hash 去重 + 删除标记 + 注释恢复（防止 git checkout 丢失注释）
+- **生产安全护栏**：DB/API/Incident 三类可阻断规则 + Before-Edit Contract
+- **变更影响智能**：blast_radius + cross_layer_impact（代码 → DB → API → 配置）
+- **代码演化智能**：函数变更频率 + 缺陷关联 + 热点排名 + churn 分析
+- **缺陷知识库**：从 Semgrep + git 修复中挖掘模式，推荐修复方案
+- **任务驱动编排**：task/step/audit 状态机，护栏阻断后自动插入修复步骤
+- **向量搜索 + RAG**：sqlite-vec + sentence-transformers，自然语言查找函数
+- **Semgrep 集成**：多语言静态安全扫描，结果按内容去重入库
+- **LSP 集成**：hover / 定义 / 引用 / 诊断 / 补全
+- **跨仓库分析**：依赖检测 + 共享符号 + 影响传播
+- **Git 集成**：commit 历史 + 符号级变更追踪
+- **分支感知**：独立工作区方案 + 差异对比 + 合并预览
+- **Java GC 机制**：.gitignore/.codegraphignore 解析 + 归档/复活/清除
+- **120 个 MCP 工具 + 145+ CLI 命令**
+
+## 快速开始
+
+```bash
+# 1. 一键安装依赖（核心 + 16 种语言 grammar + 可选依赖）
+python -m code_graph.install            # 默认安装
+# python -m code_graph.install --all    # 含 semgrep / 向量搜索等可选依赖
+
+# 2. 初始化数据库（构建代码图谱）
+cd /path/to/your/project
+python -m code_graph.cli.main --init
+
+# 3. 查询符号
+python -m code_graph.cli.main --search "login"
+python -m code_graph.cli.main --call-chain "module::function_name"
+```
+
+详细流程见 [快速开始](docs/quickstart.md)。
+
+## 文档导航
+
+| 文档 | 说明 |
+|------|------|
+| [docs/README.md](docs/README.md) | 用户文档总入口 |
+| [docs/quickstart.md](docs/quickstart.md) | 安装、初始化、基本查询、MCP Server 启动 |
+| [docs/cli_reference.md](docs/cli_reference.md) | 全部 CLI 子命令与 --flag 用法 |
+| [docs/mcp_tools.md](docs/mcp_tools.md) | 120 个 MCP 工具按功能分组 |
+| [docs/architecture.md](docs/architecture.md) | 整体架构、Schema、Mixin 设计、扩展指南 |
+| [docs/deployment.md](docs/deployment.md) | 本地/Docker 部署、MCP 配置、备份恢复 |
+| [docs/design/implementation-status.md](docs/design/implementation-status.md) | 当前实现状态权威盘点（v14） |
+| [docs/design/competition-analysis.md](docs/design/competition-analysis.md) | 竞品分析与独占优势 |
+| [docs/design/evolve-guardian-architecture/](docs/design/evolve-guardian-architecture/) | Guardian 架构设计规格 |
+| [docs/history/](docs/history/) | 历史归档文档（已过时，仅供回顾） |
+
+## 系统要求
+
+| 依赖 | 版本 | 说明 |
+|------|------|------|
+| Python | 3.10+ | 必需 |
+| tree-sitter | 最新 | 必需，多语言解析引擎 |
+| fastmcp | 最新 | 必需（MCP Server 模式） |
+| Semgrep | 可选 | 缺陷扫描，未安装时自动降级 |
+| LSP 服务器 | 可选 | pyright / tsserver / gopls / rust-analyzer |
+| sentence-transformers | 可选 | 向量嵌入，未安装时降级关键词搜索 |
+| sqlite-vec | 可选 | 向量索引扩展 |
+| Git | 2.20+ | 可选，Git 历史集成需要 |
+
+## 数据库位置
+
+按项目隔离，路径格式：
+
+```
+$HOME/.code_graph/<16位hash>/code_graph.db
+```
+
+16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目互不干扰。
+
+## 工作目录结构
+
+```
+
+├── README.md                  # 本文件（子项目入口）
+├── LICENSE                    # MIT
+├── CONTRIBUTING.md            # 贡献指南
+├── CHANGELOG.md               # 版本演化
+├── config.py                  # 配置：路径常量、多语言配置
+├── install.py                 # 一键级联安装器
+├── requirements.txt           # 依赖清单
+├── .codegraphignore.example   # 忽略规则模板
+├── analyzers/                 # 分析层（call_chain / coverage / issues / ignore_spec）
+├── cicd/                      # CI/CD 集成（sarif / incremental / pr_check）
+├── cli/                       # CLI 命令行
+├── db/                        # 数据库层（23 个 Mixin + schema）
+├── docs/                      # 文档
+├── i18n/                      # 国际化
+├── parsers/                   # 多语言解析器（16 种）
+├── rust_ext/                  # PyO3 Rust 扩展（性能加速）
+├── server/                    # MCP Server + 文件监控
+└── tests/                     # 测试套件
+```
+
+## 许可证
+
+[MIT](LICENSE)
+
+## 贡献
+
+欢迎提交 Issue 和 PR。请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。

@@ -1,0 +1,17 @@
+[package]
+name = "code-graph-core"
+version = "0.1.0"
+edition = "2021"
+description = "Code Graph 高性能 PyO3 扩展：批量余弦相似度等热路径加速"
+
+[lib]
+name = "code_graph_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+
+[profile.release]
+opt-level = 3
+lto = true

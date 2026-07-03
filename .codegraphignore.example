@@ -1,0 +1,72 @@
+# .codegraphignore - code_graph 文件忽略规则
+#
+# 格式类似 .gitignore：
+#   - 每行一条规则，# 开头是注释
+#   - 通配符：* 匹配任意字符（不含 /），** 匹配任意目录层级
+#   - 目录后缀 /：只匹配目录（如 prebuilt/ 匹配任意层级的 prebuilt 目录）
+#   - 前缀 /：只匹配根目录（如 /out 只忽略根目录的 out/）
+#   - 含 / 的模式：匹配完整相对路径（如 vendor/amlogic/cast-sdk_prebuild/）
+#
+# 注意：以下规则已作为硬编码默认基线内置，无需在此重复声明：
+#   .git/ node_modules/ target/ dist/ build/ out/ output/ obj/ bin/
+#   prebuilt/ prebuilts/ blob/ toolchain/ autogen/ generated/ gen/
+#   proto_gen/ *.pb.cc *_pb2.py moc_*.cpp ui_*.h *.pyc .repo/
+#
+# 本文件用于在默认基线之上追加项目特有规则。复制到项目根目录并改名 .codegraphignore 即可生效。
+
+# ============================================
+# 嵌入式 / AOSP repo 项目（按需启用）
+# ============================================
+
+# 厂商预构建 SDK（manifest 里常见的 *_prebuild 路径）
+# cast-sdk_prebuild/
+# vendor/amlogic/cast-lite/cast-sdk_prebuild/
+
+# 自动生成的设备树 / 配置
+# device/customer/generated/
+# device/*/autogen/
+
+# 内核驱动构建输出
+# driver/out/
+# kernel/out/
+
+# protobuf / gRPC 生成目录（若不在默认 gen/ 下）
+# protos/gen/
+# rpc/generated/
+
+# ============================================
+# 业务项目（按需启用）
+# ============================================
+
+# 第三方库源码（体积大但有时需要分析，默认不排除）
+# third_party/
+# 3rdparty/
+# external/
+# vendor_libs/
+
+# 测试 fixture 和 mock 数据
+# testdata/
+# fixtures/
+# mocks/
+
+# 文档生成输出
+# site/
+# docs/_build/
+
+# IDE / 编辑器缓存
+# .idea/
+# .vscode/
+# .cache/
+
+# 机器学习模型 / 大数据文件
+# *.model
+# *.weights
+# *.ckpt
+# *.h5
+# *.onnx
+
+# ============================================
+# 白名单（取消注释以纳入分析）
+# ============================================
+# 默认排除的 autogen 目录，若需要分析某子目录，用 ! 前缀取消（需在规则之后）
+# 注意：当前实现不支持 ! 取反语法，请改用更精确的 .codegraphinclude 或调整路径

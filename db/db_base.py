@@ -1,0 +1,1377 @@
+"""
+db.py
+=====
+
+代码知识图谱数据库核心类。
+
+提供数据库基础操作、源码解析、版本管理、查询接口等核心功能。
+通过 Mixin 模式扩展调用链分析、缺陷检测、覆盖率统计等高级功能。
+"""
+
+from __future__ import annotations
+
+import os
+import sqlite3
+import subprocess
+import threading
+import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Set
+
+from ..config import (
+    DB_PATH, norm_path, read_file_normalized,
+    detect_language_from_path, get_supported_extensions, compute_content_hash,
+    detect_project_root, get_default_workspace_name, get_project_db_path,
+)
+
+# 计算项目根目录
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PACKAGES_DIR = os.path.dirname(SCRIPT_DIR)  # scripts/
+PROJECT_ROOT = os.path.abspath(os.path.join(PACKAGES_DIR, ".."))
+
+# 为 config 模块补充 PROJECT_ROOT（兼容其他模块的导入）
+import sys
+from .. import config as _config_module
+if not hasattr(_config_module, 'PROJECT_ROOT'):
+    _config_module.PROJECT_ROOT = PROJECT_ROOT
+
+from .schema import SCHEMA_SQL, SCHEMA_VERSION
+from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
+from ..analyzers import CallChainMixin, IssueAnalyzerMixin, CoverageMixin
+from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection):
+    """v1 -> v2: 新增 Semgrep 相关表和索引"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS semgrep_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_id INTEGER NOT NULL,
+            rule_id TEXT NOT NULL,
+            rule_name TEXT DEFAULT '',
+            message TEXT DEFAULT '',
+            severity TEXT DEFAULT 'INFO',
+            confidence TEXT DEFAULT 'UNKNOWN',
+            language TEXT DEFAULT '',
+            start_line INTEGER DEFAULT 0,
+            end_line INTEGER DEFAULT 0,
+            col INTEGER DEFAULT 0,
+            end_col INTEGER DEFAULT 0,
+            snippet TEXT DEFAULT '',
+            fix TEXT DEFAULT '',
+            symbol_id INTEGER DEFAULT 0,
+            symbol_qualified TEXT DEFAULT '',
+            scanned_at REAL DEFAULT 0
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS semgrep_scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_type TEXT DEFAULT 'full',
+            config TEXT DEFAULT '',
+            started_at REAL NOT NULL,
+            completed_at REAL DEFAULT 0,
+            total_findings INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'pending'
+        )
+    """)
+
+    # 索引
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_file ON semgrep_findings(file_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_lang ON semgrep_findings(language)")
+
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection):
+    """v2 -> v3: hash 为主、path 为副、多工作区、删除标记
+
+    迁移逻辑：
+    - 创建 workspaces 表，插入默认工作区
+    - 创建 file_contents 表，从现有 file_versions 中去重 content_hash 填充
+    - 创建 file_instances 表，将旧 files 表数据迁移过来
+    - 改造 symbols 表：新增 file_instance_id 替代 file_id，新增 symbol_hash
+    - 改造 comments 表：symbol_hash 替代 symbol_id
+    - 改造 calls 表：caller_id 关联新 symbols.id
+    - 改造 file_versions 表：file_instance_id 替代 file_id，新增 is_deleted
+    - 改造 file_symbol_versions 表：新增 is_deleted
+    - 改造 semgrep_findings 表：file_instance_id 替代 file_id，新增 content_hash
+    - 改造 semgrep_scans 表：新增 workspace_id
+    - 更新所有索引
+
+    注意：SQLite 不支持 DROP COLUMN，采用重命名旧表+建新表+迁移数据的方式
+    """
+    now = time.time()
+
+    # ---- 1. 创建 workspaces 表 ----
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workspaces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            root_path TEXT UNIQUE NOT NULL,
+            created_at REAL NOT NULL,
+            is_active INTEGER DEFAULT 0,
+            description TEXT DEFAULT ''
+        )
+    """)
+
+    # 插入默认工作区（用 PROJECT_ROOT 作为根目录）
+    default_name = os.path.basename(os.path.normpath(PROJECT_ROOT))
+    conn.execute(
+        "INSERT OR IGNORE INTO workspaces (name, root_path, created_at, is_active, description) VALUES (?, ?, ?, 1, '默认工作区（迁移自 v2）')",
+        (default_name, norm_path(PROJECT_ROOT), now),
+    )
+
+    # ---- 2. 创建 file_contents 表 ----
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_contents (
+            content_hash TEXT PRIMARY KEY,
+            language TEXT DEFAULT '',
+            total_lines INTEGER DEFAULT 0,
+            first_seen_at REAL NOT NULL
+        )
+    """)
+
+    # 从 file_versions 中去重 content_hash 填充
+    conn.execute("""
+        INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at)
+        SELECT DISTINCT fv.content_hash, '', fv.total_lines, fv.parsed_at
+        FROM file_versions fv
+        WHERE fv.content_hash IS NOT NULL AND fv.content_hash != ''
+    """)
+
+    # ---- 3. 创建 file_instances 表（替代 files） ----
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_instances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            rel_path TEXT NOT NULL,
+            abs_path TEXT NOT NULL,
+            current_content_hash TEXT DEFAULT '',
+            mtime REAL NOT NULL,
+            total_lines INTEGER DEFAULT 0,
+            last_parsed REAL DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            module_path TEXT DEFAULT '',
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (current_content_hash) REFERENCES file_contents(content_hash),
+            UNIQUE(workspace_id, rel_path)
+        )
+    """)
+
+    # 迁移 files 表数据到 file_instances
+    conn.execute("""
+        INSERT INTO file_instances (workspace_id, rel_path, abs_path, current_content_hash, mtime, total_lines, last_parsed, status, module_path)
+        SELECT
+            1 as workspace_id,
+            f.path as rel_path,
+            f.abs_path,
+            COALESCE((
+                SELECT fv.content_hash FROM file_versions fv
+                WHERE fv.file_id = f.id AND fv.is_current = 1
+                LIMIT 1
+            ), '') as current_content_hash,
+            f.mtime,
+            COALESCE((
+                SELECT fv.total_lines FROM file_versions fv
+                WHERE fv.file_id = f.id AND fv.is_current = 1
+                LIMIT 1
+            ), 0) as total_lines,
+            COALESCE((
+                SELECT fv.parsed_at FROM file_versions fv
+                WHERE fv.file_id = f.id AND fv.is_current = 1
+                LIMIT 1
+            ), 0) as last_parsed,
+            f.status,
+            f.module_path
+        FROM files f
+    """)
+
+    # ---- 4. 改造 symbols 表 ----
+    # 重命名旧表
+    conn.execute("ALTER TABLE symbols RENAME TO symbols_old_v2")
+
+    # 创建新表
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS symbols (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_instance_id INTEGER NOT NULL,
+            symbol_hash TEXT NOT NULL,
+            name TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            visibility TEXT DEFAULT 'private',
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            start_col INTEGER DEFAULT 0,
+            end_col INTEGER DEFAULT 0,
+            signature TEXT DEFAULT '',
+            has_comment INTEGER DEFAULT 0,
+            comment_status TEXT DEFAULT 'pending',
+            module_path TEXT DEFAULT '',
+            qualified_name TEXT DEFAULT '',
+            depth INTEGER DEFAULT -1,
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+        )
+    """)
+
+    # 迁移数据：file_id -> file_instance_id，symbol_hash 从 file_symbol_versions 获取
+    conn.execute("""
+        INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line, start_col, end_col, signature, has_comment, comment_status, module_path, qualified_name, depth)
+        SELECT
+            fi.id as file_instance_id,
+            COALESCE(sc.content_hash, '') as symbol_hash,
+            s.name,
+            s.kind,
+            s.visibility,
+            s.start_line,
+            s.end_line,
+            s.start_col,
+            s.end_col,
+            s.signature,
+            s.has_comment,
+            s.comment_status,
+            s.module_path,
+            s.qualified_name,
+            s.depth
+        FROM symbols_old_v2 s
+        JOIN file_instances fi ON fi.workspace_id = 1 AND fi.rel_path = (
+            SELECT f.path FROM files f WHERE f.id = s.file_id
+        )
+        LEFT JOIN symbol_contents sc ON sc.qualified_name = s.qualified_name
+        LEFT JOIN file_symbol_versions fsv ON fsv.qualified_name = s.qualified_name
+        LEFT JOIN file_versions fv ON fv.id = fsv.file_version_id AND fv.file_id = s.file_id
+        GROUP BY s.id
+    """)
+
+    # 删除旧表
+    conn.execute("DROP TABLE symbols_old_v2")
+
+    # ---- 5. 改造 comments 表 ----
+    # 检查旧 comments 表是否存在（v2 可能没有）
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='comments'")
+    if cur.fetchone():
+        conn.execute("ALTER TABLE comments RENAME TO comments_old_v2")
+
+    # 创建新表
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS comments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol_hash TEXT NOT NULL,
+            comment_type TEXT DEFAULT 'doc',
+            content TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+        )
+    """)
+
+    # 迁移旧数据（如果有的话）
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='comments_old_v2'")
+    if cur.fetchone():
+        conn.execute("""
+            INSERT INTO comments (symbol_hash, comment_type, content, created_at)
+            SELECT
+                COALESCE(sc.content_hash, '') as symbol_hash,
+                c.comment_type,
+                c.content,
+                c.created_at
+            FROM comments_old_v2 c
+            LEFT JOIN symbol_contents sc ON sc.qualified_name = (
+                SELECT s.qualified_name FROM symbols s WHERE s.id = c.symbol_id
+            )
+            WHERE c.symbol_id IS NOT NULL
+        """)
+        conn.execute("DROP TABLE comments_old_v2")
+
+    # ---- 6. 改造 calls 表 ----
+    conn.execute("ALTER TABLE calls RENAME TO calls_old_v2")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS calls (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            caller_id INTEGER NOT NULL,
+            caller_name TEXT NOT NULL,
+            caller_module TEXT NOT NULL,
+            callee_name TEXT NOT NULL,
+            callee_module TEXT DEFAULT '',
+            callee_qualified TEXT DEFAULT '',
+            callee_file TEXT DEFAULT '',
+            callee_id INTEGER DEFAULT 0,
+            call_line INTEGER DEFAULT 0,
+            is_cross_file INTEGER DEFAULT 0,
+            FOREIGN KEY (caller_id) REFERENCES symbols(id)
+        )
+    """)
+
+    # 迁移 calls：通过 qualified_name 重新关联新 symbols.id
+    conn.execute("""
+        INSERT INTO calls (caller_id, caller_name, caller_module, callee_name, callee_module, callee_qualified, callee_file, callee_id, call_line, is_cross_file)
+        SELECT
+            COALESCE(s_caller.id, 0) as caller_id,
+            c.caller_name,
+            c.caller_module,
+            c.callee_name,
+            c.callee_module,
+            c.callee_qualified,
+            c.callee_file,
+            COALESCE(s_callee.id, 0) as callee_id,
+            c.call_line,
+            c.is_cross_file
+        FROM calls_old_v2 c
+        LEFT JOIN symbols s_caller ON s_caller.qualified_name = (
+            SELECT s2.qualified_name FROM symbols_old_v2 s2 WHERE s2.id = c.caller_id
+        )
+        LEFT JOIN symbols s_callee ON s_callee.qualified_name = c.callee_qualified
+        WHERE s_caller.id IS NOT NULL
+    """)
+
+    conn.execute("DROP TABLE calls_old_v2")
+
+    # ---- 7. 改造 file_versions 表 ----
+    conn.execute("ALTER TABLE file_versions RENAME TO file_versions_old_v2")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_instance_id INTEGER NOT NULL,
+            version_num INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            mtime REAL NOT NULL,
+            total_lines INTEGER DEFAULT 0,
+            parsed_at REAL NOT NULL,
+            is_current INTEGER DEFAULT 1,
+            is_deleted INTEGER DEFAULT 0,
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
+            FOREIGN KEY (content_hash) REFERENCES file_contents(content_hash)
+        )
+    """)
+
+    # 迁移数据：file_id -> file_instance_id
+    conn.execute("""
+        INSERT INTO file_versions (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, is_current, is_deleted)
+        SELECT
+            fi.id as file_instance_id,
+            fv.version_num,
+            fv.content_hash,
+            fv.mtime,
+            fv.total_lines,
+            fv.parsed_at,
+            fv.is_current,
+            0 as is_deleted
+        FROM file_versions_old_v2 fv
+        JOIN file_instances fi ON fi.workspace_id = 1 AND fi.rel_path = (
+            SELECT f.path FROM files f WHERE f.id = fv.file_id
+        )
+    """)
+
+    conn.execute("DROP TABLE file_versions_old_v2")
+
+    # ---- 8. 改造 file_symbol_versions 表 ----
+    conn.execute("ALTER TABLE file_symbol_versions RENAME TO file_symbol_versions_old_v2")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_symbol_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_version_id INTEGER NOT NULL,
+            symbol_hash TEXT NOT NULL,
+            qualified_name TEXT NOT NULL,
+            start_line INTEGER NOT NULL,
+            end_line INTEGER NOT NULL,
+            module_path TEXT DEFAULT '',
+            depth INTEGER DEFAULT -1,
+            is_deleted INTEGER DEFAULT 0,
+            FOREIGN KEY (file_version_id) REFERENCES file_versions(id),
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+        )
+    """)
+
+    # 迁移数据：通过 file_id 关联新 file_version_id
+    conn.execute("""
+        INSERT INTO file_symbol_versions (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted)
+        SELECT
+            fv_new.id as file_version_id,
+            fsv.symbol_hash,
+            fsv.qualified_name,
+            fsv.start_line,
+            fsv.end_line,
+            fsv.module_path,
+            fsv.depth,
+            0 as is_deleted
+        FROM file_symbol_versions_old_v2 fsv
+        JOIN file_versions_old_v2 fv_old ON fv_old.id = fsv.file_version_id
+        JOIN file_versions fv_new ON fv_new.file_instance_id = (
+            SELECT fi.id FROM file_instances fi
+            WHERE fi.workspace_id = 1 AND fi.rel_path = (
+                SELECT f.path FROM files f WHERE f.id = fv_old.file_id
+            )
+        ) AND fv_new.version_num = fv_old.version_num
+    """)
+
+    conn.execute("DROP TABLE file_symbol_versions_old_v2")
+
+    # ---- 9. 改造 semgrep_findings 表 ----
+    conn.execute("ALTER TABLE semgrep_findings RENAME TO semgrep_findings_old_v2")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS semgrep_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_instance_id INTEGER NOT NULL,
+            content_hash TEXT DEFAULT '',
+            rule_id TEXT NOT NULL,
+            rule_name TEXT DEFAULT '',
+            message TEXT DEFAULT '',
+            severity TEXT DEFAULT 'INFO',
+            confidence TEXT DEFAULT 'UNKNOWN',
+            language TEXT DEFAULT '',
+            start_line INTEGER DEFAULT 0,
+            end_line INTEGER DEFAULT 0,
+            snippet TEXT DEFAULT '',
+            fix TEXT DEFAULT '',
+            symbol_id INTEGER DEFAULT 0,
+            symbol_qualified TEXT DEFAULT '',
+            scanned_at REAL DEFAULT 0,
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
+            UNIQUE(content_hash, rule_id, start_line)
+        )
+    """)
+
+    # 迁移数据
+    conn.execute("""
+        INSERT INTO semgrep_findings (file_instance_id, content_hash, rule_id, rule_name, message, severity, confidence, language, start_line, end_line, snippet, fix, symbol_id, symbol_qualified, scanned_at)
+        SELECT
+            fi.id as file_instance_id,
+            COALESCE(fi.current_content_hash, '') as content_hash,
+            sf.rule_id,
+            sf.rule_name,
+            sf.message,
+            sf.severity,
+            sf.confidence,
+            sf.language,
+            sf.start_line,
+            sf.end_line,
+            sf.snippet,
+            sf.fix,
+            sf.symbol_id,
+            sf.symbol_qualified,
+            sf.scanned_at
+        FROM semgrep_findings_old_v2 sf
+        JOIN file_instances fi ON fi.workspace_id = 1 AND fi.rel_path = (
+            SELECT f.path FROM files f WHERE f.id = sf.file_id
+        )
+    """)
+
+    conn.execute("DROP TABLE semgrep_findings_old_v2")
+
+    # ---- 10. 改造 semgrep_scans 表 ----
+    conn.execute("ALTER TABLE semgrep_scans RENAME TO semgrep_scans_old_v2")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS semgrep_scans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_type TEXT DEFAULT 'full',
+            config TEXT DEFAULT '',
+            workspace_id INTEGER DEFAULT 0,
+            started_at REAL NOT NULL,
+            completed_at REAL DEFAULT 0,
+            total_findings INTEGER DEFAULT 0,
+            files_scanned INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'running'
+        )
+    """)
+
+    # 迁移数据
+    conn.execute("""
+        INSERT INTO semgrep_scans (scan_type, config, workspace_id, started_at, completed_at, total_findings, files_scanned, status)
+        SELECT scan_type, config, 1 as workspace_id, started_at, completed_at, total_findings, 0 as files_scanned, status
+        FROM semgrep_scans_old_v2
+    """)
+
+    conn.execute("DROP TABLE semgrep_scans_old_v2")
+
+    # ---- 11. 删除旧 files 表 ----
+    conn.execute("DROP TABLE IF EXISTS files")
+
+    # ---- 12. 创建所有索引 ----
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_contents_lang ON file_contents(language)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_instances_workspace ON file_instances(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_instances_hash ON file_instances(current_content_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_instances_relpath ON file_instances(rel_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_instance_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_hash ON symbols(symbol_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_callee_qualified ON calls(callee_qualified)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_hash ON file_versions(content_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_current ON file_versions(is_current)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_file ON file_symbol_versions(file_version_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_hash ON file_symbol_versions(symbol_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_qualified ON file_symbol_versions(qualified_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_call_versions_file ON call_versions(file_version_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_call_versions_caller ON call_versions(caller_qualified)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_instance ON semgrep_findings(file_instance_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_hash ON semgrep_findings(content_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_language ON semgrep_findings(language)")
+
+
+
+def _migrate_v3_to_v4(conn: sqlite3.Connection):
+    """v3 -> v4: Git 集成：关联 commit，查看变更影响
+
+    - 创建 git_commits 表：存储 commit 信息（hash、message、author、time）
+    - 创建 git_file_changes 表：关联 commit 和文件变更
+    - 创建 git_symbol_changes 表：关联 commit 和符号变更
+    - 为 file_versions 添加 commit_hash 字段
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS git_commits (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            commit_hash TEXT UNIQUE NOT NULL,
+            message TEXT DEFAULT '',
+            author TEXT DEFAULT '',
+            email TEXT DEFAULT '',
+            timestamp REAL NOT NULL,
+            workspace_id INTEGER NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS git_file_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            commit_hash TEXT NOT NULL,
+            file_instance_id INTEGER NOT NULL,
+            change_type TEXT NOT NULL,
+            old_content_hash TEXT DEFAULT '',
+            new_content_hash TEXT DEFAULT '',
+            FOREIGN KEY (commit_hash) REFERENCES git_commits(commit_hash),
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS git_symbol_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            commit_hash TEXT NOT NULL,
+            symbol_hash TEXT NOT NULL,
+            change_type TEXT NOT NULL,
+            old_content TEXT DEFAULT '',
+            new_content TEXT DEFAULT '',
+            FOREIGN KEY (commit_hash) REFERENCES git_commits(commit_hash),
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+        )
+    """)
+
+    conn.execute("ALTER TABLE file_versions ADD COLUMN commit_hash TEXT DEFAULT ''")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_commits_hash ON git_commits(commit_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_commits_workspace ON git_commits(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_commits_timestamp ON git_commits(timestamp)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_file_changes_commit ON git_file_changes(commit_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_file_changes_file ON git_file_changes(file_instance_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_symbol_changes_commit ON git_symbol_changes(commit_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_symbol_changes_symbol ON git_symbol_changes(symbol_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_commit ON file_versions(commit_hash)")
+
+
+
+def _migrate_v4_to_v5(conn: sqlite3.Connection):
+    """v4 -> v5: 添加向量嵌入表（sqlite-vec）
+
+    - 创建 symbol_embeddings 表：按 symbol_hash 关联符号内容，存储语义向量
+    - 默认模型 jina-v2-base-code，维度 768
+    - 新增 model_version 索引便于按模型筛选
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS symbol_embeddings (
+            symbol_hash TEXT PRIMARY KEY,
+            embedding BLOB NOT NULL,
+            model_version TEXT NOT NULL DEFAULT 'jina-v2-base-code',
+            dim INTEGER NOT NULL DEFAULT 768,
+            embedded_at REAL NOT NULL,
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_model ON symbol_embeddings(model_version)")
+
+
+def _migrate_v5_to_v6(conn: sqlite3.Connection):
+    """v5 -> v6: 添加符号摘要表
+
+    - 创建 symbol_summaries 表：按 symbol_hash 关联符号内容，存储 AI 生成的摘要
+    - 支持版本化（version 字段），同一符号可保留多版本历史摘要
+    - is_current 标记当前使用的摘要版本
+    - 新增 hash 和 current 索引便于按符号查询和过滤当前摘要
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS symbol_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol_hash TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            model TEXT DEFAULT 'manual',
+            version INTEGER NOT NULL DEFAULT 1,
+            is_current INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_summaries_hash ON symbol_summaries(symbol_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_summaries_current ON symbol_summaries(is_current)")
+
+
+def _migrate_v6_to_v7(conn: sqlite3.Connection):
+    """v6 -> v7: 添加任务管理表（任务驱动 MCP 的核心）
+
+    - 创建 tasks 表：管理 agent 创建的结构化任务
+    - 创建 task_steps 表：每个任务包含多个有序步骤
+    - 创建 change_audit 表：记录每个步骤对文件的修改（hash + diff）
+    - 新增 task_steps 的 task_id / status 索引和 change_audit 的 task_id 索引
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            description TEXT DEFAULT '',
+            creator TEXT NOT NULL DEFAULT 'agent',
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            closed_at REAL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_steps (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            step_index INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            target_file TEXT DEFAULT '',
+            target_symbol TEXT DEFAULT '',
+            check_items TEXT DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending',
+            result TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            completed_at REAL,
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_steps_status ON task_steps(status)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS change_audit (
+            id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            step_id TEXT,
+            file_path TEXT NOT NULL,
+            hash_before TEXT DEFAULT '',
+            hash_after TEXT DEFAULT '',
+            diff TEXT DEFAULT '',
+            author TEXT NOT NULL DEFAULT 'agent',
+            timestamp REAL NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_task ON change_audit(task_id)")
+
+
+def _migrate_v7_to_v8(conn: sqlite3.Connection):
+    """v7 -> v8: 添加文件所有权表
+
+    - 创建 file_ownership 表：记录每个文件实例的负责人
+    - source 字段标识来源（codeowners / git_blame）
+    - 同时保留最近一次 commit 的作者信息，便于综合判断负责人
+    - 新增 file_instance_id 索引便于按文件查询所有权
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_ownership (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_instance_id INTEGER NOT NULL,
+            owner TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'codeowners',
+            confidence REAL DEFAULT 1.0,
+            last_commit_hash TEXT DEFAULT '',
+            last_commit_author TEXT DEFAULT '',
+            last_commit_time REAL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ownership_file ON file_ownership(file_instance_id)")
+
+
+def _migrate_v8_to_v9(conn: sqlite3.Connection):
+    """v8 -> v9: 添加覆盖率数据表
+
+    - 创建 coverage_data 表：存储从 LCOV/Cobertura 报告导入的行级覆盖率数据
+    - file_instance_id 关联到 file_instances，symbol_id 关联到 symbols（可为空）
+    - report_source 标识来源（lcov / cobertura）
+    - 新增 file_instance_id / symbol_id / report_source 索引便于按文件、符号、来源查询
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS coverage_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_instance_id INTEGER NOT NULL,
+            symbol_id INTEGER,
+            line_start INTEGER NOT NULL,
+            line_end INTEGER NOT NULL,
+            hit_count INTEGER DEFAULT 0,
+            report_source TEXT DEFAULT 'lcov',
+            imported_at REAL NOT NULL,
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
+            FOREIGN KEY (symbol_id) REFERENCES symbols(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coverage_file ON coverage_data(file_instance_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coverage_symbol ON coverage_data(symbol_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_coverage_source ON coverage_data(report_source)")
+
+
+def _migrate_v9_to_v10(conn: sqlite3.Connection):
+    """v9 -> v10: 守护者架构表（生产安全护栏 + 变更影响 + 演化智能 + 缺陷知识库）
+
+    - 创建 guardrail_rules 表：可阻断的规则定义
+    - 创建 guardrail_findings 表：规则扫描结果
+    - 创建 change_impacts 表：跨层变更影响记录
+    - 创建 evolution_metrics 表：演化指标缓存
+    - 创建 defect_patterns 表：缺陷模式库
+    - 创建 defect_fixes 表：缺陷修复案例
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS guardrail_rules (
+            rule_id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'warn',
+            pattern TEXT NOT NULL,
+            action TEXT NOT NULL DEFAULT 'warn',
+            description TEXT DEFAULT '',
+            is_builtin INTEGER DEFAULT 0,
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS guardrail_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            rule_id TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            symbol_hash TEXT DEFAULT '',
+            severity TEXT NOT NULL DEFAULT 'warn',
+            status TEXT NOT NULL DEFAULT 'open',
+            message TEXT DEFAULT '',
+            detected_at REAL NOT NULL,
+            resolved_at REAL,
+            FOREIGN KEY (rule_id) REFERENCES guardrail_rules(rule_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_rule ON guardrail_findings(rule_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_file ON guardrail_findings(file_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_severity ON guardrail_findings(severity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_status ON guardrail_findings(status)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS change_impacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_symbol TEXT NOT NULL,
+            impact_type TEXT NOT NULL,
+            target_symbol TEXT NOT NULL,
+            target_layer TEXT NOT NULL DEFAULT 'code',
+            confidence REAL DEFAULT 1.0,
+            detected_at REAL NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_change_impacts_source ON change_impacts(source_symbol)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_change_impacts_layer ON change_impacts(target_layer)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS evolution_metrics (
+            symbol_hash TEXT PRIMARY KEY,
+            change_count INTEGER DEFAULT 0,
+            defect_count INTEGER DEFAULT 0,
+            hotspot_score REAL DEFAULT 0.0,
+            first_seen REAL,
+            last_changed_at REAL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_evolution_hotspot ON evolution_metrics(hotspot_score)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS defect_patterns (
+            pattern_id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            description TEXT NOT NULL,
+            detection_rule TEXT DEFAULT '',
+            fix_template TEXT DEFAULT '',
+            severity TEXT DEFAULT 'warn',
+            learned_from TEXT DEFAULT '',
+            case_count INTEGER DEFAULT 0,
+            created_at REAL NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_patterns_category ON defect_patterns(category)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_patterns_severity ON defect_patterns(severity)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS defect_fixes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pattern_id TEXT,
+            symbol_hash TEXT DEFAULT '',
+            before_hash TEXT DEFAULT '',
+            after_hash TEXT DEFAULT '',
+            fix_diff TEXT DEFAULT '',
+            effectiveness REAL DEFAULT 0.0,
+            created_at REAL NOT NULL,
+            FOREIGN KEY (pattern_id) REFERENCES defect_patterns(pattern_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_fixes_pattern ON defect_fixes(pattern_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_fixes_symbol ON defect_fixes(symbol_hash)")
+
+
+def _migrate_v10_to_v11(conn: sqlite3.Connection):
+    """v10 -> v11: Token 节省账本表
+
+    - 创建 token_savings_ledger 表：记录每次 Agent 操作（RAG / 调用链 / 摘要 / 注释恢复）节省的 token 数
+    - 用于宣传利器（"已为你节省 N tokens"）和优化依据（哪些操作节省最多）
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS token_savings_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation TEXT NOT NULL,
+            workspace_id INTEGER,
+            agent_task_id TEXT DEFAULT '',
+            original_tokens INTEGER DEFAULT 0,
+            actual_tokens INTEGER DEFAULT 0,
+            tokens_saved INTEGER DEFAULT 0,
+            savings_pct REAL DEFAULT 0.0,
+            detail TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_token_savings_op ON token_savings_ledger(operation)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_token_savings_workspace ON token_savings_ledger(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_token_savings_created ON token_savings_ledger(created_at)")
+
+
+def _migrate_v11_to_v12(conn: sqlite3.Connection):
+    """v11 -> v12: 安全文件编辑审计表（Agent OS 核心：propose_edit 安全编辑流水线）
+
+    - 创建 file_edit_audit 表：记录 Agent 通过 propose_edit 提交的每一次编辑
+    - 字段包含 file_hash_before/after（SHA-256 校验）、diff_summary、status 状态机
+    - status 流转：pending -> applied / reverted / failed
+    - 关联 workspace_id 和 agent_task_id，便于按工作区/任务追溯
+    - 新增 file_path / status / agent_task_id 三个索引，支持按文件、状态、任务查询
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS file_edit_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER,
+            file_path TEXT NOT NULL,
+            operation TEXT NOT NULL,
+            file_hash_before TEXT DEFAULT '',
+            file_hash_after TEXT DEFAULT '',
+            symbol_hash TEXT DEFAULT '',
+            agent_task_id TEXT DEFAULT '',
+            diff_summary TEXT DEFAULT '',
+            status TEXT DEFAULT 'pending',
+            created_at REAL NOT NULL,
+            applied_at REAL DEFAULT 0,
+            reverted_at REAL DEFAULT 0,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edit_audit_file ON file_edit_audit(file_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edit_audit_status ON file_edit_audit(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edit_audit_task ON file_edit_audit(agent_task_id)")
+
+
+def _migrate_v12_to_v13(conn: sqlite3.Connection):
+    """v12 -> v13: 跨仓库分析表
+
+    - 创建 cross_repo_deps 表：记录仓库间的依赖关系（import / call / shared_symbol）
+    - 用于跨仓库影响分析、共享代码识别、依赖变更传播追踪
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cross_repo_deps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_workspace_id INTEGER NOT NULL,
+            target_workspace_id INTEGER NOT NULL,
+            dependency_type TEXT NOT NULL,
+            source_symbol_hash TEXT DEFAULT '',
+            target_symbol_hash TEXT DEFAULT '',
+            evidence TEXT DEFAULT '',
+            confidence REAL DEFAULT 0.0,
+            detected_at REAL NOT NULL,
+            FOREIGN KEY (source_workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (target_workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_repo_source ON cross_repo_deps(source_workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_repo_target ON cross_repo_deps(target_workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_repo_type ON cross_repo_deps(dependency_type)")
+
+
+def _migrate_v13_to_v14(conn: sqlite3.Connection):
+    """v13 -> v14: 归档表（类 Java GC 老年代）
+
+    - 创建 archived_files 表：被 .gitignore / .codegraphignore 命中的文件迁出主表
+    - 保留 file_instance_id 关联和符号/调用数统计，便于取消 ignore 后复活
+    - file_instances.status 新增 'archived' 状态（无需 ALTER，status 是 TEXT）
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS archived_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_instance_id INTEGER NOT NULL,
+            workspace_id INTEGER NOT NULL,
+            rel_path TEXT NOT NULL,
+            abs_path TEXT NOT NULL,
+            content_hash TEXT DEFAULT '',
+            symbol_count INTEGER DEFAULT 0,
+            call_count INTEGER DEFAULT 0,
+            archive_reason TEXT DEFAULT '',
+            archived_at REAL NOT NULL,
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_instance ON archived_files(file_instance_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_workspace ON archived_files(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_path ON archived_files(rel_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_hash)")
+
+
+class CodeGraphBase:
+    """代码知识图谱数据库核心基类
+
+    提供数据库连接管理、schema 迁移、工作区管理等核心功能。
+    """
+
+    def __init__(self, db_path: str = "", workspace_root: Optional[str] = None):
+        # 自动检测项目根目录
+        if workspace_root:
+            self.workspace_root = norm_path(os.path.abspath(workspace_root))
+        else:
+            detected = detect_project_root(PROJECT_ROOT)
+            self.workspace_root = detected if detected else PROJECT_ROOT
+
+        # 架构修改：一个项目一个 SQLite 数据库
+        # db_path 为空时，根据项目根路径自动计算 $HOME/.code_graph/16位hash/code_graph.db
+        if not db_path:
+            db_path = get_project_db_path(self.workspace_root)
+
+        self.db_path = db_path
+        self.conn = sqlite3.connect(db_path)
+        self.conn.row_factory = sqlite3.Row
+        # 性能优化 PRAGMA（WAL 模式 + 减少 fsync + 内存缓存 + 内存映射）
+        # journal_mode=WAL：读写不互斥，WAL 文件顺序写入比回滚日志快数倍
+        # synchronous=NORMAL：WAL 模式下仅在 checkpoint 时 fsync，比 FULL 快 5-10 倍
+        # cache_size=-64000：64MB 内存页缓存，减少磁盘 I/O
+        # temp_store=MEMORY：临时表和排序在内存中完成
+        # mmap_size=268435456：256MB 内存映射，大数据库随机读更快
+        # locking_mode=NORMAL：保持并发读写能力（不要用 EXCLUSIVE，会阻塞其他连接）
+        # foreign_keys=OFF：入库期间关闭外键检查，避免每次 INSERT 触发引用完整性校验
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA cache_size=-64000")
+        self.conn.execute("PRAGMA temp_store=MEMORY")
+        self.conn.execute("PRAGMA mmap_size=268435456")
+        self.conn.execute("PRAGMA locking_mode=NORMAL")
+        self.conn.execute("PRAGMA foreign_keys=OFF")
+        self.parser = RustParser()
+
+        self.module_resolver = ModuleResolver(self.workspace_root)
+        self.call_resolver = CallResolver(self.module_resolver, self.parser)
+
+        # 活动工作区
+        self.active_workspace: Optional[Dict[str, Any]] = None
+
+        self._init_schema()
+        self._init_workspace()
+
+
+    def _init_schema(self):
+        """初始化数据库 Schema，支持版本化自动迁移（保留数据）"""
+        # 确保 schema_version 表存在
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER PRIMARY KEY,
+                applied_at REAL NOT NULL,
+                description TEXT DEFAULT ''
+            )
+        """)
+        self.conn.commit()
+
+        # 获取当前版本
+        current_version = self._get_current_version()
+
+        if current_version == 0:
+            # 全新数据库：直接执行完整 SCHEMA_SQL 并记录版本
+            self.conn.executescript(SCHEMA_SQL)
+            self.conn.execute(
+                "INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
+                (SCHEMA_VERSION, time.time(), "初始 schema"),
+            )
+            self.conn.commit()
+        elif current_version < SCHEMA_VERSION:
+            # 需要迁移：按版本顺序执行增量迁移
+            self._migrate_schema(current_version, SCHEMA_VERSION)
+        # current_version == SCHEMA_VERSION: 无需操作
+
+
+    def _get_current_version(self) -> int:
+        """获取当前数据库 schema 版本"""
+        try:
+            cur = self.conn.execute("SELECT MAX(version) as v FROM schema_version")
+            row = cur.fetchone()
+            return row["v"] if row and row["v"] is not None else 0
+        except Exception:
+            return 0
+
+
+    def _migrate_schema(self, from_version: int, to_version: int):
+        """按版本顺序执行增量迁移
+
+        Args:
+            from_version: 当前版本
+            to_version: 目标版本
+        """
+        import traceback
+
+        migrations = self._get_migrations()
+
+        for v in range(from_version + 1, to_version + 1):
+            if v not in migrations:
+                continue
+
+            migration = migrations[v]
+            print(f"  [迁移] v{from_version} -> v{v}: {migration['description']}")
+
+            try:
+                self.conn.execute("BEGIN")
+                migration["func"](self.conn)
+                self.conn.execute(
+                    "INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
+                    (v, time.time(), migration["description"]),
+                )
+                self.conn.commit()
+            except Exception as e:
+                self.conn.rollback()
+                print(f"  [错误] 迁移 v{v} 失败: {e}")
+                traceback.print_exc()
+                raise
+
+
+    def _get_migrations(self) -> Dict[int, Dict]:
+        """获取所有版本迁移函数
+
+        每个迁移函数接收一个 sqlite3.Connection 参数，在事务内执行。
+        返回: {版本号: {"description": 描述, "func": 迁移函数}}
+        """
+        return {
+            2: {
+                "description": "新增 Semgrep 缺陷表和扫描记录表",
+                "func": _migrate_v1_to_v2,
+            },
+            3: {
+                "description": "hash 为主、path 为副、多工作区、删除标记",
+                "func": _migrate_v2_to_v3,
+            },
+            4: {
+                "description": "Git 集成：关联 commit，查看变更影响",
+                "func": _migrate_v3_to_v4,
+            },
+            5: {
+                "description": "添加向量嵌入表（sqlite-vec）",
+                "func": _migrate_v4_to_v5,
+            },
+            6: {
+                "description": "添加符号摘要表（AI 生成的函数/模块摘要，版本化）",
+                "func": _migrate_v5_to_v6,
+            },
+            7: {
+                "description": "添加任务管理表（tasks / task_steps / change_audit）",
+                "func": _migrate_v6_to_v7,
+            },
+            8: {
+                "description": "添加文件所有权表（file_ownership：CODEOWNERS + git blame）",
+                "func": _migrate_v7_to_v8,
+            },
+            9: {
+                "description": "添加覆盖率数据表（coverage_data：LCOV/Cobertura 行级覆盖率）",
+                "func": _migrate_v8_to_v9,
+            },
+            10: {
+                "description": "守护者架构表（guardrail_rules/findings + change_impacts + evolution_metrics + defect_patterns/fixes）",
+                "func": _migrate_v9_to_v10,
+            },
+            11: {
+                "description": "Token 节省账本表（token_savings_ledger）",
+                "func": _migrate_v10_to_v11,
+            },
+            12: {
+                "description": "安全文件编辑审计表（file_edit_audit：propose_edit 安全编辑流水线）",
+                "func": _migrate_v11_to_v12,
+            },
+            13: {
+                "description": "跨仓库分析表（cross_repo_deps：跨仓库依赖关系）",
+                "func": _migrate_v12_to_v13,
+            },
+            14: {
+                "description": "归档表（archived_files：被 ignore 规则命中的文件迁出主表，类 Java GC 老年代）",
+                "func": _migrate_v13_to_v14,
+            },
+        }
+
+
+    def _init_workspace(self):
+        """初始化工作区：确保工作区存在，设置为活动工作区"""
+        # 检查是否已有活动工作区
+        cur = self.conn.execute(
+            "SELECT * FROM workspaces WHERE is_active = 1 ORDER BY id LIMIT 1"
+        )
+        row = cur.fetchone()
+
+        if row:
+            self.active_workspace = dict(row)
+            self.workspace_root = row["root_path"]
+            return
+
+        # 没有活动工作区，根据 workspace_root 创建或查找
+        workspace_name = get_default_workspace_name(self.workspace_root)
+
+        cur = self.conn.execute(
+            "SELECT * FROM workspaces WHERE root_path = ?",
+            (self.workspace_root,),
+        )
+        row = cur.fetchone()
+
+        if row:
+            # 已存在，设为活动
+            self.conn.execute(
+                "UPDATE workspaces SET is_active = 1 WHERE id = ?",
+                (row["id"],),
+            )
+        else:
+            # 不存在，创建新工作区
+            cur = self.conn.execute(
+                "INSERT INTO workspaces (name, root_path, created_at, is_active, description) VALUES (?, ?, ?, 1, '')",
+                (workspace_name, self.workspace_root, time.time()),
+            )
+            new_id = cur.lastrowid
+            cur = self.conn.execute(
+                "SELECT * FROM workspaces WHERE id = ?", (new_id,)
+            )
+            row = cur.fetchone()
+
+        self.conn.commit()
+        self.active_workspace = dict(row) if row else None
+
+
+    def close(self):
+        self.conn.close()
+
+    # --------------------------------------------------------------------
+    # 工作区管理方法
+    # --------------------------------------------------------------------
+
+
+    def register_workspace(self, name: str, root_path: str, description: str = "") -> int:
+        """注册新工作区
+
+        Args:
+            name: 工作区名称（唯一）
+            root_path: 工作区根目录绝对路径
+            description: 描述
+
+        Returns:
+            新工作区 ID
+        """
+        root_path = norm_path(os.path.abspath(root_path))
+
+        # 检查是否已存在
+        cur = self.conn.execute(
+            "SELECT id FROM workspaces WHERE name = ? OR root_path = ?",
+            (name, root_path),
+        )
+        row = cur.fetchone()
+        if row:
+            return row["id"]
+
+        cur = self.conn.execute(
+            "INSERT INTO workspaces (name, root_path, created_at, is_active, description) VALUES (?, ?, ?, 0, ?)",
+            (name, root_path, time.time(), description),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+
+    def list_workspaces(self) -> List[Dict]:
+        """列出所有工作区"""
+        cur = self.conn.execute(
+            "SELECT * FROM workspaces ORDER BY is_active DESC, id ASC"
+        )
+        return [dict(row) for row in cur]
+
+
+    def set_active_workspace(self, workspace_id_or_name) -> bool:
+        """设置活动工作区
+
+        Args:
+            workspace_id_or_name: 工作区 ID（int）或名称（str）
+
+        Returns:
+            是否成功
+        """
+        if isinstance(workspace_id_or_name, int):
+            cur = self.conn.execute(
+                "SELECT * FROM workspaces WHERE id = ?",
+                (workspace_id_or_name,),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT * FROM workspaces WHERE name = ?",
+                (workspace_id_or_name,),
+            )
+
+        row = cur.fetchone()
+        if not row:
+            return False
+
+        # 取消其他工作区的活动状态
+        self.conn.execute("UPDATE workspaces SET is_active = 0")
+        self.conn.execute(
+            "UPDATE workspaces SET is_active = 1 WHERE id = ?",
+            (row["id"],),
+        )
+        self.conn.commit()
+
+        self.active_workspace = dict(row)
+        self.workspace_root = row["root_path"]
+        self.module_resolver = ModuleResolver(self.workspace_root)
+        self.call_resolver = CallResolver(self.module_resolver, self.parser)
+
+        return True
+
+
+    def get_active_workspace(self) -> Optional[Dict]:
+        """获取当前活动工作区"""
+        return self.active_workspace
+
+
+    def delete_workspace(self, workspace_id_or_name) -> bool:
+        """删除工作区（级联删除所有实例和版本）
+
+        Args:
+            workspace_id_or_name: 工作区 ID（int）或名称（str）
+
+        Returns:
+            是否成功
+        """
+        if isinstance(workspace_id_or_name, int):
+            cur = self.conn.execute(
+                "SELECT id FROM workspaces WHERE id = ?",
+                (workspace_id_or_name,),
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT id FROM workspaces WHERE name = ?",
+                (workspace_id_or_name,),
+            )
+
+        row = cur.fetchone()
+        if not row:
+            return False
+
+        ws_id = row["id"]
+
+        try:
+            self.conn.execute("BEGIN")
+
+            # 删除调用关系版本（通过 file_version_id -> file_instance_id）
+            self.conn.execute("""
+                DELETE FROM call_versions WHERE file_version_id IN (
+                    SELECT fv.id FROM file_versions fv
+                    JOIN file_instances fi ON fv.file_instance_id = fi.id
+                    WHERE fi.workspace_id = ?
+                )
+            """, (ws_id,))
+
+            # 删除文件-符号关联版本
+            self.conn.execute("""
+                DELETE FROM file_symbol_versions WHERE file_version_id IN (
+                    SELECT fv.id FROM file_versions fv
+                    JOIN file_instances fi ON fv.file_instance_id = fi.id
+                    WHERE fi.workspace_id = ?
+                )
+            """, (ws_id,))
+
+            # 删除文件版本
+            self.conn.execute("""
+                DELETE FROM file_versions WHERE file_instance_id IN (
+                    SELECT id FROM file_instances WHERE workspace_id = ?
+                )
+            """, (ws_id,))
+
+            # 删除 semgrep 结果
+            self.conn.execute("""
+                DELETE FROM semgrep_findings WHERE file_instance_id IN (
+                    SELECT id FROM file_instances WHERE workspace_id = ?
+                )
+            """, (ws_id,))
+
+            # 删除 semgrep 扫描记录
+            self.conn.execute("DELETE FROM semgrep_scans WHERE workspace_id = ?", (ws_id,))
+
+            # 删除符号（当前快照）
+            self.conn.execute("""
+                DELETE FROM symbols WHERE file_instance_id IN (
+                    SELECT id FROM file_instances WHERE workspace_id = ?
+                )
+            """, (ws_id,))
+
+            # 删除文件实例
+            self.conn.execute("DELETE FROM file_instances WHERE workspace_id = ?", (ws_id,))
+
+            # 删除工作区
+            self.conn.execute("DELETE FROM workspaces WHERE id = ?", (ws_id,))
+
+            self.conn.commit()
+
+            # 如果删除的是活动工作区，清除活动状态
+            if self.active_workspace and self.active_workspace.get("id") == ws_id:
+                self.active_workspace = None
+
+            return True
+        except Exception as e:
+            self.conn.rollback()
+            print(f"删除工作区失败: {e}")
+            return False
+
+    # --------------------------------------------------------------------
+    # 完整构建流程
+    # --------------------------------------------------------------------
+
+
+    def _get_active_workspace_id(self) -> int:
+        """获取当前活动工作区 ID"""
+        if self.active_workspace:
+            return self.active_workspace.get("id", 1)
+        return 1
+
+

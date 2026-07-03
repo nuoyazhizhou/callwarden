@@ -1,0 +1,1697 @@
+"""
+db_build.py
+===========
+
+代码知识图谱构建 Mixin 类。
+
+提供文件扫描、多语言解析、调用图构建、增量更新等功能。
+"""
+
+from __future__ import annotations
+
+import os
+import time
+import threading
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Set
+
+from ..config import (
+    norm_path, read_file_normalized,
+    detect_language_from_path, get_supported_extensions, compute_content_hash,
+)
+from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
+from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
+
+
+class BuildMixin:
+    """构建功能 Mixin
+
+    通过 self.conn 访问数据库连接，提供文件解析和调用图构建功能。
+    """
+
+    def build(self):
+        """完整构建知识图谱"""
+        print("步骤 1/6: 解析模块结构...")
+        self.module_resolver.resolve_all(self.parser)
+        print(f"  发现 {len(self.module_resolver.module_to_file)} 个模块")
+
+        crate_name = self._detect_crate_name()
+        print(f"  crate 名称: {crate_name}")
+
+        print("步骤 2/6: 解析所有文件...")
+        file_results = {}
+        failed_files = []
+        total = len(self.module_resolver.module_to_file)
+        for i, (mod_path, rel_path) in enumerate(self.module_resolver.module_to_file.items(), 1):
+            abs_path = os.path.join(self.workspace_root, rel_path)
+            file_instance_id = self._register_file_db(abs_path, mod_path)
+            try:
+                result = self.parser.parse_file(abs_path, mod_path)
+                result["abs_path"] = abs_path
+                result["file_instance_id"] = file_instance_id
+                result["module_path"] = mod_path
+                result["rel_path"] = norm_path(rel_path)
+                result.setdefault("inline_modules", [])
+                file_results[norm_path(rel_path)] = result
+                print(f"  [{i}/{total}] 解析: {rel_path}")
+            except Exception as e:
+                failed_files.append((rel_path, str(e)))
+                print(f"  [{i}/{total}] 失败: {rel_path} - {e}")
+
+        print(f"  成功解析 {len(file_results)} 个文件", end="")
+        if failed_files:
+            print(f"，失败 {len(failed_files)} 个")
+        else:
+            print()
+
+        print("步骤 3/6: 创建文件版本和符号版本...")
+        for rel_path, result in file_results.items():
+            file_version_id = self._save_file_version(result["file_instance_id"], result)
+            result["file_version_id"] = file_version_id
+            self._save_symbols_for_version(file_version_id, result["file_instance_id"], result)
+
+        print("步骤 4/6: 解析并写入调用关系...")
+        self.build_call_graph(file_results, crate_name)
+
+        print("步骤 5/6: 计算拓扑深度...")
+        self._build_depth()
+
+        print("步骤 6/6: 更新符号版本的深度...")
+        self._update_symbol_version_depths()
+
+        self.conn.commit()
+
+        if failed_files:
+            print(f"完成！（有 {len(failed_files)} 个文件解析失败）")
+        else:
+            print("完成！")
+
+
+    def build_full_graph(self, force: bool = False):
+        """构建完整知识图谱（自动检测所有支持的语言）
+
+        Args:
+            force: 是否强制重新解析所有文件（忽略增量）
+        """
+        # 扫描所有支持的文件，统一走多语言构建流程（支持增量）
+        files = self._scan_supported_files()
+        self._build_multi_lang(files, force=force)
+
+
+    def build_directory(self, dir_path: str):
+        """构建指定目录的知识图谱
+
+        Args:
+            dir_path: 相对项目根目录的路径（如 "src/cli"）或绝对路径
+        """
+        # 标准化路径
+        abs_dir = os.path.abspath(dir_path)
+        if not os.path.isabs(dir_path):
+            abs_dir = os.path.join(self.workspace_root, dir_path)
+
+        if not os.path.isdir(abs_dir):
+            print(f"错误: 目录不存在 - {abs_dir}")
+            return
+
+        # 扫描该目录下的源文件
+        supported_extensions = set(get_supported_extensions())
+        skip_dirs = {".git", "node_modules", "target", "dist", "build", ".next", "__pycache__"}
+        files = []
+        for root, dirs, filenames in os.walk(abs_dir):
+            dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
+            for filename in filenames:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in supported_extensions:
+                    abs_path = os.path.join(root, filename)
+                    rel_path = norm_path(os.path.relpath(abs_path, self.workspace_root))
+                    files.append(rel_path)
+
+        files.sort()
+        if not files:
+            print(f"目录 {dir_path} 中未找到支持的源文件")
+            return
+
+        rust_files = [f for f in files if f.endswith(".rs")]
+        other_files = [f for f in files if not f.endswith(".rs")]
+
+        print(f"构建目录: {dir_path} ({len(files)} 个源文件)")
+        if other_files or len(rust_files) != len(files):
+            self._build_multi_lang(files)
+        else:
+            # 纯 Rust 目录，也走多语言流程以保持一致
+            self._build_multi_lang(files)
+
+
+    def _load_ignore_patterns(self) -> List[str]:
+        """加载 .codegraphignore 规则
+
+        规则格式（类似 .gitignore）：
+        - 每行一个模式
+        - # 开头是注释
+        - 支持通配符：* 匹配任意字符，** 匹配任意目录
+        - 目录名后加 / 只匹配目录
+        - 以 / 开头匹配根目录
+        """
+        import fnmatch
+
+        patterns = []
+        ignore_file = os.path.join(self.workspace_root, ".codegraphignore")
+
+        # 默认忽略规则（硬编码基线，覆盖 VCS/包管理/构建输出/预构建/autogen）
+        # 这些规则对 repo manifest/AOSP/嵌入式项目尤其关键——
+        # autogen 代码和预构建产物动辄几十万文件，不排除会让 DB 爆掉
+        default_ignores = [
+            # === VCS / 包管理 / Python 虚拟环境 ===
+            ".git/", "node_modules/", ".next/",
+            "__pycache__/", ".venv/", "venv/", "env/", ".tox/", "*.egg-info/",
+            # === 构建输出目录（AOSP/嵌入式/Make/Cargo）===
+            # 这些目录包含编译中间产物和 autogen 源码，体积巨大且无分析价值
+            "target/", "dist/", "build/", "out/", "output/", "outputs/",
+            "obj/", "bin/", "rootfs/", "staging/", "sysroot/", "ccache/",
+            # === 预构建 / 二进制 / 工具链 ===
+            # prebuilt/prebuilts/blob 是厂商二进制，toolchain/ndk/jdk 是工具链
+            "prebuilt/", "prebuilts/", "blob/", "toolchain/", "toolchains/",
+            "ndk/", "jdk/",
+            # === autogen 代码目录（核心痛点）===
+            # 这些目录存放 protobuf/grpc/Qt moc 等自动生成的源码
+            # 扩展名是 .c/.cpp/.py，会被扫描器拾取，但内容无人工维护语义
+            "autogen/", "auto_gen/", "generated/", "gen/", "generated_src/",
+            "proto_gen/", "protobuf_gen/", "grpc_gen/", "moc/",
+            # === autogen 文件名模式（protobuf / Qt / Python 字节码）===
+            "*.pb.cc", "*.pb.h", "*.pb.go",           # protobuf C++/Go 生成
+            "*_pb2.py", "*_pb2.pyi", "*_pb2_grpc.py",  # protobuf Python 生成
+            "*.grpc.cc", "*.grpc.h",                   # grpc C++ 生成
+            "moc_*.cpp", "ui_*.h", "qrc_*.cpp",        # Qt moc/ui 资源生成
+            "*.pyc", "*.pyo",                           # Python 字节码
+            # === repo 工具元数据（AOSP repo manifest 项目）===
+            ".repo/",
+        ]
+
+        if os.path.exists(ignore_file):
+            try:
+                with open(ignore_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#"):
+                            patterns.append(line)
+            except Exception:
+                pass
+
+        # 合并默认规则和用户规则
+        all_patterns = default_ignores + patterns
+        return all_patterns
+
+
+    def _should_ignore(self, rel_path: str, is_dir: bool, patterns: List[str]) -> bool:
+        """判断路径是否应该被忽略
+
+        Args:
+            rel_path: 相对路径（使用 / 分隔符）
+            is_dir: 是否是目录
+            patterns: 忽略规则列表
+        """
+        import fnmatch
+
+        path_parts = rel_path.split("/")
+
+        for pattern in patterns:
+            orig_pattern = pattern
+            p = pattern.rstrip("/")
+            match_dir_only = pattern.endswith("/")
+
+            # 以 / 开头：只匹配根目录
+            if p.startswith("/"):
+                p = p[1:]
+                if fnmatch.fnmatch(rel_path, p):
+                    return True
+                if is_dir and fnmatch.fnmatch(rel_path + "/", p + "/"):
+                    return True
+                continue
+
+            # 包含 /：匹配完整路径
+            if "/" in p:
+                if fnmatch.fnmatch(rel_path, p):
+                    return True
+                continue
+
+            # 不包含 /：匹配任意层级的文件名/目录名
+            if match_dir_only:
+                if is_dir and path_parts[-1] == p:
+                    return True
+            else:
+                if fnmatch.fnmatch(path_parts[-1], p):
+                    return True
+                # 也检查是否匹配完整路径的任意后缀
+                for i in range(len(path_parts)):
+                    subpath = "/".join(path_parts[i:])
+                    if fnmatch.fnmatch(subpath, p):
+                        return True
+
+        return False
+
+
+    def _scan_supported_files(self) -> List[str]:
+        """扫描项目中所有支持的源文件（尊重 .codegraphignore）"""
+        supported_extensions = set(get_supported_extensions())
+        files = []
+        ignore_patterns = self._load_ignore_patterns()
+
+        for root, dirs, filenames in os.walk(self.workspace_root):
+            # 过滤目录：原地修改 dirs 以跳过
+            rel_root = norm_path(os.path.relpath(root, self.workspace_root))
+            if rel_root == ".":
+                rel_root = ""
+
+            # 过滤要跳过的目录
+            dirs_to_keep = []
+            for d in dirs:
+                if d.startswith(".") and d not in (".codegraph",):
+                    continue
+                d_rel = (rel_root + "/" + d) if rel_root else d
+                if not self._should_ignore(d_rel, True, ignore_patterns):
+                    dirs_to_keep.append(d)
+            dirs[:] = dirs_to_keep
+
+            for filename in filenames:
+                ext = os.path.splitext(filename)[1].lower()
+                if ext in supported_extensions:
+                    abs_path = os.path.join(root, filename)
+                    rel_path = norm_path(os.path.relpath(abs_path, self.workspace_root))
+                    if not self._should_ignore(rel_path, False, ignore_patterns):
+                        files.append(rel_path)
+
+        return sorted(files)
+
+
+    def _detect_repo_manifest(self) -> int:
+        """检测 repo manifest 并注册子仓库为 workspace
+
+        AOSP/嵌入式项目用 `repo` 工具管理多仓库，根目录有 `.repo/` 元数据。
+        本方法解析 manifest.xml，把每个 <project> 注册为独立 workspace 记录，
+        让 list_workspaces / 跨仓库分析能识别子仓库边界。
+
+        注册的 workspace：
+        - name: manifest 的 name 属性（如 "firmware/middleware"）
+        - root_path: workspace_root + "/" + path 属性
+        - description: "repo subproject: <remote>/<name>"
+
+        Returns:
+            注册的子仓库数量（已存在的跳过）
+        """
+        import xml.etree.ElementTree as ET
+
+        repo_dir = os.path.join(self.workspace_root, ".repo")
+        if not os.path.isdir(repo_dir):
+            return 0
+
+        # 定位 manifest.xml：优先 .repo/manifests/<default>.xml，回退到根目录
+        manifest_path = None
+        manifests_dir = os.path.join(repo_dir, "manifests")
+        if os.path.isdir(manifests_dir):
+            # 找 default.xml 或任意 .xml
+            for candidate in ("default.xml", "manifest.xml"):
+                p = os.path.join(manifests_dir, candidate)
+                if os.path.isfile(p):
+                    manifest_path = p
+                    break
+            if not manifest_path:
+                # 找目录里第一个 .xml
+                for fn in os.listdir(manifests_dir):
+                    if fn.endswith(".xml"):
+                        manifest_path = os.path.join(manifests_dir, fn)
+                        break
+        if not manifest_path:
+            # 回退：根目录的 manifest.xml
+            root_manifest = os.path.join(self.workspace_root, "manifest.xml")
+            if os.path.isfile(root_manifest):
+                manifest_path = root_manifest
+
+        if not manifest_path:
+            return 0
+
+        try:
+            tree = ET.parse(manifest_path)
+            root_elem = tree.getroot()
+        except Exception:
+            return 0
+
+        registered = 0
+        for proj in root_elem.findall("project"):
+            name = proj.get("name", "")
+            path = proj.get("path", name)
+            remote = proj.get("remote", "")
+            if not name:
+                continue
+            # 子仓库的绝对路径
+            sub_abs = os.path.join(self.workspace_root, path)
+            if not os.path.isdir(sub_abs):
+                continue
+            # 注册为 workspace（register_workspace 内部已做去重）
+            desc = f"repo subproject: {remote}/{name}" if remote else f"repo subproject: {name}"
+            self.register_workspace(name, sub_abs, description=desc)
+            registered += 1
+
+        return registered
+
+
+    def _build_multi_lang(self, files: List[str], force: bool = False):
+        """多语言通用构建流程（支持并行解析）
+
+        Args:
+            files: 相对路径列表
+            force: 是否强制重新解析所有文件（忽略增量）
+        """
+        t_start = time.time()
+        total = len(files)
+
+        # 检测 repo manifest，注册子仓库为 workspace（让跨仓库分析能识别边界）
+        subrepo_count = self._detect_repo_manifest()
+        if subrepo_count > 0:
+            cprint(f"  (检测到 repo manifest，已注册 {subrepo_count} 个子仓库为 workspace)", "dim")
+
+        cprint(f"步骤 1/5: 扫描到 {total} 个源文件", "cyan", bold=True)
+
+        cprint("步骤 2/5: 解析所有文件...", "cyan", bold=True)
+        file_results = {}
+        skipped = 0
+        unchanged = 0
+        failed = 0
+
+        to_parse = []
+
+        for i, rel_path in enumerate(files, 1):
+            abs_path = os.path.join(self.workspace_root, rel_path)
+            lang = detect_language_from_path(rel_path)
+            parser = create_parser(rel_path)
+
+            if not parser:
+                skipped += 1
+                continue
+
+            module_path = self._infer_module_path_generic(rel_path, lang)
+            file_instance_id = self._register_file_db(abs_path, module_path)
+
+            if not force:
+                current_mtime = os.path.getmtime(abs_path)
+                latest_fv = self._get_file_version(file_instance_id)
+                if latest_fv and abs(latest_fv["mtime"] - current_mtime) < 0.001:
+                    old_result = self._load_file_result_from_db(file_instance_id, latest_fv["id"], rel_path, abs_path, module_path)
+                    if old_result:
+                        file_results[rel_path] = old_result
+                        unchanged += 1
+                        continue
+
+            to_parse.append((i, rel_path, abs_path, lang, module_path, file_instance_id))
+
+        if unchanged > 0 and not to_parse:
+            cprint(f"  ✓ 所有文件未变化，跳过后续步骤（{unchanged} 个文件）", "green")
+            duration = time.time() - t_start
+            cprint()
+            cprint(f"  ═══════ 构建总结 ═══════", "cyan", bold=True)
+            cprint()
+            cprint(f"  文件处理:", "bold")
+            cprint(f"    未变化跳过: {unchanged}", "dim")
+            cprint()
+            cprint(f"  耗时: {format_duration(duration)}", "yellow")
+            cprint(f"  ✓ 构建完成，代码图谱已是最新", "green")
+            cprint()
+            return
+
+        if to_parse:
+            max_workers = min(8, max(1, (os.cpu_count() or 4) - 1))
+            cprint(f"  (并行解析: {max_workers} 线程, {len(to_parse)} 个文件待解析)", "dim")
+            print_lock = threading.Lock()
+            done_count = [0]
+            parse_total = len(to_parse)
+            failed_files = []
+
+            def _parse_one(args):
+                idx, rel_path, abs_path, lang, module_path, file_instance_id = args
+                try:
+                    from ..parsers import (
+                        RustParser, TypeScriptParser, PythonParser, KotlinParser,
+                        GoParser, JavaParser, CParser, CppParser,
+                        CSharpParser, RubyParser, PhpParser, SwiftParser,
+                        ScalaParser, HclParser, ElixirParser,
+                    )
+                    if lang == "rust":
+                        p = RustParser()
+                    elif lang == "typescript":
+                        p = TypeScriptParser(dialect="tsx" if rel_path.endswith(".tsx") else "typescript")
+                    elif lang == "javascript":
+                        p = TypeScriptParser(dialect="jsx" if rel_path.endswith(".jsx") else "javascript")
+                    elif lang == "python":
+                        p = PythonParser()
+                    elif lang == "kotlin":
+                        p = KotlinParser()
+                    elif lang == "go":
+                        p = GoParser()
+                    elif lang == "java":
+                        p = JavaParser()
+                    elif lang == "c":
+                        p = CParser()
+                    elif lang == "cpp":
+                        p = CppParser()
+                    elif lang == "csharp":
+                        p = CSharpParser()
+                    elif lang == "ruby":
+                        p = RubyParser()
+                    elif lang == "php":
+                        p = PhpParser()
+                    elif lang == "swift":
+                        p = SwiftParser()
+                    elif lang == "scala":
+                        p = ScalaParser()
+                    elif lang == "hcl":
+                        p = HclParser()
+                    elif lang == "elixir":
+                        p = ElixirParser()
+                    else:
+                        with print_lock:
+                            done_count[0] += 1
+                        return ("skip", idx, rel_path, None)
+                    result = p.parse_file(abs_path, module_path)
+                    result["abs_path"] = abs_path
+                    result["file_instance_id"] = file_instance_id
+                    result["module_path"] = module_path
+                    result["rel_path"] = rel_path
+                    result.setdefault("inline_modules", [])
+                    with print_lock:
+                        done_count[0] += 1
+                        print_progress(done_count[0], parse_total, f"解析: {rel_path} ({lang})")
+                    return ("ok", idx, rel_path, result)
+                except Exception as e:
+                    with print_lock:
+                        done_count[0] += 1
+                    return ("fail", idx, rel_path, str(e))
+
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                for status, idx, rel_path, payload in pool.map(_parse_one, to_parse):
+                    if status == "ok":
+                        file_results[rel_path] = payload
+                    elif status == "fail":
+                        failed += 1
+                        failed_files.append((rel_path, payload))
+                    else:
+                        skipped += 1
+
+            clear_progress()
+            parsed_new = len(file_results) - unchanged
+            if failed == 0:
+                cprint(f"  ✓ 成功解析 {parsed_new} 个，未变化 {unchanged} 个，跳过 {skipped} 个", "green")
+            else:
+                cprint(f"  成功解析 {parsed_new} 个，未变化 {unchanged} 个，跳过 {skipped} 个，失败 {failed} 个", "yellow")
+                for rel_path, err in failed_files:
+                    cprint(f"    ✗ {rel_path}: {err}", "red")
+
+                spinner = Spinner("步骤 3/5: 创建文件版本和符号版本")
+        spinner.start()
+        version_count = 0
+        for rel_path, result in file_results.items():
+            if result.get("_from_db"):
+                self._restore_symbol_snapshots(result["file_instance_id"], result)
+                continue
+            file_version_id = self._save_file_version(result["file_instance_id"], result)
+            result["file_version_id"] = file_version_id
+            self._save_symbols_for_version(file_version_id, result["file_instance_id"], result)
+            version_count += 1
+        spinner.stop(f"✓ 写入 {version_count} 个文件版本")
+
+        spinner = Spinner("步骤 4/5: 解析调用关系")
+        spinner.start()
+        self._build_call_graph_multi_lang(file_results)
+        ws_id = self._get_active_workspace_id()
+        cur = self.conn.execute("SELECT COUNT(*) as c FROM calls c JOIN symbols s ON c.caller_id = s.id JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ?", (ws_id,))
+        total_calls = cur.fetchone()["c"]
+        cur = self.conn.execute("SELECT COUNT(*) as c FROM calls c JOIN symbols s ON c.caller_id = s.id JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ? AND c.callee_id IS NOT NULL", (ws_id,))
+        resolved_calls = cur.fetchone()["c"]
+        spinner.stop(f"✓ {total_calls} 条调用 ({resolved_calls} 已解析)")
+
+        spinner = Spinner("步骤 5/5: 计算拓扑深度")
+        spinner.start()
+        self._build_depth()
+        self._update_symbol_version_depths()
+        spinner.stop("✓ 深度计算完成")
+
+        self.conn.commit()
+
+        # 步骤 6/6: GC 归档（类 Java Young GC，扫描 pending 文件命中 ignore 的迁入 archived_files）
+        # 注意：在 commit 之后执行，避免归档事务与构建事务冲突
+        try:
+            gc_result = self.gc_archive(force=False)
+            if gc_result["archived"] > 0:
+                cprint(f"步骤 6/6: GC 归档 {gc_result['archived']} 个被 ignore 命中的文件", "yellow")
+                for reason, count in gc_result["reasons"].items():
+                    cprint(f"  {reason}: {count} 个", "dim")
+        except Exception as e:
+            # GC 失败不阻塞构建
+            cprint(f"  (GC 归档失败，不影响构建结果: {e})", "yellow")
+
+        duration = time.time() - t_start
+
+        ws_id = self._get_active_workspace_id()
+        cur = self.conn.execute("""
+            SELECT COUNT(*) as cnt FROM symbols s
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            WHERE fi.workspace_id = ?
+        """, (ws_id,))
+        total_symbols = cur.fetchone()["cnt"]
+
+        parsed_new = len(file_results) - unchanged
+        print_build_summary(parsed_new, unchanged, skipped, failed, total_symbols, total_calls, resolved_calls, duration)
+    
+
+    def _load_file_result_from_db(self, file_instance_id: int, file_version_id: int,
+        rel_path: str, abs_path: str, module_path: str) -> Optional[Dict]:
+        """从数据库加载已解析的文件结果（增量构建用）"""
+        try:
+            # 加载文件版本的基本信息
+            cur = self.conn.execute(
+                "SELECT content_hash, total_lines FROM file_versions WHERE id = ?",
+                (file_version_id,)
+            )
+            fv_row = cur.fetchone()
+            if not fv_row:
+                return None
+
+            # 加载该版本的所有符号（含 symbol_contents 详情）
+            cur = self.conn.execute("""
+                SELECT sv.id, sv.symbol_hash, sv.qualified_name, sv.start_line, sv.end_line,
+                       sv.module_path, sv.depth, sv.is_deleted,
+                       sc.name, sc.kind, sc.content, sc.signature, sc.has_comment,
+                       sc.comment_content as doc_comment
+                FROM file_symbol_versions sv
+                JOIN symbol_contents sc ON sv.symbol_hash = sc.content_hash
+                WHERE sv.file_version_id = ? AND sv.is_deleted = 0
+            """, (file_version_id,))
+            symbols = []
+            for row in cur:
+                sym = dict(row)
+                # 从DB加载的符号没有 raw_calls（调用点信息），需要重新解析文件才能获取
+                # 但对于符号索引来说已经足够
+                sym["calls"] = []  # 调用点信息不在DB中，增量时其他文件的调用点来自call_versions
+                sym.setdefault("issues", [])
+                symbols.append(sym)
+
+            # 从快照表加载调用关系（通过 symbols 表关联 file_instance_id）
+            cur = self.conn.execute("""
+                SELECT c.caller_name, c.caller_module, c.callee_name, c.callee_module,
+                       c.callee_qualified, c.callee_file, c.callee_id, c.call_line, c.is_cross_file
+                FROM calls c
+                JOIN symbols s ON c.caller_id = s.id
+                WHERE s.file_instance_id = ?
+            """, (file_instance_id,))
+            raw_calls = [dict(row) for row in cur]
+
+            return {
+                "abs_path": abs_path,
+                "rel_path": rel_path,
+                "module_path": module_path,
+                "file_instance_id": file_instance_id,
+                "file_version_id": file_version_id,
+                "symbols": symbols,
+                "raw_calls": raw_calls,
+                "imports": [],  # imports 不存储，但不影响符号索引
+                "content_hash": fv_row["content_hash"],
+                "total_lines": fv_row["total_lines"],
+                "inline_modules": [],
+                "_from_db": True,  # 标记来自DB（跳过写入）
+            }
+        except Exception as e:
+            return None
+
+
+    def _restore_symbol_snapshots(self, file_instance_id: int, result: Dict):
+        """从DB加载的结果恢复符号快照到 symbols 表（增量构建用）
+
+        如果快照已存在则跳过，否则从 symbol_contents 和 file_symbol_versions 恢复。
+        """
+        # 检查是否已有快照
+        cur = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM symbols WHERE file_instance_id = ?",
+            (file_instance_id,)
+        )
+        if cur.fetchone()["cnt"] > 0:
+            return  # 已有快照，不需要恢复
+
+        # 从 file_symbol_versions + symbol_contents 恢复
+        for sym in result.get("symbols", []):
+            qname = sym.get("qualified_name", "")
+            name = sym.get("name", "")
+            kind = sym.get("kind", "fn")
+            start_line = sym.get("start_line", 0)
+            end_line = sym.get("end_line", 0)
+            module_path = sym.get("module_path", result.get("module_path", ""))
+            content_hash = sym.get("symbol_hash", "")
+            depth = sym.get("depth", -1)
+            has_comment = sym.get("has_comment", 0)
+
+            self.conn.execute("""
+                INSERT OR IGNORE INTO symbols
+                (file_instance_id, name, kind, qualified_name, module_path,
+                 start_line, end_line, content_hash, depth, has_comment)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (file_instance_id, name, kind, qname, module_path,
+                  start_line, end_line, content_hash, depth, has_comment))
+
+
+    def _build_call_graph_multi_lang(self, file_results: Dict[str, Dict[str, Any]]):
+        """多语言调用关系构建（多级解析策略）
+
+        解析策略（按优先级）：
+        1. 精确匹配：callee_module.callee_name 完全匹配 qualified_name
+        2. import 解析：通过文件的 import 列表将 callee_module 映射到实际模块路径
+        3. 简名唯一匹配：callee_name 在全局符号表中唯一存在
+        4. 简名同文件匹配：callee_name 在当前文件中存在
+        """
+        total_calls = 0
+        resolved_count = 0
+
+        # ---- 第一阶段：构建符号索引 ----
+        # qualified_name -> {file, symbol}
+        all_symbols_map: Dict[str, Dict] = {}
+        # 简名 -> [qualified_name, ...]（用于 fallback 匹配）
+        name_index: Dict[str, List[str]] = defaultdict(list)
+        # 每个文件的符号简名集合（用于同文件匹配）
+        file_symbols: Dict[str, Set[str]] = defaultdict(set)
+
+        for rel_path, result in file_results.items():
+            for sym in result.get("symbols", []):
+                qname = sym.get("qualified_name", "")
+                if not qname:
+                    continue
+                all_symbols_map[qname] = {"file": rel_path, "symbol": sym}
+                # 简名 = qualified_name 的最后一段（支持 . 和 :: 分隔符）
+                # 先按 :: 分割，再按 . 分割，取最后一段
+                parts = qname.replace("::", ".").rsplit(".", 1)
+                simple_name = parts[-1] if parts else qname
+                name_index[simple_name].append(qname)
+                file_symbols[rel_path].add(simple_name)
+
+        # ---- 第二阶段：构建 import 索引 ----
+        # file_path -> {alias/module_name: full_module_path}
+        file_imports: Dict[str, Dict[str, str]] = {}
+        for rel_path, result in file_results.items():
+            imports = result.get("imports", [])
+            import_map = {}
+            for imp in imports:
+                module = imp.get("module", "")
+                if not module:
+                    continue
+                # Go: "github.com/user/project/pkg" → 包名 "pkg"
+                # Java: "com.tokenslim.sdk.TokenSlimClient" → 类名 "TokenSlimClient"
+                # C/C++: "stdio.h" → "stdio"
+                if "/" in module:
+                    parts = module.rstrip("/").split("/")
+                    alias = parts[-1]
+                elif "." in module:
+                    parts = module.split(".")
+                    alias = parts[-1]
+                else:
+                    alias = module.replace(".h", "").replace(".hpp", "")
+                import_map[alias] = module
+            file_imports[rel_path] = import_map
+
+        # ---- 第三阶段：解析调用关系 ----
+        for rel_path, result in file_results.items():
+            # 如果结果来自DB，恢复调用快照（raw_calls 已从 calls 表加载）
+            if result.get("_from_db"):
+                existing_calls = result.get("raw_calls", [])
+                # 恢复调用快照（直接写入，不重新解析）
+                self._write_calls_db(result["file_instance_id"], existing_calls)
+                total_calls += len(existing_calls)
+                resolved_count += sum(1 for c in existing_calls if c.get("callee_qualified"))
+                continue
+
+            raw_calls = result.get("raw_calls", [])
+            calls = []
+            current_imports = file_imports.get(rel_path, {})
+
+            for raw in raw_calls:
+                callee_qname = ""
+                callee_file = ""
+                callee_id = 0
+                is_cross = 0
+
+                callee_name = raw.get("callee_name", "")
+                callee_module = raw.get("callee_module", "")
+
+                if not callee_name:
+                    calls.append(self._make_call_entry(raw, "", "", 0, 0))
+                    continue
+
+                # 策略 1：精确匹配 module.name
+                if callee_module:
+                    test_qname = f"{callee_module}.{callee_name}"
+                    if test_qname in all_symbols_map:
+                        callee_qname = test_qname
+                        callee_file = all_symbols_map[test_qname]["file"]
+                        callee_id = all_symbols_map[test_qname]["symbol"].get("id", 0)
+                        if callee_file != rel_path:
+                            is_cross = 1
+
+                # 策略 2：通过 import 映射 module 后匹配
+                if not callee_qname and callee_module:
+                    # callee_module 可能是 import 别名，尝试映射到实际模块路径
+                    if callee_module in current_imports:
+                        # 尝试用 import 的完整路径的末段作为模块名
+                        full_mod = current_imports[callee_module]
+                        # 构建可能的 qualified_name
+                        mod_parts = full_mod.replace("/", ".").split(".")
+                        # 尝试最后一段 + 函数名
+                        for i in range(len(mod_parts)):
+                            test_mod = ".".join(mod_parts[i:])
+                            test_qname = f"{test_mod}.{callee_name}"
+                            if test_qname in all_symbols_map:
+                                callee_qname = test_qname
+                                callee_file = all_symbols_map[test_qname]["file"]
+                                callee_id = all_symbols_map[test_qname]["symbol"].get("id", 0)
+                                if callee_file != rel_path:
+                                    is_cross = 1
+                                break
+
+                    # 也尝试 module.name 作为后缀匹配
+                    if not callee_qname:
+                        suffix = f".{callee_module}.{callee_name}"
+                        for qname in all_symbols_map:
+                            if qname.endswith(suffix):
+                                callee_qname = qname
+                                callee_file = all_symbols_map[qname]["file"]
+                                callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
+                                if callee_file != rel_path:
+                                    is_cross = 1
+                                break
+
+                # 策略 3：简名唯一匹配（即使 callee_module 为空也尝试）
+                if not callee_qname and callee_name in name_index:
+                    candidates = name_index[callee_name]
+                    if len(candidates) == 1:
+                        callee_qname = candidates[0]
+                        callee_file = all_symbols_map[callee_qname]["file"]
+                        callee_id = all_symbols_map[callee_qname]["symbol"].get("id", 0)
+                        if callee_file != rel_path:
+                            is_cross = 1
+                    elif len(candidates) > 1:
+                        # 多个候选，优先选当前文件的
+                        for qname in candidates:
+                            if all_symbols_map[qname]["file"] == rel_path:
+                                callee_qname = qname
+                                callee_file = rel_path
+                                callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
+                                break
+                        # 如果当前文件没有，且 callee_module 匹配某个候选的父级
+                        if not callee_qname and callee_module:
+                            for qname in candidates:
+                                # 支持 :: 和 . 分隔符
+                                norm_qname = qname.replace("::", ".")
+                                parts = norm_qname.rsplit(".", 1)
+                                if len(parts) > 1 and parts[0].endswith(callee_module):
+                                    callee_qname = qname
+                                    callee_file = all_symbols_map[qname]["file"]
+                                    callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
+                                    if callee_file != rel_path:
+                                        is_cross = 1
+                                    break
+
+                # 策略 4：同文件简名匹配
+                if not callee_qname and callee_name in file_symbols.get(rel_path, set()):
+                    for qname in all_symbols_map:
+                        norm_qname = qname.replace("::", ".")
+                        if norm_qname.endswith(f".{callee_name}") and all_symbols_map[qname]["file"] == rel_path:
+                            callee_qname = qname
+                            callee_file = rel_path
+                            callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
+                            break
+
+                if callee_qname:
+                    resolved_count += 1
+
+                calls.append(self._make_call_entry(
+                    raw, callee_qname, callee_file, callee_id, is_cross
+                ))
+
+            self._write_calls_db(result["file_instance_id"], calls)
+            self._save_calls_for_version(result["file_version_id"], calls, result)
+            total_calls += len(calls)
+
+        print(f"  共 {total_calls} 个调用关系，已解析 {resolved_count} 个 ({resolved_count * 100 // total_calls if total_calls else 0}%)")
+
+
+    def _make_call_entry(self, raw: Dict, callee_qname: str, callee_file: str,
+                         callee_id: int, is_cross: int) -> Dict:
+        """构造调用关系记录"""
+        return {
+            "caller_name": raw.get("caller_name", ""),
+            "caller_module": raw.get("caller_module", ""),
+            "callee_name": raw.get("callee_name", ""),
+            "callee_module": raw.get("callee_module", ""),
+            "callee_qualified": callee_qname,
+            "callee_file": callee_file,
+            "callee_id": callee_id,
+            "call_line": raw.get("call_line", 0),
+            "is_cross_file": is_cross,
+        }
+
+
+    def _infer_module_path_generic(self, rel_path: str, lang: str) -> str:
+        """通用模块路径推断
+
+        Args:
+            rel_path: 相对路径
+            lang: 语言
+
+        Returns:
+            模块路径字符串
+        """
+        path = rel_path.replace("\\", "/")
+
+        if lang == "rust":
+            return self._infer_module_path(rel_path)
+
+        # 去掉扩展名
+        for ext in get_supported_extensions():
+            if path.endswith(ext):
+                path = path[: -len(ext)]
+                break
+
+        # 去掉常见的 src/ 前缀
+        for prefix in ("src/", "lib/", "app/", "main/"):
+            if path.startswith(prefix):
+                path = path[len(prefix):]
+                break
+
+        # 去掉 index/__init__ 等入口文件名
+        basename = os.path.basename(path)
+        if basename in ("index", "__init__", "mod"):
+            dirname = os.path.dirname(path)
+            if dirname:
+                path = dirname
+            else:
+                path = "(root)"
+
+        # 用点分隔
+        return path.replace("/", ".")
+
+
+    def build_call_graph(self, file_results: Dict[str, Dict[str, Any]], crate_name: str = ""):
+        """构建调用关系图
+
+        Args:
+            file_results: 文件解析结果字典
+            crate_name: crate 名称
+        """
+        if not crate_name:
+            crate_name = self._detect_crate_name()
+
+        self.call_resolver.crate_name = crate_name
+        self.call_resolver.lib_crate_alias = "lib"
+        self.call_resolver.load_all_symbols(file_results)
+        total_calls = 0
+        for rel_path, result in file_results.items():
+            calls = self._resolve_file_calls(rel_path, result)
+            self._write_calls_db(result["file_instance_id"], calls)
+            self._save_calls_for_version(result["file_version_id"], calls, result)
+            total_calls += len(calls)
+
+        print(f"  共 {total_calls} 个调用关系")
+
+
+    def _detect_crate_name(self) -> str:
+        """从 Cargo.toml 检测 crate 名称"""
+        cargo_toml = os.path.join(self.workspace_root, "Cargo.toml")
+        if os.path.exists(cargo_toml):
+            try:
+                import re
+                with open(cargo_toml, "r", encoding="utf-8") as f:
+                    content = f.read()
+                m = re.search(r'name\s*=\s*"([^"]+)"', content)
+                if m:
+                    return m.group(1)
+            except Exception:
+                pass
+        return "tokenslim"
+
+
+    def _register_file_db(self, abs_path: str, module_path: str) -> int:
+        """注册文件到数据库（使用 file_instances 表）
+
+        Args:
+            abs_path: 绝对路径
+            module_path: 模块路径
+
+        Returns:
+            file_instance_id
+        """
+        ws_id = self._get_active_workspace_id()
+        rel_path = norm_path(os.path.relpath(abs_path, self.workspace_root))
+        mtime = os.path.getmtime(abs_path)
+
+        cur = self.conn.execute(
+            "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+            (ws_id, rel_path),
+        )
+        row = cur.fetchone()
+
+        if row:
+            self.conn.execute(
+                "UPDATE file_instances SET mtime = ?, module_path = ?, status = 'pending' WHERE id = ?",
+                (mtime, module_path, row["id"]),
+            )
+            return row["id"]
+        else:
+            cur = self.conn.execute(
+                """INSERT INTO file_instances
+                   (workspace_id, rel_path, abs_path, current_content_hash, mtime, total_lines, last_parsed, status, module_path)
+                   VALUES (?, ?, ?, '', ?, 0, 0, 'pending', ?)""",
+                (ws_id, rel_path, norm_path(abs_path), mtime, module_path),
+            )
+            return cur.lastrowid
+
+
+    def _get_file_version(self, file_instance_id: int) -> Optional[sqlite3.Row]:
+        """获取文件的最新版本"""
+        cur = self.conn.execute(
+            "SELECT * FROM file_versions WHERE file_instance_id = ? ORDER BY version_num DESC LIMIT 1",
+            (file_instance_id,),
+        )
+        return cur.fetchone()
+
+
+    def _save_file_version(self, file_instance_id: int, result: Dict[str, Any]) -> int:
+        """创建新的文件版本，如果内容没变则返回现有版本号"""
+        content_hash = result["content_hash"]
+        mtime = os.path.getmtime(result["abs_path"]) if "abs_path" in result else 0
+        total_lines = result["total_lines"]
+        parsed_at = time.time()
+        language = detect_language_from_path(result.get("rel_path", ""))
+
+        # 确保 file_contents 中有记录
+        self.conn.execute(
+            "INSERT OR IGNORE INTO file_contents (content_hash, language, total_lines, first_seen_at) VALUES (?, ?, ?, ?)",
+            (content_hash, language, total_lines, parsed_at),
+        )
+
+        latest = self._get_file_version(file_instance_id)
+        if latest and latest["content_hash"] == content_hash:
+            # 更新 mtime
+            self.conn.execute(
+                "UPDATE file_versions SET mtime = ? WHERE id = ?",
+                (mtime, latest["id"]),
+            )
+            # 更新 file_instances 的 current_content_hash 和 last_parsed
+            self.conn.execute(
+                "UPDATE file_instances SET current_content_hash = ?, last_parsed = ?, total_lines = ?, mtime = ? WHERE id = ?",
+                (content_hash, parsed_at, total_lines, mtime, file_instance_id),
+            )
+            return latest["id"]
+
+        # 计算符号 diff（与上一版本比较）
+        prev_version_id = latest["id"] if latest else None
+
+        if latest:
+            self.conn.execute(
+                "UPDATE file_versions SET is_current = 0 WHERE id = ?",
+                (latest["id"],),
+            )
+            version_num = latest["version_num"] + 1
+        else:
+            version_num = 1
+
+        cur = self.conn.execute(
+            """INSERT INTO file_versions
+               (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, is_current, is_deleted)
+               VALUES (?, ?, ?, ?, ?, ?, 1, 0)""",
+            (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at),
+        )
+        new_version_id = cur.lastrowid
+
+        # 更新 file_instances 的 current_content_hash 和 last_parsed
+        self.conn.execute(
+            "UPDATE file_instances SET current_content_hash = ?, last_parsed = ?, total_lines = ?, mtime = ? WHERE id = ?",
+            (content_hash, parsed_at, total_lines, mtime, file_instance_id),
+        )
+
+        # 如果有前一版本，计算符号 diff 并设置删除标记
+        if prev_version_id:
+            self._compute_and_apply_symbol_diff(prev_version_id, new_version_id)
+
+        return new_version_id
+
+
+    def _compute_symbol_diff(self, prev_version_id: int, curr_version_id: int) -> Dict:
+        """计算两个版本之间的符号差异
+
+        Args:
+            prev_version_id: 上一版本 ID
+            curr_version_id: 当前版本 ID
+
+        Returns:
+            {"added": [...], "removed": [...], "modified": [...]}
+        """
+        # 获取上一版本的符号
+        cur = self.conn.execute(
+            "SELECT symbol_hash, qualified_name, start_line, end_line FROM file_symbol_versions WHERE file_version_id = ?",
+            (prev_version_id,),
+        )
+        prev_symbols = {row["qualified_name"]: dict(row) for row in cur}
+
+        # 获取当前版本的符号
+        cur = self.conn.execute(
+            "SELECT symbol_hash, qualified_name, start_line, end_line FROM file_symbol_versions WHERE file_version_id = ?",
+            (curr_version_id,),
+        )
+        curr_symbols = {row["qualified_name"]: dict(row) for row in cur}
+
+        added = []
+        removed = []
+        modified = []
+
+        all_names = set(prev_symbols.keys()) | set(curr_symbols.keys())
+
+        for name in all_names:
+            prev = prev_symbols.get(name)
+            curr = curr_symbols.get(name)
+
+            if prev and not curr:
+                removed.append(prev)
+            elif curr and not prev:
+                added.append(curr)
+            elif prev and curr and prev["symbol_hash"] != curr["symbol_hash"]:
+                modified.append(curr)
+
+        return {
+            "added": added,
+            "removed": removed,
+            "modified": modified,
+        }
+
+
+    def _compute_and_apply_symbol_diff(self, prev_version_id: int, curr_version_id: int):
+        """计算符号 diff 并应用删除标记
+
+        为当前版本中不存在的符号（相对于上一版本）设置 is_deleted=1
+        """
+        # 获取上一版本的符号
+        cur = self.conn.execute(
+            "SELECT symbol_hash, qualified_name FROM file_symbol_versions WHERE file_version_id = ?",
+            (prev_version_id,),
+        )
+        prev_symbols = {row["qualified_name"]: row["symbol_hash"] for row in cur}
+
+        # 获取当前版本的符号
+        cur = self.conn.execute(
+            "SELECT id, symbol_hash, qualified_name FROM file_symbol_versions WHERE file_version_id = ?",
+            (curr_version_id,),
+        )
+        curr_symbols = {row["qualified_name"]: row["symbol_hash"] for row in cur}
+        curr_ids = {row["qualified_name"]: row["id"] for row in cur}
+
+        # 找出删除的符号（上一版本有，当前版本没有）
+        removed_names = set(prev_symbols.keys()) - set(curr_symbols.keys())
+
+        # 对于删除的符号，在当前版本中插入标记为 is_deleted=1 的记录
+        for name in removed_names:
+            symbol_hash = prev_symbols[name]
+            # 获取上一版本中的位置信息
+            cur = self.conn.execute(
+                "SELECT start_line, end_line, module_path, depth FROM file_symbol_versions WHERE file_version_id = ? AND qualified_name = ?",
+                (prev_version_id, name),
+            )
+            prev_row = cur.fetchone()
+            if prev_row:
+                self.conn.execute(
+                    """INSERT INTO file_symbol_versions
+                       (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 1)""",
+                    (curr_version_id, symbol_hash, name,
+                     prev_row["start_line"], prev_row["end_line"],
+                     prev_row["module_path"], prev_row["depth"]),
+                )
+
+
+    def _save_symbols_for_version(self, file_version_id: int, file_instance_id: int, result: Dict[str, Any]):
+        """为文件版本创建所有符号版本（批量写入优化，相同 hash 只存一次）
+
+        性能优化（原 N×3 次 SQL → 现 5 次 SQL）：
+        1. 批量 INSERT OR IGNORE symbol_contents（content_hash 是 PK，自动去重）
+        2. 批量 SELECT 已存在的 symbols（按 qualified_name IN (...) 一次查询）
+        3. 批量 UPDATE 已存在的 symbols（executemany）
+        4. 批量 INSERT 新增的 symbols（executemany）
+        5. 批量 INSERT file_symbol_versions（executemany）
+
+        整个操作在外层 build() 的事务中执行，无需显式 BEGIN/COMMIT。
+        """
+        all_symbols = list(result["symbols"])
+        for inline_mod in result.get("inline_modules", []):
+            all_symbols.extend(inline_mod["symbols"])
+
+        if not all_symbols:
+            return
+
+        # 1. 补算 content_hash（多语言 parser 可能没计算，现场补算）
+        for sym in all_symbols:
+            if "content_hash" not in sym:
+                sym["content_hash"] = compute_content_hash(sym.get("content", ""))
+
+        # 2. 批量 INSERT OR IGNORE symbol_contents（content_hash 是 PK，自动去重）
+        self.conn.executemany(
+            """INSERT OR IGNORE INTO symbol_contents
+               (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(s["content_hash"], s["name"], s["kind"], s["content"],
+              s["signature"], s["has_comment"], s.get("comment_content", ""),
+              s["qualified_name"]) for s in all_symbols],
+        )
+
+        # 3. 批量查询已存在的 symbols（按 qualified_name 一次查询，避免 N 次 SELECT）
+        qualified_names = [s["qualified_name"] for s in all_symbols]
+        # 去重 qualified_name 避免重复占位符（同一文件可能有同名符号，罕见但安全处理）
+        unique_qnames = list(set(qualified_names))
+        placeholders = ",".join("?" * len(unique_qnames))
+        cur = self.conn.execute(
+            f"SELECT id, qualified_name FROM symbols WHERE qualified_name IN ({placeholders})",
+            unique_qnames,
+        )
+        existing_map = {row["qualified_name"]: row["id"] for row in cur.fetchall()}
+
+        # 4. 分离已存在（UPDATE）和新增（INSERT）的符号
+        to_update = []
+        to_insert = []
+        for sym in all_symbols:
+            qname = sym["qualified_name"]
+            if qname in existing_map:
+                to_update.append((
+                    file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
+                    sym["start_line"], sym["end_line"], sym["start_col"], sym["end_col"],
+                    sym["signature"], sym["has_comment"], sym["module_path"],
+                    existing_map[qname],
+                ))
+            else:
+                to_insert.append((
+                    file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
+                    sym["start_line"], sym["end_line"],
+                    sym["start_col"], sym["end_col"], sym["signature"], sym["has_comment"],
+                    sym["module_path"], qname,
+                ))
+
+        # 5. 批量 UPDATE 已存在的 symbols
+        if to_update:
+            self.conn.executemany(
+                """UPDATE symbols SET
+                   file_instance_id = ?, symbol_hash = ?, name = ?, kind = ?, visibility = ?,
+                   start_line = ?, end_line = ?, start_col = ?, end_col = ?,
+                   signature = ?, has_comment = ?, module_path = ?
+                   WHERE id = ?""",
+                to_update,
+            )
+
+        # 6. 批量 INSERT 新增的 symbols
+        if to_insert:
+            self.conn.executemany(
+                """INSERT INTO symbols
+                   (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line,
+                    start_col, end_col, signature, has_comment, comment_status,
+                    module_path, qualified_name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                to_insert,
+            )
+
+        # 7. 批量 INSERT file_symbol_versions
+        self.conn.executemany(
+            """INSERT INTO file_symbol_versions
+               (file_version_id, symbol_hash, qualified_name, start_line, end_line, module_path, depth, is_deleted)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0)""",
+            [(file_version_id, s["content_hash"], s["qualified_name"],
+              s["start_line"], s["end_line"], s["module_path"], -1) for s in all_symbols],
+        )
+
+
+    def _ensure_symbol_content(self, sym: Dict[str, Any]):
+        """确保符号内容已存储（相同 hash 只存一次）
+
+        优化：用 INSERT OR IGNORE 替代 SELECT-then-INSERT，省掉一次查询。
+        symbol_contents 表的 content_hash 是 PRIMARY KEY，自动去重。
+        """
+        self.conn.execute(
+            """INSERT OR IGNORE INTO symbol_contents
+               (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sym["content_hash"], sym["name"], sym["kind"], sym["content"],
+             sym["signature"], sym["has_comment"], sym.get("comment_content", ""),
+             sym["qualified_name"]),
+        )
+
+
+    def _get_or_create_symbol(self, file_instance_id: int, sym: Dict[str, Any]) -> int:
+        """获取或创建符号（通过 qualified_name 匹配）"""
+        cur = self.conn.execute(
+            "SELECT id FROM symbols WHERE qualified_name = ?",
+            (sym["qualified_name"],),
+        )
+        row = cur.fetchone()
+        if row:
+            self.conn.execute(
+                """UPDATE symbols SET 
+                   file_instance_id = ?, symbol_hash = ?, name = ?, kind = ?, visibility = ?,
+                   start_line = ?, end_line = ?, start_col = ?, end_col = ?,
+                   signature = ?, has_comment = ?, module_path = ?
+                   WHERE id = ?""",
+                (file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
+                 sym["start_line"], sym["end_line"], sym["start_col"], sym["end_col"],
+                 sym["signature"], sym["has_comment"], sym["module_path"], row["id"]),
+            )
+            return row["id"]
+        else:
+            cur = self.conn.execute(
+                """INSERT INTO symbols 
+                   (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line, 
+                    start_col, end_col, signature, has_comment, comment_status,
+                    module_path, qualified_name)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                (file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
+                 sym["start_line"], sym["end_line"],
+                 sym["start_col"], sym["end_col"], sym["signature"], sym["has_comment"],
+                 sym["module_path"], sym["qualified_name"]),
+            )
+            return cur.lastrowid
+
+
+    def _insert_symbol(self, file_instance_id: int, sym: Dict[str, Any]):
+        if "content_hash" not in sym:
+            sym["content_hash"] = compute_content_hash(sym.get("content", ""))
+        self.conn.execute(
+            """INSERT INTO symbols 
+               (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line, 
+                start_col, end_col, signature, has_comment, comment_status,
+                module_path, qualified_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+            (file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
+             sym["start_line"], sym["end_line"],
+             sym["start_col"], sym["end_col"], sym["signature"], sym["has_comment"],
+             sym["module_path"], sym["qualified_name"]),
+        )
+
+
+    def _resolve_file_calls(self, rel_path: str, result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """解析单个文件的所有调用"""
+        resolved_calls = []
+        module_path = result["module_path"]
+
+        for raw_call in result["raw_calls"]:
+            callee_info = self.call_resolver.resolve_call(
+                rel_path,
+                module_path,
+                raw_call["callee_name"],
+                raw_call["callee_path"],
+                raw_call["callee_is_qualified"],
+            )
+
+            resolved_call = {
+                "caller_name": raw_call["caller_name"],
+                "caller_module": module_path,
+                "callee_name": raw_call["callee_name"],
+                "callee_module": callee_info["module_path"] if callee_info else "",
+                "callee_qualified": callee_info["qualified_name"] if callee_info else "",
+                "callee_file": callee_info["file"] if callee_info else "",
+                "callee_id": callee_info.get("id", 0) if callee_info else 0,
+                "call_line": raw_call["call_line"],
+                "is_cross_file": 1 if callee_info and callee_info["file"] != rel_path else 0,
+            }
+            resolved_calls.append(resolved_call)
+
+        return resolved_calls
+
+
+    def _write_calls_db(self, file_instance_id: int, calls: List[Dict[str, Any]]):
+        # 先删除该文件已有的调用快照
+        self.conn.execute(
+            "DELETE FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?)",
+            (file_instance_id,)
+        )
+
+        sym_id_map = {}
+        cur = self.conn.execute(
+            "SELECT id, name FROM symbols WHERE file_instance_id = ?", (file_instance_id,)
+        )
+        for row in cur:
+            sym_id_map[row["name"]] = row["id"]
+
+        qname_id_map = {}
+        cur = self.conn.execute("SELECT id, qualified_name FROM symbols")
+        for row in cur:
+            qname_id_map[row["qualified_name"]] = row["id"]
+
+        for call in calls:
+            caller_id = sym_id_map.get(call["caller_name"], 0)
+            if caller_id == 0:
+                continue
+
+            callee_id = qname_id_map.get(call["callee_qualified"], 0) if call["callee_qualified"] else 0
+
+            self.conn.execute(
+                """INSERT INTO calls 
+                   (caller_id, caller_name, caller_module, callee_name, 
+                    callee_module, callee_qualified, callee_file, callee_id, 
+                    call_line, is_cross_file)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (caller_id, call["caller_name"], call["caller_module"],
+                 call["callee_name"], call["callee_module"], call["callee_qualified"],
+                 call["callee_file"], callee_id, call["call_line"],
+                 call["is_cross_file"]),
+            )
+
+
+    def _save_calls_for_version(self, file_version_id: int, calls: List[Dict[str, Any]], result: Dict[str, Any]):
+        """为文件版本创建调用关系版本"""
+        fn_hash_map = {}
+        for sym in result["symbols"]:
+            if sym["kind"] in ("fn", "test_fn"):
+                fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
+        for inline_mod in result.get("inline_modules", []):
+            for sym in inline_mod["symbols"]:
+                if sym["kind"] in ("fn", "test_fn"):
+                    fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
+
+        for call in calls:
+            caller_qualified = f"{result['module_path']}::{call['caller_name']}"
+            caller_hash = fn_hash_map.get(caller_qualified, "")
+
+            self.conn.execute(
+                """INSERT INTO call_versions
+                   (file_version_id, caller_qualified, caller_hash, callee_name,
+                    callee_module, callee_qualified, callee_file, call_line, is_cross_file)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (file_version_id, caller_qualified, caller_hash,
+                 call["callee_name"], call["callee_module"], call["callee_qualified"],
+                 call["callee_file"], call["call_line"], call["is_cross_file"]),
+            )
+
+
+    def _update_symbol_version_depths(self):
+        """更新当前文件-符号关联的深度"""
+        cur = self.conn.execute(
+            """SELECT fsv.id, s.depth 
+               FROM file_symbol_versions fsv
+               JOIN symbols s ON fsv.qualified_name = s.qualified_name
+               JOIN file_versions fv ON fsv.file_version_id = fv.id
+               WHERE fv.is_current = 1 AND fsv.is_deleted = 0"""
+        )
+        updates = []
+        for row in cur:
+            updates.append((row["depth"], row["id"]))
+
+        self.conn.executemany(
+            "UPDATE file_symbol_versions SET depth = ? WHERE id = ?",
+            updates,
+        )
+
+
+    def _build_depth(self):
+        """计算每个函数的拓扑深度"""
+        cur = self.conn.execute(
+            "SELECT id, qualified_name FROM symbols WHERE kind IN ('fn', 'test_fn')"
+        )
+        all_fns = {row["id"]: row["qualified_name"] for row in cur}
+
+        call_graph = defaultdict(list)
+        cur = self.conn.execute(
+            "SELECT caller_id, callee_id FROM calls WHERE callee_id > 0"
+        )
+        for row in cur:
+            call_graph[row["caller_id"]].append(row["callee_id"])
+
+        depth_cache = {}
+
+        def compute_depth(fn_id: int, visited: Set[int]) -> int:
+            if fn_id in depth_cache:
+                return depth_cache[fn_id]
+
+            if fn_id in visited:
+                return 0
+
+            visited.add(fn_id)
+
+            callees = call_graph.get(fn_id, [])
+            if not callees:
+                depth = 0
+            else:
+                max_callee_depth = 0
+                for callee_id in callees:
+                    d = compute_depth(callee_id, visited)
+                    if d > max_callee_depth:
+                        max_callee_depth = d
+                depth = max_callee_depth + 1
+
+            visited.remove(fn_id)
+            depth_cache[fn_id] = depth
+            return depth
+
+        for fn_id in all_fns:
+            compute_depth(fn_id, set())
+
+        for fn_id, depth in depth_cache.items():
+            self.conn.execute(
+                "UPDATE symbols SET depth = ? WHERE id = ?",
+                (depth, fn_id),
+            )
+
+        self.conn.commit()
+
+    # --------------------------------------------------------------------
+    # 增量刷新
+    # --------------------------------------------------------------------
+
+
+    def refresh_file(self, file_path: str):
+        """刷新单个文件（增量更新），支持多语言"""
+        abs_path = os.path.abspath(file_path)
+        if not os.path.exists(abs_path):
+            return
+
+        lang = detect_language_from_path(abs_path)
+        if not lang:
+            return
+
+        rel_path = norm_path(os.path.relpath(abs_path, self.workspace_root))
+        print(f"刷新: {rel_path} ({lang})")
+
+        self._refresh_file_internal(abs_path, rel_path, lang)
+
+
+    def _refresh_file_internal(self, abs_path: str, rel_path: str, lang: str = "rust"):
+        """内部刷新逻辑（支持多语言）"""
+        if lang == "rust":
+            self._refresh_file_rust(abs_path, rel_path)
+        else:
+            self._refresh_file_generic(abs_path, rel_path, lang)
+
+
+    def _refresh_file_rust(self, abs_path: str, rel_path: str):
+        """Rust 文件刷新逻辑（增量方式）"""
+        if not self.module_resolver.module_to_file:
+            self.module_resolver.resolve_all(self.parser)
+
+        module_path = self.module_resolver.get_file_module(rel_path)
+        if not module_path:
+            module_path = self._infer_module_path(rel_path)
+
+        file_instance_id = self._register_file_db(abs_path, module_path)
+
+        result = self.parser.parse_file(abs_path, module_path)
+        result["abs_path"] = abs_path
+        result["file_instance_id"] = file_instance_id
+        result["module_path"] = module_path
+        result["rel_path"] = rel_path
+        result.setdefault("inline_modules", [])
+
+        latest_fv = self._get_file_version(file_instance_id)
+        if latest_fv and latest_fv["content_hash"] == result["content_hash"]:
+            self.conn.execute(
+                "UPDATE file_versions SET mtime = ? WHERE id = ?",
+                (os.path.getmtime(abs_path), latest_fv["id"]),
+            )
+            self.conn.commit()
+            return
+
+        new_fv_id = self._save_file_version(file_instance_id, result)
+        self._save_symbols_for_version(new_fv_id, file_instance_id, result)
+
+        # 增量方式：从DB加载其他文件结果 + 新解析的当前文件
+        all_file_results = self._collect_all_current_file_results()
+        all_file_results[rel_path] = result
+
+        # 只重算当前文件的调用关系（使用完整的符号索引）
+        self._build_call_graph_multi_lang({rel_path: result} | {
+            k: v for k, v in all_file_results.items() if k != rel_path
+        })
+
+        # 清理旧版本的调用关系
+        if latest_fv:
+            self.conn.execute(
+                "DELETE FROM call_versions WHERE file_version_id = ?",
+                (latest_fv["id"],),
+            )
+
+        self._build_depth()
+        self._update_symbol_version_depths()
+        self.conn.commit()
+
+
+    def _refresh_file_generic(self, abs_path: str, rel_path: str, lang: str):
+        """通用语言文件刷新逻辑（增量方式）"""
+        from ..parsers import create_parser
+
+        parser = create_parser(rel_path)
+        if not parser:
+            return
+
+        module_path = self._infer_module_path_generic(rel_path, lang)
+        file_instance_id = self._register_file_db(abs_path, module_path)
+
+        try:
+            result = parser.parse_file(abs_path, module_path)
+        except Exception as e:
+            print(f"  刷新失败: {rel_path} - {e}")
+            return
+
+        result["abs_path"] = abs_path
+        result["file_instance_id"] = file_instance_id
+        result["module_path"] = module_path
+        result["rel_path"] = rel_path
+        result.setdefault("inline_modules", [])
+
+        latest_fv = self._get_file_version(file_instance_id)
+        if latest_fv and latest_fv["content_hash"] == result.get("content_hash", ""):
+            self.conn.execute(
+                "UPDATE file_versions SET mtime = ? WHERE id = ?",
+                (os.path.getmtime(abs_path), latest_fv["id"]),
+            )
+            self.conn.commit()
+            return
+
+        new_fv_id = self._save_file_version(file_instance_id, result)
+        self._save_symbols_for_version(new_fv_id, file_instance_id, result)
+
+        # 增量方式：从DB加载其他文件结果
+        all_file_results = self._collect_all_current_file_results()
+        all_file_results[rel_path] = result
+
+        # 重算调用关系（符号索引来自DB+新文件，只写入变化文件的调用）
+        self._build_call_graph_multi_lang(all_file_results)
+
+        # 清理旧版本的调用关系
+        if latest_fv:
+            self.conn.execute(
+                "DELETE FROM call_versions WHERE file_version_id = ?",
+                (latest_fv["id"],),
+            )
+
+        self._build_depth()
+        self._update_symbol_version_depths()
+        self.conn.commit()
+
+
+    def remove_file(self, file_path: str):
+        """删除文件（清理数据库中的相关记录，保留版本历史）
+
+        注意：保留 file_versions / file_symbol_versions / call_versions 历史，
+        只标记 file_instances 表中的状态为 deleted，并清除 symbols / calls 当前快照。
+        """
+        ws_id = self._get_active_workspace_id()
+        rel_path = norm_path(file_path)
+
+        cur = self.conn.execute(
+            "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+            (ws_id, rel_path),
+        )
+        row = cur.fetchone()
+        if not row:
+            return
+
+        file_instance_id = row["id"]
+
+        # 清除当前快照（保留历史版本）
+        self.conn.execute("DELETE FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?)", (file_instance_id,))
+        self.conn.execute("DELETE FROM symbols WHERE file_instance_id = ?", (file_instance_id,))
+
+        # 标记文件为已删除
+        self.conn.execute(
+            "UPDATE file_instances SET status = 'deleted', mtime = ? WHERE id = ?",
+            (time.time(), file_instance_id),
+        )
+
+        # 标记最新版本为已删除
+        cur = self.conn.execute(
+            "SELECT id FROM file_versions WHERE file_instance_id = ? AND is_current = 1",
+            (file_instance_id,),
+        )
+        latest = cur.fetchone()
+        if latest:
+            self.conn.execute(
+                "UPDATE file_versions SET is_deleted = 1 WHERE id = ?",
+                (latest["id"],),
+            )
+
+        self.conn.commit()
+        print(f"  已标记删除: {rel_path} (保留 {self._count_file_versions(file_instance_id)} 个历史版本)")
+
+
+    def _count_file_versions(self, file_instance_id: int) -> int:
+        """统计文件的历史版本数"""
+        cur = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM file_versions WHERE file_instance_id = ?",
+            (file_instance_id,),
+        )
+        return cur.fetchone()["cnt"]
+
+
+    def _infer_module_path(self, rel_path: str) -> str:
+        """从文件路径推断模块路径（简化版）"""
+        path = rel_path.replace("\\", "/")
+        if path.startswith("src/"):
+            path = path[4:]
+        if path.endswith(".rs"):
+            path = path[:-3]
+        if path.endswith("/mod"):
+            path = path[:-4]
+        if path == "lib":
+            return "lib"
+        if path == "main":
+            return "main"
+        return "lib::" + path.replace("/", "::")
+
+
+    def _collect_all_current_file_results(self) -> Dict[str, Dict[str, Any]]:
+        """收集所有当前版本的文件解析结果（用于调用关系解析）
+
+        从数据库加载已解析的结果，不重新解析文件。
+        """
+        results = {}
+
+        cur = self.conn.execute("""
+            SELECT fv.id as fv_id, fi.id as fi_id, fi.rel_path, fi.abs_path, fi.module_path
+            FROM file_versions fv
+            JOIN file_instances fi ON fv.file_instance_id = fi.id
+            WHERE fv.is_current = 1 AND fv.is_deleted = 0
+              AND fi.workspace_id = ?
+        """, (self._get_active_workspace_id(),))
+
+        for row in cur:
+            rel_path = row["rel_path"]
+            abs_path = row["abs_path"]
+            module_path = row["module_path"]
+            fi_id = row["fi_id"]
+            fv_id = row["fv_id"]
+
+            result = self._load_file_result_from_db(fi_id, fv_id, rel_path, abs_path, module_path)
+            if result:
+                results[rel_path] = result
+
+        return results
+
+    # --------------------------------------------------------------------
+    # 查询接口
+    # --------------------------------------------------------------------
+
+
