@@ -783,11 +783,11 @@ RAG 管道：基于调用链增强的代码库问答上下文组装。组装完�
 ```json
 {
   "mcpServers": {
-    "code-graph": {
+    "callwarden": {
       "command": "python",
-      "args": ["-m", "code_graph.server"],
+      "args": ["-m", "callwarden.server"],
       "env": {
-        "CODE_GRAPH_WORKSPACE": "/path/to/your/project"
+        "CALLWARDEN_WORKSPACE": "/path/to/your/project"
       }
     }
   }
@@ -799,12 +799,12 @@ RAG 管道：基于调用链增强的代码库问答上下文组装。组装完�
 ```json
 {
   "mcpServers": {
-    "code-graph": {
+    "callwarden": {
       "command": "python",
-      "args": ["-m", "code_graph.server"],
-      "cwd": "/path/to/code_graph/parent",
+      "args": ["-m", "callwarden.server"],
+      "cwd": "/path/to/callwarden/parent",
       "env": {
-        "CODE_GRAPH_WORKSPACE": "/path/to/your/project"
+        "CALLWARDEN_WORKSPACE": "/path/to/your/project"
       }
     }
   }
@@ -826,8 +826,8 @@ Client 配置指向 `http://localhost:<port>/sse`（默认端口由 FastMCP 决�
 
 | 变量 | 说明 |
 |------|------|
-| `CODE_GRAPH_WORKSPACE` | 默认工作区根路径 |
-| `CODE_GRAPH_DB_PATH` | 自定义数据库路径（覆盖默认 hash 路径） |
+| `CALLWARDEN_WORKSPACE` | 默认工作区根路径 |
+| `CALLWARDEN_DB_PATH` | 自定义数据库路径（覆盖默认 hash 路径） |
 
 ### 多容器共享部署
 
@@ -835,7 +835,7 @@ Client 配置指向 `http://localhost:<port>/sse`（默认端口由 FastMCP 决�
 # 1. 宿主机安装
 pip install tree-sitter tree-sitter-languages fastmcp
 
-# 2. 数据库放在 $HOME/.code_graph/（所有容器共享 $HOME）
+# 2. 数据库放在 $HOME/.callwarden/（所有容器共享 $HOME）
 # 3. 每个容器配置 MCP client 指向同一数据库路径
 ```
 

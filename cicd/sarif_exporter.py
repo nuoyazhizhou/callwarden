@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-# cicd 是 code_graph 的子包，需要回到上一级才能拿到 config
+# cicd 是 callwarden 的子包，需要回到上一级才能拿到 config
 from ..config import atomic_write_file
 
 
 # SARIF 工具元信息（驱动名称与版本）
-_TOOL_NAME = "code_graph"
+_TOOL_NAME = "callwarden"
 _TOOL_VERSION = "1.0"
 _SARIF_VERSION = "2.1.0"
 

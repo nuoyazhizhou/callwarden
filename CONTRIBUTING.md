@@ -21,8 +21,8 @@ callwarden/
 
 ```bash
 # 1. 克隆仓库
-git clone <repo-url>
-cd /path/to/callwarden
+git clone https://github.com/nuoyazhizhou/callwarden.git
+cd callwarden
 
 # 2. 安装开发依赖
 cw install --all

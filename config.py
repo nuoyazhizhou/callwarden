@@ -15,18 +15,18 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PACKAGES_DIR = os.path.dirname(SCRIPT_DIR)  # scripts/
 SRC_DIR = os.path.join(PACKAGES_DIR, "..", "src")
 
-# 数据库根目录：用户主目录下的 .code_graph/
+# 数据库根目录：用户主目录下的 .callwarden/
 USER_HOME = os.path.expanduser("~")
-CODE_GRAPH_DIR = os.path.join(USER_HOME, ".code_graph")
+CALLWARDEN_DIR = os.path.join(USER_HOME, ".callwarden")
 
 # 向后兼容的默认 DB_PATH（推荐使用 get_project_db_path 按项目隔离）
-DB_PATH = os.path.join(CODE_GRAPH_DIR, "code_graph.db")
+DB_PATH = os.path.join(CALLWARDEN_DIR, "callwarden.db")
 
 
 def get_project_db_path(project_root: str) -> str:
     """根据项目根路径生成项目级数据库路径（一个项目一个 SQLite 数据库）
 
-    路径格式: $HOME/.code_graph/16位hash/code_graph.db
+    路径格式: $HOME/.callwarden/16位hash/callwarden.db
 
     16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目的数据库隔离。
     这样每个数据库只包含一个项目的数据，体积小、查询快、互不干扰。
@@ -42,15 +42,15 @@ def get_project_db_path(project_root: str) -> str:
     norm_root = norm_path(abs_root)
     # 计算项目路径的 SHA-256 前 16 位作为目录名
     path_hash = hashlib.sha256(norm_root.encode("utf-8")).hexdigest()[:16]
-    project_dir = os.path.join(CODE_GRAPH_DIR, path_hash)
+    project_dir = os.path.join(CALLWARDEN_DIR, path_hash)
     os.makedirs(project_dir, exist_ok=True)
-    return os.path.join(project_dir, "code_graph.db")
+    return os.path.join(project_dir, "callwarden.db")
 
 
-def ensure_code_graph_dir() -> str:
+def ensure_callwarden_dir() -> str:
     """确保数据库根目录存在，返回目录路径"""
-    os.makedirs(CODE_GRAPH_DIR, exist_ok=True)
-    return CODE_GRAPH_DIR
+    os.makedirs(CALLWARDEN_DIR, exist_ok=True)
+    return CALLWARDEN_DIR
 
 
 def atomic_write_file(file_path: str, content: str, encoding: str = "utf-8") -> None:

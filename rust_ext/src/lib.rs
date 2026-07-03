@@ -1,10 +1,10 @@
-//! Code Graph Core — PyO3 高性能扩展
+//! Call Warden Core — PyO3 高性能扩展
 //!
 //! 提供 Python 侧的性能热点加速：
 //! - batch_cosine_similarity: 批量余弦相似度（替代 numpy 逐向量循环）
 //!
 //! 构建方式（需 Rust 工具链 + maturin）:
-//!   cd scripts/code_graph/rust_ext
+//!   cd callwarden/rust_ext
 //!   pip install maturin
 //!   maturin develop --release
 //!
@@ -52,7 +52,7 @@ fn batch_cosine_similarity<'py>(
 
 /// 注册 Python 模块
 #[pymodule]
-fn code_graph_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
     Ok(())
 }

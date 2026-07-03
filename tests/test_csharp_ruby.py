@@ -18,7 +18,7 @@ import os
 import sys
 import tempfile
 
-# 确保能导入 code_graph 包
+# 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -111,7 +111,7 @@ end
 def test_language_detection():
     """测试 1：语言检测（.cs / .rb 扩展名）"""
     print("--- 测试 1：语言检测 ---")
-    from code_graph.config import detect_language_from_path
+    from callwarden.config import detect_language_from_path
 
     assert detect_language_from_path("test.cs") == "csharp", ".cs 应识别为 csharp"
     assert detect_language_from_path("test.rb") == "ruby", ".rb 应识别为 ruby"
@@ -126,7 +126,7 @@ def test_language_detection():
 def test_create_parser_factory():
     """测试 2：create_parser 工厂分发"""
     print("--- 测试 2：create_parser 工厂 ---")
-    from code_graph.parsers import CSharpParser, RubyParser, create_parser
+    from callwarden.parsers import CSharpParser, RubyParser, create_parser
 
     p_cs = create_parser("Program.cs")
     p_rb = create_parser("app.rb")
@@ -144,7 +144,7 @@ def test_create_parser_factory():
 def test_csharp_parser():
     """测试 3：C# 解析（命名空间、类、接口、方法、构造方法、属性、using、调用）"""
     print("--- 测试 3：C# 解析 ---")
-    from code_graph.parsers import CSharpParser
+    from callwarden.parsers import CSharpParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".cs", delete=False, encoding="utf-8") as f:
         f.write(C_SHARP_SAMPLE)
@@ -227,7 +227,7 @@ def test_csharp_parser():
 def test_ruby_parser():
     """测试 4：Ruby 解析（module、class、方法、require、调用）"""
     print("--- 测试 4：Ruby 解析 ---")
-    from code_graph.parsers import RubyParser
+    from callwarden.parsers import RubyParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".rb", delete=False, encoding="utf-8") as f:
         f.write(RUBY_SAMPLE)
@@ -302,8 +302,8 @@ def test_ruby_parser():
 def test_install_script():
     """测试 5：install.py 一键安装器核心组件"""
     print("--- 测试 5：install.py 安装器 ---")
-    from code_graph.install import (
-        CodeGraphInstaller, PackageSpec,
+    from callwarden.install import (
+        CallWardenInstaller, PackageSpec,
         CORE_PACKAGES, SUPPORTED_LANGUAGE_PACKAGES,
         EXTENDED_LANGUAGE_PACKAGES, OPTIONAL_PACKAGES,
     )
@@ -329,7 +329,7 @@ def test_install_script():
         assert spec.description, f"{spec} 缺 description"
 
     # 验证 installer 实例化
-    installer = CodeGraphInstaller()
+    installer = CallWardenInstaller()
     assert installer.result.total == 0
     assert installer.result.installed == 0
 
@@ -352,7 +352,7 @@ def test_db_build_integration():
     print("--- 测试 6：db_build 工厂集成 ---")
     # 验证 db_build._parse_one 函数中包含 C# / Ruby 分支
     import inspect
-    from code_graph.db import db_build
+    from callwarden.db import db_build
 
     source = inspect.getsource(db_build)
     assert "CSharpParser" in source, "db_build 应引用 CSharpParser"

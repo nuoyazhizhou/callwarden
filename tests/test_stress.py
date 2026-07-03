@@ -18,10 +18,10 @@ import tempfile
 import time
 import random
 
-# 确保能导入 code_graph 包
+# 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from code_graph.db import CodeGraphDB
+from callwarden.db import CodeGraphDB
 
 # ============================================
 # 测试规模常量
@@ -45,7 +45,7 @@ def setup_database():
     Returns:
         (db, db_path, tmpdir, ws_id) 元组
     """
-    tmpdir = tempfile.mkdtemp(prefix="code_graph_stress_")
+    tmpdir = tempfile.mkdtemp(prefix="callwarden_stress_")
     db_path = os.path.join(tmpdir, "stress_test.db")
     db = CodeGraphDB(db_path)
 

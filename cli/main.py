@@ -59,7 +59,7 @@ _SUBCOMMAND_HELP = """代码守护者架构子命令（四大支柱）:
     defect stats                                        缺陷知识库统计
     defect build                                        构建缺陷知识库
 
-  代码图谱 GC（类 Java GC，归档被 .gitignore/.codegraphignore 命中的文件）:
+  代码图谱 GC（类 Java GC，归档被 .gitignore/.callwardenignore 命中的文件）:
     gc archive [--force] [--dry-run]                    归档被 ignore 命中的文件
     gc restore [--path <path> ...] [--force]            复活已归档文件
     gc status                                           查看 GC 状态（活跃/归档/删除统计）
@@ -155,7 +155,7 @@ def _dispatch_subcommand(argv, db):
 
 def _handle_guardrail(args, db):
     """处理 guardrail 子命令（安全护栏）"""
-    parser = argparse.ArgumentParser(prog="cg guardrail", description="生产安全护栏")
+    parser = argparse.ArgumentParser(prog="cw guardrail", description="生产安全护栏")
     sub = parser.add_subparsers(dest="action", required=True)
 
     scan_p = sub.add_parser("scan", help="扫描安全护栏违规")
@@ -231,7 +231,7 @@ def _handle_guardrail(args, db):
 
 def _handle_impact(args, db):
     """处理 impact 子命令（变更影响半径）"""
-    parser = argparse.ArgumentParser(prog="cg impact", description="变更影响半径分析")
+    parser = argparse.ArgumentParser(prog="cw impact", description="变更影响半径分析")
     parser.add_argument("symbol_hash", help="源符号 hash")
     parser.add_argument("--depth", type=int, default=3, help="BFS 遍历最大深度（默认 3）")
 
@@ -282,7 +282,7 @@ def _handle_impact(args, db):
 
 def _handle_review(args, db):
     """处理 review 子命令（审查就绪报告）"""
-    parser = argparse.ArgumentParser(prog="cg review", description="审查就绪报告")
+    parser = argparse.ArgumentParser(prog="cw review", description="审查就绪报告")
     parser.add_argument("symbol_hash", help="源符号 hash")
 
     opts = parser.parse_args(args)
@@ -349,7 +349,7 @@ def _handle_review(args, db):
 
 def _handle_evolution(args, db):
     """处理 evolution 子命令（函数变更频率）"""
-    parser = argparse.ArgumentParser(prog="cg evolution", description="函数变更频率查询")
+    parser = argparse.ArgumentParser(prog="cw evolution", description="函数变更频率查询")
     parser.add_argument("qualified_name", help="函数限定名")
     parser.add_argument("--window", default="", help="时间窗口（如 30d/90d/1y）")
 
@@ -415,7 +415,7 @@ def _handle_evolution(args, db):
 
 def _handle_hotspot(args, db):
     """处理 hotspot 子命令（热点函数排名）"""
-    parser = argparse.ArgumentParser(prog="cg hotspot", description="热点函数排名")
+    parser = argparse.ArgumentParser(prog="cw hotspot", description="热点函数排名")
     parser.add_argument("--module", default="", help="模块路径前缀过滤")
     parser.add_argument("--limit", type=int, default=20, help="显示数量（默认 20）")
 
@@ -461,7 +461,7 @@ def _handle_hotspot(args, db):
 
 def _handle_churn(args, db):
     """处理 churn 子命令（代码流失分析）"""
-    parser = argparse.ArgumentParser(prog="cg churn", description="代码流失（churn）分析")
+    parser = argparse.ArgumentParser(prog="cw churn", description="代码流失（churn）分析")
     parser.add_argument("--module", default="", help="模块路径前缀过滤")
     parser.add_argument("--window", default="90d", help="时间窗口（默认 90d）")
 
@@ -519,7 +519,7 @@ def _handle_churn(args, db):
 
 def _handle_defect(args, db):
     """处理 defect 子命令（缺陷知识库）"""
-    parser = argparse.ArgumentParser(prog="cg defect", description="缺陷知识库")
+    parser = argparse.ArgumentParser(prog="cw defect", description="缺陷知识库")
     sub = parser.add_subparsers(dest="action", required=True)
 
     search_p = sub.add_parser("search", help="搜索缺陷模式")
@@ -557,7 +557,7 @@ def _handle_defect(args, db):
         print()
 
         if not patterns:
-            cprint("  (无匹配模式，请先运行 'cg defect build' 构建知识库)", "dim")
+            cprint("  (无匹配模式，请先运行 'cw defect build' 构建知识库)", "dim")
         else:
             shown = patterns[:opts.limit]
             sev_icon = {"error": "[!]", "warning": "[~]", "info": "[i]"}
@@ -671,7 +671,7 @@ def _handle_defect(args, db):
                     print(f"        {desc}")
             print()
         else:
-            cprint("  (知识库为空，请先运行 'cg defect build' 构建)", "yellow")
+            cprint("  (知识库为空，请先运行 'cw defect build' 构建)", "yellow")
 
     elif opts.action == "build":
         cprint("构建缺陷知识库...", "cyan")
@@ -699,7 +699,7 @@ def _handle_defect(args, db):
 
 def _handle_task(args, db):
     """处理 task 子命令（任务管理：create/next/report/rollback）"""
-    parser = argparse.ArgumentParser(prog="cg task", description="任务管理")
+    parser = argparse.ArgumentParser(prog="cw task", description="任务管理")
     sub = parser.add_subparsers(dest="action", required=True)
 
     # create：创建任务和步骤
@@ -893,7 +893,7 @@ def _handle_task(args, db):
 
 def _handle_vuln_blast(args, db):
     """处理 vuln-blast 子命令（漏洞爆炸半径分析）"""
-    parser = argparse.ArgumentParser(prog="cg vuln-blast", description="漏洞爆炸半径分析")
+    parser = argparse.ArgumentParser(prog="cw vuln-blast", description="漏洞爆炸半径分析")
     parser.add_argument("--finding-id", type=int, default=0,
                         help="指定 Semgrep finding ID（默认扫描全部）")
     parser.add_argument("--severity", default="",
@@ -977,7 +977,7 @@ def _handle_vuln_blast(args, db):
 
 def _handle_symbol_history(args, db):
     """处理 symbol-history 子命令（符号 Git 变更历史）"""
-    parser = argparse.ArgumentParser(prog="cg symbol-history", description="符号 Git 变更历史")
+    parser = argparse.ArgumentParser(prog="cw symbol-history", description="符号 Git 变更历史")
     parser.add_argument("symbol_hash", help="符号内容 hash")
     parser.add_argument("--limit", type=int, default=20, help="返回数量限制（默认 20）")
 
@@ -1027,10 +1027,10 @@ def _handle_check_gate(args, db):
     """处理 check-gate 子命令（手动运行检查门禁）
 
     用法:
-      cg check-gate <task_id>              检查任务关联的变更文件
-      cg check-gate <task_id> --resolve    标记门禁发现为已解决
+      cw check-gate <task_id>              检查任务关联的变更文件
+      cw check-gate <task_id> --resolve    标记门禁发现为已解决
     """
-    parser = argparse.ArgumentParser(prog="cg check-gate", description="检查门禁（F6）")
+    parser = argparse.ArgumentParser(prog="cw check-gate", description="检查门禁（F6）")
     parser.add_argument("task_id", help="任务 ID")
     parser.add_argument("--resolve", action="store_true",
                         help="标记该任务的门禁发现为已解决（Agent 修复后调用）")
@@ -1093,7 +1093,7 @@ def _handle_test_impact(args, db):
     通过反向调用链 BFS，找到所有直接和间接调用该函数的测试函数。
     """
     parser = argparse.ArgumentParser(
-        prog="cg test-impact", description="测试影响选择"
+        prog="cw test-impact", description="测试影响选择"
     )
     parser.add_argument("qualified_name", help="被修改函数的限定名")
     opts = parser.parse_args(args)
@@ -1124,12 +1124,12 @@ def _handle_test_impact(args, db):
 
 
 # --------------------------------------------------------------------
-# 代码图谱 GC 子命令（归档被 .gitignore/.codegraphignore 命中的文件）
+# 代码图谱 GC 子命令（归档被 .gitignore/.callwardenignore 命中的文件）
 # --------------------------------------------------------------------
 
 def _handle_gc(args, db):
     """处理 gc 子命令（代码图谱 GC）"""
-    parser = argparse.ArgumentParser(prog="cg gc", description="代码图谱 GC（归档/复活/清除被 ignore 的文件）")
+    parser = argparse.ArgumentParser(prog="cw gc", description="代码图谱 GC（归档/复活/清除被 ignore 的文件）")
     sub = parser.add_subparsers(dest="action", required=True)
 
     # gc archive
@@ -1333,7 +1333,7 @@ def create_parser() -> argparse.ArgumentParser:
 def main():
     """CLI 主入口函数"""
     # 代码守护者架构子命令拦截（四大支柱）
-    # 子命令格式: cg <subcommand> [options]，如 cg defect stats
+    # 子命令格式: cw <subcommand> [options]，如 cw defect stats
     if len(sys.argv) > 1 and sys.argv[1] in _SUBCOMMANDS:
         _run_subcommand_mode()
         return
@@ -1520,7 +1520,7 @@ def main():
             print(f"    {get_msg('status_calls_cross', default='跨文件')}: {ca['cross_file']}")
             print()
             if status["needs_rebuild"]:
-                print(f"  ⚠ {get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cg --init 增量更新')}")
+                print(f"  ⚠ {get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cw --init 增量更新')}")
             else:
                 print(f"  {get_msg('status_up_to_date', default='✓ 代码图谱已是最新')}")
             print()

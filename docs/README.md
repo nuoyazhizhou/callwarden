@@ -70,7 +70,7 @@ cw --call-chain "module::function_name"
 数据库按项目隔离，路径格式：
 
 ```
-$HOME/.code_graph/<16位hash>/code_graph.db
+$HOME/.callwarden/<16位hash>/callwarden.db
 ```
 
 其中 16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目的数据库互不干扰。详见 [架构设计](architecture.md#数据库架构)。

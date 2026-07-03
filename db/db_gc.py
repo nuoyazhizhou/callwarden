@@ -6,7 +6,7 @@ db_gc.py
 
 类 Java GC 的分代回收机制：
 - 新生代（Young Gen）= file_instances 中 status='active'/'pending' 的活跃文件
-- 老年代（Old Gen）= archived_files 表，被 .gitignore/.codegraphignore 命中的文件迁入
+- 老年代（Old Gen）= archived_files 表，被 .gitignore/.callwardenignore 命中的文件迁入
 - GC 触发点：build 完成后自动调用 gc_archive（类 Young GC）
 - Full GC：手动调用 gc_archive(force=True) 完整扫描所有已入库文件
 - 复活（Promotion Demotion）：取消 ignore 后调用 gc_restore 把文件迁回主表
@@ -74,7 +74,7 @@ class GCMixin:
         合并规则来源（按优先级，后者覆盖前者）：
         1. 默认硬编码规则（DEFAULT_IGNORE_RULES）
         2. workspace 根目录的 .gitignore
-        3. workspace 根目录的 .codegraphignore
+        3. workspace 根目录的 .callwardenignore
         4. 子目录的 .gitignore（按路径深度应用）
 
         Returns:
@@ -83,7 +83,7 @@ class GCMixin:
         matcher = IgnoreMatcher(self.workspace_root)
         # 默认规则作为基线
         matcher.add_default_rules(DEFAULT_IGNORE_RULES)
-        # 加载 workspace 的 .gitignore / .codegraphignore
+        # 加载 workspace 的 .gitignore / .callwardenignore
         matcher.load_workspace_ignores()
         return matcher
 
@@ -272,7 +272,7 @@ class GCMixin:
     def gc_restore(self, rel_paths: List[str] = None, force: bool = False) -> Dict[str, Any]:
         """复活已归档文件（类 GC demotion，老年代降回新生代）
 
-        当 .gitignore / .codegraphignore 中的规则被移除后，调用此方法把归档文件迁回主表。
+        当 .gitignore / .callwardenignore 中的规则被移除后，调用此方法把归档文件迁回主表。
         复活后 status='pending'，下次 build 会自动重新解析重建 symbols/calls。
 
         Args:

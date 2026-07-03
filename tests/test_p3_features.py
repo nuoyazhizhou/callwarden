@@ -15,7 +15,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from code_graph.db import CodeGraphDB
+from callwarden.db import CodeGraphDB
 
 
 # ================================================================
@@ -35,7 +35,7 @@ def test_cr1_method_existence():
 def test_cr1_schema_v13():
     """CR1.2: 验证 Schema v13 包含 cross_repo_deps 表"""
     print("--- CR1.2: Schema v13 验证 ---")
-    from code_graph.db.schema import SCHEMA_SQL, SCHEMA_VERSION
+    from callwarden.db.schema import SCHEMA_SQL, SCHEMA_VERSION
     assert SCHEMA_VERSION >= 13, f"SCHEMA_VERSION 应 >= 13，实际 {SCHEMA_VERSION}"
     assert "cross_repo_deps" in SCHEMA_SQL, "SCHEMA_SQL 应包含 cross_repo_deps 表定义"
     assert "idx_cross_repo_source" in SCHEMA_SQL, "应包含 idx_cross_repo_source 索引"
@@ -376,7 +376,7 @@ def test_lsp1_completion_graceful():
 def test_lsp1_path_uri_conversion():
     """LSP1.8: 验证路径 ↔ URI 转换工具方法"""
     print("--- LSP1.8: 路径 ↔ URI 转换验证 ---")
-    from code_graph.db.db_lsp import LspMixin
+    from callwarden.db.db_lsp import LspMixin
 
     # 路径转 URI
     uri = LspMixin._path_to_uri("C:\\git_work\\callwarden\\test.py")

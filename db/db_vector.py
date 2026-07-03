@@ -20,10 +20,10 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 # Rust/PyO3 扩展加载（可选，失败时回退到 numpy 向量化）
-# 优先级: code_graph_core.batch_cosine_similarity > numpy 批量运算 > 纯 Python 循环
+# 优先级: callwarden_core.batch_cosine_similarity > numpy 批量运算 > 纯 Python 循环
 _rust_core = None
 try:
-    import code_graph_core as _rust_core  # type: ignore
+    import callwarden_core as _rust_core  # type: ignore
 except ImportError:
     _rust_core = None  # Rust 扩展未编译，使用 numpy 回退
 
@@ -36,7 +36,7 @@ def _batch_cosine(
 ) -> List[Tuple[str, float]]:
     """批量计算余弦相似度（F8 向量化优化）
 
-    优先使用 Rust/PyO3 扩展（code_graph_core.batch_cosine_similarity），
+    优先使用 Rust/PyO3 扩展（callwarden_core.batch_cosine_similarity），
     回退到 numpy 矩阵运算（10-100x 加速于逐向量 Python 循环）。
 
     Args:
@@ -567,7 +567,7 @@ class VectorMixin:
 
         补齐 200 仓库对比中的 P0 RAG 缺失。与 Sourcegraph Cody / Continue.dev 的差异：
         - 它们：纯向量检索 + 代码片段拼接
-        - code_graph：语义搜索 + 调用链上下文 + 摘要 + 缺陷/所有权元信息增强
+        - callwarden：语义搜索 + 调用链上下文 + 摘要 + 缺陷/所有权元信息增强
 
         实现思路：
         1. 用 semantic_search 找到与问题最相关的 top_k 个函数

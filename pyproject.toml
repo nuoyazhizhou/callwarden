@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "callwarden"
+version = "0.2.0"
+description = "Call Warden - AI Agent 的代码知识图谱工具，多语言代码分析、版本管理、缺陷检测"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [
+    { name = "Call Warden Team" }
+]
+keywords = ["code-analysis", "call-graph", "tree-sitter", "mcp", "semgrep", "ai-agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+[project.scripts]
+cw = "callwarden.cw:main"
+
+[project.optional-dependencies]
+all = [
+    "tree-sitter>=0.21",
+    "tree-sitter-languages>=1.10",
+    "tree-sitter-rust>=0.21",
+    "tree-sitter-typescript>=0.21",
+    "tree-sitter-python>=0.21",
+    "tree-sitter-kotlin>=0.21",
+    "tree-sitter-go>=0.21",
+    "tree-sitter-java>=0.21",
+    "tree-sitter-c>=0.21",
+    "tree-sitter-cpp>=0.21",
+    "tree-sitter-javascript>=0.21",
+    "tree-sitter-c-sharp>=0.21",
+    "tree-sitter-ruby>=0.21",
+    "tree-sitter-php>=0.22",
+    "tree-sitter-swift>=0.5",
+    "tree-sitter-scala>=0.23",
+    "tree-sitter-hcl>=1.0",
+    "tree-sitter-elixir>=0.3",
+    "fastmcp>=0.8",
+    "watchdog>=6.0.0",
+    "semgrep>=1.50",
+    "sentence-transformers>=2.2",
+    "sqlite-vec>=0.1",
+    "numpy>=1.24",
+]
+core = [
+    "tree-sitter>=0.21",
+    "tree-sitter-languages>=1.10",
+    "fastmcp>=0.8",
+    "watchdog>=6.0.0",
+]
+semgrep = ["semgrep>=1.50"]
+vector = [
+    "sentence-transformers>=2.2",
+    "sqlite-vec>=0.1",
+    "numpy>=1.24",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
+    "build>=1.0",
+    "twine>=5.0",
+]
+
+[tool.setuptools]
+package-dir = { "callwarden" = "." }
+packages = [
+    "callwarden",
+    "callwarden.analyzers",
+    "callwarden.cicd",
+    "callwarden.cli",
+    "callwarden.db",
+    "callwarden.i18n",
+    "callwarden.parsers",
+    "callwarden.server",
+]
+
+[tool.setuptools.package-data]
+callwarden = [
+    "i18n/*.json",
+]

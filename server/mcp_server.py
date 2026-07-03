@@ -12,7 +12,7 @@ import os
 import sys
 from typing import Optional
 
-# 确保可以导入 code_graph 模块
+# 确保可以导入 callwarden 模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
@@ -62,7 +62,7 @@ def create_mcp_server():
         print("错误: fastmcp 未安装。请运行: pip install fastmcp", file=sys.stderr)
         sys.exit(1)
 
-    mcp = FastMCP("code-graph", dependencies=["code_graph"])
+    mcp = FastMCP("callwarden", dependencies=["callwarden"])
 
     # ----------------------------------------------------------------
     # 查询类工具

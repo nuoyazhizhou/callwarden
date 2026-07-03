@@ -103,7 +103,7 @@ cd /path/to/your/project
 cw --init
 ```
 
-数据库将创建在 `$HOME/.code_graph/<16位hash>/code_graph.db`。
+数据库将创建在 `$HOME/.callwarden/<16位hash>/callwarden.db`。
 
 ### 6. （可选）编译 Rust 扩展
 
@@ -131,12 +131,12 @@ docker build -t call-warden:latest -f docs/Dockerfile .
 ### 2. 运行容器（CLI 模式）
 
 ```bash
-# 挂载项目目录和 $HOME/.code_graph（数据库持久化）
+# 挂载项目目录和 $HOME/.callwarden（数据库持久化）
 docker run --rm \
   -v /path/to/your/project:/workspace \
-  -v $HOME/.code_graph:/root/.code_graph \
+  -v $HOME/.callwarden:/root/.callwarden \
   -w /workspace \
-  code-graph:latest --init
+  call-warden:latest --init
 ```
 
 ### 3. 运行容器（MCP Server 模式）
@@ -144,10 +144,10 @@ docker run --rm \
 ```bash
 docker run --rm \
   -v /path/to/your/project:/workspace \
-  -v $HOME/.code_graph:/root/.code_graph \
+  -v $HOME/.callwarden:/root/.callwarden \
   -w /workspace \
-  -e CODE_GRAPH_WORKSPACE=/workspace \
-  code-graph:latest server
+  -e CALLWARDEN_WORKSPACE=/workspace \
+  call-warden:latest server
 ```
 
 ### 4. 多容器共享部署
@@ -156,20 +156,20 @@ Call Warden 支持多容器共享同一个数据库：
 
 ```bash
 # 宿主机安装一次（或用容器）
-# 数据库放在 $HOME/.code_graph/（所有容器共享挂载）
+# 数据库放在 $HOME/.callwarden/（所有容器共享挂载）
 # 每个容器配置 MCP client 指向同一个数据库路径
 
 # 容器 A：构建图谱
 docker run --rm \
   -v /path/to/project-a:/workspace \
-  -v $HOME/.code_graph:/root/.code_graph \
-  code-graph:latest --init
+  -v $HOME/.callwarden:/root/.callwarden \
+  call-warden:latest --init
 
 # 容器 B：查询（共享数据库）
 docker run --rm \
   -v /path/to/project-a:/workspace \
-  -v $HOME/.code_graph:/root/.code_graph \
-  code-graph:latest --search "login"
+  -v $HOME/.callwarden:/root/.callwarden \
+  call-warden:latest --search "login"
 ```
 
 > SQLite WAL 模式支持多读者单写者，写入自动排队，多进程安全。
@@ -185,11 +185,11 @@ docker run --rm \
 ```json
 {
   "mcpServers": {
-    "code-graph": {
+    "callwarden": {
       "command": "python",
-      "args": ["-m", "code_graph.server"],
+      "args": ["-m", "callwarden.server"],
       "env": {
-        "CODE_GRAPH_WORKSPACE": "/path/to/your/project"
+        "CALLWARDEN_WORKSPACE": "/path/to/your/project"
       }
     }
   }
@@ -201,12 +201,12 @@ docker run --rm \
 ```json
 {
   "mcpServers": {
-    "code-graph": {
+    "callwarden": {
       "command": "python",
-      "args": ["-m", "code_graph.server"],
+      "args": ["-m", "callwarden.server"],
       "cwd": "/path/to/callwarden",
       "env": {
-        "CODE_GRAPH_WORKSPACE": "/path/to/your/project"
+        "CALLWARDEN_WORKSPACE": "/path/to/your/project"
       }
     }
   }
@@ -218,14 +218,14 @@ docker run --rm \
 ```json
 {
   "mcpServers": {
-    "code-graph": {
+    "callwarden": {
       "command": "docker",
       "args": [
         "run", "--rm",
         "-v", "/path/to/your/project:/workspace",
-        "-v", "/path/to/.code_graph:/root/.code_graph",
+        "-v", "/path/to/.callwarden:/root/.callwarden",
         "-w", "/workspace",
-        "code-graph:latest", "server"
+        "call-warden:latest", "server"
       ]
     }
   }
@@ -252,15 +252,15 @@ MCP Server 启动后，可通过工具切换工作区：
 mcp.call_tool("set_active_workspace", {"workspace_id_or_name": "my_project"})
 ```
 
-或启动时通过环境变量 `CODE_GRAPH_WORKSPACE` 指定默认工作区。
+或启动时通过环境变量 `CALLWARDEN_WORKSPACE` 指定默认工作区。
 
 ## 环境变量
 
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
-| `CODE_GRAPH_WORKSPACE` | 默认工作区根路径 | 自动检测当前目录 |
-| `CODE_GRAPH_DB_PATH` | 自定义数据库路径 | `$HOME/.code_graph/<hash>/code_graph.db` |
-| `HOME` | 用户主目录（决定 `.code_graph` 位置） | 系统默认 |
+| `CALLWARDEN_WORKSPACE` | 默认工作区根路径 | 自动检测当前目录 |
+| `CALLWARDEN_DB_PATH` | 自定义数据库路径 | `$HOME/.callwarden/<hash>/callwarden.db` |
+| `HOME` | 用户主目录（决定 `.callwarden` 位置） | 系统默认 |
 
 ## 数据库备份与恢复
 
@@ -270,13 +270,13 @@ SQLite 数据库是单文件，备份简单：
 
 ```bash
 # 方法 1：直接复制（确保没有写入操作进行中）
-cp $HOME/.code_graph/<hash>/code_graph.db backup_$(date +%Y%m%d).db
+cp $HOME/.callwarden/<hash>/callwarden.db backup_$(date +%Y%m%d).db
 
 # 方法 2：使用 .backup 命令（在线备份，推荐）
-sqlite3 $HOME/.code_graph/<hash>/code_graph.db ".backup backup_$(date +%Y%m%d).db"
+sqlite3 $HOME/.callwarden/<hash>/callwarden.db ".backup backup_$(date +%Y%m%d).db"
 
-# 方法 3：备份整个 .code_graph 目录
-tar -czf code_graph_backup_$(date +%Y%m%d).tar.gz -C $HOME .code_graph/
+# 方法 3：备份整个 .callwarden 目录
+tar -czf callwarden_backup_$(date +%Y%m%d).tar.gz -C $HOME .callwarden/
 ```
 
 ### 恢复
@@ -284,14 +284,14 @@ tar -czf code_graph_backup_$(date +%Y%m%d).tar.gz -C $HOME .code_graph/
 ```bash
 # 停止所有 Call Warden 进程
 # 恢复数据库
-cp backup_20260101.db $HOME/.code_graph/<hash>/code_graph.db
+cp backup_20260101.db $HOME/.callwarden/<hash>/callwarden.db
 ```
 
 ### 自动备份（可选）
 
 ```bash
 # 添加到 crontab，每天凌晨 3 点备份
-0 3 * * * sqlite3 $HOME/.code_graph/*/code_graph.db ".backup '/backups/cg_$(date +\%Y\%m\%d).db'"
+0 3 * * * sqlite3 $HOME/.callwarden/*/callwarden.db ".backup '/backups/cw_$(date +\%Y\%m\%d).db'"
 ```
 
 ## 升级指南
@@ -318,7 +318,7 @@ cw --status    # 自动迁移并显示状态
 
 ```bash
 # 1. 备份数据库
-sqlite3 $HOME/.code_graph/<hash>/code_graph.db ".backup '/tmp/cg_backup.db'"
+sqlite3 $HOME/.callwarden/<hash>/callwarden.db ".backup '/tmp/cw_backup.db'"
 
 # 2. 拉取新代码
 cd callwarden
@@ -342,18 +342,18 @@ cw --init
 ```bash
 # 1. 备份
 docker run --rm \
-  -v $HOME/.code_graph:/root/.code_graph \
-  code-graph:latest \
-  sh -c "sqlite3 /root/.code_graph/*/code_graph.db '.backup /root/.code_graph/backup.db'"
+  -v $HOME/.callwarden:/root/.callwarden \
+  call-warden:latest \
+  sh -c "sqlite3 /root/.callwarden/*/callwarden.db '.backup /root/.callwarden/backup.db'"
 
 # 2. 拉取新镜像
-docker pull code-graph:latest
+docker pull call-warden:latest
 
 # 3. 运行（自动迁移）
 docker run --rm \
   -v /path/to/project:/workspace \
-  -v $HOME/.code_graph:/root/.code_graph \
-  code-graph:latest --status
+  -v $HOME/.callwarden:/root/.callwarden \
+  call-warden:latest --status
 ```
 
 ## 故障排查
@@ -362,24 +362,24 @@ docker run --rm \
 
 ```bash
 # 查看锁状态
-sqlite3 $HOME/.code_graph/<hash>/code_graph.db "PRAGMA journal_mode;"
+sqlite3 $HOME/.callwarden/<hash>/callwarden.db "PRAGMA journal_mode;"
 
 # WAL 模式下不应有锁定问题，如遇到：
 # 1. 确保没有多个写入进程
 # 2. 删除 -wal 和 -shm 文件（停止所有进程后）
-rm $HOME/.code_graph/<hash>/code_graph.db-wal
-rm $HOME/.code_graph/<hash>/code_graph.db-shm
+rm $HOME/.callwarden/<hash>/callwarden.db-wal
+rm $HOME/.callwarden/<hash>/callwarden.db-shm
 ```
 
 ### 数据库损坏
 
 ```bash
 # 尝试修复
-sqlite3 $HOME/.code_graph/<hash>/code_graph.db ".recover" > recovered.sql
+sqlite3 $HOME/.callwarden/<hash>/callwarden.db ".recover" > recovered.sql
 sqlite3 new.db < recovered.sql
 
 # 或从备份恢复
-cp backup.db $HOME/.code_graph/<hash>/code_graph.db
+cp backup.db $HOME/.callwarden/<hash>/callwarden.db
 ```
 
 ### Semgrep 不可用

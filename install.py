@@ -113,8 +113,8 @@ class InstallResult:
     failed_packages: List[str] = field(default_factory=list)
 
 
-class CodeGraphInstaller:
-    """Code Graph 级联安装器"""
+class CallWardenInstaller:
+    """Call Warden 级联安装器"""
 
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
@@ -133,7 +133,7 @@ class CodeGraphInstaller:
             languages_only: 若指定，只安装这些语言的 grammar（不装核心包）
         """
         print("=" * 60)
-        print("Code Graph 一键安装")
+        print("Call Warden 一键安装")
         print("=" * 60)
         print()
 
@@ -183,7 +183,7 @@ class CodeGraphInstaller:
     def check_status(self) -> None:
         """仅检查依赖状态，不安装"""
         print("=" * 60)
-        print("Code Graph 依赖状态检查")
+        print("Call Warden 依赖状态检查")
         print("=" * 60)
         print()
 
@@ -360,7 +360,7 @@ def main():
 
     args = parser.parse_args()
 
-    installer = CodeGraphInstaller(verbose=args.verbose)
+    installer = CallWardenInstaller(verbose=args.verbose)
 
     if args.check:
         installer.check_status()

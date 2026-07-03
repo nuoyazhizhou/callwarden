@@ -544,7 +544,7 @@ CREATE INDEX IF NOT EXISTS idx_cross_repo_type ON cross_repo_deps(dependency_typ
 -- ============================================
 -- v14: 归档表（类 Java GC 老年代）
 -- ============================================
--- 当文件被 .gitignore / .codegraphignore 命中时，从主表迁出到此表。
+-- 当文件被 .gitignore / .callwardenignore 命中时，从主表迁出到此表。
 -- 保留原 file_instance_id 和符号快照，便于取消 ignore 后复活（类 GC promotion/demotion）。
 -- archived_files 与 file_instances 一对一：归档时 file_instances.status='archived'，
 -- 同时把当时的 symbols/calls 快照迁到 archived_symbols/archived_calls（按需，当前仅记元数据）。
@@ -580,7 +580,7 @@ CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_has
 # v11: Token 节省账本表（token_savings_ledger，记录每次 Agent 操作的 token 节省）
 # v12: 安全文件编辑审计表（file_edit_audit，propose_edit 安全编辑流水线）
 # v13: 跨仓库分析表（cross_repo_deps，跨仓库依赖关系）
-# v14: 归档表（archived_files，被 .gitignore/.codegraphignore 命中的文件迁出主表，类 Java GC 老年代）
+# v14: 归档表（archived_files，被 .gitignore/.callwardenignore 命中的文件迁出主表，类 Java GC 老年代）
 SCHEMA_VERSION = 14
 
 

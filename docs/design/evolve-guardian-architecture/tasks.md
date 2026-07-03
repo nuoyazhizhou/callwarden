@@ -76,15 +76,15 @@
   - [x] SubTask 10.4: 在 mcp_server.py 中添加缺陷知识库类 4 个工具（defect_search / defect_suggest_fix / defect_learn / defect_stats）
 
 - [x] Task 11: CLI 命令注册
-  - [x] SubTask 11.1: 添加 `cg guardrail scan [--file <path>] [--category <cat>]` 命令
-  - [x] SubTask 11.2: 添加 `cg guardrail rules [--category <cat>]` 命令
-  - [x] SubTask 11.3: 添加 `cg impact <symbol> [--depth N]` 命令
-  - [x] SubTask 11.4: 添加 `cg evolution <symbol> [--window 30d]` 命令
-  - [x] SubTask 11.5: 添加 `cg hotspot [--module <path>]` 命令
-  - [x] SubTask 11.6: 添加 `cg defect search [--category <cat>]` 命令
-  - [x] SubTask 11.7: 添加 `cg defect suggest <symbol> <finding_id>` 命令
-  - [x] SubTask 11.8: 添加 `cg defect learn <commit_hash>` 命令
-  - [x] SubTask 11.9: 添加 `cg defect stats` 命令
+  - [x] SubTask 11.1: 添加 `cw guardrail scan [--file <path>] [--category <cat>]` 命令
+  - [x] SubTask 11.2: 添加 `cw guardrail rules [--category <cat>]` 命令
+  - [x] SubTask 11.3: 添加 `cw impact <symbol> [--depth N]` 命令
+  - [x] SubTask 11.4: 添加 `cw evolution <symbol> [--window 30d]` 命令
+  - [x] SubTask 11.5: 添加 `cw hotspot [--module <path>]` 命令
+  - [x] SubTask 11.6: 添加 `cw defect search [--category <cat>]` 命令
+  - [x] SubTask 11.7: 添加 `cw defect suggest <symbol> <finding_id>` 命令
+  - [x] SubTask 11.8: 添加 `cw defect learn <commit_hash>` 命令
+  - [x] SubTask 11.9: 添加 `cw defect stats` 命令
 
 ## Pillar 6: 集成验证
 
@@ -96,10 +96,10 @@
   - [x] SubTask 12.5: 验证 defect_suggest_fix 返回修复建议
 
 - [x] Task 13: CLI 命令验证
-  - [x] SubTask 13.1: 验证 `cg guardrail scan` 命令
-  - [x] SubTask 13.2: 验证 `cg impact` 命令
-  - [x] SubTask 13.3: 验证 `cg evolution` 和 `cg hotspot` 命令
-  - [x] SubTask 13.4: 验证 `cg defect` 系列命令
+  - [x] SubTask 13.1: 验证 `cw guardrail scan` 命令
+  - [x] SubTask 13.2: 验证 `cw impact` 命令
+  - [x] SubTask 13.3: 验证 `cw evolution` 和 `cw hotspot` 命令
+  - [x] SubTask 13.4: 验证 `cw defect` 系列命令
 
 - [x] Task 14: Before-Edit Contract 集成验证
   - [x] SubTask 14.1: 验证 task_next_step 自动触发 guardrail_check_edit

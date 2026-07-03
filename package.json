@@ -1,0 +1,32 @@
+{
+  "name": "callwarden",
+  "version": "0.2.0",
+  "description": "Call Warden - AI Agent 的代码知识图谱工具，多语言代码分析、版本管理、缺陷检测",
+  "type": "module",
+  "bin": {
+    "cw": "./bin/cw.js",
+    "callwarden": "./bin/cw.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/check-python.js",
+    "start": "cw server"
+  },
+  "keywords": [
+    "mcp",
+    "code-analysis",
+    "call-graph",
+    "tree-sitter",
+    "semgrep",
+    "ai-agent"
+  ],
+  "author": "Call Warden Team",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nuoyazhizhou/callwarden.git"
+  }
+}

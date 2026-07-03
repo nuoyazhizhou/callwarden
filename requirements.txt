@@ -1,4 +1,4 @@
-# Code Graph 核心依赖
+# Call Warden 核心依赖
 tree-sitter>=0.21
 tree-sitter-languages>=1.10
 fastmcp>=0.8

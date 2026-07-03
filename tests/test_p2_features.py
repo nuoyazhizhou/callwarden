@@ -16,13 +16,13 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from code_graph.db import CodeGraphDB
+from callwarden.db import CodeGraphDB
 
 
 def test_f2_ask_codebase():
     """F2: RAG 管道 ask_codebase（跳过网络依赖，只验证方法存在性）"""
     print("--- F2: RAG 管道 ask_codebase ---")
-    from code_graph.db import CodeGraphDB
+    from callwarden.db import CodeGraphDB
     assert hasattr(CodeGraphDB, "ask_codebase"), "ask_codebase 方法不存在"
     print("PASS F2.1: ask_codebase 方法存在")
 
@@ -37,7 +37,7 @@ def test_f2_ask_codebase():
 def test_f3_token_savings():
     """F3: Token 节省账本"""
     print("--- F3: Token 节省账本 ---")
-    from code_graph.db import CodeGraphDB
+    from callwarden.db import CodeGraphDB
     assert hasattr(CodeGraphDB, "record_token_savings"), "record_token_savings 方法不存在"
     assert hasattr(CodeGraphDB, "get_token_savings_report"), "get_token_savings_report 方法不存在"
     print("PASS F3.1: record_token_savings / get_token_savings_report 方法存在")
@@ -72,7 +72,7 @@ def test_f3_token_savings():
 def test_f4_branch_aware():
     """F4: 分支感知图谱"""
     print("--- F4: 分支感知图谱 ---")
-    from code_graph.db import CodeGraphDB
+    from callwarden.db import CodeGraphDB
     assert hasattr(CodeGraphDB, "register_branch_workspace"), "register_branch_workspace 方法不存在"
     assert hasattr(CodeGraphDB, "list_branch_workspaces"), "list_branch_workspaces 方法不存在"
     assert hasattr(CodeGraphDB, "diff_branches"), "diff_branches 方法不存在"
@@ -113,7 +113,7 @@ def test_f4_branch_aware():
 def test_f5_safe_edit():
     """F5: 安全文件编辑 propose_edit"""
     print("--- F5: 安全文件编辑 propose_edit ---")
-    from code_graph.db import CodeGraphDB
+    from callwarden.db import CodeGraphDB
     assert hasattr(CodeGraphDB, "propose_edit"), "propose_edit 方法不存在"
     assert hasattr(CodeGraphDB, "revert_edit"), "revert_edit 方法不存在"
     assert hasattr(CodeGraphDB, "get_edit_history"), "get_edit_history 方法不存在"
@@ -176,7 +176,7 @@ def test_mcp_total_tools():
     """验证 MCP 工具总数"""
     print("--- MCP 工具总数验证 ---")
     import asyncio
-    from code_graph.server.mcp_server import create_mcp_server
+    from callwarden.server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = asyncio.run(mcp.list_tools())

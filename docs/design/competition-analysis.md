@@ -133,8 +133,8 @@
 **4. 分支感知图谱**
 
 当前是单分支快照。增强方向：
-- 支持 `cg build --branch feature-x` 为不同分支构建独立图谱
-- 支持 `cg diff-branch main feature-x` 对比两个分支的结构差异（新增/删除/修改的函数、调用链变化）
+- 支持 `cw build --branch feature-x` 为不同分支构建独立图谱
+- 支持 `cw diff-branch main feature-x` 对比两个分支的结构差异（新增/删除/修改的函数、调用链变化）
 
 ---
 

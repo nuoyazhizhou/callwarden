@@ -186,19 +186,19 @@ cw install --check
 
 ```bash
 # 增量构建（默认）
-cg --init
+cw --init
 
 # 强制全量重新解析
-cg --init --force
+cw --init --force
 
 # 指定工作区
-cg --workspace /path/to/project --init
+cw --workspace /path/to/project --init
 ```
 
 ### `--refresh <PATH>`：刷新单个文件
 
 ```bash
-cg --refresh src/payment/mod.rs
+cw --refresh src/payment/mod.rs
 ```
 
 增量更新指定文件，重新解析符号和调用关系。
@@ -206,7 +206,7 @@ cg --refresh src/payment/mod.rs
 ### `--watch`：文件监控
 
 ```bash
-cg --watch
+cw --watch
 ```
 
 启动文件监控守护进程，文件变化时自动增量更新。按 `Ctrl+C` 停止。
@@ -214,7 +214,7 @@ cg --watch
 ### `--status`：查看状态
 
 ```bash
-cg --status
+cw --status
 ```
 
 显示工作区、文件分布、符号分布、调用关系统计、上次构建时间等。
@@ -222,7 +222,7 @@ cg --status
 ### `--stats`：统计信息（JSON）
 
 ```bash
-cg --stats
+cw --stats
 ```
 
 以 JSON 格式输出统计信息，便于脚本解析。
@@ -234,9 +234,9 @@ cg --stats
 ### `--search <QUERY>`：符号搜索
 
 ```bash
-cg --search "login"
-cg --search "User" --search-kind class
-cg --search "handle" --search-limit 20
+cw --search "login"
+cw --search "User" --search-kind class
+cw --search "handle" --search-limit 20
 ```
 
 | 参数 | 说明 |
@@ -248,7 +248,7 @@ cg --search "handle" --search-limit 20
 ### `--symbol <QN>`：符号详情
 
 ```bash
-cg --symbol "my_project::payment::process_payment"
+cw --symbol "my_project::payment::process_payment"
 ```
 
 显示符号的类型、深度、文件位置、签名、注释、调用关系（调用的函数 + 被谁调用）。
@@ -256,30 +256,30 @@ cg --symbol "my_project::payment::process_payment"
 ### `--file <PATH>`：文件内符号
 
 ```bash
-cg --file src/payment/mod.rs
+cw --file src/payment/mod.rs
 ```
 
 ### `--query <NAME> <FILE>`：精确查询位置
 
 ```bash
-cg --query process_payment src/payment/mod.rs
+cw --query process_payment src/payment/mod.rs
 ```
 
 ### `--callers <NAME>` / `--callees <NAME>`
 
 ```bash
 # 谁调用了我
-cg --callers process_payment
+cw --callers process_payment
 
 # 我调用了谁
-cg --callees process_payment
+cw --callees process_payment
 ```
 
 ### `--topo`：拓扑排序
 
 ```bash
-cg --topo
-cg --topo --topo-limit 100
+cw --topo
+cw --topo --topo-limit 100
 ```
 
 按依赖深度排序，底层（被调用最多）在前。
@@ -291,8 +291,8 @@ cg --topo --topo-limit 100
 ### `--impact <QN>`：影响面分析（向上）
 
 ```bash
-cg --impact "my_project::payment::process_payment"
-cg --impact "my_project::payment::process_payment" --chain-depth 5
+cw --impact "my_project::payment::process_payment"
+cw --impact "my_project::payment::process_payment" --chain-depth 5
 ```
 
 向上追踪所有调用该函数的上游函数，按层级显示。
@@ -300,51 +300,51 @@ cg --impact "my_project::payment::process_payment" --chain-depth 5
 ### `--call-chain <QN>`：调用链向下
 
 ```bash
-cg --call-chain "my_project::payment::process_payment"
+cw --call-chain "my_project::payment::process_payment"
 ```
 
 ### `--top-callers [N]`：被调用最多排行
 
 ```bash
-cg --top-callers          # 默认 20
-cg --top-callers 50
-cg --top-callers --top-callers-module "src/api"
+cw --top-callers          # 默认 20
+cw --top-callers 50
+cw --top-callers --top-callers-module "src/api"
 ```
 
 ### `--deepest [N]`：调用深度最深
 
 ```bash
-cg --deepest
-cg --deepest 50
+cw --deepest
+cw --deepest 50
 ```
 
 ### `--detect-cycles`：循环调用检测
 
 ```bash
-cg --detect-cycles
-cg --detect-cycles --cycle-depth 15
+cw --detect-cycles
+cw --detect-cycles --cycle-depth 15
 ```
 
 ### `--module-calls [N]`：模块间调用统计
 
 ```bash
-cg --module-calls
+cw --module-calls
 ```
 
 ### `--call-heatmap [GROUP]`：调用频率热力图
 
 ```bash
-cg --call-heatmap              # 默认按 module
-cg --call-heatmap file         # 按 file
-cg --call-heatmap --heatmap-limit 30
+cw --call-heatmap              # 默认按 module
+cw --call-heatmap file         # 按 file
+cw --call-heatmap --heatmap-limit 30
 ```
 
 ### `--orphan-symbols [KIND]`：孤立符号
 
 ```bash
-cg --orphan-symbols            # 默认 fn
-cg --orphan-symbols struct
-cg --orphan-symbols --orphan-module "src/legacy"
+cw --orphan-symbols            # 默认 fn
+cw --orphan-symbols struct
+cw --orphan-symbols --orphan-module "src/legacy"
 ```
 
 查找未被调用的孤立函数/结构体，适合清理死代码。
@@ -356,9 +356,9 @@ cg --orphan-symbols --orphan-module "src/legacy"
 ### `vuln-blast`：漏洞爆炸半径（子命令）
 
 ```bash
-cg vuln-blast
-cg vuln-blast --finding-id 42
-cg vuln-blast --severity ERROR --depth 5
+cw vuln-blast
+cw vuln-blast --finding-id 42
+cw vuln-blast --severity ERROR --depth 5
 ```
 
 | 参数 | 说明 |
@@ -373,13 +373,13 @@ cg vuln-blast --severity ERROR --depth 5
 
 ```bash
 # 扫描违规
-cg guardrail scan
-cg guardrail scan --file src/db/
-cg guardrail scan --category db_safety
+cw guardrail scan
+cw guardrail scan --file src/db/
+cw guardrail scan --category db_safety
 
 # 列出规则
-cg guardrail rules
-cg guardrail rules --category api_compat
+cw guardrail rules
+cw guardrail rules --category api_compat
 ```
 
 扫描 DB/API/Incident 三类可阻断规则。
@@ -388,18 +388,18 @@ cg guardrail rules --category api_compat
 
 ```bash
 # 详细扫描
-cg --semgrep
-cg --semgrep src/payment/ src/api/
+cw --semgrep
+cw --semgrep src/payment/ src/api/
 
 # 快速汇总
-cg --semgrep --semgrep-quick
+cw --semgrep --semgrep-quick
 
 # 扫描并存入数据库
-cg --semgrep --semgrep-save
+cw --semgrep --semgrep-save
 
 # 自定义规则配置
-cg --semgrep --semgrep-config p/security
-cg --semgrep --semgrep-config p/security --semgrep-scan-lang rust typescript
+cw --semgrep --semgrep-config p/security
+cw --semgrep --semgrep-config p/security --semgrep-scan-lang rust typescript
 ```
 
 | 参数 | 说明 |
@@ -415,12 +415,12 @@ cg --semgrep --semgrep-config p/security --semgrep-scan-lang rust typescript
 
 ```bash
 # 统计
-cg --semgrep-stats
+cw --semgrep-stats
 
 # 列表
-cg --semgrep-list
-cg --semgrep-list --semgrep-severity ERROR
-cg --semgrep-list --semgrep-list-lang rust
+cw --semgrep-list
+cw --semgrep-list --semgrep-severity ERROR
+cw --semgrep-list --semgrep-list-lang rust
 ```
 
 ---
@@ -431,10 +431,10 @@ cg --semgrep-list --semgrep-list-lang rust
 
 ```bash
 # 预览
-cg --restore-comment "src/payment/mod.rs:process_payment@3" --preview
+cw --restore-comment "src/payment/mod.rs:process_payment@3" --preview
 
 # 实际写入
-cg --restore-comment "src/payment/mod.rs:process_payment@3"
+cw --restore-comment "src/payment/mod.rs:process_payment@3"
 ```
 
 SPEC 格式：`文件路径:符号名@版本号` 或 `文件路径:行号`
@@ -443,23 +443,23 @@ SPEC 格式：`文件路径:符号名@版本号` 或 `文件路径:行号`
 
 ```bash
 # 预览全部
-cg --restore-all-comments --preview
+cw --restore-all-comments --preview
 
 # 恢复指定文件
-cg --restore-all-comments --restore-file src/payment/
+cw --restore-all-comments --restore-file src/payment/
 ```
 
 ### `--history <NAME>`：函数历史版本
 
 ```bash
-cg --history process_payment
-cg --history process_payment --show-content
+cw --history process_payment
+cw --history process_payment --show-content
 ```
 
 ### `--diff <H1> <H2>`：对比版本
 
 ```bash
-cg --diff a1b2c3d4e5f6... d4e5f6a1b2c3...
+cw --diff a1b2c3d4e5f6... d4e5f6a1b2c3...
 ```
 
 ---
@@ -469,7 +469,7 @@ cg --diff a1b2c3d4e5f6... d4e5f6a1b2c3...
 ### `task create`：创建任务
 
 ```bash
-cg task create \
+cw task create \
   --title "为支付函数添加注释" \
   --desc "补全 process_payment 的文档注释" \
   --steps '[{"action":"annotate","target_file":"src/payment/mod.rs","target_symbol":"process_payment"}]'
@@ -478,7 +478,7 @@ cg task create \
 ### `task next`：领取下一步骤
 
 ```bash
-cg task next <task_id>
+cw task next <task_id>
 ```
 
 返回下一步骤详情。若步骤为编辑类操作，系统自动调用护栏检查：
@@ -489,10 +489,10 @@ cg task next <task_id>
 
 ```bash
 # 成功
-cg task report <task_id> <step_id> --result "已添加注释"
+cw task report <task_id> <step_id> --result "已添加注释"
 
 # 失败
-cg task report <task_id> <step_id> --result "文件不存在" --fail
+cw task report <task_id> <step_id> --result "文件不存在" --fail
 ```
 
 失败时系统自动插入"修复缺陷"步骤。
@@ -500,17 +500,17 @@ cg task report <task_id> <step_id> --result "文件不存在" --fail
 ### `task rollback`：回滚变更
 
 ```bash
-cg task rollback <task_id> <step_id>
+cw task rollback <task_id> <step_id>
 ```
 
 ### `check-gate`：检查门禁
 
 ```bash
 # 检查
-cg check-gate <task_id>
+cw check-gate <task_id>
 
 # 标记门禁发现已解决
-cg check-gate <task_id> --resolve
+cw check-gate <task_id> --resolve
 ```
 
 对变更文件运行语法检查 + Semgrep 扫描。失败会自动插入 `fix_gate_failure` 步骤。
@@ -518,8 +518,8 @@ cg check-gate <task_id> --resolve
 ### `--task-list` / `--task-show`
 
 ```bash
-cg --task-list
-cg --task-show <task_id>
+cw --task-list
+cw --task-show <task_id>
 ```
 
 ---
@@ -529,15 +529,15 @@ cg --task-show <task_id>
 ### `--metrics`：度量汇总
 
 ```bash
-cg --metrics
+cw --metrics
 ```
 
 ### `--complexity [N]`：圈复杂度热点
 
 ```bash
-cg --complexity
-cg --complexity 50
-cg --complexity --complexity-module "src/payment"
+cw --complexity
+cw --complexity 50
+cw --complexity --complexity-module "src/payment"
 ```
 
 复杂度 >10 的函数建议重构（标记 `!`）。
@@ -545,7 +545,7 @@ cg --complexity --complexity-module "src/payment"
 ### `--coupling`：模块耦合度
 
 ```bash
-cg --coupling
+cw --coupling
 ```
 
 计算每个模块的传入/传出耦合度和不稳定性（instability）。
@@ -553,27 +553,27 @@ cg --coupling
 ### `--largest-fns [N]` / `--coupled-fns [N]`
 
 ```bash
-cg --largest-fns          # 代码行数最多
-cg --coupled-fns          # 耦合度最高（扇入+扇出）
+cw --largest-fns          # 代码行数最多
+cw --coupled-fns          # 耦合度最高（扇入+扇出）
 ```
 
 ### `--fn-metrics <NAME>`：单函数度量
 
 ```bash
-cg --fn-metrics "my_project::payment::process_payment"
+cw --fn-metrics "my_project::payment::process_payment"
 ```
 
 ### `--comment-coverage`：注释覆盖率
 
 ```bash
-cg --comment-coverage
-cg --comment-coverage --coverage-by module   # 按 module/file/kind
+cw --comment-coverage
+cw --comment-coverage --coverage-by module   # 按 module/file/kind
 ```
 
 ### `--test-coverage`：测试覆盖率
 
 ```bash
-cg --test-coverage
+cw --test-coverage
 ```
 
 ---
@@ -583,8 +583,8 @@ cg --test-coverage
 ### `evolution <QN>`：函数变更频率
 
 ```bash
-cg evolution "my_project::payment::process_payment"
-cg evolution "my_project::payment::process_payment" --window 30d
+cw evolution "my_project::payment::process_payment"
+cw evolution "my_project::payment::process_payment" --window 30d
 ```
 
 显示变更次数、变更者、变更时间线、变更分布。
@@ -592,8 +592,8 @@ cg evolution "my_project::payment::process_payment" --window 30d
 ### `hotspot`：热点函数排名
 
 ```bash
-cg hotspot
-cg hotspot --module src/payment --limit 50
+cw hotspot
+cw hotspot --module src/payment --limit 50
 ```
 
 按热点分（变更次数 + 缺陷数 + 复杂度）排序。
@@ -601,22 +601,22 @@ cg hotspot --module src/payment --limit 50
 ### `churn`：代码流失分析
 
 ```bash
-cg churn
-cg churn --window 90d
-cg churn --module src/api
+cw churn
+cw churn --window 90d
+cw churn --module src/api
 ```
 
 ### `symbol-history <HASH>`：符号 Git 历史
 
 ```bash
-cg symbol-history a1b2c3d4e5f6...
-cg symbol-history a1b2c3d4e5f6... --limit 50
+cw symbol-history a1b2c3d4e5f6...
+cw symbol-history a1b2c3d4e5f6... --limit 50
 ```
 
 ### `test-impact <QN>`：测试影响选择
 
 ```bash
-cg test-impact "my_project::payment::process_payment"
+cw test-impact "my_project::payment::process_payment"
 ```
 
 返回改了该函数后需要运行的测试列表（通过反向调用链 BFS）。
@@ -628,8 +628,8 @@ cg test-impact "my_project::payment::process_payment"
 ### `impact <HASH>`：变更影响半径（子命令）
 
 ```bash
-cg impact a1b2c3d4e5f6...
-cg impact a1b2c3d4e5f6... --depth 5
+cw impact a1b2c3d4e5f6...
+cw impact a1b2c3d4e5f6... --depth 5
 ```
 
 以符号为起点，沿调用链向上游扩散，计算受影响调用者数量与跨层分布（代码/DB/API/配置）。
@@ -637,7 +637,7 @@ cg impact a1b2c3d4e5f6... --depth 5
 ### `review <HASH>`：审查就绪报告
 
 ```bash
-cg review a1b2c3d4e5f6...
+cw review a1b2c3d4e5f6...
 ```
 
 生成审查就绪报告：风险等级、影响范围、必测项、人工审查点、覆盖率。
@@ -649,47 +649,47 @@ cg review a1b2c3d4e5f6...
 ### `defect search`：搜索缺陷模式
 
 ```bash
-cg defect search
-cg defect search --category security
-cg defect search --severity error --limit 30
+cw defect search
+cw defect search --category security
+cw defect search --severity error --limit 30
 ```
 
 ### `defect suggest`：推荐修复方案
 
 ```bash
-cg defect suggest a1b2c3d4e5f6...
-cg defect suggest a1b2c3d4e5f6... --finding 42
+cw defect suggest a1b2c3d4e5f6...
+cw defect suggest a1b2c3d4e5f6... --finding 42
 ```
 
 ### `defect learn`：从修复 commit 学习
 
 ```bash
-cg defect learn abc123def456
+cw defect learn abc123def456
 ```
 
 ### `defect stats` / `defect build`
 
 ```bash
-cg defect stats     # 统计
-cg defect build     # 构建知识库
+cw defect stats     # 统计
+cw defect build     # 构建知识库
 ```
 
 ### `--function-issues [FN]`：函数缺陷检测
 
 ```bash
 # 单函数
-cg --function-issues "my_project::payment::process_payment"
+cw --function-issues "my_project::payment::process_payment"
 
 # 全部函数列表
-cg --function-issues
-cg --function-issues --issue-type missing_comment
-cg --function-issues --issue-module src/api
+cw --function-issues
+cw --function-issues --issue-type missing_comment
+cw --function-issues --issue-module src/api
 ```
 
 ### `--issue-summary`：缺陷汇总
 
 ```bash
-cg --issue-summary
+cw --issue-summary
 ```
 
 ---
@@ -699,27 +699,27 @@ cg --issue-summary
 ### `--git-import [N]`：导入 Git 历史
 
 ```bash
-cg --git-import          # 默认 100 个 commit
-cg --git-import 500
+cw --git-import          # 默认 100 个 commit
+cw --git-import 500
 ```
 
 ### `--git-log [N]`：commit 历史
 
 ```bash
-cg --git-log
-cg --git-log 50
+cw --git-log
+cw --git-log 50
 ```
 
 ### `--git-show <COMMIT>`：commit 详情
 
 ```bash
-cg --git-show abc123def456
+cw --git-show abc123def456
 ```
 
 ### `--git-stats`：Git 统计
 
 ```bash
-cg --git-stats
+cw --git-stats
 ```
 
 ---
@@ -729,7 +729,7 @@ cg --git-stats
 ### `--semantic-search <QUERY>`：语义搜索
 
 ```bash
-cg --semantic-search "处理用户认证的函数"
+cw --semantic-search "处理用户认证的函数"
 ```
 
 > 首次使用前需运行 `--embed` 生成向量嵌入。嵌入模型不可用时自动回退到关键词匹配。
@@ -737,14 +737,14 @@ cg --semantic-search "处理用户认证的函数"
 ### `--embed` / `--embed-force`：生成向量嵌入
 
 ```bash
-cg --embed           # 增量嵌入
-cg --embed-force     # 强制重新嵌入所有函数
+cw --embed           # 增量嵌入
+cw --embed-force     # 强制重新嵌入所有函数
 ```
 
 ### `--similar <NAME>`：查找相似函数
 
 ```bash
-cg --similar "my_project::payment::process_payment"
+cw --similar "my_project::payment::process_payment"
 ```
 
 ---
@@ -754,7 +754,7 @@ cg --similar "my_project::payment::process_payment"
 ### `--brief`：项目简报
 
 ```bash
-cg --brief
+cw --brief
 ```
 
 输出项目类型、文件数、函数数、健康评分、复杂度热点等。
@@ -762,16 +762,16 @@ cg --brief
 ### `--map`：仓库模块依赖图
 
 ```bash
-cg --map                    # 默认 text
-cg --map --map-format mermaid
+cw --map                    # 默认 text
+cw --map --map-format mermaid
 ```
 
 ### `--export-module-graph [FORMAT]`：导出模块依赖图
 
 ```bash
-cg --export-module-graph mermaid
-cg --export-module-graph mermaid --graph-output deps.mmd
-cg --export-module-graph dot --graph-output deps.dot
+cw --export-module-graph mermaid
+cw --export-module-graph mermaid --graph-output deps.mmd
+cw --export-module-graph dot --graph-output deps.dot
 ```
 
 ---
@@ -781,20 +781,20 @@ cg --export-module-graph dot --graph-output deps.dot
 ### `--coverage-import <FILE>`：导入覆盖率报告
 
 ```bash
-cg --coverage-import coverage.lcov --coverage-format lcov
-cg --coverage-import coverage.xml --coverage-format cobertura
+cw --coverage-import coverage.lcov --coverage-format lcov
+cw --coverage-import coverage.xml --coverage-format cobertura
 ```
 
 ### `--coverage-fn <NAME>`：函数覆盖率
 
 ```bash
-cg --coverage-fn "my_project::payment::process_payment"
+cw --coverage-fn "my_project::payment::process_payment"
 ```
 
 ### `--coverage-uncovered`：未覆盖函数
 
 ```bash
-cg --coverage-uncovered
+cw --coverage-uncovered
 ```
 
 ---
@@ -804,7 +804,7 @@ cg --coverage-uncovered
 ### `--who <FILE>`：文件负责人
 
 ```bash
-cg --who src/payment/mod.rs
+cw --who src/payment/mod.rs
 ```
 
 综合 CODEOWNERS 和 git blame 信息。
@@ -812,7 +812,7 @@ cg --who src/payment/mod.rs
 ### `--ownership-map`：所有权映射
 
 ```bash
-cg --ownership-map
+cw --ownership-map
 ```
 
 ---
@@ -822,26 +822,26 @@ cg --ownership-map
 ### `--list-workspaces`
 
 ```bash
-cg --list-workspaces
+cw --list-workspaces
 ```
 
 ### `--register-workspace <NAME> <ROOT>`
 
 ```bash
-cg --register-workspace my_project /path/to/project
+cw --register-workspace my_project /path/to/project
 ```
 
 ### `--set-workspace <ID_OR_NAME>`
 
 ```bash
-cg --set-workspace my_project
-cg --set-workspace 1
+cw --set-workspace my_project
+cw --set-workspace 1
 ```
 
 ### `--delete-workspace <ID_OR_NAME>`
 
 ```bash
-cg --delete-workspace my_project
+cw --delete-workspace my_project
 ```
 
 ---
@@ -851,67 +851,67 @@ cg --delete-workspace my_project
 ### 示例 1：全量构建并查看状态
 
 ```bash
-cg --init --force && cg --status
+cw --init --force && cw --status
 ```
 
 ### 示例 2：查找函数 → 分析影响 → 查看度量
 
 ```bash
-cg --search "process_payment"
-cg --impact "my_project::payment::process_payment"
-cg --fn-metrics "my_project::payment::process_payment"
+cw --search "process_payment"
+cw --impact "my_project::payment::process_payment"
+cw --fn-metrics "my_project::payment::process_payment"
 ```
 
 ### 示例 3：扫描缺陷 → 查看漏洞爆炸半径
 
 ```bash
-cg --semgrep --semgrep-save
-cg --semgrep-stats
-cg vuln-blast --severity ERROR
+cw --semgrep --semgrep-save
+cw --semgrep-stats
+cw vuln-blast --severity ERROR
 ```
 
 ### 示例 4：导入 Git 历史 → 分析热点
 
 ```bash
-cg --git-import 200
-cg hotspot --limit 30
-cg churn --window 90d
+cw --git-import 200
+cw hotspot --limit 30
+cw churn --window 90d
 ```
 
 ### 示例 5：生成向量嵌入 → 语义搜索
 
 ```bash
-cg --embed
-cg --semantic-search "处理订单支付的函数"
-cg --similar "my_project::payment::process_payment"
+cw --embed
+cw --semantic-search "处理订单支付的函数"
+cw --similar "my_project::payment::process_payment"
 ```
 
 ### 示例 6：导出模块依赖图用于文档
 
 ```bash
-cg --export-module-graph mermaid --graph-output docs/architecture.mmd
-cg --map --map-format mermaid > docs/repo_map.md
+cw --export-module-graph mermaid --graph-output docs/architecture.mmd
+cw --map --map-format mermaid > docs/repo_map.md
 ```
 
 ### 示例 7：完整任务流程
 
 ```bash
 # 1. 创建任务
-cg task create --title "重构支付模块" --steps '[{"action":"refactor","target_file":"src/payment/mod.rs"}]'
+cw task create --title "重构支付模块" --steps '[{"action":"refactor","target_file":"src/payment/mod.rs"}]'
 
 # 2. 领取步骤
-cg task next <task_id>
+cw task next <task_id>
 
 # 3. Agent 执行编辑（通过 MCP propose_edit）
 
 # 4. 回报成功
-cg task report <task_id> <step_id> --result "已完成重构"
+cw task report <task_id> <step_id> --result "已完成重构"
 
 # 5. 检查门禁
-cg check-gate <task_id>
+cw check-gate <task_id>
 
 # 6. 如需回滚
-cg task rollback <task_id> <step_id>
+cw task rollback <task_id> <step_id>
 ```
 
 ---
@@ -921,8 +921,8 @@ cg task rollback <task_id> <step_id>
 CLI 命令默认使用中文输出，可通过 `--lang` 切换：
 
 ```bash
-cg --lang en_US --status
-cg --lang zh_CN --search "login"
+cw --lang en_US --status
+cw --lang zh_CN --search "login"
 ```
 
 ## 下一步

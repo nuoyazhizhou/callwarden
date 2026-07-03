@@ -13,16 +13,16 @@ import os
 import sys
 import tempfile
 
-# 确保能导入 code_graph 包
+# 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from code_graph.db import CodeGraphDB
+from callwarden.db import CodeGraphDB
 
 
 def test_b1_import_os():
     """B1: db_comment.py 应能正常导入并使用 os.path"""
     print("--- B1: db_comment.py import os ---")
-    import code_graph.db.db_comment as mod
+    import callwarden.db.db_comment as mod
     # 模块级别应能正常导入（如果缺 import os，模块导入就会失败）
     assert hasattr(mod, "os"), "db_comment 模块未导入 os"
     print("PASS B1.1: db_comment 模块成功导入 os")
@@ -35,7 +35,7 @@ def test_b1_import_os():
 def test_b2_issue_rules():
     """B2: issues.py 应能用 _get_all_issue_rules / _get_issue_rules_for_language 替代 self.ISSUE_RULES"""
     print("--- B2: issues.py ISSUE_RULES 修复 ---")
-    from code_graph.analyzers.issues import IssueAnalyzerMixin
+    from callwarden.analyzers.issues import IssueAnalyzerMixin
 
     # 验证新方法存在
     assert hasattr(IssueAnalyzerMixin, "_get_all_issue_rules"), "_get_all_issue_rules 方法不存在"
@@ -80,7 +80,7 @@ def test_b2_issue_rules():
 def test_b3_git_symbol_changes():
     """B3: db_git.py git_symbol_changes 表应有写入"""
     print("--- B3: db_git.py git_symbol_changes 写入 ---")
-    from code_graph.db.db_git import GitMixin
+    from callwarden.db.db_git import GitMixin
     import inspect
 
     # 验证 _extract_and_store_symbol_changes 方法存在

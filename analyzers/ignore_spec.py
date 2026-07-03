@@ -2,7 +2,7 @@
 ignore_spec.py
 ==============
 
-.gitignore / .codegraphignore 规则解析器（支持完整 gitignore 语法）。
+.gitignore / .callwardenignore 规则解析器（支持完整 gitignore 语法）。
 
 语法支持：
 - 空行 / # 开头：注释，跳过
@@ -37,7 +37,7 @@ class IgnoreRule:
         dir_only: 是否只匹配目录（/ 后缀）
         anchored: 是否锚定根目录（/ 前缀或含 /）
         regex: 编译后的正则表达式
-        source: 规则来源（如 ".gitignore" / ".codegraphignore" / "default"）
+        source: 规则来源（如 ".gitignore" / ".callwardenignore" / "default"）
     """
 
     __slots__ = ("pattern", "negation", "dir_only", "anchored", "regex", "source")
@@ -214,7 +214,7 @@ def load_ignore_file(file_path: str, source: str = "") -> List[IgnoreRule]:
     """加载单个 ignore 文件的所有规则
 
     Args:
-        file_path: .gitignore / .codegraphignore 文件路径
+        file_path: .gitignore / .callwardenignore 文件路径
         source: 规则来源标识（为空则用文件名）
 
     Returns:
@@ -245,7 +245,7 @@ class IgnoreMatcher:
     合并多个来源的规则，按顺序应用：
     1. 默认硬编码规则（VCS/构建输出/autogen）
     2. workspace 根目录的 .gitignore
-    3. workspace 根目录的 .codegraphignore
+    3. workspace 根目录的 .callwardenignore
     4. 各子目录的 .gitignore（按路径深度应用）
 
     规则应用顺序：后出现的规则覆盖先出现的（! 取反）。
@@ -253,7 +253,7 @@ class IgnoreMatcher:
 
     def __init__(self, workspace_root: str):
         self.workspace_root = os.path.abspath(workspace_root)
-        # 全局规则（根目录的 .gitignore + .codegraphignore + 默认规则）
+        # 全局规则（根目录的 .gitignore + .callwardenignore + 默认规则）
         self.global_rules: List[IgnoreRule] = []
         # 子目录规则：{目录相对路径: [规则列表]}
         # 当文件在子目录下时，需要应用该目录及所有祖先目录的 .gitignore
@@ -271,17 +271,17 @@ class IgnoreMatcher:
                 self.global_rules.append(rule)
 
     def load_workspace_ignores(self) -> None:
-        """加载 workspace 根目录的 .gitignore 和 .codegraphignore
+        """加载 workspace 根目录的 .gitignore 和 .callwardenignore
 
         同时递归扫描所有子目录的 .gitignore，建立 dir_rules 索引。
         子目录 .gitignore 的作用范围仅限于该目录及其子目录。
         """
         # 根目录规则
         root_gitignore = os.path.join(self.workspace_root, ".gitignore")
-        root_codegraphignore = os.path.join(self.workspace_root, ".codegraphignore")
+        root_callwardenignore = os.path.join(self.workspace_root, ".callwardenignore")
 
         self.global_rules.extend(load_ignore_file(root_gitignore, ".gitignore"))
-        self.global_rules.extend(load_ignore_file(root_codegraphignore, ".codegraphignore"))
+        self.global_rules.extend(load_ignore_file(root_callwardenignore, ".callwardenignore"))
 
         # 递归扫描子目录的 .gitignore
         # 跳过明显的非源码目录以加速扫描
@@ -315,7 +315,7 @@ class IgnoreMatcher:
 
         应用规则顺序（后者覆盖前者）：
         1. 默认硬编码规则
-        2. 根目录 .gitignore + .codegraphignore
+        2. 根目录 .gitignore + .callwardenignore
         3. 路径所属目录及祖先目录的 .gitignore
 
         Args:

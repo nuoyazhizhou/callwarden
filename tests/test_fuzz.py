@@ -2,7 +2,7 @@
 test_fuzz.py
 ============
 
-模糊测试脚本：验证 code_graph 在恶意输入下的安全性和健壮性。
+模糊测试脚本：验证 callwarden 在恶意输入下的安全性和健壮性。
 
 测试目的：
     本脚本针对 SEC-001 到 SEC-007 安全修复后的代码，进行模糊测试（Fuzz Testing）。
@@ -25,10 +25,10 @@ import tempfile
 import time
 import threading
 
-# 确保能导入 code_graph 包
+# 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from code_graph.db import CodeGraphDB
+from callwarden.db import CodeGraphDB
 
 
 # ===========================================================================
@@ -355,7 +355,7 @@ def test_atomic_write_concurrent():
 def main():
     """按顺序执行所有模糊测试，打印 PASS/FAIL 结果"""
     print("=" * 60)
-    print("code_graph 模糊测试（SEC-001 ~ SEC-007 安全修复验证）")
+    print("callwarden 模糊测试（SEC-001 ~ SEC-007 安全修复验证）")
     print("=" * 60)
     print()
 

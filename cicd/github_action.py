@@ -8,7 +8,7 @@ GitHub Actions 集成入口。
 1. 从环境变量读取 PR 上下文（base / head / workspace）
 2. 创建 CodeGraphDB 实例
 3. 运行 PRChecker.run_pr_check
-4. 导出 SARIF 报告到 $GITHUB_WORKSPACE/code_graph_results.sarif
+4. 导出 SARIF 报告到 $GITHUB_WORKSPACE/callwarden_results.sarif
 5. 若有阻断发现，打印错误并以 exit code 1 退出
 """
 
@@ -19,7 +19,7 @@ import sys
 
 
 # SARIF 报告默认输出文件名
-_SARIF_FILENAME = "code_graph_results.sarif"
+_SARIF_FILENAME = "callwarden_results.sarif"
 
 
 def _env(key: str, default: str = "") -> str:

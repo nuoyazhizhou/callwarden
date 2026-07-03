@@ -15,13 +15,13 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from code_graph.db import CodeGraphDB
+from callwarden.db import CodeGraphDB
 
 
 def test_f1_vulnerability_blast_radius():
     """F1: 漏洞爆炸半径"""
     print("--- F1: 漏洞爆炸半径 get_vulnerability_blast_radius ---")
-    from code_graph.db import CodeGraphDB
+    from callwarden.db import CodeGraphDB
     assert hasattr(CodeGraphDB, "get_vulnerability_blast_radius"), "get_vulnerability_blast_radius 方法不存在"
     print("PASS F1.1: get_vulnerability_blast_radius 方法存在")
 
@@ -54,7 +54,7 @@ def test_mcp_5_new_tools():
     """MCP: 5 个新工具接线"""
     print("--- MCP: 5 个新工具接线 ---")
     import asyncio
-    from code_graph.server.mcp_server import create_mcp_server
+    from callwarden.server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = asyncio.run(mcp.list_tools())
@@ -80,7 +80,7 @@ def test_mcp_5_new_tools():
 def test_cli_6_new_commands():
     """CLI: 6 个新命令接线"""
     print("--- CLI: 6 个新命令接线 ---")
-    from code_graph.cli.main import _handle_task, _handle_vuln_blast, _handle_symbol_history
+    from callwarden.cli.main import _handle_task, _handle_vuln_blast, _handle_symbol_history
 
     # 验证 3 个 handler 函数存在
     assert callable(_handle_task), "_handle_task 不可调用"
@@ -89,7 +89,7 @@ def test_cli_6_new_commands():
     print("PASS CLI.1: 3 个 handler 函数存在")
 
     # 验证 _SUBCOMMANDS 包含新命令
-    from code_graph.cli.main import _SUBCOMMANDS
+    from callwarden.cli.main import _SUBCOMMANDS
     assert "task" in _SUBCOMMANDS, "_SUBCOMMANDS 不包含 task"
     assert "vuln-blast" in _SUBCOMMANDS, "_SUBCOMMANDS 不包含 vuln-blast"
     assert "symbol-history" in _SUBCOMMANDS, "_SUBCOMMANDS 不包含 symbol-history"

@@ -32,7 +32,7 @@
   - 原子文件写入（临时文件 + os.replace）
   - LSP 子进程安全（命令白名单 + 超时 + 输出限制）
   - 错误日志路径消毒
-- 项目级数据库隔离：`$HOME/.code_graph/<16位hash>/code_graph.db`
+- 项目级数据库隔离：`$HOME/.callwarden/<16位hash>/callwarden.db`
 - CI/CD 集成：sarif_exporter / incremental / pr_check + GitHub Actions
 - 压力测试（test_stress.py）+ Fuzz 安全测试（test_fuzz.py）
 - 用户文档（docs/ 目录 7 份）

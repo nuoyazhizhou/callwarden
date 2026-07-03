@@ -56,15 +56,15 @@
 - [x] 变更影响类 4 个 MCP 工具可正常加载
 - [x] 演化智能类 4 个 MCP 工具可正常加载
 - [x] 缺陷知识库类 4 个 MCP 工具可正常加载
-- [x] `cg guardrail scan` CLI 命令可执行
-- [x] `cg guardrail rules` CLI 命令可执行
-- [x] `cg impact` CLI 命令可执行
-- [x] `cg evolution` CLI 命令可执行
-- [x] `cg hotspot` CLI 命令可执行
-- [x] `cg defect search` CLI 命令可执行
-- [x] `cg defect suggest` CLI 命令可执行
-- [x] `cg defect learn` CLI 命令可执行
-- [x] `cg defect stats` CLI 命令可执行
+- [x] `cw guardrail scan` CLI 命令可执行
+- [x] `cw guardrail rules` CLI 命令可执行
+- [x] `cw impact` CLI 命令可执行
+- [x] `cw evolution` CLI 命令可执行
+- [x] `cw hotspot` CLI 命令可执行
+- [x] `cw defect search` CLI 命令可执行
+- [x] `cw defect suggest` CLI 命令可执行
+- [x] `cw defect learn` CLI 命令可执行
+- [x] `cw defect stats` CLI 命令可执行
 
 ## Pillar 6: 集成验证
 

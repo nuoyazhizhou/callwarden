@@ -144,7 +144,7 @@ class BuildMixin:
 
 
     def _load_ignore_patterns(self) -> List[str]:
-        """加载 .codegraphignore 规则
+        """加载 .callwardenignore 规则
 
         规则格式（类似 .gitignore）：
         - 每行一个模式
@@ -156,7 +156,7 @@ class BuildMixin:
         import fnmatch
 
         patterns = []
-        ignore_file = os.path.join(self.workspace_root, ".codegraphignore")
+        ignore_file = os.path.join(self.workspace_root, ".callwardenignore")
 
         # 默认忽略规则（硬编码基线，覆盖 VCS/包管理/构建输出/预构建/autogen）
         # 这些规则对 repo manifest/AOSP/嵌入式项目尤其关键——
@@ -252,7 +252,7 @@ class BuildMixin:
 
 
     def _scan_supported_files(self) -> List[str]:
-        """扫描项目中所有支持的源文件（尊重 .codegraphignore）"""
+        """扫描项目中所有支持的源文件（尊重 .callwardenignore）"""
         supported_extensions = set(get_supported_extensions())
         files = []
         ignore_patterns = self._load_ignore_patterns()
@@ -505,7 +505,7 @@ class BuildMixin:
                 for rel_path, err in failed_files:
                     cprint(f"    ✗ {rel_path}: {err}", "red")
 
-                spinner = Spinner("步骤 3/5: 创建文件版本和符号版本")
+            spinner = Spinner("步骤 3/5: 创建文件版本和符号版本")
         spinner.start()
         version_count = 0
         for rel_path, result in file_results.items():

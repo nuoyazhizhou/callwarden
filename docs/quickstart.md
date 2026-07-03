@@ -159,13 +159,13 @@ cw --status
 数据库按项目隔离，路径格式：
 
 ```
-$HOME/.code_graph/<16位hash>/code_graph.db
+$HOME/.callwarden/<16位hash>/callwarden.db
 ```
 
 示例（Linux/macOS）：
 
 ```
-/home/user/.code_graph/a3f5e1b2c4d5f6a7/code_graph.db
+/home/user/.callwarden/a3f5e1b2c4d5f6a7/callwarden.db
 ```
 
 - 16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位
@@ -249,11 +249,11 @@ SSE 模式适用于远程访问或多客户端共享同一个 Server 实例。
 ```json
 {
   "mcpServers": {
-    "code-graph": {
+    "callwarden": {
       "command": "python",
-      "args": ["-m", "code_graph.server"],
+      "args": ["-m", "callwarden.server"],
       "env": {
-        "CODE_GRAPH_WORKSPACE": "/path/to/your/project"
+        "CALLWARDEN_WORKSPACE": "/path/to/your/project"
       }
     }
   }

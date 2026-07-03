@@ -1,0 +1,66 @@
+# 版本控制
+.git
+.gitignore
+
+# Python 缓存与构建产物
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.whl
+
+# 虚拟环境
+venv/
+.venv/
+env/
+
+# 测试与缓存
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Rust 编译产物
+rust_ext/target/
+target/
+
+# Node.js
+node_modules/
+
+# IDE 与编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AI 工具元数据
+.trae/
+.claude/
+.cursor/
+.codex/
+.gemini/
+.kiro/
+.opencode/
+.qoder/
+.agent/
+
+# 本地数据与临时文件
+.uploads/
+.waylog/
+*.db
+*.db-journal
+*.db-wal
+*.log
+tmp/
+temp/
+*.tmp
+
+# 旧项目分析报告（不需要打包进镜像）
+CODE_GRAPH_USER_GUIDE.md
+code_graph 功能差距分析报告.md
+code_graph 与 200 个仓库的交叉对比分析.md
+prompts/
+
+# 本地配置
+.callwardenignore
+.codegraphinclude

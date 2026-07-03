@@ -20,7 +20,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **跨仓库分析**：依赖检测 + 共享符号 + 影响传播
 - **Git 集成**：commit 历史 + 符号级变更追踪
 - **分支感知**：独立工作区方案 + 差异对比 + 合并预览
-- **Java GC 机制**：.gitignore/.codegraphignore 解析 + 归档/复活/清除
+- **Java GC 机制**：.gitignore/.callwardenignore 解析 + 归档/复活/清除
 - **120 个 MCP 工具 + 145+ CLI 命令**
 
 ## 快速开始
@@ -43,38 +43,38 @@ cw --call-chain "module::function_name"
 
 ## 文档导航
 
-| 文档 | 说明 |
-|------|------|
-| [docs/README.md](docs/README.md) | 用户文档总入口 |
-| [docs/quickstart.md](docs/quickstart.md) | 安装、初始化、基本查询、MCP Server 启动 |
-| [docs/cli_reference.md](docs/cli_reference.md) | 全部 CLI 子命令与 --flag 用法 |
-| [docs/mcp_tools.md](docs/mcp_tools.md) | 120 个 MCP 工具按功能分组 |
-| [docs/architecture.md](docs/architecture.md) | 整体架构、Schema、Mixin 设计、扩展指南 |
-| [docs/deployment.md](docs/deployment.md) | 本地/Docker 部署、MCP 配置、备份恢复 |
-| [docs/design/implementation-status.md](docs/design/implementation-status.md) | 当前实现状态权威盘点（v14） |
-| [docs/design/competition-analysis.md](docs/design/competition-analysis.md) | 竞品分析与独占优势 |
-| [docs/design/evolve-guardian-architecture/](docs/design/evolve-guardian-architecture/) | Guardian 架构设计规格 |
-| [docs/history/](docs/history/) | 历史归档文档（已过时，仅供回顾） |
+| 文档                                                                                   | 说明                                    |
+| -------------------------------------------------------------------------------------- | --------------------------------------- |
+| [docs/README.md](docs/README.md)                                                       | 用户文档总入口                          |
+| [docs/quickstart.md](docs/quickstart.md)                                               | 安装、初始化、基本查询、MCP Server 启动 |
+| [docs/cli_reference.md](docs/cli_reference.md)                                         | 全部 CLI 子命令与 --flag 用法           |
+| [docs/mcp_tools.md](docs/mcp_tools.md)                                                 | 120 个 MCP 工具按功能分组               |
+| [docs/architecture.md](docs/architecture.md)                                           | 整体架构、Schema、Mixin 设计、扩展指南  |
+| [docs/deployment.md](docs/deployment.md)                                               | 本地/Docker 部署、MCP 配置、备份恢复    |
+| [docs/design/implementation-status.md](docs/design/implementation-status.md)           | 当前实现状态权威盘点（v14）             |
+| [docs/design/competition-analysis.md](docs/design/competition-analysis.md)             | 竞品分析与独占优势                      |
+| [docs/design/evolve-guardian-architecture/](docs/design/evolve-guardian-architecture/) | Guardian 架构设计规格                   |
+| [docs/history/](docs/history/)                                                         | 历史归档文档（已过时，仅供回顾）        |
 
 ## 系统要求
 
-| 依赖 | 版本 | 说明 |
-|------|------|------|
-| Python | 3.10+ | 必需 |
-| tree-sitter | 最新 | 必需，多语言解析引擎 |
-| fastmcp | 最新 | 必需（MCP Server 模式） |
-| Semgrep | 可选 | 缺陷扫描，未安装时自动降级 |
-| LSP 服务器 | 可选 | pyright / tsserver / gopls / rust-analyzer |
-| sentence-transformers | 可选 | 向量嵌入，未安装时降级关键词搜索 |
-| sqlite-vec | 可选 | 向量索引扩展 |
-| Git | 2.20+ | 可选，Git 历史集成需要 |
+| 依赖                  | 版本  | 说明                                       |
+| --------------------- | ----- | ------------------------------------------ |
+| Python                | 3.10+ | 必需                                       |
+| tree-sitter           | 最新  | 必需，多语言解析引擎                       |
+| fastmcp               | 最新  | 必需（MCP Server 模式）                    |
+| Semgrep               | 可选  | 缺陷扫描，未安装时自动降级                 |
+| LSP 服务器            | 可选  | pyright / tsserver / gopls / rust-analyzer |
+| sentence-transformers | 可选  | 向量嵌入，未安装时降级关键词搜索           |
+| sqlite-vec            | 可选  | 向量索引扩展                               |
+| Git                   | 2.20+ | 可选，Git 历史集成需要                     |
 
 ## 数据库位置
 
 按项目隔离，路径格式：
 
 ```
-$HOME/.code_graph/<16位hash>/code_graph.db
+$HOME/.callwarden/<16位hash>/callwarden.db
 ```
 
 16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目互不干扰。
@@ -91,7 +91,7 @@ callwarden/
 ├── config.py                  # 配置：路径常量、多语言配置
 ├── install.py                 # 一键级联安装器
 ├── requirements.txt           # 依赖清单
-├── .codegraphignore.example   # 忽略规则模板
+├── .callwardenignore.example   # 忽略规则模板
 ├── analyzers/                 # 分析层（call_chain / coverage / issues / ignore_spec）
 ├── cicd/                      # CI/CD 集成（sarif / incremental / pr_check）
 ├── cli/                       # CLI 命令行

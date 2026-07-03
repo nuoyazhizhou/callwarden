@@ -35,7 +35,7 @@
                              ▼
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（每个项目一个）                    │
-│   $HOME/.code_graph/<16位hash>/code_graph.db                  │
+│   $HOME/.callwarden/<16位hash>/callwarden.db                  │
 │   Schema v13 / WAL 模式 / 30+ 表 / 23 个 Mixin 模块           │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -58,7 +58,7 @@
 每个项目使用独立的 SQLite 数据库，路径格式：
 
 ```
-$HOME/.code_graph/<16位hash>/code_graph.db
+$HOME/.callwarden/<16位hash>/callwarden.db
 ```
 
 - 16 位 hash = 项目根路径绝对路径的 SHA-256 前 16 位

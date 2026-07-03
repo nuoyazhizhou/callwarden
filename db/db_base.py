@@ -930,7 +930,7 @@ def _migrate_v12_to_v13(conn: sqlite3.Connection):
 def _migrate_v13_to_v14(conn: sqlite3.Connection):
     """v13 -> v14: 归档表（类 Java GC 老年代）
 
-    - 创建 archived_files 表：被 .gitignore / .codegraphignore 命中的文件迁出主表
+    - 创建 archived_files 表：被 .gitignore / .callwardenignore 命中的文件迁出主表
     - 保留 file_instance_id 关联和符号/调用数统计，便于取消 ignore 后复活
     - file_instances.status 新增 'archived' 状态（无需 ALTER，status 是 TEXT）
     """
@@ -971,11 +971,12 @@ class CodeGraphBase:
             self.workspace_root = detected if detected else PROJECT_ROOT
 
         # 架构修改：一个项目一个 SQLite 数据库
-        # db_path 为空时，根据项目根路径自动计算 $HOME/.code_graph/16位hash/code_graph.db
+        # db_path 为空时，根据项目根路径自动计算 $HOME/.callwarden/16位hash/callwarden.db
         if not db_path:
             db_path = get_project_db_path(self.workspace_root)
 
         self.db_path = db_path
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self.conn = sqlite3.connect(db_path)
         self.conn.row_factory = sqlite3.Row
         # 性能优化 PRAGMA（WAL 模式 + 减少 fsync + 内存缓存 + 内存映射）

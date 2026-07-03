@@ -15,16 +15,16 @@ import sys
 import tempfile
 import time
 
-# 确保能导入 code_graph 包
+# 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from code_graph.db import CodeGraphDB
-from code_graph.analyzers.ignore_spec import IgnoreMatcher, parse_ignore_line
+from callwarden.db import CodeGraphDB
+from callwarden.analyzers.ignore_spec import IgnoreMatcher, parse_ignore_line
 
 
 def setup_test_workspace():
     """创建临时 workspace 并注册激活"""
-    tmpdir = tempfile.mkdtemp(prefix="code_graph_gc_test_")
+    tmpdir = tempfile.mkdtemp(prefix="callwarden_gc_test_")
     db = CodeGraphDB(db_path=os.path.join(tmpdir, "test.db"))
     ws_id = db.register_workspace("gc-test", tmpdir)
     db.set_active_workspace(ws_id)
@@ -291,7 +291,7 @@ def test_default_autogen_rules():
 
 def main():
     print("=" * 60)
-    print("code_graph GC 功能测试")
+    print("callwarden GC 功能测试")
     print("=" * 60)
 
     tests = [

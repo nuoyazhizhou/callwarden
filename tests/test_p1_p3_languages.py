@@ -19,7 +19,7 @@ import os
 import sys
 import tempfile
 
-# 确保能导入 code_graph 包
+# 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -172,7 +172,7 @@ end
 def test_language_detection():
     """测试 1：语言检测（5 种新扩展名）"""
     print("--- 测试 1：语言检测 ---")
-    from code_graph.config import detect_language_from_path
+    from callwarden.config import detect_language_from_path
 
     assert detect_language_from_path("test.php") == "php", ".php 应识别为 php"
     assert detect_language_from_path("test.swift") == "swift", ".swift 应识别为 swift"
@@ -188,7 +188,7 @@ def test_language_detection():
 def test_create_parser_factory():
     """测试 2：create_parser 工厂分发"""
     print("--- 测试 2：create_parser 工厂 ---")
-    from code_graph.parsers import (
+    from callwarden.parsers import (
         PhpParser, SwiftParser, ScalaParser, HclParser, ElixirParser,
         create_parser,
     )
@@ -210,7 +210,7 @@ def test_create_parser_factory():
 def test_php_parser():
     """测试 3：PHP 解析"""
     print("--- 测试 3：PHP 解析 ---")
-    from code_graph.parsers import PhpParser
+    from callwarden.parsers import PhpParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".php", delete=False, encoding="utf-8") as f:
         f.write(PHP_SAMPLE)
@@ -257,7 +257,7 @@ def test_php_parser():
 def test_swift_parser():
     """测试 4：Swift 解析"""
     print("--- 测试 4：Swift 解析 ---")
-    from code_graph.parsers import SwiftParser
+    from callwarden.parsers import SwiftParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".swift", delete=False, encoding="utf-8") as f:
         f.write(SWIFT_SAMPLE)
@@ -302,7 +302,7 @@ def test_swift_parser():
 def test_scala_parser():
     """测试 5：Scala 解析"""
     print("--- 测试 5：Scala 解析 ---")
-    from code_graph.parsers import ScalaParser
+    from callwarden.parsers import ScalaParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".scala", delete=False, encoding="utf-8") as f:
         f.write(SCALA_SAMPLE)
@@ -348,7 +348,7 @@ def test_scala_parser():
 def test_hcl_parser():
     """测试 6：HCL/Terraform 解析"""
     print("--- 测试 6：HCL/Terraform 解析 ---")
-    from code_graph.parsers import HclParser
+    from callwarden.parsers import HclParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".tf", delete=False, encoding="utf-8") as f:
         f.write(HCL_SAMPLE)
@@ -392,7 +392,7 @@ def test_hcl_parser():
 def test_elixir_parser():
     """测试 7：Elixir 解析"""
     print("--- 测试 7：Elixir 解析 ---")
-    from code_graph.parsers import ElixirParser
+    from callwarden.parsers import ElixirParser
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".ex", delete=False, encoding="utf-8") as f:
         f.write(ELIXIR_SAMPLE)
@@ -438,7 +438,7 @@ def test_elixir_parser():
 def test_install_p1_p3_packages():
     """测试 8：install.py P1-P3 包定义完整性"""
     print("--- 测试 8：install.py P1-P3 包定义 ---")
-    from code_graph.install import (
+    from callwarden.install import (
         P1_LANGUAGE_PACKAGES, P2_LANGUAGE_PACKAGES, P3_LANGUAGE_PACKAGES,
     )
 
@@ -462,7 +462,7 @@ def test_db_build_integration():
     """测试 9：db_build.py 工厂分支集成"""
     print("--- 测试 9：db_build 工厂集成 ---")
     import inspect
-    from code_graph.db import db_build
+    from callwarden.db import db_build
 
     source = inspect.getsource(db_build)
     for parser_name in ["PhpParser", "SwiftParser", "ScalaParser", "HclParser", "ElixirParser"]:

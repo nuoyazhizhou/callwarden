@@ -27,7 +27,7 @@ db.py
 - EditSafetyMixin: 安全文件编辑（propose_edit hash 校验 + 原子写入 + 审计日志）
 - CrossRepoMixin: 跨仓库分析（依赖检测、共享符号、跨仓库影响传播）
 - LspMixin: LSP 集成（hover/definition/references/diagnostics/completion）
-- GCMixin: 代码图谱 GC（归档被 .gitignore/.codegraphignore 命中的文件，类 Java GC 分代回收）
+- GCMixin: 代码图谱 GC（归档被 .gitignore/.callwardenignore 命中的文件，类 Java GC 分代回收）
 """
 
 from __future__ import annotations
