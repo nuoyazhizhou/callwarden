@@ -13,7 +13,8 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **变更影响智能**：blast_radius + cross_layer_impact（代码 → DB → API → 配置）
 - **代码演化智能**：函数变更频率 + 缺陷关联 + 热点排名 + churn 分析
 - **缺陷知识库**：从 Semgrep + git 修复中挖掘模式，推荐修复方案
-- **任务驱动编排**：task/step/audit 状态机，护栏阻断后自动插入修复步骤
+- **任务驱动编排**：task/step/audit 状态机，**父子任务树**支持大任务自动拆分，深度优先遍历 + 子任务完成自动推进父任务，护栏阻断后自动插入修复步骤
+- **文件操作工具组**：file_read / file_grep / file_list / file_symbol_content，Agent 完全通过 MCP 读取代码，无需 IDE 内置工具
 - **向量搜索 + RAG**：sqlite-vec + sentence-transformers，自然语言查找函数
 - **Semgrep 集成**：多语言静态安全扫描，结果按内容去重入库
 - **LSP 集成**：hover / 定义 / 引用 / 诊断 / 补全
@@ -21,7 +22,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **Git 集成**：commit 历史 + 符号级变更追踪
 - **分支感知**：独立工作区方案 + 差异对比 + 合并预览
 - **Java GC 机制**：.gitignore/.callwardenignore 解析 + 归档/复活/清除
-- **120 个 MCP 工具 + 145+ CLI 命令**
+- **125+ MCP 工具 + 145+ CLI 命令**
 
 ## 快速开始
 
@@ -41,6 +42,55 @@ cw --call-chain "module::function_name"
 
 详细流程见 [快速开始](docs/quickstart.md)。
 
+## 典型场景
+
+### 场景一：大任务拆分与追踪（父子任务）
+
+当任务过大时，拆分为子任务避免 Agent 遗漏或遗忘上下文：
+
+```python
+# 1. 创建大任务
+task_id = mcp.task_create(
+    title="代码质量全面改进",
+    steps=[{"action": "verify", "check_items": ["最终验证"]}]
+)
+
+# 2. 拆分为多个子任务
+mcp.task_split(task_id, subtasks=[
+    {"title": "修复 parser 调用关系", "steps": [...]},
+    {"title": "i18n 国际化改造", "steps": [...]},
+    {"title": "默认语言自动检测", "steps": [...]},
+])
+
+# 3. 正常领取步骤，系统自动深度优先下钻
+step = mcp.task_next_step(task_id)
+# → 自动返回第一个子任务的第一个步骤
+# → 附带 parent_task_chain 祖先链，明确上下文
+
+# 4. 子任务全完成后自动推进父任务
+mcp.task_report_step(task_id, step["step_id"], result="...", success=True)
+
+# 5. 随时查看任务树进度
+tree = mcp.task_status_tree(task_id)
+# → 每层显示 progress: {total, done, progress百分比}
+```
+
+### 场景二：Agent 通过 MCP 读取代码（不依赖 IDE 内置工具）
+
+```python
+# 读取文件内容
+content = mcp.file_read("db/db_tasks.py", offset=0, limit=100)
+
+# 搜索代码（支持正则 + glob 过滤）
+results = mcp.file_grep("task_create", glob="*.py", output_mode="content")
+
+# 浏览目录
+files = mcp.file_list("db/", glob="*.py")
+
+# 读取函数源码（结合数据库位置信息）
+sym = mcp.file_symbol_content("db_tasks.py", "task_next_step")
+```
+
 ## 文档导航
 
 | 文档                                                                                   | 说明                                    |
@@ -48,10 +98,10 @@ cw --call-chain "module::function_name"
 | [docs/README.md](docs/README.md)                                                       | 用户文档总入口                          |
 | [docs/quickstart.md](docs/quickstart.md)                                               | 安装、初始化、基本查询、MCP Server 启动 |
 | [docs/cli_reference.md](docs/cli_reference.md)                                         | 全部 CLI 子命令与 --flag 用法           |
-| [docs/mcp_tools.md](docs/mcp_tools.md)                                                 | 120 个 MCP 工具按功能分组               |
+| [docs/mcp_tools.md](docs/mcp_tools.md)                                                 | 125+ MCP 工具按功能分组                 |
 | [docs/architecture.md](docs/architecture.md)                                           | 整体架构、Schema、Mixin 设计、扩展指南  |
 | [docs/deployment.md](docs/deployment.md)                                               | 本地/Docker 部署、MCP 配置、备份恢复    |
-| [docs/design/implementation-status.md](docs/design/implementation-status.md)           | 当前实现状态权威盘点（v14）             |
+| [docs/design/implementation-status.md](docs/design/implementation-status.md)           | 当前实现状态权威盘点（v15）             |
 | [docs/design/competition-analysis.md](docs/design/competition-analysis.md)             | 竞品分析与独占优势                      |
 | [docs/design/evolve-guardian-architecture/](docs/design/evolve-guardian-architecture/) | Guardian 架构设计规格                   |
 | [docs/history/](docs/history/)                                                         | 历史归档文档（已过时，仅供回顾）        |

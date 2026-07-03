@@ -27,7 +27,7 @@ cw server --transport sse    # SSE 模式
 | 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
 | Semgrep 缺陷 | 4 | 扫描/统计/查询 |
 | 安全编辑 | 4 | propose_edit/revert/history/stats |
-| 任务管理 | 6 | create/next/report/rollback/list/status |
+| 任务管理 | 9 | create/next/report/rollback/list/status/subtask/split/tree |
 | 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
 | LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
 | 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
@@ -308,6 +308,48 @@ cw server --transport sse    # SSE 模式
 获取任务详情和所有步骤。
 - **参数**：`task_id: str`
 - **返回**：`dict | None`
+
+### `task_create_subtask`
+在父任务下创建子任务。任务过大时拆分子任务，子任务完成后系统自动推进父任务状态，避免 Agent 遗漏任务或遗忘上下文。
+- **参数**：`parent_task_id: str`, `title: str`, `description: str = ""`, `steps: list = None`, `creator: str = "agent"`
+- **返回**：`str` — 新建子任务的 task_id
+
+### `task_split`
+将大任务拆分为多个子任务。原任务的自身步骤保留为汇总/验证步骤，具体工作由子任务完成。`task_next_step` 会自动深度优先下钻到最底层子任务执行。
+- **参数**：`task_id: str`, `subtasks: list` — subtasks 元素含 title/description/steps
+- **返回**：`list` — 新建子任务的 ID 列表
+
+### `task_status_tree`
+获取任务树详情（含子任务树和进度）。返回完整的任务树结构，包括每层的进度百分比、子任务列表、自身步骤状态。
+- **参数**：`task_id: str` — 根任务 ID
+- **返回**：`dict | None` — 含 progress、steps、subtasks 递归结构
+
+---
+
+## 文件操作工具
+
+Agent 通过 MCP 读取代码，完全替代 IDE 内置 Read/Grep/Glob 工具。所有工具都有工作区安全边界检查。
+
+### `file_read`
+读取文件内容，支持行号偏移和行数限制。
+- **参数**：`file_path: str`, `offset: int = 0`, `limit: int = 200`
+- **返回**：`dict | None` — `{path, total_lines, offset, limit, content}`
+
+### `file_grep`
+在工作区内搜索文件内容（ripgrep 风格），支持正则表达式和 glob 过滤。
+- **参数**：`pattern: str`, `path: str = ""`, `glob: str = ""`, `output_mode: str = "files_with_matches"`, `head_limit: int = 50`
+- **返回**：`dict` — `{results, count, truncated}`
+- **output_mode**：`files_with_matches`（文件名列表）/ `content`（含行号内容）/ `count`（每文件匹配数）
+
+### `file_list`
+列出目录下的文件和子目录。
+- **参数**：`path: str = ""`, `glob: str = ""`
+- **返回**：`list` — 元素 `{name, path, type}`（type 为 dir 或 file）
+
+### `file_symbol_content`
+读取文件中指定符号的源码内容。结合数据库中的符号位置信息，精确读取函数/类/方法的源码，比 file_read 更高效。
+- **参数**：`file_path: str`, `symbol_name: str`
+- **返回**：`dict | None` — `{symbol_name, symbol_type, qualified_name, file, start_line, end_line, content}`
 
 ---
 
