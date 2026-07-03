@@ -566,6 +566,44 @@ class QueryMixin:
 
         return result
 
+    def get_symbol_by_name_and_file(self, symbol_name: str, file_path: str) -> Optional[Dict]:
+        """通过符号名和文件名获取符号详情
+
+        Args:
+            symbol_name: 符号名称（短名或限定名）
+            file_path: 文件路径（相对或绝对）
+
+        Returns:
+            符号详情字典
+        """
+        ws_id = self._get_active_workspace_id()
+        sql = """
+            SELECT
+                fsv.qualified_name,
+                fsv.module_path,
+                fsv.start_line,
+                fsv.end_line,
+                fsv.depth,
+                sc.name,
+                sc.kind,
+                sc.signature,
+                fi.rel_path as file,
+                fi.abs_path
+            FROM file_symbol_versions fsv
+            JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
+            JOIN file_versions fv ON fsv.file_version_id = fv.id
+            JOIN file_instances fi ON fv.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND fv.is_current = 1 AND fsv.is_deleted = 0
+              AND (sc.name = ? OR fsv.qualified_name = ?)
+              AND (fi.rel_path = ? OR fi.abs_path = ? OR fi.rel_path LIKE '%' || ?)
+            LIMIT 1
+        """
+        cur = self.conn.execute(sql, (ws_id, symbol_name, symbol_name, file_path, file_path, file_path))
+        row = cur.fetchone()
+        if not row:
+            return None
+        return dict(row)
+
 
     def export_module_graph(self, format: str = "mermaid", output_file: str = "") -> str:
         """导出模块依赖图

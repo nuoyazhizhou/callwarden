@@ -507,6 +507,267 @@ def create_mcp_server():
         return db.get_active_workspace()
 
     # ----------------------------------------------------------------
+    # 文件操作工具（Agent 通过 MCP 读取代码，替代内置 Read/Grep 工具）
+    # ----------------------------------------------------------------
+
+    @mcp.tool()
+    def file_read(file_path: str, offset: int = 0, limit: int = 200) -> Optional[dict]:
+        """读取文件内容
+
+        Agent 通过此工具读取文件，替代 IDE 内置 Read 工具。
+        支持行号偏移和行数限制，避免一次性返回过大内容。
+
+        Args:
+            file_path: 文件路径（相对工作区根目录或绝对路径）
+            offset: 起始行号（从 0 开始，默认 0）
+            limit: 读取行数（默认 200）
+
+        Returns:
+            dict: {path, total_lines, offset, limit, content}，文件不存在返回 None
+        """
+        db = get_db()
+        ws_root = db.workspace_root
+
+        # 解析路径
+        if os.path.isabs(file_path):
+            abs_path = file_path
+        else:
+            abs_path = os.path.join(ws_root, file_path)
+
+        # 安全检查：必须在工作区内
+        abs_path = os.path.abspath(abs_path)
+        if not abs_path.startswith(os.path.abspath(ws_root)):
+            return {"error": "file path outside workspace"}
+
+        if not os.path.isfile(abs_path):
+            return None
+
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            total = len(lines)
+            end = min(offset + limit, total)
+            content = "".join(lines[offset:end])
+            return {
+                "path": abs_path,
+                "total_lines": total,
+                "offset": offset,
+                "limit": limit,
+                "content": content,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def file_grep(pattern: str, path: str = "", glob: str = "", output_mode: str = "files_with_matches", head_limit: int = 50) -> dict:
+        """在工作区内搜索文件内容（ripgrep 风格）
+
+        Agent 通过此工具搜索代码内容，替代 IDE 内置 Grep 工具。
+        支持正则表达式、glob 过滤、多种输出模式。
+
+        Args:
+            pattern: 搜索模式（支持正则表达式）
+            path: 搜索起始路径（相对或绝对，默认为工作区根）
+            glob: 文件 glob 过滤（如 "*.py"、"**/*.ts"）
+            output_mode: 输出模式（files_with_matches / content / count）
+            head_limit: 最大返回结果数（默认 50）
+
+        Returns:
+            dict: {results, count}
+        """
+        import re
+
+        db = get_db()
+        ws_root = db.workspace_root
+
+        # 解析路径
+        if path and os.path.isabs(path):
+            search_root = path
+        elif path:
+            search_root = os.path.join(ws_root, path)
+        else:
+            search_root = ws_root
+
+        search_root = os.path.abspath(search_root)
+        if not search_root.startswith(os.path.abspath(ws_root)):
+            return {"error": "search path outside workspace", "results": [], "count": 0}
+
+        if not os.path.isdir(search_root):
+            return {"error": "search path not a directory", "results": [], "count": 0}
+
+        try:
+            regex = re.compile(pattern, re.MULTILINE)
+        except re.error as e:
+            return {"error": f"invalid regex: {e}", "results": [], "count": 0}
+
+        # 编译 glob
+        import fnmatch
+
+        results = []
+        count = 0
+
+        for root, dirs, files in os.walk(search_root):
+            # 跳过常见忽略目录
+            dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build")]
+
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                rel_path = os.path.relpath(fpath, ws_root)
+
+                # glob 过滤
+                if glob and not fnmatch.fnmatch(rel_path, glob):
+                    # 也试试 basename 匹配
+                    if not fnmatch.fnmatch(fname, glob):
+                        continue
+
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                except Exception:
+                    continue
+
+                if output_mode == "files_with_matches":
+                    if regex.search(content):
+                        count += 1
+                        if len(results) < head_limit:
+                            results.append(rel_path)
+                elif output_mode == "count":
+                    matches = regex.findall(content)
+                    if matches:
+                        c = len(matches)
+                        count += c
+                        if len(results) < head_limit:
+                            results.append({"file": rel_path, "count": c})
+                elif output_mode == "content":
+                    lines = content.split("\n")
+                    for i, line in enumerate(lines):
+                        if regex.search(line):
+                            count += 1
+                            if len(results) < head_limit:
+                                results.append({
+                                    "file": rel_path,
+                                    "line": i + 1,
+                                    "content": line.rstrip(),
+                                })
+                else:
+                    return {"error": f"invalid output_mode: {output_mode}", "results": [], "count": 0}
+
+                if count > head_limit * 10:
+                    # 够多了，停止扫描
+                    break
+            if count > head_limit * 10:
+                break
+
+        return {
+            "results": results,
+            "count": count,
+            "truncated": count > head_limit,
+        }
+
+    @mcp.tool()
+    def file_list(path: str = "", glob: str = "") -> list:
+        """列出目录下的文件
+
+        Agent 通过此工具浏览目录结构，替代 IDE 内置 Glob/LS 工具。
+
+        Args:
+            path: 目录路径（相对或绝对，默认为工作区根）
+            glob: 文件 glob 过滤（如 "*.py"）
+
+        Returns:
+            文件/目录列表
+        """
+        import fnmatch
+
+        db = get_db()
+        ws_root = db.workspace_root
+
+        if path and os.path.isabs(path):
+            dir_path = path
+        elif path:
+            dir_path = os.path.join(ws_root, path)
+        else:
+            dir_path = ws_root
+
+        dir_path = os.path.abspath(dir_path)
+        if not dir_path.startswith(os.path.abspath(ws_root)):
+            return []
+
+        if not os.path.isdir(dir_path):
+            return []
+
+        try:
+            entries = []
+            for name in sorted(os.listdir(dir_path)):
+                if name.startswith("."):
+                    continue
+                full = os.path.join(dir_path, name)
+                is_dir = os.path.isdir(full)
+                entry_type = "dir" if is_dir else "file"
+                rel = os.path.relpath(full, ws_root)
+
+                if glob and not is_dir:
+                    if not fnmatch.fnmatch(name, glob):
+                        continue
+
+                entries.append({
+                    "name": name,
+                    "path": rel,
+                    "type": entry_type,
+                })
+            return entries
+        except Exception:
+            return []
+
+    @mcp.tool()
+    def file_symbol_content(file_path: str, symbol_name: str) -> Optional[dict]:
+        """读取文件中指定符号的源码内容
+
+        结合数据库中的符号位置信息，精确读取函数/类/方法的源码，
+        比 file_read 更高效，Agent 无需计算行号范围。
+
+        Args:
+            file_path: 文件路径（相对或绝对）
+            symbol_name: 符号名称
+
+        Returns:
+            dict: {symbol_name, file, start_line, end_line, content}
+        """
+        db = get_db()
+        ws_root = db.workspace_root
+
+        # 先从数据库找符号
+        sym = db.get_symbol_by_name_and_file(symbol_name, file_path)
+        if not sym:
+            return None
+
+        # 读取文件内容
+        abs_path = os.path.join(ws_root, sym.get("file", "")) if not os.path.isabs(sym.get("file", "")) else sym.get("file")
+        if not os.path.isfile(abs_path):
+            return None
+
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            start = sym.get("start_line", 1) - 1
+            end = sym.get("end_line", len(lines))
+            start = max(0, start)
+            end = min(len(lines), end)
+            content = "".join(lines[start:end])
+
+            return {
+                "symbol_name": symbol_name,
+                "symbol_type": sym.get("symbol_type", ""),
+                "qualified_name": sym.get("qualified_name", ""),
+                "file": sym.get("file", ""),
+                "start_line": sym.get("start_line", 0),
+                "end_line": sym.get("end_line", 0),
+                "content": content,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ----------------------------------------------------------------
     # Git 集成工具
     # ----------------------------------------------------------------
 
@@ -994,6 +1255,68 @@ def create_mcp_server():
         """
         db = get_db()
         return db.task_rollback(task_id=task_id, change_id=change_id, reason=reason)
+
+    @mcp.tool()
+    def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
+        """在父任务下创建子任务
+
+        当任务过大时，可将其拆分为多个子任务。子任务完成后，
+        系统自动推进父任务状态，避免 Agent 遗漏任务或遗忘上下文。
+
+        Args:
+            parent_task_id: 父任务 ID
+            title: 子任务标题
+            description: 子任务描述
+            steps: 子任务步骤列表
+            creator: 创建者标识
+
+        Returns:
+            新建子任务的 task_id
+        """
+        db = get_db()
+        return db.task_create_subtask(
+            parent_task_id=parent_task_id,
+            title=title,
+            description=description,
+            steps=steps,
+            creator=creator,
+        )
+
+    @mcp.tool()
+    def task_split(task_id: str, subtasks: list) -> list:
+        """将大任务拆分为多个子任务
+
+        当任务步骤过多或单个步骤描述过长时，使用此工具自动拆分。
+        原任务的自身步骤保留为汇总/验证步骤，具体工作由子任务完成。
+        task_next_step 会自动深度优先下钻到最底层子任务执行，
+        确保 Agent 永远聚焦在具体可执行的小任务上，不会遗漏。
+
+        Args:
+            task_id: 要拆分的父任务 ID
+            subtasks: 子任务定义列表，每个元素含 title/description/steps
+
+        Returns:
+            新建子任务的 ID 列表
+        """
+        db = get_db()
+        return db.task_split(task_id=task_id, subtasks=subtasks)
+
+    @mcp.tool()
+    def task_status_tree(task_id: str) -> Optional[dict]:
+        """获取任务树详情（含子任务树和进度）
+
+        返回完整的任务树结构，包括每层的进度百分比、
+        子任务列表、自身步骤状态。用于 Agent 了解整体进展，
+        避免因子任务过多而迷失方向。
+
+        Args:
+            task_id: 根任务 ID
+
+        Returns:
+            任务树 dict（含 progress、steps、subtasks 递归结构）
+        """
+        db = get_db()
+        return db.task_status_tree(task_id=task_id)
 
     @mcp.tool()
     def task_list(status_filter: str = None, limit: int = 20) -> list:
