@@ -27,7 +27,7 @@ cw server --transport sse    # SSE 模式
 | 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
 | Semgrep 缺陷 | 4 | 扫描/统计/查询 |
 | 安全编辑 | 4 | propose_edit/revert/history/stats |
-| 任务管理 | 9 | create/next/report/rollback/list/status/subtask/split/tree |
+| 任务管理 | 10 | create/next/report/rollback/list/status/subtask/split/tree/create_from_plan |
 | 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
 | LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
 | 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
@@ -323,6 +323,29 @@ cw server --transport sse    # SSE 模式
 获取任务树详情（含子任务树和进度）。返回完整的任务树结构，包括每层的进度百分比、子任务列表、自身步骤状态。
 - **参数**：`task_id: str` — 根任务 ID
 - **返回**：`dict | None` — 含 progress、steps、subtasks 递归结构
+
+### `task_create_from_plan`
+从 Markdown 任务计划自动创建父子任务树。Agent 只需传入任务标题和 Markdown 格式计划，系统自动解析标题层级和列表项，生成完整任务树并入库。
+- **参数**：
+  - `title: str` — 根任务标题
+  - `plan_md: str` — Markdown 格式的任务计划（见格式说明）
+  - `description: str = ""` — 根任务补充描述（可选）
+- **返回**：`str` — 根任务 ID
+- **Markdown 格式**：
+  - `# 一级标题` = 根任务描述
+  - `## 二级标题` = 子任务标题
+  - `### 三级标题` = 步骤分组
+  - `- [ ] 列表项` / `- 列表项` = 任务步骤
+- **示例**：
+  ```
+  # 性能优化专项
+  ## 1. 数据库查询优化
+  - 慢 SQL 分析
+  - 添加索引
+  ## 2. 解析器优化
+  - 大文件符号提取
+  - 增量解析支持
+  ```
 
 ---
 

@@ -1319,6 +1319,41 @@ def create_mcp_server():
         return db.task_status_tree(task_id=task_id)
 
     @mcp.tool()
+    def task_create_from_plan(title: str, plan_md: str, description: str = "") -> str:
+        """从 Markdown 任务计划自动创建父子任务树
+
+        Agent 只需传入任务标题和 Markdown 格式的计划，系统会自动：
+        - 解析 # / ## / ### 标题层级为任务层级
+        - 解析 - [ ] 列表项为任务步骤
+        - 自动生成完整的父子任务树并入库
+        - task_next_step 会自动深度优先下钻执行
+
+        推荐格式：
+        ```
+        # 一级标题 = 根任务说明
+        ## 子任务1标题
+        - 步骤1描述
+        - 步骤2描述
+        ## 子任务2标题
+        - 步骤1描述
+        ```
+
+        Args:
+            title: 根任务标题
+            plan_md: Markdown 格式的任务计划
+            description: 根任务补充描述（可选）
+
+        Returns:
+            根任务 ID
+        """
+        db = get_db()
+        return db.task_create_from_plan(
+            title=title,
+            plan_md=plan_md,
+            description=description,
+        )
+
+    @mcp.tool()
     def task_list(status_filter: str = None, limit: int = 20) -> list:
         """列出任务
 
