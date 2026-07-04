@@ -23,7 +23,7 @@ import time
 from ..db import CodeGraphDB
 from ..config import detect_project_root, get_default_workspace_name
 from ..server.watcher import FileWatcher
-from ..i18n import t, set_language, get_arg_help, get_msg, get_error
+from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
 from .console import cprint
 
 
@@ -71,7 +71,9 @@ _SUBCOMMAND_HELP = """代码守护者架构子命令（四大支柱）:
 
 def _run_subcommand_mode():
     """子命令模式入口：初始化 db 并调度代码守护者架构子命令"""
-    set_language("zh_CN")
+    # 使用系统检测到的默认语言（CALLWARDEN_LANG / LANG / LC_ALL / 系统语言）
+    # 用户可通过环境变量 CALLWARDEN_LANG=en_US 切换为英文
+    set_language(DEFAULT_LANG)
 
     # 自动检测工作区根目录
     cwd = os.getcwd()
@@ -1230,7 +1232,7 @@ def create_parser() -> argparse.ArgumentParser:
         description=t("cli.description") + "\n\n" + _SUBCOMMAND_HELP,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--lang", metavar="LANG", default="zh_CN",
+    parser.add_argument("--lang", metavar="LANG", default=DEFAULT_LANG,
                        help="Language (zh_CN/en_US)")
     parser.add_argument("--workspace", metavar="ROOT", help=get_arg_help("workspace"))
     parser.add_argument("--root", metavar="ROOT", help=get_arg_help("root"))
@@ -1362,7 +1364,7 @@ def main():
 
     # 第一阶段：先解析 --lang 参数（不创建完整 parser）
     pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--lang", metavar="LANG", default="zh_CN")
+    pre_parser.add_argument("--lang", metavar="LANG", default=DEFAULT_LANG)
     pre_args, _ = pre_parser.parse_known_args()
     
     # 设置语言
@@ -1387,7 +1389,7 @@ def main():
     
     # 初始化数据库
     db = CodeGraphDB(workspace_root=workspace_root) if workspace_root else CodeGraphDB()
-    
+
     # 如果自动检测到了工作区，自动注册并设置为活动工作区
     if workspace_root and not args.list_workspaces:
         ws_name = get_default_workspace_name(workspace_root)

@@ -1019,8 +1019,32 @@ class CodeGraphBase:
 
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row
+        # Python 3.14 + Windows + entry_point 启动方式下，sqlite3.connect 是 lazy
+        # connection，首次 execute 才真正打开文件。entry_point 启动后第一次 execute
+        # 可能因 Windows 文件系统缓存未预热或 Defender 实时扫描导致 SQLITE_CANTOPEN
+        # (error 14)。cw.py 顶部的 warmup 已经预热了该路径，但 Defender 锁定是间歇性的，
+        # 这里再用循环重试 + sleep + 重新 connect 确保连接成功。
+        self.conn = None
+        _last_err = None
+        for _attempt in range(10):
+            try:
+                self.conn = sqlite3.connect(db_path)
+                self.conn.row_factory = sqlite3.Row
+                self.conn.execute("SELECT 1").fetchone()
+                break
+            except sqlite3.OperationalError as _e:
+                _last_err = _e
+                try:
+                    if self.conn:
+                        self.conn.close()
+                except Exception:
+                    pass
+                self.conn = None
+                # sleep 让 Defender 完成扫描释放文件锁
+                import time as _time
+                _time.sleep(0.5 * (_attempt + 1))
+        if self.conn is None:
+            raise _last_err if _last_err else sqlite3.OperationalError("connect failed")
         # 性能优化 PRAGMA（WAL 模式 + 减少 fsync + 内存缓存 + 内存映射）
         # journal_mode=WAL：读写不互斥，WAL 文件顺序写入比回滚日志快数倍
         # synchronous=NORMAL：WAL 模式下仅在 checkpoint 时 fsync，比 FULL 快 5-10 倍
