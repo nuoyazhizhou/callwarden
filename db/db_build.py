@@ -22,6 +22,7 @@ from ..config import (
 )
 from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
 from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
+from ..i18n import t
 
 
 class BuildMixin:
@@ -32,14 +33,14 @@ class BuildMixin:
 
     def build(self):
         """完整构建知识图谱"""
-        print("步骤 1/6: 解析模块结构...")
+        print(t("cli.messages.db_build_step1_parse_modules"))
         self.module_resolver.resolve_all(self.parser)
-        print(f"  发现 {len(self.module_resolver.module_to_file)} 个模块")
+        print(t("cli.messages.db_build_modules_found", count=len(self.module_resolver.module_to_file)))
 
         crate_name = self._detect_crate_name()
-        print(f"  crate 名称: {crate_name}")
+        print(t("cli.messages.db_build_crate_name", name=crate_name))
 
-        print("步骤 2/6: 解析所有文件...")
+        print(t("cli.messages.db_build_step2_parse_files"))
         file_results = {}
         failed_files = []
         total = len(self.module_resolver.module_to_file)
@@ -54,38 +55,38 @@ class BuildMixin:
                 result["rel_path"] = norm_path(rel_path)
                 result.setdefault("inline_modules", [])
                 file_results[norm_path(rel_path)] = result
-                print(f"  [{i}/{total}] 解析: {rel_path}")
+                print(t("cli.messages.db_build_parse_progress", i=i, total=total, path=rel_path))
             except Exception as e:
                 failed_files.append((rel_path, str(e)))
-                print(f"  [{i}/{total}] 失败: {rel_path} - {e}")
+                print(t("cli.messages.db_build_parse_fail", i=i, total=total, path=rel_path, error=e))
 
-        print(f"  成功解析 {len(file_results)} 个文件", end="")
+        print(t("cli.messages.db_build_parsed_count", count=len(file_results)), end="")
         if failed_files:
-            print(f"，失败 {len(failed_files)} 个")
+            print(t("cli.messages.db_build_failed_count", count=len(failed_files)))
         else:
             print()
 
-        print("步骤 3/6: 创建文件版本和符号版本...")
+        print(t("cli.messages.db_build_step3_versions"))
         for rel_path, result in file_results.items():
             file_version_id = self._save_file_version(result["file_instance_id"], result)
             result["file_version_id"] = file_version_id
             self._save_symbols_for_version(file_version_id, result["file_instance_id"], result)
 
-        print("步骤 4/6: 解析并写入调用关系...")
+        print(t("cli.messages.db_build_step4_calls"))
         self.build_call_graph(file_results, crate_name)
 
-        print("步骤 5/6: 计算拓扑深度...")
+        print(t("cli.messages.db_build_step5_depth"))
         self._build_depth()
 
-        print("步骤 6/6: 更新符号版本的深度...")
+        print(t("cli.messages.db_build_step6_update_depth"))
         self._update_symbol_version_depths()
 
         self.conn.commit()
 
         if failed_files:
-            print(f"完成！（有 {len(failed_files)} 个文件解析失败）")
+            print(t("cli.messages.db_build_done_failures", count=len(failed_files)))
         else:
-            print("完成！")
+            print(t("cli.messages.db_build_done"))
 
 
     def build_full_graph(self, force: bool = False):
@@ -111,7 +112,7 @@ class BuildMixin:
             abs_dir = os.path.join(self.workspace_root, dir_path)
 
         if not os.path.isdir(abs_dir):
-            print(f"错误: 目录不存在 - {abs_dir}")
+            print(t("cli.messages.db_build_dir_not_exist", path=abs_dir))
             return
 
         # 扫描该目录下的源文件
@@ -129,13 +130,13 @@ class BuildMixin:
 
         files.sort()
         if not files:
-            print(f"目录 {dir_path} 中未找到支持的源文件")
+            print(t("cli.messages.db_build_no_source_files", path=dir_path))
             return
 
         rust_files = [f for f in files if f.endswith(".rs")]
         other_files = [f for f in files if not f.endswith(".rs")]
 
-        print(f"构建目录: {dir_path} ({len(files)} 个源文件)")
+        print(t("cli.messages.db_build_build_dir", path=dir_path, count=len(files)))
         if other_files or len(rust_files) != len(files):
             self._build_multi_lang(files)
         else:
@@ -368,11 +369,11 @@ class BuildMixin:
         # 检测 repo manifest，注册子仓库为 workspace（让跨仓库分析能识别边界）
         subrepo_count = self._detect_repo_manifest()
         if subrepo_count > 0:
-            cprint(f"  (检测到 repo manifest，已注册 {subrepo_count} 个子仓库为 workspace)", "dim")
+            cprint(t("cli.messages.db_build_repo_manifest", count=subrepo_count), "dim")
 
-        cprint(f"步骤 1/5: 扫描到 {total} 个源文件", "cyan", bold=True)
+        cprint(t("cli.messages.db_build_step1_5_scan", count=total), "cyan", bold=True)
 
-        cprint("步骤 2/5: 解析所有文件...", "cyan", bold=True)
+        cprint(t("cli.messages.db_build_step2_5_parse"), "cyan", bold=True)
         file_results = {}
         skipped = 0
         unchanged = 0
@@ -405,22 +406,22 @@ class BuildMixin:
             to_parse.append((i, rel_path, abs_path, lang, module_path, file_instance_id))
 
         if unchanged > 0 and not to_parse:
-            cprint(f"  ✓ 所有文件未变化，跳过后续步骤（{unchanged} 个文件）", "green")
+            cprint(t("cli.messages.db_build_all_unchanged", count=unchanged), "green")
             duration = time.time() - t_start
             cprint()
-            cprint(f"  ═══════ 构建总结 ═══════", "cyan", bold=True)
+            cprint(t("cli.messages.db_build_summary_title"), "cyan", bold=True)
             cprint()
-            cprint(f"  文件处理:", "bold")
-            cprint(f"    未变化跳过: {unchanged}", "dim")
+            cprint(t("cli.messages.db_build_summary_files"), "bold")
+            cprint(t("cli.messages.db_build_summary_unchanged", count=unchanged), "dim")
             cprint()
-            cprint(f"  耗时: {format_duration(duration)}", "yellow")
-            cprint(f"  ✓ 构建完成，代码图谱已是最新", "green")
+            cprint(t("cli.messages.db_build_summary_duration", duration=format_duration(duration)), "yellow")
+            cprint(t("cli.messages.db_build_summary_done"), "green")
             cprint()
             return
 
         if to_parse:
             max_workers = min(8, max(1, (os.cpu_count() or 4) - 1))
-            cprint(f"  (并行解析: {max_workers} 线程, {len(to_parse)} 个文件待解析)", "dim")
+            cprint(t("cli.messages.db_build_parallel_parse", workers=max_workers, count=len(to_parse)), "dim")
             print_lock = threading.Lock()
             done_count = [0]
             parse_total = len(to_parse)
@@ -479,7 +480,7 @@ class BuildMixin:
                     result.setdefault("inline_modules", [])
                     with print_lock:
                         done_count[0] += 1
-                        print_progress(done_count[0], parse_total, f"解析: {rel_path} ({lang})")
+                        print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
                     return ("ok", idx, rel_path, result)
                 except Exception as e:
                     with print_lock:
@@ -499,13 +500,13 @@ class BuildMixin:
             clear_progress()
             parsed_new = len(file_results) - unchanged
             if failed == 0:
-                cprint(f"  ✓ 成功解析 {parsed_new} 个，未变化 {unchanged} 个，跳过 {skipped} 个", "green")
+                cprint(t("cli.messages.db_build_parse_ok", parsed=parsed_new, unchanged=unchanged, skipped=skipped), "green")
             else:
-                cprint(f"  成功解析 {parsed_new} 个，未变化 {unchanged} 个，跳过 {skipped} 个，失败 {failed} 个", "yellow")
+                cprint(t("cli.messages.db_build_parse_warn", parsed=parsed_new, unchanged=unchanged, skipped=skipped, failed=failed), "yellow")
                 for rel_path, err in failed_files:
-                    cprint(f"    ✗ {rel_path}: {err}", "red")
+                    cprint(t("cli.messages.db_build_parse_fail_item", path=rel_path, error=err), "red")
 
-            spinner = Spinner("步骤 3/5: 创建文件版本和符号版本")
+            spinner = Spinner(t("cli.messages.db_build_step3_5_versions"))
         spinner.start()
         version_count = 0
         for rel_path, result in file_results.items():
@@ -516,9 +517,9 @@ class BuildMixin:
             result["file_version_id"] = file_version_id
             self._save_symbols_for_version(file_version_id, result["file_instance_id"], result)
             version_count += 1
-        spinner.stop(f"✓ 写入 {version_count} 个文件版本")
+        spinner.stop(t("cli.messages.db_build_versions_written", count=version_count))
 
-        spinner = Spinner("步骤 4/5: 解析调用关系")
+        spinner = Spinner(t("cli.messages.db_build_step4_5_calls"))
         spinner.start()
         self._build_call_graph_multi_lang(file_results)
         ws_id = self._get_active_workspace_id()
@@ -526,13 +527,13 @@ class BuildMixin:
         total_calls = cur.fetchone()["c"]
         cur = self.conn.execute("SELECT COUNT(*) as c FROM calls c JOIN symbols s ON c.caller_id = s.id JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ? AND c.callee_id IS NOT NULL", (ws_id,))
         resolved_calls = cur.fetchone()["c"]
-        spinner.stop(f"✓ {total_calls} 条调用 ({resolved_calls} 已解析)")
+        spinner.stop(t("cli.messages.db_build_calls_count", total=total_calls, resolved=resolved_calls))
 
-        spinner = Spinner("步骤 5/5: 计算拓扑深度")
+        spinner = Spinner(t("cli.messages.db_build_step5_5_depth"))
         spinner.start()
         self._build_depth()
         self._update_symbol_version_depths()
-        spinner.stop("✓ 深度计算完成")
+        spinner.stop(t("cli.messages.db_build_depth_done"))
 
         self.conn.commit()
 
@@ -541,12 +542,12 @@ class BuildMixin:
         try:
             gc_result = self.gc_archive(force=False)
             if gc_result["archived"] > 0:
-                cprint(f"步骤 6/6: GC 归档 {gc_result['archived']} 个被 ignore 命中的文件", "yellow")
+                cprint(t("cli.messages.db_build_step6_gc", count=gc_result['archived']), "yellow")
                 for reason, count in gc_result["reasons"].items():
-                    cprint(f"  {reason}: {count} 个", "dim")
+                    cprint(t("cli.messages.db_build_gc_reason", reason=reason, count=count), "dim")
         except Exception as e:
             # GC 失败不阻塞构建
-            cprint(f"  (GC 归档失败，不影响构建结果: {e})", "yellow")
+            cprint(t("cli.messages.db_build_gc_fail", error=e), "yellow")
 
         duration = time.time() - t_start
 
@@ -835,7 +836,7 @@ class BuildMixin:
             self._save_calls_for_version(result["file_version_id"], calls, result)
             total_calls += len(calls)
 
-        print(f"  共 {total_calls} 个调用关系，已解析 {resolved_count} 个 ({resolved_count * 100 // total_calls if total_calls else 0}%)")
+        print(t("cli.messages.db_build_calls_summary", total=total_calls, resolved=resolved_count, percent=resolved_count * 100 // total_calls if total_calls else 0))
 
 
     def _make_call_entry(self, raw: Dict, callee_qname: str, callee_file: str,
@@ -915,7 +916,7 @@ class BuildMixin:
             self._save_calls_for_version(result["file_version_id"], calls, result)
             total_calls += len(calls)
 
-        print(f"  共 {total_calls} 个调用关系")
+        print(t("cli.messages.db_build_calls_simple", total=total_calls))
 
 
     def _detect_crate_name(self) -> str:
@@ -1514,7 +1515,7 @@ class BuildMixin:
             return
 
         rel_path = norm_path(os.path.relpath(abs_path, self.workspace_root))
-        print(f"刷新: {rel_path} ({lang})")
+        print(t("cli.messages.db_build_refresh", path=rel_path, lang=lang))
 
         self._refresh_file_internal(abs_path, rel_path, lang)
 
@@ -1593,7 +1594,7 @@ class BuildMixin:
         try:
             result = parser.parse_file(abs_path, module_path)
         except Exception as e:
-            print(f"  刷新失败: {rel_path} - {e}")
+            print(t("cli.messages.db_build_refresh_fail", path=rel_path, error=e))
             return
 
         result["abs_path"] = abs_path
@@ -1676,7 +1677,7 @@ class BuildMixin:
             )
 
         self.conn.commit()
-        print(f"  已标记删除: {rel_path} (保留 {self._count_file_versions(file_instance_id)} 个历史版本)")
+        print(t("cli.messages.db_build_marked_deleted", path=rel_path, count=self._count_file_versions(file_instance_id)))
 
 
     def _count_file_versions(self, file_instance_id: int) -> int:

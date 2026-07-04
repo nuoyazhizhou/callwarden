@@ -20,6 +20,7 @@ except ImportError:
     HAS_WATCHDOG = False
 
 from ..config import PROJECT_ROOT, norm_path, get_supported_extensions, detect_language_from_path
+from ..i18n import t
 
 
 class FileWatcher:
@@ -36,7 +37,7 @@ class FileWatcher:
     def start(self):
         """启动文件监控"""
         if not HAS_WATCHDOG:
-            print("[监控] 错误: watchdog 未安装。请运行: pip install watchdog")
+            print(t("cli.messages.watcher_no_watchdog"))
             return False
 
         self._handler = _ChangeHandler(self.db, self._supported_exts)
@@ -45,18 +46,18 @@ class FileWatcher:
         self._observer.schedule(self._handler, self.watch_dir, recursive=True)
         self._observer.start()
 
-        print(f"[监控] 已启动，监控目录: {self.watch_dir}")
-        print(f"[监控] 监听语言: {', '.join(sorted(set(detect_language_from_path('test.' + e) for e in self._supported_exts if e)))}")
-        print("[监控] 按 Ctrl+C 停止")
+        print(t("cli.messages.watcher_started", dir=self.watch_dir))
+        print(t("cli.messages.watcher_listening_langs", langs=', '.join(sorted(set(detect_language_from_path('test.' + e) for e in self._supported_exts if e)))))
+        print(t("cli.messages.watcher_stop_hint"))
         print()
 
         try:
             while True:
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\n[监控] 正在停止...")
+            print(t("cli.messages.watcher_stopping"))
             self.stop()
-            print("[监控] 已停止")
+            print(t("cli.messages.watcher_stopped"))
 
         return True
 
@@ -145,7 +146,7 @@ class _ChangeHandler(FileSystemEventHandler):
 
     def _handle_modified(self, paths: List[str]):
         """处理文件修改/创建"""
-        print(f"[监控] 检测到 {len(paths)} 个文件变更，正在更新...")
+        print(t("cli.messages.watcher_modified_detected", count=len(paths)))
         success = 0
         for path in paths:
             try:
@@ -153,23 +154,23 @@ class _ChangeHandler(FileSystemEventHandler):
                 rel_path = norm_path(rel_path)
                 self.db.refresh_file(rel_path)
                 success += 1
-                print(f"  [更新] {rel_path}")
+                print(t("cli.messages.watcher_update_item", path=rel_path))
             except Exception as e:
-                print(f"  [错误] 更新 {path} 失败: {e}")
-        print(f"[监控] 更新完成: {success}/{len(paths)} 成功\n")
+                print(t("cli.messages.watcher_update_fail", path=path, error=e))
+        print(t("cli.messages.watcher_update_done", success=success, total=len(paths)))
 
     def _handle_deleted(self, paths: List[str]):
         """处理文件删除"""
-        print(f"[监控] 检测到 {len(paths)} 个文件删除，正在清理...")
+        print(t("cli.messages.watcher_deleted_detected", count=len(paths)))
         for path in paths:
             try:
                 rel_path = os.path.relpath(path, self.db.workspace_root)
                 rel_path = norm_path(rel_path)
                 self.db.remove_file(rel_path)
-                print(f"  [删除] {rel_path}")
+                print(t("cli.messages.watcher_delete_item", path=rel_path))
             except Exception as e:
-                print(f"  [错误] 删除 {path} 失败: {e}")
-        print(f"[监控] 清理完成\n")
+                print(t("cli.messages.watcher_delete_fail", path=path, error=e))
+        print(t("cli.messages.watcher_delete_done"))
 
     def on_modified(self, event):
         if event.is_directory:

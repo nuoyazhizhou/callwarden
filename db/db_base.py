@@ -24,6 +24,7 @@ from ..config import (
     detect_language_from_path, get_supported_extensions, compute_content_hash,
     detect_project_root, get_default_workspace_name, get_project_db_path,
 )
+from ..i18n import t
 
 # 计算项目根目录（callwarden 包自身的根目录）
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1131,7 +1132,7 @@ class CodeGraphBase:
                 continue
 
             migration = migrations[v]
-            print(f"  [迁移] v{from_version} -> v{v}: {migration['description']}")
+            print(t("cli.messages.db_base_migration_start", from_version=from_version, to=v, desc=migration['description']))
 
             try:
                 self.conn.execute("BEGIN")
@@ -1143,7 +1144,7 @@ class CodeGraphBase:
                 self.conn.commit()
             except Exception as e:
                 self.conn.rollback()
-                print(f"  [错误] 迁移 v{v} 失败: {e}")
+                print(t("cli.messages.db_base_migration_failed", version=v, error=e))
                 traceback.print_exc()
                 raise
 
@@ -1435,7 +1436,7 @@ class CodeGraphBase:
             return True
         except Exception as e:
             self.conn.rollback()
-            print(f"删除工作区失败: {e}")
+            print(t("cli.messages.db_base_delete_workspace_failed", error=e))
             return False
 
     # --------------------------------------------------------------------

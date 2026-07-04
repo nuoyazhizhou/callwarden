@@ -11,6 +11,8 @@ import sys
 import time
 from typing import Optional
 
+from ..i18n import t
+
 
 _COLORS = {
     "reset": "\033[0m",
@@ -284,29 +286,30 @@ def print_build_summary(parsed: int, unchanged: int, skipped: int, failed: int,
         duration: 构建总耗时（秒）
     """
     print()
-    cprint(f"  ═══════ 构建总结 ═══════", "cyan", bold=True)
+    cprint(t("cli.messages.console_build_summary_title"), "cyan", bold=True)
     print()
-    cprint(f"  文件:", "bold")
+    cprint(t("cli.messages.console_files_label"), "bold")
     if parsed:
-        cprint(f"    新增/更新: {parsed}", "green")
+        cprint(t("cli.messages.console_files_parsed", parsed=parsed), "green")
     if unchanged:
-        cprint(f"    未变化跳过: {unchanged}", "dim")
+        cprint(t("cli.messages.console_files_unchanged", unchanged=unchanged), "dim")
     if skipped:
-        cprint(f"    不支持跳过: {skipped}", "dim")
+        cprint(t("cli.messages.console_files_skipped", skipped=skipped), "dim")
     if failed:
-        cprint(f"    解析失败: {failed}", "red")
+        cprint(t("cli.messages.console_files_failed", failed=failed), "red")
     print()
-    cprint(f"  图谱:", "bold")
-    cprint(f"    符号总数: {symbols:,}", "bright_cyan")
+    cprint(t("cli.messages.console_graph_label"), "bold")
+    cprint(t("cli.messages.console_symbols_total", symbols=symbols), "bright_cyan")
     if calls:
-        rate = f"({resolved_calls / calls * 100:.1f}% 已解析)" if calls else ""
-        cprint(f"    调用关系: {calls:,} {rate}", "bright_cyan")
+        pct = resolved_calls / calls * 100
+        rate = t("cli.messages.console_resolved_rate", rate=f"{pct:.1f}")
+        cprint(t("cli.messages.console_calls_total", calls=calls, rate=rate), "bright_cyan")
     print()
-    cprint(f"  耗时: {format_duration(duration)}", "yellow")
+    cprint(t("cli.messages.console_duration", duration=format_duration(duration)), "yellow")
     if failed:
-        cprint(f"  ⚠ {failed} 个文件解析失败，已跳过", "yellow")
+        cprint(t("cli.messages.console_build_failed_warning", failed=failed), "yellow")
     else:
-        cprint(f"  ✓ 构建完成", "green")
+        cprint(t("cli.messages.console_build_done"), "green")
     print()
 
 

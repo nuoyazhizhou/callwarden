@@ -19,6 +19,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..i18n import t
+
 # Rust/PyO3 扩展加载（可选，失败时回退到 numpy 向量化）
 # 优先级: callwarden_core.batch_cosine_similarity > numpy 批量运算 > 纯 Python 循环
 _rust_core = None
@@ -373,10 +375,7 @@ class VectorMixin:
         """
         embedder = self._get_embedder()
         if embedder is None:
-            print(
-                "[semantic_search] 嵌入模型不可用，请安装 sentence-transformers "
-                "或启动 ollama 服务"
-            )
+            print(t("cli.messages.db_vector_embedder_unavailable"))
             return []
 
         query_vec = self._embed_text(query)
@@ -882,13 +881,17 @@ class VectorMixin:
             ```
         """
         lines: List[str] = []
-        lines.append(f"# 问题\n{question}\n")
-        lines.append("# 相关代码上下文\n")
+        lines.append(t("cli.messages.db_vector_rag_question", question=question))
+        lines.append(t("cli.messages.db_vector_rag_context_header"))
 
-        role_labels = {"seed": "种子", "caller": "调用方", "callee": "被调用方"}
+        role_labels = {
+            "seed": t("cli.messages.db_vector_rag_role_seed"),
+            "caller": t("cli.messages.db_vector_rag_role_caller"),
+            "callee": t("cli.messages.db_vector_rag_role_callee"),
+        }
 
         for block in blocks:
-            role = role_labels.get(block.get("role", ""), "相关")
+            role = role_labels.get(block.get("role", ""), t("cli.messages.db_vector_rag_role_default"))
             qn = block.get("qualified_name", "unknown")
             fp = block.get("file_path", "")
             sl = block.get("start_line", 0)
@@ -898,7 +901,7 @@ class VectorMixin:
 
             lines.append(f"## [{role}] {qn} ({fp}:{sl}) — similarity: {sim:.4f}")
             if summary:
-                lines.append(f"摘要: {summary}")
+                lines.append(t("cli.messages.db_vector_rag_summary", summary=summary))
             if code:
                 lines.append(f"```\n{code}\n```")
             lines.append("")

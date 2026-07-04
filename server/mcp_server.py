@@ -23,6 +23,7 @@ except ImportError:
 
 from ..db import CodeGraphDB
 from ..config import PROJECT_ROOT, DB_PATH
+from ..i18n import t
 
 
 _db_instance: Optional[CodeGraphDB] = None
@@ -59,7 +60,7 @@ def get_db(workspace: Optional[str] = None) -> CodeGraphDB:
 def create_mcp_server():
     """创建 MCP 服务器实例"""
     if not HAS_FASTMCP:
-        print("错误: fastmcp 未安装。请运行: pip install fastmcp", file=sys.stderr)
+        print(t("cli.messages.mcp_server_fastmcp_not_installed"), file=sys.stderr)
         sys.exit(1)
 
     mcp = FastMCP("callwarden", dependencies=["callwarden"])

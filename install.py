@@ -32,6 +32,8 @@ import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
+from .i18n import t
+
 
 # ---------------------------------------------------------------------
 # 依赖定义
@@ -133,13 +135,13 @@ class CallWardenInstaller:
             languages_only: 若指定，只安装这些语言的 grammar（不装核心包）
         """
         print("=" * 60)
-        print("Call Warden 一键安装")
+        print(t("cli.messages.install_title"))
         print("=" * 60)
         print()
 
         # 检查 pip 可用性
         if not self._check_pip():
-            print("[FATAL] pip 不可用，无法继续安装")
+            print(t("cli.messages.install_pip_unavailable"))
             sys.exit(2)
 
         if languages_only:
@@ -147,32 +149,32 @@ class CallWardenInstaller:
             self._install_languages_by_filter(languages_only)
         else:
             # 完整级联安装
-            print("--- 第 1 步：安装核心依赖 ---")
+            print(t("cli.messages.install_step_1"))
             self._install_group(CORE_PACKAGES)
             print()
 
-            print("--- 第 2 步：安装已支持语言 grammar（9 种） ---")
+            print(t("cli.messages.install_step_2"))
             self._install_group(SUPPORTED_LANGUAGE_PACKAGES)
             print()
 
-            print("--- 第 3 步：安装 P0 扩展语言 grammar（C# / Ruby） ---")
+            print(t("cli.messages.install_step_3"))
             self._install_group(EXTENDED_LANGUAGE_PACKAGES)
             print()
 
-            print("--- 第 4 步：安装 P1 扩展语言 grammar（PHP / Swift） ---")
+            print(t("cli.messages.install_step_4"))
             self._install_group(P1_LANGUAGE_PACKAGES)
             print()
 
-            print("--- 第 5 步：安装 P2 扩展语言 grammar（Scala / HCL） ---")
+            print(t("cli.messages.install_step_5"))
             self._install_group(P2_LANGUAGE_PACKAGES)
             print()
 
-            print("--- 第 6 步：安装 P3 扩展语言 grammar（Elixir） ---")
+            print(t("cli.messages.install_step_6"))
             self._install_group(P3_LANGUAGE_PACKAGES)
             print()
 
             if include_optional:
-                print("--- 第 7 步：安装可选依赖 ---")
+                print(t("cli.messages.install_step_7"))
                 self._install_group(OPTIONAL_PACKAGES)
                 print()
 
@@ -183,39 +185,39 @@ class CallWardenInstaller:
     def check_status(self) -> None:
         """仅检查依赖状态，不安装"""
         print("=" * 60)
-        print("Call Warden 依赖状态检查")
+        print(t("cli.messages.install_check_title"))
         print("=" * 60)
         print()
 
-        print("--- 核心依赖 ---")
+        print(t("cli.messages.install_check_core"))
         self._check_group(CORE_PACKAGES)
         print()
 
-        print("--- 已支持语言 grammar（9 种） ---")
+        print(t("cli.messages.install_check_supported"))
         self._check_group(SUPPORTED_LANGUAGE_PACKAGES)
         print()
 
-        print("--- P0 扩展语言 grammar（C# / Ruby） ---")
+        print(t("cli.messages.install_check_p0"))
         self._check_group(EXTENDED_LANGUAGE_PACKAGES)
         print()
 
-        print("--- P1 扩展语言 grammar（PHP / Swift） ---")
+        print(t("cli.messages.install_check_p1"))
         self._check_group(P1_LANGUAGE_PACKAGES)
         print()
 
-        print("--- P2 扩展语言 grammar（Scala / HCL） ---")
+        print(t("cli.messages.install_check_p2"))
         self._check_group(P2_LANGUAGE_PACKAGES)
         print()
 
-        print("--- P3 扩展语言 grammar（Elixir） ---")
+        print(t("cli.messages.install_check_p3"))
         self._check_group(P3_LANGUAGE_PACKAGES)
         print()
 
-        print("--- 可选依赖 ---")
+        print(t("cli.messages.install_check_optional"))
         self._check_group(OPTIONAL_PACKAGES)
         print()
 
-        print("提示：运行 `cw install` 安装缺失的依赖")
+        print(t("cli.messages.install_check_hint"))
 
     # ------------------------------------------------------------------
     # 内部方法
@@ -251,11 +253,13 @@ class CallWardenInstaller:
         # 检查是否已安装
         if self._is_package_installed(spec):
             self.result.skipped += 1
-            print(f"  [已安装] {spec.pip_name:<30} {spec.description}")
+            print(t("cli.messages.install_status_installed",
+                    pip_name=spec.pip_name, desc=spec.description))
             return
 
         # 执行安装
-        print(f"  [安装中] {spec.pip_name:<30} {spec.description}")
+        print(t("cli.messages.install_status_installing",
+                pip_name=spec.pip_name, desc=spec.description))
         cmd = [sys.executable, "-m", "pip", "install", spec.pip_name]
         if not self.verbose:
             cmd.append("--quiet")
@@ -266,20 +270,22 @@ class CallWardenInstaller:
             )
             if result.returncode == 0:
                 self.result.installed += 1
-                print(f"  [成功]   {spec.pip_name}")
+                print(t("cli.messages.install_status_success", pip_name=spec.pip_name))
             else:
                 self.result.failed += 1
                 self.result.failed_packages.append(spec.pip_name)
-                err_msg = result.stderr.strip().split("\n")[-1] if result.stderr else "未知错误"
-                print(f"  [失败]   {spec.pip_name}: {err_msg}")
+                err_msg = result.stderr.strip().split("\n")[-1] if result.stderr else t("cli.messages.install_unknown_error")
+                print(t("cli.messages.install_status_failed",
+                        pip_name=spec.pip_name, err_msg=err_msg))
         except subprocess.TimeoutExpired:
             self.result.failed += 1
             self.result.failed_packages.append(spec.pip_name)
-            print(f"  [超时]   {spec.pip_name}: 安装超过 5 分钟")
+            print(t("cli.messages.install_status_timeout", pip_name=spec.pip_name))
         except Exception as e:
             self.result.failed += 1
             self.result.failed_packages.append(spec.pip_name)
-            print(f"  [异常]   {spec.pip_name}: {type(e).__name__}")
+            print(t("cli.messages.install_status_exception",
+                    pip_name=spec.pip_name, err_type=type(e).__name__))
 
     def _install_languages_by_filter(self, languages: Set[str]) -> None:
         """按语言过滤安装 grammar"""
@@ -287,10 +293,12 @@ class CallWardenInstaller:
                      + P1_LANGUAGE_PACKAGES + P2_LANGUAGE_PACKAGES + P3_LANGUAGE_PACKAGES)
         filtered = [p for p in all_langs if p.language in languages]
         if not filtered:
-            print(f"[警告] 未找到匹配的语言: {languages}")
-            print(f"  支持的语言: {', '.join(p.language for p in all_langs)}")
+            print(t("cli.messages.install_no_matching_lang", langs=languages))
+            print(t("cli.messages.install_supported_langs",
+                    langs=', '.join(p.language for p in all_langs)))
             return
-        print(f"--- 安装指定语言 grammar: {', '.join(languages)} ---")
+        print(t("cli.messages.install_langs_filter",
+                langs=', '.join(languages)))
         self._install_group(filtered)
 
     def _check_group(self, packages: List[PackageSpec]) -> None:
@@ -304,27 +312,28 @@ class CallWardenInstaller:
     def _print_summary(self) -> None:
         """打印安装汇总"""
         print("=" * 60)
-        print("安装汇总")
+        print(t("cli.messages.install_summary_title"))
         print("=" * 60)
-        print(f"  总计:   {self.result.total}")
-        print(f"  新安装: {self.result.installed}")
-        print(f"  已跳过: {self.result.skipped}（已存在）")
-        print(f"  失败:   {self.result.failed}")
+        print(t("cli.messages.install_summary_total", total=self.result.total))
+        print(t("cli.messages.install_summary_installed", installed=self.result.installed))
+        print(t("cli.messages.install_summary_skipped", skipped=self.result.skipped))
+        print(t("cli.messages.install_summary_failed", failed=self.result.failed))
         if self.result.failed_packages:
-            print(f"  失败包: {', '.join(self.result.failed_packages)}")
+            print(t("cli.messages.install_summary_failed_packages",
+                    packages=', '.join(self.result.failed_packages)))
         print()
 
         if self.result.failed == 0:
-            print("✓ 全部依赖安装成功")
+            print(t("cli.messages.install_all_success"))
             print()
-            print("下一步：")
-            print("  1. 验证安装: cw --help")
-            print("  2. 构建图谱: cd /path/to/project && cw --init")
-            print("  3. 启动 MCP: cw server")
+            print(t("cli.messages.install_next_steps"))
+            print(t("cli.messages.install_next_step_1"))
+            print(t("cli.messages.install_next_step_2"))
+            print(t("cli.messages.install_next_step_3"))
         else:
-            print(f"⚠ 部分依赖安装失败（{self.result.failed} 个）")
-            print("  失败的包可稍后手动安装: pip install <package-name>")
-            print("  或重新运行: cw install")
+            print(t("cli.messages.install_partial_failure", failed=self.result.failed))
+            print(t("cli.messages.install_manual_install_hint"))
+            print(t("cli.messages.install_retry_hint"))
         print()
 
 
@@ -337,26 +346,20 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Call Warden 一键安装脚本",
+        description=t("cli.messages.install_arg_description"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  cw install              # 安装核心 + 全部已支持语言
-  cw install --all        # 安装核心 + 全部语言 + 全部可选依赖
-  cw install --lang csharp ruby  # 仅安装指定语言的 grammar
-  cw install --check      # 仅检查依赖状态，不安装
-        """,
+        epilog=t("cli.messages.install_arg_epilog"),
     )
     parser.add_argument("--all", action="store_true",
-                        help="安装全部依赖（含可选依赖）")
+                        help=t("cli.args.install_all"))
     parser.add_argument("--lang", nargs="+", metavar="LANG",
-                        help="仅安装指定语言的 grammar（如 csharp ruby）")
+                        help=t("cli.args.install_lang"))
     parser.add_argument("--check", action="store_true",
-                        help="仅检查依赖状态，不安装")
+                        help=t("cli.args.install_check"))
     parser.add_argument("--no-optional", action="store_true",
-                        help="跳过可选依赖（默认行为，显式声明）")
+                        help=t("cli.args.install_no_optional"))
     parser.add_argument("--verbose", action="store_true",
-                        help="显示详细安装日志")
+                        help=t("cli.args.install_verbose"))
 
     args = parser.parse_args()
 

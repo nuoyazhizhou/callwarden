@@ -17,6 +17,8 @@ from __future__ import annotations
 import os
 import sys
 
+from ..i18n import t
+
 
 # SARIF 报告默认输出文件名
 _SARIF_FILENAME = "callwarden_results.sarif"
@@ -52,7 +54,7 @@ def run_github_action() -> int:
         from ..db import CodeGraphDB
         db = CodeGraphDB(workspace_root=workspace)
     except Exception as e:
-        print(f"[FATAL] 初始化 CodeGraphDB 失败: {e}")
+        print(t("cli.messages.github_action_init_db_failed", error=e))
         return 1
 
     # 3. 运行 PR 检查
@@ -61,7 +63,7 @@ def run_github_action() -> int:
     try:
         result = checker.run_pr_check(base_branch=base_ref, head=head_ref)
     except Exception as e:
-        print(f"[FATAL] PR 检查异常: {e}")
+        print(t("cli.messages.github_action_pr_check_failed", error=e))
         return 1
 
     # 4. 导出 SARIF 报告（run_pr_check 已生成 sarif_report，这里直接落盘）
@@ -74,9 +76,9 @@ def run_github_action() -> int:
             sarif_path,
             json.dumps(sarif_report, ensure_ascii=False, indent=2),
         )
-        print(f"[SARIF] 报告已写入: {sarif_path}")
+        print(t("cli.messages.github_action_sarif_written", path=sarif_path))
     except Exception as e:
-        print(f"[WARN] 写入 SARIF 报告失败: {e}")
+        print(t("cli.messages.github_action_sarif_write_failed", error=e))
 
     # 5. 打印摘要
     passed = bool(result.get("passed"))
@@ -85,16 +87,16 @@ def run_github_action() -> int:
     warnings = result.get("warnings", 0)
 
     print("-" * 60)
-    print("PR 检查摘要:")
-    print(f"  通过状态    : {'PASSED' if passed else 'BLOCKED'}")
-    print(f"  总发现数    : {total}")
-    print(f"  错误(error) : {errors}")
-    print(f"  告警(warn)  : {warnings}")
+    print(t("cli.messages.github_action_pr_summary"))
+    print(t("cli.messages.github_action_pass_status", status='PASSED' if passed else 'BLOCKED'))
+    print(t("cli.messages.github_action_total_findings", count=total))
+    print(t("cli.messages.github_action_errors", count=errors))
+    print(t("cli.messages.github_action_warnings", count=warnings))
 
     # 6. 阻断判定：未通过则打印错误并 exit 1
     if not passed:
         print("-" * 60)
-        print("[ERROR] PR 被阻断：存在 error 级发现，请修复后再合并。")
+        print(t("cli.messages.github_action_pr_blocked"))
         print("=" * 60)
         return 1
 
