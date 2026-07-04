@@ -1020,17 +1020,20 @@ class CodeGraphBase:
 
         self.db_path = db_path
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        # Python 3.14 + Windows + entry_point 启动方式下，sqlite3.connect 是 lazy
-        # connection，首次 execute 才真正打开文件。entry_point 启动后第一次 execute
-        # 可能因 Windows 文件系统缓存未预热或 Defender 实时扫描导致 SQLITE_CANTOPEN
-        # (error 14)。cw.py 顶部的 warmup 已经预热了该路径，但 Defender 锁定是间歇性的，
-        # 这里再用循环重试 + sleep + 重新 connect 确保连接成功。
+        # 连接重试 + busy_timeout 前置
+        # 关键修复：必须在执行任何 SQL（包括 SELECT 1）之前先设置 busy_timeout，
+        # 否则当 MCP Server 持有 EXCLUSIVE 锁时，SELECT 1 会立即失败（默认 0ms）。
+        # busy_timeout=30000 让 SQLite 内核在锁释放瞬间立即返回，无需应用层轮询。
         self.conn = None
         _last_err = None
-        for _attempt in range(10):
+        for _attempt in range(3):
             try:
                 self.conn = sqlite3.connect(db_path)
                 self.conn.row_factory = sqlite3.Row
+                # 前置 busy_timeout：内核级锁等待，30 秒内锁释放立即返回
+                self.conn.execute("PRAGMA busy_timeout=30000")
+                # 前置 WAL：确保 -wal/-shm 文件存在，避免 rollback journal 全库锁
+                self.conn.execute("PRAGMA journal_mode=WAL")
                 self.conn.execute("SELECT 1").fetchone()
                 break
             except sqlite3.OperationalError as _e:
@@ -1041,30 +1044,24 @@ class CodeGraphBase:
                 except Exception:
                     pass
                 self.conn = None
-                # sleep 让 Defender 完成扫描释放文件锁
+                # 仅在内核级 30 秒等待仍失败时才重试（通常是长事务或崩溃残留）
                 import time as _time
                 _time.sleep(0.5 * (_attempt + 1))
         if self.conn is None:
             raise _last_err if _last_err else sqlite3.OperationalError("connect failed")
-        # 性能优化 PRAGMA（WAL 模式 + 减少 fsync + 内存缓存 + 内存映射）
-        # journal_mode=WAL：读写不互斥，WAL 文件顺序写入比回滚日志快数倍
+        # 性能优化 PRAGMA（WAL 和 busy_timeout 已在连接重试阶段前置）
         # synchronous=NORMAL：WAL 模式下仅在 checkpoint 时 fsync，比 FULL 快 5-10 倍
         # cache_size=-64000：64MB 内存页缓存，减少磁盘 I/O
         # temp_store=MEMORY：临时表和排序在内存中完成
         # mmap_size=268435456：256MB 内存映射，大数据库随机读更快
         # locking_mode=NORMAL：保持并发读写能力（不要用 EXCLUSIVE，会阻塞其他连接）
         # foreign_keys=OFF：入库期间关闭外键检查，避免每次 INSERT 触发引用完整性校验
-        # busy_timeout=30000：SQLite 内部锁等待 30 秒，避免手动重试的复杂性
-        #   这比应用层 sleep 重试更优雅——SQLite 内核在锁释放瞬间立即返回，
-        #   无需轮询。对 Windows Defender 间歇性文件锁尤为关键。
-        self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA cache_size=-64000")
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self.conn.execute("PRAGMA mmap_size=268435456")
         self.conn.execute("PRAGMA locking_mode=NORMAL")
         self.conn.execute("PRAGMA foreign_keys=OFF")
-        self.conn.execute("PRAGMA busy_timeout=30000")
         self.parser = RustParser()
 
         self.module_resolver = ModuleResolver(self.workspace_root)

@@ -16,7 +16,7 @@ cw - Call Warden 统一命令行入口
     alias cw="python /path/to/callwarden/cw.py"
 
 注意：Python 3.14 + Windows 下通过 pip entry_point（cw.exe）启动时，
-sqlite3 文件连接可能因 Defender 实时扫描间歇性失败。如遇
+sqlite3 文件连接可能因并发访问间歇性失败。如遇
 "unable to open database file" 错误，请使用 `python cw.py` 或设置别名。
 """
 import sys
@@ -45,12 +45,12 @@ def _is_entry_point_launch():
 
 
 def _warmup_sqlite():
-    """预热 sqlite3 文件连接，避免 Defender 实时扫描导致 SQLITE_CANTOPEN
+    """预热 sqlite3 文件连接，避免并发访问时 SQLITE_BUSY
 
-    Python 3.14 + Windows + entry_point 启动方式下，sqlite3 首次连接
-    可能因 Windows Defender 实时扫描文件锁导致 SQLITE_CANTOPEN (error 14)。
-    在 cw.py 顶部主动用真实项目数据库路径打开一次连接并立即关闭，触发 sqlite3
-    模块对该路径的完整初始化（VFS 缓存、文件句柄预热）。
+    根因：MCP Server 与 CLI 跨进程并发访问同一个 db 文件。
+    SQLite WAL 模式允许并发读写，但需要 busy_timeout 让内核等待锁释放。
+    本函数在 cw.py 顶部主动用真实项目数据库路径打开连接，设置 busy_timeout
+    并触发 WAL 文件创建（-wal/-shm），为后续连接预热 VFS 缓存。
 
     Returns:
         True 表示预热成功，False 表示失败
@@ -65,11 +65,17 @@ def _warmup_sqlite():
             return False
         db_path = get_project_db_path(root)
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        # 重试连接：Defender 锁定是间歇性的，最多 10 次
-        for attempt in range(10):
+        # 预热：connect + busy_timeout + WAL + 真实写入（创建 -wal/-shm 文件）
+        for attempt in range(3):
             try:
                 conn = sqlite3.connect(db_path)
-                conn.execute("SELECT 1").fetchone()
+                # 关键：先设置 busy_timeout，再执行任何 SQL
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA journal_mode=WAL")
+                # 真实写入：强制创建 -wal/-shm 文件，避免后续连接被锁
+                conn.execute("CREATE TABLE IF NOT EXISTS _warmup (id INTEGER)")
+                conn.execute("DROP TABLE IF EXISTS _warmup")
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
                 conn.close()
                 return True
             except Exception:
@@ -83,7 +89,7 @@ def _check_entry_point_sqlite():
     """检测 entry_point 启动时 sqlite3 是否可用，不可用时给出友好提示
 
     Python 3.14 + Windows 下 cw.exe（entry_point）启动时，sqlite3 文件连接
-    可能间歇性失败（Defender 锁定）。检测到失败时打印提示并退出，
+    可能因并发访问间歇性失败。检测到失败时打印提示并退出，
     让用户改用 `python cw.py` 或设置别名。
     """
     if not _is_entry_point_launch():
@@ -96,13 +102,12 @@ def _check_entry_point_sqlite():
     cw_py = os.path.abspath(__file__)
     print(
         "错误：通过 cw.exe 启动时 sqlite3 无法打开数据库文件。\n"
-        "这是 Python 3.14 + Windows + entry_point 启动方式的已知兼容性问题\n"
-        "（Windows Defender 实时扫描可能锁定文件）。\n\n"
+        "这通常是 MCP Server 与 CLI 并发访问同一个 db 导致的锁冲突。\n\n"
         "解决方案（任选其一）：\n"
         f"  1. 使用 python 启动：python \"{cw_py}\" {' '.join(sys.argv[1:])}\n"
         f"  2. 设置别名：alias cw=\"python {cw_py}\"\n"
-        "  3. 重试（Defender 锁定是间歇性的，可能下次成功）\n"
-        "  4. 将 .callwarden 目录添加到 Windows Defender 排除列表",
+        "  3. 重试（锁冲突是间歇性的，可能下次成功）\n"
+        "  4. 停止 MCP Server 后再运行 CLI（cw server --stop）",
         file=sys.stderr,
     )
     sys.exit(1)
