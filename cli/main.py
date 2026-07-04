@@ -177,14 +177,15 @@ def _handle_guardrail(args, db):
             findings = [f for f in findings
                         if rule_cat.get(f.get("rule_id", ""), "") == opts.category]
 
-        cprint("=== 安全护栏扫描结果 ===", "cyan", bold=True)
-        file_info = f"（文件过滤: {opts.file}）" if opts.file else ""
-        cat_info = f"（类别过滤: {opts.category}）" if opts.category else ""
-        print(f"发现 {len(findings)} 个违规{file_info}{cat_info}：")
+        cprint(t("cli.messages.guardrail_scan_title"), "cyan", bold=True)
+        file_info = f"（{t('cli.args.file')}: {opts.file}）" if opts.file else ""
+        cat_info = f"（{t('cli.args.category')}: {opts.category}）" if opts.category else ""
+        print(t("cli.messages.guardrail_scan_found", count=len(findings),
+                file_info=file_info, cat_info=cat_info))
         print()
 
         if not findings:
-            cprint("  ✓ 未检测到安全违规", "green")
+            cprint(t("cli.messages.guardrail_scan_no_violation"), "green")
         else:
             sev_icon = {"block": "[!]", "warn": "[~]", "info": "[i]"}
             sev_color = {"block": "red", "warn": "yellow", "info": "cyan"}
@@ -192,33 +193,41 @@ def _handle_guardrail(args, db):
                 sev = f.get("severity", "warn")
                 icon = sev_icon.get(sev, "[?]")
                 color = sev_color.get(sev, "white")
-                cprint(f"  #{i} {icon} [{sev}] {f.get('rule_id', '')}", color)
-                print(f"        文件: {f.get('file_path', '')}")
-                print(f"        消息: {f.get('message', '')}")
+                cprint(t("cli.messages.guardrail_scan_item",
+                         idx=i, icon=icon, severity=sev,
+                         rule_id=f.get('rule_id', '')), color)
+                print(t("cli.messages.guardrail_scan_file",
+                        path=f.get('file_path', '')))
+                print(t("cli.messages.guardrail_scan_message",
+                        msg=f.get('message', '')))
                 if f.get("symbol_hash"):
-                    print(f"        符号: {f['symbol_hash'][:12]}...")
+                    print(t("cli.messages.guardrail_scan_symbol",
+                            hash=f['symbol_hash'][:12]))
                 print()
         print()
 
     elif opts.action == "rules":
         rules = db.guardrail_list_rules(category_filter=opts.category)
-        cprint("=== 护栏规则列表 ===", "cyan", bold=True)
-        cat_info = f"（类别过滤: {opts.category}）" if opts.category else ""
-        print(f"共 {len(rules)} 条规则{cat_info}：")
+        cprint(t("cli.messages.guardrail_rules_title"), "cyan", bold=True)
+        cat_info = f"（{t('cli.args.category')}: {opts.category}）" if opts.category else ""
+        print(t("cli.messages.guardrail_rules_count", count=len(rules), cat_info=cat_info))
         print()
 
         if not rules:
-            cprint("  (无规则)", "dim")
+            cprint(t("cli.messages.guardrail_rules_none"), "dim")
         else:
             sev_icon = {"block": "[!]", "warn": "[~]", "info": "[i]"}
             for i, r in enumerate(rules, 1):
                 sev = r.get("severity", "warn")
                 icon = sev_icon.get(sev, "[?]")
-                builtin = "[内置]" if r.get("is_builtin") else "[自定义]"
-                print(f"  #{i} {icon} {r['rule_id']}  ({r.get('category', '')})  {builtin}")
-                print(f"        严重度: {sev}  动作: {r.get('action', '')}")
+                builtin = t("cli.messages.guardrail_builtin") if r.get("is_builtin") else t("cli.messages.guardrail_custom")
+                print(t("cli.messages.guardrail_rules_item",
+                        idx=i, icon=icon, rule_id=r['rule_id'],
+                        category=r.get('category', ''), builtin=builtin))
+                print(t("cli.messages.guardrail_rules_severity",
+                        severity=sev, action=r.get('action', '')))
                 if r.get("description"):
-                    print(f"        描述: {r['description']}")
+                    print(t("cli.messages.guardrail_rules_desc", desc=r['description']))
                 print()
         print()
 

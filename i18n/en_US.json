@@ -108,7 +108,22 @@
       "set_success": "Switched to workspace: {name}",
       "watch_started": "File watcher started, press Ctrl+C to stop",
       "stats_title": "=== Statistics ===",
-      "test_usage": "Usage: cw test <module>  e.g. cw test test_p0_bugfixes"
+      "test_usage": "Usage: cw test <module>  e.g. cw test test_p0_bugfixes",
+      "guardrail_scan_title": "=== Guardrail Scan Results ===",
+      "guardrail_scan_found": "{count} violations found{file_info}{cat_info}:",
+      "guardrail_scan_no_violation": "  ✓ No security violations detected",
+      "guardrail_scan_item": "  #{idx} {icon} [{severity}] {rule_id}",
+      "guardrail_scan_file": "        File: {path}",
+      "guardrail_scan_message": "        Message: {msg}",
+      "guardrail_scan_symbol": "        Symbol: {hash}...",
+      "guardrail_rules_title": "=== Guardrail Rules ===",
+      "guardrail_rules_count": "{count} rules total{cat_info}:",
+      "guardrail_rules_none": "  (no rules)",
+      "guardrail_rules_item": "  #{idx} {icon} {rule_id}  ({category})  {builtin}",
+      "guardrail_rules_severity": "        Severity: {severity}  Action: {action}",
+      "guardrail_rules_desc": "        Description: {desc}",
+      "guardrail_builtin": "[built-in]",
+      "guardrail_custom": "[custom]"
     }
   },
   "errors": {
