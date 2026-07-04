@@ -1090,27 +1090,17 @@ class TaskMixin:
     ) -> str:
         """从 Markdown 计划自动创建父子任务树
 
-        支持的 Markdown 格式：
+        支持的 Markdown 格式（鲁棒解析，兼容多种变体）：
         - 一级标题 (#) = 根任务描述
         - 二级标题 (##) = 子任务标题
-        - 三级标题 (###) = 子子任务标题（可选，支持多层嵌套）
-        - 无序列表项 (- [ ] / - ) = 步骤
-        - 列表项中的文字 = check_items 自动提取
-
-        示例：
-        ```
-        # i18n 国际化全量改造
-        将所有 print 改为 i18n.t()
-
-        ## 子任务1: cli/main.py
-        - 帮助信息类 print 改造
-        - 查询结果类 print 改造
-        - 错误提示类 print 改造
-
-        ## 子任务2: install.py
-        - 标题分隔线类改造
-        - 状态提示类改造
-        ```
+        - 三级标题 (###) = 步骤分组
+        - 列表项（兼容以下所有格式）：
+          - 无序列表: - / * / + 开头
+          - 有序列表: 1. / 2. / 3. 开头
+          - checkbox: - [ ] / * [x] / + [ ] 等
+          - 支持缩进（空格/tab 开头的列表项）
+        - 代码块（``` 围栏）内的内容不解析
+        - 标题前后空格和末尾 # 字符自动清理
 
         Args:
             title: 根任务标题
@@ -1121,32 +1111,65 @@ class TaskMixin:
         Returns:
             根任务 ID
         """
+        import re
+
+        # 预编译正则
+        # 标题正则：匹配 # 开头，末尾可选 # 字符
+        re_h1 = re.compile(r'^#\s+(.+?)\s*#*\s*$')
+        re_h2 = re.compile(r'^##\s+(.+?)\s*#*\s*$')
+        re_h3 = re.compile(r'^###\s+(.+?)\s*#*\s*$')
+        re_h4plus = re.compile(r'^####+\s+(.+?)\s*#*\s*$')
+
+        # 列表项正则（兼容 - / * / + / 1. / 2. 等格式）
+        # 组1: checkbox 标记 [ ] 或 [x] 或 [X]（可选）
+        # 组2: 列表项内容
+        re_list = re.compile(
+            r'^[-*+]\s+'               # 无序列表标记 - * +
+            r'(?:\[[ xX]\]\s+)?'       # 可选 checkbox [ ] [x] [X]
+            r'(.+)$'                    # 内容
+        )
+        re_ordered = re.compile(
+            r'^\d+\.\s+'                # 有序列表标记 1. 2. 3.
+            r'(?:\[[ xX]\]\s+)?'        # 可选 checkbox
+            r'(.+)$'                    # 内容
+        )
+
         lines = plan_md.strip().split("\n")
 
-        # 根任务步骤（一级标题下直接出现的列表项）
         root_steps = []
-
-        # 子任务列表：[(标题, 描述, [步骤], 深度)]
         subtasks_def = []
-
-        # 解析状态
         current_h2_title = None
         current_h2_desc_lines = []
         current_h2_steps = []
-
-        in_h1_section = False  # 是否在一级标题后
+        in_h1_section = False
         h1_desc_lines = []
+        in_code_block = False  # 代码块状态
 
         for line in lines:
             stripped = line.strip()
 
-            # 一级标题 = 根任务描述
-            if stripped.startswith("# ") and not stripped.startswith("## "):
+            # 代码块围栏检测（``` 或 ~~~）
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_code_block = not in_code_block
+                continue
+
+            # 在代码块内不解析任何内容
+            if in_code_block:
+                continue
+
+            # 空行跳过
+            if not stripped:
+                continue
+
+            # 一级标题 = 根任务描述（不匹配 ## ### 等）
+            m = re_h1.match(stripped)
+            if m and not stripped.startswith("## "):
                 in_h1_section = True
                 continue
 
             # 二级标题 = 子任务
-            if stripped.startswith("## ") and not stripped.startswith("### "):
+            m = re_h2.match(stripped)
+            if m and not stripped.startswith("### "):
                 # 保存上一个子任务
                 if current_h2_title is not None:
                     subtasks_def.append({
@@ -1155,55 +1178,72 @@ class TaskMixin:
                         "steps": current_h2_steps,
                         "depth": 1,
                     })
-
-                # 开始新子任务
-                current_h2_title = stripped[3:].strip()
+                current_h2_title = m.group(1).strip()
                 current_h2_desc_lines = []
                 current_h2_steps = []
                 continue
 
-            # 三级标题 = 子子任务（简化处理：作为步骤分组，暂不支持更深嵌套）
-            if stripped.startswith("### "):
-                # 把三级标题作为一个步骤分组的说明
+            # 三级标题 = 步骤分组
+            m = re_h3.match(stripped)
+            if m and not stripped.startswith("#### "):
                 if current_h2_title is not None:
-                    # 作为一个标注步骤
                     current_h2_steps.append({
                         "action": "group",
                         "target_file": "",
                         "target_symbol": "",
-                        "check_items": [stripped[4:].strip()],
+                        "check_items": [m.group(1).strip()],
                     })
                 continue
 
-            # 列表项 = 步骤
-            if stripped.startswith("- ") or stripped.startswith("* "):
-                item_text = stripped[2:].strip()
-                # 去掉 [ ] 或 [x] 前缀
-                if item_text.startswith("[ ] "):
-                    item_text = item_text[4:].strip()
-                elif item_text.startswith("[x] "):
-                    item_text = item_text[4:].strip()
+            # 四级及以上标题 = 作为步骤分组（降级处理）
+            m = re_h4plus.match(stripped)
+            if m:
+                if current_h2_title is not None:
+                    current_h2_steps.append({
+                        "action": "group",
+                        "target_file": "",
+                        "target_symbol": "",
+                        "check_items": [m.group(1).strip()],
+                    })
+                continue
 
+            # 无序列表项 (- / * / +)
+            m = re_list.match(stripped)
+            if m:
+                item_text = m.group(1).strip()
                 step = {
                     "action": "todo",
                     "target_file": "",
                     "target_symbol": "",
                     "check_items": [item_text] if item_text else [],
                 }
-
-                # 判断放在哪里
                 if current_h2_title is not None:
                     current_h2_steps.append(step)
                 elif in_h1_section:
                     root_steps.append(step)
                 continue
 
-            # 普通文本行
-            if stripped:
+            # 有序列表项 (1. / 2. / 3.)
+            m = re_ordered.match(stripped)
+            if m:
+                item_text = m.group(1).strip()
+                step = {
+                    "action": "todo",
+                    "target_file": "",
+                    "target_symbol": "",
+                    "check_items": [item_text] if item_text else [],
+                }
                 if current_h2_title is not None:
-                    current_h2_desc_lines.append(stripped)
+                    current_h2_steps.append(step)
                 elif in_h1_section:
-                    h1_desc_lines.append(stripped)
+                    root_steps.append(step)
+                continue
+
+            # 普通文本行 = 描述
+            if current_h2_title is not None:
+                current_h2_desc_lines.append(stripped)
+            elif in_h1_section:
+                h1_desc_lines.append(stripped)
 
         # 保存最后一个子任务
         if current_h2_title is not None:
@@ -1242,7 +1282,6 @@ class TaskMixin:
 
         # 创建子任务
         for st_def in subtasks_def:
-            # 如果子任务没有步骤，加一个默认步骤
             if not st_def["steps"]:
                 st_def["steps"] = [{
                     "action": "todo",
@@ -1250,7 +1289,6 @@ class TaskMixin:
                     "target_symbol": "",
                     "check_items": ["完成" + st_def["title"]],
                 }]
-
             self.task_create_subtask(
                 parent_task_id=root_id,
                 title=st_def["title"],
@@ -1260,6 +1298,46 @@ class TaskMixin:
             )
 
         return root_id
+
+    def task_plan_template(self) -> str:
+        """获取 task_create_from_plan 的标准格式模板
+
+        Agent 调用 task_create_from_plan 前可以先获取此模板，
+        按模板格式填写后传入，确保解析正确。
+
+        Returns:
+            Markdown 格式的模板字符串
+        """
+        return """# {根任务标题}
+{根任务描述（普通文本）}
+
+## {子任务1标题}
+{子任务1描述（可选）}
+
+- {步骤1描述}
+- {步骤2描述}
+- [ ] {未完成步骤（checkbox格式）}
+- [x] {已完成步骤}
+
+### {步骤分组标题（可选）}
+- {分组内步骤}
+
+## {子任务2标题}
+1. {有序列表步骤}
+2. {有序列表步骤}
+
+## {子任务3标题（无步骤会自动补默认）}
+
+格式说明：
+- # 一级标题 → 根任务描述
+- ## 二级标题 → 子任务（自动创建）
+- ### 三级标题 → 步骤分组
+- - / * / + → 无序列表项（自动识别为步骤）
+- 1. / 2. / 3. → 有序列表项（自动识别为步骤）
+- [ ] / [x] / [X] → checkbox 变体（自动去除标记）
+- ``` 或 ~~~ → 代码块（内容不解析）
+- 标题末尾 # 字符自动清理（如 ## Title ## → Title）
+"""
 
     def _update_parent_status(self, task_id: str):
         """递归更新父任务状态：当所有子任务+自身步骤都完成时，父任务进入 review

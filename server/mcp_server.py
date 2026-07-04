@@ -1354,6 +1354,19 @@ def create_mcp_server():
         )
 
     @mcp.tool()
+    def task_plan_template() -> str:
+        """获取 task_create_from_plan 的标准格式模板
+
+        Agent 在调用 task_create_from_plan 之前，先获取此模板，
+        按模板格式填写任务计划，确保解析器正确识别。
+
+        Returns:
+            Markdown 格式的模板字符串（含格式说明）
+        """
+        db = get_db()
+        return db.task_plan_template()
+
+    @mcp.tool()
     def task_list(status_filter: str = None, limit: int = 20) -> list:
         """列出任务
 

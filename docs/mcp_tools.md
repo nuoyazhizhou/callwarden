@@ -27,7 +27,7 @@ cw server --transport sse    # SSE 模式
 | 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
 | Semgrep 缺陷 | 4 | 扫描/统计/查询 |
 | 安全编辑 | 4 | propose_edit/revert/history/stats |
-| 任务管理 | 10 | create/next/report/rollback/list/status/subtask/split/tree/create_from_plan |
+| 任务管理 | 11 | create/next/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template |
 | 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
 | LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
 | 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
@@ -346,6 +346,15 @@ cw server --transport sse    # SSE 模式
   - 大文件符号提取
   - 增量解析支持
   ```
+
+### `task_plan_template`
+获取 `task_create_from_plan` 的标准格式模板。Agent 在创建任务前先获取模板，按模板格式填写确保解析正确。
+- **参数**：无
+- **返回**：`str` — Markdown 格式的模板字符串（含格式说明）
+- **使用流程**：
+  1. `task_plan_template()` → 获取模板
+  2. 按模板填写任务计划
+  3. `task_create_from_plan(title, plan_md)` → 自动创建任务树
 
 ---
 
