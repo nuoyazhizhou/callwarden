@@ -2500,8 +2500,69 @@ def create_mcp_server():
     return mcp
 
 
+def _start_dev_hot_reload(pkg_dir: str):
+    """开发模式：监控代码变化，自动退出让 MCP 客户端重启
+
+    检测到 .py 文件变化后，防抖 1.5 秒，然后调用 os._exit(0) 退出。
+    依赖 MCP 客户端（如 TRAE IDE）自动重启进程，加载最新代码。
+
+    Args:
+        pkg_dir: 要监控的包目录
+    """
+    import threading
+    import time
+
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler
+    except ImportError:
+        return
+
+    class _DevHandler(FileSystemEventHandler):
+        def __init__(self):
+            self._last_reload = 0
+            self._debounce = 1.5
+            self._lock = threading.Lock()
+
+        def on_modified(self, event):
+            if not event.src_path.endswith('.py'):
+                return
+            if '__pycache__' in event.src_path:
+                return
+            with self._lock:
+                now = time.time()
+                if now - self._last_reload < self._debounce:
+                    return
+                self._last_reload = now
+
+            def _delayed_exit():
+                time.sleep(0.3)
+                print("[dev] code changed, restarting...", file=sys.stderr)
+                os._exit(0)
+
+            t = threading.Thread(target=_delayed_exit, daemon=True)
+            t.start()
+
+    observer = Observer()
+    observer.schedule(_DevHandler(), pkg_dir, recursive=True)
+    observer.daemon = True
+    observer.start()
+    print("[dev] hot-reload watcher started", file=sys.stderr)
+
+
 def main():
     """MCP 服务器入口"""
+    dev_mode = False
+    if "--dev" in sys.argv:
+        dev_mode = True
+        sys.argv.remove("--dev")
+    if os.environ.get("CALLWARDEN_DEV") == "1":
+        dev_mode = True
+
+    if dev_mode:
+        pkg_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        _start_dev_hot_reload(pkg_dir)
+
     server = create_mcp_server()
     server.run()
 
