@@ -34,7 +34,7 @@ from .console import cprint
 # 子命令关键字集合
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
-                "gc"}
+                "gc", "doctor"}
 
 # 子命令帮助文本（用于 --help 输出）
 _SUBCOMMAND_HELP = """代码守护者架构子命令（四大支柱）:
@@ -64,6 +64,10 @@ _SUBCOMMAND_HELP = """代码守护者架构子命令（四大支柱）:
     gc restore [--path <path> ...] [--force]            复活已归档文件
     gc status                                           查看 GC 状态（活跃/归档/删除统计）
     gc purge [--older-than <days>]                      彻底清除归档超过 N 天的文件
+
+  诊断与维护:
+    doctor                                              检查环境、数据库状态、推荐优化
+    doctor --add-defender-exclusion                     添加 Windows Defender 排除项（需管理员权限）
 
 传统命令（--flag 模式）:
   以下选项为传统 --flag 风格命令，与上述子命令并存。"""
@@ -144,6 +148,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_test_impact(argv, db)
         elif cmd == "gc":
             return _handle_gc(argv, db)
+        elif cmd == "doctor":
+            return _handle_doctor(argv, db)
     except Exception as e:
         cprint(f"✗ 执行子命令 '{cmd}' 失败: {e}", "red")
         return True
@@ -300,62 +306,72 @@ def _handle_impact(args, db):
 
 def _handle_review(args, db):
     """处理 review 子命令（审查就绪报告）"""
-    parser = argparse.ArgumentParser(prog="cw review", description="审查就绪报告")
-    parser.add_argument("symbol_hash", help="源符号 hash")
+    parser = argparse.ArgumentParser(prog="cw review", description=t("cli.messages.review_title"))
+    parser.add_argument("symbol_hash", help=t("cli_review_arg_symbol_hash", default="源符号 hash"))
 
     opts = parser.parse_args(args)
     report = db.review_readiness_report(opts.symbol_hash)
 
-    cprint("=== 审查就绪报告 ===", "cyan", bold=True)
+    cprint(t("cli.messages.review_title"), "cyan", bold=True)
 
     scope = report.get("impact_scope", "low")
     scope_color = {"high": "red", "medium": "yellow", "low": "green"}.get(scope, "white")
-    print(f"  风险等级: ", end="")
-    cprint(scope, scope_color, bold=True)
-    print(f"  影响范围: {report.get('total_impacted', 0)} 个符号")
+    scope_i18n = {
+        "high": t("cli.messages.review_scope_high"),
+        "medium": t("cli.messages.review_scope_medium"),
+        "low": t("cli.messages.review_scope_low"),
+    }.get(scope, scope)
+    print(t("cli.messages.review_risk_level"), end="")
+    cprint(scope_i18n, scope_color, bold=True)
+    print(t("cli.messages.review_impact_scope", count=report.get('total_impacted', 0)))
     print()
 
     # 跨层影响
     by_layer = report.get("by_layer", {})
-    print("  跨层影响:")
-    print(f"    代码: {by_layer.get('code', 0)}  DB: {by_layer.get('db', 0)}  "
-          f"API: {by_layer.get('api', 0)}  配置: {by_layer.get('config', 0)}")
+    print(t("cli.messages.review_cross_layer_title"))
+    print(t("cli.messages.review_layer_counts",
+          code=by_layer.get('code', 0), db=by_layer.get('db', 0),
+          api=by_layer.get('api', 0), config=by_layer.get('config', 0)))
     print()
 
     # 必测项
     must_test = report.get("must_test", [])
-    print(f"  【必测项】（{len(must_test)} 个受影响的 public 函数）:")
+    print(t("cli.messages.review_must_test_title", count=len(must_test)))
     if must_test:
         for i, m in enumerate(must_test, 1):
-            print(f"    {i}. {m.get('qualified_name', '')}")
+            print(t("cli.messages.review_must_test_item",
+                    idx=i, name=m.get('qualified_name', '')))
             if m.get("file_path"):
-                print(f"       {m['file_path']}")
+                print(t("cli.messages.review_must_test_file", path=m['file_path']))
     else:
-        cprint("    (无)", "dim")
+        cprint(t("cli.messages.review_none"), "dim")
     print()
 
     # 人工审查点
     review_points = report.get("review_points", [])
-    print(f"  【人工审查点】（{len(review_points)} 个）:")
+    print(t("cli.messages.review_points_title", count=len(review_points)))
     if review_points:
         for r in review_points:
             layer = r.get("layer", "")
             target = r.get("target", "")
             msg = r.get("message", "")
             icon = "[!]" if layer in ("db", "api") else "[~]"
-            cprint(f"    {icon} [{layer}] {target}", "yellow")
-            print(f"        {msg}")
+            cprint(t("cli.messages.review_point_item",
+                     icon=icon, layer=layer, target=target), "yellow")
+            print(t("cli.messages.review_point_msg", msg=msg))
     else:
-        cprint("    (无)", "dim")
+        cprint(t("cli.messages.review_none"), "dim")
     print()
 
     # 覆盖率（可选）
     cov = report.get("coverage")
     if cov:
-        print(f"  【源符号覆盖率】")
-        print(f"    函数: {cov.get('qualified_name', '')}")
-        print(f"    覆盖率: {cov.get('coverage_pct', 0)}%  "
-              f"({cov.get('covered_lines', 0)}/{cov.get('tracked_lines', 0)} 行)")
+        print(t("cli.messages.review_coverage_title"))
+        print(t("cli.messages.review_coverage_fn", name=cov.get('qualified_name', '')))
+        print(t("cli.messages.review_coverage_pct",
+                pct=cov.get('coverage_pct', 0),
+                covered=cov.get('covered_lines', 0),
+                total=cov.get('tracked_lines', 0)))
         print()
 
     return True
@@ -1224,6 +1240,205 @@ def _handle_gc(args, db):
         return True
 
     return False
+
+
+# --------------------------------------------------------------------
+# 诊断与维护子命令
+# --------------------------------------------------------------------
+
+def _handle_doctor(args, db):
+    """处理 doctor 子命令（环境诊断与维护）
+
+    提供两种模式：
+    1. cw doctor           - 检查环境、数据库状态、推荐优化
+    2. cw doctor --add-defender-exclusion - 添加 Windows Defender 排除项（需管理员）
+    """
+    parser = argparse.ArgumentParser(prog="cw doctor", description="环境诊断与维护")
+    parser.add_argument("--add-defender-exclusion", action="store_true",
+                       help="添加 .callwarden 目录到 Windows Defender 排除项（需管理员权限）")
+    opts = parser.parse_args(args)
+
+    if opts.add_defender_exclusion:
+        return _doctor_add_defender_exclusion(db)
+
+    return _doctor_check(db)
+
+
+def _doctor_check(db):
+    """环境诊断：检查数据库状态、性能配置、Defender 状态等"""
+    cprint("=== Call Warden 环境诊断 ===", "cyan", bold=True)
+    print()
+
+    # 1. 数据库基本信息
+    cprint("[1] 数据库信息", "yellow", bold=True)
+    db_path = db.db_path
+    import os
+    import sqlite3
+    print(f"  路径: {db_path}")
+    print(f"  大小: {os.path.getsize(db_path) / 1024 / 1024:.2f} MB")
+
+    # PRAGMA 检查
+    # 注意：SQLite 返回值可能是小写或数字（如 wal 而非 WAL，1 而非 NORMAL）
+    # 用等价映射统一比较
+    pragma_aliases = {
+        "journal_mode": {"wal": "WAL", "wal2": "WAL"},
+        "synchronous": {"0": "OFF", "1": "NORMAL", "2": "FULL", "3": "EXTRA"},
+    }
+    pragmas = {
+        "journal_mode": "WAL",
+        "synchronous": "NORMAL",
+        "busy_timeout": "30000",
+        "cache_size": "-64000",
+        "mmap_size": "268435456",
+    }
+    print(f"  PRAGMA 配置:")
+    all_pragma_ok = True
+    for key, expected in pragmas.items():
+        actual = db.conn.execute(f"PRAGMA {key}").fetchone()[0]
+        actual_str = str(actual)
+        # 应用别名映射
+        aliases = pragma_aliases.get(key, {})
+        actual_normalized = aliases.get(actual_str.lower(), aliases.get(actual_str, actual_str))
+        expected_normalized = aliases.get(expected.lower(), aliases.get(expected, expected))
+        ok = actual_normalized == expected_normalized
+        mark = "✓" if ok else "✗"
+        color = "green" if ok else "red"
+        cprint(f"    {mark} {key} = {actual_str} (期望: {expected})", color)
+        if not ok:
+            all_pragma_ok = False
+    print()
+
+    # 2. WAL 文件检查
+    cprint("[2] WAL 文件状态", "yellow", bold=True)
+    wal_path = db_path + "-wal"
+    shm_path = db_path + "-shm"
+    print(f"  WAL 文件: {wal_path}")
+    if os.path.exists(wal_path):
+        wal_size = os.path.getsize(wal_path) / 1024
+        print(f"    大小: {wal_size:.1f} KB")
+        if wal_size > 1024 * 10:  # > 10MB
+            cprint("    ! WAL 文件较大，建议运行 cw doctor --checkpoint", "yellow")
+        else:
+            print(f"    ✓ 大小正常")
+    else:
+        print(f"    ✓ 不存在（已 checkpoint）")
+    print()
+
+    # 3. Defender 排除项检查（仅 Windows）
+    if sys.platform == "win32":
+        cprint("[3] Windows Defender 排除项", "yellow", bold=True)
+        callwarden_dir = os.path.dirname(db_path)
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["powershell", "-Command",
+                 f"Get-MpPreference | Select-Object -ExpandProperty ExclusionPath"],
+                capture_output=True, text=True, timeout=10,
+            )
+            exclusions = result.stdout.strip()
+            if callwarden_dir.lower() in exclusions.lower():
+                cprint(f"  ✓ 已添加排除项: {callwarden_dir}", "green")
+            else:
+                cprint(f"  ✗ 未添加排除项（推荐添加以避免间歇性 SQLITE_CANTOPEN）", "red")
+                cprint(f"    排除目录: {callwarden_dir}", "dim")
+                cprint(f"    添加命令（需管理员）:", "dim")
+                cprint(f"      cw doctor --add-defender-exclusion", "dim")
+                cprint(f"    或手动执行:", "dim")
+                cprint(f"      powershell -Command \"Add-MpPreference -ExclusionPath '{callwarden_dir}'\"",
+                       "dim")
+        except Exception as e:
+            cprint(f"  ? 无法检查 Defender 状态: {e}", "yellow")
+        print()
+
+    # 4. 快速连接测试
+    cprint("[4] 数据库连接测试", "yellow", bold=True)
+    import time
+    success = 0
+    fail = 0
+    for i in range(5):
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.execute("SELECT 1").fetchone()
+            conn.close()
+            success += 1
+        except sqlite3.OperationalError:
+            fail += 1
+        time.sleep(0.1)
+    if fail == 0:
+        cprint(f"  ✓ 5 次连接测试全部成功", "green")
+    else:
+        cprint(f"  ✗ {fail}/5 次失败，Defender 间歇性锁定", "red")
+    print()
+
+    # 5. 总体评估
+    cprint("[5] 总体评估", "yellow", bold=True)
+    if all_pragma_ok and fail == 0:
+        cprint("  ✓ 环境健康", "green")
+    elif all_pragma_ok:
+        cprint("  ~ 环境基本健康，但有间歇性连接失败（建议添加 Defender 排除项）", "yellow")
+    else:
+        cprint("  ✗ 环境需要优化（PRAGMA 配置不正确）", "red")
+    print()
+
+    return True
+
+
+def _doctor_add_defender_exclusion(db):
+    """添加 Windows Defender 排除项（需管理员权限）"""
+    if sys.platform != "win32":
+        cprint("✗ 此命令仅在 Windows 上可用", "red")
+        return True
+
+    import os
+    import subprocess
+    callwarden_dir = os.path.dirname(db.db_path)
+    # 排除到 .callwarden 根目录（涵盖所有项目的 db）
+    parent_dir = os.path.dirname(callwarden_dir)
+
+    cprint("=== 添加 Windows Defender 排除项 ===", "cyan", bold=True)
+    print(f"  将添加排除目录: {parent_dir}")
+    cprint("  注意: 此操作需要管理员权限", "yellow")
+    print()
+
+    # 检查当前是否已是管理员
+    try:
+        import ctypes
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+    except Exception:
+        is_admin = False
+
+    if not is_admin:
+        cprint("✗ 当前不是管理员权限，正在尝试 UAC 提权...", "yellow")
+        # 通过 PowerShell Start-Process -Verb RunAs 提权
+        cmd = f"Add-MpPreference -ExclusionPath '{parent_dir}'"
+        try:
+            subprocess.Popen(
+                ["powershell", "-Command",
+                 f"Start-Process powershell -Verb RunAs -ArgumentList '-Command', '{cmd}; Start-Sleep 2'"],
+            )
+            cprint("✓ 已弹出 UAC 提示，请在弹出的窗口中确认", "green")
+            print()
+            print("  验证是否添加成功：")
+            cprint(f"    cw doctor", "cyan")
+        except Exception as e:
+            cprint(f"✗ UAC 提权失败: {e}", "red")
+            print()
+            print("  请手动以管理员身份运行 PowerShell，执行：")
+            cprint(f"    Add-MpPreference -ExclusionPath '{parent_dir}'", "yellow")
+        return True
+
+    # 已是管理员
+    try:
+        subprocess.run(
+            ["powershell", "-Command",
+             f"Add-MpPreference -ExclusionPath '{parent_dir}'"],
+            capture_output=True, text=True, timeout=10,
+        )
+        cprint(f"✓ 已添加 Defender 排除项: {parent_dir}", "green")
+    except Exception as e:
+        cprint(f"✗ 添加失败: {e}", "red")
+
+    return True
 
 
 def create_parser() -> argparse.ArgumentParser:

@@ -1053,6 +1053,9 @@ class CodeGraphBase:
         # mmap_size=268435456：256MB 内存映射，大数据库随机读更快
         # locking_mode=NORMAL：保持并发读写能力（不要用 EXCLUSIVE，会阻塞其他连接）
         # foreign_keys=OFF：入库期间关闭外键检查，避免每次 INSERT 触发引用完整性校验
+        # busy_timeout=30000：SQLite 内部锁等待 30 秒，避免手动重试的复杂性
+        #   这比应用层 sleep 重试更优雅——SQLite 内核在锁释放瞬间立即返回，
+        #   无需轮询。对 Windows Defender 间歇性文件锁尤为关键。
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
         self.conn.execute("PRAGMA cache_size=-64000")
@@ -1060,6 +1063,7 @@ class CodeGraphBase:
         self.conn.execute("PRAGMA mmap_size=268435456")
         self.conn.execute("PRAGMA locking_mode=NORMAL")
         self.conn.execute("PRAGMA foreign_keys=OFF")
+        self.conn.execute("PRAGMA busy_timeout=30000")
         self.parser = RustParser()
 
         self.module_resolver = ModuleResolver(self.workspace_root)
