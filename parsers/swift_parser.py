@@ -202,6 +202,11 @@ class SwiftParser(BaseParser):
         imports: List[Dict[str, Any]] = []
 
         def walk(node):
+            """递归遍历 AST，收集所有 import_declaration 节点。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+            """
             for child in node.named_children:
                 if child.type == "import_declaration":
                     # import_declaration 内有 identifier
@@ -230,6 +235,13 @@ class SwiftParser(BaseParser):
         calls: List[Dict[str, Any]] = []
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
+            """递归遍历 AST，识别函数/init 与类型声明并收集 call_expression 调用关系。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_fn: 当前所在函数/init 名，用于标注调用者。
+                current_qualified: 当前所在符号的完整限定名，用于精确匹配。
+            """
             for child in node.named_children:
                 if child.type == "function_declaration":
                     name_node = self._find_child_by_type(child, "simple_identifier")

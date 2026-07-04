@@ -25,6 +25,7 @@ class CParser(BaseParser):
     language_module = tsc
 
     def __init__(self):
+        """初始化 C 语言解析器"""
         super().__init__()
 
     # --------------------------------------------------------------------
@@ -390,6 +391,7 @@ class CParser(BaseParser):
         imports = []
 
         def walk(node):
+            """递归遍历 AST，收集所有 preproc_include 节点"""
             for child in node.named_children:
                 if child.type == "preproc_include":
                     imp = self._parse_include(child, source)
@@ -424,6 +426,13 @@ class CParser(BaseParser):
         calls = []
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
+            """递归遍历 AST，收集函数调用关系
+
+            Args:
+                node: 当前 AST 节点
+                current_fn: 当前所在函数名（外层函数）
+                current_qualified: 当前函数的限定名
+            """
             for child in node.named_children:
                 if child.type == "function_definition":
                     declarator = self._find_child_by_type(child, "function_declarator")
@@ -553,6 +562,7 @@ class CppParser(CParser):
     language_module = tscpp
 
     def __init__(self):
+        """初始化 C++ 语言解析器"""
         BaseParser.__init__(self)
 
     def _extract_symbols(self, root, source: bytes, source_str: str,
@@ -683,6 +693,14 @@ class CppParser(CParser):
 
         def walk(node, current_fn: str = "", current_qualified: str = "",
                  current_scope: str = ""):
+            """递归遍历 AST，收集函数调用关系（含命名空间/类作用域）
+
+            Args:
+                node: 当前 AST 节点
+                current_fn: 当前所在函数名
+                current_qualified: 当前函数的限定名
+                current_scope: 当前命名空间/类作用域路径
+            """
             for child in node.named_children:
                 if child.type == "namespace_definition":
                     ns_name = self._extract_namespace_name(child, source)

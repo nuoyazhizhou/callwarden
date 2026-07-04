@@ -428,6 +428,25 @@ class BuildMixin:
             failed_files = []
 
             def _parse_one(args):
+                """多线程工作函数：解析单个源文件并返回结果元组
+
+                根据语言选择对应的解析器，调用 parse_file 提取符号/调用关系，
+                通过 print_lock 保护共享计数器和进度输出。
+
+                Args:
+                    args: 元组 (idx, rel_path, abs_path, lang, module_path, file_instance_id)
+                        - idx: 在 to_parse 中的序号
+                        - rel_path: 相对项目根的路径
+                        - abs_path: 绝对路径
+                        - lang: 语言标识（rust/python/typescript/...）
+                        - module_path: 推断的模块路径
+                        - file_instance_id: 文件实例 ID
+
+                Returns:
+                    元组 (status, idx, rel_path, payload)
+                        - status: "ok" 成功 / "fail" 失败 / "skip" 跳过
+                        - payload: 成功时为解析结果字典，失败时为错误字符串，跳过时为 None
+                """
                 idx, rel_path, abs_path, lang, module_path, file_instance_id = args
                 try:
                     from ..parsers import (
@@ -1336,6 +1355,12 @@ class BuildMixin:
 
 
     def _write_calls_db(self, file_instance_id: int, calls: List[Dict[str, Any]]):
+        """将文件的调用关系写入数据库，先删除旧快照再写入新关系
+
+        Args:
+            file_instance_id: 文件实例 ID
+            calls: 调用关系字典列表，每项含 caller_qualified / callee_qualified 等字段
+        """
         # 先删除该文件已有的调用快照
         self.conn.execute(
             "DELETE FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?)",
@@ -1465,6 +1490,7 @@ class BuildMixin:
         depth_cache = {}
 
         def compute_depth(fn_id: int, visited: Set[int]) -> int:
+            """递归计算函数的调用深度，带缓存与环检测"""
             if fn_id in depth_cache:
                 return depth_cache[fn_id]
 

@@ -36,6 +36,14 @@ _use_color = None
 
 
 def _enable_vt_mode():
+    """启用 Windows 终端的 VT100 虚拟终端处理模式
+
+    Windows 默认不支持 ANSI 颜色转义序列，需要通过 kernel32 API
+    显式启用 ENABLE_VIRTUAL_TERMINAL_PROCESSING 标志。
+
+    Returns:
+        True 表示启用成功或非 Windows 平台，False 表示启用失败
+    """
     if sys.platform != "win32":
         return True
     try:
@@ -53,6 +61,19 @@ def _enable_vt_mode():
 
 
 def should_use_color() -> bool:
+    """检测当前环境是否应该使用彩色输出
+
+    判定规则（按优先级）：
+    1. NO_COLOR 环境变量存在 → 禁用颜色
+    2. stdout 非 TTY → 禁用颜色（如管道/重定向）
+    3. FORCE_COLOR 环境变量存在 → 强制启用并激活 VT 模式
+    4. 否则按 VT 模式启用结果决定
+
+    结果会缓存到全局 _use_color，避免重复检测。
+
+    Returns:
+        True 表示启用彩色输出，False 表示禁用
+    """
     global _use_color
     if _use_color is not None:
         return _use_color
@@ -323,6 +344,11 @@ class Spinner:
     """
 
     def __init__(self, message: str = ""):
+        """初始化旋转动画
+
+        Args:
+            message: 加载提示消息（如 "Building graph..."）
+        """
         self.message = message
         self._frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self._idx = 0
@@ -340,6 +366,7 @@ class Spinner:
         self._render()
 
     def _render(self):
+        """渲染当前帧到终端（覆盖原行）"""
         if not self._active:
             return
         frame = self._frames[self._idx % len(self._frames)]
@@ -350,10 +377,16 @@ class Spinner:
         self._idx += 1
 
     def tick(self):
+        """推进一帧（由调用方在循环中调用）"""
         if self._active:
             self._render()
 
     def stop(self, final_msg: Optional[str] = None):
+        """停止动画并清理行
+
+        Args:
+            final_msg: 完成后显示的最终消息（None 则清空行）
+        """
         if not self._active:
             return
         self._active = False

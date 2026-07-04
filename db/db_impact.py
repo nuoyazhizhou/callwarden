@@ -184,6 +184,7 @@ class ImpactMixin:
         hunk_re = re.compile(r"^@@ -(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s*@@")
 
         def flush() -> None:
+            """刷新当前 hunk 缓冲区，将受影响符号写入结果列表"""
             nonlocal has_hunk, hunk_added, hunk_removed
             if not has_hunk:
                 return

@@ -31,6 +31,14 @@ class BaseParser:
     language_module = None  # tree-sitter 语言模块
 
     def __init__(self):
+        """初始化解析器，基于子类提供的 language_module 构造 Language 与 Parser。
+
+        子类需在类属性中设置 language_module（tree-sitter 语言模块），
+        本方法通过其 language() 入口构造 Language 实例并初始化 Parser。
+
+        Raises:
+            NotImplementedError: 当子类未设置 language_module 时抛出。
+        """
         if self.language_module is None:
             raise NotImplementedError("子类必须设置 language_module")
         self.language = Language(self.language_module.language())

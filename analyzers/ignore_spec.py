@@ -44,6 +44,16 @@ class IgnoreRule:
 
     def __init__(self, pattern: str, negation: bool, dir_only: bool,
                  anchored: bool, regex: re.Pattern, source: str):
+        """初始化忽略规则
+
+        Args:
+            pattern: 原始模式字符串（如 "*.pyc" 或 "/build/"）
+            negation: 是否取反（! 前缀）
+            dir_only: 是否只匹配目录（/ 后缀）
+            anchored: 是否锚定根目录（/ 前缀或含 /）
+            regex: 编译后的正则表达式
+            source: 规则来源（如 ".gitignore" / ".callwardenignore" / "default"）
+        """
         self.pattern = pattern
         self.negation = negation
         self.dir_only = dir_only
@@ -52,6 +62,11 @@ class IgnoreRule:
         self.source = source
 
     def __repr__(self) -> str:
+        """返回规则的可读字符串表示，包含来源与前缀标志
+
+        Returns:
+            形如 "IgnoreRule(source:/!pattern/)" 的字符串
+        """
         sign = "!" if self.negation else ""
         suffix = "/" if self.dir_only else ""
         prefix = "/" if self.anchored else ""
@@ -252,6 +267,11 @@ class IgnoreMatcher:
     """
 
     def __init__(self, workspace_root: str):
+        """初始化忽略规则匹配器，设置工作区根目录
+
+        Args:
+            workspace_root: 工作区根目录路径（相对或绝对均可）
+        """
         self.workspace_root = os.path.abspath(workspace_root)
         # 全局规则（根目录的 .gitignore + .callwardenignore + 默认规则）
         self.global_rules: List[IgnoreRule] = []

@@ -27,6 +27,12 @@ class FileWatcher:
     """文件监控器：监听项目目录变化，增量更新知识图谱"""
 
     def __init__(self, db, watch_dir: str = None):
+        """初始化文件监控器
+
+        Args:
+            db: CodeGraphDB 实例（用于增量刷新）
+            watch_dir: 监控目录，为空时使用 db.workspace_root 或 PROJECT_ROOT
+        """
         self.db = db
         # 优先使用 db 的 workspace_root，其次是传入的 watch_dir，最后用 PROJECT_ROOT
         self.watch_dir = watch_dir or db.workspace_root or PROJECT_ROOT
@@ -76,6 +82,12 @@ class _ChangeHandler(FileSystemEventHandler):
     """文件变化处理器，带防抖和批量处理"""
 
     def __init__(self, db, supported_exts: Set[str]):
+        """初始化文件变化处理器
+
+        Args:
+            db: CodeGraphDB 实例（用于刷新符号）
+            supported_exts: 支持的文件扩展名集合（如 {'.py', '.rs', '.ts'}）
+        """
         self.db = db
         self.supported_exts = supported_exts
         self._debounce_time = 1.0  # 1 秒防抖
@@ -173,6 +185,7 @@ class _ChangeHandler(FileSystemEventHandler):
         print(t("cli.messages.watcher_delete_done"))
 
     def on_modified(self, event):
+        """文件修改事件回调：加入待处理队列（防抖）"""
         if event.is_directory:
             return
         if not self._is_supported(event.src_path):
@@ -182,6 +195,7 @@ class _ChangeHandler(FileSystemEventHandler):
         self._schedule_process()
 
     def on_created(self, event):
+        """文件创建事件回调：加入待处理队列（防抖）"""
         if event.is_directory:
             return
         if not self._is_supported(event.src_path):
@@ -191,6 +205,7 @@ class _ChangeHandler(FileSystemEventHandler):
         self._schedule_process()
 
     def on_deleted(self, event):
+        """文件删除事件回调：加入待处理队列（防抖）"""
         if event.is_directory:
             return
         if not self._is_supported(event.src_path):

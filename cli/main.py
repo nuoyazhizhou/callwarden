@@ -1716,6 +1716,7 @@ def main():
             ca = status["calls"]
 
             def fmt_size(n):
+                """格式化字节数为人类可读字符串（B/KB/MB）"""
                 if n < 1024:
                     return f"{n} B"
                 if n < 1024 * 1024:
@@ -1723,6 +1724,7 @@ def main():
                 return f"{n/1024/1024:.1f} MB"
 
             def fmt_ago(ts):
+                """格式化时间戳为"多久之前"的相对描述（刚刚/N 分钟前/N 小时前/N 天前）"""
                 if not ts:
                     return t("cli.messages.status_never_built")
                 delta = time.time() - ts

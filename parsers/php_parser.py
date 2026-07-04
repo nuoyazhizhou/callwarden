@@ -21,13 +21,31 @@ from .base import BaseParser
 
 
 class PhpParser(BaseParser):
-    """PHP 源码解析器"""
+    """PHP 源码解析器
+
+    基于 tree-sitter-php 解析 PHP 源码，提取类、接口、Trait、方法、属性等符号，
+    以及 namespace / use 语句和调用关系。
+
+    主要属性：
+        language_id: 语言标识，固定为 "php"。
+        language_module: tree-sitter-php 模块，提供 language_php 入口。
+        language: tree-sitter Language 实例，用于初始化 parser。
+        parser: tree-sitter Parser 实例，负责 PHP 源码解析。
+    """
 
     language_id = "php"
     # tree-sitter-php 使用 language_php() 而非 language()
     language_module = tsphp
 
     def __init__(self):
+        """初始化 PHP 解析器。
+
+        tree-sitter-php 的语言入口是 language_php() 而非 language()，
+        因此需要在此处单独构造 Language 与 Parser 实例。
+
+        Raises:
+            Exception: 当 tree-sitter-php 模块加载失败时抛出。
+        """
         # tree-sitter-php 的入口是 language_php，不是 language
         self.language = Language(tsphp.language_php())
         self.parser = Parser(self.language)
@@ -239,6 +257,11 @@ class PhpParser(BaseParser):
         imports: List[Dict[str, Any]] = []
 
         def walk(node):
+            """递归遍历 AST，收集所有 namespace_use_declaration 中的 use 语句。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+            """
             for child in node.named_children:
                 if child.type == "namespace_use_declaration":
                     # namespace_use_declaration 内有多个 namespace_use_clause
@@ -272,6 +295,13 @@ class PhpParser(BaseParser):
         effective_module = namespace or module_path
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
+            """递归遍历 AST，识别类/接口/Trait 与方法定义并收集调用关系。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_fn: 当前所在方法名，用于标注调用者。
+                current_qualified: 当前所在符号的完整限定名，用于精确匹配。
+            """
             for child in node.named_children:
                 if child.type in ("class_declaration", "interface_declaration",
                                   "trait_declaration"):

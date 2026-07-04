@@ -92,4 +92,10 @@ class CodeGraphDB(
     """
 
     def __init__(self, db_path: str = "", workspace_root: Optional[str] = None):
+        """初始化代码知识图谱数据库，委托父类完成连接与工作区初始化
+
+        Args:
+            db_path: SQLite 数据库文件路径，为空时使用默认路径
+            workspace_root: 工作区根目录路径，为空时使用当前工作目录
+        """
         super().__init__(db_path=db_path, workspace_root=workspace_root)

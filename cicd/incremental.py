@@ -30,6 +30,11 @@ class IncrementalAnalyzer:
     """
 
     def __init__(self, db):
+        """初始化增量分析器
+
+        Args:
+            db: CodeGraphDB 实例，用于刷新文件图谱
+        """
         self.db = db
 
     def get_changed_files(self, base_branch: str = "main", head: str = "HEAD") -> List[str]:

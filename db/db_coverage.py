@@ -535,6 +535,7 @@ class CoverageMixin(_AnalyzerCoverageMixin):
 
         # 从所有调用者中筛选测试函数
         def _is_test_function(caller: Dict) -> bool:
+            """判断调用者是否为测试函数（名称或模块路径含 test / spec）"""
             name = (caller.get("name") or "").lower()
             qn = (caller.get("qualified_name") or "").lower()
             mod = (caller.get("module_path") or "").lower()

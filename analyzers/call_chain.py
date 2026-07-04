@@ -334,6 +334,7 @@ class CallChainMixin:
 
             # 提取顶级模块（前两级，如 lib::core）
             def get_top_module(name):
+                """从 qualified_name 中提取顶级模块（前 2-3 级路径）"""
                 parts = name.split("::")
                 if len(parts) >= 3:
                     return "::".join(parts[:3])  # lib::core::xxx
@@ -407,6 +408,7 @@ class CallChainMixin:
         path_set = set()
 
         def dfs(node, depth):
+            """从指定节点开始深度优先搜索，检测调用图中的循环依赖"""
             if depth > max_depth:
                 return
 

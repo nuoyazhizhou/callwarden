@@ -34,6 +34,11 @@ class PRChecker:
     """
 
     def __init__(self, db):
+        """初始化 PR 检查器，复用增量分析器与 SARIF 导出器
+
+        Args:
+            db: CodeGraphDB 实例，提供图谱查询与 guardrail 检查能力
+        """
         self.db = db
         # 复用同一个 IncrementalAnalyzer 实例
         self.incremental = IncrementalAnalyzer(db)

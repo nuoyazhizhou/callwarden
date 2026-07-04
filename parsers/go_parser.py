@@ -272,6 +272,11 @@ class GoParser(BaseParser):
         imports = []
 
         def walk(node):
+            """递归遍历 AST，收集所有 import_declaration 与 import_spec 节点。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+            """
             for child in node.named_children:
                 if child.type == "import_declaration":
                     imp = self._parse_import(child, source)
@@ -326,6 +331,13 @@ class GoParser(BaseParser):
         pkg_name = self._extract_package(root, source)
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
+            """递归遍历 AST，识别函数/方法定义并收集 call_expression 调用关系。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_fn: 当前所在函数/方法名，用于标注调用者。
+                current_qualified: 当前所在符号的完整限定名（含接收者类型），用于精确匹配。
+            """
             for child in node.named_children:
                 if child.type == "function_declaration":
                     name_node = self._find_child_by_type(child, "identifier")

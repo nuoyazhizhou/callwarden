@@ -196,6 +196,11 @@ class ElixirParser(BaseParser):
         imports: List[Dict[str, Any]] = []
 
         def walk(node):
+            """递归遍历 AST，收集 alias / import / use / require 调用形式的模块引用。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+            """
             for child in node.named_children:
                 if child.type == "call":
                     ident = self._find_child_by_type(child, "identifier")
@@ -232,6 +237,13 @@ class ElixirParser(BaseParser):
         calls: List[Dict[str, Any]] = []
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
+            """递归遍历 AST，区分 def/defp/defmodule 等定义节点并收集普通 call 调用关系。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_fn: 当前所在函数名，用于标注调用者。
+                current_qualified: 当前所在符号的完整限定名（含模块前缀），用于精确匹配。
+            """
             for child in node.named_children:
                 if child.type == "call":
                     ident = self._find_child_by_type(child, "identifier")

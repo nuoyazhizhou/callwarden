@@ -12,9 +12,21 @@ from ..config import PROJECT_ROOT, norm_path
 
 
 class ModuleResolver:
-    """Rust 模块系统解析器：建立模块路径到文件的映射"""
+    """Rust 模块系统解析器：建立模块路径到文件的映射
+
+    主要属性：
+        src_dir: Rust 源码根目录（通常是 src/）。
+        module_to_file: 模块路径到文件相对路径的映射。
+        file_to_module: 文件相对路径到模块路径的反向映射。
+        module_parents: 模块路径到父模块路径的映射。
+    """
 
     def __init__(self, src_dir: str):
+        """初始化模块解析器。
+
+        Args:
+            src_dir: Rust 源码根目录路径（通常是包含 lib.rs / main.rs 的 src 目录）。
+        """
         self.src_dir = src_dir
         # 模块路径 -> 文件相对路径
         self.module_to_file: Dict[str, str] = {}

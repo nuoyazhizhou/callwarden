@@ -169,6 +169,13 @@ class HclParser(BaseParser):
             return calls
 
         def walk(node, current_block: str = "", current_qualified: str = ""):
+            """递归遍历 AST，识别 block 节点并收集 attribute 表达式中的跨块引用。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_block: 当前所在 block 的简名，用于标注引用者。
+                current_qualified: 当前所在 block 的完整限定名，用于精确匹配。
+            """
             for child in node.named_children:
                 if child.type == "block":
                     # 进入 block 时记录当前块名
@@ -209,6 +216,11 @@ class HclParser(BaseParser):
         refs: List[str] = []
 
         def walk_expr(node):
+            """递归遍历表达式节点，收集形如 a.b.c 的跨块引用。
+
+            Args:
+                node: 当前遍历的 tree-sitter 表达式节点。
+            """
             for child in node.named_children:
                 if child.type == "variable_expr":
                     # variable_expr 包含 identifier

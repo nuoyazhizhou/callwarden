@@ -181,6 +181,11 @@ class ScalaParser(BaseParser):
         imports: List[Dict[str, Any]] = []
 
         def walk(node):
+            """递归遍历 AST，收集所有 import_declaration 节点。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+            """
             for child in node.named_children:
                 if child.type == "import_declaration":
                     # import_declaration 内有多个 identifier 节点
@@ -210,6 +215,13 @@ class ScalaParser(BaseParser):
         effective_module = package or module_path
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
+            """递归遍历 AST，识别 class/object/trait 与函数定义并收集 call_expression 调用关系。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_fn: 当前所在函数名，用于标注调用者。
+                current_qualified: 当前所在符号的完整限定名，用于精确匹配。
+            """
             for child in node.named_children:
                 if child.type in ("class_definition", "object_definition",
                                   "trait_definition"):

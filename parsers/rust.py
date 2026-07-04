@@ -30,6 +30,7 @@ class RustParser:
     """基于 tree-sitter 的 Rust 源码解析器"""
     
     def __init__(self):
+        """初始化 Rust 解析器：加载 tree-sitter-rust grammar"""
         self.language = Language(tsrust.language())
         self.parser = Parser(self.language)
     
@@ -332,6 +333,17 @@ class RustParser:
         }
     
     def _parse_static(self, node, source: bytes, source_str: str, module_path: str) -> Dict[str, Any]:
+        """解析 static 静态变量定义
+
+        Args:
+            node: tree-sitter AST 节点（static_item 类型）
+            source: 原始源码字节
+            source_str: 源码字符串
+            module_path: 模块路径前缀
+
+        Returns:
+            符号信息字典（name/kind/visibility/qualified_name 等）
+        """
         name_node = node.child_by_field_name("name")
         name = self._get_text(name_node, source) if name_node else ""
         visibility = self._get_visibility(node, source)
@@ -359,6 +371,17 @@ class RustParser:
         }
     
     def _parse_macro(self, node, source: bytes, source_str: str, module_path: str) -> Dict[str, Any]:
+        """解析 macro_rules! 宏定义
+
+        Args:
+            node: tree-sitter AST 节点（macro_definition 类型）
+            source: 原始源码字节
+            source_str: 源码字符串
+            module_path: 模块路径前缀
+
+        Returns:
+            符号信息字典
+        """
         name = ""
         for child in node.children:
             if child.type == "identifier":
@@ -389,6 +412,17 @@ class RustParser:
         }
     
     def _parse_impl(self, node, source: bytes, source_str: str, module_path: str) -> Dict[str, Any]:
+        """解析 impl 块（实现 trait 或类型）
+
+        Args:
+            node: tree-sitter AST 节点（implementation 类型）
+            source: 原始源码字节
+            source_str: 源码字符串
+            module_path: 模块路径前缀
+
+        Returns:
+            符号信息字典（name 格式为 "Trait for Type" 或 "Type"）
+        """
         type_node = node.child_by_field_name("type")
         name = self._get_text(type_node, source) if type_node else ""
         

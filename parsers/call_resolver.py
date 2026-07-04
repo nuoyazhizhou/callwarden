@@ -9,9 +9,24 @@ from typing import Any, Dict, List, Optional
 
 
 class CallResolver:
-    """调用关系解析器：将原始调用解析为具体的符号"""
+    """调用关系解析器：将原始调用解析为具体的符号
+
+    主要属性：
+        module_resolver: 模块路径解析器，提供模块路径与文件的双向映射。
+        parser: 代码解析器实例，用于解析文件提取符号。
+        all_symbols: 全部已加载符号的限定名到符号信息的映射。
+        file_uses: 文件路径到其 use 语句列表的映射。
+        crate_name: 当前 crate 名称。
+        lib_crate_alias: lib crate 的别名。
+    """
 
     def __init__(self, module_resolver, parser):
+        """初始化调用关系解析器。
+
+        Args:
+            module_resolver: 模块路径解析器实例，用于查找符号所属文件。
+            parser: 代码解析器实例，用于按需解析文件提取符号。
+        """
         self.module_resolver = module_resolver
         self.parser = parser
         # qualified_name -> symbol_info

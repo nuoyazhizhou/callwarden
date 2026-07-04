@@ -244,6 +244,11 @@ class RubyParser(BaseParser):
         imports: List[Dict[str, Any]] = []
 
         def walk(node):
+            """递归遍历 AST，收集 require / require_relative / load 调用形式的外部引用。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+            """
             for child in node.named_children:
                 if child.type == "call" and child.named_child_count > 0:
                     # 检查是否是 require 或 require_relative 调用
@@ -278,6 +283,14 @@ class RubyParser(BaseParser):
         calls: List[Dict[str, Any]] = []
 
         def walk(node, current_fn: str = "", current_qualified: str = "", current_scope: str = ""):
+            """递归遍历 AST，识别 module/class 与方法定义并收集 call 调用关系。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_fn: 当前所在方法名，用于标注调用者。
+                current_qualified: 当前方法的完整限定名（含作用域分隔符），用于精确匹配。
+                current_scope: 当前所在 module/class 作用域，用于构建 Ruby 风格的限定名。
+            """
             for child in node.named_children:
                 if child.type in ("module", "class"):
                     name_node = self._find_child_by_type(child, "constant") \

@@ -119,6 +119,11 @@ class CallWardenInstaller:
     """Call Warden 级联安装器"""
 
     def __init__(self, verbose: bool = False):
+        """初始化级联安装器
+
+        Args:
+            verbose: 是否输出详细安装日志
+        """
         self.verbose = verbose
         self.result = InstallResult()
 

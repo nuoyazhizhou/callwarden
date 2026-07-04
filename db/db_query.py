@@ -24,6 +24,12 @@ class QueryMixin:
     """
 
     def get_stats(self) -> Dict:
+        """获取当前工作区的统计信息，包括文件、符号、调用关系和注释覆盖
+
+        Returns:
+            包含 total_files / total_symbols / by_kind / total_calls /
+            cross_file_calls / resolved_calls / commented 等键的统计字典
+        """
         stats = {}
         ws_id = self._get_active_workspace_id()
 
@@ -642,6 +648,7 @@ class QueryMixin:
         all_modules = set()
 
         def get_top_module(name):
+            """从限定名中提取顶级模块（取前 2-3 段）"""
             parts = name.split("::")
             if len(parts) >= 3:
                 return "::".join(parts[:3])

@@ -30,8 +30,9 @@ class CoverageMixin:
         # 查询当前版本的所有符号及其注释状态
         # 通过 file_symbol_versions + file_versions(is_current=1) + symbol_contents
         # 使用 DISTINCT 避免同一文件同一符号的重复记录
+        # 过滤 is_deleted=1 的标记记录（版本差异追踪占位，非真实符号）
         query = """
-            SELECT 
+            SELECT
                 sc.kind,
                 sc.has_comment,
                 COUNT(DISTINCT fsv.qualified_name || '@' || fi.rel_path) as cnt
@@ -40,6 +41,7 @@ class CoverageMixin:
             JOIN file_versions fv ON fsv.file_version_id = fv.id
             JOIN file_instances fi ON fv.file_instance_id = fi.id
             WHERE fi.workspace_id = ? AND fv.is_current = 1
+              AND (fsv.is_deleted = 0 OR fsv.is_deleted IS NULL)
             GROUP BY sc.kind, sc.has_comment
             ORDER BY sc.kind, sc.has_comment
         """
@@ -71,7 +73,7 @@ class CoverageMixin:
         # 按模块分组
         if group_by == "module" or group_by == "file":
             module_query = """
-                SELECT 
+                SELECT
                     fsv.module_path,
                     fi.rel_path,
                     sc.kind,
@@ -82,6 +84,7 @@ class CoverageMixin:
                 JOIN file_versions fv ON fsv.file_version_id = fv.id
                 JOIN file_instances fi ON fv.file_instance_id = fi.id
                 WHERE fi.workspace_id = ? AND fv.is_current = 1
+                  AND (fsv.is_deleted = 0 OR fsv.is_deleted IS NULL)
                 GROUP BY fsv.module_path, fi.rel_path, sc.kind, sc.has_comment
                 ORDER BY fsv.module_path
             """
@@ -128,8 +131,9 @@ class CoverageMixin:
         """
         ws_id = self._get_active_workspace_id()
         # 使用子查询去重（同一文件同一符号只取一条）
+        # 注意：过滤 is_deleted=1 的标记记录（这些是版本差异追踪用的占位，非真实符号）
         query = """
-            SELECT 
+            SELECT
                 fsv.qualified_name,
                 fsv.module_path,
                 fsv.start_line,
@@ -140,13 +144,14 @@ class CoverageMixin:
                 sc.signature,
                 fi.rel_path as file_path
             FROM (
-                SELECT 
+                SELECT
                     fsv_inner.*,
                     ROW_NUMBER() OVER (PARTITION BY fsv_inner.qualified_name, fi.rel_path ORDER BY fsv_inner.id DESC) as rn
                 FROM file_symbol_versions fsv_inner
                 JOIN file_versions fv_inner ON fsv_inner.file_version_id = fv_inner.id
                 JOIN file_instances fi ON fv_inner.file_instance_id = fi.id
                 WHERE fi.workspace_id = ? AND fv_inner.is_current = 1
+                  AND (fsv_inner.is_deleted = 0 OR fsv_inner.is_deleted IS NULL)
             ) fsv
             JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
             JOIN file_versions fv ON fsv.file_version_id = fv.id

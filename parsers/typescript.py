@@ -234,6 +234,11 @@ class TypeScriptParser(BaseParser):
         imports = []
 
         def walk(node):
+            """递归遍历 AST，收集所有 import_statement 节点。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+            """
             for child in node.named_children:
                 if child.type == "import_statement":
                     imp = self._parse_import(child, source)
@@ -288,6 +293,15 @@ class TypeScriptParser(BaseParser):
         calls = []
 
         def make_qualified(name: str, parent_qualified: str) -> str:
+            """根据父级限定名和当前名称拼接完整限定名。
+
+            Args:
+                name: 当前符号简名。
+                parent_qualified: 父级限定名（如类名对应的限定名）。
+
+            Returns:
+                拼接后的完整限定名；无父级时回退到 module_path.name 或 name。
+            """
             if parent_qualified:
                 return f"{parent_qualified}.{name}"
             if module_path:
@@ -295,6 +309,13 @@ class TypeScriptParser(BaseParser):
             return name
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
+            """递归遍历 AST，识别函数/类/方法定义并收集 call_expression 调用关系。
+
+            Args:
+                node: 当前遍历的 tree-sitter 节点。
+                current_fn: 当前所在函数/方法的简名，用于标注调用者。
+                current_qualified: 当前所在符号的完整限定名，用于精确匹配。
+            """
             for child in node.named_children:
                 if child.type == "function_declaration":
                     name_node = self._find_child_by_type(child, "identifier")
