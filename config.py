@@ -353,8 +353,24 @@ def get_supported_extensions() -> List[str]:
 
 
 def norm_path(path: str) -> str:
-    """标准化路径：统一使用正斜杠，消除跨平台差异"""
-    return path.replace("\\", "/")
+    """标准化路径：统一正斜杠 + 去末尾斜杠 + Windows 盘符小写
+
+    消除跨平台和大小写差异，确保同一路径的不同写法产生相同的 hash。
+    - 反斜杠 → 正斜杠
+    - 去掉末尾斜杠（根目录 "/" 除外）
+    - Windows 盘符统一小写（C:\\ 和 c:\\ 等价）
+    """
+    if not path:
+        return path
+    # 反斜杠 → 正斜杠
+    normalized = path.replace("\\", "/")
+    # 去掉末尾斜杠（但保留根目录 "/"）
+    if len(normalized) > 1 and normalized.endswith("/"):
+        normalized = normalized.rstrip("/")
+    # Windows 盘符统一小写（如 C:/ → c:/）
+    if len(normalized) >= 2 and normalized[1] == ":" and normalized[0].isalpha():
+        normalized = normalized[0].lower() + normalized[1:]
+    return normalized
 
 
 def norm_newlines(text: str) -> str:
