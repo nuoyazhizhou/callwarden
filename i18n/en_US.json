@@ -123,7 +123,24 @@
       "guardrail_rules_severity": "        Severity: {severity}  Action: {action}",
       "guardrail_rules_desc": "        Description: {desc}",
       "guardrail_builtin": "[built-in]",
-      "guardrail_custom": "[custom]"
+      "guardrail_custom": "[custom]",
+      "impact_title": "=== Change Impact Radius Analysis ===",
+      "impact_symbol_not_found": "  ✗ Symbol not found: {symbol_hash}",
+      "impact_source_symbol": "  Source symbol: {symbol}",
+      "impact_source_hash": "  Source hash: {hash}...",
+      "impact_depth": "  Traversal depth: {depth}",
+      "impact_total": "  Total impacted symbols: {total}",
+      "impact_by_layer_title": "  Cross-layer impact distribution:",
+      "impact_layer_code": "    Code layer: {count}",
+      "impact_layer_db": "    DB layer:  {count}",
+      "impact_layer_api": "    API layer: {count}",
+      "impact_layer_config": "    Config layer: {count}",
+      "impact_layer_label_source": "Source",
+      "impact_layer_label_depth": "Layer {depth}",
+      "impact_layer_symbols": "  [{label}] ({count} symbols):",
+      "impact_symbol_item": "    {kind} {name}",
+      "impact_symbol_file": "             {file}",
+      "impact_more_symbols": "    ... {count} more"
     }
   },
   "errors": {

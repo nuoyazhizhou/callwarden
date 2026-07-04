@@ -123,7 +123,24 @@
       "guardrail_rules_severity": "        严重度: {severity}  动作: {action}",
       "guardrail_rules_desc": "        描述: {desc}",
       "guardrail_builtin": "[内置]",
-      "guardrail_custom": "[自定义]"
+      "guardrail_custom": "[自定义]",
+      "impact_title": "=== 变更影响半径分析 ===",
+      "impact_symbol_not_found": "  ✗ 未找到符号: {symbol_hash}",
+      "impact_source_symbol": "  源符号: {symbol}",
+      "impact_source_hash": "  源 hash: {hash}...",
+      "impact_depth": "  遍历深度: {depth}",
+      "impact_total": "  影响符号总数: {total}",
+      "impact_by_layer_title": "  跨层影响分布:",
+      "impact_layer_code": "    代码层: {count} 个",
+      "impact_layer_db": "    DB 层:  {count} 个",
+      "impact_layer_api": "    API 层: {count} 个",
+      "impact_layer_config": "    配置层: {count} 个",
+      "impact_layer_label_source": "源符号",
+      "impact_layer_label_depth": "第 {depth} 层",
+      "impact_layer_symbols": "  【{label}】（{count} 个符号）:",
+      "impact_symbol_item": "    {kind} {name}",
+      "impact_symbol_file": "             {file}",
+      "impact_more_symbols": "    ... 还有 {count} 个"
     }
   },
   "errors": {

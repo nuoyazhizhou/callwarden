@@ -247,25 +247,28 @@ def _handle_impact(args, db):
     opts = parser.parse_args(args)
     result = db.blast_radius(opts.symbol_hash, depth=opts.depth)
 
-    cprint("=== 变更影响半径分析 ===", "cyan", bold=True)
+    cprint(t("cli.messages.impact_title"), "cyan", bold=True)
 
     if not result.get("source_symbol"):
-        cprint(f"  ✗ 未找到符号: {opts.symbol_hash}", "red")
+        cprint(t("cli.messages.impact_symbol_not_found",
+                 symbol_hash=opts.symbol_hash), "red")
         return True
 
-    print(f"  源符号: {result['source_symbol']}")
-    print(f"  源 hash: {result['source_hash'][:12]}...")
-    print(f"  遍历深度: {result['depth']}")
-    print(f"  影响符号总数: {result['total_impacted']}")
+    print(t("cli.messages.impact_source_symbol",
+            symbol=result['source_symbol']))
+    print(t("cli.messages.impact_source_hash",
+            hash=result['source_hash'][:12]))
+    print(t("cli.messages.impact_depth", depth=result['depth']))
+    print(t("cli.messages.impact_total", total=result['total_impacted']))
     print()
 
     # 跨层影响分布
     by_layer = result.get("by_layer", {})
-    print("  跨层影响分布:")
-    print(f"    代码层: {by_layer.get('code', 0)} 个")
-    print(f"    DB 层:  {by_layer.get('db', 0)} 个")
-    print(f"    API 层: {by_layer.get('api', 0)} 个")
-    print(f"    配置层: {by_layer.get('config', 0)} 个")
+    print(t("cli.messages.impact_by_layer_title"))
+    print(t("cli.messages.impact_layer_code", count=by_layer.get('code', 0)))
+    print(t("cli.messages.impact_layer_db", count=by_layer.get('db', 0)))
+    print(t("cli.messages.impact_layer_api", count=by_layer.get('api', 0)))
+    print(t("cli.messages.impact_layer_config", count=by_layer.get('config', 0)))
     print()
 
     # 各层符号详情
@@ -273,17 +276,21 @@ def _handle_impact(args, db):
     for layer in layers:
         depth = layer["depth"]
         symbols = layer["symbols"]
-        label = "源符号" if depth == 0 else f"第 {depth} 层"
-        print(f"  【{label}】（{len(symbols)} 个符号）:")
+        label = (t("cli.messages.impact_layer_label_source")
+                 if depth == 0
+                 else t("cli.messages.impact_layer_label_depth", depth=depth))
+        print(t("cli.messages.impact_layer_symbols",
+                label=label, count=len(symbols)))
         for sym in symbols[:15]:
             qn = sym.get("qualified_name", "")
             kind = sym.get("kind", "")
             fp = sym.get("file_path", "")
-            print(f"    {kind:8s} {qn}")
+            print(t("cli.messages.impact_symbol_item", kind=kind, name=qn))
             if fp:
-                print(f"             {fp}")
+                print(t("cli.messages.impact_symbol_file", file=fp))
         if len(symbols) > 15:
-            print(f"    ... 还有 {len(symbols) - 15} 个")
+            print(t("cli.messages.impact_more_symbols",
+                    count=len(symbols) - 15))
         print()
 
     return True
