@@ -82,6 +82,7 @@ class TaskAttributionMixin:
             step_id = self._infer_in_progress_step_id(task_id)
 
         meta = json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True)
+        now = time.time()
         cur = self.conn.execute(
             """
             INSERT INTO task_symbol_changes
@@ -104,11 +105,35 @@ class TaskAttributionMixin:
                 change_type or "modified",
                 source or "manual",
                 meta,
-                time.time(),
+                now,
             ),
         )
+        change_id_int = cur.lastrowid
         self.conn.commit()
-        return {"success": True, "id": cur.lastrowid}
+        # 写入审计签名链（失败不阻塞主流程）
+        if hasattr(self, "sign_audit_record"):
+            try:
+                self.sign_audit_record(
+                    "task_symbol_changes",
+                    str(change_id_int),
+                    {
+                        "task_id": task_id,
+                        "step_id": step_id,
+                        "edit_audit_id": edit_audit_id,
+                        "change_audit_id": change_audit_id,
+                        "file_path": rel_path,
+                        "qualified_name": qualified_name,
+                        "symbol_name": symbol_name,
+                        "symbol_hash_before": symbol_hash_before,
+                        "symbol_hash_after": symbol_hash_after,
+                        "change_type": change_type or "modified",
+                        "source": source or "manual",
+                        "metadata": meta,
+                    },
+                )
+            except Exception:
+                pass
+        return {"success": True, "id": change_id_int}
 
     def record_edit_attribution(self, audit_id: int, step_id: str = "") -> Optional[Dict[str, Any]]:
         """为 file_edit_audit 记录文件级归因，符号级归因可在刷新后补齐"""

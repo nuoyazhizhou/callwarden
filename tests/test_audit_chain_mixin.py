@@ -5,9 +5,7 @@
 - sign_audit_record: 写入签名链
 - verify_audit_chain: 验证链连续性与签名匹配
 
-测试策略：创建临时子类混入 AuditChainMixin 和 CodeGraphDB，
-避免修改 db.py（混入由后续 step 完成）。
-
+AuditChainMixin 已混入 CodeGraphDB（db/db.py），测试直接使用 CodeGraphDB。
 HMAC 测试通过 monkeypatch 环境变量 CALLWARDEN_AUDIT_HMAC_KEY 实现。
 """
 
@@ -16,19 +14,13 @@ import tempfile
 from unittest import mock
 
 from callwarden.db.db import CodeGraphDB
-from callwarden.db.db_audit_chain import AuditChainMixin, _get_hmac_key
-
-
-# 临时子类：混入 AuditChainMixin 以便测试
-class _TestDB(AuditChainMixin, CodeGraphDB):
-    """测试用子类，混入 AuditChainMixin"""
-    pass
+from callwarden.db.db_audit_chain import _get_hmac_key
 
 
 def _db_with_audit():
     """构造带 AuditChainMixin 的临时工作区数据库。"""
     root = tempfile.mkdtemp()
-    db = _TestDB(os.path.join(root, "callwarden.db"), workspace_root=root)
+    db = CodeGraphDB(os.path.join(root, "callwarden.db"), workspace_root=root)
     return db, root
 
 

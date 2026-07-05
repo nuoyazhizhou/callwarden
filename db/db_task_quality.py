@@ -116,8 +116,27 @@ class TaskQualityMixin:
                 (ws_id, task_id, step_id, finding_type, severity, "open",
                  message, evidence_str, source, now),
             )
+            finding_id = cur.lastrowid
             self.conn.commit()
-            return cur.lastrowid
+            # 写入审计签名链（失败不阻塞主流程）
+            if hasattr(self, "sign_audit_record"):
+                try:
+                    self.sign_audit_record(
+                        "task_quality_findings",
+                        str(finding_id),
+                        {
+                            "task_id": task_id,
+                            "step_id": step_id,
+                            "finding_type": finding_type,
+                            "severity": severity,
+                            "message": message,
+                            "evidence": evidence_str,
+                            "source": source,
+                        },
+                    )
+                except Exception:
+                    pass
+            return finding_id
         except Exception:
             return 0
 

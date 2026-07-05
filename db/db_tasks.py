@@ -954,6 +954,27 @@ class TaskMixin:
 
         self.conn.commit()
 
+        # change_audit 写入后签名（commit 之后，避免破坏事务原子性）
+        if attribution_changes and hasattr(self, "sign_audit_record"):
+            for item in attribution_changes:
+                change = item["change"]
+                try:
+                    self.sign_audit_record(
+                        "change_audit",
+                        item["change_id"],
+                        {
+                            "task_id": actual_task_id,
+                            "step_id": step_id,
+                            "file_path": change.get("file_path", ""),
+                            "hash_before": change.get("hash_before", ""),
+                            "hash_after": change.get("hash_after", ""),
+                            "diff": change.get("diff", ""),
+                            "author": change.get("author", "agent"),
+                        },
+                    )
+                except Exception:
+                    pass
+
         if attribution_changes and hasattr(self, "record_task_symbol_change"):
             for item in attribution_changes:
                 change = item["change"]
@@ -1038,6 +1059,7 @@ class TaskMixin:
 
         changes = [dict(row) for row in cur]
         rolled_back: List[Dict[str, Any]] = []
+        rollback_signed: List[tuple] = []  # [(rollback_change_id, change), ...]
 
         # 为每条原始变更记录一条回滚操作（hash 前后对调）
         for change in changes:
@@ -1065,6 +1087,7 @@ class TaskMixin:
                 ),
             )
 
+            rollback_signed.append((rollback_change_id, change))
             rolled_back.append({
                 "original_change_id": change["id"],
                 "file_path": change["file_path"],
@@ -1080,6 +1103,26 @@ class TaskMixin:
         )
 
         self.conn.commit()
+
+        # 回滚 change_audit 写入后签名（commit 之后）
+        if rollback_signed and hasattr(self, "sign_audit_record"):
+            for rollback_change_id, change in rollback_signed:
+                try:
+                    self.sign_audit_record(
+                        "change_audit",
+                        rollback_change_id,
+                        {
+                            "task_id": task_id,
+                            "step_id": change.get("step_id", ""),
+                            "file_path": change["file_path"],
+                            "hash_before": change.get("hash_after", ""),
+                            "hash_after": change.get("hash_before", ""),
+                            "diff": f"[ROLLBACK] reason={reason or 'unspecified'}",
+                            "author": "agent",
+                        },
+                    )
+                except Exception:
+                    pass
 
         return {
             "rolled_back_changes": rolled_back,

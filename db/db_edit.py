@@ -342,6 +342,26 @@ class EditSafetyMixin:
         )
         self.conn.commit()
 
+        # 写入审计签名链（失败不阻塞主流程）
+        if hasattr(self, "sign_audit_record"):
+            try:
+                self.sign_audit_record(
+                    "file_edit_audit",
+                    str(audit_id),
+                    {
+                        "file_path": rel_path,
+                        "operation": operation,
+                        "file_hash_before": file_hash_before,
+                        "file_hash_after": file_hash_after,
+                        "symbol_hash": symbol_hash,
+                        "agent_task_id": agent_task_id,
+                        "diff_summary": diff_summary,
+                        "status": EDIT_STATUS_APPLIED,
+                    },
+                )
+            except Exception:
+                pass
+
         attribution = None
         if agent_task_id and hasattr(self, "record_edit_attribution"):
             try:
