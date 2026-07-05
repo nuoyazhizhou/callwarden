@@ -6,6 +6,7 @@
 - 三张表的字段、默认值、索引存在性
 """
 
+import json
 import os
 import sqlite3
 import tempfile
@@ -1502,6 +1503,291 @@ def test_extract_rule_candidates_default_min_occurrences_is_2():
             )
             cids = db.extract_rule_candidates_from_quality_findings(task_id=tid)
             assert cids == [], "默认阈值 2，1 条 finding 不应被提取"
+        finally:
+            db.close()
+
+
+# ============================================
+# Phase 6: rule_sync_agents_md / rule_insert_agents_md_block 测试
+# ============================================
+
+
+def _setup_active_rules(db, count=2):
+    """辅助：创建并 accept count 条 active 规则，返回 rule_ids"""
+    rule_ids = []
+    for i in range(count):
+        cid = db.rule_candidate_create(
+            title=f"rule-{i+1}",
+            rule_text=f"text {i+1}",
+            severity="warning" if i == 0 else "info",
+        )
+        rid = db.rule_candidate_accept(cid)
+        rule_ids.append(rid)
+    return rule_ids
+
+
+def _write_agents_md(tmp, content="# Project\n\nSome content\n"):
+    """辅助：写入 AGENTS.md 文件，返回路径"""
+    path = os.path.join(tmp, "AGENTS.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return path
+
+
+def test_rule_sync_agents_md_no_marker_returns_error():
+    """标记区不存在时应返回 success=False + suggested_block"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            _setup_active_rules(db, count=1)
+            agents_md = _write_agents_md(tmp, "# Project\n\nno marker\n")
+
+            result = db.rule_sync_agents_md(target_path=agents_md, dry_run=True)
+
+            assert result["success"] is False
+            assert result["rule_count"] == 0
+            assert result["after_hash"] == ""
+            assert "suggested_block" in result
+            assert "CALLWARDEN_RULES_START" in result["suggested_block"]
+            assert "CALLWARDEN_RULES_END" in result["suggested_block"]
+            assert "error" in result and result["error"]
+        finally:
+            db.close()
+
+
+def test_rule_sync_agents_md_dry_run_returns_preview():
+    """dry_run=True 时返回 preview，不写文件"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            rule_ids = _setup_active_rules(db, count=2)
+            agents_md = _write_agents_md(tmp, "# Project\n\nno marker\n")
+
+            # 先插入标记块
+            db.rule_insert_agents_md_block(target_path=agents_md)
+
+            result = db.rule_sync_agents_md(target_path=agents_md, dry_run=True)
+
+            assert result["success"] is True
+            assert result["dry_run"] is True
+            assert result["rule_count"] == 2
+            assert result["rule_ids"] == rule_ids
+            assert "rule-1" in result["preview"]
+            assert "rule-2" in result["preview"]
+            assert result["after_hash"]  # dry_run 也计算 after_hash
+
+            # dry_run 不应改文件
+            with open(agents_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            assert "rule-1" not in content, "dry_run 不应改文件"
+            assert "# Project" in content, "标记区外内容不应变"
+        finally:
+            db.close()
+
+
+def test_rule_sync_agents_md_apply_writes_file_and_log():
+    """apply（dry_run=False）应写文件、记录 sync_log、标记 synced_to_agents_md"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            rule_ids = _setup_active_rules(db, count=2)
+            agents_md = _write_agents_md(tmp, "# Project\n\nno marker\n")
+            db.rule_insert_agents_md_block(target_path=agents_md)
+
+            result = db.rule_sync_agents_md(target_path=agents_md, dry_run=False)
+
+            assert result["success"] is True
+            assert result["dry_run"] is False
+            assert result["rule_count"] == 2
+            assert result["after_hash"]
+            assert result["before_hash"] != result["after_hash"]
+
+            # 验证文件已写入规则内容
+            with open(agents_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            assert "rule-1" in content
+            assert "rule-2" in content
+            assert "CALLWARDEN_RULES_START" in content
+            assert "CALLWARDEN_RULES_END" in content
+
+            # 验证 sync_log 已记录 apply（dry_run=0）
+            logs = db.conn.execute(
+                "SELECT * FROM agent_rule_sync_log WHERE dry_run = 0"
+            ).fetchall()
+            assert len(logs) == 1
+            apply_log = logs[0]
+            assert apply_log["target_path"] == agents_md
+            assert apply_log["before_hash"]
+            assert apply_log["after_hash"] == result["after_hash"]
+            ids = json.loads(apply_log["rule_ids_json"])
+            assert sorted(ids) == sorted(rule_ids)
+
+            # 验证规则 synced_to_agents_md=1
+            rules = db.rule_list(status="active")
+            assert all(r["synced_to_agents_md"] is True for r in rules)
+            assert all(r["sync_hash"] == result["after_hash"] for r in rules)
+        finally:
+            db.close()
+
+
+def test_rule_sync_agents_md_apply_preserves_outside_marker():
+    """apply 只改标记区，标记区外的人工内容不应变化"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            _setup_active_rules(db, count=1)
+            # 文件含人工维护内容
+            original = (
+                "# Project\n"
+                "\n"
+                "## 规范\n"
+                "这是一段人工维护内容，不应被自动同步覆盖。\n"
+                "\n"
+            )
+            agents_md = _write_agents_md(tmp, original)
+            db.rule_insert_agents_md_block(target_path=agents_md)
+
+            db.rule_sync_agents_md(target_path=agents_md, dry_run=False)
+
+            with open(agents_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            # 人工内容保留
+            assert "# Project" in content
+            assert "这是一段人工维护内容" in content
+            assert "## 规范" in content
+            # 自动同步的规则在标记区内
+            assert "rule-1" in content
+        finally:
+            db.close()
+
+
+def test_rule_sync_agents_md_re_apply_syncs_new_rule():
+    """重新 apply 应同步新增的 active 规则"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            _setup_active_rules(db, count=2)
+            agents_md = _write_agents_md(tmp, "# Project\n")
+            db.rule_insert_agents_md_block(target_path=agents_md)
+            db.rule_sync_agents_md(target_path=agents_md, dry_run=False)
+
+            # 新增第 3 条规则
+            cid3 = db.rule_candidate_create("rule-3", "third", severity="error")
+            db.rule_candidate_accept(cid3)
+
+            result2 = db.rule_sync_agents_md(target_path=agents_md, dry_run=False)
+            assert result2["rule_count"] == 3
+
+            with open(agents_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            assert "rule-3" in content
+            assert "# Project" in content, "标记区外内容仍应保留"
+        finally:
+            db.close()
+
+
+def test_rule_insert_agents_md_block_success():
+    """rule_insert_agents_md_block 成功插入标记块"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            agents_md = _write_agents_md(tmp, "# Project\n\n人工内容\n")
+
+            result = db.rule_insert_agents_md_block(target_path=agents_md)
+
+            assert result["success"] is True
+            assert result["target_path"] == agents_md
+            assert "message" in result and result["message"]
+
+            with open(agents_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            assert "CALLWARDEN_RULES_START" in content
+            assert "CALLWARDEN_RULES_END" in content
+            assert "# Project" in content
+            assert "人工内容" in content
+        finally:
+            db.close()
+
+
+def test_rule_insert_agents_md_block_already_exists_fails():
+    """标记块已存在时再 insert 应失败"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            agents_md = _write_agents_md(tmp, "# Project\n")
+            # 第一次插入成功
+            r1 = db.rule_insert_agents_md_block(target_path=agents_md)
+            assert r1["success"] is True
+            # 第二次应失败
+            r2 = db.rule_insert_agents_md_block(target_path=agents_md)
+            assert r2["success"] is False
+            assert "message" in r2 and r2["message"]
+        finally:
+            db.close()
+
+
+def test_rule_insert_agents_md_block_records_sync_log():
+    """insert 标记块也应记录 sync_log（dry_run=1，rule_ids=[]）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            agents_md = _write_agents_md(tmp, "# Project\n")
+
+            db.rule_insert_agents_md_block(target_path=agents_md)
+
+            logs = db.conn.execute(
+                "SELECT * FROM agent_rule_sync_log WHERE dry_run = 1"
+            ).fetchall()
+            assert len(logs) == 1
+            log = logs[0]
+            assert log["target_path"] == agents_md
+            assert log["before_hash"]
+            assert log["after_hash"]
+            assert json.loads(log["rule_ids_json"]) == []
+            assert log["actor"] == "agent"
+        finally:
+            db.close()
+
+
+def test_rule_insert_agents_md_block_creates_file_if_missing():
+    """目标文件不存在时应创建空文件并写入标记块"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            agents_md = os.path.join(tmp, "AGENTS.md")
+            assert not os.path.isfile(agents_md)
+
+            result = db.rule_insert_agents_md_block(target_path=agents_md)
+
+            assert result["success"] is True
+            assert os.path.isfile(agents_md)
+            with open(agents_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            assert "CALLWARDEN_RULES_START" in content
+            assert "CALLWARDEN_RULES_END" in content
+        finally:
+            db.close()
+
+
+def test_rule_sync_agents_md_empty_active_rules_returns_zero():
+    """无 active 规则时 sync 应返回 rule_count=0 但 success=True"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            agents_md = _write_agents_md(tmp, "# Project\n")
+            db.rule_insert_agents_md_block(target_path=agents_md)
+
+            result = db.rule_sync_agents_md(target_path=agents_md, dry_run=False)
+
+            assert result["success"] is True
+            assert result["rule_count"] == 0
+            assert result["rule_ids"] == []
+            # 标记块仍在文件中（空内容）
+            with open(agents_md, "r", encoding="utf-8") as f:
+                content = f.read()
+            assert "CALLWARDEN_RULES_START" in content
+            assert "CALLWARDEN_RULES_END" in content
+            assert "# Project" in content
         finally:
             db.close()
 
