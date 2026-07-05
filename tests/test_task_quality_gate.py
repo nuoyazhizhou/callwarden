@@ -225,8 +225,13 @@ def test_legacy_v20_db_migrates_to_v21_via_init_schema():
 # ============================================
 
 def _create_task_with_step(db, title="quality-test", step_count=1):
-    """辅助：创建带 1 个步骤的任务，返回 (task_id, [step_dict])"""
-    steps = [{"action": "edit", "target_file": "sample.py"} for _ in range(step_count)]
+    """辅助：创建带 1 个步骤的任务，返回 (task_id, [step_dict])
+
+    注意：target_file 留空，避免触发 _check_scope_violations（scope 检查器
+    会对变更文件超出 target_file 范围的情况报 error finding，干扰其他测试）。
+    专门测试 scope 的用例自行构造带 target_file 的任务。
+    """
+    steps = [{"action": "edit", "target_file": ""} for _ in range(step_count)]
     task_id = db.task_create(title, steps=steps)
     return task_id
 
@@ -1742,6 +1747,665 @@ def test_decision_block_resolved_allows_step_done():
                 db.resolve_task_quality_finding(f["id"], resolution="fixed")
 
         # 阻塞解除
+        assert db.task_has_blocking_findings(task_id) is False
+    finally:
+        db.close()
+
+
+# ============================================
+# Step S-1783247858392-82b7: 4 个扩展检查器测试
+# ============================================
+
+# ---------- _check_scope_violations ----------
+
+def test_check_scope_violations_detects_out_of_target_files():
+    """变更文件超出 step.target_file 范围 → error finding"""
+    db, _root = _db_with_workspace()
+    try:
+        # 创建带 target_file='src/a.py' 的任务
+        task_id = db.task_create("scope-test", steps=[
+            {"action": "edit", "target_file": "src/a.py"},
+        ])
+        step = db.task_next_step(task_id)
+        # 调用 _check_scope_violations：传入 b.py（不在 src/a.py 范围）
+        db._check_scope_violations(task_id, step["step_id"], ["src/b.py"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        scope_findings = [f for f in findings if f["finding_type"] == "scope"]
+        assert len(scope_findings) == 1
+        assert scope_findings[0]["severity"] == "error"
+        assert scope_findings[0]["source"] == "check_gate"
+    finally:
+        db.close()
+
+
+def test_check_scope_violations_skips_when_no_target_file():
+    """step 无 target_file → 不检查（直接返回）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("no-target", steps=[
+            {"action": "edit"},  # 无 target_file
+        ])
+        step = db.task_next_step(task_id)
+        db._check_scope_violations(task_id, step["step_id"], ["any.py"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_scope_violations_allows_target_file_itself():
+    """变更文件等于 target_file → 不报 scope violation"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("self-target", steps=[
+            {"action": "edit", "target_file": "src/a.py"},
+        ])
+        step = db.task_next_step(task_id)
+        db._check_scope_violations(task_id, step["step_id"], ["src/a.py"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_scope_violations_allows_subpath_of_target():
+    """变更文件是 target_file 的子路径 → 不报 scope violation"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("subpath-target", steps=[
+            {"action": "edit", "target_file": "src"},
+        ])
+        step = db.task_next_step(task_id)
+        # src/foo.py 是 src 的子路径 → 不报
+        db._check_scope_violations(task_id, step["step_id"], ["src/foo.py"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_scope_violations_normalizes_backslash_paths():
+    """Windows 反斜杠路径标准化后比较（不误报）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("win-path", steps=[
+            {"action": "edit", "target_file": "src\\a.py"},
+        ])
+        step = db.task_next_step(task_id)
+        # 同一文件，路径分隔符不同 → 不报
+        db._check_scope_violations(task_id, step["step_id"], ["src/a.py"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_scope_violations_skips_empty_changed_files():
+    """changed_files 为空 → 不检查"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("empty-cf", steps=[
+            {"action": "edit", "target_file": "a.py"},
+        ])
+        step = db.task_next_step(task_id)
+        db._check_scope_violations(task_id, step["step_id"], [])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+# ---------- _check_symbol_attribution ----------
+
+def test_check_symbol_attribution_warns_when_no_changes():
+    """target_symbol 非空但 task_symbol_changes 无记录 → warn finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("attr-test", steps=[
+            {"action": "edit", "target_file": "a.py", "target_symbol": "module::func"},
+        ])
+        step = db.task_next_step(task_id)
+        # 不向 task_symbol_changes 表插入记录 → 应触发 warn
+        db._check_symbol_attribution(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        attr_findings = [f for f in findings if f["finding_type"] == "call_chain"]
+        assert len(attr_findings) == 1
+        assert attr_findings[0]["severity"] == "warn"
+        assert attr_findings[0]["source"] == "check_gate"
+    finally:
+        db.close()
+
+
+def test_check_symbol_attribution_skips_when_no_target_symbol():
+    """无 target_symbol → 不检查"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("no-symbol", steps=[
+            {"action": "edit", "target_file": "a.py"},
+        ])
+        step = db.task_next_step(task_id)
+        db._check_symbol_attribution(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_symbol_attribution_skips_when_changes_exist():
+    """target_symbol + task_symbol_changes 已有记录 → 不报"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("attr-exist", steps=[
+            {"action": "edit", "target_file": "a.py", "target_symbol": "module::func"},
+        ])
+        step = db.task_next_step(task_id)
+        # 手动插入一条 task_symbol_changes 记录
+        db.conn.execute(
+            """
+            INSERT INTO task_symbol_changes
+                (workspace_id, task_id, step_id, file_path, qualified_name,
+                 symbol_name, change_type, source, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (db._get_active_workspace_id(), task_id, step["step_id"],
+             "a.py", "module::func", "func", "modified", "manual", time.time()),
+        )
+        db.conn.commit()
+        # 应不报 finding（已有变更归因）
+        db._check_symbol_attribution(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        attr_findings = [f for f in findings if f["finding_type"] == "call_chain"]
+        assert len(attr_findings) == 0
+    finally:
+        db.close()
+
+
+# ---------- _check_file_health_findings ----------
+
+def _inject_mock_check_file_health(db, health_return):
+    """辅助：注入 mock check_file_health 返回指定 dict"""
+    _had = hasattr(db, "check_file_health")
+    _orig = getattr(db, "check_file_health", None)
+    db.check_file_health = lambda fp: health_return
+
+    def _restore():
+        if _had and _orig is not None:
+            db.check_file_health = _orig
+        else:
+            try:
+                delattr(db, "check_file_health")
+            except AttributeError:
+                pass
+
+    return _restore
+
+
+def test_check_file_health_findings_warns_large_file():
+    """文件大小 >= 1000 行 → warn finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        health = {"total_lines": 1500, "function_issues": []}
+        restore = _inject_mock_check_file_health(db, health)
+        try:
+            db._check_file_health_findings(task_id, step["step_id"], ["big.py"])
+        finally:
+            restore()
+        findings = db.get_task_quality_findings(task_id, status="open")
+        fh_findings = [f for f in findings if f["finding_type"] == "file_health"]
+        assert len(fh_findings) == 1
+        assert fh_findings[0]["severity"] == "warn"
+        assert fh_findings[0]["source"] == "check_gate"
+    finally:
+        db.close()
+
+
+def test_check_file_health_findings_errors_huge_file():
+    """文件大小 >= 2000 行 → error finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        health = {"total_lines": 2500, "function_issues": []}
+        restore = _inject_mock_check_file_health(db, health)
+        try:
+            db._check_file_health_findings(task_id, step["step_id"], ["huge.py"])
+        finally:
+            restore()
+        findings = db.get_task_quality_findings(task_id, status="open")
+        fh_findings = [f for f in findings if f["finding_type"] == "file_health"]
+        assert len(fh_findings) == 1
+        assert fh_findings[0]["severity"] == "error"
+    finally:
+        db.close()
+
+
+def test_check_file_health_findings_warns_complexity_hotspot():
+    """函数复杂度 >= 20 → warn finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        health = {
+            "total_lines": 100,
+            "function_issues": [
+                {
+                    "qualified_name": "mod::complex_fn",
+                    "cyclomatic_complexity": 25,
+                    "line_count": 50,
+                    "severity": "medium",
+                }
+            ],
+        }
+        restore = _inject_mock_check_file_health(db, health)
+        try:
+            db._check_file_health_findings(task_id, step["step_id"], ["c.py"])
+        finally:
+            restore()
+        findings = db.get_task_quality_findings(task_id, status="open")
+        fh_findings = [f for f in findings if f["finding_type"] == "file_health"]
+        assert len(fh_findings) == 1
+        assert fh_findings[0]["severity"] == "warn"
+    finally:
+        db.close()
+
+
+def test_check_file_health_findings_skips_when_check_raises():
+    """check_file_health 抛异常时 → 跳过该文件，不报错也不报 finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+
+        def _raise(fp):
+            raise RuntimeError("boom")
+
+        _had = hasattr(db, "check_file_health")
+        _orig = getattr(db, "check_file_health", None)
+        db.check_file_health = _raise
+        try:
+            db._check_file_health_findings(task_id, step["step_id"], ["any.py"])
+        finally:
+            if _had and _orig is not None:
+                db.check_file_health = _orig
+            else:
+                try:
+                    delattr(db, "check_file_health")
+                except AttributeError:
+                    pass
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_file_health_findings_skips_when_health_none():
+    """check_file_health 返回 None → 跳过"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        restore = _inject_mock_check_file_health(db, None)
+        try:
+            db._check_file_health_findings(task_id, step["step_id"], ["any.py"])
+        finally:
+            restore()
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_file_health_findings_skips_small_healthy_file():
+    """小文件且无复杂度热点 → 不报 finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        health = {
+            "total_lines": 100,
+            "function_issues": [
+                {
+                    "qualified_name": "mod::simple",
+                    "cyclomatic_complexity": 5,  # 低于阈值 20
+                    "line_count": 10,
+                    "severity": "low",
+                }
+            ],
+        }
+        restore = _inject_mock_check_file_health(db, health)
+        try:
+            db._check_file_health_findings(task_id, step["step_id"], ["ok.py"])
+        finally:
+            restore()
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+# ---------- _check_i18n_hardcoded ----------
+
+def _write_temp_source(root, rel_path, content):
+    """辅助：在工作区下写入临时源文件，返回绝对路径"""
+    abs_path = os.path.join(root, rel_path)
+    os.makedirs(os.path.dirname(abs_path), exist_ok=True) if os.path.dirname(rel_path) else None
+    with open(abs_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return abs_path
+
+
+def test_check_i18n_hardcoded_detects_print():
+    """检测到 print() → warn finding"""
+    db, root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        abs_path = _write_temp_source(root, "src_mod.py", "print('hello world')\n")
+        try:
+            db._check_i18n_hardcoded(task_id, step["step_id"], ["src_mod.py"])
+        finally:
+            os.unlink(abs_path)
+        findings = db.get_task_quality_findings(task_id, status="open")
+        i18n_findings = [f for f in findings if f["finding_type"] == "i18n"]
+        assert len(i18n_findings) == 1
+        assert i18n_findings[0]["severity"] == "warn"
+        assert i18n_findings[0]["source"] == "check_gate"
+    finally:
+        db.close()
+
+
+def test_check_i18n_hardcoded_detects_logger():
+    """检测到 logger.info() → warn finding"""
+    db, root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        abs_path = _write_temp_source(
+            root, "log_mod.py",
+            "import logging\nlogger = logging.getLogger(__name__)\nlogger.info('x')\n",
+        )
+        try:
+            db._check_i18n_hardcoded(task_id, step["step_id"], ["log_mod.py"])
+        finally:
+            os.unlink(abs_path)
+        findings = db.get_task_quality_findings(task_id, status="open")
+        i18n_findings = [f for f in findings if f["finding_type"] == "i18n"]
+        # 第 3 行 logger.info() 应被检测到
+        assert len(i18n_findings) == 1
+        assert i18n_findings[0]["severity"] == "warn"
+    finally:
+        db.close()
+
+
+def test_check_i18n_hardcoded_detects_logging_module():
+    """检测到 logging.warning() → warn finding"""
+    db, root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        abs_path = _write_temp_source(
+            root, "lg.py",
+            "import logging\nlogging.error('fail')\n",
+        )
+        try:
+            db._check_i18n_hardcoded(task_id, step["step_id"], ["lg.py"])
+        finally:
+            os.unlink(abs_path)
+        findings = db.get_task_quality_findings(task_id, status="open")
+        i18n_findings = [f for f in findings if f["finding_type"] == "i18n"]
+        assert len(i18n_findings) == 1
+    finally:
+        db.close()
+
+
+def test_check_i18n_hardcoded_skips_tests_dir():
+    """tests/ 目录下的文件不扫描"""
+    db, root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        abs_path = _write_temp_source(
+            root, "tests/test_x.py", "print('test output')\n"
+        )
+        try:
+            db._check_i18n_hardcoded(task_id, step["step_id"], ["tests/test_x.py"])
+        finally:
+            os.unlink(abs_path)
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_i18n_hardcoded_skips_comment_lines():
+    """以 # 开头的注释行不扫描"""
+    db, root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        abs_path = _write_temp_source(
+            root, "cmt.py",
+            "# print('this is a comment')\n# logger.info('also comment')\nx = 1\n",
+        )
+        try:
+            db._check_i18n_hardcoded(task_id, step["step_id"], ["cmt.py"])
+        finally:
+            os.unlink(abs_path)
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_i18n_hardcoded_skips_nonexistent_file():
+    """不存在的文件不报错（静默跳过）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 不抛异常
+        db._check_i18n_hardcoded(task_id, step["step_id"], ["/nonexistent/file.py"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_i18n_hardcoded_one_finding_per_line():
+    """同一行即使匹配多个模式也只记录一次"""
+    db, root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 单行同时包含 print 和 logger（理论上不可能，但测试 break 逻辑）
+        abs_path = _write_temp_source(
+            root, "multi.py", "print('a')\nlogger.info('b')\n"
+        )
+        try:
+            db._check_i18n_hardcoded(task_id, step["step_id"], ["multi.py"])
+        finally:
+            os.unlink(abs_path)
+        findings = db.get_task_quality_findings(task_id, status="open")
+        i18n_findings = [f for f in findings if f["finding_type"] == "i18n"]
+        # 2 行各 1 个 finding
+        assert len(i18n_findings) == 2
+    finally:
+        db.close()
+
+
+# ---------- run_task_completion_review 集成 4 个检查器 ----------
+
+def test_run_task_completion_review_invokes_all_four_checkers():
+    """有变更文件时，run_task_completion_review 调用 4 个检查器，
+    通过 mock 验证每个检查器都被调用"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "sample.py")
+
+        # mock run_check_gate 返回空（不让它干扰）
+        restore_cg = _mock_run_check_gate(db, findings=[])
+
+        # 替换 4 个检查器为 mock，记录调用
+        calls = {"scope": 0, "symbol": 0, "file_health": 0, "i18n": 0}
+
+        _orig_scope = db._check_scope_violations
+        _orig_symbol = db._check_symbol_attribution
+        _orig_fh = db._check_file_health_findings
+        _orig_i18n = db._check_i18n_hardcoded
+
+        def _mock_scope(tid, sid, cf):
+            calls["scope"] += 1
+
+        def _mock_symbol(tid, sid):
+            calls["symbol"] += 1
+
+        def _mock_fh(tid, sid, cf):
+            calls["file_health"] += 1
+
+        def _mock_i18n(tid, sid, cf):
+            calls["i18n"] += 1
+
+        db._check_scope_violations = _mock_scope
+        db._check_symbol_attribution = _mock_symbol
+        db._check_file_health_findings = _mock_fh
+        db._check_i18n_hardcoded = _mock_i18n
+        try:
+            db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            db._check_scope_violations = _orig_scope
+            db._check_symbol_attribution = _orig_symbol
+            db._check_file_health_findings = _orig_fh
+            db._check_i18n_hardcoded = _orig_i18n
+            restore_cg()
+
+        # 所有 4 个检查器都应被调用
+        assert calls["scope"] == 1, f"scope called {calls['scope']} times"
+        assert calls["symbol"] == 1, f"symbol called {calls['symbol']} times"
+        assert calls["file_health"] == 1, f"file_health called {calls['file_health']} times"
+        assert calls["i18n"] == 1, f"i18n called {calls['i18n']} times"
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_skips_checkers_when_no_changed_files():
+    """无变更文件时，4 个检查器都不调用"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 不注入 change_audit，get_task_changed_files 返回空列表
+
+        calls = {"scope": 0, "symbol": 0, "file_health": 0, "i18n": 0}
+        _orig_scope = db._check_scope_violations
+        _orig_symbol = db._check_symbol_attribution
+        _orig_fh = db._check_file_health_findings
+        _orig_i18n = db._check_i18n_hardcoded
+
+        db._check_scope_violations = lambda *a, **kw: calls.__setitem__("scope", calls["scope"] + 1)
+        db._check_symbol_attribution = lambda *a, **kw: calls.__setitem__("symbol", calls["symbol"] + 1)
+        db._check_file_health_findings = lambda *a, **kw: calls.__setitem__("file_health", calls["file_health"] + 1)
+        db._check_i18n_hardcoded = lambda *a, **kw: calls.__setitem__("i18n", calls["i18n"] + 1)
+        try:
+            db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            db._check_scope_violations = _orig_scope
+            db._check_symbol_attribution = _orig_symbol
+            db._check_file_health_findings = _orig_fh
+            db._check_i18n_hardcoded = _orig_i18n
+
+        assert calls["scope"] == 0
+        assert calls["symbol"] == 0
+        assert calls["file_health"] == 0
+        assert calls["i18n"] == 0
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_checkers_use_check_gate_source():
+    """4 个检查器记录的 finding 都使用 source='check_gate'，
+    在重复调用 review 时被清理去重"""
+    db, _root = _db_with_workspace()
+    try:
+        # 构造任务：target_file='a.py'，变更文件='b.py'（超出 scope）
+        task_id = db.task_create("dedup-test", steps=[
+            {"action": "edit", "target_file": "a.py"},
+        ])
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "b.py")
+
+        # mock run_check_gate 返回空
+        restore_cg = _mock_run_check_gate(db, findings=[])
+        try:
+            # 第一次 review：应记录 1 个 scope error finding
+            db.run_task_completion_review(task_id, step["step_id"])
+            findings_1 = db.get_task_quality_findings(task_id, status="all")
+            check_gate_1 = [f for f in findings_1 if f.get("source") == "check_gate"]
+            assert len(check_gate_1) >= 1
+
+            # 第二次 review：check_gate finding 应被清理去重（不累积）
+            db.run_task_completion_review(task_id, step["step_id"])
+            findings_2 = db.get_task_quality_findings(task_id, status="all")
+            check_gate_2 = [f for f in findings_2 if f.get("source") == "check_gate"]
+            # 应与第一次数量相同（去重生效）
+            assert len(check_gate_2) == len(check_gate_1)
+        finally:
+            restore_cg()
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_scope_violation_blocks():
+    """scope violation（error）→ decision=block"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("scope-block", steps=[
+            {"action": "edit", "target_file": "a.py"},
+        ])
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "b.py")
+
+        # mock run_check_gate 返回空（不影响 scope 检查）
+        restore_cg = _mock_run_check_gate(db, findings=[])
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore_cg()
+
+        # scope violation 是 error → decision=block
+        assert review["decision"] == "block"
+        assert review["counts"]["error"] >= 1
+        # task_has_blocking_findings 应返回 True
+        assert db.task_has_blocking_findings(task_id) is True
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_i18n_hardcoded_warns():
+    """i18n 硬编码（warn）→ decision=warn（不阻塞）"""
+    db, root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "hardcoded.py")
+        abs_path = _write_temp_source(root, "hardcoded.py", "print('hello')\n")
+        try:
+            # mock run_check_gate 返回空
+            restore_cg = _mock_run_check_gate(db, findings=[])
+            try:
+                review = db.run_task_completion_review(task_id, step["step_id"])
+            finally:
+                restore_cg()
+        finally:
+            os.unlink(abs_path)
+
+        # i18n hardcoded 是 warn → decision=warn（不阻塞）
+        assert review["decision"] == "warn"
+        assert review["counts"]["warn"] >= 1
+        # warn 不阻塞
         assert db.task_has_blocking_findings(task_id) is False
     finally:
         db.close()

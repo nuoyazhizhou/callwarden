@@ -9,7 +9,9 @@ db_task_quality.py
 质量问题挂到 task/step 上，使 open error/block finding 阻止任务进入 done。
 
 事实层由 task_quality_findings 表（v21 schema）表达；
-本模块只提供记录/查询/解决/阻断判断/修复步骤插入五个核心方法。
+本模块只提供记录/查询/解决/阻断判断/修复步骤插入五个核心方法，
+以及 run_task_completion_review 调度器（聚合 run_check_gate + scope/symbol/
+file_health/i18n 检查器）。
 
 状态规则（与 plan 文档一致）：
 - severity: info / warn / error / block
@@ -21,6 +23,8 @@ db_task_quality.py
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -29,6 +33,21 @@ from ..i18n import t
 
 # 阻塞性严重度（open 状态时阻止 step 进入 done）
 BLOCKING_SEVERITIES = frozenset({"error", "block"})
+
+# i18n 硬编码输出扫描的正则模式
+# 匹配 print( / cprint( / logger.info( / logging.warning( 等硬编码输出调用
+# 这些输出应通过 i18n t() 函数本地化，而非直接硬编码
+_I18N_HARDCODED_PATTERNS = [
+    re.compile(r"^\s*print\s*\("),
+    re.compile(r"^\s*cprint\s*\("),
+    re.compile(r"^\s*logger\s*\.\s*(info|warning|error|debug|critical)\s*\("),
+    re.compile(r"^\s*logging\s*\.\s*(info|warning|error|debug|critical)\s*\("),
+]
+
+# 文件大小阈值（与 db_metrics.check_file_health 保持一致）
+_FILE_SIZE_WARN_THRESHOLD = 1000
+_FILE_SIZE_ERROR_THRESHOLD = 2000
+_COMPLEXITY_HOTSPOT_THRESHOLD = 20
 
 
 class TaskQualityMixin:
@@ -319,6 +338,266 @@ class TaskQualityMixin:
         except Exception:
             return ""
 
+    # ============================================================
+    # 质量检查器（由 run_task_completion_review 调度）
+    # ============================================================
+    # 所有检查器统一使用 source='check_gate' 标识，通过 finding_type
+    # 区分具体来源（scope / call_chain / file_health / i18n）。
+    # 这样 run_task_completion_review 的清理逻辑（DELETE WHERE
+    # source='check_gate'）能统一去重，避免重复累积。
+
+    def _check_scope_violations(
+        self,
+        task_id: str,
+        step_id: str,
+        changed_files: List[str],
+    ) -> None:
+        """检查变更文件是否超出 step 的 target_file 范围
+
+        若 step 指定了 target_file，但 change_audit 记录的变更文件不在
+        target_file 范围内（不是同一文件或其子路径），则记录 error finding。
+        这是 scope violation，通常意味着 Agent 修改了非目标文件。
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID
+            changed_files: 变更文件路径列表
+        """
+        if not step_id or not changed_files:
+            return
+
+        # 读取 step 的 target_file
+        try:
+            cur = self.conn.execute(
+                "SELECT target_file FROM task_steps WHERE id = ?",
+                (step_id,),
+            )
+            row = cur.fetchone()
+        except Exception:
+            return
+        if not row:
+            return
+        target_file = row["target_file"] or ""
+        if not target_file:
+            return  # 无 target_file 约束，跳过检查
+
+        # 标准化路径比较（统一正斜杠）
+        target_norm = target_file.replace("\\", "/")
+        for fp in changed_files:
+            fp_norm = fp.replace("\\", "/")
+            # 变更文件不是 target_file 本身，也不是其子路径
+            if fp_norm != target_norm and not fp_norm.startswith(target_norm + "/"):
+                self.record_task_quality_finding(
+                    task_id=task_id,
+                    step_id=step_id,
+                    finding_type="scope",
+                    severity="error",
+                    message=t(
+                        "cli.messages.task_quality_scope_violation",
+                        default="Scope violation: file '{file}' is outside step target '{target}'",
+                        file=fp,
+                        target=target_file,
+                    ),
+                    evidence={"file_path": fp, "target_file": target_file},
+                    source="check_gate",
+                )
+
+    def _check_symbol_attribution(
+        self,
+        task_id: str,
+        step_id: str,
+    ) -> None:
+        """检查 target_symbol 非空但无 task_symbol_changes 记录
+
+        若 step 指定了 target_symbol，但 task_symbol_changes 表中没有
+        对应的符号变更归因记录，则记录 warn finding。可能是 Agent 修改了
+        非目标符号，或忘记记录归因。
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID
+        """
+        if not step_id:
+            return
+
+        try:
+            cur = self.conn.execute(
+                "SELECT target_symbol FROM task_steps WHERE id = ?",
+                (step_id,),
+            )
+            row = cur.fetchone()
+        except Exception:
+            return
+        if not row:
+            return
+        target_symbol = row["target_symbol"] or ""
+        if not target_symbol:
+            return  # 无 target_symbol 约束，跳过检查
+
+        # 检查 task_symbol_changes 表是否有记录
+        try:
+            cur = self.conn.execute(
+                "SELECT COUNT(*) as cnt FROM task_symbol_changes "
+                "WHERE task_id = ? AND step_id = ?",
+                (task_id, step_id),
+            )
+            cnt = cur.fetchone()["cnt"]
+        except Exception:
+            return
+
+        if cnt == 0:
+            self.record_task_quality_finding(
+                task_id=task_id,
+                step_id=step_id,
+                finding_type="call_chain",
+                severity="warn",
+                message=t(
+                    "cli.messages.task_quality_symbol_attribution_missing",
+                    default="Symbol attribution missing: target_symbol='{symbol}' but no task_symbol_changes recorded",
+                    symbol=target_symbol,
+                ),
+                evidence={"target_symbol": target_symbol},
+                source="check_gate",
+            )
+
+    def _check_file_health_findings(
+        self,
+        task_id: str,
+        step_id: str,
+        changed_files: List[str],
+    ) -> None:
+        """调用 check_file_health 生成文件级 health warning
+
+        对每个变更文件调用 check_file_health（如果可用），将文件大小/复杂度
+        警告转换为 task_quality_findings 记录。
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID
+            changed_files: 变更文件路径列表
+        """
+        if not hasattr(self, "check_file_health"):
+            return
+
+        for fp in changed_files:
+            try:
+                health = self.check_file_health(fp)
+            except Exception:
+                continue
+            if not health:
+                continue
+
+            # 文件过大检查
+            total_lines = health.get("total_lines", 0) or 0
+            if total_lines >= _FILE_SIZE_WARN_THRESHOLD:
+                severity = "error" if total_lines >= _FILE_SIZE_ERROR_THRESHOLD else "warn"
+                self.record_task_quality_finding(
+                    task_id=task_id,
+                    step_id=step_id,
+                    finding_type="file_health",
+                    severity=severity,
+                    message=t(
+                        "cli.messages.task_quality_file_too_large",
+                        default="File too large: {file} has {lines} lines (threshold: {threshold})",
+                        file=fp,
+                        lines=total_lines,
+                        threshold=_FILE_SIZE_WARN_THRESHOLD,
+                    ),
+                    evidence={"total_lines": total_lines, "file_path": fp},
+                    source="check_gate",
+                )
+
+            # 复杂度热点检查（check_file_health 返回 function_issues 字段，
+            # 每项含 qualified_name / cyclomatic_complexity / line_count / severity）
+            hotspots = health.get("function_issues", []) or []
+            for hs in hotspots:
+                complexity = hs.get("cyclomatic_complexity", 0) or 0
+                if complexity >= _COMPLEXITY_HOTSPOT_THRESHOLD:
+                    self.record_task_quality_finding(
+                        task_id=task_id,
+                        step_id=step_id,
+                        finding_type="file_health",
+                        severity="warn",
+                        message=t(
+                            "cli.messages.task_quality_complexity_hotspot",
+                            default="Complexity hotspot: {symbol} complexity={complexity}",
+                            symbol=hs.get("qualified_name", ""),
+                            complexity=complexity,
+                        ),
+                        evidence=hs,
+                        source="check_gate",
+                    )
+
+    def _check_i18n_hardcoded(
+        self,
+        task_id: str,
+        step_id: str,
+        changed_files: List[str],
+    ) -> None:
+        """扫描变更文件中的硬编码 print/cprint/logger 输出
+
+        对每个变更文件读取内容，扫描硬编码输出语句（print / cprint /
+        logger.* / logging.*），记录 warn finding。
+        这些输出应通过 i18n t() 函数本地化，而非直接硬编码。
+
+        豁免规则：
+        - tests/ 目录下的文件不扫描（测试文件允许直接 print）
+        - 注释行（以 # 开头）不扫描
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID
+            changed_files: 变更文件路径列表
+        """
+        for fp in changed_files:
+            # 豁免测试文件
+            fp_norm = fp.replace("\\", "/")
+            if fp_norm.startswith("tests/") or "/tests/" in fp_norm:
+                continue
+
+            # 解析绝对路径：优先用 _resolve_abs_path，否则用 workspace_root 拼接
+            if hasattr(self, "_resolve_abs_path"):
+                abs_path = self._resolve_abs_path(fp) or ""
+            elif hasattr(self, "workspace_root") and self.workspace_root:
+                abs_path = os.path.join(self.workspace_root, fp)
+            else:
+                abs_path = fp
+            if not abs_path or not os.path.exists(abs_path):
+                continue
+
+            try:
+                with open(abs_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for line_no, line in enumerate(f, start=1):
+                        stripped = line.lstrip()
+                        # 跳过注释行
+                        if stripped.startswith("#"):
+                            continue
+                        # 检查是否匹配硬编码输出模式
+                        for pattern in _I18N_HARDCODED_PATTERNS:
+                            if pattern.match(line):
+                                self.record_task_quality_finding(
+                                    task_id=task_id,
+                                    step_id=step_id,
+                                    finding_type="i18n",
+                                    severity="warn",
+                                    message=t(
+                                        "cli.messages.task_quality_i18n_hardcoded",
+                                        default="Hardcoded output: {file}:{line} - {code}",
+                                        file=fp,
+                                        line=line_no,
+                                        code=stripped.strip(),
+                                    ),
+                                    evidence={
+                                        "file_path": fp,
+                                        "line": line_no,
+                                        "code": stripped.strip(),
+                                    },
+                                    source="check_gate",
+                                )
+                                break  # 一行只记录一次
+            except Exception:
+                pass
+
     def run_task_completion_review(
         self,
         task_id: str,
@@ -327,11 +606,15 @@ class TaskQualityMixin:
         """运行任务完成质量审查
 
         流程：
-        1. 调用 run_check_gate 对任务变更文件做语法/Semgrep 检查
-        2. 把检查结果（semgrep/syntax findings）转换为 task_quality_findings 记录
-           （source='check_gate'），写入前先清理该 step 的旧 check_gate finding
-           避免重复累积
-        3. 收集 task/step 下的所有 open finding，根据 severity 决策：
+        1. 清理该 step 的旧 check_gate finding（避免重复累积）
+        2. 调用 run_check_gate 对变更文件做语法/Semgrep 检查，结果写入
+           task_quality_findings（source='check_gate'）
+        3. 运行 4 个扩展检查器（均使用 source='check_gate'）：
+           - _check_scope_violations: 变更文件超出 target_file 范围 → error
+           - _check_symbol_attribution: target_symbol 无 task_symbol_changes → warn
+           - _check_file_health_findings: 文件过大/复杂度热点 → warn/error
+           - _check_i18n_hardcoded: 硬编码 print/cprint/logger 输出 → warn
+        4. 收集 task/step 下的所有 open finding，根据 severity 决策：
            - 无 finding → pass（允许 step 进入 done）
            - 仅有 info/warn → warn（记录但允许完成）
            - 存在 error/block → block（step 阻塞，自动插入 fix_quality_gate_failure）
@@ -354,49 +637,75 @@ class TaskQualityMixin:
                 "check_gate_result": None,
             }
 
-        # 步骤 1+2: 调用 run_check_gate 并把结果转换为 task_quality_findings
-        check_gate_result: Optional[Dict[str, Any]] = None
-        if hasattr(self, "run_check_gate"):
+        # 获取任务关联的变更文件（change_audit 表由 task_report_step 写入）
+        changed_files: List[str] = []
+        if hasattr(self, "get_task_changed_files"):
             try:
-                # 获取任务关联的变更文件（change_audit 表由 task_report_step 写入）
-                changed_files: List[str] = []
-                if hasattr(self, "get_task_changed_files"):
-                    changed_files = self.get_task_changed_files(task_id)
+                changed_files = self.get_task_changed_files(task_id)
+            except Exception:
+                changed_files = []
 
-                if changed_files:
-                    # 清理该 step 关联的旧 check_gate finding（避免重复累积）
-                    if step_id:
-                        self.conn.execute(
-                            "DELETE FROM task_quality_findings "
-                            "WHERE task_id = ? AND step_id = ? AND source = 'check_gate'",
-                            (task_id, step_id),
-                        )
-                        self.conn.commit()
+        # 清理该 step 关联的旧 check_gate finding（所有检查器统一使用 source='check_gate'）
+        if step_id:
+            try:
+                self.conn.execute(
+                    "DELETE FROM task_quality_findings "
+                    "WHERE task_id = ? AND step_id = ? AND source = 'check_gate'",
+                    (task_id, step_id),
+                )
+                self.conn.commit()
+            except Exception:
+                pass
 
-                    # 调用 run_check_gate（语法 + Semgrep 检查）
-                    check_gate_result = self.run_check_gate(
-                        task_id, step_id, changed_files
+        # 步骤 2: 调用 run_check_gate 并把结果转换为 task_quality_findings
+        check_gate_result: Optional[Dict[str, Any]] = None
+        if changed_files and hasattr(self, "run_check_gate"):
+            try:
+                # 调用 run_check_gate（语法 + Semgrep 检查）
+                check_gate_result = self.run_check_gate(
+                    task_id, step_id, changed_files
+                )
+
+                # 把 findings 转换为 task_quality_findings 记录
+                for f in check_gate_result.get("findings", []):
+                    self.record_task_quality_finding(
+                        task_id=task_id,
+                        step_id=step_id,
+                        finding_type=f.get("finding_type", ""),
+                        severity=f.get("severity", "warn"),
+                        message=f.get("message", ""),
+                        evidence={
+                            "rule_id": f.get("rule_id", ""),
+                            "line": f.get("line", 0),
+                            "file_path": f.get("file_path", ""),
+                        },
+                        source="check_gate",
                     )
-
-                    # 把 findings 转换为 task_quality_findings 记录
-                    for f in check_gate_result.get("findings", []):
-                        self.record_task_quality_finding(
-                            task_id=task_id,
-                            step_id=step_id,
-                            finding_type=f.get("finding_type", ""),
-                            severity=f.get("severity", "warn"),
-                            message=f.get("message", ""),
-                            evidence={
-                                "rule_id": f.get("rule_id", ""),
-                                "line": f.get("line", 0),
-                                "file_path": f.get("file_path", ""),
-                            },
-                            source="check_gate",
-                        )
             except Exception:
                 check_gate_result = None
 
-        # 步骤 3: 收集 open findings 做决策
+        # 步骤 3: 运行扩展检查器（scope / symbol / file_health / i18n）
+        # 这些检查器也使用 source='check_gate'，与 run_check_gate 的 finding
+        # 一起被清理和决策。
+        if changed_files:
+            try:
+                self._check_scope_violations(task_id, step_id, changed_files)
+            except Exception:
+                pass
+            try:
+                self._check_symbol_attribution(task_id, step_id)
+            except Exception:
+                pass
+            try:
+                self._check_file_health_findings(task_id, step_id, changed_files)
+            except Exception:
+                pass
+            try:
+                self._check_i18n_hardcoded(task_id, step_id, changed_files)
+            except Exception:
+                pass
+
+        # 步骤 4: 收集 open findings 做决策
         findings = self.get_task_quality_findings(task_id, status="open")
 
         # 按 step_id 过滤（如果指定了 step_id）
