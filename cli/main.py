@@ -1163,6 +1163,14 @@ def _handle_task(args, db):
         help=t("cli_task_arg_flat", default="Flat list (no tree indentation)")
     )
 
+    # show：查看任务详情（默认树形展示子任务）
+    show_p = sub.add_parser("show", help=t("cli_task_show_desc", default="Show task details (tree mode by default)"))
+    show_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    show_p.add_argument(
+        "--flat", action="store_true",
+        help=t("cli_task_arg_flat_show", default="Flat mode (do not show subtasks recursively)")
+    )
+
     opts = parser.parse_args(args)
 
     if opts.action == "create":
@@ -1487,7 +1495,133 @@ def _handle_task(args, db):
         print()
         return True
 
+    elif opts.action == "show":
+        # 查看任务详情（默认树形展示子任务，--flat 退回扁平）
+        return _print_task_show(db, opts.task_id, flat=opts.flat)
+
     return True
+
+
+def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
+    """打印任务详情，默认按树形递归展示子任务
+
+    Args:
+        db: CodeGraphDB 实例
+        task_id: 任务 ID
+        flat: True 时仅显示主任务（不递归子任务），False 时递归展示整棵树
+
+    Returns:
+        True 表示处理完成
+    """
+    if flat:
+        # 扁平模式：使用 task_status 仅显示主任务
+        detail = db.task_status(task_id)
+        if not detail:
+            print(t("cli.messages.task_show_not_found", id=task_id))
+            return True
+        _print_task_detail_single(detail, indent_depth=0)
+        return True
+
+    # 树形模式：使用 task_status_tree 递归展示
+    tree = db.task_status_tree(task_id) if hasattr(db, "task_status_tree") else None
+    if not tree:
+        print(t("cli.messages.task_show_not_found", id=task_id))
+        return True
+
+    cprint(t("cli.messages.task_show_title"), "cyan", bold=True)
+    print("-" * 50)
+    _print_task_tree_node(tree, depth=0)
+    print()
+    return True
+
+
+def _print_task_detail_single(detail: dict, indent_depth: int = 0):
+    """打印单个任务详情（扁平模式，不递归子任务）"""
+    indent = t("cli.messages.task_list_indent") * indent_depth
+    print(t("cli.messages.task_show_id", id=detail['task_id']) if not indent else
+          t("cli.messages.task_show_id_indented", indent=indent, id=detail['task_id']))
+    print(t("cli.messages.task_show_title_label", title=detail['title']))
+    print(t("cli.messages.task_show_status", status=detail['status']))
+    if detail.get('description'):
+        print(t("cli.messages.task_show_desc", desc=detail['description']))
+    if detail.get('creator'):
+        print(t("cli.messages.task_show_creator", creator=detail['creator']))
+    created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(detail['created_at'])) if detail.get('created_at') else '?'
+    print(t("cli.messages.task_show_created", time=created))
+    print()
+    steps = detail.get('steps', [])
+    print(t("cli.messages.task_show_steps", count=len(steps)))
+    for s in steps:
+        print(t("cli.messages.task_show_step", idx=s['step_index'], status=s['status'], action=s['action']))
+        if s.get('target_file'):
+            print(t("cli.messages.task_show_step_file", file=s['target_file']))
+        if s.get('target_symbol'):
+            print(t("cli.messages.task_show_step_symbol", symbol=s['target_symbol']))
+
+
+def _print_task_tree_node(node: dict, depth: int = 0):
+    """递归打印任务树节点（带缩进）
+
+    Args:
+        node: task_status_tree 返回的节点 dict
+        depth: 当前深度（0 = 根任务）
+    """
+    indent = t("cli.messages.task_list_indent") * depth
+    # 主任务详情
+    if depth == 0:
+        # 根任务用顶级格式（无缩进）
+        print(t("cli.messages.task_show_id", id=node.get('task_id', '')))
+        print(t("cli.messages.task_show_title_label", title=node.get('title', '')))
+        print(t("cli.messages.task_show_status", status=node.get('status', '')))
+        if node.get('description'):
+            print(t("cli.messages.task_show_desc", desc=node['description']))
+        if node.get('creator'):
+            print(t("cli.messages.task_show_creator", creator=node['creator']))
+        created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(node['created_at'])) if node.get('created_at') else '?'
+        print(t("cli.messages.task_show_created", time=created))
+    else:
+        # 子任务用缩进格式
+        cprint(
+            t("cli.messages.task_show_subtask_item",
+              indent=indent, id=node.get('task_id', ''), status=node.get('status', ''),
+              title=node.get('title', '')),
+            "white"
+        )
+
+    # 进度
+    progress = node.get('progress') or {}
+    total = progress.get('total', 0)
+    done = progress.get('done', 0)
+    pct = progress.get('progress', 0)
+    if total > 0:
+        cprint(
+            t("cli.messages.task_show_progress",
+              indent=indent, done=done, total=total, pct=pct),
+            "green"
+        )
+
+    # 自身步骤（仅根任务显示步骤明细，避免子任务过多噪音）
+    if depth == 0:
+        steps = node.get('steps', [])
+        print(t("cli.messages.task_show_steps", count=len(steps)))
+        for s in steps:
+            print(t("cli.messages.task_show_step", idx=s['step_index'], status=s['status'], action=s['action']))
+            if s.get('target_file'):
+                print(t("cli.messages.task_show_step_file", file=s['target_file']))
+            if s.get('target_symbol'):
+                print(t("cli.messages.task_show_step_symbol", symbol=s['target_symbol']))
+
+    # 递归子任务
+    subtasks = node.get('subtasks', []) or []
+    if subtasks:
+        if depth == 0:
+            print()
+            cprint(t("cli.messages.task_show_subtasks_title", count=len(subtasks)), "cyan", bold=True)
+        for st in subtasks:
+            _print_task_tree_node(st, depth + 1)
+    elif depth > 0:
+        # 叶子节点不显示
+        pass
 
 
 def _handle_vuln_blast(args, db):
@@ -3835,31 +3969,10 @@ def main():
             return _handle_task(["list"], db)
 
         elif args.task_show:
-            detail = db.task_status(args.task_show)
-            if not detail:
-                print(t("cli.messages.task_show_not_found", id=args.task_show))
-            else:
-                print(t("cli.messages.task_show_title"))
-                print("-" * 50)
-                print(t("cli.messages.task_show_id", id=detail['task_id']))
-                print(t("cli.messages.task_show_title_label", title=detail['title']))
-                print(t("cli.messages.task_show_status", status=detail['status']))
-                if detail.get('description'):
-                    print(t("cli.messages.task_show_desc", desc=detail['description']))
-                if detail.get('creator'):
-                    print(t("cli.messages.task_show_creator", creator=detail['creator']))
-                created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(detail['created_at'])) if detail.get('created_at') else '?'
-                print(t("cli.messages.task_show_created", time=created))
-                print()
-                steps = detail.get('steps', [])
-                print(t("cli.messages.task_show_steps", count=len(steps)))
-                for s in steps:
-                    print(t("cli.messages.task_show_step", idx=s['step_index'], status=s['status'], action=s['action']))
-                    if s.get('target_file'):
-                        print(t("cli.messages.task_show_step_file", file=s['target_file']))
-                    if s.get('target_symbol'):
-                        print(t("cli.messages.task_show_step_symbol", symbol=s['target_symbol']))
-            print()
+            # --task-show 作为兼容入口，默认按树形展示子任务
+            # 等价于 `cw task show TASK_ID`
+            cprint(t("cli.messages.task_show_deprecated_hint"), "yellow")
+            return _print_task_show(db, args.task_show, flat=False)
 
         # ----------------------------------------------------------------
         # 项目简报和仓库地图

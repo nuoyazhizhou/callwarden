@@ -407,3 +407,169 @@ def test_task_list_tree_structure():
             f"三级缩进应递增: root={root_indent} < child={child_indent} < grand={grand_indent}"
         )
         db.close()
+
+
+# ============================================
+# Step 4: --task-show 显示子任务
+# ============================================
+
+
+def test_task_show_uses_task_status_tree():
+    """cw task show TASK_ID 必须调用 db.task_status_tree()，而非 task_status()"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        parent_id = db.task_create("parent-show", "parent", [
+            {"action": "verify", "target_file": "a.py"}
+        ])
+        db.task_create("child-show", "child", [], parent_id=parent_id)
+
+        call_log = {"tree_count": 0, "status_count": 0}
+        original_tree = db.task_status_tree if hasattr(db, "task_status_tree") else None
+        original_status = db.task_status
+
+        def spy_tree(*args, **kwargs):
+            call_log["tree_count"] += 1
+            return original_tree(*args, **kwargs) if original_tree else None
+
+        def spy_status(*args, **kwargs):
+            call_log["status_count"] += 1
+            return original_status(*args, **kwargs)
+
+        # 确保 db 有 task_status_tree 方法
+        assert original_tree is not None, "db.task_status_tree 必须存在"
+
+        with mock.patch.object(db, "task_status_tree", side_effect=spy_tree):
+            with mock.patch.object(db, "task_status", side_effect=spy_status):
+                try:
+                    cli_main._handle_task(["show", parent_id], db)
+                except SystemExit:
+                    pass
+
+        # 默认走 tree 路径（task_status_tree 是递归的，子任务也会调用一次）
+        assert call_log["tree_count"] >= 1, "默认应至少调用 task_status_tree 一次"
+        assert call_log["status_count"] == 0, "默认不应调用 task_status（仅 --flat 才调用）"
+        db.close()
+
+
+def test_task_show_flat_uses_task_status():
+    """cw task show TASK_ID --flat 必须调用 db.task_status()，不调用 task_status_tree()"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        parent_id = db.task_create("parent-flat-show", "p", [])
+        db.task_create("child-flat-show", "c", [], parent_id=parent_id)
+
+        call_log = {"tree_count": 0, "status_count": 0}
+        original_tree = db.task_status_tree
+        original_status = db.task_status
+
+        def spy_tree(*args, **kwargs):
+            call_log["tree_count"] += 1
+            return original_tree(*args, **kwargs)
+
+        def spy_status(*args, **kwargs):
+            call_log["status_count"] += 1
+            return original_status(*args, **kwargs)
+
+        with mock.patch.object(db, "task_status_tree", side_effect=spy_tree):
+            with mock.patch.object(db, "task_status", side_effect=spy_status):
+                try:
+                    cli_main._handle_task(["show", parent_id, "--flat"], db)
+                except SystemExit:
+                    pass
+
+        assert call_log["status_count"] == 1, "--flat 应调用 task_status 一次"
+        assert call_log["tree_count"] == 0, "--flat 不应调用 task_status_tree"
+        db.close()
+
+
+def test_task_show_displays_subtasks():
+    """cw task show 默认显示子任务（带缩进）"""
+    import io
+    from contextlib import redirect_stdout
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        parent_id = db.task_create("ROOT-SHOW", "root", [])
+        db.task_create("CHILD-SHOW-1", "c1", [], parent_id=parent_id)
+        db.task_create("CHILD-SHOW-2", "c2", [], parent_id=parent_id)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            try:
+                cli_main._handle_task(["show", parent_id], db)
+            except SystemExit:
+                pass
+        out = buf.getvalue()
+
+        # 默认应包含子任务标题
+        assert "CHILD-SHOW-1" in out, "子任务 1 应在输出中"
+        assert "CHILD-SHOW-2" in out, "子任务 2 应在输出中"
+        # 应有 "Subtasks" 或 "子任务" 标题
+        assert "subtasks" in out.lower() or "子任务" in out, (
+            f"应显示子任务标题，实际: {out!r}"
+        )
+        db.close()
+
+
+def test_task_show_flat_no_subtasks():
+    """cw task show --flat 不显示子任务"""
+    import io
+    from contextlib import redirect_stdout
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        parent_id = db.task_create("ROOT-FLAT-SHOW", "root", [])
+        db.task_create("CHILD-FLAT-SHOW", "child", [], parent_id=parent_id)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            try:
+                cli_main._handle_task(["show", parent_id, "--flat"], db)
+            except SystemExit:
+                pass
+        out = buf.getvalue()
+
+        # --flat 不应包含子任务标题
+        assert "CHILD-FLAT-SHOW" not in out, (
+            f"--flat 模式不应显示子任务，实际包含: {out!r}"
+        )
+        # 但应包含主任务
+        assert "ROOT-FLAT-SHOW" in out, "应显示主任务"
+        db.close()
+
+
+def test_task_show_tree_recursive_grandchild():
+    """cw task show 默认递归显示孙任务"""
+    import io
+    from contextlib import redirect_stdout
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        root_id = db.task_create("GRAND-ROOT", "root", [])
+        child_id = db.task_create("GRAND-CHILD", "child", [], parent_id=root_id)
+        db.task_create("GRAND-GRANDCHILD", "grandchild", [], parent_id=child_id)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            try:
+                cli_main._handle_task(["show", root_id], db)
+            except SystemExit:
+                pass
+        out = buf.getvalue()
+
+        # 三级任务都应显示
+        assert "GRAND-ROOT" in out, "应显示根任务"
+        assert "GRAND-CHILD" in out, "应显示子任务"
+        assert "GRAND-GRANDCHILD" in out, "应递归显示孙任务"
+
+        # 验证缩进递增：孙任务缩进应大于子任务
+        lines = out.split("\n")
+        child_line = next((l for l in lines if "GRAND-CHILD" in l), None)
+        grand_line = next((l for l in lines if "GRAND-GRANDCHILD" in l), None)
+        assert child_line and grand_line
+        child_indent = len(child_line) - len(child_line.lstrip())
+        grand_indent = len(grand_line) - len(grand_line.lstrip())
+        assert grand_indent > child_indent, (
+            f"孙任务缩进 ({grand_indent}) 应大于子任务缩进 ({child_indent})"
+        )
+        db.close()
