@@ -38,10 +38,21 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
 
 
 def _run_subcommand_mode():
-    """子命令模式入口：初始化 db 并调度代码守护者架构子命令"""
+    """子命令模式入口：初始化 db 并调度代码守护者架构子命令
+
+    优化：当子命令参数中含 --help/-h 时，跳过 db 初始化直接 print 帮助。
+    这避免了在 MCP Server 占用 db 锁时 cw task --help 卡死的问题。
+    """
     # 使用系统检测到的默认语言（CALLWARDEN_LANG / LANG / LC_ALL / 系统语言）
     # 用户可通过环境变量 CALLWARDEN_LANG=en_US 切换为英文
     set_language(DEFAULT_LANG)
+
+    # 检测子命令是否请求帮助（避免初始化 db 触发锁等待）
+    sub_argv = sys.argv[2:] if len(sys.argv) > 2 else []
+    wants_help = any(a in ("-h", "--help") for a in sub_argv)
+    if wants_help:
+        _dispatch_subcommand_help(sys.argv[1], sub_argv)
+        return
 
     # 自动检测工作区根目录
     cwd = os.getcwd()
@@ -67,9 +78,29 @@ def _run_subcommand_mode():
                 db.set_active_workspace(existing["id"])
 
         # 调度子命令
-        _dispatch_subcommand(sys.argv[2:], db)
+        _dispatch_subcommand(sub_argv, db)
     finally:
         db.close()
+
+
+def _dispatch_subcommand_help(cmd: str, sub_argv: list):
+    """子命令帮助模式：跳过 db 初始化，直接构造 argparse 并 print help
+
+    Args:
+        cmd: 子命令关键字（如 "task"）
+        sub_argv: 子命令参数（含 -h/--help）
+    """
+    # 复用各 _handle_* 内部的 argparse 定义，但只触发 --help 行为
+    # 通过构造一个空 args 强制 argparse 走 help 分支
+    try:
+        # 借用对应 _handle_* 函数的 parser 构造逻辑
+        # 但因为各 _handle_* 的 parser 是函数内局部变量，这里用通用方式：
+        # 调用一次 _dispatch_subcommand 但传 None 作为 db，让 argparse 自己处理 -h
+        # argparse 遇到 -h 会调用 sys.exit(0)，不会触达 db 访问代码
+        _dispatch_subcommand(sub_argv, db=None)
+    except SystemExit:
+        # argparse 处理 -h/--help 时会 sys.exit(0)
+        pass
 
 
 def _dispatch_subcommand(argv, db):
