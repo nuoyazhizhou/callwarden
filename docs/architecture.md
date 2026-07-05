@@ -233,18 +233,26 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 | change_audit | 变更审计日志（hash + diff） |
 | file_edit_audit | propose_edit 审计流水线（pending/applied/reverted/failed） |
 
+### Agent Rule Memory 表（v23）
+
+| 表 | 说明 |
+|----|------|
+| agent_rule_candidates | 候选规则（pending/accepted/rejected），由 Agent 观察或从 task_quality_findings 自动提取 |
+| agent_rules | 已生效规则（active/deprecated/removed），accept 后写入，按 scope 匹配注入到上下文 |
+| agent_rule_sync_log | AGENTS.md 同步日志（dry_run/apply 都记录，含 before/after hash） |
+
 ## Mixin 架构
 
 ### 设计原理
 
-CodeGraphDB 通过 **23 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
+CodeGraphDB 通过 **24 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
 
 - **单一职责**：每个 Mixin 只关心自己的表和查询
 - **按需组合**：主类只需声明继承即可获得功能
 - **易于扩展**：新增功能只需添加新 Mixin
-- **避免上帝类**：`db.py` 仅 92 行，职责在 23 个文件中分散
+- **避免上帝类**：`db.py` 仅 92 行，职责在 24 个文件中分散
 
-### 23 个 Mixin 列表
+### 24 个 Mixin 列表
 
 | # | Mixin | 文件 | 职责 |
 |---|-------|------|------|
@@ -271,6 +279,7 @@ CodeGraphDB 通过 **23 个 Mixin 多继承**组装，每个 Mixin 负责一个�
 | 21 | CrossRepoMixin | db_cross_repo.py | 跨仓库分析 |
 | 22 | LspMixin | db_lsp.py | LSP 集成 |
 | 23 | CheckGateMixin | db_check_gate.py | 检查门禁（F6） |
+| 24 | AgentRulesMixin | db_agent_rules.py | Agent Rule Memory：候选规则审核、scope 匹配注入、AGENTS.md 同步 |
 
 ### 组装方式
 
@@ -282,8 +291,9 @@ class CodeGraphDB(
     BuildMixin,
     QueryMixin,
     CommentMixin,
-    # ... 共 23 个 Mixin
+    # ... 共 24 个 Mixin
     CheckGateMixin,
+    AgentRulesMixin,
 ):
     """代码知识图谱数据库 - 整合所有功能模块的主类"""
 
@@ -292,6 +302,82 @@ class CodeGraphDB(
 ```
 
 所有 Mixin 共享同一个 SQLite 连接和游标（由 CodeGraphBase 提供），通过 `self.conn` 和 `self.cursor` 访问数据库。
+
+## Agent Rule Memory 架构
+
+Agent Rule Memory 是 Call Warden 的项目规则记忆系统，让 Agent 能够把任务执行中观察到的规律沉淀为可复用的规则，并在后续任务中按上下文自动注入，形成"观察 → 沉淀 → 审核 → 注入 → 同步"的闭环。
+
+### 数据流
+
+```
+[Agent 观察]                     [自动提取]
+     │                               │
+     ▼                               ▼
+ rule_candidate_create     extract_rule_candidates_from_quality_findings
+     │                               │
+     └──────────┬────────────────────┘
+                ▼
+   agent_rule_candidates (pending)
+                │
+       ┌────────┴────────┐
+       ▼                 ▼
+ rule_candidate_     rule_candidate_
+ accept              reject
+       │
+       ▼
+   agent_rules (active)
+       │
+       ├──► get_applicable_rules(context) ──► 注入到 task_next_step /
+       │                                         work_next_job /
+       │                                         get_symbol /
+       │                                         file_symbol_content
+       │
+       └──► rule_sync_agents_md(dry_run/apply) ──► AGENTS.md 标记区
+                                                    + agent_rule_sync_log
+```
+
+### Scope 匹配
+
+`agent_rules.scope_json` 是一个 JSON 对象，支持以下字段：
+
+| 字段 | 类型 | 匹配方式 |
+|------|------|----------|
+| `languages` | `list[str]` | 上下文 `languages` 任一命中即匹配（OR） |
+| `file_patterns` | `list[str]` | glob 匹配（如 `src/api/**/*.py`） |
+| `symbol_kinds` | `list[str]` | `fn` / `method` / `class` / `struct` 等 |
+| `actions` | `list[str]` | `edit` / `delete` / `create` 等 |
+| `finding_types` | `list[str]` | 与 `task_quality_findings.finding_type` 对齐 |
+| `module_prefixes` | `list[str]` | 前缀匹配（如 `crate::payment::`） |
+
+**匹配规则**：
+- 空 scope = 全局匹配
+- 同字段内多值 OR
+- 不同字段间 AND
+- 命中字段越多，匹配精度越高
+
+**排序**：severity 优先级（`critical > error > warning > info`）→ 命中字段数（越多越靠前）→ `updated_at` 倒序。
+
+### 注入点（fail-soft）
+
+规则注入采用 **fail-soft** 模式：规则查询失败时降级为空列表，不阻塞主流程。已接入的注入点：
+
+| 注入点 | 返回字段 | 上下文来源 |
+|--------|----------|-----------|
+| `task_next_step` | `applicable_rules` | 任务关联的 file/symbol/kind |
+| `work_next_job` | `project_rules` + `context.applicable_rules` | 当前 job 的符号上下文 |
+| `build_structured_instruction` | `project_rules` | 全局 active 规则 |
+| `get_symbol` | `applicable_rules` | 符号的语言/类型/文件 |
+| `file_symbol_content` | `applicable_rules` | 文件的语言/路径 |
+
+### AGENTS.md 同步
+
+`rule_sync_agents_md` 把 active 规则同步到 AGENTS.md 的标记区（`<!-- CALLWARDEN_RULES_START -->` ~ `<!-- CALLWARDEN_RULES_END -->`），不触碰人工维护区域。
+
+**安全策略**：
+- `dry_run=True`（默认）：只返回 `preview`，不写文件
+- `dry_run=False`（apply）：只替换标记区之间内容，保留标记区外的人工内容
+- 标记区不存在时返回 `error` + `suggested_block`（需先调用 `rule_insert_agents_md_block`）
+- 每次同步写入 `agent_rule_sync_log`，记录 `before_hash` / `after_hash` / `rule_count`
 
 ## 安全机制
 
