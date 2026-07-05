@@ -1025,3 +1025,276 @@ def test_get_applicable_rules_returns_all_expected_fields():
         db.close()
 
 
+# ============================================
+# Phase 4: get_symbol / file_symbol_content 注入测试
+# ============================================
+
+
+def _setup_db_with_symbol(tmp):
+    """辅助：创建 db，写入 mod.py（含 hello 函数），刷新进图谱
+
+    返回 (db, qualified_name)
+    """
+    test_file = os.path.join(tmp, "mod.py")
+    with open(test_file, "w", encoding="utf-8") as f:
+        f.write("def hello():\n    return 'hello'\n")
+
+    db = CodeGraphDB(workspace_root=tmp)
+    db.refresh_file(test_file)
+
+    # 查询符号限定名
+    row = db.conn.execute(
+        """
+        SELECT fsv.qualified_name
+        FROM file_symbol_versions fsv
+        JOIN file_versions fv ON fsv.file_version_id = fv.id
+        JOIN file_instances fi ON fv.file_instance_id = fi.id
+        WHERE fv.is_current = 1
+        LIMIT 1
+        """
+    ).fetchone()
+    qn = row["qualified_name"] if row else ""
+    return db, qn
+
+
+def test_build_rule_context_for_symbol_infers_language_and_module():
+    """build_rule_context_for_symbol 应根据 file_path 和 qualified_name 推断上下文"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            ctx = db.build_rule_context_for_symbol(
+                qualified_name="cli.main.handle",
+                file_path="cli/main.py",
+                kind="function",
+            )
+            assert ctx["file_path"] == "cli/main.py"
+            assert ctx["language"] == "python"
+            assert ctx["symbol_kind"] == "function"
+            assert ctx["module_prefix"] == "cli.main"
+        finally:
+            db.close()
+
+
+def test_build_rule_context_for_symbol_rust_double_colon():
+    """Rust 风格限定名（:: 分隔）应正确推断 module_prefix"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            ctx = db.build_rule_context_for_symbol(
+                qualified_name="mod::Sub::fn",
+                file_path="src/lib.rs",
+                kind="method",
+            )
+            assert ctx["language"] == "rust"
+            assert ctx["symbol_kind"] == "method"
+            assert ctx["module_prefix"] == "mod::Sub"
+        finally:
+            db.close()
+
+
+def test_build_rule_context_for_symbol_empty_inputs():
+    """空入参应返回空上下文（不抛异常）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            ctx = db.build_rule_context_for_symbol()
+            assert ctx == {}
+        finally:
+            db.close()
+
+
+def test_get_applicable_rules_for_symbol_returns_matched_rules():
+    """get_applicable_rules_for_symbol 应返回匹配规则（精简字段）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db, qn = _setup_db_with_symbol(tmp)
+        try:
+            cid = db.rule_candidate_create(
+                "py-rule", "Python 规则",
+                scope={"languages": ["python"]},
+                severity="warning",
+            )
+            db.rule_candidate_accept(cid)
+            db.rule_candidate_create("global-rule", "global", scope={})
+            db.rule_candidate_accept(_last_cid(db))
+
+            rules = db.get_applicable_rules_for_symbol(
+                qualified_name=qn,
+                file_path="mod.py",
+                kind="fn",
+            )
+            titles = [r["title"] for r in rules]
+            assert "py-rule" in titles
+            assert "global-rule" in titles
+
+            # 精简字段：只含 id/title/rule_text/severity/matched_scope
+            for r in rules:
+                assert set(r.keys()) == {
+                    "id", "title", "rule_text", "severity", "matched_scope",
+                }
+
+            py_rule = next(r for r in rules if r["title"] == "py-rule")
+            assert "language:python" in py_rule["matched_scope"]
+        finally:
+            db.close()
+
+
+def test_get_applicable_rules_for_symbol_fail_soft_on_missing_table():
+    """fail-soft：DROP agent_rules 表后应返回空列表"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db, qn = _setup_db_with_symbol(tmp)
+        try:
+            db.conn.execute("DROP TABLE agent_rules")
+            db.conn.commit()
+            rules = db.get_applicable_rules_for_symbol(
+                qualified_name=qn, file_path="mod.py", kind="fn",
+            )
+            assert rules == []
+        finally:
+            db.close()
+
+
+def test_get_symbol_injects_applicable_rules_field():
+    """get_symbol 返回值应包含 applicable_rules 字段"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db, qn = _setup_db_with_symbol(tmp)
+        try:
+            cid = db.rule_candidate_create(
+                "py-rule", "Python 规则",
+                scope={"languages": ["python"]},
+                severity="warning",
+            )
+            db.rule_candidate_accept(cid)
+            db.rule_candidate_create("global-rule", "global", scope={})
+            db.rule_candidate_accept(_last_cid(db))
+
+            sym = db.get_symbol(qn)
+            assert sym is not None
+            assert "applicable_rules" in sym
+            titles = [r["title"] for r in sym["applicable_rules"]]
+            assert "py-rule" in titles
+            assert "global-rule" in titles
+        finally:
+            db.close()
+
+
+def test_get_symbol_applicable_rules_empty_when_no_active_rules():
+    """无 active 规则时 applicable_rules 应为空列表"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db, qn = _setup_db_with_symbol(tmp)
+        try:
+            sym = db.get_symbol(qn)
+            assert sym is not None
+            assert sym["applicable_rules"] == []
+        finally:
+            db.close()
+
+
+def test_get_symbol_fail_soft_on_missing_agent_rules_table():
+    """fail-soft：DROP agent_rules 表后 get_symbol 仍正常返回"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db, qn = _setup_db_with_symbol(tmp)
+        try:
+            db.conn.execute("DROP TABLE agent_rules")
+            db.conn.commit()
+            sym = db.get_symbol(qn)
+            assert sym is not None, "fail-soft 时符号查询不应失败"
+            assert sym.get("applicable_rules") == []
+        finally:
+            db.close()
+
+
+def test_file_symbol_content_mcp_tool_injects_applicable_rules():
+    """file_symbol_content MCP 工具应注入 applicable_rules（含 action=read）"""
+    import asyncio
+    import json as _json
+
+    import callwarden.server.mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db, _qn = _setup_db_with_symbol(tmp)
+        try:
+            cid = db.rule_candidate_create(
+                "py-read-rule", "Python 读取规则",
+                scope={"languages": ["python"], "actions": ["read"]},
+                severity="warning",
+            )
+            db.rule_candidate_accept(cid)
+            db.rule_candidate_create("global-rule", "global", scope={})
+            db.rule_candidate_accept(_last_cid(db))
+
+            mcp = create_mcp_server()
+            orig_get_db = mcp_mod.get_db
+            mcp_mod.get_db = lambda workspace=None: db
+            try:
+                result = asyncio.run(
+                    mcp.call_tool("file_symbol_content",
+                                  {"file_path": "mod.py", "symbol_name": "hello"})
+                )
+                if isinstance(result, tuple):
+                    result = result[0]
+                payload = _json.loads(result[0].text)
+
+                assert "applicable_rules" in payload
+                titles = [r["title"] for r in payload["applicable_rules"]]
+                assert "py-read-rule" in titles
+                assert "global-rule" in titles
+
+                # action=read 应被注入到上下文
+                py_rule = next(
+                    r for r in payload["applicable_rules"]
+                    if r["title"] == "py-read-rule"
+                )
+                assert "language:python" in py_rule["matched_scope"]
+                assert "action:read" in py_rule["matched_scope"]
+            finally:
+                mcp_mod.get_db = orig_get_db
+        finally:
+            db.close()
+
+
+def test_file_symbol_content_mcp_tool_fail_soft_on_missing_table():
+    """fail-soft：DROP agent_rules 表后 file_symbol_content 仍正常返回"""
+    import asyncio
+    import json as _json
+
+    import callwarden.server.mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db, _qn = _setup_db_with_symbol(tmp)
+        try:
+            cid = db.rule_candidate_create("global-rule", "global", scope={})
+            db.rule_candidate_accept(cid)
+
+            db.conn.execute("DROP TABLE agent_rules")
+            db.conn.commit()
+
+            mcp = create_mcp_server()
+            orig_get_db = mcp_mod.get_db
+            mcp_mod.get_db = lambda workspace=None: db
+            try:
+                result = asyncio.run(
+                    mcp.call_tool("file_symbol_content",
+                                  {"file_path": "mod.py", "symbol_name": "hello"})
+                )
+                if isinstance(result, tuple):
+                    result = result[0]
+                payload = _json.loads(result[0].text)
+                # fail-soft：applicable_rules 应为空列表，符号查询仍正常
+                assert payload.get("applicable_rules") == []
+                assert payload.get("symbol_name") == "hello"
+            finally:
+                mcp_mod.get_db = orig_get_db
+        finally:
+            db.close()
+
+
+def _last_cid(db):
+    """获取最近创建的 candidate id"""
+    row = db.conn.execute(
+        "SELECT id FROM agent_rule_candidates ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    return row["id"]
+
+
