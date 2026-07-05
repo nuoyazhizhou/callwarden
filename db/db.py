@@ -31,6 +31,7 @@ db.py
 - TaskAttributionMixin: 任务-符号变更归因（task/step/edit 到 symbol version 的解释层）
 - TaskQualityMixin: 任务质量门禁（finding 记录/查询/解决/阻断判断/修复步骤插入）
 - AuditChainMixin: 审计签名链（为关键审计表生成可验证的 hash/HMAC 链，防篡改）
+- AgentRulesMixin: Agent 规则记忆（候选-审核-生效-同步全链路，注入到任务和函数上下文）
 """
 
 from __future__ import annotations
@@ -64,6 +65,7 @@ from .db_external import ExternalMixin
 from .db_task_attribution import TaskAttributionMixin
 from .db_task_quality import TaskQualityMixin
 from .db_audit_chain import AuditChainMixin
+from .db_agent_rules import AgentRulesMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -97,6 +99,7 @@ class CodeGraphDB(
     TaskAttributionMixin,
     TaskQualityMixin,
     AuditChainMixin,
+    AgentRulesMixin,
 ):
     """代码知识图谱数据库
 
