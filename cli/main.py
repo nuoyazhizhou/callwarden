@@ -1150,6 +1150,14 @@ def _handle_task(args, db):
         "--blocked", action="store_true",
         help=t("cli_task_arg_blocked", default="Only show tasks with blocking findings")
     )
+    list_p.add_argument(
+        "--limit", type=int, default=200,
+        help=t("cli_task_arg_limit", default="Maximum number of tasks to list (default: 200)")
+    )
+    list_p.add_argument(
+        "--status", default="",
+        help=t("cli_task_arg_status_filter", default="Status filter (open/in_progress/review/applied/closed/reverted)")
+    )
 
     opts = parser.parse_args(args)
 
@@ -1378,23 +1386,23 @@ def _handle_task(args, db):
 
     elif opts.action == "list":
         # 列出任务（支持 --blocked 过滤）
+        # 统一调用 db.task_list()，与 --task-list 走同一份数据源
         try:
-            cur = db.conn.execute(
-                "SELECT id, title, status, created_at FROM tasks "
-                "ORDER BY created_at DESC LIMIT 100"
-            )
-            tasks = [dict(r) for r in cur.fetchall()]
+            status_filter = opts.status or None
+            tasks = db.task_list(status_filter=status_filter, limit=opts.limit)
         except Exception:
             tasks = []
 
         cprint(t("cli.messages.task_panel_title"), "cyan", bold=True)
         if opts.blocked:
             cprint(t("cli.messages.task_panel_blocked_only"), "yellow")
+        if opts.status:
+            cprint(t("cli.messages.task_panel_status_filter", status=opts.status), "yellow")
         print(t("cli.messages.task_panel_count", count=len(tasks)))
         print()
 
         for tk in tasks:
-            tid = tk.get("id", "")
+            tid = tk.get("task_id") or tk.get("id", "")
             title = tk.get("title", "")
             status = tk.get("status", "")
             # 若 --blocked，跳过无阻塞发现的任务
@@ -3754,14 +3762,10 @@ def main():
         # ----------------------------------------------------------------
 
         elif args.task_list:
-            tasks = db.task_list()
-            print(t("cli.messages.task_list_title", count=len(tasks)))
-            print("-" * 50)
-            for task in tasks:
-                created = time.strftime('%Y-%m-%d %H:%M', time.localtime(task['created_at'])) if task.get('created_at') else '?'
-                print(t("cli.messages.task_list_item", id=task['task_id'], title=task['title']))
-                print(t("cli.messages.task_list_meta", status=task['status'], step_count=task['step_count'], created=created))
-            print()
+            # --task-list 作为兼容入口，内部转调 _handle_task list
+            # 保证与 `cw task list` 行为完全一致，避免两套实现产生分歧
+            cprint(t("cli.messages.task_list_deprecated_hint"), "yellow")
+            return _handle_task(["list"], db)
 
         elif args.task_show:
             detail = db.task_status(args.task_show)
