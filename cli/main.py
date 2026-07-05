@@ -1084,6 +1084,42 @@ def _handle_task(args, db):
     rollback_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
     rollback_p.add_argument("step_id", help=t("cli_task_arg_step_id_rollback", default="Step ID (used as change_id to locate rollback scope)"))
 
+    # findings：查看任务质量门禁发现
+    findings_p = sub.add_parser(
+        "findings", help=t("cli_task_findings_desc", default="List task quality findings")
+    )
+    findings_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    findings_p.add_argument(
+        "--status", default="open",
+        help=t("cli_task_arg_status", default="Status filter (open/resolved/wontfix/all)")
+    )
+    findings_p.add_argument(
+        "--severity", default="",
+        help=t("cli_task_arg_severity", default="Severity filter (info/warn/error/block)")
+    )
+
+    # resolve-finding：解决或豁免质量门禁发现
+    resolve_p = sub.add_parser(
+        "resolve-finding",
+        help=t("cli_task_resolve_finding_desc", default="Resolve a task quality finding")
+    )
+    resolve_p.add_argument("finding_id", type=int, help=t("cli_task_arg_finding_id", default="Finding ID"))
+    resolve_p.add_argument(
+        "--resolution", default="fixed",
+        help=t("cli_task_arg_resolution", default="Resolution (fixed/wontfix/false_positive)")
+    )
+    resolve_p.add_argument(
+        "--by", default="agent",
+        help=t("cli_task_arg_by", default="Resolver (agent/human/system)")
+    )
+
+    # list：列出任务（支持 --blocked 过滤）
+    list_p = sub.add_parser("list", help=t("cli_task_list_desc", default="List tasks"))
+    list_p.add_argument(
+        "--blocked", action="store_true",
+        help=t("cli_task_arg_blocked", default="Only show tasks with blocking findings")
+    )
+
     opts = parser.parse_args(args)
 
     if opts.action == "create":
@@ -1249,6 +1285,99 @@ def _handle_task(args, db):
         if note:
             print()
             cprint(t("cli.messages.task_note", note=note), "yellow")
+        print()
+        return True
+
+    elif opts.action == "findings":
+        # 查询任务质量发现
+        findings = db.get_task_quality_findings(
+            opts.task_id, status=opts.status, severity=opts.severity
+        )
+        cprint(t("cli.messages.task_findings_title"), "cyan", bold=True)
+        print(t("cli.messages.task_id_label", id=opts.task_id))
+        print(t("cli.messages.task_findings_count", count=len(findings)))
+        print()
+
+        if not findings:
+            cprint(t("cli.messages.task_no_findings"), "yellow")
+            return True
+
+        # 按严重度分组展示
+        for f in findings:
+            sev = f.get("severity", "warn")
+            color = {"error": "red", "block": "red", "warn": "yellow", "info": "cyan"}.get(sev, "white")
+            status = f.get("status", "open")
+            icon = "[!]" if sev in ("error", "block") else ("[~]" if sev == "warn" else "[i]")
+            cprint(
+                t("cli.messages.task_finding_item",
+                  icon=icon, id=f.get('id', 0), sev=sev, status=status,
+                  ftype=f.get('finding_type', '')),
+                color
+            )
+            print(t("cli.messages.task_finding_msg", msg=f.get('message', '')))
+            if f.get("step_id"):
+                print(t("cli.messages.task_finding_step", step=f['step_id']))
+            print(t("cli.messages.task_finding_source", src=f.get('source', '')))
+            print()
+        return True
+
+    elif opts.action == "resolve-finding":
+        # 解决或豁免质量门禁发现
+        result = db.resolve_task_quality_finding(
+            opts.finding_id, resolution=opts.resolution, resolved_by=opts.by
+        )
+        cprint(t("cli.messages.task_resolve_finding_title"), "cyan", bold=True)
+        if result.get("success"):
+            cprint(
+                t("cli.messages.task_resolve_finding_ok",
+                  id=result.get('finding_id', 0),
+                  status=result.get('status', '')),
+                "green"
+            )
+            print(t("cli.messages.task_resolve_finding_resolution",
+                    resolution=result.get('resolution', '')))
+        else:
+            cprint(
+                t("cli.messages.task_resolve_finding_fail",
+                  err=result.get('error', '')),
+                "red"
+            )
+        print()
+        return True
+
+    elif opts.action == "list":
+        # 列出任务（支持 --blocked 过滤）
+        try:
+            cur = db.conn.execute(
+                "SELECT id, title, status, created_at FROM tasks "
+                "ORDER BY created_at DESC LIMIT 100"
+            )
+            tasks = [dict(r) for r in cur.fetchall()]
+        except Exception:
+            tasks = []
+
+        cprint(t("cli.messages.task_panel_title"), "cyan", bold=True)
+        if opts.blocked:
+            cprint(t("cli.messages.task_panel_blocked_only"), "yellow")
+        print(t("cli.messages.task_panel_count", count=len(tasks)))
+        print()
+
+        for tk in tasks:
+            tid = tk.get("id", "")
+            title = tk.get("title", "")
+            status = tk.get("status", "")
+            # 若 --blocked，跳过无阻塞发现的任务
+            if opts.blocked:
+                if not db.task_has_blocking_findings(tid):
+                    continue
+            blocking = db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False
+            icon = "[!]" if blocking else "[ ]"
+            color = "red" if blocking else "white"
+            cprint(
+                t("cli.messages.task_panel_item",
+                  icon=icon, id=tid, status=status, title=title),
+                color
+            )
         print()
         return True
 
