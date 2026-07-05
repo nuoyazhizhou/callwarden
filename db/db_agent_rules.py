@@ -518,6 +518,151 @@ class AgentRulesMixin:
         return [self._row_to_rule(dict(row)) for row in cur]
 
     # ============================================
+    # 自动提取候选规则（Phase 5）
+    # ============================================
+
+    def extract_rule_candidates_from_quality_findings(
+        self,
+        task_id: str = "",
+        min_occurrences: int = 2,
+    ) -> List[str]:
+        """从 task_quality_findings 聚合重复问题，生成 pending 候选规则
+
+        设计目标：把任务完成门禁中反复出现的同类问题沉淀为项目规则候选，
+        让人审后变成可注入的 active 规则。
+
+        聚合维度：(finding_type, severity, source)
+        - 同一组合下出现次数 >= min_occurrences 才生成候选
+        - evidence 记录来源 finding_ids（最多 10 条）和 occurrences 总数
+        - 生成的候选规则默认 pending，必须 accept 才会写入 agent_rules
+        - 同一聚合键已有 pending 候选时跳过（避免重复生成）
+
+        Args:
+            task_id: 限定从指定任务提取；空串表示全库扫描
+            min_occurrences: 触发阈值，默认 2
+
+        Returns:
+            新建的候选规则 ID 列表（ARC-xxx）
+        """
+        if min_occurrences < 1:
+            min_occurrences = 1
+
+        # 聚合查询：(finding_type, severity, source) → count + sample_message + finding_ids
+        if task_id:
+            cur = self.conn.execute(
+                """
+                SELECT
+                    finding_type,
+                    severity,
+                    source,
+                    COUNT(*) as occurrences,
+                    MIN(message) as sample_message,
+                    GROUP_CONCAT(id) as finding_ids
+                FROM task_quality_findings
+                WHERE task_id = ?
+                GROUP BY finding_type, severity, source
+                HAVING occurrences >= ?
+                ORDER BY occurrences DESC
+                """,
+                (task_id, min_occurrences),
+            )
+        else:
+            cur = self.conn.execute(
+                """
+                SELECT
+                    finding_type,
+                    severity,
+                    source,
+                    COUNT(*) as occurrences,
+                    MIN(message) as sample_message,
+                    GROUP_CONCAT(id) as finding_ids
+                FROM task_quality_findings
+                GROUP BY finding_type, severity, source
+                HAVING occurrences >= ?
+                ORDER BY occurrences DESC
+                """,
+                (min_occurrences,),
+            )
+
+        created_ids: List[str] = []
+        for row in cur:
+            finding_type = row["finding_type"] or "unknown"
+            severity_raw = row["severity"] or "info"
+            source_raw = row["source"] or "task_quality"
+            occurrences = int(row["occurrences"] or 0)
+            sample = row["sample_message"] or ""
+            finding_ids_str = row["finding_ids"] or ""
+
+            # finding_ids 是 "1,2,3" 格式，转成 list[int]，最多取 10 条
+            try:
+                finding_ids: List[int] = [
+                    int(x) for x in finding_ids_str.split(",") if x.strip()
+                ][:10]
+            except ValueError:
+                finding_ids = []
+
+            # 跳过已有 pending 候选的聚合键（避免重复生成）
+            # 用 title 做去重键：finding_type + severity 简短标识
+            dedup_title = t(
+                "cli.messages.rule_candidate_auto_title",
+                default="自动沉淀: {finding_type} ({severity})",
+                finding_type=finding_type,
+                severity=severity_raw,
+            )
+            existing = self.conn.execute(
+                """
+                SELECT 1 FROM agent_rule_candidates
+                WHERE title = ? AND status = ?
+                LIMIT 1
+                """,
+                (dedup_title, CANDIDATE_STATUS_PENDING),
+            ).fetchone()
+            if existing:
+                continue
+
+            # 生成候选规则正文：基于样例 message 和 finding_type
+            rule_text = t(
+                "cli.messages.rule_candidate_auto_text",
+                default=(
+                    "在任务执行中重复出现 {finding_type} 类型问题（{occurrences} 次）。"
+                    "样例: {sample}"
+                ),
+                finding_type=finding_type,
+                occurrences=occurrences,
+                sample=sample,
+            )
+
+            # 自动提取的规则用 finding_types 作为作用域
+            scope = {"finding_types": [finding_type]}
+
+            # evidence 保存来源 finding_ids 和 occurrences
+            evidence = {
+                "source": "task_quality_findings",
+                "finding_ids": finding_ids,
+                "occurrences": occurrences,
+                "task_id": task_id or "",
+                "sample_message": sample,
+            }
+
+            # severity 从 finding 的 severity 映射到规则 severity
+            # task_quality_findings 用 warn/error，规则用 warning/error/info
+            sev_map = {"error": "error", "warn": "warning", "warning": "warning"}
+            rule_severity = sev_map.get(severity_raw.lower(), "info")
+
+            cid = self.rule_candidate_create(
+                title=dedup_title,
+                rule_text=rule_text,
+                scope=scope,
+                severity=rule_severity,
+                source="auto_quality_findings",
+                evidence=evidence,
+                confidence=min(1.0, occurrences / 10.0),
+            )
+            created_ids.append(cid)
+
+        return created_ids
+
+    # ============================================
     # 适用规则匹配（Phase 2）
     # ============================================
 

@@ -1195,6 +1195,8 @@
       "rule_candidate_already_rejected": "Candidate rule already rejected, cannot accept: {id}",
       "rule_candidate_already_accepted": "Candidate rule already accepted, cannot reject: {id}",
       "rule_candidate_invalid_status": "Invalid candidate rule status: id={id}, status={status}",
+      "rule_candidate_auto_title": "Auto-extracted: {finding_type} ({severity})",
+      "rule_candidate_auto_text": "Recurring {finding_type} issue detected during task execution ({occurrences} times). Sample: {sample}",
       "attribution_task_id_required": "task_id is required",
       "attribution_file_path_required": "file_path is required",
       "attribution_edit_audit_not_found": "edit audit not found",
