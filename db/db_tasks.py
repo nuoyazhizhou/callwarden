@@ -729,6 +729,7 @@ class TaskMixin:
         )
 
         # 记录变更审计（每条变更生成一条 change_audit 记录）
+        attribution_changes: List[Dict[str, Any]] = []
         if changes:
             for change in changes:
                 change_id = _gen_change_id()
@@ -751,6 +752,10 @@ class TaskMixin:
                         now,
                     ),
                 )
+                attribution_changes.append({
+                    "change_id": change_id,
+                    "change": change,
+                })
 
         # 失败时自动插入"修复缺陷"步骤
         if not success:
@@ -865,6 +870,31 @@ class TaskMixin:
                 self._update_parent_status(actual_task_id)
 
         self.conn.commit()
+
+        if attribution_changes and hasattr(self, "record_task_symbol_change"):
+            for item in attribution_changes:
+                change = item["change"]
+                try:
+                    self.record_task_symbol_change(
+                        task_id=actual_task_id,
+                        step_id=step_id,
+                        change_audit_id=item["change_id"],
+                        file_path=change.get("file_path", ""),
+                        qualified_name=change.get("qualified_name", ""),
+                        symbol_name=change.get("symbol_name", ""),
+                        symbol_hash_before=change.get("symbol_hash_before", ""),
+                        symbol_hash_after=change.get("symbol_hash_after", ""),
+                        change_type=change.get("change_type", "modified"),
+                        source="task_report_step",
+                        metadata={
+                            "file_hash_before": change.get("hash_before", ""),
+                            "file_hash_after": change.get("hash_after", ""),
+                            "diff": change.get("diff", ""),
+                            "author": change.get("author", "agent"),
+                        },
+                    )
+                except Exception:
+                    pass
 
         # 返回任务树中的下一步步骤信息（深度优先）
         next_row = self._find_next_pending_step_tree(task_id)

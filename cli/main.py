@@ -610,7 +610,7 @@ def _handle_impact(args, db):
 def _handle_review(args, db):
     """处理 review 子命令（审查就绪报告）"""
     parser = argparse.ArgumentParser(prog="cw review", description=t("cli.messages.review_title"))
-    parser.add_argument("symbol_hash", help=t("cli_review_arg_symbol_hash", default="源符号 hash"))
+    parser.add_argument("symbol_hash", help=t("cli_review_arg_symbol_hash", default="Source symbol hash"))
 
     opts = parser.parse_args(args)
     report = db.review_readiness_report(opts.symbol_hash)
@@ -687,8 +687,8 @@ def _handle_review(args, db):
 def _handle_evolution(args, db):
     """处理 evolution 子命令（函数变更频率）"""
     parser = argparse.ArgumentParser(prog="cw evolution", description=t("cli.messages.evolution_title"))
-    parser.add_argument("qualified_name", help=t("cli_evolution_arg_qualified_name", default="函数限定名"))
-    parser.add_argument("--window", default="", help=t("cli_evolution_arg_window", default="时间窗口（如 30d/90d/1y）"))
+    parser.add_argument("qualified_name", help=t("cli_evolution_arg_qualified_name", default="Function qualified name"))
+    parser.add_argument("--window", default="", help=t("cli_evolution_arg_window", default="Time window (for example 30d/90d/1y)"))
 
     opts = parser.parse_args(args)
     result = db.function_change_frequency(opts.qualified_name, time_window=opts.window)
@@ -757,8 +757,8 @@ def _handle_evolution(args, db):
 def _handle_hotspot(args, db):
     """处理 hotspot 子命令（热点函数排名）"""
     parser = argparse.ArgumentParser(prog="cw hotspot", description=t("cli.messages.hotspot_title"))
-    parser.add_argument("--module", default="", help=t("cli_hotspot_arg_module", default="模块路径前缀过滤"))
-    parser.add_argument("--limit", type=int, default=20, help=t("cli_hotspot_arg_limit", default="显示数量（默认 20）"))
+    parser.add_argument("--module", default="", help=t("cli_hotspot_arg_module", default="Filter by module path prefix"))
+    parser.add_argument("--limit", type=int, default=20, help=t("cli_hotspot_arg_limit", default="Number of items to show (default: 20)"))
 
     opts = parser.parse_args(args)
     results = db.hotspot_evolution(module_filter=opts.module)
@@ -818,8 +818,8 @@ def _handle_hotspot(args, db):
 def _handle_churn(args, db):
     """处理 churn 子命令（代码流失分析）"""
     parser = argparse.ArgumentParser(prog="cw churn", description=t("cli.messages.churn_title"))
-    parser.add_argument("--module", default="", help=t("cli_churn_arg_module", default="模块路径前缀过滤"))
-    parser.add_argument("--window", default="90d", help=t("cli_churn_arg_window", default="时间窗口（默认 90d）"))
+    parser.add_argument("--module", default="", help=t("cli_churn_arg_module", default="Filter by module path prefix"))
+    parser.add_argument("--window", default="90d", help=t("cli_churn_arg_window", default="Time window (default: 90d)"))
 
     opts = parser.parse_args(args)
     result = db.churn_analysis(module_filter=opts.module, time_window=opts.window)
@@ -876,24 +876,24 @@ def _handle_churn(args, db):
 
 def _handle_defect(args, db):
     """处理 defect 子命令（缺陷知识库）"""
-    parser = argparse.ArgumentParser(prog="cw defect", description=t("cli_defect_desc", default="缺陷知识库"))
+    parser = argparse.ArgumentParser(prog="cw defect", description=t("cli_defect_desc", default="Defect knowledge base"))
     sub = parser.add_subparsers(dest="action", required=True)
 
-    search_p = sub.add_parser("search", help=t("cli_defect_search_desc", default="搜索缺陷模式"))
-    search_p.add_argument("--category", default="", help=t("cli_defect_arg_category", default="类别过滤（前缀匹配）"))
+    search_p = sub.add_parser("search", help=t("cli_defect_search_desc", default="Search defect patterns"))
+    search_p.add_argument("--category", default="", help=t("cli_defect_arg_category", default="Category filter (prefix match)"))
     search_p.add_argument("--severity", default="",
-                          help=t("cli_defect_arg_severity", default="严重度过滤（error/warning/info）"))
-    search_p.add_argument("--limit", type=int, default=20, help=t("cli_defect_arg_limit", default="显示数量"))
+                          help=t("cli_defect_arg_severity", default="Severity filter (error/warning/info)"))
+    search_p.add_argument("--limit", type=int, default=20, help=t("cli_defect_arg_limit", default="Number of items to show"))
 
-    suggest_p = sub.add_parser("suggest", help=t("cli_defect_suggest_desc", default="推荐修复方案"))
-    suggest_p.add_argument("symbol_hash", help=t("cli_defect_arg_symbol_hash", default="符号内容 hash"))
-    suggest_p.add_argument("--finding", type=int, default=0, help=t("cli_defect_arg_finding", default="具体 finding ID"))
+    suggest_p = sub.add_parser("suggest", help=t("cli_defect_suggest_desc", default="Suggest fixes"))
+    suggest_p.add_argument("symbol_hash", help=t("cli_defect_arg_symbol_hash", default="Symbol content hash"))
+    suggest_p.add_argument("--finding", type=int, default=0, help=t("cli_defect_arg_finding", default="Specific finding ID"))
 
-    learn_p = sub.add_parser("learn", help=t("cli_defect_learn_desc", default="从修复 commit 学习缺陷模式"))
-    learn_p.add_argument("commit_hash", help=t("cli_defect_arg_commit_hash", default="修复提交的 commit hash"))
+    learn_p = sub.add_parser("learn", help=t("cli_defect_learn_desc", default="Learn defect patterns from a fix commit"))
+    learn_p.add_argument("commit_hash", help=t("cli_defect_arg_commit_hash", default="Fix commit hash"))
 
-    sub.add_parser("stats", help=t("cli_defect_stats_desc", default="缺陷知识库统计"))
-    sub.add_parser("build", help=t("cli_defect_build_desc", default="构建缺陷知识库"))
+    sub.add_parser("stats", help=t("cli_defect_stats_desc", default="Defect knowledge base statistics"))
+    sub.add_parser("build", help=t("cli_defect_build_desc", default="Build defect knowledge base"))
 
     opts = parser.parse_args(args)
     sev_icon_map = {"error": "[!]", "warning": "[~]", "info": "[i]"}
@@ -1058,31 +1058,31 @@ def _handle_defect(args, db):
 
 def _handle_task(args, db):
     """处理 task 子命令（任务管理：create/next/report/rollback）"""
-    parser = argparse.ArgumentParser(prog="cw task", description=t("cli_task_desc", default="任务管理"))
+    parser = argparse.ArgumentParser(prog="cw task", description=t("cli_task_desc", default="Task management"))
     sub = parser.add_subparsers(dest="action", required=True)
 
     # create：创建任务和步骤
-    create_p = sub.add_parser("create", help=t("cli_task_create_desc", default="创建任务和步骤"))
-    create_p.add_argument("--title", required=True, help=t("cli_task_arg_title", default="任务标题"))
-    create_p.add_argument("--desc", default="", help=t("cli_task_arg_desc", default="任务描述"))
+    create_p = sub.add_parser("create", help=t("cli_task_create_desc", default="Create task and steps"))
+    create_p.add_argument("--title", required=True, help=t("cli_task_arg_title", default="Task title"))
+    create_p.add_argument("--desc", default="", help=t("cli_task_arg_desc", default="Task description"))
     create_p.add_argument("--steps", default="",
-                          help=t("cli_task_arg_steps", default='步骤 JSON 数组，例如 [{"action":"annotate","target_file":"a.py"}]'))
+                          help=t("cli_task_arg_steps", default='Step JSON array, for example [{"action":"annotate","target_file":"a.py"}]'))
 
     # next：领取下一个待执行步骤
-    next_p = sub.add_parser("next", help=t("cli_task_next_desc", default="领取当前待执行的步骤"))
-    next_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="任务 ID"))
+    next_p = sub.add_parser("next", help=t("cli_task_next_desc", default="Claim current pending step"))
+    next_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
 
     # report：回报步骤执行结果
-    report_p = sub.add_parser("report", help=t("cli_task_report_desc", default="回报步骤执行结果"))
-    report_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="任务 ID"))
-    report_p.add_argument("step_id", help=t("cli_task_arg_step_id", default="步骤 ID"))
-    report_p.add_argument("--result", default="", help=t("cli_task_arg_result", default="执行结果描述"))
-    report_p.add_argument("--fail", action="store_true", help=t("cli_task_arg_fail", default="标记为失败（默认成功）"))
+    report_p = sub.add_parser("report", help=t("cli_task_report_desc", default="Report step result"))
+    report_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    report_p.add_argument("step_id", help=t("cli_task_arg_step_id", default="Step ID"))
+    report_p.add_argument("--result", default="", help=t("cli_task_arg_result", default="Result description"))
+    report_p.add_argument("--fail", action="store_true", help=t("cli_task_arg_fail", default="Mark as failed (default: success)"))
 
     # rollback：回滚变更
-    rollback_p = sub.add_parser("rollback", help=t("cli_task_rollback_desc", default="回滚变更"))
-    rollback_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="任务 ID"))
-    rollback_p.add_argument("step_id", help=t("cli_task_arg_step_id_rollback", default="步骤 ID（作为 change_id 定位回滚范围）"))
+    rollback_p = sub.add_parser("rollback", help=t("cli_task_rollback_desc", default="Roll back changes"))
+    rollback_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    rollback_p.add_argument("step_id", help=t("cli_task_arg_step_id_rollback", default="Step ID (used as change_id to locate rollback scope)"))
 
     opts = parser.parse_args(args)
 
@@ -1259,13 +1259,13 @@ def _handle_vuln_blast(args, db):
     """处理 vuln-blast 子命令（漏洞爆炸半径分析）"""
     parser = argparse.ArgumentParser(
         prog="cw vuln-blast",
-        description=t("cli_vuln_blast_desc", default="漏洞爆炸半径分析"))
+        description=t("cli_vuln_blast_desc", default="Vulnerability blast radius analysis"))
     parser.add_argument("--finding-id", type=int, default=0,
-                        help=t("cli_vuln_blast_arg_finding_id", default="指定 Semgrep finding ID（默认扫描全部）"))
+                        help=t("cli_vuln_blast_arg_finding_id", default="Specify Semgrep finding ID (default: scan all)"))
     parser.add_argument("--severity", default="",
-                        help=t("cli_vuln_blast_arg_severity", default="严重度过滤（ERROR/WARN/INFO）"))
+                        help=t("cli_vuln_blast_arg_severity", default="Severity filter (ERROR/WARN/INFO)"))
     parser.add_argument("--depth", type=int, default=3,
-                        help=t("cli_vuln_blast_arg_depth", default="调用图反向遍历深度（默认 3）"))
+                        help=t("cli_vuln_blast_arg_depth", default="Reverse call graph traversal depth (default: 3)"))
 
     opts = parser.parse_args(args)
     result = db.get_vulnerability_blast_radius(
@@ -1348,11 +1348,11 @@ def _handle_symbol_history(args, db):
     """处理 symbol-history 子命令（符号 Git 变更历史）"""
     parser = argparse.ArgumentParser(
         prog="cw symbol-history",
-        description=t("cli_symbol_history_desc", default="符号 Git 变更历史"))
+        description=t("cli_symbol_history_desc", default="Symbol Git change history"))
     parser.add_argument("symbol_hash",
-                        help=t("cli_symbol_history_arg_symbol_hash", default="符号内容 hash"))
+                        help=t("cli_symbol_history_arg_symbol_hash", default="Symbol content hash"))
     parser.add_argument("--limit", type=int, default=20,
-                        help=t("cli_symbol_history_arg_limit", default="返回数量限制（默认 20）"))
+                        help=t("cli_symbol_history_arg_limit", default="Result limit (default: 20)"))
 
     opts = parser.parse_args(args)
     commits = db.get_symbol_commit_history(opts.symbol_hash, limit=opts.limit)
@@ -1406,12 +1406,12 @@ def _handle_check_gate(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw check-gate",
-        description=t("cli_check_gate_desc", default="检查门禁（F6）"))
-    parser.add_argument("task_id", help=t("cli_check_gate_arg_task_id", default="任务 ID"))
+        description=t("cli_check_gate_desc", default="Check gate (F6)"))
+    parser.add_argument("task_id", help=t("cli_check_gate_arg_task_id", default="Task ID"))
     parser.add_argument("--resolve", action="store_true",
-                        help=t("cli_check_gate_arg_resolve", default="标记该任务的门禁发现为已解决（Agent 修复后调用）"))
+                        help=t("cli_check_gate_arg_resolve", default="Mark gate findings for this task as resolved (call after agent fix)"))
     parser.add_argument("--step-id", default="",
-                        help=t("cli_check_gate_arg_step_id", default="关联步骤 ID（可选）"))
+                        help=t("cli_check_gate_arg_step_id", default="Related step ID (optional)"))
 
     opts = parser.parse_args(args)
 
@@ -1474,9 +1474,9 @@ def _handle_test_impact(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw test-impact",
-        description=t("cli_test_impact_desc", default="测试影响选择"))
+        description=t("cli_test_impact_desc", default="Test impact selection"))
     parser.add_argument("qualified_name",
-                        help=t("cli_test_impact_arg_qualified_name", default="被修改函数的限定名"))
+                        help=t("cli_test_impact_arg_qualified_name", default="Qualified name of the modified function"))
     opts = parser.parse_args(args)
 
     tests = db.test_impact_selection(qualified_name=opts.qualified_name)
@@ -1512,33 +1512,53 @@ def _handle_gc(args, db):
     """处理 gc 子命令（代码图谱 GC）"""
     parser = argparse.ArgumentParser(
         prog="cw gc",
-        description=t("cli_gc_desc", default="代码图谱 GC（归档/复活/清除被 ignore 的文件）"))
+        description=t("cli_gc_desc", default="Code graph GC (archive/restore/purge ignored files)"))
     sub = parser.add_subparsers(dest="action", required=True)
 
     # gc archive
     archive_p = sub.add_parser("archive",
-                              help=t("cli_gc_archive_desc", default="归档被 ignore 命中的文件"))
+                              help=t("cli_gc_archive_desc", default="Archive files matched by ignore rules"))
     archive_p.add_argument("--force", action="store_true",
-                           help=t("cli_gc_archive_arg_force", default="Full GC：扫描所有活跃文件（默认只扫描 pending）"))
+                           help=t("cli_gc_archive_arg_force", default="Full GC: scan all active files (default: only pending)"))
     archive_p.add_argument("--dry-run", action="store_true",
-                           help=t("cli_gc_archive_arg_dry_run", default="预演：只统计不实际归档"))
+                           help=t("cli_gc_archive_arg_dry_run", default="Dry run: only report counts, do not archive"))
 
     # gc restore
     restore_p = sub.add_parser("restore",
-                               help=t("cli_gc_restore_desc", default="复活已归档文件"))
+                               help=t("cli_gc_restore_desc", default="Restore archived files"))
     restore_p.add_argument("--path", nargs="*", default=None,
-                           help=t("cli_gc_restore_arg_path", default="要复活的文件相对路径（为空则扫描所有归档文件）"))
+                           help=t("cli_gc_restore_arg_path", default="Relative path to restore (empty scans all archived files)"))
     restore_p.add_argument("--force", action="store_true",
-                           help=t("cli_gc_restore_arg_force", default="即使仍命中 ignore 也强制复活"))
+                           help=t("cli_gc_restore_arg_force", default="Restore even if still matched by ignore rules"))
 
     # gc status
-    sub.add_parser("status", help=t("cli_gc_status_desc", default="查看 GC 状态"))
+    sub.add_parser("status", help=t("cli_gc_status_desc", default="Show GC status"))
 
     # gc purge
     purge_p = sub.add_parser("purge",
-                             help=t("cli_gc_purge_desc", default="彻底清除归档超过 N 天的文件"))
+                             help=t("cli_gc_purge_desc", default="Permanently purge files archived for more than N days"))
     purge_p.add_argument("--older-than", type=int, default=30,
-                         help=t("cli_gc_purge_arg_older_than", default="归档超过多少天才清除（默认 30）"))
+                         help=t("cli_gc_purge_arg_older_than", default="Purge files archived more than this many days (default: 30)"))
+
+    # gc policy
+    policy_p = sub.add_parser("policy",
+                              help=t("cli_gc_policy_desc", default="Show or update GC retention policy"))
+    policy_sub = policy_p.add_subparsers(dest="policy_action", required=True)
+    policy_sub.add_parser("show", help=t("cli_gc_policy_show_desc", default="Show current GC retention policy"))
+    policy_set = policy_sub.add_parser("set", help=t("cli_gc_policy_set_desc", default="Update GC retention policy"))
+    _add_gc_policy_options(policy_set)
+
+    # gc retention
+    retention_p = sub.add_parser("retention",
+                                 help=t("cli_gc_retention_desc", default="Prune cold historical data after compressed backup"))
+    _add_gc_policy_options(retention_p)
+    run_group = retention_p.add_mutually_exclusive_group()
+    run_group.add_argument("--dry-run", action="store_true", dest="dry_run", default=True,
+                           help=t("cli_gc_retention_arg_dry_run", default="Preview only; do not modify database"))
+    run_group.add_argument("--apply", action="store_false", dest="dry_run",
+                             help=t("cli_gc_retention_arg_apply", default="Apply changes; default is dry run"))
+    retention_p.add_argument("--save-policy", action="store_true",
+                             help=t("cli_gc_retention_arg_save_policy", default="Persist provided policy options before running"))
 
     parsed = parser.parse_args(args)
 
@@ -1603,7 +1623,77 @@ def _handle_gc(args, db):
         cprint()
         return True
 
+    elif parsed.action == "policy":
+        if parsed.policy_action == "show":
+            policy = db.get_gc_policy()
+        else:
+            policy = db.set_gc_policy(
+                older_than_days=parsed.older_than,
+                keep_versions=parsed.keep_versions,
+                include_external=parsed.include_external,
+                external_stale_days=parsed.external_stale_days,
+                backup_enabled=parsed.backup,
+                vacuum_enabled=parsed.vacuum,
+            )
+        _print_gc_policy(policy)
+        return True
+
+    elif parsed.action == "retention":
+        result = db.gc_retention(
+            older_than_days=parsed.older_than,
+            keep_versions=parsed.keep_versions,
+            include_external=parsed.include_external,
+            external_stale_days=parsed.external_stale_days,
+            dry_run=parsed.dry_run,
+            backup=parsed.backup,
+            vacuum=parsed.vacuum,
+            save_policy=parsed.save_policy,
+        )
+        cprint(t("cli.messages.gc_retention_title"), "cyan", bold=True)
+        mode_key = "cli.messages.gc_retention_mode_dry_run" if result["dry_run"] else "cli.messages.gc_retention_mode_apply"
+        cprint(t(mode_key), "yellow" if result["dry_run"] else "green")
+        if result["saved_policy"]:
+            cprint(t("cli.messages.gc_retention_policy_saved"), "green")
+        cprint(t("cli.messages.gc_retention_candidate_versions", count=result["candidate_file_versions"]), "dim")
+        cprint(t("cli.messages.gc_retention_candidate_external", count=result["candidate_external_packages"]), "dim")
+        if result["backup_path"]:
+            cprint(t("cli.messages.gc_retention_backup", path=result["backup_path"]), "dim")
+        if not result["dry_run"]:
+            cprint(t("cli.messages.gc_retention_deleted_versions", count=result["deleted_file_versions"]), "dim")
+            cprint(t("cli.messages.gc_retention_deleted_external", count=result["deleted_external_symbols"]), "dim")
+            cprint(t("cli.messages.gc_retention_deleted_orphans", count=result["deleted_orphan_symbol_contents"]), "dim")
+        cprint()
+        return True
+
     return False
+
+
+def _add_gc_policy_options(parser):
+    """添加 GC policy 选项。"""
+    parser.add_argument("--older-than", type=int, default=None,
+                        help=t("cli_gc_retention_arg_older_than", default="Prune file versions older than this many days"))
+    parser.add_argument("--keep-versions", type=int, default=None,
+                        help=t("cli_gc_retention_arg_keep_versions", default="Keep at least this many recent versions per file"))
+    parser.add_argument("--include-external", action=argparse.BooleanOptionalAction, default=None,
+                        help=t("cli_gc_retention_arg_include_external", default="Also prune cold external package symbols"))
+    parser.add_argument("--external-stale-days", type=int, default=None,
+                        help=t("cli_gc_retention_arg_external_stale_days", default="External package stale threshold in days"))
+    parser.add_argument("--backup", action=argparse.BooleanOptionalAction, default=None,
+                        help=t("cli_gc_retention_arg_backup", default="Create compressed database backup before pruning"))
+    parser.add_argument("--vacuum", action=argparse.BooleanOptionalAction, default=None,
+                        help=t("cli_gc_retention_arg_vacuum", default="Run VACUUM after pruning to release disk space"))
+
+
+def _print_gc_policy(policy):
+    """打印 GC policy。"""
+    cprint(t("cli.messages.gc_policy_title"), "cyan", bold=True)
+    cprint(t("cli.messages.gc_policy_older_than", count=policy["older_than_days"]), "dim")
+    cprint(t("cli.messages.gc_policy_keep_versions", count=policy["keep_versions"]), "dim")
+    cprint(t("cli.messages.gc_policy_include_external", value=str(policy["include_external"]).lower()), "dim")
+    cprint(t("cli.messages.gc_policy_external_stale_days", count=policy["external_stale_days"]), "dim")
+    cprint(t("cli.messages.gc_policy_backup", value=str(policy["backup_enabled"]).lower()), "dim")
+    cprint(t("cli.messages.gc_policy_vacuum", value=str(policy["vacuum_enabled"]).lower()), "dim")
+    cprint()
 
 
 # --------------------------------------------------------------------

@@ -71,6 +71,16 @@ def test_new_mcp_tools_registered():
     assert "work_next_job" in names
     assert "propose_range_patch" in names
     assert "propose_symbol_patch" in names
+    assert "record_task_symbol_change" in names
+    assert "link_edit_audit_symbols" in names
+    assert "get_task_symbol_changes" in names
+    assert "get_symbol_change_tasks" in names
+    assert "get_project_dependencies" in names
+    assert "import_project_dependencies" in names
+    assert "prune_external_symbols" in names
+    assert "gc_retention" in names
+    assert "gc_policy_get" in names
+    assert "gc_policy_set" in names
 
 
 def test_install_agent_generates_templates():

@@ -28,6 +28,7 @@ db.py
 - CrossRepoMixin: 跨仓库分析（依赖检测、共享符号、跨仓库影响传播）
 - LspMixin: LSP 集成（hover/definition/references/diagnostics/completion）
 - GCMixin: 代码图谱 GC（归档被 .gitignore/.callwardenignore 命中的文件，类 Java GC 分代回收）
+- TaskAttributionMixin: 任务-符号变更归因（task/step/edit 到 symbol version 的解释层）
 """
 
 from __future__ import annotations
@@ -59,6 +60,7 @@ from .db_check_gate import CheckGateMixin
 from .db_gc import GCMixin
 from .db_stdlib import StdlibMixin
 from .db_external import ExternalMixin
+from .db_task_attribution import TaskAttributionMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -89,6 +91,7 @@ class CodeGraphDB(
     GCMixin,
     StdlibMixin,
     ExternalMixin,
+    TaskAttributionMixin,
 ):
     """代码知识图谱数据库
 

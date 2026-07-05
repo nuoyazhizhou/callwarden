@@ -342,6 +342,13 @@ class EditSafetyMixin:
         )
         self.conn.commit()
 
+        attribution = None
+        if agent_task_id and hasattr(self, "record_edit_attribution"):
+            try:
+                attribution = self.record_edit_attribution(audit_id)
+            except Exception as exc:
+                attribution = {"success": False, "error": str(exc)}
+
         return {
             "audit_id": audit_id,
             "file_path": rel_path,
@@ -350,6 +357,7 @@ class EditSafetyMixin:
             "diff_summary": diff_summary,
             "status": EDIT_STATUS_APPLIED,
             "success": True,
+            "attribution": attribution,
         }
 
     def propose_range_patch(

@@ -33,10 +33,15 @@ import os
 import re
 import subprocess
 import sys
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import norm_path
 from ..i18n import t
+
+MAX_EXTERNAL_SYMBOLS_PER_PACKAGE = 300
+MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE = 20
+MAX_EXTERNAL_MODULE_DEPTH = 1
 
 
 # 各语言包管理器配置
@@ -231,6 +236,9 @@ class ExternalMixin:
                         total += self._import_package_symbols_for_lang(
                             lang, pkg_name, version
                         )
+                        self._touch_package_version(
+                            f"ext-{lang}-{pkg_name}", version or "unknown", "last_seen_at", "manifest"
+                        )
                     except Exception as e:
                         print(
                             f"  [{lang}] {pkg_name} symbol import failed: {e}"
@@ -238,6 +246,30 @@ class ExternalMixin:
 
         self.conn.commit()
         return total
+
+    def _touch_package_version(
+        self,
+        package_name: str,
+        package_version: str,
+        field: str = "last_seen_at",
+        import_source: str = "external",
+    ) -> None:
+        """更新外部包冷热数据时间戳。"""
+        if field not in ("last_seen_at", "last_used_at"):
+            return
+        now = time.time()
+        pkg_ver = package_version or "unknown"
+        self.conn.execute(
+            """INSERT OR IGNORE INTO package_versions
+               (package_name, package_version, installed_at, last_seen_at, last_used_at, import_source)
+               VALUES (?, ?, ?, ?, 0, ?)""",
+            (package_name, pkg_ver, now, now, import_source),
+        )
+        self.conn.execute(
+            f"UPDATE package_versions SET {field} = ?, import_source = COALESCE(NULLIF(import_source, ''), ?) "
+            "WHERE package_name = ? AND package_version = ?",
+            (now, import_source, package_name, pkg_ver),
+        )
 
     # ==================== 语言检测 ====================
 
@@ -341,11 +373,22 @@ class ExternalMixin:
                     for p, v in packages.items()
                     if p.lower() in [n.lower() for n in package_names]
                 }
+            else:
+                deps = self._get_project_dependencies_for_lang("python")
+                wanted = {name.lower() for name in deps}
+                packages = {
+                    p: v
+                    for p, v in packages.items()
+                    if p.lower() in wanted
+                }
             created = 0
             skipped = 0
             for pkg_name, pkg_version in packages.items():
                 try:
                     created += self._import_python_package(pkg_name, pkg_version)
+                    self._touch_package_version(
+                        pkg_name, pkg_version, "last_seen_at", "manifest"
+                    )
                 except Exception:
                     skipped += 1
             return (created, skipped)
@@ -416,7 +459,13 @@ class ExternalMixin:
             pkg_path = os.path.join(self.workspace_root, install_dir, package_name)
             if os.path.isdir(pkg_path):
                 return self._scan_package_source_files(
-                    lang, package_name, version, pkg_path, ext
+                    lang,
+                    package_name,
+                    version,
+                    pkg_path,
+                    ext,
+                    max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE,
+                    max_depth=0,
                 )
 
         return 0
@@ -462,7 +511,13 @@ class ExternalMixin:
 
         # 扫描 crate 源码提取符号（使用 Rust parser）
         created = self._scan_package_source_files(
-            "rust", package_name, version, pkg_path, ".rs", max_files=80
+            "rust",
+            package_name,
+            version,
+            pkg_path,
+            ".rs",
+            max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE,
+            max_depth=0,
         )
 
         # 记录到 package_versions（即使符号为 0 也要标记已完成）
@@ -541,7 +596,8 @@ class ExternalMixin:
         version: str,
         pkg_path: str,
         ext: str,
-        max_files: int = 50,
+        max_files: int = MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE,
+        max_depth: int = 0,
     ) -> int:
         """扫描包目录下的源码文件，用对应语言解析器提取符号
 
@@ -571,7 +627,11 @@ class ExternalMixin:
         pkg_key = f"ext-{lang}-{package_name}"
         pkg_ver = version or "unknown"
 
+        root_depth = len(os.path.normpath(pkg_path).split(os.sep))
         for root, dirs, files in os.walk(pkg_path):
+            depth = len(os.path.normpath(root).split(os.sep)) - root_depth
+            if depth >= max_depth:
+                dirs[:] = []
             # 跳过测试 / 文档 / 构建目录
             dirs[:] = [
                 d
@@ -624,6 +684,8 @@ class ExternalMixin:
                             ),
                         )
                         created += 1
+                        if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                            return created
                 except Exception:
                     continue
 
@@ -678,6 +740,9 @@ class ExternalMixin:
         )
         row = cur.fetchone()
         if row and row["cnt"] > 0:
+            self._touch_package_version(
+                package_name, package_version, "last_seen_at", "manifest"
+            )
             return 0
 
         created = 0
@@ -770,8 +835,11 @@ class ExternalMixin:
         prefix: str,
         depth: int = 0,
     ) -> int:
-        """递归提取 Python 包的符号"""
-        if depth > 2:
+        """提取 Python 包的顶层导出符号
+
+        外部包索引只服务于项目边界上的 API 识别，不递归扫描依赖包内部实现。
+        """
+        if depth >= MAX_EXTERNAL_MODULE_DEPTH:
             return 0
 
         created = 0
@@ -781,9 +849,11 @@ class ExternalMixin:
         for name, obj in inspect.getmembers(module):
             if name.startswith("_"):
                 continue
+            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                break
 
             kind = self._infer_symbol_kind(obj)
-            if kind is None:
+            if kind is None or kind == "module":
                 continue
 
             qualified_name = f"{module_name}.{name}" if module_name else name
@@ -816,12 +886,6 @@ class ExternalMixin:
                 ),
             )
             created += 1
-
-            if inspect.ismodule(obj) and hasattr(obj, "__file__"):
-                sub_prefix = qualified_name
-                created += self._extract_package_symbols(
-                    package_name, package_version, obj, sub_prefix, depth + 1
-                )
 
         return created
 
@@ -863,11 +927,7 @@ class ExternalMixin:
     def _parse_rust_manifest(self, path: str) -> Dict[str, str]:
         """解析 Cargo.toml
 
-        提取以下段落的依赖：
-        - [dependencies]：运行时依赖
-        - [dev-dependencies]：开发依赖（测试/bench）
-        - [build-dependencies]：构建脚本依赖
-        - [workspace.dependencies]：workspace 共享依赖
+        仅提取 [dependencies] 里的运行时直接依赖。
 
         每个依赖项支持两种格式：
         - 简单字符串：`serde = "1.0"`
@@ -879,29 +939,15 @@ class ExternalMixin:
 
             with open(path, "rb") as f:
                 data = tomllib.load(f)
-            # 直接依赖段
-            for section in ["dependencies", "dev-dependencies", "build-dependencies"]:
-                if section in data:
-                    for dep_name, spec in data[section].items():
-                        if isinstance(spec, str):
-                            deps[dep_name] = spec
-                        elif isinstance(spec, dict) and "version" in spec:
-                            deps[dep_name] = spec["version"]
-                        else:
-                            deps[dep_name] = ""
-            # workspace 共享依赖段
-            workspace = data.get("workspace", {})
-            if isinstance(workspace, dict) and "dependencies" in workspace:
-                for dep_name, spec in workspace["dependencies"].items():
+            direct_deps = data.get("dependencies", {})
+            if isinstance(direct_deps, dict):
+                for dep_name, spec in direct_deps.items():
                     if isinstance(spec, str):
                         deps[dep_name] = spec
-                        continue
-                    if isinstance(spec, dict):
-                        # workspace.dependencies 里的 version 是真实版本
-                        if "version" in spec:
-                            deps[dep_name] = spec["version"]
-                        else:
-                            deps[dep_name] = ""
+                    elif isinstance(spec, dict) and "version" in spec:
+                        deps[dep_name] = spec["version"]
+                    else:
+                        deps[dep_name] = ""
         except Exception:
             pass
         return deps
@@ -949,15 +995,21 @@ class ExternalMixin:
                     line = line.strip()
                     if not line or line.startswith("//"):
                         continue
+                    if "// indirect" in line:
+                        continue
                     parts = line.split()
                     if len(parts) >= 2:
                         deps[parts[0]] = parts[1]
             # 2) 匹配单行 require（排除 require ( 块开头）
             # 单行 require 后跟空格+非(字符+空格+版本
             for m in re.finditer(
-                r"^require\s+(\S+)\s+(\S+)\s*$", content, re.MULTILINE
+                r"^require\s+(\S+)\s+(\S+)(?:\s+//.*)?\s*$",
+                content,
+                re.MULTILINE,
             ):
                 if m.group(1) == "(":
+                    continue
+                if "// indirect" in m.group(0):
                     continue
                 deps[m.group(1)] = m.group(2)
         except Exception:
@@ -1020,7 +1072,7 @@ class ExternalMixin:
 
         # 扫描 Go 源码提取符号（使用 GoParser）
         created = self._scan_package_source_files(
-            "go", package_name, version, module_path, ".go", max_files=80
+            "go", package_name, version, module_path, ".go", max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
         )
 
         # 记录到 package_versions
@@ -1141,7 +1193,7 @@ class ExternalMixin:
         return self._parse_package_json(path)
 
     def _parse_package_json(self, path: str) -> Dict[str, str]:
-        """解析 package.json 的 dependencies / devDependencies
+        """解析 package.json 的直接 runtime dependencies
 
         Args:
             path: package.json 文件路径
@@ -1153,10 +1205,10 @@ class ExternalMixin:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for section in ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"]:
-                if section in data and isinstance(data[section], dict):
-                    for dep_name, version in data[section].items():
-                        deps[dep_name] = str(version)
+            section = data.get("dependencies", {})
+            if isinstance(section, dict):
+                for dep_name, version in section.items():
+                    deps[dep_name] = str(version)
         except Exception:
             pass
         return deps
@@ -1231,7 +1283,7 @@ class ExternalMixin:
         扫描策略：
         1. 定位 node_modules/<package_name>/ 目录
         2. 读取 package.json 的 main/module/types 字段确定入口
-        3. 优先扫描入口文件，再扫描其他源码
+        3. 优先扫描入口文件，再扫描包根第一层源码
         4. TS 同时扫描 .ts 和 .js 文件；JS 仅扫描 .js
 
         Args:
@@ -1282,7 +1334,7 @@ class ExternalMixin:
 
         created = 0
         scanned_files = set()
-        max_files = 80
+        max_files = MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
 
         # 优先扫描入口文件
         for entry_rel in entry_candidates:
@@ -1299,32 +1351,28 @@ class ExternalMixin:
             if len(scanned_files) >= max_files:
                 break
 
-        # 再扫描其他源码文件
+        # 再扫描包根第一层源码文件，不递归进入依赖包内部实现
         if len(scanned_files) < max_files:
-            for root, dirs, files in os.walk(pkg_dir):
-                # 跳过测试/文档/构建目录
-                dirs[:] = [
-                    d
-                    for d in dirs
-                    if d not in (
-                        "test", "tests", "__tests__", "docs", "doc",
-                        "examples", "build", "dist", ".git", "node_modules",
-                    )
-                ]
-                for filename in files:
-                    if len(scanned_files) >= max_files:
-                        break
-                    ext = os.path.splitext(filename)[1]
-                    if ext not in extensions:
-                        continue
-                    abs_path = os.path.join(root, filename)
-                    norm_path = os.path.normpath(abs_path)
-                    if norm_path in scanned_files:
-                        continue
-                    scanned_files.add(norm_path)
-                    created += self._scan_one_npm_file(
-                        lang, package_name, version, abs_path, pkg_dir
-                    )
+            try:
+                root_files = os.listdir(pkg_dir)
+            except OSError:
+                root_files = []
+            for filename in root_files:
+                if len(scanned_files) >= max_files:
+                    break
+                abs_path = os.path.join(pkg_dir, filename)
+                if not os.path.isfile(abs_path):
+                    continue
+                ext = os.path.splitext(filename)[1]
+                if ext not in extensions:
+                    continue
+                norm_path = os.path.normpath(abs_path)
+                if norm_path in scanned_files:
+                    continue
+                scanned_files.add(norm_path)
+                created += self._scan_one_npm_file(
+                    lang, package_name, version, abs_path, pkg_dir
+                )
 
         # 标记完成
         self.conn.execute(
@@ -1428,11 +1476,19 @@ class ExternalMixin:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             packages = data.get("packages", {})
+            root_info = packages.get("", {})
+            direct_names = set()
+            if isinstance(root_info, dict):
+                direct_names.update(root_info.get("dependencies", {}).keys())
+            if not direct_names:
+                direct_names.update(data.get("dependencies", {}).keys())
             for pkg_path, info in packages.items():
                 if not pkg_path or pkg_path == "":
                     continue
                 # 路径形如 node_modules/lodash 或 node_modules/@types/node
                 name = pkg_path.split("node_modules/")[-1]
+                if name not in direct_names:
+                    continue
                 if "version" in info:
                     deps[name] = info["version"]
         except Exception:
@@ -1529,8 +1585,8 @@ class ExternalMixin:
                         v = managed_versions.get(f"{g}:{a}", "")
                     v = self._resolve_maven_props(v, properties)
                     scope = (dep.findtext("scope") or "").strip()
-                    # 跳过 test/provided/runtime（这些不进入运行时调用图）
-                    if scope in ("test", "provided"):
+                    # 跳过测试与运行期装配依赖，保留源码可直接引用的编译依赖
+                    if scope in ("test", "runtime"):
                         continue
                     deps[f"{g}:{a}"] = v
         except Exception:
@@ -1557,10 +1613,7 @@ class ExternalMixin:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
 
-            scopes = (
-                "implementation", "api", "compileOnly", "runtimeOnly",
-                "compile", "testImplementation", "testCompile",
-            )
+            scopes = ("implementation", "api", "compileOnly", "compile")
             scope_pattern = "|".join(scopes)
 
             # 格式1: implementation 'group:artifact:version' 或 implementation("group:artifact:version")
@@ -2050,14 +2103,16 @@ class ExternalMixin:
         pkg_ver = version or "unknown"
         created = 0
         file_count = 0
-        max_files = 80
+        max_files = MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
 
         try:
             with zipfile.ZipFile(jar_path) as zf:
-                java_files = [
+                java_files = sorted(
                     n for n in zf.namelist()
                     if n.endswith(".java") and not n.endswith("/package-info.java")
-                ]
+                    and not self._is_external_archive_internal_path(n)
+                )
+                java_files.sort(key=lambda n: (n.count("/"), n))
                 for name in java_files:
                     if file_count >= max_files:
                         break
@@ -2107,6 +2162,8 @@ class ExternalMixin:
                                 ),
                             )
                             created += 1
+                            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                                return created
                     except Exception:
                         continue
                     finally:
@@ -2152,16 +2209,18 @@ class ExternalMixin:
         pkg_ver = version or "unknown"
         created = 0
         class_count = 0
-        max_classes = 200  # javap 调用慢，限制处理类数
+        max_classes = MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE  # javap 调用慢，限制处理类数
 
         try:
             with zipfile.ZipFile(jar_path) as zf:
-                class_files = [
+                class_files = sorted(
                     n for n in zf.namelist()
                     if n.endswith(".class")
                     and not n.endswith("package-info.class")
                     and not n.endswith("module-info.class")
-                ]
+                    and not self._is_external_archive_internal_path(n)
+                )
+                class_files.sort(key=lambda n: (n.count("/"), n))
                 for name in class_files:
                     if class_count >= max_classes:
                         break
@@ -2198,6 +2257,8 @@ class ExternalMixin:
                             f"jar:{jar_path}!/{name}",
                         )
                         created += 1
+                        if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                            return created
                         # 解析方法和字段
                         for line in result.stdout.split("\n"):
                             line = line.strip().rstrip(";")
@@ -2227,6 +2288,8 @@ class ExternalMixin:
                                     f"jar:{jar_path}!/{name}",
                                 ):
                                     created += 1
+                                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                                        return created
                                 continue
                             # 字段
                             m = re.match(
@@ -2245,11 +2308,30 @@ class ExternalMixin:
                                     f"jar:{jar_path}!/{name}",
                                 ):
                                     created += 1
+                                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                                        return created
                     except Exception:
                         continue
         except Exception:
             pass
         return created
+
+    def _is_external_archive_internal_path(self, archive_path: str) -> bool:
+        """判断 jar 内路径是否属于内部实现、测试或元数据目录。"""
+        parts = [p.lower() for p in archive_path.replace("\\", "/").split("/")]
+        blocked = {
+            "meta-inf",
+            "internal",
+            "impl",
+            "implementation",
+            "generated",
+            "test",
+            "tests",
+            "examples",
+            "benchmark",
+            "benchmarks",
+        }
+        return any(part in blocked for part in parts)
 
     def _insert_java_external_symbol(
         self,
@@ -2390,10 +2472,10 @@ class ExternalMixin:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for section in ["require", "require-dev"]:
-                if section in data and isinstance(data[section], dict):
-                    for dep_name, version in data[section].items():
-                        deps[dep_name] = str(version)
+            section = data.get("require", {})
+            if isinstance(section, dict):
+                for dep_name, version in section.items():
+                    deps[dep_name] = str(version)
         except Exception:
             pass
         return deps
@@ -2404,7 +2486,7 @@ class ExternalMixin:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            for section in ["packages", "packages-dev"]:
+            for section in ["packages"]:
                 for pkg in data.get(section, []):
                     name = pkg.get("name", "")
                     version = pkg.get("version", "")
@@ -2455,9 +2537,12 @@ class ExternalMixin:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
 
+            scopes = ("implementation", "api", "compileOnly", "compile")
+            scope_pattern = "|".join(scopes)
+
             # 匹配 implementation "group:artifact:version" 或 implementation("group:artifact:version")
             for m in re.finditer(
-                r'(?:implementation|api|compileOnly|runtimeOnly|testImplementation)\s*[\(]?\s*["\']([^:"\']+):([^:"\']+):([^:"\']+)["\']',
+                rf'(?:{scope_pattern})\s*[\(]?\s*["\']([^:"\']+):([^:"\']+):([^:"\']+)["\']',
                 content,
             ):
                 group_id = m.group(1)
@@ -2630,7 +2715,7 @@ class ExternalMixin:
 
         # 扫描 .cs 源码
         created = self._scan_package_source_files(
-            "csharp", package_name, version, pkg_dir, ".cs", max_files=80
+            "csharp", package_name, version, pkg_dir, ".cs", max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
         )
         self.conn.execute(
             "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
@@ -2675,7 +2760,7 @@ class ExternalMixin:
             return 0
 
         created = self._scan_package_source_files(
-            "ruby", package_name, version, gem_path, ".rb", max_files=80
+            "ruby", package_name, version, gem_path, ".rb", max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
         )
         self.conn.execute(
             "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
@@ -2836,7 +2921,7 @@ class ExternalMixin:
             return 0
 
         created = self._scan_package_source_files(
-            "swift", package_name, version, checkout_dir, ".swift", max_files=80
+            "swift", package_name, version, checkout_dir, ".swift", max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
         )
         self.conn.execute(
             "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
@@ -2960,7 +3045,7 @@ class ExternalMixin:
             return 0
 
         created = self._scan_package_source_files(
-            "php", package_name, version, pkg_dir, ".php", max_files=80
+            "php", package_name, version, pkg_dir, ".php", max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
         )
         self.conn.execute(
             "INSERT OR IGNORE INTO package_versions (package_name, package_version) VALUES (?, ?)",
@@ -3002,7 +3087,7 @@ class ExternalMixin:
 
         # Elixir 同时扫描 .ex 和 .exs 文件
         created = self._scan_package_source_files(
-            "elixir", package_name, version, pkg_dir, ".ex", max_files=80
+            "elixir", package_name, version, pkg_dir, ".ex", max_files=MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE
         )
         # .exs 文件（脚本）也扫一遍
         created += self._scan_package_source_files(
@@ -3030,6 +3115,11 @@ class ExternalMixin:
             (qualified_name,),
         )
         row = cur.fetchone()
+        if row:
+            self._touch_package_version(
+                row["package_name"], row["package_version"], "last_used_at"
+            )
+            self.conn.commit()
         return dict(row) if row else None
 
     def search_external_symbols(self, name: str) -> List[Dict[str, Any]]:
@@ -3038,12 +3128,80 @@ class ExternalMixin:
             "SELECT * FROM external_symbols WHERE symbol_name LIKE ?",
             (f"%{name}%",),
         )
-        return [dict(row) for row in cur.fetchall()]
+        rows = [dict(row) for row in cur.fetchall()]
+        touched = set()
+        for row in rows:
+            key = (row["package_name"], row["package_version"])
+            if key in touched:
+                continue
+            self._touch_package_version(key[0], key[1], "last_used_at")
+            touched.add(key)
+        if touched:
+            self.conn.commit()
+        return rows
+
+    def prune_external_symbols(
+        self,
+        keep_project_deps: bool = True,
+        package_names: Optional[List[str]] = None,
+        vacuum: bool = False,
+    ) -> Dict[str, Any]:
+        """清理外部符号索引
+
+        Args:
+            keep_project_deps: True 时保留 stdlib 和当前项目直接依赖对应的外部包
+            package_names: 指定要删除的 package_name 前缀列表，例如 ["networkx", "ext-python-networkx"]
+            vacuum: True 时在删除后执行 VACUUM 释放磁盘空间
+        """
+        before = self.conn.execute("SELECT COUNT(*) as cnt FROM external_symbols").fetchone()["cnt"]
+        keep: set[str] = {"stdlib"}
+        if keep_project_deps:
+            deps = self.get_project_dependencies()
+            for lang, lang_deps in deps.items():
+                for dep in lang_deps:
+                    keep.add(dep.lower())
+                    keep.add(f"ext-{lang}-{dep}".lower())
+
+        deleted = 0
+        if package_names:
+            for name in package_names:
+                pattern = name.lower()
+                cur = self.conn.execute(
+                    "DELETE FROM external_symbols WHERE lower(package_name) = ? OR lower(package_name) LIKE ?",
+                    (pattern, f"ext-%-{pattern}"),
+                )
+                deleted += cur.rowcount if cur.rowcount is not None else 0
+                self.conn.execute(
+                    "DELETE FROM package_versions WHERE lower(package_name) = ? OR lower(package_name) LIKE ?",
+                    (pattern, f"ext-%-{pattern}"),
+                )
+        elif keep_project_deps:
+            placeholders = ",".join("?" for _ in keep)
+            cur = self.conn.execute(
+                f"DELETE FROM external_symbols WHERE lower(package_name) NOT IN ({placeholders})",
+                tuple(keep),
+            )
+            deleted += cur.rowcount if cur.rowcount is not None else 0
+            self.conn.execute(
+                f"DELETE FROM package_versions WHERE lower(package_name) NOT IN ({placeholders})",
+                tuple(keep),
+            )
+
+        self.conn.commit()
+        if vacuum:
+            self.conn.execute("VACUUM")
+        after = self.conn.execute("SELECT COUNT(*) as cnt FROM external_symbols").fetchone()["cnt"]
+        return {"before": before, "after": after, "deleted": deleted, "vacuum": vacuum}
 
     def has_external_symbol(self, qualified_name: str) -> bool:
         """检查外部符号是否存在"""
         cur = self.conn.execute(
-            "SELECT COUNT(*) as cnt FROM external_symbols WHERE qualified_name = ?",
+            "SELECT package_name, package_version FROM external_symbols WHERE qualified_name = ? LIMIT 1",
             (qualified_name,),
         )
-        return cur.fetchone()["cnt"] > 0
+        row = cur.fetchone()
+        if row:
+            self._touch_package_version(row["package_name"], row["package_version"], "last_used_at")
+            self.conn.commit()
+            return True
+        return False

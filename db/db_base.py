@@ -1022,6 +1022,68 @@ def _migrate_v15_to_v16(conn: sqlite3.Connection):
     """)
 
 
+def _migrate_v16_to_v17(conn: sqlite3.Connection):
+    """v16 -> v17: 任务-符号变更归因表"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_symbol_changes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER,
+            task_id TEXT NOT NULL,
+            step_id TEXT DEFAULT '',
+            edit_audit_id INTEGER DEFAULT 0,
+            change_audit_id TEXT DEFAULT '',
+            file_path TEXT NOT NULL,
+            qualified_name TEXT DEFAULT '',
+            symbol_name TEXT DEFAULT '',
+            symbol_hash_before TEXT DEFAULT '',
+            symbol_hash_after TEXT DEFAULT '',
+            change_type TEXT NOT NULL DEFAULT 'modified',
+            source TEXT NOT NULL DEFAULT 'manual',
+            metadata TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_task ON task_symbol_changes(task_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_step ON task_symbol_changes(step_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_edit ON task_symbol_changes(edit_audit_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_file ON task_symbol_changes(file_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_before ON task_symbol_changes(symbol_hash_before)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(symbol_hash_after)")
+
+
+def _migrate_v17_to_v18(conn: sqlite3.Connection):
+    """v17 -> v18: 外部包冷数据追踪字段"""
+    cur = conn.execute("PRAGMA table_info(package_versions)")
+    cols = {row[1] for row in cur.fetchall()}
+
+    if "last_seen_at" not in cols:
+        conn.execute("ALTER TABLE package_versions ADD COLUMN last_seen_at REAL NOT NULL DEFAULT 0")
+        conn.execute("UPDATE package_versions SET last_seen_at = installed_at WHERE last_seen_at IS NULL OR last_seen_at = 0")
+    if "last_used_at" not in cols:
+        conn.execute("ALTER TABLE package_versions ADD COLUMN last_used_at REAL DEFAULT 0")
+    if "import_source" not in cols:
+        conn.execute("ALTER TABLE package_versions ADD COLUMN import_source TEXT DEFAULT 'external'")
+
+
+def _migrate_v18_to_v19(conn: sqlite3.Connection):
+    """v18 -> v19: GC retention 策略表"""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS gc_policies (
+            workspace_id INTEGER PRIMARY KEY,
+            older_than_days INTEGER NOT NULL DEFAULT 365,
+            keep_versions INTEGER NOT NULL DEFAULT 100,
+            include_external INTEGER NOT NULL DEFAULT 0,
+            external_stale_days INTEGER NOT NULL DEFAULT 365,
+            backup_enabled INTEGER NOT NULL DEFAULT 1,
+            vacuum_enabled INTEGER NOT NULL DEFAULT 0,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1249,6 +1311,18 @@ class CodeGraphBase:
             16: {
                 "description": t("cli.messages.migration_v16", default="Add external symbol tables (external_symbols + package_versions for stdlib and third-party symbols)"),
                 "func": _migrate_v15_to_v16,
+            },
+            17: {
+                "description": t("cli.messages.migration_v17", default="Add task-symbol change attribution table"),
+                "func": _migrate_v16_to_v17,
+            },
+            18: {
+                "description": t("cli.messages.migration_v18", default="Add external package cold-data tracking fields"),
+                "func": _migrate_v17_to_v18,
+            },
+            19: {
+                "description": t("cli.messages.migration_v19", default="Add GC retention policy table"),
+                "func": _migrate_v18_to_v19,
             },
         }
 
@@ -1488,4 +1562,3 @@ class CodeGraphBase:
         if self.active_workspace:
             return self.active_workspace.get("id", 1)
         return 1
-

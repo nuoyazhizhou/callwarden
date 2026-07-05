@@ -1163,6 +1163,99 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
+    # 外部符号工具（ExternalMixin）
+    # ----------------------------------------------------------------
+
+    @mcp.tool()
+    def get_project_dependencies(languages: list = None) -> dict:
+        """读取项目直接依赖清单，不展开传递依赖"""
+        try:
+            db = get_db()
+            return db.get_project_dependencies(languages=languages)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def import_project_dependencies() -> dict:
+        """导入项目直接依赖的第一层外部符号"""
+        try:
+            db = get_db()
+            created = db.import_project_dependencies()
+            return {"created": created}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def prune_external_symbols(keep_project_deps: bool = True,
+                               package_names: list = None,
+                               vacuum: bool = False) -> dict:
+        """清理外部符号；可保留项目直接依赖并可 VACUUM 释放空间"""
+        try:
+            db = get_db()
+            return db.prune_external_symbols(
+                keep_project_deps=keep_project_deps,
+                package_names=package_names,
+                vacuum=vacuum,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def gc_retention(older_than_days: int = None,
+                     keep_versions: int = None,
+                     include_external: bool = None,
+                     external_stale_days: int = None,
+                     dry_run: bool = True,
+                     backup: bool = None,
+                     vacuum: bool = None,
+                     save_policy: bool = False) -> dict:
+        """按冷热策略清理旧版本/外部符号；默认只预演，应用前压缩备份整库"""
+        try:
+            db = get_db()
+            return db.gc_retention(
+                older_than_days=older_than_days,
+                keep_versions=keep_versions,
+                include_external=include_external,
+                external_stale_days=external_stale_days,
+                dry_run=dry_run,
+                backup=backup,
+                vacuum=vacuum,
+                save_policy=save_policy,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def gc_policy_get() -> dict:
+        """读取当前 workspace 的 GC retention 策略"""
+        try:
+            db = get_db()
+            return db.get_gc_policy()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def gc_policy_set(older_than_days: int = None,
+                      keep_versions: int = None,
+                      include_external: bool = None,
+                      external_stale_days: int = None,
+                      backup_enabled: bool = None,
+                      vacuum_enabled: bool = None) -> dict:
+        """更新当前 workspace 的 GC retention 策略"""
+        try:
+            db = get_db()
+            return db.set_gc_policy(
+                older_than_days=older_than_days,
+                keep_versions=keep_versions,
+                include_external=include_external,
+                external_stale_days=external_stale_days,
+                backup_enabled=backup_enabled,
+                vacuum_enabled=vacuum_enabled,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ----------------------------------------------------------------
     # 任务驱动编排工具
     # ----------------------------------------------------------------
 
@@ -1254,6 +1347,60 @@ def create_mcp_server():
         """
         db = get_db()
         return db.task_report_step(task_id=task_id, step_id=step_id, result=result, success=success, changes=changes)
+
+    @mcp.tool()
+    def record_task_symbol_change(task_id: str, file_path: str, step_id: str = "",
+                                  edit_audit_id: int = 0, change_audit_id: str = "",
+                                  qualified_name: str = "", symbol_name: str = "",
+                                  symbol_hash_before: str = "", symbol_hash_after: str = "",
+                                  change_type: str = "modified", source: str = "manual",
+                                  metadata: dict = None) -> dict:
+        """记录任务/步骤到文件或符号版本变化的归因"""
+        try:
+            db = get_db()
+            return db.record_task_symbol_change(
+                task_id=task_id,
+                file_path=file_path,
+                step_id=step_id,
+                edit_audit_id=edit_audit_id,
+                change_audit_id=change_audit_id,
+                qualified_name=qualified_name,
+                symbol_name=symbol_name,
+                symbol_hash_before=symbol_hash_before,
+                symbol_hash_after=symbol_hash_after,
+                change_type=change_type,
+                source=source,
+                metadata=metadata or {},
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def link_edit_audit_symbols(audit_id: int, step_id: str = "") -> dict:
+        """刷新图谱后，将某次 edit_audit 的 before/after 文件版本映射到符号变化"""
+        try:
+            db = get_db()
+            return db.link_edit_audit_symbols(audit_id=audit_id, step_id=step_id)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_task_symbol_changes(task_id: str, step_id: str = "", file_path: str = "", limit: int = 100) -> list:
+        """查询任务或步骤归因到的文件/符号变化"""
+        try:
+            db = get_db()
+            return db.get_task_symbol_changes(task_id=task_id, step_id=step_id, file_path=file_path, limit=limit)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_symbol_change_tasks(symbol_hash: str = "", qualified_name: str = "", limit: int = 50) -> list:
+        """反查某个符号版本或符号名由哪些任务改变过"""
+        try:
+            db = get_db()
+            return db.get_symbol_change_tasks(symbol_hash=symbol_hash, qualified_name=qualified_name, limit=limit)
+        except Exception as e:
+            return [{"error": str(e)}]
 
     @mcp.tool()
     def task_rollback(task_id: str, change_id: str = None, reason: str = "") -> dict:

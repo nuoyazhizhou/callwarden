@@ -25,7 +25,11 @@ db_gc.py
 
 from __future__ import annotations
 
+import gzip
 import os
+import shutil
+import sqlite3
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
@@ -59,6 +63,15 @@ DEFAULT_IGNORE_RULES: List[str] = [
     # repo 工具元数据
     ".repo/",
 ]
+
+DEFAULT_GC_POLICY: Dict[str, Any] = {
+    "older_than_days": 365,
+    "keep_versions": 100,
+    "include_external": False,
+    "external_stale_days": 365,
+    "backup_enabled": True,
+    "vacuum_enabled": False,
+}
 
 
 class GCMixin:
@@ -445,3 +458,362 @@ class GCMixin:
             "purged_symbols": purged_symbols,
             "purged_calls": purged_calls,
         }
+
+    def gc_retention(
+        self,
+        older_than_days: Optional[int] = None,
+        keep_versions: Optional[int] = None,
+        include_external: Optional[bool] = None,
+        external_stale_days: Optional[int] = None,
+        dry_run: bool = True,
+        backup: Optional[bool] = None,
+        vacuum: Optional[bool] = None,
+        save_policy: bool = False,
+    ) -> Dict[str, Any]:
+        """按保守保留策略清理冷数据。
+
+        策略：
+        - 文件历史：每个文件至少保留最近 keep_versions 个版本，只清理更老且超过 older_than_days 的非当前版本。
+        - 外部符号：默认不清理；显式 include_external=True 时只按 last_seen/last_used 时间清理冷包。
+        - 删除前默认备份完整 SQLite 数据库到 gzip，便于后续离线导回。
+        """
+        policy = self._resolve_gc_retention_policy(
+            older_than_days=older_than_days,
+            keep_versions=keep_versions,
+            include_external=include_external,
+            external_stale_days=external_stale_days,
+            backup=backup,
+            vacuum=vacuum,
+        )
+        if save_policy:
+            self.set_gc_policy(
+                older_than_days=older_than_days,
+                keep_versions=keep_versions,
+                include_external=include_external,
+                external_stale_days=external_stale_days,
+                backup_enabled=backup,
+                vacuum_enabled=vacuum,
+            )
+
+        older_than_days = int(policy["older_than_days"])
+        keep_versions = int(policy["keep_versions"])
+        include_external = bool(policy["include_external"])
+        external_stale_days = int(policy["external_stale_days"])
+        backup = bool(policy["backup_enabled"])
+        vacuum = bool(policy["vacuum_enabled"])
+
+        if older_than_days < 1:
+            older_than_days = 1
+        if keep_versions < 1:
+            keep_versions = 1
+        if external_stale_days < 1:
+            external_stale_days = 1
+
+        ws_id = self._get_active_workspace_id()
+        version_cutoff = time.time() - older_than_days * 86400
+        external_cutoff = time.time() - external_stale_days * 86400
+
+        version_ids = self._select_retention_file_versions(
+            ws_id, version_cutoff, keep_versions
+        )
+        external_packages = (
+            self._select_retention_external_packages(external_cutoff)
+            if include_external
+            else []
+        )
+
+        backup_path = ""
+        backup_size = 0
+        if not dry_run and backup and (version_ids or external_packages):
+            backup_info = self._create_gc_db_backup("retention")
+            backup_path = backup_info["path"]
+            backup_size = backup_info["size"]
+
+        deleted_versions = 0
+        deleted_file_symbols = 0
+        deleted_call_versions = 0
+        deleted_external_symbols = 0
+        deleted_packages = 0
+        deleted_orphan_symbols = 0
+
+        if not dry_run:
+            if version_ids:
+                placeholders = ",".join("?" for _ in version_ids)
+                cur = self.conn.execute(
+                    f"DELETE FROM call_versions WHERE file_version_id IN ({placeholders})",
+                    version_ids,
+                )
+                deleted_call_versions = cur.rowcount if cur.rowcount is not None else 0
+                cur = self.conn.execute(
+                    f"DELETE FROM file_symbol_versions WHERE file_version_id IN ({placeholders})",
+                    version_ids,
+                )
+                deleted_file_symbols = cur.rowcount if cur.rowcount is not None else 0
+                cur = self.conn.execute(
+                    f"DELETE FROM file_versions WHERE id IN ({placeholders})",
+                    version_ids,
+                )
+                deleted_versions = cur.rowcount if cur.rowcount is not None else 0
+
+            for pkg in external_packages:
+                cur = self.conn.execute(
+                    "DELETE FROM external_symbols WHERE package_name = ? AND package_version = ?",
+                    (pkg["package_name"], pkg["package_version"]),
+                )
+                deleted_external_symbols += cur.rowcount if cur.rowcount is not None else 0
+                cur = self.conn.execute(
+                    "DELETE FROM package_versions WHERE package_name = ? AND package_version = ?",
+                    (pkg["package_name"], pkg["package_version"]),
+                )
+                deleted_packages += cur.rowcount if cur.rowcount is not None else 0
+
+            deleted_orphan_symbols = self._delete_orphan_symbol_contents()
+            self.conn.commit()
+            if vacuum:
+                self.conn.execute("VACUUM")
+
+        return {
+            "dry_run": dry_run,
+            "policy": policy,
+            "saved_policy": save_policy,
+            "backup_path": backup_path,
+            "backup_size": backup_size,
+            "candidate_file_versions": len(version_ids),
+            "candidate_external_packages": len(external_packages),
+            "deleted_file_versions": deleted_versions,
+            "deleted_file_symbol_versions": deleted_file_symbols,
+            "deleted_call_versions": deleted_call_versions,
+            "deleted_external_symbols": deleted_external_symbols,
+            "deleted_external_packages": deleted_packages,
+            "deleted_orphan_symbol_contents": deleted_orphan_symbols,
+            "vacuum": vacuum and not dry_run,
+        }
+
+    def get_gc_policy(self) -> Dict[str, Any]:
+        """读取当前 workspace 的 GC retention 策略，不存在则创建默认策略。"""
+        ws_id = self._get_active_workspace_id()
+        cur = self.conn.execute(
+            "SELECT * FROM gc_policies WHERE workspace_id = ?",
+            (ws_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            policy = dict(DEFAULT_GC_POLICY)
+            self.set_gc_policy(**policy)
+            policy["workspace_id"] = ws_id
+            return policy
+        return self._row_to_gc_policy(dict(row))
+
+    def set_gc_policy(
+        self,
+        older_than_days: Optional[int] = None,
+        keep_versions: Optional[int] = None,
+        include_external: Optional[bool] = None,
+        external_stale_days: Optional[int] = None,
+        backup_enabled: Optional[bool] = None,
+        vacuum_enabled: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """更新当前 workspace 的 GC retention 策略。"""
+        current = self.get_gc_policy_without_create()
+        policy = dict(DEFAULT_GC_POLICY)
+        if current:
+            policy.update(current)
+
+        updates = {
+            "older_than_days": older_than_days,
+            "keep_versions": keep_versions,
+            "include_external": include_external,
+            "external_stale_days": external_stale_days,
+            "backup_enabled": backup_enabled,
+            "vacuum_enabled": vacuum_enabled,
+        }
+        for key, value in updates.items():
+            if value is None:
+                continue
+            if key in ("include_external", "backup_enabled", "vacuum_enabled"):
+                policy[key] = bool(value)
+            else:
+                policy[key] = max(1, int(value))
+
+        ws_id = self._get_active_workspace_id()
+        now = time.time()
+        self.conn.execute(
+            """INSERT INTO gc_policies
+               (workspace_id, older_than_days, keep_versions, include_external,
+                external_stale_days, backup_enabled, vacuum_enabled, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+                 older_than_days = excluded.older_than_days,
+                 keep_versions = excluded.keep_versions,
+                 include_external = excluded.include_external,
+                 external_stale_days = excluded.external_stale_days,
+                 backup_enabled = excluded.backup_enabled,
+                 vacuum_enabled = excluded.vacuum_enabled,
+                 updated_at = excluded.updated_at""",
+            (
+                ws_id,
+                int(policy["older_than_days"]),
+                int(policy["keep_versions"]),
+                1 if policy["include_external"] else 0,
+                int(policy["external_stale_days"]),
+                1 if policy["backup_enabled"] else 0,
+                1 if policy["vacuum_enabled"] else 0,
+                now,
+            ),
+        )
+        self.conn.commit()
+        policy["workspace_id"] = ws_id
+        policy["updated_at"] = now
+        return policy
+
+    def get_gc_policy_without_create(self) -> Dict[str, Any]:
+        """读取当前 workspace 的 GC 策略；不存在时返回空字典。"""
+        ws_id = self._get_active_workspace_id()
+        cur = self.conn.execute(
+            "SELECT * FROM gc_policies WHERE workspace_id = ?",
+            (ws_id,),
+        )
+        row = cur.fetchone()
+        return self._row_to_gc_policy(dict(row)) if row else {}
+
+    def _resolve_gc_retention_policy(
+        self,
+        older_than_days: Optional[int],
+        keep_versions: Optional[int],
+        include_external: Optional[bool],
+        external_stale_days: Optional[int],
+        backup: Optional[bool],
+        vacuum: Optional[bool],
+    ) -> Dict[str, Any]:
+        """合并 DB policy 与本次运行参数。"""
+        policy = self.get_gc_policy()
+        overrides = {
+            "older_than_days": older_than_days,
+            "keep_versions": keep_versions,
+            "include_external": include_external,
+            "external_stale_days": external_stale_days,
+            "backup_enabled": backup,
+            "vacuum_enabled": vacuum,
+        }
+        for key, value in overrides.items():
+            if value is None:
+                continue
+            if key in ("include_external", "backup_enabled", "vacuum_enabled"):
+                policy[key] = bool(value)
+            else:
+                policy[key] = max(1, int(value))
+        return policy
+
+    def _row_to_gc_policy(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """把数据库行转为 Python 策略字典。"""
+        return {
+            "workspace_id": row.get("workspace_id"),
+            "older_than_days": int(row.get("older_than_days") or DEFAULT_GC_POLICY["older_than_days"]),
+            "keep_versions": int(row.get("keep_versions") or DEFAULT_GC_POLICY["keep_versions"]),
+            "include_external": bool(row.get("include_external")),
+            "external_stale_days": int(row.get("external_stale_days") or DEFAULT_GC_POLICY["external_stale_days"]),
+            "backup_enabled": bool(row.get("backup_enabled")),
+            "vacuum_enabled": bool(row.get("vacuum_enabled")),
+            "updated_at": row.get("updated_at", 0),
+        }
+
+    def _select_retention_file_versions(
+        self,
+        workspace_id: int,
+        cutoff: float,
+        keep_versions: int,
+    ) -> List[int]:
+        """选择可归档删除的旧文件版本。"""
+        cur = self.conn.execute(
+            """
+            WITH ranked AS (
+                SELECT
+                    fv.id,
+                    fv.file_instance_id,
+                    fv.parsed_at,
+                    fv.is_current,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY fv.file_instance_id
+                        ORDER BY fv.version_num DESC
+                    ) AS version_rank
+                FROM file_versions fv
+                JOIN file_instances fi ON fi.id = fv.file_instance_id
+                WHERE fi.workspace_id = ?
+            )
+            SELECT r.id
+            FROM ranked r
+            WHERE r.is_current = 0
+              AND r.parsed_at < ?
+              AND r.version_rank > ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM file_symbol_versions fsv
+                  JOIN symbol_contents sc ON sc.content_hash = fsv.symbol_hash
+                  WHERE fsv.file_version_id = r.id AND sc.has_comment = 1
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM file_symbol_versions fsv
+                  JOIN task_symbol_changes tsc
+                    ON tsc.symbol_hash_before = fsv.symbol_hash
+                    OR tsc.symbol_hash_after = fsv.symbol_hash
+                  WHERE fsv.file_version_id = r.id
+              )
+            """,
+            (workspace_id, cutoff, keep_versions),
+        )
+        return [row["id"] for row in cur.fetchall()]
+
+    def _select_retention_external_packages(self, cutoff: float) -> List[Dict[str, Any]]:
+        """选择超过冷数据阈值的外部包版本。"""
+        cur = self.conn.execute(
+            """
+            SELECT package_name, package_version,
+                   MAX(COALESCE(last_used_at, 0), COALESCE(last_seen_at, 0), COALESCE(installed_at, 0)) AS last_touch
+            FROM package_versions
+            WHERE lower(package_name) != 'stdlib'
+            """
+        )
+        rows = [dict(row) for row in cur.fetchall()]
+        return [row for row in rows if (row.get("last_touch") or 0) < cutoff]
+
+    def _delete_orphan_symbol_contents(self) -> int:
+        """删除已无任何引用的符号内容。"""
+        cur = self.conn.execute(
+            """
+            DELETE FROM symbol_contents
+            WHERE content_hash NOT IN (SELECT symbol_hash FROM symbols)
+              AND content_hash NOT IN (SELECT symbol_hash FROM file_symbol_versions)
+              AND content_hash NOT IN (SELECT symbol_hash FROM comments)
+              AND content_hash NOT IN (SELECT symbol_hash FROM evolution_metrics)
+              AND content_hash NOT IN (SELECT symbol_hash FROM defect_fixes)
+              AND content_hash NOT IN (SELECT before_hash FROM defect_fixes)
+              AND content_hash NOT IN (SELECT after_hash FROM defect_fixes)
+              AND content_hash NOT IN (SELECT symbol_hash_before FROM task_symbol_changes)
+              AND content_hash NOT IN (SELECT symbol_hash_after FROM task_symbol_changes)
+            """
+        )
+        return cur.rowcount if cur.rowcount is not None else 0
+
+    def _create_gc_db_backup(self, reason: str) -> Dict[str, Any]:
+        """创建压缩 SQLite 备份。"""
+        archive_dir = os.path.join(os.path.dirname(self.db_path), "gc_archives")
+        os.makedirs(archive_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        final_path = os.path.join(archive_dir, f"{stamp}-{reason}.db.gz")
+
+        fd, temp_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            dst = sqlite3.connect(temp_path)
+            try:
+                self.conn.backup(dst)
+            finally:
+                dst.close()
+            with open(temp_path, "rb") as src, gzip.open(final_path, "wb") as gz:
+                shutil.copyfileobj(src, gz)
+        finally:
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
+
+        return {"path": final_path, "size": os.path.getsize(final_path)}

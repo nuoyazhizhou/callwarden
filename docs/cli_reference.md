@@ -46,6 +46,9 @@ Call Warden CLI 提供两种命令风格：
 | | `--task-list` | flag | 列出任务 |
 | | `--task-show <ID>` | flag | 查看任务详情 |
 | | `check-gate <TASK_ID>` | sub | 检查门禁 |
+| **GC** | `gc archive/restore/status/purge` | sub | ignore 文件归档、复活、状态、清除 |
+| | `gc policy show/set` | sub | 查看或修改 retention 策略 |
+| | `gc retention` | sub | 按冷热策略清理旧版本/外部符号 |
 | **度量** | `--metrics` | flag | 代码度量汇总 |
 | | `--complexity [N]` | flag | 圈复杂度热点 |
 | | `--coupling` | flag | 模块耦合度 |
@@ -94,6 +97,57 @@ Call Warden CLI 提供两种命令风格：
 | | `install --check` | sub | 检查依赖状态 |
 
 > `install` 是独立子命令，调用方式为 `cw install [options]`。
+
+---
+
+## GC 命令
+
+GC 分两类：
+
+- 文件归档 GC：`archive/restore/status/purge`，只处理被 ignore 规则命中的文件。
+- 冷数据 retention：`policy/retention`，按数据库策略清理旧历史版本和可选外部符号。
+
+### `gc policy show`：查看 retention 策略
+
+```bash
+cw gc policy show
+```
+
+策略保存在当前 workspace 的数据库中，作为 `gc retention` 未传参数时的默认值。
+
+### `gc policy set`：修改 retention 策略
+
+```bash
+cw gc policy set --older-than 730 --keep-versions 200 --no-include-external --backup --no-vacuum
+```
+
+常用参数：
+
+- `--older-than <DAYS>`：文件版本超过多少天才进入候选。
+- `--keep-versions <N>`：每个文件至少保留最近 N 个版本。
+- `--include-external / --no-include-external`：是否清理长期未 seen/used 的外部包符号。
+- `--external-stale-days <DAYS>`：外部包冷数据阈值。
+- `--backup / --no-backup`：执行前是否压缩备份完整数据库。
+- `--vacuum / --no-vacuum`：执行后是否运行 VACUUM 释放磁盘空间。
+
+### `gc retention`：按策略预演或执行清理
+
+```bash
+cw gc retention --dry-run
+cw gc retention --apply
+cw gc retention --apply --older-than 730 --keep-versions 200
+cw gc retention --apply --older-than 730 --keep-versions 200 --save-policy
+```
+
+语义规则：
+
+- `--dry-run`：只预演，不删除、不备份、不保存策略。
+- `--apply`：执行清理；默认仍不保存临时参数。
+- `--save-policy`：把本次传入的策略参数保存到数据库。
+- 未传策略参数时，使用 `gc_policies` 中保存的策略。
+- 传入策略参数但不带 `--save-policy` 时，只覆盖本次运行。
+
+执行删除前默认会在数据库目录下创建 `gc_archives/*.db.gz` 压缩备份，便于后续离线导回。
 
 ---
 

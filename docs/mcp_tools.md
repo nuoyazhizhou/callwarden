@@ -27,7 +27,7 @@ cw server --transport sse    # SSE 模式
 | 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
 | Semgrep 缺陷 | 4 | 扫描/统计/查询 |
 | 安全编辑 | 6 | propose_edit/range_patch/symbol_patch/revert/history/stats |
-| 任务管理 | 12 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template |
+| 任务管理 | 16 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template + task-symbol attribution |
 | 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
 | LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
 | 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
@@ -40,6 +40,7 @@ cw server --transport sse    # SSE 模式
 | 分支感知 | 5 | 注册/列出/差异/切换/合并预览 |
 | 覆盖率 | 4 | 导入/函数覆盖/未覆盖/测试影响 |
 | 所有权 | 4 | 负责人/映射/CODEOWNERS/blame |
+| 外部依赖与 GC | 6 | 直接依赖读取/导入/外部符号瘦身/冷热 retention/policy |
 | 摘要与简报 | 4 | 生成/获取摘要/项目简报/仓库图 |
 | 影响分析 | 4 | blast_radius/review/跨层/diff映射 |
 | Token 账本 | 2 | 记录节省/获取报告 |
@@ -392,6 +393,43 @@ cw server --transport sse    # SSE 模式
   2. 按模板填写任务计划
   3. `task_create_from_plan(title, plan_md)` → 自动创建任务树
 
+### `record_task_symbol_change`
+记录一次任务/步骤到文件或符号版本变化的归因。用于把“为什么变”连接到“哪个 symbol 变了”。
+
+- **参数**：
+  - `task_id: str`
+  - `file_path: str`
+  - `step_id: str = ""`
+  - `edit_audit_id: int = 0`
+  - `change_audit_id: str = ""`
+  - `qualified_name: str = ""`
+  - `symbol_name: str = ""`
+  - `symbol_hash_before: str = ""`
+  - `symbol_hash_after: str = ""`
+  - `change_type: str = "modified"` — added/modified/deleted/edit 等
+  - `source: str = "manual"`
+  - `metadata: dict = None`
+- **返回**：`dict` — `{success, id}`
+
+### `link_edit_audit_symbols`
+在图谱刷新后，把某次 `propose_edit` / `propose_range_patch` / `propose_symbol_patch` 产生的 `edit_audit_id` 映射到具体符号 before/after hash。
+
+- **参数**：`audit_id: int`, `step_id: str = ""`
+- **前置条件**：编辑前后的文件版本都已进入 `file_versions`；通常需要先运行 `cw --init` 或完整构建。
+- **返回**：`dict` — `{success, audit_id, linked, changes}`
+
+### `get_task_symbol_changes`
+查询某个任务/步骤实际归因到的文件/符号变化。
+
+- **参数**：`task_id: str`, `step_id: str = ""`, `file_path: str = ""`, `limit: int = 100`
+- **返回**：`list[dict]` — `task_symbol_changes` 记录列表
+
+### `get_symbol_change_tasks`
+反查某个符号版本或限定名由哪些任务改变过。
+
+- **参数**：`symbol_hash: str = ""`, `qualified_name: str = ""`, `limit: int = 50`
+- **返回**：`list[dict]` — 相关归因记录
+
 ---
 
 ## 文件操作工具
@@ -549,6 +587,48 @@ Agent 通过 MCP 读取代码，完全替代 IDE 内置 Read/Grep/Glob 工具。
 获取符号的 Git 变更历史（查 git_symbol_changes 表）。
 - **参数**：`symbol_hash: str`, `limit: int = 20`
 - **返回**：`list` — `{commit_hash, timestamp, author, message, change_type}`
+
+---
+
+## 外部依赖与 GC 工具
+
+### `get_project_dependencies`
+读取当前项目 manifest 中的直接依赖，不展开传递依赖。
+- **参数**：`languages: list | None = None`
+- **返回**：`dict` — `{language: {package_name: version}}`
+
+### `import_project_dependencies`
+导入项目直接依赖的第一层外部符号，并更新包的 `last_seen_at`。
+- **参数**：无
+- **返回**：`dict` — `{created}`
+
+### `prune_external_symbols`
+手动瘦身外部符号索引。适合确认只保留当前项目直接依赖时使用，不属于默认 GC。
+- **参数**：`keep_project_deps: bool = True`, `package_names: list | None = None`, `vacuum: bool = False`
+- **返回**：`dict` — `{before, after, deleted, vacuum}`
+
+### `gc_retention`
+按冷热策略清理旧文件版本和可选外部包；默认只预演，执行前默认压缩备份完整 SQLite 数据库。
+- **参数**：`older_than_days: int | None = None`, `keep_versions: int | None = None`, `include_external: bool | None = None`, `external_stale_days: int | None = None`, `dry_run: bool = True`, `backup: bool | None = None`, `vacuum: bool | None = None`, `save_policy: bool = False`
+- **返回**：`dict` — `{candidate_file_versions, candidate_external_packages, backup_path, deleted_*}`
+- **说明**：未传策略参数时读取数据库中的 GC policy；传入参数只覆盖本次运行，除非 `save_policy=True`。
+
+### `gc_policy_get`
+读取当前 workspace 的 GC retention 策略。
+- **参数**：无
+- **返回**：`dict` — `{older_than_days, keep_versions, include_external, external_stale_days, backup_enabled, vacuum_enabled}`
+
+### `gc_policy_set`
+更新当前 workspace 的 GC retention 策略。
+- **参数**：`older_than_days: int | None = None`, `keep_versions: int | None = None`, `include_external: bool | None = None`, `external_stale_days: int | None = None`, `backup_enabled: bool | None = None`, `vacuum_enabled: bool | None = None`
+- **返回**：`dict` — 更新后的策略
+
+CLI 心智模型：
+- `cw gc retention --dry-run`：按数据库策略预演，不保存参数。
+- `cw gc retention --apply --older-than 730`：本次执行临时覆盖，不保存参数。
+- `cw gc policy set --older-than 730 --keep-versions 200`：只保存策略，不执行清理。
+- `cw gc retention --apply --older-than 730 --save-policy`：保存传入策略并执行。
+- 外部包清理必须显式启用 `--include-external` 或写入 policy；普通 `gc archive` 不会按当前分支删除外部符号。
 
 ---
 

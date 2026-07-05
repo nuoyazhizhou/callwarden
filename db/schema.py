@@ -604,8 +604,56 @@ CREATE TABLE IF NOT EXISTS package_versions (
     package_name TEXT NOT NULL,                      -- 包名
     package_version TEXT NOT NULL,                    -- 版本号
     installed_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),  -- 安装时间
+    last_seen_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),  -- 最近一次被项目依赖清单看到
+    last_used_at REAL DEFAULT 0,                       -- 最近一次被查询/调用解析命中
+    import_source TEXT DEFAULT 'external',             -- 导入来源：manifest/manual/stdlib
     PRIMARY KEY (package_name, package_version)
 );
+
+-- GC 策略表：每个 workspace 独立保存 retention 默认策略。
+CREATE TABLE IF NOT EXISTS gc_policies (
+    workspace_id INTEGER PRIMARY KEY,
+    older_than_days INTEGER NOT NULL DEFAULT 365,
+    keep_versions INTEGER NOT NULL DEFAULT 100,
+    include_external INTEGER NOT NULL DEFAULT 0,
+    external_stale_days INTEGER NOT NULL DEFAULT 365,
+    backup_enabled INTEGER NOT NULL DEFAULT 1,
+    vacuum_enabled INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+-- ============================================
+-- v17: 任务-符号变更归因表
+-- ============================================
+-- 保持 file_symbol_versions / symbol_contents 作为事实层；
+-- 本表只记录一次任务/步骤/编辑行为为什么导致某个符号版本变化。
+CREATE TABLE IF NOT EXISTS task_symbol_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER,
+    task_id TEXT NOT NULL,
+    step_id TEXT DEFAULT '',
+    edit_audit_id INTEGER DEFAULT 0,
+    change_audit_id TEXT DEFAULT '',
+    file_path TEXT NOT NULL,
+    qualified_name TEXT DEFAULT '',
+    symbol_name TEXT DEFAULT '',
+    symbol_hash_before TEXT DEFAULT '',
+    symbol_hash_after TEXT DEFAULT '',
+    change_type TEXT NOT NULL DEFAULT 'modified',
+    source TEXT NOT NULL DEFAULT 'manual',
+    metadata TEXT DEFAULT '',
+    created_at REAL NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_task ON task_symbol_changes(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_step ON task_symbol_changes(step_id);
+CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_edit ON task_symbol_changes(edit_audit_id);
+CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_file ON task_symbol_changes(file_path);
+CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_before ON task_symbol_changes(symbol_hash_before);
+CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(symbol_hash_after);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -622,7 +670,10 @@ CREATE TABLE IF NOT EXISTS package_versions (
 # v14: 归档表（archived_files，被 .gitignore/.callwardenignore 命中的文件迁出主表，类 Java GC 老年代）
 # v15: 父子任务支持（tasks 表增加 parent_id/depth/sort_order，支持任务树嵌套）
 # v16: 外部符号表（external_symbols + package_versions，标准库 + 第三方包符号）
-SCHEMA_VERSION = 16
+# v17: 任务-符号变更归因表（task_symbol_changes）
+# v18: 外部包冷数据追踪（package_versions.last_seen_at / last_used_at / import_source）
+# v19: GC retention 策略表（gc_policies）
+SCHEMA_VERSION = 19
 
 
 # ============================================
