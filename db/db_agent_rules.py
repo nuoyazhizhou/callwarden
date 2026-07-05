@@ -517,6 +517,166 @@ class AgentRulesMixin:
         return [self._row_to_rule(dict(row)) for row in cur]
 
     # ============================================
+    # 适用规则匹配（Phase 2）
+    # ============================================
+
+    def get_applicable_rules(
+        self,
+        context: Dict[str, Any],
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """根据上下文返回匹配的 active 规则
+
+        上下文字段（均为可选，缺失字段视为不参与匹配）：
+        - language: str，规则语言（如 "python"）
+        - file_path: str，文件相对路径（如 "cli/main.py"）
+        - symbol_kind: str，符号类型（如 "function"/"method"/"class"）
+        - action: str，动作类型（如 "edit"/"fix"/"review"）
+        - finding_type: str，发现类型（如 "i18n"/"semgrep"/"signature"）
+        - module_prefix: str，模块前缀（如 "cli." 或 "server."）
+        - task_id: str，任务 ID（用于按 evidence.task_id 匹配，但不影响 scope）
+
+        匹配规则（参见 docs/design/agent-rule-memory-plan.md）：
+        1. 空 scope 视为全局规则，匹配所有上下文。
+        2. 同一字段内是 OR：scope.languages=["python","go"] 匹配 language=python 或 go。
+        3. 不同字段之间是 AND：必须所有出现的字段都命中才算匹配。
+        4. file_patterns 支持 glob（如 "cli/*.py"）。
+        5. module_prefixes 是前缀匹配（"cli." 匹配 "cli.main"）。
+
+        排序：severity 优先级 + 匹配精度（命中字段数）+ updated_at 倒序。
+
+        Args:
+            context: 上下文 dict
+            limit: 返回数量上限
+
+        Returns:
+            匹配的规则列表，每个元素为 dict：
+            {id, title, rule_text, scope, severity, status, source_candidate_id,
+             evidence, created_at, updated_at, synced_to_agents_md, sync_hash,
+             matched_scope}
+            matched_scope 是命中的字段标签列表（如 ["language:python", "action:edit"]），
+            便于 Agent 在日志/调试中看到为什么这条规则被选中。
+        """
+        if limit <= 0:
+            return []
+
+        # 一次查询所有 active 规则，再在内存中做匹配
+        # 限制扫描上限为 500，避免极端情况扫描过多
+        cur = self.conn.execute(
+            """
+            SELECT id, title, rule_text, scope_json, severity, status,
+                   source_candidate_id, evidence_json, created_at, updated_at,
+                   synced_to_agents_md, sync_hash
+            FROM agent_rules
+            WHERE status = ?
+            ORDER BY updated_at DESC
+            LIMIT 500
+            """,
+            (RULE_STATUS_ACTIVE,),
+        )
+        all_rules = [dict(row) for row in cur]
+
+        matched: List[Dict[str, Any]] = []
+        for rule_row in all_rules:
+            scope = _deserialize_scope(rule_row.get("scope_json", "{}"))
+            # 空 scope 视为全局规则
+            if not scope:
+                rule_dict = self._row_to_rule(rule_row)
+                rule_dict["matched_scope"] = ["global"]
+                matched.append(rule_dict)
+                continue
+
+            matched_labels, ok = self._match_scope(scope, context)
+            if ok:
+                rule_dict = self._row_to_rule(rule_row)
+                rule_dict["matched_scope"] = matched_labels
+                matched.append(rule_dict)
+
+        # 排序：severity 优先级 → 匹配精度（命中字段数倒序）→ updated_at 倒序
+        matched.sort(
+            key=lambda r: (
+                -SEVERITY_ORDER.get(r["severity"], 0),
+                -len(r.get("matched_scope", [])),
+                -r.get("updated_at", 0.0),
+            )
+        )
+
+        return matched[:limit]
+
+    def _match_scope(
+        self,
+        scope: Dict[str, Any],
+        context: Dict[str, Any],
+    ) -> tuple:
+        """匹配单个 scope dict 与上下文
+
+        Args:
+            scope: 规则作用域 dict
+            context: 上下文 dict
+
+        Returns:
+            (matched_labels, ok) 元组：
+            - matched_labels: 命中的字段标签列表（如 ["language:python"]）
+            - ok: True 表示所有出现的字段都命中
+        """
+        import fnmatch
+
+        labels: List[str] = []
+        # 1. languages
+        scope_langs = scope.get("languages") or []
+        if scope_langs:
+            ctx_lang = (context.get("language") or "").lower()
+            if not ctx_lang or ctx_lang not in [s.lower() for s in scope_langs]:
+                return ([], False)
+            labels.append(f"language:{ctx_lang}")
+
+        # 2. file_patterns（glob）
+        scope_patterns = scope.get("file_patterns") or []
+        if scope_patterns:
+            ctx_file = context.get("file_path") or ""
+            if not ctx_file:
+                return ([], False)
+            if not any(fnmatch.fnmatch(ctx_file, pat) for pat in scope_patterns):
+                return ([], False)
+            labels.append(f"file:{ctx_file}")
+
+        # 3. symbol_kinds
+        scope_kinds = scope.get("symbol_kinds") or []
+        if scope_kinds:
+            ctx_kind = (context.get("symbol_kind") or "").lower()
+            if not ctx_kind or ctx_kind not in [s.lower() for s in scope_kinds]:
+                return ([], False)
+            labels.append(f"symbol_kind:{ctx_kind}")
+
+        # 4. actions
+        scope_actions = scope.get("actions") or []
+        if scope_actions:
+            ctx_action = (context.get("action") or "").lower()
+            if not ctx_action or ctx_action not in [s.lower() for s in scope_actions]:
+                return ([], False)
+            labels.append(f"action:{ctx_action}")
+
+        # 5. finding_types
+        scope_findings = scope.get("finding_types") or []
+        if scope_findings:
+            ctx_ftype = (context.get("finding_type") or "").lower()
+            if not ctx_ftype or ctx_ftype not in [s.lower() for s in scope_findings]:
+                return ([], False)
+            labels.append(f"finding_type:{ctx_ftype}")
+
+        # 6. module_prefixes（前缀匹配）
+        scope_prefixes = scope.get("module_prefixes") or []
+        if scope_prefixes:
+            ctx_module = context.get("module_prefix") or ""
+            if not ctx_module or not any(
+                ctx_module.startswith(p) for p in scope_prefixes
+            ):
+                return ([], False)
+            labels.append(f"module:{ctx_module}")
+
+        return (labels, True)
+
+    # ============================================
     # 内部辅助
     # ============================================
 
