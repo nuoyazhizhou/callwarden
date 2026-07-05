@@ -663,6 +663,294 @@ class AgentRulesMixin:
         return created_ids
 
     # ============================================
+    # AGENTS.md 安全同步（Phase 6）
+    # ============================================
+
+    # 标记区起止标记
+    _MARKER_START = "<!-- CALLWARDEN_RULES_START -->"
+    _MARKER_END = "<!-- CALLWARDEN_RULES_END -->"
+    _MARKER_BLOCK_HINT = (
+        "<!-- 自动同步区域，请通过 cw rule sync 更新，不要手改 -->"
+    )
+
+    def rule_sync_agents_md(
+        self,
+        target_path: str = "AGENTS.md",
+        dry_run: bool = True,
+        actor: str = "agent",
+    ) -> Dict[str, Any]:
+        """把 active 规则同步到 AGENTS.md 标记区
+
+        设计目标：让无 MCP 的 Agent 也能从 AGENTS.md 看到已生效规则。
+        安全策略：
+        1. dry_run=True 默认只返回 preview，不写文件
+        2. apply（dry_run=False）只替换 CALLWARDEN_RULES_START/END 之间的内容
+        3. 标记区不存在时不静默改全文，返回 error + 建议插入块
+        4. 写入后记录 agent_rule_sync_log（before_hash/after_hash/rule_ids）
+        5. 同步后的规则标记 synced_to_agents_md=1
+
+        Args:
+            target_path: AGENTS.md 文件路径（相对 workspace_root 或绝对）
+            dry_run: True=只返回 preview，False=实际写入
+            actor: 操作者标识（写入 sync_log）
+
+        Returns:
+            dict 包含：
+            - success: bool
+            - dry_run: bool
+            - target_path: str
+            - rule_count: int（同步的规则数量）
+            - rule_ids: list[str]
+            - before_hash: str
+            - after_hash: str（dry_run 时为空）
+            - preview: str（dry_run 模式下的新内容预览）
+            - error: str（仅标记区不存在时）
+            - suggested_block: str（仅标记区不存在时，建议插入的标记块）
+        """
+        import hashlib
+
+        # 解析 target_path（相对 workspace_root 或绝对）
+        ws_root = getattr(self, "workspace_root", "") or ""
+        if os.path.isabs(target_path):
+            abs_path = target_path
+        elif ws_root:
+            abs_path = os.path.join(ws_root, target_path)
+        else:
+            abs_path = target_path
+
+        # 读取文件内容（不存在视为空）
+        if os.path.isfile(abs_path):
+            with open(abs_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        else:
+            content = ""
+        before_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+        # 查找标记区
+        start_idx = content.find(self._MARKER_START)
+        end_idx = content.find(self._MARKER_END)
+
+        if start_idx < 0 or end_idx < 0 or end_idx < start_idx:
+            # 标记区不存在：返回错误和建议插入块
+            suggested_block = (
+                f"\n\n## Call Warden 自动沉淀规则\n\n"
+                f"{self._MARKER_START}\n"
+                f"{self._MARKER_BLOCK_HINT}\n"
+                f"{self._MARKER_END}\n"
+            )
+            return {
+                "success": False,
+                "dry_run": dry_run,
+                "target_path": target_path,
+                "rule_count": 0,
+                "rule_ids": [],
+                "before_hash": before_hash,
+                "after_hash": "",
+                "error": t(
+                    "cli.messages.rule_sync_marker_not_found",
+                    default="Marker block not found in {path}. "
+                            "Insert the block first via --insert-block or manually.",
+                    path=target_path,
+                ),
+                "suggested_block": suggested_block,
+            }
+
+        # 拉取所有 active 规则
+        rules = self.rule_list(status=RULE_STATUS_ACTIVE, limit=500)
+        rule_ids = [r["id"] for r in rules]
+
+        # 构造标记区新内容：每条规则一段，含 id 便于追溯
+        lines = [self._MARKER_START, self._MARKER_BLOCK_HINT]
+        for r in rules:
+            lines.append(
+                f"- [{r['id']}] **{r['title']}** (severity: {r['severity']}): "
+                f"{r['rule_text']}"
+            )
+        lines.append(self._MARKER_END)
+        new_marker_content = "\n".join(lines)
+
+        # 替换标记区内容
+        new_content = (
+            content[:start_idx]
+            + new_marker_content
+            + content[end_idx + len(self._MARKER_END):]
+        )
+        after_hash = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
+
+        result: Dict[str, Any] = {
+            "success": True,
+            "dry_run": dry_run,
+            "target_path": target_path,
+            "rule_count": len(rules),
+            "rule_ids": rule_ids,
+            "before_hash": before_hash,
+            "after_hash": after_hash,
+            "preview": new_marker_content if dry_run else "",
+        }
+
+        if dry_run:
+            # dry_run 只返回 preview，不写文件，不记录 sync_log
+            return result
+
+        # apply 模式：写文件
+        try:
+            with open(abs_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as exc:
+            return {
+                "success": False,
+                "dry_run": False,
+                "target_path": target_path,
+                "rule_count": 0,
+                "rule_ids": [],
+                "before_hash": before_hash,
+                "after_hash": "",
+                "error": t(
+                    "cli.messages.rule_sync_write_failed",
+                    default="Failed to write {path}: {error}",
+                    path=target_path,
+                    error=exc,
+                ),
+            }
+
+        # 写 agent_rule_sync_log
+        sync_log_id = _gen_rule_id("ARSL")
+        now = time.time()
+        self.conn.execute(
+            """
+            INSERT INTO agent_rule_sync_log
+                (id, target_path, rule_ids_json, before_hash, after_hash,
+                 dry_run, created_at, actor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sync_log_id,
+                target_path,
+                json.dumps(rule_ids, ensure_ascii=False),
+                before_hash,
+                after_hash,
+                0,  # dry_run=0 表示实际写入
+                now,
+                actor,
+            ),
+        )
+
+        # 标记规则为已同步
+        if rule_ids:
+            placeholders = ",".join("?" * len(rule_ids))
+            self.conn.execute(
+                f"UPDATE agent_rules SET synced_to_agents_md = 1, "
+                f"sync_hash = ? WHERE id IN ({placeholders})",
+                [after_hash] + rule_ids,
+            )
+
+        self.conn.commit()
+        return result
+
+    def rule_insert_agents_md_block(
+        self,
+        target_path: str = "AGENTS.md",
+        actor: str = "agent",
+    ) -> Dict[str, Any]:
+        """在 AGENTS.md 末尾插入 Call Warden 规则标记块
+
+        当标记区不存在时，调用此方法插入空标记块，
+        之后 rule_sync_agents_md 才能正常工作。
+
+        Args:
+            target_path: AGENTS.md 文件路径
+            actor: 操作者标识
+
+        Returns:
+            dict 包含 success / target_path / message
+        """
+        import hashlib
+
+        ws_root = getattr(self, "workspace_root", "") or ""
+        if os.path.isabs(target_path):
+            abs_path = target_path
+        elif ws_root:
+            abs_path = os.path.join(ws_root, target_path)
+        else:
+            abs_path = target_path
+
+        if os.path.isfile(abs_path):
+            with open(abs_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        else:
+            content = ""
+
+        # 检查标记区是否已存在
+        if self._MARKER_START in content:
+            return {
+                "success": False,
+                "target_path": target_path,
+                "message": t(
+                    "cli.messages.rule_sync_block_already_exists",
+                    default="Marker block already exists in {path}",
+                    path=target_path,
+                ),
+            }
+
+        # 在文件末尾追加标记块
+        block = (
+            f"\n\n## Call Warden 自动沉淀规则\n\n"
+            f"{self._MARKER_START}\n"
+            f"{self._MARKER_BLOCK_HINT}\n"
+            f"{self._MARKER_END}\n"
+        )
+        new_content = content + block
+        try:
+            with open(abs_path, "w", encoding="utf-8") as f:
+                f.write(new_content)
+        except Exception as exc:
+            return {
+                "success": False,
+                "target_path": target_path,
+                "message": t(
+                    "cli.messages.rule_sync_write_failed",
+                    default="Failed to write {path}: {error}",
+                    path=target_path,
+                    error=exc,
+                ),
+            }
+
+        # 记录 sync_log（dry_run=1，仅标记插入操作）
+        before_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        after_hash = hashlib.sha256(new_content.encode("utf-8")).hexdigest()
+        sync_log_id = _gen_rule_id("ARSL")
+        now = time.time()
+        self.conn.execute(
+            """
+            INSERT INTO agent_rule_sync_log
+                (id, target_path, rule_ids_json, before_hash, after_hash,
+                 dry_run, created_at, actor)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sync_log_id,
+                target_path,
+                "[]",
+                before_hash,
+                after_hash,
+                1,  # dry_run=1 表示仅插入标记块
+                now,
+                actor,
+            ),
+        )
+        self.conn.commit()
+
+        return {
+            "success": True,
+            "target_path": target_path,
+            "message": t(
+                "cli.messages.rule_sync_block_inserted",
+                default="Marker block inserted into {path}",
+                path=target_path,
+            ),
+        }
+
+    # ============================================
     # 适用规则匹配（Phase 2）
     # ============================================
 
