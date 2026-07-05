@@ -22,7 +22,7 @@ except ImportError:
     HAS_FASTMCP = False
 
 from ..db import CodeGraphDB
-from ..config import PROJECT_ROOT, DB_PATH
+from ..config import PROJECT_ROOT
 from ..i18n import t
 
 

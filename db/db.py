@@ -35,7 +35,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..config import DB_PATH
 from .db_base import CodeGraphBase
 from .db_build import BuildMixin
 from .db_query import QueryMixin

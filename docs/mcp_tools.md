@@ -1074,7 +1074,7 @@ Client 配置指向 `http://localhost:<port>/sse`（默认端口由 FastMCP 决�
 # 1. 宿主机安装
 pip install tree-sitter tree-sitter-languages fastmcp
 
-# 2. 数据库放在 $HOME/.callwarden/（所有容器共享 $HOME）
+# 2. 数据库放在 $HOME/.callwarden/<16位hash>/（所有容器共享 $HOME）
 # 3. 每个容器配置 MCP client 指向同一数据库路径
 ```
 

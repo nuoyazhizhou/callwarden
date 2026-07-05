@@ -287,7 +287,7 @@ class CodeGraphDB(
 ):
     """代码知识图谱数据库 - 整合所有功能模块的主类"""
 
-    def __init__(self, db_path: str = DB_PATH, workspace_root: Optional[str] = None):
+    def __init__(self, db_path: str = "", workspace_root: Optional[str] = None):
         super().__init__(db_path=db_path, workspace_root=workspace_root)
 ```
 

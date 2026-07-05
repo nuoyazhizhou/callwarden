@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Set
 
 from ..config import (
-    DB_PATH, norm_path, read_file_normalized,
+    norm_path, read_file_normalized,
     detect_language_from_path, get_supported_extensions, compute_content_hash,
     detect_project_root, get_default_workspace_name, get_project_db_path,
 )

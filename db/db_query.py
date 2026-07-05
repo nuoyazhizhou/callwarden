@@ -160,9 +160,11 @@ class QueryMixin:
         cur = self.conn.execute("SELECT COUNT(*) as c FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ? AND s.has_comment = 0 AND s.kind IN ('fn','test_fn','method')", (ws_id,))
         uncommented_fns = cur.fetchone()["c"]
 
-        db_path = os.path.join(os.path.expanduser("~"), ".callwarden", "callwarden.db")
+        # 使用 self.db_path（已按工作区 hash 自动计算），避免硬编码路径
+        # 旧代码写死 ~/.callwarden/callwarden.db，但实际路径是 ~/.callwarden/{hash}/callwarden.db
+        db_path = self.db_path
         db_size = 0
-        if os.path.exists(db_path):
+        if db_path and os.path.exists(db_path):
             db_size = os.path.getsize(db_path)
 
         last_parsed_times = []
