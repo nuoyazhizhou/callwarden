@@ -98,6 +98,12 @@ Call Warden CLI 提供两种命令风格：
 | | `install --all` | sub | 安装全部依赖（含可选） |
 | | `install --lang <LANG...>` | sub | 仅安装指定语言 grammar |
 | | `install --check` | sub | 检查依赖状态 |
+| **Rule Memory** | `rule candidate create/list/accept/reject` | sub | 候选规则 CRUD 与审核 |
+| | `rule list` | sub | 列出已生效规则 |
+| | `rule applicable` | sub | 按上下文查询匹配规则 |
+| | `rule sync [--apply]` | sub | 同步 active 规则到 AGENTS.md 标记区 |
+| | `rule insert-block` | sub | 在 AGENTS.md 末尾插入规则标记块 |
+| | `rule extract` | sub | 从 task_quality_findings 聚合候选 |
 
 > `install` 是独立子命令，调用方式为 `cw install [options]`。
 
@@ -957,6 +963,122 @@ cw --function-issues --issue-module src/api
 ```bash
 cw --issue-summary
 ```
+
+---
+
+## Agent Rule Memory 命令
+
+Agent Rule Memory 提供项目规则的「候选 → 审核 → 生效 → 注入 → 同步」全生命周期管理。
+规则候选默认 pending，必须 accept 后才会写入 `agent_rules` 并参与上下文注入；
+active 规则可同步到 AGENTS.md 标记区，让无 MCP 的 Agent 也能读到。
+
+### `rule candidate create`：创建候选规则
+
+```bash
+cw rule candidate create --title "use i18n" --text "禁止硬编码字符串" \
+    --severity warning \
+    --scope '{"languages":["python"],"actions":["edit"]}' \
+    --source manual \
+    --evidence '{"task_id":"T-xxx","occurrences":3}' \
+    --confidence 0.8
+```
+
+必填：`--title` / `--text`。其余可选，`--severity` 默认 `info`，`--source` 默认 `manual`。
+
+### `rule candidate list`：列出候选规则
+
+```bash
+cw rule candidate list                       # 默认 pending
+cw rule candidate list --status accepted    # 已接受
+cw rule candidate list --status ""           # 所有状态
+cw rule candidate list --limit 20
+```
+
+### `rule candidate accept`：接受候选 -> active 规则
+
+```bash
+cw rule candidate accept ARC-1783253838000-a1b2
+cw rule candidate accept ARC-1783253838000-a1b2 --reviewer human
+```
+
+幂等：重复 accept 已 accepted 的 candidate 会返回原 `linked_rule_id`。
+
+### `rule candidate reject`：拒绝候选规则
+
+```bash
+cw rule candidate reject ARC-1783253838000-a1b2
+cw rule candidate reject ARC-1783253838000-a1b2 --reason "duplicate"
+```
+
+### `rule list`：列出已生效规则
+
+```bash
+cw rule list                       # 默认 active
+cw rule list --status deprecated   # 已弃用
+cw rule list --status ""           # 所有状态
+cw rule list --limit 50
+```
+
+输出含每条规则的 `id` / `title` / `severity` / `synced` 标记 / `scope`。
+
+### `rule applicable`：按上下文查询匹配规则
+
+```bash
+cw rule applicable
+cw rule applicable --context '{"languages":["python"],"actions":["edit"]}'
+cw rule applicable --context '{"file_patterns":["src/api/**/*.py"]}' --limit 5
+```
+
+返回按 `severity → 命中字段数 → updated_at` 排序的匹配规则。
+
+### `rule sync`：同步 active 规则到 AGENTS.md
+
+```bash
+# 默认 dry-run，只返回 preview，不写文件
+cw rule sync
+cw rule sync --target AGENTS.md
+
+# 实际写入文件（只改 marker block，不触碰人工内容）
+cw rule sync --apply
+cw rule sync --target path/to/AGENTS.md --apply --actor human
+```
+
+标记区格式：
+
+```markdown
+## Call Warden 自动沉淀规则
+
+<!-- CALLWARDEN_RULES_START -->
+<!-- 自动同步区域，请通过 cw rule sync 更新，不要手改 -->
+- [AR-xxx] **rule-title** (severity: warning): rule text
+<!-- CALLWARDEN_RULES_END -->
+```
+
+apply 模式会：
+1. 只替换 `CALLWARDEN_RULES_START/END` 之间的内容
+2. 写入 `agent_rule_sync_log`（before_hash / after_hash / rule_ids）
+3. 标记规则的 `synced_to_agents_md=1` 与 `sync_hash`
+
+### `rule insert-block`：插入标记块
+
+```bash
+cw rule insert-block
+cw rule insert-block --target path/to/AGENTS.md
+```
+
+当 AGENTS.md 还没有 Call Warden 标记区时调用此命令插入空标记块，
+之后 `rule sync` 才能正常工作。重复插入会返回失败。
+
+### `rule extract`：从质量发现聚合候选规则
+
+```bash
+cw rule extract                                # 扫描全库
+cw rule extract --task-id T-1783253838000-xxx  # 指定任务
+cw rule extract --min-occurrences 3            # 提高阈值
+```
+
+聚合维度：`(finding_type, severity, source)`。同一聚合键出现次数 ≥
+`min_occurrences`（默认 2）时生成 1 个 pending 候选规则，自动去重。
 
 ---
 
