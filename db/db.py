@@ -29,6 +29,7 @@ db.py
 - LspMixin: LSP 集成（hover/definition/references/diagnostics/completion）
 - GCMixin: 代码图谱 GC（归档被 .gitignore/.callwardenignore 命中的文件，类 Java GC 分代回收）
 - TaskAttributionMixin: 任务-符号变更归因（task/step/edit 到 symbol version 的解释层）
+- TaskQualityMixin: 任务质量门禁（finding 记录/查询/解决/阻断判断/修复步骤插入）
 """
 
 from __future__ import annotations
@@ -60,6 +61,7 @@ from .db_gc import GCMixin
 from .db_stdlib import StdlibMixin
 from .db_external import ExternalMixin
 from .db_task_attribution import TaskAttributionMixin
+from .db_task_quality import TaskQualityMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -91,6 +93,7 @@ class CodeGraphDB(
     StdlibMixin,
     ExternalMixin,
     TaskAttributionMixin,
+    TaskQualityMixin,
 ):
     """代码知识图谱数据库
 

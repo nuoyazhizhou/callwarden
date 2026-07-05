@@ -217,3 +217,309 @@ def test_legacy_v20_db_migrates_to_v21_via_init_schema():
         assert cur.fetchone() is not None, "v21 migration not recorded"
     finally:
         db.close()
+
+
+# ============================================
+# TaskQualityMixin 业务方法测试
+# ============================================
+
+def _create_task_with_step(db, title="quality-test", step_count=1):
+    """辅助：创建带 1 个步骤的任务，返回 (task_id, [step_dict])"""
+    steps = [{"action": "edit", "target_file": "sample.py"} for _ in range(step_count)]
+    task_id = db.task_create(title, steps=steps)
+    return task_id
+
+
+def test_record_task_quality_finding_returns_id():
+    """record_task_quality_finding 成功写入返回 finding_id > 0"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        fid = db.record_task_quality_finding(
+            task_id=task_id,
+            finding_type="semgrep",
+            severity="warn",
+            message="unused import",
+            source="semgrep",
+        )
+        assert isinstance(fid, int)
+        assert fid > 0
+    finally:
+        db.close()
+
+
+def test_record_task_quality_finding_invalid_input_returns_zero():
+    """空 task_id / 空 message / 非法 severity 都返回 0"""
+    db, _root = _db_with_workspace()
+    try:
+        assert db.record_task_quality_finding(task_id="", message="x") == 0
+        task_id = _create_task_with_step(db)
+        assert db.record_task_quality_finding(task_id=task_id, message="") == 0
+        # 非法 severity 应回退为 warn
+        fid = db.record_task_quality_finding(
+            task_id=task_id, message="x", severity="bogus"
+        )
+        assert fid > 0
+        findings = db.get_task_quality_findings(task_id)
+        assert findings[0]["severity"] == "warn"
+    finally:
+        db.close()
+
+
+def test_record_task_quality_finding_serializes_evidence():
+    """evidence dict 自动 JSON 序列化"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        evidence = {"rule_id": "python-unused", "line": 10}
+        fid = db.record_task_quality_finding(
+            task_id=task_id, message="x", evidence=evidence
+        )
+        findings = db.get_task_quality_findings(task_id)
+        import json as _json
+        parsed = _json.loads(findings[0]["evidence"])
+        assert parsed["rule_id"] == "python-unused"
+        assert parsed["line"] == 10
+    finally:
+        db.close()
+
+
+def test_get_task_quality_findings_filters():
+    """get_task_quality_findings 支持 status / severity 过滤"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        # 写入 3 个 finding：warn-open, error-open, warn-resolved
+        f1 = db.record_task_quality_finding(task_id, severity="warn", message="m1")
+        f2 = db.record_task_quality_finding(task_id, severity="error", message="m2")
+        f3 = db.record_task_quality_finding(task_id, severity="warn", message="m3")
+        db.resolve_task_quality_finding(f3)
+
+        # status=open 应返回 2 个
+        open_findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(open_findings) == 2
+
+        # status=open + severity=error 应返回 1 个
+        err_findings = db.get_task_quality_findings(
+            task_id, status="open", severity="error"
+        )
+        assert len(err_findings) == 1
+        assert err_findings[0]["id"] == f2
+
+        # status=all 应返回 3 个
+        all_findings = db.get_task_quality_findings(task_id, status="all")
+        assert len(all_findings) == 3
+    finally:
+        db.close()
+
+
+def test_get_task_quality_findings_ordered_by_created_at_asc():
+    """findings 按创建时间升序排列（旧的先处理）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        import time as _time
+        f1 = db.record_task_quality_finding(task_id, message="first")
+        _time.sleep(0.05)
+        f2 = db.record_task_quality_finding(task_id, message="second")
+        findings = db.get_task_quality_findings(task_id, status="all")
+        assert findings[0]["id"] == f1
+        assert findings[1]["id"] == f2
+    finally:
+        db.close()
+
+
+def test_resolve_task_quality_finding_fixed():
+    """resolve_task_quality_finding 'fixed' 将 status 改为 resolved"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        fid = db.record_task_quality_finding(task_id, message="x")
+        result = db.resolve_task_quality_finding(fid, resolution="fixed")
+        assert result["success"] is True
+        assert result["status"] == "resolved"
+        findings = db.get_task_quality_findings(task_id, status="all")
+        assert findings[0]["status"] == "resolved"
+        assert findings[0]["resolved_at"] is not None
+        assert findings[0]["resolved_by"] == "agent"
+    finally:
+        db.close()
+
+
+def test_resolve_task_quality_finding_wontfix():
+    """resolve_task_quality_finding 'wontfix' 将 status 改为 wontfix"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        fid = db.record_task_quality_finding(task_id, message="x")
+        result = db.resolve_task_quality_finding(fid, resolution="wontfix")
+        assert result["status"] == "wontfix"
+    finally:
+        db.close()
+
+
+def test_resolve_task_quality_finding_not_found():
+    """不存在的 finding_id 返回 success=False"""
+    db, _root = _db_with_workspace()
+    try:
+        result = db.resolve_task_quality_finding(99999)
+        assert result["success"] is False
+    finally:
+        db.close()
+
+
+def test_resolve_task_quality_finding_zero_id():
+    """finding_id=0 返回 success=False"""
+    db, _root = _db_with_workspace()
+    try:
+        result = db.resolve_task_quality_finding(0)
+        assert result["success"] is False
+    finally:
+        db.close()
+
+
+def test_task_has_blocking_findings_false_when_no_findings():
+    """无 finding 时返回 False"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        assert db.task_has_blocking_findings(task_id) is False
+    finally:
+        db.close()
+
+
+def test_task_has_blocking_findings_false_for_warn():
+    """warn/info 级别 finding 不阻塞"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        db.record_task_quality_finding(task_id, severity="warn", message="x")
+        db.record_task_quality_finding(task_id, severity="info", message="y")
+        assert db.task_has_blocking_findings(task_id) is False
+    finally:
+        db.close()
+
+
+def test_task_has_blocking_findings_true_for_error():
+    """open error/block finding 阻塞"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        db.record_task_quality_finding(task_id, severity="error", message="x")
+        assert db.task_has_blocking_findings(task_id) is True
+
+        # block 也阻塞
+        task_id2 = _create_task_with_step(db, title="t2")
+        db.record_task_quality_finding(task_id2, severity="block", message="y")
+        assert db.task_has_blocking_findings(task_id2) is True
+    finally:
+        db.close()
+
+
+def test_task_has_blocking_findings_false_after_resolved():
+    """resolved/wontfix 的 error finding 不阻塞"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        fid = db.record_task_quality_finding(task_id, severity="error", message="x")
+        assert db.task_has_blocking_findings(task_id) is True
+        db.resolve_task_quality_finding(fid, resolution="fixed")
+        assert db.task_has_blocking_findings(task_id) is False
+    finally:
+        db.close()
+
+
+def test_insert_fix_quality_gate_step_creates_step():
+    """insert_fix_quality_gate_step 创建 fix_quality_gate_failure 步骤"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        source_step_id = step["step_id"]
+
+        findings = [
+            {"id": 1, "severity": "error", "finding_type": "semgrep",
+             "message": "sql injection", "source": "semgrep"},
+            {"id": 2, "severity": "block", "finding_type": "call_chain",
+             "message": "signature changed", "source": "call_chain"},
+        ]
+        new_step_id = db.insert_fix_quality_gate_step(task_id, source_step_id, findings)
+        assert new_step_id != ""
+
+        # 验证 step 写入正确
+        cur = db.conn.execute(
+            "SELECT * FROM task_steps WHERE id = ?",
+            (new_step_id,),
+        )
+        row = cur.fetchone()
+        assert row["action"] == "fix_quality_gate_failure"
+        assert row["target_symbol"] == source_step_id
+        assert row["status"] == "pending"
+        # check_items 包含两条 finding 的修复提示
+        assert "semgrep" in row["check_items"]
+        assert "sql injection" in row["check_items"]
+        assert "call_chain" in row["check_items"]
+        # result 包含 findings JSON 摘要
+        import json as _json
+        result_json = _json.loads(row["result"])
+        assert len(result_json) == 2
+        assert result_json[0]["id"] == 1
+    finally:
+        db.close()
+
+
+def test_insert_fix_quality_gate_step_appends_to_end():
+    """新 step 追加到末尾，step_index 正确递增"""
+    db, _root = _db_with_workspace()
+    try:
+        # 创建带 2 个步骤的任务
+        task_id = db.task_create(
+            "multi-step",
+            steps=[
+                {"action": "edit", "target_file": "a.py"},
+                {"action": "edit", "target_file": "b.py"},
+            ],
+        )
+        # 获取第二个 step 作为 source
+        s1 = db.task_next_step(task_id)
+        db.task_report_step(task_id, s1["step_id"], result="done")
+        s2 = db.task_next_step(task_id)
+
+        new_step_id = db.insert_fix_quality_gate_step(
+            task_id, s2["step_id"], [{"id": 1, "severity": "error",
+                                      "finding_type": "x", "message": "y"}]
+        )
+        cur = db.conn.execute(
+            "SELECT step_index FROM task_steps WHERE id = ?",
+            (new_step_id,),
+        )
+        assert cur.fetchone()["step_index"] == 2
+    finally:
+        db.close()
+
+
+def test_insert_fix_quality_gate_step_empty_task_id():
+    """空 task_id 返回空字符串"""
+    db, _root = _db_with_workspace()
+    try:
+        result = db.insert_fix_quality_gate_step("", "src-step", [])
+        assert result == ""
+    finally:
+        db.close()
+
+
+def test_record_finding_with_step_id():
+    """record_task_quality_finding 关联 step_id"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        fid = db.record_task_quality_finding(
+            task_id=task_id,
+            step_id=step["step_id"],
+            message="x",
+        )
+        findings = db.get_task_quality_findings(task_id)
+        assert findings[0]["step_id"] == step["step_id"]
+    finally:
+        db.close()
