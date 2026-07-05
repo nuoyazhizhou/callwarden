@@ -572,6 +572,22 @@ class QueryMixin:
         cur = self.conn.execute(in_sql, (ws_id, qualified_name))
         result["called_by"] = [dict(row) for row in cur]
 
+        # 注入 applicable_rules（fail-soft：无 AgentRulesMixin 或异常时降级为空列表）
+        # 上下文：qualified_name / file_path / kind / 推断 language
+        if hasattr(self, "get_applicable_rules_for_symbol"):
+            try:
+                result["applicable_rules"] = self.get_applicable_rules_for_symbol(
+                    qualified_name=result.get("qualified_name", qualified_name),
+                    file_path=result.get("file_path", ""),
+                    kind=result.get("kind", ""),
+                    limit=5,
+                )
+            except Exception:
+                result["applicable_rules"] = []
+        else:
+            # 兼容未启用 AgentRulesMixin 的部署
+            result["applicable_rules"] = []
+
         return result
 
     def get_symbol_by_name_and_file(self, symbol_name: str, file_path: str) -> Optional[Dict]:

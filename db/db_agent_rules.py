@@ -25,6 +25,7 @@ Agent Rule Memory Mixin。
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
 from typing import Any, Dict, List, Optional
@@ -720,3 +721,118 @@ class AgentRulesMixin:
             "synced_to_agents_md": bool(row.get("synced_to_agents_md", 0)),
             "sync_hash": row.get("sync_hash", ""),
         }
+
+    # ============================================
+    # 符号/文件入口注入辅助
+    # ============================================
+
+    # 语言扩展名映射表（与 db_tasks._build_rule_context_for_step 保持一致）
+    _EXT_LANG_MAP = {
+        ".py": "python",
+        ".rs": "rust",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".go": "go",
+        ".java": "java",
+        ".kt": "kotlin",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".cc": "cpp",
+        ".cs": "csharp",
+        ".rb": "ruby",
+        ".php": "php",
+        ".swift": "swift",
+        ".scala": "scala",
+    }
+
+    def build_rule_context_for_symbol(
+        self,
+        qualified_name: str = "",
+        file_path: str = "",
+        kind: str = "",
+    ) -> Dict[str, Any]:
+        """根据符号信息构造规则匹配上下文
+
+        供 get_symbol / file_symbol_content 等函数级入口复用：
+        - 从 file_path 扩展名推断 language
+        - 从 qualified_name 推断 module_prefix（取 . 或 :: 分隔后的前缀）
+        - kind 直接作为 symbol_kind
+
+        Args:
+            qualified_name: 符号限定名（如 "cli.main.handle" / "mod::Sub::fn"）
+            file_path: 文件相对路径
+            kind: 符号类型（function/method/class 等）
+
+        Returns:
+            上下文 dict，可传入 get_applicable_rules
+        """
+        context: Dict[str, Any] = {}
+        if file_path:
+            context["file_path"] = file_path
+            _, ext = os.path.splitext(file_path)
+            lang = self._EXT_LANG_MAP.get(ext.lower())
+            if lang:
+                context["language"] = lang
+
+        if kind:
+            # symbol_kind 规范化为小写，与 _match_scope 中的比较保持一致
+            context["symbol_kind"] = kind.lower()
+
+        if qualified_name:
+            # 从限定名推断 module_prefix（取最后一段之前的部分）
+            if "::" in qualified_name:
+                prefix = qualified_name.rsplit("::", 1)[0]
+            elif "." in qualified_name:
+                prefix = qualified_name.rsplit(".", 1)[0]
+            else:
+                prefix = ""
+            if prefix:
+                context["module_prefix"] = prefix
+
+        return context
+
+    def get_applicable_rules_for_symbol(
+        self,
+        qualified_name: str = "",
+        file_path: str = "",
+        kind: str = "",
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """根据符号信息返回匹配的 active 规则
+
+        封装 build_rule_context_for_symbol + get_applicable_rules，
+        供 get_symbol / file_symbol_content 等函数级入口直接调用。
+
+        fail-soft：任何异常都返回空列表，不影响符号读取主流程。
+
+        Args:
+            qualified_name: 符号限定名
+            file_path: 文件相对路径
+            kind: 符号类型
+            limit: 返回数量上限
+
+        Returns:
+            适用规则列表，每条含 id/title/rule_text/severity/matched_scope
+        """
+        try:
+            context = self.build_rule_context_for_symbol(
+                qualified_name=qualified_name,
+                file_path=file_path,
+                kind=kind,
+            )
+            rules = self.get_applicable_rules(context, limit=limit)
+            # 精简字段，避免返回过大
+            return [
+                {
+                    "id": r.get("id", ""),
+                    "title": r.get("title", ""),
+                    "rule_text": r.get("rule_text", ""),
+                    "severity": r.get("severity", "info"),
+                    "matched_scope": r.get("matched_scope", []),
+                }
+                for r in rules
+            ]
+        except Exception:
+            return []
