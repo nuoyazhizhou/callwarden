@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露约 120 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露约 160 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -48,6 +48,7 @@ cw server --transport sse    # SSE 模式
 | 检查门禁 | 2 | 运行门禁/标记解决 |
 | 工作区管理 | 6 | 列出/注册/切换/删除/活动/构建目录 |
 | 文件操作 | 3 | 移除/构建目录/符号内容 |
+| Agent Rule Memory | 9 | 候选规则 CRUD/审核、规则列表、上下文匹配、AGENTS.md 同步、标记块插入、自动提取 |
 
 ---
 
@@ -1098,6 +1099,114 @@ RAG 管道：基于调用链增强的代码库问答上下文组装。组装完�
 导出模块依赖图。
 - **参数**：`format: str = "mermaid"` — mermaid/dot
 - **返回**：`str`
+
+---
+
+## Agent Rule Memory 工具（AgentRulesMixin）
+
+Agent Rule Memory 是 Call Warden 的项目规则记忆系统，支持"候选规则 → 审核 → 生效 → 注入 → 同步 AGENTS.md"全链路。Agent 在任务执行过程中观察到的规律可沉淀为候选规则，经审核后写入 `agent_rules`，再按上下文匹配注入到 `task_next_step` / `work_next_job` / `get_symbol` / `file_symbol_content` 的返回值中。
+
+**scope 匹配规则**：
+- 空 scope = 全局匹配
+- 同字段内多值 OR 匹配（如 `languages: [python, rust]`）
+- 不同字段间 AND 匹配
+- `file_patterns` 支持 glob；`module_prefixes` 前缀匹配
+
+**排序**：severity 优先级 → 命中字段数 → `updated_at` 倒序。
+
+### `rule_candidate_create`
+创建候选规则（pending 状态）。Agent 观察到的规则候选需走审核流程：创建 → 审核（accept/reject）→ 写入 `agent_rules` 生效。
+- **参数**：
+  - `title: str` — 规则标题（简短描述）
+  - `rule_text: str` — 规则正文（Agent 注入时会原文返回）
+  - `scope: dict = {}` — 作用域，支持 `languages` / `file_patterns` / `symbol_kinds` / `actions` / `finding_types` / `module_prefixes`
+  - `severity: str = "info"` — `critical` / `error` / `warning` / `info`
+  - `source: str = "manual"` — `manual` / `auto_quality_findings` / `auto_semgrep` / `task_review` / `other`
+  - `evidence: dict = {}` — 证据（如 `task_id`、`occurrences` 等）
+  - `confidence: float = 0.0` — 置信度 0.0-1.0
+- **返回**：`{"candidate_id": "ARC-xxx"}`，失败返回 `{"error": str}`
+
+### `rule_candidate_list`
+列出候选规则。
+- **参数**：
+  - `status: str = "pending"` — `pending` / `accepted` / `rejected`，空串返回所有
+  - `limit: int = 50` — 返回数量上限
+- **返回**：`{"candidates": [...], "count": int}`
+
+### `rule_candidate_accept`
+接受候选规则，写入 `agent_rules`（active）。幂等：重复 accept 已 accepted 的 candidate 会返回原 `linked_rule_id`。
+- **参数**：
+  - `candidate_id: str` — 候选规则 ID（`ARC-xxx`）
+  - `reviewer: str = "agent"` — 审核人标识
+- **返回**：`{"rule_id": "AR-xxx"}`，失败返回 `{"error": str}`
+
+### `rule_candidate_reject`
+拒绝候选规则。
+- **参数**：
+  - `candidate_id: str` — 候选规则 ID（`ARC-xxx`）
+  - `reviewer: str = "agent"` — 审核人标识
+  - `reason: str = ""` — 拒绝原因（可选）
+- **返回**：`{"rejected": bool}`，失败返回 `{"error": str, "rejected": False}`
+
+### `rule_list`
+列出已生效规则。
+- **参数**：
+  - `status: str = "active"` — `active` / `deprecated` / `removed`，空串返回所有
+  - `limit: int = 100` — 返回数量上限
+- **返回**：`{"rules": [...], "count": int}`
+
+### `get_applicable_rules`
+按上下文返回匹配的 active 规则。注入点（`task_next_step` / `work_next_job` / `get_symbol` / `file_symbol_content`）内部均调用此工具的同名 db 方法。
+- **参数**：
+  - `context: dict` — 上下文，支持字段 `languages` / `file_patterns` / `symbol_kinds` / `actions` / `finding_types` / `module_prefixes`
+  - `limit: int = 10` — 返回数量上限
+- **返回**：`{"rules": [...], "count": int}`
+
+### `rule_sync_agents_md`
+把 active 规则同步到 AGENTS.md 标记区。
+
+**安全策略**：
+- `dry_run=True`（默认）只返回 preview，不写文件
+- apply 模式只替换 `CALLWARDEN_RULES_START` / `CALLWARDEN_RULES_END` 之间内容，不触碰人工维护区域
+- 标记区不存在时返回 `error` + `suggested_block`（需先调用 `rule_insert_agents_md_block`）
+- 写入后记录 `agent_rule_sync_log` 并标记规则 `synced_to_agents_md=1`
+
+标记区格式示例：
+
+```
+<!-- CALLWARDEN_RULES_START -->
+<!-- 自动同步区域，请通过 cw rule sync 更新，不要手改 -->
+1. [critical] 不要在 utils 中直接调用 db 层
+2. [warning] 新增 MCP 工具必须更新 docs/mcp_tools.md
+<!-- CALLWARDEN_RULES_END -->
+```
+
+- **参数**：
+  - `target_path: str = "AGENTS.md"` — AGENTS.md 文件路径（相对 workspace 或绝对）
+  - `dry_run: bool = True` — `True`=只返回 preview，`False`=实际写入
+  - `actor: str = "agent"` — 操作者标识
+- **返回**：`{"success": bool, "rule_count": int, "preview": str, ...}`，失败返回 `{"error": str, "success": False}`
+
+### `rule_insert_agents_md_block`
+在 AGENTS.md 末尾插入 Call Warden 规则标记块。当标记区不存在时调用此方法插入空标记块，之后 `rule_sync_agents_md` 才能正常工作。重复插入会返回失败。
+- **参数**：
+  - `target_path: str = "AGENTS.md"` — AGENTS.md 文件路径
+  - `actor: str = "agent"` — 操作者标识
+- **返回**：`{"success": bool, "target_path": str, "message": str}`，失败返回 `{"error": str, "success": False}`
+
+### `extract_rule_candidates_from_quality_findings`
+从 `task_quality_findings` 聚合重复问题生成候选规则。
+
+**聚合维度**：`(finding_type, severity, source)`
+- 同一聚合键 `count >= min_occurrences` 时生成 1 个 pending 候选
+- 去重：同一聚合键已有 pending 候选时跳过
+- `evidence` 保存 `finding_ids`（最多 10 条）和 `occurrences`
+- `confidence = min(1.0, occurrences/10)`
+
+- **参数**：
+  - `task_id: str = ""` — 任务 ID，空串则全库扫描
+  - `min_occurrences: int = 2` — 阈值
+- **返回**：`{"candidate_ids": [...], "count": int}`
 
 ---
 
