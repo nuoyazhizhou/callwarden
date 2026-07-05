@@ -88,6 +88,163 @@ def test_new_mcp_tools_registered():
     assert "gc_archive_import" in names
 
 
+def test_task_quality_gate_mcp_tools_registered():
+    """任务质量门禁 3 个 MCP 工具已注册"""
+    import asyncio
+
+    mcp = create_mcp_server()
+    tools = asyncio.run(mcp.list_tools())
+    names = {tool.name for tool in tools}
+    assert "task_completion_review" in names, "task_completion_review 未注册"
+    assert "task_quality_findings" in names, "task_quality_findings 未注册"
+    assert "task_resolve_quality_finding" in names, "task_resolve_quality_finding 未注册"
+
+
+def test_task_quality_findings_mcp_end_to_end():
+    """task_quality_findings / task_resolve_quality_finding 端到端"""
+    import asyncio
+    import callwarden.server.mcp_server as mcp_mod
+
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        task_id = db.task_create("quality-gate-test", steps=[{"action": "edit"}])
+
+        fid = db.record_task_quality_finding(
+            task_id, severity="warn", message="test-warn",
+        )
+        db.record_task_quality_finding(
+            task_id, severity="error", message="test-error",
+        )
+
+        mcp = create_mcp_server()
+        # monkey-patch get_db 让 MCP 工具使用我们的临时 db
+        orig_get_db = mcp_mod.get_db
+        mcp_mod.get_db = lambda workspace=None: db
+        try:
+            # 调用 task_quality_findings 工具（返回 list[dict]）
+            open_result = asyncio.run(
+                mcp.call_tool("task_quality_findings",
+                              {"task_id": task_id, "status": "open", "severity": ""})
+            )
+            open_findings = _extract_tool_payload_list(open_result)
+            assert len(open_findings) == 2
+            messages = {f["message"] for f in open_findings}
+            assert "test-warn" in messages
+            assert "test-error" in messages
+
+            # severity 过滤
+            error_result = asyncio.run(
+                mcp.call_tool("task_quality_findings",
+                              {"task_id": task_id, "status": "open", "severity": "error"})
+            )
+            error_only = _extract_tool_payload_list(error_result)
+            assert len(error_only) == 1
+            assert error_only[0]["message"] == "test-error"
+
+            # 解决 finding（返回单个 dict）
+            resolve_result = asyncio.run(
+                mcp.call_tool("task_resolve_quality_finding",
+                              {"finding_id": fid, "resolution": "fixed", "resolved_by": "agent"})
+            )
+            resolved = _extract_tool_payload(resolve_result)
+            assert resolved["success"] is True
+            assert resolved["status"] == "resolved"
+
+            # resolved 过滤
+            resolved_list = _extract_tool_payload_list(asyncio.run(
+                mcp.call_tool("task_quality_findings",
+                              {"task_id": task_id, "status": "resolved", "severity": ""})
+            ))
+            assert len(resolved_list) == 1
+            assert resolved_list[0]["message"] == "test-warn"
+
+            # 剩余 open
+            open_after = _extract_tool_payload_list(asyncio.run(
+                mcp.call_tool("task_quality_findings",
+                              {"task_id": task_id, "status": "open", "severity": ""})
+            ))
+            assert len(open_after) == 1
+        finally:
+            mcp_mod.get_db = orig_get_db
+    finally:
+        db.close()
+
+
+def test_task_completion_review_mcp_end_to_end():
+    """task_completion_review MCP 工具端到端（空数据库 pass）"""
+    import asyncio
+    import callwarden.server.mcp_server as mcp_mod
+
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        task_id = db.task_create("review-test", steps=[{"action": "edit"}])
+
+        mcp = create_mcp_server()
+        orig_get_db = mcp_mod.get_db
+        mcp_mod.get_db = lambda workspace=None: db
+        try:
+            result = _extract_tool_payload(asyncio.run(
+                mcp.call_tool("task_completion_review",
+                              {"task_id": task_id, "step_id": ""})
+            ))
+            # 无变更文件 → pass（无发现）
+            assert result["decision"] == "pass"
+            assert isinstance(result["findings"], list)
+            assert len(result["findings"]) == 0
+            assert "counts" in result
+            assert result["counts"]["error"] == 0
+        finally:
+            mcp_mod.get_db = orig_get_db
+    finally:
+        db.close()
+
+
+def _extract_tool_payload_list(tool_result):
+    """从 FastMCP call_tool 返回值中提取业务 payload（始终返回 list）
+
+    FastMCP 1.x 返回 list[TextContent]，每个 TextContent.text 是 JSON 字符串。
+    本辅助函数解析所有 TextContent 并返回解析后的 list。
+
+    Args:
+        tool_result: FastMCP call_tool 返回值
+
+    Returns:
+        list：每个 TextContent 解析为 dict/list/str
+    """
+    import json
+
+    if isinstance(tool_result, list):
+        items = []
+        for c in tool_result:
+            if hasattr(c, "text"):
+                try:
+                    items.append(json.loads(c.text))
+                except Exception:
+                    items.append(c.text)
+            elif isinstance(c, (dict, list)):
+                items.append(c)
+        return items
+    return [tool_result]
+
+
+def _extract_tool_payload(tool_result):
+    """从 FastMCP call_tool 返回值中提取业务 payload（自动判断单值/列表）
+
+    FastMCP 总是返回 list[TextContent]，无法区分底层返回的是单个 dict 还是 list[dict]。
+    本辅助函数解析所有 TextContent：
+    - 若仅 1 个元素，返回该元素（适合返回单个 dict 的工具）
+    - 若多个元素，返回 list（适合返回 list 的工具）
+
+    详见 _extract_tool_payload_list。
+    """
+    items = _extract_tool_payload_list(tool_result)
+    if len(items) == 1:
+        return items[0]
+    return items
+
+
 def test_install_agent_generates_templates():
     tmpdir = tempfile.mkdtemp()
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

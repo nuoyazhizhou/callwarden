@@ -1657,6 +1657,84 @@ def create_mcp_server():
         db = get_db()
         return db.task_status(task_id=task_id)
 
+    @mcp.tool()
+    def task_completion_review(task_id: str, step_id: str = "") -> dict:
+        """运行任务完成质量审查
+
+        触发任务质量门禁：自动清理该 step 旧的 check_gate 发现，
+        调用 run_check_gate（语法/Semgrep），并运行 5 个扩展检查器：
+        scope/symbol_attribution/file_health/i18n_hardcoded/signature_mismatch。
+
+        根据 open 状态的发现严重度给出决策：
+        - pass: 无发现
+        - warn: 仅有 info/warn（允许完成但记录）
+        - block: 存在 error/block（阻塞完成，需修复后重审）
+
+        Agent 在 task_report_step 之前或之后均可调用此工具主动复查。
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID（可选，任务级审查留空）
+
+        Returns:
+            {decision, findings, summary, counts, check_gate_result}
+            decision ∈ {"pass", "warn", "block"}
+        """
+        db = get_db()
+        return db.run_task_completion_review(task_id=task_id, step_id=step_id)
+
+    @mcp.tool()
+    def task_quality_findings(task_id: str, status: str = "open", severity: str = "") -> list:
+        """查询任务质量门禁发现
+
+        返回 task_quality_findings 表中匹配过滤条件的记录，
+        按 created_at 升序（旧的先处理）。
+
+        Args:
+            task_id: 任务 ID
+            status: 状态过滤（open/resolved/wontfix/all），默认 open
+            severity: 严重度过滤（info/warn/error/block），默认不过滤
+
+        Returns:
+            finding 列表，每项含 id/task_id/step_id/finding_type/severity/
+            status/message/evidence/source/created_at/resolved_at/resolved_by
+        """
+        db = get_db()
+        return db.get_task_quality_findings(
+            task_id=task_id, status=status, severity=severity
+        )
+
+    @mcp.tool()
+    def task_resolve_quality_finding(
+        finding_id: int,
+        resolution: str = "fixed",
+        resolved_by: str = "agent",
+    ) -> dict:
+        """解决或豁免单条任务质量门禁发现
+
+        将 finding 状态从 open 推进到 resolved 或 wontfix，
+        记录解决者和解决时间。error/block 级别的发现被解决后，
+        该 step 的阻塞状态才会解除（task_completion_review 会重新评估）。
+
+        Args:
+            finding_id: finding ID
+            resolution: 解决方式
+                - fixed: 已修复
+                - wontfix: 暂不修复（接受风险）
+                - false_positive: 误报
+            resolved_by: 解决者标识（agent/human/system）
+
+        Returns:
+            {success, finding_id, status, resolution, resolved_at}
+            失败时返回 {success: False, error: ...}
+        """
+        db = get_db()
+        return db.resolve_task_quality_finding(
+            finding_id=finding_id,
+            resolution=resolution,
+            resolved_by=resolved_by,
+        )
+
     # ----------------------------------------------------------------
     # 代码摘要 + Repo Map 工具
     # ----------------------------------------------------------------
