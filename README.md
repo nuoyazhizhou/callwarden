@@ -34,7 +34,7 @@ cw install            # 默认安装
 
 # 2. 初始化数据库（构建代码图谱）
 cd /path/to/your/project
-cw --init
+cw --refresh-all
 
 # 3. 查询符号
 cw --search "login"

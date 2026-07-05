@@ -415,7 +415,7 @@ cw server --transport sse    # SSE 模式
 在图谱刷新后，把某次 `propose_edit` / `propose_range_patch` / `propose_symbol_patch` 产生的 `edit_audit_id` 映射到具体符号 before/after hash。
 
 - **参数**：`audit_id: int`, `step_id: str = ""`
-- **前置条件**：编辑前后的文件版本都已进入 `file_versions`；通常需要先运行 `cw --init` 或完整构建。
+- **前置条件**：编辑前后的文件版本都已进入 `file_versions`；通常需要先运行 `cw --refresh-all` 或完整构建。
 - **返回**：`dict` — `{success, audit_id, linked, changes}`
 
 ### `get_task_symbol_changes`

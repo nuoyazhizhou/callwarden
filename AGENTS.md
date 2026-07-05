@@ -102,7 +102,8 @@ cw install            # 核心依赖
 cw install --all      # 全部依赖（含 semgrep / 向量搜索）
 
 # 初始化与构建
-cw --init             # 完整构建代码图谱
+cw --refresh-all      # 增量刷新代码图谱（仅解析变更文件）
+cw --refresh-all --force  # 强制全量重新解析
 cw --refresh <file>   # 刷新单个文件
 
 # 查询

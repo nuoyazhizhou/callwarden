@@ -5,7 +5,7 @@ cw - Call Warden 统一命令行入口
 使用方式：
     cw install [--all] [--lang rust python]   安装依赖
     cw server [--transport stdio|sse]          启动 MCP Server
-    cw --init                                  构建代码图谱
+    cw --refresh-all                           构建代码图谱
     cw --search "login"                        搜索符号
     cw --call-chain "module::function"         查看调用链
     cw guardrail scan                          安全护栏扫描

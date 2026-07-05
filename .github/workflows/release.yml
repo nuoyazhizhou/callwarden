@@ -99,7 +99,7 @@ jobs:
             
             ### 使用方式
             ```bash
-            cw --init
+            cw --refresh-all
             cw --search "login"
             cw server
             ```

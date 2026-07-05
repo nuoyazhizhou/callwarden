@@ -11,8 +11,8 @@ Call Warden CLI 提供两种命令风格：
 
 | 分组 | 命令 | 风格 | 说明 |
 |------|------|------|------|
-| **构建** | `--init` | flag | 构建/增量更新代码图谱 |
-| | `--init --force` | flag | 强制全量重新解析 |
+| **构建** | `--refresh-all` | flag | 增量刷新代码图谱（仅解析变更文件，不会清空数据） |
+| | `--refresh-all --force` | flag | 强制全量重新解析 |
 | | `--refresh <PATH>` | flag | 刷新单个文件 |
 | | `--watch` | flag | 启动文件监控，自动增量更新 |
 | | `--status` | flag | 查看图谱状态概览 |
@@ -310,17 +310,17 @@ cw install --check
 
 ## 构建命令
 
-### `--init`：构建代码图谱
+### `--refresh-all`：构建/增量刷新代码图谱
 
 ```bash
-# 增量构建（默认）
-cw --init
+# 增量刷新（默认，仅解析变更文件，不会清空数据）
+cw --refresh-all
 
 # 强制全量重新解析
-cw --init --force
+cw --refresh-all --force
 
 # 指定工作区
-cw --workspace /path/to/project --init
+cw --workspace /path/to/project --refresh-all
 ```
 
 ### `--refresh <PATH>`：刷新单个文件
@@ -979,7 +979,7 @@ cw --delete-workspace my_project
 ### 示例 1：全量构建并查看状态
 
 ```bash
-cw --init --force && cw --status
+cw --refresh-all --force && cw --status
 ```
 
 ### 示例 2：查找函数 → 分析影响 → 查看度量

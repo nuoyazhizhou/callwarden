@@ -100,7 +100,7 @@ Set-Alias -Name cw -Value "python C:\path\to\callwarden\cw.py"
 
 ```bash
 cd /path/to/your/project
-cw --init
+cw --refresh-all
 ```
 
 数据库将创建在 `$HOME/.callwarden/<16位hash>/callwarden.db`。
@@ -136,7 +136,7 @@ docker run --rm \
   -v /path/to/your/project:/workspace \
   -v $HOME/.callwarden:/root/.callwarden \
   -w /workspace \
-  call-warden:latest --init
+  call-warden:latest --refresh-all
 ```
 
 ### 3. 运行容器（MCP Server 模式）
@@ -163,7 +163,7 @@ Call Warden 支持多容器共享同一个数据库：
 docker run --rm \
   -v /path/to/project-a:/workspace \
   -v $HOME/.callwarden:/root/.callwarden \
-  call-warden:latest --init
+  call-warden:latest --refresh-all
 
 # 容器 B：查询（共享数据库）
 docker run --rm \
@@ -334,7 +334,7 @@ cd rust_ext && maturin develop --release && cd -
 cw --status
 
 # 6. （可选）增量更新图谱
-cw --init
+cw --refresh-all
 ```
 
 ### Docker 升级

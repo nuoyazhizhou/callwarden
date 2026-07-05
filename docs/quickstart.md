@@ -113,11 +113,11 @@ cw install --check
 
 ```bash
 cd /path/to/your/project
-cw --init
+cw --refresh-all
 ```
 
-- `--init`：增量构建（仅解析有变化的文件）
-- `--init --force`：强制全量重新解析所有文件
+- `--refresh-all`：增量刷新（仅解析有变化的文件，不会清空数据）
+- `--refresh-all --force`：强制全量重新解析所有文件
 
 构建过程会：
 1. 自动检测项目根目录（查找 `.git`、`Cargo.toml`、`package.json`、`go.mod` 等标记）
@@ -270,7 +270,7 @@ SSE 模式适用于远程访问或多客户端共享同一个 Server 实例。
 
 ```bash
 cd /home/user/my_project
-cw --init
+cw --refresh-all
 ```
 
 ### 5.2 步骤 2：查找目标函数

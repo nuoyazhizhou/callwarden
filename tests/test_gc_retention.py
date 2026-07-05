@@ -742,7 +742,7 @@ def test_gc_archive_import_file_not_in_backup_returns_error():
 
 
 def test_gc_archive_import_file_not_in_current_returns_error():
-    """当前库不存在的文件应在 errors 中记录（要求用户先 --init）"""
+    """当前库不存在的文件应在 errors 中记录（要求用户先 --refresh-all）"""
     db, _root = _db_with_workspace()
     try:
         # 在备份库中有该文件，但当前库不存在

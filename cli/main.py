@@ -2204,7 +2204,7 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--register-workspace", nargs=2, metavar=("NAME", "ROOT"), help=get_arg_help("register_workspace"))
     parser.add_argument("--set-workspace", metavar="ID_OR_NAME", help=get_arg_help("set_workspace"))
     parser.add_argument("--delete-workspace", metavar="ID_OR_NAME", help=get_arg_help("delete_workspace"))
-    parser.add_argument("--init", action="store_true", help=get_arg_help("init"))
+    parser.add_argument("--refresh-all", action="store_true", dest="refresh_all", help=get_arg_help("refresh_all"))
     parser.add_argument("--force", action="store_true", help=get_arg_help("force"))
     parser.add_argument("--watch", action="store_true", help=get_arg_help("watch"))
     parser.add_argument("--stats", action="store_true", help=get_arg_help("stats"))
@@ -2417,7 +2417,7 @@ def main():
                 print(t("cli.messages.delete_not_found", name=ws_arg))
             return
 
-        if args.init:
+        if args.refresh_all:
             if args.force:
                 print(t("cli.messages.building_force"))
             else:

@@ -1030,7 +1030,7 @@
       "notes": ""
     },
     "cli.messages.hotspot_init": {
-      "zh": "  (无数据，请先运行 --init 构建图谱)",
+      "zh": "  (无数据，请先运行 --refresh-all 构建图谱)",
       "en": "",
       "occurrences": [
         {
@@ -1038,7 +1038,7 @@
           "type": "cprint",
           "function": "_handle_hotspot",
           "is_fstring": false,
-          "original_snippet": "cprint(\"  (无数据，请先运行 --init 构建图谱)\", \"dim\")"
+          "original_snippet": "cprint(\"  (无数据，请先运行 --refresh-all 构建图谱)\", \"dim\")"
         }
       ],
       "has_vars": false,
@@ -5329,7 +5329,7 @@
       "notes": ""
     },
     "cli.messages.main_get_msg_status_rebuild_hint_default": {
-      "zh": "  ⚠ {get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cw --init 增量更新')}",
+      "zh": "  ⚠ {get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cw --refresh-all 增量刷新（不会清空数据）')}",
       "en": "",
       "occurrences": [
         {
@@ -5337,12 +5337,12 @@
           "type": "print",
           "function": "main",
           "is_fstring": true,
-          "original_snippet": "print(f\"  ⚠ {get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cw --init 增量更新')}\")"
+          "original_snippet": "print(f\"  ⚠ {get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cw --refresh-all 增量刷新（不会清空数据）')}\")"
         }
       ],
       "has_vars": true,
       "var_names": [
-        "get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cw --init 增量更新')"
+        "get_msg('status_rebuild_hint', default='提示: 有文件变更，建议运行 cw --refresh-all 增量刷新（不会清空数据）')"
       ],
       "functions": [
         "main"
@@ -11961,7 +11961,7 @@
       "notes": ""
     },
     "cli.messages.main_init": {
-      "zh": "提示: 请先运行 --init 构建图谱，文件路径可以是相对或绝对路径",
+      "zh": "提示: 请先运行 --refresh-all 构建图谱，文件路径可以是相对或绝对路径",
       "en": "",
       "occurrences": [
         {
@@ -11969,7 +11969,7 @@
           "type": "print",
           "function": "main",
           "is_fstring": false,
-          "original_snippet": "print(\"提示: 请先运行 --init 构建图谱，文件路径可以是相对或绝对路径\")"
+          "original_snippet": "print(\"提示: 请先运行 --refresh-all 构建图谱，文件路径可以是相对或绝对路径\")"
         }
       ],
       "has_vars": false,

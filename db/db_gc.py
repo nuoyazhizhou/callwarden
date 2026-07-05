@@ -1659,7 +1659,7 @@ class GCMixin:
         if not row:
             errors.append(
                 t("errors.gc_archive_import_file_not_in_current",
-                  default="file not found in current workspace (please --init first): {path}",
+                  default="file not found in current workspace (please --refresh-all first): {path}",
                   path=file_path)
             )
             return
