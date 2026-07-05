@@ -326,17 +326,22 @@ class TaskQualityMixin:
     ) -> Dict[str, Any]:
         """运行任务完成质量审查
 
-        收集 task/step 下的 open finding，根据 severity 决策：
-        - 无 finding → pass（允许 step 进入 done）
-        - 仅有 info/warn → warn（记录但允许完成，需人工确认是否进入 review）
-        - 存在 error/block → block（step 阻塞，自动插入 fix_quality_gate_failure）
+        流程：
+        1. 调用 run_check_gate 对任务变更文件做语法/Semgrep 检查
+        2. 把检查结果（semgrep/syntax findings）转换为 task_quality_findings 记录
+           （source='check_gate'），写入前先清理该 step 的旧 check_gate finding
+           避免重复累积
+        3. 收集 task/step 下的所有 open finding，根据 severity 决策：
+           - 无 finding → pass（允许 step 进入 done）
+           - 仅有 info/warn → warn（记录但允许完成）
+           - 存在 error/block → block（step 阻塞，自动插入 fix_quality_gate_failure）
 
         Args:
             task_id: 任务 ID
             step_id: 步骤 ID（可选，任务级审查留空）
 
         Returns:
-            {decision, findings, summary, counts}
+            {decision, findings, summary, counts, check_gate_result}
             decision ∈ {"pass", "warn", "block"}
         """
         if not task_id:
@@ -346,9 +351,52 @@ class TaskQualityMixin:
                 "summary": t("cli.messages.task_quality_finding_id_required",
                              default="task_id is required"),
                 "counts": {"info": 0, "warn": 0, "error": 0, "block": 0},
+                "check_gate_result": None,
             }
 
-        # 收集 open findings
+        # 步骤 1+2: 调用 run_check_gate 并把结果转换为 task_quality_findings
+        check_gate_result: Optional[Dict[str, Any]] = None
+        if hasattr(self, "run_check_gate"):
+            try:
+                # 获取任务关联的变更文件（change_audit 表由 task_report_step 写入）
+                changed_files: List[str] = []
+                if hasattr(self, "get_task_changed_files"):
+                    changed_files = self.get_task_changed_files(task_id)
+
+                if changed_files:
+                    # 清理该 step 关联的旧 check_gate finding（避免重复累积）
+                    if step_id:
+                        self.conn.execute(
+                            "DELETE FROM task_quality_findings "
+                            "WHERE task_id = ? AND step_id = ? AND source = 'check_gate'",
+                            (task_id, step_id),
+                        )
+                        self.conn.commit()
+
+                    # 调用 run_check_gate（语法 + Semgrep 检查）
+                    check_gate_result = self.run_check_gate(
+                        task_id, step_id, changed_files
+                    )
+
+                    # 把 findings 转换为 task_quality_findings 记录
+                    for f in check_gate_result.get("findings", []):
+                        self.record_task_quality_finding(
+                            task_id=task_id,
+                            step_id=step_id,
+                            finding_type=f.get("finding_type", ""),
+                            severity=f.get("severity", "warn"),
+                            message=f.get("message", ""),
+                            evidence={
+                                "rule_id": f.get("rule_id", ""),
+                                "line": f.get("line", 0),
+                                "file_path": f.get("file_path", ""),
+                            },
+                            source="check_gate",
+                        )
+            except Exception:
+                check_gate_result = None
+
+        # 步骤 3: 收集 open findings 做决策
         findings = self.get_task_quality_findings(task_id, status="open")
 
         # 按 step_id 过滤（如果指定了 step_id）
@@ -366,7 +414,7 @@ class TaskQualityMixin:
             if sev in counts:
                 counts[sev] += 1
 
-        # 决策
+        # 决策：error/block → block；info/warn → warn；无 → pass
         if counts["error"] > 0 or counts["block"] > 0:
             decision = "block"
         elif counts["info"] > 0 or counts["warn"] > 0:
@@ -391,5 +439,6 @@ class TaskQualityMixin:
             "findings": scoped,
             "summary": summary,
             "counts": counts,
+            "check_gate_result": check_gate_result,
         }
 

@@ -16,6 +16,7 @@
 import os
 import sqlite3
 import tempfile
+import time
 
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.schema import SCHEMA_VERSION
@@ -1206,6 +1207,342 @@ def test_run_check_gate_save_gate_findings_uses_lowercase_severity():
                 assert row["severity"] == "error"  # 小写
         finally:
             os.unlink(tmp.name)
+    finally:
+        db.close()
+
+
+# ============================================
+# run_task_completion_review 集成 run_check_gate 测试
+# （Step S-1783247858392-b616）
+# ============================================
+
+def _inject_change_audit(db, task_id, step_id, file_path="sample.py"):
+    """辅助：向 change_audit 表注入一条变更记录（让 get_task_changed_files 能查到）"""
+    now = time.time()
+    db.conn.execute(
+        """
+        INSERT INTO change_audit
+            (id, task_id, step_id, file_path, hash_before, hash_after,
+             diff, author, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("C-test-" + str(int(now * 1000)), task_id, step_id, file_path,
+         "old", "new", "diff", "agent", now),
+    )
+    db.conn.commit()
+
+
+def _mock_run_check_gate(db, findings):
+    """辅助：注入 mock run_check_gate，返回指定的 findings"""
+    _had = hasattr(db, "run_check_gate")
+    _orig = getattr(db, "run_check_gate", None)
+
+    def _fake_check_gate(task_id, step_id, changed_files):
+        return {
+            "passed": all(f.get("severity") not in ("error", "block") for f in findings),
+            "checks_run": ["syntax"] if findings else [],
+            "findings": findings,
+            "fix_required": any(f.get("severity") in ("error", "block") for f in findings),
+            "summary": "mock summary",
+        }
+
+    db.run_check_gate = _fake_check_gate
+
+    def _restore():
+        if _had and _orig is not None:
+            db.run_check_gate = _orig
+        else:
+            try:
+                delattr(db, "run_check_gate")
+            except AttributeError:
+                pass
+
+    return _restore
+
+
+def test_run_task_completion_review_invokes_run_check_gate():
+    """有变更文件时，run_task_completion_review 调用 run_check_gate"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "sample.py")
+
+        restore = _mock_run_check_gate(db, findings=[])
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        # check_gate_result 应非 None（说明 run_check_gate 被调用了）
+        assert review["check_gate_result"] is not None
+        assert review["decision"] == "pass"
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_no_changed_files_skips_check_gate():
+    """无变更文件时，run_task_completion_review 不调用 run_check_gate"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 不注入 change_audit，get_task_changed_files 返回空列表
+
+        _called = {"value": False}
+
+        def _fake_check_gate(task_id, step_id, changed_files):
+            _called["value"] = True
+            return {"passed": True, "findings": [], "checks_run": [], "fix_required": False, "summary": ""}
+
+        db.run_check_gate = _fake_check_gate
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            try:
+                delattr(db, "run_check_gate")
+            except AttributeError:
+                pass
+
+        assert _called["value"] is False  # 未被调用
+        assert review["check_gate_result"] is None
+        assert review["decision"] == "pass"
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_converts_semgrep_error_to_task_quality_finding():
+    """run_check_gate 的 error finding 被转换为 task_quality_findings 记录"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "vulnerable.py")
+
+        findings = [
+            {
+                "finding_type": "semgrep",
+                "severity": "error",
+                "file_path": "vulnerable.py",
+                "rule_id": "python-security",
+                "line": 5,
+                "message": "sql injection",
+                # 向后兼容字段
+                "check": "semgrep",
+                "file": "vulnerable.py",
+                "raw_severity": "ERROR",
+            }
+        ]
+        restore = _mock_run_check_gate(db, findings=findings)
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        # 决策应为 block（存在 error finding）
+        assert review["decision"] == "block"
+        assert review["counts"]["error"] == 1
+
+        # task_quality_findings 表应包含该 finding
+        task_quality = db.get_task_quality_findings(task_id, status="open")
+        assert any(
+            f["finding_type"] == "semgrep"
+            and f["severity"] == "error"
+            and f["source"] == "check_gate"
+            for f in task_quality
+        ), f"expected semgrep error finding from check_gate, got: {task_quality}"
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_converts_syntax_warn_to_task_quality_finding():
+    """run_check_gate 的 warn finding 被转换为 task_quality_findings 记录，decision=warn"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "style.py")
+
+        findings = [
+            {
+                "finding_type": "syntax",
+                "severity": "warn",
+                "file_path": "style.py",
+                "rule_id": "",
+                "line": 0,
+                "message": "style issue",
+                "check": "syntax",
+                "file": "style.py",
+                "raw_severity": "WARNING",
+            }
+        ]
+        restore = _mock_run_check_gate(db, findings=findings)
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        assert review["decision"] == "warn"
+        assert review["counts"]["warn"] == 1
+        # task_quality_findings 表应包含该 finding
+        task_quality = db.get_task_quality_findings(task_id, status="open")
+        assert any(
+            f["finding_type"] == "syntax"
+            and f["severity"] == "warn"
+            and f["source"] == "check_gate"
+            for f in task_quality
+        )
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_error_severity_blocks():
+    """error/block severity 导致 decision=block"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "bad.py")
+
+        findings = [
+            {
+                "finding_type": "syntax",
+                "severity": "error",
+                "file_path": "bad.py",
+                "rule_id": "",
+                "line": 0,
+                "message": "syntax error",
+                "check": "syntax",
+                "file": "bad.py",
+                "raw_severity": "ERROR",
+            },
+            {
+                "finding_type": "semgrep",
+                "severity": "block",
+                "file_path": "bad.py",
+                "rule_id": "sec",
+                "line": 10,
+                "message": "critical vuln",
+                "check": "semgrep",
+                "file": "bad.py",
+                "raw_severity": "BLOCK",
+            },
+        ]
+        restore = _mock_run_check_gate(db, findings=findings)
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        assert review["decision"] == "block"
+        assert review["counts"]["error"] == 1
+        assert review["counts"]["block"] == 1
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_check_gate_no_duplicate_findings():
+    """重复调用 run_task_completion_review 不会累积 check_gate finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "dup.py")
+
+        findings = [
+            {
+                "finding_type": "semgrep",
+                "severity": "error",
+                "file_path": "dup.py",
+                "rule_id": "r1",
+                "line": 1,
+                "message": "issue",
+                "check": "semgrep",
+                "file": "dup.py",
+                "raw_severity": "ERROR",
+            }
+        ]
+        restore = _mock_run_check_gate(db, findings=findings)
+        try:
+            # 第一次调用
+            db.run_task_completion_review(task_id, step["step_id"])
+            # 第二次调用
+            db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        # task_quality_findings 表中 source='check_gate' 的 finding 应只有 1 条
+        task_quality = db.get_task_quality_findings(task_id, status="all")
+        check_gate_findings = [f for f in task_quality if f.get("source") == "check_gate"]
+        assert len(check_gate_findings) == 1, (
+            f"expected 1 check_gate finding, got {len(check_gate_findings)}"
+        )
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_preserves_manual_findings():
+    """清理 check_gate finding 时不影响手动记录的 finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 手动记录一条 finding（source='manual'）
+        db.record_task_quality_finding(
+            task_id, step_id=step["step_id"],
+            finding_type="manual", severity="warn",
+            message="manual issue", source="manual",
+        )
+        _inject_change_audit(db, task_id, step["step_id"], "m.py")
+
+        findings = [
+            {
+                "finding_type": "semgrep",
+                "severity": "error",
+                "file_path": "m.py",
+                "rule_id": "r",
+                "line": 1,
+                "message": "auto issue",
+                "check": "semgrep",
+                "file": "m.py",
+                "raw_severity": "ERROR",
+            }
+        ]
+        restore = _mock_run_check_gate(db, findings=findings)
+        try:
+            db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        # manual finding 应保留
+        task_quality = db.get_task_quality_findings(task_id, status="all")
+        manual_findings = [f for f in task_quality if f.get("source") == "manual"]
+        assert len(manual_findings) == 1
+        assert manual_findings[0]["message"] == "manual issue"
+        # check_gate finding 也应存在
+        check_gate_findings = [f for f in task_quality if f.get("source") == "check_gate"]
+        assert len(check_gate_findings) == 1
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_check_gate_result_returned():
+    """返回值包含 check_gate_result 字段"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "r.py")
+
+        restore = _mock_run_check_gate(db, findings=[])
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        assert "check_gate_result" in review
+        assert review["check_gate_result"] is not None
+        assert review["check_gate_result"]["summary"] == "mock summary"
     finally:
         db.close()
 
