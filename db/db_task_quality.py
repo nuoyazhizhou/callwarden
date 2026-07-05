@@ -598,6 +598,56 @@ class TaskQualityMixin:
             except Exception:
                 pass
 
+    # ============================================================
+    # 设计文档：_check_signature_mismatch（调用链一致性检查器）
+    # ============================================================
+    # 来源：plan 文档「调用链一致性」章节
+    #
+    # 数据来源（按优先级复用现有能力，不引入新表）：
+    # 1. task_symbol_changes 表：记录每个 step 修改的符号及其前后 hash
+    #    - symbol_hash_before：变更前的符号内容 hash
+    #    - symbol_hash_after：变更后的符号内容 hash
+    #    - qualified_name：符号限定名（用于查 get_callers）
+    #    - file_path：符号所在文件
+    # 2. symbol_contents 表：通过 content_hash 查 signature 字段
+    #    - 用 symbol_hash_before / symbol_hash_after 分别 JOIN
+    #      symbol_contents.content_hash，取 signature 比对
+    #    - 若 signature 不同 → 判定为签名变更
+    # 3. get_callers(qualified_name)：查询旧调用方列表
+    #    - 返回 caller_qualified / caller_file / call_line 等
+    # 4. calls 表（is_cross_file / callee_id）：刷新后检查 unresolved calls
+    #    - callee_id=0 或 callee_qualified 与新签名不匹配 → 未解析
+    #
+    # 检查流程：
+    # 1. 查 task_symbol_changes WHERE task_id=? AND step_id=?
+    # 2. 对每条记录，比较 before/after 的 signature（通过 symbol_contents JOIN）
+    # 3. 若 signature 变化：
+    #    a. 调 get_callers(qualified_name) 获取全部调用方
+    #    b. 检查 calls 表中 callee_id=0 或 callee_qualified 不匹配的记录
+    #       （这些是刷新后仍未解析的调用）
+    #    c. 若存在 unresolved callers → 生成 block finding
+    #       否则 → 生成 info finding（签名变更但调用方都已更新）
+    #
+    # evidence JSON 格式（满足 check_items 第 3 条）：
+    # {
+    #   "changed_symbol": "module::parse_policy",
+    #   "old_signature": "fn parse_policy(text: &str) -> Result<Policy>",
+    #   "new_signature": "fn parse_policy(text: &str, strict: bool) -> Result<Policy>",
+    #   "caller_count": 23,
+    #   "unresolved_callers": [
+    #     {"caller": "module::main", "file": "src/main.rs", "line": 45},
+    #     {"caller": "module::utils", "file": "src/utils.rs", "line": 12}
+    #   ]
+    # }
+    #
+    # finding 字段：
+    # - finding_type: "call_chain"（与 _check_symbol_attribution 同类）
+    # - severity: "block"（有 unresolved callers）/ "info"（签名变更但调用方已更新）
+    # - source: "check_gate"（统一标识，由调度器清理去重）
+    # - message: t("cli.messages.task_quality_signature_mismatch",
+    #              default="函数 {symbol} 签名已变更，但 {unresolved}/{total} 个调用方未更新",
+    #              symbol=..., unresolved=..., total=...)
+
     def run_task_completion_review(
         self,
         task_id: str,
