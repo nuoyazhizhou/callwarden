@@ -43,8 +43,8 @@ Call Warden CLI 提供两种命令风格：
 | | `--history <NAME>` | flag | 函数历史版本 |
 | | `--diff <H1> <H2>` | flag | 对比两个版本 |
 | **任务** | `task create/next/report/rollback` | sub | 任务管理 |
-| | `--task-list` | flag | 列出任务 |
-| | `--task-show <ID>` | flag | 查看任务详情 |
+| | `--task-list` | flag (兼容) | 列出任务（等价 `cw task list`） |
+| | `--task-show <ID>` | flag (兼容) | 查看任务详情（等价 `cw task show <ID>`） |
 | | `check-gate <TASK_ID>` | sub | 检查门禁 |
 | **GC** | `gc archive/restore/status/purge` | sub | ignore 文件归档、复活、状态、清除 |
 | | `gc policy show/set` | sub | 查看或修改 retention 策略 |
@@ -677,16 +677,49 @@ cw task resolve-finding <finding_id> --by human
 ### `task list`：列出任务
 
 ```bash
-# 列出最近 100 个任务
+# 列出任务（默认按树形展示父子任务，最多 200 个）
 cw task list
+
+# 切换到扁平展示（不缩进）
+cw task list --flat
 
 # 仅显示有阻塞发现的任务
 cw task list --blocked
+
+# 按状态过滤
+cw task list --status in_progress
+cw task list --status review
+
+# 限制返回数量
+cw task list --limit 50
 ```
 
-每行格式：`[icon] <task_id> [status] <title>`，其中 icon：
-- `[!]`：任务存在 `error` / `block` 级别的 open 发现
-- `[ ]`：任务无阻塞发现
+默认按 **树形模式** 展示：根任务在前，子任务按 `sort_order` 递归缩进。
+每行格式：`[indent]  [icon] <task_id> [status] <title>`，其中：
+- `indent`：4 空格 × depth（`--flat` 模式下无缩进）
+- `icon`：`[!]` 表示有 `error`/`block` 级别的 open 发现，`[ ]` 表示无阻塞
+
+**返回字段**：`task_id / title / status / created_at / parent_id / depth / sort_order / step_count`
+
+**排序规则**：根任务优先 → `parent_id` 升序 → `sort_order` 升序 → `created_at` 倒序
+
+### `task show`：查看任务详情（含子任务树）
+
+```bash
+# 默认树形展示（递归显示所有子任务 + 进度）
+cw task show <task_id>
+
+# 切换到扁平模式（仅显示主任务，不递归子任务）
+cw task show <task_id> --flat
+```
+
+默认调用 `db.task_status_tree()`，递归展示：
+- 任务详情：ID / 标题 / 状态 / 描述 / 创建者 / 创建时间
+- 进度：`done/total (pct%)`
+- 自身步骤列表（仅根任务显示步骤明细）
+- 子任务树（按 depth 缩进，带 `↳` 前缀）
+
+`--flat` 模式调用 `db.task_status()`，仅显示主任务详情和自身步骤。
 
 ### `audit verify`：验证审计链完整性
 
@@ -745,12 +778,15 @@ cw check-gate <task_id> --resolve
 > `task_completion_review`（MCP 工具）会自动调用 `check-gate` 并叠加
 > 5 个扩展检查器（scope / symbol_attribution / file_health / i18n / signature）。
 
-### `--task-list` / `--task-show`
+### `--task-list` / `--task-show`：兼容入口（已废弃）
 
 ```bash
-cw --task-list
-cw --task-show <task_id>
+cw --task-list                # 等价于 cw task list（显示兼容提示后转调）
+cw --task-show <task_id>      # 等价于 cw task show <task_id>（树形模式）
 ```
+
+> **注意**：这两个 flag 作为兼容入口保留，会先打印一行提示再转调对应子命令。
+> 推荐直接使用 `cw task list` / `cw task show` 子命令。
 
 ---
 
