@@ -848,6 +848,39 @@ class TaskMixin:
                 except Exception:
                     pass
 
+        # ---- 质量门禁（Task Quality Gate）----
+        quality_gate: Dict[str, Any] = {"decision": "pass", "findings": [], "blocked": False}
+        if success and not gate_failed and hasattr(self, "run_task_completion_review"):
+            try:
+                review = self.run_task_completion_review(actual_task_id, step_id)
+                quality_gate = {
+                    "decision": review["decision"],
+                    "findings": review["findings"],
+                    "counts": review["counts"],
+                    "summary": review["summary"],
+                    "blocked": review["decision"] == "block",
+                }
+                # decision=block：step 标记为 blocked（不进入 done），自动插入修复步骤
+                if review["decision"] == "block":
+                    gate_failed = True  # 复用 gate_failed 阻止后续 done 逻辑
+                    # 把已标记为 done 的 step 改为 blocked
+                    self.conn.execute(
+                        "UPDATE task_steps SET status = ? WHERE id = ?",
+                        (STEP_STATUS_BLOCKED, step_id),
+                    )
+                    blocking_findings = [
+                        f for f in review["findings"]
+                        if f.get("severity") in ("error", "block")
+                    ]
+                    new_step_id = self.insert_fix_quality_gate_step(
+                        actual_task_id, step_id, blocking_findings
+                    )
+                    quality_gate["fix_step_id"] = new_step_id
+                # decision=warn：记录 finding，但允许 step 完成（不阻塞）
+                # decision=pass：正常完成
+            except Exception:
+                pass
+
         # 成功且没有更多 pending 步骤时，将任务状态改为 review
         if success and not gate_failed:
             cur = self.conn.execute(
@@ -899,6 +932,9 @@ class TaskMixin:
         # 返回任务树中的下一步步骤信息（深度优先）
         next_row = self._find_next_pending_step_tree(task_id)
         if not next_row:
+            # 即使没有下一步，若质量门禁阻断也返回 quality_gate 信息
+            if quality_gate.get("blocked"):
+                return {"quality_gate": quality_gate}
             return None
 
         return {
@@ -910,6 +946,7 @@ class TaskMixin:
             "target_symbol": next_row["target_symbol"],
             "check_items": _deserialize_check_items(next_row["check_items"]),
             "task_title": next_row["task_title"],
+            "quality_gate": quality_gate,
         }
 
     def task_rollback(

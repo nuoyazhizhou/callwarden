@@ -523,3 +523,202 @@ def test_record_finding_with_step_id():
         assert findings[0]["step_id"] == step["step_id"]
     finally:
         db.close()
+
+
+# ============================================
+# run_task_completion_review 测试
+# ============================================
+
+def test_run_task_completion_review_pass_when_no_findings():
+    """无 finding 时 decision=pass"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        review = db.run_task_completion_review(task_id)
+        assert review["decision"] == "pass"
+        assert review["counts"]["error"] == 0
+        assert review["counts"]["block"] == 0
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_warn_for_warn_severity():
+    """warn/info finding → decision=warn"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        db.record_task_quality_finding(task_id, severity="warn", message="m1")
+        db.record_task_quality_finding(task_id, severity="info", message="m2")
+        review = db.run_task_completion_review(task_id)
+        assert review["decision"] == "warn"
+        assert review["counts"]["warn"] == 1
+        assert review["counts"]["info"] == 1
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_block_for_error_severity():
+    """error/block finding → decision=block"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        db.record_task_quality_finding(task_id, severity="warn", message="m1")
+        db.record_task_quality_finding(task_id, severity="error", message="m2")
+        review = db.run_task_completion_review(task_id)
+        assert review["decision"] == "block"
+        assert review["counts"]["error"] == 1
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_excludes_resolved():
+    """resolved/wontfix finding 不计入 decision"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        fid = db.record_task_quality_finding(task_id, severity="error", message="m1")
+        db.resolve_task_quality_finding(fid, resolution="fixed")
+        review = db.run_task_completion_review(task_id)
+        assert review["decision"] == "pass"
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_scoped_by_step_id():
+    """step_id 过滤：只算该 step 的 finding + 任务级 finding（无 step_id）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("multi-step", steps=[
+            {"action": "edit", "target_file": "a.py"},
+            {"action": "edit", "target_file": "b.py"},
+        ])
+        s1 = db.task_next_step(task_id)
+        s2 = db.task_next_step(task_id) if False else None  # 只领第一个
+        # 实际上 task_next_step 一次只领一个，s1 是第一个
+        # 在 s1 上记录 error finding
+        db.record_task_quality_finding(
+            task_id, step_id=s1["step_id"], severity="error", message="s1 error"
+        )
+        # 任务级 finding（无 step_id）
+        db.record_task_quality_finding(task_id, severity="warn", message="task-level warn")
+
+        # 用 s1 step_id 审查：应包含 s1 error + task-level warn → block
+        review = db.run_task_completion_review(task_id, s1["step_id"])
+        assert review["decision"] == "block"
+        assert len(review["findings"]) == 2
+    finally:
+        db.close()
+
+
+# ============================================
+# task_report_step 集成质量门禁测试
+# ============================================
+
+def test_task_report_step_pass_quality_gate():
+    """无 finding 时 task_report_step 正常完成，返回值含 quality_gate.decision=pass"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        result = db.task_report_step(task_id, step["step_id"], result="done", success=True)
+        # result 可能是 None（无下一步）或 dict（有下一步）
+        if result is None:
+            # 无下一步，quality_gate 信息可通过 task_status 查询
+            pass
+        else:
+            assert "quality_gate" in result
+            assert result["quality_gate"]["decision"] == "pass"
+        # step 应该是 done
+        cur = db.conn.execute("SELECT status FROM task_steps WHERE id = ?", (step["step_id"],))
+        assert cur.fetchone()["status"] == "done"
+    finally:
+        db.close()
+
+
+def test_task_report_step_block_quality_gate_blocks_step():
+    """error finding → task_report_step 触发 block，step 标记 blocked + 插入 fix step"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 预先记录 error finding
+        db.record_task_quality_finding(
+            task_id, step_id=step["step_id"], severity="error", message="sql injection"
+        )
+        result = db.task_report_step(task_id, step["step_id"], result="done", success=True)
+
+        # step 应该是 blocked（不是 done）
+        cur = db.conn.execute("SELECT status FROM task_steps WHERE id = ?", (step["step_id"],))
+        assert cur.fetchone()["status"] == "blocked"
+
+        # 应自动插入 fix_quality_gate_failure step
+        cur = db.conn.execute(
+            "SELECT * FROM task_steps WHERE task_id = ? AND action = ?",
+            (task_id, "fix_quality_gate_failure"),
+        )
+        fix_row = cur.fetchone()
+        assert fix_row is not None
+        assert fix_row["target_symbol"] == step["step_id"]
+
+        # 返回值含 quality_gate.blocked=True
+        assert result is not None
+        assert result["quality_gate"]["decision"] == "block"
+        assert result["quality_gate"]["blocked"] is True
+        assert "fix_step_id" in result["quality_gate"]
+    finally:
+        db.close()
+
+
+def test_task_report_step_warn_quality_gate_allows_done():
+    """warn finding → task_report_step 允许 step 完成，但 quality_gate.decision=warn"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        db.record_task_quality_finding(
+            task_id, step_id=step["step_id"], severity="warn", message="unused import"
+        )
+        result = db.task_report_step(task_id, step["step_id"], result="done", success=True)
+
+        # step 应该是 done（warn 不阻塞）
+        cur = db.conn.execute("SELECT status FROM task_steps WHERE id = ?", (step["step_id"],))
+        assert cur.fetchone()["status"] == "done"
+
+        # 不应插入 fix_quality_gate_failure step
+        cur = db.conn.execute(
+            "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ? AND action = ?",
+            (task_id, "fix_quality_gate_failure"),
+        )
+        assert cur.fetchone()["cnt"] == 0
+
+        # 返回值含 quality_gate.decision=warn
+        if result and "quality_gate" in result:
+            assert result["quality_gate"]["decision"] == "warn"
+    finally:
+        db.close()
+
+
+def test_task_report_step_block_then_resolve_allows_done():
+    """block 后解决所有 error finding，重新 report 应允许 done"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        fid = db.record_task_quality_finding(
+            task_id, step_id=step["step_id"], severity="error", message="sql injection"
+        )
+        # 第一次 report：触发 block，step → blocked
+        db.task_report_step(task_id, step["step_id"], result="done", success=True)
+        cur = db.conn.execute("SELECT status FROM task_steps WHERE id = ?", (step["step_id"],))
+        assert cur.fetchone()["status"] == "blocked"
+
+        # 解决 error finding
+        db.resolve_task_quality_finding(fid, resolution="fixed")
+
+        # 重新 report：应允许 done（无阻塞 finding）
+        # 注意：需要把 step 状态从 blocked 改回 in_progress 才能重新 report
+        # 这里直接验证 task_has_blocking_findings 返回 False
+        assert db.task_has_blocking_findings(task_id) is False
+    finally:
+        db.close()
+

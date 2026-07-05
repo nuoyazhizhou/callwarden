@@ -318,3 +318,78 @@ class TaskQualityMixin:
             return step_id
         except Exception:
             return ""
+
+    def run_task_completion_review(
+        self,
+        task_id: str,
+        step_id: str = "",
+    ) -> Dict[str, Any]:
+        """运行任务完成质量审查
+
+        收集 task/step 下的 open finding，根据 severity 决策：
+        - 无 finding → pass（允许 step 进入 done）
+        - 仅有 info/warn → warn（记录但允许完成，需人工确认是否进入 review）
+        - 存在 error/block → block（step 阻塞，自动插入 fix_quality_gate_failure）
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID（可选，任务级审查留空）
+
+        Returns:
+            {decision, findings, summary, counts}
+            decision ∈ {"pass", "warn", "block"}
+        """
+        if not task_id:
+            return {
+                "decision": "pass",
+                "findings": [],
+                "summary": t("cli.messages.task_quality_finding_id_required",
+                             default="task_id is required"),
+                "counts": {"info": 0, "warn": 0, "error": 0, "block": 0},
+            }
+
+        # 收集 open findings
+        findings = self.get_task_quality_findings(task_id, status="open")
+
+        # 按 step_id 过滤（如果指定了 step_id）
+        if step_id:
+            step_findings = [f for f in findings if f.get("step_id") == step_id]
+            task_level_findings = [f for f in findings if not f.get("step_id")]
+            scoped = step_findings + task_level_findings
+        else:
+            scoped = findings
+
+        # 分类统计
+        counts = {"info": 0, "warn": 0, "error": 0, "block": 0}
+        for f in scoped:
+            sev = f.get("severity", "warn")
+            if sev in counts:
+                counts[sev] += 1
+
+        # 决策
+        if counts["error"] > 0 or counts["block"] > 0:
+            decision = "block"
+        elif counts["info"] > 0 or counts["warn"] > 0:
+            decision = "warn"
+        else:
+            decision = "pass"
+
+        # 构造摘要
+        summary = t(
+            "cli.messages.task_quality_review_summary",
+            default="review: {decision}, {total} findings (info={info}, warn={warn}, error={error}, block={block})",
+            decision=decision,
+            total=len(scoped),
+            info=counts["info"],
+            warn=counts["warn"],
+            error=counts["error"],
+            block=counts["block"],
+        )
+
+        return {
+            "decision": decision,
+            "findings": scoped,
+            "summary": summary,
+            "counts": counts,
+        }
+

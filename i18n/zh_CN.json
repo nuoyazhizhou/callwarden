@@ -1167,7 +1167,8 @@
       "task_quality_finding_id_required": "finding_id 不能为空",
       "task_quality_finding_not_found": "未找到质量发现记录 (id={id})",
       "task_quality_blocked_by_findings": "任务存在 {count} 个阻塞发现，无法标记完成",
-      "task_quality_fix_step_inserted": "已自动插入修复步骤 (step_id={step_id})，原因：{count} 个阻塞发现"
+      "task_quality_fix_step_inserted": "已自动插入修复步骤 (step_id={step_id})，原因：{count} 个阻塞发现",
+      "task_quality_review_summary": "质量审查：{decision}，共 {total} 个发现 (info={info}, warn={warn}, error={error}, block={block})"
     },
     "subcommand_help": "代码守护者架构子命令（四大支柱）:\n\n  安全护栏:\n    guardrail scan [--file <path>] [--category <cat>]   扫描安全护栏违规\n    guardrail rules [--category <cat>]                  列出护栏规则\n\n  变更影响:\n    impact <symbol_hash> [--depth N]                    计算变更影响半径\n    review <symbol_hash>                                生成审查就绪报告\n\n  演化智能:\n    evolution <qualified_name> [--window 30d]           查询函数变更频率\n    hotspot [--module <path>]                           热点函数排名\n    churn [--module <path>] [--window 90d]              代码流失分析\n\n  缺陷知识库:\n    defect search [--category <cat>] [--severity <sev>] 搜索缺陷模式\n    defect suggest <symbol_hash> [--finding <id>]       推荐修复方案\n    defect learn <commit_hash>                          从修复 commit 学习\n    defect stats                                        缺陷知识库统计\n    defect build                                        构建缺陷知识库\n\n  代码图谱 GC（类 Java GC，归档被 .gitignore/.callwardenignore 命中的文件）:\n    gc archive [--force] [--dry-run]                    归档被 ignore 命中的文件\n    gc restore [--path <path> ...] [--force]            复活已归档文件\n    gc status                                           查看 GC 状态（活跃/归档/删除统计）\n    gc purge [--older-than <days>]                      彻底清除归档超过 N 天的文件\n\n  诊断与维护:\n    doctor                                              检查环境、数据库状态、推荐优化\n    doctor --add-defender-exclusion                     添加 Windows Defender 排除项（需管理员权限）\n\n传统命令（--flag 模式）:\n  以下选项为传统 --flag 风格命令，与上述子命令并存。"
   },
