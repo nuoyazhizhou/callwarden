@@ -34,7 +34,7 @@ from .console import cprint
 # 子命令关键字集合
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
-                "gc", "doctor", "install-agent"}
+                "gc", "doctor", "install-agent", "rule"}
 
 
 def _run_subcommand_mode():
@@ -147,6 +147,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_doctor(argv, db)
         elif cmd == "install-agent":
             return _handle_install_agent(argv, db)
+        elif cmd == "rule":
+            return _handle_rule(argv, db)
     except Exception as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         return True
@@ -313,6 +315,331 @@ def _write_agent_integration(root: str, out_root: str, agent: str, force: bool) 
 
     _write_if_needed(os.path.join(base, "README.md"), _agent_readme(agent), force, created)
     return created
+
+
+# --------------------------------------------------------------------
+# Agent Rule Memory（候选-审核-生效-同步）
+# --------------------------------------------------------------------
+
+
+def _handle_rule(args, db):
+    """处理 rule 子命令（候选-审核-生效-同步全生命周期）
+
+    子命令：
+    - candidate create/list/accept/reject：候选规则管理
+    - list：列出已生效规则
+    - applicable：按上下文查询匹配规则
+    - sync：把 active 规则同步到 AGENTS.md 标记区
+    - insert-block：在 AGENTS.md 末尾插入规则标记块
+    - extract：从 task_quality_findings 聚合重复问题生成候选
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw rule",
+        description=t("cli_rule_desc", default="Agent Rule Memory: candidate / accept / active / sync"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # candidate：候选规则子命令组
+    cand_p = sub.add_parser(
+        "candidate", help=t("cli_rule_candidate_desc", default="Candidate rule lifecycle")
+    )
+    cand_sub = cand_p.add_subparsers(dest="cand_action", required=True)
+
+    cand_create = cand_sub.add_parser(
+        "create", help=t("cli_rule_candidate_create_desc", default="Create pending candidate rule")
+    )
+    cand_create.add_argument("--title", required=True,
+        help=t("cli_rule_arg_title", default="Rule title (short)"))
+    cand_create.add_argument("--text", required=True,
+        help=t("cli_rule_arg_text", default="Rule text (Agent will receive it verbatim)"))
+    cand_create.add_argument("--scope", default="",
+        help=t("cli_rule_arg_scope", default='Scope JSON, e.g. {"languages":["python"],"actions":["edit"]}'))
+    cand_create.add_argument("--severity", default="info",
+        help=t("cli_rule_arg_severity", default="Severity: critical/error/warning/info"))
+    cand_create.add_argument("--source", default="manual",
+        help=t("cli_rule_arg_source", default="Source: manual/auto_quality_findings/auto_semgrep/task_review/other"))
+    cand_create.add_argument("--evidence", default="",
+        help=t("cli_rule_arg_evidence", default='Evidence JSON, e.g. {"task_id":"T-xxx","occurrences":3}'))
+    cand_create.add_argument("--confidence", type=float, default=0.0,
+        help=t("cli_rule_arg_confidence", default="Confidence 0.0-1.0"))
+
+    cand_list = cand_sub.add_parser(
+        "list", help=t("cli_rule_candidate_list_desc", default="List candidate rules")
+    )
+    cand_list.add_argument("--status", default="pending",
+        help=t("cli_rule_arg_status_filter", default="Status filter: pending/accepted/rejected, empty = all"))
+    cand_list.add_argument("--limit", type=int, default=50,
+        help=t("cli_rule_arg_limit", default="Maximum count (default 50)"))
+
+    cand_accept = cand_sub.add_parser(
+        "accept", help=t("cli_rule_candidate_accept_desc", default="Accept candidate -> active rule")
+    )
+    cand_accept.add_argument("candidate_id",
+        help=t("cli_rule_arg_candidate_id", default="Candidate rule ID (ARC-xxx)"))
+    cand_accept.add_argument("--reviewer", default="agent",
+        help=t("cli_rule_arg_reviewer", default="Reviewer identifier"))
+
+    cand_reject = cand_sub.add_parser(
+        "reject", help=t("cli_rule_candidate_reject_desc", default="Reject candidate rule")
+    )
+    cand_reject.add_argument("candidate_id",
+        help=t("cli_rule_arg_candidate_id", default="Candidate rule ID (ARC-xxx)"))
+    cand_reject.add_argument("--reviewer", default="agent",
+        help=t("cli_rule_arg_reviewer", default="Reviewer identifier"))
+    cand_reject.add_argument("--reason", default="",
+        help=t("cli_rule_arg_reason", default="Reject reason (optional)"))
+
+    # list：已生效规则
+    list_p = sub.add_parser(
+        "list", help=t("cli_rule_list_desc", default="List active rules")
+    )
+    list_p.add_argument("--status", default="active",
+        help=t("cli_rule_arg_status_filter_active", default="Status: active/deprecated/removed, empty = all"))
+    list_p.add_argument("--limit", type=int, default=100,
+        help=t("cli_rule_arg_limit_active", default="Maximum count (default 100)"))
+
+    # applicable：按上下文查询
+    app_p = sub.add_parser(
+        "applicable", help=t("cli_rule_applicable_desc", default="Get applicable rules by context")
+    )
+    app_p.add_argument("--context", default="{}",
+        help=t("cli_rule_arg_context", default='Context JSON, e.g. {"languages":["python"],"actions":["edit"]}'))
+    app_p.add_argument("--limit", type=int, default=10,
+        help=t("cli_rule_arg_applicable_limit", default="Maximum count (default 10)"))
+
+    # sync：同步到 AGENTS.md
+    sync_p = sub.add_parser(
+        "sync", help=t("cli_rule_sync_desc", default="Sync active rules to AGENTS.md marker block")
+    )
+    sync_p.add_argument("--target", default="AGENTS.md",
+        help=t("cli_rule_arg_target", default="Target AGENTS.md path (relative to workspace or absolute)"))
+    sync_p.add_argument("--apply", action="store_true",
+        help=t("cli_rule_arg_apply", default="Actually write to file (default: dry-run)"))
+    sync_p.add_argument("--actor", default="agent",
+        help=t("cli_rule_arg_actor", default="Actor identifier"))
+
+    # insert-block：插入标记块
+    insert_p = sub.add_parser(
+        "insert-block", help=t("cli_rule_insert_block_desc", default="Insert marker block at end of AGENTS.md")
+    )
+    insert_p.add_argument("--target", default="AGENTS.md",
+        help=t("cli_rule_arg_target_insert", default="Target AGENTS.md path"))
+    insert_p.add_argument("--actor", default="agent",
+        help=t("cli_rule_arg_actor", default="Actor identifier"))
+
+    # extract：从质量发现聚合
+    extract_p = sub.add_parser(
+        "extract", help=t("cli_rule_extract_desc", default="Extract candidate rules from task quality findings")
+    )
+    extract_p.add_argument("--task-id", default="",
+        help=t("cli_rule_arg_task_id_extract", default="Task ID (empty = scan all tasks)"))
+    extract_p.add_argument("--min-occurrences", type=int, default=2,
+        help=t("cli_rule_arg_min_occurrences", default="Min occurrences threshold (default 2)"))
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "candidate":
+        return _handle_rule_candidate(opts, db)
+    elif opts.action == "list":
+        return _handle_rule_list(opts, db)
+    elif opts.action == "applicable":
+        return _handle_rule_applicable(opts, db)
+    elif opts.action == "sync":
+        return _handle_rule_sync(opts, db)
+    elif opts.action == "insert-block":
+        return _handle_rule_insert_block(opts, db)
+    elif opts.action == "extract":
+        return _handle_rule_extract(opts, db)
+    return True
+
+
+def _handle_rule_candidate(opts, db):
+    """处理 rule candidate 子命令组"""
+    if opts.cand_action == "create":
+        scope = _parse_json_arg(opts.scope, default={})
+        evidence = _parse_json_arg(opts.evidence, default={})
+        try:
+            cid = db.rule_candidate_create(
+                title=opts.title,
+                rule_text=opts.text,
+                scope=scope,
+                severity=opts.severity,
+                source=opts.source,
+                evidence=evidence,
+                confidence=opts.confidence,
+            )
+            cprint(t("cli.messages.rule_candidate_created", default="Created candidate: {id}", id=cid), "green")
+        except Exception as e:
+            cprint(t("cli.messages.rule_candidate_create_failed", default="Create failed: {error}", error=e), "red")
+        return True
+
+    elif opts.cand_action == "list":
+        rows = db.rule_candidate_list(status=opts.status, limit=opts.limit)
+        cprint(t("cli.messages.rule_candidate_list_title",
+                 default="=== Candidates ({count}) ===", count=len(rows)), "cyan", bold=True)
+        if not rows:
+            print(t("cli.messages.rule_candidate_list_empty", default="(empty)"))
+            return True
+        for r in rows:
+            print(t("cli.messages.rule_candidate_item",
+                    default="[{id}] {title} (severity={sev}, source={src}, status={status})",
+                    id=r["id"], title=r["title"], sev=r["severity"], src=r["source"], status=r["status"]))
+            print(t("cli.messages.rule_candidate_text",
+                    default="    text: {text}", text=r["rule_text"]))
+            if r.get("scope"):
+                print(t("cli.messages.rule_candidate_scope",
+                        default="    scope: {scope}", scope=json.dumps(r["scope"], ensure_ascii=False)))
+        return True
+
+    elif opts.cand_action == "accept":
+        try:
+            rid = db.rule_candidate_accept(candidate_id=opts.candidate_id, reviewer=opts.reviewer)
+            cprint(t("cli.messages.rule_candidate_accepted",
+                     default="Accepted: candidate={cid} -> active_rule={rid}",
+                     cid=opts.candidate_id, rid=rid), "green")
+        except Exception as e:
+            cprint(t("cli.messages.rule_candidate_accept_failed",
+                     default="Accept failed: {error}", error=e), "red")
+        return True
+
+    elif opts.cand_action == "reject":
+        try:
+            ok = db.rule_candidate_reject(
+                candidate_id=opts.candidate_id, reviewer=opts.reviewer, reason=opts.reason,
+            )
+            cprint(t("cli.messages.rule_candidate_rejected",
+                     default="Rejected: {cid} ({ok})", cid=opts.candidate_id, ok=ok), "yellow")
+        except Exception as e:
+            cprint(t("cli.messages.rule_candidate_reject_failed",
+                     default="Reject failed: {error}", error=e), "red")
+        return True
+    return True
+
+
+def _handle_rule_list(opts, db):
+    """rule list 子命令"""
+    rules = db.rule_list(status=opts.status, limit=opts.limit)
+    cprint(t("cli.messages.rule_list_title",
+             default="=== Active Rules ({count}) ===", count=len(rules)), "cyan", bold=True)
+    if not rules:
+        print(t("cli.messages.rule_list_empty", default="(empty)"))
+        return True
+    for r in rules:
+        print(t("cli.messages.rule_item",
+                default="[{id}] {title} (severity={sev}, synced={synced})",
+                id=r["id"], title=r["title"], sev=r["severity"],
+                synced=("yes" if r.get("synced_to_agents_md") else "no")))
+        print(t("cli.messages.rule_text",
+                default="    text: {text}", text=r["rule_text"]))
+        if r.get("scope"):
+            print(t("cli.messages.rule_scope",
+                    default="    scope: {scope}", scope=json.dumps(r["scope"], ensure_ascii=False)))
+    return True
+
+
+def _handle_rule_applicable(opts, db):
+    """rule applicable 子命令"""
+    context = _parse_json_arg(opts.context, default={})
+    rules = db.get_applicable_rules(context=context, limit=opts.limit)
+    cprint(t("cli.messages.rule_applicable_title",
+             default="=== Applicable Rules ({count}) ===", count=len(rules)), "cyan", bold=True)
+    if not rules:
+        print(t("cli.messages.rule_applicable_empty", default="(no rule matched)"))
+        return True
+    for r in rules:
+        print(t("cli.messages.rule_applicable_item",
+                default="[{id}] {title} (severity={sev})",
+                id=r.get("id", ""), title=r.get("title", ""), sev=r.get("severity", "info")))
+        print(t("cli.messages.rule_text",
+                default="    text: {text}", text=r.get("rule_text", "")))
+    return True
+
+
+def _handle_rule_sync(opts, db):
+    """rule sync 子命令"""
+    result = db.rule_sync_agents_md(
+        target_path=opts.target,
+        dry_run=not opts.apply,
+        actor=opts.actor,
+    )
+    if not result.get("success"):
+        cprint(t("cli.messages.rule_sync_failed",
+                 default="Sync failed: {error}", error=result.get("error", "")), "red")
+        if result.get("suggested_block"):
+            print()
+            cprint(t("cli.messages.rule_sync_suggested_block_title",
+                     default="Suggested marker block (insert into AGENTS.md first):"), "yellow")
+            print(result["suggested_block"])
+        return True
+
+    if result.get("dry_run"):
+        cprint(t("cli.messages.rule_sync_dry_run_title",
+                 default="=== Dry-run Preview ({count} rules) ===",
+                 count=result.get("rule_count", 0)), "cyan", bold=True)
+        print(t("cli.messages.rule_sync_target_label",
+                default="target: {path}", path=opts.target))
+        print(t("cli.messages.rule_sync_after_hash_label",
+                default="after_hash: {hash}", hash=result.get("after_hash", "")[:16]))
+        print()
+        print(result.get("preview", ""))
+        print()
+        cprint(t("cli.messages.rule_sync_dry_run_hint",
+                 default="Use --apply to write to file."), "yellow")
+    else:
+        cprint(t("cli.messages.rule_sync_apply_title",
+                 default="=== Synced ({count} rules) ===",
+                 count=result.get("rule_count", 0)), "green", bold=True)
+        print(t("cli.messages.rule_sync_target_label",
+                default="target: {path}", path=opts.target))
+        print(t("cli.messages.rule_sync_after_hash_label",
+                default="after_hash: {hash}", hash=result.get("after_hash", "")[:16]))
+    return True
+
+
+def _handle_rule_insert_block(opts, db):
+    """rule insert-block 子命令"""
+    result = db.rule_insert_agents_md_block(target_path=opts.target, actor=opts.actor)
+    if result.get("success"):
+        cprint(t("cli.messages.rule_insert_block_success",
+                 default="Inserted marker block: {path}", path=opts.target), "green")
+    else:
+        cprint(t("cli.messages.rule_insert_block_failed",
+                 default="Insert failed: {msg}", msg=result.get("message", "")), "yellow")
+    return True
+
+
+def _handle_rule_extract(opts, db):
+    """rule extract 子命令"""
+    cids = db.extract_rule_candidates_from_quality_findings(
+        task_id=opts.task_id, min_occurrences=opts.min_occurrences,
+    )
+    cprint(t("cli.messages.rule_extract_title",
+             default="=== Extracted Candidates ({count}) ===",
+             count=len(cids)), "cyan", bold=True)
+    if opts.task_id:
+        print(t("cli.messages.rule_extract_task_filter",
+                default="task_id: {tid}", tid=opts.task_id))
+    print(t("cli.messages.rule_extract_threshold",
+            default="min_occurrences: {n}", n=opts.min_occurrences))
+    if not cids:
+        print(t("cli.messages.rule_extract_empty",
+                default="(no repeated findings above threshold)"))
+        return True
+    for cid in cids:
+        print(t("cli.messages.rule_extract_item",
+                default="  - {cid}", cid=cid))
+    return True
+
+
+def _parse_json_arg(raw: str, default=None):
+    """解析 JSON 命令行参数，失败返回 default"""
+    if not raw:
+        return default if default is not None else {}
+    try:
+        result = json.loads(raw)
+        return result if isinstance(result, (dict, list)) else (default if default is not None else {})
+    except (ValueError, TypeError):
+        return default if default is not None else {}
 
 
 def _agent_hook_script() -> str:
