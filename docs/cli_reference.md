@@ -688,6 +688,46 @@ cw task list --blocked
 - `[!]`：任务存在 `error` / `block` 级别的 open 发现
 - `[ ]`：任务无阻塞发现
 
+### `audit verify`：验证审计链完整性
+
+```bash
+# 验证全部审计链
+cw audit verify
+
+# 仅验证指定表的审计链
+cw audit verify --table change_audit
+cw audit verify --table file_edit_audit
+cw audit verify --table task_symbol_changes
+cw audit verify --table task_quality_findings
+
+# 限制验证记录数
+cw audit verify --limit 500
+```
+
+验证 `audit_chain` 表中签名链的连续性与签名匹配。每条 `audit_chain` 记录包含
+`payload_hash` + `prev_signature` + `record_signature`，形成链式结构。
+
+**签名算法**：
+- 无 HMAC key 时：`SHA-256(prev_signature + "|" + payload_hash)`，
+  `signing_key_id='local'`，`security_level='hash_only'`
+- 有 HMAC key 时：`HMAC-SHA256(key, prev_signature + "|" + payload_hash)`，
+  `signing_key_id='hmac'`，`security_level='hmac'`
+
+**HMAC key 来源**（优先级从高到低）：
+1. 环境变量 `CALLWARDEN_AUDIT_HMAC_KEY`
+2. 文件 `~/.callwarden/audit.key`
+3. 回落到 SHA-256 链
+
+**输出**：
+- 总记录数 / 通过数 / 不通过数
+- 当前安全级别（`hash_only` 或 `hmac`）
+- 不通过记录明细（id / table / record_id / reasons）
+
+**reasons 含义**：
+- `signature_mismatch`：`record_signature` 与重新计算的签名不匹配（记录被篡改）
+- `chain_broken`：`prev_signature` 与上一条的 `record_signature` 不匹配（链断裂）
+- `first_prev_not_empty`：首条记录 `prev_signature` 应为空串但非空
+
 ### `check-gate`：检查门禁
 
 ```bash

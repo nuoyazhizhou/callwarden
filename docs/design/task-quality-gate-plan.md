@@ -450,3 +450,66 @@ $env:PYTHONIOENCODING='utf-8'; python cw.py --refresh-all
 4. Semgrep finding 能挂到 task，而不是只停留在扫描报告。
 5. 审计链能检测至少一种直接改库篡改。
 6. 所有新增用户可见输出支持中英文 i18n。
+
+## 实现状态
+
+截至 2026-07-05，本计划已全部落地：
+
+### Schema（v21 + v22）
+
+- `task_quality_findings` 表（v21）：13 字段 + 4 索引
+- `audit_chain` 表（v22）：9 字段 + 2 索引
+- SCHEMA_VERSION 22，含 `_migrate_v20_to_v21` / `_migrate_v21_to_v22` 迁移函数
+
+### Mixin 实现
+
+- `db/db_task_quality.py`：`TaskQualityMixin`
+  - `record_task_quality_finding` / `get_task_quality_findings` / `resolve_task_quality_finding`
+  - `task_has_blocking_findings` / `insert_fix_quality_gate_step`
+  - `run_task_completion_review`（聚合 5 个扩展检查器）
+  - 5 个检查器：`_check_scope_violations` / `_check_symbol_attribution` /
+    `_check_file_health` / `_check_i18n_hardcoded` / `_check_signature_mismatch`
+- `db/db_audit_chain.py`：`AuditChainMixin`
+  - `canonical_json`：稳定序列化（sort_keys + ensure_ascii=False + 紧凑分隔符）
+  - `sign_audit_record`：写入 audit_chain 表，payload_hash + 链式 record_signature
+  - `verify_audit_chain`：校验链连续性与签名匹配，返回 broken_records 明细
+  - HMAC key 优先级：`CALLWARDEN_AUDIT_HMAC_KEY` > `~/.callwarden/audit.key` > SHA-256 链
+  - 无 key 时 `security_level=hash_only`，有 key 时 `security_level=hmac`
+
+### 接线（Wire）
+
+- `db/db.py`：`AuditChainMixin` 混入 `CodeGraphDB` 继承链
+- `db/db_tasks.py`：`task_report_step` / `task_rollback` 的 `change_audit` 写入后签名
+- `db/db_edit.py`：`file_edit_audit` 状态更新为 applied 后签名（dry_run 跳过）
+- `db/db_task_attribution.py`：`task_symbol_changes` 写入后签名
+- `db/db_task_quality.py`：`task_quality_findings` 写入后签名
+- 所有签名调用使用 `hasattr` 防御性检查 + `try-except` 静默失败
+
+### CLI 命令
+
+- `cw task findings <task_id>`：查看任务质量门禁发现
+- `cw task resolve-finding <finding_id>`：解决质量门禁发现
+- `cw task list --blocked`：仅显示有阻塞发现的任务
+- `cw audit verify [--table <name>]`：验证审计链完整性（待实现 CLI 子命令）
+
+### MCP 工具
+
+- `task_completion_review`：调度器，聚合 run_check_gate + 5 个扩展检查器
+- `task_quality_findings`：查询任务质量发现
+- `task_resolve_quality_finding`：解决单条 finding
+- `audit_chain_verify`：验证审计链（待实现 MCP 工具）
+
+### 测试
+
+- `tests/test_task_quality_gate.py`：schema + TaskQualityMixin 业务方法
+- `tests/test_task_quality_cli.py`：CLI 子命令测试
+- `tests/test_agent_integration.py`：MCP 工具集成测试
+- `tests/test_audit_chain.py`：audit_chain schema + 端到端集成测试（19 个）
+- `tests/test_audit_chain_mixin.py`：AuditChainMixin 单元测试（26 个）
+
+### i18n
+
+- 25+ 个 task_quality_* i18n key
+- 9 个 audit_verify_* i18n key
+- migration_v21 / migration_v22 文案
+

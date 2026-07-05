@@ -404,6 +404,38 @@ cw server --transport sse    # SSE 模式
 > 必须先 `task_resolve_quality_finding` 标记为 resolved/wontfix，
 > 再 `task_completion_review` 复查决策。
 
+### `audit_chain_verify`
+验证审计签名链的完整性与一致性。校验 `audit_chain` 表中每条记录的
+`record_signature` 是否匹配重新计算的签名，以及 `prev_signature` 是否
+正确链向上一条记录。可发现直接改库导致的审计记录篡改。
+
+- **参数**：
+  - `table_name: str = ""` — 指定表名时只验证该表的链；为空时验证全部
+  - `limit: int = 1000` — 最多验证的记录数
+- **返回**：`dict` —
+  - `table_name: str` — 验证的表名（空串表示全部）
+  - `total_count: int` — 验证的记录总数
+  - `verified_count: int` — 通过验证的记录数
+  - `broken_count: int` — 不通过的记录数
+  - `broken_records: list` — 不通过的记录列表，每项含 `id / table_name / record_id / reasons`
+  - `security_level: str` — 当前签名安全级别（`hash_only` 或 `hmac`）
+
+**签名算法**：
+- 无 HMAC key 时：`SHA-256(prev_signature + "|" + payload_hash)`，
+  `signing_key_id='local'`
+- 有 HMAC key 时：`HMAC-SHA256(key, prev_signature + "|" + payload_hash)`，
+  `signing_key_id='hmac'`
+
+**HMAC key 来源**（优先级从高到低）：
+1. 环境变量 `CALLWARDEN_AUDIT_HMAC_KEY`
+2. 文件 `~/.callwarden/audit.key`
+3. 回落到 SHA-256 链
+
+**reasons 含义**：
+- `signature_mismatch`：`record_signature` 与重新计算的签名不匹配
+- `chain_broken`：`prev_signature` 与上一条的 `record_signature` 不匹配
+- `first_prev_not_empty`：首条记录 `prev_signature` 应为空串但非空
+
 ### `task_create_subtask`
 在父任务下创建子任务。任务过大时拆分子任务，子任务完成后系统自动推进父任务状态，避免 Agent 遗漏任务或遗忘上下文。
 - **参数**：`parent_task_id: str`, `title: str`, `description: str = ""`, `steps: list = None`, `creator: str = "agent"`
