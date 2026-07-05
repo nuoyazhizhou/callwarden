@@ -2917,6 +2917,253 @@ def create_mcp_server():
         except Exception as e:
             return {"error": str(e), "resolved_count": 0}
 
+    # ---- Agent Rule Memory（候选-审核-生效-同步）----
+
+    @mcp.tool()
+    def rule_candidate_create(
+        title: str,
+        rule_text: str,
+        scope: Optional[dict] = None,
+        severity: str = "info",
+        source: str = "manual",
+        evidence: Optional[dict] = None,
+        confidence: float = 0.0,
+    ) -> dict:
+        """创建候选规则（pending 状态）
+
+        Agent 在 task 执行过程中观察到的规则候选需要走审核流程：
+        创建 → 审核（accept/reject）→ 写入 agent_rules 生效。
+
+        Args:
+            title: 规则标题（简短描述）
+            rule_text: 规则正文（Agent 注入时会原文返回）
+            scope: 作用域 dict，支持 languages / file_patterns /
+                symbol_kinds / actions / finding_types / module_prefixes
+            severity: 严重级别 critical / error / warning / info
+            source: 来源 manual / auto_quality_findings / auto_semgrep /
+                task_review / other
+            evidence: 证据 dict（如 task_id、occurrences 等）
+            confidence: 置信度 0.0-1.0
+
+        Returns:
+            {"candidate_id": "ARC-xxx"}
+        """
+        try:
+            db = get_db()
+            cid = db.rule_candidate_create(
+                title=title,
+                rule_text=rule_text,
+                scope=scope or {},
+                severity=severity,
+                source=source,
+                evidence=evidence or {},
+                confidence=confidence,
+            )
+            return {"candidate_id": cid}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def rule_candidate_list(status: str = "pending", limit: int = 50) -> dict:
+        """列出候选规则
+
+        Args:
+            status: 状态过滤 pending / accepted / rejected，空串返回所有
+            limit: 返回数量上限（默认 50）
+
+        Returns:
+            {"candidates": [...], "count": int}
+        """
+        try:
+            db = get_db()
+            rows = db.rule_candidate_list(status=status, limit=limit)
+            return {"candidates": rows, "count": len(rows)}
+        except Exception as e:
+            return {"error": str(e), "candidates": [], "count": 0}
+
+    @mcp.tool()
+    def rule_candidate_accept(
+        candidate_id: str,
+        reviewer: str = "agent",
+    ) -> dict:
+        """接受候选规则，写入 agent_rules（active）
+
+        幂等：重复 accept 已 accepted 的 candidate 会返回原 linked_rule_id。
+
+        Args:
+            candidate_id: 候选规则 ID（ARC-xxx）
+            reviewer: 审核人标识
+
+        Returns:
+            {"rule_id": "AR-xxx"} 或 {"error": ...}
+        """
+        try:
+            db = get_db()
+            rid = db.rule_candidate_accept(
+                candidate_id=candidate_id, reviewer=reviewer
+            )
+            return {"rule_id": rid}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def rule_candidate_reject(
+        candidate_id: str,
+        reviewer: str = "agent",
+        reason: str = "",
+    ) -> dict:
+        """拒绝候选规则
+
+        Args:
+            candidate_id: 候选规则 ID（ARC-xxx）
+            reviewer: 审核人标识
+            reason: 拒绝原因（可选）
+
+        Returns:
+            {"rejected": bool}
+        """
+        try:
+            db = get_db()
+            ok = db.rule_candidate_reject(
+                candidate_id=candidate_id, reviewer=reviewer, reason=reason
+            )
+            return {"rejected": ok}
+        except Exception as e:
+            return {"error": str(e), "rejected": False}
+
+    @mcp.tool()
+    def rule_list(status: str = "active", limit: int = 100) -> dict:
+        """列出已生效规则
+
+        Args:
+            status: 状态过滤 active / deprecated / removed，空串返回所有
+            limit: 返回数量上限（默认 100）
+
+        Returns:
+            {"rules": [...], "count": int}
+        """
+        try:
+            db = get_db()
+            rules = db.rule_list(status=status, limit=limit)
+            return {"rules": rules, "count": len(rules)}
+        except Exception as e:
+            return {"error": str(e), "rules": [], "count": 0}
+
+    @mcp.tool()
+    def get_applicable_rules(
+        context: dict,
+        limit: int = 10,
+    ) -> dict:
+        """按上下文返回匹配的 active 规则
+
+        scope 匹配规则：
+        - 空 scope = 全局匹配
+        - 同字段内多值 OR 匹配（如 languages: [python, rust]）
+        - 不同字段间 AND 匹配
+        - file_patterns 支持 glob；module_prefixes 前缀匹配
+
+        排序：severity 优先级 → 命中字段数 → updated_at 倒序
+
+        Args:
+            context: 上下文 dict，支持字段 languages / file_patterns /
+                symbol_kinds / actions / finding_types / module_prefixes
+            limit: 返回数量上限（默认 10）
+
+        Returns:
+            {"rules": [...], "count": int}
+        """
+        try:
+            db = get_db()
+            rules = db.get_applicable_rules(context=context, limit=limit)
+            return {"rules": rules, "count": len(rules)}
+        except Exception as e:
+            return {"error": str(e), "rules": [], "count": 0}
+
+    @mcp.tool()
+    def rule_sync_agents_md(
+        target_path: str = "AGENTS.md",
+        dry_run: bool = True,
+        actor: str = "agent",
+    ) -> dict:
+        """把 active 规则同步到 AGENTS.md 标记区
+
+        安全策略：
+        - dry_run=True（默认）只返回 preview，不写文件
+        - apply 模式只替换 CALLWARDEN_RULES_START/END 之间内容，
+          不触碰人工维护区域
+        - 标记区不存在时返回 error + suggested_block
+        - 写入后记录 agent_rule_sync_log 并标记规则 synced_to_agents_md=1
+
+        Args:
+            target_path: AGENTS.md 文件路径（相对 workspace 或绝对）
+            dry_run: True=只返回 preview，False=实际写入
+            actor: 操作者标识
+
+        Returns:
+            {"success": bool, "rule_count": int, "preview": str, ...}
+        """
+        try:
+            db = get_db()
+            return db.rule_sync_agents_md(
+                target_path=target_path, dry_run=dry_run, actor=actor
+            )
+        except Exception as e:
+            return {"error": str(e), "success": False}
+
+    @mcp.tool()
+    def rule_insert_agents_md_block(
+        target_path: str = "AGENTS.md",
+        actor: str = "agent",
+    ) -> dict:
+        """在 AGENTS.md 末尾插入 Call Warden 规则标记块
+
+        当标记区不存在时调用此方法插入空标记块，之后
+        rule_sync_agents_md 才能正常工作。重复插入会返回失败。
+
+        Args:
+            target_path: AGENTS.md 文件路径
+            actor: 操作者标识
+
+        Returns:
+            {"success": bool, "target_path": str, "message": str}
+        """
+        try:
+            db = get_db()
+            return db.rule_insert_agents_md_block(
+                target_path=target_path, actor=actor
+            )
+        except Exception as e:
+            return {"error": str(e), "success": False}
+
+    @mcp.tool()
+    def extract_rule_candidates_from_quality_findings(
+        task_id: str = "",
+        min_occurrences: int = 2,
+    ) -> dict:
+        """从 task_quality_findings 聚合重复问题生成候选规则
+
+        聚合维度：(finding_type, severity, source)
+        - 同一聚合键 count >= min_occurrences 时生成 1 个 pending 候选
+        - 去重：同一聚合键已有 pending 候选时跳过
+        - evidence 保存 finding_ids（最多 10 条）和 occurrences
+        - confidence = min(1.0, occurrences/10)
+
+        Args:
+            task_id: 任务 ID，空串则全库扫描
+            min_occurrences: 阈值（默认 2）
+
+        Returns:
+            {"candidate_ids": [...], "count": int}
+        """
+        try:
+            db = get_db()
+            cids = db.extract_rule_candidates_from_quality_findings(
+                task_id=task_id, min_occurrences=min_occurrences
+            )
+            return {"candidate_ids": cids, "count": len(cids)}
+        except Exception as e:
+            return {"error": str(e), "candidate_ids": [], "count": 0}
+
     return mcp
 
 
