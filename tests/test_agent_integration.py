@@ -266,3 +266,219 @@ def test_install_agent_generates_templates():
     assert os.path.isfile(os.path.join(out_dir, "codex", "callwarden-plugin", ".codex-plugin", "plugin.json"))
     assert os.path.isfile(os.path.join(out_dir, "claude", "settings.snippet.json"))
     assert os.path.isfile(os.path.join(out_dir, "cursor", "callwarden.mdc"))
+
+
+# ============================================
+# Agent Rule Memory 注入集成测试
+# ============================================
+
+
+def _setup_rules_for_injection(db):
+    """辅助：在 db 中创建两条 active 规则（python+edit 作用域规则 + 全局规则）
+
+    返回 (rule_id_scoped, rule_id_global)。
+    """
+    cid_scoped = db.rule_candidate_create(
+        title="i18n-rule",
+        rule_text="用户可见输出必须走 i18n key，不要硬编码",
+        scope={"languages": ["python"], "actions": ["edit"]},
+        severity="warning",
+    )
+    rid_scoped = db.rule_candidate_accept(cid_scoped, reviewer="tester")
+
+    cid_global = db.rule_candidate_create(
+        title="global-rule",
+        rule_text="所有任务都适用的全局规则",
+        scope={},
+        severity="info",
+    )
+    rid_global = db.rule_candidate_accept(cid_global, reviewer="tester")
+    return rid_scoped, rid_global
+
+
+def test_task_next_step_returns_applicable_rules_when_rule_accepted():
+    """task_next_step 应在返回值中注入 applicable_rules（accepted 规则）"""
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        _setup_rules_for_injection(db)
+
+        task_id = db.task_create(
+            "rule-inject-test",
+            steps=[{
+                "action": "edit",
+                "target_file": "cli/main.py",
+                "target_symbol": "cli.main.handle",
+                "check_items": "modify handle",
+            }],
+        )
+
+        step = db.task_next_step(task_id)
+        assert step is not None
+        assert "applicable_rules" in step, "task_next_step 必须返回 applicable_rules"
+
+        titles = [r["title"] for r in step["applicable_rules"]]
+        assert "i18n-rule" in titles, "python+edit 作用域规则应被匹配"
+        assert "global-rule" in titles, "全局规则应被匹配"
+
+        # i18n-rule 应排在 global-rule 前面（warning > info）
+        scoped = next(r for r in step["applicable_rules"] if r["title"] == "i18n-rule")
+        assert scoped["severity"] == "warning"
+        assert "language:python" in scoped["matched_scope"]
+        assert "action:edit" in scoped["matched_scope"]
+
+        # 全局规则的 matched_scope 应是 ['global']
+        global_r = next(r for r in step["applicable_rules"] if r["title"] == "global-rule")
+        assert global_r["matched_scope"] == ["global"]
+    finally:
+        db.close()
+
+
+def test_task_next_step_applicable_rules_empty_when_no_active_rules():
+    """没有 active 规则时 applicable_rules 应为空列表（不是 None）"""
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        # 只有 pending 候选规则，没有 accept
+        db.rule_candidate_create("pending-rule", "should not inject")
+
+        task_id = db.task_create(
+            "no-rule-test",
+            steps=[{"action": "edit", "target_file": "x.py"}],
+        )
+        step = db.task_next_step(task_id)
+        assert step is not None
+        assert step["applicable_rules"] == [], "pending 规则不应被注入"
+    finally:
+        db.close()
+
+
+def test_task_next_step_structured_instruction_contains_project_rules():
+    """structured_instruction.project_rules 应包含规则摘要"""
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        _setup_rules_for_injection(db)
+
+        task_id = db.task_create(
+            "si-test",
+            steps=[{
+                "action": "edit",
+                "target_file": "cli/main.py",
+                "check_items": "x",
+            }],
+        )
+        step = db.task_next_step(task_id)
+        assert step is not None
+
+        si = step.get("structured_instruction") or {}
+        assert "project_rules" in si, "structured_instruction 必须包含 project_rules"
+        assert len(si["project_rules"]) >= 2
+
+        # project_rules 只返回摘要字段（id/title/severity）
+        for r in si["project_rules"]:
+            assert "id" in r
+            assert "title" in r
+            assert "severity" in r
+            assert "rule_text" not in r, "摘要不应包含 rule_text"
+    finally:
+        db.close()
+
+
+def test_work_next_job_returns_project_rules_when_rule_accepted():
+    """work_next_job 应在 job 顶层返回 project_rules，并在 context 返回摘要"""
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        _setup_rules_for_injection(db)
+
+        task_id = db.task_create(
+            "work-rule-test",
+            steps=[{
+                "action": "edit",
+                "target_file": "cli/main.py",
+                "check_items": "x",
+            }],
+        )
+
+        job = db.work_next_job(task_id)
+        assert job is not None
+
+        # 顶层 project_rules
+        assert "project_rules" in job, "work_next_job 必须返回 project_rules"
+        assert len(job["project_rules"]) >= 2
+
+        # context.applicable_rules 是精简摘要
+        assert "applicable_rules" in job["context"], "context 必须有 applicable_rules"
+        assert len(job["context"]["applicable_rules"]) >= 2
+
+        # 摘要字段只含 id/title/severity
+        for r in job["context"]["applicable_rules"]:
+            assert set(r.keys()) == {"id", "title", "severity"}
+    finally:
+        db.close()
+
+
+def test_rule_injection_fail_soft_on_missing_table():
+    """fail-soft：agent_rules 表异常时注入降级为空列表，不阻塞任务领取"""
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        _setup_rules_for_injection(db)
+
+        # 模拟表损坏：DROP agent_rules 表
+        db.conn.execute("DROP TABLE agent_rules")
+        db.conn.commit()
+
+        # 创建新任务（之前的 step 已被领取过）
+        task_id = db.task_create(
+            "failsoft-test",
+            steps=[{"action": "edit", "target_file": "cli/main.py"}],
+        )
+        # task_next_step 应正常返回，applicable_rules 是空列表
+        step = db.task_next_step(task_id)
+        assert step is not None, "fail-soft 时任务仍应正常领取"
+        assert step["applicable_rules"] == [], "fail-soft 时 applicable_rules 应为空列表"
+
+        # structured_instruction.project_rules 也应为空
+        si = step.get("structured_instruction") or {}
+        assert si.get("project_rules", []) == []
+    finally:
+        db.close()
+
+
+def test_rule_injection_filters_by_action_scope():
+    """规则按 action 作用域过滤：edit 规则不应在 annotate 步骤注入"""
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+    try:
+        # 只在 edit 动作下生效的规则
+        cid = db.rule_candidate_create(
+            title="edit-only-rule",
+            rule_text="only for edit",
+            scope={"actions": ["edit"]},
+            severity="warning",
+        )
+        db.rule_candidate_accept(cid)
+
+        # edit 步骤应匹配
+        tid_edit = db.task_create(
+            "edit-test",
+            steps=[{"action": "edit", "target_file": "x.py"}],
+        )
+        step_edit = db.task_next_step(tid_edit)
+        assert step_edit is not None
+        titles = [r["title"] for r in step_edit["applicable_rules"]]
+        assert "edit-only-rule" in titles
+
+        # annotate 步骤不应匹配
+        tid_anno = db.task_create(
+            "annotate-test",
+            steps=[{"action": "annotate_function", "target_file": "x.py"}],
+        )
+        step_anno = db.task_next_step(tid_anno)
+        assert step_anno is not None
+        titles_anno = [r["title"] for r in step_anno["applicable_rules"]]
+        assert "edit-only-rule" not in titles_anno, "edit-only 规则不应在 annotate 步骤注入"
+    finally:
+        db.close()
