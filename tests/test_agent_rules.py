@@ -1298,3 +1298,211 @@ def _last_cid(db):
     return row["id"]
 
 
+# ============================================
+# Phase 5: extract_rule_candidates_from_quality_findings 测试
+# ============================================
+
+
+def test_extract_rule_candidates_aggregates_repeated_findings():
+    """重复出现的同类 finding 应聚合成 1 个 pending 候选规则"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid = db.task_create("q-test", steps=[{"action": "edit"}])
+            # 写入 3 个同类型 finding（i18n + warn + semgrep）
+            for i in range(3):
+                db.record_task_quality_finding(
+                    task_id=tid,
+                    finding_type="i18n",
+                    severity="warn",
+                    message=f"hardcoded {i}",
+                    source="semgrep",
+                )
+
+            cids = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert len(cids) == 1, "应只生成 1 个候选"
+            c = db.rule_candidate_list(status="pending")[0]
+            assert c["source"] == "auto_quality_findings"
+            assert c["scope"] == {"finding_types": ["i18n"]}
+            assert c["severity"] == "warning"
+            assert c["evidence"]["occurrences"] == 3
+            assert c["evidence"]["source"] == "task_quality_findings"
+            assert c["evidence"]["task_id"] == tid
+            assert len(c["evidence"]["finding_ids"]) == 3
+            # confidence = min(1.0, occurrences/10) = 0.3
+            assert c["confidence"] == pytest.approx(0.3)
+        finally:
+            db.close()
+
+
+def test_extract_rule_candidates_below_threshold_not_generated():
+    """出现次数低于 min_occurrences 不应生成候选"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid = db.task_create("q-test", steps=[{"action": "edit"}])
+            db.record_task_quality_finding(
+                task_id=tid, finding_type="i18n",
+                severity="warn", message="only one", source="semgrep",
+            )
+            cids = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert cids == [], "1 条 finding 低于阈值 2，不应生成候选"
+        finally:
+            db.close()
+
+
+def test_extract_rule_candidates_dedup_when_pending_exists():
+    """已有 pending 候选时重复提取应跳过（去重）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid = db.task_create("q-test", steps=[{"action": "edit"}])
+            for i in range(3):
+                db.record_task_quality_finding(
+                    task_id=tid, finding_type="i18n",
+                    severity="warn", message=f"m{i}", source="semgrep",
+                )
+            # 第一次提取
+            cids1 = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert len(cids1) == 1
+            # 第二次提取应去重
+            cids2 = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert cids2 == [], "已有 pending 候选时不应重复生成"
+        finally:
+            db.close()
+
+
+def test_extract_rule_candidates_regenerates_after_accept():
+    """accept 候选后再次提取应生成新候选（pending 不存在了）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid = db.task_create("q-test", steps=[{"action": "edit"}])
+            for i in range(3):
+                db.record_task_quality_finding(
+                    task_id=tid, finding_type="i18n",
+                    severity="warn", message=f"m{i}", source="semgrep",
+                )
+            cids1 = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert len(cids1) == 1
+            db.rule_candidate_accept(cids1[0])
+            # accept 后 pending 不存在，应生成新候选
+            cids2 = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert len(cids2) == 1, "accept 后应重新生成 pending 候选"
+            assert cids2[0] != cids1[0], "应是新候选 ID"
+        finally:
+            db.close()
+
+
+def test_extract_rule_candidates_full_scan_without_task_id():
+    """全库扫描（不限定 task_id）能聚合多个任务的 finding"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid1 = db.task_create("t1", steps=[{"action": "edit"}])
+            tid2 = db.task_create("t2", steps=[{"action": "edit"}])
+            for i in range(2):
+                db.record_task_quality_finding(
+                    task_id=tid1, finding_type="signature",
+                    severity="error", message=f"m{i}", source="call_chain",
+                )
+                db.record_task_quality_finding(
+                    task_id=tid2, finding_type="signature",
+                    severity="error", message=f"m{i}", source="call_chain",
+                )
+            cids = db.extract_rule_candidates_from_quality_findings(
+                min_occurrences=2,
+            )
+            assert len(cids) == 1, "全库扫描应聚合 4 条 signature finding"
+            c = db.rule_candidate_list(status="pending")[0]
+            assert c["severity"] == "error"
+            assert c["evidence"]["occurrences"] == 4
+        finally:
+            db.close()
+
+
+def test_extract_rule_candidates_severity_mapping():
+    """finding severity 应正确映射到规则 severity"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid = db.task_create("q-test", steps=[{"action": "edit"}])
+            # error 级 finding
+            for i in range(2):
+                db.record_task_quality_finding(
+                    task_id=tid, finding_type="semgrep",
+                    severity="error", message=f"e{i}", source="semgrep",
+                )
+            # warn 级 finding
+            for i in range(2):
+                db.record_task_quality_finding(
+                    task_id=tid, finding_type="i18n",
+                    severity="warn", message=f"w{i}", source="semgrep",
+                )
+            cids = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert len(cids) == 2
+            cands = db.rule_candidate_list(status="pending")
+            semgrep_c = next(c for c in cands if "semgrep" in c["title"])
+            i18n_c = next(c for c in cands if "i18n" in c["title"])
+            assert semgrep_c["severity"] == "error"
+            assert i18n_c["severity"] == "warning"
+        finally:
+            db.close()
+
+
+def test_extract_rule_candidates_evidence_preserves_finding_ids():
+    """evidence 应保存来源 finding_ids（最多 10 条）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid = db.task_create("q-test", steps=[{"action": "edit"}])
+            # 写入 15 条同类型 finding（finding_ids 应只保留前 10 条）
+            for i in range(15):
+                db.record_task_quality_finding(
+                    task_id=tid, finding_type="i18n",
+                    severity="warn", message=f"m{i}", source="semgrep",
+                )
+            cids = db.extract_rule_candidates_from_quality_findings(
+                task_id=tid, min_occurrences=2,
+            )
+            assert len(cids) == 1
+            c = db.rule_candidate_list(status="pending")[0]
+            assert c["evidence"]["occurrences"] == 15
+            assert len(c["evidence"]["finding_ids"]) == 10, "最多保留 10 条 finding_ids"
+            # confidence = min(1.0, 15/10) = 1.0
+            assert c["confidence"] == 1.0
+        finally:
+            db.close()
+
+
+def test_extract_rule_candidates_default_min_occurrences_is_2():
+    """默认 min_occurrences=2"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        try:
+            tid = db.task_create("q-test", steps=[{"action": "edit"}])
+            # 只写 1 条，低于默认阈值
+            db.record_task_quality_finding(
+                task_id=tid, finding_type="i18n",
+                severity="warn", message="m", source="semgrep",
+            )
+            cids = db.extract_rule_candidates_from_quality_findings(task_id=tid)
+            assert cids == [], "默认阈值 2，1 条 finding 不应被提取"
+        finally:
+            db.close()
+
+
