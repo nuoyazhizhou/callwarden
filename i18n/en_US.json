@@ -1158,6 +1158,7 @@
       "migration_v18": "Add external package cold-data tracking fields (last_seen_at / last_used_at / import_source)",
       "migration_v19": "Add GC retention policy table (gc_policies)",
       "migration_v20": "Add GC run audit table (gc_runs, records policy/candidates/deletions/backup/status per GC operation)",
+      "migration_v21": "Add task quality findings table (task_quality_findings, task completion gate findings, distinct from guardrail_findings)",
       "attribution_task_id_required": "task_id is required",
       "attribution_file_path_required": "file_path is required",
       "attribution_edit_audit_not_found": "edit audit not found",

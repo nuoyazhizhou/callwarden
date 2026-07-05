@@ -1,0 +1,219 @@
+"""任务质量门禁（Task Quality Gate）测试。
+
+本测试覆盖 docs/design/task-quality-gate-plan.md 中 v21 schema 落地：
+- task_quality_findings 表存在
+- 4 个索引存在（task / step / status / severity）
+- 字段完整性（task_id / step_id / finding_type / severity / status / message /
+  evidence / source / created_at / resolved_at / resolved_by）
+- 默认值正确（severity='warn', status='open', resolved_by='', resolved_at=NULL）
+- 旧库重复迁移幂等（CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS）
+- SCHEMA_VERSION 升级到 21 后 schema_version 表记录 v21
+- 全新数据库直接包含 task_quality_findings（无需迁移）
+
+后续步骤会扩展为 TaskQualityMixin 业务方法、completion review 调度器等测试。
+"""
+
+import os
+import sqlite3
+import tempfile
+
+from callwarden.db.db import CodeGraphDB
+from callwarden.db.schema import SCHEMA_VERSION
+
+
+def _db_with_workspace():
+    """构造临时工作区数据库（触发完整 schema 初始化）。"""
+    root = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(root, "callwarden.db"), workspace_root=root)
+    return db, root
+
+
+def _table_columns(conn, table_name):
+    """获取表字段列表。"""
+    cur = conn.execute(f"PRAGMA table_info({table_name})")
+    return [row["name"] for row in cur.fetchall()]
+
+
+def _index_exists(conn, index_name):
+    """检查索引是否存在。"""
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+        (index_name,),
+    )
+    return cur.fetchone() is not None
+
+
+def _table_exists(conn, table_name):
+    """检查表是否存在。"""
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    )
+    return cur.fetchone() is not None
+
+
+def test_schema_version_is_21():
+    """SCHEMA_VERSION 常量已升级到 21。"""
+    assert SCHEMA_VERSION == 21
+
+
+def test_task_quality_findings_table_exists_on_fresh_db():
+    """全新数据库直接包含 task_quality_findings 表（无需迁移）。"""
+    db, _root = _db_with_workspace()
+    try:
+        assert _table_exists(db.conn, "task_quality_findings")
+    finally:
+        db.close()
+
+
+def test_task_quality_findings_indexes_exist():
+    """4 个索引存在：task / step / status / severity。"""
+    db, _root = _db_with_workspace()
+    try:
+        assert _index_exists(db.conn, "idx_task_quality_task")
+        assert _index_exists(db.conn, "idx_task_quality_step")
+        assert _index_exists(db.conn, "idx_task_quality_status")
+        assert _index_exists(db.conn, "idx_task_quality_severity")
+    finally:
+        db.close()
+
+
+def test_task_quality_findings_columns():
+    """字段完整性检查。"""
+    expected = {
+        "id", "workspace_id", "task_id", "step_id", "finding_type",
+        "severity", "status", "message", "evidence", "source",
+        "created_at", "resolved_at", "resolved_by",
+    }
+    db, _root = _db_with_workspace()
+    try:
+        cols = set(_table_columns(db.conn, "task_quality_findings"))
+        missing = expected - cols
+        assert not missing, f"missing columns: {missing}"
+    finally:
+        db.close()
+
+
+def test_task_quality_findings_defaults():
+    """默认值：severity='warn', status='open', resolved_by='', resolved_at=NULL。"""
+    db, _root = _db_with_workspace()
+    try:
+        db.conn.execute(
+            "INSERT INTO task_quality_findings (task_id, finding_type, message, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("T-test", "semgrep", "test message", 0.0),
+        )
+        db.conn.commit()
+        cur = db.conn.execute(
+            "SELECT severity, status, resolved_by, resolved_at, source, evidence, step_id "
+            "FROM task_quality_findings WHERE task_id = ?",
+            ("T-test",),
+        )
+        row = cur.fetchone()
+        assert row["severity"] == "warn"
+        assert row["status"] == "open"
+        assert row["resolved_by"] == ""
+        assert row["resolved_at"] is None
+        assert row["source"] == ""
+        assert row["evidence"] == ""
+        assert row["step_id"] == ""
+    finally:
+        db.close()
+
+
+def test_migration_v20_to_v21_is_idempotent():
+    """v20 -> v21 迁移幂等：在已有表的库上重复执行不报错。
+
+    直接调用迁移函数 _migrate_v20_to_v21，模拟旧库 v20 迁移到 v21。
+    第二次调用应当因 IF NOT EXISTS 而 no-op。
+    """
+    root = tempfile.mkdtemp()
+    db_path = os.path.join(root, "callwarden.db")
+    db = CodeGraphDB(db_path, workspace_root=root)
+    try:
+        # 数据库已通过完整 SCHEMA_SQL 包含 task_quality_findings，
+        # 现在再次调用迁移函数，验证幂等。
+        from callwarden.db.db_base import _migrate_v20_to_v21
+        _migrate_v20_to_v21(db.conn)
+        _migrate_v20_to_v21(db.conn)
+        assert _table_exists(db.conn, "task_quality_findings")
+        assert _index_exists(db.conn, "idx_task_quality_task")
+    finally:
+        db.close()
+
+
+def test_migration_v20_to_v21_on_legacy_v20_db():
+    """模拟 v20 旧库：手动构造一个不含 task_quality_findings 的库，
+    再执行 _migrate_v20_to_v21，验证表和索引被创建。
+    """
+    root = tempfile.mkdtemp()
+    db_path = os.path.join(root, "callwarden.db")
+    # 直接用裸 sqlite3 建一个最小 v20 库（不含 task_quality_findings）
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE workspaces (id INTEGER PRIMARY KEY, name TEXT, root_path TEXT)")
+    conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT)")
+    conn.commit()
+
+    from callwarden.db.db_base import _migrate_v20_to_v21
+    _migrate_v20_to_v21(conn)
+    conn.commit()
+
+    assert _table_exists(conn, "task_quality_findings")
+    assert _index_exists(conn, "idx_task_quality_task")
+    assert _index_exists(conn, "idx_task_quality_step")
+    assert _index_exists(conn, "idx_task_quality_status")
+    assert _index_exists(conn, "idx_task_quality_severity")
+    conn.close()
+
+
+def test_schema_version_table_records_v21_on_fresh_db():
+    """全新数据库 schema_version 表记录 v21 版本。"""
+    db, _root = _db_with_workspace()
+    try:
+        cur = db.conn.execute(
+            "SELECT version FROM schema_version WHERE version = ?",
+            (21,),
+        )
+        row = cur.fetchone()
+        assert row is not None, "v21 not recorded in schema_version table"
+    finally:
+        db.close()
+
+
+def test_legacy_v20_db_migrates_to_v21_via_init_schema():
+    """旧 v20 库通过 _init_schema 自动迁移到 v21。
+
+    构造一个 v20 库（schema_version 表标记为 20，不含 task_quality_findings），
+    再用 CodeGraphDB 打开，触发 _migrate_schema(20, 21)。
+    """
+    root = tempfile.mkdtemp()
+    db_path = os.path.join(root, "callwarden.db")
+    import time
+
+    # 1. 先用 CodeGraphDB 创建完整 schema（v21）
+    db = CodeGraphDB(db_path, workspace_root=root)
+    db.close()
+
+    # 2. 模拟降级到 v20：删除 task_quality_findings 和相关索引，并把版本号改成 20
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP TABLE IF EXISTS task_quality_findings")
+    conn.execute("DELETE FROM schema_version WHERE version = 21")
+    conn.execute(
+        "INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
+        (20, time.time(), "downgrade for test"),
+    )
+    conn.commit()
+    conn.close()
+
+    # 3. 再次用 CodeGraphDB 打开，应触发 v20 -> v21 迁移
+    db = CodeGraphDB(db_path, workspace_root=root)
+    try:
+        assert _table_exists(db.conn, "task_quality_findings")
+        assert _index_exists(db.conn, "idx_task_quality_task")
+        cur = db.conn.execute(
+            "SELECT version FROM schema_version WHERE version = 21"
+        )
+        assert cur.fetchone() is not None, "v21 migration not recorded"
+    finally:
+        db.close()

@@ -1158,6 +1158,7 @@
       "migration_v18": "外部包冷数据追踪字段（last_seen_at / last_used_at / import_source）",
       "migration_v19": "GC retention 策略表（gc_policies）",
       "migration_v20": "GC 运行审计表（gc_runs，记录每次 retention/archive/purge 的策略/候选/删除/备份/状态）",
+      "migration_v21": "任务质量门禁发现表（task_quality_findings，承载任务完成门禁发现，区分于通用 guardrail_findings）",
       "attribution_task_id_required": "task_id 不能为空",
       "attribution_file_path_required": "file_path 不能为空",
       "attribution_edit_audit_not_found": "未找到编辑审计记录",

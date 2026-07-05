@@ -1116,6 +1116,39 @@ def _migrate_v19_to_v20(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_started ON gc_runs(started_at)")
 
 
+def _migrate_v20_to_v21(conn: sqlite3.Connection):
+    """v20 -> v21: 任务质量门禁发现表
+
+    承载任务完成门禁发现，区别于通用 guardrail_findings：
+    把 Semgrep、复杂度、调用链一致性、scope violation、i18n 硬编码等
+    质量问题挂到 task/step 上，使 open error/block finding 阻止任务进入 done。
+    使用 CREATE TABLE IF NOT EXISTS 保证旧库重复执行幂等。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS task_quality_findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER,
+            task_id TEXT NOT NULL,
+            step_id TEXT DEFAULT '',
+            finding_type TEXT NOT NULL,
+            severity TEXT NOT NULL DEFAULT 'warn',
+            status TEXT NOT NULL DEFAULT 'open',
+            message TEXT NOT NULL,
+            evidence TEXT DEFAULT '',
+            source TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            resolved_at REAL,
+            resolved_by TEXT DEFAULT '',
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_task ON task_quality_findings(task_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_step ON task_quality_findings(step_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_status ON task_quality_findings(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_severity ON task_quality_findings(severity)")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1359,6 +1392,10 @@ class CodeGraphBase:
             20: {
                 "description": t("cli.messages.migration_v20", default="Add GC run audit table (records policy/candidates/deletions/backup/status per GC operation)"),
                 "func": _migrate_v19_to_v20,
+            },
+            21: {
+                "description": t("cli.messages.migration_v21", default="Add task quality findings table (task completion gate findings, distinct from guardrail_findings)"),
+                "func": _migrate_v20_to_v21,
             },
         }
 

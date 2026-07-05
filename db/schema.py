@@ -683,6 +683,37 @@ CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_edit ON task_symbol_changes(e
 CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_file ON task_symbol_changes(file_path);
 CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_before ON task_symbol_changes(symbol_hash_before);
 CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(symbol_hash_after);
+
+-- ============================================
+-- v21: 任务质量门禁发现表（Task Quality Gate Findings）
+-- ============================================
+-- 区别于通用 guardrail_findings：本表专门承载任务完成门禁发现，
+-- 把 Semgrep、复杂度、调用链一致性、scope violation、i18n 硬编码等
+-- 质量问题挂到 task/step 上，使 open error/block finding 阻止任务进入 done。
+-- severity: info / warn / error / block
+-- status:   open / resolved / wontfix
+-- source:   semgrep / file_health / call_chain / scope / i18n / manual
+CREATE TABLE IF NOT EXISTS task_quality_findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER,
+    task_id TEXT NOT NULL,
+    step_id TEXT DEFAULT '',
+    finding_type TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'warn',
+    status TEXT NOT NULL DEFAULT 'open',
+    message TEXT NOT NULL,
+    evidence TEXT DEFAULT '',
+    source TEXT DEFAULT '',
+    created_at REAL NOT NULL,
+    resolved_at REAL,
+    resolved_by TEXT DEFAULT '',
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_quality_task ON task_quality_findings(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_quality_step ON task_quality_findings(step_id);
+CREATE INDEX IF NOT EXISTS idx_task_quality_status ON task_quality_findings(status);
+CREATE INDEX IF NOT EXISTS idx_task_quality_severity ON task_quality_findings(severity);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -703,7 +734,8 @@ CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(
 # v18: 外部包冷数据追踪（package_versions.last_seen_at / last_used_at / import_source）
 # v19: GC retention 策略表（gc_policies）
 # v20: GC 运行审计表（gc_runs，记录每次 retention/archive/purge 的策略/候选/删除/备份/状态）
-SCHEMA_VERSION = 20
+# v21: 任务质量门禁发现表（task_quality_findings，承载任务完成门禁发现，区分于通用 guardrail_findings）
+SCHEMA_VERSION = 21
 
 
 # ============================================
