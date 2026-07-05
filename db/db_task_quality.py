@@ -11,7 +11,7 @@ db_task_quality.py
 事实层由 task_quality_findings 表（v21 schema）表达；
 本模块只提供记录/查询/解决/阻断判断/修复步骤插入五个核心方法，
 以及 run_task_completion_review 调度器（聚合 run_check_gate + scope/symbol/
-file_health/i18n 检查器）。
+file_health/i18n/signature_mismatch 检查器）。
 
 状态规则（与 plan 文档一致）：
 - severity: info / warn / error / block
@@ -598,6 +598,183 @@ class TaskQualityMixin:
             except Exception:
                 pass
 
+    def _check_signature_mismatch(
+        self,
+        task_id: str,
+        step_id: str,
+    ) -> None:
+        """检查函数签名变更后是否存在未解析的调用方
+
+        流程：
+        1. 查 task_symbol_changes WHERE task_id=? AND step_id=?
+        2. 对每条记录，通过 symbol_contents JOIN 比对 before/after signature
+        3. 若 signature 变化：
+           a. 调 get_callers(symbol_name) 获取全部调用方
+           b. 检查 calls 表中 callee_id=0 或 callee_qualified 为空的记录
+              （这些是刷新后仍未解析的调用）
+           c. 若存在 unresolved callers → 生成 block finding
+              否则 → 生成 info finding（签名变更但调用方都已更新）
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID
+        """
+        if not step_id:
+            return
+
+        # 查询本 step 的符号变更记录
+        try:
+            cur = self.conn.execute(
+                """
+                SELECT tsc.qualified_name, tsc.symbol_name,
+                       tsc.symbol_hash_before, tsc.symbol_hash_after,
+                       tsc.file_path
+                FROM task_symbol_changes tsc
+                WHERE tsc.task_id = ? AND tsc.step_id = ?
+                """,
+                (task_id, step_id),
+            )
+            changes = [dict(row) for row in cur.fetchall()]
+        except Exception:
+            return
+
+        if not changes:
+            return  # 无符号变更记录，跳过
+
+        for ch in changes:
+            qualified_name = ch.get("qualified_name", "") or ""
+            symbol_name = ch.get("symbol_name", "") or ""
+            hash_before = ch.get("symbol_hash_before", "") or ""
+            hash_after = ch.get("symbol_hash_after", "") or ""
+            file_path = ch.get("file_path", "") or ""
+
+            # 无 before/after hash 无法比较，跳过
+            if not hash_before or not hash_after:
+                continue
+            # hash 相同 → 内容未变，跳过
+            if hash_before == hash_after:
+                continue
+
+            # 通过 symbol_contents 查 signature（before / after）
+            try:
+                cur = self.conn.execute(
+                    """
+                    SELECT
+                        (SELECT signature FROM symbol_contents
+                         WHERE content_hash = ?) as old_sig,
+                        (SELECT signature FROM symbol_contents
+                         WHERE content_hash = ?) as new_sig
+                    """,
+                    (hash_before, hash_after),
+                )
+                sig_row = cur.fetchone()
+            except Exception:
+                continue
+            if not sig_row:
+                continue
+
+            old_sig = sig_row["old_sig"] or ""
+            new_sig = sig_row["new_sig"] or ""
+
+            # signature 未变 → 不是签名变更，跳过
+            if old_sig == new_sig:
+                continue
+
+            # 签名变更：查询调用方
+            symbol_to_query = symbol_name or qualified_name
+            if not symbol_to_query:
+                continue
+
+            callers = []
+            if hasattr(self, "get_callers"):
+                try:
+                    callers = self.get_callers(symbol_to_query) or []
+                except Exception:
+                    callers = []
+
+            caller_count = len(callers)
+            # 检查 unresolved callers：callee_id=0 或 callee_qualified 为空
+            unresolved_callers = []
+            for c in callers:
+                callee_id = c.get("callee_id", 0) or 0
+                callee_qualified = c.get("callee_qualified", "") or ""
+                if callee_id == 0 or not callee_qualified:
+                    unresolved_callers.append({
+                        "caller": c.get("caller_name", ""),
+                        "file": c.get("caller_file", ""),
+                        "line": c.get("call_line", 0),
+                    })
+
+            unresolved_count = len(unresolved_callers)
+            # 无调用方 → 签名变更但无人调用，记 info（不阻塞）
+            if caller_count == 0:
+                self.record_task_quality_finding(
+                    task_id=task_id,
+                    step_id=step_id,
+                    finding_type="call_chain",
+                    severity="info",
+                    message=t(
+                        "cli.messages.task_quality_signature_changed_no_callers",
+                        default="Signature changed for {symbol} but no callers found",
+                        symbol=qualified_name or symbol_name,
+                    ),
+                    evidence={
+                        "changed_symbol": qualified_name or symbol_name,
+                        "old_signature": old_sig,
+                        "new_signature": new_sig,
+                        "caller_count": 0,
+                        "unresolved_callers": [],
+                    },
+                    source="check_gate",
+                )
+                continue
+
+            # 有 unresolved callers → block finding
+            if unresolved_count > 0:
+                self.record_task_quality_finding(
+                    task_id=task_id,
+                    step_id=step_id,
+                    finding_type="call_chain",
+                    severity="block",
+                    message=t(
+                        "cli.messages.task_quality_signature_mismatch",
+                        default="Signature changed for {symbol}: {unresolved}/{total} callers unresolved",
+                        symbol=qualified_name or symbol_name,
+                        unresolved=unresolved_count,
+                        total=caller_count,
+                    ),
+                    evidence={
+                        "changed_symbol": qualified_name or symbol_name,
+                        "old_signature": old_sig,
+                        "new_signature": new_sig,
+                        "caller_count": caller_count,
+                        "unresolved_callers": unresolved_callers,
+                    },
+                    source="check_gate",
+                )
+            else:
+                # 签名变更但所有调用方都已更新 → info finding
+                self.record_task_quality_finding(
+                    task_id=task_id,
+                    step_id=step_id,
+                    finding_type="call_chain",
+                    severity="info",
+                    message=t(
+                        "cli.messages.task_quality_signature_updated",
+                        default="Signature changed for {symbol}: all {total} callers resolved",
+                        symbol=qualified_name or symbol_name,
+                        total=caller_count,
+                    ),
+                    evidence={
+                        "changed_symbol": qualified_name or symbol_name,
+                        "old_signature": old_sig,
+                        "new_signature": new_sig,
+                        "caller_count": caller_count,
+                        "unresolved_callers": [],
+                    },
+                    source="check_gate",
+                )
+
     # ============================================================
     # 设计文档：_check_signature_mismatch（调用链一致性检查器）
     # ============================================================
@@ -659,11 +836,12 @@ class TaskQualityMixin:
         1. 清理该 step 的旧 check_gate finding（避免重复累积）
         2. 调用 run_check_gate 对变更文件做语法/Semgrep 检查，结果写入
            task_quality_findings（source='check_gate'）
-        3. 运行 4 个扩展检查器（均使用 source='check_gate'）：
+        3. 运行 5 个扩展检查器（均使用 source='check_gate'）：
            - _check_scope_violations: 变更文件超出 target_file 范围 → error
            - _check_symbol_attribution: target_symbol 无 task_symbol_changes → warn
            - _check_file_health_findings: 文件过大/复杂度热点 → warn/error
            - _check_i18n_hardcoded: 硬编码 print/cprint/logger 输出 → warn
+           - _check_signature_mismatch: 签名变更后调用方未解析 → block/info
         4. 收集 task/step 下的所有 open finding，根据 severity 决策：
            - 无 finding → pass（允许 step 进入 done）
            - 仅有 info/warn → warn（记录但允许完成）
@@ -734,7 +912,7 @@ class TaskQualityMixin:
             except Exception:
                 check_gate_result = None
 
-        # 步骤 3: 运行扩展检查器（scope / symbol / file_health / i18n）
+        # 步骤 3: 运行扩展检查器（scope / symbol / file_health / i18n / signature）
         # 这些检查器也使用 source='check_gate'，与 run_check_gate 的 finding
         # 一起被清理和决策。
         if changed_files:
@@ -754,6 +932,11 @@ class TaskQualityMixin:
                 self._check_i18n_hardcoded(task_id, step_id, changed_files)
             except Exception:
                 pass
+        # signature_mismatch 不依赖 changed_files，依赖 task_symbol_changes
+        try:
+            self._check_signature_mismatch(task_id, step_id)
+        except Exception:
+            pass
 
         # 步骤 4: 收集 open findings 做决策
         findings = self.get_task_quality_findings(task_id, status="open")

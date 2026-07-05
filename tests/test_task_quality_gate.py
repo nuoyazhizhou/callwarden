@@ -2411,3 +2411,330 @@ def test_run_task_completion_review_i18n_hardcoded_warns():
         db.close()
 
 
+# ============================================
+# Step S-1783247858392-480b: _check_signature_mismatch 测试
+# ============================================
+
+def _inject_symbol_change_with_signature(
+    db, task_id, step_id, qualified_name, symbol_name,
+    hash_before, hash_after, sig_before, sig_after,
+    file_path="a.py",
+):
+    """辅助：注入 task_symbol_changes 记录 + symbol_contents 签名数据"""
+    # 插入 symbol_contents（before / after 两条）
+    db.conn.execute(
+        "INSERT OR IGNORE INTO symbol_contents "
+        "(content_hash, name, kind, content, signature) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (hash_before, symbol_name, "fn", "old-content", sig_before),
+    )
+    db.conn.execute(
+        "INSERT OR IGNORE INTO symbol_contents "
+        "(content_hash, name, kind, content, signature) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (hash_after, symbol_name, "fn", "new-content", sig_after),
+    )
+    # 插入 task_symbol_changes 记录
+    db.conn.execute(
+        """
+        INSERT INTO task_symbol_changes
+            (workspace_id, task_id, step_id, file_path, qualified_name,
+             symbol_name, symbol_hash_before, symbol_hash_after,
+             change_type, source, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (db._get_active_workspace_id(), task_id, step_id, file_path,
+         qualified_name, symbol_name, hash_before, hash_after,
+         "modified", "manual", time.time()),
+    )
+    db.conn.commit()
+
+
+def _inject_caller(db, caller_name, caller_file, callee_name,
+                   callee_qualified="mod::fn", callee_id=1, call_line=10):
+    """辅助：注入 calls 表记录（模拟调用方）"""
+    # 需要 symbols 表中有 caller 符号 + file_instances 中有 caller 文件
+    ws_id = db._get_active_workspace_id()
+    # 先确保 file_instances 有记录
+    cur = db.conn.execute(
+        "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+        (ws_id, caller_file),
+    )
+    fi_row = cur.fetchone()
+    if not fi_row:
+        db.conn.execute(
+            "INSERT INTO file_instances (workspace_id, rel_path, abs_path, "
+            "current_content_hash, mtime, total_lines, last_parsed, status) "
+            "VALUES (?, ?, ?, '', ?, 0, 0, 'parsed')",
+            (ws_id, caller_file, caller_file, time.time()),
+        )
+        db.conn.commit()
+        cur = db.conn.execute(
+            "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+            (ws_id, caller_file),
+        )
+        fi_row = cur.fetchone()
+    fi_id = fi_row["id"]
+
+    # 插入 caller 符号
+    db.conn.execute(
+        "INSERT INTO symbols (file_instance_id, symbol_hash, name, kind, "
+        "start_line, end_line) VALUES (?, ?, ?, 'fn', 1, 10)",
+        (fi_id, f"hash-{caller_name}-{int(time.time()*1000)}", caller_name),
+    )
+    db.conn.commit()
+    caller_id_row = db.conn.execute(
+        "SELECT id FROM symbols WHERE file_instance_id = ? AND name = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (fi_id, caller_name),
+    ).fetchone()
+    caller_id = caller_id_row["id"]
+
+    # 插入 calls 记录
+    db.conn.execute(
+        "INSERT INTO calls (caller_id, caller_name, caller_module, "
+        "callee_name, callee_module, callee_qualified, callee_file, "
+        "callee_id, call_line, is_cross_file) "
+        "VALUES (?, ?, '', ?, '', ?, ?, ?, ?, 1)",
+        (caller_id, caller_name, callee_name, callee_qualified,
+         caller_file, callee_id, call_line),
+    )
+    db.conn.commit()
+
+
+def test_check_signature_mismatch_blocks_when_unresolved_callers():
+    """签名变更且存在 unresolved callers → block finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 注入符号变更（签名不同）
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::parse_policy",
+            symbol_name="parse_policy",
+            hash_before="hash-old-001", hash_after="hash-new-001",
+            sig_before="fn parse_policy(text: &str) -> Result<Policy>",
+            sig_after="fn parse_policy(text: &str, strict: bool) -> Result<Policy>",
+        )
+        # 注入 1 个 unresolved caller（callee_id=0）
+        _inject_caller(
+            db, caller_name="mod::main", caller_file="src/main.rs",
+            callee_name="parse_policy", callee_qualified="mod::parse_policy",
+            callee_id=0, call_line=45,  # callee_id=0 → unresolved
+        )
+        db._check_signature_mismatch(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        sig_findings = [f for f in findings if f["finding_type"] == "call_chain"
+                        and f["severity"] == "block"]
+        assert len(sig_findings) == 1
+        assert sig_findings[0]["source"] == "check_gate"
+    finally:
+        db.close()
+
+
+def test_check_signature_mismatch_info_when_all_resolved():
+    """签名变更但所有 callers 已解析 → info finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::helper", symbol_name="helper",
+            hash_before="hash-old-002", hash_after="hash-new-002",
+            sig_before="fn helper(x: i32) -> i32",
+            sig_after="fn helper(x: i32, y: i32) -> i32",
+        )
+        # 注入 1 个 resolved caller（callee_id != 0 且 callee_qualified 非空）
+        _inject_caller(
+            db, caller_name="mod::caller", caller_file="src/caller.rs",
+            callee_name="helper", callee_qualified="mod::helper",
+            callee_id=42, call_line=10,  # resolved
+        )
+        db._check_signature_mismatch(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        info_findings = [f for f in findings if f["finding_type"] == "call_chain"
+                         and f["severity"] == "info"]
+        assert len(info_findings) == 1
+    finally:
+        db.close()
+
+
+def test_check_signature_mismatch_info_when_no_callers():
+    """签名变更但无调用方 → info finding（不阻塞）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::orphan", symbol_name="orphan",
+            hash_before="hash-old-003", hash_after="hash-new-003",
+            sig_before="fn orphan()",
+            sig_after="fn orphan(x: bool)",
+        )
+        # 不注入任何 caller
+        db._check_signature_mismatch(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        info_findings = [f for f in findings if f["finding_type"] == "call_chain"
+                         and f["severity"] == "info"]
+        assert len(info_findings) == 1
+    finally:
+        db.close()
+
+
+def test_check_signature_mismatch_skips_when_no_changes():
+    """无 task_symbol_changes 记录 → 不检查"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        db._check_signature_mismatch(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_signature_mismatch_skips_when_signature_unchanged():
+    """hash 变但 signature 未变 → 不报 finding"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::same", symbol_name="same",
+            hash_before="hash-old-004", hash_after="hash-new-004",
+            sig_before="fn same(x: i32) -> i32",
+            sig_after="fn same(x: i32) -> i32",  # 签名相同
+        )
+        db._check_signature_mismatch(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_signature_mismatch_skips_when_hash_unchanged():
+    """hash_before == hash_after → 不检查（内容未变）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::nohash", symbol_name="nohash",
+            hash_before="same-hash", hash_after="same-hash",  # 相同 hash
+            sig_before="fn nohash()",
+            sig_after="fn nohash(x: bool)",
+        )
+        db._check_signature_mismatch(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        assert len(findings) == 0
+    finally:
+        db.close()
+
+
+def test_check_signature_mismatch_evidence_format():
+    """evidence JSON 包含 changed_symbol/old_signature/new_signature/caller_count/unresolved_callers"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::test_fn", symbol_name="test_fn",
+            hash_before="hash-old-005", hash_after="hash-new-005",
+            sig_before="fn test_fn()",
+            sig_after="fn test_fn(x: i32)",
+        )
+        _inject_caller(
+            db, caller_name="mod::unresolved_caller", caller_file="src/u.rs",
+            callee_name="test_fn", callee_qualified="",  # 空 → unresolved
+            callee_id=0, call_line=20,
+        )
+        db._check_signature_mismatch(task_id, step["step_id"])
+        findings = db.get_task_quality_findings(task_id, status="open")
+        block_findings = [f for f in findings if f["severity"] == "block"]
+        assert len(block_findings) == 1
+        import json as _json
+        evidence = _json.loads(block_findings[0]["evidence"])
+        assert evidence["changed_symbol"] == "mod::test_fn"
+        assert evidence["old_signature"] == "fn test_fn()"
+        assert evidence["new_signature"] == "fn test_fn(x: i32)"
+        assert evidence["caller_count"] == 1
+        assert len(evidence["unresolved_callers"]) == 1
+        assert evidence["unresolved_callers"][0]["caller"] == "mod::unresolved_caller"
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_invokes_signature_mismatch_checker():
+    """run_task_completion_review 调用 _check_signature_mismatch（即使无 changed_files）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 不注入 change_audit（无 changed_files），但注入 symbol_changes
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::sig_test", symbol_name="sig_test",
+            hash_before="hash-old-006", hash_after="hash-new-006",
+            sig_before="fn sig_test()",
+            sig_after="fn sig_test(x: bool)",
+        )
+
+        calls = {"signature_mismatch": 0}
+        _orig = db._check_signature_mismatch
+
+        def _mock_sig(tid, sid):
+            calls["signature_mismatch"] += 1
+
+        db._check_signature_mismatch = _mock_sig
+        try:
+            db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            db._check_signature_mismatch = _orig
+
+        # 即使无 changed_files，signature_mismatch 也应被调用
+        assert calls["signature_mismatch"] == 1
+    finally:
+        db.close()
+
+
+def test_run_task_completion_review_signature_mismatch_blocks():
+    """signature_mismatch block finding → decision=block"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "sig.py")
+        _inject_symbol_change_with_signature(
+            db, task_id, step["step_id"],
+            qualified_name="mod::break_fn", symbol_name="break_fn",
+            hash_before="hash-old-007", hash_after="hash-new-007",
+            sig_before="fn break_fn()",
+            sig_after="fn break_fn(x: i32) -> bool",
+        )
+        _inject_caller(
+            db, caller_name="mod::old_caller", caller_file="src/old.rs",
+            callee_name="break_fn", callee_qualified="",  # unresolved
+            callee_id=0, call_line=5,
+        )
+
+        restore_cg = _mock_run_check_gate(db, findings=[])
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore_cg()
+
+        # signature_mismatch block → decision=block
+        assert review["decision"] == "block"
+        assert review["counts"]["block"] >= 1
+        assert db.task_has_blocking_findings(task_id) is True
+    finally:
+        db.close()
+
+
