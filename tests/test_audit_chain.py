@@ -266,3 +266,242 @@ def test_audit_chain_insert_and_query():
         assert rows[0]["record_id"] == "2"
     finally:
         db.close()
+
+
+# ============================================
+# 端到端集成测试：业务流程触发签名链
+# ============================================
+
+
+def test_task_quality_finding_write_triggers_audit_chain():
+    """record_task_quality_finding 写入后 audit_chain 应有对应签名记录"""
+    db, _root = _db_with_workspace()
+    try:
+        # 创建任务
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        # 写入 finding
+        fid = db.record_task_quality_finding(
+            task_id=task_id,
+            finding_type="semgrep",
+            severity="warn",
+            message="unused import",
+            source="semgrep",
+        )
+        assert fid > 0
+
+        # 验证 audit_chain 表中存在对应记录
+        cur = db.conn.execute(
+            "SELECT * FROM audit_chain WHERE table_name = ? AND record_id = ?",
+            ("task_quality_findings", str(fid)),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        assert len(rows) == 1
+        assert rows[0]["operation"] == "insert"
+        assert rows[0]["payload_hash"]  # 非空
+        assert rows[0]["record_signature"]  # 非空
+    finally:
+        db.close()
+
+
+def test_task_symbol_change_write_triggers_audit_chain():
+    """record_task_symbol_change 写入后 audit_chain 应有对应签名记录"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        result = db.record_task_symbol_change(
+            task_id=task_id,
+            file_path="some/file.py",
+            qualified_name="module::func",
+            symbol_name="func",
+            symbol_hash_before="h_before",
+            symbol_hash_after="h_after",
+            change_type="modified",
+            source="test",
+        )
+        assert result["success"] is True
+        change_id = result["id"]
+
+        cur = db.conn.execute(
+            "SELECT * FROM audit_chain WHERE table_name = ? AND record_id = ?",
+            ("task_symbol_changes", str(change_id)),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        assert len(rows) == 1
+        assert rows[0]["operation"] == "insert"
+    finally:
+        db.close()
+
+
+def test_audit_chain_continuity_across_multiple_signings():
+    """多次签名后链应保持连续：每条 prev_signature 指向上一条 record_signature"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+
+        # 写入 3 条 finding，对应 3 条 audit_chain 记录
+        f1 = db.record_task_quality_finding(task_id, message="m1")
+        f2 = db.record_task_quality_finding(task_id, message="m2")
+        f3 = db.record_task_quality_finding(task_id, message="m3")
+
+        # 查询 audit_chain 中 task_quality_findings 表的所有记录
+        cur = db.conn.execute(
+            "SELECT id, prev_signature, record_signature FROM audit_chain "
+            "WHERE table_name = ? ORDER BY id ASC",
+            ("task_quality_findings",),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        assert len(rows) == 3
+
+        # 首条 prev_signature 为空
+        assert rows[0]["prev_signature"] == ""
+        # 第二条 prev_signature 等于第一条 record_signature
+        assert rows[1]["prev_signature"] == rows[0]["record_signature"]
+        # 第三条 prev_signature 等于第二条 record_signature
+        assert rows[2]["prev_signature"] == rows[1]["record_signature"]
+    finally:
+        db.close()
+
+
+def test_verify_detects_direct_update_to_audit_chain_record():
+    """直接 UPDATE audit_chain 的 payload_hash 后 verify 应失败"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        db.record_task_quality_finding(task_id, message="original")
+
+        # 篡改 audit_chain 中第一条记录的 payload_hash
+        db.conn.execute(
+            "UPDATE audit_chain SET payload_hash = ? WHERE id = ?",
+            ("tampered_hash", 1),
+        )
+        db.conn.commit()
+
+        result = db.verify_audit_chain(table_name="task_quality_findings")
+        assert result["broken_count"] >= 1
+        reasons = result["broken_records"][0]["reasons"]
+        assert "signature_mismatch" in reasons
+    finally:
+        db.close()
+
+
+def test_verify_detects_direct_update_to_source_table():
+    """直接 UPDATE task_quality_findings 的 message 字段后，audit_chain 仍可检测
+    （因为 payload_hash 不匹配源记录，但 verify_audit_chain 不直接比对源表，
+    此处验证 audit_chain 自身的完整性）
+    """
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        fid = db.record_task_quality_finding(task_id, message="original")
+
+        # 直接 UPDATE 源表 task_quality_findings
+        db.conn.execute(
+            "UPDATE task_quality_findings SET message = ? WHERE id = ?",
+            ("tampered_message", fid),
+        )
+        db.conn.commit()
+
+        # verify_audit_chain 校验 audit_chain 自身完整性，应通过
+        # （签名链本身未被破坏，但源表已被篡改——这体现了 hash_only 的局限：
+        #   防不了「同时改源表和 audit_chain」的攻击，但能防「只改 audit_chain」）
+        result = db.verify_audit_chain(table_name="task_quality_findings")
+        assert result["broken_count"] == 0
+    finally:
+        db.close()
+
+
+def test_hash_only_mode_detects_signature_tamper():
+    """无 HMAC key 时（hash_only 模式）仍能检测 record_signature 被篡改"""
+    db, _root = _db_with_workspace()
+    try:
+        # 确保无 HMAC key
+        import os
+        os.environ.pop("CALLWARDEN_AUDIT_HMAC_KEY", None)
+
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        db.record_task_quality_finding(task_id, message="m1")
+        db.record_task_quality_finding(task_id, message="m2")
+
+        # 篡改第一条的 record_signature（链头被改）
+        db.conn.execute(
+            "UPDATE audit_chain SET record_signature = ? WHERE id = ?",
+            ("fake_signature_for_first_record", 1),
+        )
+        db.conn.commit()
+
+        result = db.verify_audit_chain(table_name="task_quality_findings")
+        assert result["broken_count"] >= 1
+        assert result["security_level"] == "hash_only"
+    finally:
+        db.close()
+
+
+def test_hash_only_mode_detects_middle_record_tamper():
+    """无 HMAC key 时篡改中间记录的 payload_hash 应被检测"""
+    db, _root = _db_with_workspace()
+    try:
+        import os
+        os.environ.pop("CALLWARDEN_AUDIT_HMAC_KEY", None)
+
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        db.record_task_quality_finding(task_id, message="m1")
+        db.record_task_quality_finding(task_id, message="m2")
+        db.record_task_quality_finding(task_id, message="m3")
+
+        # 篡改中间记录的 payload_hash
+        db.conn.execute(
+            "UPDATE audit_chain SET payload_hash = ? WHERE id = ?",
+            ("tampered_middle_hash", 2),
+        )
+        db.conn.commit()
+
+        result = db.verify_audit_chain(table_name="task_quality_findings")
+        assert result["broken_count"] >= 1
+        broken_ids = [r["id"] for r in result["broken_records"]]
+        assert 2 in broken_ids
+    finally:
+        db.close()
+
+
+def test_verify_all_pass_without_tamper():
+    """无篡改时 verify 应全部通过"""
+    db, _root = _db_with_workspace()
+    try:
+        import os
+        os.environ.pop("CALLWARDEN_AUDIT_HMAC_KEY", None)
+
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        db.record_task_quality_finding(task_id, message="m1")
+        db.record_task_quality_finding(task_id, message="m2")
+        db.record_task_quality_finding(task_id, message="m3")
+
+        result = db.verify_audit_chain(table_name="task_quality_findings")
+        assert result["total_count"] == 3
+        assert result["verified_count"] == 3
+        assert result["broken_count"] == 0
+        assert result["broken_records"] == []
+    finally:
+        db.close()
+
+
+def test_verify_chain_broken_when_record_deleted():
+    """删除中间 audit_chain 记录后，链断裂应被检测"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("audit-test", steps=[{"action": "edit", "target_file": ""}])
+        db.record_task_quality_finding(task_id, message="m1")
+        db.record_task_quality_finding(task_id, message="m2")
+        db.record_task_quality_finding(task_id, message="m3")
+
+        # 删除中间记录（id=2）
+        db.conn.execute("DELETE FROM audit_chain WHERE id = ?", (2,))
+        db.conn.commit()
+
+        result = db.verify_audit_chain(table_name="task_quality_findings")
+        assert result["total_count"] == 2  # 剩余 2 条
+        # 第三条的 prev_signature 不再匹配第一条的 record_signature
+        assert result["broken_count"] >= 1
+        reasons = result["broken_records"][0]["reasons"]
+        assert "chain_broken" in reasons
+    finally:
+        db.close()
