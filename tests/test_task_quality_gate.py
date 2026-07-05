@@ -53,9 +53,9 @@ def _table_exists(conn, table_name):
     return cur.fetchone() is not None
 
 
-def test_schema_version_is_21():
-    """SCHEMA_VERSION 常量已升级到 21。"""
-    assert SCHEMA_VERSION == 21
+def test_schema_version_is_22():
+    """SCHEMA_VERSION 常量已升级到 22。"""
+    assert SCHEMA_VERSION == 22
 
 
 def test_task_quality_findings_table_exists_on_fresh_db():
@@ -168,54 +168,55 @@ def test_migration_v20_to_v21_on_legacy_v20_db():
     conn.close()
 
 
-def test_schema_version_table_records_v21_on_fresh_db():
-    """全新数据库 schema_version 表记录 v21 版本。"""
+def test_schema_version_table_records_v22_on_fresh_db():
+    """全新数据库 schema_version 表记录 v22 版本。"""
     db, _root = _db_with_workspace()
     try:
         cur = db.conn.execute(
             "SELECT version FROM schema_version WHERE version = ?",
-            (21,),
+            (22,),
         )
         row = cur.fetchone()
-        assert row is not None, "v21 not recorded in schema_version table"
+        assert row is not None, "v22 not recorded in schema_version table"
     finally:
         db.close()
 
 
-def test_legacy_v20_db_migrates_to_v21_via_init_schema():
-    """旧 v20 库通过 _init_schema 自动迁移到 v21。
+def test_legacy_v21_db_migrates_to_v22_via_init_schema():
+    """旧 v21 库通过 _init_schema 自动迁移到 v22。
 
-    构造一个 v20 库（schema_version 表标记为 20，不含 task_quality_findings），
-    再用 CodeGraphDB 打开，触发 _migrate_schema(20, 21)。
+    构造一个 v21 库（schema_version 表标记为 21，不含 audit_chain），
+    再用 CodeGraphDB 打开，触发 _migrate_schema(21, 22)。
     """
     root = tempfile.mkdtemp()
     db_path = os.path.join(root, "callwarden.db")
     import time
 
-    # 1. 先用 CodeGraphDB 创建完整 schema（v21）
+    # 1. 先用 CodeGraphDB 创建完整 schema（v22）
     db = CodeGraphDB(db_path, workspace_root=root)
     db.close()
 
-    # 2. 模拟降级到 v20：删除 task_quality_findings 和相关索引，并把版本号改成 20
+    # 2. 模拟降级到 v21：删除 audit_chain 和相关索引，并把版本号改成 21
     conn = sqlite3.connect(db_path)
-    conn.execute("DROP TABLE IF EXISTS task_quality_findings")
-    conn.execute("DELETE FROM schema_version WHERE version = 21")
+    conn.execute("DROP TABLE IF EXISTS audit_chain")
+    conn.execute("DELETE FROM schema_version WHERE version = 22")
     conn.execute(
         "INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
-        (20, time.time(), "downgrade for test"),
+        (21, time.time(), "downgrade for test"),
     )
     conn.commit()
     conn.close()
 
-    # 3. 再次用 CodeGraphDB 打开，应触发 v20 -> v21 迁移
+    # 3. 再次用 CodeGraphDB 打开，应触发 v21 -> v22 迁移
     db = CodeGraphDB(db_path, workspace_root=root)
     try:
-        assert _table_exists(db.conn, "task_quality_findings")
-        assert _index_exists(db.conn, "idx_task_quality_task")
+        assert _table_exists(db.conn, "audit_chain")
+        assert _index_exists(db.conn, "idx_audit_chain_table_record")
+        assert _index_exists(db.conn, "idx_audit_chain_signature")
         cur = db.conn.execute(
-            "SELECT version FROM schema_version WHERE version = 21"
+            "SELECT version FROM schema_version WHERE version = 22"
         )
-        assert cur.fetchone() is not None, "v21 migration not recorded"
+        assert cur.fetchone() is not None, "v22 migration not recorded"
     finally:
         db.close()
 

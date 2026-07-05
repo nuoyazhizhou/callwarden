@@ -1174,6 +1174,7 @@
       "migration_v19": "Add GC retention policy table (gc_policies)",
       "migration_v20": "Add GC run audit table (gc_runs, records policy/candidates/deletions/backup/status per GC operation)",
       "migration_v21": "Add task quality findings table (task_quality_findings, task completion gate findings, distinct from guardrail_findings)",
+      "migration_v22": "Add audit chain table (hash/HMAC chain for verifying integrity of audit records)",
       "attribution_task_id_required": "task_id is required",
       "attribution_file_path_required": "file_path is required",
       "attribution_edit_audit_not_found": "edit audit not found",

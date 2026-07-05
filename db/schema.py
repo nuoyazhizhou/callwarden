@@ -714,6 +714,27 @@ CREATE INDEX IF NOT EXISTS idx_task_quality_task ON task_quality_findings(task_i
 CREATE INDEX IF NOT EXISTS idx_task_quality_step ON task_quality_findings(step_id);
 CREATE INDEX IF NOT EXISTS idx_task_quality_status ON task_quality_findings(status);
 CREATE INDEX IF NOT EXISTS idx_task_quality_severity ON task_quality_findings(severity);
+
+-- v22: 审计签名链表（audit_chain）
+-- 为关键审计表（task_quality_findings / change_audit / file_edit_audit 等）
+-- 生成可验证的 hash/HMAC 链，防止误改或有意篡改。
+-- 每条记录包含 payload_hash + prev_signature + record_signature，形成链式结构。
+-- signing_key_id：标识使用的密钥（'local' 表示本地 SHA-256 链，无 HMAC）。
+-- 第一阶段使用 SHA-256 链；第二阶段可通过环境变量
+-- CALLWARDEN_AUDIT_HMAC_KEY 或 ~/.callwarden/audit.key 切换到 HMAC。
+CREATE TABLE IF NOT EXISTS audit_chain (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    table_name TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    operation TEXT NOT NULL DEFAULT 'insert',
+    payload_hash TEXT NOT NULL,
+    prev_signature TEXT DEFAULT '',
+    record_signature TEXT NOT NULL,
+    signing_key_id TEXT DEFAULT 'local',
+    signed_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record ON audit_chain(table_name, record_id);
+CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signature);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -735,7 +756,8 @@ CREATE INDEX IF NOT EXISTS idx_task_quality_severity ON task_quality_findings(se
 # v19: GC retention 策略表（gc_policies）
 # v20: GC 运行审计表（gc_runs，记录每次 retention/archive/purge 的策略/候选/删除/备份/状态）
 # v21: 任务质量门禁发现表（task_quality_findings，承载任务完成门禁发现，区分于通用 guardrail_findings）
-SCHEMA_VERSION = 21
+# v22: 审计签名链表（audit_chain，为关键审计表生成可验证的 hash/HMAC 链）
+SCHEMA_VERSION = 22
 
 
 # ============================================

@@ -1149,6 +1149,32 @@ def _migrate_v20_to_v21(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_severity ON task_quality_findings(severity)")
 
 
+def _migrate_v21_to_v22(conn: sqlite3.Connection):
+    """v21 -> v22: 审计签名链表
+
+    为关键审计表（task_quality_findings / change_audit / file_edit_audit 等）
+    生成可验证的 hash/HMAC 链，防止误改或有意篡改。
+    每条记录包含 payload_hash + prev_signature + record_signature，形成链式结构。
+    第一阶段使用 SHA-256 链（signing_key_id='local'）；第二阶段可切换到 HMAC。
+    使用 CREATE TABLE IF NOT EXISTS 保证旧库重复执行幂等。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS audit_chain (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_name TEXT NOT NULL,
+            record_id TEXT NOT NULL,
+            operation TEXT NOT NULL DEFAULT 'insert',
+            payload_hash TEXT NOT NULL,
+            prev_signature TEXT DEFAULT '',
+            record_signature TEXT NOT NULL,
+            signing_key_id TEXT DEFAULT 'local',
+            signed_at REAL NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record ON audit_chain(table_name, record_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signature)")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1396,6 +1422,10 @@ class CodeGraphBase:
             21: {
                 "description": t("cli.messages.migration_v21", default="Add task quality findings table (task completion gate findings, distinct from guardrail_findings)"),
                 "func": _migrate_v20_to_v21,
+            },
+            22: {
+                "description": t("cli.messages.migration_v22", default="Add audit chain table (hash/HMAC chain for verifying integrity of audit records)"),
+                "func": _migrate_v21_to_v22,
             },
         }
 
