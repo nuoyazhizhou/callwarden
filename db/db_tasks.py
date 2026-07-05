@@ -381,6 +381,11 @@ class TaskMixin:
         except Exception:
             result["structured_instruction"] = None
 
+        # 注入适用规则（applicable_rules）：基于 step 的 action/target_file/
+        # target_symbol 构造上下文，从 agent_rules 中匹配 active 规则。
+        # fail-soft：规则注入失败时降级为空列表，不影响任务领取主流程。
+        result["applicable_rules"] = self._inject_applicable_rules(result)
+
         return result
 
     def work_next_job(self, task_id: str) -> Optional[Dict[str, Any]]:
@@ -491,6 +496,23 @@ class TaskMixin:
                 "when writing, use patch tools from recommended_tools to avoid whole-file rewrites."
             ),
         )
+
+        # 注入 project_rules：与 task_next_step 的 applicable_rules 同源，
+        # 但 work_next_job 是面向 Agent 的主入口，应返回更完整但仍受 limit 控制的规则。
+        # fail-soft：拉取失败时降级为空列表
+        job["project_rules"] = step.get("applicable_rules") or []
+        # 同时把规则摘要放到 context.applicable_rules，便于只读 context 的 Agent 也能看到
+        try:
+            job["context"]["applicable_rules"] = [
+                {
+                    "id": r.get("id", ""),
+                    "title": r.get("title", ""),
+                    "severity": r.get("severity", "info"),
+                }
+                for r in job["project_rules"]
+            ]
+        except Exception:
+            job["context"]["applicable_rules"] = []
         return job
 
     def _read_symbol_source_for_job(self, sym: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -725,7 +747,143 @@ class TaskMixin:
             except Exception:
                 pass  # 上下文拉取失败不影响指令生成
 
+        # 注入 project_rules 摘要（让只读 structured_instruction 的 Agent 也能看到规则）
+        # fail-soft：拉取失败时降级为空列表
+        instruction["project_rules"] = self._get_rule_summaries_for_step(step)
+
         return instruction
+
+    def _inject_applicable_rules(self, step: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """为 task_next_step 返回值注入 applicable_rules
+
+        基于 step 的 action / target_file / target_symbol 构造上下文，
+        调用 get_applicable_rules 匹配 active 规则。
+
+        fail-soft：任何异常都降级为空列表，绝不影响任务领取主流程。
+
+        Args:
+            step: task_next_step 内部构造的 step dict
+
+        Returns:
+            适用规则列表（每条含 id/title/rule_text/severity/matched_scope）
+        """
+        try:
+            if not hasattr(self, "get_applicable_rules"):
+                return []
+            context = self._build_rule_context_for_step(step)
+            rules = self.get_applicable_rules(context, limit=5)
+            # 精简字段，避免返回过大
+            return [
+                {
+                    "id": r.get("id", ""),
+                    "title": r.get("title", ""),
+                    "rule_text": r.get("rule_text", ""),
+                    "severity": r.get("severity", "info"),
+                    "matched_scope": r.get("matched_scope", []),
+                }
+                for r in rules
+            ]
+        except Exception:
+            return []
+
+    def _get_rule_summaries_for_step(self, step: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """为 build_structured_instruction 返回 project_rules 摘要
+
+        与 _inject_applicable_rules 共享上下文构造，但只返回摘要字段
+        （id/title/severity），减少 token 占用。
+
+        Args:
+            step: 步骤 dict
+
+        Returns:
+            规则摘要列表
+        """
+        try:
+            if not hasattr(self, "get_applicable_rules"):
+                return []
+            context = self._build_rule_context_for_step(step)
+            rules = self.get_applicable_rules(context, limit=5)
+            return [
+                {
+                    "id": r.get("id", ""),
+                    "title": r.get("title", ""),
+                    "severity": r.get("severity", "info"),
+                }
+                for r in rules
+            ]
+        except Exception:
+            return []
+
+    def _build_rule_context_for_step(self, step: Dict[str, Any]) -> Dict[str, Any]:
+        """根据 step 构造规则匹配上下文
+
+        推断 language（从 target_file 扩展名）、symbol_kind（从 target_symbol
+        限定名格式）、action（从 step.action），并填入 file_path 和 module_prefix。
+
+        Args:
+            step: 步骤 dict
+
+        Returns:
+            上下文 dict，可传入 get_applicable_rules
+        """
+        context: Dict[str, Any] = {}
+        target_file = step.get("target_file") or ""
+        target_symbol = step.get("target_symbol") or ""
+        action = (step.get("action") or "").lower()
+
+        if target_file:
+            context["file_path"] = target_file
+            # 推断语言（基于扩展名）
+            ext_lang_map = {
+                ".py": "python",
+                ".rs": "rust",
+                ".ts": "typescript",
+                ".tsx": "typescript",
+                ".js": "javascript",
+                ".jsx": "javascript",
+                ".go": "go",
+                ".java": "java",
+                ".kt": "kotlin",
+                ".c": "c",
+                ".cpp": "cpp",
+                ".cc": "cpp",
+                ".cs": "csharp",
+                ".rb": "ruby",
+                ".php": "php",
+                ".swift": "swift",
+                ".scala": "scala",
+            }
+            _, ext = os.path.splitext(target_file)
+            lang = ext_lang_map.get(ext.lower())
+            if lang:
+                context["language"] = lang
+
+        if target_symbol:
+            # 简单推断 symbol_kind：如果以 :: 或 . 分隔且最后一段首字母大写，视为 class
+            last_seg = target_symbol.rsplit("::", 1)[-1].rsplit(".", 1)[-1]
+            if last_seg and last_seg[0].isupper():
+                context["symbol_kind"] = "class"
+            else:
+                context["symbol_kind"] = "function"
+            # module_prefix 取最后一段之前的部分（用 . 或 :: 分隔）
+            if "::" in target_symbol:
+                prefix = target_symbol.rsplit("::", 1)[0]
+                if prefix:
+                    context["module_prefix"] = prefix
+            elif "." in target_symbol:
+                prefix = target_symbol.rsplit(".", 1)[0]
+                if prefix:
+                    context["module_prefix"] = prefix
+
+        if action:
+            context["action"] = action
+
+        # task_id 也写入 context，便于 evidence 匹配（虽然当前 _match_scope 不用它）
+        if step.get("task_id"):
+            context["task_id"] = step["task_id"]
+
+        return context
+
 
     def task_report_step(
         self,
