@@ -10,12 +10,29 @@
 - 语法检查通过 tree-sitter re-parse（复用 BuildMixin.create_parser，hasattr 防御）
 - Semgrep 增量扫描只扫修改的文件（复用 IssueAnalyzerMixin.run_semgrep，hasattr 防御）
 - 工具不可用时降级跳过，不阻塞任务流
+- run_check_gate 只负责检查与报告，不直接承担 task 状态决策（由 task_report_step 决定）
+- findings 列表已标准化：每个 finding 包含 finding_type / severity（小写）/ file_path /
+  line / rule_id / message，与 task_quality_findings 表字段对齐
 """
 from __future__ import annotations
 
 import os
 import time
 from typing import Any, Dict, List
+
+
+# severity 大写 → 小写映射（与 task_quality_findings.severity 对齐）
+_SEVERITY_MAP = {
+    "ERROR": "error",
+    "WARNING": "warn",
+    "INFO": "info",
+    "BLOCK": "block",
+}
+
+
+def _normalize_severity(raw: str) -> str:
+    """将大写 severity（ERROR/WARNING/INFO/BLOCK）标准化为小写（error/warn/info/block）"""
+    return _SEVERITY_MAP.get((raw or "").upper(), "warn")
 
 
 class CheckGateMixin:
@@ -34,6 +51,7 @@ class CheckGateMixin:
         """运行检查门禁
 
         对变更的文件执行语法检查和 Semgrep 扫描，结果写入 guardrail_findings 表。
+        本方法只负责检查与报告，不直接修改 task/step 状态（由 task_report_step 决策）。
 
         Args:
             task_id: 任务 ID
@@ -42,9 +60,9 @@ class CheckGateMixin:
 
         Returns:
             {
-                "passed": bool,              # 是否通过（无 ERROR 级发现）
+                "passed": bool,              # 是否通过（无 error/block 级发现）
                 "checks_run": ["syntax", ...], # 实际运行的检查项
-                "findings": [...],           # 发现列表
+                "findings": [...],           # 标准化发现列表（含 finding_type/severity 小写等）
                 "fix_required": bool,        # 是否需要修复（= !passed）
                 "summary": "..."             # 人类可读摘要
             }
@@ -65,22 +83,22 @@ class CheckGateMixin:
                         result = parser.parse_file(abs_path) if hasattr(parser, "parse_file") else {}
                         if result.get("parse_error"):
                             findings.append(
-                                {
-                                    "check": "syntax",
-                                    "file": fp,
-                                    "severity": "ERROR",
-                                    "message": f"语法错误: {result['parse_error']}",
-                                }
+                                self._standardize_finding(
+                                    check="syntax",
+                                    file_path=fp,
+                                    severity="ERROR",
+                                    message=f"语法错误: {result['parse_error']}",
+                                )
                             )
                         checks_run.append("syntax")
                 except Exception as e:
                     findings.append(
-                        {
-                            "check": "syntax",
-                            "file": fp,
-                            "severity": "WARNING",
-                            "message": f"语法检查异常: {e}",
-                        }
+                        self._standardize_finding(
+                            check="syntax",
+                            file_path=fp,
+                            severity="WARNING",
+                            message=f"语法检查异常: {e}",
+                        )
                     )
                     checks_run.append("syntax")
 
@@ -96,31 +114,34 @@ class CheckGateMixin:
                     if sem_result.get("success") and sem_result.get("total_findings", 0) > 0:
                         for f in sem_result.get("results", []):
                             findings.append(
-                                {
-                                    "check": "semgrep",
-                                    "file": fp,
-                                    "severity": f.get("severity", "WARNING"),
-                                    "rule_id": f.get("rule_id", ""),
-                                    "message": f.get("message", ""),
-                                    "line": f.get("start_line", 0),
-                                }
+                                self._standardize_finding(
+                                    check="semgrep",
+                                    file_path=fp,
+                                    severity=f.get("severity", "WARNING"),
+                                    rule_id=f.get("rule_id", ""),
+                                    message=f.get("message", ""),
+                                    line=f.get("start_line", 0),
+                                )
                             )
                 except Exception:
                     pass  # Semgrep 不可用不阻塞门禁流程
 
-        # 写入 guardrail_findings 表
+        # 写入 guardrail_findings 表（用标准化字段）
         if findings:
             self._save_gate_findings(task_id, step_id, findings)
 
-        # 判断是否通过（只有 ERROR 级发现才算失败）
-        error_checks = {f["check"] for f in findings if f["severity"] == "ERROR"}
-        passed = len(error_checks) == 0
+        # 判断是否通过（只有 error/block 级发现才算失败）
+        blocking_checks = {
+            f["finding_type"] for f in findings
+            if f["severity"] in ("error", "block")
+        }
+        passed = len(blocking_checks) == 0
 
         # 构建摘要
         all_checks = sorted(set(checks_run))
         summary_parts = []
         for c in all_checks:
-            status = "FAIL" if c in error_checks else "pass"
+            status = "FAIL" if c in blocking_checks else "pass"
             summary_parts.append(f"{c}:{status}")
 
         return {
@@ -129,6 +150,34 @@ class CheckGateMixin:
             "findings": findings,
             "fix_required": not passed,
             "summary": f"检查{'通过' if passed else '失败'}: {', '.join(summary_parts)}" if summary_parts else "检查通过（无可用检查器）",
+        }
+
+    @staticmethod
+    def _standardize_finding(
+        check: str,
+        file_path: str,
+        severity: str,
+        message: str,
+        rule_id: str = "",
+        line: int = 0,
+    ) -> Dict[str, Any]:
+        """标准化 finding 字段，与 task_quality_findings 表对齐
+
+        同时保留旧字段（check/file/severity 大写）向后兼容，
+        新增字段（finding_type/file_path/severity 小写）供 TaskQualityMixin 使用。
+        """
+        return {
+            # 标准化字段（与 task_quality_findings 对齐）
+            "finding_type": check,
+            "file_path": file_path,
+            "severity": _normalize_severity(severity),
+            "rule_id": rule_id,
+            "line": line,
+            "message": message,
+            # 向后兼容字段（旧代码可能引用 check/file/severity 大写）
+            "check": check,
+            "file": file_path,
+            "raw_severity": severity,
         }
 
     def _save_gate_findings(

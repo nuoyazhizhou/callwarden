@@ -808,3 +808,405 @@ def test_task_next_step_open_quality_findings_capped_at_10():
         db.close()
 
 
+# ============================================
+# run_check_gate 标准化 finding 测试（Step S-1783247858392-f383）
+# ============================================
+
+def test_normalize_severity_maps_uppercase_to_lowercase():
+    """_normalize_severity 将大写 severity 映射为小写"""
+    from callwarden.db.db_check_gate import _normalize_severity
+
+    assert _normalize_severity("ERROR") == "error"
+    assert _normalize_severity("warning") == "warn"
+    assert _normalize_severity("Info") == "info"
+    assert _normalize_severity("BLOCK") == "block"
+
+
+def test_normalize_severity_unknown_defaults_to_warn():
+    """_normalize_severity 对 None / 空串 / 未知值默认返回 warn"""
+    from callwarden.db.db_check_gate import _normalize_severity
+
+    assert _normalize_severity("") == "warn"
+    assert _normalize_severity(None) == "warn"
+    assert _normalize_severity("CRITICAL") == "warn"
+
+
+def test_standardize_finding_returns_normalized_fields():
+    """_standardize_finding 返回标准化字段（finding_type/severity 小写等）"""
+    from callwarden.db.db_check_gate import CheckGateMixin
+
+    finding = CheckGateMixin._standardize_finding(
+        check="syntax",
+        file_path="sample.py",
+        severity="ERROR",
+        message="syntax error",
+        rule_id="rule1",
+        line=10,
+    )
+    # 标准化字段（与 task_quality_findings 表对齐）
+    assert finding["finding_type"] == "syntax"
+    assert finding["file_path"] == "sample.py"
+    assert finding["severity"] == "error"  # 小写
+    assert finding["rule_id"] == "rule1"
+    assert finding["line"] == 10
+    assert finding["message"] == "syntax error"
+    # 向后兼容字段
+    assert finding["check"] == "syntax"
+    assert finding["file"] == "sample.py"
+    assert finding["raw_severity"] == "ERROR"
+
+
+def test_standardize_finding_unknown_severity_defaults_to_warn():
+    """未知 severity 默认标准化为 warn"""
+    from callwarden.db.db_check_gate import CheckGateMixin
+
+    finding = CheckGateMixin._standardize_finding(
+        check="semgrep", file_path="x.py", severity="CRITICAL", message="x"
+    )
+    assert finding["severity"] == "warn"
+
+
+def test_run_check_gate_empty_files_passes():
+    """空文件列表 → passed=True, findings 为空"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        result = db.run_check_gate(task_id, step["step_id"], changed_files=[])
+        assert result["passed"] is True
+        assert result["findings"] == []
+        assert result["fix_required"] is False
+        assert "summary" in result
+    finally:
+        db.close()
+
+
+def test_run_check_gate_nonexistent_file_skipped():
+    """不存在的文件被跳过，不抛异常"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        result = db.run_check_gate(
+            task_id, step["step_id"], changed_files=["/nonexistent/path.py"]
+        )
+        assert result["passed"] is True
+        assert result["findings"] == []
+    finally:
+        db.close()
+
+
+def test_run_check_gate_syntax_error_emits_standardized_finding():
+    """语法错误 → 返回 error 级 finding，包含标准化字段，并写入 guardrail_findings 表"""
+    import tempfile as _tempfile
+
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        # 创建一个临时文件（内容无所谓，mock 会接管解析）
+        tmp = _tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write("def broken(:\n")
+        tmp.close()
+        try:
+            # 注入 mock create_parser 触发语法错误
+            class _FakeParser:
+                def parse_file(self, path):
+                    return {"parse_error": "SyntaxError at line 1"}
+
+            _had = hasattr(db, "create_parser")
+            _orig = getattr(db, "create_parser", None)
+            db.create_parser = lambda path: _FakeParser()
+            try:
+                result = db.run_check_gate(
+                    task_id, step["step_id"], changed_files=[tmp.name]
+                )
+            finally:
+                if _had and _orig is not None:
+                    db.create_parser = _orig
+                else:
+                    try:
+                        delattr(db, "create_parser")
+                    except AttributeError:
+                        pass
+
+            # 验证：passed=False，findings 标准化
+            assert result["passed"] is False
+            assert result["fix_required"] is True
+            assert "syntax" in result["checks_run"]
+            assert len(result["findings"]) == 1
+            f = result["findings"][0]
+            # 标准化字段
+            assert f["finding_type"] == "syntax"
+            assert f["severity"] == "error"  # 小写
+            assert f["file_path"] == tmp.name
+            assert "message" in f
+            # 向后兼容字段
+            assert f["check"] == "syntax"
+            assert f["file"] == tmp.name
+            assert f["raw_severity"] == "ERROR"
+
+            # 验证写入 guardrail_findings 表
+            cur = db.conn.execute(
+                "SELECT COUNT(*) as cnt FROM guardrail_findings WHERE file_path = ?",
+                (tmp.name,),
+            )
+            assert cur.fetchone()["cnt"] >= 1
+        finally:
+            os.unlink(tmp.name)
+    finally:
+        db.close()
+
+
+def test_run_check_gate_does_not_modify_task_or_step_status():
+    """run_check_gate 不直接修改 task/step 状态（只负责检查与报告）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        original_step_status = step["status"]
+        original_task_status_row = db.conn.execute(
+            "SELECT status FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        original_task_status = original_task_status_row["status"]
+
+        class _FakeParser:
+            def parse_file(self, path):
+                return {"parse_error": "SyntaxError"}
+
+        _had = hasattr(db, "create_parser")
+        _orig = getattr(db, "create_parser", None)
+        db.create_parser = lambda path: _FakeParser()
+        try:
+            db.run_check_gate(
+                task_id, step["step_id"], changed_files=["dummy.py"]
+            )
+        finally:
+            if _had and _orig is not None:
+                db.create_parser = _orig
+            else:
+                try:
+                    delattr(db, "create_parser")
+                except AttributeError:
+                    pass
+
+        # step 状态不应改变
+        cur = db.conn.execute(
+            "SELECT status FROM task_steps WHERE id = ?",
+            (step["step_id"],),
+        )
+        assert cur.fetchone()["status"] == original_step_status
+        # task 状态不应改变
+        cur = db.conn.execute(
+            "SELECT status FROM tasks WHERE id = ?", (task_id,)
+        )
+        assert cur.fetchone()["status"] == original_task_status
+    finally:
+        db.close()
+
+
+def test_run_check_gate_semgrep_warn_finding_passes():
+    """Semgrep WARNING finding → severity=warn，passed=True（warn 不阻塞）"""
+    import tempfile as _tempfile
+
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        tmp = _tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write("x = 1\n")
+        tmp.close()
+        try:
+            def _fake_semgrep(target_paths, config, timeout):
+                return {
+                    "success": True,
+                    "total_findings": 1,
+                    "results": [
+                        {
+                            "rule_id": "python-best-practice",
+                            "severity": "WARNING",
+                            "message": "useless assignment",
+                            "start_line": 1,
+                        }
+                    ],
+                }
+
+            _had = hasattr(db, "run_semgrep")
+            _orig = getattr(db, "run_semgrep", None)
+            db.run_semgrep = _fake_semgrep
+            try:
+                result = db.run_check_gate(
+                    task_id, step["step_id"], changed_files=[tmp.name]
+                )
+            finally:
+                if _had and _orig is not None:
+                    db.run_semgrep = _orig
+                else:
+                    try:
+                        delattr(db, "run_semgrep")
+                    except AttributeError:
+                        pass
+
+            assert result["passed"] is True  # warn 不阻塞
+            assert result["fix_required"] is False
+            assert "semgrep" in result["checks_run"]
+            assert len(result["findings"]) == 1
+            f = result["findings"][0]
+            assert f["finding_type"] == "semgrep"
+            assert f["severity"] == "warn"  # 标准化为小写
+            assert f["rule_id"] == "python-best-practice"
+            assert f["line"] == 1
+        finally:
+            os.unlink(tmp.name)
+    finally:
+        db.close()
+
+
+def test_run_check_gate_semgrep_error_finding_blocks():
+    """Semgrep ERROR finding → severity=error，passed=False（error 阻塞）"""
+    import tempfile as _tempfile
+
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        tmp = _tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write("x = 1\n")
+        tmp.close()
+        try:
+            def _fake_semgrep(target_paths, config, timeout):
+                return {
+                    "success": True,
+                    "total_findings": 1,
+                    "results": [
+                        {
+                            "rule_id": "python-security",
+                            "severity": "ERROR",
+                            "message": "sql injection",
+                            "start_line": 5,
+                        }
+                    ],
+                }
+
+            _had = hasattr(db, "run_semgrep")
+            _orig = getattr(db, "run_semgrep", None)
+            db.run_semgrep = _fake_semgrep
+            try:
+                result = db.run_check_gate(
+                    task_id, step["step_id"], changed_files=[tmp.name]
+                )
+            finally:
+                if _had and _orig is not None:
+                    db.run_semgrep = _orig
+                else:
+                    try:
+                        delattr(db, "run_semgrep")
+                    except AttributeError:
+                        pass
+
+            assert result["passed"] is False
+            assert result["fix_required"] is True
+            assert len(result["findings"]) == 1
+            assert result["findings"][0]["severity"] == "error"
+            assert result["findings"][0]["finding_type"] == "semgrep"
+        finally:
+            os.unlink(tmp.name)
+    finally:
+        db.close()
+
+
+def test_run_check_gate_summary_contains_check_status():
+    """summary 包含检查项状态（pass/FAIL）"""
+    import tempfile as _tempfile
+
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        tmp = _tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write("def broken(:\n")
+        tmp.close()
+        try:
+            class _FakeParser:
+                def parse_file(self, path):
+                    return {"parse_error": "SyntaxError"}
+
+            _had = hasattr(db, "create_parser")
+            _orig = getattr(db, "create_parser", None)
+            db.create_parser = lambda path: _FakeParser()
+            try:
+                result = db.run_check_gate(
+                    task_id, step["step_id"], changed_files=[tmp.name]
+                )
+            finally:
+                if _had and _orig is not None:
+                    db.create_parser = _orig
+                else:
+                    try:
+                        delattr(db, "create_parser")
+                    except AttributeError:
+                        pass
+
+            assert "syntax:FAIL" in result["summary"]
+            assert "检查失败" in result["summary"]
+        finally:
+            os.unlink(tmp.name)
+    finally:
+        db.close()
+
+
+def test_run_check_gate_save_gate_findings_uses_lowercase_severity():
+    """_save_gate_findings 写入 guardrail_findings 时 severity 为小写"""
+    import tempfile as _tempfile
+
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        tmp = _tempfile.NamedTemporaryFile(
+            suffix=".py", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write("def broken(:\n")
+        tmp.close()
+        try:
+            class _FakeParser:
+                def parse_file(self, path):
+                    return {"parse_error": "SyntaxError"}
+
+            _had = hasattr(db, "create_parser")
+            _orig = getattr(db, "create_parser", None)
+            db.create_parser = lambda path: _FakeParser()
+            try:
+                db.run_check_gate(
+                    task_id, step["step_id"], changed_files=[tmp.name]
+                )
+            finally:
+                if _had and _orig is not None:
+                    db.create_parser = _orig
+                else:
+                    try:
+                        delattr(db, "create_parser")
+                    except AttributeError:
+                        pass
+
+            # 验证 guardrail_findings 表中 severity 为小写
+            cur = db.conn.execute(
+                "SELECT severity FROM guardrail_findings WHERE file_path = ?",
+                (tmp.name,),
+            )
+            for row in cur:
+                assert row["severity"] == "error"  # 小写
+        finally:
+            os.unlink(tmp.name)
+    finally:
+        db.close()
+
+
