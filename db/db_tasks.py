@@ -1150,27 +1150,38 @@ class TaskMixin:
 
         Returns:
             任务摘要列表，每个元素为 dict：
-            {task_id, title, status, step_count, created_at}
+            {task_id, title, status, step_count, created_at,
+             parent_id, depth, sort_order}
+            排序规则：根任务在前 → 按 sort_order → 创建时间倒序
+            便于 CLI 端按 depth 进行树形缩进展示
         """
+        # parent_id 为空的根任务排在最前，便于树形遍历
+        # 注意：SQLite 中 parent_id IS NULL 在 ORDER BY 中需要放在首位
+        order_clause = (
+            "ORDER BY CASE WHEN t.parent_id IS NULL OR t.parent_id = '' THEN 0 ELSE 1 END, "
+            "t.parent_id ASC, t.sort_order ASC, t.created_at DESC"
+        )
         if status_filter:
             cur = self.conn.execute(
-                """
+                f"""
                 SELECT t.id as task_id, t.title, t.status, t.created_at,
+                       t.parent_id, t.depth, t.sort_order,
                        (SELECT COUNT(*) FROM task_steps ts WHERE ts.task_id = t.id) as step_count
                 FROM tasks t
                 WHERE t.status = ?
-                ORDER BY t.created_at DESC
+                {order_clause}
                 LIMIT ?
                 """,
                 (status_filter, limit),
             )
         else:
             cur = self.conn.execute(
-                """
+                f"""
                 SELECT t.id as task_id, t.title, t.status, t.created_at,
+                       t.parent_id, t.depth, t.sort_order,
                        (SELECT COUNT(*) FROM task_steps ts WHERE ts.task_id = t.id) as step_count
                 FROM tasks t
-                ORDER BY t.created_at DESC
+                {order_clause}
                 LIMIT ?
                 """,
                 (limit,),

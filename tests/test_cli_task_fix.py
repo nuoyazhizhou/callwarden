@@ -260,3 +260,150 @@ def test_task_list_unified_consistent_output():
             "--task-list 与 task list 输出不一致，应该完全相同"
         )
         db.close()
+
+
+# ============================================
+# Step 3: task list 显示父子树形结构
+# ============================================
+
+
+def test_task_list_returns_tree_fields():
+    """db.task_list() 返回结果必须包含 parent_id/depth/sort_order 字段"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        # 创建一个父任务 + 一个子任务
+        parent_id = db.task_create("parent-task", "parent desc", [])
+        db.task_create("child-task", "child desc", [], parent_id=parent_id)
+
+        tasks = db.task_list(limit=200)
+
+        # 找到父任务和子任务
+        parent = next((t for t in tasks if t["task_id"] == parent_id), None)
+        assert parent is not None, "父任务未在列表中"
+        assert parent.get("parent_id") in (None, ""), "根任务的 parent_id 应为空"
+        assert parent.get("depth") == 0, f"根任务 depth 应为 0，实际: {parent.get('depth')}"
+        assert "sort_order" in parent, "缺少 sort_order 字段"
+
+        # 子任务
+        children = [t for t in tasks if t.get("parent_id") == parent_id]
+        assert len(children) == 1, f"应只有 1 个子任务，实际: {len(children)}"
+        child = children[0]
+        assert child["depth"] == 1, f"子任务 depth 应为 1，实际: {child['depth']}"
+        db.close()
+
+
+def test_task_list_default_tree_mode():
+    """cw task list 默认按树形展示（带缩进）"""
+    import io
+    from contextlib import redirect_stdout
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        # 创建父任务 + 2 个子任务
+        parent_id = db.task_create("root-task", "root", [])
+        db.task_create("child-1", "c1", [], parent_id=parent_id)
+        db.task_create("child-2", "c2", [], parent_id=parent_id)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            try:
+                cli_main._handle_task(["list"], db)
+            except SystemExit:
+                pass
+        out = buf.getvalue()
+
+        # 默认应显示 "(tree mode" 提示
+        assert "tree mode" in out.lower() or "树形模式" in out, (
+            f"默认应显示树形模式提示，实际: {out!r}"
+        )
+        # 子任务应缩进（前面有更多空格）
+        lines = out.split("\n")
+        # 找到子任务行
+        child_lines = [l for l in lines if "child-1" in l or "child-2" in l]
+        parent_lines = [l for l in lines if "root-task" in l]
+        assert len(child_lines) >= 2, f"应至少有 2 行子任务，实际: {len(child_lines)}"
+        assert len(parent_lines) >= 1, "应有 1 行父任务"
+        # 子任务的缩进应大于父任务
+        parent_indent = len(parent_lines[0]) - len(parent_lines[0].lstrip())
+        child_indent = len(child_lines[0]) - len(child_lines[0].lstrip())
+        assert child_indent > parent_indent, (
+            f"子任务缩进 ({child_indent}) 应大于父任务缩进 ({parent_indent})"
+        )
+        db.close()
+
+
+def test_task_list_flat_mode():
+    """cw task list --flat 切换到扁平展示（无缩进）"""
+    import io
+    from contextlib import redirect_stdout
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        parent_id = db.task_create("root-flat", "root", [])
+        db.task_create("child-flat", "child", [], parent_id=parent_id)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            try:
+                cli_main._handle_task(["list", "--flat"], db)
+            except SystemExit:
+                pass
+        out = buf.getvalue()
+
+        # --flat 模式不应有 tree mode 提示
+        assert "tree mode" not in out.lower(), (
+            f"--flat 模式不应显示 tree mode 提示，实际: {out!r}"
+        )
+        # 父任务和子任务缩进相同（都是顶级）
+        lines = out.split("\n")
+        parent_lines = [l for l in lines if "root-flat" in l]
+        child_lines = [l for l in lines if "child-flat" in l]
+        assert parent_lines and child_lines
+        # 在 flat 模式下，所有任务起始位置相同
+        parent_indent = len(parent_lines[0]) - len(parent_lines[0].lstrip())
+        child_indent = len(child_lines[0]) - len(child_lines[0].lstrip())
+        assert parent_indent == child_indent, (
+            f"--flat 模式下父/子任务缩进应相同: parent={parent_indent}, child={child_indent}"
+        )
+        db.close()
+
+
+def test_task_list_tree_structure():
+    """完整树形结构测试：父-子-孙三级任务正确缩进"""
+    import io
+    from contextlib import redirect_stdout
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        # 创建三级任务树
+        root_id = db.task_create("ROOT", "root", [])
+        child_id = db.task_create("CHILD", "child", [], parent_id=root_id)
+        db.task_create("GRANDCHILD", "grandchild", [], parent_id=child_id)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            try:
+                cli_main._handle_task(["list"], db)
+            except SystemExit:
+                pass
+        out = buf.getvalue()
+
+        lines = out.split("\n")
+        # 找到三行任务行
+        root_line = next((l for l in lines if "ROOT" in l), None)
+        child_line = next((l for l in lines if "CHILD" in l and "GRAND" not in l), None)
+        grand_line = next((l for l in lines if "GRANDCHILD" in l), None)
+
+        assert root_line and child_line and grand_line, (
+            f"未找到所有三级任务行\nroot={root_line!r}\nchild={child_line!r}\ngrand={grand_line!r}"
+        )
+
+        # 验证缩进递增
+        root_indent = len(root_line) - len(root_line.lstrip())
+        child_indent = len(child_line) - len(child_line.lstrip())
+        grand_indent = len(grand_line) - len(grand_line.lstrip())
+
+        assert root_indent < child_indent < grand_indent, (
+            f"三级缩进应递增: root={root_indent} < child={child_indent} < grand={grand_indent}"
+        )
+        db.close()

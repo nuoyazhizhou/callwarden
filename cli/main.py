@@ -1158,6 +1158,10 @@ def _handle_task(args, db):
         "--status", default="",
         help=t("cli_task_arg_status_filter", default="Status filter (open/in_progress/review/applied/closed/reverted)")
     )
+    list_p.add_argument(
+        "--flat", action="store_true",
+        help=t("cli_task_arg_flat", default="Flat list (no tree indentation)")
+    )
 
     opts = parser.parse_args(args)
 
@@ -1385,7 +1389,7 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "list":
-        # 列出任务（支持 --blocked 过滤）
+        # 列出任务（支持 --blocked 过滤 / 树形展示）
         # 统一调用 db.task_list()，与 --task-list 走同一份数据源
         try:
             status_filter = opts.status or None
@@ -1398,25 +1402,88 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_panel_blocked_only"), "yellow")
         if opts.status:
             cprint(t("cli.messages.task_panel_status_filter", status=opts.status), "yellow")
+        if not opts.flat:
+            cprint(t("cli.messages.task_panel_tree_mode"), "yellow")
         print(t("cli.messages.task_panel_count", count=len(tasks)))
         print()
 
+        # 构造任务 id → 子任务列表 的映射，便于树形遍历
+        # db.task_list() 已按 (根优先, parent_id, sort_order, created_at) 排序
+        children_map: dict = {}
+        root_tasks: list = []
         for tk in tasks:
-            tid = tk.get("task_id") or tk.get("id", "")
-            title = tk.get("title", "")
-            status = tk.get("status", "")
-            # 若 --blocked，跳过无阻塞发现的任务
-            if opts.blocked:
-                if not db.task_has_blocking_findings(tid):
-                    continue
+            parent_id = tk.get("parent_id") or ""
+            if parent_id:
+                children_map.setdefault(parent_id, []).append(tk)
+            else:
+                root_tasks.append(tk)
+
+        # 递归打印树形结构
+        def _print_task_tree(task_node, depth):
+            tid = task_node.get("task_id") or task_node.get("id", "")
+            title = task_node.get("title", "")
+            status = task_node.get("status", "")
+            # 若 --blocked，跳过无阻塞发现的任务（但仍递归其子任务）
             blocking = db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False
+            if opts.blocked and not blocking:
+                # 检查子任务是否有阻塞发现，没有则整体跳过
+                has_blocked_child = False
+                stack = list(children_map.get(tid, []))
+                while stack:
+                    cur_node = stack.pop()
+                    cur_tid = cur_node.get("task_id") or cur_node.get("id", "")
+                    if db.task_has_blocking_findings(cur_tid) if hasattr(db, "task_has_blocking_findings") else False:
+                        has_blocked_child = True
+                        break
+                    stack.extend(children_map.get(cur_tid, []))
+                if not has_blocked_child:
+                    return
             icon = "[!]" if blocking else "[ ]"
             color = "red" if blocking else "white"
+            indent = "" if opts.flat else (t("cli.messages.task_list_indent") * depth)
             cprint(
                 t("cli.messages.task_panel_item",
                   icon=icon, id=tid, status=status, title=title),
                 color
+            ) if not indent else cprint(
+                t("cli.messages.task_panel_item_indented",
+                  indent=indent, icon=icon, id=tid, status=status, title=title),
+                color
             )
+            # 递归打印子任务
+            for child in children_map.get(tid, []):
+                _print_task_tree(child, depth + 1)
+
+        if opts.flat:
+            # 扁平模式：直接按 db 返回顺序打印
+            for tk in tasks:
+                tid = tk.get("task_id") or tk.get("id", "")
+                title = tk.get("title", "")
+                status = tk.get("status", "")
+                if opts.blocked:
+                    if not (db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False):
+                        continue
+                blocking = db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False
+                icon = "[!]" if blocking else "[ ]"
+                color = "red" if blocking else "white"
+                cprint(
+                    t("cli.messages.task_panel_item",
+                      icon=icon, id=tid, status=status, title=title),
+                    color
+                )
+        else:
+            # 树形模式：从根任务开始 DFS
+            for root in root_tasks:
+                _print_task_tree(root, 0)
+            # 检查是否有"孤儿"任务（parent_id 不在当前结果集中）
+            seen_ids = {tk.get("task_id") or tk.get("id", "") for tk in tasks}
+            orphans = [
+                tk for tk in tasks
+                if (tk.get("parent_id") or "")
+                and (tk.get("parent_id") not in seen_ids)
+            ]
+            for orphan in orphans:
+                _print_task_tree(orphan, 0)
         print()
         return True
 
