@@ -624,6 +624,35 @@ CREATE TABLE IF NOT EXISTS gc_policies (
 );
 
 -- ============================================
+-- v20: GC 运行审计表（记录每次 GC 操作的策略/候选/删除/备份/状态）
+-- ============================================
+-- 类 JVM GC 统计：每次 retention/archive/purge 都记一行，便于事后追溯"为什么少了数据"。
+-- policy_json 存当时的策略参数（older_than_days/keep_versions/include_external 等）。
+-- candidate_counts/deleted_counts 存 JSON 明细（按 file_versions/external_symbols 等分类）。
+-- status: running / completed / failed；失败时 error 记异常信息。
+CREATE TABLE IF NOT EXISTS gc_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER,                          -- 工作区 ID（NULL 表示全局）
+    operation TEXT NOT NULL,                      -- 操作类型：retention / archive / purge
+    dry_run INTEGER NOT NULL DEFAULT 0,            -- 1=预演（未实际删除）；0=apply
+    policy_json TEXT DEFAULT '',                  -- 策略参数 JSON（older_than_days/keep_versions 等）
+    candidate_counts TEXT DEFAULT '{}',           -- 候选数量明细 JSON（{file_versions: N, external_packages: M}）
+    deleted_counts TEXT DEFAULT '{}',             -- 实删数量明细 JSON（{file_versions: N, external_symbols: M}）
+    backup_path TEXT DEFAULT '',                   -- 备份文件路径（gzip 压缩的 .db.gz）
+    backup_size INTEGER DEFAULT 0,                -- 备份文件字节数
+    started_at REAL NOT NULL,                     -- 开始时间戳
+    completed_at REAL,                            -- 完成时间戳（失败时也填）
+    status TEXT NOT NULL DEFAULT 'running',       -- running / completed / failed
+    error TEXT DEFAULT '',                        -- 失败时的异常信息
+    operator TEXT DEFAULT 'cli',                  -- 触发者：cli / mcp / agent
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+CREATE INDEX IF NOT EXISTS idx_gc_runs_workspace ON gc_runs(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_gc_runs_operation ON gc_runs(operation);
+CREATE INDEX IF NOT EXISTS idx_gc_runs_status ON gc_runs(status);
+CREATE INDEX IF NOT EXISTS idx_gc_runs_started ON gc_runs(started_at);
+
+-- ============================================
 -- v17: 任务-符号变更归因表
 -- ============================================
 -- 保持 file_symbol_versions / symbol_contents 作为事实层；
@@ -673,7 +702,8 @@ CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(
 # v17: 任务-符号变更归因表（task_symbol_changes）
 # v18: 外部包冷数据追踪（package_versions.last_seen_at / last_used_at / import_source）
 # v19: GC retention 策略表（gc_policies）
-SCHEMA_VERSION = 19
+# v20: GC 运行审计表（gc_runs，记录每次 retention/archive/purge 的策略/候选/删除/备份/状态）
+SCHEMA_VERSION = 20
 
 
 # ============================================

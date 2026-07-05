@@ -81,6 +81,11 @@ def test_new_mcp_tools_registered():
     assert "gc_retention" in names
     assert "gc_policy_get" in names
     assert "gc_policy_set" in names
+    assert "gc_archive_list" in names
+    assert "gc_archive_inspect" in names
+    assert "gc_audit_list" in names
+    assert "gc_audit_get" in names
+    assert "gc_archive_import" in names
 
 
 def test_install_agent_generates_templates():

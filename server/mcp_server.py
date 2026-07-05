@@ -1256,6 +1256,109 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
+    # GC 备份与审计工具（v20 新增）
+    # ----------------------------------------------------------------
+
+    @mcp.tool()
+    def gc_archive_list(limit: int = 20) -> list:
+        """列出当前数据库目录下的 gc_archives/*.db.gz 备份文件
+
+        Args:
+            limit: 最多返回多少条（默认 20，按 mtime 倒序）
+
+        Returns:
+            备份文件列表，每条含 path/name/size/mtime/reason
+        """
+        try:
+            db = get_db()
+            return db.gc_archive_list(limit=limit)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def gc_archive_inspect(path: str) -> dict:
+        """检查 GC 备份文件内容（只读模式，不解压到磁盘永久位置）
+
+        Args:
+            path: 备份文件路径（.db.gz，支持相对 gc_archives 目录的简写）
+
+        Returns:
+            备份文件元信息与内容摘要，含 schema_version/tables 列表/
+            workspace_count/file_version_count/symbol_count/call_count/
+            gc_runs_count/archived_files_count
+        """
+        try:
+            db = get_db()
+            return db.gc_archive_inspect(path=path)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def gc_audit_list(limit: int = 20, operation: str = None) -> list:
+        """查询 GC 审计历史记录
+
+        Args:
+            limit: 最多返回多少条（默认 20，钳制到 [1, 500]）
+            operation: 按操作类型过滤（retention/archive/purge）；None 表示不过滤
+
+        Returns:
+            审计记录列表，按 started_at 倒序，每条含 id/operation/dry_run/
+            policy_json/candidate_counts/deleted_counts/backup_path/backup_size/
+            started_at/completed_at/status/error/operator
+        """
+        try:
+            db = get_db()
+            return db.gc_audit_list(limit=limit, operation=operation)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def gc_audit_get(audit_id: int) -> dict:
+        """查询单条 GC 审计记录详情
+
+        Args:
+            audit_id: gc_runs.id
+
+        Returns:
+            审计记录 dict（含反序列化的 JSON 字段），不存在返回空 dict
+        """
+        try:
+            db = get_db()
+            result = db.gc_audit_get(audit_id=audit_id)
+            return result if result is not None else {}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def gc_archive_import(path: str, file_path: str = "",
+                         package_name: str = "", dry_run: bool = True) -> dict:
+        """从 GC 备份文件导入历史数据到当前库
+
+        设计原则：只 INSERT OR IGNORE，绝不覆盖现有事实（当前库优先）。
+
+        Args:
+            path: 备份文件路径（.db.gz，支持相对 gc_archives 目录的简写）
+            file_path: 要导入的文件相对路径（如 'src/a.py'）；
+                       file_path 与 package_name 至少指定一个
+            package_name: 要导入的外部包名
+            dry_run: True=只统计不实际导入（默认）
+
+        Returns:
+            {
+                "path": str, "dry_run": bool, "target": str, "target_value": str,
+                "imported": dict, "skipped": dict, "candidate": dict, "errors": list
+            }
+        """
+        try:
+            db = get_db()
+            return db.gc_archive_import(
+                path=path, file_path=file_path,
+                package_name=package_name, dry_run=dry_run,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ----------------------------------------------------------------
     # 任务驱动编排工具
     # ----------------------------------------------------------------
 

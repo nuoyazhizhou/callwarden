@@ -48,7 +48,10 @@ Call Warden CLI 提供两种命令风格：
 | | `check-gate <TASK_ID>` | sub | 检查门禁 |
 | **GC** | `gc archive/restore/status/purge` | sub | ignore 文件归档、复活、状态、清除 |
 | | `gc policy show/set` | sub | 查看或修改 retention 策略 |
-| | `gc retention` | sub | 按冷热策略清理旧版本/外部符号 |
+| | `gc retention` | sub | 按冷热策略清理旧版本/外部符号（含 Top N 收益预估） |
+| | `gc archive list/inspect` | sub | 列出/检查 `gc_archives/*.db.gz` 备份 |
+| | `gc archive import` | sub | 从备份恢复指定文件或外部包（INSERT OR IGNORE 幂等） |
+| | `gc audit list/show` | sub | 查看 GC 审计记录（策略/候选/实删/备份） |
 | **度量** | `--metrics` | flag | 代码度量汇总 |
 | | `--complexity [N]` | flag | 圈复杂度热点 |
 | | `--coupling` | flag | 模块耦合度 |
@@ -148,6 +151,76 @@ cw gc retention --apply --older-than 730 --keep-versions 200 --save-policy
 - 传入策略参数但不带 `--save-policy` 时，只覆盖本次运行。
 
 执行删除前默认会在数据库目录下创建 `gc_archives/*.db.gz` 压缩备份，便于后续离线导回。
+
+dry-run 与 apply 输出末尾会附 **Top N 收益预估**（v20 新增）：
+
+- `预计删除行数`：file_versions / file_symbol_versions / call_versions / symbol_contents / external_symbols / external_packages 各表估算行数。
+- `受影响文件 Top N`：按候选版本数倒序，最多 10 条，含 `rel_path / candidate_versions / newest_parsed`。
+- `受影响外部包 Top N`：按符号数倒序，最多 10 条，含 `package_name / package_version / symbol_count / last_touch`。
+- `VACUUM 提示`：仅当 `--vacuum` 真正执行后 SQLite 文件空间才会释放到磁盘，单纯 DELETE 只会把空闲页留给后续写入。
+
+> 所有数量均为估算（基于候选 ID 集合预统计），不承诺精确磁盘节省。
+
+### `gc archive list`：列出 GC 备份文件
+
+```bash
+cw gc archive list
+cw gc archive list --limit 50
+```
+
+列出 `gc_archives/*.db.gz` 备份文件，按修改时间倒序，默认最多 20 条。每条输出含序号、文件名、大小、归档原因（从文件名 `{YYYYMMDD-HHMMSS}-{reason}.db.gz` 解析）。
+
+### `gc archive inspect`：检查备份内容
+
+```bash
+cw gc archive inspect <path-or-name>
+cw gc archive inspect 20260705-1030-retention
+```
+
+以只读模式打开 `.db.gz` 备份，输出 Schema 版本、各表行数、关键摘要（workspaces / file_instances / file_versions / symbols / archived_files / external_symbols / gc_runs）。`<path-or-name>` 既可以是完整路径，也可以是文件名简写（自动在 `gc_archives/` 下查找）。
+
+### `gc archive import`：从备份恢复数据
+
+```bash
+# 预演：仅打印将要恢复什么，不写入
+cw gc archive import <path> --file src/a.py
+cw gc archive import <path> --package ext-python-oldpkg
+
+# 执行：实际写入当前数据库（INSERT OR IGNORE，幂等）
+cw gc archive import <path> --file src/a.py --apply
+cw gc archive import <path> --package ext-python-oldpkg --apply
+```
+
+参数：
+
+- `<path>`：备份文件路径或简写文件名。
+- `--file <REL_PATH>`：要恢复的文件相对路径；与 `--package` 二选一。
+- `--package <NAME>`：要恢复的外部包名；与 `--file` 二选一。
+- `--dry-run`（默认）：只预演，不写入。
+- `--apply`：实际写入；以 INSERT OR IGNORE 方式恢复，已存在的行不会被覆盖（当前库优先）。
+
+恢复语义：
+
+- file 模式：恢复指定文件的 `file_versions / file_symbol_versions / call_versions / symbol_contents`（仅该文件历史版本涉及的部分）。
+- package 模式：恢复指定包的 `external_symbols / package_versions`。
+- 每次执行都会写入 `gc_runs` 审计记录（operation=`archive_import`），便于追踪谁在何时恢复了什么。
+
+### `gc audit list`：列出 GC 审计记录
+
+```bash
+cw gc audit list
+cw gc audit list --limit 50
+```
+
+列出 `gc_runs` 表中的审计记录，按时间倒序，默认最多 20 条。每条含 audit_id、operation、status、dry_run、started_at、completed_at。operation 取值：`archive / restore / purge / retention / archive_import`，status 取值：`running / completed / failed`。
+
+### `gc audit show`：查看审计详情
+
+```bash
+cw gc audit show <AUDIT_ID>
+```
+
+输出指定审计记录的完整详情：策略参数（policy_json）、候选数量（candidate_counts）、实删数量（deleted_counts）、备份路径、备份大小、operator、起止时间、错误信息（仅 failed 时）。
 
 ---
 

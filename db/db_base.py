@@ -1084,6 +1084,38 @@ def _migrate_v18_to_v19(conn: sqlite3.Connection):
     """)
 
 
+def _migrate_v19_to_v20(conn: sqlite3.Connection):
+    """v19 -> v20: GC 运行审计表
+
+    记录每次 retention/archive/purge 的策略参数、候选数量、实删数量、
+    备份路径、起止时间和状态，便于事后追溯"为什么少了数据"。
+    使用 CREATE TABLE IF NOT EXISTS 保证旧库重复执行幂等。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS gc_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER,
+            operation TEXT NOT NULL,
+            dry_run INTEGER NOT NULL DEFAULT 0,
+            policy_json TEXT DEFAULT '',
+            candidate_counts TEXT DEFAULT '{}',
+            deleted_counts TEXT DEFAULT '{}',
+            backup_path TEXT DEFAULT '',
+            backup_size INTEGER DEFAULT 0,
+            started_at REAL NOT NULL,
+            completed_at REAL,
+            status TEXT NOT NULL DEFAULT 'running',
+            error TEXT DEFAULT '',
+            operator TEXT DEFAULT 'cli',
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_workspace ON gc_runs(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_operation ON gc_runs(operation)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_status ON gc_runs(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_started ON gc_runs(started_at)")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1323,6 +1355,10 @@ class CodeGraphBase:
             19: {
                 "description": t("cli.messages.migration_v19", default="Add GC retention policy table"),
                 "func": _migrate_v18_to_v19,
+            },
+            20: {
+                "description": t("cli.messages.migration_v20", default="Add GC run audit table (records policy/candidates/deletions/backup/status per GC operation)"),
+                "func": _migrate_v19_to_v20,
             },
         }
 

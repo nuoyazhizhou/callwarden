@@ -1560,6 +1560,48 @@ def _handle_gc(args, db):
     retention_p.add_argument("--save-policy", action="store_true",
                              help=t("cli_gc_retention_arg_save_policy", default="Persist provided policy options before running"))
 
+    # gc archive-list（v20 新增：列出 gc_archives/*.db.gz 备份文件）
+    archive_list_p = sub.add_parser("archive-list",
+                                    help=t("cli_gc_archive_list_desc", default="List GC backup files"))
+    archive_list_p.add_argument("--limit", type=int, default=20,
+                                help=t("cli_gc_archive_list_arg_limit", default="Maximum number of entries to show (default 20)"))
+
+    # gc archive-inspect（v20 新增：检查备份文件内容，只读模式）
+    archive_inspect_p = sub.add_parser("archive-inspect",
+                                       help=t("cli_gc_archive_inspect_desc", default="Inspect GC backup file contents (read-only)"))
+    archive_inspect_p.add_argument("path",
+                                   help=t("cli_gc_archive_inspect_arg_path",
+                                          default="Backup file path (.db.gz, supports shorthand relative to gc_archives directory)"))
+
+    # gc audit-list（v20 新增：查看 GC 审计历史）
+    audit_list_p = sub.add_parser("audit-list",
+                                  help=t("cli_gc_audit_list_desc", default="View GC audit history"))
+    audit_list_p.add_argument("--limit", type=int, default=20,
+                              help=t("cli_gc_audit_list_arg_limit", default="Maximum number of entries to show (default 20)"))
+    audit_list_p.add_argument("--operation", default=None,
+                              help=t("cli_gc_audit_list_arg_operation", default="Filter by operation type (retention/archive/purge)"))
+
+    # gc audit-show（v20 新增：查看单条审计记录详情）
+    audit_show_p = sub.add_parser("audit-show",
+                                  help=t("cli_gc_audit_show_desc", default="View details of a single GC audit record"))
+    audit_show_p.add_argument("id", type=int,
+                              help=t("cli_gc_audit_show_arg_id", default="Audit record ID"))
+
+    # gc archive-import（v20 新增：从备份导回历史数据到当前库）
+    archive_import_p = sub.add_parser("archive-import",
+                                     help=t("cli_gc_archive_import_desc", default="Import historical data from GC backup file"))
+    archive_import_p.add_argument("path",
+                                 help=t("cli_gc_archive_import_arg_path",
+                                        default="Backup file path (.db.gz, supports shorthand relative to gc_archives)"))
+    archive_import_p.add_argument("--file", default="",
+                                  help=t("cli_gc_archive_import_arg_file", default="Relative file path to import (e.g. src/a.py)"))
+    archive_import_p.add_argument("--package", default="",
+                                  help=t("cli_gc_archive_import_arg_package", default="External package name to import"))
+    archive_import_p.add_argument("--dry-run", action="store_true", dest="dry_run", default=True,
+                                 help=t("cli_gc_archive_import_arg_dry_run", default="Preview only (default); do not modify database"))
+    archive_import_p.add_argument("--apply", action="store_false", dest="dry_run",
+                                   help=t("cli_gc_archive_import_arg_apply", default="Apply import; default is dry run"))
+
     parsed = parser.parse_args(args)
 
     if parsed.action == "archive":
@@ -1662,6 +1704,212 @@ def _handle_gc(args, db):
             cprint(t("cli.messages.gc_retention_deleted_versions", count=result["deleted_file_versions"]), "dim")
             cprint(t("cli.messages.gc_retention_deleted_external", count=result["deleted_external_symbols"]), "dim")
             cprint(t("cli.messages.gc_retention_deleted_orphans", count=result["deleted_orphan_symbol_contents"]), "dim")
+
+        # v20 新增：Top N 收益预估（dry-run 和 apply 都展示）
+        estimate = result.get("estimate") or {}
+        approx = estimate.get("approximate_deleted_rows") or {}
+        affected_files = estimate.get("affected_files_top_n") or []
+        external_top = estimate.get("external_packages_top_n") or []
+        # 仅在有候选数据时输出，避免空预演产生噪声
+        if approx or affected_files or external_top:
+            cprint(t("cli.messages.gc_retention_estimate_title"), "dim")
+            cprint(t(
+                "cli.messages.gc_retention_estimate_rows",
+                fv=approx.get("file_versions", 0),
+                fsv=approx.get("file_symbol_versions", 0),
+                cv=approx.get("call_versions", 0),
+                sc=approx.get("symbol_contents", 0),
+                es=approx.get("external_symbols", 0),
+                ep=approx.get("external_packages", 0),
+            ), "dim")
+            if affected_files:
+                cprint(t("cli.messages.gc_retention_estimate_files_top", top_n=len(affected_files)), "dim")
+                for idx, item in enumerate(affected_files, 1):
+                    newest = item.get("newest_parsed") or 0
+                    cprint(t(
+                        "cli.messages.gc_retention_estimate_files_item",
+                        idx=idx,
+                        path=item.get("rel_path", ""),
+                        count=item.get("candidate_versions", 0),
+                        newest=_format_ts(newest),
+                    ), "dim")
+            else:
+                cprint(t("cli.messages.gc_retention_estimate_files_empty"), "dim")
+            if external_top:
+                cprint(t("cli.messages.gc_retention_estimate_pkgs_top", top_n=len(external_top)), "dim")
+                for idx, item in enumerate(external_top, 1):
+                    last = item.get("last_touch") or 0
+                    cprint(t(
+                        "cli.messages.gc_retention_estimate_pkgs_item",
+                        idx=idx,
+                        name=item.get("package_name", ""),
+                        version=item.get("package_version", ""),
+                        count=item.get("symbol_count", 0),
+                        last=_format_ts(last),
+                    ), "dim")
+            else:
+                cprint(t("cli.messages.gc_retention_estimate_pkgs_empty"), "dim")
+            # VACUUM 提示
+            cprint(t("cli.messages.gc_retention_estimate_vacuum_hint"), "dim")
+        cprint()
+        return True
+
+    elif parsed.action == "archive-list":
+        # v20 新增：列出 gc_archives/*.db.gz 备份文件
+        items = db.gc_archive_list(limit=parsed.limit)
+        cprint(t("cli.messages.gc_archive_list_title"), "cyan", bold=True)
+        if not items:
+            cprint(t("cli.messages.gc_archive_list_empty"), "dim")
+            cprint()
+            return True
+        from datetime import datetime
+        for idx, item in enumerate(items, 1):
+            cprint(t("cli.messages.gc_archive_list_item", idx=idx, name=item["name"]), "dim")
+            ts = datetime.fromtimestamp(item["mtime"]).strftime("%Y-%m-%d %H:%M:%S")
+            size_str = _format_bytes(item["size"])
+            cprint(t("cli.messages.gc_archive_list_size",
+                     size=size_str, reason=item["reason"]), "dim")
+            cprint(t("cli.messages.gc_archive_list_mtime", ts=ts), "dim")
+        cprint()
+        return True
+
+    elif parsed.action == "archive-inspect":
+        # v20 新增：检查备份文件内容（只读）
+        try:
+            info = db.gc_archive_inspect(path=parsed.path)
+        except (FileNotFoundError, ValueError) as e:
+            cprint(str(e), "red")
+            return False
+        cprint(t("cli.messages.gc_archive_inspect_title"), "cyan", bold=True)
+        cprint(t("cli.messages.gc_archive_inspect_file", name=info["name"]), "dim")
+        cprint(t("cli.messages.gc_archive_inspect_size", size=_format_bytes(info["size"])), "dim")
+        cprint(t("cli.messages.gc_archive_inspect_schema_version", version=info["schema_version"]), "dim")
+        cprint(t("cli.messages.gc_archive_inspect_tables_title"), "dim")
+        for tb in info["tables"]:
+            cprint(t("cli.messages.gc_archive_inspect_table_item",
+                     name=tb["name"], rows=tb["rows"]), "dim")
+        cprint(t("cli.messages.gc_archive_inspect_summary"), "dim")
+        summary_items = [
+            ("workspaces", info["workspace_count"]),
+            ("file_versions", info["file_version_count"]),
+            ("symbols", info["symbol_count"]),
+            ("calls", info["call_count"]),
+            ("gc_runs", info["gc_runs_count"]),
+            ("archived_files", info["archived_files_count"]),
+        ]
+        for label, count in summary_items:
+            cprint(t("cli.messages.gc_archive_inspect_summary_item",
+                     label=label, count=count), "dim")
+        cprint()
+        return True
+
+    elif parsed.action == "audit-list":
+        # v20 新增：查看 GC 审计历史
+        from datetime import datetime
+        rows = db.gc_audit_list(limit=parsed.limit, operation=parsed.operation)
+        cprint(t("cli.messages.gc_audit_list_title"), "cyan", bold=True)
+        if not rows:
+            cprint(t("cli.messages.gc_audit_list_empty"), "dim")
+            cprint()
+            return True
+        for idx, row in enumerate(rows, 1):
+            dry_label = t("cli.messages.gc_audit_dry_run_yes") if row["dry_run"] else t("cli.messages.gc_audit_dry_run_no")
+            cprint(t("cli.messages.gc_audit_list_item",
+                     idx=idx, id=row["id"], operation=row["operation"],
+                     status=row["status"], dry_run=dry_label), "dim")
+            ts = datetime.fromtimestamp(row["started_at"]).strftime("%Y-%m-%d %H:%M:%S")
+            cprint(t("cli.messages.gc_audit_list_started", ts=ts), "dim")
+            if row.get("backup_path"):
+                cprint(t("cli.messages.gc_audit_list_backup", path=row["backup_path"]), "dim")
+            cands = row.get("candidate_counts") or {}
+            if cands:
+                cprint(t("cli.messages.gc_audit_list_candidates", candidates=cands), "dim")
+            dels = row.get("deleted_counts") or {}
+            if dels:
+                cprint(t("cli.messages.gc_audit_list_deleted", deleted=dels), "dim")
+            if row["status"] == "failed" and row.get("error"):
+                cprint(t("cli.messages.gc_audit_list_error", error=row["error"]), "red")
+        cprint()
+        return True
+
+    elif parsed.action == "audit-show":
+        # v20 新增：查看单条审计记录详情
+        from datetime import datetime
+        row = db.gc_audit_get(audit_id=parsed.id)
+        if not row:
+            cprint(t("errors.gc_audit_not_found", id=parsed.id), "red")
+            return False
+        cprint(t("cli.messages.gc_audit_show_title"), "cyan", bold=True)
+        cprint(t("cli.messages.gc_audit_show_id", id=row["id"]), "dim")
+        cprint(t("cli.messages.gc_audit_show_operation", operation=row["operation"]), "dim")
+        cprint(t("cli.messages.gc_audit_show_status", status=row["status"]), "dim")
+        cprint(t("cli.messages.gc_audit_show_dry_run",
+                 value=str(row["dry_run"]).lower()), "dim")
+        cprint(t("cli.messages.gc_audit_show_operator", operator=row["operator"]), "dim")
+        started_ts = datetime.fromtimestamp(row["started_at"]).strftime("%Y-%m-%d %H:%M:%S")
+        cprint(t("cli.messages.gc_audit_show_started", ts=started_ts), "dim")
+        if row.get("completed_at"):
+            completed_ts = datetime.fromtimestamp(row["completed_at"]).strftime("%Y-%m-%d %H:%M:%S")
+            cprint(t("cli.messages.gc_audit_show_completed", ts=completed_ts), "dim")
+        policy = row.get("policy_json") or {}
+        if policy:
+            cprint(t("cli.messages.gc_audit_show_policy"), "dim")
+            for k, v in policy.items():
+                cprint(t("cli.messages.gc_audit_show_policy_item", key=k, value=v), "dim")
+        cands = row.get("candidate_counts") or {}
+        if cands:
+            cprint(t("cli.messages.gc_audit_show_candidates"), "dim")
+            for k, v in cands.items():
+                cprint(t("cli.messages.gc_audit_show_count_item", key=k, count=v), "dim")
+        dels = row.get("deleted_counts") or {}
+        if dels:
+            cprint(t("cli.messages.gc_audit_show_deleted"), "dim")
+            for k, v in dels.items():
+                cprint(t("cli.messages.gc_audit_show_count_item", key=k, count=v), "dim")
+        if row.get("backup_path"):
+            cprint(t("cli.messages.gc_audit_show_backup",
+                     path=row["backup_path"], size=row.get("backup_size", 0)), "dim")
+        if row["status"] == "failed" and row.get("error"):
+            cprint(t("cli.messages.gc_audit_show_error", error=row["error"]), "red")
+        cprint()
+        return True
+
+    elif parsed.action == "archive-import":
+        # v20 新增：从备份导回历史数据到当前库
+        try:
+            result = db.gc_archive_import(
+                path=parsed.path,
+                file_path=parsed.file,
+                package_name=parsed.package,
+                dry_run=parsed.dry_run,
+            )
+        except (FileNotFoundError, ValueError) as e:
+            cprint(str(e), "red")
+            return False
+        cprint(t("cli.messages.gc_archive_import_title"), "cyan", bold=True)
+        mode_key = "cli.messages.gc_archive_import_mode_dry_run" if result["dry_run"] else "cli.messages.gc_archive_import_mode_apply"
+        cprint(t(mode_key), "yellow" if result["dry_run"] else "green")
+        cprint(t("cli.messages.gc_archive_import_target",
+                 target=result["target"], value=result["target_value"]), "dim")
+        cprint(t("cli.messages.gc_archive_import_path", path=result["path"]), "dim")
+        if result.get("errors"):
+            cprint(t("cli.messages.gc_archive_import_errors_title"), "red")
+            for err in result["errors"]:
+                cprint(t("cli.messages.gc_archive_import_error_item", error=err), "red")
+        # 导入明细
+        imported = result.get("imported") or {}
+        if imported:
+            cprint(t("cli.messages.gc_archive_import_imported_title"), "green")
+            for k, v in imported.items():
+                if v > 0:
+                    cprint(t("cli.messages.gc_archive_import_count_item", key=k, count=v), "green")
+        # 跳过明细
+        skipped = result.get("skipped") or {}
+        if any(v > 0 for v in skipped.values()):
+            cprint(t("cli.messages.gc_archive_import_skipped_title"), "yellow")
+            for k, v in skipped.items():
+                if v > 0:
+                    cprint(t("cli.messages.gc_archive_import_count_item", key=k, count=v), "yellow")
         cprint()
         return True
 
@@ -1694,6 +1942,50 @@ def _print_gc_policy(policy):
     cprint(t("cli.messages.gc_policy_backup", value=str(policy["backup_enabled"]).lower()), "dim")
     cprint(t("cli.messages.gc_policy_vacuum", value=str(policy["vacuum_enabled"]).lower()), "dim")
     cprint()
+
+
+def _format_bytes(num_bytes: int) -> str:
+    """字节数格式化为人类可读字符串（B/KB/MB/GB）。
+
+    Args:
+        num_bytes: 字节数
+
+    Returns:
+        形如 "1.50 KB" 的字符串；输入非整数或负数返回原始字符串
+    """
+    try:
+        n = int(num_bytes)
+    except (TypeError, ValueError):
+        return str(num_bytes)
+    if n < 0:
+        return str(num_bytes)
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(n)
+    idx = 0
+    while size >= 1024 and idx < len(units) - 1:
+        size /= 1024
+        idx += 1
+    if idx == 0:
+        return f"{n} {units[idx]}"
+    return f"{size:.2f} {units[idx]}"
+
+
+def _format_ts(ts: float) -> str:
+    """Unix 时间戳格式化为 "YYYY-MM-DD HH:MM" 字符串。
+
+    Args:
+        ts: Unix 时间戳（秒）
+
+    Returns:
+        形如 "2026-07-05 14:30" 的字符串；输入非数值或 0 返回 "-"
+    """
+    try:
+        n = float(ts)
+    except (TypeError, ValueError):
+        return "-"
+    if n <= 0:
+        return "-"
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime(n))
 
 
 # --------------------------------------------------------------------

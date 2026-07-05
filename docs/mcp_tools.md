@@ -610,8 +610,57 @@ Agent 通过 MCP 读取代码，完全替代 IDE 内置 Read/Grep/Glob 工具。
 ### `gc_retention`
 按冷热策略清理旧文件版本和可选外部包；默认只预演，执行前默认压缩备份完整 SQLite 数据库。
 - **参数**：`older_than_days: int | None = None`, `keep_versions: int | None = None`, `include_external: bool | None = None`, `external_stale_days: int | None = None`, `dry_run: bool = True`, `backup: bool | None = None`, `vacuum: bool | None = None`, `save_policy: bool = False`
-- **返回**：`dict` — `{candidate_file_versions, candidate_external_packages, backup_path, deleted_*}`
+- **返回**：`dict` — `{audit_id, dry_run, policy, saved_policy, backup_path, backup_size, candidate_file_versions, candidate_external_packages, deleted_*, vacuum, estimate}`
 - **说明**：未传策略参数时读取数据库中的 GC policy；传入参数只覆盖本次运行，除非 `save_policy=True`。
+- **`estimate`（v20 新增）**：Top N 收益预估，dry-run 与 apply 都返回。结构：
+  ```json
+  {
+    "approximate_deleted_rows": {
+      "file_versions": 12,
+      "file_symbol_versions": 47,
+      "call_versions": 31,
+      "symbol_contents": 0,
+      "external_symbols": 0,
+      "external_packages": 0
+    },
+    "affected_files_top_n": [
+      {"rel_path": "src/a.py", "candidate_versions": 5, "oldest_parsed": 1700000000, "newest_parsed": 1705000000}
+    ],
+    "external_packages_top_n": [
+      {"package_name": "ext-python-oldpkg", "package_version": "1.0", "symbol_count": 12, "last_touch": 1700000000}
+    ],
+    "is_estimate": true
+  }
+  ```
+  > 所有数量均为估算（基于候选 ID 集合预统计），不承诺精确磁盘节省。仅当 `--vacuum` 真正执行后 SQLite 文件空间才会释放到磁盘，单纯 DELETE 只会把空闲页留给后续写入。
+
+### `gc_archive_list`
+列出 `gc_archives/*.db.gz` 备份文件，按修改时间倒序。
+- **参数**：`limit: int = 20`（钳制到 1–100）
+- **返回**：`list[dict]` — 每条含 `{name, path, size, reason, mtime}`
+- **说明**：`reason` 从文件名 `{YYYYMMDD-HHMMSS}-{reason}.db.gz` 解析。
+
+### `gc_archive_inspect`
+以只读模式打开 `.db.gz` 备份，返回 schema 版本、各表行数、关键摘要。
+- **参数**：`path: str`（完整路径或文件名简写）
+- **返回**：`dict` — `{name, path, size, schema_version, tables: {name: rows}, summary}`
+- **说明**：使用 `file:path?mode=ro` URI 只读打开备份，绝不修改。
+
+### `gc_archive_import`
+从备份恢复指定文件或外部包到当前数据库，INSERT OR IGNORE 幂等。
+- **参数**：`path: str`, `file_path: str = ""`, `package_name: str = ""`, `dry_run: bool = True`
+- **返回**：`dict` — `{audit_id, dry_run, mode, target, restored_*, skipped_*, already_exists_*}`
+- **说明**：`file_path` 与 `package_name` 二选一，必须有一个非空；已存在的行不会被覆盖（当前库优先）。
+
+### `gc_audit_list`
+列出 `gc_runs` 审计记录，按时间倒序。
+- **参数**：`limit: int = 20`（钳制到 1–100）
+- **返回**：`list[dict]` — 每条含 `{audit_id, operation, status, dry_run, started_at, completed_at}`
+
+### `gc_audit_get`
+查看指定审计记录的完整详情。
+- **参数**：`audit_id: int`
+- **返回**：`dict` — `{audit_id, operation, status, dry_run, policy_json, candidate_counts, deleted_counts, backup_path, backup_size, operator, started_at, completed_at, error}`
 
 ### `gc_policy_get`
 读取当前 workspace 的 GC retention 策略。
