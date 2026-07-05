@@ -631,6 +631,63 @@ cw task report <task_id> <step_id> --result "文件不存在" --fail
 cw task rollback <task_id> <step_id>
 ```
 
+### `task findings`：查看任务质量门禁发现
+
+```bash
+# 查看任务下所有 open 状态的发现
+cw task findings <task_id>
+
+# 按状态过滤（open/resolved/wontfix/all）
+cw task findings <task_id> --status resolved
+
+# 按严重度过滤（info/warn/error/block）
+cw task findings <task_id> --severity error
+```
+
+返回 `task_quality_findings` 表中匹配过滤条件的记录，按 `created_at` 升序排列。
+每条发现包含：`id` / `severity` / `status` / `finding_type` / `message` /
+`source` / `step_id` 等字段。
+
+**严重度说明**：
+- `info`：提示性发现，不阻塞任务完成
+- `warn`：警告，不阻塞但建议处理
+- `error`：错误，阻塞 step 进入 done
+- `block`：阻塞，必须修复后才能继续
+
+### `task resolve-finding`：解决质量门禁发现
+
+```bash
+# 标记为已修复
+cw task resolve-finding <finding_id>
+
+# 标记为暂不修复（接受风险）
+cw task resolve-finding <finding_id> --resolution wontfix
+
+# 标记为误报
+cw task resolve-finding <finding_id> --resolution false_positive
+
+# 指定解决者
+cw task resolve-finding <finding_id> --by human
+```
+
+将 finding 状态从 `open` 推进到 `resolved`（fixed）或 `wontfix`
+（wontfix / false_positive）。`error` / `block` 级别的发现被解决后，
+该 step 的阻塞状态才会解除，再次 `task_completion_review` 会重新评估。
+
+### `task list`：列出任务
+
+```bash
+# 列出最近 100 个任务
+cw task list
+
+# 仅显示有阻塞发现的任务
+cw task list --blocked
+```
+
+每行格式：`[icon] <task_id> [status] <title>`，其中 icon：
+- `[!]`：任务存在 `error` / `block` 级别的 open 发现
+- `[ ]`：任务无阻塞发现
+
 ### `check-gate`：检查门禁
 
 ```bash
@@ -642,6 +699,11 @@ cw check-gate <task_id> --resolve
 ```
 
 对变更文件运行语法检查 + Semgrep 扫描。失败会自动插入 `fix_gate_failure` 步骤。
+
+> **与 `task findings` 的关系**：`check-gate` 是手动触发一次检查并写入
+> `task_quality_findings`；`task findings` 是查询已写入的发现。
+> `task_completion_review`（MCP 工具）会自动调用 `check-gate` 并叠加
+> 5 个扩展检查器（scope / symbol_attribution / file_health / i18n / signature）。
 
 ### `--task-list` / `--task-show`
 

@@ -27,7 +27,7 @@ cw server --transport sse    # SSE 模式
 | 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
 | Semgrep 缺陷 | 4 | 扫描/统计/查询 |
 | 安全编辑 | 6 | propose_edit/range_patch/symbol_patch/revert/history/stats |
-| 任务管理 | 16 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template + task-symbol attribution |
+| 任务管理 | 19 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template + task-symbol attribution + completion_review/quality_findings/resolve_quality_finding |
 | 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
 | LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
 | 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
@@ -345,6 +345,64 @@ cw server --transport sse    # SSE 模式
 获取任务详情和所有步骤。
 - **参数**：`task_id: str`
 - **返回**：`dict | None`
+
+### `task_completion_review`
+运行任务完成质量审查，触发任务质量门禁。
+
+自动清理该 step 旧的 `check_gate` 发现（避免重复累积），调用 `run_check_gate`
+（语法 + Semgrep）并叠加 5 个扩展检查器：
+- `_check_scope_violations`：变更文件超出 `target_file` 范围 → error
+- `_check_symbol_attribution`：`target_symbol` 非空但无 `task_symbol_changes` → warn
+- `_check_file_health_findings`：文件过大（≥1000/2000 行）/复杂度热点（≥20）→ warn/error
+- `_check_i18n_hardcoded`：硬编码 `print` / `cprint` / `logger.*` 输出 → warn
+- `_check_signature_mismatch`：签名变更后调用方未解析 → block/info
+
+根据 open 状态发现的严重度给出决策：
+- `pass`：无发现（允许 step 进入 done）
+- `warn`：仅有 info/warn（允许完成但记录）
+- `block`：存在 error/block（阻塞完成，需修复后重审）
+
+**Agent 应在 `task_report_step` 之前或之后调用此工具主动复查。**
+
+- **参数**：`task_id: str`, `step_id: str = ""` — 步骤 ID（任务级审查留空）
+- **返回**：`dict` — `{decision, findings, summary, counts, check_gate_result}`
+  - `decision ∈ {"pass", "warn", "block"}`
+  - `counts`: `{info, warn, error, block}` 各严重度的 open 发现数
+  - `findings`: open 发现列表（含已转换的 check_gate 发现 + 扩展检查器发现）
+
+### `task_quality_findings`
+查询任务质量门禁发现。返回 `task_quality_findings` 表中匹配过滤条件的记录，
+按 `created_at` 升序排列（旧的先处理）。
+
+- **参数**：
+  - `task_id: str` — 任务 ID（必填）
+  - `status: str = "open"` — 状态过滤（open/resolved/wontfix/all）
+  - `severity: str = ""` — 严重度过滤（info/warn/error/block），默认不过滤
+- **返回**：`list[dict]` — finding 列表，每项含
+  `id` / `task_id` / `step_id` / `finding_type` / `severity` / `status` /
+  `message` / `evidence` / `source` / `created_at` / `resolved_at` / `resolved_by`
+
+### `task_resolve_quality_finding`
+解决或豁免单条任务质量门禁发现。将 finding 状态从 `open` 推进到 `resolved`
+或 `wontfix`，记录解决者和解决时间。
+
+`error` / `block` 级别的发现被解决后，该 step 的阻塞状态才会解除，
+再次调用 `task_completion_review` 会重新评估决策。
+
+- **参数**：
+  - `finding_id: int` — finding ID
+  - `resolution: str = "fixed"` — 解决方式
+    - `fixed`：已修复（status → resolved）
+    - `wontfix`：暂不修复，接受风险（status → wontfix）
+    - `false_positive`：误报（status → wontfix）
+  - `resolved_by: str = "agent"` — 解决者标识（agent/human/system）
+- **返回**：`dict` —
+  - 成功：`{success: True, finding_id, status, resolution, resolved_at}`
+  - 失败：`{success: False, error: ...}`
+
+> **阻塞语义**：`error` / `block` 级别的 open 发现会让 step 无法进入 done。
+> 必须先 `task_resolve_quality_finding` 标记为 resolved/wontfix，
+> 再 `task_completion_review` 复查决策。
 
 ### `task_create_subtask`
 在父任务下创建子任务。任务过大时拆分子任务，子任务完成后系统自动推进父任务状态，避免 Agent 遗漏任务或遗忘上下文。
