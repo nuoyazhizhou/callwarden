@@ -756,6 +756,33 @@ def create_mcp_server():
             end = min(len(lines), end)
             content = "".join(lines[start:end])
 
+            # 注入 applicable_rules（fail-soft：无 AgentRulesMixin 或异常时降级为空列表）
+            # 上下文：file_path / qualified_name / kind / 推断 language / action=read
+            applicable_rules: list = []
+            try:
+                if hasattr(db, "get_applicable_rules_for_symbol"):
+                    # 先尝试 action=read 维度匹配；如果没匹配到，再退化为符号维度匹配
+                    # 这里直接构造带 action 的上下文，让 scope 含 actions 的规则也能命中
+                    ctx = db.build_rule_context_for_symbol(
+                        qualified_name=sym.get("qualified_name", ""),
+                        file_path=sym.get("file", ""),
+                        kind=sym.get("symbol_type", "") or sym.get("kind", ""),
+                    )
+                    ctx["action"] = "read"
+                    rules_raw = db.get_applicable_rules(ctx, limit=5)
+                    applicable_rules = [
+                        {
+                            "id": r.get("id", ""),
+                            "title": r.get("title", ""),
+                            "rule_text": r.get("rule_text", ""),
+                            "severity": r.get("severity", "info"),
+                            "matched_scope": r.get("matched_scope", []),
+                        }
+                        for r in rules_raw
+                    ]
+            except Exception:
+                applicable_rules = []
+
             return {
                 "symbol_name": symbol_name,
                 "symbol_type": sym.get("symbol_type", ""),
@@ -764,6 +791,7 @@ def create_mcp_server():
                 "start_line": sym.get("start_line", 0),
                 "end_line": sym.get("end_line", 0),
                 "content": content,
+                "applicable_rules": applicable_rules,
             }
         except Exception as e:
             return {"error": str(e)}
