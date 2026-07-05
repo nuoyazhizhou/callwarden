@@ -1792,3 +1792,259 @@ def test_rule_sync_agents_md_empty_active_rules_returns_zero():
             db.close()
 
 
+# ============================================
+# Phase 7: MCP / CLI 可用性测试
+# ============================================
+
+
+def test_mcp_server_registers_all_rule_tools():
+    """MCP Server 应注册全部 9 个 rule MCP 工具"""
+    import asyncio
+
+    from callwarden.server.mcp_server import create_mcp_server
+
+    mcp = create_mcp_server()
+    tools = asyncio.run(mcp.list_tools())
+    tool_names = {t.name for t in tools}
+
+    expected = {
+        "rule_candidate_create",
+        "rule_candidate_list",
+        "rule_candidate_accept",
+        "rule_candidate_reject",
+        "rule_list",
+        "get_applicable_rules",
+        "rule_sync_agents_md",
+        "rule_insert_agents_md_block",
+        "extract_rule_candidates_from_quality_findings",
+    }
+    missing = expected - tool_names
+    assert not missing, f"缺少 MCP 工具: {missing}"
+
+
+def _parse_mcp_result(result):
+    """辅助：解析 FastMCP call_tool 返回值
+
+    FastMCP 0.x 返回 list[TextContent]（每个 text 是 JSON 字符串）
+    FastMCP 1.x 返回 (list[TextContent], structured_dict) 元组
+    """
+    if isinstance(result, tuple) and len(result) >= 2:
+        # FastMCP 1.x：第二项是 structured dict
+        structured = result[1]
+        if isinstance(structured, dict):
+            return structured
+        # 兜底：从第一项 TextContent 解析 JSON
+        text_contents = result[0]
+    else:
+        text_contents = result
+
+    # FastMCP 0.x：list[TextContent]，每个 .text 是 JSON
+    if isinstance(text_contents, list) and text_contents:
+        first = text_contents[0]
+        text = getattr(first, "text", str(first))
+        try:
+            return json.loads(text)
+        except (ValueError, TypeError):
+            return {}
+    return {}
+
+
+def test_mcp_rule_candidate_create_returns_candidate_id():
+    """MCP rule_candidate_create 应返回 candidate_id"""
+    import asyncio
+
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
+    from callwarden.db.db import CodeGraphDB
+
+    with tempfile.TemporaryDirectory() as tmp:
+        # 注入临时 db 实例到 mcp_server 单例
+        db = CodeGraphDB(workspace_root=tmp)
+        old_db = mcp_mod._db_instance
+        mcp_mod._db_instance = db
+        try:
+            mcp = create_mcp_server()
+
+            # 调用 rule_candidate_create
+            result = asyncio.run(mcp.call_tool(
+                "rule_candidate_create",
+                {"title": "mcp-test", "rule_text": "use i18n", "severity": "warning"},
+            ))
+            structured = _parse_mcp_result(result)
+            assert "candidate_id" in structured, f"返回缺少 candidate_id: {structured}"
+            assert structured["candidate_id"].startswith("ARC-")
+        finally:
+            mcp_mod._db_instance = old_db
+            db.close()
+
+
+def test_mcp_rule_list_returns_rules():
+    """MCP rule_list 应返回 rules 列表"""
+    import asyncio
+
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
+    from callwarden.db.db import CodeGraphDB
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        cid = db.rule_candidate_create("r1", "text1")
+        db.rule_candidate_accept(cid)
+
+        old_db = mcp_mod._db_instance
+        mcp_mod._db_instance = db
+        try:
+            mcp = create_mcp_server()
+            # 调用 MCP rule_list
+            result = asyncio.run(mcp.call_tool("rule_list", {"status": "active"}))
+            structured = _parse_mcp_result(result)
+            assert structured["count"] == 1, f"期望 1 条规则，返回: {structured}"
+            assert structured["rules"][0]["title"] == "r1"
+        finally:
+            mcp_mod._db_instance = old_db
+            db.close()
+
+
+def test_cli_rule_subcommand_registered():
+    """cw rule 子命令应在 _SUBCOMMANDS 中注册"""
+    from callwarden.cli.main import _SUBCOMMANDS
+
+    assert "rule" in _SUBCOMMANDS, "rule 应在 _SUBCOMMANDS 集合中"
+
+
+def test_cli_handle_rule_dispatches_to_subcommands():
+    """_handle_rule 应能分发到 6 个 action 子命令"""
+    import argparse
+
+    from callwarden.cli.main import _handle_rule
+
+    # 构造一个模拟 db
+    class _MockDB:
+        def __init__(self):
+            self.calls = []
+
+        def rule_list(self, status="active", limit=100):
+            self.calls.append(("rule_list", status, limit))
+            return []
+
+        def get_applicable_rules(self, context=None, limit=10):
+            self.calls.append(("get_applicable_rules", context, limit))
+            return []
+
+        def rule_sync_agents_md(self, target_path="AGENTS.md", dry_run=True, actor="agent"):
+            self.calls.append(("rule_sync_agents_md", target_path, dry_run, actor))
+            return {"success": True, "dry_run": dry_run, "rule_count": 0, "rule_ids": [],
+                    "before_hash": "", "after_hash": "", "preview": ""}
+
+        def rule_insert_agents_md_block(self, target_path="AGENTS.md", actor="agent"):
+            self.calls.append(("rule_insert_agents_md_block", target_path, actor))
+            return {"success": True, "target_path": target_path, "message": "ok"}
+
+        def extract_rule_candidates_from_quality_findings(self, task_id="", min_occurrences=2):
+            self.calls.append(("extract", task_id, min_occurrences))
+            return []
+
+    mock_db = _MockDB()
+
+    # 测试 list action
+    _handle_rule(["list", "--status", "active", "--limit", "5"], mock_db)
+    assert mock_db.calls[-1][0] == "rule_list"
+
+    # 测试 applicable action
+    _handle_rule(["applicable", "--context", '{"languages":["python"]}', "--limit", "3"], mock_db)
+    assert mock_db.calls[-1][0] == "get_applicable_rules"
+
+    # 测试 sync action（dry-run 默认）
+    _handle_rule(["sync", "--target", "AGENTS.md"], mock_db)
+    assert mock_db.calls[-1][0] == "rule_sync_agents_md"
+    assert mock_db.calls[-1][2] is True  # dry_run=True
+
+    # 测试 sync action（apply）
+    _handle_rule(["sync", "--target", "AGENTS.md", "--apply"], mock_db)
+    assert mock_db.calls[-1][2] is False  # dry_run=False
+
+    # 测试 insert-block action
+    _handle_rule(["insert-block", "--target", "AGENTS.md"], mock_db)
+    assert mock_db.calls[-1][0] == "rule_insert_agents_md_block"
+
+    # 测试 extract action
+    _handle_rule(["extract", "--task-id", "T-xxx", "--min-occurrences", "3"], mock_db)
+    assert mock_db.calls[-1][0] == "extract"
+
+
+def test_cli_handle_rule_candidate_subcommands():
+    """_handle_rule candidate 子命令组应能分发到 create/list/accept/reject"""
+    from callwarden.cli.main import _handle_rule
+
+    class _MockDB:
+        def __init__(self):
+            self.calls = []
+
+        def rule_candidate_create(self, **kwargs):
+            self.calls.append(("create", kwargs))
+            return "ARC-test-1"
+
+        def rule_candidate_list(self, status="pending", limit=50):
+            self.calls.append(("list", status, limit))
+            return []
+
+        def rule_candidate_accept(self, candidate_id, reviewer="agent"):
+            self.calls.append(("accept", candidate_id, reviewer))
+            return "AR-test-1"
+
+        def rule_candidate_reject(self, candidate_id, reviewer="agent", reason=""):
+            self.calls.append(("reject", candidate_id, reviewer, reason))
+            return True
+
+    mock_db = _MockDB()
+
+    # candidate create
+    _handle_rule(["candidate", "create", "--title", "t", "--text", "r", "--severity", "warning"], mock_db)
+    assert mock_db.calls[-1][0] == "create"
+    assert mock_db.calls[-1][1]["title"] == "t"
+    assert mock_db.calls[-1][1]["severity"] == "warning"
+
+    # candidate list
+    _handle_rule(["candidate", "list", "--status", "pending", "--limit", "10"], mock_db)
+    assert mock_db.calls[-1][0] == "list"
+    assert mock_db.calls[-1][1] == "pending"
+    assert mock_db.calls[-1][2] == 10
+
+    # candidate accept
+    _handle_rule(["candidate", "accept", "ARC-xxx", "--reviewer", "human"], mock_db)
+    assert mock_db.calls[-1][0] == "accept"
+    assert mock_db.calls[-1][1] == "ARC-xxx"
+    assert mock_db.calls[-1][2] == "human"
+
+    # candidate reject
+    _handle_rule(["candidate", "reject", "ARC-xxx", "--reason", "duplicate"], mock_db)
+    assert mock_db.calls[-1][0] == "reject"
+    assert mock_db.calls[-1][3] == "duplicate"
+
+
+def test_parse_json_arg_returns_default_on_invalid():
+    """_parse_json_arg 应在非法 JSON 时返回 default
+
+    约定：default=None 时 fallback 到 {}（便于上层直接 .get/.keys）
+    """
+    from callwarden.cli.main import _parse_json_arg
+
+    # 空 string 返回 default
+    assert _parse_json_arg("", default={}) == {}
+    assert _parse_json_arg("", default=None) == {}
+    assert _parse_json_arg("", default=[]) == []
+
+    # 合法 JSON
+    assert _parse_json_arg('{"a":1}', default={}) == {"a": 1}
+    assert _parse_json_arg("[1,2]", default=[]) == [1, 2]
+
+    # 非法 JSON 返回 default
+    assert _parse_json_arg("not json", default={}) == {}
+    assert _parse_json_arg("{invalid", default=[]) == []
+    assert _parse_json_arg("{invalid", default=None) == {}
+
+    # 非 dict/list（如 string/number）返回 default
+    assert _parse_json_arg('"string"', default={}) == {}
+    assert _parse_json_arg("42", default=[]) == []
+
+

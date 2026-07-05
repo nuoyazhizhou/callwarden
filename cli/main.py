@@ -632,14 +632,20 @@ def _handle_rule_extract(opts, db):
 
 
 def _parse_json_arg(raw: str, default=None):
-    """解析 JSON 命令行参数，失败返回 default"""
+    """解析 JSON 命令行参数，失败返回 default
+
+    - raw 为空时返回 default（若 default=None 则返回 {}）
+    - 解析失败或非 dict/list 时返回 default（若 default=None 则返回 {}）
+    - 显式传 default=None 表示希望返回 None 时，需改传 default=... 哨兵值
+    """
+    fallback = {} if default is None else default
     if not raw:
-        return default if default is not None else {}
+        return fallback
     try:
         result = json.loads(raw)
-        return result if isinstance(result, (dict, list)) else (default if default is not None else {})
+        return result if isinstance(result, (dict, list)) else fallback
     except (ValueError, TypeError):
-        return default if default is not None else {}
+        return fallback
 
 
 def _agent_hook_script() -> str:
