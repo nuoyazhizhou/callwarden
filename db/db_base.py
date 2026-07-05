@@ -1175,6 +1175,79 @@ def _migrate_v21_to_v22(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signature)")
 
 
+def _migrate_v22_to_v23(conn: sqlite3.Connection):
+    """v22 -> v23: Agent Rule Memory 表
+
+    新增三张表，承载"项目规则记忆"全链路：
+    - agent_rule_candidates: 候选规则（默认 pending，需 accept 后才生效）
+    - agent_rules: 已接受规则（status=active 才参与上下文注入和 AGENTS.md 同步）
+    - agent_rule_sync_log: 同步日志（记录每次 AGENTS.md 同步的摘要，便于审计追溯）
+
+    设计原则：
+    1. 候选规则不直接生效，避免误注入到 Agent 上下文。
+    2. accepted 规则通过 get_applicable_rules 按 scope 匹配后注入到
+       task_next_step / work_next_job / get_symbol / file_symbol_content。
+    3. AGENTS.md 同步默认 dry-run，apply 时只改 marker block，不触碰人工维护内容。
+
+    使用 CREATE TABLE IF NOT EXISTS 保证旧库重复执行幂等。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_rule_candidates (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            rule_text TEXT NOT NULL,
+            scope_json TEXT DEFAULT '{}',
+            severity TEXT DEFAULT 'info',
+            source TEXT DEFAULT 'manual',
+            evidence_json TEXT DEFAULT '{}',
+            confidence REAL DEFAULT 0.0,
+            status TEXT DEFAULT 'pending',
+            created_at REAL NOT NULL,
+            reviewed_at REAL,
+            reviewer TEXT DEFAULT '',
+            linked_rule_id TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_status ON agent_rule_candidates(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_source ON agent_rule_candidates(source)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_severity ON agent_rule_candidates(severity)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_rules (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            rule_text TEXT NOT NULL,
+            scope_json TEXT DEFAULT '{}',
+            severity TEXT DEFAULT 'info',
+            status TEXT DEFAULT 'active',
+            source_candidate_id TEXT DEFAULT '',
+            evidence_json TEXT DEFAULT '{}',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            synced_to_agents_md INTEGER DEFAULT 0,
+            sync_hash TEXT DEFAULT ''
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rules_status ON agent_rules(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rules_severity ON agent_rules(severity)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rules_synced ON agent_rules(synced_to_agents_md)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS agent_rule_sync_log (
+            id TEXT PRIMARY KEY,
+            target_path TEXT NOT NULL,
+            rule_ids_json TEXT DEFAULT '[]',
+            before_hash TEXT DEFAULT '',
+            after_hash TEXT DEFAULT '',
+            dry_run INTEGER DEFAULT 1,
+            created_at REAL NOT NULL,
+            actor TEXT DEFAULT 'agent'
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_target ON agent_rule_sync_log(target_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_log(created_at)")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1426,6 +1499,10 @@ class CodeGraphBase:
             22: {
                 "description": t("cli.messages.migration_v22", default="Add audit chain table (hash/HMAC chain for verifying integrity of audit records)"),
                 "func": _migrate_v21_to_v22,
+            },
+            23: {
+                "description": t("cli.messages.migration_v23", default="Add Agent Rule Memory tables (agent_rule_candidates / agent_rules / agent_rule_sync_log)"),
+                "func": _migrate_v22_to_v23,
             },
         }
 

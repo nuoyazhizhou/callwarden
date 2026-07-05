@@ -735,6 +735,63 @@ CREATE TABLE IF NOT EXISTS audit_chain (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record ON audit_chain(table_name, record_id);
 CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signature);
+
+-- ============================================
+-- Agent Rule Memory（v23）
+-- ============================================
+-- 候选规则表：自动提取、人工创建、任务复盘都写入这里。
+-- 默认 status=pending，必须 accept 后才会注入到 Agent 上下文。
+CREATE TABLE IF NOT EXISTS agent_rule_candidates (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    rule_text TEXT NOT NULL,
+    scope_json TEXT DEFAULT '{}',
+    severity TEXT DEFAULT 'info',
+    source TEXT DEFAULT 'manual',
+    evidence_json TEXT DEFAULT '{}',
+    confidence REAL DEFAULT 0.0,
+    status TEXT DEFAULT 'pending',
+    created_at REAL NOT NULL,
+    reviewed_at REAL,
+    reviewer TEXT DEFAULT '',
+    linked_rule_id TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_status ON agent_rule_candidates(status);
+CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_source ON agent_rule_candidates(source);
+CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_severity ON agent_rule_candidates(severity);
+
+-- 已接受规则表：只有 active 规则参与上下文注入和 AGENTS.md 同步。
+CREATE TABLE IF NOT EXISTS agent_rules (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    rule_text TEXT NOT NULL,
+    scope_json TEXT DEFAULT '{}',
+    severity TEXT DEFAULT 'info',
+    status TEXT DEFAULT 'active',
+    source_candidate_id TEXT DEFAULT '',
+    evidence_json TEXT DEFAULT '{}',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    synced_to_agents_md INTEGER DEFAULT 0,
+    sync_hash TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_agent_rules_status ON agent_rules(status);
+CREATE INDEX IF NOT EXISTS idx_agent_rules_severity ON agent_rules(severity);
+CREATE INDEX IF NOT EXISTS idx_agent_rules_synced ON agent_rules(synced_to_agents_md);
+
+-- 同步日志表：记录每次同步 AGENTS.md 的摘要，便于审计追溯。
+CREATE TABLE IF NOT EXISTS agent_rule_sync_log (
+    id TEXT PRIMARY KEY,
+    target_path TEXT NOT NULL,
+    rule_ids_json TEXT DEFAULT '[]',
+    before_hash TEXT DEFAULT '',
+    after_hash TEXT DEFAULT '',
+    dry_run INTEGER DEFAULT 1,
+    created_at REAL NOT NULL,
+    actor TEXT DEFAULT 'agent'
+);
+CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_target ON agent_rule_sync_log(target_path);
+CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_log(created_at);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -757,7 +814,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signa
 # v20: GC 运行审计表（gc_runs，记录每次 retention/archive/purge 的策略/候选/删除/备份/状态）
 # v21: 任务质量门禁发现表（task_quality_findings，承载任务完成门禁发现，区分于通用 guardrail_findings）
 # v22: 审计签名链表（audit_chain，为关键审计表生成可验证的 hash/HMAC 链）
-SCHEMA_VERSION = 22
+# v23: Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log，沉淀项目规则并注入到任务和函数上下文）
+SCHEMA_VERSION = 23
 
 
 # ============================================

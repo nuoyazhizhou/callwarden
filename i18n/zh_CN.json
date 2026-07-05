@@ -1187,6 +1187,7 @@
       "migration_v20": "GC 运行审计表（gc_runs，记录每次 retention/archive/purge 的策略/候选/删除/备份/状态）",
       "migration_v21": "任务质量门禁发现表（task_quality_findings，承载任务完成门禁发现，区分于通用 guardrail_findings）",
       "migration_v22": "审计签名链表（audit_chain，为关键审计表生成可验证的 hash/HMAC 链）",
+      "migration_v23": "Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log，沉淀项目规则并注入到任务和函数上下文）",
       "attribution_task_id_required": "task_id 不能为空",
       "attribution_file_path_required": "file_path 不能为空",
       "attribution_edit_audit_not_found": "未找到编辑审计记录",
