@@ -1547,3 +1547,203 @@ def test_run_task_completion_review_check_gate_result_returned():
         db.close()
 
 
+# ============================================
+# Step S-1783247858392-9aaf: Semgrep finding 写入 + decision=block 阻止任务完成
+# ============================================
+
+def test_semgrep_finding_written_via_completion_review_blocks_task():
+    """通过 run_task_completion_review 写入 Semgrep error finding 后，
+    task_quality_findings 表包含该 finding，且 task_has_blocking_findings=True"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "vuln.py")
+
+        findings = [
+            {
+                "finding_type": "semgrep",
+                "severity": "error",
+                "file_path": "vuln.py",
+                "rule_id": "python-security",
+                "line": 5,
+                "message": "sql injection",
+                "check": "semgrep",
+                "file": "vuln.py",
+                "raw_severity": "ERROR",
+            }
+        ]
+        restore = _mock_run_check_gate(db, findings=findings)
+        try:
+            review = db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        # decision 应为 block
+        assert review["decision"] == "block"
+        # task_has_blocking_findings 应返回 True（任务不可完成）
+        assert db.task_has_blocking_findings(task_id) is True
+
+        # task_quality_findings 表应包含 semgrep error finding（source=check_gate）
+        stored = db.get_task_quality_findings(task_id, status="open")
+        semgrep_errors = [
+            f for f in stored
+            if f["finding_type"] == "semgrep"
+            and f["severity"] == "error"
+            and f["source"] == "check_gate"
+        ]
+        assert len(semgrep_errors) == 1
+        assert semgrep_errors[0]["message"] == "sql injection"
+    finally:
+        db.close()
+
+
+def test_decision_block_prevents_step_done_end_to_end():
+    """端到端：run_task_completion_review 写入 semgrep error finding →
+    task_report_step 触发 block，step 状态变为 blocked（不可 done）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "bad.py")
+
+        # mock run_check_gate：
+        # - 第 1 次调用（F6 检查门禁）返回 passed=True（让 F6 通过）
+        # - 第 2 次调用（Task Quality Gate）返回 semgrep error finding（触发 block）
+        _call_count = {"n": 0}
+        _had = hasattr(db, "run_check_gate")
+        _orig = getattr(db, "run_check_gate", None)
+
+        def _fake_check_gate(task_id, step_id, changed_files):
+            _call_count["n"] += 1
+            if _call_count["n"] == 1:
+                # F6 门禁：通过
+                return {
+                    "passed": True,
+                    "checks_run": ["syntax"],
+                    "findings": [],
+                    "fix_required": False,
+                    "summary": "F6 pass",
+                }
+            else:
+                # Task Quality Gate：返回 semgrep error finding
+                return {
+                    "passed": False,
+                    "checks_run": ["semgrep"],
+                    "findings": [
+                        {
+                            "finding_type": "semgrep",
+                            "severity": "error",
+                            "file_path": "bad.py",
+                            "rule_id": "python-security",
+                            "line": 1,
+                            "message": "sql injection",
+                            "check": "semgrep",
+                            "file": "bad.py",
+                            "raw_severity": "ERROR",
+                        }
+                    ],
+                    "fix_required": True,
+                    "summary": "semgrep error",
+                }
+
+        db.run_check_gate = _fake_check_gate
+        try:
+            # 调用 task_report_step（带 changes 触发 F6 + Task Quality Gate）
+            result = db.task_report_step(
+                task_id, step["step_id"],
+                result="done", success=True,
+                changes=[{
+                    "file_path": "bad.py",
+                    "hash_before": "a",
+                    "hash_after": "b",
+                    "diff": "+x",
+                    "author": "agent",
+                }],
+            )
+        finally:
+            if _had and _orig is not None:
+                db.run_check_gate = _orig
+            else:
+                try:
+                    delattr(db, "run_check_gate")
+                except AttributeError:
+                    pass
+
+        # step 应被 blocked（不是 done）
+        cur = db.conn.execute(
+            "SELECT status FROM task_steps WHERE id = ?", (step["step_id"],)
+        )
+        assert cur.fetchone()["status"] == "blocked"
+
+        # task_quality_findings 应包含 semgrep error finding（来自 Task Quality Gate）
+        findings = db.get_task_quality_findings(task_id, status="open")
+        semgrep_errors = [
+            f for f in findings
+            if f["finding_type"] == "semgrep" and f["severity"] == "error"
+        ]
+        assert len(semgrep_errors) >= 1
+        assert semgrep_errors[0]["source"] == "check_gate"
+
+        # 应自动插入 fix_quality_gate_failure step
+        cur = db.conn.execute(
+            "SELECT COUNT(*) as cnt FROM task_steps "
+            "WHERE task_id = ? AND action = 'fix_quality_gate_failure'",
+            (task_id,),
+        )
+        assert cur.fetchone()["cnt"] >= 1
+
+        # task_has_blocking_findings 应返回 True（任务不可完成）
+        assert db.task_has_blocking_findings(task_id) is True
+
+        # 返回值含 quality_gate.blocked=True
+        assert result is not None
+        assert result["quality_gate"]["decision"] == "block"
+        assert result["quality_gate"]["blocked"] is True
+    finally:
+        db.close()
+
+
+def test_decision_block_resolved_allows_step_done():
+    """block 后解决所有 error finding，task_has_blocking_findings 返回 False（可完成）"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        _inject_change_audit(db, task_id, step["step_id"], "v.py")
+
+        # 通过 run_task_completion_review 写入 semgrep error finding
+        findings = [
+            {
+                "finding_type": "semgrep",
+                "severity": "error",
+                "file_path": "v.py",
+                "rule_id": "r",
+                "line": 1,
+                "message": "vuln",
+                "check": "semgrep",
+                "file": "v.py",
+                "raw_severity": "ERROR",
+            }
+        ]
+        restore = _mock_run_check_gate(db, findings=findings)
+        try:
+            db.run_task_completion_review(task_id, step["step_id"])
+        finally:
+            restore()
+
+        # 此时任务被阻塞
+        assert db.task_has_blocking_findings(task_id) is True
+
+        # 解决所有 error finding
+        all_findings = db.get_task_quality_findings(task_id, status="open")
+        for f in all_findings:
+            if f["severity"] in ("error", "block"):
+                db.resolve_task_quality_finding(f["id"], resolution="fixed")
+
+        # 阻塞解除
+        assert db.task_has_blocking_findings(task_id) is False
+    finally:
+        db.close()
+
+
