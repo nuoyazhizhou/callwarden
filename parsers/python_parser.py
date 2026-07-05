@@ -196,31 +196,93 @@ class PythonParser(BaseParser):
         return imports
 
     def _parse_import_statement(self, node, source: bytes) -> Dict[str, Any]:
-        """解析 import xxx 语句"""
+        """解析 import xxx 语句
+
+        支持多种形式：
+        - import module
+        - import module.submodule
+        - import module as alias
+
+        Args:
+            node: tree-sitter import_statement 节点
+            source: 源代码字节串
+
+        Returns:
+            包含 module（完整路径）和 imported（别名列表）的字典
+        """
         modules = []
+        aliases = []
         for child in node.named_children:
             if child.type == "dotted_name":
                 modules.append(self._node_text(child, source))
+            elif child.type == "alias":
+                # import module as alias
+                for sub in child.named_children:
+                    if sub.type == "dotted_name":
+                        modules.append(self._node_text(sub, source))
+                    elif sub.type == "identifier":
+                        aliases.append(self._node_text(sub, source))
+
+        module_name = modules[0] if modules else ""
+        imported = aliases if aliases else [module_name.split(".")[-1]]
 
         return {
-            "module": modules[0] if modules else "",
-            "imported": [],
+            "module": module_name,
+            "imported": imported,
             "line": node.start_point[0] + 1,
         }
 
     def _parse_from_import(self, node, source: bytes) -> Dict[str, Any]:
-        """解析 from xxx import yyy 语句"""
+        """解析 from xxx import yyy 语句
+
+        支持多种形式：
+        - from module import name
+        - from module.submodule import name1, name2
+        - from module import name as alias
+        - from . import name（相对导入）
+        - from ..submodule import name（多级相对导入）
+        - from .submodule import name（相对导入 + 子模块）
+
+        Args:
+            node: tree-sitter import_from_statement 节点
+            source: 源代码字节串
+
+        Returns:
+            包含 module（完整路径）和 imported（导入名称列表）的字典
+            相对导入以 '.' 开头（如 '.i18n' 或 '..utils'）
+        """
         module_name = ""
         imported = []
+        dotted_names = []
 
         for child in node.named_children:
             if child.type == "dotted_name":
+                if module_name:
+                    imported.append(self._node_text(child, source))
+                else:
+                    dotted_names.append(self._node_text(child, source))
+            elif child.type == "relative_import":
                 module_name = self._node_text(child, source)
             elif child.type == "import_from_clause":
-                # 跳过 '(' ')' 等，提取标识符
                 for sub in child.named_children:
                     if sub.type == "dotted_name":
                         imported.append(self._node_text(sub, source))
+                    elif sub.type == "alias":
+                        alias_name = ""
+                        original_name = ""
+                        for ssub in sub.named_children:
+                            if ssub.type == "dotted_name":
+                                original_name = self._node_text(ssub, source)
+                            elif ssub.type == "identifier":
+                                alias_name = self._node_text(ssub, source)
+                        if alias_name:
+                            imported.append(alias_name)
+                        else:
+                            imported.append(original_name)
+
+        if dotted_names and not module_name:
+            module_name = dotted_names[0]
+            imported.extend(dotted_names[1:])
 
         return {
             "module": module_name,
@@ -245,6 +307,7 @@ class PythonParser(BaseParser):
         - caller_name: 简名（如 detect_cycles），与 symbols.name 对应
         - caller_qualified: 完整限定名（如 analyzers.call_chain.CallChainMixin.detect_cycles），
           与 symbols.qualified_name 对应，用于精确匹配
+        - callee_module: 通过 imports 信息推断的被调模块名
         """
         calls = []
 
@@ -255,6 +318,13 @@ class PythonParser(BaseParser):
             if module_path:
                 return f"{module_path}.{name}"
             return name
+
+        imports = self._extract_imports(root, source)
+        import_map = {}
+        for imp in imports:
+            mod = imp.get("module", "")
+            for name in imp.get("imported", []):
+                import_map[name] = mod
 
         def walk(node, current_fn: str = "", current_qualified: str = ""):
             """递归遍历 AST，识别函数/类定义并收集 call 调用关系。
@@ -274,15 +344,11 @@ class PythonParser(BaseParser):
                     name_node = self._find_child_by_type(child, "identifier")
                     cls_name = self._node_text(name_node, source) if name_node else ""
                     qual = make_qualified(cls_name, current_qualified)
-                    # 递归进类体，current_fn 保持为类名（仅用于类体内裸 call 的兜底），
-                    # current_qualified 传递类的完整限定名，让类内方法的 qualified 带类名
                     walk(child, cls_name, qual)
                 elif child.type == "decorated_definition":
-                    # 装饰器包裹的定义，递归处理（保持 current_fn/current_qualified 不变，
-                    # 内部的 function/class_definition 分支会更新）
                     walk(child, current_fn, current_qualified)
                 elif child.type == "call":
-                    call_info = self._parse_call(child, source)
+                    call_info = self._parse_call(child, source, import_map)
                     if call_info and current_fn:
                         call_info["caller_name"] = current_fn
                         call_info["caller_qualified"] = current_qualified
@@ -295,8 +361,17 @@ class PythonParser(BaseParser):
         walk(root)
         return calls
 
-    def _parse_call(self, node, source: bytes) -> Dict[str, Any]:
-        """解析调用表达式"""
+    def _parse_call(self, node, source: bytes, import_map: Dict[str, str] = None) -> Dict[str, Any]:
+        """解析调用表达式
+
+        Args:
+            node: tree-sitter call 节点
+            source: 源代码字节串
+            import_map: 导入名称到模块名的映射（用于推断 callee_module）
+
+        Returns:
+            包含 callee_name、callee_module、call_line 的字典
+        """
         func_node = node.child_by_field_name("function")
         if not func_node:
             return None
@@ -304,17 +379,21 @@ class PythonParser(BaseParser):
         callee_name = self._node_text(func_node, source)
         callee_module = ""
 
-        # 处理属性调用（如 obj.method()）
         if func_node.type == "attribute":
-            attr_name = self._find_child_by_type(func_node, "identifier")
-            obj_node = self._find_child_by_type(func_node, "identifier")
+            attr_name = None
+            obj_name = ""
+            for child in func_node.named_children:
+                if child.type == "identifier":
+                    if not attr_name:
+                        obj_name = self._node_text(child, source)
+                    else:
+                        attr_name = self._node_text(child, source)
             if attr_name:
-                callee_name = self._node_text(attr_name, source)
-                # 第一个 identifier 是对象
-                for child in func_node.named_children:
-                    if child.type == "identifier":
-                        callee_module = self._node_text(child, source)
-                        break
+                callee_name = attr_name
+                callee_module = obj_name
+
+        elif import_map and callee_name in import_map:
+            callee_module = import_map[callee_name]
 
         return {
             "callee_name": callee_name,

@@ -11,10 +11,12 @@ db_tasks.py
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import time
 from typing import Any, Dict, List, Optional
 
+from ..i18n import t
 from .schema import (
     TASK_STATUS_OPEN,
     TASK_STATUS_IN_PROGRESS,
@@ -262,7 +264,11 @@ class TaskMixin:
             except Exception as exc:
                 guardrail_warning = {
                     "decision": "warn",
-                    "message": f"护栏检查异常，已降级放行：{exc}",
+                    "message": t(
+                        "cli.messages.task_guardrail_check_failed",
+                        default="Guardrail check failed and was downgraded to warn: {error}",
+                        error=exc,
+                    ),
                     "findings": [],
                 }
 
@@ -326,6 +332,141 @@ class TaskMixin:
             result["structured_instruction"] = None
 
         return result
+
+    def work_next_job(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """领取下一项 Agent 工作，并附带最小可执行上下文
+
+        这是面向 Agent 的高层入口：相比 task_next_step 只返回步骤，
+        本方法会补齐目标符号源码、文件健康、调用上下文、允许编辑范围
+        和推荐检查，让 Agent 不需要手动组合 read/grep/guardrail。
+        """
+        step = self.task_next_step(task_id)
+        if step is None:
+            return None
+
+        job: Dict[str, Any] = {
+            "job_id": step.get("step_id", ""),
+            "task_id": step.get("task_id", ""),
+            "task_title": step.get("task_title", ""),
+            "job_type": step.get("action") or "todo",
+            "target_file": step.get("target_file", ""),
+            "target_symbol": step.get("target_symbol", ""),
+            "status": step.get("status", ""),
+            "parent_task_chain": step.get("parent_task_chain", []),
+            "check_items": step.get("check_items", ""),
+            "context": {},
+            "allowed_edits": [],
+            "recommended_tools": [],
+            "checks": [],
+            "report_with": {
+                "tool": "task_report_step",
+                "task_id": step.get("task_id", ""),
+                "step_id": step.get("step_id", ""),
+            },
+        }
+
+        structured = step.get("structured_instruction") or {}
+        if structured:
+            job["structured_instruction"] = structured
+            job["allowed_edits"] = structured.get("constraints", [])
+            job["checks"] = structured.get("checks", [])
+
+        if step.get("guardrail_alert"):
+            job["guardrail_alert"] = step["guardrail_alert"]
+        if step.get("guardrail_warning"):
+            job["guardrail_warning"] = step["guardrail_warning"]
+
+        target_file = step.get("target_file") or ""
+        target_symbol = step.get("target_symbol") or ""
+
+        if target_file and hasattr(self, "check_file_health"):
+            try:
+                job["context"]["file_health"] = self.check_file_health(target_file)
+            except Exception:
+                pass
+
+        if target_symbol and hasattr(self, "get_symbol"):
+            try:
+                sym = self.get_symbol(target_symbol)
+            except Exception:
+                sym = None
+            if sym:
+                job["context"]["target_symbol"] = {
+                    "qualified_name": sym.get("qualified_name", ""),
+                    "name": sym.get("name", ""),
+                    "kind": sym.get("kind", ""),
+                    "signature": sym.get("signature", ""),
+                    "file_path": sym.get("file_path", ""),
+                    "start_line": sym.get("start_line", 0),
+                    "end_line": sym.get("end_line", 0),
+                    "content_hash": sym.get("content_hash", ""),
+                    "has_comment": sym.get("has_comment", 0),
+                    "comment_content": sym.get("comment_content", ""),
+                }
+                target_file = target_file or sym.get("file_path", "")
+                source = self._read_symbol_source_for_job(sym)
+                if source is not None:
+                    job["context"]["target_source"] = source
+                job["context"]["callers"] = (sym.get("called_by") or [])[:8]
+                job["context"]["callees"] = (sym.get("calls_out") or [])[:8]
+                job["allowed_edit_scope"] = {
+                    "type": "symbol",
+                    "file_path": target_file,
+                    "symbol_name": target_symbol,
+                    "start_line": sym.get("start_line", 0),
+                    "end_line": sym.get("end_line", 0),
+                    "preferred_tool": "propose_symbol_patch",
+                }
+
+        if not job.get("allowed_edit_scope") and target_file:
+            job["allowed_edit_scope"] = {
+                "type": "file",
+                "file_path": target_file,
+                "preferred_tool": "propose_range_patch",
+            }
+
+        action = (step.get("action") or "").lower()
+        if action in EDIT_ACTIONS:
+            job["recommended_tools"] = [
+                "propose_symbol_patch" if target_symbol else "propose_range_patch",
+                "task_report_step",
+            ]
+        else:
+            job["recommended_tools"] = ["task_report_step"]
+
+        job["agent_guidance"] = t(
+            "cli.messages.work_next_job_guidance",
+            default=(
+                "Prefer the context and allowed_edit_scope returned by this job; "
+                "when writing, use patch tools from recommended_tools to avoid whole-file rewrites."
+            ),
+        )
+        return job
+
+    def _read_symbol_source_for_job(self, sym: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """按符号行号读取最小源码片段"""
+        file_path = sym.get("file_path") or sym.get("file") or ""
+        if not file_path:
+            return None
+        abs_path = sym.get("abs_path") or file_path
+        if not os.path.isabs(abs_path):
+            abs_path = os.path.join(self.workspace_root, file_path)
+        if not os.path.isfile(abs_path):
+            return None
+        try:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+            start = max(1, int(sym.get("start_line") or 1))
+            end = max(start, int(sym.get("end_line") or start))
+            content = "".join(lines[start - 1:end])
+            return {
+                "file_path": file_path,
+                "start_line": start,
+                "end_line": end,
+                "content": content,
+            }
+        except Exception:
+            return None
 
     def _build_parent_chain(self, task_id: str) -> List[Dict[str, Any]]:
         """构建从根任务到当前任务的祖先链（含自身）
@@ -411,7 +552,10 @@ class TaskMixin:
             "task_id": task_id,
             "status": STEP_STATUS_PENDING,
             "resolution": resolution,
-            "message": "告警已处理，步骤恢复为 pending，可重新领取",
+            "message": t(
+                "cli.messages.task_guardrail_resolved",
+                default="Guardrail alert resolved; step restored to pending and can be claimed again",
+            ),
         }
 
     # ------------------------------------------------------------------
@@ -453,34 +597,49 @@ class TaskMixin:
 
         # 根据 action 类型填充不同的约束和检查
         if action in ("annotate_function", "annotate", "add_comment", "comment"):
-            instruction["constraints"] = [
-                "只添加注释，不修改函数逻辑",
-                "注释语言: 中文",
-                "注释格式遵循目标语言规范（Rust: /// 或 /** */，Python: # 或 docstring）",
-            ]
+            instruction["constraints"] = t(
+                "cli.messages.task_constraints_annotate",
+                default=[
+                    "Only add comments; do not change function logic",
+                    "Comment language: Chinese",
+                    "Use the target language's comment style (Rust: /// or /** */, Python: # or docstring)",
+                ],
+            )
             instruction["checks"] = ["syntax", "semgrep_quick"]
         elif action in ("refactor", "refactor_function"):
-            instruction["constraints"] = [
-                "保持函数的外部行为不变（签名、返回值、副作用）",
-                "修改后必须通过语法检查",
-                "如涉及公共 API 变更须同步更新调用方",
-            ]
+            instruction["constraints"] = t(
+                "cli.messages.task_constraints_refactor",
+                default=[
+                    "Keep external behavior unchanged (signature, return value, side effects)",
+                    "Run syntax checks after changes",
+                    "Update callers when public API changes are involved",
+                ],
+            )
             instruction["checks"] = ["syntax", "semgrep"]
         elif action in ("fix", "fix_defect", "fix_gate_failure"):
-            instruction["constraints"] = [
-                "只修复报告的问题，不做额外修改",
-                "修复后必须通过之前的检查门禁",
-            ]
+            instruction["constraints"] = t(
+                "cli.messages.task_constraints_fix",
+                default=[
+                    "Fix only the reported issue; avoid unrelated changes",
+                    "The previous check gate must pass after the fix",
+                ],
+            )
             instruction["checks"] = ["syntax", "semgrep"]
         elif action in ("edit", "propose_edit", "write"):
-            instruction["constraints"] = [
-                "使用 propose_edit 工具执行写入，禁止直接操作文件系统",
-                "写入前先 dry_run 确认 diff",
-                "提供 expected_hash 防止并发冲突",
-            ]
+            instruction["constraints"] = t(
+                "cli.messages.task_constraints_edit",
+                default=[
+                    "Use propose_edit for writes; do not write directly to the filesystem",
+                    "Run dry_run first to inspect the diff",
+                    "Provide expected_hash to prevent concurrent overwrite",
+                ],
+            )
             instruction["checks"] = ["syntax"]
         else:
-            instruction["constraints"] = ["按步骤 check_items 描述执行"]
+            instruction["constraints"] = t(
+                "cli.messages.task_constraints_default",
+                default=["Follow the step check_items"],
+            )
             instruction["checks"] = ["syntax"]
 
         # 自动拉取符号上下文（target_symbol 非空时）
@@ -808,9 +967,12 @@ class TaskMixin:
         return {
             "rolled_back_changes": rolled_back,
             "task_status": TASK_STATUS_REVERTED,
-            "note": (
-                "仅记录回滚意图，未操作文件系统。"
-                "调用方应根据 rolled_back_changes 中的 hash_before 自行恢复文件内容。"
+            "note": t(
+                "cli.messages.task_rollback_note",
+                default=(
+                    "Only rollback intent was recorded; no filesystem changes were made. "
+                    "Callers should restore file content using hash_before from rolled_back_changes."
+                ),
             ),
         }
 
@@ -1269,7 +1431,10 @@ class TaskMixin:
                 "action": "verify",
                 "target_file": "",
                 "target_symbol": "",
-                "check_items": ["所有子任务全部完成", "最终验证通过"],
+                "check_items": t(
+                    "cli.messages.task_plan_root_check_items",
+                    default=["All subtasks are complete", "Final verification passed"],
+                ),
             }]
 
         # 创建根任务
@@ -1287,7 +1452,13 @@ class TaskMixin:
                     "action": "todo",
                     "target_file": "",
                     "target_symbol": "",
-                    "check_items": ["完成" + st_def["title"]],
+                    "check_items": [
+                        t(
+                            "cli.messages.task_plan_subtask_check_item",
+                            default="Complete {title}",
+                            title=st_def["title"],
+                        )
+                    ],
                 }]
             self.task_create_subtask(
                 parent_task_id=root_id,
@@ -1308,36 +1479,36 @@ class TaskMixin:
         Returns:
             Markdown 格式的模板字符串
         """
-        return """# {根任务标题}
-{根任务描述（普通文本）}
+        return t("cli.messages.task_plan_template", default="""# {Root task title}
+{Root task description (plain text)}
 
-## {子任务1标题}
-{子任务1描述（可选）}
+## {Subtask 1 title}
+{Subtask 1 description (optional)}
 
-- {步骤1描述}
-- {步骤2描述}
-- [ ] {未完成步骤（checkbox格式）}
-- [x] {已完成步骤}
+- {Step 1 description}
+- {Step 2 description}
+- [ ] {Incomplete step (checkbox format)}
+- [x] {Completed step}
 
-### {步骤分组标题（可选）}
-- {分组内步骤}
+### {Step group title (optional)}
+- {Grouped step}
 
-## {子任务2标题}
-1. {有序列表步骤}
-2. {有序列表步骤}
+## {Subtask 2 title}
+1. {Ordered list step}
+2. {Ordered list step}
 
-## {子任务3标题（无步骤会自动补默认）}
+## {Subtask 3 title (default step will be added when no steps exist)}
 
-格式说明：
-- # 一级标题 → 根任务描述
-- ## 二级标题 → 子任务（自动创建）
-- ### 三级标题 → 步骤分组
-- - / * / + → 无序列表项（自动识别为步骤）
-- 1. / 2. / 3. → 有序列表项（自动识别为步骤）
-- [ ] / [x] / [X] → checkbox 变体（自动去除标记）
-- ``` 或 ~~~ → 代码块（内容不解析）
-- 标题末尾 # 字符自动清理（如 ## Title ## → Title）
-"""
+Format notes:
+- # heading -> root task description
+- ## heading -> subtask (created automatically)
+- ### heading -> step group
+- - / * / + -> unordered list item (recognized as step)
+- 1. / 2. / 3. -> ordered list item (recognized as step)
+- [ ] / [x] / [X] -> checkbox variants (marker is removed)
+- ``` or ~~~ -> code block (content is not parsed)
+- trailing # in headings is cleaned automatically (for example, ## Title ## -> Title)
+""")
 
     def _update_parent_status(self, task_id: str):
         """递归更新父任务状态：当所有子任务+自身步骤都完成时，父任务进入 review

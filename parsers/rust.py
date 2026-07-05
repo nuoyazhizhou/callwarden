@@ -67,11 +67,28 @@ class RustParser:
         # 检查模块级注释
         has_module_comment = self._has_module_comment(root, source)
         
+        imports = []
+        for stmt in use_stmts:
+            path = stmt.get("path", "")
+            alias = stmt.get("alias", "")
+            if alias:
+                imported = [alias]
+            elif "{" in path or "," in path:
+                imported = []
+            else:
+                imported = [path.split("::")[-1]] if path else []
+            imports.append({
+                "module": path,
+                "imported": imported,
+                "line": stmt.get("line", 0),
+            })
+
         return {
             "total_lines": total_lines,
             "content_hash": content_hash,
             "symbols": symbols,
             "use_stmts": use_stmts,
+            "imports": imports,
             "mod_decls": mod_decls,
             "inline_modules": inline_modules,
             "raw_calls": raw_calls,
@@ -511,6 +528,7 @@ class RustParser:
             "path": path_text,
             "alias": alias,
             "is_pub": is_pub,
+            "line": node.start_point[0] + 1,
         }
     
     def _extract_mod_decls(self, root, source: bytes) -> List[Dict[str, str]]:
@@ -615,8 +633,7 @@ class RustParser:
                                 "caller_name": fn_name,
                                 "caller_module": module_path,
                                 "callee_name": callee_name,
-                                "callee_path": callee_info["path"],
-                                "callee_is_qualified": callee_info["is_qualified"],
+                                "callee_module": callee_info["path"],
                                 "call_line": call_node.start_point[0] + 1,
                             })
         
@@ -643,7 +660,17 @@ class RustParser:
                 "is_qualified": True,
             }
         elif func_node.type == "field_expression":
-            # obj.method() - 方法调用，暂不处理
+            # obj.method() - 方法调用，提取对象名作为模块
+            obj_node = func_node.child_by_field_name("object")
+            field_node = func_node.child_by_field_name("field")
+            if obj_node and field_node:
+                obj_name = self._get_text(obj_node, source)
+                method_name = self._get_text(field_node, source)
+                return {
+                    "name": method_name,
+                    "path": obj_name,
+                    "is_qualified": True,
+                }
             return None
         else:
             return None

@@ -26,8 +26,8 @@ cw server --transport sse    # SSE 模式
 | 调用链分析 | 9 | 影响面/调用链/循环/热力图 |
 | 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
 | Semgrep 缺陷 | 4 | 扫描/统计/查询 |
-| 安全编辑 | 4 | propose_edit/revert/history/stats |
-| 任务管理 | 11 | create/next/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template |
+| 安全编辑 | 6 | propose_edit/range_patch/symbol_patch/revert/history/stats |
+| 任务管理 | 12 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template |
 | 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
 | LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
 | 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
@@ -236,6 +236,7 @@ cw server --transport sse    # SSE 模式
   - `agent_task_id: str = ""` — 关联任务 ID
   - `symbol_hash: str = ""` — 关联符号 hash
   - `dry_run: bool = False` — 仅预览不写入
+  - `expected_hash: str = ""` — 编辑前期望文件 hash（并发保护）
 - **返回**：
   ```json
   {
@@ -248,6 +249,31 @@ cw server --transport sse    # SSE 模式
     "success": true
   }
   ```
+
+### `propose_range_patch`
+提交行号范围补丁，避免 Agent 读写整个大文件。
+- **参数**：
+  - `file_path: str`
+  - `start_line: int` — 1-based 起始行
+  - `end_line: int` — 1-based 结束行（闭区间）
+  - `replacement: str` — 替换内容
+  - `agent_task_id: str = ""`
+  - `symbol_hash: str = ""`
+  - `dry_run: bool = False`
+  - `expected_hash: str = ""`
+- **返回**：`dict` — 含审计信息、diff_summary、patch_scope、refreshed
+
+### `propose_symbol_patch`
+提交符号级补丁，由图谱定位函数/类范围后局部改写。
+- **参数**：
+  - `file_path: str`
+  - `symbol_name: str`
+  - `patch: str`
+  - `mode: str = "replace"` — `replace` / `insert_before` / `insert_after`
+  - `agent_task_id: str = ""`
+  - `dry_run: bool = False`
+  - `expected_hash: str = ""`
+- **返回**：`dict` — 含审计信息、符号范围、刷新结果
 
 ### `revert_edit`
 回滚编辑（标记审计状态为 reverted）。
@@ -283,6 +309,16 @@ cw server --transport sse    # SSE 模式
 **Before-Edit Contract**：当步骤为编辑类操作时，系统自动调用护栏检查：
 - 返回 `guardrail_alert`（block）：步骤状态为 blocked，需先调用 `task_resolve_block`
 - 返回 `guardrail_warning`（warn）：可执行，但需关注告警
+
+### `work_next_job`
+领取下一项 Agent 工作，并返回完成它所需的最小上下文。推荐 Agent 优先使用它，而不是自行组合 `file_read` / `grep` / `task_next_step`。
+- **参数**：`task_id: str`
+- **返回**：`dict | None` — job 详情，包含：
+  - `job_type` / `target_file` / `target_symbol`
+  - `context.target_source` / `context.callers` / `context.callees` / `context.file_health`
+  - `allowed_edit_scope`
+  - `recommended_tools`
+  - `report_with`
 
 ### `task_resolve_block`
 处理 blocked 步骤的护栏告警，恢复为 pending。

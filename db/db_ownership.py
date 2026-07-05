@@ -17,6 +17,8 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+from ..i18n import t
+
 
 class OwnershipMixin:
     """文件所有权分析功能 Mixin
@@ -287,7 +289,7 @@ class OwnershipMixin:
             if ws:
                 workspace_root = ws["root_path"]
         if not workspace_root or not os.path.exists(os.path.join(workspace_root, ".git")):
-            return {"success": False, "error": "未找到 Git 仓库", "files_total": 0,
+            return {"success": False, "error": t("cli.messages.git_repo_not_found", default="Git repository not found"), "files_total": 0,
                     "files_processed": 0, "files_updated": 0, "errors": 0}
 
         cur = self.conn.execute(

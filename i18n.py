@@ -154,7 +154,7 @@ def t(key: str, default: Optional[str] = None, **kwargs) -> str:
     if isinstance(value, str):
         try:
             return value.format(**kwargs)
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, IndexError):
             return value
 
     return str(value)

@@ -57,6 +57,8 @@ from .db_cross_repo import CrossRepoMixin
 from .db_lsp import LspMixin
 from .db_check_gate import CheckGateMixin
 from .db_gc import GCMixin
+from .db_stdlib import StdlibMixin
+from .db_external import ExternalMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -85,6 +87,8 @@ class CodeGraphDB(
     LspMixin,
     CheckGateMixin,
     GCMixin,
+    StdlibMixin,
+    ExternalMixin,
 ):
     """代码知识图谱数据库
 

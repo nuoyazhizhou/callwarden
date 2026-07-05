@@ -314,9 +314,17 @@ class GoParser(BaseParser):
             path_node = self._find_child_by_type(node, "raw_string_literal")
 
         module_name = self._node_text(path_node, source).strip('"').strip("'") if path_node else ""
+
+        imported = []
+        if module_name:
+            if "/" in module_name:
+                imported = [module_name.split("/")[-1]]
+            else:
+                imported = [module_name]
+
         return {
             "module": module_name,
-            "imported": [],
+            "imported": imported,
             "line": node.start_point[0] + 1,
         }
 

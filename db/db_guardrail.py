@@ -17,6 +17,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from ..config import read_file_normalized
+from ..i18n import t
 from .schema import (
     GUARDRAIL_ACTION_BLOCK,
     GUARDRAIL_ACTION_REQUIRE_REVIEW,
@@ -64,7 +65,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_WARN,
                 "pattern": r"\bALTER\s+TABLE\b",
                 "action": GUARDRAIL_ACTION_WARN,
-                "description": "检测 ALTER TABLE 语句（schema 变更风险）",
+                "description": t("cli.messages.guardrail_rule_db_alter", default="Detect ALTER TABLE statements (schema change risk)"),
             },
             {
                 "rule_id": "GR-builtin-db-2",
@@ -72,7 +73,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
                 "pattern": r"\bDROP\s+(TABLE|COLUMN)\b",
                 "action": GUARDRAIL_ACTION_BLOCK,
-                "description": "检测 DROP TABLE / DROP COLUMN 语句（数据丢失风险）",
+                "description": t("cli.messages.guardrail_rule_db_drop", default="Detect DROP TABLE / DROP COLUMN statements (data loss risk)"),
             },
             {
                 "rule_id": "GR-builtin-db-3",
@@ -80,7 +81,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
                 "pattern": r"VARCHAR\s*\(\s*(\d+)\s*\)\s*(?:→|->)\s*VARCHAR\s*\(\s*(\d+)\s*\)",
                 "action": GUARDRAIL_ACTION_BLOCK,
-                "description": "检测 VARCHAR 字段长度缩减（数据截断风险）",
+                "description": t("cli.messages.guardrail_rule_db_varchar_shrink", default="Detect VARCHAR length shrinkage (data truncation risk)"),
             },
             # ---- API Compatibility 类 ----
             {
@@ -89,7 +90,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
                 "pattern": r"#\s*BREAKING\s+CHANGE",
                 "action": GUARDRAIL_ACTION_BLOCK,
-                "description": "检测 BREAKING CHANGE 标记（含 pub fn 可见性降低）",
+                "description": t("cli.messages.guardrail_rule_api_breaking_change", default="Detect BREAKING CHANGE markers (including reduced pub fn visibility)"),
             },
             {
                 "rule_id": "GR-builtin-api-2",
@@ -97,7 +98,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
                 "pattern": r"//\s*REMOVED\s+PARAM",
                 "action": GUARDRAIL_ACTION_BLOCK,
-                "description": "检测函数参数删除（调用方兼容性破坏）",
+                "description": t("cli.messages.guardrail_rule_api_removed_param", default="Detect removed function parameters (caller compatibility break)"),
             },
             {
                 "rule_id": "GR-builtin-api-3",
@@ -105,7 +106,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
                 "pattern": r"//\s*REMOVED\s+FIELD",
                 "action": GUARDRAIL_ACTION_BLOCK,
-                "description": "检测 pub struct 字段删除（结构体兼容性破坏）",
+                "description": t("cli.messages.guardrail_rule_api_removed_field", default="Detect removed pub struct fields (struct compatibility break)"),
             },
             # ---- Incident Readiness 类 ----
             {
@@ -114,7 +115,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_WARN,
                 "pattern": r"fn\s+\w+.*\{[^}]*(?:try|catch|unwrap|expect|\?|Result)",
                 "action": GUARDRAIL_ACTION_WARN,
-                "description": "检测函数缺少错误处理（无 try/catch/unwrap/expect/?/Result）",
+                "description": t("cli.messages.guardrail_rule_inc_error_handling", default="Detect functions missing error handling (no try/catch/unwrap/expect/?/Result)"),
             },
             {
                 "rule_id": "GR-builtin-inc-2",
@@ -122,7 +123,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_INFO,
                 "pattern": r"fn\s+\w+.*\{[^}]*(?:log::|tracing::|println!|print!)",
                 "action": GUARDRAIL_ACTION_WARN,
-                "description": "检测函数缺少日志（无 log::/tracing::/println!/print!）",
+                "description": t("cli.messages.guardrail_rule_inc_logging", default="Detect functions missing logging (no log::/tracing::/println!/print!)"),
             },
             {
                 "rule_id": "GR-builtin-inc-3",
@@ -130,7 +131,7 @@ class GuardrailMixin:
                 "severity": GUARDRAIL_SEVERITY_WARN,
                 "pattern": r"(?:INSERT|UPDATE|DELETE|write|save|commit).*(?:rollback|transaction|begin|undo)",
                 "action": GUARDRAIL_ACTION_WARN,
-                "description": "检测有写操作但无事务/回滚逻辑",
+                "description": t("cli.messages.guardrail_rule_inc_transaction", default="Detect write operations without transaction/rollback logic"),
             },
         ]
 
@@ -239,7 +240,7 @@ class GuardrailMixin:
                 return {
                     "decision": "pass",
                     "findings": [],
-                    "message": "文件不存在或无法读取，跳过检查",
+                    "message": t("cli.messages.guardrail_file_unreadable_skip", default="File does not exist or cannot be read; skipping checks"),
                 }
 
         # 运行三类检测器（不持久化，仅返回结果）
@@ -258,13 +259,13 @@ class GuardrailMixin:
 
         if block_count > 0:
             decision = "block"
-            message = f"检测到 {block_count} 个阻断级问题，禁止编辑"
+            message = t("cli.messages.guardrail_decision_block", default="Detected {count} blocking issues; edit is not allowed", count=block_count)
         elif warn_count > 0:
             decision = "warn"
-            message = f"检测到 {warn_count} 个警告级问题，建议审查后编辑"
+            message = t("cli.messages.guardrail_decision_warn", default="Detected {count} warning issues; review before editing", count=warn_count)
         else:
             decision = "pass"
-            message = "未检测到安全问题，可以编辑"
+            message = t("cli.messages.guardrail_decision_pass", default="No safety issues detected; edit is allowed")
 
         return {"decision": decision, "findings": findings, "message": message}
 
@@ -378,7 +379,7 @@ class GuardrailMixin:
             findings.append({
                 "rule_id": "GR-builtin-db-1",
                 "severity": GUARDRAIL_SEVERITY_WARN,
-                "message": f"检测到 ALTER TABLE 语句（第 {line} 行）",
+                "message": t("cli.messages.guardrail_finding_alter_table", default="Detected ALTER TABLE statement (line {line})", line=line),
                 "symbol_hash": "",
             })
 
@@ -388,7 +389,7 @@ class GuardrailMixin:
             findings.append({
                 "rule_id": "GR-builtin-db-2",
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
-                "message": f"检测到 {m.group(0).upper()} 语句（第 {line} 行）",
+                "message": t("cli.messages.guardrail_finding_drop", default="Detected {statement} statement (line {line})", statement=m.group(0).upper(), line=line),
                 "symbol_hash": "",
             })
 
@@ -406,7 +407,7 @@ class GuardrailMixin:
                 findings.append({
                     "rule_id": "GR-builtin-db-3",
                     "severity": GUARDRAIL_SEVERITY_BLOCK,
-                    "message": f"VARCHAR 长度缩减：{old_len} → {new_len}（第 {line} 行）",
+                    "message": t("cli.messages.guardrail_finding_varchar_shrink", default="VARCHAR length shrank: {old_len} -> {new_len} (line {line})", old_len=old_len, new_len=new_len, line=line),
                     "symbol_hash": "",
                 })
 
@@ -416,7 +417,7 @@ class GuardrailMixin:
             findings.append({
                 "rule_id": "GR-builtin-db-1",
                 "severity": GUARDRAIL_SEVERITY_WARN,
-                "message": "SQL 文件不在 migrations/ 目录下（迁移脚本缺失风险）",
+                "message": t("cli.messages.guardrail_sql_not_in_migrations", default="SQL file is not under migrations/ (migration script missing risk)"),
                 "symbol_hash": "",
             })
 
@@ -450,7 +451,7 @@ class GuardrailMixin:
             findings.append({
                 "rule_id": "GR-builtin-api-1",
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
-                "message": f"检测到 BREAKING CHANGE 标记：{context}（第 {line} 行）",
+                "message": t("cli.messages.guardrail_finding_breaking_change", default="Detected BREAKING CHANGE marker: {context} (line {line})", context=context, line=line),
                 "symbol_hash": "",
             })
 
@@ -460,7 +461,7 @@ class GuardrailMixin:
             findings.append({
                 "rule_id": "GR-builtin-api-2",
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
-                "message": f"检测到参数删除标记 // REMOVED PARAM（第 {line} 行）",
+                "message": t("cli.messages.guardrail_finding_removed_param", default="Detected parameter removal marker // REMOVED PARAM (line {line})", line=line),
                 "symbol_hash": "",
             })
 
@@ -470,7 +471,7 @@ class GuardrailMixin:
             findings.append({
                 "rule_id": "GR-builtin-api-3",
                 "severity": GUARDRAIL_SEVERITY_BLOCK,
-                "message": f"检测到字段删除标记 // REMOVED FIELD（第 {line} 行）",
+                "message": t("cli.messages.guardrail_finding_removed_field", default="Detected field removal marker // REMOVED FIELD (line {line})", line=line),
                 "symbol_hash": "",
             })
 
@@ -503,14 +504,14 @@ class GuardrailMixin:
             if len(body.strip()) < 10:
                 continue
 
-            location = f"函数 {name}（第 {start_line}-{end_line} 行）"
+            location = t("cli.messages.guardrail_location_function", default="Function {name} (lines {start}-{end})", name=name, start=start_line, end=end_line)
 
             # 检测缺少错误处理（warn）→ GR-builtin-inc-1
             if not re.search(r"\b(?:try|catch|unwrap|expect)\b|\?|Result", body):
                 findings.append({
                     "rule_id": "GR-builtin-inc-1",
                     "severity": GUARDRAIL_SEVERITY_WARN,
-                    "message": f"{location}缺少错误处理（无 try/catch/unwrap/expect/?/Result）",
+                    "message": t("cli.messages.guardrail_finding_missing_error_handling", default="{location} is missing error handling (no try/catch/unwrap/expect/?/Result)", location=location),
                     "symbol_hash": "",
                 })
 
@@ -519,7 +520,7 @@ class GuardrailMixin:
                 findings.append({
                     "rule_id": "GR-builtin-inc-2",
                     "severity": GUARDRAIL_SEVERITY_INFO,
-                    "message": f"{location}缺少日志（无 log::/tracing::/println!/print!）",
+                    "message": t("cli.messages.guardrail_finding_missing_logging", default="{location} is missing logging (no log::/tracing::/println!/print!)", location=location),
                     "symbol_hash": "",
                 })
 
@@ -535,7 +536,7 @@ class GuardrailMixin:
                 findings.append({
                     "rule_id": "GR-builtin-inc-3",
                     "severity": GUARDRAIL_SEVERITY_WARN,
-                    "message": f"{location}有写操作但无事务/回滚逻辑",
+                    "message": t("cli.messages.guardrail_finding_missing_transaction", default="{location} has write operations without transaction/rollback logic", location=location),
                     "symbol_hash": "",
                 })
 

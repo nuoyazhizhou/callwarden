@@ -236,6 +236,16 @@ class ElixirParser(BaseParser):
         """
         calls: List[Dict[str, Any]] = []
 
+        # 构建 import_map（从 alias/use 提取的模块别名映射）
+        import_map: Dict[str, str] = {}
+        for imp in self._extract_imports(root, source):
+            mod = imp.get("module", "")
+            if mod:
+                # alias Foo.Bar -> 别名是最后一段 Bar
+                parts = mod.split(".")
+                alias_name = parts[-1]
+                import_map[alias_name] = mod
+
         def walk(node, current_fn: str = "", current_qualified: str = ""):
             """递归遍历 AST，区分 def/defp/defmodule 等定义节点并收集普通 call 调用关系。
 
@@ -295,12 +305,30 @@ class ElixirParser(BaseParser):
                         else:
                             # 普通函数调用（非 def/defp/defmodule）
                             if current_fn:
+                                # 推断 callee_module
+                                callee_mod = ""
+                                # 检查是否有 alias 前缀（如 Logger.info 中的 Logger）
+                                if "." in keyword:
+                                    parts = keyword.split(".")
+                                    first_part = parts[0]
+                                    if first_part in import_map:
+                                        callee_mod = import_map[first_part]
+                                    else:
+                                        callee_mod = first_part
+                                    # callee_name 取最后一段
+                                    keyword_name = parts[-1]
+                                else:
+                                    keyword_name = keyword
+                                    # 检查是否是 alias 引入的模块
+                                    if keyword in import_map:
+                                        callee_mod = import_map[keyword]
+
                                 calls.append({
                                     "caller_name": current_fn,
                                     "caller_module": module_path,
                                     "caller_qualified": current_qualified,
-                                    "callee_name": keyword,
-                                    "callee_module": "",
+                                    "callee_name": keyword_name,
+                                    "callee_module": callee_mod,
                                     "call_line": child.start_point[0] + 1,
                                 })
                             # 递归处理 call 内部可能嵌套的子 call（如 arguments 内的 call）

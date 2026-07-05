@@ -985,6 +985,43 @@ def _migrate_v14_to_v15(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
 
 
+def _migrate_v15_to_v16(conn: sqlite3.Connection):
+    """v15 -> v16: 外部符号表（标准库 + 第三方包）
+
+    - external_symbols: 存储项目外部的符号信息
+    - package_versions: 记录已导入的包及其版本
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS external_symbols (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            package_name TEXT NOT NULL,
+            package_version TEXT DEFAULT '',
+            module_path TEXT NOT NULL,
+            qualified_name TEXT NOT NULL UNIQUE,
+            symbol_name TEXT NOT NULL,
+            symbol_kind TEXT DEFAULT 'fn',
+            signature TEXT DEFAULT '',
+            docstring TEXT DEFAULT '',
+            source_file TEXT DEFAULT '',
+            imported_at REAL NOT NULL DEFAULT (strftime('%s', 'now'))
+        )
+    """)
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_name ON external_symbols(symbol_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_qualified ON external_symbols(qualified_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_package ON external_symbols(package_name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_module ON external_symbols(module_path)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS package_versions (
+            package_name TEXT NOT NULL,
+            package_version TEXT NOT NULL,
+            installed_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),
+            PRIMARY KEY (package_name, package_version)
+        )
+    """)
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1154,60 +1191,64 @@ class CodeGraphBase:
         """
         return {
             2: {
-                "description": "新增 Semgrep 缺陷表和扫描记录表",
+                "description": t("cli.messages.migration_v2", default="Add Semgrep issue and scan tables"),
                 "func": _migrate_v1_to_v2,
             },
             3: {
-                "description": "hash 为主、path 为副、多工作区、删除标记",
+                "description": t("cli.messages.migration_v3", default="Hash-first/path-secondary multi-workspace model with deletion markers"),
                 "func": _migrate_v2_to_v3,
             },
             4: {
-                "description": "Git 集成：关联 commit，查看变更影响",
+                "description": t("cli.messages.migration_v4", default="Git integration: associate commits and inspect change impact"),
                 "func": _migrate_v3_to_v4,
             },
             5: {
-                "description": "添加向量嵌入表（sqlite-vec）",
+                "description": t("cli.messages.migration_v5", default="Add vector embedding tables (sqlite-vec)"),
                 "func": _migrate_v4_to_v5,
             },
             6: {
-                "description": "添加符号摘要表（AI 生成的函数/模块摘要，版本化）",
+                "description": t("cli.messages.migration_v6", default="Add symbol summary tables (versioned AI-generated function/module summaries)"),
                 "func": _migrate_v5_to_v6,
             },
             7: {
-                "description": "添加任务管理表（tasks / task_steps / change_audit）",
+                "description": t("cli.messages.migration_v7", default="Add task management tables (tasks / task_steps / change_audit)"),
                 "func": _migrate_v6_to_v7,
             },
             8: {
-                "description": "添加文件所有权表（file_ownership：CODEOWNERS + git blame）",
+                "description": t("cli.messages.migration_v8", default="Add file ownership table (CODEOWNERS + git blame)"),
                 "func": _migrate_v7_to_v8,
             },
             9: {
-                "description": "添加覆盖率数据表（coverage_data：LCOV/Cobertura 行级覆盖率）",
+                "description": t("cli.messages.migration_v9", default="Add coverage data table (LCOV/Cobertura line coverage)"),
                 "func": _migrate_v8_to_v9,
             },
             10: {
-                "description": "守护者架构表（guardrail_rules/findings + change_impacts + evolution_metrics + defect_patterns/fixes）",
+                "description": t("cli.messages.migration_v10", default="Add guardian architecture tables (guardrails, impacts, evolution metrics, defect patterns/fixes)"),
                 "func": _migrate_v9_to_v10,
             },
             11: {
-                "description": "Token 节省账本表（token_savings_ledger）",
+                "description": t("cli.messages.migration_v11", default="Add token savings ledger table"),
                 "func": _migrate_v10_to_v11,
             },
             12: {
-                "description": "安全文件编辑审计表（file_edit_audit：propose_edit 安全编辑流水线）",
+                "description": t("cli.messages.migration_v12", default="Add safe file edit audit table (propose_edit safe edit pipeline)"),
                 "func": _migrate_v11_to_v12,
             },
             13: {
-                "description": "跨仓库分析表（cross_repo_deps：跨仓库依赖关系）",
+                "description": t("cli.messages.migration_v13", default="Add cross-repository analysis table (cross-repo dependencies)"),
                 "func": _migrate_v12_to_v13,
             },
             14: {
-                "description": "归档表（archived_files：被 ignore 规则命中的文件迁出主表，类 Java GC 老年代）",
+                "description": t("cli.messages.migration_v14", default="Add archive table (files matched by ignore rules moved out of primary tables)"),
                 "func": _migrate_v13_to_v14,
             },
             15: {
-                "description": "父子任务支持（tasks 增加 parent_id/depth/sort_order，任务树嵌套）",
+                "description": t("cli.messages.migration_v15", default="Add parent/child task support (parent_id/depth/sort_order task trees)"),
                 "func": _migrate_v14_to_v15,
+            },
+            16: {
+                "description": t("cli.messages.migration_v16", default="Add external symbol tables (external_symbols + package_versions for stdlib and third-party symbols)"),
+                "func": _migrate_v15_to_v16,
             },
         }
 
@@ -1447,5 +1488,4 @@ class CodeGraphBase:
         if self.active_workspace:
             return self.active_workspace.get("id", 1)
         return 1
-
 

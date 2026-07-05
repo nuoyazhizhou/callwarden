@@ -88,6 +88,7 @@ Call Warden CLI 提供两种命令风格：
 | **导出** | `--export-module-graph [FORMAT]` | flag | 导出模块依赖图 |
 | | `--graph-output <FILE>` | flag | 输出到文件 |
 | **安装** | `install` | sub | 一键级联安装依赖 |
+| **Agent 集成** | `install-agent <codex|claude|cursor|all>` | sub | 生成 MCP/Skill/Rules/Hooks 集成模板 |
 | | `install --all` | sub | 安装全部依赖（含可选） |
 | | `install --lang <LANG...>` | sub | 仅安装指定语言 grammar |
 | | `install --check` | sub | 检查依赖状态 |

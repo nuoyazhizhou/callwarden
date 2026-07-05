@@ -29,6 +29,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..config import norm_path, atomic_write_file
+from ..i18n import t
 
 
 # 编辑操作类型常量
@@ -97,18 +98,18 @@ class EditSafetyMixin:
 
         # 新建文件场景
         if not old_content:
-            return f"新增 {len(new_lines)} 行 / 删除 0 行"
+            return t("cli.messages.edit_diff_summary", default="Added {added} lines / removed {removed} lines", added=len(new_lines), removed=0)
 
         # 删除文件场景
         if not new_content:
-            return f"新增 0 行 / 删除 {len(old_lines)} 行"
+            return t("cli.messages.edit_diff_summary", default="Added {added} lines / removed {removed} lines", added=0, removed=len(old_lines))
 
         # 行级集合差异（去重后比较，避免相同行重复计数）
         old_set = set(old_lines)
         new_set = set(new_lines)
         added = len(new_set - old_set)
         removed = len(old_set - new_set)
-        return f"新增 {added} 行 / 删除 {removed} 行"
+        return t("cli.messages.edit_diff_summary", default="Added {added} lines / removed {removed} lines", added=added, removed=removed)
 
     def _resolve_abs_path(self, file_path: str) -> str:
         """将文件路径解析为绝对路径
@@ -172,6 +173,7 @@ class EditSafetyMixin:
         agent_task_id: str = "",
         symbol_hash: str = "",
         dry_run: bool = False,
+        expected_hash: str = "",
     ) -> Dict[str, Any]:
         """提交编辑请求（Agent OS 核心方法）
 
@@ -191,6 +193,7 @@ class EditSafetyMixin:
             agent_task_id: 关联的任务 ID（可选）
             symbol_hash: 关联的符号 hash（可选）
             dry_run: 是否仅预览（True 不实际写入）
+            expected_hash: 编辑前期望文件 hash，用于防止并发覆盖（可选）
 
         Returns:
             {
@@ -214,7 +217,11 @@ class EditSafetyMixin:
                 "diff_summary": "",
                 "status": EDIT_STATUS_FAILED,
                 "success": False,
-                "error": f"非法操作类型: {operation}（合法值: edit/create/delete）",
+                "error": t(
+                    "cli.messages.edit_invalid_operation",
+                    default="Invalid operation: {operation} (valid values: edit/create/delete)",
+                    operation=operation,
+                ),
             }
 
         # 解析路径
@@ -224,6 +231,19 @@ class EditSafetyMixin:
         # 步骤 a：读取并计算编辑前 hash
         old_content = self._read_file_safe(abs_path)
         file_hash_before = self._compute_sha256(old_content)
+
+        # 并发保护：调用方拿到旧 hash 后再提交，若文件已变化则拒绝写入
+        if expected_hash and expected_hash != file_hash_before:
+            return {
+                "audit_id": 0,
+                "file_path": rel_path,
+                "file_hash_before": file_hash_before,
+                "file_hash_after": "",
+                "diff_summary": "",
+                "status": EDIT_STATUS_FAILED,
+                "success": False,
+                "error": t("cli.messages.edit_hash_mismatch", default="File hash mismatch; possible concurrent modification, write rejected"),
+            }
 
         # 步骤 b：计算编辑后 hash
         file_hash_after = self._compute_sha256(new_content)
@@ -308,7 +328,11 @@ class EditSafetyMixin:
                 "diff_summary": diff_summary,
                 "status": EDIT_STATUS_FAILED,
                 "success": False,
-                "error": f"文件写入失败: {type(e).__name__}",
+                "error": t(
+                    "cli.messages.edit_write_failed",
+                    default="File write failed: {error_type}",
+                    error_type=type(e).__name__,
+                ),
             }
 
         # 步骤 g：更新审计状态为 applied
@@ -327,6 +351,165 @@ class EditSafetyMixin:
             "status": EDIT_STATUS_APPLIED,
             "success": True,
         }
+
+    def propose_range_patch(
+        self,
+        file_path: str,
+        start_line: int,
+        end_line: int,
+        replacement: str,
+        agent_task_id: str = "",
+        symbol_hash: str = "",
+        dry_run: bool = False,
+        expected_hash: str = "",
+    ) -> Dict[str, Any]:
+        """提交行号范围补丁，避免 Agent 读写整个大文件
+
+        行号使用 1-based 且 end_line 为闭区间。replacement 会替换
+        [start_line, end_line] 之间的原内容。若 start_line=end_line+1，
+        可表达插入空范围。
+        """
+        abs_path = self._resolve_abs_path(file_path)
+        rel_path = self._resolve_rel_path(file_path)
+        old_content = self._read_file_safe(abs_path)
+        if not old_content and not os.path.exists(abs_path):
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "file_path": rel_path,
+                "error": t("cli.messages.edit_range_file_missing", default="Target file does not exist; range patch only supports existing files"),
+            }
+
+        lines = old_content.splitlines(keepends=True)
+        total = len(lines)
+        if start_line < 1 or end_line < 0 or start_line > total + 1 or end_line > total or start_line > end_line + 1:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "file_path": rel_path,
+                "error": t(
+                    "cli.messages.edit_invalid_range",
+                    default="Invalid line range: {start}-{end} (file has {total} lines)",
+                    start=start_line,
+                    end=end_line,
+                    total=total,
+                ),
+            }
+
+        repl = replacement
+        if repl and not repl.endswith(("\n", "\r")):
+            repl += "\n"
+
+        start_idx = start_line - 1
+        end_idx = end_line
+        new_content = "".join(lines[:start_idx]) + repl + "".join(lines[end_idx:])
+        result = self.propose_edit(
+            file_path=file_path,
+            new_content=new_content,
+            operation=EDIT_OPERATION_EDIT,
+            agent_task_id=agent_task_id,
+            symbol_hash=symbol_hash,
+            dry_run=dry_run,
+            expected_hash=expected_hash,
+        )
+        result["patch_scope"] = {
+            "type": "range",
+            "start_line": start_line,
+            "end_line": end_line,
+        }
+        if result.get("success") and not dry_run and hasattr(self, "refresh_file"):
+            try:
+                self.refresh_file(file_path)
+                result["refreshed"] = True
+            except Exception as exc:
+                result["refreshed"] = False
+                result["refresh_error"] = str(exc)
+        return result
+
+    def propose_symbol_patch(
+        self,
+        file_path: str,
+        symbol_name: str,
+        patch: str,
+        mode: str = "replace",
+        agent_task_id: str = "",
+        dry_run: bool = False,
+        expected_hash: str = "",
+    ) -> Dict[str, Any]:
+        """提交符号级补丁，按 AST/图谱定位范围后局部改写
+
+        mode:
+        - replace: 用 patch 替换整个符号源码
+        - insert_before: 在符号前插入 patch（适合加函数注释）
+        - insert_after: 在符号后插入 patch
+        """
+        if not hasattr(self, "get_symbol_by_name_and_file"):
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "error": t(
+                    "cli.messages.edit_symbol_lookup_unavailable",
+                    default="Symbol lookup is unavailable",
+                ),
+            }
+
+        sym = self.get_symbol_by_name_and_file(symbol_name, file_path)
+        if not sym:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "file_path": self._resolve_rel_path(file_path),
+                "error": t("cli.messages.edit_symbol_not_found", default="Symbol not found: {name}", name=symbol_name),
+            }
+
+        start_line = int(sym.get("start_line") or 0)
+        end_line = int(sym.get("end_line") or 0)
+        symbol_hash = sym.get("content_hash") or sym.get("symbol_hash") or ""
+        if start_line <= 0 or end_line < start_line:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "file_path": self._resolve_rel_path(file_path),
+                "error": t("cli.messages.edit_symbol_line_invalid", default="Invalid symbol line range: {name}", name=symbol_name),
+            }
+
+        mode = (mode or "replace").lower()
+        if mode == "replace":
+            range_start, range_end = start_line, end_line
+            replacement = patch
+        elif mode == "insert_before":
+            range_start, range_end = start_line, start_line - 1
+            replacement = patch
+        elif mode == "insert_after":
+            range_start, range_end = end_line + 1, end_line
+            replacement = patch
+        else:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "file_path": self._resolve_rel_path(file_path),
+                "error": t("cli.messages.edit_invalid_symbol_patch_mode", default="Invalid symbol patch mode: {mode}", mode=mode),
+            }
+
+        result = self.propose_range_patch(
+            file_path=file_path,
+            start_line=range_start,
+            end_line=range_end,
+            replacement=replacement,
+            agent_task_id=agent_task_id,
+            symbol_hash=symbol_hash,
+            dry_run=dry_run,
+            expected_hash=expected_hash,
+        )
+        result["patch_scope"] = {
+            "type": "symbol",
+            "mode": mode,
+            "symbol_name": symbol_name,
+            "qualified_name": sym.get("qualified_name", ""),
+            "start_line": start_line,
+            "end_line": end_line,
+        }
+        return result
 
     def revert_edit(self, audit_id: int) -> Dict[str, Any]:
         """回滚编辑（标记审计状态为 reverted）
@@ -355,7 +538,11 @@ class EditSafetyMixin:
         if not row:
             return {
                 "audit_id": audit_id,
-                "error": f"审计记录不存在: id={audit_id}",
+                "error": t(
+                    "cli.messages.edit_audit_not_found",
+                    default="Edit audit record not found: id={audit_id}",
+                    audit_id=audit_id,
+                ),
             }
 
         # 仅 applied 状态的记录可回滚
@@ -364,7 +551,12 @@ class EditSafetyMixin:
             return {
                 "audit_id": audit_id,
                 "status": current_status,
-                "message": f"当前状态 {current_status} 不可回滚（仅 {EDIT_STATUS_APPLIED} 可回滚）",
+                "message": t(
+                    "cli.messages.edit_revert_invalid_status",
+                    default="Current status {status} cannot be reverted (only {applied_status} can be reverted)",
+                    status=current_status,
+                    applied_status=EDIT_STATUS_APPLIED,
+                ),
                 "file_path": row["file_path"],
                 "file_hash_before": row["file_hash_before"],
             }
@@ -379,9 +571,13 @@ class EditSafetyMixin:
         return {
             "audit_id": audit_id,
             "status": EDIT_STATUS_REVERTED,
-            "message": (
-                "审计已标记为 reverted；实际内容回滚需依赖 git checkout "
-                f"或外部备份（编辑前 hash: {row['file_hash_before'] or '空'}）"
+            "message": t(
+                "cli.messages.edit_revert_marked",
+                default=(
+                    "Audit marked as reverted; actual content rollback depends on git checkout "
+                    "or an external backup (before hash: {hash})"
+                ),
+                hash=row["file_hash_before"] or t("cli.messages.empty_value", default="empty"),
             ),
             "file_path": row["file_path"],
             "file_hash_before": row["file_hash_before"],

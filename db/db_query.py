@@ -60,7 +60,7 @@ class QueryMixin:
         cur = self.conn.execute("SELECT COUNT(*) as cnt FROM calls WHERE is_cross_file = 1")
         stats["cross_file_calls"] = cur.fetchone()["cnt"]
 
-        cur = self.conn.execute("SELECT COUNT(*) as cnt FROM calls WHERE callee_id > 0")
+        cur = self.conn.execute("SELECT COUNT(*) as cnt FROM calls WHERE callee_id IS NOT NULL")
         stats["resolved_calls"] = cur.fetchone()["cnt"]
 
         cur = self.conn.execute("""
@@ -593,6 +593,7 @@ class QueryMixin:
                 sc.name,
                 sc.kind,
                 sc.signature,
+                sc.content_hash,
                 fi.rel_path as file,
                 fi.abs_path
             FROM file_symbol_versions fsv
@@ -712,4 +713,3 @@ class QueryMixin:
             return output_file
 
         return content
-

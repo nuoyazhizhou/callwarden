@@ -369,16 +369,31 @@ class PhpParser(BaseParser):
         }
 
     def _parse_function_call(self, node, source: bytes) -> Dict[str, Any]:
-        """解析函数调用 func()"""
+        """解析函数调用 func() 或 Namespace\\func()"""
         callee_name = ""
-        # function_call_expression = name + arguments
-        name_node = self._find_child_by_type(node, "name")
-        if name_node:
-            callee_name = self._node_text(name_node, source)
+        callee_module = ""
+
+        # 检查是否有 qualified_name（如 \App\foo 或 Namespace\func）
+        qname_node = self._find_child_by_type(node, "qualified_name")
+        if qname_node:
+            full_text = self._node_text(qname_node, source)
+            # 去掉前导反斜杠
+            full_text = full_text.lstrip("\\")
+            parts = full_text.split("\\")
+            if len(parts) > 1:
+                callee_name = parts[-1]
+                callee_module = "\\".join(parts[:-1])
+            else:
+                callee_name = parts[0]
+        else:
+            # function_call_expression = name + arguments
+            name_node = self._find_child_by_type(node, "name")
+            if name_node:
+                callee_name = self._node_text(name_node, source)
 
         return {
             "callee_name": callee_name,
-            "callee_module": "",
+            "callee_module": callee_module,
             "call_line": node.start_point[0] + 1,
         }
 

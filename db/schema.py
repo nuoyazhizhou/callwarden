@@ -572,6 +572,40 @@ CREATE INDEX IF NOT EXISTS idx_archived_files_instance ON archived_files(file_in
 CREATE INDEX IF NOT EXISTS idx_archived_files_workspace ON archived_files(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_archived_files_path ON archived_files(rel_path);
 CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_hash);
+
+-- ============================================
+-- v16: 外部符号表（标准库 + 第三方包）
+-- ============================================
+-- 存储项目外部的符号信息，包括 Python 标准库和第三方包的函数、类、常量等。
+-- 用于跨文件调用解析时，当项目内部找不到被调符号时，查找外部符号表。
+-- 支持版本化：同一符号在不同版本的包中可能有不同的签名和文档。
+CREATE TABLE IF NOT EXISTS external_symbols (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    package_name TEXT NOT NULL,                      -- 包名（如 'stdlib', 'requests', 'fastapi'）
+    package_version TEXT DEFAULT '',                  -- 版本号（如 '3.11.0', '2.31.0'）
+    module_path TEXT NOT NULL,                       -- 模块路径（如 'os.path', 'requests.get'）
+    qualified_name TEXT NOT NULL UNIQUE,             -- 限定名（如 'os.path.join'）
+    symbol_name TEXT NOT NULL,                       -- 符号名（如 'join'）
+    symbol_kind TEXT DEFAULT 'fn',                   -- 符号类型（fn/class/property/constant/module）
+    signature TEXT DEFAULT '',                       -- 签名（如 'def join(path1, path2)'）
+    docstring TEXT DEFAULT '',                       -- 文档字符串
+    source_file TEXT DEFAULT '',                     -- 源文件路径（标准库模块的 __file__）
+    imported_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),  -- 导入时间
+    FOREIGN KEY (package_name, package_version) REFERENCES package_versions(package_name, package_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_symbols_name ON external_symbols(symbol_name);
+CREATE INDEX IF NOT EXISTS idx_external_symbols_qualified ON external_symbols(qualified_name);
+CREATE INDEX IF NOT EXISTS idx_external_symbols_package ON external_symbols(package_name);
+CREATE INDEX IF NOT EXISTS idx_external_symbols_module ON external_symbols(module_path);
+
+-- 包版本表：记录已导入的包及其版本
+CREATE TABLE IF NOT EXISTS package_versions (
+    package_name TEXT NOT NULL,                      -- 包名
+    package_version TEXT NOT NULL,                    -- 版本号
+    installed_at REAL NOT NULL DEFAULT (strftime('%s', 'now')),  -- 安装时间
+    PRIMARY KEY (package_name, package_version)
+);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -587,7 +621,8 @@ CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_has
 # v13: 跨仓库分析表（cross_repo_deps，跨仓库依赖关系）
 # v14: 归档表（archived_files，被 .gitignore/.callwardenignore 命中的文件迁出主表，类 Java GC 老年代）
 # v15: 父子任务支持（tasks 表增加 parent_id/depth/sort_order，支持任务树嵌套）
-SCHEMA_VERSION = 15
+# v16: 外部符号表（external_symbols + package_versions，标准库 + 第三方包符号）
+SCHEMA_VERSION = 16
 
 
 # ============================================

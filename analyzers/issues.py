@@ -9,6 +9,7 @@ import json
 import time
 
 from ..config import detect_language_from_path as config_detect_language
+from ..i18n import t
 
 
 class IssueAnalyzerMixin:
@@ -446,7 +447,7 @@ class IssueAnalyzerMixin:
         if not semgrep_path:
             return {
                 "success": False,
-                "error": "Semgrep CLI 未找到。请运行: pip install semgrep",
+                "error": t("cli.messages.semgrep_cli_not_found_install", default="Semgrep CLI not found. Please run: pip install semgrep"),
                 "results": [],
             }
         

@@ -1088,7 +1088,9 @@ def create_mcp_server():
         try:
             db = get_db()
             ok = db.embed_symbol(symbol_hash)
-            return {"success": ok, "symbol_hash": symbol_hash, "message": "嵌入成功" if ok else "嵌入失败（符号不存在或向量服务不可用）"}
+            message_key = "cli.messages.embed_single_success" if ok else "cli.messages.embed_single_failed"
+            default = "Embedding generated" if ok else "Embedding failed (symbol not found or vector service unavailable)"
+            return {"success": ok, "symbol_hash": symbol_hash, "message": t(message_key, default=default)}
         except Exception as e:
             return {"success": False, "symbol_hash": symbol_hash, "message": str(e)}
 
@@ -1203,6 +1205,17 @@ def create_mcp_server():
         """
         db = get_db()
         return db.task_next_step(task_id=task_id)
+
+    @mcp.tool()
+    def work_next_job(task_id: str) -> Optional[dict]:
+        """领取下一项 Agent 工作，并返回完成它所需的最小上下文
+
+        这是 Agent 优先入口：相比手动 read/grep/plan，本工具返回目标、
+        符号源码、调用上下文、文件健康、允许编辑范围、推荐 patch 工具
+        和完成后汇报方式。
+        """
+        db = get_db()
+        return db.work_next_job(task_id=task_id)
 
     @mcp.tool()
     def task_resolve_block(task_id: str, step_id: str, resolution: str = "ack") -> Optional[dict]:
@@ -2045,7 +2058,7 @@ def create_mcp_server():
     @mcp.tool()
     def propose_edit(file_path: str, new_content: str, operation: str = "edit",
                      agent_task_id: str = "", symbol_hash: str = "",
-                     dry_run: bool = False) -> dict:
+                     dry_run: bool = False, expected_hash: str = "") -> dict:
         """提交安全编辑请求（Agent OS 核心能力）
 
         执行流程：
@@ -2064,6 +2077,7 @@ def create_mcp_server():
             agent_task_id: 关联的任务 ID（可选）
             symbol_hash: 关联的符号 hash（可选）
             dry_run: 是否仅预览（True 不实际写入文件）
+            expected_hash: 编辑前期望文件 hash（可选，用于并发保护）
 
         Returns:
             {
@@ -2086,6 +2100,56 @@ def create_mcp_server():
                 agent_task_id=agent_task_id,
                 symbol_hash=symbol_hash,
                 dry_run=dry_run,
+                expected_hash=expected_hash,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def propose_range_patch(file_path: str, start_line: int, end_line: int,
+                            replacement: str, agent_task_id: str = "",
+                            symbol_hash: str = "", dry_run: bool = False,
+                            expected_hash: str = "") -> dict:
+        """提交行号范围补丁，避免读写整个大文件
+
+        行号为 1-based 闭区间。用于 Agent 只改目标函数、目标代码块或
+        插入少量注释，而不需要提交完整文件内容。
+        """
+        try:
+            db = get_db()
+            return db.propose_range_patch(
+                file_path=file_path,
+                start_line=start_line,
+                end_line=end_line,
+                replacement=replacement,
+                agent_task_id=agent_task_id,
+                symbol_hash=symbol_hash,
+                dry_run=dry_run,
+                expected_hash=expected_hash,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def propose_symbol_patch(file_path: str, symbol_name: str, patch: str,
+                             mode: str = "replace", agent_task_id: str = "",
+                             dry_run: bool = False,
+                             expected_hash: str = "") -> dict:
+        """提交符号级补丁，按图谱定位函数/类范围后局部改写
+
+        mode 支持 replace / insert_before / insert_after。注释任务通常使用
+        insert_before；bugfix/refactor 可使用 replace 或 range patch。
+        """
+        try:
+            db = get_db()
+            return db.propose_symbol_patch(
+                file_path=file_path,
+                symbol_name=symbol_name,
+                patch=patch,
+                mode=mode,
+                agent_task_id=agent_task_id,
+                dry_run=dry_run,
+                expected_hash=expected_hash,
             )
         except Exception as e:
             return {"error": str(e)}
@@ -2508,4 +2572,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

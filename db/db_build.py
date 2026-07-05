@@ -540,6 +540,10 @@ class BuildMixin:
 
         spinner = Spinner(t("cli.messages.db_build_step4_5_calls"))
         spinner.start()
+        # 导入所有支持语言的标准库符号（Python + Rust/Java/Go/C/C++/C#/TS/Kotlin/Ruby/Swift/Scala/Elixir/PHP）
+        # 这一步在构建调用图之前完成，确保后续 callee 匹配能命中标准库符号
+        self.import_all_stdlib_symbols()
+        self.import_project_dependencies()
         self._build_call_graph_multi_lang(file_results)
         ws_id = self._get_active_workspace_id()
         cur = self.conn.execute("SELECT COUNT(*) as c FROM calls c JOIN symbols s ON c.caller_id = s.id JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ?", (ws_id,))
@@ -843,6 +847,33 @@ class BuildMixin:
                             callee_file = rel_path
                             callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
                             break
+
+                # 策略 5：查找外部符号表（标准库 + 第三方包）
+                if not callee_qname:
+                    if callee_module:
+                        test_qname = f"{callee_module}.{callee_name}"
+                        cur = self.conn.execute(
+                            "SELECT id, package_name, package_version, signature, docstring FROM external_symbols WHERE qualified_name = ?",
+                            (test_qname,)
+                        )
+                        ext_sym = cur.fetchone()
+                        if ext_sym:
+                            callee_qname = test_qname
+                            callee_file = f"external://{ext_sym['package_name']}"
+                            callee_id = -ext_sym["id"]
+                            is_cross = 1
+                    else:
+                        cur = self.conn.execute(
+                            "SELECT id, qualified_name, package_name FROM external_symbols WHERE symbol_name = ?",
+                            (callee_name,)
+                        )
+                        ext_syms = cur.fetchall()
+                        if len(ext_syms) == 1:
+                            ext_sym = ext_syms[0]
+                            callee_qname = ext_sym["qualified_name"]
+                            callee_file = f"external://{ext_sym['package_name']}"
+                            callee_id = -ext_sym["id"]
+                            is_cross = 1
 
                 if callee_qname:
                     resolved_count += 1
@@ -1334,8 +1365,8 @@ class BuildMixin:
                 rel_path,
                 module_path,
                 raw_call["callee_name"],
-                raw_call["callee_path"],
-                raw_call["callee_is_qualified"],
+                raw_call.get("callee_module", raw_call.get("callee_path", "")),
+                raw_call.get("callee_is_qualified", False),
             )
 
             resolved_call = {
@@ -1380,6 +1411,11 @@ class BuildMixin:
         cur = self.conn.execute("SELECT id, qualified_name FROM symbols")
         for row in cur:
             qname_id_map[row["qualified_name"]] = row["id"]
+
+        # 外部符号 qualified_name -> -id（负值表示外部符号）
+        cur = self.conn.execute("SELECT id, qualified_name FROM external_symbols")
+        for row in cur:
+            qname_id_map[row["qualified_name"]] = -row["id"]
 
         for call in calls:
             # 多级 fallback 策略匹配 caller_id：

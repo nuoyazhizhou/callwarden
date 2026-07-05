@@ -15,6 +15,8 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+from ..i18n import t
+
 
 class MetricsMixin:
     """代码度量功能 Mixin
@@ -524,13 +526,13 @@ class MetricsMixin:
             lines = row["total_lines"]
             if lines >= 2000:
                 sev = "high"
-                advice = "严重过大，强烈建议按功能拆分为多个模块文件"
+                advice = t("cli.messages.metrics_advice_file_huge", default="Severely oversized; strongly consider splitting by responsibility into multiple modules")
             elif lines >= 1000:
                 sev = "medium"
-                advice = "文件较大，建议考虑拆分"
+                advice = t("cli.messages.metrics_advice_file_large", default="Large file; consider splitting")
             elif lines >= 500:
                 sev = "low"
-                advice = "可考虑按职责拆分"
+                advice = t("cli.messages.metrics_advice_file_medium", default="Consider splitting by responsibility")
             else:
                 continue
             large_files.append({
@@ -541,7 +543,7 @@ class MetricsMixin:
             })
         issues.append({
             "category": "large_files",
-            "title": "过大文件",
+            "title": t("cli.messages.metrics_title_large_files", default="Oversized files"),
             "count": len(large_files),
             "items": large_files,
         })
@@ -553,13 +555,13 @@ class MetricsMixin:
             comp = fn["cyclomatic_complexity"]
             if comp >= 30:
                 sev = "high"
-                advice = "极复杂函数，必须重构拆分，否则 AI 难以正确理解和修改"
+                advice = t("cli.messages.metrics_advice_function_extreme", default="Extremely complex function; refactor and split before AI edits")
             elif comp >= 20:
                 sev = "medium"
-                advice = "复杂度高，建议拆分为多个小函数"
+                advice = t("cli.messages.metrics_advice_function_complex", default="High complexity; split into smaller functions")
             elif comp >= 10:
                 sev = "low"
-                advice = "复杂度中等，可考虑优化"
+                advice = t("cli.messages.metrics_advice_function_moderate", default="Moderate complexity; consider optimization")
             else:
                 continue
             complex_functions.append({
@@ -574,7 +576,7 @@ class MetricsMixin:
             })
         issues.append({
             "category": "complex_functions",
-            "title": "复杂函数",
+            "title": t("cli.messages.metrics_title_complex_functions", default="Complex functions"),
             "count": len(complex_functions),
             "items": complex_functions,
         })
@@ -586,13 +588,13 @@ class MetricsMixin:
             lines = fn["line_count"]
             if lines >= 200:
                 sev = "high"
-                advice = "函数过长，强烈建议拆分，AI 读取和修改都容易出问题"
+                advice = t("cli.messages.metrics_advice_function_too_long", default="Function is too long; strongly consider splitting before AI reads or edits it")
             elif lines >= 100:
                 sev = "medium"
-                advice = "函数较长，建议拆分"
+                advice = t("cli.messages.metrics_advice_function_long", default="Long function; consider splitting")
             elif lines >= 50:
                 sev = "low"
-                advice = "可考虑拆分"
+                advice = t("cli.messages.metrics_advice_function_split", default="Consider splitting")
             else:
                 continue
             long_functions.append({
@@ -606,7 +608,7 @@ class MetricsMixin:
             })
         issues.append({
             "category": "long_functions",
-            "title": "超长函数",
+            "title": t("cli.messages.metrics_title_long_functions", default="Long functions"),
             "count": len(long_functions),
             "items": long_functions,
         })
@@ -618,13 +620,13 @@ class MetricsMixin:
             inst = mod["instability"]
             if inst >= 0.9:
                 sev = "high"
-                advice = "极度不稳定，严重依赖外部模块，修改影响范围大"
+                advice = t("cli.messages.metrics_advice_coupling_extreme", default="Extremely unstable; heavily depends on external modules, so edits have broad impact")
             elif inst >= 0.7:
                 sev = "medium"
-                advice = "不稳定，依赖较多外部模块"
+                advice = t("cli.messages.metrics_advice_coupling_unstable", default="Unstable; depends on many external modules")
             elif mod["total_coupling"] >= 50:
                 sev = "low"
-                advice = "耦合度较高"
+                advice = t("cli.messages.metrics_advice_coupling_high", default="High coupling")
             else:
                 continue
             high_coupling_modules.append({
@@ -638,7 +640,7 @@ class MetricsMixin:
             })
         issues.append({
             "category": "high_coupling",
-            "title": "高耦合模块",
+            "title": t("cli.messages.metrics_title_high_coupling", default="Highly coupled modules"),
             "count": len(high_coupling_modules),
             "items": high_coupling_modules,
         })
@@ -663,13 +665,13 @@ class MetricsMixin:
         health_score = max(0, 100 - high_count * 5 - medium_count * 2 - low_count * 0.5)
 
         if health_score >= 80:
-            health_level = "良好"
+            health_level = t("cli.messages.metrics_health_good", default="good")
         elif health_score >= 60:
-            health_level = "一般"
+            health_level = t("cli.messages.metrics_health_fair", default="fair")
         elif health_score >= 40:
-            health_level = "较差"
+            health_level = t("cli.messages.metrics_health_poor", default="poor")
         else:
-            health_level = "很差"
+            health_level = t("cli.messages.metrics_health_bad", default="bad")
 
         return {
             "health_score": round(health_score, 1),
@@ -679,13 +681,13 @@ class MetricsMixin:
             "low_issue_count": low_count,
             "total_issue_count": high_count + medium_count + low_count,
             "issues": issues,
-            "agent_guidance": (
-                "AI Agent 修改代码前必读：\n"
-                "1. 优先修改小文件，大文件修改前先考虑拆分\n"
-                "2. 复杂函数修改前先理解完整逻辑，或先拆分成小函数再修改\n"
-                "3. 高耦合模块修改后务必验证所有调用点\n"
-                "4. 如果一个函数超过 200 行或复杂度 >30，建议先重构再修改"
-            ),
+            "agent_guidance": t("cli.messages.metrics_agent_guidance", default=(
+                "Before editing code, AI agents should:\n"
+                "1. Prefer small files; split large files before editing when possible\n"
+                "2. Understand complex functions fully, or split them first\n"
+                "3. Validate all call sites after editing highly coupled modules\n"
+                "4. Refactor before editing functions over 200 lines or complexity > 30"
+            )),
         }
 
     def check_file_health(self, file_path: str) -> Optional[Dict[str, Any]]:
@@ -725,16 +727,16 @@ class MetricsMixin:
         # 大文件判断
         if total_lines >= 2000:
             file_severity = "high"
-            file_advice = "文件严重过大（2000+ 行），强烈建议拆分为多个模块后再修改"
+            file_advice = t("cli.messages.metrics_file_advice_huge", default="File is severely oversized (2000+ lines); strongly split into modules before editing")
         elif total_lines >= 1000:
             file_severity = "medium"
-            file_advice = "文件较大（1000+ 行），建议拆分后修改，或分多次小步修改"
+            file_advice = t("cli.messages.metrics_file_advice_large", default="File is large (1000+ lines); split first or edit in small steps")
         elif total_lines >= 500:
             file_severity = "low"
-            file_advice = "文件中等大小（500+ 行），注意分块修改"
+            file_advice = t("cli.messages.metrics_file_advice_medium", default="File is medium sized (500+ lines); edit in focused chunks")
         else:
             file_severity = "normal"
-            file_advice = "文件大小正常"
+            file_advice = t("cli.messages.metrics_file_advice_normal", default="File size is normal")
 
         # 获取该文件的函数列表
         cur = self.conn.execute(
@@ -771,7 +773,7 @@ class MetricsMixin:
                     "line_count": lines,
                     "cyclomatic_complexity": comp,
                     "severity": sev,
-                    "advice": "函数过大/过复杂，建议先拆分再修改",
+                    "advice": t("cli.messages.metrics_function_issue_advice", default="Function is too large/complex; split before editing"),
                 })
 
         return {
@@ -784,11 +786,11 @@ class MetricsMixin:
             "function_issue_count": len(function_issues),
             "function_issues": function_issues[:10],
             "should_split_first": file_severity == "high" or any(f["severity"] == "high" for f in function_issues),
-            "agent_warning": (
-                "警告：此文件存在 high 级别问题，直接全量修改可能导致：\n"
-                "- Token 溢出，AI 无法完整理解\n"
-                "- 写入失败，文件过大难以一次性写回\n"
-                "- 逻辑错误，复杂函数修改容易引入 bug\n"
-                "建议：先拆分成小文件/小函数，再逐步修改"
-            ) if file_severity == "high" or any(f["severity"] == "high" for f in function_issues) else "",
+            "agent_warning": t("cli.messages.metrics_agent_warning", default=(
+                "Warning: this file has high-severity issues. Full-file edits may cause:\n"
+                "- Token overflow; the AI may not understand the whole file\n"
+                "- Write failures because the file is too large to rewrite safely\n"
+                "- Logic errors because complex functions are easy to break\n"
+                "Recommendation: split into smaller files/functions, then edit incrementally"
+            )) if file_severity == "high" or any(f["severity"] == "high" for f in function_issues) else "",
         }

@@ -13,6 +13,8 @@ import os
 import subprocess
 from typing import Any, Dict, List, Optional
 
+from ..i18n import t
+
 
 class GitMixin:
     """Git 集成功能 Mixin
@@ -37,7 +39,7 @@ class GitMixin:
                 workspace_root = ws['root_path']
         
         if not workspace_root or not os.path.exists(os.path.join(workspace_root, '.git')):
-            return {"success": False, "error": "未找到 Git 仓库", "commits_imported": 0}
+            return {"success": False, "error": t("cli.messages.git_repo_not_found", default="Git repository not found"), "commits_imported": 0}
 
         try:
             result = subprocess.run(

@@ -21,7 +21,7 @@ import sys
 import time
 
 from ..db import CodeGraphDB
-from ..config import detect_project_root, get_default_workspace_name
+from ..config import detect_project_root, get_default_workspace_name, atomic_write_file
 from ..server.watcher import FileWatcher
 from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
 from .console import cprint
@@ -34,7 +34,7 @@ from .console import cprint
 # 子命令关键字集合
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
-                "gc", "doctor"}
+                "gc", "doctor", "install-agent"}
 
 
 def _run_subcommand_mode():
@@ -114,11 +114,344 @@ def _dispatch_subcommand(argv, db):
             return _handle_gc(argv, db)
         elif cmd == "doctor":
             return _handle_doctor(argv, db)
+        elif cmd == "install-agent":
+            return _handle_install_agent(argv, db)
     except Exception as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         return True
 
     return False
+
+
+def _handle_install_agent(args, db):
+    """生成 Agent 集成包（MCP + skills/rules + hooks）"""
+    parser = argparse.ArgumentParser(
+        prog="cw install-agent",
+        description=t("cli.messages.install_agent_desc", default="Generate Call Warden integration files for Codex/Claude/Cursor"),
+    )
+    parser.add_argument(
+        "agent",
+        choices=["codex", "claude", "cursor", "all"],
+        help=t("cli.messages.install_agent_arg_agent", default="Target Agent"),
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="",
+        help=t("cli.messages.install_agent_arg_output_dir", default="Output directory, defaults to .callwarden/agent-integrations"),
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=t("cli.messages.install_agent_arg_force", default="Overwrite existing integration files"),
+    )
+    opts = parser.parse_args(args)
+
+    root = db.workspace_root
+    out_root = opts.output_dir or os.path.join(root, ".callwarden", "agent-integrations")
+    out_root = os.path.abspath(out_root)
+    agents = ["codex", "claude", "cursor"] if opts.agent == "all" else [opts.agent]
+
+    created = []
+    for agent in agents:
+        created.extend(_write_agent_integration(root, out_root, agent, opts.force))
+
+    cprint(t("cli.messages.install_agent_title", default="=== Agent Integration Generated ==="), "cyan", bold=True)
+    print(t("cli.messages.install_agent_root", default="  Root: {root}", root=root))
+    print(t("cli.messages.install_agent_output", default="  Output: {path}", path=out_root))
+    print(t("cli.messages.install_agent_agents", default="  Agents: {agents}", agents=', '.join(agents)))
+    print()
+    for path in created:
+        print(f"  - {path}")
+    print()
+    cprint(t(
+        "cli.messages.install_agent_next",
+        default="Next: enable hooks/MCP/plugin using the generated README for the target Agent.",
+    ), "green")
+    return True
+
+
+def _write_if_needed(path: str, content: str, force: bool, created: list) -> None:
+    """写入文件，默认不覆盖已有内容"""
+    if os.path.exists(path) and not force:
+        created.append(path + t("cli.messages.install_agent_exists_skipped", default=" (exists, skipped)"))
+        return
+    atomic_write_file(path, content)
+    created.append(path)
+
+
+def _write_agent_integration(root: str, out_root: str, agent: str, force: bool) -> list:
+    """写入单个 Agent 的集成模板"""
+    created = []
+    base = os.path.join(out_root, agent)
+    os.makedirs(base, exist_ok=True)
+
+    hook_dir = os.path.join(base, "hooks")
+    os.makedirs(hook_dir, exist_ok=True)
+    hook_script = os.path.join(hook_dir, "callwarden_hook.py")
+    _write_if_needed(hook_script, _agent_hook_script(), force, created)
+
+    if agent == "codex":
+        plugin_root = os.path.join(base, "callwarden-plugin")
+        os.makedirs(os.path.join(plugin_root, ".codex-plugin"), exist_ok=True)
+        os.makedirs(os.path.join(plugin_root, "skills", "callwarden-workflow"), exist_ok=True)
+        os.makedirs(os.path.join(plugin_root, "hooks"), exist_ok=True)
+        _write_if_needed(
+            os.path.join(plugin_root, ".codex-plugin", "plugin.json"),
+            json.dumps({
+                "name": "callwarden",
+                "version": "0.1.0",
+                "description": t(
+                    "cli.messages.install_agent_plugin_description",
+                    default="Call Warden Agent workflow, MCP tools, and lifecycle hooks.",
+                ),
+                "skills": "./skills/",
+                "mcpServers": "./.mcp.json",
+                "hooks": "./hooks/hooks.json",
+                "interface": {
+                    "displayName": "Call Warden",
+                    "shortDescription": t(
+                        "cli.messages.install_agent_plugin_short_description",
+                        default="Code graph workflow and safe patch tools for coding agents.",
+                    ),
+                    "capabilities": ["Read", "Write"],
+                },
+            }, ensure_ascii=False, indent=2) + "\n",
+            force,
+            created,
+        )
+        _write_if_needed(
+            os.path.join(plugin_root, ".mcp.json"),
+            json.dumps({
+                "mcpServers": {
+                    "callwarden": {
+                        "command": "python",
+                        "args": [os.path.join(root, "cw.py"), "server"],
+                    }
+                }
+            }, ensure_ascii=False, indent=2) + "\n",
+            force,
+            created,
+        )
+        _write_if_needed(
+            os.path.join(plugin_root, "skills", "callwarden-workflow", "SKILL.md"),
+            _callwarden_skill_md(),
+            force,
+            created,
+        )
+        _write_if_needed(
+            os.path.join(plugin_root, "hooks", "hooks.json"),
+            _codex_hooks_json(hook_script),
+            force,
+            created,
+        )
+
+    elif agent == "claude":
+        _write_if_needed(
+            os.path.join(base, "settings.snippet.json"),
+            _claude_settings_json(hook_script),
+            force,
+            created,
+        )
+        _write_if_needed(
+            os.path.join(base, "CALLWARDEN.md"),
+            _callwarden_skill_md(),
+            force,
+            created,
+        )
+
+    elif agent == "cursor":
+        _write_if_needed(
+            os.path.join(base, "callwarden.mdc"),
+            _cursor_rule_mdc(),
+            force,
+            created,
+        )
+        _write_if_needed(
+            os.path.join(base, "mcp.json"),
+            json.dumps({
+                "mcpServers": {
+                    "callwarden": {
+                        "command": "python",
+                        "args": [os.path.join(root, "cw.py"), "server"],
+                    }
+                }
+            }, ensure_ascii=False, indent=2) + "\n",
+            force,
+            created,
+        )
+
+    _write_if_needed(os.path.join(base, "README.md"), _agent_readme(agent), force, created)
+    return created
+
+
+def _agent_hook_script() -> str:
+    return t("cli.messages.install_agent_hook_script", default=r'''#!/usr/bin/env python3
+"""Call Warden Agent hook.
+
+Reads Agent hook JSON from stdin, blocks destructive shell commands,
+and refreshes the code graph after file edits when possible.
+"""
+import json
+import os
+import subprocess
+import sys
+
+
+BLOCKED_COMMANDS = [
+    "git reset --hard",
+    "git checkout .",
+    "git clean -fd",
+    "git clean -fx",
+    "rm -rf",
+    "Remove-Item -Recurse",
+]
+
+
+def read_payload():
+    try:
+        raw = sys.stdin.read()
+        return json.loads(raw) if raw.strip() else {}
+    except Exception:
+        return {}
+
+
+def find_command(payload):
+    tool_input = payload.get("tool_input") or payload.get("input") or {}
+    return (
+        tool_input.get("command")
+        or tool_input.get("cmd")
+        or payload.get("command")
+        or ""
+    )
+
+
+def find_file(payload):
+    tool_input = payload.get("tool_input") or payload.get("input") or {}
+    return (
+        tool_input.get("file_path")
+        or tool_input.get("path")
+        or payload.get("file_path")
+        or ""
+    )
+
+
+def block(message):
+    print(json.dumps({"decision": "block", "reason": message}, ensure_ascii=False))
+    return 2
+
+
+def main():
+    payload = read_payload()
+    command = find_command(payload)
+    for blocked in BLOCKED_COMMANDS:
+        if blocked.lower() in command.lower():
+            return block(f"Call Warden blocked destructive command: {blocked}")
+
+    file_path = find_file(payload)
+    event = str(payload.get("event") or payload.get("hook_event_name") or "")
+    if file_path and ("post" in event.lower() or payload.get("tool_name") in ("Edit", "Write", "apply_patch")):
+        try:
+            subprocess.run(
+                ["python", "cw.py", "--refresh", file_path],
+                cwd=os.getcwd(),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=30,
+            )
+        except Exception:
+            pass
+
+    print(json.dumps({"decision": "pass"}, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''')
+
+
+def _callwarden_skill_md() -> str:
+    return t("cli.messages.install_agent_skill_md", default="""---
+name: callwarden-workflow
+description: Use Call Warden for codebase-aware tasks in large or risky repositories. Trigger for bugfixes, refactors, code review, annotation, broad edits, impact analysis, or any task touching more than one file or more than a few steps.
+---
+
+Use the Call Warden MCP server as the primary workflow entrypoint.
+
+1. Prefer `work_next_job` over manual file search when a task_id exists.
+2. Prefer `file_symbol_content` / `symbol_context` style tools over whole-file reads.
+3. Prefer `propose_symbol_patch` or `propose_range_patch` over whole-file rewrites.
+4. For broad tasks, create/split tasks first, then repeatedly call `work_next_job`.
+5. After editing, report the step with `task_report_step` and include changed files.
+6. Do not run destructive git commands such as `git reset --hard`, `git checkout .`, or `git clean -fd`.
+""")
+
+
+def _codex_hooks_json(hook_script: str) -> str:
+    return json.dumps({
+        "PreToolUse": [
+            {
+                "matcher": "Bash|Shell|LocalShell",
+                "hooks": [{"type": "command", "command": f"python \"{hook_script}\""}],
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Edit|Write|apply_patch",
+                "hooks": [{"type": "command", "command": f"python \"{hook_script}\""}],
+            }
+        ],
+    }, ensure_ascii=False, indent=2) + "\n"
+
+
+def _claude_settings_json(hook_script: str) -> str:
+    return json.dumps({
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash|Shell",
+                    "hooks": [{"type": "command", "command": f"python \"{hook_script}\""}],
+                }
+            ],
+            "PostToolUse": [
+                {
+                    "matcher": "Edit|Write",
+                    "hooks": [{"type": "command", "command": f"python \"{hook_script}\""}],
+                }
+            ],
+        }
+    }, ensure_ascii=False, indent=2) + "\n"
+
+
+def _cursor_rule_mdc() -> str:
+    return t("cli.messages.install_agent_cursor_rule", default="""---
+description: Call Warden workflow for codebase-aware Agent tasks
+alwaysApply: true
+---
+
+When the Call Warden MCP server is available, prefer it for broad or risky coding tasks.
+
+- Use `work_next_job` for task-driven work instead of manually deciding the next file.
+- Use symbol/range patch tools instead of full-file rewrites.
+- Use Call Warden impact and guardrail tools before DB/API/config changes.
+- Avoid destructive git cleanup commands unless the user explicitly requests them.
+""")
+
+
+def _agent_readme(agent: str) -> str:
+    return t("cli.messages.install_agent_readme", default="""# Call Warden {agent} integration
+
+This directory contains generated integration files for {agent}.
+
+Recommended workflow:
+
+1. Enable the MCP server config that points to `python cw.py server`.
+2. Enable the generated skill/rule instructions.
+3. Enable hooks where the target Agent supports them.
+4. For large tasks, ask the Agent to start from Call Warden `work_next_job`.
+
+The hook script blocks destructive git cleanup commands and refreshes the graph after edits when the Agent exposes edited file paths in hook payloads.
+""", agent=agent)
 
 
 # --------------------------------------------------------------------
@@ -127,16 +460,19 @@ def _dispatch_subcommand(argv, db):
 
 def _handle_guardrail(args, db):
     """处理 guardrail 子命令（安全护栏）"""
-    parser = argparse.ArgumentParser(prog="cw guardrail", description="生产安全护栏")
+    parser = argparse.ArgumentParser(
+        prog="cw guardrail",
+        description=t("cli.messages.guardrail_desc", default="Production safety guardrails"),
+    )
     sub = parser.add_subparsers(dest="action", required=True)
 
-    scan_p = sub.add_parser("scan", help="扫描安全护栏违规")
-    scan_p.add_argument("--file", default="", help="文件路径前缀过滤")
+    scan_p = sub.add_parser("scan", help=t("cli.messages.guardrail_scan_help", default="Scan guardrail violations"))
+    scan_p.add_argument("--file", default="", help=t("cli.messages.guardrail_file_help", default="Filter by file path prefix"))
     scan_p.add_argument("--category", default="",
-                        help="按类别过滤（db_safety/api_compat/incident）")
+                        help=t("cli.messages.guardrail_category_help", default="Filter by category (db_safety/api_compat/incident)"))
 
-    rules_p = sub.add_parser("rules", help="列出护栏规则")
-    rules_p.add_argument("--category", default="", help="按类别过滤")
+    rules_p = sub.add_parser("rules", help=t("cli.messages.guardrail_rules_help", default="List guardrail rules"))
+    rules_p.add_argument("--category", default="", help=t("cli.messages.guardrail_category_filter_help", default="Filter by category"))
 
     opts = parser.parse_args(args)
 
@@ -212,9 +548,12 @@ def _handle_guardrail(args, db):
 
 def _handle_impact(args, db):
     """处理 impact 子命令（变更影响半径）"""
-    parser = argparse.ArgumentParser(prog="cw impact", description="变更影响半径分析")
-    parser.add_argument("symbol_hash", help="源符号 hash")
-    parser.add_argument("--depth", type=int, default=3, help="BFS 遍历最大深度（默认 3）")
+    parser = argparse.ArgumentParser(
+        prog="cw impact",
+        description=t("cli.messages.impact_desc", default="Change impact radius analysis"),
+    )
+    parser.add_argument("symbol_hash", help=t("cli.messages.impact_symbol_hash_help", default="Source symbol hash"))
+    parser.add_argument("--depth", type=int, default=3, help=t("cli.messages.impact_depth_help", default="Maximum BFS traversal depth (default: 3)"))
 
     opts = parser.parse_args(args)
     result = db.blast_radius(opts.symbol_hash, depth=opts.depth)
@@ -1278,9 +1617,12 @@ def _handle_doctor(args, db):
     1. cw doctor           - 检查环境、数据库状态、推荐优化
     2. cw doctor --add-defender-exclusion - 添加 Windows Defender 排除项（需管理员）
     """
-    parser = argparse.ArgumentParser(prog="cw doctor", description="环境诊断与维护")
+    parser = argparse.ArgumentParser(
+        prog="cw doctor",
+        description=t("cli.messages.doctor_desc", default="Environment diagnostics and maintenance"),
+    )
     parser.add_argument("--add-defender-exclusion", action="store_true",
-                       help="添加 .callwarden 目录到 Windows Defender 排除项（需管理员权限）")
+                       help=t("cli.messages.doctor_add_defender_help", default="Add .callwarden directory to Windows Defender exclusions (requires admin privileges)"))
     opts = parser.parse_args(args)
 
     if opts.add_defender_exclusion:
@@ -1291,16 +1633,16 @@ def _handle_doctor(args, db):
 
 def _doctor_check(db):
     """环境诊断：检查数据库状态、性能配置、Defender 状态等"""
-    cprint("=== Call Warden 环境诊断 ===", "cyan", bold=True)
+    cprint(t("cli.messages.doctor_title", default="=== Call Warden Environment Diagnostics ==="), "cyan", bold=True)
     print()
 
     # 1. 数据库基本信息
-    cprint("[1] 数据库信息", "yellow", bold=True)
+    cprint(t("cli.messages.doctor_db_info_title", default="[1] Database information"), "yellow", bold=True)
     db_path = db.db_path
     import os
     import sqlite3
-    print(f"  路径: {db_path}")
-    print(f"  大小: {os.path.getsize(db_path) / 1024 / 1024:.2f} MB")
+    print(t("cli.messages.doctor_db_path", default="  Path: {path}", path=db_path))
+    print(t("cli.messages.doctor_db_size", default="  Size: {size:.2f} MB", size=os.path.getsize(db_path) / 1024 / 1024))
 
     # PRAGMA 检查
     # 注意：SQLite 返回值可能是小写或数字（如 wal 而非 WAL，1 而非 NORMAL）
@@ -1316,7 +1658,7 @@ def _doctor_check(db):
         "cache_size": "-64000",
         "mmap_size": "268435456",
     }
-    print(f"  PRAGMA 配置:")
+    print(t("cli.messages.doctor_pragma_config", default="  PRAGMA config:"))
     all_pragma_ok = True
     for key, expected in pragmas.items():
         actual = db.conn.execute(f"PRAGMA {key}").fetchone()[0]
@@ -1328,30 +1670,30 @@ def _doctor_check(db):
         ok = actual_normalized == expected_normalized
         mark = "✓" if ok else "✗"
         color = "green" if ok else "red"
-        cprint(f"    {mark} {key} = {actual_str} (期望: {expected})", color)
+        cprint(t("cli.messages.doctor_pragma_item", default="    {mark} {key} = {actual} (expected: {expected})", mark=mark, key=key, actual=actual_str, expected=expected), color)
         if not ok:
             all_pragma_ok = False
     print()
 
     # 2. WAL 文件检查
-    cprint("[2] WAL 文件状态", "yellow", bold=True)
+    cprint(t("cli.messages.doctor_wal_title", default="[2] WAL file status"), "yellow", bold=True)
     wal_path = db_path + "-wal"
     shm_path = db_path + "-shm"
-    print(f"  WAL 文件: {wal_path}")
+    print(t("cli.messages.doctor_wal_file", default="  WAL file: {path}", path=wal_path))
     if os.path.exists(wal_path):
         wal_size = os.path.getsize(wal_path) / 1024
-        print(f"    大小: {wal_size:.1f} KB")
+        print(t("cli.messages.doctor_wal_size", default="    Size: {size:.1f} KB", size=wal_size))
         if wal_size > 1024 * 10:  # > 10MB
-            cprint("    ! WAL 文件较大，建议运行 cw doctor --checkpoint", "yellow")
+            cprint(t("cli.messages.doctor_wal_large", default="    ! WAL file is large; consider running cw doctor --checkpoint"), "yellow")
         else:
-            print(f"    ✓ 大小正常")
+            print(t("cli.messages.doctor_wal_size_ok", default="    ✓ Size is normal"))
     else:
-        print(f"    ✓ 不存在（已 checkpoint）")
+        print(t("cli.messages.doctor_wal_missing_ok", default="    ✓ Not present (checkpointed)"))
     print()
 
     # 3. Defender 排除项检查（仅 Windows）
     if sys.platform == "win32":
-        cprint("[3] Windows Defender 排除项", "yellow", bold=True)
+        cprint(t("cli.messages.doctor_defender_title", default="[3] Windows Defender exclusions"), "yellow", bold=True)
         callwarden_dir = os.path.dirname(db_path)
         try:
             import subprocess
@@ -1362,21 +1704,21 @@ def _doctor_check(db):
             )
             exclusions = result.stdout.strip()
             if callwarden_dir.lower() in exclusions.lower():
-                cprint(f"  ✓ 已添加排除项: {callwarden_dir}", "green")
+                cprint(t("cli.messages.doctor_defender_added", default="  ✓ Exclusion already added: {path}", path=callwarden_dir), "green")
             else:
-                cprint(f"  ✗ 未添加排除项（推荐添加以避免间歇性 SQLITE_CANTOPEN）", "red")
-                cprint(f"    排除目录: {callwarden_dir}", "dim")
-                cprint(f"    添加命令（需管理员）:", "dim")
+                cprint(t("cli.messages.doctor_defender_missing", default="  ✗ Exclusion missing (recommended to avoid intermittent SQLITE_CANTOPEN)"), "red")
+                cprint(t("cli.messages.doctor_defender_dir", default="    Exclusion directory: {path}", path=callwarden_dir), "dim")
+                cprint(t("cli.messages.doctor_defender_command", default="    Add command (requires admin):"), "dim")
                 cprint(f"      cw doctor --add-defender-exclusion", "dim")
-                cprint(f"    或手动执行:", "dim")
+                cprint(t("cli.messages.doctor_defender_manual", default="    Or run manually:"), "dim")
                 cprint(f"      powershell -Command \"Add-MpPreference -ExclusionPath '{callwarden_dir}'\"",
                        "dim")
         except Exception as e:
-            cprint(f"  ? 无法检查 Defender 状态: {e}", "yellow")
+            cprint(t("cli.messages.doctor_defender_check_failed", default="  ? Could not check Defender status: {error}", error=e), "yellow")
         print()
 
     # 4. 快速连接测试
-    cprint("[4] 数据库连接测试", "yellow", bold=True)
+    cprint(t("cli.messages.doctor_connection_title", default="[4] Database connection test"), "yellow", bold=True)
     import time
     success = 0
     fail = 0
@@ -1390,19 +1732,19 @@ def _doctor_check(db):
             fail += 1
         time.sleep(0.1)
     if fail == 0:
-        cprint(f"  ✓ 5 次连接测试全部成功", "green")
+        cprint(t("cli.messages.doctor_connection_success", default="  ✓ All 5 connection tests succeeded"), "green")
     else:
-        cprint(f"  ✗ {fail}/5 次失败，Defender 间歇性锁定", "red")
+        cprint(t("cli.messages.doctor_connection_failed", default="  ✗ {fail}/5 failed, possible intermittent Defender lock", fail=fail), "red")
     print()
 
     # 5. 总体评估
-    cprint("[5] 总体评估", "yellow", bold=True)
+    cprint(t("cli.messages.doctor_overall_title", default="[5] Overall assessment"), "yellow", bold=True)
     if all_pragma_ok and fail == 0:
-        cprint("  ✓ 环境健康", "green")
+        cprint(t("cli.messages.doctor_overall_healthy", default="  ✓ Environment is healthy"), "green")
     elif all_pragma_ok:
-        cprint("  ~ 环境基本健康，但有间歇性连接失败（建议添加 Defender 排除项）", "yellow")
+        cprint(t("cli.messages.doctor_overall_mostly_healthy", default="  ~ Environment is mostly healthy, but connection failures occurred (consider adding Defender exclusion)"), "yellow")
     else:
-        cprint("  ✗ 环境需要优化（PRAGMA 配置不正确）", "red")
+        cprint(t("cli.messages.doctor_overall_needs_work", default="  ✗ Environment needs optimization (PRAGMA config is incorrect)"), "red")
     print()
 
     return True
@@ -1411,7 +1753,7 @@ def _doctor_check(db):
 def _doctor_add_defender_exclusion(db):
     """添加 Windows Defender 排除项（需管理员权限）"""
     if sys.platform != "win32":
-        cprint("✗ 此命令仅在 Windows 上可用", "red")
+        cprint(t("cli.messages.doctor_windows_only", default="✗ This command is only available on Windows"), "red")
         return True
 
     import os
@@ -1420,9 +1762,9 @@ def _doctor_add_defender_exclusion(db):
     # 排除到 .callwarden 根目录（涵盖所有项目的 db）
     parent_dir = os.path.dirname(callwarden_dir)
 
-    cprint("=== 添加 Windows Defender 排除项 ===", "cyan", bold=True)
-    print(f"  将添加排除目录: {parent_dir}")
-    cprint("  注意: 此操作需要管理员权限", "yellow")
+    cprint(t("cli.messages.doctor_add_defender_title", default="=== Add Windows Defender Exclusion ==="), "cyan", bold=True)
+    print(t("cli.messages.doctor_add_defender_dir", default="  Exclusion directory to add: {path}", path=parent_dir))
+    cprint(t("cli.messages.doctor_add_defender_admin_note", default="  Note: this operation requires admin privileges"), "yellow")
     print()
 
     # 检查当前是否已是管理员
@@ -1433,7 +1775,7 @@ def _doctor_add_defender_exclusion(db):
         is_admin = False
 
     if not is_admin:
-        cprint("✗ 当前不是管理员权限，正在尝试 UAC 提权...", "yellow")
+        cprint(t("cli.messages.doctor_uac_try", default="✗ Current process is not elevated; trying UAC elevation..."), "yellow")
         # 通过 PowerShell Start-Process -Verb RunAs 提权
         cmd = f"Add-MpPreference -ExclusionPath '{parent_dir}'"
         try:
@@ -1441,14 +1783,14 @@ def _doctor_add_defender_exclusion(db):
                 ["powershell", "-Command",
                  f"Start-Process powershell -Verb RunAs -ArgumentList '-Command', '{cmd}; Start-Sleep 2'"],
             )
-            cprint("✓ 已弹出 UAC 提示，请在弹出的窗口中确认", "green")
+            cprint(t("cli.messages.doctor_uac_prompted", default="✓ UAC prompt opened; confirm in the popup window"), "green")
             print()
-            print("  验证是否添加成功：")
+            print(t("cli.messages.doctor_verify_hint", default="  Verify success with:"))
             cprint(f"    cw doctor", "cyan")
         except Exception as e:
-            cprint(f"✗ UAC 提权失败: {e}", "red")
+            cprint(t("cli.messages.doctor_uac_failed", default="✗ UAC elevation failed: {error}", error=e), "red")
             print()
-            print("  请手动以管理员身份运行 PowerShell，执行：")
+            print(t("cli.messages.doctor_manual_admin_hint", default="  Run PowerShell as administrator and execute:"))
             cprint(f"    Add-MpPreference -ExclusionPath '{parent_dir}'", "yellow")
         return True
 
@@ -1459,9 +1801,9 @@ def _doctor_add_defender_exclusion(db):
              f"Add-MpPreference -ExclusionPath '{parent_dir}'"],
             capture_output=True, text=True, timeout=10,
         )
-        cprint(f"✓ 已添加 Defender 排除项: {parent_dir}", "green")
+        cprint(t("cli.messages.doctor_add_defender_success", default="✓ Defender exclusion added: {path}", path=parent_dir), "green")
     except Exception as e:
-        cprint(f"✗ 添加失败: {e}", "red")
+        cprint(t("cli.messages.doctor_add_defender_failed", default="✗ Add failed: {error}", error=e), "red")
 
     return True
 
@@ -2208,7 +2550,7 @@ def main():
 
             for i, item in enumerate(results, 1):
                 rank = str(i).rjust(rank_width)
-                print(f"  #{rank}  [深度 {item['depth']:2d}]  {item['qualified_name']}")
+                print(t("cli.messages.deepest_item", default="  #{rank}  [depth {depth:2d}]  {name}", rank=rank, depth=item["depth"], name=item["qualified_name"]))
             print()
 
         elif args.module_calls is not None:
@@ -2300,7 +2642,16 @@ def main():
                         heat_bar = heat_chars[heat_level] * (heat_level + 1)
 
                         group_name = item["group"].ljust(max_group_len)
-                        print(f"  #{i:2d}  {group_name}  {heat_bar}  {item['total_calls']:4d} 次调用  ({item['unique_callers']} 个调用者, {item['unique_callees']} 个被调用函数)")
+                        print(t(
+                            "cli.messages.heatmap_item",
+                            default="  #{idx:2d}  {group}  {bar}  {calls:4d} calls  ({callers} callers, {callees} callees)",
+                            idx=i,
+                            group=group_name,
+                            bar=heat_bar,
+                            calls=item["total_calls"],
+                            callers=item["unique_callers"],
+                            callees=item["unique_callees"],
+                        ))
                 else:
                     print(t("cli.messages.heatmap_none"))
                 print()
@@ -2425,7 +2776,16 @@ def main():
                         icon = severity_icon.get(issue["severity"], "")
                         bar_len = int(issue["function_count"] / stats["total_functions"] * 40) if stats["total_functions"] > 0 else 0
                         bar = "█" * bar_len
-                        print(f"    {icon} {issue['label']:<14s}  {bar} {issue['function_count']:4d} 个函数 ({issue['ratio']}%)  共 {issue['total_occurrences']} 次")
+                        print(t(
+                            "cli.messages.issue_summary_dist_item",
+                            default="    {icon} {label:<14s}  {bar} {function_count:4d} functions ({ratio}%)  {occurrences} occurrences",
+                            icon=icon,
+                            label=issue["label"],
+                            bar=bar,
+                            function_count=issue["function_count"],
+                            ratio=issue["ratio"],
+                            occurrences=issue["total_occurrences"],
+                        ))
                     print()
 
             # 显示零缺陷的函数
@@ -2677,7 +3037,7 @@ def main():
                 type_map = {'A': t("cli.messages.git_type_added"), 'M': t("cli.messages.git_type_modified"), 'D': t("cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
                 for ct, cnt in sorted(stats["change_types"].items(), key=lambda x: x[1], reverse=True):
                     label = type_map.get(ct, ct)
-                    print(f"    {label}: {cnt} 次")
+                    print(t("cli.messages.git_stats_type_count", default="    {label}: {count} times", label=label, count=cnt))
         
         # ----------------------------------------------------------------
         # 代码度量
@@ -2712,7 +3072,11 @@ def main():
             filter_info = t("cli.messages.complexity_filter", module=mod_filter) if mod_filter else ""
             print(t("cli.messages.complexity_title", filter_info=filter_info, count=len(hotspots)))
             print()
-            print(f"  {'#':>3}  {'复杂度':>6}  {'行数':>5}  {'深度':>4}  函数名")
+            complexity_h = t("cli.messages.col_complexity", default="Complexity")
+            lines_h = t("cli.messages.col_lines", default="Lines")
+            depth_h = t("cli.messages.col_depth", default="Depth")
+            fn_h = t("cli.messages.col_function", default="Function")
+            print(f"  {'#':>3}  {complexity_h:>6}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
             print(f"  {'-'*3}  {'-'*6}  {'-'*5}  {'-'*4}  {'-'*50}")
 
             for i, fn in enumerate(hotspots, 1):
@@ -2726,7 +3090,12 @@ def main():
             modules = db.get_coupling_analysis(limit=30)
             print(t("cli.messages.coupling_title", count=len(modules)))
             print()
-            print(f"  {'#':>3}  {'模块':<40s}  {'传入':>4}  {'传出':>4}  {'总计':>4}  {'不稳定性':>6}")
+            module_h = t("cli.messages.col_module", default="Module")
+            afferent_h = t("cli.messages.col_afferent", default="In")
+            efferent_h = t("cli.messages.col_efferent", default="Out")
+            total_h = t("cli.messages.col_total", default="Total")
+            instability_h = t("cli.messages.col_instability", default="Instab")
+            print(f"  {'#':>3}  {module_h:<40s}  {afferent_h:>4}  {efferent_h:>4}  {total_h:>4}  {instability_h:>6}")
             print(f"  {'-'*3}  {'-'*40}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*6}")
 
             for i, mod in enumerate(modules, 1):
@@ -2743,7 +3112,10 @@ def main():
             fns = db.get_largest_functions(limit=limit)
             print(t("cli.messages.largest_fns_title", count=len(fns)))
             print()
-            print(f"  {'#':>3}  {'行数':>5}  {'深度':>4}  函数名")
+            lines_h = t("cli.messages.col_lines", default="Lines")
+            depth_h = t("cli.messages.col_depth", default="Depth")
+            fn_h = t("cli.messages.col_function", default="Function")
+            print(f"  {'#':>3}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
             print(f"  {'-'*3}  {'-'*5}  {'-'*4}  {'-'*50}")
 
             for i, fn in enumerate(fns, 1):
@@ -2755,7 +3127,11 @@ def main():
             fns = db.get_most_coupled_functions(limit=limit)
             print(t("cli.messages.coupled_fns_title", count=len(fns)))
             print()
-            print(f"  {'#':>3}  {'扇入':>4}  {'扇出':>4}  {'总计':>4}  函数名")
+            fan_in_h = t("cli.messages.col_fan_in", default="Fan-in")
+            fan_out_h = t("cli.messages.col_fan_out", default="Fan-out")
+            total_h = t("cli.messages.col_total", default="Total")
+            fn_h = t("cli.messages.col_function", default="Function")
+            print(f"  {'#':>3}  {fan_in_h:>4}  {fan_out_h:>4}  {total_h:>4}  {fn_h}")
             print(f"  {'-'*3}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*50}")
 
             for i, fn in enumerate(fns, 1):
