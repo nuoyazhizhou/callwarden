@@ -635,3 +635,393 @@ def test_rule_candidate_accept_empty_id_raises():
             db.rule_candidate_accept("")
         db.close()
 
+
+# ============================================
+# Phase 2: get_applicable_rules 作用域匹配
+# ============================================
+
+
+def _setup_rules(db):
+    """辅助：创建一组测试规则并 accept"""
+    # 全局规则
+    cid_g = db.rule_candidate_create("global-rule", "global text", scope={})
+    db.rule_candidate_accept(cid_g)
+    # Python + edit 规则（warning）
+    cid_py = db.rule_candidate_create(
+        "i18n-rule", "use i18n",
+        scope={"languages": ["python"], "actions": ["edit"]},
+        severity="warning",
+    )
+    db.rule_candidate_accept(cid_py)
+    # file glob 规则（error）
+    cid_file = db.rule_candidate_create(
+        "cli-rule", "cli rule",
+        scope={"file_patterns": ["cli/*.py"]},
+        severity="error",
+    )
+    db.rule_candidate_accept(cid_file)
+    # module prefix 规则
+    cid_mod = db.rule_candidate_create(
+        "server-rule", "server rule",
+        scope={"module_prefixes": ["server."]},
+    )
+    db.rule_candidate_accept(cid_mod)
+    # symbol_kind 规则
+    cid_kind = db.rule_candidate_create(
+        "fn-rule", "fn rule",
+        scope={"symbol_kinds": ["function"]},
+        severity="info",
+    )
+    db.rule_candidate_accept(cid_kind)
+
+
+def test_get_applicable_rules_global_matches_all():
+    """空 scope 全局规则应匹配所有上下文"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules({}, limit=10)
+        # 空上下文应只匹配全局规则
+        assert len(rs) == 1
+        assert rs[0]["title"] == "global-rule"
+        assert rs[0]["matched_scope"] == ["global"]
+        db.close()
+
+
+def test_get_applicable_rules_language_match():
+    """按语言匹配规则"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules({"language": "python"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "global-rule" in titles
+        assert "i18n-rule" not in titles  # 上下文缺 action，不应匹配
+        # 只匹配 global
+        assert len(rs) == 1
+        db.close()
+
+
+def test_get_applicable_rules_language_and_action_match():
+    """language + action 同时命中（AND）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules(
+            {"language": "python", "action": "edit"}, limit=10
+        )
+        titles = [r["title"] for r in rs]
+        assert "global-rule" in titles
+        assert "i18n-rule" in titles
+        db.close()
+
+
+def test_get_applicable_rules_file_glob_match():
+    """file_patterns glob 匹配"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules({"file_path": "cli/main.py"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "global-rule" in titles
+        assert "cli-rule" in titles
+        # 不匹配 server-rule（无 module_prefix 上下文）
+        assert "server-rule" not in titles
+        db.close()
+
+
+def test_get_applicable_rules_file_glob_no_match():
+    """file_patterns 不匹配时应过滤掉"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules({"file_path": "src/main.rs"}, limit=10)
+        titles = [r["title"] for r in rs]
+        # 只匹配全局
+        assert titles == ["global-rule"]
+        db.close()
+
+
+def test_get_applicable_rules_module_prefix_match():
+    """module_prefixes 前缀匹配"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules(
+            {"module_prefix": "server.foo"}, limit=10
+        )
+        titles = [r["title"] for r in rs]
+        assert "global-rule" in titles
+        assert "server-rule" in titles
+        db.close()
+
+
+def test_get_applicable_rules_module_prefix_no_match():
+    """module_prefixes 前缀不匹配"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules(
+            {"module_prefix": "cli.main"}, limit=10
+        )
+        titles = [r["title"] for r in rs]
+        # 只匹配全局
+        assert titles == ["global-rule"]
+        db.close()
+
+
+def test_get_applicable_rules_symbol_kind_match():
+    """symbol_kinds 匹配"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules({"symbol_kind": "function"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "fn-rule" in titles
+        db.close()
+
+
+def test_get_applicable_rules_severity_ordering():
+    """按 severity 优先级排序（critical 在前）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        for sev, title in [
+            ("info", "info-rule"),
+            ("critical", "critical-rule"),
+            ("warning", "warning-rule"),
+            ("error", "error-rule"),
+        ]:
+            cid = db.rule_candidate_create(title, "r", severity=sev)
+            db.rule_candidate_accept(cid)
+
+        rs = db.get_applicable_rules({}, limit=10)
+        # 全部 scope 为空 → 全部匹配
+        # 按 severity 排序
+        assert rs[0]["severity"] == "critical"
+        assert rs[1]["severity"] == "error"
+        assert rs[2]["severity"] == "warning"
+        assert rs[3]["severity"] == "info"
+        db.close()
+
+
+def test_get_applicable_rules_match_precision_ordering():
+    """匹配精度高的规则排在前面（命中字段数多的优先）"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        # 全局规则（1 个标签 global）
+        cid_g = db.rule_candidate_create("global", "r", scope={}, severity="warning")
+        db.rule_candidate_accept(cid_g)
+        # 多字段规则（3 个标签 language+action+file）
+        cid_multi = db.rule_candidate_create(
+            "multi", "r",
+            scope={
+                "languages": ["python"],
+                "actions": ["edit"],
+                "file_patterns": ["cli/*.py"],
+            },
+            severity="warning",
+        )
+        db.rule_candidate_accept(cid_multi)
+
+        rs = db.get_applicable_rules(
+            {"language": "python", "action": "edit", "file_path": "cli/main.py"},
+            limit=10,
+        )
+        # 同 severity，匹配精度高的在前
+        assert rs[0]["title"] == "multi"
+        assert len(rs[0]["matched_scope"]) == 3
+        assert rs[1]["title"] == "global"
+        db.close()
+
+
+def test_get_applicable_rules_limit():
+    """limit 限制返回数量"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        for i in range(10):
+            cid = db.rule_candidate_create(f"r{i}", "r")
+            db.rule_candidate_accept(cid)
+
+        rs = db.get_applicable_rules({}, limit=3)
+        assert len(rs) == 3
+        db.close()
+
+
+def test_get_applicable_rules_zero_limit_returns_empty():
+    """limit=0 应返回空列表"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules({}, limit=0)
+        assert rs == []
+        db.close()
+
+
+def test_get_applicable_rules_only_returns_active():
+    """只返回 status=active 规则"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        cid1 = db.rule_candidate_create("active1", "r")
+        cid2 = db.rule_candidate_create("active2", "r")
+        rid1 = db.rule_candidate_accept(cid1)
+        rid2 = db.rule_candidate_accept(cid2)
+
+        # 把 rid2 改成 deprecated
+        db.conn.execute(
+            "UPDATE agent_rules SET status = ? WHERE id = ?",
+            ("deprecated", rid2),
+        )
+        db.conn.commit()
+
+        rs = db.get_applicable_rules({}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "active1" in titles
+        assert "active2" not in titles
+        db.close()
+
+
+def test_get_applicable_rules_matched_scope_labels():
+    """matched_scope 标签应反映命中的字段"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        cid = db.rule_candidate_create(
+            "multi", "r",
+            scope={
+                "languages": ["python"],
+                "actions": ["edit"],
+                "file_patterns": ["cli/*.py"],
+            },
+        )
+        db.rule_candidate_accept(cid)
+
+        rs = db.get_applicable_rules(
+            {"language": "python", "action": "edit", "file_path": "cli/main.py"},
+            limit=10,
+        )
+        rule = next(r for r in rs if r["title"] == "multi")
+        assert "language:python" in rule["matched_scope"]
+        assert "action:edit" in rule["matched_scope"]
+        assert "file:cli/main.py" in rule["matched_scope"]
+        db.close()
+
+
+def test_get_applicable_rules_case_insensitive_language():
+    """language 匹配大小写不敏感"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        cid = db.rule_candidate_create(
+            "py", "r",
+            scope={"languages": ["Python"]},
+        )
+        db.rule_candidate_accept(cid)
+
+        rs = db.get_applicable_rules({"language": "python"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "py" in titles
+        db.close()
+
+
+def test_get_applicable_rules_case_insensitive_action():
+    """action 匹配大小写不敏感"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        cid = db.rule_candidate_create(
+            "edit-rule", "r",
+            scope={"actions": ["EDIT"]},
+        )
+        db.rule_candidate_accept(cid)
+
+        rs = db.get_applicable_rules({"action": "edit"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "edit-rule" in titles
+        db.close()
+
+
+def test_get_applicable_rules_no_active_returns_empty():
+    """没有 active 规则时返回空列表"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        rs = db.get_applicable_rules({"language": "python"}, limit=10)
+        assert rs == []
+        db.close()
+
+
+def test_get_applicable_rules_multiple_fields_all_must_match():
+    """多字段 AND 匹配：缺一不可"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        cid = db.rule_candidate_create(
+            "strict", "r",
+            scope={
+                "languages": ["python"],
+                "actions": ["edit"],
+                "file_patterns": ["cli/*.py"],
+            },
+        )
+        db.rule_candidate_accept(cid)
+
+        # 只传 language → 不匹配（缺 action 和 file_path）
+        rs = db.get_applicable_rules({"language": "python"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "strict" not in titles
+
+        # 传 language + action → 仍不匹配（缺 file_path）
+        rs = db.get_applicable_rules(
+            {"language": "python", "action": "edit"}, limit=10
+        )
+        titles = [r["title"] for r in rs]
+        assert "strict" not in titles
+
+        # 全部字段都传 → 匹配
+        rs = db.get_applicable_rules(
+            {"language": "python", "action": "edit", "file_path": "cli/main.py"},
+            limit=10,
+        )
+        titles = [r["title"] for r in rs]
+        assert "strict" in titles
+        db.close()
+
+
+def test_get_applicable_rules_finding_type_match():
+    """finding_types 字段匹配"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        cid = db.rule_candidate_create(
+            "i18n-finding", "r",
+            scope={"finding_types": ["i18n", "semgrep"]},
+        )
+        db.rule_candidate_accept(cid)
+
+        rs = db.get_applicable_rules({"finding_type": "i18n"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "i18n-finding" in titles
+
+        rs = db.get_applicable_rules({"finding_type": "semgrep"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "i18n-finding" in titles
+
+        # 不匹配的 finding_type
+        rs = db.get_applicable_rules({"finding_type": "signature"}, limit=10)
+        titles = [r["title"] for r in rs]
+        assert "i18n-finding" not in titles
+        db.close()
+
+
+def test_get_applicable_rules_returns_all_expected_fields():
+    """返回的 dict 应包含所有期望字段"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        _setup_rules(db)
+        rs = db.get_applicable_rules({}, limit=10)
+        r = rs[0]
+        expected_keys = {
+            "id", "title", "rule_text", "scope", "severity", "status",
+            "source_candidate_id", "evidence", "created_at", "updated_at",
+            "synced_to_agents_md", "sync_hash", "matched_scope",
+        }
+        assert expected_keys.issubset(set(r.keys())), (
+            f"缺少字段: {expected_keys - set(r.keys())}"
+        )
+        db.close()
+
+
