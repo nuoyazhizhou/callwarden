@@ -233,6 +233,36 @@ class TaskMixin:
         if not row:
             return None
 
+        # 质量门禁优先级：若任务树中存在 fix_quality_gate_failure 的 pending 步骤，
+        # 优先返回它（让 Agent 先处理质量门禁失败，再继续普通步骤）
+        try:
+            fix_row = self.conn.execute(
+                """
+                SELECT ts.id as step_id, ts.task_id, ts.step_index, ts.action,
+                       ts.target_file, ts.target_symbol, ts.check_items,
+                       t.title as task_title
+                FROM task_steps ts
+                JOIN tasks t ON ts.task_id = t.id
+                WHERE ts.task_id IN (
+                    WITH RECURSIVE task_tree(id) AS (
+                        SELECT id FROM tasks WHERE id = ?
+                        UNION ALL
+                        SELECT t.id FROM tasks t JOIN task_tree tt ON t.parent_id = tt.id
+                    )
+                    SELECT id FROM task_tree
+                )
+                AND ts.action = 'fix_quality_gate_failure'
+                AND ts.status = ?
+                ORDER BY ts.created_at ASC
+                LIMIT 1
+                """,
+                (task_id, STEP_STATUS_PENDING),
+            ).fetchone()
+            if fix_row:
+                row = fix_row
+        except Exception:
+            pass
+
         step_id = row["step_id"]
         actual_task_id = row["task_id"]
         now = time.time()
@@ -324,6 +354,26 @@ class TaskMixin:
             result["guardrail_alert"] = guardrail_alert
         if guardrail_warning:
             result["guardrail_warning"] = guardrail_warning
+
+        # 附加 open_quality_findings 摘要（让 Agent 知道任务下有哪些未解决的质量发现）
+        if hasattr(self, "get_task_quality_findings"):
+            try:
+                open_findings = self.get_task_quality_findings(actual_task_id, status="open")
+                result["open_quality_findings"] = {
+                    "count": len(open_findings),
+                    "blocking": sum(1 for f in open_findings if f.get("severity") in ("error", "block")),
+                    "items": [
+                        {
+                            "id": f["id"],
+                            "severity": f["severity"],
+                            "finding_type": f["finding_type"],
+                            "message": f["message"],
+                        }
+                        for f in open_findings[:10]  # 最多 10 条摘要
+                    ],
+                }
+            except Exception:
+                pass
 
         # 构建结构化指令
         try:

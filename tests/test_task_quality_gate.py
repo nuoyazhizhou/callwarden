@@ -722,3 +722,89 @@ def test_task_report_step_block_then_resolve_allows_done():
     finally:
         db.close()
 
+
+# ============================================
+# task_next_step 集成质量门禁测试
+# ============================================
+
+def test_task_next_step_prioritizes_fix_quality_gate_step():
+    """存在 fix_quality_gate_failure pending 步骤时，task_next_step 优先返回它"""
+    db, _root = _db_with_workspace()
+    try:
+        # 创建带 2 个普通步骤的任务
+        task_id = db.task_create("priority-test", steps=[
+            {"action": "edit", "target_file": "a.py"},
+            {"action": "edit", "target_file": "b.py"},
+        ])
+        # 领取第一个 step，但触发 block（插入 fix_quality_gate_failure）
+        s1 = db.task_next_step(task_id)
+        db.record_task_quality_finding(
+            task_id, step_id=s1["step_id"], severity="error", message="sql injection"
+        )
+        db.task_report_step(task_id, s1["step_id"], result="done", success=True)
+        # 此时应该有 fix_quality_gate_failure step（pending）
+
+        # 再次 task_next_step：应优先返回 fix_quality_gate_failure（而非第二个普通步骤）
+        next_step = db.task_next_step(task_id)
+        assert next_step["action"] == "fix_quality_gate_failure"
+        assert next_step["target_symbol"] == s1["step_id"]
+    finally:
+        db.close()
+
+
+def test_task_next_step_returns_open_quality_findings_summary():
+    """普通步骤返回 open_quality_findings 摘要"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        # 预先记录 2 个 finding（warn + error）
+        db.record_task_quality_finding(
+            task_id, severity="warn", message="unused import", finding_type="semgrep"
+        )
+        db.record_task_quality_finding(
+            task_id, severity="error", message="sql injection", finding_type="semgrep"
+        )
+
+        step = db.task_next_step(task_id)
+        assert "open_quality_findings" in step
+        summary = step["open_quality_findings"]
+        assert summary["count"] == 2
+        assert summary["blocking"] == 1  # 1 个 error
+        assert len(summary["items"]) == 2
+        severities = {item["severity"] for item in summary["items"]}
+        assert "warn" in severities
+        assert "error" in severities
+    finally:
+        db.close()
+
+
+def test_task_next_step_open_quality_findings_empty_when_no_findings():
+    """无 finding 时 open_quality_findings.count=0"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        step = db.task_next_step(task_id)
+        assert step["open_quality_findings"]["count"] == 0
+        assert step["open_quality_findings"]["blocking"] == 0
+        assert step["open_quality_findings"]["items"] == []
+    finally:
+        db.close()
+
+
+def test_task_next_step_open_quality_findings_capped_at_10():
+    """open_quality_findings.items 最多 10 条"""
+    db, _root = _db_with_workspace()
+    try:
+        task_id = _create_task_with_step(db)
+        # 写入 12 个 finding
+        for i in range(12):
+            db.record_task_quality_finding(
+                task_id, severity="warn", message=f"finding {i}"
+            )
+        step = db.task_next_step(task_id)
+        assert step["open_quality_findings"]["count"] == 12
+        assert len(step["open_quality_findings"]["items"]) == 10
+    finally:
+        db.close()
+
+
