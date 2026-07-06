@@ -12,7 +12,7 @@
                ▼                               ▼
 ┌──────────────────────────┐     ┌──────────────────────────────┐
 │      CLI (cli/main.py)   │     │   MCP Server (FastMCP)       │
-│  子命令 + --flag 双风格  │     │   120 个 @mcp.tool() 工具    │
+│  子命令 + --flag 双风格  │     │   166 个 @mcp.tool() 工具    │
 │  145+ 命令               │     │   stdio / SSE 传输           │
 └────────────┬─────────────┘     └──────────────┬───────────────┘
              │                                  │
@@ -20,7 +20,7 @@
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                  CodeGraphDB (db.py)                          │
-│         23 个 Mixin 多继承组装的统一数据库类                  │
+│         25 个 Mixin 多继承组装的统一数据库类                  │
 │  CodeGraphBase + BuildMixin + QueryMixin + ... + CheckGateMixin│
 └────────────────────────────┬──────────────────────────────────┘
                              │
@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（每个项目一个）                    │
 │   $HOME/.callwarden/<16位hash>/callwarden.db                  │
-│   Schema v13 / WAL 模式 / 30+ 表 / 23 个 Mixin 模块           │
+│   Schema v25 / WAL 模式 / 40+ 表 / 25 个 Mixin 模块           │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -45,7 +45,7 @@
 | 层 | 职责 | 关键文件 |
 |----|------|----------|
 | 接入层 | CLI 命令解析、MCP 协议处理 | `cli/main.py`、`server/mcp_server.py` |
-| 业务层 | 23 个 Mixin 组合的数据库类 | `db.py` + `db_*.py`（23 个文件） |
+| 业务层 | 25 个 Mixin 组合的数据库类 | `db.py` + `db_*.py`（25 个文件） |
 | 解析层 | tree-sitter 多语言解析、调用关系提取 | `parsers/`（10 个文件） |
 | 分析层 | 调用链、覆盖率、缺陷检测 | `analyzers/`（3 个文件） |
 | 加速层 | PyO3 Rust 扩展（可选） | `rust_ext/` |
@@ -67,7 +67,7 @@ $HOME/.callwarden/<16位hash>/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v13**
+当前 Schema 版本：**v25**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -80,9 +80,21 @@ v10 守护者架构表（guardrail_rules/findings + change_impacts + evolution_m
 v11 Token 节省账本表（token_savings_ledger）
 v12 安全文件编辑审计表（file_edit_audit，propose_edit 流水线）
 v13 跨仓库分析表（cross_repo_deps）
+v14 归档文件表（archived_files，GC 可恢复归档闭环）
+v15 父子任务表（tasks 加 parent_id / depth / sort_order 字段，支持任务树）
+v16 外部依赖表（external_symbols + package_versions，追踪外部包符号）
+v17 任务-符号变更归因表（task_symbol_changes，任务编辑与符号变更的关联）
+v18 package_versions 增强（加 last_seen_at / last_used_at / import_source，冷数据追踪）
+v19 GC 策略表（gc_policies，retention 策略配置）
+v20 GC 运行审计表（gc_runs，GC 运行记录与归档明细）
+v21 任务质量门禁表（task_quality_findings，阻塞/警告级别 finding）
+v22 审计签名链表（audit_chain，HMAC 签名的审计链）
+v23 Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log）
+v24 任务状态机完整化（tasks 加 applied_at 字段，支持 review → applied → closed 流转）
+v25 自举闭环扫描基线表（workspace_scan_runs，扫描运行记录与变化检测）
 ```
 
-Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。
+Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。
 
 ### WAL 模式
 
@@ -224,14 +236,47 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 | defect_patterns | 缺陷模式库 |
 | defect_fixes | 缺陷修复案例 |
 
-### 任务与编辑审计表（v7 + v12）
+### 任务与编辑审计表（v7 + v12 + v15 + v24）
 
 | 表 | 说明 |
 |----|------|
-| tasks | 任务（open/in_progress/review/applied/closed/reverted） |
+| tasks | 任务（open/in_progress/review/applied/closed/reverted）。v15 加 `parent_id` / `depth` / `sort_order` 支持父子任务树；v24 加 `applied_at` 字段支持 review → applied → closed 流转 |
 | task_steps | 任务步骤（pending/in_progress/done/failed/blocked） |
 | change_audit | 变更审计日志（hash + diff） |
 | file_edit_audit | propose_edit 审计流水线（pending/applied/reverted/failed） |
+
+### 归档与 GC 表（v14 + v19 + v20）
+
+| 表 | 说明 |
+|----|------|
+| archived_files | 归档文件元数据（v14）。`file_instances.status='archived'` 时记录归档原因、符号/调用数快照、归档时间戳，便于 GC 可恢复归档闭环 |
+| gc_policies | GC 策略配置（v19）。每个 workspace 一行，包含 `older_than_days` / `keep_versions` / `include_external` / `backup_enabled` 等 retention 参数 |
+| gc_runs | GC 运行审计（v20）。每次 retention/archive/purge 记一行，含 `policy_json`（策略参数）/ `candidate_counts`（候选明细）/ `deleted_counts`（实删明细）/ `backup_path`（备份路径）/ `status`（running/completed/failed） |
+
+### 外部依赖表（v16 + v18）
+
+| 表 | 说明 |
+|----|------|
+| external_symbols | 外部符号表（v16）。存储标准库和第三方包的函数/类/常量，用于跨文件调用解析时查找项目外的被调符号。`qualified_name` 唯一，关联 `package_versions` |
+| package_versions | 包版本表（v16，v18 增强）。`package_name` + `package_version` 联合主键。v18 加 `last_seen_at`（依赖清单最近看到时间）/ `last_used_at`（最近被调用解析命中时间）/ `import_source`（manifest/manual/stdlib）用于冷数据追踪 |
+
+### 任务-符号变更归因表（v17）
+
+| 表 | 说明 |
+|----|------|
+| task_symbol_changes | 任务-符号变更归因（v17）。记录一次任务/步骤/编辑行为为什么导致某个符号版本变化，含 `task_id` / `step_id` / `edit_audit_id` / `symbol_hash_before` / `symbol_hash_after` / `change_type` / `source`。事实层仍是 `file_symbol_versions` / `symbol_contents`，本表只做归因 |
+
+### 任务质量门禁表（v21）
+
+| 表 | 说明 |
+|----|------|
+| task_quality_findings | 任务质量门禁发现（v21）。把 Semgrep、复杂度、调用链一致性、scope violation、i18n 硬编码等质量问题挂到 task/step 上。`severity`：info/warn/error/block（block 阻止任务进入 done）；`status`：open/resolved/wontfix；`source`：semgrep/file_health/call_chain/scope/i18n/manual |
+
+### 审计签名链表（v22）
+
+| 表 | 说明 |
+|----|------|
+| audit_chain | 审计签名链（v22）。为 `task_quality_findings` / `change_audit` / `file_edit_audit` 等关键审计表生成可验证的 hash/HMAC 链。每条记录含 `payload_hash` + `prev_signature` + `record_signature`，形成链式结构。`signing_key_id`：`'local'` 表示本地 SHA-256 链；可通过环境变量 `CALLWARDEN_AUDIT_HMAC_KEY` 或 `~/.callwarden/audit.key` 切换到 HMAC-SHA256 |
 
 ### Agent Rule Memory 表（v23）
 
@@ -240,7 +285,6 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 | agent_rule_candidates | 候选规则（pending/accepted/rejected），由 Agent 观察或从 task_quality_findings 自动提取 |
 | agent_rules | 已生效规则（active/deprecated/removed），accept 后写入，按 scope 匹配注入到上下文 |
 | agent_rule_sync_log | AGENTS.md 同步日志（dry_run/apply 都记录，含 before/after hash） |
-| audit_chain | 审计签名链（每条 change_audit/file_edit_audit/task_quality_findings 等记录对应一条），含 `payload_hash` + `prev_signature` + `record_signature`，支持 SHA-256 链或 HMAC-SHA256 |
 
 ### 自举闭环表（v25）
 
