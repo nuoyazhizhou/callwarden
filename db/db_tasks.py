@@ -333,6 +333,19 @@ class TaskMixin:
                     (TASK_STATUS_IN_PROGRESS, now, actual_task_id),
                 )
 
+        # 领取子任务时，把从根任务到 actual_task_id 路径上的所有 open 状态父任务推进到 in_progress
+        # （深度优先遍历时，中间层父任务可能仍是 open，需同步推进）
+        if actual_task_id != task_id:
+            parent_chain = self._build_parent_chain(actual_task_id)
+            for chain_item in parent_chain:
+                chain_id = chain_item["task_id"]
+                chain_status = chain_item["status"]
+                if chain_status == TASK_STATUS_OPEN:
+                    self.conn.execute(
+                        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                        (TASK_STATUS_IN_PROGRESS, now, chain_id),
+                    )
+
         self.conn.commit()
 
         # 构建父任务链（从根到当前任务）
