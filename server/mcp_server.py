@@ -10,7 +10,7 @@ mcp_server.py
 
 import os
 import sys
-from typing import Optional
+from typing import Any, Dict, Optional
 
 # 确保可以导入 callwarden 模块
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -3507,9 +3507,96 @@ def create_mcp_server():
     return mcp
 
 
+def _auto_sync_agents_md() -> Dict[str, Any]:
+    """启动时自动同步 AGENTS.md（fail-soft，不阻断启动）
+
+    把当前 active 的 Agent Rule Memory 同步到 AGENTS.md 标记区，
+    让无 MCP 的 Agent 也能从 AGENTS.md 看到已生效规则。
+
+    安全策略：
+    - 同步失败不阻断 MCP Server 启动（fail-soft）
+    - 使用 dry_run=False 实际写入文件，并记录 agent_rule_sync_log
+    - 标记区不存在时静默跳过（不插入标记块，避免改写用户文件）
+    - 所有输出走 stderr，不污染 stdio 协议
+
+    Returns:
+        dict: 同步结果摘要（含 success / rule_count / error 等字段）
+    """
+    try:
+        db = get_db()
+        result = db.rule_sync_agents_md(
+            target_path="AGENTS.md",
+            dry_run=False,
+            actor="mcp_server_startup",
+        )
+        return result
+    except Exception as exc:
+        # fail-soft：任何异常都不阻断启动，仅记录错误
+        return {
+            "success": False,
+            "dry_run": False,
+            "target_path": "AGENTS.md",
+            "rule_count": 0,
+            "rule_ids": [],
+            "before_hash": "",
+            "after_hash": "",
+            "error": str(exc),
+        }
+
+
+def _print_auto_sync_summary(result: Dict[str, Any]) -> None:
+    """打印 AGENTS.md 自动同步摘要到 stderr
+
+    MCP Server 使用 stdio 传输协议，所有日志必须走 stderr，
+    否则会污染协议输出导致 client 解析失败。
+
+    Args:
+        result: _auto_sync_agents_md() 返回的结果字典
+    """
+    if result.get("success"):
+        count = result.get("rule_count", 0)
+        print(
+            t(
+                "cli.messages.agents_md_auto_sync_success",
+                count=count,
+                default=f"[Auto Sync] AGENTS.md 已同步，共 {count} 条规则",
+            ),
+            file=sys.stderr,
+        )
+    else:
+        error = result.get("error", "")
+        # 标记区不存在时给出更友好的提示
+        if "marker" in error.lower() or "not found" in error.lower():
+            print(
+                t(
+                    "cli.messages.agents_md_auto_sync_no_marker",
+                    default="[Auto Sync] AGENTS.md 标记区不存在，跳过同步。请先运行 `cw rule insert-block` 插入标记块。",
+                ),
+                file=sys.stderr,
+            )
+        else:
+            print(
+                t(
+                    "cli.messages.agents_md_auto_sync_skipped",
+                    error=error,
+                    default=f"[Auto Sync] AGENTS.md 同步跳过：{error}",
+                ),
+                file=sys.stderr,
+            )
+
+
 def main():
-    """MCP 服务器入口"""
+    """MCP 服务器入口
+
+    启动流程：
+    1. create_mcp_server() 创建服务器实例并注册所有 MCP 工具
+    2. _auto_sync_agents_md() 自动同步 AGENTS.md（fail-soft，不阻断启动）
+    3. server.run() 启动 stdio 传输
+    """
     server = create_mcp_server()
+    # 启动时自动同步 AGENTS.md（C2 新增）
+    sync_result = _auto_sync_agents_md()
+    _print_auto_sync_summary(sync_result)
     server.run()
 
 

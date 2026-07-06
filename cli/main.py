@@ -3762,6 +3762,33 @@ def main():
             else:
                 print(t("cli.messages.building_incremental"))
             db.build_full_graph(force=args.force)
+            # C2: refresh-all 完成后自动同步 AGENTS.md（fail-soft，不阻断 refresh）
+            try:
+                sync_result = db.rule_sync_agents_md(
+                    target_path="AGENTS.md",
+                    dry_run=False,
+                    actor="cli_refresh_all",
+                )
+                if sync_result.get("success"):
+                    print(t(
+                        "cli.messages.agents_md_auto_sync_success",
+                        count=sync_result.get("rule_count", 0),
+                    ))
+                else:
+                    error = sync_result.get("error", "")
+                    if "marker" in error.lower() or "not found" in error.lower():
+                        print(t("cli.messages.agents_md_auto_sync_no_marker"))
+                    else:
+                        print(t(
+                            "cli.messages.agents_md_auto_sync_skipped",
+                            error=error,
+                        ))
+            except Exception as exc:
+                # fail-soft：同步失败不阻断 refresh，仅输出提示
+                print(t(
+                    "cli.messages.agents_md_auto_sync_skipped",
+                    error=str(exc),
+                ))
         
         elif args.watch:
             watcher = FileWatcher(db)

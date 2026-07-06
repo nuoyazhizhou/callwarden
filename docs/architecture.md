@@ -436,6 +436,21 @@ Agent Rule Memory 是 Call Warden 的项目规则记忆系统，让 Agent 能够
 - 标记区不存在时返回 `error` + `suggested_block`（需先调用 `rule_insert_agents_md_block`）
 - 每次同步写入 `agent_rule_sync_log`，记录 `before_hash` / `after_hash` / `rule_count`
 
+### 启动时自动同步（C2）
+
+Call Warden 在以下两个入口点自动触发 `rule_sync_agents_md(dry_run=False)`，让规则无需手动同步即可生效：
+
+| 入口点 | actor | 触发时机 | fail-soft |
+|--------|-------|----------|-----------|
+| `cw server` (MCP Server 启动) | `mcp_server_startup` | `create_mcp_server()` 之后、`server.run()` 之前 | 同步失败不阻断启动，输出到 stderr |
+| `cw --refresh-all` (CLI 刷新) | `cli_refresh_all` | `db.build_full_graph()` 之后 | 同步失败不阻断 refresh |
+
+**设计要点**：
+- **fail-soft 原则**：同步失败（标记区不存在、权限不足、DB 异常等）不阻断主流程，仅输出提示
+- **stdio 协议安全**：MCP Server 启动时的同步摘要输出到 `stderr`，避免污染 stdio 协议输出
+- **幂等性**：多次调用结果一致，`after_hash` 在内容未变时保持相同
+- **日志追溯**：每次同步写入 `agent_rule_sync_log`，通过 `actor` 字段区分触发来源
+
 ## 自举闭环架构（Bootstrap Closure）
 
 自举闭环（Bootstrap Closure）是 Call Warden 把"外部 Agent 真实文件改动"反向
