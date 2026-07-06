@@ -13,6 +13,28 @@ authors = [
     { name = "Call Warden Team" }
 ]
 keywords = ["code-analysis", "call-graph", "tree-sitter", "mcp", "semgrep", "ai-agent"]
+dependencies = [
+    "tree-sitter>=0.21",
+    "tree-sitter-languages>=1.10",
+    "tree-sitter-rust>=0.21",
+    "tree-sitter-typescript>=0.21",
+    "tree-sitter-python>=0.21",
+    "tree-sitter-kotlin>=0.21",
+    "tree-sitter-go>=0.21",
+    "tree-sitter-java>=0.21",
+    "tree-sitter-c>=0.21",
+    "tree-sitter-cpp>=0.21",
+    "tree-sitter-javascript>=0.21",
+    "tree-sitter-c-sharp>=0.21",
+    "tree-sitter-ruby>=0.21",
+    "tree-sitter-php>=0.22",
+    "tree-sitter-swift>=0.5",
+    "tree-sitter-scala>=0.23",
+    "tree-sitter-hcl>=1.0",
+    "tree-sitter-elixir>=0.3",
+    "fastmcp>=0.8",
+    "watchdog>=6.0.0",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
