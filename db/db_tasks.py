@@ -1479,12 +1479,16 @@ class TaskMixin:
         设计原则：写代码的 Agent 不能自己 closed，必须由其他会话的 LLM 审核关闭。
         只有 status=applied 的任务才能 close，其他状态拒绝。
 
+        父任务禁止手动 close：必须由子任务 apply 时自动级联触发
+        （_cascade_close_if_ready 在最后一个子任务 apply 时原子完成）。
+        若手动 close 父任务，返回 error 提示由级联触发。
+
         Args:
             task_id: 任务 ID
             reviewer: 审核人标识
 
         Returns:
-            包含 task_id、status、closed_at 的字典；失败时包含 error 字段
+            包含 task_id、status、closed_at 的字典；失败时包含 error 字段和 reason 字段
         """
         now = time.time()
         cur = self.conn.execute(
@@ -1499,6 +1503,25 @@ class TaskMixin:
             }
 
         current_status = row["status"]
+
+        # 父任务禁止手动 close：必须由级联触发
+        cur = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM tasks WHERE parent_id = ?",
+            (task_id,),
+        )
+        subtask_count = cur.fetchone()["cnt"]
+        if subtask_count > 0:
+            return {
+                "error": t(
+                    "cli.messages.task_close_parent_manual_forbidden",
+                    default="Parent task cannot be closed manually; it is auto-cascaded when all subtasks are applied",
+                ),
+                "task_id": task_id,
+                "status": current_status,
+                "reason": "parent_task_must_cascade",
+                "subtask_count": subtask_count,
+            }
+
         if current_status != TASK_STATUS_APPLIED:
             return {
                 "error": t(
