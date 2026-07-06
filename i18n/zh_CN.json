@@ -1021,6 +1021,12 @@
       "task_status_label": "  状态: {status}",
       "task_applied_at": "  审核通过时间: {ts}",
       "task_closed_at": "  关闭时间: {ts}",
+      "task_apply_parent_manual_forbidden": "父任务不能手动审核通过，将在所有子任务审核通过时自动级联触发",
+      "task_close_parent_manual_forbidden": "父任务不能手动关闭，将在所有子任务审核通过时自动级联触发",
+      "task_close_blocked_by_subtasks": "还有 {count} 个子任务未关闭，无法关闭父任务",
+      "task_apply_auto_cascaded": "所有子任务已审核通过，自动级联关闭: {task_ids}",
+      "task_parent_auto_promoted_to_review": "所有子任务已进入 review，父任务自动进入 review",
+      "task_parent_auto_promoted_to_in_progress": "子任务被领取，父任务自动进入 in_progress",
       "task_plan_root_check_items": [
         "所有子任务全部完成",
         "最终验证通过"

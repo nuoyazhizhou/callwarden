@@ -1021,6 +1021,12 @@
       "task_status_label": "  Status: {status}",
       "task_applied_at": "  Applied at: {ts}",
       "task_closed_at": "  Closed at: {ts}",
+      "task_apply_parent_manual_forbidden": "Parent task cannot be applied manually; it is auto-cascaded when all subtasks are applied",
+      "task_close_parent_manual_forbidden": "Parent task cannot be closed manually; it is auto-cascaded when all subtasks are applied",
+      "task_close_blocked_by_subtasks": "{count} subtasks are not closed; cannot close parent task",
+      "task_apply_auto_cascaded": "All subtasks applied; auto-cascaded close: {task_ids}",
+      "task_parent_auto_promoted_to_review": "All subtasks entered review; parent task auto-promoted to review",
+      "task_parent_auto_promoted_to_in_progress": "Subtask claimed; parent task auto-promoted to in_progress",
       "task_plan_root_check_items": [
         "All subtasks are complete",
         "Final verification passed"
