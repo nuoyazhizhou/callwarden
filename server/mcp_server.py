@@ -1589,6 +1589,59 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def task_capture_diff(
+        task_id: str,
+        step_id: str = "",
+        base: str = "",
+        dry_run: bool = True,
+    ) -> dict:
+        """捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
+
+        用于把外部 Agent（非 Call Warden MCP）在文件系统中留下的真实改动
+        归因到指定 task/step，并触发质量审查。这是自举闭环的核心入口。
+
+        流程：
+        1. 调用 get_workspace_changes_since 检测变更文件
+        2. dry-run=True：只返回计划不写库
+        3. dry-run=False（apply 模式）：
+           - 写 workspace_scan_runs（status=running -> completed）
+           - 每个变更文件写 change_audit（含 hash_before/hash_after）
+           - 签名审计记录 sign_audit_record（best-effort，失败不阻塞）
+           - 关联 task_symbol_changes（best-effort，失败不阻塞）
+           - 调用 run_task_completion_review 收集 quality findings
+           - 根据 quality_decision 决定 next_action
+
+        Args:
+            task_id: 关联任务 ID
+            step_id: 关联步骤 ID（可选）
+            base: 基线 commit（空串自动取最近一次 scan baseline 的 git_head）
+            dry_run: True 只返回计划不写库，默认 True
+
+        Returns:
+            {
+                "task_id": str,
+                "step_id": str,
+                "dry_run": bool,
+                "scan_id": int,        # apply 模式才有
+                "changed_files": [...],
+                "linked_symbols": [...],
+                "quality_findings": [...],
+                "quality_decision": "pass" | "warn" | "block" | "",
+                "next_action": "review" | "fix" | "commit" | "noop" | "",
+            }
+        """
+        db = get_db()
+        try:
+            return db.task_capture_diff(
+                task_id=task_id,
+                step_id=step_id,
+                base=base,
+                dry_run=dry_run,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
         """在父任务下创建子任务
 

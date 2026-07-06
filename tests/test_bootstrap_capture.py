@@ -13,6 +13,8 @@ import os
 import sqlite3
 import tempfile
 
+import pytest
+
 from callwarden.db.schema import SCHEMA_VERSION
 from callwarden.db.db import CodeGraphDB
 
@@ -811,3 +813,154 @@ def test_task_capture_diff_apply_block_decision_next_action_fix():
                 db.run_task_completion_review = original
     finally:
         db.close()
+
+
+# ----------------------------------------------------------------------
+# CLI cw task capture-diff 与 MCP task_capture_diff 测试
+# ----------------------------------------------------------------------
+
+def test_cli_task_capture_diff_help_no_db():
+    """cw task capture-diff --help 不应初始化数据库。"""
+    import sys
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    old_argv = sys.argv
+    sys.argv = ["cw", "task", "capture-diff", "--help"]
+    try:
+        db_init_called = {"count": 0}
+
+        def fake_init(self, *args, **kwargs):
+            db_init_called["count"] += 1
+            raise RuntimeError("db should not be initialized for --help")
+
+        with mock.patch.object(CodeGraphDB, "__init__", fake_init):
+            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
+                try:
+                    cli_main._run_subcommand_mode()
+                except RuntimeError as e:
+                    if "should not" in str(e):
+                        pytest.fail("db initialized during cw task capture-diff --help")
+                    raise
+        assert db_init_called["count"] == 0
+    finally:
+        sys.argv = old_argv
+
+
+def test_cli_task_capture_diff_dry_run_calls_db_method():
+    """cw task capture-diff --dry-run 必须调用 db.task_capture_diff(dry_run=True)。"""
+    import sys
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        try:
+            tid = db.task_create("cli-dry-run-test", "desc", [])
+            call_log = {"count": 0, "kwargs": None}
+            original = db.task_capture_diff
+
+            def spy(*args, **kwargs):
+                call_log["count"] += 1
+                call_log["kwargs"] = kwargs
+                return original(*args, **kwargs)
+
+            with mock.patch.object(db, "task_capture_diff", side_effect=spy):
+                old_argv = sys.argv
+                sys.argv = ["cw", "task", "capture-diff", tid, "--dry-run"]
+                try:
+                    cli_main._handle_task(["capture-diff", tid, "--dry-run"], db)
+                except SystemExit:
+                    pass
+                finally:
+                    sys.argv = old_argv
+
+            assert call_log["count"] == 1, "db.task_capture_diff 必须被调用一次"
+            kw = call_log["kwargs"] or {}
+            assert kw.get("dry_run") is True
+            assert kw.get("task_id") == tid
+        finally:
+            db.close()
+
+
+def test_cli_task_capture_diff_apply_passes_dry_run_false():
+    """cw task capture-diff（不带 --dry-run）必须以 dry_run=False 调用 db 方法。"""
+    import sys
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        try:
+            tid = db.task_create("cli-apply-test", "desc", [])
+            call_log = {"kwargs": None}
+            original = db.task_capture_diff
+
+            def spy(*args, **kwargs):
+                call_log["kwargs"] = kwargs
+                # 不真正执行 apply，避免触发质量审查的副作用
+                return {
+                    "task_id": kwargs.get("task_id", ""),
+                    "step_id": kwargs.get("step_id", ""),
+                    "dry_run": False,
+                    "scan_id": 1,
+                    "changed_files": [{"path": "demo.py", "status": "M"}],
+                    "linked_symbols": [{"file_path": "demo.py", "change_id": "C-1", "linked": True}],
+                    "quality_findings": [],
+                    "quality_decision": "pass",
+                    "next_action": "review",
+                }
+
+            with mock.patch.object(db, "task_capture_diff", side_effect=spy):
+                old_argv = sys.argv
+                sys.argv = ["cw", "task", "capture-diff", tid, "--step-id", "S-1"]
+                try:
+                    cli_main._handle_task(["capture-diff", tid, "--step-id", "S-1"], db)
+                except SystemExit:
+                    pass
+                finally:
+                    sys.argv = old_argv
+
+            kw = call_log["kwargs"] or {}
+            assert kw.get("dry_run") is False, "未传 --dry-run 时 dry_run 必须为 False"
+            assert kw.get("step_id") == "S-1"
+        finally:
+            db.close()
+
+
+def test_mcp_task_capture_diff_registered():
+    """MCP server 注册了 task_capture_diff 工具。"""
+    import inspect
+    from callwarden.server import mcp_server
+
+    # create_mcp_server 内部定义 task_capture_diff，无法直接拿到引用，
+    # 但可以通过源代码字符串验证工具已注册。
+    src = inspect.getsource(mcp_server.create_mcp_server)
+    assert "def task_capture_diff(" in src, "MCP 源码缺少 task_capture_diff 工具定义"
+    assert "@mcp.tool()" in src, "MCP 源码缺少 @mcp.tool() 装饰器"
+
+
+def test_mcp_task_capture_diff_signature():
+    """task_capture_diff MCP 工具签名包含 task_id/step_id/base/dry_run。"""
+    import ast
+    import os as _os
+
+    src_path = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+        "server", "mcp_server.py",
+    )
+    with open(src_path, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+
+    func_def = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "task_capture_diff":
+            func_def = node
+            break
+    assert func_def is not None, "未找到 task_capture_diff 函数定义"
+
+    arg_names = [a.arg for a in func_def.args.args]
+    assert "task_id" in arg_names
+    assert "step_id" in arg_names
+    assert "base" in arg_names
+    assert "dry_run" in arg_names

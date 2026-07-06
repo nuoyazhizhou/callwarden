@@ -1551,6 +1551,25 @@ def _handle_task(args, db):
         help=t("cli_task_arg_reviewer", default="Reviewer identity")
     )
 
+    # capture-diff：捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
+    capture_p = sub.add_parser(
+        "capture-diff",
+        help=t("cli_task_capture_diff_desc", default="Capture external agent file changes into task/audit closure")
+    )
+    capture_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    capture_p.add_argument(
+        "--step-id", default="",
+        help=t("cli_task_arg_step_id_capture", default="Associated step ID (optional)")
+    )
+    capture_p.add_argument(
+        "--base", default="",
+        help=t("cli_task_arg_base", default="Base commit (empty = latest scan baseline)")
+    )
+    capture_p.add_argument(
+        "--dry-run", action="store_true",
+        help=t("cli_task_arg_dry_run", default="Dry-run mode: only return plan, do not write to DB")
+    )
+
     # findings：查看任务质量门禁发现
     findings_p = sub.add_parser(
         "findings", help=t("cli_task_findings_desc", default="List task quality findings")
@@ -1800,6 +1819,70 @@ def _handle_task(args, db):
         print(t("cli.messages.task_status_label", status=result["status"]))
         if result.get("closed_at"):
             print(t("cli.messages.task_closed_at", ts=result["closed_at"]))
+        print()
+        return True
+
+    elif opts.action == "capture-diff":
+        # 捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
+        result = db.task_capture_diff(
+            task_id=opts.task_id,
+            step_id=opts.step_id,
+            base=opts.base,
+            dry_run=opts.dry_run,
+        )
+
+        cprint(t("cli.messages.task_capture_diff_title"), "cyan", bold=True)
+        print(t("cli.messages.task_id_label", id=opts.task_id))
+        if opts.step_id:
+            print(t("cli.messages.task_capture_diff_step_id", step=opts.step_id))
+        if opts.base:
+            print(t("cli.messages.task_capture_diff_base_commit", base=opts.base))
+        print(t("cli.messages.task_capture_diff_mode",
+                mode=t("cli.messages.task_capture_diff_mode_dry_run") if opts.dry_run
+                else t("cli.messages.task_capture_diff_mode_apply")))
+        print()
+
+        changed = result.get("changed_files", [])
+        print(t("cli.messages.task_capture_diff_changed_count", count=len(changed)))
+        if changed:
+            print()
+            for c in changed:
+                print(t("cli.messages.task_capture_diff_changed_item",
+                        path=c.get("path", ""), status=c.get("status", "M")))
+            print()
+
+        # dry-run 模式只显示计划，不显示后续字段
+        if result.get("dry_run"):
+            cprint(t("cli.messages.task_capture_diff_dry_run_hint",
+                     next_action=result.get("next_action", "")), "yellow")
+            print()
+            return True
+
+        # apply 模式：显示 scan_id / linked_symbols / quality_findings / next_action
+        print(t("cli.messages.task_capture_diff_scan_id", scan_id=result.get("scan_id", 0)))
+        linked = result.get("linked_symbols", [])
+        print(t("cli.messages.task_capture_diff_linked_count", count=len(linked)))
+
+        # 质量审查结果
+        decision = result.get("quality_decision", "")
+        findings = result.get("quality_findings", [])
+        decision_color = {"pass": "green", "warn": "yellow", "block": "red"}.get(decision, "white")
+        if decision:
+            cprint(t("cli.messages.task_capture_diff_quality_decision",
+                     decision=decision, count=len(findings)), decision_color)
+            for f in findings:
+                sev = f.get("severity", "info")
+                color = {"error": "red", "block": "red", "warn": "yellow", "info": "cyan"}.get(sev, "white")
+                cprint(t("cli.messages.task_capture_diff_finding_item",
+                         sev=sev, ftype=f.get("finding_type", ""),
+                         msg=f.get("message", "")), color)
+        print()
+
+        # next_action 提示
+        next_action = result.get("next_action", "")
+        next_color = {"review": "green", "fix": "red", "noop": "yellow"}.get(next_action, "white")
+        cprint(t("cli.messages.task_capture_diff_next_action",
+                 action=next_action), next_color, bold=True)
         print()
         return True
 
