@@ -459,7 +459,29 @@ class TaskMixin:
             except Exception:
                 sym = None
             if sym:
+                symbol_id = 0
+                try:
+                    row = self.conn.execute(
+                        """
+                        SELECT s.id
+                        FROM symbols s
+                        JOIN file_instances fi ON s.file_instance_id = fi.id
+                        WHERE s.qualified_name = ?
+                          AND (? = '' OR fi.rel_path = ? OR fi.abs_path = ?)
+                        LIMIT 1
+                        """,
+                        (
+                            sym.get("qualified_name", target_symbol),
+                            sym.get("file_path", ""),
+                            sym.get("file_path", ""),
+                            sym.get("file_path", ""),
+                        ),
+                    ).fetchone()
+                    symbol_id = int(row["id"]) if row else 0
+                except Exception:
+                    symbol_id = 0
                 job["context"]["target_symbol"] = {
+                    "symbol_id": symbol_id,
                     "qualified_name": sym.get("qualified_name", ""),
                     "name": sym.get("name", ""),
                     "kind": sym.get("kind", ""),
@@ -480,6 +502,7 @@ class TaskMixin:
                 job["allowed_edit_scope"] = {
                     "type": "symbol",
                     "file_path": target_file,
+                    "symbol_id": symbol_id,
                     "symbol_name": target_symbol,
                     "start_line": sym.get("start_line", 0),
                     "end_line": sym.get("end_line", 0),

@@ -62,6 +62,33 @@ def test_work_next_job_returns_agent_context():
     assert "report_with" in job
 
 
+def test_work_next_job_includes_symbol_id_when_target_symbol_exists():
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+
+    target = os.path.join(tmpdir, "sample.py")
+    with open(target, "w", encoding="utf-8") as f:
+        f.write("def hello():\n    return 'hi'\n")
+
+    db.build_full_graph(force=True)
+    sym = db.get_symbol_by_name_and_file("hello", "sample.py")
+    assert sym is not None
+
+    task_id = db.task_create(
+        "symbol job",
+        steps=[{
+            "action": "edit",
+            "target_file": "sample.py",
+            "target_symbol": sym["qualified_name"],
+        }],
+    )
+
+    job = db.work_next_job(task_id)
+    assert job is not None
+    assert job["context"]["target_symbol"]["symbol_id"] > 0
+    assert job["allowed_edit_scope"]["symbol_id"] == job["context"]["target_symbol"]["symbol_id"]
+
+
 def test_new_mcp_tools_registered():
     import asyncio
 
