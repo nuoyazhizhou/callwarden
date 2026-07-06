@@ -337,6 +337,33 @@ cw server --transport sse    # SSE 模式
 - **参数**：`task_id: str`, `change_id: str = None`, `reason: str = ""`
 - **返回**：`dict`
 
+### `task_apply`
+审核通过任务（review → applied）。由其他会话的 LLM 调用，写代码的 Agent 不能自己 apply。
+
+**级联 close 机制**（T-1783309017863-a1b6）：apply 后查询所有兄弟子任务状态，若全部
+`applied`/`closed` 则原子级联 close：
+1. close 所有 applied 兄弟任务
+2. 父任务 review → applied → closed 一次性推进
+3. 递归向上检查祖父层级联
+
+- **参数**：`task_id: str`, `reviewer: str = "reviewer"`
+- **返回**：`dict` — `{task_id, status, applied_at, reviewer, cascaded_close?}`
+  - `cascaded_close: List[str]` — 仅触发级联时存在，列出所有自动 close 的 task_id
+- **拒绝场景**：
+  - 父任务（有子任务）手动 apply：`{error, reason: "parent_task_must_cascade", subtask_count}`
+  - 状态不是 review：`{error, reason: "invalid_status"}`
+
+### `task_close`
+关闭任务（applied → closed）。由其他会话的 LLM 调用。
+
+**父任务禁止手动 close**：若任务有子任务，返回错误，提示由级联触发。
+
+- **参数**：`task_id: str`, `reviewer: str = "reviewer"`
+- **返回**：`dict` — `{task_id, status, closed_at, reviewer}`
+- **拒绝场景**：
+  - 父任务（有子任务）手动 close：`{error, reason: "parent_task_must_cascade", subtask_count}`
+  - 状态不是 applied：`{error, reason: "invalid_status"}`
+
 ### `task_list`
 列出任务。
 - **参数**：`status_filter: str = None`, `limit: int = 20`
