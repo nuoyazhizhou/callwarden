@@ -25,10 +25,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import secrets
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
 
+from ..config import read_file_normalized
 from ..i18n import t
 
 
@@ -494,4 +496,220 @@ class BootstrapMixin:
             "changed_files": changed_files,
             "status_hash": status_hash,
             "is_dirty": is_dirty,
+        }
+
+    # ============================================
+    # task_capture_diff 闭环入口
+    # ============================================
+
+    def task_capture_diff(
+        self,
+        task_id: str,
+        step_id: str = "",
+        base: str = "",
+        dry_run: bool = True,
+    ) -> Dict[str, Any]:
+        """把外部 Agent 的真实文件改动捕获到 task/change/symbol/audit
+
+        流程：
+        1. 读取上次 scan baseline 或指定 base，调用 get_workspace_changes_since
+        2. dry-run：只返回计划，不写 change_audit / audit_chain
+        3. apply 模式：
+           a. 记录 scan baseline（workspace_scan_runs）
+           b. 对每个变更文件计算 hash_before/hash_after，写入 change_audit
+           c. 签名审计记录（sign_audit_record）
+           d. 尽量关联 task_symbol_changes（record_task_symbol_change）
+           e. 调用 run_task_completion_review
+           f. 更新 scan_run 状态为 completed
+        4. 返回 changed_files、linked_symbols、quality_findings、next_action
+
+        Args:
+            task_id: 关联任务 ID
+            step_id: 关联步骤 ID（可选）
+            base: 基线 commit（空串自动取最近一次 scan baseline 的 git_head）
+            dry_run: True 只返回计划不写库
+
+        Returns:
+            {
+                "task_id": ...,
+                "step_id": ...,
+                "dry_run": bool,
+                "scan_id": int,        # apply 模式才有
+                "changed_files": [...],
+                "linked_symbols": [...],
+                "quality_findings": [...],
+                "quality_decision": "pass" | "warn" | "block" | "",
+                "next_action": "review" | "fix" | "commit" | "",
+            }
+        """
+        # 步骤 1：检测变更
+        changes = self.get_workspace_changes_since(
+            scan_id=0,
+            base_commit=base,
+            include_untracked=True,
+        )
+        changed_files = changes["changed_files"]
+
+        # dry-run：只返回计划
+        if dry_run:
+            return {
+                "task_id": task_id,
+                "step_id": step_id,
+                "dry_run": True,
+                "scan_id": 0,
+                "changed_files": changed_files,
+                "linked_symbols": [],
+                "quality_findings": [],
+                "quality_decision": "",
+                "next_action": "apply" if changed_files else "noop",
+            }
+
+        # 步骤 2：记录 scan baseline
+        scan_id = self.record_workspace_scan_run(
+            purpose="capture",
+            task_id=task_id,
+            step_id=step_id,
+            status="running",
+            metadata={
+                "base_commit": changes["base_commit"],
+                "baseline_type": changes["baseline_type"],
+            },
+        )
+
+        # 步骤 3：写入 change_audit（每文件一条）
+        ws_id = self._get_active_workspace_id()
+        root = getattr(self, "workspace_root", "")
+        linked_symbols: List[Dict[str, Any]] = []
+        recorded_changes: List[Dict[str, Any]] = []
+
+        for f in changed_files:
+            rel_path = f["path"]
+            status_code = f.get("status", "M")
+            abs_path = os.path.join(root, rel_path) if root else rel_path
+
+            # 读取 hash_before（从 file_instances）
+            hash_before = ""
+            try:
+                cur = self.conn.execute(
+                    "SELECT current_content_hash FROM file_instances "
+                    "WHERE workspace_id = ? AND rel_path = ?",
+                    (ws_id, rel_path),
+                )
+                row = cur.fetchone()
+                if row:
+                    hash_before = row[0] if not isinstance(row, dict) else row["current_content_hash"]
+            except Exception:
+                pass
+
+            # 读取 hash_after（从磁盘）
+            hash_after = ""
+            if os.path.exists(abs_path):
+                try:
+                    _content, hash_after = read_file_normalized(abs_path)
+                except Exception:
+                    hash_after = ""
+
+            # 生成 change_id 并写入 change_audit
+            ts_ms = int(time.time() * 1000)
+            rand4 = secrets.token_hex(2)
+            change_id = f"C-{ts_ms}-{rand4}"
+            try:
+                self.conn.execute(
+                    "INSERT INTO change_audit "
+                    "(id, task_id, step_id, file_path, hash_before, hash_after, "
+                    " diff, author, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        change_id, task_id, step_id, rel_path,
+                        hash_before, hash_after, "",
+                        "capture-diff", time.time(),
+                    ),
+                )
+                recorded_changes.append({
+                    "change_id": change_id,
+                    "file_path": rel_path,
+                    "hash_before": hash_before,
+                    "hash_after": hash_after,
+                    "status": status_code,
+                })
+            except Exception:
+                pass
+
+            # 签名审计记录（失败不阻塞）
+            if hasattr(self, "sign_audit_record"):
+                try:
+                    self.sign_audit_record(
+                        "change_audit",
+                        change_id,
+                        {
+                            "task_id": task_id,
+                            "step_id": step_id,
+                            "file_path": rel_path,
+                            "hash_before": hash_before,
+                            "hash_after": hash_after,
+                            "diff": "",
+                            "author": "capture-diff",
+                        },
+                    )
+                except Exception:
+                    pass
+
+            # 尽量关联 task_symbol_changes（best-effort）
+            if hasattr(self, "record_task_symbol_change"):
+                try:
+                    self.record_task_symbol_change(
+                        task_id=task_id,
+                        step_id=step_id,
+                        change_audit_id=change_id,
+                        file_path=rel_path,
+                        symbol_hash_before=hash_before,
+                        symbol_hash_after=hash_after,
+                        change_type="modified" if status_code == "M" else (
+                            "added" if status_code in ("A", "untracked") else
+                            "deleted" if status_code == "D" else "modified"
+                        ),
+                        source="task_capture_diff",
+                        metadata={"status": status_code},
+                    )
+                    linked_symbols.append({
+                        "file_path": rel_path,
+                        "change_id": change_id,
+                        "linked": True,
+                    })
+                except Exception:
+                    pass
+
+        self.conn.commit()
+
+        # 步骤 4：调用 run_task_completion_review
+        quality_decision = ""
+        quality_findings: List[Dict[str, Any]] = []
+        if hasattr(self, "run_task_completion_review") and recorded_changes:
+            try:
+                review = self.run_task_completion_review(task_id, step_id)
+                quality_decision = review.get("decision", "")
+                quality_findings = review.get("findings", [])
+            except Exception:
+                pass
+
+        # 步骤 5：更新 scan_run 状态为 completed
+        self.update_scan_run_status(scan_id, "completed", changed_files=changed_files)
+
+        # 步骤 6：决定 next_action
+        if quality_decision == "block":
+            next_action = "fix"
+        elif recorded_changes:
+            next_action = "review"
+        else:
+            next_action = "noop"
+
+        return {
+            "task_id": task_id,
+            "step_id": step_id,
+            "dry_run": False,
+            "scan_id": scan_id,
+            "changed_files": changed_files,
+            "linked_symbols": linked_symbols,
+            "quality_findings": quality_findings,
+            "quality_decision": quality_decision,
+            "next_action": next_action,
         }

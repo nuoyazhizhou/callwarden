@@ -530,3 +530,284 @@ def test_get_workspace_changes_since_git_clean():
         assert result["current_head"] == head
     finally:
         db.close()
+
+
+# ----------------------------------------------------------------------
+# task_capture_diff 闭环入口测试
+# ----------------------------------------------------------------------
+
+def _db_with_git_repo_and_task():
+    """构造临时工作区 + git 仓库 + 一个关联任务。
+
+    返回 (db, root, head, task_id)，调用方负责 db.close()。
+    """
+    db, root = _db_with_workspace()
+    head = _init_git_repo(root)
+    task_id = db.task_create(
+        title="capture-diff 测试任务",
+        description="为 task_capture_diff 测试构造的真实任务",
+    )
+    return db, root, head, task_id
+
+
+def test_task_capture_diff_dry_run_no_writes():
+    """dry_run=True 不写 change_audit / audit_chain / 已完成 scan_runs。"""
+    db, root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        # 制造一个 dirty 文件
+        with open(os.path.join(root, "committed.py"), "a", encoding="utf-8") as f:
+            f.write("# extra\n")
+
+        before_audit = db.conn.execute(
+            "SELECT COUNT(*) FROM change_audit"
+        ).fetchone()[0]
+        before_chain = db.conn.execute(
+            "SELECT COUNT(*) FROM audit_chain"
+        ).fetchone()[0]
+
+        result = db.task_capture_diff(
+            task_id=task_id, step_id="S-test", base=head, dry_run=True
+        )
+
+        # dry_run 应只返回计划，不落库
+        after_audit = db.conn.execute(
+            "SELECT COUNT(*) FROM change_audit"
+        ).fetchone()[0]
+        after_chain = db.conn.execute(
+            "SELECT COUNT(*) FROM audit_chain"
+        ).fetchone()[0]
+        assert after_audit == before_audit, "dry-run 不应写 change_audit"
+        assert after_chain == before_chain, "dry-run 不应写 audit_chain"
+
+        # dry_run 不应创建已完成的 scan_run
+        assert result["dry_run"] is True
+        assert result["scan_id"] == 0
+        assert result["next_action"] == "apply"
+        assert len(result["changed_files"]) >= 1
+        assert result["quality_findings"] == []
+        assert result["quality_decision"] == ""
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_dry_run_empty_changes_next_action_noop():
+    """clean repo + dry_run=True → changed_files 为空，next_action='noop'。"""
+    db, _root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        result = db.task_capture_diff(
+            task_id=task_id, base=head, dry_run=True
+        )
+        assert result["dry_run"] is True
+        assert result["changed_files"] == []
+        assert result["next_action"] == "noop"
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_apply_writes_change_audit():
+    """apply 模式：变更文件写入 change_audit，含 hash_before/hash_after。"""
+    db, root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        # dirty：修改已提交文件
+        with open(os.path.join(root, "committed.py"), "a", encoding="utf-8") as f:
+            f.write("print('extra')\n")
+
+        result = db.task_capture_diff(
+            task_id=task_id, step_id="S-cap1", base=head, dry_run=False
+        )
+
+        assert result["dry_run"] is False
+        assert result["scan_id"] > 0
+        assert result["next_action"] in ("review", "fix")
+        assert len(result["changed_files"]) >= 1
+        assert len(result["linked_symbols"]) >= 1
+
+        # 验证 change_audit 落库
+        cur = db.conn.execute(
+            "SELECT id, file_path, hash_before, hash_after, author, task_id, step_id "
+            "FROM change_audit WHERE task_id = ?",
+            (task_id,),
+        )
+        rows = cur.fetchall()
+        assert len(rows) >= 1, "change_audit 应至少有一条记录"
+        r = rows[0]
+        assert r["file_path"] == "committed.py"
+        assert r["author"] == "capture-diff"
+        assert r["task_id"] == task_id
+        assert r["step_id"] == "S-cap1"
+        # hash_before 在 file_instances 无记录时为空串，hash_after 来自磁盘
+        # 这里不强制 hash_before 非空（取决于 file_instances 是否有记录）
+        assert r["hash_after"] != ""  # 磁盘文件存在，hash_after 应非空
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_apply_writes_audit_chain_signatures():
+    """apply 模式：为每个 change_audit 写入 audit_chain 签名。"""
+    db, root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        with open(os.path.join(root, "committed.py"), "a", encoding="utf-8") as f:
+            f.write("# dirty\n")
+        # 新增 untracked 文件，触发两条变更
+        with open(os.path.join(root, "new_file.py"), "w", encoding="utf-8") as f:
+            f.write("print('new')\n")
+
+        db.task_capture_diff(
+            task_id=task_id, step_id="S-cap2", base=head, dry_run=False
+        )
+
+        # 每个 change_audit.id 都应在 audit_chain 有对应签名记录
+        cur = db.conn.execute(
+            "SELECT id FROM change_audit WHERE task_id = ?",
+            (task_id,),
+        )
+        change_ids = [row["id"] for row in cur.fetchall()]
+        assert len(change_ids) >= 1
+
+        for cid in change_ids:
+            cur2 = db.conn.execute(
+                "SELECT COUNT(*) FROM audit_chain "
+                "WHERE table_name = 'change_audit' AND record_id = ?",
+                (cid,),
+            )
+            n = cur2.fetchone()[0]
+            assert n >= 1, f"change_audit {cid} 缺少 audit_chain 签名记录"
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_apply_links_task_symbol_changes():
+    """apply 模式：每个变更文件尽量关联 task_symbol_changes。"""
+    db, root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        with open(os.path.join(root, "committed.py"), "a", encoding="utf-8") as f:
+            f.write("# dirty\n")
+
+        result = db.task_capture_diff(
+            task_id=task_id, step_id="S-cap3", base=head, dry_run=False
+        )
+
+        # linked_symbols 列表应与 changed_files 数量一致（best-effort，可能为 0）
+        assert isinstance(result["linked_symbols"], list)
+
+        # 验证 task_symbol_changes 表有记录（capture-diff 应触发）
+        cur = db.conn.execute(
+            "SELECT COUNT(*) FROM task_symbol_changes "
+            "WHERE task_id = ? AND source = 'task_capture_diff'",
+            (task_id,),
+        )
+        n = cur.fetchone()[0]
+        assert n >= 1, "task_symbol_changes 应至少有一条 task_capture_diff 来源的记录"
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_apply_completes_scan_run():
+    """apply 模式：scan_run 状态由 running 更新为 completed。"""
+    db, root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        with open(os.path.join(root, "committed.py"), "a", encoding="utf-8") as f:
+            f.write("# dirty\n")
+
+        result = db.task_capture_diff(
+            task_id=task_id, step_id="S-cap4", base=head, dry_run=False
+        )
+        scan_id = result["scan_id"]
+        assert scan_id > 0
+
+        cur = db.conn.execute(
+            "SELECT status, completed_at, changed_files_json, purpose, task_id "
+            "FROM workspace_scan_runs WHERE id = ?",
+            (scan_id,),
+        )
+        row = cur.fetchone()
+        assert row is not None
+        assert row["status"] == "completed"
+        assert row["completed_at"] is not None
+        assert row["purpose"] == "capture"
+        assert row["task_id"] == task_id
+        # changed_files_json 应为非空数组
+        import json as _json
+        changed = _json.loads(row["changed_files_json"])
+        assert len(changed) >= 1
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_apply_empty_changes_next_action_noop():
+    """apply 模式 + 无变更 → next_action='noop'，不写 change_audit。"""
+    db, _root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        before = db.conn.execute(
+            "SELECT COUNT(*) FROM change_audit WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()[0]
+
+        result = db.task_capture_diff(
+            task_id=task_id, base=head, dry_run=False
+        )
+
+        assert result["dry_run"] is False
+        assert result["changed_files"] == []
+        assert result["next_action"] == "noop"
+
+        after = db.conn.execute(
+            "SELECT COUNT(*) FROM change_audit WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()[0]
+        assert after == before, "无变更时不应写 change_audit"
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_apply_returns_quality_fields():
+    """apply 模式：返回结果包含 quality_findings 和 quality_decision 字段。"""
+    db, root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        with open(os.path.join(root, "committed.py"), "a", encoding="utf-8") as f:
+            f.write("# dirty\n")
+
+        result = db.task_capture_diff(
+            task_id=task_id, step_id="S-cap5", base=head, dry_run=False
+        )
+
+        # quality_decision 为字符串（pass/warn/block 之一或空串）
+        assert isinstance(result["quality_decision"], str)
+        assert result["quality_decision"] in ("", "pass", "warn", "block")
+        # quality_findings 为列表
+        assert isinstance(result["quality_findings"], list)
+    finally:
+        db.close()
+
+
+def test_task_capture_diff_apply_block_decision_next_action_fix():
+    """quality_decision='block' 时 next_action='fix'。
+
+    通过 monkey-patch run_task_completion_review 强制返回 block 决策。
+    """
+    db, root, head, task_id = _db_with_git_repo_and_task()
+    try:
+        with open(os.path.join(root, "committed.py"), "a", encoding="utf-8") as f:
+            f.write("# dirty\n")
+
+        # monkey-patch 让 run_task_completion_review 返回 block 决策
+        original = getattr(db, "run_task_completion_review", None)
+        db.run_task_completion_review = lambda tid, sid="": {
+            "decision": "block",
+            "findings": [{"severity": "block", "message": "mocked"}],
+            "summary": "mocked block",
+            "counts": {"info": 0, "warn": 0, "error": 0, "block": 1},
+            "check_gate_result": None,
+        }
+        try:
+            result = db.task_capture_diff(
+                task_id=task_id, step_id="S-cap6", base=head, dry_run=False
+            )
+            assert result["quality_decision"] == "block"
+            assert result["next_action"] == "fix"
+            assert len(result["quality_findings"]) >= 1
+        finally:
+            if original is not None:
+                db.run_task_completion_review = original
+    finally:
+        db.close()
