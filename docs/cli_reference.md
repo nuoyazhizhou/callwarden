@@ -652,6 +652,18 @@ cw task apply <task_id> [--reviewer <identity>]
 - 成功后 `applied_at` 字段写入当前时间戳
 - `--reviewer` 参数标识审核人（默认 `reviewer`）
 
+**父任务禁止手动 apply**：若任务有子任务（即父任务），返回错误
+`reason=parent_task_must_cascade`，提示由级联触发。父任务的状态推进由系统在
+最后一个子任务 apply 时自动级联完成（`review → applied → closed` 一次性推进）。
+
+**级联 close**：若 apply 后所有兄弟子任务都已 `applied`/`closed`，触发原子级联：
+1. close 所有 `applied` 状态的兄弟任务
+2. 父任务 `review → applied → closed` 一次性推进
+3. 递归向上检查祖父层级联
+
+返回值新增 `cascaded_close: List[str]` 字段（仅触发级联时存在），列出所有自动
+close 的 task_id。
+
 ### `task close`：关闭任务
 
 ```bash
@@ -666,6 +678,10 @@ cw task close <task_id> [--reviewer <identity>]
 - 仅 `applied` 状态的任务可 `close`，其他状态返回错误
 - 成功后 `closed_at` 字段写入当前时间戳
 - `--reviewer` 参数标识关闭人（默认 `reviewer`）
+
+**父任务禁止手动 close**：若任务有子任务（即父任务），返回错误
+`reason=parent_task_must_cascade` 和 `subtask_count` 字段，提示由级联触发。
+父任务的 close 由系统在最后一个子任务 apply 时自动级联完成。
 
 ### `task findings`：查看任务质量门禁发现
 
@@ -1336,6 +1352,37 @@ cw task close <task_id> --reviewer closer-session
 
 # 8. 如需回滚
 cw task rollback <task_id> <step_id>
+```
+
+### 示例 8：父子任务级联 close
+
+```bash
+# 1. 创建父任务（含 3 个子任务）
+cw task create --title "重构支付模块" --parent-id ""  # 父任务
+# → 返回 parent_id
+
+# 2. 为父任务创建 3 个子任务
+cw task create --title "重构支付 API" --parent-id <parent_id>
+cw task create --title "重构支付 DB 层" --parent-id <parent_id>
+cw task create --title "重构支付测试" --parent-id <parent_id>
+
+# 3. 领取并完成所有子任务（深度优先）
+cw task next <parent_id>  # 自动下钻到第一个子任务
+# ... 每个子任务完成后 task_next_step 自动下钻到下一个
+
+# 4. 所有子任务进入 review 后，父任务自动推进到 review
+# （由 _update_parent_status 自动触发）
+
+# 5. 逐个 apply 子任务（由其他会话 LLM 调用）
+cw task apply <sub1_id> --reviewer reviewer-A  # 不级联（还有兄弟未 apply）
+cw task apply <sub2_id> --reviewer reviewer-B  # 不级联（还有兄弟未 apply）
+cw task apply <sub3_id> --reviewer reviewer-C  # 触发级联 close！
+# → 返回值包含 cascaded_close: [sub1_id, sub2_id, sub3_id, parent_id]
+# → 所有子任务和父任务一次性变为 closed 状态
+
+# 6. 查看任务树状态确认
+cw task show <parent_id>
+# → 所有子任务和父任务都是 closed
 ```
 
 ---
