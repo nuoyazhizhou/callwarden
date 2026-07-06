@@ -45,6 +45,54 @@ def test_propose_range_patch_updates_only_target_lines():
         assert f.read() == "line1\nchanged\nline3\n"
 
 
+def test_propose_symbol_id_patch_updates_exact_symbol():
+    tmpdir = tempfile.mkdtemp()
+    db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
+
+    target = os.path.join(tmpdir, "sample.py")
+    with open(target, "w", encoding="utf-8") as f:
+        f.write("def hello():\n    return 'hi'\n\ndef keep():\n    return 'stay'\n")
+
+    db.build_full_graph(force=True)
+    sym = db.get_symbol_by_name_and_file("hello", "sample.py")
+    assert sym is not None
+    row = db.conn.execute(
+        "SELECT id, symbol_hash FROM symbols WHERE qualified_name = ?",
+        (sym["qualified_name"],),
+    ).fetchone()
+    assert row is not None
+
+    preview = db.propose_symbol_id_patch(
+        row["id"],
+        "def hello():\n    return 'hello'",
+        dry_run=True,
+        expected_symbol_hash=row["symbol_hash"],
+    )
+    assert preview["success"] is True
+    assert preview["status"] == "preview"
+    assert preview["patch_scope"]["symbol_id"] == row["id"]
+    assert preview["guardrail"]["decision"] in ("pass", "warn")
+
+    mismatch = db.propose_symbol_id_patch(
+        row["id"],
+        "def hello():\n    return 'bad'",
+        dry_run=True,
+        expected_symbol_hash="bad-hash",
+    )
+    assert mismatch["success"] is False
+
+    applied = db.propose_symbol_id_patch(
+        row["id"],
+        "def hello():\n    return 'hello'",
+        expected_symbol_hash=row["symbol_hash"],
+    )
+    assert applied["success"] is True
+    assert applied["status"] == "applied"
+
+    with open(target, "r", encoding="utf-8") as f:
+        assert f.read() == "def hello():\n    return 'hello'\n\ndef keep():\n    return 'stay'\n"
+
+
 def test_work_next_job_returns_agent_context():
     tmpdir = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
