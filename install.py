@@ -338,6 +338,121 @@ echo "[Call Warden] running check-gate for $CALLWARDEN_TASK_ID before push..."
 {cmd} check-gate "$CALLWARDEN_TASK_ID"
 """
 
+    def _post_commit_hook(self, task_id: str = "") -> str:
+        """生成 post-commit hook 内容
+
+        在 commit 完成后自动捕获文件变更到 task/audit 闭环。
+
+        Args:
+            task_id: 指定的任务 ID。为空时从 CALLWARDEN_TASK_ID 环境变量读取。
+
+        Returns:
+            post-commit hook 脚本内容
+        """
+        cmd = self._python_cw_command()
+        marker = self._hook_marker()
+        if task_id:
+            # 硬编码 task_id，直接调用
+            return f"""#!/bin/sh
+{marker}
+# post-commit: 自动捕获文件变更到 task/audit 闭环（task_id 硬编码）
+export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
+echo "[Call Warden] capturing diff for task {task_id}..."
+{cmd} task capture-diff "{task_id}" || true
+"""
+        # 从环境变量读取 task_id
+        return f"""#!/bin/sh
+{marker}
+# post-commit: 自动捕获文件变更到 task/audit 闭环（task_id 从环境变量读取）
+export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
+if [ -z "${{CALLWARDEN_TASK_ID:-}}" ]; then
+  # 没有任务 ID，静默跳过（不报错，不影响 commit）
+  exit 0
+fi
+echo "[Call Warden] capturing diff for task $CALLWARDEN_TASK_ID..."
+{cmd} task capture-diff "$CALLWARDEN_TASK_ID" || true
+"""
+
+    def install_post_commit_hook(
+        self, task_id: str = "", uninstall: bool = False
+    ) -> bool:
+        """安装或卸载 post-commit hook
+
+        Args:
+            task_id: 指定的任务 ID（为空时从环境变量读取）
+            uninstall: True=卸载 hook，False=安装 hook
+
+        Returns:
+            True=操作成功，False=操作失败（如 git 目录不存在）
+        """
+        git_dir = self._find_git_dir(os.getcwd())
+        if not git_dir:
+            print(t(
+                "cli.messages.install_hooks_no_git",
+                default="Not inside a Git repository; hooks were not installed.",
+            ))
+            return False
+
+        hook_path = os.path.join(git_dir, "hooks", "post-commit")
+
+        if uninstall:
+            # 卸载：仅删除 Call Warden 生成的 hook
+            if os.path.exists(hook_path):
+                try:
+                    with open(hook_path, "r", encoding="utf-8", errors="ignore") as f:
+                        existing = f.read()
+                except OSError:
+                    existing = ""
+                if self._hook_marker() in existing:
+                    os.remove(hook_path)
+                    print(t(
+                        "cli.messages.install_hook_uninstalled",
+                        path=hook_path,
+                        default=f"Uninstalled hook: {hook_path}",
+                    ))
+                else:
+                    print(t(
+                        "cli.messages.install_hook_skip_non_cw",
+                        path=hook_path,
+                        default=f"Skipped non-Call-Warden hook: {hook_path}",
+                    ))
+            else:
+                print(t(
+                    "cli.messages.install_hook_not_found",
+                    path=hook_path,
+                    default=f"Hook not found: {hook_path}",
+                ))
+            return True
+
+        # 安装：写入 post-commit hook
+        os.makedirs(os.path.dirname(hook_path), exist_ok=True)
+        content = self._post_commit_hook(task_id=task_id)
+        if self._write_hook(hook_path, content, force=False):
+            print(t(
+                "cli.messages.install_hook_installed",
+                path=hook_path,
+                default=f"Installed hook: {hook_path}",
+            ))
+            if task_id:
+                print(t(
+                    "cli.messages.install_hook_task_id_hardcoded",
+                    task_id=task_id,
+                    default=f"  task_id hardcoded: {task_id}",
+                ))
+            else:
+                print(t(
+                    "cli.messages.install_hook_task_id_envvar",
+                    default="  task_id from CALLWARDEN_TASK_ID env var",
+                ))
+            return True
+        else:
+            print(t(
+                "cli.messages.install_hooks_skipped",
+                path=hook_path,
+                default=f"Skipped existing non-Call-Warden hook: {hook_path}",
+            ))
+            return False
+
     def _check_pip(self) -> bool:
         """检查 pip 是否可用"""
         try:

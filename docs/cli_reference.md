@@ -318,6 +318,54 @@ cw install --check
 3. **状态可见**：每个包安装前后打印状态（已安装 / 安装中 / 成功 / 失败）
 4. **幂等**：重复运行不会出错，已安装的包会跳过
 
+### `install-hook`：安装 Git Hook（task_capture_diff 闭环）
+
+Call Warden 提供独立的 Git Hook 安装命令，安装 post-commit hook 让 Agent 在 commit 后自动捕获文件变更到 task/audit 闭环。
+
+**调用方式**：`cw install-hook post-commit [options]`
+
+#### 安装（从环境变量读取 task_id，推荐）
+
+```bash
+cw install-hook post-commit
+# 之后通过 CALLWARDEN_TASK_ID 环境变量传递当前任务 ID
+export CALLWARDEN_TASK_ID=T-xxx
+git commit -m "feat: xxx"
+```
+
+#### 安装（硬编码 task_id）
+
+```bash
+cw install-hook post-commit --task-id T-1783349079762-8246
+```
+
+#### 卸载
+
+```bash
+cw install-hook post-commit --uninstall
+```
+
+#### 命令行参数
+
+| 参数 | 说明 |
+|------|------|
+| `hook` | Hook 类型（目前仅支持 `post-commit`） |
+| `--task-id <ID>` | 硬编码 task_id 到 hook（不指定时从 `CALLWARDEN_TASK_ID` 环境变量读取） |
+| `--uninstall` | 卸载 hook（仅删除 Call Warden 生成的 hook，保护用户自定义 hook） |
+
+#### 退出码
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 安装/卸载成功 |
+| 1 | 安装/卸载失败（如不在 git 仓库内） |
+
+#### fail-soft 设计
+
+- 没有进行中的任务时静默跳过，不影响 commit
+- 数据库锁或异常时打印提示但用 `|| true` 兜底退出码
+- 双层 fail-soft（DB 层 + CLI 层）确保不影响 git commit
+
 ---
 
 ## 构建命令
@@ -790,6 +838,10 @@ cw task capture-diff <task_id> --apply
 
 # 指定关联 step 与 base commit
 cw task capture-diff <task_id> --step-id S-1783... --base HEAD~1 --apply
+
+# --auto 模式：自动检测 in_progress 任务，HEAD~1 作为 base，自动 apply（fail-soft）
+# 常用于 post-commit hook 自动调用，task_id 可省略
+cw task capture-diff --auto
 ```
 
 **用途**：当外部 Agent（如 Claude Code、Codex 等）在 Call Warden 之外
@@ -797,10 +849,15 @@ cw task capture-diff <task_id> --step-id S-1783... --base HEAD~1 --apply
 任务/变更/符号/审计闭环，使图谱与磁盘保持一致，并自动生成质量发现。
 
 **参数**：
-- `<task_id>`（必填）：关联的任务 ID
+- `<task_id>`（可选，`--auto` 模式下可省略）：关联的任务 ID
 - `--step-id <ID>`：关联的 step ID（可选，默认空）
 - `--base <COMMIT>`：基准 commit（可选，默认使用最近一次 `workspace_scan_runs` 的 git_head）
 - `--dry-run`（默认）：只返回计划，不写数据库
+- `--auto`：自动模式（fail-soft，不阻断 git commit）：
+  - 自动检测当前 `in_progress` 状态的任务
+  - 取 `HEAD~1` 作为 base（commit 后 hook 触发，HEAD 已是新提交）
+  - 自动 apply（`dry_run=False`）
+  - 双层 fail-soft（DB 层 + CLI 层）确保不影响 git commit
 
 **输出**：
 - 变更文件清单（含新增 / 修改 / 删除统计）

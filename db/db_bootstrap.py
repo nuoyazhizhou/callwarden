@@ -715,6 +715,120 @@ class BootstrapMixin:
         }
 
     # ============================================
+    # task_capture_diff_auto 自动模式（fail-soft）
+    # ============================================
+
+    def task_capture_diff_auto(self) -> Dict[str, Any]:
+        """自动检测 in_progress 任务并捕获 diff（fail-soft）
+
+        用于 post-commit hook 自动调用场景，无需用户手动指定 task_id：
+        1. 从 task_list 找最近一个 in_progress 任务（按 sort_order / created_at）
+        2. 取 HEAD~1 作为 base（commit 后 hook 触发，HEAD 是新提交）
+        3. 自动 apply（dry_run=False）
+        4. 任何异常都封装在 result dict 中，不抛异常，不影响 git commit
+
+        Returns:
+            {
+                "auto": True,           # 标识为自动模式
+                "task_id": str,          # 检测到的任务 ID（空表示没找到）
+                "step_id": "",           # 自动模式不关联 step
+                "base": str,             # 使用的 base commit
+                "dry_run": False,        # 始终 False
+                "success": bool,         # 整体是否成功
+                "error": str,            # 失败原因（success=False 时填充）
+                "reason": str,           # 失败原因的简短标识（no_in_progress_task / git_error / exception）
+                "changed_files": [...],  # 变更文件列表
+                "linked_symbols": [...],
+                "quality_findings": [...],
+                "quality_decision": "",
+                "next_action": "",
+            }
+        """
+        try:
+            # 1. 找最近的 in_progress 任务
+            tasks = self.task_list(status_filter="in_progress", limit=10)
+            if not tasks:
+                return {
+                    "auto": True,
+                    "task_id": "",
+                    "step_id": "",
+                    "base": "",
+                    "dry_run": False,
+                    "success": False,
+                    "error": "",
+                    "reason": "no_in_progress_task",
+                    "changed_files": [],
+                    "linked_symbols": [],
+                    "quality_findings": [],
+                    "quality_decision": "",
+                    "next_action": "noop",
+                }
+            task_id = tasks[0].get("task_id", "")
+            if not task_id:
+                return {
+                    "auto": True,
+                    "task_id": "",
+                    "step_id": "",
+                    "base": "",
+                    "dry_run": False,
+                    "success": False,
+                    "error": "",
+                    "reason": "no_in_progress_task",
+                    "changed_files": [],
+                    "linked_symbols": [],
+                    "quality_findings": [],
+                    "quality_decision": "",
+                    "next_action": "noop",
+                }
+
+            # 2. 取 HEAD~1 作为 base（commit 后 hook 触发，HEAD 已是新提交）
+            base = ""
+            try:
+                cwd = getattr(self, "workspace_root", "") or None
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD~1"],
+                    capture_output=True,
+                    text=True,
+                    cwd=cwd,
+                )
+                if result.returncode == 0:
+                    base = result.stdout.strip()
+            except Exception:
+                # 没有上一个 commit（首次提交），base 留空，由 task_capture_diff 自动取 scan baseline
+                base = ""
+
+            # 3. 自动 apply（dry_run=False）
+            capture_result = self.task_capture_diff(
+                task_id=task_id,
+                step_id="",
+                base=base,
+                dry_run=False,
+            )
+            capture_result["auto"] = True
+            capture_result["success"] = True
+            capture_result["error"] = ""
+            capture_result["reason"] = ""
+            capture_result["base"] = base
+            return capture_result
+        except Exception as exc:
+            # fail-soft：任何异常都封装为结果，不抛
+            return {
+                "auto": True,
+                "task_id": "",
+                "step_id": "",
+                "base": "",
+                "dry_run": False,
+                "success": False,
+                "error": str(exc),
+                "reason": "exception",
+                "changed_files": [],
+                "linked_symbols": [],
+                "quality_findings": [],
+                "quality_decision": "",
+                "next_action": "noop",
+            }
+
+    # ============================================
     # bootstrap_status 健康摘要
     # ============================================
 

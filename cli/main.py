@@ -35,7 +35,7 @@ from .console import cprint
 # 子命令关键字集合
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
-                "gc", "doctor", "install-agent", "rule", "audit", "bootstrap",
+                "gc", "doctor", "install-agent", "install-hook", "rule", "audit", "bootstrap",
                 "clone"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
@@ -243,6 +243,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_doctor(argv, db)
         elif cmd == "install-agent":
             return _handle_install_agent(argv, db)
+        elif cmd == "install-hook":
+            return _handle_install_hook(argv, db)
         elif cmd == "rule":
             return _handle_rule(argv, db)
         elif cmd == "audit":
@@ -424,6 +426,60 @@ def _write_agent_integration(root: str, out_root: str, agent: str, force: bool) 
 
     _write_if_needed(os.path.join(base, "README.md"), _agent_readme(agent), force, created)
     return created
+
+
+# --------------------------------------------------------------------
+# install-hook：Git hook 安装/卸载
+# --------------------------------------------------------------------
+
+
+def _handle_install_hook(args, db):
+    """处理 install-hook 子命令：安装或卸载 Git hook
+
+    用法：
+        cw install-hook post-commit                    # 安装（从环境变量读取 task_id）
+        cw install-hook post-commit --task-id T-xxx    # 安装（硬编码 task_id）
+        cw install-hook post-commit --uninstall        # 卸载
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw install-hook",
+        description=t(
+            "cli.messages.install_hook_desc",
+            default="Install or uninstall Call Warden Git hooks",
+        ),
+    )
+    parser.add_argument(
+        "hook",
+        choices=["post-commit"],
+        help=t(
+            "cli.messages.install_hook_arg_hook",
+            default="Hook name (post-commit: auto capture-diff after commit)",
+        ),
+    )
+    parser.add_argument(
+        "--task-id", default="",
+        help=t(
+            "cli.messages.install_hook_arg_task_id",
+            default="Task ID to hardcode in hook (empty = read from CALLWARDEN_TASK_ID env var)",
+        ),
+    )
+    parser.add_argument(
+        "--uninstall", action="store_true",
+        help=t(
+            "cli.messages.install_hook_arg_uninstall",
+            default="Uninstall the hook instead of installing",
+        ),
+    )
+    opts = parser.parse_args(args)
+
+    from ..install import CallWardenInstaller
+
+    installer = CallWardenInstaller()
+    success = installer.install_post_commit_hook(
+        task_id=opts.task_id,
+        uninstall=opts.uninstall,
+    )
+    return bool(success)
 
 
 # --------------------------------------------------------------------
@@ -1633,7 +1689,11 @@ def _handle_task(args, db):
         "capture-diff",
         help=t("cli_task_capture_diff_desc", default="Capture external agent file changes into task/audit closure")
     )
-    capture_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    # task_id 在 --auto 模式下可省略（nargs='?'）
+    capture_p.add_argument(
+        "task_id", nargs="?", default="",
+        help=t("cli_task_arg_task_id", default="Task ID")
+    )
     capture_p.add_argument(
         "--step-id", default="",
         help=t("cli_task_arg_step_id_capture", default="Associated step ID (optional)")
@@ -1645,6 +1705,10 @@ def _handle_task(args, db):
     capture_p.add_argument(
         "--dry-run", action="store_true",
         help=t("cli_task_arg_dry_run", default="Dry-run mode: only return plan, do not write to DB")
+    )
+    capture_p.add_argument(
+        "--auto", action="store_true",
+        help=t("cli_task_arg_auto_capture", default="Auto mode: detect in_progress task, use HEAD~1 as base, auto apply (fail-soft)")
     )
 
     # findings：查看任务质量门禁发现
@@ -1924,6 +1988,99 @@ def _handle_task(args, db):
 
     elif opts.action == "capture-diff":
         # 捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
+        # --auto 模式：自动检测 in_progress 任务 + HEAD~1 base + 自动 apply（fail-soft）
+        if opts.auto:
+            # 自动模式：调用 db.task_capture_diff_auto()，fail-soft
+            # 双层 fail-soft：db 层吞异常 + CLI 层兜底，确保不影响 git commit
+            try:
+                result = db.task_capture_diff_auto()
+            except Exception as exc:
+                # 兜底：db 层未捕获的异常也封装为 fail-soft 结果
+                result = {
+                    "auto": True,
+                    "success": False,
+                    "reason": "cli_exception",
+                    "error": str(exc),
+                    "task_id": "",
+                    "base": "",
+                    "dry_run": False,
+                    "changed_files": [],
+                    "linked_symbols": [],
+                    "quality_findings": [],
+                    "quality_decision": "",
+                    "next_action": "noop",
+                }
+
+            cprint(t("cli.messages.task_capture_diff_title"), "cyan", bold=True)
+            cprint(t("cli.messages.task_capture_diff_auto_mode"), "yellow", bold=True)
+            print()
+
+            if not result.get("success"):
+                # fail-soft：失败不阻断，仅提示
+                reason = result.get("reason", "")
+                error = result.get("error", "")
+                if reason == "no_in_progress_task":
+                    cprint(t("cli.messages.task_capture_diff_auto_no_task"), "yellow")
+                elif reason == "exception":
+                    cprint(t("cli.messages.task_capture_diff_auto_exception",
+                             error=error), "red")
+                else:
+                    cprint(t("cli.messages.task_capture_diff_auto_failed",
+                             reason=reason, error=error), "red")
+                print()
+                # fail-soft：返回 True，不阻断 git commit
+                return True
+
+            # 成功：展示 task_id / base / 变更摘要
+            task_id = result.get("task_id", "")
+            base = result.get("base", "")
+            print(t("cli.messages.task_id_label", id=task_id))
+            if base:
+                print(t("cli.messages.task_capture_diff_base_commit", base=base))
+            print(t("cli.messages.task_capture_diff_mode",
+                    mode=t("cli.messages.task_capture_diff_mode_apply")))
+            print()
+
+            changed = result.get("changed_files", [])
+            print(t("cli.messages.task_capture_diff_changed_count", count=len(changed)))
+            if changed:
+                print()
+                for c in changed:
+                    print(t("cli.messages.task_capture_diff_changed_item",
+                            path=c.get("path", ""), status=c.get("status", "M")))
+                print()
+
+            print(t("cli.messages.task_capture_diff_scan_id",
+                     scan_id=result.get("scan_id", 0)))
+            linked = result.get("linked_symbols", [])
+            print(t("cli.messages.task_capture_diff_linked_count", count=len(linked)))
+
+            decision = result.get("quality_decision", "")
+            findings = result.get("quality_findings", [])
+            decision_color = {"pass": "green", "warn": "yellow", "block": "red"}.get(decision, "white")
+            if decision:
+                cprint(t("cli.messages.task_capture_diff_quality_decision",
+                         decision=decision, count=len(findings)), decision_color)
+                for f in findings:
+                    sev = f.get("severity", "info")
+                    color = {"error": "red", "block": "red", "warn": "yellow", "info": "cyan"}.get(sev, "white")
+                    cprint(t("cli.messages.task_capture_diff_finding_item",
+                             sev=sev, ftype=f.get("finding_type", ""),
+                             msg=f.get("message", "")), color)
+            print()
+
+            next_action = result.get("next_action", "")
+            next_color = {"review": "green", "fix": "red", "noop": "yellow"}.get(next_action, "white")
+            cprint(t("cli.messages.task_capture_diff_next_action",
+                     action=next_action), next_color, bold=True)
+            print()
+            return True
+
+        # 手动模式：必须指定 task_id
+        if not opts.task_id:
+            capture_p.error(t("cli.messages.task_capture_diff_missing_task_id",
+                              default="task_id is required (or use --auto)"))
+
         result = db.task_capture_diff(
             task_id=opts.task_id,
             step_id=opts.step_id,

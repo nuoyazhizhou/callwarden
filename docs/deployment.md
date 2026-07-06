@@ -466,6 +466,63 @@ jobs:
 
 门禁失败时 PR 显示红色 X，输出失败原因和推荐修复动作。
 
+### Git Hooks（task_capture_diff 闭环）
+
+Call Warden 提供 `cw install-hook post-commit` 一键安装 post-commit hook，让 Agent 在 commit 后自动把文件变更捕获到 task/audit 闭环。
+
+**前置条件**：
+- 已安装 Call Warden 并注册当前工作区（`cw --refresh-all` 至少跑过一次）
+- 至少有一个 `in_progress` 状态的任务（否则自动跳过）
+
+**安装**：
+
+```bash
+# 方式 1：从环境变量 CALLWARDEN_TASK_ID 读取 task_id（推荐，可动态切换任务）
+cw install-hook post-commit
+
+# 方式 2：硬编码 task_id（适合长任务周期固定一个任务）
+cw install-hook post-commit --task-id T-1783349079762-8246
+```
+
+**触发流程**：
+1. Agent 完成编辑后执行 `git commit -m "..."`
+2. post-commit hook 自动触发 `cw task capture-diff --auto`
+3. 自动检测当前 `in_progress` 任务，取 `HEAD~1` 作为 base
+4. 调用 `db.task_capture_diff(task_id, base=HEAD~1, dry_run=False)` 写入 change_audit / audit_chain / scan_run
+5. 触发 `run_task_completion_review` 质量审查，输出 decision / findings / next_action
+
+**fail-soft 设计**：
+- 没有进行中的任务：输出 "No in_progress task found"，正常退出（不影响 commit）
+- 数据库锁或异常：捕获异常并打印提示，`|| true` 兜底退出码 0
+- 双层 fail-soft：DB 层 + CLI 层都包 try/except，确保不影响 git commit
+
+**手动调用**：
+
+```bash
+# 直接调用 --auto 模式（无需通过 hook）
+cw task capture-diff --auto
+
+# 传统手动模式（必须指定 task_id）
+cw task capture-diff T-1783349079762-8246 --base HEAD~1
+```
+
+**卸载**：
+
+```bash
+cw install-hook post-commit --uninstall
+```
+
+**环境变量传递 task_id**（推荐方式）：
+
+```bash
+# 设置当前任务 ID（hook 会自动读取）
+export CALLWARDEN_TASK_ID=T-1783349079762-8246
+git commit -m "feat: implement xxx"
+unset CALLWARDEN_TASK_ID
+```
+
+> 未设置 `CALLWARDEN_TASK_ID` 且未硬编码 task_id 时，hook 静默跳过，不影响 commit。
+
 ## 下一步
 
 - [快速开始](quickstart.md)：从零开始使用
