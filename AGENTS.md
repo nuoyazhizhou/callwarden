@@ -9,7 +9,19 @@
 ## 默认工作规则（强制遵守）
 
 1. **提交前必须全量刷新数据库**：每次 `git commit` 之前，必须运行 `cw --refresh-all` 或批量刷新所有修改文件，确保数据库中的符号/调用关系与代码同步。禁止提交后数据库滞后。
-2. **优先使用 MCP 工具读取代码**：读取文件内容、搜索代码、浏览目录时，优先使用 Call Warden MCP 工具（`file_read` / `file_grep` / `file_list` / `file_symbol_content`），而非 IDE 内置的 Read/Grep/Glob 工具。只有在 MCP 工具不可用时才降级使用内置工具。
+2. **代码读取工具按场景分工**（避免 SQLite 跨进程锁冲突）：
+
+   | 操作类型 | 当前（MCP 未激活/开发期）| MCP 激活后 |
+   |---------|------------------------|-----------|
+   | 任务编排（task create/next/report/rollback）| **CLI** `cw task ...` | **CLI**（保持，写操作避免与 MCP 长连接撞锁）|
+   | 刷新数据库（refresh/refresh-all）| **CLI** `cw --refresh ...` | **CLI**（保持，写操作）|
+   | 读文件内容 / 搜索代码 / 浏览目录 | **CLI** `cw --file <PATH>` / `cw --search <Q>` / `cw --query <NAME> <FILE>`；IDE 内置 Read/Grep/Glob 作为降级 | **MCP** `file_read` / `file_grep` / `file_list`（只读，WAL 模式下与 CLI 写并发安全）|
+   | 符号内容 / 符号查询 | **CLI** `cw --symbol <QN>` / `cw --callers` / `cw --callees` | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）|
+   | 规则匹配查询（get_applicable_rules）| **CLI** `cw rule applicable` | **MCP** `get_applicable_rules`（只读）|
+
+   **背景**：MCP Server 是 stdio 长连接，与 CLI 新进程并发时会触发 SQLite `database is locked`。已通过 `PRAGMA journal_mode=WAL` + `busy_timeout=30000` 缓解，但**写操作仍有 5% 撞锁概率**，故写操作永久走 CLI；只读操作在 MCP 激活后走 MCP（吃狗粮），未激活时走 CLI。
+
+   **MCP 激活状态判断**：会话开始时若无法调用 `file_grep` 等 MCP 工具，则视为 MCP 未激活，全部走 CLI。MCP 激活由用户手工配置，不在 AGENTS.md 中自动判断。
 3. **大任务必须拆分父子任务**：当任务涉及 3 个以上文件或 5 个以上步骤时，必须使用 `task_split` 拆分为父子任务树，通过 `task_next_step` 逐步执行，避免遗漏和遗忘。
 4. **开发阶段开启 watcher**：长时间开发时，使用 `cw --watch` 启动文件监控，修改后自动刷新数据库。
 
