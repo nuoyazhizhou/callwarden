@@ -1549,6 +1549,46 @@ def create_mcp_server():
         return db.task_rollback(task_id=task_id, change_id=change_id, reason=reason)
 
     @mcp.tool()
+    def task_apply(task_id: str, reviewer: str = "reviewer") -> dict:
+        """审核通过：将任务状态从 review 改为 applied
+
+        设计原则：写代码的 Agent 不能自己 applied，必须由其他会话的
+        LLM 审核通过后调用此工具。只有 status=review 的任务才能 apply。
+
+        Args:
+            task_id: 任务 ID
+            reviewer: 审核人标识
+
+        Returns:
+            包含 task_id、status、applied_at 的字典；失败时包含 error 字段
+        """
+        db = get_db()
+        try:
+            return db.task_apply(task_id=task_id, reviewer=reviewer)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def task_close(task_id: str, reviewer: str = "reviewer") -> dict:
+        """关闭任务：将任务状态从 applied 改为 closed
+
+        设计原则：写代码的 Agent 不能自己 closed，必须由其他会话的
+        LLM 审核关闭后调用此工具。只有 status=applied 的任务才能 close。
+
+        Args:
+            task_id: 任务 ID
+            reviewer: 审核人标识
+
+        Returns:
+            包含 task_id、status、closed_at 的字典；失败时包含 error 字段
+        """
+        db = get_db()
+        try:
+            return db.task_close(task_id=task_id, reviewer=reviewer)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
         """在父任务下创建子任务
 
