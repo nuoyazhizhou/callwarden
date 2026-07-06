@@ -130,7 +130,16 @@ class TaskMixin:
 
         Returns:
             新建任务的 task_id
+
+        Soft Warning（C1 新增）：
+        当 parent_id 为空（根任务）且 steps 数量 > 5 或涉及文件 > 3 时，
+        通过 stderr 输出 soft warning 建议使用 task_split 创建父子任务树，
+        避免创建难以管理的孤儿任务。warning 不阻断创建，仅提示。
         """
+        # C1: 孤儿任务 soft warning（不阻断，仅提示）
+        if not parent_id and steps:
+            self._check_orphan_task_warning(title, steps)
+
         now = time.time()
         task_id = _gen_task_id()
 
@@ -196,6 +205,57 @@ class TaskMixin:
 
         self.conn.commit()
         return task_id
+
+    def _check_orphan_task_warning(
+        self,
+        title: str,
+        steps: List[Dict[str, Any]],
+    ) -> None:
+        """检查是否可能创建孤儿任务，输出 soft warning（C1 新增）
+
+        判断条件（满足任一即触发 warning）：
+        - steps 数量 > 5（任务步骤过多，难以管理）
+        - 涉及不同文件数 > 3（跨文件改动应拆分为子任务）
+
+        warning 不阻断创建，仅通过 stderr 输出提示，建议使用 task_split
+        创建父子任务树，避免孤儿任务难以追踪和回滚。
+
+        Args:
+            title: 任务标题（用于 warning 消息）
+            steps: 步骤列表（用于统计数量和涉及文件数）
+        """
+        import sys
+
+        step_count = len(steps)
+        # 统计涉及的不同文件数
+        files_set = set()
+        for step in steps:
+            target_file = step.get("target_file", "")
+            if target_file:
+                # 可能是 "file1.py + file2.py" 形式，拆分统计
+                for f in str(target_file).split("+"):
+                    f = f.strip()
+                    if f:
+                        files_set.add(f)
+        file_count = len(files_set)
+
+        # 阈值：steps > 5 或 files > 3
+        if step_count <= 5 and file_count <= 3:
+            return
+
+        # 输出 soft warning 到 stderr（不阻断创建）
+        warning = t(
+            "cli.messages.task_orphan_warning",
+            title=title,
+            step_count=step_count,
+            file_count=file_count,
+            default=(
+                f"[Soft Warning] Task '{title}' has {step_count} steps and "
+                f"involves {file_count} files. Consider using task_split to "
+                f"create a parent-child task tree for better manageability."
+            ),
+        )
+        print(warning, file=sys.stderr)
 
     def task_next_step(self, task_id: str) -> Optional[Dict[str, Any]]:
         """领取当前待执行的步骤

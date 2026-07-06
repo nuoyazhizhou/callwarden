@@ -1718,6 +1718,29 @@ def _handle_task(args, db):
                 cprint(t("cli.messages.task_steps_parse_error", error=e), "red")
                 return True
 
+        # C1: 孤儿任务 soft warning（CLI 层显式提示，db 层也会输出到 stderr）
+        if steps:
+            step_count = len(steps)
+            files_set = set()
+            for s in steps:
+                tf = s.get("target_file", "")
+                if tf:
+                    for f in str(tf).split("+"):
+                        f = f.strip()
+                        if f:
+                            files_set.add(f)
+            file_count = len(files_set)
+            if step_count > 5 or file_count > 3:
+                cprint(
+                    t(
+                        "cli.messages.task_orphan_warning",
+                        title=opts.title,
+                        step_count=step_count,
+                        file_count=file_count,
+                    ),
+                    "yellow",
+                )
+
         task_id = db.task_create(opts.title, opts.desc, steps, creator="agent")
 
         cprint(t("cli.messages.task_create_title"), "cyan", bold=True)

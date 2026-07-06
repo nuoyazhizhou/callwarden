@@ -1223,6 +1223,7 @@
       "migration_v26": "symbols 表新增 UNIQUE 索引 (file_instance_id, name, start_line) + UPSERT 支持，防止重复符号、支持并发安全写入",
       "migration_v27": "新增 clone_pairs 表（重复代码检测，记录 Type-1/2/3 克隆配对结果，支持重构决策）",
       "migration_v28": "file_versions 表新增 ast_cache BLOB 字段（存储 tree-sitter AST 序列化结果，支持 AST 级增量解析，大文件性能 10 倍提升）",
+      "task_orphan_warning": "[软警告] 任务 '{title}' 包含 {step_count} 个步骤，涉及 {file_count} 个文件。建议使用 task_split 创建父子任务树，便于管理和回滚（此警告不阻断创建）。",
       "rule_candidate_title_required": "规则标题不能为空",
       "rule_candidate_text_required": "规则正文不能为空",
       "rule_candidate_id_required": "候选规则 ID 不能为空",
