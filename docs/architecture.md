@@ -443,6 +443,30 @@ Agent 每次编辑文件都记录完整审计：
 - 跨文件/跨仓库的相同函数自动关联
 - 历史版本通过 hash 关联，不存储完整副本
 
+### 7. 任务级联 close（T-1783309017863-a1b6）
+
+任务状态机 `open → in_progress → review → applied → closed` 实现级联 close 机制：
+
+**父任务状态自动推进**：
+- `open → in_progress`：第一个子任务被 `task_next_step` 领取时，遍历父任务链推进
+- `in_progress → review`：所有子任务都是 review/applied/closed 时，由 `_update_parent_status` 递归推进
+- `review → applied → closed`：最后一个子任务 apply 时由 `_cascade_close_if_ready` 原子推进
+
+**级联 close 触发**：最后一个子任务被 `task_apply` 时
+1. 子任务自己 review → applied
+2. 查询所有兄弟子任务状态
+3. 全部 applied/closed → 原子级联 close：
+   - close 所有 applied 兄弟任务
+   - 父任务 review → applied → closed 一次性推进
+   - 递归向上检查祖父层级联
+
+**状态约束**：
+- 叶子任务（无子任务）：可手动 apply + close
+- 父任务（有子任务）：禁止手动 apply/close，由系统自动级联触发
+
+设计原则：写代码的 Agent 不能自己 apply/close，必须由其他会话的 LLM 审核执行。
+详细设计见 [docs/design/task-state-machine.md](design/task-state-machine.md)。
+
 ## 性能优化
 
 ### 1. PyO3 加速（rust_ext/）
