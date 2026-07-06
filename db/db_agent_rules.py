@@ -451,6 +451,204 @@ class AgentRulesMixin:
         return True
 
     # ============================================
+    # Bootstrap 种子规则
+    # ============================================
+
+    # 内置自举规则（按 bootstrap-closure-plan.md Phase 3）
+    _BOOTSTRAP_SEED_RULES: List[Dict[str, Any]] = [
+        {
+            "id": "AR-bootstrap-i18n",
+            "title": "用户可见输出必须使用 i18n key",
+            "rule_text": (
+                "所有用户可见的 CLI/MCP 输出（提示、错误、状态、摘要）必须通过 i18n.t() "
+                "获取，禁止硬编码中文/英文字符串。新增输出时必须同时更新 "
+                "i18n/zh_CN.json 与 i18n/en_US.json。"
+            ),
+            "scope": {},
+            "severity": "warning",
+            "evidence": {"source": "bootstrap-seed", "plan": "bootstrap-closure-plan.md"},
+        },
+        {
+            "id": "AR-bootstrap-refresh-before-commit",
+            "title": "提交前必须刷新代码图谱",
+            "rule_text": (
+                "每次 git commit 之前必须运行 cw --refresh-all 或批量刷新所有修改文件，"
+                "确保数据库中的符号/调用关系与代码同步。禁止提交后数据库滞后。"
+            ),
+            "scope": {"actions": ["commit"]},
+            "severity": "critical",
+            "evidence": {"source": "bootstrap-seed", "plan": "bootstrap-closure-plan.md"},
+        },
+        {
+            "id": "AR-bootstrap-task-split",
+            "title": "大任务必须通过 Call Warden task 拆分并推进",
+            "rule_text": (
+                "当任务涉及 3 个以上文件或 5 个以上步骤时，必须使用 task_split 拆分为"
+                "父子任务树，通过 task_next_step 逐步执行，避免遗漏和遗忘。"
+            ),
+            "scope": {"actions": ["task_create", "task_next_step"]},
+            "severity": "warning",
+            "evidence": {"source": "bootstrap-seed", "plan": "bootstrap-closure-plan.md"},
+        },
+        {
+            "id": "AR-bootstrap-completion-review",
+            "title": "任务完成后必须运行 completion review",
+            "rule_text": (
+                "任务完成后必须运行 run_task_completion_review，blocking finding 未解决"
+                "不得 apply/close。blocking findings 必须先修复或显式 wontfix 后才能推进状态。"
+            ),
+            "scope": {"actions": ["task_apply", "task_close"]},
+            "severity": "critical",
+            "evidence": {"source": "bootstrap-seed", "plan": "bootstrap-closure-plan.md"},
+        },
+        {
+            "id": "AR-bootstrap-capture-diff",
+            "title": "外部编辑完成后必须运行 task capture-diff",
+            "rule_text": (
+                "外部 Agent 完成文件编辑后，必须运行 cw task capture-diff 把真实改动"
+                "归因到 task/change/symbol/audit 闭环，触发质量审查与签名链。"
+            ),
+            "scope": {"actions": ["task_capture_diff"]},
+            "severity": "warning",
+            "evidence": {"source": "bootstrap-seed", "plan": "bootstrap-closure-plan.md"},
+        },
+    ]
+
+    def rule_seed_bootstrap(self, dry_run: bool = True) -> Dict[str, Any]:
+        """种子化自举 active rules
+
+        把内置的 5 条 bootstrap 规则写入 agent_rules（status=active），
+        让规则注入不再空转。
+
+        幂等性：通过固定 ID（AR-bootstrap-*）实现，重复 seed 不会重复创建。
+        已存在的规则会跳过（除非 rule_text 变化，此时更新）。
+
+        Args:
+            dry_run: True 只返回计划不写库，默认 True
+
+        Returns:
+            {
+                "dry_run": bool,
+                "total": int,           # 内置规则总数
+                "created": int,          # 新建数量
+                "updated": int,          # 更新数量（rule_text 变化）
+                "skipped": int,          # 跳过数量（已存在且无变化）
+                "rules": [               # 每条规则的执行结果
+                    {"id": str, "title": str, "action": "create"|"update"|"skip"},
+                ],
+            }
+        """
+        results: List[Dict[str, Any]] = []
+        created = 0
+        updated = 0
+        skipped = 0
+        now = time.time()
+
+        for rule in self._BOOTSTRAP_SEED_RULES:
+            rule_id = rule["id"]
+            scope_json = _serialize_scope(rule.get("scope", {}))
+            evidence_json = _serialize_evidence(rule.get("evidence", {}))
+
+            # 查询是否已存在
+            cur = self.conn.execute(
+                "SELECT title, rule_text, scope_json, severity, evidence_json "
+                "FROM agent_rules WHERE id = ?",
+                (rule_id,),
+            )
+            existing = cur.fetchone()
+
+            if existing is None:
+                # 新建
+                results.append({
+                    "id": rule_id,
+                    "title": rule["title"],
+                    "action": "create",
+                })
+                created += 1
+                if not dry_run:
+                    self.conn.execute(
+                        """
+                        INSERT INTO agent_rules
+                            (id, title, rule_text, scope_json, severity, status,
+                             source_candidate_id, evidence_json, created_at, updated_at,
+                             synced_to_agents_md, sync_hash)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            rule_id,
+                            rule["title"],
+                            rule["rule_text"],
+                            scope_json,
+                            rule["severity"],
+                            RULE_STATUS_ACTIVE,
+                            "",  # source_candidate_id 为空（种子规则无候选来源）
+                            evidence_json,
+                            now,
+                            now,
+                            0,
+                            "",
+                        ),
+                    )
+            else:
+                # 已存在：检查是否需要更新（rule_text / scope / severity 变化）
+                existing_text = existing["rule_text"] if isinstance(existing, dict) else existing[1]
+                existing_scope = existing["scope_json"] if isinstance(existing, dict) else existing[2]
+                existing_severity = existing["severity"] if isinstance(existing, dict) else existing[3]
+                existing_evidence = existing["evidence_json"] if isinstance(existing, dict) else existing[4]
+
+                if (existing_text != rule["rule_text"]
+                        or existing_scope != scope_json
+                        or existing_severity != rule["severity"]
+                        or existing_evidence != evidence_json):
+                    # 需要更新
+                    results.append({
+                        "id": rule_id,
+                        "title": rule["title"],
+                        "action": "update",
+                    })
+                    updated += 1
+                    if not dry_run:
+                        self.conn.execute(
+                            """
+                            UPDATE agent_rules
+                            SET title = ?, rule_text = ?, scope_json = ?,
+                                severity = ?, evidence_json = ?, updated_at = ?,
+                                status = ?
+                            WHERE id = ?
+                            """,
+                            (
+                                rule["title"],
+                                rule["rule_text"],
+                                scope_json,
+                                rule["severity"],
+                                evidence_json,
+                                now,
+                                RULE_STATUS_ACTIVE,
+                                rule_id,
+                            ),
+                        )
+                else:
+                    # 跳过（无变化）
+                    results.append({
+                        "id": rule_id,
+                        "title": rule["title"],
+                        "action": "skip",
+                    })
+                    skipped += 1
+
+        if not dry_run:
+            self.conn.commit()
+
+        return {
+            "dry_run": dry_run,
+            "total": len(self._BOOTSTRAP_SEED_RULES),
+            "created": created,
+            "updated": updated,
+            "skipped": skipped,
+            "rules": results,
+        }
+
+    # ============================================
     # 已生效规则查询
     # ============================================
 

@@ -537,6 +537,13 @@ def _handle_rule(args, db):
     extract_p.add_argument("--min-occurrences", type=int, default=2,
         help=t("cli_rule_arg_min_occurrences", default="Min occurrences threshold (default 2)"))
 
+    # seed-bootstrap：种子化内置自举规则
+    seed_p = sub.add_parser(
+        "seed-bootstrap", help=t("cli_rule_seed_bootstrap_desc", default="Seed built-in bootstrap active rules")
+    )
+    seed_p.add_argument("--apply", action="store_true",
+        help=t("cli_rule_seed_bootstrap_arg_apply", default="Actually write to db (default: dry-run)"))
+
     opts = parser.parse_args(args)
 
     if opts.action == "candidate":
@@ -551,6 +558,8 @@ def _handle_rule(args, db):
         return _handle_rule_insert_block(opts, db)
     elif opts.action == "extract":
         return _handle_rule_extract(opts, db)
+    elif opts.action == "seed-bootstrap":
+        return _handle_rule_seed_bootstrap(opts, db)
     return True
 
 
@@ -729,6 +738,52 @@ def _handle_rule_extract(opts, db):
     for cid in cids:
         print(t("cli.messages.rule_extract_item",
                 default="  - {cid}", cid=cid))
+    return True
+
+
+def _handle_rule_seed_bootstrap(opts, db):
+    """rule seed-bootstrap 子命令：种子化内置自举 active rules
+
+    通过固定 ID（AR-bootstrap-*）实现幂等，已存在则跳过或更新。
+    """
+    result = db.rule_seed_bootstrap(dry_run=not opts.apply)
+    total = result.get("total", 0)
+    created = result.get("created", 0)
+    updated = result.get("updated", 0)
+    skipped = result.get("skipped", 0)
+
+    if result.get("dry_run"):
+        cprint(t("cli.messages.rule_seed_bootstrap_dry_run_title",
+                 default="=== Bootstrap Seed Dry-Run ({total} rules) ===",
+                 total=total), "cyan", bold=True)
+    else:
+        cprint(t("cli.messages.rule_seed_bootstrap_apply_title",
+                 default="=== Bootstrap Seed Applied ({total} rules) ===",
+                 total=total), "green", bold=True)
+
+    print(t("cli.messages.rule_seed_bootstrap_summary",
+            default="created: {created} | updated: {updated} | skipped: {skipped}",
+            created=created, updated=updated, skipped=skipped))
+    print()
+
+    for rule in result.get("rules", []):
+        action = rule.get("action", "skip")
+        rid = rule.get("id", "")
+        title = rule.get("title", "")
+        if action == "create":
+            color = "green"
+        elif action == "update":
+            color = "yellow"
+        else:
+            color = "white"
+        cprint(t("cli.messages.rule_seed_bootstrap_item",
+                 default="[{action}] {id}  {title}",
+                 action=action, id=rid, title=title), color)
+
+    if result.get("dry_run"):
+        print()
+        cprint(t("cli.messages.rule_seed_bootstrap_dry_run_hint",
+                 default="Use --apply to write rules to agent_rules table."), "yellow")
     return True
 
 

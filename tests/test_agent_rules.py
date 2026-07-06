@@ -2048,3 +2048,425 @@ def test_parse_json_arg_returns_default_on_invalid():
     assert _parse_json_arg("42", default=[]) == []
 
 
+# ============================================
+# Bootstrap 种子规则 (rule_seed_bootstrap)
+# ============================================
+
+
+def test_rule_seed_bootstrap_dry_run_returns_5_created():
+    """dry_run=True 时返回 5 条 created 计划，但不写库"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        result = db.rule_seed_bootstrap(dry_run=True)
+
+        assert result["dry_run"] is True
+        assert result["total"] == 5
+        assert result["created"] == 5
+        assert result["updated"] == 0
+        assert result["skipped"] == 0
+        assert len(result["rules"]) == 5
+
+        # 验证 action 全为 create
+        actions = [r["action"] for r in result["rules"]]
+        assert actions == ["create"] * 5
+
+        # 验证 db 中实际未写入
+        count = db.conn.execute("SELECT COUNT(*) AS c FROM agent_rules").fetchone()["c"]
+        assert count == 0, "dry_run 不应写入数据库"
+        db.close()
+
+
+def test_rule_seed_bootstrap_apply_writes_5_rules():
+    """dry_run=False 时实际写入 5 条 active 规则"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        result = db.rule_seed_bootstrap(dry_run=False)
+
+        assert result["dry_run"] is False
+        assert result["created"] == 5
+        assert result["updated"] == 0
+        assert result["skipped"] == 0
+
+        # 验证 db 中有 5 条 active 规则
+        rows = db.conn.execute(
+            "SELECT id, title, severity, status FROM agent_rules ORDER BY id"
+        ).fetchall()
+        assert len(rows) == 5
+
+        # 验证所有规则都是 active
+        for row in rows:
+            assert row["status"] == "active"
+
+        # 验证固定 ID 存在
+        ids = {row["id"] for row in rows}
+        expected_ids = {
+            "AR-bootstrap-i18n",
+            "AR-bootstrap-refresh-before-commit",
+            "AR-bootstrap-task-split",
+            "AR-bootstrap-completion-review",
+            "AR-bootstrap-capture-diff",
+        }
+        assert ids == expected_ids, f"ID 不匹配: {ids ^ expected_ids}"
+        db.close()
+
+
+def test_rule_seed_bootstrap_is_idempotent():
+    """重复 --apply 应全部 skip，不重复创建"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+
+        # 第一次 apply
+        r1 = db.rule_seed_bootstrap(dry_run=False)
+        assert r1["created"] == 5
+        assert r1["skipped"] == 0
+
+        # 第二次 apply
+        r2 = db.rule_seed_bootstrap(dry_run=False)
+        assert r2["created"] == 0
+        assert r2["updated"] == 0
+        assert r2["skipped"] == 5
+
+        # db 中仍只有 5 条
+        count = db.conn.execute("SELECT COUNT(*) AS c FROM agent_rules").fetchone()["c"]
+        assert count == 5
+        db.close()
+
+
+def test_rule_seed_bootstrap_updates_when_text_changes():
+    """已存在规则内容变化时应 update"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+
+        # 先 apply 一次
+        db.rule_seed_bootstrap(dry_run=False)
+
+        # 手动修改一条规则的 rule_text
+        db.conn.execute(
+            "UPDATE agent_rules SET rule_text = 'old text' WHERE id = ?",
+            ("AR-bootstrap-i18n",),
+        )
+        db.conn.commit()
+
+        # 再次 apply，应检测到变化并 update
+        result = db.rule_seed_bootstrap(dry_run=False)
+        assert result["created"] == 0
+        assert result["updated"] == 1
+        assert result["skipped"] == 4
+
+        # 找到 update 的那条
+        updated_rule = next(r for r in result["rules"] if r["action"] == "update")
+        assert updated_rule["id"] == "AR-bootstrap-i18n"
+
+        # 验证 db 中 text 已被还原
+        text = db.conn.execute(
+            "SELECT rule_text FROM agent_rules WHERE id = ?",
+            ("AR-bootstrap-i18n",),
+        ).fetchone()["rule_text"]
+        assert text != "old text"
+        db.close()
+
+
+def test_rule_seed_bootstrap_severity_levels():
+    """种子规则应包含正确的 severity 级别"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        db.rule_seed_bootstrap(dry_run=False)
+
+        # 检查 critical 级别规则
+        critical = db.conn.execute(
+            "SELECT id FROM agent_rules WHERE severity = 'critical' ORDER BY id"
+        ).fetchall()
+        critical_ids = {row["id"] for row in critical}
+        assert "AR-bootstrap-refresh-before-commit" in critical_ids
+        assert "AR-bootstrap-completion-review" in critical_ids
+        assert len(critical_ids) == 2
+
+        # 检查 warning 级别规则
+        warning = db.conn.execute(
+            "SELECT id FROM agent_rules WHERE severity = 'warning' ORDER BY id"
+        ).fetchall()
+        warning_ids = {row["id"] for row in warning}
+        assert "AR-bootstrap-i18n" in warning_ids
+        assert "AR-bootstrap-task-split" in warning_ids
+        assert "AR-bootstrap-capture-diff" in warning_ids
+        assert len(warning_ids) == 3
+        db.close()
+
+
+def test_rule_seed_bootstrap_scope_serialized():
+    """种子规则的 scope_json 应正确序列化为 JSON 字符串"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        db.rule_seed_bootstrap(dry_run=False)
+
+        # 验证 refresh-before-commit 的 scope 包含 actions=[commit]
+        row = db.conn.execute(
+            "SELECT scope_json FROM agent_rules WHERE id = ?",
+            ("AR-bootstrap-refresh-before-commit",),
+        ).fetchone()
+        scope = json.loads(row["scope_json"])
+        assert scope == {"actions": ["commit"]}
+
+        # 验证 i18n 规则 scope 为空 {}
+        row = db.conn.execute(
+            "SELECT scope_json FROM agent_rules WHERE id = ?",
+            ("AR-bootstrap-i18n",),
+        ).fetchone()
+        scope = json.loads(row["scope_json"])
+        assert scope == {}
+        db.close()
+
+
+def test_rule_seed_bootstrap_evidence_serialized():
+    """种子规则的 evidence_json 应包含 source=bootstrap-seed"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        db.rule_seed_bootstrap(dry_run=False)
+
+        rows = db.conn.execute(
+            "SELECT id, evidence_json FROM agent_rules"
+        ).fetchall()
+        for row in rows:
+            ev = json.loads(row["evidence_json"])
+            assert ev.get("source") == "bootstrap-seed"
+            assert ev.get("plan") == "bootstrap-closure-plan.md"
+        db.close()
+
+
+# ============================================
+# CLI 测试 (cw rule seed-bootstrap)
+# ============================================
+
+
+def test_cli_rule_seed_bootstrap_dispatched():
+    """_handle_rule 应能分发到 seed-bootstrap action"""
+    from callwarden.cli.main import _handle_rule
+
+    class _MockDB:
+        def __init__(self):
+            self.calls = []
+
+        def rule_seed_bootstrap(self, dry_run=True):
+            self.calls.append(("rule_seed_bootstrap", dry_run))
+            return {
+                "dry_run": dry_run,
+                "total": 5,
+                "created": 5 if not dry_run else 5,
+                "updated": 0,
+                "skipped": 0,
+                "rules": [
+                    {"id": "AR-bootstrap-i18n", "title": "i18n", "action": "create"}
+                ],
+            }
+
+    mock_db = _MockDB()
+
+    # 默认 dry-run
+    _handle_rule(["seed-bootstrap"], mock_db)
+    assert mock_db.calls[-1][0] == "rule_seed_bootstrap"
+    assert mock_db.calls[-1][1] is True  # dry_run=True
+
+    # --apply
+    _handle_rule(["seed-bootstrap", "--apply"], mock_db)
+    assert mock_db.calls[-1][0] == "rule_seed_bootstrap"
+    assert mock_db.calls[-1][1] is False  # dry_run=False
+
+
+def test_cli_rule_seed_bootstrap_help_no_db():
+    """cw rule seed-bootstrap --help 不应触发数据库初始化"""
+    import sys
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+    from callwarden.db.db import CodeGraphDB
+
+    old_argv = sys.argv
+    sys.argv = ["cw", "rule", "seed-bootstrap", "--help"]
+    try:
+        db_init_called = {"count": 0}
+
+        def fake_init(self, *args, **kwargs):
+            db_init_called["count"] += 1
+            raise RuntimeError("db should not be initialized for --help")
+
+        with mock.patch.object(CodeGraphDB, "__init__", fake_init):
+            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
+                try:
+                    cli_main._run_subcommand_mode()
+                except RuntimeError as e:
+                    if "should not" in str(e):
+                        pytest.fail("db initialized during cw rule seed-bootstrap --help")
+                    raise
+                except SystemExit:
+                    pass  # argparse --help 通常会 SystemExit(0)
+        assert db_init_called["count"] == 0, "--help 不应触发数据库初始化"
+    finally:
+        sys.argv = old_argv
+
+
+# ============================================
+# MCP 测试 (rule_seed_bootstrap)
+# ============================================
+
+
+def test_mcp_rule_seed_bootstrap_registered():
+    """MCP Server 应注册 rule_seed_bootstrap 工具"""
+    import asyncio
+
+    from callwarden.server.mcp_server import create_mcp_server
+
+    mcp = create_mcp_server()
+    tools = asyncio.run(mcp.list_tools())
+    tool_names = {t.name for t in tools}
+    assert "rule_seed_bootstrap" in tool_names, "缺少 rule_seed_bootstrap MCP 工具"
+
+
+def test_mcp_rule_seed_bootstrap_dry_run():
+    """MCP rule_seed_bootstrap dry_run=True 应返回 5 条 created 计划"""
+    import asyncio
+
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        old_db = mcp_mod._db_instance
+        mcp_mod._db_instance = db
+        try:
+            mcp = create_mcp_server()
+            result = asyncio.run(mcp.call_tool(
+                "rule_seed_bootstrap",
+                {"dry_run": True},
+            ))
+            structured = _parse_mcp_result(result)
+            assert structured["dry_run"] is True
+            assert structured["total"] == 5
+            assert structured["created"] == 5
+            assert structured["skipped"] == 0
+        finally:
+            mcp_mod._db_instance = old_db
+            db.close()
+
+
+def test_mcp_rule_seed_bootstrap_apply_writes_5():
+    """MCP rule_seed_bootstrap dry_run=False 应实际写入 5 条规则"""
+    import asyncio
+
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        old_db = mcp_mod._db_instance
+        mcp_mod._db_instance = db
+        try:
+            mcp = create_mcp_server()
+            result = asyncio.run(mcp.call_tool(
+                "rule_seed_bootstrap",
+                {"dry_run": False},
+            ))
+            structured = _parse_mcp_result(result)
+            assert structured["dry_run"] is False
+            assert structured["created"] == 5
+
+            # 验证 db 中有 5 条
+            count = db.conn.execute("SELECT COUNT(*) AS c FROM agent_rules").fetchone()["c"]
+            assert count == 5
+        finally:
+            mcp_mod._db_instance = old_db
+            db.close()
+
+
+# ============================================
+# 集成测试：seed 后规则可被 get_applicable_rules 查询
+# ============================================
+
+
+def test_seed_bootstrap_rules_visible_to_get_applicable_rules():
+    """种子化后 get_applicable_rules 应能返回 bootstrap 规则
+
+    scope 匹配规则：
+    - scope={} (i18n 规则) 为 global，匹配任何 context
+    - scope={"actions": ["commit"]} 仅匹配 context={"action": "commit"}（注意：context 用 action 单数）
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        db = CodeGraphDB(workspace_root=tmp)
+        db.rule_seed_bootstrap(dry_run=False)
+
+        # 用 action=commit 查询，应匹配 refresh-before-commit（scope.actions=[commit]）
+        # 以及 i18n（scope={} global）
+        rules = db.get_applicable_rules(context={"action": "commit"}, limit=10)
+        rule_ids = {r["id"] for r in rules}
+        assert "AR-bootstrap-refresh-before-commit" in rule_ids
+        assert "AR-bootstrap-i18n" in rule_ids  # global 规则也匹配
+
+        # 用 action=task_apply 查询，应匹配 completion-review
+        rules = db.get_applicable_rules(context={"action": "task_apply"}, limit=10)
+        rule_ids = {r["id"] for r in rules}
+        assert "AR-bootstrap-completion-review" in rule_ids
+
+        # 空 context 只匹配 scope={} 的 global 规则
+        rules = db.get_applicable_rules(context={}, limit=10)
+        rule_ids = {r["id"] for r in rules}
+        assert "AR-bootstrap-i18n" in rule_ids
+        assert len(rule_ids) == 1, f"空 context 只应匹配 global 规则，实际: {rule_ids}"
+        db.close()
+
+
+def test_seed_bootstrap_injects_into_get_symbol():
+    """种子化后 get_symbol 返回的 applicable_rules 应包含 bootstrap 全局规则"""
+    with tempfile.TemporaryDirectory() as tmp:
+        db, qn = _setup_db_with_symbol(tmp)
+        try:
+            # 种子化 5 条 bootstrap 规则
+            db.rule_seed_bootstrap(dry_run=False)
+
+            # get_symbol 应在返回值中注入 applicable_rules
+            sym = db.get_symbol(qn)
+            assert sym is not None, "符号查询不应失败"
+            assert "applicable_rules" in sym, "返回值应包含 applicable_rules 字段"
+
+            # 验证 bootstrap 规则被注入
+            rule_ids = {r.get("id", "") for r in sym["applicable_rules"]}
+            # global 规则（scope={}）应匹配
+            assert "AR-bootstrap-i18n" in rule_ids, \
+                f"i18n 全局规则应被注入到 get_symbol，实际: {rule_ids}"
+        finally:
+            db.close()
+
+
+def test_seed_bootstrap_injects_into_file_symbol_content_mcp():
+    """种子化后 MCP file_symbol_content 应在返回值中包含 bootstrap 全局规则"""
+    import asyncio
+    import json as _json
+
+    import callwarden.server.mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db, _qn = _setup_db_with_symbol(tmp)
+        # 种子化 bootstrap 规则
+        db.rule_seed_bootstrap(dry_run=False)
+
+        mcp = create_mcp_server()
+        orig_get_db = mcp_mod.get_db
+        mcp_mod.get_db = lambda workspace=None: db
+        try:
+            result = asyncio.run(
+                mcp.call_tool("file_symbol_content",
+                              {"file_path": "mod.py", "symbol_name": "hello"})
+            )
+            if isinstance(result, tuple):
+                result = result[0]
+            payload = _json.loads(result[0].text)
+
+            assert "applicable_rules" in payload, \
+                f"file_symbol_content 返回应包含 applicable_rules: {payload}"
+            rule_ids = {r.get("id", "") for r in payload["applicable_rules"]}
+            # i18n 规则 scope={} 是 global，应被注入
+            assert "AR-bootstrap-i18n" in rule_ids, \
+                f"i18n 全局规则应被注入到 file_symbol_content，实际: {rule_ids}"
+        finally:
+            mcp_mod.get_db = orig_get_db
+            db.close()
+
+

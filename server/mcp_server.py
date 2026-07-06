@@ -1716,6 +1716,42 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def rule_seed_bootstrap(dry_run: bool = True) -> dict:
+        """种子化内置自举 active rules
+
+        把内置的 5 条 bootstrap 规则写入 agent_rules（status=active），
+        让规则注入不再空转。规则覆盖：
+        - i18n 强制（warning）
+        - 提交前刷新代码图谱（critical）
+        - 大任务必须拆分（warning）
+        - 任务完成必须运行 completion review（critical）
+        - 外部编辑后必须运行 task capture-diff（warning）
+
+        幂等性：通过固定 ID（AR-bootstrap-*）实现，重复 seed 不会重复创建。
+        已存在且无变化 → skip；已存在但内容变化 → update；不存在 → create。
+
+        Args:
+            dry_run: True 只返回计划不写库，默认 True
+
+        Returns:
+            {
+                "dry_run": bool,
+                "total": int,           # 内置规则总数（5）
+                "created": int,          # 新建数量
+                "updated": int,          # 更新数量
+                "skipped": int,          # 跳过数量
+                "rules": [               # 每条规则的执行结果
+                    {"id": str, "title": str, "action": "create"|"update"|"skip"}
+                ],
+            }
+        """
+        db = get_db()
+        try:
+            return db.rule_seed_bootstrap(dry_run=dry_run)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
         """在父任务下创建子任务
 
