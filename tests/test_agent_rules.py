@@ -23,8 +23,8 @@ from callwarden.db.schema import SCHEMA_VERSION
 
 
 def test_schema_version_is_23():
-    """SCHEMA_VERSION 应为 23"""
-    assert SCHEMA_VERSION == 24
+    """SCHEMA_VERSION 应为 25"""
+    assert SCHEMA_VERSION == 25
 
 
 def test_new_db_has_agent_rule_tables():
@@ -44,13 +44,13 @@ def test_new_db_has_agent_rule_tables():
 
 
 def test_new_db_schema_version_is_23():
-    """新库 schema_version 表中应有 23 记录"""
+    """新库 schema_version 表中应有 25 记录"""
     with tempfile.TemporaryDirectory() as tmp:
         db = CodeGraphDB(workspace_root=tmp)
         v = db.conn.execute(
             "SELECT MAX(version) as v FROM schema_version"
         ).fetchone()
-        assert v["v"] == 24
+        assert v["v"] == 25
         db.close()
 
 
@@ -211,7 +211,7 @@ def test_legacy_v22_db_migrates_to_v23():
         v = db2.conn.execute(
             "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
         ).fetchone()
-        assert v["version"] == 24
+        assert v["version"] == 25
         tabs = [
             r[0]
             for r in db2.conn.execute(

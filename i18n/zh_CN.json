@@ -1205,6 +1205,7 @@
       "migration_v22": "审计签名链表（audit_chain，为关键审计表生成可验证的 hash/HMAC 链）",
       "migration_v23": "Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log，沉淀项目规则并注入到任务和函数上下文）",
       "migration_v24": "tasks 表新增 applied_at 字段（review -> applied 状态转换，支持任务审核闭环）",
+      "migration_v25": "新增 workspace_scan_runs 表（自举扫描基线，支持 task capture-diff 闭环）",
       "rule_candidate_title_required": "规则标题不能为空",
       "rule_candidate_text_required": "规则正文不能为空",
       "rule_candidate_id_required": "候选规则 ID 不能为空",
@@ -1299,7 +1300,8 @@
     "gc_archive_import_not_implemented": "gc_archive_import 尚未实现",
     "gc_archive_import_file_not_in_backup": "备份库中找不到该文件: {path}",
     "gc_archive_import_file_not_in_current": "当前工作区中找不到该文件（请先 --refresh-all 构建图谱）: {path}",
-    "gc_audit_not_found": "未找到审计记录: id={id}"
+    "gc_audit_not_found": "未找到审计记录: id={id}",
+    "db_locked": "数据库正忙（其他进程正在写入），请几秒后重试。若持续失败，可执行 'cw server --stop' 停止 MCP Server 后再运行。"
   },
   "cli_hotspot_col_score": "热点分",
   "cli_hotspot_col_changes": "变更",

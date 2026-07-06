@@ -793,6 +793,36 @@ CREATE TABLE IF NOT EXISTS agent_rule_sync_log (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_target ON agent_rule_sync_log(target_path);
 CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_log(created_at);
+
+-- 自举扫描运行表：记录每次 capture/review 的基线（commit/status_hash/mtime/manifest）
+-- 用途：判断两次扫描之间真实变更了哪些文件，关联 task/step
+-- 设计：Git 项目优先用 git_head + git_status_hash；非 Git 项目回退到 root_mtime + manifest_hash
+CREATE TABLE IF NOT EXISTS workspace_scan_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'bootstrap',
+    task_id TEXT DEFAULT '',
+    step_id TEXT DEFAULT '',
+    baseline_type TEXT NOT NULL DEFAULT 'git',
+    git_head TEXT DEFAULT '',
+    git_merge_base TEXT DEFAULT '',
+    git_status_hash TEXT DEFAULT '',
+    root_mtime REAL DEFAULT 0,
+    file_count INTEGER DEFAULT 0,
+    manifest_hash TEXT DEFAULT '',
+    changed_files_json TEXT DEFAULT '[]',
+    metadata_json TEXT DEFAULT '{}',
+    started_at REAL NOT NULL,
+    completed_at REAL,
+    status TEXT DEFAULT 'running',
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_workspace
+ON workspace_scan_runs(workspace_id, purpose, started_at);
+CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_task
+ON workspace_scan_runs(task_id, step_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_git_head
+ON workspace_scan_runs(git_head);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -817,7 +847,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_lo
 # v22: 审计签名链表（audit_chain，为关键审计表生成可验证的 hash/HMAC 链）
 # v23: Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log，沉淀项目规则并注入到任务和函数上下文）
 # v24: tasks 表新增 applied_at 字段（记录 review → applied 审核通过时间，与 closed_at 配合完成任务状态机）
-SCHEMA_VERSION = 24
+# v25: 自举扫描运行表（workspace_scan_runs，记录 capture/review 基线，支持 task capture-diff 闭环）
+SCHEMA_VERSION = 25
 
 
 # ============================================

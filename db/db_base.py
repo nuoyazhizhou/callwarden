@@ -1266,6 +1266,55 @@ def _migrate_v23_to_v24(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE tasks ADD COLUMN applied_at REAL")
 
 
+def _migrate_v24_to_v25(conn: sqlite3.Connection):
+    """v24 -> v25: 新增 workspace_scan_runs 表（自举扫描基线）
+
+    自举闭环需要记录每次 capture/review 的基线（commit / status_hash / mtime / manifest），
+    用于判断两次扫描之间真实变更了哪些文件，并关联 task/step。
+
+    设计决策：
+    - 不在 workspaces 表加字段，而是新建独立 scan run 表（一个 workspace 可有多次扫描）
+    - Git 项目优先用 git_head + git_status_hash；非 Git 项目回退到 root_mtime + manifest_hash
+    - 第一阶段不实现 workspace_scan_files（逐文件 manifest 表），优先复用 file_instances.mtime
+
+    使用 CREATE TABLE IF NOT EXISTS 保证幂等。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS workspace_scan_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            purpose TEXT NOT NULL DEFAULT 'bootstrap',
+            task_id TEXT DEFAULT '',
+            step_id TEXT DEFAULT '',
+            baseline_type TEXT NOT NULL DEFAULT 'git',
+            git_head TEXT DEFAULT '',
+            git_merge_base TEXT DEFAULT '',
+            git_status_hash TEXT DEFAULT '',
+            root_mtime REAL DEFAULT 0,
+            file_count INTEGER DEFAULT 0,
+            manifest_hash TEXT DEFAULT '',
+            changed_files_json TEXT DEFAULT '[]',
+            metadata_json TEXT DEFAULT '{}',
+            started_at REAL NOT NULL,
+            completed_at REAL,
+            status TEXT DEFAULT 'running',
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_workspace
+        ON workspace_scan_runs(workspace_id, purpose, started_at)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_task
+        ON workspace_scan_runs(task_id, step_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_git_head
+        ON workspace_scan_runs(git_head)
+    """)
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1304,15 +1353,16 @@ class CodeGraphBase:
         # 连接重试 + busy_timeout 前置
         # 关键修复：必须在执行任何 SQL（包括 SELECT 1）之前先设置 busy_timeout，
         # 否则当 MCP Server 持有 EXCLUSIVE 锁时，SELECT 1 会立即失败（默认 0ms）。
-        # busy_timeout=30000 让 SQLite 内核在锁释放瞬间立即返回，无需应用层轮询。
+        # busy_timeout=5000：5 秒内锁释放立即返回；超时则快速失败让上层友好提示重试，
+        # 避免 CLI 卡死 30 秒（原 30000ms 过长，用户无法接受）。
         self.conn = None
         _last_err = None
         for _attempt in range(3):
             try:
                 self.conn = sqlite3.connect(db_path)
                 self.conn.row_factory = sqlite3.Row
-                # 前置 busy_timeout：内核级锁等待，30 秒内锁释放立即返回
-                self.conn.execute("PRAGMA busy_timeout=30000")
+                # 前置 busy_timeout：内核级锁等待，5 秒内锁释放立即返回
+                self.conn.execute("PRAGMA busy_timeout=5000")
                 # 前置 WAL：确保 -wal/-shm 文件存在，避免 rollback journal 全库锁
                 self.conn.execute("PRAGMA journal_mode=WAL")
                 self.conn.execute("SELECT 1").fetchone()
@@ -1526,6 +1576,10 @@ class CodeGraphBase:
                 "description": t("cli.messages.migration_v24", default="Add tasks.applied_at column for review-to-applied state transition"),
                 "func": _migrate_v23_to_v24,
             },
+            25: {
+                "description": t("cli.messages.migration_v25", default="Add workspace_scan_runs table for bootstrap scan baseline"),
+                "func": _migrate_v24_to_v25,
+            },
         }
 
 
@@ -1643,6 +1697,15 @@ class CodeGraphBase:
         row = cur.fetchone()
         if not row:
             return False
+
+        # 优化：目标 workspace 已是 active 时跳过写操作，避免在锁竞争时被阻塞
+        # （只读命令如 task list 也会经过这里，跳过 UPDATE 可避免被 MCP Server 写锁卡住）
+        if row["is_active"] == 1:
+            self.active_workspace = dict(row)
+            self.workspace_root = row["root_path"]
+            self.module_resolver = ModuleResolver(self.workspace_root)
+            self.call_resolver = CallResolver(self.module_resolver, self.parser)
+            return True
 
         # 取消其他工作区的活动状态
         self.conn.execute("UPDATE workspaces SET is_active = 0")

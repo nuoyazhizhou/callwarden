@@ -1205,6 +1205,7 @@
       "migration_v22": "Add audit chain table (hash/HMAC chain for verifying integrity of audit records)",
       "migration_v23": "Add Agent Rule Memory tables (agent_rule_candidates / agent_rules / agent_rule_sync_log for sediment project rules and inject into task and function context)",
       "migration_v24": "Add tasks.applied_at column (review -> applied state transition, supports task review closure)",
+      "migration_v25": "Add workspace_scan_runs table (bootstrap scan baseline, supports task capture-diff closure)",
       "rule_candidate_title_required": "Rule title is required",
       "rule_candidate_text_required": "Rule text is required",
       "rule_candidate_id_required": "Candidate rule ID is required",
@@ -1299,7 +1300,8 @@
     "gc_archive_import_not_implemented": "gc_archive_import is not implemented yet",
     "gc_archive_import_file_not_in_backup": "File not found in backup: {path}",
     "gc_archive_import_file_not_in_current": "File not found in current workspace (please --refresh-all first): {path}",
-    "gc_audit_not_found": "Audit record not found: id={id}"
+    "gc_audit_not_found": "Audit record not found: id={id}",
+    "db_locked": "Database is busy (another process is writing). Please retry in a few seconds. If it persists, run 'cw server --stop' to stop MCP Server and try again."
   },
   "cli_hotspot_col_score": "Score",
   "cli_hotspot_col_changes": "Changes",

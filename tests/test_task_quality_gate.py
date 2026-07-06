@@ -54,8 +54,8 @@ def _table_exists(conn, table_name):
 
 
 def test_schema_version_is_23():
-    """SCHEMA_VERSION 常量已升级到 23。"""
-    assert SCHEMA_VERSION == 24
+    """SCHEMA_VERSION 常量已升级到 25。"""
+    assert SCHEMA_VERSION == 25
 
 
 def test_task_quality_findings_table_exists_on_fresh_db():
@@ -169,15 +169,15 @@ def test_migration_v20_to_v21_on_legacy_v20_db():
 
 
 def test_schema_version_table_records_v23_on_fresh_db():
-    """全新数据库 schema_version 表记录 v24 版本。"""
+    """全新数据库 schema_version 表记录 v25 版本。"""
     db, _root = _db_with_workspace()
     try:
         cur = db.conn.execute(
             "SELECT version FROM schema_version WHERE version = ?",
-            (24,),
+            (25,),
         )
         row = cur.fetchone()
-        assert row is not None, "v24 not recorded in schema_version table"
+        assert row is not None, "v25 not recorded in schema_version table"
     finally:
         db.close()
 
