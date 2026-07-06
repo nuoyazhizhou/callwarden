@@ -309,6 +309,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     status TEXT NOT NULL DEFAULT 'open',
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL,
+    applied_at REAL,
     closed_at REAL,
     parent_id TEXT DEFAULT '',
     depth INTEGER NOT NULL DEFAULT 0,
@@ -815,7 +816,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_lo
 # v21: 任务质量门禁发现表（task_quality_findings，承载任务完成门禁发现，区分于通用 guardrail_findings）
 # v22: 审计签名链表（audit_chain，为关键审计表生成可验证的 hash/HMAC 链）
 # v23: Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log，沉淀项目规则并注入到任务和函数上下文）
-SCHEMA_VERSION = 23
+# v24: tasks 表新增 applied_at 字段（记录 review → applied 审核通过时间，与 closed_at 配合完成任务状态机）
+SCHEMA_VERSION = 24
 
 
 # ============================================

@@ -55,7 +55,7 @@ def _table_exists(conn, table_name):
 
 def test_schema_version_is_23():
     """SCHEMA_VERSION 常量已升级到 23。"""
-    assert SCHEMA_VERSION == 23
+    assert SCHEMA_VERSION == 24
 
 
 def test_task_quality_findings_table_exists_on_fresh_db():
@@ -169,15 +169,15 @@ def test_migration_v20_to_v21_on_legacy_v20_db():
 
 
 def test_schema_version_table_records_v23_on_fresh_db():
-    """全新数据库 schema_version 表记录 v23 版本。"""
+    """全新数据库 schema_version 表记录 v24 版本。"""
     db, _root = _db_with_workspace()
     try:
         cur = db.conn.execute(
             "SELECT version FROM schema_version WHERE version = ?",
-            (23,),
+            (24,),
         )
         row = cur.fetchone()
-        assert row is not None, "v23 not recorded in schema_version table"
+        assert row is not None, "v24 not recorded in schema_version table"
     finally:
         db.close()
 
@@ -192,7 +192,7 @@ def test_legacy_v22_db_migrates_to_v23_via_init_schema():
     db_path = os.path.join(root, "callwarden.db")
     import time
 
-    # 1. 先用 CodeGraphDB 创建完整 schema（v23）
+    # 1. 先用 CodeGraphDB 创建完整 schema（v24）
     db = CodeGraphDB(db_path, workspace_root=root)
     db.close()
 
@@ -201,7 +201,7 @@ def test_legacy_v22_db_migrates_to_v23_via_init_schema():
     conn.execute("DROP TABLE IF EXISTS agent_rule_candidates")
     conn.execute("DROP TABLE IF EXISTS agent_rules")
     conn.execute("DROP TABLE IF EXISTS agent_rule_sync_log")
-    conn.execute("DELETE FROM schema_version WHERE version = 23")
+    conn.execute("DELETE FROM schema_version WHERE version >= 23")
     conn.execute(
         "INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
         (22, time.time(), "downgrade for test"),
@@ -209,16 +209,16 @@ def test_legacy_v22_db_migrates_to_v23_via_init_schema():
     conn.commit()
     conn.close()
 
-    # 3. 再次用 CodeGraphDB 打开，应触发 v22 -> v23 迁移
+    # 3. 再次用 CodeGraphDB 打开，应触发 v22 -> v23 -> v24 迁移
     db = CodeGraphDB(db_path, workspace_root=root)
     try:
         assert _table_exists(db.conn, "agent_rule_candidates")
         assert _table_exists(db.conn, "agent_rules")
         assert _table_exists(db.conn, "agent_rule_sync_log")
         cur = db.conn.execute(
-            "SELECT version FROM schema_version WHERE version = 23"
+            "SELECT version FROM schema_version WHERE version = 24"
         )
-        assert cur.fetchone() is not None, "v23 migration not recorded"
+        assert cur.fetchone() is not None, "v24 migration not recorded"
     finally:
         db.close()
 

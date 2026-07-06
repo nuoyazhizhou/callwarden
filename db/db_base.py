@@ -1248,6 +1248,24 @@ def _migrate_v22_to_v23(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_log(created_at)")
 
 
+def _migrate_v23_to_v24(conn: sqlite3.Connection):
+    """v23 -> v24: tasks 表新增 applied_at 字段
+
+    任务状态机设计为 open → in_progress → review → applied → closed，
+    但之前只实现了 open → in_progress → review，缺少 review → applied → closed 转换。
+
+    新增 applied_at 字段记录 review → applied 的审核通过时间，与 closed_at 配合
+    完成完整状态机。设计原则：写代码的 Agent 不能自己 applied/closed，必须由其他
+    会话的 LLM 审核 applied 和 closed，避免奖励函数激励直接 close。
+
+    使用 PRAGMA table_info 检测字段是否存在，保证幂等。
+    """
+    cur = conn.execute("PRAGMA table_info(tasks)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "applied_at" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN applied_at REAL")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1503,6 +1521,10 @@ class CodeGraphBase:
             23: {
                 "description": t("cli.messages.migration_v23", default="Add Agent Rule Memory tables (agent_rule_candidates / agent_rules / agent_rule_sync_log)"),
                 "func": _migrate_v22_to_v23,
+            },
+            24: {
+                "description": t("cli.messages.migration_v24", default="Add tasks.applied_at column for review-to-applied state transition"),
+                "func": _migrate_v23_to_v24,
             },
         }
 

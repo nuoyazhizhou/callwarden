@@ -24,7 +24,7 @@ from callwarden.db.schema import SCHEMA_VERSION
 
 def test_schema_version_is_23():
     """SCHEMA_VERSION 应为 23"""
-    assert SCHEMA_VERSION == 23
+    assert SCHEMA_VERSION == 24
 
 
 def test_new_db_has_agent_rule_tables():
@@ -50,7 +50,7 @@ def test_new_db_schema_version_is_23():
         v = db.conn.execute(
             "SELECT MAX(version) as v FROM schema_version"
         ).fetchone()
-        assert v["v"] == 23
+        assert v["v"] == 24
         db.close()
 
 
@@ -197,13 +197,13 @@ def test_legacy_v22_db_migrates_to_v23():
             DROP TABLE IF EXISTS agent_rule_candidates;
             DROP TABLE IF EXISTS agent_rules;
             DROP TABLE IF EXISTS agent_rule_sync_log;
-            DELETE FROM schema_version WHERE version = 23;
+            DELETE FROM schema_version WHERE version >= 23;
             """
         )
         conn.commit()
         cur = conn.execute("SELECT MAX(version) as v FROM schema_version")
         row = cur.fetchone()
-        assert row[0] is None or row[0] < 23
+        assert row[0] is None or row[0] < 24
         conn.close()
 
         # 重新打开触发迁移
@@ -211,7 +211,7 @@ def test_legacy_v22_db_migrates_to_v23():
         v = db2.conn.execute(
             "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
         ).fetchone()
-        assert v["version"] == 23
+        assert v["version"] == 24
         tabs = [
             r[0]
             for r in db2.conn.execute(

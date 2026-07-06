@@ -1294,6 +1294,114 @@ class TaskMixin:
             ),
         }
 
+    def task_apply(
+        self,
+        task_id: str,
+        reviewer: str = "reviewer",
+    ) -> Dict[str, Any]:
+        """审核通过：将任务状态从 review 改为 applied
+
+        设计原则：写代码的 Agent 不能自己 applied，必须由其他会话的 LLM 审核。
+        只有 status=review 的任务才能 apply，其他状态拒绝。
+
+        Args:
+            task_id: 任务 ID
+            reviewer: 审核人标识
+
+        Returns:
+            包含 task_id、status、applied_at 的字典；失败时包含 error 字段
+        """
+        now = time.time()
+        cur = self.conn.execute(
+            "SELECT status FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {
+                "error": t("cli.messages.task_not_found", default="Task not found"),
+                "task_id": task_id,
+            }
+
+        current_status = row["status"]
+        if current_status != TASK_STATUS_REVIEW:
+            return {
+                "error": t(
+                    "cli.messages.task_apply_invalid_status",
+                    default="Cannot apply task in status '{status}', only 'review' can be applied",
+                    status=current_status,
+                ),
+                "task_id": task_id,
+                "status": current_status,
+            }
+
+        self.conn.execute(
+            "UPDATE tasks SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
+            (TASK_STATUS_APPLIED, now, now, task_id),
+        )
+        self.conn.commit()
+
+        return {
+            "task_id": task_id,
+            "status": TASK_STATUS_APPLIED,
+            "applied_at": now,
+            "reviewer": reviewer,
+        }
+
+    def task_close(
+        self,
+        task_id: str,
+        reviewer: str = "reviewer",
+    ) -> Dict[str, Any]:
+        """关闭任务：将任务状态从 applied 改为 closed
+
+        设计原则：写代码的 Agent 不能自己 closed，必须由其他会话的 LLM 审核关闭。
+        只有 status=applied 的任务才能 close，其他状态拒绝。
+
+        Args:
+            task_id: 任务 ID
+            reviewer: 审核人标识
+
+        Returns:
+            包含 task_id、status、closed_at 的字典；失败时包含 error 字段
+        """
+        now = time.time()
+        cur = self.conn.execute(
+            "SELECT status FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {
+                "error": t("cli.messages.task_not_found", default="Task not found"),
+                "task_id": task_id,
+            }
+
+        current_status = row["status"]
+        if current_status != TASK_STATUS_APPLIED:
+            return {
+                "error": t(
+                    "cli.messages.task_close_invalid_status",
+                    default="Cannot close task in status '{status}', only 'applied' can be closed",
+                    status=current_status,
+                ),
+                "task_id": task_id,
+                "status": current_status,
+            }
+
+        self.conn.execute(
+            "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
+            (TASK_STATUS_CLOSED, now, now, task_id),
+        )
+        self.conn.commit()
+
+        return {
+            "task_id": task_id,
+            "status": TASK_STATUS_CLOSED,
+            "closed_at": now,
+            "reviewer": reviewer,
+        }
+
     def task_list(
         self,
         status_filter: Optional[str] = None,
