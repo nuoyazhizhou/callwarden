@@ -23,8 +23,8 @@ from callwarden.db.schema import SCHEMA_VERSION
 
 
 def test_schema_version_is_23():
-    """SCHEMA_VERSION 应为 26"""
-    assert SCHEMA_VERSION == 26
+    """SCHEMA_VERSION 不低于 26（agent_rule 表引入版本 v23+）。"""
+    assert SCHEMA_VERSION >= 26
 
 
 def test_new_db_has_agent_rule_tables():
@@ -44,13 +44,13 @@ def test_new_db_has_agent_rule_tables():
 
 
 def test_new_db_schema_version_is_23():
-    """新库 schema_version 表中应有 26 记录"""
+    """新库 schema_version 表应记录当前版本（≥26，agent_rule 表已就绪）"""
     with tempfile.TemporaryDirectory() as tmp:
         db = CodeGraphDB(workspace_root=tmp)
         v = db.conn.execute(
             "SELECT MAX(version) as v FROM schema_version"
         ).fetchone()
-        assert v["v"] == 26
+        assert v["v"] >= 26
         db.close()
 
 

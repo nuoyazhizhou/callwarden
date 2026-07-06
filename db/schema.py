@@ -824,6 +824,35 @@ CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_task
 ON workspace_scan_runs(task_id, step_id);
 CREATE INDEX IF NOT EXISTS idx_workspace_scan_runs_git_head
 ON workspace_scan_runs(git_head);
+
+-- 重复代码对表：记录 Type-1/2/3 重复代码检测结果
+-- 用途：识别代码克隆，辅助重构决策
+-- 设计：存储配对符号 ID + 克隆类型 + 相似度 + token 序列哈希
+CREATE TABLE IF NOT EXISTS clone_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    symbol_a_id INTEGER NOT NULL,
+    symbol_b_id INTEGER NOT NULL,
+    clone_type INTEGER NOT NULL,
+    similarity REAL NOT NULL,
+    token_hash TEXT NOT NULL DEFAULT '',
+    lines_a INTEGER DEFAULT 0,
+    lines_b INTEGER DEFAULT 0,
+    detected_at REAL NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    FOREIGN KEY (symbol_a_id) REFERENCES symbols(id),
+    FOREIGN KEY (symbol_b_id) REFERENCES symbols(id)
+);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_workspace
+ON clone_pairs(workspace_id, detected_at);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_symbol_a
+ON clone_pairs(symbol_a_id);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_symbol_b
+ON clone_pairs(symbol_b_id);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_type
+ON clone_pairs(clone_type, similarity);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_clone_pairs_unique
+ON clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -850,7 +879,8 @@ ON workspace_scan_runs(git_head);
 # v24: tasks 表新增 applied_at 字段（记录 review → applied 审核通过时间，与 closed_at 配合完成任务状态机）
 # v25: 自举扫描运行表（workspace_scan_runs，记录 capture/review 基线，支持 task capture-diff 闭环）
 # v26: symbols 表 UNIQUE 索引（file_instance_id, name, start_line）+ UPSERT，防止重复符号、支持并发安全写入
-SCHEMA_VERSION = 26
+# v27: 重复代码对表（clone_pairs，记录 Type-1/2/3 克隆检测结果，支持重构决策）
+SCHEMA_VERSION = 27
 
 
 # ============================================

@@ -1716,6 +1716,118 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def detect_clones(
+        file_filter: str = "",
+        min_lines: int = 5,
+        similarity_threshold: float = 0.8,
+    ) -> dict:
+        """检测重复代码（Type-1/2/3 克隆）
+
+        检测范围：
+        - Type-1：完全相同的符号内容（content_hash 相同）
+        - Type-2：重命名克隆（token 序列相同，标识符名不同）
+        - Type-3：微调克隆（token 集合 Jaccard 相似度 >= similarity_threshold）
+
+        结果持久化到 clone_pairs 表（UPSERT），支持重复执行。
+
+        Args:
+            file_filter: 文件路径前缀过滤（如 "src/core/"），空字符串扫描所有
+            min_lines: 最小符号行数，低于此值的符号跳过（默认 5）
+            similarity_threshold: Type-3 相似度阈值 [0,1]（默认 0.8）
+
+        Returns:
+            {
+                "total_pairs": int,
+                "type1_pairs": int,
+                "type2_pairs": int,
+                "type3_pairs": int,
+                "scanned_symbols": int,
+                "skipped_symbols": int,
+                "similarity_threshold": float,
+                "min_lines": int,
+            }
+        """
+        db = get_db()
+        try:
+            return db.detect_clones(
+                file_filter=file_filter,
+                min_lines=min_lines,
+                similarity_threshold=similarity_threshold,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def list_clones(
+        clone_type: int = 0,
+        min_similarity: float = 0.0,
+        limit: int = 100,
+    ) -> list:
+        """列出检测到的克隆对
+
+        Args:
+            clone_type: 克隆类型过滤（0=全部，1/2/3 对应 Type-N）
+            min_similarity: 最低相似度过滤（默认 0.0）
+            limit: 返回上限（默认 100）
+
+        Returns:
+            克隆对列表，按相似度降序，每项包含：
+            {
+                "clone_type": int,
+                "similarity": float,
+                "token_hash": str,
+                "lines_a": int, "lines_b": int,
+                "detected_at": float,
+                "symbol_a_name": str, "symbol_a_qualified": str,
+                "symbol_a_line": int,
+                "symbol_b_name": str, "symbol_b_qualified": str,
+                "symbol_b_line": int,
+                "file_a": str, "file_b": str,
+            }
+        """
+        db = get_db()
+        try:
+            return db.list_clones(
+                clone_type=clone_type,
+                min_similarity=min_similarity,
+                limit=limit,
+            )
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_clone_stats() -> dict:
+        """获取克隆检测统计信息
+
+        Returns:
+            {
+                "total": int,
+                "type1": int, "type2": int, "type3": int,
+                "affected_files": int,
+                "affected_symbols": int,
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_clone_stats()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def clear_clones() -> dict:
+        """清空当前 workspace 的所有克隆检测结果
+
+        Returns:
+            {"deleted": int} 被删除的记录数
+        """
+        db = get_db()
+        try:
+            deleted = db.clear_clones()
+            return {"deleted": deleted}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def rule_seed_bootstrap(dry_run: bool = True) -> dict:
         """种子化内置自举 active rules
 

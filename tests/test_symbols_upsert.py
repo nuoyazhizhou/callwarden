@@ -49,8 +49,8 @@ def _insert_symbol_content(conn, content_hash, name="foo", kind="fn"):
 
 
 def test_schema_version_is_26():
-    """SCHEMA_VERSION 应为 26。"""
-    assert SCHEMA_VERSION == 26
+    """SCHEMA_VERSION 不低于 26（symbols UNIQUE 索引引入版本）。"""
+    assert SCHEMA_VERSION >= 26
 
 
 def test_unique_index_exists_in_schema_sql():
@@ -225,7 +225,7 @@ def test_full_db_init_creates_unique_index():
             ver = db.conn.execute(
                 "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
             ).fetchone()
-            assert ver[0] == 26
+            assert ver[0] >= 26
         finally:
             db.close()
 

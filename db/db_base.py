@@ -1352,6 +1352,57 @@ def _migrate_v25_to_v26(conn: sqlite3.Connection):
     """)
 
 
+def _migrate_v26_to_v27(conn: sqlite3.Connection):
+    """v26 -> v27: 新增 clone_pairs 表（重复代码检测）
+
+    问题背景：
+    - 缺少重复代码（克隆）检测结果存储，无法支持重构决策
+    - 基于 tree-sitter token 序列的 Type-1/2/3 克隆检测需要持久化结果
+
+    迁移步骤：
+    1. 创建 clone_pairs 表（含 5 个索引 + 1 个 UNIQUE 索引）
+
+    幂等性：CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS 保证可重复执行。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS clone_pairs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            symbol_a_id INTEGER NOT NULL,
+            symbol_b_id INTEGER NOT NULL,
+            clone_type INTEGER NOT NULL,
+            similarity REAL NOT NULL,
+            token_hash TEXT NOT NULL DEFAULT '',
+            lines_a INTEGER DEFAULT 0,
+            lines_b INTEGER DEFAULT 0,
+            detected_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (symbol_a_id) REFERENCES symbols(id),
+            FOREIGN KEY (symbol_b_id) REFERENCES symbols(id)
+        )
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_clone_pairs_workspace
+        ON clone_pairs(workspace_id, detected_at)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_clone_pairs_symbol_a
+        ON clone_pairs(symbol_a_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_clone_pairs_symbol_b
+        ON clone_pairs(symbol_b_id)
+    """)
+    conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_clone_pairs_type
+        ON clone_pairs(clone_type, similarity)
+    """)
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_clone_pairs_unique
+        ON clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type)
+    """)
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1620,6 +1671,10 @@ class CodeGraphBase:
             26: {
                 "description": t("cli.messages.migration_v26", default="Add UNIQUE index on symbols(file_instance_id, name, start_line) + UPSERT support"),
                 "func": _migrate_v25_to_v26,
+            },
+            27: {
+                "description": t("cli.messages.migration_v27", default="Add clone_pairs table for duplicate code detection (Type-1/2/3)"),
+                "func": _migrate_v26_to_v27,
             },
         }
 

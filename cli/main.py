@@ -35,7 +35,8 @@ from .console import cprint
 # 子命令关键字集合
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
-                "gc", "doctor", "install-agent", "rule", "audit", "bootstrap"}
+                "gc", "doctor", "install-agent", "rule", "audit", "bootstrap",
+                "clone"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -45,6 +46,8 @@ _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 _READONLY_AUDIT_ACTIONS = {"verify"}
 # bootstrap status 只读（汇总查询，不写数据库）
 _READONLY_BOOTSTRAP_ACTIONS = {"status"}
+# clone list/stats 只读（查询 clone_pairs 表）；clone detect/clear 写
+_READONLY_CLONE_ACTIONS = {"list", "stats"}
 
 # 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
 # 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
@@ -152,6 +155,9 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "bootstrap":
         # bootstrap status 只读（汇总查询，不写数据库）
         return action in _READONLY_BOOTSTRAP_ACTIONS
+    if cmd == "clone":
+        # clone list/stats 只读（查询 clone_pairs 表）；clone detect/clear 写
+        return action in _READONLY_CLONE_ACTIONS
     return False
 
 
@@ -243,6 +249,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_audit(argv, db)
         elif cmd == "bootstrap":
             return _handle_bootstrap(argv, db)
+        elif cmd == "clone":
+            return _handle_clone(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -2416,6 +2424,140 @@ def _handle_bootstrap(args, db):
         cprint(t("cli.messages.bootstrap_status_recommended",
                  action=recommended), "yellow", bold=True)
         print()
+        return True
+
+    return False
+
+
+def _handle_clone(args, db):
+    """处理 clone 子命令（重复代码检测）
+
+    子命令：
+    - cw clone detect [--file-filter <path>] [--min-lines <n>] [--similarity <f>]
+      检测 Type-1/2/3 克隆，结果持久化到 clone_pairs 表
+    - cw clone list [--type <1|2|3>] [--min-similarity <f>] [--limit <n>]
+      列出已检测到的克隆对
+    - cw clone stats
+      显示克隆检测统计信息
+    - cw clone clear
+      清空当前 workspace 的所有克隆检测结果
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw clone",
+        description=t("cli_clone_desc", default="Duplicate code detection (Type-1/2/3 clones)"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # detect：检测克隆
+    detect_p = sub.add_parser(
+        "detect",
+        help=t("cli_clone_detect_desc", default="Detect Type-1/2/3 clones and persist to clone_pairs table"),
+    )
+    detect_p.add_argument(
+        "--file-filter", default="",
+        help=t("cli_clone_detect_arg_file_filter", default="File path prefix filter (e.g. 'src/core/'), empty for all"),
+    )
+    detect_p.add_argument(
+        "--min-lines", type=int, default=5,
+        help=t("cli_clone_detect_arg_min_lines", default="Minimum symbol line count (default: 5, skip shorter symbols)"),
+    )
+    detect_p.add_argument(
+        "--similarity", type=float, default=0.8,
+        help=t("cli_clone_detect_arg_similarity", default="Type-3 similarity threshold [0,1] (default: 0.8)"),
+    )
+
+    # list：列出克隆对
+    list_p = sub.add_parser(
+        "list",
+        help=t("cli_clone_list_desc", default="List detected clone pairs"),
+    )
+    list_p.add_argument(
+        "--type", type=int, default=0, choices=[0, 1, 2, 3],
+        help=t("cli_clone_list_arg_type", default="Clone type filter (0=all, 1/2/3=Type-N)"),
+    )
+    list_p.add_argument(
+        "--min-similarity", type=float, default=0.0,
+        help=t("cli_clone_list_arg_min_similarity", default="Minimum similarity filter (default: 0.0)"),
+    )
+    list_p.add_argument(
+        "--limit", type=int, default=100,
+        help=t("cli_clone_list_arg_limit", default="Max results (default: 100)"),
+    )
+
+    # stats：统计信息
+    sub.add_parser(
+        "stats",
+        help=t("cli_clone_stats_desc", default="Show clone detection statistics"),
+    )
+
+    # clear：清空结果
+    sub.add_parser(
+        "clear",
+        help=t("cli_clone_clear_desc", default="Clear all clone detection results for current workspace"),
+    )
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "detect":
+        result = db.detect_clones(
+            file_filter=opts.file_filter,
+            min_lines=opts.min_lines,
+            similarity_threshold=opts.similarity,
+        )
+        cprint(t("cli.messages.clone_detect_title"), "cyan", bold=True)
+        print()
+        print(t("cli.messages.clone_detect_total_pairs", count=result.get("total_pairs", 0)))
+        print(t("cli.messages.clone_detect_type1", count=result.get("type1_pairs", 0)))
+        print(t("cli.messages.clone_detect_type2", count=result.get("type2_pairs", 0)))
+        print(t("cli.messages.clone_detect_type3", count=result.get("type3_pairs", 0)))
+        print()
+        print(t("cli.messages.clone_detect_scanned", count=result.get("scanned_symbols", 0)))
+        print(t("cli.messages.clone_detect_skipped", count=result.get("skipped_symbols", 0)))
+        print(t("cli.messages.clone_detect_threshold",
+                 sim=result.get("similarity_threshold", 0.8),
+                 min_lines=result.get("min_lines", 5)))
+        return True
+
+    if opts.action == "list":
+        clones = db.list_clones(
+            clone_type=opts.type,
+            min_similarity=opts.min_similarity,
+            limit=opts.limit,
+        )
+        cprint(t("cli.messages.clone_list_title", count=len(clones)), "cyan", bold=True)
+        print()
+        if not clones:
+            print(t("cli.messages.clone_list_empty"))
+            return True
+        for c in clones:
+            type_label = {1: "Type-1", 2: "Type-2", 3: "Type-3"}.get(c["clone_type"], "?")
+            print(t("cli.messages.clone_list_item",
+                    type=type_label,
+                    sim=c["similarity"],
+                    a_file=c.get("file_a", ""),
+                    a_line=c.get("symbol_a_line", 0),
+                    a_name=c.get("symbol_a_name", ""),
+                    b_file=c.get("file_b", ""),
+                    b_line=c.get("symbol_b_line", 0),
+                    b_name=c.get("symbol_b_name", "")))
+        return True
+
+    if opts.action == "stats":
+        stats = db.get_clone_stats()
+        cprint(t("cli.messages.clone_stats_title"), "cyan", bold=True)
+        print()
+        print(t("cli.messages.clone_stats_total", count=stats.get("total", 0)))
+        print(t("cli.messages.clone_stats_type1", count=stats.get("type1", 0)))
+        print(t("cli.messages.clone_stats_type2", count=stats.get("type2", 0)))
+        print(t("cli.messages.clone_stats_type3", count=stats.get("type3", 0)))
+        print()
+        print(t("cli.messages.clone_stats_affected_files", count=stats.get("affected_files", 0)))
+        print(t("cli.messages.clone_stats_affected_symbols", count=stats.get("affected_symbols", 0)))
+        return True
+
+    if opts.action == "clear":
+        deleted = db.clear_clones()
+        cprint(t("cli.messages.clone_clear_done", count=deleted), "green")
         return True
 
     return False

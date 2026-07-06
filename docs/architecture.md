@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（每个项目一个）                    │
 │   $HOME/.callwarden/<16位hash>/callwarden.db                  │
-│   Schema v26 / WAL 模式 / 40+ 表 / 25 个 Mixin 模块           │
+│   Schema v27 / WAL 模式 / 40+ 表 / 25 个 Mixin 模块           │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,7 +67,7 @@ $HOME/.callwarden/<16位hash>/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v26**
+当前 Schema 版本：**v27**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -93,6 +93,7 @@ v23 Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_syn
 v24 任务状态机完整化（tasks 加 applied_at 字段，支持 review → applied → closed 流转）
 v25 自举闭环扫描基线表（workspace_scan_runs，扫描运行记录与变化检测）
 v26 symbols 表 UNIQUE 索引（file_instance_id, name, start_line）+ UPSERT，防止重复符号、支持并发安全写入
+v27 重复代码对表（clone_pairs，记录 Type-1/2/3 克隆检测结果，支持重构决策）
 ```
 
 Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。
@@ -287,11 +288,12 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 | agent_rules | 已生效规则（active/deprecated/removed），accept 后写入，按 scope 匹配注入到上下文 |
 | agent_rule_sync_log | AGENTS.md 同步日志（dry_run/apply 都记录，含 before/after hash） |
 
-### 自举闭环表（v25）
+### 自举闭环与代码克隆表（v25 + v27）
 
 | 表 | 说明 |
 |----|------|
 | workspace_scan_runs | 工作区扫描基线记录（id / workspace_id / purpose / task_id / step_id / baseline_type / git_head / git_merge_base / git_status_hash / root_mtime / file_count / manifest_hash / changed_files_json / metadata_json / started_at / completed_at / status）。`purpose` 取值 `bootstrap`（启动时基线）/ `task_capture`（task_capture_diff 触发）；`status` 走 `running → completed/failed`；三个索引 `idx_workspace_scan_runs_workspace/task/git_head` |
+| clone_pairs | 重复代码检测对（id / workspace_id / symbol_a_id / symbol_b_id / clone_type / similarity / token_hash / lines_a / lines_b / detected_at）。`clone_type` 取值 1=Type-1 完全相同 / 2=Type-2 重命名 / 3=Type-3 微调；`similarity` 0.0-1.0；五个索引 `idx_clone_pairs_workspace/symbol_a/symbol_b/type` + `idx_clone_pairs_unique`（UNIQUE）|
 
 ## Mixin 架构
 

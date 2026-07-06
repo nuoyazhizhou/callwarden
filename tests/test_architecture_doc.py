@@ -84,7 +84,7 @@ def test_doc_has_all_table_group_sections():
         "任务质量门禁表",        # v21
         "审计签名链表",          # v22
         "Agent Rule Memory 表", # v23
-        "自举闭环表",            # v25
+        "自举闭环与代码克隆表",  # v25 + v27
         "守护者架构表",          # v10
         "任务与编辑审计表",      # v7 + v12 + v15 + v24
     ]
