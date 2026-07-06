@@ -1,0 +1,35 @@
+name: Call Warden Bootstrap Gate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  bootstrap-gate:
+    name: Bootstrap Gate Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 完整历史，用于 git_head 对比
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Call Warden
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[core]"
+
+      - name: Refresh code graph
+        run: |
+          cw --refresh-all
+
+      - name: Run bootstrap gate
+        run: |
+          python -m callwarden.cicd.bootstrap_check

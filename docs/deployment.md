@@ -419,6 +419,53 @@ cw --embed-force
 
 向量服务不可用时，语义搜索自动回退到关键词匹配。
 
+## CI/CD 集成
+
+### Bootstrap Gate（自举门禁检查）
+
+Call Warden 提供自举门禁脚本 `cicd/bootstrap_check.py`，在 CI 流程中检查自举闭环健康度，决定是否阻断合并。
+
+**检查项**（任一失败即阻断，退出码 1）：
+1. `db_stale=True`：数据库滞后于当前 HEAD（需先 `cw --refresh-all`）
+2. `blocking_findings_count > 0`：有阻塞级质量发现（需先修复）
+3. `audit_verify.broken_count > 0`：审计链有损坏记录（需先修复）
+
+**使用方式**：
+
+```bash
+# 直接运行
+python -m callwarden.cicd.bootstrap_check
+
+# 退出码：0=通过，1=失败
+echo $?
+```
+
+**GitHub Actions 集成**：
+
+参考 `.github/workflows/callwarden.yml`，在 PR 检查流程中添加 bootstrap-gate job：
+
+```yaml
+jobs:
+  bootstrap-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Call Warden
+        run: pip install -e ".[core]"
+      - name: Refresh code graph
+        run: cw --refresh-all
+      - name: Run bootstrap gate
+        run: python -m callwarden.cicd.bootstrap_check
+```
+
+门禁失败时 PR 显示红色 X，输出失败原因和推荐修复动作。
+
 ## 下一步
 
 - [快速开始](quickstart.md)：从零开始使用
