@@ -1220,6 +1220,7 @@
       "migration_v23": "Add Agent Rule Memory tables (agent_rule_candidates / agent_rules / agent_rule_sync_log for sediment project rules and inject into task and function context)",
       "migration_v24": "Add tasks.applied_at column (review -> applied state transition, supports task review closure)",
       "migration_v25": "Add workspace_scan_runs table (bootstrap scan baseline, supports task capture-diff closure)",
+      "migration_v26": "Add UNIQUE index on symbols(file_instance_id, name, start_line) + UPSERT support, prevents duplicate symbols and enables concurrent-safe writes",
       "rule_candidate_title_required": "Rule title is required",
       "rule_candidate_text_required": "Rule text is required",
       "rule_candidate_id_required": "Candidate rule ID is required",

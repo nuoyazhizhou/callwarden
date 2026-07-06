@@ -1315,6 +1315,35 @@ def _migrate_v24_to_v25(conn: sqlite3.Connection):
     """)
 
 
+def _migrate_v25_to_v26(conn: sqlite3.Connection):
+    """v25 -> v26: symbols 表新增 UNIQUE 索引 + UPSERT 支持
+
+    问题背景：
+    - symbols 表缺少 (file_instance_id, name, start_line) 的 UNIQUE 约束
+    - 并发写入或重复 refresh 时可能产生重复符号行，导致查询返回重复结果
+    - 改用 UPSERT（INSERT ... ON CONFLICT ... DO UPDATE）可避免重复插入
+
+    迁移步骤：
+    1. 清理已存在的重复行（按 file_instance_id + name + start_line 分组，保留最小 id）
+    2. 创建 UNIQUE INDEX idx_symbols_unique
+
+    幂等性：CREATE UNIQUE INDEX IF NOT EXISTS 保证可重复执行。
+    """
+    # 1. 清理重复行：保留每组 (file_instance_id, name, start_line) 中 id 最小的行
+    conn.execute("""
+        DELETE FROM symbols
+        WHERE id NOT IN (
+            SELECT MIN(id) FROM symbols
+            GROUP BY file_instance_id, name, start_line
+        )
+    """)
+    # 2. 创建 UNIQUE 索引
+    conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique
+        ON symbols(file_instance_id, name, start_line)
+    """)
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1579,6 +1608,10 @@ class CodeGraphBase:
             25: {
                 "description": t("cli.messages.migration_v25", default="Add workspace_scan_runs table for bootstrap scan baseline"),
                 "func": _migrate_v24_to_v25,
+            },
+            26: {
+                "description": t("cli.messages.migration_v26", default="Add UNIQUE index on symbols(file_instance_id, name, start_line) + UPSERT support"),
+                "func": _migrate_v25_to_v26,
             },
         }
 

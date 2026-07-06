@@ -1258,14 +1258,25 @@ class BuildMixin:
                 to_update,
             )
 
-        # 6. 批量 INSERT 新增的 symbols
+        # 6. 批量 UPSERT 新增的 symbols（ON CONFLICT 防止重复行）
         if to_insert:
             self.conn.executemany(
                 """INSERT INTO symbols
                    (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line,
                     start_col, end_col, signature, has_comment, comment_status,
                     module_path, qualified_name)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                   ON CONFLICT(file_instance_id, name, start_line) DO UPDATE SET
+                    symbol_hash = excluded.symbol_hash,
+                    kind = excluded.kind,
+                    visibility = excluded.visibility,
+                    end_line = excluded.end_line,
+                    start_col = excluded.start_col,
+                    end_col = excluded.end_col,
+                    signature = excluded.signature,
+                    has_comment = excluded.has_comment,
+                    module_path = excluded.module_path,
+                    qualified_name = excluded.qualified_name""",
                 to_insert,
             )
 
@@ -1316,17 +1327,29 @@ class BuildMixin:
             return row["id"]
         else:
             cur = self.conn.execute(
-                """INSERT INTO symbols 
-                   (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line, 
+                """INSERT INTO symbols
+                   (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line,
                     start_col, end_col, signature, has_comment, comment_status,
                     module_path, qualified_name)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                   ON CONFLICT(file_instance_id, name, start_line) DO UPDATE SET
+                    symbol_hash = excluded.symbol_hash,
+                    kind = excluded.kind,
+                    visibility = excluded.visibility,
+                    end_line = excluded.end_line,
+                    start_col = excluded.start_col,
+                    end_col = excluded.end_col,
+                    signature = excluded.signature,
+                    has_comment = excluded.has_comment,
+                    module_path = excluded.module_path,
+                    qualified_name = excluded.qualified_name
+                   RETURNING id""",
                 (file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
                  sym["start_line"], sym["end_line"],
                  sym["start_col"], sym["end_col"], sym["signature"], sym["has_comment"],
                  sym["module_path"], sym["qualified_name"]),
             )
-            return cur.lastrowid
+            return cur.fetchone()[0]
 
 
     def _insert_symbol(self, file_instance_id: int, sym: Dict[str, Any]):
@@ -1343,11 +1366,22 @@ class BuildMixin:
         if "content_hash" not in sym:
             sym["content_hash"] = compute_content_hash(sym.get("content", ""))
         self.conn.execute(
-            """INSERT INTO symbols 
-               (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line, 
+            """INSERT INTO symbols
+               (file_instance_id, symbol_hash, name, kind, visibility, start_line, end_line,
                 start_col, end_col, signature, has_comment, comment_status,
                 module_path, qualified_name)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+               ON CONFLICT(file_instance_id, name, start_line) DO UPDATE SET
+                symbol_hash = excluded.symbol_hash,
+                kind = excluded.kind,
+                visibility = excluded.visibility,
+                end_line = excluded.end_line,
+                start_col = excluded.start_col,
+                end_col = excluded.end_col,
+                signature = excluded.signature,
+                has_comment = excluded.has_comment,
+                module_path = excluded.module_path,
+                qualified_name = excluded.qualified_name""",
             (file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
              sym["start_line"], sym["end_line"],
              sym["start_col"], sym["end_col"], sym["signature"], sym["has_comment"],

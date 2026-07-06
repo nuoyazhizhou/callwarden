@@ -1220,6 +1220,7 @@
       "migration_v23": "Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log，沉淀项目规则并注入到任务和函数上下文）",
       "migration_v24": "tasks 表新增 applied_at 字段（review -> applied 状态转换，支持任务审核闭环）",
       "migration_v25": "新增 workspace_scan_runs 表（自举扫描基线，支持 task capture-diff 闭环）",
+      "migration_v26": "symbols 表新增 UNIQUE 索引 (file_instance_id, name, start_line) + UPSERT 支持，防止重复符号、支持并发安全写入",
       "rule_candidate_title_required": "规则标题不能为空",
       "rule_candidate_text_required": "规则正文不能为空",
       "rule_candidate_id_required": "候选规则 ID 不能为空",
