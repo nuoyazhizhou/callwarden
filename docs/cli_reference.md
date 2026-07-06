@@ -637,6 +637,36 @@ cw task report <task_id> <step_id> --result "文件不存在" --fail
 cw task rollback <task_id> <step_id>
 ```
 
+### `task apply`：审核通过任务
+
+```bash
+cw task apply <task_id> [--reviewer <identity>]
+```
+
+将任务状态从 `review` 推进到 `applied`，记录审核通过时间戳 `applied_at`。
+
+**设计原则**：写代码的 Agent 完成任务后状态为 `review`，不能自己 `apply`，
+必须由其他会话的 LLM 审核调用，避免基于奖励函数的激励直接 close 任务。
+
+- 仅 `review` 状态的任务可 `apply`，其他状态返回错误
+- 成功后 `applied_at` 字段写入当前时间戳
+- `--reviewer` 参数标识审核人（默认 `reviewer`）
+
+### `task close`：关闭任务
+
+```bash
+cw task close <task_id> [--reviewer <identity>]
+```
+
+将任务状态从 `applied` 推进到 `closed`，记录关闭时间戳 `closed_at`。
+
+**设计原则**：关闭操作也必须由其他会话的 LLM 调用，与 `apply` 配合完成
+`review → applied → closed` 审核闭环。
+
+- 仅 `applied` 状态的任务可 `close`，其他状态返回错误
+- 成功后 `closed_at` 字段写入当前时间戳
+- `--reviewer` 参数标识关闭人（默认 `reviewer`）
+
 ### `task findings`：查看任务质量门禁发现
 
 ```bash
@@ -1298,7 +1328,13 @@ cw task report <task_id> <step_id> --result "已完成重构"
 # 5. 检查门禁
 cw check-gate <task_id>
 
-# 6. 如需回滚
+# 6. 审核通过（由其他会话的 LLM 调用，review -> applied）
+cw task apply <task_id> --reviewer reviewer-session
+
+# 7. 关闭任务（由其他会话的 LLM 调用，applied -> closed）
+cw task close <task_id> --reviewer closer-session
+
+# 8. 如需回滚
 cw task rollback <task_id> <step_id>
 ```
 
