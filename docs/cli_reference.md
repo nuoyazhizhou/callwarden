@@ -43,9 +43,13 @@ Call Warden CLI 提供两种命令风格：
 | | `--history <NAME>` | flag | 函数历史版本 |
 | | `--diff <H1> <H2>` | flag | 对比两个版本 |
 | **任务** | `task create/next/report/rollback` | sub | 任务管理 |
+| | `task list/show/findings/resolve-finding` | sub | 任务列表/详情/质量发现/解决 |
+| | `task apply/close` | sub | 任务审核通过/关闭（带级联关闭子任务） |
+| | `task capture-diff <TASK_ID>` | sub | 捕获外部 Agent 真实文件改动到 task/change/audit 闭环 |
 | | `--task-list` | flag (兼容) | 列出任务（等价 `cw task list`） |
 | | `--task-show <ID>` | flag (兼容) | 查看任务详情（等价 `cw task show <ID>`） |
 | | `check-gate <TASK_ID>` | sub | 检查门禁 |
+| **审计** | `audit verify` | sub | 验证 `audit_chain` 签名链完整性 |
 | **GC** | `gc archive/restore/status/purge` | sub | ignore 文件归档、复活、状态、清除 |
 | | `gc policy show/set` | sub | 查看或修改 retention 策略 |
 | | `gc retention` | sub | 按冷热策略清理旧版本/外部符号（含 Top N 收益预估） |
@@ -104,6 +108,8 @@ Call Warden CLI 提供两种命令风格：
 | | `rule sync [--apply]` | sub | 同步 active 规则到 AGENTS.md 标记区 |
 | | `rule insert-block` | sub | 在 AGENTS.md 末尾插入规则标记块 |
 | | `rule extract` | sub | 从 task_quality_findings 聚合候选 |
+| | `rule seed-bootstrap [--apply]` | sub | 种子化内置自举 active rules（幂等，固定 ID `AR-bootstrap-*`） |
+| **自举** | `bootstrap status` | sub | 自举闭环健康摘要（DB 同步/规则/质量发现/审计链/扫描基线/任务/推荐动作） |
 
 > `install` 是独立子命令，调用方式为 `cw install [options]`。
 
@@ -773,6 +779,47 @@ cw task show <task_id> --flat
 
 `--flat` 模式调用 `db.task_status()`，仅显示主任务详情和自身步骤。
 
+### `task capture-diff`：捕获外部 Agent 文件改动到审计闭环
+
+```bash
+# Dry-run（默认）：只返回计划，不写库
+cw task capture-diff <task_id>
+
+# 实际写入：落 change_audit / task_symbol_changes / audit_chain，并触发质量检查
+cw task capture-diff <task_id> --apply
+
+# 指定关联 step 与 base commit
+cw task capture-diff <task_id> --step-id S-1783... --base HEAD~1 --apply
+```
+
+**用途**：当外部 Agent（如 Claude Code、Codex 等）在 Call Warden 之外
+直接修改了文件后，调用此命令把这些"真实改动"捕获回 Call Warden 的
+任务/变更/符号/审计闭环，使图谱与磁盘保持一致，并自动生成质量发现。
+
+**参数**：
+- `<task_id>`（必填）：关联的任务 ID
+- `--step-id <ID>`：关联的 step ID（可选，默认空）
+- `--base <COMMIT>`：基准 commit（可选，默认使用最近一次 `workspace_scan_runs` 的 git_head）
+- `--dry-run`（默认）：只返回计划，不写数据库
+
+**输出**：
+- 变更文件清单（含新增 / 修改 / 删除统计）
+- `scan_id`：对应的 `workspace_scan_runs` 记录 ID（apply 模式）
+- `linked_findings`：本次变更触发的质量发现（按 finding_type 分组）
+- `quality_decision`：`pass` / `warn` / `block`
+- `next_action`：建议的下一步（`review` / `fix_findings` / `noop`）
+
+**写入的事实表**：
+- `workspace_scan_runs`：扫描基线记录（purpose=`task_capture`，author=`capture-diff`）
+- `change_audit`：每文件一条变更记录（hash_before / hash_after）
+- `task_symbol_changes`：受影响的符号变更记录
+- `audit_chain`：每条 change_audit 的签名链记录
+- `task_quality_findings`：scope/call_chain/file_health 等检查器发现的违规
+
+> **与 `task report` 的关系**：`task report` 是 Agent 声明完成 step；
+> `task capture-diff` 是从磁盘真实变更反向同步到任务上下文，二者配合
+> 构成完整的"声明 + 验证"闭环。
+
 ### `audit verify`：验证审计链完整性
 
 ```bash
@@ -1125,6 +1172,72 @@ cw rule extract --min-occurrences 3            # 提高阈值
 
 聚合维度：`(finding_type, severity, source)`。同一聚合键出现次数 ≥
 `min_occurrences`（默认 2）时生成 1 个 pending 候选规则，自动去重。
+
+### `rule seed-bootstrap`：种子化内置自举 active rules
+
+```bash
+# Dry-run（默认）：只返回计划，不写库
+cw rule seed-bootstrap
+
+# 实际写入 agent_rules 表
+cw rule seed-bootstrap --apply
+```
+
+**用途**：把 Call Warden 自身的 5 条核心规约（i18n 强制、提交前刷新、
+任务拆分、completion review、capture-diff）以**固定 ID** `AR-bootstrap-*`
+写入 `agent_rules` 表，让 `task_next_step` / `work_next_job` /
+`file_symbol_content` / `get_symbol` 等注入点能向 Agent 提供稳定的行为约束。
+
+**幂等性**：通过固定 ID 实现：
+- 不存在 → `create`
+- 存在但 `rule_text` 变化 → `update`
+- 存在且无变化 → `skip`
+
+**内置规则清单**：
+
+| ID | severity | scope | 说明 |
+|----|----------|-------|------|
+| `AR-bootstrap-i18n` | warning | `{}` (global) | 用户可见输出必须通过 i18n.t() |
+| `AR-bootstrap-refresh-before-commit` | warning | `{actions:[commit]}` | git commit 前必须 `cw --refresh-all` |
+| `AR-bootstrap-task-split` | info | `{actions:[task_create]}` | 3+ 文件或 5+ 步骤必须 task_split |
+| `AR-bootstrap-completion-review` | warning | `{actions:[task_report]}` | task_report 前必须 run_task_completion_review |
+| `AR-bootstrap-capture-diff` | info | `{actions:[task_report]}` | task_report 前建议 task_capture_diff 验证磁盘 |
+
+**输出**：
+- `total` / `created` / `updated` / `skipped` 计数
+- 每条规则的 `action`（create / update / skip）+ title
+- dry-run 模式末尾提示 `Use --apply to write rules to agent_rules table.`
+
+---
+
+## 自举闭环命令
+
+### `bootstrap status`：自举健康摘要
+
+```bash
+cw bootstrap status
+```
+
+**用途**：一行命令汇总自举闭环（bootstrap closure）整体健康度，便于
+人工巡检或 CI 门禁脚本快速判断"系统是否处于一致性状态"。
+
+**输出分组**（按区块）：
+
+1. **DB stale 状态** — 当前 git_head 与最近一次 `workspace_scan_runs.git_head`
+   是否一致；不一致会红色提示运行 `cw --refresh-all`
+2. **规则与候选** — `agent_rules` 已生效规则数 + `agent_rule_candidates`
+   pending 候选数
+3. **质量发现** — `task_quality_findings` open 数 + blocking（error/block）数
+4. **审计链验证** — `audit_chain` total / broken / security_level
+   （`hash_only` 或 `hmac`）
+5. **最近扫描基线** — 最近一次 `workspace_scan_runs` 的 id / git_head / status
+6. **任务状态分组** — tasks 表按 open / in_progress / review / applied 分组计数
+7. **推荐下一条命令** — 根据当前状态推荐 `cw --refresh-all` /
+   `cw rule seed-bootstrap --apply` / `cw audit verify` /
+   `cw task next <id>` 等
+
+> **只读命令**：`bootstrap status` 不会写数据库，不会触发 workspace 激活，
+> 不会与 MCP Server 长连接撞锁。
 
 ---
 

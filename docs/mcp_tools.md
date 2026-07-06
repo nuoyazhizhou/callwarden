@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露约 160 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 160+ 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -27,7 +27,7 @@ cw server --transport sse    # SSE 模式
 | 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
 | Semgrep 缺陷 | 4 | 扫描/统计/查询 |
 | 安全编辑 | 6 | propose_edit/range_patch/symbol_patch/revert/history/stats |
-| 任务管理 | 19 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template + task-symbol attribution + completion_review/quality_findings/resolve_quality_finding |
+| 任务管理 | 20 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template + task-symbol attribution + completion_review/quality_findings/resolve_quality_finding + capture_diff（自举闭环入口） |
 | 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
 | LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
 | 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
@@ -48,7 +48,8 @@ cw server --transport sse    # SSE 模式
 | 检查门禁 | 2 | 运行门禁/标记解决 |
 | 工作区管理 | 6 | 列出/注册/切换/删除/活动/构建目录 |
 | 文件操作 | 3 | 移除/构建目录/符号内容 |
-| Agent Rule Memory | 9 | 候选规则 CRUD/审核、规则列表、上下文匹配、AGENTS.md 同步、标记块插入、自动提取 |
+| Agent Rule Memory | 10 | 候选规则 CRUD/审核、规则列表、上下文匹配、AGENTS.md 同步、标记块插入、自动提取、内置规则种子化 |
+| 自举闭环 | 1 | bootstrap_status（自举健康摘要） |
 
 ---
 
@@ -443,6 +444,38 @@ cw server --transport sse    # SSE 模式
 > **阻塞语义**：`error` / `block` 级别的 open 发现会让 step 无法进入 done。
 > 必须先 `task_resolve_quality_finding` 标记为 resolved/wontfix，
 > 再 `task_completion_review` 复查决策。
+
+### `task_capture_diff`
+捕获外部 Agent 真实文件改动到 task / change / symbol / audit 闭环。
+这是自举闭环（bootstrap closure）的核心入口。
+
+当外部 Agent（非 Call Warden MCP）在文件系统中留下改动后，调用此工具
+把这些变更归因到指定 task/step，并触发质量审查：
+1. 检测自最近一次 `workspace_scan_runs.git_head` 以来的文件变更
+2. dry-run 模式只返回计划，apply 模式写入事实表
+3. apply 模式：写 `workspace_scan_runs`（status=running → completed）
+   + 每文件 `change_audit`（hash_before/hash_after）+ `audit_chain` 签名
+   + 关联 `task_symbol_changes` + 触发 `run_task_completion_review`
+4. 根据 `quality_decision` 决定 `next_action`
+
+- **参数**：
+  - `task_id: str` — 关联任务 ID（必填）
+  - `step_id: str = ""` — 关联步骤 ID（可选，默认空）
+  - `base: str = ""` — 基准 commit（空串自动取最近 scan baseline 的 git_head）
+  - `dry_run: bool = True` — True 只返回计划不写库；False 写入事实表
+- **返回**：`dict` —
+  - `task_id: str` / `step_id: str` / `dry_run: bool`
+  - `scan_id: int` — apply 模式才有，对应的 `workspace_scan_runs` ID
+  - `changed_files: list[str]` — 变更文件路径列表
+  - `linked_symbols: list[dict]` — 关联的符号变更列表
+  - `quality_findings: list[dict]` — 触发的质量发现
+  - `quality_decision: str` — `pass` / `warn` / `block` / `""`（dry-run 时为空）
+  - `next_action: str` — `review` / `fix` / `commit` / `noop` / `""`
+
+> **与 `task_report_step` 的关系**：`task_report_step` 是 Agent 声明完成 step；
+> `task_capture_diff` 是从磁盘真实变更反向同步到任务上下文，二者配合构成
+> "声明 + 验证"闭环。建议流程：`task_next_step` → 外部编辑 →
+> `task_capture_diff` → `task_report_step`。
 
 ### `audit_chain_verify`
 验证审计签名链的完整性与一致性。校验 `audit_chain` 表中每条记录的
@@ -1246,6 +1279,73 @@ Agent Rule Memory 是 Call Warden 的项目规则记忆系统，支持"候选规
   - `task_id: str = ""` — 任务 ID，空串则全库扫描
   - `min_occurrences: int = 2` — 阈值
 - **返回**：`{"candidate_ids": [...], "count": int}`
+
+### `rule_seed_bootstrap`
+种子化内置自举 active rules。把 Call Warden 自身的 5 条核心规约以
+**固定 ID** `AR-bootstrap-*` 写入 `agent_rules` 表，让 `task_next_step` /
+`work_next_job` / `file_symbol_content` / `get_symbol` 等注入点能向
+Agent 提供稳定的行为约束。
+
+**幂等性**通过固定 ID 实现：
+- 不存在 → `create`
+- 存在但 `rule_text` 变化 → `update`
+- 存在且无变化 → `skip`
+
+**内置 5 条规则**：
+
+| ID | severity | scope | 说明 |
+|----|----------|-------|------|
+| `AR-bootstrap-i18n` | warning | `{}` (global) | 用户可见输出必须通过 i18n.t() |
+| `AR-bootstrap-refresh-before-commit` | warning | `{actions:[commit]}` | git commit 前必须 `cw --refresh-all` |
+| `AR-bootstrap-task-split` | info | `{actions:[task_create]}` | 3+ 文件或 5+ 步骤必须 task_split |
+| `AR-bootstrap-completion-review` | warning | `{actions:[task_report]}` | task_report 前必须 run_task_completion_review |
+| `AR-bootstrap-capture-diff` | info | `{actions:[task_report]}` | task_report 前建议 task_capture_diff 验证磁盘 |
+
+- **参数**：
+  - `dry_run: bool = True` — True 只返回计划不写库；False 写入 `agent_rules` 表
+- **返回**：`dict` —
+  - `dry_run: bool`
+  - `total: int` — 内置规则总数（5）
+  - `created: int` — 新建数量
+  - `updated: int` — 更新数量
+  - `skipped: int` — 跳过数量
+  - `rules: list[dict]` — 每条规则的执行结果
+    - `{"id": str, "title": str, "action": "create"|"update"|"skip"}`
+
+> **注入点**：seed 后的 active rules 会通过 `get_applicable_rules`
+> 被以下注入点读取：`task_next_step`（applicable_rules）、
+> `work_next_job`（project_rules + context.applicable_rules）、
+> `build_structured_instruction`（project_rules）、
+> `get_symbol`（applicable_rules）、`file_symbol_content`（applicable_rules）。
+
+### `bootstrap_status`
+返回自举健康状态摘要。一行调用汇总以下信息，帮助判断当前自举闭环
+（bootstrap closure）是否健康：
+
+1. `db_stale` — DB 是否滞后（最近 scan_run 的 git_head 与当前 HEAD 不一致）
+2. `active_rules_count` / `pending_candidates_count` — 已生效规则数 / 待审候选数
+3. `open_findings_count` / `blocking_findings_count` — open 质量发现数 / 阻塞发现数
+4. `audit_verify` — `audit_chain` 验证摘要（total / verified / broken / security_level）
+5. `latest_scan_run` — 最近一次 `workspace_scan_runs` 记录
+6. `tasks` — 任务按状态分组计数（open / in_progress / review / applied）
+7. `recommended_next_action` — 推荐下一条命令
+
+- **参数**：无
+- **返回**：`dict` —
+  - `db_stale: bool`
+  - `current_head: str`
+  - `active_rules_count: int`
+  - `pending_candidates_count: int`
+  - `open_findings_count: int`
+  - `blocking_findings_count: int`
+  - `audit_verify: {total_count, verified_count, broken_count, security_level}`
+  - `latest_scan_run: dict | None`
+  - `tasks: {open, in_progress, review, applied}`
+  - `recommended_next_action: str` — 例如 `"cw --refresh-all"` /
+    `"cw rule seed-bootstrap --apply"` / `"cw audit verify"` /
+    `"cw task next <id>"`
+
+> **只读工具**：不写数据库，不触发 workspace 激活，可安全与 CLI 写操作并发。
 
 ---
 

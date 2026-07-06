@@ -240,19 +240,26 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 | agent_rule_candidates | 候选规则（pending/accepted/rejected），由 Agent 观察或从 task_quality_findings 自动提取 |
 | agent_rules | 已生效规则（active/deprecated/removed），accept 后写入，按 scope 匹配注入到上下文 |
 | agent_rule_sync_log | AGENTS.md 同步日志（dry_run/apply 都记录，含 before/after hash） |
+| audit_chain | 审计签名链（每条 change_audit/file_edit_audit/task_quality_findings 等记录对应一条），含 `payload_hash` + `prev_signature` + `record_signature`，支持 SHA-256 链或 HMAC-SHA256 |
+
+### 自举闭环表（v25）
+
+| 表 | 说明 |
+|----|------|
+| workspace_scan_runs | 工作区扫描基线记录（id / workspace_id / purpose / task_id / step_id / baseline_type / git_head / git_merge_base / git_status_hash / root_mtime / file_count / manifest_hash / changed_files_json / metadata_json / started_at / completed_at / status）。`purpose` 取值 `bootstrap`（启动时基线）/ `task_capture`（task_capture_diff 触发）；`status` 走 `running → completed/failed`；三个索引 `idx_workspace_scan_runs_workspace/task/git_head` |
 
 ## Mixin 架构
 
 ### 设计原理
 
-CodeGraphDB 通过 **24 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
+CodeGraphDB 通过 **25 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
 
 - **单一职责**：每个 Mixin 只关心自己的表和查询
 - **按需组合**：主类只需声明继承即可获得功能
 - **易于扩展**：新增功能只需添加新 Mixin
-- **避免上帝类**：`db.py` 仅 92 行，职责在 24 个文件中分散
+- **避免上帝类**：`db.py` 仅 92 行，职责在 25 个文件中分散
 
-### 24 个 Mixin 列表
+### 25 个 Mixin 列表
 
 | # | Mixin | 文件 | 职责 |
 |---|-------|------|------|
@@ -280,6 +287,7 @@ CodeGraphDB 通过 **24 个 Mixin 多继承**组装，每个 Mixin 负责一个�
 | 22 | LspMixin | db_lsp.py | LSP 集成 |
 | 23 | CheckGateMixin | db_check_gate.py | 检查门禁（F6） |
 | 24 | AgentRulesMixin | db_agent_rules.py | Agent Rule Memory：候选规则审核、scope 匹配注入、AGENTS.md 同步 |
+| 25 | BootstrapMixin | db_bootstrap.py | 自举闭环：扫描基线检测（workspace_scan_runs）、task_capture_diff 闭环入口、bootstrap_status 健康摘要 |
 
 ### 组装方式
 
@@ -378,6 +386,111 @@ Agent Rule Memory 是 Call Warden 的项目规则记忆系统，让 Agent 能够
 - `dry_run=False`（apply）：只替换标记区之间内容，保留标记区外的人工内容
 - 标记区不存在时返回 `error` + `suggested_block`（需先调用 `rule_insert_agents_md_block`）
 - 每次同步写入 `agent_rule_sync_log`，记录 `before_hash` / `after_hash` / `rule_count`
+
+## 自举闭环架构（Bootstrap Closure）
+
+自举闭环（Bootstrap Closure）是 Call Warden 把"外部 Agent 真实文件改动"反向
+同步回任务/变更/符号/审计事实层的闭环机制，让 Call Warden 自身也能作为"被观测
+对象"接受完整性校验。
+
+### 解决的问题
+
+| 场景 | 没有 capture-diff 时 | 有 capture-diff 后 |
+|------|---------------------|--------------------|
+| 外部 Agent（Claude Code/Codex）直接编辑磁盘文件 | 图谱与磁盘脱节，task 无法归因真实变更 | 自动捕获变更、归因到 task/step、生成 quality findings |
+| 任务完成审查 | 只靠 Agent 自报 `task_report`，缺验证 | `task_capture_diff` 提供磁盘事实，与 Agent 声明交叉验证 |
+| 跨会话审计 | 多个 Agent 改动难以追溯 | 每次 capture 写 `workspace_scan_runs` + `change_audit` + `audit_chain` |
+| 规则注入空转 | active_rules 表为空，注入点返回空列表 | `rule_seed_bootstrap --apply` 写入 5 条核心规约，注入稳定 |
+
+### 数据流
+
+```
+[work_next_job]                    [外部 Agent 编辑]
+     │                                   │
+     ▼                                   ▼
+ task_next_step                     磁盘文件变更
+     │                                   │
+     │     ┌─────────────────────────────┘
+     │     │
+     │     ▼
+     │  task_capture_diff(task_id, step_id, dry_run=False)
+     │     │
+     │     ├─► get_workspace_changes_since(scan_baseline)
+     │     │       └─► 变更文件清单
+     │     │
+     │     ├─► workspace_scan_runs（status: running → completed）
+     │     │       └─► 新基线 git_head / manifest_hash
+     │     │
+     │     ├─► change_audit（每文件一条，hash_before/after）
+     │     │       └─► audit_chain（签名链：payload_hash + prev_sig + record_sig）
+     │     │
+     │     ├─► task_symbol_changes（best-effort 关联）
+     │     │
+     │     └─► run_task_completion_review
+     │             └─► task_quality_findings（scope / call_chain / file_health / i18n）
+     │
+     ▼
+ [quality_decision]                 [next_action]
+   pass / warn / block               review / fix / noop / commit
+     │
+     ▼
+ task_report_step（Agent 声明完成）→ task_apply → task_close
+```
+
+### 关键表与字段
+
+- `workspace_scan_runs`（v25）：扫描基线记录，17 个字段
+  - `purpose`：`bootstrap`（启动时基线）/ `task_capture`（task_capture_diff 触发）
+  - `baseline_type`：`git`（默认）/ `manifest` / `mtime`
+  - `git_head` / `git_merge_base` / `git_status_hash`：基线锚点
+  - `changed_files_json`：本次扫描检测到的变更文件清单
+  - `status`：`running → completed/failed`
+  - 三个索引：`idx_workspace_scan_runs_workspace/task/git_head`
+
+- `change_audit`：每文件一条变更记录
+  - `hash_before` / `hash_after`：内容哈希前后对比
+  - `author`：`capture-diff` 标识本条由 task_capture_diff 写入
+
+- `audit_chain`：每条 change_audit 对应一条签名记录
+  - `payload_hash`：当前记录内容的 SHA-256
+  - `prev_signature`：上一条记录的 `record_signature`
+  - `record_signature`：本条签名（SHA-256 链或 HMAC-SHA256）
+  - `signing_key_id`：`local` / `hmac`
+  - `security_level`：`hash_only` / `hmac`
+
+### 闭环命令映射
+
+| 阶段 | CLI | MCP | 说明 |
+|------|-----|-----|------|
+| 种子规则 | `cw rule seed-bootstrap --apply` | `rule_seed_bootstrap(dry_run=False)` | 写入 5 条 `AR-bootstrap-*` |
+| 健康摘要 | `cw bootstrap status` | `bootstrap_status()` | 一行汇总 db_stale/规则/质量发现/审计链/扫描基线/任务/推荐 |
+| 捕获改动 | `cw task capture-diff <T> --apply` | `task_capture_diff(task_id, dry_run=False)` | 写 scan_runs + change_audit + audit_chain + findings |
+| 审计验证 | `cw audit verify` | `audit_chain_verify(table_name, limit)` | 验证签名链完整性与签名匹配 |
+| 任务报告 | `cw task report <T> <S> --result "..."` | `task_report_step(task_id, step_id, result)` | Agent 声明完成 step |
+| 任务应用 | `cw task apply <T> --reviewer <S>` | `task_apply(task_id, reviewer)` | review → applied |
+| 任务关闭 | `cw task close <T> --reviewer <S>` | `task_close(task_id, reviewer)` | applied → closed（带级联） |
+
+### BootstrapMixin 职责
+
+`BootstrapMixin`（第 25 个 Mixin，`db/db_bootstrap.py`）承载自举闭环的核心方法：
+- `bootstrap_status()`：聚合 health 摘要（不写库）
+- `task_capture_diff()`：捕获磁盘变更到任务上下文（写库）
+- `get_workspace_changes_since()`：检测自基线以来的变更文件（只读）
+
+`rule_seed_bootstrap()` 在 `AgentRulesMixin`（`db/db_agent_rules.py`）中实现，
+通过固定 ID `AR-bootstrap-*` 实现幂等。
+
+### 与其他闭环的关系
+
+- **Agent Rule Memory 闭环**：自举闭环负责"种子化"和"注入稳定数据源"，
+  Agent Rule Memory 闭环负责"自动沉淀"和"scope 匹配注入"。二者共同构成
+  Call Warden 的行为约束系统。
+- **任务状态机**：自举闭环的 `task_capture_diff` 在 `task_report_step`
+  之前调用，提供磁盘事实；任务状态机的 `apply/close` 依赖 quality findings
+  决策。
+- **审计链**：自举闭环写入的 `change_audit` 与 `task_quality_findings`
+  都会被 `sign_audit_record` 签名，纳入 `audit_chain`，统一由
+  `audit_chain_verify` 验证。
 
 ## 安全机制
 
