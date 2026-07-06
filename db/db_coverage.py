@@ -66,7 +66,7 @@ class CoverageMixin(_AnalyzerCoverageMixin):
 
         # 策略2：rel_path 后缀匹配
         cur = self.conn.execute(
-            "SELECT id, rel_path FROM file_instances WHERE workspace_id = ?",
+            "SELECT id, rel_path FROM file_instances WHERE workspace_id = ? AND status != 'archived'",
             (ws_id,),
         )
         candidates = cur.fetchall()
@@ -95,6 +95,9 @@ class CoverageMixin(_AnalyzerCoverageMixin):
             """
             SELECT id, start_line, end_line FROM symbols
             WHERE file_instance_id = ?
+              AND file_instance_id NOT IN (
+                  SELECT id FROM file_instances WHERE status = 'archived'
+              )
             ORDER BY start_line
             """,
             (file_instance_id,),

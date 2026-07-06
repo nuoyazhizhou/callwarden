@@ -469,7 +469,7 @@ class VectorMixin:
             SELECT s.symbol_hash
             FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND s.qualified_name = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.qualified_name = ?
             LIMIT 1
             """,
             (ws_id, qualified_name),
@@ -783,7 +783,7 @@ class VectorMixin:
             """
             SELECT s.symbol_hash FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND s.qualified_name = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.qualified_name = ?
             LIMIT 1
             """,
             (ws_id, qualified_name),

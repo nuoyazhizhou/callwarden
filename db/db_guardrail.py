@@ -579,7 +579,7 @@ class GuardrailMixin:
         # 策略1：从 file_instances 表查找 abs_path
         ws_id = self._get_active_workspace_id()
         cur = self.conn.execute(
-            "SELECT abs_path FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+            "SELECT abs_path FROM file_instances WHERE workspace_id = ? AND rel_path = ? AND status != 'archived'",
             (ws_id, file_path),
         )
         row = cur.fetchone()

@@ -68,8 +68,8 @@ def _get_task_row(conn, task_id):
 # ----------------------------------------------------------------------
 
 def test_schema_version_is_24():
-    """SCHEMA_VERSION 常量已升级到 25。"""
-    assert SCHEMA_VERSION == 25
+    """SCHEMA_VERSION 常量不低于 25（applied_at 引入版本 v24+）。"""
+    assert SCHEMA_VERSION >= 25
 
 
 def test_tasks_table_has_applied_at_column():
@@ -85,16 +85,14 @@ def test_tasks_table_has_applied_at_column():
 
 
 def test_schema_version_table_records_v24():
-    """schema_version 表记录 v25 迁移已完成。"""
+    """schema_version 表记录当前版本（≥25，applied_at 字段已就绪）。"""
     db, _root = _db_with_workspace()
     try:
         cur = db.conn.execute(
-            "SELECT version FROM schema_version WHERE version = ?",
-            (25,),
+            "SELECT MAX(version) as v FROM schema_version"
         )
         row = cur.fetchone()
-        assert row is not None
-        assert row["version"] == 25
+        assert row is not None and row["v"] >= 25
     finally:
         db.close()
 

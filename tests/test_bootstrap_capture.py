@@ -24,8 +24,8 @@ from callwarden.db.db import CodeGraphDB
 # ----------------------------------------------------------------------
 
 def test_schema_version_is_25():
-    """SCHEMA_VERSION 常量已升级到 25。"""
-    assert SCHEMA_VERSION == 25
+    """SCHEMA_VERSION 常量不低于 25（workspace_scan_runs 引入版本）。"""
+    assert SCHEMA_VERSION >= 25
 
 
 def test_new_db_has_workspace_scan_runs_table():
@@ -186,8 +186,9 @@ def test_legacy_v24_db_migrates_to_v25():
         db1.close()
 
         # 降级到 v24：删除 workspace_scan_runs 表 + 索引，回退版本号
+        # 当前 SCHEMA_VERSION 可能高于 25，需删除所有 >= 25 的版本记录以模拟 v24
         conn = sqlite3.connect(db_path)
-        conn.execute("DELETE FROM schema_version WHERE version = 25")
+        conn.execute("DELETE FROM schema_version WHERE version >= 25")
         conn.execute("DROP TABLE IF EXISTS workspace_scan_runs")
         conn.execute("DROP INDEX IF EXISTS idx_workspace_scan_runs_workspace")
         conn.execute("DROP INDEX IF EXISTS idx_workspace_scan_runs_task")
@@ -195,13 +196,13 @@ def test_legacy_v24_db_migrates_to_v25():
         conn.commit()
         conn.close()
 
-        # 重新打开触发 v24 -> v25 迁移
+        # 重新打开触发 v24 -> v25 迁移（后续可能继续到 v26+）
         db = CodeGraphDB(db_path=db_path, workspace_root=tmp)
         try:
             v = db.conn.execute(
                 "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
             ).fetchone()
-            assert v["version"] == 25
+            assert v["version"] >= 25
 
             cur = db.conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_scan_runs'"

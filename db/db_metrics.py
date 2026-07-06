@@ -196,7 +196,7 @@ class MetricsMixin:
             content = row["content"] or ""
             lang = ""
             if row["rel_path"]:
-                from .config import detect_language_from_path
+                from ..config import detect_language_from_path
                 lang = detect_language_from_path(row["rel_path"]) or ""
 
             complexity = self._compute_cyclomatic_complexity(content, lang)
@@ -292,7 +292,7 @@ class MetricsMixin:
 
         # 基本统计
         cur = self.conn.execute(
-            "SELECT COUNT(*) as cnt FROM file_instances WHERE workspace_id = ?",
+            "SELECT COUNT(*) as cnt FROM file_instances WHERE workspace_id = ? AND status != 'archived'",
             (ws_id,),
         )
         file_count = cur.fetchone()["cnt"]
@@ -301,7 +301,7 @@ class MetricsMixin:
             """
             SELECT COUNT(*) as cnt FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND s.kind IN ('fn', 'function', 'method')
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.kind IN ('fn', 'function', 'method')
             """,
             (ws_id,),
         )
@@ -310,7 +310,7 @@ class MetricsMixin:
         cur = self.conn.execute(
             """
             SELECT SUM(fi.total_lines) as total FROM file_instances fi
-            WHERE fi.workspace_id = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
             """,
             (ws_id,),
         )
@@ -323,7 +323,7 @@ class MetricsMixin:
             FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
             LEFT JOIN symbol_contents sc ON s.symbol_hash = sc.content_hash
-            WHERE fi.workspace_id = ? AND s.kind IN ('fn', 'function', 'method')
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.kind IN ('fn', 'function', 'method')
             """,
             (ws_id,),
         )
@@ -340,7 +340,7 @@ class MetricsMixin:
 
             lang = ""
             if row["rel_path"]:
-                from .config import detect_language_from_path
+                from ..config import detect_language_from_path
                 lang = detect_language_from_path(row["rel_path"]) or ""
 
             complexity = self._compute_cyclomatic_complexity(content, lang)
@@ -365,7 +365,7 @@ class MetricsMixin:
             SELECT COUNT(*) as cnt FROM calls c
             JOIN symbols s ON c.caller_id = s.id
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
             """,
             (ws_id,),
         )

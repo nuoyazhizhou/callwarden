@@ -55,8 +55,8 @@ def _table_exists(conn, table_name):
 
 
 def test_schema_version_is_22():
-    """SCHEMA_VERSION 常量已升级到 22。"""
-    assert SCHEMA_VERSION == 22
+    """SCHEMA_VERSION 常量不低于 22（audit_chain 引入版本）。"""
+    assert SCHEMA_VERSION >= 22
 
 
 def test_audit_chain_table_exists_on_fresh_db():
@@ -162,15 +162,14 @@ def test_migration_v21_to_v22_on_legacy_v21_db():
 
 
 def test_schema_version_table_records_v22_on_fresh_db():
-    """全新数据库 schema_version 表记录 v22 版本。"""
+    """全新数据库 schema_version 表记录当前版本（≥22，audit_chain 引入版本）。"""
     db, _root = _db_with_workspace()
     try:
         cur = db.conn.execute(
-            "SELECT version FROM schema_version WHERE version = ?",
-            (22,),
+            "SELECT MAX(version) as v FROM schema_version"
         )
         row = cur.fetchone()
-        assert row is not None, "v22 not recorded in schema_version table"
+        assert row is not None and row["v"] >= 22, "schema_version table missing or below v22"
     finally:
         db.close()
 

@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（每个项目一个）                    │
 │   $HOME/.callwarden/<16位hash>/callwarden.db                  │
-│   Schema v25 / WAL 模式 / 40+ 表 / 25 个 Mixin 模块           │
+│   Schema v26 / WAL 模式 / 40+ 表 / 25 个 Mixin 模块           │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,7 +67,7 @@ $HOME/.callwarden/<16位hash>/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v25**
+当前 Schema 版本：**v26**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -92,6 +92,7 @@ v22 审计签名链表（audit_chain，HMAC 签名的审计链）
 v23 Agent Rule Memory 表（agent_rule_candidates / agent_rules / agent_rule_sync_log）
 v24 任务状态机完整化（tasks 加 applied_at 字段，支持 review → applied → closed 流转）
 v25 自举闭环扫描基线表（workspace_scan_runs，扫描运行记录与变化检测）
+v26 symbols 表 UNIQUE 索引（file_instance_id, name, start_line）+ UPSERT，防止重复符号、支持并发安全写入
 ```
 
 Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。

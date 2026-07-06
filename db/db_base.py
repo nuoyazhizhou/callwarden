@@ -1328,7 +1328,15 @@ def _migrate_v25_to_v26(conn: sqlite3.Connection):
     2. 创建 UNIQUE INDEX idx_symbols_unique
 
     幂等性：CREATE UNIQUE INDEX IF NOT EXISTS 保证可重复执行。
+    防御性：symbols 表不存在时跳过（兼容合成测试库）。
     """
+    # 检查 symbols 表是否存在（防御性：合成测试库可能未创建此表）
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'"
+    )
+    if not cur.fetchone():
+        return  # symbols 表不存在，跳过迁移
+
     # 1. 清理重复行：保留每组 (file_instance_id, name, start_line) 中 id 最小的行
     conn.execute("""
         DELETE FROM symbols

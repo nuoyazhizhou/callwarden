@@ -14,7 +14,7 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
-from ..config import atomic_write_file
+from ..config import atomic_write_file, norm_path
 
 
 class QueryMixin:
@@ -34,7 +34,7 @@ class QueryMixin:
         ws_id = self._get_active_workspace_id()
 
         cur = self.conn.execute(
-            "SELECT COUNT(*) as cnt FROM file_instances WHERE workspace_id = ?",
+            "SELECT COUNT(*) as cnt FROM file_instances WHERE workspace_id = ? AND status != 'archived'",
             (ws_id,),
         )
         stats["total_files"] = cur.fetchone()["cnt"]
@@ -42,38 +42,53 @@ class QueryMixin:
         cur = self.conn.execute("""
             SELECT COUNT(*) as cnt FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
         """, (ws_id,))
         stats["total_symbols"] = cur.fetchone()["cnt"]
 
         cur = self.conn.execute("""
             SELECT s.kind, COUNT(*) as cnt FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
             GROUP BY s.kind ORDER BY cnt DESC
         """, (ws_id,))
         stats["by_kind"] = {row["kind"]: row["cnt"] for row in cur}
 
-        cur = self.conn.execute("SELECT COUNT(*) as cnt FROM calls")
+        cur = self.conn.execute("""
+            SELECT COUNT(*) as cnt FROM calls c
+            JOIN symbols s ON c.caller_id = s.id
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
+        """, (ws_id,))
         stats["total_calls"] = cur.fetchone()["cnt"]
 
-        cur = self.conn.execute("SELECT COUNT(*) as cnt FROM calls WHERE is_cross_file = 1")
+        cur = self.conn.execute("""
+            SELECT COUNT(*) as cnt FROM calls c
+            JOIN symbols s ON c.caller_id = s.id
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND c.is_cross_file = 1
+        """, (ws_id,))
         stats["cross_file_calls"] = cur.fetchone()["cnt"]
 
-        cur = self.conn.execute("SELECT COUNT(*) as cnt FROM calls WHERE callee_id IS NOT NULL")
+        cur = self.conn.execute("""
+            SELECT COUNT(*) as cnt FROM calls c
+            JOIN symbols s ON c.caller_id = s.id
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND c.callee_id IS NOT NULL
+        """, (ws_id,))
         stats["resolved_calls"] = cur.fetchone()["cnt"]
 
         cur = self.conn.execute("""
             SELECT COUNT(*) as cnt FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND s.comment_status = 'done'
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.comment_status = 'done'
         """, (ws_id,))
         stats["commented"] = cur.fetchone()["cnt"]
 
         cur = self.conn.execute("""
             SELECT s.depth, COUNT(*) as cnt FROM symbols s
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND s.kind IN ('fn', 'test_fn') AND s.depth >= 0
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.kind IN ('fn', 'test_fn') AND s.depth >= 0
             GROUP BY s.depth ORDER BY s.depth
         """, (ws_id,))
         stats["depth_distribution"] = {row["depth"]: row["cnt"] for row in cur}
@@ -81,14 +96,14 @@ class QueryMixin:
         cur = self.conn.execute("""
             SELECT COUNT(*) as cnt FROM file_versions fv
             JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
         """, (ws_id,))
         stats["total_file_versions"] = cur.fetchone()["cnt"]
 
         cur = self.conn.execute("""
             SELECT COUNT(*) as cnt FROM file_versions fv
             JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND fv.is_current = 1
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND fv.is_current = 1
         """, (ws_id,))
         stats["current_files"] = cur.fetchone()["cnt"]
 
@@ -99,7 +114,7 @@ class QueryMixin:
             SELECT COUNT(*) as cnt FROM file_symbol_versions fsv
             JOIN file_versions fv ON fsv.file_version_id = fv.id
             JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
         """, (ws_id,))
         stats["total_file_symbol_links"] = cur.fetchone()["cnt"]
 
@@ -107,7 +122,7 @@ class QueryMixin:
             SELECT COUNT(*) as cnt FROM call_versions cv
             JOIN file_versions fv ON cv.file_version_id = fv.id
             JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ?
+            WHERE fi.workspace_id = ? AND fi.status != 'archived'
         """, (ws_id,))
         stats["total_call_versions"] = cur.fetchone()["cnt"]
 
@@ -115,7 +130,7 @@ class QueryMixin:
             SELECT COUNT(*) as cnt FROM (
                 SELECT fv.file_instance_id FROM file_versions fv
                 JOIN file_instances fi ON fv.file_instance_id = fi.id
-                WHERE fi.workspace_id = ?
+                WHERE fi.workspace_id = ? AND fi.status != 'archived'
                 GROUP BY fv.file_instance_id HAVING COUNT(*) > 1
             )
         """, (ws_id,))
@@ -136,7 +151,7 @@ class QueryMixin:
         current_set = set(scanned_files)
 
         cur = self.conn.execute(
-            "SELECT rel_path, mtime, last_parsed FROM file_instances WHERE workspace_id = ?",
+            "SELECT rel_path, mtime, last_parsed FROM file_instances WHERE workspace_id = ? AND status != 'archived'",
             (ws_id,),
         )
         db_files = {}
@@ -157,7 +172,7 @@ class QueryMixin:
 
         new_files = [f for f in current_set if f not in db_files]
 
-        cur = self.conn.execute("SELECT COUNT(*) as c FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ? AND s.has_comment = 0 AND s.kind IN ('fn','test_fn','method')", (ws_id,))
+        cur = self.conn.execute("SELECT COUNT(*) as c FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.has_comment = 0 AND s.kind IN ('fn','test_fn','method')", (ws_id,))
         uncommented_fns = cur.fetchone()["c"]
 
         # 使用 self.db_path（已按工作区 hash 自动计算），避免硬编码路径
@@ -168,7 +183,7 @@ class QueryMixin:
             db_size = os.path.getsize(db_path)
 
         last_parsed_times = []
-        for row in self.conn.execute("SELECT last_parsed FROM file_instances WHERE workspace_id = ? AND last_parsed > 0", (ws_id,)):
+        for row in self.conn.execute("SELECT last_parsed FROM file_instances WHERE workspace_id = ? AND status != 'archived' AND last_parsed > 0", (ws_id,)):
             last_parsed_times.append(row["last_parsed"])
         last_build = max(last_parsed_times) if last_parsed_times else 0
 
@@ -265,7 +280,7 @@ class QueryMixin:
         ws_id = self._get_active_workspace_id()
         rel_path = norm_path(file_path)
         cur = self.conn.execute(
-            "SELECT * FROM file_instances WHERE workspace_id = ? AND rel_path = ?",
+            "SELECT * FROM file_instances WHERE workspace_id = ? AND rel_path = ? AND status != 'archived'",
             (ws_id, rel_path),
         )
         row = cur.fetchone()
@@ -291,7 +306,7 @@ class QueryMixin:
                FROM file_symbol_versions fsv
                JOIN file_versions fv ON fsv.file_version_id = fv.id
                JOIN file_instances fi ON fv.file_instance_id = fi.id
-               WHERE fsv.qualified_name = ? AND fi.workspace_id = ?
+               WHERE fsv.qualified_name = ? AND fi.workspace_id = ? AND fi.status != 'archived'
                ORDER BY fv.parsed_at DESC""",
             (qualified_name, ws_id),
         )
@@ -306,7 +321,7 @@ class QueryMixin:
             """SELECT fv.*, fi.rel_path
                FROM file_versions fv
                JOIN file_instances fi ON fv.file_instance_id = fi.id
-               WHERE fi.workspace_id = ? AND fi.rel_path = ?
+               WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fi.status != 'archived'
                ORDER BY fv.version_num DESC""",
             (ws_id, rel_path),
         )
@@ -431,7 +446,7 @@ class QueryMixin:
             cur = self.conn.execute(
                 """SELECT s.*, fi.rel_path, fi.abs_path 
                    FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id
-                   WHERE fi.workspace_id = ? AND s.name = ?""",
+                   WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.name = ?""",
                 (ws_id, name),
             )
         row = cur.fetchone()
@@ -445,7 +460,7 @@ class QueryMixin:
         cur = self.conn.execute(
             """SELECT s.* FROM symbols s 
                JOIN file_instances fi ON s.file_instance_id = fi.id
-               WHERE fi.workspace_id = ? AND fi.rel_path = ?
+               WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fi.status != 'archived'
                ORDER BY s.start_line""",
             (ws_id, rel_path),
         )
@@ -480,7 +495,7 @@ class QueryMixin:
             JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
             JOIN file_versions fv ON fsv.file_version_id = fv.id
             JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND fv.is_current = 1 AND fsv.is_deleted = 0
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND fv.is_current = 1 AND fsv.is_deleted = 0
               AND (fsv.qualified_name LIKE ? OR sc.name LIKE ?)
         """
 
@@ -526,7 +541,7 @@ class QueryMixin:
             JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
             JOIN file_versions fv ON fsv.file_version_id = fv.id
             JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND fv.is_current = 1 AND fsv.is_deleted = 0
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND fv.is_current = 1 AND fsv.is_deleted = 0
               AND fsv.qualified_name = ?
             LIMIT 1
         """
@@ -618,7 +633,7 @@ class QueryMixin:
             JOIN symbol_contents sc ON fsv.symbol_hash = sc.content_hash
             JOIN file_versions fv ON fsv.file_version_id = fv.id
             JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND fv.is_current = 1 AND fsv.is_deleted = 0
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND fv.is_current = 1 AND fsv.is_deleted = 0
               AND (sc.name = ? OR fsv.qualified_name = ?)
               AND (fi.rel_path = ? OR fi.abs_path = ? OR fi.rel_path LIKE '%' || ?)
             LIMIT 1

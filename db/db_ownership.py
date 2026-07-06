@@ -207,7 +207,7 @@ class OwnershipMixin:
 
         # 获取所有文件实例
         cur = self.conn.execute(
-            "SELECT id, rel_path FROM file_instances WHERE workspace_id = ?",
+            "SELECT id, rel_path FROM file_instances WHERE workspace_id = ? AND status != 'archived'",
             (ws_id,),
         )
         files = [dict(row) for row in cur.fetchall()]
@@ -293,7 +293,7 @@ class OwnershipMixin:
                     "files_processed": 0, "files_updated": 0, "errors": 0}
 
         cur = self.conn.execute(
-            "SELECT id, rel_path, abs_path FROM file_instances WHERE workspace_id = ?",
+            "SELECT id, rel_path, abs_path FROM file_instances WHERE workspace_id = ? AND status != 'archived'",
             (ws_id,),
         )
         files = [dict(row) for row in cur.fetchall()]

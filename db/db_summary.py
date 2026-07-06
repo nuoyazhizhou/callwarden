@@ -45,7 +45,7 @@ class SummaryMixin:
         cur = self.conn.execute(
             """SELECT s.symbol_hash FROM symbols s
                JOIN file_instances fi ON s.file_instance_id = fi.id
-               WHERE fi.workspace_id = ? AND s.qualified_name = ?""",
+               WHERE fi.workspace_id = ? AND fi.status != 'archived' AND s.qualified_name = ?""",
             (ws_id, qualified_name),
         )
         row = cur.fetchone()
@@ -129,7 +129,7 @@ class SummaryMixin:
         # 判断项目类型：按文件扩展名分布统计（不依赖 status["files"] 结构）
         cur = self.conn.execute(
             """SELECT rel_path FROM file_instances
-               WHERE workspace_id = ? AND rel_path LIKE '%.%'""",
+               WHERE workspace_id = ? AND status != 'archived' AND rel_path LIKE '%.%'""",
             (ws_id,),
         )
         ext_counts: Dict[str, int] = {}
