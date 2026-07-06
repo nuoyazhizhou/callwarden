@@ -539,6 +539,214 @@ class EditSafetyMixin:
         }
         return result
 
+    def propose_symbol_id_patch(
+        self,
+        symbol_id: int,
+        patch: str,
+        mode: str = "replace",
+        agent_task_id: str = "",
+        dry_run: bool = False,
+        expected_hash: str = "",
+        expected_symbol_hash: str = "",
+    ) -> Dict[str, Any]:
+        """按当前快照 symbol_id 提交符号级补丁。
+
+        相比按名称定位的 propose_symbol_patch，本方法直接使用 symbols.id
+        精确定位当前工作区符号，并支持 expected_symbol_hash 校验，避免
+        Agent 在符号被并发刷新或移动后误改相邻代码。
+        """
+        try:
+            sid = int(symbol_id)
+        except (TypeError, ValueError):
+            sid = 0
+        if sid <= 0:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": symbol_id,
+                "error": t("cli.messages.edit_invalid_symbol_id", default=f"Invalid symbol_id: {symbol_id}"),
+            }
+
+        sym = self._get_symbol_snapshot_by_id(sid)
+        if not sym:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": sid,
+                "error": t("cli.messages.edit_symbol_id_not_found", default=f"Symbol not found: id={sid}"),
+            }
+
+        symbol_hash = sym.get("symbol_hash", "")
+        if expected_symbol_hash and expected_symbol_hash != symbol_hash:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": sid,
+                "file_path": sym.get("file_path", ""),
+                "symbol_hash": symbol_hash,
+                "error": t("cli.messages.edit_symbol_hash_mismatch", default="Symbol hash mismatch; possible concurrent graph refresh, patch rejected"),
+            }
+
+        file_path = sym.get("file_path", "")
+        abs_path = sym.get("abs_path", "") or self._resolve_abs_path(file_path)
+        old_content = self._read_file_safe(abs_path)
+        if not old_content and not os.path.exists(abs_path):
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": sid,
+                "file_path": file_path,
+                "error": t("cli.messages.edit_range_file_missing", default="Target file does not exist; range patch only supports existing files"),
+            }
+
+        start_line = int(sym.get("start_line") or 0)
+        end_line = int(sym.get("end_line") or 0)
+        if start_line <= 0 or end_line < start_line:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": sid,
+                "file_path": file_path,
+                "error": t("cli.messages.edit_symbol_line_invalid", default=f"Invalid symbol line range: {sym.get('name', sid)}"),
+            }
+
+        mode = (mode or "replace").lower()
+        if mode == "replace":
+            range_start, range_end = start_line, end_line
+        elif mode == "insert_before":
+            range_start, range_end = start_line, start_line - 1
+        elif mode == "insert_after":
+            range_start, range_end = end_line + 1, end_line
+        else:
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": sid,
+                "file_path": file_path,
+                "error": t("cli.messages.edit_invalid_symbol_patch_mode", default=f"Invalid symbol patch mode: {mode}"),
+            }
+
+        new_content = self._apply_line_replacement(
+            old_content,
+            range_start,
+            range_end,
+            patch,
+        )
+        if new_content is None:
+            total = len(old_content.splitlines())
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": sid,
+                "file_path": file_path,
+                "error": t("cli.messages.edit_invalid_range", default=f"Invalid line range: {range_start}-{range_end} (file has {total} lines)"),
+            }
+
+        guardrail = None
+        if hasattr(self, "check_before_edit"):
+            try:
+                guardrail = self.check_before_edit(file_path, proposed_change=new_content)
+            except Exception as exc:
+                guardrail = {
+                    "decision": "warn",
+                    "findings": [],
+                    "message": str(exc),
+                }
+        if guardrail and guardrail.get("decision") == "block":
+            return {
+                "success": False,
+                "status": EDIT_STATUS_FAILED,
+                "symbol_id": sid,
+                "file_path": file_path,
+                "symbol_hash": symbol_hash,
+                "guardrail": guardrail,
+                "error": guardrail.get("message", ""),
+            }
+
+        result = self.propose_edit(
+            file_path=file_path,
+            new_content=new_content,
+            operation=EDIT_OPERATION_EDIT,
+            agent_task_id=agent_task_id,
+            symbol_hash=symbol_hash,
+            dry_run=dry_run,
+            expected_hash=expected_hash,
+        )
+        result["patch_scope"] = {
+            "type": "symbol_id",
+            "mode": mode,
+            "symbol_id": sid,
+            "symbol_hash": symbol_hash,
+            "qualified_name": sym.get("qualified_name", ""),
+            "name": sym.get("name", ""),
+            "start_line": start_line,
+            "end_line": end_line,
+        }
+        if guardrail:
+            result["guardrail"] = guardrail
+        if result.get("success") and not dry_run and hasattr(self, "refresh_file"):
+            try:
+                self.refresh_file(file_path)
+                result["refreshed"] = True
+            except Exception as exc:
+                result["refreshed"] = False
+                result["refresh_error"] = str(exc)
+        return result
+
+    def _get_symbol_snapshot_by_id(self, symbol_id: int) -> Optional[Dict[str, Any]]:
+        """按 symbols.id 获取当前工作区符号快照。"""
+        ws_id = self._get_active_workspace_id() if hasattr(self, "_get_active_workspace_id") else None
+        params: tuple
+        if ws_id is None:
+            sql = """
+                SELECT s.id, s.symbol_hash, s.name, s.kind, s.qualified_name,
+                       s.start_line, s.end_line, fi.rel_path as file_path, fi.abs_path
+                FROM symbols s
+                JOIN file_instances fi ON s.file_instance_id = fi.id
+                WHERE s.id = ?
+                LIMIT 1
+            """
+            params = (symbol_id,)
+        else:
+            sql = """
+                SELECT s.id, s.symbol_hash, s.name, s.kind, s.qualified_name,
+                       s.start_line, s.end_line, fi.rel_path as file_path, fi.abs_path
+                FROM symbols s
+                JOIN file_instances fi ON s.file_instance_id = fi.id
+                WHERE s.id = ? AND fi.workspace_id = ?
+                LIMIT 1
+            """
+            params = (symbol_id, ws_id)
+        row = self.conn.execute(sql, params).fetchone()
+        return dict(row) if row else None
+
+    @staticmethod
+    def _apply_line_replacement(
+        old_content: str,
+        start_line: int,
+        end_line: int,
+        replacement: str,
+    ) -> Optional[str]:
+        """生成行号范围替换后的新文件内容。"""
+        lines = old_content.splitlines(keepends=True)
+        total = len(lines)
+        if (
+            start_line < 1
+            or end_line < 0
+            or start_line > total + 1
+            or end_line > total
+            or start_line > end_line + 1
+        ):
+            return None
+
+        repl = replacement
+        if repl and not repl.endswith(("\n", "\r")):
+            repl += "\n"
+
+        start_idx = start_line - 1
+        end_idx = end_line
+        return "".join(lines[:start_idx]) + repl + "".join(lines[end_idx:])
+
     def revert_edit(self, audit_id: int) -> Dict[str, Any]:
         """回滚编辑（标记审计状态为 reverted）
 
