@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import time
 
@@ -35,6 +36,22 @@ from .console import cprint
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
                 "gc", "doctor", "install-agent", "rule"}
+
+# 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
+# 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
+_READONLY_TASK_ACTIONS = {"list", "show", "findings"}
+_READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
+
+# 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
+# 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
+# changes/comment_coverage/stats/status/query/top_callers/orphan_symbols/deepest/module_calls/
+# detect_cycles/export_module_graph/call_heatmap/impact/uncommented/who/ownership_map 等）
+_WRITE_FLAGS = {
+    "refresh_all", "refresh", "watch",
+    "register_workspace", "set_workspace", "delete_workspace",
+    "restore_comment", "restore_all_comments",
+    "coverage_import",
+}
 
 
 def _run_subcommand_mode():
@@ -64,23 +81,86 @@ def _run_subcommand_mode():
 
     try:
         # 自动注册工作区（与 --flag 模式行为一致）
-        if workspace_root:
-            ws_name = get_default_workspace_name(workspace_root)
-            existing = None
-            for ws in db.list_workspaces():
-                if ws["root_path"] == workspace_root:
-                    existing = ws
-                    break
-            if not existing:
-                ws_id = db.register_workspace(ws_name, workspace_root)
-                db.set_active_workspace(ws_id)
-            elif not existing.get("is_active"):
-                db.set_active_workspace(existing["id"])
+        # 优化：只读子命令跳过 register/set_active_workspace 写操作，避免被 MCP Server 写锁卡住
+        # （set_active_workspace 内部还会做 is_active 短路判断，已 active 时直接返回不写）
+        skip_workspace_write = _is_readonly_command(sys.argv[1], sub_argv)
+        if workspace_root and not skip_workspace_write:
+            try:
+                ws_name = get_default_workspace_name(workspace_root)
+                existing = None
+                for ws in db.list_workspaces():
+                    if ws["root_path"] == workspace_root:
+                        existing = ws
+                        break
+                if not existing:
+                    ws_id = db.register_workspace(ws_name, workspace_root)
+                    db.set_active_workspace(ws_id)
+                elif not existing.get("is_active"):
+                    db.set_active_workspace(existing["id"])
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower():
+                    cprint(get_error("db_locked"), "red")
+                    sys.exit(2)
+                raise
 
         # 调度子命令
         _dispatch_subcommand(sub_argv, db)
     finally:
         db.close()
+
+
+def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
+    """判断子命令是否为只读命令（不修改数据库）
+
+    只读命令可以跳过 workspace 注册/激活写操作，在 MCP Server 持有写锁时也能立即返回。
+    设计原则：所有读操作都不应该被锁住，只有写操作才需要锁。
+
+    Args:
+        cmd: 子命令关键字（如 "task"）
+        sub_argv: 子命令参数（不含子命令关键字本身）
+
+    Returns:
+        True 表示只读命令，可跳过 workspace 写操作
+    """
+    action = sub_argv[0] if sub_argv else ""
+    if cmd == "task":
+        # task list/show/findings 是只读，create/next/report/apply/close 等是写
+        return action in _READONLY_TASK_ACTIONS
+    if cmd == "rule":
+        # rule list/candidate/applicable/extract 是只读，sync/insert-block 是写
+        return action in _READONLY_RULE_ACTIONS
+    if cmd in {"doctor", "check-gate", "test-impact", "hotspot", "churn", "evolution",
+               "impact", "review", "vuln-blast", "symbol-history"}:
+        # 这些子命令默认只读（分析/查询类，不写数据库）
+        return True
+    if cmd == "guardrail":
+        # guardrail scan 是只读（扫描展示），不带写
+        return True
+    if cmd == "defect":
+        # defect stats/list 是只读，import/add 是写
+        return action in {"stats", "list", "show"}
+    if cmd == "gc":
+        # gc list/inspect 是只读，archive/import 是写
+        return action in {"list", "inspect"}
+    return False
+
+
+def _is_readonly_args(args) -> bool:
+    """判断 flag 模式命令是否为只读（不修改数据库）
+
+    设计原则：不在 _WRITE_FLAGS 集合内的 flag 命令均为只读。
+    只读命令跳过 workspace 激活写操作，避免被 MCP Server 写锁卡住。
+
+    Args:
+        args: argparse 解析后的 args 对象
+
+    Returns:
+        True 表示只读命令，可跳过 workspace 写操作
+    """
+    for flag in _WRITE_FLAGS:
+        if getattr(args, flag, None):
+            return False
+    return True
 
 
 def _dispatch_subcommand_help(cmd: str, sub_argv: list):
@@ -149,6 +229,13 @@ def _dispatch_subcommand(argv, db):
             return _handle_install_agent(argv, db)
         elif cmd == "rule":
             return _handle_rule(argv, db)
+    except sqlite3.OperationalError as e:
+        # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
+        if "locked" in str(e).lower():
+            cprint(get_error("db_locked"), "red")
+            sys.exit(2)
+        cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
+        return True
     except Exception as e:
         cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
         return True
@@ -3101,19 +3188,27 @@ def main():
     db = CodeGraphDB(workspace_root=workspace_root) if workspace_root else CodeGraphDB()
 
     # 如果自动检测到了工作区，自动注册并设置为活动工作区
-    if workspace_root and not args.list_workspaces:
-        ws_name = get_default_workspace_name(workspace_root)
-        # 检查是否已注册
-        existing = None
-        for ws in db.list_workspaces():
-            if ws["root_path"] == workspace_root:
-                existing = ws
-                break
-        if not existing:
-            ws_id = db.register_workspace(ws_name, workspace_root)
-            db.set_active_workspace(ws_id)
-        elif not existing.get("is_active"):
-            db.set_active_workspace(existing["id"])
+    # 优化：只读命令（search/symbol/callers 等查询类）跳过 register/set_active_workspace 写操作，
+    # 避免被 MCP Server 写锁卡住。set_active_workspace 内部也有 is_active 短路判断。
+    if workspace_root and not _is_readonly_args(args):
+        try:
+            ws_name = get_default_workspace_name(workspace_root)
+            # 检查是否已注册
+            existing = None
+            for ws in db.list_workspaces():
+                if ws["root_path"] == workspace_root:
+                    existing = ws
+                    break
+            if not existing:
+                ws_id = db.register_workspace(ws_name, workspace_root)
+                db.set_active_workspace(ws_id)
+            elif not existing.get("is_active"):
+                db.set_active_workspace(existing["id"])
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower():
+                cprint(get_error("db_locked"), "red")
+                sys.exit(2)
+            raise
     
     try:
         # 工作区管理命令
@@ -4481,7 +4576,13 @@ def main():
 
         else:
             parser.print_help()
-    
+
+    except sqlite3.OperationalError as e:
+        # 锁错误友好提示（写命令执行 SQL 时也可能遇到锁）
+        if "locked" in str(e).lower():
+            cprint(get_error("db_locked"), "red")
+            sys.exit(2)
+        raise
     finally:
         db.close()
 

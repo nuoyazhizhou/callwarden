@@ -70,7 +70,7 @@ def _warmup_sqlite():
             try:
                 conn = sqlite3.connect(db_path)
                 # 关键：先设置 busy_timeout，再执行任何 SQL
-                conn.execute("PRAGMA busy_timeout=30000")
+                conn.execute("PRAGMA busy_timeout=5000")
                 conn.execute("PRAGMA journal_mode=WAL")
                 # 真实写入：强制创建 -wal/-shm 文件，避免后续连接被锁
                 conn.execute("CREATE TABLE IF NOT EXISTS _warmup (id INTEGER)")
