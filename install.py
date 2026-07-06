@@ -27,6 +27,8 @@ Call Warden 一键安装脚本：级联安装核心依赖 + 各语言 tree-sitte
 from __future__ import annotations
 
 import importlib
+import os
+import stat
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -224,9 +226,117 @@ class CallWardenInstaller:
 
         print(t("cli.messages.install_check_hint"))
 
+    def install_hooks(self, force: bool = False) -> None:
+        """安装 Git hooks 到当前仓库。
+
+        pre-commit 在提交前刷新图谱；pre-push 在提供 CALLWARDEN_TASK_ID
+        时运行检查门禁。若目标 hook 已存在且不是 Call Warden 生成的，
+        默认拒绝覆盖，避免破坏用户自定义流程。
+        """
+        git_dir = self._find_git_dir(os.getcwd())
+        if not git_dir:
+            print(t("cli.messages.install_hooks_no_git", default="Not inside a Git repository; hooks were not installed."))
+            return
+
+        hooks_dir = os.path.join(git_dir, "hooks")
+        os.makedirs(hooks_dir, exist_ok=True)
+        hook_defs = {
+            "pre-commit": self._pre_commit_hook(),
+            "pre-push": self._pre_push_hook(),
+        }
+
+        installed = 0
+        skipped = 0
+        for hook_name, content in hook_defs.items():
+            hook_path = os.path.join(hooks_dir, hook_name)
+            if self._write_hook(hook_path, content, force=force):
+                installed += 1
+                msg = t("cli.messages.install_hooks_installed", default="")
+                print(msg.format(hook=hook_path) if msg else f"Installed hook: {hook_path}")
+            else:
+                skipped += 1
+                msg = t("cli.messages.install_hooks_skipped", default="")
+                print(msg.format(hook=hook_path) if msg else f"Skipped existing non-Call-Warden hook: {hook_path}")
+
+        msg = t("cli.messages.install_hooks_summary", default="")
+        print(
+            msg.format(installed=installed, skipped=skipped)
+            if msg else f"Git hooks ready: installed={installed}, skipped={skipped}"
+        )
+
     # ------------------------------------------------------------------
     # 内部方法
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_git_dir(start_dir: str) -> str:
+        """从当前目录向上查找 .git 目录。"""
+        cur = os.path.abspath(start_dir)
+        while True:
+            git_path = os.path.join(cur, ".git")
+            if os.path.isdir(git_path):
+                return git_path
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                return ""
+            cur = parent
+
+    @staticmethod
+    def _hook_marker() -> str:
+        """Call Warden hook 标记，用于幂等更新。"""
+        return "# CALLWARDEN-GIT-HOOK"
+
+    def _write_hook(self, hook_path: str, content: str, force: bool = False) -> bool:
+        """写入单个 hook，保护用户已有 hook。"""
+        marker = self._hook_marker()
+        if os.path.exists(hook_path):
+            try:
+                with open(hook_path, "r", encoding="utf-8", errors="ignore") as f:
+                    existing = f.read()
+            except OSError:
+                existing = ""
+            if marker not in existing and not force:
+                return False
+
+        with open(hook_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+        mode = os.stat(hook_path).st_mode
+        os.chmod(hook_path, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        return True
+
+    def _python_cw_command(self) -> str:
+        """生成 hook 中调用 cw.py 的跨平台命令。"""
+        cw_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "cw.py"))
+        cw_py = cw_py.replace(os.sep, "/")
+        return f'python "{cw_py}"'
+
+    def _pre_commit_hook(self) -> str:
+        """生成 pre-commit hook 内容。"""
+        cmd = self._python_cw_command()
+        marker = self._hook_marker()
+        return f"""#!/bin/sh
+{marker}
+set -eu
+export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
+echo "[Call Warden] refreshing code graph before commit..."
+{cmd} --refresh-all
+"""
+
+    def _pre_push_hook(self) -> str:
+        """生成 pre-push hook 内容。"""
+        cmd = self._python_cw_command()
+        marker = self._hook_marker()
+        return f"""#!/bin/sh
+{marker}
+set -eu
+export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
+if [ -z "${{CALLWARDEN_TASK_ID:-}}" ]; then
+  echo "[Call Warden] CALLWARDEN_TASK_ID is not set; skipping check-gate."
+  exit 0
+fi
+echo "[Call Warden] running check-gate for $CALLWARDEN_TASK_ID before push..."
+{cmd} check-gate "$CALLWARDEN_TASK_ID"
+"""
 
     def _check_pip(self) -> bool:
         """检查 pip 是否可用"""
@@ -361,6 +471,10 @@ def main():
                         help=t("cli.args.install_lang"))
     parser.add_argument("--check", action="store_true",
                         help=t("cli.args.install_check"))
+    parser.add_argument("--hooks", action="store_true",
+                        help=t("cli.args.install_hooks", default="Install Call Warden Git hooks into .git/hooks"))
+    parser.add_argument("--force-hooks", action="store_true",
+                        help=t("cli.args.install_force_hooks", default="Overwrite existing Call Warden hooks"))
     parser.add_argument("--no-optional", action="store_true",
                         help=t("cli.args.install_no_optional"))
     parser.add_argument("--verbose", action="store_true",
@@ -372,6 +486,10 @@ def main():
 
     if args.check:
         installer.check_status()
+        return
+
+    if args.hooks:
+        installer.install_hooks(force=args.force_hooks)
         return
 
     if args.lang:
