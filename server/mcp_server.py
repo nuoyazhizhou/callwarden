@@ -1642,6 +1642,39 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def audit_verify_chain(table_name: str = "", limit: int = 1000) -> dict:
+        """验证审计签名链连续性与签名匹配
+
+        检查 audit_chain 表中每条记录：
+        1. record_signature 是否匹配重新计算的签名
+        2. prev_signature 是否匹配上一条记录的 record_signature
+        3. 首条记录的 prev_signature 是否为空串
+
+        用于检测直接改库导致的篡改。
+
+        Args:
+            table_name: 指定表名时只验证该表的链；为空时验证全部
+            limit: 最多验证的记录数，默认 1000
+
+        Returns:
+            {
+                "table_name": str,       # 验证的表名（空串表示全部）
+                "total_count": int,      # 验证的记录总数
+                "verified_count": int,   # 通过验证的记录数
+                "broken_count": int,     # 不通过的记录数
+                "broken_records": [     # 不通过的记录列表
+                    {"id": int, "table_name": str, "record_id": str, "reasons": [str]}
+                ],
+                "security_level": str,  # "hmac" 或 "hash_only"
+            }
+        """
+        db = get_db()
+        try:
+            return db.verify_audit_chain(table_name=table_name, limit=limit)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
         """在父任务下创建子任务
 

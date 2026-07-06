@@ -17,6 +17,8 @@ import os
 import sqlite3
 import tempfile
 
+import pytest
+
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.schema import SCHEMA_VERSION
 
@@ -505,3 +507,243 @@ def test_verify_chain_broken_when_record_deleted():
         assert "chain_broken" in reasons
     finally:
         db.close()
+
+
+# ============================================
+# CLI cw audit verify 测试
+# ============================================
+
+
+def test_cli_audit_verify_help_no_db():
+    """cw audit verify --help 不应初始化数据库。"""
+    import sys
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    old_argv = sys.argv
+    sys.argv = ["cw", "audit", "verify", "--help"]
+    try:
+        db_init_called = {"count": 0}
+
+        def fake_init(self, *args, **kwargs):
+            db_init_called["count"] += 1
+            raise RuntimeError("db should not be initialized for --help")
+
+        with mock.patch.object(CodeGraphDB, "__init__", fake_init):
+            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
+                try:
+                    cli_main._run_subcommand_mode()
+                except RuntimeError as e:
+                    if "should not" in str(e):
+                        pytest.fail("db initialized during cw audit verify --help")
+                    raise
+        assert db_init_called["count"] == 0
+    finally:
+        sys.argv = old_argv
+
+
+def test_cli_audit_help_no_db():
+    """cw audit --help 不应初始化数据库。"""
+    import sys
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    old_argv = sys.argv
+    sys.argv = ["cw", "audit", "--help"]
+    try:
+        db_init_called = {"count": 0}
+
+        def fake_init(self, *args, **kwargs):
+            db_init_called["count"] += 1
+            raise RuntimeError("db should not be initialized for --help")
+
+        with mock.patch.object(CodeGraphDB, "__init__", fake_init):
+            with mock.patch.object(cli_main, "CodeGraphDB", CodeGraphDB):
+                try:
+                    cli_main._run_subcommand_mode()
+                except RuntimeError as e:
+                    if "should not" in str(e):
+                        pytest.fail("db initialized during cw audit --help")
+                    raise
+        assert db_init_called["count"] == 0
+    finally:
+        sys.argv = old_argv
+
+
+def test_cli_audit_verify_calls_db_method():
+    """cw audit verify 必须调用 db.verify_audit_chain()。"""
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        try:
+            call_log = {"count": 0, "kwargs": None}
+            original = db.verify_audit_chain
+
+            def spy(*args, **kwargs):
+                call_log["count"] += 1
+                call_log["kwargs"] = kwargs
+                return original(*args, **kwargs)
+
+            with mock.patch.object(db, "verify_audit_chain", side_effect=spy):
+                try:
+                    cli_main._handle_audit(["verify"], db)
+                except SystemExit:
+                    pass
+
+            assert call_log["count"] == 1, "db.verify_audit_chain 必须被调用一次"
+            kw = call_log["kwargs"] or {}
+            assert kw.get("table_name") == ""
+            assert kw.get("limit") == 1000
+        finally:
+            db.close()
+
+
+def test_cli_audit_verify_passes_table_and_limit():
+    """cw audit verify --table X --limit N 必须传递参数。"""
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        try:
+            call_log = {"kwargs": None}
+            original = db.verify_audit_chain
+
+            def spy(*args, **kwargs):
+                call_log["kwargs"] = kwargs
+                return original(*args, **kwargs)
+
+            with mock.patch.object(db, "verify_audit_chain", side_effect=spy):
+                try:
+                    cli_main._handle_audit(
+                        ["verify", "--table", "change_audit", "--limit", "50"],
+                        db,
+                    )
+                except SystemExit:
+                    pass
+
+            kw = call_log["kwargs"] or {}
+            assert kw.get("table_name") == "change_audit"
+            assert kw.get("limit") == 50
+        finally:
+            db.close()
+
+
+def test_cli_audit_verify_output_contains_fields():
+    """cw audit verify 输出必须包含 total/verified/broken/security_level 字段。"""
+    import io
+    from contextlib import redirect_stdout
+    from callwarden.cli import main as cli_main
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db = CodeGraphDB(workspace_root=tmpdir)
+        try:
+            # 无记录时的输出
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                try:
+                    cli_main._handle_audit(["verify"], db)
+                except SystemExit:
+                    pass
+            out = buf.getvalue()
+
+            # 应包含汇总字段标签（通过 i18n key 的 default 值或实际 zh/en 文本）
+            # security_level 字段值 hash_only
+            assert "hash_only" in out, f"输出应包含 security_level=hash_only, 实际: {out!r}"
+            # 应包含 total/verified/broken 汇总行（数字 0）
+            assert "0" in out, f"输出应包含数字 0, 实际: {out!r}"
+        finally:
+            db.close()
+
+
+def test_cli_audit_verify_is_readonly():
+    """audit verify 是只读命令，应在 _is_readonly_command 中返回 True。"""
+    from callwarden.cli import main as cli_main
+
+    assert cli_main._is_readonly_command("audit", ["verify"]) is True
+    assert cli_main._is_readonly_command("audit", []) is False
+    # 非 verify 的 action 不算只读
+    assert cli_main._is_readonly_command("audit", ["unknown"]) is False
+
+
+def test_cli_audit_in_subcommands():
+    """audit 应在 _SUBCOMMANDS 集合中。"""
+    from callwarden.cli import main as cli_main
+
+    assert "audit" in cli_main._SUBCOMMANDS
+
+
+def test_cli_audit_dispatched():
+    """_dispatch_subcommand 应将 audit 分发到 _handle_audit。"""
+    import sys
+    from unittest import mock
+    from callwarden.cli import main as cli_main
+
+    old_argv = sys.argv
+    sys.argv = ["cw", "audit", "--help"]
+    try:
+        called = {"handler": None}
+        original = cli_main._handle_audit
+
+        def spy(args, db):
+            called["handler"] = "audit"
+            return original(args, db)
+
+        with mock.patch.object(cli_main, "_handle_audit", side_effect=spy):
+            try:
+                cli_main._dispatch_subcommand(["--help"], db=None)
+            except SystemExit:
+                pass
+        assert called["handler"] == "audit", "audit 应分发到 _handle_audit"
+    finally:
+        sys.argv = old_argv
+
+
+# ============================================
+# MCP audit_verify_chain 工具测试
+# ============================================
+
+
+def test_mcp_audit_verify_chain_registered():
+    """MCP server 注册了 audit_verify_chain 工具。"""
+    import inspect
+    from callwarden.server import mcp_server
+
+    src = inspect.getsource(mcp_server.create_mcp_server)
+    assert "def audit_verify_chain(" in src, "MCP 源码缺少 audit_verify_chain 工具定义"
+    assert "@mcp.tool()" in src, "MCP 源码缺少 @mcp.tool() 装饰器"
+
+
+def test_mcp_audit_verify_chain_signature():
+    """audit_verify_chain MCP 工具签名包含 table_name/limit。"""
+    import ast
+    import os as _os
+
+    src_path = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+        "server", "mcp_server.py",
+    )
+    with open(src_path, "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+
+    func_def = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "audit_verify_chain":
+            func_def = node
+            break
+    assert func_def is not None, "未找到 audit_verify_chain 函数定义"
+
+    arg_names = [a.arg for a in func_def.args.args]
+    assert "table_name" in arg_names
+    assert "limit" in arg_names
+
+
+def test_mcp_audit_verify_chain_in_tool_list():
+    """create_mcp_server 返回的 server 工具列表包含 audit_verify_chain。"""
+    from callwarden.server.mcp_server import create_mcp_server
+
+    mcp = create_mcp_server()
+    tools = [t.name for t in mcp._tool_manager.list_tools()]
+    assert "audit_verify_chain" in tools

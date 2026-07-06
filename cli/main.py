@@ -35,12 +35,14 @@ from .console import cprint
 # 子命令关键字集合
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
-                "gc", "doctor", "install-agent", "rule"}
+                "gc", "doctor", "install-agent", "rule", "audit"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
 _READONLY_TASK_ACTIONS = {"list", "show", "findings"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
+# audit verify 只读（只查询 audit_chain 表，不写数据库）
+_READONLY_AUDIT_ACTIONS = {"verify"}
 
 # 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
 # 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
@@ -142,6 +144,9 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "gc":
         # gc list/inspect 是只读，archive/import 是写
         return action in {"list", "inspect"}
+    if cmd == "audit":
+        # audit verify 只读（查询 audit_chain 表，不写数据库）
+        return action in _READONLY_AUDIT_ACTIONS
     return False
 
 
@@ -229,6 +234,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_install_agent(argv, db)
         elif cmd == "rule":
             return _handle_rule(argv, db)
+        elif cmd == "audit":
+            return _handle_audit(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -2169,6 +2176,88 @@ def _print_task_tree_node(node: dict, depth: int = 0):
     elif depth > 0:
         # 叶子节点不显示
         pass
+
+
+def _handle_audit(args, db):
+    """处理 audit 子命令（审计签名链验证）
+
+    目前仅支持 verify action：调用 verify_audit_chain 校验 audit_chain 表的
+    连续性与签名匹配，输出 total/verified/broken/security_level/broken_records。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw audit",
+        description=t("cli_audit_desc", default="Audit chain verification"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # verify：验证审计签名链
+    verify_p = sub.add_parser(
+        "verify",
+        help=t("cli_audit_verify_desc", default="Verify audit chain continuity and signatures"),
+    )
+    verify_p.add_argument(
+        "--table", default="",
+        help=t("cli_audit_verify_arg_table", default="Filter by table name (empty = all tables)"),
+    )
+    verify_p.add_argument(
+        "--limit", type=int, default=1000,
+        help=t("cli_audit_verify_arg_limit", default="Maximum records to verify (default 1000)"),
+    )
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "verify":
+        # 调用 verify_audit_chain 进行验证
+        result = db.verify_audit_chain(table_name=opts.table, limit=opts.limit)
+
+        # 标题（pre-existing key 自带 \n=== ... === 包装）
+        cprint(t("cli.messages.audit_verify_title").strip(), "cyan", bold=True)
+
+        # 验证范围：--table 指定时显示表名，否则显示全部表
+        scope = opts.table if opts.table else t(
+            "cli.messages.audit_verify_all_tables",
+            default="all tables",
+        )
+        print(t("cli.messages.audit_verify_table", scope=scope))
+        print(t("cli.messages.audit_verify_limit", limit=opts.limit))
+        print()
+
+        # 汇总统计
+        total = result.get("total_count", 0)
+        verified = result.get("verified_count", 0)
+        broken = result.get("broken_count", 0)
+        security_level = result.get("security_level", "hash_only")
+
+        print(t("cli.messages.audit_verify_security_level", level=security_level))
+        print(t("cli.messages.audit_verify_summary",
+                total=total, verified=verified, broken=broken))
+        print()
+
+        # 损坏记录详情
+        broken_records = result.get("broken_records", [])
+        if broken_records:
+            for idx, r in enumerate(broken_records, start=1):
+                reasons = r.get("reasons", [])
+                reasons_str = ", ".join(reasons) if reasons else "unknown"
+                print(t("cli.messages.audit_verify_broken_item",
+                        idx=idx,
+                        id=r.get("id", 0),
+                        table=r.get("table_name", ""),
+                        rid=r.get("record_id", ""),
+                        reasons=reasons_str))
+            print()
+
+        # 最终结论
+        if total == 0:
+            cprint(t("cli.messages.audit_verify_no_records"), "yellow")
+        elif broken == 0:
+            cprint(t("cli.messages.audit_verify_pass"), "green", bold=True)
+        else:
+            cprint(t("cli.messages.audit_verify_fail", count=broken), "red", bold=True)
+        print()
+        return True
+
+    return False
 
 
 def _handle_vuln_blast(args, db):
