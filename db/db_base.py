@@ -1403,6 +1403,34 @@ def _migrate_v26_to_v27(conn: sqlite3.Connection):
     """)
 
 
+def _migrate_v27_to_v28(conn: sqlite3.Connection):
+    """v27 -> v28: file_versions 表新增 ast_cache 字段（AST 增量索引）
+
+    问题背景：
+    - 大文件每次 refresh 都要全量重新解析 AST，性能瓶颈明显
+    - tree-sitter 支持增量解析（parse(prev_tree, new_content)），但需要持久化上一次的 AST
+    - 缺少 AST 序列化存储字段，无法跨进程/会话复用上一次的解析结果
+
+    迁移步骤：
+    1. file_versions 表新增 ast_cache BLOB 字段，存储 tree-sitter AST 序列化字节流
+
+    幂等性：使用 PRAGMA table_info 检测字段是否存在，保证可重复执行。
+    防御性：file_versions 表不存在时跳过（兼容合成测试库）。
+    """
+    # 检查 file_versions 表是否存在（防御性：合成测试库可能未创建此表）
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='file_versions'"
+    )
+    if not cur.fetchone():
+        return  # file_versions 表不存在，跳过迁移
+
+    # 检查 ast_cache 字段是否已存在（幂等性）
+    cur = conn.execute("PRAGMA table_info(file_versions)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "ast_cache" not in cols:
+        conn.execute("ALTER TABLE file_versions ADD COLUMN ast_cache BLOB DEFAULT NULL")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1675,6 +1703,10 @@ class CodeGraphBase:
             27: {
                 "description": t("cli.messages.migration_v27", default="Add clone_pairs table for duplicate code detection (Type-1/2/3)"),
                 "func": _migrate_v26_to_v27,
+            },
+            28: {
+                "description": t("cli.messages.migration_v28", default="Add file_versions.ast_cache BLOB column for AST incremental parsing"),
+                "func": _migrate_v27_to_v28,
             },
         }
 

@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（每个项目一个）                    │
 │   $HOME/.callwarden/<16位hash>/callwarden.db                  │
-│   Schema v27 / WAL 模式 / 40+ 表 / 25 个 Mixin 模块           │
+│   Schema v28 / WAL 模式 / 40+ 表 / 26 个 Mixin 模块           │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,7 +67,7 @@ $HOME/.callwarden/<16位hash>/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v27**
+当前 Schema 版本：**v28**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -94,6 +94,7 @@ v24 任务状态机完整化（tasks 加 applied_at 字段，支持 review → a
 v25 自举闭环扫描基线表（workspace_scan_runs，扫描运行记录与变化检测）
 v26 symbols 表 UNIQUE 索引（file_instance_id, name, start_line）+ UPSERT，防止重复符号、支持并发安全写入
 v27 重复代码对表（clone_pairs，记录 Type-1/2/3 克隆检测结果，支持重构决策）
+v28 file_versions 表 ast_cache BLOB 字段（tree-sitter AST 序列化，支持 AST 级增量解析）
 ```
 
 Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。
@@ -212,6 +213,7 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 | is_current | INTEGER | 是否当前版本 |
 | is_deleted | INTEGER | 是否已删除 |
 | commit_hash | TEXT | 关联 commit |
+| ast_cache | BLOB | tree-sitter AST 序列化字节流（v28 新增，支持增量解析） |
 
 ### file_symbol_versions（文件-符号关联表）
 

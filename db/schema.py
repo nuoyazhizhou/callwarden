@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS file_versions (
     is_current INTEGER DEFAULT 1,
     is_deleted INTEGER DEFAULT 0,
     commit_hash TEXT DEFAULT '',
+    ast_cache BLOB DEFAULT NULL,
     FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
     FOREIGN KEY (content_hash) REFERENCES file_contents(content_hash)
 );
@@ -880,7 +881,8 @@ ON clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type);
 # v25: 自举扫描运行表（workspace_scan_runs，记录 capture/review 基线，支持 task capture-diff 闭环）
 # v26: symbols 表 UNIQUE 索引（file_instance_id, name, start_line）+ UPSERT，防止重复符号、支持并发安全写入
 # v27: 重复代码对表（clone_pairs，记录 Type-1/2/3 克隆检测结果，支持重构决策）
-SCHEMA_VERSION = 27
+# v28: file_versions 表新增 ast_cache 字段（BLOB，存储 tree-sitter AST 序列化结果，支持增量解析）
+SCHEMA_VERSION = 28
 
 
 # ============================================

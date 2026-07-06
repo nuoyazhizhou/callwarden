@@ -1056,6 +1056,8 @@ class BuildMixin:
                 "UPDATE file_instances SET current_content_hash = ?, last_parsed = ?, total_lines = ?, mtime = ? WHERE id = ?",
                 (content_hash, parsed_at, total_lines, mtime, file_instance_id),
             )
+            # 更新 ast_cache 元数据（即使内容未变，记录 parsed_at 用于跨进程缓存判断）
+            self._update_ast_cache(latest["id"], result, content_hash, parsed_at)
             return latest["id"]
 
         # 计算符号 diff（与上一版本比较）
@@ -1084,11 +1086,75 @@ class BuildMixin:
             (content_hash, parsed_at, total_lines, mtime, file_instance_id),
         )
 
+        # 写入 ast_cache 元数据（v28 新增：AST 增量解析元信息）
+        self._update_ast_cache(new_version_id, result, content_hash, parsed_at)
+
         # 如果有前一版本，计算符号 diff 并设置删除标记
         if prev_version_id:
             self._compute_and_apply_symbol_diff(prev_version_id, new_version_id)
 
         return new_version_id
+
+    def _update_ast_cache(
+        self,
+        file_version_id: int,
+        result: Dict[str, Any],
+        content_hash: str,
+        parsed_at: float,
+    ) -> None:
+        """更新 file_versions.ast_cache 字段（v28 新增）
+
+        存储格式：JSON 编码的元数据字节流
+        {
+            "content_hash": str,         # 上次解析的 content_hash
+            "parsed_at": float,          # 上次解析时间
+            "incremental": bool,         # 是否走了增量解析路径
+            "changed_ranges_count": int, # 变更区间数量（0 表示全量解析）
+            "language": str,             # 语言标识
+        }
+
+        tree-sitter Tree 对象无法跨进程序列化，此处只存元数据。
+        实际的 Tree 对象缓存在 BaseParser._tree_cache（进程内）。
+        """
+        import json
+        metadata = {
+            "content_hash": content_hash,
+            "parsed_at": parsed_at,
+            "incremental": result.get("incremental", False),
+            "changed_ranges_count": len(result.get("changed_ranges", [])),
+            "language": result.get("language", ""),
+        }
+        try:
+            self.conn.execute(
+                "UPDATE file_versions SET ast_cache = ? WHERE id = ?",
+                (json.dumps(metadata).encode("utf-8"), file_version_id),
+            )
+        except sqlite3.OperationalError:
+            # ast_cache 字段不存在（v27 库未迁移到 v28），降级为无操作
+            pass
+
+    def _read_ast_cache(self, file_instance_id: int) -> Optional[Dict[str, Any]]:
+        """读取 file_versions.ast_cache 元数据（v28 新增）
+
+        用于跨进程判断上次解析状态：
+        - 若 ast_cache.content_hash 与当前文件 content_hash 相同，可跳过解析
+        - 若 ast_cache.incremental 为 True，可复用增量解析状态
+
+        Returns:
+            元数据字典或 None（无缓存或字段不存在）
+        """
+        import json
+        cur = self.conn.execute(
+            "SELECT ast_cache FROM file_versions WHERE file_instance_id = ? AND is_current = 1 LIMIT 1",
+            (file_instance_id,),
+        )
+        row = cur.fetchone()
+        if not row or not row["ast_cache"]:
+            return None
+        try:
+            return json.loads(row["ast_cache"].decode("utf-8") if isinstance(row["ast_cache"], bytes) else row["ast_cache"])
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
 
 
     def _compute_symbol_diff(self, prev_version_id: int, curr_version_id: int) -> Dict:
