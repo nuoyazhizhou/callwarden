@@ -1349,22 +1349,23 @@ class TaskMixin:
         parent_id = row["parent_id"] or ""
 
         # 父任务禁止手动 apply：必须由级联触发
-        if parent_id:
-            # 检查是否有子任务（若自身有子任务则为父任务）
-            cur = self.conn.execute(
-                "SELECT COUNT(*) as cnt FROM tasks WHERE parent_id = ?",
-                (task_id,),
-            )
-            subtask_count = cur.fetchone()["cnt"]
-            if subtask_count > 0:
-                return {
-                    "error": t(
-                        "cli.messages.task_apply_parent_manual_forbidden",
-                        default="Parent task cannot be applied manually; it is auto-cascaded when all subtasks are applied",
-                    ),
-                    "task_id": task_id,
-                    "status": current_status,
-                }
+        # 检查是否有子任务（若自身有子任务则为父任务）
+        cur = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM tasks WHERE parent_id = ?",
+            (task_id,),
+        )
+        subtask_count = cur.fetchone()["cnt"]
+        if subtask_count > 0:
+            return {
+                "error": t(
+                    "cli.messages.task_apply_parent_manual_forbidden",
+                    default="Parent task cannot be applied manually; it is auto-cascaded when all subtasks are applied",
+                ),
+                "task_id": task_id,
+                "status": current_status,
+                "reason": "parent_task_must_cascade",
+                "subtask_count": subtask_count,
+            }
 
         if current_status != TASK_STATUS_REVIEW:
             return {
