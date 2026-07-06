@@ -35,7 +35,7 @@ from .console import cprint
 # 子命令关键字集合
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
-                "gc", "doctor", "install-agent", "rule", "audit"}
+                "gc", "doctor", "install-agent", "rule", "audit", "bootstrap"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -43,6 +43,8 @@ _READONLY_TASK_ACTIONS = {"list", "show", "findings"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 # audit verify 只读（只查询 audit_chain 表，不写数据库）
 _READONLY_AUDIT_ACTIONS = {"verify"}
+# bootstrap status 只读（汇总查询，不写数据库）
+_READONLY_BOOTSTRAP_ACTIONS = {"status"}
 
 # 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
 # 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
@@ -147,6 +149,9 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "audit":
         # audit verify 只读（查询 audit_chain 表，不写数据库）
         return action in _READONLY_AUDIT_ACTIONS
+    if cmd == "bootstrap":
+        # bootstrap status 只读（汇总查询，不写数据库）
+        return action in _READONLY_BOOTSTRAP_ACTIONS
     return False
 
 
@@ -236,6 +241,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_rule(argv, db)
         elif cmd == "audit":
             return _handle_audit(argv, db)
+        elif cmd == "bootstrap":
+            return _handle_bootstrap(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -2254,6 +2261,105 @@ def _handle_audit(args, db):
             cprint(t("cli.messages.audit_verify_pass"), "green", bold=True)
         else:
             cprint(t("cli.messages.audit_verify_fail", count=broken), "red", bold=True)
+        print()
+        return True
+
+    return False
+
+
+def _handle_bootstrap(args, db):
+    """处理 bootstrap 子命令（自举健康摘要）
+
+    目前仅支持 status action：调用 bootstrap_status 汇总自举闭环健康度，
+    输出 db_stale / active_rules / pending_candidates / open_findings /
+    blocking_findings / audit_verify / latest_scan_run / tasks / recommended。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw bootstrap",
+        description=t("cli_bootstrap_desc", default="Bootstrap health summary"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # status：自举健康摘要
+    status_p = sub.add_parser(
+        "status",
+        help=t("cli_bootstrap_status_desc", default="Show bootstrap health summary"),
+    )
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "status":
+        # 调用 bootstrap_status 获取健康摘要
+        result = db.bootstrap_status()
+
+        cprint(t("cli.messages.bootstrap_status_title"), "cyan", bold=True)
+        print()
+
+        # 1. DB stale 状态
+        db_stale = result.get("db_stale", False)
+        current_head = result.get("current_head", "")
+        if db_stale:
+            cprint(t("cli.messages.bootstrap_status_db_stale_yes"), "red", bold=True)
+        else:
+            cprint(t("cli.messages.bootstrap_status_db_stale_no"), "green")
+        if current_head:
+            print(t("cli.messages.bootstrap_status_current_head", head=current_head[:12]))
+        print()
+
+        # 2. 规则与候选
+        active_count = result.get("active_rules_count", 0)
+        pending_count = result.get("pending_candidates_count", 0)
+        print(t("cli.messages.bootstrap_status_active_rules", count=active_count))
+        print(t("cli.messages.bootstrap_status_pending_candidates", count=pending_count))
+        print()
+
+        # 3. 质量发现
+        open_count = result.get("open_findings_count", 0)
+        blocking_count = result.get("blocking_findings_count", 0)
+        print(t("cli.messages.bootstrap_status_open_findings", count=open_count))
+        if blocking_count > 0:
+            cprint(t("cli.messages.bootstrap_status_blocking_findings",
+                     count=blocking_count), "red", bold=True)
+        else:
+            print(t("cli.messages.bootstrap_status_blocking_findings", count=0))
+        print()
+
+        # 4. 审计链验证
+        audit = result.get("audit_verify", {})
+        audit_total = audit.get("total_count", 0)
+        audit_broken = audit.get("broken_count", 0)
+        audit_level = audit.get("security_level", "")
+        audit_color = "green" if audit_broken == 0 and audit_total > 0 else (
+            "yellow" if audit_total == 0 else "red"
+        )
+        cprint(t("cli.messages.bootstrap_status_audit_verify",
+                 total=audit_total, broken=audit_broken, level=audit_level), audit_color)
+        print()
+
+        # 5. 最近扫描基线
+        latest = result.get("latest_scan_run")
+        if latest:
+            print(t("cli.messages.bootstrap_status_latest_scan",
+                    scan_id=latest.get("id", 0),
+                    head=latest.get("git_head", "")[:12],
+                    status=latest.get("status", "")))
+        else:
+            print(t("cli.messages.bootstrap_status_no_scan"))
+        print()
+
+        # 6. 任务按状态分组
+        tasks = result.get("tasks", {})
+        print(t("cli.messages.bootstrap_status_tasks",
+                open=tasks.get("open", 0),
+                in_progress=tasks.get("in_progress", 0),
+                review=tasks.get("review", 0),
+                applied=tasks.get("applied", 0)))
+        print()
+
+        # 7. 推荐下一条命令
+        recommended = result.get("recommended_next_action", "")
+        cprint(t("cli.messages.bootstrap_status_recommended",
+                 action=recommended), "yellow", bold=True)
         print()
         return True
 

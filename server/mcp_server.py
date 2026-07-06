@@ -1675,6 +1675,47 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def bootstrap_status() -> dict:
+        """返回自举健康状态摘要
+
+        汇总以下信息，帮助判断当前自举闭环是否健康：
+
+        1. db_stale：DB 是否滞后（最近一次 scan_run 的 git_head 与当前 HEAD 不一致）
+        2. active_rules_count：已生效的 agent_rules 数量
+        3. pending_candidates_count：待审核的 rule candidates 数量
+        4. open_findings_count：open 状态的 quality findings 数量
+        5. blocking_findings_count：block 严重度的 quality findings 数量
+        6. audit_verify：audit_chain 验证结果摘要
+        7. latest_scan_run：最近一次 workspace_scan_runs 记录
+        8. tasks：按状态分组的任务计数（open / in_progress / review / applied）
+        9. recommended_next_action：推荐下一条命令
+
+        Returns:
+            {
+                "db_stale": bool,
+                "current_head": str,
+                "active_rules_count": int,
+                "pending_candidates_count": int,
+                "open_findings_count": int,
+                "blocking_findings_count": int,
+                "audit_verify": {
+                    "total_count": int,
+                    "verified_count": int,
+                    "broken_count": int,
+                    "security_level": str,
+                },
+                "latest_scan_run": {...} | None,
+                "tasks": {"open": int, "in_progress": int, "review": int, "applied": int},
+                "recommended_next_action": str,
+            }
+        """
+        db = get_db()
+        try:
+            return db.bootstrap_status()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
         """在父任务下创建子任务
 

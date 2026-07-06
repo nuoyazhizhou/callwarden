@@ -713,3 +713,131 @@ class BootstrapMixin:
             "quality_decision": quality_decision,
             "next_action": next_action,
         }
+
+    # ============================================
+    # bootstrap_status 健康摘要
+    # ============================================
+
+    def bootstrap_status(self) -> Dict[str, Any]:
+        """返回自举健康状态摘要
+
+        汇总以下信息，帮助判断当前自举闭环是否健康：
+
+        1. db_stale：DB 是否滞后（最近一次 scan_run 的 git_head 与当前 HEAD 不一致）
+        2. active_rules_count：已生效的 agent_rules 数量
+        3. pending_candidates_count：待审核的 rule candidates 数量
+        4. open_findings_count：open 状态的 quality findings 数量
+        5. blocking_findings_count：block 严重度的 quality findings 数量
+        6. audit_verify：audit_chain 验证结果摘要
+        7. latest_scan_run：最近一次 workspace_scan_runs 记录
+        8. tasks：按状态分组的任务计数（open / in_progress / review / applied）
+        9. recommended_next_action：推荐下一条命令
+
+        Returns:
+            包含上述字段的 dict
+        """
+        # 1. DB 是否 stale：对比最近 scan_run 的 git_head 与当前 HEAD
+        latest_scan = self.get_latest_scan_run()
+        current_head = self._get_git_head() if self._is_git_repo() else ""
+        db_stale = False
+        if latest_scan and current_head:
+            scan_head = latest_scan.get("git_head", "") if isinstance(latest_scan, dict) else ""
+            # git_head 为空串时无法判断，视为不 stale
+            db_stale = bool(scan_head) and scan_head != current_head
+
+        # 2. active rules 数量
+        active_rules_count = 0
+        if hasattr(self, "rule_list"):
+            try:
+                active_rules = self.rule_list(status="active", limit=1000)
+                active_rules_count = len(active_rules)
+            except Exception:
+                pass
+
+        # 3. pending rule candidates 数量
+        pending_candidates_count = 0
+        if hasattr(self, "rule_candidate_list"):
+            try:
+                pending = self.rule_candidate_list(status="pending", limit=1000)
+                pending_candidates_count = len(pending)
+            except Exception:
+                pass
+
+        # 4-5. quality findings 计数（直接查询 task_quality_findings 表）
+        open_findings_count = 0
+        blocking_findings_count = 0
+        try:
+            cur = self.conn.execute(
+                "SELECT COUNT(*) as cnt FROM task_quality_findings WHERE status = 'open'"
+            )
+            row = cur.fetchone()
+            open_findings_count = row[0] if row else 0
+            cur = self.conn.execute(
+                "SELECT COUNT(*) as cnt FROM task_quality_findings "
+                "WHERE status = 'open' AND severity = 'block'"
+            )
+            row = cur.fetchone()
+            blocking_findings_count = row[0] if row else 0
+        except Exception:
+            pass
+
+        # 6. audit_chain 验证结果
+        audit_verify: Dict[str, Any] = {}
+        if hasattr(self, "verify_audit_chain"):
+            try:
+                audit_verify = self.verify_audit_chain(table_name="", limit=500)
+            except Exception as e:
+                audit_verify = {"error": str(e)}
+
+        # 7. tasks 按状态分组计数
+        task_counts: Dict[str, int] = {
+            "open": 0, "in_progress": 0, "review": 0, "applied": 0,
+        }
+        try:
+            cur = self.conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status"
+            )
+            for row in cur.fetchall():
+                status_val = row[0] if not isinstance(row, dict) else row["status"]
+                cnt = row[1] if not isinstance(row, dict) else row["cnt"]
+                if status_val in task_counts:
+                    task_counts[status_val] = cnt
+        except Exception:
+            pass
+
+        # 8. 推荐下一条命令
+        if db_stale:
+            recommended = "cw --refresh-all"
+        elif blocking_findings_count > 0:
+            recommended = "cw task findings <task_id>  # 有阻塞发现需修复"
+        elif pending_candidates_count > 0:
+            recommended = "cw rule candidate  # 有待审核的候选规则"
+        elif audit_verify.get("broken_count", 0) > 0:
+            recommended = "cw audit verify  # 审计链有损坏记录"
+        elif task_counts["review"] > 0:
+            recommended = "cw task apply <task_id>  # 有任务待审核"
+        else:
+            recommended = "cw task list  # 一切正常，查看任务列表"
+
+        return {
+            "db_stale": db_stale,
+            "current_head": current_head,
+            "active_rules_count": active_rules_count,
+            "pending_candidates_count": pending_candidates_count,
+            "open_findings_count": open_findings_count,
+            "blocking_findings_count": blocking_findings_count,
+            "audit_verify": {
+                "total_count": audit_verify.get("total_count", 0),
+                "verified_count": audit_verify.get("verified_count", 0),
+                "broken_count": audit_verify.get("broken_count", 0),
+                "security_level": audit_verify.get("security_level", ""),
+            },
+            "latest_scan_run": {
+                "id": latest_scan.get("id", 0) if latest_scan else 0,
+                "git_head": latest_scan.get("git_head", "") if latest_scan else "",
+                "started_at": latest_scan.get("started_at", 0) if latest_scan else 0,
+                "status": latest_scan.get("status", "") if latest_scan else "",
+            } if latest_scan else None,
+            "tasks": task_counts,
+            "recommended_next_action": recommended,
+        }
