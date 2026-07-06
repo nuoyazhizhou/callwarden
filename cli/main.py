@@ -1448,6 +1448,22 @@ def _handle_task(args, db):
     rollback_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
     rollback_p.add_argument("step_id", help=t("cli_task_arg_step_id_rollback", default="Step ID (used as change_id to locate rollback scope)"))
 
+    # apply：审核通过（review -> applied），由其他会话的 LLM 调用
+    apply_p = sub.add_parser("apply", help=t("cli_task_apply_desc", default="Approve task (review -> applied)"))
+    apply_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    apply_p.add_argument(
+        "--reviewer", default="reviewer",
+        help=t("cli_task_arg_reviewer", default="Reviewer identity")
+    )
+
+    # close：关闭任务（applied -> closed），由其他会话的 LLM 调用
+    close_p = sub.add_parser("close", help=t("cli_task_close_desc", default="Close task (applied -> closed)"))
+    close_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    close_p.add_argument(
+        "--reviewer", default="reviewer",
+        help=t("cli_task_arg_reviewer", default="Reviewer identity")
+    )
+
     # findings：查看任务质量门禁发现
     findings_p = sub.add_parser(
         "findings", help=t("cli_task_findings_desc", default="List task quality findings")
@@ -1669,6 +1685,34 @@ def _handle_task(args, db):
         if note:
             print()
             cprint(t("cli.messages.task_note", note=note), "yellow")
+        print()
+        return True
+
+    elif opts.action == "apply":
+        # 审核通过：review -> applied（由其他会话的 LLM 调用）
+        result = db.task_apply(opts.task_id, reviewer=opts.reviewer)
+        if "error" in result:
+            cprint(t("cli.messages.task_apply_failed", error=result["error"]), "red")
+            print()
+            return True
+        cprint(t("cli.messages.task_apply_success", id=result["task_id"]), "green", bold=True)
+        print(t("cli.messages.task_status_label", status=result["status"]))
+        if result.get("applied_at"):
+            print(t("cli.messages.task_applied_at", ts=result["applied_at"]))
+        print()
+        return True
+
+    elif opts.action == "close":
+        # 关闭任务：applied -> closed（由其他会话的 LLM 调用）
+        result = db.task_close(opts.task_id, reviewer=opts.reviewer)
+        if "error" in result:
+            cprint(t("cli.messages.task_close_failed", error=result["error"]), "red")
+            print()
+            return True
+        cprint(t("cli.messages.task_close_success", id=result["task_id"]), "green", bold=True)
+        print(t("cli.messages.task_status_label", status=result["status"]))
+        if result.get("closed_at"):
+            print(t("cli.messages.task_closed_at", ts=result["closed_at"]))
         print()
         return True
 
