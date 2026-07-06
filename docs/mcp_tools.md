@@ -277,6 +277,18 @@ cw server --transport sse    # SSE 模式
   - `expected_hash: str = ""`
 - **返回**：`dict` — 含审计信息、符号范围、刷新结果
 
+### `propose_symbol_id_patch`
+提交基于 `symbols.id` 的精确符号补丁。适合从 `work_next_job.allowed_edit_scope.symbol_id` 直接进入修改，避免重名符号歧义。
+- **参数**：
+  - `symbol_id: int` — 当前快照中的符号 ID
+  - `patch: str`
+  - `mode: str = "replace"` — `replace` / `insert_before` / `insert_after`
+  - `agent_task_id: str = ""`
+  - `dry_run: bool = False`
+  - `expected_hash: str = ""` — 编辑前期望文件 hash
+  - `expected_symbol_hash: str = ""` — 编辑前期望符号 hash
+- **返回**：`dict` — 含审计信息、`patch_scope`、`guardrail` 决策和刷新结果；Before-Edit Contract 为 `block` 时拒绝写入
+
 ### `revert_edit`
 回滚编辑（标记审计状态为 reverted）。
 - **参数**：`audit_id: int`
