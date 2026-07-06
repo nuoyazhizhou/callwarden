@@ -13,7 +13,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **变更影响智能**：blast_radius + cross_layer_impact（代码 → DB → API → 配置）
 - **代码演化智能**：函数变更频率 + 缺陷关联 + 热点排名 + churn 分析
 - **缺陷知识库**：从 Semgrep + git 修复中挖掘模式，推荐修复方案
-- **任务驱动编排**：task/step/audit 状态机，**父子任务树**支持大任务自动拆分，深度优先遍历 + 子任务完成自动推进父任务，护栏阻断后自动插入修复步骤
+- **任务驱动编排**：task/step/audit 状态机，**父子任务树**支持大任务自动拆分，深度优先遍历 + 子任务完成自动推进父任务，护栏阻断后自动插入修复步骤。完整状态机 `open → in_progress → review → applied → closed`，最后一个子任务 apply 时**原子级联 close**（兄弟 + 父任务），父任务禁止手动 apply/close，必须由其他会话 LLM 审核执行
 - **Agent 集成闭环**：`work_next_job` 返回下一步最小上下文，`propose_symbol_patch` / `propose_range_patch` 支持手术刀式局部编辑，`install-agent` 生成 Codex/Claude/Cursor 集成模板
 - **文件操作工具组**：file_read / file_grep / file_list / file_symbol_content，Agent 完全通过 MCP 读取代码，无需 IDE 内置工具
 - **向量搜索 + RAG**：sqlite-vec + sentence-transformers，自然语言查找函数
