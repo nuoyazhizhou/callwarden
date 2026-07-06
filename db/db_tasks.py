@@ -1304,16 +1304,25 @@ class TaskMixin:
         设计原则：写代码的 Agent 不能自己 applied，必须由其他会话的 LLM 审核。
         只有 status=review 的任务才能 apply，其他状态拒绝。
 
+        父任务禁止手动 apply：必须由子任务 apply 时自动级联触发。
+        父任务的 apply 由 _cascade_close_if_ready 在最后一个子任务 apply 时原子完成
+        （review → applied → closed 一次推进到位）。
+
+        级联规则：apply 后查询所有兄弟子任务状态
+        - 若全部 applied/closed → 原子级联 close：所有 applied 兄弟 + 自己 + 父任务
+        - 否则保持 applied，等待其他兄弟任务被 apply
+
         Args:
             task_id: 任务 ID
             reviewer: 审核人标识
 
         Returns:
-            包含 task_id、status、applied_at 的字典；失败时包含 error 字段
+            包含 task_id、status、applied_at 的字典；失败时包含 error 字段。
+            若触发级联，额外返回 cascaded_close 字段（自动 close 的 task_id 列表）。
         """
         now = time.time()
         cur = self.conn.execute(
-            "SELECT status FROM tasks WHERE id = ?",
+            "SELECT status, parent_id FROM tasks WHERE id = ?",
             (task_id,),
         )
         row = cur.fetchone()
@@ -1324,6 +1333,26 @@ class TaskMixin:
             }
 
         current_status = row["status"]
+        parent_id = row["parent_id"] or ""
+
+        # 父任务禁止手动 apply：必须由级联触发
+        if parent_id:
+            # 检查是否有子任务（若自身有子任务则为父任务）
+            cur = self.conn.execute(
+                "SELECT COUNT(*) as cnt FROM tasks WHERE parent_id = ?",
+                (task_id,),
+            )
+            subtask_count = cur.fetchone()["cnt"]
+            if subtask_count > 0:
+                return {
+                    "error": t(
+                        "cli.messages.task_apply_parent_manual_forbidden",
+                        default="Parent task cannot be applied manually; it is auto-cascaded when all subtasks are applied",
+                    ),
+                    "task_id": task_id,
+                    "status": current_status,
+                }
+
         if current_status != TASK_STATUS_REVIEW:
             return {
                 "error": t(
@@ -1335,18 +1364,110 @@ class TaskMixin:
                 "status": current_status,
             }
 
+        # 将当前任务 review → applied
         self.conn.execute(
             "UPDATE tasks SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
             (TASK_STATUS_APPLIED, now, now, task_id),
         )
+
+        # 级联检查：若所有兄弟子任务都已 applied/closed，则原子 close 全部
+        cascaded_close: List[str] = []
+        if parent_id:
+            cascaded_close = self._cascade_close_if_ready(parent_id, reviewer, now)
+
         self.conn.commit()
 
-        return {
+        result: Dict[str, Any] = {
             "task_id": task_id,
             "status": TASK_STATUS_APPLIED,
             "applied_at": now,
             "reviewer": reviewer,
         }
+        if cascaded_close:
+            result["cascaded_close"] = cascaded_close
+        return result
+
+    def _cascade_close_if_ready(
+        self,
+        parent_id: str,
+        reviewer: str,
+        now: float,
+    ) -> List[str]:
+        """级联 close 检查：若父任务的所有子任务都 applied/closed，则原子 close 全部
+
+        触发条件：最后一个子任务被 apply 时调用。
+        原子操作：
+        1. close 所有 applied 状态的子任务（applied → closed）
+        2. 父任务 review → applied → closed（一次性推进）
+        3. 递归向上：若父任务也有父任务，且其兄弟都已 closed，继续级联
+
+        Args:
+            parent_id: 父任务 ID
+            reviewer: 审核人标识（用于写入 closed_at 记录）
+            now: 当前时间戳
+
+        Returns:
+            被自动 close 的 task_id 列表（含子任务和父任务）
+        """
+        cascaded: List[str] = []
+
+        # 查询所有兄弟子任务状态
+        cur = self.conn.execute(
+            "SELECT id, status FROM tasks WHERE parent_id = ?",
+            (parent_id,),
+        )
+        siblings = [dict(row) for row in cur]
+
+        # 若有非 applied/closed 状态的兄弟，则不级联
+        all_ready = all(
+            s["status"] in (TASK_STATUS_APPLIED, TASK_STATUS_CLOSED)
+            for s in siblings
+        )
+        if not all_ready:
+            return cascaded
+
+        # 查询父任务状态：必须为 review 才级联（避免重复 close）
+        cur = self.conn.execute(
+            "SELECT status, parent_id FROM tasks WHERE id = ?",
+            (parent_id,),
+        )
+        parent_row = cur.fetchone()
+        if not parent_row:
+            return cascaded
+        parent_status = parent_row["status"]
+        grandparent_id = parent_row["parent_id"] or ""
+
+        # 父任务不是 review 状态：不级联（可能已被 close 或还在 in_progress）
+        if parent_status != TASK_STATUS_REVIEW:
+            return cascaded
+
+        # 1. close 所有 applied 状态的子任务
+        for s in siblings:
+            if s["status"] == TASK_STATUS_APPLIED:
+                self.conn.execute(
+                    "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
+                    (TASK_STATUS_CLOSED, now, now, s["id"]),
+                )
+                cascaded.append(s["id"])
+
+        # 2. 父任务 review → applied → closed（一次性推进）
+        self.conn.execute(
+            "UPDATE tasks SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
+            (TASK_STATUS_APPLIED, now, now, parent_id),
+        )
+        self.conn.execute(
+            "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",
+            (TASK_STATUS_CLOSED, now, now, parent_id),
+        )
+        cascaded.append(parent_id)
+
+        # 3. 递归向上：若父任务也有父任务，检查祖父的所有子任务（父任务的兄弟）是否都已 closed
+        if grandparent_id:
+            cascaded.extend(
+                self._cascade_close_if_ready(grandparent_id, reviewer, now)
+            )
+
+        return cascaded
 
     def task_close(
         self,
