@@ -2551,6 +2551,31 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def propose_symbol_id_patch(symbol_id: int, patch: str,
+                                mode: str = "replace", agent_task_id: str = "",
+                                dry_run: bool = False, expected_hash: str = "",
+                                expected_symbol_hash: str = "") -> dict:
+        """提交基于 symbol_id 的精确符号补丁
+
+        使用 symbols.id 定位当前符号快照，并在写入前校验文件 hash
+        与符号 hash。工具内部会执行 Before-Edit Contract，block 时拒绝写入。
+        mode 支持 replace / insert_before / insert_after。
+        """
+        try:
+            db = get_db()
+            return db.propose_symbol_id_patch(
+                symbol_id=symbol_id,
+                patch=patch,
+                mode=mode,
+                agent_task_id=agent_task_id,
+                dry_run=dry_run,
+                expected_hash=expected_hash,
+                expected_symbol_hash=expected_symbol_hash,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def revert_edit(audit_id: int) -> dict:
         """回滚编辑（标记审计状态为 reverted）
 
