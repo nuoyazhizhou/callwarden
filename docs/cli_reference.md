@@ -1566,6 +1566,24 @@ cw --lang en_US --status
 cw --lang zh_CN --search "login"
 ```
 
+### i18n 全量改造收尾（C5）
+
+Call Warden 自身的所有用户可见输出（标题、标签、列表项、分隔说明等）已通过
+`i18n.t()` 走国际化文案，新增的 i18n key 覆盖以下场景：
+
+- **查询类**：`callers_item` / `callees_item` / `topo_item` — 调用者、被调用者、拓扑排序的列表项
+- **diff 显示**：`diff_remove_line` / `diff_add_line` — 版本对比的 +/- 行
+- **install --check**：`install_check_ok` / `install_check_miss` / `install_check_item` — 依赖状态行
+- **install hooks**：`install_hooks_installed` / `install_hooks_skipped` / `install_hooks_summary` — Git hook 安装结果
+- **install-agent**：`install_agent_path_item` — Agent 集成文件路径列表项
+- **GitHub Action**：`github_action_title` / `github_action_base_ref` / `github_action_head_ref` / `github_action_workspace` — CI 标题与分支信息
+- **缺陷建议**：`defect_suggest_fix_truncated` — 修复方案截断省略号
+- **restore-all**：`restore_all_error_item` — 批量恢复错误列表项
+
+> 程序化输出（如 `print(json.dumps(...))`）、纯分隔符（`"=" * N`）、CLI 命令示例
+> （如 `cw doctor --add-defender-exclusion`）以及 `cw.py` 启动前 i18n 模块未加载时的
+> 引导信息保留硬编码，不在 i18n 范围内。
+
 ## 下一步
 
 - [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 120 个工具

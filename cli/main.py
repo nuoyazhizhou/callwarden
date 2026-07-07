@@ -305,7 +305,7 @@ def _handle_install_agent(args, db):
     print(t("cli.messages.install_agent_agents", default="  Agents: {agents}", agents=', '.join(agents)))
     print()
     for path in created:
-        print(f"  - {path}")
+        print(t("cli.messages.install_agent_path_item", path=path))
     print()
     cprint(t(
         "cli.messages.install_agent_next",
@@ -1542,7 +1542,7 @@ def _handle_defect(args, db):
             for line in fix.split("\n")[:20]:
                 print(t("cli.messages.defect_suggest_fix_line", line=line))
             if len(fix.split("\n")) > 20:
-                print("    ...")
+                print(t("cli.messages.defect_suggest_fix_truncated"))
         else:
             cprint(t("cli.messages.defect_suggest_no_fix"), "yellow")
         print()
@@ -4053,7 +4053,8 @@ def main():
             print(t("cli.messages.callers_title", name=args.callers, count=len(callers)))
             for c in callers:
                 cross = t("cli.messages.callers_cross_file") if c["is_cross_file"] else ""
-                print(f"  {c['caller_file']}:{c['call_line']} -> {c['caller_name']}{cross}")
+                print(t("cli.messages.callers_item",
+                        file=c['caller_file'], line=c['call_line'], name=c['caller_name'], cross=cross))
 
         elif args.callees:
             callees = db.get_callees(args.callees)
@@ -4061,13 +4062,15 @@ def main():
             for c in callees:
                 cross = t("cli.messages.callees_cross_file") if c["is_cross_file"] else ""
                 file_info = f" ({c['callee_file']})" if c["callee_file"] else t("cli.messages.callees_unresolved")
-                print(f"  line {c['call_line']}: {c['callee_name']}{cross}{file_info}")
+                print(t("cli.messages.callees_item",
+                        line=c['call_line'], name=c['callee_name'], cross=cross, file_info=file_info))
 
         elif args.topo:
             order = db.get_topological_order(args.topo_limit)
             print(t("cli.messages.topo_title", count=len(order)))
             for i, sym in enumerate(order):
-                print(f"  {i+1}. depth={sym['depth']:2d}  {sym['path']}:{sym['start_line']}  {sym['name']}")
+                print(t("cli.messages.topo_item",
+                        idx=i+1, depth=f"{sym['depth']:2d}", path=sym['path'], line=sym['start_line'], name=sym['name']))
 
         elif args.file:
             symbols = db.get_file_symbols(args.file)
@@ -4124,9 +4127,9 @@ def main():
                     l2 = lines2[i] if i < len(lines2) else ""
                     if l1 != l2:
                         if l1:
-                            print(f"  - {i+1}: {l1}")
+                            print(t("cli.messages.diff_remove_line", idx=i+1, content=l1))
                         if l2:
-                            print(f"  + {i+1}: {l2}")
+                            print(t("cli.messages.diff_add_line", idx=i+1, content=l2))
 
         elif args.changes:
             result = db.get_recent_changes(args.changes)
@@ -4216,7 +4219,7 @@ def main():
                 print()
                 print(t("cli.messages.restore_all_errors_title"))
                 for err in result["errors"]:
-                    print(f"  - {err}")
+                    print(t("cli.messages.restore_all_error_item", err=err))
 
         elif args.comment_coverage:
             result = db.get_comment_coverage(group_by=args.coverage_by)

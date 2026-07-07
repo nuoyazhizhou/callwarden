@@ -42,11 +42,11 @@ def run_github_action() -> int:
     workspace = _env("GITHUB_WORKSPACE", os.getcwd())
 
     print("=" * 60)
-    print("Code Graph Analysis - GitHub Action")
+    print(t("cli.messages.github_action_title"))
     print("=" * 60)
-    print(f"  base ref : {base_ref}")
-    print(f"  head ref : {head_ref}")
-    print(f"  workspace: {workspace}")
+    print(t("cli.messages.github_action_base_ref", ref=base_ref))
+    print(t("cli.messages.github_action_head_ref", ref=head_ref))
+    print(t("cli.messages.github_action_workspace", workspace=workspace))
     print("-" * 60)
 
     # 2. 创建 CodeGraphDB 实例（延迟导入，避免模块加载期副作用）

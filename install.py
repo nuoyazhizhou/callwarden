@@ -251,18 +251,12 @@ class CallWardenInstaller:
             hook_path = os.path.join(hooks_dir, hook_name)
             if self._write_hook(hook_path, content, force=force):
                 installed += 1
-                msg = t("cli.messages.install_hooks_installed", default="")
-                print(msg.format(hook=hook_path) if msg else f"Installed hook: {hook_path}")
+                print(t("cli.messages.install_hooks_installed", hook=hook_path))
             else:
                 skipped += 1
-                msg = t("cli.messages.install_hooks_skipped", default="")
-                print(msg.format(hook=hook_path) if msg else f"Skipped existing non-Call-Warden hook: {hook_path}")
+                print(t("cli.messages.install_hooks_skipped", hook=hook_path))
 
-        msg = t("cli.messages.install_hooks_summary", default="")
-        print(
-            msg.format(installed=installed, skipped=skipped)
-            if msg else f"Git hooks ready: installed={installed}, skipped={skipped}"
-        )
+        print(t("cli.messages.install_hooks_summary", installed=installed, skipped=skipped))
 
     # ------------------------------------------------------------------
     # 内部方法
@@ -535,9 +529,10 @@ echo "[Call Warden] capturing diff for task $CALLWARDEN_TASK_ID..."
         """检查一组包的安装状态"""
         for spec in packages:
             installed = self._is_package_installed(spec)
-            status = "[OK]  " if installed else "[MISS]"
+            status = t("cli.messages.install_check_ok") if installed else t("cli.messages.install_check_miss")
             lang_tag = f" ({spec.language})" if spec.language else ""
-            print(f"  {status} {spec.pip_name:<30} {spec.description}{lang_tag}")
+            print(t("cli.messages.install_check_item",
+                    status=status, pip_name=spec.pip_name, desc=spec.description, lang_tag=lang_tag))
 
     def _print_summary(self) -> None:
         """打印安装汇总"""
