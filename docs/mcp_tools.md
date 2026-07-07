@@ -1318,6 +1318,37 @@ Agent 提供稳定的行为约束。
 > `build_structured_instruction`（project_rules）、
 > `get_symbol`（applicable_rules）、`file_symbol_content`（applicable_rules）。
 
+### `cleanup_agent_rule_sync_log`
+清理 `agent_rule_sync_log` 表中的旧记录，防止无限增长（C6 GC）。
+
+每次 `rule_sync_agents_md` 都会写入一条 sync_log 记录，长期累积膨胀。
+本工具按**双重过滤策略**清理旧记录。
+
+**清理策略**（同时满足才删除）：
+1. `created_at` 早于 `older_than_days` 天前
+2. 不在最近 `keep_latest` 条记录内（按 `created_at` 倒序）
+
+**默认 dry-run**：`dry_run=True` 时只预估删除数量（`SELECT COUNT`），不执行 `DELETE`；
+传 `dry_run=False` 才真正删除并 `commit`。
+
+**fail-soft**：任何异常都封装为 `{"success": False, "error": ...}`，不抛出。
+
+- **参数**：
+  - `older_than_days: int = 90` — 超过多少天的记录进入候选
+  - `keep_latest: int = 100` — 保留最近多少条记录不删除
+  - `dry_run: bool = True` — True 只预估不删除；False 真正执行 DELETE
+- **返回**：`dict` —
+  - `success: bool`
+  - `dry_run: bool`
+  - `deleted_count: int` — dry_run 时为预估值，apply 时为实删数
+  - `remaining_count: int` — 清理后剩余记录数
+  - `total_before: int` — 清理前总记录数
+  - `older_than_days: int`
+  - `keep_latest: int`
+  - `error: str` — 仅 `success=False` 时存在
+
+**对应 CLI**：`cw rule cleanup-sync-log [--older-than 90] [--keep-latest 100] [--apply]`
+
 ### `bootstrap_status`
 返回自举健康状态摘要。一行调用汇总以下信息，帮助判断当前自举闭环
 （bootstrap closure）是否健康：

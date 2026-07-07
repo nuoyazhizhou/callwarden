@@ -109,6 +109,7 @@ Call Warden CLI 提供两种命令风格：
 | | `rule insert-block` | sub | 在 AGENTS.md 末尾插入规则标记块 |
 | | `rule extract` | sub | 从 task_quality_findings 聚合候选 |
 | | `rule seed-bootstrap [--apply]` | sub | 种子化内置自举 active rules（幂等，固定 ID `AR-bootstrap-*`） |
+| | `rule cleanup-sync-log [--apply]` | sub | 清理 agent_rule_sync_log 旧记录（GC，默认 dry-run） |
 | **自举** | `bootstrap status` | sub | 自举闭环健康摘要（DB 同步/规则/质量发现/审计链/扫描基线/任务/推荐动作） |
 
 > `install` 是独立子命令，调用方式为 `cw install [options]`。
@@ -1267,6 +1268,45 @@ cw rule seed-bootstrap --apply
 
 ---
 
+### `rule cleanup-sync-log`：清理 agent_rule_sync_log 旧记录（GC）
+
+```bash
+# Dry-run（默认）：只预估删除数量，不执行 DELETE
+cw rule cleanup-sync-log
+
+# 自定义参数 + 实际执行删除
+cw rule cleanup-sync-log --older-than 30 --keep-latest 50 --apply
+
+# 仅清理 90 天前的记录，保留最近 100 条
+cw rule cleanup-sync-log --apply
+```
+
+**用途**：`agent_rule_sync_log` 表记录每次 `cw rule sync` 的同步日志，
+长期累积会无限增长。本命令按**双重过滤策略**清理旧记录，防止表膨胀。
+
+**清理策略**（同时满足才删除）：
+1. `created_at` 早于 `--older-than` 天前（默认 90 天）
+2. 不在最近 `--keep-latest` 条记录内（按 `created_at` 倒序，默认 100 条）
+
+**命令行参数**：
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--older-than <DAYS>` | 90 | 超过多少天的记录进入候选 |
+| `--keep-latest <N>` | 100 | 保留最近 N 条记录不删除 |
+| `--apply` | false | 实际执行删除（默认 dry-run，只预估） |
+
+**输出**：
+- dry-run / apply 标题（含 `older_than` / `keep_latest` 参数回显）
+- `total_before` / `deleted` / `remaining` 三项计数
+- dry-run 模式末尾提示 `Use --apply to actually delete records.`
+
+**fail-soft**：任何异常都封装为 `success=False + error`，不阻断流程。
+
+**对应 MCP 工具**：`cleanup_agent_rule_sync_log(older_than_days, keep_latest, dry_run)`
+
+---
+
 ## 自举闭环命令
 
 ### `bootstrap status`：自举健康摘要
@@ -1583,6 +1623,23 @@ Call Warden 自身的所有用户可见输出（标题、标签、列表项、�
 > 程序化输出（如 `print(json.dumps(...))`）、纯分隔符（`"=" * N`）、CLI 命令示例
 > （如 `cw doctor --add-defender-exclusion`）以及 `cw.py` 启动前 i18n 模块未加载时的
 > 引导信息保留硬编码，不在 i18n 范围内。
+
+### agent_rule_sync_log 清理策略（C6）
+
+`agent_rule_sync_log` 表记录每次 `cw rule sync` 的同步日志，长期累积会无限增长。
+C6 引入 GC 清理机制，按**双重过滤策略**删除旧记录，防止表膨胀。
+
+- **CLI 命令**：`cw rule cleanup-sync-log [--older-than 90] [--keep-latest 100] [--apply]`
+- **MCP 工具**：`cleanup_agent_rule_sync_log(older_than_days, keep_latest, dry_run)`
+
+**双重过滤**（同时满足才删除）：
+1. `created_at` 早于 `--older-than` 天前（默认 90 天）
+2. 不在最近 `--keep-latest` 条记录内（按 `created_at` 倒序，默认 100 条）
+
+**默认 dry-run**：不传 `--apply` 时只预估删除数量（`SELECT COUNT`），不执行 `DELETE`；
+传 `--apply` 才真正删除并 `commit`。
+
+**fail-soft**：任何异常都封装为 `{"success": False, "error": ...}`，不抛出，不阻断流程。
 
 ## 下一步
 

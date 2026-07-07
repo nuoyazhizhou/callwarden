@@ -1467,3 +1467,105 @@ class AgentRulesMixin:
             ]
         except Exception:
             return []
+
+    # ============================================
+    # GC：agent_rule_sync_log 清理（C6）
+    # ============================================
+
+    def cleanup_sync_log(
+        self,
+        older_than_days: int = 90,
+        keep_latest: int = 100,
+        dry_run: bool = True,
+    ) -> Dict[str, Any]:
+        """清理 agent_rule_sync_log 表中的旧记录，防止无限增长
+
+        策略（同时满足才删除）：
+        1. created_at 早于 older_than_days 天前
+        2. 不在最近 keep_latest 条记录内（按 created_at 倒序）
+
+        Args:
+            older_than_days: 超过多少天的记录进入候选（默认 90）
+            keep_latest: 保留最近多少条记录不删除（默认 100）
+            dry_run: True 只预演不删除（默认 True），False 真正执行 DELETE
+
+        Returns:
+            {
+                "success": True,
+                "dry_run": bool,
+                "deleted_count": int,      # dry_run 时为预估值，apply 时为实删数
+                "remaining_count": int,
+                "total_before": int,       # 清理前总记录数
+                "older_than_days": older_than_days,
+                "keep_latest": keep_latest,
+            }
+        """
+        try:
+            now = time.time()
+            cutoff_ts = now - older_than_days * 86400
+
+            # 先统计当前总数
+            cur_total = self.conn.execute(
+                "SELECT COUNT(*) FROM agent_rule_sync_log"
+            ).fetchone()[0]
+
+            # 构造删除条件：双重过滤（时间 + 保留阈值）
+            if cur_total <= keep_latest:
+                # 总记录数 <= keep_latest，仅按时间过滤
+                sql_where = "WHERE created_at < ?"
+                params: tuple = (cutoff_ts,)
+            else:
+                # 找到第 keep_latest 条（按 created_at DESC）的 created_at 作为下限
+                # 同时满足 created_at < cutoff_ts AND created_at < 保留阈值
+                threshold_row = self.conn.execute(
+                    """
+                    SELECT created_at FROM agent_rule_sync_log
+                    ORDER BY created_at DESC
+                    LIMIT 1 OFFSET ?
+                    """,
+                    (keep_latest - 1,),
+                ).fetchone()
+                keep_threshold = threshold_row[0] if threshold_row else now
+                sql_where = "WHERE created_at < ? AND created_at < ?"
+                params = (cutoff_ts, keep_threshold)
+
+            if dry_run:
+                # 预演：用 SELECT COUNT 估算将删除的记录数
+                count_row = self.conn.execute(
+                    f"SELECT COUNT(*) FROM agent_rule_sync_log {sql_where}",
+                    params,
+                ).fetchone()
+                deleted = count_row[0] if count_row else 0
+            else:
+                # 执行删除
+                cur = self.conn.execute(
+                    f"DELETE FROM agent_rule_sync_log {sql_where}",
+                    params,
+                )
+                deleted = cur.rowcount
+                self.conn.commit()
+
+            remaining = self.conn.execute(
+                "SELECT COUNT(*) FROM agent_rule_sync_log"
+            ).fetchone()[0]
+
+            return {
+                "success": True,
+                "dry_run": dry_run,
+                "deleted_count": deleted,
+                "remaining_count": remaining,
+                "total_before": cur_total,
+                "older_than_days": older_than_days,
+                "keep_latest": keep_latest,
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "dry_run": dry_run,
+                "deleted_count": 0,
+                "remaining_count": -1,
+                "total_before": -1,
+                "older_than_days": older_than_days,
+                "keep_latest": keep_latest,
+            }

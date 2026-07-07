@@ -608,6 +608,18 @@ def _handle_rule(args, db):
     seed_p.add_argument("--apply", action="store_true",
         help=t("cli_rule_seed_bootstrap_arg_apply", default="Actually write to db (default: dry-run)"))
 
+    # cleanup-sync-log：清理 agent_rule_sync_log 旧记录（C6 GC）
+    cleanup_p = sub.add_parser(
+        "cleanup-sync-log",
+        help=t("cli_rule_cleanup_sync_log_desc", default="Cleanup old agent_rule_sync_log records")
+    )
+    cleanup_p.add_argument("--older-than", type=int, default=90,
+        help=t("cli_rule_cleanup_sync_log_arg_older_than", default="Records older than N days (default 90)"))
+    cleanup_p.add_argument("--keep-latest", type=int, default=100,
+        help=t("cli_rule_cleanup_sync_log_arg_keep_latest", default="Keep latest N records (default 100)"))
+    cleanup_p.add_argument("--apply", action="store_true",
+        help=t("cli_rule_cleanup_sync_log_arg_apply", default="Actually delete (default: dry-run)"))
+
     opts = parser.parse_args(args)
 
     if opts.action == "candidate":
@@ -624,6 +636,8 @@ def _handle_rule(args, db):
         return _handle_rule_extract(opts, db)
     elif opts.action == "seed-bootstrap":
         return _handle_rule_seed_bootstrap(opts, db)
+    elif opts.action == "cleanup-sync-log":
+        return _handle_rule_cleanup_sync_log(opts, db)
     return True
 
 
@@ -848,6 +862,46 @@ def _handle_rule_seed_bootstrap(opts, db):
         print()
         cprint(t("cli.messages.rule_seed_bootstrap_dry_run_hint",
                  default="Use --apply to write rules to agent_rules table."), "yellow")
+    return True
+
+
+def _handle_rule_cleanup_sync_log(opts, db):
+    """rule cleanup-sync-log 子命令：清理 agent_rule_sync_log 旧记录（C6 GC）
+
+    默认 dry-run，需 --apply 才真正执行删除。
+    """
+    result = db.cleanup_sync_log(
+        older_than_days=opts.older_than,
+        keep_latest=opts.keep_latest,
+        dry_run=not opts.apply,
+    )
+
+    total_before = result.get("total_before", -1)
+    deleted = result.get("deleted_count", 0)
+    remaining = result.get("remaining_count", -1)
+
+    if result.get("dry_run"):
+        cprint(t("cli.messages.rule_cleanup_sync_log_dry_run_title",
+                 default="=== Sync Log Cleanup Dry-Run ===",
+                 older_than=opts.older_than, keep_latest=opts.keep_latest), "cyan", bold=True)
+    else:
+        cprint(t("cli.messages.rule_cleanup_sync_log_apply_title",
+                 default="=== Sync Log Cleanup Applied ===",
+                 older_than=opts.older_than, keep_latest=opts.keep_latest), "green", bold=True)
+
+    if not result.get("success"):
+        cprint(t("cli.messages.rule_cleanup_sync_log_failed",
+                 default="Cleanup failed: {error}", error=result.get("error", "")), "red")
+        return True
+
+    print(t("cli.messages.rule_cleanup_sync_log_summary",
+            default="total_before: {total_before} | deleted: {deleted} | remaining: {remaining}",
+            total_before=total_before, deleted=deleted, remaining=remaining))
+
+    if result.get("dry_run"):
+        print()
+        cprint(t("cli.messages.rule_cleanup_sync_log_dry_run_hint",
+                 default="Use --apply to actually delete records."), "yellow")
     return True
 
 

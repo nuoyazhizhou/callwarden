@@ -1864,6 +1864,48 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def cleanup_agent_rule_sync_log(
+        older_than_days: int = 90,
+        keep_latest: int = 100,
+        dry_run: bool = True,
+    ) -> dict:
+        """清理 agent_rule_sync_log 表中的旧记录，防止无限增长（C6 GC）
+
+        策略（同时满足才删除）：
+        1. created_at 早于 older_than_days 天前
+        2. 不在最近 keep_latest 条记录内（按 created_at 倒序）
+
+        默认 dry-run（只预估不删除），需传 dry_run=False 才真正执行 DELETE。
+        fail-soft：任何异常都封装为 {"success": False, "error": ...}，不抛出。
+
+        Args:
+            older_than_days: 超过多少天的记录进入候选（默认 90）
+            keep_latest: 保留最近多少条记录不删除（默认 100）
+            dry_run: True 只预演不删除（默认 True），False 真正执行删除
+
+        Returns:
+            {
+                "success": bool,
+                "dry_run": bool,
+                "deleted_count": int,      # dry_run 时为预估值，apply 时为实删数
+                "remaining_count": int,
+                "total_before": int,       # 清理前总记录数
+                "older_than_days": int,
+                "keep_latest": int,
+                "error": str,              # 仅 success=False 时存在
+            }
+        """
+        db = get_db()
+        try:
+            return db.cleanup_sync_log(
+                older_than_days=older_than_days,
+                keep_latest=keep_latest,
+                dry_run=dry_run,
+            )
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
         """在父任务下创建子任务
 
