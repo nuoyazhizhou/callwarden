@@ -646,6 +646,49 @@ Agent 每次编辑文件都记录完整审计：
 设计原则：写代码的 Agent 不能自己 apply/close，必须由其他会话的 LLM 审核执行。
 详细设计见 [docs/design/task-state-machine.md](design/task-state-machine.md)。
 
+### 7.1 父任务自身步骤完成后自动级联 close（T-1783428495806-71f6）
+
+**问题背景**：当父任务既有自身步骤（如 `verify`/`build`）又有子任务时，存在一个
+边缘场景导致父任务卡在 `review` 状态无法 `closed`：
+
+1. 子任务先被 `task_apply` 推到 `applied`
+2. `_update_parent_status` 检查时把父任务推到 `review`（所有子任务视为完成）
+3. 之后父任务自身步骤完成，`task_report_step` 进入 review 分支
+4. 但父任务状态已经是 `review`（不是 `open`/`in_progress`），原 `if` 分支被跳过
+5. 级联 close 调用不会触发，父任务永远卡在 `review`
+
+**修复方案**：在 `task_report_step` 中，父任务自身步骤全部完成后，**无论**
+`t_status` 是刚推到 `review` 还是已经是 `review`，都重新查询当前状态并检查：
+
+```python
+if pending_count == 0:
+    if t_status in (OPEN, IN_PROGRESS):
+        UPDATE tasks SET status = REVIEW WHERE id = ?
+    # 关键：重新查询当前状态（可能已被 _update_parent_status 提前推到 REVIEW）
+    current_status = SELECT status FROM tasks WHERE id = ?
+    if current_status == REVIEW:
+        has_subtasks = SELECT COUNT(*) FROM tasks WHERE parent_id = ?
+        if has_subtasks:
+            cascaded = _cascade_close_if_ready(task_id, "system", now)
+```
+
+**触发条件**（全部满足才级联）：
+- 任务自身所有步骤完成（`pending_count == 0`）
+- 任务当前状态为 `review`（无论是刚推入还是已被提前推入）
+- 任务有子任务（`has_subtasks == True`）
+- 所有子任务都是 `applied`/`closed`（由 `_cascade_close_if_ready` 内部检查）
+
+**不影响叶子任务**：叶子任务（无子任务）保持人工 apply/close 流程，不会自动级联。
+**不影响失败步骤**：步骤失败（`success=False`）时不进入此分支。
+
+**测试覆盖**：`tests/test_task_parent_cascade_fix.py`（10 个测试）
+- 父任务有 verify 步骤 + 单子任务 → 自动 close
+- 父任务有多个步骤 + 多个子任务 → 自动 close
+- 多层任务树（祖父-父-子）递归级联
+- 步骤失败时不会自动 close
+- 部分子任务未完成时不会自动 close
+- 叶子任务不受影响
+
 ### 8. 任务 reopen 机制（T-1783413215675-3aae）
 
 任务状态机支持 `review`/`applied`/`closed` → `in_progress` 的回退（reopen），

@@ -1301,6 +1301,32 @@ class TaskMixin:
                         "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
                         (TASK_STATUS_REVIEW, now, actual_task_id),
                     )
+                # 边缘 bug 修复（T-1783428495806-71f6）：
+                # 父任务有自身步骤（如 verify），子任务全部 closed/applied 后
+                # _update_parent_status 已把父任务推到 REVIEW；之后父任务自身步骤
+                # 完成时 t_status 已经是 REVIEW，不再满足 OPEN/IN_PROGRESS 条件，
+                # 导致级联 close 调用被跳过，父任务卡在 review。
+                # 修复：无论 t_status 是刚推到 REVIEW 还是已经是 REVIEW，
+                # 都检查父任务（有子任务）是否所有子任务都已 applied/closed，
+                # 若是则自动调用 _cascade_close_if_ready 级联 close。
+                # 注意：叶子任务（无子任务）不触发，保持人工 apply/close 流程。
+                cur = self.conn.execute(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (actual_task_id,),
+                )
+                current_status = cur.fetchone()["status"]
+                if current_status == TASK_STATUS_REVIEW:
+                    cur = self.conn.execute(
+                        "SELECT COUNT(*) as cnt FROM tasks WHERE parent_id = ?",
+                        (actual_task_id,),
+                    )
+                    has_subtasks = cur.fetchone()["cnt"] > 0
+                    if has_subtasks:
+                        cascaded = self._cascade_close_if_ready(
+                            actual_task_id, "system", now
+                        )
+                        if cascaded:
+                            self.conn.commit()
                 # 子任务完成后，递归向上更新父任务状态
                 self._update_parent_status(actual_task_id)
 
