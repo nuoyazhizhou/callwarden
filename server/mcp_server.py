@@ -1675,6 +1675,65 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def rotate_audit_signing_key(key_id: str, key_secret: str = "") -> dict:
+        """轮换审计签名密钥（C7）
+
+        流程：
+        1. 将当前 active 密钥置为 inactive（is_active=0）
+        2. 插入新密钥记录（is_active=1）
+
+        轮换后：
+        - 新的 sign_audit_record 调用使用新密钥签名（signing_key_id = key_id）
+        - 旧记录保持原签名不变（signing_key_id 不变）
+        - verify_audit_chain 按 signing_key_id 查找对应密钥验证
+
+        Args:
+            key_id: 新密钥标识（唯一，如 "key-2026-07"）
+            key_secret: 新密钥内容（用于 HMAC 计算）；为空时自动生成 32 字节随机密钥
+
+        Returns:
+            {
+                "success": True,
+                "key_id": str,           # 新密钥标识
+                "rotated_at": float,     # 轮换时间戳
+                "previous_key_id": str,  # 前一个 active 密钥的 key_id（无则为空串）
+            }
+            失败时：{"success": False, "error": str}
+        """
+        db = get_db()
+        try:
+            # key_secret 为空时自动生成 32 字节随机密钥（hex 编码，64 字符）
+            if not key_secret:
+                import secrets as _secrets
+                key_secret = _secrets.token_hex(32)
+            return db.rotate_signing_key(
+                new_key_id=key_id,
+                new_key_secret=key_secret,
+            )
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @mcp.tool()
+    def list_audit_signing_keys() -> list:
+        """列出所有签名密钥轮换记录（C7）
+
+        按 rotated_at 倒序返回，每项含 key_id/rotated_at/is_active，
+        不返回 key_secret 以避免泄露密钥内容。
+
+        Returns:
+            [
+                {"key_id": str, "rotated_at": float, "is_active": int},
+                ...
+            ]
+            失败时：[{"error": str}]
+        """
+        db = get_db()
+        try:
+            return db.list_signing_keys()
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
     def bootstrap_status() -> dict:
         """返回自举健康状态摘要
 

@@ -740,6 +740,20 @@ CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record ON audit_chain(table_nam
 CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signature);
 
 -- ============================================
+-- 审计签名密钥轮换（v29）
+-- ============================================
+-- 记录每次签名密钥轮换的时间点与密钥内容，支持按时间点选择对应 key 验证。
+-- 轮换后新记录用新 key 签名，旧记录保持原签名；验证时按 signing_key_id 查找对应密钥。
+CREATE TABLE IF NOT EXISTS audit_key_rotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id TEXT NOT NULL UNIQUE,
+    key_secret TEXT NOT NULL,
+    rotated_at REAL NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_audit_key_rotations_active ON audit_key_rotations(is_active);
+
+-- ============================================
 -- Agent Rule Memory（v23）
 -- ============================================
 -- 候选规则表：自动提取、人工创建、任务复盘都写入这里。
@@ -882,7 +896,8 @@ ON clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type);
 # v26: symbols 表 UNIQUE 索引（file_instance_id, name, start_line）+ UPSERT，防止重复符号、支持并发安全写入
 # v27: 重复代码对表（clone_pairs，记录 Type-1/2/3 克隆检测结果，支持重构决策）
 # v28: file_versions 表新增 ast_cache 字段（BLOB，存储 tree-sitter AST 序列化结果，支持增量解析）
-SCHEMA_VERSION = 28
+# v29: 审计签名密钥轮换表（audit_key_rotations，记录密钥轮换时间点，支持按 key_id 验证旧记录）
+SCHEMA_VERSION = 29
 
 
 # ============================================

@@ -509,6 +509,50 @@ cw server --transport sse    # SSE 模式
 - `chain_broken`：`prev_signature` 与上一条的 `record_signature` 不匹配
 - `first_prev_not_empty`：首条记录 `prev_signature` 应为空串但非空
 
+### `rotate_audit_signing_key`（C7）
+轮换审计签名密钥。轮换后新记录用新密钥签名（`signing_key_id = key_id`），旧记录保持原签名不变，`audit_chain_verify` 按 `signing_key_id` 从 `audit_key_rotations` 表查找对应密钥验证。
+- **参数**：
+  - `key_id: str` — 新密钥标识（唯一，如 `key-2026-07`）
+  - `key_secret: str = ""` — 新密钥内容；为空时自动生成 32 字节随机密钥（hex 编码，64 字符）
+- **返回**：`dict` —
+  - `success: bool`
+  - `key_id: str` — 新密钥标识
+  - `rotated_at: float` — 轮换时间戳
+  - `previous_key_id: str` — 前一个 active 密钥的 `key_id`（无则为空串）
+  - 失败时：`{"success": False, "error": str}`
+
+**幂等性**：相同 `key_id` 再次轮换会更新 `key_secret` 并保持 `is_active=1`。
+
+> **写操作**：会 INSERT/UPDATE `audit_key_rotations` 表。对应 CLI `cw audit rotate-key`。
+
+### `list_audit_signing_keys`（C7）
+列出所有签名密钥轮换记录，按 `rotated_at` 倒序。**不返回 `key_secret`** 以避免泄露密钥内容。
+- **参数**：无
+- **返回**：`list` —
+  - 每项含 `key_id: str` / `rotated_at: float` / `is_active: int`
+  - 失败时：`[{"error": str}]`
+
+> **只读**：仅查询 `audit_key_rotations` 表。对应 CLI `cw audit keys`。
+
+### `audit_chain` 签名密钥轮换机制（C7）
+
+**Schema v29** 新增 `audit_key_rotations` 表，记录每次密钥轮换（`key_id` / `key_secret` / `rotated_at` / `is_active`）。
+
+**密钥查找优先级**（`_get_active_signing_key`）：
+1. `audit_key_rotations` 表中 `is_active=1` 的记录
+2. 环境变量 `CALLWARDEN_AUDIT_HMAC_KEY` / 文件 `~/.callwarden/audit.key`
+3. 回落到 SHA-256 链（`signing_key_id='local'`）
+
+**验证时密钥查找**（`_lookup_signing_key`）：
+1. `audit_key_rotations` 表中 `key_id` 对应的 `key_secret`
+2. `key_id == "hmac"`：回落到当前环境变量/文件密钥（向后兼容）
+3. `key_id == "local"`：返回 `None`（SHA-256 链）
+4. 未知 `key_id`：返回 `None`（无法验证，标记为 `signature_mismatch`）
+
+**向后兼容**：
+- legacy `signing_key_id="hmac"` 记录（无轮换表时签发）仍能用当前环境变量/文件密钥验证
+- legacy `signing_key_id="local"` 记录（SHA-256 链）无需密钥即可验证
+
 ### `task_create_subtask`
 在父任务下创建子任务。任务过大时拆分子任务，子任务完成后系统自动推进父任务状态，避免 Agent 遗漏任务或遗忘上下文。
 - **参数**：`parent_task_id: str`, `title: str`, `description: str = ""`, `steps: list = None`, `creator: str = "agent"`

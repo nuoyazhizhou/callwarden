@@ -49,7 +49,7 @@ Call Warden CLI 提供两种命令风格：
 | | `--task-list` | flag (兼容) | 列出任务（等价 `cw task list`） |
 | | `--task-show <ID>` | flag (兼容) | 查看任务详情（等价 `cw task show <ID>`） |
 | | `check-gate <TASK_ID>` | sub | 检查门禁 |
-| **审计** | `audit verify` | sub | 验证 `audit_chain` 签名链完整性 |
+| **审计** | `audit verify` / `audit rotate-key` / `audit keys` | sub | 验证 `audit_chain` 签名链 / 轮换签名密钥（C7） / 列出密钥轮换记录（C7） |
 | **GC** | `gc archive/restore/status/purge` | sub | ignore 文件归档、复活、状态、清除 |
 | | `gc policy show/set` | sub | 查看或修改 retention 策略 |
 | | `gc retention` | sub | 按冷热策略清理旧版本/外部符号（含 Top N 收益预估） |
@@ -917,6 +917,76 @@ cw audit verify --limit 500
 - `signature_mismatch`：`record_signature` 与重新计算的签名不匹配（记录被篡改）
 - `chain_broken`：`prev_signature` 与上一条的 `record_signature` 不匹配（链断裂）
 - `first_prev_not_empty`：首条记录 `prev_signature` 应为空串但非空
+
+### `audit rotate-key`：轮换审计签名密钥（C7）
+
+```bash
+# 轮换到新密钥（自动生成 32 字节随机密钥）
+cw audit rotate-key --key-id key-2026-07
+
+# 指定密钥内容
+cw audit rotate-key --key-id key-2026-07 --secret "my-secret-string"
+```
+
+轮换审计签名密钥。轮换后：
+- **新记录**用新密钥签名（`signing_key_id = <new_key_id>`）
+- **旧记录保持原签名不变**（`signing_key_id` 不变）
+- `verify_audit_chain` 按 `signing_key_id` 从 `audit_key_rotations` 表查找对应密钥验证
+
+**参数**：
+
+| 参数 | 必填 | 默认 | 说明 |
+| ---- | ---- | ---- | ---- |
+| `--key-id` | 是 | - | 新密钥标识（唯一，如 `key-2026-07`） |
+| `--secret` | 否 | 自动生成 | 新密钥内容；省略时自动生成 32 字节随机密钥（hex 编码，64 字符） |
+
+**输出**：
+- 新密钥 ID
+- 轮换时间戳
+- 前一个密钥 ID（首次轮换为空）
+- 提示：旧记录保持原签名，验证时按 `signing_key_id` 查找对应密钥
+
+**幂等性**：相同 `key_id` 再次轮换会更新 `key_secret` 并保持 `is_active=1`。
+
+> **写操作**：此命令会 INSERT/UPDATE `audit_key_rotations` 表，需激活 workspace。
+
+### `audit keys`：列出签名密钥轮换记录
+
+```bash
+cw audit keys
+```
+
+列出所有签名密钥轮换记录，按 `rotated_at` 倒序。每项含 `key_id` / `rotated_at` / `is_active`，
+**不返回 `key_secret`** 以避免泄露密钥内容。
+
+> **只读**：此命令仅查询 `audit_key_rotations` 表，不修改数据库。
+
+### `audit_chain` 签名密钥轮换机制（C7）
+
+**Schema v29** 新增 `audit_key_rotations` 表，记录每次密钥轮换：
+
+| 字段 | 类型 | 说明 |
+| ---- | ---- | ---- |
+| `id` | INTEGER PK | 自增主键 |
+| `key_id` | TEXT UNIQUE | 密钥标识（如 `key-2026-07`） |
+| `key_secret` | TEXT | 密钥内容（用于 HMAC 计算） |
+| `rotated_at` | REAL | 轮换时间戳 |
+| `is_active` | INTEGER | 1=当前活跃，0=已停用 |
+
+**密钥查找优先级**（`_get_active_signing_key`）：
+1. `audit_key_rotations` 表中 `is_active=1` 的记录
+2. 环境变量 `CALLWARDEN_AUDIT_HMAC_KEY` / 文件 `~/.callwarden/audit.key`
+3. 回落到 SHA-256 链（`signing_key_id='local'`）
+
+**验证时密钥查找**（`_lookup_signing_key`）：
+1. `audit_key_rotations` 表中 `key_id` 对应的 `key_secret`
+2. `key_id == "hmac"`：回落到当前环境变量/文件密钥（向后兼容）
+3. `key_id == "local"`：返回 `None`（SHA-256 链）
+4. 未知 `key_id`：返回 `None`（无法验证，标记为 `signature_mismatch`）
+
+**向后兼容**：
+- legacy `signing_key_id="hmac"` 记录（无轮换表时签发）仍能用当前环境变量/文件密钥验证
+- legacy `signing_key_id="local"` 记录（SHA-256 链）无需密钥即可验证
 
 ### `check-gate`：检查门禁
 

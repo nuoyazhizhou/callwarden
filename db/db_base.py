@@ -1431,6 +1431,36 @@ def _migrate_v27_to_v28(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE file_versions ADD COLUMN ast_cache BLOB DEFAULT NULL")
 
 
+def _migrate_v28_to_v29(conn: sqlite3.Connection):
+    """v28 -> v29: 新增 audit_key_rotations 表（审计签名密钥轮换）
+
+    问题背景：
+    - audit_chain 的签名密钥（HMAC key）固定不变，无法轮换
+    - 密钥泄露后无法切换到新密钥，旧记录也无法用旧密钥验证
+    - 缺少密钥轮换记录，无法按时间点选择对应密钥验证
+
+    迁移步骤：
+    1. 创建 audit_key_rotations 表，记录每次轮换的 key_id / key_secret / rotated_at / is_active
+
+    幂等性：使用 CREATE TABLE IF NOT EXISTS，保证可重复执行。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS audit_key_rotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id TEXT NOT NULL UNIQUE,
+            key_secret TEXT NOT NULL,
+            rotated_at REAL NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_key_rotations_active "
+        "ON audit_key_rotations(is_active)"
+    )
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1707,6 +1737,10 @@ class CodeGraphBase:
             28: {
                 "description": t("cli.messages.migration_v28", default="Add file_versions.ast_cache BLOB column for AST incremental parsing"),
                 "func": _migrate_v27_to_v28,
+            },
+            29: {
+                "description": t("cli.messages.migration_v29", default="Add audit_key_rotations table for signing key rotation"),
+                "func": _migrate_v28_to_v29,
             },
         }
 

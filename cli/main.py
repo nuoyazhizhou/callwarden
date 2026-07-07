@@ -42,8 +42,9 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
 _READONLY_TASK_ACTIONS = {"list", "show", "findings"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
-# audit verify 只读（只查询 audit_chain 表，不写数据库）
-_READONLY_AUDIT_ACTIONS = {"verify"}
+# audit verify/keys 只读（只查询 audit_chain/audit_key_rotations 表，不写数据库）
+# audit rotate-key 是写（INSERT/UPDATE audit_key_rotations）
+_READONLY_AUDIT_ACTIONS = {"verify", "keys"}
 # bootstrap status 只读（汇总查询，不写数据库）
 _READONLY_BOOTSTRAP_ACTIONS = {"status"}
 # clone list/stats 只读（查询 clone_pairs 表）；clone detect/clear 写
@@ -2483,14 +2484,18 @@ def _print_task_tree_node(node: dict, depth: int = 0):
 
 
 def _handle_audit(args, db):
-    """处理 audit 子命令（审计签名链验证）
+    """处理 audit 子命令（审计签名链验证 + 密钥轮换）
 
-    目前仅支持 verify action：调用 verify_audit_chain 校验 audit_chain 表的
-    连续性与签名匹配，输出 total/verified/broken/security_level/broken_records。
+    支持的 action：
+    - verify：调用 verify_audit_chain 校验 audit_chain 表的连续性与签名匹配，
+      输出 total/verified/broken/security_level/broken_records。
+    - rotate-key：轮换审计签名密钥（C7）。新记录用新 key 签名，
+      旧记录保持原签名不变（signing_key_id 不变），验证时按 key_id 查找对应密钥。
+    - keys：列出所有签名密钥轮换记录（不返回 key_secret，避免泄露）。
     """
     parser = argparse.ArgumentParser(
         prog="cw audit",
-        description=t("cli_audit_desc", default="Audit chain verification"),
+        description=t("cli_audit_desc", default="Audit chain verification and signing key rotation"),
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
@@ -2506,6 +2511,30 @@ def _handle_audit(args, db):
     verify_p.add_argument(
         "--limit", type=int, default=1000,
         help=t("cli_audit_verify_arg_limit", default="Maximum records to verify (default 1000)"),
+    )
+
+    # rotate-key：轮换审计签名密钥（C7）
+    rotate_p = sub.add_parser(
+        "rotate-key",
+        help=t("cli_audit_rotate_key_desc",
+               default="Rotate audit signing key (new records use new key, old records keep original signature)"),
+    )
+    rotate_p.add_argument(
+        "--key-id", required=True,
+        help=t("cli_audit_rotate_key_arg_key_id",
+               default="New key identifier (unique, e.g. 'key-2026-07')"),
+    )
+    rotate_p.add_argument(
+        "--secret", default=None,
+        help=t("cli_audit_rotate_key_arg_secret",
+               default="New key secret (omit to auto-generate a random secret)"),
+    )
+
+    # keys：列出签名密钥轮换记录
+    keys_p = sub.add_parser(
+        "keys",
+        help=t("cli_audit_keys_desc",
+               default="List all signing key rotation records (key_secret not shown)"),
     )
 
     opts = parser.parse_args(args)
@@ -2559,6 +2588,72 @@ def _handle_audit(args, db):
         else:
             cprint(t("cli.messages.audit_verify_fail", count=broken), "red", bold=True)
         print()
+        return True
+
+    if opts.action == "rotate-key":
+        # 处理 audit rotate-key：轮换审计签名密钥（C7）
+        key_id = opts.key_id.strip()
+        secret = opts.secret
+
+        # 若未提供 --secret，自动生成 32 字节随机密钥（hex 编码）
+        if secret is None:
+            import secrets as _secrets
+            secret = _secrets.token_hex(32)
+
+        try:
+            result = db.rotate_signing_key(
+                new_key_id=key_id,
+                new_key_secret=secret,
+            )
+        except ValueError as exc:
+            cprint(t("cli.messages.audit_rotate_key_invalid_arg",
+                     error=str(exc)), "red")
+            return True
+        except Exception as exc:
+            cprint(t("cli.messages.audit_rotate_key_failed",
+                     error=str(exc)), "red")
+            return True
+
+        cprint(t("cli.messages.audit_rotate_key_title").strip(),
+               "green", bold=True)
+        print(t("cli.messages.audit_rotate_key_key_id",
+                key_id=result.get("key_id", "")))
+        ts = result.get("rotated_at", 0.0)
+        print(t("cli.messages.audit_rotate_key_rotated_at", ts=ts))
+        prev = result.get("previous_key_id", "")
+        if prev:
+            print(t("cli.messages.audit_rotate_key_previous", prev=prev))
+        else:
+            print(t("cli.messages.audit_rotate_key_no_previous"))
+        # 提示：旧记录保持原签名，验证时按 key_id 查找
+        cprint(t("cli.messages.audit_rotate_key_hint").strip(), "cyan")
+        print()
+        return True
+
+    if opts.action == "keys":
+        # 处理 audit keys：列出签名密钥轮换记录
+        rows = db.list_signing_keys()
+        cprint(t("cli.messages.audit_keys_title").strip(),
+               "cyan", bold=True)
+        if not rows:
+            cprint(t("cli.messages.audit_keys_empty"), "yellow")
+            return True
+        print(t("cli.messages.audit_keys_count", count=len(rows)))
+        print()
+        for idx, r in enumerate(rows, start=1):
+            active_flag = t("cli.messages.audit_keys_active_yes") if r.get("is_active") else t("cli.messages.audit_keys_active_no")
+            ts = r.get("rotated_at", 0.0)
+            print(t("cli.messages.audit_keys_item",
+                    idx=idx,
+                    key_id=r.get("key_id", ""),
+                    ts=ts,
+                    active=active_flag))
+        print()
+        # 提示当前活跃密钥
+        active_rows = [r for r in rows if r.get("is_active")]
+        if active_rows:
+            print(t("cli.messages.audit_keys_current_active",
+                    key_id=active_rows[0].get("key_id", "")))
         return True
 
     return False

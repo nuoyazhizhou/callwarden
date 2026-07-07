@@ -97,6 +97,12 @@ class AuditChainMixin:
     通过 Mixin 模式混入 CodeGraphDB，与 TaskQualityMixin 等协作：
     关键审计记录写入时调用 sign_audit_record 留下签名痕迹，
     运维或审查时调用 verify_audit_chain 检测直接改库导致的篡改。
+
+    支持签名密钥轮换（C7）：
+    - rotate_signing_key(new_key_id, new_key_secret) 轮换到新密钥
+    - 轮换后新记录用新 key 签名（signing_key_id = new_key_id）
+    - 旧记录保持原签名不变（signing_key_id 不变）
+    - 验证时按 signing_key_id 从 audit_key_rotations 查找对应密钥
     """
 
     def canonical_json(self, payload: Any) -> str:
@@ -121,6 +127,161 @@ class AuditChainMixin:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+
+    # ============================================
+    # 密钥轮换（C7）
+    # ============================================
+
+    def rotate_signing_key(
+        self,
+        new_key_id: str,
+        new_key_secret: str,
+    ) -> Dict[str, Any]:
+        """轮换审计签名密钥
+
+        流程：
+        1. 将当前 active 密钥置为 inactive（is_active=0）
+        2. 插入新密钥记录（is_active=1）
+        3. 返回轮换信息
+
+        轮换后：
+        - 新的 sign_audit_record 调用使用新密钥签名
+        - 旧记录保持原签名不变（signing_key_id 不变）
+        - verify_audit_chain 按 signing_key_id 查找对应密钥验证
+
+        Args:
+            new_key_id: 新密钥标识（唯一，如 "key-2026-07"）
+            new_key_secret: 新密钥内容（用于 HMAC 计算）
+
+        Returns:
+            {
+                "success": True,
+                "key_id": new_key_id,
+                "rotated_at": float,
+                "previous_key_id": str,  # 前一个 active 密钥的 key_id（无则为空串）
+            }
+
+        Raises:
+            ValueError: new_key_id 或 new_key_secret 为空
+        """
+        if not new_key_id or not new_key_id.strip():
+            raise ValueError("new_key_id is required")
+        if not new_key_secret:
+            raise ValueError("new_key_secret is required")
+
+        now = time.time()
+        new_key_id = new_key_id.strip()
+
+        # 查询当前 active 密钥
+        cur = self.conn.execute(
+            "SELECT key_id FROM audit_key_rotations WHERE is_active = 1 LIMIT 1"
+        )
+        row = cur.fetchone()
+        previous_key_id = row["key_id"] if row else ""
+
+        # 将当前 active 密钥置为 inactive
+        if previous_key_id:
+            self.conn.execute(
+                "UPDATE audit_key_rotations SET is_active = 0 WHERE is_active = 1"
+            )
+
+        # 插入新密钥（若 key_id 已存在则更新，幂等）
+        self.conn.execute(
+            """
+            INSERT INTO audit_key_rotations (key_id, key_secret, rotated_at, is_active)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(key_id) DO UPDATE SET
+                key_secret = excluded.key_secret,
+                rotated_at = excluded.rotated_at,
+                is_active = 1
+            """,
+            (new_key_id, new_key_secret, now),
+        )
+        self.conn.commit()
+
+        return {
+            "success": True,
+            "key_id": new_key_id,
+            "rotated_at": now,
+            "previous_key_id": previous_key_id,
+        }
+
+    def list_signing_keys(self) -> List[Dict[str, Any]]:
+        """列出所有签名密钥轮换记录
+
+        Returns:
+            密钥列表，按 rotated_at 倒序，每项含 key_id/rotated_at/is_active
+            （不返回 key_secret，避免泄露）
+        """
+        cur = self.conn.execute(
+            "SELECT key_id, rotated_at, is_active FROM audit_key_rotations "
+            "ORDER BY rotated_at DESC"
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def _get_active_signing_key(self) -> tuple:
+        """获取当前活跃签名密钥
+
+        优先级：
+        1. audit_key_rotations 表中 is_active=1 的记录
+        2. 环境变量 CALLWARDEN_AUDIT_HMAC_KEY / 文件 ~/.callwarden/audit.key
+        3. None（回落到 SHA-256 链）
+
+        Returns:
+            (key_id, key_bytes, security_level) 三元组
+            - key_id: 密钥标识（如 "key-2026-07" / "hmac" / "local"）
+            - key_bytes: 密钥字节串（None 时表示无密钥，用 SHA-256）
+            - security_level: "hmac" 或 "hash_only"
+        """
+        # 1. 查询 audit_key_rotations 中的 active 密钥
+        cur = self.conn.execute(
+            "SELECT key_id, key_secret FROM audit_key_rotations WHERE is_active = 1 LIMIT 1"
+        )
+        row = cur.fetchone()
+        if row:
+            return (row["key_id"], row["key_secret"].encode("utf-8"), "hmac")
+
+        # 2. 回落到环境变量/文件
+        hmac_key = _get_hmac_key()
+        if hmac_key is not None:
+            return ("hmac", hmac_key, "hmac")
+
+        # 3. 无密钥
+        return ("local", None, "hash_only")
+
+    def _lookup_signing_key(self, key_id: str) -> Optional[bytes]:
+        """按 key_id 查找签名密钥（用于验证时选择对应密钥）
+
+        查找顺序：
+        1. audit_key_rotations 表中 key_id 对应的 key_secret
+        2. 若 key_id == "hmac"，回落到当前环境变量/文件密钥（向后兼容）
+        3. 若 key_id == "local"，返回 None（SHA-256 链）
+        4. 其他未知 key_id，返回 None（无法验证，标记为 mismatch）
+
+        Args:
+            key_id: 签名时使用的密钥标识
+
+        Returns:
+            密钥字节串，或 None（SHA-256 或未知密钥）
+        """
+        if key_id == "local":
+            return None  # SHA-256 链，无需密钥
+
+        # 查询 audit_key_rotations
+        cur = self.conn.execute(
+            "SELECT key_secret FROM audit_key_rotations WHERE key_id = ? LIMIT 1",
+            (key_id,),
+        )
+        row = cur.fetchone()
+        if row:
+            return row["key_secret"].encode("utf-8")
+
+        # 向后兼容：legacy "hmac" key_id，用当前环境变量/文件密钥
+        if key_id == "hmac":
+            return _get_hmac_key()
+
+        # 未知 key_id（密钥已被删除或来自其他实例）
+        return None
 
     def sign_audit_record(
         self,
@@ -170,14 +331,8 @@ class AuditChainMixin:
         row = cur.fetchone()
         prev_signature = row["record_signature"] if row else ""
 
-        # 3. 选择签名算法
-        hmac_key = _get_hmac_key()
-        if hmac_key is not None:
-            signing_key_id = "hmac"
-            security_level = "hmac"
-        else:
-            signing_key_id = "local"
-            security_level = "hash_only"
+        # 3. 获取当前活跃签名密钥（支持轮换，C7）
+        signing_key_id, hmac_key, security_level = self._get_active_signing_key()
 
         # 4. 计算 record_signature
         record_signature = _compute_signature(
@@ -261,9 +416,8 @@ class AuditChainMixin:
         cur = self.conn.execute(sql, params)
         records = cur.fetchall()
 
-        # 当前 HMAC key（用于重新计算签名）
-        hmac_key = _get_hmac_key()
-        current_security_level = "hmac" if hmac_key is not None else "hash_only"
+        # 当前活跃密钥（用于报告 security_level）
+        _, _, current_security_level = self._get_active_signing_key()
 
         broken_records: List[Dict[str, Any]] = []
         verified_count = 0
@@ -290,26 +444,25 @@ class AuditChainMixin:
                 reasons.append("chain_broken")
 
             # 2. 重新计算 record_signature 并验证
-            # 使用与原签名相同的密钥策略
-            if signing_key_id == "hmac":
-                # 原签名使用 HMAC，需要用当前 HMAC key 重新计算
-                # 如果当前无 HMAC key，则签名必然不匹配
-                if hmac_key is None:
-                    reasons.append("signature_mismatch")
-                    recomputed = ""
-                else:
-                    recomputed = _compute_signature(
-                        prev_signature, payload_hash, hmac_key
-                    )
-                    if recomputed != record_signature:
-                        reasons.append("signature_mismatch")
-            else:
-                # 原签名使用 SHA-256，用 SHA-256 重新计算
+            # 按 signing_key_id 查找对应密钥（支持轮换，C7）
+            record_key = self._lookup_signing_key(signing_key_id)
+            if signing_key_id == "local":
+                # SHA-256 链，record_key 为 None
                 recomputed = _compute_signature(
                     prev_signature, payload_hash, None
                 )
                 if recomputed != record_signature:
                     reasons.append("signature_mismatch")
+            elif record_key is not None:
+                # 找到对应 HMAC 密钥，重新计算
+                recomputed = _compute_signature(
+                    prev_signature, payload_hash, record_key
+                )
+                if recomputed != record_signature:
+                    reasons.append("signature_mismatch")
+            else:
+                # signing_key_id 非 "local" 但找不到对应密钥
+                reasons.append("signature_mismatch")
 
             # 3. 首条记录 prev_signature 应为空串
             if expected_prev == "" and prev_signature != "":
