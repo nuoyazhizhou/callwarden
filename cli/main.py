@@ -36,7 +36,16 @@ from .console import cprint
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
                 "gc", "doctor", "install-agent", "install-hook", "rule", "audit", "bootstrap",
-                "clone"}
+                "clone",
+                # C8 Step #1: 新增 8 大类 subcommand 入口（保留旧 flag 兼容）
+                "workspace", "refresh", "stats", "status",
+                "search", "symbol", "file", "query",
+                "callers", "callees", "call-chain", "topo",
+                "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
+                "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
+                "git", "semgrep",
+                "coverage", "who", "ownership-map",
+                "brief", "map"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -49,6 +58,15 @@ _READONLY_AUDIT_ACTIONS = {"verify", "keys"}
 _READONLY_BOOTSTRAP_ACTIONS = {"status"}
 # clone list/stats 只读（查询 clone_pairs 表）；clone detect/clear 写
 _READONLY_CLONE_ACTIONS = {"list", "stats"}
+# C8 Step #1: 新增 subcommand 的只读 action 集合
+# workspace list 只读；register/set/delete 写
+_READONLY_WORKSPACE_ACTIONS = {"list"}
+# git log/show/stats 只读；git import 写
+_READONLY_GIT_ACTIONS = {"log", "show", "stats"}
+# semgrep list/stats 只读；semgrep scan 含 --save 写，默认视为写以避免锁
+_READONLY_SEMGREP_ACTIONS = {"list", "stats"}
+# coverage fn/uncovered 只读；coverage import 写
+_READONLY_COVERAGE_ACTIONS = {"fn", "uncovered"}
 
 # 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
 # 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
@@ -159,6 +177,29 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "clone":
         # clone list/stats 只读（查询 clone_pairs 表）；clone detect/clear 写
         return action in _READONLY_CLONE_ACTIONS
+    # C8 Step #1: 新增 subcommand 只读判断
+    if cmd in {"search", "symbol", "file", "query",
+               "callers", "callees", "call-chain", "topo",
+               "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
+               "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
+               "who", "ownership-map", "brief", "map", "stats", "status"}:
+        # 这些查询/分析类子命令均为只读，不写数据库
+        return True
+    if cmd == "workspace":
+        # workspace list 只读；register/set/delete 写
+        return action in _READONLY_WORKSPACE_ACTIONS
+    if cmd == "git":
+        # git log/show/stats 只读；git import 写
+        return action in _READONLY_GIT_ACTIONS
+    if cmd == "semgrep":
+        # semgrep list/stats 只读；semgrep scan 视为写（含 --save 选项）
+        return action in _READONLY_SEMGREP_ACTIONS
+    if cmd == "coverage":
+        # coverage fn/uncovered 只读；coverage import 写
+        return action in _READONLY_COVERAGE_ACTIONS
+    if cmd == "refresh":
+        # refresh 始终是写操作（build_full_graph / refresh_file）
+        return False
     return False
 
 
@@ -254,6 +295,63 @@ def _dispatch_subcommand(argv, db):
             return _handle_bootstrap(argv, db)
         elif cmd == "clone":
             return _handle_clone(argv, db)
+        # C8 Step #1: 新增 8 大类 subcommand 调度
+        elif cmd == "workspace":
+            return _handle_workspace(argv, db)
+        elif cmd == "refresh":
+            return _handle_refresh(argv, db)
+        elif cmd == "stats":
+            return _handle_stats(argv, db)
+        elif cmd == "status":
+            return _handle_status(argv, db)
+        elif cmd == "search":
+            return _handle_search(argv, db)
+        elif cmd == "symbol":
+            return _handle_symbol(argv, db)
+        elif cmd == "file":
+            return _handle_file(argv, db)
+        elif cmd == "query":
+            return _handle_query(argv, db)
+        elif cmd == "callers":
+            return _handle_callers(argv, db)
+        elif cmd == "callees":
+            return _handle_callees(argv, db)
+        elif cmd == "call-chain":
+            return _handle_call_chain(argv, db)
+        elif cmd == "topo":
+            return _handle_topo(argv, db)
+        elif cmd == "metrics":
+            return _handle_metrics(argv, db)
+        elif cmd == "complexity":
+            return _handle_complexity(argv, db)
+        elif cmd == "coupling":
+            return _handle_coupling(argv, db)
+        elif cmd == "comment-coverage":
+            return _handle_comment_coverage(argv, db)
+        elif cmd == "uncommented":
+            return _handle_uncommented(argv, db)
+        elif cmd == "function-issues":
+            return _handle_function_issues(argv, db)
+        elif cmd == "largest-fns":
+            return _handle_largest_fns(argv, db)
+        elif cmd == "coupled-fns":
+            return _handle_coupled_fns(argv, db)
+        elif cmd == "fn-metrics":
+            return _handle_fn_metrics(argv, db)
+        elif cmd == "git":
+            return _handle_git(argv, db)
+        elif cmd == "semgrep":
+            return _handle_semgrep(argv, db)
+        elif cmd == "coverage":
+            return _handle_coverage(argv, db)
+        elif cmd == "who":
+            return _handle_who(argv, db)
+        elif cmd == "ownership-map":
+            return _handle_ownership_map(argv, db)
+        elif cmd == "brief":
+            return _handle_brief(argv, db)
+        elif cmd == "map":
+            return _handle_map(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -3824,6 +3922,1315 @@ def _doctor_add_defender_exclusion(db):
     except Exception as e:
         cprint(t("cli.messages.doctor_add_defender_failed", default="✗ Add failed: {error}", error=e), "red")
 
+    return True
+
+
+# ====================================================================
+# C8 Step #1: subcommand 模式对齐 handler
+# 为 8 大类新增 subcommand 入口，等价于对应 flag 模式
+# ====================================================================
+
+
+# --------------------------------------------------------------------
+# [1] Workspace & Database
+# --------------------------------------------------------------------
+
+
+def _handle_workspace(args, db):
+    """处理 workspace 子命令（工作区管理）
+
+    等价 flag: --list-workspaces / --register-workspace / --set-workspace / --delete-workspace
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw workspace",
+        description=t("cli.messages.workspace_subcommand_desc", default="Workspace management (list/register/set/delete)"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    sub.add_parser("list", help=t("cli.messages.workspace_action_list", default="List all workspaces"))
+
+    reg = sub.add_parser("register", help=t("cli.messages.workspace_action_register", default="Register a new workspace"))
+    reg.add_argument("name", help=t("cli.messages.workspace_arg_name", default="Workspace name"))
+    reg.add_argument("root", help=t("cli.messages.workspace_arg_root", default="Workspace root path"))
+
+    set_p = sub.add_parser("set", help=t("cli.messages.workspace_action_set", default="Set active workspace"))
+    set_p.add_argument("id_or_name", help=t("cli.messages.workspace_arg_id_or_name", default="Workspace ID or name"))
+
+    del_p = sub.add_parser("delete", help=t("cli.messages.workspace_action_delete", default="Delete a workspace"))
+    del_p.add_argument("id_or_name", help=t("cli.messages.workspace_arg_id_or_name", default="Workspace ID or name"))
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "list":
+        workspaces = db.list_workspaces()
+        print(t("cli.messages.workspaces_title", count=len(workspaces)))
+        for ws in workspaces:
+            active_mark = t("cli.messages.workspace_active_mark") if ws.get("is_active") else ""
+            print(t("cli.messages.workspace_normal", id=ws['id'], name=ws['name']) + active_mark)
+            print(t("cli.messages.workspace_path", path=ws['root_path']))
+            if ws.get("description"):
+                print(t("cli.messages.workspace_desc", desc=ws['description']))
+        return True
+
+    if opts.action == "register":
+        name, root = opts.name, opts.root
+        ws_id = db.register_workspace(name, root)
+        print(t("cli.messages.register_success", id=ws_id, name=name, root=root))
+        return True
+
+    if opts.action == "set":
+        ws_arg = opts.id_or_name
+        try:
+            ws_id = int(ws_arg)
+            success = db.set_active_workspace(ws_id)
+        except ValueError:
+            success = db.set_active_workspace(ws_arg)
+        if success:
+            active = db.get_active_workspace()
+            print(t("cli.messages.set_success", name=active['name'], root=active['root_path']))
+        else:
+            print(t("cli.messages.workspace_set_fail", name=ws_arg))
+        return True
+
+    if opts.action == "delete":
+        ws_arg = opts.id_or_name
+        try:
+            ws_id = int(ws_arg)
+            success = db.delete_workspace(ws_id)
+        except ValueError:
+            success = db.delete_workspace(ws_arg)
+        if success:
+            print(t("cli.messages.delete_success", name=ws_arg))
+        else:
+            print(t("cli.messages.delete_not_found", name=ws_arg))
+        return True
+
+    return True
+
+
+def _handle_refresh(args, db):
+    """处理 refresh 子命令（数据库刷新）
+
+    等价 flag: --refresh-all / --refresh <path> / --force
+    用法:
+        cw refresh --all            # 增量刷新（等价 --refresh-all）
+        cw refresh --all --force     # 强制全量重新解析
+        cw refresh <path1> [path2]   # 刷新指定文件（支持多路径）
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw refresh",
+        description=t("cli.messages.refresh_subcommand_desc", default="Refresh code graph (incremental or by file)"),
+    )
+    parser.add_argument("--all", action="store_true", dest="refresh_all",
+                        help=t("cli.messages.refresh_arg_all", default="Refresh all files (equivalent to --refresh-all)"))
+    parser.add_argument("--force", action="store_true",
+                        help=t("cli.messages.refresh_arg_force", default="Force full rebuild (only with --all)"))
+    parser.add_argument("paths", nargs="*", help=t("cli.messages.refresh_arg_paths", default="File paths to refresh"))
+    opts = parser.parse_args(args)
+
+    if opts.refresh_all:
+        # 全量刷新（等价 --refresh-all）
+        if opts.force:
+            print(t("cli.messages.building_force"))
+        else:
+            print(t("cli.messages.building_incremental"))
+        db.build_full_graph(force=opts.force)
+        # 自动同步 AGENTS.md（fail-soft，不阻断 refresh）
+        try:
+            sync_result = db.rule_sync_agents_md(
+                target_path="AGENTS.md",
+                dry_run=False,
+                actor="cli_refresh",
+            )
+            if sync_result.get("success"):
+                print(t(
+                    "cli.messages.agents_md_auto_sync_success",
+                    count=sync_result.get("rule_count", 0),
+                ))
+            else:
+                error = sync_result.get("error", "")
+                if "marker" in error.lower() or "not found" in error.lower():
+                    print(t("cli.messages.agents_md_auto_sync_no_marker"))
+                else:
+                    print(t(
+                        "cli.messages.agents_md_auto_sync_skipped",
+                        error=error,
+                    ))
+        except Exception as exc:
+            print(t(
+                "cli.messages.agents_md_auto_sync_skipped",
+                error=str(exc),
+            ))
+        return True
+
+    if opts.paths:
+        # 刷新指定文件（支持多路径，等价多次 --refresh <path>）
+        for path in opts.paths:
+            db.refresh_file(path)
+            print(t("cli.messages.refresh_done", path=path))
+        return True
+
+    # 未指定 --all 也未指定路径：打印帮助
+    parser.print_help()
+    return True
+
+
+def _handle_stats(args, db):
+    """处理 stats 子命令（统计信息）
+
+    等价 flag: --stats
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw stats",
+        description=t("cli.messages.stats_subcommand_desc", default="Show database statistics"),
+    )
+    parser.parse_args(args)
+    stats = db.get_stats()
+    print(json.dumps(stats, indent=2, ensure_ascii=False))
+    return True
+
+
+def _handle_status(args, db):
+    """处理 status 子命令（完整状态概览）
+
+    等价 flag: --status
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw status",
+        description=t("cli.messages.status_subcommand_desc", default="Show full status overview"),
+    )
+    parser.parse_args(args)
+    status = db.get_status()
+    ws = status["workspace"]
+    fi = status["files"]
+    sy = status["symbols"]
+    ca = status["calls"]
+
+    def fmt_size(n):
+        """格式化字节数为人类可读字符串（B/KB/MB）"""
+        if n < 1024:
+            return f"{n} B"
+        if n < 1024 * 1024:
+            return f"{n/1024:.1f} KB"
+        return f"{n/1024/1024:.1f} MB"
+
+    def fmt_ago(ts):
+        """格式化时间戳为"多久之前"的相对描述"""
+        if not ts:
+            return t("cli.messages.status_never_built")
+        delta = time.time() - ts
+        if delta < 60:
+            return t("cli.messages.status_just_now")
+        if delta < 3600:
+            m = int(delta // 60)
+            return t("cli.messages.status_minutes_ago", m=m)
+        if delta < 86400:
+            h = int(delta // 3600)
+            return t("cli.messages.status_hours_ago", h=h)
+        d = int(delta // 86400)
+        return t("cli.messages.status_days_ago", d=d)
+
+    print()
+    print(f"  {t('cli.messages.status_title')}")
+    print()
+    print(f"  {t('cli.messages.status_workspace')}: {ws['name']}")
+    print(f"  {t('cli.messages.status_root')}: {ws['root']}")
+    print(f"  {t('cli.messages.status_db_size')}: {fmt_size(ws['db_size'])}")
+    print(f"  {t('cli.messages.status_last_build')}: {fmt_ago(status['last_build'])}")
+    print()
+    print(f"  {t('cli.messages.status_files_title')}")
+    on_disk = t("cli.messages.status_files_on_disk")
+    tracked = t("cli.messages.status_files_tracked")
+    print(f"    {on_disk}: {fi['on_disk']}  ({tracked}: {fi['tracked']})")
+    if fi["new"]:
+        new_label = t("cli.messages.status_files_new")
+        print(f"    {new_label}: {fi['new']}  {', '.join(fi['new_files'][:5])}{'...' if len(fi['new_files'])>5 else ''}")
+    if fi["stale"]:
+        stale_label = t("cli.messages.status_files_stale")
+        print(f"    {stale_label}: {fi['stale']}  {', '.join(fi['stale_files'][:5])}{'...' if len(fi['stale_files'])>5 else ''}")
+    if fi["deleted"]:
+        deleted_label = t("cli.messages.status_files_deleted")
+        print(f"    {deleted_label}: {fi['deleted']}  {', '.join(fi['deleted_files'][:5])}{'...' if len(fi['deleted_files'])>5 else ''}")
+    if fi["by_language"]:
+        parts = []
+        for ext, cnt in sorted(fi["by_language"].items(), key=lambda x: -x[1])[:6]:
+            parts.append(f"{ext}: {cnt}")
+        by_lang = t("cli.messages.status_by_language")
+        print(f"    {by_lang}: {', '.join(parts)}")
+    print()
+    print(f"  {t('cli.messages.status_symbols_title')}")
+    print(f"    {t('cli.messages.status_symbols_total')}: {sy['total']}")
+    kind_parts = []
+    kind_names = {"fn": t("cli.messages.kind_fn"), "test_fn": t("cli.messages.kind_test_fn"), "struct": t("cli.messages.kind_struct"),
+                  "enum": t("cli.messages.kind_enum"), "trait": t("cli.messages.kind_trait"), "impl": "impl",
+                  "const": "const", "static": "static", "method": t("cli.messages.kind_method"),
+                  "class": t("cli.messages.kind_class"), "interface": t("cli.messages.kind_interface")}
+    for kind, cnt in sorted(sy["by_kind"].items(), key=lambda x: -x[1])[:8]:
+        kn = kind_names.get(kind, kind)
+        kind_parts.append(f"{kn}: {cnt}")
+    print(f"    {t('cli.messages.status_by_kind')}: {', '.join(kind_parts)}")
+    print(f"    {t('cli.messages.status_uncommented_fns')}: {sy['uncommented_fns']}")
+    print()
+    print(f"  {t('cli.messages.status_calls_title')}")
+    print(f"    {t('cli.messages.status_calls_total')}: {ca['total']}")
+    resolved_label = t("cli.messages.status_calls_resolved")
+    rate_label = t("cli.messages.status_calls_rate")
+    print(f"    {resolved_label}: {ca['resolved']}  ({rate_label}: {ca['resolve_rate']}%)")
+    print(f"    {t('cli.messages.status_calls_cross')}: {ca['cross_file']}")
+    print()
+    if status["needs_rebuild"]:
+        print(f"  ⚠ {t('cli.messages.status_rebuild_hint')}")
+    else:
+        print(f"  {t('cli.messages.status_up_to_date')}")
+    print()
+    return True
+
+
+# --------------------------------------------------------------------
+# [2] Query & Search
+# --------------------------------------------------------------------
+
+
+def _handle_search(args, db):
+    """处理 search 子命令（符号搜索）
+
+    等价 flag: --search
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw search",
+        description=t("cli.messages.search_subcommand_desc", default="Search symbols"),
+    )
+    parser.add_argument("query", help=t("cli.messages.search_arg_query", default="Search query"))
+    parser.add_argument("--kind", default=None, help=t("cli.messages.search_arg_kind", default="Filter by kind"))
+    parser.add_argument("--limit", type=int, default=50, help=t("cli.messages.search_arg_limit", default="Max results (default 50)"))
+    opts = parser.parse_args(args)
+
+    symbols = db.search_symbols(opts.query, kind=opts.kind, limit=opts.limit)
+    kind_info = t("cli.messages.search_kind_info", kind=opts.kind) if opts.kind else ""
+    print(t("cli.messages.search_title", query=opts.query, kind_info=kind_info,
+            total=len(symbols), shown=min(opts.limit, len(symbols))))
+    print()
+    for i, sym in enumerate(symbols[:opts.limit]):
+        depth = sym["depth"] if sym["depth"] >= 0 else "?"
+        sig = sym.get("signature", "")[:50] if sym.get("signature") else ""
+        comment_mark = "✓" if sym["has_comment"] else " "
+        print(f"  [{i+1:3d}] depth={depth:>3} [{comment_mark}] {sym['kind']:8s} {sym['qualified_name']}")
+        print(f"         {sym['file_path']}:{sym['start_line']}")
+        if sig:
+            print(f"         {sig}")
+    if len(symbols) >= opts.limit:
+        print()
+        print(t("cli.messages.search_more"))
+    return True
+
+
+def _handle_symbol(args, db):
+    """处理 symbol 子命令（符号详情）
+
+    等价 flag: --symbol
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw symbol",
+        description=t("cli.messages.symbol_subcommand_desc", default="Show symbol detail"),
+    )
+    parser.add_argument("name", help=t("cli.messages.symbol_arg_name", default="Qualified symbol name"))
+    opts = parser.parse_args(args)
+
+    detail = db.get_symbol_detail(opts.name)
+    if not detail:
+        print(t("cli.messages.symbol_not_found", name=opts.name))
+        print(t("cli.messages.symbol_search_hint"))
+        return True
+    print(t("cli.messages.symbol_detail_title"))
+    print(t("cli.messages.symbol_name", name=detail['qualified_name']))
+    print(t("cli.messages.symbol_kind", kind=detail['kind']))
+    print(t("cli.messages.symbol_depth", depth=detail['depth']))
+    file_loc = f"{detail['file_path']}:{detail['start_line']}-{detail['end_line']}"
+    print(t("cli.messages.symbol_file", file=file_loc))
+    sig = detail['signature'][:100] if detail['signature'] else None
+    if sig:
+        print(t("cli.messages.symbol_signature", sig=sig))
+    else:
+        print(t("cli.messages.symbol_signature_none"))
+    if detail['has_comment']:
+        print(t("cli.messages.symbol_comment_yes"))
+    else:
+        print(t("cli.messages.symbol_comment_no"))
+    if detail.get("comment_content"):
+        print(t("cli.messages.symbol_comment_content"))
+        for line in detail["comment_content"].split("\n")[:10]:
+            print(f"    {line}")
+    print()
+    print(t("cli.messages.symbol_calls_out_title", count=len(detail['calls_out'])))
+    if detail["calls_out"]:
+        for call in detail["calls_out"][:20]:
+            target = call["target_name"]
+            line = call.get("call_line", "")
+            line_info = f" (line {line})" if line else ""
+            print(f"  → {target}{line_info}")
+        if len(detail["calls_out"]) > 20:
+            print(t("cli.messages.symbol_more", count=len(detail['calls_out']) - 20))
+    else:
+        print(t("cli.messages.symbol_none"))
+    print()
+    print(t("cli.messages.symbol_called_by_title", count=len(detail['called_by'])))
+    if detail["called_by"]:
+        for call in detail["called_by"][:20]:
+            caller = call["caller_name"]
+            line = call.get("call_line", "")
+            line_info = f" (line {line})" if line else ""
+            print(f"  ← {caller}{line_info}")
+        if len(detail["called_by"]) > 20:
+            print(t("cli.messages.symbol_more", count=len(detail['called_by']) - 20))
+    else:
+        print(t("cli.messages.symbol_none"))
+    return True
+
+
+def _handle_file(args, db):
+    """处理 file 子命令（文件符号列表）
+
+    等价 flag: --file
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw file",
+        description=t("cli.messages.file_subcommand_desc", default="List symbols in a file"),
+    )
+    parser.add_argument("path", help=t("cli.messages.file_arg_path", default="File path"))
+    opts = parser.parse_args(args)
+
+    symbols = db.get_file_symbols(opts.path)
+    print(t("cli.messages.file_symbols_title", path=opts.path, count=len(symbols)))
+    for s in symbols:
+        print(f"  {s['start_line']}-{s['end_line']}: {s['kind']} {s['name']} ({s['visibility']})")
+    return True
+
+
+def _handle_query(args, db):
+    """处理 query 子命令（符号定位）
+
+    等价 flag: --query
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw query",
+        description=t("cli.messages.query_subcommand_desc", default="Query symbol location"),
+    )
+    parser.add_argument("name", help=t("cli.messages.query_arg_name", default="Symbol name"))
+    parser.add_argument("file", help=t("cli.messages.query_arg_file", default="File path"))
+    opts = parser.parse_args(args)
+
+    result = db.get_symbol_location(opts.name, opts.file)
+    if result:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    else:
+        print(t("cli.messages.query_not_found", name=opts.name))
+    return True
+
+
+# --------------------------------------------------------------------
+# [3] Call Chain Analysis
+# --------------------------------------------------------------------
+
+
+def _handle_callers(args, db):
+    """处理 callers 子命令（调用方查询）
+
+    等价 flag: --callers
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw callers",
+        description=t("cli.messages.callers_subcommand_desc", default="Show callers of a symbol"),
+    )
+    parser.add_argument("name", help=t("cli.messages.callers_arg_name", default="Symbol name"))
+    opts = parser.parse_args(args)
+
+    callers = db.get_callers(opts.name)
+    print(t("cli.messages.callers_title", name=opts.name, count=len(callers)))
+    for c in callers:
+        cross = t("cli.messages.callers_cross_file") if c["is_cross_file"] else ""
+        print(t("cli.messages.callers_item",
+                file=c['caller_file'], line=c['call_line'], name=c['caller_name'], cross=cross))
+    return True
+
+
+def _handle_callees(args, db):
+    """处理 callees 子命令（被调用方查询）
+
+    等价 flag: --callees
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw callees",
+        description=t("cli.messages.callees_subcommand_desc", default="Show callees of a symbol"),
+    )
+    parser.add_argument("name", help=t("cli.messages.callees_arg_name", default="Symbol name"))
+    opts = parser.parse_args(args)
+
+    callees = db.get_callees(opts.name)
+    print(t("cli.messages.callees_title", name=opts.name, count=len(callees)))
+    for c in callees:
+        cross = t("cli.messages.callees_cross_file") if c["is_cross_file"] else ""
+        file_info = f" ({c['callee_file']})" if c["callee_file"] else t("cli.messages.callees_unresolved")
+        print(t("cli.messages.callees_item",
+                line=c['call_line'], name=c['callee_name'], cross=cross, file_info=file_info))
+    return True
+
+
+def _handle_call_chain(args, db):
+    """处理 call-chain 子命令（向下调用链）
+
+    等价 flag: --call-chain
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw call-chain",
+        description=t("cli.messages.call_chain_subcommand_desc", default="Show call chain down"),
+    )
+    parser.add_argument("name", help=t("cli.messages.call_chain_arg_name", default="Symbol name"))
+    parser.add_argument("--depth", type=int, default=10, help=t("cli.messages.call_chain_arg_depth", default="Max depth (default 10)"))
+    opts = parser.parse_args(args)
+
+    result = db.get_call_chain_down(opts.name, max_depth=opts.depth)
+    print(t("cli.messages.call_chain_down_title", name=result['start']))
+    print(t("cli.messages.call_chain_down_total", count=result['total_downstream']))
+    print(t("cli.messages.call_chain_down_max_depth", depth=result['max_depth_reached']))
+    print()
+    for level in result["levels"]:
+        print(t("cli.messages.call_chain_down_level", depth=level['depth'], count=level['count']))
+        for item in level["callees"][:15]:
+            print(f"  → {item['callee']}")
+        if level["count"] > 15:
+            print(t("cli.messages.call_chain_down_more", count=level['count'] - 15))
+        print()
+    return True
+
+
+def _handle_topo(args, db):
+    """处理 topo 子命令（拓扑排序）
+
+    等价 flag: --topo
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw topo",
+        description=t("cli.messages.topo_subcommand_desc", default="Topological order"),
+    )
+    parser.add_argument("--limit", type=int, default=50, help=t("cli.messages.topo_arg_limit", default="Max results (default 50)"))
+    opts = parser.parse_args(args)
+
+    order = db.get_topological_order(opts.limit)
+    print(t("cli.messages.topo_title", count=len(order)))
+    for i, sym in enumerate(order):
+        print(t("cli.messages.topo_item",
+                idx=i+1, depth=f"{sym['depth']:2d}", path=sym['path'], line=sym['start_line'], name=sym['name']))
+    return True
+
+
+# --------------------------------------------------------------------
+# [4] Code Health & Metrics
+# --------------------------------------------------------------------
+
+
+def _handle_metrics(args, db):
+    """处理 metrics 子命令（度量汇总）
+
+    等价 flag: --metrics
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw metrics",
+        description=t("cli.messages.metrics_subcommand_desc", default="Show code metrics summary"),
+    )
+    parser.parse_args(args)
+    summary = db.get_code_metrics_summary()
+    print(t("cli.messages.metrics_title"))
+    print(t("cli.messages.metrics_files", count=summary['file_count']))
+    print(t("cli.messages.metrics_functions", count=summary['function_count']))
+    print(t("cli.messages.metrics_total_lines", count=summary['total_lines']))
+    print(t("cli.messages.metrics_calls", count=summary['total_calls']))
+    print()
+    print(t("cli.messages.metrics_avg_complexity", value=summary['avg_complexity']))
+    print(t("cli.messages.metrics_max_complexity", value=summary['max_complexity']))
+    print()
+    print(t("cli.messages.metrics_complexity_dist"))
+    dist = summary["complexity_distribution"]
+    total_fn = sum(dist.values()) or 1
+    for level, count in dist.items():
+        pct = count / total_fn * 100
+        bar = "#" * int(pct / 2)
+        print(f"    {level:<12s} {count:4d} ({pct:5.1f}%) {bar}")
+    print()
+    print(t("cli.messages.metrics_comment_coverage", pct=summary['comment_coverage']))
+    return True
+
+
+def _handle_complexity(args, db):
+    """处理 complexity 子命令（复杂度热点）
+
+    等价 flag: --complexity
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw complexity",
+        description=t("cli.messages.complexity_subcommand_desc", default="Show complexity hotspots"),
+    )
+    parser.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.complexity_arg_limit", default="Max results (default 20)"))
+    parser.add_argument("--module", default=None, help=t("cli.messages.complexity_arg_module", default="Filter by module"))
+    opts = parser.parse_args(args)
+
+    hotspots = db.get_complexity_hotspots(limit=opts.limit, module_filter=opts.module or "")
+    filter_info = t("cli.messages.complexity_filter", module=opts.module) if opts.module else ""
+    print(t("cli.messages.complexity_title", filter_info=filter_info, count=len(hotspots)))
+    print()
+    complexity_h = t("cli.messages.col_complexity", default="Complexity")
+    lines_h = t("cli.messages.col_lines", default="Lines")
+    depth_h = t("cli.messages.col_depth", default="Depth")
+    fn_h = t("cli.messages.col_function", default="Function")
+    print(f"  {'#':>3}  {complexity_h:>6}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
+    print(f"  {'-'*3}  {'-'*6}  {'-'*5}  {'-'*4}  {'-'*50}")
+    for i, fn in enumerate(hotspots, 1):
+        risk = "!" if fn["cyclomatic_complexity"] > 10 else " "
+        print(f"  {i:3d}{risk}  {fn['cyclomatic_complexity']:>6}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
+        print(f"        {fn['file_path']}:{fn['start_line']}")
+    print()
+    print(t("cli.messages.complexity_hint"))
+    return True
+
+
+def _handle_coupling(args, db):
+    """处理 coupling 子命令（模块耦合分析）
+
+    等价 flag: --coupling
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw coupling",
+        description=t("cli.messages.coupling_subcommand_desc", default="Show module coupling analysis"),
+    )
+    parser.parse_args(args)
+    modules = db.get_coupling_analysis(limit=30)
+    print(t("cli.messages.coupling_title", count=len(modules)))
+    print()
+    module_h = t("cli.messages.col_module", default="Module")
+    afferent_h = t("cli.messages.col_afferent", default="In")
+    efferent_h = t("cli.messages.col_efferent", default="Out")
+    total_h = t("cli.messages.col_total", default="Total")
+    instability_h = t("cli.messages.col_instability", default="Instab")
+    print(f"  {'#':>3}  {module_h:<40s}  {afferent_h:>4}  {efferent_h:>4}  {total_h:>4}  {instability_h:>6}")
+    print(f"  {'-'*3}  {'-'*40}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*6}")
+    for i, mod in enumerate(modules, 1):
+        inst = mod["instability"]
+        inst_label = f"{inst:.2f}"
+        if inst > 0.7:
+            inst_label += t("cli.messages.coupling_unstable")
+        elif inst < 0.3:
+            inst_label += t("cli.messages.coupling_stable")
+        print(f"  {i:3d}  {mod['module'][:40]:<40s}  {mod['afferent']:>4}  {mod['efferent']:>4}  {mod['total_coupling']:>4}  {inst_label:>6}")
+    return True
+
+
+def _handle_comment_coverage(args, db):
+    """处理 comment-coverage 子命令（注释覆盖率）
+
+    等价 flag: --comment-coverage
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw comment-coverage",
+        description=t("cli.messages.comment_coverage_subcommand_desc", default="Show comment coverage"),
+    )
+    parser.add_argument("--by", default="module", dest="group_by", help=t("cli.messages.comment_coverage_arg_by", default="Group by (default module)"))
+    opts = parser.parse_args(args)
+
+    result = db.get_comment_coverage(group_by=opts.group_by)
+    print(t("cli.messages.comment_coverage_title"))
+    print(t("cli.messages.comment_coverage_total", count=result['total']))
+    print(t("cli.messages.comment_coverage_commented", count=result['commented']))
+    print(t("cli.messages.comment_coverage_rate", pct=result['coverage']))
+    print()
+    print(t("cli.messages.comment_coverage_by_kind"))
+    for kind, info in sorted(result["by_kind"].items(), key=lambda x: -x[1]["total"]):
+        pct = round(info["commented"] / info["total"] * 100, 1) if info["total"] > 0 else 0
+        bar_len = int(pct / 5)
+        bar = "█" * bar_len + "░" * (20 - bar_len)
+        print(f"  {bar} {pct:5.1f}%  {kind:12s}  ({info['commented']}/{info['total']})")
+    if result.get("by_module"):
+        print()
+        print(t("cli.messages.comment_coverage_by_module"))
+        modules = sorted(result["by_module"].items(), key=lambda x: x[1]["coverage"])
+        for i, (mod, info) in enumerate(modules[:30]):
+            pct = info["coverage"]
+            bar_len = int(pct / 5)
+            bar = "█" * bar_len + "░" * (20 - bar_len)
+            print(f"  {bar} {pct:5.1f}%  {mod:50s}  ({info['commented']}/{info['total']})")
+        if len(modules) > 30:
+            print(t("cli.messages.comment_coverage_more_modules", count=len(modules) - 30))
+    if result.get("by_file"):
+        print()
+        print(t("cli.messages.comment_coverage_by_file"))
+        files = sorted(result["by_file"].items(), key=lambda x: x[1]["coverage"])
+        for i, (fpath, info) in enumerate(files[:30]):
+            pct = info["coverage"]
+            bar_len = int(pct / 5)
+            bar = "█" * bar_len + "░" * (20 - bar_len)
+            print(f"  {bar} {pct:5.1f}%  {fpath:50s}  ({info['commented']}/{info['total']})")
+        if len(files) > 30:
+            print(t("cli.messages.comment_coverage_more_files", count=len(files) - 30))
+    return True
+
+
+def _handle_uncommented(args, db):
+    """处理 uncommented 子命令（未注释符号列表）
+
+    等价 flag: --uncommented
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw uncommented",
+        description=t("cli.messages.uncommented_subcommand_desc", default="Show uncommented symbols"),
+    )
+    parser.add_argument("kind", nargs="?", default="fn", help=t("cli.messages.uncommented_arg_kind", default="Symbol kind (default fn)"))
+    parser.add_argument("--module", default=None, help=t("cli.messages.uncommented_arg_module", default="Filter by module"))
+    parser.add_argument("--limit", type=int, default=50, help=t("cli.messages.uncommented_arg_limit", default="Max results (default 50)"))
+    opts = parser.parse_args(args)
+
+    symbols = db.get_uncommented_symbols(kind=opts.kind, module_filter=opts.module)
+    filter_info = t("cli.messages.uncommented_module_filter", module=opts.module) if opts.module else ""
+    print(t("cli.messages.uncommented_title", kind=opts.kind, filter_info=filter_info,
+           total=len(symbols), shown=min(opts.limit, len(symbols))))
+    print()
+    for i, sym in enumerate(symbols[:opts.limit]):
+        depth = sym["depth"] if sym["depth"] >= 0 else "?"
+        sig = sym.get("signature", "")[:60] if sym.get("signature") else ""
+        print(f"  [{i+1:3d}] depth={depth:>3}  {sym['qualified_name']}")
+        print(f"         {sym['file_path']}:{sym['start_line']}")
+        if sig:
+            print(f"         {sig}")
+    if len(symbols) > opts.limit:
+        print()
+        print(t("cli.messages.uncommented_more", count=len(symbols) - opts.limit))
+    return True
+
+
+def _handle_function_issues(args, db):
+    """处理 function-issues 子命令（函数缺陷检测）
+
+    等价 flag: --function-issues
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw function-issues",
+        description=t("cli.messages.function_issues_subcommand_desc", default="Show function issues"),
+    )
+    parser.add_argument("fn", nargs="?", default="", help=t("cli.messages.function_issues_arg_fn", default="Function name (empty for list mode)"))
+    parser.add_argument("--type", default=None, help=t("cli.messages.function_issues_arg_type", default="Filter by issue type"))
+    parser.add_argument("--module", default=None, help=t("cli.messages.function_issues_arg_module", default="Filter by module"))
+    parser.add_argument("--limit", type=int, default=30, help=t("cli.messages.function_issues_arg_limit", default="Max results (default 30)"))
+    opts = parser.parse_args(args)
+
+    fn_name = opts.fn
+    module_filter = opts.module or ""
+    issue_filter = opts.type or ""
+    results = db.get_function_issues(
+        qualified_name=fn_name,
+        module_filter=module_filter,
+        issue_filter=issue_filter,
+        limit=opts.limit,
+    )
+    severity_icon = {"danger": "[!]", "warn": "[~]", "info": "[i]"}
+
+    if fn_name:
+        # 单函数详情模式
+        if results:
+            r = results[0]
+            print(t("cli.messages.function_issues_title", name=r['qualified_name']))
+            print(t("cli.messages.function_issues_module", module=r['module_path'] or '(unknown)'))
+            print(t("cli.messages.function_issues_count", count=r['issue_count']))
+            print()
+            for issue in r["issues"]:
+                icon = severity_icon.get(issue["severity"], "[?]")
+                print(f"  {icon} {issue['label']}  (x{issue['count']})")
+                print(f"      {issue['description']}")
+            print()
+        else:
+            print(t("cli.messages.function_issues_title", name=fn_name))
+            filter_str = t("cli.messages.function_issues_filter", filter=issue_filter) if issue_filter else ""
+            print(t("cli.messages.function_issues_no_issues") + filter_str)
+            print()
+    else:
+        # 列表模式
+        if issue_filter:
+            print(t("cli.messages.function_issues_list_title_type", filter=issue_filter, count=len(results)))
+        elif module_filter:
+            print(t("cli.messages.function_issues_list_title_module", module=module_filter, count=len(results)))
+        else:
+            print(t("cli.messages.function_issues_list_title", count=len(results)))
+        print()
+        for i, r in enumerate(results, 1):
+            issue_labels = []
+            for issue in r["issues"]:
+                icon = severity_icon.get(issue["severity"], "")
+                issue_labels.append(f"{icon}{issue['label']}" + (f"(x{issue['count']})" if issue["count"] > 1 else ""))
+            issue_str = "  ".join(issue_labels)
+            print(f"  #{i:2d}  {r['qualified_name']}")
+            print(f"        {issue_str}")
+        print()
+    return True
+
+
+def _handle_largest_fns(args, db):
+    """处理 largest-fns 子命令（最大函数列表）
+
+    等价 flag: --largest-fns
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw largest-fns",
+        description=t("cli.messages.largest_fns_subcommand_desc", default="Show largest functions"),
+    )
+    parser.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.largest_fns_arg_limit", default="Max results (default 20)"))
+    opts = parser.parse_args(args)
+
+    fns = db.get_largest_functions(limit=opts.limit)
+    print(t("cli.messages.largest_fns_title", count=len(fns)))
+    print()
+    lines_h = t("cli.messages.col_lines", default="Lines")
+    depth_h = t("cli.messages.col_depth", default="Depth")
+    fn_h = t("cli.messages.col_function", default="Function")
+    print(f"  {'#':>3}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
+    print(f"  {'-'*3}  {'-'*5}  {'-'*4}  {'-'*50}")
+    for i, fn in enumerate(fns, 1):
+        print(f"  {i:3d}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
+        print(f"        {fn['file_path']}:{fn['start_line']}")
+    return True
+
+
+def _handle_coupled_fns(args, db):
+    """处理 coupled-fns 子命令（耦合度最高的函数）
+
+    等价 flag: --coupled-fns
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw coupled-fns",
+        description=t("cli.messages.coupled_fns_subcommand_desc", default="Show most coupled functions"),
+    )
+    parser.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.coupled_fns_arg_limit", default="Max results (default 20)"))
+    opts = parser.parse_args(args)
+
+    fns = db.get_most_coupled_functions(limit=opts.limit)
+    print(t("cli.messages.coupled_fns_title", count=len(fns)))
+    print()
+    fan_in_h = t("cli.messages.col_fan_in", default="Fan-in")
+    fan_out_h = t("cli.messages.col_fan_out", default="Fan-out")
+    total_h = t("cli.messages.col_total", default="Total")
+    fn_h = t("cli.messages.col_function", default="Function")
+    print(f"  {'#':>3}  {fan_in_h:>4}  {fan_out_h:>4}  {total_h:>4}  {fn_h}")
+    print(f"  {'-'*3}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*50}")
+    for i, fn in enumerate(fns, 1):
+        print(f"  {i:3d}  {fn['fan_in']:>4}  {fn['fan_out']:>4}  {fn['total_coupling']:>4}  {fn['qualified_name'][:60]}")
+        print(f"        {fn['file_path']}")
+    return True
+
+
+def _handle_fn_metrics(args, db):
+    """处理 fn-metrics 子命令（单函数度量）
+
+    等价 flag: --fn-metrics
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw fn-metrics",
+        description=t("cli.messages.fn_metrics_subcommand_desc", default="Show function metrics"),
+    )
+    parser.add_argument("name", help=t("cli.messages.fn_metrics_arg_name", default="Function name"))
+    opts = parser.parse_args(args)
+
+    metrics = db.get_function_metrics(opts.name)
+    if not metrics:
+        print(t("cli.messages.fn_metrics_not_found", name=opts.name))
+        print(t("cli.messages.fn_metrics_search_hint"))
+    else:
+        print(t("cli.messages.fn_metrics_title", name=metrics['qualified_name']))
+        print(t("cli.messages.fn_metrics_kind", kind=metrics['kind']))
+        print(t("cli.messages.fn_metrics_file", file=metrics['file_path'], start=metrics['start_line'], end=metrics['end_line']))
+        print(t("cli.messages.fn_metrics_lines", count=metrics['line_count']))
+        print(t("cli.messages.fn_metrics_complexity", value=metrics['cyclomatic_complexity'], risk=metrics['risk_level']))
+        print(t("cli.messages.fn_metrics_fan_in", count=metrics['fan_in']))
+        print(t("cli.messages.fn_metrics_fan_out", count=metrics['fan_out']))
+        print(t("cli.messages.fn_metrics_depth", depth=metrics['depth']))
+        print(t("cli.messages.fn_metrics_module", module=metrics['module_path']))
+        if metrics['signature']:
+            print(t("cli.messages.fn_metrics_signature", sig=metrics['signature'][:100]))
+    return True
+
+
+# --------------------------------------------------------------------
+# [8] Git Integration
+# --------------------------------------------------------------------
+
+
+def _handle_git(args, db):
+    """处理 git 子命令（Git 集成）
+
+    等价 flag: --git-import / --git-log / --git-show / --git-stats
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw git",
+        description=t("cli.messages.git_subcommand_desc", default="Git integration (import/log/show/stats)"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    imp = sub.add_parser("import", help=t("cli.messages.git_action_import", default="Import git history"))
+    imp.add_argument("limit", type=int, nargs="?", default=100, help=t("cli.messages.git_arg_limit", default="Max commits (default 100)"))
+
+    log_p = sub.add_parser("log", help=t("cli.messages.git_action_log", default="Show git log"))
+    log_p.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.git_arg_log_limit", default="Max commits (default 20)"))
+
+    show_p = sub.add_parser("show", help=t("cli.messages.git_action_show", default="Show commit details"))
+    show_p.add_argument("commit", help=t("cli.messages.git_arg_commit", default="Commit hash"))
+
+    sub.add_parser("stats", help=t("cli.messages.git_action_stats", default="Show git integration stats"))
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "import":
+        print(t("cli.messages.git_import_start", count=opts.limit))
+        result = db.import_git_history(max_commits=opts.limit)
+        if result.get("success"):
+            print(t("cli.messages.git_import_success", count=result['commits_imported']))
+            print(t("cli.messages.git_import_total", count=result['total_commits']))
+        else:
+            print(t("cli.messages.git_import_fail", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+        return True
+
+    if opts.action == "log":
+        commits = db.get_git_commits(limit=opts.limit)
+        print(t("cli.messages.git_log_title", count=len(commits)))
+        print()
+        for c in commits:
+            short_hash = c['commit_hash'][:8]
+            timestamp = time.strftime('%Y-%m-%d %H:%M', time.localtime(c['timestamp']))
+            msg = c['message'][:60] if c['message'] else t("cli.messages.git_log_no_msg")
+            author = c['author'][:15] if c['author'] else 'unknown'
+            print(f"  {short_hash}  {timestamp}  {author:<15s}  {msg}")
+        return True
+
+    if opts.action == "show":
+        details = db.get_commit_changes(opts.commit)
+        commit = details.get("commit")
+        if not commit:
+            print(t("cli.messages.git_show_not_found", hash=opts.commit))
+        else:
+            print(t("cli.messages.git_show_commit", hash=commit['commit_hash']))
+            print(t("cli.messages.git_show_author", author=commit['author'], email=commit['email']))
+            print(t("cli.messages.git_show_time", time=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(commit['timestamp']))))
+            print(t("cli.messages.git_show_message", msg=commit['message']))
+            print()
+            file_changes = details.get("file_changes", [])
+            print(t("cli.messages.git_show_files", count=len(file_changes)))
+            type_map = {'A': t("cli.messages.git_type_added"), 'M': t("cli.messages.git_type_modified"),
+                        'D': t("cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
+            for fc in file_changes:
+                ct = fc.get('change_type', '?')
+                type_label = type_map.get(ct, ct)
+                path = fc.get('rel_path') or fc.get('abs_path') or 'unknown'
+                print(f"  [{type_label}] {path}")
+        return True
+
+    if opts.action == "stats":
+        stats = db.get_git_stats()
+        print(t("cli.messages.git_stats_title"))
+        print(t("cli.messages.git_stats_commits", count=stats['commit_count']))
+        print(t("cli.messages.git_stats_file_changes", count=stats['file_change_count']))
+        print()
+        if stats.get("change_types"):
+            print(t("cli.messages.git_stats_by_type"))
+            type_map = {'A': t("cli.messages.git_type_added"), 'M': t("cli.messages.git_type_modified"),
+                        'D': t("cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
+            for ct, cnt in sorted(stats["change_types"].items(), key=lambda x: x[1], reverse=True):
+                label = type_map.get(ct, ct)
+                print(t("cli.messages.git_stats_type_count", default="    {label}: {count} times", label=label, count=cnt))
+        return True
+
+    return True
+
+
+# --------------------------------------------------------------------
+# [9] Semgrep & Defects
+# --------------------------------------------------------------------
+
+
+def _handle_semgrep(args, db):
+    """处理 semgrep 子命令（Semgrep 静态分析）
+
+    等价 flag: --semgrep / --semgrep-list / --semgrep-stats
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw semgrep",
+        description=t("cli.messages.semgrep_subcommand_desc", default="Semgrep static analysis (scan/list/stats)"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    scan_p = sub.add_parser("scan", help=t("cli.messages.semgrep_action_scan", default="Run Semgrep scan"))
+    scan_p.add_argument("paths", nargs="*", help=t("cli.messages.semgrep_arg_paths", default="Target paths (empty for workspace root)"))
+    scan_p.add_argument("--config", default="p/default", help=t("cli.messages.semgrep_arg_config", default="Semgrep config (default p/default)"))
+    scan_p.add_argument("--lang", dest="languages", nargs="*", help=t("cli.messages.semgrep_arg_lang", default="Limit to languages"))
+    scan_p.add_argument("--timeout", type=int, default=180, help=t("cli.messages.semgrep_arg_timeout", default="Timeout seconds (default 180)"))
+    scan_p.add_argument("--save", action="store_true", help=t("cli.messages.semgrep_arg_save", default="Save findings to database"))
+    scan_p.add_argument("--quick", action="store_true", help=t("cli.messages.semgrep_arg_quick", default="Quick summary scan"))
+
+    list_p = sub.add_parser("list", help=t("cli.messages.semgrep_action_list", default="List saved findings"))
+    list_p.add_argument("filter", nargs="?", default="", help=t("cli.messages.semgrep_arg_filter", default="Rule id filter"))
+    list_p.add_argument("--severity", default=None, help=t("cli.messages.semgrep_arg_severity", default="Filter by severity"))
+    list_p.add_argument("--lang", dest="language", default=None, help=t("cli.messages.semgrep_arg_list_lang", default="Filter by language"))
+    list_p.add_argument("--limit", type=int, default=50, help=t("cli.messages.semgrep_arg_list_limit", default="Max results (default 50)"))
+
+    sub.add_parser("stats", help=t("cli.messages.semgrep_action_stats", default="Show Semgrep stats"))
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "scan":
+        target_paths = opts.paths if opts.paths else None
+        print(t("cli.messages.semgrep_title"))
+        print(t("cli.messages.semgrep_config_label", config=opts.config))
+        if opts.languages:
+            print(t("cli.messages.semgrep_lang_limit", langs=", ".join(opts.languages)))
+        print(t("cli.messages.semgrep_timeout_label", timeout=opts.timeout))
+        print()
+        if opts.save:
+            result = db.run_semgrep_and_save(
+                target_paths=target_paths or [db.workspace_root],
+                config=opts.config,
+                languages=opts.languages,
+                timeout=opts.timeout,
+            )
+            if not result.get("success"):
+                print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+            else:
+                print(t("cli.messages.semgrep_scan_done", count=result['total_findings']))
+                print(t("cli.messages.semgrep_saved", count=result['saved_findings']))
+                print()
+                print(t("cli.messages.semgrep_save_hint"))
+        elif opts.quick:
+            result = db.get_semgrep_summary(target_paths)
+            if not result.get("success"):
+                print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+            else:
+                print(t("cli.messages.semgrep_quick_total", count=result['total_findings']))
+                print()
+                if result.get("by_severity"):
+                    print(t("cli.messages.semgrep_severity_dist"))
+                    for sev in ["ERROR", "WARNING", "INFO"]:
+                        count = result["by_severity"].get(sev, 0)
+                        if count > 0:
+                            icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
+                            print(t("cli.messages.semgrep_severity_count", icon=icon, sev=sev, count=count))
+                    print()
+                if result.get("by_language"):
+                    print(t("cli.messages.semgrep_lang_dist"))
+                    for lang, count in sorted(result["by_language"].items(), key=lambda x: x[1], reverse=True):
+                        print(t("cli.messages.semgrep_lang_count", lang=lang, count=count))
+                    print()
+                if result.get("top_rules"):
+                    print(t("cli.messages.semgrep_top_rules"))
+                    for rule_id, stats in result["top_rules"][:10]:
+                        sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[stats.get("severity", "INFO")]
+                        print(t("cli.messages.semgrep_rule_item", icon=sev_icon, rule=rule_id, count=stats['count']))
+                        print(f"        {stats['message'][:80]}...")
+                    print()
+            if result.get("errors"):
+                print(t("cli.messages.semgrep_warning_count", count=len(result['errors'])))
+        else:
+            result = db.run_semgrep(
+                target_paths=target_paths or [db.workspace_root],
+                config=opts.config,
+                languages=opts.languages,
+                timeout=opts.timeout,
+            )
+            if not result.get("success"):
+                print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+            else:
+                print(t("cli.messages.semgrep_scan_done", count=result['total_findings']))
+                print()
+                severity_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}
+                for sev in ["ERROR", "WARNING", "INFO"]:
+                    sev_findings = [f for f in result["results"] if f["severity"] == sev]
+                    if sev_findings:
+                        icon = severity_icon[sev]
+                        if sev == "ERROR":
+                            sev_label = t("cli.messages.semgrep_sev_error")
+                        elif sev == "WARNING":
+                            sev_label = t("cli.messages.semgrep_sev_warning")
+                        else:
+                            sev_label = t("cli.messages.semgrep_sev_info")
+                        print(t("cli.messages.semgrep_detail_title", label=sev_label, count=len(sev_findings)))
+                        print()
+                        for f in sev_findings[:15]:
+                            print(f"    {icon} {f['rule_name']}")
+                            print(t("cli.messages.semgrep_finding_file", file=f['path'], line=f['start_line']))
+                            print(t("cli.messages.semgrep_finding_lang", lang=f['language']))
+                            print(t("cli.messages.semgrep_finding_msg", msg=f['message'][:100]))
+                            if f.get("fix"):
+                                print(t("cli.messages.semgrep_fix_hint", fix=f['fix'][:50]))
+                            print()
+                        if len(sev_findings) > 15:
+                            print(t("cli.messages.semgrep_more", count=len(sev_findings) - 15))
+                            print()
+        print(t("cli.messages.semgrep_hint"))
+        print()
+        return True
+
+    if opts.action == "stats":
+        stats = db.get_semgrep_stats()
+        print(t("cli.messages.semgrep_stats_title"))
+        print(t("cli.messages.semgrep_stats_total", count=stats['total_findings']))
+        print()
+        if stats["by_severity"]:
+            print(t("cli.messages.semgrep_stats_by_sev"))
+            for sev in ["ERROR", "WARNING", "INFO"]:
+                count = stats["by_severity"].get(sev, 0)
+                if count > 0:
+                    icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
+                    print(t("cli.messages.semgrep_severity_count", icon=icon, sev=sev, count=count))
+            print()
+        if stats["by_language"]:
+            print(t("cli.messages.semgrep_stats_by_lang"))
+            for lang, count in sorted(stats["by_language"].items(), key=lambda x: x[1], reverse=True):
+                print(f"    {lang:<15s} {count:4d}")
+            print()
+        if stats["by_rule"]:
+            print(t("cli.messages.semgrep_stats_top_rules"))
+            for i, rule in enumerate(stats["by_rule"][:10], 1):
+                sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}.get(rule["severity"], "[?]")
+                print(f"    #{i:2d} {sev_icon} {rule['rule_id'][:50]:<50s}  {rule['cnt']:3d}")
+            print()
+        if stats["by_symbol"]:
+            print(t("cli.messages.semgrep_stats_top_symbols"))
+            for i, sym in enumerate(stats["by_symbol"][:10], 1):
+                print(f"    #{i:2d} {sym['symbol_qualified'][:60]:<60s}  {sym['cnt']:2d}")
+            print()
+        return True
+
+    if opts.action == "list":
+        rule_filter = opts.filter if opts.filter else ""
+        severity = opts.severity or ""
+        language = opts.language or ""
+        findings = db.get_semgrep_findings(
+            severity=severity,
+            language=language,
+            rule_id=rule_filter,
+            limit=opts.limit,
+        )
+        filter_parts = []
+        if severity:
+            filter_parts.append(t("cli.messages.semgrep_list_filter_sev", sev=severity))
+        if language:
+            filter_parts.append(t("cli.messages.semgrep_list_filter_lang", lang=language))
+        if rule_filter:
+            filter_parts.append(t("cli.messages.semgrep_list_filter_rule", rule=rule_filter))
+        filter_str = " | ".join(filter_parts) if filter_parts else t("cli.messages.semgrep_list_filter_all")
+        print(t("cli.messages.semgrep_list_title", filter=filter_str, total=len(findings), shown=min(opts.limit, len(findings))))
+        print()
+        sev_icon_map = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}
+        for i, f in enumerate(findings[:opts.limit], 1):
+            icon = sev_icon_map.get(f["severity"], "[?]")
+            sym_info = f" -> {f['symbol_qualified']}" if f["symbol_qualified"] else ""
+            print(f"  #{i:3d} {icon} {f['rule_name'][:40]:<40s} {f['language']:<12s}{sym_info}")
+            print(f"        {f['file_path']}:{f['start_line']}")
+            print(f"        {f['message'][:80]}")
+            print()
+        if len(findings) > opts.limit:
+            print(t("cli.messages.semgrep_list_more", count=len(findings) - opts.limit))
+        return True
+
+    return True
+
+
+# --------------------------------------------------------------------
+# [10] Coverage & Ownership
+# --------------------------------------------------------------------
+
+
+def _handle_coverage(args, db):
+    """处理 coverage 子命令（覆盖率导入与查询）
+
+    等价 flag: --coverage-import / --coverage-fn / --coverage-uncovered
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw coverage",
+        description=t("cli.messages.coverage_subcommand_desc", default="Coverage import and query (import/fn/uncovered)"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    imp = sub.add_parser("import", help=t("cli.messages.coverage_action_import", default="Import coverage report"))
+    imp.add_argument("file", help=t("cli.messages.coverage_arg_file", default="Coverage report file"))
+    imp.add_argument("--format", choices=["lcov", "cobertura"], default="lcov", help=t("cli.messages.coverage_arg_format", default="Report format (default lcov)"))
+
+    fn_p = sub.add_parser("fn", help=t("cli.messages.coverage_action_fn", default="Coverage for a function"))
+    fn_p.add_argument("name", help=t("cli.messages.coverage_arg_name", default="Function name"))
+
+    sub.add_parser("uncovered", help=t("cli.messages.coverage_action_uncovered", default="Find uncovered functions"))
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "import":
+        print(t("cli.messages.coverage_import_title", file=opts.file, format=opts.format))
+        print("-" * 50)
+        try:
+            if opts.format == "lcov":
+                stats = db.import_lcov(opts.file)
+            else:
+                stats = db.import_cobertura(opts.file)
+            print(t("cli.messages.coverage_import_files_total", count=stats['files_total']))
+            print(t("cli.messages.coverage_import_files_matched", count=stats['files_matched']))
+            print(t("cli.messages.coverage_import_lines", count=stats['lines_imported']))
+            print(t("cli.messages.coverage_import_symbols", count=stats['symbols_matched']))
+        except FileNotFoundError:
+            print(t("cli.messages.coverage_import_file_not_found", file=opts.file))
+        except Exception as e:
+            print(t("cli.messages.coverage_import_parse_error", error=e))
+        print()
+        return True
+
+    if opts.action == "fn":
+        info = db.get_coverage_for_symbol(opts.name)
+        if not info:
+            print(t("cli.messages.coverage_fn_not_found", name=opts.name))
+            print(t("cli.messages.coverage_fn_search_hint"))
+        else:
+            print(t("cli.messages.coverage_fn_title", name=info['qualified_name']))
+            print("-" * 50)
+            print(t("cli.messages.coverage_fn_file", file=info['file_path'], start=info['start_line'], end=info['end_line']))
+            print(t("cli.messages.coverage_fn_total", count=info['total_lines']))
+            print(t("cli.messages.coverage_fn_tracked", count=info['tracked_lines']))
+            print(t("cli.messages.coverage_fn_covered", count=info['covered_lines']))
+            print(t("cli.messages.coverage_fn_pct", pct=info['coverage_pct']))
+            if info['uncovered_lines']:
+                lines_preview = info['uncovered_lines'][:30]
+                more = '...' if len(info['uncovered_lines']) > 30 else ''
+                print(t("cli.messages.coverage_fn_uncovered", lines=lines_preview, more=more))
+        print()
+        return True
+
+    if opts.action == "uncovered":
+        results = db.find_uncovered_functions()
+        print(t("cli.messages.coverage_uncovered_title", count=len(results)))
+        print("-" * 50)
+        for i, r in enumerate(results, 1):
+            pct_label = t("cli.messages.coverage_fn_pct", pct="").strip().rstrip(":").strip()
+            print(f"  [{i:3d}] {pct_label}={r['coverage_pct']:5.1f}%  {r['qualified_name']}")
+            print(t("cli.messages.coverage_uncovered_item", file=r['file_path'], start=r['start_line'], end=r['end_line'], covered=r['covered_lines'], tracked=r['tracked_lines']))
+        print()
+        return True
+
+    return True
+
+
+def _handle_who(args, db):
+    """处理 who 子命令（文件负责人）
+
+    等价 flag: --who
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw who",
+        description=t("cli.messages.who_subcommand_desc", default="Show file owner (who to ask)"),
+    )
+    parser.add_argument("file", help=t("cli.messages.who_arg_file", default="File path"))
+    opts = parser.parse_args(args)
+
+    info = db.who_to_ask(opts.file)
+    if not info:
+        print(t("cli.messages.who_not_found", file=opts.file))
+        print(t("cli.messages.who_hint"))
+    else:
+        print(t("cli.messages.who_title"))
+        print("-" * 50)
+        print(t("cli.messages.who_file", file=info['file_path']))
+        print(t("cli.messages.who_owner", owner=info['owner']))
+        print(t("cli.messages.who_source", source=info['source']))
+        print(t("cli.messages.who_confidence", confidence=info['confidence']))
+        if info.get('last_commit_author'):
+            print(t("cli.messages.who_last_author", author=info['last_commit_author']))
+        if info.get('last_commit_time'):
+            ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(info['last_commit_time']))
+            print(t("cli.messages.who_last_time", time=ts))
+        if info.get('last_commit_hash'):
+            print(t("cli.messages.who_last_hash", hash=info['last_commit_hash'][:12]))
+    print()
+    return True
+
+
+def _handle_ownership_map(args, db):
+    """处理 ownership-map 子命令（所有权映射）
+
+    等价 flag: --ownership-map
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw ownership-map",
+        description=t("cli.messages.ownership_map_subcommand_desc", default="Show ownership map"),
+    )
+    parser.parse_args(args)
+    results = db.get_ownership_map()
+    print(t("cli.messages.ownership_map_title", count=len(results)))
+    print("-" * 50)
+    for i, m in enumerate(results, 1):
+        print(f"  [{i}] {m['module']}")
+        print(t("cli.messages.ownership_map_primary", owner=m['primary_owner'], count=m['file_count']))
+        owners_str = ", ".join(f"{o['name']}({o['file_count']})" for o in m['owners'][:5])
+        print(t("cli.messages.ownership_map_dist", owners=owners_str))
+        if len(m['owners']) > 5:
+            print(t("cli.messages.ownership_map_more", count=len(m['owners']) - 5))
+    print()
+    return True
+
+
+# --------------------------------------------------------------------
+# [12] Diagnostics
+# --------------------------------------------------------------------
+
+
+def _handle_brief(args, db):
+    """处理 brief 子命令（项目简报）
+
+    等价 flag: --brief
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw brief",
+        description=t("cli.messages.brief_subcommand_desc", default="Show project brief"),
+    )
+    parser.parse_args(args)
+    brief = db.project_brief()
+    print(t("cli.messages.brief_title"))
+    print()
+    print(t("cli.messages.brief_project_type", type=brief['project_type']))
+    print(t("cli.messages.brief_files", count=brief['file_count']))
+    print(t("cli.messages.brief_functions", count=brief['function_count']))
+    print(t("cli.messages.brief_total_lines", count=brief['total_lines']))
+    print(t("cli.messages.brief_health", score=brief['health_score'], level=brief['health_level']))
+    print(t("cli.messages.brief_avg_complexity", value=brief['avg_complexity']))
+    print(t("cli.messages.brief_comment_coverage", pct=brief['comment_coverage']))
+    print()
+    modules = brief.get('modules', [])
+    if modules:
+        print(t("cli.messages.brief_modules", count=len(modules)))
+        for i, m in enumerate(modules, 1):
+            print(t("cli.messages.brief_module_item", idx=i, module=m['module'], count=m['function_count']))
+        print()
+    hotspots = brief.get('hot_functions', [])
+    if hotspots:
+        print(t("cli.messages.brief_hotspots", count=len(hotspots)))
+        for i, fn in enumerate(hotspots, 1):
+            print(t("cli.messages.brief_hotspot_item", idx=i, value=fn['cyclomatic_complexity'], name=fn['qualified_name']))
+    print()
+    return True
+
+
+def _handle_map(args, db):
+    """处理 map 子命令（仓库模块依赖图）
+
+    等价 flag: --map
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw map",
+        description=t("cli.messages.map_subcommand_desc", default="Show repo module map"),
+    )
+    parser.add_argument("--format", choices=["text", "mermaid"], default="text", help=t("cli.messages.map_arg_format", default="Output format (default text)"))
+    opts = parser.parse_args(args)
+
+    output = db.repo_map(format=opts.format)
+    print(t("cli.messages.map_title", format=opts.format))
+    print()
+    print(output)
+    print()
     return True
 
 
