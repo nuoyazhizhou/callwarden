@@ -1225,7 +1225,7 @@
       "task_capture_diff_finding_item": "    [{sev}] {ftype}: {msg}",
       "task_capture_diff_next_action": "▶ Next: {action}",
       "task_capture_diff_auto_mode": "[--auto mode] Auto-detect in_progress task, use HEAD~1 as base, auto apply (fail-soft)",
-      "task_capture_diff_auto_no_task": "  (No in_progress task found, skipping capture)",
+      "task_capture_diff_auto_no_task": "  ⚠ No in_progress task found; capture-diff loop did not run. Run 'cw task next <task_id>' to claim a task, and subsequent commits will auto-capture changes into the task/audit loop.",
       "task_capture_diff_auto_exception": "  ✗ Auto-capture exception (fail-soft, does not block git commit): {error}",
       "task_capture_diff_auto_failed": "  ✗ Auto-capture failed (reason={reason}): {error}",
       "task_capture_diff_missing_task_id": "task_id is required (or use --auto mode)",

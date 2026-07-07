@@ -1225,7 +1225,7 @@
       "task_capture_diff_finding_item": "    [{sev}] {ftype}: {msg}",
       "task_capture_diff_next_action": "▶ 下一步: {action}",
       "task_capture_diff_auto_mode": "[--auto 模式] 自动检测 in_progress 任务，HEAD~1 作为 base，自动 apply（fail-soft）",
-      "task_capture_diff_auto_no_task": "  (没有 in_progress 状态的任务，跳过捕获)",
+      "task_capture_diff_auto_no_task": "  ⚠ 没有 in_progress 状态的任务，capture-diff 闭环未运行。使用 'cw task next <task_id>' 领取任务后，后续 commit 将自动捕获变更到 task/audit 闭环。",
       "task_capture_diff_auto_exception": "  ✗ 自动捕获异常（fail-soft，不影响 git commit）: {error}",
       "task_capture_diff_auto_failed": "  ✗ 自动捕获失败（reason={reason}）: {error}",
       "task_capture_diff_missing_task_id": "task_id 是必填参数（除非使用 --auto 模式）",
