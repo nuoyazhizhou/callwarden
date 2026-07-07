@@ -2723,6 +2723,35 @@ def _handle_task(args, db):
         help=t("cli_task_arg_flat_show", default="Flat mode (do not show subtasks recursively)")
     )
 
+    # completion-review：运行任务完成质量审查（C9 新增）
+    cr_p = sub.add_parser(
+        "completion-review",
+        help=t("cli_task_completion_review_desc", default="Run task completion quality review"),
+    )
+    cr_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    cr_p.add_argument(
+        "--step-id", default="",
+        help=t("cli_task_arg_step_id", default="Step ID (optional, task-level review if empty)"),
+    )
+
+    # split：从 Markdown 计划拆分父子任务树（C9 新增）
+    split_p = sub.add_parser(
+        "split",
+        help=t("cli_task_split_desc", default="Split task into subtasks from Markdown plan"),
+    )
+    split_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    split_p.add_argument(
+        "--plan", required=True,
+        help=t("cli_task_arg_plan_file", default="Markdown plan file path"),
+    )
+
+    # status-tree：以树形显示任务状态（C9 新增，task show --tree 的别名）
+    st_p = sub.add_parser(
+        "status-tree",
+        help=t("cli_task_status_tree_desc", default="Show task status tree"),
+    )
+    st_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+
     opts = parser.parse_args(args)
 
     if opts.action == "create":
@@ -3283,7 +3312,181 @@ def _handle_task(args, db):
         # 查看任务详情（默认树形展示子任务，--flat 退回扁平）
         return _print_task_show(db, opts.task_id, flat=opts.flat)
 
+    elif opts.action == "completion-review":
+        # 运行任务完成质量审查（C9 新增）
+        if not hasattr(db, "run_task_completion_review"):
+            cprint(t("cli.messages.task_completion_review_unavailable",
+                     default="Task completion review not available"), "red")
+            return True
+        result = db.run_task_completion_review(opts.task_id, step_id=opts.step_id)
+        if "error" in result:
+            cprint(t("cli.messages.task_completion_review_failed",
+                     error=result["error"]), "red")
+            print()
+            return True
+        decision = result.get("decision", "unknown")
+        counts = result.get("counts", {})
+        decision_color = {"pass": "green", "warn": "yellow", "block": "red"}.get(decision, "white")
+        cprint(t("cli.messages.task_completion_review_result",
+                 decision=decision), decision_color, bold=True)
+        print(t("cli.messages.task_completion_review_task", task_id=opts.task_id))
+        if opts.step_id:
+            print(t("cli.messages.task_completion_review_step", step_id=opts.step_id))
+        summary = result.get("summary", "")
+        if summary:
+            print(t("cli.messages.task_completion_review_summary", summary=summary))
+        if counts:
+            print(t("cli.messages.task_completion_review_counts",
+                    total=counts.get("total", 0),
+                    info=counts.get("info", 0),
+                    warn=counts.get("warn", 0),
+                    error=counts.get("error", 0),
+                    block=counts.get("block", 0)))
+        findings = result.get("findings", [])
+        if findings:
+            print()
+            print(t("cli.messages.task_completion_review_findings_title", count=len(findings)))
+            for i, f in enumerate(findings, 1):
+                sev = f.get("severity", "?")
+                msg = f.get("message", "")
+                print(t("cli.messages.task_completion_review_finding_item",
+                        idx=i, severity=sev, message=msg))
+        print()
+        return True
+
+    elif opts.action == "split":
+        # 从 Markdown 计划拆分父子任务树（C9 新增）
+        plan_path = opts.plan
+        if not os.path.exists(plan_path):
+            cprint(t("cli.messages.task_split_plan_not_found",
+                     path=plan_path), "red")
+            print()
+            return True
+        with open(plan_path, encoding="utf-8") as f:
+            plan_md = f.read()
+        # 验证任务存在
+        cur = db.conn.execute("SELECT title FROM tasks WHERE id = ?", (opts.task_id,))
+        task_row = cur.fetchone()
+        if not task_row:
+            cprint(t("cli.messages.task_not_found", default="Task not found"), "red")
+            print()
+            return True
+        # 解析 Markdown 计划为子任务定义
+        subtasks = _parse_plan_to_subtasks(plan_md)
+        if not subtasks:
+            cprint(t("cli.messages.task_split_no_subtasks",
+                     default="No subtasks found in plan"), "yellow")
+            print()
+            return True
+        sub_ids = db.task_split(opts.task_id, subtasks)
+        cprint(t("cli.messages.task_split_success",
+                 task_id=opts.task_id, count=len(sub_ids)), "green", bold=True)
+        for i, sid in enumerate(sub_ids):
+            title = subtasks[i].get("title", "")
+            print(t("cli.messages.task_split_subtask_item",
+                    idx=i + 1, id=sid, title=title))
+        print()
+        return True
+
+    elif opts.action == "status-tree":
+        # 以树形显示任务状态（C9 新增，task show --tree 的别名）
+        return _print_task_show(db, opts.task_id, flat=False)
+
     return True
+
+
+def _parse_plan_to_subtasks(plan_md: str):
+    """从 Markdown 计划解析子任务定义列表（C9 新增，供 task split 使用）
+
+    解析格式（与 task_create_from_plan 兼容）：
+    - ## 标题 = 子任务标题
+    - ## 标题下的描述行 = 子任务描述
+    - - / * / + 开头的列表项 = 步骤（action @ target_file 格式）
+
+    Args:
+        plan_md: Markdown 格式的计划文本
+
+    Returns:
+        子任务定义列表 [{title, description, steps}]
+    """
+    import re
+
+    re_h2 = re.compile(r'^##\s+(.+?)\s*#*\s*$')
+    re_list = re.compile(r'^[-*+]\s+(.+)$')
+
+    lines = plan_md.strip().split("\n")
+    subtasks = []
+    current_title = None
+    current_desc_lines = []
+    current_steps = []
+    in_code_block = False
+
+    for line in lines:
+        stripped = line.strip()
+
+        # 代码块围栏检测
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+
+        # 二级标题 = 新子任务
+        m_h2 = re_h2.match(stripped)
+        if m_h2:
+            # 保存前一个子任务
+            if current_title:
+                subtasks.append({
+                    "title": current_title,
+                    "description": "\n".join(current_desc_lines).strip(),
+                    "steps": current_steps,
+                })
+            current_title = m_h2.group(1)
+            current_desc_lines = []
+            current_steps = []
+            continue
+
+        # 列表项 = 步骤
+        m_list = re_list.match(stripped)
+        if m_list and current_title:
+            content = m_list.group(1)
+            # 解析 "action @ target_file" 或 "action: target_file" 格式
+            action = "edit"
+            target_file = ""
+            if "@" in content:
+                parts = content.split("@", 1)
+                action = parts[0].strip()
+                target_file = parts[1].strip()
+            elif ":" in content:
+                parts = content.split(":", 1)
+                action = parts[0].strip()
+                target_file = parts[1].strip()
+            else:
+                action = content.strip()
+            current_steps.append({
+                "action": action,
+                "target_file": target_file,
+                "check_items": "",
+            })
+            continue
+
+        # 普通行 = 描述
+        if stripped and current_title:
+            # H2 已在上方处理，此处跳过其余以 # 开头的标题行（H1/H3/H4...）
+            # 避免 #标题 / ###标题 等被当作描述行
+            if stripped.startswith("#"):
+                continue
+            current_desc_lines.append(stripped)
+
+    # 保存最后一个子任务
+    if current_title:
+        subtasks.append({
+            "title": current_title,
+            "description": "\n".join(current_desc_lines).strip(),
+            "steps": current_steps,
+        })
+
+    return subtasks
 
 
 def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
