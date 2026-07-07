@@ -257,6 +257,7 @@ _MAIN_HELP_GROUPS = [
         ("task rollback <TASK_ID> <STEP_ID>", "cli.messages.help_task_rollback"),
         ("task apply <TASK_ID>", "cli.messages.help_task_apply"),
         ("task close <TASK_ID>", "cli.messages.help_task_close"),
+        ("task reopen <TASK_ID>", "cli.messages.help_task_reopen"),
         ("task list [--blocked]", "cli.messages.help_task_list"),
         ("task show <TASK_ID>", "cli.messages.help_task_show"),
         ("task findings <TASK_ID>", "cli.messages.help_task_findings"),
@@ -2624,6 +2625,21 @@ def _handle_task(args, db):
         help=t("cli_task_arg_reviewer", default="Reviewer identity")
     )
 
+    # reopen：重新打开任务（review/applied/closed -> in_progress），用于 code review 发现问题或挂新子任务
+    reopen_p = sub.add_parser(
+        "reopen",
+        help=t("cli_task_reopen_desc", default="Reopen task (review/applied/closed -> in_progress)"),
+    )
+    reopen_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    reopen_p.add_argument(
+        "--reviewer", default="reviewer",
+        help=t("cli_task_arg_reviewer", default="Reviewer identity")
+    )
+    reopen_p.add_argument(
+        "--reason", default="",
+        help=t("cli_task_arg_reopen_reason", default="Reason for reopening (optional)")
+    )
+
     # capture-diff：捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
     capture_p = sub.add_parser(
         "capture-diff",
@@ -2923,6 +2939,30 @@ def _handle_task(args, db):
         print(t("cli.messages.task_status_label", status=result["status"]))
         if result.get("closed_at"):
             print(t("cli.messages.task_closed_at", ts=result["closed_at"]))
+        print()
+        return True
+
+    elif opts.action == "reopen":
+        # 重新打开任务：review/applied/closed -> in_progress
+        # 用于 code review 发现已 applied/closed 的任务有问题，需要修复
+        result = db.task_reopen(
+            opts.task_id, reviewer=opts.reviewer, reason=opts.reason
+        )
+        if "error" in result:
+            cprint(t("cli.messages.task_reopen_failed", error=result["error"]), "red")
+            print()
+            return True
+        cprint(
+            t("cli.messages.task_reopen_success",
+              id=result["task_id"],
+              previous=result["previous_status"]),
+            "green", bold=True,
+        )
+        print(t("cli.messages.task_status_label", status=result["status"]))
+        if result.get("reopened_at"):
+            print(t("cli.messages.task_reopened_at", ts=result["reopened_at"]))
+        if opts.reason:
+            print(t("cli.messages.task_reopen_reason_label", reason=opts.reason))
         print()
         return True
 
