@@ -1285,9 +1285,12 @@ def _handle_install_hook(args, db):
     """处理 install-hook 子命令：安装或卸载 Git hook
 
     用法：
-        cw install-hook post-commit                    # 安装（从环境变量读取 task_id）
+        cw install-hook post-commit                    # 安装（--auto 模式，自动检测 in_progress 任务）
         cw install-hook post-commit --task-id T-xxx    # 安装（硬编码 task_id）
         cw install-hook post-commit --uninstall        # 卸载
+
+    注意：`cw install --hooks` 已默认包含 post-commit（--auto 模式），
+    通常无需单独执行此命令。此接口保留用于单独卸载或硬编码 task_id 场景。
     """
     parser = argparse.ArgumentParser(
         prog="cw install-hook",
@@ -1308,7 +1311,7 @@ def _handle_install_hook(args, db):
         "--task-id", default="",
         help=t(
             "cli.messages.install_hook_arg_task_id",
-            default="Task ID to hardcode in hook (empty = read from CALLWARDEN_TASK_ID env var)",
+            default="Task ID to hardcode in hook (empty = --auto mode, auto-detect in_progress task via active_task)",
         ),
     )
     parser.add_argument(

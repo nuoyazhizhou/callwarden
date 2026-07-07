@@ -226,12 +226,25 @@ class CallWardenInstaller:
 
         print(t("cli.messages.install_check_hint"))
 
-    def install_hooks(self, force: bool = False) -> None:
-        """安装 Git hooks 到当前仓库。
+    def install_hooks(
+        self,
+        force: bool = False,
+        with_post_commit: bool = True,
+    ) -> None:
+        """安装 Git hooks 到当前仓库（统一入口：pre-commit + pre-push + post-commit）
 
-        pre-commit 在提交前刷新图谱；pre-push 在提供 CALLWARDEN_TASK_ID
-        时运行检查门禁。若目标 hook 已存在且不是 Call Warden 生成的，
-        默认拒绝覆盖，避免破坏用户自定义流程。
+        三种 hook 的职责：
+        - pre-commit：提交前刷新代码图谱（确保数据库与代码同步）
+        - pre-push：推送前运行 check-gate 门禁（需设置 CALLWARDEN_TASK_ID）
+        - post-commit：提交后自动捕获变更到 task/audit 闭环（--auto 模式，开箱即用）
+
+        Args:
+            force: 若目标 hook 已存在但不是 Call Warden 生成的，True=强制覆盖
+            with_post_commit: 是否安装 post-commit hook（默认 True）。
+                设为 False 可跳过 post-commit（如用户已有自定义 post-commit 流程）。
+
+        若目标 hook 已存在且不是 Call Warden 生成的，默认拒绝覆盖，
+        避免破坏用户自定义流程。
         """
         git_dir = self._find_git_dir(os.getcwd())
         if not git_dir:
@@ -244,6 +257,9 @@ class CallWardenInstaller:
             "pre-commit": self._pre_commit_hook(),
             "pre-push": self._pre_push_hook(),
         }
+        if with_post_commit:
+            # post-commit 使用 --auto 模式（task_id=""），无需环境变量
+            hook_defs["post-commit"] = self._post_commit_hook(task_id="")
 
         installed = 0
         skipped = 0
@@ -372,11 +388,18 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
         """安装或卸载 post-commit hook
 
         Args:
-            task_id: 指定的任务 ID（为空时从环境变量读取）
+            task_id: 指定的任务 ID。为空时使用 --auto 模式自动检测
+                in_progress 状态的任务（基于 active_task 持久化字段，无需
+                手动 export CALLWARDEN_TASK_ID 环境变量）。
             uninstall: True=卸载 hook，False=安装 hook
 
         Returns:
             True=操作成功，False=操作失败（如 git 目录不存在）
+
+        注意：
+            `cw install --hooks` 已默认包含 post-commit（--auto 模式），
+            无需单独执行此命令。此接口保留用于单独卸载 post-commit 或
+            安装硬编码 task_id 的 post-commit（如 CI 流水线场景）。
         """
         git_dir = self._find_git_dir(os.getcwd())
         if not git_dir:
@@ -434,8 +457,8 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
                 ))
             else:
                 print(t(
-                    "cli.messages.install_hook_task_id_envvar",
-                    default="  task_id from CALLWARDEN_TASK_ID env var",
+                    "cli.messages.install_hook_task_id_auto",
+                    default="  task_id auto-detected via active_task (--auto mode)",
                 ))
             return True
         else:
@@ -581,9 +604,11 @@ def main():
     parser.add_argument("--check", action="store_true",
                         help=t("cli.args.install_check"))
     parser.add_argument("--hooks", action="store_true",
-                        help=t("cli.args.install_hooks", default="Install Call Warden Git hooks into .git/hooks"))
+                        help=t("cli.args.install_hooks"))
     parser.add_argument("--force-hooks", action="store_true",
-                        help=t("cli.args.install_force_hooks", default="Overwrite existing Call Warden hooks"))
+                        help=t("cli.args.install_force_hooks"))
+    parser.add_argument("--no-post-commit", action="store_true",
+                        help=t("cli.args.install_no_post_commit"))
     parser.add_argument("--no-optional", action="store_true",
                         help=t("cli.args.install_no_optional"))
     parser.add_argument("--verbose", action="store_true",
@@ -598,7 +623,10 @@ def main():
         return
 
     if args.hooks:
-        installer.install_hooks(force=args.force_hooks)
+        installer.install_hooks(
+            force=args.force_hooks,
+            with_post_commit=not args.no_post_commit,
+        )
         return
 
     if args.lang:

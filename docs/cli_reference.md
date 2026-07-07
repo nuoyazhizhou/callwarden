@@ -217,6 +217,9 @@ cw install --check
 | `--all` | 安装全部依赖（含可选依赖：semgrep / sentence-transformers / sqlite-vec / numpy） |
 | `--lang <LANG...>` | 仅安装指定语言的 grammar（空格分隔多个语言名） |
 | `--check` | 仅检查依赖状态，不安装 |
+| `--hooks` | 安装 Git hooks 到 `.git/hooks`（pre-commit + pre-push + post-commit 三种） |
+| `--force-hooks` | 强制覆盖已存在的非 Call Warden hooks |
+| `--no-post-commit` | 跳过安装 post-commit hook（仅装 pre-commit + pre-push） |
 | `--no-optional` | 显式跳过可选依赖（默认行为） |
 | `--verbose` | 显示详细安装日志（pip 输出） |
 
@@ -235,11 +238,65 @@ cw install --check
 3. **状态可见**：每个包安装前后打印状态（已安装 / 安装中 / 成功 / 失败）
 4. **幂等**：重复运行不会出错，已安装的包会跳过
 
-### `install-hook`：安装 Git Hook（task_capture_diff 闭环）
+### `install --hooks`：统一安装 Git Hooks（推荐）
 
-Call Warden 提供独立的 Git Hook 安装命令，安装 post-commit hook 让 Agent 在 commit 后自动捕获文件变更到 task/audit 闭环。
+**调用方式**：`cw install --hooks [options]`
+
+一条命令装齐三种 Git hook，开箱即用：
+
+```bash
+cw install --hooks
+# 已安装：pre-commit + pre-push + post-commit
+```
+
+#### 三种 hook 的职责
+
+| Hook | 触发时机 | 作用 | 依赖 |
+|------|---------|------|------|
+| `pre-commit` | `git commit` 前 | 刷新代码图谱（`cw --refresh-all`），确保数据库与代码同步 | 无 |
+| `pre-push` | `git push` 前 | 运行 check-gate 门禁（需 `export CALLWARDEN_TASK_ID=<T-xxx>`） | 可选（未设置则跳过） |
+| `post-commit` | `git commit` 后 | 自动捕获变更到 task/audit 闭环（`cw task capture-diff --auto`） | active_task 持久化字段（Schema v30+，无需环境变量） |
+
+#### --auto 模式说明
+
+`post-commit` hook 默认使用 `--auto` 模式：
+- 通过 `workspaces.active_task_id` 字段自动检测当前 `in_progress` 状态的任务（P1 引入，替代 `CALLWARDEN_TASK_ID` 环境变量）
+- `task_next_step` 进入 `in_progress` 时自动写入 `active_task_id`
+- `task_close` 时自动清除
+- fail-soft：没有 in_progress 任务 / 数据库锁 / 异常时静默跳过，不影响 commit
+
+#### 跳过 post-commit
+
+如已有自定义 post-commit 流程，可跳过：
+
+```bash
+cw install --hooks --no-post-commit
+# 仅安装 pre-commit + pre-push
+```
+
+#### 强制覆盖
+
+```bash
+cw install --hooks --force-hooks
+# 强制覆盖已存在的非 Call Warden hooks
+```
+
+#### 幂等性
+
+- 重复运行 `cw install --hooks` 不报错，已安装的 hook 会覆盖更新
+- 非 Call Warden 生成的 hook（无 marker）默认保留，需 `--force-hooks` 才覆盖
+
+---
+
+### `install-hook`：单独管理单个 Git Hook
+
+Call Warden 也提供独立的 Git Hook 安装命令，用于单独安装/卸载 `post-commit` hook。
 
 **调用方式**：`cw install-hook post-commit [options]`
+
+> **注意**：`cw install --hooks` 已默认包含 post-commit（--auto 模式），
+> 通常无需单独执行此命令。此接口保留用于单独卸载 post-commit 或
+> 安装硬编码 task_id 的 post-commit（如 CI 流水线场景）。
 
 #### 安装（--auto 模式，推荐）
 
