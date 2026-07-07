@@ -76,31 +76,39 @@ class CheckGateMixin:
                 continue
 
             # 检查 1: 语法检查（tree-sitter re-parse）
-            if hasattr(self, "create_parser"):
-                try:
-                    parser = self.create_parser(abs_path)
-                    if parser:
-                        result = parser.parse_file(abs_path) if hasattr(parser, "parse_file") else {}
-                        if result.get("parse_error"):
-                            findings.append(
-                                self._standardize_finding(
-                                    check="syntax",
-                                    file_path=fp,
-                                    severity="ERROR",
-                                    message=f"语法错误: {result['parse_error']}",
-                                )
+            # 优先用 db.create_parser（允许测试注入 mock），否则回退到模块级函数。
+            # 原实现 hasattr(self, "create_parser") 永远为 False（create_parser 是
+            # callwarden.parsers 模块函数而非 db 方法），导致 syntax 检查从未运行。
+            # 修复：先检查 db 属性（向后兼容 mock 注入），无则 import 模块级函数。
+            try:
+                _parser = None
+                if hasattr(self, "create_parser"):
+                    _parser = self.create_parser(abs_path)
+                else:
+                    from ..parsers import create_parser as _create_parser
+                    _parser = _create_parser(abs_path)
+                if _parser:
+                    result = _parser.parse_file(abs_path) if hasattr(_parser, "parse_file") else {}
+                    if result.get("parse_error"):
+                        findings.append(
+                            self._standardize_finding(
+                                check="syntax",
+                                file_path=fp,
+                                severity="ERROR",
+                                message=f"语法错误: {result['parse_error']}",
                             )
-                        checks_run.append("syntax")
-                except Exception as e:
-                    findings.append(
-                        self._standardize_finding(
-                            check="syntax",
-                            file_path=fp,
-                            severity="WARNING",
-                            message=f"语法检查异常: {e}",
                         )
-                    )
                     checks_run.append("syntax")
+            except Exception as e:
+                findings.append(
+                    self._standardize_finding(
+                        check="syntax",
+                        file_path=fp,
+                        severity="WARNING",
+                        message=f"语法检查异常: {e}",
+                    )
+                )
+                checks_run.append("syntax")
 
             # 检查 2: Semgrep 增量扫描
             if hasattr(self, "run_semgrep"):
