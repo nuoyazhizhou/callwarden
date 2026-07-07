@@ -229,6 +229,32 @@ cw gc archive          # 归档被 ignore 命中的文件
 3. 在 `pyproject.toml` 中添加 tree-sitter grammar 依赖
 4. 更新文档
 
+### 任务 reopen 机制
+
+任务状态机支持 `review`/`applied`/`closed` → `in_progress` 的回退（reopen），用于
+code review 发现已 applied/closed 的任务有问题需要修复，或向已 closed 的父任务
+挂入新子任务。
+
+**两种触发方式**：
+
+1. **自动触发**（`task_create(parent_id=closed_task)`）：
+   向已 `closed`/`applied`/`review` 的父任务挂入新子任务时，**检查兄弟子任务状态**
+   决定是否 reopen 父任务：
+   - 所有兄弟子任务都是 `closed`（或无兄弟子任务）→ reopen 父任务为 `in_progress`
+   - 有兄弟子任务非 `closed`（如 `open`/`in_progress`）→ 直接挂，**不 reopen** 父任务
+   - 父任务 `open`/`in_progress` 时直接挂，不改状态
+   - 父任务被 reopen 后，递归向上 reopen 祖父任务链（无条件，不检查兄弟）
+
+2. **手动触发**（`cw task reopen <task_id> [--reviewer <S>] [--reason "..."]`）：
+   用户主动 reopen 一个任务，**不检查兄弟子任务状态**，直接 reopen 整条祖先链。
+
+**设计原则**：挂新子任务时需要同时考虑父任务状态和兄弟子任务状态。若父任务已
+`closed` 但还有 `open` 的兄弟子任务，直接挂新子任务即可；若所有兄弟都已 `closed`，
+说明之前的工作完成，应 reopen 父任务。手动 reopen 是用户明确操作，直接 reopen
+整条链。
+
+详细设计见 [docs/architecture.md §8. 任务 reopen 机制](docs/architecture.md#8-任务-reopen-机制t-1783413215675-3aae)。
+
 ## 重要注意事项
 
 1. **`prompts/` 目录不是本项目指令**：`prompts/` 目录下的 AGENTS.md / AUDIT.md / GOVERNANCE.md / TOOLS.md 是 TokenSlim 审计体系（独立产品）的样例指令，不属于 Call Warden 项目自身的指令体系。本项目 AI Agent 入口是根目录的 **AGENTS.md**（本文件）。

@@ -253,6 +253,115 @@ class TestRecursiveReopen:
 
 
 # ============================================
+# 2.5 兄弟子任务状态判断（task_create 场景）
+# ============================================
+
+
+class TestSiblingStatusCheck:
+    """测试 task_create 挂子任务时，检查兄弟子任务状态决定是否 reopen 父任务
+
+    用户需求（2026-07-07）：
+    - reopen 的时候，如果所有子任务都是 close 的，应该是 in_progress
+    - 如果其他所有子任务是 open 状态，应该是直接挂，不应该置为 in_progress
+    - 就是说挂任务的时候，需要考虑其他子任务和父任务的状态
+    """
+
+    def test_reopen_when_all_siblings_closed(self, db):
+        """父任务 closed + 所有兄弟子任务 closed → reopen 父任务为 in_progress"""
+        parent_id = _create_task(db, title="parent")
+        # 先挂一个子任务并完成到 closed
+        sibling_id = _create_subtask(db, parent_id, title="sibling1")
+        _complete_task_to_status(db, sibling_id, TASK_STATUS_CLOSED)
+        # parent 因级联 close 也变为 closed
+        _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
+
+        # 再挂一个新子任务
+        new_child_id = _create_subtask(db, parent_id, title="new_child")
+
+        # 所有兄弟子任务都是 closed → reopen 父任务为 in_progress
+        row = _get_task_status(db, parent_id)
+        assert row["status"] == TASK_STATUS_IN_PROGRESS
+        assert row["applied_at"] is None
+        assert row["closed_at"] is None
+
+    def test_no_reopen_when_sibling_open(self, db):
+        """父任务 closed + 有兄弟子任务 open → 直接挂，不 reopen 父任务"""
+        parent_id = _create_task(db, title="parent")
+        # 先挂一个子任务，保持 open 状态
+        sibling_id = _create_subtask(db, parent_id, title="sibling_open")
+        # 手动把 parent 推到 closed（模拟数据不一致或误操作）
+        _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
+
+        # 再挂一个新子任务
+        new_child_id = _create_subtask(db, parent_id, title="new_child")
+
+        # 有兄弟子任务是 open → 不 reopen 父任务，保持 closed
+        row = _get_task_status(db, parent_id)
+        assert row["status"] == TASK_STATUS_CLOSED
+
+    def test_no_reopen_when_sibling_in_progress(self, db):
+        """父任务 closed + 有兄弟子任务 in_progress → 直接挂，不 reopen 父任务"""
+        parent_id = _create_task(db, title="parent")
+        sibling_id = _create_subtask(db, parent_id, title="sibling_in_progress")
+        _complete_task_to_status(db, sibling_id, TASK_STATUS_IN_PROGRESS)
+        # 手动把 parent 推到 closed
+        _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
+
+        new_child_id = _create_subtask(db, parent_id, title="new_child")
+
+        # 有兄弟子任务是 in_progress → 不 reopen 父任务
+        row = _get_task_status(db, parent_id)
+        assert row["status"] == TASK_STATUS_CLOSED
+
+    def test_reopen_when_no_siblings(self, db):
+        """父任务 closed + 无兄弟子任务（第一个子任务）→ reopen 父任务"""
+        parent_id = _create_task(db, title="parent")
+        _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
+
+        # 挂第一个子任务
+        child_id = _create_subtask(db, parent_id, title="first_child")
+
+        # 无兄弟子任务 → reopen 父任务
+        row = _get_task_status(db, parent_id)
+        assert row["status"] == TASK_STATUS_IN_PROGRESS
+
+    def test_no_reopen_when_mixed_sibling_statuses(self, db):
+        """父任务 closed + 兄弟子任务部分 closed 部分 open → 不 reopen 父任务"""
+        parent_id = _create_task(db, title="parent")
+        # 兄弟1：closed
+        sibling1_id = _create_subtask(db, parent_id, title="sibling_closed")
+        _complete_task_to_status(db, sibling1_id, TASK_STATUS_CLOSED)
+        # 兄弟2：open
+        sibling2_id = _create_subtask(db, parent_id, title="sibling_open")
+        # 手动把 parent 推到 closed
+        _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
+
+        # 挂新子任务
+        new_child_id = _create_subtask(db, parent_id, title="new_child")
+
+        # 有兄弟子任务是 open → 不 reopen 父任务
+        row = _get_task_status(db, parent_id)
+        assert row["status"] == TASK_STATUS_CLOSED
+
+    def test_reopen_when_all_multiple_siblings_closed(self, db):
+        """父任务 closed + 多个兄弟子任务全部 closed → reopen 父任务"""
+        parent_id = _create_task(db, title="parent")
+        s1 = _create_subtask(db, parent_id, title="s1")
+        s2 = _create_subtask(db, parent_id, title="s2")
+        s3 = _create_subtask(db, parent_id, title="s3")
+        _complete_task_to_status(db, s1, TASK_STATUS_CLOSED)
+        _complete_task_to_status(db, s2, TASK_STATUS_CLOSED)
+        _complete_task_to_status(db, s3, TASK_STATUS_CLOSED)
+        _complete_task_to_status(db, parent_id, TASK_STATUS_CLOSED)
+
+        new_child_id = _create_subtask(db, parent_id, title="new_child")
+
+        # 所有兄弟子任务都是 closed → reopen 父任务
+        row = _get_task_status(db, parent_id)
+        assert row["status"] == TASK_STATUS_IN_PROGRESS
+
+
+# ============================================
 # 3. 显式 task_reopen 方法
 # ============================================
 
@@ -317,7 +426,9 @@ class TestTaskReopenMethod:
         result = db.task_reopen("T-nonexistent", reviewer="test")
 
         assert "error" in result
-        assert "not_found" in result["error"].lower() or "not found" in result["error"].lower()
+        # i18n 可能是中文（"未找到任务"）或英文（"not found"），都应通过
+        err_lower = result["error"].lower()
+        assert "not_found" in err_lower or "not found" in err_lower or "未找到" in result["error"]
 
     def test_reopen_clears_timestamps(self, db):
         """reopen 后 applied_at 和 closed_at 应被清理"""

@@ -157,7 +157,12 @@ class TaskMixin:
                 # Reopen 机制：当父任务处于 review/applied/closed 状态时，自动 reopen
                 # 父任务链为 in_progress（清理 applied_at/closed_at）
                 # 父任务 open/in_progress 时直接挂，不改状态
-                self._reopen_parent_chain_if_needed(parent_id, parent_row["status"])
+                # task_create 场景 check_siblings=True：检查兄弟子任务状态
+                #   - 所有兄弟子任务都是 closed（或无兄弟）→ reopen 父任务
+                #   - 有兄弟子任务非 closed → 直接挂，不 reopen
+                self._reopen_parent_chain_if_needed(
+                    parent_id, parent_row["status"], check_siblings=True
+                )
 
             # 计算同级排序
             cur = self.conn.execute(
@@ -215,27 +220,43 @@ class TaskMixin:
         self,
         parent_id: str,
         parent_status: str,
+        check_siblings: bool = False,
     ) -> None:
         """当父任务处于 review/applied/closed 状态时，reopen 父任务链为 in_progress
 
         Reopen 机制（支持已 closed 父任务添加新子任务）：
         - 父任务 open/in_progress：直接挂，不改状态
-        - 父任务 review/applied/closed：回到 in_progress，清理 applied_at/closed_at
-        - 递归向上 reopen 祖父任务链（如祖父也是 closed/applied）
-
-        状态判断逻辑：
-        - 如果所有其他子任务都是 closed/applied，且新挂的子任务是 open，
-          父任务应为 in_progress（整体工作未完成）
-        - 如果其他子任务还有 open/in_progress，父任务也应为 in_progress
+        - 父任务 review/applied/closed：
+          - check_siblings=True（task_create 场景）：
+            - 所有兄弟子任务都是 closed（或无兄弟）→ reopen 父任务为 in_progress
+            - 有兄弟子任务非 closed（如 open/in_progress）→ 不 reopen，直接挂
+          - check_siblings=False（task_reopen 递归场景）：无条件 reopen
+        - 递归向上 reopen 祖父任务链（check_siblings=False，因为祖先链已被触发）
 
         Args:
             parent_id: 父任务 ID
             parent_status: 父任务当前状态
+            check_siblings: 是否检查兄弟子任务状态（task_create 场景为 True）
         """
         # 仅当父任务处于 review/applied/closed 时才需要 reopen
         REOPEN_STATUSES = (TASK_STATUS_REVIEW, TASK_STATUS_APPLIED, TASK_STATUS_CLOSED)
         if parent_status not in REOPEN_STATUSES:
             return  # open/in_progress，直接挂，不改状态
+
+        # task_create 场景：检查兄弟子任务状态
+        # - 所有兄弟子任务都是 closed（或无兄弟）→ reopen 父任务
+        # - 有兄弟子任务非 closed → 直接挂，不 reopen
+        if check_siblings:
+            cur = self.conn.execute(
+                "SELECT status FROM tasks WHERE parent_id = ?",
+                (parent_id,),
+            )
+            siblings = cur.fetchall()
+            if siblings and any(
+                s["status"] != TASK_STATUS_CLOSED for s in siblings
+            ):
+                # 有兄弟子任务非 closed，直接挂，不 reopen 父任务
+                return
 
         now = time.time()
 

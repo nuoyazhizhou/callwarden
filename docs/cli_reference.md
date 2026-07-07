@@ -688,6 +688,47 @@ cw task close <task_id> [--reviewer <identity>]
 `reason=parent_task_must_cascade` 和 `subtask_count` 字段，提示由级联触发。
 父任务的 close 由系统在最后一个子任务 apply 时自动级联完成。
 
+### `task reopen`：重新打开任务
+
+```bash
+cw task reopen <task_id> [--reviewer <identity>] [--reason "<原因>"]
+```
+
+将任务状态从 `review`/`applied`/`closed` 回退到 `in_progress`，清理
+`applied_at`/`closed_at` 时间戳。用于 code review 发现已 applied/closed 的任务
+有问题需要修复，或向已 closed 的父任务挂入新子任务。
+
+**状态判断逻辑**：
+- `review`/`applied`/`closed` → `in_progress`（清理时间戳，记录 audit_chain）
+- `open`/`in_progress` → 返回 `no need to reopen` 错误（任务仍在工作中）
+
+**递归 reopen 祖父链**：reopen 当前任务后，自动检查祖父任务状态。若祖父也是
+`applied`/`closed`，递归 reopen 为 `in_progress`，确保整条任务链回到工作状态。
+
+**自动触发场景**（`task_create(parent_id=closed_task)`）：
+- 向已 `closed`/`applied`/`review` 状态的父任务挂入新子任务时，**检查兄弟子任务状态**
+  决定是否 reopen 父任务：
+  - 所有兄弟子任务都是 `closed`（或无兄弟子任务）→ reopen 父任务为 `in_progress`
+  - 有兄弟子任务非 `closed`（如 `open`/`in_progress`）→ 直接挂，**不 reopen** 父任务
+  （因为父任务下还有工作在进行中，不需要重新激活）
+- 父任务 `open`/`in_progress` 时直接挂，不改状态
+- 父任务被 reopen 后，递归向上检查祖父任务时**不再检查兄弟**（祖先链已被触发，
+  无条件 reopen），确保整条链回到工作状态
+
+> **设计理由**：挂新子任务时需要同时考虑父任务状态和兄弟子任务状态。若父任务已
+> `closed` 但还有 `open` 的兄弟子任务（数据不一致或误操作），直接挂新子任务即可，
+> 不自动改父任务状态；若所有兄弟都已 `closed`，说明之前的工作完成，新子任务表示新
+> 需求来了，应 reopen 父任务。
+
+**手动触发场景**（`cw task reopen`）：
+- code review agent 发现 `applied`/`closed` 任务有回归问题
+- 任务被误 close，需要重新打开
+- 已 `review` 的任务发现问题需要退回修复
+- 手动 reopen 时**不检查兄弟子任务状态**（用户明确要 reopen，直接 reopen 整条链）
+
+**i18n key**：`task_reopen_failed`/`task_reopen_success`/`task_reopen_no_need`/
+`task_reopened_at`/`task_reopen_reason_label`。
+
 ### `task findings`：查看任务质量门禁发现
 
 ```bash

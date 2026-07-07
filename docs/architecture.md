@@ -646,6 +646,43 @@ Agent 每次编辑文件都记录完整审计：
 设计原则：写代码的 Agent 不能自己 apply/close，必须由其他会话的 LLM 审核执行。
 详细设计见 [docs/design/task-state-machine.md](design/task-state-machine.md)。
 
+### 8. 任务 reopen 机制（T-1783413215675-3aae）
+
+任务状态机支持 `review`/`applied`/`closed` → `in_progress` 的回退（reopen），
+用于 code review 发现已 applied/closed 的任务有问题需要修复，
+或向已 closed 的父任务挂入新子任务。
+
+**状态转换**：
+- `review`/`applied`/`closed` → `in_progress`（清理 `applied_at`/`closed_at` 时间戳）
+- `open`/`in_progress` → 不变（无需 reopen）
+- 在 `audit_chain` 中记录 reopen 事件（fail-soft，签名失败不阻断）
+
+**两种触发方式**：
+
+1. **自动触发**（`task_create(parent_id=closed_task)`）：
+   向已 `closed`/`applied`/`review` 的父任务挂入新子任务时，`_reopen_parent_chain_if_needed`
+   检查父任务状态和兄弟子任务状态：
+   - 父任务 `open`/`in_progress` → 直接挂，不改状态
+   - 父任务 `closed`/`applied`/`review` + **检查兄弟子任务状态**（`check_siblings=True`）：
+     - 所有兄弟子任务都是 `closed`（或无兄弟）→ reopen 父任务为 `in_progress`
+     - 有兄弟子任务非 `closed`（如 `open`/`in_progress`）→ 直接挂，不 reopen
+       （父任务下还有工作在进行中，不需要重新激活）
+   - 父任务被 reopen 后，递归向上检查祖父任务（`check_siblings=False`，无条件 reopen），
+     确保整条链回到工作状态
+
+2. **手动触发**（`cw task reopen <task_id>`）：
+   用户主动 reopen 一个任务，**不检查兄弟子任务状态**，直接 reopen 整条祖先链。
+   递归向上时同样用 `check_siblings=False`（无条件 reopen）。
+
+**设计理由**：挂新子任务时需要同时考虑父任务状态和兄弟子任务状态。若父任务已
+`closed` 但还有 `open` 的兄弟子任务（数据不一致或误操作），直接挂新子任务即可，
+不自动改父任务状态；若所有兄弟都已 `closed`，说明之前的工作完成，新子任务表示新
+需求来了，应 reopen 父任务。手动 reopen 是用户明确操作，直接 reopen 整条链。
+
+**CLI 命令**：`cw task reopen <task_id> [--reviewer <identity>] [--reason "<原因>"]`
+**MCP 工具**：`task_reopen(task_id, reviewer, reason)`
+**实现**：`db/db_tasks.py` 的 `_reopen_parent_chain_if_needed()` 和 `task_reopen()` 方法
+
 ## 性能优化
 
 ### 1. PyO3 加速（rust_ext/）
