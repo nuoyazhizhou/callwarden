@@ -627,6 +627,11 @@ cw task next <task_id>
 - `guardrail_alert`（block）：步骤被阻塞，需先处理告警
 - `guardrail_warning`（warn）：可执行，但需关注告警
 
+**active_task 持久化**（v30 新增）：`task next` 成功后自动将 `task_id` 写入
+当前 workspace 的 `active_task_id` 字段，替代 `CALLWARDEN_TASK_ID` 环境变量。
+后续 `cw task capture-diff --auto` 会优先从该字段读取 task_id，无需手动 export。
+连续 claim 多个任务时后者覆盖前者。
+
 ### `task report`：回报结果
 
 ```bash
@@ -691,6 +696,10 @@ cw task close <task_id> [--reviewer <identity>]
 `reason=parent_task_must_cascade` 和 `subtask_count` 字段，提示由级联触发。
 父任务的 close 由系统在最后一个子任务 apply 时自动级联完成。
 
+**active_task 清除**（v30 新增）：`task close` 成功后自动清除当前 workspace
+的 `active_task_id`（防御性：仅当 `active_task == task_id` 时才清除，避免误清除
+后续已 claim 的新任务）。
+
 ### `task reopen`：重新打开任务
 
 ```bash
@@ -700,6 +709,9 @@ cw task reopen <task_id> [--reviewer <identity>] [--reason "<原因>"]
 将任务状态从 `review`/`applied`/`closed` 回退到 `in_progress`，清理
 `applied_at`/`closed_at` 时间戳。用于 code review 发现已 applied/closed 的任务
 有问题需要修复，或向已 closed 的父任务挂入新子任务。
+
+**active_task 设置**（v30 新增）：`task reopen` 成功后自动将 `task_id` 写入
+`active_task_id`（用户显式 reopen 表示要重新开始干这个任务）。
 
 **状态判断逻辑**：
 - `review`/`applied`/`closed` → `in_progress`（清理时间戳，记录 audit_chain）

@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
     root_path TEXT UNIQUE NOT NULL,
     created_at REAL NOT NULL,
     is_active INTEGER DEFAULT 0,
-    description TEXT DEFAULT ''
+    description TEXT DEFAULT '',
+    active_task_id TEXT DEFAULT ''
 );
 
 -- 文件内容表：按 content_hash 唯一存储，相同内容只存一次（hash 为主）
@@ -185,6 +186,7 @@ CREATE TABLE IF NOT EXISTS semgrep_scans (
 
 -- 索引
 CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active);
+CREATE INDEX IF NOT EXISTS idx_workspaces_active_task ON workspaces(active_task_id);
 CREATE INDEX IF NOT EXISTS idx_file_contents_lang ON file_contents(language);
 CREATE INDEX IF NOT EXISTS idx_file_instances_workspace ON file_instances(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_file_instances_hash ON file_instances(current_content_hash);
@@ -897,7 +899,8 @@ ON clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type);
 # v27: 重复代码对表（clone_pairs，记录 Type-1/2/3 克隆检测结果，支持重构决策）
 # v28: file_versions 表新增 ast_cache 字段（BLOB，存储 tree-sitter AST 序列化结果，支持增量解析）
 # v29: 审计签名密钥轮换表（audit_key_rotations，记录密钥轮换时间点，支持按 key_id 验证旧记录）
-SCHEMA_VERSION = 29
+# v30: workspaces 表新增 active_task_id 字段（active task 持久化，替代 CALLWARDEN_TASK_ID 环境变量）
+SCHEMA_VERSION = 30
 
 
 # ============================================

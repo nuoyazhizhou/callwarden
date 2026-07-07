@@ -1422,6 +1422,7 @@
       "migration_v27": "Add clone_pairs table for duplicate code detection (Type-1/2/3), records clone pair results to support refactoring decisions",
       "migration_v28": "Add file_versions.ast_cache BLOB column (stores tree-sitter AST serialization for AST-level incremental parsing, 10x performance boost for large files)",
       "migration_v29": "Add audit_key_rotations table (audit signing key rotation, records key_id/secret/rotated_at/is_active, supports verifying old records by key_id)",
+      "migration_v30": "Add workspaces.active_task_id column (active task persistence, replaces CALLWARDEN_TASK_ID env var, auto-set by task_next_step, auto-cleared by task_close)",
       "task_orphan_warning": "[Soft Warning] Task '{title}' has {step_count} steps and involves {file_count} files. Consider using task_split to create a parent-child task tree for better manageability (this warning does not block creation).",
       "agents_md_auto_sync_success": "[Auto Sync] AGENTS.md synced, {count} rules applied (actor: mcp_server_startup)",
       "agents_md_auto_sync_no_marker": "[Auto Sync] AGENTS.md marker block not found, skipping sync. Run `cw rule insert-block` first to insert the marker block before starting the server.",

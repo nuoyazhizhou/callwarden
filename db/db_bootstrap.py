@@ -745,25 +745,29 @@ class BootstrapMixin:
             }
         """
         try:
-            # 1. 找最近的 in_progress 任务
-            tasks = self.task_list(status_filter="in_progress", limit=10)
-            if not tasks:
-                return {
-                    "auto": True,
-                    "task_id": "",
-                    "step_id": "",
-                    "base": "",
-                    "dry_run": False,
-                    "success": False,
-                    "error": "",
-                    "reason": "no_in_progress_task",
-                    "changed_files": [],
-                    "linked_symbols": [],
-                    "quality_findings": [],
-                    "quality_decision": "",
-                    "next_action": "noop",
-                }
-            task_id = tasks[0].get("task_id", "")
+            # 1. 优先从 active_task 持久化字段读取（P1：替代 CALLWARDEN_TASK_ID 环境变量）
+            task_id = self.get_active_task() or ""
+            # fallback：active_task 为空时，退回 task_list 找最近一个 in_progress
+            # （向后兼容旧数据库 schema < v30，以及容错 active_task 与实际状态不一致）
+            if not task_id:
+                tasks = self.task_list(status_filter="in_progress", limit=10)
+                if not tasks:
+                    return {
+                        "auto": True,
+                        "task_id": "",
+                        "step_id": "",
+                        "base": "",
+                        "dry_run": False,
+                        "success": False,
+                        "error": "",
+                        "reason": "no_in_progress_task",
+                        "changed_files": [],
+                        "linked_symbols": [],
+                        "quality_findings": [],
+                        "quality_decision": "",
+                        "next_action": "noop",
+                    }
+                task_id = tasks[0].get("task_id", "")
             if not task_id:
                 return {
                     "auto": True,

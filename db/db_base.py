@@ -1461,6 +1461,32 @@ def _migrate_v28_to_v29(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v29_to_v30(conn: sqlite3.Connection):
+    """v29 -> v30: workspaces 表新增 active_task_id 字段（active task 持久化）
+
+    问题背景：
+    - task_capture_diff_auto 依赖 CALLWARDEN_TASK_ID 环境变量，但该变量无自动传播机制
+    - 子进程无法反向修改父 shell 的环境变量，用户每次切换任务都要手动 export
+    - 默认安装下 post-commit hook 闭环实际是关的（用户忘记 export 时静默跳过）
+
+    迁移步骤：
+    1. workspaces 表新增 active_task_id 字段（TEXT，默认空串）
+    2. 新增 idx_workspaces_active_task 索引
+
+    幂等性：用 PRAGMA table_info 检测字段是否存在，已存在则跳过 ALTER TABLE。
+    """
+    cur = conn.execute("PRAGMA table_info(workspaces)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "active_task_id" not in cols:
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN active_task_id TEXT DEFAULT ''"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspaces_active_task "
+        "ON workspaces(active_task_id)"
+    )
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1741,6 +1767,10 @@ class CodeGraphBase:
             29: {
                 "description": t("cli.messages.migration_v29", default="Add audit_key_rotations table for signing key rotation"),
                 "func": _migrate_v28_to_v29,
+            },
+            30: {
+                "description": t("cli.messages.migration_v30", default="Add workspaces.active_task_id column for active task persistence"),
+                "func": _migrate_v29_to_v30,
             },
         }
 

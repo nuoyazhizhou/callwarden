@@ -1422,6 +1422,7 @@
       "migration_v27": "新增 clone_pairs 表（重复代码检测，记录 Type-1/2/3 克隆配对结果，支持重构决策）",
       "migration_v28": "file_versions 表新增 ast_cache BLOB 字段（存储 tree-sitter AST 序列化结果，支持 AST 级增量解析，大文件性能 10 倍提升）",
       "migration_v29": "新增 audit_key_rotations 表（审计签名密钥轮换，记录 key_id/secret/rotated_at/is_active，支持按 key_id 验证旧记录）",
+      "migration_v30": "workspaces 表新增 active_task_id 字段（active task 持久化，替代 CALLWARDEN_TASK_ID 环境变量，task_next_step 自动设置，task_close 自动清除）",
       "task_orphan_warning": "[软警告] 任务 '{title}' 包含 {step_count} 个步骤，涉及 {file_count} 个文件。建议使用 task_split 创建父子任务树，便于管理和回滚（此警告不阻断创建）。",
       "agents_md_auto_sync_success": "[自动同步] AGENTS.md 已同步，共 {count} 条规则（actor: mcp_server_startup）",
       "agents_md_auto_sync_no_marker": "[自动同步] AGENTS.md 标记区不存在，跳过同步。请先运行 `cw rule insert-block` 插入标记块再启动服务器。",

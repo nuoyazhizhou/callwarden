@@ -216,6 +216,60 @@ class TaskMixin:
         self.conn.commit()
         return task_id
 
+    def set_active_task(self, task_id: str) -> None:
+        """设置当前 workspace 的 active task
+
+        在 task_next_step 进入 in_progress / task_reopen 回到 in_progress 时调用。
+        幂等：重复设置同一 task_id 不产生副作用。
+        覆盖语义：若之前已有 active_task，直接覆盖（用户显式 claim 新任务）。
+
+        Args:
+            task_id: 任务 ID（空串表示清除）
+        """
+        self.conn.execute(
+            "UPDATE workspaces SET active_task_id = ? WHERE is_active = 1",
+            (task_id,),
+        )
+        self.conn.commit()
+
+    def get_active_task(self) -> Optional[str]:
+        """读取当前 workspace 的 active task_id
+
+        用于 task_capture_diff_auto 优先读取，替代 CALLWARDEN_TASK_ID 环境变量。
+
+        Returns:
+            active task_id，无则返回 None
+        """
+        cur = self.conn.execute(
+            "SELECT active_task_id FROM workspaces WHERE is_active = 1"
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        tid = row["active_task_id"] or ""
+        return tid if tid else None
+
+    def clear_active_task(self, task_id: str = "") -> None:
+        """清除当前 workspace 的 active task
+
+        在 task_close 成功后调用。防御性：传入 task_id 时仅当 active_task == task_id
+        才清除，避免误清除后续已 claim 的新任务；传入空串时无条件清除。
+
+        Args:
+            task_id: 已关闭的任务 ID（防御性匹配）；空串表示无条件清除
+        """
+        if task_id:
+            self.conn.execute(
+                "UPDATE workspaces SET active_task_id = '' "
+                "WHERE is_active = 1 AND active_task_id = ?",
+                (task_id,),
+            )
+        else:
+            self.conn.execute(
+                "UPDATE workspaces SET active_task_id = '' WHERE is_active = 1"
+            )
+        self.conn.commit()
+
     def _reopen_parent_chain_if_needed(
         self,
         parent_id: str,
@@ -505,6 +559,10 @@ class TaskMixin:
                     )
 
         self.conn.commit()
+
+        # P1: 持久化 active_task（替代 CALLWARDEN_TASK_ID 环境变量）
+        # task_next_step 进入 in_progress 后自动设置，task_close 时清除
+        self.set_active_task(task_id)
 
         # 构建父任务链（从根到当前任务）
         parent_chain = self._build_parent_chain(actual_task_id)
@@ -1760,6 +1818,10 @@ class TaskMixin:
         )
         self.conn.commit()
 
+        # P1: 清除 active_task（防御性：仅当 active_task == task_id 时才清除，
+        # 避免误清除后续已 claim 的新任务）
+        self.clear_active_task(task_id)
+
         return {
             "task_id": task_id,
             "status": TASK_STATUS_CLOSED,
@@ -1867,6 +1929,9 @@ class TaskMixin:
                 )
 
         self.conn.commit()
+
+        # P1: reopen 后设置为 active_task（用户显式 reopen 表示要重新开始干这个任务）
+        self.set_active_task(task_id)
 
         return {
             "task_id": task_id,
