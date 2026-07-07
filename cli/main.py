@@ -198,6 +198,637 @@ def _emit_deprecated_flag_warning(args):
             cprint(hint, "yellow", file=sys.stderr)
 
 
+# ====================================================================
+# C8 Step #3: 主 --help 输出（12 组分组结构）
+# --------------------------------------------------------------------
+# 替代旧的 4-pillar 分组 + argparse 默认 description。
+# 输出：标题 + 12 组分组 + 底部 deprecated flag 清单 + 最底部全局选项
+# ====================================================================
+
+# 12 组分组数据：每组 (group_title_key, [(cmd, desc_key), ...])
+_MAIN_HELP_GROUPS = [
+    ("cli.messages.help_group_workspace", [
+        ("workspace list", "cli.messages.help_workspace_list"),
+        ("workspace register <NAME> <ROOT>", "cli.messages.help_workspace_register"),
+        ("workspace set <ID_OR_NAME>", "cli.messages.help_workspace_set"),
+        ("workspace delete <ID_OR_NAME>", "cli.messages.help_workspace_delete"),
+        ("refresh all | <paths> | --watch", "cli.messages.help_refresh"),
+        ("stats", "cli.messages.help_stats"),
+        ("status", "cli.messages.help_status"),
+        ("doctor", "cli.messages.help_doctor"),
+    ]),
+    ("cli.messages.help_group_query", [
+        ("search <QUERY>", "cli.messages.help_search"),
+        ("symbol <QUALIFIED_NAME>", "cli.messages.help_symbol"),
+        ("file <PATH>", "cli.messages.help_file"),
+        ("query <NAME> <FILE>", "cli.messages.help_query"),
+        ("brief", "cli.messages.help_brief"),
+        ("map", "cli.messages.help_map"),
+    ]),
+    ("cli.messages.help_group_call_chain", [
+        ("callers <NAME>", "cli.messages.help_callers"),
+        ("callees <NAME>", "cli.messages.help_callees"),
+        ("call-chain <QUALIFIED_NAME>", "cli.messages.help_call_chain"),
+        ("topo", "cli.messages.help_topo"),
+        ("impact <SYMBOL_HASH>", "cli.messages.help_chain_impact"),
+        ("call-chain --detect-cycles", "cli.messages.help_chain_cycles"),
+        ("call-chain --orphans", "cli.messages.help_chain_orphans"),
+        ("call-chain --deepest N", "cli.messages.help_chain_deepest"),
+        ("callers --top N", "cli.messages.help_chain_top_callers"),
+        ("call-chain --module-calls", "cli.messages.help_chain_module_calls"),
+        ("call-chain --heatmap", "cli.messages.help_chain_heatmap"),
+        ("call-chain --export-module-graph", "cli.messages.help_chain_module_graph"),
+    ]),
+    ("cli.messages.help_group_metrics", [
+        ("metrics", "cli.messages.help_metrics"),
+        ("complexity [N]", "cli.messages.help_complexity"),
+        ("coupling", "cli.messages.help_coupling"),
+        ("largest-fns [N]", "cli.messages.help_largest_fns"),
+        ("coupled-fns [N]", "cli.messages.help_coupled_fns"),
+        ("fn-metrics <NAME>", "cli.messages.help_fn_metrics"),
+        ("comment-coverage", "cli.messages.help_comment_coverage"),
+        ("uncommented [KIND]", "cli.messages.help_uncommented"),
+        ("function-issues [FN]", "cli.messages.help_function_issues"),
+    ]),
+    ("cli.messages.help_group_task", [
+        ("task create --title ... --steps ...", "cli.messages.help_task_create"),
+        ("task next <TASK_ID>", "cli.messages.help_task_next"),
+        ("task report <TASK_ID> <STEP_ID>", "cli.messages.help_task_report"),
+        ("task rollback <TASK_ID> <STEP_ID>", "cli.messages.help_task_rollback"),
+        ("task apply <TASK_ID>", "cli.messages.help_task_apply"),
+        ("task close <TASK_ID>", "cli.messages.help_task_close"),
+        ("task list [--blocked]", "cli.messages.help_task_list"),
+        ("task show <TASK_ID>", "cli.messages.help_task_show"),
+        ("task findings <TASK_ID>", "cli.messages.help_task_findings"),
+        ("task capture-diff [TASK_ID] [--auto]", "cli.messages.help_task_capture_diff"),
+        ("task resolve-finding <FINDING_ID>", "cli.messages.help_task_resolve_finding"),
+        ("task completion-review <TASK_ID>", "cli.messages.help_task_completion_review"),
+        ("task split <TASK_ID>", "cli.messages.help_task_split"),
+        ("task status-tree", "cli.messages.help_task_status_tree"),
+    ]),
+    ("cli.messages.help_group_rule", [
+        ("rule candidate create/list/accept/reject", "cli.messages.help_rule_candidate"),
+        ("rule list", "cli.messages.help_rule_list"),
+        ("rule applicable --context ...", "cli.messages.help_rule_applicable"),
+        ("rule sync [--target AGENTS.md]", "cli.messages.help_rule_sync"),
+        ("rule insert-block", "cli.messages.help_rule_insert_block"),
+        ("rule extract", "cli.messages.help_rule_extract"),
+        ("rule seed-bootstrap", "cli.messages.help_rule_seed_bootstrap"),
+        ("rule cleanup-sync-log", "cli.messages.help_rule_cleanup_sync_log"),
+    ]),
+    ("cli.messages.help_group_audit", [
+        ("audit verify [--table T] [--limit N]", "cli.messages.help_audit_verify"),
+        ("audit rotate-key --key-id <ID>", "cli.messages.help_audit_rotate_key"),
+        ("audit keys", "cli.messages.help_audit_keys"),
+        ("bootstrap status", "cli.messages.help_bootstrap_status"),
+        ("check-gate <TASK_ID> [--resolve]", "cli.messages.help_check_gate"),
+        ("test-impact <QUALIFIED_NAME>", "cli.messages.help_test_impact"),
+    ]),
+    ("cli.messages.help_group_git", [
+        ("git import [N]", "cli.messages.help_git_import"),
+        ("git log [N]", "cli.messages.help_git_log"),
+        ("git show <COMMIT>", "cli.messages.help_git_show"),
+        ("git stats", "cli.messages.help_git_stats"),
+        ("symbol-history <SYMBOL_HASH>", "cli.messages.help_symbol_history"),
+    ]),
+    ("cli.messages.help_group_semgrep", [
+        ("semgrep scan [PATH]", "cli.messages.help_semgrep_scan"),
+        ("semgrep list [FILTER]", "cli.messages.help_semgrep_list"),
+        ("semgrep stats", "cli.messages.help_semgrep_stats"),
+        ("defect search [--category C] [--severity S]", "cli.messages.help_defect_search"),
+        ("defect suggest <SYMBOL_HASH>", "cli.messages.help_defect_suggest"),
+        ("defect learn <COMMIT_HASH>", "cli.messages.help_defect_learn"),
+        ("defect stats", "cli.messages.help_defect_stats"),
+        ("defect build", "cli.messages.help_defect_build"),
+        ("vuln-blast [--finding-id N]", "cli.messages.help_vuln_blast"),
+        ("impact <SYMBOL_HASH>", "cli.messages.help_impact"),
+        ("review <SYMBOL_HASH>", "cli.messages.help_review"),
+    ]),
+    ("cli.messages.help_group_coverage", [
+        ("coverage comment", "cli.messages.help_coverage_comment"),
+        ("coverage uncommented", "cli.messages.help_coverage_uncommented"),
+        ("coverage test", "cli.messages.help_coverage_test"),
+        ("coverage import <FILE>", "cli.messages.help_coverage_import"),
+        ("coverage fn <NAME>", "cli.messages.help_coverage_fn"),
+        ("coverage uncovered", "cli.messages.help_coverage_uncovered"),
+        ("who <FILE>", "cli.messages.help_who"),
+        ("ownership-map", "cli.messages.help_ownership_map"),
+    ]),
+    ("cli.messages.help_group_gc", [
+        ("gc archive [--force] [--dry-run]", "cli.messages.help_gc_archive"),
+        ("gc restore [--path P ...] [--force]", "cli.messages.help_gc_restore"),
+        ("gc status", "cli.messages.help_gc_status"),
+        ("gc purge [--older-than N]", "cli.messages.help_gc_purge"),
+        ("gc policy show|set", "cli.messages.help_gc_policy"),
+        ("gc retention [--apply]", "cli.messages.help_gc_retention"),
+        ("gc archive-list", "cli.messages.help_gc_archive_list"),
+        ("gc archive-inspect <PATH>", "cli.messages.help_gc_archive_inspect"),
+        ("gc archive-import <PATH>", "cli.messages.help_gc_archive_import"),
+        ("gc audit-list", "cli.messages.help_gc_audit_list"),
+        ("gc audit-show <ID>", "cli.messages.help_gc_audit_show"),
+    ]),
+    ("cli.messages.help_group_diagnostics", [
+        ("doctor [--add-defender-exclusion]", "cli.messages.help_doctor"),
+        ("install-agent <codex|claude|cursor|all>", "cli.messages.help_install_agent"),
+        ("install-hook", "cli.messages.help_install_hook"),
+        ("guardrail scan [--file P] [--category C]", "cli.messages.help_guardrail_scan"),
+        ("guardrail rules [--category C]", "cli.messages.help_guardrail_rules"),
+        ("clone detect [--file-filter P]", "cli.messages.help_clone_detect"),
+        ("clone list [--type 1|2|3]", "cli.messages.help_clone_list"),
+        ("clone stats", "cli.messages.help_clone_stats"),
+        ("clone clear", "cli.messages.help_clone_clear"),
+        ("evolution <QUALIFIED_NAME>", "cli.messages.help_evolution"),
+        ("hotspot [--module P]", "cli.messages.help_hotspot"),
+        ("churn [--module P] [--window 90d]", "cli.messages.help_churn"),
+    ]),
+]
+
+
+def _print_main_help():
+    """打印主 --help 输出（12 组分组结构，C8 Step #3）
+
+    替代旧的 4-pillar 分组。输出顺序：
+    1. 标题 + intro
+    2. 12 组分组（每组：组标题 + 命令-说明对）
+    3. 底部 deprecated flag 清单（前 10 个，指向替代 subcommand）
+    4. 最底部全局选项（--lang/--workspace/--root/--help）
+    """
+    # 标题
+    cprint(t("cli.messages.main_help_title"), "cyan", bold=True)
+    print(t("cli.messages.main_help_intro"))
+    print()
+
+    # 12 组分组
+    for group_title_key, items in _MAIN_HELP_GROUPS:
+        cprint(t(group_title_key), "yellow", bold=True)
+        for cmd, desc_key in items:
+            desc = t(desc_key)
+            print(f"  {cmd:45s}  {desc}")
+        print()
+
+    # 底部 deprecated flag 清单（指向替代 subcommand）
+    cprint(t("cli.messages.help_deprecated_title"), "yellow", bold=True)
+    print(t("cli.messages.help_deprecated_intro"))
+    # 显示前 10 个最常用的 deprecated flag → subcommand 映射
+    deprecated_items = list(_DEPRECATED_FLAG_MAPPING.items())[:10]
+    for _attr, (flag_name, subcommand) in deprecated_items:
+        print(f"  {flag_name:30s}  -> cw {subcommand}")
+    remaining = len(_DEPRECATED_FLAG_MAPPING) - 10
+    if remaining > 0:
+        print(t("cli.messages.help_deprecated_more", count=remaining))
+    print()
+
+    # 最底部全局选项
+    cprint(t("cli.messages.help_global_options_title"), "cyan", bold=True)
+    print(f"  --lang LANG                 {t('cli.messages.help_lang')}")
+    print(f"  --workspace ROOT            {t('cli.messages.help_workspace_root')}")
+    print(f"  --root ROOT                 {t('cli.messages.help_root')}")
+    print(f"  -h, --help                  {t('cli.messages.help_help')}")
+    print()
+    print(t("cli.messages.help_footer"))
+
+
+# ====================================================================
+# C8 Step #4: 子命令 --help 统一模板
+# --------------------------------------------------------------------
+# 模板包含 5 个章节：用法 / 描述 / 参数（必填|可选）/ 示例 / 退出码
+# 通过 argparse 的 epilog + RawDescriptionHelpFormatter 实现多行帮助
+# ====================================================================
+
+def _format_subcommand_help(usage: str, description: str, parameters: list,
+                             examples: list, exit_codes: list) -> str:
+    """按统一模板格式化子命令帮助文本（C8 Step #4）
+
+    模板章节（5 个）：
+    - 用法 / Usage
+    - 描述 / Description
+    - 参数 / Parameters（含必填 [必填] / 可选 [可选] 标记）
+    - 示例 / Examples（至少 2 个）
+    - 退出码 / Exit Codes
+
+    Args:
+        usage: 用法字符串，如 "cw task <subcommand> [options]"
+        description: 命令描述
+        parameters: 参数列表，每项为 (name, required, desc) 三元组；
+                    required=True 表示必填，False 表示可选
+        examples: 示例字符串列表（至少 2 个）
+        exit_codes: 退出码列表，每项为 (code, meaning) 二元组
+
+    Returns:
+        格式化后的多行帮助文本
+    """
+    lines = []
+    # 顶部装饰分隔
+    lines.append("=" * 60)
+    # 用法
+    lines.append(t("cli.messages.help_template_usage"))
+    lines.append(f"  {usage}")
+    lines.append("")
+    # 描述
+    lines.append(t("cli.messages.help_template_description"))
+    lines.append(f"  {description}")
+    lines.append("")
+    # 参数
+    lines.append(t("cli.messages.help_template_parameters"))
+    for name, required, desc in parameters:
+        mark = t("cli.messages.help_template_required") if required else t("cli.messages.help_template_optional")
+        lines.append(f"  {mark} {name:25s}  {desc}")
+    lines.append("")
+    # 示例
+    lines.append(t("cli.messages.help_template_examples"))
+    for i, ex in enumerate(examples, 1):
+        lines.append(f"  {i}. {ex}")
+    lines.append("")
+    # 退出码
+    lines.append(t("cli.messages.help_template_exit_codes"))
+    for code, meaning in exit_codes:
+        lines.append(f"  {code}  {meaning}")
+    # 底部装饰分隔
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+# ====================================================================
+# C8 Step #4: 18+ 子命令的统一帮助模板规格
+# --------------------------------------------------------------------
+# 每条规格：{cmd: {"usage", "description", "parameters", "examples",
+#                  "exit_codes", "desc_key"}}
+# 通过 _get_subcommand_epilog(cmd) 取出格式化后的 epilog 文本。
+# ====================================================================
+_SUBCOMMAND_HELP_SPECS = {
+    "task": {
+        "usage": "cw task <subcommand> [options]",
+        "description": "Task lifecycle: create / next / report / rollback / apply / close / list / show / findings / capture-diff / resolve-finding / completion-review / split / status-tree",
+        "parameters": [
+            ("create --title T --steps J", True, "Create task and steps"),
+            ("next <task_id>", True, "Claim current pending step"),
+            ("report <task_id> <step_id> [--fail]", True, "Report step result"),
+            ("rollback <task_id> <step_id>", True, "Roll back changes"),
+            ("apply <task_id> [--reviewer R]", True, "Approve task (review -> applied)"),
+            ("close <task_id> [--reviewer R]", True, "Close task (applied -> closed)"),
+            ("capture-diff [task_id] [--auto] [--dry-run]", False, "Capture external agent file changes"),
+            ("list [--blocked] [--status S] [--limit N]", False, "List tasks"),
+            ("show <task_id> [--flat]", False, "Show task details"),
+            ("findings <task_id> [--status S] [--severity S]", False, "List task quality findings"),
+            ("resolve-finding <finding_id> [--resolution R]", False, "Resolve a quality gate finding"),
+        ],
+        "examples": [
+            "cw task create --title 'Add login feature' --steps '[{\"action\":\"annotate\",\"target_file\":\"a.py\"}]'",
+            "cw task next T-1783350489327",
+            "cw task report T-1783350489327 S-1783350489328 --result 'done'",
+            "cw task list --blocked",
+            "cw task capture-diff --auto",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (invalid args, db error, task not found)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "rule": {
+        "usage": "cw rule <subcommand> [options]",
+        "description": "Agent Rule Memory: candidate create/list/accept/reject, list, applicable, sync, insert-block, extract, seed-bootstrap, cleanup-sync-log",
+        "parameters": [
+            ("candidate create --title T --text T", True, "Create pending candidate rule"),
+            ("candidate list [--status S] [--limit N]", False, "List candidate rules"),
+            ("candidate accept <candidate_id> [--reviewer R]", True, "Accept candidate -> active"),
+            ("candidate reject <candidate_id> [--reason R]", True, "Reject candidate"),
+            ("list [--status S] [--limit N]", False, "List active rules"),
+            ("applicable --context JSON [--limit N]", False, "Get applicable rules by context"),
+            ("sync [--target AGENTS.md]", False, "Sync active rules to AGENTS.md marker block"),
+            ("extract", False, "Aggregate findings into candidates"),
+            ("seed-bootstrap", False, "Seed rule library from built-in templates"),
+        ],
+        "examples": [
+            "cw rule candidate create --title 'Avoid raw SQL' --text 'Never use string concatenation for SQL'",
+            "cw rule list --status active",
+            "cw rule applicable --context '{\"languages\":[\"python\"],\"actions\":[\"edit\"]}'",
+            "cw rule sync --target AGENTS.md",
+            "cw rule seed-bootstrap",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (invalid args, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "gc": {
+        "usage": "cw gc <subcommand> [options]",
+        "description": "Code graph GC: archive / restore / status / purge / policy / retention / archive-list / archive-inspect / archive-import / audit-list / audit-show",
+        "parameters": [
+            ("archive [--force] [--dry-run]", True, "Archive files matched by ignore rules"),
+            ("restore [--path P ...] [--force]", False, "Restore archived files"),
+            ("status", False, "View GC status"),
+            ("purge [--older-than N]", False, "Permanently purge files archived >N days"),
+            ("policy show|set", False, "Show or update GC retention policy"),
+            ("retention [--apply] [--save-policy]", False, "Cold data pruning with compressed backup"),
+            ("archive-list [--limit N]", False, "List GC backup files"),
+            ("archive-inspect <path>", False, "Inspect backup file contents (read-only)"),
+            ("archive-import <path> [--apply]", False, "Import historical data from backup"),
+            ("audit-list [--limit N] [--operation O]", False, "View GC audit history"),
+            ("audit-show <id>", False, "View details of a single GC audit record"),
+        ],
+        "examples": [
+            "cw gc archive --dry-run",
+            "cw gc status",
+            "cw gc purge --older-than 30",
+            "cw gc policy show",
+            "cw gc archive-list --limit 10",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (invalid args, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "audit": {
+        "usage": "cw audit <subcommand> [options]",
+        "description": "Audit chain verification and signing key rotation: verify / rotate-key / keys",
+        "parameters": [
+            ("verify [--table T] [--limit N]", False, "Verify audit chain continuity and signatures"),
+            ("rotate-key --key-id ID [--secret S]", True, "Rotate audit signing key"),
+            ("keys", False, "List all signing key rotation records"),
+        ],
+        "examples": [
+            "cw audit verify",
+            "cw audit verify --table task_steps --limit 500",
+            "cw audit rotate-key --key-id key-2026-07",
+            "cw audit keys",
+        ],
+        "exit_codes": [
+            ("0", "Success (audit chain intact or operation completed)"),
+            ("1", "Failure (invalid args, db error, broken audit chain)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "bootstrap": {
+        "usage": "cw bootstrap <subcommand>",
+        "description": "Bootstrap health summary: status",
+        "parameters": [
+            ("status", True, "Show bootstrap health summary"),
+        ],
+        "examples": [
+            "cw bootstrap status",
+            "cw bootstrap status 2>&1 | tee bootstrap-report.txt",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "defect": {
+        "usage": "cw defect <subcommand> [options]",
+        "description": "Defect knowledge base: search / suggest / learn / stats / build",
+        "parameters": [
+            ("search [--category C] [--severity S] [--limit N]", False, "Search defect patterns"),
+            ("suggest <symbol_hash> [--finding ID]", True, "Recommend fix suggestions"),
+            ("learn <commit_hash>", True, "Learn defect patterns from a fix commit"),
+            ("stats", False, "Defect knowledge base statistics"),
+            ("build", False, "Build defect knowledge base"),
+        ],
+        "examples": [
+            "cw defect search --severity error",
+            "cw defect suggest abc123def456",
+            "cw defect learn a1b2c3d4",
+            "cw defect stats",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (invalid args, db error, pattern not found)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "guardrail": {
+        "usage": "cw guardrail <subcommand> [options]",
+        "description": "Production safety guardrails: scan / rules",
+        "parameters": [
+            ("scan [--file P] [--category C]", True, "Scan guardrail violations"),
+            ("rules [--category C]", False, "List guardrail rules"),
+        ],
+        "examples": [
+            "cw guardrail scan",
+            "cw guardrail scan --file src/db/ --category db_safety",
+            "cw guardrail rules --category api_compat",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (invalid args, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "impact": {
+        "usage": "cw impact <symbol_hash> [--depth N]",
+        "description": "Change impact radius analysis (BFS over reverse call graph)",
+        "parameters": [
+            ("symbol_hash", True, "Source symbol content hash"),
+            ("--depth N", False, "Maximum BFS traversal depth (default: 3)"),
+        ],
+        "examples": [
+            "cw impact abc123def456",
+            "cw impact abc123def456 --depth 5",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (symbol not found, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "review": {
+        "usage": "cw review <symbol_hash>",
+        "description": "Review readiness report (impact scope + must-test + review points)",
+        "parameters": [
+            ("symbol_hash", True, "Source symbol content hash"),
+        ],
+        "examples": [
+            "cw review abc123def456",
+            "cw review deadbeefcafe",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (symbol not found, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "evolution": {
+        "usage": "cw evolution <qualified_name> [--window W]",
+        "description": "Function change frequency over time (commit history analysis)",
+        "parameters": [
+            ("qualified_name", True, "Function qualified name"),
+            ("--window W", False, "Time window (e.g. 30d/90d/1y, empty = all history)"),
+        ],
+        "examples": [
+            "cw evolution module::function_name",
+            "cw evolution module::function_name --window 90d",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (function not found, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "hotspot": {
+        "usage": "cw hotspot [--module P] [--limit N]",
+        "description": "Hotspot function ranking (change frequency + defect correlation + complexity)",
+        "parameters": [
+            ("--module P", False, "Filter by module path prefix"),
+            ("--limit N", False, "Number of items to show (default: 20)"),
+        ],
+        "examples": [
+            "cw hotspot",
+            "cw hotspot --module src/core/ --limit 50",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "churn": {
+        "usage": "cw churn [--module P] [--window W]",
+        "description": "Code churn analysis (changed files + churned lines + trend)",
+        "parameters": [
+            ("--module P", False, "Filter by module path prefix"),
+            ("--window W", False, "Time window (default: 90d)"),
+        ],
+        "examples": [
+            "cw churn",
+            "cw churn --module src/api/ --window 30d",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "vuln-blast": {
+        "usage": "cw vuln-blast [--finding-id N] [--severity S] [--depth N]",
+        "description": "Vulnerability blast radius analysis (reverse call graph from findings)",
+        "parameters": [
+            ("--finding-id N", False, "Specify Semgrep finding ID (default: scan all)"),
+            ("--severity S", False, "Severity filter (ERROR/WARN/INFO)"),
+            ("--depth N", False, "Reverse call graph traversal depth (default: 3)"),
+        ],
+        "examples": [
+            "cw vuln-blast",
+            "cw vuln-blast --finding-id 42",
+            "cw vuln-blast --severity ERROR --depth 5",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (db error, no findings)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "symbol-history": {
+        "usage": "cw symbol-history <symbol_hash> [--limit N]",
+        "description": "Symbol Git change history (commits that touched this symbol)",
+        "parameters": [
+            ("symbol_hash", True, "Symbol content hash"),
+            ("--limit N", False, "Result limit (default: 20)"),
+        ],
+        "examples": [
+            "cw symbol-history abc123def456",
+            "cw symbol-history abc123def456 --limit 50",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (symbol not found, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "check-gate": {
+        "usage": "cw check-gate <task_id> [--resolve] [--step-id S]",
+        "description": "Check gate (F6): run quality gate checks on task's changed files",
+        "parameters": [
+            ("task_id", True, "Task ID"),
+            ("--resolve", False, "Mark gate findings for this task as resolved (after agent fix)"),
+            ("--step-id S", False, "Related step ID (optional)"),
+        ],
+        "examples": [
+            "cw check-gate T-1783350489327",
+            "cw check-gate T-1783350489327 --resolve",
+        ],
+        "exit_codes": [
+            ("0", "Success (gate passed or findings resolved)"),
+            ("1", "Failure (task not found, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "test-impact": {
+        "usage": "cw test-impact <qualified_name>",
+        "description": "Test impact selection (which tests to run after changing a function)",
+        "parameters": [
+            ("qualified_name", True, "Qualified name of the modified function"),
+        ],
+        "examples": [
+            "cw test-impact module::function_name",
+            "cw test-impact another_module::another_fn",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (function not found, db error)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "doctor": {
+        "usage": "cw doctor [--add-defender-exclusion]",
+        "description": "Environment diagnostics and maintenance (db status, PRAGMA, WAL, Defender)",
+        "parameters": [
+            ("--add-defender-exclusion", False, "Add .callwarden to Windows Defender exclusions (requires admin)"),
+        ],
+        "examples": [
+            "cw doctor",
+            "cw doctor --add-defender-exclusion",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (db error, admin required)"),
+            ("2", "Database locked (retry later)"),
+        ],
+    },
+    "install-agent": {
+        "usage": "cw install-agent <codex|claude|cursor|all> [--output-dir D] [--force]",
+        "description": "Generate Call Warden integration files for Codex/Claude/Cursor",
+        "parameters": [
+            ("agent", True, "Target Agent: codex / claude / cursor / all"),
+            ("--output-dir D", False, "Output directory (default: .callwarden/agent-integrations)"),
+            ("--force", False, "Overwrite existing integration files"),
+        ],
+        "examples": [
+            "cw install-agent claude",
+            "cw install-agent all --force",
+            "cw install-agent codex --output-dir ./integrations",
+        ],
+        "exit_codes": [
+            ("0", "Success"),
+            ("1", "Failure (invalid agent, write error)"),
+        ],
+    },
+}
+
+
+def _get_subcommand_epilog(cmd: str) -> str:
+    """根据子命令名取出统一模板格式化的 epilog 文本（C8 Step #4）
+
+    Args:
+        cmd: 子命令名（如 "task"/"rule"/"gc" 等）
+
+    Returns:
+        格式化后的 epilog 字符串；若 cmd 不在规格表中，返回空字符串
+    """
+    spec = _SUBCOMMAND_HELP_SPECS.get(cmd)
+    if not spec:
+        return ""
+    return _format_subcommand_help(
+        usage=spec["usage"],
+        description=spec["description"],
+        parameters=spec["parameters"],
+        examples=spec["examples"],
+        exit_codes=spec["exit_codes"],
+    )
+
+
 def _run_subcommand_mode():
     """子命令模式入口：初始化 db 并调度代码守护者架构子命令
 
@@ -489,6 +1120,8 @@ def _handle_install_agent(args, db):
     parser = argparse.ArgumentParser(
         prog="cw install-agent",
         description=t("cli.messages.install_agent_desc", default="Generate Call Warden integration files for Codex/Claude/Cursor"),
+        epilog=_get_subcommand_epilog("install-agent"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "agent",
@@ -718,6 +1351,8 @@ def _handle_rule(args, db):
     parser = argparse.ArgumentParser(
         prog="cw rule",
         description=t("cli_rule_desc", default="Agent Rule Memory: candidate / accept / active / sync"),
+        epilog=_get_subcommand_epilog("rule"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
@@ -1318,6 +1953,8 @@ def _handle_guardrail(args, db):
     parser = argparse.ArgumentParser(
         prog="cw guardrail",
         description=t("cli.messages.guardrail_desc", default="Production safety guardrails"),
+        epilog=_get_subcommand_epilog("guardrail"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
@@ -1406,6 +2043,8 @@ def _handle_impact(args, db):
     parser = argparse.ArgumentParser(
         prog="cw impact",
         description=t("cli.messages.impact_desc", default="Change impact radius analysis"),
+        epilog=_get_subcommand_epilog("impact"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("symbol_hash", help=t("cli.messages.impact_symbol_hash_help", default="Source symbol hash"))
     parser.add_argument("--depth", type=int, default=3, help=t("cli.messages.impact_depth_help", default="Maximum BFS traversal depth (default: 3)"))
@@ -1464,7 +2103,12 @@ def _handle_impact(args, db):
 
 def _handle_review(args, db):
     """处理 review 子命令（审查就绪报告）"""
-    parser = argparse.ArgumentParser(prog="cw review", description=t("cli.messages.review_title"))
+    parser = argparse.ArgumentParser(
+        prog="cw review",
+        description=t("cli.messages.review_title"),
+        epilog=_get_subcommand_epilog("review"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("symbol_hash", help=t("cli_review_arg_symbol_hash", default="Source symbol hash"))
 
     opts = parser.parse_args(args)
@@ -1541,7 +2185,12 @@ def _handle_review(args, db):
 
 def _handle_evolution(args, db):
     """处理 evolution 子命令（函数变更频率）"""
-    parser = argparse.ArgumentParser(prog="cw evolution", description=t("cli.messages.evolution_title"))
+    parser = argparse.ArgumentParser(
+        prog="cw evolution",
+        description=t("cli.messages.evolution_title"),
+        epilog=_get_subcommand_epilog("evolution"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("qualified_name", help=t("cli_evolution_arg_qualified_name", default="Function qualified name"))
     parser.add_argument("--window", default="", help=t("cli_evolution_arg_window", default="Time window (for example 30d/90d/1y)"))
 
@@ -1611,7 +2260,12 @@ def _handle_evolution(args, db):
 
 def _handle_hotspot(args, db):
     """处理 hotspot 子命令（热点函数排名）"""
-    parser = argparse.ArgumentParser(prog="cw hotspot", description=t("cli.messages.hotspot_title"))
+    parser = argparse.ArgumentParser(
+        prog="cw hotspot",
+        description=t("cli.messages.hotspot_title"),
+        epilog=_get_subcommand_epilog("hotspot"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--module", default="", help=t("cli_hotspot_arg_module", default="Filter by module path prefix"))
     parser.add_argument("--limit", type=int, default=20, help=t("cli_hotspot_arg_limit", default="Number of items to show (default: 20)"))
 
@@ -1672,7 +2326,12 @@ def _handle_hotspot(args, db):
 
 def _handle_churn(args, db):
     """处理 churn 子命令（代码流失分析）"""
-    parser = argparse.ArgumentParser(prog="cw churn", description=t("cli.messages.churn_title"))
+    parser = argparse.ArgumentParser(
+        prog="cw churn",
+        description=t("cli.messages.churn_title"),
+        epilog=_get_subcommand_epilog("churn"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--module", default="", help=t("cli_churn_arg_module", default="Filter by module path prefix"))
     parser.add_argument("--window", default="90d", help=t("cli_churn_arg_window", default="Time window (default: 90d)"))
 
@@ -1731,7 +2390,12 @@ def _handle_churn(args, db):
 
 def _handle_defect(args, db):
     """处理 defect 子命令（缺陷知识库）"""
-    parser = argparse.ArgumentParser(prog="cw defect", description=t("cli_defect_desc", default="Defect knowledge base"))
+    parser = argparse.ArgumentParser(
+        prog="cw defect",
+        description=t("cli_defect_desc", default="Defect knowledge base"),
+        epilog=_get_subcommand_epilog("defect"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="action", required=True)
 
     search_p = sub.add_parser("search", help=t("cli_defect_search_desc", default="Search defect patterns"))
@@ -1913,7 +2577,12 @@ def _handle_defect(args, db):
 
 def _handle_task(args, db):
     """处理 task 子命令（任务管理：create/next/report/rollback）"""
-    parser = argparse.ArgumentParser(prog="cw task", description=t("cli_task_desc", default="Task management"))
+    parser = argparse.ArgumentParser(
+        prog="cw task",
+        description=t("cli_task_desc", default="Task management"),
+        epilog=_get_subcommand_epilog("task"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="action", required=True)
 
     # create：创建任务和步骤
@@ -2712,6 +3381,8 @@ def _handle_audit(args, db):
     parser = argparse.ArgumentParser(
         prog="cw audit",
         description=t("cli_audit_desc", default="Audit chain verification and signing key rotation"),
+        epilog=_get_subcommand_epilog("audit"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
@@ -2885,6 +3556,8 @@ def _handle_bootstrap(args, db):
     parser = argparse.ArgumentParser(
         prog="cw bootstrap",
         description=t("cli_bootstrap_desc", default="Bootstrap health summary"),
+        epilog=_get_subcommand_epilog("bootstrap"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
@@ -3112,7 +3785,10 @@ def _handle_vuln_blast(args, db):
     """处理 vuln-blast 子命令（漏洞爆炸半径分析）"""
     parser = argparse.ArgumentParser(
         prog="cw vuln-blast",
-        description=t("cli_vuln_blast_desc", default="Vulnerability blast radius analysis"))
+        description=t("cli_vuln_blast_desc", default="Vulnerability blast radius analysis"),
+        epilog=_get_subcommand_epilog("vuln-blast"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("--finding-id", type=int, default=0,
                         help=t("cli_vuln_blast_arg_finding_id", default="Specify Semgrep finding ID (default: scan all)"))
     parser.add_argument("--severity", default="",
@@ -3201,7 +3877,10 @@ def _handle_symbol_history(args, db):
     """处理 symbol-history 子命令（符号 Git 变更历史）"""
     parser = argparse.ArgumentParser(
         prog="cw symbol-history",
-        description=t("cli_symbol_history_desc", default="Symbol Git change history"))
+        description=t("cli_symbol_history_desc", default="Symbol Git change history"),
+        epilog=_get_subcommand_epilog("symbol-history"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("symbol_hash",
                         help=t("cli_symbol_history_arg_symbol_hash", default="Symbol content hash"))
     parser.add_argument("--limit", type=int, default=20,
@@ -3259,7 +3938,10 @@ def _handle_check_gate(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw check-gate",
-        description=t("cli_check_gate_desc", default="Check gate (F6)"))
+        description=t("cli_check_gate_desc", default="Check gate (F6)"),
+        epilog=_get_subcommand_epilog("check-gate"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("task_id", help=t("cli_check_gate_arg_task_id", default="Task ID"))
     parser.add_argument("--resolve", action="store_true",
                         help=t("cli_check_gate_arg_resolve", default="Mark gate findings for this task as resolved (call after agent fix)"))
@@ -3327,7 +4009,10 @@ def _handle_test_impact(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw test-impact",
-        description=t("cli_test_impact_desc", default="Test impact selection"))
+        description=t("cli_test_impact_desc", default="Test impact selection"),
+        epilog=_get_subcommand_epilog("test-impact"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument("qualified_name",
                         help=t("cli_test_impact_arg_qualified_name", default="Qualified name of the modified function"))
     opts = parser.parse_args(args)
@@ -3365,7 +4050,10 @@ def _handle_gc(args, db):
     """处理 gc 子命令（代码图谱 GC）"""
     parser = argparse.ArgumentParser(
         prog="cw gc",
-        description=t("cli_gc_desc", default="Code graph GC (archive/restore/purge ignored files)"))
+        description=t("cli_gc_desc", default="Code graph GC (archive/restore/purge ignored files)"),
+        epilog=_get_subcommand_epilog("gc"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="action", required=True)
 
     # gc archive
@@ -3855,6 +4543,8 @@ def _handle_doctor(args, db):
     parser = argparse.ArgumentParser(
         prog="cw doctor",
         description=t("cli.messages.doctor_desc", default="Environment diagnostics and maintenance"),
+        epilog=_get_subcommand_epilog("doctor"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--add-defender-exclusion", action="store_true",
                        help=t("cli.messages.doctor_add_defender_help", default="Add .callwarden directory to Windows Defender exclusions (requires admin privileges)"))
@@ -5482,11 +6172,11 @@ def main():
         _run_subcommand_mode()
         return
 
-    # 显示 --help 时，先打印子命令概览（确保 head -50 可见）
-    # argparse 默认将 description 放在超长 usage 之后，子命令信息会被推到 50 行之外
+    # 显示 --help 时，调用 _print_main_help() 输出完整 12 组结构（C8 Step #3）
+    # 替代旧的 4-pillar 分组 + argparse 默认 description
     if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
-        print(t("cli.subcommand_help"))
-        print()
+        _print_main_help()
+        return
 
     # 第一阶段：先解析 --lang 参数（不创建完整 parser）
     pre_parser = argparse.ArgumentParser(add_help=False)
