@@ -17,7 +17,7 @@ Call Warden 把 145+ 个 CLI 命令按功能聚合为 12 个主分类，每个�
 | 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复 | `search`、`symbol`、`file`、`query`、`brief`、`map` | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
 | 3 | **Call Chain Analysis** | 调用链、拓扑、循环、孤儿、模块图、热力图 | `callers`、`callees`、`call-chain`、`impact`、`topo` | `--callers`、`--callees`、`--call-chain`、`--impact`、`--topo`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap` |
 | 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented` | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented` |
-| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、capture-diff | `task create/next/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`check-gate` | `--task-list`、`--task-show`（兼容） |
+| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、capture-diff、质量审查、拆分 | `task create/next/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`task completion-review`、`task split`、`task status-tree`、`task reopen`、`check-gate` | `--task-list`、`--task-show`（兼容） |
 | 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log` | — |
 | 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁 | `audit verify/rotate-key/keys`、`bootstrap status` | — |
 | 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | `git import/log/show/stats`、`symbol-history` | `--git-import`、`--git-log`、`--git-show`、`--git-stats` |
@@ -771,6 +771,81 @@ cw task resolve-finding <finding_id> --by human
 将 finding 状态从 `open` 推进到 `resolved`（fixed）或 `wontfix`
 （wontfix / false_positive）。`error` / `block` 级别的发现被解决后，
 该 step 的阻塞状态才会解除，再次 `task_completion_review` 会重新评估。
+
+### `task completion-review`：任务完成质量审查
+
+```bash
+# 任务级审查（不含 step）
+cw task completion-review <task_id>
+
+# 步骤级审查（指定 step_id）
+cw task completion-review <task_id> --step-id <step_id>
+```
+
+运行任务完成质量审查，聚合 `run_check_gate` + 5 个扩展检查器
+（scope violation / symbol attribution / file health / i18n 硬编码 /
+signature mismatch），根据所有 open finding 的严重度给出决策：
+
+- `pass`：无 finding，允许 step 进入 done
+- `warn`：仅有 info/warn 级别 finding，记录但允许完成
+- `block`：存在 error/block 级别 finding，step 阻塞，自动插入
+  `fix_quality_gate_failure` 修复步骤
+
+**输出字段**：`decision` / `summary` / `counts`（info/warn/error/block 计数）/
+`findings`（详细发现列表）/ `check_gate_result`（底层 check_gate 原始结果）。
+
+**i18n key**：`task_completion_review_unavailable`/`task_completion_review_failed`/
+`task_completion_review_result`/`task_completion_review_task`/
+`task_completion_review_step`/`task_completion_review_summary`/
+`task_completion_review_counts`/`task_completion_review_findings_title`/
+`task_completion_review_finding_item`。
+
+### `task split`：从 Markdown 计划拆分父子任务树
+
+```bash
+cw task split <task_id> --plan <plan.md>
+```
+
+读取 Markdown 计划文件，解析出子任务定义，调用 `db.task_split` 创建
+父子任务树。适用于任务过大需要拆分为可管理的子任务时使用。
+
+**Markdown 计划格式**：
+- `## 子任务标题` = 子任务
+- 标题下的普通文本 = 子任务描述
+- `- / * / +` 开头的列表项 = 步骤（格式：`action @ target_file` 或
+  `action: target_file`）
+- 代码块（``` 围栏）内的内容不解析
+- 一级标题（`#`）和三级及以上标题（`###`+）被跳过
+
+**示例计划**：
+```markdown
+# 根任务
+
+## 子任务1
+实现登录功能
+- edit @ src/auth.py
+- test @ tests/test_auth.py
+
+## 子任务2
+实现注册功能
+- edit @ src/register.py
+```
+
+**输出**：每个新建子任务的 ID 和标题。
+
+**i18n key**：`task_split_plan_not_found`/`task_split_no_subtasks`/
+`task_split_success`/`task_split_subtask_item`。
+
+### `task status-tree`：以树形显示任务状态
+
+```bash
+cw task status-tree <task_id>
+```
+
+以树形模式显示任务详情，递归展示所有子任务。等价于 `cw task show <task_id>`
+（不带 `--flat`）。是 `task show` 的树形别名，方便用户记忆。
+
+**输出格式**：与 `task show` 一致，按 `depth` × 4 空格缩进展示子任务链。
 
 ### `task list`：列出任务
 
