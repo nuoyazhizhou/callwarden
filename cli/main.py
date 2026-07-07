@@ -306,9 +306,6 @@ _MAIN_HELP_GROUPS = [
         ("review <SYMBOL_HASH>", "cli.messages.help_review"),
     ]),
     ("cli.messages.help_group_coverage", [
-        ("coverage comment", "cli.messages.help_coverage_comment"),
-        ("coverage uncommented", "cli.messages.help_coverage_uncommented"),
-        ("coverage test", "cli.messages.help_coverage_test"),
         ("coverage import <FILE>", "cli.messages.help_coverage_import"),
         ("coverage fn <NAME>", "cli.messages.help_coverage_fn"),
         ("coverage uncovered", "cli.messages.help_coverage_uncovered"),
