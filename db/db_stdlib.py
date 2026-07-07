@@ -4068,6 +4068,11 @@ class StdlibMixin:
             count = self.import_stdlib_symbols_for_lang(lang)
             total += count
             if count > 0:
-                print(f"  {lang}: {count} symbols")
+                print(t(
+                    "cli.messages.stdlib_import_lang_summary",
+                    lang=lang,
+                    count=count,
+                    default=f"  {lang}: {count} symbols",
+                ))
 
         return total

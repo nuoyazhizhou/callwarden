@@ -170,7 +170,12 @@ class ExternalMixin:
                 total_created += created
                 total_skipped += skipped
             except Exception as e:
-                print(f"  [{lang}] import failed: {e}")
+                print(t(
+                    "cli.messages.external_import_lang_failed",
+                    lang=lang,
+                    error=e,
+                    default=f"  [{lang}] import failed: {e}",
+                ))
                 total_skipped += 1
 
         self.conn.commit()
@@ -240,9 +245,13 @@ class ExternalMixin:
                             f"ext-{lang}-{pkg_name}", version or "unknown", "last_seen_at", "manifest"
                         )
                     except Exception as e:
-                        print(
-                            f"  [{lang}] {pkg_name} symbol import failed: {e}"
-                        )
+                        print(t(
+                            "cli.messages.external_import_pkg_failed",
+                            lang=lang,
+                            package=pkg_name,
+                            error=e,
+                            default=f"  [{lang}] {pkg_name} symbol import failed: {e}",
+                        ))
 
         self.conn.commit()
         return total

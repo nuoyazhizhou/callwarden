@@ -137,7 +137,11 @@ def _print_gate_result(result: Dict[str, Any]) -> None:
             "cli.messages.bootstrap_gate_failed_title",
             default="[Bootstrap Gate] FAIL",
         ))
-        print(f"  {result['reason']}")
+        print(t(
+            "cli.messages.bootstrap_gate_reason_detail",
+            reason=result['reason'],
+            default=f"  {result['reason']}",
+        ))
         status = result.get("status", {})
         if status:
             db_stale = status.get("db_stale", False)
