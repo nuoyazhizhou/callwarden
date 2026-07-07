@@ -315,7 +315,10 @@ class TestTaskReopenE2E:
 
         assert result is True  # 返回 True 但输出错误
         captured = capsys.readouterr()
-        assert "失败" in captured.out or "无需" in captured.out
+        # i18n 可能是中文（"失败"/"无需"）或英文（"failed"/"no need"），都应通过
+        out_lower = captured.out.lower()
+        assert "失败" in captured.out or "无需" in captured.out or \
+               "failed" in out_lower or "no need" in out_lower
 
     def test_reopen_nonexistent_task_e2e(self, db, capsys):
         """端到端：reopen 不存在的任务 → 失败"""
@@ -323,7 +326,10 @@ class TestTaskReopenE2E:
 
         assert result is True
         captured = capsys.readouterr()
-        assert "失败" in captured.out or "not found" in captured.out.lower()
+        # i18n 可能是中文（"失败"/"未找到"）或英文（"failed"/"not found"），都应通过
+        out_lower = captured.out.lower()
+        assert "失败" in captured.out or "未找到" in captured.out or \
+               "failed" in out_lower or "not found" in out_lower
 
     def test_reopen_propagates_to_parent_e2e(self, db, capsys):
         """端到端：reopen 子任务时，祖父任务链也应 reopen"""
