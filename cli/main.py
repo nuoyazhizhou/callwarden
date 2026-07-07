@@ -80,6 +80,124 @@ _WRITE_FLAGS = {
 }
 
 
+# ====================================================================
+# C8 Step #2: --flag 命令的 deprecated 警告映射
+# --------------------------------------------------------------------
+# 每个 entry: (args 属性名, --flag 名, 推荐的 subcommand)
+# 不在此表中的 --flag 通用选项（--lang/--workspace/--root/--force/--preview
+# 等辅助/通用 flag）不输出 deprecated 警告。
+# --task-list / --task-show 已有自己的 deprecated 提示实现，不在此表中。
+# ====================================================================
+_DEPRECATED_FLAG_MAPPING = {
+    # [1] 工作区管理
+    "list_workspaces": ("--list-workspaces", "workspace list"),
+    "register_workspace": ("--register-workspace", "workspace register <NAME> <ROOT>"),
+    "set_workspace": ("--set-workspace", "workspace set <ID_OR_NAME>"),
+    "delete_workspace": ("--delete-workspace", "workspace delete <ID_OR_NAME>"),
+
+    # [2] 数据库构建与监控
+    "refresh_all": ("--refresh-all", "refresh --all"),
+    "refresh": ("--refresh", "refresh <PATH>"),
+    "watch": ("--watch", "refresh --watch"),
+    "stats": ("--stats", "stats"),
+    "status": ("--status", "status"),
+
+    # [3] 符号查询
+    "query": ("--query", "query <NAME> <FILE>"),
+    "search": ("--search", "search <QUERY>"),
+    "symbol": ("--symbol", "symbol <QUALIFIED_NAME>"),
+    "file": ("--file", "file <PATH>"),
+
+    # [4] 调用链分析
+    "callers": ("--callers", "callers <NAME>"),
+    "callees": ("--callees", "callees <NAME>"),
+    "call_chain": ("--call-chain", "call-chain <QUALIFIED_NAME>"),
+    "impact": ("--impact", "impact <QUALIFIED_NAME>"),
+    "topo": ("--topo", "topo"),
+    "top_callers": ("--top-callers", "callers --top N"),
+    "orphan_symbols": ("--orphan-symbols", "callers --orphans"),
+    "deepest": ("--deepest", "call-chain --deepest N"),
+    "module_calls": ("--module-calls", "call-chain --module-calls N"),
+    "detect_cycles": ("--detect-cycles", "call-chain --detect-cycles"),
+    "export_module_graph": ("--export-module-graph", "call-chain --export-module-graph"),
+    "call_heatmap": ("--call-heatmap", "call-chain --heatmap"),
+
+    # [5] 代码度量
+    "metrics": ("--metrics", "metrics"),
+    "complexity": ("--complexity", "complexity [N]"),
+    "coupling": ("--coupling", "coupling"),
+    "largest_fns": ("--largest-fns", "largest-fns [N]"),
+    "coupled_fns": ("--coupled-fns", "coupled-fns [N]"),
+    "fn_metrics": ("--fn-metrics", "fn-metrics <NAME>"),
+    "comment_coverage": ("--comment-coverage", "comment-coverage"),
+    "uncommented": ("--uncommented", "uncommented [KIND]"),
+
+    # [6] 编辑与版本历史
+    "restore_comment": ("--restore-comment", "file restore-comment <SPEC>"),
+    "restore_all_comments": ("--restore-all-comments", "file restore-all-comments"),
+    "restore_file": ("--restore-file", "file restore-file <PATH>"),
+    "history": ("--history", "symbol-history <NAME>"),
+    "diff": ("--diff", "file diff <HASH1> <HASH2>"),
+    "changes": ("--changes", "file changes [SINCE]"),
+
+    # [7] Git 集成
+    "git_import": ("--git-import", "git import [N]"),
+    "git_log": ("--git-log", "git log [N]"),
+    "git_show": ("--git-show", "git show <COMMIT>"),
+    "git_stats": ("--git-stats", "git stats"),
+
+    # [8] Semgrep 静态扫描
+    "semgrep": ("--semgrep", "semgrep scan [PATH]"),
+    "semgrep_list": ("--semgrep-list", "semgrep list [FILTER]"),
+    "semgrep_stats": ("--semgrep-stats", "semgrep stats"),
+
+    # [9] 缺陷检测
+    "function_issues": ("--function-issues", "function-issues [FN]"),
+    "issue_summary": ("--issue-summary", "function-issues --summary"),
+
+    # [10] 覆盖率
+    "coverage_import": ("--coverage-import", "coverage import <FILE>"),
+    "coverage_fn": ("--coverage-fn", "coverage fn <NAME>"),
+    "coverage_uncovered": ("--coverage-uncovered", "coverage uncovered"),
+    "test_coverage": ("--test-coverage", "coverage --test"),
+
+    # [11] 所有权
+    "who": ("--who", "who <FILE>"),
+    "ownership_map": ("--ownership-map", "ownership-map"),
+
+    # [12] 向量语义搜索
+    "semantic_search": ("--semantic-search", "search --semantic <QUERY>"),
+    "embed": ("--embed", "search --embed"),
+    "embed_force": ("--embed-force", "search --embed --force"),
+    "similar": ("--similar", "search --similar <NAME>"),
+
+    # [13] 项目简报与仓库地图
+    "brief": ("--brief", "brief"),
+    "map": ("--map", "map"),
+}
+
+
+def _emit_deprecated_flag_warning(args):
+    """C8 Step #2: 扫描 args，对每个被设置为真值的 deprecated --flag 输出 stderr 警告。
+
+    设计：
+    - 不阻断执行，仅 warning；
+    - 输出到 stderr（不污染 stdout 管道）；
+    - 不包含 --task-list / --task-show（已有自己的 deprecated 提示实现）；
+    - 通用 flag（--lang/--workspace/--root/--force/--preview 等辅助 flag）不在映射表中，不输出警告。
+    """
+    for attr, (flag_name, subcommand) in _DEPRECATED_FLAG_MAPPING.items():
+        val = getattr(args, attr, None)
+        if val:  # truthy (含非空字符串、True、列表等)
+            # 嵌入多语言提示，写入 stderr
+            msg = t("cli.messages.deprecated_flag_warning",
+                    flag=flag_name, subcommand=subcommand)
+            cprint(msg, "yellow", file=sys.stderr)
+            # 通用引导提示（每个 deprecated flag 触发后输出一次）
+            hint = t("cli.messages.deprecated_flag_hint")
+            cprint(hint, "yellow", file=sys.stderr)
+
+
 def _run_subcommand_mode():
     """子命令模式入口：初始化 db 并调度代码守护者架构子命令
 
@@ -5381,7 +5499,10 @@ def main():
     # 第二阶段：用正确的语言创建完整 parser 并解析所有参数
     parser = create_parser()
     args = parser.parse_args()
-    
+
+    # C8 Step #2: --flag deprecated 警告（输出到 stderr，不阻断执行）
+    _emit_deprecated_flag_warning(args)
+
     # 确定工作区根目录
     workspace_root = None
     if args.workspace:

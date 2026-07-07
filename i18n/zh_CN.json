@@ -346,6 +346,8 @@
       "task_list_indent": "    ",
       "task_list_root": "[根任务] ",
       "task_list_deprecated_hint": "[提示] --task-list 为兼容入口，已自动转调 'cw task list'。建议直接使用 'cw task list'。",
+      "deprecated_flag_warning": "[提示] {flag} 已废弃，请使用 'cw {subcommand}' 代替",
+      "deprecated_flag_hint": "提示：所有 --flag 模式命令已废弃，将在未来版本移除。运行 'cw --help' 查看支持的 subcommand。",
       "vuln_blast_title": "=== 漏洞爆炸半径分析 ===",
       "vuln_blast_risk_level": "  风险等级: ",
       "vuln_blast_total_findings": "  漏洞总数: {count}",

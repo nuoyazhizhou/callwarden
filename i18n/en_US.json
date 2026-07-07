@@ -346,6 +346,8 @@
       "task_list_indent": "    ",
       "task_list_root": "[root] ",
       "task_list_deprecated_hint": "[hint] --task-list is a compat alias and has been redirected to 'cw task list'. Prefer 'cw task list' directly.",
+      "deprecated_flag_warning": "[Hint] {flag} is deprecated, use 'cw {subcommand}' instead",
+      "deprecated_flag_hint": "Hint: All --flag mode commands are deprecated and will be removed in future versions. Run 'cw --help' for supported subcommands.",
       "vuln_blast_title": "=== Vulnerability Blast Radius Analysis ===",
       "vuln_blast_risk_level": "  Risk Level: ",
       "vuln_blast_total_findings": "  Total findings: {count}",
