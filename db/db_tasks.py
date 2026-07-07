@@ -148,12 +148,17 @@ class TaskMixin:
         sort_order = 0
         if parent_id:
             cur = self.conn.execute(
-                "SELECT depth FROM tasks WHERE id = ?",
+                "SELECT depth, status FROM tasks WHERE id = ?",
                 (parent_id,),
             )
             parent_row = cur.fetchone()
             if parent_row:
                 depth = parent_row["depth"] + 1
+                # Reopen 机制：当父任务处于 review/applied/closed 状态时，自动 reopen
+                # 父任务链为 in_progress（清理 applied_at/closed_at）
+                # 父任务 open/in_progress 时直接挂，不改状态
+                self._reopen_parent_chain_if_needed(parent_id, parent_row["status"])
+
             # 计算同级排序
             cur = self.conn.execute(
                 "SELECT COALESCE(MAX(sort_order), -1) as max_order FROM tasks WHERE parent_id = ?",
@@ -205,6 +210,78 @@ class TaskMixin:
 
         self.conn.commit()
         return task_id
+
+    def _reopen_parent_chain_if_needed(
+        self,
+        parent_id: str,
+        parent_status: str,
+    ) -> None:
+        """当父任务处于 review/applied/closed 状态时，reopen 父任务链为 in_progress
+
+        Reopen 机制（支持已 closed 父任务添加新子任务）：
+        - 父任务 open/in_progress：直接挂，不改状态
+        - 父任务 review/applied/closed：回到 in_progress，清理 applied_at/closed_at
+        - 递归向上 reopen 祖父任务链（如祖父也是 closed/applied）
+
+        状态判断逻辑：
+        - 如果所有其他子任务都是 closed/applied，且新挂的子任务是 open，
+          父任务应为 in_progress（整体工作未完成）
+        - 如果其他子任务还有 open/in_progress，父任务也应为 in_progress
+
+        Args:
+            parent_id: 父任务 ID
+            parent_status: 父任务当前状态
+        """
+        # 仅当父任务处于 review/applied/closed 时才需要 reopen
+        REOPEN_STATUSES = (TASK_STATUS_REVIEW, TASK_STATUS_APPLIED, TASK_STATUS_CLOSED)
+        if parent_status not in REOPEN_STATUSES:
+            return  # open/in_progress，直接挂，不改状态
+
+        now = time.time()
+
+        # Reopen 当前父任务为 in_progress，清理时间戳
+        self.conn.execute(
+            "UPDATE tasks SET status = ?, applied_at = NULL, closed_at = NULL, "
+            "updated_at = ? WHERE id = ?",
+            (TASK_STATUS_IN_PROGRESS, now, parent_id),
+        )
+
+        # 在 audit_chain 中记录 reopen 事件（fail-soft，不阻断流程）
+        try:
+            if hasattr(self, "sign_audit_record"):
+                self.sign_audit_record(
+                    "tasks",
+                    parent_id,
+                    {
+                        "task_id": parent_id,
+                        "operation": "reopen",
+                        "previous_status": parent_status,
+                        "new_status": TASK_STATUS_IN_PROGRESS,
+                        "reason": "new subtask created after parent closed",
+                        "timestamp": now,
+                    },
+                    operation="update",
+                )
+        except Exception:
+            pass  # fail-soft，审计签名失败不阻断 reopen
+
+        # 递归向上 reopen 祖父任务链
+        cur = self.conn.execute(
+            "SELECT parent_id FROM tasks WHERE id = ?",
+            (parent_id,),
+        )
+        row = cur.fetchone()
+        if row and row["parent_id"]:
+            grandparent_id = row["parent_id"]
+            cur = self.conn.execute(
+                "SELECT status FROM tasks WHERE id = ?",
+                (grandparent_id,),
+            )
+            grandparent_row = cur.fetchone()
+            if grandparent_row:
+                self._reopen_parent_chain_if_needed(
+                    grandparent_id, grandparent_row["status"]
+                )
 
     def _check_orphan_task_warning(
         self,
@@ -1641,6 +1718,116 @@ class TaskMixin:
             "status": TASK_STATUS_CLOSED,
             "closed_at": now,
             "reviewer": reviewer,
+        }
+
+    def task_reopen(
+        self,
+        task_id: str,
+        reviewer: str = "reviewer",
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        """显式 reopen 任务：将任务从 review/applied/closed 状态回到 in_progress
+
+        使用场景：
+        - Code review 发现已 applied/closed 的任务有问题，需要修复
+        - 任务被误 close，需要重新打开
+        - 有新子任务需要挂入已 closed 的父任务
+
+        状态判断逻辑：
+        - review/applied/closed → in_progress（清理 applied_at/closed_at）
+        - open/in_progress：无需 reopen，返回提示
+        - 父任务 reopen 时递归向上 reopen 祖父任务链
+
+        Args:
+            task_id: 任务 ID
+            reviewer: 审核人标识
+            reason: reopen 原因（可选）
+
+        Returns:
+            包含 task_id、status、previous_status、reopened_at 的字典；
+            失败时包含 error 字段
+        """
+        now = time.time()
+        cur = self.conn.execute(
+            "SELECT status FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {
+                "error": t("cli.messages.task_not_found", default="Task not found"),
+                "task_id": task_id,
+            }
+
+        current_status = row["status"]
+        REOPEN_STATUSES = (TASK_STATUS_REVIEW, TASK_STATUS_APPLIED, TASK_STATUS_CLOSED)
+
+        if current_status not in REOPEN_STATUSES:
+            return {
+                "error": t(
+                    "cli.messages.task_reopen_no_need",
+                    default="Task is in status '{status}', no need to reopen (only review/applied/closed can be reopened)",
+                    status=current_status,
+                ),
+                "task_id": task_id,
+                "status": current_status,
+                "reason": "not_closed",
+            }
+
+        # Reopen 当前任务为 in_progress，清理时间戳
+        self.conn.execute(
+            "UPDATE tasks SET status = ?, applied_at = NULL, closed_at = NULL, "
+            "updated_at = ? WHERE id = ?",
+            (TASK_STATUS_IN_PROGRESS, now, task_id),
+        )
+
+        # 在 audit_chain 中记录 reopen 事件（fail-soft）
+        try:
+            if hasattr(self, "sign_audit_record"):
+                self.sign_audit_record(
+                    "tasks",
+                    task_id,
+                    {
+                        "task_id": task_id,
+                        "operation": "reopen",
+                        "previous_status": current_status,
+                        "new_status": TASK_STATUS_IN_PROGRESS,
+                        "reason": reason or "manual reopen",
+                        "reviewer": reviewer,
+                        "timestamp": now,
+                    },
+                    operation="update",
+                )
+        except Exception:
+            pass  # fail-soft
+
+        # 递归向上 reopen 祖父任务链
+        cur = self.conn.execute(
+            "SELECT parent_id FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        parent_row = cur.fetchone()
+        if parent_row and parent_row["parent_id"]:
+            grandparent_id = parent_row["parent_id"]
+            cur = self.conn.execute(
+                "SELECT status FROM tasks WHERE id = ?",
+                (grandparent_id,),
+            )
+            grandparent_row = cur.fetchone()
+            if grandparent_row:
+                self._reopen_parent_chain_if_needed(
+                    grandparent_id, grandparent_row["status"]
+                )
+
+        self.conn.commit()
+
+        return {
+            "task_id": task_id,
+            "status": TASK_STATUS_IN_PROGRESS,
+            "previous_status": current_status,
+            "reopened_at": now,
+            "reviewer": reviewer,
+            "reason": reason,
         }
 
     def task_list(
