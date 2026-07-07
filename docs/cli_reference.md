@@ -241,20 +241,23 @@ Call Warden 提供独立的 Git Hook 安装命令，安装 post-commit hook 让 
 
 **调用方式**：`cw install-hook post-commit [options]`
 
-#### 安装（从环境变量读取 task_id，推荐）
+#### 安装（--auto 模式，推荐）
 
 ```bash
 cw install-hook post-commit
-# 之后通过 CALLWARDEN_TASK_ID 环境变量传递当前任务 ID
-export CALLWARDEN_TASK_ID=T-xxx
+# 之后直接 commit，hook 自动检测 in_progress 状态的任务并捕获变更
 git commit -m "feat: xxx"
 ```
+
+默认使用 `--auto` 模式，无需手动 `export CALLWARDEN_TASK_ID`。hook 调用 `cw task capture-diff --auto`，自动查找当前 `in_progress` 状态的任务，取 `HEAD~1` 作为 base，fail-soft 捕获变更到 change_audit / task_symbol_changes 表。
 
 #### 安装（硬编码 task_id）
 
 ```bash
 cw install-hook post-commit --task-id T-1783349079762-8246
 ```
+
+绑定到固定任务，适合长时间专注单一任务的场景。
 
 #### 卸载
 
@@ -267,7 +270,7 @@ cw install-hook post-commit --uninstall
 | 参数 | 说明 |
 |------|------|
 | `hook` | Hook 类型（目前仅支持 `post-commit`） |
-| `--task-id <ID>` | 硬编码 task_id 到 hook（不指定时从 `CALLWARDEN_TASK_ID` 环境变量读取） |
+| `--task-id <ID>` | 硬编码 task_id 到 hook（不指定时使用 `--auto` 模式自动检测 in_progress 任务） |
 | `--uninstall` | 卸载 hook（仅删除 Call Warden 生成的 hook，保护用户自定义 hook） |
 
 #### 退出码
@@ -279,7 +282,7 @@ cw install-hook post-commit --uninstall
 
 #### fail-soft 设计
 
-- 没有进行中的任务时静默跳过，不影响 commit
+- `--auto` 模式下没有 in_progress 任务时静默跳过，不影响 commit
 - 数据库锁或异常时打印提示但用 `|| true` 兜底退出码
 - 双层 fail-soft（DB 层 + CLI 层）确保不影响 git commit
 

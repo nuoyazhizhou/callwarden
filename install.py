@@ -338,7 +338,8 @@ echo "[Call Warden] running check-gate for $CALLWARDEN_TASK_ID before push..."
         在 commit 完成后自动捕获文件变更到 task/audit 闭环。
 
         Args:
-            task_id: 指定的任务 ID。为空时从 CALLWARDEN_TASK_ID 环境变量读取。
+            task_id: 指定的任务 ID。为空时使用 --auto 模式自动检测
+                     in_progress 状态的任务（无需手动 export CALLWARDEN_TASK_ID）。
 
         Returns:
             post-commit hook 脚本内容
@@ -354,17 +355,15 @@ export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
 echo "[Call Warden] capturing diff for task {task_id}..."
 {cmd} task capture-diff "{task_id}" || true
 """
-        # 从环境变量读取 task_id
+        # 默认使用 --auto 模式，自动检测 in_progress 任务，无需环境变量
+        # task_capture_diff_auto() 已有双层 fail-soft 保护（DB + CLI），
+        # 不会阻断 git commit 流程
         return f"""#!/bin/sh
 {marker}
-# post-commit: 自动捕获文件变更到 task/audit 闭环（task_id 从环境变量读取）
+# post-commit: 自动捕获文件变更到 task/audit 闭环（--auto 模式）
 export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
-if [ -z "${{CALLWARDEN_TASK_ID:-}}" ]; then
-  # 没有任务 ID，静默跳过（不报错，不影响 commit）
-  exit 0
-fi
-echo "[Call Warden] capturing diff for task $CALLWARDEN_TASK_ID..."
-{cmd} task capture-diff "$CALLWARDEN_TASK_ID" || true
+echo "[Call Warden] auto-capturing diff for in-progress task..."
+{cmd} task capture-diff --auto || true
 """
 
     def install_post_commit_hook(

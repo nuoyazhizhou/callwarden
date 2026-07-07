@@ -69,24 +69,25 @@ def test_post_commit_hook_envvar_mode_contains_marker():
     assert installer._hook_marker() in content, "hook 必须包含 marker 标记"
 
 
-def test_post_commit_hook_envvar_mode_contains_cw_command():
-    """hook 脚本必须包含调用 cw task capture-diff 的命令。"""
+def test_post_commit_hook_auto_mode_contains_cw_command():
+    """hook 脚本必须包含调用 cw task capture-diff --auto 的命令。"""
     installer = CallWardenInstaller()
     content = installer._post_commit_hook(task_id="")
     assert "task capture-diff" in content
-    assert "$CALLWARDEN_TASK_ID" in content
+    assert "--auto" in content
 
 
-def test_post_commit_hook_envvar_mode_skips_when_no_task_id():
-    """环境变量模式下，CALLWARDEN_TASK_ID 未设置时静默 exit 0（不影响 commit）。"""
+def test_post_commit_hook_auto_mode_no_envvar_dependency():
+    """--auto 模式不依赖 CALLWARDEN_TASK_ID 环境变量。"""
     installer = CallWardenInstaller()
     content = installer._post_commit_hook(task_id="")
-    # 必须有 if [ -z "${CALLWARDEN_TASK_ID:-}" ]; then exit 0; fi
-    assert "CALLWARDEN_TASK_ID" in content
-    assert "exit 0" in content
+    # 不应有 CALLWARDEN_TASK_ID 检查（--auto 自动检测 in_progress 任务）
+    assert "CALLWARDEN_TASK_ID" not in content
+    # 不应有静默 exit 0（--auto 模式总是尝试执行）
+    assert "exit 0" not in content
 
 
-def test_post_commit_hook_envvar_mode_fail_soft_with_or_true():
+def test_post_commit_hook_auto_mode_fail_soft_with_or_true():
     """hook 末尾必须用 || true 兜底退出码，确保不影响 git commit。"""
     installer = CallWardenInstaller()
     content = installer._post_commit_hook(task_id="")
