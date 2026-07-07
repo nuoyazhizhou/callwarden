@@ -65,8 +65,41 @@ def create_mcp_server():
 
     mcp = FastMCP("callwarden", dependencies=["callwarden"])
 
+    # =================================================================
+    # Call Warden MCP 工具 — 12 大类索引（C8 Step #6）
+    # =================================================================
+    #
+    # 工具命名前缀约定：
+    #   get_X      — 查询单个对象详情
+    #   list_X     — 列表查询
+    #   search_X   — 模糊搜索
+    #   find_X     — 条件查找
+    #   create_X / delete_X / update_X — CRUD 写操作
+    #   import_X / export_X — 导入导出
+    #   detect_X / analyze_X — 分析类
+    #   其余动词前缀（task_ / gc_ / rule_ / audit_ / lsp_ / guardrail_ /
+    #   file_ / defect_ / embed_ 等）作为模块前缀保留
+    #
+    # 12 大类分组（按 .cli_audit.md §2 设计，详细审计见 .mcp_audit.md）：
+    #
+    #   [1]  Workspace & Database       — 工作区管理、数据库刷新、状态概览、分支感知
+    #   [2]  Query & Search             — 符号查询、搜索、文件读取、语义搜索、摘要
+    #   [3]  Call Chain Analysis        — 调用链、拓扑、循环、孤儿、模块图、热力图
+    #   [4]  Code Health & Metrics      — 复杂度、耦合、度量、健康检查、演化、热点、流失
+    #   [5]  Task Orchestration         — 任务创建/认领/上报/回滚/审批/关闭、capture-diff
+    #   [6]  Agent Rule Memory          — 规则候选/审核/生效/同步/提取/清理
+    #   [7]  Audit & Bootstrap          — 审计链验证、密钥轮换、自举健康、检查门禁、安全护栏
+    #   [8]  Git Integration            — git 历史、commit、变更、blame、符号历史
+    #   [9]  Semgrep & Defects          — Semgrep 扫描、缺陷检测、缺陷知识库、影响半径
+    #   [10] Coverage & Ownership       — 注释覆盖、测试覆盖、CODEOWNERS、所有权映射
+    #   [11] GC                         — 归档、恢复、清理、策略、备份、审计
+    #   [12] Diagnostics                — clone 检测、LSP、安全编辑、跨仓库分析
+    #
+    # =================================================================
+
     # ----------------------------------------------------------------
-    # 查询类工具
+    # [L1+L2+L3] 查询类工具（get_stats 属 L1；search_symbols/get_symbol 等
+    #             属 L2；get_topological_order 属 L3）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -179,7 +212,7 @@ def create_mcp_server():
         return db.get_topological_order(limit=limit)
 
     # ----------------------------------------------------------------
-    # 高级调用链分析工具
+    # [L3] 高级调用链分析工具（get_impact / get_call_chain_down / detect_cycles 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -264,7 +297,7 @@ def create_mcp_server():
         return db.detect_cycles(max_depth=max_depth)
 
     # ----------------------------------------------------------------
-    # 注释恢复工具
+    # [L10] 注释恢复工具（get_comment_from_version / restore_comment 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -289,7 +322,7 @@ def create_mcp_server():
         return db.restore_comment(spec, preview=preview)
 
     # ----------------------------------------------------------------
-    # 缺陷检测工具
+    # [L9] 缺陷检测工具（find_issues / get_semgrep_* / run_semgrep_scan 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -351,7 +384,7 @@ def create_mcp_server():
         )
 
     # ----------------------------------------------------------------
-    # 覆盖率分析工具
+    # [L10] 覆盖率分析工具（get_comment_coverage / get_test_coverage 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -399,7 +432,7 @@ def create_mcp_server():
         return db.get_test_coverage()
 
     # ----------------------------------------------------------------
-    # 模块图 & 批量工具
+    # [L3+L10] 模块图 & 批量工具（export_module_graph 属 L3；restore_all_comments 属 L10）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -428,7 +461,7 @@ def create_mcp_server():
         )
 
     # ----------------------------------------------------------------
-    # 构建 & 刷新工具
+    # [L1] 构建 & 刷新工具（build_graph / refresh_file）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -450,7 +483,7 @@ def create_mcp_server():
         return True
 
     # ----------------------------------------------------------------
-    # 工作区管理工具
+    # [L1] 工作区管理工具（list_workspaces / register_workspace / set_active_workspace 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -508,7 +541,7 @@ def create_mcp_server():
         return db.get_active_workspace()
 
     # ----------------------------------------------------------------
-    # 文件操作工具（Agent 通过 MCP 读取代码，替代内置 Read/Grep 工具）
+    # [L2] 文件操作工具（Agent 通过 MCP 读取代码，替代内置 Read/Grep 工具）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -797,7 +830,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # Git 集成工具
+    # [L8] Git 集成工具（import_git_history / get_git_commits / get_commit_changes 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -851,7 +884,7 @@ def create_mcp_server():
         return db.get_git_stats()
 
     # ----------------------------------------------------------------
-    # 状态与概览工具
+    # [L1] 状态与概览工具（get_status）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -868,7 +901,7 @@ def create_mcp_server():
         return db.get_status()
 
     # ----------------------------------------------------------------
-    # 文件操作工具
+    # [L1] 文件操作工具（remove_file / build_directory）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -898,7 +931,7 @@ def create_mcp_server():
         return db.build_directory(dir_path)
 
     # ----------------------------------------------------------------
-    # 符号内容工具
+    # [L2] 符号内容工具（get_symbol_content_by_hash）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -915,7 +948,7 @@ def create_mcp_server():
         return db.get_symbol_content_by_hash(content_hash)
 
     # ----------------------------------------------------------------
-    # 代码度量工具
+    # [L4] 代码度量工具（get_code_metrics_summary / get_complexity_hotspots 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -1003,7 +1036,7 @@ def create_mcp_server():
         return db.get_most_coupled_functions(limit=limit)
 
     # ----------------------------------------------------------------
-    # 代码健康检查工具（Agent 必读）
+    # [L4] 代码健康检查工具（Agent 必读）（get_code_health_check / check_file_health）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -1056,7 +1089,7 @@ def create_mcp_server():
         return db.check_file_health(file_path)
 
     # ----------------------------------------------------------------
-    # 语义搜索工具
+    # [L2] 语义搜索工具（semantic_search / find_similar_functions / embed_*）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -1191,7 +1224,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 外部符号工具（ExternalMixin）
+    # [L11] 外部符号工具（ExternalMixin）（get_project_dependencies / import_project_dependencies 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -1284,7 +1317,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # GC 备份与审计工具（v20 新增）
+    # [L11] GC 备份与审计工具（v20 新增）（gc_archive_list / gc_audit_list 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -1387,7 +1420,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 任务驱动编排工具
+    # [L5] 任务驱动编排工具（task_create / task_next_step / work_next_job 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2180,7 +2213,7 @@ def create_mcp_server():
         )
 
     # ----------------------------------------------------------------
-    # 代码摘要 + Repo Map 工具
+    # [L2] 代码摘要 + Repo Map 工具（generate_summary / get_summary / project_brief / repo_map）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2238,7 +2271,7 @@ def create_mcp_server():
         return db.repo_map(format=format)
 
     # ----------------------------------------------------------------
-    # 覆盖率智能工具
+    # [L10] 覆盖率智能工具（import_coverage / get_coverage_for_symbol / find_uncovered_functions 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2298,7 +2331,7 @@ def create_mcp_server():
         return db.test_impact_selection(qualified_name=qualified_name)
 
     # ----------------------------------------------------------------
-    # 所有权分析工具
+    # [L10] 所有权分析工具（who_to_ask / get_ownership_map）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2330,7 +2363,7 @@ def create_mcp_server():
         return db.get_ownership_map(module_filter=module_filter)
 
     # ----------------------------------------------------------------
-    # 安全护栏工具（GuardrailMixin）
+    # [L7] 安全护栏工具（GuardrailMixin）（guardrail_scan / guardrail_check_edit 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2409,7 +2442,8 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 变更影响工具（ImpactMixin）
+    # [L9+L2] 变更影响工具（ImpactMixin）（blast_radius 属 L9；ask_codebase /
+    #         record_token_savings / get_token_savings_report 属 L2）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2564,7 +2598,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 演化智能工具（EvolutionMixin）
+    # [L4] 演化智能工具（EvolutionMixin）（evolution_frequency / defect_correlation 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2643,7 +2677,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 缺陷知识库工具（DefectKbMixin）
+    # [L9] 缺陷知识库工具（DefectKbMixin）（defect_search / defect_suggest_fix 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2718,7 +2752,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 分支感知图谱工具（BranchMixin）
+    # [L1] 分支感知图谱工具（BranchMixin）（register_branch / list_branches 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -2824,7 +2858,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 安全文件编辑工具（EditSafetyMixin，Agent OS 核心）
+    # [L12] 安全文件编辑工具（EditSafetyMixin，Agent OS 核心）（propose_edit / revert_edit 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -3025,7 +3059,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # 跨仓库分析工具（Cross-Repo Analysis）
+    # [L12] 跨仓库分析工具（Cross-Repo Analysis）（detect_cross_repo_deps 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -3150,7 +3184,7 @@ def create_mcp_server():
             return {"error": str(e)}
 
     # ----------------------------------------------------------------
-    # LSP 集成工具（Language Server Protocol）
+    # [L12] LSP 集成工具（Language Server Protocol）（lsp_hover / lsp_definition 等）
     # ----------------------------------------------------------------
 
     @mcp.tool()
@@ -3305,7 +3339,7 @@ def create_mcp_server():
         except Exception as e:
             return {"error": str(e)}
 
-    # ---- 检查门禁（F6）----
+    # ---- [L7] 检查门禁（F6）（run_check_gate / resolve_gate_findings）----
 
     @mcp.tool()
     def run_check_gate(task_id: str, step_id: str, changed_files: list) -> dict:
@@ -3358,7 +3392,7 @@ def create_mcp_server():
         except Exception as e:
             return {"error": str(e), "resolved_count": 0}
 
-    # ---- Agent Rule Memory（候选-审核-生效-同步）----
+    # ---- [L6] Agent Rule Memory（候选-审核-生效-同步）（rule_candidate_* / rule_list 等）----
 
     @mcp.tool()
     def rule_candidate_create(
