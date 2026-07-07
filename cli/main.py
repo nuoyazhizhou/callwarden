@@ -4872,10 +4872,31 @@ def _handle_refresh(args, db):
         return True
 
     if opts.paths:
-        # 刷新指定文件（支持多路径，等价多次 --refresh <path>）
+        # 刷新指定文件（支持多路径，等价多次 --refresh <path>，C8 Step #5）
+        success_count = 0
+        failure_count = 0
+        failed_paths = []
+        start_ts = time.time()
         for path in opts.paths:
-            db.refresh_file(path)
-            print(t("cli.messages.refresh_done", path=path))
+            try:
+                db.refresh_file(path)
+                print(t("cli.messages.refresh_done", path=path))
+                success_count += 1
+            except Exception as exc:
+                failure_count += 1
+                failed_paths.append((path, str(exc)))
+                cprint(t("cli.messages.refresh_failed", path=path, error=str(exc)), "red")
+        elapsed = time.time() - start_ts
+        # 多文件时输出汇总
+        if len(opts.paths) > 1:
+            cprint(t("cli.messages.refresh_multi_summary",
+                     success=success_count, failure=failure_count,
+                     total=len(opts.paths), elapsed=f"{elapsed:.2f}"), "cyan", bold=True)
+            if failed_paths:
+                cprint(t("cli.messages.refresh_multi_failed_title"), "red", bold=True)
+                for path, err in failed_paths:
+                    print(t("cli.messages.refresh_multi_failed_item",
+                            path=path, error=err))
         return True
 
     # 未指定 --all 也未指定路径：打印帮助
@@ -6067,7 +6088,8 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--topo", action="store_true", help=get_arg_help("topo"))
     parser.add_argument("--topo-limit", type=int, default=50, help=get_arg_help("topo_limit"))
     parser.add_argument("--file", metavar="PATH", help=get_arg_help("file"))
-    parser.add_argument("--refresh", metavar="PATH", help=get_arg_help("refresh"))
+    parser.add_argument("--refresh", metavar="PATH [...]", nargs="+",
+                        help=get_arg_help("refresh"))
     parser.add_argument("--history", metavar="NAME", help=get_arg_help("history"))
     parser.add_argument("--show-content", action="store_true", help=get_arg_help("show_content"))
     parser.add_argument("--diff", nargs=2, metavar=("HASH1", "HASH2"), help=get_arg_help("diff"))
@@ -6446,8 +6468,33 @@ def main():
                 print(f"  {s['start_line']}-{s['end_line']}: {s['kind']} {s['name']} ({s['visibility']})")
 
         elif args.refresh:
-            db.refresh_file(args.refresh)
-            print(t("cli.messages.refresh_done", path=args.refresh))
+            # C8 Step #5: --refresh 支持多 path（nargs='+'）
+            # 循环调用 db.refresh_file(p)，输出每个文件刷新结果汇总
+            paths = args.refresh if isinstance(args.refresh, list) else [args.refresh]
+            success_count = 0
+            failure_count = 0
+            failed_paths = []
+            start_ts = time.time()
+            for path in paths:
+                try:
+                    db.refresh_file(path)
+                    print(t("cli.messages.refresh_done", path=path))
+                    success_count += 1
+                except Exception as exc:
+                    failure_count += 1
+                    failed_paths.append((path, str(exc)))
+                    cprint(t("cli.messages.refresh_failed", path=path, error=str(exc)), "red")
+            elapsed = time.time() - start_ts
+            # 输出汇总
+            if len(paths) > 1:
+                cprint(t("cli.messages.refresh_multi_summary",
+                         success=success_count, failure=failure_count,
+                         total=len(paths), elapsed=f"{elapsed:.2f}"), "cyan", bold=True)
+                if failed_paths:
+                    cprint(t("cli.messages.refresh_multi_failed_title"), "red", bold=True)
+                    for path, err in failed_paths:
+                        print(t("cli.messages.refresh_multi_failed_item",
+                                path=path, error=err))
 
         elif args.history:
             history = db.get_history(args.history)

@@ -13,7 +13,7 @@ Call Warden CLI 提供两种命令风格：
 |------|------|------|------|
 | **构建** | `--refresh-all` | flag | 增量刷新代码图谱（仅解析变更文件，不会清空数据） |
 | | `--refresh-all --force` | flag | 强制全量重新解析 |
-| | `--refresh <PATH>` | flag | 刷新单个文件 |
+| | `--refresh <PATH [...]>` | flag | 刷新文件（支持多路径，C8 Step #5） |
 | | `--watch` | flag | 启动文件监控，自动增量更新 |
 | | `--status` | flag | 查看图谱状态概览 |
 | | `--stats` | flag | 查看统计信息（JSON） |
@@ -384,13 +384,47 @@ cw --refresh-all --force
 cw --workspace /path/to/project --refresh-all
 ```
 
-### `--refresh <PATH>`：刷新单个文件
+### `--refresh <PATH [...]>`：刷新文件（支持多路径，C8 Step #5）
 
 ```bash
+# 刷新单个文件
 cw --refresh src/payment/mod.rs
+
+# 同时刷新多个文件（C8 Step #5 新增支持）
+cw --refresh src/payment/mod.rs src/auth/login.py src/db/query.rs
 ```
 
-增量更新指定文件，重新解析符号和调用关系。
+增量更新指定文件，重新解析符号和调用关系。多文件时会输出汇总（成功数/失败数/总耗时）。
+
+> **deprecated 提示**：`--refresh` 已废弃，建议使用 `cw refresh <paths>` subcommand。详见 `cw --help` 的 deprecated flag 清单。
+
+#### 示例输出（多文件刷新）
+
+```
+Refresh: src/payment/mod.rs (rust)
+Refreshed: src/payment/mod.rs
+Refresh: src/auth/login.py (python)
+Refreshed: src/auth/login.py
+Refresh summary: success 2 / failure 0 / total 2, elapsed 0.04s
+```
+
+#### `cw refresh` subcommand（推荐用法）
+
+```bash
+# 等价 --refresh-all
+cw refresh --all
+
+# 强制全量重新解析
+cw refresh --all --force
+
+# 刷新指定文件（支持多路径，等价多次 --refresh <path>）
+cw refresh src/payment/mod.rs src/auth/login.py
+
+# 启动文件监控
+cw refresh --watch
+```
+
+`cw refresh` 是 `--refresh` / `--refresh-all` / `--watch` 的统一入口，支持所有刷新模式。多文件时会输出汇总，失败文件会被单独列出。
 
 ### `--watch`：文件监控
 
