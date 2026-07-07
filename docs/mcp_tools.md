@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 160+ 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 173 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -18,38 +18,79 @@ cw server                    # stdio 模式
 cw server --transport sse    # SSE 模式
 ```
 
-## 工具分类总览
+## 按 12 大功能分类
 
-| 分类 | 工具数 | 说明 |
-|------|--------|------|
-| 符号查询 | 12 | 搜索/定位/历史/拓扑 |
-| 调用链分析 | 9 | 影响面/调用链/循环/热力图 |
-| 安全护栏 | 4 | 规则扫描/编辑前检查/规则管理 |
-| Semgrep 缺陷 | 4 | 扫描/统计/查询 |
-| 安全编辑 | 6 | propose_edit/range_patch/symbol_patch/revert/history/stats |
-| 任务管理 | 20 | create/next/work_next_job/report/rollback/list/status/subtask/split/tree/create_from_plan/plan_template + task-symbol attribution + completion_review/quality_findings/resolve_quality_finding + capture_diff（自举闭环入口） |
-| 跨仓库分析 | 4 | 依赖检测/共享符号/影响/总览 |
-| LSP 集成 | 6 | hover/定义/引用/诊断/补全/可用性 |
-| 向量与语义搜索 | 4 | 语义搜索/嵌入/相似函数 |
-| 注释恢复 | 3 | 单个/批量/版本查询 |
-| Git 集成 | 4 | 历史/commit/变更/统计 |
-| 代码度量 | 6 | 汇总/复杂度/耦合/最大函数 |
-| 代码健康 | 2 | 健康检查/文件健康 |
-| 演化智能 | 4 | 变更频率/缺陷关联/热点/流失 |
-| 缺陷知识库 | 4 | 搜索/建议/学习/统计 |
-| 分支感知 | 5 | 注册/列出/差异/切换/合并预览 |
-| 覆盖率 | 4 | 导入/函数覆盖/未覆盖/测试影响 |
-| 所有权 | 4 | 负责人/映射/CODEOWNERS/blame |
-| 外部依赖与 GC | 6 | 直接依赖读取/导入/外部符号瘦身/冷热 retention/policy |
-| 摘要与简报 | 4 | 生成/获取摘要/项目简报/仓库图 |
-| 影响分析 | 4 | blast_radius/review/跨层/diff映射 |
-| Token 账本 | 2 | 记录节省/获取报告 |
-| RAG 问答 | 1 | ask_codebase |
-| 检查门禁 | 2 | 运行门禁/标记解决 |
-| 工作区管理 | 6 | 列出/注册/切换/删除/活动/构建目录 |
-| 文件操作 | 3 | 移除/构建目录/符号内容 |
-| Agent Rule Memory | 10 | 候选规则 CRUD/审核、规则列表、上下文匹配、AGENTS.md 同步、标记块插入、自动提取、内置规则种子化 |
-| 自举闭环 | 1 | bootstrap_status（自举健康摘要） |
+Call Warden 通过 MCP Server 暴露 173 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+
+### 概览表
+
+| # | 主分类 | 工具数 | 涵盖范围 | 对应 CLI 主分类 |
+|---|--------|--------|----------|-----------------|
+| 1 | **Workspace & Database** | 16 | workspace / db 构建 / branch | 1. Workspace & Database |
+| 2 | **Query & Search** | 24 | 符号 / 文件 / 语义搜索 / 摘要 / RAG / Token 账本 | 2. Query & Search |
+| 3 | **Call Chain Analysis** | 12 | 调用链 / 拓扑 / 循环 / 孤儿 / 模块图 / 热力图 | 3. Call Chain Analysis |
+| 4 | **Code Health & Metrics** | 12 | 度量 / 健康检查 / 演化 / 热点 / 流失 / 缺陷关联 | 4. Code Health & Metrics |
+| 5 | **Task Orchestration** | 22 | 任务 CRUD / 审批 / 质量门禁 / 符号归因 / capture-diff | 5. Task Orchestration |
+| 6 | **Agent Rule Memory** | 11 | 候选 / 审核 / 生效 / 同步 / 提取 / 清理 / 种子 | 6. Agent Rule Memory |
+| 7 | **Audit & Bootstrap** | 10 | 审计链 / 密钥轮换 / 自举 / 检查门禁 / 安全护栏 | 7. Audit & Bootstrap |
+| 8 | **Git Integration** | 5 | git 历史 / commit / 变更 / 统计 / 符号历史 | 8. Git Integration |
+| 9 | **Semgrep & Defects** | 14 | Semgrep / 缺陷知识库 / 影响半径 / 审查就绪 / 跨层 | 9. Semgrep & Defects |
+| 10 | **Coverage & Ownership** | 15 | 注释 / 测试覆盖率 / CODEOWNERS / 所有权 / 注释恢复 | 10. Coverage & Ownership |
+| 11 | **GC** | 11 | 外部符号 / retention / policy / 备份 / 审计 | 11. GC |
+| 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
+| **合计** | **173** | | |
+
+### 各分类工具清单
+
+#### [1] Workspace & Database（16 个）
+
+`list_workspaces`、`register_workspace`、`set_active_workspace`、`delete_workspace`、`get_active_workspace`、`build_graph`、`refresh_file`、`build_directory`、`remove_file`、`get_stats`、`get_status`、`register_branch`、`list_branches`、`diff_branches`、`switch_branch`、`merge_preview`
+
+#### [2] Query & Search（24 个）
+
+`search_symbols`、`get_symbol`、`get_symbol_location`、`get_file_symbols`、`get_symbol_history`、`get_file_history`、`get_recent_changes`、`get_symbol_content_by_hash`、`file_read`、`file_grep`、`file_list`、`file_symbol_content`、`semantic_search`、`find_similar_functions`、`embed_symbols`、`embed_single_symbol`、`generate_summary`、`get_summary`、`project_brief`、`repo_map`、`ask_codebase`、`record_token_savings`、`get_token_savings_report`
+
+#### [3] Call Chain Analysis（12 个）
+
+`get_callers`、`get_callees`、`get_impact`、`get_call_chain_down`、`get_top_callers`、`get_orphan_symbols`、`get_deepest_functions`、`get_module_call_stats`、`detect_cycles`、`get_call_heatmap`、`export_module_graph`、`get_topological_order`
+
+#### [4] Code Health & Metrics（12 个）
+
+`get_code_metrics_summary`、`get_complexity_hotspots`、`get_coupling_analysis`、`get_function_metrics`、`get_largest_functions`、`get_most_coupled_functions`、`get_code_health_check`、`check_file_health`、`evolution_frequency`、`defect_correlation`、`hotspot_evolution`、`churn_analysis`
+
+#### [5] Task Orchestration（22 个）
+
+`task_create`、`task_create_subtask`、`task_split`、`task_create_from_plan`、`task_plan_template`、`task_next_step`、`work_next_job`、`task_resolve_block`、`task_report_step`、`task_rollback`、`task_apply`、`task_close`、`task_capture_diff`、`task_list`、`task_status`、`task_status_tree`、`task_completion_review`、`task_quality_findings`、`task_resolve_quality_finding`、`record_task_symbol_change`、`link_edit_audit_symbols`、`get_task_symbol_changes`、`get_symbol_change_tasks`
+
+#### [6] Agent Rule Memory（11 个）
+
+`rule_candidate_create`、`rule_candidate_list`、`rule_candidate_accept`、`rule_candidate_reject`、`rule_list`、`get_applicable_rules`、`rule_sync_agents_md`、`rule_insert_agents_md_block`、`extract_rule_candidates_from_quality_findings`、`rule_seed_bootstrap`、`cleanup_agent_rule_sync_log`
+
+#### [7] Audit & Bootstrap（10 个）
+
+`audit_verify_chain`、`rotate_audit_signing_key`、`list_audit_signing_keys`、`bootstrap_status`、`run_check_gate`、`resolve_gate_findings`、`guardrail_scan`、`guardrail_check_edit`、`guardrail_list_rules`、`guardrail_add_rule`
+
+#### [8] Git Integration（5 个）
+
+`import_git_history`、`get_git_commits`、`get_commit_changes`、`get_git_stats`、`get_symbol_commit_history`
+
+#### [9] Semgrep & Defects（14 个）
+
+`run_semgrep_scan`、`get_semgrep_stats`、`get_semgrep_findings`、`get_issue_summary`、`find_issues`、`defect_search`、`defect_suggest_fix`、`defect_learn`、`defect_stats`、`blast_radius`、`get_vulnerability_blast_radius`、`diff_to_symbol`、`review_readiness`、`cross_layer_impact`
+
+#### [10] Coverage & Ownership（15 个）
+
+`get_comment_coverage`、`get_uncommented_symbols`、`get_test_coverage`、`get_comment_from_version`、`restore_comment`、`restore_all_comments`、`import_coverage`、`get_coverage_for_symbol`、`find_uncovered_functions`、`test_impact_selection`、`who_to_ask`、`get_ownership_map`、`parse_codeowners`、`import_codeowners`、`import_git_blame`
+
+#### [11] GC（11 个）
+
+`get_project_dependencies`、`import_project_dependencies`、`prune_external_symbols`、`gc_retention`、`gc_policy_get`、`gc_policy_set`、`gc_archive_list`、`gc_archive_inspect`、`gc_archive_import`、`gc_audit_list`、`gc_audit_get`
+
+#### [12] Diagnostics（21 个）
+
+`detect_clones`、`list_clones`、`get_clone_stats`、`clear_clones`、`propose_edit`、`propose_range_patch`、`propose_symbol_patch`、`propose_symbol_id_patch`、`revert_edit`、`get_edit_history`、`get_edit_stats`、`detect_cross_repo_deps`、`find_shared_symbols`、`cross_repo_impact`、`cross_repo_summary`、`lsp_hover`、`lsp_definition`、`lsp_references`、`lsp_diagnostics`、`lsp_completion`、`lsp_check_available`
+
+> **注**：以下章节按原有功能分组保留各工具的详细参数与返回值说明。MCP 工具命名不重命名，仅审计与归档（详见 `.mcp_audit.md` §5 设计决策）。
 
 ---
 

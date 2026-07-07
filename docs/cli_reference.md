@@ -1,116 +1,32 @@
 # CLI 命令参考
 
-Call Warden CLI 提供两种命令风格：
+Call Warden CLI 提供两种命令风格，遵循"subcommand 为主，--flag deprecated 为辅"的长期方向（详见 [架构设计 - 命令风格统一规范](architecture.md#命令风格统一规范c8)）：
 
-1. **子命令风格**：`cw <subcommand> [options]`（12 个子命令，对应"代码守护者架构"四大支柱）
-2. **Flag 风格**：`cw --flag [options]`（传统命令，覆盖构建/查询/编辑/度量等）
+1. **子命令风格（推荐）**：`cw <subcommand> [options]`，对应 12 大功能分类，是长期支持的方向
+2. **Flag 风格（已废弃）**：`cw --flag [options]`，作为兼容入口保留，使用时会打印 `deprecated` 警告，将在未来版本移除
 
-> 下文用 `cw` 作为命令前缀。
+> 下文用 `cw` 作为命令前缀。本文档末尾附「Deprecated --flag 清单」章节，列出所有 60 个 `--flag` 及其推荐的 subcommand 替代。
 
-## 命令概览（按功能分组）
+## 命令概览（按 12 大功能分类）
 
-| 分组 | 命令 | 风格 | 说明 |
-|------|------|------|------|
-| **构建** | `--refresh-all` | flag | 增量刷新代码图谱（仅解析变更文件，不会清空数据） |
-| | `--refresh-all --force` | flag | 强制全量重新解析 |
-| | `--refresh <PATH [...]>` | flag | 刷新文件（支持多路径，C8 Step #5） |
-| | `--watch` | flag | 启动文件监控，自动增量更新 |
-| | `--status` | flag | 查看图谱状态概览 |
-| | `--stats` | flag | 查看统计信息（JSON） |
-| **查询** | `--search <QUERY>` | flag | 模糊搜索符号 |
-| | `--symbol <QN>` | flag | 查看符号详情 |
-| | `--file <PATH>` | flag | 查看文件内符号 |
-| | `--query <NAME> <FILE>` | flag | 精确查询符号位置 |
-| | `--callers <NAME>` | flag | 查询调用者 |
-| | `--callees <NAME>` | flag | 查询被调用者 |
-| | `--topo` | flag | 拓扑排序 |
-| **调用链** | `--impact <QN>` | flag | 向上追踪影响面 |
-| | `--call-chain <QN>` | flag | 向下追踪调用链 |
-| | `--top-callers [N]` | flag | 被调用最多排行 |
-| | `--deepest [N]` | flag | 调用深度最深排行 |
-| | `--detect-cycles` | flag | 检测循环调用 |
-| | `--module-calls [N]` | flag | 模块间调用统计 |
-| | `--call-heatmap [GROUP]` | flag | 调用频率热力图 |
-| | `--orphan-symbols [KIND]` | flag | 孤立符号（未被调用） |
-| **安全** | `vuln-blast` | sub | 漏洞爆炸半径分析 |
-| | `guardrail scan/rules` | sub | 安全护栏扫描/规则 |
-| | `--semgrep [PATH...]` | flag | Semgrep 扫描 |
-| | `--semgrep-stats` | flag | Semgrep 统计 |
-| | `--semgrep-list [FILTER]` | flag | Semgrep 缺陷列表 |
-| **编辑** | `--restore-comment <SPEC>` | flag | 恢复函数注释 |
-| | `--restore-all-comments` | flag | 批量恢复注释 |
-| | `--preview` | flag | 预览模式（配合恢复） |
-| | `--history <NAME>` | flag | 函数历史版本 |
-| | `--diff <H1> <H2>` | flag | 对比两个版本 |
-| **任务** | `task create/next/report/rollback` | sub | 任务管理 |
-| | `task list/show/findings/resolve-finding` | sub | 任务列表/详情/质量发现/解决 |
-| | `task apply/close` | sub | 任务审核通过/关闭（带级联关闭子任务） |
-| | `task capture-diff <TASK_ID>` | sub | 捕获外部 Agent 真实文件改动到 task/change/audit 闭环 |
-| | `--task-list` | flag (兼容) | 列出任务（等价 `cw task list`） |
-| | `--task-show <ID>` | flag (兼容) | 查看任务详情（等价 `cw task show <ID>`） |
-| | `check-gate <TASK_ID>` | sub | 检查门禁 |
-| **审计** | `audit verify` / `audit rotate-key` / `audit keys` | sub | 验证 `audit_chain` 签名链 / 轮换签名密钥（C7） / 列出密钥轮换记录（C7） |
-| **GC** | `gc archive/restore/status/purge` | sub | ignore 文件归档、复活、状态、清除 |
-| | `gc policy show/set` | sub | 查看或修改 retention 策略 |
-| | `gc retention` | sub | 按冷热策略清理旧版本/外部符号（含 Top N 收益预估） |
-| | `gc archive list/inspect` | sub | 列出/检查 `gc_archives/*.db.gz` 备份 |
-| | `gc archive import` | sub | 从备份恢复指定文件或外部包（INSERT OR IGNORE 幂等） |
-| | `gc audit list/show` | sub | 查看 GC 审计记录（策略/候选/实删/备份） |
-| **度量** | `--metrics` | flag | 代码度量汇总 |
-| | `--complexity [N]` | flag | 圈复杂度热点 |
-| | `--coupling` | flag | 模块耦合度 |
-| | `--largest-fns [N]` | flag | 代码行数最多函数 |
-| | `--coupled-fns [N]` | flag | 耦合度最高函数 |
-| | `--fn-metrics <NAME>` | flag | 单函数度量 |
-| | `--comment-coverage` | flag | 注释覆盖率 |
-| | `--test-coverage` | flag | 测试覆盖率 |
-| **演化** | `evolution <QN>` | sub | 函数变更频率 |
-| | `hotspot` | sub | 热点函数排名 |
-| | `churn` | sub | 代码流失分析 |
-| | `symbol-history <HASH>` | sub | 符号 Git 历史 |
-| | `test-impact <QN>` | sub | 测试影响选择 |
-| **影响** | `impact <HASH>` | sub | 变更影响半径 |
-| | `review <HASH>` | sub | 审查就绪报告 |
-| **缺陷** | `defect search/suggest/learn/stats/build` | sub | 缺陷知识库 |
-| | `--function-issues [FN]` | flag | 函数缺陷检测 |
-| | `--issue-summary` | flag | 缺陷汇总 |
-| **跨仓库** | （通过 MCP 工具） | mcp | 跨仓库依赖/共享符号/影响 |
-| **LSP** | （通过 MCP 工具） | mcp | hover/定义/引用/诊断/补全 |
-| **Git** | `--git-import [N]` | flag | 导入 Git 历史 |
-| | `--git-log [N]` | flag | Git commit 历史 |
-| | `--git-show <COMMIT>` | flag | commit 变更详情 |
-| | `--git-stats` | flag | Git 集成统计 |
-| **向量** | `--semantic-search <QUERY>` | flag | 语义搜索 |
-| | `--embed` | flag | 生成向量嵌入 |
-| | `--embed-force` | flag | 强制重新嵌入 |
-| | `--similar <NAME>` | flag | 查找相似函数 |
-| **概览** | `--brief` | flag | 项目简报 |
-| | `--map` | flag | 仓库模块依赖图 |
-| **覆盖率** | `--coverage-import <FILE>` | flag | 导入覆盖率报告 |
-| | `--coverage-fn <NAME>` | flag | 函数覆盖率 |
-| | `--coverage-uncovered` | flag | 未覆盖函数 |
-| **所有权** | `--who <FILE>` | flag | 文件负责人 |
-| | `--ownership-map` | flag | 所有权映射 |
-| **工作区** | `--list-workspaces` | flag | 列出工作区 |
-| | `--register-workspace <NAME> <ROOT>` | flag | 注册工作区 |
-| | `--set-workspace <ID_OR_NAME>` | flag | 切换工作区 |
-| | `--delete-workspace <ID_OR_NAME>` | flag | 删除工作区 |
-| **导出** | `--export-module-graph [FORMAT]` | flag | 导出模块依赖图 |
-| | `--graph-output <FILE>` | flag | 输出到文件 |
-| **安装** | `install` | sub | 一键级联安装依赖 |
-| **Agent 集成** | `install-agent <codex|claude|cursor|all>` | sub | 生成 MCP/Skill/Rules/Hooks 集成模板 |
-| | `install --all` | sub | 安装全部依赖（含可选） |
-| | `install --lang <LANG...>` | sub | 仅安装指定语言 grammar |
-| | `install --check` | sub | 检查依赖状态 |
-| **Rule Memory** | `rule candidate create/list/accept/reject` | sub | 候选规则 CRUD 与审核 |
-| | `rule list` | sub | 列出已生效规则 |
-| | `rule applicable` | sub | 按上下文查询匹配规则 |
-| | `rule sync [--apply]` | sub | 同步 active 规则到 AGENTS.md 标记区 |
-| | `rule insert-block` | sub | 在 AGENTS.md 末尾插入规则标记块 |
-| | `rule extract` | sub | 从 task_quality_findings 聚合候选 |
-| | `rule seed-bootstrap [--apply]` | sub | 种子化内置自举 active rules（幂等，固定 ID `AR-bootstrap-*`） |
-| | `rule cleanup-sync-log [--apply]` | sub | 清理 agent_rule_sync_log 旧记录（GC，默认 dry-run） |
-| **自举** | `bootstrap status` | sub | 自举闭环健康摘要（DB 同步/规则/质量发现/审计链/扫描基线/任务/推荐动作） |
+Call Warden 把 145+ 个 CLI 命令按功能聚合为 12 个主分类，每个主分类下包含若干 subcommand 与（兼容期保留的）`--flag`。详细分组设计见 `.cli_audit.md` §2。
+
+| # | 主分类 | 涵盖范围 | 主要 subcommand | 等价 --flag（deprecated） |
+|---|--------|----------|-----------------|--------------------------|
+| 1 | **Workspace & Database** | 工作区管理、数据库刷新、状态概览、watcher、分支感知 | `workspace list/register/set/delete`、`refresh --all/--watch/<paths>`、`stats`、`status` | `--list-workspaces`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--refresh-all`、`--refresh`、`--watch`、`--stats`、`--status` |
+| 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复 | `search`、`symbol`、`file`、`query`、`brief`、`map` | `--search`、`--symbol`、`--file`、`--query`、`--brief`、`--map`、`--semantic-search`、`--similar`、`--embed`、`--embed-force`、`--restore-comment`、`--restore-all-comments`、`--restore-file`、`--history`、`--diff`、`--changes` |
+| 3 | **Call Chain Analysis** | 调用链、拓扑、循环、孤儿、模块图、热力图 | `callers`、`callees`、`call-chain`、`impact`、`topo` | `--callers`、`--callees`、`--call-chain`、`--impact`、`--topo`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap` |
+| 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失 | `metrics`、`complexity`、`coupling`、`largest-fns`、`coupled-fns`、`fn-metrics`、`evolution`、`hotspot`、`churn`、`comment-coverage`、`uncommented` | `--metrics`、`--complexity`、`--coupling`、`--largest-fns`、`--coupled-fns`、`--fn-metrics`、`--comment-coverage`、`--uncommented` |
+| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、capture-diff | `task create/next/report/rollback/apply/close`、`task list/show/findings/resolve-finding`、`task capture-diff`、`check-gate` | `--task-list`、`--task-show`（兼容） |
+| 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log` | — |
+| 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁 | `audit verify/rotate-key/keys`、`bootstrap status` | — |
+| 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | `git import/log/show/stats`、`symbol-history` | `--git-import`、`--git-log`、`--git-show`、`--git-stats` |
+| 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径 | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast` | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary` |
+| 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、CODEOWNERS、所有权映射 | `coverage import/fn/uncovered`、`who`、`ownership-map` | `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map` |
+| 11 | **GC** | 归档、恢复、清理、策略、备份、审计 | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show` | — |
+| 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑 | `doctor`、`install`、`install-agent`、`install-hook` | — |
+
+> **注**：详细 subcommand 用法见下文章节；deprecated `--flag` 的完整映射见本文档末尾「Deprecated --flag 清单」章节。
 
 > `install` 是独立子命令，调用方式为 `cw install [options]`。
 
@@ -1744,6 +1660,107 @@ C6 引入 GC 清理机制，按**双重过滤策略**删除旧记录，防止表
 传 `--apply` 才真正删除并 `commit`。
 
 **fail-soft**：任何异常都封装为 `{"success": False, "error": ...}`，不抛出，不阻断流程。
+
+## Deprecated --flag 清单（C8 Step #2）
+
+Call Warden 在 C8 Step #2 中为所有 `--flag` 模式命令添加了 `deprecated` 警告。
+下表列出全部 60 个 `--flag` 及其推荐的 subcommand 替代（数据来源：`deprecated_flag_mapping.json`）。
+
+> **使用 `--flag` 时的行为**：会先打印一行 `deprecated` 警告，然后正常执行原逻辑，不影响向后兼容。
+> **迁移建议**：新代码、脚本、CI 配置应直接使用推荐的 subcommand；`--flag` 将在未来版本移除。
+
+| # | Deprecated `--flag` | 推荐 subcommand | 主分类 |
+|---|---------------------|-----------------|--------|
+| 1 | `--brief` | `cw brief` | 2. Query & Search |
+| 2 | `--call-chain` | `cw call-chain <QUALIFIED_NAME>` | 3. Call Chain Analysis |
+| 3 | `--call-heatmap` | `cw call-chain --heatmap` | 2. Query & Search |
+| 4 | `--callees` | `cw callees <NAME>` | 3. Call Chain Analysis |
+| 5 | `--callers` | `cw callers <NAME>` | 3. Call Chain Analysis |
+| 6 | `--changes` | `cw file changes [SINCE]` | 2. Query & Search |
+| 7 | `--comment-coverage` | `cw comment-coverage` | 4. Code Health & Metrics |
+| 8 | `--complexity` | `cw complexity [N]` | 4. Code Health & Metrics |
+| 9 | `--coupled-fns` | `cw coupled-fns [N]` | 4. Code Health & Metrics |
+| 10 | `--coupling` | `cw coupling` | 4. Code Health & Metrics |
+| 11 | `--coverage-fn` | `cw coverage fn <NAME>` | 10. Coverage & Ownership |
+| 12 | `--coverage-import` | `cw coverage import <FILE>` | 10. Coverage & Ownership |
+| 13 | `--coverage-uncovered` | `cw coverage uncovered` | 10. Coverage & Ownership |
+| 14 | `--deepest` | `cw call-chain --deepest N` | 3. Call Chain Analysis |
+| 15 | `--delete-workspace` | `cw workspace delete <ID_OR_NAME>` | 1. Workspace & Database |
+| 16 | `--detect-cycles` | `cw call-chain --detect-cycles` | 3. Call Chain Analysis |
+| 17 | `--diff` | `cw file diff <HASH1> <HASH2>` | 2. Query & Search |
+| 18 | `--embed` | `cw search --embed` | 2. Query & Search |
+| 19 | `--embed-force` | `cw search --embed --force` | 2. Query & Search |
+| 20 | `--export-module-graph` | `cw call-chain --export-module-graph` | 3. Call Chain Analysis |
+| 21 | `--file` | `cw file <PATH>` | 2. Query & Search |
+| 22 | `--fn-metrics` | `cw fn-metrics <NAME>` | 4. Code Health & Metrics |
+| 23 | `--function-issues` | `cw function-issues [FN]` | 9. Semgrep & Defects |
+| 24 | `--git-import` | `cw git import [N]` | 8. Git Integration |
+| 25 | `--git-log` | `cw git log [N]` | 8. Git Integration |
+| 26 | `--git-show` | `cw git show <COMMIT>` | 8. Git Integration |
+| 27 | `--git-stats` | `cw git stats` | 1. Workspace & Database |
+| 28 | `--history` | `cw symbol-history <NAME>` | 2. Query & Search |
+| 29 | `--impact` | `cw impact <QUALIFIED_NAME>` | 3. Call Chain Analysis |
+| 30 | `--issue-summary` | `cw function-issues --summary` | 9. Semgrep & Defects |
+| 31 | `--largest-fns` | `cw largest-fns [N]` | 4. Code Health & Metrics |
+| 32 | `--list-workspaces` | `cw workspace list` | 1. Workspace & Database |
+| 33 | `--map` | `cw map` | 2. Query & Search |
+| 34 | `--metrics` | `cw metrics` | 4. Code Health & Metrics |
+| 35 | `--module-calls` | `cw call-chain --module-calls N` | 3. Call Chain Analysis |
+| 36 | `--orphan-symbols` | `cw callers --orphans` | 2. Query & Search |
+| 37 | `--ownership-map` | `cw ownership-map` | 2. Query & Search |
+| 38 | `--query` | `cw query <NAME> <FILE>` | 2. Query & Search |
+| 39 | `--refresh` | `cw refresh <PATH>` | 1. Workspace & Database |
+| 40 | `--refresh-all` | `cw refresh --all` | 1. Workspace & Database |
+| 41 | `--register-workspace` | `cw workspace register <NAME> <ROOT>` | 1. Workspace & Database |
+| 42 | `--restore-all-comments` | `cw file restore-all-comments` | 2. Query & Search |
+| 43 | `--restore-comment` | `cw file restore-comment <SPEC>` | 2. Query & Search |
+| 44 | `--restore-file` | `cw file restore-file <PATH>` | 2. Query & Search |
+| 45 | `--search` | `cw search <QUERY>` | 2. Query & Search |
+| 46 | `--semantic-search` | `cw search --semantic <QUERY>` | 2. Query & Search |
+| 47 | `--semgrep` | `cw semgrep scan [PATH]` | 9. Semgrep & Defects |
+| 48 | `--semgrep-list` | `cw semgrep list [FILTER]` | 9. Semgrep & Defects |
+| 49 | `--semgrep-stats` | `cw semgrep stats` | 9. Semgrep & Defects |
+| 50 | `--set-workspace` | `cw workspace set <ID_OR_NAME>` | 1. Workspace & Database |
+| 51 | `--similar` | `cw search --similar <NAME>` | 2. Query & Search |
+| 52 | `--stats` | `cw stats` | 1. Workspace & Database |
+| 53 | `--status` | `cw status` | 1. Workspace & Database |
+| 54 | `--symbol` | `cw symbol <QUALIFIED_NAME>` | 2. Query & Search |
+| 55 | `--test-coverage` | `cw coverage --test` | 10. Coverage & Ownership |
+| 56 | `--top-callers` | `cw callers --top N` | 3. Call Chain Analysis |
+| 57 | `--topo` | `cw topo` | 3. Call Chain Analysis |
+| 58 | `--uncommented` | `cw uncommented [KIND]` | 4. Code Health & Metrics |
+| 59 | `--watch` | `cw refresh --watch` | 1. Workspace & Database |
+| 60 | `--who` | `cw who <FILE>` | 10. Coverage & Ownership |
+
+### 保留的通用 flag（非 deprecated）
+
+以下 flag 作为 subcommand 的通用参数或全局 flag 保留，**不**属于 deprecated 范围：
+
+| flag | 用途 |
+|------|------|
+| `--lang <LANG>` | 全局语言切换（zh_CN / en_US） |
+| `--preview` | 预览模式（配合恢复类命令使用） |
+| `--show-content` | 显示完整内容（配合 `--history` 等使用） |
+| `--force` | 强制全量重新解析（配合 `--refresh-all` 使用） |
+| `--graph-output <FILE>` | 输出到文件（配合 `--export-module-graph` 使用） |
+| `--search-kind <KIND>` | 类型过滤（配合 `--search` 使用） |
+| `--search-limit <N>` | 返回数量限制（配合 `--search` 使用） |
+| `--chain-depth <N>` | 调用链深度（配合 `--impact` / `--call-chain` 使用） |
+| `--topo-limit <N>` | 拓扑排序数量限制（配合 `--topo` 使用） |
+| `--cycle-depth <N>` | 循环检测深度（配合 `--detect-cycles` 使用） |
+| `--heatmap-limit <N>` | 热力图数量限制（配合 `--call-heatmap` 使用） |
+| `--complexity-module <PATH>` | 复杂度模块过滤 |
+| `--coverage-by <GROUP>` | 覆盖率分组（module/file/kind） |
+| `--coverage-format <FORMAT>` | 覆盖率报告格式（lcov/cobertura） |
+| `--semgrep-config <CONFIG>` | Semgrep 规则配置 |
+| `--semgrep-scan-lang <LANG...>` | Semgrep 扫描语言限制 |
+| `--semgrep-timeout <N>` | Semgrep 超时秒数 |
+| `--semgrep-quick` | Semgrep 快速汇总模式 |
+| `--semgrep-save` | Semgrep 结果存入数据库 |
+| `--semgrep-severity <SEV>` | Semgrep 严重度过滤 |
+| `--map-format <FORMAT>` | 模块图格式（text/mermaid） |
+
+---
 
 ## 下一步
 

@@ -762,6 +762,126 @@ def new_tool(param: str) -> dict:
 3. 在 `parsers/__init__.py` 注册解析器
 4. 安装对应的 tree-sitter 语法包
 
+## 命令风格统一规范（C8）
+
+Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprecated 为辅"** 的长期命令风格方向。本节说明总体方向、12 主分类设计、迁移时间线与设计决策。
+
+> 相关审计文档：`.cli_audit.md`（CLI/MCP 参数一致性审计）、`.mcp_audit.md`（MCP 工具命名审计）。
+> 相关用户文档：[CLI 命令参考 - 命令概览（按 12 大功能分类）](cli_reference.md#命令概览按-12-大功能分类)、[MCP 工具参考 - 按 12 大功能分类](mcp_tools.md#按-12-大功能分类)。
+
+### 总体方向
+
+| 命令风格 | 状态 | 长期定位 |
+|----------|------|----------|
+| **subcommand**（`cw <subcommand> [options]`） | ✅ 推荐 | 长期支持，所有新功能必须以 subcommand 形式提供 |
+| **--flag**（`cw --flag [options]`） | ⚠️ deprecated | 兼容期保留，使用时打印 `deprecated` 警告，将在未来版本移除 |
+
+**原则**：
+1. 新增 CLI 命令必须使用 subcommand 风格
+2. 现有 `--flag` 不删除执行逻辑，仅添加 `deprecated` 警告
+3. subcommand 与 `--flag` 在兼容期内并存，用户可渐进迁移
+4. MCP 工具命名不重命名，仅审计与归档
+
+### 12 主分类设计
+
+Call Warden 把 145+ 个 CLI 命令和 173 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
+
+| # | 主分类 | CLI 涵盖范围 | MCP 工具数 |
+|---|--------|-------------|-----------|
+| 1 | **Workspace & Database** | 工作区管理、数据库刷新、状态概览、watcher、分支感知 | 16 |
+| 2 | **Query & Search** | 符号查询、搜索、文件读取、语义搜索、摘要、RAG、版本恢复 | 24 |
+| 3 | **Call Chain Analysis** | 调用链、拓扑、循环、孤儿、模块图、热力图 | 12 |
+| 4 | **Code Health & Metrics** | 复杂度、耦合、度量、健康检查、演化、热点、流失 | 12 |
+| 5 | **Task Orchestration** | 任务创建/认领/上报/回滚/审批/关闭、capture-diff | 22 |
+| 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | 11 |
+| 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁、安全护栏 | 10 |
+| 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | 5 |
+| 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径 | 14 |
+| 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、CODEOWNERS、所有权映射 | 15 |
+| 11 | **GC** | 归档、恢复、清理、策略、备份、审计 | 11 |
+| 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑 | 21 |
+
+> 详细子分类设计见 `.cli_audit.md` §3；MCP 工具分组明细见 `.mcp_audit.md` §4。
+
+### 迁移时间线（三阶段）
+
+#### 阶段 1：CLI subcommand 改造（✅ 已完成）
+
+| 工作项 | 状态 | 说明 |
+|--------|------|------|
+| 新增 27 个 subcommand handler | ✅ | 覆盖 8 个主分类（workspace/db/query/call-chain/metrics/git/semgrep/coverage/diagnostics 部分） |
+| 60 个 `--flag` deprecated 警告 | ✅ | 通过 `_DEPRECATED_FLAG_MAPPING` 字典实现，使用 `--flag` 时打印推荐 subcommand |
+| `cw --help` 12 组分组 | ✅ | main help 按 12 主分类组织 subcommand 列表 |
+| 子命令 `--help` 统一模板 | ✅ | 所有 subcommand 共享统一的 help 输出格式 |
+| `--refresh` 多 path 支持 | ✅ | `cw --refresh <path1> <path2> ...` 支持同时刷新多文件 |
+| readonly 命令集合扩展 | ✅ | `_READONLY_*_ACTIONS` 集合覆盖 workspace/git/semgrep/coverage 查询类 |
+
+完整 flag → subcommand 映射见 [CLI 命令参考 - Deprecated --flag 清单](cli_reference.md#deprecated---flag-清单c8-step-2) 和 `deprecated_flag_mapping.json`。
+
+#### 阶段 2：MCP 工具审计与文档（🔄 进行中）
+
+| 工作项 | 状态 | 说明 |
+|--------|------|------|
+| MCP 工具命名审计 | ✅ | 173 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
+| 12 大类分组注释 | ✅ | `server/mcp_server.py` 中用统一注释格式标注每个分类起点 |
+| CLI↔MCP 映射对照表 | ✅ | `docs/mcp_tools.md` 末尾添加 171 条 CLI↔MCP 命名映射 |
+| CLI 命令参考 12 大类重构 | ✅ | `docs/cli_reference.md` 开头概览表替换为 12 大功能分类 |
+| MCP 工具参考 12 大类重组 | ✅ | `docs/mcp_tools.md` 开头概览表替换为 12 大功能分类 |
+| 架构规范文档化 | ✅ | 本节（architecture.md 命令风格统一规范） |
+
+#### 阶段 3：深度完善（📋 计划中）
+
+| 工作项 | 状态 | 说明 |
+|--------|------|------|
+| MCP 工具内部 i18n 改造 | 📋 | MCP 工具的错误消息/提示走 i18n.t()，与 CLI 输出一致 |
+| 文档深度完善 | 📋 | 补充各 subcommand 的完整参数表、退出码、示例 |
+| 测试覆盖加强 | 📋 | 为 27 个新增 subcommand handler 编写端到端测试 |
+| `--flag` 移除评估 | 📋 | 评估 deprecated `--flag` 的使用率，制定移除时间表 |
+
+### 设计决策
+
+#### 1. 不修改现有 `--flag` 执行逻辑
+
+**决策**：所有 `--flag` 命令保持原有执行逻辑，仅在入口处添加 `deprecated` 警告。
+
+**理由**：
+- 避免破坏向后兼容（已有脚本、CI 配置依赖 `--flag`）
+- 降低迁移风险（用户可渐进切换到 subcommand）
+- 减少回归测试范围（不触碰已有 `_handle_*` 函数）
+
+**实现**：`cli/main.py` 中的 `_DEPRECATED_FLAG_MAPPING` 字典维护 flag → subcommand 映射，`--flag` 被触发时先打印 `[deprecated] --flag is deprecated, use 'cw <subcommand>' instead`，然后正常执行原逻辑。
+
+#### 2. 不重命名 MCP 工具
+
+**决策**：173 个 MCP 工具的命名保持不变，仅审计和归档。
+
+**理由**：
+- MCP 工具名是 Agent 集成的稳定接口，重命名会破坏已部署的 Agent workflow
+- 现有命名前缀（`get_` / `list_` / `find_` / `task_` / `gc_` / `rule_` 等）基本符合约定
+- 部分工具名（如 `blast_radius` / `who_to_ask` / `bootstrap_status`）使用业务领域术语而非动词前缀，但已成为稳定接口
+
+**实现**：在 `server/mcp_server.py` 中添加 12 大类分组注释（`# === [N] <Category> ===`），不修改任何 `@mcp.tool()` 注册。详细审计结论见 `.mcp_audit.md` §5。
+
+#### 3. subcommand 与 `--flag` 并存
+
+**决策**：在兼容期内，subcommand 与 `--flag` 并存，`--flag` 将在未来版本移除。
+
+**理由**：
+- 给用户充分的迁移时间
+- `--flag` 的 deprecated 警告会引导用户迁移
+- 移除时间表将根据使用率数据制定（阶段 3 评估）
+
+**兼容矩阵**：
+
+| 命令类型 | MCP 未激活 | MCP 激活 |
+|---------|-----------|----------|
+| subcommand（推荐） | ✅ CLI 执行 | ✅ CLI 执行（写操作避免与 MCP 撞锁） |
+| `--flag`（deprecated） | ✅ CLI 执行 + deprecated 警告 | ✅ CLI 执行 + deprecated 警告 |
+| MCP 工具（只读） | ❌ 不可用 | ✅ MCP 执行（WAL 模式下与 CLI 写并发安全） |
+| MCP 工具（写操作） | ❌ 不可用 | ⚠️ 5% 撞锁概率，建议用 CLI subcommand 替代 |
+
+> 数据库锁策略详见 [AGENTS.md - 代码读取工具按场景分工](../AGENTS.md)。
+
 ## 下一步
 
 - [MCP 工具参考](mcp_tools.md)：120 个工具详情
