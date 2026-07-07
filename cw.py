@@ -99,17 +99,40 @@ def _check_entry_point_sqlite():
         return  # 预热成功，继续执行
 
     # 预热失败，打印友好提示并退出
-    cw_py = os.path.abspath(__file__)
-    print(
-        "错误：通过 cw.exe 启动时 sqlite3 无法打开数据库文件。\n"
-        "这通常是 MCP Server 与 CLI 并发访问同一个 db 导致的锁冲突。\n\n"
-        "解决方案（任选其一）：\n"
-        f"  1. 使用 python 启动：python \"{cw_py}\" {' '.join(sys.argv[1:])}\n"
-        f"  2. 设置别名：alias cw=\"python {cw_py}\"\n"
-        "  3. 重试（锁冲突是间歇性的，可能下次成功）\n"
-        "  4. 停止 MCP Server 后再运行 CLI（cw server --stop）",
-        file=sys.stderr,
-    )
+    # 用 i18n t() 获取翻译（en_US 系统显示英文，zh_CN 系统显示中文），
+    # 并处理 Windows GBK 终端编码问题：stderr 非 utf-8 时 reconfigure
+    try:
+        from callwarden.i18n import t
+        msg = t(
+            "cli.messages.entry_point_sqlite_error",
+            cw_py=os.path.abspath(__file__),
+            args=" ".join(sys.argv[1:]),
+        )
+    except Exception:
+        # i18n 模块本身不可用时，退回到英文硬编码（避免循环依赖）
+        msg = (
+            "Error: sqlite3 failed to open the database file when launched via cw.exe.\n"
+            "Solutions: 1) python cw.py ...  2) alias cw=\"python cw.py\"  "
+            "3) retry  4) stop MCP Server (cw server --stop)"
+        )
+
+    # 编码安全：Windows GBK 终端下中文 print 可能 UnicodeEncodeError。
+    # 检测 stderr.encoding，非 utf-8 时 reconfigure（Python 3.7+）。
+    try:
+        enc = (sys.stderr.encoding or "").lower()
+        if enc and enc not in ("utf-8", "utf8"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError):
+        # reconfigure 不可用（重定向到 StringIO 等）：直接写字节
+        try:
+            sys.stderr.buffer.write(msg.encode("utf-8", errors="replace"))
+            sys.stderr.buffer.write(b"\n")
+            sys.stderr.flush()
+            sys.exit(1)
+        except Exception:
+            pass  # 最后兜底，用默认 print
+
+    print(msg, file=sys.stderr)
     sys.exit(1)
 
 

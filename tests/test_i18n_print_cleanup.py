@@ -136,8 +136,51 @@ def test_i18n_key_translations_contain_placeholders():
             ("external_import_lang_failed", ["{lang}", "{error}"]),
             ("external_import_pkg_failed", ["{lang}", "{package}", "{error}"]),
             ("bootstrap_gate_reason_detail", ["{reason}"]),
+            ("entry_point_sqlite_error", ["{cw_py}", "{args}"]),
         ]
         for key, placeholders in checks:
             value = messages.get(key, "")
             for ph in placeholders:
                 assert ph in value, f"{lang_file} 的 {key} 缺少占位符 {ph}: {value}"
+
+
+# ----------------------------------------------------------------------
+# cw.py 入口错误提示已走 i18n
+# ----------------------------------------------------------------------
+
+def test_cw_entry_point_uses_t():
+    """cw.py 的 _check_entry_point_sqlite 错误提示应通过 t() 获取翻译文本。"""
+    cw_py = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "cw.py",
+    )
+    with open(cw_py, "r", encoding="utf-8") as f:
+        source = f.read()
+    # 必须包含 t() 调用
+    assert "from callwarden.i18n import t" in source, \
+        "cw.py 应通过 from callwarden.i18n import t 获取翻译"
+    assert "entry_point_sqlite_error" in source, \
+        "cw.py 应引用 i18n key cli.messages.entry_point_sqlite_error"
+    # 不应再硬编码中文错误文案
+    assert '"错误：通过 cw.exe 启动时' not in source, \
+        "cw.py 不应再硬编码中文错误文案"
+
+
+def test_cw_entry_point_handles_encoding():
+    """cw.py 应检测 stderr.encoding 并 reconfigure（Windows GBK 终端兼容）。"""
+    cw_py = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "cw.py",
+    )
+    with open(cw_py, "r", encoding="utf-8") as f:
+        source = f.read()
+    # 必须有编码检测逻辑
+    assert "sys.stderr.encoding" in source, \
+        "cw.py 应检测 sys.stderr.encoding"
+    assert "reconfigure" in source, \
+        "cw.py 应使用 reconfigure(encoding='utf-8') 处理非 utf-8 终端"
+    assert "errors=\"replace\"" in source or "errors='replace'" in source, \
+        "cw.py reconfigure 应使用 errors='replace' 避免抛异常"
+    # 必须有 buffer.write 兜底（reconfigure 不可用时）
+    assert "buffer.write" in source, \
+        "cw.py 应有 buffer.write 兜底（reconfigure 不可用时的 fallback）"

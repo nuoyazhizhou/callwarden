@@ -1556,6 +1556,7 @@
       "external_import_done": "外部包导入完成：新增 {created} 个，跳过 {skipped} 个",
       "external_import_lang_failed": "  [{lang}] 导入失败: {error}",
       "external_import_pkg_failed": "  [{lang}] {package} 符号导入失败: {error}",
+      "entry_point_sqlite_error": "错误：通过 cw.exe 启动时 sqlite3 无法打开数据库文件。\n这通常是 MCP Server 与 CLI 并发访问同一个 db 导致的锁冲突。\n\n解决方案（任选其一）：\n  1. 使用 python 启动：python \"{cw_py}\" {args}\n  2. 设置别名：alias cw=\"python {cw_py}\"\n  3. 重试（锁冲突是间歇性的，可能下次成功）\n  4. 停止 MCP Server 后再运行 CLI（cw server --stop）",
       "clone_detect_title": "重复代码检测完成",
       "clone_detect_total_pairs": "  克隆对总数: {count}",
       "clone_detect_type1": "  Type-1（完全相同）: {count}",
