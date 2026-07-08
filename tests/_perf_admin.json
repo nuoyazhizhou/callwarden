@@ -1,0 +1,75 @@
+[
+  {
+    "repo": "admin",
+    "desc": "云端 admin（Java Maven 多模块，257K 行）",
+    "root": "C:\\git_work\\callwarden\\testcode\\admin",
+    "db_path": "C:\\git_work\\callwarden\\tests\\_perf_db\\admin\\callwarden.db",
+    "steps": [],
+    "workspace_id": 1,
+    "refresh": {
+      "elapsed_sec": 223.48608422279358,
+      "elapsed_min": 3.724768070379893,
+      "db_size_before_mb": 0.0,
+      "db_size_after_mb": 83.00390625,
+      "db_delta_mb": 83.00390625
+    },
+    "stats": {
+      "elapsed": 0.09178900718688965,
+      "symbols": 20936,
+      "files": 1758,
+      "calls": 84669,
+      "raw": {
+        "total_files": 1758,
+        "total_symbols": 20936,
+        "by_kind": {
+          "method": 18893,
+          "class": 1366,
+          "interface": 336,
+          "constructor": 296,
+          "enum": 39,
+          "fn": 6
+        },
+        "total_calls": 84669,
+        "cross_file_calls": 11213,
+        "resolved_calls": 84669,
+        "commented": 0,
+        "depth_distribution": {
+          "0": 5,
+          "1": 1
+        },
+        "total_file_versions": 1758,
+        "current_files": 1758,
+        "unique_symbol_contents": 15016,
+        "total_file_symbol_links": 20940,
+        "total_call_versions": 101687,
+        "multi_version_files": 0
+      }
+    },
+    "queries": {
+      "search": {
+        "term": "Admin",
+        "elapsed": 0.06643366813659668,
+        "result_count": 50
+      },
+      "get_callers": {
+        "target": "com.linkplay.admin.AdminApplication",
+        "elapsed": 0.00036835670471191406,
+        "result_count": 0
+      },
+      "get_callees": {
+        "target": "com.linkplay.admin.AdminApplication",
+        "elapsed": 0.00031256675720214844,
+        "result_count": 0
+      },
+      "topo": {
+        "elapsed": 0.00039839744567871094,
+        "count": 6
+      },
+      "clone_detect": {
+        "elapsed": 2.8555355072021484,
+        "total_pairs": 90057,
+        "scanned_symbols": 5077
+      }
+    }
+  }
+]

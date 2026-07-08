@@ -1,0 +1,94 @@
+[
+  {
+    "repo": "android",
+    "desc": "Android app（Java + Kotlin，898K 行）",
+    "root": "C:\\git_work\\callwarden\\testcode\\android",
+    "db_path": "C:\\git_work\\callwarden\\tests\\_perf_db\\android\\callwarden.db",
+    "steps": [
+      {
+        "step": "write_ignore",
+        "rules_count": 4
+      }
+    ],
+    "workspace_id": 1,
+    "refresh": {
+      "elapsed_sec": 449.99617099761963,
+      "elapsed_min": 7.49993618329366,
+      "db_size_before_mb": 0.0,
+      "db_size_after_mb": 223.69921875,
+      "db_delta_mb": 223.69921875
+    },
+    "stats": {
+      "elapsed": 0.31907105445861816,
+      "symbols": 50776,
+      "files": 5105,
+      "calls": 190777,
+      "raw": {
+        "total_files": 5105,
+        "total_symbols": 50776,
+        "by_kind": {
+          "method": 31739,
+          "fn": 11082,
+          "class": 4689,
+          "constructor": 2986,
+          "interface": 225,
+          "enum": 41,
+          "struct": 12,
+          "union": 2
+        },
+        "total_calls": 190777,
+        "cross_file_calls": 39560,
+        "resolved_calls": 190777,
+        "commented": 0,
+        "depth_distribution": {
+          "0": 4543,
+          "1": 2290,
+          "2": 1182,
+          "3": 687,
+          "4": 846,
+          "5": 603,
+          "6": 514,
+          "7": 237,
+          "8": 98,
+          "9": 40,
+          "10": 23,
+          "11": 12,
+          "12": 5,
+          "13": 2
+        },
+        "total_file_versions": 5105,
+        "current_files": 5105,
+        "unique_symbol_contents": 45592,
+        "total_file_symbol_links": 51050,
+        "total_call_versions": 246204,
+        "multi_version_files": 0
+      }
+    },
+    "queries": {
+      "search": {
+        "term": "Activity",
+        "elapsed": 0.20274138450622559,
+        "result_count": 50
+      },
+      "get_callers": {
+        "target": "com.wifiaudio.view.pagesmsccontent.ContainerActivity",
+        "elapsed": 0.00036525726318359375,
+        "result_count": 0
+      },
+      "get_callees": {
+        "target": "com.wifiaudio.view.pagesmsccontent.ContainerActivity",
+        "elapsed": 0.000156402587890625,
+        "result_count": 0
+      },
+      "topo": {
+        "elapsed": 0.07581210136413574,
+        "count": 5000
+      },
+      "clone_detect": {
+        "elapsed": 42.26321268081665,
+        "total_pairs": 1032083,
+        "scanned_symbols": 22849
+      }
+    }
+  }
+]

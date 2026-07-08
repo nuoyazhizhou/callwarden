@@ -1,0 +1,89 @@
+[
+  {
+    "repo": "ios_muzoplayer",
+    "desc": "iOS app（ObjC + Swift + C，1.58M 行）",
+    "root": "C:\\git_work\\callwarden\\testcode\\ios_muzoplayer",
+    "db_path": "C:\\git_work\\callwarden\\tests\\_perf_db\\ios_muzoplayer\\callwarden.db",
+    "steps": [
+      {
+        "step": "write_ignore",
+        "rules_count": 10
+      }
+    ],
+    "workspace_id": 1,
+    "refresh": {
+      "elapsed_sec": 35.55196213722229,
+      "elapsed_min": 0.5925327022870381,
+      "db_size_before_mb": 3.3125,
+      "db_size_after_mb": 22.03515625,
+      "db_delta_mb": 18.72265625
+    },
+    "stats": {
+      "elapsed": 0.01702404022216797,
+      "symbols": 2884,
+      "files": 3760,
+      "calls": 8845,
+      "raw": {
+        "total_files": 3760,
+        "total_symbols": 2884,
+        "by_kind": {
+          "function": 1547,
+          "fn": 418,
+          "class": 296,
+          "enum": 279,
+          "method": 180,
+          "constructor": 119,
+          "struct": 36,
+          "protocol": 9
+        },
+        "total_calls": 8845,
+        "cross_file_calls": 891,
+        "resolved_calls": 8845,
+        "commented": 0,
+        "depth_distribution": {
+          "0": 269,
+          "1": 77,
+          "2": 22,
+          "3": 13,
+          "4": 12,
+          "5": 10,
+          "6": 7,
+          "7": 5,
+          "8": 3
+        },
+        "total_file_versions": 3760,
+        "current_files": 3760,
+        "unique_symbol_contents": 2389,
+        "total_file_symbol_links": 2884,
+        "total_call_versions": 16479,
+        "multi_version_files": 0
+      }
+    },
+    "queries": {
+      "search": {
+        "term": "ViewController",
+        "elapsed": 0.0050046443939208984,
+        "result_count": 50
+      },
+      "get_callers": {
+        "target": "muzodev.Clients.MuzoHome.Code.DeviceSetting.ScreenSetting.LPDeviceClockFaceViewC",
+        "elapsed": 0.00010132789611816406,
+        "result_count": 0
+      },
+      "get_callees": {
+        "target": "muzodev.Clients.MuzoHome.Code.DeviceSetting.ScreenSetting.LPDeviceClockFaceViewC",
+        "elapsed": 4.982948303222656e-05,
+        "result_count": 0
+      },
+      "topo": {
+        "elapsed": 0.0029723644256591797,
+        "count": 418
+      },
+      "clone_detect": {
+        "elapsed": 0.2864060401916504,
+        "total_pairs": 3273,
+        "scanned_symbols": 1453
+      }
+    }
+  }
+]

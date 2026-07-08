@@ -1,0 +1,36 @@
+[
+  {
+    "repo": "firmware",
+    "desc": "固件主仓库（C/C++，34M 行，2.71GB）",
+    "root": "C:\\git_work\\callwarden\\testcode\\firmware",
+    "db_path": "C:\\git_work\\callwarden\\tests\\_perf_db\\firmware\\callwarden.db",
+    "status": "partial",
+    "note": "refresh-all 未完成，卡在 Step 4/5（调用关系解析 O(M*N) 性能瓶颈）",
+    "refresh": {
+      "elapsed_sec": 1800,
+      "elapsed_min": 30.0,
+      "status": "timeout",
+      "bottleneck": "_build_call_graph_multi_lang 策略2后缀匹配 O(M*N)",
+      "bottleneck_location": "db/db_build.py:798-808",
+      "completed_steps": ["scan", "parse", "version", "stdlib_import"],
+      "failed_step": "call_relation_resolve"
+    },
+    "stats": {
+      "files": 14293,
+      "symbols": 107926,
+      "calls": 0,
+      "symbol_contents": 86752,
+      "external_symbols": 5775,
+      "failed_files": 7,
+      "failed_reason": "maximum recursion depth exceeded (ffmpeg/caps 数据表文件)"
+    },
+    "db_size_mb": 275.37,
+    "queries": {
+      "search": "N/A (refresh 未完成)",
+      "get_callers": "N/A",
+      "get_callees": "N/A",
+      "topo": "N/A",
+      "clone_detect": "N/A"
+    }
+  }
+]
