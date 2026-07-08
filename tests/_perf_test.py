@@ -126,6 +126,85 @@ REPOS = {
             "back_images/",
         ],
     },
+    # === 新增仓库（P16 性能验证第二批）===
+    "CLIProxyAPI": {
+        "root": r"C:\git_work\callwarden\testcode\CLIProxyAPI",
+        "desc": "CLI Proxy API（Go，API 代理网关）",
+        "ignore_rules": [],
+    },
+    "DeepSeek-TUI": {
+        "root": r"C:\git_work\callwarden\testcode\DeepSeek-TUI",
+        "desc": "DeepSeek TUI（Rust + TS，终端 AI 客户端）",
+        "ignore_rules": [
+            "target/",
+            "*/target/",
+        ],
+    },
+    "TokenSlim-publish2": {
+        "root": r"C:\git_work\callwarden\testcode\TokenSlim-publish2",
+        "desc": "TokenSlim（Rust，日志分析工具）",
+        "ignore_rules": [
+            "target/",
+            "*/target/",
+        ],
+    },
+    "ailearning-mis": {
+        "root": r"C:\git_work\callwarden\testcode\ailearning-mis",
+        "desc": "AI 学习管理后台（Vue + JS，前端）",
+        "ignore_rules": [
+            "node_modules/",
+            "*/node_modules/",
+            "build/",
+            "*/build/",
+            "dist/",
+            "*/dist/",
+            # static/ 目录全是第三方库源码（echarts 2.8MB、UEditor 1MB、tinymce 814KB 等）
+            # tree-sitter parse 这些大文件很慢（6.5s/30 文件），且非业务代码
+            "static/",
+            "*/static/",
+        ],
+    },
+    "ailearning-service": {
+        "root": r"C:\git_work\callwarden\testcode\ailearning-service",
+        "desc": "AI 学习后端服务（Java Gradle 多模块）",
+        "ignore_rules": [
+            # docs 目录含大量图片/SQL 备份/Word 文档，非代码
+            "docs/",
+            # Gradle 构建输出
+            ".gradle/",
+            "*/.gradle/",
+            "build/",
+            "*/build/",
+        ],
+    },
+    "ailearning-smart": {
+        "root": r"C:\git_work\callwarden\testcode\ailearning-smart",
+        "desc": "AI 学习小程序（TSX，前端）",
+        "ignore_rules": [
+            "node_modules/",
+            "*/node_modules/",
+        ],
+    },
+    "codex-lb": {
+        "root": r"C:\git_work\callwarden\testcode\codex-lb",
+        "desc": "Codex 负载均衡（Python + TSX，全栈）",
+        "ignore_rules": [
+            "node_modules/",
+            "*/node_modules/",
+            ".venv/",
+            "*/.venv/",
+        ],
+    },
+    "new-api": {
+        "root": r"C:\git_work\callwarden\testcode\new-api",
+        "desc": "New API（Go + TSX，API 网关平台）",
+        "ignore_rules": [
+            "node_modules/",
+            "*/node_modules/",
+            "web/default/node_modules/",
+            "web/classic/node_modules/",
+        ],
+    },
 }
 
 

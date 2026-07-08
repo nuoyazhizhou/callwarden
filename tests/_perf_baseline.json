@@ -1,21 +1,230 @@
 {
   "firmware": {
     "stage_timings": {
-      "register": 0.1428211000020383,
-      "parse": 11.001237900010892,
-      "symbol_write": 0.43622119999781717,
-      "stdlib_import": 0.4454304999962915,
-      "call_resolve_write": 0.9376832999987528,
-      "depth": 0.4603497000061907,
-      "fts_rebuild": 0.07010749999608379,
-      "commit": 0.10356770000362303,
-      "gc_archive": 1.1985713000030955,
-      "total": 14.813040256500244,
-      "files_total": 2923,
-      "files_parsed": 2923,
+      "register": 0.26205689999915194,
+      "parse": 3.9681730000011157,
+      "symbol_write": 1.1799648000014713,
+      "stdlib_import": 3.2839338000048883,
+      "call_resolve_write": 2.598265900000115,
+      "depth": 4.036120100005064,
+      "fts_rebuild": 0.18974279999383725,
+      "commit": 0.5647701999987476,
+      "gc_archive": 2.2698254999995697,
+      "total": 18.420112371444702,
+      "files_total": 5491,
+      "files_parsed": 5483,
       "files_unchanged": 0
     },
-    "elapsed_sec": 15.899688720703125,
-    "updated_at": "2026-07-08 19:12:41"
+    "elapsed_sec": 20.206218481063843,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "admin": {
+    "stage_timings": {
+      "register": 0.1148032999917632,
+      "parse": 3.6306419000029564,
+      "symbol_write": 0.7226159999991069,
+      "stdlib_import": 72.3052663999988,
+      "call_resolve_write": 1.1295972000079928,
+      "depth": 1.1608854000078281,
+      "fts_rebuild": 0.09889710000425112,
+      "commit": 0.2130773999961093,
+      "gc_archive": 0.29139300000679214,
+      "total": 79.68375396728516,
+      "files_total": 1758,
+      "files_parsed": 1758,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 80.4126524925232,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "android": {
+    "stage_timings": {
+      "register": 0.23783680000633467,
+      "parse": 2.568249800009653,
+      "symbol_write": 2.038589799994952,
+      "stdlib_import": 1.1059792999876663,
+      "call_resolve_write": 3.096577200005413,
+      "depth": 1.1074114999937592,
+      "fts_rebuild": 0.31716099999903236,
+      "commit": 0.6292706000094768,
+      "gc_archive": 0.7723649999970803,
+      "total": 11.954612255096436,
+      "files_total": 5105,
+      "files_parsed": 5105,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 13.480911254882812,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "ios_muzoplayer": {
+    "stage_timings": {
+      "register": 0.18091569999523927,
+      "parse": 1.7007147000113036,
+      "symbol_write": 0.25073600000177976,
+      "stdlib_import": 0.6401435000007041,
+      "call_resolve_write": 0.17331160001049284,
+      "depth": 0.2880194000026677,
+      "fts_rebuild": 0.02531329999328591,
+      "commit": 0.006948399997781962,
+      "gc_archive": 1.037839200012968,
+      "total": 4.307809591293335,
+      "files_total": 3760,
+      "files_parsed": 3760,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 6.298710107803345,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "CLIProxyAPI": {
+    "stage_timings": {
+      "register": 0.050343299997621216,
+      "parse": 0.7615645000041695,
+      "symbol_write": 0.18311569999787025,
+      "stdlib_import": 0.4784612999937963,
+      "call_resolve_write": 0.668827000001329,
+      "depth": 0.6363113999977941,
+      "fts_rebuild": 0.01482929999474436,
+      "commit": 0.10553390000131913,
+      "gc_archive": 0.04137320000154432,
+      "total": 2.9493162631988525,
+      "files_total": 499,
+      "files_parsed": 499,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 3.068385362625122,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "DeepSeek-TUI": {
+    "stage_timings": {
+      "register": 0.041726300012669526,
+      "parse": 1.5101424000022234,
+      "symbol_write": 0.31346219999250025,
+      "stdlib_import": 1.0686892999947304,
+      "call_resolve_write": 0.20732219998899382,
+      "depth": 0.3160566000005929,
+      "fts_rebuild": 0.055593600001884624,
+      "commit": 0.1297772999969311,
+      "gc_archive": 0.06243450001056772,
+      "total": 3.7096774578094482,
+      "files_total": 340,
+      "files_parsed": 340,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 3.7940523624420166,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "TokenSlim-publish2": {
+    "stage_timings": {
+      "register": 0.027148399996804073,
+      "parse": 0.7724712000053842,
+      "symbol_write": 0.17287799999758136,
+      "stdlib_import": 0.8404708999878494,
+      "call_resolve_write": 0.17512460000580177,
+      "depth": 0.2682158999959938,
+      "fts_rebuild": 0.028828000009525567,
+      "commit": 0.006567700009327382,
+      "gc_archive": 0.13873370000510477,
+      "total": 2.4344468116760254,
+      "files_total": 542,
+      "files_parsed": 542,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 2.7045364379882812,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "ailearning-mis": {
+    "stage_timings": {
+      "register": 0.02884769999946002,
+      "parse": 6.532566499998211,
+      "symbol_write": 0.07575620000716299,
+      "stdlib_import": 0.2498858999897493,
+      "call_resolve_write": 0.5025423000042792,
+      "depth": 0.5818628999986686,
+      "fts_rebuild": 0.0060440000088419765,
+      "commit": 0.005713700011256151,
+      "gc_archive": 0.0604215000057593,
+      "total": 8.04682445526123,
+      "files_total": 288,
+      "files_parsed": 288,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 8.164200782775879,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "ailearning-service": {
+    "stage_timings": {
+      "register": 0.0615784999972675,
+      "parse": 1.1775596000079531,
+      "symbol_write": 0.3500446000107331,
+      "stdlib_import": 0.6078294000035385,
+      "call_resolve_write": 0.4324696999974549,
+      "depth": 0.36707739999110345,
+      "fts_rebuild": 0.018356299988226965,
+      "commit": 0.005696599997463636,
+      "gc_archive": 0.42820199999550823,
+      "total": 3.459009885787964,
+      "files_total": 1056,
+      "files_parsed": 1056,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 3.974097728729248,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "ailearning-smart": {
+    "stage_timings": {
+      "register": 0.004227000012178905,
+      "parse": 0.4033950000011828,
+      "symbol_write": 0.021900499996263534,
+      "stdlib_import": 0.2777205000020331,
+      "call_resolve_write": 0.04059150000102818,
+      "depth": 0.002574000012828037,
+      "fts_rebuild": 0.0019120999932056293,
+      "commit": 0.042818899994017556,
+      "gc_archive": 0.023232000006828457,
+      "total": 0.819451093673706,
+      "files_total": 71,
+      "files_parsed": 71,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 0.8511984348297119,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "codex-lb": {
+    "stage_timings": {
+      "register": 0.052325299999210984,
+      "parse": 0.938048300013179,
+      "symbol_write": 0.23694840000825934,
+      "stdlib_import": 6.141028500001994,
+      "call_resolve_write": 0.5154716999968514,
+      "depth": 0.6857205999986036,
+      "fts_rebuild": 0.03719250000722241,
+      "commit": 0.011398300004657358,
+      "gc_archive": 0.15104250000149477,
+      "total": 8.775884628295898,
+      "files_total": 655,
+      "files_parsed": 655,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 9.06465220451355,
+    "updated_at": "2026-07-08 22:52:09"
+  },
+  "new-api": {
+    "stage_timings": {
+      "register": 0.12889880000147969,
+      "parse": 1.3712418999930378,
+      "symbol_write": 0.44511590000183787,
+      "stdlib_import": 0.47130010000546463,
+      "call_resolve_write": 0.5610500000038883,
+      "depth": 0.35105089998978656,
+      "fts_rebuild": 0.023256399988895282,
+      "commit": 0.009357399991131388,
+      "gc_archive": 0.18188439999357797,
+      "total": 3.552161931991577,
+      "files_total": 1849,
+      "files_parsed": 1849,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 4.118100643157959,
+    "updated_at": "2026-07-08 22:52:09"
   }
 }
