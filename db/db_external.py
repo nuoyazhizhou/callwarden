@@ -2191,6 +2191,10 @@ class ExternalMixin:
 
         需要 JDK 安装。对每个 .class 文件运行 javap -public 输出公共字段和方法签名。
 
+        优化（P16）：批量 javap 调用。原实现对每个 .class 文件单独启动 javap 子进程，
+        JVM 启动开销 ~0.3-0.5s/次，20 类 = 6-10s/包，17 个包 = 100-170s。
+        现在改为一次 javap 调用处理一批 class（最多 20 个），JVM 只启动一次。
+
         Args:
             jar_path: class jar 文件路径
             package_name: "groupId:artifactId"
@@ -2218,7 +2222,7 @@ class ExternalMixin:
         pkg_ver = version or "unknown"
         created = 0
         class_count = 0
-        max_classes = MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE  # javap 调用慢，限制处理类数
+        max_classes = MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE  # 限制处理类数
 
         try:
             with zipfile.ZipFile(jar_path) as zf:
@@ -2230,100 +2234,267 @@ class ExternalMixin:
                     and not self._is_external_archive_internal_path(n)
                 )
                 class_files.sort(key=lambda n: (n.count("/"), n))
+                # 收集要处理的 class 列表（跳过内部类）
+                classes_to_process = []
                 for name in class_files:
                     if class_count >= max_classes:
                         break
-                    class_count += 1
                     # class 名：com/foo/Bar.class -> com.foo.Bar
                     class_name = name[:-6].replace("/", ".")
                     # 内部类跳过（含 $）
                     if "$" in class_name:
                         continue
+                    classes_to_process.append((name, class_name))
+                    class_count += 1
+
+                if not classes_to_process:
+                    return 0
+
+                # P16: 批量 javap 调用
+                # javap 支持一次处理多个 class：javap -classpath X -public A B C...
+                # 输出用 "Compiled from \"X.java\"" 分隔不同类
+                # 分批处理，每批最多 20 个 class（避免命令行过长）
+                BATCH_SIZE = 20
+                for batch_start in range(0, len(classes_to_process), BATCH_SIZE):
+                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                        return created
+                    batch = classes_to_process[batch_start:batch_start + BATCH_SIZE]
+                    class_names = [cn for _, cn in batch]
+
                     try:
                         result = subprocess.run(
-                            ["javap", "-classpath", jar_path, "-public", class_name],
+                            ["javap", "-classpath", jar_path, "-public"] + class_names,
                             capture_output=True,
                             text=True,
                             encoding="utf-8",
-                            timeout=10,
+                            timeout=30,  # 批量处理给更长超时
                         )
                         if result.returncode != 0:
+                            # 批量失败，回退到逐类处理
+                            for name, class_name in batch:
+                                if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                                    return created
+                                created = self._javap_single_class(
+                                    jar_path, name, class_name,
+                                    pkg_key, pkg_ver, created,
+                                )
                             continue
-                        # 解析输出：提取公共方法/字段签名
-                        # 输出格式形如：
-                        #   public class com.foo.Bar {
-                        #     public void doSomething();
-                        #     public java.lang.String getName();
-                        #     public static final int MAX = 100;
-                        #   }
-                        module_path = class_name.rsplit(".", 1)[0] if "." in class_name else ""
-                        class_short = class_name.rsplit(".", 1)[-1]
-                        # 类自身
-                        self._insert_java_external_symbol(
-                            pkg_key, pkg_ver, module_path,
-                            class_name, class_short, "class",
-                            f"public class {class_short}",
-                            f"jar:{jar_path}!/{name}",
+                        # 解析批量输出
+                        created = self._parse_javap_batch_output(
+                            result.stdout, jar_path, batch,
+                            pkg_key, pkg_ver, created,
                         )
-                        created += 1
-                        if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
-                            return created
-                        # 解析方法和字段
-                        for line in result.stdout.split("\n"):
-                            line = line.strip().rstrip(";")
-                            if not line or line.startswith("//") or line.startswith("Compiled"):
-                                continue
-                            # 跳过类声明行
-                            if line.startswith(("public class", "public final class",
-                                                "public abstract class",
-                                                "public interface", "public enum",
-                                                "public final class", "class ")):
-                                continue
-                            # 形如 "public void doSomething()" 或 "public static int MAX"
-                            m = re.match(
-                                r"public\s+(?:static\s+)?(?:final\s+)?"
-                                r"([\w<>\[\],.\s]+?)\s+(\w+)\s*\(([^)]*)\)",
-                                line,
+                    except subprocess.TimeoutExpired:
+                        # 超时，回退到逐类处理
+                        for name, class_name in batch:
+                            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                                return created
+                            created = self._javap_single_class(
+                                jar_path, name, class_name,
+                                pkg_key, pkg_ver, created,
                             )
-                            if m:
-                                ret_type = m.group(1).strip()
-                                method_name = m.group(2).strip()
-                                params = m.group(3).strip()
-                                qname = f"{class_name}.{method_name}"
-                                if self._insert_java_external_symbol(
-                                    pkg_key, pkg_ver, class_name,
-                                    qname, method_name, "method",
-                                    f"public {ret_type} {method_name}({params})",
-                                    f"jar:{jar_path}!/{name}",
-                                ):
-                                    created += 1
-                                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
-                                        return created
-                                continue
-                            # 字段
-                            m = re.match(
-                                r"public\s+(?:static\s+)?(?:final\s+)?"
-                                r"([\w<>\[\],.]+)\s+(\w+)",
-                                line,
-                            )
-                            if m:
-                                field_type = m.group(1).strip()
-                                field_name = m.group(2).strip()
-                                qname = f"{class_name}.{field_name}"
-                                if self._insert_java_external_symbol(
-                                    pkg_key, pkg_ver, class_name,
-                                    qname, field_name, "field",
-                                    f"public {field_type} {field_name}",
-                                    f"jar:{jar_path}!/{name}",
-                                ):
-                                    created += 1
-                                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
-                                        return created
                     except Exception:
                         continue
         except Exception:
             pass
         return created
+
+    def _parse_javap_batch_output(
+        self,
+        stdout: str,
+        jar_path: str,
+        batch: list,
+        pkg_key: str,
+        pkg_ver: str,
+        created: int,
+    ) -> int:
+        """解析批量 javap 输出，提取符号并插入数据库
+
+        Args:
+            stdout: javap 的标准输出
+            jar_path: jar 文件路径
+            batch: [(archive_name, class_name), ...] 本批处理的 class 列表
+            pkg_key: 包键
+            pkg_ver: 版本
+            created: 已导入符号数
+
+        Returns:
+            更新后的已导入符号数
+        """
+        # javap 批量输出格式：
+        #   Compiled from "Bar.java"
+        #   public class com.foo.Bar {
+        #     public void doSomething();
+        #     ...
+        #   }
+        #   Compiled from "Baz.java"
+        #   public class com.foo.Baz {
+        #     ...
+        #   }
+        # 按 "Compiled from" 分割成不同 class 的块
+        blocks = re.split(r'^Compiled from ".*?"$', stdout, flags=re.MULTILINE)
+        # 第一块是空（开头就是 Compiled from）
+        blocks = [b for b in blocks if b.strip()]
+
+        # 构建类名到 archive_name 的映射
+        name_to_archive = {cn: an for an, cn in batch}
+
+        for block in blocks:
+            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                return created
+            # 从块中提取类名（匹配 "public class/abstract/interface/enum/final class X"）
+            class_match = re.search(
+                r"public\s+(?:final\s+|abstract\s+)?(?:class|interface|enum)\s+(\S+)",
+                block,
+            )
+            if not class_match:
+                continue
+            class_name = class_match.group(1).rstrip("{").strip()
+            # 找到对应的 archive name
+            archive_name = name_to_archive.get(class_name, "")
+            if not archive_name:
+                # 可能是内部类或其他，跳过
+                continue
+
+            created = self._parse_and_insert_javap_block(
+                block, class_name, archive_name, jar_path,
+                pkg_key, pkg_ver, created,
+            )
+
+        return created
+
+    def _parse_and_insert_javap_block(
+        self,
+        block: str,
+        class_name: str,
+        archive_name: str,
+        jar_path: str,
+        pkg_key: str,
+        pkg_ver: str,
+        created: int,
+    ) -> int:
+        """解析单个 class 的 javap 输出块，插入符号
+
+        Args:
+            block: javap 输出中一个 class 的块
+            class_name: 类完整限定名
+            archive_name: jar 内路径
+            jar_path: jar 文件路径
+            pkg_key: 包键
+            pkg_ver: 版本
+            created: 已导入符号数
+
+        Returns:
+            更新后的已导入符号数
+        """
+        module_path = class_name.rsplit(".", 1)[0] if "." in class_name else ""
+        class_short = class_name.rsplit(".", 1)[-1]
+        source_file = f"jar:{jar_path}!/{archive_name}"
+
+        # 类自身
+        if self._insert_java_external_symbol(
+            pkg_key, pkg_ver, module_path,
+            class_name, class_short, "class",
+            f"public class {class_short}",
+            source_file,
+        ):
+            created += 1
+
+        if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+            return created
+
+        # 解析方法和字段
+        for line in block.split("\n"):
+            line = line.strip().rstrip(";")
+            if not line or line.startswith("//") or line.startswith("Compiled"):
+                continue
+            # 跳过类声明行
+            if line.startswith(("public class", "public final class",
+                                "public abstract class",
+                                "public interface", "public enum",
+                                "public final class", "class ")):
+                continue
+            # 形如 "public void doSomething()" 或 "public static int MAX"
+            m = re.match(
+                r"public\s+(?:static\s+)?(?:final\s+)?"
+                r"([\w<>\[\],.\s]+?)\s+(\w+)\s*\(([^)]*)\)",
+                line,
+            )
+            if m:
+                ret_type = m.group(1).strip()
+                method_name = m.group(2).strip()
+                params = m.group(3).strip()
+                qname = f"{class_name}.{method_name}"
+                if self._insert_java_external_symbol(
+                    pkg_key, pkg_ver, class_name,
+                    qname, method_name, "method",
+                    f"public {ret_type} {method_name}({params})",
+                    source_file,
+                ):
+                    created += 1
+                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                        return created
+                continue
+            # 字段
+            m = re.match(
+                r"public\s+(?:static\s+)?(?:final\s+)?"
+                r"([\w<>\[\],.]+)\s+(\w+)",
+                line,
+            )
+            if m:
+                field_type = m.group(1).strip()
+                field_name = m.group(2).strip()
+                qname = f"{class_name}.{field_name}"
+                if self._insert_java_external_symbol(
+                    pkg_key, pkg_ver, class_name,
+                    qname, field_name, "field",
+                    f"public {field_type} {field_name}",
+                    source_file,
+                ):
+                    created += 1
+                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                        return created
+
+        return created
+
+    def _javap_single_class(
+        self,
+        jar_path: str,
+        archive_name: str,
+        class_name: str,
+        pkg_key: str,
+        pkg_ver: str,
+        created: int,
+    ) -> int:
+        """对单个 class 调用 javap（批量失败时的回退路径）
+
+        Args:
+            jar_path: jar 文件路径
+            archive_name: jar 内路径
+            class_name: 类完整限定名
+            pkg_key: 包键
+            pkg_ver: 版本
+            created: 已导入符号数
+
+        Returns:
+            更新后的已导入符号数
+        """
+        try:
+            result = subprocess.run(
+                ["javap", "-classpath", jar_path, "-public", class_name],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return created
+            return self._parse_and_insert_javap_block(
+                result.stdout, class_name, archive_name, jar_path,
+                pkg_key, pkg_ver, created,
+            )
+        except Exception:
+            return created
 
     def _is_external_archive_internal_path(self, archive_path: str) -> bool:
         """判断 jar 内路径是否属于内部实现、测试或元数据目录。"""
