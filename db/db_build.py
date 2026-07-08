@@ -696,6 +696,11 @@ class BuildMixin:
         to_parse = []
         parsed_new = 0  # P11: 初始化为 0，用于 GC 条件化判断
 
+        # P20: 收集项目中实际出现的语言集合
+        # 用于 stdlib_import 时只导入项目实际使用语言的 stdlib 符号，
+        # 避免给 Python 项目导入 Java/C/Rust 等无关语言的 stdlib（无效数据 + 耗时）
+        project_langs: Set[str] = set()
+
         # P10: 细拆 register 阶段计时（逐文件 SQL: _register_file_db + _get_file_version）
         t_register_start = time.perf_counter()
         for i, rel_path in enumerate(files, 1):
@@ -706,6 +711,10 @@ class BuildMixin:
             if not parser:
                 skipped += 1
                 continue
+
+            # P20: 记录项目实际使用的语言
+            if lang:
+                project_langs.add(lang)
 
             module_path = self._infer_module_path_generic(rel_path, lang)
             file_instance_id = self._register_file_db(abs_path, module_path)
@@ -912,10 +921,11 @@ class BuildMixin:
 
         spinner = Spinner(t("cli.messages.db_build_step4_5_calls"))
         spinner.start()
-        # 导入所有支持语言的标准库符号（Python + Rust/Java/Go/C/C++/C#/TS/Kotlin/Ruby/Swift/Scala/Elixir/PHP）
+        # 导入项目实际使用语言的标准库符号
+        # P20: 只导入项目实际检测到的语言，避免给 Python 项目导入 Java/C/Rust 等无关 stdlib
         # 这一步在构建调用图之前完成，确保后续 callee 匹配能命中标准库符号
         t_stdlib_start = time.perf_counter()
-        self.import_all_stdlib_symbols()
+        self.import_all_stdlib_symbols(languages=list(project_langs) if project_langs else None)
         self.import_project_dependencies()
         t_stdlib = time.perf_counter() - t_stdlib_start
 

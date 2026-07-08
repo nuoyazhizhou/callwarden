@@ -4055,7 +4055,9 @@ class StdlibMixin:
         """导入所有支持语言的标准库符号
 
         Args:
-            languages: 指定语言列表，为空则导入所有
+            languages: 指定语言列表，为空则导入所有支持语言的标准库。
+                       P20: build_full_graph 会传入项目实际检测到的语言集合，
+                       避免给 Python 项目导入 Java/C/Rust 等无关 stdlib。
 
         Returns:
             总导入符号数量
