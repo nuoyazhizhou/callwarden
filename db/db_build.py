@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import pickle
 import re
+import sys
 import time
 import threading
 from collections import defaultdict
@@ -48,54 +49,175 @@ def _init_worker_parsers():
     _worker_parsers = {}
 
 
+# 每个 worker 进程预估内存上限（MB）
+# Python 解释器 ~30MB + tree-sitter grammar ~30MB + parse 缓存 ~20MB
+_WORKER_MEM_BUDGET_MB = 150
+# 保留给宿主机/其他进程的内存下限（MB），避免把宿主机搞崩溃
+_HOST_RESERVED_MEM_MB = 2048  # 2GB
+# worker 数硬上限（即使资源充足也不超过，避免进程调度开销）
+_MAX_WORKERS_CAP = 8
+# worker 数硬下限
+_MIN_WORKERS = 1
+
+
+def _detect_optimal_workers() -> int:
+    """根据宿主机剩余资源动态计算最优 worker 数。
+
+    用户要求：worker 数应通过检测宿主机剩余资源来决定，
+    剩余资源多就多起，剩余资源少就少起。
+
+    综合考虑三个因素：
+    1. CPU 核心数：worker 数不应超过 CPU 核心数（避免抢占调度）
+    2. 剩余可用内存：每个 worker 预估 ~150MB，确保不会把内存吃光
+    3. 硬上限 8：避免进程过多导致 IPC 开销和调度抖动
+
+    内存检测优先用 psutil（跨平台），不可用时回退到平台原生 API
+    （Windows: ctypes.windll.kernel32.GlobalMemoryStatusEx；
+     Linux: /proc/meminfo）。
+
+    Returns:
+        推荐 worker 数（1-8）
+    """
+    cpu_count = os.cpu_count() or 4
+
+    # CPU 维度：留 1 核给主进程和系统
+    cpu_based = max(_MIN_WORKERS, cpu_count - 1)
+
+    # 内存维度：检测可用内存
+    mem_based = _MAX_WORKERS_CAP  # 默认假设内存充足
+    available_mb = _get_available_memory_mb()
+    if available_mb is not None:
+        # 减去保留量后，按每 worker 预算计算
+        usable_mb = available_mb - _HOST_RESERVED_MEM_MB
+        if usable_mb <= 0:
+            mem_based = _MIN_WORKERS
+        else:
+            mem_based = max(_MIN_WORKERS, int(usable_mb / _WORKER_MEM_BUDGET_MB))
+
+    # 取 CPU 和内存维度的较小值，再限制在硬上限内
+    workers = min(cpu_based, mem_based, _MAX_WORKERS_CAP)
+    return max(_MIN_WORKERS, workers)
+
+
+def _get_available_memory_mb() -> Optional[float]:
+    """获取系统可用物理内存（MB），跨平台。
+
+    优先用 psutil（跨平台），不可用时回退到平台原生 API。
+
+    Returns:
+        可用内存 MB 数，无法检测时返回 None（由调用方决定回退策略）
+    """
+    # 优先 psutil
+    try:
+        import psutil
+        return psutil.virtual_memory().available / (1024 * 1024)
+    except ImportError:
+        pass
+
+    # Windows 原生：GlobalMemoryStatusEx
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            stat = MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            return stat.ullAvailPhys / (1024 * 1024)
+        except Exception:
+            pass
+
+    # Linux 原生：/proc/meminfo
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/meminfo", "r") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        # 格式: MemAvailable:  12345678 kB
+                        return int(line.split()[1]) / 1024
+        except Exception:
+            pass
+
+    # macOS：sysctl hw.memsize 只给总量，无可用量，回退到 None
+    return None
+
+
 def _get_or_create_parser(lang: str, rel_path: str):
     """获取或创建 parser（带进程级缓存）。
 
-   惰性加载：首次遇到某语言时创建 parser 并缓存，后续复用。
+    真懒加载：按语言直接 import 具体模块，避免经过 parsers/__init__.py
+    聚合入口全量加载 16 个 grammar。
+
+    问题背景：parsers/__init__.py 顶层 import 了所有 parser 模块，
+    每个 parser 模块又顶层 import 对应 tree-sitter grammar。
+    所以 `from ..parsers import CParser` 会连带加载 tree_sitter_c
+    以及其他 15 个 grammar，每个约 15-30MB，总 200-400MB。
+
+    改为 `from ..parsers.c_parser import CParser` 后，只加载 tree_sitter_c，
+    firmware 项目（C/C++）每个 worker 从 ~300MB 降到 ~80MB。
     """
     global _worker_parsers
     if lang in _worker_parsers:
         return _worker_parsers[lang]
 
-    # 按需 import + 创建
-    from ..parsers import (
-        RustParser, TypeScriptParser, PythonParser, KotlinParser,
-        GoParser, JavaParser, CParser, CppParser,
-        CSharpParser, RubyParser, PhpParser, SwiftParser,
-        ScalaParser, HclParser, ElixirParser,
-    )
     p = None
     if lang == "rust":
+        from ..parsers.rust import RustParser
         p = RustParser()
     elif lang == "typescript":
+        from ..parsers.typescript import TypeScriptParser
         p = TypeScriptParser(dialect="tsx" if rel_path.endswith(".tsx") else "typescript")
     elif lang == "javascript":
+        from ..parsers.typescript import TypeScriptParser
         p = TypeScriptParser(dialect="jsx" if rel_path.endswith(".jsx") else "javascript")
     elif lang == "python":
+        from ..parsers.python_parser import PythonParser
         p = PythonParser()
     elif lang == "kotlin":
+        from ..parsers.kotlin_parser import KotlinParser
         p = KotlinParser()
     elif lang == "go":
+        from ..parsers.go_parser import GoParser
         p = GoParser()
     elif lang == "java":
+        from ..parsers.java_parser import JavaParser
         p = JavaParser()
     elif lang == "c":
+        from ..parsers.c_parser import CParser
         p = CParser()
     elif lang == "cpp":
+        from ..parsers.c_parser import CppParser
         p = CppParser()
     elif lang == "csharp":
+        from ..parsers.csharp_parser import CSharpParser
         p = CSharpParser()
     elif lang == "ruby":
+        from ..parsers.ruby_parser import RubyParser
         p = RubyParser()
     elif lang == "php":
+        from ..parsers.php_parser import PhpParser
         p = PhpParser()
     elif lang == "swift":
+        from ..parsers.swift_parser import SwiftParser
         p = SwiftParser()
     elif lang == "scala":
+        from ..parsers.scala_parser import ScalaParser
         p = ScalaParser()
     elif lang == "hcl":
+        from ..parsers.hcl_parser import HclParser
         p = HclParser()
     elif lang == "elixir":
+        from ..parsers.elixir_parser import ElixirParser
         p = ElixirParser()
 
     if p is not None:
@@ -645,21 +767,21 @@ class BuildMixin:
             # tree-sitter Parser.parse() 不释放 GIL，ThreadPoolExecutor 实际只有 2x 加速
             # ProcessPoolExecutor 用独立进程，每个进程有自己的 GIL，可真正 N 核并行
             #
-            # 内存预算：每个 worker 进程约 200-400MB（Python + 16 语言 tree-sitter grammar）
-            # max_workers 限制为 4，避免内存爆炸（4 × 400MB = 1.6GB 上限）
-            # 在 22 核机器上只用 4 核，但避免把宿主机搞崩溃
+            # 真懒加载后每进程内存约 80-150MB（仅加载实际用到的语言 grammar）
+            # worker 数由 _detect_optimal_workers() 根据宿主机剩余资源动态决定
             MP_THRESHOLD = 50  # 文件数 >= 50 才用多进程（避免进程创建开销）
             use_multiprocess = len(to_parse) >= MP_THRESHOLD
 
             if use_multiprocess:
-                # 多进程路径：限制 worker 数，控制内存
-                # 每进程惰性加载 parser（仅实际用到的语言），约 80-150MB/进程
-                # 默认 min(4, cpu-1)，可用 CW_MP_WORKERS 环境变量覆盖
+                # 多进程路径：动态检测宿主机资源决定 worker 数
+                # 真懒加载后每进程内存约 80-150MB，按可用内存动态分配 worker
                 env_workers = os.environ.get("CW_MP_WORKERS")
                 if env_workers:
+                    # 环境变量覆盖：用户手动指定
                     mp_workers = max(1, min(8, int(env_workers)))
                 else:
-                    mp_workers = min(4, max(1, (os.cpu_count() or 4) - 1))
+                    # 动态检测：根据 CPU 核心数和剩余内存计算
+                    mp_workers = _detect_optimal_workers()
                 cprint(t("cli.messages.db_build_parallel_parse", workers=mp_workers, count=len(to_parse)), "dim")
                 from concurrent.futures import ProcessPoolExecutor, as_completed
                 # worker 参数：(rel_path, abs_path, lang, module_path, file_instance_id)
@@ -699,8 +821,11 @@ class BuildMixin:
 
             if not use_multiprocess:
                 # 原多线程路径（小文件量或 fallback）
-                # 线程比进程轻量，8 线程内存占用远低于 4 进程
-                max_workers = min(8, max(1, (os.cpu_count() or 4) - 1))
+                # 线程比进程轻量，内存占用远低于进程，但 GIL 限制实际并行度
+                # 仍按动态资源检测决定线程数（线程数可放宽，每个线程内存开销小）
+                max_workers = _detect_optimal_workers()
+                # 线程比进程轻量，可适当多开（线程内存开销小，GIL 才是真瓶颈）
+                max_workers = min(8, max(1, max_workers))
                 cprint(t("cli.messages.db_build_parallel_parse", workers=max_workers, count=len(to_parse)), "dim")
                 print_lock = threading.Lock()
                 done_count = [0]
@@ -716,45 +841,9 @@ class BuildMixin:
                                 done_count[0] += 1
                                 print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
                             return ("skip_resource", rel_path, reason)
-                        from ..parsers import (
-                            RustParser, TypeScriptParser, PythonParser, KotlinParser,
-                            GoParser, JavaParser, CParser, CppParser,
-                            CSharpParser, RubyParser, PhpParser, SwiftParser,
-                            ScalaParser, HclParser, ElixirParser,
-                        )
-                        if lang == "rust":
-                            p = RustParser()
-                        elif lang == "typescript":
-                            p = TypeScriptParser(dialect="tsx" if rel_path.endswith(".tsx") else "typescript")
-                        elif lang == "javascript":
-                            p = TypeScriptParser(dialect="jsx" if rel_path.endswith(".jsx") else "javascript")
-                        elif lang == "python":
-                            p = PythonParser()
-                        elif lang == "kotlin":
-                            p = KotlinParser()
-                        elif lang == "go":
-                            p = GoParser()
-                        elif lang == "java":
-                            p = JavaParser()
-                        elif lang == "c":
-                            p = CParser()
-                        elif lang == "cpp":
-                            p = CppParser()
-                        elif lang == "csharp":
-                            p = CSharpParser()
-                        elif lang == "ruby":
-                            p = RubyParser()
-                        elif lang == "php":
-                            p = PhpParser()
-                        elif lang == "swift":
-                            p = SwiftParser()
-                        elif lang == "scala":
-                            p = ScalaParser()
-                        elif lang == "hcl":
-                            p = HclParser()
-                        elif lang == "elixir":
-                            p = ElixirParser()
-                        else:
+                        # 复用模块级 _get_or_create_parser：真懒加载，按语言直接 import
+                        p = _get_or_create_parser(lang, rel_path)
+                        if not p:
                             with print_lock:
                                 done_count[0] += 1
                             return ("skip", rel_path, None)

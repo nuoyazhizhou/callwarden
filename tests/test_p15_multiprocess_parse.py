@@ -173,13 +173,15 @@ def test_mp_threshold_value():
     assert "50" in src
 
 
-def test_mp_workers_capped_at_4():
-    """多进程 worker 数应限制为 4（避免内存爆炸）。"""
+def test_mp_workers_dynamic_detection():
+    """多进程 worker 数应通过 _detect_optimal_workers() 动态检测，不再硬编码 4。"""
     import callwarden.db.db_build as db_build_mod
     import inspect
     src = inspect.getsource(db_build_mod.BuildMixin._build_multi_lang)
-    # 应该有 min(4, ...) 限制
-    assert "min(4" in src
+    # 应该调用 _detect_optimal_workers()
+    assert "_detect_optimal_workers" in src
+    # 不应再硬编码 min(4, ...) 限制
+    assert "min(4" not in src
 
 
 def test_worker_function_is_module_level():
