@@ -527,6 +527,7 @@ class BuildMixin:
 
             spinner = Spinner(t("cli.messages.db_build_step3_5_versions"))
         spinner.start()
+        t_versions_start = time.perf_counter()
         version_count = 0
         for rel_path, result in file_results.items():
             if result.get("_from_db"):
@@ -537,14 +538,21 @@ class BuildMixin:
             self._save_symbols_for_version(file_version_id, result["file_instance_id"], result)
             version_count += 1
         spinner.stop(t("cli.messages.db_build_versions_written", count=version_count))
+        t_versions = time.perf_counter() - t_versions_start
 
         spinner = Spinner(t("cli.messages.db_build_step4_5_calls"))
         spinner.start()
         # 导入所有支持语言的标准库符号（Python + Rust/Java/Go/C/C++/C#/TS/Kotlin/Ruby/Swift/Scala/Elixir/PHP）
         # 这一步在构建调用图之前完成，确保后续 callee 匹配能命中标准库符号
+        t_stdlib_start = time.perf_counter()
         self.import_all_stdlib_symbols()
         self.import_project_dependencies()
+        t_stdlib = time.perf_counter() - t_stdlib_start
+
+        t_call_resolve_start = time.perf_counter()
         self._build_call_graph_multi_lang(file_results)
+        t_call_resolve = time.perf_counter() - t_call_resolve_start
+
         ws_id = self._get_active_workspace_id()
         cur = self.conn.execute("SELECT COUNT(*) as c FROM calls c JOIN symbols s ON c.caller_id = s.id JOIN file_instances fi ON s.file_instance_id = fi.id WHERE fi.workspace_id = ?", (ws_id,))
         total_calls = cur.fetchone()["c"]
@@ -554,14 +562,19 @@ class BuildMixin:
 
         spinner = Spinner(t("cli.messages.db_build_step5_5_depth"))
         spinner.start()
+        t_depth_start = time.perf_counter()
         self._build_depth()
         self._update_symbol_version_depths()
+        t_depth = time.perf_counter() - t_depth_start
         spinner.stop(t("cli.messages.db_build_depth_done"))
 
+        t_commit_start = time.perf_counter()
         self.conn.commit()
+        t_commit = time.perf_counter() - t_commit_start
 
         # 步骤 6/6: GC 归档（类 Java Young GC，扫描 pending 文件命中 ignore 的迁入 archived_files）
         # 注意：在 commit 之后执行，避免归档事务与构建事务冲突
+        t_gc_start = time.perf_counter()
         try:
             gc_result = self.gc_archive(force=False)
             if gc_result["archived"] > 0:
@@ -571,6 +584,7 @@ class BuildMixin:
         except Exception as e:
             # GC 失败不阻塞构建
             cprint(t("cli.messages.db_build_gc_fail", error=e), "yellow")
+        t_gc = time.perf_counter() - t_gc_start
 
         duration = time.time() - t_start
 
@@ -584,6 +598,21 @@ class BuildMixin:
 
         parsed_new = len(file_results) - unchanged
         print_build_summary(parsed_new, unchanged, skipped, failed, total_symbols, total_calls, resolved_calls, duration)
+
+        # 阶段计时汇总（用于定位性能瓶颈）
+        # scan + parse 已包含在 t_start 到 versions_start 之前，这里拆分显示
+        t_other = duration - (t_versions + t_stdlib + t_call_resolve + t_depth + t_commit + t_gc)
+        cprint()
+        cprint("── 阶段耗时分解 ──────────────────────", "cyan", bold=True)
+        cprint(f"  scan + parse + register : {t_other:8.2f}s  (扫描/解析/注册文件)", "dim")
+        cprint(f"  symbol write            : {t_versions:8.2f}s  (写入符号/版本)", "dim")
+        cprint(f"  stdlib import           : {t_stdlib:8.2f}s  (标准库符号导入)", "dim")
+        cprint(f"  call resolve + write    : {t_call_resolve:8.2f}s  (调用关系解析+写入)", "yellow")
+        cprint(f"  depth                   : {t_depth:8.2f}s  (拓扑深度计算)", "dim")
+        cprint(f"  commit                  : {t_commit:8.2f}s  (事务提交)", "dim")
+        cprint(f"  gc archive              : {t_gc:8.2f}s  (GC 归档)", "dim")
+        cprint(f"  total                   : {duration:8.2f}s", "cyan", bold=True)
+        cprint("──────────────────────────────────────", "cyan")
     
 
     def _load_file_result_from_db(self, file_instance_id: int, file_version_id: int,
@@ -746,6 +775,28 @@ class BuildMixin:
             # external_symbols 表可能不存在（旧版本 DB）
             pass
 
+        # ---- P7 优化：一次性构建 qname_id_map + file_sym_id_map ----
+        # 替代 _write_calls_db 内每文件全表扫描 symbols + external_symbols
+        # firmware 1.4万文件 × 10万符号 = 十亿级行读取 → 现在仅 2 次全表扫描
+        qname_id_map: Dict[str, int] = {}
+        file_sym_id_map: Dict[int, Dict[str, int]] = defaultdict(dict)
+        cur = self.conn.execute("SELECT id, name, qualified_name, file_instance_id FROM symbols")
+        for row in cur:
+            qn = row["qualified_name"]
+            if qn:
+                qname_id_map[qn] = row["id"]
+            file_sym_id_map[row["file_instance_id"]][row["name"]] = row["id"]
+
+        # 外部符号 qualified_name -> -id（负值表示外部符号）
+        try:
+            cur = self.conn.execute("SELECT id, qualified_name FROM external_symbols")
+            for row in cur:
+                qn = row["qualified_name"]
+                if qn:
+                    qname_id_map[qn] = -row["id"]
+        except Exception:
+            pass
+
         # ---- 第二阶段：构建 import 索引 ----
         # file_path -> {alias/module_name: full_module_path}
         file_imports: Dict[str, Dict[str, str]] = {}
@@ -771,12 +822,15 @@ class BuildMixin:
             file_imports[rel_path] = import_map
 
         # ---- 第三阶段：解析调用关系 ----
+        # P7 优化：批量收集 calls/call_versions 记录，循环后 executemany 一次性写入
+        calls_to_insert: List[tuple] = []          # calls 表的 INSERT 元组
+        call_versions_to_insert: List[tuple] = []  # call_versions 表的 INSERT 元组
+        changed_file_instance_ids: List[int] = []  # 需要删除旧 calls 的文件实例
+
         for rel_path, result in file_results.items():
-            # 如果结果来自DB，恢复调用快照（raw_calls 已从 calls 表加载）
+            # 如果结果来自DB，calls 已在 calls 表中，无需 DELETE+重写（消除写放大）
             if result.get("_from_db"):
                 existing_calls = result.get("raw_calls", [])
-                # 恢复调用快照（直接写入，不重新解析）
-                self._write_calls_db(result["file_instance_id"], existing_calls)
                 total_calls += len(existing_calls)
                 resolved_count += sum(1 for c in existing_calls if c.get("callee_qualified"))
                 continue
@@ -906,9 +960,91 @@ class BuildMixin:
                     raw, callee_qname, callee_file, callee_id, is_cross
                 ))
 
-            self._write_calls_db(result["file_instance_id"], calls)
-            self._save_calls_for_version(result["file_version_id"], calls, result)
+            # P7: 收集到批量列表（不再逐条 INSERT）
+            fi_id = result["file_instance_id"]
+            changed_file_instance_ids.append(fi_id)
+            sym_id_map_fi = file_sym_id_map.get(fi_id, {})
+
+            # 收集 calls 表 INSERT 元组（caller_id 多级 fallback 与 _write_calls_db 一致）
+            for call in calls:
+                caller_id = 0
+                caller_qname = call.get("caller_qualified", "")
+                caller_name_raw = call.get("caller_name", "")
+                if caller_qname and caller_qname in qname_id_map:
+                    caller_id = qname_id_map[caller_qname]
+                elif caller_name_raw and caller_name_raw in qname_id_map:
+                    caller_id = qname_id_map[caller_name_raw]
+                elif caller_name_raw:
+                    simple_name = caller_name_raw
+                    for sep in ("::", ".", "#"):
+                        if sep in simple_name:
+                            simple_name = simple_name.rsplit(sep, 1)[-1]
+                    caller_id = sym_id_map_fi.get(simple_name, 0)
+                if caller_id == 0:
+                    continue
+                callee_q = call.get("callee_qualified", "")
+                callee_id_resolved = qname_id_map.get(callee_q, 0) if callee_q else 0
+                calls_to_insert.append((
+                    caller_id, caller_name_raw, call.get("caller_module", ""),
+                    call["callee_name"], call.get("callee_module", ""),
+                    callee_q, call.get("callee_file", ""),
+                    callee_id_resolved, call.get("call_line", 0),
+                    call.get("is_cross_file", 0),
+                ))
+
+            # 收集 call_versions 表 INSERT 元组
+            fn_hash_map = {}
+            for sym in result["symbols"]:
+                if sym["kind"] in ("fn", "test_fn"):
+                    fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
+            for inline_mod in result.get("inline_modules", []):
+                for sym in inline_mod["symbols"]:
+                    if sym["kind"] in ("fn", "test_fn"):
+                        fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
+            mod_path = result.get("module_path", "")
+            fv_id = result["file_version_id"]
+            for call in calls:
+                caller_qualified = call.get("caller_qualified", "")
+                if not caller_qualified:
+                    if call.get("caller_name"):
+                        caller_qualified = f"{mod_path}::{call['caller_name']}"
+                caller_hash = fn_hash_map.get(caller_qualified, "")
+                call_versions_to_insert.append((
+                    fv_id, caller_qualified, caller_hash,
+                    call["callee_name"], call["callee_module"], call["callee_qualified"],
+                    call["callee_file"], call["call_line"], call["is_cross_file"],
+                ))
             total_calls += len(calls)
+
+        # ---- P7: 批量写入 calls + call_versions ----
+        # 批量删除已变更文件的旧 calls（分批 IN 子句，避免 SQLite 999 参数限制）
+        if changed_file_instance_ids:
+            BATCH = 500
+            for i in range(0, len(changed_file_instance_ids), BATCH):
+                chunk = changed_file_instance_ids[i:i + BATCH]
+                placeholders = ",".join("?" * len(chunk))
+                self.conn.execute(
+                    f"DELETE FROM calls WHERE caller_id IN ("
+                    f"SELECT id FROM symbols WHERE file_instance_id IN ({placeholders}))",
+                    chunk,
+                )
+        if calls_to_insert:
+            self.conn.executemany(
+                """INSERT INTO calls
+                   (caller_id, caller_name, caller_module, callee_name,
+                    callee_module, callee_qualified, callee_file, callee_id,
+                    call_line, is_cross_file)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                calls_to_insert,
+            )
+        if call_versions_to_insert:
+            self.conn.executemany(
+                """INSERT INTO call_versions
+                   (file_version_id, caller_qualified, caller_hash, callee_name,
+                    callee_module, callee_qualified, callee_file, call_line, is_cross_file)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                call_versions_to_insert,
+            )
 
         print(t("cli.messages.db_build_calls_summary", total=total_calls, resolved=resolved_count, percent=resolved_count * 100 // total_calls if total_calls else 0))
 
