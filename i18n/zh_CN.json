@@ -1031,6 +1031,7 @@
       "db_build_summary_duration": "  耗时: {duration}",
       "db_build_summary_done": "  ✓ 构建完成，代码图谱已是最新",
       "db_build_parallel_parse": "  (并行解析: {workers} 线程, {count} 个文件待解析)",
+      "auto_ignore_detected": "  P21 自动检测: 跳过 {count} 个第三方库目录 ({dirs})",
       "db_build_parse_progress_lang": "解析: {path} ({lang})",
       "db_build_parse_ok": "  ✓ 成功解析 {parsed} 个，未变化 {unchanged} 个，跳过 {skipped} 个",
       "db_build_parse_warn": "  成功解析 {parsed} 个，未变化 {unchanged} 个，跳过 {skipped} 个，失败 {failed} 个",

@@ -158,10 +158,7 @@ REPOS = {
             "*/build/",
             "dist/",
             "*/dist/",
-            # static/ 目录全是第三方库源码（echarts 2.8MB、UEditor 1MB、tinymce 814KB 等）
-            # tree-sitter parse 这些大文件很慢（6.5s/30 文件），且非业务代码
-            "static/",
-            "*/static/",
+            # P21: static/ 目录的第三方库由自动检测算法识别，不再手动配置
         ],
     },
     "ailearning-service": {

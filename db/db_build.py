@@ -296,6 +296,134 @@ def _is_resource_file(abs_path: str):
     return False, None
 
 
+# ============================================
+# P21: 第三方库目录自动检测（基于内容特征，非硬编码规则）
+# ============================================
+
+# 已知第三方库目录名模式（这些目录几乎 100% 是第三方库存放目录）
+_THIRD_PARTY_DIR_NAMES = frozenset({
+    "node_modules", "vendor", "third_party", "thirdparty", "3rdparty",
+    "bower_components", "jspm_packages", "web_modules",
+    # Java/JVM
+    ".m2", ".gradle", "ivy",
+    # 其他
+    "deps", "deps_packages",
+})
+
+# 第三方库目录的"可疑"目录名（需要配合内容检测才判定）
+_SUSPICIOUS_DIR_NAMES = frozenset({
+    "static", "libs", "lib", "external", "externals",
+    "assets", "resources", "vendor_src",
+})
+
+# 大文件阈值：> 500KB 的源码文件通常是打包后的第三方库（如 echarts.js 2.8MB）
+# 业务代码文件通常 < 500KB（即使是大型 C 文件，一般也不超过 500KB）
+_LARGE_FILE_THRESHOLD = 500 * 1024  # 500KB
+# 目录内大文件数量阈值：超过此数量判定为第三方库目录
+_LARGE_FILE_COUNT_THRESHOLD = 5
+# minified 文件特征
+_MINIFIED_FILE_MARK = ".min."
+
+# 检测得分阈值：总分 >= 此值才判定为第三方库目录
+_THIRD_PARTY_SCORE_THRESHOLD = 50
+
+# 内容检测最大深度：只对深度 <= 2 的目录做内容检测（性能优化）
+_CONTENT_SCAN_MAX_DEPTH = 2
+
+# 源码文件扩展名集合（用于过滤大文件统计，忽略 .a/.so 等二进制文件）
+# 避免误判：firmware 的 libbin/ 目录有 26 个 .a/.so 文件（4MB+），但这些不是源码
+_SOURCE_FILE_EXTS = frozenset({
+    ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx",  # C/C++
+    ".java", ".kt", ".scala",  # JVM
+    ".py", ".rb", ".php",  # 脚本
+    ".js", ".jsx", ".ts", ".tsx",  # JS/TS
+    ".go", ".rs", ".swift",  # 现代
+    ".cs", ".m", ".mm",  # C#/ObjC
+    ".ex", ".exs",  # Elixir
+    ".hcl", ".tf",  # HCL/Terraform
+})
+
+
+def _detect_third_party_dir(abs_dir_path: str, rel_dir_path: str) -> tuple:
+    """检测目录是否为第三方库目录（基于内容特征）
+
+    算法：基于多信号评分，总分 >= 50 才判定为第三方库目录。
+
+    信号：
+    1. 大文件密度（> 5 个 > 100KB 的文件）：+50 分
+       第三方库通常被打包成大文件（如 echarts.js 2.8MB）
+    2. minified 文件（.min.js/.min.css）：+30 分
+       第三方库通常提供 minified 版本
+    3. 目录名匹配已知模式（node_modules/vendor 等）：+100 分（直接判定）
+    4. 目录名匹配可疑模式（static/libs 等）：+20 分（辅助信号）
+
+    性能优化：
+    - 目录名匹配已知模式直接判定，不做内容检测
+    - 深度 > 2 的目录只做目录名检测，不做内容检测
+    - 内容检测只统计文件大小，不读文件内容
+
+    Args:
+        abs_dir_path: 目录绝对路径
+        rel_dir_path: 目录相对路径（用 / 分隔，用于计算深度）
+
+    Returns:
+        (is_third_party, reason):
+            is_third_party: True 表示是第三方库目录应跳过
+            reason: 跳过原因（用于日志），如 "known_dir" / "large_files" / "minified"
+    """
+    dir_name = os.path.basename(abs_dir_path).lower()
+
+    # 信号 3: 已知第三方库目录名（直接判定，100 分）
+    if dir_name in _THIRD_PARTY_DIR_NAMES:
+        return True, f"known_dir:{dir_name}"
+
+    # 计算目录深度（相对路径的 / 数量）
+    depth = rel_dir_path.count("/") if rel_dir_path else 0
+
+    # 深度 > 2 的目录只做目录名检测（性能优化）
+    if depth > _CONTENT_SCAN_MAX_DEPTH:
+        return False, None
+
+    # 内容检测：统计大文件和 minified 文件
+    try:
+        large_files = 0
+        has_minified = False
+        for f in os.listdir(abs_dir_path):
+            if f.startswith("."):
+                continue
+            # 信号 2: minified 文件
+            if _MINIFIED_FILE_MARK in f.lower():
+                has_minified = True
+                continue  # minified 文件通常不大，不需要再 stat
+            # 只统计源码文件的大文件（忽略 .a/.so/.o 等二进制文件）
+            ext = os.path.splitext(f)[1].lower()
+            if ext not in _SOURCE_FILE_EXTS:
+                continue
+            f_path = os.path.join(abs_dir_path, f)
+            try:
+                if os.path.isfile(f_path) and os.path.getsize(f_path) > _LARGE_FILE_THRESHOLD:
+                    large_files += 1
+            except OSError:
+                pass
+
+        # 信号 1: 大文件密度
+        if large_files >= _LARGE_FILE_COUNT_THRESHOLD:
+            return True, f"large_files:{large_files}"
+
+        # 信号 2: minified 文件
+        if has_minified:
+            return True, "minified"
+
+        # 信号 4: 可疑目录名 + 辅助信号（大文件 >= 1 或 minified 存在）
+        if dir_name in _SUSPICIOUS_DIR_NAMES:
+            if large_files >= 1 or has_minified:
+                return True, f"suspicious_dir:{dir_name}"
+    except OSError:
+        pass
+
+    return False, None
+
+
 def _parse_file_worker(args):
     """多进程 worker：解析单个源文件（模块级函数，可 pickle）。
 
@@ -567,10 +695,12 @@ class BuildMixin:
 
 
     def _scan_supported_files(self) -> List[str]:
-        """扫描项目中所有支持的源文件（尊重 .callwardenignore）"""
+        """扫描项目中所有支持的源文件（尊重 .callwardenignore + P21 自动检测）"""
         supported_extensions = set(get_supported_extensions())
         files = []
         ignore_patterns = self._load_ignore_patterns()
+        # P21: 自动检测到的第三方库目录（用于日志输出）
+        auto_ignored: List[tuple] = []
 
         for root, dirs, filenames in os.walk(self.workspace_root):
             # 过滤目录：原地修改 dirs 以跳过
@@ -584,8 +714,15 @@ class BuildMixin:
                 if d.startswith(".") and d not in (".codegraph",):
                     continue
                 d_rel = (rel_root + "/" + d) if rel_root else d
-                if not self._should_ignore(d_rel, True, ignore_patterns):
-                    dirs_to_keep.append(d)
+                if self._should_ignore(d_rel, True, ignore_patterns):
+                    continue
+                # P21: 自动检测第三方库目录（基于内容特征，非硬编码规则）
+                abs_d = os.path.join(root, d)
+                is_tp, reason = _detect_third_party_dir(abs_d, d_rel)
+                if is_tp:
+                    auto_ignored.append((d_rel, reason))
+                    continue
+                dirs_to_keep.append(d)
             dirs[:] = dirs_to_keep
 
             for filename in filenames:
@@ -595,6 +732,18 @@ class BuildMixin:
                     rel_path = norm_path(os.path.relpath(abs_path, self.workspace_root))
                     if not self._should_ignore(rel_path, False, ignore_patterns):
                         files.append(rel_path)
+
+        # P21: 打印自动检测到的第三方库目录
+        if auto_ignored:
+            cprint(
+                t(
+                    "cli.messages.auto_ignore_detected",
+                    count=len(auto_ignored),
+                    dirs=", ".join(f"{d}({r})" for d, r in auto_ignored[:10]),
+                    default=f"  P21 自动检测: 跳过 {len(auto_ignored)} 个第三方库目录",
+                ),
+                "dim",
+            )
 
         return sorted(files)
 

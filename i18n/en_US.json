@@ -1031,6 +1031,7 @@
       "db_build_summary_duration": "  Duration: {duration}",
       "db_build_summary_done": "  ✓ Build complete, code graph is up-to-date",
       "db_build_parallel_parse": "  (Parallel parsing: {workers} threads, {count} files to parse)",
+      "auto_ignore_detected": "  P21 auto-detect: skipped {count} third-party lib dirs ({dirs})",
       "db_build_parse_progress_lang": "Parsing: {path} ({lang})",
       "db_build_parse_ok": "  ✓ Parsed {parsed}, unchanged {unchanged}, skipped {skipped}",
       "db_build_parse_warn": "  Parsed {parsed}, unchanged {unchanged}, skipped {skipped}, failed {failed}",
