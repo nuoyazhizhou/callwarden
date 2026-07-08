@@ -527,6 +527,9 @@ class BuildMixin:
 
             spinner = Spinner(t("cli.messages.db_build_step3_5_versions"))
         spinner.start()
+        # P8 优化：full build 期间禁用 FTS 触发器，避免每个 symbol INSERT/UPDATE
+        # 都同步维护 trigram FTS 索引（写放大）。批量写完后一次性 rebuild。
+        fts_was_disabled = self._disable_fts_triggers()
         t_versions_start = time.perf_counter()
         version_count = 0
         for rel_path, result in file_results.items():
@@ -568,6 +571,12 @@ class BuildMixin:
         t_depth = time.perf_counter() - t_depth_start
         spinner.stop(t("cli.messages.db_build_depth_done"))
 
+        # P8: 批量写完后一次性重建 FTS 索引 + 重新启用触发器
+        t_fts_start = time.perf_counter()
+        if fts_was_disabled:
+            self._rebuild_and_enable_fts()
+        t_fts = time.perf_counter() - t_fts_start
+
         t_commit_start = time.perf_counter()
         self.conn.commit()
         t_commit = time.perf_counter() - t_commit_start
@@ -601,7 +610,7 @@ class BuildMixin:
 
         # 阶段计时汇总（用于定位性能瓶颈）
         # scan + parse 已包含在 t_start 到 versions_start 之前，这里拆分显示
-        t_other = duration - (t_versions + t_stdlib + t_call_resolve + t_depth + t_commit + t_gc)
+        t_other = duration - (t_versions + t_stdlib + t_call_resolve + t_depth + t_fts + t_commit + t_gc)
         cprint()
         cprint("── 阶段耗时分解 ──────────────────────", "cyan", bold=True)
         cprint(f"  scan + parse + register : {t_other:8.2f}s  (扫描/解析/注册文件)", "dim")
@@ -609,11 +618,70 @@ class BuildMixin:
         cprint(f"  stdlib import           : {t_stdlib:8.2f}s  (标准库符号导入)", "dim")
         cprint(f"  call resolve + write    : {t_call_resolve:8.2f}s  (调用关系解析+写入)", "yellow")
         cprint(f"  depth                   : {t_depth:8.2f}s  (拓扑深度计算)", "dim")
+        cprint(f"  fts rebuild             : {t_fts:8.2f}s  (FTS5 索引重建)", "dim")
         cprint(f"  commit                  : {t_commit:8.2f}s  (事务提交)", "dim")
         cprint(f"  gc archive              : {t_gc:8.2f}s  (GC 归档)", "dim")
         cprint(f"  total                   : {duration:8.2f}s", "cyan", bold=True)
         cprint("──────────────────────────────────────", "cyan")
     
+
+    # ---- P8: FTS5 触发器延后重建 ----
+
+    def _disable_fts_triggers(self) -> bool:
+        """禁用 symbols_fts 的 3 个同步触发器，返回是否成功禁用。
+
+        在 full build 期间禁用触发器，避免每个 symbol INSERT/UPDATE 都同步维护
+        trigram FTS 索引（写放大）。批量写完后调用 _rebuild_and_enable_fts() 重建。
+
+        Returns:
+            True 表示触发了禁用（需要后续重建），False 表示 FTS 表不存在或已禁用
+        """
+        try:
+            # 检查 symbols_fts 表是否存在
+            cur = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols_fts'"
+            )
+            if not cur.fetchone():
+                return False
+            # DROP 3 个触发器（IF EXISTS 确保幂等）
+            self.conn.execute("DROP TRIGGER IF EXISTS symbols_fts_ai")
+            self.conn.execute("DROP TRIGGER IF EXISTS symbols_fts_ad")
+            self.conn.execute("DROP TRIGGER IF EXISTS symbols_fts_au")
+            return True
+        except Exception:
+            return False
+
+    def _rebuild_and_enable_fts(self):
+        """一次性重建 FTS5 索引并重新启用同步触发器。
+
+        在 _disable_fts_triggers() 之后调用，确保 FTS 索引与 symbols 表一致。
+        """
+        try:
+            # 重建 FTS 索引（从 symbols 表重新构建全文索引）
+            self.conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
+            # 重新创建同步触发器
+            self.conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS symbols_fts_ai AFTER INSERT ON symbols BEGIN
+                    INSERT INTO symbols_fts(rowid, name, qualified_name)
+                    VALUES (new.id, new.name, new.qualified_name);
+                END
+            """)
+            self.conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS symbols_fts_ad AFTER DELETE ON symbols BEGIN
+                    INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+                    VALUES ('delete', old.id, old.name, old.qualified_name);
+                END
+            """)
+            self.conn.execute("""
+                CREATE TRIGGER IF NOT EXISTS symbols_fts_au AFTER UPDATE ON symbols BEGIN
+                    INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+                    VALUES ('delete', old.id, old.name, old.qualified_name);
+                    INSERT INTO symbols_fts(rowid, name, qualified_name)
+                    VALUES (new.id, new.name, new.qualified_name);
+                END
+            """)
+        except Exception:
+            pass
 
     def _load_file_result_from_db(self, file_instance_id: int, file_version_id: int,
         rel_path: str, abs_path: str, module_path: str) -> Optional[Dict]:

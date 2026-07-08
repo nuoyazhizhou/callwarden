@@ -227,3 +227,64 @@ def test_batch_delete_and_insert_consistency():
     assert count_after == len(callee_names), (
         f"刷新后该 caller 的 calls 数应不变：before={len(callee_names)}, after={count_after}"
     )
+
+
+def test_fts_search_works_after_build():
+    """P8: build 期间禁用 FTS 触发器，build 后重建 FTS，搜索仍然正常。"""
+    root = tempfile.mkdtemp()
+    _write_file(root, "calc.py", CALC_PY)
+    _write_file(root, "main.py", MAIN_PY)
+
+    db = _build_db(root)
+
+    # 验证 FTS 触发器存在（build 后已重建）
+    cur = db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'symbols_fts_%'"
+    )
+    triggers = [row[0] for row in cur.fetchall()]
+    assert len(triggers) == 3, f"应有 3 个 FTS 触发器，实际 {triggers}"
+
+    # 验证 FTS 搜索能找到符号
+    results = db.search_symbols("add")
+    assert any(r["name"] == "add" for r in results), f"FTS 搜索 add 应返回结果，实际 {results}"
+
+    results = db.search_symbols("subtract")
+    assert any(r["name"] == "subtract" for r in results), f"FTS 搜索 subtract 应返回结果，实际 {results}"
+
+
+def test_fts_search_works_after_incremental_refresh():
+    """P8: 增量刷新后 FTS 触发器仍然存在，搜索正常。"""
+    root = tempfile.mkdtemp()
+    _write_file(root, "calc.py", CALC_PY)
+    _write_file(root, "main.py", MAIN_PY)
+
+    db = _build_db(root)
+
+    # 修改 calc.py（新增一个函数）
+    _write_file(root, "calc.py", '''"""计算模块 v2。"""
+def add(a, b):
+    return a + b
+
+def subtract(a, b):
+    return a - b
+
+def multiply(a, b):
+    return a * b
+''')
+
+    # 增量刷新
+    db.build_full_graph()
+
+    # 验证 FTS 触发器仍然存在
+    cur = db.conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'symbols_fts_%'"
+    )
+    triggers = [row[0] for row in cur.fetchall()]
+    assert len(triggers) == 3, f"增量刷新后应有 3 个 FTS 触发器，实际 {triggers}"
+
+    # 验证 FTS 搜索能找到新增的 multiply 函数
+    results = db.search_symbols("multiply")
+    assert any(r["name"] == "multiply" for r in results), (
+        f"FTS 搜索 multiply 应返回结果，实际 {results}"
+    )
+
