@@ -36,7 +36,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..config import norm_path
+from ..config import norm_path, read_file_text
 from ..i18n import t
 
 MAX_EXTERNAL_SYMBOLS_PER_PACKAGE = 300
@@ -772,16 +772,15 @@ class ExternalMixin:
     def _parse_requirements_txt(self, path: str) -> Dict[str, str]:
         """解析 requirements.txt"""
         deps: Dict[str, str] = {}
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split("==")
-                if len(parts) >= 2:
-                    deps[parts[0].strip().lower()] = parts[1].strip()
-                else:
-                    deps[line.strip().lower()] = ""
+        for line in read_file_text(path).splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("==")
+            if len(parts) >= 2:
+                deps[parts[0].strip().lower()] = parts[1].strip()
+            else:
+                deps[line.strip().lower()] = ""
         return deps
 
     def _parse_pyproject_toml(self, path: str) -> Dict[str, str]:
@@ -819,8 +818,7 @@ class ExternalMixin:
         """解析 setup.py"""
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
             match = re.search(r"install_requires\s*=\s*\[([^\]]+)\]", content)
             if match:
@@ -994,8 +992,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
             # 1) 匹配 require ( ... ) 块
             block_match = re.search(r"require\s*\(([^)]+)\)", content)
@@ -1029,13 +1026,12 @@ class ExternalMixin:
         """解析 go.sum"""
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if len(parts) >= 2:
-                        # 格式: <modpath> <version> <hash>
-                        # 取版本（去除 /go.mod 后缀）
-                        deps[parts[0]] = parts[1]
+            for line in read_file_text(path).splitlines():
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    # 格式: <modpath> <version> <hash>
+                    # 取版本（去除 /go.mod 后缀）
+                    deps[parts[0]] = parts[1]
         except Exception:
             pass
         return deps
@@ -1212,7 +1208,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
             section = data.get("dependencies", {})
             if isinstance(section, dict):
@@ -1238,7 +1234,7 @@ class ExternalMixin:
         if not os.path.isfile(pkg_json_path):
             return result
         try:
-            with open(pkg_json_path, "r", encoding="utf-8") as f:
+            with open(pkg_json_path, "r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
             for key in ("main", "module", "types", "typings", "browser"):
                 val = data.get(key)
@@ -1482,7 +1478,7 @@ class ExternalMixin:
         """解析 package-lock.json v2/v3 的 packages 字段"""
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
             packages = data.get("packages", {})
             root_info = packages.get("", {})
@@ -1538,8 +1534,7 @@ class ExternalMixin:
             import xml.etree.ElementTree as ET
 
             # 忽略 maven 命名空间前缀
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
             # 去除 <project xmlns="..."> 中的命名空间，简化后续 xpath 查询
             content_no_ns = re.sub(r'\sxmlns="[^"]+"', "", content, count=1)
             root = ET.fromstring(content_no_ns)
@@ -1619,8 +1614,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
             scopes = ("implementation", "api", "compileOnly", "compile")
             scope_pattern = "|".join(scopes)
@@ -1906,8 +1900,7 @@ class ExternalMixin:
             try:
                 import xml.etree.ElementTree as ET
 
-                with open(settings_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = read_file_text(settings_path)
                 # 去除命名空间
                 content_no_ns = re.sub(r'\sxmlns="[^"]+"', "", content, count=1)
                 root = ET.fromstring(content_no_ns)
@@ -1923,13 +1916,12 @@ class ExternalMixin:
         project_mvn_config = os.path.join(self.workspace_root, ".mvn", "maven.config")
         if os.path.isfile(project_mvn_config):
             try:
-                with open(project_mvn_config, "r", encoding="utf-8") as f:
-                    for line in f:
-                        m = re.search(r"-Dmaven\.repo\.local=(\S+)", line)
-                        if m:
-                            path = os.path.expanduser(m.group(1))
-                            if os.path.isdir(path):
-                                return os.path.abspath(path)
+                for line in read_file_text(project_mvn_config).splitlines():
+                    m = re.search(r"-Dmaven\.repo\.local=(\S+)", line)
+                    if m:
+                        path = os.path.expanduser(m.group(1))
+                        if os.path.isdir(path):
+                            return os.path.abspath(path)
             except Exception:
                 pass
 
@@ -1964,17 +1956,16 @@ class ExternalMixin:
             if not os.path.isfile(props_path):
                 continue
             try:
-                with open(props_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        # gradle.properties 格式：key=value 或 key:value
-                        line = line.strip()
-                        if not line or line.startswith("#"):
-                            continue
-                        m = re.match(r"^gradle\.user\.home\s*[=:]\s*(.+)$", line)
-                        if m:
-                            path = os.path.expanduser(m.group(1).strip())
-                            if os.path.isdir(path):
-                                return os.path.abspath(path)
+                for line in read_file_text(props_path).splitlines():
+                    # gradle.properties 格式：key=value 或 key:value
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    m = re.match(r"^gradle\.user\.home\s*[=:]\s*(.+)$", line)
+                    if m:
+                        path = os.path.expanduser(m.group(1).strip())
+                        if os.path.isdir(path):
+                            return os.path.abspath(path)
             except Exception:
                 pass
 
@@ -2013,8 +2004,7 @@ class ExternalMixin:
             try:
                 import xml.etree.ElementTree as ET
 
-                with open(config_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = read_file_text(config_path)
                 content_no_ns = re.sub(r'\sxmlns="[^"]+"', "", content, count=1)
                 root = ET.fromstring(content_no_ns)
                 # 查找 <config><add key="globalPackagesFolder" value="..." /></config>
@@ -2058,8 +2048,7 @@ class ExternalMixin:
             if not os.path.isfile(config_path):
                 continue
             try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = read_file_text(config_path)
                 # 简化解析：查找 [env] 段下的 CARGO_HOME = "..."
                 in_env_section = False
                 for line in content.splitlines():
@@ -2576,8 +2565,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
             # 匹配 "group" [%|%%] "artifact" % "version"
             # 注意 %% 是 Scala 特有：按 scalaVersion 自动加后缀
@@ -2604,14 +2592,13 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                for line in f:
-                    m = re.match(
-                        r"gem\s+['\"]([^'\"]+)['\"](?:\s*,\s*['\"]([^'\"]+)['\"])?",
-                        line.strip(),
-                    )
-                    if m:
-                        deps[m.group(1)] = m.group(2) or ""
+            for line in read_file_text(path).splitlines():
+                m = re.match(
+                    r"gem\s+['\"]([^'\"]+)['\"](?:\s*,\s*['\"]([^'\"]+)['\"])?",
+                    line.strip(),
+                )
+                if m:
+                    deps[m.group(1)] = m.group(2) or ""
         except Exception:
             pass
         return deps
@@ -2628,20 +2615,19 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                in_specs = False
-                for line in f:
-                    if "specs:" in line:
-                        in_specs = True
-                        continue
-                    if in_specs:
-                        if line.startswith("    ") and not line.startswith("      "):
-                            # 形如 "    rake (13.0.6)"
-                            m = re.match(r"\s+(\S+)\s+\(([^)]+)\)", line)
-                            if m:
-                                deps[m.group(1)] = m.group(2)
-                        elif line.strip() and not line.startswith(" "):
-                            in_specs = False
+            in_specs = False
+            for line in read_file_text(path).splitlines():
+                if "specs:" in line:
+                    in_specs = True
+                    continue
+                if in_specs:
+                    if line.startswith("    ") and not line.startswith("      "):
+                        # 形如 "    rake (13.0.6)"
+                        m = re.match(r"\s+(\S+)\s+\(([^)]+)\)", line)
+                        if m:
+                            deps[m.group(1)] = m.group(2)
+                    elif line.strip() and not line.startswith(" "):
+                        in_specs = False
         except Exception:
             pass
         return deps
@@ -2650,7 +2636,7 @@ class ExternalMixin:
         """解析 composer.json"""
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
             section = data.get("require", {})
             if isinstance(section, dict):
@@ -2664,7 +2650,7 @@ class ExternalMixin:
         """解析 composer.lock"""
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
             for section in ["packages"]:
                 for pkg in data.get(section, []):
@@ -2683,10 +2669,9 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
-            # 匹配 .package(url: "<url>", from: "<version>") 或 .package(url: ..., .exact("<version>"))
+            # 匹配 .package(url: "<url>", from: "1.0.0") 或 .package(url: ..., .exact("<version>"))
             for m in re.finditer(
                 r'\.package\(\s*url:\s*"([^"]+)"[^)]*?(?:from:\s*"([^"]+)"|\.exact\("([^"]+)"\)|version:\s*"([^"]+)"\))',
                 content,
@@ -2714,8 +2699,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
             scopes = ("implementation", "api", "compileOnly", "compile")
             scope_pattern = "|".join(scopes)
@@ -2740,8 +2724,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
             for m in re.finditer(
                 r'\{:(\w+),\s*"([^"]+)"',
@@ -2763,8 +2746,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
 
             for m in re.finditer(
                 r'"([^"]+)":\s*\{:hex,\s*:(\w+),\s*"([^"]+)"',
@@ -2792,8 +2774,7 @@ class ExternalMixin:
         try:
             import xml.etree.ElementTree as ET
 
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
+            content = read_file_text(path)
             # 去除命名空间
             content_no_ns = re.sub(r'\sxmlns="[^"]+"', "", content, count=1)
             root = ET.fromstring(content_no_ns)
@@ -2828,7 +2809,7 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 data = json.load(f)
             dependencies = data.get("dependencies", {})
             if isinstance(dependencies, dict):
@@ -3022,23 +3003,22 @@ class ExternalMixin:
         gemrc_path = os.path.join(os.path.expanduser("~"), ".gemrc")
         if os.path.isfile(gemrc_path):
             try:
-                with open(gemrc_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        # YAML 格式: gempath: /path/to/gems
-                        # 或 gempath: [/path1, /path2]
-                        m = re.match(r"^\s*gempath\s*:\s*(.+)$", line)
-                        if m:
-                            paths_str = m.group(1).strip()
-                            # 去除 YAML 数组方括号
-                            paths_str = paths_str.lstrip("[").rstrip("]")
-                            for path in re.split(r"[,;:]", paths_str):
-                                path = path.strip().strip("'\"")
-                                if not path:
-                                    continue
-                                gems_dir = os.path.join(path, "gems")
-                                result = match_gem_in_gems_dir(gems_dir)
-                                if result:
-                                    return result
+                for line in read_file_text(gemrc_path).splitlines():
+                    # YAML 格式: gempath: /path/to/gems
+                    # 或 gempath: [/path1, /path2]
+                    m = re.match(r"^\s*gempath\s*:\s*(.+)$", line)
+                    if m:
+                        paths_str = m.group(1).strip()
+                        # 去除 YAML 数组方括号
+                        paths_str = paths_str.lstrip("[").rstrip("]")
+                        for path in re.split(r"[,;:]", paths_str):
+                            path = path.strip().strip("'\"")
+                            if not path:
+                                continue
+                            gems_dir = os.path.join(path, "gems")
+                            result = match_gem_in_gems_dir(gems_dir)
+                            if result:
+                                return result
             except Exception:
                 pass
 

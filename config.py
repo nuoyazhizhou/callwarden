@@ -5,6 +5,7 @@ config.py
 代码知识图谱配置：路径常量、工具函数、多语言配置。
 """
 
+import codecs
 import hashlib
 import os
 import tempfile
@@ -210,7 +211,11 @@ def scan_subprojects(root_dir: str, max_depth: int = 5) -> List[Dict[str, str]]:
     root_dir = os.path.abspath(root_dir)
     projects: List[Dict[str, str]] = []
 
-    for root, dirs, files in os.walk(root_dir):
+    # P23.5: onerror 回调，跳过不可访问的目录（如文件锁、权限不足、路径过长）
+    def _scan_onerror(err):
+        pass
+
+    for root, dirs, files in os.walk(root_dir, onerror=_scan_onerror):
         # 跳过第三方/VCS/构建目录
         dirs[:] = [d for d in dirs if d not in _SUBPROJECT_SKIP_DIRS and not d.startswith(".")]
 
@@ -477,3 +482,115 @@ def read_file_normalized(file_path: str) -> Tuple[str, str]:
     normalized = norm_newlines(text)
     content_hash = compute_content_hash(normalized)
     return normalized, content_hash
+
+
+def read_file_text(file_path: str, errors: str = "replace") -> str:
+    """安全读取文本文件（UTF-8 优先，失败降级 latin-1）
+
+    P23.4: 项目依赖文件（requirements.txt / package.json / Cargo.toml 等）
+    可能使用非 UTF-8 编码（如 UTF-16 BOM、GB2312）。直接 open(encoding="utf-8")
+    会抛 UnicodeDecodeError 导致整个项目构建失败。本函数自动降级，确保任何
+    编码的文件都能读出文本（无效字节用 ? 替换）。
+
+    Args:
+        file_path: 文件绝对路径
+        errors: 解码错误处理策略（默认 "replace"，用 ? 替换无效字节）
+
+    Returns:
+        文件文本内容（换行符已标准化为 LF）
+    """
+    with open(file_path, "rb") as f:
+        raw = f.read()
+    # 尝试 UTF-8（含 BOM 自动剥离）
+    if raw.startswith(codecs.BOM_UTF8):
+        text = raw[3:].decode("utf-8", errors=errors)
+    else:
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            # UTF-16 BOM 检测
+            if raw.startswith(codecs.BOM_UTF16_LE):
+                text = raw[2:].decode("utf-16-le", errors=errors)
+            elif raw.startswith(codecs.BOM_UTF16_BE):
+                text = raw[2:].decode("utf-16-be", errors=errors)
+            else:
+                # 降级 latin-1：逐字节映射，不会失败
+                text = raw.decode("latin-1", errors=errors)
+    return norm_newlines(text)
+
+
+def to_long_path(path: str) -> str:
+    """Windows 长路径支持：添加 \\\\?\\ 前缀绕过 MAX_PATH 260 限制
+
+    P23.6: Java Maven 深层目录路径可能超过 260 字符
+    (src/main/java/com/xxx/xxx/...)，Windows 默认不支持。
+    添加 \\\\?\\ 前缀后，Windows API 支持最长 32767 字符路径。
+
+    仅在 Windows 且路径长度可能超限时添加。\\?\ 前缀要求：
+    - 绝对路径
+    - 不含 .. 或 .
+    - 反斜杠分隔
+
+    Args:
+        path: 原始路径
+
+    Returns:
+        可能添加了 \\\\?\\ 前缀的路径
+    """
+    if os.name != "nt":
+        return path
+    if not path:
+        return path
+    # 已有 \\?\ 前缀，不重复添加
+    if path.startswith("\\\\?\\"):
+        return path
+    # 路径未超 260，不需要长路径前缀
+    if len(path) < 250:
+        return path
+    # 必须是绝对路径
+    if not os.path.isabs(path):
+        return path
+    # 标准化为绝对路径，解析 .. 和 .
+    abs_path = os.path.abspath(path)
+    # 转为反斜杠分隔
+    abs_path = abs_path.replace("/", "\\")
+    # 添加 \\?\ 前缀
+    if abs_path[1] == ":" and abs_path[0].isalpha():
+        return "\\\\?\\" + abs_path
+    # UNC 路径 \\\\server\\share -> \\\\?\\UNC\\server\\share
+    if abs_path.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + abs_path[2:]
+    return abs_path
+
+
+def safe_walk(root_dir: str, max_depth: int = -1, **kwargs):
+    """带错误处理的 os.walk：跳过不可访问的目录/文件
+
+    P23.5: Windows 下可能遇到文件锁定（WinError 1920）、权限不足、
+    路径过长（WinError 3）等错误，os.walk 默认会中断遍历。
+    本函数通过 onerror 回调捕获错误并继续遍历。
+
+    Args:
+        root_dir: 遍历根目录
+        max_depth: 最大递归深度（-1 表示无限制）
+        **kwargs: 传递给 os.walk 的额外参数
+
+    Yields:
+        (dirpath, dirnames, filenames) 三元组
+    """
+    _walk_errors = []
+
+    def _onerror(err):
+        _walk_errors.append(err)
+
+    root_dir = to_long_path(root_dir)
+
+    for root, dirs, files in os.walk(root_dir, onerror=_onerror, **kwargs):
+        # 深度限制
+        if max_depth >= 0:
+            rel = os.path.relpath(root, root_dir)
+            depth = 0 if rel == "." else rel.count(os.sep)
+            if depth > max_depth:
+                dirs[:] = []
+                continue
+        yield root, dirs, files

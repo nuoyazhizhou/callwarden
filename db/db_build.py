@@ -20,8 +20,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Set
 
 from ..config import (
-    norm_path, read_file_normalized,
+    norm_path, read_file_normalized, read_file_text,
     detect_language_from_path, get_supported_extensions, compute_content_hash,
+    safe_walk,
 )
 from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
 from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
@@ -557,7 +558,7 @@ class BuildMixin:
         supported_extensions = set(get_supported_extensions())
         skip_dirs = {".git", "node_modules", "target", "dist", "build", ".next", "__pycache__"}
         files = []
-        for root, dirs, filenames in os.walk(abs_dir):
+        for root, dirs, filenames in safe_walk(abs_dir):
             dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
             for filename in filenames:
                 ext = os.path.splitext(filename)[1].lower()
@@ -633,11 +634,11 @@ class BuildMixin:
 
         if os.path.exists(ignore_file):
             try:
-                with open(ignore_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#"):
-                            patterns.append(line)
+                text = read_file_text(ignore_file)
+                for line in text.splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        patterns.append(line)
             except Exception:
                 pass
 
@@ -702,7 +703,7 @@ class BuildMixin:
         # P21: 自动检测到的第三方库目录（用于日志输出）
         auto_ignored: List[tuple] = []
 
-        for root, dirs, filenames in os.walk(self.workspace_root):
+        for root, dirs, filenames in safe_walk(self.workspace_root):
             # 过滤目录：原地修改 dirs 以跳过
             rel_root = norm_path(os.path.relpath(root, self.workspace_root))
             if rel_root == ".":
@@ -841,6 +842,7 @@ class BuildMixin:
         skipped = 0
         unchanged = 0
         failed = 0
+        failed_files = []  # P23.5: 提前初始化，register 循环中也可能追加
 
         to_parse = []
         parsed_new = 0  # P11: 初始化为 0，用于 GC 条件化判断
@@ -865,18 +867,27 @@ class BuildMixin:
             if lang:
                 project_langs.add(lang)
 
-            module_path = self._infer_module_path_generic(rel_path, lang)
-            file_instance_id = self._register_file_db(abs_path, module_path)
+            # P23.5/P23.6: 捕获文件系统异常（WinError 1920 文件锁 / WinError 3 路径过长）
+            # 跳过不可访问的文件，不中断整个构建
+            try:
+                module_path = self._infer_module_path_generic(rel_path, lang)
+                file_instance_id = self._register_file_db(abs_path, module_path)
 
-            if not force:
-                current_mtime = os.path.getmtime(abs_path)
-                latest_fv = self._get_file_version(file_instance_id)
-                if latest_fv and abs(latest_fv["mtime"] - current_mtime) < 0.001:
-                    old_result = self._load_file_result_from_db(file_instance_id, latest_fv["id"], rel_path, abs_path, module_path)
-                    if old_result:
-                        file_results[rel_path] = old_result
-                        unchanged += 1
-                        continue
+                if not force:
+                    current_mtime = os.path.getmtime(abs_path)
+                    latest_fv = self._get_file_version(file_instance_id)
+                    if latest_fv and abs(latest_fv["mtime"] - current_mtime) < 0.001:
+                        old_result = self._load_file_result_from_db(file_instance_id, latest_fv["id"], rel_path, abs_path, module_path)
+                        if old_result:
+                            file_results[rel_path] = old_result
+                            unchanged += 1
+                            continue
+            except OSError as e:
+                # 文件不可访问：跳过并记录，不中断构建
+                failed += 1
+                failed_files.append((rel_path, f"OSError: {e}"))
+                cprint(f"  ⚠ 跳过不可访问文件: {rel_path} ({e})", "yellow")
+                continue
 
             to_parse.append((i, rel_path, abs_path, lang, module_path, file_instance_id))
         t_register = time.perf_counter() - t_register_start
@@ -913,13 +924,15 @@ class BuildMixin:
                 "files_total": unchanged + skipped,
                 "files_parsed": 0,
                 "files_unchanged": unchanged,
+                # P23.7: 暴露 skipped/failed 计数
+                "files_skipped": skipped,
+                "files_failed": 0,
             }
             return
 
         t_parse_start = time.perf_counter()
         if to_parse:
             parse_total = len(to_parse)
-            failed_files = []
 
             # P15.3: 按语言预排序，让同语言文件聚集
             # ProcessPoolExecutor 的 chunksize 分块后，每个 worker 尽量只处理一种语言，
@@ -1172,6 +1185,10 @@ class BuildMixin:
             "files_total": total,
             "files_parsed": parsed_new,
             "files_unchanged": unchanged,
+            # P23.7: 暴露 skipped/failed 计数，避免基准脚本误算
+            # (files_total - files_parsed - files_unchanged 把 skipped 算成 failed)
+            "files_skipped": skipped,
+            "files_failed": failed,
         }
     
 
@@ -1747,8 +1764,7 @@ class BuildMixin:
         if os.path.exists(cargo_toml):
             try:
                 import re
-                with open(cargo_toml, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = read_file_text(cargo_toml)
                 m = re.search(r'name\s*=\s*"([^"]+)"', content)
                 if m:
                     return m.group(1)
