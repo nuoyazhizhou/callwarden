@@ -384,7 +384,10 @@ class BuildMixin:
         failed = 0
 
         to_parse = []
+        parsed_new = 0  # P11: 初始化为 0，用于 GC 条件化判断
 
+        # P10: 细拆 register 阶段计时（逐文件 SQL: _register_file_db + _get_file_version）
+        t_register_start = time.perf_counter()
         for i, rel_path in enumerate(files, 1):
             abs_path = os.path.join(self.workspace_root, rel_path)
             lang = detect_language_from_path(rel_path)
@@ -408,6 +411,7 @@ class BuildMixin:
                         continue
 
             to_parse.append((i, rel_path, abs_path, lang, module_path, file_instance_id))
+        t_register = time.perf_counter() - t_register_start
 
         if unchanged > 0 and not to_parse:
             cprint(t("cli.messages.db_build_all_unchanged", count=unchanged), "green")
@@ -421,8 +425,14 @@ class BuildMixin:
             cprint(t("cli.messages.db_build_summary_duration", duration=format_duration(duration)), "yellow")
             cprint(t("cli.messages.db_build_summary_done"), "green")
             cprint()
+            # P10: even in all-unchanged path, show register timing
+            cprint("── 阶段耗时分解 ──────────────────────", "cyan", bold=True)
+            cprint(f"  register (逐文件SQL)    : {t_register:8.2f}s  (注册/mtime/version 查询)", "dim")
+            cprint(f"  total                   : {duration:8.2f}s", "cyan", bold=True)
+            cprint("──────────────────────────────────────", "cyan")
             return
 
+        t_parse_start = time.perf_counter()
         if to_parse:
             max_workers = min(8, max(1, (os.cpu_count() or 4) - 1))
             cprint(t("cli.messages.db_build_parallel_parse", workers=max_workers, count=len(to_parse)), "dim")
@@ -529,7 +539,9 @@ class BuildMixin:
                 for rel_path, err in failed_files:
                     cprint(t("cli.messages.db_build_parse_fail_item", path=rel_path, error=err), "red")
 
-            spinner = Spinner(t("cli.messages.db_build_step3_5_versions"))
+        t_parse = time.perf_counter() - t_parse_start
+
+        spinner = Spinner(t("cli.messages.db_build_step3_5_versions"))
         spinner.start()
         # P8 优化：full build 期间禁用 FTS 触发器，避免每个 symbol INSERT/UPDATE
         # 都同步维护 trigram FTS 索引（写放大）。批量写完后一次性 rebuild。
@@ -587,13 +599,17 @@ class BuildMixin:
 
         # 步骤 6/6: GC 归档（类 Java Young GC，扫描 pending 文件命中 ignore 的迁入 archived_files）
         # 注意：在 commit 之后执行，避免归档事务与构建事务冲突
+        # P11: 条件化 GC —— 无新解析文件时跳过（避免 os.walk 全仓遍历构建 matcher）
+        # parsed_new 是实际解析（非 unchanged）的文件数；为 0 说明全部走增量，不需要 GC
         t_gc_start = time.perf_counter()
         try:
-            gc_result = self.gc_archive(force=False)
-            if gc_result["archived"] > 0:
-                cprint(t("cli.messages.db_build_step6_gc", count=gc_result['archived']), "yellow")
-                for reason, count in gc_result["reasons"].items():
-                    cprint(t("cli.messages.db_build_gc_reason", reason=reason, count=count), "dim")
+            if parsed_new > 0:
+                gc_result = self.gc_archive(force=False)
+                if gc_result["archived"] > 0:
+                    cprint(t("cli.messages.db_build_step6_gc", count=gc_result['archived']), "yellow")
+                    for reason, count in gc_result["reasons"].items():
+                        cprint(t("cli.messages.db_build_gc_reason", reason=reason, count=count), "dim")
+            # P11: 无新解析文件时跳过 GC，matcher 不构建、os.walk 不执行
         except Exception as e:
             # GC 失败不阻塞构建
             cprint(t("cli.messages.db_build_gc_fail", error=e), "yellow")
@@ -613,11 +629,12 @@ class BuildMixin:
         print_build_summary(parsed_new, unchanged, skipped, failed, total_symbols, total_calls, resolved_calls, duration)
 
         # 阶段计时汇总（用于定位性能瓶颈）
-        # scan + parse 已包含在 t_start 到 versions_start 之前，这里拆分显示
-        t_other = duration - (t_versions + t_stdlib + t_call_resolve + t_depth + t_fts + t_commit + t_gc)
+        # P10: 细拆 scan+parse+register → register（逐文件 SQL） + parse（tree-sitter）
+        t_other = duration - (t_register + t_parse + t_versions + t_stdlib + t_call_resolve + t_depth + t_fts + t_commit + t_gc)
         cprint()
         cprint("── 阶段耗时分解 ──────────────────────", "cyan", bold=True)
-        cprint(f"  scan + parse + register : {t_other:8.2f}s  (扫描/解析/注册文件)", "dim")
+        cprint(f"  register (逐文件SQL)    : {t_register:8.2f}s  (注册/mtime/version 查询)", "dim")
+        cprint(f"  parse (tree-sitter)     : {t_parse:8.2f}s  (多线程源码解析)", "dim")
         cprint(f"  symbol write            : {t_versions:8.2f}s  (写入符号/版本)", "dim")
         cprint(f"  stdlib import           : {t_stdlib:8.2f}s  (标准库符号导入)", "dim")
         cprint(f"  call resolve + write    : {t_call_resolve:8.2f}s  (调用关系解析+写入)", "yellow")
@@ -625,6 +642,8 @@ class BuildMixin:
         cprint(f"  fts rebuild             : {t_fts:8.2f}s  (FTS5 索引重建)", "dim")
         cprint(f"  commit                  : {t_commit:8.2f}s  (事务提交)", "dim")
         cprint(f"  gc archive              : {t_gc:8.2f}s  (GC 归档)", "dim")
+        if t_other > 0.01:
+            cprint(f"  other                   : {t_other:8.2f}s  (其他开销)", "dim")
         cprint(f"  total                   : {duration:8.2f}s", "cyan", bold=True)
         cprint("──────────────────────────────────────", "cyan")
     

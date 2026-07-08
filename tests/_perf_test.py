@@ -197,12 +197,13 @@ def timed(fn, *args, **kwargs):
     return result, elapsed
 
 
-def test_repo(repo_name: str, skip_refresh: bool = False) -> dict:
+def test_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool = True) -> dict:
     """测试单个仓库的性能。
 
     Args:
         repo_name: 仓库名称（admin/android/ios_muzoplayer/firmware）
         skip_refresh: 跳过 refresh-all（用于已刷新的仓库）
+        skip_clone: 跳过 clone detect（默认跳过，不污染 refresh 性能报告）
 
     Returns:
         性能测试结果 dict
@@ -354,21 +355,25 @@ def test_repo(repo_name: str, skip_refresh: bool = False) -> dict:
 
     result["queries"] = queries
 
-    # 6. clone detect（克隆检测，性能敏感操作）
-    print(f"[6/6] clone detect（克隆检测）...")
-    try:
-        clones, elapsed = timed(db.detect_clones, min_lines=5, similarity_threshold=0.8)
-        total_pairs = clones.get("total_pairs", 0)
-        scanned = clones.get("scanned_symbols", 0)
-        print(f"  clone detect: {elapsed:.3f}s, {total_pairs} 对, 扫描 {scanned} 符号")
-        queries["clone_detect"] = {
-            "elapsed": elapsed,
-            "total_pairs": total_pairs,
-            "scanned_symbols": scanned,
-        }
-    except Exception as e:
-        print(f"  clone detect 失败: {e}")
-        queries["clone_detect"] = {"error": str(e)[:300]}
+    # 6. clone detect（on-demand，不影响 refresh 性能；默认跳过，用 --clone 显式开启）
+    if skip_clone:
+        print(f"[6/6] clone detect（跳过，使用 --clone 开启）")
+        queries["clone_detect"] = {"skipped": True}
+    else:
+        print(f"[6/6] clone detect（克隆检测）...")
+        try:
+            clones, elapsed = timed(db.detect_clones, min_lines=5, similarity_threshold=0.8)
+            total_pairs = clones.get("total_pairs", 0)
+            scanned = clones.get("scanned_symbols", 0)
+            print(f"  clone detect: {elapsed:.3f}s, {total_pairs} 对, 扫描 {scanned} 符号")
+            queries["clone_detect"] = {
+                "elapsed": elapsed,
+                "total_pairs": total_pairs,
+                "scanned_symbols": scanned,
+            }
+        except Exception as e:
+            print(f"  clone detect 失败: {e}")
+            queries["clone_detect"] = {"error": str(e)[:300]}
 
     db.close()
     return result
@@ -392,6 +397,11 @@ def main():
         help="跳过 refresh-all（使用已刷新的数据）",
     )
     parser.add_argument(
+        "--clone",
+        action="store_true",
+        help="执行 clone detect（默认跳过，不污染 refresh 性能报告）",
+    )
+    parser.add_argument(
         "--output",
         default="tests/_perf_results.json",
         help="结果输出 JSON 文件路径",
@@ -406,7 +416,7 @@ def main():
     all_results = []
     for repo_name in repos_to_test:
         try:
-            result = test_repo(repo_name, skip_refresh=args.skip_refresh)
+            result = test_repo(repo_name, skip_refresh=args.skip_refresh, skip_clone=not args.clone)
             all_results.append(result)
         except Exception as e:
             print(f"\n[ERROR] 测试 {repo_name} 时异常: {e}")

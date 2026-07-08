@@ -85,7 +85,7 @@ class GCMixin:
     """
 
     def _build_ignore_matcher(self) -> IgnoreMatcher:
-        """构建忽略规则匹配器
+        """构建忽略规则匹配器（带实例级缓存）
 
         合并规则来源（按优先级，后者覆盖前者）：
         1. 默认硬编码规则（DEFAULT_IGNORE_RULES）
@@ -93,14 +93,35 @@ class GCMixin:
         3. workspace 根目录的 .callwardenignore
         4. 子目录的 .gitignore（按路径深度应用）
 
+        P11: 缓存 matcher 实例。通过根目录 .gitignore + .callwardenignore 的 mtime
+        判断是否需要重建。子目录 .gitignore 的变化不会被检测到（极少变化），
+        如需强制重建可用 `cw gc archive --force`。
+
         Returns:
             配置好的 IgnoreMatcher 实例
         """
+        # P11: 检查缓存
+        root_git = os.path.join(self.workspace_root, ".gitignore")
+        root_cw = os.path.join(self.workspace_root, ".callwardenignore")
+        try:
+            git_mtime = os.path.getmtime(root_git) if os.path.exists(root_git) else 0
+            cw_mtime = os.path.getmtime(root_cw) if os.path.exists(root_cw) else 0
+        except OSError:
+            git_mtime = cw_mtime = 0
+        cache_key = (git_mtime, cw_mtime)
+
+        cached = getattr(self, "_ignore_matcher_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return cached[1]
+
+        # 缓存未命中或过期：重建 matcher
         matcher = IgnoreMatcher(self.workspace_root)
         # 默认规则作为基线
         matcher.add_default_rules(DEFAULT_IGNORE_RULES)
         # 加载 workspace 的 .gitignore / .callwardenignore
         matcher.load_workspace_ignores()
+        # 缓存
+        self._ignore_matcher_cache = (cache_key, matcher)
         return matcher
 
     def gc_archive(
