@@ -88,22 +88,18 @@ REPOS = {
         "root": r"C:\git_work\callwarden\testcode\firmware",
         "desc": "固件主仓库（C/C++，34M 行，2.71GB）",
         "ignore_rules": [
-            # 第三方应用源码（体积大，非业务代码）
-            "applications/application/boa/",
-            "applications/application/squeezelite/",
-            "applications/application/esp/",
-            "applications/application/apple_remote/",
-            "applications/application/audio_cast/",
-            "applications/application/intercom/",
-            "applications/application/aws_iot/",
-            "applications/application/wiim_lvgl_app/",  # LVGL 第三方 GUI 库（18500 文件中占大量）
-            "applications/application/cxdish_src_v1.0.0.6/",  # 第三方源码包
-            # 中间件中的第三方库
-            "middleware/private/mplayer/",
-            "middleware/private/shairport/",
-            "middleware/private/libbsa/",
-            "middleware/private/mfi_airplay/",
-            # 预编译二进制和镜像
+            # === 纯第三方解压代码（无业务改动，目录缺失或零项目标记）===
+            "applications/application/esp/",                # Amazon AVS ESP/VAD 库，零业务改动
+            "applications/application/cxdish_src_v1.0.0.6/", # 带版本号的第三方源码包
+            # === 第三方库的纯上游子目录（业务改动在外层，子目录是未改动的上游代码）===
+            "middleware/private/mplayer/MPlayer-1.1/DOCS/",  # MPlayer 文档
+            "middleware/private/mplayer/MPlayer-1.1/help/",  # MPlayer i18n
+            "middleware/private/mplayer/MPlayer-1.1/gui/",   # MPlayer 旧 GUI
+            "middleware/private/mplayer/MPlayer-1.1/ffmpeg/", # MPlayer 内嵌的 ffmpeg
+            "middleware/private/libbsa/lib/",                # 预编译二进制（.a/.so）
+            "middleware/private/mfi_airplay/mDNSResponder-*/", # 5 个版本的 Apple mDNSResponder
+            "middleware/private/mfi_airplay/WAC_POSIX_Server_*/", # Apple WAC 配网
+            # === 预编译二进制和镜像 ===
             "device/legacy/",
             "system/misc/melody/",
             "system/misc/mp3/",
@@ -114,7 +110,7 @@ REPOS = {
             "system/misc/test/",
             "system/misc/tx_tone/",
             "system/tool/",
-            # 构建脚本和工具
+            # === 构建脚本和工具 ===
             "build/",
             "back_images/",
         ],

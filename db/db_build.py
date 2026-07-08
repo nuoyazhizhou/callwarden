@@ -10,6 +10,7 @@ db_build.py
 from __future__ import annotations
 
 import os
+import pickle
 import time
 import threading
 from collections import defaultdict
@@ -23,6 +24,114 @@ from ..config import (
 from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
 from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
 from ..i18n import t
+
+
+# ============================================
+# P15: ProcessPoolExecutor worker 函数（模块级，可 pickle）
+# ============================================
+
+# 每个 worker 进程的 parser 缓存（进程级，避免每文件创建）
+_worker_parsers: Dict[str, Any] = {}
+
+
+def _init_worker_parsers():
+    """worker 进程初始化：惰性加载 parser（不预加载）。
+
+    在 ProcessPoolExecutor 的 initializer 中调用，每个 worker 进程启动时
+    执行一次。空初始化，parser 在 _parse_file_worker 中按需创建并缓存。
+
+    P15 修正：不预加载所有 16 语言（每进程省 ~200MB），改为惰性加载。
+    firmware 只有 C/C++，只需加载 2 个 parser，内存占用从 ~300MB 降到 ~80MB。
+    """
+    global _worker_parsers
+    _worker_parsers = {}
+
+
+def _get_or_create_parser(lang: str, rel_path: str):
+    """获取或创建 parser（带进程级缓存）。
+
+   惰性加载：首次遇到某语言时创建 parser 并缓存，后续复用。
+    """
+    global _worker_parsers
+    if lang in _worker_parsers:
+        return _worker_parsers[lang]
+
+    # 按需 import + 创建
+    from ..parsers import (
+        RustParser, TypeScriptParser, PythonParser, KotlinParser,
+        GoParser, JavaParser, CParser, CppParser,
+        CSharpParser, RubyParser, PhpParser, SwiftParser,
+        ScalaParser, HclParser, ElixirParser,
+    )
+    p = None
+    if lang == "rust":
+        p = RustParser()
+    elif lang == "typescript":
+        p = TypeScriptParser(dialect="tsx" if rel_path.endswith(".tsx") else "typescript")
+    elif lang == "javascript":
+        p = TypeScriptParser(dialect="jsx" if rel_path.endswith(".jsx") else "javascript")
+    elif lang == "python":
+        p = PythonParser()
+    elif lang == "kotlin":
+        p = KotlinParser()
+    elif lang == "go":
+        p = GoParser()
+    elif lang == "java":
+        p = JavaParser()
+    elif lang == "c":
+        p = CParser()
+    elif lang == "cpp":
+        p = CppParser()
+    elif lang == "csharp":
+        p = CSharpParser()
+    elif lang == "ruby":
+        p = RubyParser()
+    elif lang == "php":
+        p = PhpParser()
+    elif lang == "swift":
+        p = SwiftParser()
+    elif lang == "scala":
+        p = ScalaParser()
+    elif lang == "hcl":
+        p = HclParser()
+    elif lang == "elixir":
+        p = ElixirParser()
+
+    if p is not None:
+        _worker_parsers[lang] = p
+    return p
+
+
+def _parse_file_worker(args):
+    """多进程 worker：解析单个源文件（模块级函数，可 pickle）。
+
+    在 worker 进程中执行，绕开 GIL 实现真正的并行 parse。
+    使用进程级 _worker_parsers 缓存，避免每文件创建 parser。
+
+    Args:
+        args: 元组 (rel_path, abs_path, lang, module_path, file_instance_id)
+
+    Returns:
+        元组 (status, rel_path, payload)
+            - status: "ok" / "fail" / "skip"
+            - payload: 成功时为解析结果 dict，失败时为错误字符串，跳过时为 None
+    """
+    rel_path, abs_path, lang, module_path, file_instance_id = args
+    try:
+        parser = _get_or_create_parser(lang, rel_path)
+
+        if not parser:
+            return ("skip", rel_path, None)
+
+        result = parser.parse_file(abs_path, module_path)
+        result["abs_path"] = abs_path
+        result["file_instance_id"] = file_instance_id
+        result["module_path"] = module_path
+        result["rel_path"] = rel_path
+        result.setdefault("inline_modules", [])
+        return ("ok", rel_path, result)
+    except Exception as e:
+        return ("fail", rel_path, str(e))
 
 
 class BuildMixin:
@@ -450,101 +559,139 @@ class BuildMixin:
 
         t_parse_start = time.perf_counter()
         if to_parse:
-            max_workers = min(8, max(1, (os.cpu_count() or 4) - 1))
-            cprint(t("cli.messages.db_build_parallel_parse", workers=max_workers, count=len(to_parse)), "dim")
-            print_lock = threading.Lock()
-            done_count = [0]
             parse_total = len(to_parse)
             failed_files = []
 
-            def _parse_one(args):
-                """多线程工作函数：解析单个源文件并返回结果元组
+            # P15: 文件数超过阈值时用 ProcessPoolExecutor（绕开 GIL 真正并行 parse）
+            # tree-sitter Parser.parse() 不释放 GIL，ThreadPoolExecutor 实际只有 2x 加速
+            # ProcessPoolExecutor 用独立进程，每个进程有自己的 GIL，可真正 N 核并行
+            #
+            # 内存预算：每个 worker 进程约 200-400MB（Python + 16 语言 tree-sitter grammar）
+            # max_workers 限制为 4，避免内存爆炸（4 × 400MB = 1.6GB 上限）
+            # 在 22 核机器上只用 4 核，但避免把宿主机搞崩溃
+            MP_THRESHOLD = 50  # 文件数 >= 50 才用多进程（避免进程创建开销）
+            use_multiprocess = len(to_parse) >= MP_THRESHOLD
 
-                根据语言选择对应的解析器，调用 parse_file 提取符号/调用关系，
-                通过 print_lock 保护共享计数器和进度输出。
+            if use_multiprocess:
+                # 多进程路径：限制 worker 数，控制内存
+                # 每进程惰性加载 parser（仅实际用到的语言），约 80-150MB/进程
+                # 默认 min(4, cpu-1)，可用 CW_MP_WORKERS 环境变量覆盖
+                env_workers = os.environ.get("CW_MP_WORKERS")
+                if env_workers:
+                    mp_workers = max(1, min(8, int(env_workers)))
+                else:
+                    mp_workers = min(4, max(1, (os.cpu_count() or 4) - 1))
+                cprint(t("cli.messages.db_build_parallel_parse", workers=mp_workers, count=len(to_parse)), "dim")
+                from concurrent.futures import ProcessPoolExecutor, as_completed
+                # worker 参数：(rel_path, abs_path, lang, module_path, file_instance_id)
+                mp_args = [(rel_path, abs_path, lang, module_path, file_instance_id)
+                           for _, rel_path, abs_path, lang, module_path, file_instance_id in to_parse]
+                # chunksize: 每批处理多少文件，减少 IPC 开销
+                chunksize = max(1, len(mp_args) // (mp_workers * 4))
+                cprint(f"  (P15 multiprocess: {mp_workers} workers, chunksize={chunksize})", "dim")
 
-                Args:
-                    args: 元组 (idx, rel_path, abs_path, lang, module_path, file_instance_id)
-                        - idx: 在 to_parse 中的序号
-                        - rel_path: 相对项目根的路径
-                        - abs_path: 绝对路径
-                        - lang: 语言标识（rust/python/typescript/...）
-                        - module_path: 推断的模块路径
-                        - file_instance_id: 文件实例 ID
-
-                Returns:
-                    元组 (status, idx, rel_path, payload)
-                        - status: "ok" 成功 / "fail" 失败 / "skip" 跳过
-                        - payload: 成功时为解析结果字典，失败时为错误字符串，跳过时为 None
-                """
-                idx, rel_path, abs_path, lang, module_path, file_instance_id = args
                 try:
-                    from ..parsers import (
-                        RustParser, TypeScriptParser, PythonParser, KotlinParser,
-                        GoParser, JavaParser, CParser, CppParser,
-                        CSharpParser, RubyParser, PhpParser, SwiftParser,
-                        ScalaParser, HclParser, ElixirParser,
-                    )
-                    if lang == "rust":
-                        p = RustParser()
-                    elif lang == "typescript":
-                        p = TypeScriptParser(dialect="tsx" if rel_path.endswith(".tsx") else "typescript")
-                    elif lang == "javascript":
-                        p = TypeScriptParser(dialect="jsx" if rel_path.endswith(".jsx") else "javascript")
-                    elif lang == "python":
-                        p = PythonParser()
-                    elif lang == "kotlin":
-                        p = KotlinParser()
-                    elif lang == "go":
-                        p = GoParser()
-                    elif lang == "java":
-                        p = JavaParser()
-                    elif lang == "c":
-                        p = CParser()
-                    elif lang == "cpp":
-                        p = CppParser()
-                    elif lang == "csharp":
-                        p = CSharpParser()
-                    elif lang == "ruby":
-                        p = RubyParser()
-                    elif lang == "php":
-                        p = PhpParser()
-                    elif lang == "swift":
-                        p = SwiftParser()
-                    elif lang == "scala":
-                        p = ScalaParser()
-                    elif lang == "hcl":
-                        p = HclParser()
-                    elif lang == "elixir":
-                        p = ElixirParser()
-                    else:
+                    with ProcessPoolExecutor(
+                        max_workers=mp_workers,
+                        initializer=_init_worker_parsers,
+                    ) as pool:
+                        done_count = 0
+                        for status, rel_path, payload in pool.map(
+                            _parse_file_worker, mp_args, chunksize=chunksize
+                        ):
+                            if status == "ok":
+                                file_results[rel_path] = payload
+                            elif status == "fail":
+                                failed += 1
+                                failed_files.append((rel_path, payload))
+                            else:
+                                skipped += 1
+                            done_count += 1
+                            print_progress(done_count, parse_total,
+                                           t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=""))
+                except ( pickle.PickleError, BrokenPipeError, OSError) as e:
+                    # fallback: 进程创建/pickle 失败时降级为 ThreadPoolExecutor
+                    cprint(f"  (P15 fallback to ThreadPool: {e})", "yellow")
+                    use_multiprocess = False
+
+            if not use_multiprocess:
+                # 原多线程路径（小文件量或 fallback）
+                # 线程比进程轻量，8 线程内存占用远低于 4 进程
+                max_workers = min(8, max(1, (os.cpu_count() or 4) - 1))
+                cprint(t("cli.messages.db_build_parallel_parse", workers=max_workers, count=len(to_parse)), "dim")
+                print_lock = threading.Lock()
+                done_count = [0]
+
+                def _parse_one(args):
+                    """多线程工作函数：解析单个源文件并返回结果元组"""
+                    _, rel_path, abs_path, lang, module_path, file_instance_id = args
+                    try:
+                        from ..parsers import (
+                            RustParser, TypeScriptParser, PythonParser, KotlinParser,
+                            GoParser, JavaParser, CParser, CppParser,
+                            CSharpParser, RubyParser, PhpParser, SwiftParser,
+                            ScalaParser, HclParser, ElixirParser,
+                        )
+                        if lang == "rust":
+                            p = RustParser()
+                        elif lang == "typescript":
+                            p = TypeScriptParser(dialect="tsx" if rel_path.endswith(".tsx") else "typescript")
+                        elif lang == "javascript":
+                            p = TypeScriptParser(dialect="jsx" if rel_path.endswith(".jsx") else "javascript")
+                        elif lang == "python":
+                            p = PythonParser()
+                        elif lang == "kotlin":
+                            p = KotlinParser()
+                        elif lang == "go":
+                            p = GoParser()
+                        elif lang == "java":
+                            p = JavaParser()
+                        elif lang == "c":
+                            p = CParser()
+                        elif lang == "cpp":
+                            p = CppParser()
+                        elif lang == "csharp":
+                            p = CSharpParser()
+                        elif lang == "ruby":
+                            p = RubyParser()
+                        elif lang == "php":
+                            p = PhpParser()
+                        elif lang == "swift":
+                            p = SwiftParser()
+                        elif lang == "scala":
+                            p = ScalaParser()
+                        elif lang == "hcl":
+                            p = HclParser()
+                        elif lang == "elixir":
+                            p = ElixirParser()
+                        else:
+                            with print_lock:
+                                done_count[0] += 1
+                            return ("skip", rel_path, None)
+                        result = p.parse_file(abs_path, module_path)
+                        result["abs_path"] = abs_path
+                        result["file_instance_id"] = file_instance_id
+                        result["module_path"] = module_path
+                        result["rel_path"] = rel_path
+                        result.setdefault("inline_modules", [])
                         with print_lock:
                             done_count[0] += 1
-                        return ("skip", idx, rel_path, None)
-                    result = p.parse_file(abs_path, module_path)
-                    result["abs_path"] = abs_path
-                    result["file_instance_id"] = file_instance_id
-                    result["module_path"] = module_path
-                    result["rel_path"] = rel_path
-                    result.setdefault("inline_modules", [])
-                    with print_lock:
-                        done_count[0] += 1
-                        print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
-                    return ("ok", idx, rel_path, result)
-                except Exception as e:
-                    with print_lock:
-                        done_count[0] += 1
-                    return ("fail", idx, rel_path, str(e))
+                            print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
+                        return ("ok", rel_path, result)
+                    except Exception as e:
+                        with print_lock:
+                            done_count[0] += 1
+                        return ("fail", rel_path, str(e))
 
-            with ThreadPoolExecutor(max_workers=max_workers) as pool:
-                for status, idx, rel_path, payload in pool.map(_parse_one, to_parse):
-                    if status == "ok":
-                        file_results[rel_path] = payload
-                    elif status == "fail":
-                        failed += 1
-                        failed_files.append((rel_path, payload))
-                    else:
-                        skipped += 1
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    for status, rel_path, payload in pool.map(_parse_one, to_parse):
+                        if status == "ok":
+                            file_results[rel_path] = payload
+                        elif status == "fail":
+                            failed += 1
+                            failed_files.append((rel_path, payload))
+                        else:
+                            skipped += 1
 
             clear_progress()
             parsed_new = len(file_results) - unchanged

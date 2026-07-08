@@ -1,0 +1,21 @@
+{
+  "firmware": {
+    "stage_timings": {
+      "register": 0.1428211000020383,
+      "parse": 11.001237900010892,
+      "symbol_write": 0.43622119999781717,
+      "stdlib_import": 0.4454304999962915,
+      "call_resolve_write": 0.9376832999987528,
+      "depth": 0.4603497000061907,
+      "fts_rebuild": 0.07010749999608379,
+      "commit": 0.10356770000362303,
+      "gc_archive": 1.1985713000030955,
+      "total": 14.813040256500244,
+      "files_total": 2923,
+      "files_parsed": 2923,
+      "files_unchanged": 0
+    },
+    "elapsed_sec": 15.899688720703125,
+    "updated_at": "2026-07-08 19:12:41"
+  }
+}
