@@ -1,0 +1,114 @@
+[
+  {
+    "repo": "firmware",
+    "desc": "固件主仓库（C/C++，34M 行，2.71GB）",
+    "root": "C:\\git_work\\callwarden\\testcode\\firmware",
+    "db_path": "C:\\git_work\\callwarden\\tests\\_perf_db\\firmware\\callwarden.db",
+    "steps": [
+      {
+        "step": "write_ignore",
+        "rules_count": 26
+      }
+    ],
+    "workspace_id": 1,
+    "refresh": {
+      "elapsed_sec": 30.419997692108154,
+      "elapsed_min": 0.5069999615351359,
+      "db_size_before_mb": 0.0,
+      "db_size_after_mb": 187.203125,
+      "db_delta_mb": 187.203125,
+      "stage_timings": {
+        "register": 0.2558610999985831,
+        "parse": 13.390625699990778,
+        "symbol_write": 1.1273922999971546,
+        "stdlib_import": 3.5786823999951594,
+        "call_resolve_write": 2.41564429999562,
+        "depth": 4.409834099991713,
+        "fts_rebuild": 0.25754620000952855,
+        "commit": 0.50892889998795,
+        "gc_archive": 2.6916618999966886,
+        "total": 28.707401275634766,
+        "files_total": 5491,
+        "files_parsed": 5489,
+        "files_unchanged": 0
+      }
+    },
+    "stats": {
+      "elapsed": 0.14579987525939941,
+      "symbols": 26530,
+      "files": 5258,
+      "calls": 146445,
+      "raw": {
+        "total_files": 5258,
+        "total_symbols": 26530,
+        "by_kind": {
+          "fn": 24856,
+          "struct": 1439,
+          "enum": 102,
+          "method": 96,
+          "class": 29,
+          "union": 8
+        },
+        "total_calls": 146445,
+        "cross_file_calls": 24110,
+        "resolved_calls": 146445,
+        "commented": 0,
+        "depth_distribution": {
+          "0": 12487,
+          "1": 4385,
+          "2": 2285,
+          "3": 2128,
+          "4": 1397,
+          "5": 773,
+          "6": 459,
+          "7": 346,
+          "8": 233,
+          "9": 147,
+          "10": 58,
+          "11": 24,
+          "12": 25,
+          "13": 23,
+          "14": 16,
+          "15": 13,
+          "16": 30,
+          "17": 16,
+          "18": 4,
+          "19": 3,
+          "20": 2,
+          "21": 1,
+          "22": 1
+        },
+        "total_file_versions": 5256,
+        "current_files": 5256,
+        "unique_symbol_contents": 24981,
+        "total_file_symbol_links": 26530,
+        "total_call_versions": 197619,
+        "multi_version_files": 0
+      }
+    },
+    "queries": {
+      "search": {
+        "term": "main",
+        "elapsed": 0.013926982879638672,
+        "result_count": 50
+      },
+      "get_callers": {
+        "target": "applications.application.pushdeviceinfo.main.PUSH_EVENT_TYPE",
+        "elapsed": 0.00015544891357421875,
+        "result_count": 0
+      },
+      "get_callees": {
+        "target": "applications.application.pushdeviceinfo.main.PUSH_EVENT_TYPE",
+        "elapsed": 0.00013017654418945312,
+        "result_count": 0
+      },
+      "topo": {
+        "elapsed": 0.05878806114196777,
+        "count": 5000
+      },
+      "clone_detect": {
+        "skipped": true
+      }
+    }
+  }
+]

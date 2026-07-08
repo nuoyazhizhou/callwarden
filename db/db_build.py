@@ -118,6 +118,16 @@ def _parse_file_worker(args):
     """
     rel_path, abs_path, lang, module_path, file_instance_id = args
     try:
+        # P15 安全网：跳过 > 1MB 的源文件（字体/图片数据的 C 数组，非业务代码）
+        # tree-sitter parse 大文件时 AST 内存爆炸（8.9MB 文件 → 7GB+ AST）
+        # 1MB 的 C 文件约 3 万行，超过此大小的通常是生成的资源文件
+        try:
+            fsize = os.path.getsize(abs_path)
+            if fsize > 1 * 1024 * 1024:  # 1MB
+                return ("skip_large", rel_path, fsize)
+        except OSError:
+            pass
+
         parser = _get_or_create_parser(lang, rel_path)
 
         if not parser:
@@ -604,6 +614,11 @@ class BuildMixin:
                             elif status == "fail":
                                 failed += 1
                                 failed_files.append((rel_path, payload))
+                            elif status == "skip_large":
+                                skipped += 1
+                                # P15: 大文件跳过提示（字体/图片数据的 C 数组）
+                                fsize_mb = payload / (1024 * 1024)
+                                cprint(f"  ⚠ 跳过超大文件 ({fsize_mb:.1f}MB): {rel_path}", "yellow")
                             else:
                                 skipped += 1
                             done_count += 1

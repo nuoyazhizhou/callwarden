@@ -91,6 +91,17 @@ REPOS = {
             # === 纯第三方解压代码（无业务改动，目录缺失或零项目标记）===
             "applications/application/esp/",                # Amazon AVS ESP/VAD 库，零业务改动
             "applications/application/cxdish_src_v1.0.0.6/", # 带版本号的第三方源码包
+            # === LVGL 开源 GUI 库（wiim_lvgl_app 内的第三方依赖，非业务代码）===
+            # wiim_lvgl_app 本身是业务代码，但内含的 lvgl/ 和 lvgl-9.2.2/ 是开源 GUI 库
+            # 这些目录有 100MB+ 的字体/图片资源 C 文件（font_harmony_sans_*、analogclock_*）
+            # tree-sitter parse 这些文件会内存爆炸（109MB 文件 → 10GB+ AST）
+            "applications/application/wiim_lvgl_app/lvgl/",
+            "applications/application/wiim_lvgl_app/lvgl-9.2.2/",
+            # LVGL assets 目录：图片/字体资源 C 数组（analogclock_*、default_music_* 等）
+            # 8.9MB 文件 parse 时 AST 会爆炸到 7GB+，不是业务代码
+            "applications/application/wiim_lvgl_app/wiim_bar/assets/",
+            "applications/application/wiim_lvgl_app/wiim_sound/assets/",
+            "applications/application/wiim_lvgl_app/wiim_ultra/assets/",
             # === 第三方库的纯上游子目录（业务改动在外层，子目录是未改动的上游代码）===
             "middleware/private/mplayer/MPlayer-1.1/DOCS/",  # MPlayer 文档
             "middleware/private/mplayer/MPlayer-1.1/help/",  # MPlayer i18n
