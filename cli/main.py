@@ -5010,6 +5010,10 @@ def _handle_workspace(args, db):
     del_p = sub.add_parser("delete", help=t("cli.messages.workspace_action_delete", default="Delete a workspace"))
     del_p.add_argument("id_or_name", help=t("cli.messages.workspace_arg_id_or_name", default="Workspace ID or name"))
 
+    scan_p = sub.add_parser("scan", help=t("cli.messages.workspace_action_scan", default="Scan directory for subprojects"))
+    scan_p.add_argument("dir", nargs="?", default=".", help="Directory to scan (default: current)")
+    scan_p.add_argument("--register", action="store_true", help="Register all found projects as workspaces")
+
     opts = parser.parse_args(args)
 
     if opts.action == "list":
@@ -5054,6 +5058,39 @@ def _handle_workspace(args, db):
             print(t("cli.messages.delete_success", name=ws_arg))
         else:
             print(t("cli.messages.delete_not_found", name=ws_arg))
+        return True
+
+    if opts.action == "scan":
+        from ..config import scan_subprojects
+        scan_dir = os.path.abspath(opts.dir)
+        if not os.path.isdir(scan_dir):
+            print(t("cli.messages.workspace_scan_not_dir", path=scan_dir))
+            return True
+        projects = scan_subprojects(scan_dir)
+        print(t("cli.messages.workspace_scan_found", count=len(projects)))
+        # 按语言统计
+        lang_stats: dict = {}
+        for p in projects:
+            lang_stats[p["lang"]] = lang_stats.get(p["lang"], 0) + 1
+        print(t("cli.messages.workspace_scan_lang_stats"))
+        for lang, cnt in sorted(lang_stats.items(), key=lambda x: -x[1]):
+            print(f"  {lang:15s}: {cnt}")
+        print()
+        # 列出每个项目
+        for p in projects:
+            print(f"  {p['lang']:10s}  {p['name']}  ({p['manifest']})")
+            if p["rel_path"]:
+                print(f"             {p['rel_path']}")
+        # 可选：注册为 workspace
+        if opts.register:
+            registered = 0
+            for p in projects:
+                try:
+                    db.register_workspace(p["name"], p["root"])
+                    registered += 1
+                except Exception:
+                    pass
+            print(t("cli.messages.workspace_scan_registered", count=registered))
         return True
 
     return True

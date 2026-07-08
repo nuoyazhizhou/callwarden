@@ -162,6 +162,81 @@ def get_default_workspace_name(root_path: str) -> str:
     return os.path.basename(os.path.normpath(root_path))
 
 
+# 子项目识别用的清单文件 → 语言映射（与 detect_project_root 的 root_markers_file 保持一致 + 扩展）
+PROJECT_MANIFESTS: Dict[str, str] = {
+    "go.mod": "go",
+    "Cargo.toml": "rust",
+    "package.json": "javascript",
+    "pom.xml": "java",
+    "pyproject.toml": "python",
+    "setup.py": "python",
+    "Gemfile": "ruby",
+    "composer.json": "php",
+    "mix.exs": "elixir",
+    "Package.swift": "swift",
+    "build.gradle": "java",
+    "build.gradle.kts": "kotlin",
+    "CMakeLists.txt": "cmake",
+}
+
+# 子项目扫描时跳过的目录（第三方库 / VCS / 构建产物）
+_SUBPROJECT_SKIP_DIRS = frozenset({
+    ".git", "node_modules", "target", "vendor", ".venv", "venv",
+    "dist", "build", ".gradle", "__pycache__", ".m2", ".cache",
+    ".repo", ".next", "out", "bin", "obj",
+})
+
+
+def scan_subprojects(root_dir: str, max_depth: int = 5) -> List[Dict[str, str]]:
+    """向下扫描目录，识别所有子项目根（基于清单文件）
+
+    与 detect_project_root（向上找）互补：本函数向下递归发现子项目。
+    用于处理 "一个目录下有多个独立开源项目" 的场景（如 testcode/repos/）。
+
+    算法：
+    1. os.walk 递归遍历目录树
+    2. 跳过第三方库/VCS/构建产物目录（性能优化）
+    3. 当一个目录包含清单文件（go.mod/Cargo.toml/package.json 等）时，
+       标记为项目根，记录项目名、语言、清单文件
+    4. 识别到项目根后继续扫描子目录（支持 monorepo 嵌套子项目）
+
+    Args:
+        root_dir: 扫描根目录
+        max_depth: 最大递归深度（相对 root_dir 的目录层数），默认 5
+
+    Returns:
+        项目列表，每项含 root/rel_path/name/lang/manifest 字段
+    """
+    root_dir = os.path.abspath(root_dir)
+    projects: List[Dict[str, str]] = []
+
+    for root, dirs, files in os.walk(root_dir):
+        # 跳过第三方/VCS/构建目录
+        dirs[:] = [d for d in dirs if d not in _SUBPROJECT_SKIP_DIRS and not d.startswith(".")]
+
+        # 深度限制
+        rel = os.path.relpath(root, root_dir)
+        depth = 0 if rel == "." else rel.count(os.sep)
+        if depth > max_depth:
+            dirs[:] = []
+            continue
+
+        # 检查是否是项目根（含清单文件）
+        for manifest, lang in PROJECT_MANIFESTS.items():
+            if manifest in files:
+                rel_path = norm_path(rel) if rel != "." else ""
+                projects.append({
+                    "root": root,
+                    "rel_path": rel_path,
+                    "name": os.path.basename(root) if rel != "." else os.path.basename(root_dir),
+                    "lang": lang,
+                    "manifest": manifest,
+                })
+                break  # 一个目录只取第一个匹配的清单文件
+
+    return projects
+
+
 # 多语言配置：统一管理各语言的扩展名、注释符号、入口文件规则
 LANGUAGE_CONFIG: Dict[str, Dict] = {
     "rust": {
