@@ -688,17 +688,26 @@ class BuildMixin:
         2. import 解析：通过文件的 import 列表将 callee_module 映射到实际模块路径
         3. 简名唯一匹配：callee_name 在全局符号表中唯一存在
         4. 简名同文件匹配：callee_name 在当前文件中存在
+
+        性能优化（P0/P3）：
+        - 后缀反向索引：策略 2/4 的后缀匹配从 O(M*N) 优化为 O(M*K)
+        - external_symbols 批量加载：策略 5 从 M 次 DB 查询优化为 1 次批量加载
         """
         total_calls = 0
         resolved_count = 0
 
-        # ---- 第一阶段：构建符号索引 ----
+        # ---- 第一阶段：构建符号索引 + 后缀反向索引 ----
         # qualified_name -> {file, symbol}
         all_symbols_map: Dict[str, Dict] = {}
         # 简名 -> [qualified_name, ...]（用于 fallback 匹配）
         name_index: Dict[str, List[str]] = defaultdict(list)
         # 每个文件的符号简名集合（用于同文件匹配）
         file_symbols: Dict[str, Set[str]] = defaultdict(set)
+        # P0 优化：后缀反向索引
+        # 后缀（含前导点，如 ".module.name"）-> [qualified_name, ...]
+        # 用于策略 2/4 的后缀匹配，从 O(N) 遍历优化为 O(K) 索引查找
+        # 内存开销：平均每 qname 4 段 → 4 个索引项，20 万符号约 80 万项/40MB
+        suffix_index: Dict[str, List[str]] = defaultdict(list)
 
         for rel_path, result in file_results.items():
             for sym in result.get("symbols", []):
@@ -707,11 +716,35 @@ class BuildMixin:
                     continue
                 all_symbols_map[qname] = {"file": rel_path, "symbol": sym}
                 # 简名 = qualified_name 的最后一段（支持 . 和 :: 分隔符）
-                # 先按 :: 分割，再按 . 分割，取最后一段
-                parts = qname.replace("::", ".").rsplit(".", 1)
+                norm_qname = qname.replace("::", ".")
+                parts = norm_qname.rsplit(".", 1)
                 simple_name = parts[-1] if parts else qname
                 name_index[simple_name].append(qname)
                 file_symbols[rel_path].add(simple_name)
+                # P0：构建后缀索引（含前导点，与原 endswith 语义一致）
+                # 例如 "com.foo.Bar.method" → 索引 ".method", ".Bar.method", ".foo.Bar.method", ".com.foo.Bar.method"
+                norm_parts = norm_qname.split(".")
+                for i in range(len(norm_parts)):
+                    suffix = "." + ".".join(norm_parts[i:])
+                    suffix_index[suffix].append(qname)
+
+        # ---- P3 优化：批量加载 external_symbols 到内存 ----
+        # 策略 5 原来对每个未解析调用执行 DB 查询，改为内存查找
+        ext_by_qname: Dict[str, Dict] = {}
+        ext_by_name: Dict[str, List[Dict]] = defaultdict(list)
+        try:
+            cur = self.conn.execute(
+                "SELECT id, symbol_name, qualified_name, package_name, package_version, signature, docstring FROM external_symbols"
+            )
+            for row in cur:
+                d = dict(row)
+                qn = d.get("qualified_name", "")
+                if qn:
+                    ext_by_qname[qn] = d
+                ext_by_name[d.get("symbol_name", "")].append(d)
+        except Exception:
+            # external_symbols 表可能不存在（旧版本 DB）
+            pass
 
         # ---- 第二阶段：构建 import 索引 ----
         # file_path -> {alias/module_name: full_module_path}
@@ -795,17 +828,16 @@ class BuildMixin:
                                     is_cross = 1
                                 break
 
-                    # 也尝试 module.name 作为后缀匹配
+                    # P0 优化：后缀索引替代全表遍历（O(N) → O(K)，K 为后缀候选数）
                     if not callee_qname:
                         suffix = f".{callee_module}.{callee_name}"
-                        for qname in all_symbols_map:
-                            if qname.endswith(suffix):
-                                callee_qname = qname
-                                callee_file = all_symbols_map[qname]["file"]
-                                callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
-                                if callee_file != rel_path:
-                                    is_cross = 1
-                                break
+                        for qname in suffix_index.get(suffix, []):
+                            callee_qname = qname
+                            callee_file = all_symbols_map[qname]["file"]
+                            callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
+                            if callee_file != rel_path:
+                                is_cross = 1
+                            break
 
                 # 策略 3：简名唯一匹配（即使 callee_module 为空也尝试）
                 if not callee_qname and callee_name in name_index:
@@ -838,36 +870,28 @@ class BuildMixin:
                                         is_cross = 1
                                     break
 
-                # 策略 4：同文件简名匹配
+                # 策略 4：同文件简名匹配（P0 优化：后缀索引替代全表遍历）
                 if not callee_qname and callee_name in file_symbols.get(rel_path, set()):
-                    for qname in all_symbols_map:
-                        norm_qname = qname.replace("::", ".")
-                        if norm_qname.endswith(f".{callee_name}") and all_symbols_map[qname]["file"] == rel_path:
+                    suffix = f".{callee_name}"
+                    for qname in suffix_index.get(suffix, []):
+                        if all_symbols_map[qname]["file"] == rel_path:
                             callee_qname = qname
                             callee_file = rel_path
                             callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
                             break
 
-                # 策略 5：查找外部符号表（标准库 + 第三方包）
+                # 策略 5：查找外部符号表（P3 优化：内存查找替代逐条 DB 查询）
                 if not callee_qname:
                     if callee_module:
                         test_qname = f"{callee_module}.{callee_name}"
-                        cur = self.conn.execute(
-                            "SELECT id, package_name, package_version, signature, docstring FROM external_symbols WHERE qualified_name = ?",
-                            (test_qname,)
-                        )
-                        ext_sym = cur.fetchone()
+                        ext_sym = ext_by_qname.get(test_qname)
                         if ext_sym:
                             callee_qname = test_qname
                             callee_file = f"external://{ext_sym['package_name']}"
                             callee_id = -ext_sym["id"]
                             is_cross = 1
                     else:
-                        cur = self.conn.execute(
-                            "SELECT id, qualified_name, package_name FROM external_symbols WHERE symbol_name = ?",
-                            (callee_name,)
-                        )
-                        ext_syms = cur.fetchall()
+                        ext_syms = ext_by_name.get(callee_name, [])
                         if len(ext_syms) == 1:
                             ext_sym = ext_syms[0]
                             callee_qname = ext_sym["qualified_name"]
@@ -1653,11 +1677,12 @@ class BuildMixin:
         for fn_id in all_fns:
             compute_depth(fn_id, set())
 
-        for fn_id, depth in depth_cache.items():
-            self.conn.execute(
-                "UPDATE symbols SET depth = ? WHERE id = ?",
-                (depth, fn_id),
-            )
+        # P5 优化：executemany 批量更新替代逐个 UPDATE
+        updates = [(depth, fn_id) for fn_id, depth in depth_cache.items()]
+        self.conn.executemany(
+            "UPDATE symbols SET depth = ? WHERE id = ?",
+            updates,
+        )
 
         self.conn.commit()
 

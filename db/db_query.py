@@ -479,6 +479,70 @@ class QueryMixin:
             匹配的符号列表
         """
         ws_id = self._get_active_workspace_id()
+        # P2 优化：优先 FTS5 token 匹配，失败回退 LIKE
+        # FTS5 unicode61 会把 snake_case/camelCase/::./ 自动分词
+        # 例如 user_login_handler → [user, login, handler]，搜 "login" 即可命中
+        try:
+            fts_query = self._build_fts_query(query)
+            sql = """
+                SELECT DISTINCT
+                    s.qualified_name,
+                    s.module_path,
+                    s.start_line,
+                    s.end_line,
+                    s.depth,
+                    s.name,
+                    s.kind,
+                    s.signature,
+                    s.has_comment,
+                    fi.rel_path as file_path
+                FROM symbols_fts
+                JOIN symbols s ON s.id = symbols_fts.rowid
+                JOIN file_instances fi ON s.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND fi.status != 'archived'
+                  AND symbols_fts MATCH ?
+            """
+            params: List[Any] = [ws_id, fts_query]
+
+            if kind:
+                sql += " AND s.kind = ?"
+                params.append(kind)
+
+            sql += " ORDER BY s.kind, s.depth DESC, fi.rel_path, s.start_line LIMIT ?"
+            params.append(limit)
+
+            cur = self.conn.execute(sql, params)
+            return [dict(row) for row in cur]
+        except Exception:
+            # FTS5 不可用或 query 含特殊语法 → 回退 LIKE 路径
+            return self._search_symbols_like(query, kind, limit)
+
+    @staticmethod
+    def _build_fts_query(query: str) -> str:
+        """把用户输入转为 FTS5 MATCH 查询（trigram tokenizer）
+
+        trigram 做任意子串匹配：搜 "order" 命中 "processOrderItem"。
+        无需加 * 前缀，直接用原始子串。
+
+        约束：
+        - query 必须 >= 3 字符（trigram 的 3-gram 要求），否则抛异常触发 LIKE 回退
+        - 提取字母数字部分，过滤 FTS5 特殊字符（双引号、OR/AND/NOT 关键字）
+        """
+        import re
+        # 提取连续的字母数字下划线 token
+        tokens = re.findall(r'[A-Za-z0-9_]+', query)
+        if not tokens:
+            raise ValueError("empty fts query")
+        # trigram 要求每个 token >= 3 字符
+        valid_tokens = [t for t in tokens if len(t) >= 3]
+        if not valid_tokens:
+            raise ValueError("all tokens shorter than 3 chars, fallback to LIKE")
+        # 用双引号包裹每个 token，避免被解释为 FTS5 关键字（OR/AND/NOT）
+        return ' '.join(f'"{t}"' for t in valid_tokens)
+
+    def _search_symbols_like(self, query: str, kind: Optional[str] = None, limit: int = 50) -> List[Dict]:
+        """LIKE 回退路径（FTS5 不可用时使用，保持原查询语义）"""
+        ws_id = self._get_active_workspace_id()
         sql = """
             SELECT DISTINCT
                 fsv.qualified_name,
@@ -499,7 +563,7 @@ class QueryMixin:
               AND (fsv.qualified_name LIKE ? OR sc.name LIKE ?)
         """
 
-        params = [ws_id, f"%{query}%", f"%{query}%"]
+        params: List[Any] = [ws_id, f"%{query}%", f"%{query}%"]
 
         if kind:
             sql += " AND sc.kind = ?"

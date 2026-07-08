@@ -870,6 +870,32 @@ CREATE INDEX IF NOT EXISTS idx_clone_pairs_type
 ON clone_pairs(clone_type, similarity);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_clone_pairs_unique
 ON clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type);
+
+-- ============================================
+-- v31: FTS5 全文索引（symbols 表的 name + qualified_name）
+-- P2 优化：search_symbols 从 LIKE '%query%' 全表扫改为 FTS5 子串匹配
+-- trigram tokenizer 把文本拆成 3-gram，支持任意子串匹配（camelCase/snake_case 都能命中）
+-- ============================================
+CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
+    name, qualified_name,
+    content='symbols', content_rowid='id',
+    tokenize='trigram'
+);
+-- 同步触发器：symbols 表增删改时自动维护 FTS5 索引
+CREATE TRIGGER IF NOT EXISTS symbols_fts_ai AFTER INSERT ON symbols BEGIN
+    INSERT INTO symbols_fts(rowid, name, qualified_name)
+    VALUES (new.id, new.name, new.qualified_name);
+END;
+CREATE TRIGGER IF NOT EXISTS symbols_fts_ad AFTER DELETE ON symbols BEGIN
+    INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+    VALUES ('delete', old.id, old.name, old.qualified_name);
+END;
+CREATE TRIGGER IF NOT EXISTS symbols_fts_au AFTER UPDATE ON symbols BEGIN
+    INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+    VALUES ('delete', old.id, old.name, old.qualified_name);
+    INSERT INTO symbols_fts(rowid, name, qualified_name)
+    VALUES (new.id, new.name, new.qualified_name);
+END;
 """
 
 # Schema 版本号（用于迁移判断）
@@ -900,7 +926,8 @@ ON clone_pairs(workspace_id, symbol_a_id, symbol_b_id, clone_type);
 # v28: file_versions 表新增 ast_cache 字段（BLOB，存储 tree-sitter AST 序列化结果，支持增量解析）
 # v29: 审计签名密钥轮换表（audit_key_rotations，记录密钥轮换时间点，支持按 key_id 验证旧记录）
 # v30: workspaces 表新增 active_task_id 字段（active task 持久化，替代 CALLWARDEN_TASK_ID 环境变量）
-SCHEMA_VERSION = 30
+# v31: FTS5 全文索引（symbols_fts 虚拟表 + 同步触发器，search_symbols 从 LIKE 改为 FTS5 MATCH）
+SCHEMA_VERSION = 31
 
 
 # ============================================

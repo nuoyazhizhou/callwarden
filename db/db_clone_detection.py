@@ -17,7 +17,8 @@ from __future__ import annotations
 import hashlib
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..i18n import t
 
@@ -113,6 +114,69 @@ def _jaccard_similarity(set_a: set, set_b: set) -> float:
     return len(set_a & set_b) / len(union)
 
 
+# ==================== MinHash + LSH（P1 优化）====================
+
+
+def _minhash_signature(token_set: set, num_perm: int = 128) -> tuple:
+    """计算 token 集合的 MinHash 签名
+
+    MinHash 通过对集合元素施加多个独立哈希函数，取最小值作为签名。
+    两个集合 MinHash 签名在相同位置的概率 ≈ Jaccard 相似度。
+
+    Args:
+        token_set: token 集合
+        num_perm: 哈希函数数量（签名长度），默认 128
+
+    Returns:
+        长度为 num_perm 的签名 tuple，每个元素是 32 位无符号整数。
+        空集合返回全 0xFFFFFFFF。
+
+    Note:
+        签名依赖 Python hash()，受 PYTHONHASHSEED 影响，但同一进程内一致。
+        detect_clones 是单次调用，满足此约束。
+    """
+    if not token_set:
+        return tuple([0xFFFFFFFF] * num_perm)
+
+    signature = [0xFFFFFFFF] * num_perm
+    for token in token_set:
+        base = hash(token)
+        for i in range(num_perm):
+            # 线性变换生成独立哈希：h_i = (base * (i+1) + offset * i) mod 2^32
+            h = (base * (i + 1) + 0x9E3779B9 * i) & 0xFFFFFFFF
+            if h < signature[i]:
+                signature[i] = h
+    return tuple(signature)
+
+
+def _lsh_buckets(signature: tuple, num_bands: int = 32, rows_per_band: int = 4) -> list:
+    """将 MinHash 签名分桶（Locality-Sensitive Hashing）
+
+    LSH 把签名分成 num_bands 个带，每带 rows_per_band 个哈希值。
+    两个签名在任意一个带上完全相同，就是候选相似对。
+
+    阈值公式：t ≈ (1/num_bands)^(1/rows_per_band)
+    默认参数：b=32, r=4 → t ≈ 0.42，低于 0.8 阈值，保证召回率。
+
+    Args:
+        signature: MinHash 签名
+        num_bands: 带数
+        rows_per_band: 每带行数
+
+    Returns:
+        桶 key 列表（num_bands 个），用于分组候选对
+    """
+    buckets = []
+    for i in range(num_bands):
+        start = i * rows_per_band
+        end = start + rows_per_band
+        band = signature[start:end]
+        # 把带内的哈希值拼接成字符串作为桶 key
+        bucket_key = f"b{i}:" + ":".join(str(h) for h in band)
+        buckets.append(bucket_key)
+    return buckets
+
+
 class CloneDetectionMixin:
     """重复代码检测 Mixin
 
@@ -174,7 +238,7 @@ class CloneDetectionMixin:
         scanned = len(symbols)
         skipped = 0
 
-        # 预计算每个符号的 token_hash 和 token 集合
+        # 预计算每个符号的 token_hash、token 集合和 MinHash 签名
         sym_meta: List[Dict[str, Any]] = []
         for s in symbols:
             content = s.get("content") or ""
@@ -185,6 +249,8 @@ class CloneDetectionMixin:
             th = _token_hash(content)
             # Type-3 相似度用 token set（去重，简化 Jaccard 计算）
             token_set = set(_normalize_token_sequence(content).split())
+            # P1 优化：MinHash 签名用于 LSH 候选筛选
+            minhash_sig = _minhash_signature(token_set)
             sym_meta.append({
                 "id": s["id"],
                 "symbol_hash": s["symbol_hash"],
@@ -193,6 +259,7 @@ class CloneDetectionMixin:
                 "lines": lines,
                 "token_hash": th,
                 "token_set": token_set,
+                "minhash_sig": minhash_sig,
                 "qualified_name": s["qualified_name"],
                 "file_path": s["file_path"],
             })
@@ -249,35 +316,44 @@ class CloneDetectionMixin:
                     existing_pairs.add((a["id"], b["id"]))
 
         # Type-3：相似度 >= 阈值但 < 1.0（基于 token 集合 Jaccard）
-        # 为控制 O(n^2) 复杂度，仅对相同 token_hash 前缀的符号比较
-        # 简化：按 name 首字母分组，避免完全 O(n^2)
-        by_name_prefix: Dict[str, List[Dict[str, Any]]] = {}
-        for m in sym_meta:
-            prefix = m["name"][:3] if m["name"] else "___"
-            by_name_prefix.setdefault(prefix, []).append(m)
+        # P1 优化：MinHash + LSH 替代 name 前缀分组
+        # LSH 把签名分成 32 带，每带 4 哈希，落入相同桶的为候选对
+        # 候选对再用精确 Jaccard 验证，保证精确率 100%
+        # 阈值 t ≈ (1/32)^(1/4) ≈ 0.42，低于 0.8，保证召回率 ≥ 95%
+        lsh_buckets: Dict[str, List[int]] = defaultdict(list)
+        for idx, m in enumerate(sym_meta):
+            for bucket_key in _lsh_buckets(m["minhash_sig"]):
+                lsh_buckets[bucket_key].append(idx)
+
+        # 收集候选对（去重）
+        candidate_pairs: Set = set()
+        for indices in lsh_buckets.values():
+            if len(indices) < 2:
+                continue
+            for i in range(len(indices)):
+                for j in range(i + 1, len(indices)):
+                    a, b = indices[i], indices[j]
+                    pair = (a, b) if a < b else (b, a)
+                    candidate_pairs.add(pair)
 
         type3_count = 0
-        for prefix, group in by_name_prefix.items():
-            if len(group) < 2:
+        for a_idx, b_idx in candidate_pairs:
+            a, b = sym_meta[a_idx], sym_meta[b_idx]
+            if (a["id"], b["id"]) in existing_pairs:
                 continue
-            for i in range(len(group)):
-                for j in range(i + 1, len(group)):
-                    a, b = group[i], group[j]
-                    if (a["id"], b["id"]) in existing_pairs:
-                        continue
-                    sim = _jaccard_similarity(a["token_set"], b["token_set"])
-                    if sim >= similarity_threshold and sim < 1.0:
-                        pairs.append({
-                            "symbol_a_id": a["id"],
-                            "symbol_b_id": b["id"],
-                            "clone_type": CLONE_TYPE_3,
-                            "similarity": round(sim, 3),
-                            "token_hash": a["token_hash"],
-                            "lines_a": a["lines"],
-                            "lines_b": b["lines"],
-                        })
-                        existing_pairs.add((a["id"], b["id"]))
-                        type3_count += 1
+            sim = _jaccard_similarity(a["token_set"], b["token_set"])
+            if sim >= similarity_threshold and sim < 1.0:
+                pairs.append({
+                    "symbol_a_id": a["id"],
+                    "symbol_b_id": b["id"],
+                    "clone_type": CLONE_TYPE_3,
+                    "similarity": round(sim, 3),
+                    "token_hash": a["token_hash"],
+                    "lines_a": a["lines"],
+                    "lines_b": b["lines"],
+                })
+                existing_pairs.add((a["id"], b["id"]))
+                type3_count += 1
 
         # 持久化到 clone_pairs（UPSERT）
         for p in pairs:

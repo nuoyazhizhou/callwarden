@@ -1487,6 +1487,53 @@ def _migrate_v29_to_v30(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v30_to_v31(conn: sqlite3.Connection):
+    """v30 -> v31: FTS5 全文索引（symbols_fts 虚拟表 + 同步触发器）
+
+    P2 优化：search_symbols 从 LIKE '%query%' 全表扫改为 FTS5 子串匹配。
+    trigram tokenizer 把文本拆成 3-gram，支持任意子串匹配（camelCase/snake_case
+    都能命中），比 LIKE 全表扫快。
+
+    迁移步骤：
+    1. 创建 symbols_fts 外部内容虚拟表（content='symbols'，trigram 分词）
+    2. 创建 3 个同步触发器（AFTER INSERT/UPDATE/DELETE ON symbols）
+    3. 用 rebuild 命令从 symbols 表全量导入到 FTS5 索引
+
+    幂等性：用 CREATE ... IF NOT EXISTS，已存在则跳过。
+    """
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5("
+        "name, qualified_name, content='symbols', content_rowid='id', tokenize='trigram')"
+    )
+    # 检查 symbols 表是否存在（极简旧库可能缺基础表）
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'"
+    )
+    if not cur.fetchone():
+        return  # symbols 表不存在，跳过触发器和 rebuild（全新库通过 SCHEMA_SQL 创建）
+    conn.executescript(
+        """
+        CREATE TRIGGER IF NOT EXISTS symbols_fts_ai AFTER INSERT ON symbols BEGIN
+            INSERT INTO symbols_fts(rowid, name, qualified_name)
+            VALUES (new.id, new.name, new.qualified_name);
+        END;
+        CREATE TRIGGER IF NOT EXISTS symbols_fts_ad AFTER DELETE ON symbols BEGIN
+            INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+            VALUES ('delete', old.id, old.name, old.qualified_name);
+        END;
+        CREATE TRIGGER IF NOT EXISTS symbols_fts_au AFTER UPDATE ON symbols BEGIN
+            INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+            VALUES ('delete', old.id, old.name, old.qualified_name);
+            INSERT INTO symbols_fts(rowid, name, qualified_name)
+            VALUES (new.id, new.name, new.qualified_name);
+        END;
+        """
+    )
+    # 重建索引：rebuild 命令会清空 FTS5 索引并从 symbols 表全量导入
+    # 外部内容表的 rebuild 直接读取 content table，无需手动 INSERT
+    conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1771,6 +1818,10 @@ class CodeGraphBase:
             30: {
                 "description": t("cli.messages.migration_v30", default="Add workspaces.active_task_id column for active task persistence"),
                 "func": _migrate_v29_to_v30,
+            },
+            31: {
+                "description": t("cli.messages.migration_v31", default="Add FTS5 full-text index on symbols(name, qualified_name) for faster search_symbols"),
+                "func": _migrate_v30_to_v31,
             },
         }
 
