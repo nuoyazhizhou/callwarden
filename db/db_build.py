@@ -763,6 +763,12 @@ class BuildMixin:
             parse_total = len(to_parse)
             failed_files = []
 
+            # P15.3: 按语言预排序，让同语言文件聚集
+            # ProcessPoolExecutor 的 chunksize 分块后，每个 worker 尽量只处理一种语言，
+            # 减少 worker 内多语言切换导致的 parser 创建开销（每个 parser ~30MB）
+            # 排序稳定（相同 lang 保持原 idx 顺序），不影响结果正确性
+            to_parse.sort(key=lambda x: (x[3], x[0]))  # (lang, idx)
+
             # P15: 文件数超过阈值时用 ProcessPoolExecutor（绕开 GIL 真正并行 parse）
             # tree-sitter Parser.parse() 不释放 GIL，ThreadPoolExecutor 实际只有 2x 加速
             # ProcessPoolExecutor 用独立进程，每个进程有自己的 GIL，可真正 N 核并行
