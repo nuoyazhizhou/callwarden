@@ -757,28 +757,32 @@ class BuildMixin:
                     suffix = "." + ".".join(norm_parts[i:])
                     suffix_index[suffix].append(qname)
 
-        # ---- P3 优化：批量加载 external_symbols 到内存 ----
+        # ---- P3+P7 合并：批量加载 external_symbols 到内存 + 构建 qname_id_map ----
         # 策略 5 原来对每个未解析调用执行 DB 查询，改为内存查找
+        # P7: 同时构建 qname_id_map（避免第二次全表扫描 external_symbols）
+        # 优化：只加载解析需要的 4 列（id, symbol_name, qualified_name, package_name），
+        #       跳过 package_version/signature/docstring（397k 行 × 3 列 → 节省 ~50% 内存和时间）
         ext_by_qname: Dict[str, Dict] = {}
         ext_by_name: Dict[str, List[Dict]] = defaultdict(list)
+        qname_id_map: Dict[str, int] = {}
         try:
             cur = self.conn.execute(
-                "SELECT id, symbol_name, qualified_name, package_name, package_version, signature, docstring FROM external_symbols"
+                "SELECT id, symbol_name, qualified_name, package_name FROM external_symbols"
             )
             for row in cur:
-                d = dict(row)
+                d = {"id": row[0], "symbol_name": row[1],
+                     "qualified_name": row[2], "package_name": row[3]}
                 qn = d.get("qualified_name", "")
                 if qn:
                     ext_by_qname[qn] = d
+                    qname_id_map[qn] = -d["id"]  # P7: 外部符号用负 id
                 ext_by_name[d.get("symbol_name", "")].append(d)
         except Exception:
             # external_symbols 表可能不存在（旧版本 DB）
             pass
 
-        # ---- P7 优化：一次性构建 qname_id_map + file_sym_id_map ----
-        # 替代 _write_calls_db 内每文件全表扫描 symbols + external_symbols
-        # firmware 1.4万文件 × 10万符号 = 十亿级行读取 → 现在仅 2 次全表扫描
-        qname_id_map: Dict[str, int] = {}
+        # ---- P7 优化：一次性构建 qname_id_map（项目符号）+ file_sym_id_map ----
+        # 替代 _write_calls_db 内每文件全表扫描 symbols
         file_sym_id_map: Dict[int, Dict[str, int]] = defaultdict(dict)
         cur = self.conn.execute("SELECT id, name, qualified_name, file_instance_id FROM symbols")
         for row in cur:
@@ -786,16 +790,6 @@ class BuildMixin:
             if qn:
                 qname_id_map[qn] = row["id"]
             file_sym_id_map[row["file_instance_id"]][row["name"]] = row["id"]
-
-        # 外部符号 qualified_name -> -id（负值表示外部符号）
-        try:
-            cur = self.conn.execute("SELECT id, qualified_name FROM external_symbols")
-            for row in cur:
-                qn = row["qualified_name"]
-                if qn:
-                    qname_id_map[qn] = -row["id"]
-        except Exception:
-            pass
 
         # ---- 第二阶段：构建 import 索引 ----
         # file_path -> {alias/module_name: full_module_path}
