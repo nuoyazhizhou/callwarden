@@ -1035,6 +1035,7 @@
       "db_build_parse_ok": "  ✓ 成功解析 {parsed} 个，未变化 {unchanged} 个，跳过 {skipped} 个",
       "db_build_parse_warn": "  成功解析 {parsed} 个，未变化 {unchanged} 个，跳过 {skipped} 个，失败 {failed} 个",
       "db_build_parse_fail_item": "    ✗ {path}: {error}",
+      "db_build_skip_resource": "  ⚠ 跳过资源文件 ({reason}): {path}",
       "db_build_step3_5_versions": "步骤 3/5: 创建文件版本和符号版本",
       "db_build_versions_written": "✓ 写入 {count} 个文件版本",
       "db_build_step4_5_calls": "步骤 4/5: 解析调用关系",

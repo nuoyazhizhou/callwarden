@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import pickle
+import re
 import time
 import threading
 from collections import defaultdict
@@ -102,6 +103,77 @@ def _get_or_create_parser(lang: str, rel_path: str):
     return p
 
 
+# ============================================
+# 资源文件检测（基于内容特征，非文件大小）
+# ============================================
+
+# LVGL 生成的字体/图片资源 C 文件的特征宏定义
+_LVGL_RESOURCE_MARKERS = (
+    "LV_ATTRIBUTE_IMG_",
+    "LV_ATTRIBUTE_LARGE_CONST",
+)
+
+# 十六进制字面量正则（0x00-0xFF）
+_HEX_LITERAL_RE = re.compile(r'0x[0-9a-fA-F]{2}')
+
+# 检测时读取的文件头部字节数（足够检测特征，又不读太多）
+_RESOURCE_HEAD_BYTES = 8192
+
+# 十六进制字面量密度阈值：平均每行超过此数量判定为资源文件
+_HEX_DENSITY_THRESHOLD = 8
+# 最少行数要求（避免短文件误判）
+_HEX_MIN_LINES = 10
+
+
+def _is_resource_file(abs_path: str):
+    """检测文件是否为资源文件（字体/图片数据的 C 数组，非业务代码）。
+
+    基于内容特征检测，而非文件大小判断。
+
+    用户要求：判断代码内容是否为"奇怪格式"，而非简单按大小判断。
+    资源文件（如 LVGL 生成的字体/图片 C 文件）有两个明显内容特征：
+
+    1. LVGL 资源文件宏定义（LV_ATTRIBUTE_IMG_ / LV_ATTRIBUTE_LARGE_CONST）
+       —— LVGL 图片转换工具生成的 C 文件头部必有这些宏
+    2. 十六进制字节数组密度（前 8KB 平均每行 > 8 个 0x.. 字面量）
+       —— 二进制数据用 C 数组表示时的典型模式
+       （如 GIF 头 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 ...）
+
+    tree-sitter parse 这类文件时 AST 内存爆炸（8.9MB 文件 → 7GB+ AST），
+    且这些文件无业务代码语义，应跳过。
+
+    Args:
+        abs_path: 文件绝对路径
+
+    Returns:
+        (is_resource, reason):
+            is_resource: True 表示是资源文件应跳过
+            reason: 跳过原因（用于日志），如 "lvgl_resource" / "hex_array"，
+                   非资源文件为 None
+    """
+    try:
+        with open(abs_path, 'rb') as f:
+            head = f.read(_RESOURCE_HEAD_BYTES)
+    except OSError:
+        return False, None
+
+    head_str = head.decode('utf-8', errors='replace')
+
+    # 特征 1: LVGL 资源文件宏定义（强信号）
+    # LVGL 生成的资源 C 文件头部必有这些宏定义
+    if any(m in head_str for m in _LVGL_RESOURCE_MARKERS):
+        return True, "lvgl_resource"
+
+    # 特征 2: 十六进制字节数组密度检测
+    # 资源文件特征：大量 0x.. 字面量密集出现（二进制数据的 C 数组表示）
+    hex_count = len(_HEX_LITERAL_RE.findall(head_str))
+    lines = head_str.count('\n') + 1
+    if lines >= _HEX_MIN_LINES and hex_count / lines > _HEX_DENSITY_THRESHOLD:
+        return True, "hex_array"
+
+    return False, None
+
+
 def _parse_file_worker(args):
     """多进程 worker：解析单个源文件（模块级函数，可 pickle）。
 
@@ -113,20 +185,17 @@ def _parse_file_worker(args):
 
     Returns:
         元组 (status, rel_path, payload)
-            - status: "ok" / "fail" / "skip"
-            - payload: 成功时为解析结果 dict，失败时为错误字符串，跳过时为 None
+            - status: "ok" / "fail" / "skip" / "skip_resource"
+            - payload: 成功时为解析结果 dict，失败时为错误字符串，
+              skip_resource 时为原因字符串，其他跳过为 None
     """
     rel_path, abs_path, lang, module_path, file_instance_id = args
     try:
-        # P15 安全网：跳过 > 1MB 的源文件（字体/图片数据的 C 数组，非业务代码）
-        # tree-sitter parse 大文件时 AST 内存爆炸（8.9MB 文件 → 7GB+ AST）
-        # 1MB 的 C 文件约 3 万行，超过此大小的通常是生成的资源文件
-        try:
-            fsize = os.path.getsize(abs_path)
-            if fsize > 1 * 1024 * 1024:  # 1MB
-                return ("skip_large", rel_path, fsize)
-        except OSError:
-            pass
+        # 资源文件检测：基于内容特征跳过字体/图片数据的 C 数组
+        # 不按文件大小判断，而是检测 LVGL 宏定义和十六进制字节数组密度
+        is_res, reason = _is_resource_file(abs_path)
+        if is_res:
+            return ("skip_resource", rel_path, reason)
 
         parser = _get_or_create_parser(lang, rel_path)
 
@@ -614,11 +683,10 @@ class BuildMixin:
                             elif status == "fail":
                                 failed += 1
                                 failed_files.append((rel_path, payload))
-                            elif status == "skip_large":
+                            elif status == "skip_resource":
                                 skipped += 1
-                                # P15: 大文件跳过提示（字体/图片数据的 C 数组）
-                                fsize_mb = payload / (1024 * 1024)
-                                cprint(f"  ⚠ 跳过超大文件 ({fsize_mb:.1f}MB): {rel_path}", "yellow")
+                                # 资源文件跳过提示（基于内容特征检测：LVGL 宏 / 十六进制数组密度）
+                                cprint(t("cli.messages.db_build_skip_resource", path=rel_path, reason=payload), "yellow")
                             else:
                                 skipped += 1
                             done_count += 1
@@ -641,6 +709,13 @@ class BuildMixin:
                     """多线程工作函数：解析单个源文件并返回结果元组"""
                     _, rel_path, abs_path, lang, module_path, file_instance_id = args
                     try:
+                        # 资源文件检测：基于内容特征跳过字体/图片数据的 C 数组
+                        is_res, reason = _is_resource_file(abs_path)
+                        if is_res:
+                            with print_lock:
+                                done_count[0] += 1
+                                print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
+                            return ("skip_resource", rel_path, reason)
                         from ..parsers import (
                             RustParser, TypeScriptParser, PythonParser, KotlinParser,
                             GoParser, JavaParser, CParser, CppParser,
@@ -705,6 +780,9 @@ class BuildMixin:
                         elif status == "fail":
                             failed += 1
                             failed_files.append((rel_path, payload))
+                        elif status == "skip_resource":
+                            skipped += 1
+                            cprint(t("cli.messages.db_build_skip_resource", path=rel_path, reason=payload), "yellow")
                         else:
                             skipped += 1
 

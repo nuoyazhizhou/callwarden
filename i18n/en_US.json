@@ -1035,6 +1035,7 @@
       "db_build_parse_ok": "  ✓ Parsed {parsed}, unchanged {unchanged}, skipped {skipped}",
       "db_build_parse_warn": "  Parsed {parsed}, unchanged {unchanged}, skipped {skipped}, failed {failed}",
       "db_build_parse_fail_item": "    ✗ {path}: {error}",
+      "db_build_skip_resource": "  ⚠ Skipped resource file ({reason}): {path}",
       "db_build_step3_5_versions": "Step 3/5: Creating file and symbol versions",
       "db_build_versions_written": "✓ Wrote {count} file versions",
       "db_build_step4_5_calls": "Step 4/5: Resolving call relations",
