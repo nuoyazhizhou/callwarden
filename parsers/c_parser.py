@@ -422,17 +422,13 @@ class CParser(BaseParser):
 
     def _extract_raw_calls(self, root, source: bytes,
                            module_path: str) -> List[Dict[str, Any]]:
-        """提取原始调用关系"""
+        """提取原始调用关系（显式栈遍历，避免递归爆栈）"""
         calls = []
-
-        def walk(node, current_fn: str = "", current_qualified: str = ""):
-            """递归遍历 AST，收集函数调用关系
-
-            Args:
-                node: 当前 AST 节点
-                current_fn: 当前所在函数名（外层函数）
-                current_qualified: 当前函数的限定名
-            """
+        # 栈元素：(node, current_fn, current_qualified)
+        # 用 list 模拟栈，避免 Python 递归深度限制（默认 1000）
+        stack = [(root, "", "")]
+        while stack:
+            node, current_fn, current_qualified = stack.pop()
             for child in node.named_children:
                 if child.type == "function_definition":
                     declarator = self._find_child_by_type(child, "function_declarator")
@@ -449,7 +445,7 @@ class CParser(BaseParser):
                                     name_node = self._find_child_by_type(pointer_declarator, "field_identifier")
                     fn_name = self._node_text(name_node, source) if name_node else ""
                     qual = f"{module_path}.{fn_name}" if module_path else fn_name
-                    walk(child, fn_name, qual)
+                    stack.append((child, fn_name, qual))
                 elif child.type == "call_expression":
                     call_info = self._parse_call(child, source)
                     if call_info and current_fn:
@@ -457,11 +453,9 @@ class CParser(BaseParser):
                         call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn, current_qualified)
+                    stack.append((child, current_fn, current_qualified))
                 else:
-                    walk(child, current_fn, current_qualified)
-
-        walk(root)
+                    stack.append((child, current_fn, current_qualified))
         return calls
 
     def _parse_call(self, node, source: bytes) -> Dict[str, Any]:
@@ -688,24 +682,17 @@ class CppParser(CParser):
 
     def _extract_raw_calls(self, root, source: bytes,
                            module_path: str) -> List[Dict[str, Any]]:
-        """提取原始调用关系（C++ 扩展版）"""
+        """提取原始调用关系（C++ 扩展版，显式栈遍历避免递归爆栈）"""
         calls = []
-
-        def walk(node, current_fn: str = "", current_qualified: str = "",
-                 current_scope: str = ""):
-            """递归遍历 AST，收集函数调用关系（含命名空间/类作用域）
-
-            Args:
-                node: 当前 AST 节点
-                current_fn: 当前所在函数名
-                current_qualified: 当前函数的限定名
-                current_scope: 当前命名空间/类作用域路径
-            """
+        # 栈元素：(node, current_fn, current_qualified, current_scope)
+        stack = [(root, "", "", "")]
+        while stack:
+            node, current_fn, current_qualified, current_scope = stack.pop()
             for child in node.named_children:
                 if child.type == "namespace_definition":
                     ns_name = self._extract_namespace_name(child, source)
                     new_scope = f"{current_scope}.{ns_name}" if current_scope else ns_name
-                    walk(child, current_fn, current_qualified, new_scope)
+                    stack.append((child, current_fn, current_qualified, new_scope))
                 elif child.type in ("class_specifier", "struct_specifier"):
                     name_node = self._find_child_by_type(child, "type_identifier")
                     if name_node:
@@ -713,7 +700,7 @@ class CppParser(CParser):
                         new_scope = f"{current_scope}.{cls_name}" if current_scope else cls_name
                         body = self._find_child_by_type(child, "field_declaration_list")
                         if body:
-                            walk(body, current_fn, current_qualified, new_scope)
+                            stack.append((body, current_fn, current_qualified, new_scope))
                 elif child.type == "function_definition":
                     declarator = self._find_child_by_type(child, "function_declarator")
                     name_node = None
@@ -732,7 +719,7 @@ class CppParser(CParser):
                         qual = f"{module_path}.{current_scope}.{fn_name}" if module_path else f"{current_scope}.{fn_name}"
                     else:
                         qual = f"{module_path}.{fn_name}" if module_path else fn_name
-                    walk(child, fn_name, qual, current_scope)
+                    stack.append((child, fn_name, qual, current_scope))
                 elif child.type == "call_expression":
                     call_info = self._parse_call_cpp(child, source)
                     if call_info and current_fn:
@@ -740,11 +727,9 @@ class CppParser(CParser):
                         call_info["caller_qualified"] = current_qualified
                         call_info["caller_module"] = module_path
                         calls.append(call_info)
-                    walk(child, current_fn, current_qualified, current_scope)
+                    stack.append((child, current_fn, current_qualified, current_scope))
                 else:
-                    walk(child, current_fn, current_qualified, current_scope)
-
-        walk(root)
+                    stack.append((child, current_fn, current_qualified, current_scope))
         return calls
 
     def _parse_call_cpp(self, node, source: bytes) -> Dict[str, Any]:

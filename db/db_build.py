@@ -174,6 +174,10 @@ class BuildMixin:
             # prebuilt/prebuilts/blob 是厂商二进制，toolchain/ndk/jdk 是工具链
             "prebuilt/", "prebuilts/", "blob/", "toolchain/", "toolchains/",
             "ndk/", "jdk/",
+            # === 第三方依赖源码 ===
+            # thirdParty/third_party/vendor 是常见第三方库存放目录
+            # 包含大量外部代码，非项目业务逻辑，分析价值低且会显著增加 DB 体积
+            "thirdParty/", "third_party/", "vendor/",
             # === autogen 代码目录（核心痛点）===
             # 这些目录存放 protobuf/grpc/Qt moc 等自动生成的源码
             # 扩展名是 .c/.cpp/.py，会被扫描器拾取，但内容无人工维护语义
