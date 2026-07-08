@@ -143,6 +143,76 @@ def write_ignore_file(repo_root: str, rules: list[str]) -> None:
         f.write(content)
 
 
+# P13: perf 回归基线 —— 防止 _write_calls_db() 等热循环 SQL 回潮
+# 基线文件存储各仓库的阶段耗时，每次测试时对比，超过 1.5x 打印警告
+PERF_BASELINE_PATH = os.path.join(_PKG_ROOT, "tests", "_perf_baseline.json")
+
+# 允许的回归倍数（超过此倍数则警告）
+REGRESSION_THRESHOLD = 1.5
+
+
+def _load_perf_baseline() -> dict:
+    """加载 perf 基线 JSON。"""
+    try:
+        import json
+        with open(PERF_BASELINE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _print_stage_baseline_comparison(repo_name: str, timings: dict):
+    """打印阶段耗时与基线的对比。
+
+    如果某阶段耗时超过基线的 REGRESSION_THRESHOLD 倍，打印红色警告。
+    这能帮助快速发现性能回归（如 _write_calls_db 热循环 SQL 回潮）。
+    """
+    baseline = _load_perf_baseline()
+    repo_baseline = baseline.get(repo_name, {}).get("stage_timings", {})
+    if not repo_baseline:
+        print(f"  (无基线对比，运行 --update-baseline 创建基线)")
+        return
+
+    print(f"\n  ── 基线对比 ──")
+    has_regression = False
+    for stage, current_val in timings.items():
+        if stage in ("files_total", "files_parsed", "files_unchanged"):
+            continue
+        baseline_val = repo_baseline.get(stage)
+        if baseline_val is None or baseline_val <= 0:
+            continue
+        ratio = current_val / baseline_val
+        status = "✓" if ratio <= REGRESSION_THRESHOLD else "✗ 回归!"
+        color = "" if ratio <= REGRESSION_THRESHOLD else "  ← WARNING"
+        print(f"    {stage:25s}: {current_val:6.2f}s vs {baseline_val:6.2f}s  ({ratio:.2f}x) {status}{color}")
+        if ratio > REGRESSION_THRESHOLD:
+            has_regression = True
+
+    if has_regression:
+        print(f"\n  ⚠ 检测到性能回归！请检查上述标记的阶段。")
+        print(f"    常见原因：热循环 SQL 回潮（如 _write_calls_db 逐条 INSERT）、")
+        print(f"    FTS 触发器未禁用、_from_db 未跳过重写等。")
+
+
+def _update_perf_baseline(results: list):
+    """用本次测试结果更新基线文件。"""
+    import json
+    baseline = _load_perf_baseline()
+    for result in results:
+        repo = result.get("repo")
+        refresh = result.get("refresh", {})
+        stage_timings = refresh.get("stage_timings")
+        if repo and stage_timings:
+            baseline[repo] = {
+                "stage_timings": stage_timings,
+                "elapsed_sec": refresh.get("elapsed_sec", 0),
+                "updated_at": __import__("time").strftime("%Y-%m-%d %H:%M:%S"),
+            }
+    with open(PERF_BASELINE_PATH, "w", encoding="utf-8") as f:
+        json.dump(baseline, f, indent=2, ensure_ascii=False)
+    print(f"\n✓ 基线已更新: {PERF_BASELINE_PATH}")
+
+
 def open_db(repo_root: str, repo_name: str) -> CodeGraphDB:
     """打开指定仓库的 CodeGraphDB。
 
@@ -262,6 +332,12 @@ def test_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool = Tru
                 "db_size_after_mb": db_size_after,
                 "db_delta_mb": db_size_after - db_size_before,
             }
+            # P13: 捕获阶段耗时，用于回归基线对比
+            stage_timings = getattr(db, "_stage_timings", None)
+            if stage_timings:
+                result["refresh"]["stage_timings"] = stage_timings
+                # 打印阶段耗时对比基线
+                _print_stage_baseline_comparison(repo_name, stage_timings)
         except Exception as e:
             print(f"  refresh-all 失败: {e}")
             result["refresh"] = {"elapsed_sec": 0, "error": str(e)[:500]}
@@ -406,6 +482,11 @@ def main():
         default="tests/_perf_results.json",
         help="结果输出 JSON 文件路径",
     )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="用本次测试的阶段耗时更新 perf 基线文件（tests/_perf_baseline.json）",
+    )
     args = parser.parse_args()
 
     if not args.repo and not args.all:
@@ -447,6 +528,10 @@ def main():
         print(f"{repo:<16} {refresh_sec:<12.1f} {symbols:<12} {db_mb:<10.2f} {search_sec:<10.3f}")
 
     print(f"\n详细结果已保存到: {output_path.absolute()}")
+
+    # P13: 用本次测试结果更新基线文件（供后续测试做回归对比）
+    if args.update_baseline:
+        _update_perf_baseline(all_results)
 
 
 if __name__ == "__main__":

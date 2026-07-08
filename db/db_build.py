@@ -430,6 +430,22 @@ class BuildMixin:
             cprint(f"  register (逐文件SQL)    : {t_register:8.2f}s  (注册/mtime/version 查询)", "dim")
             cprint(f"  total                   : {duration:8.2f}s", "cyan", bold=True)
             cprint("──────────────────────────────────────", "cyan")
+            # P13: early return 路径也暴露 _stage_timings（供 perf test 做基线对比）
+            self._stage_timings = {
+                "register": t_register,
+                "parse": 0,
+                "symbol_write": 0,
+                "stdlib_import": 0,
+                "call_resolve_write": 0,
+                "depth": 0,
+                "fts_rebuild": 0,
+                "commit": 0,
+                "gc_archive": 0,
+                "total": duration,
+                "files_total": unchanged + skipped,
+                "files_parsed": 0,
+                "files_unchanged": unchanged,
+            }
             return
 
         t_parse_start = time.perf_counter()
@@ -646,6 +662,23 @@ class BuildMixin:
             cprint(f"  other                   : {t_other:8.2f}s  (其他开销)", "dim")
         cprint(f"  total                   : {duration:8.2f}s", "cyan", bold=True)
         cprint("──────────────────────────────────────", "cyan")
+
+        # P13: 暴露阶段耗时数据到实例，供 perf test 读取做回归基线对比
+        self._stage_timings = {
+            "register": t_register,
+            "parse": t_parse,
+            "symbol_write": t_versions,
+            "stdlib_import": t_stdlib,
+            "call_resolve_write": t_call_resolve,
+            "depth": t_depth,
+            "fts_rebuild": t_fts,
+            "commit": t_commit,
+            "gc_archive": t_gc,
+            "total": duration,
+            "files_total": total,
+            "files_parsed": parsed_new,
+            "files_unchanged": unchanged,
+        }
     
 
     # ---- P8: FTS5 触发器延后重建 ----
