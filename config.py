@@ -520,6 +520,38 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
             dirs[:] = []
             continue
 
+    # P26.7: 容器目录启发式（shallow 模式后处理）
+    # 当 member 的父目录在 _MONOREPO_PKG_DIRS（crates/packages/apps/libs/sdks 等）中时，
+    # 项目根 = 容器目录的父目录（而不是 member 本身）
+    # 场景：无 .git 的裸 monorepo（my_mono/crates/foo/Cargo.toml → 项目根 = my_mono/）
+    # 去重：同一个项目根只保留第一次识别（避免 crates/foo + crates/bar 产生 2 条）
+    if shallow:
+        seen_roots = set()
+        deduped = []
+        for p in projects:
+            rel = p["rel_path"]
+            if rel and "/" in rel:
+                parts = rel.split("/")
+                # 检查倒数第二级是否是容器目录（如 my_mono/crates/foo → parts[-2] = "crates"）
+                if len(parts) >= 2 and parts[-2] in _MONOREPO_PKG_DIRS:
+                    # 项目根 = 容器目录的父目录
+                    new_rel = "/".join(parts[:-2])
+                    new_root = os.path.dirname(os.path.dirname(p["root"]))
+                    if new_root not in seen_roots:
+                        deduped.append({
+                            "root": new_root,
+                            "rel_path": new_rel,
+                            "name": os.path.basename(new_root) if new_rel else os.path.basename(root_dir),
+                            "lang": p["lang"],
+                            "manifest": p["manifest"],
+                        })
+                        seen_roots.add(new_root)
+                    continue
+            if p["root"] not in seen_roots:
+                deduped.append(p)
+                seen_roots.add(p["root"])
+        projects = deduped
+
     return projects
 
 

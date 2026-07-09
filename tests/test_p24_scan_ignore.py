@@ -58,8 +58,8 @@ class TestScanSubprojectsFilter:
         (repo / "package.json").write_text('{"name": "test_repo"}')
         self._create_repo_with_fixtures(str(repo))
 
-        # 默认行为：跳过非真实子项目
-        projects = scan_subprojects(str(repo))
+        # 默认行为：跳过非真实子项目（deep 模式，shallow=False 保留 P24 行为）
+        projects = scan_subprojects(str(repo), shallow=False)
         names = [p["name"] for p in projects]
 
         assert "test_repo" in names  # 仓库根保留

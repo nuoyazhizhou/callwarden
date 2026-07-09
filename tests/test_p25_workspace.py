@@ -110,7 +110,8 @@ class TestCargoWorkspaceDetection:
         indep.mkdir(parents=True)
         (indep / "Cargo.toml").write_text('[package]\nname = "lib_x"\n', encoding="utf-8")
 
-        projs = scan_subprojects(str(tmp_path))
+        # shallow=False: 这些测试验证 deep 模式下的 workspace 边界行为
+        projs = scan_subprojects(str(tmp_path), shallow=False)
         roots = [p["rel_path"] for p in projs]
         # workspace root + 独立 crate = 2 个
         assert "apps/ws" in roots
@@ -301,7 +302,8 @@ class TestExtendedNonRealDirs:
                 json.dumps({"name": f"@scope/{d}-core"}), encoding="utf-8"
             )
 
-        projs = scan_subprojects(str(tmp_path))
+        # shallow=False: 验证 deep 模式下这些目录不被跳过（shallow 模式会折叠容器目录）
+        projs = scan_subprojects(str(tmp_path), shallow=False)
         # 5 个真实子项目
         assert len(projs) == 5
         roots = [p["rel_path"] for p in projs]
@@ -359,7 +361,8 @@ class TestRealWorldScenarios:
         e2e_pkg.mkdir(parents=True)
         (e2e_pkg / "package.json").write_text(json.dumps({"name": "e2e-thing"}), encoding="utf-8")
 
-        projs = scan_subprojects(str(tmp_path))
+        # shallow=False: 验证 deep 模式下的 workspace 边界行为
+        projs = scan_subprojects(str(tmp_path), shallow=False)
         rels = {p["rel_path"] for p in projs}
 
         # 应识别 3 个：workspace root + 2 个独立包

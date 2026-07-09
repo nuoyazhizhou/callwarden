@@ -320,3 +320,120 @@ class TestRealWorldScenarios:
         assert len(projs) == 1
         assert projs[0]["rel_path"] == ""
         assert projs[0]["manifest"] == "pyproject.toml"
+
+
+# ============================================
+# P26.7: 容器目录启发式（无 .git 的裸 monorepo）
+# ============================================
+
+class TestContainerDirHeuristic:
+    """当 member 的父目录在 _MONOREPO_PKG_DIRS（crates/packages 等）中时，
+    项目根 = 容器目录的父目录，而非 member 本身"""
+
+    def test_crates_dir_folds_to_parent(self, tmp_path):
+        """crates/foo/Cargo.toml + crates/bar/Cargo.toml → 1 个项目（容器父目录）"""
+        mono = tmp_path / "my_mono"
+        for name in ("foo", "bar"):
+            d = mono / "crates" / name
+            d.mkdir(parents=True)
+            (d / "Cargo.toml").write_text(f'[package]\nname = "{name}"\n', encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        assert len(projs) == 1
+        assert projs[0]["rel_path"] == "my_mono"
+        assert projs[0]["name"] == "my_mono"
+
+    def test_packages_dir_folds_to_parent(self, tmp_path):
+        """packages/a/package.json + packages/b/package.json → 1 个项目"""
+        mono = tmp_path / "my_mono"
+        for name in ("a", "b"):
+            d = mono / "packages" / name
+            d.mkdir(parents=True)
+            (d / "package.json").write_text(f'{{"name": "{name}"}}\n', encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        assert len(projs) == 1
+        assert projs[0]["rel_path"] == "my_mono"
+
+    def test_mixed_container_dirs_dedup(self, tmp_path):
+        """crates/foo + packages/bar → 1 个项目（去重）"""
+        mono = tmp_path / "my_mono"
+        (mono / "crates" / "foo").mkdir(parents=True)
+        (mono / "crates" / "foo" / "Cargo.toml").write_text(
+            '[package]\nname = "foo"\n', encoding="utf-8")
+        (mono / "packages" / "bar").mkdir(parents=True)
+        (mono / "packages" / "bar" / "package.json").write_text(
+            '{"name": "bar"}\n', encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        assert len(projs) == 1
+        assert projs[0]["rel_path"] == "my_mono"
+
+    def test_standalone_crate_not_affected(self, tmp_path):
+        """独立 crate（不在容器目录下）不受影响"""
+        standalone = tmp_path / "standalone"
+        standalone.mkdir()
+        (standalone / "Cargo.toml").write_text(
+            '[package]\nname = "standalone"\n', encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        assert len(projs) == 1
+        assert projs[0]["rel_path"] == "standalone"
+
+    def test_all_container_dirs_recognized(self, tmp_path):
+        """所有 _MONOREPO_PKG_DIRS 都应触发折叠"""
+        from callwarden.config import _MONOREPO_PKG_DIRS
+        for container in _MONOREPO_PKG_DIRS:
+            mono = tmp_path / f"mono_{container}"
+            d = mono / container / "member"
+            d.mkdir(parents=True)
+            (d / "Cargo.toml").write_text('[package]\nname = "m"\n', encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        # 每个容器目录的父目录都是 1 个项目
+        assert len(projs) == len(_MONOREPO_PKG_DIRS)
+        for p in projs:
+            # 验证项目根是容器目录的父目录（mono_xxx），而非 member
+            assert p["name"].startswith("mono_")
+
+    def test_git_repo_with_container_inside_not_affected(self, tmp_path):
+        """有 .git 的仓库内部容器目录不受影响（.git 边界优先）"""
+        repo = tmp_path / "repo"
+        _make_repo_dir(repo, manifest="Cargo.toml")
+        # 仓库内有 crates/foo（不应独立识别，因为 .git 已停止递归）
+        (repo / "crates" / "foo").mkdir(parents=True)
+        (repo / "crates" / "foo" / "Cargo.toml").write_text(
+            '[package]\nname = "foo"\n', encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        assert len(projs) == 1
+        assert projs[0]["rel_path"] == "repo"
+
+    def test_scanned_root_is_container_parent(self, tmp_path):
+        """扫描根本身是容器目录的父目录（rel_path 为空）"""
+        for name in ("foo", "bar"):
+            d = tmp_path / "crates" / name
+            d.mkdir(parents=True)
+            (d / "Cargo.toml").write_text(f'[package]\nname = "{name}"\n', encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        assert len(projs) == 1
+        assert projs[0]["rel_path"] == ""  # 扫描根本身就是项目根
+
+    def test_container_with_independent_project_mixed(self, tmp_path):
+        """容器目录 monorepo + 独立项目混合"""
+        # my_mono/crates/foo/Cargo.toml（容器目录 → 项目根 = my_mono）
+        mono = tmp_path / "my_mono"
+        (mono / "crates" / "foo").mkdir(parents=True)
+        (mono / "crates" / "foo" / "Cargo.toml").write_text(
+            '[package]\nname = "foo"\n', encoding="utf-8")
+        # another_pkg/setup.py（独立项目，不在容器目录下）
+        another = tmp_path / "another_pkg"
+        another.mkdir()
+        (another / "setup.py").write_text(
+            "from setuptools import setup\nsetup(name='another')\n", encoding="utf-8")
+
+        projs = scan_subprojects(str(tmp_path))
+        assert len(projs) == 2
+        rels = {p["rel_path"] for p in projs}
+        assert rels == {"my_mono", "another_pkg"}
