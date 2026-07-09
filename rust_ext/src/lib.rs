@@ -194,7 +194,7 @@ fn walk_c_node(
                 }
             }
             "struct_specifier" => {
-                if let Some(sym) = parse_c_struct(&child, source, module_path, parent_qualified, "struct") {
+                if let Some(sym) = parse_c_struct(&child, source, module_path, parent_qualified, "struct", None) {
                     let qname = sym.qualified_name.clone();
                     symbols.push(sym);
                     // 递归处理结构体内部
@@ -204,13 +204,45 @@ fn walk_c_node(
                 }
             }
             "enum_specifier" => {
-                if let Some(sym) = parse_c_enum(&child, source, module_path, parent_qualified) {
+                if let Some(sym) = parse_c_enum(&child, source, module_path, parent_qualified, None) {
                     symbols.push(sym);
                 }
             }
             "union_specifier" => {
-                if let Some(sym) = parse_c_struct(&child, source, module_path, parent_qualified, "union") {
+                if let Some(sym) = parse_c_struct(&child, source, module_path, parent_qualified, "union", None) {
                     symbols.push(sym);
+                }
+            }
+            // P32: typedef 声明 — 提取其中的 struct/enum/union，用 typedef 名称
+            // 修复 P29 缺失的 857 个 typedef 符号（与 Python c_parser.py 行为对齐）
+            "type_definition" => {
+                let struct_node = find_child(&child, "struct_specifier");
+                let enum_node = find_child(&child, "enum_specifier");
+                let union_node = find_child(&child, "union_specifier");
+                // 最后一个 type_identifier 是 typedef 的名称
+                let type_name = find_last_child_by_kind(&child, "type_identifier")
+                    .map(|n| node_text(&n, source).to_string());
+
+                if let (Some(sn), Some(name)) = (struct_node.as_ref(), type_name.as_ref()) {
+                    if let Some(sym) = parse_c_struct(sn, source, module_path, parent_qualified, "struct", Some(name)) {
+                        let qname = sym.qualified_name.clone();
+                        symbols.push(sym);
+                        // 递归处理结构体内部字段
+                        if let Some(body) = find_child(sn, "field_declaration_list") {
+                            walk_c_node(&body, source, module_path, &qname, symbols, calls, imports);
+                        }
+                    }
+                } else if let (Some(en), Some(name)) = (enum_node.as_ref(), type_name.as_ref()) {
+                    if let Some(sym) = parse_c_enum(en, source, module_path, parent_qualified, Some(name)) {
+                        symbols.push(sym);
+                    }
+                } else if let (Some(un), Some(name)) = (union_node.as_ref(), type_name.as_ref()) {
+                    if let Some(sym) = parse_c_struct(un, source, module_path, parent_qualified, "union", Some(name)) {
+                        symbols.push(sym);
+                    }
+                } else {
+                    // 其他 typedef 情况（如 typedef int MyInt），递归处理子节点
+                    walk_c_node(&child, source, module_path, parent_qualified, symbols, calls, imports);
                 }
             }
             "preproc_include" => {
@@ -275,22 +307,25 @@ fn parse_c_function(
 }
 
 /// parse C 结构体/联合体
+///
+/// name_override：P32 typedef 时传入 typedef 名称（type_definition 的最后一个
+/// type_identifier），None 时从节点自身 type_identifier 提取名称。
 fn parse_c_struct(
     node: &Node,
     source: &[u8],
     module_path: &str,
     parent_qualified: &str,
     kind: &str,
+    name_override: Option<&str>,
 ) -> Option<SymbolInfo> {
-    let name_node = find_child(node, "type_identifier")?;
-    let name = node_text(&name_node, source).to_string();
-    let qualified = if !parent_qualified.is_empty() {
-        format!("{}.{}", parent_qualified, name)
-    } else if !module_path.is_empty() {
-        format!("{}.{}", module_path, name)
-    } else {
-        name.clone()
+    let name = match name_override {
+        Some(n) => n.to_string(),
+        None => {
+            let name_node = find_child(node, "type_identifier")?;
+            node_text(&name_node, source).to_string()
+        }
     };
+    let qualified = make_qualified(module_path, parent_qualified, &name);
 
     Some(SymbolInfo {
         name,
@@ -309,21 +344,23 @@ fn parse_c_struct(
 }
 
 /// parse C 枚举
+///
+/// name_override：P32 typedef 时传入 typedef 名称，None 时从节点自身 type_identifier 提取。
 fn parse_c_enum(
     node: &Node,
     source: &[u8],
     module_path: &str,
     parent_qualified: &str,
+    name_override: Option<&str>,
 ) -> Option<SymbolInfo> {
-    let name_node = find_child(node, "type_identifier")?;
-    let name = node_text(&name_node, source).to_string();
-    let qualified = if !parent_qualified.is_empty() {
-        format!("{}.{}", parent_qualified, name)
-    } else if !module_path.is_empty() {
-        format!("{}.{}", module_path, name)
-    } else {
-        name.clone()
+    let name = match name_override {
+        Some(n) => n.to_string(),
+        None => {
+            let name_node = find_child(node, "type_identifier")?;
+            node_text(&name_node, source).to_string()
+        }
     };
+    let qualified = make_qualified(module_path, parent_qualified, &name);
 
     Some(SymbolInfo {
         name,
@@ -415,6 +452,30 @@ fn node_text<'a>(node: &Node<'a>, source: &'a [u8]) -> &'a str {
     let start = node.start_byte();
     let end = node.end_byte();
     std::str::from_utf8(&source[start..end]).unwrap_or("")
+}
+
+/// P32: 构造限定名（qualified_name）
+/// 优先级：parent_qualified > module_path > 裸名
+fn make_qualified(module_path: &str, parent_qualified: &str, name: &str) -> String {
+    if !parent_qualified.is_empty() {
+        format!("{}.{}", parent_qualified, name)
+    } else if !module_path.is_empty() {
+        format!("{}.{}", module_path, name)
+    } else {
+        name.to_string()
+    }
+}
+
+/// P32: 查找指定 kind 的最后一个命名子节点（用于 typedef 提取最后一个 type_identifier）
+fn find_last_child_by_kind<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    let mut last: Option<Node<'a>> = None;
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == kind {
+            last = Some(child);
+        }
+    }
+    last
 }
 
 /// 简单哈希（PoC 用，生产应换 SHA-256）
