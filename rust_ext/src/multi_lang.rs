@@ -45,6 +45,13 @@ pub enum NameStrategy {
         intermediate: &'static str,
         name_kinds: Vec<&'static str>,
     },
+
+    /// Rust impl 块专用：trait_field + type_field 拼接为 "Trait for Type" 或 "Type"
+    /// 对齐 Python rust_parser._parse_impl 的 name 格式
+    ImplTraitForType {
+        trait_field: &'static str,
+        type_field: &'static str,
+    },
 }
 
 // ============================================
@@ -99,6 +106,9 @@ pub struct LangConfig {
     pub symbol_rules: Vec<SymbolRule>,
     pub call_rules: Vec<CallRule>,
     pub import_kinds: Vec<&'static str>,
+    /// 跳过的节点 kind：既不提取符号也不递归子节点
+    /// 用于 Rust 的 mod_item（Python 不提取到 symbols，放到 inline_modules）
+    pub skip_kinds: Vec<&'static str>,
 }
 
 impl LangConfig {
@@ -152,6 +162,7 @@ fn python_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call", callee_field: Some("function") }],
         import_kinds: vec!["import_statement", "import_from_statement"],
+        skip_kinds: vec![],
     }
 }
 
@@ -178,21 +189,35 @@ fn rust_config() -> LangConfig {
             SymbolRule::new(
                 "trait_item",
                 NameStrategy::FieldName("name"),
-                "trait", Some("declaration_list"), false,
+                "trait", None, false,
             ),
+            // impl 块：不递归进 body（对齐 Python rust_parser._parse_impl 行为）
+            // name 格式 "Trait for Type" 或 "Type"
             SymbolRule::new(
                 "impl_item",
-                NameStrategy::FieldName("type"),
-                "impl", Some("declaration_list"), false,
+                NameStrategy::ImplTraitForType { trait_field: "trait", type_field: "type" },
+                "impl", None, false,
+            ),
+            // const/static/macro（对齐 Python rust_parser 的符号种类）
+            SymbolRule::new(
+                "const_item",
+                NameStrategy::FieldName("name"),
+                "const", None, false,
             ),
             SymbolRule::new(
-                "module",
+                "static_item",
                 NameStrategy::FieldName("name"),
-                "module", Some("declaration_list"), false,
+                "static", None, false,
+            ),
+            SymbolRule::new(
+                "macro_definition",
+                NameStrategy::ChildByType(vec!["identifier"]),
+                "macro_rules", None, false,
             ),
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
         import_kinds: vec!["use_declaration"],
+        skip_kinds: vec!["mod_item"],
     }
 }
 
@@ -226,6 +251,7 @@ fn go_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
         import_kinds: vec!["import_spec"],
+        skip_kinds: vec![],
     }
 }
 
@@ -262,6 +288,7 @@ fn java_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "method_invocation", callee_field: None }],
         import_kinds: vec!["import_declaration"],
+        skip_kinds: vec![],
     }
 }
 
@@ -293,6 +320,7 @@ fn typescript_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
         import_kinds: vec!["import_statement"],
+        skip_kinds: vec![],
     }
 }
 
@@ -320,6 +348,7 @@ fn javascript_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
         import_kinds: vec!["import_statement"],
+        skip_kinds: vec![],
     }
 }
 
@@ -352,6 +381,7 @@ fn ruby_config() -> LangConfig {
         call_rules: vec![CallRule { kind: "call", callee_field: Some("method") }],
         // Ruby 的 require 是 call 节点，不走 import 逻辑
         import_kinds: vec![],
+        skip_kinds: vec![],
     }
 }
 
@@ -390,6 +420,7 @@ fn php_config() -> LangConfig {
             CallRule { kind: "member_call_expression", callee_field: None },
         ],
         import_kinds: vec!["namespace_use_declaration"],
+        skip_kinds: vec![],
     }
 }
 
@@ -426,6 +457,7 @@ fn scala_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: None }],
         import_kinds: vec!["import_declaration"],
+        skip_kinds: vec![],
     }
 }
 
@@ -474,6 +506,7 @@ fn csharp_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "invocation_expression", callee_field: None }],
         import_kinds: vec!["using_directive"],
+        skip_kinds: vec![],
     }
 }
 
@@ -514,6 +547,7 @@ fn cpp_config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
         import_kinds: vec!["preproc_include"],
+        skip_kinds: vec![],
     }
 }
 
@@ -629,6 +663,11 @@ fn walk_node(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         let kind = child.kind();
+
+        // 0. 跳过指定 kind（不提取符号、不递归）
+        if config.skip_kinds.contains(&kind) {
+            continue;
+        }
 
         // 1. 检查符号规则
         if let Some(rule) = config.symbol_rules.iter().find(|r| r.kind == kind) {
@@ -754,6 +793,18 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
                 }
             }
             None
+        }
+        NameStrategy::ImplTraitForType { trait_field, type_field } => {
+            // Rust impl 块：有 trait 字段时 name = "Trait for Type"，否则 "Type"
+            let type_name = node.child_by_field_name(type_field)
+                .map(|n| node_text(&n, source).to_string())
+                .unwrap_or_default();
+            if let Some(trait_node) = node.child_by_field_name(trait_field) {
+                let trait_name = node_text(&trait_node, source);
+                Some(format!("{} for {}", trait_name, type_name))
+            } else {
+                Some(type_name)
+            }
         }
     }
 }

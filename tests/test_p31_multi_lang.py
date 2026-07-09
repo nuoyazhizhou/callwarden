@@ -436,7 +436,7 @@ class TestParseFileLang(unittest.TestCase):
         self.assertTrue("os" in joined or "typing" in joined)
 
     def test_rust_extracts_struct_and_methods(self):
-        """Rust: 提取 struct 与 impl 方法"""
+        """Rust: 提取 struct 与 impl 块（不递归进 impl 体，对齐 Python rust_parser）"""
         from callwarden_core import parse_file_lang
         path = self._write_sample("rust", "sample.rs", _SAMPLE_RUST)
         result = parse_file_lang(path, "test.sample", "rust")
@@ -444,9 +444,13 @@ class TestParseFileLang(unittest.TestCase):
         self.assertEqual(result["language"], "rust")
         names = {s["name"]: s["kind"] for s in result["symbols"]}
         self.assertIn("Point", names)
-        # new / distance / main 都应提取
-        for m in ("new", "distance", "main"):
-            self.assertIn(m, names)
+        # impl 块作为一个符号提取（kind="impl"），不递归提取内部方法
+        self.assertIn("Point", names)
+        # 顶层 function 提取
+        self.assertIn("main", names)
+        # impl 块符号存在（name 为 type 名）
+        impl_names = [s["name"] for s in result["symbols"] if s["kind"] == "impl"]
+        self.assertTrue(len(impl_names) > 0, "应至少提取 1 个 impl 块符号")
 
     def test_go_extracts_functions_and_types(self):
         """Go: 提取函数、方法、struct、interface"""

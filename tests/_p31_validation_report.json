@@ -1,0 +1,366 @@
+{
+  "alignment": [
+    {
+      "project": "new-api",
+      "total_sampled": 100,
+      "perfect_match": 98,
+      "perfect_match_rate": 98.0,
+      "aligned_files": 100,
+      "aligned_rate": 100.0,
+      "rust_missing_symbols": 0,
+      "rust_extra_symbols": 2,
+      "samples_missing": [],
+      "samples_extra": [
+        {
+          "file": "testcode\\new-api\\model\\channel.go",
+          "extra": [
+            "result"
+          ]
+        },
+        {
+          "file": "testcode\\new-api\\relay\\common\\relay_info.go",
+          "extra": [
+            "Alias"
+          ]
+        }
+      ],
+      "errors": []
+    },
+    {
+      "project": "admin",
+      "total_sampled": 100,
+      "perfect_match": 94,
+      "perfect_match_rate": 94.0,
+      "aligned_files": 100,
+      "aligned_rate": 100.0,
+      "rust_missing_symbols": 0,
+      "rust_extra_symbols": 11,
+      "samples_missing": [],
+      "samples_extra": [
+        {
+          "file": "testcode\\admin\\cloud-admin-api\\src\\main\\java\\com\\linkplay\\admin\\filter\\ReqBodyParamsRequestWrapper.java",
+          "extra": [
+            "isFinished",
+            "isReady",
+            "read",
+            "setReadListener"
+          ]
+        },
+        {
+          "file": "testcode\\admin\\cloud-modules\\cloud-aisupport\\src\\main\\java\\com\\linkplay\\aisupport\\service\\impl\\order\\RegionSalesSettingServiceImpl.java",
+          "extra": [
+            "ProductInfo"
+          ]
+        },
+        {
+          "file": "testcode\\admin\\cloud-modules\\cloud-bigdata\\src\\main\\java\\com\\linkplay\\bigdata\\service\\impl\\IBigdataBootUpServiceImpl.java",
+          "extra": [
+            "OobeResult"
+          ]
+        },
+        {
+          "file": "testcode\\admin\\cloud-product-api\\src\\main\\java\\com\\linkplay\\product\\config\\SecurityConfiguration.java",
+          "extra": [
+            "postProcess"
+          ]
+        },
+        {
+          "file": "testcode\\admin\\cloud-utils\\cloud-amazon-catalog-item\\src\\main\\java\\com\\linkplay\\amazon\\catalog\\client\\ProgressResponseBody.java",
+          "extra": [
+            "ProgressListener",
+            "read"
+          ]
+        },
+        {
+          "file": "testcode\\admin\\cloud-utils\\cloud-amazon-fbaInventory\\src\\main\\java\\com\\linkplay\\amazon\\fbainventory\\client\\ApiClient.java",
+          "extra": [
+            "onFailure",
+            "onResponse"
+          ]
+        }
+      ],
+      "errors": []
+    },
+    {
+      "project": "codex-lb",
+      "total_sampled": 100,
+      "perfect_match": 81,
+      "perfect_match_rate": 81.0,
+      "aligned_files": 100,
+      "aligned_rate": 100.0,
+      "rust_missing_symbols": 0,
+      "rust_extra_symbols": 80,
+      "samples_missing": [],
+      "samples_extra": [
+        {
+          "file": "testcode\\codex-lb\\.agents\\hooks\\post_edit_tracker.py",
+          "extra": [
+            "emit_event"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\app\\core\\openai\\chat_responses.py",
+          "extra": [
+            "apply_delta",
+            "build_stream_delta",
+            "index_for",
+            "index_for_output_index",
+            "register_alias",
+            "register_output_index",
+            "to_chunk_call",
+            "to_message_tool_call"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\app\\core\\usage\\refresh_scheduler.py",
+          "extra": [
+            "_refresh_once",
+            "_run_loop",
+            "start",
+            "stop"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\app\\modules\\proxy\\work_admission.py",
+          "extra": [
+            "__del__",
+            "__enter__",
+            "__exit__",
+            "release"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\app\\modules\\sticky_sessions\\cleanup_scheduler.py",
+          "extra": [
+            "_cleanup_once",
+            "_run_loop",
+            "start",
+            "stop"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\tests\\e2e\\conftest.py",
+          "extra": [
+            "_create",
+            "_enable",
+            "_import",
+            "_login",
+            "_noop_init_db",
+            "_populate",
+            "_setup"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\tests\\e2e\\test_proxy_flow.py",
+          "extra": [
+            "fake_stream"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\tests\\integration\\test_auth_middleware.py",
+          "extra": [
+            "echo_dashboard_proxy_header",
+            "should_not_call_fetch_usage",
+            "stub_fetch_usage"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\tests\\integration\\test_dashboard_bootstrap.py",
+          "extra": [
+            "_noop_init_db"
+          ]
+        },
+        {
+          "file": "testcode\\codex-lb\\tests\\integration\\test_db_models.py",
+          "extra": [
+            "wrapped"
+          ]
+        }
+      ],
+      "errors": []
+    },
+    {
+      "project": "DeepSeek-TUI",
+      "total_sampled": 100,
+      "perfect_match": 94,
+      "perfect_match_rate": 94.0,
+      "aligned_files": 100,
+      "aligned_rate": 100.0,
+      "rust_missing_symbols": 0,
+      "rust_extra_symbols": 8,
+      "samples_missing": [],
+      "samples_extra": [
+        {
+          "file": "testcode\\DeepSeek-TUI\\crates\\tui\\src\\client.rs",
+          "extra": [
+            "POOL",
+            "RE"
+          ]
+        },
+        {
+          "file": "testcode\\DeepSeek-TUI\\crates\\tui\\src\\working_set.rs",
+          "extra": [
+            "CANDIDATES",
+            "RE"
+          ]
+        },
+        {
+          "file": "testcode\\DeepSeek-TUI\\crates\\tui\\src\\execpolicy\\parser.rs",
+          "extra": [
+            "prefix_rule"
+          ]
+        },
+        {
+          "file": "testcode\\DeepSeek-TUI\\crates\\tui\\src\\sandbox\\seatbelt.rs",
+          "extra": [
+            "SEATBELT_AVAILABLE"
+          ]
+        },
+        {
+          "file": "testcode\\DeepSeek-TUI\\crates\\tui\\src\\tools\\web_search.rs",
+          "extra": [
+            "ENTITY_RE"
+          ]
+        },
+        {
+          "file": "testcode\\DeepSeek-TUI\\crates\\tui\\src\\tools\\subagent\\mod.rs",
+          "extra": [
+            "MAX_LEN"
+          ]
+        }
+      ],
+      "errors": []
+    },
+    {
+      "project": "CLIProxyAPI",
+      "total_sampled": 100,
+      "perfect_match": 95,
+      "perfect_match_rate": 95.0,
+      "aligned_files": 100,
+      "aligned_rate": 100.0,
+      "rust_missing_symbols": 0,
+      "rust_extra_symbols": 10,
+      "samples_missing": [],
+      "samples_extra": [
+        {
+          "file": "testcode\\CLIProxyAPI\\internal\\api\\handlers\\management\\config_lists.go",
+          "extra": [
+            "claudeKeyPatch",
+            "codexKeyPatch",
+            "geminiKeyPatch",
+            "openAICompatPatch",
+            "vertexCompatPatch"
+          ]
+        },
+        {
+          "file": "testcode\\CLIProxyAPI\\internal\\api\\handlers\\management\\logs.go",
+          "extra": [
+            "candidate",
+            "errorLog"
+          ]
+        },
+        {
+          "file": "testcode\\CLIProxyAPI\\internal\\api\\modules\\amp\\fallback_handlers.go",
+          "extra": [
+            "AmpRouteType"
+          ]
+        },
+        {
+          "file": "testcode\\CLIProxyAPI\\internal\\redisqueue\\plugin_test.go",
+          "extra": [
+            "pluginFunc"
+          ]
+        },
+        {
+          "file": "testcode\\CLIProxyAPI\\internal\\translator\\claude\\openai\\responses\\claude_openai-responses_response.go",
+          "extra": [
+            "toolState"
+          ]
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "performance": [
+    {
+      "project": "new-api",
+      "files": 569,
+      "rust": {
+        "time_sec": 0.23,
+        "symbols": 4719,
+        "calls": 27595
+      },
+      "python": {
+        "time_sec": 1.49,
+        "symbols": 4668,
+        "calls": 24512
+      },
+      "speedup": 6.35,
+      "symbol_diff": 51
+    },
+    {
+      "project": "admin",
+      "files": 1754,
+      "rust": {
+        "time_sec": 0.63,
+        "symbols": 21610,
+        "calls": 86732
+      },
+      "python": {
+        "time_sec": 3.61,
+        "symbols": 20956,
+        "calls": 85597
+      },
+      "speedup": 5.73,
+      "symbol_diff": 654
+    },
+    {
+      "project": "codex-lb",
+      "files": 435,
+      "rust": {
+        "time_sec": 0.35,
+        "symbols": 6962,
+        "calls": 34780
+      },
+      "python": {
+        "time_sec": 2.05,
+        "symbols": 5691,
+        "calls": 29050
+      },
+      "speedup": 5.89,
+      "symbol_diff": 1271
+    },
+    {
+      "project": "DeepSeek-TUI",
+      "files": 326,
+      "rust": {
+        "time_sec": 0.34,
+        "symbols": 5224,
+        "calls": 29212
+      },
+      "python": {
+        "time_sec": 4.09,
+        "symbols": 5261,
+        "calls": 8167
+      },
+      "speedup": 12.1,
+      "symbol_diff": -37
+    },
+    {
+      "project": "CLIProxyAPI",
+      "files": 499,
+      "rust": {
+        "time_sec": 0.3,
+        "symbols": 4790,
+        "calls": 46417
+      },
+      "python": {
+        "time_sec": 1.92,
+        "symbols": 4724,
+        "calls": 41112
+      },
+      "speedup": 6.47,
+      "symbol_diff": 66
+    }
+  ]
+}
