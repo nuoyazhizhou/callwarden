@@ -1,17 +1,26 @@
 [package]
 name = "callwarden-core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Call Warden 高性能 PyO3 扩展：批量余弦相似度等热路径加速"
+description = "Call Warden 高性能 PyO3 扩展：parse 热路径 + 批量余弦相似度"
 
 [lib]
 name = "callwarden_core"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module"] }
-numpy = "0.22"
+# P29: PyO3 升级到 0.29 以支持 Python 3.14
+pyo3 = { version = "0.29", features = ["extension-module"] }
+numpy = "0.29"
+# P29: tree-sitter parse 热路径下沉
+tree-sitter = "0.26"
+tree-sitter-c = "0.24"
+# rayon: 数据并行（替代 Python ProcessPoolExecutor，共享 grammar）
+rayon = "1.10"
+# 并发原语
+parking_lot = "0.12"
 
 [profile.release]
 opt-level = 3
 lto = true
+codegen-units = 1  # 单 codegen unit 优化极致性能

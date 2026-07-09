@@ -1,0 +1,38 @@
+{
+  "label": "p29_rust_vs_python_parse",
+  "testcode_root": "C:\\git_work\\callwarden\\testcode\\repos",
+  "rust": {
+    "engine": "rust",
+    "files": 1999,
+    "elapsed_sec": 78.22,
+    "symbols": 11498,
+    "calls": 508099,
+    "lines": 37580133,
+    "errors": 1,
+    "rss_before_mb": 34,
+    "rss_after_mb": 553,
+    "rss_peak_mb": 6844,
+    "rss_delta_mb": 519,
+    "threads": 8
+  },
+  "python": {
+    "engine": "python",
+    "files": 1999,
+    "elapsed_sec": 180.0,
+    "symbols": 12355,
+    "calls": 518098,
+    "lines": 37580133,
+    "errors": 1,
+    "rss_before_mb": 71,
+    "rss_after_mb": 248,
+    "rss_peak_mb": 6844,
+    "rss_delta_mb": 177,
+    "workers": 4
+  },
+  "comparison": {
+    "elapsed_ratio": 0.43,
+    "rss_peak_diff": 0,
+    "rss_delta_diff": 342
+  },
+  "timestamp": "2026-07-09 22:26:29"
+}

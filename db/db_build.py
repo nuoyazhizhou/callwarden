@@ -477,6 +477,93 @@ def _detect_third_party_dir(abs_dir_path: str, rel_dir_path: str) -> tuple:
     return False, None
 
 
+def _can_use_rust_parse() -> bool:
+    """P29: 检测 Rust 扩展是否可用且支持 parse。
+
+    Returns:
+        True 表示 callwarden_core.batch_parse_c_files 可用
+    """
+    try:
+        from callwarden_core import batch_parse_c_files  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _python_multiprocess_parse(to_parse, mp_workers, file_results,
+                                failed_files, parse_total,
+                                skipped_ref=None, failed_ref=None):
+    """P29: Python 原多进程 parse 路径（提取为函数，供 Rust fallback 复用）。
+
+    Args:
+        to_parse: 待 parse 文件列表 [(idx, rel_path, abs_path, lang, module_path, file_instance_id), ...]
+        mp_workers: worker 数
+        file_results: 结果 dict（in-place 更新）
+        failed_files: 失败文件列表（in-place 更新）
+        parse_total: 总文件数（进度显示用）
+        skipped_ref: [skipped_count] 引用（in-place 更新）
+        failed_ref: [failed_count] 引用（in-place 更新）
+    """
+    skipped = skipped_ref[0] if skipped_ref else 0
+    failed = failed_ref[0] if failed_ref else 0
+
+    cprint(t("cli.messages.db_build_parallel_parse", workers=mp_workers, count=len(to_parse)), "dim")
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    mp_args = [(rel_path, abs_path, lang, module_path, file_instance_id)
+               for _, rel_path, abs_path, lang, module_path, file_instance_id in to_parse]
+    chunksize = max(1, len(mp_args) // (mp_workers * 4))
+    cprint(f"  (P15 multiprocess: {mp_workers} workers, chunksize={chunksize})", "dim")
+
+    try:
+        with ProcessPoolExecutor(
+            max_workers=mp_workers,
+            initializer=_init_worker_parsers,
+        ) as pool:
+            done_count = 0
+            for status, rel_path, payload in pool.map(
+                _parse_file_worker, mp_args, chunksize=chunksize
+            ):
+                if status == "ok":
+                    file_results[rel_path] = payload
+                elif status == "fail":
+                    failed += 1
+                    failed_files.append((rel_path, payload))
+                elif status == "skip_resource":
+                    skipped += 1
+                    cprint(t("cli.messages.db_build_skip_resource", path=rel_path, reason=payload), "yellow")
+                else:
+                    skipped += 1
+                done_count += 1
+                print_progress(done_count, parse_total,
+                               t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=""))
+    except (pickle.PickleError, BrokenPipeError, OSError) as e:
+        cprint(f"  (P15 fallback to ThreadPool: {e})", "yellow")
+        # 降级为 ThreadPoolExecutor
+        max_workers = min(8, max(1, mp_workers))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            done_count = 0
+            for status, rel_path, payload in pool.map(_parse_file_worker, mp_args):
+                if status == "ok":
+                    file_results[rel_path] = payload
+                elif status == "fail":
+                    failed += 1
+                    failed_files.append((rel_path, payload))
+                elif status == "skip_resource":
+                    skipped += 1
+                    cprint(t("cli.messages.db_build_skip_resource", path=rel_path, reason=payload), "yellow")
+                else:
+                    skipped += 1
+                done_count += 1
+                print_progress(done_count, parse_total,
+                               t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=""))
+
+    # 回写引用
+    if skipped_ref is not None:
+        skipped_ref[0] = skipped
+    if failed_ref is not None:
+        failed_ref[0] = failed
+
+
 def _parse_file_worker(args):
     """多进程 worker：解析单个源文件（模块级函数，可 pickle）。
 
@@ -485,7 +572,6 @@ def _parse_file_worker(args):
 
     Args:
         args: 元组 (rel_path, abs_path, lang, module_path, file_instance_id)
-
     Returns:
         元组 (status, rel_path, payload)
             - status: "ok" / "fail" / "skip" / "skip_resource"
@@ -1012,42 +1098,67 @@ class BuildMixin:
                     # 动态检测：根据 CPU 核心数、剩余内存、数据规模计算
                     # P28：传 file_count 启用数据规模因子，避免主进程结果持有内存爆炸
                     mp_workers = _detect_optimal_workers(len(to_parse))
-                cprint(t("cli.messages.db_build_parallel_parse", workers=mp_workers, count=len(to_parse)), "dim")
-                from concurrent.futures import ProcessPoolExecutor, as_completed
-                # worker 参数：(rel_path, abs_path, lang, module_path, file_instance_id)
-                mp_args = [(rel_path, abs_path, lang, module_path, file_instance_id)
-                           for _, rel_path, abs_path, lang, module_path, file_instance_id in to_parse]
-                # chunksize: 每批处理多少文件，减少 IPC 开销
-                chunksize = max(1, len(mp_args) // (mp_workers * 4))
-                cprint(f"  (P15 multiprocess: {mp_workers} workers, chunksize={chunksize})", "dim")
 
-                try:
-                    with ProcessPoolExecutor(
-                        max_workers=mp_workers,
-                        initializer=_init_worker_parsers,
-                    ) as pool:
-                        done_count = 0
-                        for status, rel_path, payload in pool.map(
-                            _parse_file_worker, mp_args, chunksize=chunksize
-                        ):
-                            if status == "ok":
-                                file_results[rel_path] = payload
-                            elif status == "fail":
+                # P29: Rust batch_parse_c_files 接入点（仅 C 语言）
+                # Rust 路径：rayon 线程并行 + grammar 共享 + 零拷贝，避免多进程内存爆炸
+                # Python fallback：Rust 扩展不可用或非 C 语言时走原 ProcessPoolExecutor
+                c_files_to_parse = [x for x in to_parse if x[3] == "c"]
+                use_rust = (len(c_files_to_parse) >= MP_THRESHOLD
+                            and _can_use_rust_parse()
+                            and not os.environ.get("CW_DISABLE_RUST_PARSE"))
+                if use_rust:
+                    cprint(t("cli.messages.db_build_parallel_parse",
+                             workers=mp_workers, count=len(c_files_to_parse)), "dim")
+                    cprint(f"  (P29 rust batch_parse_c_files: {len(c_files_to_parse)} files, "
+                           f"threads={mp_workers})", "dim")
+                    try:
+                        from callwarden_core import batch_parse_c_files
+                        # 资源文件预过滤（Rust 侧不做，避免读大文件）
+                        c_files_filtered = []
+                        for rel_path, abs_path, lang, module_path, file_instance_id in c_files_to_parse:
+                            is_res, reason = _is_resource_file(abs_path)
+                            if is_res:
+                                skipped += 1
+                                failed_files.append((rel_path, f"skip_resource:{reason}"))
+                                cprint(t("cli.messages.db_build_skip_resource",
+                                        path=rel_path, reason=reason), "yellow")
+                                continue
+                            c_files_filtered.append((abs_path, module_path, rel_path, file_instance_id))
+                        # Rust 批量 parse（rayon 并行，grammar 共享）
+                        rust_args = [(abs_path, module_path)
+                                     for abs_path, module_path, _, _ in c_files_filtered]
+                        rust_results = batch_parse_c_files(rust_args, num_threads=mp_workers)
+                        # 将 Rust 结果转为 file_results 格式（与 Python worker 返回兼容）
+                        for (abs_path, module_path, rel_path, file_instance_id), r in zip(c_files_filtered, rust_results):
+                            if r.get("error"):
                                 failed += 1
-                                failed_files.append((rel_path, payload))
-                            elif status == "skip_resource":
-                                skipped += 1
-                                # 资源文件跳过提示（基于内容特征检测：LVGL 宏 / 十六进制数组密度）
-                                cprint(t("cli.messages.db_build_skip_resource", path=rel_path, reason=payload), "yellow")
-                            else:
-                                skipped += 1
-                            done_count += 1
+                                failed_files.append((rel_path, r["error"]))
+                                continue
+                            # 补齐 Python 侧需要的字段
+                            r["abs_path"] = abs_path
+                            r["file_instance_id"] = file_instance_id
+                            r["module_path"] = module_path
+                            r["rel_path"] = rel_path
+                            r.setdefault("inline_modules", [])
+                            file_results[rel_path] = r
+                            done_count = len(file_results)
                             print_progress(done_count, parse_total,
-                                           t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=""))
-                except ( pickle.PickleError, BrokenPipeError, OSError) as e:
-                    # fallback: 进程创建/pickle 失败时降级为 ThreadPoolExecutor
-                    cprint(f"  (P15 fallback to ThreadPool: {e})", "yellow")
-                    use_multiprocess = False
+                                           t("cli.messages.db_build_parse_progress_lang",
+                                             path=rel_path, lang="c"))
+                        # 非 C 语言文件走原 Python 多进程（如果有的话）
+                        non_c_files = [x for x in to_parse if x[3] != "c"]
+                        if non_c_files:
+                            _python_multiprocess_parse(non_c_files, mp_workers, file_results,
+                                                       failed_files, parse_total,
+                                                       skipped_ref=[skipped], failed_ref=[failed])
+                    except Exception as e:
+                        cprint(f"  (P29 rust fallback to multiprocess: {e})", "yellow")
+                        use_rust = False
+                if not use_rust:
+                    _python_multiprocess_parse(to_parse, mp_workers, file_results,
+                                               failed_files, parse_total,
+                                               skipped_ref=[skipped], failed_ref=[failed])
+                    # use_multiprocess 标记保持 True，因为已尝试多进程
 
             if not use_multiprocess:
                 # 原多线程路径（小文件量或 fallback）
@@ -1392,7 +1503,7 @@ class BuildMixin:
             self.conn.execute("""
                 INSERT OR IGNORE INTO symbols
                 (file_instance_id, name, kind, qualified_name, module_path,
-                 start_line, end_line, content_hash, depth, has_comment)
+                 start_line, end_line, symbol_hash, depth, has_comment)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (file_instance_id, name, kind, qname, module_path,
                   start_line, end_line, content_hash, depth, has_comment))
