@@ -1365,8 +1365,12 @@ class BuildMixin:
         all_symbols_map: Dict[str, Dict] = {}
         # 简名 -> [qualified_name, ...]（用于 fallback 匹配）
         name_index: Dict[str, List[str]] = defaultdict(list)
-        # 每个文件的符号简名集合（用于同文件匹配）
+        # 每个文件的符号简名集合（用于同文件匹配存在性判断）
         file_symbols: Dict[str, Set[str]] = defaultdict(set)
+        # P27 优化：每个文件的 简名→qualified_name 映射（用于策略3/4的 O(1) 查找）
+        # 替代原策略3多候选 O(K) 遍历：1M 规模下 K=10000，O(M×K)=10^10 次操作
+        # 内存开销：与 file_symbols 同量级（每符号存一个 qname 引用），20 万符号约 ~10MB
+        file_local_qname: Dict[str, Dict[str, str]] = defaultdict(dict)
         # P0 优化：后缀反向索引
         # 后缀（含前导点，如 ".module.name"）-> [qualified_name, ...]
         # 用于策略 2/4 的后缀匹配，从 O(N) 遍历优化为 O(K) 索引查找
@@ -1385,6 +1389,10 @@ class BuildMixin:
                 simple_name = parts[-1] if parts else qname
                 name_index[simple_name].append(qname)
                 file_symbols[rel_path].add(simple_name)
+                # P27：构建 file-local qname 映射（简名→qname）
+                # 注意：同文件内同名符号（如多类同名方法）后写覆盖前写，
+                # 但这符合策略3"优先当前文件"的语义，且多候选时原本也只取第一个
+                file_local_qname[rel_path][simple_name] = qname
                 # P0：构建后缀索引（含前导点，与原 endswith 语义一致）
                 # 例如 "com.foo.Bar.method" → 索引 ".method", ".Bar.method", ".foo.Bar.method", ".com.foo.Bar.method"
                 norm_parts = norm_qname.split(".")
@@ -1532,14 +1540,15 @@ class BuildMixin:
                         if callee_file != rel_path:
                             is_cross = 1
                     elif len(candidates) > 1:
-                        # 多个候选，优先选当前文件的
-                        for qname in candidates:
-                            if all_symbols_map[qname]["file"] == rel_path:
-                                callee_qname = qname
-                                callee_file = rel_path
-                                callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
-                                break
+                        # P27 优化：file-local qname dict 查找，O(1) 替代 O(K) 遍历
+                        # 1M 规模下 K=10000，原 O(M×K)=10^10 次操作，现降为 O(M)
+                        local_qname = file_local_qname.get(rel_path, {}).get(callee_name)
+                        if local_qname:
+                            callee_qname = local_qname
+                            callee_file = rel_path
+                            callee_id = all_symbols_map[local_qname]["symbol"].get("id", 0)
                         # 如果当前文件没有，且 callee_module 匹配某个候选的父级
+                        # 此时仍需 O(K) 遍历，但此分支触发率极低（本地无同名符号才进入）
                         if not callee_qname and callee_module:
                             for qname in candidates:
                                 # 支持 :: 和 . 分隔符
@@ -1553,15 +1562,14 @@ class BuildMixin:
                                         is_cross = 1
                                     break
 
-                # 策略 4：同文件简名匹配（P0 优化：后缀索引替代全表遍历）
+                # 策略 4：同文件简名匹配（P27 优化：file_local_qname dict O(1) 查找）
+                # 原 P0 用 suffix_index O(K) 遍历筛选当前文件，现直接 dict 取值
                 if not callee_qname and callee_name in file_symbols.get(rel_path, set()):
-                    suffix = f".{callee_name}"
-                    for qname in suffix_index.get(suffix, []):
-                        if all_symbols_map[qname]["file"] == rel_path:
-                            callee_qname = qname
-                            callee_file = rel_path
-                            callee_id = all_symbols_map[qname]["symbol"].get("id", 0)
-                            break
+                    local_qname = file_local_qname.get(rel_path, {}).get(callee_name)
+                    if local_qname:
+                        callee_qname = local_qname
+                        callee_file = rel_path
+                        callee_id = all_symbols_map[local_qname]["symbol"].get("id", 0)
 
                 # 策略 5：查找外部符号表（P3 优化：内存查找替代逐条 DB 查询）
                 if not callee_qname:

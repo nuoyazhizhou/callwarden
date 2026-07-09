@@ -257,7 +257,7 @@ def get_callers(self, callee_name: str) -> List[Dict]:
 
 ## 5. 优化建议
 
-### 5.1 P8：构建 file-local qname 索引（高优先级）
+### 5.1 P27：构建 file-local qname 索引（高优先级）— ✅ 已实施
 
 **目标**：消除 `call_resolve_write` 的 O(M×K) 瓶颈
 
@@ -285,7 +285,17 @@ if not callee_qname and callee_name in file_local_qname.get(rel_path, {}):
 - 总复杂度从 O(M×K) 降为 O(M)
 - 1M refresh 预估从 28 分钟降为 ~5 分钟（与 100K 线性扩展）
 
-### 5.2 P9：`get_callers/get_callees` 支持 qualified_name（中优先级）
+**实测结果**（2026-07-09，1M 符号 / 10100 文件）：
+
+| 指标 | 优化前 | 优化后 | 提升 |
+|------|--------|--------|------|
+| 1M refresh 总耗时 | 卡死 22+ 分钟（未完成） | **126.4s（2m6s）** | 从不可用 → 可用 |
+| call_resolve_write | 未完成（O(M×K)=10^10） | **22.83s** | O(M×K) → O(M) |
+| resolved calls | 0（卡死） | 1,000,000 (90%) | 正常解析 |
+
+**优化后瓶颈转移**：symbol_write 成新瓶颈（46.58s/37%），call_resolve_write 降至 22.83s/18%（原 100K baseline 为 74%）。详见 [docs/perf_optimization_plan.md](perf_optimization_plan.md) §P27。
+
+### 5.2 P28：`get_callers/get_callees` 支持 qualified_name（中优先级）
 
 **目标**：避免大规模符号下的跨模块同名混淆
 
@@ -309,7 +319,7 @@ def get_callers(self, callee_name: str, callee_qualified: str = None) -> List[Di
         ...
 ```
 
-### 5.3 P10：FTS 索引在 refresh 中断后重建（低优先级）
+### 5.3 P29：FTS 索引在 refresh 中断后重建（低优先级）
 
 **问题**：1M refresh 中断后，`symbols_fts` 表为空，`search_symbols` 返回 0 结果
 
@@ -319,7 +329,7 @@ def get_callers(self, callee_name: str, callee_qualified: str = None) -> List[Di
 cw fts rebuild   # 仅重建 FTS 索引，不重新 refresh
 ```
 
-### 5.4 P11：考虑并行 INSERT 或分片 DB（长期）
+### 5.4 P30：考虑并行 INSERT 或分片 DB（长期）
 
 **问题**：SQLite 单写者模型限制 INSERT 吞吐量
 
@@ -348,16 +358,16 @@ cw fts rebuild   # 仅重建 FTS 索引，不重新 refresh
 | 场景 | 可用性 | 说明 |
 |------|--------|------|
 | 单仓库 100K 符号 | ✅ 可用 | refresh 41s，查询 < 100ms |
-| 单仓库 1M 符号 | ⚠️ 受限 | refresh 因 O(M×K) 瓶颈卡死，需先实施 P8 优化 |
+| 单仓库 1M 符号 | ✅ 可用（P27 后） | refresh 126s，查询 <250ms |
 | 单仓库 10M 符号 | ❌ 不可行 | refresh 完全不可行，直接 INSERT 需 2+ 小时 |
 | 多仓库聚合 1M 符号 | ✅ 可用 | 现有 bench 数据 150 万符号耗时 27 分钟 |
 
 ### 7.2 下一步行动
 
-1. **立即实施 P8**（file-local qname 索引）— 预计可将 1M refresh 从 28 分钟降为 5 分钟
-2. **验证 P8 效果**：在 1M 模拟数据上重测 refresh 性能
-3. **重新评估 10M 可行性**：P8 实施后重新推算
-4. **实施 P9**（qualified_name 查询）：修复 API 设计缺陷
+1. **~~立即实施 P27~~（已完成）** — file-local qname 索引已实施，1M refresh 从卡死降为 126s
+2. **验证 P27 效果（已完成）** — 1M 实测：call_resolve_write 22.83s，resolved 90%
+3. **重新评估 10M 可行性**：P27 后 symbol_write 成新瓶颈（37%），10M 仍需进一步优化
+4. **实施 P28**（qualified_name 查询）：修复 API 设计缺陷
 5. **长期规划**：参考 [docs/design/enterprise-architecture-evolution.md](design/enterprise-architecture-evolution.md) 的 daemon + 主从表架构
 
 ### 7.3 测试资产

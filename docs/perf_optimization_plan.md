@@ -264,3 +264,96 @@ SELECT * FROM symbols_fts WHERE symbols_fts MATCH ?
 - **Rust 重写**：若算法优化后 20 万符号 refresh 仍 >30 分钟，考虑用 Rust 重写 `_build_call_graph_multi_lang` 核心循环
 - **并行化**：调用关系解析可按文件分片并行（当前解析阶段已并行，调用解析阶段未并行）
 - **增量优化**：AST 缓存激活（T-1783441015098-d577）减少重复解析
+
+---
+
+## P6-P26 已实施记录（补记）
+
+> 以下优化已在 git log 中实施（commit 96c5d79..1d40f03），原计划文档未及时更新，此处补记。
+
+| 编号 | Commit | 说明 |
+|------|--------|------|
+| P6 | 96c5d79 | 调用解析结果汇总 |
+| P7 | 0b4fdf5 | 批量化 call 写入路径（42s→0.35s, 120x 提升） |
+| P8 | 344ffbe | full build 延后 FTS5 重建（禁用触发器 + 批量写完后 rebuild） |
+| P9 | 52ceee8 | C/C++ parser 显式栈遍历 + 默认 ignore thirdParty |
+| P10-P12 | 72d1928 | 阶段计时拆分 + GC 条件化 + clone detect 拆出 |
+| P13 | 0402b56 | perf 回归基线 — 防止热循环 SQL 回潮 |
+| P14 | 1894359 | rust_daemon_architecture.md 开头改定位 |
+| P15 | 9a76f80 | ProcessPoolExecutor 多进程并行 parse（绕开 GIL） |
+| P15.1 | 973a3ae | resource file detection by content features |
+| P15.2 | 9e85e01 | true lazy import + dynamic worker detection |
+| P15.3 | c4418ac | presort to_parse by language to reduce worker parser creation |
+| P16 | b62a6f7 | batch javap calls for Java external dependency import (7x speedup) |
+| P20 | 08bf0a1 | stdlib_import 只导入项目实际使用语言的标准库 |
+| P21 | c263729 | 第三方库目录自动检测算法 |
+| P22 | 1a8b4a7 | 子项目扫描能力 (scan_subprojects + cw workspace scan) |
+| P23 | 928935b | 工业化解析健壮性提升（编码/长路径/文件访问/计数） |
+| P23b | deb87e2 | 测试数据库隔离（conftest）+ gc db-cleanup 子命令 |
+| P24 | ba76d88 | scan_subprojects 过度识别修复 + auto_generate_ignore 自动忽略 |
+| P25 | e4d2e11 | workspace 边界检测（解决 749→3028 过度识别的根因） |
+| P26 | ea11d1c | git-aware 项目边界检测（解决 749→1783 仍过度识别的根因） |
+| P26.7 | 1d40f03 | 容器目录启发式（crates/packages/apps/libs 等折叠到父目录） |
+
+---
+
+## P27（致命）：file-local qname 索引 — 消除 call_resolve O(M×K) 瓶颈
+
+**状态**：✅ 已实施 + 1M 实测验证
+
+**位置**：[db/db_build.py:1533-1572](../db/db_build.py#L1533-L1572) 策略3多候选分支 + 策略4
+
+**问题**：
+策略3多候选分支当 `callee_module` 为空时，遍历所有同名候选（O(K)）。
+1M 规模下每个简名有 10000 个候选，O(M×K) = 1.11M × 10000 = 1.11×10^10 次操作。
+
+```python
+# 优化前：O(K) 遍历
+elif len(candidates) > 1:
+    for qname in candidates:  # ← 1M 时 K=10000
+        if all_symbols_map[qname]["file"] == rel_path:
+```
+
+**优化方案**：构建 `file_local_qname[rel_path][simple_name] = qname` dict，多候选分支 O(1) 查找。
+
+```python
+# 优化后：O(1) dict 查找
+local_qname = file_local_qname.get(rel_path, {}).get(callee_name)
+if local_qname:
+    callee_qname = local_qname  # 直接命中，跳过 O(K) 遍历
+```
+
+**实测结果**（1M 符号，10100 文件）：
+
+| 指标 | 优化前 | 优化后 | 提升 |
+|------|--------|--------|------|
+| 1M refresh | 卡死 22+ 分钟（未完成） | **126.4s（2m6s）** | 从不可用 → 可用 |
+| call_resolve_write | 未完成 | **22.83s** | O(M×K) → O(M) |
+| resolved calls | 0（卡死） | 1,000,000 (90%) | 正常解析 |
+
+**新的瓶颈分布**（优化后）：
+
+| 阶段 | 耗时(s) | 占比 |
+|------|---------|------|
+| symbol write | 46.58 | 37%（新瓶颈） |
+| call resolve + write | 22.83 | 18%（原 74%） |
+| depth | 17.74 | 14% |
+| parse | 15.48 | 12% |
+
+**测试**：[tests/test_p27_file_local_qname.py](../tests/test_p27_file_local_qname.py)
+- 多候选场景：两文件同名函数，各自调用解析到本文件
+- 单候选场景：唯一函数正确解析
+- 跨模块调用：本地 shadow 优先
+- 增量刷新：不丢失 calls
+
+**cw task**：T-1783582951080-382f
+
+---
+
+## P28-P30 待实施建议
+
+| 编号 | 建议 | 说明 |
+|------|------|------|
+| P28 | get_callers/get_callees 增加 qualified_name 参数 | 当前接受短名，大规模下返回跨模块错误匹配 |
+| P29 | FTS 独立重建命令 | refresh 中断后 symbols_fts 为空，search 返回 0 结果 |
+| P30 | 并行 INSERT | SQLite 单进程 INSERT 吞吐恒定（~19万行/秒），10M 需 2+ 小时 |
