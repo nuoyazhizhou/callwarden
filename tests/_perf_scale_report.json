@@ -1,0 +1,231 @@
+[
+  {
+    "label": "100k",
+    "root": "tests/_gen/100k",
+    "db_path": "C:\\git_work\\callwarden\\tests\\_gen_db\\100k\\callwarden.db",
+    "steps": [],
+    "workspace_id": 1,
+    "rss_before_mb": 0.0,
+    "db_size_before_mb": 120.89453125,
+    "refresh": {
+      "skipped": true
+    },
+    "stats": {
+      "elapsed": 0.1915523999996367,
+      "symbols": 100000,
+      "files": 1010,
+      "calls": 111000,
+      "raw": {
+        "total_files": 1010,
+        "total_symbols": 100000,
+        "by_kind": {
+          "fn": 100000
+        },
+        "total_calls": 111000,
+        "cross_file_calls": 0,
+        "resolved_calls": 111000,
+        "commented": 0,
+        "depth_distribution": {
+          "0": 1000,
+          "1": 1000,
+          "2": 1000,
+          "3": 1000,
+          "4": 1000,
+          "5": 1000,
+          "6": 1000,
+          "7": 1000,
+          "8": 1000,
+          "9": 1000,
+          "10": 1000,
+          "11": 1000,
+          "12": 1000,
+          "13": 1000,
+          "14": 1000,
+          "15": 1000,
+          "16": 1000,
+          "17": 1000,
+          "18": 1000,
+          "19": 1000,
+          "20": 1000,
+          "21": 1000,
+          "22": 1000,
+          "23": 1000,
+          "24": 1000,
+          "25": 1000,
+          "26": 1000,
+          "27": 1000,
+          "28": 1000,
+          "29": 1000,
+          "30": 1000,
+          "31": 1000,
+          "32": 1000,
+          "33": 1000,
+          "34": 1000,
+          "35": 1000,
+          "36": 1000,
+          "37": 1000,
+          "38": 1000,
+          "39": 1000,
+          "40": 1000,
+          "41": 1000,
+          "42": 1000,
+          "43": 1000,
+          "44": 1000,
+          "45": 1000,
+          "46": 1000,
+          "47": 1000,
+          "48": 1000,
+          "49": 1000,
+          "50": 1000,
+          "51": 1000,
+          "52": 1000,
+          "53": 1000,
+          "54": 1000,
+          "55": 1000,
+          "56": 1000,
+          "57": 1000,
+          "58": 1000,
+          "59": 1000,
+          "60": 1000,
+          "61": 1000,
+          "62": 1000,
+          "63": 1000,
+          "64": 1000,
+          "65": 1000,
+          "66": 1000,
+          "67": 1000,
+          "68": 1000,
+          "69": 1000,
+          "70": 1000,
+          "71": 1000,
+          "72": 1000,
+          "73": 1000,
+          "74": 1000,
+          "75": 1000,
+          "76": 1000,
+          "77": 1000,
+          "78": 1000,
+          "79": 1000,
+          "80": 1000,
+          "81": 1000,
+          "82": 1000,
+          "83": 1000,
+          "84": 1000,
+          "85": 1000,
+          "86": 1000,
+          "87": 1000,
+          "88": 1000,
+          "89": 1000,
+          "90": 1000,
+          "91": 1000,
+          "92": 1000,
+          "93": 1000,
+          "94": 1000,
+          "95": 1000,
+          "96": 1000,
+          "97": 1000,
+          "98": 1000,
+          "99": 1000
+        },
+        "total_file_versions": 1010,
+        "current_files": 1010,
+        "unique_symbol_contents": 100,
+        "total_file_symbol_links": 100000,
+        "total_call_versions": 111000,
+        "multi_version_files": 0
+      }
+    },
+    "queries": {
+      "search": {
+        "term": "func_0",
+        "elapsed": 0.0072362999999313615,
+        "result_count": 50
+      },
+      "get_callers": {
+        "target": "func_1",
+        "elapsed": 0.007445799998095026,
+        "result_count": 1000
+      },
+      "get_callees": {
+        "target": "func_1",
+        "elapsed": 0.003004599999258062,
+        "result_count": 1000
+      },
+      "topo": {
+        "elapsed": 0.0763076999974146,
+        "count": 5000
+      },
+      "clone_detect": {
+        "skipped": true
+      }
+    },
+    "final": {
+      "db_size_mb": 120.89453125,
+      "rss_mb": 0.0
+    }
+  },
+  {
+    "label": "1m",
+    "root": "tests/_gen/1m",
+    "db_path": "C:\\git_work\\callwarden\\tests\\_gen_db\\1m\\callwarden.db",
+    "steps": [],
+    "workspace_id": 1,
+    "rss_before_mb": 0.0,
+    "db_size_before_mb": 761.05078125,
+    "refresh": {
+      "skipped": true
+    },
+    "stats": {
+      "elapsed": 1.906425000001036,
+      "symbols": 1000000,
+      "files": 10100,
+      "calls": 1110000,
+      "raw": {
+        "total_files": 10100,
+        "total_symbols": 1000000,
+        "by_kind": {
+          "fn": 1000000
+        },
+        "total_calls": 1110000,
+        "cross_file_calls": 110000,
+        "resolved_calls": 1110000,
+        "commented": 0,
+        "depth_distribution": {},
+        "total_file_versions": 10100,
+        "current_files": 10100,
+        "unique_symbol_contents": 100,
+        "total_file_symbol_links": 1000000,
+        "total_call_versions": 0,
+        "multi_version_files": 0
+      }
+    },
+    "queries": {
+      "search": {
+        "term": "func_0",
+        "elapsed": 0.0004760999981954228,
+        "result_count": 0
+      },
+      "get_callers": {
+        "target": "func_1",
+        "elapsed": 0.11181860000215238,
+        "result_count": 10000
+      },
+      "get_callees": {
+        "target": "func_1",
+        "elapsed": 0.06455340000320575,
+        "result_count": 10000
+      },
+      "topo": {
+        "elapsed": 0.24575459999687155,
+        "count": 5000
+      },
+      "clone_detect": {
+        "skipped": true
+      }
+    },
+    "final": {
+      "db_size_mb": 761.05078125,
+      "rss_mb": 0.0
+    }
+  }
+]
