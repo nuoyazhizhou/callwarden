@@ -53,6 +53,14 @@ def _find_callwarden_db() -> Optional[str]:
     return None
 
 
+def _connect_readonly(db_path: str) -> sqlite3.Connection:
+    """以 immutable=1 只读模式连接 SQLite，避免 WAL 模式下 -shm 文件创建被沙箱拦截"""
+    normalized = db_path.replace('\\', '/')
+    prefix = "file:" if normalized.startswith('/') else "file:///"
+    uri = f"{prefix}{normalized}?immutable=1"
+    return sqlite3.connect(uri, uri=True)
+
+
 @unittest.skipUnless(_has_rust_ext(), "callwarden_core 未安装")
 class TestGraphStoreLoad(unittest.TestCase):
     """测试从 SQLite 加载"""
@@ -108,7 +116,7 @@ class TestGraphStoreQueries(unittest.TestCase):
         cls.store = GraphStore()
         cls.store.load_from_sqlite(cls.db_path)
         # 从 SQLite 直接查一些已知数据用于断言
-        cls.conn = sqlite3.connect(cls.db_path)
+        cls.conn = _connect_readonly(cls.db_path)
 
     def test_get_symbol_exists(self):
         """get_symbol 应返回存在的符号"""
@@ -296,7 +304,7 @@ class TestGraphStorePerformance(unittest.TestCase):
         from callwarden_core import GraphStore
         cls.store = GraphStore()
         cls.store.load_from_sqlite(cls.db_path)
-        cls.py_conn = sqlite3.connect(cls.db_path)
+        cls.py_conn = _connect_readonly(cls.db_path)
         # 找 20 个有调用者的 callee_name 做批量测试
         cur = cls.py_conn.execute(
             "SELECT callee_name FROM calls WHERE callee_name != '' "

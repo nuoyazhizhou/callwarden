@@ -75,8 +75,16 @@ pub struct CallGraph {
     /// CSR 偏移：backward_offsets[i..i+1] 给出 callee_id=i 的边范围
     pub backward_offsets: Vec<usize>,
 
+    /// 未解析边索引：callee_name_idx → [forward_edges 中的位置]
+    /// 用于 get_callers 快速查找 callee_id=0 但 callee_name 匹配的边
+    /// 避免全扫 forward_edges（O(E) → O(k)，k 为同名未解析边数）
+    pub unresolved_by_name: HashMap<u32, Vec<usize>>,
+
     /// callee 名字池（edges 通过索引引用，避免重复分配 String）
     pub callee_names: Vec<String>,
+
+    /// 反向索引：callee_name → callee_name_idx（O(1) 查找，避免每次扫池）
+    pub callee_name_to_idx: HashMap<String, u32>,
 
     /// 顶层节点（无 caller 的函数，用于拓扑排序）
     pub roots: Vec<u32>,
@@ -108,8 +116,29 @@ impl GraphStore {
     /// 从 SQLite 数据库加载 symbols + calls 到内存
     /// 返回加载的符号数 / 边数
     fn load_from_sqlite(&mut self, db_path: &str) -> PyResult<(usize, usize)> {
-        let conn = Connection::open(db_path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("open db failed: {}", e)))?;
+        // 只读 + immutable 模式打开：
+        // - READ_ONLY: 不写入
+        // - immutable=1: 告知 SQLite 数据库不会被修改，跳过 -wal/-shm 文件创建
+        //   避免 WAL 模式下 rusqlite bundled SQLite 尝试创建 -shm 文件被沙箱拦截
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+            | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+        // 转换 Windows 路径为 file: URI（immutable=1 跳过 WAL/SHM）
+        let normalized = db_path.replace('\\', "/");
+        let uri = if normalized.starts_with("//") || normalized.starts_with("file:") {
+            // UNC 路径或已是 URI，直接加 immutable
+            if normalized.contains('?') {
+                format!("{}&immutable=1", normalized)
+            } else {
+                format!("{}?immutable=1", normalized)
+            }
+        } else {
+            // 普通路径转 file: URI
+            let prefix = if normalized.starts_with('/') { "file:" } else { "file:///" };
+            format!("{}{}?immutable=1", prefix, normalized)
+        };
+        let conn = Connection::open_with_flags(&uri, flags)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("open db failed: {} (uri={})", e, uri)))?;
 
         // 1. 加载符号（JOIN file_instances 拿 rel_path）
         let mut by_id = Vec::new();
@@ -226,6 +255,18 @@ impl GraphStore {
             }
         }
 
+        // 5. 构建未解析边索引：callee_name_idx → [forward_edges 位置]
+        // 用于 get_callers 快速查找 callee_id=0 但 callee_name 匹配的边
+        for (idx, edge) in calls.forward_edges.iter().enumerate() {
+            if edge.callee_id == 0 {
+                calls.unresolved_by_name.entry(edge.callee_name_idx).or_default().push(idx);
+            }
+        }
+
+        // 6. 构建反向索引：callee_name → callee_name_idx（O(1) 查找）
+        // 复用已构建的 name_idx_map，避免每次 get_callers 扫池
+        calls.callee_name_to_idx = name_idx_map;
+
         self.symbols = Some(symbols);
         self.calls = Some(calls);
 
@@ -234,6 +275,11 @@ impl GraphStore {
 
     /// 查询谁调用了这个函数（对齐 Python db_query.get_callers）
     /// 入参：callee_name（简名，对齐 Python 接口）
+    ///
+    /// B-P6 优化：O(E) 全扫 → O(degree + k)
+    /// - 已解析边：CSR backward_offsets 按 callee_id 定位（O(degree) per callee_id）
+    /// - 未解析边：unresolved_by_name 索引按 callee_name_idx 定位（O(k)，k=同名未解析边数）
+    /// - callee_name → callee_name_idx：O(1) 反向索引
     fn get_callers<'py>(&self, py: Python<'py>, callee_name: &str) -> PyResult<Vec<Bound<'py, PyAny>>> {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
@@ -242,30 +288,27 @@ impl GraphStore {
 
         let mut results = Vec::new();
 
-        // callee_name 可能匹配多个 symbol_id（同名函数）
+        // 1. O(1) 查找 callee_name_idx（反向索引，避免扫池）
+        let callee_name_idx = calls.callee_name_to_idx.get(callee_name).copied();
+
+        // 2. 已解析边：通过 CSR backward_offsets 按 callee_id 定位 O(degree)
+        //    callee_name 可能匹配多个 symbol_id（同名函数）
         let callee_ids: Vec<u32> = symbols.by_simple_name.get(callee_name)
             .cloned()
             .unwrap_or_default();
 
-        // 遍历所有边找匹配（PoC 简化：未解析边全扫，已解析边走 CSR）
-        // 优化点：后续可建 callee_name → [edge_idx] 索引
-        for edge in &calls.forward_edges {
-            let matched = if callee_ids.is_empty() {
-                // 无同名符号，只能靠 callee_name 匹配未解析边
-                edge.callee_id == 0 && calls.callee_names.get(edge.callee_name_idx as usize)
-                    .map(|n| n.as_str() == callee_name).unwrap_or(false)
-            } else if edge.callee_id != 0 {
-                // 已解析边，按 callee_id 匹配
-                callee_ids.contains(&edge.callee_id)
-            } else {
-                // 未解析边，按 callee_name 匹配
-                calls.callee_names.get(edge.callee_name_idx as usize)
-                    .map(|n| n.as_str() == callee_name).unwrap_or(false)
-            };
+        for callee_id in &callee_ids {
+            let start = calls.backward_offsets.get(*callee_id as usize)
+                .copied().unwrap_or(0);
+            let end = calls.backward_offsets.get(*callee_id as usize + 1)
+                .copied().unwrap_or(0);
 
-            if matched {
-                let caller_sym = symbols.by_id.get(edge.caller_id as usize);
-                if let Some(caller) = caller_sym {
+            for i in start..end {
+                let edge = &calls.backward_edges[i];
+                // backward_offsets[0] 区段是未解析边，跳过（由 step 3 处理）
+                if edge.callee_id == 0 { continue; }
+
+                if let Some(caller) = symbols.by_id.get(edge.caller_id as usize) {
                     let dict = PyDict::new(py);
                     dict.set_item("caller_name", &caller.name)?;
                     dict.set_item("caller_qualified", &caller.qualified_name)?;
@@ -274,6 +317,26 @@ impl GraphStore {
                     dict.set_item("call_line", edge.call_line)?;
                     dict.set_item("is_cross_file", edge.is_cross_file)?;
                     results.push(dict.into_any());
+                }
+            }
+        }
+
+        // 3. 未解析边：通过 unresolved_by_name 索引按 callee_name_idx 定位 O(k)
+        //    即使有已解析的同名符号，未解析边也应返回（对齐原逻辑）
+        if let Some(idx) = callee_name_idx {
+            if let Some(positions) = calls.unresolved_by_name.get(&idx) {
+                for &pos in positions {
+                    let edge = &calls.forward_edges[pos];
+                    if let Some(caller) = symbols.by_id.get(edge.caller_id as usize) {
+                        let dict = PyDict::new(py);
+                        dict.set_item("caller_name", &caller.name)?;
+                        dict.set_item("caller_qualified", &caller.qualified_name)?;
+                        dict.set_item("caller_file", &caller.file_rel_path)?;
+                        dict.set_item("caller_module", &caller.module_path)?;
+                        dict.set_item("call_line", edge.call_line)?;
+                        dict.set_item("is_cross_file", edge.is_cross_file)?;
+                        results.push(dict.into_any());
+                    }
                 }
             }
         }
@@ -634,13 +697,16 @@ fn build_csr(edges: Vec<CallEdge>, callee_names: Vec<String>, max_id: usize) -> 
         backward_offsets[i] += backward_offsets[i - 1];
     }
 
-    // roots 在 load_from_sqlite 完成后由调用方补充（需要 symbols 信息）
+    // callee_name_to_idx 在 load_from_sqlite 完成后由调用方补充
+    // roots 也在 load_from_sqlite 完成后由调用方补充（需要 symbols 信息）
     CallGraph {
         forward_edges,
         forward_offsets,
         backward_edges,
         backward_offsets,
+        unresolved_by_name: HashMap::new(),
         callee_names,
+        callee_name_to_idx: HashMap::new(),
         roots: Vec::new(),
     }
 }
