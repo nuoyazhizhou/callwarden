@@ -16,6 +16,7 @@ use pyo3::Bound;
 use pyo3::types::PyAny;
 use pyo3::BoundObject;  // P29: PyO3 0.29 需要 trait 导入才能用 into_bound()
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};  // P30: ParseResultPool 迭代器游标（Sync 安全）
 use rayon::prelude::*;
 use tree_sitter::{Language, Parser, Node};
 
@@ -546,6 +547,137 @@ fn parse_result_to_pydict<'py>(py: Python<'py>, r: &ParseResult) -> PyResult<Bou
 }
 
 // ============================================
+// P30: 流式回传 — ParseResultPool（Rust 侧持有结果，Python 按需读取）
+// ============================================
+
+/// Rust 侧持有的 parse 结果池。
+///
+/// 解决 P29 的内存问题：batch_parse_c_files 把所有结果转成 Python list 后，
+/// 主进程持有 10-14GB 的 dict（1.5M 符号场景）。
+///
+/// P30 改造：parse 结果存在 Rust 侧 Vec<ParseResult>，Python 通过 get_at(i)
+/// 按需读取单个文件，转成 Python dict 写 DB 后立即释放。
+/// 主进程任意时刻只持有 1 个文件的结果（~1MB），而非全部。
+///
+/// Python 用法：
+///   pool = batch_parse_c_files_pool(files, num_threads=8)
+///   for i in range(pool.len()):
+///       result = pool.get_at(i)  # 按需转 dict，写完 DB 即可释放
+///       db.write_file_result(result)
+///       del result  # 显式释放
+#[pyclass]
+pub struct ParseResultPool {
+    results: Vec<ParseResult>,
+    iter_idx: AtomicUsize,  // 迭代器游标（AtomicUsize 满足 Send+Sync，支持 for r in pool）
+}
+
+#[pymethods]
+impl ParseResultPool {
+    /// 获取池中结果数量
+    fn len(&self) -> usize {
+        self.results.len()
+    }
+
+    /// 按索引获取单个结果（转成 Python dict，零拷贝）
+    ///
+    /// 每次调用只转一个文件，主进程不持有全部结果。
+    /// 调用方应在写完 DB 后立即释放返回的 dict（del 或离开作用域）。
+    fn get_at<'py>(&self, py: Python<'py>, idx: usize) -> PyResult<Bound<'py, PyAny>> {
+        if idx >= self.results.len() {
+            return Err(pyo3::exceptions::PyIndexError::new_err(format!(
+                "index {} out of range (len={})", idx, self.results.len()
+            )));
+        }
+        parse_result_to_pydict(py, &self.results[idx])
+    }
+
+    /// 获取指定 abs_path 的结果（线性查找，适合测试/调试）
+    fn get_by_path<'py>(&self, py: Python<'py>, abs_path: &str) -> PyResult<Bound<'py, PyAny>> {
+        let idx = self.results.iter().position(|r| r.abs_path == abs_path)
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!(
+                "path not found: {}", abs_path
+            )))?;
+        parse_result_to_pydict(py, &self.results[idx])
+    }
+
+    /// 获取所有结果的统计信息（不转 dict，零内存开销）
+    fn stats(&self) -> (usize, usize, usize, usize) {
+        let total_symbols: usize = self.results.iter().map(|r| r.symbols.len()).sum();
+        let total_calls: usize = self.results.iter().map(|r| r.calls.len()).sum();
+        let total_errors: usize = self.results.iter().filter(|r| r.error.is_some()).count();
+        (self.results.len(), total_symbols, total_calls, total_errors)
+    }
+
+    /// Python 迭代器协议：__iter__ 重置游标并返回自身
+    ///
+    /// 重置游标后可重复迭代：
+    ///   pool = batch_parse_c_files_pool(files)
+    ///   for r in pool:   # 第一次遍历
+    ///       write_db(r)
+    ///   for r in pool:   # 第二次遍历，游标已重置
+    ///       ...
+    fn __iter__(slf: Py<Self>, py: Python<'_>) -> Py<Self> {
+        slf.borrow(py).iter_idx.store(0, Ordering::Relaxed);
+        slf
+    }
+
+    /// Python 迭代器协议：__next__ 按需转 dict 并推进游标
+    ///
+    /// 配合 __iter__ 实现 `for result in pool:` 流式遍历。
+    /// 每次返回一个文件的 dict，写完 DB 后由 Python GC 回收，
+    /// 主进程任意时刻只持有 1 个文件结果。
+    fn __next__<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let idx = self.iter_idx.load(Ordering::Relaxed);
+        if idx >= self.results.len() {
+            // 迭代结束，重置游标以便下次 for 循环能再次遍历
+            self.iter_idx.store(0, Ordering::Relaxed);
+            return Ok(None);
+        }
+        let result = parse_result_to_pydict(py, &self.results[idx])?;
+        self.iter_idx.store(idx + 1, Ordering::Relaxed);
+        Ok(Some(result))
+    }
+}
+
+/// 批量 parse C 文件，返回 Rust 侧持有的结果池（流式回传）
+///
+/// 与 batch_parse_c_files 的区别：
+/// - batch_parse_c_files：一次性转成 Python list，主进程持有全部结果
+/// - batch_parse_c_files_pool：结果存 Rust 侧，Python 按需 get_at(i) 读取
+///
+/// 内存对比（1.5M 符号场景）：
+/// - batch_parse_c_files：主进程 10-14GB（全部 dict）
+/// - batch_parse_c_files_pool：主进程 ~1MB（单个 dict）
+#[pyfunction]
+#[pyo3(signature = (files, num_threads=None))]
+fn batch_parse_c_files_pool(
+    files: Vec<(String, String)>,  // (abs_path, module_path)
+    num_threads: Option<usize>,
+) -> PyResult<ParseResultPool> {
+    // 配置 rayon 线程数
+    if let Some(n) = num_threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .ok();
+    }
+
+    // grammar 只加载一次，Arc 共享给所有线程
+    let c_parser = Arc::new(CParser::new());
+
+    // rayon 并行 parse：结果存 Rust 侧 Vec（不转 Python dict）
+    let results: Vec<ParseResult> = files
+        .par_iter()
+        .map(|(abs_path, module_path)| {
+            let parser = c_parser.clone();
+            parser.parse_file(abs_path, module_path)
+        })
+        .collect();
+
+    Ok(ParseResultPool { results, iter_idx: AtomicUsize::new(0) })
+}
+
+// ============================================
 // P28 保留：批量余弦相似度（原有功能）
 // ============================================
 
@@ -594,6 +726,9 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_parse_c_files, m)?)?;
     m.add_function(wrap_pyfunction!(parse_c_file, m)?)?;
     m.add_function(wrap_pyfunction!(core_version, m)?)?;
+    // P30: 流式回传 — Rust 侧持有结果，Python 按需读取
+    m.add_class::<ParseResultPool>()?;
+    m.add_function(wrap_pyfunction!(batch_parse_c_files_pool, m)?)?;
     // P28: 批量余弦相似度（保留）
     m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
     Ok(())
