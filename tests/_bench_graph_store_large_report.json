@@ -1,0 +1,130 @@
+[
+  {
+    "scale": "10K",
+    "target_symbols": 10000,
+    "data": {
+      "symbols": 10000,
+      "calls": 69789,
+      "files": 2000,
+      "db_size_mb": 9.4
+    },
+    "rust_load": {
+      "load_time_ms": 45.6,
+      "symbols": 10001,
+      "edges": 69789
+    },
+    "rust_query": {
+      "get_callers_x20_avg_us": 128.4,
+      "get_callees_x20_avg_us": 112.2,
+      "search_symbols_x5_avg_ms": 1.42,
+      "topo_order_ms": 0.4,
+      "topo_order_count": 1045
+    },
+    "python_query": {
+      "get_callers_x20_avg_us": 608.9,
+      "get_callees_x20_avg_us": 314.7,
+      "search_symbols_x5_avg_ms": 2.41
+    },
+    "speedup": {
+      "get_callers": 4.74,
+      "get_callees": 2.8,
+      "search_symbols": 1.7
+    }
+  },
+  {
+    "scale": "50K",
+    "target_symbols": 50000,
+    "data": {
+      "symbols": 50000,
+      "calls": 349198,
+      "files": 10000,
+      "db_size_mb": 49.5
+    },
+    "rust_load": {
+      "load_time_ms": 268.8,
+      "symbols": 50001,
+      "edges": 349198
+    },
+    "rust_query": {
+      "get_callers_x20_avg_us": 156.1,
+      "get_callees_x20_avg_us": 106.4,
+      "search_symbols_x5_avg_ms": 4.6,
+      "topo_order_ms": 2.3,
+      "topo_order_count": 5218
+    },
+    "python_query": {
+      "get_callers_x20_avg_us": 4643.1,
+      "get_callees_x20_avg_us": 328.0,
+      "search_symbols_x5_avg_ms": 18.91
+    },
+    "speedup": {
+      "get_callers": 29.74,
+      "get_callees": 3.08,
+      "search_symbols": 4.11
+    }
+  },
+  {
+    "scale": "100K",
+    "target_symbols": 100000,
+    "data": {
+      "symbols": 100000,
+      "calls": 699544,
+      "files": 20000,
+      "db_size_mb": 101.4
+    },
+    "rust_load": {
+      "load_time_ms": 589.0,
+      "symbols": 100001,
+      "edges": 699544
+    },
+    "rust_query": {
+      "get_callers_x20_avg_us": 143.7,
+      "get_callees_x20_avg_us": 106.4,
+      "search_symbols_x5_avg_ms": 8.35,
+      "topo_order_ms": 4.4,
+      "topo_order_count": 10418
+    },
+    "python_query": {
+      "get_callers_x20_avg_us": 5621.8,
+      "get_callees_x20_avg_us": 319.5,
+      "search_symbols_x5_avg_ms": 40.75
+    },
+    "speedup": {
+      "get_callers": 39.12,
+      "get_callees": 3.0,
+      "search_symbols": 4.88
+    }
+  },
+  {
+    "scale": "500K",
+    "target_symbols": 500000,
+    "data": {
+      "symbols": 500000,
+      "calls": 3499960,
+      "files": 100000,
+      "db_size_mb": 535.1
+    },
+    "rust_load": {
+      "load_time_ms": 3514.9,
+      "symbols": 500001,
+      "edges": 3499960
+    },
+    "rust_query": {
+      "get_callers_x20_avg_us": 255.3,
+      "get_callees_x20_avg_us": 113.2,
+      "search_symbols_x5_avg_ms": 40.17,
+      "topo_order_ms": 22.2,
+      "topo_order_count": 52006
+    },
+    "python_query": {
+      "get_callers_x20_avg_us": 11229.5,
+      "get_callees_x20_avg_us": 327.4,
+      "search_symbols_x5_avg_ms": 199.46
+    },
+    "speedup": {
+      "get_callers": 43.99,
+      "get_callees": 2.89,
+      "search_symbols": 4.97
+    }
+  }
+]

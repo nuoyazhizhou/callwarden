@@ -36,6 +36,10 @@ pub struct GraphSymbol {
     pub end_line: u32,
     pub depth: i32,
     pub file_rel_path: String,
+    /// 预计算的小写 name（避免 search_symbols 每次查询时 to_lowercase 分配）
+    pub name_lower: String,
+    /// 预计算的小写 qualified_name
+    pub qname_lower: String,
 }
 
 /// 符号表：紧凑存储 + 多维索引
@@ -155,12 +159,16 @@ impl GraphStore {
         ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare symbols query failed: {}", e)))?;
 
         let symbol_iter = stmt.query_map([], |row| {
+            let name: String = row.get::<_, String>(3)?;
+            let qname: String = row.get::<_, String>(4)?;
             Ok(GraphSymbol {
                 id: row.get::<_, i64>(0)? as u32,
                 file_instance_id: row.get::<_, i64>(1)? as u32,
                 kind: row.get::<_, String>(2)?,
-                name: row.get::<_, String>(3)?,
-                qualified_name: row.get::<_, String>(4)?,
+                name_lower: name.to_lowercase(),
+                qname_lower: qname.to_lowercase(),
+                name,
+                qualified_name: qname,
                 module_path: row.get::<_, String>(5)?,
                 start_line: row.get::<_, i64>(6)? as u32,
                 end_line: row.get::<_, i64>(7)? as u32,
@@ -182,6 +190,7 @@ impl GraphStore {
                     name: String::new(), qualified_name: String::new(),
                     module_path: String::new(), start_line: 0, end_line: 0,
                     depth: -1, file_rel_path: String::new(),
+                    name_lower: String::new(), qname_lower: String::new(),
                 });
             }
             by_id[id as usize] = sym;
@@ -426,16 +435,14 @@ impl GraphStore {
         let query_lower = query.to_lowercase();
         let mut results = Vec::new();
 
-        // PoC: 遍历 by_id，子串匹配 name 或 qualified_name
-        // 优化点：后续上 FTS5 trigram 或 SuffixIndex
+        // 遍历 by_id，用预计算的 name_lower/qname_lower 做子串匹配
+        // 避免每次查询时 to_lowercase 分配（O(N) 扫描但零分配）
         for sym in &symbols.by_id {
-            if sym.id == 0 && sym.name.is_empty() { continue; }  // 跳过空槽位
+            if sym.id == 0 && sym.name.is_empty() { continue; }
             if let Some(k) = kind {
                 if sym.kind != k { continue; }
             }
-            let name_match = sym.name.to_lowercase().contains(&query_lower);
-            let qname_match = sym.qualified_name.to_lowercase().contains(&query_lower);
-            if name_match || qname_match {
+            if sym.name_lower.contains(&query_lower) || sym.qname_lower.contains(&query_lower) {
                 let dict = PyDict::new(py);
                 dict.set_item("id", sym.id)?;
                 dict.set_item("name", &sym.name)?;
