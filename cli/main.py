@@ -212,6 +212,8 @@ _MAIN_HELP_GROUPS = [
         ("workspace register <NAME> <ROOT>", "cli.messages.help_workspace_register"),
         ("workspace set <ID_OR_NAME>", "cli.messages.help_workspace_set"),
         ("workspace delete <ID_OR_NAME>", "cli.messages.help_workspace_delete"),
+        ("workspace scan [<DIR>]", "cli.messages.help_workspace_scan"),
+        ("workspace generate-ignore [<DIR>] [--apply]", "cli.messages.help_workspace_generate_ignore"),
         ("refresh all | <paths> | --watch", "cli.messages.help_refresh"),
         ("stats", "cli.messages.help_stats"),
         ("status", "cli.messages.help_status"),
@@ -5241,6 +5243,15 @@ def _handle_workspace(args, db):
     scan_p = sub.add_parser("scan", help=t("cli.messages.workspace_action_scan", default="Scan directory for subprojects"))
     scan_p.add_argument("dir", nargs="?", default=".", help="Directory to scan (default: current)")
     scan_p.add_argument("--register", action="store_true", help="Register all found projects as workspaces")
+    scan_p.add_argument("--include-all", action="store_true",
+                       help="Include non-real subprojects (tests/fixtures/npm/examples etc)")
+
+    gen_ignore_p = sub.add_parser("generate-ignore",
+                                   help="Auto-generate .callwardenignore based on project characteristics")
+    gen_ignore_p.add_argument("dir", nargs="?", default=".",
+                              help="Directory to scan (default: current workspace root)")
+    gen_ignore_p.add_argument("--apply", action="store_true",
+                              help="Actually write .callwardenignore (default: dry-run preview)")
 
     opts = parser.parse_args(args)
 
@@ -5294,7 +5305,7 @@ def _handle_workspace(args, db):
         if not os.path.isdir(scan_dir):
             print(t("cli.messages.workspace_scan_not_dir", path=scan_dir))
             return True
-        projects = scan_subprojects(scan_dir)
+        projects = scan_subprojects(scan_dir, skip_non_real=not opts.include_all)
         print(t("cli.messages.workspace_scan_found", count=len(projects)))
         # 按语言统计
         lang_stats: dict = {}
@@ -5319,6 +5330,44 @@ def _handle_workspace(args, db):
                 except Exception:
                     pass
             print(t("cli.messages.workspace_scan_registered", count=registered))
+        return True
+
+    if opts.action == "generate-ignore":
+        from ..config import auto_generate_ignore
+        scan_dir = os.path.abspath(opts.dir)
+        if not os.path.isdir(scan_dir):
+            print(f"Error: {scan_dir} is not a directory")
+            return True
+
+        dry_run = not opts.apply
+        mode = "DRY RUN (preview)" if dry_run else "APPLY (will write)"
+        print(f"Auto-generate .callwardenignore  [{mode}]")
+        print(f"  Target: {scan_dir}")
+        print()
+
+        result = auto_generate_ignore(scan_dir, dry_run=dry_run)
+
+        if result["written"]:
+            print(f"✓ Written to: {result['ignore_file']}")
+        else:
+            print(f"Would write to: {result['ignore_file']}")
+
+        print(f"  New patterns:     {len(result['new_patterns'])}")
+        print(f"  Existing patterns: {len(result['existing_patterns'])}")
+        print(f"  Default covered:   {len(result['default_covered'])} (built-in, not listed)")
+        print()
+
+        if result["new_patterns"]:
+            print("New patterns to add:")
+            for p in result["new_patterns"]:
+                print(f"  {p}")
+            print()
+
+        if not dry_run and not result["new_patterns"]:
+            print("No new patterns needed (all covered by default baseline or existing rules).")
+        elif dry_run and result["new_patterns"]:
+            print("Run with --apply to write these rules to .callwardenignore")
+
         return True
 
     return True

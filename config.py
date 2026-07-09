@@ -187,8 +187,65 @@ _SUBPROJECT_SKIP_DIRS = frozenset({
     ".repo", ".next", "out", "bin", "obj",
 })
 
+# 非真实子项目目录：含 manifest 但不是真实子项目（测试 fixture / 发布包 / 示例 / 评估 / 文档）
+# 这些目录下的 package.json / Cargo.toml 等是测试数据或发布配置，不是真实项目根
+# 数据来源：749 仓库基准测试，4318 个"子项目"中 3700+ 是这些目录下的假阳性
+_NON_REAL_PROJECT_DIRS = frozenset({
+    # 测试 fixture（最大假阳性来源，fallow-rs 一个仓库就有 360 个 tests/fixtures）
+    "tests", "test", "__tests__", "__fixtures__", "test-fixtures",
+    "fixtures", "mocks", "stubs", "testdata", "test-data",
+    "conformance", "conformance-tests",
+    # 发布包（npm/darwin-arm64, npm/linux-x64-gnu 等平台特定 manifest）
+    "npm",
+    # 示例代码
+    "examples", "example", "samples", "sample", "demos", "demo",
+    # 评估
+    "evals", "eval", "evaluation", "evaluations", "benchmarks",
+    # 文档站点
+    "docs", "doc", "website", "site",
+})
 
-def scan_subprojects(root_dir: str, max_depth: int = 5) -> List[Dict[str, str]]:
+# monorepo 真实子项目目录名（这些目录下的子目录是真实子项目）
+_MONOREPO_PKG_DIRS = frozenset({
+    "packages", "crates", "apps", "libs", "sdks",
+    "modules", "services", "plugins", "extensions",
+})
+
+
+def _parse_gitmodules(repo_root: str) -> set:
+    """解析 .gitmodules 文件，返回 submodule 路径集合
+
+    Git submodule 的标准识别方式：.gitmodules 文件定义了 submodule 的 path。
+    submodule 目录下的 .git 是文件（指向父仓库 .git/modules/），不是目录。
+
+    Args:
+        repo_root: 仓库根目录
+
+    Returns:
+        submodule 路径集合（相对 repo_root 的路径，用 / 分隔）
+    """
+    gm_path = os.path.join(repo_root, ".gitmodules")
+    if not os.path.isfile(gm_path):
+        return set()
+
+    paths = set()
+    try:
+        text = read_file_text(gm_path)
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("path"):
+                # 格式: path = submodule/path
+                parts = line.split("=", 1)
+                if len(parts) == 2:
+                    sm_path = parts[1].strip()
+                    paths.add(sm_path.replace("\\", "/"))
+    except Exception:
+        pass
+    return paths
+
+
+def scan_subprojects(root_dir: str, max_depth: int = 5,
+                     skip_non_real: bool = True) -> List[Dict[str, str]]:
     """向下扫描目录，识别所有子项目根（基于清单文件）
 
     与 detect_project_root（向上找）互补：本函数向下递归发现子项目。
@@ -197,13 +254,18 @@ def scan_subprojects(root_dir: str, max_depth: int = 5) -> List[Dict[str, str]]:
     算法：
     1. os.walk 递归遍历目录树
     2. 跳过第三方库/VCS/构建产物目录（性能优化）
-    3. 当一个目录包含清单文件（go.mod/Cargo.toml/package.json 等）时，
+    3. skip_non_real=True 时，跳过测试 fixture / 发布包 / 示例 / 评估 / 文档目录
+       这些目录含 manifest 但不是真实子项目（如 tests/fixtures/angular-component-rollup
+       下的 package.json 是测试数据）
+    4. 当一个目录包含清单文件（go.mod/Cargo.toml/package.json 等）时，
        标记为项目根，记录项目名、语言、清单文件
-    4. 识别到项目根后继续扫描子目录（支持 monorepo 嵌套子项目）
+    5. 利用 .gitmodules 识别 submodule 边界，submodule 目录不作为子项目重复识别
 
     Args:
         root_dir: 扫描根目录
         max_depth: 最大递归深度（相对 root_dir 的目录层数），默认 5
+        skip_non_real: 是否跳过非真实子项目目录（tests/fixtures/npm/examples/evals/
+                      benchmarks/docs 等），默认 True。设为 False 恢复旧行为
 
     Returns:
         项目列表，每项含 root/rel_path/name/lang/manifest 字段
@@ -211,20 +273,64 @@ def scan_subprojects(root_dir: str, max_depth: int = 5) -> List[Dict[str, str]]:
     root_dir = os.path.abspath(root_dir)
     projects: List[Dict[str, str]] = []
 
-    # P23.5: onerror 回调，跳过不可访问的目录（如文件锁、权限不足、路径过长）
+    # P23.5: onerror 回调，跳过不可访问的目录
     def _scan_onerror(err):
         pass
+
+    # 跟踪每个仓库的 submodule 路径（避免重复解析 .gitmodules）
+    _submodule_cache: Dict[str, set] = {}
+
+    def _get_submodule_paths(repo_root: str) -> set:
+        """获取仓库的 submodule 路径（带缓存）"""
+        if repo_root not in _submodule_cache:
+            _submodule_cache[repo_root] = _parse_gitmodules(repo_root)
+        return _submodule_cache[repo_root]
+
+    def _find_repo_root(current_dir: str) -> Optional[str]:
+        """从 current_dir 向上找最近的 .git 目录或 .gitmodules 文件所在目录"""
+        d = current_dir
+        while d and d != os.path.dirname(d):
+            if os.path.isdir(os.path.join(d, ".git")) or os.path.isfile(os.path.join(d, ".gitmodules")):
+                return d
+            d = os.path.dirname(d)
+        return None
 
     for root, dirs, files in os.walk(root_dir, onerror=_scan_onerror):
         # 跳过第三方/VCS/构建目录
         dirs[:] = [d for d in dirs if d not in _SUBPROJECT_SKIP_DIRS and not d.startswith(".")]
 
+        # skip_non_real: 跳过非真实子项目目录
+        if skip_non_real:
+            # 检查路径中任何一级目录名是否在非真实列表中
+            # 如 repo/tests/fixtures/demo → parts 含 "tests" → 跳过整个子树
+            # 如 repo/packages/core → parts 不含非真实目录 → 保留
+            rel = os.path.relpath(root, root_dir).replace("\\", "/")
+            if rel != ".":
+                parts = rel.split("/")
+                if any(p in _NON_REAL_PROJECT_DIRS for p in parts):
+                    dirs[:] = []
+                    continue
+            # 同时从 dirs 中移除非真实目录，防止进入
+            dirs[:] = [d for d in dirs if d not in _NON_REAL_PROJECT_DIRS]
+
         # 深度限制
-        rel = os.path.relpath(root, root_dir)
-        depth = 0 if rel == "." else rel.count(os.sep)
+        rel = os.path.relpath(root, root_dir).replace("\\", "/")
+        depth = 0 if rel == "." else rel.count("/")
         if depth > max_depth:
             dirs[:] = []
             continue
+
+        # 跳过 submodule 目录（git submodule 是独立仓库，不作为子项目重复识别）
+        if skip_non_real:
+            repo_root = _find_repo_root(root)
+            if repo_root and repo_root != root:
+                sm_paths = _get_submodule_paths(repo_root)
+                if sm_paths:
+                    rel_to_repo = os.path.relpath(root, repo_root).replace("\\", "/")
+                    if rel_to_repo in sm_paths:
+                        # 当前目录是 submodule，跳过（不识别为子项目）
+                        dirs[:] = []
+                        continue
 
         # 检查是否是项目根（含清单文件）
         for manifest, lang in PROJECT_MANIFESTS.items():
@@ -240,6 +346,212 @@ def scan_subprojects(root_dir: str, max_depth: int = 5) -> List[Dict[str, str]]:
                 break  # 一个目录只取第一个匹配的清单文件
 
     return projects
+
+
+# ============================================
+# 自动 .callwardenignore 生成（基于 749 仓库基准测试总结）
+# ============================================
+
+# 默认基线规则（与 db_build.py _load_ignore_patterns 的 default_ignores 保持一致）
+# 这些规则已硬编码内置，auto_generate_ignore 不会重复生成
+_DEFAULT_IGNORE_PATTERNS = frozenset({
+    ".git/", "node_modules/", ".next/",
+    "__pycache__/", ".venv/", "venv/", "env/", ".tox/", "*.egg-info/",
+    "target/", "dist/", "build/", "out/", "output/", "outputs/",
+    "obj/", "bin/", "rootfs/", "staging/", "sysroot/", "ccache/",
+    "prebuilt/", "prebuilts/", "blob/", "toolchain/", "toolchains/",
+    "ndk/", "jdk/",
+    "thirdParty/", "third_party/", "vendor/",
+    "autogen/", "auto_gen/", "generated/", "gen/", "generated_src/",
+    "proto_gen/", "protobuf_gen/", "grpc_gen/", "moc/",
+    "*.pb.cc", "*.pb.h", "*.pb.go",
+    "*_pb2.py", "*_pb2.pyi", "*_pb2_grpc.py",
+    "*.grpc.cc", "*.grpc.h",
+    "moc_*.cpp", "ui_*.h", "qrc_*.cpp",
+    "*.pyc", "*.pyo",
+    ".repo/",
+})
+
+# 已知第三方库目录名（与 db_build.py _THIRD_PARTY_DIR_NAMES 保持一致）
+_KNOWN_THIRD_PARTY_DIRS = frozenset({
+    "node_modules", "vendor", "third_party", "thirdparty", "3rdparty",
+    "bower_components", "jspm_packages", "web_modules",
+    ".m2", ".gradle", "ivy",
+    "deps", "deps_packages",
+})
+
+# 大文件阈值（> 500KB 的源码文件通常是打包后的第三方库）
+_AUTO_LARGE_FILE_THRESHOLD = 500 * 1024
+# 目录内大文件数量阈值
+_AUTO_LARGE_FILE_COUNT_THRESHOLD = 3
+# minified 文件特征
+_AUTO_MINIFIED_MARK = ".min."
+
+
+def auto_generate_ignore(project_root: str, dry_run: bool = True) -> Dict:
+    """自动扫描项目，生成/更新 .callwardenignore 规则
+
+    基于 749 仓库基准测试总结的文件特征，自动检测需要忽略的目录和文件：
+    1. 第三方库目录（node_modules/vendor 等已知 + 大文件密度 + minified）
+    2. 测试 fixture 目录（tests/fixtures/、__fixtures__/ 等）
+    3. 发布包目录（npm/ 下的平台特定 manifest）
+    4. 示例/评估/文档目录（examples/、evals/、benchmarks/、docs/）
+    5. 资源文件目录（hex_array/lvgl_resource）
+    6. 大文件（> 500KB 的单个源码文件）
+
+    生成的规则只包含项目特有的，不重复默认基线（.git/ node_modules/ build/ 等）。
+    合并到现有 .callwardenignore 时保留用户手写规则。
+
+    Args:
+        project_root: 项目根目录
+        dry_run: True 只返回建议不写入文件，False 实际写入/更新 .callwardenignore
+
+    Returns:
+        {
+            "ignore_file": .callwardenignore 路径,
+            "new_patterns": [新发现的规则],
+            "existing_patterns": [已存在的规则],
+            "default_covered": [默认基线已覆盖的规则],
+            "written": bool,  # 是否实际写入文件
+        }
+    """
+    project_root = os.path.abspath(project_root)
+    ignore_file = os.path.join(project_root, ".callwardenignore")
+
+    # 加载现有 .callwardenignore 规则（用户手写）
+    existing_patterns = set()
+    if os.path.isfile(ignore_file):
+        try:
+            text = read_file_text(ignore_file)
+            for line in text.splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    existing_patterns.add(line)
+        except Exception:
+            pass
+
+    # 新发现的规则
+    new_patterns = []  # 有序列表，保持可读性
+    new_set = set()
+    # 默认基线已覆盖的规则（不生成）
+    default_covered = set()
+
+    def _add_pattern(pattern: str, reason: str):
+        """添加规则（去重，跳过默认基线已覆盖的）"""
+        # 去掉末尾 / 比较
+        bare = pattern.rstrip("/")
+        if not bare:
+            return
+        if pattern in existing_patterns or bare in existing_patterns:
+            return  # 用户已手写
+        if pattern in new_set or bare in new_set:
+            return  # 已添加
+        # 检查是否被默认基线覆盖
+        if pattern in _DEFAULT_IGNORE_PATTERNS or bare in _DEFAULT_IGNORE_PATTERNS:
+            default_covered.add(pattern)
+            return
+        new_patterns.append(pattern)
+        new_set.add(pattern)
+
+    # 扫描项目目录树（深度限制 3 层，性能优化）
+    for root, dirs, files in os.walk(project_root, onerror=lambda e: None):
+        rel = os.path.relpath(root, project_root)
+        # 标准化为正斜杠（.callwardenignore 格式要求）
+        rel = rel.replace("\\", "/")
+        depth = 0 if rel == "." else rel.count("/")
+        if depth > 3:
+            dirs[:] = []
+            continue
+
+        # 跳过 .git/.callwardenignore 已覆盖的目录
+        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _KNOWN_THIRD_PARTY_DIRS]
+
+        dir_name = os.path.basename(root)
+
+        # 1. 检测第三方库目录（已知目录名）
+        if dir_name in _KNOWN_THIRD_PARTY_DIRS:
+            _add_pattern(f"{dir_name}/", "known_third_party")
+            dirs[:] = []
+            continue
+
+        # 2. 检测第三方库目录（大文件密度 / minified）
+        if depth <= 2 and dirs or files:
+            large_files = 0
+            has_minified = False
+            for f in files:
+                if _AUTO_MINIFIED_MARK in f.lower():
+                    has_minified = True
+                    continue
+                ext = os.path.splitext(f)[1].lower()
+                if ext in (".js", ".ts", ".py", ".rb", ".go", ".rs", ".java", ".c", ".cpp", ".h"):
+                    f_path = os.path.join(root, f)
+                    try:
+                        if os.path.getsize(f_path) > _AUTO_LARGE_FILE_THRESHOLD:
+                            large_files += 1
+                    except OSError:
+                        pass
+
+            if large_files >= _AUTO_LARGE_FILE_COUNT_THRESHOLD or has_minified:
+                if rel != ".":
+                    _add_pattern(f"{rel}/", "large_files_or_minified")
+
+        # 3. 检测测试 fixture 目录
+        if dir_name in ("fixtures", "__fixtures__", "test-fixtures", "testdata", "test-data", "mocks", "stubs"):
+            if rel != ".":
+                _add_pattern(f"{rel}/", "test_fixture")
+            dirs[:] = []
+            continue
+
+        # 4. 检测发布包目录（npm/ 下的平台特定 manifest）
+        if dir_name == "npm" and depth <= 2:
+            _add_pattern(f"{rel}/", "npm_publish_packages")
+            dirs[:] = []
+            continue
+
+        # 5. 检测示例/评估目录
+        if dir_name in ("examples", "example", "samples", "sample", "demos", "demo"):
+            if rel != ".":
+                _add_pattern(f"{rel}/", "examples")
+            dirs[:] = []
+            continue
+        if dir_name in ("evals", "eval", "evaluation", "benchmarks"):
+            if rel != ".":
+                _add_pattern(f"{rel}/", "evals_benchmarks")
+            dirs[:] = []
+            continue
+
+        # 6. 检测文档站点目录
+        if dir_name in ("docs", "doc", "website", "site") and depth <= 2:
+            if rel != ".":
+                _add_pattern(f"{rel}/", "docs_site")
+
+    written = False
+    if not dry_run and new_patterns:
+        # 合并写入：保留用户手写规则 + 追加新规则
+        existing_lines = []
+        if os.path.isfile(ignore_file):
+            existing_lines = read_file_text(ignore_file).splitlines()
+
+        # 生成追加内容
+        append_lines = ["", "# === auto-generated by cw workspace generate-ignore ==="]
+        append_lines.append(f"# Total: {len(new_patterns)} new patterns")
+        append_lines.append("# (default baseline like .git/ node_modules/ build/ are built-in, not listed here)")
+        append_lines.append("")
+        for p in new_patterns:
+            append_lines.append(p)
+        append_lines.append("# === end auto-generated ===")
+
+        content = "\n".join(existing_lines + append_lines) + "\n"
+        atomic_write_file(ignore_file, content)
+        written = True
+
+    return {
+        "ignore_file": ignore_file,
+        "new_patterns": new_patterns,
+        "existing_patterns": sorted(existing_patterns),
+        "default_covered": sorted(default_covered),
+        "written": written,
+    }
 
 
 # 多语言配置：统一管理各语言的扩展名、注释符号、入口文件规则
@@ -526,7 +838,7 @@ def to_long_path(path: str) -> str:
     (src/main/java/com/xxx/xxx/...)，Windows 默认不支持。
     添加 \\\\?\\ 前缀后，Windows API 支持最长 32767 字符路径。
 
-    仅在 Windows 且路径长度可能超限时添加。\\?\ 前缀要求：
+    仅在 Windows 且路径长度可能超限时添加。\\\\?\\ 前缀要求：
     - 绝对路径
     - 不含 .. 或 .
     - 反斜杠分隔
