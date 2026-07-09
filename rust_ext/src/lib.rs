@@ -20,6 +20,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};  // P30: ParseResultPool 迭代�
 use rayon::prelude::*;
 use tree_sitter::{Language, Parser, Node};
 
+mod multi_lang;
+
 // ============================================
 // P29: 数据结构定义
 // ============================================
@@ -436,7 +438,7 @@ fn extract_calls_from_function(
 // P29: 工具函数
 // ============================================
 
-fn find_child<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
+pub(crate) fn find_child<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
     // tree-sitter 0.26: cursor 必须在循环外创建
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -448,7 +450,7 @@ fn find_child<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
     None
 }
 
-fn node_text<'a>(node: &Node<'a>, source: &'a [u8]) -> &'a str {
+pub(crate) fn node_text<'a>(node: &Node<'a>, source: &'a [u8]) -> &'a str {
     let start = node.start_byte();
     let end = node.end_byte();
     std::str::from_utf8(&source[start..end]).unwrap_or("")
@@ -456,7 +458,7 @@ fn node_text<'a>(node: &Node<'a>, source: &'a [u8]) -> &'a str {
 
 /// P32: 构造限定名（qualified_name）
 /// 优先级：parent_qualified > module_path > 裸名
-fn make_qualified(module_path: &str, parent_qualified: &str, name: &str) -> String {
+pub(crate) fn make_qualified(module_path: &str, parent_qualified: &str, name: &str) -> String {
     if !parent_qualified.is_empty() {
         format!("{}.{}", parent_qualified, name)
     } else if !module_path.is_empty() {
@@ -467,7 +469,7 @@ fn make_qualified(module_path: &str, parent_qualified: &str, name: &str) -> Stri
 }
 
 /// P32: 查找指定 kind 的最后一个命名子节点（用于 typedef 提取最后一个 type_identifier）
-fn find_last_child_by_kind<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
+pub(crate) fn find_last_child_by_kind<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> {
     let mut cursor = node.walk();
     let mut last: Option<Node<'a>> = None;
     for child in node.named_children(&mut cursor) {
@@ -479,7 +481,7 @@ fn find_last_child_by_kind<'a>(node: &Node<'a>, kind: &str) -> Option<Node<'a>> 
 }
 
 /// 简单哈希（PoC 用，生产应换 SHA-256）
-fn blake_hash(data: &[u8]) -> u64 {
+pub(crate) fn blake_hash(data: &[u8]) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
@@ -549,7 +551,7 @@ fn core_version() -> &'static str {
 }
 
 /// 将 ParseResult 转为 Python dict（零拷贝：Rust String 直接转 PyString）
-fn parse_result_to_pydict<'py>(py: Python<'py>, r: &ParseResult) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn parse_result_to_pydict<'py>(py: Python<'py>, r: &ParseResult) -> PyResult<Bound<'py, PyAny>> {
     let dict = PyDict::new(py);
 
     dict.set_item("abs_path", r.abs_path.clone())?;
@@ -628,8 +630,8 @@ fn parse_result_to_pydict<'py>(py: Python<'py>, r: &ParseResult) -> PyResult<Bou
 ///       del result  # 显式释放
 #[pyclass]
 pub struct ParseResultPool {
-    results: Vec<ParseResult>,
-    iter_idx: AtomicUsize,  // 迭代器游标（AtomicUsize 满足 Send+Sync，支持 for r in pool）
+    pub(crate) results: Vec<ParseResult>,
+    pub(crate) iter_idx: AtomicUsize,  // 迭代器游标（AtomicUsize 满足 Send+Sync，支持 for r in pool）
 }
 
 #[pymethods]
@@ -790,6 +792,11 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // P30: 流式回传 — Rust 侧持有结果，Python 按需读取
     m.add_class::<ParseResultPool>()?;
     m.add_function(wrap_pyfunction!(batch_parse_c_files_pool, m)?)?;
+    // P31: 多语言 parser（config 驱动框架，支持 11 种语言）
+    m.add_function(wrap_pyfunction!(multi_lang::parse_file_lang, m)?)?;
+    m.add_function(wrap_pyfunction!(multi_lang::batch_parse_files_lang, m)?)?;
+    m.add_function(wrap_pyfunction!(multi_lang::batch_parse_files_lang_pool, m)?)?;
+    m.add_function(wrap_pyfunction!(multi_lang::supported_languages, m)?)?;
     // P28: 批量余弦相似度（保留）
     m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
     Ok(())
