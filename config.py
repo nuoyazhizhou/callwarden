@@ -8,6 +8,7 @@ config.py
 import codecs
 import hashlib
 import os
+import re
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
@@ -195,6 +196,13 @@ _NON_REAL_PROJECT_DIRS = frozenset({
     "tests", "test", "__tests__", "__fixtures__", "test-fixtures",
     "fixtures", "mocks", "stubs", "testdata", "test-data",
     "conformance", "conformance-tests",
+    # 测试应用 / 端到端测试 / SDK 测试 / 集成测试（P25 新增）
+    "test_apps", "test-apps", "testapp",
+    "e2e", "e2e_tests", "e2e-tests",
+    "sdk_tests", "sdk-tests",
+    "integration_tests", "integration-tests", "integration_test",
+    # Conan 包测试 fixture（conan_recipes/recipes/xxx/all/test_package）
+    "test_package", "test-package",
     # 发布包（npm/darwin-arm64, npm/linux-x64-gnu 等平台特定 manifest）
     "npm",
     # 示例代码
@@ -244,6 +252,86 @@ def _parse_gitmodules(repo_root: str) -> set:
     return paths
 
 
+# ============================================
+# P25: workspace 边界检测（避免 workspace member 被识别成独立子项目）
+# ============================================
+
+# Cargo.toml 中 [workspace] section 的检测正则
+_CARGO_WORKSPACE_SECTION_RE = re.compile(r'^\s*\[workspace', re.MULTILINE)
+
+
+def _is_cargo_workspace(cargo_toml_path: str) -> bool:
+    """检测 Cargo.toml 是否是 Cargo workspace root（含 [workspace] section）
+
+    Cargo workspace 的 root Cargo.toml 含 [workspace] section，其 members
+    字段列出所有 workspace 成员的路径。member 本身的 Cargo.toml 是真实包，
+    但它们是 workspace 内部成员，不应作为独立子项目重复识别。
+
+    示例：
+        [workspace]
+        members = ["crates/types/app-types", "crates/logic/*"]
+
+    Args:
+        cargo_toml_path: Cargo.toml 文件绝对路径
+
+    Returns:
+        True 表示是 workspace root，应停止向下递归
+    """
+    try:
+        text = read_file_text(cargo_toml_path)
+        # 简单匹配 [workspace] 或 [workspace.dependencies] / [workspace.package]
+        return bool(_CARGO_WORKSPACE_SECTION_RE.search(text))
+    except Exception:
+        return False
+
+
+def _is_npm_workspace(package_json_path: str) -> bool:
+    """检测 package.json 是否是 npm/yarn workspace root（含 "workspaces" 字段）
+
+    npm/yarn/pnpm workspace root 的 package.json 含 "workspaces" 字段，
+    声明 workspace 成员的 glob 模式。member 是 workspace 内部包，
+    不应作为独立子项目重复识别。
+
+    示例：
+        {"workspaces": ["packages/*", "apps/*"]}
+
+    Args:
+        package_json_path: package.json 文件绝对路径
+
+    Returns:
+        True 表示是 workspace root，应停止向下递归
+    """
+    try:
+        import json
+        text = read_file_text(package_json_path)
+        data = json.loads(text)
+        if not isinstance(data, dict):
+            return False
+        # "workspaces" 字段存在即视为 workspace root
+        # 值可以是 list（npm/yarn）或 dict（pnpm 的 {packages: [...]}）
+        return "workspaces" in data
+    except Exception:
+        return False
+
+
+def _is_manifest_workspace_root(manifest_path: str, manifest_name: str) -> bool:
+    """检测 manifest 是否是 workspace root（多语言统一接口）
+
+    Args:
+        manifest_path: manifest 文件绝对路径
+        manifest_name: manifest 文件名（Cargo.toml / package.json）
+
+    Returns:
+        True 表示是 workspace root，应停止向下递归
+    """
+    if manifest_name == "Cargo.toml":
+        return _is_cargo_workspace(manifest_path)
+    if manifest_name == "package.json":
+        return _is_npm_workspace(manifest_path)
+    # go.work 本身就是 workspace 文件（不是 manifest），在 scan_subprojects 中单独处理
+    return False
+
+
 def scan_subprojects(root_dir: str, max_depth: int = 5,
                      skip_non_real: bool = True) -> List[Dict[str, str]]:
     """向下扫描目录，识别所有子项目根（基于清单文件）
@@ -260,6 +348,11 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
     4. 当一个目录包含清单文件（go.mod/Cargo.toml/package.json 等）时，
        标记为项目根，记录项目名、语言、清单文件
     5. 利用 .gitmodules 识别 submodule 边界，submodule 目录不作为子项目重复识别
+    6. P25: workspace 边界检测 —— Cargo.toml 含 [workspace] / package.json 含
+       "workspaces" / go.work 文件 → 识别为子项目后停止向下递归，
+       workspace member 不再作为独立子项目重复识别（这是 749 仓库识别成
+       3028 子项目的主要原因，guardrail3 一个仓库就有 11 个 workspace member
+       被错识别成独立 crate）
 
     Args:
         root_dir: 扫描根目录
@@ -333,8 +426,14 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
                         continue
 
         # 检查是否是项目根（含清单文件）
+        # P25: 同时检测 workspace 边界，workspace root 识别后停止向下递归
+        is_workspace_root = False
         for manifest, lang in PROJECT_MANIFESTS.items():
             if manifest in files:
+                manifest_abs = os.path.join(root, manifest)
+                # 检测此 manifest 是否是 workspace root
+                if skip_non_real and _is_manifest_workspace_root(manifest_abs, manifest):
+                    is_workspace_root = True
                 rel_path = norm_path(rel) if rel != "." else ""
                 projects.append({
                     "root": root,
@@ -344,6 +443,24 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
                     "manifest": manifest,
                 })
                 break  # 一个目录只取第一个匹配的清单文件
+
+        # P25: 检测 go.work 文件（Go workspace root，单独处理因为不是 PROJECT_MANIFESTS）
+        if not is_workspace_root and "go.work" in files:
+            is_workspace_root = True
+            rel_path = norm_path(rel) if rel != "." else ""
+            projects.append({
+                "root": root,
+                "rel_path": rel_path,
+                "name": os.path.basename(root) if rel != "." else os.path.basename(root_dir),
+                "lang": "go",
+                "manifest": "go.work",
+            })
+
+        # P25: workspace root 停止向下递归（member 不再作为独立子项目）
+        # 重要：这是减少 749→3028 过度识别的关键，避免 workspace member 被重复识别
+        if is_workspace_root:
+            dirs[:] = []
+            continue
 
     return projects
 
