@@ -21,6 +21,7 @@ use rayon::prelude::*;
 use tree_sitter::{Language, Parser, Node};
 
 mod multi_lang;
+mod graph;
 
 // ============================================
 // P29: 数据结构定义
@@ -799,5 +800,7 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(multi_lang::supported_languages, m)?)?;
     // P28: 批量余弦相似度（保留）
     m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
+    // B-PoC: 图存储 + 查询下沉（CSR 邻接表 + 内存索引 + rusqlite 加载）
+    m.add_class::<graph::GraphStore>()?;
     Ok(())
 }
