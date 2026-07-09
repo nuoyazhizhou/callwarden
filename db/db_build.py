@@ -51,30 +51,67 @@ def _init_worker_parsers():
 
 
 # 每个 worker 进程预估内存上限（MB）
-# Python 解释器 ~30MB + tree-sitter grammar ~30MB + parse 缓存 ~20MB
-_WORKER_MEM_BUDGET_MB = 150
+# P28 修正：原 150MB 只算 parser 加载（Python ~30MB + grammar ~30MB + 缓存 ~20MB），
+# 完全未算 tree-sitter AST 解析峰值内存。实测 1MB .c 文件 parse 时 AST 可达 1-2GB，
+# 即使过滤了 LVGL 资源，普通大文件（200KB .c）也产生 200-500MB AST 峰值。
+# 真实预算 = parser 加载（~80MB）+ AST 峰值（大文件 500MB-1GB）→ 取 800MB 保守值
+_WORKER_MEM_BUDGET_MB = 800
 # 保留给宿主机/其他进程的内存下限（MB），避免把宿主机搞崩溃
-_HOST_RESERVED_MEM_MB = 2048  # 2GB
+# P28 修正：原 2GB 太激进，32GB 机器 OS+IDE+浏览器常态占用 10-15GB，留 4GB 缓冲更安全
+_HOST_RESERVED_MEM_MB = 4096  # 4GB
 # worker 数硬上限（即使资源充足也不超过，避免进程调度开销）
 _MAX_WORKERS_CAP = 8
 # worker 数硬下限
 _MIN_WORKERS = 1
 
+# 主进程持有 parse 结果的预估内存（每符号 KB）
+# 含 symbol dict + call list + position info + module info
+# 实测 1.5M 符号 ~ 10-14GB → 每符号约 7-9KB，取保守值 8KB
+# 这是原算法完全缺失的维度：build_full_graph 把所有结果存到 file_results dict，
+# 即使 worker=1 主进程也会爆，是 4 worker 模式崩溃的根因
+_MAIN_PROCESS_PER_SYMBOL_KB = 8
+# 每文件平均符号数（用于从 file_count 估算主进程内存）
+_AVG_SYMBOLS_PER_FILE = 10
 
-def _detect_optimal_workers() -> int:
+# 数据规模阈值：超过时主进程结果持有内存会爆炸，必须降低 worker 数
+# 阈值推导（每符号 8KB × 每文件 10 符号 = 80KB/文件）：
+#   10K 文件 → 主进程 ~800MB（可接受，最多 2 worker）
+#   50K 文件 → 主进程 ~4GB（必须降到 1 worker）
+#   200K 文件 → 主进程 ~16GB（必须分批构建，强制 1 worker 警告）
+# 命名加 _SCALE_ 前缀避免与第三方库检测的 _LARGE_FILE_COUNT_THRESHOLD=5 撞名
+_SCALE_LARGE_FILE_THRESHOLD = 10000
+_SCALE_VERY_LARGE_FILE_THRESHOLD = 50000
+_SCALE_HUGE_FILE_THRESHOLD = 200000
+
+
+def _detect_optimal_workers(file_count: int = 0) -> int:
     """根据宿主机剩余资源动态计算最优 worker 数。
 
-    用户要求：worker 数应通过检测宿主机剩余资源来决定，
-    剩余资源多就多起，剩余资源少就少起。
+    P28 修复背景：原算法只考虑 worker 内存预算（150MB）和保留内存（2GB），
+    导致 4 worker 模式下主进程内存从 9GB 涨到 14.2GB，把 32GB 宿主机搞崩。
+    真实缺陷：
+    1. worker 预算严重低估：未算 AST 峰值（大文件可达 1GB）
+    2. 保留内存太小：32GB 机器留 2GB 不够 OS+IDE 占用
+    3. 完全没算主进程结果持有内存：1.5M 符号需 10-14GB
+    4. 没考虑数据规模因子：文件数越多主进程越爆
 
-    综合考虑三个因素：
-    1. CPU 核心数：worker 数不应超过 CPU 核心数（避免抢占调度）
-    2. 剩余可用内存：每个 worker 预估 ~150MB，确保不会把内存吃光
-    3. 硬上限 8：避免进程过多导致 IPC 开销和调度抖动
+    P28 修复后综合考虑四个因素：
+    1. CPU 核心数：worker 数不超过 CPU 核心数（留 1 核给主进程/系统）
+    2. 剩余可用内存：每 worker 预估 800MB（含 AST 峰值），保留 4GB 给宿主机
+    3. 数据规模因子（新增）：文件数多时主进程结果持有内存爆炸，必须降低 worker 数
+       - >= 200K 文件：主进程结果 16GB+，必须分批构建（强制 1 worker）
+       - >= 50K 文件：主进程结果 4GB+，最多 1 worker
+       - >= 10K 文件：主进程结果 800MB+，最多 2 worker
+    4. 硬上限 8：避免进程过多导致 IPC 开销和调度抖动
 
     内存检测优先用 psutil（跨平台），不可用时回退到平台原生 API
     （Windows: ctypes.windll.kernel32.GlobalMemoryStatusEx；
      Linux: /proc/meminfo）。
+
+    Args:
+        file_count: 本次待解析的文件数，用于估算主进程结果持有内存。
+                    默认 0（不启用数据规模因子，向后兼容）。
+                    调用方应传 len(to_parse) 启用规模感知。
 
     Returns:
         推荐 worker 数（1-8）
@@ -83,6 +120,21 @@ def _detect_optimal_workers() -> int:
 
     # CPU 维度：留 1 核给主进程和系统
     cpu_based = max(_MIN_WORKERS, cpu_count - 1)
+
+    # 数据规模因子（P28 新增）：文件数过多时主进程结果持有内存爆炸
+    # 这是原算法完全缺失的维度，是 4 worker 模式崩溃的根因
+    if file_count >= _SCALE_HUGE_FILE_THRESHOLD:
+        # 200K+ 文件：主进程结果 16GB+，必须分批构建
+        # 强制 1 worker（调用方应改用 build_directory 分批）
+        scale_cap = 1
+    elif file_count >= _SCALE_VERY_LARGE_FILE_THRESHOLD:
+        # 50K+ 文件：主进程结果 4GB+，最多 1 worker
+        scale_cap = 1
+    elif file_count >= _SCALE_LARGE_FILE_THRESHOLD:
+        # 10K+ 文件：主进程结果 800MB+，最多 2 worker
+        scale_cap = 2
+    else:
+        scale_cap = _MAX_WORKERS_CAP
 
     # 内存维度：检测可用内存
     mem_based = _MAX_WORKERS_CAP  # 默认假设内存充足
@@ -95,8 +147,8 @@ def _detect_optimal_workers() -> int:
         else:
             mem_based = max(_MIN_WORKERS, int(usable_mb / _WORKER_MEM_BUDGET_MB))
 
-    # 取 CPU 和内存维度的较小值，再限制在硬上限内
-    workers = min(cpu_based, mem_based, _MAX_WORKERS_CAP)
+    # 取 CPU、内存、数据规模三者的较小值，再限制在硬上限内
+    workers = min(cpu_based, mem_based, _MAX_WORKERS_CAP, scale_cap)
     return max(_MIN_WORKERS, workers)
 
 
@@ -957,8 +1009,9 @@ class BuildMixin:
                     # 环境变量覆盖：用户手动指定
                     mp_workers = max(1, min(8, int(env_workers)))
                 else:
-                    # 动态检测：根据 CPU 核心数和剩余内存计算
-                    mp_workers = _detect_optimal_workers()
+                    # 动态检测：根据 CPU 核心数、剩余内存、数据规模计算
+                    # P28：传 file_count 启用数据规模因子，避免主进程结果持有内存爆炸
+                    mp_workers = _detect_optimal_workers(len(to_parse))
                 cprint(t("cli.messages.db_build_parallel_parse", workers=mp_workers, count=len(to_parse)), "dim")
                 from concurrent.futures import ProcessPoolExecutor, as_completed
                 # worker 参数：(rel_path, abs_path, lang, module_path, file_instance_id)
@@ -1000,7 +1053,8 @@ class BuildMixin:
                 # 原多线程路径（小文件量或 fallback）
                 # 线程比进程轻量，内存占用远低于进程，但 GIL 限制实际并行度
                 # 仍按动态资源检测决定线程数（线程数可放宽，每个线程内存开销小）
-                max_workers = _detect_optimal_workers()
+                # P28：仍传 file_count，因主进程结果持有内存是真实瓶颈（与线程/进程无关）
+                max_workers = _detect_optimal_workers(len(to_parse))
                 # 线程比进程轻量，可适当多开（线程内存开销小，GIL 才是真瓶颈）
                 max_workers = min(8, max(1, max_workers))
                 cprint(t("cli.messages.db_build_parallel_parse", workers=max_workers, count=len(to_parse)), "dim")
