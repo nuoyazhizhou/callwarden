@@ -182,10 +182,14 @@ PROJECT_MANIFESTS: Dict[str, str] = {
 }
 
 # 子项目扫描时跳过的目录（第三方库 / VCS / 构建产物）
+# 注意：.git 不在这里（它在 shallow 模式下作为项目边界识别后停止递归，
+# 但 .git 本身不会被 os.walk 进入，因为 dirs 过滤了 d.startswith(".")）
+# 注意：.repo 不在这里（P26: .repo 是 AOSP repo 工具的项目根标记，应识别为
+# 项目边界并停止递归，而不是跳过）
 _SUBPROJECT_SKIP_DIRS = frozenset({
-    ".git", "node_modules", "target", "vendor", ".venv", "venv",
+    "node_modules", "target", "vendor", ".venv", "venv",
     "dist", "build", ".gradle", "__pycache__", ".m2", ".cache",
-    ".repo", ".next", "out", "bin", "obj",
+    ".next", "out", "bin", "obj",
 })
 
 # 非真实子项目目录：含 manifest 但不是真实子项目（测试 fixture / 发布包 / 示例 / 评估 / 文档）
@@ -333,7 +337,8 @@ def _is_manifest_workspace_root(manifest_path: str, manifest_name: str) -> bool:
 
 
 def scan_subprojects(root_dir: str, max_depth: int = 5,
-                     skip_non_real: bool = True) -> List[Dict[str, str]]:
+                     skip_non_real: bool = True,
+                     shallow: bool = True) -> List[Dict[str, str]]:
     """向下扫描目录，识别所有子项目根（基于清单文件）
 
     与 detect_project_root（向上找）互补：本函数向下递归发现子项目。
@@ -353,12 +358,28 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
        workspace member 不再作为独立子项目重复识别（这是 749 仓库识别成
        3028 子项目的主要原因，guardrail3 一个仓库就有 11 个 workspace member
        被错识别成独立 crate）
+    7. P26: shallow 模式（默认）—— 用 git 语义作为项目边界
+       - .git 目录存在 → 当前目录是仓库根 → 识别为 1 个子项目 → 停止向下递归
+         （不进 packages/crates 找 monorepo member，因为它们共享同一 .git）
+       - .repo 目录存在（AOSP repo 工具）→ 当前目录是项目根 → 停止递归
+       - manifest 只在"无 .git 的目录"作为 fallback
+       这修复了 749 仓库被识别成 1783 的问题：每个 .git = 1 个项目
+       （testcode/repos/ 下 749 个 .git → 749 个项目）
+       设 shallow=False 启用 deep 模式，进入仓库内部识别 monorepo 子项目
+
+    项目根优先级（从高到低）：
+    - .repo 目录（AOSP repo 工具的项目根）
+    - .git 目录（git 仓库根，标准 git 语义）
+    - manifest 文件（fallback：纯 Python 包等无 git 的项目）
 
     Args:
         root_dir: 扫描根目录
         max_depth: 最大递归深度（相对 root_dir 的目录层数），默认 5
         skip_non_real: 是否跳过非真实子项目目录（tests/fixtures/npm/examples/evals/
                       benchmarks/docs 等），默认 True。设为 False 恢复旧行为
+        shallow: 是否启用 shallow 模式（默认 True）。True 时每个 .git/.repo
+                识别为 1 个项目并停止递归；False 时进入仓库内部识别 monorepo
+                子项目（保留 P25 workspace 边界检测）
 
     Returns:
         项目列表，每项含 root/rel_path/name/lang/manifest 字段
@@ -389,6 +410,45 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
         return None
 
     for root, dirs, files in os.walk(root_dir, onerror=_scan_onerror):
+        # 计算相对路径（循环开头一次，后续重复使用）
+        rel = os.path.relpath(root, root_dir).replace("\\", "/")
+
+        # P26: shallow 模式下，在 dirs 过滤之前检测 .git/.repo 作为项目边界
+        # （过滤逻辑会移除所有 d.startswith(".") 的目录，包括 .git/.repo，
+        # 所以必须在过滤之前检测）
+        if shallow:
+            repo_marker = None
+            repo_lang_marker = "git"
+            if ".repo" in dirs:
+                # .repo 优先级最高（AOSP repo 工具的项目根标记）
+                repo_marker = ".repo"
+                repo_lang_marker = "repo"
+            elif ".git" in dirs:
+                repo_marker = ".git"
+                repo_lang_marker = "git"
+
+            if repo_marker:
+                # 识别为子项目，记录其 manifest（如果有，用真实 manifest 替代 .git/.repo）
+                best_manifest = repo_marker
+                best_lang = repo_lang_marker
+                for manifest, lang in PROJECT_MANIFESTS.items():
+                    if manifest in files:
+                        best_manifest = manifest
+                        best_lang = lang
+                        break
+                rel_path = norm_path(rel) if rel != "." else ""
+                projects.append({
+                    "root": root,
+                    "rel_path": rel_path,
+                    "name": os.path.basename(root) if rel != "." else os.path.basename(root_dir),
+                    "lang": best_lang,
+                    "manifest": best_manifest,
+                })
+                # 停止向下递归：每个 .git/.repo = 1 个项目
+                # （monorepo 内部的 packages/crates 等子目录共享同一 .git，不应独立识别）
+                dirs[:] = []
+                continue
+
         # 跳过第三方/VCS/构建目录
         dirs[:] = [d for d in dirs if d not in _SUBPROJECT_SKIP_DIRS and not d.startswith(".")]
 
@@ -397,7 +457,6 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
             # 检查路径中任何一级目录名是否在非真实列表中
             # 如 repo/tests/fixtures/demo → parts 含 "tests" → 跳过整个子树
             # 如 repo/packages/core → parts 不含非真实目录 → 保留
-            rel = os.path.relpath(root, root_dir).replace("\\", "/")
             if rel != ".":
                 parts = rel.split("/")
                 if any(p in _NON_REAL_PROJECT_DIRS for p in parts):
@@ -407,7 +466,6 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
             dirs[:] = [d for d in dirs if d not in _NON_REAL_PROJECT_DIRS]
 
         # 深度限制
-        rel = os.path.relpath(root, root_dir).replace("\\", "/")
         depth = 0 if rel == "." else rel.count("/")
         if depth > max_depth:
             dirs[:] = []

@@ -5245,6 +5245,9 @@ def _handle_workspace(args, db):
     scan_p.add_argument("--register", action="store_true", help="Register all found projects as workspaces")
     scan_p.add_argument("--include-all", action="store_true",
                        help="Include non-real subprojects (tests/fixtures/npm/examples etc)")
+    scan_p.add_argument("--deep", action="store_true",
+                       help="Deep scan: enter git repo to find monorepo subprojects "
+                            "(default: shallow mode, each .git = 1 project)")
 
     gen_ignore_p = sub.add_parser("generate-ignore",
                                    help="Auto-generate .callwardenignore based on project characteristics")
@@ -5305,7 +5308,9 @@ def _handle_workspace(args, db):
         if not os.path.isdir(scan_dir):
             print(t("cli.messages.workspace_scan_not_dir", path=scan_dir))
             return True
-        projects = scan_subprojects(scan_dir, skip_non_real=not opts.include_all)
+        projects = scan_subprojects(scan_dir,
+                                    skip_non_real=not opts.include_all,
+                                    shallow=not opts.deep)
         print(t("cli.messages.workspace_scan_found", count=len(projects)))
         # 按语言统计
         lang_stats: dict = {}
