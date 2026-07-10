@@ -1645,6 +1645,10 @@ class CodeGraphBase:
         except ImportError:
             return None
         try:
+            # 关键：GraphStore 用 immutable=1 只读模式打开（跳过 WAL），
+            # 因此加载前必须先 checkpoint WAL，确保最新写入的数据刷入主数据库文件，
+            # 否则会读到 WAL 之前的旧数据（新建库的 schema 都在 WAL 中）
+            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             store = GraphStore()
             store.load_from_sqlite(self.db_path)
             self._graph_store = store
@@ -1658,6 +1662,9 @@ class CodeGraphBase:
 
         在写操作（refresh_file / gc_archive / task apply 等）后调用，
         确保下次查询时从最新的 SQLite 重新加载。
+
+        注：WAL checkpoint 在 _get_graph_store() 加载前自动执行，
+        此处只需清空缓存即可。
         """
         self._graph_store = None
 
