@@ -566,21 +566,38 @@ def _rust_multilang_parse(
 
     # Rust 批量 parse（rayon 并行，grammar 共享）
     rust_args = [(abs_path, module_path) for abs_path, module_path, _, _ in filtered]
-    pool = batch_parse_files_lang_pool(rust_args, lang, num_threads=mp_workers)
+    try:
+        pool = batch_parse_files_lang_pool(rust_args, lang, num_threads=mp_workers)
+    except Exception as e:
+        # Rust pool 运行时异常 → 回退 Python
+        cprint(f"  (Phase 1 rust pool exception, fallback to Python: {e})", "yellow")
+        return False
 
     # 流式回传：逐个 get_at 转 dict 写入 file_results
     for i, (abs_path, module_path, rel_path, file_instance_id) in enumerate(filtered):
         r = pool.get_at(i)
         if r.get("error"):
-            if failed_ref is not None:
-                failed_ref[0] += 1
-            failed_files.append((rel_path, r["error"]))
+            # 单文件 Rust parse 出错 → 尝试 Python parser 回退
+            py_result = _python_parse_single_file(
+                abs_path, module_path, lang, rel_path, file_instance_id
+            )
+            if py_result is not None:
+                file_results[rel_path] = py_result
+                done_count = len(file_results)
+                print_progress(done_count, parse_total,
+                               t("cli.messages.db_build_parse_progress_lang",
+                                 path=rel_path, lang=lang))
+            else:
+                if failed_ref is not None:
+                    failed_ref[0] += 1
+                failed_files.append((rel_path, r["error"]))
             continue
         r["abs_path"] = abs_path
         r["file_instance_id"] = file_instance_id
         r["module_path"] = module_path
         r["rel_path"] = rel_path
         r.setdefault("inline_modules", [])
+        _normalize_rust_symbols(r)
         file_results[rel_path] = r
         done_count = len(file_results)
         print_progress(done_count, parse_total,
@@ -588,6 +605,55 @@ def _rust_multilang_parse(
                          path=rel_path, lang=lang))
 
     return True
+
+
+def _normalize_rust_symbols(r):
+    """Phase 1: 归一化 Rust parser 输出，补齐 _save_symbols_for_version 所需字段。
+
+    Rust parser 缺少 start_col/end_col，has_comment 返回 bool 而非 int，
+    imports 返回 List[str] 而非 List[Dict]。在小批量 (_parse_one) 和大批量
+    (_rust_multilang_parse) 路径统一调用。
+    """
+    for sym in r.get("symbols", []):
+        sym.setdefault("start_col", 0)
+        sym.setdefault("end_col", 0)
+        if isinstance(sym.get("has_comment"), bool):
+            sym["has_comment"] = int(sym["has_comment"])
+    for mod in r.get("inline_modules", []):
+        for sym in mod.get("symbols", []):
+            sym.setdefault("start_col", 0)
+            sym.setdefault("end_col", 0)
+            if isinstance(sym.get("has_comment"), bool):
+                sym["has_comment"] = int(sym["has_comment"])
+    # imports: Rust 返回 List[str]，Python 返回 List[Dict]（含 module/imported/line）
+    imports = r.get("imports")
+    if imports and isinstance(imports[0], str):
+        r["imports"] = [{"module": m} for m in imports]
+    return r
+
+
+def _python_parse_single_file(abs_path, module_path, lang, rel_path, file_instance_id):
+    """Phase 1: Rust parse 出错时的单文件 Python fallback。
+
+    尝试用 Python parser 解析单个文件，成功则返回与 Rust parser 格式一致的 result dict。
+    用于 Rust pool 批量 parse 中单文件 error 的回退。
+
+    Returns:
+        parse result dict（成功）或 None（失败）
+    """
+    try:
+        p = _get_or_create_parser(lang, rel_path)
+        if not p:
+            return None
+        result = p.parse_file(abs_path, module_path)
+        result["abs_path"] = abs_path
+        result["file_instance_id"] = file_instance_id
+        result["module_path"] = module_path
+        result["rel_path"] = rel_path
+        result.setdefault("inline_modules", [])
+        return result
+    except Exception:
+        return None
 
 
 def _python_multiprocess_parse(to_parse, mp_workers, file_results,
@@ -1346,7 +1412,11 @@ class BuildMixin:
                 done_count = [0]
 
                 def _parse_one(args):
-                    """多线程工作函数：解析单个源文件并返回结果元组"""
+                    """多线程工作函数：解析单个源文件并返回结果元组
+
+                    Phase 1: 小批量路径优先用 Rust parse_file_lang（单文件），
+                    失败则回退 Python parser。
+                    """
                     _, rel_path, abs_path, lang, module_path, file_instance_id = args
                     try:
                         # 资源文件检测：基于内容特征跳过字体/图片数据的 C 数组
@@ -1356,7 +1426,27 @@ class BuildMixin:
                                 done_count[0] += 1
                                 print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
                             return ("skip_resource", rel_path, reason)
-                        # 复用模块级 _get_or_create_parser：真懒加载，按语言直接 import
+                        # Phase 1: 小批量优先用 Rust parse_file_lang（非 C 的 Rust 支持语言）
+                        if (lang != "c" and _can_use_rust_parse(lang)
+                                and not os.environ.get("CW_DISABLE_RUST_PARSE")):
+                            try:
+                                from callwarden_core import parse_file_lang
+                                r = parse_file_lang(abs_path, module_path, lang)
+                                if not r.get("error"):
+                                    r["abs_path"] = abs_path
+                                    r["file_instance_id"] = file_instance_id
+                                    r["module_path"] = module_path
+                                    r["rel_path"] = rel_path
+                                    r.setdefault("inline_modules", [])
+                                    _normalize_rust_symbols(r)
+                                    with print_lock:
+                                        done_count[0] += 1
+                                        print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
+                                    return ("ok", rel_path, r)
+                                # Rust 返回 error → 回退 Python parser
+                            except Exception:
+                                pass  # Rust 异常 → 回退 Python parser
+                        # Python parser（fallback 或非 Rust 支持语言）
                         p = _get_or_create_parser(lang, rel_path)
                         if not p:
                             with print_lock:
