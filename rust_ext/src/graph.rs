@@ -113,13 +113,13 @@ pub struct GraphStore {
 impl GraphStore {
     /// 创建空 store
     #[new]
-    fn new() -> Self {
+    pub fn new() -> Self {
         GraphStore { symbols: None, calls: None }
     }
 
     /// 从 SQLite 数据库加载 symbols + calls 到内存
     /// 返回加载的符号数 / 边数
-    fn load_from_sqlite(&mut self, db_path: &str) -> PyResult<(usize, usize)> {
+    pub fn load_from_sqlite(&mut self, db_path: &str) -> PyResult<(usize, usize)> {
         // 只读 + immutable 模式打开：
         // - READ_ONLY: 不写入
         // - immutable=1: 告知 SQLite 数据库不会被修改，跳过 -wal/-shm 文件创建

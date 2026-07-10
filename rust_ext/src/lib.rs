@@ -23,6 +23,7 @@ use tree_sitter::{Language, Parser, Node};
 mod multi_lang;
 mod daemon;
 mod graph;
+mod snapshot;
 
 // ============================================
 // P29: 数据结构定义
@@ -803,5 +804,8 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
     // B-PoC: 图存储 + 查询下沉（CSR 邻接表 + 内存索引 + rusqlite 加载）
     m.add_class::<graph::GraphStore>()?;
+    // Phase 4: GraphSnapshot + ArcSwap 原子发布
+    m.add_class::<snapshot::PySnapshotManager>()?;
+    m.add_class::<snapshot::PySnapshotCache>()?;
     Ok(())
 }

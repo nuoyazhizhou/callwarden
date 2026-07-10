@@ -36,6 +36,10 @@ rayon = "1.10"
 parking_lot = "0.12"
 # B-PoC: rusqlite（bundled 自带 SQLite + FTS5，跨平台一致）
 rusqlite = { version = "0.31", features = ["bundled"] }
+# Phase 4: arc-swap 用于 GraphSnapshot 原子发布（无锁读路径）
+arc-swap = "1.7"
+# Phase 2 daemon: libc 用于 SO_PEERCRED（仅 unix）
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
