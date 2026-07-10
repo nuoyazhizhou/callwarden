@@ -85,6 +85,7 @@ class TestMCPGraphStoreConcurrency(unittest.TestCase):
 
     def setUp(self):
         self.db._invalidate_graph_store()
+        self.db._graph_store_dirty = False
 
     def test_graph_store_loads_on_first_query(self):
         """MCP 场景：首次查询触发懒加载"""
@@ -118,11 +119,11 @@ class TestMCPGraphStoreConcurrency(unittest.TestCase):
         )
         self.db.conn.commit()
 
-        # 3. 失效缓存（应触发 WAL checkpoint）
+        # 3. 失效缓存（延迟失效：只标记 dirty，不清空）
         self.db._invalidate_graph_store()
-        self.assertIsNone(self.db._graph_store)
+        self.assertTrue(self.db._graph_store_dirty, "应标记 dirty")
 
-        # 4. 重新加载，应包含新符号
+        # 4. 重新加载（查询时检测 dirty → checkpoint WAL → 重新加载）
         store = self.db._get_graph_store()
         self.assertIsNotNone(store)
         new_stats = store.stats()
@@ -132,12 +133,12 @@ class TestMCPGraphStoreConcurrency(unittest.TestCase):
 
     def test_write_invalidate_reload_cycle(self):
         """多次 write-invalidate-reload 循环数据一致"""
-        for cycle in range(3):
-            # 加载
-            store = self.db._get_graph_store()
-            self.assertIsNotNone(store)
-            before = store.stats()["symbol_count"]
+        # 先加载一次，记录基础数量
+        store = self.db._get_graph_store()
+        self.assertIsNotNone(store)
+        base_count = store.stats()["symbol_count"]
 
+        for cycle in range(3):
             # 写入
             ws_id = self.db._get_active_workspace_id()
             cur = self.db.conn.execute(
@@ -157,8 +158,9 @@ class TestMCPGraphStoreConcurrency(unittest.TestCase):
             self.db._invalidate_graph_store()
             store = self.db._get_graph_store()
             after = store.stats()["symbol_count"]
-            self.assertEqual(after, before + 1,
-                             f"cycle {cycle}: 符号数应 +1（{before} → {after}）")
+            # 每轮应增加 1 个符号
+            self.assertEqual(after, base_count + cycle + 1,
+                             f"cycle {cycle}: 符号数应为 {base_count + cycle + 1}（实际 {after}）")
 
     def test_graceful_degradation_when_rust_fails(self):
         """Rust 加载失败时降级到 SQL"""

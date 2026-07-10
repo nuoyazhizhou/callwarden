@@ -174,19 +174,22 @@ class TestGraphStoreIntegration(unittest.TestCase):
             self.assertIn(key, first, f"search_symbols 结果应包含字段 {key}")
 
     def test_cache_invalidation(self):
-        """缓存失效后应重新加载"""
+        """延迟失效：invalidate 标记 dirty，查询时才真正清空+重载"""
         # 加载缓存
         store1 = self.db._get_graph_store()
         self.assertIsNotNone(store1)
+        self.assertFalse(self.db._graph_store_dirty)
 
-        # 失效
+        # 失效（只标记 dirty，不清空）
         self.db._invalidate_graph_store()
-        self.assertIsNone(self.db._graph_store)
+        self.assertTrue(self.db._graph_store_dirty, "invalidate 应标记 dirty")
+        self.assertIsNotNone(self.db._graph_store, "dirty 标记不应立即清空缓存")
 
-        # 重新加载
+        # 查询时检测到 dirty，真正清空+重载
         store2 = self.db._get_graph_store()
         self.assertIsNotNone(store2)
-        self.assertIsNot(store1, store2, "失效后应创建新实例")
+        self.assertFalse(self.db._graph_store_dirty, "重载后 dirty 应清除")
+        self.assertIsNot(store1, store2, "应创建新实例")
 
     def test_graceful_degradation(self):
         """GraphStore 加载失败时应降级到 SQL"""

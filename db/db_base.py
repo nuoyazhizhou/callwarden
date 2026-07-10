@@ -1617,10 +1617,12 @@ class CodeGraphBase:
         self.module_resolver = ModuleResolver(self.workspace_root)
         self.call_resolver = CallResolver(self.module_resolver, self.parser)
 
-        # B-P7b: GraphStore 查询加速层（懒加载）
-        # 首次调用 get_callers/get_callees/search_symbols 时从 SQLite 加载到内存
-        # 写操作（refresh_file 等）后自动失效，下次查询时重新加载
+        # B-P7b: GraphStore 查询加速层（懒加载 + 延迟失效）
+        # 首次查询时从 SQLite 加载到内存 CSR
+        # 写操作后标记 _graph_store_dirty=True，下次查询时才真正失效+重载
+        # 避免 Watcher 连续 refresh 多个文件时每次都清空缓存
         self._graph_store = None
+        self._graph_store_dirty = False
 
         # 活动工作区
         self.active_workspace: Optional[Dict[str, Any]] = None
@@ -1633,11 +1635,15 @@ class CodeGraphBase:
 
         首次调用时从 SQLite 加载 symbols + calls 到内存 CSR 结构。
         后续查询直接走内存，零 SQL 零磁盘 I/O。
-        写操作后调用 _invalidate_graph_store() 失效，下次查询自动重新加载。
+        写操作后 _invalidate_graph_store() 标记 dirty，下次查询时重新加载。
 
         Returns:
             GraphStore 实例，或 None（callwarden_core 未安装时降级到 SQL）
         """
+        # 延迟失效：写操作后只标记 dirty，查询时才真正清空+重载
+        if self._graph_store_dirty:
+            self._graph_store = None
+            self._graph_store_dirty = False
         if self._graph_store is not None:
             return self._graph_store
         try:
@@ -1658,15 +1664,14 @@ class CodeGraphBase:
         return self._graph_store
 
     def _invalidate_graph_store(self):
-        """B-P7b: 失效 GraphStore 缓存
+        """B-P7b: 标记 GraphStore 缓存为 dirty（延迟失效）
 
-        在写操作（refresh_file / gc_archive / task apply 等）后调用，
-        确保下次查询时从最新的 SQLite 重新加载。
-
-        注：WAL checkpoint 在 _get_graph_store() 加载前自动执行，
-        此处只需清空缓存即可。
+        在写操作（refresh_file / gc_archive / task apply 等）后调用。
+        采用延迟失效策略：只标记 dirty，不立即清空缓存。
+        下次查询时 _get_graph_store() 检测到 dirty 才真正清空+重载。
+        这样 Watcher 连续 refresh 多个文件时不会每次都清空缓存。
         """
-        self._graph_store = None
+        self._graph_store_dirty = True
 
 
     def _init_schema(self):
