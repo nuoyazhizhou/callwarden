@@ -54,14 +54,14 @@ Call Warden 当前是"每个工作区一个独立 SQLite 数据库"的单机工�
 │  │       资源限制：4GB 内存 / 4 CPU 核心                   │  │
 │  │  ┌─────────────────────────────────────────────────┐  │  │
 │  │  │  Layer 1: 全局 CAS 缓存池                        │  │  │
-│  │  │  /var/lib/call_warden/global_cache.db (只读共享) │  │  │
+│  │  │  /var/lib/callwarden/cas.db (daemon-only, 0600)│  │  │
 │  │  │  主键：sha256(content + lang + parser_version)   │  │  │
 │  │  │  存储：AST / 符号表 / 单文件内 raw calls（内容寻址）│  │  │
 │  │  │  ⚠ 不存跨文件 call_edges（依赖 build context）     │  │  │
 │  │  └─────────────────────────────────────────────────┘  │  │
 │  │  ┌─────────────────────────────────────────────────┐  │  │
 │  │  │  Layer 2: 工具链专属库 (System/Toolchain DB)      │  │  │
-│  │  │  /var/lib/call_warden/toolchain.db (只读)         │  │  │
+│  │  │  /var/lib/callwarden/toolchain.db (只读)         │  │  │
 │  │  │  一次性扫描 /opt 下的头文件和静态库                │  │  │
 │  │  └─────────────────────────────────────────────────┘  │  │
 │  │  ┌─────────────────────────────────────────────────┐  │  │
@@ -90,7 +90,7 @@ Call Warden 当前是"每个工作区一个独立 SQLite 数据库"的单机工�
 
 **目标**：消灭 95%+ 的重复文件解析。
 
-**位置**：`/var/lib/call_warden/global_cache.db`（宿主机共享目录）
+**位置**：`/var/lib/callwarden/cas.db`（宿主机共享目录，daemon-only 0600）
 
 > **v5 P1 修复（权限隔离）**：Global CAS 文件权限改为 **daemon-only（0600）**，客户端**不直接打开 SQLite**。CAS 包含跨用户项目的符号正文，所有用户只读仍会造成跨项目源码泄露。企业模式下客户端只能通过 **UDS API + workspace/snapshot ACL** 查询，daemon 负责实际文件读写。单用户模式下 Local CAS（`~/.callwarden/cas.db`）保持当前用户可读写，不涉及跨用户泄露。
 
@@ -122,7 +122,7 @@ hash_key = sha256(
 
 **目标**：`/opt` 下的工具链一次扫描终身受益，但必须按真实指纹隔离不同厂家/版本/sysroot 的工具链，不能"一刀切"。
 
-**位置**：`/var/lib/call_warden/toolchain.db`
+**位置**：`/var/lib/callwarden/toolchain.db`
 
 **关键修正：工具链也必须做 fingerprint**。
 
@@ -158,7 +158,7 @@ toolchain_fingerprint = sha256(
 
 **目标**：每个开发者工作区对应的 thin DB 极小（几 MB），由 daemon 集中持有，不再放回客户端本地。
 
-**位置**：`/var/lib/call_warden/workspaces/<workspace_instance_id>/thin.db`（集中存储，daemon 拥有；客户端本地不再持有 SQLite）
+**位置**：`/var/lib/callwarden/workspaces/<workspace_instance_id>/thin.db`（集中存储，daemon 拥有；客户端本地不再持有 SQLite）
 
 **关键修正：拆分 `workspace_instance_id` 与 `snapshot_id` 两个概念**。
 
@@ -192,7 +192,7 @@ snapshot_id = sha256(
 
 | 状态 | workspace_instance_id | thin DB 来源 |
 |------|----------------------|-------------|
-| clean working tree（无 staged/未提交修改） | 仍唯一 | **复用 snapshot 级 thin DB**（只读共享） |
+| clean working tree（无 staged/未提交修改） | 仍唯一 | **复用 snapshot 级 thin DB**（daemon-only 共享） |
 | dirty working tree | 唯一 | **独立 thin DB**（不复用，因为 dirty 内容无 snapshot_id） |
 | staged 但未 commit | 唯一 | 独立 thin DB（staged 内容算 `working_tree_dirty_hash`） |
 
@@ -265,7 +265,7 @@ WantedBy=multi-user.target
 
 **通信机制**：Unix Domain Socket (UDS) 为主，本地 TCP 仅作为容器穿透的可选通路
 
-- **UDS 路径**：`/var/run/call_warden.sock`（权限 `0660`，属主 `callwarden:callwarden`，组成员可连）
+- **UDS 路径**：`/var/run/callwarden.sock`（权限 `0660`，属主 `callwarden:callwarden`，组成员可连）
 - **本地 TCP**：默认 **关闭**。只在容器无法挂 UDS 时开启，且必须启用 mTLS + per-container token
 - 协议：JSON-RPC 2.0（与 MCP 兼容）
 
@@ -479,7 +479,7 @@ _hash_index: Dict[str, FileMeta] = {
 > **⚠️ 本节已废弃**：下方的 3 阶段迁移路径已被 [enterprise-phase1-phase3-detail.md](enterprise-phase1-phase3-detail.md) v4 取代。
 > v4 的实施顺序为：Phase 1（Rust 多语言 parse）→ Phase 3A（Local CAS，per-UID `~/.callwarden/cas.db`）→ Phase 2 daemon → Phase 3B（daemon 内单源实现）。
 > 本节保留作为历史背景参考，不再代表当前实施计划。具体差异：
-> - v4 的 CAS 是 per-UID Local DB（`~/.callwarden/cas.db`），不是 `/var/lib/call_warden/global_cache.db`
+> - v4 的 CAS 是 per-UID Local DB（`~/.callwarden/cas.db`），不是 `/var/lib/callwarden/cas.db`
 > - v4 的 Phase 1 是 Rust 多语言 parse 接入，不是 CAS
 > - v4 的 Phase 3A 在 Phase 2 daemon 之前实施（Local CAS 不依赖 daemon）
 > - v4 的 Phase 3B（查询路径迁移）延后到 Phase 2 daemon 之后
@@ -491,14 +491,14 @@ _hash_index: Dict[str, FileMeta] = {
 ### 阶段 1：CAS 全局缓存（核心收益）
 
 > **⚠️ 已废弃**：v4 中此阶段拆分为 Phase 1（Rust 多语言 parse）和 Phase 3A（Local CAS，per-UID DB）。
-> CAS 路径从 `/var/lib/call_warden/global_cache.db` 改为 `~/.callwarden/cas.db`，且 CAS 表为自包含（含 `cas_symbol_contents`）。
+> CAS 路径从 `/var/lib/callwarden/cas.db` 改为 `~/.callwarden/cas.db`，且 CAS 表为自包含（含 `cas_symbol_contents`）。
 
 **目标**：抽取文件 hash 索引层，多分支共享 AST/符号。
 
 **改动范围**：
 - 新增 `db/db_cas.py`：CAS 存储层（file_hash → AST/symbols）
 - 修改 `db_build.py`：解析文件前先查 CAS，命中则跳过 tree-sitter parse
-- 配置项：`callwarden.cas.enabled = true`、`callwarden.cas.db_path = /var/lib/call_warden/global_cache.db`
+- 配置项：`callwarden.cas.enabled = true`、`callwarden.cas.db_path = /var/lib/callwarden/cas.db`
 
 **预期收益**：
 - 95% 重复文件解析被消灭
@@ -687,7 +687,7 @@ client.get_callers(
 # /etc/callwarden/daemon.conf
 [client]
 mode = enterprise      # enterprise / local / auto
-uds_path = /var/run/call_warden.sock
+uds_path = /var/run/callwarden.sock
 fallback_warning = true
 ```
 
