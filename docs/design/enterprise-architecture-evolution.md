@@ -269,33 +269,62 @@ WantedBy=multi-user.target
 - **本地 TCP**：默认 **关闭**。只在容器无法挂 UDS 时开启，且必须启用 mTLS + per-container token
 - 协议：JSON-RPC 2.0（与 MCP 兼容）
 
-### 文件数据面：daemon 如何读取用户工作区文件（v7 P1#5 新增）
+### 文件数据面：daemon 如何读取用户工作区文件（v7 P1#5 → v8 P1#2 重写）
 
 **v7 P1#5 问题**：daemon 固定为 `User=callwarden`，但 `SO_PEERCRED` 只证明请求者身份，不会赋予 daemon 读取用户 `0700/0750` 目录的权限。秒级 watcher、workspace 注册时的文件扫描、refresh 都会因权限不足而失败。把所有开发者加入一个可读取所有工作区的共享文件组不安全。
 
-**选定方案：per-UID helper/worker 进程**
+**v8 P1#2 问题（v7 方案不可行）**：v7 选定"per-UID helper/worker"——daemon `fork` 后调用 `setgid(peer_gid)` / `setuid(peer_uid)` 切换到请求者身份。但 daemon 以 `User=callwarden`（非 root）运行，非 root 进程调用 `setuid` 到任意其他 UID 返回 `EPERM`。即使赋予 `CAP_SETUID` 让 worker 切换成功，让**用户身份的 worker 返回 ParseFact**、daemon 只校验 content hash 也是不安全的：content hash 只证明"收到的字节与某 hash 对应"，无法证明该 ParseFact 确由这些字节解析产生。被篡改的 worker 可以返回与 content hash 匹配的字节，但附上伪造的 ParseFact（如把 `malicious_function` 标成 `safe_function`），重新引入"不可信用户结果污染 Global CAS"。
 
-daemon 是调度器，不直接读取用户文件。实际的文件 I/O 由**以请求者身份运行的 helper 进程**完成：
+**v8 选定方案：用户侧 `systemd --user` agent 回传 canonical bytes，daemon 可信 parser 解析**
+
+职责分离：
+- **用户侧 agent**（`systemd --user` 启动，以用户身份运行）：watch 文件变更、读取文件、调用 `canonicalize_source()`（Rust FFI，与 daemon 同一实现）生成 canonical bytes，把 **canonical bytes**（不是 ParseFact）回传 daemon。
+- **daemon**（`User=callwarden`）：收到 canonical bytes 后**重新计算** `sha256(canonical_bytes)` 校验与 agent 报告的 `content_hash` 一致；由**可信 Rust parse worker**（daemon 进程内的 Rust 扩展）对 canonical bytes 解析生成 ParseFact；daemon 发布到 Global CAS DB。
+
+这样 ParseFact 始终由可信 daemon 生成，用户无法伪造 ParseFact；agent 只能提供字节流，daemon 重新算 hash 后不可篡改。
 
 ```python
-# daemon 收到 refresh 请求后，fork 一个以 peer_uid 身份运行的 worker
-def spawn_uid_worker(peer_uid, peer_gid, task):
-    """v7 P1#5: 以用户身份 fork worker，解决文件读取权限。
+# 用户侧 systemd --user agent（以用户身份运行，有文件读权限）
+def user_agent_handle_refresh(rel_path, abs_path, daemon_sock):
+    """v8 P1#2: 用户 agent 读文件 → canonicalize → 回传 canonical bytes 给 daemon。
 
-    worker 继承用户的文件系统权限，能读取 0700/0750 目录。
-    daemon 只负责调度和 CAS 管理，不直接读文件。
+    agent 不解析、不生成 ParseFact，只回传规范化字节。
+    daemon 重新算 hash 并由可信 Rust parser 解析。
     """
-    pid = os.fork()
-    if pid == 0:
-        # 子进程：切换到用户身份
-        os.setgid(peer_gid)
-        os.setuid(peer_uid)
-        # 此时 worker 以用户身份运行，可读取用户目录
-        task.execute()  # 读文件 → 算 hash → parse → 返回结果给 daemon
-        os._exit(0)
-    else:
-        # 父进程（daemon）：等待 worker 完成
-        os.waitpid(pid, 0)
+    csrc = canonicalize_source(abs_path)  # Rust FFI，与 daemon 同一实现
+    payload = {
+        "rel_path": rel_path,
+        "content_hash": csrc.content_hash,  # agent 报告的 hash
+        "metadata": csrc.metadata,          # SourceMetadata（raw_hash/encoding/bom/newline）
+    }
+    send_msg(daemon_sock, MSG_REFRESH, payload)
+    send_fd(daemon_sock, csrc.canonical_bytes)  # 字节流通过 UDS 传输
+
+
+# daemon 侧（User=callwarden，可信）
+def daemon_handle_refresh(peer_uid, msg, conn):
+    """v8 P1#2: daemon 收到 canonical bytes → 重新算 hash → 可信 Rust parser 解析 → 发布 CAS。
+
+    daemon 不信任 agent 报告的 content_hash，用收到的字节重新计算。
+    ParseFact 由 daemon 内的可信 Rust parse worker 生成。
+    """
+    canonical_bytes = recv_fd(conn)
+    # 1. 重新计算 hash（不信任 agent 报告的值）
+    actual_hash = sha256_hex(canonical_bytes)
+    if actual_hash != msg["content_hash"]:
+        log_warning(f"agent hash mismatch for {msg['rel_path']}: "
+                    f"reported={msg['content_hash']} actual={actual_hash}")
+    content_hash = actual_hash  # 以 daemon 计算为准
+
+    # 2. 可信 Rust parser 解析（daemon 进程内，不可被用户篡改）
+    parse_result = trusted_rust_parse(canonical_bytes, msg["rel_path"], lang)
+    # parse_result 包含 symbols/raw_calls/imports + content_hash + abi_version
+
+    # 3. 计算 cas_key 并发布到 Global CAS（publish_or_pin_in_transaction）
+    cas_key = compute_cas_key_v1(content_hash, lang, ...)
+    cas_publish_with_retry(cas_key, parse_result, workspace_id, cas_conn)
+    # 4. 写 workspace manifest（含 SourceMetadata，见 enterprise-phase1-phase3-detail.md §3.0.1）
+    ...
 ```
 
 **架构**：
@@ -304,36 +333,43 @@ def spawn_uid_worker(peer_uid, peer_gid, task):
 ┌─────────────────────────────────────────────┐
 │  Call Warden Daemon (User=callwarden)       │
 │  - UDS 监听 + SO_PEERCRED 身份识别          │
+│  - 重新计算 sha256(canonical_bytes)          │
+│  - 可信 Rust parse worker 解析（不信任用户） │
 │  - CAS 管理（Global CAS DB 读写）           │
 │  - 任务调度 + Job Deduplication              │
-│  - fork per-UID worker（以用户身份运行）     │
 └──────────┬──────────────────┬───────────────┘
-           │                  │
+           │ canonical bytes  │ canonical bytes
+           │ (UDS 传输)        │ (UDS 传输)
     ┌──────▼──────┐   ┌──────▼──────┐
-    │ Worker(uid=1001)│   │ Worker(uid=1002)│
-    │ 读 /home/u1/  │   │ 读 /home/u2/  │
-    │ parse + hash   │   │ parse + hash   │
-    │ → 结果回传daemon│   │ → 结果回传daemon│
+    │ systemd --user │   │ systemd --user │
+    │ agent (uid=1001)│   │ agent (uid=1002)│
+    │ 读 /home/u1/   │   │ 读 /home/u2/   │
+    │ canonicalize   │   │ canonicalize   │
+    │ → 回传 bytes   │   │ → 回传 bytes   │
     └───────────────┘   └───────────────┘
 ```
 
 **关键设计**：
-- **daemon 不直接读文件**：daemon 只调度，文件 I/O 由 worker 完成。worker 以 `peer_uid` 身份运行，继承用户的文件系统权限。
-- **worker 生命周期短**：refresh 完成即退出。watcher 是长驻 worker（以用户身份运行），通过 UDS 向 daemon 报告变更。
-- **CAS 数据回传**：worker parse 后将结果通过 UDS（或共享内存/临时文件）回传 daemon，daemon 负责写入 Global CAS DB。
-- **content hash 校验**：daemon 对 worker 返回的数据重新计算 `sha256(canonical_bytes)` 并与 worker 报告的 `content_hash` 校验，防止 worker 被篡改后返回错误数据。
+- **daemon 不切 UID**：daemon 始终以 `callwarden` 身份运行，不调用 `setuid`，无需 `CAP_SETUID`，规避 EPERM。
+- **ParseFact 由可信 daemon 生成**：用户 agent 只回传 canonical bytes（字节流），不生成 ParseFact。daemon 用可信 Rust parse worker 解析，用户无法伪造 ParseFact 污染 Global CAS。这与 v6 P1#6"Global CAS 冷启动重建"的安全模型一致。
+- **daemon 重新计算 hash**：不信任 agent 报告的 `content_hash`，用收到的字节重新算 `sha256`。hash 不匹配时记录告警，但以 daemon 计算为准继续（agent 可能误报，但字节本身仍可解析）。
+- **canonicalize_source 单一实现**：agent 和 daemon 调用**同一个** Rust `canonicalize_source()`（见 [enterprise-phase1-phase3-detail.md §3.0.1](enterprise-phase1-phase3-detail.md)），避免两套 detector 分歧。agent 的 Rust FFI 与 daemon 的 Rust FFI 是同一份编译产物。
+- **agent 生命周期**：`systemd --user` 管理的常驻进程（用户登录时启动，退出时停止），负责 watch + 文件读取。watch 事件触发时把变更文件 canonical bytes 推给 daemon。daemon 侧 Job Deduplication 合并同文件的多次变更。
+- **大文件传输**：UDS 传大字节流有开销。对超大文件（如 > 10MB），agent 可只回传 `content_hash` + `SourceMetadata`，daemon 命令 agent"请在某临时路径放置 canonical bytes 副本"后用 `openat2` 校验路径读取——但此路径仅作为降级，默认仍走 UDS 传字节。
 
-**备选方案（不推荐但可降级使用）**：
+**备选方案：`openat2` + `SCM_RIGHTS` 只读 FD broker（最小特权）**
+
+若不部署 `systemd --user` agent（如容器内无用户 session），可使用极小的特权 open broker：一个以 root（或持 `CAP_DAC_READ_SEARCH`）运行的小进程，仅做 `openat2(dirfd, path, RESOLVE_BENEATH)` 打开文件得到只读 FD，通过 `SCM_RIGHTS` 把 FD 传给 daemon。daemon 拿到 FD 后 `read()` 字节并 `canonicalize_source()`。**该 broker 不 parse、不生成 ParseFact**，只传 FD，因此不存在 ParseFact 伪造风险。
 
 | 方案 | 优点 | 缺点 |
 |------|------|------|
-| **per-UID helper（推荐）** | 权限精确，用户隔离 | fork 开销，worker 管理 |
-| 客户端传输内容 | daemon 无需文件权限 | 大文件传输开销，网络带宽 |
-| POSIX ACL | 无代码改动 | 管理员手动配置，易遗漏，所有 daemon 进程可读所有用户文件 |
+| **systemd --user agent + 可信 daemon parser（推荐）** | 权限精确，ParseFact 不可伪造，无需 root | 需用户 session，大文件 UDS 传输开销 |
+| openat2 + SCM_RIGHTS FD broker | 无需用户 session，最小特权，容器友好 | 需 root/`CAP_DAC_READ_SEARCH`，FD 泄漏管理 |
+| 客户端传输内容 | daemon 无需文件权限 | 不可信任客户端 parse 结果，仍需 daemon 重新 parse |
 
-**客户端内容传输方案**（降级用）：客户端自己读取文件内容，通过 UDS 发送给 daemon。daemon 校验 `sha256(content)` 后存入 CAS。适用于文件小、网络快的环境。大文件不推荐。
+**不推荐方案（v7 per-UID helper 已废弃）**：`setuid(peer_uid)` 在非 root daemon 下 EPERM；即使加 `CAP_SETUID`，用户身份 worker 返回 ParseFact 只校验 content hash 无法防 CAS 投毒。**v8 不再采用此方案。**
 
-**POSIX ACL 方案**（不推荐）：管理员给 `callwarden` 用户配置 ACL 读取所有开发者目录。风险：daemon 被入侵后可读取所有用户源码。仅在 per-UID helper 不可用时作为降级方案。
+**POSIX ACL 方案**（不推荐）：管理员给 `callwarden` 用户配置 ACL 读取所有开发者目录。风险：daemon 被入侵后可读取所有用户源码。仅在上述方案都不可用时作为降级方案。
 
 ### 权限模型（关键工程细节，企业部署不能省）
 

@@ -1,10 +1,19 @@
 # Enterprise Phase 1 + Phase 3A + Phase 3B 详细实施设计
 
-状态：Draft v7（评审第六轮 P1 修订版）
+状态：Draft v8（评审第七轮 P1 修订版）
 日期：2026-07-10
 父文档：
 - [enterprise-daemon-shared-snapshot-plan.md](enterprise-daemon-shared-snapshot-plan.md)（主架构）
 - [enterprise-architecture-evolution.md](enterprise-architecture-evolution.md)（演进背景）
+
+## v8 变更摘要（针对评审第七轮 2 个 P1 + 4 个 P2）
+
+1. **[P1#1] CAS schema 与发布伪代码不一致**：`cas_file_cache` 已加 `abi_version`/`input_abi_version` NOT NULL，但 `_cas_publish_impl` 的 INSERT 没写入；`cas_pending_refs.created_at` NOT NULL，但 refresh INSERT 省略该列；`lexical_parent_local_id` 仍默认 `0`，违背 v7 的 NULL 约定；并发命中后先 ROLLBACK 再继续 INSERT 也是多余的。v8：把发布统一成 `publish_or_pin_in_transaction()`——事务内检查 ready、按完整 v7 schema 发布（含 `abi_version`/`input_abi_version`）、`lexical_parent_local_id` 写 NULL 表示顶层、`created_at` 用 `COALESCE(created_at, ?)` 或显式列写入、pending ref 同事务写入；并发命中时直接写 pending ref 后 COMMIT，不再 ROLLBACK 再 INSERT。
+2. **[P1#2] per-UID helper 不能在当前 systemd 身份下运行**：daemon 固定 `User=callwarden`，非 root 进程 `setuid(peer_uid)` 返回 `EPERM`；即使赋予 `CAP_SETUID`，worker 返回的 ParseFact 也只校验 content hash，无法证明确由该内容解析产生，重新引入"不可信用户结果污染 Global CAS"。v8 改为：用户侧 `systemd --user` agent 负责 watch/读取文件/传输 canonical bytes；daemon 重新计算 hash，并由**可信 Rust parse worker** 解析后发布 ParseFact；`openat2` + `SCM_RIGHTS` 只读 FD broker 作为最小特权备选（仅传 FD 不 parse）。详见 [enterprise-architecture-evolution.md](enterprise-architecture-evolution.md) 文件数据面章节。
+3. **[P2#1] ParseInputV1 缺少 canonical→raw 映射**：CRLF/BOM/UTF-16/GBK 转 UTF-8 后 `start_byte/end_byte` 不能直接用于编辑原文件。v8：`canonicalize_source()` 单一实现（Rust 暴露给 Python，避免两套 detector 分歧），返回 canonical_bytes + `SourceMetadata`（raw_hash/source_encoding/bom_kind/newline_style）+ `CanonicalToRawMap`；workspace_manifests 保存 `SourceMetadata`；编辑功能生成 canonical→raw offset 映射后再写原文件。
+4. **[P2#2] "parse 在锁外"与伪代码不一致**：实际 parse 位于 `LOCK_SH` 之后，慢文件会长期阻塞 GC；"flock 保证不会有同 UID 并发"也错误，`LOCK_SH` 明确允许多个 refresh 并行。v8：乐观查询（无锁）→ miss 时在 flock 外 parse → 获取 `LOCK_SH` → 事务内 recheck + `publish_or_pin_in_transaction()` 短事务发布。
+5. **[P2#3] Rust fallback 两个缺口**：`pool.get_at(i)` 抛异常时没有回退整组或剩余文件；验收标准"11 种语言默认走 Rust"与默认空灰度集合冲突。v8：`pool.get_at` 流式读取全生命周期用 try/except 包裹，异常时剩余文件全部回退 `non_rust_files`；验收改为"仅已放行语言默认 Rust，最终目标 11 种"。
+6. **[P2#4] 越权 edge 被静默丢弃**：`INSERT ... SELECT` 返回 0 行后没有检查 `rowcount`，提交前一致性扫描也看不到根本没插入的 edge。v8：每条输入要求恰好产生一条 edge，检查 `cursor.rowcount == 1`；不满足时回滚并抛异常记录 rejected edge，避免调用图静默缺边。
 
 ## v7 变更摘要（针对评审第六轮 5 个 P1 + 2 个 P2）
 
@@ -154,7 +163,7 @@ Phase 2（daemon skeleton + UDS）、Phase 4+（snapshot sharing / ACL / GraphSn
 ### 1.6 验收标准
 
 Phase 1：
-- 支持 11 种语言默认走 Rust `batch_parse_files_lang_pool`，非支持语言回退 Python。
+- v8 P2#3: 仅 `RUST_PARSE_ENABLED_LANGS` 中已放行的语言默认走 Rust `batch_parse_files_lang_pool`；未放行语言回退 Python。**最终目标**是 11 种语言全部通过 alignment tests 后逐语言放行，但默认空灰度集合下不自动启用任何语言（C 快路径 `batch_parse_c_files_pool` 独立保留，不受此变量影响）。
 - 大批量解析时父进程 RSS 不再持有全部 Python dict 峰值（沿用 P30 流式 pool）。
 - 与 Python parser 核心字段 alignment test：actual_diff - known_diffs == empty（Counter 相减，剩余差异为零；已知差异显式记录在 `KNOWN_SYMBOL_DIFFS` / `KNOWN_CALL_DIFFS` 中）。
 
@@ -247,20 +256,30 @@ if _can_use_rust_parse() and not os.environ.get("CW_DISABLE_RUST_PARSE"):
             failed_files.append((f"<pool:{lang}>", str(pool_err)))
             continue
 
-        # 流式回传：逐个 get_at 转 dict 写入 file_results
-        for i, (abs_path, module_path, rel_path, file_instance_id) in enumerate(filtered):
-            r = pool.get_at(i)
-            if r.get("error"):
-                # v7 P1#4: 单文件 error → 该文件回退 Python（不是整组丢弃）
+        # v8 P2#3: 流式回传全程用 try/except 包裹。
+        # pool.get_at 在任意 i 抛异常（Rust panic / 段错误 / pool 内部状态损坏）时，
+        # 已成功回传的 file_results 保留，剩余未处理的文件全部回退 non_rust_files 走 Python。
+        try:
+            for i, (abs_path, module_path, rel_path, file_instance_id) in enumerate(filtered):
+                r = pool.get_at(i)
+                if r.get("error"):
+                    # v7 P1#4: 单文件 error → 该文件回退 Python（不是整组丢弃）
+                    rust_failed_files.append((None, rel_path, abs_path, lang, module_path, file_instance_id))
+                    failed_files.append((rel_path, r["error"]))
+                    continue
+                r["abs_path"] = abs_path
+                r["file_instance_id"] = file_instance_id
+                r["module_path"] = module_path
+                r["rel_path"] = rel_path
+                r.setdefault("inline_modules", [])
+                file_results[rel_path] = r
+        except Exception as stream_err:
+            # v8 P2#3: pool.get_at 抛异常 → 剩余未处理文件全部回退 Python
+            # 已回传的 file_results 保留（已成功 parse 的不重做）。
+            remaining = filtered[i+1:]  # i 是当前抛异常的位置，i+1 起为未处理
+            for _idx, rel_path, abs_path, _lang, module_path, file_instance_id in remaining:
                 rust_failed_files.append((None, rel_path, abs_path, lang, module_path, file_instance_id))
-                failed_files.append((rel_path, r["error"]))
-                continue
-            r["abs_path"] = abs_path
-            r["file_instance_id"] = file_instance_id
-            r["module_path"] = module_path
-            r["rel_path"] = rel_path
-            r.setdefault("inline_modules", [])
-            file_results[rel_path] = r
+            failed_files.append((f"<pool:{lang}:stream>", str(stream_err)))
 
 # v7 P1#4: Rust 失败的文件 + 未放行语言 → 走原 Python ProcessPoolExecutor
 python_files = non_rust_files + rust_failed_files
@@ -278,7 +297,8 @@ if python_files:
 - **新增 `batch_parse_files_lang_pool`** 作为多语言通用路径。
 - **小批量用 `parse_file_lang`（单文件）**：文件数 < 阈值时（如 < 50），用单文件 Rust parse 避免线程池开销。大批量（≥ 50）用 `batch_parse_files_lang_pool`。Phase 1.1 实现中已加此阈值，但需补集成测试覆盖小批量路径（v4 Phase 1.1 复核修复）。
 - 资源文件预过滤（`_is_resource_file`）仍在 Python 侧执行，避免 Rust 读取大文件。
-- **失败 fallback（v7 P1#4 修正）**：Rust 扩展不可用 → `non_rust_files` 保持全部文件走 Python；pool 异常 → 整组回退 Python；单文件 error → 该文件回退 Python。三种情况都不会丢文件。需补集成测试覆盖"语言已放行但扩展不可用"、"pool 异常回退"、"单文件 error 回退"。
+- **失败 fallback（v7 P1#4 + v8 P2#3 修正）**：Rust 扩展不可用 → `non_rust_files` 保持全部文件走 Python；pool 创建异常 → 整组回退 Python；**pool.get_at 流式读取异常（v8 P2#3）→ 已回传的保留，剩余未处理文件全部回退 Python**；单文件 error → 该文件回退 Python。四种情况都不会丢文件。需补集成测试覆盖"语言已放行但扩展不可用"、"pool 创建异常回退"、"pool.get_at 流式异常回退"、"单文件 error 回退"。
+- **v8 P2#3 验收口径修正**：默认空灰度集合下不自动启用任何语言（C 快路径除外）；只有显式加入 `RUST_PARSE_ENABLED_LANGS` 且 alignment tests 通过的语言才走 Rust。验收标准从"11 种语言默认走 Rust"改为"仅已放行语言默认 Rust，最终目标 11 种"。
 
 #### 2.2.2 Alignment Tests（Counter 多重集合比较 + Counter 相减）
 
@@ -590,28 +610,67 @@ PARSE_INPUT_ABI_VERSION = "v1"
 **Rust 侧改动**（[rust_ext/src/multi_lang.rs](../../rust_ext/src/multi_lang.rs)）：
 
 ```rust
-// v7 P1#3: Rust 侧必须规范化输入，不能用原始字节
-fn read_canonical_bytes(abs_path: &str) -> Result<Vec<u8>, io::Error> {
-    let raw = std::fs::read(abs_path)?;
-    // 1. BOM 检测
-    let (encoding, bytes_no_bom) = detect_encoding_and_strip_bom(&raw);
-    // 2. 解码为 UTF-8
-    let utf8_str = decode_to_utf8(bytes_no_bom, encoding)?;
-    // 3. 换行规范化: CRLF/CR → LF
-    let normalized: String = utf8_str.replace("\r\n", "\n").replace("\r", "\n");
-    Ok(normalized.into_bytes())
+// v7 P1#3 + v8 P2#1: 唯一的输入规范化实现，Python 通过 FFI 调用，不重复实现 detector
+pub struct SourceMetadata {
+    pub raw_hash: String,          // sha256(原始磁盘字节)，用于检测原文件是否改动
+    pub source_encoding: String,  // "utf-8" | "utf-16le" | "utf-16be" | "gbk" | "latin-1" ...
+    pub bom_kind: String,          // "none" | "utf8" | "utf16le" | "utf16be" | "utf32"
+    pub newline_style: String,    // "lf" | "crlf" | "cr" | "mixed"
 }
 
-// v7 P1#3: 必须用 SHA-256，不用 DefaultHasher
-fn compute_content_hash(canonical: &[u8]) -> String {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(canonical);
-    format!("{:x}", hasher.finalize())
+pub struct CanonicalizeResult {
+    pub canonical_bytes: Vec<u8>,     // BOM 剥离 + 解码为 UTF-8 + CRLF/CR→LF 后的字节
+    pub content_hash: String,         // sha256(canonical_bytes)
+    pub metadata: SourceMetadata,     // v8 P2#1: 原始文件元数据，编辑功能用
+    pub offset_map: Vec<(usize, usize)>, // v8 P2#1: canonical_byte_offset → raw_byte_offset 的分段映射
+}
+
+// v8 P2#1: canonicalize_source 是输入规范化的唯一入口（v7 read_canonical_bytes 的演进版）
+pub fn canonicalize_source(abs_path: &str) -> Result<CanonicalizeResult, io::Error> {
+    let raw = std::fs::read(abs_path)?;
+    let raw_hash = sha256_hex(&raw);
+
+    // 1. BOM 检测 + 剥离
+    let (bom_kind, bytes_no_bom) = detect_and_strip_bom(&raw);
+    // 2. 编码检测 + 解码为 UTF-8
+    let (source_encoding, utf8_str) = decode_to_utf8(bytes_no_bom, bom_kind)?;
+    // 3. 换行规范化: 记录原 newline_style，CRLF/CR → LF
+    let (newline_style, normalized, offset_map) = normalize_newlines(&utf8_str);
+    let canonical_bytes = normalized.into_bytes();
+    let content_hash = sha256_hex(&canonical_bytes);
+    Ok(CanonicalizeResult {
+        canonical_bytes, content_hash,
+        metadata: SourceMetadata { raw_hash, source_encoding, bom_kind, newline_style },
+        offset_map,
+    })
+}
+
+// v8 P2#1: canonical→raw 偏移映射。offset_map 是分段表 [(canonical_end, raw_end), ...]，
+// 二分查找即可把 canonical start_byte/end_byte 翻译为原文件字节偏移，供编辑/注释恢复使用。
+// offset_map 仅在编辑原文件时构建（lazy），parse/查询路径不需要。
+pub fn canonical_to_raw(offset_map: &[(usize, usize)], canonical_off: usize) -> usize {
+    // 找到第一个 canonical_end > canonical_off 的段，线性插值 raw 偏移
+    // （CRLF→LF 会让 canonical 比 raw 短，每个 \r\n 收缩 1 字节）
+    offset_map.iter()
+        .find(|(c_end, _)| *c_end > canonical_off)
+        .map(|(_, r_end)| {
+            // 段内偏移：canonical 段起点到 canonical_off 的差 + raw 段起点
+            // 简化：段内 raw/canonical 偏移一一对应（CRLF 收缩发生在段边界）
+            r_end.saturating_sub(canonical_off) // 实现按真实分段表二分
+        })
+        .unwrap_or(canonical_off)
 }
 ```
 
-**Python 侧改动**（[config.py read_file_normalized](../../config.py#L993)）：当前已做 UTF-8 → latin-1 降级。v7 需补齐：BOM 剥离 + CRLF→LF 规范化 + 确保与 Rust 侧 `read_canonical_bytes` 输出字节一致。可参考 [TokenSlim-publish2 encoding_fallback](../../testcode/TokenSlim-publish2/src/core/encoding_fallback/mod.rs)（见 AGENTS.md 第 9 条）。
+**v8 P2#1 关键设计（canonical→raw 映射）**：
+- **单一实现**：`canonicalize_source()` 只在 Rust 实现，Python 通过 FFI（`rust_ext`）调用，**不**在 Python 侧重复实现编码检测器。避免两套 detector 偶发分歧（如 chardetng 与 chardet 对边界编码判断不同），导致 Rust/Python content_hash 不一致。
+- **`SourceMetadata` 保存到 workspace_manifests**：编辑功能（注释恢复、refactor）必须知道原文件编码/BOM/换行风格才能正确写回。`start_byte/end_byte` 属于 canonical UTF-8 坐标系，CRLF/UTF-16/GBK 文件不能直接用。
+- **`offset_map` 惰性构建**：偏移映射只在编辑原文件时构建（parse 和查询路径不需要，避免内存开销）。映射为分段表，二分查找 O(log N)。
+- **CAS 不存 SourceMetadata**：CAS 是内容级、编码无关的（canonical bytes 已规范化），同一文件内容无论原编码如何都映射到同一 CAS 条目。`SourceMetadata` 存 workspace_manifests（路径级元数据）。
+
+**Python 侧改动**（[config.py read_file_normalized](../../config.py#L993)）：v7 计划在 Python 侧补齐 BOM/CRLF。**v8 P2#1 修正**：Python 侧**不再重复实现**编码检测，改为调用 Rust `canonicalize_source()` FFI，确保唯一 detector。仅当 Rust 扩展不可用（`_can_use_rust_parse() == False`）时，Python 侧才用降级实现（latin-1 兜底），并在 manifest 标记 `source_encoding="fallback-latin1"` 供编辑路径警告"偏移可能不准"。可参考 [TokenSlim-publish2 encoding_fallback](../../testcode/TokenSlim-publish2/src/core/encoding_fallback/mod.rs)（见 AGENTS.md 第 9 条）。
+
+**workspace_manifests schema 扩展（v8 P2#1）**：增加原始文件元数据列，编辑功能据此还原原文件偏移（见 §3.3 schema）。
 
 **ParseInputV1 版本纳入 CAS key**：input_abi_version 与 abi_version 一起纳入 CAS key，编码/换行策略变化后旧条目自然失效。
 
@@ -721,14 +780,15 @@ def normalize_calls_v1(calls):
 ```
 
 **实施步骤**：
-1. Rust 实现 `read_canonical_bytes`（BOM + 编码检测 + CRLF→LF），替换 [multi_lang.rs L570](../../rust_ext/src/multi_lang.rs#L570) 的原始字节读取。
+1. Rust 实现 `canonicalize_source()`（BOM + 编码检测 + CRLF→LF + SourceMetadata + offset_map，v8 P2#1 演进版），替换 [multi_lang.rs L570](../../rust_ext/src/multi_lang.rs#L570) 的原始字节读取。
 2. Rust `content_hash` 改用 `sha2::Sha256`，替换 `DefaultHasher`。
 3. Rust `SymbolInfo` / `RawCall` 增加字段（`local_id` 从 1 开始，parent/caller 用 `Option<u32>`），`walk_node` 赋值。
-4. Python `read_file_normalized` 补齐 BOM 剥离 + CRLF→LF，确保与 Rust `read_canonical_bytes` 输出字节一致。
+4. v8 P2#1: Python 通过 FFI 调用 Rust `canonicalize_source()`，**不**重复实现编码检测。仅 Rust 扩展不可用时用 latin-1 降级实现并标记 `source_encoding="fallback-latin1"`。
 5. Python 各 parser 增加 `local_id`（从 1 开始）/ parent / byte range 输出。
 6. `_normalize_rust_symbols` 补齐缺失字段的默认值（向后兼容）。
-7. Alignment tests 增加 `test_abi_field_alignment`（local_id / parent / byte range / call_ordinal / input_canonical_bytes 一致性）。
-8. CAS key 统一调用 `compute_cas_key_v1`，删除所有重复定义。
+7. v8 P2#1: `workspace_manifests` 迁移加 `raw_hash`/`source_encoding`/`bom_kind`/`newline_style` 列；refresh 写入时填充。
+8. Alignment tests 增加 `test_abi_field_alignment`（local_id / parent / byte range / call_ordinal / input_canonical_bytes 一致性）。
+9. CAS key 统一调用 `compute_cas_key_v1`，删除所有重复定义。
 
 ### 3.1 核心思想（只承诺减少重复 parse）
 
@@ -911,9 +971,15 @@ CREATE TABLE IF NOT EXISTS workspace_manifests (
     workspace_id INTEGER NOT NULL,
     rel_path TEXT NOT NULL,
     cas_key TEXT DEFAULT NULL,           -- clean: 指向 CAS DB 的 cas_file_cache；dirty: NULL
-    content_hash TEXT NOT NULL,         -- 文件内容 hash（clean 和 dirty 都填）
+    content_hash TEXT NOT NULL,         -- 文件内容 hash（clean 和 dirty 都填；canonical bytes 的 sha256）
     is_dirty INTEGER DEFAULT 0,         -- 1 = dirty overlay，独立 parse
     mtime REAL NOT NULL,
+    -- v8 P2#1: 原始文件元数据，编辑/注释恢复据此把 canonical 偏移翻译回原文件偏移。
+    -- canonical start_byte/end_byte 不能直接写原文件（CRLF/BOM/UTF-16/GBK 偏移不一致）。
+    raw_hash TEXT DEFAULT '',            -- sha256(原始磁盘字节)，检测原文件改动
+    source_encoding TEXT DEFAULT 'utf-8', -- "utf-8" | "utf-16le" | "utf-16be" | "gbk" | "latin-1" | "fallback-latin1"
+    bom_kind TEXT DEFAULT 'none',        -- "none" | "utf8" | "utf16le" | "utf16be" | "utf32"
+    newline_style TEXT DEFAULT 'lf',     -- "lf" | "crlf" | "cr" | "mixed"
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
     -- v6 P1#1: 删除跨库 FK（cas_file_cache 在独立 CAS DB，普通 SQLite FK 无法跨库引用）
     -- cas_key 的一致性由应用层保证：refresh 写入前查 CAS DB 确认 cas_key 存在
@@ -1022,16 +1088,27 @@ Phase 3A 改造后：
 **v5 修复**：发布流程改为"正文 payload → symbol occurrence → raw calls/imports → ready"四阶段，补齐全部 v4 字段，并加 busy retry 包装层。
 
 ```python
-def cas_publish_with_retry(cas_key, parse_result, cas_conn, max_retries=3):
-    """带 busy retry 的 CAS 发布包装层。
+def cas_publish_with_retry(cas_key, parse_result, workspace_id, cas_conn, max_retries=3):
+    """v8 P1#1: 带 busy retry 的 CAS 发布 + pin 包装层。
 
     CAS DB 可能被同 UID 的其他 CLI / hook / VS Code 进程占用，
     BEGIN IMMEDIATE 遇到 database is locked 时有界重试。
+
+    单次调用 = BEGIN IMMEDIATE + publish_or_pin_in_transaction + COMMIT。
+    refresh_file_with_cas（§3.5.1）走自己的两阶段事务，不经过此函数；
+    此函数供冷启动 / 显式 cas publish 等无 flock 协调的场景使用。
     """
     for attempt in range(max_retries):
         try:
-            return _cas_publish_impl(cas_key, parse_result, cas_conn)
+            cas_conn.execute("BEGIN IMMEDIATE")
+            publish_or_pin_in_transaction(cas_key, parse_result, workspace_id, cas_conn)
+            cas_conn.execute("COMMIT")
+            return
         except sqlite3.OperationalError as e:
+            try:
+                cas_conn.execute("ROLLBACK")
+            except Exception:
+                pass
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 time.sleep(0.1 * (attempt + 1))  # 100ms, 200ms, 300ms
                 # 重试前重新检查：可能其他进程已经发布了 ready 条目
@@ -1039,44 +1116,69 @@ def cas_publish_with_retry(cas_key, parse_result, cas_conn, max_retries=3):
                     "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
                 ).fetchone()
                 if row and row["state"] == "ready":
-                    return  # 其他进程已完成发布
+                    # 已 ready：只需补 pin
+                    cas_conn.execute("BEGIN IMMEDIATE")
+                    publish_or_pin_in_transaction(cas_key, None, workspace_id, cas_conn)
+                    cas_conn.execute("COMMIT")
+                    return
                 continue
             raise
 
 
-def _cas_publish_impl(cas_key, parse_result, cas_conn):
-    """原子发布 CAS 条目（单事务，崩溃安全）
+def publish_or_pin_in_transaction(cas_key, parse_result, workspace_id, cas_conn):
+    """v8 P1#1: 事务内"发布或 pin"——统一入口。
 
-    v5 P1#4: 四阶段写入——
-    1. 正文 payload → cas_symbol_contents（按 content_hash 去重）
-    2. symbol occurrence → cas_symbols（含 symbol_content_hash / local_qualified_name /
-       lexical_parent_local_id / start_byte / end_byte 等 v4 全部新增字段）
-    3. raw calls / imports → cas_raw_calls / cas_imports（含 call_ordinal）
-    4. state=building → ready（最后发布）
+    调用前提：调用方已执行 BEGIN IMMEDIATE（CAS 写事务已开启），本函数不 BEGIN/COMMIT。
+    调用方在函数返回后执行 COMMIT（失败则 ROLLBACK）。
+
+    行为：
+    - 若 cas_key 已存在 state='ready' 条目：**不**重新 INSERT payload，
+      只写一条 cas_pending_refs（pin），避免 GC 在 manifest 提交窗口期删除 CAS。
+    - 若不存在 ready 条目（CAS miss）：按完整 v7 schema 发布
+      （含 abi_version / input_abi_version / lexical_parent_local_id=NULL），
+      然后写 cas_pending_refs。
+    - parse_result 为 None 时只走 pin 分支（调用方已确认 ready 或只想 pin）。
+
+    v8 P1#1 修复点（相对 v7 _cas_publish_impl）：
+    1. cas_file_cache INSERT 补齐 abi_version / input_abi_version（NOT NULL）。
+    2. cas_symbols.lexical_parent_local_id 用 NULL 表示顶层，不再默认 0。
+    3. cas_raw_calls.caller_local_id 用 NULL 表示顶层裸调用，不再默认 0。
+    4. cas_pending_refs INSERT 显式写入 created_at（NOT NULL）。
+    5. 并发命中时不 ROLLBACK 再 INSERT，直接写 pin 后返回。
     """
-    cas_conn.execute("BEGIN IMMEDIATE")  # 获取写锁
-    try:
-        # 0. 检查是否已存在 ready 条目（并发同 key）
-        row = cas_conn.execute(
-            "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
-        ).fetchone()
-        if row and row["state"] == "ready":
-            cas_conn.execute("ROLLBACK")
-            return  # 已有 ready 条目，跳过
+    now = time.time()
 
-        # 1. 插父记录，state=building（不可被命中）
+    # 0. 事务内检查 ready（并发同 key 可能已被其他 refresh 发布）
+    row = cas_conn.execute(
+        "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
+    ).fetchone()
+    already_ready = (row is not None and row["state"] == "ready")
+
+    if not already_ready:
+        # CAS miss：按完整 v7 schema 发布
+        if parse_result is None:
+            raise RuntimeError(
+                f"publish_or_pin: cas_key={cas_key} 未 ready 但未提供 parse_result"
+            )
+
         content_hash = parse_result["content_hash"]
         language = parse_result["language"]
+
+        # 1. 父记录 state=building（不可被命中）。v8 P1#1: 补齐 abi_version / input_abi_version
         cas_conn.execute(
             """INSERT OR IGNORE INTO cas_file_cache
                (cas_key, content_hash, language, parser_version,
-                callwarden_version, extraction_config_version, state, parsed_at)
-               VALUES (?, ?, ?, ?, ?, ?, 'building', ?)""",
+                callwarden_version, extraction_config_version,
+                abi_version, input_abi_version,            -- v8 P1#1: NOT NULL 字段
+                state, parsed_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'building', ?)""",
             (cas_key, content_hash, language,
              parse_result.get("parser_version", ""),
              parse_result.get("callwarden_version", ""),
              parse_result.get("extraction_config_version", ""),
-             time.time())
+             parse_result.get("abi_version", PARSE_FACT_ABI_VERSION),      # v8 P1#1
+             parse_result.get("input_abi_version", PARSE_INPUT_ABI_VERSION),  # v8 P1#1
+             now)
         )
 
         # 2. 正文 payload → cas_symbol_contents（按 content_hash 去重）
@@ -1087,9 +1189,11 @@ def _cas_publish_impl(cas_key, parse_result, cas_conn):
                 (sym_content_hash, sym.get("content", ""))
             )
 
-        # 3. symbol occurrence → cas_symbols（含 v4 全部新增字段）
+        # 3. symbol occurrence → cas_symbols
         for sym in parse_result["symbols"]:
             sym_content_hash = sym.get("content_hash") or compute_content_hash(sym.get("content", ""))
+            # v8 P1#1: lexical_parent_local_id 用 NULL 表示顶层（None），不再默认 0
+            parent_id = sym.get("lexical_parent_local_id")  # None → SQL NULL
             cas_conn.execute(
                 """INSERT OR IGNORE INTO cas_symbols
                    (cas_key, local_symbol_id, symbol_content_hash, name,
@@ -1098,33 +1202,35 @@ def _cas_publish_impl(cas_key, parse_result, cas_conn):
                     start_byte, end_byte, visibility, signature, has_comment, depth)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (cas_key, sym["local_id"], sym_content_hash, sym["name"],
-                 sym["local_qualified_name"],           # v4: 内容级限定名
-                 sym.get("lexical_parent_local_id", 0), # v4: 词法父 ID
+                 sym["local_qualified_name"],
+                 parent_id,                          # v8 P1#1: None=顶层 → NULL
                  sym["kind"],
                  sym["start_line"], sym["end_line"],
                  sym.get("start_col", 0), sym.get("end_col", 0),
-                 sym.get("start_byte", 0),              # v5 P1#5: 从 cas_symbol_contents 移来
-                 sym.get("end_byte", 0),                # v5 P1#5: 同上
+                 sym.get("start_byte", 0),
+                 sym.get("end_byte", 0),
                  sym.get("visibility", "private"),
                  sym.get("signature", ""),
-                 int(sym.get("has_comment", False)),    # v4: bool → int 归一化
+                 int(sym.get("has_comment", False)),
                  sym.get("depth", -1))
             )
 
-        # 4. raw calls → cas_raw_calls（含 call_ordinal）
+        # 4. raw calls → cas_raw_calls
         for call in parse_result.get("raw_calls", []):
+            # v8 P1#1: caller_local_id 用 NULL 表示顶层裸调用（None → SQL NULL）
+            caller_local_id = call.get("caller_local_id")  # None → SQL NULL
             cas_conn.execute(
                 """INSERT OR IGNORE INTO cas_raw_calls
                    (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (cas_key, call["caller_local_id"], call["caller_name"],
+                (cas_key, caller_local_id, call["caller_name"],
                  call["callee_name"], call["call_line"],
-                 call.get("call_ordinal", 0))           # v4 P2: 同行调用序号
+                 call.get("call_ordinal", 0))
             )
 
         # 5. imports → cas_imports
         for imp in parse_result.get("imports", []):
-            import_path = imp["module"] if isinstance(imp, dict) else imp  # 兼容 List[str]/List[Dict]
+            import_path = imp["module"] if isinstance(imp, dict) else imp
             import_kind = imp.get("kind", "import") if isinstance(imp, dict) else "import"
             cas_conn.execute(
                 """INSERT OR IGNORE INTO cas_imports
@@ -1137,25 +1243,29 @@ def _cas_publish_impl(cas_key, parse_result, cas_conn):
             "UPDATE cas_file_cache SET state = 'ready' WHERE cas_key = ?",
             (cas_key,)
         )
-        cas_conn.execute("COMMIT")
-    except Exception:
-        cas_conn.execute("ROLLBACK")
-        # v6 P2#1: 不再在 rollback 后执行 DELETE building。
-        # ROLLBACK 已回滚整个事务（包括 step 1 的 INSERT building），
-        # 再执行 DELETE 会触发隐式事务，可能报 "transaction within transaction"。
-        # 孤儿 building 条目由 GC 的 building 清理逻辑处理（见 §3.8 子查询清理）。
-        raise
+
+    # 7. v8 P1#1: 写 cas_pending_refs（pin）。命中或刚发布都写，保护 manifest 提交窗口期。
+    #    created_at 显式写入（NOT NULL），expires_at = now + 300s（5 分钟 TTL）
+    cas_conn.execute(
+        """INSERT OR REPLACE INTO cas_pending_refs
+           (cas_key, workspace_id, expires_at, created_at)
+           VALUES (?, ?, ?, ?)""",
+        (cas_key, workspace_id, now + 300, now)
+    )
 ```
 
-**关键点**：
+**v8 P1#1 关键修复（相对 v7 `_cas_publish_impl`）**：
+- **`cas_file_cache` INSERT 补齐 `abi_version` / `input_abi_version`**：两个 NOT NULL 字段此前被省略，首次 CAS miss 即插入失败。v8 显式写入，值取自 `parse_result` 或回退到当前 ABI 常量。
+- **`lexical_parent_local_id` 用 NULL 表示顶层**：v7 已规定 NULL 约定，但发布代码仍 `sym.get("lexical_parent_local_id", 0)` 默认 0。v8 改为 `sym.get("lexical_parent_local_id")`（`None` → SQL NULL），与 §3.0.2 哨兵值设计一致。
+- **`caller_local_id` 用 NULL 表示顶层裸调用**：同上，v8 改为 `call.get("caller_local_id")`。
+- **`cas_pending_refs.created_at` 显式写入**：schema 为 NOT NULL，但 v7 refresh INSERT 省略该列。v8 在 `publish_or_pin_in_transaction` 内显式写入 `now`。
+- **并发命中不 ROLLBACK 再 INSERT**：v7 命中后 `ROLLBACK` 再走 `INSERT INTO cas_pending_refs`（隐式新事务），多余且易错。v8 命中时在同一事务内直接写 pin 后返回，调用方 COMMIT。
+
+**其他保留点**：
 - **四阶段顺序**：正文 payload → symbol occurrence → raw calls/imports → ready。每阶段在同一事务内，全部成功后才 `state=ready`。
-- `cas_symbol_contents` 按 `content_hash` 去重（`INSERT OR IGNORE`），相同正文只存一份。
-- `cas_symbols.symbol_content_hash` 引用 CAS DB 内部的 `cas_symbol_contents`（自包含 FK）。
-- `cas_symbols` 写入 `local_qualified_name` / `lexical_parent_local_id` / `start_byte` / `end_byte` 等 v4 新增字段。
-- `cas_raw_calls` 写入 `call_ordinal`（v4 P2：同行调用序号）。
-- `has_comment` 做 `bool → int` 归一化（Rust parser 返回 bool，Python 期望 int）。
-- `imports` 兼容 `List[str]` 和 `List[Dict]` 两种格式（Rust 返回 str，Python 返回 Dict）。
-- **busy retry 包装层**：`cas_publish_with_retry` 在 `database is locked` 时有界重试，重试前重新检查 `state=ready`（可能其他进程已完成发布）。
+- `cas_symbol_contents` 按 `content_hash` 去重（`INSERT OR IGNORE`）。
+- `has_comment` 做 `bool → int` 归一化。
+- `imports` 兼容 `List[str]` 和 `List[Dict]` 两种格式。
 - `state=building` 的条目**不可被命中**（查询条件加 `WHERE state = 'ready'`）。
 - 崩溃后 GC 清理 `state=building` 的孤儿条目（见 §3.8）。
 
@@ -1384,12 +1494,16 @@ def gc_cas(cas_conn, grace_period_days=7):
 
 **v7 P1#1 问题**：v6 的 `refresh_file_with_cas` 把 parse 放在 CAS `BEGIN IMMEDIATE` 内，同 UID 并发刷新会长时间串行化（parse 耗时可能数秒），5 秒 `busy_timeout` 容易失效。而且 workspace DB 在 CAS DB 之前提交——进程在两次 COMMIT 之间崩溃，manifest 会指向已回滚或不存在的 CAS（SQLite WAL 下两个独立连接不能组成原子事务）。
 
-**v7 修复**：
-1. **parse 在锁外完成**——parse 耗时不可控，不持有任何 DB 锁。
-2. **flock 协调 GC/refresh**——refresh 获取共享 `flock`（多个 refresh 可并行），GC 获取独占 `flock`（GC 期间所有 refresh 阻塞）。flock 是进程级文件锁，不占用 SQLite 连接。
-3. **锁内重新检查 CAS**——获取 flock 后重新查 CAS，可能其他 refresh 已发布同一 key。
+**v7 修复 + v8 P2#2 修正**：
+1. **parse 在锁外完成**——parse 耗时不可控，不持有任何 DB 锁，也不持有 flock。
+2. **flock 协调 GC/refresh**——refresh 获取共享 `flock`（`LOCK_SH`，多个 refresh 可并行），GC 获取独占 `flock`（`LOCK_EX`，GC 期间所有 refresh 阻塞）。flock 是进程级文件锁，不占用 SQLite 连接。
+   - **v8 P2#2 修正**：`LOCK_SH` 明确允许多个 refresh 并行，**不**保证"无同 UID 并发"。因此事务内仍需 recheck CAS。parse 必须在 `LOCK_SH` **之前**完成，否则慢文件会长期阻塞 GC（GC 等 `LOCK_EX`，而 `LOCK_SH` 持有者在 parse）。
+3. **乐观查询→锁外 parse→锁内 recheck/publish**——v8 P2#2 流程：
+   - (a) 无锁乐观查询 `SELECT state WHERE cas_key=?`；命中则跳过 parse。
+   - (b) miss 时在 flock 外 parse（耗时操作）。
+   - (c) 获取 `LOCK_SH`，事务内 recheck + `publish_or_pin_in_transaction()` 短事务发布 + pin。
 4. **CAS 先于 workspace 提交**——先短事务发布 CAS（COMMIT），再提交 workspace manifest。崩溃在两次提交之间时：CAS 多一个未引用条目（GC 清理），workspace manifest 未更新（下次 refresh 重做）——**不会出现 manifest 指向不存在 CAS**。
-5. **cas_pending_refs 带 TTL**——CAS 发布后、manifest 提交前，写入 `cas_pending_refs(cas_key, workspace_id, expires_at)`。GC 将 pending key 视为 live，避免在窗口期内删除。manifest 提交后删除 pending ref（或等 TTL 自然过期）。
+5. **cas_pending_refs 带 TTL**——CAS 发布后、manifest 提交前，写入 `cas_pending_refs(cas_key, workspace_id, expires_at, created_at)`。GC 将 pending key 视为 live，避免在窗口期内删除。manifest 提交后删除 pending ref（或等 TTL 自然过期）。
 
 ```python
 import fcntl
@@ -1398,75 +1512,79 @@ CAS_FLOCK_PATH = os.path.expanduser("~/.callwarden/cas.flock")
 
 def refresh_file_with_cas(workspace_id, rel_path, abs_path, module_path, lang,
                          ws_conn, cas_conn):
-    """v7 P1#1: parse 锁外 → flock 共享锁 → CAS 短事务发布 → manifest 提交。
+    """v7 P1#1 + v8 P2#2: 乐观查询 → 锁外 parse → LOCK_SH → 事务内 recheck/publish/pin → manifest。
 
     崩溃安全性：
     - CAS 先提交，workspace 后提交。两次提交之间崩溃 → CAS 多一个未引用条目
       （GC 清理），manifest 未更新（下次 refresh 重做）。不会出现 manifest 指向
       不存在 CAS。
     - cas_pending_refs 保证 GC 在窗口期内不删除 CAS 条目。
+
+    v8 P2#2: parse 在 LOCK_SH 之前完成，不阻塞 GC；LOCK_SH 只保护 recheck+publish+pin
+    短事务，以及 manifest 提交窗口期。LOCK_SH 允许其他 refresh 并行，因此事务内必须 recheck。
     """
-    # 1. 锁外读取文件 + 计算 cas_key（不持有任何锁）
-    canonical_bytes = read_canonical_bytes(abs_path)  # v7 P1#3: ParseInputV1
-    content_hash = hashlib.sha256(canonical_bytes).hexdigest()
+    # 1. 锁外读取文件 + 计算 cas_key（不持有任何锁，也不持有 flock）
+    #    v8 P2#1: 调用唯一实现 canonicalize_source()（Rust FFI），返回 canonical_bytes
+    #    + SourceMetadata（raw_hash/source_encoding/bom_kind/newline_style）+ offset_map。
+    #    SourceMetadata 在 step 6 写入 workspace_manifests，供编辑功能还原原文件偏移。
+    csrc = canonicalize_source(abs_path)  # v8 P2#1: 替代 read_canonical_bytes
+    canonical_bytes = csrc.canonical_bytes
+    content_hash = csrc.content_hash
     cas_key = compute_cas_key_v1(content_hash, lang, parser_version,
                                   callwarden_version, extraction_config_version,
                                   abi_version, input_abi_version)
 
-    # 2. 锁外 parse（耗时操作，不持有 DB 锁）
-    parse_result = None  # 延迟 parse：CAS 命中则不需要
+    # 2. v8 P2#2: 无锁乐观查询 CAS。命中则跳过 parse。
+    parse_result = None
+    row = cas_conn.execute(
+        "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
+    ).fetchone()
+    cache_hit = (row is not None and row["state"] == "ready")
 
-    # 3. 获取共享 flock（与 GC 独占 flock 互斥）
+    # 3. v8 P2#2: miss 时在 flock 外 parse（耗时操作，不阻塞 GC）
+    if not cache_hit:
+        parse_result = parse_file(abs_path, module_path, lang)
+
+    # 4. 获取共享 flock（与 GC 独占 flock 互斥；多个 refresh 可并行持有 LOCK_SH）
     flock_fd = os.open(CAS_FLOCK_PATH, os.O_CREAT | os.O_RDWR)
     try:
-        fcntl.flock(flock_fd, fcntl.LOCK_SH)  # 共享锁，多个 refresh 可并行
+        fcntl.flock(flock_fd, fcntl.LOCK_SH)
 
-        # 4. 锁内重新检查 CAS（可能其他 refresh 已发布）
-        row = cas_conn.execute(
-            "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
-        ).fetchone()
-        if row and row["state"] == "ready":
-            pass  # 命中，跳过 parse + publish
-        else:
-            # 5. 未命中：parse（仍在 flock 内，但不在 CAS 事务内）
-            if parse_result is None:
-                parse_result = parse_file(abs_path, module_path, lang)
+        # 5. v8 P2#2: 事务内 recheck + publish_or_pin（短事务，CAS 先提交）
+        #    publish_or_pin_in_transaction 内部会 recheck ready：
+        #      - 已 ready（其他 refresh 刚发布）→ 只写 pin
+        #      - 未 ready → 按 v7 schema 发布 + 写 pin
+        #    parse_result 在 cache_hit 时为 None（只 pin）；miss 时已 parse 好。
+        cas_conn.execute("BEGIN IMMEDIATE")
+        try:
+            publish_or_pin_in_transaction(cas_key, parse_result, workspace_id, cas_conn)
+            cas_conn.execute("COMMIT")  # CAS 先提交
+        except Exception:
+            cas_conn.execute("ROLLBACK")
+            raise
 
-            # 6. 短事务发布 CAS（CAS 先提交）
-            cas_conn.execute("BEGIN IMMEDIATE")
-            try:
-                # 再次检查（flock 内但事务外可能有同 UID 并发？flock 保证不会）
-                row = cas_conn.execute(
-                    "SELECT state FROM cas_file_cache WHERE cas_key = ?",
-                    (cas_key,)
-                ).fetchone()
-                if row and row["state"] == "ready":
-                    cas_conn.execute("ROLLBACK")  # 已发布，跳过
-                else:
-                    _cas_publish_in_transaction(cas_key, parse_result, cas_conn)
-
-                # 写入 pending ref（带 TTL，GC 视为 live）
-                cas_conn.execute(
-                    "INSERT OR REPLACE INTO cas_pending_refs "
-                    "(cas_key, workspace_id, expires_at) VALUES (?, ?, ?)",
-                    (cas_key, workspace_id, time.time() + 300)  # 5 分钟 TTL
-                )
-                cas_conn.execute("COMMIT")  # CAS 先提交
-            except Exception:
-                cas_conn.execute("ROLLBACK")
-                raise
-
-        # 7. workspace manifest 提交（CAS 已提交，崩溃在此 → CAS 多一个未引用条目）
+        # 6. workspace manifest 提交（CAS 已提交，崩溃在此 → CAS 多一个未引用条目）
+        #    v8 P2#1: manifest 同时写入 SourceMetadata，供编辑功能还原原文件偏移。
         ws_conn.execute("BEGIN IMMEDIATE")
         try:
             refresh_projection(workspace_id, rel_path, cas_key, ws_conn, cas_conn)
+            ws_conn.execute(
+                """UPDATE workspace_manifests
+                   SET cas_key = ?, content_hash = ?, raw_hash = ?,
+                       source_encoding = ?, bom_kind = ?, newline_style = ?
+                   WHERE workspace_id = ? AND rel_path = ?""",
+                (cas_key, content_hash,
+                 csrc.metadata.raw_hash, csrc.metadata.source_encoding,
+                 csrc.metadata.bom_kind, csrc.metadata.newline_style,
+                 workspace_id, rel_path),
+            )
             ws_conn.execute("COMMIT")  # workspace 后提交
         except Exception:
             ws_conn.execute("ROLLBACK")
             # manifest 未提交，CAS 已提交——pending ref TTL 保护 CAS 不被 GC 删除
             raise
 
-        # 8. manifest 提交成功，删除 pending ref
+        # 7. manifest 提交成功，删除 pending ref
         cas_conn.execute("BEGIN IMMEDIATE")
         try:
             cas_conn.execute(
@@ -1575,12 +1693,26 @@ def test_doctor_detects_edge_workspace_inconsistency(tmp_path):
     # 1. 从旧 schema 迁移的数据中存在 caller workspace_id 不一致
     # 2. 运行 doctor_check_edge_workspace_consistency
     # 3. 验证：返回 False 并打印违规 edge
+
+
+def test_edge_insert_rejected_edge_raises(tmp_path):
+    """v8 P2#4: INSERT...SELECT 返回 0 行时不再静默丢弃，而是 ROLLBACK + 抛 EdgeWorkspaceViolation。"""
+    # 1. workspace A 写入 symbol_x；workspace B 调用 write_resolved_edges(B, caller=symbol_x.id)
+    # 2. 验证：抛 EdgeWorkspaceViolation，rejected_edges 含该 edge
+    # 3. 验证：workspace_resolved_edges 无新增行（事务已 ROLLBACK）
+
+
+def test_edge_insert_rowcount_batch_mismatch(tmp_path):
+    """v8 P2#4: 批量 executemany 模式下 rowcount != len(batch) 时按行回退定位 rejected edge。"""
+    # 1. 构造 batch：3 条 edge，其中 1 条 caller 跨 workspace
+    # 2. executemany rowcount=2（!=3）→ 按行单条 INSERT 定位 → rejected_edges 含跨 workspace 的那条
+    # 3. 验证：抛 EdgeWorkspaceViolation，已写入的 2 条随 ROLLBACK 回滚
 ```
 
-**v6 + v7 关键改进**：
+**v6 + v7 + v8 关键改进**：
 - **TOCTOU 消除**：flock 保证 GC（独占）与 refresh（共享）互斥。
 - **崩溃安全**：CAS 先提交，workspace 后提交。崩溃窗口内 CAS 多一个未引用条目（pending ref 保护），不会出现 manifest 指向不存在 CAS。
-- **parse 不持锁**：parse 在 flock 内但不在 CAS 事务内，不阻塞其他 refresh 的 CAS 查询（只阻塞 GC）。
+- **parse 不持锁（v8 P2#2 修正）**：parse 在 `LOCK_SH` **之前**完成（锁外），既不持有 CAS 事务也不持有 flock，完全不阻塞 GC。`LOCK_SH` 只保护 recheck+publish+pin 短事务和 manifest 提交窗口期。
 - **fail-closed 保留**：任何 workspace DB 读取失败即中止 GC。
 - **`grace_threshold`**：仅影响"陈旧 workspace"警告，不影响 live set（保守策略：所有 manifest 引用的 key + pending refs 都加入 live set）。
 - **删除顺序**：先子表 → 正文表 → 父表。
@@ -1609,9 +1741,9 @@ def test_doctor_detects_edge_workspace_inconsistency(tmp_path):
 
       for ws_root in workspace_roots:
           for rel_path, abs_path in walk_source_files(ws_root):
-              # v7 P1#3: 必须用 ParseInputV1 规范化后的 canonical bytes 计算 content_hash
-              canonical_bytes = read_canonical_bytes(abs_path)  # 见 §3.0.1
-              content_hash = hashlib.sha256(canonical_bytes).hexdigest()
+              # v7 P1#3 + v8 P2#1: 必须用 canonicalize_source() 规范化后的 canonical bytes 计算 content_hash
+              csrc = canonicalize_source(abs_path)  # 见 §3.0.1（Rust FFI 唯一实现）
+              content_hash = csrc.content_hash
 
               # 必须重新读取源文件、计算 content hash，不信任 Local CAS 中的 cas_key
               # v7 P2#1: 统一调用 compute_cas_key_v1（含 abi_version + input_abi_version）
@@ -1747,14 +1879,19 @@ CREATE INDEX IF NOT EXISTS idx_edges_callee_qname ON workspace_resolved_edges(wo
 
 ```python
 def write_resolved_edges(workspace_id, resolved_calls, ws_conn):
-    """v7 P2#2: workspace_resolved_edges 写入，caller/callee 的 workspace_id
+    """v7 P2#2 + v8 P2#4: workspace_resolved_edges 写入，caller/callee 的 workspace_id
     由 SELECT 子查询约束，不信任 Python 侧查到的 id。
 
     - caller 必须命中 workspace_symbols(workspace_id=?, id=caller_symbol_id)
     - callee 若已解析（callee_symbol_id 非 NULL），必须命中同 workspace 的 symbol
     - callee 未解析（callee_symbol_id=NULL）允许写入（未解析边仍需保留以供查询）
+
+    v8 P2#4: 每条输入要求恰好产生一条 edge。INSERT ... SELECT 返回 0 行（caller/callee
+    不属于本 workspace）不再是静默丢弃，而是收集为 rejected edge 并 ROLLBACK + 抛异常，
+    避免 resolver 串库 bug 被悄悄转换成调用图缺边。
     """
     ws_conn.execute("BEGIN IMMEDIATE")
+    rejected_edges = []  # v8 P2#4: 记录被 SELECT 0 行拒绝的 edge，供诊断
     try:
         for call in resolved_calls:
             caller_symbol_id = call["caller_symbol_id"]
@@ -1762,7 +1899,7 @@ def write_resolved_edges(workspace_id, resolved_calls, ws_conn):
 
             if callee_symbol_id is None:
                 # callee 未解析：只校验 caller 属于本 workspace
-                ws_conn.execute(
+                cur = ws_conn.execute(
                     """INSERT INTO workspace_resolved_edges
                        (workspace_id, caller_symbol_id, callee_symbol_id,
                         caller_qualified, callee_qualified, callee_name,
@@ -1783,7 +1920,7 @@ def write_resolved_edges(workspace_id, resolved_calls, ws_conn):
                 )
             else:
                 # callee 已解析：caller 和 callee 都必须属同一 workspace
-                ws_conn.execute(
+                cur = ws_conn.execute(
                     """INSERT INTO workspace_resolved_edges
                        (workspace_id, caller_symbol_id, callee_symbol_id,
                         caller_qualified, callee_qualified, callee_name,
@@ -1805,9 +1942,29 @@ def write_resolved_edges(workspace_id, resolved_calls, ws_conn):
                      call.get("is_cross_file", 0), call.get("source", "cas"),
                      workspace_id, caller_symbol_id, callee_symbol_id),
                 )
-                # SELECT 返回 0 行 = caller 或 callee 不属于本 workspace → 该 edge 被丢弃
 
-        # v7 P2#2: 提交前局部完整性检查
+            # v8 P2#4: 每条输入必须恰好产生一条 edge。rowcount != 1 说明
+            # caller/callee 不属于本 workspace（SELECT 0 行），edge 被静默丢弃。
+            # 收集为 rejected edge，最终 ROLLBACK 并抛异常，避免调用图静默缺边。
+            if cur.rowcount != 1:
+                rejected_edges.append({
+                    "caller_symbol_id": caller_symbol_id,
+                    "callee_symbol_id": callee_symbol_id,
+                    "call_line": call["call_line"],
+                    "callee_name": call["callee_name"],
+                    "reason": f"INSERT...SELECT rowcount={cur.rowcount} "
+                              f"(caller/callee 不属于 workspace {workspace_id})",
+                })
+
+        # v8 P2#4: 有 rejected edge → 立即 ROLLBACK，不等提交前检查
+        if rejected_edges:
+            raise EdgeWorkspaceViolation(
+                f"workspace {workspace_id} 有 {len(rejected_edges)} 条 edge 被拒绝"
+                f"（caller/callee 不属于本 workspace），已回滚。"
+                f"首条：{rejected_edges[0]}"
+            )
+
+        # v7 P2#2: 提交前局部完整性检查（兜底，正常情况下 rowcount 检查已拦截）
         # 校验本事务写入的 edge 没有 caller/callee workspace_id 不一致的情况
         bad = ws_conn.execute(
             """SELECT COUNT(*) FROM workspace_resolved_edges e
@@ -1833,13 +1990,19 @@ def write_resolved_edges(workspace_id, resolved_calls, ws_conn):
         raise
 ```
 
-**关键设计**：
+**v8 P2#4 关键设计（相对 v7）**：
 
-1. **`INSERT ... SELECT` 替代 `INSERT ... VALUES`**：caller/callee 的 `workspace_id` 由 `WHERE caller.workspace_id = ? AND caller.id = ?` 约束。若 Python 侧查到的 id 属于其他 workspace（例如 resolver 误用全局 `qname_id_map` 命中了另一 workspace 的同名符号），SELECT 返回 0 行，edge 不写入——**写入期即拒绝越权 edge**，而非事后由 `doctor` 发现。
-2. **callee 未解析仍允许写入**：`callee_symbol_id=NULL` 的边（raw call 未解析到目标）仍需保留，以支持 `get_callees` 返回未解析调用。此时只校验 caller 属于本 workspace。
-3. **提交前局部完整性检查**：在 COMMIT 前用一条 SQL 扫描本事务写入的 edge，确认无 caller/callee workspace_id 不一致。发现不一致则 ROLLBACK 并抛异常，避免脏数据落盘。该检查在事务内执行，开销小（仅扫本 workspace 的 edge）。
-4. **不依赖 `PRAGMA foreign_keys=ON`**：`INSERT ... SELECT` 的 WHERE 子句本身即 workspace 边界约束，与 FK 是否启用无关。即使 `foreign_keys=OFF`，越权 edge 也无法写入。
-5. **批量写入优化**：上述伪代码为单条 INSERT 展示逻辑；实现时可收集批量参数后用 `executemany` + 同一 `INSERT ... SELECT` 模板，减少往返开销。`executemany` 的参数绑定与 `INSERT ... SELECT` 兼容（SQLite 会逐行执行 SELECT 约束）。
+1. **`rowcount == 1` 强校验**：每条 `INSERT ... SELECT` 后检查 `cur.rowcount`。SQLite 的 `rowcount` 对 `INSERT ... SELECT` 反映实际插入行数（0 或 1）。`rowcount != 1` 说明 SELECT 子查询未命中（caller/callee 不属于本 workspace），edge 被静默丢弃——v8 收集为 rejected edge 并 ROLLBACK。
+2. **`EdgeWorkspaceViolation` 异常**：携带 rejected edge 详情（caller/callee symbol_id、call_line、callee_name、原因），供上层日志/诊断定位 resolver 串库根因。不再把"越权 edge 被丢弃"作为正常路径。
+3. **rejected edge 先于提交前检查**：发现 rejected edge 立即 ROLLBACK，不继续写入也不等提交前 SQL 扫描。提交前局部完整性检查保留作为兜底（正常路径 rowcount 已拦截；历史数据迁移时 rowcount 不可用，仍靠提交前检查 + doctor）。
+4. **与 v7 提交前检查的关系**：v7 的提交前 SQL 扫描只能看到**已插入**的 edge 的 workspace_id 不一致，看不到**根本没插入**的 edge。v8 的 rowcount 检查补上了这个盲区：**未插入的 edge 也是 bug**，必须暴露而非静默接受。
+
+**其他保留点（v7）**：
+
+5. **`INSERT ... SELECT` 替代 `INSERT ... VALUES`**：caller/callee 的 `workspace_id` 由 `WHERE caller.workspace_id = ? AND caller.id = ?` 约束。若 Python 侧查到的 id 属于其他 workspace（例如 resolver 误用全局 `qname_id_map` 命中了另一 workspace 的同名符号），SELECT 返回 0 行，edge 不写入——**写入期即拒绝越权 edge**，而非事后由 `doctor` 发现。
+6. **callee 未解析仍允许写入**：`callee_symbol_id=NULL` 的边（raw call 未解析到目标）仍需保留，以支持 `get_callees` 返回未解析调用。此时只校验 caller 属于本 workspace；caller 不命中同样触发 rowcount=0 rejected。
+7. **不依赖 `PRAGMA foreign_keys=ON`**：`INSERT ... SELECT` 的 WHERE 子句本身即 workspace 边界约束，与 FK 是否启用无关。即使 `foreign_keys=OFF`，越权 edge 也无法写入。
+8. **批量写入优化**：上述伪代码为单条 INSERT 展示逻辑；实现时可收集批量参数后用 `executemany` + 同一 `INSERT ... SELECT` 模板，减少往返开销。`executemany` 的参数绑定与 `INSERT ... SELECT` 兼容（SQLite 会逐行执行 SELECT 约束）。批量模式下 `cursor.rowcount` 为总插入行数，需与输入条数比较（`rowcount == len(batch)`），不等则按行回退单条 INSERT 定位 rejected edge。
 
 **`doctor --fk-check` 扩展（edge workspace 一致性校验）**：
 
