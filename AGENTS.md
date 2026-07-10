@@ -265,6 +265,16 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 4. **自举使用**：本项目自身就是 Call Warden 的第一个用户，开发时可以用 `cw` 命令分析本项目代码。
 
+5. **PowerShell Heredoc 不可用**：在 Windows PowerShell 环境中，`git commit -m "$(cat <<'EOF' ... EOF)"` 等 heredoc 语法不工作（报 "Missing file specification after redirection operator"）。多行 commit message 应使用多个 `-m` 参数：`git commit -m "标题" -m "正文行1" -m "正文行2"`。或用 `git commit -F 文件路径` 从文件读取。
+
+6. **工具调用错误日志与 AGENTS.md 持续改进**：当同一类工具调用错误重复出现时（如 PowerShell heredoc、SQLite WAL/SHM 文件创建被沙箱拦截等），应将该错误的根因和规避方法写入 AGENTS.md 的"重要注意事项"小节，避免后续重复踩坑。改进闭环：发现错误 → 记录根因 → 提取通用规律 → 写入 AGENTS.md → 后续自动遵守。
+
+7. **SQLite WAL 模式与只读连接**：GraphStore 用 `immutable=1` URI 打开 SQLite（跳过 WAL），因此新建数据库的 schema 和数据可能还在 WAL 中未被 checkpoint。`_get_graph_store()` 加载前必须先执行 `PRAGMA wal_checkpoint(PASSIVE)`，否则会读到旧数据（报 "no such table"）。同理，任何用 `immutable=1` 或只读模式打开 SQLite 的场景，都需确保写入方已 checkpoint。
+
+8. **Python vs Rust SQL 驱动效率**：Python sqlite3 和 Rust rusqlite 底层都是同一个 C SQLite 库，纯 SQL 执行效率几乎相同。Rust 快 5-15% 来自无 Python 对象转换开销。**真正的加速不来自 SQL 驱动，而来自内存索引（CSR HashMap）完全跳过 SQL 解析/优化/执行**。简单 SQL 查询用 Python 直连更快（避免 PyO3 跨语言调用开销 ~1μs/call），复杂图查询用 Rust 内存索引（5x 加速）。
+
+9. **TokenSlim-publish2 编码处理可复用**：`testcode/TokenSlim-publish2/src/core/encoding_fallback/mod.rs` 实现了完整的编码检测链（BOM → UTF-16/32 无 BOM 启发式 → chardetng 统计检测 → locale 提示 → 14 种编码候选打分 → 混合编码行级解码）。当前 Call Warden 的 `config.py:read_file_normalized` 只做 UTF-8 → latin-1 两步降级，遇到 GBK/Shift-JIS/Big5 等亚洲编码会产生乱码。如需改进编码处理，可参考该实现。
+
 ## 文档索引
 
 | 文档 | 说明 |
