@@ -269,6 +269,72 @@ WantedBy=multi-user.target
 - **本地 TCP**：默认 **关闭**。只在容器无法挂 UDS 时开启，且必须启用 mTLS + per-container token
 - 协议：JSON-RPC 2.0（与 MCP 兼容）
 
+### 文件数据面：daemon 如何读取用户工作区文件（v7 P1#5 新增）
+
+**v7 P1#5 问题**：daemon 固定为 `User=callwarden`，但 `SO_PEERCRED` 只证明请求者身份，不会赋予 daemon 读取用户 `0700/0750` 目录的权限。秒级 watcher、workspace 注册时的文件扫描、refresh 都会因权限不足而失败。把所有开发者加入一个可读取所有工作区的共享文件组不安全。
+
+**选定方案：per-UID helper/worker 进程**
+
+daemon 是调度器，不直接读取用户文件。实际的文件 I/O 由**以请求者身份运行的 helper 进程**完成：
+
+```python
+# daemon 收到 refresh 请求后，fork 一个以 peer_uid 身份运行的 worker
+def spawn_uid_worker(peer_uid, peer_gid, task):
+    """v7 P1#5: 以用户身份 fork worker，解决文件读取权限。
+
+    worker 继承用户的文件系统权限，能读取 0700/0750 目录。
+    daemon 只负责调度和 CAS 管理，不直接读文件。
+    """
+    pid = os.fork()
+    if pid == 0:
+        # 子进程：切换到用户身份
+        os.setgid(peer_gid)
+        os.setuid(peer_uid)
+        # 此时 worker 以用户身份运行，可读取用户目录
+        task.execute()  # 读文件 → 算 hash → parse → 返回结果给 daemon
+        os._exit(0)
+    else:
+        # 父进程（daemon）：等待 worker 完成
+        os.waitpid(pid, 0)
+```
+
+**架构**：
+
+```
+┌─────────────────────────────────────────────┐
+│  Call Warden Daemon (User=callwarden)       │
+│  - UDS 监听 + SO_PEERCRED 身份识别          │
+│  - CAS 管理（Global CAS DB 读写）           │
+│  - 任务调度 + Job Deduplication              │
+│  - fork per-UID worker（以用户身份运行）     │
+└──────────┬──────────────────┬───────────────┘
+           │                  │
+    ┌──────▼──────┐   ┌──────▼──────┐
+    │ Worker(uid=1001)│   │ Worker(uid=1002)│
+    │ 读 /home/u1/  │   │ 读 /home/u2/  │
+    │ parse + hash   │   │ parse + hash   │
+    │ → 结果回传daemon│   │ → 结果回传daemon│
+    └───────────────┘   └───────────────┘
+```
+
+**关键设计**：
+- **daemon 不直接读文件**：daemon 只调度，文件 I/O 由 worker 完成。worker 以 `peer_uid` 身份运行，继承用户的文件系统权限。
+- **worker 生命周期短**：refresh 完成即退出。watcher 是长驻 worker（以用户身份运行），通过 UDS 向 daemon 报告变更。
+- **CAS 数据回传**：worker parse 后将结果通过 UDS（或共享内存/临时文件）回传 daemon，daemon 负责写入 Global CAS DB。
+- **content hash 校验**：daemon 对 worker 返回的数据重新计算 `sha256(canonical_bytes)` 并与 worker 报告的 `content_hash` 校验，防止 worker 被篡改后返回错误数据。
+
+**备选方案（不推荐但可降级使用）**：
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| **per-UID helper（推荐）** | 权限精确，用户隔离 | fork 开销，worker 管理 |
+| 客户端传输内容 | daemon 无需文件权限 | 大文件传输开销，网络带宽 |
+| POSIX ACL | 无代码改动 | 管理员手动配置，易遗漏，所有 daemon 进程可读所有用户文件 |
+
+**客户端内容传输方案**（降级用）：客户端自己读取文件内容，通过 UDS 发送给 daemon。daemon 校验 `sha256(content)` 后存入 CAS。适用于文件小、网络快的环境。大文件不推荐。
+
+**POSIX ACL 方案**（不推荐）：管理员给 `callwarden` 用户配置 ACL 读取所有开发者目录。风险：daemon 被入侵后可读取所有用户源码。仅在 per-UID helper 不可用时作为降级方案。
+
 ### 权限模型（关键工程细节，企业部署不能省）
 
 之前文档把"权限隔离"仅列为风险条目，没有设计。多人共享机器下这是核心安全控制。
