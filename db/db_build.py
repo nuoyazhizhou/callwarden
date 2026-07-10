@@ -1455,6 +1455,128 @@ class BuildMixin:
         except Exception:
             pass
 
+    def rebuild_fts_index(self) -> dict:
+        """P29：独立重建 FTS5 索引（公开方法，供 CLI `cw fts rebuild` 调用）
+
+        场景：refresh 中断后 symbols_fts 为空，search 返回 0 结果。
+        此方法从 symbols 表全量重建 FTS5 索引，并确保同步触发器存在。
+
+        Returns:
+            dict: {
+                "success": bool,
+                "symbols_count": int,   # symbols 表行数
+                "fts_rows": int,        # 重建后 FTS5 索引行数
+                "triggers_recreated": int,  # 重建的触发器数
+                "elapsed": float,       # 耗时（秒）
+                "error": str,           # 失败时的错误信息
+            }
+        """
+        import time
+        t0 = time.time()
+        result = {
+            "success": False,
+            "symbols_count": 0,
+            "fts_rows": 0,
+            "triggers_recreated": 0,
+            "elapsed": 0.0,
+            "error": "",
+        }
+        try:
+            # 检查 symbols_fts 表是否存在
+            cur = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols_fts'"
+            )
+            if not cur.fetchone():
+                result["error"] = "symbols_fts 表不存在（数据库版本过低或未初始化）"
+                result["elapsed"] = time.time() - t0
+                return result
+
+            # 统计 symbols 表行数
+            cur = self.conn.execute("SELECT COUNT(*) FROM symbols")
+            result["symbols_count"] = cur.fetchone()[0]
+
+            # 重建 FTS5 索引
+            self.conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
+
+            # 统计重建后 FTS5 行数
+            cur = self.conn.execute("SELECT COUNT(*) FROM symbols_fts")
+            result["fts_rows"] = cur.fetchone()[0]
+
+            # 重建触发器（确保增量维护生效）
+            self.conn.execute("DROP TRIGGER IF EXISTS symbols_fts_ai")
+            self.conn.execute("DROP TRIGGER IF EXISTS symbols_fts_ad")
+            self.conn.execute("DROP TRIGGER IF EXISTS symbols_fts_au")
+            self.conn.execute("""
+                CREATE TRIGGER symbols_fts_ai AFTER INSERT ON symbols BEGIN
+                    INSERT INTO symbols_fts(rowid, name, qualified_name)
+                    VALUES (new.id, new.name, new.qualified_name);
+                END
+            """)
+            self.conn.execute("""
+                CREATE TRIGGER symbols_fts_ad AFTER DELETE ON symbols BEGIN
+                    INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+                    VALUES ('delete', old.id, old.name, old.qualified_name);
+                END
+            """)
+            self.conn.execute("""
+                CREATE TRIGGER symbols_fts_au AFTER UPDATE ON symbols BEGIN
+                    INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name)
+                    VALUES ('delete', old.id, old.name, old.qualified_name);
+                    INSERT INTO symbols_fts(rowid, name, qualified_name)
+                    VALUES (new.id, new.name, new.qualified_name);
+                END
+            """)
+            result["triggers_recreated"] = 3
+            self.conn.commit()
+            result["success"] = True
+        except Exception as e:
+            result["error"] = str(e)
+        result["elapsed"] = time.time() - t0
+        return result
+
+    def get_fts_status(self) -> dict:
+        """P29：查询 FTS5 索引状态（供 CLI `cw fts status` 调用）
+
+        Returns:
+            dict: {
+                "exists": bool,        # symbols_fts 表是否存在
+                "symbols_count": int,  # symbols 表行数
+                "fts_rows": int,       # FTS5 索引行数
+                "triggers": list,      # 已存在的同步触发器列表
+                "consistent": bool,    # fts_rows == symbols_count
+            }
+        """
+        result = {
+            "exists": False,
+            "symbols_count": 0,
+            "fts_rows": 0,
+            "triggers": [],
+            "consistent": False,
+        }
+        try:
+            cur = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols_fts'"
+            )
+            if not cur.fetchone():
+                return result
+            result["exists"] = True
+
+            cur = self.conn.execute("SELECT COUNT(*) FROM symbols")
+            result["symbols_count"] = cur.fetchone()[0]
+
+            cur = self.conn.execute("SELECT COUNT(*) FROM symbols_fts")
+            result["fts_rows"] = cur.fetchone()[0]
+
+            cur = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'symbols_fts_%'"
+            )
+            result["triggers"] = [row[0] for row in cur.fetchall()]
+
+            result["consistent"] = (result["fts_rows"] == result["symbols_count"])
+        except Exception:
+            pass
+        return result
+
     def _load_file_result_from_db(self, file_instance_id: int, file_version_id: int,
         rel_path: str, abs_path: str, module_path: str) -> Optional[Dict]:
         """从数据库加载已解析的文件结果（增量构建用）"""

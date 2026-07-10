@@ -248,48 +248,83 @@ class QueryMixin:
         return [dict(row) for row in cur]
 
 
-    def get_callers(self, callee_name: str) -> List[Dict]:
-        """查询谁调用了这个函数"""
+    def get_callers(self, callee_name: str, qualified_name: Optional[str] = None) -> List[Dict]:
+        """查询谁调用了这个函数
+
+        P28：大规模下短名跨模块误匹配优化
+        - 默认行为（qualified_name=None）：对齐原接口，按 callee_name 短名匹配
+        - 传入 qualified_name：先查 callee_id，再用 callee_id 过滤边，
+          避免多个模块都有同名函数（如 init/main/handle）导致跨模块误匹配
+        """
         # B-P7b: Rust GraphStore 短路（CSR 内存查询，O(degree+k)）
         store = self._get_graph_store()
         if store is not None:
             try:
-                rust_callers = store.get_callers(callee_name)
+                rust_callers = store.get_callers(callee_name, qualified_name)
                 if rust_callers is not None:
                     return rust_callers
             except Exception:
                 pass  # Rust 查询异常 → 降级 SQL
-        cur = self.conn.execute(
-            """SELECT c.*, s.name as caller_name, fi.rel_path as caller_file
-               FROM calls c
-               JOIN symbols s ON c.caller_id = s.id
-               JOIN file_instances fi ON s.file_instance_id = fi.id
-               WHERE c.callee_name = ?
-               ORDER BY fi.rel_path, c.call_line""",
-            (callee_name,),
-        )
+        # P28：传入 qualified_name 时，JOIN symbols 精确过滤 callee_id
+        if qualified_name is not None:
+            cur = self.conn.execute(
+                """SELECT c.*, s.name as caller_name, fi.rel_path as caller_file
+                   FROM calls c
+                   JOIN symbols s ON c.caller_id = s.id
+                   JOIN file_instances fi ON s.file_instance_id = fi.id
+                   JOIN symbols callee ON c.callee_id = callee.id
+                   WHERE c.callee_name = ? AND callee.qualified_name = ?
+                   ORDER BY fi.rel_path, c.call_line""",
+                (callee_name, qualified_name),
+            )
+        else:
+            cur = self.conn.execute(
+                """SELECT c.*, s.name as caller_name, fi.rel_path as caller_file
+                   FROM calls c
+                   JOIN symbols s ON c.caller_id = s.id
+                   JOIN file_instances fi ON s.file_instance_id = fi.id
+                   WHERE c.callee_name = ?
+                   ORDER BY fi.rel_path, c.call_line""",
+                (callee_name,),
+            )
         return [dict(row) for row in cur]
 
 
-    def get_callees(self, caller_name: str) -> List[Dict]:
-        """查询这个函数调用了谁"""
+    def get_callees(self, caller_name: str, qualified_name: Optional[str] = None) -> List[Dict]:
+        """查询这个函数调用了谁
+
+        P28：大规模下短名跨模块误匹配优化
+        - 默认行为（qualified_name=None）：对齐原接口，按 caller_name 短名匹配
+        - 传入 qualified_name：直接 qname→caller_id 走 CSR，避免多候选遍历
+        """
         # B-P7b: Rust GraphStore 短路（CSR forward 遍历，O(degree)）
         store = self._get_graph_store()
         if store is not None:
             try:
-                rust_callees = store.get_callees(caller_name)
+                rust_callees = store.get_callees(caller_name, qualified_name)
                 if rust_callees is not None:
                     return rust_callees
             except Exception:
                 pass  # Rust 查询异常 → 降级 SQL
-        cur = self.conn.execute(
-            """SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, c.is_cross_file
-               FROM calls c
-               JOIN symbols s ON c.caller_id = s.id
-               WHERE s.name = ?
-               ORDER BY c.call_line""",
-            (caller_name,),
-        )
+        # P28：传入 qualified_name 时，用 qualified_name 精确定位 caller
+        if qualified_name is not None:
+            cur = self.conn.execute(
+                """SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, c.is_cross_file
+                   FROM calls c
+                   JOIN symbols s ON c.caller_id = s.id
+                   WHERE s.qualified_name = ?
+                   ORDER BY c.call_line""",
+                (qualified_name,),
+            )
+        else:
+            cur = self.conn.execute(
+                """SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, c.is_cross_file
+                   FROM calls c
+                   JOIN symbols s ON c.caller_id = s.id
+                   WHERE s.name = ?
+                   ORDER BY c.call_line""",
+                (caller_name,),
+            )
         return [dict(row) for row in cur]
 
 

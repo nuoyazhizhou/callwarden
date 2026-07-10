@@ -283,16 +283,30 @@ impl GraphStore {
 
     /// 查询谁调用了这个函数（对齐 Python db_query.get_callers）
     /// 入参：callee_name（简名，对齐 Python 接口）
+    /// 入参：qualified_name（可选，P28 新增，大规模下避免短名跨模块误匹配）
     ///
     /// B-P7b 优化：使用 by_callee_name 索引，一次查找 O(k)
     /// 对齐 SQL 的 WHERE c.callee_name = ? 语义，覆盖所有边（含已解析和未解析）
-    fn get_callers<'py>(&self, py: Python<'py>, callee_name: &str) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    /// P28：传入 qualified_name 时，先查 callee_id 再用 callee_id 过滤边，
+    ///      避免大规模下短名跨模块误匹配（如多个模块都有 init() 函数）
+    #[pyo3(signature = (callee_name, qualified_name=None))]
+    fn get_callers<'py>(&self, py: Python<'py>, callee_name: &str, qualified_name: Option<&str>) -> PyResult<Vec<Bound<'py, PyAny>>> {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self.calls.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
 
         let mut results = Vec::new();
+
+        // P28：传入 qualified_name 时，先解析 callee_id 用于精确过滤
+        let qname_filter_id: Option<u32> = match qualified_name {
+            Some(qname) => symbols.by_qname.get(qname).copied(),
+            None => None,
+        };
+        // 传了 qname 但查不到对应符号 → 空结果（避免短名误匹配）
+        if qualified_name.is_some() && qname_filter_id.is_none() {
+            return Ok(results);
+        }
 
         // O(1) 查找 callee_name_idx（反向索引）
         let callee_name_idx = match calls.callee_name_to_idx.get(callee_name).copied() {
@@ -304,6 +318,12 @@ impl GraphStore {
         if let Some(positions) = calls.by_callee_name.get(&callee_name_idx) {
             for &pos in positions {
                 let edge = &calls.forward_edges[pos];
+                // P28：传入 qname 时，跳过 callee_id 不匹配的边（未解析边 callee_id=0 也跳过）
+                if let Some(filter_id) = qname_filter_id {
+                    if edge.callee_id != filter_id {
+                        continue;
+                    }
+                }
                 if let Some(caller) = symbols.by_id.get(edge.caller_id as usize) {
                     let callee_name = calls.callee_names.get(edge.callee_name_idx as usize)
                         .map(|s| s.as_str()).unwrap_or("");
@@ -337,7 +357,12 @@ impl GraphStore {
 
     /// 查询这个函数调用了谁（对齐 Python db_query.get_callees）
     /// 入参：caller_name（简名）
-    fn get_callees<'py>(&self, py: Python<'py>, caller_name: &str) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    /// 入参：qualified_name（可选，P28 新增，精确到唯一符号避免跨模块误匹配）
+    ///
+    /// P28：传入 qualified_name 时，直接 qname→caller_id 走 CSR（O(1) 定位 + O(degree) 遍历），
+    ///      跳过简名多候选遍历，避免大规模下多个模块同名函数误匹配
+    #[pyo3(signature = (caller_name, qualified_name=None))]
+    fn get_callees<'py>(&self, py: Python<'py>, caller_name: &str, qualified_name: Option<&str>) -> PyResult<Vec<Bound<'py, PyAny>>> {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self.calls.as_ref()
@@ -345,10 +370,16 @@ impl GraphStore {
 
         let mut results = Vec::new();
 
-        // caller_name 匹配多个 symbol_id（同名函数）
-        let caller_ids = symbols.by_simple_name.get(caller_name)
-            .cloned()
-            .unwrap_or_default();
+        // P28：传入 qualified_name 时，直接定位唯一 caller_id（O(1)）
+        let caller_ids: Vec<u32> = match qualified_name {
+            Some(qname) => match symbols.by_qname.get(qname).copied() {
+                Some(id) => vec![id],
+                None => return Ok(results),  // qname 查不到 → 空结果
+            },
+            None => symbols.by_simple_name.get(caller_name)
+                .cloned()
+                .unwrap_or_default(),
+        };
 
         for caller_id in caller_ids {
             // CSR forward 遍历：caller_id 的所有边

@@ -36,7 +36,7 @@ from .console import cprint
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
                 "gc", "doctor", "install-agent", "install-hook", "rule", "audit", "bootstrap",
-                "clone",
+                "clone", "fts",
                 # C8 Step #1: 新增 8 大类 subcommand 入口（保留旧 flag 兼容）
                 "workspace", "refresh", "stats", "status",
                 "search", "symbol", "file", "query",
@@ -67,6 +67,8 @@ _READONLY_GIT_ACTIONS = {"log", "show", "stats"}
 _READONLY_SEMGREP_ACTIONS = {"list", "stats"}
 # coverage fn/uncovered 只读；coverage import 写
 _READONLY_COVERAGE_ACTIONS = {"fn", "uncovered"}
+# fts status 只读（查询 FTS5 索引状态）；fts rebuild 写（重建索引）
+_READONLY_FTS_ACTIONS = {"status"}
 
 # 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
 # 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
@@ -948,6 +950,9 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "coverage":
         # coverage fn/uncovered 只读；coverage import 写
         return action in _READONLY_COVERAGE_ACTIONS
+    if cmd == "fts":
+        # fts status 只读（查询 FTS5 状态）；fts rebuild 写（重建索引）
+        return action in _READONLY_FTS_ACTIONS
     if cmd == "refresh":
         # refresh 始终是写操作（build_full_graph / refresh_file）
         return False
@@ -1032,6 +1037,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_test_impact(argv, db)
         elif cmd == "gc":
             return _handle_gc(argv, db)
+        elif cmd == "fts":
+            return _handle_fts(argv, db)
         elif cmd == "doctor":
             return _handle_doctor(argv, db)
         elif cmd == "install-agent":
@@ -5003,6 +5010,68 @@ def _format_ts(ts: float) -> str:
 
 
 # --------------------------------------------------------------------
+# FTS5 全文索引维护子命令（P29）
+# --------------------------------------------------------------------
+
+def _handle_fts(args, db):
+    """处理 fts 子命令（FTS5 全文索引维护）
+
+    P29：refresh 中断后 symbols_fts 可能为空，search 返回 0 结果。
+    提供 `cw fts rebuild` 独立重建命令和 `cw fts status` 状态查询。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw fts",
+        description=t("cli_fts_desc", default="FTS5 full-text index maintenance (rebuild/status)"),
+        epilog=_get_subcommand_epilog("fts"),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    sub.add_parser("rebuild",
+                   help=t("cli_fts_rebuild_desc",
+                          default="Rebuild FTS5 index from symbols table (fix empty search results after interrupted refresh)"))
+    sub.add_parser("status",
+                   help=t("cli_fts_status_desc",
+                          default="Show FTS5 index status (row count, triggers, consistency)"))
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "rebuild":
+        print(t("cli_fts_rebuilding", default="Rebuilding FTS5 index..."))
+        result = db.rebuild_fts_index()
+        if result["success"]:
+            print(t("cli_fts_rebuild_done",
+                    symbols=result["symbols_count"],
+                    fts_rows=result["fts_rows"],
+                    triggers=result["triggers_recreated"],
+                    elapsed=f"{result['elapsed']:.2f}s"))
+            if result["fts_rows"] != result["symbols_count"]:
+                print(t("cli_fts_rebuild_mismatch_warning",
+                        symbols=result["symbols_count"],
+                        fts_rows=result["fts_rows"]))
+        else:
+            print(t("cli_fts_rebuild_failed", error=result["error"]))
+            return False
+    elif opts.action == "status":
+        status = db.get_fts_status()
+        if not status["exists"]:
+            print(t("cli_fts_not_exist", default="symbols_fts table does not exist (database version too low or not initialized)"))
+            return True
+        print(t("cli_fts_status_symbols", count=status["symbols_count"]))
+        print(t("cli_fts_status_fts_rows", count=status["fts_rows"]))
+        print(t("cli_fts_status_triggers", triggers=", ".join(status["triggers"]) if status["triggers"] else "(none)"))
+        if status["consistent"]:
+            print(t("cli_fts_status_consistent", default="✓ Consistent (fts_rows == symbols_count)"))
+        else:
+            print(t("cli_fts_status_inconsistent",
+                    symbols=status["symbols_count"],
+                    fts_rows=status["fts_rows"]))
+            print(t("cli_fts_status_inconsistent_hint",
+                    default="  → Run `cw fts rebuild` to fix"))
+    return True
+
+
+# --------------------------------------------------------------------
 # 诊断与维护子命令
 # --------------------------------------------------------------------
 
@@ -5727,15 +5796,18 @@ def _handle_callers(args, db):
     """处理 callers 子命令（调用方查询）
 
     等价 flag: --callers
+    P28：支持 --qualified 可选参数，大规模项目避免短名跨模块误匹配
     """
     parser = argparse.ArgumentParser(
         prog="cw callers",
         description=t("cli.messages.callers_subcommand_desc", default="Show callers of a symbol"),
     )
     parser.add_argument("name", help=t("cli.messages.callers_arg_name", default="Symbol name"))
+    parser.add_argument("--qualified", default=None,
+                        help="完整限定名（如 module::Class::method），精确匹配避免跨模块误匹配")
     opts = parser.parse_args(args)
 
-    callers = db.get_callers(opts.name)
+    callers = db.get_callers(opts.name, opts.qualified)
     print(t("cli.messages.callers_title", name=opts.name, count=len(callers)))
     for c in callers:
         cross = t("cli.messages.callers_cross_file") if c["is_cross_file"] else ""
@@ -5748,15 +5820,18 @@ def _handle_callees(args, db):
     """处理 callees 子命令（被调用方查询）
 
     等价 flag: --callees
+    P28：支持 --qualified 可选参数，大规模项目避免短名跨模块误匹配
     """
     parser = argparse.ArgumentParser(
         prog="cw callees",
         description=t("cli.messages.callees_subcommand_desc", default="Show callees of a symbol"),
     )
     parser.add_argument("name", help=t("cli.messages.callees_arg_name", default="Symbol name"))
+    parser.add_argument("--qualified", default=None,
+                        help="完整限定名（如 module::Class::method），精确匹配避免跨模块误匹配")
     opts = parser.parse_args(args)
 
-    callees = db.get_callees(opts.name)
+    callees = db.get_callees(opts.name, opts.qualified)
     print(t("cli.messages.callees_title", name=opts.name, count=len(callees)))
     for c in callees:
         cross = t("cli.messages.callees_cross_file") if c["is_cross_file"] else ""

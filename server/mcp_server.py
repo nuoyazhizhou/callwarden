@@ -152,24 +152,32 @@ def create_mcp_server():
         return db.get_file_symbols(file_path)
 
     @mcp.tool()
-    def get_callers(callee_name: str) -> list:
+    def get_callers(callee_name: str, qualified_name: Optional[str] = None) -> list:
         """查询指定函数的所有调用者（谁调用了它）
 
+        P28：大规模项目推荐传入 qualified_name 避免短名跨模块误匹配
+
         Args:
-            callee_name: 被调用的函数名
+            callee_name: 被调用的函数名（简名）
+            qualified_name: 可选，完整限定名（如 module::Class::method），
+                           传入时精确匹配该符号，避免多个模块同名函数误匹配
         """
         db = get_db()
-        return db.get_callers(callee_name)
+        return db.get_callers(callee_name, qualified_name)
 
     @mcp.tool()
-    def get_callees(caller_name: str) -> list:
+    def get_callees(caller_name: str, qualified_name: Optional[str] = None) -> list:
         """查询指定函数调用了哪些函数（它调用了谁）
 
+        P28：大规模项目推荐传入 qualified_name 避免短名跨模块误匹配
+
         Args:
-            caller_name: 调用者函数名
+            caller_name: 调用者函数名（简名）
+            qualified_name: 可选，完整限定名（如 module::Class::method），
+                           传入时精确匹配该符号，避免多个模块同名函数误匹配
         """
         db = get_db()
-        return db.get_callees(caller_name)
+        return db.get_callees(caller_name, qualified_name)
 
     @mcp.tool()
     def get_symbol_history(qualified_name: str) -> list:
