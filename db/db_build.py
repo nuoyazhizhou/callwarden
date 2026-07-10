@@ -17,7 +17,7 @@ import time
 import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..config import (
     norm_path, read_file_normalized, read_file_text,
@@ -477,27 +477,117 @@ def _detect_third_party_dir(abs_dir_path: str, rel_dir_path: str) -> tuple:
     return False, None
 
 
-def _can_use_rust_parse() -> bool:
-    """P29/P30: 检测 Rust 扩展是否可用且支持 parse。
+def _can_use_rust_parse(lang: Optional[str] = None) -> bool:
+    """P29/P30/Phase1: 检测 Rust 扩展是否可用且支持指定语言的 parse。
 
     P30 起优先使用流式 pool API（batch_parse_c_files_pool + ParseResultPool），
     结果存 Rust 侧 Vec，Python 按需 get_at 读取单个 dict，避免一次性生成 N 个
     Python dict 的转换峰值。不可用时回退到 P29 的 batch_parse_c_files。
 
+    Phase 1 起新增多语言通用路径（batch_parse_files_lang_pool），支持 11 种语言。
+    C 语言仍走专用快路径 batch_parse_c_files_pool（已稳定，不破坏）。
+
+    Args:
+        lang: 语言标识。None 检测 C 语言专用接口；"c" 同上；
+              其他语言检测多语言通用接口。
+
     Returns:
-        True 表示 callwarden_core 的 parse 接口可用
+        True 表示 callwarden_core 的对应 parse 接口可用
     """
+    # C 语言专用快路径
+    if lang is None or lang == "c":
+        try:
+            from callwarden_core import batch_parse_c_files_pool  # noqa: F401
+            return True
+        except ImportError:
+            pass
+        try:
+            from callwarden_core import batch_parse_c_files  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    # 多语言通用路径（Phase 1）
     try:
-        # P30: 优先检测流式 pool API
-        from callwarden_core import batch_parse_c_files_pool  # noqa: F401
-        return True
-    except ImportError:
-        pass
-    try:
-        from callwarden_core import batch_parse_c_files  # noqa: F401
-        return True
+        from callwarden_core import batch_parse_files_lang_pool, supported_languages  # noqa: F401
+        return lang in supported_languages()
     except ImportError:
         return False
+
+
+def _rust_multilang_parse(
+    files_to_parse: List[Tuple[str, str, str, str, int]],
+    lang: str,
+    mp_workers: int,
+    file_results: Dict[str, Any],
+    failed_files: List[Tuple[str, str]],
+    parse_total: int,
+    skipped_ref: Optional[List[int]] = None,
+    failed_ref: Optional[List[int]] = None,
+) -> bool:
+    """Phase 1: Rust 多语言 parse 通用路径（非 C 语言）。
+
+    用 batch_parse_files_lang_pool 流式 pool，逐个 get_at 转 dict 写入 file_results。
+    资源文件预过滤（_is_resource_file）在 Python 侧执行，避免 Rust 读取大文件。
+
+    Args:
+        files_to_parse: 待 parse 文件列表 [(rel_path, abs_path, module_path, lang, file_instance_id), ...]
+        lang: 语言标识（非 "c"）
+        mp_workers: 线程数
+        file_results: 结果字典（rel_path → parse_result）
+        failed_files: 失败文件列表
+        parse_total: 总文件数（用于进度显示）
+        skipped_ref: [skipped] 引用，资源文件跳过计数
+        failed_ref: [failed] 引用，失败计数
+
+    Returns:
+        True 表示成功执行，False 表示需要 fallback 到 Python
+    """
+    try:
+        from callwarden_core import batch_parse_files_lang_pool
+    except ImportError:
+        return False
+
+    # 资源文件预过滤（Rust 侧不做，避免读大文件）
+    filtered = []
+    for rel_path, abs_path, module_path, _lang, file_instance_id in files_to_parse:
+        is_res, reason = _is_resource_file(abs_path)
+        if is_res:
+            if skipped_ref is not None:
+                skipped_ref[0] += 1
+            failed_files.append((rel_path, f"skip_resource:{reason}"))
+            cprint(t("cli.messages.db_build_skip_resource",
+                    path=rel_path, reason=reason), "yellow")
+            continue
+        filtered.append((abs_path, module_path, rel_path, file_instance_id))
+
+    if not filtered:
+        return True
+
+    # Rust 批量 parse（rayon 并行，grammar 共享）
+    rust_args = [(abs_path, module_path) for abs_path, module_path, _, _ in filtered]
+    pool = batch_parse_files_lang_pool(rust_args, lang, num_threads=mp_workers)
+
+    # 流式回传：逐个 get_at 转 dict 写入 file_results
+    for i, (abs_path, module_path, rel_path, file_instance_id) in enumerate(filtered):
+        r = pool.get_at(i)
+        if r.get("error"):
+            if failed_ref is not None:
+                failed_ref[0] += 1
+            failed_files.append((rel_path, r["error"]))
+            continue
+        r["abs_path"] = abs_path
+        r["file_instance_id"] = file_instance_id
+        r["module_path"] = module_path
+        r["rel_path"] = rel_path
+        r.setdefault("inline_modules", [])
+        file_results[rel_path] = r
+        done_count = len(file_results)
+        print_progress(done_count, parse_total,
+                       t("cli.messages.db_build_parse_progress_lang",
+                         path=rel_path, lang=lang))
+
+    return True
 
 
 def _python_multiprocess_parse(to_parse, mp_workers, file_results,
@@ -1111,22 +1201,50 @@ class BuildMixin:
                     # P28：传 file_count 启用数据规模因子，避免主进程结果持有内存爆炸
                     mp_workers = _detect_optimal_workers(len(to_parse))
 
-                # P29: Rust batch_parse_c_files 接入点（仅 C 语言）
-                # Rust 路径：rayon 线程并行 + grammar 共享 + 零拷贝，避免多进程内存爆炸
-                # Python fallback：Rust 扩展不可用或非 C 语言时走原 ProcessPoolExecutor
+                # Phase 1: Rust parse 接入点
+                # C 语言走专用快路径 batch_parse_c_files_pool（P29/P30，已稳定）
+                # 非 C 的 Rust 支持语言走通用路径 batch_parse_files_lang_pool（Phase 1 新增）
+                # 非 Rust 支持语言走 Python ProcessPoolExecutor
+                # 环境变量 CW_DISABLE_RUST_PARSE 可强制关闭 Rust 路径
+                rust_disabled = bool(os.environ.get("CW_DISABLE_RUST_PARSE"))
+
+                # Phase 1: 按 Rust 支持情况分组
                 c_files_to_parse = [x for x in to_parse if x[3] == "c"]
-                use_rust = (len(c_files_to_parse) >= MP_THRESHOLD
-                            and _can_use_rust_parse()
-                            and not os.environ.get("CW_DISABLE_RUST_PARSE"))
-                if use_rust:
+                rust_multilang_files: Dict[str, list] = defaultdict(list)  # lang → files
+                non_rust_files: list = []
+
+                if not rust_disabled:
+                    try:
+                        from callwarden_core import supported_languages
+                        rust_langs = set(supported_languages())  # 11 种，不含 c
+                    except ImportError:
+                        rust_langs = set()
+                else:
+                    rust_langs = set()
+
+                for entry in to_parse:
+                    lang = entry[3]
+                    if lang == "c":
+                        continue  # C 语言单独处理
+                    elif lang in rust_langs:
+                        rust_multilang_files[lang].append(entry)
+                    else:
+                        non_rust_files.append(entry)
+
+                # 1. C 语言专用快路径（P29/P30，已稳定）
+                c_use_rust = (len(c_files_to_parse) >= MP_THRESHOLD
+                              and _can_use_rust_parse("c")
+                              and not rust_disabled)
+                if c_use_rust:
                     cprint(t("cli.messages.db_build_parallel_parse",
                              workers=mp_workers, count=len(c_files_to_parse)), "dim")
                     cprint(f"  (P30 rust pool: {len(c_files_to_parse)} files, "
                            f"threads={mp_workers})", "dim")
                     try:
                         # 资源文件预过滤（Rust 侧不做，避免读大文件）
+                        # 修复：to_parse 是六元组 (idx, rel_path, abs_path, lang, module_path, file_instance_id)
                         c_files_filtered = []
-                        for rel_path, abs_path, lang, module_path, file_instance_id in c_files_to_parse:
+                        for _idx, rel_path, abs_path, lang, module_path, file_instance_id in c_files_to_parse:
                             is_res, reason = _is_resource_file(abs_path)
                             if is_res:
                                 skipped += 1
@@ -1183,20 +1301,37 @@ class BuildMixin:
                                 print_progress(done_count, parse_total,
                                                t("cli.messages.db_build_parse_progress_lang",
                                                  path=rel_path, lang="c"))
-                        # 非 C 语言文件走原 Python 多进程（如果有的话）
-                        non_c_files = [x for x in to_parse if x[3] != "c"]
-                        if non_c_files:
-                            _python_multiprocess_parse(non_c_files, mp_workers, file_results,
-                                                       failed_files, parse_total,
-                                                       skipped_ref=[skipped], failed_ref=[failed])
                     except Exception as e:
                         cprint(f"  (P30 rust fallback to multiprocess: {e})", "yellow")
-                        use_rust = False
-                if not use_rust:
-                    _python_multiprocess_parse(to_parse, mp_workers, file_results,
+                        c_use_rust = False
+                # C 语言 fallback 到 Python 多进程
+                if not c_use_rust and c_files_to_parse:
+                    non_rust_files.extend(c_files_to_parse)
+
+                # 2. 多语言通用路径（Phase 1 新增）
+                for lang, files in rust_multilang_files.items():
+                    if len(files) >= MP_THRESHOLD and _can_use_rust_parse(lang):
+                        cprint(t("cli.messages.db_build_parallel_parse",
+                                 workers=mp_workers, count=len(files)), "dim")
+                        cprint(f"  (Phase 1 rust multi-lang: {len(files)} {lang} files, "
+                               f"threads={mp_workers})", "dim")
+                        # 构造五元组 (rel_path, abs_path, module_path, lang, file_instance_id)
+                        files_for_rust = [(f[1], f[2], f[4], f[3], f[5]) for f in files]
+                        success = _rust_multilang_parse(
+                            files_for_rust, lang, mp_workers, file_results,
+                            failed_files, parse_total,
+                            skipped_ref=[skipped], failed_ref=[failed]
+                        )
+                        if not success:
+                            non_rust_files.extend(files)
+                    else:
+                        non_rust_files.extend(files)
+
+                # 3. 非 Rust 支持语言 + fallback 走 Python ProcessPoolExecutor
+                if non_rust_files:
+                    _python_multiprocess_parse(non_rust_files, mp_workers, file_results,
                                                failed_files, parse_total,
                                                skipped_ref=[skipped], failed_ref=[failed])
-                    # use_multiprocess 标记保持 True，因为已尝试多进程
 
             if not use_multiprocess:
                 # 原多线程路径（小文件量或 fallback）
