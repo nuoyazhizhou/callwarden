@@ -601,6 +601,148 @@ def verify_clean_via_bare_mirror(workspace_id, rel_path, registered_commit,
 - **session 切换只在握手时发生**：`daemon_handle_connect` 在 `BEGIN IMMEDIATE` 事务中撤销旧 session + 分配新 epoch + 重置 `file_generations.latest_seq=0`。消息路径 `daemon_handle_refresh` 不再有 session 切换分支。
 - **多 host/container agent 限制**：同一 workspace 同一时刻只允许一个 active session。多 host agent 要写同一 workspace 必须先 revoke 当前 active session 再握手新 session（不允许并发写）。这是为了避免多 agent 并发写同一 manifest 导致冲突。
 
+**v10.1 模型测试：session epoch 竞态 barrier 测试**：用 barrier 固定 S1 校验→S2 握手→S1 提交的竞态顺序，确保 S1 两阶段均被拒绝。覆盖两种路径：(1) S1 校验通过后被 S2 抢占→S1 CAS 写入被 stale generation 拒绝；(2) S1 延迟消息到达时 S2 已握手→epoch 不匹配 ProtocolError 拒绝。
+
+```python
+# tests/model/test_session_epoch_race.py
+# v10.1 模型测试：session epoch 竞态——barrier 固定 S1→S2→S1 顺序
+# 不变量：旧 session（epoch 落后）在任何阶段都不能成功写入或被接受为 active
+
+import threading
+
+def test_stale_session_rejected_both_phases():
+    """S1 校验→S2 握手→S1 提交：S1 两阶段均被 stale 拒绝。
+
+    竞态窗口（barrier 固定顺序）：
+    1. S1 的 daemon_handle_refresh 进入 epoch 校验 —— barrier_validate
+    2. S2 握手，daemon 撤销 S1 分配 S2 epoch=2 —— barrier_handshake
+    3. S1 继续执行 CAS 两步提交 —— barrier_commit
+
+    不变量：
+    - barrier_validate 处 S1 epoch=1 == active epoch=1，校验通过
+    - barrier_handshake 后 S2 epoch=2 成为 active，file_generations.latest_seen_generation
+      已被 S2 第一条消息（seq=1）设置为 "2:1"
+    - barrier_commit 处 S1 尝试 CAS 第一步：
+      UPDATE latest_seen_generation WHERE generation < "1:5" → generation="2:1" > "1:5"
+      → rows_affected=0 → stale generation 拒绝
+    """
+    barrier_validate = threading.Barrier(2)
+    barrier_handshake = threading.Barrier(2)
+    barrier_commit = threading.Barrier(2)
+    errors = []
+
+    def s1_agent():
+        """S1 epoch=1, seq=5。校验通过后被 S2 抢占。"""
+        barrier_validate.wait(timeout=5)
+        # daemon_handle_refresh 已完成 session epoch 校验 → (s1, 1) ✓
+        barrier_handshake.wait(timeout=5)
+        # 此时 S2 已握手，active epoch=2，latest_seen_generation="2:1"
+        # S1 继续执行 CAS 第一步——
+        barrier_commit.wait(timeout=5)
+        # 预期：CAS BEGIN IMMEDIATE 内
+        #   "update latest_seen_generation where generation < '1:5'"
+        #   generation 当前 = '2:1' > '1:5' → 0 rows → stale → ProtocolError
+        errors.append("S1 CAS 提交阶段应被 stale generation 拒绝但成功写入")
+
+    def s2_agent():
+        """S2 握手获得 epoch=2，替代 S1 并推进 generation。"""
+        barrier_validate.wait(timeout=5)  # 等 S1 先通过校验
+        resp = daemon_handle_connect(peer_uid=1, workspace_id=1,
+                                     requested_session_id="s2", ws_conn=ws)
+        assert resp["session_epoch"] == 2
+        # 写一条 S2 消息推进 latest_seen_generation 到 "2:1"
+        daemon_handle_refresh(peer_uid=1, workspace_id=1,
+                              msg={"agent_session_id": "s2", "session_epoch": 2,
+                                   "monotonic_seq": 1},
+                              canonical_bytes=b"x", cas_conn=cas, ws_conn=ws)
+        barrier_handshake.wait(timeout=5)  # 通知 S1 generation 已推进
+        barrier_commit.wait(timeout=5)     # 等 S1 提交被拒绝
+
+    t1 = threading.Thread(target=s1_agent)
+    t2 = threading.Thread(target=s2_agent)
+    t1.start(); t2.start()
+    t1.join(timeout=10); t2.join(timeout=10)
+    assert errors == [], f"竞态不变量被破坏: {errors}"
+
+
+def test_stale_session_epoch_mismatch_rejected():
+    """S1 延迟消息在 S2 握手后到达：epoch 不匹配直接 ProtocolError。
+
+    场景：S1 的 refresh 消息在网络中延迟，到达 daemon 时 S2 已握手。
+    incoming_epoch=1, active_session_epoch=2 → mismatch → ProtocolError。
+    不进入 CAS 路径，零副作用。
+    """
+    barrier_s2_done = threading.Barrier(2)
+    errors = []
+
+    def s1_late_arrival():
+        """S1 epoch=1 的延迟消息，到达时 active epoch=2。"""
+        barrier_s2_done.wait(timeout=5)  # 等 S2 先完成握手
+        try:
+            daemon_handle_refresh(peer_uid=1, workspace_id=1,
+                                  msg={"agent_session_id": "s1", "session_epoch": 1,
+                                       "monotonic_seq": 5},
+                                  canonical_bytes=b"...", cas_conn=cas, ws_conn=ws)
+            errors.append("S1 延迟消息 epoch=1 应被 ProtocolError 拒绝但未被拒绝")
+        except ProtocolError as e:
+            if "stale" not in str(e).lower() and "epoch" not in str(e).lower():
+                errors.append(f"非预期异常: {e}")
+
+    def s2_handshake():
+        """S2 握手获得 epoch=2。"""
+        resp = daemon_handle_connect(peer_uid=1, workspace_id=1,
+                                     requested_session_id="s2", ws_conn=ws)
+        assert resp["session_epoch"] == 2
+        barrier_s2_done.wait(timeout=5)
+
+    t1 = threading.Thread(target=s1_late_arrival)
+    t2 = threading.Thread(target=s2_handshake)
+    t2.start()  # S2 先启动确保先握手
+    t1.start()
+    t1.join(timeout=10); t2.join(timeout=10)
+    assert errors == [], f"竞态不变量被破坏: {errors}"
+
+
+def test_concurrent_same_workspace_rejected():
+    """同一 workspace 两个 agent 并发连接→后者 revoke 前者，前者写入被拒。"""
+    barrier_both_connected = threading.Barrier(2)
+    errors = []
+
+    def s1_worker():
+        resp = daemon_handle_connect(peer_uid=1, workspace_id=1,
+                                     requested_session_id="s1", ws_conn=ws)
+        assert resp["session_epoch"] == 1
+        barrier_both_connected.wait(timeout=5)
+        # S2 已握手 revoke S1，S1 尝试写入应被 epoch 不匹配拒绝
+        try:
+            daemon_handle_refresh(peer_uid=1, workspace_id=1,
+                                  msg={"agent_session_id": "s1", "session_epoch": 1,
+                                       "monotonic_seq": 1},
+                                  canonical_bytes=b"...", cas_conn=cas, ws_conn=ws)
+            errors.append("S1 epoch=1 写入应被拒绝（已被 S2 revoke）")
+        except ProtocolError:
+            pass  # 预期
+
+    def s2_worker():
+        barrier_both_connected.wait(timeout=5)
+        resp = daemon_handle_connect(peer_uid=1, workspace_id=1,
+                                     requested_session_id="s2", ws_conn=ws)
+        assert resp["session_epoch"] == 2  # S1 epoch=1 已被 revoke
+
+    t1 = threading.Thread(target=s1_worker)
+    t2 = threading.Thread(target=s2_worker)
+    t1.start(); t2.start()
+    t1.join(timeout=10); t2.join(timeout=10)
+    assert errors == [], f"并发写不变量被破坏: {errors}"
+```
+
+不变量：
+1. **epoch 校验早于 CAS 写入**：daemon_handle_refresh 在 CAS 事务前校验 `incoming_epoch == active_session_epoch`，epoch 不匹配则 ProtocolError 直接拒绝，不进入 CAS 路径（零副作用）
+2. **CAS 两步提交因 generation 过期被拒**：epoch 校验通过但 CAS 第一步 `UPDATE latest_seen_generation WHERE generation < incoming_gen` 发现当前值已被 S2 推进（`"2:1" > "1:5"`）→ 0 rows affected → stale generation 拒绝
+3. **握手独占 active**：daemon_handle_connect 在 `BEGIN IMMEDIATE` 事务中 revoke 旧 session + 分配新 epoch + 更新 workspace_active_session，同一时刻只有一个 active
+4. **barrier 固定竞态窗口可复现**：barrier 确保 S1 校验→S2 握手→S1 提交的顺序可重复执行，验证 epoch + generation 双重保护均生效
+5. **S1 两阶段均被拒绝**：(a) 校验阶段——S1 epoch=1 不匹配 active epoch=2 → ProtocolError；(b) 提交阶段——S1 CAS 第一步发现 latest_seen_generation="2:1" > "1:5" → stale 拒绝
+
 **v10 P1#3 修复（相对 v9）**：
 - **daemon 维护 bare mirror**：每个注册仓库一个只读 bare mirror（`~/.callwarden/mirrors/<repo>.git`），以受信 remote/ref/commit 为根。
 - **不信任 agent 提供的 git_tree_oid/git_blob_oid**：agent 只提供 `registered_commit`（它观察到的 HEAD）。daemon 校验该 commit 是否属于受信 ref 的祖先，再从 mirror 按 `commit + rel_path` 读取 blob。

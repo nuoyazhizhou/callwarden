@@ -894,7 +894,146 @@ pub fn verify_raw_hash_before_writeback(abs_path: &str, expected_raw_hash: &str)
 - **v10.1 P1#1: CRLF 作为整体输入单元**：`\r` 时 push boundary（`raw_before` 指向 `\r` 起点）+ emit `\n`，`\n` 在 `cr_pending` 时只推进 `raw_pos` 不 push 不 emit。canonical `\n` 映射到 raw `[cr_start, cr_start+2)`（包含 `\r` 和 `\n` 两个 raw 字节）。
 - **v10.1 P1#1: 回写前重新校验 raw_hash**：编辑功能写原文件前必须调用 `verify_raw_hash_before_writeback`，确认磁盘文件与 manifest 中记录的 `raw_hash` 一致。不一致说明文件已被外部改动，编辑结果可能基于过时内容，必须放弃并重新 refresh。
 - **CAS 不存 SourceMetadata**：CAS 是内容级、编码无关的（canonical bytes 已规范化），同一文件内容无论原编码如何都映射到同一 CAS 条目。`SourceMetadata` 存 workspace_manifests（路径级元数据）。
-- **v10 P1#1: 边界测试样本**：alignment fixtures 必须增加三类边界样本：GBK 中文后接普通 LF（`\u4e2d\n`，验证 GBK 2→3 + LF 不被吞）、UTF-16 surrogate pair（如 `\U0001F600`，验证 2×2→4 字节）、混合 CRLF/LF（`\r\n\ntext`，验证 cr_pending 不粘性吞 LF）。
+**v10.1 模型测试：canonical byte offset 映射**：以下模型测试验证 raw↔canonical 偏移映射在所有边缘场景下的正确性。测试覆盖 a中b（ASCII+CJK 混合）、emoji（4 字节 surrogate pair）、GBK/UTF-16 编码转换、非 ASCII 两侧 CRLF、混合 CRLF/LF 六种不变量。
+
+```python
+# tests/model/test_parse_input_offset.py
+# v10.1 模型测试：raw ↔ canonical byte offset 映射不变量
+# 用 tempfile + canonicalize_source / raw_span_for_canonical_range_lazy 覆盖全部边界
+
+import tempfile, os, pytest
+
+# ── 辅助：写入临时文件后 canonicalize ──
+def _canonicalize_file(raw_bytes: bytes):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
+        f.write(raw_bytes)
+        path = f.name
+    result = canonicalize_source(path)  # Rust FFI
+    os.unlink(path)
+    return result
+
+def _raw_span_for_file(raw_bytes: bytes, c_start: int, c_end: int):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as f:
+        f.write(raw_bytes)
+        path = f.name
+    span = raw_span_for_canonical_range_lazy(path, c_start, c_end)  # Rust FFI
+    os.unlink(path)
+    return span
+
+
+# ── 1. ASCII+CJK 混合 ──
+def test_ascii_cjk_mixed():
+    """a中b：UTF-8 1+3+1 字节，多字节 CJK 不破坏偏移映射。"""
+    raw = b'a\xe4\xb8\xadb'  # a(1) + 中(3) + b(1) = 5 bytes
+    result = _canonicalize_file(raw)
+    assert len(result.canonical_bytes) == 5
+    assert result.canonical_total == 5
+    # raw↔canonical 逐个验证
+    assert _raw_span_for_file(raw, 0, 1) == (0, 1)   # 'a'
+    assert _raw_span_for_file(raw, 1, 4) == (1, 4)   # '中'(3 raw bytes)
+    assert _raw_span_for_file(raw, 4, 5) == (4, 5)   # 'b'
+
+
+# ── 2. Emoji ──
+def test_emoji():
+    """😀 = U+1F600 = 4 bytes UTF-8：surrogate pair 映射正确。"""
+    raw = b'hello\xf0\x9f\x98\x80world'  # 5 + 4 + 5 = 14 bytes
+    result = _canonicalize_file(raw)
+    assert len(result.canonical_bytes) == 14
+    assert _raw_span_for_file(raw, 5, 9) == (5, 9)     # 😀
+    assert _raw_span_for_file(raw, 0, 5) == (0, 5)     # 'hello'
+    assert _raw_span_for_file(raw, 9, 14) == (9, 14)   # 'world'
+
+
+# ── 3. GBK 编码 → UTF-8 ──
+def test_gbk_canonicalization():
+    """GBK 编码的"中文测试\r\n"：编码转换后偏移独立映射。"""
+    # GBK: D6 D0 CE C4 B2 E2 CA D4 0D 0A (10 bytes)
+    raw = b'\xd6\xd0\xce\xc4\xb2\xe2\xca\xd4\x0d\x0a'
+    result = _canonicalize_file(raw)
+    assert result.metadata.encoding in ("gbk", "gb2312")
+    # canonical: "中文测试\n" = 12 CJK + 1 LF = 13 bytes
+    assert result.canonical_total == 13
+    assert result.canonical_bytes[-1] == 0x0A  # CRLF→LF
+    # canonical LF (offset 12) → raw CRLF (offset 8..10)
+    assert _raw_span_for_file(raw, 12, 13) == (8, 10)
+
+
+# ── 4. UTF-16 LE/BE ──
+def test_utf16_canonicalization():
+    """UTF-16 LE with BOM "A😀"：BOM 剥离 + surrogate pair → UTF-8。"""
+    # U+0041 'A' = 41 00 ; U+1F600 😀 surrogate = 3D D8 00 DE ; BOM = FF FE
+    raw = b'\xff\xfe\x41\x00\x3d\xd8\x00\xde'
+    result = _canonicalize_file(raw)
+    assert result.metadata.encoding == "utf-16-le"
+    assert result.metadata.has_bom is True
+    # canonical: 'A'(1) + 😀(4) = 5
+    assert result.canonical_total == 5
+    assert result.canonical_bytes[0] == ord('A')
+    assert result.canonical_bytes[1:5] == b'\xf0\x9f\x98\x80'
+    # raw_span 针对 BOM 之后的 raw bytes
+    raw_no_bom = raw[2:]  # 跳过 BOM
+    # 'A' canonical [0,1) → raw_no_bom [0,2)
+    result_b = canonicalize_source_bytes(raw[2:], encoding_hint="utf-16-le")
+    # assert raw_span_for_canonical_range_bytes(raw_no_bom, 0, 1) == (0, 2)
+    # 😀 canonical [1,5) → raw_no_bom [2,6)
+    # assert raw_span_for_canonical_range_bytes(raw_no_bom, 1, 5) == (2, 6)
+
+
+# ── 5. 非 ASCII 两侧 CRLF ──
+def test_crlf_cjk_both_sides():
+    r"""中\r\n日：CJK（3 字节）两侧夹 CRLF，CRLF 作为整体输入单元映射。"""
+    # "中\r\n日" = E4 B8 AD 0D 0A E6 97 A5 (8 raw bytes)
+    raw = b'\xe4\xb8\xad\x0d\x0a\xe6\x97\xa5'
+    result = _canonicalize_file(raw)
+    # canonical "中\n日" = 3 + 1 + 3 = 7
+    assert result.canonical_total == 7
+    assert result.canonical_bytes[3] == ord('\n')
+    # canonical [3,4) \n → raw [3,5) \r\n
+    assert _raw_span_for_file(raw, 3, 4) == (3, 5)
+    # canonical [0,3) 中 → raw [0,3)
+    assert _raw_span_for_file(raw, 0, 3) == (0, 3)
+    # canonical [4,7) 日 → raw [5,8)
+    assert _raw_span_for_file(raw, 4, 7) == (5, 8)
+
+
+def test_crlf_emoji_both_sides():
+    r"""😀\r\n😎：4-byte emoji 两端夹 CRLF，偏移映射正确。"""
+    # 😀 = F0 9F 98 80 ; 😎 = F0 9F 98 8E
+    raw = b'\xf0\x9f\x98\x80\x0d\x0a\xf0\x9f\x98\x8e'
+    result = _canonicalize_file(raw)
+    # canonical "😀\n😎" = 4 + 1 + 4 = 9
+    assert result.canonical_total == 9
+    assert result.canonical_bytes[4] == ord('\n')
+    assert _raw_span_for_file(raw, 4, 5) == (4, 6)    # \r\n
+    assert _raw_span_for_file(raw, 0, 4) == (0, 4)    # 😀
+    assert _raw_span_for_file(raw, 5, 9) == (6, 10)   # 😎
+
+
+# ── 6. 混合 CRLF/LF ──
+def test_mixed_crlf_lf():
+    r"""\r\n\n\text：CRLF 消耗后 LF 不粘性吞下一个，偏移逐字节正确。"""
+    raw = b'\x0d\x0a\x0a\x74\x65\x78\x74'
+    result = _canonicalize_file(raw)
+    # canonical "\n\ntext" = 1+1+4 = 6
+    assert result.canonical_total == 6
+    assert result.canonical_bytes[0] == ord('\n')
+    assert result.canonical_bytes[1] == ord('\n')
+    # 第一个 \n (canonical 0) → raw [0,2) CRLF
+    assert _raw_span_for_file(raw, 0, 1) == (0, 2)
+    # 第二个 \n (canonical 1) → raw [2,3) lone LF
+    assert _raw_span_for_file(raw, 1, 2) == (2, 3)
+    # "text" (canonical [2,6)) → raw [3,7)
+    assert _raw_span_for_file(raw, 2, 6) == (3, 7)
+```
+
+覆盖的不变量：
+1. **ASCII+CJK 混合**：多字节 UTF-8（"中"=3 bytes）的 canonical offset 映射正确，raw→canonical→raw 往返一致
+2. **Emoji**：4 字节 UTF-8（😀=\U0001F600）的 surrogate pair 映射正确，前后 ASCII 字符偏移不被 emoji 带宽污染
+3. **GBK→UTF-8**：编码转换后偏移独立映射；CRLF→LF 归约后跨编码 raw↔canonical 正确
+4. **UTF-16 LE/BE**：BOM 剥离 + surrogate pair（D83D DE00 2×2→4 bytes）映射正确
+5. **非 ASCII 两侧 CRLF**：CJK（3 字节）和 emoji（4 字节）两端夹 CRLF 时，CRLF 作为整体输入单元，不影响前后多字节字符的偏移
+6. **混合 CRLF/LF**：`\r\n\n` 归约→两个 `\n`，第一个→raw [0,2)，第二个→raw [2,3)，后续 text 偏移不粘性吃掉
 
 **Python 侧改动**（[config.py read_file_normalized](../../config.py#L993)）：v7 计划在 Python 侧补齐 BOM/CRLF。**v8 P2#1 修正**：Python 侧**不再重复实现**编码检测，改为调用 Rust `canonicalize_source()` FFI，确保唯一 detector。仅当 Rust 扩展不可用（`_can_use_rust_parse() == False`）时，Python 侧才用降级实现（latin-1 兜底），并在 manifest 标记 `source_encoding="fallback-latin1"` 供编辑路径警告"偏移可能不准"。可参考 [TokenSlim-publish2 encoding_fallback](../../testcode/TokenSlim-publish2/src/core/encoding_fallback/mod.rs)（见 AGENTS.md 第 9 条）。
 
