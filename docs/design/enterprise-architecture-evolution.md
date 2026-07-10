@@ -285,15 +285,26 @@ WantedBy=multi-user.target
 
 ```python
 # 用户侧 systemd --user agent（以用户身份运行，有文件读权限）
-# v9 P2#1 + v10 P1#2: 消息增加 generation 控制——agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns。
-# v10 P1#2: agent 重启后 session_id 换新、seq 从 1 开始；daemon 检测到 session 切换时重置 latest_seq=0。
+# v9 P2#1 + v10 P1#2 + v10.1 P1#2: 消息增加 generation 控制——agent_session_id + session_epoch +
+#   monotonic_seq + observed_raw_hash/mtime_ns。epoch 由 daemon 握手时分配，旧 session 永久失效。
 class AgentSession:
-    """v9 P2#1 + v10 P1#2: agent 会话状态——每个 systemd --user agent 实例一个 session。"""
+    """v9 P2#1 + v10 P1#2 + v10.1 P1#2: agent 会话状态——每个 systemd --user agent 实例一个 session。"""
     session_id: str          # UUID，agent 启动时生成，重启后换新
+    session_epoch: int = 0   # v10.1 P1#2: daemon 握手时分配的单调 epoch，旧 session 永久失效
     seq_counter: int = 0     # 单调递增，每发一条消息 +1
 
+def user_agent_connect(daemon_sock, session: AgentSession):
+    """v10.1 P1#2: agent 连接握手——向 daemon 注册 session_id，获取 daemon 分配的 session_epoch。
+    必须在发送任何 refresh 消息之前调用。daemon 在握手时撤销旧 session，分配新 epoch。
+    """
+    resp = send_request(daemon_sock, MSG_CONNECT, {
+        "session_id": session.session_id,
+    })
+    session.session_epoch = resp["session_epoch"]
+    session.seq_counter = 0  # 新 epoch 的 seq 从 1 开始
+
 def user_agent_handle_refresh(rel_path, abs_path, daemon_sock, session: AgentSession):
-    """v8 P1#2 + v9 P2#1/P2#2 + v10 P1#2/P1#3: agent 读文件 → canonicalize → 回传 canonical bytes + generation。"""
+    """v8 P1#2 + v9 P2#1/P2#2 + v10 P1#2/P1#3 + v10.1 P1#2: agent 读文件 → canonicalize → 回传 canonical bytes + generation。"""
     csrc = canonicalize_source(abs_path)  # Rust FFI，与 daemon 同一实现
     session.seq_counter += 1
     stat = os.stat(abs_path)
@@ -301,8 +312,9 @@ def user_agent_handle_refresh(rel_path, abs_path, daemon_sock, session: AgentSes
         "rel_path": rel_path,
         "content_hash": csrc.content_hash,   # agent 报告的 hash
         "metadata": csrc.metadata,           # SourceMetadata（raw_hash/encoding/bom/newline）
-        # v9 P2#1 + v10 P1#2: generation 控制
+        # v9 P2#1 + v10 P1#2 + v10.1 P1#2: generation 控制
         "agent_session_id": session.session_id,
+        "session_epoch": session.session_epoch,  # v10.1 P1#2: daemon 握手分配的 epoch
         "monotonic_seq": session.seq_counter,
         "observed_raw_hash": csrc.metadata.raw_hash,  # sha256(磁盘原始字节)
         "mtime_ns": stat.st_mtime_ns,                 # 纳秒级 mtime
@@ -317,36 +329,124 @@ def user_agent_handle_refresh(rel_path, abs_path, daemon_sock, session: AgentSes
 
 # daemon 侧（User=callwarden，可信）
 # v10 P1#2: generation 持久化到 workspace DB，不再用内存字典。
-# workspace DB 新增表 file_generations：
+# v10.1 P1#2: session epoch 机制——daemon 握手时分配单调 epoch，旧 session 永久失效。
+#   消息路径只能匹配当前 active epoch，不能由任意不同 UUID 触发 session 切换。
+# workspace DB 新增表：
 #   CREATE TABLE file_generations (
 #       workspace_id INTEGER NOT NULL,
 #       rel_path TEXT NOT NULL,
 #       latest_session_id TEXT DEFAULT '',
+#       latest_session_epoch INTEGER DEFAULT 0,  -- v10.1 P1#2: daemon 分配的 epoch
 #       latest_seq INTEGER DEFAULT 0,
-#       latest_seen_generation TEXT DEFAULT '',  -- "{session_id}:{seq}" 格式
+#       latest_seen_generation TEXT DEFAULT '',  -- "{session_epoch}:{seq}" 格式
 #       latest_committed_generation TEXT DEFAULT '',
 #       PRIMARY KEY (workspace_id, rel_path)
 #   );
+#   CREATE TABLE agent_sessions (  -- v10.1 P1#2: session epoch 注册表
+#       workspace_id INTEGER NOT NULL,
+#       session_id TEXT NOT NULL,          -- agent UUID
+#       session_epoch INTEGER NOT NULL,    -- daemon 分配的单调递增 epoch
+#       activated_at INTEGER NOT NULL,     -- 激活时间戳
+#       revoked_at INTEGER,                -- 撤销时间戳（NULL=active）
+#       peer_uid INTEGER NOT NULL,         -- 哪个用户的 session
+#       PRIMARY KEY (workspace_id, session_id)
+#   );
+#   CREATE TABLE workspace_active_session (  -- v10.1 P1#2: 每个 workspace 当前 active session
+#       workspace_id INTEGER PRIMARY KEY,
+#       active_session_id TEXT NOT NULL,
+#       active_session_epoch INTEGER NOT NULL
+#   );
+
+def daemon_handle_connect(peer_uid, workspace_id, requested_session_id, ws_conn):
+    """v10.1 P1#2: agent 连接握手——daemon 分配单调 epoch，旧 session 永久失效。
+
+    agent 连接时调用此函数。daemon 在 BEGIN IMMEDIATE 事务中：
+    1. 撤销该 workspace 所有旧 active session（revoked_at = now）。
+    2. 分配新 epoch = MAX(session_epoch) + 1。
+    3. 注册新 session 到 agent_sessions。
+    4. 更新 workspace_active_session 为新 session。
+    5. 重置 file_generations 中所有 rel_path 的 latest_seq=0（新 session seq 从 1 开始）。
+
+    返回 session_epoch 给 agent，后续每条消息携带此 epoch。
+    旧 session 的延迟消息因 epoch 不匹配被拒绝，不会把 active session 切回旧值。
+    """
+    ws_conn.execute("BEGIN IMMEDIATE")
+    try:
+        now = int(time.time())
+        # 1. 撤销旧 active session
+        ws_conn.execute(
+            "UPDATE agent_sessions SET revoked_at = ? "
+            "WHERE workspace_id = ? AND revoked_at IS NULL",
+            (now, workspace_id)
+        )
+        # 2. 分配新 epoch
+        row = ws_conn.execute(
+            "SELECT COALESCE(MAX(session_epoch), 0) + 1 AS next_epoch "
+            "FROM agent_sessions WHERE workspace_id = ?",
+            (workspace_id,)
+        ).fetchone()
+        new_epoch = row["next_epoch"]
+        # 3. 注册新 session
+        ws_conn.execute(
+            "INSERT INTO agent_sessions (workspace_id, session_id, session_epoch, "
+            "activated_at, revoked_at, peer_uid) VALUES (?, ?, ?, ?, NULL, ?)",
+            (workspace_id, requested_session_id, new_epoch, now, peer_uid)
+        )
+        # 4. 更新 active session
+        ws_conn.execute(
+            "INSERT OR REPLACE INTO workspace_active_session "
+            "(workspace_id, active_session_id, active_session_epoch) VALUES (?, ?, ?)",
+            (workspace_id, requested_session_id, new_epoch)
+        )
+        # 5. 重置 file_generations 的 latest_seq=0（新 session seq 从 1 开始）
+        ws_conn.execute(
+            "UPDATE file_generations SET latest_session_id = ?, "
+            "latest_session_epoch = ?, latest_seq = 0, "
+            "latest_seen_generation = '' WHERE workspace_id = ?",
+            (requested_session_id, new_epoch, workspace_id)
+        )
+        ws_conn.execute("COMMIT")
+        return {"session_epoch": new_epoch}
+    except Exception:
+        ws_conn.execute("ROLLBACK")
+        raise
 
 def daemon_handle_refresh(peer_uid, workspace_id, msg, canonical_bytes, cas_conn, ws_conn):
-    """v8 P1#2 + v9 P1#2/P2#1/P2#2 + v10 P1#2/P1#3: daemon 收到 canonical bytes
-    → 持久化 generation CAS → 重新算 hash → 可信 parser 解析
-    → Git bare mirror 校验 clean/dirty → 发布 CAS / 写 dirty overlay
+    """v8 P1#2 + v9 P1#2/P2#1/P2#2 + v10 P1#2/P1#3 + v10.1 P1#2: daemon 收到 canonical bytes
+    → 校验 session epoch（不自行切换） → 持久化 generation CAS → 重新算 hash
+    → 可信 parser 解析 → Git bare mirror 校验 clean/dirty → 发布 CAS / 写 dirty overlay
     → manifest 事务内条件更新（仅当 generation 仍等于本任务 generation 才 COMMIT）。
     """
     rel_path = msg["rel_path"]
     incoming_session = msg["agent_session_id"]
     incoming_seq = msg["monotonic_seq"]
-    incoming_gen = f"{incoming_session}:{incoming_seq}"
+    incoming_epoch = msg["session_epoch"]  # v10.1 P1#2: 握手时 daemon 分配的 epoch
+
+    # v10.1 P1#2: 校验 session epoch——只能匹配当前 active epoch，不自行切换 session。
+    #   旧 session 的延迟消息因 epoch 不匹配被拒绝，不会把 active session 切回旧值。
+    active = ws_conn.execute(
+        "SELECT active_session_id, active_session_epoch "
+        "FROM workspace_active_session WHERE workspace_id = ?",
+        (workspace_id,)
+    ).fetchone()
+    if active is None:
+        raise ProtocolError(f"no active session for workspace {workspace_id}")
+    if (incoming_session != active["active_session_id"]
+            or incoming_epoch != active["active_session_epoch"]):
+        raise ProtocolError(
+            f"stale session rejected: incoming={incoming_session}:{incoming_epoch} "
+            f"active={active['active_session_id']}:{active['active_session_epoch']} "
+            f"(old session cannot reclaim active status)"
+        )
+    incoming_gen = f"{incoming_epoch}:{incoming_seq}"  # v10.1 P1#2: 用 epoch 替代 session_id
 
     # v10 P1#2: 持久化 CAS 第一步——BEGIN IMMEDIATE，原子更新 latest_seen_generation。
-    #   检查 session 切换：若 incoming_session != latest_session_id，重置 latest_seq=0
-    #   （新 agent 的 seq 从 1 开始，不能被旧 latest_seq 拒绝）。
-    #   若 incoming_gen <= latest_seen_generation（同 session 内 seq 不大于已见的），拒绝。
+    #   v10.1 P1#2: 不再有 "session 切换" 分支——session 切换只在握手时发生。
+    #   若 incoming_gen <= latest_seen（同 epoch 内 seq 不大于已见的），拒绝。
     ws_conn.execute("BEGIN IMMEDIATE")
     try:
         row = ws_conn.execute(
-            "SELECT latest_session_id, latest_seq, latest_seen_generation, "
+            "SELECT latest_session_epoch, latest_seq, latest_seen_generation, "
             "latest_committed_generation FROM file_generations "
             "WHERE workspace_id = ? AND rel_path = ?",
             (workspace_id, rel_path)
@@ -356,29 +456,25 @@ def daemon_handle_refresh(peer_uid, workspace_id, msg, canonical_bytes, cas_conn
             # 首次：插入
             ws_conn.execute(
                 "INSERT INTO file_generations (workspace_id, rel_path, latest_session_id, "
-                "latest_seq, latest_seen_generation, latest_committed_generation) "
-                "VALUES (?, ?, ?, ?, ?, '')",
-                (workspace_id, rel_path, incoming_session, incoming_seq, incoming_gen)
-            )
-        elif row["latest_session_id"] != incoming_session:
-            # v10 P1#2: session 切换——新 agent 重置 seq 计数
-            ws_conn.execute(
-                "UPDATE file_generations SET latest_session_id = ?, latest_seq = ?, "
-                "latest_seen_generation = ? WHERE workspace_id = ? AND rel_path = ?",
-                (incoming_session, incoming_seq, incoming_gen, workspace_id, rel_path)
+                "latest_session_epoch, latest_seq, latest_seen_generation, "
+                "latest_committed_generation) VALUES (?, ?, ?, ?, ?, ?, '')",
+                (workspace_id, rel_path, incoming_session, incoming_epoch,
+                 incoming_seq, incoming_gen)
             )
         elif incoming_seq <= row["latest_seq"]:
-            # 同 session 内 stale seq，拒绝
+            # 同 epoch 内 stale seq，拒绝
             ws_conn.execute("ROLLBACK")
             log_info(f"drop stale generation for {rel_path}: seq={incoming_seq} "
                      f"<= latest={row['latest_seq']}")
             return
         else:
-            # 同 session 内新 seq，原子更新 latest_seen
+            # 同 epoch 内新 seq，原子更新 latest_seen
             ws_conn.execute(
-                "UPDATE file_generations SET latest_seq = ?, latest_seen_generation = ? "
+                "UPDATE file_generations SET latest_session_id = ?, "
+                "latest_session_epoch = ?, latest_seq = ?, latest_seen_generation = ? "
                 "WHERE workspace_id = ? AND rel_path = ?",
-                (incoming_seq, incoming_gen, workspace_id, rel_path)
+                (incoming_session, incoming_epoch, incoming_seq, incoming_gen,
+                 workspace_id, rel_path)
             )
         ws_conn.execute("COMMIT")  # latest_seen 已持久化
     except Exception:
@@ -496,8 +592,14 @@ def verify_clean_via_bare_mirror(workspace_id, rel_path, registered_commit,
 **v10 P1#2 修复（相对 v9）**：
 - **持久化 generation**：`file_generations` 表存 `latest_session_id`/`latest_seq`/`latest_seen_generation`/`latest_committed_generation`，daemon 重启后状态不丢失。不再用内存字典 `generations`。
 - **manifest 事务内条件更新**：manifest COMMIT 前，`UPDATE file_generations SET latest_committed_generation = ? WHERE ... AND latest_seen_generation = ?`。若并发 handler 中较新请求已更新 `latest_seen`，本任务的条件更新返回 0 行 → ROLLBACK。这是真正的 CAS，不是 check-then-set。
-- **session 切换处理**：`incoming_session != latest_session_id` 时重置 `latest_seq=0`，新 agent 的 seq 从 1 开始不被旧值拒绝。
+- ~~**session 切换处理**：`incoming_session != latest_session_id` 时重置 `latest_seq=0`~~（v10.1 P1#2 已废弃此设计——旧 session 可重新夺回 active 状态）
 - **两阶段 CAS**：第一阶段 `BEGIN IMMEDIATE` 原子更新 `latest_seen_generation`（拒绝 stale seq）；第二阶段 manifest 提交时条件更新 `latest_committed_generation`（拒绝 stale manifest commit）。
+
+**v10.1 P1#2 修复（相对 v10）**：
+- **session epoch 机制**：daemon 在握手时（`daemon_handle_connect`）分配单调递增 `session_epoch`，旧 session 被 `revoked_at` 标记永久失效。新增 `agent_sessions` 表（注册表）和 `workspace_active_session` 表（当前 active）。agent 连接时调用 `user_agent_connect` 获取 epoch，后续每条消息携带 `session_epoch`。
+- **消息路径不自行切换 session**：`daemon_handle_refresh` 开头校验 `incoming_epoch == active_session_epoch`，不匹配则 `ProtocolError` 拒绝。旧 session 的延迟消息（如 S1 在 S2 已激活后到达）因 epoch 不匹配被拒绝，不会把 active session 切回旧值。
+- **session 切换只在握手时发生**：`daemon_handle_connect` 在 `BEGIN IMMEDIATE` 事务中撤销旧 session + 分配新 epoch + 重置 `file_generations.latest_seq=0`。消息路径 `daemon_handle_refresh` 不再有 session 切换分支。
+- **多 host/container agent 限制**：同一 workspace 同一时刻只允许一个 active session。多 host agent 要写同一 workspace 必须先 revoke 当前 active session 再握手新 session（不允许并发写）。这是为了避免多 agent 并发写同一 manifest 导致冲突。
 
 **v10 P1#3 修复（相对 v9）**：
 - **daemon 维护 bare mirror**：每个注册仓库一个只读 bare mirror（`~/.callwarden/mirrors/<repo>.git`），以受信 remote/ref/commit 为根。
@@ -554,13 +656,17 @@ def send_via_memfd(sock, msg_type, payload, canonical_bytes):
 
 
 def recv_via_memfd(sock, expected_canonical_len, expected_content_hash, peer_uid):
-    """v10 P1#4: daemon 接收端校验——不信任 agent 提供的 memfd。
+    """v10 P1#4 + v10.1 P1#3: daemon 接收端校验——不信任 agent 提供的 memfd。
 
-    四重校验，任一失败则拒绝并关闭连接：
+    四重校验，任一失败则拒绝并关闭 FD：
     1. fstat().st_size == expected_canonical_len（大小匹配 payload 中声明的 canonical_len）
     2. F_GET_SEALS 包含 F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL
     3. st_size <= MAX_MEMFD_BYTES（防 agent 传超大 memfd 耗尽 daemon 内存）
     4. 重新计算 sha256(memfd content) == expected_content_hash（防内容被替换）
+
+    v10.1 P1#3 修复：os.lseek() 返回整数（文件位置），不是内容。
+    校验通过后返回 FD 所有权（不关闭），由调用方传给可信 Rust parser
+    mmap 只读后解析，用完负责 close。避免复制 256MB 内容。
     """
     fd, msg = recv_msg_with_fd(sock)  # SCM_RIGHTS 接收 FD + JSON payload
     try:
@@ -579,15 +685,38 @@ def recv_via_memfd(sock, expected_canonical_len, expected_content_hash, peer_uid
         if st.st_size > MAX_MEMFD_BYTES:  # v10 P2: 256 MB
             raise ProtocolError(f"memfd exceeds MAX_MEMFD_BYTES: "
                                 f"st_size={st.st_size} limit={MAX_MEMFD_BYTES}")
-        # 4. 内容 hash 校验——读全部字节重新 sha256
-        content = os.lseek(fd, 0, SEEK_SET)  # 回到起点
+        # 4. 内容 hash 校验——os.lseek 回到起点后流式 sha256
+        #    v10.1 P1#3: os.lseek 返回新文件位置（整数），不返回内容。
+        #    不要赋值给 content——只需把 FD 位置重置到起点，然后 sha256_streaming 读取。
+        os.lseek(fd, 0, SEEK_SET)  # 回到起点（返回值是 0，不用）
         actual_hash = sha256_streaming(fd, st.st_size)  # 流式 hash，不一次性载入内存
         if actual_hash != expected_content_hash:
             raise ProtocolError(f"memfd content hash mismatch: "
                                 f"actual={actual_hash} expected={expected_content_hash}")
-        return content, msg
-    finally:
-        os.close(fd)  # daemon 用完即关
+        # v10.1 P1#3: 校验通过后回到起点，返回 FD 所有权（不关闭）。
+        # 调用方（daemon_handle_refresh）把 FD 传给可信 Rust parser，
+        # Rust 侧 mmap 只读后解析，用完负责 close。避免复制 256MB 内容。
+        os.lseek(fd, 0, SEEK_SET)  # 确保 parser 从头读
+        return fd, msg  # FD 所有权转移给调用方
+    except Exception:
+        os.close(fd)  # 校验失败才关闭 FD
+        raise
+```
+
+**v10.1 P1#3: memfd 路径的 FD 所有权传递**：
+
+`recv_via_memfd` 校验通过后返回 `(fd, msg)`——FD 所有权转移给调用方，不关闭。调用方（`daemon_handle_refresh` 的 memfd 分支）把 FD 传给可信 Rust parser，Rust 侧 `mmap` 只读后直接解析 canonical bytes，用完 `close` FD。避免复制 256MB 内容到 Python 堆。
+
+```python
+# daemon_handle_refresh 的 memfd 分支（大文件 > 16MB）
+fd, msg = recv_via_memfd(sock, expected_canonical_len, expected_hash, peer_uid)
+try:
+    # 可信 Rust parser 直接从 FD mmap 只读解析，不复制内容到 Python 堆
+    canonical_len = msg["canonical_len"]
+    parse_result = parse_canonical_bytes_from_fd(fd, canonical_len, rel_path, lang)
+    # ... 后续 hash 校验、CAS 发布、manifest 提交（与 stream 路径一致）
+finally:
+    os.close(fd)  # Rust parser 用完后 daemon 关闭 FD
 ```
 
 **传输协议约束**：
@@ -630,7 +759,7 @@ def recv_via_memfd(sock, expected_canonical_len, expected_content_hash, peer_uid
 - **daemon 重新计算 hash**：不信任 agent 报告的 `content_hash`，用收到的字节重新算 `sha256`。hash 不匹配时记录告警，但以 daemon 计算为准继续（agent 可能误报，但字节本身仍可解析）。
 - **canonicalize_source 单一实现**：agent 和 daemon 调用**同一个** Rust `canonicalize_source()`（见 [enterprise-phase1-phase3-detail.md §3.0.1](enterprise-phase1-phase3-detail.md)），避免两套 detector 分歧。agent 的 Rust FFI 与 daemon 的 Rust FFI 是同一份编译产物。
 - **agent 生命周期**：`systemd --user` 管理的常驻进程（用户登录时启动，退出时停止），负责 watch + 文件读取。watch 事件触发时把变更文件 canonical bytes 推给 daemon。daemon 侧 Job Deduplication 合并同文件的多次变更。
-- **v9 P2#1 + v10 P1#2: 事件代次控制**：每条消息携带 `agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns`。daemon 按 `(workspace_id, rel_path)` 做 compare-and-swap——v10 P1#2 改为持久化到 `file_generations` 表的真正 CAS（两阶段：`BEGIN IMMEDIATE` 更新 `latest_seen_generation` + manifest 提交时条件更新 `latest_committed_generation`），不再用内存字典。`session_id` 参与比较，agent 重启后 session 切换时重置 `latest_seq=0`，新 agent 的 seq 从 1 开始不被旧值永久拒绝。
+- **v9 P2#1 + v10 P1#2 + v10.1 P1#2: 事件代次控制**：每条消息携带 `agent_session_id + session_epoch + monotonic_seq + observed_raw_hash/mtime_ns`。daemon 按 `(workspace_id, rel_path)` 做 compare-and-swap——v10 P1#2 持久化到 `file_generations` 表的真正 CAS（两阶段：`BEGIN IMMEDIATE` 更新 `latest_seen_generation` + manifest 提交时条件更新 `latest_committed_generation`）。v10.1 P1#2: `session_epoch` 由 daemon 握手时分配（单调递增），旧 session 永久失效；消息路径只匹配当前 active epoch，不自行切换 session——旧 session 的延迟消息因 epoch 不匹配被拒绝。
 - **v9 P2#1 + v10 P1#3: clean vs dirty 分流**：未经可信 Git 校验的内容（工作区未提交改动）只能进入 **dirty overlay**（workspace 本地，不发布到 Global CAS，不跨用户共享）。只有 agent 提供 `registered_commit`（它观察到的 HEAD）且 daemon 通过 `verify_clean_via_bare_mirror()` 从受信 bare mirror 读取 blob、重新 canonicalize 后 hash 匹配，才标记为 clean 并发布到跨用户共享的 Global CAS。v10 P1#3 不再信任 agent 提供的 `git_tree_oid`/`git_blob_oid`（用户可自行构造 tree）。
 - **v9 P2#2 + v10 P1#4 + v10 P2: 传输方式闭合**：`SCM_RIGHTS` 发送 FD 而非字节数组。小/中文件（≤16MB）用长度分帧 UDS stream；大文件（>16MB）用 `memfd_create + seals + SCM_RIGHTS`（v10 P1#4: `MFD_ALLOW_SEALING` + `write_all` + `F_SEAL_GROW` + 接收端四重校验）。背压同时限制深度（`MAX_READ_QUEUE_DEPTH=64`）和字节数（v10 P2: per-conn 256MB / daemon 2GB / per-UID 512MB / memfd 256MB）。超时 send 30s / recv 60s。断线清理 `generations` 中 pending 状态并扣减 inflight 字节计数。
 
