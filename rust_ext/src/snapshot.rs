@@ -14,6 +14,7 @@ use arc_swap::{ArcSwap, Guard};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use crate::graph::GraphStore;
+use crate::diff;
 
 // ============================================
 // 类型别名
@@ -145,6 +146,15 @@ impl SnapshotManager {
     /// 分配下一个 generation 号
     pub fn alloc_generation(&self) -> Generation {
         self.next_generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 获取当前 snapshot 的 GraphStore 引用（供 diff 模块只读访问）
+    pub fn current_store(&self) -> Option<Arc<GraphStore>> {
+        let guard = self.current.load();
+        // guard derefs to Arc<Option<Arc<GraphSnapshot>>>
+        // 第一个 as_ref(): Arc::as_ref() → &Option<Arc<GraphSnapshot>>
+        // 第二个 as_ref(): Option::as_ref() → Option<&Arc<GraphSnapshot>>
+        guard.as_ref().as_ref().map(|snap| snap.store.clone())
     }
 }
 
@@ -354,5 +364,57 @@ impl PySnapshotCache {
     /// 移除指定 workspace 的 snapshot
     fn evict(&self, workspace_id: &str) -> bool {
         self.inner.evict(workspace_id).is_some()
+    }
+
+    /// Phase 4.7: 对比两个 workspace 中同一 qualified_name 的符号完整差异
+    ///
+    /// 返回包含 change_kind / signature_change / caller_delta / callee_delta 的 dict
+    fn diff_symbol<'py>(
+        &self,
+        py: Python<'py>,
+        left_workspace_id: &str,
+        right_workspace_id: &str,
+        qualified_name: &str,
+    ) -> PyResult<Bound<'py, PyDict>> {
+        let left_store = self.get_store(left_workspace_id)?;
+        let right_store = self.get_store(right_workspace_id)?;
+        let record = diff::diff_symbol(&left_store, &right_store, qualified_name);
+        diff::symbol_diff_to_pydict(py, &record)
+    }
+
+    /// Phase 4.7: 仅对比两个 workspace 中同一符号的签名差异
+    ///
+    /// 返回 file/line_range/kind 层面的变化
+    fn diff_signature<'py>(
+        &self,
+        py: Python<'py>,
+        left_workspace_id: &str,
+        right_workspace_id: &str,
+        qualified_name: &str,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let left_store = self.get_store(left_workspace_id)?;
+        let right_store = self.get_store(right_workspace_id)?;
+        match diff::diff_signature(&left_store, &right_store, qualified_name) {
+            Some(sig) => {
+                let d = diff::signature_diff_to_pydict(py, &sig)?;
+                Ok(Some(d))
+            }
+            None => Ok(None),
+        }
+    }
+}
+
+// 非 PyO3 的内部方法
+impl PySnapshotCache {
+    /// 获取指定 workspace 的当前 GraphStore（内部 Rust 接口）
+    fn get_store(&self, workspace_id: &str) -> PyResult<Arc<GraphStore>> {
+        let mgr = self.inner.get(workspace_id)
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "workspace '{}' not found in cache", workspace_id
+            )))?;
+        mgr.current_store()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "workspace '{}' has no published snapshot yet", workspace_id
+            )))
     }
 }

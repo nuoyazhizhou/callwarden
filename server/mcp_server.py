@@ -22,11 +22,26 @@ except ImportError:
     HAS_FASTMCP = False
 
 from ..db import CodeGraphDB
-from ..config import PROJECT_ROOT
+from ..config import PROJECT_ROOT, get_project_db_path
 from ..i18n import t
 
 
 _db_instance: Optional[CodeGraphDB] = None
+
+
+def _get_daemon_client():
+    """获取 DaemonClient 单例（Phase 4.8: 高频查询走 daemon client）。
+
+    延迟导入避免循环依赖。
+    """
+    from callwarden.server.daemon_client import get_daemon_client
+    return get_daemon_client()
+
+
+def _get_db_path_for_daemon() -> str:
+    """获取当前 workspace 的 db_path（用于 daemon 自动发布 snapshot）。"""
+    db = get_db()
+    return get_project_db_path(db.workspace_root)
 
 
 def get_db(workspace: Optional[str] = None) -> CodeGraphDB:
@@ -105,8 +120,9 @@ def create_mcp_server():
     @mcp.tool()
     def get_stats() -> dict:
         """获取代码知识图谱统计信息（文件数、函数数、调用关系数等）"""
-        db = get_db()
-        return db.get_stats()
+        # Phase 4.8: 优先走 daemon client（Rust snapshot），回退 SQL
+        client = _get_daemon_client()
+        return client.get_stats(db_path=_get_db_path_for_daemon())
 
     @mcp.tool()
     def search_symbols(query: str, kind: str = "", limit: int = 20) -> list:
@@ -117,8 +133,10 @@ def create_mcp_server():
             kind: 按类型过滤（fn/method/class/struct/enum/trait/interface 等）
             limit: 返回数量限制
         """
-        db = get_db()
-        return db.search_symbols(query, kind=kind or None, limit=limit)
+        # Phase 4.8: 优先走 daemon client
+        client = _get_daemon_client()
+        return client.search_symbols(query, kind=kind or None, limit=limit,
+                                      db_path=_get_db_path_for_daemon())
 
     @mcp.tool()
     def get_symbol(qualified_name: str) -> Optional[dict]:
@@ -127,8 +145,9 @@ def create_mcp_server():
         Args:
             qualified_name: 符号限定名（如 crate::module::function_name）
         """
-        db = get_db()
-        return db.get_symbol(qualified_name)
+        # Phase 4.8: 优先走 daemon client
+        client = _get_daemon_client()
+        return client.get_symbol(qualified_name, db_path=_get_db_path_for_daemon())
 
     @mcp.tool()
     def get_symbol_location(name: str, file_path: str = "") -> Optional[dict]:
@@ -162,8 +181,10 @@ def create_mcp_server():
             qualified_name: 可选，完整限定名（如 module::Class::method），
                            传入时精确匹配该符号，避免多个模块同名函数误匹配
         """
-        db = get_db()
-        return db.get_callers(callee_name, qualified_name)
+        # Phase 4.8: 优先走 daemon client
+        client = _get_daemon_client()
+        return client.get_callers(callee_name, qualified_name,
+                                   db_path=_get_db_path_for_daemon())
 
     @mcp.tool()
     def get_callees(caller_name: str, qualified_name: Optional[str] = None) -> list:
@@ -176,8 +197,10 @@ def create_mcp_server():
             qualified_name: 可选，完整限定名（如 module::Class::method），
                            传入时精确匹配该符号，避免多个模块同名函数误匹配
         """
-        db = get_db()
-        return db.get_callees(caller_name, qualified_name)
+        # Phase 4.8: 优先走 daemon client
+        client = _get_daemon_client()
+        return client.get_callees(caller_name, qualified_name,
+                                    db_path=_get_db_path_for_daemon())
 
     @mcp.tool()
     def get_symbol_history(qualified_name: str) -> list:
@@ -216,8 +239,10 @@ def create_mcp_server():
         Args:
             limit: 返回数量限制
         """
-        db = get_db()
-        return db.get_topological_order(limit=limit)
+        # Phase 4.8: 优先走 daemon client
+        client = _get_daemon_client()
+        return client.get_topological_order(limit=limit,
+                                              db_path=_get_db_path_for_daemon())
 
     # ----------------------------------------------------------------
     # [L3] 高级调用链分析工具（get_impact / get_call_chain_down / detect_cycles 等）
@@ -231,6 +256,7 @@ def create_mcp_server():
             qualified_name: 起始函数的限定名
             max_depth: 最大追踪深度（默认 10）
         """
+        # Phase 4.8: get_impact 仍走 SQL（daemon 暂不支持 get_call_chain_up）
         db = get_db()
         return db.get_call_chain_up(qualified_name, max_depth=max_depth)
 
@@ -242,8 +268,14 @@ def create_mcp_server():
             qualified_name: 起始函数的限定名
             max_depth: 最大追踪深度（默认 10）
         """
-        db = get_db()
-        return db.get_call_chain_down(qualified_name, max_depth=max_depth)
+        # Phase 4.8: 优先走 daemon client
+        client = _get_daemon_client()
+        result = client.get_call_chain_down(qualified_name, max_depth=max_depth,
+                                             db_path=_get_db_path_for_daemon())
+        # daemon 返回 list，MCP 接口期望 dict（兼容旧格式）
+        if isinstance(result, list):
+            return {"chain": result, "edges": result}
+        return result
 
     @mcp.tool()
     def get_top_callers(limit: int = 20, kind: str = "fn", module_filter: str = "") -> list:
@@ -301,8 +333,10 @@ def create_mcp_server():
         Returns:
             检测到的循环列表，每个循环是一个函数名列表
         """
-        db = get_db()
-        return db.detect_cycles(max_depth=max_depth)
+        # Phase 4.8: 优先走 daemon client
+        client = _get_daemon_client()
+        return client.detect_cycles(max_depth=max_depth,
+                                     db_path=_get_db_path_for_daemon())
 
     # ----------------------------------------------------------------
     # [L10] 注释恢复工具（get_comment_from_version / restore_comment 等）

@@ -24,6 +24,7 @@ mod multi_lang;
 mod daemon;
 mod graph;
 mod snapshot;
+mod diff;
 
 // ============================================
 // P29: 数据结构定义

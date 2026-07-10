@@ -682,6 +682,69 @@ impl GraphStore {
 }
 
 // ============================================
+// 内部 Rust 方法（非 PyO3，供 diff 模块直接调用）
+// ============================================
+
+impl GraphStore {
+    /// 通过 qualified_name 获取符号引用（内部 Rust 接口，零 Python 开销）
+    pub fn get_symbol_ref(&self, qualified_name: &str) -> Option<&GraphSymbol> {
+        let symbols = self.symbols.as_ref()?;
+        let id = symbols.by_qname.get(qualified_name)?;
+        symbols.by_id.get(*id as usize)
+    }
+
+    /// 获取指定符号的所有已解析 caller symbol_id 集合
+    /// （谁调用了这个函数，仅已解析边）
+    pub fn get_caller_ids(&self, callee_id: u32) -> Vec<u32> {
+        let calls = match self.calls.as_ref() {
+            Some(c) => c,
+            None => return vec![],
+        };
+        // CSR backward 遍历：callee_id 的所有入边
+        let start = calls.backward_offsets.get(callee_id as usize)
+            .copied().unwrap_or(0);
+        let end = calls.backward_offsets.get(callee_id as usize + 1)
+            .copied().unwrap_or(0);
+        let mut callers = Vec::new();
+        for i in start..end {
+            let edge = &calls.backward_edges[i];
+            if edge.caller_id != 0 {
+                callers.push(edge.caller_id);
+            }
+        }
+        callers
+    }
+
+    /// 获取指定符号的所有已解析 callee symbol_id 集合
+    /// （这个函数调用了谁，仅已解析边）
+    pub fn get_callee_ids(&self, caller_id: u32) -> Vec<u32> {
+        let calls = match self.calls.as_ref() {
+            Some(c) => c,
+            None => return vec![],
+        };
+        // CSR forward 遍历：caller_id 的所有出边
+        let start = calls.forward_offsets.get(caller_id as usize)
+            .copied().unwrap_or(0);
+        let end = calls.forward_offsets.get(caller_id as usize + 1)
+            .copied().unwrap_or(0);
+        let mut callees = Vec::new();
+        for i in start..end {
+            let edge = &calls.forward_edges[i];
+            if edge.callee_id != 0 {
+                callees.push(edge.callee_id);
+            }
+        }
+        callees
+    }
+
+    /// 通过 symbol_id 获取符号引用
+    pub fn get_symbol_by_id(&self, id: u32) -> Option<&GraphSymbol> {
+        let symbols = self.symbols.as_ref()?;
+        symbols.by_id.get(id as usize)
+    }
+}
+
+// ============================================
 // CSR 构建
 // ============================================
 
