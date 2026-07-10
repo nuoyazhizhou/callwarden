@@ -1633,21 +1633,54 @@ class TaskMixin:
             }
 
         if current_status != TASK_STATUS_REVIEW:
-            return {
-                "error": t(
-                    "cli.messages.task_apply_invalid_status",
-                    default="Cannot apply task in status '{status}', only 'review' can be applied",
-                    status=current_status,
-                ),
-                "task_id": task_id,
-                "status": current_status,
-            }
+            # 修复：无 steps 的叶子任务可以从 open/in_progress 自动推进到 review。
+            # task_split 创建的子任务如果 plan 中没有列表项，就不会创建 steps，
+            # 导致任务卡在 open 无法 apply（状态机要求 open→in_progress→review→applied→closed）。
+            # 这里跳过中间状态直接推进到 review，让 apply/close 流程正常工作。
+            if current_status in (TASK_STATUS_OPEN, TASK_STATUS_IN_PROGRESS):
+                cur = self.conn.execute(
+                    "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ?",
+                    (task_id,),
+                )
+                step_count = cur.fetchone()["cnt"]
+                if step_count == 0:
+                    # 无 steps，自动推进到 review
+                    self.conn.execute(
+                        "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                        (TASK_STATUS_REVIEW, now, task_id),
+                    )
+                    current_status = TASK_STATUS_REVIEW
+                else:
+                    return {
+                        "error": t(
+                            "cli.messages.task_apply_invalid_status",
+                            default="Cannot apply task in status '{status}', only 'review' can be applied",
+                            status=current_status,
+                        ),
+                        "task_id": task_id,
+                        "status": current_status,
+                    }
+            else:
+                return {
+                    "error": t(
+                        "cli.messages.task_apply_invalid_status",
+                        default="Cannot apply task in status '{status}', only 'review' can be applied",
+                        status=current_status,
+                    ),
+                    "task_id": task_id,
+                    "status": current_status,
+                }
 
         # 将当前任务 review → applied
         self.conn.execute(
             "UPDATE tasks SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
             (TASK_STATUS_APPLIED, now, now, task_id),
         )
+
+        # 级联检查前，先更新父任务状态（无 steps 的子任务跳过了 task_report_step，
+        # 父任务可能还是 open，需要 _update_parent_status 推进到 review）
+        if parent_id:
+            self._update_parent_status(task_id)
 
         # 级联检查：若所有兄弟子任务都已 applied/closed，则原子 close 全部
         cascaded_close: List[str] = []
@@ -1802,15 +1835,42 @@ class TaskMixin:
             }
 
         if current_status != TASK_STATUS_APPLIED:
-            return {
-                "error": t(
-                    "cli.messages.task_close_invalid_status",
-                    default="Cannot close task in status '{status}', only 'applied' can be closed",
-                    status=current_status,
-                ),
-                "task_id": task_id,
-                "status": current_status,
-            }
+            # 修复：无 steps 的叶子任务可以从 open/in_progress/review 自动推进到 applied。
+            # 与 task_apply 的修复对应，允许无 steps 的任务直接 close。
+            if current_status in (TASK_STATUS_OPEN, TASK_STATUS_IN_PROGRESS, TASK_STATUS_REVIEW):
+                cur = self.conn.execute(
+                    "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ?",
+                    (task_id,),
+                )
+                step_count = cur.fetchone()["cnt"]
+                if step_count == 0:
+                    # 无 steps，自动推进到 applied
+                    now_applied = now
+                    self.conn.execute(
+                        "UPDATE tasks SET status = ?, applied_at = ?, updated_at = ? WHERE id = ?",
+                        (TASK_STATUS_APPLIED, now_applied, now_applied, task_id),
+                    )
+                    current_status = TASK_STATUS_APPLIED
+                else:
+                    return {
+                        "error": t(
+                            "cli.messages.task_close_invalid_status",
+                            default="Cannot close task in status '{status}', only 'applied' can be closed",
+                            status=current_status,
+                        ),
+                        "task_id": task_id,
+                        "status": current_status,
+                    }
+            else:
+                return {
+                    "error": t(
+                        "cli.messages.task_close_invalid_status",
+                        default="Cannot close task in status '{status}', only 'applied' can be closed",
+                        status=current_status,
+                    ),
+                    "task_id": task_id,
+                    "status": current_status,
+                }
 
         self.conn.execute(
             "UPDATE tasks SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?",

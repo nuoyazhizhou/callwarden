@@ -187,10 +187,15 @@ def test_task_apply_review_to_applied_success():
 
 
 def test_task_apply_invalid_status_open():
-    """task_apply 拒绝 open 状态任务（必须先到 review）。"""
+    """task_apply 拒绝 open 状态任务（必须先到 review）。
+
+    注意：无 steps 的任务可以自动推进（见 test_task_no_steps_fix.py），
+    这里用有 steps 的任务测试拒绝逻辑。
+    """
     db, _root = _db_with_workspace()
     try:
-        task_id = db.task_create(title="测试任务", description="")
+        task_id = db.task_create(title="测试任务", description="",
+                                 steps=[{"action": "annotate", "target_file": "a.py"}])
         # 任务初始状态为 open，未进入 review
         result = db.task_apply(task_id, reviewer="reviewer")
 
@@ -206,10 +211,15 @@ def test_task_apply_invalid_status_open():
 
 
 def test_task_apply_invalid_status_in_progress():
-    """task_apply 拒绝 in_progress 状态任务。"""
+    """task_apply 拒绝 in_progress 状态任务。
+
+    注意：无 steps 的任务可以自动推进（见 test_task_no_steps_fix.py），
+    这里用有 steps 的任务测试拒绝逻辑。
+    """
     db, _root = _db_with_workspace()
     try:
-        task_id = db.task_create(title="测试任务", description="")
+        task_id = db.task_create(title="测试任务", description="",
+                                 steps=[{"action": "annotate", "target_file": "a.py"}])
         _set_task_status(db.conn, task_id, TASK_STATUS_IN_PROGRESS)
 
         result = db.task_apply(task_id, reviewer="reviewer")
@@ -305,10 +315,15 @@ def test_task_close_applied_to_closed_success():
 
 
 def test_task_close_invalid_status_open():
-    """task_close 拒绝 open 状态任务（必须先 applied）。"""
+    """task_close 拒绝 open 状态任务（必须先 applied）。
+
+    注意：无 steps 的任务可以自动推进（见 test_task_no_steps_fix.py），
+    这里用有 steps 的任务测试拒绝逻辑。
+    """
     db, _root = _db_with_workspace()
     try:
-        task_id = db.task_create(title="测试任务", description="")
+        task_id = db.task_create(title="测试任务", description="",
+                                 steps=[{"action": "annotate", "target_file": "a.py"}])
 
         result = db.task_close(task_id, reviewer="reviewer")
 
@@ -322,10 +337,15 @@ def test_task_close_invalid_status_open():
 
 
 def test_task_close_invalid_status_review():
-    """task_close 拒绝 review 状态任务（必须先 applied）。"""
+    """task_close 拒绝 review 状态任务（必须先 applied）。
+
+    注意：无 steps 的任务可以自动推进（见 test_task_no_steps_fix.py），
+    这里用有 steps 的任务测试拒绝逻辑。
+    """
     db, _root = _db_with_workspace()
     try:
-        task_id = db.task_create(title="测试任务", description="")
+        task_id = db.task_create(title="测试任务", description="",
+                                 steps=[{"action": "annotate", "target_file": "a.py"}])
         _set_task_status(db.conn, task_id, TASK_STATUS_REVIEW)
 
         result = db.task_close(task_id, reviewer="reviewer")
@@ -337,10 +357,15 @@ def test_task_close_invalid_status_review():
 
 
 def test_task_close_invalid_status_in_progress():
-    """task_close 拒绝 in_progress 状态任务。"""
+    """task_close 拒绝 in_progress 状态任务。
+
+    注意：无 steps 的任务可以自动推进（见 test_task_no_steps_fix.py），
+    这里用有 steps 的任务测试拒绝逻辑。
+    """
     db, _root = _db_with_workspace()
     try:
-        task_id = db.task_create(title="测试任务", description="")
+        task_id = db.task_create(title="测试任务", description="",
+                                 steps=[{"action": "annotate", "target_file": "a.py"}])
         _set_task_status(db.conn, task_id, TASK_STATUS_IN_PROGRESS)
 
         result = db.task_close(task_id, reviewer="reviewer")
@@ -481,10 +506,14 @@ def test_reverted_status_not_closable():
 # ----------------------------------------------------------------------
 
 def test_task_apply_error_uses_i18n_key():
-    """task_apply 错误消息使用 i18n key，而非硬编码 default 文案。"""
+    """task_apply 错误消息使用 i18n key，而非硬编码 default 文案。
+
+    注意：无 steps 的任务可以自动推进，这里用有 steps 的任务测试拒绝逻辑。
+    """
     db, _root = _db_with_workspace()
     try:
-        task_id = db.task_create(title="测试", description="")
+        task_id = db.task_create(title="测试", description="",
+                                 steps=[{"action": "annotate", "target_file": "a.py"}])
         # open 状态 apply 应失败
         result = db.task_apply(task_id, reviewer="reviewer")
 
@@ -497,10 +526,14 @@ def test_task_apply_error_uses_i18n_key():
 
 
 def test_task_close_error_uses_i18n_key():
-    """task_close 错误消息使用 i18n key。"""
+    """task_close 错误消息使用 i18n key。
+
+    注意：无 steps 的任务可以自动推进，这里用有 steps 的任务测试拒绝逻辑。
+    """
     db, _root = _db_with_workspace()
     try:
-        task_id = db.task_create(title="测试", description="")
+        task_id = db.task_create(title="测试", description="",
+                                 steps=[{"action": "annotate", "target_file": "a.py"}])
         # open 状态 close 应失败
         result = db.task_close(task_id, reviewer="reviewer")
 
