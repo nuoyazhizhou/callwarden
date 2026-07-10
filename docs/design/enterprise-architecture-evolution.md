@@ -474,11 +474,22 @@ _hash_index: Dict[str, FileMeta] = {
 
 ## 迁移路径（分 3 阶段）
 
+> **⚠️ 本节已废弃**：下方的 3 阶段迁移路径已被 [enterprise-phase1-phase3-detail.md](enterprise-phase1-phase3-detail.md) v4 取代。
+> v4 的实施顺序为：Phase 1（Rust 多语言 parse）→ Phase 3A（Local CAS，per-UID `~/.callwarden/cas.db`）→ Phase 2 daemon → Phase 3B（daemon 内单源实现）。
+> 本节保留作为历史背景参考，不再代表当前实施计划。具体差异：
+> - v4 的 CAS 是 per-UID Local DB（`~/.callwarden/cas.db`），不是 `/var/lib/call_warden/global_cache.db`
+> - v4 的 Phase 1 是 Rust 多语言 parse 接入，不是 CAS
+> - v4 的 Phase 3A 在 Phase 2 daemon 之前实施（Local CAS 不依赖 daemon）
+> - v4 的 Phase 3B（查询路径迁移）延后到 Phase 2 daemon 之后
+
 不能一次推翻现有架构，因为：
 - 单机开发者仍需要零依赖的本地工具
 - 企业部署初期，Daemon 还没稳定时有 fallback
 
 ### 阶段 1：CAS 全局缓存（核心收益）
+
+> **⚠️ 已废弃**：v4 中此阶段拆分为 Phase 1（Rust 多语言 parse）和 Phase 3A（Local CAS，per-UID DB）。
+> CAS 路径从 `/var/lib/call_warden/global_cache.db` 改为 `~/.callwarden/cas.db`，且 CAS 表为自包含（含 `cas_symbol_contents`）。
 
 **目标**：抽取文件 hash 索引层，多分支共享 AST/符号。
 
