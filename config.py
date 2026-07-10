@@ -1113,3 +1113,71 @@ def safe_walk(root_dir: str, max_depth: int = -1, **kwargs):
                 dirs[:] = []
                 continue
         yield root, dirs, files
+
+
+# ── Enterprise daemon 配置 ──
+
+# daemon socket 路径（Linux）
+DAEMON_SOCKET_PATH = "/var/run/callwarden.sock"
+
+# daemon 数据根目录
+DAEMON_DATA_ROOT = "/var/lib/callwarden"
+
+# workspace registry DB 路径
+DAEMON_REGISTRY_DB = os.path.join(DAEMON_DATA_ROOT, "registry.db")
+
+# CAS DB 路径
+DAEMON_CAS_DB = os.path.join(DAEMON_DATA_ROOT, "cas.db")
+
+# toolchain DB 路径
+DAEMON_TOOLCHAIN_DB = os.path.join(DAEMON_DATA_ROOT, "toolchain.db")
+
+# container mount mapping 默认配置
+# 格式: {container_id: {container_path: host_path}}
+CONTAINER_MOUNT_MAPPINGS = {}
+
+# daemon 运行模式
+# auto: 自动检测（有 daemon 用 daemon，没有用 local）
+# enterprise: 强制走 daemon
+# local: 强制走本地 SQLite
+DAEMON_MODE = os.environ.get("CW_DAEMON_MODE", "auto")
+
+
+def resolve_container_path(path: str, container_mappings: dict = None) -> str:
+    """将容器内路径解析为宿主机路径。
+
+    Args:
+        path: 容器内路径（如 /home/user1/work/firmware）
+        container_mappings: {container_path_prefix: host_path_prefix}
+
+    Returns:
+        宿主机路径
+    """
+    if container_mappings is None:
+        container_mappings = CONTAINER_MOUNT_MAPPINGS
+
+    for container_prefix, host_prefix in container_mappings.items():
+        if path.startswith(container_prefix):
+            return path.replace(container_prefix, host_prefix, 1)
+
+    return path
+
+
+def get_daemon_mode() -> str:
+    """获取当前 daemon 模式。"""
+    return DAEMON_MODE
+
+
+def is_daemon_required() -> bool:
+    """是否强制要求 daemon。"""
+    return DAEMON_MODE == "enterprise"
+
+
+def is_daemon_available() -> bool:
+    """检测 daemon 是否可用（socket 是否存在且可连接）。
+
+    Windows 上永远返回 False。
+    """
+    if os.name == "nt":
+        return False
+    return os.path.exists(DAEMON_SOCKET_PATH)

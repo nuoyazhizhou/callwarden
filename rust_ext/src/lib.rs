@@ -21,6 +21,7 @@ use rayon::prelude::*;
 use tree_sitter::{Language, Parser, Node};
 
 mod multi_lang;
+mod daemon;
 mod graph;
 
 // ============================================

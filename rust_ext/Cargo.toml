@@ -8,6 +8,10 @@ description = "Call Warden 高性能 PyO3 扩展：parse 热路径 + 批量余�
 name = "callwarden_core"
 crate-type = ["cdylib"]
 
+[[bin]]
+name = "cw_daemon"
+path = "src/bin/cw_daemon.rs"
+
 [dependencies]
 # P29: PyO3 升级到 0.29 以支持 Python 3.14
 pyo3 = { version = "0.29", features = ["extension-module"] }
