@@ -250,6 +250,15 @@ class QueryMixin:
 
     def get_callers(self, callee_name: str) -> List[Dict]:
         """查询谁调用了这个函数"""
+        # B-P7b: Rust GraphStore 短路（CSR 内存查询，O(degree+k)）
+        store = self._get_graph_store()
+        if store is not None:
+            try:
+                rust_callers = store.get_callers(callee_name)
+                if rust_callers is not None:
+                    return rust_callers
+            except Exception:
+                pass  # Rust 查询异常 → 降级 SQL
         cur = self.conn.execute(
             """SELECT c.*, s.name as caller_name, fi.rel_path as caller_file
                FROM calls c
@@ -264,6 +273,15 @@ class QueryMixin:
 
     def get_callees(self, caller_name: str) -> List[Dict]:
         """查询这个函数调用了谁"""
+        # B-P7b: Rust GraphStore 短路（CSR forward 遍历，O(degree)）
+        store = self._get_graph_store()
+        if store is not None:
+            try:
+                rust_callees = store.get_callees(caller_name)
+                if rust_callees is not None:
+                    return rust_callees
+            except Exception:
+                pass  # Rust 查询异常 → 降级 SQL
         cur = self.conn.execute(
             """SELECT c.callee_name, c.callee_file, c.callee_qualified, c.call_line, c.is_cross_file
                FROM calls c
@@ -479,6 +497,38 @@ class QueryMixin:
             匹配的符号列表
         """
         ws_id = self._get_active_workspace_id()
+        # B-P7b: Rust GraphStore 快速过滤 + SQL 字段补全
+        # Rust 做子串匹配（O(N) 扫描预计算的小写字段，零 SQL），
+        # 返回最多 limit 个匹配的 symbol id，
+        # 再用 SQL 按 id IN(...) 批量取完整字段（signature/has_comment 等）
+        store = self._get_graph_store()
+        if store is not None:
+            try:
+                rust_results = store.search_symbols(query, kind, limit)
+                if rust_results is not None and len(rust_results) > 0:
+                    ids = [r["id"] for r in rust_results]
+                    placeholders = ",".join("?" * len(ids))
+                    sql = f"""
+                        SELECT DISTINCT
+                            s.qualified_name, s.module_path, s.start_line, s.end_line,
+                            s.depth, s.name, s.kind, s.signature, s.has_comment,
+                            fi.rel_path as file_path
+                        FROM symbols s
+                        JOIN file_instances fi ON s.file_instance_id = fi.id
+                        WHERE fi.workspace_id = ? AND fi.status != 'archived'
+                          AND s.id IN ({placeholders})
+                        ORDER BY s.kind, s.depth DESC, fi.rel_path, s.start_line
+                        LIMIT ?
+                    """
+                    params: List[Any] = [ws_id] + ids + [limit]
+                    cur = self.conn.execute(sql, params)
+                    return [dict(row) for row in cur]
+                elif rust_results is not None:
+                    # Rust 返回空列表（有结果但为空）→ 直接返回
+                    return []
+            except Exception:
+                pass  # Rust 查询异常 → 降级 FTS5/LIKE
+
         # P2 优化：优先 FTS5 token 匹配，失败回退 LIKE
         # FTS5 unicode61 会把 snake_case/camelCase/::./ 自动分词
         # 例如 user_login_handler → [user, login, handler]，搜 "login" 即可命中
@@ -502,7 +552,7 @@ class QueryMixin:
                 WHERE fi.workspace_id = ? AND fi.status != 'archived'
                   AND symbols_fts MATCH ?
             """
-            params: List[Any] = [ws_id, fts_query]
+            params = [ws_id, fts_query]
 
             if kind:
                 sql += " AND s.kind = ?"

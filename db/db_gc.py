@@ -251,6 +251,8 @@ class GCMixin:
 
             if not dry_run:
                 self.conn.commit()
+                # B-P7b: 失效 GraphStore 缓存（symbols/calls 已删除/归档）
+                self._invalidate_graph_store()
 
             candidate_counts = {
                 "scanned_files": len(files_to_check),
@@ -398,6 +400,8 @@ class GCMixin:
             restored += 1
 
         self.conn.commit()
+        # B-P7b: 失效 GraphStore 缓存（文件状态已变更）
+        self._invalidate_graph_store()
 
         return {
             "scanned": len(archived_rows),
@@ -537,6 +541,8 @@ class GCMixin:
             )
 
             self.conn.commit()
+            # B-P7b: 失效 GraphStore 缓存（symbols/calls 已永久删除）
+            self._invalidate_graph_store()
 
             deleted_counts = {
                 "purged_files": len(fi_ids),

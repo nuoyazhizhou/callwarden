@@ -79,10 +79,10 @@ pub struct CallGraph {
     /// CSR 偏移：backward_offsets[i..i+1] 给出 callee_id=i 的边范围
     pub backward_offsets: Vec<usize>,
 
-    /// 未解析边索引：callee_name_idx → [forward_edges 中的位置]
-    /// 用于 get_callers 快速查找 callee_id=0 但 callee_name 匹配的边
-    /// 避免全扫 forward_edges（O(E) → O(k)，k 为同名未解析边数）
-    pub unresolved_by_name: HashMap<u32, Vec<usize>>,
+    /// 按 callee_name 索引所有边：callee_name_idx → [forward_edges 中的位置]
+    /// 用于 get_callers 快速查找 callee_name 匹配的所有边（含已解析和未解析）
+    /// 对齐 SQL 的 WHERE c.callee_name = ? 语义，O(k)，k 为同名边数
+    pub by_callee_name: HashMap<u32, Vec<usize>>,
 
     /// callee 名字池（edges 通过索引引用，避免重复分配 String）
     pub callee_names: Vec<String>,
@@ -264,12 +264,11 @@ impl GraphStore {
             }
         }
 
-        // 5. 构建未解析边索引：callee_name_idx → [forward_edges 位置]
-        // 用于 get_callers 快速查找 callee_id=0 但 callee_name 匹配的边
+        // 5. 构建 by_callee_name 索引：callee_name_idx → [forward_edges 位置]
+        // 索引所有边（含已解析和未解析），对齐 SQL 的 WHERE c.callee_name = ? 语义
+        // get_callers 一次查找 O(k) 即可，无需分 resolved/unresolved 两步
         for (idx, edge) in calls.forward_edges.iter().enumerate() {
-            if edge.callee_id == 0 {
-                calls.unresolved_by_name.entry(edge.callee_name_idx).or_default().push(idx);
-            }
+            calls.by_callee_name.entry(edge.callee_name_idx).or_default().push(idx);
         }
 
         // 6. 构建反向索引：callee_name → callee_name_idx（O(1) 查找）
@@ -285,10 +284,8 @@ impl GraphStore {
     /// 查询谁调用了这个函数（对齐 Python db_query.get_callers）
     /// 入参：callee_name（简名，对齐 Python 接口）
     ///
-    /// B-P6 优化：O(E) 全扫 → O(degree + k)
-    /// - 已解析边：CSR backward_offsets 按 callee_id 定位（O(degree) per callee_id）
-    /// - 未解析边：unresolved_by_name 索引按 callee_name_idx 定位（O(k)，k=同名未解析边数）
-    /// - callee_name → callee_name_idx：O(1) 反向索引
+    /// B-P7b 优化：使用 by_callee_name 索引，一次查找 O(k)
+    /// 对齐 SQL 的 WHERE c.callee_name = ? 语义，覆盖所有边（含已解析和未解析）
     fn get_callers<'py>(&self, py: Python<'py>, callee_name: &str) -> PyResult<Vec<Bound<'py, PyAny>>> {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
@@ -297,55 +294,40 @@ impl GraphStore {
 
         let mut results = Vec::new();
 
-        // 1. O(1) 查找 callee_name_idx（反向索引，避免扫池）
-        let callee_name_idx = calls.callee_name_to_idx.get(callee_name).copied();
+        // O(1) 查找 callee_name_idx（反向索引）
+        let callee_name_idx = match calls.callee_name_to_idx.get(callee_name).copied() {
+            Some(idx) => idx,
+            None => return Ok(results),  // 无此 callee_name，空结果
+        };
 
-        // 2. 已解析边：通过 CSR backward_offsets 按 callee_id 定位 O(degree)
-        //    callee_name 可能匹配多个 symbol_id（同名函数）
-        let callee_ids: Vec<u32> = symbols.by_simple_name.get(callee_name)
-            .cloned()
-            .unwrap_or_default();
-
-        for callee_id in &callee_ids {
-            let start = calls.backward_offsets.get(*callee_id as usize)
-                .copied().unwrap_or(0);
-            let end = calls.backward_offsets.get(*callee_id as usize + 1)
-                .copied().unwrap_or(0);
-
-            for i in start..end {
-                let edge = &calls.backward_edges[i];
-                // backward_offsets[0] 区段是未解析边，跳过（由 step 3 处理）
-                if edge.callee_id == 0 { continue; }
-
+        // 一次查找 by_callee_name 索引，获取所有 callee_name 匹配的边
+        if let Some(positions) = calls.by_callee_name.get(&callee_name_idx) {
+            for &pos in positions {
+                let edge = &calls.forward_edges[pos];
                 if let Some(caller) = symbols.by_id.get(edge.caller_id as usize) {
+                    let callee_name = calls.callee_names.get(edge.callee_name_idx as usize)
+                        .map(|s| s.as_str()).unwrap_or("");
+                    // 已解析边：从 callee 符号表取完整信息；未解析边：返回空
+                    let (callee_qname, callee_file, callee_module) = if edge.callee_id != 0 {
+                        symbols.by_id.get(edge.callee_id as usize)
+                            .map(|s| (s.qualified_name.as_str(), s.file_rel_path.as_str(), s.module_path.as_str()))
+                            .unwrap_or(("", "", ""))
+                    } else { ("", "", "") };
+
                     let dict = PyDict::new(py);
                     dict.set_item("caller_name", &caller.name)?;
                     dict.set_item("caller_qualified", &caller.qualified_name)?;
                     dict.set_item("caller_file", &caller.file_rel_path)?;
                     dict.set_item("caller_module", &caller.module_path)?;
+                    dict.set_item("caller_id", edge.caller_id)?;
                     dict.set_item("call_line", edge.call_line)?;
                     dict.set_item("is_cross_file", edge.is_cross_file)?;
+                    dict.set_item("callee_name", callee_name)?;
+                    dict.set_item("callee_id", edge.callee_id)?;
+                    dict.set_item("callee_qualified", callee_qname)?;
+                    dict.set_item("callee_file", callee_file)?;
+                    dict.set_item("callee_module", callee_module)?;
                     results.push(dict.into_any());
-                }
-            }
-        }
-
-        // 3. 未解析边：通过 unresolved_by_name 索引按 callee_name_idx 定位 O(k)
-        //    即使有已解析的同名符号，未解析边也应返回（对齐原逻辑）
-        if let Some(idx) = callee_name_idx {
-            if let Some(positions) = calls.unresolved_by_name.get(&idx) {
-                for &pos in positions {
-                    let edge = &calls.forward_edges[pos];
-                    if let Some(caller) = symbols.by_id.get(edge.caller_id as usize) {
-                        let dict = PyDict::new(py);
-                        dict.set_item("caller_name", &caller.name)?;
-                        dict.set_item("caller_qualified", &caller.qualified_name)?;
-                        dict.set_item("caller_file", &caller.file_rel_path)?;
-                        dict.set_item("caller_module", &caller.module_path)?;
-                        dict.set_item("call_line", edge.call_line)?;
-                        dict.set_item("is_cross_file", edge.is_cross_file)?;
-                        results.push(dict.into_any());
-                    }
                 }
             }
         }
@@ -379,19 +361,19 @@ impl GraphStore {
                 let edge = &calls.forward_edges[i];
                 let callee_name = calls.callee_names.get(edge.callee_name_idx as usize)
                     .map(|s| s.as_str()).unwrap_or("");
-                let callee_qname = if edge.callee_id != 0 {
+                // 已解析边：从 callee 符号表取完整信息
+                let (callee_qname, callee_file, callee_module) = if edge.callee_id != 0 {
                     symbols.by_id.get(edge.callee_id as usize)
-                        .map(|s| s.qualified_name.as_str()).unwrap_or("")
-                } else { "" };
-                let callee_file = if edge.callee_id != 0 {
-                    symbols.by_id.get(edge.callee_id as usize)
-                        .map(|s| s.file_rel_path.as_str()).unwrap_or("")
-                } else { "" };
+                        .map(|s| (s.qualified_name.as_str(), s.file_rel_path.as_str(), s.module_path.as_str()))
+                        .unwrap_or(("", "", ""))
+                } else { ("", "", "") };
 
                 let dict = PyDict::new(py);
                 dict.set_item("callee_name", callee_name)?;
+                dict.set_item("callee_id", edge.callee_id)?;
                 dict.set_item("callee_qualified", callee_qname)?;
                 dict.set_item("callee_file", callee_file)?;
+                dict.set_item("callee_module", callee_module)?;
                 dict.set_item("call_line", edge.call_line)?;
                 dict.set_item("is_cross_file", edge.is_cross_file)?;
                 results.push(dict.into_any());
@@ -448,8 +430,11 @@ impl GraphStore {
                 dict.set_item("name", &sym.name)?;
                 dict.set_item("kind", &sym.kind)?;
                 dict.set_item("qualified_name", &sym.qualified_name)?;
-                dict.set_item("file_rel_path", &sym.file_rel_path)?;
+                dict.set_item("module_path", &sym.module_path)?;
                 dict.set_item("start_line", sym.start_line)?;
+                dict.set_item("end_line", sym.end_line)?;
+                dict.set_item("depth", sym.depth)?;
+                dict.set_item("file_path", &sym.file_rel_path)?;
                 results.push(dict.into_any());
                 if results.len() >= limit { break; }
             }
@@ -711,7 +696,7 @@ fn build_csr(edges: Vec<CallEdge>, callee_names: Vec<String>, max_id: usize) -> 
         forward_offsets,
         backward_edges,
         backward_offsets,
-        unresolved_by_name: HashMap::new(),
+        by_callee_name: HashMap::new(),
         callee_names,
         callee_name_to_idx: HashMap::new(),
         roots: Vec::new(),

@@ -1617,11 +1617,49 @@ class CodeGraphBase:
         self.module_resolver = ModuleResolver(self.workspace_root)
         self.call_resolver = CallResolver(self.module_resolver, self.parser)
 
+        # B-P7b: GraphStore 查询加速层（懒加载）
+        # 首次调用 get_callers/get_callees/search_symbols 时从 SQLite 加载到内存
+        # 写操作（refresh_file 等）后自动失效，下次查询时重新加载
+        self._graph_store = None
+
         # 活动工作区
         self.active_workspace: Optional[Dict[str, Any]] = None
 
         self._init_schema()
         self._init_workspace()
+
+    def _get_graph_store(self):
+        """B-P7b: 懒加载 GraphStore（Rust CSR 内存索引）
+
+        首次调用时从 SQLite 加载 symbols + calls 到内存 CSR 结构。
+        后续查询直接走内存，零 SQL 零磁盘 I/O。
+        写操作后调用 _invalidate_graph_store() 失效，下次查询自动重新加载。
+
+        Returns:
+            GraphStore 实例，或 None（callwarden_core 未安装时降级到 SQL）
+        """
+        if self._graph_store is not None:
+            return self._graph_store
+        try:
+            from callwarden_core import GraphStore
+        except ImportError:
+            return None
+        try:
+            store = GraphStore()
+            store.load_from_sqlite(self.db_path)
+            self._graph_store = store
+        except Exception:
+            # 加载失败（数据库锁、schema 不匹配等）→ 降级到 SQL
+            self._graph_store = None
+        return self._graph_store
+
+    def _invalidate_graph_store(self):
+        """B-P7b: 失效 GraphStore 缓存
+
+        在写操作（refresh_file / gc_archive / task apply 等）后调用，
+        确保下次查询时从最新的 SQLite 重新加载。
+        """
+        self._graph_store = None
 
 
     def _init_schema(self):

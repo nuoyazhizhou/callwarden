@@ -669,6 +669,8 @@ class BuildMixin:
         self._update_symbol_version_depths()
 
         self.conn.commit()
+        # B-P7b: 失效 GraphStore 缓存（完整构建已写入 symbols/calls）
+        self._invalidate_graph_store()
 
         if failed_files:
             print(t("cli.messages.db_build_done_failures", count=len(failed_files)))
@@ -1320,6 +1322,8 @@ class BuildMixin:
         t_commit_start = time.perf_counter()
         self.conn.commit()
         t_commit = time.perf_counter() - t_commit_start
+        # B-P7b: 失效 GraphStore 缓存（批量构建已写入 symbols/calls）
+        self._invalidate_graph_store()
 
         # 步骤 6/6: GC 归档（类 Java Young GC，扫描 pending 文件命中 ignore 的迁入 archived_files）
         # 注意：在 commit 之后执行，避免归档事务与构建事务冲突
@@ -2678,6 +2682,8 @@ class BuildMixin:
         print(t("cli.messages.db_build_refresh", path=rel_path, lang=lang))
 
         self._refresh_file_internal(abs_path, rel_path, lang)
+        # B-P7b: 失效 GraphStore 缓存（symbols/calls 已更新，下次查询重新加载）
+        self._invalidate_graph_store()
 
 
     def _refresh_file_internal(self, abs_path: str, rel_path: str, lang: str = "rust"):
@@ -2837,6 +2843,8 @@ class BuildMixin:
             )
 
         self.conn.commit()
+        # B-P7b: 失效 GraphStore 缓存（symbols/calls 已删除）
+        self._invalidate_graph_store()
         print(t("cli.messages.db_build_marked_deleted", path=rel_path, count=self._count_file_versions(file_instance_id)))
 
 
