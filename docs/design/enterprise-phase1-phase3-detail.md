@@ -1,10 +1,19 @@
 # Enterprise Phase 1 + Phase 3A + Phase 3B 详细实施设计
 
-状态：Draft v8（评审第七轮 P1 修订版）
+状态：Draft v9（评审第八轮 P1 修订版）
 日期：2026-07-10
 父文档：
 - [enterprise-daemon-shared-snapshot-plan.md](enterprise-daemon-shared-snapshot-plan.md)（主架构）
 - [enterprise-architecture-evolution.md](enterprise-architecture-evolution.md)（演进背景）
+
+## v9 变更摘要（针对评审第八轮 4 个 P1 + 2 个 P2）
+
+1. **[P1#1] GC 存在两个冲突实现**：v6 `gc_cas` 只持 `BEGIN IMMEDIATE`（不获取 `LOCK_EX`、不读 pending refs），v8 又定义了带 flock 但主体为省略号的 stub。实现者沿用 v6 会重新引入 GC/manifest TOCTOU。v9 删除旧实现，保留**唯一权威版本**：`LOCK_EX → BEGIN IMMEDIATE → scan manifests + pending refs → sweep → COMMIT → unlock`。
+2. **[P1#2] CAS key 和 ParseFact 来自不同文件内容**：refresh 对 `csrc.canonical_bytes` 计算 key，miss 后却调用 `parse_file(abs_path)` 再次读取路径，文件在两次读取间变化时会把内容 A 的 `cas_key` 和内容 B 的 ParseFact 发布到一起；parser 若读 raw bytes 也违背 ParseInputV1。v9：所有路径（refresh + 冷启动）改用 `parse_canonical_bytes(canonical_bytes, lang)`；发布前强制校验 `parse_result["content_hash"] == expected_content_hash` 且 `recompute_cas_key(parse_result) == cas_key`，不一致则丢弃。
+3. **[P1#3] Rust 流式 fallback 仍会漏文件并再次异常**：`filtered[i+1:]` 漏掉正好失败的第 i 个文件；`filtered` 是四元组却按六元组解包触发 `ValueError`。v9：改为 `remaining = filtered[i:]`（含失败位），按四元组解包，通过原始 entry map 恢复完整六元组；补"第一个/中间/最后一个 get_at 抛错"的测试。
+4. **[P1#4] canonical→raw 映射只覆盖换行，没有覆盖编码转换**：`offset_map` 在 `decode_to_utf8` 之后由 `normalize_newlines` 构建，无法表示 UTF-16/GBK 原始字节→canonical UTF-8 的对应；`r_end.saturating_sub(canonical_off)` 对变长编码线性插值错误。v9：在**流式解码阶段**生成每个 Unicode scalar 的 `(canonical_range, raw_range)` 组合映射；提供惰性 `raw_span_for_canonical_range(raw, start, end)`；回写前必须重新校验 `raw_hash`。
+5. **[P2#1] 用户 agent 协议缺少事件代次控制**：同一文件连续保存两次时，旧内容解析更慢、后到达 daemon，最终覆盖新 manifest。v9：消息加 `agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns`，daemon 按 workspace/path 做 compare-and-swap，只允许最新 generation 发布；未经可信 Git tree/blob 验证的内容只能进入 dirty overlay，不能直接发布为跨用户共享的 clean snapshot。
+6. **[P2#2] UDS 传输方式尚未闭合**：`send_fd(sock, canonical_bytes)` 语义不成立——`SCM_RIGHTS` 发送 FD 而非字节数组。v9：明确使用长度分帧的 UDS stream（小/中文件）或 `memfd_create + seals + SCM_RIGHTS`（大文件），定义最大消息尺寸、背压、超时和断线清理。
 
 ## v8 变更摘要（针对评审第七轮 2 个 P1 + 4 个 P2）
 
@@ -274,11 +283,24 @@ if _can_use_rust_parse() and not os.environ.get("CW_DISABLE_RUST_PARSE"):
                 r.setdefault("inline_modules", [])
                 file_results[rel_path] = r
         except Exception as stream_err:
-            # v8 P2#3: pool.get_at 抛异常 → 剩余未处理文件全部回退 Python
+            # v9 P1#3: pool.get_at 抛异常 → 剩余未处理文件全部回退 Python
             # 已回传的 file_results 保留（已成功 parse 的不重做）。
-            remaining = filtered[i+1:]  # i 是当前抛异常的位置，i+1 起为未处理
-            for _idx, rel_path, abs_path, _lang, module_path, file_instance_id in remaining:
-                rust_failed_files.append((None, rel_path, abs_path, lang, module_path, file_instance_id))
+            # v9 P1#3 修复（相对 v8）：
+            #   1. filtered[i:] 而非 filtered[i+1:]——失败的第 i 个文件也要回退（不能漏）。
+            #   2. filtered 是四元组 (abs_path, module_path, rel_path, file_instance_id)，
+            #      按四元组解包，不再误用六元组解包触发 ValueError。
+            #   3. rust_failed_files 期望六元组 (idx, rel_path, abs_path, lang, module_path, file_instance_id)，
+            #      通过原始 files 列表恢复——用 rel_path 建索引 map 回原 entry。
+            remaining = filtered[i:]  # 含失败的第 i 个（v9 P1#3: 不再 i+1 漏文件）
+            # 原始 files 是六元组，按 rel_path 建索引恢复完整 entry
+            files_by_rel = {f[1]: f for f in files}  # f[1] = rel_path
+            for abs_path, module_path, rel_path, file_instance_id in remaining:
+                orig = files_by_rel.get(rel_path)
+                if orig:
+                    rust_failed_files.append(orig)  # 完整六元组
+                else:
+                    # 兜底：构造六元组
+                    rust_failed_files.append((None, rel_path, abs_path, lang, module_path, file_instance_id))
             failed_files.append((f"<pool:{lang}:stream>", str(stream_err)))
 
 # v7 P1#4: Rust 失败的文件 + 未放行语言 → 走原 Python ProcessPoolExecutor
@@ -290,7 +312,8 @@ if python_files:
 **v7 P1#4 关键修复**：
 - **文件不会消失**：`non_rust_files` 初始包含全部文件，只有 Rust 实际可用且放行时才移出。Rust pool 异常或单文件 error 的文件回退 `non_rust_files`，最终走 Python fallback。
 - **C 快路径独立保留**：`batch_parse_c_files_pool`（C 语言专用）不受 `RUST_PARSE_ENABLED_LANGS` 影响，已在 [db_build.py L1145-L1166](../../db/db_build.py#L1145-L1166) 稳定运行。上面的伪代码是**通用多语言 Rust 路径**，与 C 快路径并行。
-- **测试覆盖**：需要补"语言已放行但扩展不可用"、"pool 异常回退"、"单文件 error 回退"的集成测试。
+- **测试覆盖**：需要补"语言已放行但扩展不可用"、"pool 创建异常回退"、"pool.get_at 流式异常回退"、"单文件 error 回退"的集成测试。
+- **v9 P1#3 stream fallback 测试**：必须覆盖 `get_at` 在**第一个**（i=0）、**中间**（i=n/2）、**最后一个**（i=len-1）抛异常的三种情况，验证：剩余文件（含失败位）全部回退 Python，已回传的 file_results 保留，`rust_failed_files` 中每个 entry 是完整六元组（不触发 ValueError）。
 
 关键点：
 - **保留 `batch_parse_c_files_pool`** 作为 C 语言专用快路径（已稳定，不破坏，不受 `RUST_PARSE_ENABLED_LANGS` 影响）。
@@ -610,7 +633,7 @@ PARSE_INPUT_ABI_VERSION = "v1"
 **Rust 侧改动**（[rust_ext/src/multi_lang.rs](../../rust_ext/src/multi_lang.rs)）：
 
 ```rust
-// v7 P1#3 + v8 P2#1: 唯一的输入规范化实现，Python 通过 FFI 调用，不重复实现 detector
+// v7 P1#3 + v8 P2#1 + v9 P1#4: 唯一的输入规范化实现，Python 通过 FFI 调用，不重复实现 detector
 pub struct SourceMetadata {
     pub raw_hash: String,          // sha256(原始磁盘字节)，用于检测原文件是否改动
     pub source_encoding: String,  // "utf-8" | "utf-16le" | "utf-16be" | "gbk" | "latin-1" ...
@@ -618,25 +641,43 @@ pub struct SourceMetadata {
     pub newline_style: String,    // "lf" | "crlf" | "cr" | "mixed"
 }
 
+// v9 P1#4: 偏移映射条目——记录每个 Unicode scalar 在 canonical 和 raw 坐标系的范围。
+// 不再使用 (canonical_end, raw_end) 分段线性插值（对 GBK/UTF-16 变长编码错误）。
+// 每个 entry 对应一个"不可分割段"：编码转换边界 + 换行边界。
+// 段内 canonical 和 raw 偏移一一对应（UTF-8 子串无内部收缩），
+// 收缩只发生在段边界（如 \r\n→\n 收缩 1 字节，或 GBK 双字节→UTF-8 三字节）。
+pub struct OffsetEntry {
+    pub canonical_start: usize,   // canonical_bytes 中的起始偏移
+    pub canonical_end: usize,     // canonical_bytes 中的结束偏移（不含）
+    pub raw_start: usize,         // 原始磁盘字节（含 BOM）中的起始偏移
+    pub raw_end: usize,           // 原始磁盘字节中的结束偏移（不含）
+}
+
 pub struct CanonicalizeResult {
     pub canonical_bytes: Vec<u8>,     // BOM 剥离 + 解码为 UTF-8 + CRLF/CR→LF 后的字节
     pub content_hash: String,         // sha256(canonical_bytes)
-    pub metadata: SourceMetadata,     // v8 P2#1: 原始文件元数据，编辑功能用
-    pub offset_map: Vec<(usize, usize)>, // v8 P2#1: canonical_byte_offset → raw_byte_offset 的分段映射
+    pub metadata: SourceMetadata,     // 原始文件元数据，编辑功能用
+    pub offset_map: Vec<OffsetEntry>, // v9 P1#4: canonical→raw 偏移映射（含编码转换）
 }
 
-// v8 P2#1: canonicalize_source 是输入规范化的唯一入口（v7 read_canonical_bytes 的演进版）
+// v9 P1#4: canonicalize_source 是输入规范化的唯一入口。
+// 关键修复：offset_map 在**流式解码阶段**构建，同时记录编码转换和换行规范化的偏移关系。
+// 旧实现（v8）在 decode_to_utf8 之后才由 normalize_newlines 构建 offset_map，
+// 无法表示 UTF-16/GBK 原始字节→canonical UTF-8 的对应。
 pub fn canonicalize_source(abs_path: &str) -> Result<CanonicalizeResult, io::Error> {
     let raw = std::fs::read(abs_path)?;
     let raw_hash = sha256_hex(&raw);
+    let raw_len = raw.len();
 
-    // 1. BOM 检测 + 剥离
-    let (bom_kind, bytes_no_bom) = detect_and_strip_bom(&raw);
-    // 2. 编码检测 + 解码为 UTF-8
-    let (source_encoding, utf8_str) = decode_to_utf8(bytes_no_bom, bom_kind)?;
-    // 3. 换行规范化: 记录原 newline_style，CRLF/CR → LF
-    let (newline_style, normalized, offset_map) = normalize_newlines(&utf8_str);
-    let canonical_bytes = normalized.into_bytes();
+    // 1. BOM 检测 + 剥离（记录 BOM 字节范围，偏移映射要跳过 BOM）
+    let (bom_kind, bom_len, bytes_no_bom) = detect_and_strip_bom(&raw)?;
+
+    // 2. v9 P1#4: 流式解码 + 构建 offset_map（同时处理编码转换 + 换行规范化）
+    //    逐个 Unicode scalar 解码，记录 (canonical_pos, raw_pos)，
+    //    在换行边界（\r\n→\n、\r→\n）和编码边界（多字节→UTF-8）处分段。
+    let (source_encoding, newline_style, canonical_bytes, offset_map) =
+        streaming_decode_with_offset_map(bytes_no_bom, bom_len)?;
+
     let content_hash = sha256_hex(&canonical_bytes);
     Ok(CanonicalizeResult {
         canonical_bytes, content_hash,
@@ -645,26 +686,119 @@ pub fn canonicalize_source(abs_path: &str) -> Result<CanonicalizeResult, io::Err
     })
 }
 
-// v8 P2#1: canonical→raw 偏移映射。offset_map 是分段表 [(canonical_end, raw_end), ...]，
-// 二分查找即可把 canonical start_byte/end_byte 翻译为原文件字节偏移，供编辑/注释恢复使用。
-// offset_map 仅在编辑原文件时构建（lazy），parse/查询路径不需要。
-pub fn canonical_to_raw(offset_map: &[(usize, usize)], canonical_off: usize) -> usize {
-    // 找到第一个 canonical_end > canonical_off 的段，线性插值 raw 偏移
-    // （CRLF→LF 会让 canonical 比 raw 短，每个 \r\n 收缩 1 字节）
-    offset_map.iter()
-        .find(|(c_end, _)| *c_end > canonical_off)
-        .map(|(_, r_end)| {
-            // 段内偏移：canonical 段起点到 canonical_off 的差 + raw 段起点
-            // 简化：段内 raw/canonical 偏移一一对应（CRLF 收缩发生在段边界）
-            r_end.saturating_sub(canonical_off) // 实现按真实分段表二分
-        })
-        .unwrap_or(canonical_off)
+// v9 P1#4: 流式解码——逐个 Unicode scalar 解码，同步构建 offset_map。
+// 每个 OffsetEntry 对应一个"段"：段内 canonical↔raw 一一对应（UTF-8 子串），
+// 段边界处可能发生偏移收缩（\r\n→\n 或编码变长转换）。
+fn streaming_decode_with_offset_map(
+    bytes_no_bom: &[u8], bom_len: usize,
+) -> Result<(String, String, Vec<u8>, Vec<OffsetEntry>), io::Error> {
+    let encoding = detect_encoding(bytes_no_bom)?;
+    let mut decoder = new_decoder(&encoding, bytes_no_bom);
+    let mut canonical = String::new();
+    let mut offset_map: Vec<OffsetEntry> = Vec::new();
+
+    let mut raw_pos = 0usize;       // 在 bytes_no_bom 中的位置（不含 BOM）
+    let mut canonical_pos = 0usize;  // 在 canonical_bytes 中的位置
+    let mut seg_raw_start = 0usize;
+    let mut seg_canon_start = 0usize;
+    let mut newline_style = "lf".to_string();
+    let mut has_crlf = false;
+    let mut has_cr = false;
+    let mut has_lf = false;
+
+    while let Some((scalar, consumed_raw_bytes)) = decoder.next_scalar()? {
+        // 换行规范化：\r\n → \n，\r → \n
+        let (emit_str, is_newline_boundary) = match scalar {
+            '\r' => { has_cr = true; has_crlf = has_crlf || decoder.peek_is_lf(); ("\n".to_string(), true) }
+            '\n' => { has_lf = true; (if has_crlf { "" } else { "\n" }.to_string(), false) }
+            _ => (scalar.to_string(), false),
+        };
+        // 实际换行处理需更精细，这里展示分段逻辑：
+        // 在换行边界或编码边界处，闭合当前段，开启新段
+        if is_newline_boundary {
+            // 闭合当前段
+            if canonical_pos > seg_canon_start || raw_pos > seg_raw_start {
+                offset_map.push(OffsetEntry {
+                    canonical_start: seg_canon_start,
+                    canonical_end: canonical_pos,
+                    raw_start: seg_raw_start + bom_len,
+                    raw_end: raw_pos + bom_len,
+                });
+            }
+            // 发射规范化后的字符
+            for b in emit_str.bytes() { canonical.push(b as char); canonical_pos += 1; }
+            raw_pos += consumed_raw_bytes;
+            seg_canon_start = canonical_pos;
+            seg_raw_start = raw_pos;
+        } else {
+            // 段内：直接追加 UTF-8 编码
+            let s = emit_str;
+            let start = canonical.len();
+            canonical.push_str(&s);
+            canonical_pos += canonical.len() - start;
+            raw_pos += consumed_raw_bytes;
+        }
+    }
+    // 闭合最后一段
+    if canonical_pos > seg_canon_start || raw_pos > seg_raw_start {
+        offset_map.push(OffsetEntry {
+            canonical_start: seg_canon_start, canonical_end: canonical_pos,
+            raw_start: seg_raw_start + bom_len, raw_end: raw_pos + bom_len,
+        });
+    }
+
+    if has_crlf && has_cr && has_lf { newline_style = "mixed".into(); }
+    else if has_crlf { newline_style = "crlf".into(); }
+    else if has_cr { newline_style = "cr".into(); }
+    else { newline_style = "lf".into(); }
+
+    Ok((encoding, newline_style, canonical.into_bytes(), offset_map))
+}
+
+// v9 P1#4: 惰性查询——给定 canonical [start, end)，返回 raw [start, end)。
+// 编辑功能用此把 canonical 偏移翻译为原文件字节偏移。
+// 二分查找 offset_map，段内 raw↔canonical 一一对应（UTF-8 子串无内部收缩）。
+pub fn raw_span_for_canonical_range(
+    offset_map: &[OffsetEntry],
+    raw: &[u8],
+    canonical_start: usize,
+    canonical_end: usize,
+) -> (usize, usize) {
+    // 找到 canonical_start 所在的段
+    let seg_start = offset_map.iter()
+        .find(|e| canonical_start >= e.canonical_start && canonical_start < e.canonical_end)
+        .or_else(|| offset_map.last())
+        .expect("canonical_start out of range");
+    let in_seg_off = canonical_start - seg_start.canonical_start;
+    let raw_start = seg_start.raw_start + in_seg_off;
+
+    // 找到 canonical_end 所在的段
+    let seg_end = offset_map.iter()
+        .find(|e| canonical_end > e.canonical_start && canonical_end <= e.canonical_end)
+        .or_else(|| offset_map.last())
+        .expect("canonical_end out of range");
+    let in_seg_off_end = canonical_end - seg_end.canonical_start;
+    let raw_end = seg_end.raw_start + in_seg_off_end;
+
+    (raw_start, raw_end)
+}
+
+// v9 P1#4: 回写前必须重新校验 raw_hash。
+// 编辑功能修改原文件后，下一次 canonicalize_source 会重新计算 raw_hash；
+// 若 raw_hash 与 manifest 中记录的不一致，说明文件已被外部改动，
+// 编辑结果可能基于过时内容，必须放弃并重新 refresh。
+pub fn verify_raw_hash_before_writeback(abs_path: &str, expected_raw_hash: &str) -> bool {
+    let raw = std::fs::read(abs_path).unwrap_or_default();
+    sha256_hex(&raw) == expected_raw_hash
 }
 ```
 
-**v8 P2#1 关键设计（canonical→raw 映射）**：
+**v8 P2#1 + v9 P1#4 关键设计（canonical→raw 映射）**：
 - **单一实现**：`canonicalize_source()` 只在 Rust 实现，Python 通过 FFI（`rust_ext`）调用，**不**在 Python 侧重复实现编码检测器。避免两套 detector 偶发分歧（如 chardetng 与 chardet 对边界编码判断不同），导致 Rust/Python content_hash 不一致。
 - **`SourceMetadata` 保存到 workspace_manifests**：编辑功能（注释恢复、refactor）必须知道原文件编码/BOM/换行风格才能正确写回。`start_byte/end_byte` 属于 canonical UTF-8 坐标系，CRLF/UTF-16/GBK 文件不能直接用。
+- **v9 P1#4: offset_map 在流式解码阶段构建**：旧实现（v8）在 `decode_to_utf8` 之后才由 `normalize_newlines` 构建 offset_map，只能表示"规范化 UTF-8 → 换行前 UTF-8"，无法表示"canonical UTF-8 → 原始 UTF-16/GBK 字节"。v9 在 `streaming_decode_with_offset_map` 中逐个 Unicode scalar 解码时同步记录 `(canonical_range, raw_range)`，覆盖编码转换 + 换行规范化两个阶段的偏移变化。
+- **v9 P1#4: 段内一一对应，段边界处收缩**：每个 `OffsetEntry` 是一个"不可分割段"，段内 canonical↔raw 字节一一对应（UTF-8 子串无内部收缩）。收缩只发生在段边界（如 `\r\n`→`\n` 收缩 1 字节，或 GBK 双字节→UTF-8 三字节）。`raw_span_for_canonical_range` 二分查找定位段，段内偏移直接加。**不再**使用 `r_end.saturating_sub(canonical_off)` 线性插值（对变长编码错误）。
+- **v9 P1#4: 回写前重新校验 raw_hash**：编辑功能写原文件前必须调用 `verify_raw_hash_before_writeback`，确认磁盘文件与 manifest 中记录的 `raw_hash` 一致。不一致说明文件已被外部改动，编辑结果可能基于过时内容，必须放弃并重新 refresh。
 - **`offset_map` 惰性构建**：偏移映射只在编辑原文件时构建（parse 和查询路径不需要，避免内存开销）。映射为分段表，二分查找 O(log N)。
 - **CAS 不存 SourceMetadata**：CAS 是内容级、编码无关的（canonical bytes 已规范化），同一文件内容无论原编码如何都映射到同一 CAS 条目。`SourceMetadata` 存 workspace_manifests（路径级元数据）。
 
@@ -729,6 +863,36 @@ pub struct RawCall {
 ```
 
 **Python 侧改动**：各语言 parser 的 `parse_file()` 返回 dict 中增加上述字段。`local_id` 在遍历 AST 时按 `start_line, start_col` 排序从 1 开始赋值；`lexical_parent_local_id` 从 AST 父节点追溯（顶层为 `None`）；`start_byte`/`end_byte` 从 tree-sitter node 直接取（基于 canonical bytes）。
+
+**v9 P1#2: `parse_canonical_bytes()`——CAS 发布路径的唯一 parse 入口**
+
+所有 CAS 发布路径（refresh + 冷启动 + daemon）必须调用 `parse_canonical_bytes(canonical_bytes, module_path, lang)`，**不能**调用 `parse_file(abs_path, lang)` 再次读取路径。原因：
+1. **TOCTOU**：`canonicalize_source(abs_path)` 算出的 `cas_key` 对应内容 A，若 `parse_file` 再次读路径，文件可能已变为内容 B，导致内容 A 的 key 与内容 B 的 ParseFact 拼到一起。
+2. **ParseInputV1 一致性**：`parse_file` 可能走 raw-byte parser（如 Rust `DefaultHasher`），违背 §3.0.1 的 canonical bytes 约定。`parse_canonical_bytes` 强制基于 canonical UTF-8 字节解析。
+
+```python
+# v9 P1#2: CAS 发布路径的唯一 parse 入口。消费 canonicalize_source() 产出的 canonical_bytes。
+def parse_canonical_bytes(canonical_bytes: bytes, module_path: str, lang: str) -> dict:
+    """基于 canonical UTF-8 字节解析，返回 ParseFactV1 dict。
+
+    - Rust 侧：tree-sitter parser 直接吃 canonical_bytes（已是 UTF-8），start_byte/end_byte 基于 canonical 坐标系。
+    - Python 侧：各语言 parser 需提供 parse_bytes(canonical_bytes, module_path) 入口（而非 parse_file(path)）。
+    - 返回的 content_hash 字段必须 == sha256(canonical_bytes)，由调用方校验。
+    """
+    if _can_use_rust_parse(lang) and lang in RUST_PARSE_ENABLED_LANGS:
+        return rust_ext.parse_bytes(canonical_bytes, module_path, lang)
+    else:
+        return python_parser_parse_bytes(canonical_bytes, module_path, lang)
+```
+
+**发布前强制校验（v9 P1#2）**：调用方在 `publish_or_pin_in_transaction` 之前必须校验：
+```python
+assert parse_result["content_hash"] == expected_content_hash  # == canonicalize_source().content_hash
+assert recompute_cas_key(parse_result) == cas_key              # 用 parse_result 重算 key 必须一致
+```
+不一致说明 parser 实现有 bug（如 content_hash 算错、或内部又读了路径），必须丢弃不发布。
+
+**alignment tests 例外**：`parse_file_lang(path, ...)` 仍用于 alignment tests（对比 Python/Rust parser 输出一致性），因为测试目的是验证 parser 等价性，不是 CAS 发布。但 alignment tests 内部也应先 `canonicalize_source(path)` 再 `parse_canonical_bytes(canonical_bytes, ...)`，确保两侧都基于 canonical bytes。
 
 **`local_qualified_name` 构造规则**：
 - 顶层符号：`local_qualified_name = name`（如 `"parse_file"`）
@@ -1390,7 +1554,7 @@ PyO3 绑定（[lib.rs](../../rust_ext/src/lib.rs)）同步更新，Python 侧 `_
 - GraphStore 会把其他 workspace 的调用边加载进 CSR 索引。
 - `get_callers`/`get_callees` 会返回其他 workspace 的调用方。
 
-### 3.8 GC 策略（v6 P1#3：GC 独占锁全程 + fail-closed + TOCTOU 修复）
+### 3.8 GC 策略（v6 P1#3 → v7 P1#1 → v8 P2#2 → v9 P1#1 合并为唯一权威版本）
 
 **v5 遗留问题（TOCTOU）**：fail-closed 解决了"读失败后误删"，但事务外扫描与短事务删除之间仍有时间窗口：
 1. GC 扫描 workspace A，未看到新 key。
@@ -1398,97 +1562,13 @@ PyO3 绑定（[lib.rs](../../rust_ext/src/lib.rs)）同步更新，Python 侧 `_
 3. GC 根据旧 live set 删除该 key。
 4. manifest 指向不存在的 CAS，查询缺数据。
 
-**v6 修复**：GC 全程持有 CAS `BEGIN IMMEDIATE`（独占写锁），refresh 从 CAS lookup 到 manifest commit 也持 CAS 锁。二者互斥，消除 TOCTOU 窗口。
+**v9 P1#1 修复**：v6 曾只持 SQLite `BEGIN IMMEDIATE`（不获取 `LOCK_EX`、不读 pending refs），v8 又定义了带 flock 但主体省略的 stub，导致两个冲突实现。v9 删除旧实现，只保留**唯一权威版本**：
 
-```python
-def gc_cas(cas_conn, grace_period_days=7):
-    """v6 P1#3: GC 全程持 CAS 独占锁（scan + sweep 原子），消除 TOCTOU。
+`LOCK_EX → BEGIN IMMEDIATE → scan manifests + pending refs → sweep → COMMIT → unlock`
 
-    refresh 的 refresh_file_with_cas 也持 CAS BEGIN IMMEDIATE 从 lookup 到 manifest commit。
-    二者通过 CAS 写锁互斥，busy_timeout=5000 协调。
-    GC 是手动命令（cw gc cas），持续时间可接受（扫描 + 删除）。
-    """
-    import glob
+flock 与 SQLite 写锁分工：`LOCK_EX` 阻塞所有 refresh（防止 scan 期间新 CAS 发布 + pin 写入）；`BEGIN IMMEDIATE` 保护 sweep 内部原子性。pending_refs 中的 key 视为 live，保护 manifest 提交窗口期。
 
-    # 全程持有 CAS BEGIN IMMEDIATE（独占写锁）
-    # refresh 的 cas_publish 也需要 BEGIN IMMEDIATE → busy_timeout 等待 GC 完成
-    cas_conn.execute("BEGIN IMMEDIATE")
-    try:
-        # ===== 阶段 1：扫描所有 workspace DB（持锁状态下，fail-closed）=====
-        cas_dir = os.path.expanduser("~/.callwarden")
-        live_keys = set()
-        now = time.time()
-        grace_threshold = now - grace_period_days * 86400
-        scanned_workspaces = []
-
-        for ws_db_path in glob.glob(os.path.join(cas_dir, "*", "callwarden.db")):
-            try:
-                ws_conn = sqlite3.connect(f"file:{ws_db_path}?mode=ro", uri=True)
-                ws_conn.row_factory = sqlite3.Row
-                has_table = ws_conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_manifests'"
-                ).fetchone()
-                if not has_table:
-                    ws_conn.close()
-                    continue
-                # v6 P2: grace_threshold 真正参与 live set
-                # 宽限期内（mtime > grace_threshold）的 workspace cas_key 必须加入 live set
-                # 宽限期外的 workspace 也加入（保守策略：GC 不删任何被 manifest 引用的 key）
-                # grace_threshold 仅影响是否对 workspace 发出"陈旧"警告，不影响 live set
-                ws_mtime = os.path.getmtime(ws_db_path)
-                rows = ws_conn.execute(
-                    "SELECT DISTINCT cas_key FROM workspace_manifests WHERE cas_key IS NOT NULL"
-                ).fetchall()
-                live_keys.update(r["cas_key"] for r in rows)
-                ws_conn.close()
-                scanned_workspaces.append((ws_db_path, ws_mtime > grace_threshold))
-            except Exception as e:
-                # v6 fail-closed：任何 workspace 读取失败即中止 GC（rollback）
-                cas_conn.execute("ROLLBACK")
-                print(f"GC aborted: workspace DB {ws_db_path} read failed: {e}")
-                print("不删除任何 CAS 条目。请确保所有 workspace DB 可读后重试。")
-                return False
-
-        # ===== 阶段 2：mark-sweep（同一事务内，先子表后正文表后父表）=====
-        cas_conn.execute("CREATE TEMP TABLE IF NOT EXISTS _gc_live (cas_key TEXT PRIMARY KEY)")
-        cas_conn.execute("DELETE FROM _gc_live")
-        cas_conn.executemany("INSERT OR IGNORE INTO _gc_live VALUES (?)",
-                             [(k,) for k in live_keys])
-
-        # 2a. 先删子表
-        cas_conn.execute("DELETE FROM cas_symbols WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)")
-        cas_conn.execute("DELETE FROM cas_raw_calls WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)")
-        cas_conn.execute("DELETE FROM cas_imports WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)")
-
-        # 2b. 再删正文表（无符号引用的正文）
-        cas_conn.execute("""
-            DELETE FROM cas_symbol_contents
-            WHERE content_hash NOT IN (SELECT DISTINCT symbol_content_hash FROM cas_symbols)
-        """)
-
-        # 2c. 最后删父表（只删 ready）
-        cas_conn.execute("""
-            DELETE FROM cas_file_cache
-            WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live) AND state = 'ready'
-        """)
-
-        # 2d. 清理孤儿 building 条目（崩溃残留，先子表后父记录）
-        cas_conn.execute("DELETE FROM cas_symbols WHERE cas_key IN (SELECT cas_key FROM cas_file_cache WHERE state = 'building')")
-        cas_conn.execute("DELETE FROM cas_raw_calls WHERE cas_key IN (SELECT cas_key FROM cas_file_cache WHERE state = 'building')")
-        cas_conn.execute("DELETE FROM cas_imports WHERE cas_key IN (SELECT cas_key FROM cas_file_cache WHERE state = 'building')")
-        cas_conn.execute("DELETE FROM cas_symbol_contents WHERE content_hash NOT IN (SELECT DISTINCT symbol_content_hash FROM cas_symbols)")
-        cas_conn.execute("DELETE FROM cas_file_cache WHERE state = 'building'")
-
-        cas_conn.execute("DROP TABLE _gc_live")
-        cas_conn.execute("COMMIT")
-        stale = [p for p, active in scanned_workspaces if not active]
-        print(f"GC complete: scanned {len(scanned_workspaces)} workspaces, "
-              f"live keys = {len(live_keys)}, stale workspaces = {len(stale)}")
-        return True
-    except Exception:
-        cas_conn.execute("ROLLBACK")
-        raise
-```
+> **注**：v9 之前的 v6/v8 `gc_cas` 定义已删除，下方为实现者应采用的唯一实现。
 
 **refresh 侧配合（v6 P1#3 + v7 P1#1：parse 锁外 + flock + CAS 先提交 + pending_refs）**：
 
@@ -1541,9 +1621,26 @@ def refresh_file_with_cas(workspace_id, rel_path, abs_path, module_path, lang,
     ).fetchone()
     cache_hit = (row is not None and row["state"] == "ready")
 
-    # 3. v8 P2#2: miss 时在 flock 外 parse（耗时操作，不阻塞 GC）
+    # 3. v9 P1#2: miss 时在 flock 外 parse。必须消费**同一份** canonical_bytes，
+    #    不能再次 read(abs_path)——否则文件在两次读取间变化会把内容 A 的 cas_key
+    #    和内容 B 的 ParseFact 拼到一起；也避免 raw-byte parser 违背 ParseInputV1。
     if not cache_hit:
-        parse_result = parse_file(abs_path, module_path, lang)
+        parse_result = parse_canonical_bytes(canonical_bytes, module_path, lang)
+        # v9 P1#2: 发布前强制校验——parse_result 的 content_hash 必须等于 csrc 算出的，
+        # 且用 parse_result 重算 cas_key 必须等于 step 1 的 cas_key。不一致则丢弃。
+        if parse_result.get("content_hash") != content_hash:
+            raise RuntimeError(
+                f"parse_result content_hash mismatch for {rel_path}: "
+                f"canonical={content_hash} parse={parse_result.get('content_hash')}"
+            )
+        recomputed_key = compute_cas_key_v1(
+            parse_result["content_hash"], lang, parser_version,
+            callwarden_version, extraction_config_version,
+            abi_version, input_abi_version)
+        if recomputed_key != cas_key:
+            raise RuntimeError(
+                f"cas_key mismatch for {rel_path}: original={cas_key} recomputed={recomputed_key}"
+            )
 
     # 4. 获取共享 flock（与 GC 独占 flock 互斥；多个 refresh 可并行持有 LOCK_SH）
     flock_fd = os.open(CAS_FLOCK_PATH, os.O_CREAT | os.O_RDWR)
@@ -1600,33 +1697,109 @@ def refresh_file_with_cas(workspace_id, rel_path, abs_path, module_path, lang,
         os.close(flock_fd)
 ```
 
-**GC 侧配合（v7 P1#1）**：GC 获取独占 `flock`，扫描时将 `cas_pending_refs` 中的 key 也加入 live set：
+**GC 侧配合（v7 P1#1 + v9 P1#1 唯一权威实现）**：GC 获取独占 `flock`，扫描时将 `cas_pending_refs` 中的 key 也加入 live set，全程 `BEGIN IMMEDIATE` 保护 sweep 原子性：
 
 ```python
 def gc_cas(cas_conn, grace_period_days=7):
-    """v7 P1#1: GC 获取独占 flock，scan + sweep 期间所有 refresh 阻塞。
-    pending_refs 中的 key 也视为 live。
+    """v9 P1#1: 唯一权威 gc_cas 实现（合并 v6 scan+sweep + v7/v8 flock + pending_refs）。
+
+    协议：LOCK_EX → BEGIN IMMEDIATE → scan manifests + pending refs → sweep → COMMIT → unlock。
+    - LOCK_EX 阻塞所有 refresh（防止 scan 期间新 CAS 发布 + pin 写入）。
+    - BEGIN IMMEDIATE 保护 sweep 内部原子性（子表→正文→父表顺序删除）。
+    - pending_refs 中的 key 视为 live，保护 manifest 提交窗口期。
+    - fail-closed：任何 workspace DB 读取失败 → ROLLBACK + 中止，不删任何条目。
     """
+    import glob
+
     flock_fd = os.open(CAS_FLOCK_PATH, os.O_CREAT | os.O_RDWR)
     try:
         fcntl.flock(flock_fd, fcntl.LOCK_EX)  # 独占锁，阻塞所有 refresh
 
-        # ... v6 的 scan + sweep 逻辑 ...
+        cas_conn.execute("BEGIN IMMEDIATE")  # 获取 CAS 写锁，保护 sweep
+        try:
+            # ===== 阶段 1：扫描所有 workspace DB（持锁状态下，fail-closed）=====
+            cas_dir = os.path.expanduser("~/.callwarden")
+            live_keys = set()
+            now = time.time()
+            grace_threshold = now - grace_period_days * 86400
+            scanned_workspaces = []
 
-        # live set 额外包含 pending_refs（未完成 manifest 提交的 CAS key）
-        pending_keys = cas_conn.execute(
-            "SELECT DISTINCT cas_key FROM cas_pending_refs WHERE expires_at > ?",
-            (time.time(),)
-        ).fetchall()
-        live_keys.update(r["cas_key"] for r in pending_keys)
+            for ws_db_path in glob.glob(os.path.join(cas_dir, "*", "callwarden.db")):
+                try:
+                    ws_conn = sqlite3.connect(f"file:{ws_db_path}?mode=ro", uri=True)
+                    ws_conn.row_factory = sqlite3.Row
+                    has_table = ws_conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_manifests'"
+                    ).fetchone()
+                    if not has_table:
+                        ws_conn.close()
+                        continue
+                    ws_mtime = os.path.getmtime(ws_db_path)
+                    rows = ws_conn.execute(
+                        "SELECT DISTINCT cas_key FROM workspace_manifests WHERE cas_key IS NOT NULL"
+                    ).fetchall()
+                    live_keys.update(r["cas_key"] for r in rows)
+                    ws_conn.close()
+                    scanned_workspaces.append((ws_db_path, ws_mtime > grace_threshold))
+                except Exception as e:
+                    # fail-closed：任何 workspace 读取失败即中止 GC（rollback）
+                    cas_conn.execute("ROLLBACK")
+                    print(f"GC aborted: workspace DB {ws_db_path} read failed: {e}")
+                    print("不删除任何 CAS 条目。请确保所有 workspace DB 可读后重试。")
+                    return False
 
-        # 清理过期 pending_refs（TTL 自然过期）
-        cas_conn.execute(
-            "DELETE FROM cas_pending_refs WHERE expires_at <= ?",
-            (time.time(),)
-        )
+            # ===== 阶段 2：pending_refs 加入 live set（保护 manifest 提交窗口期）=====
+            pending_keys = cas_conn.execute(
+                "SELECT DISTINCT cas_key FROM cas_pending_refs WHERE expires_at > ?",
+                (now,)
+            ).fetchall()
+            live_keys.update(r["cas_key"] for r in pending_keys)
 
-        # ... sweep 逻辑 ...
+            # ===== 阶段 3：mark-sweep（同一事务内，先子表后正文表后父表）=====
+            cas_conn.execute("CREATE TEMP TABLE IF NOT EXISTS _gc_live (cas_key TEXT PRIMARY KEY)")
+            cas_conn.execute("DELETE FROM _gc_live")
+            cas_conn.executemany("INSERT OR IGNORE INTO _gc_live VALUES (?)",
+                                 [(k,) for k in live_keys])
+
+            # 3a. 先删子表
+            cas_conn.execute("DELETE FROM cas_symbols WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)")
+            cas_conn.execute("DELETE FROM cas_raw_calls WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)")
+            cas_conn.execute("DELETE FROM cas_imports WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)")
+
+            # 3b. 再删正文表（无符号引用的正文）
+            cas_conn.execute("""
+                DELETE FROM cas_symbol_contents
+                WHERE content_hash NOT IN (SELECT DISTINCT symbol_content_hash FROM cas_symbols)
+            """)
+
+            # 3c. 最后删父表（只删 ready）
+            cas_conn.execute("""
+                DELETE FROM cas_file_cache
+                WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live) AND state = 'ready'
+            """)
+
+            # 3d. 清理孤儿 building 条目（崩溃残留，先子表后父记录）
+            cas_conn.execute("DELETE FROM cas_symbols WHERE cas_key IN (SELECT cas_key FROM cas_file_cache WHERE state = 'building')")
+            cas_conn.execute("DELETE FROM cas_raw_calls WHERE cas_key IN (SELECT cas_key FROM cas_file_cache WHERE state = 'building')")
+            cas_conn.execute("DELETE FROM cas_imports WHERE cas_key IN (SELECT cas_key FROM cas_file_cache WHERE state = 'building')")
+            cas_conn.execute("DELETE FROM cas_symbol_contents WHERE content_hash NOT IN (SELECT DISTINCT symbol_content_hash FROM cas_symbols)")
+            cas_conn.execute("DELETE FROM cas_file_cache WHERE state = 'building'")
+
+            # 3e. 清理过期 pending_refs（TTL 自然过期）
+            cas_conn.execute(
+                "DELETE FROM cas_pending_refs WHERE expires_at <= ?",
+                (now,)
+            )
+
+            cas_conn.execute("DROP TABLE _gc_live")
+            cas_conn.execute("COMMIT")
+            stale = [p for p, active in scanned_workspaces if not active]
+            print(f"GC complete: scanned {len(scanned_workspaces)} workspaces, "
+                  f"live keys = {len(live_keys)}, stale workspaces = {len(stale)}")
+            return True
+        except Exception:
+            cas_conn.execute("ROLLBACK")
+            raise
     finally:
         fcntl.flock(flock_fd, fcntl.LOCK_UN)
         os.close(flock_fd)
@@ -1741,8 +1914,9 @@ def test_edge_insert_rowcount_batch_mismatch(tmp_path):
 
       for ws_root in workspace_roots:
           for rel_path, abs_path in walk_source_files(ws_root):
-              # v7 P1#3 + v8 P2#1: 必须用 canonicalize_source() 规范化后的 canonical bytes 计算 content_hash
+              # v7 P1#3 + v8 P2#1 + v9 P1#2: 必须用 canonicalize_source() 规范化后的 canonical bytes
               csrc = canonicalize_source(abs_path)  # 见 §3.0.1（Rust FFI 唯一实现）
+              canonical_bytes = csrc.canonical_bytes
               content_hash = csrc.content_hash
 
               # 必须重新读取源文件、计算 content hash，不信任 Local CAS 中的 cas_key
@@ -1751,7 +1925,14 @@ def test_edge_insert_rowcount_batch_mismatch(tmp_path):
 
               # 只有 cas_key 不存在时才重新 parse（避免重复工作）
               if not cas_key_exists(global_cas, cas_key):
-                  result = parse_file(abs_path, lang)  # 重新 parse，不信任 Local CAS 缓存
+                  # v9 P1#2: 必须消费同一份 canonical_bytes，不能再次 read(abs_path)（TOCTOU）。
+                  #          parse_canonical_bytes 基于 canonical UTF-8 字节解析，符合 ParseInputV1。
+                  result = parse_canonical_bytes(canonical_bytes, module_path, lang)
+                  # v9 P1#2: 发布前校验 content_hash + 重算 cas_key
+                  assert result["content_hash"] == content_hash
+                  assert compute_cas_key_v1(result["content_hash"], lang, parser_version,
+                                             callwarden_version, extraction_config_version,
+                                             abi_version, input_abi_version) == cas_key
                   cas_publish(global_cas, cas_key, result)  # 原子发布
 
       return global_cas

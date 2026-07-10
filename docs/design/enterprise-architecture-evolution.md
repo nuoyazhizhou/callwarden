@@ -285,47 +285,142 @@ WantedBy=multi-user.target
 
 ```python
 # 用户侧 systemd --user agent（以用户身份运行，有文件读权限）
-def user_agent_handle_refresh(rel_path, abs_path, daemon_sock):
-    """v8 P1#2: 用户 agent 读文件 → canonicalize → 回传 canonical bytes 给 daemon。
+# v9 P2#1: 消息增加 generation 控制——agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns。
+# daemon 据此做 compare-and-swap，拒绝 stale generation，防止旧内容覆盖新 manifest。
+class AgentSession:
+    """v9 P2#1: agent 会话状态——每个 systemd --user agent 实例一个 session。"""
+    session_id: str          # UUID，agent 启动时生成，重启后换新
+    seq_counter: int = 0     # 单调递增，每发一条消息 +1
 
-    agent 不解析、不生成 ParseFact，只回传规范化字节。
-    daemon 重新算 hash 并由可信 Rust parser 解析。
-    """
+def user_agent_handle_refresh(rel_path, abs_path, daemon_sock, session: AgentSession):
+    """v8 P1#2 + v9 P2#1/P2#2: agent 读文件 → canonicalize → 回传 canonical bytes + generation。"""
     csrc = canonicalize_source(abs_path)  # Rust FFI，与 daemon 同一实现
+    session.seq_counter += 1
+    stat = os.stat(abs_path)
     payload = {
         "rel_path": rel_path,
-        "content_hash": csrc.content_hash,  # agent 报告的 hash
-        "metadata": csrc.metadata,          # SourceMetadata（raw_hash/encoding/bom/newline）
+        "content_hash": csrc.content_hash,   # agent 报告的 hash
+        "metadata": csrc.metadata,           # SourceMetadata（raw_hash/encoding/bom/newline）
+        # v9 P2#1: generation 控制
+        "agent_session_id": session.session_id,
+        "monotonic_seq": session.seq_counter,
+        "observed_raw_hash": csrc.metadata.raw_hash,  # sha256(磁盘原始字节)
+        "mtime_ns": stat.st_mtime_ns,                 # 纳秒级 mtime
     }
-    send_msg(daemon_sock, MSG_REFRESH, payload)
-    send_fd(daemon_sock, csrc.canonical_bytes)  # 字节流通过 UDS 传输
+    # v9 P2#2: 长度分帧 UDS stream（小/中文件）或 memfd_create + SCM_RIGHTS（大文件）
+    send_framed_stream(daemon_sock, MSG_REFRESH, payload, csrc.canonical_bytes)
 
 
 # daemon 侧（User=callwarden，可信）
-def daemon_handle_refresh(peer_uid, msg, conn):
-    """v8 P1#2: daemon 收到 canonical bytes → 重新算 hash → 可信 Rust parser 解析 → 发布 CAS。
+# v9 P2#1: workspace/path → latest generation 的 CAS 守卫
+# 每个 (workspace_id, rel_path) 维护一个 generation 状态：
+#   latest_seq: int          — 已接收的最大 monotonic_seq
+#   latest_session_id: str   — 对应的 agent_session_id
+#   latest_raw_hash: str     — 对应的 observed_raw_hash
+# daemon 只接受 seq > latest_seq 的消息（compare-and-swap）。
+generations: dict[tuple[int, str], dict] = {}  # (workspace_id, rel_path) -> gen state
 
-    daemon 不信任 agent 报告的 content_hash，用收到的字节重新计算。
-    ParseFact 由 daemon 内的可信 Rust parse worker 生成。
+def daemon_handle_refresh(peer_uid, workspace_id, msg, canonical_bytes, cas_conn, ws_conn):
+    """v8 P1#2 + v9 P1#2/P2#1/P2#2: daemon 收到 canonical bytes → generation CAS
+    → 重新算 hash → 可信 parser 解析 → 发布 CAS / 写 dirty overlay。
+
+    v9 P2#1: 未经可信 Git tree/blob 验证的内容只能进入 dirty overlay，
+             不能直接发布为跨用户共享的 clean snapshot。
     """
-    canonical_bytes = recv_fd(conn)
+    rel_path = msg["rel_path"]
+    gen_key = (workspace_id, rel_path)
+
+    # v9 P2#1: compare-and-swap——拒绝 stale generation
+    gen = generations.get(gen_key, {"latest_seq": 0, "latest_session_id": "", "latest_raw_hash": ""})
+    if msg["monotonic_seq"] <= gen["latest_seq"]:
+        log_info(f"drop stale generation for {rel_path}: seq={msg['monotonic_seq']} "
+                 f"<= latest={gen['latest_seq']}")
+        return  # 旧内容，丢弃（不覆盖新 manifest）
+
     # 1. 重新计算 hash（不信任 agent 报告的值）
     actual_hash = sha256_hex(canonical_bytes)
     if actual_hash != msg["content_hash"]:
-        log_warning(f"agent hash mismatch for {msg['rel_path']}: "
+        log_warning(f"agent hash mismatch for {rel_path}: "
                     f"reported={msg['content_hash']} actual={actual_hash}")
     content_hash = actual_hash  # 以 daemon 计算为准
 
-    # 2. 可信 Rust parser 解析（daemon 进程内，不可被用户篡改）
-    parse_result = trusted_rust_parse(canonical_bytes, msg["rel_path"], lang)
-    # parse_result 包含 symbols/raw_calls/imports + content_hash + abi_version
+    # 2. v9 P2#1: 判断 clean vs dirty——未经可信 Git tree/blob 验证的内容只能 dirty overlay
+    #    clean = 内容来自可信 Git HEAD（agent 附带 git_tree_oid + git_blob_oid，
+    #            daemon 用 libgit2 校验 blob 属于该 tree）。
+    #    dirty = 工作区未提交改动（无 git_blob_oid 或校验失败）。
+    is_clean = verify_against_git_tree(msg.get("git_tree_oid"),
+                                        msg.get("git_blob_oid"), canonical_bytes)
 
-    # 3. 计算 cas_key 并发布到 Global CAS（publish_or_pin_in_transaction）
+    # 3. 可信 Rust parser 解析（daemon 进程内，不可被用户篡改）
+    #    v9 P1#2: parse_canonical_bytes 消费 daemon 收到的 canonical bytes（不再读路径）
+    parse_result = parse_canonical_bytes(canonical_bytes, rel_path, lang)
+    assert parse_result["content_hash"] == content_hash  # v9 P1#2
+
+    # 4. 计算 cas_key
     cas_key = compute_cas_key_v1(content_hash, lang, ...)
-    cas_publish_with_retry(cas_key, parse_result, workspace_id, cas_conn)
-    # 4. 写 workspace manifest（含 SourceMetadata，见 enterprise-phase1-phase3-detail.md §3.0.1）
-    ...
+
+    if is_clean:
+        # clean snapshot：可发布到跨用户共享的 Global CAS
+        cas_publish_with_retry(cas_key, parse_result, workspace_id, cas_conn)
+        # manifest 标记 is_dirty=0，cas_key 指向 Global CAS
+        ws_conn.execute("UPDATE workspace_manifests SET cas_key=?, content_hash=?, "
+                        "is_dirty=0, raw_hash=?, source_encoding=?, bom_kind=?, newline_style=? "
+                        "WHERE workspace_id=? AND rel_path=?",
+                        (cas_key, content_hash, msg["metadata"].raw_hash,
+                         msg["metadata"].source_encoding, msg["metadata"].bom_kind,
+                         msg["metadata"].newline_style, workspace_id, rel_path))
+    else:
+        # v9 P2#1: dirty overlay——只写 workspace 本地的 dirty symbols/edges，
+        #          不发布到 Global CAS（不跨用户共享）
+        ws_conn.execute("UPDATE workspace_manifests SET cas_key=NULL, content_hash=?, "
+                        "is_dirty=1, raw_hash=?, source_encoding=?, bom_kind=?, newline_style=? "
+                        "WHERE workspace_id=? AND rel_path=?",
+                        (content_hash, msg["metadata"].raw_hash,
+                         msg["metadata"].source_encoding, msg["metadata"].bom_kind,
+                         msg["metadata"].newline_style, workspace_id, rel_path))
+        write_dirty_overlay(workspace_id, rel_path, parse_result, ws_conn)
+
+    # 5. v9 P2#1: 更新 generation 状态（compare-and-swap 成功）
+    generations[gen_key] = {
+        "latest_seq": msg["monotonic_seq"],
+        "latest_session_id": msg["agent_session_id"],
+        "latest_raw_hash": msg["observed_raw_hash"],
+    }
 ```
+
+**v9 P2#2: UDS 传输方式闭合**
+
+`SCM_RIGHTS` 发送的是 FD 而非字节数组，`send_fd(sock, canonical_bytes)` 语义不成立。v9 明确两种传输方式：
+
+1. **长度分帧 UDS stream（小/中文件，默认）**：消息头 `| msg_type(1B) | payload_len(4B) | canonical_len(8B) |`，后跟 JSON payload + canonical bytes 连续写入同一 UDS stream。daemon 读完头后按 `canonical_len` 读固定长度字节。最大消息尺寸 `MAX_MSG_BYTES = 16 MB`（超过则走 memfd 路径）。
+2. **`memfd_create` + seals + `SCM_RIGHTS`（大文件 > 16MB）**：agent 用 `memfd_create()` 创建匿名内存文件，写入 canonical bytes，施加 `F_SEAL_SHRINK | F_SEAL_WRITE | F_SEAL_SEAL` seals（防 daemon 写入后篡改），通过 `SCM_RIGHTS` 把 FD 传给 daemon。daemon `mmap` 只读后 `read()` 字节。FD 用完即 `close`，memfd 引用计数归零自动释放。
+
+```python
+def send_framed_stream(sock, msg_type, payload, canonical_bytes):
+    """v9 P2#2: 长度分帧 UDS stream（小/中文件）。"""
+    payload_json = json.dumps(payload).encode("utf-8")
+    total_len = 1 + 4 + 8 + len(payload_json) + len(canonical_bytes)
+    if total_len > MAX_MSG_BYTES:  # 16 MB
+        return send_via_memfd(sock, msg_type, payload, canonical_bytes)
+    header = struct.pack(">BIQ", msg_type, len(payload_json), len(canonical_bytes))
+    sock.sendall(header + payload_json + canonical_bytes)  # 连续写入
+
+def send_via_memfd(sock, msg_type, payload, canonical_bytes):
+    """v9 P2#2: 大文件用 memfd_create + seals + SCM_RIGHTS 传 FD。"""
+    fd = memfd_create("cw_canonical", 0)
+    os.write(fd, canonical_bytes)
+    # 施加 seals：防 daemon 篡改内容
+    linux_seal(fd, F_SEAL_SHRINK | F_SEAL_WRITE | F_SEAL_SEAL)
+    payload["canonical_len"] = len(canonical_bytes)
+    send_msg_with_fd(sock, msg_type, payload, fd)  # SCM_RIGHTS 传 FD
+    os.close(fd)  # daemon 持有 FD 后 agent 关闭自己的引用
+```
+
+**传输协议约束**：
+- **最大消息尺寸**：`MAX_MSG_BYTES = 16 MB`（stream 路径），超过走 memfd。
+- **背压**：daemon 读循环若跟不上 agent 发送速度，UDS socket buffer 满后 `sendall` 阻塞（TCP-like 流控）。daemon 侧维护 per-connection 读队列，超出 `MAX_READ_QUEUE_DEPTH = 64` 条时暂停 `recv`，agent 侧 `sendall` 自然阻塞。
+- **超时**：agent `sendall` 超时 `SEND_TIMEOUT = 30s`（大文件传输可能慢）；daemon `recv` 超时 `RECV_TIMEOUT = 60s`。超时后关闭连接，该消息丢弃。
+- **断线清理**：daemon 检测到连接断开（`recv` 返回空）时，清理该 agent 的 `generations` 中所有未 COMMIT 的 pending 状态（标记为 stale，等 agent 重连后重新发送）。
 
 **架构**：
 
@@ -355,7 +450,9 @@ def daemon_handle_refresh(peer_uid, msg, conn):
 - **daemon 重新计算 hash**：不信任 agent 报告的 `content_hash`，用收到的字节重新算 `sha256`。hash 不匹配时记录告警，但以 daemon 计算为准继续（agent 可能误报，但字节本身仍可解析）。
 - **canonicalize_source 单一实现**：agent 和 daemon 调用**同一个** Rust `canonicalize_source()`（见 [enterprise-phase1-phase3-detail.md §3.0.1](enterprise-phase1-phase3-detail.md)），避免两套 detector 分歧。agent 的 Rust FFI 与 daemon 的 Rust FFI 是同一份编译产物。
 - **agent 生命周期**：`systemd --user` 管理的常驻进程（用户登录时启动，退出时停止），负责 watch + 文件读取。watch 事件触发时把变更文件 canonical bytes 推给 daemon。daemon 侧 Job Deduplication 合并同文件的多次变更。
-- **大文件传输**：UDS 传大字节流有开销。对超大文件（如 > 10MB），agent 可只回传 `content_hash` + `SourceMetadata`，daemon 命令 agent"请在某临时路径放置 canonical bytes 副本"后用 `openat2` 校验路径读取——但此路径仅作为降级，默认仍走 UDS 传字节。
+- **v9 P2#1: 事件代次控制**：每条消息携带 `agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns`。daemon 按 `(workspace_id, rel_path)` 做 compare-and-swap，只接受 `seq > latest_seq` 的消息，防止旧内容解析更慢、后到达时覆盖新 manifest。
+- **v9 P2#1: clean vs dirty 分流**：未经可信 Git tree/blob 验证的内容（工作区未提交改动）只能进入 **dirty overlay**（workspace 本地，不发布到 Global CAS，不跨用户共享）。只有 agent 附带 `git_tree_oid + git_blob_oid` 且 daemon 用 libgit2 校验 blob 属于该 tree 的内容，才标记为 clean 并发布到跨用户共享的 Global CAS。
+- **v9 P2#2: 传输方式闭合**：`SCM_RIGHTS` 发送 FD 而非字节数组。小/中文件（≤16MB）用长度分帧 UDS stream；大文件（>16MB）用 `memfd_create + seals + SCM_RIGHTS`。定义了最大消息尺寸、背压（`MAX_READ_QUEUE_DEPTH=64`）、超时（send 30s / recv 60s）、断线清理。
 
 **备选方案：`openat2` + `SCM_RIGHTS` 只读 FD broker（最小特权）**
 
