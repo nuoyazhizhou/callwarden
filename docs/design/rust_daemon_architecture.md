@@ -1,5 +1,17 @@
 # Rust Daemon 架构设计
 
+> **⚠ 本文档已过时（Phase 0 步骤 3 标记）**
+>
+> Enterprise Daemon 架构已正式成为 v10.2 基线（`ad2e308`）。
+> 当前权威主设计为 [enterprise-daemon-shared-snapshot-plan.md](enterprise-daemon-shared-snapshot-plan.md)。
+>
+> 以下描述已过时：
+> - ~~"本文档不是 firmware refresh P0 的解法，而是 Call Warden 的长期演进方向"~~ → Enterprise Daemon 已进入正式实施路线图（Phase 0-8）
+> - ~~"Rust Daemon 不是 firmware refresh 的 P0 解法，而是面向未来架构设计"~~ → Phase 1 已将 Rust parse 接入主 refresh 路径
+> - ~~"建议满足以下任一条件时启动"~~ → 已启动，9 个 Phase 任务已建入数据库
+>
+> 本文档保留作为历史参考，不再更新。
+
 ## 0. 定位与背景
 
 > **本文档不是 firmware refresh P0 的解法，而是 Call Warden 的长期演进方向。**
