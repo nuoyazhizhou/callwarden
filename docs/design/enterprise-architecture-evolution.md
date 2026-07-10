@@ -285,15 +285,15 @@ WantedBy=multi-user.target
 
 ```python
 # 用户侧 systemd --user agent（以用户身份运行，有文件读权限）
-# v9 P2#1: 消息增加 generation 控制——agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns。
-# daemon 据此做 compare-and-swap，拒绝 stale generation，防止旧内容覆盖新 manifest。
+# v9 P2#1 + v10 P1#2: 消息增加 generation 控制——agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns。
+# v10 P1#2: agent 重启后 session_id 换新、seq 从 1 开始；daemon 检测到 session 切换时重置 latest_seq=0。
 class AgentSession:
-    """v9 P2#1: agent 会话状态——每个 systemd --user agent 实例一个 session。"""
+    """v9 P2#1 + v10 P1#2: agent 会话状态——每个 systemd --user agent 实例一个 session。"""
     session_id: str          # UUID，agent 启动时生成，重启后换新
     seq_counter: int = 0     # 单调递增，每发一条消息 +1
 
 def user_agent_handle_refresh(rel_path, abs_path, daemon_sock, session: AgentSession):
-    """v8 P1#2 + v9 P2#1/P2#2: agent 读文件 → canonicalize → 回传 canonical bytes + generation。"""
+    """v8 P1#2 + v9 P2#1/P2#2 + v10 P1#2/P1#3: agent 读文件 → canonicalize → 回传 canonical bytes + generation。"""
     csrc = canonicalize_source(abs_path)  # Rust FFI，与 daemon 同一实现
     session.seq_counter += 1
     stat = os.stat(abs_path)
@@ -301,41 +301,89 @@ def user_agent_handle_refresh(rel_path, abs_path, daemon_sock, session: AgentSes
         "rel_path": rel_path,
         "content_hash": csrc.content_hash,   # agent 报告的 hash
         "metadata": csrc.metadata,           # SourceMetadata（raw_hash/encoding/bom/newline）
-        # v9 P2#1: generation 控制
+        # v9 P2#1 + v10 P1#2: generation 控制
         "agent_session_id": session.session_id,
         "monotonic_seq": session.seq_counter,
         "observed_raw_hash": csrc.metadata.raw_hash,  # sha256(磁盘原始字节)
         "mtime_ns": stat.st_mtime_ns,                 # 纳秒级 mtime
+        # v10 P1#3: agent 不再提供 git_tree_oid/git_blob_oid（不可信），
+        #          改为提供 registered_commit（agent 观察到的当前 HEAD commit OID）。
+        #          daemon 用 bare mirror 校验该 commit 是否属于受信 ref。
+        "registered_commit": get_head_commit(abs_path),  # agent 观察到的 HEAD
     }
-    # v9 P2#2: 长度分帧 UDS stream（小/中文件）或 memfd_create + SCM_RIGHTS（大文件）
+    # v9 P2#2 + v10 P1#4: 长度分帧 UDS stream（小/中文件）或 memfd_create + seals + SCM_RIGHTS（大文件）
     send_framed_stream(daemon_sock, MSG_REFRESH, payload, csrc.canonical_bytes)
 
 
 # daemon 侧（User=callwarden，可信）
-# v9 P2#1: workspace/path → latest generation 的 CAS 守卫
-# 每个 (workspace_id, rel_path) 维护一个 generation 状态：
-#   latest_seq: int          — 已接收的最大 monotonic_seq
-#   latest_session_id: str   — 对应的 agent_session_id
-#   latest_raw_hash: str     — 对应的 observed_raw_hash
-# daemon 只接受 seq > latest_seq 的消息（compare-and-swap）。
-generations: dict[tuple[int, str], dict] = {}  # (workspace_id, rel_path) -> gen state
+# v10 P1#2: generation 持久化到 workspace DB，不再用内存字典。
+# workspace DB 新增表 file_generations：
+#   CREATE TABLE file_generations (
+#       workspace_id INTEGER NOT NULL,
+#       rel_path TEXT NOT NULL,
+#       latest_session_id TEXT DEFAULT '',
+#       latest_seq INTEGER DEFAULT 0,
+#       latest_seen_generation TEXT DEFAULT '',  -- "{session_id}:{seq}" 格式
+#       latest_committed_generation TEXT DEFAULT '',
+#       PRIMARY KEY (workspace_id, rel_path)
+#   );
 
 def daemon_handle_refresh(peer_uid, workspace_id, msg, canonical_bytes, cas_conn, ws_conn):
-    """v8 P1#2 + v9 P1#2/P2#1/P2#2: daemon 收到 canonical bytes → generation CAS
-    → 重新算 hash → 可信 parser 解析 → 发布 CAS / 写 dirty overlay。
-
-    v9 P2#1: 未经可信 Git tree/blob 验证的内容只能进入 dirty overlay，
-             不能直接发布为跨用户共享的 clean snapshot。
+    """v8 P1#2 + v9 P1#2/P2#1/P2#2 + v10 P1#2/P1#3: daemon 收到 canonical bytes
+    → 持久化 generation CAS → 重新算 hash → 可信 parser 解析
+    → Git bare mirror 校验 clean/dirty → 发布 CAS / 写 dirty overlay
+    → manifest 事务内条件更新（仅当 generation 仍等于本任务 generation 才 COMMIT）。
     """
     rel_path = msg["rel_path"]
-    gen_key = (workspace_id, rel_path)
+    incoming_session = msg["agent_session_id"]
+    incoming_seq = msg["monotonic_seq"]
+    incoming_gen = f"{incoming_session}:{incoming_seq}"
 
-    # v9 P2#1: compare-and-swap——拒绝 stale generation
-    gen = generations.get(gen_key, {"latest_seq": 0, "latest_session_id": "", "latest_raw_hash": ""})
-    if msg["monotonic_seq"] <= gen["latest_seq"]:
-        log_info(f"drop stale generation for {rel_path}: seq={msg['monotonic_seq']} "
-                 f"<= latest={gen['latest_seq']}")
-        return  # 旧内容，丢弃（不覆盖新 manifest）
+    # v10 P1#2: 持久化 CAS 第一步——BEGIN IMMEDIATE，原子更新 latest_seen_generation。
+    #   检查 session 切换：若 incoming_session != latest_session_id，重置 latest_seq=0
+    #   （新 agent 的 seq 从 1 开始，不能被旧 latest_seq 拒绝）。
+    #   若 incoming_gen <= latest_seen_generation（同 session 内 seq 不大于已见的），拒绝。
+    ws_conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = ws_conn.execute(
+            "SELECT latest_session_id, latest_seq, latest_seen_generation, "
+            "latest_committed_generation FROM file_generations "
+            "WHERE workspace_id = ? AND rel_path = ?",
+            (workspace_id, rel_path)
+        ).fetchone()
+
+        if row is None:
+            # 首次：插入
+            ws_conn.execute(
+                "INSERT INTO file_generations (workspace_id, rel_path, latest_session_id, "
+                "latest_seq, latest_seen_generation, latest_committed_generation) "
+                "VALUES (?, ?, ?, ?, ?, '')",
+                (workspace_id, rel_path, incoming_session, incoming_seq, incoming_gen)
+            )
+        elif row["latest_session_id"] != incoming_session:
+            # v10 P1#2: session 切换——新 agent 重置 seq 计数
+            ws_conn.execute(
+                "UPDATE file_generations SET latest_session_id = ?, latest_seq = ?, "
+                "latest_seen_generation = ? WHERE workspace_id = ? AND rel_path = ?",
+                (incoming_session, incoming_seq, incoming_gen, workspace_id, rel_path)
+            )
+        elif incoming_seq <= row["latest_seq"]:
+            # 同 session 内 stale seq，拒绝
+            ws_conn.execute("ROLLBACK")
+            log_info(f"drop stale generation for {rel_path}: seq={incoming_seq} "
+                     f"<= latest={row['latest_seq']}")
+            return
+        else:
+            # 同 session 内新 seq，原子更新 latest_seen
+            ws_conn.execute(
+                "UPDATE file_generations SET latest_seq = ?, latest_seen_generation = ? "
+                "WHERE workspace_id = ? AND rel_path = ?",
+                (incoming_seq, incoming_gen, workspace_id, rel_path)
+            )
+        ws_conn.execute("COMMIT")  # latest_seen 已持久化
+    except Exception:
+        ws_conn.execute("ROLLBACK")
+        raise
 
     # 1. 重新计算 hash（不信任 agent 报告的值）
     actual_hash = sha256_hex(canonical_bytes)
@@ -344,12 +392,16 @@ def daemon_handle_refresh(peer_uid, workspace_id, msg, canonical_bytes, cas_conn
                     f"reported={msg['content_hash']} actual={actual_hash}")
     content_hash = actual_hash  # 以 daemon 计算为准
 
-    # 2. v9 P2#1: 判断 clean vs dirty——未经可信 Git tree/blob 验证的内容只能 dirty overlay
-    #    clean = 内容来自可信 Git HEAD（agent 附带 git_tree_oid + git_blob_oid，
-    #            daemon 用 libgit2 校验 blob 属于该 tree）。
-    #    dirty = 工作区未提交改动（无 git_blob_oid 或校验失败）。
-    is_clean = verify_against_git_tree(msg.get("git_tree_oid"),
-                                        msg.get("git_blob_oid"), canonical_bytes)
+    # 2. v10 P1#3: clean vs dirty——用 daemon 的 bare mirror 校验，不信任 agent 提供的 git_tree_oid
+    #    daemon 维护每个注册仓库的只读 bare mirror（如 ~/.callwarden/mirrors/<repo>.git），
+    #    以受信 remote/ref/commit 为根。agent 只提供 registered_commit（它观察到的 HEAD），
+    #    daemon 校验该 commit 是否属于受信 ref（如 origin/main 的祖先）。
+    #    若属于，daemon 按 commit + rel_path 从 bare mirror 读取 blob（原始 bytes），
+    #    对该 blob 执行 canonicalize_source_bytes()，比较 canonical hash。
+    #    Git blob OID 基于原始 bytes，不等于 canonical bytes，因此必须重新 canonicalize 比较。
+    is_clean = verify_clean_via_bare_mirror(
+        workspace_id, rel_path, msg.get("registered_commit"), canonical_bytes, content_hash
+    )
 
     # 3. 可信 Rust parser 解析（daemon 进程内，不可被用户篡改）
     #    v9 P1#2: parse_canonical_bytes 消费 daemon 收到的 canonical bytes（不再读路径）
@@ -362,38 +414,103 @@ def daemon_handle_refresh(peer_uid, workspace_id, msg, canonical_bytes, cas_conn
     if is_clean:
         # clean snapshot：可发布到跨用户共享的 Global CAS
         cas_publish_with_retry(cas_key, parse_result, workspace_id, cas_conn)
-        # manifest 标记 is_dirty=0，cas_key 指向 Global CAS
-        ws_conn.execute("UPDATE workspace_manifests SET cas_key=?, content_hash=?, "
-                        "is_dirty=0, raw_hash=?, source_encoding=?, bom_kind=?, newline_style=? "
-                        "WHERE workspace_id=? AND rel_path=?",
-                        (cas_key, content_hash, msg["metadata"].raw_hash,
-                         msg["metadata"].source_encoding, msg["metadata"].bom_kind,
-                         msg["metadata"].newline_style, workspace_id, rel_path))
-    else:
-        # v9 P2#1: dirty overlay——只写 workspace 本地的 dirty symbols/edges，
-        #          不发布到 Global CAS（不跨用户共享）
-        ws_conn.execute("UPDATE workspace_manifests SET cas_key=NULL, content_hash=?, "
-                        "is_dirty=1, raw_hash=?, source_encoding=?, bom_kind=?, newline_style=? "
-                        "WHERE workspace_id=? AND rel_path=?",
-                        (content_hash, msg["metadata"].raw_hash,
-                         msg["metadata"].source_encoding, msg["metadata"].bom_kind,
-                         msg["metadata"].newline_style, workspace_id, rel_path))
-        write_dirty_overlay(workspace_id, rel_path, parse_result, ws_conn)
 
-    # 5. v9 P2#1: 更新 generation 状态（compare-and-swap 成功）
-    generations[gen_key] = {
-        "latest_seq": msg["monotonic_seq"],
-        "latest_session_id": msg["agent_session_id"],
-        "latest_raw_hash": msg["observed_raw_hash"],
-    }
+    # 5. v10 P1#2: manifest 提交——条件更新，仅当 latest_committed_generation 仍等于本任务
+    #    generation 才允许 COMMIT。并发 handler 中较旧的请求会发现 latest_seen 已被较新请求覆盖，
+    #    条件更新 WHERE 子句不匹配，UPDATE 返回 0 行，ROLLBACK。
+    ws_conn.execute("BEGIN IMMEDIATE")
+    try:
+        if is_clean:
+            cur = ws_conn.execute(
+                """UPDATE workspace_manifests SET cas_key=?, content_hash=?, is_dirty=0,
+                   raw_hash=?, source_encoding=?, bom_kind=?, newline_style=?
+                   WHERE workspace_id=? AND rel_path=?""",
+                (cas_key, content_hash, msg["metadata"].raw_hash,
+                 msg["metadata"].source_encoding, msg["metadata"].bom_kind,
+                 msg["metadata"].newline_style, workspace_id, rel_path)
+            )
+        else:
+            # v9 P2#1: dirty overlay——只写 workspace 本地，不发布到 Global CAS
+            cur = ws_conn.execute(
+                """UPDATE workspace_manifests SET cas_key=NULL, content_hash=?, is_dirty=1,
+                   raw_hash=?, source_encoding=?, bom_kind=?, newline_style=?
+                   WHERE workspace_id=? AND rel_path=?""",
+                (content_hash, msg["metadata"].raw_hash,
+                 msg["metadata"].source_encoding, msg["metadata"].bom_kind,
+                 msg["metadata"].newline_style, workspace_id, rel_path)
+            )
+            write_dirty_overlay(workspace_id, rel_path, parse_result, ws_conn)
+
+        # v10 P1#2: 条件更新 latest_committed_generation——仅当 latest_seen 仍等于本任务 gen
+        gen_cur = ws_conn.execute(
+            """UPDATE file_generations SET latest_committed_generation = ?
+               WHERE workspace_id = ? AND rel_path = ?
+                 AND latest_seen_generation = ?""",
+            (incoming_gen, workspace_id, rel_path, incoming_gen)
+        )
+        if gen_cur.rowcount != 1:
+            # latest_seen 已被更新的 generation 覆盖——本任务已 stale，ROLLBACK
+            ws_conn.execute("ROLLBACK")
+            log_info(f"drop stale manifest commit for {rel_path}: "
+                     f"gen={incoming_gen} superseded")
+            return
+
+        ws_conn.execute("COMMIT")
+    except Exception:
+        ws_conn.execute("ROLLBACK")
+        raise
+
+
+def verify_clean_via_bare_mirror(workspace_id, rel_path, registered_commit,
+                                  canonical_bytes, content_hash):
+    """v10 P1#3: 用 daemon 的 bare mirror 校验内容是否属于受信 commit。
+
+    1. 检查 registered_commit 是否属于受信 ref（如 origin/main 的祖先）。
+    2. 从 bare mirror 按 commit + rel_path 读取 blob（原始 bytes）。
+    3. 对 blob 执行 canonicalize_source_bytes()，比较 canonical hash。
+    4. 任何一步失败 → 返回 False（视为 dirty）。
+
+    不信任 agent 提供的 git_tree_oid/git_blob_oid——用户可自行构造 tree。
+    """
+    repo_mirror = get_bare_mirror_for_workspace(workspace_id)  # ~/.callwarden/mirrors/<repo>.git
+    if not repo_mirror or not registered_commit:
+        return False  # 无 mirror 或无 commit → dirty
+
+    # 1. 校验 commit 属于受信 ref
+    trusted_ref = get_trusted_ref(workspace_id)  # 如 "origin/main"
+    if not git_is_ancestor(repo_mirror, trusted_ref, registered_commit):
+        return False  # commit 不属于受信 ref → dirty
+
+    # 2. 从 bare mirror 读取 blob（原始 bytes）
+    try:
+        blob_raw = git_read_blob(repo_mirror, registered_commit, rel_path)
+    except GitObjectNotFound:
+        return False  # commit 中无此文件 → dirty
+
+    # 3. 对 blob 执行同一 canonicalize_source_bytes()，比较 canonical hash
+    #    Git blob OID 基于原始 bytes，不等于 canonical bytes，必须重新 canonicalize
+    blob_canonical = canonicalize_source_bytes(blob_raw)  # Rust FFI，与 agent 同一实现
+    return blob_canonical.content_hash == content_hash
 ```
+
+**v10 P1#2 修复（相对 v9）**：
+- **持久化 generation**：`file_generations` 表存 `latest_session_id`/`latest_seq`/`latest_seen_generation`/`latest_committed_generation`，daemon 重启后状态不丢失。不再用内存字典 `generations`。
+- **manifest 事务内条件更新**：manifest COMMIT 前，`UPDATE file_generations SET latest_committed_generation = ? WHERE ... AND latest_seen_generation = ?`。若并发 handler 中较新请求已更新 `latest_seen`，本任务的条件更新返回 0 行 → ROLLBACK。这是真正的 CAS，不是 check-then-set。
+- **session 切换处理**：`incoming_session != latest_session_id` 时重置 `latest_seq=0`，新 agent 的 seq 从 1 开始不被旧值拒绝。
+- **两阶段 CAS**：第一阶段 `BEGIN IMMEDIATE` 原子更新 `latest_seen_generation`（拒绝 stale seq）；第二阶段 manifest 提交时条件更新 `latest_committed_generation`（拒绝 stale manifest commit）。
+
+**v10 P1#3 修复（相对 v9）**：
+- **daemon 维护 bare mirror**：每个注册仓库一个只读 bare mirror（`~/.callwarden/mirrors/<repo>.git`），以受信 remote/ref/commit 为根。
+- **不信任 agent 提供的 git_tree_oid/git_blob_oid**：agent 只提供 `registered_commit`（它观察到的 HEAD）。daemon 校验该 commit 是否属于受信 ref 的祖先，再从 mirror 按 `commit + rel_path` 读取 blob。
+- **重新 canonicalize 比较**：Git blob OID 基于原始 bytes，不等于 canonical bytes。daemon 对 blob 执行同一 `canonicalize_source_bytes()`，比较 canonical hash。
+- **任何一步失败 → dirty**：无 mirror、commit 不属于受信 ref、commit 中无此文件、canonical hash 不匹配，一律 dirty overlay。
 
 **v9 P2#2: UDS 传输方式闭合**
 
 `SCM_RIGHTS` 发送的是 FD 而非字节数组，`send_fd(sock, canonical_bytes)` 语义不成立。v9 明确两种传输方式：
 
 1. **长度分帧 UDS stream（小/中文件，默认）**：消息头 `| msg_type(1B) | payload_len(4B) | canonical_len(8B) |`，后跟 JSON payload + canonical bytes 连续写入同一 UDS stream。daemon 读完头后按 `canonical_len` 读固定长度字节。最大消息尺寸 `MAX_MSG_BYTES = 16 MB`（超过则走 memfd 路径）。
-2. **`memfd_create` + seals + `SCM_RIGHTS`（大文件 > 16MB）**：agent 用 `memfd_create()` 创建匿名内存文件，写入 canonical bytes，施加 `F_SEAL_SHRINK | F_SEAL_WRITE | F_SEAL_SEAL` seals（防 daemon 写入后篡改），通过 `SCM_RIGHTS` 把 FD 传给 daemon。daemon `mmap` 只读后 `read()` 字节。FD 用完即 `close`，memfd 引用计数归零自动释放。
+2. **`memfd_create` + seals + `SCM_RIGHTS`（大文件 > 16MB）**：agent 用 `memfd_create("cw_canonical", MFD_CLOEXEC | MFD_ALLOW_SEALING)` 创建匿名内存文件（**v10 P1#4**: 必须传 `MFD_ALLOW_SEALING`，否则 Linux 预置 `F_SEAL_SEAL` 后续加 seal 返回 `EPERM`），用 `write_all()` 写入 canonical bytes（**v10 P1#4**: 处理短写），施加完整不可变集合 `F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL`（**v10 P1#4**: 补 `F_SEAL_GROW` 防 `lseek+write` 扩展内容），通过 `SCM_RIGHTS` 把 FD 传给 daemon。daemon 接收后做四重校验（大小/seal flags/最大尺寸/内容 sha256，见 `recv_via_memfd`）。FD 用完即 `close`，memfd 引用计数归零自动释放。
 
 ```python
 def send_framed_stream(sock, msg_type, payload, canonical_bytes):
@@ -405,22 +522,85 @@ def send_framed_stream(sock, msg_type, payload, canonical_bytes):
     header = struct.pack(">BIQ", msg_type, len(payload_json), len(canonical_bytes))
     sock.sendall(header + payload_json + canonical_bytes)  # 连续写入
 
+def write_all(fd, data):
+    """v10 P1#4: 循环写直到全部写完——os.write 可能短写，必须处理。"""
+    view = memoryview(data)
+    total = 0
+    while total < len(view):
+        n = os.write(fd, view[total:])
+        if n == 0:
+            raise OSError("memfd write returned 0 (disk full?)")
+        total += n
+
 def send_via_memfd(sock, msg_type, payload, canonical_bytes):
-    """v9 P2#2: 大文件用 memfd_create + seals + SCM_RIGHTS 传 FD。"""
-    fd = memfd_create("cw_canonical", 0)
-    os.write(fd, canonical_bytes)
-    # 施加 seals：防 daemon 篡改内容
-    linux_seal(fd, F_SEAL_SHRINK | F_SEAL_WRITE | F_SEAL_SEAL)
-    payload["canonical_len"] = len(canonical_bytes)
-    send_msg_with_fd(sock, msg_type, payload, fd)  # SCM_RIGHTS 传 FD
-    os.close(fd)  # daemon 持有 FD 后 agent 关闭自己的引用
+    """v10 P1#4: 大文件用 memfd_create + seals + SCM_RIGHTS 传 FD。
+
+    修复 v9 的三个 bug：
+    1. memfd_create(..., 0) 没传 MFD_ALLOW_SEALING，Linux 会预置 F_SEAL_SEAL，
+       后续 F_ADD_SEALS 返回 EPERM。必须传 MFD_CLOEXEC | MFD_ALLOW_SEALING。
+    2. os.write() 不处理短写，大文件可能只写入部分。改用 write_all() 循环写。
+    3. seals 缺 F_SEAL_GROW，daemon 仍可 lseek+write 扩展内容。补齐完整不可变集合。
+    """
+    # v10 P1#4: 必须 MFD_CLOEXEC | MFD_ALLOW_SEALING，否则 F_SEAL_SEAL 预置后无法再加 seal
+    fd = memfd_create("cw_canonical", MFD_CLOEXEC | MFD_ALLOW_SEALING)
+    try:
+        write_all(fd, canonical_bytes)  # v10 P1#4: 处理短写
+        # v10 P1#4: 完整不可变集合——补 F_SEAL_GROW，防 daemon lseek+write 扩展
+        linux_seal(fd, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL)
+        payload["canonical_len"] = len(canonical_bytes)
+        send_msg_with_fd(sock, msg_type, payload, fd)  # SCM_RIGHTS 传 FD
+    finally:
+        os.close(fd)  # daemon 持有 FD 后 agent 关闭自己的引用
+
+
+def recv_via_memfd(sock, expected_canonical_len, expected_content_hash, peer_uid):
+    """v10 P1#4: daemon 接收端校验——不信任 agent 提供的 memfd。
+
+    四重校验，任一失败则拒绝并关闭连接：
+    1. fstat().st_size == expected_canonical_len（大小匹配 payload 中声明的 canonical_len）
+    2. F_GET_SEALS 包含 F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL
+    3. st_size <= MAX_MEMFD_BYTES（防 agent 传超大 memfd 耗尽 daemon 内存）
+    4. 重新计算 sha256(memfd content) == expected_content_hash（防内容被替换）
+    """
+    fd, msg = recv_msg_with_fd(sock)  # SCM_RIGHTS 接收 FD + JSON payload
+    try:
+        st = os.fstat(fd)
+        # 1. 大小校验
+        if st.st_size != expected_canonical_len:
+            raise ProtocolError(f"memfd size mismatch: "
+                                f"st_size={st.st_size} expected={expected_canonical_len}")
+        # 2. seal flags 校验
+        actual_seals = linux_get_seals(fd)  # F_GET_SEALS
+        required_seals = (F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL)
+        if (actual_seals & required_seals) != required_seals:
+            raise ProtocolError(f"memfd missing seals: "
+                                f"actual={actual_seals:#x} required={required_seals:#x}")
+        # 3. 最大尺寸校验（防 OOM）
+        if st.st_size > MAX_MEMFD_BYTES:  # v10 P2: 256 MB
+            raise ProtocolError(f"memfd exceeds MAX_MEMFD_BYTES: "
+                                f"st_size={st.st_size} limit={MAX_MEMFD_BYTES}")
+        # 4. 内容 hash 校验——读全部字节重新 sha256
+        content = os.lseek(fd, 0, SEEK_SET)  # 回到起点
+        actual_hash = sha256_streaming(fd, st.st_size)  # 流式 hash，不一次性载入内存
+        if actual_hash != expected_content_hash:
+            raise ProtocolError(f"memfd content hash mismatch: "
+                                f"actual={actual_hash} expected={expected_content_hash}")
+        return content, msg
+    finally:
+        os.close(fd)  # daemon 用完即关
 ```
 
 **传输协议约束**：
 - **最大消息尺寸**：`MAX_MSG_BYTES = 16 MB`（stream 路径），超过走 memfd。
-- **背压**：daemon 读循环若跟不上 agent 发送速度，UDS socket buffer 满后 `sendall` 阻塞（TCP-like 流控）。daemon 侧维护 per-connection 读队列，超出 `MAX_READ_QUEUE_DEPTH = 64` 条时暂停 `recv`，agent 侧 `sendall` 自然阻塞。
+- **背压（v10 P2: 深度 + 字节数双重限制）**：daemon 读循环若跟不上 agent 发送速度，UDS socket buffer 满后 `sendall` 阻塞（TCP-like 流控）。daemon 侧维护 per-connection 读队列，**同时**限制队列深度和累计字节数，超任一限制则暂停 `recv`：
+  - `MAX_READ_QUEUE_DEPTH = 64` 条（队列深度）
+  - `MAX_CONN_QUEUED_BYTES = 256 MB`（per-connection 累计未处理字节数）
+  - `MAX_DAEMON_INFLIGHT_BYTES = 2 GB`（daemon 全局 inflight 总字节数，所有连接之和）
+  - `MAX_UID_INFLIGHT_BYTES = 512 MB`（per-UID inflight 总字节数，防单用户用多连接耗尽 daemon）
+  - `MAX_MEMFD_BYTES = 256 MB`（单个 memfd 最大尺寸，接收端 `recv_via_memfd` 校验）
+  - 超限处理：暂停 `recv` 该连接/该 UID 的新消息（不关闭连接），等 inflight 字节下降到阈值以下再恢复；agent 侧 `sendall` 自然阻塞。**不依赖 socket buffer 作为唯一背压**——64 个接近 16MB 的 stream 消息单连接就接近 1GB，必须显式限制字节数。
 - **超时**：agent `sendall` 超时 `SEND_TIMEOUT = 30s`（大文件传输可能慢）；daemon `recv` 超时 `RECV_TIMEOUT = 60s`。超时后关闭连接，该消息丢弃。
-- **断线清理**：daemon 检测到连接断开（`recv` 返回空）时，清理该 agent 的 `generations` 中所有未 COMMIT 的 pending 状态（标记为 stale，等 agent 重连后重新发送）。
+- **断线清理**：daemon 检测到连接断开（`recv` 返回空）时，清理该 agent 的 `generations` 中所有未 COMMIT 的 pending 状态（标记为 stale，等 agent 重连后重新发送）；同时从 `MAX_DAEMON_INFLIGHT_BYTES` / `MAX_UID_INFLIGHT_BYTES` 计数器中扣减该连接的 inflight 字节数。
 
 **架构**：
 
@@ -450,9 +630,9 @@ def send_via_memfd(sock, msg_type, payload, canonical_bytes):
 - **daemon 重新计算 hash**：不信任 agent 报告的 `content_hash`，用收到的字节重新算 `sha256`。hash 不匹配时记录告警，但以 daemon 计算为准继续（agent 可能误报，但字节本身仍可解析）。
 - **canonicalize_source 单一实现**：agent 和 daemon 调用**同一个** Rust `canonicalize_source()`（见 [enterprise-phase1-phase3-detail.md §3.0.1](enterprise-phase1-phase3-detail.md)），避免两套 detector 分歧。agent 的 Rust FFI 与 daemon 的 Rust FFI 是同一份编译产物。
 - **agent 生命周期**：`systemd --user` 管理的常驻进程（用户登录时启动，退出时停止），负责 watch + 文件读取。watch 事件触发时把变更文件 canonical bytes 推给 daemon。daemon 侧 Job Deduplication 合并同文件的多次变更。
-- **v9 P2#1: 事件代次控制**：每条消息携带 `agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns`。daemon 按 `(workspace_id, rel_path)` 做 compare-and-swap，只接受 `seq > latest_seq` 的消息，防止旧内容解析更慢、后到达时覆盖新 manifest。
-- **v9 P2#1: clean vs dirty 分流**：未经可信 Git tree/blob 验证的内容（工作区未提交改动）只能进入 **dirty overlay**（workspace 本地，不发布到 Global CAS，不跨用户共享）。只有 agent 附带 `git_tree_oid + git_blob_oid` 且 daemon 用 libgit2 校验 blob 属于该 tree 的内容，才标记为 clean 并发布到跨用户共享的 Global CAS。
-- **v9 P2#2: 传输方式闭合**：`SCM_RIGHTS` 发送 FD 而非字节数组。小/中文件（≤16MB）用长度分帧 UDS stream；大文件（>16MB）用 `memfd_create + seals + SCM_RIGHTS`。定义了最大消息尺寸、背压（`MAX_READ_QUEUE_DEPTH=64`）、超时（send 30s / recv 60s）、断线清理。
+- **v9 P2#1 + v10 P1#2: 事件代次控制**：每条消息携带 `agent_session_id + monotonic_seq + observed_raw_hash/mtime_ns`。daemon 按 `(workspace_id, rel_path)` 做 compare-and-swap——v10 P1#2 改为持久化到 `file_generations` 表的真正 CAS（两阶段：`BEGIN IMMEDIATE` 更新 `latest_seen_generation` + manifest 提交时条件更新 `latest_committed_generation`），不再用内存字典。`session_id` 参与比较，agent 重启后 session 切换时重置 `latest_seq=0`，新 agent 的 seq 从 1 开始不被旧值永久拒绝。
+- **v9 P2#1 + v10 P1#3: clean vs dirty 分流**：未经可信 Git 校验的内容（工作区未提交改动）只能进入 **dirty overlay**（workspace 本地，不发布到 Global CAS，不跨用户共享）。只有 agent 提供 `registered_commit`（它观察到的 HEAD）且 daemon 通过 `verify_clean_via_bare_mirror()` 从受信 bare mirror 读取 blob、重新 canonicalize 后 hash 匹配，才标记为 clean 并发布到跨用户共享的 Global CAS。v10 P1#3 不再信任 agent 提供的 `git_tree_oid`/`git_blob_oid`（用户可自行构造 tree）。
+- **v9 P2#2 + v10 P1#4 + v10 P2: 传输方式闭合**：`SCM_RIGHTS` 发送 FD 而非字节数组。小/中文件（≤16MB）用长度分帧 UDS stream；大文件（>16MB）用 `memfd_create + seals + SCM_RIGHTS`（v10 P1#4: `MFD_ALLOW_SEALING` + `write_all` + `F_SEAL_GROW` + 接收端四重校验）。背压同时限制深度（`MAX_READ_QUEUE_DEPTH=64`）和字节数（v10 P2: per-conn 256MB / daemon 2GB / per-UID 512MB / memfd 256MB）。超时 send 30s / recv 60s。断线清理 `generations` 中 pending 状态并扣减 inflight 字节计数。
 
 **备选方案：`openat2` + `SCM_RIGHTS` 只读 FD broker（最小特权）**
 

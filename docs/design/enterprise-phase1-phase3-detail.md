@@ -1,10 +1,18 @@
 # Enterprise Phase 1 + Phase 3A + Phase 3B 详细实施设计
 
-状态：Draft v9（评审第八轮 P1 修订版）
+状态：Draft v10（评审第九轮 P1 修订版）
 日期：2026-07-10
 父文档：
 - [enterprise-daemon-shared-snapshot-plan.md](enterprise-daemon-shared-snapshot-plan.md)（主架构）
 - [enterprise-architecture-evolution.md](enterprise-architecture-evolution.md)（演进背景）
+
+## v10 变更摘要（针对评审第九轮 4 个 P1 + 1 个 P2）
+
+1. **[P1#1] offset map 仍按大段线性映射**：v9 宣称逐 scalar 建 entry，但实际只在换行边界 push，普通 GBK/UTF-16 多字节字符合并进大段，`raw_start + in_seg_off` 对变长编码错误；`has_crlf` 全局粘性状态导致一次 CRLF 后后续普通 LF 被输出为空。v10：每个 Unicode scalar 都 `push OffsetBoundary`，查询二分定位到精确 scalar 边界直接取 `raw_before`；CRLF 用局部 `cr_pending` 成对消费；补 GBK 中文后接普通 LF / UTF-16 surrogate pair / 混合 CRLF-LF 三类边界测试。
+2. **[P1#2] generation 是 check-then-set 非真正 CAS**：v9 先读内存 `generations`、长 parse/写库、最后更新字典，并发 handler 可同时通过检查并乱序提交；`session_id` 未参与比较，agent 重启后 seq 重置被旧 `latest_seq` 永久拒绝；daemon 重启状态丢失。v10：持久化 `latest_seen_generation / latest_committed_generation` 到 workspace DB；manifest 提交时在同一 workspace 事务中执行条件更新（`WHERE generation = :task_gen`），仅当当前 generation 仍等于本任务 generation 才允许 COMMIT；session 切换时 `latest_seq` 重置为 0。
+3. **[P1#3] clean snapshot 的 Git 证明没有可信锚点**：`git_tree_oid`/`git_blob_oid` 都由 agent 提供，验证二者关系不能证明 tree 属于注册仓库的可信 commit；Git blob OID 基于原始 bytes 不等于 canonical bytes。v10：daemon 维护注册仓库的只读 bare mirror，以受信 remote/ref/commit 为根，按 `commit + rel_path` 读取 blob，对该 blob 执行同一 `canonicalize_source_bytes()`，比较 canonical hash；无法完成验证的一律 dirty。
+4. **[P1#4] memfd sealing 伪代码会直接失败**：`memfd_create(..., 0)` 没传 `MFD_ALLOW_SEALING`，Linux 预置 `F_SEAL_SEAL` 后续添加 seals 返回 `EPERM`；缺少 `F_SEAL_GROW`；`os.write()` 没处理短写。v10：`MFD_CLOEXEC | MFD_ALLOW_SEALING`，`write_all` 防短写，完整 seals `F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL`；接收端校验 `fstat().st_size == canonical_len`、实际 seal flags、最大 memfd 尺寸、重新计算 SHA-256。
+5. **[P2] 队列只限深度没限字节**：64 个接近 16MB 的 stream 消息单连接接近 1GB。v10：同时设置 per-connection queued bytes、daemon global inflight bytes、per-UID inflight bytes、memfd 最大尺寸；超限时拒绝或暂停读取。
 
 ## v9 变更摘要（针对评审第八轮 4 个 P1 + 2 个 P2）
 
@@ -641,149 +649,173 @@ pub struct SourceMetadata {
     pub newline_style: String,    // "lf" | "crlf" | "cr" | "mixed"
 }
 
-// v9 P1#4: 偏移映射条目——记录每个 Unicode scalar 在 canonical 和 raw 坐标系的范围。
-// 不再使用 (canonical_end, raw_end) 分段线性插值（对 GBK/UTF-16 变长编码错误）。
-// 每个 entry 对应一个"不可分割段"：编码转换边界 + 换行边界。
-// 段内 canonical 和 raw 偏移一一对应（UTF-8 子串无内部收缩），
-// 收缩只发生在段边界（如 \r\n→\n 收缩 1 字节，或 GBK 双字节→UTF-8 三字节）。
-pub struct OffsetEntry {
-    pub canonical_start: usize,   // canonical_bytes 中的起始偏移
-    pub canonical_end: usize,     // canonical_bytes 中的结束偏移（不含）
-    pub raw_start: usize,         // 原始磁盘字节（含 BOM）中的起始偏移
-    pub raw_end: usize,           // 原始磁盘字节中的结束偏移（不含）
+// v9 P1#4 + v10 P1#1: 边界映射条目——每个 Unicode scalar 一条边界记录。
+// 不再使用"大段 + 段内线性插值"（对变长编码错误）。
+// 每条记录 canonical 边界和对应的 raw 边界，查询时二分查找后直接取边界，
+// 不在段内做 raw_start + in_seg_off 的线性换算。
+pub struct OffsetBoundary {
+    pub canonical_before: usize,  // 此 scalar 在 canonical_bytes 中的起始偏移
+    pub raw_before: usize,         // 此 scalar 在原始磁盘字节（含 BOM）中的起始偏移
+    // 下一条边界的 canonical_before 即本 scalar 的 canonical_end（省略存储）
 }
 
 pub struct CanonicalizeResult {
-    pub canonical_bytes: Vec<u8>,     // BOM 剥离 + 解码为 UTF-8 + CRLF/CR→LF 后的字节
-    pub content_hash: String,         // sha256(canonical_bytes)
-    pub metadata: SourceMetadata,     // 原始文件元数据，编辑功能用
-    pub offset_map: Vec<OffsetEntry>, // v9 P1#4: canonical→raw 偏移映射（含编码转换）
+    pub canonical_bytes: Vec<u8>,         // BOM 剥离 + 解码为 UTF-8 + CRLF/CR→LF 后的字节
+    pub content_hash: String,             // sha256(canonical_bytes)
+    pub metadata: SourceMetadata,          // 原始文件元数据，编辑功能用
+    pub offset_map: Vec<OffsetBoundary>,   // v10 P1#1: 逐 scalar 边界表
+    pub canonical_total: usize,            // canonical_bytes.len()
+    pub raw_total: usize,                  // raw.len()（含 BOM）
 }
 
-// v9 P1#4: canonicalize_source 是输入规范化的唯一入口。
-// 关键修复：offset_map 在**流式解码阶段**构建，同时记录编码转换和换行规范化的偏移关系。
-// 旧实现（v8）在 decode_to_utf8 之后才由 normalize_newlines 构建 offset_map，
-// 无法表示 UTF-16/GBK 原始字节→canonical UTF-8 的对应。
+// v10 P1#1: canonicalize_source 是输入规范化的唯一入口。
+// 关键修复（相对 v9）：offset_map 改为**逐 Unicode scalar** 边界表，
+// 不再只在换行边界 push（旧实现把 GBK/UTF-16 多字节字符合并进大段，
+// 段内 raw_start+in_seg_off 对变长编码错误）。
 pub fn canonicalize_source(abs_path: &str) -> Result<CanonicalizeResult, io::Error> {
     let raw = std::fs::read(abs_path)?;
     let raw_hash = sha256_hex(&raw);
-    let raw_len = raw.len();
+    let raw_total = raw.len();
 
     // 1. BOM 检测 + 剥离（记录 BOM 字节范围，偏移映射要跳过 BOM）
     let (bom_kind, bom_len, bytes_no_bom) = detect_and_strip_bom(&raw)?;
 
-    // 2. v9 P1#4: 流式解码 + 构建 offset_map（同时处理编码转换 + 换行规范化）
-    //    逐个 Unicode scalar 解码，记录 (canonical_pos, raw_pos)，
-    //    在换行边界（\r\n→\n、\r→\n）和编码边界（多字节→UTF-8）处分段。
+    // 2. v10 P1#1: 流式解码 + 逐 scalar 边界表
     let (source_encoding, newline_style, canonical_bytes, offset_map) =
-        streaming_decode_with_offset_map(bytes_no_bom, bom_len)?;
+        streaming_decode_with_boundary_map(bytes_no_bom, bom_len)?;
 
+    let canonical_total = canonical_bytes.len();
     let content_hash = sha256_hex(&canonical_bytes);
     Ok(CanonicalizeResult {
         canonical_bytes, content_hash,
         metadata: SourceMetadata { raw_hash, source_encoding, bom_kind, newline_style },
         offset_map,
+        canonical_total, raw_total,
     })
 }
 
-// v9 P1#4: 流式解码——逐个 Unicode scalar 解码，同步构建 offset_map。
-// 每个 OffsetEntry 对应一个"段"：段内 canonical↔raw 一一对应（UTF-8 子串），
-// 段边界处可能发生偏移收缩（\r\n→\n 或编码变长转换）。
-fn streaming_decode_with_offset_map(
+// v10 P1#1: 流式解码——逐个 Unicode scalar 解码，**每个 scalar 都记录边界**。
+// 修复 v9 的两个 bug：
+//   1. v9 只在换行边界 push OffsetEntry，普通 GBK/UTF-16 多字节字符合并进大段，
+//      段内 raw_start+in_seg_off 对 \r\n→\n 之外的变长编码不成立。
+//      v10 每个 scalar 一条 OffsetBoundary，查询时二分定位到精确 scalar 边界，
+//      不在段内线性插值。
+//   2. v9 的 has_crlf 是全局粘性状态，一次 CRLF 后所有后续普通 \n 被错误输出为空。
+//      v10 用局部 crlf_pending 标志：\r 时设 pending，下一个 \r 消费 pending 并
+//      只发射一个 \n；普通 \n（无 pending）正常发射。
+fn streaming_decode_with_boundary_map(
     bytes_no_bom: &[u8], bom_len: usize,
-) -> Result<(String, String, Vec<u8>, Vec<OffsetEntry>), io::Error> {
+) -> Result<(String, String, Vec<u8>, Vec<OffsetBoundary>), io::Error> {
     let encoding = detect_encoding(bytes_no_bom)?;
     let mut decoder = new_decoder(&encoding, bytes_no_bom);
-    let mut canonical = String::new();
-    let mut offset_map: Vec<OffsetEntry> = Vec::new();
+    let mut canonical: Vec<u8> = Vec::new();
+    let mut boundaries: Vec<OffsetBoundary> = Vec::new();
 
-    let mut raw_pos = 0usize;       // 在 bytes_no_bom 中的位置（不含 BOM）
-    let mut canonical_pos = 0usize;  // 在 canonical_bytes 中的位置
-    let mut seg_raw_start = 0usize;
-    let mut seg_canon_start = 0usize;
+    let mut raw_pos = 0usize;          // 在 bytes_no_bom 中的位置（不含 BOM）
     let mut newline_style = "lf".to_string();
-    let mut has_crlf = false;
-    let mut has_cr = false;
-    let mut has_lf = false;
+    let mut saw_crlf = false;          // 见过 \r\n
+    let mut saw_lone_cr = false;       // 见过单独 \r（不跟 \n）
+    let mut saw_lone_lf = false;       // 见过单独 \n（不跟 \r）
+    let mut cr_pending = false;        // v10 P1#1: 局部状态——上一个 scalar 是 \r
 
     while let Some((scalar, consumed_raw_bytes)) = decoder.next_scalar()? {
-        // 换行规范化：\r\n → \n，\r → \n
-        let (emit_str, is_newline_boundary) = match scalar {
-            '\r' => { has_cr = true; has_crlf = has_crlf || decoder.peek_is_lf(); ("\n".to_string(), true) }
-            '\n' => { has_lf = true; (if has_crlf { "" } else { "\n" }.to_string(), false) }
-            _ => (scalar.to_string(), false),
-        };
-        // 实际换行处理需更精细，这里展示分段逻辑：
-        // 在换行边界或编码边界处，闭合当前段，开启新段
-        if is_newline_boundary {
-            // 闭合当前段
-            if canonical_pos > seg_canon_start || raw_pos > seg_raw_start {
-                offset_map.push(OffsetEntry {
-                    canonical_start: seg_canon_start,
-                    canonical_end: canonical_pos,
-                    raw_start: seg_raw_start + bom_len,
-                    raw_end: raw_pos + bom_len,
-                });
+        // v10 P1#1: 每个 scalar 都记录边界（canonical_before, raw_before）。
+        // raw_before 加 bom_len 是因为 offset 坐标系包含 BOM（编辑原文件要用磁盘偏移）。
+        boundaries.push(OffsetBoundary {
+            canonical_before: canonical.len(),
+            raw_before: raw_pos + bom_len,
+        });
+
+        // v10 P1#1: 换行规范化——CRLF 成对消费，cr_pending 是局部状态（非全局粘性）
+        match scalar {
+            '\r' => {
+                // \r：设 pending，先不发射（等看下一个是否 \n）
+                cr_pending = true;
+                raw_pos += consumed_raw_bytes;
+                // 不 push canonical，边界已在上面记录（canonical_before 指向 \r 之前）
             }
-            // 发射规范化后的字符
-            for b in emit_str.bytes() { canonical.push(b as char); canonical_pos += 1; }
-            raw_pos += consumed_raw_bytes;
-            seg_canon_start = canonical_pos;
-            seg_raw_start = raw_pos;
-        } else {
-            // 段内：直接追加 UTF-8 编码
-            let s = emit_str;
-            let start = canonical.len();
-            canonical.push_str(&s);
-            canonical_pos += canonical.len() - start;
-            raw_pos += consumed_raw_bytes;
+            '\n' => {
+                if cr_pending {
+                    // \r\n → \n（成对消费，发射一个 \n）
+                    saw_crlf = true;
+                    cr_pending = false;
+                    canonical.push(b'\n');
+                    // raw_pos 已在 \r 时推进，这里只推进 \n 的 raw 字节
+                    raw_pos += consumed_raw_bytes;
+                    // 下一个 scalar 的边界记录已覆盖此处
+                } else {
+                    // 单独 \n → \n
+                    saw_lone_lf = true;
+                    canonical.push(b'\n');
+                    raw_pos += consumed_raw_bytes;
+                }
+            }
+            _ => {
+                if cr_pending {
+                    // \r 后跟非 \n：\r → \n（单独 CR 规范化为 LF）
+                    saw_lone_cr = true;
+                    cr_pending = false;
+                    canonical.push(b'\n');
+                    // raw_pos 已在 \r 时推进
+                }
+                // 发射 scalar 的 UTF-8 编码
+                let mut buf = [0u8; 4];
+                let s = scalar.encode_utf8(&mut buf);
+                canonical.extend_from_slice(s.as_bytes());
+                raw_pos += consumed_raw_bytes;
+            }
         }
     }
-    // 闭合最后一段
-    if canonical_pos > seg_canon_start || raw_pos > seg_raw_start {
-        offset_map.push(OffsetEntry {
-            canonical_start: seg_canon_start, canonical_end: canonical_pos,
-            raw_start: seg_raw_start + bom_len, raw_end: raw_pos + bom_len,
-        });
+    // 末尾 \r（文件以 \r 结尾，无后续 \n）：\r → \n
+    if cr_pending {
+        saw_lone_cr = true;
+        canonical.push(b'\n');
     }
 
-    if has_crlf && has_cr && has_lf { newline_style = "mixed".into(); }
-    else if has_crlf { newline_style = "crlf".into(); }
-    else if has_cr { newline_style = "cr".into(); }
-    else { newline_style = "lf".into(); }
+    // v10 P1#1: newline_style 判定
+    if saw_crlf && (saw_lone_cr || saw_lone_lf) {
+        newline_style = "mixed".into();
+    } else if saw_crlf {
+        newline_style = "crlf".into();
+    } else if saw_lone_cr {
+        newline_style = "cr".into();
+    } else {
+        newline_style = "lf".into();
+    }
 
-    Ok((encoding, newline_style, canonical.into_bytes(), offset_map))
+    // v10 P1#1: 末尾哨兵边界（canonical 末尾 + raw 末尾），便于查询 canonical_end
+    boundaries.push(OffsetBoundary {
+        canonical_before: canonical.len(),
+        raw_before: raw_pos + bom_len,
+    });
+
+    Ok((encoding, newline_style, canonical, boundaries))
 }
 
-// v9 P1#4: 惰性查询——给定 canonical [start, end)，返回 raw [start, end)。
-// 编辑功能用此把 canonical 偏移翻译为原文件字节偏移。
-// 二分查找 offset_map，段内 raw↔canonical 一一对应（UTF-8 子串无内部收缩）。
+// v10 P1#1: 惰性查询——给定 canonical [start, end)，返回 raw [start, end)。
+// 二分查找 boundaries，定位到 canonical_start 和 canonical_end 各自所属的 scalar 边界，
+// 直接取该边界的 raw_before，不做段内线性插值。
+// 每个 scalar 的 raw 范围 = [boundary[i].raw_before, boundary[i+1].raw_before)，
+// canonical 范围 = [boundary[i].canonical_before, boundary[i+1].canonical_before)。
+// 因为每个 scalar 都有边界，所以 raw 范围精确到 scalar 级别，正确处理 GBK 2→3、UTF-16 2→4 等变长。
 pub fn raw_span_for_canonical_range(
-    offset_map: &[OffsetEntry],
-    raw: &[u8],
+    boundaries: &[OffsetBoundary],
     canonical_start: usize,
     canonical_end: usize,
 ) -> (usize, usize) {
-    // 找到 canonical_start 所在的段
-    let seg_start = offset_map.iter()
-        .find(|e| canonical_start >= e.canonical_start && canonical_start < e.canonical_end)
-        .or_else(|| offset_map.last())
-        .expect("canonical_start out of range");
-    let in_seg_off = canonical_start - seg_start.canonical_start;
-    let raw_start = seg_start.raw_start + in_seg_off;
+    // 二分查找 canonical_start 所属的 scalar 边界
+    let idx_start = boundaries.partition_point(|b| b.canonical_before <= canonical_start);
+    // idx_start - 1 是 canonical_before <= canonical_start 的最后一条
+    let raw_start = boundaries[idx_start.saturating_sub(1)].raw_before;
 
-    // 找到 canonical_end 所在的段
-    let seg_end = offset_map.iter()
-        .find(|e| canonical_end > e.canonical_start && canonical_end <= e.canonical_end)
-        .or_else(|| offset_map.last())
-        .expect("canonical_end out of range");
-    let in_seg_off_end = canonical_end - seg_end.canonical_start;
-    let raw_end = seg_end.raw_start + in_seg_off_end;
+    // 二分查找 canonical_end 所属的 scalar 边界
+    let idx_end = boundaries.partition_point(|b| b.canonical_before < canonical_end);
+    let raw_end = boundaries[idx_end].raw_before;
 
     (raw_start, raw_end)
 }
 
-// v9 P1#4: 回写前必须重新校验 raw_hash。
+// v10 P1#1: 回写前必须重新校验 raw_hash。
 // 编辑功能修改原文件后，下一次 canonicalize_source 会重新计算 raw_hash；
 // 若 raw_hash 与 manifest 中记录的不一致，说明文件已被外部改动，
 // 编辑结果可能基于过时内容，必须放弃并重新 refresh。
@@ -793,14 +825,21 @@ pub fn verify_raw_hash_before_writeback(abs_path: &str, expected_raw_hash: &str)
 }
 ```
 
-**v8 P2#1 + v9 P1#4 关键设计（canonical→raw 映射）**：
+**v10 P1#1 修复（相对 v9）**：
+- **逐 scalar 边界表**：v9 只在换行边界 `push OffsetEntry`，普通 GBK/UTF-16 多字节字符合并进大段，段内 `raw_start + in_seg_off` 对变长编码不成立。v10 每个 Unicode scalar 都 `push OffsetBoundary`，查询时二分定位到精确 scalar 边界，直接取 `raw_before`，不做段内线性插值。
+- **CRLF 成对消费**：v9 的 `has_crlf` 是全局粘性状态，一次 CRLF 后所有后续普通 `\n` 被错误输出为空。v10 用局部 `cr_pending` 标志：`\r` 时设 pending 先不发射，下一个 `\n` 消费 pending 并只发射一个 `\n`；普通 `\n`（无 pending）正常发射；`\r` 后跟非 `\n` 则 `\r`→`\n`。
+- **`raw_span_for_canonical_range` 不再段内加偏移**：因为每个 scalar 都有边界记录，raw 范围精确到 scalar 级别，正确处理 GBK 2 字节→UTF-8 3 字节、UTF-16 surrogate pair 2×2 字节→UTF-8 4 字节等变长情况。
+- **末尾哨兵边界**：最后 push 一条 `canonical_before=canonical.len()` 的哨兵，便于查询 `canonical_end` 时取 `raw_before`。
+
+**v8 P2#1 + v9 P1#4 + v10 P1#1 关键设计（canonical→raw 映射）**：
 - **单一实现**：`canonicalize_source()` 只在 Rust 实现，Python 通过 FFI（`rust_ext`）调用，**不**在 Python 侧重复实现编码检测器。避免两套 detector 偶发分歧（如 chardetng 与 chardet 对边界编码判断不同），导致 Rust/Python content_hash 不一致。
 - **`SourceMetadata` 保存到 workspace_manifests**：编辑功能（注释恢复、refactor）必须知道原文件编码/BOM/换行风格才能正确写回。`start_byte/end_byte` 属于 canonical UTF-8 坐标系，CRLF/UTF-16/GBK 文件不能直接用。
-- **v9 P1#4: offset_map 在流式解码阶段构建**：旧实现（v8）在 `decode_to_utf8` 之后才由 `normalize_newlines` 构建 offset_map，只能表示"规范化 UTF-8 → 换行前 UTF-8"，无法表示"canonical UTF-8 → 原始 UTF-16/GBK 字节"。v9 在 `streaming_decode_with_offset_map` 中逐个 Unicode scalar 解码时同步记录 `(canonical_range, raw_range)`，覆盖编码转换 + 换行规范化两个阶段的偏移变化。
-- **v9 P1#4: 段内一一对应，段边界处收缩**：每个 `OffsetEntry` 是一个"不可分割段"，段内 canonical↔raw 字节一一对应（UTF-8 子串无内部收缩）。收缩只发生在段边界（如 `\r\n`→`\n` 收缩 1 字节，或 GBK 双字节→UTF-8 三字节）。`raw_span_for_canonical_range` 二分查找定位段，段内偏移直接加。**不再**使用 `r_end.saturating_sub(canonical_off)` 线性插值（对变长编码错误）。
-- **v9 P1#4: 回写前重新校验 raw_hash**：编辑功能写原文件前必须调用 `verify_raw_hash_before_writeback`，确认磁盘文件与 manifest 中记录的 `raw_hash` 一致。不一致说明文件已被外部改动，编辑结果可能基于过时内容，必须放弃并重新 refresh。
-- **`offset_map` 惰性构建**：偏移映射只在编辑原文件时构建（parse 和查询路径不需要，避免内存开销）。映射为分段表，二分查找 O(log N)。
+- **v10 P1#1: 逐 scalar 边界表（替代 v9 大段）**：v9 只在换行边界 push OffsetEntry，普通 GBK/UTF-16 多字节字符合并进大段，段内 `raw_start + in_seg_off` 对变长编码错误。v10 每个 Unicode scalar 都 `push OffsetBoundary`，查询二分定位到精确 scalar 边界直接取 `raw_before`，不在段内线性插值。正确处理 GBK 2 字节→UTF-8 3 字节、UTF-16 surrogate pair 2×2 字节→UTF-8 4 字节等变长情况。
+- **v10 P1#1: CRLF 成对消费**：v9 的 `has_crlf` 是全局粘性状态，一次 CRLF 后后续普通 `\n` 被输出为空。v10 用局部 `cr_pending`：`\r` 设 pending 先不发射，`\n` 消费 pending 发射一个 `\n`，普通 `\n` 正常发射，`\r` 后跟非 `\n` 则 `\r`→`\n`。
+- **v10 P1#1: 回写前重新校验 raw_hash**：编辑功能写原文件前必须调用 `verify_raw_hash_before_writeback`，确认磁盘文件与 manifest 中记录的 `raw_hash` 一致。不一致说明文件已被外部改动，编辑结果可能基于过时内容，必须放弃并重新 refresh。
+- **`offset_map` 惰性构建**：偏移映射只在编辑原文件时构建（parse 和查询路径不需要，避免内存开销）。映射为逐 scalar 边界表，二分查找 O(log N)。
 - **CAS 不存 SourceMetadata**：CAS 是内容级、编码无关的（canonical bytes 已规范化），同一文件内容无论原编码如何都映射到同一 CAS 条目。`SourceMetadata` 存 workspace_manifests（路径级元数据）。
+- **v10 P1#1: 边界测试样本**：alignment fixtures 必须增加三类边界样本：GBK 中文后接普通 LF（`\u4e2d\n`，验证 GBK 2→3 + LF 不被吞）、UTF-16 surrogate pair（如 `\U0001F600`，验证 2×2→4 字节）、混合 CRLF/LF（`\r\n\ntext`，验证 cr_pending 不粘性吞 LF）。
 
 **Python 侧改动**（[config.py read_file_normalized](../../config.py#L993)）：v7 计划在 Python 侧补齐 BOM/CRLF。**v8 P2#1 修正**：Python 侧**不再重复实现**编码检测，改为调用 Rust `canonicalize_source()` FFI，确保唯一 detector。仅当 Rust 扩展不可用（`_can_use_rust_parse() == False`）时，Python 侧才用降级实现（latin-1 兜底），并在 manifest 标记 `source_encoding="fallback-latin1"` 供编辑路径警告"偏移可能不准"。可参考 [TokenSlim-publish2 encoding_fallback](../../testcode/TokenSlim-publish2/src/core/encoding_fallback/mod.rs)（见 AGENTS.md 第 9 条）。
 
