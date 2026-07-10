@@ -407,7 +407,7 @@ impl PySnapshotCache {
 // 非 PyO3 的内部方法
 impl PySnapshotCache {
     /// 获取指定 workspace 的当前 GraphStore（内部 Rust 接口）
-    fn get_store(&self, workspace_id: &str) -> PyResult<Arc<GraphStore>> {
+    pub fn get_store(&self, workspace_id: &str) -> PyResult<Arc<GraphStore>> {
         let mgr = self.inner.get(workspace_id)
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(format!(
                 "workspace '{}' not found in cache", workspace_id

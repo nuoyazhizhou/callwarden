@@ -742,6 +742,37 @@ impl GraphStore {
         let symbols = self.symbols.as_ref()?;
         symbols.by_id.get(id as usize)
     }
+
+    /// 获取指定 file_rel_path 的所有符号（供 delta 模块按文件对比）
+    pub fn get_symbols_by_file(&self, file_rel_path: &str) -> Vec<&GraphSymbol> {
+        let symbols = match self.symbols.as_ref() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        symbols
+            .by_id
+            .iter()
+            .filter(|s| s.file_rel_path == file_rel_path)
+            .collect()
+    }
+
+    /// 获取所有符号的简单名称 → qualified_name 映射（供 resolve delta 使用）
+    pub fn get_name_to_qnames(&self) -> HashMap<String, Vec<String>> {
+        let symbols = match self.symbols.as_ref() {
+            Some(s) => s,
+            None => return HashMap::new(),
+        };
+        let mut map: HashMap<String, Vec<String>> = HashMap::new();
+        for sym in &symbols.by_id {
+            if sym.id == 0 && sym.name.is_empty() {
+                continue;
+            }
+            map.entry(sym.name.clone())
+                .or_default()
+                .push(sym.qualified_name.clone());
+        }
+        map
+    }
 }
 
 // ============================================

@@ -40,6 +40,11 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 arc-swap = "1.7"
 # Phase 2 daemon: libc 用于 SO_PEERCRED（仅 unix）
 libc = "0.2"
+# Phase 5: notify 用于文件监听（跨平台 fs events）
+notify = "7.0"
+crossbeam-channel = "0.5"
+# Phase 5.2: sha2 用于文件内容 hash diff（排除假阳性 watcher 事件）
+sha2 = "0.10"
 
 [profile.release]
 opt-level = 3

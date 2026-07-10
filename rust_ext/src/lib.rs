@@ -25,6 +25,11 @@ mod daemon;
 mod graph;
 mod snapshot;
 mod diff;
+mod watcher;
+mod hash_diff;
+mod delta;
+mod frontier;
+mod metrics;
 
 // ============================================
 // P29: 数据结构定义
@@ -808,5 +813,24 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Phase 4: GraphSnapshot + ArcSwap 原子发布
     m.add_class::<snapshot::PySnapshotManager>()?;
     m.add_class::<snapshot::PySnapshotCache>()?;
+    // Phase 5: File Watcher (notify crate)
+    m.add_class::<watcher::PyFileWatcher>()?;
+    // Phase 5.1: DebouncedFileWatcher (debounce + batch coalescing)
+    m.add_class::<watcher::PyDebouncedFileWatcher>()?;
+    // Phase 5.2: HashDiffStore (content hash diff for false-positive filtering)
+    m.add_class::<hash_diff::PyHashDiffStore>()?;
+    // Phase 5.3: Parse Delta / Resolve Delta
+    m.add_class::<delta::PyParseDelta>()?;
+    m.add_class::<delta::PyResolveDelta>()?;
+    m.add_class::<delta::PyDeltaComputer>()?;
+    // Phase 5.4: Affected Frontier
+    m.add_class::<frontier::PyAffectedFrontier>()?;
+    m.add_function(wrap_pyfunction!(frontier::compute_frontier, m)?)?;
+    // Phase 5.5: Local Metrics Update (depth/cycle/impact)
+    m.add_class::<metrics::PyDepthChange>()?;
+    m.add_class::<metrics::PyCycleChange>()?;
+    m.add_class::<metrics::PyImpactChange>()?;
+    m.add_class::<metrics::PyLocalMetricsUpdate>()?;
+    m.add_function(wrap_pyfunction!(metrics::compute_local_update, m)?)?;
     Ok(())
 }
