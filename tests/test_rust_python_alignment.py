@@ -11,7 +11,9 @@
   避免 Python should_filter_call 过滤标准库导致的差异。
 - qualified_name 差异是投影策略差异（Rust 用语言原生包名/命名空间，Python 用传入的 module_path），
   不是解析差异。Phase 1.4 会修复 Rust parser 的 module_path 使用。
-- 通过率门槛：≥ 99%（< 1% 差异进已知差异清单，逐项分析是 Python bug 还是 Rust bug）。
+- 已知差异管理（v5 P2 修复）：已知差异用 **Counter** 表示并从实际 diff 中**相减**，
+  要求剩余差异为零。这样不会一次放过某 key 的全部差异次数（`del Counter[key]` 的缺陷），
+  也比 `diff_rate < threshold` 更精确——只有显式记录的差异才被允许，任何新差异都会失败。
 """
 from __future__ import annotations
 
@@ -38,35 +40,66 @@ from callwarden.parsers import create_parser  # noqa: E402
 
 
 # ============================================
-# 已知差异清单（显式管理例外，不静默容忍）
+# 已知差异清单（Counter 相减，不静默容忍）
 # ============================================
 # Phase 1.4 修复后应逐步清空此清单
-# 格式: (lang, test_name) → (reason, diff_rate_threshold)
-#   diff_rate_threshold: 该语言该测试的放宽阈值（< 1.0 = 100%）
-#   reason: 差异原因描述
+#
+# 数据结构：Dict[lang, (reason, Counter_of_known_diffs)]
+#   Counter_of_known_diffs: 已知差异的精确多重集合，key 与 normalize 函数输出一致
+#   reason: 差异原因描述（人类可读）
+#
+# 断言逻辑：actual_diff - known_diffs == empty（剩余差异必须为零）
+#   这确保只有显式记录的差异被允许，任何新差异都会失败
+#
+# Counters 由 _discover_alignment_diffs.py 脚本发现后填入
+# （运行 `python tests/_discover_alignment_diffs.py` 重新生成）
 
-KNOWN_SYMBOL_FAILURES = {
+KNOWN_SYMBOL_DIFFS: dict[str, tuple[str, Counter]] = {
     # TypeScript: Rust parser 完全未提取符号（class/method/fn 均缺失）
     # Phase 1.4 需修复 Rust TypeScript parser 的 symbol_rules 配置
-    "typescript": ("Rust TypeScript parser 未提取任何符号，Phase 1.4 待修复", 1.0),
+    "typescript": (
+        "Rust TypeScript parser 未提取任何符号，Phase 1.4 待修复",
+        Counter({
+            ("User", 3, 9): 1,
+            ("add", 11, 13): 1,
+            ("constructor", 4, 4): 1,
+            ("greet", 6, 8): 1,
+            ("main", 15, 20): 1,
+        }),
+    ),
     # PHP: Rust 不提取 property 类型的符号（Python 提取 $value 属性）
     # Phase 1.4 可在 php_config 的 symbol_rules 中增加 property 支持
-    "php": ("Rust 不提取 PHP property 符号，Phase 1.4 待修复", 0.3),
+    "php": (
+        "Rust 不提取 PHP property 符号，Phase 1.4 待修复",
+        Counter({("value", 7, 7): 1}),
+    ),
     # C++: Rust 额外提取 namespace 作为符号（Python 不提取）
     # 这是 Rust 更 thorough，不是 bug；投影差异
-    "cpp": ("Rust 额外提取 C++ namespace 符号（投影差异）", 0.2),
+    "cpp": (
+        "Rust 额外提取 C++ namespace 符号（投影差异）",
+        Counter({("example", 4, 31): 1}),
+    ),
 }
 
-KNOWN_CALL_FAILURES = {
+KNOWN_CALL_DIFFS: dict[str, tuple[str, Counter]] = {
     # Python: Rust 识别到对象方法调用（calc.add() / calc.clear()），Python parser 不提取方法调用
     # 这是 Python parser 的已知限制，不是 Rust 的 bug
-    "python": ("Rust 识别对象方法调用，Python parser 不提取（Python 限制）", 0.7),
+    "python": (
+        "Rust 识别对象方法调用，Python parser 不提取（Python 限制）",
+        Counter({("add", 22): 1, ("clear", 23): 1}),
+    ),
     # Scala: Rust 不识别对象方法调用（calc.add()），Python 识别
     # 这是 Rust Scala parser 的 bug，Phase 1.4 待修复
-    "scala": ("Rust 不识别 Scala 对象方法调用，Phase 1.4 待修复", 1.1),
-    # C++: Rust 识别对象方法调用（p1.distance()），Python 不提取
+    "scala": (
+        "Rust 不识别 Scala 对象方法调用，Phase 1.4 待修复",
+        Counter({("add", 17): 1}),
+    ),
+    # C++: Rust 识别对象方法调用（p.distance()），Python 不提取
     # 同 Python 语言：Python parser 不提取方法调用
-    "cpp": ("Rust 识别 C++ 对象方法调用，Python parser 不提取（Python 限制）", 0.6),
+    "cpp": (
+        "Rust 识别 C++ 对象方法调用，Python parser 不提取（Python 限制）",
+        Counter({("distance", 25): 1}),
+    ),
 }
 
 
@@ -108,19 +141,27 @@ def filter_user_calls(calls, user_symbol_names):
     return [c for c in calls if c["callee_name"] in user_symbol_names]
 
 
-def compute_diff_rate(py_counter, rs_counter):
-    """计算两个 Counter 之间的差异率。
+def compute_diff(py_counter, rs_counter):
+    """计算两个 Counter 之间的差异（剩余 diff Counter）。
 
-    返回 (diff_rate, missing_in_rs, missing_in_py)。
+    返回 (diff_counter, missing_in_rs, missing_in_py)。
+    - diff_counter: missing_in_rs + missing_in_py（合并后的总差异多重集合）
     - missing_in_rs: Python 有但 Rust 没有的条目
     - missing_in_py: Rust 有但 Python 没有的条目
     """
     missing_in_rs = py_counter - rs_counter  # Python 有但 Rust 没有
     missing_in_py = rs_counter - py_counter  # Rust 有但 Python 没有
-    total = max(sum(py_counter.values()), sum(rs_counter.values()), 1)
-    diff_count = sum(missing_in_rs.values()) + sum(missing_in_py.values())
-    diff_rate = diff_count / total
-    return diff_rate, missing_in_rs, missing_in_py
+    diff_counter = missing_in_rs + missing_in_py
+    return diff_counter, missing_in_rs, missing_in_py
+
+
+def subtract_known_diffs(diff_counter, known_diffs):
+    """从实际 diff 中减去已知差异，返回剩余差异。
+
+    v5 P2 修复：用 Counter 相减而非 `del Counter[key]` 或 `diff_rate < threshold`。
+    Counter 相减只减去允许的数量，如果实际差异超过已知数量，剩余部分非空 → 测试失败。
+    """
+    return diff_counter - known_diffs
 
 
 # ============================================
@@ -152,7 +193,9 @@ class TestRustPythonAlignment:
     def test_symbol_alignment(self, lang, filename, content, tmp_path):
         """符号核心字段一致（name, start_line, end_line）。
 
-        通过率门槛：≥ 99%（diff_rate < 0.01），已知差异语言使用放宽阈值。
+        断言逻辑：actual_diff - known_diffs == empty
+        - 已知差异从 KNOWN_SYMBOL_DIFFS 中减去
+        - 剩余差异必须为零（任何未知差异都会失败）
         不比较 qualified_name 和 kind（投影策略差异，由其他测试覆盖）。
         """
         py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
@@ -160,23 +203,31 @@ class TestRustPythonAlignment:
         py_syms = normalize_symbols(py_result["symbols"])
         rs_syms = normalize_symbols(rs_result["symbols"])
 
-        diff_rate, missing_in_rs, missing_in_py = compute_diff_rate(py_syms, rs_syms)
+        diff_counter, missing_in_rs, missing_in_py = compute_diff(py_syms, rs_syms)
 
-        # 已知差异语言使用放宽阈值
-        threshold = 0.01
-        if lang in KNOWN_SYMBOL_FAILURES:
-            reason, threshold = KNOWN_SYMBOL_FAILURES[lang]
+        # 从实际差异中减去已知差异
+        reason = ""
+        known = Counter()
+        if lang in KNOWN_SYMBOL_DIFFS:
+            reason, known = KNOWN_SYMBOL_DIFFS[lang]
+        remaining = subtract_known_diffs(diff_counter, known)
 
-        assert diff_rate < threshold, (
-            f"[{lang}] symbol diff rate {diff_rate:.2%} > {threshold:.0%}\n"
+        assert not remaining, (
+            f"[{lang}] symbol 对齐发现未知差异（已知差异已减去）\n"
+            f"  已知差异原因: {reason}\n"
+            f"  已知差异 Counter: {dict(known)}\n"
+            f"  剩余未知差异: {dict(remaining)}\n"
             f"  missing_in_rs (Python 有 Rust 没有): {dict(missing_in_rs)}\n"
-            f"  missing_in_py (Rust 有 Python 没有): {dict(missing_in_py)}"
+            f"  missing_in_py (Rust 有 Python 没有): {dict(missing_in_py)}\n"
+            f"  提示: 若为新增已知差异，请更新 KNOWN_SYMBOL_DIFFS[{lang!r}]"
         )
 
     def test_call_alignment(self, lang, filename, content, tmp_path):
         """调用关系一致（仅比较用户定义符号间的调用）。
 
-        通过率门槛：≥ 99%（diff_rate < 0.01）。
+        断言逻辑：actual_diff - known_diffs == empty
+        - 已知差异从 KNOWN_CALL_DIFFS 中减去
+        - 剩余差异必须为零（任何未知差异都会失败）
         只比较 callee_name 在双方符号名集合中的调用，避免标准库过滤差异。
         不比较 caller_qualified（投影策略差异）。
         """
@@ -194,36 +245,47 @@ class TestRustPythonAlignment:
         py_call_counter = normalize_calls(py_calls)
         rs_call_counter = normalize_calls(rs_calls)
 
-        diff_rate, missing_in_rs, missing_in_py = compute_diff_rate(
+        diff_counter, missing_in_rs, missing_in_py = compute_diff(
             py_call_counter, rs_call_counter
         )
 
-        # 已知差异语言使用放宽阈值
-        threshold = 0.01
-        if lang in KNOWN_CALL_FAILURES:
-            reason, threshold = KNOWN_CALL_FAILURES[lang]
+        # 从实际差异中减去已知差异
+        reason = ""
+        known = Counter()
+        if lang in KNOWN_CALL_DIFFS:
+            reason, known = KNOWN_CALL_DIFFS[lang]
+        remaining = subtract_known_diffs(diff_counter, known)
 
-        assert diff_rate < threshold, (
-            f"[{lang}] call diff rate {diff_rate:.2%} > {threshold:.0%}\n"
+        assert not remaining, (
+            f"[{lang}] call 对齐发现未知差异（已知差异已减去）\n"
+            f"  已知差异原因: {reason}\n"
+            f"  已知差异 Counter: {dict(known)}\n"
+            f"  剩余未知差异: {dict(remaining)}\n"
             f"  missing_in_rs (Python 有 Rust 没有): {dict(missing_in_rs)}\n"
-            f"  missing_in_py (Rust 有 Python 没有): {dict(missing_in_py)}"
+            f"  missing_in_py (Rust 有 Python 没有): {dict(missing_in_py)}\n"
+            f"  提示: 若为新增已知差异，请更新 KNOWN_CALL_DIFFS[{lang!r}]"
         )
 
     def test_symbol_count_alignment(self, lang, filename, content, tmp_path):
-        """符号数量大致一致（允许 ≤ 2 个差异，防止系统性遗漏）。
+        """符号数量一致性检查（辅助断言，防止 normalize 吞掉系统性遗漏）。
 
-        Rust 允许多提取（如 impl 块），但不允许大幅少于 Python。
-        TypeScript 已知有 5 个符号差距（Phase 1.4 待修复），单独放宽到 8。
+        主断言在 test_symbol_alignment 中已用 Counter 相减精确跟踪。
+        此测试作为额外检查：已知差异语言的符号数量差异应与 KNOWN_SYMBOL_DIFFS 中的条目数一致。
         """
         py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
 
         py_count = len(py_result["symbols"])
         rs_count = len(rs_result["symbols"])
 
-        # TypeScript 已知差距：Rust 缺少 constructor/箭头函数等边界情况
-        tolerance = 8 if lang == "typescript" else 2
-        assert rs_count >= py_count - tolerance, (
-            f"[{lang}] Rust symbol count {rs_count} 远少于 Python {py_count}"
+        # 已知差异允许的数量
+        known_tolerance = 0
+        if lang in KNOWN_SYMBOL_DIFFS:
+            _, known = KNOWN_SYMBOL_DIFFS[lang]
+            known_tolerance = sum(known.values())
+
+        assert abs(py_count - rs_count) <= known_tolerance, (
+            f"[{lang}] 符号数量差异 {abs(py_count - rs_count)} 超过已知差异 {known_tolerance}\n"
+            f"  Python: {py_count} symbols, Rust: {rs_count} symbols"
         )
 
 
@@ -272,7 +334,7 @@ class TestAlignmentEdgeCases:
         assert isinstance(rs_result["symbols"], list)
 
     def test_nested_class_alignment(self, tmp_path):
-        """嵌套类/方法：符号数量和行号应一致。"""
+        """嵌套类/方法：符号数量和行号应一致（零差异）。"""
         code = """\
 class Outer:
     class Inner:
@@ -290,10 +352,11 @@ class Outer:
         py_syms = normalize_symbols(py_result["symbols"])
         rs_syms = normalize_symbols(rs_result["symbols"])
 
-        diff_rate, missing_in_rs, missing_in_py = compute_diff_rate(py_syms, rs_syms)
+        diff_counter, missing_in_rs, missing_in_py = compute_diff(py_syms, rs_syms)
 
-        assert diff_rate < 0.01, (
-            f"nested class diff rate {diff_rate:.2%} > 1%\n"
+        # Python 嵌套类无已知差异，要求零差异
+        assert not diff_counter, (
+            f"nested class diff 非零（Python 无已知差异）\n"
             f"  missing_in_rs: {dict(missing_in_rs)}\n"
             f"  missing_in_py: {dict(missing_in_py)}"
         )

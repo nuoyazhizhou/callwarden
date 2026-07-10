@@ -286,80 +286,80 @@
       "project": "new-api",
       "files": 569,
       "rust": {
-        "time_sec": 0.23,
+        "time_sec": 0.3,
         "symbols": 4719,
         "calls": 27595
       },
       "python": {
-        "time_sec": 1.49,
+        "time_sec": 1.41,
         "symbols": 4668,
         "calls": 24512
       },
-      "speedup": 6.35,
+      "speedup": 4.71,
       "symbol_diff": 51
     },
     {
       "project": "admin",
       "files": 1754,
       "rust": {
-        "time_sec": 0.63,
+        "time_sec": 0.7,
         "symbols": 21610,
         "calls": 86732
       },
       "python": {
-        "time_sec": 3.61,
+        "time_sec": 3.5,
         "symbols": 20956,
         "calls": 85597
       },
-      "speedup": 5.73,
+      "speedup": 4.98,
       "symbol_diff": 654
     },
     {
       "project": "codex-lb",
       "files": 435,
       "rust": {
-        "time_sec": 0.35,
+        "time_sec": 0.33,
         "symbols": 6962,
         "calls": 34780
       },
       "python": {
-        "time_sec": 2.05,
+        "time_sec": 1.91,
         "symbols": 5691,
         "calls": 29050
       },
-      "speedup": 5.89,
+      "speedup": 5.75,
       "symbol_diff": 1271
     },
     {
       "project": "DeepSeek-TUI",
       "files": 326,
       "rust": {
-        "time_sec": 0.34,
+        "time_sec": 0.35,
         "symbols": 5224,
         "calls": 29212
       },
       "python": {
-        "time_sec": 4.09,
+        "time_sec": 3.76,
         "symbols": 5261,
         "calls": 8167
       },
-      "speedup": 12.1,
+      "speedup": 10.66,
       "symbol_diff": -37
     },
     {
       "project": "CLIProxyAPI",
       "files": 499,
       "rust": {
-        "time_sec": 0.3,
+        "time_sec": 0.31,
         "symbols": 4790,
         "calls": 46417
       },
       "python": {
-        "time_sec": 1.92,
+        "time_sec": 1.81,
         "symbols": 4724,
         "calls": 41112
       },
-      "speedup": 6.47,
+      "speedup": 5.81,
       "symbol_diff": 66
     }
   ]

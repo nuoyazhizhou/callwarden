@@ -90,7 +90,9 @@ Call Warden 当前是"每个工作区一个独立 SQLite 数据库"的单机工�
 
 **目标**：消灭 95%+ 的重复文件解析。
 
-**位置**：`/var/lib/call_warden/global_cache.db`（宿主机共享目录，所有用户只读访问）
+**位置**：`/var/lib/call_warden/global_cache.db`（宿主机共享目录）
+
+> **v5 P1 修复（权限隔离）**：Global CAS 文件权限改为 **daemon-only（0600）**，客户端**不直接打开 SQLite**。CAS 包含跨用户项目的符号正文，所有用户只读仍会造成跨项目源码泄露。企业模式下客户端只能通过 **UDS API + workspace/snapshot ACL** 查询，daemon 负责实际文件读写。单用户模式下 Local CAS（`~/.callwarden/cas.db`）保持当前用户可读写，不涉及跨用户泄露。
 
 **主键设计**（关键工程细节）：
 
@@ -698,8 +700,11 @@ fallback_warning = true
 ## 后续优先级
 
 1. **已完成** P26：git-aware 项目边界（解决 749→749 精确识别）
-2. **计划** 阶段 1：CAS 全局缓存（核心收益，95% 重复解析消灭）
-3. **计划** 阶段 2：Daemon + UDS（多用户协同 + Job Dedup）
-4. **计划** 阶段 3：工具链库 + 路径穿越（企业级完善）
+2. **计划** Phase 1 + Phase 3A：Rust 多语言 parse + Local CAS parse cache（详见 [enterprise-phase1-phase3-detail.md v5](enterprise-phase1-phase3-detail.md)）
+3. **计划** Phase 2：Daemon + UDS（多用户协同 + Job Dedup，Global CAS 在此阶段接入）
+4. **计划** Phase 3B：workspace 查询路径迁移 + resolved edge store
+5. **计划** Phase 6：工具链库 + 路径穿越（企业级完善）
+
+> **注**：原"阶段 1/2/3"命名已废弃，改为 v5 设计文档的 Phase 1/2/3A/3B/6 命名。
 
 每阶段独立可交付，每阶段都有明确的收益和验证标准。

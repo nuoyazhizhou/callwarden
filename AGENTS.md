@@ -281,6 +281,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
    - SQLite WAL 模式下 `immutable=1` 只读连接读到旧数据 → 加载前 `PRAGMA wal_checkpoint(PASSIVE)`（见第 7 条）
    - rusqlite `SQLITE_OPEN_NOMUTEX` 常量名错误 → 正确为 `SQLITE_OPEN_NO_MUTEX`
    - Windows `.pyd` 文件锁定导致 `pip install` 失败 → 解压 wheel 到 `target/pyinstall` + `PYTHONPATH`
+   - PowerShell 中复杂 `rg` alternation/括号转义易产生 `regex parse error: unclosed group` → 拆成多个简单 `-e` 模式或改用 `Select-String`（见第 10 条）
 
 7. **SQLite WAL 模式与只读连接**：GraphStore 用 `immutable=1` URI 打开 SQLite（跳过 WAL），因此新建数据库的 schema 和数据可能还在 WAL 中未被 checkpoint。`_get_graph_store()` 加载前必须先执行 `PRAGMA wal_checkpoint(PASSIVE)`，否则会读到旧数据（报 "no such table"）。同理，任何用 `immutable=1` 或只读模式打开 SQLite 的场景，都需确保写入方已 checkpoint。
 
@@ -292,6 +293,8 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
    B-P7b 设计原则：单值查询（get_stats）保持 Python SQL；多行查询（get_callers/get_callees/search_symbols）走 Rust 短路。
 
 9. **TokenSlim-publish2 编码处理可复用**：`testcode/TokenSlim-publish2/src/core/encoding_fallback/mod.rs` 实现了完整的编码检测链（BOM → UTF-16/32 无 BOM 启发式 → chardetng 统计检测 → locale 提示 → 14 种编码候选打分 → 混合编码行级解码）。当前 Call Warden 的 `config.py:read_file_normalized` 只做 UTF-8 → latin-1 两步降级，遇到 GBK/Shift-JIS/Big5 等亚洲编码会产生乱码。如需改进编码处理，可参考该实现。
+
+10. **PowerShell 下避免单条复杂 `rg` 正则**：PowerShell 双引号、反斜杠和括号混用时，复杂 alternation 容易在传给 `rg` 前破坏转义，报 `regex parse error: unclosed group`。多个关键词应使用独立的简单模式，例如 `rg -n -e "parse_file_lang" -e "MP_THRESHOLD" db tests`；包含大量括号或引号时改用 `Get-Content ... | Select-String -Pattern 'pattern1|pattern2'`，不要把代码片段转义塞进一个巨大正则。
 
 ## 文档索引
 

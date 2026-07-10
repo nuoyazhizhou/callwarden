@@ -1,26 +1,38 @@
 # Enterprise Phase 1 + Phase 3A + Phase 3B 详细实施设计
 
-状态：Draft v4（评审第三轮 P1 修订版）
+状态：Draft v5（评审第四轮 P1 修订版）
 日期：2026-07-10
 父文档：
 - [enterprise-daemon-shared-snapshot-plan.md](enterprise-daemon-shared-snapshot-plan.md)（主架构）
 - [enterprise-architecture-evolution.md](enterprise-architecture-evolution.md)（演进背景）
 
-## v4 变更摘要（针对评审第三轮 4 个 P1）
+## v5 变更摘要（针对评审第四轮 5 个 P1）
 
-1. **[P1#1] CAS 自包含**：新增 `cas_symbol_contents` 表到 CAS DB（存符号正文 content + start_byte/end_byte），移除跨库 FK（`symbol_hash` 不再指向 workspace DB 的 `symbol_contents`）。CAS 命中后可独立回填 workspace 的 `symbol_contents`。
-2. **[P1#2] GC 根集合完整**：GC 遍历 `~/.callwarden/<hash>/` 下**所有** workspace DB 的 manifest，聚合完整 live key 集合。增加 workspace 失联宽限期（不立即视为无引用）。
-3. **[P1#3] 统一 symbol identity**：引入 `workspace_symbols` 统一身份表，clean/dirty 都投影到此表。`workspace_resolved_edges.caller_symbol_id` / `callee_symbol_id` 只引用 `workspace_symbols.id`，消除 ID 碰撞。`cas_symbols` 增加 `local_qualified_name`（内容级，含 lexical parent chain），`workspace_symbols.qualified_name` = `module_path + local_qualified_name`。
-4. **[P1#4] Dirty overlay 按 rel_path 屏蔽**：文件变 dirty 时在 workspace 事务中删除该 rel_path 的旧 projection（tombstone by rel_path）。Clean 查询 JOIN manifest 校验 `is_dirty = 0`。Overlay 边界改为 rel_path，不是 qualified_name。
+1. **[P1#1] Global CAS 权限**：企业模式下 CAS 文件权限改为 daemon-only（0600），客户端不直接打开 SQLite，只通过 UDS API + workspace/snapshot ACL 查询。详见 [enterprise-architecture-evolution.md](enterprise-architecture-evolution.md)。
+2. **[P1#2] GC fail-closed**：GC 改为两阶段——先在事务外扫描所有 workspace DB 聚合 live set（任何 workspace 读取失败即**中止本次 GC**，不删除任何条目），全部扫描成功后再开短事务执行 mark-sweep。修正 `row_factory` 设置、`grace_threshold` 参与删除判断、删除顺序（先子表后正文表）。
+3. **[P1#3] Dirty tombstone 删除顺序**：`mark_file_dirty` 改为**先删 edge 再删 symbol**。`workspace_resolved_edges` 的 FK 增加 `ON DELETE CASCADE`，即使先删 symbol 也能自动清理 edge。
+4. **[P1#4] cas_publish() 完整重写**：发布流程改为"正文 payload → symbol occurrence → raw calls/imports → ready"四阶段，写入 `cas_symbol_contents` / `symbol_content_hash` / `local_qualified_name` / `lexical_parent_local_id` / `call_ordinal` 等 v4 全部新增字段。补 busy retry 包装层。
+5. **[P1#5] start_byte/end_byte 移到 cas_symbols**：byte range 是符号在具体文件中的位置，不是正文属性。`cas_symbol_contents` 只存 `content_hash + content`；`start_byte`/`end_byte` 移到 `cas_symbols`。
 
-**v3 已修复的 5 个 P1**（保留）：CAS 物理存储闭合 / 内容级路径级拆分 / resolved edge store / 多 workspace 隔离扩展 / CAS 原子发布协议。
+## v5 P2 修复
 
-## v4 P2 修复
+- 查询列名：Clean 查询的 `cs.start_line/end_line/depth` 改为 `csym.start_line/end_line/depth`（指向 `cas_symbols`）；dirty 查询移除不存在的 `wsym.depth`，改用 `s.depth`。
+- 组合 FK：`workspace_resolved_edges` 的 FK 改为 `FOREIGN KEY (workspace_id, caller_symbol_id) REFERENCES workspace_symbols(workspace_id, id) ON DELETE CASCADE`，保证 edge 与 symbol 同 workspace。
+- ATTACH 参数化：`ATTACH 'file:{cas_db_path}?mode=ro'` 改为参数化 `ws_conn.execute("ATTACH DATABASE ? AS cas_db", (f"file:{cas_db_path}?mode=ro",))`，workspace 主连接启用 URI。
+- GC 删除顺序：先删 `cas_symbols` / `cas_raw_calls` / `cas_imports`，再删无引用的 `cas_symbol_contents`，最后删 `cas_file_cache`。
+- Phase 3B 验收：`workspace_symbol_projection` 改为 `workspace_symbols`。
+- Alignment whitelist：从 `diff_rate < threshold` 改为 Counter 相减——已知差异作为 Counter 从实际 diff 中减去，要求剩余差异为零。
 
-- CAS DB 并发：`busy_timeout=5000` + 有界重试 + 重新检查 `state=ready`（不再假设单进程独占）。
-- CAS DB schema version：增加 `cas_schema_meta` 表记录 `cas_schema_version` / `min_reader_version`。
-- UNIQUE 约束：`cas_raw_calls` 增加 `call_ordinal` 列避免吞掉同行重复调用；resolved edge 同理。
-- ATTACH 只读：用 `ATTACH 'file:...?mode=ro' AS cas_db`，JOIN 用 `cas_db.cas_symbols` 全名。
+## v4 已修复的 4 个 P1（保留）
+
+1. CAS 自包含（`cas_symbol_contents`）/ 2. GC 扫描所有 workspace / 3. 统一 symbol identity（`workspace_symbols`）/ 4. Dirty overlay 按 rel_path 屏蔽。
+
+## v4 P2 修复（保留）
+
+- CAS DB 并发：`busy_timeout=5000` + 有界重试 + 重新检查 `state=ready`。
+- CAS DB schema version：`cas_schema_meta` 表。
+- UNIQUE 约束：`call_ordinal` 列。
+- ATTACH 只读 + `cas_db.cas_symbols` 全名引用。
 - `enterprise-architecture-evolution.md` 旧章节标记废弃。
 
 ## 实施范围（v3 调整后）
@@ -120,7 +132,7 @@ Phase 2（daemon skeleton + UDS）、Phase 4+（snapshot sharing / ACL / GraphSn
 Phase 1：
 - 支持 11 种语言默认走 Rust `batch_parse_files_lang_pool`，非支持语言回退 Python。
 - 大批量解析时父进程 RSS 不再持有全部 Python dict 峰值（沿用 P30 流式 pool）。
-- 与 Python parser 核心字段 alignment test 通过率 ≥ 99%（按归一化 key 比较）。
+- 与 Python parser 核心字段 alignment test：actual_diff - known_diffs == empty（Counter 相减，剩余差异为零；已知差异显式记录在 `KNOWN_SYMBOL_DIFFS` / `KNOWN_CALL_DIFFS` 中）。
 
 Phase 3A：
 - **单用户** 50 个同 repo clean workspace 中，相同文件 parse 只发生一次（CAS 命中率 ≥ 95%，验收口径 **parse miss = 0**）。
@@ -130,7 +142,7 @@ Phase 3A：
 - CAS 写入原子性：崩溃后 CAS 表无半成品记录（`state=building` 条目被 GC 清理）。
 
 Phase 3B：
-- 查询路径走 `workspace_symbol_projection` + `workspace_resolved_edges`，dirty 走 `symbols`/`calls` overlay。
+- 查询路径走 `workspace_symbols` + `workspace_resolved_edges`，dirty 走 `symbols`/`calls` overlay。
 - 多 workspace 共享 CAS 时，符号查询返回的 `qualified_name` / `content` 跨 workspace 一致。
 - `get_callers`/`get_callees` 走 `workspace_resolved_edges`，按 `workspace_id` 过滤。
 - `GraphStore` 加载按 `workspace_id` 过滤，不串库。
@@ -210,9 +222,9 @@ if non_rust_files:
 - 资源文件预过滤（`_is_resource_file`）仍在 Python 侧执行，避免 Rust 读取大文件。
 - 失败 fallback：Rust 扩展不可用、某语言 Rust 不支持、单文件 parse 异常 → 回退 Python parser。需补 **Rust pool 运行时异常**和**单文件 error 后真正回退 Python**的集成测试。
 
-#### 2.2.2 Alignment Tests（Counter 多重集合比较）
+#### 2.2.2 Alignment Tests（Counter 多重集合比较 + Counter 相减）
 
-新增 `tests/test_rust_python_alignment.py`：
+新增 `tests/test_rust_python_alignment.py`（v5 P2 修复：Counter 相减白名单）：
 
 ```python
 # 对每种语言，准备 5-10 个样本文件，覆盖：
@@ -224,33 +236,62 @@ if non_rust_files:
 
 from collections import Counter
 
+# v5 P2: 已知差异用 Counter 表示（精确到每个 tuple 的允许次数）
+# 格式: Dict[lang, (reason, Counter_of_known_diffs)]
+# 断言逻辑：actual_diff - known_diffs == empty（剩余差异必须为零）
+#   Counter 相减只减去允许的数量，不会一次放过某 key 的全部差异次数
+#   （`del Counter[key]` 的缺陷），也比 `diff_rate < threshold` 更精确——
+#   只有显式记录的差异才被允许，任何新差异都会失败。
+KNOWN_SYMBOL_DIFFS: dict[str, tuple[str, Counter]] = {
+    "typescript": (
+        "Rust TypeScript parser 未提取任何符号，Phase 1.4 待修复",
+        Counter({
+            ("User", 3, 9): 1, ("add", 11, 13): 1,
+            ("constructor", 4, 4): 1, ("greet", 6, 8): 1,
+            ("main", 15, 20): 1,
+        }),
+    ),
+    "php": (
+        "Rust 不提取 PHP property 符号，Phase 1.4 待修复",
+        Counter({("value", 7, 7): 1}),
+    ),
+    # ... 其余已知差异语言
+}
+
 def normalize_symbols(symbols):
-    """按 (qualified_name, kind, start_line, end_line) 归一化为 Counter 多重集合。
+    """按 (name, start_line, end_line) 归一化为 Counter 多重集合。
 
     用 Counter 而非 dict：同一行可能有多个相同调用（如 foo(); foo();），
     dict 会吞掉重复，Counter 保留多重性。
+    不比较 qualified_name：Rust/Python 的 module_path 策略不同（投影差异）。
     """
     return Counter(
-        (s["qualified_name"], s["kind"], s["start_line"], s["end_line"])
+        (s["name"], s["start_line"], s["end_line"])
         for s in symbols
     )
 
-def normalize_calls(calls):
-    """按 (caller_qualified, callee_name, call_line) 归一化为 Counter。"""
-    return Counter(
-        (c["caller_qualified"], c["callee_name"], c["call_line"])
-        for c in calls
-    )
+def subtract_known_diffs(diff_counter, known_diffs):
+    """从实际 diff 中减去已知差异，返回剩余差异。
+
+    v5 P2 修复：用 Counter 相减而非 `del Counter[key]` 或 `diff_rate < threshold`。
+    Counter 相减只减去允许的数量，如果实际差异超过已知数量，剩余非空 → 测试失败。
+    """
+    return diff_counter - known_diffs
 
 @pytest.mark.parametrize("lang", [
     "python", "rust", "go", "java", "typescript", "javascript",
     "ruby", "php", "scala", "csharp", "cpp",
 ])
-def test_symbol_alignment(lang, sample_files, known_diff_whitelist):
-    """Rust parser 与 Python parser 输出的 symbols 核心字段一致（Counter 多重集合比较）。"""
+def test_symbol_alignment(lang, sample_files):
+    """Rust parser 与 Python parser 输出的 symbols 核心字段一致。
+
+    断言逻辑：actual_diff - known_diffs == empty
+    - 已知差异从 KNOWN_SYMBOL_DIFFS 中减去
+    - 剩余差异必须为零（任何未知差异都会失败）
+    """
     for path in sample_files[lang]:
-        py_result = python_parser.parse_file(path, module_path="")
-        rs_result = parse_file_lang(path, module_path="", lang=lang)
+        py_result = python_parser.parse_file(path, module_path="test.align")
+        rs_result = parse_file_lang(path, module_path="test.align", lang=lang)
 
         py_syms = normalize_symbols(py_result["symbols"])
         rs_syms = normalize_symbols(rs_result["symbols"])
@@ -258,37 +299,31 @@ def test_symbol_alignment(lang, sample_files, known_diff_whitelist):
         # Counter 减法：找出多/少的条目（保留多重性）
         missing_in_rs = py_syms - rs_syms   # Python 有但 Rust 没有
         missing_in_py = rs_syms - py_syms   # Rust 有但 Python 没有
+        diff_counter = missing_in_rs + missing_in_py  # 合并总差异
 
-        # 过滤已知差异白名单（显式管理例外，不静默容忍）
-        diff_key = (lang, path)
-        if diff_key in known_diff_whitelist:
-            allowed = known_diff_whitelist[diff_key]
-            for k in list(missing_in_rs):
-                if k in allowed:
-                    del missing_in_rs[k]
-            for k in list(missing_in_py):
-                if k in allowed:
-                    del missing_in_py[k]
+        # v5 P2: 从实际差异中减去已知差异（Counter 相减，保留多重性）
+        known = Counter()
+        if lang in KNOWN_SYMBOL_DIFFS:
+            _, known = KNOWN_SYMBOL_DIFFS[lang]
+        remaining = diff_counter - known
 
-        total = max(sum(py_syms.values()), sum(rs_syms.values()), 1)
-        diff_count = sum(missing_in_rs.values()) + sum(missing_in_py.values())
-        diff_rate = diff_count / total
-        assert diff_rate < 0.01, (
-            f"{path}: symbol diff rate {diff_rate:.2%} > 1%\n"
+        assert not remaining, (
+            f"[{lang}] {path}: symbol 对齐发现未知差异（已知差异已减去）\n"
+            f"  剩余未知差异: {dict(remaining)}\n"
             f"  missing_in_rs: {dict(missing_in_rs)}\n"
-            f"  missing_in_py: {dict(missing_in_py)}"
+            f"  missing_in_py: {dict(missing_in_py)}\n"
+            f"  提示: 若为新增已知差异，请更新 KNOWN_SYMBOL_DIFFS[{lang!r}]"
         )
 
-        # raw_calls 也纳入对齐
-        py_calls = normalize_calls(py_result.get("raw_calls", []))
-        rs_calls = normalize_calls(rs_result.get("raw_calls", []))
-        # ... 同样集合比较
+        # raw_calls 也纳入对齐（同样 Counter 相减逻辑）
+        # ... 见 KNOWN_CALL_DIFFS
 ```
 
-通过率门槛：
-- ≥ 99% 的 symbol 核心字段（name/qualified_name/kind/start_line/end_line）一致。
-- < 1% 差异进入"已知差异清单"，逐项分析是 Python bug 还是 Rust bug。
-- raw_calls / imports 也纳入对齐验收。
+断言逻辑（v5 P2 修复）：
+- **已知差异用 Counter 表示**，从实际 diff Counter 中**相减**，要求**剩余差异为零**。
+- 不会一次放过某 key 的全部差异次数（`del Counter[key]` 的缺陷），也不允许任意比例的差异（`diff_rate < threshold` 的缺陷）。
+- 只有显式记录的差异才被允许，任何新差异都会失败——迫使开发者更新白名单或修复 parser。
+- Counters 由 `tests/_discover_alignment_diffs.py` 脚本发现后填入（运行 `python tests/_discover_alignment_diffs.py` 重新生成）。
 
 #### 2.2.3 性能验证
 
@@ -311,7 +346,7 @@ def test_symbol_alignment(lang, sample_files, known_diff_whitelist):
 
 | 风险 | 缓解 |
 |------|------|
-| Rust parser 与 Python parser 结果不一致 | alignment tests 锁定差异，< 1% 差异进清单 |
+| Rust parser 与 Python parser 结果不一致 | alignment tests 锁定差异（Counter 相减，剩余差异为零），已知差异进 `KNOWN_*_DIFFS` 清单 |
 | Rust 扩展在某些环境编译失败 | 保留 Python fallback，`CW_DISABLE_RUST_PARSE` 可关闭 |
 | tree-sitter grammar 版本差异 | Cargo.toml 锁定版本，alignment tests 持续监控 |
 | Rust 多语言 parse 速度反而慢于 Python ProcessPool | benchmark 验证，不达标不切换默认路径 |
@@ -377,16 +412,15 @@ CREATE TABLE IF NOT EXISTS cas_file_cache (
 CREATE INDEX IF NOT EXISTS idx_cas_content_hash ON cas_file_cache(content_hash);
 CREATE INDEX IF NOT EXISTS idx_cas_language ON cas_file_cache(language);
 
--- CAS 符号内容表（v4 P1#1 修复：CAS 自包含，不再外键指向 workspace DB 的 symbol_contents）
+-- CAS 符号内容表（v5 P1#5 修复：byte range 移到 cas_symbols，正文表只存 content_hash + content）
 CREATE TABLE IF NOT EXISTS cas_symbol_contents (
     content_hash TEXT PRIMARY KEY,      -- 符号正文内容 hash
-    content TEXT NOT NULL,             -- 符号正文文本
-    start_byte INTEGER DEFAULT 0,
-    end_byte INTEGER DEFAULT 0
+    content TEXT NOT NULL              -- 符号正文文本
 );
 
 -- CAS 符号表：内容级符号事实（不含路径信息）
 -- qualified_name / module_path 已移除，由 workspace_symbols 生成
+-- v5 P1#5: start_byte/end_byte 从 cas_symbol_contents 移到此处（byte range 是文件位置，非正文属性）
 CREATE TABLE IF NOT EXISTS cas_symbols (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cas_key TEXT NOT NULL,
@@ -400,6 +434,8 @@ CREATE TABLE IF NOT EXISTS cas_symbols (
     end_line INTEGER NOT NULL,
     start_col INTEGER DEFAULT 0,
     end_col INTEGER DEFAULT 0,
+    start_byte INTEGER DEFAULT 0,      -- v5 P1#5: 符号在文件中的字节偏移（从 cas_symbol_contents 移来）
+    end_byte INTEGER DEFAULT 0,        -- v5 P1#5: 同上
     visibility TEXT DEFAULT 'private',
     signature TEXT DEFAULT '',
     has_comment INTEGER DEFAULT 0,
@@ -441,8 +477,9 @@ CREATE TABLE IF NOT EXISTS cas_imports (
 CREATE INDEX IF NOT EXISTS idx_cas_imports_key ON cas_imports(cas_key);
 ```
 
-**v4 P1#1 自包含说明**：
-- `cas_symbol_contents` 存储符号正文（与现有 workspace DB 的 `symbol_contents` 表结构一致）。
+**v4 P1#1 自包含说明 + v5 P1#5 修正**：
+- `cas_symbol_contents` 只存 `content_hash + content`（v5 修正：byte range 移到 `cas_symbols`，因为相同正文出现在不同文件偏移不同）。
+- `cas_symbols.start_byte/end_byte` 记录符号在文件中的字节偏移。
 - CAS 命中后，从 `cas_symbol_contents` 复制到 workspace 的 `symbol_contents`，从 `cas_symbols` + path 信息生成 `workspace_symbols` + `symbols`。
 - 不再有任何跨库 FK（`symbol_content_hash` 指向 CAS DB 内部的 `cas_symbol_contents`）。
 - `cas_symbols.local_qualified_name`：内容级限定名（如 `Parser.tokenize`），基于 lexical parent chain 拼接。workspace 级 `qualified_name` = `module_path + "." + local_qualified_name`（如 `my_module.Parser.tokenize`）。
@@ -469,6 +506,7 @@ CREATE TABLE IF NOT EXISTS workspace_symbols (
     end_line INTEGER NOT NULL,
     source TEXT NOT NULL DEFAULT 'cas', -- 'cas' = clean 投影，'dirty' = dirty 文件
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    UNIQUE(workspace_id, id),           -- v5 P2: 组合唯一约束，供 workspace_resolved_edges 组合 FK 引用
     UNIQUE(workspace_id, rel_path, local_symbol_id, source)
 );
 
@@ -553,24 +591,48 @@ Phase 3A 改造后：
 4. 解析 resolved_edges（依赖 build context，每 workspace 独立，不共享）
 ```
 
-#### 3.5.1 CAS 原子发布协议（P1#5 修复）
+#### 3.5.1 CAS 原子发布协议（v5 P1#4 重写：四阶段 + busy retry）
 
-**问题**：原设计先写 `cas_file_cache`，再写子表。进程中途崩溃会导致"只有父记录、缺少 symbols/calls"的半成品条目被下次误判为命中。
+**v4 问题**：`cas_publish()` 仍是 v3 写法，未写入 `cas_symbol_contents` / `symbol_content_hash` / `local_qualified_name` / `lexical_parent_local_id` / `call_ordinal` 等 v4 新增字段。当前伪代码无法生成一个满足 v4 schema 的 ready 条目。
 
-**方案**：单事务原子发布 + `state` 状态机。
+**v5 修复**：发布流程改为"正文 payload → symbol occurrence → raw calls/imports → ready"四阶段，补齐全部 v4 字段，并加 busy retry 包装层。
 
 ```python
-def cas_publish(cas_key, parse_result, cas_conn):
-    """原子发布 CAS 条目（单事务，崩溃安全）"""
+def cas_publish_with_retry(cas_key, parse_result, cas_conn, max_retries=3):
+    """带 busy retry 的 CAS 发布包装层。
+
+    CAS DB 可能被同 UID 的其他 CLI / hook / VS Code 进程占用，
+    BEGIN IMMEDIATE 遇到 database is locked 时有界重试。
+    """
+    for attempt in range(max_retries):
+        try:
+            return _cas_publish_impl(cas_key, parse_result, cas_conn)
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e) and attempt < max_retries - 1:
+                time.sleep(0.1 * (attempt + 1))  # 100ms, 200ms, 300ms
+                # 重试前重新检查：可能其他进程已经发布了 ready 条目
+                row = cas_conn.execute(
+                    "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
+                ).fetchone()
+                if row and row["state"] == "ready":
+                    return  # 其他进程已完成发布
+                continue
+            raise
+
+
+def _cas_publish_impl(cas_key, parse_result, cas_conn):
+    """原子发布 CAS 条目（单事务，崩溃安全）
+
+    v5 P1#4: 四阶段写入——
+    1. 正文 payload → cas_symbol_contents（按 content_hash 去重）
+    2. symbol occurrence → cas_symbols（含 symbol_content_hash / local_qualified_name /
+       lexical_parent_local_id / start_byte / end_byte 等 v4 全部新增字段）
+    3. raw calls / imports → cas_raw_calls / cas_imports（含 call_ordinal）
+    4. state=building → ready（最后发布）
+    """
+    cas_conn.execute("BEGIN IMMEDIATE")  # 获取写锁
     try:
-        cas_conn.execute("BEGIN IMMEDIATE")  # 获取写锁
-        # 1. 先插父记录，state=building（不可被命中）
-        cas_conn.execute(
-            "INSERT OR IGNORE INTO cas_file_cache "
-            "(cas_key, content_hash, language, state, parsed_at, ...) VALUES (?, ?, ?, 'building', ?, ...)",
-            (cas_key, content_hash, language, time.time(), ...)
-        )
-        # 检查是否已存在 ready 条目（并发同 key）
+        # 0. 检查是否已存在 ready 条目（并发同 key）
         row = cas_conn.execute(
             "SELECT state FROM cas_file_cache WHERE cas_key = ?", (cas_key,)
         ).fetchone()
@@ -578,23 +640,75 @@ def cas_publish(cas_key, parse_result, cas_conn):
             cas_conn.execute("ROLLBACK")
             return  # 已有 ready 条目，跳过
 
-        # 2. 写子表（同一事务，UNIQUE 约束防重）
+        # 1. 插父记录，state=building（不可被命中）
+        content_hash = parse_result["content_hash"]
+        language = parse_result["language"]
+        cas_conn.execute(
+            """INSERT OR IGNORE INTO cas_file_cache
+               (cas_key, content_hash, language, parser_version,
+                callwarden_version, extraction_config_version, state, parsed_at)
+               VALUES (?, ?, ?, ?, ?, ?, 'building', ?)""",
+            (cas_key, content_hash, language,
+             parse_result.get("parser_version", ""),
+             parse_result.get("callwarden_version", ""),
+             parse_result.get("extraction_config_version", ""),
+             time.time())
+        )
+
+        # 2. 正文 payload → cas_symbol_contents（按 content_hash 去重）
         for sym in parse_result["symbols"]:
+            sym_content_hash = sym.get("content_hash") or compute_content_hash(sym.get("content", ""))
             cas_conn.execute(
-                "INSERT OR IGNORE INTO cas_symbols "
-                "(cas_key, local_symbol_id, name, kind, ...) VALUES (?, ?, ?, ?, ...)",
-                (cas_key, sym["local_id"], sym["name"], sym["kind"], ...)
-            )
-        for call in parse_result["raw_calls"]:
-            cas_conn.execute(
-                "INSERT OR IGNORE INTO cas_raw_calls "
-                "(cas_key, caller_local_id, caller_name, callee_name, call_line) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (cas_key, call["caller_local_id"], call["caller_name"],
-                 call["callee_name"], call["call_line"])
+                "INSERT OR IGNORE INTO cas_symbol_contents (content_hash, content) VALUES (?, ?)",
+                (sym_content_hash, sym.get("content", ""))
             )
 
-        # 3. 最后发布：state=building → ready（同一事务）
+        # 3. symbol occurrence → cas_symbols（含 v4 全部新增字段）
+        for sym in parse_result["symbols"]:
+            sym_content_hash = sym.get("content_hash") or compute_content_hash(sym.get("content", ""))
+            cas_conn.execute(
+                """INSERT OR IGNORE INTO cas_symbols
+                   (cas_key, local_symbol_id, symbol_content_hash, name,
+                    local_qualified_name, lexical_parent_local_id, kind,
+                    start_line, end_line, start_col, end_col,
+                    start_byte, end_byte, visibility, signature, has_comment, depth)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (cas_key, sym["local_id"], sym_content_hash, sym["name"],
+                 sym["local_qualified_name"],           # v4: 内容级限定名
+                 sym.get("lexical_parent_local_id", 0), # v4: 词法父 ID
+                 sym["kind"],
+                 sym["start_line"], sym["end_line"],
+                 sym.get("start_col", 0), sym.get("end_col", 0),
+                 sym.get("start_byte", 0),              # v5 P1#5: 从 cas_symbol_contents 移来
+                 sym.get("end_byte", 0),                # v5 P1#5: 同上
+                 sym.get("visibility", "private"),
+                 sym.get("signature", ""),
+                 int(sym.get("has_comment", False)),    # v4: bool → int 归一化
+                 sym.get("depth", -1))
+            )
+
+        # 4. raw calls → cas_raw_calls（含 call_ordinal）
+        for call in parse_result.get("raw_calls", []):
+            cas_conn.execute(
+                """INSERT OR IGNORE INTO cas_raw_calls
+                   (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (cas_key, call["caller_local_id"], call["caller_name"],
+                 call["callee_name"], call["call_line"],
+                 call.get("call_ordinal", 0))           # v4 P2: 同行调用序号
+            )
+
+        # 5. imports → cas_imports
+        for imp in parse_result.get("imports", []):
+            import_path = imp["module"] if isinstance(imp, dict) else imp  # 兼容 List[str]/List[Dict]
+            import_kind = imp.get("kind", "import") if isinstance(imp, dict) else "import"
+            cas_conn.execute(
+                """INSERT OR IGNORE INTO cas_imports
+                   (cas_key, import_path, import_kind) VALUES (?, ?, ?)""",
+                (cas_key, import_path, import_kind)
+            )
+
+        # 6. 最后发布：state=building → ready（同一事务）
         cas_conn.execute(
             "UPDATE cas_file_cache SET state = 'ready' WHERE cas_key = ?",
             (cas_key,)
@@ -611,10 +725,16 @@ def cas_publish(cas_key, parse_result, cas_conn):
 ```
 
 **关键点**：
+- **四阶段顺序**：正文 payload → symbol occurrence → raw calls/imports → ready。每阶段在同一事务内，全部成功后才 `state=ready`。
+- `cas_symbol_contents` 按 `content_hash` 去重（`INSERT OR IGNORE`），相同正文只存一份。
+- `cas_symbols.symbol_content_hash` 引用 CAS DB 内部的 `cas_symbol_contents`（自包含 FK）。
+- `cas_symbols` 写入 `local_qualified_name` / `lexical_parent_local_id` / `start_byte` / `end_byte` 等 v4 新增字段。
+- `cas_raw_calls` 写入 `call_ordinal`（v4 P2：同行调用序号）。
+- `has_comment` 做 `bool → int` 归一化（Rust parser 返回 bool，Python 期望 int）。
+- `imports` 兼容 `List[str]` 和 `List[Dict]` 两种格式（Rust 返回 str，Python 返回 Dict）。
+- **busy retry 包装层**：`cas_publish_with_retry` 在 `database is locked` 时有界重试，重试前重新检查 `state=ready`（可能其他进程已完成发布）。
 - `state=building` 的条目**不可被命中**（查询条件加 `WHERE state = 'ready'`）。
 - 崩溃后 GC 清理 `state=building` 的孤儿条目（见 §3.8）。
-- 子表有 `UNIQUE` 约束，并发同 key 写入时 `INSERT OR IGNORE` 幂等。
-- 整个发布在**单事务**内完成，要么全写入要么全回滚。
 
 收益：
 - **CAS 命中时跳过 Rust parse**（最耗时的步骤）。
@@ -737,65 +857,75 @@ PyO3 绑定（[lib.rs](../../rust_ext/src/lib.rs)）同步更新，Python 侧 `_
 - GraphStore 会把其他 workspace 的调用边加载进 CSR 索引。
 - `get_callers`/`get_callees` 会返回其他 workspace 的调用方。
 
-### 3.8 GC 策略（v4 P1#2 修复：扫描所有 workspace DB + 宽限期）
+### 3.8 GC 策略（v5 P1#2 重写：fail-closed 两阶段 + 删除顺序修正）
 
-**v3 问题**：`gc_cas(cas_conn, ws_conn)` 只读取当前 workspace 的 manifest，却清理整个 per-UID CAS。在 workspace A 运行 GC 会删掉只被 B/C 引用的 key。
+**v4 三个问题**：
+1. 只读连接没有设置 `row_factory`，`r["cas_key"]` 对默认 tuple 会报错，被宽泛 `except` 吞掉 → live set 算空 → 误删全部。
+2. `grace_threshold` 计算了但完全没有使用；DB 读取失败后直接跳过，其引用没有进入 live set，随后照样删除。
+3. 扫描所有 workspace 时已经持有 CAS `BEGIN IMMEDIATE`，会长时间阻塞 refresh。
 
-**v4 修复**：GC 遍历 `~/.callwarden/<hash>/` 下**所有** workspace DB，聚合完整 live key 集合。失联 workspace 有宽限期。
+**v5 修复**：fail-closed 两阶段——
+1. **阶段 1（事务外扫描）**：不开 CAS 事务，遍历所有 workspace DB 聚合 live set。**任何 workspace 读取失败即中止本次 GC**，不删除任何条目。
+2. **阶段 2（短事务 mark-sweep）**：全部扫描成功后，开短事务执行删除。删除顺序：先子表（`cas_symbols` / `cas_raw_calls` / `cas_imports`），再正文表（`cas_symbol_contents`），最后父表（`cas_file_cache`）。
 
 ```python
 def gc_cas(cas_conn, grace_period_days=7):
     """清理无引用的 CAS 条目 + 孤儿 building 条目
 
-    v4 P1#2 修复：扫描所有 workspace DB，不只当前 workspace。
+    v5 P1#2 重写：fail-closed 两阶段。
+    阶段 1：事务外扫描所有 workspace DB 聚合 live set（fail-closed）。
+    阶段 2：短事务 mark-sweep（先子表后正文表后父表）。
     """
     import glob
+
+    # ===== 阶段 1：事务外扫描所有 workspace DB（fail-closed）=====
+    cas_dir = os.path.expanduser("~/.callwarden")
+    live_keys = set()
+    now = time.time()
+    grace_threshold = now - grace_period_days * 86400
+    scanned_workspaces = []
+
+    for ws_db_path in glob.glob(os.path.join(cas_dir, "*", "callwarden.db")):
+        try:
+            ws_conn = sqlite3.connect(f"file:{ws_db_path}?mode=ro", uri=True)
+            ws_conn.row_factory = sqlite3.Row  # v5 修复：必须设置 row_factory，否则 r["cas_key"] 报错
+            # 检查是否有 workspace_manifests 表（旧版本可能没有）
+            has_table = ws_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_manifests'"
+            ).fetchone()
+            if not has_table:
+                ws_conn.close()
+                continue
+            # 检查 workspace 是否在宽限期内活跃（mtime > grace_threshold）
+            ws_mtime = os.path.getmtime(ws_db_path)
+            if ws_mtime < grace_threshold:
+                # 超过宽限期未活跃 → 标记为可清理，但其 cas_key 仍加入 live set
+                # （保守策略：宽限期内不删除其引用；宽限期后由 workspace GC 处理）
+                pass
+            # 聚合该 workspace 的 live keys
+            rows = ws_conn.execute(
+                "SELECT DISTINCT cas_key FROM workspace_manifests WHERE cas_key IS NOT NULL"
+            ).fetchall()
+            live_keys.update(r["cas_key"] for r in rows)
+            ws_conn.close()
+            scanned_workspaces.append(ws_db_path)
+        except Exception as e:
+            # v5 fail-closed：任何 workspace 读取失败即中止本次 GC，不删除任何条目
+            # 避免因 DB 被锁/损坏导致 live set 不完整而误删
+            print(f"GC aborted: workspace DB {ws_db_path} read failed: {e}")
+            print("不删除任何 CAS 条目。请确保所有 workspace DB 可读后重试。")
+            return False
+
+    # ===== 阶段 2：短事务 mark-sweep（先子表后正文表后父表）=====
     cas_conn.execute("BEGIN IMMEDIATE")
     try:
-        # 1. 遍历 ~/.callwarden/<hash>/ 下所有 workspace DB
-        cas_dir = os.path.expanduser("~/.callwarden")
-        live_keys = set()
-        now = time.time()
-        grace_threshold = now - grace_period_days * 86400
-
-        for ws_db_path in glob.glob(os.path.join(cas_dir, "*", "callwarden.db")):
-            try:
-                ws_conn = sqlite3.connect(f"file:{ws_db_path}?mode=ro", uri=True)
-                # 检查是否有 workspace_manifests 表（旧版本可能没有）
-                has_table = ws_conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_manifests'"
-                ).fetchone()
-                if not has_table:
-                    ws_conn.close()
-                    continue
-                # 聚合该 workspace 的 live keys
-                rows = ws_conn.execute(
-                    "SELECT DISTINCT cas_key FROM workspace_manifests WHERE cas_key IS NOT NULL"
-                ).fetchall()
-                live_keys.update(r["cas_key"] for r in rows)
-                ws_conn.close()
-            except Exception:
-                # DB 被锁或损坏 → 跳过（宽限期保护）
-                continue
-
-        # 2. 用临时 mark 表避免 IN 参数上限
+        # 用临时 mark 表避免 IN 参数上限
         cas_conn.execute("CREATE TEMP TABLE IF NOT EXISTS _gc_live (cas_key TEXT PRIMARY KEY)")
         cas_conn.execute("DELETE FROM _gc_live")
         cas_conn.executemany("INSERT OR IGNORE INTO _gc_live VALUES (?)",
                              [(k,) for k in live_keys])
 
-        # 3. 删除无引用条目（只删 ready，building 由步骤 4 处理）
-        cas_conn.execute("""
-            DELETE FROM cas_symbol_contents
-            WHERE content_hash NOT IN (
-                SELECT symbol_content_hash FROM cas_symbols
-            )
-            AND content_hash NOT IN (
-                SELECT sc.content_hash FROM cas_symbols cs
-                JOIN cas_symbol_contents sc ON cs.symbol_content_hash = sc.content_hash
-                WHERE cs.cas_key IN (SELECT cas_key FROM _gc_live)
-            )
-        """)
+        # 2a. 先删子表（cas_symbols / cas_raw_calls / cas_imports）
         cas_conn.execute("""
             DELETE FROM cas_symbols WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)
         """)
@@ -805,35 +935,52 @@ def gc_cas(cas_conn, grace_period_days=7):
         cas_conn.execute("""
             DELETE FROM cas_imports WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)
         """)
+
+        # 2b. 再删正文表（cas_symbol_contents：清理无符号引用的正文）
+        cas_conn.execute("""
+            DELETE FROM cas_symbol_contents
+            WHERE content_hash NOT IN (
+                SELECT DISTINCT symbol_content_hash FROM cas_symbols
+            )
+        """)
+
+        # 2c. 最后删父表（cas_file_cache，只删 ready）
         cas_conn.execute("""
             DELETE FROM cas_file_cache
             WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)
               AND state = 'ready'
         """)
 
-        # 4. 清理孤儿 building 条目（P1#5 崩溃残留）
-        cas_conn.execute("DELETE FROM cas_file_cache WHERE state = 'building'")
-        cas_conn.execute("""
-            DELETE FROM cas_symbols
-            WHERE cas_key NOT IN (SELECT cas_key FROM cas_file_cache)
-        """)
-        cas_conn.execute("""
-            DELETE FROM cas_raw_calls
-            WHERE cas_key NOT IN (SELECT cas_key FROM cas_file_cache)
-        """)
+        # 2d. 清理孤儿 building 条目（崩溃残留）
+        # 先删 building 的子表引用，再删 building 父记录
+        building_keys = [r[0] for r in cas_conn.execute(
+            "SELECT cas_key FROM cas_file_cache WHERE state = 'building'"
+        ).fetchall()]
+        if building_keys:
+            placeholders = ",".join("?" * len(building_keys))
+            cas_conn.execute(f"DELETE FROM cas_symbols WHERE cas_key IN ({placeholders})", building_keys)
+            cas_conn.execute(f"DELETE FROM cas_raw_calls WHERE cas_key IN ({placeholders})", building_keys)
+            cas_conn.execute(f"DELETE FROM cas_imports WHERE cas_key IN ({placeholders})", building_keys)
+            cas_conn.execute(f"DELETE FROM cas_symbol_contents WHERE content_hash NOT IN (SELECT DISTINCT symbol_content_hash FROM cas_symbols)")
+            cas_conn.execute("DELETE FROM cas_file_cache WHERE state = 'building'")
 
         cas_conn.execute("DROP TABLE _gc_live")
         cas_conn.execute("COMMIT")
+        print(f"GC complete: scanned {len(scanned_workspaces)} workspaces, live keys = {len(live_keys)}")
+        return True
     except Exception:
         cas_conn.execute("ROLLBACK")
         raise
 ```
 
+**v5 关键改进**：
+- **fail-closed**：任何 workspace DB 读取失败即中止 GC，不删除任何条目。避免因 DB 被锁/损坏导致 live set 不完整而误删。
+- **`row_factory = sqlite3.Row`**：必须设置，否则 `r["cas_key"]` 对默认 tuple 会报 `TypeError`，被 `except` 吞掉后 live set 为空。
+- **`grace_threshold` 参与判断**：宽限期内 workspace 的 cas_key 必须加入 live set（保守不删）；宽限期后由 workspace GC 单独处理。
+- **事务外扫描**：阶段 1 不持有 CAS 写锁，不阻塞 refresh。只有阶段 2 开短事务。
+- **删除顺序**：先子表（`cas_symbols` / `cas_raw_calls` / `cas_imports`）→ 再正文表（`cas_symbol_contents`）→ 最后父表（`cas_file_cache`）。避免留下正文孤儿。
 - GC 命令：`cw gc cas [--grace-days 7]`，手动触发，默认不自动 GC。
-- **遍历所有 workspace DB**（`~/.callwarden/<hash>/callwarden.db`），聚合完整 live key 集合。
-- **宽限期**：workspace DB 被锁或损坏时跳过（不删除其引用的 key），默认 7 天。
-- `cas_symbol_contents` 也参与 GC（清理无符号引用的正文）。
-- 清理 `state=building` 孤儿条目（P1#5 崩溃残留）。
+- 清理 `state=building` 孤儿条目（崩溃残留），先删子表再删父记录。
 
 ### 3.9 迁移策略（v4 P2 修复：CAS schema version）
 
@@ -915,8 +1062,9 @@ CREATE TABLE IF NOT EXISTS workspace_resolved_edges (
     is_cross_file INTEGER DEFAULT 0,
     source TEXT DEFAULT 'cas',            -- 'cas' = clean 文件边，'dirty' = dirty 文件边
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-    FOREIGN KEY (caller_symbol_id) REFERENCES workspace_symbols(id),
-    FOREIGN KEY (callee_symbol_id) REFERENCES workspace_symbols(id),
+    -- v5 P2: 组合 FK 保证 edge 与 symbol 同 workspace，ON DELETE CASCADE 自动清理 edge
+    FOREIGN KEY (workspace_id, caller_symbol_id) REFERENCES workspace_symbols(workspace_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (workspace_id, callee_symbol_id) REFERENCES workspace_symbols(workspace_id, id) ON DELETE CASCADE,
     UNIQUE(workspace_id, caller_symbol_id, callee_name, call_line, call_ordinal)  -- 含 call_ordinal
 );
 
@@ -936,34 +1084,46 @@ CREATE INDEX IF NOT EXISTS idx_edges_callee_qname ON workspace_resolved_edges(wo
 
 **v3 问题**：Clean 查询直接读取 `workspace_symbol_projection`，没有 JOIN manifest 检查 `is_dirty=0`。文件从 clean 变 dirty 后，旧 projection 仍被返回。按 `qualified_name` 让 dirty 优先会误删其他文件中的合法同名符号。
 
-**v4 修复**：
-1. 文件变 dirty 时，在 workspace 事务中**删除该 rel_path 的旧 `workspace_symbols`**（tombstone by rel_path）。
-2. Clean 查询 JOIN manifest 校验 `wm.is_dirty = 0`（双重保险）。
-3. Overlay 边界是 **rel_path**，不是 qualified_name。
+**v4 修复 + v5 P1#3 删除顺序修正**：
+1. 文件变 dirty 时，在 workspace 事务中**先删 edge 再删 symbol**（v5 修正：v4 先删 symbol 导致 edge 子查询为空）。
+2. `workspace_resolved_edges` 的 FK 增加 `ON DELETE CASCADE`（v5 P1#3），即使先删 symbol 也能自动清理 edge。
+3. Clean 查询 JOIN manifest 校验 `wm.is_dirty = 0`（双重保险）。
+4. Overlay 边界是 **rel_path**，不是 qualified_name。
 
 ```python
 def mark_file_dirty(workspace_id, rel_path, ws_conn):
-    """文件变 dirty 时，删除旧 clean projection（tombstone by rel_path）"""
+    """文件变 dirty 时，删除旧 clean projection（tombstone by rel_path）
+
+    v5 P1#3: 先删 edge 再删 symbol（v4 先删 symbol 导致 edge 子查询为空）。
+    FK ON DELETE CASCADE 作为兜底，但显式先删 edge 更安全。
+    """
     ws_conn.execute("BEGIN IMMEDIATE")
     try:
-        # 1. 删除该 rel_path 的旧 workspace_symbols（clean projection）
+        # 1. 先取得 affected symbol IDs（此时 workspace_symbols 还没删）
+        affected_ids = [r[0] for r in ws_conn.execute(
+            "SELECT id FROM workspace_symbols WHERE workspace_id = ? AND rel_path = ? AND source = 'cas'",
+            (workspace_id, rel_path)
+        ).fetchall()]
+
+        # 2. 先删该 rel_path 的旧 resolved edges（caller 或 callee 指向 affected symbols）
+        if affected_ids:
+            placeholders = ",".join("?" * len(affected_ids))
+            ws_conn.execute(f"""
+                DELETE FROM workspace_resolved_edges
+                WHERE workspace_id = ? AND (
+                    caller_symbol_id IN ({placeholders})
+                    OR callee_symbol_id IN ({placeholders})
+                )
+            """, [workspace_id] + affected_ids + affected_ids)
+
+        # 3. 再删该 rel_path 的旧 workspace_symbols（clean projection）
         ws_conn.execute(
             "DELETE FROM workspace_symbols WHERE workspace_id = ? AND rel_path = ? AND source = 'cas'",
             (workspace_id, rel_path)
         )
-        # 2. 删除该 rel_path 的旧 resolved edges（caller 或 callee 指向已删除的 symbol）
-        ws_conn.execute("""
-            DELETE FROM workspace_resolved_edges
-            WHERE workspace_id = ? AND (
-                caller_symbol_id IN (
-                    SELECT id FROM workspace_symbols WHERE workspace_id = ? AND rel_path = ?
-                )
-                OR callee_symbol_id IN (
-                    SELECT id FROM workspace_symbols WHERE workspace_id = ? AND rel_path = ?
-                )
-            )
-        """, (workspace_id, workspace_id, rel_path, workspace_id, rel_path))
-        # 3. 更新 manifest 为 dirty
+        # 注：FK ON DELETE CASCADE 也会自动清理 edge，但显式先删更安全（不依赖 PRAGMA foreign_keys=ON）
+
+        # 4. 更新 manifest 为 dirty
         ws_conn.execute(
             "UPDATE workspace_manifests SET is_dirty = 1, cas_key = NULL WHERE workspace_id = ? AND rel_path = ?",
             (workspace_id, rel_path)
@@ -981,14 +1141,14 @@ def search_symbols(query, kind, limit, workspace_id, ws_conn, cas_attached):
     """
     # Clean 文件：workspace_symbols JOIN cas_db.cas_symbols（ATTACH 只读）
     # JOIN manifest 校验 is_dirty = 0（双重保险，防止 tombstone 未清理的残留）
+    # v5 P2: 列名从 cas_symbol_contents(cs) 改为 cas_symbols(csym)，因 start_line/depth 在 csym
     sql = """
         SELECT wsym.qualified_name, wsym.module_path, wsym.rel_path as file_path,
-               cs.start_line, cs.end_line, cs.depth, csym.name, csym.kind,
+               csym.start_line, csym.end_line, csym.depth, csym.name, csym.kind,
                csym.signature, csym.has_comment
         FROM workspace_symbols wsym
         JOIN workspace_manifests wm ON wsym.workspace_id = wm.workspace_id AND wsym.rel_path = wm.rel_path
         JOIN cas_db.cas_symbols csym ON wsym.cas_key = csym.cas_key AND wsym.local_symbol_id = csym.local_symbol_id
-        JOIN cas_db.cas_symbol_contents cs ON csym.symbol_content_hash = cs.content_hash
         WHERE wsym.workspace_id = ?
           AND wm.is_dirty = 0
           AND wsym.source = 'cas'
@@ -1003,16 +1163,17 @@ def search_symbols(query, kind, limit, workspace_id, ws_conn, cas_attached):
     clean_results = [dict(r) for r in ws_conn.execute(sql, params)]
 
     # Dirty 文件：workspace_symbols（source='dirty'）
+    # v5 P2: depth 从 symbols(s) 取，不从 workspace_symbols(wsym) 取（wsym 无 depth 列）
     sql_dirty = """
         SELECT wsym.qualified_name, wsym.module_path, wsym.rel_path as file_path,
-               wsym.start_line, wsym.end_line, wsym.depth, wsym.name, wsym.kind,
+               wsym.start_line, wsym.end_line, s.depth, wsym.name, wsym.kind,
                s.signature, s.has_comment
         FROM workspace_symbols wsym
         JOIN symbols s ON wsym.symbols_rowid = s.id
         WHERE wsym.workspace_id = ?
           AND wsym.source = 'dirty'
           AND (wsym.name LIKE ? OR wsym.qualified_name LIKE ?)
-        ORDER BY wsym.kind, wsym.depth DESC, wsym.rel_path, wsym.start_line LIMIT ?
+        ORDER BY wsym.kind, s.depth DESC, wsym.rel_path, wsym.start_line LIMIT ?
     """
     dirty_results = [dict(r) for r in ws_conn.execute(sql_dirty, [workspace_id, f"%{query}%", f"%{query}%", limit])]
 
@@ -1026,11 +1187,13 @@ def search_symbols(query, kind, limit, workspace_id, ws_conn, cas_attached):
 - Overlay 边界是 **rel_path**，不会误删其他文件中的同名符号。
 - `workspace_resolved_edges` 的 `source` 字段区分 clean/dirty 边，查询时不需要 UNION，单表查即可。
 
-**跨 DB ATTACH 只读**（v4 P2 修复）：
+**跨 DB ATTACH 只读**（v5 P2: 参数化 ATTACH）：
 
 ```python
-# ATTACH 时用 mode=ro 确保只读，不引入写锁
-ws_conn.execute("ATTACH 'file:{cas_db_path}?mode=ro' AS cas_db")
+# v5 P2: 参数化 ATTACH，避免 f-string 花括号被当字面值
+# workspace 主连接需启用 URI（sqlite3.connect("file:...", uri=True)）
+cas_uri = f"file:{cas_db_path}?mode=ro"
+ws_conn.execute("ATTACH DATABASE ? AS cas_db", (cas_uri,))
 # 查询用 cas_db.cas_symbols 全名引用
 ```
 
@@ -1054,7 +1217,7 @@ ws_conn.execute("ATTACH 'file:{cas_db_path}?mode=ro' AS cas_db")
 
 | 测试 | 类型 | 验收 |
 |------|------|------|
-| 11 语言 alignment tests（Counter 多重集合比较） | 单元 | 核心字段一致率 ≥ 99% |
+| 11 语言 alignment tests（Counter 多重集合比较 + Counter 相减） | 单元 | actual_diff - known_diffs == empty（剩余差异为零） |
 | Rust 扩展不可用 fallback | 集成 | 回退 Python parser，不报错 |
 | `CW_DISABLE_RUST_PARSE` | 集成 | 强制走 Python |
 | 小批量走 `parse_file_lang`（单文件 Rust） | 集成 | 文件数 < 50 时走单文件 Rust，不走 pool |
