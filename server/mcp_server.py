@@ -2183,6 +2183,45 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def embed_symbols_async(
+        batch_size: int = 32,
+        force: bool = False,
+    ) -> dict:
+        """异步嵌入向量（后台 job，不阻塞 MCP 请求）
+
+        Phase 7.2：把 vector embedding 提交为后台 job。
+        增量模式（force=False）只嵌入尚未有嵌入的符号，适合 20 万符号级别的代码库，
+        避免同步执行导致 MCP 请求超时。
+
+        Args:
+            batch_size: 每批处理数量（默认 32）
+            force: True 时强制重新嵌入所有符号（默认 False，增量模式）
+
+        Returns:
+            {
+                "job_id": str,          # 任务 ID
+                "status": "pending",     # 初始状态
+                "job_type": "vector_embed",
+                "message": "submitted",
+            }
+        """
+        db = get_db()
+        try:
+            from callwarden.server.job_executor_singleton import get_job_executor
+            executor = get_job_executor(db.db_path, db.workspace_root)
+            params = {"batch_size": batch_size, "force": force}
+            ws_id = db._get_active_workspace_id()
+            job = executor.submit("vector_embed", params, workspace_id=ws_id)
+            return {
+                "job_id": job.job_id,
+                "status": job.status,
+                "job_type": job.job_type,
+                "message": "submitted",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def rule_seed_bootstrap(dry_run: bool = True) -> dict:
         """种子化内置自举 active rules
 

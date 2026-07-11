@@ -254,18 +254,28 @@ class VectorMixin:
         return True
 
     def embed_all_symbols(
-        self, batch_size: int = 32, force: bool = False
+        self,
+        batch_size: int = 32,
+        force: bool = False,
+        progress_callback=None,
     ) -> Dict[str, int]:
         """批量嵌入所有函数符号
+
+        Phase 7.2：新增 progress_callback 参数，支持后台 job 进度上报。
+        增量模式（force=False）只嵌入尚未有嵌入的符号，避免全量重算。
 
         Args:
             batch_size: 每批处理数量（用于日志/进度提示）
             force: True 时强制重新嵌入已存在嵌入的符号
+            progress_callback: 可选，签名为 (progress: float, message: str) -> None
 
         Returns:
             统计字典：total / success / skipped / failed
         """
         ws_id = self._get_active_workspace_id()
+
+        if progress_callback:
+            progress_callback(0.05, "loading symbols")
 
         # 查询当前工作区内所有函数符号及其内容
         sql = """
@@ -281,7 +291,7 @@ class VectorMixin:
         params: list = [ws_id]
 
         if not force:
-            # 跳过已有嵌入的符号
+            # Phase 7.2：增量模式 — 跳过已有嵌入的符号
             sql += " AND s.symbol_hash NOT IN (SELECT symbol_hash FROM symbol_embeddings)"
 
         cur = self.conn.execute(sql, params)
@@ -294,7 +304,12 @@ class VectorMixin:
 
         # 模型不可用时直接返回，避免逐条失败
         if self._get_embedder() is None:
+            if progress_callback:
+                progress_callback(1.0, "embedder not available, all skipped")
             return {"total": total, "success": 0, "skipped": total, "failed": 0}
+
+        if progress_callback:
+            progress_callback(0.1, f"embedding {total} symbols")
 
         for idx, row in enumerate(rows):
             symbol_hash = row["symbol_hash"]
@@ -329,7 +344,15 @@ class VectorMixin:
             if (idx + 1) % batch_size == 0:
                 self.conn.commit()
 
+            # Phase 7.2：进度上报
+            if progress_callback and (idx + 1) % 100 == 0:
+                progress = 0.1 + 0.85 * (idx + 1) / total if total > 0 else 1.0
+                progress_callback(progress, f"embedded {idx + 1}/{total}")
+
         self.conn.commit()
+
+        if progress_callback:
+            progress_callback(1.0, f"done: {success} success, {failed} failed")
 
         return {
             "total": total,
