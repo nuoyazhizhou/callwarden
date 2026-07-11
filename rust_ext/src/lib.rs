@@ -30,6 +30,7 @@ mod hash_diff;
 mod delta;
 mod frontier;
 mod metrics;
+mod toolchain;
 
 // ============================================
 // P29: 数据结构定义
@@ -832,5 +833,8 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<metrics::PyImpactChange>()?;
     m.add_class::<metrics::PyLocalMetricsUpdate>()?;
     m.add_function(wrap_pyfunction!(metrics::compute_local_update, m)?)?;
+    // Phase 6.1: Toolchain Fingerprint
+    m.add_function(wrap_pyfunction!(toolchain::detect_compiler_type_py, m)?)?;
+    m.add_function(wrap_pyfunction!(toolchain::compute_toolchain_fingerprint_py, m)?)?;
     Ok(())
 }

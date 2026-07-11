@@ -1110,6 +1110,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_brief(argv, db)
         elif cmd == "map":
             return _handle_map(argv, db)
+        elif cmd == "toolchain":
+            return _handle_toolchain(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -6697,6 +6699,156 @@ def _handle_map(args, db):
     print()
     print(output)
     print()
+    return True
+
+
+def _handle_toolchain(args, db):
+    """处理 toolchain 子命令（工具链注册与管理）
+
+    子命令：
+        register <NAME> <COMPILER_PATH> [--sysroot SYSROOT] [--description DESC]
+        list
+        show <NAME_OR_ID>
+        delete <NAME_OR_ID>
+        bind <WORKSPACE_ID> <TOOLCHAIN_NAME> [--build-context-hash HASH]
+    """
+    from db.db_toolchain import (
+        init_toolchain_schema, register_toolchain, get_toolchain,
+        list_toolchains, delete_toolchain, bind_toolchain_to_workspace,
+        get_workspace_toolchains,
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="cw toolchain",
+        description="Toolchain management (register/list/show/delete/bind)",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # register
+    reg = sub.add_parser("register", help="Register a new toolchain")
+    reg.add_argument("name", help="Toolchain name (unique)")
+    reg.add_argument("compiler_path", help="Compiler executable path")
+    reg.add_argument("--sysroot", default="", help="Sysroot path")
+    reg.add_argument("--description", default="", help="Description")
+    reg.add_argument("--no-probe", action="store_true", help="Skip auto-probe")
+
+    # list
+    sub.add_parser("list", help="List all toolchains")
+
+    # show
+    show_p = sub.add_parser("show", help="Show toolchain details")
+    show_p.add_argument("name_or_id", help="Toolchain name or ID")
+
+    # delete
+    del_p = sub.add_parser("delete", help="Delete a toolchain")
+    del_p.add_argument("name_or_id", help="Toolchain name or ID")
+
+    # bind
+    bind_p = sub.add_parser("bind", help="Bind toolchain to workspace")
+    bind_p.add_argument("workspace_id", type=int, help="Workspace ID")
+    bind_p.add_argument("toolchain_name", help="Toolchain name")
+    bind_p.add_argument("--build-context-hash", default="", help="Build context hash")
+
+    # list-bound
+    bound_p = sub.add_parser("list-bound", help="List toolchains bound to a workspace")
+    bound_p.add_argument("workspace_id", type=int, help="Workspace ID")
+    bound_p.add_argument("--build-context-hash", default="", help="Filter by build context hash")
+
+    opts = parser.parse_args(args)
+
+    # 初始化 schema（幂等）
+    init_toolchain_schema(db.conn)
+
+    if opts.action == "register":
+        try:
+            tc = register_toolchain(
+                conn=db.conn,
+                name=opts.name,
+                compiler_path=opts.compiler_path,
+                sysroot=opts.sysroot,
+                description=opts.description,
+                probe=not opts.no_probe,
+            )
+            print(f"Toolchain registered: {tc.summary()}")
+            print(f"  fingerprint: {tc.fingerprint}")
+            if tc.include_dirs:
+                print(f"  include_dirs ({len(tc.include_dirs)}): {', '.join(tc.include_dirs[:3])}...")
+            if tc.predefined_macros:
+                print(f"  predefined_macros: {len(tc.predefined_macros)} macros")
+        except Exception as e:
+            print(f"Error: {e}")
+            return False
+
+    elif opts.action == "list":
+        tcs = list_toolchains(db.conn)
+        if not tcs:
+            print("No toolchains registered.")
+            return True
+        print(f"{'ID':<5} {'Name':<20} {'Type':<20} {'Version':<30} {'Target':<25}")
+        print("-" * 100)
+        for tc in tcs:
+            print(f"{tc.id:<5} {tc.name:<20} {tc.compiler_type:<20} {tc.version[:30]:<30} {tc.target_triple:<25}")
+
+    elif opts.action == "show":
+        # 尝试 ID 或名称
+        try:
+            name_or_id = int(opts.name_or_id)
+        except ValueError:
+            name_or_id = opts.name_or_id
+        tc = get_toolchain(db.conn, name_or_id)
+        if tc is None:
+            print(f"Toolchain not found: {opts.name_or_id}")
+            return False
+        print(f"Toolchain: {tc.name}")
+        print(f"  ID: {tc.id}")
+        print(f"  Compiler: {tc.compiler_path}")
+        print(f"  Type: {tc.compiler_type}")
+        print(f"  Version: {tc.version}")
+        print(f"  Target: {tc.target_triple}")
+        print(f"  Sysroot: {tc.sysroot or '(none)'}")
+        print(f"  Fingerprint: {tc.fingerprint}")
+        print(f"  Include dirs ({len(tc.include_dirs)}):")
+        for d in tc.include_dirs[:10]:
+            print(f"    {d}")
+        if len(tc.include_dirs) > 10:
+            print(f"    ... and {len(tc.include_dirs) - 10} more")
+        print(f"  Predefined macros: {len(tc.predefined_macros)}")
+        print(f"  Description: {tc.description or '(none)'}")
+
+    elif opts.action == "delete":
+        try:
+            name_or_id = int(opts.name_or_id)
+        except ValueError:
+            name_or_id = opts.name_or_id
+        if delete_toolchain(db.conn, name_or_id):
+            print(f"Toolchain deleted: {opts.name_or_id}")
+        else:
+            print(f"Toolchain not found: {opts.name_or_id}")
+            return False
+
+    elif opts.action == "bind":
+        tc = get_toolchain(db.conn, opts.toolchain_name)
+        if tc is None:
+            print(f"Toolchain not found: {opts.toolchain_name}")
+            return False
+        if bind_toolchain_to_workspace(
+            db.conn, opts.workspace_id, tc.id, opts.build_context_hash
+        ):
+            print(f"Toolchain '{tc.name}' bound to workspace {opts.workspace_id}")
+        else:
+            print(f"Failed to bind (already bound?)")
+            return False
+
+    elif opts.action == "list-bound":
+        tcs = get_workspace_toolchains(
+            db.conn, opts.workspace_id, opts.build_context_hash
+        )
+        if not tcs:
+            print(f"No toolchains bound to workspace {opts.workspace_id}")
+            return True
+        for tc in tcs:
+            print(f"  {tc.summary()}")
+
     return True
 
 
