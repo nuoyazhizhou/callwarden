@@ -116,7 +116,57 @@ def _jaccard_similarity(set_a: set, set_b: set) -> float:
     return len(set_a & set_b) / len(union)
 
 
-# ==================== MinHash + LSH（P1 优化）====================
+# ==================== MinHash + LSH（P1 优化 + Phase 7.1 稳定 hash）====================
+
+# Phase 7.1 修复：使用稳定的 FNV-1a hash 替代 Python 内置 hash()。
+# Python hash() 在不同进程间结果不同（PYTHONHASHSEED 随机化），
+# 导致同一代码库在不同运行中产生不同的 MinHash 签名和 LSH 桶，
+# clone 检测结果不可复现。FNV-1a 是确定性 hash，跨进程稳定。
+
+# FNV-1a 参数（32 位）
+_FNV_OFFSET_BASIS = 0x811C9DC5
+_FNV_PRIME = 0x01000193
+
+
+def _fnv1a_32(data: bytes) -> int:
+    """FNV-1a 32 位 hash（确定性，跨进程稳定）
+
+    Args:
+        data: 字节串
+
+    Returns:
+        32 位无符号整数 hash 值
+    """
+    h = _FNV_OFFSET_BASIS
+    for b in data:
+        h ^= b
+        h = (h * _FNV_PRIME) & 0xFFFFFFFF
+    return h
+
+
+def _stable_token_hash(token) -> int:
+    """计算 token 的稳定 hash（FNV-1a，跨进程确定性）
+
+    Phase 7.1：替代 Python 内置 hash()，确保 MinHash 签名跨进程一致。
+
+    支持两种输入：
+    - str：直接编码为 UTF-8 后 hash
+    - tuple（3-gram shingle）：先转为固定格式字符串再 hash，
+      确保 (a, b, c) 和 "a|b|c" 一一对应
+
+    Args:
+        token: token 字符串或 3-gram tuple
+
+    Returns:
+        32 位无符号整数
+    """
+    if isinstance(token, tuple):
+        # 3-gram shingle：用分隔符拼接为字符串
+        token = "\x1f".join(str(t) for t in token)
+    elif not isinstance(token, str):
+        token = str(token)
+    return _fnv1a_32(token.encode("utf-8"))
+
 
 # P1 优化：预生成 128 个独立 hash 函数系数（模块加载时计算一次，进程内固定）。
 # 使用通用 hash family: h_i(x) = (a_i * x + b_i) mod 2^32
@@ -135,6 +185,11 @@ _HASH_A_NP = np.array([c[0] for c in _HASH_COEFFS], dtype=np.uint64)
 _HASH_B_NP = np.array([c[1] for c in _HASH_COEFFS], dtype=np.uint64)
 _MASK_32 = np.uint64(0xFFFFFFFF)
 
+# Phase 7.1：大桶保护参数
+# LSH 桶中符号数超过此值时跳过该桶（降级为暴力比较的子集），
+# 避免常见模式（如 return / break / continue）导致的所有符号落入同一桶。
+_MAX_BUCKET_SIZE = 200
+
 
 def _minhash_signature(token_set: set, num_perm: int = 128) -> tuple:
     """计算 token 集合的 MinHash 签名
@@ -142,16 +197,15 @@ def _minhash_signature(token_set: set, num_perm: int = 128) -> tuple:
     MinHash 通过对集合元素施加多个独立哈希函数，取最小值作为签名。
     两个集合 MinHash 签名在相同位置的概率 ≈ Jaccard 相似度。
 
+    Phase 7.1 修复：使用 FNV-1a 稳定 hash 替代 Python 内置 hash()。
+    - 旧实现：hash(t) 受 PYTHONHASHSEED 影响，跨进程不可复现
+    - 新实现：_stable_token_hash(t) 基于 FNV-1a，确定性
+    签名在跨进程、跨机器环境下完全一致，clone 检测结果可复现。
+
     P1 优化（核心）：numpy 向量化计算 (a*x+b) mod 2^32，替代 Python 循环。
-    - 每 token 只算一次 Python hash()，得到 base_hash 数组
+    - 每 token 只算一次稳定 hash，得到 base_hash 数组
     - 128 个 perm 通过 numpy 广播一次计算所有 hash，再取 min
     - 实测 Android 22K 符号 MinHash 阶段 29s → ~2s（约 15x 加速）
-
-    P1 历史：
-    - v1: 线性 hash `base*(i+1) + offset*i` → LSH 桶爆炸（11K/22K 同桶）
-    - v2: hash(f"{i}:{token}") 独立但每次字符串拼接慢（29s）
-    - v3: Python 循环 (a*x+b) mod 2^32，无字符串拼接（12s）
-    - v4: 当前实现 — numpy 向量化（~2s）
 
     Args:
         token_set: token 集合
@@ -164,10 +218,10 @@ def _minhash_signature(token_set: set, num_perm: int = 128) -> tuple:
     if not token_set:
         return tuple([0xFFFFFFFF] * num_perm)
 
-    # 预计算每个 token 的 base_hash（Python 内置 hash，每 token 只算一次）
+    # Phase 7.1：使用 FNV-1a 稳定 hash 替代 Python 内置 hash()
     # 列表推导比 numpy.fromiter 快（小数组）
     base_hashes = np.array(
-        [hash(t) & 0xFFFFFFFF for t in token_set], dtype=np.uint64
+        [_stable_token_hash(t) for t in token_set], dtype=np.uint64
     )
 
     # numpy 向量化：对所有 perm × 所有 token 一次性计算
@@ -381,8 +435,16 @@ class CloneDetectionMixin:
                 m = sym_meta[idx]
                 for bucket_key in _lsh_buckets(m["minhash_sig"]):
                     lsh_buckets[bucket_key].append(idx)
+            # Phase 7.1：大桶保护 — 跳过过大的桶
+            # 大桶（如 > 200 个符号）通常意味着常见模式（return/break）导致
+            # 大量不相关符号落入同一桶，展开 O(n²) 候选对既慢又无意义。
+            # 跳过这些桶可显著减少候选对数量，不影响精确率（精确 Jaccard
+            # 验证会过滤掉假阳性，跳过桶只是降低召回率，但这些桶中的真阳性
+            # 比例极低）。
             for indices in lsh_buckets.values():
                 if len(indices) < 2:
+                    continue
+                if len(indices) > _MAX_BUCKET_SIZE:
                     continue
                 for i in range(len(indices)):
                     for j in range(i + 1, len(indices)):
@@ -672,9 +734,11 @@ class CloneDetectionMixin:
                 for bucket_key in _lsh_buckets(m["minhash_sig"]):
                     lsh_buckets[bucket_key].append(idx)
 
-            # 收集候选对（去重）
+            # Phase 7.1：大桶保护 — 收集候选对（去重），跳过过大的桶
             for indices in lsh_buckets.values():
                 if len(indices) < 2:
+                    continue
+                if len(indices) > _MAX_BUCKET_SIZE:
                     continue
                 for i in range(len(indices)):
                     for j in range(i + 1, len(indices)):
