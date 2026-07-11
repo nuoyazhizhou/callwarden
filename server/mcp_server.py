@@ -2222,6 +2222,47 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def semgrep_scan_async(
+        config: str = "p/default",
+        languages: list = None,
+        timeout: int = 300,
+    ) -> dict:
+        """异步运行 Semgrep 扫描（后台 job，不阻塞 MCP 请求）
+
+        Phase 7.3：把 Semgrep CLI 扫描提交为后台 job。
+        Semgrep 作为 bounded external process 执行（有 timeout 限制），
+        适合大型代码库，避免同步执行导致 MCP 请求超时。
+
+        Args:
+            config: Semgrep 规则配置（默认 p/default，可选 p/security 等）
+            languages: 限制扫描的语言列表（如 ["python", "rust"]），为空则扫描所有
+            timeout: Semgrep CLI 超时秒数（默认 300）
+
+        Returns:
+            {
+                "job_id": str,
+                "status": "pending",
+                "job_type": "semgrep_scan",
+                "message": "submitted",
+            }
+        """
+        db = get_db()
+        try:
+            from callwarden.server.job_executor_singleton import get_job_executor
+            executor = get_job_executor(db.db_path, db.workspace_root)
+            params = {"config": config, "languages": languages, "timeout": timeout}
+            ws_id = db._get_active_workspace_id()
+            job = executor.submit("semgrep_scan", params, workspace_id=ws_id)
+            return {
+                "job_id": job.job_id,
+                "status": job.status,
+                "job_type": job.job_type,
+                "message": "submitted",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def rule_seed_bootstrap(dry_run: bool = True) -> dict:
         """种子化内置自举 active rules
 

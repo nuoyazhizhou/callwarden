@@ -89,7 +89,7 @@ _ALLOWED_PREFIXES = (
     "task_", "gc_", "rule_", "audit_", "lsp_", "guardrail_", "file_",
     "work_", "defect_", "embed_", "semantic_", "project_", "repo_",
     "cross_repo_", "cross_", "blast_", "bootstrap_", "cleanup_",
-    "evolution_", "churn_", "hotspot_", "who_", "branch_",
+    "evolution_", "churn_", "hotspot_", "who_", "branch_", "semgrep_",
 )
 
 
