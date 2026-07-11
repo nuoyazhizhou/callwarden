@@ -411,7 +411,11 @@ def create_mcp_server():
     def run_semgrep_scan(config: str = "p/default",
                          languages: list = None,
                          timeout: int = 300) -> dict:
-        """运行 Semgrep 扫描并将结果存入数据库
+        """运行 Semgrep 扫描并将结果存入数据库 — 同步版本
+
+        注意：对于大型代码库，请使用 semgrep_scan_async 提交后台 job，
+        避免阻塞 MCP 请求。semgrep_scan_async 提交后可用 wait_for_job
+        等待完成，结果通过 get_semgrep_findings / get_semgrep_stats 查询。
 
         Args:
             config: Semgrep 规则配置（默认 p/default，可选 p/security/p/best-practices 等）
@@ -1855,7 +1859,12 @@ def create_mcp_server():
         min_lines: int = 5,
         similarity_threshold: float = 0.8,
     ) -> dict:
-        """检测重复代码（Type-1/2/3 克隆）
+        """检测重复代码（Type-1/2/3 克隆）— 同步版本
+
+        注意：对于 20 万符号级别的大型代码库，请使用 detect_clones_async
+        提交后台 job，避免 MCP 请求超时。
+        detect_clones_async 提交后可用 wait_for_job 等待完成，
+        结果通过 list_clone_groups / get_clone_group_stats 查询。
 
         检测范围：
         - Type-1：完全相同的符号内容（content_hash 相同）
@@ -2102,6 +2111,65 @@ def create_mcp_server():
         db = get_db()
         try:
             return db.get_job_stats()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def wait_for_job(
+        job_id: str,
+        timeout: float = 30.0,
+        poll_interval: float = 0.5,
+    ) -> dict:
+        """等待后台任务完成并返回 result_summary
+
+        Phase 7.4：提交 async job 后调用此工具等待完成，获取结果摘要。
+        适用于 "submit → wait → get result" 模式。
+
+        Args:
+            job_id: 任务 ID（如 "J-1783698970719-3a4b"）
+            timeout: 最大等待秒数（默认 30）
+            poll_interval: 轮询间隔秒数（默认 0.5）
+
+        Returns:
+            {
+                "job_id": str,
+                "status": str,             # completed/cancelled/failed/timeout
+                "progress": float,
+                "result_summary": dict,    # job 完成时的结果摘要
+                "error": str,              # 失败时的错误信息
+                "elapsed": float,          # 实际等待秒数
+            }
+        """
+        import time as _time
+
+        db = get_db()
+        start = _time.time()
+        try:
+            deadline = start + timeout
+            while _time.time() < deadline:
+                job = db.get_job(job_id)
+                if not job:
+                    return {"error": f"job not found: {job_id}"}
+                if job.is_terminal:
+                    return {
+                        "job_id": job_id,
+                        "status": job.status,
+                        "progress": job.progress,
+                        "result_summary": job.result_summary,
+                        "error": job.error,
+                        "elapsed": _time.time() - start,
+                    }
+                _time.sleep(poll_interval)
+            # 超时
+            job = db.get_job(job_id)
+            return {
+                "job_id": job_id,
+                "status": "timeout" if not job.is_terminal else job.status,
+                "progress": job.progress if job else 0.0,
+                "result_summary": job.result_summary if job else {},
+                "error": f"timeout after {timeout}s",
+                "elapsed": _time.time() - start,
+            }
         except Exception as e:
             return {"error": str(e)}
 
