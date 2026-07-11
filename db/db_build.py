@@ -2938,48 +2938,65 @@ class BuildMixin:
 
 
     def _build_depth(self):
-        """计算每个函数的拓扑深度"""
+        """计算每个函数的拓扑深度
+
+        迭代实现（Kahn 拓扑排序变体）：从叶子节点（无 callee）开始 BFS 向上传播，
+        环中节点 depth=0（与原递归实现一致）。
+
+        原递归实现在调用链深度 >1000 时会 RecursionError，迭代版本避免此问题。
+        时间复杂度 O(V+E)，与递归版本相同。
+        """
+        from collections import deque
+
         cur = self.conn.execute(
             "SELECT id, qualified_name FROM symbols WHERE kind IN ('fn', 'test_fn')"
         )
         all_fns = {row["id"]: row["qualified_name"] for row in cur}
 
         call_graph = defaultdict(list)
+        reverse_graph = defaultdict(list)
         cur = self.conn.execute(
             "SELECT caller_id, callee_id FROM calls WHERE callee_id > 0"
         )
         for row in cur:
             call_graph[row["caller_id"]].append(row["callee_id"])
+            reverse_graph[row["callee_id"]].append(row["caller_id"])
 
         depth_cache = {}
 
-        def compute_depth(fn_id: int, visited: Set[int]) -> int:
-            """递归计算函数的调用深度，带缓存与环检测"""
-            if fn_id in depth_cache:
-                return depth_cache[fn_id]
-
-            if fn_id in visited:
-                return 0
-
-            visited.add(fn_id)
-
-            callees = call_graph.get(fn_id, [])
-            if not callees:
-                depth = 0
-            else:
-                max_callee_depth = 0
-                for callee_id in callees:
-                    d = compute_depth(callee_id, visited)
-                    if d > max_callee_depth:
-                        max_callee_depth = d
-                depth = max_callee_depth + 1
-
-            visited.remove(fn_id)
-            depth_cache[fn_id] = depth
-            return depth
-
+        # 计算每个函数的未处理 callee 计数
+        pending_callee_count = {}
         for fn_id in all_fns:
-            compute_depth(fn_id, set())
+            pending_callee_count[fn_id] = len(call_graph.get(fn_id, []))
+
+        # 从叶子节点（无 callee）开始 BFS
+        queue = deque()
+        for fn_id in all_fns:
+            if pending_callee_count[fn_id] == 0:
+                depth_cache[fn_id] = 0
+                queue.append(fn_id)
+
+        while queue:
+            fn_id = queue.popleft()
+            fn_depth = depth_cache[fn_id]
+
+            for caller_id in reverse_graph.get(fn_id, []):
+                if caller_id in depth_cache:
+                    continue
+                pending_callee_count[caller_id] -= 1
+                if pending_callee_count[caller_id] == 0:
+                    callees = call_graph.get(caller_id, [])
+                    max_callee_depth = max(
+                        (depth_cache.get(c, 0) for c in callees),
+                        default=0
+                    )
+                    depth_cache[caller_id] = max_callee_depth + 1
+                    queue.append(caller_id)
+
+        # 环中的节点（未被 BFS 处理的）depth=0
+        for fn_id in all_fns:
+            if fn_id not in depth_cache:
+                depth_cache[fn_id] = 0
 
         # P5 优化：executemany 批量更新替代逐个 UPDATE
         updates = [(depth, fn_id) for fn_id, depth in depth_cache.items()]
