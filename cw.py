@@ -140,8 +140,30 @@ def _check_entry_point_sqlite():
 _check_entry_point_sqlite()
 
 
+def _ensure_utf8_output():
+    """强制 stdout/stderr 使用 UTF-8 编码，避免 Windows GBK 控制台无法输出 Unicode 字符
+
+    修复 Bug T-1783751418408-44eb: CLI 输出含 ✓ 等 Unicode 字符，Windows GBK 控制台
+    编码不了直接崩溃（UnicodeEncodeError）。在入口处统一设置 UTF-8 + replace 错误处理，
+    确保任何字符都能输出（无法编码时用 ? 替代而非崩溃）。
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, TypeError):
+                pass
+
+
 def main():
     """统一入口：根据第一个参数分发到对应模块"""
+    # 修复 Bug T-1783751418408-44eb: Windows GBK 控制台无法输出 Unicode 字符
+    _ensure_utf8_output()
+
     args = sys.argv[1:] if len(sys.argv) > 1 else []
 
     # cw install [opts] → 安装依赖

@@ -2630,49 +2630,29 @@ class BuildMixin:
               s["qualified_name"]) for s in all_symbols],
         )
 
-        # 3. 批量查询已存在的 symbols（按 qualified_name 一次查询，避免 N 次 SELECT）
-        qualified_names = [s["qualified_name"] for s in all_symbols]
-        # 去重 qualified_name 避免重复占位符（同一文件可能有同名符号，罕见但安全处理）
-        unique_qnames = list(set(qualified_names))
-        placeholders = ",".join("?" * len(unique_qnames))
-        cur = self.conn.execute(
-            f"SELECT id, qualified_name FROM symbols WHERE qualified_name IN ({placeholders})",
-            unique_qnames,
+        # 3. 清理当前 file_instance 的旧 symbols 和 calls，避免 UPDATE 时 UNIQUE 冲突
+        # 修复 Bug T-1783751412674-5995: UPDATE 多行交换 (name, start_line) 值时 executemany 逐条执行会临时冲突
+        # 方案：DELETE 旧数据 + 纯 INSERT 新数据，彻底避免 UPDATE 冲突
+        # calls 表的 caller_id 引用 symbols.id，必须先删 calls 再删 symbols
+        self.conn.execute(
+            "DELETE FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?)",
+            (file_instance_id,)
         )
-        existing_map = {row["qualified_name"]: row["id"] for row in cur.fetchall()}
+        self.conn.execute(
+            "DELETE FROM symbols WHERE file_instance_id = ?",
+            (file_instance_id,)
+        )
 
-        # 4. 分离已存在（UPDATE）和新增（INSERT）的符号
-        to_update = []
-        to_insert = []
-        for sym in all_symbols:
-            qname = sym["qualified_name"]
-            if qname in existing_map:
-                to_update.append((
-                    file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
-                    sym["start_line"], sym["end_line"], sym["start_col"], sym["end_col"],
-                    sym["signature"], sym["has_comment"], sym["module_path"],
-                    existing_map[qname],
-                ))
-            else:
-                to_insert.append((
-                    file_instance_id, sym["content_hash"], sym["name"], sym["kind"], sym["visibility"],
-                    sym["start_line"], sym["end_line"],
-                    sym["start_col"], sym["end_col"], sym["signature"], sym["has_comment"],
-                    sym["module_path"], qname,
-                ))
-
-        # 5. 批量 UPDATE 已存在的 symbols
-        if to_update:
-            self.conn.executemany(
-                """UPDATE symbols SET
-                   file_instance_id = ?, symbol_hash = ?, name = ?, kind = ?, visibility = ?,
-                   start_line = ?, end_line = ?, start_col = ?, end_col = ?,
-                   signature = ?, has_comment = ?, module_path = ?
-                   WHERE id = ?""",
-                to_update,
+        # 4. 批量 INSERT 新 symbols（ON CONFLICT 防止极端情况下的重复行）
+        to_insert = [
+            (
+                file_instance_id, s["content_hash"], s["name"], s["kind"], s["visibility"],
+                s["start_line"], s["end_line"], s["start_col"], s["end_col"],
+                s["signature"], s["has_comment"], s["module_path"], s["qualified_name"],
             )
+            for s in all_symbols
+        ]
 
-        # 6. 批量 UPSERT 新增的 symbols（ON CONFLICT 防止重复行）
         if to_insert:
             self.conn.executemany(
                 """INSERT INTO symbols

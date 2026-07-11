@@ -7512,7 +7512,7 @@ def main():
                 print(t("cli.messages.search_more"))
 
         elif args.symbol:
-            detail = db.get_symbol_detail(args.symbol)
+            detail = db.get_symbol(args.symbol)
 
             if not detail:
                 print(t("cli.messages.symbol_not_found", name=args.symbol))
