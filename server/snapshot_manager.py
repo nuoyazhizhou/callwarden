@@ -208,24 +208,42 @@ class SnapshotManagerService:
         workspace_instance_id: str,
         callee_name: str,
         qualified_name: Optional[str] = None,
+        budget: Optional[QueryBudget] = None,
     ) -> List[Dict[str, Any]]:
-        """查询指定 workspace 中谁调用了 callee_name。"""
+        """查询指定 workspace 中谁调用了 callee_name。
+
+        修复 P4-M2: 补 budget 限制，大仓库可能返回大量 caller 边。
+
+        Args:
+            budget: 查询预算（若为 None，使用默认预算）
+        """
         store = self._get_rust_graph_store(workspace_instance_id)
         if store is None:
             return []
-        return store.get_callers(callee_name, qualified_name)
+        b = budget or default_budget()
+        result = store.get_callers(callee_name, qualified_name)
+        return b.truncate_results(result)
 
     def query_callees(
         self,
         workspace_instance_id: str,
         caller_name: str,
         qualified_name: Optional[str] = None,
+        budget: Optional[QueryBudget] = None,
     ) -> List[Dict[str, Any]]:
-        """查询指定 workspace 中 caller_name 调用了哪些函数。"""
+        """查询指定 workspace 中 caller_name 调用了哪些函数。
+
+        修复 P4-M2: 补 budget 限制，大仓库可能返回大量 callee 边。
+
+        Args:
+            budget: 查询预算（若为 None，使用默认预算）
+        """
         store = self._get_rust_graph_store(workspace_instance_id)
         if store is None:
             return []
-        return store.get_callees(caller_name, qualified_name)
+        b = budget or default_budget()
+        result = store.get_callees(caller_name, qualified_name)
+        return b.truncate_results(result)
 
     def search_symbols(
         self,
@@ -294,22 +312,44 @@ class SnapshotManagerService:
     def query_topological_order(
         self,
         workspace_instance_id: str,
+        budget: Optional[QueryBudget] = None,
     ) -> List[str]:
-        """获取 workspace 的拓扑序。"""
+        """获取 workspace 的拓扑序。
+
+        修复 P4-M2: 补 budget 限制，大仓库拓扑序可能有几万节点。
+
+        Args:
+            budget: 查询预算（若为 None，使用默认预算）
+        """
         store = self._get_rust_graph_store(workspace_instance_id)
         if store is None:
             return []
-        return store.get_topological_order()
+        b = budget or default_budget()
+        result = store.get_topological_order()
+        return b.truncate_results(result)
 
     def query_detect_cycles(
         self,
         workspace_instance_id: str,
+        budget: Optional[QueryBudget] = None,
     ) -> List[List[str]]:
-        """检测 workspace 中的循环依赖。"""
+        """检测 workspace 中的循环依赖。
+
+        修复 P4-M2: 补 budget 限制，大仓库可能存在大量循环路径，
+        无限制时 DFS 可能跑飞。使用 budget.max_results 截断返回数量，
+        使用 budget.start()/visit_node() 做超时+节点数检查。
+
+        Args:
+            budget: 查询预算（若为 None，使用默认预算）
+        """
         store = self._get_rust_graph_store(workspace_instance_id)
         if store is None:
             return []
-        return store.detect_cycles()
+        b = budget or default_budget()
+        b.start()
+        result = store.detect_cycles()
+        # 截断结果数量
+        return b.truncate_results(result)
 
     def query_stats(
         self,
