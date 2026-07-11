@@ -3226,6 +3226,92 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def diff_callers(left_workspace_id: str, right_workspace_id: str,
+                     qualified_name: str) -> dict:
+        """对比两个 workspace 中同一符号的 caller 边集合
+
+        基于 resolved edge delta，返回 left/right 各自独有的 caller 列表及共同 caller。
+
+        修复 T-1783751538837-33e1: DaemonClient 已有 diff_callers 方法，但 MCP 层未暴露。
+
+        Args:
+            left_workspace_id: 左 workspace ID
+            right_workspace_id: 右 workspace ID
+            qualified_name: 符号限定名
+
+        Returns:
+            {"left_only": [...], "right_only": [...], "common": [...]}
+            Rust 不可用时返回 {"error": "rust backend unavailable"}
+        """
+        try:
+            client = _get_daemon_client()
+            result = client.diff_callers(left_workspace_id, right_workspace_id,
+                                         qualified_name)
+            if result is None:
+                return {"error": "rust backend unavailable"}
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def diff_callees(left_workspace_id: str, right_workspace_id: str,
+                     qualified_name: str) -> dict:
+        """对比两个 workspace 中同一符号的 callee 边集合
+
+        基于 resolved edge delta，返回 left/right 各自独有的 callee 列表及共同 callee。
+
+        修复 T-1783751538837-33e1: DaemonClient 已有 diff_callees 方法，但 MCP 层未暴露。
+
+        Args:
+            left_workspace_id: 左 workspace ID
+            right_workspace_id: 右 workspace ID
+            qualified_name: 符号限定名
+
+        Returns:
+            {"left_only": [...], "right_only": [...], "common": [...]}
+            Rust 不可用时返回 {"error": "rust backend unavailable"}
+        """
+        try:
+            client = _get_daemon_client()
+            result = client.diff_callees(left_workspace_id, right_workspace_id,
+                                         qualified_name)
+            if result is None:
+                return {"error": "rust backend unavailable"}
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def compare_snapshots(left_workspace_id: str, right_workspace_id: str,
+                          scope_type: str = "repo", scope_value: str = "") -> dict:
+        """对比两个 workspace 中指定 scope 内的所有符号差异
+
+        同步查询：小 scope（file/module）直接返回结果。
+        仓库级 scope 应先调用 count_symbols_in_scope 检查大小，超阈值时改用后台 job。
+
+        修复 T-1783751538837-33e1: DaemonClient 已有 compare_snapshots 方法，但 MCP 层未暴露。
+
+        Args:
+            left_workspace_id: 左 workspace ID
+            right_workspace_id: 右 workspace ID
+            scope_type: "file" / "module" / "repo"
+            scope_value: 文件路径或模块路径（repo 时忽略）
+
+        Returns:
+            {"changes": [...], "scope_type": str, "scope_value": str, "count": int}
+            Rust 不可用时返回 {"error": "rust backend unavailable"}
+        """
+        try:
+            client = _get_daemon_client()
+            result = client.compare_snapshots(left_workspace_id, right_workspace_id,
+                                               scope_type, scope_value)
+            if result is None:
+                return {"error": "rust backend unavailable"}
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def switch_branch(branch_name: str) -> dict:
         """切换活动工作区到指定分支
 
