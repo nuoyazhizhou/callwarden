@@ -219,7 +219,267 @@ class CloneDetectionMixin:
 
     通过 self.conn 访问数据库连接，提供 Type-1/2/3 重复代码检测能力。
     检测结果持久化到 clone_pairs 表，支持 workspace 隔离和增量更新。
+
+    Phase 7.0 新增：detect_clones_to_groups 把结果写入 clone_groups +
+    clone_group_members（不展开成 pairs），适合后台 job 异步执行。
     """
+
+    def _detect_clone_groups_core(
+        self,
+        file_filter: str = "",
+        min_lines: int = 5,
+        similarity_threshold: float = 0.8,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+        """检测 clone groups 的核心逻辑（不写库）
+
+        返回：
+            groups: List[Dict]，每个 dict 含：
+                - clone_type: int (1/2/3)
+                - token_hash: str
+                - similarity: float
+                - members: List[int]（symbol IDs，第一个为 representative）
+            stats: Dict 含 scanned_symbols / skipped_symbols / total_groups
+        """
+        ws_id = self._get_active_workspace_id()
+        normalized_filter = file_filter.replace("\\", "/").strip()
+
+        # 加载候选符号
+        filter_clause = ""
+        sql_params: List[Any] = [ws_id, min_lines]
+        if normalized_filter:
+            filter_clause = "AND fi.rel_path LIKE ?"
+            sql_params.append(normalized_filter + "%")
+
+        cur = self.conn.execute(
+            f"""
+            SELECT s.id, s.symbol_hash, s.name, s.kind, s.start_line, s.end_line,
+                   s.qualified_name, fi.rel_path as file_path,
+                   sc.content, sc.signature
+            FROM symbols s
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            LEFT JOIN symbol_contents sc ON s.symbol_hash = sc.content_hash
+            WHERE fi.workspace_id = ?
+              AND fi.status != 'archived'
+              AND s.kind IN ('fn', 'function', 'method', 'test_fn')
+              AND (s.end_line - s.start_line + 1) >= ?
+              {filter_clause}
+            ORDER BY s.id
+            """,
+            sql_params,
+        )
+
+        symbols = [dict(row) for row in cur]
+        scanned = len(symbols)
+        skipped = 0
+
+        # 预计算每个符号的 token_hash 和 token 集合
+        sym_meta: List[Dict[str, Any]] = []
+        minhash_cache: Dict[str, tuple] = {}
+        for s in symbols:
+            content = s.get("content") or ""
+            if not content:
+                skipped += 1
+                continue
+            lines = s["end_line"] - s["start_line"] + 1
+            normalized = _normalize_token_sequence(content)
+            th = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+            tokens = normalized.split()
+            if len(tokens) >= 3:
+                token_set = set(zip(tokens, tokens[1:], tokens[2:]))
+            else:
+                token_set = set(tokens)
+            if th in minhash_cache:
+                minhash_sig = minhash_cache[th]
+            else:
+                minhash_sig = _minhash_signature(token_set)
+                minhash_cache[th] = minhash_sig
+            sym_meta.append({
+                "id": s["id"],
+                "symbol_hash": s["symbol_hash"],
+                "name": s["name"],
+                "content": content,
+                "lines": lines,
+                "token_hash": th,
+                "token_set": token_set,
+                "minhash_sig": minhash_sig,
+                "qualified_name": s["qualified_name"],
+                "file_path": s["file_path"],
+            })
+
+        # 按 token_hash 和 content_hash 分组
+        by_token_hash: Dict[str, List[Dict[str, Any]]] = {}
+        by_content_hash: Dict[str, List[Dict[str, Any]]] = {}
+        for m in sym_meta:
+            by_token_hash.setdefault(m["token_hash"], []).append(m)
+            by_content_hash.setdefault(m["symbol_hash"], []).append(m)
+
+        groups: List[Dict[str, Any]] = []
+
+        # Type-1：content_hash 相同
+        for ch, group_syms in by_content_hash.items():
+            if len(group_syms) < 2:
+                continue
+            groups.append({
+                "clone_type": CLONE_TYPE_1,
+                "token_hash": group_syms[0]["token_hash"],
+                "similarity": 1.0,
+                "members": [s["id"] for s in group_syms],
+            })
+
+        # Type-2：token_hash 相同但 content_hash 不同
+        type1_token_hashes = {
+            g["token_hash"] for g in groups if g["clone_type"] == CLONE_TYPE_1
+        }
+        for th, group_syms in by_token_hash.items():
+            if len(group_syms) < 2:
+                continue
+            # 跳过已被 Type-1 覆盖的 token_hash（避免重复）
+            if th in type1_token_hashes:
+                # 仍然报告 Type-2：同 token_hash 但不同 content_hash 的子组
+                # 把同 content_hash 的符号聚合，跨 content_hash 的视为 Type-2
+                by_ch: Dict[str, List[Dict[str, Any]]] = {}
+                for s in group_syms:
+                    by_ch.setdefault(s["symbol_hash"], []).append(s)
+                if len(by_ch) < 2:
+                    continue
+                # Type-2 组：所有成员（representative 取第一个）
+                groups.append({
+                    "clone_type": CLONE_TYPE_2,
+                    "token_hash": th,
+                    "similarity": 1.0,
+                    "members": [s["id"] for s in group_syms],
+                })
+            else:
+                groups.append({
+                    "clone_type": CLONE_TYPE_2,
+                    "token_hash": th,
+                    "similarity": 1.0,
+                    "members": [s["id"] for s in group_syms],
+                })
+
+        # Type-3：相似度 >= 阈值但 < 1.0
+        # 按 token_hash 去重，每组取第一个符号作为代表参与 LSH
+        token_hash_to_rep_idx: Dict[str, int] = {}
+        for idx, m in enumerate(sym_meta):
+            th = m["token_hash"]
+            if th not in token_hash_to_rep_idx:
+                token_hash_to_rep_idx[th] = idx
+
+        lsh_rep_indices = list(token_hash_to_rep_idx.values())
+        num_reps = len(lsh_rep_indices)
+
+        BRUTEFORCE_THRESHOLD = 500
+        candidate_pairs: Set = set()
+
+        if num_reps < BRUTEFORCE_THRESHOLD:
+            for i in range(num_reps):
+                for j in range(i + 1, num_reps):
+                    candidate_pairs.add((lsh_rep_indices[i], lsh_rep_indices[j]))
+        else:
+            lsh_buckets: Dict[str, List[int]] = defaultdict(list)
+            for idx in lsh_rep_indices:
+                m = sym_meta[idx]
+                for bucket_key in _lsh_buckets(m["minhash_sig"]):
+                    lsh_buckets[bucket_key].append(idx)
+            for indices in lsh_buckets.values():
+                if len(indices) < 2:
+                    continue
+                for i in range(len(indices)):
+                    for j in range(i + 1, len(indices)):
+                        a, b = indices[i], indices[j]
+                        pair = (a, b) if a < b else (b, a)
+                        candidate_pairs.add(pair)
+
+        # 跳过已被 Type-1/2 覆盖的代表对（同 token_hash）
+        covered_token_hashes = {g["token_hash"] for g in groups}
+
+        # Type-3 组：相似度 >= 阈值
+        # 把候选对聚合为 group：相同 (token_hash_a, token_hash_b, similarity) 的归为一组
+        type3_clusters: Dict[Tuple[str, str, float], List[int]] = defaultdict(list)
+        for a_idx, b_idx in candidate_pairs:
+            a, b = sym_meta[a_idx], sym_meta[b_idx]
+            # 跳过同 token_hash（已被 Type-1/2 覆盖）
+            if a["token_hash"] == b["token_hash"]:
+                continue
+            sim = _jaccard_similarity(a["token_set"], b["token_set"])
+            if sim >= similarity_threshold and sim < 1.0:
+                # 用相似度量化作为 cluster key
+                sim_bucket = round(sim, 2)
+                key = (a["token_hash"], b["token_hash"], sim_bucket)
+                type3_clusters[key].extend([a["id"], b["id"]])
+
+        for key, member_ids in type3_clusters.items():
+            # 去重 members
+            unique_members = list(dict.fromkeys(member_ids))
+            if len(unique_members) < 2:
+                continue
+            th_a, th_b, sim_val = key
+            groups.append({
+                "clone_type": CLONE_TYPE_3,
+                "token_hash": f"{th_a}|{th_b}",
+                "similarity": sim_val,
+                "members": unique_members,
+            })
+
+        stats = {
+            "scanned_symbols": scanned,
+            "skipped_symbols": skipped,
+            "total_groups": len(groups),
+            "type1_groups": sum(1 for g in groups if g["clone_type"] == CLONE_TYPE_1),
+            "type2_groups": sum(1 for g in groups if g["clone_type"] == CLONE_TYPE_2),
+            "type3_groups": sum(1 for g in groups if g["clone_type"] == CLONE_TYPE_3),
+        }
+        return groups, stats
+
+    def detect_clones_to_groups(
+        self,
+        file_filter: str = "",
+        min_lines: int = 5,
+        similarity_threshold: float = 0.8,
+        progress_callback=None,
+    ) -> Dict[str, Any]:
+        """检测重复代码并写入 clone_groups（不展开为 pairs）
+
+        适合后台 job 异步执行，避免 20 万符号产生 N×N pair 爆炸。
+
+        参数：
+            progress_callback: 可选，签名为 (progress: float, message: str) -> None
+                供 job_executor 上报进度
+
+        返回：统计字典
+        """
+        if progress_callback:
+            progress_callback(0.1, "loading symbols")
+
+        groups, stats = self._detect_clone_groups_core(
+            file_filter=file_filter,
+            min_lines=min_lines,
+            similarity_threshold=similarity_threshold,
+        )
+
+        if progress_callback:
+            progress_callback(0.6, f"detected {len(groups)} groups")
+
+        # 写入 clone_groups
+        ws_id = self._get_active_workspace_id()
+
+        # 清空旧的 groups（同 workspace + 同 file_filter 范围）
+        # 简化：直接清空所有 groups，重新写入
+        from .db_clone_groups import store_clone_groups, clear_clone_groups
+        clear_clone_groups(self.conn, ws_id)
+
+        if progress_callback:
+            progress_callback(0.8, "storing groups")
+
+        stored = store_clone_groups(self.conn, ws_id, groups)
+
+        if progress_callback:
+            progress_callback(1.0, f"stored {stored} groups")
+
+        stats["stored_groups"] = stored
+        stats["similarity_threshold"] = similarity_threshold
+        stats["min_lines"] = min_lines
+        return stats
 
     def detect_clones(
         self,

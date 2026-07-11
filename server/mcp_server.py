@@ -1961,6 +1961,227 @@ def create_mcp_server():
         except Exception as e:
             return {"error": str(e)}
 
+    # ========================================
+    # Phase 7.0: Heavy Jobs 后台化
+    # ========================================
+
+    @mcp.tool()
+    def detect_clones_async(
+        file_filter: str = "",
+        min_lines: int = 5,
+        similarity_threshold: float = 0.8,
+    ) -> dict:
+        """异步检测重复代码（后台 job，不阻塞 MCP 请求）
+
+        把 clone detect 提交为后台 job，存 clone groups（不展开 pairs）。
+        适合 20 万符号级别的代码库，避免同步执行导致 MCP 请求超时。
+
+        Args:
+            file_filter: 文件路径前缀过滤（如 "src/core/"），空字符串扫描所有
+            min_lines: 最小符号行数（默认 5）
+            similarity_threshold: Type-3 相似度阈值 [0,1]（默认 0.8）
+
+        Returns:
+            {
+                "job_id": str,         # 任务 ID
+                "status": "pending",    # 初始状态
+                "job_type": "clone_detect",
+                "message": "submitted",
+            }
+        """
+        db = get_db()
+        try:
+            from callwarden.server.job_executor_singleton import get_job_executor
+            executor = get_job_executor(db.db_path, db.workspace_root)
+            params = {
+                "file_filter": file_filter,
+                "min_lines": min_lines,
+                "similarity_threshold": similarity_threshold,
+            }
+            ws_id = db._get_active_workspace_id()
+            job = executor.submit("clone_detect", params, workspace_id=ws_id)
+            return {
+                "job_id": job.job_id,
+                "status": job.status,
+                "job_type": job.job_type,
+                "message": "submitted",
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_job_status(job_id: str) -> dict:
+        """查询后台任务状态
+
+        Args:
+            job_id: 任务 ID（如 "J-1783698970719-3a4b"）
+
+        Returns:
+            {
+                "job_id": str,
+                "job_type": str,
+                "status": str,         # pending/running/completed/cancelled/failed
+                "progress": float,     # 0.0 ~ 1.0
+                "message": str,
+                "result_summary": dict,
+                "error": str,
+                "created_at": float,
+                "started_at": float,
+                "finished_at": float,
+            }
+        """
+        db = get_db()
+        try:
+            job = db.get_job(job_id)
+            if not job:
+                return {"error": f"job not found: {job_id}"}
+            return job.to_dict()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def cancel_job(job_id: str) -> dict:
+        """请求取消后台任务
+
+        行为：
+        - pending 状态：直接标记为 cancelled
+        - running 状态：设置 cancel_requested，executor 轮询后退出
+        - 终态：无操作
+
+        Args:
+            job_id: 任务 ID
+
+        Returns:
+            {"cancelled": bool, "job_id": str}
+        """
+        db = get_db()
+        try:
+            ok = db.cancel_job(job_id)
+            return {"cancelled": ok, "job_id": job_id}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def list_jobs(
+        job_type: str = "",
+        status: str = "",
+        limit: int = 100,
+    ) -> list:
+        """列出后台任务
+
+        Args:
+            job_type: 任务类型过滤（"" = 全部，如 "clone_detect"）
+            status: 状态过滤（"" = 全部，如 "running"）
+            limit: 返回上限（默认 100）
+
+        Returns:
+            任务列表，按 created_at 降序
+        """
+        db = get_db()
+        try:
+            jobs = db.list_jobs(
+                job_type=job_type or None,
+                status=status or None,
+                limit=limit,
+            )
+            return [j.to_dict() for j in jobs]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_job_stats() -> dict:
+        """获取任务统计信息
+
+        Returns:
+            {
+                "pending": int, "running": int,
+                "completed": int, "cancelled": int, "failed": int,
+                "total": int,
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_job_stats()
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def list_clone_groups(
+        clone_type: int = 0,
+        min_similarity: float = 0.0,
+        limit: int = 100,
+    ) -> list:
+        """列出 clone groups（Phase 7.0 新增）
+
+        读取 detect_clones_async 的结果。每组含 representative + member_count，
+        不展开成 pairs，避免 N×N 爆炸。
+
+        Args:
+            clone_type: 0=全部，1/2/3 对应 Type-N
+            min_similarity: 最低相似度过滤
+            limit: 返回上限（默认 100）
+
+        Returns:
+            clone group 列表，按相似度降序
+        """
+        db = get_db()
+        try:
+            groups = db.list_clone_groups(
+                clone_type=clone_type,
+                min_similarity=min_similarity,
+                limit=limit,
+            )
+            return [g.to_dict() for g in groups]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_clone_group_detail(
+        group_id: int,
+        members_limit: int = 100,
+    ) -> dict:
+        """获取 clone group 详情（含成员符号）
+
+        Args:
+            group_id: group ID
+            members_limit: 成员返回上限（默认 100）
+
+        Returns:
+            {
+                "group": {...},
+                "members": [{"symbol_id", "name", "qualified_name",
+                            "file_path", "start_line"}, ...]
+            }
+        """
+        db = get_db()
+        try:
+            detail = db.get_clone_group_detail(group_id, members_limit)
+            if not detail:
+                return {"error": f"group not found: {group_id}"}
+            return {
+                "group": detail.group.to_dict(),
+                "members": detail.members,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_clone_group_stats() -> dict:
+        """获取 clone groups 统计信息
+
+        Returns:
+            {
+                "total_groups": int, "type1": int, "type2": int, "type3": int,
+                "total_members": int,
+                "affected_files": int, "affected_symbols": int,
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_clone_group_stats()
+        except Exception as e:
+            return {"error": str(e)}
+
     @mcp.tool()
     def rule_seed_bootstrap(dry_run: bool = True) -> dict:
         """种子化内置自举 active rules

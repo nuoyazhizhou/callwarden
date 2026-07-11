@@ -69,6 +69,8 @@ from .db_audit_chain import AuditChainMixin
 from .db_agent_rules import AgentRulesMixin
 from .db_bootstrap import BootstrapMixin
 from .db_clone_detection import CloneDetectionMixin
+from .db_jobs import JobMixin
+from .db_clone_groups import CloneGroupMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -105,6 +107,8 @@ class CodeGraphDB(
     AgentRulesMixin,
     BootstrapMixin,
     CloneDetectionMixin,
+    JobMixin,
+    CloneGroupMixin,
 ):
     """代码知识图谱数据库
 

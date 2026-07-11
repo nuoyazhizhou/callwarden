@@ -1702,6 +1702,25 @@ class CodeGraphBase:
             self._migrate_schema(current_version, SCHEMA_VERSION)
         # current_version == SCHEMA_VERSION: 无需操作
 
+        # Phase 6/7 扩展 schema（CREATE IF NOT EXISTS，幂等）
+        # 这些 schema 由独立模块管理，不进入 SCHEMA_SQL 的版本化迁移流，
+        # 而是在每次启动时通过 CREATE IF NOT EXISTS 幂等创建。
+        try:
+            from .db_toolchain import init_toolchain_schema
+            init_toolchain_schema(self.conn)
+        except Exception:
+            pass
+        try:
+            from .db_jobs import init_jobs_schema
+            init_jobs_schema(self.conn)
+        except Exception:
+            pass
+        try:
+            from .db_clone_groups import init_clone_groups_schema
+            init_clone_groups_schema(self.conn)
+        except Exception:
+            pass
+
 
     def _get_current_version(self) -> int:
         """获取当前数据库 schema 版本"""
