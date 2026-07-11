@@ -2834,16 +2834,8 @@ class BuildMixin:
         for row in cur:
             sym_id_map[row["name"]] = row["id"]
 
-        # 全局 qualified_name -> id（精确匹配，能区分同名方法）
-        qname_id_map = {}
-        cur = self.conn.execute("SELECT id, qualified_name FROM symbols")
-        for row in cur:
-            qname_id_map[row["qualified_name"]] = row["id"]
-
-        # 外部符号 qualified_name -> -id（负值表示外部符号）
-        cur = self.conn.execute("SELECT id, qualified_name FROM external_symbols")
-        for row in cur:
-            qname_id_map[row["qualified_name"]] = -row["id"]
+        # 全局 qualified_name -> id（缓存化，避免每文件全表扫描）
+        qname_id_map = self._get_qname_id_map()
 
         for call in calls:
             # 多级 fallback 策略匹配 caller_id：
@@ -2883,6 +2875,31 @@ class BuildMixin:
                  callee_id, call.get("call_line", 0),
                  call.get("is_cross_file", 0)),
             )
+
+    def _get_qname_id_map(self) -> Dict[str, int]:
+        """获取 qualified_name -> id 的全局缓存（项目符号 + 外部符号）
+
+        缓存构建一次，后续调用直接返回。写操作（INSERT symbols/external_symbols）
+        后需调用 _invalidate_qname_cache() 失效缓存。
+
+        外部符号用负 id（-external_symbol_id）以区分。
+        """
+        if self._qname_cache is None:
+            self._qname_cache = {}
+            cur = self.conn.execute("SELECT id, qualified_name FROM symbols")
+            for row in cur:
+                self._qname_cache[row["qualified_name"]] = row["id"]
+            try:
+                cur = self.conn.execute("SELECT id, qualified_name FROM external_symbols")
+                for row in cur:
+                    self._qname_cache[row["qualified_name"]] = -row["id"]
+            except Exception:
+                pass  # external_symbols 表可能不存在
+        return self._qname_cache
+
+    def _invalidate_qname_cache(self):
+        """失效 qname_id_map 缓存（写操作后调用）"""
+        self._qname_cache = None
 
 
     def _save_calls_for_version(self, file_version_id: int, calls: List[Dict[str, Any]], result: Dict[str, Any]):
@@ -2940,12 +2957,17 @@ class BuildMixin:
     def _build_depth(self):
         """计算每个函数的拓扑深度
 
-        迭代实现（Kahn 拓扑排序变体）：从叶子节点（无 callee）开始 BFS 向上传播，
-        环中节点 depth=0（与原递归实现一致）。
+        优先使用 Rust GraphStore.compute_depth_all（复用 CSR 索引，内存 ~160MB），
+        Rust 不可用时降级为 Python 迭代 Kahn BFS。
 
-        原递归实现在调用链深度 >1000 时会 RecursionError，迭代版本避免此问题。
-        时间复杂度 O(V+E)，与递归版本相同。
+        算法：从叶子节点（无 callee）开始 BFS 向上传播，
+        depth = max(所有 callee 的 depth) + 1，环中节点 depth=0。
         """
+        # 优先走 Rust 路径：CSR 索引 + Kahn BFS
+        if self._try_build_depth_rust():
+            return
+
+        # 降级：Python 迭代 Kahn BFS
         from collections import deque
 
         cur = self.conn.execute(
@@ -2964,12 +2986,10 @@ class BuildMixin:
 
         depth_cache = {}
 
-        # 计算每个函数的未处理 callee 计数
         pending_callee_count = {}
         for fn_id in all_fns:
             pending_callee_count[fn_id] = len(call_graph.get(fn_id, []))
 
-        # 从叶子节点（无 callee）开始 BFS
         queue = deque()
         for fn_id in all_fns:
             if pending_callee_count[fn_id] == 0:
@@ -2978,8 +2998,6 @@ class BuildMixin:
 
         while queue:
             fn_id = queue.popleft()
-            fn_depth = depth_cache[fn_id]
-
             for caller_id in reverse_graph.get(fn_id, []):
                 if caller_id in depth_cache:
                     continue
@@ -2993,19 +3011,56 @@ class BuildMixin:
                     depth_cache[caller_id] = max_callee_depth + 1
                     queue.append(caller_id)
 
-        # 环中的节点（未被 BFS 处理的）depth=0
         for fn_id in all_fns:
             if fn_id not in depth_cache:
                 depth_cache[fn_id] = 0
 
-        # P5 优化：executemany 批量更新替代逐个 UPDATE
         updates = [(depth, fn_id) for fn_id, depth in depth_cache.items()]
         self.conn.executemany(
             "UPDATE symbols SET depth = ? WHERE id = ?",
             updates,
         )
-
         self.conn.commit()
+
+    def _try_build_depth_rust(self) -> bool:
+        """尝试用 Rust GraphStore 计算 depth，成功返回 True。
+
+        流程：
+        1. WAL checkpoint（确保 immutable 只读连接能看到最新数据）
+        2. GraphStore.load_from_sqlite 加载 symbols + calls 到 Rust CSR
+        3. compute_depth_all Kahn BFS（Rust 端，内存 ~160MB）
+        4. Python 侧 executemany 批量 UPDATE
+        """
+        try:
+            from callwarden_core import GraphStore
+        except ImportError:
+            return False
+
+        try:
+            # 关键：先 commit 释放主连接持有的写锁
+            # build_full_graph 在调用 _build_depth 前未 commit，主连接还在事务中，
+            # 会导致 wal_checkpoint 和 Rust immutable=1 打开都失败（SQLITE_LOCKED）
+            self.conn.commit()
+
+            # WAL checkpoint：确保 immutable 只读连接能看到刚写入的数据
+            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+
+            store = GraphStore()
+            store.load_from_sqlite(self.db_path)
+            depth_updates = store.compute_depth_all()
+
+            # 批量 UPDATE（executemany 比逐条快 10x）
+            # depth_updates: Vec<(symbol_id: u32, depth: i32)>
+            py_updates = [(int(d), int(sid)) for sid, d in depth_updates]
+            self.conn.executemany(
+                "UPDATE symbols SET depth = ? WHERE id = ?",
+                py_updates,
+            )
+            self.conn.commit()
+            return True
+        except Exception as e:
+            print(f"[callwarden] Rust compute_depth_all 失败，降级 Python: {e}")
+            return False
 
     # --------------------------------------------------------------------
     # 增量刷新

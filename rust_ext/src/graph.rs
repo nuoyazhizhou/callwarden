@@ -679,6 +679,114 @@ impl GraphStore {
         }
         Ok(dict.into_any())
     }
+
+    /// 全量计算所有函数的拓扑深度（Kahn BFS，复用 CSR 索引）
+    ///
+    /// 算法：从叶子节点（无 callee）开始 BFS 向上传播，
+    /// depth = max(所有 callee 的 depth) + 1，环中节点 depth=0。
+    ///
+    /// 返回 Vec<(symbol_id, depth)>，Python 侧可直接 executemany 批量 UPDATE。
+    ///
+    /// 内存占用（千万符号）：
+    /// - pending_callee_count: Vec<usize> ~80MB
+    /// - depth: Vec<i32> ~40MB
+    /// - queue: VecDeque<u32> ~40MB
+    /// 总计 ~160MB（Rust），远小于 Python defaultdict 的 2GB+
+    fn compute_depth_all(&self) -> PyResult<Vec<(u32, i32)>> {
+        use std::collections::VecDeque;
+
+        let symbols = self.symbols.as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
+                "symbols not loaded, call load_from_sqlite first"
+            ))?;
+        let calls = self.calls.as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
+                "calls not loaded, call load_from_sqlite first"
+            ))?;
+
+        let max_id = symbols.by_id.len();
+
+        // 1. 构建每个 fn 的未处理 callee 计数（CSR forward edges）
+        let mut pending_callee_count = vec![0usize; max_id];
+        for edge in &calls.forward_edges {
+            if edge.callee_id > 0 && (edge.caller_id as usize) < max_id {
+                pending_callee_count[edge.caller_id as usize] += 1;
+            }
+        }
+
+        // 2. depth 数组：-1 = 未计算
+        let mut depth: Vec<i32> = vec![-1; max_id];
+
+        // 3. 从叶子节点（无 callee 且 kind 是 fn/test_fn）开始 BFS
+        let mut queue: VecDeque<u32> = VecDeque::new();
+        for sym in &symbols.by_id {
+            if sym.id == 0 {
+                continue;
+            }
+            // 只计算 fn 和 test_fn（与 Python 侧一致）
+            if sym.kind != "fn" && sym.kind != "test_fn" {
+                continue;
+            }
+            let id = sym.id as usize;
+            if pending_callee_count[id] == 0 {
+                depth[id] = 0;
+                queue.push_back(sym.id);
+            }
+        }
+
+        // 4. BFS 向上传播
+        while let Some(fn_id) = queue.pop_front() {
+            let fn_depth = depth[fn_id as usize];
+
+            // 遍历所有 caller（通过 CSR backward edges）
+            let b_start = calls.backward_offsets.get(fn_id as usize)
+                .copied().unwrap_or(0);
+            let b_end = calls.backward_offsets.get(fn_id as usize + 1)
+                .copied().unwrap_or(0);
+
+            for i in b_start..b_end {
+                let caller_id = calls.backward_edges[i].caller_id;
+                if caller_id == 0 || (caller_id as usize) >= max_id {
+                    continue;
+                }
+                if depth[caller_id as usize] != -1 {
+                    continue;
+                }
+                pending_callee_count[caller_id as usize] -= 1;
+                if pending_callee_count[caller_id as usize] == 0 {
+                    // 所有 callee 都已处理，计算 depth = max(callee depths) + 1
+                    let f_start = calls.forward_offsets.get(caller_id as usize)
+                        .copied().unwrap_or(0);
+                    let f_end = calls.forward_offsets.get(caller_id as usize + 1)
+                        .copied().unwrap_or(0);
+                    let max_callee_depth = calls.forward_edges[f_start..f_end]
+                        .iter()
+                        .filter(|e| e.callee_id > 0 && (e.callee_id as usize) < max_id)
+                        .map(|e| depth[e.callee_id as usize])
+                        .filter(|d| *d >= 0)
+                        .max()
+                        .unwrap_or(0);
+                    depth[caller_id as usize] = max_callee_depth + 1;
+                    queue.push_back(caller_id);
+                }
+            }
+        }
+
+        // 5. 收集结果（环中节点 depth=0）
+        let mut result = Vec::with_capacity(max_id);
+        for sym in &symbols.by_id {
+            if sym.id == 0 {
+                continue;
+            }
+            if sym.kind != "fn" && sym.kind != "test_fn" {
+                continue;
+            }
+            let d = if depth[sym.id as usize] == -1 { 0 } else { depth[sym.id as usize] };
+            result.push((sym.id, d));
+        }
+
+        Ok(result)
+    }
 }
 
 // ============================================

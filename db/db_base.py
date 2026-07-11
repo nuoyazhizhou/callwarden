@@ -1624,6 +1624,11 @@ class CodeGraphBase:
         self._graph_store = None
         self._graph_store_dirty = False
 
+        # qname_id_map 缓存：qualified_name -> symbol_id（项目符号）+ -external_id（外部符号）
+        # 避免 _write_calls_db 每文件全表扫描 symbols + external_symbols
+        # 写操作后需调用 _invalidate_qname_cache() 失效
+        self._qname_cache: Optional[Dict[str, int]] = None
+
         # 活动工作区
         self.active_workspace: Optional[Dict[str, Any]] = None
 
@@ -1672,6 +1677,8 @@ class CodeGraphBase:
         这样 Watcher 连续 refresh 多个文件时不会每次都清空缓存。
         """
         self._graph_store_dirty = True
+        # 同时失效 qname_id_map 缓存（symbols/external_symbols 已变更）
+        self._qname_cache = None
 
 
     def _init_schema(self):
