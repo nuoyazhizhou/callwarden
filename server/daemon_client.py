@@ -280,6 +280,131 @@ class DaemonClient:
             return None
         return cache.diff_signature(left_workspace_id, right_workspace_id, qualified_name)
 
+    def diff_callers(
+        self,
+        left_workspace_id: str,
+        right_workspace_id: str,
+        qualified_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """对比两个 workspace 中同一符号的 caller 边集合（基于 resolved edge delta）。"""
+        if not self._svc.rust_available:
+            return None
+        cache = self._svc._cache
+        if cache is None:
+            return None
+        return cache.diff_callers(left_workspace_id, right_workspace_id, qualified_name)
+
+    def diff_callees(
+        self,
+        left_workspace_id: str,
+        right_workspace_id: str,
+        qualified_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """对比两个 workspace 中同一符号的 callee 边集合（基于 resolved edge delta）。"""
+        if not self._svc.rust_available:
+            return None
+        cache = self._svc._cache
+        if cache is None:
+            return None
+        return cache.diff_callees(left_workspace_id, right_workspace_id, qualified_name)
+
+    def compare_snapshots(
+        self,
+        left_workspace_id: str,
+        right_workspace_id: str,
+        scope_type: str = "repo",
+        scope_value: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """对比两个 workspace 中指定 scope 内的所有符号差异（同步查询）。
+
+        同步路径：小 scope（file/module）直接返回结果。
+        仓库级 scope 应先调用 count_symbols_in_scope 检查大小，
+        超阈值时改用 start_snapshot_diff 转后台 job。
+
+        Args:
+            left_workspace_id: 左 workspace ID
+            right_workspace_id: 右 workspace ID
+            scope_type: "file" / "module" / "repo"
+            scope_value: 文件路径或模块路径（repo 时忽略）
+
+        Returns:
+            {"changes": [...], "scope_type": str, "scope_value": str, "count": int}
+            Rust 不可用时返回 None
+        """
+        if not self._svc.rust_available:
+            return None
+        cache = self._svc._cache
+        if cache is None:
+            return None
+        changes = cache.compare_snapshots(
+            left_workspace_id, right_workspace_id, scope_type, scope_value
+        )
+        return {
+            "changes": changes,
+            "scope_type": scope_type,
+            "scope_value": scope_value,
+            "count": len(changes),
+        }
+
+    def count_symbols_in_scope(
+        self,
+        left_workspace_id: str,
+        right_workspace_id: str,
+        scope_type: str = "repo",
+        scope_value: str = "",
+    ) -> int:
+        """统计两个 workspace 中匹配 scope 的符号数量（并集）。
+
+        用于判断 compare_snapshots 是否应走同步路径还是转后台 job。
+
+        Returns:
+            符号数量（并集），Rust 不可用时返回 0
+        """
+        if not self._svc.rust_available:
+            return 0
+        cache = self._svc._cache
+        if cache is None:
+            return 0
+        return cache.count_symbols_in_scope(
+            left_workspace_id, right_workspace_id, scope_type, scope_value
+        )
+
+    def start_snapshot_diff(
+        self,
+        left_workspace_id: str,
+        right_workspace_id: str,
+        scope_type: str = "repo",
+        scope_value: str = "",
+    ) -> Optional[str]:
+        """启动仓库级 snapshot diff 后台 job。
+
+        设计参考：enterprise-daemon-shared-snapshot-plan.md §12.4 start_snapshot_diff
+
+        Args:
+            left_workspace_id: 左 workspace ID
+            right_workspace_id: 右 workspace ID
+            scope_type: "file" / "module" / "repo"
+            scope_value: 文件路径或模块路径（repo 时忽略）
+
+        Returns:
+            job_id 字符串，Rust 不可用时返回 None
+        """
+        if not self._svc.rust_available:
+            return None
+        # 延迟导入避免循环依赖
+        from callwarden.config import get_project_db_path
+        from callwarden.server.job_executor_singleton import get_job_executor
+        db_path = get_project_db_path(self._project_root or ".")
+        executor = get_job_executor(db_path)
+        params = {
+            "left_workspace_id": left_workspace_id,
+            "right_workspace_id": right_workspace_id,
+            "scope_type": scope_type,
+            "scope_value": scope_value,
+        }
+        job = executor.submit("snapshot_diff", params)
+        return job.job_id
+
     # ------------------------------------------------------------------
     # SQL 回退（兼容 local 模式，daemon 不可用时走 Python SQL）
     # ------------------------------------------------------------------

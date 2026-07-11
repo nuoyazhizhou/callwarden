@@ -231,6 +231,80 @@ class _SemgrepScanWrapper:
         return self._delegate("_get_current_symbol_positions")()
 
 
+def snapshot_diff_handler(ctx) -> Dict[str, Any]:
+    """Snapshot diff job handler（Phase 4.8 仓库级 diff 后台 job）
+
+    把 compare_snapshots 包装为后台 job，避免在 MCP 在线请求中
+    执行仓库级全量 diff（可能涉及数万符号）。
+
+    ctx.params:
+        left_workspace_id: str  — 左 workspace ID
+        right_workspace_id: str  — 右 workspace ID
+        scope_type: str = "repo"  — "file" / "module" / "repo"
+        scope_value: str = ""  — 文件路径或模块路径
+
+    返回：
+        {
+            "total_changes": int,
+            "added": int,
+            "removed": int,
+            "moved": int,
+            "signature_changed": int,
+            "callers_changed": int,
+            "callees_changed": int,
+            "ambiguous": int,
+        }
+    """
+    from callwarden.server.snapshot_manager import get_snapshot_service
+
+    params = ctx.params
+    left_ws = params.get("left_workspace_id", "")
+    right_ws = params.get("right_workspace_id", "")
+    scope_type = params.get("scope_type", "repo")
+    scope_value = params.get("scope_value", "")
+
+    ctx.update_progress(0.0, "starting snapshot diff")
+
+    svc = get_snapshot_service()
+    if not svc.rust_available:
+        return {"error": "Rust backend not available", "total_changes": 0}
+
+    cache = svc._cache
+    if cache is None:
+        return {"error": "snapshot cache not initialized", "total_changes": 0}
+
+    ctx.update_progress(0.1, "counting symbols in scope")
+    symbol_count = cache.count_symbols_in_scope(
+        left_ws, right_ws, scope_type, scope_value
+    )
+
+    ctx.update_progress(0.2, f"comparing {symbol_count} symbols")
+    changes = cache.compare_snapshots(left_ws, right_ws, scope_type, scope_value)
+
+    # 按 change_kind 统计
+    stats = {
+        "added": 0,
+        "removed": 0,
+        "moved": 0,
+        "signature_changed": 0,
+        "callers_changed": 0,
+        "callees_changed": 0,
+        "ambiguous": 0,
+    }
+    for change in changes:
+        kind = change.get("change_kind", "")
+        if kind in stats:
+            stats[kind] += 1
+
+    result = {
+        "total_changes": len(changes),
+        **stats,
+    }
+
+    ctx.update_progress(1.0, f"done: {len(changes)} changes")
+    return result
+
+
 def register_default_handlers(executor) -> None:
     """注册默认 job handlers 到 executor
 
@@ -240,4 +314,5 @@ def register_default_handlers(executor) -> None:
     executor.register_handler("clone_detect", clone_detect_handler)
     executor.register_handler("vector_embed", vector_embed_handler)
     executor.register_handler("semgrep_scan", semgrep_scan_handler)
+    executor.register_handler("snapshot_diff", snapshot_diff_handler)
 

@@ -173,6 +173,50 @@ pub fn diff_edges(
     Some((caller_delta, callee_delta))
 }
 
+/// 对比两个 snapshot 中同一 qualified_name 的 caller 边集合
+///
+/// 基于 resolved edge delta：只返回 caller 的增删（谁开始/不再调用这个函数）。
+/// 返回的 EdgeDeltaSummary 中只有 added_callers / removed_callers 有值，
+/// added_callees / removed_callees 为空。
+///
+/// 符号在任一侧不存在时返回 None（与 diff_signature 一致）。
+/// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 Query API
+pub fn diff_callers(
+    left: &GraphStore,
+    right: &GraphStore,
+    qualified_name: &str,
+) -> Option<EdgeDeltaSummary> {
+    let (caller_delta_raw, _) = diff_edges(left, right, qualified_name)?;
+    Some(EdgeDeltaSummary {
+        added_callers: caller_delta_raw.added_callers,
+        removed_callers: caller_delta_raw.removed_callers,
+        added_callees: vec![],
+        removed_callees: vec![],
+    })
+}
+
+/// 对比两个 snapshot 中同一 qualified_name 的 callee 边集合
+///
+/// 基于 resolved edge delta：只返回 callee 的增删（这个函数开始/不再调用谁）。
+/// 返回的 EdgeDeltaSummary 中只有 added_callees / removed_callees 有值，
+/// added_callers / removed_callers 为空。
+///
+/// 符号在任一侧不存在时返回 None（与 diff_signature 一致）。
+/// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 Query API
+pub fn diff_callees(
+    left: &GraphStore,
+    right: &GraphStore,
+    qualified_name: &str,
+) -> Option<EdgeDeltaSummary> {
+    let (_, callee_delta_raw) = diff_edges(left, right, qualified_name)?;
+    Some(EdgeDeltaSummary {
+        added_callers: vec![],
+        removed_callers: vec![],
+        added_callees: callee_delta_raw.added_callers,
+        removed_callees: callee_delta_raw.removed_callers,
+    })
+}
+
 /// 计算两组 symbol_id 的增删差异，返回 qualified_name 列表
 fn compute_edge_delta(
     left: &GraphStore,
@@ -292,6 +336,93 @@ pub fn diff_symbol(
 }
 
 // ============================================
+// compare_snapshots: scope 级批量对比
+// ============================================
+
+/// Scope 过滤器
+#[derive(Clone, Debug)]
+pub enum ScopeFilter {
+    /// 仓库级（所有符号）
+    Repo,
+    /// 文件级（按 file_rel_path 过滤）
+    File(String),
+    /// 模块级（按 module_path 过滤）
+    Module(String),
+}
+
+impl ScopeFilter {
+    /// 将 ScopeFilter 转换为 (file_filter, module_filter) 元组
+    ///
+    /// 供 GraphStore.get_all_qualified_names 使用
+    fn to_filters(&self) -> (Option<&str>, Option<&str>) {
+        match self {
+            ScopeFilter::Repo => (None, None),
+            ScopeFilter::File(path) => (Some(path.as_str()), None),
+            ScopeFilter::Module(module_path) => (None, Some(module_path.as_str())),
+        }
+    }
+}
+
+/// 统计两个 snapshot 中匹配 scope 的符号数量（并集）
+///
+/// 用于判断是否应走同步路径还是转后台 job。
+/// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 / §12.4
+pub fn count_symbols_in_scope(
+    left: &GraphStore,
+    right: &GraphStore,
+    scope: &ScopeFilter,
+) -> usize {
+    let (file_filter, module_filter) = scope.to_filters();
+    let mut qnames = HashSet::new();
+    for qname in left.get_all_qualified_names(file_filter, module_filter) {
+        qnames.insert(qname);
+    }
+    for qname in right.get_all_qualified_names(file_filter, module_filter) {
+        qnames.insert(qname);
+    }
+    qnames.len()
+}
+
+/// 对比两个 snapshot 中指定 scope 内的所有符号差异
+///
+/// 遍历 scope 内的符号并集，对每个符号调用 diff_symbol，
+/// 返回所有有变化的 SymbolDiffRecord（unchanged 的不包含）。
+///
+/// scope:
+/// - ScopeFilter::Repo: 仓库级（调用方应先用 count_symbols_in_scope 检查大小）
+/// - ScopeFilter::File(path): 文件级
+/// - ScopeFilter::Module(path): 模块级
+///
+/// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 compare_snapshots
+pub fn compare_snapshots(
+    left: &GraphStore,
+    right: &GraphStore,
+    scope: &ScopeFilter,
+) -> Vec<SymbolDiffRecord> {
+    // 1. 收集 scope 内的 qualified_names 并集
+    let (file_filter, module_filter) = scope.to_filters();
+    let mut qnames = HashSet::new();
+    for qname in left.get_all_qualified_names(file_filter, module_filter) {
+        qnames.insert(qname);
+    }
+    for qname in right.get_all_qualified_names(file_filter, module_filter) {
+        qnames.insert(qname);
+    }
+
+    // 2. 对每个 qualified_name 调用 diff_symbol，过滤 unchanged
+    qnames.into_iter()
+        .filter_map(|qname| {
+            let record = diff_symbol(left, right, &qname);
+            if record.change_kind != SymbolChangeKind::Unchanged {
+                Some(record)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+// ============================================
 // PyO3 序列化辅助
 // ============================================
 
@@ -347,4 +478,17 @@ pub fn symbol_diff_to_pydict<'py>(
     let callee = edge_delta_to_pydict(py, &record.callee_delta)?;
     d.set_item("callee_delta", callee)?;
     Ok(d)
+}
+
+/// 将 Vec<SymbolDiffRecord> 转为 Python list of dict
+pub fn symbol_diff_list_to_pylist<'py>(
+    py: Python<'py>,
+    records: &[SymbolDiffRecord],
+) -> PyResult<Bound<'py, PyList>> {
+    let list = PyList::empty(py);
+    for record in records {
+        let dict = symbol_diff_to_pydict(py, record)?;
+        list.append(dict)?;
+    }
+    Ok(list)
 }

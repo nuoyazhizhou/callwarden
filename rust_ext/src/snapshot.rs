@@ -402,6 +402,110 @@ impl PySnapshotCache {
             None => Ok(None),
         }
     }
+
+    /// Phase 4.8: 仅对比两个 workspace 中同一符号的 caller 边集合
+    ///
+    /// 基于 resolved edge delta：只返回 caller 的增删（谁开始/不再调用这个函数）。
+    /// 返回的 dict 中 added_callers / removed_callers 有值，
+    /// added_callees / removed_callees 为空列表。
+    /// 符号在任一侧不存在时返回 None。
+    /// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 Query API
+    fn diff_callers<'py>(
+        &self,
+        py: Python<'py>,
+        left_workspace_id: &str,
+        right_workspace_id: &str,
+        qualified_name: &str,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let left_store = self.get_store(left_workspace_id)?;
+        let right_store = self.get_store(right_workspace_id)?;
+        match diff::diff_callers(&left_store, &right_store, qualified_name) {
+            Some(delta) => {
+                let d = diff::edge_delta_to_pydict(py, &delta)?;
+                Ok(Some(d))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Phase 4.8: 仅对比两个 workspace 中同一符号的 callee 边集合
+    ///
+    /// 基于 resolved edge delta：只返回 callee 的增删（这个函数开始/不再调用谁）。
+    /// 返回的 dict 中 added_callees / removed_callees 有值，
+    /// added_callers / removed_callers 为空列表。
+    /// 符号在任一侧不存在时返回 None。
+    /// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 Query API
+    fn diff_callees<'py>(
+        &self,
+        py: Python<'py>,
+        left_workspace_id: &str,
+        right_workspace_id: &str,
+        qualified_name: &str,
+    ) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let left_store = self.get_store(left_workspace_id)?;
+        let right_store = self.get_store(right_workspace_id)?;
+        match diff::diff_callees(&left_store, &right_store, qualified_name) {
+            Some(delta) => {
+                let d = diff::edge_delta_to_pydict(py, &delta)?;
+                Ok(Some(d))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Phase 4.8: 统计两个 workspace 中匹配 scope 的符号数量（并集）
+    ///
+    /// 用于判断是否应走同步路径还是转后台 job。
+    /// scope_type: "repo" / "file" / "module"
+    /// scope_value: 文件路径或模块路径（repo 时忽略）
+    fn count_symbols_in_scope(
+        &self,
+        left_workspace_id: &str,
+        right_workspace_id: &str,
+        scope_type: &str,
+        scope_value: &str,
+    ) -> PyResult<usize> {
+        let left_store = self.get_store(left_workspace_id)?;
+        let right_store = self.get_store(right_workspace_id)?;
+        let scope = build_scope_filter(scope_type, scope_value);
+        Ok(diff::count_symbols_in_scope(&left_store, &right_store, &scope))
+    }
+
+    /// Phase 4.8: 对比两个 workspace 中指定 scope 内的所有符号差异
+    ///
+    /// 同步查询：遍历 scope 内的符号并集，对每个符号调用 diff_symbol，
+    /// 返回所有有变化的 SymbolDiffRecord 列表（unchanged 的不包含）。
+    ///
+    /// scope_type: "repo" / "file" / "module"
+    /// scope_value: 文件路径或模块路径（repo 时忽略）
+    ///
+    /// 注意：repo 级 scope 可能很慢，调用方应先用 count_symbols_in_scope
+    /// 检查大小，超阈值时改用 start_snapshot_diff 后台 job。
+    ///
+    /// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 compare_snapshots
+    fn compare_snapshots<'py>(
+        &self,
+        py: Python<'py>,
+        left_workspace_id: &str,
+        right_workspace_id: &str,
+        scope_type: &str,
+        scope_value: &str,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let left_store = self.get_store(left_workspace_id)?;
+        let right_store = self.get_store(right_workspace_id)?;
+        let scope = build_scope_filter(scope_type, scope_value);
+        let records = diff::compare_snapshots(&left_store, &right_store, &scope);
+        diff::symbol_diff_list_to_pylist(py, &records)
+    }
+}
+
+/// 根据 Python 传入的 scope 参数构造 ScopeFilter
+fn build_scope_filter(scope_type: &str, scope_value: &str) -> diff::ScopeFilter {
+    match scope_type {
+        "file" => diff::ScopeFilter::File(scope_value.to_string()),
+        "module" => diff::ScopeFilter::Module(scope_value.to_string()),
+        _ => diff::ScopeFilter::Repo,
+    }
 }
 
 // 非 PyO3 的内部方法

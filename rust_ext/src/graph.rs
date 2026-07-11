@@ -773,6 +773,42 @@ impl GraphStore {
         }
         map
     }
+
+    /// 获取所有符号的 qualified_name 列表，可选按 file_rel_path 或 module_path 过滤
+    ///
+    /// 供 diff 模块的 compare_snapshots / count_symbols_in_scope 使用，
+    /// 避免 diff 模块直接访问 GraphStore 内部字段。
+    pub fn get_all_qualified_names(
+        &self,
+        file_filter: Option<&str>,
+        module_filter: Option<&str>,
+    ) -> Vec<String> {
+        let symbols = match self.symbols.as_ref() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        symbols
+            .by_id
+            .iter()
+            .filter(|sym| {
+                if sym.id == 0 && sym.name.is_empty() {
+                    return false;
+                }
+                if let Some(f) = file_filter {
+                    if sym.file_rel_path != f {
+                        return false;
+                    }
+                }
+                if let Some(m) = module_filter {
+                    if sym.module_path != m {
+                        return false;
+                    }
+                }
+                true
+            })
+            .map(|sym| sym.qualified_name.clone())
+            .collect()
+    }
 }
 
 // ============================================
