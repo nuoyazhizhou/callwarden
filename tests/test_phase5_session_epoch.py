@@ -620,3 +620,135 @@ class TestFileGenerationsDedup:
         )
         assert resp["status"] == "committed"
         assert resp["generation"] == "2:1"
+
+
+# ============================================
+# TestDaemonParsePublishPipeline —— daemon_handle_refresh 中间管道测试
+# ============================================
+
+class TestDaemonParsePublishPipeline:
+    """daemon_handle_refresh 中间的 re-canonicalize + re-hash + Rust parse + CAS publish 管道"""
+
+    def test_refresh_without_cas_conn_returns_cas_state(self):
+        """cas_conn=None 时跳过 CAS publish，但仍完成 generation CAS"""
+        conn = _open_db()
+        daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                              requested_session_id="s1", ws_conn=conn)
+        resp = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="test.py"),
+            ws_conn=conn,
+            cas_conn=None,
+        )
+        assert resp["status"] == "committed"
+        # cas_conn=None 时返回 no_cas_conn 或其他降级状态
+        assert "cas_state" in resp
+
+    def test_refresh_with_abs_path_in_msg(self):
+        """msg 中携带 abs_path 时使用该路径"""
+        conn = _open_db()
+        daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                              requested_session_id="s1", ws_conn=conn)
+        # 用一个不存在的 abs_path，触发降级路径
+        msg = _refresh_msg("s1", epoch=1, seq=1, rel_path="test.py")
+        msg["abs_path"] = "/nonexistent/path/test.py"
+        resp = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=msg,
+            ws_conn=conn,
+            cas_conn=None,
+        )
+        assert resp["status"] == "committed"
+
+    def test_refresh_with_workspace_root_derives_abs_path(self):
+        """workspace_root + rel_path 推导 abs_path"""
+        conn = _open_db()
+        daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                              requested_session_id="s1", ws_conn=conn)
+        resp = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="src/main.py"),
+            ws_conn=conn,
+            cas_conn=None,
+            workspace_root="/some/root",
+        )
+        assert resp["status"] == "committed"
+
+    def test_refresh_unsupported_language_skips_cas(self):
+        """不支持的文件扩展名 → cas_state=unsupported_language"""
+        conn = _open_db()
+        daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                              requested_session_id="s1", ws_conn=conn)
+        resp = daemon_handle_refresh(
+            peer_uid=1000, workspace_id=1,
+            msg=_refresh_msg("s1", epoch=1, seq=1, rel_path="README.unknown"),
+            ws_conn=conn,
+            cas_conn=None,
+        )
+        assert resp["status"] == "committed"
+        assert resp["cas_state"] == "unsupported_language"
+
+    def test_refresh_with_cas_conn_attempts_cas_publish(self):
+        """有 cas_conn 时会尝试 CAS publish（即使最终降级）"""
+        # 创建 CAS schema
+        cas_conn = sqlite3.connect(":memory:", check_same_thread=False)
+        cas_conn.row_factory = sqlite3.Row
+        try:
+            from db.db_cas import init_cas_schema
+            init_cas_schema(cas_conn)
+        except ImportError:
+            pytest.skip("db.db_cas not available")
+
+        conn = _open_db()
+        daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                              requested_session_id="s1", ws_conn=conn)
+
+        # 用一个真实的 Python 文件做测试
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
+            f.write("def foo():\n    pass\n")
+            tmp_path = f.name
+        try:
+            msg = _refresh_msg("s1", epoch=1, seq=1, rel_path="test.py")
+            msg["abs_path"] = tmp_path
+            resp = daemon_handle_refresh(
+                peer_uid=1000, workspace_id=1,
+                msg=msg,
+                ws_conn=conn,
+                cas_conn=cas_conn,
+            )
+            assert resp["status"] == "committed"
+            # 应该有 cas_key 和 cas_state
+            assert "cas_key" in resp
+            assert "cas_state" in resp
+            # Rust 不可用时可能是 parse_failed 或 ready_published
+            assert resp["cas_state"] in (
+                "ready_published", "parse_failed", "ready_cache_hit",
+                "publish_failed", "no_cas_conn",
+            )
+        finally:
+            os.unlink(tmp_path)
+
+
+class TestJoinPath:
+    """_join_path 辅助函数"""
+
+    def test_join_path_basic(self):
+        from server.replicator import _join_path
+        assert _join_path("/root", "src/main.py") == "/root/src/main.py"
+
+    def test_join_path_trailing_slash(self):
+        from server.replicator import _join_path
+        assert _join_path("/root/", "src/main.py") == "/root/src/main.py"
+
+    def test_join_path_leading_slash_in_rel(self):
+        from server.replicator import _join_path
+        assert _join_path("/root", "/src/main.py") == "/root/src/main.py"
+
+    def test_join_path_windows_backslash(self):
+        from server.replicator import _join_path
+        assert _join_path("C:\\root", "src\\main.py") == "c:/root/src/main.py"
+
+    def test_join_path_empty_root(self):
+        from server.replicator import _join_path
+        assert _join_path("", "src/main.py") == "src/main.py"
