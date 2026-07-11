@@ -13,6 +13,7 @@ daemon crash 后，Replicator 可从 staging log 恢复未应用的 entries 并�
 """
 
 import logging
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
@@ -21,6 +22,200 @@ from typing import List, Optional, Dict, Any
 from server.staging_log import StagingLog, StagingEntry
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# Session epoch / generation CAS —— 规范 watcher-generation-state-machine.md
+# 修复 T-1783751525743-7c76
+# ============================================
+
+SESSION_SCHEMA_DDL = """
+-- agent_sessions：所有 session 的注册表（含已撤销）
+CREATE TABLE IF NOT EXISTS agent_sessions (
+    workspace_id INTEGER NOT NULL,
+    session_id TEXT NOT NULL,
+    session_epoch INTEGER NOT NULL,
+    activated_at INTEGER NOT NULL,
+    revoked_at INTEGER,
+    peer_uid INTEGER NOT NULL,
+    PRIMARY KEY (workspace_id, session_id)
+);
+
+-- workspace_active_session：每个 workspace 当前唯一的 active session
+CREATE TABLE IF NOT EXISTS workspace_active_session (
+    workspace_id INTEGER PRIMARY KEY,
+    active_session_id TEXT NOT NULL,
+    active_session_epoch INTEGER NOT NULL
+);
+
+-- file_generations：per-file 消息去重 + CAS 两阶段提交
+CREATE TABLE IF NOT EXISTS file_generations (
+    workspace_id INTEGER NOT NULL,
+    rel_path TEXT NOT NULL,
+    latest_session_id TEXT DEFAULT '',
+    latest_session_epoch INTEGER DEFAULT 0,
+    latest_seq INTEGER DEFAULT 0,
+    latest_seen_generation TEXT DEFAULT '',
+    latest_committed_generation TEXT DEFAULT '',
+    PRIMARY KEY (workspace_id, rel_path)
+);
+"""
+
+
+def init_session_schema(conn: sqlite3.Connection):
+    """初始化 session 管理 schema。"""
+    conn.executescript(SESSION_SCHEMA_DDL)
+    conn.commit()
+
+
+class ProtocolError(Exception):
+    """Session epoch / generation CAS 协议错误。"""
+    pass
+
+
+def daemon_handle_connect(peer_uid: int, workspace_id: int, requested_session_id: str,
+                          ws_conn: sqlite3.Connection) -> dict:
+    """agent 连接握手——daemon 分配单调 epoch，旧 session 永久失效。
+
+    规范：watcher-generation-state-machine.md §4.1
+    修复 T-1783751525743-7c76
+    """
+    now = int(time.time())
+    ws_conn.execute("BEGIN IMMEDIATE")
+    try:
+        # 1. 撤销同一 workspace 所有旧 active session
+        ws_conn.execute(
+            "UPDATE agent_sessions SET revoked_at = ? "
+            "WHERE workspace_id = ? AND revoked_at IS NULL",
+            (now, workspace_id)
+        )
+        # 2. 分配 new_epoch = MAX(all session_epoch) + 1
+        row = ws_conn.execute(
+            "SELECT COALESCE(MAX(session_epoch), 0) + 1 AS next_epoch "
+            "FROM agent_sessions WHERE workspace_id = ?",
+            (workspace_id,)
+        ).fetchone()
+        new_epoch = row["next_epoch"]
+        # 3. INSERT agent_sessions
+        ws_conn.execute(
+            "INSERT INTO agent_sessions (workspace_id, session_id, session_epoch, "
+            "activated_at, revoked_at, peer_uid) VALUES (?, ?, ?, ?, NULL, ?)",
+            (workspace_id, requested_session_id, new_epoch, now, peer_uid)
+        )
+        # 4. INSERT OR REPLACE workspace_active_session
+        ws_conn.execute(
+            "INSERT OR REPLACE INTO workspace_active_session "
+            "(workspace_id, active_session_id, active_session_epoch) VALUES (?, ?, ?)",
+            (workspace_id, requested_session_id, new_epoch)
+        )
+        # 5. UPDATE file_generations SET latest_seq=0（新 session seq 从 1 开始）
+        ws_conn.execute(
+            "UPDATE file_generations SET latest_session_id = ?, "
+            "latest_session_epoch = ?, latest_seq = 0, "
+            "latest_seen_generation = '' WHERE workspace_id = ?",
+            (requested_session_id, new_epoch, workspace_id)
+        )
+        ws_conn.execute("COMMIT")
+        return {"session_epoch": new_epoch}
+    except Exception:
+        try:
+            ws_conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+
+
+def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
+                          ws_conn: sqlite3.Connection) -> dict:
+    """处理 agent refresh 消息——session epoch 校验 + 两阶段 CAS。
+
+    规范：watcher-generation-state-machine.md §4.3
+    修复 T-1783751525743-7c76
+    """
+    rel_path = msg["rel_path"]
+    incoming_session = msg["agent_session_id"]
+    incoming_seq = msg["monotonic_seq"]
+    incoming_epoch = msg["session_epoch"]
+
+    # 1. 校验 session epoch——只能匹配当前 active epoch
+    active = ws_conn.execute(
+        "SELECT active_session_id, active_session_epoch "
+        "FROM workspace_active_session WHERE workspace_id = ?",
+        (workspace_id,)
+    ).fetchone()
+    if active is None:
+        raise ProtocolError(f"no active session for workspace {workspace_id}")
+    if (incoming_session != active["active_session_id"]
+            or incoming_epoch != active["active_session_epoch"]):
+        raise ProtocolError(
+            f"stale session rejected: incoming={incoming_session}:{incoming_epoch} "
+            f"active={active['active_session_id']}:{active['active_session_epoch']}"
+        )
+
+    incoming_gen = f"{incoming_epoch}:{incoming_seq}"
+
+    # 2. CAS 第一阶段（seen）——原子更新 latest_seen_generation
+    ws_conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = ws_conn.execute(
+            "SELECT latest_session_epoch, latest_seq, latest_seen_generation, "
+            "latest_committed_generation FROM file_generations "
+            "WHERE workspace_id = ? AND rel_path = ?",
+            (workspace_id, rel_path)
+        ).fetchone()
+
+        if row is None:
+            # 首次见到此文件——插入新行
+            ws_conn.execute(
+                "INSERT INTO file_generations "
+                "(workspace_id, rel_path, latest_session_id, latest_session_epoch, "
+                "latest_seq, latest_seen_generation, latest_committed_generation) "
+                "VALUES (?, ?, ?, ?, ?, ?, '')",
+                (workspace_id, rel_path, incoming_session, incoming_epoch,
+                 incoming_seq, incoming_gen)
+            )
+        elif incoming_seq <= row["latest_seq"]:
+            # 同 epoch 内 stale seq——直接丢弃，不报错
+            ws_conn.execute("ROLLBACK")
+            return {"status": "stale_seq_dropped"}
+        else:
+            ws_conn.execute(
+                "UPDATE file_generations SET latest_session_id = ?, "
+                "latest_session_epoch = ?, latest_seq = ?, latest_seen_generation = ? "
+                "WHERE workspace_id = ? AND rel_path = ?",
+                (incoming_session, incoming_epoch, incoming_seq, incoming_gen,
+                 workspace_id, rel_path)
+            )
+        ws_conn.execute("COMMIT")
+    except Exception:
+        try:
+            ws_conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+
+    # 3. CAS 第二阶段（committed）——条件更新 latest_committed_generation
+    # Note: 完整实现中此处会有 re-hash / Rust parse / CAS publish；此处只做 committed 阶段
+    ws_conn.execute("BEGIN IMMEDIATE")
+    try:
+        gen_cur = ws_conn.execute(
+            "UPDATE file_generations SET latest_committed_generation = ? "
+            "WHERE workspace_id = ? AND rel_path = ? "
+            "AND latest_seen_generation = ?",
+            (incoming_gen, workspace_id, rel_path, incoming_gen)
+        )
+        if gen_cur.rowcount != 1:
+            ws_conn.execute("ROLLBACK")
+            raise ProtocolError(f"stale manifest commit for {rel_path}")
+        ws_conn.execute("COMMIT")
+    except Exception:
+        try:
+            ws_conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
+
+    return {"status": "committed", "generation": incoming_gen}
 
 
 # ============================================

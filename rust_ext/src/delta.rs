@@ -232,13 +232,22 @@ impl DeltaComputer {
             .ok_or_else(|| format!("unsupported language: {}", language))?;
 
         // 3. 解析文件
+        // 修复 T-1783751519227-18d8: 先 canonicalize 再 parse，
+        // 避免 parse_file 直接读文件绕过 BOM 剥离 / 编码检测 / CRLF→LF 归一化
         let parser = GenericParser::new(Arc::new(config));
         let abs_path = file_path.to_string_lossy();
         let module_path = file_path
             .file_stem()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
-        let parse_result = parser.parse_file(&abs_path, &module_path);
+        let canonical = crate::canonicalize::canonicalize_source(&abs_path)
+            .map_err(|e| format!("canonicalize failed: {}", e))?;
+        let parse_result = parser.parse_canonical_bytes(
+            &canonical.canonical_bytes,
+            &abs_path,
+            &module_path,
+            &canonical.content_hash,
+        );
 
         if let Some(err) = &parse_result.error {
             return Err(format!("parse error: {}", err));

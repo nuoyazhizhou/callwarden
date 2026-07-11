@@ -14,6 +14,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::Bound;
 use pyo3::types::PyAny;
+use pyo3::types::PyBytes;
 use pyo3::BoundObject;  // P29: PyO3 0.29 需要 trait 导入才能用 into_bound()
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};  // P30: ParseResultPool 迭代器游标（Sync 安全）
@@ -31,6 +32,7 @@ mod delta;
 mod frontier;
 mod metrics;
 mod toolchain;
+mod canonicalize;
 
 // ============================================
 // P29: 数据结构定义
@@ -790,6 +792,54 @@ fn batch_cosine_similarity<'py>(
 }
 
 // ============================================
+// T-1783751519227-18d8: 输入规范化（PyO3 暴露）
+// ============================================
+
+/// Python 侧调用 canonicalize_source
+///
+/// 将文件规范化（BOM 剥离 + 编码检测 + CRLF→LF），返回 dict：
+///   {
+///     "canonical_bytes": bytes,      # 规范化后的字节
+///     "content_hash": str,           # sha256(canonical_bytes)
+///     "canonical_total": int,       # canonical_bytes 长度
+///     "raw_total": int,             # 原始字节长度（含 BOM）
+///     "metadata": {
+///       "raw_hash": str,            # sha256(raw_bytes)
+///       "source_encoding": str,     # "utf-8" / "utf-16-le" / "latin-1" 等
+///       "bom_kind": str,            # "utf-8" / "utf-16-le" / "utf-16-be" / "none"
+///       "newline_style": str,       # "crlf" / "lf" / "cr" / "none"
+///     }
+///   }
+#[pyfunction]
+fn canonicalize_source_py<'py>(
+    py: Python<'py>,
+    abs_path: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    let result = canonicalize::canonicalize_source(abs_path)
+        .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
+
+    let dict = PyDict::new(py);
+
+    // canonical_bytes → Python bytes
+    let canonical_bytes = PyBytes::new(py, &result.canonical_bytes);
+    dict.set_item("canonical_bytes", canonical_bytes)?;
+
+    dict.set_item("content_hash", result.content_hash.clone())?;
+    dict.set_item("canonical_total", result.canonical_total)?;
+    dict.set_item("raw_total", result.raw_total)?;
+
+    // metadata 嵌套 dict
+    let metadata_dict = PyDict::new(py);
+    metadata_dict.set_item("raw_hash", result.metadata.raw_hash.clone())?;
+    metadata_dict.set_item("source_encoding", result.metadata.source_encoding.clone())?;
+    metadata_dict.set_item("bom_kind", result.metadata.bom_kind.clone())?;
+    metadata_dict.set_item("newline_style", result.metadata.newline_style.clone())?;
+    dict.set_item("metadata", metadata_dict)?;
+
+    Ok(dict.into_any().into_bound())
+}
+
+// ============================================
 // 模块注册
 // ============================================
 
@@ -836,5 +886,7 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Phase 6.1: Toolchain Fingerprint
     m.add_function(wrap_pyfunction!(toolchain::detect_compiler_type_py, m)?)?;
     m.add_function(wrap_pyfunction!(toolchain::compute_toolchain_fingerprint_py, m)?)?;
+    // T-1783751519227-18d8: 输入规范化入口（BOM 剥离 + 编码检测 + CRLF→LF）
+    m.add_function(wrap_pyfunction!(canonicalize_source_py, m)?)?;
     Ok(())
 }

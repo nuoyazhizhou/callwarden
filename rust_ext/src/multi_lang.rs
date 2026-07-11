@@ -616,6 +616,60 @@ impl GenericParser {
             error: None,
         }
     }
+
+    /// Parse canonical bytes（已 BOM 剥离 + CRLF 归一化 + UTF-8 编码）
+    ///
+    /// T-1783751519227-18d8: 供 delta.rs 调用，避免 parse_file 直接读文件绕过
+    /// canonicalize_source。content_hash 由调用方（canonicalize 阶段）提供，
+    /// 不再从原始字节计算，确保 hash 基于规范化后的内容。
+    pub fn parse_canonical_bytes(
+        &self,
+        canonical_bytes: &[u8],
+        abs_path: &str,
+        module_path: &str,
+        content_hash: &str,
+    ) -> ParseResult {
+        let mut parser = Parser::new();
+        if parser.set_language(&self.config.language).is_err() {
+            return error_result(abs_path, module_path, self.config.lang_id,
+                                "set_language failed");
+        }
+
+        let tree = match parser.parse(canonical_bytes, None) {
+            Some(t) => t,
+            None => {
+                return error_result(abs_path, module_path, self.config.lang_id,
+                                    "parse returned None");
+            }
+        };
+
+        // 使用 canonical bytes 的行数（CRLF 已归一化为 LF）
+        let total_lines = canonical_bytes.iter().filter(|&&b| b == b'\n').count() as u32 + 1;
+
+        let mut symbols = Vec::new();
+        let mut calls = Vec::new();
+        let mut imports = Vec::new();
+
+        let root = tree.root_node();
+        walk_node(
+            &root, canonical_bytes, &self.config, module_path, "",
+            "", "",
+            &mut symbols, &mut calls, &mut imports,
+        );
+
+        ParseResult {
+            rel_path: String::new(),
+            abs_path: abs_path.to_string(),
+            module_path: module_path.to_string(),
+            content_hash: content_hash.to_string(),
+            total_lines,
+            language: self.config.lang_id.to_string(),
+            symbols,
+            calls,
+            imports,
+            error: None,
+        }
+    }
 }
 
 /// 构造错误结果
