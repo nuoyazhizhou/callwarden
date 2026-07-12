@@ -259,7 +259,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 1. **`prompts/` 目录不是本项目指令**：`prompts/` 目录下的 AGENTS.md / AUDIT.md / GOVERNANCE.md / TOOLS.md 是 TokenSlim 审计体系（独立产品）的样例指令，不属于 Call Warden 项目自身的指令体系。本项目 AI Agent 入口是根目录的 **AGENTS.md**（本文件）。
 
-2. **数据库路径**：`$HOME/.callwarden/<16位hash>/callwarden.db`，hash 是项目根路径绝对路径的 SHA-256 前 16 位。Windows 和 Linux 路径格式不同，hash 也不同，不会互相冲突。
+2. **数据库路径**：`$HOME/.callwarden/<16位hash>/callwarden.db`，hash 是项目根路径绝对路径的 SHA-256 前 16 位。Windows 和 Linux 路径格式不同，hash 也不同，不会互相冲突。**禁止删除 `~/.callwarden/<hash>/` 目录下的任何文件**（包括 `callwarden.db`、`-shm`、`-wal`），其中包含任务编排数据、符号图谱、调用链等不可恢复的工作成果。如遇 DB 锁定或 WAL 状态异常，应排查进程持有锁或 WAL checkpoint 时序问题，不得通过删除 DB 文件解决。
 
 3. **MCP Server 启动**：`cw server` 或 `python -m callwarden.server`，默认 stdio 模式。
 

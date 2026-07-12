@@ -26,12 +26,15 @@ DB_PATH = os.path.join(CALLWARDEN_DIR, "callwarden.db")
 
 
 def get_project_db_path(project_root: str) -> str:
-    """根据项目根路径生成项目级数据库路径（一个项目一个 SQLite 数据库）
+    """根据项目根路径生成项目级数据库路径（一个用户所有项目共用一个数据库）
 
-    路径格式: <project_root>/.callwarden/callwarden.db
+    路径格式: $HOME/.callwarden/<16位hash>/callwarden.db
 
-    DB 存储在项目目录内，避免 TRAE 沙箱阻止对 ~/.callwarden/ 的写操作
-    （SQLite WAL 模式需要创建 -shm/-wal 文件）。
+    16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目的数据库隔离。
+    这样每个数据库只包含一个项目的数据，体积小、查询快、互不干扰。
+
+    注意：根据 Enterprise Daemon Shared Snapshot 设计，Global CAS 要求
+    "相同文件跨用户、跨工作区只解析一次"，因此所有项目共用一个数据库。
 
     Args:
         project_root: 项目根目录路径
@@ -40,8 +43,11 @@ def get_project_db_path(project_root: str) -> str:
         项目级数据库绝对路径
     """
     abs_root = os.path.abspath(project_root)
-    # DB 存储在项目目录内 .callwarden/ 子目录
-    project_dir = os.path.join(abs_root, ".callwarden")
+    # 标准化路径（统一正斜杠，消除跨平台差异）
+    norm_root = norm_path(abs_root)
+    # 计算项目路径的 SHA-256 前 16 位作为目录名
+    path_hash = hashlib.sha256(norm_root.encode("utf-8")).hexdigest()[:16]
+    project_dir = os.path.join(CALLWARDEN_DIR, path_hash)
     os.makedirs(project_dir, exist_ok=True)
     return os.path.join(project_dir, "callwarden.db")
 
