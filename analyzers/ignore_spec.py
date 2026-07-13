@@ -313,22 +313,27 @@ class IgnoreMatcher:
         }
 
         for root, dirs, files in os.walk(self.workspace_root):
-            # 原地修改 dirs 跳过非源码目录
-            dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
-
-            if ".gitignore" not in files:
-                continue
-
-            # 计算相对目录路径
             abs_dir = os.path.abspath(root)
-            if abs_dir == self.workspace_root:
-                continue  # 根目录已处理
+            rel_dir = "" if abs_dir == self.workspace_root else (
+                os.path.relpath(abs_dir, self.workspace_root).replace("\\", "/")
+            )
 
-            rel_dir = os.path.relpath(abs_dir, self.workspace_root).replace("\\", "/")
-            gitignore_path = os.path.join(abs_dir, ".gitignore")
-            rules = load_ignore_file(gitignore_path, f".gitignore:{rel_dir}")
-            if rules:
-                self.dir_rules[rel_dir] = rules
+            # 必须先加载当前目录规则，再决定是否进入它的子目录。
+            if rel_dir and ".gitignore" in files:
+                gitignore_path = os.path.join(abs_dir, ".gitignore")
+                rules = load_ignore_file(gitignore_path, f".gitignore:{rel_dir}")
+                if rules:
+                    self.dir_rules[rel_dir] = rules
+
+            kept_dirs = []
+            for dirname in dirs:
+                if dirname in skip_dirs or dirname.startswith("."):
+                    continue
+                child_rel = f"{rel_dir}/{dirname}" if rel_dir else dirname
+                if self.is_ignored(child_rel, is_dir=True):
+                    continue
+                kept_dirs.append(dirname)
+            dirs[:] = kept_dirs
 
     def is_ignored(self, rel_path: str, is_dir: bool = False) -> bool:
         """判断相对路径是否被忽略
@@ -367,24 +372,21 @@ class IgnoreMatcher:
                 ignored = not rule.negation
 
         # 应用子目录 .gitignore 规则（按路径深度从浅到深）
-        # 找到所有祖先目录的 .gitignore
         path_parts = rel_path.split("/")
         for i in range(1, len(path_parts)):
             ancestor_dir = "/".join(path_parts[:i])
             if ancestor_dir not in self.dir_rules:
                 continue
 
+            # 子目录规则只匹配相对该 .gitignore 所在目录的路径。
+            scoped_path = "/".join(path_parts[i:])
             for rule in self.dir_rules[ancestor_dir]:
-                # 子目录规则中的路径是相对该子目录的
-                # 但我们存储时是相对 workspace_root 的，所以直接匹配完整路径
-                # 这里需要把规则模式重新匹配相对子目录的路径
-                # 简化处理：直接匹配完整路径（已锚定到子目录前缀）
                 if rule.dir_only and not is_dir:
-                    if rule.regex.search(rel_path):
+                    if rule.regex.search(scoped_path):
                         ignored = not rule.negation
                     continue
 
-                if rule.regex.search(rel_path):
+                if rule.regex.search(scoped_path):
                     ignored = not rule.negation
 
         return ignored
