@@ -258,7 +258,7 @@ class QueryMixin:
         """
         # B-P7b: Rust GraphStore 短路（CSR 内存查询，O(degree+k)）
         store = self._get_graph_store()
-        if store is not None:
+        if store is not None and store.load_state() == "graph_ready":
             try:
                 rust_callers = store.get_callers(callee_name, qualified_name)
                 if rust_callers is not None:
@@ -311,7 +311,7 @@ class QueryMixin:
         """
         # B-P7b: Rust GraphStore 短路（CSR forward 遍历，O(degree)）
         store = self._get_graph_store()
-        if store is not None:
+        if store is not None and store.load_state() == "graph_ready":
             try:
                 rust_callees = store.get_callees(caller_name, qualified_name)
                 if rust_callees is not None:

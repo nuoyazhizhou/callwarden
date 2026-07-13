@@ -89,7 +89,7 @@
 | 优化 | 原理 | 预期收益 | 复杂度 |
 |------|------|---------|--------|
 | **A. 二进制快照 dump** | GraphStore 序列化到 `.bin` 文件，冷启动直接 mmap 读取 | 140s → **~5s** | 中 |
-| **B. 分级加载** | 先加载 symbols（30s 可查询），后台加载 calls | 可查询时间 30s | 低 |
+| **B. 分级加载** | 先加载 symbols，后台构建完整 calls CSR 并按 generation 发布 | 1M: 3.15s 可查符号，10.05s 完整图 | 已实施 |
 | **C. mmap 模式** | SQLite 以 mmap 打开，避免 page cache 复制 | -20% | 低 |
 | **D. 增量加载** | 只加载最近 N 天变更的符号，旧数据延迟加载 | 140s → **~10s** | 高 |
 
@@ -99,6 +99,13 @@
 // load：mmap 4 个文件，零拷贝
 ```
 冷启动从 140s 降到 ~5s（mmap 零拷贝，仅建立虚拟内存映射）。
+
+**分级加载实测（2026-07-13）**：
+
+- 1M：symbols-ready 3.15s，full-ready 10.05s，首次可查询时间提前 69%。
+- 2M：symbols-ready 9.12s，full-ready 26.97s，首次可查询时间提前 66%。
+- PyO3 加载与 snapshot dump/load 期间释放 GIL；symbols-only store 发布后，后台 full load 不阻塞符号查询。
+- 加载窗口会短暂同时持有 stage/full 两份 SymbolTable；2M 实测峰值约 1.10GB，待 daemon 用 `Arc<SymbolTable>` 共享消除重复。
 
 ---
 
@@ -364,7 +371,8 @@ def detect_and_configure(db: CodeGraphDB, is_long_running: bool = False):
 |------|------|---------|------|
 | **参数矩阵实验** | 1M/2M 规模跑 cache/mmap/temp/page_size/index_mode 全组合 | 修正压测基准体系 | 待实施（T-1783907815346-75de）|
 | **SQLite 参数优化** | 根据实验结果，统一选择 page_size/temp_store/索引集合；动态选 cache_size/mmap_size | 参数矩阵实验完成 | 待决策 |
-| **GraphStore P1-P6** | 字符串池/kind 枚举/紧凑 backward edge/FxHash，每项分别测 | 无（可并行） | 待实施 |
+| **GraphStore P1-P6** | 字符串池/kind 枚举/紧凑 backward edge/FxHash，每项分别测 | 无（可并行） | 已实施并完成 1M/2M 复测 |
+| **GraphStore 分级加载** | symbols-only 快速发布 + 后台 full graph generation 替换 | GraphStore P1-P6 | 已实施（T-1783937504339-3839） |
 | **混合架构** | SQLite/CAS 真相 + GraphStore 内存查询 + daemon 共享 | GraphStore P1-P6 完成 | 合并到 Enterprise Daemon |
 
 **推荐顺序**：

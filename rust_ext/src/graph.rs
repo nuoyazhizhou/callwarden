@@ -350,7 +350,40 @@ impl GraphStore {
 
     /// 从 SQLite 数据库加载 symbols + calls 到内存
     /// 返回加载的符号数 / 边数
-    pub fn load_from_sqlite(&mut self, db_path: &str) -> PyResult<(usize, usize)> {
+    pub fn load_from_sqlite(
+        &mut self,
+        py: Python<'_>,
+        db_path: &str,
+    ) -> PyResult<(usize, usize)> {
+        py.detach(|| self._load_from_sqlite_stage(db_path, true))
+    }
+
+    /// 仅加载文件和符号索引，不读取 calls 表。
+    ///
+    /// 用于分级冷启动：调用方可先发布 symbols-ready store，
+    /// 后台构建完整图后再原子替换。
+    pub fn load_symbols_from_sqlite(&mut self, py: Python<'_>, db_path: &str) -> PyResult<usize> {
+        py.detach(|| self._load_from_sqlite_stage(db_path, false))
+            .map(|(symbols, _)| symbols)
+    }
+
+    /// 返回当前加载阶段，供 Python/daemon 选择查询路径。
+    pub fn load_state(&self) -> &'static str {
+        if self.calls.is_some() {
+            "graph_ready"
+        } else if self.symbols.is_some() {
+            "symbols_ready"
+        } else {
+            "empty"
+        }
+    }
+
+    /// 内部共享加载路径，`include_calls=false` 时在符号索引完成后返回。
+    fn _load_from_sqlite_stage(
+        &mut self,
+        db_path: &str,
+        include_calls: bool,
+    ) -> PyResult<(usize, usize)> {
         // 只读 + immutable 模式打开：
         // - READ_ONLY: 不写入
         // - immutable=1: 告知 SQLite 数据库不会被修改，跳过 -wal/-shm 文件创建
@@ -541,6 +574,12 @@ impl GraphStore {
             search_pool_lower, search_entry_offsets, search_entry_sym_ids,
         };
 
+        if !include_calls {
+            self.symbols = Some(symbols);
+            self.calls = None;
+            return Ok((symbol_count, 0));
+        }
+
         // 2. 加载调用关系
         let mut edges: Vec<CallEdge> = Vec::new();
         // P5 优化：callee_names 改为 string pool + offsets
@@ -646,7 +685,7 @@ impl GraphStore {
         let symbols = self_ref.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self_ref.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let mut results: Vec<CallerResult> = Vec::new();
 
@@ -705,7 +744,7 @@ impl GraphStore {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let mut results = Vec::new();
 
@@ -850,7 +889,7 @@ impl GraphStore {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let mut results = Vec::new();
         let start_id = match symbols.qname_get(qualified_name) {
@@ -921,7 +960,7 @@ impl GraphStore {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let n = symbols.by_id.len();
 
@@ -977,7 +1016,7 @@ impl GraphStore {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let n = symbols.by_id.len();
         // 0=white(未访问), 1=gray(在栈中), 2=black(已完成)
@@ -1238,12 +1277,17 @@ impl GraphStore {
     ///
     /// 用法：
     ///   store.dump_to_file("/path/to/snapshot.cwsnap")
-    pub fn dump_to_file(&self, path: &str) -> PyResult<()> {
+    pub fn dump_to_file(&self, py: Python<'_>, path: &str) -> PyResult<()> {
+        py.detach(|| self._dump_to_file(path))
+    }
+
+    /// 内部 snapshot 写入实现，公开入口在执行期间释放 GIL。
+    fn _dump_to_file(&self, path: &str) -> PyResult<()> {
         use std::io::Write;
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = self.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         // 计算 symbol_count（排除空槽位）
         let symbol_count = symbols.by_id.iter()
@@ -1355,7 +1399,16 @@ impl GraphStore {
     ///
     /// 用法：
     ///   store.load_from_file("/path/to/snapshot.cwsnap")
-    pub fn load_from_file(&mut self, path: &str) -> PyResult<(usize, usize)> {
+    pub fn load_from_file(
+        &mut self,
+        py: Python<'_>,
+        path: &str,
+    ) -> PyResult<(usize, usize)> {
+        py.detach(|| self._load_from_file(path))
+    }
+
+    /// 内部 snapshot 加载实现，公开入口在执行期间释放 GIL。
+    fn _load_from_file(&mut self, path: &str) -> PyResult<(usize, usize)> {
         use std::fs::OpenOptions;
 
         let file = OpenOptions::new()
@@ -1549,6 +1602,14 @@ impl GraphStore {
 // ============================================
 
 impl GraphStore {
+    /// Rust 内部调用的阻塞加载入口，不需要 Python token。
+    pub(crate) fn load_from_sqlite_blocking(
+        &mut self,
+        db_path: &str,
+    ) -> PyResult<(usize, usize)> {
+        self._load_from_sqlite_stage(db_path, true)
+    }
+
     /// 通过 qualified_name 获取符号引用（内部 Rust 接口，零 Python 开销）
     pub fn get_symbol_ref(&self, qualified_name: &str) -> Option<&GraphSymbol> {
         let symbols = self.symbols.as_ref()?;
@@ -1884,7 +1945,7 @@ impl CallersBatch {
         let symbols = store.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
         let calls = store.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let caller = symbols.by_id.get(r.caller_id as usize)
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("caller not found"))?;

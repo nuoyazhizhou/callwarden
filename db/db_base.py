@@ -1668,6 +1668,10 @@ class CodeGraphBase:
         # 避免 Watcher 连续 refresh 多个文件时每次都清空缓存
         self._graph_store = None
         self._graph_store_dirty = False
+        self._graph_store_lock = threading.RLock()
+        self._graph_store_generation = 0
+        self._graph_store_loading = False
+        self._graph_store_load_error: Optional[str] = None
 
         # qname_id_map 缓存：qualified_name -> symbol_id（项目符号）+ -external_id（外部符号）
         # 避免 _write_calls_db 每文件全表扫描 symbols + external_symbols
@@ -1681,10 +1685,11 @@ class CodeGraphBase:
         self._init_workspace()
 
     def _get_graph_store(self):
-        """B-P7b: 懒加载 GraphStore（Rust CSR 内存索引）
+        """B-P7b: 分级懒加载 GraphStore（Rust CSR 内存索引）
 
-        首次调用时从 SQLite 加载 symbols + calls 到内存 CSR 结构。
-        后续查询直接走内存，零 SQL 零磁盘 I/O。
+        有效 snapshot 仍直接加载完整图。snapshot 缺失或过期时，
+        先同步加载 symbols-only store 供符号查询，再在后台构建完整图。
+        calls 未就绪时 Rust 查询明确报错，上层降级到 SQL。
         写操作后 _invalidate_graph_store() 标记 dirty，下次查询时重新加载。
 
         P5 优化：优先从快照文件加载（mmap 零拷贝，2.91x 加速），
@@ -1693,60 +1698,122 @@ class CodeGraphBase:
         Returns:
             GraphStore 实例，或 None（callwarden_core 未安装时降级到 SQL）
         """
-        import os
-        # 延迟失效：写操作后只标记 dirty，查询时才真正清空+重载
-        if self._graph_store_dirty:
-            self._graph_store = None
-            self._graph_store_dirty = False
-        if self._graph_store is not None:
-            return self._graph_store
+        with self._graph_store_lock:
+            if self._graph_store_dirty:
+                self._graph_store = None
+                self._graph_store_dirty = False
+            if self._graph_store is not None:
+                return self._graph_store
+
+            try:
+                from callwarden_core import GraphStore
+            except ImportError:
+                return None
+
+            try:
+                # immutable=1 跳过 WAL，加载前必须 checkpoint。
+                self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+                token = self._graph_store_generation
+                db_mtime_ns = os.stat(self.db_path).st_mtime_ns
+                snap_path = self.db_path + ".cwsnap"
+                store = GraphStore()
+
+                snap_valid = (
+                    os.path.exists(snap_path)
+                    and os.stat(snap_path).st_mtime_ns >= db_mtime_ns
+                )
+                if snap_valid:
+                    try:
+                        store.load_from_file(snap_path)
+                        self._graph_store = store
+                        self._graph_store_loading = False
+                        self._graph_store_load_error = None
+                        return store
+                    except Exception:
+                        pass
+
+                store.load_symbols_from_sqlite(self.db_path)
+                self._graph_store = store
+                self._graph_store_loading = True
+                self._graph_store_load_error = None
+                threading.Thread(
+                    target=self._load_full_graph_store,
+                    args=(GraphStore, token, db_mtime_ns, snap_path),
+                    daemon=True,
+                    name=f"cw-graph-load-{token}",
+                ).start()
+                return store
+            except Exception as exc:
+                self._graph_store = None
+                self._graph_store_loading = False
+                self._graph_store_load_error = str(exc)
+                return None
+
+    def _load_full_graph_store(self, graph_store_cls, token: int,
+                               db_mtime_ns: int, snap_path: str) -> None:
+        """后台构建完整图，仅在 generation 和 DB mtime 均未变时发布。"""
         try:
-            from callwarden_core import GraphStore
-        except ImportError:
-            return None
+            full_store = graph_store_cls()
+            full_store.load_from_sqlite(self.db_path)
+        except Exception as exc:
+            with self._graph_store_lock:
+                if token == self._graph_store_generation:
+                    self._graph_store_loading = False
+                    self._graph_store_load_error = str(exc)
+            return
+
         try:
-            # 关键：GraphStore 用 immutable=1 只读模式打开（跳过 WAL），
-            # 因此加载前必须先 checkpoint WAL，确保最新写入的数据刷入主数据库文件，
-            # 否则会读到 WAL 之前的旧数据（新建库的 schema 都在 WAL 中）
-            self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            store = GraphStore()
+            with self._graph_store_lock:
+                current_mtime_ns = os.stat(self.db_path).st_mtime_ns
+                if (token != self._graph_store_generation
+                        or self._graph_store_dirty
+                        or current_mtime_ns != db_mtime_ns):
+                    return
+                self._graph_store = full_store
+                self._graph_store_loading = False
+                self._graph_store_load_error = None
+        except OSError as exc:
+            with self._graph_store_lock:
+                if token == self._graph_store_generation:
+                    self._graph_store_loading = False
+                    self._graph_store_load_error = str(exc)
+            return
 
-            # P5: 快照缓存路径（与 DB 同目录，后缀 .cwsnap）
-            snap_path = self.db_path + ".cwsnap"
-            # P5: 有效性检查 — 快照 mtime >= DB mtime 表示快照覆盖了最新数据
-            snap_valid = (
-                os.path.exists(snap_path)
-                and os.path.exists(self.db_path)
-                and os.path.getmtime(snap_path) >= os.path.getmtime(self.db_path)
-            )
-
-            if snap_valid:
-                # 快照有效 → mmap 零拷贝加载（2.91x 加速）
+        # 快照发布也做代次校验，避免旧图获得更新 mtime。
+        temp_path = f"{snap_path}.{os.getpid()}.{id(self)}.{token}.tmp"
+        try:
+            full_store.dump_to_file(temp_path)
+            with self._graph_store_lock:
+                if (token == self._graph_store_generation
+                        and not self._graph_store_dirty
+                        and os.stat(self.db_path).st_mtime_ns == db_mtime_ns):
+                    os.replace(temp_path, snap_path)
+        except Exception as exc:
+            with self._graph_store_lock:
+                if token == self._graph_store_generation:
+                    self._graph_store_load_error = f"snapshot dump failed: {exc}"
+        finally:
+            if os.path.exists(temp_path):
                 try:
-                    store.load_from_file(snap_path)
-                    self._graph_store = store
-                    return self._graph_store
-                except Exception:
-                    pass  # 快照损坏，回退到 load_from_sqlite
+                    os.remove(temp_path)
+                except OSError:
+                    pass
 
-            # 快照无效或损坏 → 从 SQLite 加载
-            store.load_from_sqlite(self.db_path)
-            self._graph_store = store
-
-            # P5: 后台 dump 新快照（daemon 线程，不阻塞查询）
-            # 下次冷启动时 load_from_file 将获得 2.91x 加速
-            import threading
-            def _dump_snapshot():
+    def _graph_store_status(self) -> Dict[str, Any]:
+        """返回 GraphStore 分级加载状态，供 daemon 健康检查和测试使用。"""
+        with self._graph_store_lock:
+            state = "empty"
+            if self._graph_store is not None:
                 try:
-                    store.dump_to_file(snap_path)
+                    state = self._graph_store.load_state()
                 except Exception:
-                    pass  # dump 失败不影响功能，下次启动会重试
-            threading.Thread(target=_dump_snapshot, daemon=True).start()
-
-        except Exception:
-            # 加载失败（数据库锁、schema 不匹配等）→ 降级到 SQL
-            self._graph_store = None
-        return self._graph_store
+                    state = "unknown"
+            return {
+                "state": state,
+                "generation": self._graph_store_generation,
+                "loading": self._graph_store_loading,
+                "last_error": self._graph_store_load_error,
+            }
 
     def _invalidate_graph_store(self):
         """B-P7b: 标记 GraphStore 缓存为 dirty（延迟失效）
@@ -1756,7 +1823,10 @@ class CodeGraphBase:
         下次查询时 _get_graph_store() 检测到 dirty 才真正清空+重载。
         这样 Watcher 连续 refresh 多个文件时不会每次都清空缓存。
         """
-        self._graph_store_dirty = True
+        with self._graph_store_lock:
+            self._graph_store_generation += 1
+            self._graph_store_dirty = True
+            self._graph_store_loading = False
         # 同时失效 qname_id_map 缓存（symbols/external_symbols 已变更）
         self._qname_cache = None
 

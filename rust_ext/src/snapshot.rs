@@ -267,7 +267,7 @@ impl PySnapshotManager {
     ) -> PyResult<(Generation, usize, usize)> {
         // 1. 创建 GraphStore 并加载 SQLite
         let mut store = GraphStore::new();
-        let (symbol_count, call_count) = store.load_from_sqlite(db_path)?;
+        let (symbol_count, call_count) = store.load_from_sqlite_blocking(db_path)?;
 
         // 2. 分配 generation
         let generation = self.inner.alloc_generation();

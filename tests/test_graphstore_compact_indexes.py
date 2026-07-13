@@ -67,6 +67,22 @@ def _caller_qnames(store) -> list[str]:
     return sorted(row["caller_qualified"] for row in store.get_callers("target"))
 
 
+def test_staged_load_exposes_symbols_before_calls(compact_index_db: Path):
+    store = callwarden_core.GraphStore()
+    assert store.load_state() == "empty"
+
+    assert store.load_symbols_from_sqlite(str(compact_index_db)) == 5
+    assert store.load_state() == "symbols_ready"
+    assert store.get_symbol("mod_a.target")["name"] == "target"
+    assert len(store.search_symbols("target", None, 10)) == 2
+    with pytest.raises(RuntimeError, match="calls not ready"):
+        store.get_callers("target")
+
+    assert store.load_from_sqlite(str(compact_index_db)) == (5, 3)
+    assert store.load_state() == "graph_ready"
+    assert _caller_qnames(store) == ["mod_a.foo", "mod_a.foo", "mod_b.foo"]
+
+
 def test_compact_indexes_preserve_short_and_qualified_queries(compact_index_db: Path):
     store = callwarden_core.GraphStore()
     store.load_from_sqlite(str(compact_index_db))
