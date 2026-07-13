@@ -1,0 +1,41 @@
+[Unit]
+Description=Call Warden Enterprise Daemon
+After=network.target
+Documentation=https://docs.callwarden.dev/daemon
+
+[Service]
+Type=notify
+User=callwarden
+Group=callwarden
+RuntimeDirectory=callwarden
+StateDirectory=callwarden
+LogsDirectory=callwarden
+
+ExecStart=/usr/local/bin/cw server --enterprise
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=60
+
+# 资源限制
+LimitNOFILE=65536
+TasksMax=256
+MemoryHigh=2G
+MemoryMax=4G
+
+# 安全约束
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+UMask=0077
+
+# Socket 和审计目录权限
+RuntimeDirectoryMode=0755
+StateDirectoryMode=0700
+LogsDirectoryMode=0700
+
+[Install]
+WantedBy=multi-user.target
