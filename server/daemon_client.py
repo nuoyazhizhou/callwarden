@@ -14,14 +14,109 @@
 """
 
 import hashlib
+import itertools
 import logging
 import os
+import socket
+import sqlite3
 from typing import Optional, List, Dict, Any
 
+from callwarden.config import (
+    DAEMON_SOCKET_PATH,
+    get_daemon_mode,
+    is_daemon_required,
+)
+from callwarden.server.daemon_protocol import (
+    DEFAULT_MAX_MESSAGE_BYTES,
+    parse_response,
+    recv_message,
+    send_message,
+    send_message_with_fds,
+)
 from callwarden.server.snapshot_manager import SnapshotManagerService, get_snapshot_service
 from callwarden.server.query_budget import default_budget
 
 logger = logging.getLogger(__name__)
+_NO_REMOTE = object()
+
+
+class DaemonUnavailableError(RuntimeError):
+    """enterprise 模式要求 daemon，但 socket 不可用。"""
+
+
+class UnixDaemonRpcClient:
+    """每次请求建立一个 UDS 连接的轻量 RPC client。"""
+
+    def __init__(self, socket_path: str = DAEMON_SOCKET_PATH,
+                 timeout: float = 30.0,
+                 max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES):
+        self.socket_path = socket_path
+        self.timeout = timeout
+        self.max_message_bytes = max_message_bytes
+        self._ids = itertools.count(1)
+
+    def call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        if not hasattr(socket, "AF_UNIX"):
+            raise DaemonUnavailableError("当前平台不支持 Unix domain socket")
+        request_id = next(self._ids)
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+                conn.settimeout(self.timeout)
+                conn.connect(self.socket_path)
+                send_message(conn, {
+                    "id": request_id,
+                    "method": method,
+                    "params": params or {},
+                }, self.max_message_bytes)
+                response = recv_message(conn, self.max_message_bytes)
+        except (OSError, socket.timeout) as exc:
+            raise DaemonUnavailableError(
+                f"无法连接 daemon socket {self.socket_path}: {exc}"
+            ) from exc
+        if response.get("id") != request_id:
+            raise DaemonUnavailableError("daemon 响应 request id 不匹配")
+        return parse_response(response)
+
+    def call_with_fd(self, method: str, params: Dict[str, Any], fd: int) -> Any:
+        """发送一个带只读 FD 的请求。"""
+        if not hasattr(socket, "AF_UNIX"):
+            raise DaemonUnavailableError("当前平台不支持 Unix domain socket")
+        request_id = next(self._ids)
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+                conn.settimeout(self.timeout)
+                conn.connect(self.socket_path)
+                send_message_with_fds(conn, {
+                    "id": request_id,
+                    "method": method,
+                    "params": params,
+                }, [fd], self.max_message_bytes)
+                response = recv_message(conn, self.max_message_bytes)
+        except (OSError, socket.timeout) as exc:
+            raise DaemonUnavailableError(
+                f"无法连接 daemon socket {self.socket_path}: {exc}"
+            ) from exc
+        if response.get("id") != request_id:
+            raise DaemonUnavailableError("daemon 响应 request id 不匹配")
+        return parse_response(response)
+
+    def publish_snapshot(self, workspace_instance_id: str, db_path: str,
+                         build_context_hash: str = "") -> Any:
+        """checkpoint 本地 DB，并以只读 FD 发布给 daemon。"""
+        with sqlite3.connect(db_path, timeout=30.0) as conn:
+            busy, _wal_pages, _checkpointed = conn.execute(
+                "PRAGMA wal_checkpoint(FULL)"
+            ).fetchone()
+            if busy:
+                raise DaemonUnavailableError("SQLite WAL checkpoint 被活动 writer 阻塞")
+        fd = os.open(db_path, os.O_RDONLY)
+        try:
+            return self.call_with_fd("snapshot.publish", {
+                "workspace_instance_id": workspace_instance_id,
+                "build_context_hash": build_context_hash,
+            }, fd)
+        finally:
+            os.close(fd)
 
 
 # ----------------------------------------------------------------------
@@ -55,9 +150,12 @@ class DaemonClient:
 
     _instance: Optional["DaemonClient"] = None
 
-    def __init__(self):
+    def __init__(self, socket_path: Optional[str] = None):
         self._svc: SnapshotManagerService = get_snapshot_service()
+        self._rpc = UnixDaemonRpcClient(socket_path or DAEMON_SOCKET_PATH)
         self._workspace_instance_id: Optional[str] = None
+        self._remote_workspace_id: Optional[str] = None
+        self._remote_snapshot_ready = False
         self._project_root: Optional[str] = None
         # 路由统计
         self._daemon_hits: int = 0
@@ -83,6 +181,8 @@ class DaemonClient:
         """
         self._project_root = project_root
         self._workspace_instance_id = derive_workspace_instance_id(project_root)
+        self._remote_workspace_id = None
+        self._remote_snapshot_ready = False
         logger.debug(
             "DaemonClient 配置 workspace: root=%s id=%s",
             project_root, self._workspace_instance_id,
@@ -104,9 +204,59 @@ class DaemonClient:
 
     def is_daemon_ready(self) -> bool:
         """daemon snapshot 是否已就绪（已发布且 Rust 后端可用）。"""
+        if get_daemon_mode() != "local" and os.path.exists(self._rpc.socket_path):
+            try:
+                self._rpc.call("ping")
+                return self._remote_snapshot_ready
+            except Exception:
+                if is_daemon_required():
+                    raise
         if self._workspace_instance_id is None:
             return False
         return self._svc.ensure_workspace(self._workspace_instance_id)
+
+    def rpc_call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
+        """公开的底层 RPC 入口，供 CLI 管理命令使用。"""
+        return self._rpc.call(method, params)
+
+    def _ensure_remote_snapshot(self, db_path: Optional[str]) -> Optional[str]:
+        """在 auto/enterprise 模式注册 workspace 并发布 snapshot。"""
+        mode = get_daemon_mode()
+        if mode == "local":
+            return None
+        if not os.path.exists(self._rpc.socket_path):
+            if mode == "enterprise":
+                raise DaemonUnavailableError(
+                    f"enterprise 模式要求 daemon: {self._rpc.socket_path}"
+                )
+            return None
+        try:
+            if self._remote_workspace_id is None:
+                root = self._project_root or os.getcwd()
+                workspace = self._rpc.call("workspace.register", {
+                    "client_view_root": root,
+                })
+                self._remote_workspace_id = workspace["workspace_instance_id"]
+            if db_path and not self._remote_snapshot_ready:
+                self._rpc.publish_snapshot(self._remote_workspace_id, db_path)
+                self._remote_snapshot_ready = True
+            return self._remote_workspace_id if self._remote_snapshot_ready else None
+        except Exception:
+            if mode == "enterprise":
+                raise
+            logger.warning("daemon UDS 请求失败，auto 模式回退 local", exc_info=True)
+            return None
+
+    def _remote_query(self, method: str, params: Dict[str, Any],
+                      db_path: Optional[str]) -> Any:
+        workspace_id = self._ensure_remote_snapshot(db_path)
+        if workspace_id is None:
+            return _NO_REMOTE
+        request = dict(params)
+        request["workspace_instance_id"] = workspace_id
+        result = self._rpc.call(method, request)
+        self._daemon_hits += 1
+        return result
 
     # ------------------------------------------------------------------
     # 内部：确保 snapshot 已发布
@@ -153,6 +303,12 @@ class DaemonClient:
         db_path: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """查询谁调用了指定函数。"""
+        remote = self._remote_query("query.callers", {
+            "callee_name": callee_name,
+            "qualified_name": qualified_name,
+        }, db_path)
+        if remote is not _NO_REMOTE:
+            return remote
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             return self._svc.query_callers(
@@ -168,6 +324,12 @@ class DaemonClient:
         db_path: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """查询指定函数调用了哪些函数。"""
+        remote = self._remote_query("query.callees", {
+            "caller_name": caller_name,
+            "qualified_name": qualified_name,
+        }, db_path)
+        if remote is not _NO_REMOTE:
+            return remote
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             return self._svc.query_callees(
@@ -184,6 +346,13 @@ class DaemonClient:
         db_path: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """搜索符号。"""
+        remote = self._remote_query("query.search", {
+            "query": query,
+            "kind": kind,
+            "limit": limit,
+        }, db_path)
+        if remote is not _NO_REMOTE:
+            return remote
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             return self._svc.search_symbols(
@@ -198,6 +367,11 @@ class DaemonClient:
         db_path: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """按 qualified_name 精确查询符号。"""
+        remote = self._remote_query("query.symbol", {
+            "qualified_name": qualified_name,
+        }, db_path)
+        if remote is not _NO_REMOTE:
+            return remote
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             return self._svc.query_symbol(
@@ -208,6 +382,9 @@ class DaemonClient:
 
     def get_stats(self, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """获取统计信息。"""
+        remote = self._remote_query("query.stats", {}, db_path)
+        if remote is not _NO_REMOTE:
+            return remote
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             return self._svc.query_stats(self._workspace_instance_id)

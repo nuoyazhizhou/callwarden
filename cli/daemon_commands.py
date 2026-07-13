@@ -1,96 +1,142 @@
-"""CLI daemon 子命令——daemon client 和 enterprise/auto/local 模式切换。
+"""Enterprise daemon 的独立 CLI，所有管理与查询请求均走 UDS。"""
 
-提供 cw daemon register / list / status / mode 命令。
-"""
+from __future__ import annotations
 
 import argparse
 import json
-import sys
-from typing import Optional
+import os
+from typing import Optional, Sequence
 
 from callwarden.config import (
+    DAEMON_REGISTRY_DB,
+    DAEMON_SOCKET_PATH,
     get_daemon_mode,
     is_daemon_available,
     is_daemon_required,
-    resolve_container_path,
 )
+from callwarden.server.daemon_client import UnixDaemonRpcClient
 from callwarden.server.daemon_server import (
-    api_register_workspace,
-    api_list_workspaces,
-    api_get_workspace_status,
-    api_update_workspace_status,
+    EnterpriseDaemonServer,
+    EnterpriseDaemonService,
 )
 
 
-def add_daemon_subcommands(subparsers):
-    """添加 daemon 子命令到 argparse。"""
-    daemon_parser = subparsers.add_parser("daemon", help="Enterprise daemon 管理")
-    daemon_sub = daemon_parser.add_subparsers(dest="daemon_command")
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="cw daemon", description="Enterprise daemon UDS 管理与查询"
+    )
+    parser.add_argument("--socket", default=DAEMON_SOCKET_PATH,
+                        help="UDS 路径（默认 CW_DAEMON_SOCKET）")
+    sub = parser.add_subparsers(dest="action", required=True)
 
-    # daemon register
-    register_parser = daemon_sub.add_parser("register", help="注册 workspace")
-    register_parser.add_argument("--client-root", required=True, help="客户端视图根目录")
-    register_parser.add_argument("--host-root", required=True, help="宿主机真实根目录")
-    register_parser.add_argument("--git-remote", default="", help="Git remote URL")
-    register_parser.add_argument("--git-head", default="", help="Git HEAD commit SHA")
-    register_parser.add_argument("--uid", type=int, default=0, help="owner UID")
+    serve = sub.add_parser("serve", help="前台启动 daemon")
+    serve.add_argument("--registry", default=DAEMON_REGISTRY_DB)
+    serve.add_argument("--workers", type=int, default=16)
 
-    # daemon list
-    list_parser = daemon_sub.add_parser("list", help="列出 workspace")
-    list_parser.add_argument("--uid", type=int, default=None, help="按 UID 过滤")
+    sub.add_parser("ping", help="检查 daemon 与 peer credential")
 
-    # daemon status
-    status_parser = daemon_sub.add_parser("status", help="查看 workspace 状态")
-    status_parser.add_argument("workspace_id", help="workspace_instance_id")
+    register = sub.add_parser("register", help="注册当前 UID 的 workspace")
+    register.add_argument("root")
+    register.add_argument("--git-remote", default="")
+    register.add_argument("--git-head", default="")
+    register.add_argument("--toolchain", default="")
 
-    # daemon mode
-    mode_parser = daemon_sub.add_parser("mode", help="查看/设置 daemon 模式")
-    mode_parser.add_argument("--set", choices=["auto", "enterprise", "local"],
-                             help="设置 daemon 模式")
+    sub.add_parser("list", help="列出当前 UID 的 workspace")
+
+    status = sub.add_parser("status", help="查询 workspace 和 snapshot 状态")
+    status.add_argument("workspace_id")
+
+    publish = sub.add_parser("publish", help="发布已刷新 DB 为共享 snapshot")
+    publish.add_argument("workspace_id")
+    publish.add_argument("db_path")
+    publish.add_argument("--build-context", default="")
+
+    query = sub.add_parser("query", help="查询共享 snapshot")
+    query.add_argument("workspace_id")
+    query.add_argument("query_type", choices=["stats", "symbol", "search", "callers", "callees"])
+    query.add_argument("value", nargs="?", default="")
+    query.add_argument("--qualified-name", default=None)
+    query.add_argument("--kind", default=None)
+    query.add_argument("--limit", type=int, default=20)
+
+    mode = sub.add_parser("mode", help="查看 daemon 模式")
+    mode.add_argument("--set", choices=["auto", "enterprise", "local"])
+    return parser
+
+
+def _print_json(value) -> None:
+    print(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+def run_daemon_command(argv: Optional[Sequence[str]] = None) -> int:
+    args = _parser().parse_args(argv)
+    if args.action == "mode":
+        if args.set:
+            print(f"请设置环境变量 CW_DAEMON_MODE={args.set}")
+        _print_json({
+            "mode": args.set or get_daemon_mode(),
+            "available": is_daemon_available(),
+            "required": is_daemon_required(),
+            "socket": args.socket,
+        })
+        return 0
+
+    if args.action == "serve":
+        service = EnterpriseDaemonService(args.registry)
+        server = EnterpriseDaemonServer(
+            args.socket, service, max_workers=max(1, args.workers)
+        )
+        print(f"Call Warden Enterprise daemon listening: {args.socket}")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            server.shutdown()
+        return 0
+
+    client = UnixDaemonRpcClient(args.socket)
+    if args.action == "ping":
+        result = client.call("ping")
+    elif args.action == "register":
+        result = client.call("workspace.register", {
+            "client_view_root": os.path.abspath(args.root),
+            "git_remote_url": args.git_remote,
+            "git_head_commit_sha": args.git_head,
+            "toolchain_fingerprint": args.toolchain,
+        })
+    elif args.action == "list":
+        result = client.call("workspace.list")
+    elif args.action == "status":
+        result = client.call("workspace.status", {
+            "workspace_instance_id": args.workspace_id,
+        })
+    elif args.action == "publish":
+        result = client.publish_snapshot(
+            args.workspace_id,
+            os.path.abspath(args.db_path),
+            args.build_context,
+        )
+    elif args.action == "query":
+        params = {"workspace_instance_id": args.workspace_id}
+        method = f"query.{args.query_type}"
+        if args.query_type == "symbol":
+            params["qualified_name"] = args.value
+        elif args.query_type == "search":
+            params.update(query=args.value, kind=args.kind, limit=args.limit)
+        elif args.query_type == "callers":
+            params.update(callee_name=args.value, qualified_name=args.qualified_name)
+        elif args.query_type == "callees":
+            params.update(caller_name=args.value, qualified_name=args.qualified_name)
+        result = client.call(method, params)
+    else:
+        raise AssertionError(args.action)
+    _print_json(result)
+    return 0
+
+
+def add_daemon_subcommands(_subparsers):
+    """兼容旧导入；daemon 现在由主 CLI 提前分派。"""
 
 
 def handle_daemon_command(args) -> int:
-    """处理 daemon 子命令。"""
-    if not args.daemon_command:
-        print("Usage: cw daemon <register|list|status|mode>")
-        return 1
-
-    if args.daemon_command == "register":
-        result = api_register_workspace(
-            owner_uid=args.uid,
-            client_view_root=args.client_root,
-            host_real_root=args.host_root,
-            git_remote_url=args.git_remote,
-            git_head_commit_sha=args.git_head,
-        )
-        print(json.dumps(result, indent=2, default=str))
-        return 0
-
-    elif args.daemon_command == "list":
-        workspaces = api_list_workspaces(args.uid)
-        print(json.dumps(workspaces, indent=2, default=str))
-        return 0
-
-    elif args.daemon_command == "status":
-        ws = api_get_workspace_status(args.workspace_id)
-        if ws:
-            print(json.dumps(ws, indent=2, default=str))
-        else:
-            print(f"workspace not found: {args.workspace_id}")
-            return 1
-        return 0
-
-    elif args.daemon_command == "mode":
-        if args.set:
-            print(f"设置 daemon 模式为: {args.set}")
-            print(f"（需要设置环境变量 CW_DAEMON_MODE={args.set}）")
-        else:
-            mode = get_daemon_mode()
-            available = is_daemon_available()
-            required = is_daemon_required()
-            print(f"当前模式: {mode}")
-            print(f"daemon 可用: {available}")
-            print(f"强制 daemon: {required}")
-        return 0
-
-    return 1
+    """兼容旧调用；新代码应使用 run_daemon_command。"""
+    return run_daemon_command(getattr(args, "daemon_argv", None))

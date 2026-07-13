@@ -338,7 +338,7 @@ struct CallerResult {
 #[pyclass]
 pub struct GraphStore {
     symbols: Option<Arc<SymbolTable>>,
-    calls: Option<CallGraph>,
+    calls: Option<Arc<CallGraph>>,
 }
 
 #[pymethods]
@@ -577,7 +577,7 @@ impl GraphStore {
         let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref())?;
 
         self.symbols = Some(symbols);
-        self.calls = Some(calls);
+        self.calls = Some(Arc::new(calls));
 
         Ok((symbol_count, edge_count))
     }
@@ -587,7 +587,7 @@ impl GraphStore {
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbols not ready"))?;
         let conn = open_immutable_db(db_path)?;
         let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref())?;
-        self.calls = Some(calls);
+        self.calls = Some(Arc::new(calls));
         Ok(edge_count)
     }
 
@@ -1498,7 +1498,7 @@ impl GraphStore {
             search_entry_sym_ids,
         }));
 
-        self.calls = Some(CallGraph {
+        self.calls = Some(Arc::new(CallGraph {
             forward_edges,
             forward_offsets,
             backward_positions,
@@ -1509,7 +1509,7 @@ impl GraphStore {
             callee_names_offsets,
             callee_name_sorted_idxs,
             roots,
-        });
+        }));
 
         Ok((symbol_count, edge_count))
     }
@@ -1520,6 +1520,14 @@ impl GraphStore {
 // ============================================
 
 impl GraphStore {
+    /// 创建共享符号层和调用图的查询视图，不复制大表。
+    pub(crate) fn fork_shared(&self) -> Self {
+        Self {
+            symbols: self.symbols.as_ref().map(Arc::clone),
+            calls: self.calls.as_ref().map(Arc::clone),
+        }
+    }
+
     /// Rust 内部调用的阻塞加载入口，不需要 Python token。
     pub(crate) fn load_from_sqlite_blocking(
         &mut self,

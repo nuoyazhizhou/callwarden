@@ -315,6 +315,11 @@ impl PySnapshotManager {
             None => Ok(None),
         }
     }
+
+    /// 返回当前已发布 snapshot 的共享查询视图，不复制 symbols/calls。
+    fn current_store(&self) -> Option<GraphStore> {
+        self.inner.current_store().map(|store| store.fork_shared())
+    }
 }
 
 /// Python 侧多 workspace snapshot 缓存包装。

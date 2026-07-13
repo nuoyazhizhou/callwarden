@@ -75,8 +75,7 @@ class SnapshotManagerService:
         self._max_workspaces = max_workspaces
         self._cache = None
         self._lock = threading.Lock()
-        # workspace_id → GraphStore 实例（用于查询，与 Rust 侧 ArcSwap 配合）
-        # 注：当前为过渡方案，长期应通过 GraphSnapshot.store 暴露查询方法
+        # workspace_id → 当前 ArcSwap snapshot 的共享 GraphStore 查询视图
         self._rust_stores: Dict[str, Any] = {}
         if _RUST_AVAILABLE is not None:
             PySnapshotCache, _, _ = _RUST_AVAILABLE
@@ -138,12 +137,9 @@ class SnapshotManagerService:
             mgr = self._cache.get_or_create(workspace_instance_id)
             gen, syms, calls = mgr.build_and_publish(db_path, build_context_hash, snapshot_id)
 
-            # 2. 同时创建 GraphStore 用于查询（过渡方案）
-            # 长期方案：从 GraphSnapshot.store 暴露查询方法，避免双份内存
-            if _RUST_AVAILABLE is not None:
-                _, _, GraphStore = _RUST_AVAILABLE
-                store = GraphStore()
-                store.load_from_sqlite(db_path)
+            # 2. 查询视图直接共享刚发布 snapshot 的 symbols/calls Arc。
+            store = mgr.current_store()
+            if store is not None:
                 self._rust_stores[workspace_instance_id] = store
 
             logger.info(

@@ -15,11 +15,41 @@ import os
 import pytest
 
 from callwarden.cicd.systemd_unit import (
+    generate_enterprise_daemon_unit,
     generate_systemd_unit,
     install_systemd_unit,
     generate_deploy_script,
     validate_unit_content,
 )
+
+
+class TestGenerateEnterpriseDaemonUnit:
+    def test_uses_uds_daemon_entrypoint(self):
+        content = generate_enterprise_daemon_unit()
+        assert "cw.py daemon --socket /run/callwarden/callwarden.sock serve" in content
+        assert "CW_DAEMON_MODE=enterprise" in content
+
+    def test_uses_systemd_managed_directories(self):
+        content = generate_enterprise_daemon_unit()
+        assert "RuntimeDirectory=callwarden" in content
+        assert "StateDirectory=callwarden" in content
+        assert "StateDirectoryMode=0700" in content
+
+    def test_does_not_need_user_home_access(self):
+        content = generate_enterprise_daemon_unit()
+        assert "ProtectHome=true" in content
+        assert "NoNewPrivileges=true" in content
+        assert "UMask=0007" in content
+
+    def test_supports_deployment_overrides(self):
+        content = generate_enterprise_daemon_unit(
+            socket_path="/run/cw/test.sock",
+            data_root="/srv/cw",
+            memory_max="16G",
+        )
+        assert "CW_DAEMON_SOCKET=/run/cw/test.sock" in content
+        assert "--registry /srv/cw/registry.db" in content
+        assert "MemoryMax=16G" in content
 
 
 # ============================================

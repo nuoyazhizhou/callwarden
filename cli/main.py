@@ -6977,6 +6977,11 @@ def create_parser() -> argparse.ArgumentParser:
 
 def main():
     """CLI 主入口函数"""
+    # daemon 必须绕过本地 CodeGraphDB 初始化，所有状态均通过 UDS/registry 管理。
+    if len(sys.argv) > 1 and sys.argv[1] == "daemon":
+        from .daemon_commands import run_daemon_command
+        raise SystemExit(run_daemon_command(sys.argv[2:]))
+
     # 代码守护者架构子命令拦截（四大支柱）
     # 子命令格式: cw <subcommand> [options]，如 cw defect stats
     if len(sys.argv) > 1 and sys.argv[1] in _SUBCOMMANDS:

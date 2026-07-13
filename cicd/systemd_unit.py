@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import os
+import posixpath
 from typing import Dict, Optional
 
 
@@ -90,6 +91,59 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths={working_dir} /tmp
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def generate_enterprise_daemon_unit(
+    user: str = "callwarden",
+    group: str = "callwarden",
+    working_dir: str = "/opt/callwarden",
+    socket_path: str = "/run/callwarden/callwarden.sock",
+    data_root: str = "/var/lib/callwarden",
+    memory_max: str = "8G",
+    cpu_quota: str = "400%",
+    restart_sec: int = 3,
+) -> str:
+    """生成共享 UDS snapshot daemon 的 systemd unit。"""
+    registry_db = posixpath.join(data_root, "registry.db")
+    return f"""[Unit]
+Description=Call Warden Enterprise Shared Snapshot Daemon
+Documentation=file://{working_dir}/docs/deployment.md
+After=local-fs.target
+
+[Service]
+Type=simple
+User={user}
+Group={group}
+WorkingDirectory={working_dir}
+ExecStart={working_dir}/cw.py daemon --socket {socket_path} serve --registry {registry_db}
+Restart=on-failure
+RestartSec={restart_sec}
+KillSignal=SIGTERM
+TimeoutStopSec=30
+UMask=0007
+
+# systemd 创建并授权 daemon 专用运行/状态目录。
+RuntimeDirectory=callwarden
+RuntimeDirectoryMode=0770
+StateDirectory=callwarden
+StateDirectoryMode=0700
+
+Environment=CW_DAEMON_MODE=enterprise
+Environment=CW_DAEMON_SOCKET={socket_path}
+Environment=CW_DAEMON_DATA_ROOT={data_root}
+
+MemoryMax={memory_max}
+CPUQuota={cpu_quota}
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target

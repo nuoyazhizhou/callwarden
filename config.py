@@ -1121,10 +1121,12 @@ def safe_walk(root_dir: str, max_depth: int = -1, **kwargs):
 # ── Enterprise daemon 配置 ──
 
 # daemon socket 路径（Linux）
-DAEMON_SOCKET_PATH = "/var/run/callwarden.sock"
+DAEMON_SOCKET_PATH = os.environ.get(
+    "CW_DAEMON_SOCKET", "/var/run/callwarden/callwarden.sock"
+)
 
 # daemon 数据根目录
-DAEMON_DATA_ROOT = "/var/lib/callwarden"
+DAEMON_DATA_ROOT = os.environ.get("CW_DAEMON_DATA_ROOT", "/var/lib/callwarden")
 
 # workspace registry DB 路径
 DAEMON_REGISTRY_DB = os.path.join(DAEMON_DATA_ROOT, "registry.db")

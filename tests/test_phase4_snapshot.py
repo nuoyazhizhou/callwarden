@@ -111,6 +111,15 @@ class TestSnapshotManagerBasic:
 # ----------------------------------------------------------------------
 
 class TestBuildAndPublish:
+    def test_current_store_shares_published_graph(self, minimal_db):
+        """current_store 返回可查询的共享 Arc 视图。"""
+        from callwarden_core import PySnapshotManager
+        mgr = PySnapshotManager("ws_shared_store")
+        mgr.build_and_publish(minimal_db, "ctx_shared", None)
+        store = mgr.current_store()
+        assert store is not None
+        assert store.get_symbol("util.helper")["name"] == "helper"
+
     def test_build_and_publish_returns_generation_and_counts(self, minimal_db):
         """build_and_publish 后返回 (generation, symbol_count, call_count)。
         注：GraphStore by_id 按 max(symbol_id)+1 resize，因此返回值可能比实际符号数多 1。
