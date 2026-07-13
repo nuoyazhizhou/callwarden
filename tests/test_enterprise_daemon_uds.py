@@ -311,6 +311,63 @@ def test_service_rejects_cross_uid_workspace_access(daemon_service, tmp_path):
         })
 
 
+def test_service_rejects_cross_uid_query_isolation(daemon_service, tmp_path):
+    """验收：用户 A 的所有 workspace 级操作对用户 B 完全不可见。
+
+    补全 T-1783952125417-8255 Step #4：不仅 workspace.status 被阻断，
+    workspace.connect、workspace.file.refresh、workspace.recover、
+    snapshot.publish、workspace.refresh 和全部 query.* 方法都必须拒绝
+    跨 UID 请求。这是"完整查询隔离"的核心要求。
+    """
+    owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+    owner_peer = {"pid": os.getpid(), "uid": owner_uid, "gid": owner_uid}
+    workspace = daemon_service.dispatch(owner_peer, "workspace.register", {
+        "client_view_root": str(tmp_path),
+    })
+    ws_id = workspace["workspace_instance_id"]
+    other_peer = {"pid": 99999, "uid": owner_uid + 1, "gid": owner_uid + 1}
+
+    # 所有 workspace 级方法都必须拒绝跨 UID
+    blocked_methods = [
+        ("workspace.status", {"workspace_instance_id": ws_id}),
+        ("workspace.connect", {
+            "workspace_instance_id": ws_id,
+            "agent_session_id": "test-session",
+        }),
+        ("workspace.file.refresh", {
+            "workspace_instance_id": ws_id,
+            "rel_path": "test.py",
+            "agent_session_id": "test-session",
+            "session_epoch": 1,
+            "monotonic_seq": 1,
+        }),
+        ("workspace.recover", {"workspace_instance_id": ws_id}),
+        ("snapshot.publish", {
+            "workspace_instance_id": ws_id,
+            "db_path": "/tmp/nonexistent.db",
+        }),
+        ("workspace.refresh", {
+            "workspace_instance_id": ws_id,
+            "db_path": "/tmp/nonexistent.db",
+        }),
+    ]
+    for method, params in blocked_methods:
+        with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID"):
+            daemon_service.dispatch(other_peer, method, params)
+
+    # query.* 方法需要先 publish snapshot，但跨 UID 在 _owned_workspace 就被拦截
+    query_methods = [
+        ("query.stats", {"workspace_instance_id": ws_id}),
+        ("query.symbol", {"workspace_instance_id": ws_id, "qualified_name": "foo"}),
+        ("query.search", {"workspace_instance_id": ws_id, "query": "foo"}),
+        ("query.callers", {"workspace_instance_id": ws_id, "callee_name": "foo"}),
+        ("query.callees", {"workspace_instance_id": ws_id, "caller_name": "foo"}),
+    ]
+    for method, params in query_methods:
+        with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID"):
+            daemon_service.dispatch(other_peer, method, params)
+
+
 def test_service_routes_publish_and_query_without_socket(daemon_service, tmp_path):
     uid = os.getuid() if hasattr(os, "getuid") else 0
     peer = {"pid": os.getpid(), "uid": uid, "gid": uid}
