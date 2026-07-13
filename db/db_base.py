@@ -1534,6 +1534,25 @@ def _migrate_v30_to_v31(conn: sqlite3.Connection):
     conn.execute("INSERT INTO symbols_fts(symbols_fts) VALUES('rebuild')")
 
 
+def _migrate_v31_to_v32(conn: sqlite3.Connection):
+    """v31 -> v32: P6 索引精简 — 删除 idx_calls_callee
+
+    GraphStore CSR 内存索引已覆盖 get_callers 查询路径（callee_name → caller_ids），
+    WHERE callee_name=? 查询走内存短路，SQL 降级路径仅在 callwarden_core 未安装时触发。
+
+    删除 idx_calls_callee 的收益：
+    - 减少 1/3 calls 表索引写入开销（每次 INSERT 少维护一个 B-tree）
+    - 减少 ~56MB 索引存储（1M 符号 / 7M 边场景）
+
+    保留的索引：
+    - idx_calls_caller（JOIN/DELETE 高频使用）
+    - idx_calls_callee_qualified（blast_radius/cross_layer_impact 影响分析专用）
+
+    幂等性：DROP INDEX IF EXISTS，不存在则跳过。
+    """
+    conn.execute("DROP INDEX IF EXISTS idx_calls_callee")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1651,9 +1670,13 @@ class CodeGraphBase:
         后续查询直接走内存，零 SQL 零磁盘 I/O。
         写操作后 _invalidate_graph_store() 标记 dirty，下次查询时重新加载。
 
+        P5 优化：优先从快照文件加载（mmap 零拷贝，2.91x 加速），
+        快照不存在或过期时回退到 load_from_sqlite 并自动 dump 新快照。
+
         Returns:
             GraphStore 实例，或 None（callwarden_core 未安装时降级到 SQL）
         """
+        import os
         # 延迟失效：写操作后只标记 dirty，查询时才真正清空+重载
         if self._graph_store_dirty:
             self._graph_store = None
@@ -1670,8 +1693,39 @@ class CodeGraphBase:
             # 否则会读到 WAL 之前的旧数据（新建库的 schema 都在 WAL 中）
             self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             store = GraphStore()
+
+            # P5: 快照缓存路径（与 DB 同目录，后缀 .cwsnap）
+            snap_path = self.db_path + ".cwsnap"
+            # P5: 有效性检查 — 快照 mtime >= DB mtime 表示快照覆盖了最新数据
+            snap_valid = (
+                os.path.exists(snap_path)
+                and os.path.exists(self.db_path)
+                and os.path.getmtime(snap_path) >= os.path.getmtime(self.db_path)
+            )
+
+            if snap_valid:
+                # 快照有效 → mmap 零拷贝加载（2.91x 加速）
+                try:
+                    store.load_from_file(snap_path)
+                    self._graph_store = store
+                    return self._graph_store
+                except Exception:
+                    pass  # 快照损坏，回退到 load_from_sqlite
+
+            # 快照无效或损坏 → 从 SQLite 加载
             store.load_from_sqlite(self.db_path)
             self._graph_store = store
+
+            # P5: 后台 dump 新快照（daemon 线程，不阻塞查询）
+            # 下次冷启动时 load_from_file 将获得 2.91x 加速
+            import threading
+            def _dump_snapshot():
+                try:
+                    store.dump_to_file(snap_path)
+                except Exception:
+                    pass  # dump 失败不影响功能，下次启动会重试
+            threading.Thread(target=_dump_snapshot, daemon=True).start()
+
         except Exception:
             # 加载失败（数据库锁、schema 不匹配等）→ 降级到 SQL
             self._graph_store = None
@@ -1934,6 +1988,10 @@ class CodeGraphBase:
             31: {
                 "description": t("cli.messages.migration_v31", default="Add FTS5 full-text index on symbols(name, qualified_name) for faster search_symbols"),
                 "func": _migrate_v30_to_v31,
+            },
+            32: {
+                "description": t("cli.messages.migration_v32", default="P6: Drop idx_calls_callee (GraphStore covers get_callers in memory)"),
+                "func": _migrate_v31_to_v32,
             },
         }
 

@@ -265,6 +265,8 @@ class QueryMixin:
                     return rust_callers
             except Exception:
                 pass  # Rust 查询异常 → 降级 SQL
+        # P6 注：idx_calls_callee 已删除（GraphStore 覆盖 get_callers）。
+        # SQL 降级路径（callwarden_core 未安装时）WHERE callee_name=? 走全表扫描。
         # P28：传入 qualified_name 时，JOIN symbols 精确过滤 callee_id
         if qualified_name is not None:
             cur = self.conn.execute(

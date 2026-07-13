@@ -199,7 +199,6 @@ CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique ON symbols(file_instance_id, name, start_line);
 CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id);
-CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name);
 CREATE INDEX IF NOT EXISTS idx_calls_callee_qualified ON calls(callee_qualified);
 CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash);
 CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id);
@@ -927,7 +926,74 @@ END;
 # v29: 审计签名密钥轮换表（audit_key_rotations，记录密钥轮换时间点，支持按 key_id 验证旧记录）
 # v30: workspaces 表新增 active_task_id 字段（active task 持久化，替代 CALLWARDEN_TASK_ID 环境变量）
 # v31: FTS5 全文索引（symbols_fts 虚拟表 + 同步触发器，search_symbols 从 LIKE 改为 FTS5 MATCH）
-SCHEMA_VERSION = 31
+# v32: P6 索引精简 — 删除 idx_calls_callee（GraphStore CSR 已覆盖 get_callers 查询路径，
+#      WHERE callee_name=? 查询走内存短路，SQL 降级路径仅在 callwarden_core 未安装时触发）
+SCHEMA_VERSION = 32
+
+
+# ============================================
+# P12: Schema 拆分 — 全新数据库延迟建索引
+# ============================================
+# 压测发现：建表时同步建 6 个 B-tree 索引，每个 INSERT 都触发索引维护（写放大），
+# 导致 2M 符号入库 1031s（baseline）。改为「先建表 → 入库 → 最后建索引」可降到 76s（13.5x）。
+# 全新数据库走 SCHEMA_TABLES_SQL（只建表+虚拟表），build_full_graph 完成后调用
+# SCHEMA_INDEXES_SQL 建索引+触发器。已迁移的数据库走完整 SCHEMA_SQL（向后兼容）。
+
+def _split_schema_sql():
+    """拆分 SCHEMA_SQL：CREATE TABLE/VIRTUAL TABLE → TABLES；CREATE INDEX/TRIGGER → INDEXES
+
+    按行扫描，识别 `CREATE INDEX` / `CREATE UNIQUE INDEX` / `CREATE TRIGGER` 开头的语句。
+    其余（CREATE TABLE / CREATE VIRTUAL TABLE / 注释）归入 TABLES。
+
+    注意：CREATE TRIGGER 语句内部含 `INSERT ... VALUES(...);` 也会以 `;` 结尾，
+    必须识别 `BEGIN ... END;` 块，否则触发器会被错误切分。
+    """
+    statements = []
+    buf = []
+    in_trigger = False  # 是否在 CREATE TRIGGER 语句中
+
+    for line in SCHEMA_SQL.split('\n'):
+        buf.append(line)
+        stripped = line.strip()
+
+        # 检测 CREATE TRIGGER 开始（忽略大小写）
+        if stripped.upper().startswith('CREATE TRIGGER'):
+            in_trigger = True
+
+        if in_trigger:
+            # 触发器语句以 `END;` 结尾
+            if stripped.upper() == 'END;':
+                statements.append('\n'.join(buf))
+                buf = []
+                in_trigger = False
+        else:
+            # 普通语句以 `;` 结尾
+            if stripped.endswith(';'):
+                statements.append('\n'.join(buf))
+                buf = []
+
+    if buf:
+        statements.append('\n'.join(buf))
+
+    tables = []
+    indexes = []
+    for stmt in statements:
+        # 去除前导空白和注释，取首个有效关键字
+        non_comment_lines = [l for l in stmt.split('\n') if l.strip() and not l.strip().startswith('--')]
+        if not non_comment_lines:
+            tables.append(stmt)  # 注释块归入 tables（无害）
+            continue
+        first_line = non_comment_lines[0].lstrip().upper()
+        if (first_line.startswith('CREATE INDEX')
+                or first_line.startswith('CREATE UNIQUE INDEX')
+                or first_line.startswith('CREATE TRIGGER')):
+            indexes.append(stmt)
+        else:
+            tables.append(stmt)
+    return '\n'.join(tables), '\n'.join(indexes)
+
+
+SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL = _split_schema_sql()
 
 
 # ============================================

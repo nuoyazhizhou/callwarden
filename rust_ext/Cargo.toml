@@ -45,6 +45,14 @@ notify = "7.0"
 crossbeam-channel = "0.5"
 # Phase 5.2: sha2 用于文件内容 hash diff（排除假阳性 watcher 事件）
 sha2 = "0.10"
+# P6 优化：rustc-hash 提供 FxHashMap（比 SipHash 快 5-10x，非加密哈希）
+rustc-hash = "2.0"
+# P11 优化：memchr 提供 SIMD 加速的子串搜索（search_symbols 热路径）
+memchr = "2.7"
+# P5 优化：memmap2 用于 GraphStore 快照 dump/load 零拷贝加载
+memmap2 = "0.9"
+# P5 优化：bytemuck 用于 GraphSymbol/CallEdge 的零拷贝字节转换
+bytemuck = { version = "1.21", features = ["derive"] }
 
 [profile.release]
 opt-level = 3
