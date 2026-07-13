@@ -1,0 +1,53 @@
+# Call Warden 统一版本源
+#
+# 这是唯一的版本真相源。构建时校验并同步到：
+# - Python metadata (pyproject.toml)
+# - Cargo package (rust_ext/Cargo.toml)
+# - __init__.py __version__
+# - cw --version
+# - daemon version RPC
+# - 安装包版本
+#
+# 任一不一致直接失败。
+
+[product]
+name = "Call Warden"
+version = "0.3.0"
+edition = "2024"
+
+[abi]
+python = "cp311"
+parser = 2
+snapshot = 2
+schema_registry = 3
+schema_cas = 2
+schema_workspace = 4
+
+[runtime]
+python_min = "3.9"
+python_max = "3.14"
+rust_edition = "2021"
+tree_sitter = "0.26"
+pyo3 = "0.29"
+
+[platforms]
+windows = ["x64", "arm64"]
+macos = ["x86_64", "arm64"]
+linux = ["x86_64", "aarch64"]
+
+[roles]
+# local: cw + Rust extension + local DB + MCP + watcher
+# client: cw-client + MCP proxy, no parser/CAS
+# agent: Linux cw-agent + systemd user unit + client
+# daemon: Linux cw-daemon + system unit + migration/backup tools
+# all: platform-supported roles (Linux = enterprise meta-package)
+default_windows = "local"
+default_macos = "local"
+default_linux_desktop = "local"
+default_linux_server = "all"
+
+[entry_points]
+cw = "callwarden.cw:main"
+cw_client = "callwarden.cli.client:main"
+cw_agent = "callwarden.cli.agent:main"
+cw_daemon = "callwarden.cli.daemon:main"

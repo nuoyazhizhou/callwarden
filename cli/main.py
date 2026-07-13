@@ -8480,5 +8480,56 @@ def main():
         db.close()
 
 
+# ============================================
+# 角色化入口（cw-client / cw-agent / cw-daemon）
+# ============================================
+
+
+def run_client_mode(argv: list) -> int:
+    """cw-client 入口：仅 RPC/MCP proxy，不含 parser 和本地 DB 写能力。"""
+    print("Call Warden Client Mode")
+    print("  Connects to Enterprise Daemon via UDS")
+    print("  No local parser or CAS write capability")
+    if not argv:
+        print("\nUsage: cw-client <command> [options]")
+        print("Commands: ping, query, refresh, status")
+        return 0
+    # TODO: 实现 client RPC proxy
+    print(f"  Command: {' '.join(argv)}")
+    return 0
+
+
+def run_agent_mode(argv: list) -> int:
+    """cw-agent 入口：Linux per-UID watcher agent。仅 Linux 可用。"""
+    import sys as _sys
+    if _sys.platform != "linux":
+        print("ERROR: cw-agent is only supported on Linux.", file=_sys.stderr)
+        return 2
+    print("Call Warden Agent Mode (Linux only)")
+    print("  Per-UID file watcher → UDS → Enterprise Daemon")
+    if not argv:
+        print("\nUsage: cw-agent start|stop|status [options]")
+        return 0
+    # TODO: 实现 agent watcher loop
+    print(f"  Command: {' '.join(argv)}")
+    return 0
+
+
+def run_daemon_mode(argv: list) -> int:
+    """cw-daemon 入口：Linux system daemon。仅 Linux 可用。"""
+    import sys as _sys
+    if _sys.platform != "linux":
+        print("ERROR: cw-daemon is only supported on Linux.", file=_sys.stderr)
+        return 2
+    print("Call Warden Daemon Mode (Linux only)")
+    print("  UDS server + SO_PEERCRED ACL + CAS + Replicator + SnapshotManager")
+    if not argv:
+        print("\nUsage: cw-daemon --config <path> [--foreground]")
+        return 0
+    # TODO: 实现 daemon server startup
+    print(f"  Args: {' '.join(argv)}")
+    return 0
+
+
 if __name__ == "__main__":
     main()

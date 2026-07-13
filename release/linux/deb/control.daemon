@@ -1,0 +1,20 @@
+# Debian package control file for callwarden-daemon
+# Task: T-1783983162956-b2a8
+
+Package: callwarden-daemon
+Version: 0.3.0
+Section: devel
+Priority: optional
+Architecture: amd64
+Maintainer: Call Warden Team <team@callwarden.dev>
+Description: Call Warden Enterprise Daemon
+ Enterprise-grade code knowledge graph daemon with UDS,
+ SO_PEERCRED ACL, CAS, Replicator, and SnapshotManager.
+ .
+ Features:
+  - UDS server with SO_PEERCRED authentication
+  - Content-Addressable Storage (CAS) with GC
+  - SnapshotManager with ArcSwap atomic publish
+  - Durable staging WAL with crash recovery
+  - systemd integration with graceful shutdown
+Depends: callwarden-local (= 0.3.0), systemd, libc6 (>= 2.17)

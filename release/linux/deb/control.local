@@ -1,0 +1,20 @@
+# Debian package control file for callwarden-local
+# Task: T-1783983162956-b2a8
+
+Package: callwarden-local
+Version: 0.3.0
+Section: devel
+Priority: optional
+Architecture: amd64
+Maintainer: Call Warden Team <team@callwarden.dev>
+Description: Call Warden - Local CLI with code knowledge graph
+ Call Warden provides multi-language code analysis, call graph
+ tracking, and AI agent integration via MCP protocol.
+ .
+ This package includes:
+  - cw CLI (local mode with SQLite + tree-sitter)
+  - Rust extension (callwarden_core)
+  - MCP stdio server
+  - File watcher
+Depends: libc6 (>= 2.17), libgcc-s1
+Recommends: git

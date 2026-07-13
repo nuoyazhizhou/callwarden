@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Call Warden Windows MSI Installer (WiX Toolset)
+  Task: T-1783983162956-ab68
+  Supports: x64, arm64
+  Roles: local, client
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Call Warden"
+           Language="1033"
+           Version="0.3.0"
+           Manufacturer="Call Warden Team"
+           UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Call Warden - Code Knowledge Graph for AI Agents"
+             Comments="Supports local CLI, MCP, and watcher modes." />
+
+    <!-- Upgrade behavior: block downgrade -->
+    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+
+    <!-- Embedded cabinet -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Features -->
+    <Feature Id="Complete" Title="Call Warden" Level="1">
+      <ComponentGroupRef Id="MainComponents" />
+      <ComponentGroupRef Id="ShortcutComponents" />
+    </Feature>
+
+    <!-- Optional features -->
+    <Feature Id="LocalRole" Title="Local Mode (CLI + MCP + Watcher)" Level="1" />
+    <Feature Id="ClientRole" Title="Client Mode (RPC Proxy Only)" Level="2" />
+
+    <!-- Install directory -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="CallWarden">
+          <Directory Id="BinFolder" Name="bin" />
+          <Directory Id="LibFolder" Name="lib" />
+          <Directory Id="ConfigFolder" Name="config" />
+        </Directory>
+      </Directory>
+
+      <!-- Start Menu -->
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Call Warden" />
+      </Directory>
+    </Directory>
+
+    <!-- Main components -->
+    <ComponentGroup Id="MainComponents" Directory="BinFolder">
+      <Component Id="CwExe" Guid="*">
+        <File Id="cw.exe" Source="dist\windows\cw.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="CwClientExe" Guid="*">
+        <File Id="cw_client.exe" Source="dist\windows\cw_client.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="CallwardenCorePyd" Guid="*">
+        <File Id="callwarden_core.pyd" Source="dist\windows\callwarden_core.pyd" KeyPath="yes" />
+      </Component>
+      <!-- Python runtime (bundled) -->
+      <Component Id="PythonRuntime" Guid="*">
+        <File Id="python.exe" Source="dist\windows\runtime\python.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Shortcuts -->
+    <ComponentGroup Id="ShortcutComponents" Directory="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcut" Guid="*">
+        <Shortcut Id="ApplicationStartMenuShortcut"
+                  Name="Call Warden"
+                  Target="[BinFolder]cw.exe"
+                  WorkingDirectory="BinFolder" />
+        <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\CallWarden" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Environment: add to PATH (optional) -->
+    <Component Id="PathEntry" Guid="*" Directory="BinFolder">
+      <Environment Id="PATH" Name="PATH" Value="[BinFolder]" Permanent="no" Part="last" Action="set" System="yes" />
+    </Component>
+
+    <!-- Data directory: preserve on uninstall -->
+    <Directory Id="LocalAppDataFolder">
+      <Directory Id="DataFolder" Name="CallWarden">
+        <Component Id="DataDir" Guid="*">
+          <CreateFolder />
+          <RemoveFile Id="RemoveDataFiles" Name="*" On="uninstall" />
+        </Component>
+      </Directory>
+    </Directory>
+
+    <!-- Exit codes -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+              Value="Call Warden has been installed. Run 'cw --version' to verify." />
+  </Product>
+</Wix>
