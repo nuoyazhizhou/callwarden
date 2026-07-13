@@ -222,7 +222,7 @@ class SnapshotManagerService:
             return []
         b = budget or default_budget()
         result = store.get_callers(callee_name, qualified_name)
-        return b.truncate_results(result)
+        return list(b.truncate_results(result))
 
     def query_callees(
         self,
@@ -243,7 +243,7 @@ class SnapshotManagerService:
             return []
         b = budget or default_budget()
         result = store.get_callees(caller_name, qualified_name)
-        return b.truncate_results(result)
+        return list(b.truncate_results(result))
 
     def search_symbols(
         self,
@@ -268,7 +268,7 @@ class SnapshotManagerService:
         b = budget or default_budget()
         if limit is None:
             limit = b.max_results
-        return store.search_symbols(query, kind, limit)
+        return list(store.search_symbols(query, kind, limit))
 
     def query_symbol(
         self,

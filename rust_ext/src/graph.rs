@@ -15,6 +15,7 @@
 //! - 不替换现有 Python 查询（旁路验证，对比性能后再决定）
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rusqlite::Connection;
@@ -336,7 +337,7 @@ struct CallerResult {
 ///   callers = store.get_callers("function_name")
 #[pyclass]
 pub struct GraphStore {
-    symbols: Option<SymbolTable>,
+    symbols: Option<Arc<SymbolTable>>,
     calls: Option<CallGraph>,
 }
 
@@ -367,6 +368,21 @@ impl GraphStore {
             .map(|(symbols, _)| symbols)
     }
 
+    /// 创建一个共享当前符号层的新 store，供后台仅构建调用图。
+    pub fn fork_symbols(&self) -> PyResult<Self> {
+        let symbols = self.symbols.as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbols not ready"))?;
+        Ok(Self {
+            symbols: Some(Arc::clone(symbols)),
+            calls: None,
+        })
+    }
+
+    /// 复用已加载的符号层，仅从 SQLite 加载 calls 并构建 CSR。
+    pub fn load_calls_from_sqlite(&mut self, py: Python<'_>, db_path: &str) -> PyResult<usize> {
+        py.detach(|| self._load_calls_from_sqlite(db_path))
+    }
+
     /// 返回当前加载阶段，供 Python/daemon 选择查询路径。
     pub fn load_state(&self) -> &'static str {
         if self.calls.is_some() {
@@ -384,29 +400,7 @@ impl GraphStore {
         db_path: &str,
         include_calls: bool,
     ) -> PyResult<(usize, usize)> {
-        // 只读 + immutable 模式打开：
-        // - READ_ONLY: 不写入
-        // - immutable=1: 告知 SQLite 数据库不会被修改，跳过 -wal/-shm 文件创建
-        //   避免 WAL 模式下 rusqlite bundled SQLite 尝试创建 -shm 文件被沙箱拦截
-        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
-            | rusqlite::OpenFlags::SQLITE_OPEN_URI;
-        // 转换 Windows 路径为 file: URI（immutable=1 跳过 WAL/SHM）
-        let normalized = db_path.replace('\\', "/");
-        let uri = if normalized.starts_with("//") || normalized.starts_with("file:") {
-            // UNC 路径或已是 URI，直接加 immutable
-            if normalized.contains('?') {
-                format!("{}&immutable=1", normalized)
-            } else {
-                format!("{}?immutable=1", normalized)
-            }
-        } else {
-            // 普通路径转 file: URI
-            let prefix = if normalized.starts_with('/') { "file:" } else { "file:///" };
-            format!("{}{}?immutable=1", prefix, normalized)
-        };
-        let conn = Connection::open_with_flags(&uri, flags)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("open db failed: {} (uri={})", e, uri)))?;
+        let conn = open_immutable_db(db_path)?;
 
         // 1a. 先加载 file_paths（P3 优化：file_instance_id → rel_path 独立表）
         // P4: 改为 pool + offsets，消除 20万 String 堆分配（省 11MB）
@@ -567,12 +561,12 @@ impl GraphStore {
             }
         }
 
-        let symbols = SymbolTable {
+        let symbols = Arc::new(SymbolTable {
             by_id, by_qname_sorted_ids, by_simple_name_sorted_ids,
             file_paths_pool, file_paths_offsets,
             name_pool, qname_pool, module_pool,
             search_pool_lower, search_entry_offsets, search_entry_sym_ids,
-        };
+        });
 
         if !include_calls {
             self.symbols = Some(symbols);
@@ -580,97 +574,21 @@ impl GraphStore {
             return Ok((symbol_count, 0));
         }
 
-        // 2. 加载调用关系
-        let mut edges: Vec<CallEdge> = Vec::new();
-        // P5 优化：callee_names 改为 string pool + offsets
-        let mut callee_names_pool = String::new();
-        let mut callee_names_offsets: Vec<u32> = Vec::new();
-        let mut name_idx_map: FxHashMap<String, u32> = FxHashMap::default();
-
-        let mut stmt = conn.prepare(
-            "SELECT caller_id, callee_id, callee_name, call_line, is_cross_file FROM calls"
-        ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare calls query failed: {}", e)))?;
-
-        let call_iter = stmt.query_map([], |row| {
-            let callee_name: String = row.get(2)?;
-            Ok((
-                row.get::<_, i64>(0)? as u32,   // caller_id
-                row.get::<_, i64>(1)? as u32,   // callee_id
-                callee_name,                     // callee_name
-                row.get::<_, i64>(3)? as u32,   // call_line
-                row.get::<_, i64>(4)? != 0,     // is_cross_file
-            ))
-        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("query calls failed: {}", e)))?;
-
-        for call in call_iter {
-            let (caller_id, callee_id, callee_name, call_line, is_cross_file) = call
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("read call row failed: {}", e)))?;
-
-            // callee_name 池化去重（P5：追加到 string pool，记录偏移）
-            let callee_name_idx = match name_idx_map.get(&callee_name) {
-                Some(&idx) => idx,
-                None => {
-                    let idx = callee_names_offsets.len() as u32;
-                    let start = callee_names_pool.len() as u32;
-                    callee_names_pool.push_str(&callee_name);
-                    callee_names_offsets.push(start);
-                    // 末尾哨兵：offsets[i+1] = end
-                    // 这里先 push start，查询时用 offsets[i]..offsets[i+1]
-                    // 所以需要额外 push 一个 end 作为最后一个 name 的结束
-                    // 但我们用 idx 查，idx < offsets.len() 时用 offsets[idx]..offsets[idx+1]
-                    // 所以最后一个 name 需要 offsets 末尾再加一个 end
-                    // 简化：offsets 存每个 name 的 start，最后再加一个 pool.len()
-                    name_idx_map.insert(callee_name, idx);
-                    idx
-                }
-            };
-
-            edges.push(CallEdge {
-                caller_id, callee_id,
-                call_line_packed: CallEdge::pack_call_line(call_line, is_cross_file),
-                callee_name_idx,
-            });
-        }
-
-        let edge_count = edges.len();
-
-        // 3. 构建 CSR 邻接表（forward + backward 双份排序）
-        let max_id = symbols.by_id.len().max(1) - 1;
-        // P5：offsets 末尾追加 pool.len() 作为哨兵，便于 callee_name(idx) 读取
-        callee_names_offsets.push(callee_names_pool.len() as u32);
-        let mut calls = build_csr(edges, callee_names_pool, callee_names_offsets, max_id);
-
-        // 4. 计算根节点（无 caller 的真实符号）
-        let mut has_caller = vec![false; symbols.by_id.len()];
-        for &position in &calls.backward_positions {
-            let e = &calls.forward_edges[position as usize];
-            if e.callee_id != 0 && (e.callee_id as usize) < has_caller.len() {
-                has_caller[e.callee_id as usize] = true;
-            }
-        }
-        for (idx, sym) in symbols.by_id.iter().enumerate() {
-            // 跳过空槽位 + 跳过非函数（只有 fn/test_fn/method 才进调用图）
-            if sym.id == 0 && sym.name_len == 0 { continue; }
-            if !has_caller[idx] && sym.kind == SymbolKind::Fn {
-                calls.roots.push(idx as u32);
-            }
-        }
-
-        // 5. 构建 callee_name 紧凑二分索引和位置 CSR。
-        let (name_sorted, position_offsets, positions) = build_callee_name_index(
-            &calls.forward_edges,
-            &calls.callee_names_pool,
-            &calls.callee_names_offsets,
-        );
-        calls.callee_name_sorted_idxs = name_sorted;
-        calls.callee_position_offsets = position_offsets;
-        calls.callee_positions = positions;
-        drop(name_idx_map);
+        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref())?;
 
         self.symbols = Some(symbols);
         self.calls = Some(calls);
 
         Ok((symbol_count, edge_count))
+    }
+
+    fn _load_calls_from_sqlite(&mut self, db_path: &str) -> PyResult<usize> {
+        let symbols = self.symbols.as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbols not ready"))?;
+        let conn = open_immutable_db(db_path)?;
+        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref())?;
+        self.calls = Some(calls);
+        Ok(edge_count)
     }
 
     /// 查询谁调用了这个函数（对齐 Python db_query.get_callers）
@@ -1566,7 +1484,7 @@ impl GraphStore {
             }
         }
 
-        self.symbols = Some(SymbolTable {
+        self.symbols = Some(Arc::new(SymbolTable {
             by_id,
             by_qname_sorted_ids,
             by_simple_name_sorted_ids,
@@ -1578,7 +1496,7 @@ impl GraphStore {
             search_pool_lower,
             search_entry_offsets,
             search_entry_sym_ids,
-        });
+        }));
 
         self.calls = Some(CallGraph {
             forward_edges,
@@ -1818,6 +1736,106 @@ fn build_callee_name_index(
 /// 从边列表构建 CSR 邻接表
 /// forward: 按 caller_id 排序
 /// backward: 按 callee_id 排序（用于 get_callers 反向查询）
+fn open_immutable_db(db_path: &str) -> PyResult<Connection> {
+    let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+        | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+    let normalized = db_path.replace('\\', "/");
+    let uri = if normalized.starts_with("//") || normalized.starts_with("file:") {
+        if normalized.contains('?') {
+            format!("{}&immutable=1", normalized)
+        } else {
+            format!("{}?immutable=1", normalized)
+        }
+    } else {
+        let prefix = if normalized.starts_with('/') { "file:" } else { "file:///" };
+        format!("{}{}?immutable=1", prefix, normalized)
+    };
+    Connection::open_with_flags(&uri, flags).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!(
+            "open db failed: {} (uri={})", e, uri
+        ))
+    })
+}
+
+fn load_call_graph(conn: &Connection, symbols: &SymbolTable) -> PyResult<(CallGraph, usize)> {
+    let mut edges: Vec<CallEdge> = Vec::new();
+    let mut callee_names_pool = String::new();
+    let mut callee_names_offsets: Vec<u32> = Vec::new();
+    let mut name_idx_map: FxHashMap<String, u32> = FxHashMap::default();
+
+    let mut stmt = conn.prepare(
+        "SELECT caller_id, callee_id, callee_name, call_line, is_cross_file FROM calls"
+    ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+        format!("prepare calls query failed: {}", e)
+    ))?;
+    let call_iter = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)? as u32,
+            row.get::<_, i64>(1)? as u32,
+            row.get::<_, String>(2)?,
+            row.get::<_, i64>(3)? as u32,
+            row.get::<_, i64>(4)? != 0,
+        ))
+    }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+        format!("query calls failed: {}", e)
+    ))?;
+
+    for call in call_iter {
+        let (caller_id, callee_id, callee_name, call_line, is_cross_file) = call
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+                format!("read call row failed: {}", e)
+            ))?;
+        let callee_name_idx = match name_idx_map.get(&callee_name) {
+            Some(&idx) => idx,
+            None => {
+                let idx = callee_names_offsets.len() as u32;
+                callee_names_offsets.push(callee_names_pool.len() as u32);
+                callee_names_pool.push_str(&callee_name);
+                name_idx_map.insert(callee_name, idx);
+                idx
+            }
+        };
+        edges.push(CallEdge {
+            caller_id,
+            callee_id,
+            call_line_packed: CallEdge::pack_call_line(call_line, is_cross_file),
+            callee_name_idx,
+        });
+    }
+
+    let edge_count = edges.len();
+    callee_names_offsets.push(callee_names_pool.len() as u32);
+    let max_id = symbols.by_id.len().max(1) - 1;
+    let mut calls = build_csr(edges, callee_names_pool, callee_names_offsets, max_id);
+
+    let mut has_caller = vec![false; symbols.by_id.len()];
+    for &position in &calls.backward_positions {
+        let edge = &calls.forward_edges[position as usize];
+        if edge.callee_id != 0 && (edge.callee_id as usize) < has_caller.len() {
+            has_caller[edge.callee_id as usize] = true;
+        }
+    }
+    for (idx, symbol) in symbols.by_id.iter().enumerate() {
+        if symbol.id == 0 && symbol.name_len == 0 {
+            continue;
+        }
+        if !has_caller[idx] && symbol.kind == SymbolKind::Fn {
+            calls.roots.push(idx as u32);
+        }
+    }
+
+    let (name_sorted, position_offsets, positions) = build_callee_name_index(
+        &calls.forward_edges,
+        &calls.callee_names_pool,
+        &calls.callee_names_offsets,
+    );
+    calls.callee_name_sorted_idxs = name_sorted;
+    calls.callee_position_offsets = position_offsets;
+    calls.callee_positions = positions;
+    Ok((calls, edge_count))
+}
+
 fn build_csr(
     edges: Vec<CallEdge>,
     callee_names_pool: String,

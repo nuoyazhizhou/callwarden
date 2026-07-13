@@ -25,6 +25,7 @@ class ControlledGraphStore:
 
     def __init__(self):
         self.state = "empty"
+        self.symbol_token = None
 
     @classmethod
     def reset(cls) -> None:
@@ -34,15 +35,24 @@ class ControlledGraphStore:
 
     def load_symbols_from_sqlite(self, _db_path: str) -> int:
         self.state = "symbols_ready"
+        self.symbol_token = object()
         return 1
 
-    def load_from_sqlite(self, _db_path: str):
+    def fork_symbols(self):
+        if self.symbol_token is None:
+            raise RuntimeError("symbols not ready")
+        forked = type(self)()
+        forked.state = "symbols_ready"
+        forked.symbol_token = self.symbol_token
+        return forked
+
+    def load_calls_from_sqlite(self, _db_path: str):
         self.full_started.set()
         if not self.full_release.wait(timeout=5):
             raise TimeoutError("test did not release full graph load")
         self.state = "graph_ready"
         self.full_finished.set()
-        return 1, 0
+        return 0
 
     def load_from_file(self, _path: str):
         self.state = "graph_ready"
@@ -96,6 +106,7 @@ def test_symbols_publish_before_background_full_graph(
     ControlledGraphStore.full_release.set()
     _wait_for_state(staged_db, "graph_ready")
     assert staged_db._graph_store is not symbols_store
+    assert staged_db._graph_store.symbol_token is symbols_store.symbol_token
     assert staged_db._graph_store_status()["loading"] is False
 
 

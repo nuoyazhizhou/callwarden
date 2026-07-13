@@ -1733,12 +1733,13 @@ class CodeGraphBase:
                         pass
 
                 store.load_symbols_from_sqlite(self.db_path)
+                full_store = store.fork_symbols()
                 self._graph_store = store
                 self._graph_store_loading = True
                 self._graph_store_load_error = None
                 threading.Thread(
                     target=self._load_full_graph_store,
-                    args=(GraphStore, token, db_mtime_ns, snap_path),
+                    args=(full_store, token, db_mtime_ns, snap_path),
                     daemon=True,
                     name=f"cw-graph-load-{token}",
                 ).start()
@@ -1749,12 +1750,11 @@ class CodeGraphBase:
                 self._graph_store_load_error = str(exc)
                 return None
 
-    def _load_full_graph_store(self, graph_store_cls, token: int,
+    def _load_full_graph_store(self, full_store, token: int,
                                db_mtime_ns: int, snap_path: str) -> None:
-        """后台构建完整图，仅在 generation 和 DB mtime 均未变时发布。"""
+        """后台复用符号层构建 calls，仅在 generation 和 DB mtime 均未变时发布。"""
         try:
-            full_store = graph_store_cls()
-            full_store.load_from_sqlite(self.db_path)
+            full_store.load_calls_from_sqlite(self.db_path)
         except Exception as exc:
             with self._graph_store_lock:
                 if token == self._graph_store_generation:

@@ -83,6 +83,23 @@ def test_staged_load_exposes_symbols_before_calls(compact_index_db: Path):
     assert _caller_qnames(store) == ["mod_a.foo", "mod_a.foo", "mod_b.foo"]
 
 
+def test_forked_store_reuses_symbols_and_loads_only_calls(compact_index_db: Path):
+    stage = callwarden_core.GraphStore()
+    stage.load_symbols_from_sqlite(str(compact_index_db))
+
+    full = stage.fork_symbols()
+    assert stage.load_state() == "symbols_ready"
+    assert full.load_state() == "symbols_ready"
+    assert full.get_symbol("mod_a.target") == stage.get_symbol("mod_a.target")
+
+    assert full.load_calls_from_sqlite(str(compact_index_db)) == 3
+    assert full.load_state() == "graph_ready"
+    assert stage.load_state() == "symbols_ready"
+    assert _caller_qnames(full) == ["mod_a.foo", "mod_a.foo", "mod_b.foo"]
+    with pytest.raises(RuntimeError, match="calls not ready"):
+        stage.get_callers("target")
+
+
 def test_compact_indexes_preserve_short_and_qualified_queries(compact_index_db: Path):
     store = callwarden_core.GraphStore()
     store.load_from_sqlite(str(compact_index_db))
