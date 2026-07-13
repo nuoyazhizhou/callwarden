@@ -1,0 +1,6472 @@
+{
+  "env": {
+    "sqlite_version": "3.50.4",
+    "python_version": "3.14.3",
+    "os": "Windows-11-10.0.26200-SP0",
+    "cpu": "Intel64 Family 6 Model 170 Stepping 4, GenuineIntel",
+    "cpu_cores": 22,
+    "ram_total_gb": 31,
+    "ram_available_mb": 8666,
+    "disk_total_gb": 952,
+    "disk_free_gb": 33
+  },
+  "params": {
+    "symbols": 1000000,
+    "runs": 3,
+    "matrix_size": 6
+  },
+  "matrix": [
+    {
+      "name": "baseline_64_256_4",
+      "cache_mb": 64,
+      "mmap_mb": 256,
+      "page_size": 4096
+    },
+    {
+      "name": "cache_256_256_4",
+      "cache_mb": 256,
+      "mmap_mb": 256,
+      "page_size": 4096
+    },
+    {
+      "name": "mmap_64_1024_4",
+      "cache_mb": 64,
+      "mmap_mb": 1024,
+      "page_size": 4096
+    },
+    {
+      "name": "combined_256_1024_4",
+      "cache_mb": 256,
+      "mmap_mb": 1024,
+      "page_size": 4096
+    },
+    {
+      "name": "extreme_512_1024_4",
+      "cache_mb": 512,
+      "mmap_mb": 1024,
+      "page_size": 4096
+    },
+    {
+      "name": "page8_256_1024_8",
+      "cache_mb": 256,
+      "mmap_mb": 1024,
+      "page_size": 8192
+    }
+  ],
+  "results": {
+    "baseline_64_256_4": {
+      "params": {
+        "cache_size_mb": 64,
+        "mmap_size_mb": 256,
+        "page_size": 4096,
+        "temp_store": "MEMORY",
+        "mode": "deferred"
+      },
+      "runs": [
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 64,
+          "mmap_size_mb": 256,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0121,
+            "insert_s": 49.364,
+            "index_s": 40.8547,
+            "checkpoint_s": 0.0442,
+            "verify_s": 0.931,
+            "storage_build_s": 90.275,
+            "end_to_end_s": 91.2107
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.12,
+            "cold_callee_name_ms": 0.07,
+            "hot_qualified_name_ms": 0.02,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 482.7
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 64,
+          "mmap_size_mb": 256,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0193,
+            "insert_s": 47.6931,
+            "index_s": 42.8398,
+            "checkpoint_s": 0.0498,
+            "verify_s": 0.7952,
+            "storage_build_s": 90.602,
+            "end_to_end_s": 91.4013
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.12,
+            "cold_callee_name_ms": 0.06,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 483.6
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 64,
+          "mmap_size_mb": 256,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0164,
+            "insert_s": 51.8832,
+            "index_s": 40.4387,
+            "checkpoint_s": 0.057,
+            "verify_s": 1.1531,
+            "storage_build_s": 92.3953,
+            "end_to_end_s": 93.5538
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.14,
+            "cold_callee_name_ms": 0.08,
+            "hot_qualified_name_ms": 0.02,
+            "hot_callee_name_ms": 0.03
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 483.9
+          },
+          "index_timings": [
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0058
+            },
+            {
+              "name": "INDEX idx_workspaces_active_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_contents_lang",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_instances_workspace",
+              "time_s": 0.0698
+            },
+            {
+              "name": "INDEX idx_file_instances_hash",
+              "time_s": 0.2518
+            },
+            {
+              "name": "INDEX idx_file_instances_relpath",
+              "time_s": 0.2922
+            },
+            {
+              "name": "INDEX idx_symbols_file",
+              "time_s": 0.6863
+            },
+            {
+              "name": "INDEX idx_symbols_hash",
+              "time_s": 0.9154
+            },
+            {
+              "name": "INDEX idx_symbols_name",
+              "time_s": 0.8806
+            },
+            {
+              "name": "INDEX idx_symbols_kind",
+              "time_s": 0.6789
+            },
+            {
+              "name": "INDEX idx_symbols_qualified",
+              "time_s": 1.1724
+            },
+            {
+              "name": "INDEX idx_symbols_module",
+              "time_s": 0.9928
+            },
+            {
+              "name": "UNIQUE INDEX idx_symbols_unique",
+              "time_s": 1.1824
+            },
+            {
+              "name": "INDEX idx_calls_caller",
+              "time_s": 4.3459
+            },
+            {
+              "name": "INDEX idx_calls_callee",
+              "time_s": 14.5974
+            },
+            {
+              "name": "INDEX idx_calls_callee_qualified",
+              "time_s": 14.3431
+            },
+            {
+              "name": "INDEX idx_comments_hash",
+              "time_s": 0.0096
+            },
+            {
+              "name": "INDEX idx_file_versions_instance",
+              "time_s": 0.0003
+            },
+            {
+              "name": "INDEX idx_file_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_file",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_caller",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_instance",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_semgrep_hash",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_semgrep_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_language",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_git_commits_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_timestamp",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_embeddings_model",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_parent",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_ownership_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_layer",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_evolution_hotspot",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_category",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_pattern",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_op",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_path",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_archived_files_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_name",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_external_symbols_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_package",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_module",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_operation",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_started",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_edit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_before",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_after",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_table_record",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_signature",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_audit_key_rotations_active",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_severity",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_agent_rules_synced",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_target",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_created",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_workspace",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_task",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_git_head",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_clone_pairs_workspace",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_a",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_b",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_clone_pairs_type",
+              "time_s": 0.0002
+            },
+            {
+              "name": "UNIQUE INDEX idx_clone_pairs_unique",
+              "time_s": 0.0002
+            },
+            {
+              "name": "TRIGGER",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_ad",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_au",
+              "time_s": 0.0001
+            }
+          ]
+        }
+      ],
+      "median": {
+        "schema_s": 0.0164,
+        "insert_s": 49.364,
+        "index_s": 40.8547,
+        "checkpoint_s": 0.0498,
+        "storage_build_s": 90.602,
+        "end_to_end_s": 91.4013,
+        "peak_rss_mb": 483.6,
+        "peak_wal_mb": 168.3,
+        "db_mb": 1246.7,
+        "query_latency": {
+          "cold_qualified_name_ms": 0.14,
+          "cold_callee_name_ms": 0.08,
+          "hot_qualified_name_ms": 0.02,
+          "hot_callee_name_ms": 0.03
+        },
+        "index_timings": [
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0058
+          },
+          {
+            "name": "INDEX idx_workspaces_active_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_contents_lang",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_instances_workspace",
+            "time_s": 0.0698
+          },
+          {
+            "name": "INDEX idx_file_instances_hash",
+            "time_s": 0.2518
+          },
+          {
+            "name": "INDEX idx_file_instances_relpath",
+            "time_s": 0.2922
+          },
+          {
+            "name": "INDEX idx_symbols_file",
+            "time_s": 0.6863
+          },
+          {
+            "name": "INDEX idx_symbols_hash",
+            "time_s": 0.9154
+          },
+          {
+            "name": "INDEX idx_symbols_name",
+            "time_s": 0.8806
+          },
+          {
+            "name": "INDEX idx_symbols_kind",
+            "time_s": 0.6789
+          },
+          {
+            "name": "INDEX idx_symbols_qualified",
+            "time_s": 1.1724
+          },
+          {
+            "name": "INDEX idx_symbols_module",
+            "time_s": 0.9928
+          },
+          {
+            "name": "UNIQUE INDEX idx_symbols_unique",
+            "time_s": 1.1824
+          },
+          {
+            "name": "INDEX idx_calls_caller",
+            "time_s": 4.3459
+          },
+          {
+            "name": "INDEX idx_calls_callee",
+            "time_s": 14.5974
+          },
+          {
+            "name": "INDEX idx_calls_callee_qualified",
+            "time_s": 14.3431
+          },
+          {
+            "name": "INDEX idx_comments_hash",
+            "time_s": 0.0096
+          },
+          {
+            "name": "INDEX idx_file_versions_instance",
+            "time_s": 0.0003
+          },
+          {
+            "name": "INDEX idx_file_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_file",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_caller",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_instance",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_semgrep_hash",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_semgrep_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_language",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_git_commits_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_timestamp",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_embeddings_model",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_parent",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_ownership_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_layer",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_evolution_hotspot",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_category",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_pattern",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_op",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_path",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_archived_files_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_name",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_external_symbols_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_package",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_module",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_operation",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_started",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_edit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_before",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_after",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_table_record",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_signature",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_audit_key_rotations_active",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_severity",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_agent_rules_synced",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_target",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_created",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_workspace",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_task",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_git_head",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_clone_pairs_workspace",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_a",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_b",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_clone_pairs_type",
+            "time_s": 0.0002
+          },
+          {
+            "name": "UNIQUE INDEX idx_clone_pairs_unique",
+            "time_s": 0.0002
+          },
+          {
+            "name": "TRIGGER",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_ad",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_au",
+            "time_s": 0.0001
+          }
+        ]
+      }
+    },
+    "cache_256_256_4": {
+      "params": {
+        "cache_size_mb": 256,
+        "mmap_size_mb": 256,
+        "page_size": 4096,
+        "temp_store": "MEMORY",
+        "mode": "deferred"
+      },
+      "runs": [
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 256,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0184,
+            "insert_s": 45.9954,
+            "index_s": 43.3971,
+            "checkpoint_s": 0.0389,
+            "verify_s": 0.7329,
+            "storage_build_s": 89.4498,
+            "end_to_end_s": 90.1865
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.1,
+            "cold_callee_name_ms": 0.04,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 487.1
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 256,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0138,
+            "insert_s": 41.1773,
+            "index_s": 38.838,
+            "checkpoint_s": 0.0316,
+            "verify_s": 1.3268,
+            "storage_build_s": 80.0608,
+            "end_to_end_s": 81.3955
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.21,
+            "cold_callee_name_ms": 0.38,
+            "hot_qualified_name_ms": 0.05,
+            "hot_callee_name_ms": 0.03
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 487.9
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 256,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0218,
+            "insert_s": 37.8485,
+            "index_s": 37.1368,
+            "checkpoint_s": 0.0352,
+            "verify_s": 0.8655,
+            "storage_build_s": 75.0423,
+            "end_to_end_s": 75.9119
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.09,
+            "cold_callee_name_ms": 0.05,
+            "hot_qualified_name_ms": 0.02,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 487.2
+          },
+          "index_timings": [
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0031
+            },
+            {
+              "name": "INDEX idx_workspaces_active_task",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_contents_lang",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_instances_workspace",
+              "time_s": 0.0752
+            },
+            {
+              "name": "INDEX idx_file_instances_hash",
+              "time_s": 0.1266
+            },
+            {
+              "name": "INDEX idx_file_instances_relpath",
+              "time_s": 0.1787
+            },
+            {
+              "name": "INDEX idx_symbols_file",
+              "time_s": 0.512
+            },
+            {
+              "name": "INDEX idx_symbols_hash",
+              "time_s": 0.5733
+            },
+            {
+              "name": "INDEX idx_symbols_name",
+              "time_s": 0.6255
+            },
+            {
+              "name": "INDEX idx_symbols_kind",
+              "time_s": 0.4983
+            },
+            {
+              "name": "INDEX idx_symbols_qualified",
+              "time_s": 0.7457
+            },
+            {
+              "name": "INDEX idx_symbols_module",
+              "time_s": 0.647
+            },
+            {
+              "name": "UNIQUE INDEX idx_symbols_unique",
+              "time_s": 0.7529
+            },
+            {
+              "name": "INDEX idx_calls_caller",
+              "time_s": 5.0372
+            },
+            {
+              "name": "INDEX idx_calls_callee",
+              "time_s": 15.3967
+            },
+            {
+              "name": "INDEX idx_calls_callee_qualified",
+              "time_s": 11.9542
+            },
+            {
+              "name": "INDEX idx_comments_hash",
+              "time_s": 0.0029
+            },
+            {
+              "name": "INDEX idx_file_versions_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_caller",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_language",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_timestamp",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_embeddings_model",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_parent",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_ownership_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_layer",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_evolution_hotspot",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_category",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_pattern",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_op",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_path",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_name",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_package",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_module",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_operation",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_started",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_edit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_before",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_after",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_table_record",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_signature",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_key_rotations_active",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_synced",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_git_head",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_a",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_b",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNIQUE INDEX idx_clone_pairs_unique",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_ad",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_au",
+              "time_s": 0.0001
+            }
+          ]
+        }
+      ],
+      "median": {
+        "schema_s": 0.0184,
+        "insert_s": 41.1773,
+        "index_s": 38.838,
+        "checkpoint_s": 0.0352,
+        "storage_build_s": 80.0608,
+        "end_to_end_s": 81.3955,
+        "peak_rss_mb": 487.2,
+        "peak_wal_mb": 168.3,
+        "db_mb": 1246.7,
+        "query_latency": {
+          "cold_qualified_name_ms": 0.09,
+          "cold_callee_name_ms": 0.05,
+          "hot_qualified_name_ms": 0.02,
+          "hot_callee_name_ms": 0.01
+        },
+        "index_timings": [
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0031
+          },
+          {
+            "name": "INDEX idx_workspaces_active_task",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_contents_lang",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_instances_workspace",
+            "time_s": 0.0752
+          },
+          {
+            "name": "INDEX idx_file_instances_hash",
+            "time_s": 0.1266
+          },
+          {
+            "name": "INDEX idx_file_instances_relpath",
+            "time_s": 0.1787
+          },
+          {
+            "name": "INDEX idx_symbols_file",
+            "time_s": 0.512
+          },
+          {
+            "name": "INDEX idx_symbols_hash",
+            "time_s": 0.5733
+          },
+          {
+            "name": "INDEX idx_symbols_name",
+            "time_s": 0.6255
+          },
+          {
+            "name": "INDEX idx_symbols_kind",
+            "time_s": 0.4983
+          },
+          {
+            "name": "INDEX idx_symbols_qualified",
+            "time_s": 0.7457
+          },
+          {
+            "name": "INDEX idx_symbols_module",
+            "time_s": 0.647
+          },
+          {
+            "name": "UNIQUE INDEX idx_symbols_unique",
+            "time_s": 0.7529
+          },
+          {
+            "name": "INDEX idx_calls_caller",
+            "time_s": 5.0372
+          },
+          {
+            "name": "INDEX idx_calls_callee",
+            "time_s": 15.3967
+          },
+          {
+            "name": "INDEX idx_calls_callee_qualified",
+            "time_s": 11.9542
+          },
+          {
+            "name": "INDEX idx_comments_hash",
+            "time_s": 0.0029
+          },
+          {
+            "name": "INDEX idx_file_versions_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_caller",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_language",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_timestamp",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_embeddings_model",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_parent",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_ownership_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_layer",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_evolution_hotspot",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_category",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_pattern",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_op",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_path",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_name",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_package",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_module",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_operation",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_started",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_edit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_before",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_after",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_table_record",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_signature",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_key_rotations_active",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_synced",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_git_head",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_a",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_b",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNIQUE INDEX idx_clone_pairs_unique",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_ad",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_au",
+            "time_s": 0.0001
+          }
+        ]
+      }
+    },
+    "mmap_64_1024_4": {
+      "params": {
+        "cache_size_mb": 64,
+        "mmap_size_mb": 1024,
+        "page_size": 4096,
+        "temp_store": "MEMORY",
+        "mode": "deferred"
+      },
+      "runs": [
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 64,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0126,
+            "insert_s": 44.3648,
+            "index_s": 39.7414,
+            "checkpoint_s": 0.0463,
+            "verify_s": 0.7307,
+            "storage_build_s": 84.165,
+            "end_to_end_s": 84.8997
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.12,
+            "cold_callee_name_ms": 0.06,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 488.9
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 64,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0135,
+            "insert_s": 51.1491,
+            "index_s": 40.6834,
+            "checkpoint_s": 0.0322,
+            "verify_s": 1.0116,
+            "storage_build_s": 91.8782,
+            "end_to_end_s": 92.8934
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.08,
+            "cold_callee_name_ms": 0.04,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 488.0
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 64,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0135,
+            "insert_s": 36.1961,
+            "index_s": 31.0782,
+            "checkpoint_s": 0.0324,
+            "verify_s": 0.8603,
+            "storage_build_s": 67.3202,
+            "end_to_end_s": 68.1847
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.09,
+            "cold_callee_name_ms": 0.05,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 489.4
+          },
+          "index_timings": [
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0034
+            },
+            {
+              "name": "INDEX idx_workspaces_active_task",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_contents_lang",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_instances_workspace",
+              "time_s": 0.0772
+            },
+            {
+              "name": "INDEX idx_file_instances_hash",
+              "time_s": 0.146
+            },
+            {
+              "name": "INDEX idx_file_instances_relpath",
+              "time_s": 0.1664
+            },
+            {
+              "name": "INDEX idx_symbols_file",
+              "time_s": 0.5085
+            },
+            {
+              "name": "INDEX idx_symbols_hash",
+              "time_s": 0.5759
+            },
+            {
+              "name": "INDEX idx_symbols_name",
+              "time_s": 0.6067
+            },
+            {
+              "name": "INDEX idx_symbols_kind",
+              "time_s": 0.478
+            },
+            {
+              "name": "INDEX idx_symbols_qualified",
+              "time_s": 0.7455
+            },
+            {
+              "name": "INDEX idx_symbols_module",
+              "time_s": 0.6275
+            },
+            {
+              "name": "UNIQUE INDEX idx_symbols_unique",
+              "time_s": 0.7041
+            },
+            {
+              "name": "INDEX idx_calls_caller",
+              "time_s": 3.086
+            },
+            {
+              "name": "INDEX idx_calls_callee",
+              "time_s": 13.3091
+            },
+            {
+              "name": "INDEX idx_calls_callee_qualified",
+              "time_s": 10.0283
+            },
+            {
+              "name": "INDEX idx_comments_hash",
+              "time_s": 0.003
+            },
+            {
+              "name": "INDEX idx_file_versions_instance",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_file",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_call_versions_caller",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_instance",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_semgrep_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_severity",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_semgrep_symbol",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_semgrep_language",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_timestamp",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_embeddings_model",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_parent",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_task",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_task_steps_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_ownership_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_layer",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_evolution_hotspot",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_category",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_pattern",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_op",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_instance",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_archived_files_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_path",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_name",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_package",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_module",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_operation",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_started",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_edit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_before",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_after",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_table_record",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_signature",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_audit_key_rotations_active",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_synced",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_workspace",
+              "time_s": 0.0006
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_task",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_git_head",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_clone_pairs_workspace",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_a",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_b",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNIQUE INDEX idx_clone_pairs_unique",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_ad",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_au",
+              "time_s": 0.0001
+            }
+          ]
+        }
+      ],
+      "median": {
+        "schema_s": 0.0135,
+        "insert_s": 44.3648,
+        "index_s": 39.7414,
+        "checkpoint_s": 0.0324,
+        "storage_build_s": 84.165,
+        "end_to_end_s": 84.8997,
+        "peak_rss_mb": 488.9,
+        "peak_wal_mb": 168.3,
+        "db_mb": 1246.7,
+        "query_latency": {
+          "cold_qualified_name_ms": 0.09,
+          "cold_callee_name_ms": 0.05,
+          "hot_qualified_name_ms": 0.01,
+          "hot_callee_name_ms": 0.01
+        },
+        "index_timings": [
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0034
+          },
+          {
+            "name": "INDEX idx_workspaces_active_task",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_contents_lang",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_instances_workspace",
+            "time_s": 0.0772
+          },
+          {
+            "name": "INDEX idx_file_instances_hash",
+            "time_s": 0.146
+          },
+          {
+            "name": "INDEX idx_file_instances_relpath",
+            "time_s": 0.1664
+          },
+          {
+            "name": "INDEX idx_symbols_file",
+            "time_s": 0.5085
+          },
+          {
+            "name": "INDEX idx_symbols_hash",
+            "time_s": 0.5759
+          },
+          {
+            "name": "INDEX idx_symbols_name",
+            "time_s": 0.6067
+          },
+          {
+            "name": "INDEX idx_symbols_kind",
+            "time_s": 0.478
+          },
+          {
+            "name": "INDEX idx_symbols_qualified",
+            "time_s": 0.7455
+          },
+          {
+            "name": "INDEX idx_symbols_module",
+            "time_s": 0.6275
+          },
+          {
+            "name": "UNIQUE INDEX idx_symbols_unique",
+            "time_s": 0.7041
+          },
+          {
+            "name": "INDEX idx_calls_caller",
+            "time_s": 3.086
+          },
+          {
+            "name": "INDEX idx_calls_callee",
+            "time_s": 13.3091
+          },
+          {
+            "name": "INDEX idx_calls_callee_qualified",
+            "time_s": 10.0283
+          },
+          {
+            "name": "INDEX idx_comments_hash",
+            "time_s": 0.003
+          },
+          {
+            "name": "INDEX idx_file_versions_instance",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_file",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_call_versions_caller",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_instance",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_semgrep_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_severity",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_semgrep_symbol",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_semgrep_language",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_timestamp",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_embeddings_model",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_parent",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_task",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_task_steps_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_ownership_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_layer",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_evolution_hotspot",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_category",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_pattern",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_op",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_instance",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_archived_files_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_path",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_name",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_package",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_module",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_operation",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_started",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_edit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_before",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_after",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_table_record",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_signature",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_audit_key_rotations_active",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_synced",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_workspace",
+            "time_s": 0.0006
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_task",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_git_head",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_clone_pairs_workspace",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_a",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_b",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNIQUE INDEX idx_clone_pairs_unique",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_ad",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_au",
+            "time_s": 0.0001
+          }
+        ]
+      }
+    },
+    "combined_256_1024_4": {
+      "params": {
+        "cache_size_mb": 256,
+        "mmap_size_mb": 1024,
+        "page_size": 4096,
+        "temp_store": "MEMORY",
+        "mode": "deferred"
+      },
+      "runs": [
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.013,
+            "insert_s": 50.3236,
+            "index_s": 41.8566,
+            "checkpoint_s": 0.0372,
+            "verify_s": 0.8119,
+            "storage_build_s": 92.2304,
+            "end_to_end_s": 93.0464
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.1,
+            "cold_callee_name_ms": 0.05,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 486.1
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0127,
+            "insert_s": 38.3748,
+            "index_s": 41.1282,
+            "checkpoint_s": 0.0568,
+            "verify_s": 0.7214,
+            "storage_build_s": 79.5725,
+            "end_to_end_s": 80.2972
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.07,
+            "cold_callee_name_ms": 0.04,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 489.8
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0156,
+            "insert_s": 45.526,
+            "index_s": 37.3193,
+            "checkpoint_s": 0.0516,
+            "verify_s": 0.7735,
+            "storage_build_s": 82.9125,
+            "end_to_end_s": 83.6898
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.09,
+            "cold_callee_name_ms": 0.04,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 490.3
+          },
+          "index_timings": [
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.01
+            },
+            {
+              "name": "INDEX idx_workspaces_active_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_contents_lang",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_instances_workspace",
+              "time_s": 0.0689
+            },
+            {
+              "name": "INDEX idx_file_instances_hash",
+              "time_s": 0.3395
+            },
+            {
+              "name": "INDEX idx_file_instances_relpath",
+              "time_s": 0.2406
+            },
+            {
+              "name": "INDEX idx_symbols_file",
+              "time_s": 0.7276
+            },
+            {
+              "name": "INDEX idx_symbols_hash",
+              "time_s": 0.981
+            },
+            {
+              "name": "INDEX idx_symbols_name",
+              "time_s": 0.9339
+            },
+            {
+              "name": "INDEX idx_symbols_kind",
+              "time_s": 0.6905
+            },
+            {
+              "name": "INDEX idx_symbols_qualified",
+              "time_s": 1.1986
+            },
+            {
+              "name": "INDEX idx_symbols_module",
+              "time_s": 0.9031
+            },
+            {
+              "name": "UNIQUE INDEX idx_symbols_unique",
+              "time_s": 1.2702
+            },
+            {
+              "name": "INDEX idx_calls_caller",
+              "time_s": 4.7567
+            },
+            {
+              "name": "INDEX idx_calls_callee",
+              "time_s": 11.6711
+            },
+            {
+              "name": "INDEX idx_calls_callee_qualified",
+              "time_s": 13.5124
+            },
+            {
+              "name": "INDEX idx_comments_hash",
+              "time_s": 0.0081
+            },
+            {
+              "name": "INDEX idx_file_versions_instance",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_caller",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_semgrep_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_rule",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_semgrep_severity",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_semgrep_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_language",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_timestamp",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_embeddings_model",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_parent",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_tasks_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_ownership_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_symbol",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_coverage_source",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_file",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_severity",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_status",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_change_impacts_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_layer",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_evolution_hotspot",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_category",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_severity",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_defect_fixes_pattern",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_symbol",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_token_savings_op",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_workspace",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_token_savings_created",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_edit_audit_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_status",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_edit_audit_task",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_cross_repo_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_type",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_archived_files_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_path",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_name",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_qualified",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_external_symbols_package",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_external_symbols_module",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_gc_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_operation",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_gc_runs_status",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_gc_runs_started",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_edit",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_file",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_before",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_after",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_quality_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_step",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_quality_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_table_record",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_signature",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_key_rotations_active",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_synced",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_created",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_git_head",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_clone_pairs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_a",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_b",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_clone_pairs_type",
+              "time_s": 0.0
+            },
+            {
+              "name": "UNIQUE INDEX idx_clone_pairs_unique",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_ad",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_au",
+              "time_s": 0.0001
+            }
+          ]
+        }
+      ],
+      "median": {
+        "schema_s": 0.013,
+        "insert_s": 45.526,
+        "index_s": 41.1282,
+        "checkpoint_s": 0.0516,
+        "storage_build_s": 82.9125,
+        "end_to_end_s": 83.6898,
+        "peak_rss_mb": 489.8,
+        "peak_wal_mb": 168.3,
+        "db_mb": 1246.7,
+        "query_latency": {
+          "cold_qualified_name_ms": 0.09,
+          "cold_callee_name_ms": 0.04,
+          "hot_qualified_name_ms": 0.01,
+          "hot_callee_name_ms": 0.01
+        },
+        "index_timings": [
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.01
+          },
+          {
+            "name": "INDEX idx_workspaces_active_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_contents_lang",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_instances_workspace",
+            "time_s": 0.0689
+          },
+          {
+            "name": "INDEX idx_file_instances_hash",
+            "time_s": 0.3395
+          },
+          {
+            "name": "INDEX idx_file_instances_relpath",
+            "time_s": 0.2406
+          },
+          {
+            "name": "INDEX idx_symbols_file",
+            "time_s": 0.7276
+          },
+          {
+            "name": "INDEX idx_symbols_hash",
+            "time_s": 0.981
+          },
+          {
+            "name": "INDEX idx_symbols_name",
+            "time_s": 0.9339
+          },
+          {
+            "name": "INDEX idx_symbols_kind",
+            "time_s": 0.6905
+          },
+          {
+            "name": "INDEX idx_symbols_qualified",
+            "time_s": 1.1986
+          },
+          {
+            "name": "INDEX idx_symbols_module",
+            "time_s": 0.9031
+          },
+          {
+            "name": "UNIQUE INDEX idx_symbols_unique",
+            "time_s": 1.2702
+          },
+          {
+            "name": "INDEX idx_calls_caller",
+            "time_s": 4.7567
+          },
+          {
+            "name": "INDEX idx_calls_callee",
+            "time_s": 11.6711
+          },
+          {
+            "name": "INDEX idx_calls_callee_qualified",
+            "time_s": 13.5124
+          },
+          {
+            "name": "INDEX idx_comments_hash",
+            "time_s": 0.0081
+          },
+          {
+            "name": "INDEX idx_file_versions_instance",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_caller",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_semgrep_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_rule",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_semgrep_severity",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_semgrep_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_language",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_timestamp",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_embeddings_model",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_parent",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_tasks_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_ownership_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_symbol",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_coverage_source",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_file",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_severity",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_status",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_change_impacts_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_layer",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_evolution_hotspot",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_category",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_severity",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_defect_fixes_pattern",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_symbol",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_token_savings_op",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_workspace",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_token_savings_created",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_edit_audit_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_status",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_edit_audit_task",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_cross_repo_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_type",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_archived_files_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_path",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_name",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_qualified",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_external_symbols_package",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_external_symbols_module",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_gc_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_operation",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_gc_runs_status",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_gc_runs_started",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_edit",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_file",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_before",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_after",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_quality_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_step",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_quality_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_table_record",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_signature",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_key_rotations_active",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_synced",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_created",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_git_head",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_clone_pairs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_a",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_b",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_clone_pairs_type",
+            "time_s": 0.0
+          },
+          {
+            "name": "UNIQUE INDEX idx_clone_pairs_unique",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_ad",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_au",
+            "time_s": 0.0001
+          }
+        ]
+      }
+    },
+    "extreme_512_1024_4": {
+      "params": {
+        "cache_size_mb": 512,
+        "mmap_size_mb": 1024,
+        "page_size": 4096,
+        "temp_store": "MEMORY",
+        "mode": "deferred"
+      },
+      "runs": [
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 512,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0147,
+            "insert_s": 39.0402,
+            "index_s": 51.1594,
+            "checkpoint_s": 0.0471,
+            "verify_s": 0.758,
+            "storage_build_s": 90.2614,
+            "end_to_end_s": 91.0231
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.08,
+            "cold_callee_name_ms": 0.04,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 490.3
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 512,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.016,
+            "insert_s": 42.9655,
+            "index_s": 40.5184,
+            "checkpoint_s": 0.039,
+            "verify_s": 0.8416,
+            "storage_build_s": 83.539,
+            "end_to_end_s": 84.3852
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.09,
+            "cold_callee_name_ms": 0.05,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 491.3
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 512,
+          "mmap_size_mb": 1024,
+          "page_size": 4096,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.013,
+            "insert_s": 37.2182,
+            "index_s": 41.2504,
+            "checkpoint_s": 0.035,
+            "verify_s": 0.7117,
+            "storage_build_s": 78.5165,
+            "end_to_end_s": 79.2318
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.07,
+            "cold_callee_name_ms": 0.04,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1246.7,
+            "wal_mb": 0,
+            "peak_wal_mb": 168.3
+          },
+          "memory": {
+            "peak_rss_mb": 491.9
+          },
+          "index_timings": [
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.003
+            },
+            {
+              "name": "INDEX idx_workspaces_active_task",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_contents_lang",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_instances_workspace",
+              "time_s": 0.0712
+            },
+            {
+              "name": "INDEX idx_file_instances_hash",
+              "time_s": 0.156
+            },
+            {
+              "name": "INDEX idx_file_instances_relpath",
+              "time_s": 0.1439
+            },
+            {
+              "name": "INDEX idx_symbols_file",
+              "time_s": 0.4905
+            },
+            {
+              "name": "INDEX idx_symbols_hash",
+              "time_s": 0.5747
+            },
+            {
+              "name": "INDEX idx_symbols_name",
+              "time_s": 0.5912
+            },
+            {
+              "name": "INDEX idx_symbols_kind",
+              "time_s": 0.6709
+            },
+            {
+              "name": "INDEX idx_symbols_qualified",
+              "time_s": 1.1262
+            },
+            {
+              "name": "INDEX idx_symbols_module",
+              "time_s": 0.8599
+            },
+            {
+              "name": "UNIQUE INDEX idx_symbols_unique",
+              "time_s": 1.0188
+            },
+            {
+              "name": "INDEX idx_calls_caller",
+              "time_s": 5.1031
+            },
+            {
+              "name": "INDEX idx_calls_callee",
+              "time_s": 17.3672
+            },
+            {
+              "name": "INDEX idx_calls_callee_qualified",
+              "time_s": 13.0621
+            },
+            {
+              "name": "INDEX idx_comments_hash",
+              "time_s": 0.0044
+            },
+            {
+              "name": "INDEX idx_file_versions_instance",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_hash",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_caller",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_language",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_workspace",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_git_commits_timestamp",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_git_file_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_embeddings_model",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_summaries_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_parent",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_status",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_ownership_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_symbol",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_coverage_source",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_status",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_change_impacts_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_layer",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_evolution_hotspot",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_category",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_pattern",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_symbol",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_token_savings_op",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_workspace",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_token_savings_created",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_edit_audit_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_task",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_cross_repo_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_type",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_archived_files_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_workspace",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_archived_files_path",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_hash",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_external_symbols_name",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_qualified",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_external_symbols_package",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_external_symbols_module",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_gc_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_operation",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_gc_runs_status",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_gc_runs_started",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_step",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_edit",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_before",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_after",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_quality_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_step",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_task_quality_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_severity",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_audit_chain_table_record",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_signature",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_key_rotations_active",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_synced",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_git_head",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_clone_pairs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_a",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_b",
+              "time_s": 0.0
+            },
+            {
+              "name": "INDEX idx_clone_pairs_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNIQUE INDEX idx_clone_pairs_unique",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_ad",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_au",
+              "time_s": 0.0001
+            }
+          ]
+        }
+      ],
+      "median": {
+        "schema_s": 0.0147,
+        "insert_s": 39.0402,
+        "index_s": 41.2504,
+        "checkpoint_s": 0.039,
+        "storage_build_s": 83.539,
+        "end_to_end_s": 84.3852,
+        "peak_rss_mb": 491.3,
+        "peak_wal_mb": 168.3,
+        "db_mb": 1246.7,
+        "query_latency": {
+          "cold_qualified_name_ms": 0.07,
+          "cold_callee_name_ms": 0.04,
+          "hot_qualified_name_ms": 0.01,
+          "hot_callee_name_ms": 0.01
+        },
+        "index_timings": [
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.003
+          },
+          {
+            "name": "INDEX idx_workspaces_active_task",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_contents_lang",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_instances_workspace",
+            "time_s": 0.0712
+          },
+          {
+            "name": "INDEX idx_file_instances_hash",
+            "time_s": 0.156
+          },
+          {
+            "name": "INDEX idx_file_instances_relpath",
+            "time_s": 0.1439
+          },
+          {
+            "name": "INDEX idx_symbols_file",
+            "time_s": 0.4905
+          },
+          {
+            "name": "INDEX idx_symbols_hash",
+            "time_s": 0.5747
+          },
+          {
+            "name": "INDEX idx_symbols_name",
+            "time_s": 0.5912
+          },
+          {
+            "name": "INDEX idx_symbols_kind",
+            "time_s": 0.6709
+          },
+          {
+            "name": "INDEX idx_symbols_qualified",
+            "time_s": 1.1262
+          },
+          {
+            "name": "INDEX idx_symbols_module",
+            "time_s": 0.8599
+          },
+          {
+            "name": "UNIQUE INDEX idx_symbols_unique",
+            "time_s": 1.0188
+          },
+          {
+            "name": "INDEX idx_calls_caller",
+            "time_s": 5.1031
+          },
+          {
+            "name": "INDEX idx_calls_callee",
+            "time_s": 17.3672
+          },
+          {
+            "name": "INDEX idx_calls_callee_qualified",
+            "time_s": 13.0621
+          },
+          {
+            "name": "INDEX idx_comments_hash",
+            "time_s": 0.0044
+          },
+          {
+            "name": "INDEX idx_file_versions_instance",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_hash",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_caller",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_language",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_workspace",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_git_commits_timestamp",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_git_file_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_embeddings_model",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_summaries_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_parent",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_status",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_ownership_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_symbol",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_coverage_source",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_status",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_change_impacts_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_layer",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_evolution_hotspot",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_category",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_pattern",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_symbol",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_token_savings_op",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_workspace",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_token_savings_created",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_edit_audit_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_task",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_cross_repo_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_type",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_archived_files_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_workspace",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_archived_files_path",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_hash",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_external_symbols_name",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_qualified",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_external_symbols_package",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_external_symbols_module",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_gc_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_operation",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_gc_runs_status",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_gc_runs_started",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_step",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_edit",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_before",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_after",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_quality_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_step",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_task_quality_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_severity",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_audit_chain_table_record",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_signature",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_key_rotations_active",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_synced",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_git_head",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_clone_pairs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_a",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_b",
+            "time_s": 0.0
+          },
+          {
+            "name": "INDEX idx_clone_pairs_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNIQUE INDEX idx_clone_pairs_unique",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_ad",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_au",
+            "time_s": 0.0001
+          }
+        ]
+      }
+    },
+    "page8_256_1024_8": {
+      "params": {
+        "cache_size_mb": 256,
+        "mmap_size_mb": 1024,
+        "page_size": 8192,
+        "temp_store": "MEMORY",
+        "mode": "deferred"
+      },
+      "runs": [
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 1024,
+          "page_size": 8192,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0153,
+            "insert_s": 40.6664,
+            "index_s": 38.5822,
+            "checkpoint_s": 0.06,
+            "verify_s": 0.6403,
+            "storage_build_s": 79.3238,
+            "end_to_end_s": 79.968
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.09,
+            "cold_callee_name_ms": 0.04,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1240.6,
+            "wal_mb": 0,
+            "peak_wal_mb": 167.2
+          },
+          "memory": {
+            "peak_rss_mb": 487.2
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 1024,
+          "page_size": 8192,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0146,
+            "insert_s": 36.5383,
+            "index_s": 37.9134,
+            "checkpoint_s": 0.0506,
+            "verify_s": 0.6599,
+            "storage_build_s": 74.5169,
+            "end_to_end_s": 75.1806
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.12,
+            "cold_callee_name_ms": 0.05,
+            "hot_qualified_name_ms": 0.01,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1240.6,
+            "wal_mb": 0,
+            "peak_wal_mb": 167.2
+          },
+          "memory": {
+            "peak_rss_mb": 487.0
+          },
+          "index_timings": null
+        },
+        {
+          "mode": "deferred",
+          "target_symbols": 1000000,
+          "n_files": 200000,
+          "cache_size_mb": 256,
+          "mmap_size_mb": 1024,
+          "page_size": 8192,
+          "temp_store": "MEMORY",
+          "timing": {
+            "schema_s": 0.0172,
+            "insert_s": 37.0658,
+            "index_s": 32.2644,
+            "checkpoint_s": 0.0732,
+            "verify_s": 0.7852,
+            "storage_build_s": 69.4206,
+            "end_to_end_s": 70.2106
+          },
+          "query_latency": {
+            "cold_qualified_name_ms": 0.18,
+            "cold_callee_name_ms": 0.08,
+            "hot_qualified_name_ms": 0.02,
+            "hot_callee_name_ms": 0.01
+          },
+          "data": {
+            "symbols": 1000000,
+            "calls": 6999161,
+            "files": 200000,
+            "commits": 12
+          },
+          "storage": {
+            "db_mb": 1240.6,
+            "wal_mb": 0,
+            "peak_wal_mb": 167.2
+          },
+          "memory": {
+            "peak_rss_mb": 480.0
+          },
+          "index_timings": [
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.003
+            },
+            {
+              "name": "INDEX idx_workspaces_active_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_contents_lang",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_instances_workspace",
+              "time_s": 0.0525
+            },
+            {
+              "name": "INDEX idx_file_instances_hash",
+              "time_s": 0.0677
+            },
+            {
+              "name": "INDEX idx_file_instances_relpath",
+              "time_s": 0.14
+            },
+            {
+              "name": "INDEX idx_symbols_file",
+              "time_s": 0.4662
+            },
+            {
+              "name": "INDEX idx_symbols_hash",
+              "time_s": 0.5033
+            },
+            {
+              "name": "INDEX idx_symbols_name",
+              "time_s": 0.5348
+            },
+            {
+              "name": "INDEX idx_symbols_kind",
+              "time_s": 0.477
+            },
+            {
+              "name": "INDEX idx_symbols_qualified",
+              "time_s": 0.6276
+            },
+            {
+              "name": "INDEX idx_symbols_module",
+              "time_s": 0.5254
+            },
+            {
+              "name": "UNIQUE INDEX idx_symbols_unique",
+              "time_s": 0.5793
+            },
+            {
+              "name": "INDEX idx_calls_caller",
+              "time_s": 2.698
+            },
+            {
+              "name": "INDEX idx_calls_callee",
+              "time_s": 10.4407
+            },
+            {
+              "name": "INDEX idx_calls_callee_qualified",
+              "time_s": 15.0703
+            },
+            {
+              "name": "INDEX idx_comments_hash",
+              "time_s": 0.0699
+            },
+            {
+              "name": "INDEX idx_file_versions_instance",
+              "time_s": 0.0003
+            },
+            {
+              "name": "INDEX idx_file_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_symbol_versions_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_call_versions_caller",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_semgrep_language",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNKNOWN",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_commits_timestamp",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_file_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_git_symbol_changes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_file_versions_commit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_embeddings_model",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_summaries_current",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_tasks_parent",
+              "time_s": 0.0003
+            },
+            {
+              "name": "INDEX idx_tasks_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_steps_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_ownership_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_coverage_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_rule",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_guardrail_findings_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_change_impacts_layer",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_evolution_hotspot",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_category",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_patterns_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_pattern",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_defect_fixes_symbol",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_op",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_token_savings_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_edit_audit_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_cross_repo_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_instance",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_path",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_archived_files_hash",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_name",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_qualified",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_package",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_external_symbols_module",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_operation",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_gc_runs_started",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_task",
+              "time_s": 0.0002
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_edit",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_file",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_before",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_symbol_changes_after",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_step",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_task_quality_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_table_record",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_chain_signature",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_audit_key_rotations_active",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_source",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_candidates_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_status",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_severity",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rules_synced",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_target",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_agent_rule_sync_log_created",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_task",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_workspace_scan_runs_git_head",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_workspace",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_a",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_symbol_b",
+              "time_s": 0.0001
+            },
+            {
+              "name": "INDEX idx_clone_pairs_type",
+              "time_s": 0.0001
+            },
+            {
+              "name": "UNIQUE INDEX idx_clone_pairs_unique",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_ad",
+              "time_s": 0.0001
+            },
+            {
+              "name": "TRIGGER symbols_fts_au",
+              "time_s": 0.0001
+            }
+          ]
+        }
+      ],
+      "median": {
+        "schema_s": 0.0153,
+        "insert_s": 37.0658,
+        "index_s": 37.9134,
+        "checkpoint_s": 0.06,
+        "storage_build_s": 74.5169,
+        "end_to_end_s": 75.1806,
+        "peak_rss_mb": 487.0,
+        "peak_wal_mb": 167.2,
+        "db_mb": 1240.6,
+        "query_latency": {
+          "cold_qualified_name_ms": 0.18,
+          "cold_callee_name_ms": 0.08,
+          "hot_qualified_name_ms": 0.02,
+          "hot_callee_name_ms": 0.01
+        },
+        "index_timings": [
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.003
+          },
+          {
+            "name": "INDEX idx_workspaces_active_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_contents_lang",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_instances_workspace",
+            "time_s": 0.0525
+          },
+          {
+            "name": "INDEX idx_file_instances_hash",
+            "time_s": 0.0677
+          },
+          {
+            "name": "INDEX idx_file_instances_relpath",
+            "time_s": 0.14
+          },
+          {
+            "name": "INDEX idx_symbols_file",
+            "time_s": 0.4662
+          },
+          {
+            "name": "INDEX idx_symbols_hash",
+            "time_s": 0.5033
+          },
+          {
+            "name": "INDEX idx_symbols_name",
+            "time_s": 0.5348
+          },
+          {
+            "name": "INDEX idx_symbols_kind",
+            "time_s": 0.477
+          },
+          {
+            "name": "INDEX idx_symbols_qualified",
+            "time_s": 0.6276
+          },
+          {
+            "name": "INDEX idx_symbols_module",
+            "time_s": 0.5254
+          },
+          {
+            "name": "UNIQUE INDEX idx_symbols_unique",
+            "time_s": 0.5793
+          },
+          {
+            "name": "INDEX idx_calls_caller",
+            "time_s": 2.698
+          },
+          {
+            "name": "INDEX idx_calls_callee",
+            "time_s": 10.4407
+          },
+          {
+            "name": "INDEX idx_calls_callee_qualified",
+            "time_s": 15.0703
+          },
+          {
+            "name": "INDEX idx_comments_hash",
+            "time_s": 0.0699
+          },
+          {
+            "name": "INDEX idx_file_versions_instance",
+            "time_s": 0.0003
+          },
+          {
+            "name": "INDEX idx_file_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_symbol_versions_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_call_versions_caller",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_semgrep_language",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNKNOWN",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_commits_timestamp",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_file_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_git_symbol_changes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_file_versions_commit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_embeddings_model",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_summaries_current",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_tasks_parent",
+            "time_s": 0.0003
+          },
+          {
+            "name": "INDEX idx_tasks_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_steps_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_ownership_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_coverage_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_rule",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_guardrail_findings_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_change_impacts_layer",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_evolution_hotspot",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_category",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_patterns_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_pattern",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_defect_fixes_symbol",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_op",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_token_savings_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_edit_audit_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_cross_repo_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_instance",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_path",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_archived_files_hash",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_name",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_qualified",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_package",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_external_symbols_module",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_operation",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_gc_runs_started",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_task",
+            "time_s": 0.0002
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_edit",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_file",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_before",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_symbol_changes_after",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_step",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_task_quality_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_table_record",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_chain_signature",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_audit_key_rotations_active",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_source",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_candidates_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_status",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_severity",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rules_synced",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_target",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_agent_rule_sync_log_created",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_task",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_workspace_scan_runs_git_head",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_workspace",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_a",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_symbol_b",
+            "time_s": 0.0001
+          },
+          {
+            "name": "INDEX idx_clone_pairs_type",
+            "time_s": 0.0001
+          },
+          {
+            "name": "UNIQUE INDEX idx_clone_pairs_unique",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_ad",
+            "time_s": 0.0001
+          },
+          {
+            "name": "TRIGGER symbols_fts_au",
+            "time_s": 0.0001
+          }
+        ]
+      }
+    }
+  },
+  "summary": {
+    "baseline_storage_build_s": 90.602,
+    "baseline_index_s": 40.8547,
+    "baseline_insert_s": 49.364,
+    "best_combination": "page8_256_1024_8"
+  }
+}
