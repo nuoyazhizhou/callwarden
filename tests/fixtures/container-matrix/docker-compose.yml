@@ -1,0 +1,89 @@
+# Call Warden Enterprise Daemon — Ubuntu 容器矩阵 CI
+#
+# 串行运行 6 个 Ubuntu 版本，每个容器独立磁盘和内存。
+# 镜像无法从公开 registry 获取时，CI 报告 infrastructure skip，不标记 pass。
+
+services:
+  # Ubuntu 14.04 — 仅文件源，不运行 Python agent
+  ubuntu-1404:
+    image: ubuntu:14.04
+    volumes:
+      - ./fixtures/project:/project:ro
+      - shared-uds:/run/callwarden
+    command: sleep infinity
+    labels:
+      cw.ubuntu-version: "14.04"
+      cw.agent-mode: "host-only"
+
+  ubuntu-1604:
+    image: ubuntu:16.04
+    volumes:
+      - ./fixtures/project:/project:ro
+      - shared-uds:/run/callwarden
+    command: sleep infinity
+    labels:
+      cw.ubuntu-version: "16.04"
+      cw.agent-mode: "host-only"
+
+  ubuntu-1804:
+    image: ubuntu:18.04
+    volumes:
+      - ./fixtures/project:/project:ro
+      - shared-uds:/run/callwarden
+    command: sleep infinity
+    labels:
+      cw.ubuntu-version: "18.04"
+      cw.agent-mode: "host-only"
+
+  ubuntu-2004:
+    image: ubuntu:20.04
+    volumes:
+      - ./fixtures/project:/project
+      - shared-uds:/run/callwarden
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+    command: sleep infinity
+    labels:
+      cw.ubuntu-version: "20.04"
+      cw.agent-mode: "container-capable"
+
+  ubuntu-2204:
+    image: ubuntu:22.04
+    volumes:
+      - ./fixtures/project:/project
+      - shared-uds:/run/callwarden
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+    command: sleep infinity
+    labels:
+      cw.ubuntu-version: "22.04"
+      cw.agent-mode: "container-capable"
+
+  ubuntu-2404:
+    image: ubuntu:24.04
+    volumes:
+      - ./fixtures/project:/project
+      - shared-uds:/run/callwarden
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+    command: sleep infinity
+    labels:
+      cw.ubuntu-version: "24.04"
+      cw.agent-mode: "container-capable"
+
+  # Samba server for SMB/CIFS testing
+  samba:
+    image: dperson/samba:latest
+    ports:
+      - "445:445"
+    volumes:
+      - ./fixtures/project:/mount/project:ro
+    environment:
+      - USERID=1000
+      - GROUPID=1000
+    command: >
+      -s "project;/mount/project;yes;no;no"
+      -u "testuser;testpass"
+
+volumes:
+  shared-uds:

@@ -200,6 +200,31 @@ class StagingLog:
         """标记指定 LSN 的 entry 为 applied"""
         self._update_status(lsn, "applied")
 
+    def mark_applied_batch(self, lsns: List[int]):
+        """批量标记多个 LSN 为 applied——单次文件重写。
+
+        修复 T-1783952125417-7a09：减少 mark_applied 逐条重写整个文件的开销。
+        """
+        if not lsns:
+            return
+        target_lsns = set(lsns)
+        with self._lock:
+            entries = []
+            if os.path.exists(self.log_path):
+                with open(self.log_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = StagingEntry.from_json_line(line)
+                            if entry.lsn in target_lsns:
+                                entry.status = "applied"
+                            entries.append(entry)
+                        except (json.JSONDecodeError, KeyError):
+                            continue
+            self._rewrite(entries)
+
     def mark_failed(self, lsn: int, error: str):
         """标记指定 LSN 的 entry 为 failed"""
         self._update_status(lsn, "failed", error)

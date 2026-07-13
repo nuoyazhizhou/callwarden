@@ -128,6 +128,7 @@ def daemon_handle_connect(peer_uid: int, workspace_id: int, requested_session_id
 def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
                           ws_conn: sqlite3.Connection,
                           cas_conn: Optional[sqlite3.Connection] = None,
+                          canonical_bytes: Optional[bytes] = None,
                           workspace_root: str = "") -> dict:
     """处理 agent refresh 消息——session epoch 校验 + 两阶段 CAS。
 
@@ -135,21 +136,23 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
     规范：daemon-ipc-security.md §3.2（daemon 不信任 agent 提供的 hash）
     规范：parse-input-abi.md §2（canonicalize_source 是唯一输入入口）
     修复 T-1783751525743-7c76
+    修复 T-1783952125417-7a09（消除 TOCTOU + 禁止读客户端 abs_path）
 
     完整管道：
     1. session epoch 校验（拒绝 stale session）
     2. CAS 第一阶段（seen）——原子更新 latest_seen_generation
-    3. daemon 侧 re-canonicalize + re-hash + Rust parse + CAS publish
+    3. daemon 侧 canonical bytes 解析（或 re-canonicalize + re-hash + Rust parse + CAS publish）
     4. CAS 第二阶段（committed）——条件更新 latest_committed_generation
 
     Args:
         peer_uid: agent 的 peer UID
         workspace_id: workspace ID
-        msg: agent 消息，需包含 rel_path/agent_session_id/monotonic_seq/session_epoch，
-             可选 abs_path（无则用 workspace_root + rel_path 推导）
+        msg: agent 消息，需包含 rel_path/agent_session_id/monotonic_seq/session_epoch
         ws_conn: workspace 数据库连接
         cas_conn: CAS 数据库连接（若为 None 则跳过 CAS publish，仅做 generation CAS）
-        workspace_root: workspace 根路径（用于推导 abs_path）
+        canonical_bytes: 来自 UDS bytes frame 或 FD 的规范化文件内容（优先使用）；
+                         为 None 时降级为从 abs_path 读取（仅用于兼容旧路径）
+        workspace_root: workspace 根路径（仅在 canonical_bytes 为 None 时使用）
 
     Returns:
         {"status": "committed"/"stale_seq_dropped", "generation": str, ...}
@@ -216,11 +219,12 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
             pass
         raise
 
-    # 3. daemon 侧 re-canonicalize + re-hash + Rust parse + CAS publish
+    # 3. daemon 侧解析 + CAS publish
     # 规范：daemon-ipc-security.md §3.2 —— daemon 不信任 agent 提供的 hash，必须重新计算
-    # 规范：parse-input-abi.md §2 —— canonicalize_source 是唯一输入入口
+    # 规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
     cas_result = _daemon_parse_and_publish(
         rel_path=rel_path,
+        canonical_bytes=canonical_bytes,
         abs_path=msg.get("abs_path") or _join_path(workspace_root, rel_path),
         cas_conn=cas_conn,
         workspace_id=workspace_id,
@@ -266,31 +270,32 @@ def _join_path(workspace_root: str, rel_path: str) -> str:
 
 def _daemon_parse_and_publish(
     rel_path: str,
-    abs_path: str,
-    cas_conn: Optional[sqlite3.Connection],
-    workspace_id: int,
+    canonical_bytes: Optional[bytes] = None,
+    abs_path: str = "",
+    cas_conn: Optional[sqlite3.Connection] = None,
+    workspace_id: int = 0,
 ) -> Optional[Dict[str, Any]]:
-    """daemon 侧 re-canonicalize + re-hash + Rust parse + CAS publish。
+    """daemon 侧解析 + CAS publish——消除 TOCTOU。
 
     规范：daemon-ipc-security.md §3.2 —— daemon 重新计算 sha256，不信任 agent 提供的 hash
-    规范：parse-input-abi.md §2 —— canonicalize_source 是唯一输入入口
+    规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
     规范：cas-gc-protocol.md §3 —— CAS 原子发布四阶段
+    修复：T-1783952125417-7a09（TOCTOU + 禁止读客户端 abs_path）
 
-    降级路径：
-    1. 优先调用 Rust canonicalize_source_py（BOM+编码+CRLF 完整归一化）
-    2. Rust 不可用时降级到 Python config.read_file_normalized（UTF-8→latin-1 两步降级）
-    3. cas_conn 为 None 时跳过 CAS publish（仅做 generation CAS）
+    输入优先级：
+    1. canonical_bytes 非 None：直接 hash + parse_canonical_bytes_py（不读文件）
+    2. canonical_bytes 为 None：降级从 abs_path 读取（兼容旧路径）
 
     Args:
         rel_path: 相对路径（用于语言检测）
-        abs_path: 绝对路径（用于读取文件）
+        canonical_bytes: 来自 UDS bytes frame 或 FD 的规范化文件内容
+        abs_path: 绝对路径（仅在 canonical_bytes 为 None 时使用）
         cas_conn: CAS 数据库连接
         workspace_id: workspace ID（用于 cas_pin）
 
     Returns:
         {"content_hash": str, "cas_key": str, "cas_state": str, ...} 或 None
     """
-    import os
     import hashlib
 
     # 3a. 检测语言
@@ -300,37 +305,40 @@ def _daemon_parse_and_publish(
     except ImportError:
         language = ""
     if not language:
-        # 不支持的语言——跳过 parse/publish，仅保留 generation CAS
         return {"content_hash": "", "cas_key": "", "cas_state": "unsupported_language"}
 
-    # 3b. canonicalize + re-hash —— 优先 Rust，降级 Python
-    canonical_bytes = None
+    # 3b. canonicalize + re-hash
+    canonicalize_method = "direct_bytes"
     content_hash = ""
-    canonicalize_method = "rust"
 
-    try:
-        from callwarden_core import canonicalize_source_py
-        canon = canonicalize_source_py(abs_path)
-        canonical_bytes = canon["canonical_bytes"]
-        content_hash = canon["content_hash"]
-    except ImportError:
-        canonicalize_method = "python_fallback"
-    except Exception as e:
-        logger.warning("Rust canonicalize_source_py failed for %s: %s, fallback to Python",
-                       abs_path, e)
-        canonicalize_method = "python_fallback"
-
-    if canonicalize_method == "python_fallback":
-        # Python 降级：读取文件 + 简单 UTF-8 → latin-1
+    if canonical_bytes is not None:
+        # 优先路径：daemon 已从 UDS bytes frame / FD 获得规范化内容
+        content_hash = hashlib.sha256(canonical_bytes).hexdigest()
+    else:
+        # 降级路径：从 abs_path 读取（兼容旧 refresh 模式）
+        canonicalize_method = "abs_path_fallback"
         try:
-            from config import read_file_normalized
-            text, content_hash = read_file_normalized(abs_path)
-            canonical_bytes = text.encode("utf-8")
+            from callwarden_core import canonicalize_source_py
+            canon = canonicalize_source_py(abs_path)
+            canonical_bytes = canon["canonical_bytes"]
+            content_hash = canon["content_hash"]
+        except ImportError:
+            canonicalize_method = "python_fallback"
         except Exception as e:
-            logger.error("Python canonicalize fallback failed for %s: %s", abs_path, e)
-            return {"content_hash": "", "cas_key": "",
-                    "cas_state": "canonicalize_failed",
-                    "error": str(e)}
+            logger.warning("Rust canonicalize_source_py failed for %s: %s, fallback to Python",
+                           abs_path, e)
+            canonicalize_method = "python_fallback"
+
+        if canonicalize_method == "python_fallback":
+            try:
+                from config import read_file_normalized
+                text, content_hash = read_file_normalized(abs_path)
+                canonical_bytes = text.encode("utf-8")
+            except Exception as e:
+                logger.error("Python canonicalize fallback failed for %s: %s", abs_path, e)
+                return {"content_hash": "", "cas_key": "",
+                        "cas_state": "canonicalize_failed",
+                        "error": str(e)}
 
     # 3c. CAS publish（若 cas_conn 可用）
     if cas_conn is None:
@@ -340,7 +348,6 @@ def _daemon_parse_and_publish(
     try:
         from db.db_cas import compute_cas_key_v1, cas_publish_with_retry, cas_lookup
     except ImportError:
-        # CAS 模块不可用——只返回 content_hash
         return {"content_hash": content_hash, "cas_key": "",
                 "cas_state": "cas_module_unavailable",
                 "canonicalize_method": canonicalize_method}
@@ -359,7 +366,6 @@ def _daemon_parse_and_publish(
     # 3e. 检查 CAS 是否已命中（state='ready'）
     existing = cas_lookup(cas_conn, cas_key)
     if existing:
-        # CAS 命中——只需补 pin，无需重新 parse
         try:
             from db.db_cas import cas_pin
             cas_pin(cas_conn, cas_key, workspace_id)
@@ -368,23 +374,26 @@ def _daemon_parse_and_publish(
         return {"content_hash": content_hash, "cas_key": cas_key,
                 "cas_state": "ready_cache_hit", "canonicalize_method": canonicalize_method}
 
-    # 3f. CAS 未命中——调用可信 Rust parser 解析 canonical_bytes
+    # 3f. CAS 未命中——用同一份 canonical_bytes 做 parse（消除 TOCTOU）
     parse_result = None
     try:
-        from callwarden_core import parse_file_lang
-        # Rust 侧 parse_file_lang 内部会调用 canonicalize_source，但我们已经
-        # canonicalize 过了。理想情况应调用 parse_canonical_bytes，但该函数
-        # 目前只在 Rust impl 中，未暴露给 Python。
-        # 降级方案：让 Rust parse_file_lang 自己读取并 canonicalize（幂等）
-        parse_result = parse_file_lang(abs_path, "")
+        from callwarden_core import parse_canonical_bytes_py
+        module_path = rel_path.rsplit(".", 1)[0].replace("/", ".").replace("\\", ".")
+        parse_result = parse_canonical_bytes_py(
+            canonical_bytes, module_path, language, content_hash
+        )
     except ImportError:
-        parse_result = None
+        # parse_canonical_bytes_py 不可用——降级 parse_file_lang
+        if abs_path:
+            try:
+                from callwarden_core import parse_file_lang
+                parse_result = parse_file_lang(abs_path, "")
+            except Exception as e:
+                logger.warning("Rust parse_file_lang fallback failed for %s: %s", abs_path, e)
     except Exception as e:
-        logger.warning("Rust parse_file_lang failed for %s: %s", abs_path, e)
-        parse_result = None
+        logger.warning("Rust parse_canonical_bytes_py failed: %s", e)
 
     if parse_result is None:
-        # Rust parser 不可用——CAS 发布无法完成
         return {"content_hash": content_hash, "cas_key": cas_key,
                 "cas_state": "parse_failed",
                 "canonicalize_method": canonicalize_method}
@@ -401,7 +410,7 @@ def _daemon_parse_and_publish(
         return {"content_hash": content_hash, "cas_key": cas_key,
                 "cas_state": "ready_published", "canonicalize_method": canonicalize_method}
     except Exception as e:
-        logger.error("CAS publish failed for %s (cas_key=%s): %s", abs_path, cas_key, e)
+        logger.error("CAS publish failed (cas_key=%s): %s", cas_key, e)
         return {"content_hash": content_hash, "cas_key": cas_key,
                 "cas_state": "publish_failed",
                 "canonicalize_method": canonicalize_method,
@@ -525,10 +534,10 @@ class Replicator:
                     result.duration_ms = (time.time() - start_time) * 1000
                     return result
 
-            # 4. 标记 entries 为 applied
-            for entry in pending:
-                self.staging_log.mark_applied(entry.lsn)
-                result.applied_lsns.append(entry.lsn)
+            # 4. 批量标记 entries 为 applied（单次文件重写）
+            result.applied_lsns = [entry.lsn for entry in pending]
+            if result.applied_lsns:
+                self.staging_log.mark_applied_batch(result.applied_lsns)
 
             result.applied_count = len(result.applied_lsns)
 

@@ -11,28 +11,28 @@
 //!   主进程持有：10-14GB → 流式 ~100MB
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
-use pyo3::Bound;
 use pyo3::types::PyAny;
 use pyo3::types::PyBytes;
-use pyo3::BoundObject;  // P29: PyO3 0.29 需要 trait 导入才能用 into_bound()
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};  // P30: ParseResultPool 迭代器游标（Sync 安全）
+use pyo3::types::PyDict;
+use pyo3::Bound;
+use pyo3::BoundObject; // P29: PyO3 0.29 需要 trait 导入才能用 into_bound()
 use rayon::prelude::*;
-use tree_sitter::{Language, Parser, Node};
+use std::sync::atomic::{AtomicUsize, Ordering}; // P30: ParseResultPool 迭代器游标（Sync 安全）
+use std::sync::Arc;
+use tree_sitter::{Language, Node, Parser};
 
-mod multi_lang;
-mod daemon;
-mod graph;
-mod snapshot;
-mod diff;
-mod watcher;
-mod hash_diff;
-mod delta;
-mod frontier;
-mod metrics;
-mod toolchain;
 mod canonicalize;
+mod daemon;
+mod delta;
+mod diff;
+mod frontier;
+mod graph;
+mod hash_diff;
+mod metrics;
+mod multi_lang;
+mod snapshot;
+mod toolchain;
+mod watcher;
 
 // ============================================
 // P29: 数据结构定义
@@ -59,15 +59,15 @@ pub struct ParseResult {
 pub struct SymbolInfo {
     pub name: String,
     pub qualified_name: String,
-    pub kind: String,           // "function" / "struct" / "enum" / "union"
+    pub kind: String, // "function" / "struct" / "enum" / "union"
     pub start_line: u32,
     pub end_line: u32,
     pub module_path: String,
-    pub symbol_hash: String,     // 内容哈希
-    pub depth: i32,             // 调用深度（-1 未计算）
+    pub symbol_hash: String, // 内容哈希
+    pub depth: i32,          // 调用深度（-1 未计算）
     pub has_comment: bool,
     pub visibility: String,
-    pub content: String,        // 符号源码内容
+    pub content: String, // 符号源码内容
     pub signature: String,
 }
 
@@ -75,7 +75,7 @@ pub struct SymbolInfo {
 #[derive(Clone, Debug)]
 pub struct RawCall {
     pub callee_name: String,
-    pub callee_module: String,  // 可能空
+    pub callee_module: String, // 可能空
     pub caller_name: String,
     pub caller_qualified: String,
     pub call_line: u32,
@@ -203,12 +203,25 @@ fn walk_c_node(
             "function_definition" => {
                 if let Some(sym) = parse_c_function(&child, source, module_path, parent_qualified) {
                     // 在函数体内提取调用
-                    extract_calls_from_function(&child, source, &sym.qualified_name, &sym.name, calls);
+                    extract_calls_from_function(
+                        &child,
+                        source,
+                        &sym.qualified_name,
+                        &sym.name,
+                        calls,
+                    );
                     symbols.push(sym);
                 }
             }
             "struct_specifier" => {
-                if let Some(sym) = parse_c_struct(&child, source, module_path, parent_qualified, "struct", None) {
+                if let Some(sym) = parse_c_struct(
+                    &child,
+                    source,
+                    module_path,
+                    parent_qualified,
+                    "struct",
+                    None,
+                ) {
                     let qname = sym.qualified_name.clone();
                     symbols.push(sym);
                     // 递归处理结构体内部
@@ -218,12 +231,15 @@ fn walk_c_node(
                 }
             }
             "enum_specifier" => {
-                if let Some(sym) = parse_c_enum(&child, source, module_path, parent_qualified, None) {
+                if let Some(sym) = parse_c_enum(&child, source, module_path, parent_qualified, None)
+                {
                     symbols.push(sym);
                 }
             }
             "union_specifier" => {
-                if let Some(sym) = parse_c_struct(&child, source, module_path, parent_qualified, "union", None) {
+                if let Some(sym) =
+                    parse_c_struct(&child, source, module_path, parent_qualified, "union", None)
+                {
                     symbols.push(sym);
                 }
             }
@@ -238,25 +254,57 @@ fn walk_c_node(
                     .map(|n| node_text(&n, source).to_string());
 
                 if let (Some(sn), Some(name)) = (struct_node.as_ref(), type_name.as_ref()) {
-                    if let Some(sym) = parse_c_struct(sn, source, module_path, parent_qualified, "struct", Some(name)) {
+                    if let Some(sym) = parse_c_struct(
+                        sn,
+                        source,
+                        module_path,
+                        parent_qualified,
+                        "struct",
+                        Some(name),
+                    ) {
                         let qname = sym.qualified_name.clone();
                         symbols.push(sym);
                         // 递归处理结构体内部字段
                         if let Some(body) = find_child(sn, "field_declaration_list") {
-                            walk_c_node(&body, source, module_path, &qname, symbols, calls, imports);
+                            walk_c_node(
+                                &body,
+                                source,
+                                module_path,
+                                &qname,
+                                symbols,
+                                calls,
+                                imports,
+                            );
                         }
                     }
                 } else if let (Some(en), Some(name)) = (enum_node.as_ref(), type_name.as_ref()) {
-                    if let Some(sym) = parse_c_enum(en, source, module_path, parent_qualified, Some(name)) {
+                    if let Some(sym) =
+                        parse_c_enum(en, source, module_path, parent_qualified, Some(name))
+                    {
                         symbols.push(sym);
                     }
                 } else if let (Some(un), Some(name)) = (union_node.as_ref(), type_name.as_ref()) {
-                    if let Some(sym) = parse_c_struct(un, source, module_path, parent_qualified, "union", Some(name)) {
+                    if let Some(sym) = parse_c_struct(
+                        un,
+                        source,
+                        module_path,
+                        parent_qualified,
+                        "union",
+                        Some(name),
+                    ) {
                         symbols.push(sym);
                     }
                 } else {
                     // 其他 typedef 情况（如 typedef int MyInt），递归处理子节点
-                    walk_c_node(&child, source, module_path, parent_qualified, symbols, calls, imports);
+                    walk_c_node(
+                        &child,
+                        source,
+                        module_path,
+                        parent_qualified,
+                        symbols,
+                        calls,
+                        imports,
+                    );
                 }
             }
             "preproc_include" => {
@@ -307,7 +355,7 @@ fn parse_c_function(
     Some(SymbolInfo {
         name,
         qualified_name: qualified,
-        kind: "fn".to_string(),  // 与 Python c_parser.py 保持一致：函数用 "fn"
+        kind: "fn".to_string(), // 与 Python c_parser.py 保持一致：函数用 "fn"
         start_line,
         end_line,
         module_path: module_path.to_string(),
@@ -517,7 +565,7 @@ pub(crate) fn blake_hash(data: &[u8]) -> u64 {
 #[pyo3(signature = (files, num_threads=None))]
 fn batch_parse_c_files<'py>(
     py: Python<'py>,
-    files: Vec<(String, String)>,  // (abs_path, module_path)
+    files: Vec<(String, String)>, // (abs_path, module_path)
     num_threads: Option<usize>,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
     // 配置 rayon 线程数
@@ -535,7 +583,7 @@ fn batch_parse_c_files<'py>(
     let results: Vec<ParseResult> = files
         .par_iter()
         .map(|(abs_path, module_path)| {
-            let parser = c_parser.clone();  // Arc clone，零拷贝
+            let parser = c_parser.clone(); // Arc clone，零拷贝
             parser.parse_file(abs_path, module_path)
         })
         .collect();
@@ -550,7 +598,11 @@ fn batch_parse_c_files<'py>(
 
 /// 单文件 parse C（用于测试和对比）
 #[pyfunction]
-fn parse_c_file<'py>(py: Python<'py>, abs_path: &str, module_path: &str) -> PyResult<Bound<'py, PyAny>> {
+fn parse_c_file<'py>(
+    py: Python<'py>,
+    abs_path: &str,
+    module_path: &str,
+) -> PyResult<Bound<'py, PyAny>> {
     let parser = CParser::new();
     let result = parser.parse_file(abs_path, module_path);
     parse_result_to_pydict(py, &result)
@@ -563,7 +615,10 @@ fn core_version() -> &'static str {
 }
 
 /// 将 ParseResult 转为 Python dict（零拷贝：Rust String 直接转 PyString）
-pub(crate) fn parse_result_to_pydict<'py>(py: Python<'py>, r: &ParseResult) -> PyResult<Bound<'py, PyAny>> {
+pub(crate) fn parse_result_to_pydict<'py>(
+    py: Python<'py>,
+    r: &ParseResult,
+) -> PyResult<Bound<'py, PyAny>> {
     let dict = PyDict::new(py);
 
     dict.set_item("abs_path", r.abs_path.clone())?;
@@ -604,7 +659,8 @@ pub(crate) fn parse_result_to_pydict<'py>(py: Python<'py>, r: &ParseResult) -> P
             d.set_item("callee_name", c.callee_name.clone()).ok();
             d.set_item("callee_module", c.callee_module.clone()).ok();
             d.set_item("caller_name", c.caller_name.clone()).ok();
-            d.set_item("caller_qualified", c.caller_qualified.clone()).ok();
+            d.set_item("caller_qualified", c.caller_qualified.clone())
+                .ok();
             d.set_item("call_line", c.call_line).ok();
             d.set_item("is_cross_file", c.is_cross_file).ok();
             d.into_any().into_bound()
@@ -643,7 +699,7 @@ pub(crate) fn parse_result_to_pydict<'py>(py: Python<'py>, r: &ParseResult) -> P
 #[pyclass]
 pub struct ParseResultPool {
     pub(crate) results: Vec<ParseResult>,
-    pub(crate) iter_idx: AtomicUsize,  // 迭代器游标（AtomicUsize 满足 Send+Sync，支持 for r in pool）
+    pub(crate) iter_idx: AtomicUsize, // 迭代器游标（AtomicUsize 满足 Send+Sync，支持 for r in pool）
 }
 
 #[pymethods]
@@ -660,7 +716,9 @@ impl ParseResultPool {
     fn get_at<'py>(&self, py: Python<'py>, idx: usize) -> PyResult<Bound<'py, PyAny>> {
         if idx >= self.results.len() {
             return Err(pyo3::exceptions::PyIndexError::new_err(format!(
-                "index {} out of range (len={})", idx, self.results.len()
+                "index {} out of range (len={})",
+                idx,
+                self.results.len()
             )));
         }
         parse_result_to_pydict(py, &self.results[idx])
@@ -668,10 +726,13 @@ impl ParseResultPool {
 
     /// 获取指定 abs_path 的结果（线性查找，适合测试/调试）
     fn get_by_path<'py>(&self, py: Python<'py>, abs_path: &str) -> PyResult<Bound<'py, PyAny>> {
-        let idx = self.results.iter().position(|r| r.abs_path == abs_path)
-            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err(format!(
-                "path not found: {}", abs_path
-            )))?;
+        let idx = self
+            .results
+            .iter()
+            .position(|r| r.abs_path == abs_path)
+            .ok_or_else(|| {
+                pyo3::exceptions::PyKeyError::new_err(format!("path not found: {}", abs_path))
+            })?;
         parse_result_to_pydict(py, &self.results[idx])
     }
 
@@ -726,7 +787,7 @@ impl ParseResultPool {
 #[pyfunction]
 #[pyo3(signature = (files, num_threads=None))]
 fn batch_parse_c_files_pool(
-    files: Vec<(String, String)>,  // (abs_path, module_path)
+    files: Vec<(String, String)>, // (abs_path, module_path)
     num_threads: Option<usize>,
 ) -> PyResult<ParseResultPool> {
     // 配置 rayon 线程数
@@ -749,14 +810,17 @@ fn batch_parse_c_files_pool(
         })
         .collect();
 
-    Ok(ParseResultPool { results, iter_idx: AtomicUsize::new(0) })
+    Ok(ParseResultPool {
+        results,
+        iter_idx: AtomicUsize::new(0),
+    })
 }
 
 // ============================================
 // P28 保留：批量余弦相似度（原有功能）
 // ============================================
 
-use numpy::{PyReadonlyArray1, PyReadonlyArray2, PyArray1};
+use numpy::{PyArray1, PyReadonlyArray1, PyReadonlyArray2};
 
 /// 批量余弦相似度：query (dim,) × matrix (N, dim) → scores (N,)
 #[pyfunction]
@@ -811,10 +875,7 @@ fn batch_cosine_similarity<'py>(
 ///     }
 ///   }
 #[pyfunction]
-fn canonicalize_source_py<'py>(
-    py: Python<'py>,
-    abs_path: &str,
-) -> PyResult<Bound<'py, PyAny>> {
+fn canonicalize_source_py<'py>(py: Python<'py>, abs_path: &str) -> PyResult<Bound<'py, PyAny>> {
     let result = canonicalize::canonicalize_source(abs_path)
         .map_err(|e| pyo3::exceptions::PyIOError::new_err(e.to_string()))?;
 
@@ -854,14 +915,20 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_parse_c_files_pool, m)?)?;
     // P31: 多语言 parser（config 驱动框架，支持 11 种语言）
     m.add_function(wrap_pyfunction!(multi_lang::parse_file_lang, m)?)?;
+    m.add_function(wrap_pyfunction!(multi_lang::parse_canonical_bytes_py, m)?)?;
     m.add_function(wrap_pyfunction!(multi_lang::batch_parse_files_lang, m)?)?;
-    m.add_function(wrap_pyfunction!(multi_lang::batch_parse_files_lang_pool, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        multi_lang::batch_parse_files_lang_pool,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(multi_lang::supported_languages, m)?)?;
     // P28: 批量余弦相似度（保留）
     m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
     // B-PoC: 图存储 + 查询下沉（CSR 邻接表 + 内存索引 + rusqlite 加载）
     m.add_class::<graph::GraphStore>()?;
-    // Phase 4: GraphSnapshot + ArcSwap 原子发布
+    m.add_class::<graph::CallersBatch>()?; // P10: get_callers 懒转换批量结果
+    m.add_class::<graph::SymbolSearchBatch>()?; // P11: search_symbols 懒转换批量结果
+                                                // Phase 4: GraphSnapshot + ArcSwap 原子发布
     m.add_class::<snapshot::PySnapshotManager>()?;
     m.add_class::<snapshot::PySnapshotCache>()?;
     // Phase 5: File Watcher (notify crate)
@@ -885,7 +952,10 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(metrics::compute_local_update, m)?)?;
     // Phase 6.1: Toolchain Fingerprint
     m.add_function(wrap_pyfunction!(toolchain::detect_compiler_type_py, m)?)?;
-    m.add_function(wrap_pyfunction!(toolchain::compute_toolchain_fingerprint_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        toolchain::compute_toolchain_fingerprint_py,
+        m
+    )?)?;
     // T-1783751519227-18d8: 输入规范化入口（BOM 剥离 + 编码检测 + CRLF→LF）
     m.add_function(wrap_pyfunction!(canonicalize_source_py, m)?)?;
     Ok(())

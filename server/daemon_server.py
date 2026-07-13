@@ -8,6 +8,7 @@ GraphSnapshot 提供。
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import os
 import socket
 import sqlite3
@@ -36,6 +37,8 @@ from callwarden.server.snapshot_manager import (
     SnapshotManagerService,
     get_snapshot_service,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class DaemonRpcError(RuntimeError):
@@ -115,15 +118,89 @@ def api_update_workspace_status(workspace_instance_id: str, status: str):
 
 
 class EnterpriseDaemonService:
-    """带 UID ACL 的 workspace registry + shared snapshot RPC 服务。"""
+    """带 UID ACL 的 workspace registry + shared snapshot RPC 服务。
+
+    T-1783952125417-7a09：接通 CAS/Replicator/StagingLog，
+    refresh 管道走 daemon_handle_refresh → CAS → StagingLog → Replicator → SnapshotManager。
+    """
 
     def __init__(self, registry_db: str = DAEMON_REGISTRY_DB,
-                 snapshot_service: Optional[SnapshotManagerService] = None):
+                 snapshot_service: Optional[SnapshotManagerService] = None,
+                 data_root: str = ""):
         self.registry_db = os.path.abspath(registry_db)
         self.snapshot_service = snapshot_service or get_snapshot_service()
+        self._data_root = data_root or os.path.join(
+            os.path.dirname(self.registry_db), "enterprise"
+        )
+        os.makedirs(self._data_root, exist_ok=True)
         os.makedirs(os.path.dirname(self.registry_db), exist_ok=True)
+        # workspace_id → {cas_conn, staging_log, replicator, ws_conn}
+        self._workspace_resources: Dict[str, Dict] = {}
+        self._resources_lock = threading.Lock()
         with closing(self._registry_conn()):
             pass
+
+    def _get_workspace_resources(self, workspace_id: str) -> Dict:
+        """懒初始化 per-workspace 的 CAS conn / StagingLog / Replicator / ws_conn。"""
+        with self._resources_lock:
+            if workspace_id in self._workspace_resources:
+                return self._workspace_resources[workspace_id]
+
+            ws_dir = os.path.join(self._data_root, workspace_id)
+            os.makedirs(ws_dir, exist_ok=True)
+
+            # CAS 数据库
+            from callwarden.db.db_cas import init_cas_schema
+            cas_db_path = os.path.join(ws_dir, "cas.db")
+            cas_conn = sqlite3.connect(cas_db_path, timeout=5.0)
+            cas_conn.row_factory = sqlite3.Row
+            cas_conn.execute("PRAGMA busy_timeout=5000")
+            cas_conn.execute("PRAGMA journal_mode=WAL")
+            init_cas_schema(cas_conn)
+
+            # Workspace session 数据库
+            from callwarden.server.replicator import init_session_schema
+            ws_db_path = os.path.join(ws_dir, "workspace.db")
+            ws_conn = sqlite3.connect(ws_db_path, timeout=5.0)
+            ws_conn.row_factory = sqlite3.Row
+            ws_conn.execute("PRAGMA busy_timeout=5000")
+            ws_conn.execute("PRAGMA journal_mode=WAL")
+            init_session_schema(ws_conn)
+
+            # StagingLog
+            from callwarden.server.staging_log import StagingLog
+            staging_log_path = os.path.join(ws_dir, "staging.log")
+            staging_log = StagingLog(staging_log_path)
+
+            # Replicator
+            from callwarden.server.replicator import Replicator
+            replicator = Replicator(staging_log, self.snapshot_service)
+
+            resources = {
+                "cas_conn": cas_conn,
+                "ws_conn": ws_conn,
+                "staging_log": staging_log,
+                "replicator": replicator,
+            }
+            self._workspace_resources[workspace_id] = resources
+            return resources
+
+    def recover_all_workspaces(self):
+        """daemon 启动时扫描所有 workspace 的 pending staging entries 并恢复。
+
+        规范：enterprise-daemon-full-e2e-followup.md §4.2
+        单 workspace 单写，跨 workspace 可并行。
+        """
+        for ws_id in list(self._workspace_resources.keys()):
+            try:
+                res = self._workspace_resources[ws_id]
+                pending = res["staging_log"].read_pending()
+                ws_pending = [e for e in pending if e.workspace_id == ws_id]
+                if ws_pending:
+                    logger.info("recovering %d pending entries for ws=%s", len(ws_pending), ws_id)
+                    res["replicator"].recover(ws_id)
+            except Exception as e:
+                logger.error("recovery failed for ws=%s: %s", ws_id, e)
 
     def _registry_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.registry_db, timeout=5.0)
@@ -188,6 +265,29 @@ class EnterpriseDaemonService:
             with closing(self._registry_conn()) as conn:
                 return list_workspaces(conn, owner_uid=uid)
 
+        # workspace.connect：agent 连接握手，分配 session epoch
+        if method == "workspace.connect":
+            workspace_id = str(params.get("workspace_instance_id") or "")
+            if not workspace_id:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_instance_id")
+            self._owned_workspace(uid, workspace_id)
+            session_id = str(params.get("agent_session_id") or "")
+            if not session_id:
+                raise DaemonRpcError("invalid_params", "缺少 agent_session_id")
+            from callwarden.server.replicator import daemon_handle_connect
+            res = self._get_workspace_resources(workspace_id)
+            try:
+                result = daemon_handle_connect(
+                    peer_uid=uid,
+                    workspace_id=int(workspace_id),
+                    requested_session_id=session_id,
+                    ws_conn=res["ws_conn"],
+                )
+                result["workspace_instance_id"] = workspace_id
+                return result
+            except Exception as e:
+                raise DaemonRpcError("connect_failed", str(e))
+
         workspace_id = str(params.get("workspace_instance_id") or "")
         if not workspace_id:
             raise DaemonRpcError("invalid_params", "缺少 workspace_instance_id")
@@ -197,6 +297,71 @@ class EnterpriseDaemonService:
             result = dict(workspace)
             result["snapshot"] = self.snapshot_service.get_snapshot_stats(workspace_id)
             return result
+
+        # workspace.file.refresh：增量 refresh 经 CAS/Replicator
+        if method == "workspace.file.refresh":
+            from callwarden.server.replicator import daemon_handle_refresh
+            res = self._get_workspace_resources(workspace_id)
+            # 从 UDS bytes frame 或 FD 获取 canonical bytes
+            canonical_bytes = None
+            received_fds = received_fds or []
+            if received_fds:
+                # FD 模式：从 FD 读取文件内容
+                fd = received_fds[0]
+                try:
+                    info = os.fstat(fd)
+                    canonical_bytes = os.read(fd, info.st_size)
+                except OSError as e:
+                    raise DaemonRpcError("fd_read_failed", str(e))
+            elif "canonical_bytes_b64" in params:
+                import base64
+                canonical_bytes = base64.b64decode(params["canonical_bytes_b64"])
+            # 调用 daemon_handle_refresh
+            try:
+                result = daemon_handle_refresh(
+                    peer_uid=uid,
+                    workspace_id=int(workspace_id),
+                    msg=params,
+                    ws_conn=res["ws_conn"],
+                    cas_conn=res["cas_conn"],
+                    canonical_bytes=canonical_bytes,
+                )
+                # 成功后追加 staging entry 并 replicate
+                if result.get("status") == "committed":
+                    from callwarden.server.staging_log import create_staging_entry
+                    entry = create_staging_entry(
+                        workspace_id=workspace_id,
+                        file_path=params.get("rel_path", ""),
+                        content_hash=result.get("content_hash", ""),
+                        language=params.get("language", ""),
+                    )
+                    res["staging_log"].append(entry)
+                    # 触发 replicate 发布新 generation
+                    repl_result = res["replicator"].replicate(workspace_id)
+                    result["replication"] = {
+                        "generation": repl_result.generation,
+                        "applied_count": repl_result.applied_count,
+                        "duration_ms": repl_result.duration_ms,
+                    }
+                return result
+            except Exception as e:
+                raise DaemonRpcError("refresh_failed", str(e))
+
+        # workspace.recover：崩溃恢复，重放 pending staging entries
+        if method == "workspace.recover":
+            res = self._get_workspace_resources(workspace_id)
+            try:
+                repl_result = res["replicator"].recover(workspace_id)
+                return {
+                    "status": "recovered",
+                    "generation": repl_result.generation,
+                    "applied_count": repl_result.applied_count,
+                    "pending_count": repl_result.pending_count,
+                    "duration_ms": repl_result.duration_ms,
+                    "error": repl_result.error,
+                }
+            except Exception as e:
+                raise DaemonRpcError("recover_failed", str(e))
 
         if method in ("snapshot.publish", "workspace.refresh"):
             received_fds = received_fds or []

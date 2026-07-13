@@ -978,6 +978,35 @@ pub fn parse_file_lang<'py>(
     parse_result_to_pydict(py, &result)
 }
 
+/// 解析已规范化的 canonical bytes（不读文件）
+///
+/// Python 调用：
+///   from callwarden_core import parse_canonical_bytes_py
+///   result = parse_canonical_bytes_py(canonical_bytes, "module.foo", "python", content_hash)
+///
+/// 消除 TOCTOU：daemon 先 canonicalize + hash，再传同一份 bytes 给 parser，
+/// CAS key 与 parse 来自同一份 canonical bytes（parse-input-abi.md §2）。
+#[pyfunction]
+#[pyo3(signature = (canonical_bytes, module_path, language, content_hash))]
+pub fn parse_canonical_bytes_py<'py>(
+    py: Python<'py>,
+    canonical_bytes: &[u8],
+    module_path: &str,
+    language: &str,
+    content_hash: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    let config = LangConfig::get(language)
+        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
+            format!("不支持的语言: {}，支持: {:?}", language, LangConfig::supported_languages())
+        ))?;
+    let parser = GenericParser::new(Arc::new(config));
+    // abs_path 用 module_path 占位——canonical bytes 已从 daemon 侧验证
+    let result = parser.parse_canonical_bytes(
+        canonical_bytes, module_path, module_path, content_hash,
+    );
+    parse_result_to_pydict(py, &result)
+}
+
 /// 批量解析文件（多语言，rayon 并行）
 ///
 /// Python 调用：
