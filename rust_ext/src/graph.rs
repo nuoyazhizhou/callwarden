@@ -248,15 +248,6 @@ impl CallEdge {
     }
 }
 
-/// 反向边（P4 优化：紧凑化，仅存反向查询所需字段）
-/// 8 字节 vs CallEdge 20 字节，省 ~280MB / 200万符号（14M 边 × 12B 差）
-#[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-#[repr(C)]
-pub struct BackwardEdge {
-    pub callee_id: u32,   // 用于 CSR 排序 + roots 构建
-    pub caller_id: u32,   // 用于 compute_depth_all
-}
-
 /// 调用图：CSR 压缩稀疏行邻接表
 pub struct CallGraph {
     /// 所有调用边（按 caller_id 升序排序）
@@ -265,9 +256,9 @@ pub struct CallGraph {
     /// 长度 = max_symbol_id + 2
     pub forward_offsets: Vec<usize>,
 
-    /// 所有调用边（按 callee_id 升序排序，用于反向查询）
-    /// P4 优化：紧凑 BackwardEdge 结构，仅存 callee_id + caller_id
-    pub backward_edges: Vec<BackwardEdge>,
+    /// `forward_edges` 位置，按对应边的 callee_id 升序排列。
+    /// 反向索引不再重复存储 callee_id/caller_id，每边从 8 字节降为 4 字节。
+    pub backward_positions: Vec<u32>,
     /// CSR 偏移：backward_offsets[i..i+1] 给出 callee_id=i 的边范围
     pub backward_offsets: Vec<usize>,
 
@@ -611,9 +602,9 @@ impl GraphStore {
         let mut calls = build_csr(edges, callee_names_pool, callee_names_offsets, max_id);
 
         // 4. 计算根节点（无 caller 的真实符号）
-        // 遍历 backward_edges 中 callee_id != 0 的边，标记被调用的符号
         let mut has_caller = vec![false; symbols.by_id.len()];
-        for e in &calls.backward_edges {
+        for &position in &calls.backward_positions {
+            let e = &calls.forward_edges[position as usize];
             if e.callee_id != 0 && (e.callee_id as usize) < has_caller.len() {
                 has_caller[e.callee_id as usize] = true;
             }
@@ -1119,7 +1110,7 @@ impl GraphStore {
         if let Some(calls) = &self.calls {
             add_bytes!("forward_edges", calls.forward_edges.capacity() * size_of::<CallEdge>());
             add_bytes!("forward_offsets", calls.forward_offsets.capacity() * size_of::<usize>());
-            add_bytes!("backward_edges", calls.backward_edges.capacity() * size_of::<BackwardEdge>());
+            add_bytes!("backward_positions", calls.backward_positions.capacity() * size_of::<u32>());
             add_bytes!("backward_offsets", calls.backward_offsets.capacity() * size_of::<usize>());
             add_bytes!("callee_position_offsets", calls.callee_position_offsets.capacity() * size_of::<u32>());
             add_bytes!("callee_positions", calls.callee_positions.capacity() * size_of::<u32>());
@@ -1197,7 +1188,7 @@ impl GraphStore {
                 .copied().unwrap_or(0);
 
             for i in b_start..b_end {
-                let caller_id = calls.backward_edges[i].caller_id;
+                let caller_id = calls.forward_edges[calls.backward_positions[i] as usize].caller_id;
                 if caller_id == 0 || (caller_id as usize) >= max_id {
                     continue;
                 }
@@ -1271,7 +1262,7 @@ impl GraphStore {
         let qname_pool_bytes = symbols.qname_pool.as_bytes();
         let module_pool_bytes = symbols.module_pool.as_bytes();
         let forward_edges_bytes = bytemuck::cast_slice::<CallEdge, u8>(&calls.forward_edges);
-        let backward_edges_bytes = bytemuck::cast_slice::<BackwardEdge, u8>(&calls.backward_edges);
+        let backward_positions_bytes = bytemuck::cast_slice::<u32, u8>(&calls.backward_positions);
         let forward_offsets_bytes = bytemuck::cast_slice::<usize, u8>(&calls.forward_offsets);
         let backward_offsets_bytes = bytemuck::cast_slice::<usize, u8>(&calls.backward_offsets);
         let callee_names_pool_bytes = calls.callee_names_pool.as_bytes();
@@ -1287,7 +1278,7 @@ impl GraphStore {
         // 修复：dump 时对齐每个 section 起始偏移，并在 buffer 中加入 padding 字节。
         let section_bytes_arr: [&[u8]; SECTION_COUNT] = [
             by_id_bytes, name_pool_bytes, qname_pool_bytes, module_pool_bytes,
-            forward_edges_bytes, backward_edges_bytes,
+            forward_edges_bytes, backward_positions_bytes,
             forward_offsets_bytes, backward_offsets_bytes,
             callee_names_pool_bytes, callee_names_offsets_bytes,
             file_paths_pool_bytes, file_paths_offsets_bytes,
@@ -1297,7 +1288,7 @@ impl GraphStore {
             std::mem::align_of::<GraphSymbol>() as u64,  // SEC_BY_ID
             1, 1, 1,                                      // 3 个 string pool
             std::mem::align_of::<CallEdge>() as u64,      // SEC_FORWARD_EDGES
-            std::mem::align_of::<BackwardEdge>() as u64, // SEC_BACKWARD_EDGES
+            std::mem::align_of::<u32>() as u64,          // SEC_BACKWARD_POSITIONS
             std::mem::align_of::<usize>() as u64,        // SEC_FWD_OFFSETS
             std::mem::align_of::<usize>() as u64,        // SEC_BWD_OFFSETS
             1,                                             // SEC_CALLEE_NAMES_POOL
@@ -1430,9 +1421,16 @@ impl GraphStore {
         let qname_pool: String = read_string!(SEC_QNAME_POOL);
         let module_pool: String = read_string!(SEC_MODULE_POOL);
         let forward_edges: Vec<CallEdge> = read_section!(SEC_FORWARD_EDGES, CallEdge);
-        let backward_edges: Vec<BackwardEdge> = read_section!(SEC_BACKWARD_EDGES, BackwardEdge);
+        let backward_positions: Vec<u32> = read_section!(SEC_BACKWARD_POSITIONS, u32);
         let forward_offsets: Vec<usize> = read_section!(SEC_FWD_OFFSETS, usize);
         let backward_offsets: Vec<usize> = read_section!(SEC_BWD_OFFSETS, usize);
+        if backward_positions.len() != forward_edges.len()
+            || backward_positions.iter().any(|&position| position as usize >= forward_edges.len())
+        {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "invalid backward positions section",
+            ));
+        }
         // P5-v2：新增 4 个 section
         let callee_names_pool: String = read_string!(SEC_CALLEE_NAMES_POOL);
         let callee_names_offsets: Vec<u32> = read_section!(SEC_CALLEE_NAMES_OFFSETS, u32);
@@ -1466,9 +1464,10 @@ impl GraphStore {
         let (callee_name_sorted_idxs, callee_position_offsets, callee_positions) =
             build_callee_name_index(&forward_edges, &callee_names_pool, &callee_names_offsets);
 
-        // 5. roots（从 backward_edges 重建）
+        // 5. roots（从 backward positions 重建）
         let mut has_caller = vec![false; by_id.len()];
-        for e in &backward_edges {
+        for &position in &backward_positions {
+            let e = &forward_edges[position as usize];
             if e.callee_id != 0 && (e.callee_id as usize) < has_caller.len() {
                 has_caller[e.callee_id as usize] = true;
             }
@@ -1531,7 +1530,7 @@ impl GraphStore {
         self.calls = Some(CallGraph {
             forward_edges,
             forward_offsets,
-            backward_edges,
+            backward_positions,
             backward_offsets,
             callee_position_offsets,
             callee_positions,
@@ -1571,7 +1570,7 @@ impl GraphStore {
             .copied().unwrap_or(0);
         let mut callers = Vec::new();
         for i in start..end {
-            let edge = &calls.backward_edges[i];
+            let edge = &calls.forward_edges[calls.backward_positions[i] as usize];
             if edge.caller_id != 0 {
                 callers.push(edge.caller_id);
             }
@@ -1781,15 +1780,19 @@ fn build_csr(
         forward_offsets[i] += forward_offsets[i - 1];
     }
 
-    // 2. backward: 按 callee_id 排序（未解析边 callee_id=0 排最前）
-    // P4 优化：转换为紧凑 BackwardEdge 结构，仅存 callee_id + caller_id
-    let mut backward_edges: Vec<BackwardEdge> = forward_edges.iter()
-        .map(|e| BackwardEdge { callee_id: e.callee_id, caller_id: e.caller_id })
-        .collect();
-    backward_edges.sort_by_key(|e| e.callee_id);
+    // 2. backward: 只保留 forward_edges 位置，按 callee_id 排序。
+    assert!(
+        u32::try_from(forward_edges.len()).is_ok(),
+        "call edge count exceeds u32 position range"
+    );
+    let mut backward_positions: Vec<u32> = (0..forward_edges.len() as u32).collect();
+    backward_positions.sort_unstable_by_key(|&position| {
+        forward_edges[position as usize].callee_id
+    });
 
     let mut backward_offsets = vec![0usize; n + 1];
-    for e in &backward_edges {
+    for &position in &backward_positions {
+        let e = &forward_edges[position as usize];
         if (e.callee_id as usize) < n {
             backward_offsets[e.callee_id as usize + 1] += 1;
         }
@@ -1802,7 +1805,7 @@ fn build_csr(
     CallGraph {
         forward_edges,
         forward_offsets,
-        backward_edges,
+        backward_positions,
         backward_offsets,
         callee_position_offsets: Vec::new(),
         callee_positions: Vec::new(),
@@ -1998,7 +2001,7 @@ impl SymbolSearchBatch {
 /// 快照文件魔数 "CWSN" (Call Warden Snapshot)
 const SNAPSHOT_MAGIC: u32 = 0x4357534E;
 /// 快照格式版本
-const SNAPSHOT_VERSION: u32 = 1;
+const SNAPSHOT_VERSION: u32 = 2;
 /// Section table 数量（P5-v2：扩展为 12 个 section，覆盖 callee_names + file_paths）
 const SECTION_COUNT: usize = 12;
 
@@ -2008,7 +2011,7 @@ const SEC_NAME_POOL: usize = 1;               // String bytes (name_pool)
 const SEC_QNAME_POOL: usize = 2;              // String bytes (qname_pool)
 const SEC_MODULE_POOL: usize = 3;             // String bytes (module_pool)
 const SEC_FORWARD_EDGES: usize = 4;           // Vec<CallEdge>
-const SEC_BACKWARD_EDGES: usize = 5;         // Vec<BackwardEdge>
+const SEC_BACKWARD_POSITIONS: usize = 5;     // Vec<u32>
 const SEC_FWD_OFFSETS: usize = 6;             // Vec<usize>
 const SEC_BWD_OFFSETS: usize = 7;             // Vec<usize>
 const SEC_CALLEE_NAMES_POOL: usize = 8;       // String bytes (callee_names_pool)

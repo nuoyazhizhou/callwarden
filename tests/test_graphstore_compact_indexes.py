@@ -79,6 +79,7 @@ def test_compact_indexes_preserve_short_and_qualified_queries(compact_index_db: 
     assert len(all_callees) == 3
     precise_callees = store.get_callees("foo", "mod_a.foo")
     assert len(precise_callees) == 2
+    assert dict(store.compute_depth_all()) == {1: 1, 2: 1, 3: 0, 4: 0}
 
 
 def test_compact_indexes_round_trip_existing_snapshot_format(
@@ -95,6 +96,21 @@ def test_compact_indexes_round_trip_existing_snapshot_format(
     assert restored.get_callees("foo") == source.get_callees("foo")
 
 
+def test_snapshot_v1_is_rejected_explicitly(compact_index_db: Path, tmp_path: Path):
+    snapshot_path = tmp_path / "old-format.cwsnap"
+    source = callwarden_core.GraphStore()
+    source.load_from_sqlite(str(compact_index_db))
+    source.dump_to_file(str(snapshot_path))
+
+    data = bytearray(snapshot_path.read_bytes())
+    data[4:8] = (1).to_bytes(4, "little")
+    snapshot_path.write_bytes(data)
+
+    restored = callwarden_core.GraphStore()
+    with pytest.raises(RuntimeError, match=r"unsupported snapshot version: 1"):
+        restored.load_from_file(str(snapshot_path))
+
+
 def test_memory_breakdown_reports_compact_capacity(compact_index_db: Path):
     store = callwarden_core.GraphStore()
     store.load_from_sqlite(str(compact_index_db))
@@ -103,6 +119,8 @@ def test_memory_breakdown_reports_compact_capacity(compact_index_db: Path):
     memory = store.memory_breakdown()
     assert stats["callee_name_pool_size"] == len("target")
     assert memory["simple_name_sorted_ids"] > 0
+    assert memory["backward_positions"] == 3 * 4
+    assert "backward_edges" not in memory
     assert memory["callee_positions"] == 3 * 4
     assert memory["known_heap_total"] == sum(
         value for key, value in memory.items() if key != "known_heap_total"
