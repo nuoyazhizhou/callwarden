@@ -82,7 +82,7 @@ class MetricsMixin:
         # 获取符号基本信息和内容
         cur = self.conn.execute(
             """
-            SELECT s.qualified_name, s.kind, s.start_line, s.end_line,
+            SELECT s.id, s.qualified_name, s.kind, s.start_line, s.end_line,
                    s.depth, s.module_path, s.signature,
                    sc.content, sc.content_hash,
                    fi.rel_path, fi.abs_path
@@ -104,7 +104,7 @@ class MetricsMixin:
         # 从文件实例获取语言
         lang = ""
         if row["rel_path"]:
-            from .config import detect_language_from_path
+            from ..config import detect_language_from_path
             lang = detect_language_from_path(row["rel_path"]) or ""
 
         # 圈复杂度
@@ -117,9 +117,11 @@ class MetricsMixin:
             FROM calls c
             JOIN symbols s ON c.caller_id = s.id
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND c.callee_qualified = ?
+            WHERE fi.workspace_id = ?
+              AND c.callee_id > 0
+              AND c.callee_id = ?
             """,
-            (ws_id, qualified_name),
+            (ws_id, row["id"]),
         )
         fan_in = cur.fetchone()["cnt"]
 
@@ -453,14 +455,19 @@ class MetricsMixin:
         # 扇入统计
         cur = self.conn.execute(
             """
-            SELECT c.callee_qualified as name, COUNT(DISTINCT c.caller_id) as fan_in
+            SELECT callee.qualified_name as name, COUNT(DISTINCT c.caller_id) as fan_in
             FROM calls c
             JOIN symbols s ON c.caller_id = s.id
             JOIN file_instances fi ON s.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND c.callee_qualified != ''
-            GROUP BY c.callee_qualified
+            JOIN symbols callee ON c.callee_id = callee.id
+            JOIN file_instances callee_fi ON callee.file_instance_id = callee_fi.id
+            WHERE fi.workspace_id = ?
+              AND callee_fi.workspace_id = ?
+              AND c.callee_id > 0
+              AND callee.qualified_name != ''
+            GROUP BY c.callee_id, callee.qualified_name
             """,
-            (ws_id,),
+            (ws_id, ws_id),
         )
         fan_in_map = {row["name"]: row["fan_in"] for row in cur}
 

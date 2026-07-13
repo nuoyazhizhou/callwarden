@@ -54,6 +54,9 @@ memmap2 = "0.9"
 # P5 优化：bytemuck 用于 GraphSymbol/CallEdge 的零拷贝字节转换
 bytemuck = { version = "1.21", features = ["derive"] }
 
+[dev-dependencies]
+tempfile = "3"
+
 [profile.release]
 opt-level = 3
 lto = true

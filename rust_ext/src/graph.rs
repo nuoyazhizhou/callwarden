@@ -3,7 +3,7 @@
 //! 实现 CSR 邻接表 + 内存索引 + rusqlite 加载，验证查询性能 vs Python SQL。
 //!
 //! 设计要点：
-//! - SymbolTable: by_id (Vec) + by_qname / by_simple_name / by_file (HashMap 索引)
+//! - SymbolTable: by_id (Vec) + 名称排序数组 + 字符串池
 //! - CallGraph: CSR 压缩稀疏行邻接表，forward/backward 双份排序
 //! - 加载: 从现有 SQLite (symbols + calls 表) 一次性读入内存
 //! - 查询: 纯内存遍历，零 SQL，零磁盘 I/O
@@ -126,10 +126,8 @@ pub struct SymbolTable {
     /// P4: 删除 by_qname_keys: Vec<String> 和 by_qname_values: Vec<u32>
     /// 改用排序的 symbol_id 数组，从 qname_pool 切片比较，消除 100万 String 堆分配（省 56MB）
     pub by_qname_sorted_ids: Vec<u32>,
-    /// simple_name → [symbol_id]（同名可能有多个）
-    pub by_simple_name: FxHashMap<String, Vec<u32>>,
-    /// file_instance_id → [symbol_id]
-    pub by_file: FxHashMap<u32, Vec<u32>>,
+    /// 按 simple_name 排序的 symbol_id，同名符号形成连续区间
+    pub by_simple_name_sorted_ids: Vec<u32>,
     /// file_instance_id → rel_path（P3 优化：替代 GraphSymbol.file_rel_path）
     /// P4: 改为 pool + offsets，消除 20万 String 堆分配（省 11MB）
     pub file_paths_pool: String,
@@ -200,6 +198,18 @@ impl SymbolTable {
             .ok()
             .map(|i| self.by_qname_sorted_ids[i])
     }
+
+    /// 返回 simple_name 对应的连续 symbol_id 区间。
+    #[inline]
+    pub fn simple_name_ids(&self, name: &str) -> &[u32] {
+        let start = self.by_simple_name_sorted_ids.partition_point(|sid| {
+            self.sym_name(&self.by_id[*sid as usize]) < name
+        });
+        let end = self.by_simple_name_sorted_ids.partition_point(|sid| {
+            self.sym_name(&self.by_id[*sid as usize]) <= name
+        });
+        &self.by_simple_name_sorted_ids[start..end]
+    }
 }
 
 /// 调用边（紧凑 Copy 类型，提升缓存命中）
@@ -261,10 +271,9 @@ pub struct CallGraph {
     /// CSR 偏移：backward_offsets[i..i+1] 给出 callee_id=i 的边范围
     pub backward_offsets: Vec<usize>,
 
-    /// 按 callee_name 索引所有边：callee_name_idx → [forward_edges 中的位置]
-    /// 用于 get_callers 快速查找 callee_name 匹配的所有边（含已解析和未解析）
-    /// 对齐 SQL 的 WHERE c.callee_name = ? 语义，O(k)，k 为同名边数
-    pub by_callee_name: FxHashMap<u32, Vec<usize>>,
+    /// callee_name_idx → forward_edges 位置的 CSR 索引。
+    pub callee_position_offsets: Vec<u32>,
+    pub callee_positions: Vec<u32>,
 
     /// callee 名字池（P5 优化：紧凑存储，所有 name 拼接在一个 String 中）
     /// 替代 Vec<String>，消除 N 个 String 堆分配开销
@@ -272,8 +281,8 @@ pub struct CallGraph {
     /// callee name 偏移表：offsets[i]..offsets[i+1] 给出第 i 个 name 的字节范围
     pub callee_names_offsets: Vec<u32>,
 
-    /// 反向索引：callee_name → callee_name_idx（O(1) 查找，避免每次扫池）
-    pub callee_name_to_idx: FxHashMap<String, u32>,
+    /// 按名称排序的 callee_name_idx，查询时从字符串池二分。
+    pub callee_name_sorted_idxs: Vec<u32>,
 
     /// 顶层节点（无 caller 的函数，用于拓扑排序）
     pub roots: Vec<u32>,
@@ -291,6 +300,27 @@ impl CallGraph {
         } else {
             ""
         }
+    }
+
+    /// 从紧凑字符串池二分查找 callee_name_idx。
+    #[inline]
+    pub fn callee_name_idx(&self, name: &str) -> Option<u32> {
+        self.callee_name_sorted_idxs
+            .binary_search_by(|idx| self.callee_name(*idx).cmp(name))
+            .ok()
+            .map(|i| self.callee_name_sorted_idxs[i])
+    }
+
+    /// 返回指定 callee_name_idx 对应的 forward_edges 位置。
+    #[inline]
+    pub fn positions_for_callee_name(&self, idx: u32) -> &[u32] {
+        let i = idx as usize;
+        if i + 1 >= self.callee_position_offsets.len() {
+            return &[];
+        }
+        let start = self.callee_position_offsets[i] as usize;
+        let end = self.callee_position_offsets[i + 1] as usize;
+        &self.callee_positions[start..end]
     }
 }
 
@@ -397,9 +427,6 @@ impl GraphStore {
         // 1b. 加载符号（不再 JOIN file_instances，file_rel_path 从 file_paths 查）
         // P7: name/qualified_name/module_path 改为 string pool，消除 600万 String 堆分配
         let mut by_id = Vec::new();
-        let mut by_qname_pairs: Vec<(String, u32)> = Vec::new();  // P9: 临时存储，后续排序
-        let mut by_simple_name: FxHashMap<String, Vec<u32>> = FxHashMap::default();
-        let mut by_file: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
         // P7: 3 个全局 string pool
         let mut name_pool = String::new();
         let mut qname_pool = String::new();
@@ -458,20 +485,30 @@ impl GraphStore {
                 });
             }
             by_id[id as usize] = sym;
-            by_qname_pairs.push((qname, id));  // P9: 临时存储，后续排序
-            by_simple_name.entry(name).or_default().push(id);
-            by_file.entry(fid).or_default().push(id);
         }
 
         let symbol_count = by_id.len();
 
-        // P4: by_qname 排序数组构建 — 排序 symbol_id 数组，从 qname_pool 切片比较
-        // 消除 by_qname_keys: Vec<String> 的 100万 String 堆分配（省 56MB）
-        by_qname_pairs.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut by_qname_sorted_ids: Vec<u32> = Vec::with_capacity(by_qname_pairs.len());
-        for (_, sym_id) in by_qname_pairs {
-            by_qname_sorted_ids.push(sym_id);
-        }
+        // 直接排序 symbol_id 并从 pool 比较，加载期不再复制百万份 String。
+        let mut by_qname_sorted_ids: Vec<u32> = by_id.iter()
+            .filter(|sym| sym.id != 0 || sym.name_len != 0)
+            .map(|sym| sym.id)
+            .collect();
+        by_qname_sorted_ids.sort_unstable_by(|a, b| {
+            let sa = &by_id[*a as usize];
+            let sb = &by_id[*b as usize];
+            let qa = &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
+            let qb = &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
+            qa.cmp(qb)
+        });
+        let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
+        by_simple_name_sorted_ids.sort_unstable_by(|a, b| {
+            let sa = &by_id[*a as usize];
+            let sb = &by_id[*b as usize];
+            let na = &name_pool[sa.name_offset as usize..(sa.name_offset + sa.name_len) as usize];
+            let nb = &name_pool[sb.name_offset as usize..(sb.name_offset + sb.name_len) as usize];
+            na.cmp(nb).then_with(|| a.cmp(b))
+        });
 
         // P2: 构建搜索索引 — 所有 name + qname 的小写版本，\0 分隔
         // memchr SIMD 一次扫描整个池，替代 N 次子串搜索
@@ -507,7 +544,7 @@ impl GraphStore {
         }
 
         let symbols = SymbolTable {
-            by_id, by_qname_sorted_ids, by_simple_name, by_file,
+            by_id, by_qname_sorted_ids, by_simple_name_sorted_ids,
             file_paths_pool, file_paths_offsets,
             name_pool, qname_pool, module_pool,
             search_pool_lower, search_entry_offsets, search_entry_sym_ids,
@@ -589,16 +626,16 @@ impl GraphStore {
             }
         }
 
-        // 5. 构建 by_callee_name 索引：callee_name_idx → [forward_edges 位置]
-        // 索引所有边（含已解析和未解析），对齐 SQL 的 WHERE c.callee_name = ? 语义
-        // get_callers 一次查找 O(k) 即可，无需分 resolved/unresolved 两步
-        for (idx, edge) in calls.forward_edges.iter().enumerate() {
-            calls.by_callee_name.entry(edge.callee_name_idx).or_default().push(idx);
-        }
-
-        // 6. 构建反向索引：callee_name → callee_name_idx（O(1) 查找）
-        // 复用已构建的 name_idx_map，避免每次 get_callers 扫池
-        calls.callee_name_to_idx = name_idx_map;
+        // 5. 构建 callee_name 紧凑二分索引和位置 CSR。
+        let (name_sorted, position_offsets, positions) = build_callee_name_index(
+            &calls.forward_edges,
+            &calls.callee_names_pool,
+            &calls.callee_names_offsets,
+        );
+        calls.callee_name_sorted_idxs = name_sorted;
+        calls.callee_position_offsets = position_offsets;
+        calls.callee_positions = positions;
+        drop(name_idx_map);
 
         self.symbols = Some(symbols);
         self.calls = Some(calls);
@@ -633,8 +670,8 @@ impl GraphStore {
             return Ok(CallersBatch { results, store: py_self });
         }
 
-        // O(1) 查找 callee_name_idx（反向索引）
-        let callee_name_idx = match calls.callee_name_to_idx.get(callee_name).copied() {
+        // 从排序名称下标二分查找 callee_name_idx。
+        let callee_name_idx = match calls.callee_name_idx(callee_name) {
             Some(idx) => idx,
             None => {
                 let py_self = slf.clone().unbind();
@@ -642,10 +679,9 @@ impl GraphStore {
             }
         };
 
-        // 一次查找 by_callee_name 索引，获取所有 callee_name 匹配的边
-        if let Some(positions) = calls.by_callee_name.get(&callee_name_idx) {
-            for &pos in positions {
-                let edge = &calls.forward_edges[pos];
+        // CSR 连续区间返回所有 callee_name 匹配的边。
+        for &pos in calls.positions_for_callee_name(callee_name_idx) {
+                let edge = &calls.forward_edges[pos as usize];
                 // P28：传入 qname 时，跳过 callee_id 不匹配的边
                 if let Some(filter_id) = qname_filter_id {
                     if edge.callee_id != filter_id {
@@ -661,7 +697,6 @@ impl GraphStore {
                         call_line_packed: edge.call_line_packed,
                     });
                 }
-            }
         }
 
         let py_self = slf.clone().unbind();
@@ -689,9 +724,7 @@ impl GraphStore {
                 Some(id) => vec![id],
                 None => return Ok(results),  // qname 查不到 → 空结果
             },
-            None => symbols.by_simple_name.get(caller_name)
-                .cloned()
-                .unwrap_or_default(),
+            None => symbols.simple_name_ids(caller_name).to_vec(),
         };
 
         for caller_id in caller_ids {
@@ -1021,8 +1054,8 @@ impl GraphStore {
         if let Some(symbols) = &self.symbols {
             dict.set_item("symbol_count", symbols.by_id.len())?;
             dict.set_item("qname_index_size", symbols.by_qname_sorted_ids.len())?;
-            dict.set_item("simple_name_index_size", symbols.by_simple_name.len())?;
-            dict.set_item("file_index_size", symbols.by_file.len())?;
+            dict.set_item("simple_name_index_size", symbols.by_simple_name_sorted_ids.len())?;
+            dict.set_item("file_index_size", symbols.file_paths_offsets.len().saturating_sub(1))?;
             // P4: 暴露 pool size 用于内存分析
             dict.set_item("name_pool_size", symbols.name_pool.len())?;
             dict.set_item("qname_pool_size", symbols.qname_pool.len())?;
@@ -1046,12 +1079,56 @@ impl GraphStore {
             dict.set_item("resolved_edge_count", resolved)?;
             dict.set_item("forward_offsets_size", calls.forward_offsets.len())?;
             dict.set_item("backward_offsets_size", calls.backward_offsets.len())?;
-            dict.set_item("callee_name_pool_size", calls.callee_names_offsets.len().saturating_sub(1))?;
-            dict.set_item("callee_name_to_idx_size", calls.callee_name_to_idx.len())?;
+            dict.set_item("callee_name_pool_size", calls.callee_names_pool.len())?;
+            dict.set_item("callee_name_count", calls.callee_names_offsets.len().saturating_sub(1))?;
+            dict.set_item("callee_name_to_idx_size", calls.callee_name_sorted_idxs.len())?;
             dict.set_item("root_count", calls.roots.len())?;
         } else {
             dict.set_item("edge_count", 0)?;
         }
+        Ok(dict.into_any())
+    }
+
+    /// 按容器 capacity 返回 GraphStore 已知堆内存，供容量回归测试使用。
+    fn memory_breakdown<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        use std::mem::size_of;
+
+        let dict = PyDict::new(py);
+        let mut total = 0usize;
+        macro_rules! add_bytes {
+            ($name:expr, $bytes:expr) => {{
+                let bytes = $bytes;
+                dict.set_item($name, bytes)?;
+                total += bytes;
+            }};
+        }
+
+        if let Some(symbols) = &self.symbols {
+            add_bytes!("symbols_by_id", symbols.by_id.capacity() * size_of::<GraphSymbol>());
+            add_bytes!("qname_sorted_ids", symbols.by_qname_sorted_ids.capacity() * size_of::<u32>());
+            add_bytes!("simple_name_sorted_ids", symbols.by_simple_name_sorted_ids.capacity() * size_of::<u32>());
+            add_bytes!("file_paths_pool", symbols.file_paths_pool.capacity());
+            add_bytes!("file_paths_offsets", symbols.file_paths_offsets.capacity() * size_of::<u32>());
+            add_bytes!("name_pool", symbols.name_pool.capacity());
+            add_bytes!("qname_pool", symbols.qname_pool.capacity());
+            add_bytes!("module_pool", symbols.module_pool.capacity());
+            add_bytes!("search_pool_lower", symbols.search_pool_lower.capacity());
+            add_bytes!("search_entry_offsets", symbols.search_entry_offsets.capacity() * size_of::<u32>());
+            add_bytes!("search_entry_sym_ids", symbols.search_entry_sym_ids.capacity() * size_of::<u32>());
+        }
+        if let Some(calls) = &self.calls {
+            add_bytes!("forward_edges", calls.forward_edges.capacity() * size_of::<CallEdge>());
+            add_bytes!("forward_offsets", calls.forward_offsets.capacity() * size_of::<usize>());
+            add_bytes!("backward_edges", calls.backward_edges.capacity() * size_of::<BackwardEdge>());
+            add_bytes!("backward_offsets", calls.backward_offsets.capacity() * size_of::<usize>());
+            add_bytes!("callee_position_offsets", calls.callee_position_offsets.capacity() * size_of::<u32>());
+            add_bytes!("callee_positions", calls.callee_positions.capacity() * size_of::<u32>());
+            add_bytes!("callee_names_pool", calls.callee_names_pool.capacity());
+            add_bytes!("callee_names_offsets", calls.callee_names_offsets.capacity() * size_of::<u32>());
+            add_bytes!("callee_name_sorted_idxs", calls.callee_name_sorted_idxs.capacity() * size_of::<u32>());
+            add_bytes!("roots", calls.roots.capacity() * size_of::<u32>());
+        }
+        dict.set_item("known_heap_total", total)?;
         Ok(dict.into_any())
     }
 
@@ -1281,10 +1358,9 @@ impl GraphStore {
         Ok(())
     }
 
-    /// P5: 从快照文件 mmap 加载（零拷贝 Vec + String pool）
+    /// P5: 从快照文件 mmap 加载（紧凑 Vec + String pool）
     ///
-    /// HashMap（by_simple_name/by_file/by_callee_name/callee_name_to_idx/by_qname_keys）
-    /// 在 load 后重建（约 1-2s）。
+    /// 名称排序数组和 callee 位置 CSR 在 load 后重建。
     ///
     /// 用法：
     ///   store.load_from_file("/path/to/snapshot.cwsnap")
@@ -1366,55 +1442,29 @@ impl GraphStore {
         let symbol_count = header.symbol_count as usize;
         let edge_count = header.edge_count as usize;
 
-        // 重建索引（这些 HashMap 不在 dump 范围内，从 Vec 重建）
-        // P4: by_qname 排序数组 — 排序 symbol_id 数组，从 qname_pool 切片比较
-        let mut by_qname_pairs: Vec<(String, u32)> = Vec::with_capacity(symbol_count);
-        for sym in &by_id {
-            if sym.id == 0 && sym.name_len == 0 { continue; }
-            let qname_start = sym.qname_offset as usize;
-            let qname_end = qname_start + sym.qname_len as usize;
-            if let Some(qname) = qname_pool.get(qname_start..qname_end) {
-                by_qname_pairs.push((qname.to_string(), sym.id));
-            }
-        }
-        by_qname_pairs.sort_by(|a, b| a.0.cmp(&b.0));
-        let mut by_qname_sorted_ids: Vec<u32> = Vec::with_capacity(by_qname_pairs.len());
-        for (_, sym_id) in by_qname_pairs {
-            by_qname_sorted_ids.push(sym_id);
-        }
+        // 从字符串池直接重建排序 ID 索引，不复制 String。
+        let mut by_qname_sorted_ids: Vec<u32> = by_id.iter()
+            .filter(|sym| sym.id != 0 || sym.name_len != 0)
+            .map(|sym| sym.id)
+            .collect();
+        by_qname_sorted_ids.sort_unstable_by(|a, b| {
+            let sa = &by_id[*a as usize];
+            let sb = &by_id[*b as usize];
+            let qa = &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
+            let qb = &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
+            qa.cmp(qb)
+        });
+        let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
+        by_simple_name_sorted_ids.sort_unstable_by(|a, b| {
+            let sa = &by_id[*a as usize];
+            let sb = &by_id[*b as usize];
+            let na = &name_pool[sa.name_offset as usize..(sa.name_offset + sa.name_len) as usize];
+            let nb = &name_pool[sb.name_offset as usize..(sb.name_offset + sb.name_len) as usize];
+            na.cmp(nb).then_with(|| a.cmp(b))
+        });
 
-        // 2. by_simple_name + by_file
-        let mut by_simple_name: FxHashMap<String, Vec<u32>> = FxHashMap::default();
-        let mut by_file: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
-        for sym in &by_id {
-            if sym.id == 0 && sym.name_len == 0 { continue; }
-            // name
-            let name_start = sym.name_offset as usize;
-            let name_end = name_start + sym.name_len as usize;
-            if let Some(name) = name_pool.get(name_start..name_end) {
-                by_simple_name.entry(name.to_string()).or_default().push(sym.id);
-            }
-            // file
-            by_file.entry(sym.file_instance_id).or_default().push(sym.id);
-        }
-
-        // 3. P5-v2：从快照恢复 callee_name_to_idx（反向索引：callee_name → idx）
-        //    callee_names_offsets 末尾有哨兵（pool.len()），所以 name 数 = offsets.len() - 1
-        let mut callee_name_to_idx: FxHashMap<String, u32> = FxHashMap::default();
-        let callee_name_count = callee_names_offsets.len().saturating_sub(1);
-        for i in 0..callee_name_count {
-            let start = callee_names_offsets[i] as usize;
-            let end = callee_names_offsets[i + 1] as usize;
-            if let Some(name) = callee_names_pool.get(start..end) {
-                callee_name_to_idx.insert(name.to_string(), i as u32);
-            }
-        }
-
-        // 4. by_callee_name 索引（callee_name_idx → [forward_edges 位置]）
-        let mut by_callee_name: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
-        for (idx, edge) in forward_edges.iter().enumerate() {
-            by_callee_name.entry(edge.callee_name_idx).or_default().push(idx);
-        }
+        let (callee_name_sorted_idxs, callee_position_offsets, callee_positions) =
+            build_callee_name_index(&forward_edges, &callee_names_pool, &callee_names_offsets);
 
         // 5. roots（从 backward_edges 重建）
         let mut has_caller = vec![false; by_id.len()];
@@ -1467,8 +1517,7 @@ impl GraphStore {
         self.symbols = Some(SymbolTable {
             by_id,
             by_qname_sorted_ids,
-            by_simple_name,
-            by_file,
+            by_simple_name_sorted_ids,
             file_paths_pool,
             file_paths_offsets,
             name_pool,
@@ -1484,10 +1533,11 @@ impl GraphStore {
             forward_offsets,
             backward_edges,
             backward_offsets,
-            by_callee_name,
+            callee_position_offsets,
+            callee_positions,
             callee_names_pool,
             callee_names_offsets,
-            callee_name_to_idx,
+            callee_name_sorted_idxs,
             roots,
         });
 
@@ -1665,6 +1715,46 @@ impl GraphStore {
 // CSR 构建
 // ============================================
 
+/// 构建 callee 名称二分索引和 name_idx → edge position 的紧凑 CSR。
+fn build_callee_name_index(
+    forward_edges: &[CallEdge],
+    names_pool: &str,
+    name_offsets: &[u32],
+) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    let name_count = name_offsets.len().saturating_sub(1);
+    let mut sorted_idxs: Vec<u32> = (0..name_count as u32).collect();
+    sorted_idxs.sort_unstable_by(|a, b| {
+        let ai = *a as usize;
+        let bi = *b as usize;
+        let an = &names_pool[name_offsets[ai] as usize..name_offsets[ai + 1] as usize];
+        let bn = &names_pool[name_offsets[bi] as usize..name_offsets[bi + 1] as usize];
+        an.cmp(bn)
+    });
+
+    let mut offsets = vec![0u32; name_count + 1];
+    for edge in forward_edges {
+        let idx = edge.callee_name_idx as usize;
+        if idx < name_count {
+            offsets[idx + 1] += 1;
+        }
+    }
+    for i in 1..offsets.len() {
+        offsets[i] += offsets[i - 1];
+    }
+
+    let mut positions = vec![0u32; forward_edges.len()];
+    let mut cursors = offsets[..name_count].to_vec();
+    for (position, edge) in forward_edges.iter().enumerate() {
+        let idx = edge.callee_name_idx as usize;
+        if idx < name_count {
+            let slot = cursors[idx] as usize;
+            positions[slot] = position as u32;
+            cursors[idx] += 1;
+        }
+    }
+    (sorted_idxs, offsets, positions)
+}
+
 /// 从边列表构建 CSR 邻接表
 /// forward: 按 caller_id 排序
 /// backward: 按 callee_id 排序（用于 get_callers 反向查询）
@@ -1708,17 +1798,17 @@ fn build_csr(
         backward_offsets[i] += backward_offsets[i - 1];
     }
 
-    // callee_name_to_idx 在 load_from_sqlite 完成后由调用方补充
-    // roots 也在 load_from_sqlite 完成后由调用方补充（需要 symbols 信息）
+    // 名称索引和 roots 在加载函数中补充。
     CallGraph {
         forward_edges,
         forward_offsets,
         backward_edges,
         backward_offsets,
-        by_callee_name: FxHashMap::default(),
+        callee_position_offsets: Vec::new(),
+        callee_positions: Vec::new(),
         callee_names_pool,
         callee_names_offsets,
-        callee_name_to_idx: FxHashMap::default(),
+        callee_name_sorted_idxs: Vec::new(),
         roots: Vec::new(),
     }
 }
@@ -1951,4 +2041,3 @@ struct SnapshotHeader {
 
 /// 快照文件头大小（自动等于 sizeof(SnapshotHeader)）
 const HEADER_SIZE: usize = std::mem::size_of::<SnapshotHeader>();
-

@@ -267,17 +267,27 @@ class QueryMixin:
                 pass  # Rust 查询异常 → 降级 SQL
         # P6 注：idx_calls_callee 已删除（GraphStore 覆盖 get_callers）。
         # SQL 降级路径（callwarden_core 未安装时）WHERE callee_name=? 走全表扫描。
-        # P28：传入 qualified_name 时，JOIN symbols 精确过滤 callee_id
+        # P7：传入 qualified_name 时先在当前工作区解析 symbol id，再通过紧凑整数索引查边。
+        # 显式 callee_id > 0 是 SQLite 使用 partial index 的必要条件。
         if qualified_name is not None:
+            ws_id = self._get_active_workspace_id()
             cur = self.conn.execute(
                 """SELECT c.*, s.name as caller_name, fi.rel_path as caller_file
                    FROM calls c
                    JOIN symbols s ON c.caller_id = s.id
                    JOIN file_instances fi ON s.file_instance_id = fi.id
-                   JOIN symbols callee ON c.callee_id = callee.id
-                   WHERE c.callee_name = ? AND callee.qualified_name = ?
+                   WHERE fi.workspace_id = ?
+                     AND c.callee_id > 0
+                     AND c.callee_id = (
+                         SELECT target.id
+                         FROM symbols target
+                         JOIN file_instances target_fi ON target.file_instance_id = target_fi.id
+                         WHERE target_fi.workspace_id = ?
+                           AND target.qualified_name = ?
+                         LIMIT 1
+                     )
                    ORDER BY fi.rel_path, c.call_line""",
-                (callee_name, qualified_name),
+                (ws_id, ws_id, qualified_name),
             )
         else:
             cur = self.conn.execute(

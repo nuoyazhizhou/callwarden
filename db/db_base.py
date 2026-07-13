@@ -510,7 +510,10 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_callee_qualified ON calls(callee_qualified)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calls_callee_id_resolved "
+        "ON calls(callee_id) WHERE callee_id > 0"
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_hash ON file_versions(content_hash)")
@@ -1553,6 +1556,20 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection):
     conn.execute("DROP INDEX IF EXISTS idx_calls_callee")
 
 
+def _migrate_v32_to_v33(conn: sqlite3.Connection):
+    """v32 -> v33: 用整数部分索引替代反向调用长文本索引
+
+    已解析调用通过 callee_id 连接目标符号。整数 key 比 qualified_name 文本 key
+    更紧凑，部分索引同时排除 callee_id=0 的未解析调用。先建新索引再删除旧索引，
+    迁移失败回滚后仍保留原查询能力。
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calls_callee_id_resolved "
+        "ON calls(callee_id) WHERE callee_id > 0"
+    )
+    conn.execute("DROP INDEX IF EXISTS idx_calls_callee_qualified")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -1992,6 +2009,10 @@ class CodeGraphBase:
             32: {
                 "description": t("cli.messages.migration_v32", default="P6: Drop idx_calls_callee (GraphStore covers get_callers in memory)"),
                 "func": _migrate_v31_to_v32,
+            },
+            33: {
+                "description": t("cli.messages.migration_v33", default="P7: Replace calls(callee_qualified) text index with resolved callee_id partial index"),
+                "func": _migrate_v32_to_v33,
             },
         }
 

@@ -493,13 +493,26 @@ class CoverageMixin(_AnalyzerCoverageMixin):
         """
         ws_id = self._get_active_workspace_id()
 
-        # BFS 反向遍历调用图
-        visited: Set[str] = set()
-        queue: List[str] = [qualified_name]
+        # 入口按当前工作区解析一次 symbol id，BFS 后续全程走紧凑整数索引。
+        target = self.conn.execute(
+            """
+            SELECT s.id
+            FROM symbols s
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND s.qualified_name = ?
+            LIMIT 1
+            """,
+            (ws_id, qualified_name),
+        ).fetchone()
+        if not target:
+            return []
+
+        visited: Set[int] = set()
+        queue: List[int] = [target["id"]]
         all_callers: Dict[str, Dict] = {}
 
         while queue:
-            current_batch = [q for q in queue if q not in visited]
+            current_batch = [symbol_id for symbol_id in queue if symbol_id not in visited]
             if not current_batch:
                 break
 
@@ -508,21 +521,22 @@ class CoverageMixin(_AnalyzerCoverageMixin):
             cur = self.conn.execute(
                 f"""
                 SELECT DISTINCT
-                    s.qualified_name, s.name, s.module_path,
+                    s.id, s.qualified_name, s.name, s.module_path,
                     s.start_line, fi.rel_path
                 FROM calls c
                 JOIN symbols s ON c.caller_id = s.id
                 JOIN file_instances fi ON s.file_instance_id = fi.id
                 WHERE fi.workspace_id = ?
-                  AND c.callee_qualified IN ({placeholders})
+                  AND c.callee_id > 0
+                  AND c.callee_id IN ({placeholders})
                 """,
                 [ws_id] + current_batch,
             )
 
-            next_queue: List[str] = []
+            next_queue: List[int] = []
             for row in cur:
                 caller_qn = row["qualified_name"]
-                if caller_qn and caller_qn not in visited:
+                if caller_qn and row["id"] not in visited:
                     all_callers[caller_qn] = {
                         "qualified_name": caller_qn,
                         "name": row["name"],
@@ -530,10 +544,9 @@ class CoverageMixin(_AnalyzerCoverageMixin):
                         "start_line": row["start_line"],
                         "file_path": row["rel_path"],
                     }
-                    next_queue.append(caller_qn)
+                    next_queue.append(row["id"])
 
-            for q in current_batch:
-                visited.add(q)
+            visited.update(current_batch)
             queue = next_queue
 
         # 从所有调用者中筛选测试函数

@@ -331,7 +331,7 @@ class ImpactMixin:
         # 去重集合：按 qualified_name 与 symbol_hash 双重去重
         visited_qn = {source_qn} if source_qn else set()
         visited_hash = {symbol_hash}
-        current_batch: List[str] = [source_qn] if source_qn else []
+        current_batch: List[int] = [row["id"]]
 
         for d in range(1, depth + 1):
             if not current_batch:
@@ -346,11 +346,12 @@ class ImpactMixin:
                 JOIN symbols s ON c.caller_id = s.id
                 JOIN file_instances fi ON s.file_instance_id = fi.id
                 WHERE fi.workspace_id = ?
-                  AND c.callee_qualified IN ({placeholders})
+                  AND c.callee_id > 0
+                  AND c.callee_id IN ({placeholders})
                 """,
                 [ws_id] + current_batch,
             )
-            next_batch: List[str] = []
+            next_batch: List[int] = []
             layer_symbols: List[Dict[str, Any]] = []
             for r in cur:
                 qn = r["qualified_name"] or ""
@@ -370,7 +371,7 @@ class ImpactMixin:
                     "kind": r["kind"],
                 })
                 if qn:
-                    next_batch.append(qn)
+                    next_batch.append(r["id"])
             if layer_symbols:
                 layers.append({"depth": d, "symbols": layer_symbols})
             current_batch = next_batch
@@ -450,9 +451,10 @@ class ImpactMixin:
             JOIN symbols s ON c.caller_id = s.id
             JOIN file_instances fi ON s.file_instance_id = fi.id
             WHERE fi.workspace_id = ?
-              AND c.callee_qualified = ?
+              AND c.callee_id > 0
+              AND c.callee_id = ?
             """,
-            (ws_id, source_qn),
+            (ws_id, row["id"]),
         )
         for r in cur:
             code_layer.append({
