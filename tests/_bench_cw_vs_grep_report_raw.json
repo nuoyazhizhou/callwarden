@@ -1,0 +1,4202 @@
+{
+  "generate_systemd_unit_symbol": {
+    "cw": [
+      {
+        "ms": 278.30570000514854,
+        "chars": 374,
+        "lines": 7,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 292.1598999964772,
+        "chars": 374,
+        "lines": 7,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 329.333100002259,
+        "chars": 374,
+        "lines": 7,
+        "result_count": 2,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 94.20799999497831,
+        "chars": 73,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 108.1731000012951,
+        "chars": 73,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 109.24339998746291,
+        "chars": 73,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      }
+    ]
+  },
+  "generate_systemd_unit_callers": {
+    "cw": [
+      {
+        "ms": 318.41310000163503,
+        "chars": 1722,
+        "lines": 24,
+        "result_count": 23
+      },
+      {
+        "ms": 303.2026000000769,
+        "chars": 1722,
+        "lines": 24,
+        "result_count": 23
+      },
+      {
+        "ms": 289.7700000030454,
+        "chars": 1722,
+        "lines": 24,
+        "result_count": 23
+      }
+    ],
+    "grep": [
+      {
+        "ms": 111.65919998893514,
+        "chars": 2599,
+        "lines": 25,
+        "result_count": 25
+      },
+      {
+        "ms": 110.12959999789018,
+        "chars": 2599,
+        "lines": 25,
+        "result_count": 25
+      },
+      {
+        "ms": 102.83060000801925,
+        "chars": 2599,
+        "lines": 25,
+        "result_count": 25
+      }
+    ]
+  },
+  "generate_systemd_unit_callees": {
+    "cw": [
+      {
+        "ms": 308.1201000022702,
+        "chars": 162,
+        "lines": 4,
+        "result_count": 3
+      },
+      {
+        "ms": 290.6381000066176,
+        "chars": 162,
+        "lines": 4,
+        "result_count": 3
+      },
+      {
+        "ms": 289.08919999958016,
+        "chars": 162,
+        "lines": 4,
+        "result_count": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 112.24889999721199,
+        "chars": 5870,
+        "lines": 46,
+        "result_count": 46,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 117.41799999435898,
+        "chars": 5870,
+        "lines": 46,
+        "result_count": 46,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 114.85730001004413,
+        "chars": 5870,
+        "lines": 46,
+        "result_count": 46,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "generate_systemd_unit_call-chain": {
+    "cw": [
+      {
+        "ms": 289.4531000056304,
+        "chars": 103,
+        "lines": 3
+      },
+      {
+        "ms": 297.1570999943651,
+        "chars": 103,
+        "lines": 3
+      },
+      {
+        "ms": 294.652299999143,
+        "chars": 103,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "generate_systemd_unit_impact": {
+    "cw": [
+      {
+        "ms": 276.6925000032643,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 278.381600001012,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 293.79949999565724,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "generate_systemd_unit_grep": {
+    "cw": [
+      {
+        "ms": 390.72870000381954,
+        "chars": 4723,
+        "lines": 25,
+        "result_count": 25,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 407.29399998963345,
+        "chars": 4723,
+        "lines": 25,
+        "result_count": 25,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 406.7397000035271,
+        "chars": 4723,
+        "lines": 25,
+        "result_count": 25,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 119.170199992368,
+        "chars": 5870,
+        "lines": 46,
+        "result_count": 46,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 121.23619999329094,
+        "chars": 5870,
+        "lines": 46,
+        "result_count": 46,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 124.63789999310393,
+        "chars": 5870,
+        "lines": 46,
+        "result_count": 46,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "generate_systemd_unit_issues": {
+    "cw": [
+      {
+        "ms": 350.23219999857247,
+        "chars": 113,
+        "lines": 2
+      },
+      {
+        "ms": 295.99810000217985,
+        "chars": 113,
+        "lines": 2
+      },
+      {
+        "ms": 343.97649999300484,
+        "chars": 113,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "generate_systemd_unit_tests": {
+    "cw": [
+      {
+        "ms": 333.1012999988161,
+        "chars": 3372,
+        "lines": 50
+      },
+      {
+        "ms": 317.7663999958895,
+        "chars": 3372,
+        "lines": 50
+      },
+      {
+        "ms": 287.8905000106897,
+        "chars": 3372,
+        "lines": 50
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "generate_systemd_unit_clone": {
+    "cw": [
+      {
+        "ms": 292.9902000032598,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 282.4767999991309,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 266.3522000075318,
+        "chars": 80,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "generate_systemd_unit_evolution-defects": {
+    "cw": [
+      {
+        "ms": 262.6021000032779,
+        "chars": 172,
+        "lines": 6
+      },
+      {
+        "ms": 257.9147000069497,
+        "chars": 172,
+        "lines": 6
+      },
+      {
+        "ms": 259.73440000962,
+        "chars": 172,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_symbol": {
+    "cw": [
+      {
+        "ms": 281.4871999871684,
+        "chars": 692,
+        "lines": 10,
+        "result_count": 3,
+        "found": true
+      },
+      {
+        "ms": 295.2657999994699,
+        "chars": 692,
+        "lines": 10,
+        "result_count": 3,
+        "found": true
+      },
+      {
+        "ms": 289.83120000339113,
+        "chars": 692,
+        "lines": 10,
+        "result_count": 3,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 115.30230000789743,
+        "chars": 197,
+        "lines": 2,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 115.25160000019241,
+        "chars": 197,
+        "lines": 2,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 116.62740001338534,
+        "chars": 197,
+        "lines": 2,
+        "result_count": 2,
+        "found": true
+      }
+    ]
+  },
+  "_get_subcommand_epilog_callers": {
+    "cw": [
+      {
+        "ms": 310.0001999991946,
+        "chars": 774,
+        "lines": 20,
+        "result_count": 19
+      },
+      {
+        "ms": 301.78919999161735,
+        "chars": 774,
+        "lines": 20,
+        "result_count": 19
+      },
+      {
+        "ms": 311.87960000534076,
+        "chars": 774,
+        "lines": 20,
+        "result_count": 19
+      }
+    ],
+    "grep": [
+      {
+        "ms": 114.75760000757873,
+        "chars": 3376,
+        "lines": 33,
+        "result_count": 33
+      },
+      {
+        "ms": 114.9849999928847,
+        "chars": 3376,
+        "lines": 33,
+        "result_count": 33
+      },
+      {
+        "ms": 148.36300000024494,
+        "chars": 3376,
+        "lines": 33,
+        "result_count": 33
+      }
+    ]
+  },
+  "_get_subcommand_epilog_callees": {
+    "cw": [
+      {
+        "ms": 327.3008999967715,
+        "chars": 149,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 339.28510000987444,
+        "chars": 149,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 314.9358999944525,
+        "chars": 149,
+        "lines": 3,
+        "result_count": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 123.53700000676326,
+        "chars": 5652,
+        "lines": 51,
+        "result_count": 51,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 144.22230000491254,
+        "chars": 5652,
+        "lines": 51,
+        "result_count": 51,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 116.51530000381172,
+        "chars": 5652,
+        "lines": 51,
+        "result_count": 51,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_call-chain": {
+    "cw": [
+      {
+        "ms": 270.85990000341553,
+        "chars": 154,
+        "lines": 5
+      },
+      {
+        "ms": 264.1462000028696,
+        "chars": 154,
+        "lines": 5
+      },
+      {
+        "ms": 258.3937000017613,
+        "chars": 154,
+        "lines": 5
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_impact": {
+    "cw": [
+      {
+        "ms": 248.20899999758694,
+        "chars": 91,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 269.4125999987591,
+        "chars": 91,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 264.00460000149906,
+        "chars": 91,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_grep": {
+    "cw": [
+      {
+        "ms": 349.7026000113692,
+        "chars": 5387,
+        "lines": 33,
+        "result_count": 33,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 370.3193999972427,
+        "chars": 5387,
+        "lines": 33,
+        "result_count": 33,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 383.54049999907147,
+        "chars": 5387,
+        "lines": 33,
+        "result_count": 33,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 110.37900000519585,
+        "chars": 5652,
+        "lines": 51,
+        "result_count": 51,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 109.20629999600351,
+        "chars": 5652,
+        "lines": 51,
+        "result_count": 51,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 110.84179999306798,
+        "chars": 5652,
+        "lines": 51,
+        "result_count": 51,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_issues": {
+    "cw": [
+      {
+        "ms": 276.16360000683926,
+        "chars": 105,
+        "lines": 2
+      },
+      {
+        "ms": 275.5106000113301,
+        "chars": 105,
+        "lines": 2
+      },
+      {
+        "ms": 295.96660000970587,
+        "chars": 105,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_tests": {
+    "cw": [
+      {
+        "ms": 323.970500001451,
+        "chars": 139,
+        "lines": 3
+      },
+      {
+        "ms": 406.69319999869913,
+        "chars": 139,
+        "lines": 3
+      },
+      {
+        "ms": 368.7160999979824,
+        "chars": 139,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_clone": {
+    "cw": [
+      {
+        "ms": 357.7571999921929,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 382.4375000112923,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 361.5513999975519,
+        "chars": 80,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "_get_subcommand_epilog_evolution-defects": {
+    "cw": [
+      {
+        "ms": 363.84190000535455,
+        "chars": 165,
+        "lines": 6
+      },
+      {
+        "ms": 378.2115999929374,
+        "chars": 165,
+        "lines": 6
+      },
+      {
+        "ms": 339.55640000931453,
+        "chars": 165,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "daemon_handle_refresh_symbol": {
+    "cw": [
+      {
+        "ms": 354.819200001657,
+        "chars": 2089,
+        "lines": 27,
+        "result_count": 9,
+        "found": true
+      },
+      {
+        "ms": 338.4426999982679,
+        "chars": 2089,
+        "lines": 27,
+        "result_count": 9,
+        "found": true
+      },
+      {
+        "ms": 340.6957999977749,
+        "chars": 2089,
+        "lines": 27,
+        "result_count": 9,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 120.19839999265969,
+        "chars": 868,
+        "lines": 6,
+        "result_count": 6,
+        "found": true
+      },
+      {
+        "ms": 129.19780000811443,
+        "chars": 868,
+        "lines": 6,
+        "result_count": 6,
+        "found": true
+      },
+      {
+        "ms": 138.18790001096204,
+        "chars": 868,
+        "lines": 6,
+        "result_count": 6,
+        "found": true
+      }
+    ]
+  },
+  "daemon_handle_refresh_callers": {
+    "cw": [
+      {
+        "ms": 346.5991999983089,
+        "chars": 1380,
+        "lines": 15,
+        "result_count": 14
+      },
+      {
+        "ms": 355.0919999979669,
+        "chars": 1380,
+        "lines": 15,
+        "result_count": 14
+      },
+      {
+        "ms": 343.73750000668224,
+        "chars": 1380,
+        "lines": 15,
+        "result_count": 14
+      }
+    ],
+    "grep": [
+      {
+        "ms": 131.34779999381863,
+        "chars": 9241,
+        "lines": 68,
+        "result_count": 68
+      },
+      {
+        "ms": 126.48980000813026,
+        "chars": 9241,
+        "lines": 68,
+        "result_count": 68
+      },
+      {
+        "ms": 134.2006000049878,
+        "chars": 9241,
+        "lines": 68,
+        "result_count": 68
+      }
+    ]
+  },
+  "daemon_handle_refresh_callees": {
+    "cw": [
+      {
+        "ms": 335.3696999984095,
+        "chars": 859,
+        "lines": 23,
+        "result_count": 22
+      },
+      {
+        "ms": 329.1964999953052,
+        "chars": 859,
+        "lines": 23,
+        "result_count": 22
+      },
+      {
+        "ms": 342.19590001157485,
+        "chars": 859,
+        "lines": 23,
+        "result_count": 22
+      }
+    ],
+    "grep": [
+      {
+        "ms": 129.14950000413228,
+        "chars": 35322,
+        "lines": 195,
+        "result_count": 195,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 118.20280000392813,
+        "chars": 35322,
+        "lines": 195,
+        "result_count": 195,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 133.32220001029782,
+        "chars": 35322,
+        "lines": 195,
+        "result_count": 195,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "daemon_handle_refresh_call-chain": {
+    "cw": [
+      {
+        "ms": 327.2482000029413,
+        "chars": 1180,
+        "lines": 30
+      },
+      {
+        "ms": 314.37190000724513,
+        "chars": 1180,
+        "lines": 30
+      },
+      {
+        "ms": 314.6738000068581,
+        "chars": 1180,
+        "lines": 30
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "daemon_handle_refresh_impact": {
+    "cw": [
+      {
+        "ms": 317.0011999900453,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 342.2290000016801,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 335.2353999944171,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "daemon_handle_refresh_grep": {
+    "cw": [
+      {
+        "ms": 428.3047000062652,
+        "chars": 10679,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 487.5954000017373,
+        "chars": 11273,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 465.01569999963976,
+        "chars": 10649,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 132.8469000000041,
+        "chars": 35322,
+        "lines": 195,
+        "result_count": 195,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 132.79629999306053,
+        "chars": 35322,
+        "lines": 195,
+        "result_count": 195,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 152.21100000781007,
+        "chars": 35322,
+        "lines": 195,
+        "result_count": 195,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "daemon_handle_refresh_issues": {
+    "cw": [
+      {
+        "ms": 344.71340000163764,
+        "chars": 113,
+        "lines": 2
+      },
+      {
+        "ms": 332.44050000212155,
+        "chars": 113,
+        "lines": 2
+      },
+      {
+        "ms": 309.0446999995038,
+        "chars": 113,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "daemon_handle_refresh_tests": {
+    "cw": [
+      {
+        "ms": 314.53139999939594,
+        "chars": 1780,
+        "lines": 22
+      },
+      {
+        "ms": 328.24109999637585,
+        "chars": 1780,
+        "lines": 22
+      },
+      {
+        "ms": 359.57660000713076,
+        "chars": 1780,
+        "lines": 22
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "daemon_handle_refresh_clone": {
+    "cw": [
+      {
+        "ms": 346.5886999911163,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 329.99430000199936,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 320.0144000002183,
+        "chars": 80,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "daemon_handle_refresh_evolution-defects": {
+    "cw": [
+      {
+        "ms": 343.08919998875353,
+        "chars": 172,
+        "lines": 6
+      },
+      {
+        "ms": 365.6466999964323,
+        "chars": 172,
+        "lines": 6
+      },
+      {
+        "ms": 362.7561000030255,
+        "chars": 172,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "daemon_handle_connect_symbol": {
+    "cw": [
+      {
+        "ms": 386.51430000027176,
+        "chars": 1138,
+        "lines": 15,
+        "result_count": 5,
+        "found": true
+      },
+      {
+        "ms": 432.9455999977654,
+        "chars": 1138,
+        "lines": 15,
+        "result_count": 5,
+        "found": true
+      },
+      {
+        "ms": 439.377600006992,
+        "chars": 1138,
+        "lines": 15,
+        "result_count": 5,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 137.92940000712406,
+        "chars": 756,
+        "lines": 5,
+        "result_count": 5,
+        "found": true
+      },
+      {
+        "ms": 160.54920000897255,
+        "chars": 756,
+        "lines": 5,
+        "result_count": 5,
+        "found": true
+      },
+      {
+        "ms": 160.70910000416916,
+        "chars": 756,
+        "lines": 5,
+        "result_count": 5,
+        "found": true
+      }
+    ]
+  },
+  "daemon_handle_connect_callers": {
+    "cw": [
+      {
+        "ms": 477.8131999919424,
+        "chars": 1479,
+        "lines": 16,
+        "result_count": 15
+      },
+      {
+        "ms": 410.9228999877814,
+        "chars": 1479,
+        "lines": 16,
+        "result_count": 15
+      },
+      {
+        "ms": 375.97870000172406,
+        "chars": 1479,
+        "lines": 16,
+        "result_count": 15
+      }
+    ],
+    "grep": [
+      {
+        "ms": 171.15569999441504,
+        "chars": 9633,
+        "lines": 76,
+        "result_count": 76
+      },
+      {
+        "ms": 139.6759000053862,
+        "chars": 9633,
+        "lines": 76,
+        "result_count": 76
+      },
+      {
+        "ms": 141.0875000001397,
+        "chars": 9633,
+        "lines": 76,
+        "result_count": 76
+      }
+    ]
+  },
+  "daemon_handle_connect_callees": {
+    "cw": [
+      {
+        "ms": 391.36589999543503,
+        "chars": 398,
+        "lines": 12,
+        "result_count": 11
+      },
+      {
+        "ms": 339.16150000004563,
+        "chars": 398,
+        "lines": 12,
+        "result_count": 11
+      },
+      {
+        "ms": 349.8764999967534,
+        "chars": 398,
+        "lines": 12,
+        "result_count": 11
+      }
+    ],
+    "grep": [
+      {
+        "ms": 135.41089999489486,
+        "chars": 18567,
+        "lines": 121,
+        "result_count": 121,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 132.8112999908626,
+        "chars": 18567,
+        "lines": 121,
+        "result_count": 121,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 132.11180000507738,
+        "chars": 18567,
+        "lines": 121,
+        "result_count": 121,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "daemon_handle_connect_call-chain": {
+    "cw": [
+      {
+        "ms": 348.0102000030456,
+        "chars": 103,
+        "lines": 3
+      },
+      {
+        "ms": 331.23080000223126,
+        "chars": 103,
+        "lines": 3
+      },
+      {
+        "ms": 317.69989999884274,
+        "chars": 103,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "daemon_handle_connect_impact": {
+    "cw": [
+      {
+        "ms": 321.4733999921009,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 325.71660001121927,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 305.2560999931302,
+        "chars": 99,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "daemon_handle_connect_grep": {
+    "cw": [
+      {
+        "ms": 392.08720000169706,
+        "chars": 11785,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 394.83950000430923,
+        "chars": 11581,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 386.7346000042744,
+        "chars": 11810,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 112.7526000054786,
+        "chars": 18567,
+        "lines": 121,
+        "result_count": 121,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 112.26629999873694,
+        "chars": 18567,
+        "lines": 121,
+        "result_count": 121,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 116.96959999972023,
+        "chars": 18567,
+        "lines": 121,
+        "result_count": 121,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "daemon_handle_connect_issues": {
+    "cw": [
+      {
+        "ms": 282.71339999628253,
+        "chars": 113,
+        "lines": 2
+      },
+      {
+        "ms": 266.8424000003142,
+        "chars": 113,
+        "lines": 2
+      },
+      {
+        "ms": 254.72589999844786,
+        "chars": 113,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "daemon_handle_connect_tests": {
+    "cw": [
+      {
+        "ms": 247.24759999662638,
+        "chars": 1780,
+        "lines": 22
+      },
+      {
+        "ms": 243.76549999578856,
+        "chars": 1780,
+        "lines": 22
+      },
+      {
+        "ms": 250.02769999264274,
+        "chars": 1780,
+        "lines": 22
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "daemon_handle_connect_clone": {
+    "cw": [
+      {
+        "ms": 259.5348000031663,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 254.44489999790676,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 255.67109999246895,
+        "chars": 80,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "daemon_handle_connect_evolution-defects": {
+    "cw": [
+      {
+        "ms": 250.14960000407882,
+        "chars": 172,
+        "lines": 6
+      },
+      {
+        "ms": 240.29149999842048,
+        "chars": 172,
+        "lines": 6
+      },
+      {
+        "ms": 246.24899998889305,
+        "chars": 172,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "get_callers_symbol": {
+    "cw": [
+      {
+        "ms": 264.2436999885831,
+        "chars": 1636,
+        "lines": 27,
+        "result_count": 8,
+        "found": true
+      },
+      {
+        "ms": 266.94899999711197,
+        "chars": 1636,
+        "lines": 27,
+        "result_count": 8,
+        "found": true
+      },
+      {
+        "ms": 268.40690000972245,
+        "chars": 1636,
+        "lines": 27,
+        "result_count": 8,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 94.9146000057226,
+        "chars": 1463,
+        "lines": 14,
+        "result_count": 14,
+        "found": true
+      },
+      {
+        "ms": 98.06279999611434,
+        "chars": 1463,
+        "lines": 14,
+        "result_count": 14,
+        "found": true
+      },
+      {
+        "ms": 106.90009999962058,
+        "chars": 1463,
+        "lines": 14,
+        "result_count": 14,
+        "found": true
+      }
+    ]
+  },
+  "get_callers_callers": {
+    "cw": [
+      {
+        "ms": 272.3946000041906,
+        "chars": 84,
+        "lines": 2,
+        "result_count": 1
+      },
+      {
+        "ms": 267.5549999985378,
+        "chars": 84,
+        "lines": 2,
+        "result_count": 1
+      },
+      {
+        "ms": 280.8989000041038,
+        "chars": 84,
+        "lines": 2,
+        "result_count": 1
+      }
+    ],
+    "grep": [
+      {
+        "ms": 107.99319999932777,
+        "chars": 13992,
+        "lines": 114,
+        "result_count": 114
+      },
+      {
+        "ms": 106.58520000288263,
+        "chars": 13992,
+        "lines": 114,
+        "result_count": 114
+      },
+      {
+        "ms": 113.54229999415111,
+        "chars": 13992,
+        "lines": 114,
+        "result_count": 114
+      }
+    ]
+  },
+  "get_callers_callees": {
+    "cw": [
+      {
+        "ms": 296.4018000056967,
+        "chars": 121,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 281.9744000007631,
+        "chars": 121,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 331.2850000074832,
+        "chars": 121,
+        "lines": 3,
+        "result_count": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 106.71379999257624,
+        "chars": 76004,
+        "lines": 589,
+        "result_count": 589,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 108.73069999797735,
+        "chars": 76004,
+        "lines": 589,
+        "result_count": 589,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 117.90329999348614,
+        "chars": 76004,
+        "lines": 589,
+        "result_count": 589,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "get_callers_call-chain": {
+    "cw": [
+      {
+        "ms": 287.3778999928618,
+        "chars": 84,
+        "lines": 3
+      },
+      {
+        "ms": 303.9433999947505,
+        "chars": 84,
+        "lines": 3
+      },
+      {
+        "ms": 293.7604000035208,
+        "chars": 84,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "get_callers_impact": {
+    "cw": [
+      {
+        "ms": 261.34369999635965,
+        "chars": 80,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 274.48600000934675,
+        "chars": 80,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 276.9049000053201,
+        "chars": 80,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "get_callers_grep": {
+    "cw": [
+      {
+        "ms": 374.38389999442734,
+        "chars": 8581,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 384.76090000767726,
+        "chars": 8735,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 394.9288000003435,
+        "chars": 8738,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 111.73089999647345,
+        "chars": 76004,
+        "lines": 589,
+        "result_count": 589,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 118.1734999991022,
+        "chars": 76004,
+        "lines": 589,
+        "result_count": 589,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 126.87749999167863,
+        "chars": 76004,
+        "lines": 589,
+        "result_count": 589,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "get_callers_issues": {
+    "cw": [
+      {
+        "ms": 283.8848999963375,
+        "chars": 94,
+        "lines": 2
+      },
+      {
+        "ms": 279.27689999341965,
+        "chars": 94,
+        "lines": 2
+      },
+      {
+        "ms": 267.13069999823347,
+        "chars": 94,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "get_callers_tests": {
+    "cw": [
+      {
+        "ms": 301.259800005937,
+        "chars": 128,
+        "lines": 3
+      },
+      {
+        "ms": 298.34609999670647,
+        "chars": 128,
+        "lines": 3
+      },
+      {
+        "ms": 282.97389998624567,
+        "chars": 128,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "get_callers_clone": {
+    "cw": [
+      {
+        "ms": 277.2326999984216,
+        "chars": 38,
+        "lines": 1
+      },
+      {
+        "ms": 277.04020000237506,
+        "chars": 38,
+        "lines": 1
+      },
+      {
+        "ms": 271.22890000464395,
+        "chars": 38,
+        "lines": 1
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "get_callers_evolution-defects": {
+    "cw": [
+      {
+        "ms": 270.02189999620896,
+        "chars": 153,
+        "lines": 6
+      },
+      {
+        "ms": 257.68860000243876,
+        "chars": 153,
+        "lines": 6
+      },
+      {
+        "ms": 263.3191000059014,
+        "chars": 153,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "_detect_and_decode_symbol": {
+    "cw": [
+      {
+        "ms": 282.8010999946855,
+        "chars": 201,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 294.83119999349583,
+        "chars": 201,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 312.2418999992078,
+        "chars": 201,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 100.96119999070652,
+        "chars": 105,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 118.74839999654796,
+        "chars": 105,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 119.50610000349116,
+        "chars": 105,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      }
+    ]
+  },
+  "_detect_and_decode_callers": {
+    "cw": [
+      {
+        "ms": 303.0638999916846,
+        "chars": 117,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 301.35919999156613,
+        "chars": 117,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 316.8971999984933,
+        "chars": 117,
+        "lines": 3,
+        "result_count": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 120.97370000265073,
+        "chars": 266,
+        "lines": 3,
+        "result_count": 3
+      },
+      {
+        "ms": 116.53929999738466,
+        "chars": 266,
+        "lines": 3,
+        "result_count": 3
+      },
+      {
+        "ms": 121.57960000331514,
+        "chars": 266,
+        "lines": 3,
+        "result_count": 3
+      }
+    ]
+  },
+  "_detect_and_decode_callees": {
+    "cw": [
+      {
+        "ms": 300.100200009183,
+        "chars": 400,
+        "lines": 10,
+        "result_count": 9
+      },
+      {
+        "ms": 283.4447000059299,
+        "chars": 400,
+        "lines": 10,
+        "result_count": 9
+      },
+      {
+        "ms": 309.8368000064511,
+        "chars": 400,
+        "lines": 10,
+        "result_count": 9
+      }
+    ],
+    "grep": [
+      {
+        "ms": 112.34950000653043,
+        "chars": 651,
+        "lines": 7,
+        "result_count": 7,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 114.33060000126716,
+        "chars": 651,
+        "lines": 7,
+        "result_count": 7,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 115.56020000716671,
+        "chars": 651,
+        "lines": 7,
+        "result_count": 7,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "_detect_and_decode_call-chain": {
+    "cw": [
+      {
+        "ms": 281.2938999995822,
+        "chars": 89,
+        "lines": 3
+      },
+      {
+        "ms": 280.88190000562463,
+        "chars": 89,
+        "lines": 3
+      },
+      {
+        "ms": 257.78400000126567,
+        "chars": 89,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "_detect_and_decode_impact": {
+    "cw": [
+      {
+        "ms": 253.47209999745246,
+        "chars": 85,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 253.0408000020543,
+        "chars": 85,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 251.45070000144187,
+        "chars": 85,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "_detect_and_decode_grep": {
+    "cw": [
+      {
+        "ms": 344.28759998991154,
+        "chars": 743,
+        "lines": 5,
+        "result_count": 5,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 355.8162999979686,
+        "chars": 743,
+        "lines": 5,
+        "result_count": 5,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 351.3325999956578,
+        "chars": 743,
+        "lines": 5,
+        "result_count": 5,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 102.25489998992998,
+        "chars": 651,
+        "lines": 7,
+        "result_count": 7,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 105.19409998960327,
+        "chars": 651,
+        "lines": 7,
+        "result_count": 7,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 100.53049999987707,
+        "chars": 651,
+        "lines": 7,
+        "result_count": 7,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "_detect_and_decode_issues": {
+    "cw": [
+      {
+        "ms": 252.88569999975152,
+        "chars": 99,
+        "lines": 2
+      },
+      {
+        "ms": 262.0324999879813,
+        "chars": 99,
+        "lines": 2
+      },
+      {
+        "ms": 261.23800000641495,
+        "chars": 99,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "_detect_and_decode_tests": {
+    "cw": [
+      {
+        "ms": 258.6957000021357,
+        "chars": 133,
+        "lines": 3
+      },
+      {
+        "ms": 246.96570000378415,
+        "chars": 133,
+        "lines": 3
+      },
+      {
+        "ms": 252.08990000828635,
+        "chars": 133,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "_detect_and_decode_clone": {
+    "cw": [
+      {
+        "ms": 251.52130000060424,
+        "chars": 130,
+        "lines": 2
+      },
+      {
+        "ms": 261.0309000010602,
+        "chars": 130,
+        "lines": 2
+      },
+      {
+        "ms": 255.0822000048356,
+        "chars": 130,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "_detect_and_decode_evolution-defects": {
+    "cw": [
+      {
+        "ms": 248.05100000230595,
+        "chars": 158,
+        "lines": 6
+      },
+      {
+        "ms": 246.60450000374112,
+        "chars": 158,
+        "lines": 6
+      },
+      {
+        "ms": 252.84929999907035,
+        "chars": 158,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "_handle_symbol_symbol": {
+    "cw": [
+      {
+        "ms": 277.25670000654645,
+        "chars": 310,
+        "lines": 7,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 278.52700000221375,
+        "chars": 310,
+        "lines": 7,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 281.79690000251867,
+        "chars": 310,
+        "lines": 7,
+        "result_count": 2,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 101.75549999985378,
+        "chars": 147,
+        "lines": 2,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 116.78539999411441,
+        "chars": 147,
+        "lines": 2,
+        "result_count": 2,
+        "found": true
+      },
+      {
+        "ms": 112.09289998805616,
+        "chars": 147,
+        "lines": 2,
+        "result_count": 2,
+        "found": true
+      }
+    ]
+  },
+  "_handle_symbol_callers": {
+    "cw": [
+      {
+        "ms": 284.52370000013616,
+        "chars": 80,
+        "lines": 2,
+        "result_count": 1
+      },
+      {
+        "ms": 286.9330999965314,
+        "chars": 80,
+        "lines": 2,
+        "result_count": 1
+      },
+      {
+        "ms": 285.79130000434816,
+        "chars": 80,
+        "lines": 2,
+        "result_count": 1
+      }
+    ],
+    "grep": [
+      {
+        "ms": 111.72430000442546,
+        "chars": 153,
+        "lines": 2,
+        "result_count": 2
+      },
+      {
+        "ms": 103.3430999959819,
+        "chars": 153,
+        "lines": 2,
+        "result_count": 2
+      },
+      {
+        "ms": 109.83149999810848,
+        "chars": 153,
+        "lines": 2,
+        "result_count": 2
+      }
+    ]
+  },
+  "_handle_symbol_callees": {
+    "cw": [
+      {
+        "ms": 286.2221999967005,
+        "chars": 1208,
+        "lines": 36,
+        "result_count": 35
+      },
+      {
+        "ms": 284.25630000128876,
+        "chars": 1208,
+        "lines": 36,
+        "result_count": 35
+      },
+      {
+        "ms": 284.6624000085285,
+        "chars": 1208,
+        "lines": 36,
+        "result_count": 35
+      }
+    ],
+    "grep": [
+      {
+        "ms": 109.99240000091959,
+        "chars": 2726,
+        "lines": 27,
+        "result_count": 27,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 117.605099992943,
+        "chars": 2726,
+        "lines": 27,
+        "result_count": 27,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 119.93339999753516,
+        "chars": 2726,
+        "lines": 27,
+        "result_count": 27,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "_handle_symbol_call-chain": {
+    "cw": [
+      {
+        "ms": 279.57400000013877,
+        "chars": 87,
+        "lines": 3
+      },
+      {
+        "ms": 285.43760000320617,
+        "chars": 87,
+        "lines": 3
+      },
+      {
+        "ms": 277.0944999938365,
+        "chars": 87,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "_handle_symbol_impact": {
+    "cw": [
+      {
+        "ms": 262.3178999929223,
+        "chars": 83,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 267.19349999621045,
+        "chars": 83,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 267.4317999917548,
+        "chars": 83,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "_handle_symbol_grep": {
+    "cw": [
+      {
+        "ms": 367.26899999484885,
+        "chars": 1335,
+        "lines": 8,
+        "result_count": 8,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 372.55549999827053,
+        "chars": 1335,
+        "lines": 8,
+        "result_count": 8,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 388.81979999132454,
+        "chars": 1335,
+        "lines": 8,
+        "result_count": 8,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 109.57660000713076,
+        "chars": 2726,
+        "lines": 27,
+        "result_count": 27,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 115.0813999993261,
+        "chars": 2726,
+        "lines": 27,
+        "result_count": 27,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 109.23410000395961,
+        "chars": 2726,
+        "lines": 27,
+        "result_count": 27,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "_handle_symbol_issues": {
+    "cw": [
+      {
+        "ms": 284.360799996648,
+        "chars": 97,
+        "lines": 2
+      },
+      {
+        "ms": 269.92649999738205,
+        "chars": 97,
+        "lines": 2
+      },
+      {
+        "ms": 262.7248999924632,
+        "chars": 97,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "_handle_symbol_tests": {
+    "cw": [
+      {
+        "ms": 258.79510000231676,
+        "chars": 131,
+        "lines": 3
+      },
+      {
+        "ms": 267.06430000194814,
+        "chars": 131,
+        "lines": 3
+      },
+      {
+        "ms": 264.0095999959158,
+        "chars": 131,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "_handle_symbol_clone": {
+    "cw": [
+      {
+        "ms": 263.53880000533536,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 254.19969999347813,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 259.15969999914523,
+        "chars": 80,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "_handle_symbol_evolution-defects": {
+    "cw": [
+      {
+        "ms": 257.37629999639466,
+        "chars": 156,
+        "lines": 6
+      },
+      {
+        "ms": 278.2462999894051,
+        "chars": 156,
+        "lines": 6
+      },
+      {
+        "ms": 275.44830000260845,
+        "chars": 156,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "get_symbol_symbol": {
+    "cw": [
+      {
+        "ms": 282.86319998733234,
+        "chars": 5923,
+        "lines": 99,
+        "result_count": 32,
+        "found": true
+      },
+      {
+        "ms": 295.34670000430197,
+        "chars": 5923,
+        "lines": 99,
+        "result_count": 32,
+        "found": true
+      },
+      {
+        "ms": 288.91160000057425,
+        "chars": 5923,
+        "lines": 99,
+        "result_count": 32,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 101.7645999963861,
+        "chars": 2092,
+        "lines": 17,
+        "result_count": 17,
+        "found": true
+      },
+      {
+        "ms": 116.4100000023609,
+        "chars": 2092,
+        "lines": 17,
+        "result_count": 17,
+        "found": true
+      },
+      {
+        "ms": 109.41859999729786,
+        "chars": 2092,
+        "lines": 17,
+        "result_count": 17,
+        "found": true
+      }
+    ]
+  },
+  "get_symbol_callers": {
+    "cw": [
+      {
+        "ms": 285.43590000481345,
+        "chars": 171,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 272.60139999270905,
+        "chars": 171,
+        "lines": 3,
+        "result_count": 2
+      },
+      {
+        "ms": 275.1609999977518,
+        "chars": 171,
+        "lines": 3,
+        "result_count": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 119.0745999920182,
+        "chars": 6801,
+        "lines": 61,
+        "result_count": 61
+      },
+      {
+        "ms": 105.51300000224728,
+        "chars": 6801,
+        "lines": 61,
+        "result_count": 61
+      },
+      {
+        "ms": 100.29990000475664,
+        "chars": 6801,
+        "lines": 61,
+        "result_count": 61
+      }
+    ]
+  },
+  "get_symbol_callees": {
+    "cw": [
+      {
+        "ms": 275.0771999999415,
+        "chars": 214,
+        "lines": 6,
+        "result_count": 5
+      },
+      {
+        "ms": 270.5110999959288,
+        "chars": 214,
+        "lines": 6,
+        "result_count": 5
+      },
+      {
+        "ms": 268.7697999936063,
+        "chars": 214,
+        "lines": 6,
+        "result_count": 5
+      }
+    ],
+    "grep": [
+      {
+        "ms": 107.39810000814032,
+        "chars": 69096,
+        "lines": 594,
+        "result_count": 594,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 100.9055000031367,
+        "chars": 69096,
+        "lines": 594,
+        "result_count": 594,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 103.30070000782143,
+        "chars": 69096,
+        "lines": 594,
+        "result_count": 594,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "get_symbol_call-chain": {
+    "cw": [
+      {
+        "ms": 267.5199000077555,
+        "chars": 86,
+        "lines": 3
+      },
+      {
+        "ms": 254.61630000791047,
+        "chars": 86,
+        "lines": 3
+      },
+      {
+        "ms": 245.28250000730623,
+        "chars": 86,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "get_symbol_impact": {
+    "cw": [
+      {
+        "ms": 249.04749999404885,
+        "chars": 82,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 250.20450000010896,
+        "chars": 82,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 246.95519999659155,
+        "chars": 82,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "get_symbol_grep": {
+    "cw": [
+      {
+        "ms": 360.30919999757316,
+        "chars": 8034,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 409.2834000039147,
+        "chars": 7879,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 404.2247000033967,
+        "chars": 7944,
+        "lines": 50,
+        "result_count": 50,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 119.66519999259617,
+        "chars": 69096,
+        "lines": 594,
+        "result_count": 594,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 123.38469999667723,
+        "chars": 69096,
+        "lines": 594,
+        "result_count": 594,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 105.38959999394137,
+        "chars": 69096,
+        "lines": 594,
+        "result_count": 594,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "get_symbol_issues": {
+    "cw": [
+      {
+        "ms": 269.81589999923017,
+        "chars": 96,
+        "lines": 2
+      },
+      {
+        "ms": 256.6002999956254,
+        "chars": 96,
+        "lines": 2
+      },
+      {
+        "ms": 252.93760000204202,
+        "chars": 96,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "get_symbol_tests": {
+    "cw": [
+      {
+        "ms": 261.7557999910787,
+        "chars": 130,
+        "lines": 3
+      },
+      {
+        "ms": 255.5285999987973,
+        "chars": 130,
+        "lines": 3
+      },
+      {
+        "ms": 249.1643999965163,
+        "chars": 130,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "get_symbol_clone": {
+    "cw": [
+      {
+        "ms": 262.7667999913683,
+        "chars": 40,
+        "lines": 1
+      },
+      {
+        "ms": 263.17170000402257,
+        "chars": 40,
+        "lines": 1
+      },
+      {
+        "ms": 309.2783000029158,
+        "chars": 40,
+        "lines": 1
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "get_symbol_evolution-defects": {
+    "cw": [
+      {
+        "ms": 305.28150001191534,
+        "chars": 155,
+        "lines": 6
+      },
+      {
+        "ms": 321.9234999996843,
+        "chars": 155,
+        "lines": 6
+      },
+      {
+        "ms": 288.49240001,
+        "chars": 155,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "read_file_normalized_symbol": {
+    "cw": [
+      {
+        "ms": 342.7669000084279,
+        "chars": 205,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 353.45199999574106,
+        "chars": 205,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 341.4111000020057,
+        "chars": 205,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 119.49460000323597,
+        "chars": 98,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 125.81360001058783,
+        "chars": 98,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 124.23100000887644,
+        "chars": 98,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      }
+    ]
+  },
+  "read_file_normalized_callers": {
+    "cw": [
+      {
+        "ms": 381.1446000036085,
+        "chars": 112,
+        "lines": 2,
+        "result_count": 1
+      },
+      {
+        "ms": 336.0689999972237,
+        "chars": 112,
+        "lines": 2,
+        "result_count": 1
+      },
+      {
+        "ms": 313.9816999901086,
+        "chars": 112,
+        "lines": 2,
+        "result_count": 1
+      }
+    ],
+    "grep": [
+      {
+        "ms": 128.7852999957977,
+        "chars": 1152,
+        "lines": 10,
+        "result_count": 10
+      },
+      {
+        "ms": 128.97109999903478,
+        "chars": 1152,
+        "lines": 10,
+        "result_count": 10
+      },
+      {
+        "ms": 122.13760000304319,
+        "chars": 1152,
+        "lines": 10,
+        "result_count": 10
+      }
+    ]
+  },
+  "read_file_normalized_callees": {
+    "cw": [
+      {
+        "ms": 324.0609999920707,
+        "chars": 207,
+        "lines": 5,
+        "result_count": 4
+      },
+      {
+        "ms": 300.76959999860264,
+        "chars": 207,
+        "lines": 5,
+        "result_count": 4
+      },
+      {
+        "ms": 296.75850000057835,
+        "chars": 207,
+        "lines": 5,
+        "result_count": 4
+      }
+    ],
+    "grep": [
+      {
+        "ms": 116.71109999588225,
+        "chars": 4842,
+        "lines": 34,
+        "result_count": 34,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 119.76270000741351,
+        "chars": 4842,
+        "lines": 34,
+        "result_count": 34,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 111.67260000365786,
+        "chars": 4842,
+        "lines": 34,
+        "result_count": 34,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "read_file_normalized_call-chain": {
+    "cw": [
+      {
+        "ms": 301.3418000045931,
+        "chars": 200,
+        "lines": 7
+      },
+      {
+        "ms": 274.3386000074679,
+        "chars": 200,
+        "lines": 7
+      },
+      {
+        "ms": 294.9644000036642,
+        "chars": 200,
+        "lines": 7
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "read_file_normalized_impact": {
+    "cw": [
+      {
+        "ms": 266.1520000110613,
+        "chars": 87,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 297.6372999983141,
+        "chars": 87,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 263.4805999987293,
+        "chars": 87,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "read_file_normalized_grep": {
+    "cw": [
+      {
+        "ms": 370.5550000013318,
+        "chars": 1399,
+        "lines": 8,
+        "result_count": 8,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 411.3932000036584,
+        "chars": 1399,
+        "lines": 8,
+        "result_count": 8,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 408.4798999974737,
+        "chars": 1399,
+        "lines": 8,
+        "result_count": 8,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 137.8578000003472,
+        "chars": 4842,
+        "lines": 34,
+        "result_count": 34,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 126.52309999975841,
+        "chars": 4842,
+        "lines": 34,
+        "result_count": 34,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 114.00400000275113,
+        "chars": 4842,
+        "lines": 34,
+        "result_count": 34,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "read_file_normalized_issues": {
+    "cw": [
+      {
+        "ms": 279.11600000516046,
+        "chars": 101,
+        "lines": 2
+      },
+      {
+        "ms": 263.23219999903813,
+        "chars": 101,
+        "lines": 2
+      },
+      {
+        "ms": 271.9312999979593,
+        "chars": 101,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "read_file_normalized_tests": {
+    "cw": [
+      {
+        "ms": 274.81149999948684,
+        "chars": 135,
+        "lines": 3
+      },
+      {
+        "ms": 258.3444999909261,
+        "chars": 135,
+        "lines": 3
+      },
+      {
+        "ms": 274.31899998919107,
+        "chars": 135,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "read_file_normalized_clone": {
+    "cw": [
+      {
+        "ms": 331.5192999871215,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 305.79450000368524,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 288.9567999955034,
+        "chars": 80,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "read_file_normalized_evolution-defects": {
+    "cw": [
+      {
+        "ms": 274.94259999366477,
+        "chars": 160,
+        "lines": 6
+      },
+      {
+        "ms": 262.606100004632,
+        "chars": 160,
+        "lines": 6
+      },
+      {
+        "ms": 257.3623000062071,
+        "chars": 160,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  },
+  "read_file_text_symbol": {
+    "cw": [
+      {
+        "ms": 283.1950000108918,
+        "chars": 193,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 275.7449000055203,
+        "chars": 193,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 300.7012999878498,
+        "chars": 193,
+        "lines": 4,
+        "result_count": 1,
+        "found": true
+      }
+    ],
+    "grep": [
+      {
+        "ms": 105.94689998833928,
+        "chars": 105,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 114.40749999019317,
+        "chars": 105,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      },
+      {
+        "ms": 108.78150000644382,
+        "chars": 105,
+        "lines": 1,
+        "result_count": 1,
+        "found": true
+      }
+    ]
+  },
+  "read_file_text_callers": {
+    "cw": [
+      {
+        "ms": 278.88830000301823,
+        "chars": 320,
+        "lines": 8,
+        "result_count": 7
+      },
+      {
+        "ms": 276.1100999923656,
+        "chars": 320,
+        "lines": 8,
+        "result_count": 7
+      },
+      {
+        "ms": 269.4843000062974,
+        "chars": 320,
+        "lines": 8,
+        "result_count": 7
+      }
+    ],
+    "grep": [
+      {
+        "ms": 110.37150000629481,
+        "chars": 3326,
+        "lines": 35,
+        "result_count": 35
+      },
+      {
+        "ms": 103.28779999690596,
+        "chars": 3326,
+        "lines": 35,
+        "result_count": 35
+      },
+      {
+        "ms": 99.4395000016084,
+        "chars": 3326,
+        "lines": 35,
+        "result_count": 35
+      }
+    ]
+  },
+  "read_file_text_callees": {
+    "cw": [
+      {
+        "ms": 272.82389999891166,
+        "chars": 155,
+        "lines": 4,
+        "result_count": 3
+      },
+      {
+        "ms": 284.7905999951763,
+        "chars": 155,
+        "lines": 4,
+        "result_count": 3
+      },
+      {
+        "ms": 278.65329998894595,
+        "chars": 155,
+        "lines": 4,
+        "result_count": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 105.3505000018049,
+        "chars": 4247,
+        "lines": 42,
+        "result_count": 42,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 100.84629998891614,
+        "chars": 4247,
+        "lines": 42,
+        "result_count": 42,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      },
+      {
+        "ms": 108.5495000006631,
+        "chars": 4247,
+        "lines": 42,
+        "result_count": 42,
+        "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
+      }
+    ]
+  },
+  "read_file_text_call-chain": {
+    "cw": [
+      {
+        "ms": 261.1602000106359,
+        "chars": 162,
+        "lines": 6
+      },
+      {
+        "ms": 271.2697999959346,
+        "chars": 162,
+        "lines": 6
+      },
+      {
+        "ms": 267.2402000025613,
+        "chars": 162,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做图遍历"
+      }
+    ]
+  },
+  "read_file_text_impact": {
+    "cw": [
+      {
+        "ms": 251.29280000692233,
+        "chars": 81,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 255.77180000254884,
+        "chars": 81,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      },
+      {
+        "ms": 263.3809000108158,
+        "chars": 81,
+        "lines": 2,
+        "note": "需要 symbol_hash"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法计算 blast radius"
+      }
+    ]
+  },
+  "read_file_text_grep": {
+    "cw": [
+      {
+        "ms": 371.50999999721535,
+        "chars": 5428,
+        "lines": 35,
+        "result_count": 35,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 384.46069999190513,
+        "chars": 5428,
+        "lines": 35,
+        "result_count": 35,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      },
+      {
+        "ms": 387.80519999272656,
+        "chars": 5428,
+        "lines": 35,
+        "result_count": 35,
+        "note": "默认过滤无符号行（文档/import/注释）"
+      }
+    ],
+    "grep": [
+      {
+        "ms": 115.17030000686646,
+        "chars": 4247,
+        "lines": 42,
+        "result_count": 42,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 107.82750000362284,
+        "chars": 4247,
+        "lines": 42,
+        "result_count": 42,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      },
+      {
+        "ms": 112.28800000390038,
+        "chars": 4247,
+        "lines": 42,
+        "result_count": 42,
+        "note": "rg 原始匹配，含文档/注释/import 噪音"
+      }
+    ]
+  },
+  "read_file_text_issues": {
+    "cw": [
+      {
+        "ms": 280.70930000103544,
+        "chars": 95,
+        "lines": 2
+      },
+      {
+        "ms": 267.3006999975769,
+        "chars": 95,
+        "lines": 2
+      },
+      {
+        "ms": 254.97190000896808,
+        "chars": 95,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联 Semgrep/Guardrail findings"
+      }
+    ]
+  },
+  "read_file_text_tests": {
+    "cw": [
+      {
+        "ms": 253.24389999150299,
+        "chars": 129,
+        "lines": 3
+      },
+      {
+        "ms": 255.5313000048045,
+        "chars": 129,
+        "lines": 3
+      },
+      {
+        "ms": 261.4462000055937,
+        "chars": 129,
+        "lines": 3
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法推断 test_fn ↔ tested_fn 关联"
+      }
+    ]
+  },
+  "read_file_text_clone": {
+    "cw": [
+      {
+        "ms": 274.1453000053298,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 289.2497000138974,
+        "chars": 80,
+        "lines": 2
+      },
+      {
+        "ms": 285.19840000080876,
+        "chars": 80,
+        "lines": 2
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法做 MinHash/LSH 相似度检测"
+      }
+    ]
+  },
+  "read_file_text_evolution-defects": {
+    "cw": [
+      {
+        "ms": 282.9261000006227,
+        "chars": 154,
+        "lines": 6
+      },
+      {
+        "ms": 275.4663999949116,
+        "chars": 154,
+        "lines": 6
+      },
+      {
+        "ms": 265.1031999994302,
+        "chars": 154,
+        "lines": 6
+      }
+    ],
+    "grep": [
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      },
+      {
+        "ms": 0,
+        "chars": 0,
+        "lines": 0,
+        "note": "Grep 无法关联变更频率与缺陷"
+      }
+    ]
+  }
+}
