@@ -20,7 +20,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 12 大功能分类
 
-Call Warden 通过 MCP Server 暴露 173 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 193 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
 
 ### 概览表
 
@@ -34,11 +34,136 @@ Call Warden 通过 MCP Server 暴露 173 个工具，按功能聚合为 12 个�
 | 6 | **Agent Rule Memory** | 11 | 候选 / 审核 / 生效 / 同步 / 提取 / 清理 / 种子 | 6. Agent Rule Memory |
 | 7 | **Audit & Bootstrap** | 10 | 审计链 / 密钥轮换 / 自举 / 检查门禁 / 安全护栏 | 7. Audit & Bootstrap |
 | 8 | **Git Integration** | 5 | git 历史 / commit / 变更 / 统计 / 符号历史 | 8. Git Integration |
-| 9 | **Semgrep & Defects** | 14 | Semgrep / 缺陷知识库 / 影响半径 / 审查就绪 / 跨层 | 9. Semgrep & Defects |
-| 10 | **Coverage & Ownership** | 15 | 注释 / 测试覆盖率 / CODEOWNERS / 所有权 / 注释恢复 | 10. Coverage & Ownership |
+| 9 | **Semgrep & Defects** | 16 | Semgrep / 缺陷知识库 / 影响半径 / 审查就绪 / 跨层 / 符号静态检查 / 变更-缺陷关联 | 9. Semgrep & Defects |
+| 10 | **Coverage & Ownership** | 19 | 注释 / 测试覆盖率 / 测试 case 关联 / 测试稳定性 / CODEOWNERS / 所有权 / 注释恢复 | 10. Coverage & Ownership |
 | 11 | **GC** | 11 | 外部符号 / retention / policy / 备份 / 审计 | 11. GC |
 | 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
-| **合计** | **173** | | |
+| **合计** | **179** | | |
+
+> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 193（含若干跨分类工具）。本表只统计每个分类独有的工具。
+
+## 场景 → MCP 工具索引（按 8 类能力维度）
+
+帮助 agent 按场景快速找到对应的 MCP 工具。详细的工具参数和返回值见下方各分类章节。
+
+### 1. 符号基本属性（symbols 表）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 符号搜索 | `search_symbols` | `cw --search` | 按名字/限定名模糊搜索 |
+| 符号详情 | `get_symbol` | `cw --symbol` | 含 calls_out/called_by/issues 前 5 条 |
+| 符号位置 | `get_symbol_location` | `cw --query` | 文件 + 行号 |
+| 文件内符号 | `get_file_symbols` | `cw --file` | 文件所有符号列表 |
+| 符号内容 | `file_symbol_content` | `cw --symbol` | 符号源码 |
+| 按 hash 取内容 | `get_symbol_content_by_hash` | — | CAS 内容寻址 |
+
+### 2. 代码度量（db_metrics.py）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 度量汇总 | `get_code_metrics_summary` | `cw --metrics` | 全项目度量 |
+| 复杂度热点 | `get_complexity_hotspots` | `cw --complexity` | Top N 复杂函数 |
+| 模块耦合 | `get_coupling_analysis` | `cw --coupling` | 模块耦合度 |
+| 单函数度量 | `get_function_metrics` | `cw --fn-metrics` | 指定函数详情 |
+| 最大函数 | `get_largest_functions` | `cw --largest-fns` | 按行数排序 |
+| 高耦合函数 | `get_most_coupled_functions` | `cw --coupled-fns` | 按调用数排序 |
+| 代码健康检查 | `get_code_health_check` / `check_file_health` | — | 综合健康评分 |
+
+### 3. 调用关系 / 爆炸半径（db_impact.py）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 调用方 | `get_callers` | `cw --callers` | 精确调用方 |
+| 被调用方 | `get_callees` | `cw --callees` | 函数体内调用 |
+| 调用链 | `get_call_chain_down` | `cw --call-chain` | 下游调用链 |
+| 变更影响 | `get_impact` | `cw --impact` | blast radius |
+| Top 调用方 | `get_top_callers` | `cw --top-callers` | 被调用最多排行 |
+| 孤立符号 | `get_orphan_symbols` | `cw --orphan-symbols` | 无调用关系 |
+| 调用最深 | `get_deepest_functions` | `cw --deepest` | 调用链最深 |
+| 模块调用统计 | `get_module_call_stats` | `cw --module-calls` | 跨模块统计 |
+| 循环检测 | `detect_cycles` | `cw --detect-cycles` | 调用图环 |
+| 调用热力图 | `get_call_heatmap` | `cw --call-heatmap` | 频率热力图 |
+| 模块图导出 | `export_module_graph` | `cw --export-module-graph` | 模块依赖图 |
+| 拓扑排序 | `get_topological_order` | `cw --topo` | 调用图拓扑序 |
+| 漏洞爆炸半径 | `get_vulnerability_blast_radius` / `blast_radius` | `cw vuln-blast` | 漏洞到调用方反向影响 |
+| 跨层影响 | `cross_layer_impact` | `cw defect cross-layer` | 跨层传播 |
+
+### 4. 覆盖率（db_coverage.py）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 注释覆盖 | `get_comment_coverage` | `cw --comment-coverage` | 全项目注释率 |
+| 无注释符号 | `get_uncommented_symbols` | `cw --uncommented` | 缺注释符号列表 |
+| 测试覆盖 | `get_test_coverage` | `cw --test-coverage` | 全项目测试率 |
+| 导入覆盖率 | `import_coverage` | `cw coverage import` | lcov/jacoco 报告 |
+| 函数覆盖率 | `get_coverage_for_symbol` | `cw coverage fn` | 指定函数覆盖率 |
+| 未覆盖函数 | `find_uncovered_functions` | `cw coverage uncovered` | 未被测试覆盖 |
+| 测试影响选择 | `test_impact_selection` | `cw test-impact` | 改后需跑的测试 |
+| 找负责人 | `who_to_ask` | `cw who` | 按 blame + CODEOWNERS |
+| 所有权映射 | `get_ownership_map` | `cw ownership-map` | 符号→负责人 |
+| CODEOWNERS | `parse_codeowners` / `import_codeowners` | — | CODEOWNERS 解析与导入 |
+| Git blame | `import_git_blame` | — | blame 数据入库 |
+
+### 5. Git 历史 / 演化智能（db_git.py + db_evolution.py）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 导入 git 历史 | `import_git_history` | `cw git import` | commit log 入库 |
+| commit 列表 | `get_git_commits` | `cw git log` | 按条件查询 |
+| commit 变更 | `get_commit_changes` | `cw git show` | 单 commit 详情 |
+| git 统计 | `get_git_stats` | `cw git stats` | 提交者/文件统计 |
+| 符号 commit 历史 | `get_symbol_commit_history` | `cw symbol-history` | 符号时间线 |
+| 符号历史版本 | `get_symbol_history` | `cw --history` | 符号历史版本 |
+| 文件历史 | `get_file_history` | — | 文件变更历史 |
+| 最近变更 | `get_recent_changes` | — | 最近 N 次变更 |
+| 函数变更频率 | `evolution_frequency` | `cw evolution` | 变更次数/时间线 |
+| 热点演化 | `hotspot_evolution` | `cw hotspot` | 热点函数演化 |
+| 代码流失 | `churn_analysis` | `cw churn` | 增删统计 |
+
+### 6. 静态检查（Semgrep + Guardrail + issues + tests + clone + defects）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 符号静态检查 | `get_symbol_issues` | `cw issues <QN>` | Semgrep + Guardrail findings 聚合 |
+| 测试 case 列表 | `get_test_cases` | `cw tests <QN>` | 三阶推断（direct_call > name_convention > indirect）|
+| 反向测试查询 | `get_tested_functions` | `cw tests --reverse` | test_fn 测了哪些函数 |
+| 测试覆盖摘要 | `get_test_coverage_summary` | `cw tests --coverage` | has_tests / test_count / high_confidence_count |
+| 测试稳定性 | `get_test_stability` | `cw tests --history` | pass_rate / recent_failures / by_test |
+| 变更-缺陷关联 | `get_defect_correlation` | `cw evolution --defects` | change_count / defect_count / defect_rate |
+| Semgrep 扫描 | `run_semgrep_scan` | `cw semgrep scan` | 扫描入库 |
+| Semgrep 统计 | `get_semgrep_stats` | `cw semgrep stats` | findings 汇总 |
+| Semgrep findings | `get_semgrep_findings` | `cw semgrep list` | 按条件查询 |
+| 问题汇总 | `get_issue_summary` | `cw --issue-summary` | 按模块/严重度聚合 |
+| 函数缺陷检测 | `find_issues` | `cw function-issues` | 按函数聚合 findings |
+| 缺陷搜索 | `defect_search` | `cw defect search` | 知识库搜索 |
+| 缺陷修复建议 | `defect_suggest_fix` | `cw defect suggest` | 修复建议 |
+| 缺陷学习 | `defect_learn` | `cw defect learn` | 知识库录入 |
+| 缺陷统计 | `defect_stats` | `cw defect stats` | 缺陷分布 |
+| 审查就绪 | `review_readiness` | — | review 准备度评估 |
+| 安全护栏扫描 | `guardrail_scan` | `cw guardrail scan` | 编辑前规则匹配 |
+| 编辑前检查 | `guardrail_check_edit` | `cw guardrail check-edit` | Before-Edit Contract |
+| 规则列表 | `guardrail_list_rules` | `cw guardrail list` | 规则查询 |
+| 添加规则 | `guardrail_add_rule` | — | 自定义规则 |
+| 适用规则 | `get_applicable_rules` | `cw rule applicable` | 当前 applicable 规则 |
+
+### 7. 注释恢复（db_comment.py）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 注释覆盖 | `get_comment_coverage` | `cw --comment-coverage` | 注释率统计 |
+| 无注释符号 | `get_uncommented_symbols` | `cw --uncommented` | 缺注释符号 |
+| 恢复注释 | `restore_comment` | `cw --restore-comment` | 从历史恢复单个 |
+| 批量恢复 | `restore_all_comments` | `cw --restore-all-comments` | 全项目批量 |
+| 从版本取注释 | `get_comment_from_version` | `cw symbol comment-from-version` | 指定 commit 的注释 |
+
+### 8. 代码重复检测（db_clone_detection.py）
+
+| 场景 | MCP 工具 | 对应 CLI | 说明 |
+|------|---------|---------|------|
+| 检测克隆 | `detect_clones` | `cw clone detect` | Type-1/2/3 检测 |
+| 列出克隆 | `list_clones` | `cw clone list` | 支持按 symbol_id 过滤 |
+| 克隆统计 | `get_clone_stats` | `cw clone stats` | 数量/影响文件/类型分布 |
+| 清空克隆 | `clear_clones` | `cw clone clear` | 清空检测结果 |
 
 ### 各分类工具清单
 

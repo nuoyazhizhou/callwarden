@@ -21,8 +21,8 @@ Call Warden 把 145+ 个 CLI 命令按功能聚合为 12 个主分类，每个�
 | 6 | **Agent Rule Memory** | 规则候选/审核/生效/同步/提取/清理/种子化 | `rule candidate create/list/accept/reject`、`rule list/applicable/sync/insert-block/extract`、`rule seed-bootstrap`、`rule cleanup-sync-log` | — |
 | 7 | **Audit & Bootstrap** | 审计链验证、密钥轮换、自举健康、检查门禁 | `audit verify/rotate-key/keys`、`bootstrap status` | — |
 | 8 | **Git Integration** | git 历史、commit、变更、blame、分支感知 | `git import/log/show/stats`、`symbol-history` | `--git-import`、`--git-log`、`--git-show`、`--git-stats` |
-| 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径 | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast` | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary` |
-| 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、CODEOWNERS、所有权映射 | `coverage import/fn/uncovered`、`who`、`ownership-map` | `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map` |
+| 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联 | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects` | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary` |
+| 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射 | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）| `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map` |
 | 11 | **GC** | 归档、恢复、清理、策略、备份、审计 | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show` | — |
 | 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑 | `doctor`、`install`、`install-agent`、`install-hook` | — |
 
@@ -1251,6 +1251,121 @@ cw test-impact "my_project::payment::process_payment"
 ```
 
 返回改了该函数后需要运行的测试列表（通过反向调用链 BFS）。
+
+### `evolution <QN> --defects`：变更-缺陷关联
+
+```bash
+cw evolution "module::fn" --defects
+cw evolution "module::fn" --defects --window-commits 10
+```
+
+分析符号的变更频率与缺陷（Semgrep findings）的时间关联性，回答"这个函数改得多不多？改完之后容易引入缺陷吗？"
+
+参数：
+- `<QN>`：符号限定名
+- `--defects`：启用变更-缺陷关联模式（不加则只返回变更频率）
+- `--window-commits <N>`：变更后观察的提交窗口数（默认 5，即变更后 N 次提交内出现的 findings 算关联）
+
+返回字段：`change_count`（变更次数）/ `defect_count`（关联缺陷数）/ `defect_rate`（defect_count / change_count）/ `recent_defects`（最近的关联缺陷列表）
+
+对应 MCP 工具：`get_defect_correlation`
+
+---
+
+## 静态检查命令
+
+Call Warden 静态检查整合了 4 类能力：符号静态检查（issues）/ 测试 case 关联（tests）/ 代码重复检测（clone）/ 变更-缺陷关联（evolution --defects）。
+
+> **背景**：这 4 类能力是 cw 独有的静态分析能力，Grep 做不到或做不好。详见 [TOOLS.md 场景映射 §6 静态检查](../TOOLS.md)。
+
+### `issues <QN>`：符号静态检查
+
+```bash
+cw issues "module::fn"
+cw issues "module::fn" --include-info
+```
+
+整合 Semgrep + Guardrail findings，按符号聚合。返回符号相关的所有静态检查问题。
+
+查询路径：
+1. **Semgrep findings**：按 `symbol_qualified` 精确匹配（首选）；无精确匹配时按 `file_instance_id + line 范围交集` 兜底
+2. **Guardrail findings**：按 `file_path + symbol_hash` 匹配
+
+参数：
+- `<QN>`：符号限定名
+- `--include-info`：包含 INFO 级别（默认只 WARNING+，避免噪音）
+
+返回：issues 列表，按 severity 降序（ERROR > WARNING > INFO），每条含 source/rule_id/severity/message/start_line/end_line/snippet/fix。
+
+对应 MCP 工具：`get_symbol_issues`
+
+### `tests <QN>`：符号测试 case 查询
+
+回答 agent 高频问题："foo() 有哪些 test 在测它？"
+
+```bash
+cw tests "module::fn"                      # 查测试 case 列表（按 confidence 降序）
+cw tests "module::fn" --reverse            # 反向：test_fn 测了哪些函数
+cw tests "module::fn" --coverage           # 测试覆盖摘要
+cw tests "module::fn" --history            # 测试稳定性（pass_rate / failures / by_test）
+cw tests --build                           # 全量重建 test_case_relations（refresh 后调用）
+cw tests --build --force                   # 强制全量重建（清空已有关联）
+cw tests --import <junit.xml>              # 导入 JUnit XML 测试运行结果
+cw tests --import <file> --ci-run-id ID --ci-url URL  # 关联 CI 运行信息
+```
+
+#### 三阶推断算法
+
+test_fn ↔ tested_fn 的关联分 3 个置信度等级：
+
+1. **direct_call（high）**：test_fn 直接调用了 tested_fn（基于调用图）
+2. **name_convention（mid）**：test_fn 名字能推断出 tested_fn（`testFoo` → `foo`，`foo_test` → `foo`）
+3. **indirect（low）**：test_fn 调用了 tested_fn 的调用方（间接测试）
+
+参数：
+- `<QN>`：被测函数限定名（`--reverse` 时为 test_fn 限定名）
+- `--reverse`：反向查询
+- `--coverage`：返回 `has_tests` / `test_count` / `high_confidence_count` / `tests`
+- `--history`：基于 `test_runs` 表的运行历史，返回 `pass_rate` / `recent_failures` / `by_test`
+- `--build`：重建关联（写操作，refresh 测试文件后调用）
+- `--force`：与 `--build` 配合，强制清空已有关联后重建
+- `--import <file>`：导入 JUnit XML（写操作）
+- `--ci-run-id` / `--ci-url`：与 `--import` 配合，关联 CI 运行信息
+
+对应 MCP 工具（只读）：`get_test_cases` / `get_tested_functions` / `get_test_coverage_summary` / `get_test_stability`
+
+> **注**：写操作（`--build` / `--import`）不暴露 MCP，遵循 AGENTS.md 规则 2（写操作走 CLI）。
+
+### `clone`：代码重复检测
+
+子命令组，检测和查询 Type-1/2/3 克隆。
+
+```bash
+cw clone detect                              # 检测克隆（默认 min_lines=3, similarity=0.7）
+cw clone detect --min-lines 10 --similarity 0.8  # 自定义阈值
+cw clone list                               # 列出所有克隆对
+cw clone list --type 1                      # 只列 Type-1（完全相同）
+cw clone list --type 2 --limit 20           # Type-2 + 限制数量
+cw clone list --symbol <QN>                  # 按符号查重复代码
+cw clone stats                              # 克隆统计
+cw clone clear                              # 清空检测结果
+```
+
+#### 克隆类型
+
+| 类型 | 说明 | 检测方法 |
+|------|------|---------|
+| Type-1 | 完全相同（除空白/注释）| content_hash 完全相同 |
+| Type-2 | 重命名克隆（token 序列相同）| token 归一化后相同 |
+| Type-3 | 微调克隆（添加/删除/修改语句）| Jaccard 相似度 ≥ 阈值 |
+
+参数：
+- `detect`：`--min-lines <N>`（最小行数，默认 3）/ `--similarity <F>`（相似度阈值 0-1，默认 0.7）
+- `list`：`--type <1|2|3>`（类型过滤，0=全部）/ `--limit <N>`（返回上限）/ `--symbol <QN>`（只返回涉及此符号的克隆）
+
+返回字段：clone_type / similarity / token_hash / lines_a / lines_b / symbol_a_name / symbol_b_name / file_a / file_b / detected_at。
+
+对应 MCP 工具：`detect_clones` / `list_clones`（含 `symbol_id` 参数）/ `get_clone_stats` / `clear_clones`
 
 ---
 
