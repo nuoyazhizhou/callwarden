@@ -895,6 +895,71 @@ CREATE TRIGGER IF NOT EXISTS symbols_fts_au AFTER UPDATE ON symbols BEGIN
     INSERT INTO symbols_fts(rowid, name, qualified_name)
     VALUES (new.id, new.name, new.qualified_name);
 END;
+
+-- ============================================
+-- v32: 单元测试 case 关联表
+-- ============================================
+-- 回答 "foo() 有哪些 test 在测它？" 这一高频 agent 问题。
+-- 不存测试内容（测试本身是 symbols 表里的 test_fn），只存"测试 ↔ 被测"关联。
+--
+-- 推断规则（match_method 字段）：
+--   direct_call      - test_fn 直接调用 fn（confidence=high，最可靠）
+--   name_convention  - test_fn 名字匹配（test_foo / testFoo / foo_test → foo）（confidence=mid）
+--   indirect         - test_fn 调用了 fn 的 callers 链中某函数（confidence=low）
+--
+-- build_test_relations() 全量扫描后填充；每次 refresh 测试文件后重建。
+CREATE TABLE IF NOT EXISTS test_case_relations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    test_fn_id INTEGER NOT NULL,           -- test 函数的 symbols.id
+    tested_fn_id INTEGER NOT NULL,          -- 被测函数的 symbols.id
+    match_method TEXT NOT NULL,             -- direct_call / name_convention / indirect
+    confidence TEXT NOT NULL DEFAULT 'mid', -- high / mid / low
+    detected_at REAL NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    FOREIGN KEY (test_fn_id) REFERENCES symbols(id),
+    FOREIGN KEY (tested_fn_id) REFERENCES symbols(id)
+);
+CREATE INDEX IF NOT EXISTS idx_test_case_relations_workspace
+ON test_case_relations(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_test_case_relations_test
+ON test_case_relations(test_fn_id);
+CREATE INDEX IF NOT EXISTS idx_test_case_relations_tested
+ON test_case_relations(tested_fn_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_test_case_relations_unique
+ON test_case_relations(workspace_id, test_fn_id, tested_fn_id, match_method);
+
+-- ============================================
+-- v33: 测试运行结果表（test_runs）
+-- ============================================
+-- 记录每次 CI 运行中 test 函数的执行结果，用于稳定性分析。
+-- 数据来源：JUnit XML / pytest-json / 手动导入。
+-- 通过 ci_run_id 关联同一次 CI 运行的所有 test 结果。
+CREATE TABLE IF NOT EXISTS test_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    test_fn_id INTEGER NOT NULL,           -- test 函数的 symbols.id（0 表示未匹配到符号）
+    test_name TEXT NOT NULL,               -- test 函数名（含 class 前缀，如 TestFoo.test_bar）
+    test_class TEXT DEFAULT '',             -- 测试类名
+    test_file TEXT DEFAULT '',              -- 测试文件路径
+    status TEXT NOT NULL,                  -- passed / failed / skipped / error
+    duration_ms REAL DEFAULT 0,            -- 执行时长（毫秒）
+    error_message TEXT DEFAULT '',         -- 失败时的错误信息（截断到 500 字符）
+    error_type TEXT DEFAULT '',            -- 错误类型（AssertionError / TimeoutError 等）
+    ci_run_id TEXT DEFAULT '',             -- CI 运行 ID（关联同一次运行）
+    ci_url TEXT DEFAULT '',                -- CI 运行 URL
+    run_at REAL NOT NULL,                  -- 运行时间戳
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    FOREIGN KEY (test_fn_id) REFERENCES symbols(id)
+);
+CREATE INDEX IF NOT EXISTS idx_test_runs_workspace
+ON test_runs(workspace_id, run_at);
+CREATE INDEX IF NOT EXISTS idx_test_runs_test
+ON test_runs(test_fn_id, run_at);
+CREATE INDEX IF NOT EXISTS idx_test_runs_status
+ON test_runs(status, run_at);
+CREATE INDEX IF NOT EXISTS idx_test_runs_ci
+ON test_runs(ci_run_id);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -929,7 +994,10 @@ END;
 # v32: P6 索引精简 — 删除 idx_calls_callee（GraphStore CSR 已覆盖 get_callers 查询路径，
 #      WHERE callee_name=? 查询走内存短路，SQL 降级路径仅在 callwarden_core 未安装时触发）
 # v33: P7 反向调用索引 — 用 resolved callee_id 部分整数索引替代 callee_qualified 长文本索引
-SCHEMA_VERSION = 33
+# v34: 静态扫描能力补全 — 创建 test_case_relations（test_fn↔tested_fn 关联）
+#      和 test_runs（CI 测试运行结果）两张表。CREATE IF NOT EXISTS 幂等；
+#      全新库通过 SCHEMA_SQL 已包含，本迁移只补齐既有 v33 库。
+SCHEMA_VERSION = 34
 
 
 # ============================================

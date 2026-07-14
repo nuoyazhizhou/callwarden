@@ -1570,6 +1570,90 @@ def _migrate_v32_to_v33(conn: sqlite3.Connection):
     conn.execute("DROP INDEX IF EXISTS idx_calls_callee_qualified")
 
 
+def _migrate_v33_to_v34(conn: sqlite3.Connection):
+    """v33 -> v34: 创建 test_case_relations + test_runs 表
+
+    静态扫描能力补全（子任务1+2）所需的两张表：
+    - test_case_relations: test_fn ↔ tested_fn 关联（direct_call / name_convention / indirect）
+    - test_runs: CI 测试运行结果（passed/failed/skipped/error），来源 JUnit XML 导入
+
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v33 库。
+    使用 CREATE TABLE/INDEX IF NOT EXISTS，幂等可重复执行。
+    """
+    # test_case_relations 表
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS test_case_relations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            test_fn_id INTEGER NOT NULL,
+            tested_fn_id INTEGER NOT NULL,
+            match_method TEXT NOT NULL,
+            confidence TEXT NOT NULL DEFAULT 'mid',
+            detected_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (test_fn_id) REFERENCES symbols(id),
+            FOREIGN KEY (tested_fn_id) REFERENCES symbols(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_test_case_relations_ws "
+        "ON test_case_relations(workspace_id, tested_fn_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_test_case_relations_test "
+        "ON test_case_relations(test_fn_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_test_case_relations_tested "
+        "ON test_case_relations(tested_fn_id)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_test_case_relations_unique "
+        "ON test_case_relations(workspace_id, test_fn_id, tested_fn_id, match_method)"
+    )
+
+    # test_runs 表
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS test_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            test_fn_id INTEGER NOT NULL,
+            test_name TEXT NOT NULL,
+            test_class TEXT DEFAULT '',
+            test_file TEXT DEFAULT '',
+            status TEXT NOT NULL,
+            duration_ms REAL DEFAULT 0,
+            error_message TEXT DEFAULT '',
+            error_type TEXT DEFAULT '',
+            ci_run_id TEXT DEFAULT '',
+            ci_url TEXT DEFAULT '',
+            run_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (test_fn_id) REFERENCES symbols(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_test_runs_workspace "
+        "ON test_runs(workspace_id, run_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_test_runs_test "
+        "ON test_runs(test_fn_id, run_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_test_runs_status "
+        "ON test_runs(status, run_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_test_runs_ci "
+        "ON test_runs(ci_run_id)"
+    )
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2083,6 +2167,10 @@ class CodeGraphBase:
             33: {
                 "description": t("cli.messages.migration_v33", default="P7: Replace calls(callee_qualified) text index with resolved callee_id partial index"),
                 "func": _migrate_v32_to_v33,
+            },
+            34: {
+                "description": t("cli.messages.migration_v34", default="Static analysis gap fix: create test_case_relations + test_runs tables (CREATE IF NOT EXISTS, idempotent)"),
+                "func": _migrate_v33_to_v34,
             },
         }
 

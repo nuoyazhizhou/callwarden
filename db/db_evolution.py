@@ -446,6 +446,66 @@ class EvolutionMixin:
             "findings": defect_findings,
         }
 
+    def get_defect_correlation_by_qn(self, qualified_name: str, window_commits: int = 5) -> Dict[str, Any]:
+        """按限定名查询符号的变更-缺陷关联（defect_correlation 的便捷封装）
+
+        Args:
+            qualified_name: 符号限定名
+            window_commits: 变更后观察的提交窗口数
+
+        Returns:
+            包含 qualified_name / change_count / defect_count / defect_rate / recent_defects 的字典
+        """
+        ws_id = self._get_active_workspace_id()
+
+        # 查符号的 symbol_hash
+        cur = self.conn.execute(
+            """SELECT fsv.symbol_hash FROM file_symbol_versions fsv
+               JOIN file_versions fv ON fsv.file_version_id = fv.id
+               JOIN file_instances fi ON fv.file_instance_id = fi.id
+               WHERE fi.workspace_id = ? AND fv.is_current = 1 AND fsv.is_deleted = 0
+                 AND fsv.qualified_name = ?
+               LIMIT 1""",
+            (ws_id, qualified_name),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {
+                "qualified_name": qualified_name,
+                "change_count": 0,
+                "defect_count": 0,
+                "defect_rate": 0.0,
+                "recent_defects": [],
+            }
+
+        symbol_hash = row["symbol_hash"]
+        result = self.defect_correlation(symbol_hash, window_commits=window_commits)
+
+        # 取最近 3 条缺陷
+        findings = result.get("findings", [])
+        recent_defects = [
+            {
+                "rule_id": f.get("rule_id", ""),
+                "severity": f.get("severity", ""),
+                "message": f.get("message", "")[:100],
+                "start_line": f.get("start_line", 0),
+            }
+            for f in findings[:3]
+        ]
+
+        change_count = result.get("total_changes", 0)
+        defect_count = result.get("defects_after_change", 0)
+        defect_rate = (defect_count / change_count) if change_count > 0 else 0.0
+
+        return {
+            "qualified_name": qualified_name,
+            "change_count": change_count,
+            "defect_count": defect_count,
+            "defect_rate": round(defect_rate, 3),
+            "defect_types": result.get("defect_types", {}),
+            "recent_defects": recent_defects,
+        }
+
     def hotspot_evolution(self, module_filter: str = "") -> List[Dict[str, Any]]:
         """热点函数演化排名
 

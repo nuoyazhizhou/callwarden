@@ -820,6 +820,7 @@ class CloneDetectionMixin:
         clone_type: int = 0,
         min_similarity: float = 0.0,
         limit: int = 100,
+        symbol_id: int = 0,
     ) -> List[Dict]:
         """列出检测到的克隆对
 
@@ -827,6 +828,7 @@ class CloneDetectionMixin:
             clone_type: 克隆类型过滤（0=全部，1/2/3 对应 Type-1/2/3）
             min_similarity: 最低相似度过滤
             limit: 返回上限
+            symbol_id: 只返回涉及此符号的克隆对（0=不过滤）
 
         Returns:
             克隆对列表，按相似度降序，包含符号和文件信息
@@ -841,6 +843,9 @@ class CloneDetectionMixin:
         if min_similarity > 0:
             where.append("cp.similarity >= ?")
             params.append(min_similarity)
+        if symbol_id > 0:
+            where.append("(cp.symbol_a_id = ? OR cp.symbol_b_id = ?)")
+            params.extend([symbol_id, symbol_id])
         params.append(limit)
 
         cur = self.conn.execute(

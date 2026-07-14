@@ -39,7 +39,7 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "clone", "fts",
                 # C8 Step #1: 新增 8 大类 subcommand 入口（保留旧 flag 兼容）
                 "workspace", "refresh", "stats", "status",
-                "search", "symbol", "file", "query",
+                "search", "grep", "symbol", "file", "query", "issues", "tests",
                 "callers", "callees", "call-chain", "topo",
                 "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                 "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
@@ -930,8 +930,11 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "clone":
         # clone list/stats 只读（查询 clone_pairs 表）；clone detect/clear 写
         return action in _READONLY_CLONE_ACTIONS
+    if cmd == "tests":
+        # tests --build / tests --import 写；其他（含 --history、--reverse）只读
+        return not ("--build" in sub_argv or "--import" in sub_argv)
     # C8 Step #1: 新增 subcommand 只读判断
-    if cmd in {"search", "symbol", "file", "query",
+    if cmd in {"search", "grep", "symbol", "file", "query",
                "callers", "callees", "call-chain", "topo",
                "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
@@ -1064,6 +1067,12 @@ def _dispatch_subcommand(argv, db):
             return _handle_status(argv, db)
         elif cmd == "search":
             return _handle_search(argv, db)
+        elif cmd == "grep":
+            return _handle_grep(argv, db)
+        elif cmd == "issues":
+            return _handle_issues(argv, db)
+        elif cmd == "tests":
+            return _handle_tests(argv, db)
         elif cmd == "symbol":
             return _handle_symbol(argv, db)
         elif cmd == "file":
@@ -2207,8 +2216,36 @@ def _handle_evolution(args, db):
     )
     parser.add_argument("qualified_name", help=t("cli_evolution_arg_qualified_name", default="Function qualified name"))
     parser.add_argument("--window", default="", help=t("cli_evolution_arg_window", default="Time window (for example 30d/90d/1y)"))
+    parser.add_argument("--defects", action="store_true",
+                        help="Show defect correlation (changes vs defects introduced)")
 
     opts = parser.parse_args(args)
+
+    # --defects 模式：显示变更-缺陷关联
+    if opts.defects:
+        result = db.get_defect_correlation_by_qn(opts.qualified_name)
+        cprint("Defect Correlation", "cyan", bold=True)
+        print(f"  Function:       {result['qualified_name']}")
+        print(f"  Change count:   {result['change_count']}")
+        print(f"  Defect count:   {result['defect_count']}")
+        print(f"  Defect rate:    {result['defect_rate']:.1%}")
+        if result.get("defect_types"):
+            print(f"  Defect types:   {result['defect_types']}")
+        print()
+        recent = result.get("recent_defects", [])
+        if recent:
+            print(f"Recent defects ({len(recent)} shown):")
+            for d in recent:
+                sev = d.get("severity", "?").upper()
+                rule = d.get("rule_id", "?")
+                msg = d.get("message", "")
+                line = d.get("start_line", 0)
+                line_info = f" L{line}" if line else ""
+                print(f"  [{sev}] {rule}{line_info}: {msg}")
+        else:
+            print("No defects found after changes.")
+        return True
+
     result = db.function_change_frequency(opts.qualified_name, time_window=opts.window)
 
     cprint(t("cli.messages.evolution_title"), "cyan", bold=True)
@@ -2248,11 +2285,11 @@ def _handle_evolution(args, db):
     timeline = result.get("timeline", [])
     print(t("cli.messages.evolution_timeline_title", count=len(timeline)))
     if timeline:
-        for i, t in enumerate(timeline[:20], 1):
-            ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(t.get("timestamp", 0)))
-            author = (t.get("author", "") or "unknown")[:12]
-            msg = (t.get("message", "") or "")[:50]
-            commit = (t.get("commit_hash", "") or "")[:8]
+        for i, tl in enumerate(timeline[:20], 1):
+            ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(tl.get("timestamp", 0)))
+            author = (tl.get("author", "") or "unknown")[:12]
+            msg = (tl.get("message", "") or "")[:50]
+            commit = (tl.get("commit_hash", "") or "")[:8]
             print(t("cli.messages.evolution_timeline_item",
                     idx=i, time=ts, author=author, commit=commit, msg=msg))
         if len(timeline) > 20:
@@ -3957,6 +3994,10 @@ def _handle_clone(args, db):
         "--limit", type=int, default=100,
         help=t("cli_clone_list_arg_limit", default="Max results (default: 100)"),
     )
+    list_p.add_argument(
+        "--symbol", default="",
+        help="Filter by symbol qualified_name (show only clones involving this symbol)",
+    )
 
     # stats：统计信息
     sub.add_parser(
@@ -3993,10 +4034,32 @@ def _handle_clone(args, db):
         return True
 
     if opts.action == "list":
+        # --symbol 过滤：查符号 ID 后传给 list_clones
+        symbol_id = 0
+        if opts.symbol:
+            sym = db.get_symbol(opts.symbol)
+            if not sym:
+                print(f"Symbol not found: {opts.symbol}")
+                return False
+            # 取 symbol id（get_symbol 不返回 id，用 location 查）
+            loc = db.get_symbol_location(opts.symbol.split(".")[-1])
+            if loc:
+                symbol_id = loc.get("id", 0)
+            if not symbol_id:
+                # 兜底：直接 SQL 查
+                cur = db.conn.execute(
+                    "SELECT id FROM symbols WHERE qualified_name = ? LIMIT 1",
+                    (opts.symbol,),
+                )
+                row = cur.fetchone()
+                if row:
+                    symbol_id = row[0]
+
         clones = db.list_clones(
             clone_type=opts.type,
             min_similarity=opts.min_similarity,
             limit=opts.limit,
+            symbol_id=symbol_id,
         )
         cprint(t("cli.messages.clone_list_title", count=len(clones)), "cyan", bold=True)
         print()
@@ -5686,6 +5749,461 @@ def _handle_search(args, db):
     return True
 
 
+def _handle_grep(args, db):
+    """处理 grep 子命令（带符号上下文的文本搜索）
+
+    核心价值：返回 file:line [in fn xxx] content，每行带符号归属。
+    默认只展示有符号归属的行（过滤 import/文档/注释噪音），--include-all 恢复全部。
+
+    支持多关键词 AND：cw grep import time → 找同时含 "import" 和 "time" 的行。
+    用引号包住含空格的字符串：cw grep "import time" → 整体作为 pattern。
+
+    实现：
+    1. 调 rg 做文本匹配（用第一个 pattern，速度快）
+    2. 多 pattern 时 Python 端 AND 过滤（每行必须含全部 patterns）
+    3. 解析匹配行（file:line:content）
+    4. 按文件分组，批量查 find_symbols_at_lines 拿符号归属
+    5. 默认过滤 [no symbol]，--include-all 时保留全部
+    6. 截断到 limit
+    7. 输出 file:line [in fn qualified_name] content
+    """
+    import shutil
+    import subprocess
+    import re as _re
+
+    parser = argparse.ArgumentParser(
+        prog="cw grep",
+        description="Grep with symbol context (file:line [in fn xxx] content)",
+    )
+    parser.add_argument("patterns", nargs="+",
+                        help="Search pattern(s). Multiple patterns = AND (all must match on same line). "
+                             "Quote to treat as single pattern: \"import time\"")
+    parser.add_argument("--fixed", action="store_true",
+                        help="Treat patterns as fixed strings (rg -F)")
+    parser.add_argument("--limit", type=int, default=200,
+                        help="Max matches (default 200, applied after symbol filter)")
+    parser.add_argument("--path", default=None,
+                        help="Search path (default: workspace root)")
+    parser.add_argument("--include-all", action="store_true",
+                        help="Include matches outside symbols (imports/docs/comments). "
+                             "Default: only show matches inside symbols.")
+    parser.add_argument("--kind", default=None,
+                        help="Only show matches inside symbols of this kind (fn/class/...)")
+    opts = parser.parse_args(args)
+
+    # 多 pattern 处理：
+    # - len == 1：单 pattern（原行为），rg 用这个 pattern
+    # - len > 1：AND 语义，rg 用第一个 pattern 搜索，Python 端过滤同时包含所有 patterns 的行
+    patterns: List[str] = opts.patterns
+    primary_pattern = patterns[0]
+    is_multi_and = len(patterns) > 1
+
+    # 1. 检查 rg 是否可用，不可用回退 Python re
+    rg_path = shutil.which("rg")
+    search_root = opts.path if opts.path else db.workspace_root
+    if not search_root or not os.path.isdir(search_root):
+        # path 参数可能传的是文件，转父目录
+        if opts.path and os.path.isfile(opts.path):
+            search_root = os.path.dirname(opts.path)
+        else:
+            search_root = db.workspace_root
+
+    raw_lines: List[str] = []  # 形如 "file:line:content"
+    if rg_path:
+        # 2a. 用 rg 做文本搜索（rg 速度远快于 Python re）
+        cmd = [rg_path, "-n", "--no-heading", "--color", "never"]
+        if opts.fixed:
+            cmd.append("-F")
+        cmd.extend([primary_pattern, search_root])
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=30, shell=False,
+            )
+            # rg exit code 1 = 无匹配（不是错误）
+            if result.returncode == 0:
+                raw_lines = result.stdout.splitlines()
+            elif result.returncode == 1:
+                raw_lines = []
+            elif result.returncode == 2:
+                # rg 错误（正则语法错等）
+                print(f"Error: {result.stderr.strip()}")
+                return False
+        except subprocess.TimeoutExpired:
+            print("Error: grep timeout after 30s")
+            return False
+        except Exception as e:
+            print(f"Error: {e}")
+            return False
+    else:
+        # 2b. 无 rg → Python re 回退（慢但可用）
+        try:
+            # fixed 模式：用 re.escape 转义所有正则元字符
+            pat = _re.escape(primary_pattern) if opts.fixed else primary_pattern
+            pattern = _re.compile(pat)
+        except _re.error as e:
+            print(f"Error: regex error: {e}")
+            return False
+        for dirpath, dirnames, filenames in os.walk(search_root):
+            # 跳过常见忽略目录
+            dirnames[:] = [d for d in dirnames if d not in (".git", "__pycache__", "node_modules", "target", ".venv", "venv", "dist", "build")]
+            for fname in filenames:
+                # 只扫源码文件（避免二进制和大文件）
+                if not fname.endswith((".py", ".rs", ".ts", ".js", ".go", ".java", ".c", ".h", ".cpp", ".hpp", ".cs", ".rb", ".php", ".kt", ".swift", ".scala")):
+                    continue
+                fpath = os.path.join(dirpath, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                        for i, line in enumerate(f, 1):
+                            if pattern.search(line):
+                                raw_lines.append(f"{fpath}:{i}:{line.rstrip()}")
+                except OSError:
+                    continue
+
+    if not raw_lines:
+        print(f"No matches for: {primary_pattern}")
+        return True
+
+    # 3. 解析所有 rg 输出为 (file, line, content)
+    matches: List[Tuple[str, int, str]] = []
+    for raw in raw_lines:
+        m = _re.match(r"^(.+?):(\d+):(.*)$", raw)
+        if not m:
+            continue
+        fpath, lineno_str, content = m.group(1), int(m.group(2)), m.group(3)
+        matches.append((fpath, lineno_str, content))
+
+    # 3b. 多 pattern AND 过滤：rg 已匹配第一个 pattern，Python 端检查剩余 patterns
+    if is_multi_and:
+        remaining_patterns = patterns[1:]
+        if opts.fixed:
+            # fixed 模式：直接子串匹配
+            matches = [
+                (f, l, c) for f, l, c in matches
+                if all(p in c for p in remaining_patterns)
+            ]
+        else:
+            # 正则模式：编译剩余 patterns
+            try:
+                remaining_compiled = [_re.compile(p) for p in remaining_patterns]
+            except _re.error as e:
+                print(f"Error: regex error in pattern: {e}")
+                return False
+            matches = [
+                (f, l, c) for f, l, c in matches
+                if all(p.search(c) for p in remaining_compiled)
+            ]
+        if not matches:
+            print(f"No matches for AND: {' '.join(patterns)}")
+            return True
+
+    # 4. 按文件分组，每组一次性查所有行号
+    file_to_lines: Dict[str, List[int]] = {}
+    for fpath, lineno, _ in matches:
+        file_to_lines.setdefault(fpath, []).append(lineno)
+
+    # 批量查符号归属（在截断前完成，确保不会因 limit 丢失代码匹配）
+    file_line_symbols: Dict[str, Dict[int, Optional[Dict]]] = {}
+    for fpath, lines in file_to_lines.items():
+        file_line_symbols[fpath] = db.find_symbols_at_lines(fpath, lines)
+
+    # 5. 过滤 + 截断
+    # 5a. 默认过滤 [no symbol]（agent 要有效信息）；--include-all 时保留全部
+    no_symbol_filtered = 0
+    if not opts.include_all:
+        before_no_symbol_filter = len(matches)
+        matches = [
+            (f, l, c) for f, l, c in matches
+            if file_line_symbols.get(f, {}).get(l) is not None
+        ]
+        no_symbol_filtered = before_no_symbol_filter - len(matches)
+    # 5b. --kind：过滤指定符号类型
+    if opts.kind:
+        matches = [
+            (f, l, c) for f, l, c in matches
+            if (file_line_symbols.get(f, {}).get(l) or {}).get("kind") == opts.kind
+        ]
+    # 5c. 截断到 limit（此时已过滤无符号行，截断不会丢代码匹配）
+    total_before_limit = len(matches)
+    matches = matches[:opts.limit]
+
+    # 6. 输出
+    pattern_display = " ".join(patterns) if is_multi_and else patterns[0]
+    filter_note = ""
+    if not opts.include_all and no_symbol_filtered > 0:
+        filter_note = f", filtered {no_symbol_filtered} no-symbol"
+    kind_note = f" [kind={opts.kind}]" if opts.kind else ""
+    print(f"Grep with symbol context: pattern={pattern_display!r}, {len(matches)} matches"
+          f" (of {total_before_limit} after filter{filter_note}){kind_note}")
+    print()
+    for fpath, lineno, content in matches:
+        sym_map = file_line_symbols.get(fpath, {})
+        sym = sym_map.get(lineno)
+        if sym:
+            # 带符号上下文：file:line [in fn xxx] content
+            kind_label = sym.get("kind", "?")
+            qname = sym.get("qualified_name") or sym.get("name") or "?"
+            print(f"{fpath}:{lineno} [in {kind_label} {qname}] {content}")
+        else:
+            # 仅 --include-all 时才会到这（import/顶层语句/注释块外）
+            print(f"{fpath}:{lineno} [no symbol] {content}")
+    print()
+    print(f"Total: {len(matches)} matches (of {total_before_limit} after filter)")
+    return True
+
+
+def _handle_issues(args, db):
+    """处理 issues 子命令（符号级静态检查问题）
+
+    查询符号相关的 Semgrep findings + Guardrail findings，让 agent 一站式看到
+    已知缺陷/告警。相比 cw symbol（只注入前 5 条），cw issues 返回完整列表。
+
+    用法：
+        cw issues <qualified_name>              # 默认 WARNING+ 级别
+        cw issues <qualified_name> --include-info  # 包含 INFO 级别
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw issues",
+        description="Symbol-level static check issues (Semgrep + Guardrail findings)",
+    )
+    parser.add_argument("qualified_name", help="Symbol qualified name")
+    parser.add_argument("--include-info", action="store_true",
+                        help="Include INFO level findings (default: WARNING+ only)")
+    opts = parser.parse_args(args)
+
+    issues = db.get_symbol_issues(opts.qualified_name, include_info=opts.include_info)
+
+    if not issues:
+        print(f"No issues found for: {opts.qualified_name}")
+        print("（可能原因：1. 未运行 semgrep 扫描；2. 符号无 WARNING+ 问题；3. 符号不存在）")
+        return True
+
+    # 统计
+    by_source = {"semgrep": 0, "guardrail": 0}
+    by_severity = {}
+    for issue in issues:
+        src = issue.get("source", "?")
+        sev = issue.get("severity", "?").upper()
+        by_source[src] = by_source.get(src, 0) + 1
+        by_severity[sev] = by_severity.get(sev, 0) + 1
+
+    sev_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_severity.items(), key=lambda x: -x[1]))
+    src_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_source.items(), key=lambda x: -x[1]))
+    info_note = " (+INFO)" if opts.include_info else ""
+    print(f"Issues for {opts.qualified_name}: {len(issues)} total{info_note}")
+    print(f"  by severity: {sev_str}")
+    print(f"  by source:   {src_str}")
+    print()
+
+    for i, issue in enumerate(issues, 1):
+        src = issue.get("source", "?")
+        sev = issue.get("severity", "?").upper()
+        rule_id = issue.get("rule_id", "?")
+        rule_name = issue.get("rule_name", "")
+        msg = issue.get("message", "")
+        start_line = issue.get("start_line", 0)
+        end_line = issue.get("end_line", 0)
+        confidence = issue.get("confidence", "")
+        status = issue.get("status", "")
+        snippet = issue.get("snippet", "")
+        fix = issue.get("fix", "")
+
+        # 标题行：[i] [source] [severity] rule_id (line range)
+        line_range = f"L{start_line}" if start_line == end_line or not end_line else f"L{start_line}-{end_line}"
+        line_info = f" {line_range}" if start_line else ""
+        conf_info = f" conf={confidence}" if confidence and confidence != "UNKNOWN" else ""
+        status_info = f" [{status}]" if status else ""
+        print(f"[{i}] [{src}] [{sev}] {rule_id}{line_info}{conf_info}{status_info}")
+        if rule_name:
+            print(f"    rule: {rule_name}")
+        if msg:
+            print(f"    msg:  {msg}")
+        if snippet:
+            # snippet 可能多行，缩进展示
+            snippet_lines = snippet.strip().split("\n")
+            for sl in snippet_lines[:3]:  # 最多展示 3 行
+                print(f"    code: {sl}")
+            if len(snippet_lines) > 3:
+                print(f"    code: ... ({len(snippet_lines)-3} more lines)")
+        if fix:
+            print(f"    fix:  {fix}")
+        print()
+
+    print(f"Total: {len(issues)} issues")
+    return True
+
+
+def _handle_tests(args, db):
+    """处理 tests 子命令（符号级单元测试 case 查询 + 测试运行结果）
+
+    回答 agent 高频问题："foo() 有哪些 test 在测它？" "foo() 的测试最近稳定吗？"
+
+    用法：
+        cw tests <qualified_name>            # 查 foo 的测试列表
+        cw tests <qualified_name> --reverse   # 反向：查 test_foo 测了哪些函数
+        cw tests --build [--force]            # 全量重建测试关联（refresh 测试文件后调用）
+        cw tests <qualified_name> --history   # 查 foo 的测试运行历史与稳定性
+        cw tests --import <junit.xml>         # 导入 JUnit XML 测试运行结果
+                [--ci-run-id ID] [--ci-url URL]
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw tests",
+        description="Symbol-level test case relations and test run history",
+    )
+    parser.add_argument("qualified_name", nargs="?", help="Symbol qualified name")
+    parser.add_argument("--reverse", action="store_true",
+                        help="Reverse query: what does this test function test?")
+    parser.add_argument("--build", action="store_true",
+                        help="Build/rebuild test case relations (run after refresh of test files)")
+    parser.add_argument("--force", action="store_true",
+                        help="With --build: force full rebuild (clear existing relations first)")
+    parser.add_argument("--history", action="store_true",
+                        help="Show test run history/stability for the symbol (requires test_runs data)")
+    parser.add_argument("--import", dest="import_file", default="",
+                        help="Import JUnit XML test results (file path or XML content)")
+    parser.add_argument("--ci-run-id", default="",
+                        help="CI run ID (optional, used with --import to group one CI run)")
+    parser.add_argument("--ci-url", default="",
+                        help="CI run URL (optional, used with --import)")
+    parser.add_argument("--limit", type=int, default=50,
+                        help="Max run records to display (with --history, default 50)")
+    opts = parser.parse_args(args)
+
+    # --import 模式：导入 JUnit XML 测试运行结果
+    if opts.import_file:
+        stats = db.import_test_results(
+            opts.import_file,
+            ci_run_id=opts.ci_run_id,
+            ci_url=opts.ci_url,
+        )
+        if "parse_error" in stats:
+            print(f"Error: {stats['parse_error']}")
+            return False
+        print("Test results imported:")
+        print(f"  Total:    {stats['total']}")
+        print(f"  Passed:   {stats['passed']}")
+        print(f"  Failed:   {stats['failed']}")
+        print(f"  Skipped:  {stats['skipped']}")
+        print(f"  Error:    {stats['error']}")
+        print(f"  Matched:  {stats['matched']}  (test_name → symbol_id)")
+        return True
+
+    # --history 模式：查符号的测试运行历史与稳定性
+    if opts.history:
+        if not opts.qualified_name:
+            print("Error: qualified_name required with --history")
+            return False
+        result = db.get_test_stability(opts.qualified_name, limit=opts.limit)
+        print(f"Test stability for {opts.qualified_name}:")
+        print(f"  Total runs:   {result['total_runs']}")
+        if result['total_runs'] > 0:
+            print(f"  Pass rate:    {result['pass_rate']*100:.1f}%")
+            print(f"  Avg duration: {result['avg_duration_ms']:.1f} ms")
+        else:
+            print("  (no test runs found)")
+            print("  提示：先运行 'cw tests --import <junit.xml>' 导入 CI 测试结果")
+            return True
+
+        if result['recent_failures']:
+            print(f"\nRecent failures (top {len(result['recent_failures'])}):")
+            for f in result['recent_failures']:
+                ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(f.get('run_at', 0)))
+                err_type = f.get('error_type', '') or '?'
+                print(f"  - {f['test_name']} [{err_type}] @ {ts}")
+                msg = f.get('error_message', '')
+                if msg:
+                    print(f"    {msg[:100]}")
+
+        if result['by_test']:
+            print(f"\nBy test (pass/total):")
+            # 按通过率升序（最不稳定的在前）
+            sorted_tests = sorted(
+                result['by_test'].items(),
+                key=lambda kv: (kv[1]['passed'] / kv[1]['total'] if kv[1]['total'] else 1, kv[1]['total']),
+            )
+            for name, st in sorted_tests:
+                rate = st['passed'] * 100 / st['total'] if st['total'] else 0
+                failed_str = f", {st['failed']} failed" if st.get('failed', 0) else ""
+                print(f"  {name}: {st['passed']}/{st['total']} ({rate:.0f}%{failed_str})")
+        return True
+
+    # --build 模式：重建关联表
+    if opts.build:
+        stats = db.build_test_relations(force=opts.force)
+        print(f"Test relations built:")
+        print(f"  Total test functions scanned: {stats['total_test_fns']}")
+        print(f"  direct_call relations:     {stats.get('direct_call', 0)}")
+        print(f"  name_convention relations:  {stats.get('name_convention', 0)}")
+        print(f"  indirect relations:         {stats.get('indirect', 0)}")
+        print(f"  Total inserted:             {stats['inserted']}")
+        return True
+
+    if not opts.qualified_name:
+        print("Error: qualified_name required (or use --build/--import/--history)")
+        return False
+
+    if opts.reverse:
+        # 反向查询：test_foo 测了哪些函数
+        tested = db.get_tested_functions(opts.qualified_name)
+        if not tested:
+            print(f"No tested functions found for: {opts.qualified_name}")
+            print("（可能原因：1. 未运行 cw tests --build；2. 此 test_fn 未关联到任何函数；3. 符号不存在）")
+            return True
+
+        print(f"Tested functions for {opts.qualified_name}: {len(tested)} total")
+        print()
+        for i, t in enumerate(tested, 1):
+            method = t.get("match_method", "?")
+            confidence = t.get("confidence", "?")
+            tested_qn = t.get("tested_qualified_name", "?")
+            tested_file = t.get("tested_file", "")
+            line = t.get("tested_start_line", 0)
+            print(f"[{i}] [{method}] [{confidence}] {tested_qn}")
+            if tested_file:
+                print(f"    file: {tested_file}:{line}")
+        print()
+        print(f"Total: {len(tested)} tested functions")
+        return True
+
+    # 正向查询：foo 有哪些 test
+    test_cases = db.get_test_cases(opts.qualified_name)
+
+    if not test_cases:
+        print(f"No test cases found for: {opts.qualified_name}")
+        print("（可能原因：1. 未运行 cw tests --build；2. 此函数无测试；3. 符号不存在）")
+        print("提示：运行 'cw tests --build' 重建测试关联表")
+        return True
+
+    # 统计
+    by_confidence = {}
+    by_method = {}
+    for tc in test_cases:
+        conf = tc.get("confidence", "?")
+        method = tc.get("match_method", "?")
+        by_confidence[conf] = by_confidence.get(conf, 0) + 1
+        by_method[method] = by_method.get(method, 0) + 1
+
+    conf_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_confidence.items(), key=lambda x: -x[1]))
+    method_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_method.items(), key=lambda x: -x[1]))
+    print(f"Test cases for {opts.qualified_name}: {len(test_cases)} total")
+    print(f"  by confidence: {conf_str}")
+    print(f"  by method:     {method_str}")
+    print()
+
+    for i, tc in enumerate(test_cases, 1):
+        method = tc.get("match_method", "?")
+        confidence = tc.get("confidence", "?")
+        test_qn = tc.get("test_qualified_name", "?")
+        test_name = tc.get("test_name", "")
+        test_file = tc.get("test_file", "")
+        test_line = tc.get("test_start_line", 0)
+        print(f"[{i}] [{method}] [{confidence}] {test_qn}")
+        if test_file:
+            print(f"    file: {test_file}:{test_line}")
+    print()
+    print(f"Total: {len(test_cases)} test cases")
+    return True
+
+
 def _handle_symbol(args, db):
     """处理 symbol 子命令（符号详情）
 
@@ -5698,7 +6216,7 @@ def _handle_symbol(args, db):
     parser.add_argument("name", help=t("cli.messages.symbol_arg_name", default="Qualified symbol name"))
     opts = parser.parse_args(args)
 
-    detail = db.get_symbol_detail(opts.name)
+    detail = db.get_symbol(opts.name)
     if not detail:
         print(t("cli.messages.symbol_not_found", name=opts.name))
         print(t("cli.messages.symbol_search_hint"))
@@ -5746,6 +6264,28 @@ def _handle_symbol(args, db):
             print(t("cli.messages.symbol_more", count=len(detail['called_by']) - 20))
     else:
         print(t("cli.messages.symbol_none"))
+
+    # 展示静态检查问题（fail-soft 注入，最多 5 条；完整列表用 cw issues <QN>）
+    issues = detail.get("issues", [])
+    issues_total = detail.get("issues_total", 0)
+    if issues:
+        print()
+        print(f"Issues ({len(issues)} of {issues_total}, use 'cw issues {opts.name}' for full):")
+        for issue in issues:
+            src = issue.get("source", "?")
+            sev = issue.get("severity", "?").upper()
+            rule_id = issue.get("rule_id", "?")
+            msg = issue.get("message", "")
+            start_line = issue.get("start_line", 0)
+            line_info = f" L{start_line}" if start_line else ""
+            print(f"  [{src}] [{sev}] {rule_id}{line_info}: {msg}")
+    elif issues_total == 0:
+        # 无问题时不打印噪音（保持输出简洁）
+        pass
+    else:
+        # 有问题但都被过滤（如全是 INFO），提示
+        print()
+        print(f"Issues: {issues_total} total (filtered, use 'cw issues {opts.name} --include-info')")
     return True
 
 

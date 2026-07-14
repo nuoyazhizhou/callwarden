@@ -716,7 +716,7 @@ class QueryMixin:
 
         out_sql = """
             SELECT DISTINCT
-                cv.callee_qualified as target_name,
+                COALESCE(NULLIF(cv.callee_qualified, ''), cv.callee_name) as target_name,
                 cv.callee_module as target_module,
                 cv.callee_file as target_file,
                 cv.call_line
@@ -764,6 +764,125 @@ class QueryMixin:
             # 兼容未启用 AgentRulesMixin 的部署
             result["applicable_rules"] = []
 
+        # 注入 issues（fail-soft：静态检查数据缺失时降级为空列表）
+        # 只注入前 5 条 WARNING+ 问题，避免 token 爆炸；完整列表用 cw issues <QN>
+        try:
+            all_issues = self.get_symbol_issues(qualified_name, include_info=False)
+            result["issues"] = all_issues[:5]
+            result["issues_total"] = len(all_issues)
+        except Exception:
+            result["issues"] = []
+            result["issues_total"] = 0
+
+        # 注入 test_cases（fail-soft：测试关联数据缺失时降级为空列表）
+        # 只注入前 5 条测试 case；完整列表用 cw tests <QN>
+        try:
+            test_summary = self.get_test_coverage_summary(qualified_name)
+            result["has_tests"] = test_summary["has_tests"]
+            result["test_count"] = test_summary["test_count"]
+            result["test_cases"] = test_summary["tests"][:5]
+        except Exception:
+            result["has_tests"] = False
+            result["test_count"] = 0
+            result["test_cases"] = []
+
+        # 注入 evolution_summary（fail-soft：变更-缺陷关联数据缺失时降级为空）
+        # 只注入摘要（change_count / defect_count / defect_rate / recent_defects 前3条）
+        try:
+            result["evolution_summary"] = self.get_defect_correlation_by_qn(qualified_name)
+        except Exception:
+            result["evolution_summary"] = {
+                "qualified_name": qualified_name,
+                "change_count": 0,
+                "defect_count": 0,
+                "defect_rate": 0.0,
+                "recent_defects": [],
+            }
+
+        return result
+
+    def find_symbol_at_line(self, file_path: str, line: int) -> Optional[Dict]:
+        """查找给定文件给定行号所属的最内层符号
+
+        用于 cw grep 的行号→符号映射：给定一个文件路径和行号，返回包含该行的
+        最小范围符号（如某行在一个嵌套方法内，优先返回内层方法，而非外层函数）。
+
+        Args:
+            file_path: 文件路径（相对或绝对均可，内部归一化为相对路径）
+            line: 行号（1-based）
+
+        Returns:
+            符号字典（qualified_name/name/kind/start_line/end_line），无匹配返回 None
+        """
+        ws_id = self._get_active_workspace_id()
+        # 归一化为相对路径（与 file_instances.rel_path 对齐）
+        if os.path.isabs(file_path):
+            try:
+                rel_path = os.path.relpath(file_path, self.workspace_root)
+            except ValueError:
+                # Windows 跨盘符 relpath 报错 → 直接用原路径
+                rel_path = file_path
+        else:
+            rel_path = file_path
+        # 路径分隔符统一为正斜杠（cw 数据库约定）
+        rel_path = rel_path.replace("\\", "/")
+
+        cur = self.conn.execute(
+            """SELECT s.qualified_name, s.name, s.kind, s.start_line, s.end_line
+               FROM symbols s
+               JOIN file_instances fi ON s.file_instance_id = fi.id
+               WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fi.status != 'archived'
+                 AND s.start_line <= ? AND s.end_line >= ?
+               ORDER BY (s.end_line - s.start_line) ASC
+               LIMIT 1""",
+            (ws_id, rel_path, line, line),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def find_symbols_at_lines(self, file_path: str, lines: List[int]) -> Dict[int, Optional[Dict]]:
+        """批量查找多行号所属符号（用于 cw grep 减少重复 SQL）
+
+        一次查询文件所有符号，在 Python 端做区间匹配，避免 N 次 SQL。
+
+        Args:
+            file_path: 文件路径
+            lines: 行号列表（1-based）
+
+        Returns:
+            {line: 符号字典或 None} 映射
+        """
+        ws_id = self._get_active_workspace_id()
+        if os.path.isabs(file_path):
+            try:
+                rel_path = os.path.relpath(file_path, self.workspace_root)
+            except ValueError:
+                rel_path = file_path
+        else:
+            rel_path = file_path
+        rel_path = rel_path.replace("\\", "/")
+
+        # 一次性取出该文件所有函数/方法符号（kind 为 fn/method/test_fn 等"有行号范围"的符号）
+        cur = self.conn.execute(
+            """SELECT s.qualified_name, s.name, s.kind, s.start_line, s.end_line
+               FROM symbols s
+               JOIN file_instances fi ON s.file_instance_id = fi.id
+               WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fi.status != 'archived'
+                 AND s.start_line > 0 AND s.end_line > 0
+               ORDER BY (s.end_line - s.start_line) ASC""",
+            (ws_id, rel_path),
+        )
+        symbols = [dict(row) for row in cur]
+
+        # 在 Python 端做行号区间匹配（按范围升序，取第一个包含的即最内层）
+        result: Dict[int, Optional[Dict]] = {}
+        for line in lines:
+            matched = None
+            for sym in symbols:
+                if sym["start_line"] <= line <= sym["end_line"]:
+                    matched = sym
+                    break  # 已按范围升序，第一个匹配即最内层
+            result[line] = matched
         return result
 
     def get_symbol_by_name_and_file(self, symbol_name: str, file_path: str) -> Optional[Dict]:
@@ -804,6 +923,95 @@ class QueryMixin:
         if not row:
             return None
         return dict(row)
+
+    def get_symbol_issues(self, qualified_name: str, include_info: bool = False) -> List[Dict]:
+        """查询符号相关的静态检查问题（Semgrep findings + Guardrail findings）
+
+        整合两类静态检查数据，让 agent 查符号时一站式看到已知缺陷/告警。
+        用于 cw issues <QN> 子命令，也被 get_symbol() fail-soft 注入。
+
+        查询路径：
+        1. semgrep_findings：按 symbol_qualified 精确匹配（首选）
+                         OR file_instance_id + line 范围交集（兜底，行范围落在符号内）
+        2. guardrail_findings：按 file_path + symbol_hash 匹配
+
+        Args:
+            qualified_name: 符号限定名
+            include_info: 是否包含 INFO 级别（默认只 WARNING+，避免噪音）
+
+        Returns:
+            issues 列表，按 severity 降序（ERROR > WARNING > INFO），每条含：
+            - source: "semgrep" / "guardrail"
+            - rule_id, rule_name, severity, message, start_line, end_line
+            - snippet, fix（仅 semgrep）
+        """
+        ws_id = self._get_active_workspace_id()
+
+        # 先拿符号的 file_instance_id / start_line / end_line / file_path / symbol_hash
+        sym_sql = """
+            SELECT fi.id as file_instance_id, fi.rel_path as file_path,
+                   fsv.start_line, fsv.end_line, fsv.symbol_hash
+            FROM file_symbol_versions fsv
+            JOIN file_versions fv ON fsv.file_version_id = fv.id
+            JOIN file_instances fi ON fv.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND fi.status != 'archived' AND fv.is_current = 1 AND fsv.is_deleted = 0
+              AND fsv.qualified_name = ?
+            LIMIT 1
+        """
+        cur = self.conn.execute(sym_sql, (ws_id, qualified_name))
+        sym_row = cur.fetchone()
+        if not sym_row:
+            return []
+        sym = dict(sym_row)
+
+        issues: List[Dict] = []
+
+        # 1. semgrep_findings：优先按 symbol_qualified 精确匹配，兜底用行范围交集
+        sem_sql = """
+            SELECT rule_id, rule_name, severity, confidence, message,
+                   start_line, end_line, snippet, fix
+            FROM semgrep_findings
+            WHERE file_instance_id = ?
+              AND (symbol_qualified = ? OR symbol_qualified = ''
+                   OR (start_line BETWEEN ? AND ? AND end_line BETWEEN ? AND ?))
+        """
+        params = (sym["file_instance_id"], qualified_name,
+                  sym["start_line"], sym["end_line"], sym["start_line"], sym["end_line"])
+        if not include_info:
+            sem_sql += " AND severity != 'INFO' AND severity != 'UNKNOWN'"
+        sem_sql += " ORDER BY CASE severity WHEN 'ERROR' THEN 0 WHEN 'WARNING' THEN 1 ELSE 2 END, start_line"
+        try:
+            cur = self.conn.execute(sem_sql, params)
+            for row in cur:
+                d = dict(row)
+                d["source"] = "semgrep"
+                issues.append(d)
+        except Exception:
+            pass  # fail-soft：表不存在或异常时降级为空
+
+        # 2. guardrail_findings：按 file_path + symbol_hash 匹配
+        guard_sql = """
+            SELECT gf.rule_id, gr.category as rule_name, gf.severity, gf.message,
+                   gf.status, gf.detected_at
+            FROM guardrail_findings gf
+            JOIN guardrail_rules gr ON gf.rule_id = gr.rule_id
+            WHERE gf.file_path = ? AND gf.symbol_hash = ?
+        """
+        if not include_info:
+            guard_sql += " AND gf.severity != 'info'"
+        guard_sql += " ORDER BY CASE gf.severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END"
+        try:
+            cur = self.conn.execute(guard_sql, (sym["file_path"], sym["symbol_hash"]))
+            for row in cur:
+                d = dict(row)
+                d["source"] = "guardrail"
+                d["start_line"] = 0  # guardrail_findings 无行号
+                d["end_line"] = 0
+                issues.append(d)
+        except Exception:
+            pass  # fail-soft
+
+        return issues
 
 
     def export_module_graph(self, format: str = "mermaid", output_file: str = "") -> str:

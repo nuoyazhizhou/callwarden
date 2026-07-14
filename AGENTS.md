@@ -16,25 +16,31 @@
    | 任务编排（task create/next/report/rollback）| **CLI** `cw task ...` | **CLI**（保持，写操作避免与 MCP 长连接撞锁）|
    | 刷新数据库（refresh/refresh-all）| **CLI** `cw --refresh ...` | **CLI**（保持，写操作）|
    | 读文件内容 / 搜索代码 / 浏览目录 | **CLI** `cw --file <PATH>` / `cw --search <Q>` / `cw --query <NAME> <FILE>`；IDE 内置 Read/Grep/Glob 作为降级 | **MCP** `file_read` / `file_grep` / `file_list`（只读，WAL 模式下与 CLI 写并发安全）|
-   | 符号内容 / 符号查询 | **CLI** `cw --symbol <QN>` / `cw --callers` / `cw --callees` | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）|
+   | 符号内容 / 符号查询 | **CLI** `cw symbol <QN>` / `cw callers` / `cw callees` | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）|
+   | 符号静态检查 | **CLI** `cw issues <QN>`（整合 Semgrep + Guardrail findings，按符号聚合）| 待加 MCP 工具 |
+   | 符号测试 case | **CLI** `cw tests <QN>`（回答"foo() 有哪些 test"；`--build` 重建关联；`--history` 查稳定性；`--import` 导入 JUnit XML）| 待加 MCP 工具 |
+   | 带符号上下文的文本搜索 | **CLI** `cw grep <pattern...> [--fixed] [--limit N] [--include-all]`（默认过滤无符号行，多关键词空格分隔为 AND）| 待加 MCP 工具 |
    | 规则匹配查询（get_applicable_rules）| **CLI** `cw rule applicable` | **MCP** `get_applicable_rules`（只读）|
 
    **背景**：MCP Server 是 stdio 长连接，与 CLI 新进程并发时会触发 SQLite `database is locked`。已通过 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` 缓解，但**写操作仍有 5% 撞锁概率**，故写操作永久走 CLI；只读操作在 MCP 激活后走 MCP（吃狗粮），未激活时走 CLI。
 
    **MCP 激活状态判断**：会话开始时若无法调用 `file_grep` 等 MCP 工具，则视为 MCP 未激活，全部走 CLI。MCP 激活由用户手工配置，不在 AGENTS.md 中自动判断。
-3. **大任务必须拆分父子任务**：当任务涉及 3 个以上文件或 5 个以上步骤时，必须使用 `task_split` 拆分为父子任务树，通过 `task_next_step` 逐步执行，避免遗漏和遗忘。
-4. **开发阶段开启 watcher**：长时间开发时，使用 `cw --watch` 启动文件监控，修改后自动刷新数据库。
-5. **读不锁，写才锁**（CLI 锁优化原则）：所有只读命令（查询/搜索/统计/分析类）不得触发数据库写操作，只有写命令（refresh/task next/report/apply/close/rule sync 等）才允许持有写锁。
+3. **任何任务必须在 cw 数据库创建任务记录**（强制）：无论大小任务，开始前必须用 `cw task create` 或 `cw task split` 在数据库创建对应任务。可以创建独立父任务，也可以挂载到已存在的父任务下（通过 Python API `task_create(parent_id=...)`）。禁止"无任务记录就开始编码"。
+
+   **子任务挂载方式**（重要）：
+   - **CLI `cw task create` 当前不支持 `--parent` 参数**（只有 `--title`/`--desc`/`--steps`）
+   - 需要挂载子任务到父任务时，用 Python 脚本调用 `CodeGraphDB.task_create(title=..., description=..., parent_id=..., steps=[])`
+   - 脚本模板见 [docs/task_create_subtask.py](docs/task_create_subtask.py)
+   - 或用 `cw task split --plan plan.md <parent_task_id>` 从 Markdown 计划拆分子任务
+
+4. **大任务必须拆分父子任务**：当任务涉及 3 个以上文件或 5 个以上步骤时，必须使用 `task_split` 拆分为父子任务树，通过 `task_next_step` 逐步执行，避免遗漏和遗忘。
+5. **开发阶段开启 watcher**：长时间开发时，使用 `cw --watch` 启动文件监控，修改后自动刷新数据库。
+6. **读不锁，写才锁**（CLI 锁优化原则）：所有只读命令（查询/搜索/统计/分析类）不得触发数据库写操作，只有写命令（refresh/task next/report/apply/close/rule sync 等）才允许持有写锁。
 
    - **只读命令跳过 workspace 激活**：CLI 启动时默认会执行 `register_workspace` + `set_active_workspace`（UPDATE workspaces 写操作）。只读命令通过 `_is_readonly_command()`（子命令模式）或 `_is_readonly_args()`（flag 模式）识别后跳过此写操作，避免被 MCP Server 写锁卡住。
    - **set_active_workspace 内部短路**：即使写命令进入此方法，若目标 workspace 已是 active，直接返回不写（`is_active == 1` 短路）。
    - **busy_timeout=5000**：写命令遇到锁时最多等 5 秒（非 30 秒），超时后抛 `sqlite3.OperationalError`，由上层捕获并打印 `errors.db_locked` 友好提示（"数据库正忙，请几秒后重试"），exit code 2。
-   - **只读命令清单**：
-     - 子命令：`task list/show/findings`、`rule list/candidate/applicable/extract`、`doctor`、`check-gate`、`test-impact`、`hotspot`、`churn`、`evolution`、`impact`、`review`、`vuln-blast`、`symbol-history`、`guardrail scan/rules`、`defect stats/list/show`、`gc list/inspect`
-     - flag：`--search`、`--symbol`、`--call-chain`、`--callers`、`--callees`、`--topo`、`--file`、`--history`、`--diff`、`--changes`、`--comment-coverage`、`--stats`、`--status`、`--query`、`--top-callers`、`--orphan-symbols`、`--deepest`、`--module-calls`、`--detect-cycles`、`--export-module-graph`、`--call-heatmap`、`--impact`、`--uncommented`、`--who`、`--ownership-map`
-   - **写命令清单**（需激活 workspace，可能撞锁）：
-     - 子命令：`task create/next/report/apply/close/rollback`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`
-     - flag：`--refresh-all`、`--refresh`、`--watch`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--restore-comment`、`--restore-all-comments`、`--coverage-import`
+   - **只读/写命令分类**：详见 [TOOLS.md](TOOLS.md) 的"只读/写命令分类"小节。
 
 ## 真相源优先级
 
@@ -115,70 +121,11 @@ callwarden/
 └── tests/                   # 测试套件
 ```
 
-## 常用命令
+## 工具参考
 
-### CLI 命令（cw）
+CLI 命令速查、cw task 子命令参数、MCP 工具分组、只读/写命令分类、场景→命令映射，详见 [TOOLS.md](TOOLS.md)。
 
-```bash
-# 安装依赖
-cw install            # 核心依赖
-cw install --all      # 全部依赖（含 semgrep / 向量搜索）
-
-# 初始化与构建
-cw --refresh-all      # 增量刷新代码图谱（仅解析变更文件）
-cw --refresh-all --force  # 强制全量重新解析
-cw --refresh <file>   # 刷新单个文件
-
-# 查询
-cw --search "login"            # 搜索符号
-cw --call-chain "module::fn"   # 查看调用链
-cw --stats                      # 统计信息
-cw --status                     # 完整状态概览
-
-# MCP Server
-cw server              # 启动 MCP Server（stdio 模式）
-cw server --transport sse  # SSE 模式
-
-# 安全护栏
-cw guardrail scan      # 扫描安全规则
-cw guardrail list      # 列出规则
-
-# 其他
-cw test <module>       # 运行测试
-cw gc archive          # 归档被 ignore 命中的文件
-```
-
-### MCP 工具（120+ 个，按功能分组）
-
-**查询类**：get_stats、search_symbols、get_symbol、get_callers、get_callees、get_symbol_history、get_file_history、get_recent_changes、get_topological_order
-
-**调用链分析**：get_impact、get_call_chain_down、get_top_callers、get_orphan_symbols、get_deepest_functions、get_module_call_stats、detect_cycles
-
-**缺陷检测**：get_issue_summary、find_issues、get_semgrep_stats、get_semgrep_findings、run_semgrep_scan
-
-**覆盖率分析**：get_comment_coverage、get_uncommented_symbols、get_call_heatmap、get_test_coverage
-
-**代码健康**：get_code_health_check、check_file_health、get_complexity_hotspots、get_coupling_analysis、get_function_metrics
-
-**语义搜索**：semantic_search、find_similar_functions、embed_symbols、ask_codebase（RAG 管道）
-
-**安全护栏**：guardrail_scan、guardrail_check_edit、guardrail_list_rules、guardrail_add_rule
-
-**变更影响**：blast_radius、get_vulnerability_blast_radius、cross_layer_impact、diff_to_symbol、review_readiness
-
-**演化智能**：evolution_frequency、defect_correlation、hotspot_evolution、churn_analysis
-
-**缺陷知识库**：defect_search、defect_suggest_fix、defect_learn
-
-**任务编排**：task_create、task_next_step、task_report_step、task_rollback、task_list、task_status
-
-**Git 集成**：import_git_history、get_git_commits、get_commit_changes、get_git_stats
-
-**工作区管理**：list_workspaces、register_workspace、set_active_workspace、get_active_workspace
-
-**项目简报**：project_brief、repo_map、get_status
-
-完整 MCP 工具列表见 [docs/mcp_tools.md](docs/mcp_tools.md)。
+**核心原则**：符号级查询（callers/callees/call-chain/impact/symbol）必须用 cw，Grep 做不到或做不好。读文件全文/浏览目录/编辑文件可用 IDE 内置工具。
 
 ## 代码规范
 
@@ -293,21 +240,43 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
    B-P7b 设计原则：单值查询（get_stats）保持 Python SQL；多行查询（get_callers/get_callees/search_symbols）走 Rust 短路。
 
-9. **TokenSlim-publish2 编码处理可复用**：`testcode/TokenSlim-publish2/src/core/encoding_fallback/mod.rs` 实现了完整的编码检测链（BOM → UTF-16/32 无 BOM 启发式 → chardetng 统计检测 → locale 提示 → 14 种编码候选打分 → 混合编码行级解码）。当前 Call Warden 的 `config.py:read_file_normalized` 只做 UTF-8 → latin-1 两步降级，遇到 GBK/Shift-JIS/Big5 等亚洲编码会产生乱码。如需改进编码处理，可参考该实现。
+9. **PowerShell 下避免单条复杂 `rg` 正则**：PowerShell 双引号、反斜杠和括号混用时，复杂 alternation 容易在传给 `rg` 前破坏转义，报 `regex parse error: unclosed group`。多个关键词应使用独立的简单模式，例如 `rg -n -e "parse_file_lang" -e "MP_THRESHOLD" db tests`；包含大量括号或引号时改用 `Get-Content ... | Select-String -Pattern 'pattern1|pattern2'`，不要把代码片段转义塞进一个巨大正则。
 
-10. **PowerShell 下避免单条复杂 `rg` 正则**：PowerShell 双引号、反斜杠和括号混用时，复杂 alternation 容易在传给 `rg` 前破坏转义，报 `regex parse error: unclosed group`。多个关键词应使用独立的简单模式，例如 `rg -n -e "parse_file_lang" -e "MP_THRESHOLD" db tests`；包含大量括号或引号时改用 `Get-Content ... | Select-String -Pattern 'pattern1|pattern2'`，不要把代码片段转义塞进一个巨大正则。
+10. **并行调用必须容忍预期的非零退出**：`rg` 未找到内容、探测可选模块不存在等预期情况会返回非零，这不是执行故障；若把这类命令直接放进 `Promise.all`，一个分支会中止整组调用并丢失其他结果。并行脚本应在每个分支捕获结果，或在 PowerShell 中把预期的非零状态显式转换为成功，例如 `rg -n -e "pattern" path; if ($LASTEXITCODE -eq 1) { exit 0 }`。无法方便转换时单独执行该探测；只有非预期的非零状态才按真正错误处理。
 
-11. **并行检索必须容忍 `rg` 无匹配**：`rg` 未找到内容时返回 exit code 1，这不是执行故障；若把该命令直接放进 `Promise.all`，一个无匹配分支会中止整组调用并丢失其他结果。并行脚本应在每个分支捕获结果，或在 PowerShell 中显式转换无匹配，例如 `rg -n -e "pattern" path; if ($LASTEXITCODE -eq 1) { exit 0 }`。只有 exit code 大于 1 才按真正错误处理。
+11. **后台 watcher 用长运行 exec cell 承载**：在桌面工具执行器中，`Start-Process` 启动的后代进程可能被持续跟踪，即使重定向标准输出仍会使父工具调用超时。启动 `cw --watch` 时直接运行长命令并保留返回的 cell id，开发结束后显式终止该 cell；不要用 `Start-Process` 脱离。
+
+12. **`cw task create` 不支持 `--parent` 参数**：CLI 的 `cw task create` 只有 `--title`/`--desc`/`--steps` 三个参数。挂载子任务必须用 Python API `db.task_create(title=..., description=..., parent_id=..., steps=[])`，模板见 [docs/task_create_subtask.py](docs/task_create_subtask.py)。参数清单见 [TOOLS.md](TOOLS.md)，不确定时先 `cw task <subcommand> --help`。
+
+13. **合成数据压测 ≠ 真实 E2E**（方法论教训）：用 `generate_data()` 一次性生成全部合成数据到内存再批量入库，会挤压系统页缓存、未覆盖解析/CAS/watcher/daemon、多规模并行互相干扰。正确做法：流式生成、串行运行取中位数、分开报告 storage_build_time 和 end_to_end_time、记录硬件型号。不要发展"内存主表+SQLite 从表"架构，Call Warden 走混合架构：SQLite/CAS 持久化真相，Rust GraphStore/CSR 内存查询，daemon 共享发布。
+
+14. **PowerShell 不展开传给 `rg` 的路径通配符**：在 Windows PowerShell 中，`rg pattern tests/test_*.py` 或 `rg pattern *.ps1` 会把通配符原样交给 `rg`，随后报 `os error 123`。文件类型筛选必须使用 `rg -g`，例如 `rg -n -g "test_*.py" pattern tests`；多个后缀使用多个 `-g`。不要把 `*` 放在传给 `rg` 的路径参数中。
+
+15. **读取测试文件前先确认真实路径**：不要根据功能名连续猜测 `tests/test_xxx.py`。先运行 `rg --files tests | rg "关键词"` 或 `rg -l -g "test_*.py" "符号名" tests`，再对实际返回的路径使用 `Get-Content` / `cw file`。缺失的候选文件不是检索失败，不应让并行读取整组中止。
+
+16. **`cargo fmt` 不能限定单文件范围**：`cargo fmt --check -- src/graph.rs` 仍会扫描整个 crate，可能被任务之外的既有未格式化文件阻断。只格式化当前修改文件时使用 `rustfmt --edition 2021 rust_ext/src/graph.rs`，随后用 `cargo check --manifest-path rust_ext/Cargo.toml` 验证；不要运行会机械改写整个 crate 的 `cargo fmt`。
+
+17. **Rust 懒批对象必须在服务边界物化**：`CallersBatch` / `SymbolSearchBatch` 等 PyO3 懒批对象用于降低 Rust→Python 转换开销，但 MCP、daemon service 和公开 Python API 若声明返回 `List[...]`，必须在边界执行 `list(result)`。不要把自定义懒批对象直接交给 JSON 序列化或依赖 list 契约的调用方；内部 db 查询短路可继续保留懒批。
+
+18. **连续修改同一文件前刷新补丁上下文**：前一个 `apply_patch` 可能已删除、移动或格式化后续补丁依赖的锚点，继续使用旧上下文会触发 `PatchContextMismatch`。对同一文件分阶段修改时，先用 `rg -n` 或读取目标局部确认当前内容，再生成小范围补丁；不要复用前一轮读取到的 import 或函数上下文。
+
+19. **WSL 验收先检查隔离测试依赖**：精简 Ubuntu/WSL 镜像可能同时缺少 `pytest` 和 `python3-venv`，直接创建 venv 会因无 `ensurepip` 失败。运行 Linux 专属验收前先检查 `python3 -m pip --version`、`python3 -m venv --help` 和 `import pytest`；缺少 venv 支持时先安装匹配版本的 `python3-venv`，再在 `/tmp` 创建临时环境，禁止把 Linux wheel 或测试依赖装进 Windows Python 环境。
+
+20. **PowerShell 调 WSL 时避免嵌套代码字符串**：`PowerShell -> wsl -> bash -lc -> python -c/cargo --config` 的三层引号很容易被提前展开或截断。WSL 验收应把构建、文件准备和 Python 测试拆成独立的简单命令；复杂 Python 逻辑放入仓库已有测试文件，由 `python3 -m pytest` 调用，不要在 `bash -lc` 尾部拼接带引号和括号的 `python -c`。
+
+21. **跨平台路径断言先输出模块来源和实际值**：Windows 对 Linux 风格绝对路径的 `os.path.abspath/join/normpath` 行为可能加入盘符或反斜杠，且 `PYTHONPATH` 可能命中不同安装副本。配置探测连续失败时，先输出 `module.__file__`、原始环境变量和实际配置值，再基于目标平台语义断言；不要连续猜测字符串规范化结果。
 
 ## 文档索引
 
 | 文档 | 说明 |
 | ---- | ---- |
+| [TOOLS.md](TOOLS.md) | 工具使用指南（CLI/MCP/场景映射） |
 | [README.md](README.md) | 项目首页 |
 | [docs/quickstart.md](docs/quickstart.md) | 快速开始 |
 | [docs/cli_reference.md](docs/cli_reference.md) | CLI 命令参考 |
 | [docs/mcp_tools.md](docs/mcp_tools.md) | MCP 工具参考 |
 | [docs/architecture.md](docs/architecture.md) | 架构设计 |
 | [docs/deployment.md](docs/deployment.md) | 部署指南 |
+| [docs/task_create_subtask.py](docs/task_create_subtask.py) | 挂载子任务的标准脚本模板 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更 |
