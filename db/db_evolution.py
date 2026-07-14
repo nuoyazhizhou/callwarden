@@ -528,7 +528,11 @@ class EvolutionMixin:
         """代码流失（churn）分析
 
         统计时间窗口内的变更行数、变更文件数、流失率、高频变更文件与流失趋势。
-        变更行数通过相邻文件版本 total_lines 差值近似。
+        基于 git_file_changes 表的 lines_added / lines_deleted 真实行数统计，
+        需要 `cw git import` 导入 git 历史。
+
+        如果 git_file_changes 无数据（未导入 git 历史），则 fallback 到
+        file_versions 相邻版本 total_lines 差值近似。
 
         Args:
             module_filter: 模块路径前缀过滤
@@ -541,45 +545,130 @@ class EvolutionMixin:
         ws_id = self._get_active_workspace_id()
         cutoff = self._parse_time_window(time_window)
 
-        sql = """
+        # 优先使用 git_file_changes（真实行数），fallback 到 file_versions（近似）
+        sql_gfc = """
+            SELECT gfc.file_instance_id, gfc.lines_added, gfc.lines_deleted,
+                   gfc.commit_hash, gc.timestamp as commit_ts,
+                   fi.rel_path, fi.module_path
+            FROM git_file_changes gfc
+            JOIN file_instances fi ON gfc.file_instance_id = fi.id
+            LEFT JOIN git_commits gc ON gfc.commit_hash = gc.commit_hash
+            WHERE fi.workspace_id = ?
+        """
+        params_gfc: list = [ws_id]
+        if module_filter:
+            sql_gfc += " AND fi.module_path LIKE ?"
+            params_gfc.append(f"{module_filter}%")
+        if cutoff > 0:
+            sql_gfc += " AND gc.timestamp >= ?"
+            params_gfc.append(cutoff)
+
+        cur = self.conn.execute(sql_gfc, params_gfc)
+        gfc_rows = cur.fetchall()
+
+        if gfc_rows:
+            # 基于 git_file_changes 的真实行数统计
+            by_file: Dict[int, Dict[str, Any]] = {}
+            total_churned_lines = 0
+            changed_files = 0
+            trend_buckets: Dict[str, int] = defaultdict(int)
+
+            for row in gfc_rows:
+                fid = row["file_instance_id"]
+                added = row["lines_added"] or 0
+                deleted = row["lines_deleted"] or 0
+                file_churn = added + deleted
+
+                if fid not in by_file:
+                    by_file[fid] = {
+                        "file_instance_id": fid,
+                        "rel_path": row["rel_path"],
+                        "change_count": 0,
+                        "churned_lines": 0,
+                    }
+                    changed_files += 1
+
+                by_file[fid]["change_count"] += 1
+                by_file[fid]["churned_lines"] += file_churn
+                total_churned_lines += file_churn
+
+                # 趋势分桶（按天，使用 commit timestamp）
+                ts = row["commit_ts"]
+                if ts and file_churn > 0:
+                    bucket_key = time.strftime("%Y-%m-%d", time.localtime(ts))
+                    trend_buckets[bucket_key] += file_churn
+
+            # 当前总行数（取 file_versions 最新版本）
+            cur_lines = self.conn.execute(
+                "SELECT COALESCE(SUM(total_lines), 0) as total FROM file_versions "
+                "WHERE is_current = 1 AND file_instance_id IN "
+                "(SELECT id FROM file_instances WHERE workspace_id = ?)",
+                (ws_id,),
+            )
+            total_lines_current = cur_lines.fetchone()["total"]
+
+            churn_rate = (
+                total_churned_lines / total_lines_current
+            ) if total_lines_current > 0 else 0.0
+
+            # 按流失行数降序排列 Top 10
+            top_files = sorted(
+                by_file.values(),
+                key=lambda x: x["churned_lines"],
+                reverse=True,
+            )[:10]
+
+            trend = [
+                {"date": k, "churned_lines": v}
+                for k, v in sorted(trend_buckets.items())
+            ]
+
+            return {
+                "churn_rate": round(churn_rate, 4),
+                "total_churned_lines": total_churned_lines,
+                "changed_files": changed_files,
+                "total_lines_current": total_lines_current,
+                "top_churned_files": top_files,
+                "trend": trend,
+            }
+
+        # Fallback: 使用 file_versions 相邻版本 total_lines 差值近似
+        sql_fv = """
             SELECT fv.id, fv.file_instance_id, fv.version_num, fv.total_lines,
                    fv.parsed_at, fi.rel_path, fi.module_path
             FROM file_versions fv
             JOIN file_instances fi ON fv.file_instance_id = fi.id
             WHERE fi.workspace_id = ?
         """
-        params: list = [ws_id]
+        params_fv: list = [ws_id]
         if module_filter:
-            sql += " AND fi.module_path LIKE ?"
-            params.append(f"{module_filter}%")
+            sql_fv += " AND fi.module_path LIKE ?"
+            params_fv.append(f"{module_filter}%")
         if cutoff > 0:
-            sql += " AND fv.parsed_at >= ?"
-            params.append(cutoff)
-        sql += " ORDER BY fv.file_instance_id, fv.version_num ASC"
+            sql_fv += " AND fv.parsed_at >= ?"
+            params_fv.append(cutoff)
+        sql_fv += " ORDER BY fv.file_instance_id, fv.version_num ASC"
 
-        cur = self.conn.execute(sql, params)
+        cur = self.conn.execute(sql_fv, params_fv)
         versions = cur.fetchall()
 
-        # 按 file_instance 分组，计算相邻版本行数差
-        by_file: Dict[int, List[Any]] = defaultdict(list)
+        by_file_fv: Dict[int, List[Any]] = defaultdict(list)
         for row in versions:
-            by_file[row["file_instance_id"]].append(row)
+            by_file_fv[row["file_instance_id"]].append(row)
 
         total_churned_lines = 0
         changed_files = 0
         total_lines_current = 0
         file_churn_records: List[Dict[str, Any]] = []
-        trend_buckets: Dict[str, int] = defaultdict(int)
+        trend_buckets_fv: Dict[str, int] = defaultdict(int)
 
-        for file_instance_id, fversions in by_file.items():
+        for file_instance_id, fversions in by_file_fv.items():
             if not fversions:
                 continue
             changed_files += 1
-            # 当前文件行数取该文件最新版本
             total_lines_current += fversions[-1]["total_lines"] or 0
 
             if len(fversions) < 2:
-                # 只有一个版本，无法计算流失行数
                 file_churn_records.append({
                     "file_instance_id": file_instance_id,
                     "rel_path": fversions[0]["rel_path"],
@@ -589,7 +678,7 @@ class EvolutionMixin:
                 continue
 
             file_churn = 0
-            change_count = 1  # 至少有 1 次变更（首个版本）
+            change_count = 1
             for i in range(1, len(fversions)):
                 prev_lines = fversions[i - 1]["total_lines"] or 0
                 curr_lines = fversions[i]["total_lines"] or 0
@@ -597,11 +686,10 @@ class EvolutionMixin:
                 file_churn += diff
                 change_count += 1
                 if diff > 0:
-                    # 趋势分桶（按天）
                     bucket_key = time.strftime(
                         "%Y-%m-%d", time.localtime(fversions[i]["parsed_at"])
                     )
-                    trend_buckets[bucket_key] += diff
+                    trend_buckets_fv[bucket_key] += diff
 
             total_churned_lines += file_churn
             file_churn_records.append({
@@ -615,17 +703,15 @@ class EvolutionMixin:
             total_churned_lines / total_lines_current
         ) if total_lines_current > 0 else 0.0
 
-        # 高频变更文件 Top 10（按变更次数降序）
         top_files = sorted(
             file_churn_records,
-            key=lambda x: x["change_count"],
+            key=lambda x: x["churned_lines"],
             reverse=True,
         )[:10]
 
-        # 流失趋势（按时间排序）
         trend = [
             {"date": k, "churned_lines": v}
-            for k, v in sorted(trend_buckets.items())
+            for k, v in sorted(trend_buckets_fv.items())
         ]
 
         return {

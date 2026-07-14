@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import pickle
 import re
+import subprocess
 import sys
 import time
 import threading
@@ -613,6 +614,9 @@ def _normalize_rust_symbols(r):
     Rust parser 缺少 start_col/end_col，has_comment 返回 bool 而非 int，
     imports 返回 List[str] 而非 List[Dict]。在小批量 (_parse_one) 和大批量
     (_rust_multilang_parse) 路径统一调用。
+
+    Python docstring 补全：Rust make_symbol 硬编码 has_comment=false，
+    对 Python 符号用 ast 模块检测 docstring 补全 has_comment / comment_content。
     """
     for sym in r.get("symbols", []):
         sym.setdefault("start_col", 0)
@@ -629,7 +633,53 @@ def _normalize_rust_symbols(r):
     imports = r.get("imports")
     if imports and isinstance(imports[0], str):
         r["imports"] = [{"module": m} for m in imports]
+
+    # Python docstring 检测：Rust make_symbol 硬编码 has_comment=false，
+    # 对 Python 符号用 ast 模块检测 docstring 补全 has_comment / comment_content
+    rel_path = r.get("rel_path", "")
+    if rel_path and rel_path.endswith(".py"):
+        _detect_python_docstrings(r.get("symbols", []))
+        for mod in r.get("inline_modules", []):
+            _detect_python_docstrings(mod.get("symbols", []))
+
     return r
+
+
+def _detect_python_docstrings(symbols):
+    """检测 Python 符号的 docstring，补全 has_comment / comment_content
+
+    Rust make_symbol 不检测 docstring（硬编码 has_comment=false），
+    此函数用 ast.parse 解析符号 content，检测首条语句是否为字符串字面量（docstring）。
+    仅对 has_comment=0 的符号生效，避免覆盖已有结果。
+    """
+    import ast
+    for sym in symbols:
+        if sym.get("has_comment"):
+            continue  # 已有注释，跳过
+        content = sym.get("content", "")
+        if not content or len(content) < 12:
+            continue
+        try:
+            tree = ast.parse(content)
+            if not tree.body:
+                continue
+            node = tree.body[0]
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if not node.body:
+                continue
+            first_stmt = node.body[0]
+            if isinstance(first_stmt, ast.Expr):
+                val = first_stmt.value
+                # Python 3.8+: ast.Constant；旧版: ast.Str
+                if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                    sym["has_comment"] = 1
+                    sym["comment_content"] = val.value
+                elif hasattr(ast, "Str") and isinstance(val, ast.Str):
+                    sym["has_comment"] = 1
+                    sym["comment_content"] = val.s
+        except (SyntaxError, ValueError):
+            pass  # content 不是有效 Python，跳过
 
 
 def _python_parse_single_file(abs_path, module_path, lang, rel_path, file_instance_id):
@@ -1544,6 +1594,13 @@ class BuildMixin:
             self._rebuild_and_enable_fts()
         t_fts = time.perf_counter() - t_fts_start
 
+        # P12: 延迟建索引 — 入库完成后一次性建立所有 B-tree 索引和触发器
+        # 全新数据库 _init_schema 只建了表（SCHEMA_TABLES_SQL），此处补建索引
+        # 收益：避免 INSERT 期间维护 B-tree 索引（写放大），2M 入库从 1031s 降到 31s
+        t_index_start = time.perf_counter()
+        self._create_indexes_after_build()
+        t_index = time.perf_counter() - t_index_start
+
         t_commit_start = time.perf_counter()
         self.conn.commit()
         t_commit = time.perf_counter() - t_commit_start
@@ -1583,7 +1640,7 @@ class BuildMixin:
 
         # 阶段计时汇总（用于定位性能瓶颈）
         # P10: 细拆 scan+parse+register → register（逐文件 SQL） + parse（tree-sitter）
-        t_other = duration - (t_register + t_parse + t_versions + t_stdlib + t_call_resolve + t_depth + t_fts + t_commit + t_gc)
+        t_other = duration - (t_register + t_parse + t_versions + t_stdlib + t_call_resolve + t_depth + t_fts + t_index + t_commit + t_gc)
         cprint()
         cprint("── 阶段耗时分解 ──────────────────────", "cyan", bold=True)
         cprint(f"  register (逐文件SQL)    : {t_register:8.2f}s  (注册/mtime/version 查询)", "dim")
@@ -1593,6 +1650,7 @@ class BuildMixin:
         cprint(f"  call resolve + write    : {t_call_resolve:8.2f}s  (调用关系解析+写入)", "yellow")
         cprint(f"  depth                   : {t_depth:8.2f}s  (拓扑深度计算)", "dim")
         cprint(f"  fts rebuild             : {t_fts:8.2f}s  (FTS5 索引重建)", "dim")
+        cprint(f"  create indexes          : {t_index:8.2f}s  (P12: 延迟建索引)", "cyan")
         cprint(f"  commit                  : {t_commit:8.2f}s  (事务提交)", "dim")
         cprint(f"  gc archive              : {t_gc:8.2f}s  (GC 归档)", "dim")
         if t_other > 0.01:
@@ -1609,6 +1667,7 @@ class BuildMixin:
             "call_resolve_write": t_call_resolve,
             "depth": t_depth,
             "fts_rebuild": t_fts,
+            "create_indexes": t_index,
             "commit": t_commit,
             "gc_archive": t_gc,
             "total": duration,
@@ -2378,13 +2437,41 @@ class BuildMixin:
         return cur.fetchone()
 
 
+    def _get_head_commit_cached(self) -> str:
+        """获取当前 git HEAD commit hash（进程内缓存，避免反复 fork git）
+
+        在 build/refresh 流程中多次调用 _save_file_version 时只 fork 一次 git。
+        缓存存储在 self._cached_head_commit，生命周期与 db 实例相同。
+        """
+        cached = getattr(self, "_cached_head_commit", None)
+        if cached is not None:
+            return cached
+        try:
+            cwd = getattr(self, "workspace_root", "") or None
+            r = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                capture_output=True, text=True, cwd=cwd,
+            )
+            if r.returncode == 0:
+                self._cached_head_commit = r.stdout.strip()
+            else:
+                self._cached_head_commit = ""
+        except Exception:
+            self._cached_head_commit = ""
+        return self._cached_head_commit
+
     def _save_file_version(self, file_instance_id: int, result: Dict[str, Any]) -> int:
-        """创建新的文件版本，如果内容没变则返回现有版本号"""
+        """创建新的文件版本，如果内容没变则返回现有版本号
+
+        会写入当前 git HEAD commit_hash，用于 function_change_frequency 等
+        演化智能查询 JOIN git_commits 获取 author/changers。
+        """
         content_hash = result["content_hash"]
         mtime = os.path.getmtime(result["abs_path"]) if "abs_path" in result else 0
         total_lines = result["total_lines"]
         parsed_at = time.time()
         language = detect_language_from_path(result.get("rel_path", ""))
+        commit_hash = self._get_head_commit_cached()
 
         # 确保 file_contents 中有记录
         self.conn.execute(
@@ -2394,10 +2481,10 @@ class BuildMixin:
 
         latest = self._get_file_version(file_instance_id)
         if latest and latest["content_hash"] == content_hash:
-            # 更新 mtime
+            # 更新 mtime 和 commit_hash（内容未变但可能处于新 commit）
             self.conn.execute(
-                "UPDATE file_versions SET mtime = ? WHERE id = ?",
-                (mtime, latest["id"]),
+                "UPDATE file_versions SET mtime = ?, commit_hash = ? WHERE id = ?",
+                (mtime, commit_hash, latest["id"]),
             )
             # 更新 file_instances 的 current_content_hash 和 last_parsed
             self.conn.execute(
@@ -2422,9 +2509,9 @@ class BuildMixin:
 
         cur = self.conn.execute(
             """INSERT INTO file_versions
-               (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, is_current, is_deleted)
-               VALUES (?, ?, ?, ?, ?, ?, 1, 0)""",
-            (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at),
+               (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, is_current, is_deleted, commit_hash)
+               VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)""",
+            (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, commit_hash),
         )
         new_version_id = cur.lastrowid
 
@@ -2629,6 +2716,17 @@ class BuildMixin:
               s["signature"], s["has_comment"], s.get("comment_content", ""),
               s["qualified_name"]) for s in all_symbols],
         )
+        # 2b. 补丁：修复已存在记录的 has_comment / comment_content
+        #     INSERT OR IGNORE 不会更新已存在的行，对检测到 docstring 的符号
+        #     执行 UPDATE 补全（仅当旧值为 0 时更新，避免覆盖已正确的数据）
+        to_update = [(s.get("comment_content", ""), s["content_hash"])
+                     for s in all_symbols if s.get("has_comment")]
+        if to_update:
+            self.conn.executemany(
+                "UPDATE symbol_contents SET has_comment = 1, comment_content = ? "
+                "WHERE content_hash = ? AND has_comment = 0",
+                to_update,
+            )
 
         # 3. 清理当前 file_instance 的旧 symbols 和 calls，避免 UPDATE 时 UNIQUE 冲突
         # 修复 Bug T-1783751412674-5995: UPDATE 多行交换 (name, start_line) 值时 executemany 逐条执行会临时冲突

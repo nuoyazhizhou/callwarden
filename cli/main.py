@@ -850,9 +850,14 @@ def _run_subcommand_mode():
         return
 
     # 自动检测工作区根目录
-    cwd = os.getcwd()
-    detected = detect_project_root(cwd)
-    workspace_root = detected if detected else None
+    # 优先级：CALLWARDEN_WORKSPACE 环境变量 > cwd 自动检测
+    ws_env = os.environ.get("CALLWARDEN_WORKSPACE")
+    if ws_env:
+        workspace_root = ws_env
+    else:
+        cwd = os.getcwd()
+        detected = detect_project_root(cwd)
+        workspace_root = detected if detected else None
 
     # 初始化数据库
     db = CodeGraphDB(workspace_root=workspace_root) if workspace_root else CodeGraphDB()
@@ -7595,6 +7600,14 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] == "daemon":
         from .daemon_commands import run_daemon_command
         raise SystemExit(run_daemon_command(sys.argv[2:]))
+
+    # --workspace 预扫描：允许 `cw --workspace ROOT task show T-xxx` 形式
+    # 提取 --workspace ROOT 到环境变量，从 argv 移除后让 sys.argv[1] 指向真正子命令
+    if "--workspace" in sys.argv[1:]:
+        idx = sys.argv.index("--workspace")
+        if idx + 1 < len(sys.argv):
+            os.environ["CALLWARDEN_WORKSPACE"] = sys.argv[idx + 1]
+            del sys.argv[idx:idx + 2]
 
     # 代码守护者架构子命令拦截（四大支柱）
     # 子命令格式: cw <subcommand> [options]，如 cw defect stats

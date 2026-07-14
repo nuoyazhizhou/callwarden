@@ -830,6 +830,15 @@ class BootstrapMixin:
             capture_result["error"] = ""
             capture_result["reason"] = ""
             capture_result["base"] = base
+
+            # 4. 自动导入最新 commit 到 git_commits 表（fail-soft）
+            #    确保后续 get_task_commits 能 JOIN 到 author/subject
+            if head_commit:
+                try:
+                    self.import_git_history(max_commits=5)
+                except Exception:
+                    pass  # git-import 失败不影响 capture 结果
+
             return capture_result
         except Exception as exc:
             # fail-soft：任何异常都封装为结果，不抛

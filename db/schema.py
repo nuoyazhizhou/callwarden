@@ -238,6 +238,8 @@ CREATE TABLE IF NOT EXISTS git_file_changes (
     change_type TEXT NOT NULL,
     old_content_hash TEXT DEFAULT '',
     new_content_hash TEXT DEFAULT '',
+    lines_added INTEGER DEFAULT 0,
+    lines_deleted INTEGER DEFAULT 0,
     FOREIGN KEY (commit_hash) REFERENCES git_commits(commit_hash),
     FOREIGN KEY (file_instance_id) REFERENCES file_instances(id)
 );
@@ -1001,7 +1003,9 @@ ON test_runs(ci_run_id);
 #      全新库通过 SCHEMA_SQL 已包含，本迁移只补齐既有 v33 库。
 # v35: task↔commit↔symbol 三角关联 — task_symbol_changes 加 source_commit_hash 字段 + 索引，
 #      让 task_id → commit_id 通过 JOIN git_commits 可查；打通三角关联。
-SCHEMA_VERSION = 35
+# v36: churn_analysis 真实行数 — git_file_changes 加 lines_added / lines_deleted 字段，
+#      用 git show --numstat 填充，替代 file_versions 相邻版本差值近似。
+SCHEMA_VERSION = 36
 
 
 # ============================================

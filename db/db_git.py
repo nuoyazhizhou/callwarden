@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..i18n import t
 
@@ -94,8 +94,10 @@ class GitMixin:
         """导入 Git 文件变更记录
 
         对每个 commit：
-        1. 用 `git show --name-status` 获取文件级变更，写入 git_file_changes 表
-        2. 对每个变更文件，用 `git show <commit> -- <file>` 获取 diff，
+        1. 用 `git show --name-status` 获取文件级变更类型（A/M/D/R）
+        2. 用 `git show --numstat` 获取行数变更（added/deleted）
+        3. 合并后写入 git_file_changes 表（含 lines_added / lines_deleted）
+        4. 对每个变更文件，用 `git show <commit> -- <file>` 获取 diff，
            通过行号范围匹配 symbols 表，提取符号级变更写入 git_symbol_changes 表
 
         Args:
@@ -106,8 +108,10 @@ class GitMixin:
 
         for commit in commits:
             commit_hash = commit['hash']
+
+            # 1. name-status: 获取变更类型
             try:
-                result = subprocess.run(
+                result_status = subprocess.run(
                     ["git", "show", "--name-status", "--format=", commit_hash],
                     cwd=repo_root,
                     capture_output=True,
@@ -117,7 +121,35 @@ class GitMixin:
             except subprocess.CalledProcessError:
                 continue
 
-            for line in result.stdout.strip().split('\n'):
+            # 2. numstat: 获取行数变更
+            try:
+                result_numstat = subprocess.run(
+                    ["git", "show", "--numstat", "--format=", commit_hash],
+                    cwd=repo_root,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                result_numstat = None
+
+            # 构建 file_path → (added, deleted) 映射
+            numstat_map: Dict[str, Tuple[int, int]] = {}
+            if result_numstat:
+                for line in result_numstat.stdout.strip().split('\n'):
+                    if not line.strip():
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) >= 3:
+                        added_str, deleted_str = parts[0], parts[1]
+                        file_path_ns = parts[-1]
+                        # 二进制文件显示为 "-"，跳过
+                        added = int(added_str) if added_str.isdigit() else 0
+                        deleted = int(deleted_str) if deleted_str.isdigit() else 0
+                        numstat_map[file_path_ns] = (added, deleted)
+
+            # 3. 合并 name-status + numstat
+            for line in result_status.stdout.strip().split('\n'):
                 if not line.strip():
                     continue
                 parts = line.split('\t')
@@ -137,10 +169,22 @@ class GitMixin:
                 file_instance_id = row['id'] if row else 0
 
                 if file_instance_id > 0:
+                    lines_added, lines_deleted = numstat_map.get(file_path, (0, 0))
                     self.conn.execute(
-                        "INSERT OR IGNORE INTO git_file_changes (commit_hash, file_instance_id, change_type) VALUES (?, ?, ?)",
-                        (commit_hash, file_instance_id, change_type),
+                        "INSERT OR IGNORE INTO git_file_changes "
+                        "(commit_hash, file_instance_id, change_type, lines_added, lines_deleted) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (commit_hash, file_instance_id, change_type, lines_added, lines_deleted),
                     )
+                    # INSERT OR IGNORE 不更新已存在行；对旧行（lines_added=0）补全真实行数
+                    # 仅当传入值非零时才更新，避免覆盖已正确的零值（如纯重命名提交）
+                    if lines_added > 0 or lines_deleted > 0:
+                        self.conn.execute(
+                            "UPDATE git_file_changes SET lines_added = ?, lines_deleted = ? "
+                            "WHERE commit_hash = ? AND file_instance_id = ? "
+                            "AND lines_added = 0 AND lines_deleted = 0",
+                            (lines_added, lines_deleted, commit_hash, file_instance_id),
+                        )
                     # 提取符号级变更并写入 git_symbol_changes 表
                     # 复用 ImpactMixin.diff_to_symbol 的行号匹配逻辑（通过 git diff 提取变更行号）
                     self._extract_and_store_symbol_changes(

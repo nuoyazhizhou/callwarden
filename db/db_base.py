@@ -1678,6 +1678,21 @@ def _migrate_v34_to_v35(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v35_to_v36(conn: sqlite3.Connection):
+    """v35 -> v36: git_file_changes 加 lines_added / lines_deleted 字段
+
+    churn_analysis 用真实 git 行数变更替代 file_versions 相邻版本差值近似。
+    全新数据库已通过 SCHEMA_SQL 创建（含 lines_added / lines_deleted），
+    本迁移只补齐既有 v35 库。
+    """
+    cur = conn.execute("PRAGMA table_info(git_file_changes)")
+    gfc_columns = {row[1] for row in cur.fetchall()}
+    if "lines_added" not in gfc_columns:
+        conn.execute("ALTER TABLE git_file_changes ADD COLUMN lines_added INTEGER DEFAULT 0")
+    if "lines_deleted" not in gfc_columns:
+        conn.execute("ALTER TABLE git_file_changes ADD COLUMN lines_deleted INTEGER DEFAULT 0")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2199,6 +2214,10 @@ class CodeGraphBase:
             35: {
                 "description": t("cli.messages.migration_v35", default="task↔commit↔symbol triangle: add source_commit_hash column to task_symbol_changes + index (idempotent)"),
                 "func": _migrate_v34_to_v35,
+            },
+            36: {
+                "description": t("cli.messages.migration_v36", default="churn_analysis real line counts: add lines_added / lines_deleted columns to git_file_changes (idempotent)"),
+                "func": _migrate_v35_to_v36,
             },
         }
 
