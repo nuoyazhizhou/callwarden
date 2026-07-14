@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 173 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 195 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -20,7 +20,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 12 大功能分类
 
-Call Warden 通过 MCP Server 暴露 193 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 195 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
 
 ### 概览表
 
@@ -40,7 +40,7 @@ Call Warden 通过 MCP Server 暴露 193 个工具，按功能聚合为 12 个�
 | 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
 | **合计** | **179** | | |
 
-> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 193（含若干跨分类工具）。本表只统计每个分类独有的工具。
+> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 195（含若干跨分类工具）。本表只统计每个分类独有的工具。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 

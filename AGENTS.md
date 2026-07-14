@@ -2,7 +2,7 @@
 
 ## 身份
 
-你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 120+ MCP 工具和 145+ CLI 命令。
+你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 195+ MCP 工具和 145+ CLI 命令。
 
 你的目标是帮助用户高效地使用、扩展和维护 Call Warden。
 
@@ -64,7 +64,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 120+ MCP 工具 + 145+ CLI 命令
+- 195+ MCP 工具 + 145+ CLI 命令
 
 ## 技术栈
 
@@ -92,7 +92,7 @@ callwarden/
 ├── analyzers/               # 分析层（call_chain / coverage / issues / ignore_spec）
 ├── cicd/                    # CI/CD 集成（sarif / incremental / pr_check）
 ├── cli/                     # CLI 命令行（argparse 子命令）
-├── db/                      # 数据库层（23 个 Mixin + schema）
+├── db/                      # 数据库层（37 个 Mixin + schema）
 │   ├── db.py                # 主类 CodeGraphDB（组合所有 Mixin）
 │   ├── db_base.py           # 基础连接与 schema 初始化
 │   ├── db_query.py          # 查询 Mixin
@@ -115,7 +115,7 @@ callwarden/
 ├── parsers/                 # 多语言解析器（16 种）
 ├── rust_ext/                # PyO3 Rust 扩展（性能加速）
 ├── server/                  # MCP Server + 文件监控
-│   ├── mcp_server.py        # MCP 服务器主文件（120+ tools）
+│   ├── mcp_server.py        # MCP 服务器主文件（195+ tools）
 │   ├── __main__.py          # MCP 启动入口
 │   └── watcher.py           # 文件监控守护进程
 ├── prompts/                 # TokenSlim 审计样例（独立产品，非本项目指令）
@@ -266,6 +266,28 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 20. **PowerShell 调 WSL 时避免嵌套代码字符串**：`PowerShell -> wsl -> bash -lc -> python -c/cargo --config` 的三层引号很容易被提前展开或截断。WSL 验收应把构建、文件准备和 Python 测试拆成独立的简单命令；复杂 Python 逻辑放入仓库已有测试文件，由 `python3 -m pytest` 调用，不要在 `bash -lc` 尾部拼接带引号和括号的 `python -c`。
 
 21. **跨平台路径断言先输出模块来源和实际值**：Windows 对 Linux 风格绝对路径的 `os.path.abspath/join/normpath` 行为可能加入盘符或反斜杠，且 `PYTHONPATH` 可能命中不同安装副本。配置探测连续失败时，先输出 `module.__file__`、原始环境变量和实际配置值，再基于目标平台语义断言；不要连续猜测字符串规范化结果。
+
+22. **代码变更必须同步更新文档（文档同步规则）**：当代码变更涉及以下"关键指标"时，**必须在同一次 commit 中同步更新相关文档**，禁止"代码改了文档没改"：
+
+    **关键指标清单（变更时必须同步文档）**：
+    - MCP 工具数量（新增/删除 `@mcp.tool()` 装饰器时）→ 更新 [docs/mcp_tools.md](docs/mcp_tools.md) 头部 + [README.md](README.md) + [docs/design/implementation-status.md](docs/design/implementation-status.md)
+    - Schema 版本号（[db/schema.py](db/schema.py) 的 `SCHEMA_VERSION` 变更时）→ 更新 [docs/architecture.md](docs/architecture.md) + [docs/design/implementation-status.md](docs/design/implementation-status.md)
+    - Mixin 数量（新增/删除 `db/db_*.py` 文件时）→ 更新 [AGENTS.md](AGENTS.md) 项目结构 + [docs/architecture.md](docs/architecture.md) + [CONTRIBUTING.md](CONTRIBUTING.md)
+    - CLI 子命令数量（新增/删除 `cli/main.py` 子命令时）→ 更新 [docs/cli_reference.md](docs/cli_reference.md) + [TOOLS.md](TOOLS.md)
+    - 支持语言数量（新增 parser 时）→ 更新 [README.md](README.md) + [AGENTS.md](AGENTS.md) 技术栈 + [pyproject.toml](pyproject.toml)
+
+    **自检方法**：commit 前运行以下命令快速核对关键指标是否与文档一致：
+    ```powershell
+    # MCP 工具数
+    (Select-String -Path "server\mcp_server.py" -Pattern "@mcp\.tool\(\)" | Measure-Object).Count
+    # Mixin 数
+    (Get-ChildItem db\db_*.py | Measure-Object).Count
+    # Schema 版本
+    (Select-String -Path "db\schema.py" -Pattern "SCHEMA_VERSION").Line
+    ```
+
+    **违反示例**：新增了 3 个 MCP 工具但未更新 `docs/mcp_tools.md`，导致文档说 195 个实际 198 个 → 禁止。
+    **正确示例**：新增 MCP 工具时，同一次 commit 更新 `docs/mcp_tools.md` 头部数字 + 工具列表 + `README.md` 中的数字。
 
 ## 文档索引
 

@@ -60,6 +60,27 @@ def _enable_vt_mode():
         return False
 
 
+def ensure_utf8_output():
+    """强制 stdout/stderr 使用 UTF-8 编码，避免 Windows GBK 控制台无法输出 Unicode 字符
+
+    修复 Bug L11: CLI 输出含 ✓ ↳ 等 Unicode 字符，Windows GBK 控制台
+    编码不了直接崩溃（UnicodeEncodeError）。在入口处统一设置 UTF-8 + replace 错误处理，
+    确保任何字符都能输出（无法编码时用 ? 替代而非崩溃）。
+
+    所有 CLI 入口（cw.py / __main__.py / cli/main.py:main()）都应调用此函数。
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, TypeError):
+                pass
+
+
 def should_use_color() -> bool:
     """检测当前环境是否应该使用彩色输出
 

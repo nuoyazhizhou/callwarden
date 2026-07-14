@@ -7596,6 +7596,10 @@ def create_parser() -> argparse.ArgumentParser:
 
 def main():
     """CLI 主入口函数"""
+    # 强制 UTF-8 输出，避免 Windows GBK 控制台无法输出 Unicode 字符（↳ ✓ ⚠ 等）
+    from .console import ensure_utf8_output
+    ensure_utf8_output()
+
     # daemon 必须绕过本地 CodeGraphDB 初始化，所有状态均通过 UDS/registry 管理。
     if len(sys.argv) > 1 and sys.argv[1] == "daemon":
         from .daemon_commands import run_daemon_command

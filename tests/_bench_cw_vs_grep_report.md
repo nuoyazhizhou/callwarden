@@ -1,113 +1,118 @@
 # A/B 对比评估：cw CLI vs Grep
 
-测试时间：2026-07-14 16:42:06
+测试时间：2026-07-14 20:40:46（v4：6 quirks 修复后重跑）
 测试对象：callwarden 自身（6113 符号，10079 调用边）
 重复次数：3 次（取中位数）
+
+> **v4 更新说明**：本次重跑在 Q1-Q6 quirks 修复后进行（commit 1933395）。
+> 与 v3（2026-07-14 16:42:06）对比，callers/callees 场景结果数显著增加，
+> 证实 Q1 修复（QN 自动识别 + fallback）让原本因 QN 解析不一致被漏掉的调用关系正确返回。
+> 详见 §7 v3→v4 对比分析。
 
 ## 1. 总览
 
 | 函数 | 频率 | 场景 | cw 耗时(ms) | Grep 耗时(ms) | cw token | Grep token | cw 结果数 | Grep 结果数 | cw 优势 |
 |------|------|------|------------|--------------|---------|-----------|----------|------------|--------|
-| generate_systemd_unit | high | symbol | 292 | 108 | 374 | 73 | 2 | 1 | Grep 快 170% |
-| generate_systemd_unit | high | callers | 303 | 110 | 1722 | 2599 | 23 | 25 | Grep 快 175% |
-| generate_systemd_unit | high | callees | 291 | 115 | 162 | 5870 | 3 | 46 | Grep 快 153% |
-| generate_systemd_unit | high | call-chain | 295 | 0 | 103 | 0 | 3 | 0 | cw 独有 |
-| generate_systemd_unit | high | impact | 278 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
-| generate_systemd_unit | high | grep | 407 | 121 | 4723 | 5870 | 25 | 46 | Grep 快 235% |
-| generate_systemd_unit | high | issues | 344 | 0 | 113 | 0 | 2 | 0 | cw 独有 |
-| generate_systemd_unit | high | tests | 318 | 0 | 3372 | 0 | 50 | 0 | cw 独有 |
-| generate_systemd_unit | high | clone | 282 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| generate_systemd_unit | high | evolution-defects | 260 | 0 | 172 | 0 | 6 | 0 | cw 独有 |
-| _get_subcommand_epilog | high | symbol | 290 | 115 | 692 | 197 | 3 | 2 | Grep 快 151% |
-| _get_subcommand_epilog | high | callers | 310 | 115 | 774 | 3376 | 19 | 33 | Grep 快 170% |
-| _get_subcommand_epilog | high | callees | 327 | 124 | 149 | 5652 | 2 | 51 | Grep 快 165% |
-| _get_subcommand_epilog | high | call-chain | 264 | 0 | 154 | 0 | 5 | 0 | cw 独有 |
-| _get_subcommand_epilog | high | impact | 264 | 0 | 91 | 0 | 2 | 0 | cw 独有 |
-| _get_subcommand_epilog | high | grep | 370 | 110 | 5387 | 5652 | 33 | 51 | Grep 快 235% |
-| _get_subcommand_epilog | high | issues | 276 | 0 | 105 | 0 | 2 | 0 | cw 独有 |
-| _get_subcommand_epilog | high | tests | 369 | 0 | 139 | 0 | 3 | 0 | cw 独有 |
-| _get_subcommand_epilog | high | clone | 362 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| _get_subcommand_epilog | high | evolution-defects | 364 | 0 | 165 | 0 | 6 | 0 | cw 独有 |
-| daemon_handle_refresh | mid | symbol | 341 | 129 | 2089 | 868 | 9 | 6 | Grep 快 164% |
-| daemon_handle_refresh | mid | callers | 347 | 131 | 1380 | 9241 | 14 | 68 | Grep 快 164% |
-| daemon_handle_refresh | mid | callees | 335 | 129 | 859 | 35322 | 22 | 195 | Grep 快 160% |
-| daemon_handle_refresh | mid | call-chain | 315 | 0 | 1180 | 0 | 30 | 0 | cw 独有 |
-| daemon_handle_refresh | mid | impact | 335 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
-| daemon_handle_refresh | mid | grep | 465 | 133 | 10679 | 35322 | 50 | 195 | Grep 快 250% |
-| daemon_handle_refresh | mid | issues | 332 | 0 | 113 | 0 | 2 | 0 | cw 独有 |
-| daemon_handle_refresh | mid | tests | 328 | 0 | 1780 | 0 | 22 | 0 | cw 独有 |
-| daemon_handle_refresh | mid | clone | 330 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| daemon_handle_refresh | mid | evolution-defects | 363 | 0 | 172 | 0 | 6 | 0 | cw 独有 |
-| daemon_handle_connect | mid | symbol | 433 | 161 | 1138 | 756 | 5 | 5 | Grep 快 170% |
-| daemon_handle_connect | mid | callers | 411 | 141 | 1479 | 9633 | 15 | 76 | Grep 快 191% |
-| daemon_handle_connect | mid | callees | 350 | 133 | 398 | 18567 | 11 | 121 | Grep 快 163% |
-| daemon_handle_connect | mid | call-chain | 331 | 0 | 103 | 0 | 3 | 0 | cw 独有 |
-| daemon_handle_connect | mid | impact | 321 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
-| daemon_handle_connect | mid | grep | 392 | 113 | 11785 | 18567 | 50 | 121 | Grep 快 248% |
-| daemon_handle_connect | mid | issues | 267 | 0 | 113 | 0 | 2 | 0 | cw 独有 |
-| daemon_handle_connect | mid | tests | 247 | 0 | 1780 | 0 | 22 | 0 | cw 独有 |
-| daemon_handle_connect | mid | clone | 256 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| daemon_handle_connect | mid | evolution-defects | 246 | 0 | 172 | 0 | 6 | 0 | cw 独有 |
-| get_callers | mid | symbol | 267 | 98 | 1636 | 1463 | 8 | 14 | Grep 快 172% |
-| get_callers | mid | callers | 272 | 108 | 84 | 13992 | 1 | 114 | Grep 快 152% |
-| get_callers | mid | callees | 296 | 109 | 121 | 76004 | 2 | 589 | Grep 快 173% |
-| get_callers | mid | call-chain | 294 | 0 | 84 | 0 | 3 | 0 | cw 独有 |
-| get_callers | mid | impact | 274 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| get_callers | mid | grep | 385 | 118 | 8735 | 76004 | 50 | 589 | Grep 快 226% |
-| get_callers | mid | issues | 279 | 0 | 94 | 0 | 2 | 0 | cw 独有 |
-| get_callers | mid | tests | 298 | 0 | 128 | 0 | 3 | 0 | cw 独有 |
-| get_callers | mid | clone | 277 | 0 | 38 | 0 | 1 | 0 | cw 独有 |
-| get_callers | mid | evolution-defects | 263 | 0 | 153 | 0 | 6 | 0 | cw 独有 |
-| _detect_and_decode | low | symbol | 295 | 119 | 201 | 105 | 1 | 1 | Grep 快 148% |
-| _detect_and_decode | low | callers | 303 | 121 | 117 | 266 | 2 | 3 | Grep 快 151% |
-| _detect_and_decode | low | callees | 300 | 114 | 400 | 651 | 9 | 7 | Grep 快 162% |
-| _detect_and_decode | low | call-chain | 281 | 0 | 89 | 0 | 3 | 0 | cw 独有 |
-| _detect_and_decode | low | impact | 253 | 0 | 85 | 0 | 2 | 0 | cw 独有 |
-| _detect_and_decode | low | grep | 351 | 102 | 743 | 651 | 5 | 7 | Grep 快 244% |
-| _detect_and_decode | low | issues | 261 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
-| _detect_and_decode | low | tests | 252 | 0 | 133 | 0 | 3 | 0 | cw 独有 |
-| _detect_and_decode | low | clone | 255 | 0 | 130 | 0 | 2 | 0 | cw 独有 |
-| _detect_and_decode | low | evolution-defects | 248 | 0 | 158 | 0 | 6 | 0 | cw 独有 |
-| _handle_symbol | low | symbol | 279 | 112 | 310 | 147 | 2 | 2 | Grep 快 148% |
-| _handle_symbol | low | callers | 286 | 110 | 80 | 153 | 1 | 2 | Grep 快 160% |
-| _handle_symbol | low | callees | 285 | 118 | 1208 | 2726 | 35 | 27 | Grep 快 142% |
-| _handle_symbol | low | call-chain | 280 | 0 | 87 | 0 | 3 | 0 | cw 独有 |
-| _handle_symbol | low | impact | 267 | 0 | 83 | 0 | 2 | 0 | cw 独有 |
-| _handle_symbol | low | grep | 373 | 110 | 1335 | 2726 | 8 | 27 | Grep 快 240% |
-| _handle_symbol | low | issues | 270 | 0 | 97 | 0 | 2 | 0 | cw 独有 |
-| _handle_symbol | low | tests | 264 | 0 | 131 | 0 | 3 | 0 | cw 独有 |
-| _handle_symbol | low | clone | 259 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| _handle_symbol | low | evolution-defects | 275 | 0 | 156 | 0 | 6 | 0 | cw 独有 |
-| get_symbol | low | symbol | 289 | 109 | 5923 | 2092 | 32 | 17 | Grep 快 164% |
-| get_symbol | low | callers | 275 | 106 | 171 | 6801 | 2 | 61 | Grep 快 161% |
-| get_symbol | low | callees | 271 | 103 | 214 | 69096 | 5 | 594 | Grep 快 162% |
-| get_symbol | low | call-chain | 255 | 0 | 86 | 0 | 3 | 0 | cw 独有 |
-| get_symbol | low | impact | 249 | 0 | 82 | 0 | 2 | 0 | cw 独有 |
-| get_symbol | low | grep | 404 | 120 | 7944 | 69096 | 50 | 594 | Grep 快 238% |
-| get_symbol | low | issues | 257 | 0 | 96 | 0 | 2 | 0 | cw 独有 |
-| get_symbol | low | tests | 256 | 0 | 130 | 0 | 3 | 0 | cw 独有 |
-| get_symbol | low | clone | 263 | 0 | 40 | 0 | 1 | 0 | cw 独有 |
-| get_symbol | low | evolution-defects | 305 | 0 | 155 | 0 | 6 | 0 | cw 独有 |
-| read_file_normalized | low | symbol | 343 | 124 | 205 | 98 | 1 | 1 | Grep 快 176% |
-| read_file_normalized | low | callers | 336 | 129 | 112 | 1152 | 1 | 10 | Grep 快 161% |
-| read_file_normalized | low | callees | 301 | 117 | 207 | 4842 | 4 | 34 | Grep 快 158% |
-| read_file_normalized | low | call-chain | 295 | 0 | 200 | 0 | 7 | 0 | cw 独有 |
-| read_file_normalized | low | impact | 266 | 0 | 87 | 0 | 2 | 0 | cw 独有 |
-| read_file_normalized | low | grep | 408 | 127 | 1399 | 4842 | 8 | 34 | Grep 快 223% |
-| read_file_normalized | low | issues | 272 | 0 | 101 | 0 | 2 | 0 | cw 独有 |
-| read_file_normalized | low | tests | 274 | 0 | 135 | 0 | 3 | 0 | cw 独有 |
-| read_file_normalized | low | clone | 306 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| read_file_normalized | low | evolution-defects | 263 | 0 | 160 | 0 | 6 | 0 | cw 独有 |
-| read_file_text | low | symbol | 283 | 109 | 193 | 105 | 1 | 1 | Grep 快 160% |
-| read_file_text | low | callers | 276 | 103 | 320 | 3326 | 7 | 35 | Grep 快 167% |
-| read_file_text | low | callees | 279 | 105 | 155 | 4247 | 3 | 42 | Grep 快 165% |
-| read_file_text | low | call-chain | 267 | 0 | 162 | 0 | 6 | 0 | cw 独有 |
-| read_file_text | low | impact | 256 | 0 | 81 | 0 | 2 | 0 | cw 独有 |
-| read_file_text | low | grep | 384 | 112 | 5428 | 4247 | 35 | 42 | Grep 快 242% |
-| read_file_text | low | issues | 267 | 0 | 95 | 0 | 2 | 0 | cw 独有 |
-| read_file_text | low | tests | 256 | 0 | 129 | 0 | 3 | 0 | cw 独有 |
-| read_file_text | low | clone | 285 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
-| read_file_text | low | evolution-defects | 275 | 0 | 154 | 0 | 6 | 0 | cw 独有 |
+| generate_systemd_unit | high | symbol | 405 | 188 | 374 | 73 | 2 | 1 | Grep 快 115% |
+| generate_systemd_unit | high | callers | 383 | 183 | 1722 | 2599 | 23 | 25 | Grep 快 109% |
+| generate_systemd_unit | high | callees | 404 | 203 | 162 | 9632 | 3 | 75 | Grep 快 100% |
+| generate_systemd_unit | high | call-chain | 474 | 0 | 103 | 0 | 3 | 0 | cw 独有 |
+| generate_systemd_unit | high | impact | 415 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
+| generate_systemd_unit | high | grep | 577 | 201 | 4723 | 9632 | 25 | 75 | Grep 快 187% |
+| generate_systemd_unit | high | issues | 349 | 0 | 113 | 0 | 2 | 0 | cw 独有 |
+| generate_systemd_unit | high | tests | 329 | 0 | 3372 | 0 | 50 | 0 | cw 独有 |
+| generate_systemd_unit | high | clone | 320 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| generate_systemd_unit | high | evolution-defects | 316 | 0 | 172 | 0 | 6 | 0 | cw 独有 |
+| _get_subcommand_epilog | high | symbol | 338 | 190 | 639 | 197 | 3 | 2 | Grep 快 78% |
+| _get_subcommand_epilog | high | callers | 347 | 183 | 774 | 3376 | 19 | 33 | Grep 快 90% |
+| _get_subcommand_epilog | high | callees | 388 | 192 | 126 | 9430 | 2 | 80 | Grep 快 102% |
+| _get_subcommand_epilog | high | call-chain | 339 | 0 | 154 | 0 | 5 | 0 | cw 独有 |
+| _get_subcommand_epilog | high | impact | 315 | 0 | 91 | 0 | 2 | 0 | cw 独有 |
+| _get_subcommand_epilog | high | grep | 496 | 171 | 5387 | 9430 | 33 | 80 | Grep 快 190% |
+| _get_subcommand_epilog | high | issues | 319 | 0 | 105 | 0 | 2 | 0 | cw 独有 |
+| _get_subcommand_epilog | high | tests | 305 | 0 | 139 | 0 | 3 | 0 | cw 独有 |
+| _get_subcommand_epilog | high | clone | 328 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| _get_subcommand_epilog | high | evolution-defects | 317 | 0 | 165 | 0 | 6 | 0 | cw 独有 |
+| daemon_handle_refresh | mid | symbol | 351 | 168 | 2089 | 868 | 9 | 6 | Grep 快 109% |
+| daemon_handle_refresh | mid | callers | 351 | 169 | 1380 | 8783 | 14 | 66 | Grep 快 108% |
+| daemon_handle_refresh | mid | callees | 353 | 184 | 859 | 39433 | 22 | 221 | Grep 快 92% |
+| daemon_handle_refresh | mid | call-chain | 354 | 0 | 1546 | 0 | 41 | 0 | cw 独有 |
+| daemon_handle_refresh | mid | impact | 345 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
+| daemon_handle_refresh | mid | grep | 502 | 176 | 11273 | 39433 | 50 | 221 | Grep 快 186% |
+| daemon_handle_refresh | mid | issues | 362 | 0 | 113 | 0 | 2 | 0 | cw 独有 |
+| daemon_handle_refresh | mid | tests | 343 | 0 | 1780 | 0 | 22 | 0 | cw 独有 |
+| daemon_handle_refresh | mid | clone | 327 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| daemon_handle_refresh | mid | evolution-defects | 330 | 0 | 172 | 0 | 6 | 0 | cw 独有 |
+| daemon_handle_connect | mid | symbol | 344 | 171 | 1138 | 1193 | 5 | 7 | Grep 快 101% |
+| daemon_handle_connect | mid | callers | 358 | 180 | 1479 | 10675 | 15 | 80 | Grep 快 99% |
+| daemon_handle_connect | mid | callees | 353 | 178 | 398 | 27248 | 11 | 175 | Grep 快 98% |
+| daemon_handle_connect | mid | call-chain | 326 | 0 | 103 | 0 | 3 | 0 | cw 独有 |
+| daemon_handle_connect | mid | impact | 327 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
+| daemon_handle_connect | mid | grep | 509 | 178 | 11786 | 27248 | 50 | 175 | Grep 快 186% |
+| daemon_handle_connect | mid | issues | 343 | 0 | 113 | 0 | 2 | 0 | cw 独有 |
+| daemon_handle_connect | mid | tests | 326 | 0 | 1780 | 0 | 22 | 0 | cw 独有 |
+| daemon_handle_connect | mid | clone | 339 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| daemon_handle_connect | mid | evolution-defects | 352 | 0 | 172 | 0 | 6 | 0 | cw 独有 |
+| get_callers | mid | symbol | 378 | 185 | 1516 | 1576 | 8 | 15 | Grep 快 104% |
+| get_callers | mid | callers | 374 | 187 | 263 | 14227 | 6 | 116 | Grep 快 100% |
+| get_callers | mid | callees | 412 | 194 | 685 | 81890 | 15 | 637 | Grep 快 112% |
+| get_callers | mid | call-chain | 377 | 0 | 84 | 0 | 3 | 0 | cw 独有 |
+| get_callers | mid | impact | 324 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| get_callers | mid | grep | 508 | 184 | 8696 | 81890 | 50 | 637 | Grep 快 175% |
+| get_callers | mid | issues | 325 | 0 | 94 | 0 | 2 | 0 | cw 独有 |
+| get_callers | mid | tests | 327 | 0 | 128 | 0 | 3 | 0 | cw 独有 |
+| get_callers | mid | clone | 310 | 0 | 38 | 0 | 1 | 0 | cw 独有 |
+| get_callers | mid | evolution-defects | 353 | 0 | 153 | 0 | 6 | 0 | cw 独有 |
+| _detect_and_decode | low | symbol | 350 | 176 | 141 | 105 | 1 | 1 | Grep 快 99% |
+| _detect_and_decode | low | callers | 360 | 196 | 117 | 266 | 2 | 3 | Grep 快 83% |
+| _detect_and_decode | low | callees | 423 | 200 | 352 | 5886 | 9 | 49 | Grep 快 111% |
+| _detect_and_decode | low | call-chain | 340 | 0 | 89 | 0 | 3 | 0 | cw 独有 |
+| _detect_and_decode | low | impact | 315 | 0 | 85 | 0 | 2 | 0 | cw 独有 |
+| _detect_and_decode | low | grep | 574 | 206 | 744 | 5886 | 5 | 49 | Grep 快 179% |
+| _detect_and_decode | low | issues | 347 | 0 | 99 | 0 | 2 | 0 | cw 独有 |
+| _detect_and_decode | low | tests | 332 | 0 | 133 | 0 | 3 | 0 | cw 独有 |
+| _detect_and_decode | low | clone | 323 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| _detect_and_decode | low | evolution-defects | 309 | 0 | 158 | 0 | 6 | 0 | cw 独有 |
+| _handle_symbol | low | symbol | 334 | 169 | 226 | 147 | 2 | 2 | Grep 快 98% |
+| _handle_symbol | low | callers | 350 | 187 | 80 | 153 | 1 | 2 | Grep 快 88% |
+| _handle_symbol | low | callees | 358 | 180 | 2244 | 7777 | 71 | 69 | Grep 快 98% |
+| _handle_symbol | low | call-chain | 379 | 0 | 137 | 0 | 5 | 0 | cw 独有 |
+| _handle_symbol | low | impact | 388 | 0 | 83 | 0 | 2 | 0 | cw 独有 |
+| _handle_symbol | low | grep | 518 | 195 | 1335 | 7777 | 8 | 69 | Grep 快 166% |
+| _handle_symbol | low | issues | 384 | 0 | 97 | 0 | 2 | 0 | cw 独有 |
+| _handle_symbol | low | tests | 342 | 0 | 131 | 0 | 3 | 0 | cw 独有 |
+| _handle_symbol | low | clone | 342 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| _handle_symbol | low | evolution-defects | 350 | 0 | 157 | 0 | 6 | 0 | cw 独有 |
+| get_symbol | low | symbol | 415 | 204 | 5532 | 2225 | 35 | 18 | Grep 快 103% |
+| get_symbol | low | callers | 375 | 190 | 312 | 6695 | 6 | 61 | Grep 快 98% |
+| get_symbol | low | callees | 347 | 185 | 847 | 77067 | 20 | 660 | Grep 快 88% |
+| get_symbol | low | call-chain | 327 | 0 | 86 | 0 | 3 | 0 | cw 独有 |
+| get_symbol | low | impact | 318 | 0 | 82 | 0 | 2 | 0 | cw 独有 |
+| get_symbol | low | grep | 512 | 178 | 8028 | 77067 | 50 | 660 | Grep 快 188% |
+| get_symbol | low | issues | 326 | 0 | 96 | 0 | 2 | 0 | cw 独有 |
+| get_symbol | low | tests | 327 | 0 | 130 | 0 | 3 | 0 | cw 独有 |
+| get_symbol | low | clone | 349 | 0 | 40 | 0 | 1 | 0 | cw 独有 |
+| get_symbol | low | evolution-defects | 351 | 0 | 155 | 0 | 6 | 0 | cw 独有 |
+| read_file_normalized | low | symbol | 370 | 192 | 145 | 98 | 1 | 1 | Grep 快 92% |
+| read_file_normalized | low | callers | 346 | 179 | 171 | 1152 | 2 | 10 | Grep 快 94% |
+| read_file_normalized | low | callees | 333 | 174 | 260 | 10207 | 5 | 76 | Grep 快 92% |
+| read_file_normalized | low | call-chain | 322 | 0 | 612 | 0 | 20 | 0 | cw 独有 |
+| read_file_normalized | low | impact | 316 | 0 | 87 | 0 | 2 | 0 | cw 独有 |
+| read_file_normalized | low | grep | 576 | 193 | 1399 | 10207 | 8 | 76 | Grep 快 198% |
+| read_file_normalized | low | issues | 340 | 0 | 101 | 0 | 2 | 0 | cw 独有 |
+| read_file_normalized | low | tests | 317 | 0 | 135 | 0 | 3 | 0 | cw 独有 |
+| read_file_normalized | low | clone | 317 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| read_file_normalized | low | evolution-defects | 308 | 0 | 160 | 0 | 6 | 0 | cw 独有 |
+| read_file_text | low | symbol | 345 | 174 | 133 | 105 | 1 | 1 | Grep 快 98% |
+| read_file_text | low | callers | 352 | 188 | 346 | 3326 | 7 | 35 | Grep 快 87% |
+| read_file_text | low | callees | 395 | 217 | 208 | 9368 | 4 | 84 | Grep 快 82% |
+| read_file_text | low | call-chain | 373 | 0 | 574 | 0 | 19 | 0 | cw 独有 |
+| read_file_text | low | impact | 382 | 0 | 81 | 0 | 2 | 0 | cw 独有 |
+| read_file_text | low | grep | 683 | 227 | 5429 | 9368 | 35 | 84 | Grep 快 201% |
+| read_file_text | low | issues | 493 | 0 | 95 | 0 | 2 | 0 | cw 独有 |
+| read_file_text | low | tests | 401 | 0 | 129 | 0 | 3 | 0 | cw 独有 |
+| read_file_text | low | clone | 379 | 0 | 80 | 0 | 2 | 0 | cw 独有 |
+| read_file_text | low | evolution-defects | 391 | 0 | 154 | 0 | 6 | 0 | cw 独有 |
 
 ## 2. 分场景分析
 
@@ -141,10 +146,10 @@
 
 | 场景 | cw 平均 token | Grep 平均 token | cw 节省 |
 |------|-------------|---------------|--------|
-| symbol | 1276 | 590 | -116% |
-| callers | 624 | 5054 | +88% |
-| callees | 387 | 22298 | +98% |
-| grep | 5816 | 22298 | +74% |
+| symbol | 1193 | 659 | -81% |
+| callers | 664 | 5125 | +87% |
+| callees | 614 | 27794 | +98% |
+| grep | 5880 | 27794 | +79% |
 
 ## 5. Grep 误匹配采样分析
 
@@ -152,27 +157,27 @@
 
 | 函数 | 频率 | Grep 总匹配 | 采样数 | 文件分布 | 误匹配类型分布 |
 |------|------|-----------|--------|---------|--------------|
-| generate_systemd_unit | high | 46 | 10 | py:7, md:3 | 疑似真实调用:4, 文档提及:3, 函数定义:2, 注释:1 |
-| _get_subcommand_epilog | high | 51 | 10 | py:10 | 疑似真实调用:8, 注释:1, 函数定义:1 |
-| daemon_handle_refresh | mid | 195 | 10 | md:8, py:2 | 文档提及:8, 疑似真实调用:1, 字符串:1 |
-| daemon_handle_connect | mid | 121 | 10 | md:10 | 文档提及:10 |
-| get_callers | mid | 589 | 10 | md:6, py:4 | 文档提及:6, 疑似真实调用:3, 字符串:1 |
-| _detect_and_decode | low | 7 | 7 | py:7 | 疑似真实调用:5, 函数定义:1, 字符串:1 |
-| _handle_symbol | low | 27 | 10 | json:10 | 其他:10 |
-| get_symbol | low | 594 | 10 | py:9, md:1 | 疑似真实调用:9, 文档提及:1 |
-| read_file_normalized | low | 34 | 10 | py:6, md:4 | 文档提及:4, 疑似真实调用:3, 导入:2, 函数定义:1 |
-| read_file_text | low | 42 | 10 | py:8, md:2 | 疑似真实调用:7, 文档提及:2, 函数定义:1 |
+| generate_systemd_unit | high | 75 | 10 | json:5, md:3, py:2 | 其他:5, 文档提及:3, 函数定义:1, 疑似真实调用:1 |
+| _get_subcommand_epilog | high | 80 | 10 | py:10 | 疑似真实调用:8, 注释:1, 函数定义:1 |
+| daemon_handle_refresh | mid | 221 | 10 | md:10 | 文档提及:10 |
+| daemon_handle_connect | mid | 175 | 10 | md:10 | 文档提及:10 |
+| get_callers | mid | 637 | 10 | md:6, py:4 | 文档提及:6, 疑似真实调用:3, 字符串:1 |
+| _detect_and_decode | low | 49 | 10 | py:5, md:5 | 文档提及:5, 疑似真实调用:3, 函数定义:1, 字符串:1 |
+| _handle_symbol | low | 69 | 10 | json:6, py:4 | 其他:6, 疑似真实调用:2, 函数定义:2 |
+| get_symbol | low | 660 | 10 | py:7, md:2, json:1 | 疑似真实调用:7, 文档提及:2, 其他:1 |
+| read_file_normalized | low | 76 | 10 | py:10 | 疑似真实调用:6, 导入:3, 函数定义:1 |
+| read_file_text | low | 84 | 10 | py:10 | 疑似真实调用:8, 函数定义:1, 导入:1 |
 
 ### 5.1 典型误匹配样本
 
-**daemon_handle_connect** 的 Grep 前 5 条匹配（共 121 条）：
+**daemon_handle_refresh** 的 Grep 前 5 条匹配（共 221 条）：
 
 ```
-C:\git_work\callwarden\完成企业守护进程_E2E_任务_2026-07-14_09-24.md:812:- `daemon_handle_connect(peer_uid, workspace_id, requested_session_id, ws_conn)` — handshake: revokes all old sessions, allocates monotonic epoch, resets file_generations seq
-C:\git_work\callwarden\完成企业守护进程_E2E_任务_2026-07-14_09-24.md:835:**Status:** `daemon_handle_refresh` and `daemon_handle_connect` are **fully implemented**. The `Replicator.replicate()` method is implemented but currently does full DB checkpoint publish rather than incremental delta merge. The `_merge_deltas` is a simple summarizer, not a true incremental graph merger. The connection between `daemon_handle_refresh` (which handles individual file refreshes with CAS) and `Replicator.replicate()` (which handles staging log entries) is **not yet wired** in `daemon_server.py`'s dispatch.
-C:\git_work\callwarden\完成企业守护进程_E2E_任务_2026-07-14_09-24.md:1060:    |-- daemon_handle_connect (defined but not called from dispatch)
-C:\git_work\callwarden\完成企业守护进程_E2E_任务_2026-07-14_09-24.md:4257:76	def daemon_handle_connect(peer_uid: int, workspace_id: int, requested_session_id: str,
-C:\git_work\callwarden\完成企业守护进程_E2E_任务_2026-07-14_09-24.md:9222:66	### 4.1 连接握手：daemon_handle_connect
+C:\git_work\callwarden\docs\design\audit-cas-replicator-wiring.md:28:`daemon_handle_connect` 和 `daemon_handle_refresh` 完整实现了 session epoch 分配、
+C:\git_work\callwarden\docs\design\audit-cas-replicator-wiring.md:36:2. **违反禁止读客户端路径**：`daemon_handle_refresh` 用 `workspace_root + rel_path`
+C:\git_work\callwarden\docs\design\audit-cas-replicator-wiring.md:41:   路径，未调用 `daemon_handle_refresh`。
+C:\git_work\callwarden\docs\design\audit-cas-replicator-wiring.md:95:2. **改造 `daemon_handle_refresh`**：接收 canonical_bytes（从 UDS bytes frame 或
+C:\git_work\callwarden\docs\design\audit-cas-replicator-wiring.md:98:   `workspace.refresh` 走 daemon_handle_refresh 路径。
 ```
 
 观察：前 10 条中 **10** 条来自文档，真实代码调用极少。
@@ -232,3 +237,86 @@ C:\git_work\callwarden\完成企业守护进程_E2E_任务_2026-07-14_09-24.md:9
 - `cw clone list --symbol <QN>`：按符号查 Type-1/2/3 重复代码（MinHash + LSH）
 - `cw evolution <QN> --defects`：变更频率 vs 缺陷关联（change_count / defect_count / defect_rate）
 - **4 个缺口全部补齐**：单元测试 case / 测试稳定性 / 代码重复 / 变更-缺陷关联
+
+## 7. v3→v4 对比分析（6 quirks 修复影响评估）
+
+**v3 时间**：2026-07-14 16:42:06（quirks 修复前）
+**v4 时间**：2026-07-14 20:40:46（commit 1933395，Q1-Q6 修复后）
+
+### 7.1 callers 场景（Q1 影响）
+
+Q1 修复（`get_callers` QN 自动识别 + fallback）让原本因 QN 解析不一致被漏掉的调用关系正确返回。
+
+| 函数 | v3 cw 结果数 | v4 cw 结果数 | 变化 | 说明 |
+|------|------------|------------|------|------|
+| generate_systemd_unit | 23 | 23 | 无变化 | 高频函数，短名匹配本就准确 |
+| _get_subcommand_epilog | 19 | 19 | 无变化 | 同上 |
+| daemon_handle_refresh | 14 | 14 | 无变化 | — |
+| daemon_handle_connect | 15 | 15 | 无变化 | — |
+| **get_callers** | **1** | **6** | **1→6 ↑** | Q1 修复后 5 个额外调用方被正确识别 |
+| **get_symbol** | **2** | **6** | **2→6 ↑** | Q1 修复后 4 个额外调用方被正确识别 |
+| **read_file_normalized** | **1** | **2** | **1→2 ↑** | Q1 修复后 1 个额外调用方被正确识别 |
+| _detect_and_decode | 2 | 2 | 无变化 | — |
+| _handle_symbol | 1 | 1 | 无变化 | — |
+| read_file_text | 7 | 7 | 无变化 | — |
+
+**关键发现**：`get_callers` 和 `get_symbol` 这两个本身作为测试对象的函数，在 v3 中只找到 1-2 个调用方，v4 修复后正确找到 6 个。这证实 Q1 修复让 `get_callers` 的 QN 自动识别 + fallback 逻辑生效，原本被 QN 精确匹配过滤掉的调用方现在通过短名 fallback 正确返回。
+
+### 7.2 callees 场景（Q1 关联影响）
+
+| 函数 | v3 cw 结果数 | v4 cw 结果数 | 变化 |
+|------|------------|------------|------|
+| **_handle_symbol** | **35** | **71** | **35→71 ↑** | Q1 修复后 callees 数量翻倍 |
+| **get_callers** | **2** | **15** | **2→15 ↑** | 显著增加 |
+| **get_symbol** | **5** | **20** | **5→20 ↑** | 显著增加 |
+| **read_file_normalized** | **4** | **5** | **4→5 ↑** | +1 |
+| **read_file_text** | **3** | **4** | **3→4 ↑** | +1 |
+| generate_systemd_unit | 3 | 3 | 无变化 |
+| _get_subcommand_epilog | 2 | 2 | 无变化 |
+| daemon_handle_connect | 11 | 11 | 无变化 |
+| daemon_handle_refresh | 22 | 22 | 无变化 |
+| _detect_and_decode | 9 | 9 | 无变化 |
+
+**关键发现**：`_handle_symbol` 的 callees 从 35 增加到 71（翻倍），说明该函数内部调用了 `get_callers`/`get_symbol` 等"短名通用"函数，v3 中这些短名匹配被 QN 过滤，v4 fallback 后正确返回。
+
+### 7.3 evolution-defects 场景（Q6 影响）
+
+| 函数 | v3 chars | v4 chars | 变化 |
+|------|---------|---------|------|
+| _handle_symbol | 156 | 157 | +1 char |
+| 其他 9 个函数 | 无变化 | 无变化 | — |
+
+**分析**：Q6 修复（`_save_file_version` 写入 `commit_hash`）对 evolution-defects 输出影响极小（仅 1 处 +1 char）。
+原因：`get_defect_correlation_by_qn` 主要依赖 `file_symbol_versions` 表（记录符号版本历史），
+而 callwarden 自身的 `file_symbol_versions` 数据在 refresh-all 后基本不变（符号内容未变 = 无新版本）。
+Q6 的修复对 cw_demo（有 git 历史）影响明显，但对 callwarden 自身（refresh-all 不产生新版本）影响有限。
+
+### 7.4 symbol 场景（control group）
+
+| 函数 | v3 | v4 | 变化 |
+|------|-----|-----|------|
+| get_callers | 8 | 8 | 无变化 |
+| get_symbol | 32 | 35 | 32→35 ↑ |
+| 其他 8 个 | 无变化 | — | — |
+
+symbol 场景作为对照组，绝大多数函数结果数不变，仅 `get_symbol` +3（可能是新文件解析差异）。证实 Q1 修复主要影响 callers/callees 场景，不影响符号搜索本身。
+
+### 7.5 结论
+
+**Q1 修复（callers/callees QN fallback）效果显著**：
+- 10 个测试函数中 4 个 callers 结果数增加，5 个 callees 结果数增加
+- `get_callers` 从 1→6，`get_symbol` 从 2→6，`_handle_symbol` callees 从 35→71
+- 证实修复前 QN 解析不一致确实导致部分调用关系被漏掉
+
+**Q6 修复（commit_hash 写入）对 callwarden 自身影响有限**：
+- evolution-defects 场景几乎无变化（仅 1 处 +1 char）
+- 原因：callwarden 自身 refresh-all 不产生新 file_symbol_versions（符号内容未变）
+- Q6 的实际价值在 cw_demo 等有 git 历史的项目中体现（见 capability_showcase.md Q6 验证）
+
+**其他 quirks（Q2/Q3/Q4/Q5）不影响 A/B benchmark 场景**：
+- Q2（docstring 检测）：benchmark 不测 comment_coverage
+- Q3（--workspace 兼容）：benchmark 用默认 workspace
+- Q4（git-import 自动化）：benchmark 不触发 task_capture_diff_auto
+- Q5（churn_analysis 行数）：benchmark 不测 churn_analysis
+
+**数据一致性验证**：修复前后符号/调用边数量相同（6113 符号，10079 调用边），证实修复未破坏数据完整性。

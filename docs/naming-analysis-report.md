@@ -1,5 +1,7 @@
 # Call Warden 开源命名与参赛策略分析报告
 
+> **⚠️ 过时提示**：本报告撰写时 MCP 工具数为 120 个，截至 2026-07-15 已增长至 195 个。报告中涉及"120 个 MCP 工具"的描述均为历史数据，请以 [docs/mcp_tools.md](mcp_tools.md) 为准。
+
 ## Abstract
 
 Call Warden 是一个面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 协议，已具备 16 语言解析、120 个 MCP 工具、145+ CLI 命令的成熟能力。本报告从项目技术基因出发，经过**逐个 GitHub 实名验证**，筛选出真正可用的命名方案，并给出最终推荐与 TRAE AI 创造力大赛赛道适配策略。

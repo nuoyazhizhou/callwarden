@@ -2,21 +2,21 @@
   "generate_systemd_unit_symbol": {
     "cw": [
       {
-        "ms": 278.30570000514854,
+        "ms": 405.26900000986643,
         "chars": 374,
         "lines": 7,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 292.1598999964772,
+        "ms": 389.6220999886282,
         "chars": 374,
         "lines": 7,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 329.333100002259,
+        "ms": 406.94700001040474,
         "chars": 374,
         "lines": 7,
         "result_count": 2,
@@ -25,21 +25,21 @@
     ],
     "grep": [
       {
-        "ms": 94.20799999497831,
+        "ms": 188.41750000137836,
         "chars": 73,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 108.1731000012951,
+        "ms": 191.78620001184754,
         "chars": 73,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 109.24339998746291,
+        "ms": 180.95689998881426,
         "chars": 73,
         "lines": 1,
         "result_count": 1,
@@ -50,19 +50,19 @@
   "generate_systemd_unit_callers": {
     "cw": [
       {
-        "ms": 318.41310000163503,
+        "ms": 404.8913000005996,
         "chars": 1722,
         "lines": 24,
         "result_count": 23
       },
       {
-        "ms": 303.2026000000769,
+        "ms": 383.07400001212955,
         "chars": 1722,
         "lines": 24,
         "result_count": 23
       },
       {
-        "ms": 289.7700000030454,
+        "ms": 379.9388000043109,
         "chars": 1722,
         "lines": 24,
         "result_count": 23
@@ -70,19 +70,19 @@
     ],
     "grep": [
       {
-        "ms": 111.65919998893514,
+        "ms": 183.45050000061747,
         "chars": 2599,
         "lines": 25,
         "result_count": 25
       },
       {
-        "ms": 110.12959999789018,
+        "ms": 162.7425999904517,
         "chars": 2599,
         "lines": 25,
         "result_count": 25
       },
       {
-        "ms": 102.83060000801925,
+        "ms": 204.14879999589175,
         "chars": 2599,
         "lines": 25,
         "result_count": 25
@@ -92,19 +92,19 @@
   "generate_systemd_unit_callees": {
     "cw": [
       {
-        "ms": 308.1201000022702,
+        "ms": 404.23379999992903,
         "chars": 162,
         "lines": 4,
         "result_count": 3
       },
       {
-        "ms": 290.6381000066176,
+        "ms": 397.2957000078168,
         "chars": 162,
         "lines": 4,
         "result_count": 3
       },
       {
-        "ms": 289.08919999958016,
+        "ms": 424.63819999829866,
         "chars": 162,
         "lines": 4,
         "result_count": 3
@@ -112,24 +112,24 @@
     ],
     "grep": [
       {
-        "ms": 112.24889999721199,
-        "chars": 5870,
-        "lines": 46,
-        "result_count": 46,
+        "ms": 199.78090000222437,
+        "chars": 9632,
+        "lines": 75,
+        "result_count": 75,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 117.41799999435898,
-        "chars": 5870,
-        "lines": 46,
-        "result_count": 46,
+        "ms": 216.05020000424702,
+        "chars": 9632,
+        "lines": 75,
+        "result_count": 75,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 114.85730001004413,
-        "chars": 5870,
-        "lines": 46,
-        "result_count": 46,
+        "ms": 202.52700000128243,
+        "chars": 9632,
+        "lines": 75,
+        "result_count": 75,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -137,17 +137,17 @@
   "generate_systemd_unit_call-chain": {
     "cw": [
       {
-        "ms": 289.4531000056304,
+        "ms": 476.2316999986069,
         "chars": 103,
         "lines": 3
       },
       {
-        "ms": 297.1570999943651,
+        "ms": 473.7931999989087,
         "chars": 103,
         "lines": 3
       },
       {
-        "ms": 294.652299999143,
+        "ms": 373.58769999991637,
         "chars": 103,
         "lines": 3
       }
@@ -176,19 +176,19 @@
   "generate_systemd_unit_impact": {
     "cw": [
       {
-        "ms": 276.6925000032643,
+        "ms": 397.2334999998566,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 278.381600001012,
+        "ms": 414.89919999730773,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 293.79949999565724,
+        "ms": 428.4087999985786,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -218,21 +218,21 @@
   "generate_systemd_unit_grep": {
     "cw": [
       {
-        "ms": 390.72870000381954,
+        "ms": 1241.2804999912623,
         "chars": 4723,
         "lines": 25,
         "result_count": 25,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 407.29399998963345,
+        "ms": 577.4242000043159,
         "chars": 4723,
         "lines": 25,
         "result_count": 25,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 406.7397000035271,
+        "ms": 550.270100007765,
         "chars": 4723,
         "lines": 25,
         "result_count": 25,
@@ -241,24 +241,24 @@
     ],
     "grep": [
       {
-        "ms": 119.170199992368,
-        "chars": 5870,
-        "lines": 46,
-        "result_count": 46,
+        "ms": 204.08280000265222,
+        "chars": 9632,
+        "lines": 75,
+        "result_count": 75,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 121.23619999329094,
-        "chars": 5870,
-        "lines": 46,
-        "result_count": 46,
+        "ms": 196.29110000096262,
+        "chars": 9632,
+        "lines": 75,
+        "result_count": 75,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 124.63789999310393,
-        "chars": 5870,
-        "lines": 46,
-        "result_count": 46,
+        "ms": 201.4573000051314,
+        "chars": 9632,
+        "lines": 75,
+        "result_count": 75,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -266,17 +266,17 @@
   "generate_systemd_unit_issues": {
     "cw": [
       {
-        "ms": 350.23219999857247,
+        "ms": 374.5978999941144,
         "chars": 113,
         "lines": 2
       },
       {
-        "ms": 295.99810000217985,
+        "ms": 348.8297000003513,
         "chars": 113,
         "lines": 2
       },
       {
-        "ms": 343.97649999300484,
+        "ms": 336.11619999282993,
         "chars": 113,
         "lines": 2
       }
@@ -305,17 +305,17 @@
   "generate_systemd_unit_tests": {
     "cw": [
       {
-        "ms": 333.1012999988161,
+        "ms": 332.77280000038445,
         "chars": 3372,
         "lines": 50
       },
       {
-        "ms": 317.7663999958895,
+        "ms": 324.2443000053754,
         "chars": 3372,
         "lines": 50
       },
       {
-        "ms": 287.8905000106897,
+        "ms": 329.08820000011474,
         "chars": 3372,
         "lines": 50
       }
@@ -344,17 +344,17 @@
   "generate_systemd_unit_clone": {
     "cw": [
       {
-        "ms": 292.9902000032598,
+        "ms": 366.6656999994302,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 282.4767999991309,
+        "ms": 310.29900000430644,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 266.3522000075318,
+        "ms": 320.22359999245964,
         "chars": 80,
         "lines": 2
       }
@@ -383,17 +383,17 @@
   "generate_systemd_unit_evolution-defects": {
     "cw": [
       {
-        "ms": 262.6021000032779,
+        "ms": 316.14179999451153,
         "chars": 172,
         "lines": 6
       },
       {
-        "ms": 257.9147000069497,
+        "ms": 310.3040999994846,
         "chars": 172,
         "lines": 6
       },
       {
-        "ms": 259.73440000962,
+        "ms": 325.22110000718385,
         "chars": 172,
         "lines": 6
       }
@@ -422,44 +422,44 @@
   "_get_subcommand_epilog_symbol": {
     "cw": [
       {
-        "ms": 281.4871999871684,
-        "chars": 692,
-        "lines": 10,
+        "ms": 327.9307000047993,
+        "chars": 639,
+        "lines": 9,
         "result_count": 3,
         "found": true
       },
       {
-        "ms": 295.2657999994699,
-        "chars": 692,
-        "lines": 10,
+        "ms": 338.0254000076093,
+        "chars": 639,
+        "lines": 9,
         "result_count": 3,
         "found": true
       },
       {
-        "ms": 289.83120000339113,
-        "chars": 692,
-        "lines": 10,
+        "ms": 343.9151999918977,
+        "chars": 639,
+        "lines": 9,
         "result_count": 3,
         "found": true
       }
     ],
     "grep": [
       {
-        "ms": 115.30230000789743,
+        "ms": 163.955399999395,
         "chars": 197,
         "lines": 2,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 115.25160000019241,
+        "ms": 189.80249999731313,
         "chars": 197,
         "lines": 2,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 116.62740001338534,
+        "ms": 189.66620000719558,
         "chars": 197,
         "lines": 2,
         "result_count": 2,
@@ -470,19 +470,19 @@
   "_get_subcommand_epilog_callers": {
     "cw": [
       {
-        "ms": 310.0001999991946,
+        "ms": 346.2176000030013,
         "chars": 774,
         "lines": 20,
         "result_count": 19
       },
       {
-        "ms": 301.78919999161735,
+        "ms": 346.9584999984363,
         "chars": 774,
         "lines": 20,
         "result_count": 19
       },
       {
-        "ms": 311.87960000534076,
+        "ms": 364.37079998722766,
         "chars": 774,
         "lines": 20,
         "result_count": 19
@@ -490,19 +490,19 @@
     ],
     "grep": [
       {
-        "ms": 114.75760000757873,
+        "ms": 177.49129999720026,
         "chars": 3376,
         "lines": 33,
         "result_count": 33
       },
       {
-        "ms": 114.9849999928847,
+        "ms": 182.84599999606144,
         "chars": 3376,
         "lines": 33,
         "result_count": 33
       },
       {
-        "ms": 148.36300000024494,
+        "ms": 186.24550000822637,
         "chars": 3376,
         "lines": 33,
         "result_count": 33
@@ -512,44 +512,44 @@
   "_get_subcommand_epilog_callees": {
     "cw": [
       {
-        "ms": 327.3008999967715,
-        "chars": 149,
+        "ms": 407.99610000976827,
+        "chars": 126,
         "lines": 3,
         "result_count": 2
       },
       {
-        "ms": 339.28510000987444,
-        "chars": 149,
+        "ms": 387.5571999960812,
+        "chars": 126,
         "lines": 3,
         "result_count": 2
       },
       {
-        "ms": 314.9358999944525,
-        "chars": 149,
+        "ms": 362.74389999744017,
+        "chars": 126,
         "lines": 3,
         "result_count": 2
       }
     ],
     "grep": [
       {
-        "ms": 123.53700000676326,
-        "chars": 5652,
-        "lines": 51,
-        "result_count": 51,
+        "ms": 209.69040000636596,
+        "chars": 9430,
+        "lines": 80,
+        "result_count": 80,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 144.22230000491254,
-        "chars": 5652,
-        "lines": 51,
-        "result_count": 51,
+        "ms": 191.64319999981672,
+        "chars": 9430,
+        "lines": 80,
+        "result_count": 80,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 116.51530000381172,
-        "chars": 5652,
-        "lines": 51,
-        "result_count": 51,
+        "ms": 188.01699999312405,
+        "chars": 9430,
+        "lines": 80,
+        "result_count": 80,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -557,17 +557,17 @@
   "_get_subcommand_epilog_call-chain": {
     "cw": [
       {
-        "ms": 270.85990000341553,
+        "ms": 364.9409000063315,
         "chars": 154,
         "lines": 5
       },
       {
-        "ms": 264.1462000028696,
+        "ms": 331.3656000100309,
         "chars": 154,
         "lines": 5
       },
       {
-        "ms": 258.3937000017613,
+        "ms": 339.4640000042273,
         "chars": 154,
         "lines": 5
       }
@@ -596,19 +596,19 @@
   "_get_subcommand_epilog_impact": {
     "cw": [
       {
-        "ms": 248.20899999758694,
+        "ms": 328.9011000015307,
         "chars": 91,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 269.4125999987591,
+        "ms": 314.57489999593236,
         "chars": 91,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 264.00460000149906,
+        "ms": 314.81400001212023,
         "chars": 91,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -638,21 +638,21 @@
   "_get_subcommand_epilog_grep": {
     "cw": [
       {
-        "ms": 349.7026000113692,
+        "ms": 488.6419999966165,
         "chars": 5387,
         "lines": 33,
         "result_count": 33,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 370.3193999972427,
+        "ms": 510.40369999827817,
         "chars": 5387,
         "lines": 33,
         "result_count": 33,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 383.54049999907147,
+        "ms": 496.4538000058383,
         "chars": 5387,
         "lines": 33,
         "result_count": 33,
@@ -661,24 +661,24 @@
     ],
     "grep": [
       {
-        "ms": 110.37900000519585,
-        "chars": 5652,
-        "lines": 51,
-        "result_count": 51,
+        "ms": 167.8918999969028,
+        "chars": 9430,
+        "lines": 80,
+        "result_count": 80,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 109.20629999600351,
-        "chars": 5652,
-        "lines": 51,
-        "result_count": 51,
+        "ms": 170.98019999684766,
+        "chars": 9430,
+        "lines": 80,
+        "result_count": 80,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 110.84179999306798,
-        "chars": 5652,
-        "lines": 51,
-        "result_count": 51,
+        "ms": 177.74319999443833,
+        "chars": 9430,
+        "lines": 80,
+        "result_count": 80,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -686,17 +686,17 @@
   "_get_subcommand_epilog_issues": {
     "cw": [
       {
-        "ms": 276.16360000683926,
+        "ms": 319.2364999995334,
         "chars": 105,
         "lines": 2
       },
       {
-        "ms": 275.5106000113301,
+        "ms": 325.94300000346266,
         "chars": 105,
         "lines": 2
       },
       {
-        "ms": 295.96660000970587,
+        "ms": 314.3456999969203,
         "chars": 105,
         "lines": 2
       }
@@ -725,17 +725,17 @@
   "_get_subcommand_epilog_tests": {
     "cw": [
       {
-        "ms": 323.970500001451,
+        "ms": 312.2896999993827,
         "chars": 139,
         "lines": 3
       },
       {
-        "ms": 406.69319999869913,
+        "ms": 305.1967999927001,
         "chars": 139,
         "lines": 3
       },
       {
-        "ms": 368.7160999979824,
+        "ms": 305.0344000075711,
         "chars": 139,
         "lines": 3
       }
@@ -764,17 +764,17 @@
   "_get_subcommand_epilog_clone": {
     "cw": [
       {
-        "ms": 357.7571999921929,
+        "ms": 344.5867999980692,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 382.4375000112923,
+        "ms": 327.6648000028217,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 361.5513999975519,
+        "ms": 314.94220001331996,
         "chars": 80,
         "lines": 2
       }
@@ -803,17 +803,17 @@
   "_get_subcommand_epilog_evolution-defects": {
     "cw": [
       {
-        "ms": 363.84190000535455,
+        "ms": 316.8474999984028,
         "chars": 165,
         "lines": 6
       },
       {
-        "ms": 378.2115999929374,
+        "ms": 319.9599999934435,
         "chars": 165,
         "lines": 6
       },
       {
-        "ms": 339.55640000931453,
+        "ms": 306.63530000310857,
         "chars": 165,
         "lines": 6
       }
@@ -842,21 +842,21 @@
   "daemon_handle_refresh_symbol": {
     "cw": [
       {
-        "ms": 354.819200001657,
+        "ms": 353.2316000055289,
         "chars": 2089,
         "lines": 27,
         "result_count": 9,
         "found": true
       },
       {
-        "ms": 338.4426999982679,
+        "ms": 350.91649999958463,
         "chars": 2089,
         "lines": 27,
         "result_count": 9,
         "found": true
       },
       {
-        "ms": 340.6957999977749,
+        "ms": 343.7359999952605,
         "chars": 2089,
         "lines": 27,
         "result_count": 9,
@@ -865,21 +865,21 @@
     ],
     "grep": [
       {
-        "ms": 120.19839999265969,
+        "ms": 165.2710000053048,
         "chars": 868,
         "lines": 6,
         "result_count": 6,
         "found": true
       },
       {
-        "ms": 129.19780000811443,
+        "ms": 167.60069999145344,
         "chars": 868,
         "lines": 6,
         "result_count": 6,
         "found": true
       },
       {
-        "ms": 138.18790001096204,
+        "ms": 174.255500009167,
         "chars": 868,
         "lines": 6,
         "result_count": 6,
@@ -890,19 +890,19 @@
   "daemon_handle_refresh_callers": {
     "cw": [
       {
-        "ms": 346.5991999983089,
+        "ms": 345.46039999986533,
         "chars": 1380,
         "lines": 15,
         "result_count": 14
       },
       {
-        "ms": 355.0919999979669,
+        "ms": 352.4829000089085,
         "chars": 1380,
         "lines": 15,
         "result_count": 14
       },
       {
-        "ms": 343.73750000668224,
+        "ms": 351.3957999966806,
         "chars": 1380,
         "lines": 15,
         "result_count": 14
@@ -910,41 +910,41 @@
     ],
     "grep": [
       {
-        "ms": 131.34779999381863,
-        "chars": 9241,
-        "lines": 68,
-        "result_count": 68
+        "ms": 165.37579998839647,
+        "chars": 8783,
+        "lines": 66,
+        "result_count": 66
       },
       {
-        "ms": 126.48980000813026,
-        "chars": 9241,
-        "lines": 68,
-        "result_count": 68
+        "ms": 168.7963000003947,
+        "chars": 8783,
+        "lines": 66,
+        "result_count": 66
       },
       {
-        "ms": 134.2006000049878,
-        "chars": 9241,
-        "lines": 68,
-        "result_count": 68
+        "ms": 185.57609998970293,
+        "chars": 8783,
+        "lines": 66,
+        "result_count": 66
       }
     ]
   },
   "daemon_handle_refresh_callees": {
     "cw": [
       {
-        "ms": 335.3696999984095,
+        "ms": 353.4920000092825,
         "chars": 859,
         "lines": 23,
         "result_count": 22
       },
       {
-        "ms": 329.1964999953052,
+        "ms": 350.8891999954358,
         "chars": 859,
         "lines": 23,
         "result_count": 22
       },
       {
-        "ms": 342.19590001157485,
+        "ms": 373.8482000044314,
         "chars": 859,
         "lines": 23,
         "result_count": 22
@@ -952,24 +952,24 @@
     ],
     "grep": [
       {
-        "ms": 129.14950000413228,
-        "chars": 35322,
-        "lines": 195,
-        "result_count": 195,
+        "ms": 178.48079999384936,
+        "chars": 39433,
+        "lines": 221,
+        "result_count": 221,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 118.20280000392813,
-        "chars": 35322,
-        "lines": 195,
-        "result_count": 195,
+        "ms": 183.85400000261143,
+        "chars": 39433,
+        "lines": 221,
+        "result_count": 221,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 133.32220001029782,
-        "chars": 35322,
-        "lines": 195,
-        "result_count": 195,
+        "ms": 191.80230000347365,
+        "chars": 39433,
+        "lines": 221,
+        "result_count": 221,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -977,19 +977,19 @@
   "daemon_handle_refresh_call-chain": {
     "cw": [
       {
-        "ms": 327.2482000029413,
-        "chars": 1180,
-        "lines": 30
+        "ms": 354.3626000027871,
+        "chars": 1546,
+        "lines": 41
       },
       {
-        "ms": 314.37190000724513,
-        "chars": 1180,
-        "lines": 30
+        "ms": 357.72699999506585,
+        "chars": 1546,
+        "lines": 41
       },
       {
-        "ms": 314.6738000068581,
-        "chars": 1180,
-        "lines": 30
+        "ms": 329.6568999940064,
+        "chars": 1546,
+        "lines": 41
       }
     ],
     "grep": [
@@ -1016,19 +1016,19 @@
   "daemon_handle_refresh_impact": {
     "cw": [
       {
-        "ms": 317.0011999900453,
+        "ms": 346.38109999650624,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 342.2290000016801,
+        "ms": 339.62009999959264,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 335.2353999944171,
+        "ms": 345.3757000097539,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -1058,22 +1058,22 @@
   "daemon_handle_refresh_grep": {
     "cw": [
       {
-        "ms": 428.3047000062652,
-        "chars": 10679,
+        "ms": 523.5222000046633,
+        "chars": 11279,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 487.5954000017373,
+        "ms": 483.49649998999666,
         "chars": 11273,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 465.01569999963976,
-        "chars": 10649,
+        "ms": 501.7297000013059,
+        "chars": 10661,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
@@ -1081,24 +1081,24 @@
     ],
     "grep": [
       {
-        "ms": 132.8469000000041,
-        "chars": 35322,
-        "lines": 195,
-        "result_count": 195,
+        "ms": 185.264300002018,
+        "chars": 39433,
+        "lines": 221,
+        "result_count": 221,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 132.79629999306053,
-        "chars": 35322,
-        "lines": 195,
-        "result_count": 195,
+        "ms": 174.95939999935217,
+        "chars": 39433,
+        "lines": 221,
+        "result_count": 221,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 152.21100000781007,
-        "chars": 35322,
-        "lines": 195,
-        "result_count": 195,
+        "ms": 175.6429999950342,
+        "chars": 39433,
+        "lines": 221,
+        "result_count": 221,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -1106,17 +1106,17 @@
   "daemon_handle_refresh_issues": {
     "cw": [
       {
-        "ms": 344.71340000163764,
+        "ms": 314.1710000054445,
         "chars": 113,
         "lines": 2
       },
       {
-        "ms": 332.44050000212155,
+        "ms": 362.38379999122117,
         "chars": 113,
         "lines": 2
       },
       {
-        "ms": 309.0446999995038,
+        "ms": 368.9191000012215,
         "chars": 113,
         "lines": 2
       }
@@ -1145,17 +1145,17 @@
   "daemon_handle_refresh_tests": {
     "cw": [
       {
-        "ms": 314.53139999939594,
+        "ms": 346.8014999962179,
         "chars": 1780,
         "lines": 22
       },
       {
-        "ms": 328.24109999637585,
+        "ms": 330.7005999959074,
         "chars": 1780,
         "lines": 22
       },
       {
-        "ms": 359.57660000713076,
+        "ms": 343.1325000128709,
         "chars": 1780,
         "lines": 22
       }
@@ -1184,17 +1184,17 @@
   "daemon_handle_refresh_clone": {
     "cw": [
       {
-        "ms": 346.5886999911163,
+        "ms": 325.94439999957103,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 329.99430000199936,
+        "ms": 341.94500000739936,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 320.0144000002183,
+        "ms": 326.9335999939358,
         "chars": 80,
         "lines": 2
       }
@@ -1223,17 +1223,17 @@
   "daemon_handle_refresh_evolution-defects": {
     "cw": [
       {
-        "ms": 343.08919998875353,
+        "ms": 335.3288999933284,
         "chars": 172,
         "lines": 6
       },
       {
-        "ms": 365.6466999964323,
+        "ms": 322.2260000038659,
         "chars": 172,
         "lines": 6
       },
       {
-        "ms": 362.7561000030255,
+        "ms": 329.8387999966508,
         "chars": 172,
         "lines": 6
       }
@@ -1262,21 +1262,21 @@
   "daemon_handle_connect_symbol": {
     "cw": [
       {
-        "ms": 386.51430000027176,
+        "ms": 336.15309999731835,
         "chars": 1138,
         "lines": 15,
         "result_count": 5,
         "found": true
       },
       {
-        "ms": 432.9455999977654,
+        "ms": 343.7624000071082,
         "chars": 1138,
         "lines": 15,
         "result_count": 5,
         "found": true
       },
       {
-        "ms": 439.377600006992,
+        "ms": 353.59759999846574,
         "chars": 1138,
         "lines": 15,
         "result_count": 5,
@@ -1285,24 +1285,24 @@
     ],
     "grep": [
       {
-        "ms": 137.92940000712406,
-        "chars": 756,
-        "lines": 5,
-        "result_count": 5,
+        "ms": 158.73200001078658,
+        "chars": 1193,
+        "lines": 7,
+        "result_count": 7,
         "found": true
       },
       {
-        "ms": 160.54920000897255,
-        "chars": 756,
-        "lines": 5,
-        "result_count": 5,
+        "ms": 171.07810000015888,
+        "chars": 1193,
+        "lines": 7,
+        "result_count": 7,
         "found": true
       },
       {
-        "ms": 160.70910000416916,
-        "chars": 756,
-        "lines": 5,
-        "result_count": 5,
+        "ms": 193.2814000028884,
+        "chars": 1193,
+        "lines": 7,
+        "result_count": 7,
         "found": true
       }
     ]
@@ -1310,19 +1310,19 @@
   "daemon_handle_connect_callers": {
     "cw": [
       {
-        "ms": 477.8131999919424,
+        "ms": 352.8329999971902,
         "chars": 1479,
         "lines": 16,
         "result_count": 15
       },
       {
-        "ms": 410.9228999877814,
+        "ms": 369.0162999992026,
         "chars": 1479,
         "lines": 16,
         "result_count": 15
       },
       {
-        "ms": 375.97870000172406,
+        "ms": 358.17549999046605,
         "chars": 1479,
         "lines": 16,
         "result_count": 15
@@ -1330,41 +1330,41 @@
     ],
     "grep": [
       {
-        "ms": 171.15569999441504,
-        "chars": 9633,
-        "lines": 76,
-        "result_count": 76
+        "ms": 174.63120000320487,
+        "chars": 10675,
+        "lines": 80,
+        "result_count": 80
       },
       {
-        "ms": 139.6759000053862,
-        "chars": 9633,
-        "lines": 76,
-        "result_count": 76
+        "ms": 184.24850000883453,
+        "chars": 10675,
+        "lines": 80,
+        "result_count": 80
       },
       {
-        "ms": 141.0875000001397,
-        "chars": 9633,
-        "lines": 76,
-        "result_count": 76
+        "ms": 180.21619999490213,
+        "chars": 10675,
+        "lines": 80,
+        "result_count": 80
       }
     ]
   },
   "daemon_handle_connect_callees": {
     "cw": [
       {
-        "ms": 391.36589999543503,
+        "ms": 380.7446999999229,
         "chars": 398,
         "lines": 12,
         "result_count": 11
       },
       {
-        "ms": 339.16150000004563,
+        "ms": 353.07270000339486,
         "chars": 398,
         "lines": 12,
         "result_count": 11
       },
       {
-        "ms": 349.8764999967534,
+        "ms": 347.0201000018278,
         "chars": 398,
         "lines": 12,
         "result_count": 11
@@ -1372,24 +1372,24 @@
     ],
     "grep": [
       {
-        "ms": 135.41089999489486,
-        "chars": 18567,
-        "lines": 121,
-        "result_count": 121,
+        "ms": 185.42100000195205,
+        "chars": 27248,
+        "lines": 175,
+        "result_count": 175,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 132.8112999908626,
-        "chars": 18567,
-        "lines": 121,
-        "result_count": 121,
+        "ms": 170.9922000009101,
+        "chars": 27248,
+        "lines": 175,
+        "result_count": 175,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 132.11180000507738,
-        "chars": 18567,
-        "lines": 121,
-        "result_count": 121,
+        "ms": 177.8721000009682,
+        "chars": 27248,
+        "lines": 175,
+        "result_count": 175,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -1397,17 +1397,17 @@
   "daemon_handle_connect_call-chain": {
     "cw": [
       {
-        "ms": 348.0102000030456,
+        "ms": 318.7108999991324,
         "chars": 103,
         "lines": 3
       },
       {
-        "ms": 331.23080000223126,
+        "ms": 349.191699991934,
         "chars": 103,
         "lines": 3
       },
       {
-        "ms": 317.69989999884274,
+        "ms": 325.51819999935105,
         "chars": 103,
         "lines": 3
       }
@@ -1436,19 +1436,19 @@
   "daemon_handle_connect_impact": {
     "cw": [
       {
-        "ms": 321.4733999921009,
+        "ms": 304.47419999109115,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 325.71660001121927,
+        "ms": 327.2632000007434,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 305.2560999931302,
+        "ms": 332.7073999971617,
         "chars": 99,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -1478,22 +1478,22 @@
   "daemon_handle_connect_grep": {
     "cw": [
       {
-        "ms": 392.08720000169706,
-        "chars": 11785,
+        "ms": 489.503099990543,
+        "chars": 11846,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 394.83950000430923,
-        "chars": 11581,
+        "ms": 509.0745000052266,
+        "chars": 11630,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 386.7346000042744,
-        "chars": 11810,
+        "ms": 523.4151000040583,
+        "chars": 11786,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
@@ -1501,24 +1501,24 @@
     ],
     "grep": [
       {
-        "ms": 112.7526000054786,
-        "chars": 18567,
-        "lines": 121,
-        "result_count": 121,
+        "ms": 170.12939999403898,
+        "chars": 27248,
+        "lines": 175,
+        "result_count": 175,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 112.26629999873694,
-        "chars": 18567,
-        "lines": 121,
-        "result_count": 121,
+        "ms": 181.25210001016967,
+        "chars": 27248,
+        "lines": 175,
+        "result_count": 175,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 116.96959999972023,
-        "chars": 18567,
-        "lines": 121,
-        "result_count": 121,
+        "ms": 178.15089999930933,
+        "chars": 27248,
+        "lines": 175,
+        "result_count": 175,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -1526,17 +1526,17 @@
   "daemon_handle_connect_issues": {
     "cw": [
       {
-        "ms": 282.71339999628253,
+        "ms": 342.5040999863995,
         "chars": 113,
         "lines": 2
       },
       {
-        "ms": 266.8424000003142,
+        "ms": 348.51129999151453,
         "chars": 113,
         "lines": 2
       },
       {
-        "ms": 254.72589999844786,
+        "ms": 321.1172000010265,
         "chars": 113,
         "lines": 2
       }
@@ -1565,17 +1565,17 @@
   "daemon_handle_connect_tests": {
     "cw": [
       {
-        "ms": 247.24759999662638,
+        "ms": 325.855799994315,
         "chars": 1780,
         "lines": 22
       },
       {
-        "ms": 243.76549999578856,
+        "ms": 324.5281000126852,
         "chars": 1780,
         "lines": 22
       },
       {
-        "ms": 250.02769999264274,
+        "ms": 328.09500000439584,
         "chars": 1780,
         "lines": 22
       }
@@ -1604,17 +1604,17 @@
   "daemon_handle_connect_clone": {
     "cw": [
       {
-        "ms": 259.5348000031663,
+        "ms": 338.8369000022067,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 254.44489999790676,
+        "ms": 352.8768999967724,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 255.67109999246895,
+        "ms": 332.60140000493266,
         "chars": 80,
         "lines": 2
       }
@@ -1643,17 +1643,17 @@
   "daemon_handle_connect_evolution-defects": {
     "cw": [
       {
-        "ms": 250.14960000407882,
+        "ms": 337.05230000487063,
         "chars": 172,
         "lines": 6
       },
       {
-        "ms": 240.29149999842048,
+        "ms": 352.22250000515487,
         "chars": 172,
         "lines": 6
       },
       {
-        "ms": 246.24899998889305,
+        "ms": 361.83680000249296,
         "chars": 172,
         "lines": 6
       }
@@ -1682,47 +1682,47 @@
   "get_callers_symbol": {
     "cw": [
       {
-        "ms": 264.2436999885831,
-        "chars": 1636,
-        "lines": 27,
+        "ms": 374.8753999971086,
+        "chars": 1516,
+        "lines": 25,
         "result_count": 8,
         "found": true
       },
       {
-        "ms": 266.94899999711197,
-        "chars": 1636,
-        "lines": 27,
+        "ms": 413.6798999970779,
+        "chars": 1516,
+        "lines": 25,
         "result_count": 8,
         "found": true
       },
       {
-        "ms": 268.40690000972245,
-        "chars": 1636,
-        "lines": 27,
+        "ms": 378.16740000562277,
+        "chars": 1516,
+        "lines": 25,
         "result_count": 8,
         "found": true
       }
     ],
     "grep": [
       {
-        "ms": 94.9146000057226,
-        "chars": 1463,
-        "lines": 14,
-        "result_count": 14,
+        "ms": 189.21709999267478,
+        "chars": 1576,
+        "lines": 15,
+        "result_count": 15,
         "found": true
       },
       {
-        "ms": 98.06279999611434,
-        "chars": 1463,
-        "lines": 14,
-        "result_count": 14,
+        "ms": 181.9997999991756,
+        "chars": 1576,
+        "lines": 15,
+        "result_count": 15,
         "found": true
       },
       {
-        "ms": 106.90009999962058,
-        "chars": 1463,
-        "lines": 14,
-        "result_count": 14,
+        "ms": 185.0265999964904,
+        "chars": 1576,
+        "lines": 15,
+        "result_count": 15,
         "found": true
       }
     ]
@@ -1730,86 +1730,86 @@
   "get_callers_callers": {
     "cw": [
       {
-        "ms": 272.3946000041906,
-        "chars": 84,
-        "lines": 2,
-        "result_count": 1
+        "ms": 367.6510999939637,
+        "chars": 263,
+        "lines": 7,
+        "result_count": 6
       },
       {
-        "ms": 267.5549999985378,
-        "chars": 84,
-        "lines": 2,
-        "result_count": 1
+        "ms": 392.77259999653324,
+        "chars": 263,
+        "lines": 7,
+        "result_count": 6
       },
       {
-        "ms": 280.8989000041038,
-        "chars": 84,
-        "lines": 2,
-        "result_count": 1
+        "ms": 374.2063999961829,
+        "chars": 263,
+        "lines": 7,
+        "result_count": 6
       }
     ],
     "grep": [
       {
-        "ms": 107.99319999932777,
-        "chars": 13992,
-        "lines": 114,
-        "result_count": 114
+        "ms": 189.00230000144802,
+        "chars": 14227,
+        "lines": 116,
+        "result_count": 116
       },
       {
-        "ms": 106.58520000288263,
-        "chars": 13992,
-        "lines": 114,
-        "result_count": 114
+        "ms": 186.64020000142045,
+        "chars": 14227,
+        "lines": 116,
+        "result_count": 116
       },
       {
-        "ms": 113.54229999415111,
-        "chars": 13992,
-        "lines": 114,
-        "result_count": 114
+        "ms": 183.02199999743607,
+        "chars": 14227,
+        "lines": 116,
+        "result_count": 116
       }
     ]
   },
   "get_callers_callees": {
     "cw": [
       {
-        "ms": 296.4018000056967,
-        "chars": 121,
-        "lines": 3,
-        "result_count": 2
+        "ms": 411.9146000011824,
+        "chars": 685,
+        "lines": 16,
+        "result_count": 15
       },
       {
-        "ms": 281.9744000007631,
-        "chars": 121,
-        "lines": 3,
-        "result_count": 2
+        "ms": 380.05799999518786,
+        "chars": 685,
+        "lines": 16,
+        "result_count": 15
       },
       {
-        "ms": 331.2850000074832,
-        "chars": 121,
-        "lines": 3,
-        "result_count": 2
+        "ms": 452.0366000069771,
+        "chars": 685,
+        "lines": 16,
+        "result_count": 15
       }
     ],
     "grep": [
       {
-        "ms": 106.71379999257624,
-        "chars": 76004,
-        "lines": 589,
-        "result_count": 589,
+        "ms": 185.40529999881983,
+        "chars": 81890,
+        "lines": 637,
+        "result_count": 637,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 108.73069999797735,
-        "chars": 76004,
-        "lines": 589,
-        "result_count": 589,
+        "ms": 218.91760001017246,
+        "chars": 81890,
+        "lines": 637,
+        "result_count": 637,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 117.90329999348614,
-        "chars": 76004,
-        "lines": 589,
-        "result_count": 589,
+        "ms": 194.02950000949204,
+        "chars": 81890,
+        "lines": 637,
+        "result_count": 637,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -1817,17 +1817,17 @@
   "get_callers_call-chain": {
     "cw": [
       {
-        "ms": 287.3778999928618,
+        "ms": 388.21429999370594,
         "chars": 84,
         "lines": 3
       },
       {
-        "ms": 303.9433999947505,
+        "ms": 377.4685000098543,
         "chars": 84,
         "lines": 3
       },
       {
-        "ms": 293.7604000035208,
+        "ms": 353.35429999395274,
         "chars": 84,
         "lines": 3
       }
@@ -1856,19 +1856,19 @@
   "get_callers_impact": {
     "cw": [
       {
-        "ms": 261.34369999635965,
+        "ms": 323.54829998803325,
         "chars": 80,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 274.48600000934675,
+        "ms": 326.6060999885667,
         "chars": 80,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 276.9049000053201,
+        "ms": 315.02979999640957,
         "chars": 80,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -1898,22 +1898,22 @@
   "get_callers_grep": {
     "cw": [
       {
-        "ms": 374.38389999442734,
-        "chars": 8581,
+        "ms": 494.7517000109656,
+        "chars": 8750,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 384.76090000767726,
-        "chars": 8735,
+        "ms": 507.60270000318997,
+        "chars": 8696,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 394.9288000003435,
-        "chars": 8738,
+        "ms": 528.3716999983881,
+        "chars": 8087,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
@@ -1921,24 +1921,24 @@
     ],
     "grep": [
       {
-        "ms": 111.73089999647345,
-        "chars": 76004,
-        "lines": 589,
-        "result_count": 589,
+        "ms": 196.21870000264607,
+        "chars": 81890,
+        "lines": 637,
+        "result_count": 637,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 118.1734999991022,
-        "chars": 76004,
-        "lines": 589,
-        "result_count": 589,
+        "ms": 184.3380999926012,
+        "chars": 81890,
+        "lines": 637,
+        "result_count": 637,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 126.87749999167863,
-        "chars": 76004,
-        "lines": 589,
-        "result_count": 589,
+        "ms": 174.61050000565592,
+        "chars": 81890,
+        "lines": 637,
+        "result_count": 637,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -1946,17 +1946,17 @@
   "get_callers_issues": {
     "cw": [
       {
-        "ms": 283.8848999963375,
+        "ms": 330.75200000894256,
         "chars": 94,
         "lines": 2
       },
       {
-        "ms": 279.27689999341965,
+        "ms": 325.0322999956552,
         "chars": 94,
         "lines": 2
       },
       {
-        "ms": 267.13069999823347,
+        "ms": 314.74240000534337,
         "chars": 94,
         "lines": 2
       }
@@ -1985,17 +1985,17 @@
   "get_callers_tests": {
     "cw": [
       {
-        "ms": 301.259800005937,
+        "ms": 328.9558999967994,
         "chars": 128,
         "lines": 3
       },
       {
-        "ms": 298.34609999670647,
+        "ms": 326.9685999985086,
         "chars": 128,
         "lines": 3
       },
       {
-        "ms": 282.97389998624567,
+        "ms": 314.12640000053216,
         "chars": 128,
         "lines": 3
       }
@@ -2024,17 +2024,17 @@
   "get_callers_clone": {
     "cw": [
       {
-        "ms": 277.2326999984216,
+        "ms": 310.3772000031313,
         "chars": 38,
         "lines": 1
       },
       {
-        "ms": 277.04020000237506,
+        "ms": 300.60560000129044,
         "chars": 38,
         "lines": 1
       },
       {
-        "ms": 271.22890000464395,
+        "ms": 312.6476999896113,
         "chars": 38,
         "lines": 1
       }
@@ -2063,17 +2063,17 @@
   "get_callers_evolution-defects": {
     "cw": [
       {
-        "ms": 270.02189999620896,
+        "ms": 308.0874000006588,
         "chars": 153,
         "lines": 6
       },
       {
-        "ms": 257.68860000243876,
+        "ms": 360.7339000009233,
         "chars": 153,
         "lines": 6
       },
       {
-        "ms": 263.3191000059014,
+        "ms": 352.83140001411084,
         "chars": 153,
         "lines": 6
       }
@@ -2102,44 +2102,44 @@
   "_detect_and_decode_symbol": {
     "cw": [
       {
-        "ms": 282.8010999946855,
-        "chars": 201,
-        "lines": 4,
+        "ms": 350.14339999179356,
+        "chars": 141,
+        "lines": 3,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 294.83119999349583,
-        "chars": 201,
-        "lines": 4,
+        "ms": 352.94579999754205,
+        "chars": 141,
+        "lines": 3,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 312.2418999992078,
-        "chars": 201,
-        "lines": 4,
+        "ms": 345.58180000749417,
+        "chars": 141,
+        "lines": 3,
         "result_count": 1,
         "found": true
       }
     ],
     "grep": [
       {
-        "ms": 100.96119999070652,
+        "ms": 176.20859999442473,
         "chars": 105,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 118.74839999654796,
+        "ms": 169.28770000231452,
         "chars": 105,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 119.50610000349116,
+        "ms": 181.2802000058582,
         "chars": 105,
         "lines": 1,
         "result_count": 1,
@@ -2150,19 +2150,19 @@
   "_detect_and_decode_callers": {
     "cw": [
       {
-        "ms": 303.0638999916846,
+        "ms": 356.40330000023823,
         "chars": 117,
         "lines": 3,
         "result_count": 2
       },
       {
-        "ms": 301.35919999156613,
+        "ms": 359.874600006151,
         "chars": 117,
         "lines": 3,
         "result_count": 2
       },
       {
-        "ms": 316.8971999984933,
+        "ms": 385.5787000065902,
         "chars": 117,
         "lines": 3,
         "result_count": 2
@@ -2170,19 +2170,19 @@
     ],
     "grep": [
       {
-        "ms": 120.97370000265073,
+        "ms": 221.78199999325443,
         "chars": 266,
         "lines": 3,
         "result_count": 3
       },
       {
-        "ms": 116.53929999738466,
+        "ms": 196.49630000640173,
         "chars": 266,
         "lines": 3,
         "result_count": 3
       },
       {
-        "ms": 121.57960000331514,
+        "ms": 189.29019999632146,
         "chars": 266,
         "lines": 3,
         "result_count": 3
@@ -2192,44 +2192,44 @@
   "_detect_and_decode_callees": {
     "cw": [
       {
-        "ms": 300.100200009183,
-        "chars": 400,
+        "ms": 423.2585999998264,
+        "chars": 352,
         "lines": 10,
         "result_count": 9
       },
       {
-        "ms": 283.4447000059299,
-        "chars": 400,
+        "ms": 425.50139999366365,
+        "chars": 352,
         "lines": 10,
         "result_count": 9
       },
       {
-        "ms": 309.8368000064511,
-        "chars": 400,
+        "ms": 374.5111000025645,
+        "chars": 352,
         "lines": 10,
         "result_count": 9
       }
     ],
     "grep": [
       {
-        "ms": 112.34950000653043,
-        "chars": 651,
-        "lines": 7,
-        "result_count": 7,
+        "ms": 200.3707999974722,
+        "chars": 5886,
+        "lines": 49,
+        "result_count": 49,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 114.33060000126716,
-        "chars": 651,
-        "lines": 7,
-        "result_count": 7,
+        "ms": 276.6360999958124,
+        "chars": 5886,
+        "lines": 49,
+        "result_count": 49,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 115.56020000716671,
-        "chars": 651,
-        "lines": 7,
-        "result_count": 7,
+        "ms": 185.41190000541974,
+        "chars": 5886,
+        "lines": 49,
+        "result_count": 49,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -2237,17 +2237,17 @@
   "_detect_and_decode_call-chain": {
     "cw": [
       {
-        "ms": 281.2938999995822,
+        "ms": 340.03710000251886,
         "chars": 89,
         "lines": 3
       },
       {
-        "ms": 280.88190000562463,
+        "ms": 340.8625000010943,
         "chars": 89,
         "lines": 3
       },
       {
-        "ms": 257.78400000126567,
+        "ms": 328.8981000077911,
         "chars": 89,
         "lines": 3
       }
@@ -2276,19 +2276,19 @@
   "_detect_and_decode_impact": {
     "cw": [
       {
-        "ms": 253.47209999745246,
+        "ms": 306.3177000003634,
         "chars": 85,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 253.0408000020543,
+        "ms": 319.88490000367165,
         "chars": 85,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 251.45070000144187,
+        "ms": 314.99349999648985,
         "chars": 85,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -2318,22 +2318,22 @@
   "_detect_and_decode_grep": {
     "cw": [
       {
-        "ms": 344.28759998991154,
-        "chars": 743,
+        "ms": 513.8561999920057,
+        "chars": 744,
         "lines": 5,
         "result_count": 5,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 355.8162999979686,
-        "chars": 743,
+        "ms": 621.3144999928772,
+        "chars": 744,
         "lines": 5,
         "result_count": 5,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 351.3325999956578,
-        "chars": 743,
+        "ms": 573.5372999915853,
+        "chars": 744,
         "lines": 5,
         "result_count": 5,
         "note": "默认过滤无符号行（文档/import/注释）"
@@ -2341,24 +2341,24 @@
     ],
     "grep": [
       {
-        "ms": 102.25489998992998,
-        "chars": 651,
-        "lines": 7,
-        "result_count": 7,
+        "ms": 205.6012999964878,
+        "chars": 5886,
+        "lines": 49,
+        "result_count": 49,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 105.19409998960327,
-        "chars": 651,
-        "lines": 7,
-        "result_count": 7,
+        "ms": 207.30639999965206,
+        "chars": 5886,
+        "lines": 49,
+        "result_count": 49,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 100.53049999987707,
-        "chars": 651,
-        "lines": 7,
-        "result_count": 7,
+        "ms": 200.99759999720845,
+        "chars": 5886,
+        "lines": 49,
+        "result_count": 49,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -2366,17 +2366,17 @@
   "_detect_and_decode_issues": {
     "cw": [
       {
-        "ms": 252.88569999975152,
+        "ms": 375.3225999971619,
         "chars": 99,
         "lines": 2
       },
       {
-        "ms": 262.0324999879813,
+        "ms": 347.16889999981504,
         "chars": 99,
         "lines": 2
       },
       {
-        "ms": 261.23800000641495,
+        "ms": 327.09589999285527,
         "chars": 99,
         "lines": 2
       }
@@ -2405,17 +2405,17 @@
   "_detect_and_decode_tests": {
     "cw": [
       {
-        "ms": 258.6957000021357,
+        "ms": 332.2289999923669,
         "chars": 133,
         "lines": 3
       },
       {
-        "ms": 246.96570000378415,
+        "ms": 324.1000999987591,
         "chars": 133,
         "lines": 3
       },
       {
-        "ms": 252.08990000828635,
+        "ms": 334.5990000088932,
         "chars": 133,
         "lines": 3
       }
@@ -2444,18 +2444,18 @@
   "_detect_and_decode_clone": {
     "cw": [
       {
-        "ms": 251.52130000060424,
-        "chars": 130,
+        "ms": 321.17929999367334,
+        "chars": 80,
         "lines": 2
       },
       {
-        "ms": 261.0309000010602,
-        "chars": 130,
+        "ms": 329.37110000057146,
+        "chars": 80,
         "lines": 2
       },
       {
-        "ms": 255.0822000048356,
-        "chars": 130,
+        "ms": 322.88900000276044,
+        "chars": 80,
         "lines": 2
       }
     ],
@@ -2483,17 +2483,17 @@
   "_detect_and_decode_evolution-defects": {
     "cw": [
       {
-        "ms": 248.05100000230595,
+        "ms": 309.44219999946654,
         "chars": 158,
         "lines": 6
       },
       {
-        "ms": 246.60450000374112,
+        "ms": 304.8817000089912,
         "chars": 158,
         "lines": 6
       },
       {
-        "ms": 252.84929999907035,
+        "ms": 313.62739999894984,
         "chars": 158,
         "lines": 6
       }
@@ -2522,44 +2522,44 @@
   "_handle_symbol_symbol": {
     "cw": [
       {
-        "ms": 277.25670000654645,
-        "chars": 310,
-        "lines": 7,
+        "ms": 330.7889999996405,
+        "chars": 226,
+        "lines": 5,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 278.52700000221375,
-        "chars": 310,
-        "lines": 7,
+        "ms": 334.46669999102596,
+        "chars": 226,
+        "lines": 5,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 281.79690000251867,
-        "chars": 310,
-        "lines": 7,
+        "ms": 348.18970000196714,
+        "chars": 226,
+        "lines": 5,
         "result_count": 2,
         "found": true
       }
     ],
     "grep": [
       {
-        "ms": 101.75549999985378,
+        "ms": 172.20349999843165,
         "chars": 147,
         "lines": 2,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 116.78539999411441,
+        "ms": 168.80569999921136,
         "chars": 147,
         "lines": 2,
         "result_count": 2,
         "found": true
       },
       {
-        "ms": 112.09289998805616,
+        "ms": 167.71900000458118,
         "chars": 147,
         "lines": 2,
         "result_count": 2,
@@ -2570,19 +2570,19 @@
   "_handle_symbol_callers": {
     "cw": [
       {
-        "ms": 284.52370000013616,
+        "ms": 347.03600000648294,
         "chars": 80,
         "lines": 2,
         "result_count": 1
       },
       {
-        "ms": 286.9330999965314,
+        "ms": 350.320899990038,
         "chars": 80,
         "lines": 2,
         "result_count": 1
       },
       {
-        "ms": 285.79130000434816,
+        "ms": 356.9666999974288,
         "chars": 80,
         "lines": 2,
         "result_count": 1
@@ -2590,19 +2590,19 @@
     ],
     "grep": [
       {
-        "ms": 111.72430000442546,
+        "ms": 186.74570000439417,
         "chars": 153,
         "lines": 2,
         "result_count": 2
       },
       {
-        "ms": 103.3430999959819,
+        "ms": 189.26899999496527,
         "chars": 153,
         "lines": 2,
         "result_count": 2
       },
       {
-        "ms": 109.83149999810848,
+        "ms": 183.9754999964498,
         "chars": 153,
         "lines": 2,
         "result_count": 2
@@ -2612,44 +2612,44 @@
   "_handle_symbol_callees": {
     "cw": [
       {
-        "ms": 286.2221999967005,
-        "chars": 1208,
-        "lines": 36,
-        "result_count": 35
+        "ms": 366.0485000000335,
+        "chars": 2244,
+        "lines": 72,
+        "result_count": 71
       },
       {
-        "ms": 284.25630000128876,
-        "chars": 1208,
-        "lines": 36,
-        "result_count": 35
+        "ms": 357.59430000325665,
+        "chars": 2244,
+        "lines": 72,
+        "result_count": 71
       },
       {
-        "ms": 284.6624000085285,
-        "chars": 1208,
-        "lines": 36,
-        "result_count": 35
+        "ms": 353.7519999954384,
+        "chars": 2244,
+        "lines": 72,
+        "result_count": 71
       }
     ],
     "grep": [
       {
-        "ms": 109.99240000091959,
-        "chars": 2726,
-        "lines": 27,
-        "result_count": 27,
+        "ms": 187.28440000268165,
+        "chars": 7777,
+        "lines": 69,
+        "result_count": 69,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 117.605099992943,
-        "chars": 2726,
-        "lines": 27,
-        "result_count": 27,
+        "ms": 176.77099999855272,
+        "chars": 7777,
+        "lines": 69,
+        "result_count": 69,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 119.93339999753516,
-        "chars": 2726,
-        "lines": 27,
-        "result_count": 27,
+        "ms": 180.38309999974445,
+        "chars": 7777,
+        "lines": 69,
+        "result_count": 69,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -2657,19 +2657,19 @@
   "_handle_symbol_call-chain": {
     "cw": [
       {
-        "ms": 279.57400000013877,
-        "chars": 87,
-        "lines": 3
+        "ms": 320.2729000040563,
+        "chars": 137,
+        "lines": 5
       },
       {
-        "ms": 285.43760000320617,
-        "chars": 87,
-        "lines": 3
+        "ms": 378.85880000249017,
+        "chars": 137,
+        "lines": 5
       },
       {
-        "ms": 277.0944999938365,
-        "chars": 87,
-        "lines": 3
+        "ms": 417.24949999479577,
+        "chars": 137,
+        "lines": 5
       }
     ],
     "grep": [
@@ -2696,19 +2696,19 @@
   "_handle_symbol_impact": {
     "cw": [
       {
-        "ms": 262.3178999929223,
+        "ms": 452.2904999903403,
         "chars": 83,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 267.19349999621045,
+        "ms": 387.637599997106,
         "chars": 83,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 267.4317999917548,
+        "ms": 354.4566000055056,
         "chars": 83,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -2738,21 +2738,21 @@
   "_handle_symbol_grep": {
     "cw": [
       {
-        "ms": 367.26899999484885,
+        "ms": 516.2589999963529,
         "chars": 1335,
         "lines": 8,
         "result_count": 8,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 372.55549999827053,
+        "ms": 532.4975999974413,
         "chars": 1335,
         "lines": 8,
         "result_count": 8,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 388.81979999132454,
+        "ms": 517.7108999923803,
         "chars": 1335,
         "lines": 8,
         "result_count": 8,
@@ -2761,24 +2761,24 @@
     ],
     "grep": [
       {
-        "ms": 109.57660000713076,
-        "chars": 2726,
-        "lines": 27,
-        "result_count": 27,
+        "ms": 194.81610000366345,
+        "chars": 7777,
+        "lines": 69,
+        "result_count": 69,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 115.0813999993261,
-        "chars": 2726,
-        "lines": 27,
-        "result_count": 27,
+        "ms": 200.52779999969061,
+        "chars": 7777,
+        "lines": 69,
+        "result_count": 69,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 109.23410000395961,
-        "chars": 2726,
-        "lines": 27,
-        "result_count": 27,
+        "ms": 193.13460000557825,
+        "chars": 7777,
+        "lines": 69,
+        "result_count": 69,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -2786,17 +2786,17 @@
   "_handle_symbol_issues": {
     "cw": [
       {
-        "ms": 284.360799996648,
+        "ms": 372.7882000093814,
         "chars": 97,
         "lines": 2
       },
       {
-        "ms": 269.92649999738205,
+        "ms": 383.77140001102816,
         "chars": 97,
         "lines": 2
       },
       {
-        "ms": 262.7248999924632,
+        "ms": 419.5038000034401,
         "chars": 97,
         "lines": 2
       }
@@ -2825,17 +2825,17 @@
   "_handle_symbol_tests": {
     "cw": [
       {
-        "ms": 258.79510000231676,
+        "ms": 362.64769999252167,
         "chars": 131,
         "lines": 3
       },
       {
-        "ms": 267.06430000194814,
+        "ms": 341.8063999997685,
         "chars": 131,
         "lines": 3
       },
       {
-        "ms": 264.0095999959158,
+        "ms": 332.23960000032093,
         "chars": 131,
         "lines": 3
       }
@@ -2864,17 +2864,17 @@
   "_handle_symbol_clone": {
     "cw": [
       {
-        "ms": 263.53880000533536,
+        "ms": 335.6047999986913,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 254.19969999347813,
+        "ms": 350.06280000379775,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 259.15969999914523,
+        "ms": 342.1639000007417,
         "chars": 80,
         "lines": 2
       }
@@ -2903,18 +2903,18 @@
   "_handle_symbol_evolution-defects": {
     "cw": [
       {
-        "ms": 257.37629999639466,
-        "chars": 156,
+        "ms": 350.0591999909375,
+        "chars": 157,
         "lines": 6
       },
       {
-        "ms": 278.2462999894051,
-        "chars": 156,
+        "ms": 349.90589998778887,
+        "chars": 157,
         "lines": 6
       },
       {
-        "ms": 275.44830000260845,
-        "chars": 156,
+        "ms": 385.7828999898629,
+        "chars": 157,
         "lines": 6
       }
     ],
@@ -2942,47 +2942,47 @@
   "get_symbol_symbol": {
     "cw": [
       {
-        "ms": 282.86319998733234,
-        "chars": 5923,
-        "lines": 99,
-        "result_count": 32,
+        "ms": 406.3019000022905,
+        "chars": 5532,
+        "lines": 91,
+        "result_count": 35,
         "found": true
       },
       {
-        "ms": 295.34670000430197,
-        "chars": 5923,
-        "lines": 99,
-        "result_count": 32,
+        "ms": 430.5268000025535,
+        "chars": 5532,
+        "lines": 91,
+        "result_count": 35,
         "found": true
       },
       {
-        "ms": 288.91160000057425,
-        "chars": 5923,
-        "lines": 99,
-        "result_count": 32,
+        "ms": 414.7399000066798,
+        "chars": 5532,
+        "lines": 91,
+        "result_count": 35,
         "found": true
       }
     ],
     "grep": [
       {
-        "ms": 101.7645999963861,
-        "chars": 2092,
-        "lines": 17,
-        "result_count": 17,
+        "ms": 204.42059999913909,
+        "chars": 2225,
+        "lines": 18,
+        "result_count": 18,
         "found": true
       },
       {
-        "ms": 116.4100000023609,
-        "chars": 2092,
-        "lines": 17,
-        "result_count": 17,
+        "ms": 212.52080000704154,
+        "chars": 2225,
+        "lines": 18,
+        "result_count": 18,
         "found": true
       },
       {
-        "ms": 109.41859999729786,
-        "chars": 2092,
-        "lines": 17,
-        "result_count": 17,
+        "ms": 202.6954999892041,
+        "chars": 2225,
+        "lines": 18,
+        "result_count": 18,
         "found": true
       }
     ]
@@ -2990,40 +2990,40 @@
   "get_symbol_callers": {
     "cw": [
       {
-        "ms": 285.43590000481345,
-        "chars": 171,
-        "lines": 3,
-        "result_count": 2
+        "ms": 380.35730000410695,
+        "chars": 312,
+        "lines": 7,
+        "result_count": 6
       },
       {
-        "ms": 272.60139999270905,
-        "chars": 171,
-        "lines": 3,
-        "result_count": 2
+        "ms": 374.7245999984443,
+        "chars": 312,
+        "lines": 7,
+        "result_count": 6
       },
       {
-        "ms": 275.1609999977518,
-        "chars": 171,
-        "lines": 3,
-        "result_count": 2
+        "ms": 345.24929999315646,
+        "chars": 312,
+        "lines": 7,
+        "result_count": 6
       }
     ],
     "grep": [
       {
-        "ms": 119.0745999920182,
-        "chars": 6801,
+        "ms": 191.3969999877736,
+        "chars": 6695,
         "lines": 61,
         "result_count": 61
       },
       {
-        "ms": 105.51300000224728,
-        "chars": 6801,
+        "ms": 189.57799999043345,
+        "chars": 6695,
         "lines": 61,
         "result_count": 61
       },
       {
-        "ms": 100.29990000475664,
-        "chars": 6801,
+        "ms": 177.60060000000522,
+        "chars": 6695,
         "lines": 61,
         "result_count": 61
       }
@@ -3032,44 +3032,44 @@
   "get_symbol_callees": {
     "cw": [
       {
-        "ms": 275.0771999999415,
-        "chars": 214,
-        "lines": 6,
-        "result_count": 5
+        "ms": 354.3458000058308,
+        "chars": 847,
+        "lines": 21,
+        "result_count": 20
       },
       {
-        "ms": 270.5110999959288,
-        "chars": 214,
-        "lines": 6,
-        "result_count": 5
+        "ms": 346.79769999638665,
+        "chars": 847,
+        "lines": 21,
+        "result_count": 20
       },
       {
-        "ms": 268.7697999936063,
-        "chars": 214,
-        "lines": 6,
-        "result_count": 5
+        "ms": 345.1220000133617,
+        "chars": 847,
+        "lines": 21,
+        "result_count": 20
       }
     ],
     "grep": [
       {
-        "ms": 107.39810000814032,
-        "chars": 69096,
-        "lines": 594,
-        "result_count": 594,
+        "ms": 186.48730000131764,
+        "chars": 77067,
+        "lines": 660,
+        "result_count": 660,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 100.9055000031367,
-        "chars": 69096,
-        "lines": 594,
-        "result_count": 594,
+        "ms": 184.89540000155102,
+        "chars": 77067,
+        "lines": 660,
+        "result_count": 660,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 103.30070000782143,
-        "chars": 69096,
-        "lines": 594,
-        "result_count": 594,
+        "ms": 184.9067000002833,
+        "chars": 77067,
+        "lines": 660,
+        "result_count": 660,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -3077,17 +3077,17 @@
   "get_symbol_call-chain": {
     "cw": [
       {
-        "ms": 267.5199000077555,
+        "ms": 326.6286999860313,
         "chars": 86,
         "lines": 3
       },
       {
-        "ms": 254.61630000791047,
+        "ms": 336.6392000025371,
         "chars": 86,
         "lines": 3
       },
       {
-        "ms": 245.28250000730623,
+        "ms": 321.91890000831336,
         "chars": 86,
         "lines": 3
       }
@@ -3116,19 +3116,19 @@
   "get_symbol_impact": {
     "cw": [
       {
-        "ms": 249.04749999404885,
+        "ms": 339.8565000097733,
         "chars": 82,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 250.20450000010896,
+        "ms": 318.40409999131225,
         "chars": 82,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 246.95519999659155,
+        "ms": 316.07650000660215,
         "chars": 82,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -3158,22 +3158,22 @@
   "get_symbol_grep": {
     "cw": [
       {
-        "ms": 360.30919999757316,
-        "chars": 8034,
+        "ms": 491.07200000435114,
+        "chars": 7904,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 409.2834000039147,
-        "chars": 7879,
+        "ms": 515.0414000090677,
+        "chars": 8028,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 404.2247000033967,
-        "chars": 7944,
+        "ms": 511.67059999716,
+        "chars": 8322,
         "lines": 50,
         "result_count": 50,
         "note": "默认过滤无符号行（文档/import/注释）"
@@ -3181,24 +3181,24 @@
     ],
     "grep": [
       {
-        "ms": 119.66519999259617,
-        "chars": 69096,
-        "lines": 594,
-        "result_count": 594,
+        "ms": 170.66830000840127,
+        "chars": 77067,
+        "lines": 660,
+        "result_count": 660,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 123.38469999667723,
-        "chars": 69096,
-        "lines": 594,
-        "result_count": 594,
+        "ms": 190.3084000077797,
+        "chars": 77067,
+        "lines": 660,
+        "result_count": 660,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 105.38959999394137,
-        "chars": 69096,
-        "lines": 594,
-        "result_count": 594,
+        "ms": 177.7866000047652,
+        "chars": 77067,
+        "lines": 660,
+        "result_count": 660,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -3206,17 +3206,17 @@
   "get_symbol_issues": {
     "cw": [
       {
-        "ms": 269.81589999923017,
+        "ms": 338.6138000059873,
         "chars": 96,
         "lines": 2
       },
       {
-        "ms": 256.6002999956254,
+        "ms": 325.67700000072364,
         "chars": 96,
         "lines": 2
       },
       {
-        "ms": 252.93760000204202,
+        "ms": 323.7862999958452,
         "chars": 96,
         "lines": 2
       }
@@ -3245,17 +3245,17 @@
   "get_symbol_tests": {
     "cw": [
       {
-        "ms": 261.7557999910787,
+        "ms": 336.31090000562835,
         "chars": 130,
         "lines": 3
       },
       {
-        "ms": 255.5285999987973,
+        "ms": 327.07980000122916,
         "chars": 130,
         "lines": 3
       },
       {
-        "ms": 249.1643999965163,
+        "ms": 320.00190000690054,
         "chars": 130,
         "lines": 3
       }
@@ -3284,17 +3284,17 @@
   "get_symbol_clone": {
     "cw": [
       {
-        "ms": 262.7667999913683,
+        "ms": 334.6984999952838,
         "chars": 40,
         "lines": 1
       },
       {
-        "ms": 263.17170000402257,
+        "ms": 349.07890000613406,
         "chars": 40,
         "lines": 1
       },
       {
-        "ms": 309.2783000029158,
+        "ms": 376.3502000074368,
         "chars": 40,
         "lines": 1
       }
@@ -3323,17 +3323,17 @@
   "get_symbol_evolution-defects": {
     "cw": [
       {
-        "ms": 305.28150001191534,
+        "ms": 424.32360000384506,
         "chars": 155,
         "lines": 6
       },
       {
-        "ms": 321.9234999996843,
+        "ms": 350.8956000005128,
         "chars": 155,
         "lines": 6
       },
       {
-        "ms": 288.49240001,
+        "ms": 351.19400000257883,
         "chars": 155,
         "lines": 6
       }
@@ -3362,44 +3362,44 @@
   "read_file_normalized_symbol": {
     "cw": [
       {
-        "ms": 342.7669000084279,
-        "chars": 205,
-        "lines": 4,
+        "ms": 370.2543999970658,
+        "chars": 145,
+        "lines": 3,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 353.45199999574106,
-        "chars": 205,
-        "lines": 4,
+        "ms": 366.10310000833124,
+        "chars": 145,
+        "lines": 3,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 341.4111000020057,
-        "chars": 205,
-        "lines": 4,
+        "ms": 379.07710000581574,
+        "chars": 145,
+        "lines": 3,
         "result_count": 1,
         "found": true
       }
     ],
     "grep": [
       {
-        "ms": 119.49460000323597,
+        "ms": 192.39330000709742,
         "chars": 98,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 125.81360001058783,
+        "ms": 200.52430000214372,
         "chars": 98,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 124.23100000887644,
+        "ms": 178.9569999964442,
         "chars": 98,
         "lines": 1,
         "result_count": 1,
@@ -3410,39 +3410,39 @@
   "read_file_normalized_callers": {
     "cw": [
       {
-        "ms": 381.1446000036085,
-        "chars": 112,
-        "lines": 2,
-        "result_count": 1
+        "ms": 345.5461999983527,
+        "chars": 171,
+        "lines": 3,
+        "result_count": 2
       },
       {
-        "ms": 336.0689999972237,
-        "chars": 112,
-        "lines": 2,
-        "result_count": 1
+        "ms": 347.8175999916857,
+        "chars": 171,
+        "lines": 3,
+        "result_count": 2
       },
       {
-        "ms": 313.9816999901086,
-        "chars": 112,
-        "lines": 2,
-        "result_count": 1
+        "ms": 335.644399994635,
+        "chars": 171,
+        "lines": 3,
+        "result_count": 2
       }
     ],
     "grep": [
       {
-        "ms": 128.7852999957977,
+        "ms": 194.23190000816248,
         "chars": 1152,
         "lines": 10,
         "result_count": 10
       },
       {
-        "ms": 128.97109999903478,
+        "ms": 174.3412000068929,
         "chars": 1152,
         "lines": 10,
         "result_count": 10
       },
       {
-        "ms": 122.13760000304319,
+        "ms": 178.51849998987745,
         "chars": 1152,
         "lines": 10,
         "result_count": 10
@@ -3452,44 +3452,44 @@
   "read_file_normalized_callees": {
     "cw": [
       {
-        "ms": 324.0609999920707,
-        "chars": 207,
-        "lines": 5,
-        "result_count": 4
+        "ms": 332.6550999918254,
+        "chars": 260,
+        "lines": 6,
+        "result_count": 5
       },
       {
-        "ms": 300.76959999860264,
-        "chars": 207,
-        "lines": 5,
-        "result_count": 4
+        "ms": 333.14859999518376,
+        "chars": 260,
+        "lines": 6,
+        "result_count": 5
       },
       {
-        "ms": 296.75850000057835,
-        "chars": 207,
-        "lines": 5,
-        "result_count": 4
+        "ms": 334.4658999994863,
+        "chars": 260,
+        "lines": 6,
+        "result_count": 5
       }
     ],
     "grep": [
       {
-        "ms": 116.71109999588225,
-        "chars": 4842,
-        "lines": 34,
-        "result_count": 34,
+        "ms": 177.53559999982826,
+        "chars": 10207,
+        "lines": 76,
+        "result_count": 76,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 119.76270000741351,
-        "chars": 4842,
-        "lines": 34,
-        "result_count": 34,
+        "ms": 173.775300005218,
+        "chars": 10207,
+        "lines": 76,
+        "result_count": 76,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 111.67260000365786,
-        "chars": 4842,
-        "lines": 34,
-        "result_count": 34,
+        "ms": 167.46500000590459,
+        "chars": 10207,
+        "lines": 76,
+        "result_count": 76,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -3497,19 +3497,19 @@
   "read_file_normalized_call-chain": {
     "cw": [
       {
-        "ms": 301.3418000045931,
-        "chars": 200,
-        "lines": 7
+        "ms": 322.35960000252817,
+        "chars": 612,
+        "lines": 20
       },
       {
-        "ms": 274.3386000074679,
-        "chars": 200,
-        "lines": 7
+        "ms": 332.1905000047991,
+        "chars": 612,
+        "lines": 20
       },
       {
-        "ms": 294.9644000036642,
-        "chars": 200,
-        "lines": 7
+        "ms": 319.63399999949615,
+        "chars": 612,
+        "lines": 20
       }
     ],
     "grep": [
@@ -3536,19 +3536,19 @@
   "read_file_normalized_impact": {
     "cw": [
       {
-        "ms": 266.1520000110613,
+        "ms": 316.00789999356493,
         "chars": 87,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 297.6372999983141,
+        "ms": 323.66739999270067,
         "chars": 87,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 263.4805999987293,
+        "ms": 310.3577000001678,
         "chars": 87,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -3578,21 +3578,21 @@
   "read_file_normalized_grep": {
     "cw": [
       {
-        "ms": 370.5550000013318,
+        "ms": 493.044100003317,
         "chars": 1399,
         "lines": 8,
         "result_count": 8,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 411.3932000036584,
+        "ms": 620.1850000070408,
         "chars": 1399,
         "lines": 8,
         "result_count": 8,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 408.4798999974737,
+        "ms": 575.775799996336,
         "chars": 1399,
         "lines": 8,
         "result_count": 8,
@@ -3601,24 +3601,24 @@
     ],
     "grep": [
       {
-        "ms": 137.8578000003472,
-        "chars": 4842,
-        "lines": 34,
-        "result_count": 34,
+        "ms": 193.2885999995051,
+        "chars": 10207,
+        "lines": 76,
+        "result_count": 76,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 126.52309999975841,
-        "chars": 4842,
-        "lines": 34,
-        "result_count": 34,
+        "ms": 246.5249000088079,
+        "chars": 10207,
+        "lines": 76,
+        "result_count": 76,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 114.00400000275113,
-        "chars": 4842,
-        "lines": 34,
-        "result_count": 34,
+        "ms": 181.91189999924973,
+        "chars": 10207,
+        "lines": 76,
+        "result_count": 76,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -3626,17 +3626,17 @@
   "read_file_normalized_issues": {
     "cw": [
       {
-        "ms": 279.11600000516046,
+        "ms": 408.1667999998899,
         "chars": 101,
         "lines": 2
       },
       {
-        "ms": 263.23219999903813,
+        "ms": 340.14239998941775,
         "chars": 101,
         "lines": 2
       },
       {
-        "ms": 271.9312999979593,
+        "ms": 319.4465999986278,
         "chars": 101,
         "lines": 2
       }
@@ -3665,17 +3665,17 @@
   "read_file_normalized_tests": {
     "cw": [
       {
-        "ms": 274.81149999948684,
+        "ms": 324.20669999555685,
         "chars": 135,
         "lines": 3
       },
       {
-        "ms": 258.3444999909261,
+        "ms": 296.92329998943023,
         "chars": 135,
         "lines": 3
       },
       {
-        "ms": 274.31899998919107,
+        "ms": 316.81180000305176,
         "chars": 135,
         "lines": 3
       }
@@ -3704,17 +3704,17 @@
   "read_file_normalized_clone": {
     "cw": [
       {
-        "ms": 331.5192999871215,
+        "ms": 339.0129000035813,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 305.79450000368524,
+        "ms": 316.8895999988308,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 288.9567999955034,
+        "ms": 312.61899998935405,
         "chars": 80,
         "lines": 2
       }
@@ -3743,17 +3743,17 @@
   "read_file_normalized_evolution-defects": {
     "cw": [
       {
-        "ms": 274.94259999366477,
+        "ms": 307.0554000005359,
         "chars": 160,
         "lines": 6
       },
       {
-        "ms": 262.606100004632,
+        "ms": 307.9816999961622,
         "chars": 160,
         "lines": 6
       },
       {
-        "ms": 257.3623000062071,
+        "ms": 314.0440999995917,
         "chars": 160,
         "lines": 6
       }
@@ -3782,44 +3782,44 @@
   "read_file_text_symbol": {
     "cw": [
       {
-        "ms": 283.1950000108918,
-        "chars": 193,
-        "lines": 4,
+        "ms": 351.287700003013,
+        "chars": 133,
+        "lines": 3,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 275.7449000055203,
-        "chars": 193,
-        "lines": 4,
+        "ms": 344.6265999955358,
+        "chars": 133,
+        "lines": 3,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 300.7012999878498,
-        "chars": 193,
-        "lines": 4,
+        "ms": 344.84489999886137,
+        "chars": 133,
+        "lines": 3,
         "result_count": 1,
         "found": true
       }
     ],
     "grep": [
       {
-        "ms": 105.94689998833928,
+        "ms": 171.42069998953957,
         "chars": 105,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 114.40749999019317,
+        "ms": 179.2045999900438,
         "chars": 105,
         "lines": 1,
         "result_count": 1,
         "found": true
       },
       {
-        "ms": 108.78150000644382,
+        "ms": 174.3694000033429,
         "chars": 105,
         "lines": 1,
         "result_count": 1,
@@ -3830,39 +3830,39 @@
   "read_file_text_callers": {
     "cw": [
       {
-        "ms": 278.88830000301823,
-        "chars": 320,
+        "ms": 366.73639999935403,
+        "chars": 346,
         "lines": 8,
         "result_count": 7
       },
       {
-        "ms": 276.1100999923656,
-        "chars": 320,
+        "ms": 346.9255000090925,
+        "chars": 346,
         "lines": 8,
         "result_count": 7
       },
       {
-        "ms": 269.4843000062974,
-        "chars": 320,
+        "ms": 351.7901000013808,
+        "chars": 346,
         "lines": 8,
         "result_count": 7
       }
     ],
     "grep": [
       {
-        "ms": 110.37150000629481,
+        "ms": 188.12390000675805,
         "chars": 3326,
         "lines": 35,
         "result_count": 35
       },
       {
-        "ms": 103.28779999690596,
+        "ms": 181.34720000671223,
         "chars": 3326,
         "lines": 35,
         "result_count": 35
       },
       {
-        "ms": 99.4395000016084,
+        "ms": 188.34149999020156,
         "chars": 3326,
         "lines": 35,
         "result_count": 35
@@ -3872,44 +3872,44 @@
   "read_file_text_callees": {
     "cw": [
       {
-        "ms": 272.82389999891166,
-        "chars": 155,
-        "lines": 4,
-        "result_count": 3
+        "ms": 348.99359999690205,
+        "chars": 208,
+        "lines": 5,
+        "result_count": 4
       },
       {
-        "ms": 284.7905999951763,
-        "chars": 155,
-        "lines": 4,
-        "result_count": 3
+        "ms": 394.50249999936204,
+        "chars": 208,
+        "lines": 5,
+        "result_count": 4
       },
       {
-        "ms": 278.65329998894595,
-        "chars": 155,
-        "lines": 4,
-        "result_count": 3
+        "ms": 421.6950999980327,
+        "chars": 208,
+        "lines": 5,
+        "result_count": 4
       }
     ],
     "grep": [
       {
-        "ms": 105.3505000018049,
-        "chars": 4247,
-        "lines": 42,
-        "result_count": 42,
+        "ms": 188.5099000064656,
+        "chars": 9368,
+        "lines": 84,
+        "result_count": 84,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 100.84629998891614,
-        "chars": 4247,
-        "lines": 42,
-        "result_count": 42,
+        "ms": 216.57979999145027,
+        "chars": 9368,
+        "lines": 84,
+        "result_count": 84,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       },
       {
-        "ms": 108.5495000006631,
-        "chars": 4247,
-        "lines": 42,
-        "result_count": 42,
+        "ms": 231.3670000003185,
+        "chars": 9368,
+        "lines": 84,
+        "result_count": 84,
         "note": "Grep 无法限定在函数体内，结果包含文件内所有出现"
       }
     ]
@@ -3917,19 +3917,19 @@
   "read_file_text_call-chain": {
     "cw": [
       {
-        "ms": 261.1602000106359,
-        "chars": 162,
-        "lines": 6
+        "ms": 376.4967000024626,
+        "chars": 574,
+        "lines": 19
       },
       {
-        "ms": 271.2697999959346,
-        "chars": 162,
-        "lines": 6
+        "ms": 372.6454999996349,
+        "chars": 574,
+        "lines": 19
       },
       {
-        "ms": 267.2402000025613,
-        "chars": 162,
-        "lines": 6
+        "ms": 338.8150999962818,
+        "chars": 574,
+        "lines": 19
       }
     ],
     "grep": [
@@ -3956,19 +3956,19 @@
   "read_file_text_impact": {
     "cw": [
       {
-        "ms": 251.29280000692233,
+        "ms": 337.98289998958353,
         "chars": 81,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 255.77180000254884,
+        "ms": 381.8916000018362,
         "chars": 81,
         "lines": 2,
         "note": "需要 symbol_hash"
       },
       {
-        "ms": 263.3809000108158,
+        "ms": 402.43329999793787,
         "chars": 81,
         "lines": 2,
         "note": "需要 symbol_hash"
@@ -3998,22 +3998,22 @@
   "read_file_text_grep": {
     "cw": [
       {
-        "ms": 371.50999999721535,
-        "chars": 5428,
+        "ms": 604.8070000106236,
+        "chars": 5429,
         "lines": 35,
         "result_count": 35,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 384.46069999190513,
-        "chars": 5428,
+        "ms": 683.1923999998253,
+        "chars": 5429,
         "lines": 35,
         "result_count": 35,
         "note": "默认过滤无符号行（文档/import/注释）"
       },
       {
-        "ms": 387.80519999272656,
-        "chars": 5428,
+        "ms": 704.5144000003347,
+        "chars": 5429,
         "lines": 35,
         "result_count": 35,
         "note": "默认过滤无符号行（文档/import/注释）"
@@ -4021,24 +4021,24 @@
     ],
     "grep": [
       {
-        "ms": 115.17030000686646,
-        "chars": 4247,
-        "lines": 42,
-        "result_count": 42,
+        "ms": 202.12079999328125,
+        "chars": 9368,
+        "lines": 84,
+        "result_count": 84,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 107.82750000362284,
-        "chars": 4247,
-        "lines": 42,
-        "result_count": 42,
+        "ms": 226.71260000788607,
+        "chars": 9368,
+        "lines": 84,
+        "result_count": 84,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       },
       {
-        "ms": 112.28800000390038,
-        "chars": 4247,
-        "lines": 42,
-        "result_count": 42,
+        "ms": 239.71910000545904,
+        "chars": 9368,
+        "lines": 84,
+        "result_count": 84,
         "note": "rg 原始匹配，含文档/注释/import 噪音"
       }
     ]
@@ -4046,17 +4046,17 @@
   "read_file_text_issues": {
     "cw": [
       {
-        "ms": 280.70930000103544,
+        "ms": 533.248799998546,
         "chars": 95,
         "lines": 2
       },
       {
-        "ms": 267.3006999975769,
+        "ms": 493.1107000011252,
         "chars": 95,
         "lines": 2
       },
       {
-        "ms": 254.97190000896808,
+        "ms": 440.3671000036411,
         "chars": 95,
         "lines": 2
       }
@@ -4085,17 +4085,17 @@
   "read_file_text_tests": {
     "cw": [
       {
-        "ms": 253.24389999150299,
+        "ms": 400.8900999906473,
         "chars": 129,
         "lines": 3
       },
       {
-        "ms": 255.5313000048045,
+        "ms": 390.1538999925833,
         "chars": 129,
         "lines": 3
       },
       {
-        "ms": 261.4462000055937,
+        "ms": 402.28369999385905,
         "chars": 129,
         "lines": 3
       }
@@ -4124,17 +4124,17 @@
   "read_file_text_clone": {
     "cw": [
       {
-        "ms": 274.1453000053298,
+        "ms": 383.2248999970034,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 289.2497000138974,
+        "ms": 379.0231000020867,
         "chars": 80,
         "lines": 2
       },
       {
-        "ms": 285.19840000080876,
+        "ms": 370.97850001009647,
         "chars": 80,
         "lines": 2
       }
@@ -4163,17 +4163,17 @@
   "read_file_text_evolution-defects": {
     "cw": [
       {
-        "ms": 282.9261000006227,
+        "ms": 383.7915000040084,
         "chars": 154,
         "lines": 6
       },
       {
-        "ms": 275.4663999949116,
+        "ms": 391.45000001008157,
         "chars": 154,
         "lines": 6
       },
       {
-        "ms": 265.1031999994302,
+        "ms": 394.15499998722225,
         "chars": 154,
         "lines": 6
       }

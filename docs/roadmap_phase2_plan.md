@@ -37,7 +37,7 @@
 ## MCP Server 测试
 
 - [ ] 编写 MCP Server 启动与协议握手测试
-- [ ] 测试 120+ MCP 工具的输入输出契约
+- [ ] 测试 195+ MCP 工具的输入输出契约
 - [ ] 测试 MCP 与 CLI 并发访问（WAL 模式下读写并发安全验证）
 - [ ] 测试 MCP 长连接稳定性（长时间空闲后恢复）
 - [ ] 编写 tests/test_mcp_server_full.py
