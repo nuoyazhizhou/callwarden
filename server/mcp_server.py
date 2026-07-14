@@ -1613,6 +1613,53 @@ def create_mcp_server():
             return [{"error": str(e)}]
 
     @mcp.tool()
+    def get_task_commits(task_id: str, include_commit_details: bool = True) -> list:
+        """查询任务关联的所有 commit（task → commit 正向查询，三角关联）
+
+        通过 task_symbol_changes.source_commit_hash JOIN git_commits 拿 commit 详情。
+
+        Args:
+            task_id: 任务 ID
+            include_commit_details: 是否 JOIN git_commits 返回 commit 详情（author/message/timestamp）
+
+        Returns:
+            按 source_commit_hash 去重的列表，每条含：
+            source_commit_hash / change_count / first_change_at / last_change_at，
+            include_commit_details=True 时额外返回 commit_author / commit_message /
+            commit_timestamp / commit_subject。
+        """
+        try:
+            db = get_db()
+            if not hasattr(db, "get_task_commits"):
+                return [{"error": "get_task_commits not available (need schema v35+)"}]
+            return db.get_task_commits(task_id=task_id, include_commit_details=include_commit_details)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_commit_tasks(commit_hash: str, include_task_details: bool = True) -> list:
+        """查询 commit 关联的所有 task（commit → task 反向查询，三角关联）
+
+        通过 task_symbol_changes.source_commit_hash 反查关联的任务。
+
+        Args:
+            commit_hash: Git commit hash
+            include_task_details: 是否 JOIN tasks 表返回 task 详情（title/status/parent_id）
+
+        Returns:
+            按 task_id 去重的列表，每条含：
+            task_id / change_count / first_change_at / last_change_at，
+            include_task_details=True 时额外返回 task_title / task_status / task_parent_id。
+        """
+        try:
+            db = get_db()
+            if not hasattr(db, "get_commit_tasks"):
+                return [{"error": "get_commit_tasks not available (need schema v35+)"}]
+            return db.get_commit_tasks(commit_hash=commit_hash, include_task_details=include_task_details)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
     def task_rollback(task_id: str, change_id: str = None, reason: str = "") -> dict:
         """回滚任务中的变更
 
@@ -1673,8 +1720,15 @@ def create_mcp_server():
         step_id: str = "",
         base: str = "",
         dry_run: bool = True,
+        source_commit_hash: str = "",
     ) -> dict:
         """捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
+
+        Args:
+            source_commit_hash: 引入此次变更的 git commit hash（可选）。
+                填写后会写入 task_symbol_changes.source_commit_hash 字段，
+                支持后续通过 get_task_commits / get_commit_tasks 查询三角关联。
+                post-commit hook 自动调用时取当前 HEAD commit hash。
 
         用于把外部 Agent（非 Call Warden MCP）在文件系统中留下的真实改动
         归因到指定 task/step，并触发质量审查。这是自举闭环的核心入口。
@@ -1716,6 +1770,7 @@ def create_mcp_server():
                 step_id=step_id,
                 base=base,
                 dry_run=dry_run,
+                source_commit_hash=source_commit_hash,
             )
         except Exception as e:
             return {"error": str(e)}

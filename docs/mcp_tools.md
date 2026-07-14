@@ -629,6 +629,9 @@ Call Warden 通过 MCP Server 暴露 193 个工具，按功能聚合为 12 个�
   - `step_id: str = ""` — 关联步骤 ID（可选，默认空）
   - `base: str = ""` — 基准 commit（空串自动取最近 scan baseline 的 git_head）
   - `dry_run: bool = True` — True 只返回计划不写库；False 写入事实表
+  - `source_commit_hash: str = ""` — 引入此次变更的 git commit hash（可选，schema v35+）
+    - 填写后会写入 `task_symbol_changes.source_commit_hash` 字段，支持后续通过 `get_task_commits` / `get_commit_tasks` 查询三角关联
+    - post-commit hook 自动调用时取当前 HEAD commit hash（参见 CLI `cw task capture-diff --auto`）
 - **返回**：`dict` —
   - `task_id: str` / `step_id: str` / `dry_run: bool`
   - `scan_id: int` — apply 模式才有，对应的 `workspace_scan_runs` ID
@@ -782,6 +785,7 @@ Call Warden 通过 MCP Server 暴露 193 个工具，按功能聚合为 12 个�
   - `change_type: str = "modified"` — added/modified/deleted/edit 等
   - `source: str = "manual"`
   - `metadata: dict = None`
+  - `source_commit_hash: str = ""` — 引入此次变更的 git commit hash（schema v35+）。填写后支持 `get_task_commits` / `get_commit_tasks` 三角关联查询
 - **返回**：`dict` — `{success, id}`
 
 ### `link_edit_audit_symbols`
@@ -801,7 +805,29 @@ Call Warden 通过 MCP Server 暴露 193 个工具，按功能聚合为 12 个�
 反查某个符号版本或限定名由哪些任务改变过。
 
 - **参数**：`symbol_hash: str = ""`, `qualified_name: str = ""`, `limit: int = 50`
-- **返回**：`list[dict]` — 相关归因记录
+- **返回**：`list[dict]` — 相关归因记录（每条含 `source_commit_hash` 字段，schema v35+）
+
+### `get_task_commits`（v35+ 三角关联）
+查询任务关联的所有 commit（task → commit 正向查询）。通过 `task_symbol_changes.source_commit_hash` 字段 JOIN `git_commits` 拿 commit 详情。
+
+- **参数**：
+  - `task_id: str` — 任务 ID
+  - `include_commit_details: bool = True` — 是否 JOIN `git_commits` 返回 commit 详情（author/message/timestamp）
+- **返回**：`list[dict]` — 按 `source_commit_hash` 去重的列表，每条含：
+  - `source_commit_hash: str` / `change_count: int` / `first_change_at: float` / `last_change_at: float`
+  - `include_commit_details=True` 时额外：`commit_author` / `commit_message` / `commit_timestamp` / `commit_subject`（message 首行）
+
+### `get_commit_tasks`（v35+ 三角关联）
+查询 commit 关联的所有 task（commit → task 反向查询）。通过 `task_symbol_changes.source_commit_hash` 反查关联的任务。
+
+- **参数**：
+  - `commit_hash: str` — Git commit hash
+  - `include_task_details: bool = True` — 是否 JOIN `tasks` 表返回 task 详情（title/status/parent_id）
+- **返回**：`list[dict]` — 按 `task_id` 去重的列表，每条含：
+  - `task_id: str` / `change_count: int` / `first_change_at: float` / `last_change_at: float`
+  - `include_task_details=True` 时额外：`task_title` / `task_status` / `task_parent_id`
+
+> **三角关联场景**：`task_capture_diff`（传 source_commit_hash）→ `get_task_commits`（task→commit）→ `get_commit_tasks`（commit→task）→ `get_symbol_change_tasks`（symbol→task）。配合 CLI `cw task show` / `cw symbol-history` / `cw git show` 的关联段输出。
 
 ---
 

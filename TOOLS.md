@@ -227,7 +227,10 @@ cw task reopen <task_id> [--reviewer <审核人>] [--reason "重开原因"]
 cw task split --plan <plan.md> <parent_task_id>
 
 # 捕获外部 agent 的文件变更到任务/审计闭环
-cw task capture-diff [<task_id>] [--auto] [--dry-run]
+cw task capture-diff [<task_id>] [--auto] [--dry-run] [--source-commit-hash <HASH>]
+# --source-commit-hash：填写后写入 task_symbol_changes.source_commit_hash（v35+），
+#                       支持 get_task_commits / get_commit_tasks 三角关联查询。
+#                       --auto 模式自动取当前 HEAD commit hash，无需手动指定。
 
 # 解决质量门禁 finding
 cw task resolve-finding <finding_id> [--resolution <解决方案>]

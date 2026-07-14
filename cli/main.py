@@ -3145,6 +3145,7 @@ def _handle_task(args, db):
             step_id=opts.step_id,
             base=opts.base,
             dry_run=opts.dry_run,
+            source_commit_hash=getattr(opts, "source_commit_hash", "") or "",
         )
 
         cprint(t("cli.messages.task_capture_diff_title"), "cyan", bold=True)
@@ -3557,6 +3558,7 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
             print(t("cli.messages.task_show_not_found", id=task_id))
             return True
         _print_task_detail_single(detail, indent_depth=0)
+        _print_task_link_section(db, task_id)
         return True
 
     # 树形模式：使用 task_status_tree 递归展示
@@ -3569,7 +3571,49 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
     print("-" * 50)
     _print_task_tree_node(tree, depth=0)
     print()
+    _print_task_link_section(db, task_id)
     return True
+
+
+def _print_task_link_section(db, task_id: str):
+    """打印任务的三角关联段（commits + symbol_changes）
+
+    在 _print_task_show 末尾调用，展示 task → commit / task → symbol 关联。
+    fail-soft：方法不存在或查询失败时静默跳过。
+    """
+    try:
+        commits = db.get_task_commits(task_id) if hasattr(db, "get_task_commits") else []
+    except Exception:
+        commits = []
+    try:
+        changes = db.get_task_symbol_changes(task_id, limit=20) if hasattr(db, "get_task_symbol_changes") else []
+    except Exception:
+        changes = []
+
+    if not commits and not changes:
+        return
+
+    cprint(t("cli.messages.task_show_link_title", default="── Related ──"), "cyan")
+    if commits:
+        print(t("cli.messages.task_show_commits_count", default="Commits ({}):".format(len(commits)), count=len(commits)))
+        for c in commits:
+            short = (c.get("source_commit_hash") or "")[:8]
+            subject = c.get("commit_subject") or ""
+            author = c.get("commit_author") or ""
+            cnt = c.get("change_count", 0)
+            print("  {} {} [{} change{}]".format(short, subject, cnt, "s" if cnt != 1 else ""))
+            if author:
+                print("       by {}".format(author))
+    if changes:
+        print(t("cli.messages.task_show_changes_count", default="Symbol changes ({}):".format(len(changes)), count=len(changes)))
+        for ch in changes[:10]:
+            qn = ch.get("qualified_name") or ch.get("symbol_name") or ""
+            ct = ch.get("change_type", "")
+            sch = (ch.get("source_commit_hash") or "")[:8]
+            tag = " [commit:{}]".format(sch) if sch else ""
+            print("  {} {}{}".format(qn, ct, tag))
+        if len(changes) > 10:
+            print("  ... and {} more".format(len(changes) - 10))
 
 
 def _print_task_detail_single(detail: dict, indent_depth: int = 0):
@@ -4240,6 +4284,22 @@ def _handle_symbol_history(args, db):
             msg_line = message.split("\n")[0][:80]
             print(t("cli.messages.symbol_history_message", msg=msg_line))
         print()
+
+    # 三角关联段：symbol → task
+    try:
+        related_tasks = db.get_symbol_change_tasks(symbol_hash=opts.symbol_hash, limit=20) if hasattr(db, "get_symbol_change_tasks") else []
+    except Exception:
+        related_tasks = []
+    if related_tasks:
+        cprint(t("cli.messages.symbol_history_tasks_title", default="── Related Tasks ──"), "cyan")
+        print(t("cli.messages.symbol_history_tasks_count", default="Tasks ({}):".format(len(related_tasks)), count=len(related_tasks)))
+        for rt in related_tasks:
+            tid = rt.get("task_id", "")
+            ct = rt.get("change_type", "")
+            sch = (rt.get("source_commit_hash") or "")[:8]
+            qn = rt.get("qualified_name") or ""
+            tag = " [commit:{}]".format(sch) if sch else ""
+            print("  {} {} {}{}".format(tid, qn, ct, tag))
 
     return True
 
@@ -6832,6 +6892,20 @@ def _handle_git(args, db):
                 type_label = type_map.get(ct, ct)
                 path = fc.get('rel_path') or fc.get('abs_path') or 'unknown'
                 print(f"  [{type_label}] {path}")
+            # 三角关联段：commit → task
+            try:
+                related_tasks = db.get_commit_tasks(commit["commit_hash"]) if hasattr(db, "get_commit_tasks") else []
+            except Exception:
+                related_tasks = []
+            if related_tasks:
+                print()
+                cprint(t("cli.messages.git_show_tasks_title", default="── Related Tasks ──"), "cyan")
+                print(t("cli.messages.git_show_tasks_count", default="Tasks ({}):".format(len(related_tasks)), count=len(related_tasks)))
+                for rt in related_tasks:
+                    tid = rt.get("task_id", "")
+                    title = rt.get("task_title") or ""
+                    cnt = rt.get("change_count", 0)
+                    print("  {} {} [{} change{}]".format(tid, title, cnt, "s" if cnt != 1 else ""))
         return True
 
     if opts.action == "stats":

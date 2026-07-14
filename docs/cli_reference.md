@@ -992,10 +992,14 @@ cw task capture-diff --auto
 - `--step-id <ID>`：关联的 step ID（可选，默认空）
 - `--base <COMMIT>`：基准 commit（可选，默认使用最近一次 `workspace_scan_runs` 的 git_head）
 - `--dry-run`（默认）：只返回计划，不写数据库
+- `--source-commit-hash <HASH>`：引入此次变更的 git commit hash（可选，schema v35+）
+  - 填写后写入 `task_symbol_changes.source_commit_hash` 字段，支持后续 `get_task_commits` / `get_commit_tasks` 三角关联查询
+  - `--auto` 模式自动取当前 HEAD commit hash，无需手动指定
 - `--auto`：自动模式（fail-soft，不阻断 git commit）：
   - 自动检测当前 `in_progress` 状态的任务
   - 取 `HEAD~1` 作为 base（commit 后 hook 触发，HEAD 已是新提交）
   - 自动 apply（`dry_run=False`）
+  - 自动取当前 HEAD commit hash 填入 `source_commit_hash`（v35+ 三角关联）
   - 双层 fail-soft（DB 层 + CLI 层）确保不影响 git commit
 
 **输出**：
@@ -1243,6 +1247,8 @@ cw churn --module src/api
 cw symbol-history a1b2c3d4e5f6...
 cw symbol-history a1b2c3d4e5f6... --limit 50
 ```
+
+输出末尾会追加 **三角关联段：symbol → task**（schema v35+），列出该符号被哪些任务改变过、对应的 `source_commit_hash` 与 `change_type`。对应 MCP 工具 `get_symbol_change_tasks`。
 
 ### `test-impact <QN>`：测试影响选择
 

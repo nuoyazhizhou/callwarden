@@ -69,8 +69,15 @@ class TaskAttributionMixin:
         change_type: str = "modified",
         source: str = "manual",
         metadata: Optional[Dict[str, Any]] = None,
+        source_commit_hash: str = "",
     ) -> Dict[str, Any]:
-        """记录一次任务到文件/符号变化的归因"""
+        """记录一次任务到文件/符号变化的归因
+
+        Args:
+            source_commit_hash: 引入此次变更的 git commit hash（可选）。
+                填写后可通过 get_task_commits / get_commit_tasks 查询 task↔commit 关联。
+                post-commit hook 自动调用时应传当前 HEAD commit hash。
+        """
         if not task_id:
             return {"success": False, "error": t("cli.messages.attribution_task_id_required", default="task_id is required")}
         if not file_path:
@@ -88,8 +95,9 @@ class TaskAttributionMixin:
             INSERT INTO task_symbol_changes
                 (workspace_id, task_id, step_id, edit_audit_id, change_audit_id,
                  file_path, qualified_name, symbol_name, symbol_hash_before,
-                 symbol_hash_after, change_type, source, metadata, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 symbol_hash_after, change_type, source, source_commit_hash,
+                 metadata, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 ws_id,
@@ -104,6 +112,7 @@ class TaskAttributionMixin:
                 symbol_hash_after,
                 change_type or "modified",
                 source or "manual",
+                source_commit_hash or "",
                 meta,
                 now,
             ),
@@ -297,4 +306,130 @@ class TaskAttributionMixin:
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(limit)
         cur = self.conn.execute(sql, params)
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_task_commits(
+        self,
+        task_id: str,
+        include_commit_details: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """查询任务关联的所有 commit（task → commit 正向查询）
+
+        通过 task_symbol_changes.source_commit_hash 字段 JOIN git_commits 拿 commit 详情。
+
+        Args:
+            task_id: 任务 ID
+            include_commit_details: 是否 JOIN git_commits 返回 commit 详情（author/message/timestamp）
+                True 时每条返回额外字段：commit_author / commit_message / commit_timestamp / commit_subject
+                False 时只返回 source_commit_hash 和出现次数
+
+        Returns:
+            按 source_commit_hash 去重的列表，每条含：
+            {
+                "source_commit_hash": str,
+                "change_count": int,        # 此 commit 在此 task 下的 symbol change 条数
+                "first_change_at": float,
+                "last_change_at": float,
+                # include_commit_details=True 时额外：
+                "commit_author": str,
+                "commit_message": str,
+                "commit_timestamp": float,
+                "commit_subject": str,     # message 首行
+            }
+        """
+        if not task_id:
+            return []
+        if include_commit_details:
+            sql = """
+                SELECT tsc.source_commit_hash,
+                       COUNT(*) AS change_count,
+                       MIN(tsc.created_at) AS first_change_at,
+                       MAX(tsc.created_at) AS last_change_at,
+                       gc.author AS commit_author,
+                       gc.message AS commit_message,
+                       gc.timestamp AS commit_timestamp
+                FROM task_symbol_changes tsc
+                LEFT JOIN git_commits gc ON tsc.source_commit_hash = gc.commit_hash
+                WHERE tsc.task_id = ? AND tsc.source_commit_hash != ''
+                GROUP BY tsc.source_commit_hash
+                ORDER BY last_change_at DESC
+            """
+        else:
+            sql = """
+                SELECT source_commit_hash,
+                       COUNT(*) AS change_count,
+                       MIN(created_at) AS first_change_at,
+                       MAX(created_at) AS last_change_at
+                FROM task_symbol_changes
+                WHERE task_id = ? AND source_commit_hash != ''
+                GROUP BY source_commit_hash
+                ORDER BY last_change_at DESC
+            """
+        cur = self.conn.execute(sql, (task_id,))
+        rows = []
+        for row in cur.fetchall():
+            item = dict(row)
+            # commit_subject 仅在 include_commit_details=True 时提取（避免泄露字段到精简模式）
+            if include_commit_details:
+                msg = item.get("commit_message") or ""
+                item["commit_subject"] = msg.split("\n", 1)[0] if msg else ""
+            rows.append(item)
+        return rows
+
+    def get_commit_tasks(
+        self,
+        commit_hash: str,
+        include_task_details: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """查询 commit 关联的所有 task（commit → task 反向查询）
+
+        通过 task_symbol_changes.source_commit_hash 字段 JOIN tasks 拿 task 详情。
+
+        Args:
+            commit_hash: git commit hash
+            include_task_details: 是否 JOIN tasks 返回 task 详情（title/status）
+                True 时每条返回额外字段：task_title / task_status / task_parent_id
+
+        Returns:
+            按 task_id 去重的列表，每条含：
+            {
+                "task_id": str,
+                "change_count": int,
+                "first_change_at": float,
+                "last_change_at": float,
+                # include_task_details=True 时额外：
+                "task_title": str,
+                "task_status": str,
+                "task_parent_id": str,
+            }
+        """
+        if not commit_hash:
+            return []
+        if include_task_details:
+            sql = """
+                SELECT tsc.task_id,
+                       COUNT(*) AS change_count,
+                       MIN(tsc.created_at) AS first_change_at,
+                       MAX(tsc.created_at) AS last_change_at,
+                       t.title AS task_title,
+                       t.status AS task_status,
+                       t.parent_id AS task_parent_id
+                FROM task_symbol_changes tsc
+                LEFT JOIN tasks t ON tsc.task_id = t.id
+                WHERE tsc.source_commit_hash = ?
+                GROUP BY tsc.task_id
+                ORDER BY last_change_at DESC
+            """
+        else:
+            sql = """
+                SELECT task_id,
+                       COUNT(*) AS change_count,
+                       MIN(created_at) AS first_change_at,
+                       MAX(created_at) AS last_change_at
+                FROM task_symbol_changes
+                WHERE source_commit_hash = ?
+                GROUP BY task_id
+                ORDER BY last_change_at DESC
+            """
+        cur = self.conn.execute(sql, (commit_hash,))
         return [dict(row) for row in cur.fetchall()]

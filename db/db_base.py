@@ -1654,6 +1654,30 @@ def _migrate_v33_to_v34(conn: sqlite3.Connection):
     )
 
 
+def _migrate_v34_to_v35(conn: sqlite3.Connection):
+    """v34 -> v35: task_symbol_changes 加 source_commit_hash 字段 + 索引
+
+    打通 task_id ↔ commit_id ↔ symbol_hash 三角关联：
+    - task_symbol_changes 已有 task_id ↔ symbol_hash（v17）
+    - git_symbol_changes 已有 commit_id ↔ symbol_hash（v4）
+    - 新增 source_commit_hash 字段让 task_symbol_changes 也能查到 commit_id
+
+    全新数据库已通过 SCHEMA_SQL 创建（含 source_commit_hash 列），本迁移只补齐既有 v34 库。
+    """
+    # 检查字段是否已存在（幂等）
+    cur = conn.execute("PRAGMA table_info(task_symbol_changes)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "source_commit_hash" not in columns:
+        conn.execute(
+            "ALTER TABLE task_symbol_changes ADD COLUMN source_commit_hash TEXT DEFAULT ''"
+        )
+    # 索引幂等
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_commit "
+        "ON task_symbol_changes(source_commit_hash)"
+    )
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2171,6 +2195,10 @@ class CodeGraphBase:
             34: {
                 "description": t("cli.messages.migration_v34", default="Static analysis gap fix: create test_case_relations + test_runs tables (CREATE IF NOT EXISTS, idempotent)"),
                 "func": _migrate_v33_to_v34,
+            },
+            35: {
+                "description": t("cli.messages.migration_v35", default="task↔commit↔symbol triangle: add source_commit_hash column to task_symbol_changes + index (idempotent)"),
+                "func": _migrate_v34_to_v35,
             },
         }
 

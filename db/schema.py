@@ -675,6 +675,7 @@ CREATE TABLE IF NOT EXISTS task_symbol_changes (
     symbol_hash_after TEXT DEFAULT '',
     change_type TEXT NOT NULL DEFAULT 'modified',
     source TEXT NOT NULL DEFAULT 'manual',
+    source_commit_hash TEXT DEFAULT '',
     metadata TEXT DEFAULT '',
     created_at REAL NOT NULL,
     FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
@@ -687,6 +688,7 @@ CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_edit ON task_symbol_changes(e
 CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_file ON task_symbol_changes(file_path);
 CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_before ON task_symbol_changes(symbol_hash_before);
 CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(symbol_hash_after);
+CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_commit ON task_symbol_changes(source_commit_hash);
 
 -- ============================================
 -- v21: 任务质量门禁发现表（Task Quality Gate Findings）
@@ -997,7 +999,9 @@ ON test_runs(ci_run_id);
 # v34: 静态扫描能力补全 — 创建 test_case_relations（test_fn↔tested_fn 关联）
 #      和 test_runs（CI 测试运行结果）两张表。CREATE IF NOT EXISTS 幂等；
 #      全新库通过 SCHEMA_SQL 已包含，本迁移只补齐既有 v33 库。
-SCHEMA_VERSION = 34
+# v35: task↔commit↔symbol 三角关联 — task_symbol_changes 加 source_commit_hash 字段 + 索引，
+#      让 task_id → commit_id 通过 JOIN git_commits 可查；打通三角关联。
+SCHEMA_VERSION = 35
 
 
 # ============================================

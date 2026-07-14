@@ -508,6 +508,7 @@ class BootstrapMixin:
         step_id: str = "",
         base: str = "",
         dry_run: bool = True,
+        source_commit_hash: str = "",
     ) -> Dict[str, Any]:
         """把外部 Agent 的真实文件改动捕获到 task/change/symbol/audit
 
@@ -669,6 +670,7 @@ class BootstrapMixin:
                         ),
                         source="task_capture_diff",
                         metadata={"status": status_code},
+                        source_commit_hash=source_commit_hash,
                     )
                     linked_symbols.append({
                         "file_path": rel_path,
@@ -787,6 +789,7 @@ class BootstrapMixin:
 
             # 2. 取 HEAD~1 作为 base（commit 后 hook 触发，HEAD 已是新提交）
             base = ""
+            head_commit = ""
             try:
                 cwd = getattr(self, "workspace_root", "") or None
                 result = subprocess.run(
@@ -800,13 +803,27 @@ class BootstrapMixin:
             except Exception:
                 # 没有上一个 commit（首次提交），base 留空，由 task_capture_diff 自动取 scan baseline
                 base = ""
+            # 取当前 HEAD commit hash，作为 source_commit_hash 传入三角关联
+            try:
+                cwd = getattr(self, "workspace_root", "") or None
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    cwd=cwd,
+                )
+                if result.returncode == 0:
+                    head_commit = result.stdout.strip()
+            except Exception:
+                head_commit = ""
 
-            # 3. 自动 apply（dry_run=False）
+            # 3. 自动 apply（dry_run=False），传 source_commit_hash 让三角关联生效
             capture_result = self.task_capture_diff(
                 task_id=task_id,
                 step_id="",
                 base=base,
                 dry_run=False,
+                source_commit_hash=head_commit,
             )
             capture_result["auto"] = True
             capture_result["success"] = True
