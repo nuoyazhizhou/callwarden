@@ -17,9 +17,10 @@
    | 刷新数据库（refresh/refresh-all）| **CLI** `cw --refresh ...` | **CLI**（保持，写操作）|
    | 读文件内容 / 搜索代码 / 浏览目录 | **CLI** `cw --file <PATH>` / `cw --search <Q>` / `cw --query <NAME> <FILE>`；IDE 内置 Read/Grep/Glob 作为降级 | **MCP** `file_read` / `file_grep` / `file_list`（只读，WAL 模式下与 CLI 写并发安全）|
    | 符号内容 / 符号查询 | **CLI** `cw symbol <QN>` / `cw callers` / `cw callees` | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）|
-   | 符号静态检查 | **CLI** `cw issues <QN>`（整合 Semgrep + Guardrail findings，按符号聚合）| 待加 MCP 工具 |
-   | 符号测试 case | **CLI** `cw tests <QN>`（回答"foo() 有哪些 test"；`--build` 重建关联；`--history` 查稳定性；`--import` 导入 JUnit XML）| 待加 MCP 工具 |
-   | 带符号上下文的文本搜索 | **CLI** `cw grep <pattern...> [--fixed] [--limit N] [--include-all]`（默认过滤无符号行，多关键词空格分隔为 AND）| 待加 MCP 工具 |
+   | 符号静态检查 | **CLI** `cw issues <QN>`（整合 Semgrep + Guardrail findings，按符号聚合）| **MCP** `get_symbol_issues`（只读）|
+   | 符号测试 case | **CLI** `cw tests <QN>`（`--build` 重建关联 / `--import` 导入 JUnit XML 为写操作走 CLI）；`--history` 查稳定性 | **MCP** `get_test_cases` / `get_tested_functions` / `get_test_coverage_summary` / `get_test_stability`（只读，WAL 安全）|
+   | 变更-缺陷关联 | **CLI** `cw evolution <QN> --defects` | **MCP** `get_defect_correlation`（只读）|
+   | 带符号上下文的文本搜索 | **CLI** `cw grep <pattern...> [--fixed] [--limit N] [--include-all]`（默认过滤无符号行，多关键词空格分隔为 AND）| **CLI 保持**（依赖 rg 二进制 + `find_symbols_at_lines` 组合，非纯 db 查询；通用文本搜索用 MCP `file_grep`）|
    | 规则匹配查询（get_applicable_rules）| **CLI** `cw rule applicable` | **MCP** `get_applicable_rules`（只读）|
 
    **背景**：MCP Server 是 stdio 长连接，与 CLI 新进程并发时会触发 SQLite `database is locked`。已通过 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` 缓解，但**写操作仍有 5% 撞锁概率**，故写操作永久走 CLI；只读操作在 MCP 激活后走 MCP（吃狗粮），未激活时走 CLI。

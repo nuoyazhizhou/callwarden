@@ -1905,6 +1905,7 @@ def create_mcp_server():
         clone_type: int = 0,
         min_similarity: float = 0.0,
         limit: int = 100,
+        symbol_id: int = 0,
     ) -> list:
         """列出检测到的克隆对
 
@@ -1912,6 +1913,7 @@ def create_mcp_server():
             clone_type: 克隆类型过滤（0=全部，1/2/3 对应 Type-N）
             min_similarity: 最低相似度过滤（默认 0.0）
             limit: 返回上限（默认 100）
+            symbol_id: 只返回涉及此符号的克隆对（0=不过滤）
 
         Returns:
             克隆对列表，按相似度降序，每项包含：
@@ -1934,6 +1936,7 @@ def create_mcp_server():
                 clone_type=clone_type,
                 min_similarity=min_similarity,
                 limit=limit,
+                symbol_id=symbol_id,
             )
         except Exception as e:
             return [{"error": str(e)}]
@@ -1967,6 +1970,172 @@ def create_mcp_server():
         try:
             deleted = db.clear_clones()
             return {"deleted": deleted}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # ========================================
+    # Phase 8: 符号级静态分析（issues / tests / evolution-defects）
+    # ========================================
+    # 对应 CLI: cw issues / cw tests / cw evolution --defects
+    # 全部为只读操作，WAL 模式下与 CLI 写并发安全。
+    # 写操作（build_test_relations / import_test_results）走 CLI，不暴露 MCP。
+
+    @mcp.tool()
+    def get_symbol_issues(qualified_name: str, include_info: bool = False) -> list:
+        """查询符号相关的静态检查问题（Semgrep findings + Guardrail findings 聚合）
+
+        整合两类静态检查数据，让 agent 查符号时一站式看到已知缺陷/告警。
+        对应 CLI: cw issues <QN>
+
+        查询路径：
+        1. semgrep_findings：按 symbol_qualified 精确匹配（首选）
+                         OR file_instance_id + line 范围交集（兜底）
+        2. guardrail_findings：按 file_path + symbol_hash 匹配
+
+        Args:
+            qualified_name: 符号限定名
+            include_info: 是否包含 INFO 级别（默认只 WARNING+，避免噪音）
+
+        Returns:
+            issues 列表，按 severity 降序（ERROR > WARNING > INFO），每条含：
+            {
+                "source": "semgrep" / "guardrail",
+                "rule_id": str, "rule_name": str,
+                "severity": str, "message": str,
+                "start_line": int, "end_line": int,
+                "snippet": str, "fix": str (仅 semgrep),
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_symbol_issues(qualified_name, include_info=include_info)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_test_cases(qualified_name: str) -> list:
+        """查询符号的测试 case 列表
+
+        回答 agent 高频问题："foo() 有哪些 test 在测它？"
+        对应 CLI: cw tests <QN>
+
+        Args:
+            qualified_name: 被测函数的限定名
+
+        Returns:
+            测试 case 列表，按 confidence 降序（high > mid > low），每条含：
+            {
+                "test_fn_id": int,
+                "match_method": "direct_call" / "name_convention" / "indirect",
+                "confidence": "high" / "mid" / "low",
+                "test_name": str, "test_qualified_name": str,
+                "test_file": str, "test_start_line": int,
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_test_cases(qualified_name)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_tested_functions(test_qualified_name: str) -> list:
+        """反向查询：test 函数测了哪些被测函数
+
+        对应 CLI: cw tests <QN> --reverse（反向查询）
+
+        Args:
+            test_qualified_name: test 函数的限定名
+
+        Returns:
+            被测函数列表，按 confidence 降序，每条含：
+            {
+                "tested_fn_id": int,
+                "match_method": str, "confidence": str,
+                "tested_name": str, "tested_qualified_name": str,
+                "tested_file": str, "tested_start_line": int, "tested_end_line": int,
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_tested_functions(test_qualified_name)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_test_coverage_summary(qualified_name: str) -> dict:
+        """查询符号的测试覆盖情况摘要
+
+        Args:
+            qualified_name: 被测函数的限定名
+
+        Returns:
+            {
+                "has_tests": bool,
+                "test_count": int,
+                "high_confidence_count": int,
+                "tests": [...],  # 最多 10 条
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_test_coverage_summary(qualified_name)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_test_stability(qualified_name: str, limit: int = 50) -> dict:
+        """查询符号关联测试的稳定性（基于 test_runs 历史）
+
+        查找通过 test_case_relations 关联到此符号的所有 test_fn，
+        再查 test_runs 表获取它们的运行历史。
+        对应 CLI: cw tests <QN> --history
+
+        Args:
+            qualified_name: 被测函数的限定名
+            limit: 最多返回多少条运行记录（默认 50）
+
+        Returns:
+            {
+                "total_runs": int,
+                "pass_rate": float,        # 0.0-1.0
+                "avg_duration_ms": float,
+                "recent_failures": [...],   # 最近的失败记录
+                "by_test": {                # 按 test_name 分组统计
+                    "test_name": {"total": int, "passed": int, "failed": int, ...},
+                }
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_test_stability(qualified_name, limit=limit)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_defect_correlation(qualified_name: str, window_commits: int = 5) -> dict:
+        """查询符号的变更-缺陷关联（defect correlation）
+
+        分析符号的变更频率与缺陷（Semgrep findings）的时间关联性，
+        回答"这个函数改得多不多？改完之后容易引入缺陷吗？"
+        对应 CLI: cw evolution <QN> --defects
+
+        Args:
+            qualified_name: 符号限定名
+            window_commits: 变更后观察的提交窗口数（默认 5，即变更后 5 次提交内出现的 findings 算关联）
+
+        Returns:
+            {
+                "qualified_name": str,
+                "change_count": int,        # 变更次数
+                "defect_count": int,        # 关联缺陷数
+                "defect_rate": float,       # defect_count / change_count
+                "recent_defects": [...],   # 最近的关联缺陷
+            }
+        """
+        db = get_db()
+        try:
+            return db.get_defect_correlation_by_qn(qualified_name, window_commits=window_commits)
         except Exception as e:
             return {"error": str(e)}
 

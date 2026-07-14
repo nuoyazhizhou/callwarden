@@ -1710,6 +1710,8 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | `cw defect diff-to-symbol` | `diff_to_symbol` | diff 映射符号 |
 | `cw defect review-readiness` | `review_readiness` | 审查就绪 |
 | `cw defect cross-layer` | `cross_layer_impact` | 跨层影响 |
+| `cw issues <QN>` | `get_symbol_issues` | 符号静态检查（Semgrep + Guardrail findings 聚合）|
+| `cw evolution <QN> --defects` | `get_defect_correlation` | 变更-缺陷关联（change_count / defect_count / defect_rate）|
 
 ### [10] Coverage & Ownership
 
@@ -1730,6 +1732,10 @@ pip install tree-sitter tree-sitter-languages fastmcp
 | `cw symbol restore-comment` / `cw --restore-comment` | `restore_comment` | 恢复注释 |
 | `cw symbol restore-all-comments` / `cw --restore-all-comments` | `restore_all_comments` | 批量恢复注释 |
 | `cw symbol comment-from-version` | `get_comment_from_version` | 历史版本注释 |
+| `cw tests <QN>` | `get_test_cases` | 符号的测试 case 列表（test_fn ↔ tested_fn 三阶推断）|
+| `cw tests <QN> --reverse` | `get_tested_functions` | 反向查询（test_fn 测了哪些函数）|
+| `cw tests <QN> --coverage` | `get_test_coverage_summary` | 测试覆盖摘要（has_tests / test_count / high_confidence_count）|
+| `cw tests <QN> --history` | `get_test_stability` | 测试稳定性（pass_rate / recent_failures / by_test）|
 
 ### [11] GC
 
