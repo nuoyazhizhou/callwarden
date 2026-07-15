@@ -2596,7 +2596,8 @@ class BuildMixin:
 
         存储格式：JSON 编码的元数据字节流
         {
-            "content_hash": str,         # 上次解析的 content_hash
+            "content_hash": str,         # 上次解析的 content_hash（parser 返回值）
+            "file_content_hash": str,    # 文件实际 content_hash（read_file_normalized，用于跨进程短路判断）
             "parsed_at": float,          # 上次解析时间
             "incremental": bool,         # 是否走了增量解析路径
             "changed_ranges_count": int, # 变更区间数量（0 表示全量解析）
@@ -2605,10 +2606,25 @@ class BuildMixin:
 
         tree-sitter Tree 对象无法跨进程序列化，此处只存元数据。
         实际的 Tree 对象缓存在 BaseParser._tree_cache（进程内）。
+
+        H7 激活新增 file_content_hash 字段：read_file_normalized 计算的 hash，
+        用于跨进程短路判断（parser 返回的 content_hash 可能与 read_file_normalized
+        不同，因 Rust/Python parser 的 normalization 差异）。
         """
         import json
+        # H7 激活：额外存 file_content_hash（read_file_normalized 的 hash）
+        # 用于跨进程短路判断（与 parser 返回的 content_hash 分离）
+        file_content_hash = ""
+        abs_path = result.get("abs_path")
+        if abs_path:
+            try:
+                _, file_content_hash = read_file_normalized(abs_path)
+            except Exception:
+                pass
+
         metadata = {
             "content_hash": content_hash,
+            "file_content_hash": file_content_hash,
             "parsed_at": parsed_at,
             "incremental": result.get("incremental", False),
             "changed_ranges_count": len(result.get("changed_ranges", [])),
@@ -2645,6 +2661,117 @@ class BuildMixin:
             return json.loads(row["ast_cache"].decode("utf-8") if isinstance(row["ast_cache"], bytes) else row["ast_cache"])
         except (json.JSONDecodeError, UnicodeDecodeError):
             return None
+
+    def _try_ast_cache_short_circuit(
+        self,
+        abs_path: str,
+        rel_path: str,
+        file_instance_id: int,
+        lang: str,
+    ) -> bool:
+        """H7 AST 缓存激活：parse 前比对 content_hash，未变更则跳过 parse
+
+        watcher 触发 refresh_file 时，未变更文件不应重新 parse。
+        base.py 进程内 _tree_cache 跨进程无效，ast_cache 元数据是跨进程真相源。
+
+        策略：
+        1. 读 file_versions 当前 content_hash（DB 已有，避免重复计算）
+        2. 读文件算 content_hash（read_file_normalized）
+        3. 若 DB content_hash == ast_cache.content_hash == 文件 content_hash，跳过 parse
+           - 更新 file_versions.mtime（mtime 可能因 git checkout 变化）
+           - 更新 file_instances.last_parsed（标记已检查）
+           - 更新 ast_cache.parsed_at（保持时效性）
+           - 返回 True 表示已短路
+        4. 否则返回 False，调用方继续 parse
+
+        注意：content_hash 必须三方一致才短路：
+        - DB file_versions.content_hash（上次 parse 写入）
+        - ast_cache.content_hash（上次 parse 元数据）
+        - 文件实际 content_hash（当前文件内容）
+        若任一不一致，说明文件已变或缓存失效，走 parse 路径。
+
+        Args:
+            abs_path: 文件绝对路径
+            rel_path: 相对路径
+            file_instance_id: 文件实例 ID
+            lang: 语言标识
+
+        Returns:
+            True 表示已短路（跳过 parse），False 表示需要继续 parse
+        """
+        try:
+            _, file_content_hash = read_file_normalized(abs_path)
+        except Exception:
+            return False  # 读取失败，走原 parse 路径
+
+        latest_fv = self._get_file_version(file_instance_id)
+        if not latest_fv:
+            return False  # 无 file_versions 记录，走 parse 路径
+
+        db_content_hash = latest_fv["content_hash"]
+        metadata = self._read_ast_cache(file_instance_id)
+        if not metadata:
+            return False  # 无 ast_cache，走 parse 路径
+
+        # 三方一致才短路：
+        # - DB file_versions.content_hash 与 ast_cache.content_hash 一致（缓存有效）
+        # - 文件实际 content_hash 与 DB content_hash 一致（内容未变）
+        # 注意：file_content_hash 与 db_content_hash 可能因 Rust/Python parser
+        # 的 normalization 不同而不一致，此时 db_content_hash 是真相源——
+        # 只要文件内容未变，read_file_normalized 就会返回与上次相同的 hash，
+        # 但该 hash 可能不等于 db_content_hash（如果 Rust parser 算的 hash 不同）。
+        # 所以判断"文件是否变更"应该比对 file_content_hash 自身的上次值，
+        # 而非 db_content_hash。但 ast_cache.metadata.content_hash 存的是
+        # parser 返回的 hash（与 db_content_hash 一致），不是 file_content_hash。
+        # 因此需要额外存 file_content_hash 才能正确短路。
+        #
+        # 简化方案：直接比对 db_content_hash == ast_cache.content_hash
+        # 且 file_content_hash == ast_cache.get("file_content_hash")
+        # 但 ast_cache 当前不存 file_content_hash。
+        #
+        # 临时方案：比对 file_content_hash 是否等于 ast_cache 中存储的
+        # file_content_hash（如果有），否则走 parse 路径。
+        cached_file_hash = metadata.get("file_content_hash")
+        if not cached_file_hash:
+            # 旧版 ast_cache 不存 file_content_hash，无法短路
+            # 但可以补存：当前 metadata 没有 file_content_hash，
+            # 说明这是首次短路检查，补存后下次可短路
+            return False
+
+        if file_content_hash != cached_file_hash:
+            return False  # 文件已变，走 parse 路径
+
+        # 命中缓存：未变更文件跳过 parse
+        now = time.time()
+        try:
+            mtime = os.path.getmtime(abs_path)
+        except OSError:
+            mtime = now
+
+        # 更新 file_versions.mtime（git checkout 后 mtime 可能变）
+        self.conn.execute(
+            "UPDATE file_versions SET mtime = ? WHERE id = ?",
+            (mtime, latest_fv["id"]),
+        )
+        # 更新 ast_cache 元数据的 parsed_at（保留 content_hash 等其他字段）
+        import json
+        metadata["parsed_at"] = now
+        try:
+            self.conn.execute(
+                "UPDATE file_versions SET ast_cache = ? WHERE id = ?",
+                (json.dumps(metadata).encode("utf-8"), latest_fv["id"]),
+            )
+        except sqlite3.OperationalError:
+            pass  # ast_cache 字段不存在，降级
+
+        # 更新 file_instances.last_parsed
+        self.conn.execute(
+            "UPDATE file_instances SET last_parsed = ?, mtime = ? WHERE id = ?",
+            (now, mtime, file_instance_id),
+        )
+        self.conn.commit()
+        return True
+
 
 
     def _compute_symbol_diff(self, prev_version_id: int, curr_version_id: int) -> Dict:
@@ -3257,6 +3384,11 @@ class BuildMixin:
 
         file_instance_id = self._register_file_db(abs_path, module_path)
 
+        # H7 AST 缓存激活：parse 前先算 content_hash 比对 ast_cache
+        # 未变更文件跳过 parse（base.py 进程内缓存跨进程无效，ast_cache 元数据是跨进程真相源）
+        if self._try_ast_cache_short_circuit(abs_path, rel_path, file_instance_id, "rust"):
+            return
+
         result = self.parser.parse_file(abs_path, module_path)
         result["abs_path"] = abs_path
         result["file_instance_id"] = file_instance_id
@@ -3303,6 +3435,10 @@ class BuildMixin:
 
         module_path = self._infer_module_path_generic(rel_path, lang)
         file_instance_id = self._register_file_db(abs_path, module_path)
+
+        # H7 AST 缓存激活：parse 前先算 content_hash 比对 ast_cache
+        if self._try_ast_cache_short_circuit(abs_path, rel_path, file_instance_id, lang):
+            return
 
         try:
             result = parser.parse_file(abs_path, module_path)

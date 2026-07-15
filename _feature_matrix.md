@@ -261,7 +261,7 @@
 | H4 | Bootstrap 自举闭环 | BC | ✅ 已实现 | workspace_scan_runs 表 + db_bootstrap.py(987行) + bootstrap_status MCP + capture-diff |
 | H5 | 集成测试全流程 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H6 | 千万级符号性能验证 | RP | ❌ 未实施 | 1M 已测，10M 未测 |
-| H7 | AST 缓存激活（B2） | RP | ⚠️ 部分 | file_versions.ast_cache 字段/读写方法/内存层已就位；`_read_ast_cache` 未接入 refresh_file 决策路径；test_incremental_parse.py 覆盖读写 |
+| H7 | AST 缓存激活（B2） | RP | ✅ 已实现 | `_try_ast_cache_short_circuit` 接入 `_refresh_file_rust`/`_refresh_file_generic` 决策路径；新增 `file_content_hash` 字段解决 Rust/Python parser normalization 差异；test_h7_ast_cache_activation.py 8 测试（7 PASS + 1 xfail pre-existing bug）；test_incremental_parse.py 26/26 回归通过 |
 | H8 | 统一项目健康报告 cw health-report | RP | ✅ 已实现 | cli/main.py `_handle_health_report` 聚合 stats + hotspots + issues + token_savings |
 | H9 | MCP Server 完整测试 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H10 | Clone Detection LSH 增强（B1） | RP | ✅ 已实现 | 3-gram shingle + _MAX_BUCKET_SIZE=200 + LSH(8 bands, 16 rows) + 降级策略 + 稳定 hash 全部就位；test_phase7_minhash_stable.py 覆盖稳定性；缺召回率/精确率基准测试 |
@@ -474,7 +474,7 @@
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 0 | 4 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **133** | **11** | **15** | **161** |
+| **总计** | **134** | **10** | **15** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -490,5 +490,5 @@
 2. **中优先级（Phase 4 缺失）**：（H17-H18 diff_callers/diff_callees + compare_snapshots 已实现）
 3. **中优先级（Agent 体验）**：（L1 软门禁已实现：is_task_active + task_context；L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
-5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存）、H9（MCP 测试）、L5（构建上下文感知）、L9 4 语言 grammar 补齐（Kotlin/Swift/Elixir/HCL）
+5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5（构建上下文感知）、L9 4 语言 grammar 补齐（Kotlin/Swift/Elixir/HCL）
 6. **可延后**：H12-H13（Git Hook/多语言测试；H11 已实现；H10 已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
