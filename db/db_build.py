@@ -1955,7 +1955,8 @@ class BuildMixin:
                   start_line, end_line, content_hash, depth, has_comment))
 
 
-    def _build_call_graph_multi_lang(self, file_results: Dict[str, Dict[str, Any]]):
+    def _build_call_graph_multi_lang(self, file_results: Dict[str, Dict[str, Any]],
+                                     only_files: Optional[Set[str]] = None):
         """多语言调用关系构建（多级解析策略）
 
         解析策略（按优先级）：
@@ -1967,6 +1968,9 @@ class BuildMixin:
         性能优化（P0/P3）：
         - 后缀反向索引：策略 2/4 的后缀匹配从 O(M*N) 优化为 O(M*K)
         - external_symbols 批量加载：策略 5 从 M 次 DB 查询优化为 1 次批量加载
+
+        L8 增量优化：only_files 非空时，符号索引从 DB 全量读取（不依赖 file_results），
+        calls 只 resolve + 写入 only_files 中的文件，避免全量 _collect_all_current_file_results。
         """
         total_calls = 0
         resolved_count = 0
@@ -1988,28 +1992,57 @@ class BuildMixin:
         # 内存开销：平均每 qname 4 段 → 4 个索引项，20 万符号约 80 万项/40MB
         suffix_index: Dict[str, List[str]] = defaultdict(list)
 
-        for rel_path, result in file_results.items():
-            for sym in result.get("symbols", []):
-                qname = sym.get("qualified_name", "")
-                if not qname:
-                    continue
-                all_symbols_map[qname] = {"file": rel_path, "symbol": sym}
-                # 简名 = qualified_name 的最后一段（支持 . 和 :: 分隔符）
+        if only_files:
+            # L8 增量模式：符号索引从 DB symbols 表全量读取
+            # 避免 _collect_all_current_file_results() 全量加载所有文件的完整 parse 结果
+            ws_id = self._get_active_workspace_id()
+            cur = self.conn.execute("""
+                SELECT s.id, s.name, s.qualified_name, s.kind,
+                       fi.rel_path
+                FROM symbols s
+                JOIN file_instances fi ON s.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND s.qualified_name != ''
+            """, (ws_id,))
+            for row in cur:
+                qname = row["qualified_name"]
+                rel_p = row["rel_path"]
+                sym = {"id": row["id"], "name": row["name"],
+                       "qualified_name": qname, "kind": row["kind"]}
+                all_symbols_map[qname] = {"file": rel_p, "symbol": sym}
                 norm_qname = qname.replace("::", ".")
                 parts = norm_qname.rsplit(".", 1)
                 simple_name = parts[-1] if parts else qname
                 name_index[simple_name].append(qname)
-                file_symbols[rel_path].add(simple_name)
-                # P27：构建 file-local qname 映射（简名→qname）
-                # 注意：同文件内同名符号（如多类同名方法）后写覆盖前写，
-                # 但这符合策略3"优先当前文件"的语义，且多候选时原本也只取第一个
-                file_local_qname[rel_path][simple_name] = qname
-                # P0：构建后缀索引（含前导点，与原 endswith 语义一致）
-                # 例如 "com.foo.Bar.method" → 索引 ".method", ".Bar.method", ".foo.Bar.method", ".com.foo.Bar.method"
+                file_symbols[rel_p].add(simple_name)
+                file_local_qname[rel_p][simple_name] = qname
                 norm_parts = norm_qname.split(".")
                 for i in range(len(norm_parts)):
                     suffix = "." + ".".join(norm_parts[i:])
                     suffix_index[suffix].append(qname)
+        else:
+            # 全量模式：从 file_results 构建（原逻辑）
+            for rel_path, result in file_results.items():
+                for sym in result.get("symbols", []):
+                    qname = sym.get("qualified_name", "")
+                    if not qname:
+                        continue
+                    all_symbols_map[qname] = {"file": rel_path, "symbol": sym}
+                    # 简名 = qualified_name 的最后一段（支持 . 和 :: 分隔符）
+                    norm_qname = qname.replace("::", ".")
+                    parts = norm_qname.rsplit(".", 1)
+                    simple_name = parts[-1] if parts else qname
+                    name_index[simple_name].append(qname)
+                    file_symbols[rel_path].add(simple_name)
+                    # P27：构建 file-local qname 映射（简名→qname）
+                    # 注意：同文件内同名符号（如多类同名方法）后写覆盖前写，
+                    # 但这符合策略3"优先当前文件"的语义，且多候选时原本也只取第一个
+                    file_local_qname[rel_path][simple_name] = qname
+                    # P0：构建后缀索引（含前导点，与原 endswith 语义一致）
+                    # 例如 "com.foo.Bar.method" → 索引 ".method", ".Bar.method", ".foo.Bar.method", ".com.foo.Bar.method"
+                    norm_parts = norm_qname.split(".")
+                    for i in range(len(norm_parts)):
+                        suffix = "." + ".".join(norm_parts[i:])
+                        suffix_index[suffix].append(qname)
 
         # ---- P3+P7 合并：批量加载 external_symbols 到内存 + 构建 qname_id_map ----
         # 策略 5 原来对每个未解析调用执行 DB 查询，改为内存查找
@@ -3222,14 +3255,9 @@ class BuildMixin:
         result["file_version_id"] = new_fv_id
         self._save_symbols_for_version(new_fv_id, file_instance_id, result)
 
-        # 增量方式：从DB加载其他文件结果 + 新解析的当前文件
-        all_file_results = self._collect_all_current_file_results()
-        all_file_results[rel_path] = result
-
-        # 只重算当前文件的调用关系（使用完整的符号索引）
-        self._build_call_graph_multi_lang({rel_path: result} | {
-            k: v for k, v in all_file_results.items() if k != rel_path
-        })
+        # L8 增量优化：只 resolve 当前文件的调用关系，符号索引从 DB symbols 表全量读取
+        # 避免 _collect_all_current_file_results() 全量加载所有文件完整 parse 结果到内存
+        self._build_call_graph_multi_lang({rel_path: result}, only_files={rel_path})
 
         # 清理旧版本的调用关系
         if latest_fv:
@@ -3279,12 +3307,8 @@ class BuildMixin:
         result["file_version_id"] = new_fv_id
         self._save_symbols_for_version(new_fv_id, file_instance_id, result)
 
-        # 增量方式：从DB加载其他文件结果
-        all_file_results = self._collect_all_current_file_results()
-        all_file_results[rel_path] = result
-
-        # 重算调用关系（符号索引来自DB+新文件，只写入变化文件的调用）
-        self._build_call_graph_multi_lang(all_file_results)
+        # L8 增量优化：只 resolve 当前文件的调用关系，符号索引从 DB symbols 表全量读取
+        self._build_call_graph_multi_lang({rel_path: result}, only_files={rel_path})
 
         # 清理旧版本的调用关系
         if latest_fv:
