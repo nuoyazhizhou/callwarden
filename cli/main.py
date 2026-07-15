@@ -1130,6 +1130,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_map(argv, db)
         elif cmd == "toolchain":
             return _handle_toolchain(argv, db)
+        elif cmd == "build-context":
+            return _handle_build_context(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -7590,6 +7592,213 @@ def _handle_toolchain(args, db):
             return True
         for tc in tcs:
             print(f"  {tc.summary()}")
+
+    return True
+
+
+def _handle_build_context(args, db):
+    """处理 build-context 子命令（构建上下文管理）
+
+    子命令：
+        register <WORKSPACE_ID> <NAME> [--flags ...] [--defines ...] [--includes ...] [--activate]
+        list <WORKSPACE_ID>
+        show <WORKSPACE_ID> <HASH>
+        activate <WORKSPACE_ID> <HASH>
+        delete <WORKSPACE_ID> <HASH>
+        import-compile-commands <FILE> <WORKSPACE_ID> [--name NAME] [--activate]
+        edges <WORKSPACE_ID> <HASH> [--caller SYM_ID] [--limit N]
+    """
+    from ..db.db_toolchain import (
+        init_toolchain_schema, register_build_context, get_build_context,
+        list_build_contexts, set_active_build_context, delete_build_context,
+        get_active_build_context, get_resolved_edges, count_resolved_edges,
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="cw build-context",
+        description="Build context management (L5: 构建上下文感知)",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # register
+    reg = sub.add_parser("register", help="Register a build context")
+    reg.add_argument("workspace_id", type=int, help="Workspace ID")
+    reg.add_argument("name", help="Context name (e.g. debug, release)")
+    reg.add_argument("--flags", nargs="*", default=[], help="Compile flags (e.g. -O2 -g)")
+    reg.add_argument("--defines", nargs="*", default=[], help="Defines (e.g. DEBUG=1 BOARD=A98)")
+    reg.add_argument("--includes", nargs="*", default=[], help="Include paths")
+    reg.add_argument("--activate", action="store_true", help="Set as active context")
+
+    # list
+    lst = sub.add_parser("list", help="List build contexts")
+    lst.add_argument("workspace_id", type=int, help="Workspace ID")
+
+    # show
+    show_p = sub.add_parser("show", help="Show build context details")
+    show_p.add_argument("workspace_id", type=int, help="Workspace ID")
+    show_p.add_argument("hash", help="Build context hash")
+
+    # activate
+    act_p = sub.add_parser("activate", help="Set active build context")
+    act_p.add_argument("workspace_id", type=int, help="Workspace ID")
+    act_p.add_argument("hash", help="Build context hash")
+
+    # delete
+    del_p = sub.add_parser("delete", help="Delete a build context")
+    del_p.add_argument("workspace_id", type=int, help="Workspace ID")
+    del_p.add_argument("hash", help="Build context hash")
+
+    # import-compile-commands
+    imp = sub.add_parser("import-compile-commands", help="Import from compile_commands.json")
+    imp.add_argument("file", help="Path to compile_commands.json")
+    imp.add_argument("workspace_id", type=int, help="Workspace ID")
+    imp.add_argument("--name", default="imported", help="Context name")
+    imp.add_argument("--activate", action="store_true", help="Set as active context")
+    imp.add_argument("--workspace-root", default="", help="Workspace root for path normalization")
+
+    # edges
+    edges_p = sub.add_parser("edges", help="List resolved edges for a build context")
+    edges_p.add_argument("workspace_id", type=int, help="Workspace ID")
+    edges_p.add_argument("hash", help="Build context hash")
+    edges_p.add_argument("--caller", type=int, default=None, help="Filter by caller symbol ID")
+    edges_p.add_argument("--limit", type=int, default=50, help="Max results")
+
+    opts = parser.parse_args(args)
+
+    # 初始化 schema（幂等）
+    init_toolchain_schema(db.conn)
+
+    if opts.action == "register":
+        # 解析 defines: ["DEBUG=1", "BOARD=A98"] → {"DEBUG": "1", "BOARD": "A98"}
+        defines_dict = {}
+        for d in opts.defines:
+            if "=" in d:
+                k, v = d.split("=", 1)
+                defines_dict[k] = v
+            else:
+                defines_dict[d] = ""
+
+        ctx = register_build_context(
+            conn=db.conn,
+            workspace_id=opts.workspace_id,
+            name=opts.name,
+            compile_flags=opts.flags,
+            defines=defines_dict,
+            include_paths=opts.includes,
+            set_active=opts.activate,
+        )
+        print(f"Build context registered: {ctx.name}")
+        print(f"  hash: {ctx.build_context_hash}")
+        print(f"  flags: {ctx.compile_flags}")
+        print(f"  defines: {len(ctx.defines)} macros")
+        print(f"  includes: {len(ctx.include_paths)} paths")
+        if opts.activate:
+            print(f"  (set as active)")
+
+    elif opts.action == "list":
+        ctxs = list_build_contexts(db.conn, opts.workspace_id)
+        if not ctxs:
+            print(f"No build contexts for workspace {opts.workspace_id}")
+            return True
+        print(f"Build contexts for workspace {opts.workspace_id}:")
+        print(f"{'Name':<20} {'Active':<8} {'Hash':<20} {'Defines':<8} {'Includes':<8}")
+        print("-" * 80)
+        for ctx in ctxs:
+            active = "✓" if ctx.is_active else ""
+            print(f"{ctx.name:<20} {active:<8} {ctx.build_context_hash[:16]:<20} "
+                  f"{len(ctx.defines):<8} {len(ctx.include_paths):<8}")
+
+    elif opts.action == "show":
+        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
+        if ctx is None:
+            print(f"Build context not found: {opts.hash}")
+            return False
+        print(f"Build Context: {ctx.name}")
+        print(f"  Hash: {ctx.build_context_hash}")
+        print(f"  Active: {'yes' if ctx.is_active else 'no'}")
+        print(f"  Compile flags ({len(ctx.compile_flags)}):")
+        for f in ctx.compile_flags:
+            print(f"    {f}")
+        print(f"  Defines ({len(ctx.defines)}):")
+        for k, v in list(ctx.defines.items())[:20]:
+            print(f"    {k}={v}")
+        if len(ctx.defines) > 20:
+            print(f"    ... and {len(ctx.defines) - 20} more")
+        print(f"  Include paths ({len(ctx.include_paths)}):")
+        for p in ctx.include_paths[:10]:
+            print(f"    {p}")
+        if len(ctx.include_paths) > 10:
+            print(f"    ... and {len(ctx.include_paths) - 10} more")
+        # 统计 resolved edges
+        count = count_resolved_edges(db.conn, opts.workspace_id, opts.hash)
+        print(f"  Resolved edges: {count}")
+
+    elif opts.action == "activate":
+        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
+        if ctx is None:
+            print(f"Build context not found: {opts.hash}")
+            return False
+        if set_active_build_context(db.conn, opts.workspace_id, opts.hash):
+            print(f"Activated: {ctx.name} ({ctx.build_context_hash[:16]})")
+        else:
+            print(f"Failed to activate")
+            return False
+
+    elif opts.action == "delete":
+        if delete_build_context(db.conn, opts.workspace_id, opts.hash):
+            print(f"Deleted: {opts.hash}")
+        else:
+            print(f"Not found: {opts.hash}")
+            return False
+
+    elif opts.action == "import-compile-commands":
+        from ..analyzers.compile_commands import import_compile_commands
+        if not os.path.exists(opts.file):
+            print(f"File not found: {opts.file}")
+            return False
+
+        agg = import_compile_commands(opts.file, opts.workspace_root or os.getcwd())
+        print(f"Imported {agg.file_count} compile entries:")
+        print(f"  compiler: {agg.compiler_path or '(not detected)'}")
+        print(f"  defines: {len(agg.defines)}")
+        print(f"  include_paths: {len(agg.include_paths)}")
+        print(f"  compile_flags: {len(agg.compile_flags)}")
+
+        # 注册 build context
+        ctx = register_build_context(
+            conn=db.conn,
+            workspace_id=opts.workspace_id,
+            name=opts.name,
+            compile_flags=agg.compile_flags,
+            defines=agg.defines,
+            include_paths=agg.include_paths,
+            set_active=opts.activate,
+        )
+        print(f"Build context registered: {ctx.name}")
+        print(f"  hash: {ctx.build_context_hash}")
+        if opts.activate:
+            print(f"  (set as active)")
+
+        # 如果检测到编译器，提示注册 toolchain
+        if agg.compiler_path:
+            print(f"\n  Hint: Detected compiler '{agg.compiler_path}'")
+            print(f"  Run: cw toolchain register auto_{int(time.time())} {agg.compiler_path}")
+
+    elif opts.action == "edges":
+        edges = get_resolved_edges(
+            db.conn, opts.workspace_id, opts.hash,
+            caller_symbol_id=opts.caller, limit=opts.limit,
+        )
+        if not edges:
+            print(f"No resolved edges found")
+            return True
+        print(f"Resolved edges ({len(edges)} shown):")
+        print(f"{'Caller':<10} {'Callee':<10} {'Callee Name':<30} {'File':<20} {'Line':<6} {'Method':<15}")
+        print("-" * 95)
+        for e in edges:
+            print(f"{e.caller_symbol_id:<10} {e.callee_symbol_id:<10} "
+                  f"{e.callee_name[:30]:<30} {e.callee_file[:20]:<20} "
+                  f"{e.call_line:<6} {e.resolution_method:<15}")
 
     return True
 

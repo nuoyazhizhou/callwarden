@@ -4453,6 +4453,175 @@ def create_mcp_server():
         except Exception as e:
             return {"error": str(e), "candidate_ids": [], "count": 0}
 
+    # ----------------------------------------------------------------
+    # [L5] 构建上下文感知（toolchain + build_context + resolved_edges）
+    # 只读查询工具；写操作（register/bind/import）走 CLI 避免与 MCP 长连接撞锁
+    # ----------------------------------------------------------------
+
+    @mcp.tool()
+    def list_toolchains() -> list:
+        """L5: 列出所有已注册的工具链
+
+        Returns:
+            工具链摘要列表（id/name/compiler_type/version/target_triple/fingerprint）
+        """
+        try:
+            from db.db_toolchain import init_toolchain_schema, list_toolchains as _list
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            tcs = _list(db.conn)
+            return [tc.to_dict() for tc in tcs]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_toolchain(name_or_id: str) -> Optional[dict]:
+        """L5: 查询工具链详情（含 include_dirs + predefined_macros）
+
+        Args:
+            name_or_id: 工具链名称或 ID
+        """
+        try:
+            from db.db_toolchain import init_toolchain_schema, get_toolchain as _get
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            # 尝试 int 转换
+            try:
+                key = int(name_or_id)
+            except (ValueError, TypeError):
+                key = name_or_id
+            tc = _get(db.conn, key)
+            return tc.to_dict() if tc else None
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_workspace_toolchains(
+        workspace_id: int,
+        build_context_hash: str = "",
+    ) -> list:
+        """L5: 查询 workspace 绑定的工具链
+
+        Args:
+            workspace_id: workspace ID
+            build_context_hash: 可选过滤
+        """
+        try:
+            from db.db_toolchain import (
+                init_toolchain_schema, get_workspace_toolchains as _get_ws,
+            )
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            tcs = _get_ws(db.conn, workspace_id, build_context_hash)
+            return [tc.to_dict() for tc in tcs]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def list_build_contexts(workspace_id: int) -> list:
+        """L5: 列出 workspace 的所有构建上下文（build variants）
+
+        Args:
+            workspace_id: workspace ID
+        """
+        try:
+            from db.db_toolchain import init_toolchain_schema, list_build_contexts as _list
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            ctxs = _list(db.conn, workspace_id)
+            return [c.to_dict() for c in ctxs]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def get_build_context(workspace_id: int, build_context_hash: str) -> Optional[dict]:
+        """L5: 查询构建上下文详情（flags + defines + include_paths）
+
+        Args:
+            workspace_id: workspace ID
+            build_context_hash: 构建上下文哈希
+        """
+        try:
+            from db.db_toolchain import init_toolchain_schema, get_build_context as _get
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            ctx = _get(db.conn, workspace_id, build_context_hash)
+            return ctx.to_dict() if ctx else None
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_active_build_context(workspace_id: int) -> Optional[dict]:
+        """L5: 查询当前活跃的构建上下文
+
+        Args:
+            workspace_id: workspace ID
+        """
+        try:
+            from db.db_toolchain import (
+                init_toolchain_schema, get_active_build_context as _get_active,
+            )
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            ctx = _get_active(db.conn, workspace_id)
+            return ctx.to_dict() if ctx else None
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
+    def get_resolved_edges(
+        workspace_id: int,
+        build_context_hash: str,
+        caller_symbol_id: Optional[int] = None,
+        limit: int = 50,
+    ) -> list:
+        """L5: 查询解析后的跨文件调用边（resolved_edges）
+
+        resolved_edges 是用 build context（include 路径 + defines + toolchain）
+        解析 raw_calls 后得到的具体调用目标符号。未绑定 build context 时
+        返回空列表（精度降级模式）。
+
+        Args:
+            workspace_id: workspace ID
+            build_context_hash: 构建上下文哈希
+            caller_symbol_id: 可选，按调用方过滤
+            limit: 返回数量上限
+        """
+        try:
+            from db.db_toolchain import init_toolchain_schema, get_resolved_edges as _get_edges
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            edges = _get_edges(
+                db.conn, workspace_id, build_context_hash,
+                caller_symbol_id=caller_symbol_id, limit=limit,
+            )
+            return [e.to_dict() for e in edges]
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def count_resolved_edges(
+        workspace_id: int,
+        build_context_hash: str,
+    ) -> dict:
+        """L5: 统计构建上下文下的 resolved_edges 数量
+
+        Args:
+            workspace_id: workspace ID
+            build_context_hash: 构建上下文哈希
+
+        Returns:
+            {"count": int}
+        """
+        try:
+            from db.db_toolchain import init_toolchain_schema, count_resolved_edges as _count
+            db = get_db()
+            init_toolchain_schema(db.conn)
+            n = _count(db.conn, workspace_id, build_context_hash)
+            return {"count": n}
+        except Exception as e:
+            return {"error": str(e), "count": 0}
+
     return mcp
 
 

@@ -303,7 +303,7 @@
 | L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ❌ 未实现 | post-commit hook 已有，但破坏性操作拦截（回滚保护）未实现 |
 | L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ⚠️ 概念 | 讨论发现本地 hook 可被 Agent 绕过（--no-verify/改 hook 脚本），结论：只有 CI/远端才能真正强制 |
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
-| L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ❌ 未实现 | 讨论结论：这是唯一值得继续做的大能力，比再加 20 个 MCP 工具有价值 |
+| L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ⚠️ 部分 | compile_commands.json 解析器 + build-context CLI（7 子命令）+ 8 MCP 工具（toolchain/build_context/resolved_edges 只读查询）；resolved_edges 计算引擎未实现 |
 | L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ⚠️ 部分 | versions + symbols 写入 DB 后释放 file_results 中的 symbols 数据，调用图构建改为 only_files 模式从 DB 读取符号索引；parse 阶段流式回传（pool.imap）未实现 |
 | L7 | RSS 监控采样修复 | PR | ✅ 已实现 | psutil 优先 + Windows ctypes Psapi.GetProcessMemoryInfo fallback（T3 修复） |
 | L8 | 增量调用图更新（只 resolve 受影响文件） | PR/D3 | ✅ 已实现 | `_build_call_graph_multi_lang` 加 only_files 参数；增量路径符号索引从 DB symbols 表全量读取，calls 只 resolve 变化文件；`_refresh_file_rust`/`_refresh_file_generic` 不再调用 `_collect_all_current_file_results()` 全量加载 |
@@ -470,11 +470,11 @@
 | F. 性能优化 | 17 | 1 | 1 | 19 |
 | G. Enterprise Daemon | 26 | 4 | 2 | 32+ |
 | H. 规划但未实施 | 11 | 1 | 6 | 18 |
-| L. 讨论文档提取 | 9 | 5 | 2 | 16 |
+| L. 讨论文档提取 | 9 | 6 | 1 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 4 | 0 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **135** | **13** | **11** | **161** |
+| **总计** | **135** | **14** | **10** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -490,5 +490,5 @@
 2. **中优先级（Phase 4 缺失）**：（H17-H18 diff_callers/diff_callees + compare_snapshots 已实现）
 3. **中优先级（Agent 体验）**：（L1 软门禁已实现：is_task_active + task_context；L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N7 脚本已完成（Windows MSI/macOS pkg/Linux deb 5 子包，未实际构建）；N8 CI workflow 11 门禁已补全（待上线运行验证）
-5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5（构建上下文感知）、L9 Kotlin/Swift 已补齐 Rust 路径（Elixir/HCL 保持 Python fallback）
+5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5 构建上下文感知 MVP（compile_commands.json 解析 + CLI + 8 MCP 工具，resolved_edges 计算引擎待实现）、L9 Kotlin/Swift 已补齐 Rust 路径（Elixir/HCL 保持 Python fallback）
 6. **可延后**：H12-H13（Git Hook/多语言测试已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）

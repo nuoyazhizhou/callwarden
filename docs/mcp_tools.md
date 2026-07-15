@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 196 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 204 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -20,7 +20,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 12 大功能分类
 
-Call Warden 通过 MCP Server 暴露 196 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 204 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
 
 ### 概览表
 
@@ -40,7 +40,7 @@ Call Warden 通过 MCP Server 暴露 196 个工具，按功能聚合为 12 个�
 | 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
 | **合计** | **179** | | |
 
-> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 196（含若干跨分类工具）。本表只统计每个分类独有的工具。
+> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 204（含若干跨分类工具 + 8 个 L5 构建上下文感知工具）。本表只统计每个分类独有的工具。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 
@@ -1618,6 +1618,101 @@ Agent 提供稳定的行为约束。
     `"cw task next <id>"`
 
 > **只读工具**：不写数据库，不触发 workspace 激活，可安全与 CLI 写操作并发。
+
+---
+
+## L5 构建上下文感知工具（ToolchainMixin）
+
+L5 为固件/嵌入式 C/C++ 场景提供"构建上下文感知"能力。核心模型是双层调用关系：
+- **raw_calls**：从源码直接解析出的原始调用（CAS 共享、`file_hash` 索引，与构建上下文无关）
+- **resolved_edges**：基于某个 `build_context`（编译宏、include 路径、工具链版本）解析后的跨文件调用边（`workspace_id`+`build_context_hash` 隔离）
+
+构建上下文来源：`compile_commands.json`（clangd compilation database）、Kconfig/.config、toolchain probe（`gcc -dM -E`）。
+
+> **设计原则**：所有 L5 MCP 工具均为**只读查询**。写操作（`register`/`bind`/`import`/`activate`/`delete`）走 CLI `cw build-context ...`，避免与 MCP 长连接撞 SQLite 锁。
+
+### `list_toolchains`
+
+列出所有已注册的工具链（gcc/clang/arm-gcc 等）及其指纹。
+
+- **参数**：无
+- **返回**：`List[Dict]`，每项含 `id` / `name` / `compiler_path` / `version_string` / `fingerprint_hash` / `compiler_type`
+
+### `get_toolchain(name_or_id)`
+
+按名称或 ID 查询工具链详情。
+
+- **参数**：
+  - `name_or_id: str|int` — 工具链名称或数据库 ID
+- **返回**：`Dict`（同 `list_toolchains` 单项）或 `None`
+
+### `get_workspace_toolchains(workspace_id, build_context_hash?)`
+
+查询 workspace 绑定的工具链（可选过滤特定 `build_context_hash`）。
+
+- **参数**：
+  - `workspace_id: int`
+  - `build_context_hash: str?` — 限定到某次构建上下文
+- **返回**：`List[Dict]`
+
+### `list_build_contexts(workspace_id)`
+
+列出 workspace 下所有已导入的构建上下文（含激活标记）。
+
+- **参数**：
+  - `workspace_id: int`
+- **返回**：`List[Dict]`，每项含 `hash` / `name` / `is_active` / `created_at` / `file_count`
+
+### `get_build_context(workspace_id, build_context_hash)`
+
+查询构建上下文详情（defines / include_paths / compile_flags / compiler_path）。
+
+- **参数**：
+  - `workspace_id: int`
+  - `build_context_hash: str`
+- **返回**：`Dict` 或 `None`
+
+### `get_active_build_context(workspace_id)`
+
+查询当前 workspace 激活的构建上下文（仅一个）。
+
+- **参数**：
+  - `workspace_id: int`
+- **返回**：`Dict` 或 `None`
+
+### `get_resolved_edges(workspace_id, build_context_hash, caller_symbol_id?, limit=100)`
+
+查询某个构建上下文下的解析后调用边。这是 L5 的核心查询——给定宏定义/include 路径后，哪些跨文件调用边是真实可达的。
+
+- **参数**：
+  - `workspace_id: int`
+  - `build_context_hash: str`
+  - `caller_symbol_id: int?` — 限定调用方符号，不传则返回所有 resolved edges
+  - `limit: int = 100`
+- **返回**：`List[Dict]`，每项含 `caller_symbol_id` / `callee_symbol_id` / `call_expr_hash` / `resolved_via`
+
+### `count_resolved_edges(workspace_id, build_context_hash)`
+
+统计某构建上下文下 resolved_edges 总数（用于评估解析覆盖率）。
+
+- **参数**：
+  - `workspace_id: int`
+  - `build_context_hash: str`
+- **返回**：`int`
+
+### 配套 CLI 命令
+
+写操作走 CLI `cw build-context <subcommand>`：
+
+| 子命令 | 说明 |
+|--------|------|
+| `register <WORKSPACE_ID> <NAME> [--flags ...] [--defines ...] [--includes ...] [--activate]` | 手动注册构建上下文 |
+| `list <WORKSPACE_ID>` | 列出 workspace 下构建上下文 |
+| `show <WORKSPACE_ID> <HASH>` | 显示详情 |
+| `activate <WORKSPACE_ID> <HASH>` | 设为活跃 |
+| `delete <WORKSPACE_ID> <HASH>` | 删除 |
+| `import-compile-commands <FILE> <WORKSPACE_ID> [--name NAME] [--activate] [--workspace-root ROOT]` | 从 `compile_commands.json` 导入 |
+| `edges <WORKSPACE_ID> <HASH> [--caller SYM_ID] [--limit N]` | 查询 resolved_edges |
 
 ---
 
