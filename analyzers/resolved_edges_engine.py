@@ -11,16 +11,16 @@ L5 resolved_edges 计算引擎
 1. CAS 模式：从 cas_raw_calls 解析（需要 workspace_manifests 有 cas_key）
 2. CLI 降级：从 calls 表复制（resolution_method="from_calls"）
 
-解析策略（CAS 模式，4 级）：
+解析策略（CAS 模式，5 级）：
 1. exact_match：callee_name 作为 qualified_name 精确匹配
 2. simple_name_unique：简名（最后一段）全局唯一匹配（跨文件）
 3. same_file：同文件简名匹配
-4. unresolved：兜底
-
-MVP 范围：不实现 include_path / sysroot 解析（需要 #include 语句解析器 + 头文件路径映射），
-后续扩展。resolution_method 字段已预留这两档。
+4. include_path/sysroot：基于 build_context 的 include_paths + toolchain sysroot/include_dirs
+   消除简名歧义（多 candidate 时，优先匹配在头文件搜索路径下的定义）
+5. unresolved：兜底
 """
 
+import json
 import sqlite3
 from typing import List, Dict, Any, Optional, Tuple
 
@@ -109,6 +109,18 @@ def _compute_from_cas(
     # 4. 构建符号索引（symbols 表）
     symbol_index = _build_symbol_index(conn, workspace_id)
 
+    # 4.5 加载 build_context search_paths（include_paths + sysroot + toolchain_include_dirs）
+    include_paths, sysroot, tc_include_dirs = _load_build_context_includes(
+        conn, workspace_id, build_context_hash
+    )
+    search_paths = None
+    if include_paths or sysroot or tc_include_dirs:
+        search_paths = {
+            "include_paths": include_paths,
+            "sysroot": sysroot,
+            "toolchain_include_dirs": tc_include_dirs,
+        }
+
     # 5. 解析每条 raw_call
     edges: List[Dict[str, Any]] = []
     skipped = 0
@@ -122,7 +134,7 @@ def _compute_from_cas(
 
         caller_relpath = cas_to_relpath.get(cas_key, "")
         callee_id, callee_file, method = _resolve_callee(
-            callee_name, caller_relpath, symbol_index
+            callee_name, caller_relpath, symbol_index, search_paths
         )
         edges.append({
             "caller_symbol_id": caller_symbol_id,
@@ -291,6 +303,7 @@ def _resolve_callee(
     callee_name: str,
     caller_relpath: str,
     symbol_index: Dict[str, Any],
+    search_paths: Optional[Dict[str, Any]] = None,
 ) -> Tuple[int, str, str]:
     """
     解析 callee_name → callee_symbol_id。
@@ -298,11 +311,21 @@ def _resolve_callee(
     返回 (callee_symbol_id, callee_file, resolution_method)。
     解析失败时 callee_symbol_id=0, resolution_method="unresolved"。
 
-    4 级策略：
+    5 级策略：
     1. exact_match：callee_name 作为 qualified_name 精确匹配
     2. simple_name_unique：简名全局唯一
     3. same_file：同文件简名
-    4. unresolved：兜底
+    4. include_path/sysroot：简名多 candidate 时，按 build_context search_paths 消歧
+    5. unresolved：兜底
+
+    参数：
+        search_paths: 第 4 级解析所需的 build_context 路径信息，结构：
+            {
+                "include_paths": [...],           # workspace 相对路径
+                "sysroot": "...",                 # 绝对路径
+                "toolchain_include_dirs": [...],  # 绝对路径
+            }
+            为 None 时跳过第 4 级。
     """
     qname_map = symbol_index["qname_map"]
     name_index = symbol_index["name_index"]
@@ -326,5 +349,148 @@ def _resolve_callee(
         sid = file_syms[callee_name]
         return sid, caller_relpath, "same_file"
 
-    # 策略 4：兜底
+    # 策略 4：include_path/sysroot 路径匹配（消除简名歧义）
+    if search_paths is not None and len(candidates) > 1:
+        result = _resolve_callee_include_path(candidates, symbol_index, search_paths)
+        if result is not None:
+            return result
+
+    # 策略 5：兜底
     return 0, "", "unresolved"
+
+
+# ============================================
+# 第 4 级解析：include_path / sysroot 路径匹配
+# ============================================
+
+def _load_build_context_includes(
+    conn: sqlite3.Connection,
+    workspace_id: int,
+    build_context_hash: str,
+) -> Tuple[List[str], str, List[str]]:
+    """
+    加载 build context 的 include 路径信息（第 4 级解析所需）。
+
+    联表查询：
+    - workspace_build_contexts.include_paths（workspace 相对路径，JSON array）
+    - workspace_toolchains → toolchains.sysroot（绝对路径）
+    - workspace_toolchains → toolchains.include_dirs（绝对路径，JSON array）
+
+    返回 (include_paths, sysroot, toolchain_include_dirs)。
+    无对应数据时各字段为空。
+    """
+    # 1. 查 build_context 的 include_paths
+    bc_row = conn.execute(
+        "SELECT include_paths FROM workspace_build_contexts "
+        "WHERE workspace_id = ? AND build_context_hash = ?",
+        (workspace_id, build_context_hash),
+    ).fetchone()
+    include_paths: List[str] = []
+    if bc_row and bc_row[0]:
+        try:
+            include_paths = json.loads(bc_row[0])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # 2. 查 workspace_toolchains + toolchains（取第一个 toolchain 的 sysroot + include_dirs）
+    tc_row = conn.execute(
+        "SELECT t.sysroot, t.include_dirs FROM toolchains t "
+        "JOIN workspace_toolchains wt ON t.id = wt.toolchain_id "
+        "WHERE wt.workspace_id = ? AND wt.build_context_hash = ? "
+        "ORDER BY t.id LIMIT 1",
+        (workspace_id, build_context_hash),
+    ).fetchone()
+    sysroot = ""
+    toolchain_include_dirs: List[str] = []
+    if tc_row:
+        sysroot = tc_row[0] or ""
+        if tc_row[1]:
+            try:
+                toolchain_include_dirs = json.loads(tc_row[1])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+    return include_paths, sysroot, toolchain_include_dirs
+
+
+def _resolve_callee_include_path(
+    candidates: List[int],
+    symbol_index: Dict[str, Any],
+    search_paths: Dict[str, Any],
+) -> Optional[Tuple[int, str, str]]:
+    """
+    第 4 级解析：基于 build_context search_paths 消除简名歧义。
+
+    场景：callee_name 有多个 candidate（简名相同但定义在不同文件中），
+    通过 build_context 的 include_paths 或 toolchain 的 sysroot/include_dirs
+    判定哪个 candidate 是当前构建上下文应解析到的定义。
+
+    匹配规则：
+    - include_paths（workspace 相对路径）：candidate 的 rel_path 前缀匹配
+    - sysroot + toolchain_include_dirs（绝对路径）：取 basename 前缀匹配 rel_path
+
+    返回：
+    - 唯一命中：(callee_id, callee_file, "include_path" | "sysroot")
+    - 多匹配或无匹配：None（交由第 5 级 unresolved 处理）
+    """
+    file_for_symbol = symbol_index["file_for_symbol"]
+    include_paths = search_paths.get("include_paths", [])
+    sysroot = search_paths.get("sysroot", "")
+    toolchain_include_dirs = search_paths.get("toolchain_include_dirs", [])
+
+    # 规范化 search_paths（统一正斜杠 + 去尾部斜杠）
+    norm_include_paths = [_norm_search_path(p) for p in include_paths if p]
+    norm_sysroot = _norm_search_path(sysroot) if sysroot else ""
+    norm_tc_dirs = [_norm_search_path(p) for p in toolchain_include_dirs if p]
+
+    # 分别收集 include_path 命中和 sysroot 命中的 candidates
+    include_hits: List[int] = []
+    sysroot_hits: List[int] = []
+
+    for sid in candidates:
+        rel_path = file_for_symbol.get(sid, "")
+        if not rel_path:
+            continue
+        norm_rel = _norm_search_path(rel_path)
+
+        # 检查 include_paths（workspace 相对路径，前缀匹配）
+        hit_include = False
+        for inc in norm_include_paths:
+            if inc and norm_rel.startswith(inc):
+                include_hits.append(sid)
+                hit_include = True
+                break
+        if hit_include:
+            continue
+
+        # 检查 sysroot + toolchain_include_dirs（绝对路径，basename 前缀匹配）
+        for tc_dir in [norm_sysroot] + norm_tc_dirs:
+            if not tc_dir:
+                continue
+            # 取 basename（如 /usr/include -> include）
+            basename = tc_dir.rsplit("/", 1)[-1] if "/" in tc_dir else tc_dir
+            if basename and norm_rel.startswith(basename):
+                sysroot_hits.append(sid)
+                break
+
+    # include_path 优先于 sysroot
+    if len(include_hits) == 1:
+        sid = include_hits[0]
+        return sid, file_for_symbol.get(sid, ""), "include_path"
+
+    if len(sysroot_hits) == 1:
+        sid = sysroot_hits[0]
+        return sid, file_for_symbol.get(sid, ""), "sysroot"
+
+    # 多匹配或无匹配 → None（交由 unresolved）
+    return None
+
+
+def _norm_search_path(path: str) -> str:
+    """规范化 search path：统一正斜杠 + 去尾部斜杠"""
+    if not path:
+        return ""
+    p = path.replace("\\", "/")
+    if len(p) > 1 and p.endswith("/"):
+        p = p.rstrip("/")
+    return p

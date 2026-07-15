@@ -1689,7 +1689,7 @@ L5 为固件/嵌入式 C/C++ 场景提供"构建上下文感知"能力。核心�
   - `build_context_hash: str`
   - `caller_symbol_id: int?` — 限定调用方符号，不传则返回所有 resolved edges
   - `limit: int = 100`
-- **返回**：`List[Dict]`，每项含 `caller_symbol_id` / `callee_symbol_id` / `callee_name` / `callee_file` / `call_line` / `resolution_method`（取值：`exact_match` / `simple_name_unique` / `same_file` / `from_calls` / `unresolved`）
+- **返回**：`List[Dict]`，每项含 `caller_symbol_id` / `callee_symbol_id` / `callee_name` / `callee_file` / `call_line` / `resolution_method`（取值：`exact_match` / `simple_name_unique` / `same_file` / `include_path` / `sysroot` / `from_calls` / `unresolved`）
 
 ### `count_resolved_edges(workspace_id, build_context_hash)`
 

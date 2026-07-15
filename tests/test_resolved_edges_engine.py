@@ -509,6 +509,180 @@ def test_store_and_query_resolved_edges(temp_db):
     assert edges[0].resolution_method == "from_calls"
 
 
+# ============================================
+# 第 4 级解析测试：include_path / sysroot
+# ============================================
+
+def _setup_include_path_test(conn, ws_id, include_paths=None, sysroot="", tc_include_dirs=None):
+    """搭建 include_path/sysroot 解析测试的通用夹具。
+
+    场景：caller 文件 src/main.c 调用 gpio_set()，两个 candidate：
+    - candidate A：定义在 include/driver/gpio.h（头文件搜索路径下）
+    - candidate B：定义在 src/legacy/gpio.c（非头文件搜索路径）
+
+    build_context.include_paths 或 toolchain.sysroot/include_dirs 配置后，
+    第 4 级解析应唯一命中 candidate A。
+    """
+    import json as _json
+    from callwarden.db.db_toolchain import register_build_context
+
+    # 注册 build_context（含 include_paths）
+    ctx = register_build_context(
+        conn, ws_id, "debug",
+        include_paths=include_paths or [],
+        set_active=True,
+    )
+    bch = ctx.build_context_hash
+
+    # 直接用 SQL 插入 toolchain（绕过 probe，因为测试用假编译器路径）
+    # 并绑定到 workspace + build_context
+    if sysroot or tc_include_dirs:
+        import time as _time
+        conn.execute(
+            "INSERT INTO toolchains (name, compiler_path, compiler_type, sysroot, "
+            "include_dirs, predefined_macros, fingerprint, created_at, updated_at) "
+            "VALUES (?, ?, 'gcc', ?, ?, '{}', ?, ?, ?)",
+            (
+                "gcc_arm_test", "/usr/bin/arm-gcc", sysroot,
+                _json.dumps(tc_include_dirs or []),
+                f"fp_{sysroot}_{_json.dumps(tc_include_dirs or [])}",
+                _time.time(), _time.time(),
+            ),
+        )
+        tc_id = conn.execute("SELECT id FROM toolchains WHERE name='gcc_arm_test'").fetchone()[0]
+        conn.execute(
+            "INSERT INTO workspace_toolchains (workspace_id, toolchain_id, build_context_hash) "
+            "VALUES (?, ?, ?)",
+            (ws_id, tc_id, bch),
+        )
+
+    # 文件 1：caller src/main.c
+    fi_main = _insert_file(conn, ws_id, "src/main.c")
+    caller_id = _insert_symbol(conn, fi_main, "main", "main", 1)
+
+    # 文件 2：callee candidate A — include/driver/gpio.h（头文件搜索路径下）
+    # qualified_name="DriverGpio.gpio_set"（不等于 callee_name "gpio_set"，避免 exact_match）
+    fi_hdr = _insert_file(conn, ws_id, "include/driver/gpio.h")
+    callee_a_id = _insert_symbol(conn, fi_hdr, "gpio_set", "DriverGpio.gpio_set", 10)
+
+    # 文件 3：callee candidate B — src/legacy/gpio.c（非头文件搜索路径）
+    fi_legacy = _insert_file(conn, ws_id, "src/legacy/gpio.c")
+    callee_b_id = _insert_symbol(conn, fi_legacy, "gpio_set", "legacy_gpio_set", 5)
+
+    # CAS 数据：src/main.c 调用 gpio_set()
+    cas_key = "cas_inc_path"
+    from callwarden.db.db_workspace_manifest import upsert_manifest
+    upsert_manifest(conn, ws_id, "src/main.c", "hash_main", cas_key=cas_key)
+    conn.execute(
+        "INSERT INTO cas_file_cache (cas_key, content_hash, language, created_at) "
+        "VALUES (?, ?, 'c', 0)",
+        (cas_key, "hash_main"),
+    )
+    conn.execute(
+        "INSERT INTO cas_symbols (cas_key, local_symbol_id, symbol_content_hash, "
+        "name, local_qualified_name, kind, start_line, end_line) "
+        "VALUES (?, 0, 'h_main', 'main', 'main', 'fn', 1, 10)",
+        (cas_key,),
+    )
+    # callee_name "gpio_set"（简名，有 2 个 candidate → 不走 simple_name_unique）
+    conn.execute(
+        "INSERT INTO cas_raw_calls (cas_key, caller_local_id, caller_name, callee_name, call_line) "
+        "VALUES (?, 0, 'main', 'gpio_set', 5)",
+        (cas_key,),
+    )
+    conn.commit()
+
+    return bch, caller_id, callee_a_id, callee_b_id
+
+
+def test_compute_cas_resolution_include_path(temp_db):
+    """测试 9：CAS 模式——include_path（简名歧义，build_context include_paths 唯一命中）"""
+    from callwarden.analyzers.resolved_edges_engine import compute_resolved_edges
+
+    conn = temp_db
+    ws_id = 1
+    bch, caller_id, callee_a_id, callee_b_id = _setup_include_path_test(
+        conn, ws_id, include_paths=["include/"]
+    )
+
+    result = compute_resolved_edges(conn, ws_id, bch)
+    assert result["source"] == "cas"
+    assert result["count"] == 1
+
+    edge = result["edges"][0]
+    # gpio_set 有 2 个 candidate，include/driver/gpio.h 在 "include/" 下 → include_path
+    assert edge["resolution_method"] == "include_path"
+    assert edge["callee_symbol_id"] == callee_a_id
+    assert edge["callee_file"] == "include/driver/gpio.h"
+    assert edge["caller_symbol_id"] == caller_id
+
+
+def test_compute_cas_resolution_sysroot(temp_db):
+    """测试 10：CAS 模式——sysroot（简名歧义，toolchain include_dirs basename 唯一命中）"""
+    from callwarden.analyzers.resolved_edges_engine import compute_resolved_edges
+
+    conn = temp_db
+    ws_id = 1
+    # toolchain include_dirs=["/sysroot/usr/include"]，basename="include"
+    # candidate A 的 rel_path="include/driver/gpio.h" 以 "include" 开头 → sysroot 命中
+    # candidate B 的 rel_path="src/legacy/gpio.c" 不以 "include" 开头 → 不命中
+    bch, caller_id, callee_a_id, callee_b_id = _setup_include_path_test(
+        conn, ws_id, tc_include_dirs=["/sysroot/usr/include"]
+    )
+
+    result = compute_resolved_edges(conn, ws_id, bch)
+    assert result["source"] == "cas"
+    edge = result["edges"][0]
+    # include_dirs basename="include"，candidate A 的 rel_path 以 "include" 开头 → sysroot
+    assert edge["resolution_method"] == "sysroot"
+    assert edge["callee_symbol_id"] == callee_a_id
+    assert edge["callee_file"] == "include/driver/gpio.h"
+
+
+def test_compute_cas_resolution_include_path_ambiguous(temp_db):
+    """测试 11：CAS 模式——include_path 歧义（多 candidate 都在 search_paths 下 → unresolved）"""
+    from callwarden.analyzers.resolved_edges_engine import compute_resolved_edges
+
+    conn = temp_db
+    ws_id = 1
+    # 修改夹具：两个 candidate 都在 "include/" 下
+    # 重新搭建：candidate B 也放到 include/ 下
+    bch, caller_id, callee_a_id, callee_b_id = _setup_include_path_test(
+        conn, ws_id, include_paths=["include/"]
+    )
+    # 把 candidate B 的文件改为 include/legacy/gpio.c（也在 include/ 下）
+    conn.execute(
+        "UPDATE file_instances SET rel_path='include/legacy/gpio.c' WHERE id="
+        + str(conn.execute("SELECT id FROM file_instances WHERE rel_path='src/legacy/gpio.c'").fetchone()[0])
+    )
+    conn.commit()
+
+    result = compute_resolved_edges(conn, ws_id, bch)
+    assert result["source"] == "cas"
+    edge = result["edges"][0]
+    # 两个 candidate 都在 "include/" 下 → 歧义 → unresolved
+    assert edge["resolution_method"] == "unresolved"
+    assert edge["callee_symbol_id"] == 0
+
+
+def test_compute_cas_resolution_include_path_no_match(temp_db):
+    """测试 12：CAS 模式——无 include_path 配置时走 unresolved"""
+    from callwarden.analyzers.resolved_edges_engine import compute_resolved_edges
+
+    conn = temp_db
+    ws_id = 1
+    # 不配置 include_paths 也不配置 sysroot/include_dirs → search_paths=None
+    # 第 4 级跳过，直接 unresolved
+    bch, caller_id, callee_a_id, callee_b_id = _setup_include_path_test(conn, ws_id)
+
+    result = compute_resolved_edges(conn, ws_id, bch)
+    assert result["source"] == "cas"
+    edge = result["edges"][0]
+    # 无 search_paths → 第 4 级跳过 → unresolved
+    assert edge["resolution_method"] == "unresolved"
+    assert edge["callee_symbol_id"] == 0
+
+
 # ====================================
 # 主入口
 # ====================================
