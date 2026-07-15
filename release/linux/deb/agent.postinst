@@ -1,0 +1,27 @@
+#!/bin/bash
+# callwarden-agent postinst（简化版）
+# Task: T-1783983162956-b2a8
+# 设计 §8.2: 不自动为所有用户启用 linger，管理员可选择启用方式。
+
+set -euo pipefail
+
+UNIT="callwarden-agent.service"
+
+case "$1" in
+    configure)
+        # 用户级 unit 安装在 /usr/lib/systemd/user/，无需系统级 daemon-reload
+        # 各用户需自行 systemctl --user daemon-reload
+        echo "[callwarden-agent] user unit installed at /usr/lib/systemd/user/$UNIT"
+        echo "[callwarden-agent] to enable for a specific user:"
+        echo "  sudo loginctl enable-linger <username>"
+        echo "  sudo -u <username> systemctl --user enable --now $UNIT"
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "[callwarden-agent] postinst: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

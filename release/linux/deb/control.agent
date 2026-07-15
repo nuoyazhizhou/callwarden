@@ -1,0 +1,20 @@
+# Debian package control file for callwarden-agent
+# Task: T-1783983162956-b2a8
+# 角色 agent: cw-agent + systemd user unit + client（设计 §8.1 / §4.4）
+# __VERSION__ / __ARCH__ 由 build_packages.sh 从 release/version.toml 注入
+
+Package: callwarden-agent
+Version: __VERSION__
+Section: devel
+Priority: optional
+Architecture: __ARCH__
+Maintainer: Call Warden Team <team@callwarden.dev>
+Description: Call Warden - Per-UID Agent (cw-agent + systemd user unit)
+ Per-UID agent running as the logged-in user. Reads the user's own
+ workspaces and reports to the system daemon via UDS/FD.
+ .
+ Includes:
+  - cw-agent CLI
+  - systemd user unit (callwarden-agent.service)
+  - depends on callwarden-client (shared connection/MCP proxy)
+Depends: callwarden-client (= __VERSION__), libc6 (>= 2.17)

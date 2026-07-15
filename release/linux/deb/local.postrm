@@ -1,0 +1,25 @@
+#!/bin/bash
+# callwarden-local postrm（简化版）
+# Task: T-1783983162956-b2a8
+# purge 删系统配置；用户数据 ~/.callwarden 保留。
+
+set -euo pipefail
+
+CONFIG_DIR="/etc/callwarden"
+
+case "$1" in
+    remove)
+        ;;
+    purge)
+        rm -rf "$CONFIG_DIR"
+        echo "[callwarden-local] user data at \$HOME/.callwarden retained"
+        ;;
+    upgrade|failed-upgrade|disappear)
+        ;;
+    *)
+        echo "[callwarden-local] postrm: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

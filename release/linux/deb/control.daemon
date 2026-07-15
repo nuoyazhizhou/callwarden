@@ -1,11 +1,14 @@
 # Debian package control file for callwarden-daemon
 # Task: T-1783983162956-b2a8
+# 角色 daemon: cw-daemon + system unit + 迁移/备份工具（设计 §8.1 / §8.2）
+# __VERSION__ / __ARCH__ 由 build_packages.sh 从 release/version.toml 注入
+# 依赖 callwarden-local 以复用 Rust 扩展 (libcallwarden_core.so) 与 cw 基础运行时
 
 Package: callwarden-daemon
-Version: 0.3.0
+Version: __VERSION__
 Section: devel
 Priority: optional
-Architecture: amd64
+Architecture: __ARCH__
 Maintainer: Call Warden Team <team@callwarden.dev>
 Description: Call Warden Enterprise Daemon
  Enterprise-grade code knowledge graph daemon with UDS,
@@ -17,4 +20,5 @@ Description: Call Warden Enterprise Daemon
   - SnapshotManager with ArcSwap atomic publish
   - Durable staging WAL with crash recovery
   - systemd integration with graceful shutdown
-Depends: callwarden-local (= 0.3.0), systemd, libc6 (>= 2.17)
+  - Schema migration and online backup tools
+Depends: callwarden-local (= __VERSION__), systemd, libc6 (>= 2.17)

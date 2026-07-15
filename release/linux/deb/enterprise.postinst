@@ -1,0 +1,27 @@
+#!/bin/bash
+# callwarden-enterprise postinst（元包，简化版）
+# Task: T-1783983162956-b2a8
+# 元包 = daemon + agent + client（设计 §8.1）
+# 仅打印启用指引，实际服务由各子包的 postinst 管理。
+
+set -euo pipefail
+
+case "$1" in
+    configure)
+        echo "[callwarden-enterprise] meta-package installed:"
+        echo "  - callwarden-daemon: system service"
+        echo "      enable: sudo systemctl enable --now callwarden-daemon"
+        echo "  - callwarden-agent: per-UID agent (enable per user)"
+        echo "  - callwarden-client: cw-client + MCP proxy"
+        echo ""
+        echo "  enterprise 模式 socket 不存在时必须失败，不会静默创建本地数据库（设计 §8.2）。"
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "[callwarden-enterprise] postinst: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,22 @@
+#!/bin/bash
+# callwarden-client postinst（简化版）
+# Task: T-1783983162956-b2a8
+# client 包仅创建配置目录，无服务/数据库。
+
+set -euo pipefail
+
+CONFIG_DIR="/etc/callwarden"
+
+case "$1" in
+    configure)
+        install -d -m 0755 "$CONFIG_DIR"
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "[callwarden-client] postinst: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

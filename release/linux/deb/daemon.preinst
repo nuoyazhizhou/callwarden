@@ -1,0 +1,94 @@
+#!/bin/bash
+# callwarden-daemon preinst
+# Task: T-1783983162956-b2a8
+# 设计 §8.3 升级顺序（前置部分）: 版本/空间预检 → drain → 在线备份 → 停服务
+# 失败时中止升级，不进入 dpkg 解包阶段，避免"新 schema + 旧二进制"组合。
+
+set -euo pipefail
+
+# 运行时常量
+DAEMON_USER="callwarden"
+STATE_DIR="/var/lib/callwarden"
+LOG_DIR="/var/log/callwarden"
+BACKUP_DIR="/var/lib/callwarden/backup"
+SOCKET="/run/callwarden/callwarden.sock"
+SERVICE="callwarden-daemon.service"
+# 在线备份保留份数
+BACKUP_KEEP=3
+
+case "$1" in
+    install)
+        # 首次安装：无需备份/停服务
+        echo "[callwarden-daemon] preinst: first install"
+        ;;
+    upgrade)
+        OLD_VERSION="${2:-unknown}"
+        echo "[callwarden-daemon] preinst: upgrade from $OLD_VERSION"
+
+        # 1. 版本/兼容性预检（N-1 兼容性）
+        # 检查当前 schema 版本与即将安装的二进制 ABI 是否兼容
+        if [ -x /usr/bin/cw-daemon ]; then
+            if ! /usr/bin/cw-daemon schema-check --pre-upgrade; then
+                echo "[callwarden-daemon] ERROR: schema compatibility pre-check failed" >&2
+                echo "[callwarden-daemon] Aborting upgrade to avoid new-schema + old-binary state." >&2
+                exit 1
+            fi
+        fi
+
+        # 2. 磁盘空间预检（至少 2x state 目录大小，用于备份与迁移）
+        if [ -d "$STATE_DIR" ]; then
+            DB_SIZE="$(du -sb "$STATE_DIR" 2>/dev/null | awk '{print $1}')"
+            AVAIL="$(df -B1 "$STATE_DIR" | awk 'NR==2{print $4}')"
+            if [ -n "${DB_SIZE:-}" ] && [ -n "${AVAIL:-}" ] && [ "${DB_SIZE:-0}" -gt 0 ]; then
+                NEEDED=$((DB_SIZE * 2))
+                if [ "$AVAIL" -lt "$NEEDED" ]; then
+                    echo "[callwarden-daemon] ERROR: insufficient disk space (need ${NEEDED}B, have ${AVAIL}B)" >&2
+                    exit 1
+                fi
+            fi
+        fi
+
+        # 3. Drain：通知 daemon 拒绝新连接并等待活跃连接结束
+        if [ -S "$SOCKET" ]; then
+            echo "[callwarden-daemon] draining in-flight connections..."
+            if command -v cw-daemon >/dev/null 2>&1; then
+                cw-daemon drain --timeout 30 || true
+            fi
+        fi
+
+        # 4. 在线备份（停服务前的最后一致点）
+        if [ -d "$STATE_DIR" ]; then
+            mkdir -p "$BACKUP_DIR"
+            TS="$(date +%Y%m%d-%H%M%S)"
+            BACKUP_TAG="pre-upgrade-${OLD_VERSION}-${TS}"
+            echo "[callwarden-daemon] creating online backup: $BACKUP_TAG"
+            if [ -x /usr/bin/cw-daemon ]; then
+                # 优先使用 daemon 自带的 WAL 安全快照
+                if ! /usr/bin/cw-daemon snapshot create --output "$BACKUP_DIR/$BACKUP_TAG"; then
+                    echo "[callwarden-daemon] WARNING: online snapshot failed, falling back to tar copy"
+                    tar -cf "$BACKUP_DIR/$BACKUP_TAG.tar" -C "$STATE_DIR" . 2>/dev/null || true
+                fi
+            else
+                tar -cf "$BACKUP_DIR/$BACKUP_TAG.tar" -C "$STATE_DIR" . 2>/dev/null || true
+            fi
+            # 清理过期备份，仅保留最近 BACKUP_KEEP 份
+            ls -1dt "$BACKUP_DIR"/pre-upgrade-* 2>/dev/null | tail -n +$((BACKUP_KEEP + 1)) | while read -r old; do
+                rm -rf "$old"
+            done
+        fi
+
+        # 5. 停止服务（dpkg 解包前，确保旧二进制不再运行）
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl stop "$SERVICE" 2>/dev/null || true
+        fi
+        ;;
+    abort-upgrade)
+        echo "[callwarden-daemon] preinst: abort-upgrade"
+        ;;
+    *)
+        echo "[callwarden-daemon] preinst: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

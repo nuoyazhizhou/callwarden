@@ -1,0 +1,23 @@
+#!/bin/bash
+# callwarden-local postinst（简化版）
+# Task: T-1783983162956-b2a8
+# local 模式：创建系统配置目录；用户数据库位于 ~/.callwarden，首次运行时创建。
+
+set -euo pipefail
+
+CONFIG_DIR="/etc/callwarden"
+
+case "$1" in
+    configure)
+        install -d -m 0755 "$CONFIG_DIR"
+        echo "[callwarden-local] local DB will be created at \$HOME/.callwarden on first run"
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+    *)
+        echo "[callwarden-local] postinst: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

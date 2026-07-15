@@ -1,0 +1,24 @@
+#!/bin/bash
+# callwarden-client postrm（简化版）
+# Task: T-1783983162956-b2a8
+# purge 删配置；client 无本地数据。
+
+set -euo pipefail
+
+CONFIG_DIR="/etc/callwarden"
+
+case "$1" in
+    remove)
+        ;;
+    purge)
+        rm -rf "$CONFIG_DIR"
+        ;;
+    upgrade|failed-upgrade|disappear)
+        ;;
+    *)
+        echo "[callwarden-client] postrm: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

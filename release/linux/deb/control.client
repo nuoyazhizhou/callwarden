@@ -1,0 +1,19 @@
+# Debian package control file for callwarden-client
+# Task: T-1783983162956-b2a8
+# 角色 client: cw-client + MCP proxy，不含 parser/CAS（设计 §8.1 / §4.4）
+# __VERSION__ / __ARCH__ 由 build_packages.sh 从 release/version.toml 注入
+
+Package: callwarden-client
+Version: __VERSION__
+Section: devel
+Priority: optional
+Architecture: __ARCH__
+Maintainer: Call Warden Team <team@callwarden.dev>
+Description: Call Warden - Client (cw-client + MCP proxy)
+ Lightweight client connecting to a remote Call Warden daemon
+ via UDS. No local parser, CAS, or SQLite database.
+ .
+ Includes:
+  - cw-client CLI
+  - MCP proxy (forwards requests to daemon)
+Depends: libc6 (>= 2.17)

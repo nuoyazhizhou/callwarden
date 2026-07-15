@@ -1,0 +1,55 @@
+# Call Warden daemon systemd unit（打包占位文件）
+# Task: T-1783983162956-b2a8
+# 设计 §8.2: pre-start 执行 schema compatibility check，迁移失败不得启动
+# 安装路径: /usr/lib/systemd/system/callwarden-daemon.service
+# 注意：本文件为占位，路径用绝对路径；构建时由 dpkg 安装到上述位置。
+
+[Unit]
+Description=Call Warden Enterprise Daemon
+Documentation=https://docs.callwarden.dev/daemon
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=callwarden
+Group=callwarden
+
+# 运行时目录由 tmpfiles.d / RuntimeDirectory 创建，属主 callwarden:callwarden-clients
+RuntimeDirectory=callwarden
+RuntimeDirectoryMode=0755
+StateDirectory=callwarden
+StateDirectoryMode=0750
+LogsDirectory=callwarden
+LogsDirectoryMode=0750
+
+# pre-start: schema 兼容性检查（迁移失败不得启动）
+ExecStartPre=/usr/bin/cw-daemon schema-check --strict
+ExecStart=/usr/bin/cw-daemon serve --enterprise
+ExecReload=/bin/kill -HUP $MAINPID
+
+# 优雅停止
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+
+# 资源限制
+LimitNOFILE=65536
+TasksMax=256
+MemoryHigh=2G
+MemoryMax=4G
+
+# 安全约束
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# UMask=0007 使 UDS socket 可为 callwarden-clients 组读写（0660，设计 §8.2）
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

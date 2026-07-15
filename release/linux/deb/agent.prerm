@@ -1,0 +1,26 @@
+#!/bin/bash
+# callwarden-agent prerm（简化版）
+# Task: T-1783983162956-b2a8
+# 用户级 unit 无法以 root 身份停止所有用户的实例，仅提示。
+
+set -euo pipefail
+
+UNIT="callwarden-agent.service"
+
+case "$1" in
+    remove)
+        echo "[callwarden-agent] prerm: remove"
+        echo "[callwarden-agent] users should stop their own instances:"
+        echo "  systemctl --user stop $UNIT"
+        ;;
+    upgrade|deconfigure)
+        ;;
+    failed-upgrade)
+        ;;
+    *)
+        echo "[callwarden-agent] prerm: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

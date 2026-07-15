@@ -1,0 +1,16 @@
+#!/bin/bash
+# callwarden-agent postrm（简化版）
+# Task: T-1783983162956-b2a8
+
+set -euo pipefail
+
+case "$1" in
+    remove|purge|upgrade|failed-upgrade|disappear)
+        ;;
+    *)
+        echo "[callwarden-agent] postrm: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

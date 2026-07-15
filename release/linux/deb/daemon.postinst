@@ -1,0 +1,142 @@
+#!/bin/bash
+# callwarden-daemon postinst
+# Task: T-1783983162956-b2a8
+# 设计 §8.3 升级顺序（后置部分）: 替换程序(dpkg) → N-1 migration → 启动 → health/generation 验证
+# 失败时恢复旧程序和备份，不能留下"新 schema + 旧二进制"组合。
+# __VERSION__ 由 build_packages.sh 注入。
+
+set -euo pipefail
+
+# 运行时常量
+DAEMON_USER="callwarden"
+DAEMON_GROUP="callwarden"
+CLIENTS_GROUP="callwarden-clients"
+STATE_DIR="/var/lib/callwarden"
+LOG_DIR="/var/log/callwarden"
+CONFIG_DIR="/etc/callwarden"
+RUN_DIR="/run/callwarden"
+SOCKET="$RUN_DIR/callwarden.sock"
+SERVICE="callwarden-daemon.service"
+BACKUP_DIR="/var/lib/callwarden/backup"
+# 由 build_packages.sh 注入实际版本号
+CW_VERSION="__VERSION__"
+
+# 创建目录并设置权限（幂等）
+ensure_dirs() {
+    # sysusers.d 在 systemd-sysusers 时创建用户，这里兜底处理
+    if ! getent group "$CLIENTS_GROUP" >/dev/null 2>&1; then
+        groupadd --system "$CLIENTS_GROUP" 2>/dev/null || true
+    fi
+    if ! getent group "$DAEMON_GROUP" >/dev/null 2>&1; then
+        groupadd --system "$DAEMON_GROUP" 2>/dev/null || true
+    fi
+    if ! getent passwd "$DAEMON_USER" >/dev/null 2>&1; then
+        useradd --system --gid "$DAEMON_GROUP" \
+                --home-dir "$STATE_DIR" \
+                --shell /usr/sbin/nologin \
+                "$DAEMON_USER" 2>/dev/null || true
+    fi
+    # 确保 callwarden 在 callwarden-clients 组（UDS socket 访问）
+    usermod -aG "$CLIENTS_GROUP" "$DAEMON_USER" 2>/dev/null || true
+
+    install -d -o "$DAEMON_USER" -g "$DAEMON_GROUP" -m 0750 "$CONFIG_DIR"
+    install -d -o "$DAEMON_USER" -g "$DAEMON_GROUP" -m 0750 "$STATE_DIR"
+    install -d -o "$DAEMON_USER" -g "$DAEMON_GROUP" -m 0750 "$LOG_DIR"
+    install -d -o "$DAEMON_USER" -g "$CLIENTS_GROUP" -m 0750 "$RUN_DIR" 2>/dev/null || true
+}
+
+# 升级失败回滚：恢复备份数据（旧二进制需由管理员 reinstall 旧版包）
+rollback_upgrade() {
+    local backup="$1"
+    echo "[callwarden-daemon] ERROR: post-install verification failed, rolling back" >&2
+    if [ -n "${backup:-}" ] && [ -e "${backup:-/nonexistent}" ]; then
+        echo "[callwarden-daemon] restoring data from $backup" >&2
+        find "$STATE_DIR" -mindepth 1 -delete 2>/dev/null || true
+        if [ -d "$backup" ]; then
+            cp -a "$backup/." "$STATE_DIR/"
+        elif [ -f "$backup.tar" ]; then
+            tar -xf "$backup.tar" -C "$STATE_DIR/"
+        elif [ -f "$backup" ]; then
+            tar -xf "$backup" -C "$STATE_DIR/"
+        fi
+    fi
+    # 旧二进制已由 dpkg 解包替换；回滚完整需 reinstall 旧版本
+    echo "[callwarden-daemon] WARNING: new binary installed, rollback data restored." >&2
+    echo "[callwarden-daemon] WARNING: reinstall previous callwarden-daemon version to complete rollback." >&2
+}
+
+case "$1" in
+    configure)
+        OLD_VERSION="${2:-}"
+        echo "[callwarden-daemon] postinst: configure (from ${OLD_VERSION:-fresh install})"
+
+        ensure_dirs
+
+        # 注册 sysusers / tmpfiles
+        if command -v systemd-sysusers >/dev/null 2>&1; then
+            systemd-sysusers /usr/lib/sysusers.d/callwarden.conf 2>/dev/null || true
+        fi
+        if command -v systemd-tmpfiles >/dev/null 2>&1; then
+            systemd-tmpfiles --create /usr/lib/tmpfiles.d/callwarden.conf 2>/dev/null || true
+        fi
+
+        # 重载 systemd unit
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+
+        # 升级路径：N-1 migration → 启动 → health/generation 验证
+        if [ -n "$OLD_VERSION" ] && [ -x /usr/bin/cw-daemon ]; then
+            echo "[callwarden-daemon] running N-1 schema migration ($OLD_VERSION -> $CW_VERSION)..."
+            # 最近的 pre-upgrade 备份用于失败回滚
+            LATEST_BACKUP="$(ls -1dt "$BACKUP_DIR"/pre-upgrade-* 2>/dev/null | head -n1 || true)"
+            if ! /usr/bin/cw-daemon migrate --from "$OLD_VERSION" --to "$CW_VERSION"; then
+                echo "[callwarden-daemon] ERROR: schema migration failed" >&2
+                rollback_upgrade "$LATEST_BACKUP"
+                exit 1
+            fi
+
+            # 启动服务（尊重 policy-rc.d）
+            if command -v deb-systemd-invoke >/dev/null 2>&1; then
+                deb-systemd-invoke start "$SERVICE" 2>/dev/null || systemctl start "$SERVICE" 2>/dev/null || true
+            elif command -v systemctl >/dev/null 2>&1; then
+                systemctl start "$SERVICE" 2>/dev/null || true
+            fi
+
+            # health/generation 验证（设计 §8.3）
+            echo "[callwarden-daemon] health/generation verification..."
+            sleep 2
+            if ! /usr/bin/cw-daemon health-check --timeout 15; then
+                echo "[callwarden-daemon] ERROR: health check failed after migration" >&2
+                if command -v systemctl >/dev/null 2>&1; then
+                    systemctl stop "$SERVICE" 2>/dev/null || true
+                fi
+                rollback_upgrade "$LATEST_BACKUP"
+                exit 1
+            fi
+        else
+            # 首次安装：仅启用服务，不自动启动（遵循 Debian policy-rc.d）
+            echo "[callwarden-daemon] fresh install; enabling service (start deferred to admin)"
+            if command -v deb-systemd-helper >/dev/null 2>&1; then
+                deb-systemd-helper enable "$SERVICE" 2>/dev/null || true
+            fi
+        fi
+        ;;
+    abort-upgrade)
+        echo "[callwarden-daemon] postinst: abort-upgrade"
+        # 旧版二进制由 dpkg 恢复，这里重载 unit 确保旧版可启动
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        ;;
+    abort-remove)
+        ;;
+    abort-deconfigure)
+        ;;
+    *)
+        echo "[callwarden-daemon] postinst: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

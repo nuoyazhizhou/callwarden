@@ -1,9 +1,38 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Call Warden Windows MSI Installer (WiX Toolset)
+  Call Warden Windows MSI Installer (WiX Toolset v3)
   Task: T-1783983162956-ab68
-  Supports: x64, arm64
-  Roles: local, client
+  支持架构: x64, arm64 (由 candle -arch 参数决定)
+  角色组件: local (CLI + MCP + Watcher), client (仅 RPC 代理)
+  安装范围: CurrentUser (默认) / AllUsers (管理员提权)
+
+  构建命令:
+    x64:   candle -arch x64   -dBuildOutputDir=release\dist\windows callwarden.wxs
+    arm64: candle -arch arm64 -dBuildOutputDir=release\dist\windows callwarden.wxs
+    链接:  light -out CallWarden-0.3.0-<arch>.msi callwarden.wixobj
+    注意: arm64 变体需要 arm64 工具链构建的二进制产物 (PyInstaller target-arch arm64)
+
+  Authenticode 签名 (仅 tag release, CI 中执行, 普通构建为 unsigned):
+    signtool sign /fd SHA256 /tr <timestamp-url> /td SHA256 \
+      /sha1 <cert-thumbprint> CallWarden-0.3.0-<arch>.msi
+
+  静默参数 / 退出码:
+    安装: msiexec /i CallWarden-0.3.0-x64.msi /qn /l*v "%TEMP%\cw-install.log"
+    卸载: msiexec /x CallWarden-0.3.0-x64.msi /qn
+    修复: msiexec /fa CallWarden-0.3.0-x64.msi /qn
+    卸载并清理数据: msiexec /x CallWarden-0.3.0-x64.msi /qn ADDLOCAL=RemoveDataOnUninstall
+    退出码: 0=成功, 1602=用户取消, 1603=致命错误, 1605=未安装
+
+  数据保留策略:
+    卸载默认保留 %LocalAppData%\CallWarden 数据;
+    仅勾选 "卸载时清理数据" Feature 或 ADDLOCAL=RemoveDataOnUninstall 时才清理。
+
+  双模式安装说明:
+    InstallScope=perUserOrMachine + InstallPrivileges=limited 实现双模式。
+    非提权运行 → per-user (CurrentUser); 提权运行 → per-machine (AllUsers)。
+    可通过 MSIINSTALLPERUSER=1 强制 per-user (即使提权)。
+    注意: per-user 安装时 ProgramFiles64Folder 目录需由 CustomAction 重定向到
+    LocalAppData\Programs, 此处暂用统一目录, 由构建脚本适配。
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*"
@@ -13,29 +42,59 @@
            Manufacturer="Call Warden Team"
            UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
 
+    <!-- 双模式安装: perUserOrMachine 允许 CurrentUser (非提权) 或 AllUsers (提权) -->
     <Package InstallerVersion="500"
              Compressed="yes"
-             InstallScope="perMachine"
+             InstallScope="perUserOrMachine"
+             InstallPrivileges="limited"
              Description="Call Warden - Code Knowledge Graph for AI Agents"
              Comments="Supports local CLI, MCP, and watcher modes." />
 
-    <!-- Upgrade behavior: block downgrade -->
-    <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
+    <!-- 安装范围控制属性: 1=per-user, 空=per-machine (需管理员提权) -->
+    <Property Id="MSIINSTALLPERUSER" Value="{}" Secure="yes" />
+
+    <!-- 禁用 RestartManager, 避免 watcher/cw 进程占用文件时安装器卡死 -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+
+    <!-- 默认日志配置 (可被 msiexec /l*v 覆盖; vp=详细+属性刷新) -->
+    <Property Id="MsiLogging" Value="vp" />
+
+    <!-- 可选属性: REMOVEDATA=1 卸载时清理数据 (需配合 RemoveDataOnUninstall Feature) -->
+    <Property Id="REMOVEDATA" Value="0" Secure="yes" />
+
+    <!-- 升级行为: 阻断降级 (中文详细消息) -->
+    <MajorUpgrade DowngradeErrorMessage="检测到已安装更新版本的 Call Warden，降级安装不被支持。请先从控制面板卸载现有版本，或安装更高版本。本次安装已中止。" />
 
     <!-- Embedded cabinet -->
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- Features -->
-    <Feature Id="Complete" Title="Call Warden" Level="1">
-      <ComponentGroupRef Id="MainComponents" />
-      <ComponentGroupRef Id="ShortcutComponents" />
+    <!-- Feature 树: Complete 为根, local 为默认必选角色 -->
+    <Feature Id="Complete" Title="Call Warden" Level="1" Display="expand">
+      <!-- local 角色: CLI + MCP + Watcher (默认必选, 不可取消) -->
+      <Feature Id="LocalRole" Title="Local 模式 (CLI + MCP + Watcher)" Level="1" Absent="disallow">
+        <ComponentGroupRef Id="MainComponents" />
+        <ComponentGroupRef Id="ShortcutComponents" />
+        <ComponentRef Id="DataDir" />
+      </Feature>
+      <!-- client 角色: 仅 RPC 代理 (可选, 静默安装用 ADDLOCAL=ClientRole) -->
+      <Feature Id="ClientRole" Title="Client 模式 (仅 RPC 代理)" Level="2" Absent="allow">
+        <ComponentGroupRef Id="ClientComponents" />
+      </Feature>
+      <!-- 加入 PATH (可选, 静默安装用 ADDLOCAL=AddToPath) -->
+      <Feature Id="AddToPath" Title="加入 PATH 环境变量" Level="2" Absent="allow">
+        <ComponentRef Id="PathEntry" />
+      </Feature>
+      <!-- 写入 MCP 配置 (占位, 实际写入由 CustomAction 完成) -->
+      <Feature Id="WriteMcpConfig" Title="写入 MCP 配置" Level="2" Absent="allow">
+        <ComponentRef Id="McpConfigStub" />
+      </Feature>
+      <!-- 卸载时清理数据 (默认不勾选, 数据保留) -->
+      <Feature Id="RemoveDataOnUninstall" Title="卸载时清理数据 (默认保留)" Level="2" Absent="allow">
+        <ComponentRef Id="DataRemover" />
+      </Feature>
     </Feature>
 
-    <!-- Optional features -->
-    <Feature Id="LocalRole" Title="Local Mode (CLI + MCP + Watcher)" Level="1" />
-    <Feature Id="ClientRole" Title="Client Mode (RPC Proxy Only)" Level="2" />
-
-    <!-- Install directory -->
+    <!-- 目录结构 -->
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="CallWarden">
@@ -49,22 +108,33 @@
       <Directory Id="ProgramMenuFolder">
         <Directory Id="ApplicationProgramsFolder" Name="Call Warden" />
       </Directory>
+
+      <!-- 数据目录 (LocalAppData), 卸载默认保留 -->
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="DataFolder" Name="CallWarden" />
+      </Directory>
     </Directory>
 
-    <!-- Main components -->
+    <!-- Main components: local 角色所需文件 -->
+    <!-- BuildOutputDir 通过 candle -dBuildOutputDir=<path> 传入, 默认 release\dist\windows -->
+    <!-- build.py 输出 Python wheel 到 release\dist\, Windows 二进制 (PyInstaller) 输出到 release\dist\windows\ -->
     <ComponentGroup Id="MainComponents" Directory="BinFolder">
       <Component Id="CwExe" Guid="*">
-        <File Id="cw.exe" Source="dist\windows\cw.exe" KeyPath="yes" />
-      </Component>
-      <Component Id="CwClientExe" Guid="*">
-        <File Id="cw_client.exe" Source="dist\windows\cw_client.exe" KeyPath="yes" />
+        <File Id="cw.exe" Source="$(var.BuildOutputDir)\cw.exe" KeyPath="yes" />
       </Component>
       <Component Id="CallwardenCorePyd" Guid="*">
-        <File Id="callwarden_core.pyd" Source="dist\windows\callwarden_core.pyd" KeyPath="yes" />
+        <File Id="callwarden_core.pyd" Source="$(var.BuildOutputDir)\callwarden_core.pyd" KeyPath="yes" />
       </Component>
       <!-- Python runtime (bundled) -->
       <Component Id="PythonRuntime" Guid="*">
-        <File Id="python.exe" Source="dist\windows\runtime\python.exe" KeyPath="yes" />
+        <File Id="python.exe" Source="$(var.BuildOutputDir)\runtime\python.exe" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Client 角色组件: 仅 cw_client.exe -->
+    <ComponentGroup Id="ClientComponents" Directory="BinFolder">
+      <Component Id="CwClientExe" Guid="*">
+        <File Id="cw_client.exe" Source="$(var.BuildOutputDir)\cw_client.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 
@@ -80,23 +150,37 @@
       </Component>
     </ComponentGroup>
 
-    <!-- Environment: add to PATH (optional) -->
+    <!-- Environment: 加入 PATH (可选, 通过 AddToPath Feature 控制) -->
+    <!-- System="no" 写入用户 PATH (HKCU), 适配 perUserOrMachine 双模式; -->
+    <!-- per-machine 安装提权后如需写系统 PATH, 应另建 System="yes" 组件并条件 MSIINSTALLPERUSER&lt;&gt;1 -->
     <Component Id="PathEntry" Guid="*" Directory="BinFolder">
-      <Environment Id="PATH" Name="PATH" Value="[BinFolder]" Permanent="no" Part="last" Action="set" System="yes" />
+      <Environment Id="PATH" Name="PATH" Value="[BinFolder]" Permanent="no" Part="last" Action="set" System="no" />
     </Component>
 
-    <!-- Data directory: preserve on uninstall -->
-    <Directory Id="LocalAppDataFolder">
-      <Directory Id="DataFolder" Name="CallWarden">
-        <Component Id="DataDir" Guid="*">
-          <CreateFolder />
-          <RemoveFile Id="RemoveDataFiles" Name="*" On="uninstall" />
-        </Component>
-      </Directory>
-    </Directory>
+    <!-- MCP 配置写入占位组件 -->
+    <!-- 实际 MCP 配置 (如 claude_desktop_config.json) 写入由 InstallExecuteSequence 中的 CustomAction 完成 -->
+    <!-- 此组件仅提供 Feature 选择的 KeyPath 锚点, CI 集成时添加 CustomAction -->
+    <Component Id="McpConfigStub" Guid="*" Directory="ConfigFolder">
+      <CreateFolder />
+      <RegistryValue Root="HKCU" Key="Software\CallWarden\MCP" Name="configured" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
 
-    <!-- Exit codes -->
+    <!-- 数据目录: 默认仅创建, 卸载保留 -->
+    <Component Id="DataDir" Guid="*" Directory="DataFolder">
+      <CreateFolder />
+      <RegistryValue Root="HKCU" Key="Software\CallWarden\Data" Name="created" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- 数据清理组件: 仅当 RemoveDataOnUninstall Feature 被选中时才在卸载时删除数据 -->
+    <!-- 未选中此 Feature → 组件未安装 → 卸载时 RemoveFile 不触发 → 数据保留 -->
+    <Component Id="DataRemover" Guid="*" Directory="DataFolder">
+      <RemoveFile Id="RemoveDataFiles" Name="*" On="uninstall" />
+      <RemoveFolder Id="RemoveDataDir" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\CallWarden\Uninstall" Name="removeData" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- 完成提示 -->
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
-              Value="Call Warden has been installed. Run 'cw --version' to verify." />
+              Value="Call Warden 已安装完成。运行 'cw --version' 验证安装。卸载默认保留数据，如需清理请在安装时勾选对应选项。" />
   </Product>
 </Wix>

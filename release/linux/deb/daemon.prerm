@@ -1,0 +1,42 @@
+#!/bin/bash
+# callwarden-daemon prerm
+# Task: T-1783983162956-b2a8
+# 设计 §8.3: 停服务前置（drain → 停服务）
+# 卸载/升级前停止 daemon，确保无残留进程。
+
+set -euo pipefail
+
+SERVICE="callwarden-daemon.service"
+SOCKET="/run/callwarden/callwarden.sock"
+
+case "$1" in
+    remove)
+        echo "[callwarden-daemon] prerm: remove"
+        # Drain 并停止服务
+        if [ -S "$SOCKET" ] && command -v cw-daemon >/dev/null 2>&1; then
+            cw-daemon drain --timeout 30 || true
+        fi
+        if command -v deb-systemd-invoke >/dev/null 2>&1; then
+            deb-systemd-invoke stop "$SERVICE" 2>/dev/null || true
+        elif command -v systemctl >/dev/null 2>&1; then
+            systemctl stop "$SERVICE" 2>/dev/null || true
+        fi
+        ;;
+    upgrade)
+        # 升级时由 preinst 处理停服务，这里仅 drain
+        echo "[callwarden-daemon] prerm: upgrade"
+        if [ -S "$SOCKET" ] && command -v cw-daemon >/dev/null 2>&1; then
+            cw-daemon drain --timeout 30 || true
+        fi
+        ;;
+    deconfigure)
+        ;;
+    failed-upgrade)
+        ;;
+    *)
+        echo "[callwarden-daemon] prerm: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,68 @@
+#!/bin/bash
+# callwarden-daemon postrm
+# Task: T-1783983162956-b2a8
+# 设计 §8.2: 卸载默认保留数据，purge 删配置，数据删除需二次显式选项。
+
+set -euo pipefail
+
+# 运行时常量
+DAEMON_USER="callwarden"
+CLIENTS_GROUP="callwarden-clients"
+STATE_DIR="/var/lib/callwarden"
+LOG_DIR="/var/log/callwarden"
+CONFIG_DIR="/etc/callwarden"
+SERVICE="callwarden-daemon.service"
+
+# 数据删除的二次显式选项：
+# 仅当 /etc/callwarden/purge-data.flag 存在或 PURGE_DATA=1 环境变量时才删除数据。
+# 设计 §8.2: 数据删除需要二次显式选项。
+should_purge_data() {
+    [ -f "$CONFIG_DIR/purge-data.flag" ] || [ "${PURGE_DATA:-0}" = "1" ]
+}
+
+case "$1" in
+    remove)
+        echo "[callwarden-daemon] postrm: remove (data retained)"
+        # 禁用服务，保留数据
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper mask "$SERVICE" 2>/dev/null || true
+        fi
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        ;;
+    purge)
+        echo "[callwarden-daemon] postrm: purge"
+        # 先检查数据删除选项（在删除配置前，因为 flag 位于配置目录）
+        if should_purge_data; then
+            echo "[callwarden-daemon] PURGE_DATA confirmed - deleting state, logs, and config"
+            rm -rf "$STATE_DIR" "$LOG_DIR" "$CONFIG_DIR"
+        else
+            # purge 语义：删除配置，但保留数据
+            echo "[callwarden-daemon] config purged; data retained at $STATE_DIR"
+            echo "[callwarden-daemon] (set PURGE_DATA=1 or create $CONFIG_DIR/purge-data.flag to also delete data)"
+            rm -rf "$CONFIG_DIR"
+        fi
+        # 清理 systemd 残留
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper purge "$SERVICE" 2>/dev/null || true
+        fi
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        # 不删除用户/组（可能仍有数据属主问题，避免破坏文件所有权）
+        ;;
+    upgrade)
+        # 升级时由 postinst 处理
+        ;;
+    failed-upgrade)
+        ;;
+    disappear)
+        ;;
+    *)
+        echo "[callwarden-daemon] postrm: unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0
