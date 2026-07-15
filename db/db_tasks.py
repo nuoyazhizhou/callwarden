@@ -728,9 +728,9 @@ class TaskMixin:
                 ]
                 job["context"]["callees"] = [
                     {
-                        "callee": c.get("target_name", ""),
-                        "module": c.get("target_module", ""),
-                        "file": c.get("target_file", ""),
+                        "callee": c.get("callee_name", ""),
+                        "module": c.get("callee_module", ""),
+                        "file": c.get("callee_file", ""),
                         "call_line": c.get("call_line", 0),
                     }
                     for c in _callees_all[:8]

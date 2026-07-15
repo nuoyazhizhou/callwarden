@@ -591,19 +591,24 @@ def create_mcp_server():
     # ----------------------------------------------------------------
 
     @mcp.tool()
-    def file_read(file_path: str, offset: int = 0, limit: int = 200) -> Optional[dict]:
-        """读取文件内容
+    def file_read(file_path: str, offset: int = 0, limit: int = 200, include_context: bool = False) -> Optional[dict]:
+        """读取文件内容（可选附带符号上下文）
 
         Agent 通过此工具读取文件，替代 IDE 内置 Read 工具。
         支持行号偏移和行数限制，避免一次性返回过大内容。
+
+        L4 赋能：include_context=True 时合并返回文件中的符号列表 + 每个函数符号的
+        调用方/被调用方摘要（top 3），减少 Agent 3+N 次 MCP 往返为 1 次。
 
         Args:
             file_path: 文件路径（相对工作区根目录或绝对路径）
             offset: 起始行号（从 0 开始，默认 0）
             limit: 读取行数（默认 200）
+            include_context: 是否附带符号上下文（符号列表+调用方/被调用方摘要，默认 False）
 
         Returns:
-            dict: {path, total_lines, offset, limit, content}，文件不存在返回 None
+            dict: {path, total_lines, offset, limit, content}，include_context=True 时
+                  额外返回 {symbols, symbol_contexts}，文件不存在返回 None
         """
         db = get_db()
         ws_root = db.workspace_root
@@ -628,13 +633,82 @@ def create_mcp_server():
             total = len(lines)
             end = min(offset + limit, total)
             content = "".join(lines[offset:end])
-            return {
+            result = {
                 "path": abs_path,
                 "total_lines": total,
                 "offset": offset,
                 "limit": limit,
                 "content": content,
             }
+
+            # L4: include_context=True 时合并返回符号上下文
+            if include_context:
+                rel_path = os.path.relpath(abs_path, ws_root).replace("\\", "/")
+                try:
+                    symbols = db.get_file_symbols(rel_path)
+                    # 精简符号列表字段（只返回 Agent 需要的关键字段）
+                    result["symbols"] = [
+                        {
+                            "name": s.get("name", ""),
+                            "qualified_name": s.get("qualified_name", ""),
+                            "kind": s.get("kind", ""),
+                            "start_line": s.get("start_line", 0),
+                            "end_line": s.get("end_line", 0),
+                        }
+                        for s in symbols
+                    ]
+
+                    # 为每个函数/方法符号附加 callers/callees 摘要（top 3）
+                    # 限制最多 20 个符号避免响应过大
+                    fn_kinds = ("fn", "function", "method", "test_fn")
+                    symbol_contexts = []
+                    for sym in symbols[:20]:
+                        if sym.get("kind") not in fn_kinds:
+                            continue
+                        sym_name = sym.get("name", "")
+                        sym_qn = sym.get("qualified_name", "") or None
+                        if not sym_name:
+                            continue
+                        ctx = {
+                            "symbol": sym_name,
+                            "qualified_name": sym.get("qualified_name", ""),
+                            "start_line": sym.get("start_line", 0),
+                            "end_line": sym.get("end_line", 0),
+                        }
+                        # 调用方 top 3
+                        try:
+                            callers = db.get_callers(sym_name, sym_qn)
+                            ctx["callers_total"] = len(callers or [])
+                            ctx["callers"] = [
+                                {
+                                    "caller": c.get("caller_name", ""),
+                                    "file": c.get("caller_file", ""),
+                                }
+                                for c in (callers or [])[:3]
+                            ]
+                        except Exception:
+                            ctx["callers"] = []
+                            ctx["callers_total"] = 0
+                        # 被调用方 top 3
+                        try:
+                            callees = db.get_callees(sym_name, sym_qn)
+                            ctx["callees_total"] = len(callees or [])
+                            ctx["callees"] = [
+                                {
+                                    "callee": c.get("callee_name", ""),
+                                    "module": c.get("callee_module", ""),
+                                }
+                                for c in (callees or [])[:3]
+                            ]
+                        except Exception:
+                            ctx["callees"] = []
+                            ctx["callees_total"] = 0
+                        symbol_contexts.append(ctx)
+                    result["symbol_contexts"] = symbol_contexts
+                except Exception as e:
+                    result["symbol_contexts_error"] = str(e)
+
+            return result
         except Exception as e:
             return {"error": str(e)}
 

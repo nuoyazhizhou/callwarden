@@ -302,7 +302,7 @@
 | L1 | MCP Server 层门禁：file_write 强制关联活跃 task_id | QA1 | ❌ 未实现 | propose_edit 有审计但 file_write MCP 不强制关联 task_id；讨论结论：需让 Agent "用比不用更好" 而非强制 |
 | L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ❌ 未实现 | post-commit hook 已有，但破坏性操作拦截（回滚保护）未实现 |
 | L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ⚠️ 概念 | 讨论发现本地 hook 可被 Agent 绕过（--no-verify/改 hook 脚本），结论：只有 CI/远端才能真正强制 |
-| L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ⚠️ 部分 | file_read 返回文件内容，file_symbol_content 返回符号，但未在单次调用中合并返回符号+调用方+调用链 |
+| L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
 | L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ❌ 未实现 | 讨论结论：这是唯一值得继续做的大能力，比再加 20 个 MCP 工具有价值 |
 | L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ❌ 未实现 | 设计已完成：主进程边收边写 DB 边释放，内存从 10-14GB → ~100MB；~30 行改动 |
 | L7 | RSS 监控采样修复 | PR | ✅ 已实现 | psutil 优先 + Windows ctypes Psapi.GetProcessMemoryInfo fallback（T3 修复） |
@@ -312,7 +312,7 @@
 | L11 | Windows 控制台 Unicode bug（cw task show 在 GBK 下崩溃） | D3 | ✅ 已修复 | ensure_utf8_output() 统一到 cli/console.py，三入口复用（T2 修复） |
 | L12 | propose_symbol_id_patch（符号级 patch 带 symbol_id） | WL1 | ❌ 未实现 | 讨论提出：传入 symbol_id + patch + expected_hash，自动 diff+审计+refresh |
 | L13 | work_next_job 返回完整上下文（源码+调用方+风险+patch 范围） | WL1 | ✅ 已实现 | db_tasks.py 增强 callers/callees 摘要 + callers_total/callees_total |
-| L14 | 真懒加载 parser（按语言 import 而非聚合入口） | WL2 | ❌ 未实现 | parsers/__init__.py 顶层 import 全 16 grammar；应改为按语言懒 import |
+| L14 | 真懒加载 parser（按语言 import 而非聚合入口） | WL2 | ✅ 已实现 | parsers/__init__.py `__getattr__` 模块级懒加载 + `create_parser` 按需 import |
 | L15 | 分阶段计时日志（scan/parse/symbol/call/depth/FTS/GC） | WL2 | ✅ 已实现 | perf 脚本已输出阶段耗时分解 |
 | L16 | Agent 工具设计原则（“捷径”而非“规则”） | WL1 | ⚠️ 设计方向 | 核心结论：高层工作流工具 > 底层工具集合；工具名/描述/参数影响 Agent 选择 |
 
@@ -357,10 +357,10 @@
 
 | # | 缺口 | 严重度 | 详情 |
 |---|------|--------|------|
-| K1 | Replicator TOCTOU 违规 | 高 | `_daemon_parse_and_publish` 先 canonicalize 再重新读文件，canonical bytes 和 parse 不是同一份数据，违反 parse-input-abi.md §2 |
-| K2 | Replicator 违反禁止读客户端路径 | 高 | `daemon_handle_refresh` 用 `workspace_root + rel_path` 拼接 abs_path 后读取文件，违反 §2.2 |
+| K1 | Replicator TOCTOU 违规 | 高 | ✅ 已修复：`_daemon_parse_and_publish` 优先用 `canonical_bytes`，parse 阶段复用同一份 bytes（T-1783952125417-7a09） |
+| K2 | Replicator 违反禁止读客户端路径 | 高 | ✅ 已修复：`canonical_bytes` 非 None 时不读 abs_path，仅降级 fallback 使用（T-1783952125417-7a09） |
 | K3 | Rust parse_canonical_bytes 未暴露 | 中 | ✅ 已修复：`parse_canonical_bytes_py` 已有 `#[pyfunction]` 包装（multi_lang.rs L989）+ lib.rs L918 注册 |
-| K4 | daemon dispatch 未接入 | 中 | daemon_server.py 的 `workspace.refresh` 走全量 checkpoint，未调用 `daemon_handle_refresh` |
+| K4 | daemon dispatch 未接入 | 中 | ✅ 已修复：daemon_server.py L396 `workspace.file.refresh` 调用 `daemon_handle_refresh` + staging + replicate |
 | K5 | IPC 双协议未统一 | 低 | ipc_transport.py 先 recv header 再 recvmsg FD 可能丢失 ancillary data，已标记 deprecated |
 | K6 | file_generations DDL 重复 | 低 | ✅ 已修复：FILE_GENERATIONS_DDL 提取到 db_cas.py 共享常量，replicator.py 延迟导入 |
 
@@ -470,11 +470,11 @@
 | F. 性能优化 | 15 | 1 | 3 | 19 |
 | G. Enterprise Daemon | 26 | 4 | 2 | 32+ |
 | H. 规划但未实施 | 6 | 0 | 12 | 18 |
-| L. 讨论文档提取 | 2 | 4 | 10 | 16 |
+| L. 讨论文档提取 | 6 | 3 | 7 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 0 | 4 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **121** | **9** | **30** | **161** |
+| **总计** | **124** | **7** | **28** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -484,12 +484,11 @@
 - **N 类新增 8 项**（N1-N8）：跨平台打包实现细节
 - **L 类新增 5 项**（L12-L16）：来自 waylog 对话的产品设计讨论
 
-**真正未实现的 30 项按优先级排序**：
+**真正未实现的 28 项按优先级排序**：
 
-1. **高优先级（影响 Daemon 闭合）**：K1-K2、K4（Replicator TOCTOU + 禁止读路径 + dispatch 接入；K3/K6 已修复）
-2. **高优先级（性能/稳定性）**：F12（快照 dump）、F13（索引精简）、L6（流式 parse）、L8（增量调用图）、L9（Rust ParseResultPool）（L7 RSS 监控已修复）
-3. **中优先级（Phase 4 缺失）**：H17-H18（diff_callers/diff_callees + compare_snapshots）
-4. **中优先级（Agent 体验）**：L1（MCP 门禁）、L4（file_read 赋能）、L12（symbol_id patch）、L14（懒加载 parser）（L11 Windows Unicode / L13 work_next_job 上下文已实现）
-5. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
-6. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存）、H9（MCP 测试）、L5（构建上下文感知）
-7. **可延后**：H10、H12-H13（Clone LSH 增强/Git Hook/多语言测试；H11 已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
+1. **高优先级（性能/稳定性）**：F12（快照 dump）、F13（索引精简）、L6（流式 parse）、L8（增量调用图）、L9（Rust ParseResultPool）（L7 RSS 监控已修复；K1-K4/K6 daemon 闭合已全部修复）
+2. **中优先级（Phase 4 缺失）**：H17-H18（diff_callers/diff_callees + compare_snapshots）
+3. **中优先级（Agent 体验）**：L1（MCP 门禁）、L12（symbol_id patch）（L4 file_read 赋能 / L11 Windows Unicode / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
+4. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
+5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存）、H9（MCP 测试）、L5（构建上下文感知）
+6. **可延后**：H10、H12-H13（Clone LSH 增强/Git Hook/多语言测试；H11 已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
