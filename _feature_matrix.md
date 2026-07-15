@@ -299,7 +299,7 @@
 
 | # | 功能点 | 来源 | 状态 | 备注 |
 |---|--------|------|------|------|
-| L1 | MCP Server 层门禁：file_write 强制关联活跃 task_id | QA1 | ❌ 未实现 | propose_edit 有审计但 file_write MCP 不强制关联 task_id；讨论结论：需让 Agent "用比不用更好" 而非强制 |
+| L1 | MCP Server 层门禁：file_write 强制关联活跃 task_id | QA1 | ⚠️ 软门禁 | QA1 最终结论"赋能而非门禁"已落地：`db_tasks.is_task_active()` 校验真实性 + `get_task_context()` 赋能字段；`propose_edit` 系列（4 工具）在 `agent_task_id` 非空时返回 `task_validation`（valid/invalid/error）+ `task_context`（title/status/steps 概况）；软门禁语义：不拒绝写入，只在返回值标记；完全向后兼容（`agent_task_id=""` 时跳过） |
 | L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ❌ 未实现 | post-commit hook 已有，但破坏性操作拦截（回滚保护）未实现 |
 | L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ⚠️ 概念 | 讨论发现本地 hook 可被 Agent 绕过（--no-verify/改 hook 脚本），结论：只有 CI/远端才能真正强制 |
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
@@ -470,11 +470,11 @@
 | F. 性能优化 | 17 | 1 | 1 | 19 |
 | G. Enterprise Daemon | 26 | 4 | 2 | 32+ |
 | H. 规划但未实施 | 9 | 1 | 8 | 18 |
-| L. 讨论文档提取 | 8 | 4 | 4 | 16 |
+| L. 讨论文档提取 | 8 | 5 | 3 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 0 | 4 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **131** | **10** | **18** | **161** |
+| **总计** | **131** | **11** | **17** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -488,7 +488,7 @@
 
 1. **高优先级（性能/稳定性）**：（L9 已实现 3.5 阶段，仅缺 4 语言 grammar 补齐，作为低优先级；L6 部分实现：versions 写入后释放 symbols + 调用图从 DB 读取符号索引，parse 阶段流式回传未实现；F12 快照 dump 已实现；F13 索引精简已实施；L7 RSS 监控已修复；L8 增量调用图已实现；K1-K4/K6 daemon 闭合已全部修复）—— **当前无未完成的高优先级性能任务**
 2. **中优先级（Phase 4 缺失）**：（H17-H18 diff_callers/diff_callees + compare_snapshots 已实现）
-3. **中优先级（Agent 体验）**：L1（MCP 门禁）（L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
+3. **中优先级（Agent 体验）**：（L1 软门禁已实现：is_task_active + task_context；L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
 5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存）、H9（MCP 测试）、L5（构建上下文感知）、L9 4 语言 grammar 补齐（Kotlin/Swift/Elixir/HCL）
 6. **可延后**：H12-H13（Git Hook/多语言测试；H11 已实现；H10 已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）

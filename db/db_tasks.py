@@ -270,6 +270,94 @@ class TaskMixin:
             )
         self.conn.commit()
 
+    def is_task_active(self, task_id: str) -> bool:
+        """校验 task_id 是否存在且处于活跃状态（open / in_progress）
+
+        L1 软门禁基础设施：为 propose_edit 系列提供 task_id 真实性校验。
+        不改变 task 状态，纯只读查询。
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            True 表示 task 存在且 status ∈ {open, in_progress}；
+            False 表示 task 不存在或已 review/applied/closed
+        """
+        if not task_id:
+            return False
+        cur = self.conn.execute(
+            "SELECT status FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return False
+        return row["status"] in (TASK_STATUS_OPEN, TASK_STATUS_IN_PROGRESS)
+
+    def get_task_context(self, task_id: str) -> Optional[Dict[str, Any]]:
+        """获取 task 上下文（L1 赋能激励：让 Agent 看到关联 task_id 的价值）
+
+        轻量级查询，返回 task 基本信息 + steps 概况，不查 callers/impact
+        等重数据（Agent 可通过专用 MCP 工具按需获取）。
+
+        Args:
+            task_id: 任务 ID
+
+        Returns:
+            {
+                "task_id": str,
+                "title": str,
+                "status": str,
+                "is_active_task": bool,     # 是否当前 workspace 的 active task
+                "steps": {
+                    "total": int,
+                    "completed": int,
+                    "in_progress": int,
+                },
+            }
+            task 不存在时返回 None
+        """
+        cur = self.conn.execute(
+            "SELECT id, title, status FROM tasks WHERE id = ?",
+            (task_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        # steps 概况
+        cur_steps = self.conn.execute(
+            "SELECT status FROM task_steps WHERE task_id = ?",
+            (task_id,),
+        )
+        steps_total = 0
+        steps_completed = 0
+        steps_in_progress = 0
+        for srow in cur_steps.fetchall():
+            steps_total += 1
+            s = srow["status"]
+            if s == "completed":
+                steps_completed += 1
+            elif s == "in_progress":
+                steps_in_progress += 1
+        # 是否当前 workspace 的 active task
+        is_active_task = False
+        try:
+            active_tid = self.get_active_task()
+            is_active_task = (active_tid == task_id)
+        except Exception:
+            pass
+        return {
+            "task_id": row["id"],
+            "title": row["title"],
+            "status": row["status"],
+            "is_active_task": is_active_task,
+            "steps": {
+                "total": steps_total,
+                "completed": steps_completed,
+                "in_progress": steps_in_progress,
+            },
+        }
+
     def _reopen_parent_chain_if_needed(
         self,
         parent_id: str,

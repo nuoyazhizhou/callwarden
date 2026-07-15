@@ -369,6 +369,26 @@ class EditSafetyMixin:
             except Exception as exc:
                 attribution = {"success": False, "error": str(exc)}
 
+        # L1 软门禁 + 赋能激励（QA1 最终结论：让 Agent "用比不用更好"）
+        # - agent_task_id 非空时校验真实性（软门禁：不拒绝写入，只在返回值标记）
+        # - 校验成功时附带 task_context（赋能：让 Agent 看到关联 task 的价值）
+        # - 完全向后兼容：agent_task_id="" 时跳过，不影响现有流程
+        task_validation = None
+        task_context = None
+        if agent_task_id and hasattr(self, "is_task_active"):
+            try:
+                if self.is_task_active(agent_task_id):
+                    task_validation = {"status": "valid"}
+                    if hasattr(self, "get_task_context"):
+                        task_context = self.get_task_context(agent_task_id)
+                else:
+                    task_validation = {
+                        "status": "invalid",
+                        "reason": "task_id not found or not active (status not in open/in_progress)",
+                    }
+            except Exception as exc:
+                task_validation = {"status": "error", "error": str(exc)}
+
         return {
             "audit_id": audit_id,
             "file_path": rel_path,
@@ -378,6 +398,8 @@ class EditSafetyMixin:
             "status": EDIT_STATUS_APPLIED,
             "success": True,
             "attribution": attribution,
+            "task_validation": task_validation,
+            "task_context": task_context,
         }
 
     def propose_range_patch(
