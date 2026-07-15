@@ -266,8 +266,8 @@
 | H9 | MCP Server 完整测试 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H10 | Clone Detection LSH 增强（B1） | RP | ✅ 已实现 | 3-gram shingle + _MAX_BUCKET_SIZE=200 + LSH(8 bands, 16 rows) + 降级策略 + 稳定 hash 全部就位；test_phase7_minhash_stable.py 覆盖稳定性；缺召回率/精确率基准测试 |
 | H11 | Clone Detection 影响分析联动 | RP | ✅ 已实现 | db_impact.py `get_clone_aware_impact` + MCP 注册（195→196） |
-| H12 | 扩展 Git Hook 到 AI CLI IDE | RP | ❌ 未实施 | 所有 checklist 未勾选 |
-| H13 | 15 种语言开源项目测试 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
+| H12 | 扩展 Git Hook 到 AI CLI IDE | RP | ✅ 已实现 | `install.py:323-466` 三 hook 模板（pre-commit refresh-all + pre-push check-gate + post-commit capture-diff --auto）；marker 卸载机制保留用户其他 hook；`cw install --hooks` 统一入口；test_install_hooks_unified + test_git_hook_capture 覆盖 |
+| H13 | 15 种语言开源项目测试 | RP | ⚠️ 部分 | 14/16 语言已有专门测试（test_p1_p3_languages 覆盖 PHP/Swift/Scala/HCL/Elixir；test_csharp_ruby；test_p9_c_parser_stack；test_p29_rust_parse；test_p31_multi_lang TS/Scala）；缺 Kotlin + Go 专门测试 |
 | H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H15 | 多用户权限系统（RBAC） | IS | ❌ 未实施 | 当前按项目隔离 |
 | H16 | 生产者-消费者架构 | IS | ❌ 未实施 | 当前 Map-Reduce |
@@ -469,12 +469,12 @@
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
 | F. 性能优化 | 17 | 1 | 1 | 19 |
 | G. Enterprise Daemon | 26 | 4 | 2 | 32+ |
-| H. 规划但未实施 | 9 | 1 | 8 | 18 |
-| L. 讨论文档提取 | 8 | 5 | 3 | 16 |
+| H. 规划但未实施 | 11 | 1 | 6 | 18 |
+| L. 讨论文档提取 | 9 | 5 | 2 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 0 | 4 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **131** | **11** | **17** | **161** |
+| **总计** | **133** | **11** | **15** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
