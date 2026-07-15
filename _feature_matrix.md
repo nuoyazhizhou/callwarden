@@ -271,8 +271,8 @@
 | H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H15 | 多用户权限系统（RBAC） | IS | ❌ 未实施 | 当前按项目隔离 |
 | H16 | 生产者-消费者架构 | IS | ❌ 未实施 | 当前 Map-Reduce |
-| H17 | diff_callers / diff_callees（跨 snapshot 调用差异） | P4M | ❌ 未实施 | Phase 4 缺失项，需 Rust 实现 |
-| H18 | compare_snapshots 同步查询 + 仓库级 diff | P4M | ❌ 未实施 | Phase 4 缺失项 |
+| H17 | diff_callers / diff_callees（跨 snapshot 调用差异） | P4M | ✅ 已实现 | MCP 已暴露 diff_callers (L3546) + diff_callees (L3574)；DaemonClient 完整实现（daemon_client.py L460/L474） |
+| H18 | compare_snapshots 同步查询 + 仓库级 diff | P4M | ✅ 已实现 | MCP 已暴露 compare_snapshots (L3602)；同步查询 + 后台 job（job_handlers.py L237/L282）+ _should_run_async 大小判断 |
 
 ## L. 讨论文档提取的功能点（问答/对话/问题）
 
@@ -484,11 +484,11 @@
 - **N 类新增 8 项**（N1-N8）：跨平台打包实现细节
 - **L 类新增 5 项**（L12-L16）：来自 waylog 对话的产品设计讨论
 
-**真正未实现的 28 项按优先级排序**：
+**真正未实现的 21 项按优先级排序**：
 
 1. **高优先级（性能/稳定性）**：L6（流式 parse）、L8（增量调用图）、L9（Rust ParseResultPool）（F12 快照 dump 已实现；F13 索引精简已实施；L7 RSS 监控已修复；K1-K4/K6 daemon 闭合已全部修复）
-2. **中优先级（Phase 4 缺失）**：H17-H18（diff_callers/diff_callees + compare_snapshots）
-3. **中优先级（Agent 体验）**：L1（MCP 门禁）、L12（symbol_id patch）（L4 file_read 赋能 / L11 Windows Unicode / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
+2. **中优先级（Phase 4 缺失）**：（H17-H18 diff_callers/diff_callees + compare_snapshots 已实现）
+3. **中优先级（Agent 体验）**：L1（MCP 门禁）（L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
 5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存）、H9（MCP 测试）、L5（构建上下文感知）
 6. **可延后**：H12-H13（Git Hook/多语言测试；H11 已实现；H10 已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
