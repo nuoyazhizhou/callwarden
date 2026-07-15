@@ -199,7 +199,7 @@
 | F9 | P28 get_callers qualified_name 参数 | PP | ✅ 已实施 | capability_showcase Q1 确认 |
 | F10 | P29 FTS 独立重建命令 | PP | ✅ 已实现 | v31 迁移含 rebuild 命令 |
 | F11 | P30 并行 INSERT | PP | ❌ 未实施 | 仅停留在计划阶段 |
-| F12 | P5 冷启动快照 dump/load（二进制 mmap） | BR3 | ❌ 未实施 | 预期 GraphStore 加载 7.83s → <1s；dump 4 文件（symbols/calls/indices/metadata） |
+| F12 | P5 冷启动快照 dump/load（二进制 mmap） | BR3 | ✅ 已实现 | `_get_graph_store` 优先 mmap 加载 `.cwsnap`（snap_mtime>=db_mtime 校验），后台线程构建 calls + dump_to_file；Rust dump_to_file/load_from_file 完整实现（HEADER + 12 sections + 对齐 padding）；test_graphstore_compact_indexes + _verify_p4_phase2 覆盖 |
 | F13 | P6 calls 表索引精简（删 2/3 calls 索引） | BR3 | ✅ 已实施 | v32 删除 idx_calls_callee（GraphStore CSR 覆盖 get_callers）；v33 新增 idx_calls_callee_id_resolved 部分索引；保留 idx_calls_caller（SQL 降级路径） |
 | F14 | P12 延迟建索引 + 分段 commit | BR2 | ✅ 已实施 | 10M 符号 19.5min（vs 基线 2h+，8.1x 加速）；WAL TRUNCATE 全生效 |
 | F15 | P13 cache_size=256MB + P15 page_size=8KB | BR4 | ✅ 已实施 | 联合 17.8% 加速（90.60s → 74.52s @1M）；cache 收益递减点在 256MB |
@@ -467,14 +467,14 @@
 | C. 任务编排 + Agent OS | 11 | 0 | 0 | 11 |
 | D. 向量搜索 + RAG + LSP + 跨仓库 | 8 | 0 | 0 | 8 |
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
-| F. 性能优化 | 16 | 1 | 2 | 19 |
+| F. 性能优化 | 17 | 1 | 1 | 19 |
 | G. Enterprise Daemon | 26 | 4 | 2 | 32+ |
 | H. 规划但未实施 | 7 | 1 | 10 | 18 |
 | L. 讨论文档提取 | 7 | 3 | 6 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 0 | 4 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **127** | **8** | **24** | **161** |
+| **总计** | **128** | **8** | **23** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -486,7 +486,7 @@
 
 **真正未实现的 28 项按优先级排序**：
 
-1. **高优先级（性能/稳定性）**：F12（快照 dump）、F13（索引精简）、L6（流式 parse）、L8（增量调用图）、L9（Rust ParseResultPool）（L7 RSS 监控已修复；K1-K4/K6 daemon 闭合已全部修复）
+1. **高优先级（性能/稳定性）**：L6（流式 parse）、L8（增量调用图）、L9（Rust ParseResultPool）（F12 快照 dump 已实现；F13 索引精简已实施；L7 RSS 监控已修复；K1-K4/K6 daemon 闭合已全部修复）
 2. **中优先级（Phase 4 缺失）**：H17-H18（diff_callers/diff_callees + compare_snapshots）
 3. **中优先级（Agent 体验）**：L1（MCP 门禁）、L12（symbol_id patch）（L4 file_read 赋能 / L11 Windows Unicode / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
