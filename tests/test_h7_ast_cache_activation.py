@@ -10,8 +10,6 @@ import os
 import tempfile
 import time
 
-import pytest
-
 from callwarden.config import norm_path
 from callwarden.db.db import CodeGraphDB
 
@@ -129,7 +127,7 @@ def test_refresh_file_skips_parse_on_unchanged_file():
         symbols_before = cur.fetchone()["c"]
 
         for _ in range(3):
-            db.refresh_file("sample.py")
+            db.refresh_file(abs_path)
 
         cur = db.conn.execute("SELECT COUNT(*) as c FROM symbols")
         symbols_after = cur.fetchone()["c"]
@@ -143,16 +141,8 @@ def test_refresh_file_skips_parse_on_unchanged_file():
         db.close()
 
 
-@pytest.mark.xfail(
-    reason="pre-existing bug: refresh_file 不写入变更后的新符号（与 H7 无关，"
-           "git stash H7 改动后仍失败）。根因在 _refresh_file_generic 或 "
-           "_save_symbols_for_version 路径，待独立任务修复。",
-    strict=True,
-)
 def test_refresh_file_reparses_on_change():
-    """refresh_file 变更文件正常 parse（禁用 Rust parse 避免 parser 缓存干扰）"""
-    import os
-    os.environ["CW_DISABLE_RUST_PARSE"] = "1"
+    """refresh_file 变更文件正常 parse（symbols 更新为新内容）"""
     db, root = _db_with_workspace()
     try:
         abs_path = _write_sample(root, content="def foo():\n    return 1\n")
@@ -161,14 +151,13 @@ def test_refresh_file_reparses_on_change():
         with open(abs_path, "w", encoding="utf-8") as f:
             f.write("def foo():\n    return 1\n\ndef bar():\n    return 2\n")
 
-        db.refresh_file("sample.py")
+        db.refresh_file(abs_path)
 
         cur = db.conn.execute("SELECT COUNT(*) as c FROM symbols")
         symbols_after = cur.fetchone()["c"]
         assert symbols_after >= 2
     finally:
         db.close()
-        del os.environ["CW_DISABLE_RUST_PARSE"]
 
 
 # ============================================

@@ -261,7 +261,7 @@
 | H4 | Bootstrap 自举闭环 | BC | ✅ 已实现 | workspace_scan_runs 表 + db_bootstrap.py(987行) + bootstrap_status MCP + capture-diff |
 | H5 | 集成测试全流程 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H6 | 千万级符号性能验证 | RP | ❌ 未实施 | 1M 已测，10M 未测 |
-| H7 | AST 缓存激活（B2） | RP | ✅ 已实现 | `_try_ast_cache_short_circuit` 接入 `_refresh_file_rust`/`_refresh_file_generic` 决策路径；新增 `file_content_hash` 字段解决 Rust/Python parser normalization 差异；test_h7_ast_cache_activation.py 8 测试（7 PASS + 1 xfail pre-existing bug）；test_incremental_parse.py 26/26 回归通过 |
+| H7 | AST 缓存激活（B2） | RP | ✅ 已实现 | `_try_ast_cache_short_circuit` 接入 `_refresh_file_rust`/`_refresh_file_generic` 决策路径；新增 `file_content_hash` 字段解决 Rust/Python parser normalization 差异；test_h7_ast_cache_activation.py 8 测试全通过；test_incremental_parse.py 26/26 回归通过 |
 | H8 | 统一项目健康报告 cw health-report | RP | ✅ 已实现 | cli/main.py `_handle_health_report` 聚合 stats + hotspots + issues + token_savings |
 | H9 | MCP Server 完整测试 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H10 | Clone Detection LSH 增强（B1） | RP | ✅ 已实现 | 3-gram shingle + _MAX_BUCKET_SIZE=200 + LSH(8 bands, 16 rows) + 降级策略 + 稳定 hash 全部就位；test_phase7_minhash_stable.py 覆盖稳定性；缺召回率/精确率基准测试 |
