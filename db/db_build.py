@@ -1559,6 +1559,23 @@ class BuildMixin:
         spinner.stop(t("cli.messages.db_build_versions_written", count=version_count))
         t_versions = time.perf_counter() - t_versions_start
 
+        # L6 内存优化：versions + symbols 已写入 DB，释放 file_results 中的 symbols 数据
+        # 符号索引改由 _build_call_graph_multi_lang 的 only_files 模式从 DB 读取
+        # （symbols 是 parse 结果中最大的数据块，占 50-70% 内存）
+        # 保留 fn_hash_map（call_versions 表的 caller_hash 需要 content_hash）
+        for result in file_results.values():
+            if "symbols" in result:
+                fn_hash_map = {}
+                for sym in result["symbols"]:
+                    if sym["kind"] in ("fn", "test_fn") and "content_hash" in sym:
+                        fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
+                for inline_mod in result.get("inline_modules", []):
+                    for sym in inline_mod["symbols"]:
+                        if sym["kind"] in ("fn", "test_fn") and "content_hash" in sym:
+                            fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
+                result["fn_hash_map"] = fn_hash_map
+                del result["symbols"]
+
         spinner = Spinner(t("cli.messages.db_build_step4_5_calls"))
         spinner.start()
         # 导入项目实际使用语言的标准库符号
@@ -1570,7 +1587,8 @@ class BuildMixin:
         t_stdlib = time.perf_counter() - t_stdlib_start
 
         t_call_resolve_start = time.perf_counter()
-        self._build_call_graph_multi_lang(file_results)
+        # L6 内存优化：符号索引从 DB 读取（symbols 已在 versions 阶段写入 DB 并从 file_results 释放）
+        self._build_call_graph_multi_lang(file_results, only_files=set(file_results.keys()))
         t_call_resolve = time.perf_counter() - t_call_resolve_start
 
         ws_id = self._get_active_workspace_id()
@@ -2274,14 +2292,18 @@ class BuildMixin:
                 ))
 
             # 收集 call_versions 表 INSERT 元组
-            fn_hash_map = {}
-            for sym in result["symbols"]:
-                if sym["kind"] in ("fn", "test_fn"):
-                    fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
-            for inline_mod in result.get("inline_modules", []):
-                for sym in inline_mod["symbols"]:
-                    if sym["kind"] in ("fn", "test_fn"):
+            # L6: fn_hash_map 在 versions 阶段已预提取（symbols 已释放）
+            fn_hash_map = result.get("fn_hash_map")
+            if fn_hash_map is None:
+                # 兼容路径：symbols 未被清理时从 symbols 构建
+                fn_hash_map = {}
+                for sym in result.get("symbols", []):
+                    if sym["kind"] in ("fn", "test_fn") and "content_hash" in sym:
                         fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
+                for inline_mod in result.get("inline_modules", []):
+                    for sym in inline_mod["symbols"]:
+                        if sym["kind"] in ("fn", "test_fn") and "content_hash" in sym:
+                            fn_hash_map[sym["qualified_name"]] = sym["content_hash"]
             mod_path = result.get("module_path", "")
             fv_id = result["file_version_id"]
             for call in calls:
