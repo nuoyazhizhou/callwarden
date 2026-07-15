@@ -30,9 +30,11 @@ tree-sitter-ruby = "0.23"
 tree-sitter-php = "0.23"
 tree-sitter-scala = "0.23"
 tree-sitter-c-sharp = "0.23"
-# L9 补齐：Kotlin + Swift grammar（Elixir/HCL 因 AST 结构特殊保持 Python fallback）
+# L9 补齐：Kotlin + Swift + Elixir + HCL grammar（全部 15 语言 Rust 化）
 tree-sitter-kotlin-ng = "1.1"
 tree-sitter-swift = "0.7"
+tree-sitter-elixir = "0.3"
+tree-sitter-hcl = "1.1"
 # rayon: 数据并行（替代 Python ProcessPoolExecutor，共享 grammar）
 rayon = "1.10"
 # 并发原语

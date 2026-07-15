@@ -1,13 +1,14 @@
 //! P31: 多语言 parser 框架
 //!
 //! 配置驱动的 tree-sitter parser，统一 walk 逻辑提取符号 + 调用 + import。
-//! 支持 13 种语言（C 保留专用 parser；Kotlin/Swift 已补齐；
-//! Elixir/HCL 因 AST 结构特殊保持 Python fallback）。
+//! 支持 15 种语言（C 保留专用 parser；其余 15 语言全 Rust 化：
+//! python/rust/go/java/ts/js/ruby/php/scala/csharp/cpp/kotlin/swift/elixir/hcl）。
 //!
 //! 设计原则：
 //! - 每语言一份 LangConfig，配置节点 kind 映射和名称提取策略
 //! - 统一 walk_node 递归，同时提取符号、调用关系、import
-//! - 三种名称提取策略：ChildByType / FieldName / PositionBefore / ChildByTypeNested
+//! - 名称提取策略：ChildByType / FieldName / PositionBefore / ChildByTypeNested /
+//!   ImplTraitForType / CallArgName / HclLabels（后两个为 Elixir/HCL 专用）
 //! - 调用关系按当前函数上下文标注 caller
 
 use tree_sitter::{Language, Node, Parser};
@@ -53,6 +54,25 @@ pub enum NameStrategy {
         trait_field: &'static str,
         type_field: &'static str,
     },
+
+    /// Elixir 专用：从 arguments 内的特定结构提取名称
+    /// 流程：在 container（如 "arguments"）内找首个 child_kind 节点，
+    /// 再提取该节点内（或自身）首个 name_kind 子节点的文本。
+    /// - defmodule：container="arguments", child_kind="alias", name_kind="alias"（取自身）
+    /// - def/defp：container="arguments", child_kind="call", name_kind="identifier"
+    CallArgName {
+        container: &'static str,
+        child_kind: &'static str,
+        name_kind: &'static str,
+    },
+
+    /// HCL 专用：收集所有 string_lit 子节点的 template_literal 文本作为标签
+    /// - 2+ 标签：name = "labels[0].labels[1]"（resource/data 风格，如 aws_instance.web）
+    /// - 1 标签：name = "labels[0]"
+    /// - 0 标签：name = fallback（块类型文本）
+    HclLabels {
+        fallback: &'static str,
+    },
 }
 
 // ============================================
@@ -75,10 +95,19 @@ pub struct SymbolRule {
     /// 动态 kind：遍历子节点，第一个匹配的 (child_kind, sym_kind) 决定符号 kind
     /// 用于 Go 的 type_spec → struct_type/interface_type
     pub dynamic_kind: Vec<(&'static str, &'static str)>,
+    /// 调用关键字过滤：当 kind 匹配时，要求首个 identifier 子节点文本等于此值才命中
+    /// 用于 Elixir：所有声明都是 call 节点，需按 identifier 文本区分 defmodule/def/defp/...
+    /// None 时不做文本过滤（默认行为，不影响已接入的 13 种语言）
+    pub call_keyword: Option<&'static str>,
+    /// 按子节点文本映射 sym_kind：遍历 named_children，首个 identifier 子节点的文本
+    /// 匹配此映射则决定 sym_kind。用于 HCL：block 节点统一为 kind="block"，
+    /// 块类型（resource/provider/variable/...）由首个 identifier 文本决定。
+    /// 空时不做文本映射（默认行为，不影响已接入的 13 种语言）
+    pub kind_from_child_text: Vec<(&'static str, &'static str)>,
 }
 
 impl SymbolRule {
-    /// 快速构造（无动态 kind）
+    /// 快速构造（无动态 kind / call_keyword / kind_from_child_text）
     const fn new(
         kind: &'static str,
         name: NameStrategy,
@@ -86,7 +115,12 @@ impl SymbolRule {
         body: Option<&'static str>,
         is_fn: bool,
     ) -> Self {
-        Self { kind, name, sym_kind, body, is_fn, dynamic_kind: vec![] }
+        Self {
+            kind, name, sym_kind, body, is_fn,
+            dynamic_kind: vec![],
+            call_keyword: None,
+            kind_from_child_text: vec![],
+        }
     }
 }
 
@@ -129,6 +163,8 @@ impl LangConfig {
             "cpp" => cpp_config(),
             "kotlin" => kotlin_config(),
             "swift" => swift_config(),
+            "elixir" => elixir_config(),
+            "hcl" => hcl_config(),
             _ => return None,
         };
         Some(config)
@@ -140,6 +176,7 @@ impl LangConfig {
             "python", "rust", "go", "java", "typescript", "javascript",
             "ruby", "php", "scala", "csharp", "cpp",
             "kotlin", "swift",
+            "elixir", "hcl",
         ]
     }
 }
@@ -251,6 +288,8 @@ fn go_config() -> LangConfig {
                     ("struct_type", "struct"),
                     ("interface_type", "interface"),
                 ],
+                call_keyword: None,
+                kind_from_child_text: vec![],
             },
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
@@ -644,6 +683,174 @@ fn swift_config() -> LangConfig {
     }
 }
 
+fn elixir_config() -> LangConfig {
+    // Elixir AST 特殊性：所有声明都是 call 节点（同 kind="call"），
+    // 需按首个 identifier 文本区分 defmodule/def/defp/defmacro/defmacrop/defguard/defguardp。
+    // 用 SymbolRule.call_keyword 字段过滤，name 用 CallArgName 从 arguments 提取。
+    LangConfig {
+        lang_id: "elixir",
+        language: Language::from(tree_sitter_elixir::LANGUAGE),
+        symbol_rules: vec![
+            // defmodule Foo.Bar do ... end → kind="module"，name 从 arguments 内 alias 取
+            SymbolRule {
+                kind: "call",
+                name: NameStrategy::CallArgName {
+                    container: "arguments",
+                    child_kind: "alias",
+                    name_kind: "alias",
+                },
+                sym_kind: "module",
+                body: Some("do_block"),
+                is_fn: false,
+                dynamic_kind: vec![],
+                call_keyword: Some("defmodule"),
+                kind_from_child_text: vec![],
+            },
+            // def foo(args) do ... end → kind="function"，is_fn=true（设置调用上下文）
+            // name 从 arguments 内首个 call 节点的 identifier 提取
+            SymbolRule {
+                kind: "call",
+                name: NameStrategy::CallArgName {
+                    container: "arguments",
+                    child_kind: "call",
+                    name_kind: "identifier",
+                },
+                sym_kind: "function",
+                body: Some("do_block"),
+                is_fn: true,
+                dynamic_kind: vec![],
+                call_keyword: Some("def"),
+                kind_from_child_text: vec![],
+            },
+            // defp foo(args) do ... end → kind="function"（私有）
+            SymbolRule {
+                kind: "call",
+                name: NameStrategy::CallArgName {
+                    container: "arguments",
+                    child_kind: "call",
+                    name_kind: "identifier",
+                },
+                sym_kind: "function",
+                body: Some("do_block"),
+                is_fn: true,
+                dynamic_kind: vec![],
+                call_keyword: Some("defp"),
+                kind_from_child_text: vec![],
+            },
+            // defmacro name(args) do ... end → kind="macro"
+            SymbolRule {
+                kind: "call",
+                name: NameStrategy::CallArgName {
+                    container: "arguments",
+                    child_kind: "call",
+                    name_kind: "identifier",
+                },
+                sym_kind: "macro",
+                body: Some("do_block"),
+                is_fn: true,
+                dynamic_kind: vec![],
+                call_keyword: Some("defmacro"),
+                kind_from_child_text: vec![],
+            },
+            // defmacrop name(args) do ... end → kind="macro"（私有）
+            SymbolRule {
+                kind: "call",
+                name: NameStrategy::CallArgName {
+                    container: "arguments",
+                    child_kind: "call",
+                    name_kind: "identifier",
+                },
+                sym_kind: "macro",
+                body: Some("do_block"),
+                is_fn: true,
+                dynamic_kind: vec![],
+                call_keyword: Some("defmacrop"),
+                kind_from_child_text: vec![],
+            },
+            // defguard name(args) do ... end → kind="guard"
+            SymbolRule {
+                kind: "call",
+                name: NameStrategy::CallArgName {
+                    container: "arguments",
+                    child_kind: "call",
+                    name_kind: "identifier",
+                },
+                sym_kind: "guard",
+                body: Some("do_block"),
+                is_fn: true,
+                dynamic_kind: vec![],
+                call_keyword: Some("defguard"),
+                kind_from_child_text: vec![],
+            },
+            // defguardp name(args) do ... end → kind="guard"（私有）
+            SymbolRule {
+                kind: "call",
+                name: NameStrategy::CallArgName {
+                    container: "arguments",
+                    child_kind: "call",
+                    name_kind: "identifier",
+                },
+                sym_kind: "guard",
+                body: Some("do_block"),
+                is_fn: true,
+                dynamic_kind: vec![],
+                call_keyword: Some("defguardp"),
+                kind_from_child_text: vec![],
+            },
+        ],
+        // Elixir 普通 call 调用：identifier 是函数名，callee_field=None
+        // 注意：def/defp 等 call_keyword 匹配的 SymbolRule 会先命中走符号路径，
+        // 其他普通 call（如 IO.puts、Enum.map）会走此调用规则路径
+        call_rules: vec![CallRule { kind: "call", callee_field: None }],
+        // Elixir 的 alias/import/use/require 也是 call 节点，不走 import 路径
+        // （Python parser 的 _extract_imports 专门处理，这里留空，由 Python 端补充）
+        import_kinds: vec![],
+        skip_kinds: vec![],
+    }
+}
+
+fn hcl_config() -> LangConfig {
+    // HCL AST 特殊性：所有顶层块统一为 kind="block"，块类型由首个 identifier 子节点
+    // 文本决定（resource/provider/variable/output/module/data/locals/terraform）。
+    // 用 SymbolRule.kind_from_child_text 按 identifier 文本映射 sym_kind。
+    // name 用 HclLabels 收集 string_lit 标签拼接（resource/data 用 type.name 风格）。
+    LangConfig {
+        lang_id: "hcl",
+        language: Language::from(tree_sitter_hcl::LANGUAGE),
+        symbol_rules: vec![
+            SymbolRule {
+                kind: "block",
+                name: NameStrategy::HclLabels { fallback: "block" },
+                // sym_kind 是兜底值；实际由 kind_from_child_text 覆盖
+                sym_kind: "block",
+                // HCL block 的 body 子节点用于递归提取 attribute 中的引用（调用关系）
+                body: Some("body"),
+                is_fn: false,
+                dynamic_kind: vec![],
+                call_keyword: None,
+                kind_from_child_text: vec![
+                    ("resource", "resource"),
+                    ("provider", "provider"),
+                    ("variable", "variable"),
+                    ("output", "output"),
+                    ("module", "module"),
+                    ("data", "data"),
+                    ("locals", "locals"),
+                    ("terraform", "terraform"),
+                ],
+            },
+        ],
+        // HCL 无传统函数调用；引用关系在 attribute 表达式中（如 value = aws_instance.web.public_ip）
+        // 当前 walk_node 的 CallRule 按 kind 匹配，不适用于 attribute。
+        // Python parser 的 _extract_refs_from_expression 专门处理，这里留空，
+        // 由 Python 端补充提取（或后续扩展框架支持 attribute 引用）
+        call_rules: vec![],
+        // HCL 无 import 概念
+        import_kinds: vec![],
+        skip_kinds: vec![],
+    }
+}
+
 // ============================================
 // 通用 parser
 // ============================================
@@ -816,45 +1023,74 @@ fn walk_node(
             continue;
         }
 
-        // 1. 检查符号规则
-        if let Some(rule) = config.symbol_rules.iter().find(|r| r.kind == kind) {
-            if let Some(name) = extract_name(&child, source, &rule.name) {
-                // 动态 kind 处理（Go 的 type_spec → struct/interface）
-                let actual_kind = if !rule.dynamic_kind.is_empty() {
-                    rule.dynamic_kind.iter()
-                        .find_map(|(child_kind, sym_kind)| {
-                            if find_child(&child, child_kind).is_some() {
-                                Some(*sym_kind)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(rule.sym_kind)
-                } else {
-                    rule.sym_kind
-                };
+        // 1. 检查符号规则（kind + call_keyword 都匹配）
+        //    Elixir 的 defmodule/def/defp 等都是 call 节点，需按首个 identifier 文本过滤
+        let rule_match = config.symbol_rules.iter().find(|r| {
+            if r.kind != kind { return false; }
+            if let Some(kw) = r.call_keyword {
+                // Elixir：要求首个 identifier 子节点文本等于 kw
+                return find_child(&child, "identifier")
+                    .map(|n| node_text(&n, source) == kw)
+                    .unwrap_or(false);
+            }
+            true
+        });
+        if let Some(rule) = rule_match {
+            // 计算 actual_kind：优先 kind_from_child_text（HCL），其次 dynamic_kind（Go），兜底 sym_kind
+            // kind_from_child_text 配置但未匹配时返回 None（HCL：未知块类型，跳过符号提取）
+            let actual_kind_opt: Option<&'static str> = if !rule.kind_from_child_text.is_empty() {
+                find_child(&child, "identifier").and_then(|n| {
+                    let text = node_text(&n, source);
+                    rule.kind_from_child_text.iter()
+                        .find_map(|(txt, kind)| if text == *txt { Some(*kind) } else { None })
+                })
+                // 注意：不设 unwrap_or(rule.sym_kind)，匹配失败返回 None
+            } else if !rule.dynamic_kind.is_empty() {
+                // Go：按子节点 kind 映射，匹配失败兜底 sym_kind
+                Some(rule.dynamic_kind.iter()
+                    .find_map(|(child_kind, sym_kind)| {
+                        if find_child(&child, child_kind).is_some() {
+                            Some(*sym_kind)
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(rule.sym_kind))
+            } else {
+                Some(rule.sym_kind)
+            };
 
-                let qualified = make_qualified(module_path, parent_qualified, &name);
-                let sym = make_symbol(&child, source, module_path, &name, &qualified, actual_kind);
-                symbols.push(sym);
+            if let Some(actual_kind) = actual_kind_opt {
+                if let Some(name) = extract_name(&child, source, &rule.name) {
+                    let qualified = make_qualified(module_path, parent_qualified, &name);
+                    let sym = make_symbol(&child, source, module_path, &name, &qualified, actual_kind);
+                    symbols.push(sym);
 
-                // 设置新的调用上下文
-                let (new_fn, new_qual) = if rule.is_fn {
-                    (name.as_str(), qualified.as_str())
-                } else {
-                    (current_fn, current_qualified)
-                };
+                    // 设置新的调用上下文
+                    let (new_fn, new_qual) = if rule.is_fn {
+                        (name.as_str(), qualified.as_str())
+                    } else {
+                        (current_fn, current_qualified)
+                    };
 
-                // 递归进 body
-                if let Some(body_kind) = rule.body {
-                    if let Some(body) = find_child(&child, body_kind) {
-                        walk_node(
-                            &body, source, config, module_path, &qualified,
-                            new_fn, new_qual,
-                            symbols, calls, imports,
-                        );
+                    // 递归进 body
+                    if let Some(body_kind) = rule.body {
+                        if let Some(body) = find_child(&child, body_kind) {
+                            walk_node(
+                                &body, source, config, module_path, &qualified,
+                                new_fn, new_qual,
+                                symbols, calls, imports,
+                            );
+                        }
                     }
                 }
+            } else {
+                // kind_from_child_text 未匹配（HCL：未知块类型），仍递归子节点提取嵌套
+                walk_node(
+                    &child, source, config, module_path, parent_qualified,
+                    current_fn, current_qualified,
+                    symbols, calls, imports,
+                );
             }
             continue;
         }
@@ -951,6 +1187,52 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
                 Some(format!("{} for {}", trait_name, type_name))
             } else {
                 Some(type_name)
+            }
+        }
+        NameStrategy::CallArgName { container, child_kind, name_kind } => {
+            // Elixir 专用：在 container（如 "arguments"）内找首个 child_kind 节点，
+            // 再提取该节点内（或自身）首个 name_kind 子节点的文本
+            let container_node = find_child(node, container)?;
+            let mut cursor = container_node.walk();
+            for inner in container_node.named_children(&mut cursor) {
+                if inner.kind() != *child_kind { continue; }
+                if *child_kind == *name_kind {
+                    // defmodule：container="arguments", child_kind="alias", name_kind="alias"
+                    // alias 节点本身就是名称，直接取其文本
+                    return Some(node_text(&inner, source).to_string());
+                }
+                // def/defp：container="arguments", child_kind="call", name_kind="identifier"
+                // 在 call 节点内找 identifier 子节点
+                if let Some(name_child) = find_child(&inner, name_kind) {
+                    return Some(node_text(&name_child, source).to_string());
+                }
+            }
+            None
+        }
+        NameStrategy::HclLabels { fallback } => {
+            // HCL 专用：收集所有 string_lit 子节点的 template_literal 文本作为标签
+            // - 2+ 标签：name = "labels[0].labels[1]"（resource/data 风格，如 aws_instance.web）
+            // - 1 标签：name = "labels[0]"
+            // - 0 标签：name = fallback
+            let mut labels: Vec<String> = Vec::new();
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                if child.kind() == "string_lit" {
+                    // string_lit 内有 template_literal 子节点（或直接是字符串内容）
+                    if let Some(tpl) = find_child(&child, "template_literal") {
+                        labels.push(node_text(&tpl, source).to_string());
+                    } else {
+                        // 兜底：直接取 string_lit 整体文本并去引号
+                        let raw = node_text(&child, source);
+                        let stripped = raw.trim_matches('"').to_string();
+                        labels.push(stripped);
+                    }
+                }
+            }
+            match labels.len() {
+                0 => Some((*fallback).to_string()),
+                1 => Some(labels[0].clone()),
+                _ => Some(format!("{}.{}", labels[0], labels[1])),
             }
         }
     }
