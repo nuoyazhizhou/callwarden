@@ -1,7 +1,8 @@
 //! P31: 多语言 parser 框架
 //!
 //! 配置驱动的 tree-sitter parser，统一 walk 逻辑提取符号 + 调用 + import。
-//! 支持 11 种语言（C 保留专用 parser，Kotlin/Swift/Elixir/HCL 待后续添加 grammar）。
+//! 支持 13 种语言（C 保留专用 parser；Kotlin/Swift 已补齐；
+//! Elixir/HCL 因 AST 结构特殊保持 Python fallback）。
 //!
 //! 设计原则：
 //! - 每语言一份 LangConfig，配置节点 kind 映射和名称提取策略
@@ -126,6 +127,8 @@ impl LangConfig {
             "scala" => scala_config(),
             "csharp" => csharp_config(),
             "cpp" => cpp_config(),
+            "kotlin" => kotlin_config(),
+            "swift" => swift_config(),
             _ => return None,
         };
         Some(config)
@@ -136,6 +139,7 @@ impl LangConfig {
         vec![
             "python", "rust", "go", "java", "typescript", "javascript",
             "ruby", "php", "scala", "csharp", "cpp",
+            "kotlin", "swift",
         ]
     }
 }
@@ -551,6 +555,95 @@ fn cpp_config() -> LangConfig {
     }
 }
 
+fn kotlin_config() -> LangConfig {
+    LangConfig {
+        lang_id: "kotlin",
+        language: Language::from(tree_sitter_kotlin_ng::LANGUAGE),
+        symbol_rules: vec![
+            // Kotlin 函数声明：function_declaration → identifier + function_body
+            SymbolRule::new(
+                "function_declaration",
+                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
+                "fn", Some("function_body"), true,
+            ),
+            // Kotlin 类声明
+            SymbolRule::new(
+                "class_declaration",
+                NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
+                "class", Some("class_body"), false,
+            ),
+            // Kotlin object 声明（单例对象）
+            SymbolRule::new(
+                "object_declaration",
+                NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
+                "object", Some("class_body"), false,
+            ),
+            // Kotlin 接口声明
+            SymbolRule::new(
+                "interface_declaration",
+                NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
+                "interface", Some("class_body"), false,
+            ),
+        ],
+        // Kotlin 调用：call_expression 无 callee field，从 identifier 提取
+        call_rules: vec![CallRule { kind: "call_expression", callee_field: None }],
+        import_kinds: vec!["import"],
+        skip_kinds: vec![],
+    }
+}
+
+fn swift_config() -> LangConfig {
+    LangConfig {
+        lang_id: "swift",
+        language: Language::from(tree_sitter_swift::LANGUAGE),
+        symbol_rules: vec![
+            // Swift 函数声明
+            SymbolRule::new(
+                "function_declaration",
+                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
+                "fn", Some("function_body"), true,
+            ),
+            // Swift init 声明（构造函数）
+            SymbolRule::new(
+                "init_declaration",
+                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
+                "constructor", Some("function_body"), true,
+            ),
+            // Swift 协议内的方法声明（无方法体）
+            SymbolRule::new(
+                "protocol_function_declaration",
+                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
+                "fn", None, true,
+            ),
+            // Swift 类型声明：tree-sitter-swift 0.7.x 把 class/struct/enum/actor
+            // 统一为 class_declaration（用 declaration_kind 字段区分）。
+            // Rust multilang 框架暂不支持字段值映射，统一标记为 "class"。
+            // name 通过 "name" field 提取（比 ChildByType 更可靠）。
+            SymbolRule::new(
+                "class_declaration",
+                NameStrategy::FieldName("name"),
+                "class", Some("class_body"), false,
+            ),
+            // Swift protocol
+            SymbolRule::new(
+                "protocol_declaration",
+                NameStrategy::FieldName("name"),
+                "protocol", Some("protocol_body"), false,
+            ),
+            // Swift typealias（类型别名）
+            SymbolRule::new(
+                "typealias_declaration",
+                NameStrategy::FieldName("name"),
+                "typealias", None, false,
+            ),
+        ],
+        // Swift 调用：call_expression 有 "function" field
+        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
+        import_kinds: vec!["import_declaration"],
+        skip_kinds: vec![],
+    }
+}
+
 // ============================================
 // 通用 parser
 // ============================================
@@ -871,7 +964,8 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
 fn extract_callee(node: &Node, source: &[u8], field: Option<&str>) -> Option<String> {
     let callee = match field {
         Some(f) => node.child_by_field_name(f)?,
-        None => find_child(node, "identifier")?,
+        None => find_child(node, "identifier")
+            .or_else(|| find_child(node, "simple_identifier"))?,
     };
     Some(node_text(&callee, source).to_string())
 }

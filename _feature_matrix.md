@@ -307,7 +307,7 @@
 | L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ⚠️ 部分 | versions + symbols 写入 DB 后释放 file_results 中的 symbols 数据，调用图构建改为 only_files 模式从 DB 读取符号索引；parse 阶段流式回传（pool.imap）未实现 |
 | L7 | RSS 监控采样修复 | PR | ✅ 已实现 | psutil 优先 + Windows ctypes Psapi.GetProcessMemoryInfo fallback（T3 修复） |
 | L8 | 增量调用图更新（只 resolve 受影响文件） | PR/D3 | ✅ 已实现 | `_build_call_graph_multi_lang` 加 only_files 参数；增量路径符号索引从 DB symbols 表全量读取，calls 只 resolve 变化文件；`_refresh_file_rust`/`_refresh_file_generic` 不再调用 `_collect_all_current_file_results()` 全量加载 |
-| L9 | Rust ParseResultPool 共享内存架构 | PR | ⚠️ 部分 | 4 阶段已实现 3.5：①PoC（`batch_parse_c_files` + Rayon + Arc 共享 grammar）②流式集成（`ParseResultPool` + `batch_parse_files_lang_pool` + `_rust_multilang_parse` 逐个 `get_at` 转 dict）③多语言 11/15（python/rust/go/java/ts/js/ruby/php/scala/csharp/cpp；缺 Kotlin/Swift/Elixir/HCL 4 语言 grammar）④全量接管（`_can_use_rust_parse` + `CW_DISABLE_RUST_PARSE` 开关 + Python 多进程 fallback 链）；C 语言走专用快路径，其他 Rust 支持语言 `>= MP_THRESHOLD(50)` 走流式 pool，小批量走 `parse_file_lang` 单文件 Rust |
+| L9 | Rust ParseResultPool 共享内存架构 | PR | ⚠️ 部分 | 4 阶段已实现 3.5：①PoC（`batch_parse_c_files` + Rayon + Arc 共享 grammar）②流式集成（`ParseResultPool` + `batch_parse_files_lang_pool` + `_rust_multilang_parse` 逐个 `get_at` 转 dict）③多语言 13/15（python/rust/go/java/ts/js/ruby/php/scala/csharp/cpp + Kotlin/Swift 已补齐；Elixir/HCL 因 AST 结构特殊保持 Python fallback）④全量接管（`_can_use_rust_parse` + `CW_DISABLE_RUST_PARSE` 开关 + Python 多进程 fallback 链）；C 语言走专用快路径，其他 Rust 支持语言 `>= MP_THRESHOLD(50)` 走流式 pool，小批量走 `parse_file_lang` 单文件 Rust；test_l9_rust_multilang.py 8 测试验证 |
 | L10 | MCP 工具优化（优化 schema/错误信息/组合工具而非继续加） | D3 | ⚠️ 设计方向 | 讨论结论：195 个工具已够用，应优化组合查询路径而非继续扩功能面 |
 | L11 | Windows 控制台 Unicode bug（cw task show 在 GBK 下崩溃） | D3 | ✅ 已修复 | ensure_utf8_output() 统一到 cli/console.py，三入口复用（T2 修复） |
 | L12 | propose_symbol_id_patch（符号级 patch 带 symbol_id） | WL1 | ✅ 已实现 | MCP 工具 propose_symbol_id_patch（symbol_id + patch + expected_hash + expected_symbol_hash） |
@@ -490,5 +490,5 @@
 2. **中优先级（Phase 4 缺失）**：（H17-H18 diff_callers/diff_callees + compare_snapshots 已实现）
 3. **中优先级（Agent 体验）**：（L1 软门禁已实现：is_task_active + task_context；L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
-5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5（构建上下文感知）、L9 4 语言 grammar 补齐（Kotlin/Swift/Elixir/HCL）
+5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5（构建上下文感知）、L9 Kotlin/Swift 已补齐 Rust 路径（Elixir/HCL 保持 Python fallback）
 6. **可延后**：H12-H13（Git Hook/多语言测试已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
