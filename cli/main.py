@@ -7606,12 +7606,14 @@ def _handle_build_context(args, db):
         activate <WORKSPACE_ID> <HASH>
         delete <WORKSPACE_ID> <HASH>
         import-compile-commands <FILE> <WORKSPACE_ID> [--name NAME] [--activate]
+        resolve <WORKSPACE_ID> <HASH>            计算 resolved_edges（先清旧再写入）
         edges <WORKSPACE_ID> <HASH> [--caller SYM_ID] [--limit N]
     """
     from ..db.db_toolchain import (
         init_toolchain_schema, register_build_context, get_build_context,
         list_build_contexts, set_active_build_context, delete_build_context,
         get_active_build_context, get_resolved_edges, count_resolved_edges,
+        store_resolved_edges, delete_resolved_edges,
     )
 
     parser = argparse.ArgumentParser(
@@ -7655,6 +7657,11 @@ def _handle_build_context(args, db):
     imp.add_argument("--name", default="imported", help="Context name")
     imp.add_argument("--activate", action="store_true", help="Set as active context")
     imp.add_argument("--workspace-root", default="", help="Workspace root for path normalization")
+
+    # resolve（计算 resolved_edges）
+    resolve_p = sub.add_parser("resolve", help="Compute resolved edges for a build context")
+    resolve_p.add_argument("workspace_id", type=int, help="Workspace ID")
+    resolve_p.add_argument("hash", help="Build context hash")
 
     # edges
     edges_p = sub.add_parser("edges", help="List resolved edges for a build context")
@@ -7783,6 +7790,31 @@ def _handle_build_context(args, db):
         if agg.compiler_path:
             print(f"\n  Hint: Detected compiler '{agg.compiler_path}'")
             print(f"  Run: cw toolchain register auto_{int(time.time())} {agg.compiler_path}")
+
+    elif opts.action == "resolve":
+        from ..analyzers.resolved_edges_engine import compute_resolved_edges
+        # 验证 build context 存在
+        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
+        if ctx is None:
+            print(f"Build context not found: {opts.hash}")
+            return False
+        # 计算
+        result = compute_resolved_edges(db.conn, opts.workspace_id, opts.hash)
+        if result.get("error"):
+            print(f"Error: {result['error']}")
+            return False
+        # 先清旧再写入（重建）
+        deleted = delete_resolved_edges(db.conn, opts.workspace_id, opts.hash)
+        stored = store_resolved_edges(
+            db.conn, opts.workspace_id, opts.hash, result["edges"]
+        )
+        print(f"Resolved edges computed for: {ctx.name}")
+        print(f"  source: {result['source']}")
+        print(f"  computed: {result['count']} edges")
+        if result.get("skipped"):
+            print(f"  skipped (caller unmapped): {result['skipped']}")
+        print(f"  deleted old: {deleted}")
+        print(f"  stored: {stored}")
 
     elif opts.action == "edges":
         edges = get_resolved_edges(

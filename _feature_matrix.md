@@ -303,7 +303,7 @@
 | L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ❌ 未实现 | post-commit hook 已有，但破坏性操作拦截（回滚保护）未实现 |
 | L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ⚠️ 概念 | 讨论发现本地 hook 可被 Agent 绕过（--no-verify/改 hook 脚本），结论：只有 CI/远端才能真正强制 |
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
-| L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ⚠️ 部分 | compile_commands.json 解析器 + build-context CLI（7 子命令）+ 8 MCP 工具（toolchain/build_context/resolved_edges 只读查询）；resolved_edges 计算引擎未实现 |
+| L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ⚠️ 部分 | compile_commands.json 解析器 + build-context CLI（8 子命令含 resolve）+ 8 MCP 工具；resolved_edges 计算引擎 MVP 已实现（CAS 模式 4 级解析：exact_match/simple_name_unique/same_file/unresolved + calls 表降级）；include_path/sysroot 解析未实现 |
 | L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ⚠️ 部分 | versions + symbols 写入 DB 后释放 file_results 中的 symbols 数据，调用图构建改为 only_files 模式从 DB 读取符号索引；parse 阶段流式回传（pool.imap）未实现 |
 | L7 | RSS 监控采样修复 | PR | ✅ 已实现 | psutil 优先 + Windows ctypes Psapi.GetProcessMemoryInfo fallback（T3 修复） |
 | L8 | 增量调用图更新（只 resolve 受影响文件） | PR/D3 | ✅ 已实现 | `_build_call_graph_multi_lang` 加 only_files 参数；增量路径符号索引从 DB symbols 表全量读取，calls 只 resolve 变化文件；`_refresh_file_rust`/`_refresh_file_generic` 不再调用 `_collect_all_current_file_results()` 全量加载 |

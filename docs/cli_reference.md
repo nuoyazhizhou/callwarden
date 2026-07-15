@@ -1819,6 +1819,88 @@ cw --delete-workspace my_project
 
 ---
 
+## 构建上下文命令（L5：构建上下文感知）
+
+`cw build-context` 子命令组管理构建上下文（build context），用于区分同一份代码在不同编译配置（debug/release、不同 board、不同 include path）下的调用图。resolved_edges 按 `(workspace_id, build_context_hash)` 隔离，支持多构建配置并存。
+
+### `build-context register <WORKSPACE_ID> <NAME>`
+
+注册一个构建上下文。可选参数：`--flags`（编译选项）、`--defines`（宏定义）、`--includes`（头文件路径）、`--activate`（设为当前活跃上下文）。
+
+```bash
+cw build-context register 1 debug --flags -O0 -g --defines DEBUG=1 --activate
+cw build-context register 1 release --flags -O2 --defines NDEBUG=1
+```
+
+### `build-context list <WORKSPACE_ID>`
+
+列出某工作区下所有构建上下文。
+
+```bash
+cw build-context list 1
+```
+
+### `build-context show <WORKSPACE_ID> <HASH>`
+
+查看指定构建上下文详情（含 flags/defines/includes）。
+
+```bash
+cw build-context show 1 3a2f1b8c
+```
+
+### `build-context activate <WORKSPACE_ID> <HASH>`
+
+将指定构建上下文设为活跃。
+
+```bash
+cw build-context activate 1 3a2f1b8c
+```
+
+### `build-context delete <WORKSPACE_ID> <HASH>`
+
+删除构建上下文（含其 resolved_edges，不会删除 raw_calls/symbols）。
+
+```bash
+cw build-context delete 1 3a2f1b8c
+```
+
+### `build-context import-compile-commands <FILE> <WORKSPACE_ID>`
+
+从 `compile_commands.json` 导入构建上下文（自动提取 flags/defines/includes，按 directory 聚合）。可选 `--name`、`--activate`、`--workspace-root`（路径归一化基准）。
+
+```bash
+cw build-context import-compile-commands build/compile_commands.json 1 --name debug --activate
+```
+
+### `build-context resolve <WORKSPACE_ID> <HASH>`：计算 resolved_edges
+
+计算指定构建上下文的 resolved_edges（**先清旧再写入，可重复执行**）。计算引擎优先走 CAS 模式（从 `cas_raw_calls` 解析，4 级 resolution：`exact_match` → `simple_name_unique` → `same_file` → `unresolved`），降级时从 `calls` 表复制（`resolution_method="from_calls"`）。
+
+```bash
+cw build-context resolve 1 3a2f1b8c
+```
+
+输出示例：
+```
+Resolved edges computed for: debug
+  source: cas
+  computed: 5428 edges
+  skipped (caller unmapped): 12
+  deleted old: 5416
+  stored: 5428
+```
+
+### `build-context edges <WORKSPACE_ID> <HASH>`
+
+查询已计算的 resolved_edges。可选 `--caller SYM_ID`（按 caller 过滤）、`--limit N`（限制返回条数）。
+
+```bash
+cw build-context edges 1 3a2f1b8c --limit 20
+cw build-context edges 1 3a2f1b8c --caller 42
+```
+
+---
+
 ## 常用组合命令示例
 
 ### 示例 1：全量构建并查看状态

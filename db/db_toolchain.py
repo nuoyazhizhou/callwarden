@@ -923,6 +923,7 @@ def get_resolved_edges(
     workspace_id: int,
     build_context_hash: str,
     caller_symbol_id: int = None,
+    limit: int = None,
 ) -> List[ResolvedEdge]:
     """
     查询 resolved edges。
@@ -931,25 +932,27 @@ def get_resolved_edges(
         workspace_id: workspace ID
         build_context_hash: build context 哈希
         caller_symbol_id: 如果指定，只返回该 caller 的 edges
+        limit: 如果指定，限制返回条数
 
     返回：ResolvedEdge 列表
     """
     if caller_symbol_id is not None:
-        rows = conn.execute(
-            """SELECT * FROM resolved_edges
-               WHERE workspace_id = ? AND build_context_hash = ?
-               AND caller_symbol_id = ?
-               ORDER BY call_line""",
-            (workspace_id, build_context_hash, caller_symbol_id),
-        ).fetchall()
+        sql = """SELECT * FROM resolved_edges
+                 WHERE workspace_id = ? AND build_context_hash = ?
+                 AND caller_symbol_id = ?
+                 ORDER BY call_line"""
+        params: list = [workspace_id, build_context_hash, caller_symbol_id]
     else:
-        rows = conn.execute(
-            """SELECT * FROM resolved_edges
-               WHERE workspace_id = ? AND build_context_hash = ?
-               ORDER BY caller_symbol_id, call_line""",
-            (workspace_id, build_context_hash),
-        ).fetchall()
+        sql = """SELECT * FROM resolved_edges
+                 WHERE workspace_id = ? AND build_context_hash = ?
+                 ORDER BY caller_symbol_id, call_line"""
+        params = [workspace_id, build_context_hash]
 
+    if limit is not None and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    rows = conn.execute(sql, params).fetchall()
     return [_row_to_resolved_edge(r) for r in rows]
 
 
