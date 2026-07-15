@@ -394,7 +394,7 @@
 | N5 | Windows WiX MSI（x64/arm64 + Authenticode） | ⚠️ 部分 | callwarden.wxs 完成（perUserOrMachine + 数据保留 Feature + arm64 + PATH Feature），未实际构建 |
 | N6 | macOS universal2 pkg + notarization | ⚠️ 部分 | build_pkg.sh 完成（hardened runtime + entitlements + notarytool + spctl + tar.gz），未实际构建 |
 | N7 | Linux deb 5 子包 + rpm + tar.zst | ⚠️ 部分 | build_packages.sh + 5 control + 14 maintainer scripts + systemd/sysusers/tmpfiles + offline bundle 完成，未实际构建 |
-| N8 | Release CI（enterprise-release.yml 11 门禁） | ❌ 未实施 | 测试已通过（20 passed, 1 skipped），CI workflow 待补全 |
+| N8 | Release CI（enterprise-release.yml 11 门禁） | ⚠️ 部分 | 11 门禁已补全（源码测试→wheels→黑盒→MSI/pkg/deb→安装→N-1 升级→签名→SBOM→staging→批准→production），未上线运行 |
 
 ## O. 基准验证实测数据
 
@@ -472,9 +472,9 @@
 | H. 规划但未实施 | 11 | 1 | 6 | 18 |
 | L. 讨论文档提取 | 9 | 5 | 2 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
-| N. 跨平台打包 | 4 | 3 | 1 | 8 |
+| N. 跨平台打包 | 4 | 4 | 0 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **135** | **12** | **12** | **161** |
+| **总计** | **135** | **13** | **11** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -489,6 +489,6 @@
 1. **高优先级（性能/稳定性）**：（L9 已实现 3.5 阶段，仅缺 4 语言 grammar 补齐，作为低优先级；L6 部分实现：versions 写入后释放 symbols + 调用图从 DB 读取符号索引，parse 阶段流式回传未实现；F12 快照 dump 已实现；F13 索引精简已实施；L7 RSS 监控已修复；L8 增量调用图已实现；K1-K4/K6 daemon 闭合已全部修复）—— **当前无未完成的高优先级性能任务**
 2. **中优先级（Phase 4 缺失）**：（H17-H18 diff_callers/diff_callees + compare_snapshots 已实现）
 3. **中优先级（Agent 体验）**：（L1 软门禁已实现：is_task_active + task_context；L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
-4. **低优先级（打包发布）**：N5-N7 脚本已完成（Windows MSI/macOS pkg/Linux deb 5 子包，未实际构建）；N8 CI workflow 11 门禁待补全
+4. **低优先级（打包发布）**：N5-N7 脚本已完成（Windows MSI/macOS pkg/Linux deb 5 子包，未实际构建）；N8 CI workflow 11 门禁已补全（待上线运行验证）
 5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5（构建上下文感知）、L9 Kotlin/Swift 已补齐 Rust 路径（Elixir/HCL 保持 Python fallback）
 6. **可延后**：H12-H13（Git Hook/多语言测试已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
