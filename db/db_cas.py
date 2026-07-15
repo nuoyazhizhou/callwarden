@@ -54,8 +54,21 @@ def _flock_unlock(fd: int):
             pass
 
 
+# file_generations DDL（共享定义，replicator.py 从此处导入，避免重复维护）
+# 规范：cas-gc-protocol.md §4 / watcher-generation-state-machine.md
+FILE_GENERATIONS_DDL = """CREATE TABLE IF NOT EXISTS file_generations (
+    workspace_id INTEGER NOT NULL,
+    rel_path TEXT NOT NULL,
+    latest_session_id TEXT DEFAULT '',
+    latest_session_epoch INTEGER DEFAULT 0,
+    latest_seq INTEGER DEFAULT 0,
+    latest_seen_generation TEXT DEFAULT '',
+    latest_committed_generation TEXT DEFAULT '',
+    PRIMARY KEY (workspace_id, rel_path)
+);"""
+
 # CAS schema DDL
-CAS_SCHEMA_DDL = """
+CAS_SCHEMA_DDL = f"""
 -- CAS 文件缓存表
 CREATE TABLE IF NOT EXISTS cas_file_cache (
     cas_key TEXT PRIMARY KEY,
@@ -137,16 +150,7 @@ CREATE TABLE IF NOT EXISTS cas_pending_refs (
 -- file_generations 两阶段 CAS（daemon 侧）
 -- 规范：cas-gc-protocol.md §4
 -- 防止 stale manifest commit 和 CAS 投毒
-CREATE TABLE IF NOT EXISTS file_generations (
-    workspace_id INTEGER NOT NULL,
-    rel_path TEXT NOT NULL,
-    latest_session_id TEXT DEFAULT '',
-    latest_session_epoch INTEGER DEFAULT 0,
-    latest_seq INTEGER DEFAULT 0,
-    latest_seen_generation TEXT DEFAULT '',
-    latest_committed_generation TEXT DEFAULT '',
-    PRIMARY KEY (workspace_id, rel_path)
-);
+{FILE_GENERATIONS_DDL}
 """
 
 CAS_INDEX_SQL = """

@@ -2073,6 +2073,6 @@ Call Warden 在 C8 Step #2 中为所有 `--flag` 模式命令添加了 `deprecat
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 195 个工具
+- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 196 个工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署与多容器共享

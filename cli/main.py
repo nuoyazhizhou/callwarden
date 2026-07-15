@@ -45,7 +45,8 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
                 "git", "semgrep",
                 "coverage", "who", "ownership-map",
-                "brief", "map"}
+                "brief", "map",
+                "health-report"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -943,7 +944,8 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
                "callers", "callees", "call-chain", "topo",
                "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
-               "who", "ownership-map", "brief", "map", "stats", "status"}:
+               "who", "ownership-map", "brief", "map", "stats", "status",
+               "health-report"}:
         # 这些查询/分析类子命令均为只读，不写数据库
         return True
     if cmd == "workspace":
@@ -1068,6 +1070,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_refresh(argv, db)
         elif cmd == "stats":
             return _handle_stats(argv, db)
+        elif cmd == "health-report":
+            return _handle_health_report(argv, db)
         elif cmd == "status":
             return _handle_status(argv, db)
         elif cmd == "search":
@@ -5677,6 +5681,125 @@ def _handle_stats(args, db):
     parser.parse_args(args)
     stats = db.get_stats()
     print(json.dumps(stats, indent=2, ensure_ascii=False))
+    return True
+
+
+def _handle_health_report(args, db):
+    """处理 health-report 子命令（项目整体健康报告）
+
+    聚合：基础统计 + 演化热点 + 问题统计 + Token 节省，一眼看清项目健康状态。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw health-report",
+        description="Show project overall health report (stats + hotspots + issues + token savings)",
+    )
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    opts = parser.parse_args(args)
+
+    report: Dict[str, Any] = {}
+
+    # 1. 基础统计
+    try:
+        report["stats"] = db.get_stats()
+    except Exception as e:
+        report["stats"] = {"error": str(e)}
+
+    # 2. 演化热点 Top 5（变更最频繁的符号）
+    try:
+        if hasattr(db, "hotspot_evolution"):
+            report["hotspots"] = db.hotspot_evolution()[:5]
+    except Exception as e:
+        report["hotspots"] = [{"error": str(e)}]
+
+    # 3. 问题统计（Semgrep findings 按 severity 分组）
+    try:
+        if hasattr(db, "get_semgrep_stats"):
+            report["issues"] = db.get_semgrep_stats()
+        else:
+            cur = db.conn.execute(
+                "SELECT severity, COUNT(*) as cnt FROM semgrep_findings GROUP BY severity"
+            )
+            report["issues"] = {row["severity"]: row["cnt"] for row in cur}
+    except Exception as e:
+        report["issues"] = {"error": str(e)}
+
+    # 4. Token 节省摘要
+    try:
+        if hasattr(db, "get_token_savings_report"):
+            report["token_savings"] = db.get_token_savings_report(time_window="30d")
+    except Exception as e:
+        report["token_savings"] = {"error": str(e)}
+
+    if opts.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False, default=str))
+        return True
+
+    # 格式化输出
+    print()
+    cprint("=" * 60, "cyan")
+    cprint("  Call Warden 项目健康报告", "cyan", bold=True)
+    cprint("=" * 60, "cyan")
+    print()
+
+    # 基础统计
+    st = report.get("stats", {})
+    if isinstance(st, dict) and "error" not in st:
+        cprint("  [基础统计]", "yellow", bold=True)
+        print(f"    符号总数:     {st.get('total_symbols', 'N/A')}")
+        print(f"    文件总数:     {st.get('total_files', 'N/A')}")
+        print(f"    调用关系数:   {st.get('total_calls', 'N/A')}")
+        print(f"    语言数:       {st.get('total_languages', st.get('languages', 'N/A'))}")
+        print()
+    else:
+        print(f"  [基础统计] 获取失败: {st.get('error', 'unknown')}")
+        print()
+
+    # 演化热点
+    hs = report.get("hotspots", [])
+    if hs and isinstance(hs, list) and isinstance(hs[0], dict) and "error" not in hs[0]:
+        cprint("  [演化热点 Top 5]（变更最频繁）", "yellow", bold=True)
+        for i, h in enumerate(hs, 1):
+            name = h.get("qualified_name") or h.get("symbol_name") or h.get("name", "?")
+            score = h.get("hotspot_score") or h.get("score", 0)
+            changes = h.get("change_count") or h.get("commits", 0)
+            print(f"    {i}. {name}  (变更 {changes} 次, 热点分 {score:.1f})")
+        print()
+    else:
+        print("  [演化热点] 无数据或获取失败")
+        print()
+
+    # 问题统计
+    iss = report.get("issues", {})
+    if isinstance(iss, dict) and "error" not in iss:
+        cprint("  [静态检查问题]", "yellow", bold=True)
+        total = iss.get("total_findings", 0) if isinstance(iss.get("total_findings"), int) else 0
+        by_sev = iss.get("by_severity", {}) if isinstance(iss.get("by_severity"), dict) else iss
+        if total:
+            print(f"    总数: {total}")
+        if by_sev:
+            for sev, cnt in by_sev.items():
+                print(f"    {sev}: {cnt}")
+        if not total and not by_sev:
+            print("    无问题")
+        print()
+    else:
+        print(f"  [静态检查] 获取失败: {iss.get('error', 'unknown') if isinstance(iss, dict) else iss}")
+        print()
+
+    # Token 节省
+    ts = report.get("token_savings", {})
+    if isinstance(ts, dict) and "error" not in ts:
+        cprint("  [Token 节省（近 30 天）]", "yellow", bold=True)
+        saved = ts.get("total_saved") or ts.get("tokens_saved") or 0
+        calls = ts.get("total_calls") or ts.get("call_count") or 0
+        print(f"    节省 Token:   {saved}")
+        print(f"    MCP 调用数:   {calls}")
+        print()
+    else:
+        print("  [Token 节省] 无数据")
+        print()
+
+    cprint("=" * 60, "cyan")
     return True
 
 

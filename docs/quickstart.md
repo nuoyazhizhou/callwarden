@@ -218,7 +218,7 @@ cw --semgrep-list
 
 ## 4. 启动 MCP Server
 
-MCP（Model Context Protocol）Server 模式让 AI Agent 通过标准协议调用 195 个工具。
+MCP（Model Context Protocol）Server 模式让 AI Agent 通过标准协议调用 196 个工具。
 
 ### 4.1 stdio 模式（默认）
 
@@ -355,6 +355,6 @@ result = mcp.call_tool("revert_edit", {"audit_id": 42})
 ## 6. 下一步
 
 - [CLI 命令参考](cli_reference.md)：了解全部 145+ CLI 命令
-- [MCP 工具参考](mcp_tools.md)：了解全部 195 个 MCP 工具
+- [MCP 工具参考](mcp_tools.md)：了解全部 196 个 MCP 工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署、多容器共享、备份恢复

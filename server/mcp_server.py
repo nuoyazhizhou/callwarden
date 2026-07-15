@@ -3179,6 +3179,25 @@ def create_mcp_server():
             return {"error": str(e)}
 
     @mcp.tool()
+    def get_clone_aware_impact(qualified_name: str, depth: int = 3) -> dict:
+        """克隆感知的变更影响分析（H11）
+
+        在 blast_radius 基础上联动 clone_pairs：源符号的克隆代码变更也会影响相同调用方，
+        因此影响半径应包含克隆符号的影响。
+
+        Args:
+            qualified_name: 源符号限定名
+            depth: BFS 遍历深度（默认 3）
+
+        返回：源符号信息 + 原始影响半径 + 克隆列表 + 每个克隆的影响半径 + 合并后影响总数
+        """
+        try:
+            db = get_db()
+            return db.get_clone_aware_impact(qualified_name, depth)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @mcp.tool()
     def diff_to_symbol(diff_text: str) -> list:
         """将 git diff 映射到受影响符号
 

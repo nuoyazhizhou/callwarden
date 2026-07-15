@@ -837,3 +837,138 @@ class ImpactMixin:
                 "high_risk_callers": high_risk_callers,
             },
         }
+
+    # ------------------------------------------------------------------
+    # 克隆感知影响分析（Clone-Aware Impact）
+    # ------------------------------------------------------------------
+
+    def get_clone_aware_impact(
+        self, qualified_name: str, depth: int = 3
+    ) -> Dict[str, Any]:
+        """克隆感知的变更影响分析（H11）
+
+        在 blast_radius 基础上联动 clone_pairs 表：当源符号有克隆代码时，
+        克隆代码的变更也会影响相同的调用方，因此影响半径应包含克隆符号的影响。
+
+        实现思路：
+        1. 查找源符号的 symbol_hash 和 symbol_id
+        2. 调用 blast_radius 获取原符号的影响半径
+        3. 调用 list_clones(symbol_id) 获取克隆对
+        4. 对每个克隆符号，调用 blast_radius 获取其影响半径
+        5. 合并返回，标注哪些影响来自克隆
+
+        Args:
+            qualified_name: 源符号限定名
+            depth: BFS 遍历深度（默认 3）
+
+        Returns:
+            {
+                "source_symbol": 源符号信息,
+                "original_blast_radius": 原符号影响半径,
+                "clones": [克隆符号信息列表],
+                "clone_blast_radii": [每个克隆的影响半径],
+                "total_impacted_with_clones": 合并后影响符号总数,
+            }
+        """
+        ws_id = self._get_active_workspace_id()
+
+        # 1. 查找源符号
+        cur = self.conn.execute(
+            """
+            SELECT s.id, s.symbol_hash, s.qualified_name, s.name, s.module_path,
+                   s.kind, fi.rel_path
+            FROM symbols s
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND s.qualified_name = ?
+            LIMIT 1
+            """,
+            (ws_id, qualified_name),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {
+                "source_symbol": "",
+                "error": f"符号不存在: {qualified_name}",
+            }
+
+        source = dict(row)
+        symbol_id = source["id"]
+        symbol_hash = source["symbol_hash"]
+
+        # 2. 原符号影响半径
+        original_radius = self.blast_radius(symbol_hash, depth=depth)
+
+        # 3. 查找克隆对
+        clone_impacts: List[Dict[str, Any]] = []
+        clone_infos: List[Dict[str, Any]] = []
+        if hasattr(self, "list_clones"):
+            clones = self.list_clones(symbol_id=symbol_id, limit=50)
+            for c in clones:
+                # 确定克隆符号是 symbol_a 还是 symbol_b
+                if c.get("symbol_a_qualified") == qualified_name:
+                    clone_qn = c.get("symbol_b_qualified", "")
+                    clone_file = c.get("file_b", "")
+                    clone_line = c.get("symbol_b_line", 0)
+                else:
+                    clone_qn = c.get("symbol_a_qualified", "")
+                    clone_file = c.get("file_a", "")
+                    clone_line = c.get("symbol_a_line", 0)
+
+                clone_infos.append({
+                    "qualified_name": clone_qn,
+                    "file": clone_file,
+                    "line": clone_line,
+                    "similarity": c.get("similarity", 0),
+                    "clone_type": c.get("clone_type", 0),
+                })
+
+                # 查找克隆符号的 hash，计算其 blast_radius
+                if clone_qn:
+                    cur2 = self.conn.execute(
+                        """
+                        SELECT s.symbol_hash
+                        FROM symbols s
+                        JOIN file_instances fi ON s.file_instance_id = fi.id
+                        WHERE fi.workspace_id = ? AND s.qualified_name = ?
+                        LIMIT 1
+                        """,
+                        (ws_id, clone_qn),
+                    )
+                    clone_row = cur2.fetchone()
+                    if clone_row:
+                        clone_radius = self.blast_radius(clone_row["symbol_hash"], depth=depth)
+                        clone_impacts.append({
+                            "clone_symbol": clone_qn,
+                            "blast_radius": clone_radius,
+                        })
+
+        # 4. 合并影响符号总数（去重）
+        all_impacted = set()
+        for layer in original_radius.get("layers", []):
+            for sym in layer.get("symbols", []):
+                if isinstance(sym, dict):
+                    all_impacted.add(sym.get("qualified_name", ""))
+                elif isinstance(sym, str):
+                    all_impacted.add(sym)
+        for ci in clone_impacts:
+            for layer in ci.get("blast_radius", {}).get("layers", []):
+                for sym in layer.get("symbols", []):
+                    if isinstance(sym, dict):
+                        all_impacted.add(sym.get("qualified_name", ""))
+                    elif isinstance(sym, str):
+                        all_impacted.add(sym)
+        all_impacted.discard("")
+
+        return {
+            "source_symbol": {
+                "qualified_name": source["qualified_name"],
+                "name": source["name"],
+                "kind": source["kind"],
+                "file": source["rel_path"],
+                "symbol_hash": symbol_hash,
+            },
+            "original_blast_radius": original_radius,
+            "clones": clone_infos,
+            "clone_blast_radii": clone_impacts,
+            "total_impacted_with_clones": len(all_impacted),
+        }

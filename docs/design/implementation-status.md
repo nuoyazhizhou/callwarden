@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-15 · Schema v36 · 37 Mixin · 195 MCP 工具 · 16 语言
+> 最后更新：2026-07-15 · Schema v36 · 37 Mixin · 196 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -12,7 +12,7 @@
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
 | Schema 版本 | v36  | v3→v36 版本化迁移，事务化执行                                                             |
 | Mixin 模块  | 37   | CodeGraphBase + 36 个功能 Mixin                                                           |
-| MCP 工具    | 195  | FastMCP @mcp.tool() 注册                                                                  |
+| MCP 工具    | 196  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
 | 解析器文件  | 16   | tree-sitter 多语言                                                                        |
 | 测试套件    | 8    | P0/P1/P2/P3/csharp_ruby/p1_p3/stress/fuzz/gc                                              |

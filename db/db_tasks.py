@@ -713,8 +713,28 @@ class TaskMixin:
                 source = self._read_symbol_source_for_job(sym)
                 if source is not None:
                     job["context"]["target_source"] = source
-                job["context"]["callers"] = (sym.get("called_by") or [])[:8]
-                job["context"]["callees"] = (sym.get("calls_out") or [])[:8]
+                # 调用方/被调用方摘要：精简字段 + 总数（让 Agent 知道是否还有更多）
+                _callers_all = sym.get("called_by") or []
+                _callees_all = sym.get("calls_out") or []
+                job["context"]["callers_total"] = len(_callers_all)
+                job["context"]["callees_total"] = len(_callees_all)
+                job["context"]["callers"] = [
+                    {
+                        "caller": c.get("caller_name", ""),
+                        "file": c.get("caller_file", ""),
+                        "call_line": c.get("call_line", 0),
+                    }
+                    for c in _callers_all[:8]
+                ]
+                job["context"]["callees"] = [
+                    {
+                        "callee": c.get("target_name", ""),
+                        "module": c.get("target_module", ""),
+                        "file": c.get("target_file", ""),
+                        "call_line": c.get("call_line", 0),
+                    }
+                    for c in _callees_all[:8]
+                ]
                 job["allowed_edit_scope"] = {
                     "type": "symbol",
                     "file_path": target_file,

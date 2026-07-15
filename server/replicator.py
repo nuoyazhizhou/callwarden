@@ -21,6 +21,12 @@ from typing import List, Optional, Dict, Any
 
 from server.staging_log import StagingLog, StagingEntry
 
+# file_generations DDL 从 db_cas.py 导入（K6 去重，避免两处不一致）
+# 延迟导入避免触发 db 包的完整初始化链
+def _get_file_generations_ddl() -> str:
+    from db.db_cas import FILE_GENERATIONS_DDL
+    return FILE_GENERATIONS_DDL
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,24 +53,15 @@ CREATE TABLE IF NOT EXISTS workspace_active_session (
     active_session_id TEXT NOT NULL,
     active_session_epoch INTEGER NOT NULL
 );
-
--- file_generations：per-file 消息去重 + CAS 两阶段提交
-CREATE TABLE IF NOT EXISTS file_generations (
-    workspace_id INTEGER NOT NULL,
-    rel_path TEXT NOT NULL,
-    latest_session_id TEXT DEFAULT '',
-    latest_session_epoch INTEGER DEFAULT 0,
-    latest_seq INTEGER DEFAULT 0,
-    latest_seen_generation TEXT DEFAULT '',
-    latest_committed_generation TEXT DEFAULT '',
-    PRIMARY KEY (workspace_id, rel_path)
-);
 """
+
+# file_generations DDL 从 db_cas.py 延迟导入（K6 去重，避免两处不一致）
 
 
 def init_session_schema(conn: sqlite3.Connection):
-    """初始化 session 管理 schema。"""
+    """初始化 session 管理 schema（含 file_generations，DDL 从 db_cas.py 共享导入）。"""
     conn.executescript(SESSION_SCHEMA_DDL)
+    conn.executescript(_get_file_generations_ddl())
     conn.commit()
 
 
