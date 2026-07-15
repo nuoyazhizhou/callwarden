@@ -200,7 +200,7 @@
 | F10 | P29 FTS 独立重建命令 | PP | ✅ 已实现 | v31 迁移含 rebuild 命令 |
 | F11 | P30 并行 INSERT | PP | ❌ 未实施 | 仅停留在计划阶段 |
 | F12 | P5 冷启动快照 dump/load（二进制 mmap） | BR3 | ❌ 未实施 | 预期 GraphStore 加载 7.83s → <1s；dump 4 文件（symbols/calls/indices/metadata） |
-| F13 | P6 calls 表索引精简（删 2/3 calls 索引） | BR3 | ❌ 未实施 | GraphStore 接管后 idx_calls_callee/idx_calls_caller 可删，建索引 -52% |
+| F13 | P6 calls 表索引精简（删 2/3 calls 索引） | BR3 | ✅ 已实施 | v32 删除 idx_calls_callee（GraphStore CSR 覆盖 get_callers）；v33 新增 idx_calls_callee_id_resolved 部分索引；保留 idx_calls_caller（SQL 降级路径） |
 | F14 | P12 延迟建索引 + 分段 commit | BR2 | ✅ 已实施 | 10M 符号 19.5min（vs 基线 2h+，8.1x 加速）；WAL TRUNCATE 全生效 |
 | F15 | P13 cache_size=256MB + P15 page_size=8KB | BR4 | ✅ 已实施 | 联合 17.8% 加速（90.60s → 74.52s @1M）；cache 收益递减点在 256MB |
 | F16 | P7 CallGraphBuildContext 内存批量写入 | WL2 | ✅ 已实施 | call resolve+write 42.23s → 0.35s（120x）；内存算完再批量落库 |
@@ -261,10 +261,10 @@
 | H4 | Bootstrap 自举闭环 | BC | ✅ 已实现 | workspace_scan_runs 表 + db_bootstrap.py(987行) + bootstrap_status MCP + capture-diff |
 | H5 | 集成测试全流程 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H6 | 千万级符号性能验证 | RP | ❌ 未实施 | 1M 已测，10M 未测 |
-| H7 | AST 缓存激活（B2） | RP | ❌ 未实施 | 所有 checklist 未勾选 |
+| H7 | AST 缓存激活（B2） | RP | ⚠️ 部分 | file_versions.ast_cache 字段/读写方法/内存层已就位；`_read_ast_cache` 未接入 refresh_file 决策路径；test_incremental_parse.py 覆盖读写 |
 | H8 | 统一项目健康报告 cw health-report | RP | ✅ 已实现 | cli/main.py `_handle_health_report` 聚合 stats + hotspots + issues + token_savings |
 | H9 | MCP Server 完整测试 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
-| H10 | Clone Detection LSH 增强（B1） | RP | ❌ 未实施 | 所有 checklist 未勾选 |
+| H10 | Clone Detection LSH 增强（B1） | RP | ✅ 已实现 | 3-gram shingle + _MAX_BUCKET_SIZE=200 + LSH(8 bands, 16 rows) + 降级策略 + 稳定 hash 全部就位；test_phase7_minhash_stable.py 覆盖稳定性；缺召回率/精确率基准测试 |
 | H11 | Clone Detection 影响分析联动 | RP | ✅ 已实现 | db_impact.py `get_clone_aware_impact` + MCP 注册（195→196） |
 | H12 | 扩展 Git Hook 到 AI CLI IDE | RP | ❌ 未实施 | 所有 checklist 未勾选 |
 | H13 | 15 种语言开源项目测试 | RP | ❌ 未实施 | 所有 checklist 未勾选 |
@@ -310,7 +310,7 @@
 | L9 | Rust ParseResultPool 共享内存架构 | PR | ❌ 未实现 | 4 阶段设计：PoC→流式集成→多语言→全量接管；Rayon 并行 + Arc 共享 grammar + PyO3 零拷贝 |
 | L10 | MCP 工具优化（优化 schema/错误信息/组合工具而非继续加） | D3 | ⚠️ 设计方向 | 讨论结论：195 个工具已够用，应优化组合查询路径而非继续扩功能面 |
 | L11 | Windows 控制台 Unicode bug（cw task show 在 GBK 下崩溃） | D3 | ✅ 已修复 | ensure_utf8_output() 统一到 cli/console.py，三入口复用（T2 修复） |
-| L12 | propose_symbol_id_patch（符号级 patch 带 symbol_id） | WL1 | ❌ 未实现 | 讨论提出：传入 symbol_id + patch + expected_hash，自动 diff+审计+refresh |
+| L12 | propose_symbol_id_patch（符号级 patch 带 symbol_id） | WL1 | ✅ 已实现 | MCP 工具 propose_symbol_id_patch（symbol_id + patch + expected_hash + expected_symbol_hash） |
 | L13 | work_next_job 返回完整上下文（源码+调用方+风险+patch 范围） | WL1 | ✅ 已实现 | db_tasks.py 增强 callers/callees 摘要 + callers_total/callees_total |
 | L14 | 真懒加载 parser（按语言 import 而非聚合入口） | WL2 | ✅ 已实现 | parsers/__init__.py `__getattr__` 模块级懒加载 + `create_parser` 按需 import |
 | L15 | 分阶段计时日志（scan/parse/symbol/call/depth/FTS/GC） | WL2 | ✅ 已实现 | perf 脚本已输出阶段耗时分解 |
@@ -467,14 +467,14 @@
 | C. 任务编排 + Agent OS | 11 | 0 | 0 | 11 |
 | D. 向量搜索 + RAG + LSP + 跨仓库 | 8 | 0 | 0 | 8 |
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
-| F. 性能优化 | 15 | 1 | 3 | 19 |
+| F. 性能优化 | 16 | 1 | 2 | 19 |
 | G. Enterprise Daemon | 26 | 4 | 2 | 32+ |
-| H. 规划但未实施 | 6 | 0 | 12 | 18 |
-| L. 讨论文档提取 | 6 | 3 | 7 | 16 |
+| H. 规划但未实施 | 7 | 1 | 10 | 18 |
+| L. 讨论文档提取 | 7 | 3 | 6 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 0 | 4 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **124** | **7** | **28** | **161** |
+| **总计** | **127** | **8** | **24** | **161** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -491,4 +491,4 @@
 3. **中优先级（Agent 体验）**：L1（MCP 门禁）、L12（symbol_id patch）（L4 file_read 赋能 / L11 Windows Unicode / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N8（Windows/macOS/Linux/CI 跨平台构建）
 5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存）、H9（MCP 测试）、L5（构建上下文感知）
-6. **可延后**：H10、H12-H13（Clone LSH 增强/Git Hook/多语言测试；H11 已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
+6. **可延后**：H12-H13（Git Hook/多语言测试；H11 已实现；H10 已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
