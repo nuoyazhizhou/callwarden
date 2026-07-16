@@ -4672,8 +4672,12 @@ def _ensure_semgrep_rules_cache() -> None:
 
     semgrep --config p/default 首次调用会从 registry 下载规则到本地缓存
     （~/.cache/semgrep/ 或 %LOCALAPPDATA%\\semgrep\\），可能耗时数十秒。
-    本函数在 MCP 启动时检查缓存是否存在，缺失则启动后台线程下载，
-    不阻塞 MCP Server 启动和后续命令执行。
+
+    多用户场景查找顺序：
+    1. 系统级共享缓存 /var/lib/callwarden/semgrep_rules/（root 预下载，只读）
+       → 有则复制到用户级 ~/.cache/semgrep/（一次性复制，后续直接用）
+    2. 用户级缓存 ~/.cache/semgrep/ 已存在 → 直接用
+    3. 都没有 → 后台启动 semgrep --validate 下载到用户级
 
     安全策略：
     - 完全非阻塞：Popen 启动子进程 + 后台线程 wait(timeout) 监控
@@ -4685,7 +4689,13 @@ def _ensure_semgrep_rules_cache() -> None:
     import shutil
     import subprocess
     import threading
-    import time
+
+    # 导入共享缓存配置
+    try:
+        from config import SYSTEM_SEMGREP_RULES_DIR, is_system_cache_available
+    except ImportError:
+        SYSTEM_SEMGREP_RULES_DIR = ""
+        is_system_cache_available = lambda: False
 
     semgrep_path = shutil.which("semgrep")
     if not semgrep_path:
@@ -4700,9 +4710,48 @@ def _ensure_semgrep_rules_cache() -> None:
         if os.path.isdir(win_cache):
             cache_dir = win_cache  # Windows 缓存已存在，无需预下载
 
-    # 缓存已存在，跳过预下载（semgrep CLI 会自动管理缓存更新）
+    # 用户级缓存已存在且非空，直接用（semgrep CLI 会自动管理缓存更新）
     if os.path.isdir(cache_dir) and os.listdir(cache_dir):
         return
+
+    # 1. 检查系统级共享缓存是否可用（root 预下载）
+    # 有则复制到用户级缓存（一次性操作，后续直接用用户级）
+    if is_system_cache_available():
+        print(
+            t(
+                "cli.messages.semgrep_rules_copy_from_system",
+                default="[Semgrep] Copying rules from system cache to user cache...",
+            ),
+            file=sys.stderr,
+        )
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            import shutil as _shutil
+            for item in os.listdir(SYSTEM_SEMGREP_RULES_DIR):
+                src = os.path.join(SYSTEM_SEMGREP_RULES_DIR, item)
+                dst = os.path.join(cache_dir, item)
+                if os.path.isdir(src):
+                    _shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    _shutil.copy2(src, dst)
+            print(
+                t(
+                    "cli.messages.semgrep_rules_copy_ok",
+                    default="[Semgrep] Rules copied from system cache. Ready for scanning.",
+                ),
+                file=sys.stderr,
+            )
+            return  # 复制完成，无需下载
+        except (OSError, PermissionError) as e:
+            print(
+                t(
+                    "cli.messages.semgrep_rules_prefetch_skip",
+                    default="[Semgrep] Failed to copy from system cache: {error}. Will download on first scan.",
+                    error=str(e),
+                ),
+                file=sys.stderr,
+            )
+            # 复制失败，继续走下载流程
 
     # 检查缓存目录的父目录是否可写（semgrep 会创建缓存目录）
     cache_parent = os.path.dirname(cache_dir) or os.path.expanduser("~")

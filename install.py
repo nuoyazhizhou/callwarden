@@ -200,6 +200,13 @@ class CallWardenInstaller:
         ~/.cache/semgrep/，可能导致首次扫描卡顿数十秒。
         本方法在安装完成后启动后台线程下载规则，不阻塞安装流程。
 
+        多用户场景：
+        - root 安装（系统级）：下载到 /var/lib/callwarden/semgrep_rules/，
+          设置 755 权限供所有用户只读共享
+        - 普通用户安装（pip install --user）：下载到 ~/.cache/semgrep/，
+          仅当前用户可用
+        - 普通用户运行时：优先用系统级共享缓存，缺失才下载到用户级
+
         策略：
         1. 检查 semgrep CLI 是否可用 + 缓存目录可写权限
         2. Popen 启动子进程 + 后台线程 wait(timeout) 监控
@@ -208,6 +215,7 @@ class CallWardenInstaller:
         """
         import shutil
         import threading
+        from config import SYSTEM_SEMGREP_RULES_DIR, is_system_cache_available
 
         semgrep_path = shutil.which("semgrep")
         if not semgrep_path:
@@ -223,21 +231,40 @@ class CallWardenInstaller:
         if not semgrep_path:
             return  # semgrep 未安装，跳过
 
-        # 检查缓存目录的父目录是否可写（semgrep 会创建缓存目录）
-        # Linux/Mac: ~/.cache/semgrep/  Windows: %LOCALAPPDATA%\\semgrep\\
-        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "semgrep")
-        if not os.path.isdir(cache_dir):
-            win_cache = os.path.join(os.environ.get("LOCALAPPDATA", ""), "semgrep")
-            if os.path.isdir(win_cache):
-                cache_dir = win_cache  # Windows 缓存已存在，无需预下载
+        # 判断当前用户是否为 root（Linux/Mac）以决定下载目标
+        # root 安装到系统级共享路径，普通用户安装到用户级
+        is_root = os.name != "nt" and os.geteuid() == 0 if hasattr(os, "geteuid") else False
 
-        # 缓存已存在，跳过预下载
-        if os.path.isdir(cache_dir) and os.listdir(cache_dir):
+        if is_root and SYSTEM_SEMGREP_RULES_DIR:
+            # root 安装：下载到系统级共享路径 /var/lib/callwarden/semgrep_rules/
+            target_cache_dir = SYSTEM_SEMGREP_RULES_DIR
+            cache_type = "system"
+        else:
+            # 普通用户安装：下载到用户级缓存 ~/.cache/semgrep/
+            target_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "semgrep")
+            cache_type = "user"
+
+        # 系统级缓存已存在且非空，跳过预下载
+        if cache_type == "system" and is_system_cache_available():
             return
 
+        # 用户级缓存已存在且非空，跳过预下载
+        if cache_type == "user":
+            user_cache = os.path.join(os.path.expanduser("~"), ".cache", "semgrep")
+            if os.path.isdir(user_cache) and os.listdir(user_cache):
+                return
+            # Windows: 检查 %LOCALAPPDATA%/semgrep/
+            win_cache = os.path.join(os.environ.get("LOCALAPPDATA", ""), "semgrep")
+            if win_cache and os.path.isdir(win_cache) and os.listdir(win_cache):
+                return
+
         # 检查缓存父目录是否存在且可写
-        cache_parent = os.path.dirname(cache_dir) or os.path.expanduser("~")
+        cache_parent = os.path.dirname(target_cache_dir) or os.path.expanduser("~")
         try:
+            # root 安装时创建系统级目录
+            if cache_type == "system" and not os.path.isdir(cache_parent):
+                os.makedirs(cache_parent, exist_ok=True)
+
             if not os.path.isdir(cache_parent):
                 print(t("cli.messages.install_semgrep_prefetch_skip",
                         default="[Semgrep] Cache parent dir not exists: {dir}. Skip prefetch.",
@@ -255,7 +282,8 @@ class CallWardenInstaller:
             return
 
         print(t("cli.messages.install_semgrep_prefetch",
-                default="[Semgrep] Starting background rule cache prefetch (p/default, non-blocking, 120s timeout)..."))
+                default="[Semgrep] Starting background rule cache prefetch ({cache_type} cache, p/default, non-blocking, 120s timeout)...",
+                cache_type=cache_type))
 
         # Popen 启动子进程
         try:
@@ -288,13 +316,45 @@ class CallWardenInstaller:
             return
 
         print(t("cli.messages.install_semgrep_prefetch_scheduled",
-                default="[Semgrep] Background prefetch scheduled (pid={pid}). Rules will be ready for first scan.",
-                pid=proc.pid))
+                default="[Semgrep] Background prefetch scheduled (pid={pid}, cache={cache_type}). Rules will be ready for first scan.",
+                pid=proc.pid, cache_type=cache_type))
 
         # 后台线程监控子进程，超时则 kill
-        def _monitor_timeout(p, timeout=120):
+        def _monitor_timeout(p, timeout=120, cache_dir=None, is_system=False):
             try:
                 p.wait(timeout=timeout)
+                # root 安装完成后，把规则从 root 用户级缓存复制到系统级共享路径
+                if is_system and cache_dir:
+                    root_user_cache = os.path.join(
+                        os.path.expanduser("~"), ".cache", "semgrep"
+                    )
+                    if os.path.isdir(root_user_cache) and os.listdir(root_user_cache):
+                        try:
+                            # 创建系统级目录
+                            os.makedirs(cache_dir, exist_ok=True)
+                            # 复制规则文件到系统级路径
+                            import shutil as _shutil
+                            for item in os.listdir(root_user_cache):
+                                src = os.path.join(root_user_cache, item)
+                                dst = os.path.join(cache_dir, item)
+                                if os.path.isdir(src):
+                                    _shutil.copytree(src, dst, dirs_exist_ok=True)
+                                else:
+                                    _shutil.copy2(src, dst)
+                            # 设置系统级缓存目录权限为 755（所有用户可读）
+                            os.chmod(cache_dir, 0o755)
+                            for root_dir, dirs, files in os.walk(cache_dir):
+                                for d in dirs:
+                                    os.chmod(os.path.join(root_dir, d), 0o755)
+                                for f in files:
+                                    os.chmod(os.path.join(root_dir, f), 0o644)
+                            print(t("cli.messages.install_semgrep_prefetch_system_ok",
+                                    default="[Semgrep] System-level shared cache ready at {dir}. All users can use it.",
+                                    dir=cache_dir))
+                        except (OSError, PermissionError) as e:
+                            print(t("cli.messages.install_semgrep_prefetch_skip",
+                                    default="[Semgrep] Failed to copy rules to system cache: {error}.",
+                                    error=str(e)))
             except subprocess.TimeoutExpired:
                 try:
                     if os.name == "nt":
@@ -317,7 +377,9 @@ class CallWardenInstaller:
                 pass
 
         monitor_thread = threading.Thread(
-            target=_monitor_timeout, args=(proc, 120), daemon=True,
+            target=_monitor_timeout,
+            args=(proc, 120, target_cache_dir if cache_type == "system" else None, cache_type == "system"),
+            daemon=True,
         )
         monitor_thread.start()
 

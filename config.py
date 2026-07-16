@@ -24,6 +24,66 @@ CALLWARDEN_DIR = os.path.join(USER_HOME, ".callwarden")
 # 向后兼容的默认 DB_PATH（推荐使用 get_project_db_path 按项目隔离）
 DB_PATH = os.path.join(CALLWARDEN_DIR, "callwarden.db")
 
+# 系统级共享缓存目录（root 安装时预下载 semgrep 规则到此目录）
+# Linux: /var/lib/callwarden/semgrep_rules/
+# Windows: 不适用（单用户场景，用用户级缓存）
+# 普通用户只读使用，避免每个用户重复下载规则
+SYSTEM_CACHE_DIR = "/var/lib/callwarden" if os.name != "nt" else ""
+SYSTEM_SEMGREP_RULES_DIR = os.path.join(SYSTEM_CACHE_DIR, "semgrep_rules") if SYSTEM_CACHE_DIR else ""
+
+
+def get_semgrep_rules_cache_dir() -> str:
+    """获取 semgrep 规则缓存目录（优先系统级，回退用户级）
+
+    多用户场景下的查找顺序：
+    1. 系统级共享缓存 /var/lib/callwarden/semgrep_rules/（root 预下载，只读）
+    2. 用户级缓存 ~/.cache/semgrep/（Linux/Mac）或 %LOCALAPPDATA%/semgrep/（Windows）
+
+    系统级缓存存在且非空时优先使用，避免每个用户重复下载规则。
+    用户级缓存作为回退，保证 pip install 的单用户场景也能正常工作。
+
+    Returns:
+        缓存目录路径（空串表示无可用缓存）
+    """
+    # 1. 检查系统级共享缓存（root 预下载，只读）
+    if SYSTEM_SEMGREP_RULES_DIR and os.path.isdir(SYSTEM_SEMGREP_RULES_DIR):
+        try:
+            if os.listdir(SYSTEM_SEMGREP_RULES_DIR):  # 非空
+                return SYSTEM_SEMGREP_RULES_DIR
+        except (OSError, PermissionError):
+            pass  # 权限不足，回退到用户级
+
+    # 2. 回退到用户级缓存
+    user_cache = os.path.join(USER_HOME, ".cache", "semgrep")
+    if os.path.isdir(user_cache) and os.listdir(user_cache):
+        return user_cache
+
+    # Windows: 检查 %LOCALAPPDATA%/semgrep/
+    win_cache = os.path.join(os.environ.get("LOCALAPPDATA", ""), "semgrep")
+    if win_cache and os.path.isdir(win_cache) and os.listdir(win_cache):
+        return win_cache
+
+    return ""  # 无可用缓存
+
+
+def is_system_cache_available() -> bool:
+    """检查系统级共享缓存是否可用（root 安装场景）
+
+    用于 install.py 判断是否需要预下载到系统级路径，
+    以及 _ensure_semgrep_rules_cache 判断是否需要为当前用户下载。
+
+    Returns:
+        True 表示系统级缓存已就绪（普通用户无需再下载）
+    """
+    if not SYSTEM_SEMGREP_RULES_DIR:
+        return False
+    if not os.path.isdir(SYSTEM_SEMGREP_RULES_DIR):
+        return False
+    try:
+        return len(os.listdir(SYSTEM_SEMGREP_RULES_DIR)) > 0
+    except (OSError, PermissionError):
+        return False
+
 
 def get_project_db_path(project_root: str) -> str:
     """根据项目根路径生成项目级数据库路径（一个用户所有项目共用一个数据库）
