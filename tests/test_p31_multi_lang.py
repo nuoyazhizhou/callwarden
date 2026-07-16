@@ -346,19 +346,23 @@ _LANGUAGE_SAMPLES = [
 class TestSupportedLanguages(unittest.TestCase):
     """P31: supported_languages() 接口测试"""
 
-    def test_returns_11_languages(self):
-        """应返回 11 种支持的语言"""
+    def test_returns_14_languages(self):
+        """应返回 14 种支持的语言（Rust parser 支持）
+        注意：HCL 走 Python parser（引用提取非函数调用模式），C 有独立批量解析路径，
+        均不在 Rust supported_languages() 中。"""
         from callwarden_core import supported_languages
         langs = supported_languages()
-        self.assertEqual(len(langs), 11)
+        self.assertEqual(len(langs), 14)
 
     def test_contains_all_expected_languages(self):
-        """应包含所有 11 种语言"""
+        """应包含所有 14 种语言"""
         from callwarden_core import supported_languages
         langs = set(supported_languages())
         expected = {
             "python", "rust", "go", "java", "typescript", "javascript",
             "ruby", "php", "scala", "csharp", "cpp",
+            "kotlin", "swift",
+            "elixir",
         }
         self.assertEqual(langs, expected)
 
