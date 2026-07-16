@@ -194,7 +194,7 @@ class TestSecurity:
 
     def test_path_traversal_rejected(self, tmp_path):
         """../ 路径遍历被拒绝。"""
-        from server.daemon_server import EnterpriseDaemonService, DaemonRpcError
+        from callwarden.server.daemon_server import EnterpriseDaemonService, DaemonRpcError
 
         registry_db = str(tmp_path / "registry.db")
         service = EnterpriseDaemonService(registry_db=registry_db)
@@ -215,7 +215,7 @@ class TestSecurity:
 
     def test_cross_uid_rejected(self, tmp_path):
         """跨 UID 注册/查询被拒绝。"""
-        from server.daemon_server import EnterpriseDaemonService, DaemonRpcError
+        from callwarden.server.daemon_server import EnterpriseDaemonService, DaemonRpcError
 
         registry_db = str(tmp_path / "registry.db")
         service = EnterpriseDaemonService(registry_db=registry_db)
@@ -237,7 +237,7 @@ class TestSecurity:
 
     def test_resource_exhaustion_protection(self):
         """资源耗尽保护：队列限制 + inflight 字节限制。"""
-        from server.refresh_scheduler import SchedulerConfig
+        from callwarden.server.refresh_scheduler import SchedulerConfig
 
         config = SchedulerConfig()
         assert config.max_queue_entries > 0
@@ -246,7 +246,7 @@ class TestSecurity:
 
     def test_stale_session_rejected(self, tmp_path):
         """stale session 被拒绝。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError, init_session_schema
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError, init_session_schema
 
         ws_db_path = str(tmp_path / "ws.db")
         ws_conn = sqlite3.connect(ws_db_path)

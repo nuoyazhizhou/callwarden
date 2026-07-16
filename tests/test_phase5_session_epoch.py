@@ -694,7 +694,7 @@ class TestDaemonParsePublishPipeline:
         cas_conn = sqlite3.connect(":memory:", check_same_thread=False)
         cas_conn.row_factory = sqlite3.Row
         try:
-            from db.db_cas import init_cas_schema
+            from callwarden.db.db_cas import init_cas_schema
             init_cas_schema(cas_conn)
         except ImportError:
             pytest.skip("db.db_cas not available")

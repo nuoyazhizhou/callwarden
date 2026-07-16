@@ -4471,7 +4471,7 @@ def create_mcp_server():
             工具链摘要列表（id/name/compiler_type/version/target_triple/fingerprint）
         """
         try:
-            from db.db_toolchain import init_toolchain_schema, list_toolchains as _list
+            from callwarden.db.db_toolchain import init_toolchain_schema, list_toolchains as _list
             db = get_db()
             init_toolchain_schema(db.conn)
             tcs = _list(db.conn)
@@ -4487,7 +4487,7 @@ def create_mcp_server():
             name_or_id: 工具链名称或 ID
         """
         try:
-            from db.db_toolchain import init_toolchain_schema, get_toolchain as _get
+            from callwarden.db.db_toolchain import init_toolchain_schema, get_toolchain as _get
             db = get_db()
             init_toolchain_schema(db.conn)
             # 尝试 int 转换
@@ -4512,7 +4512,7 @@ def create_mcp_server():
             build_context_hash: 可选过滤
         """
         try:
-            from db.db_toolchain import (
+            from callwarden.db.db_toolchain import (
                 init_toolchain_schema, get_workspace_toolchains as _get_ws,
             )
             db = get_db()
@@ -4530,7 +4530,7 @@ def create_mcp_server():
             workspace_id: workspace ID
         """
         try:
-            from db.db_toolchain import init_toolchain_schema, list_build_contexts as _list
+            from callwarden.db.db_toolchain import init_toolchain_schema, list_build_contexts as _list
             db = get_db()
             init_toolchain_schema(db.conn)
             ctxs = _list(db.conn, workspace_id)
@@ -4547,7 +4547,7 @@ def create_mcp_server():
             build_context_hash: 构建上下文哈希
         """
         try:
-            from db.db_toolchain import init_toolchain_schema, get_build_context as _get
+            from callwarden.db.db_toolchain import init_toolchain_schema, get_build_context as _get
             db = get_db()
             init_toolchain_schema(db.conn)
             ctx = _get(db.conn, workspace_id, build_context_hash)
@@ -4563,7 +4563,7 @@ def create_mcp_server():
             workspace_id: workspace ID
         """
         try:
-            from db.db_toolchain import (
+            from callwarden.db.db_toolchain import (
                 init_toolchain_schema, get_active_build_context as _get_active,
             )
             db = get_db()
@@ -4593,7 +4593,7 @@ def create_mcp_server():
             limit: 返回数量上限
         """
         try:
-            from db.db_toolchain import init_toolchain_schema, get_resolved_edges as _get_edges
+            from callwarden.db.db_toolchain import init_toolchain_schema, get_resolved_edges as _get_edges
             db = get_db()
             init_toolchain_schema(db.conn)
             edges = _get_edges(
@@ -4619,7 +4619,7 @@ def create_mcp_server():
             {"count": int}
         """
         try:
-            from db.db_toolchain import init_toolchain_schema, count_resolved_edges as _count
+            from callwarden.db.db_toolchain import init_toolchain_schema, count_resolved_edges as _count
             db = get_db()
             init_toolchain_schema(db.conn)
             n = _count(db.conn, workspace_id, build_context_hash)

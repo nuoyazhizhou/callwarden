@@ -7632,7 +7632,7 @@ def _handle_toolchain(args, db):
         delete <NAME_OR_ID>
         bind <WORKSPACE_ID> <TOOLCHAIN_NAME> [--build-context-hash HASH]
     """
-    from db.db_toolchain import (
+    from callwarden.db.db_toolchain import (
         init_toolchain_schema, register_toolchain, get_toolchain,
         list_toolchains, delete_toolchain, bind_toolchain_to_workspace,
         get_workspace_toolchains,

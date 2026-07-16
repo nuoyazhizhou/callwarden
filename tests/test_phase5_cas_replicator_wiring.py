@@ -113,7 +113,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def _setup_workspace(self, tmp_dir):
         """创建 workspace session DB。"""
-        from server.replicator import init_session_schema
+        from callwarden.server.replicator import init_session_schema
         ws_path = os.path.join(tmp_dir, "workspace.db")
         ws_conn = sqlite3.connect(ws_path)
         ws_conn.row_factory = sqlite3.Row
@@ -123,7 +123,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_with_canonical_bytes_no_abs_path(self, tmp_path):
         """传入 canonical_bytes 时不读 abs_path。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -160,7 +160,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_stale_session_rejected_with_canonical_bytes(self, tmp_path):
         """canonical_bytes 模式下 stale session 仍然被拒绝。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -197,7 +197,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_duplicate_seq_dropped(self, tmp_path):
         """重复 seq 直接丢弃，不报错。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -235,7 +235,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_out_of_order_seq(self, tmp_path):
         """乱序 seq：先 seq=2 再 seq=1，seq=1 被丢弃。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -288,7 +288,7 @@ class TestStagingLogBatchMark:
 
     def test_mark_applied_batch(self, tmp_path):
         """批量标记多个 LSN 为 applied，单次文件重写。"""
-        from server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.staging_log import StagingLog, StagingEntry
 
         log_path = str(tmp_path / "test.log")
         log = StagingLog(log_path)
@@ -321,7 +321,7 @@ class TestStagingLogBatchMark:
 
     def test_mark_applied_batch_empty(self, tmp_path):
         """空 lsns 列表不应报错。"""
-        from server.staging_log import StagingLog
+        from callwarden.server.staging_log import StagingLog
 
         log_path = str(tmp_path / "empty.log")
         log = StagingLog(log_path)
@@ -338,7 +338,7 @@ class TestCrashRecovery:
 
     def test_staging_log_survives_crash(self, tmp_path):
         """模拟 daemon crash：pending entries 在 log 文件中持久化。"""
-        from server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.staging_log import StagingLog, StagingEntry
 
         log_path = str(tmp_path / "crash.log")
 
@@ -368,8 +368,8 @@ class TestCrashRecovery:
 
     def test_recover_idempotent(self, tmp_path):
         """重复 recover 应该幂等。"""
-        from server.staging_log import StagingLog, StagingEntry
-        from server.replicator import Replicator
+        from callwarden.server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.replicator import Replicator
 
         log_path = str(tmp_path / "idempotent.log")
         log = StagingLog(log_path)
@@ -471,8 +471,8 @@ class TestEnterpriseDaemonServiceResources:
 
     def test_workspace_resources_lazy_init(self, tmp_path):
         """_get_workspace_resources 懒初始化 CAS/StagingLog/Replicator。"""
-        from server.daemon_server import EnterpriseDaemonService
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
 
         # 创建 mock snapshot service
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
@@ -522,10 +522,10 @@ class TestPerformanceMetrics:
 
     def test_refresh_timing(self, tmp_path):
         """验证 refresh 返回耗时指标。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
-        from server.replicator import init_session_schema
+        from callwarden.server.replicator import init_session_schema
         ws_path = os.path.join(tmp_dir, "ws_perf.db")
         ws_conn = sqlite3.connect(ws_path)
         ws_conn.row_factory = sqlite3.Row
@@ -561,8 +561,8 @@ class TestPerformanceMetrics:
 
     def test_replicate_timing(self, tmp_path):
         """验证 replicate 返回耗时指标。"""
-        from server.staging_log import StagingLog, StagingEntry
-        from server.replicator import Replicator
+        from callwarden.server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.replicator import Replicator
 
         log_path = str(tmp_path / "perf.log")
         log = StagingLog(log_path)

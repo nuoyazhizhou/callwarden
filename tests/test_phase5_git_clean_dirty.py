@@ -375,7 +375,7 @@ class TestMultiBranchSessionManagement:
 
     def test_different_branches_different_sessions(self, git_fixture, tmp_path):
         """不同分支使用不同 session，互不干扰。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
 
         default = git_fixture._default_branch
         ws_stable = git_fixture.clone_workspace("ws_s", default)

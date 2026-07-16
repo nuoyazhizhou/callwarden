@@ -16,7 +16,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Tuple
 
-from server.watcher_protocol import (
+from callwarden.server.watcher_protocol import (
     EventKind,
     WatcherEvent,
     coalesce_events,

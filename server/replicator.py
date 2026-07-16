@@ -19,12 +19,12 @@ import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
-from server.staging_log import StagingLog, StagingEntry
+from callwarden.server.staging_log import StagingLog, StagingEntry
 
 # file_generations DDL 从 db_cas.py 导入（K6 去重，避免两处不一致）
 # 延迟导入避免触发 db 包的完整初始化链
 def _get_file_generations_ddl() -> str:
-    from db.db_cas import FILE_GENERATIONS_DDL
+    from callwarden.db.db_cas import FILE_GENERATIONS_DDL
     return FILE_GENERATIONS_DDL
 
 logger = logging.getLogger(__name__)
@@ -343,7 +343,7 @@ def _daemon_parse_and_publish(
                 "cas_state": "no_cas_conn", "canonicalize_method": canonicalize_method}
 
     try:
-        from db.db_cas import compute_cas_key_v1, cas_publish_with_retry, cas_lookup
+        from callwarden.db.db_cas import compute_cas_key_v1, cas_publish_with_retry, cas_lookup
     except ImportError:
         return {"content_hash": content_hash, "cas_key": "",
                 "cas_state": "cas_module_unavailable",
@@ -364,7 +364,7 @@ def _daemon_parse_and_publish(
     existing = cas_lookup(cas_conn, cas_key)
     if existing:
         try:
-            from db.db_cas import cas_pin
+            from callwarden.db.db_cas import cas_pin
             cas_pin(cas_conn, cas_key, workspace_id)
         except Exception as e:
             logger.warning("cas_pin failed for cas_key=%s: %s", cas_key, e)
