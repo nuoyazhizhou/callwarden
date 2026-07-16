@@ -694,15 +694,32 @@ def get_build_context(
     workspace_id: int,
     build_context_hash: str,
 ) -> Optional[BuildContext]:
-    """查询 build context。不存在返回 None。"""
+    """查询 build context。不存在返回 None。
+
+    支持短 hash 前缀匹配：当精确匹配失败时，尝试用传入的 hash 作为前缀匹配。
+    这样 CLI 中使用 list 显示的 16 位短 hash 也能正常查找到完整 hash 的 context。
+    """
+    # 1. 精确匹配
     row = conn.execute(
         """SELECT * FROM workspace_build_contexts
            WHERE workspace_id = ? AND build_context_hash = ?""",
         (workspace_id, build_context_hash),
     ).fetchone()
-    if row is None:
+    if row is not None:
+        return _row_to_build_context(row)
+
+    # 2. 前缀匹配（短 hash → 完整 hash）
+    rows = conn.execute(
+        """SELECT * FROM workspace_build_contexts
+           WHERE workspace_id = ? AND build_context_hash LIKE ?""",
+        (workspace_id, build_context_hash + "%"),
+    ).fetchall()
+    if len(rows) == 1:
+        return _row_to_build_context(rows[0])
+    if len(rows) > 1:
+        # 多个匹配，无法确定，返回 None
         return None
-    return _row_to_build_context(row)
+    return None
 
 
 def list_build_contexts(

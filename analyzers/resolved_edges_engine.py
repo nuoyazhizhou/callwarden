@@ -79,7 +79,14 @@ def _compute_from_cas(
 
     需要 workspace_manifests 表有 cas_key。如果 cas_raw_calls 无数据返回 None（降级）。
     """
-    # 1. 获取 workspace 的 cas_key → rel_path 映射
+    # 1. 检查 workspace_manifests 表是否存在（enterprise daemon 架构才有，CLI 模式不存在）
+    table_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_manifests'"
+    ).fetchone()
+    if not table_exists:
+        return None  # 表不存在，降级为 from_calls 模式
+
+    # 2. 获取 workspace 的 cas_key → rel_path 映射
     manifest_rows = conn.execute(
         """SELECT rel_path, cas_key FROM workspace_manifests
            WHERE workspace_id = ? AND cas_key IS NOT NULL AND cas_key != ''""",

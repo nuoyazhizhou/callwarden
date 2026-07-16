@@ -46,7 +46,9 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "git", "semgrep",
                 "coverage", "who", "ownership-map",
                 "brief", "map",
-                "health-report"}
+                "health-report",
+                # L5: build-context + toolchain 子命令（resolved_edges 引擎入口）
+                "build-context", "toolchain"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -7736,8 +7738,8 @@ def _handle_build_context(args, db):
             print(f"    {p}")
         if len(ctx.include_paths) > 10:
             print(f"    ... and {len(ctx.include_paths) - 10} more")
-        # 统计 resolved edges
-        count = count_resolved_edges(db.conn, opts.workspace_id, opts.hash)
+        # 统计 resolved edges（用完整 hash）
+        count = count_resolved_edges(db.conn, opts.workspace_id, ctx.build_context_hash)
         print(f"  Resolved edges: {count}")
 
     elif opts.action == "activate":
@@ -7745,17 +7747,23 @@ def _handle_build_context(args, db):
         if ctx is None:
             print(f"Build context not found: {opts.hash}")
             return False
-        if set_active_build_context(db.conn, opts.workspace_id, opts.hash):
-            print(f"Activated: {ctx.name} ({ctx.build_context_hash[:16]})")
+        full_hash = ctx.build_context_hash
+        if set_active_build_context(db.conn, opts.workspace_id, full_hash):
+            print(f"Activated: {ctx.name} ({full_hash[:16]})")
         else:
             print(f"Failed to activate")
             return False
 
     elif opts.action == "delete":
-        if delete_build_context(db.conn, opts.workspace_id, opts.hash):
-            print(f"Deleted: {opts.hash}")
-        else:
+        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
+        if ctx is None:
             print(f"Not found: {opts.hash}")
+            return False
+        full_hash = ctx.build_context_hash
+        if delete_build_context(db.conn, opts.workspace_id, full_hash):
+            print(f"Deleted: {ctx.name} ({full_hash[:16]})")
+        else:
+            print(f"Failed to delete")
             return False
 
     elif opts.action == "import-compile-commands":
@@ -7798,15 +7806,17 @@ def _handle_build_context(args, db):
         if ctx is None:
             print(f"Build context not found: {opts.hash}")
             return False
+        # 使用完整 hash（get_build_context 已支持短 hash 前缀匹配，但引擎内部需要完整 hash）
+        full_hash = ctx.build_context_hash
         # 计算
-        result = compute_resolved_edges(db.conn, opts.workspace_id, opts.hash)
+        result = compute_resolved_edges(db.conn, opts.workspace_id, full_hash)
         if result.get("error"):
             print(f"Error: {result['error']}")
             return False
         # 先清旧再写入（重建）
-        deleted = delete_resolved_edges(db.conn, opts.workspace_id, opts.hash)
+        deleted = delete_resolved_edges(db.conn, opts.workspace_id, full_hash)
         stored = store_resolved_edges(
-            db.conn, opts.workspace_id, opts.hash, result["edges"]
+            db.conn, opts.workspace_id, full_hash, result["edges"]
         )
         print(f"Resolved edges computed for: {ctx.name}")
         print(f"  source: {result['source']}")
@@ -7817,8 +7827,14 @@ def _handle_build_context(args, db):
         print(f"  stored: {stored}")
 
     elif opts.action == "edges":
+        # 先用短 hash 查找完整 hash
+        ctx = get_build_context(db.conn, opts.workspace_id, opts.hash)
+        if ctx is None:
+            print(f"Build context not found: {opts.hash}")
+            return False
+        full_hash = ctx.build_context_hash
         edges = get_resolved_edges(
-            db.conn, opts.workspace_id, opts.hash,
+            db.conn, opts.workspace_id, full_hash,
             caller_symbol_id=opts.caller, limit=opts.limit,
         )
         if not edges:
