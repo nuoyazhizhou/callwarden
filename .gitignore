@@ -93,6 +93,7 @@ target/
 # AI 辅助工具元数据（不入仓库）
 # ------------------------------------------
 .trae/
+.trae-cn/
 .claude/
 .cursor/
 .codex/
@@ -101,6 +102,11 @@ target/
 .opencode/
 .qoder/
 .agent/
+
+# ------------------------------------------
+# 独立子项目（不入主仓库）
+# ------------------------------------------
+callwarden-competition/
 
 # ------------------------------------------
 # 输出与日志
@@ -134,3 +140,19 @@ tests/_gen_db/
 # testcode 合并入库基线 DB（可重新生成）
 # ------------------------------------------
 tests/_testcode_db/
+
+# ------------------------------------------
+# 基准测试产物（可重新生成，不入库）
+# ------------------------------------------
+tests/_bench_*_report.json
+tests/_bench_*_report.md
+tests/_bench_output.txt
+tests/_bench_*.cwsnap
+tests/_bench_*.db
+tests/_e2e_*_report.json
+tests/_perf_*.json
+tests/_unified_*.cwsnap
+tests/_unified_*_report.json
+tests/_unified_*_report.md
+tests/_graphstore_*_report.json
+tests/_pytest_output.txt
