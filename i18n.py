@@ -149,7 +149,13 @@ def t(key: str, default: Optional[str] = None, **kwargs) -> str:
             break
 
     if value is None:
-        return default if default is not None else key
+        # key 不存在：default 也需要格式化占位符（如 "Symbols: {count}"）
+        if default is not None:
+            try:
+                return default.format(**kwargs)
+            except (KeyError, ValueError, IndexError):
+                return default
+        return key
 
     if isinstance(value, str):
         try:

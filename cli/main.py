@@ -5195,13 +5195,20 @@ def _handle_fts(args, db):
         if not status["exists"]:
             print(t("cli_fts_not_exist", default="symbols_fts table does not exist (database version too low or not initialized)"))
             return True
-        print(t("cli_fts_status_symbols", count=status["symbols_count"]))
-        print(t("cli_fts_status_fts_rows", count=status["fts_rows"]))
-        print(t("cli_fts_status_triggers", triggers=", ".join(status["triggers"]) if status["triggers"] else "(none)"))
+        print(t("cli_fts_status_symbols",
+                default="Symbols: {count}",
+                count=status["symbols_count"]))
+        print(t("cli_fts_status_fts_rows",
+                default="FTS5 rows: {count}",
+                count=status["fts_rows"]))
+        print(t("cli_fts_status_triggers",
+                default="Triggers: {triggers}",
+                triggers=", ".join(status["triggers"]) if status["triggers"] else "(none)"))
         if status["consistent"]:
             print(t("cli_fts_status_consistent", default="✓ Consistent (fts_rows == symbols_count)"))
         else:
             print(t("cli_fts_status_inconsistent",
+                    default="✗ Inconsistent (symbols={symbols}, fts_rows={fts_rows})",
                     symbols=status["symbols_count"],
                     fts_rows=status["fts_rows"]))
             print(t("cli_fts_status_inconsistent_hint",
