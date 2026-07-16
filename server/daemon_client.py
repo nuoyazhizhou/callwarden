@@ -124,10 +124,11 @@ class UnixDaemonRpcClient:
 # ----------------------------------------------------------------------
 
 def derive_workspace_instance_id(project_root: str) -> str:
-    """从项目根路径推导 workspace_instance_id。
+    """从项目根路径推导 workspace_instance_id（跨进程标识符）。
 
-    与 config.get_project_db_path 使用相同的 SHA-256 前 16 位哈希，
-    确保同一项目的 workspace_instance_id 一致。
+    用项目根路径的 SHA-256 前 16 位作为 workspace_instance_id，确保同一项目
+    在不同进程（CLI / MCP / daemon）中标识一致。
+    注意：此 hash 仅用于 workspace 标识，不再用于数据库路径（数据库已改为用户级统一路径）。
     """
     abs_root = os.path.abspath(project_root)
     norm_root = abs_root.replace("\\", "/")

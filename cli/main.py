@@ -4569,6 +4569,16 @@ def _handle_gc(args, db):
                               help=t("cli_gc_db_cleanup_arg_all_but_current",
                                      default="Mark all databases except current workspace as orphan"))
 
+    # db-migrate-single：旧版多库 → 用户级单库迁移
+    db_migrate_p = sub.add_parser("db-migrate-single",
+                                   help="Migrate legacy per-project databases to single user database")
+    db_migrate_p.add_argument("--dry-run", action="store_true", dest="dry_run", default=True,
+                              help="Preview only (default); do not write")
+    db_migrate_p.add_argument("--apply", action="store_false", dest="dry_run",
+                              help="Actually migrate data; default is dry run")
+    db_migrate_p.add_argument("--no-backup", action="store_false", dest="backup", default=True,
+                              help="Skip backup of unified database before migration")
+
     parsed = parser.parse_args(args)
 
     if parsed.action == "archive":
@@ -4885,12 +4895,69 @@ def _handle_gc(args, db):
                                      all_but_current=parsed.all_but_current,
                                      current_workspace_root=db.workspace_root)
 
+    elif parsed.action == "db-migrate-single":
+        return _handle_db_migrate_single(
+            dry_run=parsed.dry_run,
+            backup=parsed.backup,
+        )
+
     return False
+
+
+def _handle_db_migrate_single(dry_run: bool = True, backup: bool = True) -> bool:
+    """旧版多库 → 用户级单库迁移
+
+    将 ~/.callwarden/<hash>/callwarden.db 的数据合并到 ~/.callwarden/callwarden.db。
+    迁移 workspaces / tasks / task_steps 表，符号图谱数据建议迁移后 refresh 重建。
+    """
+    from ..db.db_migrate import migrate_to_single_db
+
+    mode = "[DRY-RUN] " if dry_run else ""
+    cprint(f"{mode}Database migration: legacy per-project → single user database", "cyan", bold=True)
+
+    result = migrate_to_single_db(dry_run=dry_run, backup=backup)
+
+    if result["errors"] and not result["legacy_dbs"]:
+        for err in result["errors"]:
+            cprint(f"  {err}", "yellow")
+        return True
+
+    cprint(f"  Legacy databases found: {len(result['legacy_dbs'])}", "dim")
+    for d in result["legacy_dbs"]:
+        cprint(f"    {d}", "dim")
+
+    cprint(f"  Workspaces migrated: {result['migrated_workspaces']}", "green" if result["migrated_workspaces"] else "dim")
+    cprint(f"  Workspaces skipped (root_path exists): {result['skipped_workspaces']}", "dim")
+    cprint(f"  Tasks migrated: {result['migrated_tasks']}", "green" if result["migrated_tasks"] else "dim")
+    cprint(f"  Task steps migrated: {result['migrated_steps']}", "green" if result["migrated_steps"] else "dim")
+
+    if result["errors"]:
+        cprint("  Errors:", "yellow")
+        for err in result["errors"]:
+            cprint(f"    {err}", "yellow")
+
+    if result["backup_path"]:
+        cprint(f"  Backup created: {result['backup_path']}", "dim")
+
+    if dry_run:
+        cprint("  [DRY-RUN] No data written. Run with --apply to migrate.", "yellow")
+    else:
+        cprint("  Migration complete. Run 'cw refresh --all' to rebuild symbol graph.", "green")
+        cprint("  Legacy databases kept for backup. Delete manually after verification:", "dim")
+        for d in result["legacy_dbs"]:
+            cprint(f"    rm -rf {d}", "dim")
+
+    return True
 
 
 def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
                           current_workspace_root: str = "") -> bool:
     """扫描 ~/.callwarden/ 下所有数据库，找出并清理孤儿数据库
+
+    注意：此函数为旧版多库架构（~/.callwarden/<hash>/callwarden.db）的 GC 逻辑。
+    单库架构下（~/.callwarden/callwarden.db）需重构为 workspace 级 GC：
+    扫描 workspaces 表，删除 workspace_root 不存在/指向临时目录的 workspace 记录及其关联数据。
+    当前实现仍按旧多库扫描，兼容迁移未完成的环境（旧 hash 目录仍存在）。
 
     孤儿数据库的产生原因：
     1. 测试残留：CodeGraphDB(workspace_root=tmp) 不传 db_path → 按 tmp 路径 hash 建库，

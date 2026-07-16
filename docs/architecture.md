@@ -34,9 +34,10 @@
                              │
                              ▼
 ┌───────────────────────────────────────────────────────────────┐
-│              SQLite 数据库（每个项目一个）                    │
-│   $HOME/.callwarden/<16位hash>/callwarden.db                  │
+│              SQLite 数据库（用户级单库）                       │
+│   $HOME/.callwarden/callwarden.db                              │
 │   Schema v37 / WAL 模式 / 40+ 表 / 37 个 Mixin 模块           │
+│   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -53,17 +54,20 @@
 
 ## 数据库架构
 
-### 项目级隔离
+### 用户级单库 + workspace 逻辑隔离
 
-每个项目使用独立的 SQLite 数据库，路径格式：
+每个用户使用一个统一的 SQLite 数据库，路径格式：
 
 ```
-$HOME/.callwarden/<16位hash>/callwarden.db
+$HOME/.callwarden/callwarden.db
 ```
 
-- 16 位 hash = 项目根路径绝对路径的 SHA-256 前 16 位
-- 不同项目互不干扰，体积小、查询快
+- 一个用户一个数据库，所有项目共用
+- 项目间通过 `workspaces` 表的 `workspace_id` 字段在所有业务表中逻辑隔离
+- 所有查询自动带 `WHERE workspace_id = ?` 过滤
+- 相同文件跨项目只解析一次（Global CAS 共享）
 - 实现见 `config.py:get_project_db_path()`
+- 旧版多库迁移：`cw gc db-migrate-single --apply`
 
 ### Schema 版本
 

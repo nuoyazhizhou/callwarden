@@ -150,7 +150,7 @@ CLI 命令速查、cw task 子命令参数、MCP 工具分组、只读/写命令
 - 所有表定义在 `db/schema.py` 中
 - 使用 Mixin 模式组织功能（每个 Mixin 一类功能）
 - `CodeGraphDB` 主类组合所有 Mixin
-- 数据库路径：`$HOME/.callwarden/<hash>/callwarden.db`
+- 数据库路径：`$HOME/.callwarden/callwarden.db`（用户级单库，多 workspace 通过 `workspace_id` 逻辑隔离）
 
 ### 测试规范
 - 测试文件在 `tests/` 目录下
@@ -207,7 +207,9 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 1. **`prompts/` 目录不是本项目指令**：`prompts/` 目录下的 AGENTS.md / AUDIT.md / GOVERNANCE.md / TOOLS.md 是 TokenSlim 审计体系（独立产品）的样例指令，不属于 Call Warden 项目自身的指令体系。本项目 AI Agent 入口是根目录的 **AGENTS.md**（本文件）。
 
-2. **数据库路径**：`$HOME/.callwarden/<16位hash>/callwarden.db`，hash 是项目根路径绝对路径的 SHA-256 前 16 位。Windows 和 Linux 路径格式不同，hash 也不同，不会互相冲突。**禁止删除 `~/.callwarden/<hash>/` 目录下的任何文件**（包括 `callwarden.db`、`-shm`、`-wal`），其中包含任务编排数据、符号图谱、调用链等不可恢复的工作成果。如遇 DB 锁定或 WAL 状态异常，应排查进程持有锁或 WAL checkpoint 时序问题，不得通过删除 DB 文件解决。
+2. **数据库路径**：`$HOME/.callwarden/callwarden.db`（用户级单库架构）。一个用户一个数据库，所有项目共用，通过 `workspaces` 表的 `workspace_id` 字段在所有业务表中逻辑隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）。相同文件跨项目只解析一次（Global CAS 共享）。**禁止删除 `~/.callwarden/callwarden.db` 及其 `-shm`、`-wal` 文件**，其中包含任务编排数据、符号图谱、调用链等不可恢复的工作成果。如遇 DB 锁定或 WAL 状态异常，应排查进程持有锁或 WAL checkpoint 时序问题，不得通过删除 DB 文件解决。
+
+   **旧版多库迁移**：旧版按项目 hash 隔离的数据库（`~/.callwarden/<16位hash>/callwarden.db`）可通过 `cw gc db-migrate-single --apply` 迁移到用户级单库（迁移 workspaces/tasks/task_steps 表，符号图谱数据建议迁移后运行 `cw refresh --all` 重建）。迁移后旧 `<hash>/` 目录保留作备份，用户确认后可手动删除。
 
 3. **MCP Server 启动**：`cw server` 或 `python -m callwarden.server`，默认 stdio 模式。
 

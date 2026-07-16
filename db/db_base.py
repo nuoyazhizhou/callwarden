@@ -1733,14 +1733,14 @@ class CodeGraphBase:
 
         工作流程：
         1. 检测并设置工作区根目录（优先使用传入路径，否则从调用路径向上探测）
-        2. 计算数据库文件路径（默认 ~/.callwarden/<hash>/callwarden.db）
+        2. 计算数据库文件路径（默认 ~/.callwarden/callwarden.db 用户级统一库）
         3. 建立 SQLite 连接并应用性能优化 PRAGMA
         4. 初始化解析器、模块解析器、调用关系解析器
         5. 初始化 schema（自动版本化迁移，保留数据）
-        6. 初始化工作区记录
+        6. 初始化工作区记录（workspaces 表，workspace_id 逻辑隔离）
 
         Args:
-            db_path: 数据库文件路径，为空时按工作区自动计算
+            db_path: 数据库文件路径，为空时用用户级统一路径
             workspace_root: 工作区根目录，为空时自动探测
         """
         # 自动检测项目根目录
@@ -1750,8 +1750,9 @@ class CodeGraphBase:
             detected = detect_project_root(PROJECT_ROOT)
             self.workspace_root = detected if detected else PROJECT_ROOT
 
-        # 架构修改：一个项目一个 SQLite 数据库
-        # db_path 为空时，根据项目根路径自动计算 $HOME/.callwarden/16位hash/callwarden.db
+        # 单库多 workspace 架构：一个用户一个 SQLite 数据库 $HOME/.callwarden/callwarden.db
+        # 项目间通过 workspaces 表的 workspace_id 字段逻辑隔离，相同文件只解析一次（CAS 共享）
+        # db_path 为空时用用户级统一路径；workspace_root 仅用于 register_workspace 注册工作区
         if not db_path:
             db_path = get_project_db_path(self.workspace_root)
 

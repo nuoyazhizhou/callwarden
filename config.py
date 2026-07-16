@@ -85,31 +85,68 @@ def is_system_cache_available() -> bool:
         return False
 
 
-def get_project_db_path(project_root: str) -> str:
-    """根据项目根路径生成项目级数据库路径（一个用户所有项目共用一个数据库）
+def get_project_db_path(project_root: str = "") -> str:
+    """返回用户级统一数据库路径（一个用户一个数据库）
 
-    路径格式: $HOME/.callwarden/<16位hash>/callwarden.db
+    路径格式: $HOME/.callwarden/callwarden.db
 
-    16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目的数据库隔离。
-    这样每个数据库只包含一个项目的数据，体积小、查询快、互不干扰。
+    设计原则：单库多 workspace 逻辑隔离
+    - 所有项目共用一个 SQLite 数据库文件
+    - 通过 workspaces 表的 workspace_id 字段在所有业务表中隔离数据
+    - 所有查询自动带 WHERE workspace_id = ? 过滤（已在 db_query.py 实现）
+    - 相同文件跨项目只解析一次（Global CAS 共享）
 
-    注意：根据 Enterprise Daemon Shared Snapshot 设计，Global CAS 要求
-    "相同文件跨用户、跨工作区只解析一次"，因此所有项目共用一个数据库。
+    project_root 参数保留是为了向后兼容调用点签名，不再用于生成 hash 目录。
+    workspace 注册由 register_workspace(workspace_root) 在 db_base.py 中处理。
+
+    Args:
+        project_root: 项目根目录路径（仅用于兼容，不再影响 DB 路径）
+
+    Returns:
+        用户级数据库绝对路径
+    """
+    os.makedirs(CALLWARDEN_DIR, exist_ok=True)
+    return DB_PATH
+
+
+def get_legacy_hash_db_path(project_root: str) -> str:
+    """返回旧版按 hash 隔离的数据库路径（仅用于迁移工具识别旧库）
+
+    旧路径格式: $HOME/.callwarden/<16位hash>/callwarden.db
+
+    迁移工具 cw db migrate-to-single 用此函数枚举所有旧库，合并到用户级统一库。
+    新代码不应使用此函数。
 
     Args:
         project_root: 项目根目录路径
 
     Returns:
-        项目级数据库绝对路径
+        旧版 hash 目录下的数据库路径（可能不存在）
     """
     abs_root = os.path.abspath(project_root)
-    # 标准化路径（统一正斜杠，消除跨平台差异）
     norm_root = norm_path(abs_root)
-    # 计算项目路径的 SHA-256 前 16 位作为目录名
     path_hash = hashlib.sha256(norm_root.encode("utf-8")).hexdigest()[:16]
-    project_dir = os.path.join(CALLWARDEN_DIR, path_hash)
-    os.makedirs(project_dir, exist_ok=True)
-    return os.path.join(project_dir, "callwarden.db")
+    return os.path.join(CALLWARDEN_DIR, path_hash, "callwarden.db")
+
+
+def list_legacy_hash_db_dirs() -> List[str]:
+    """枚举 ~/.callwarden/ 下所有旧版 hash 子目录（含 callwarden.db）
+
+    迁移工具用此函数扫描所有需要合并的旧库。
+
+    Returns:
+        旧版 hash 目录路径列表（每个目录下应有 callwarden.db）
+    """
+    if not os.path.isdir(CALLWARDEN_DIR):
+        return []
+    result = []
+    for name in os.listdir(CALLWARDEN_DIR):
+        # hash 目录是 16 位十六进制字符
+        if len(name) == 16 and all(c in "0123456789abcdef" for c in name):
+            db_file = os.path.join(CALLWARDEN_DIR, name, "callwarden.db")
+            if os.path.isfile(db_file):
+                result.append(os.path.join(CALLWARDEN_DIR, name))
+    return result
 
 
 def ensure_callwarden_dir() -> str:
