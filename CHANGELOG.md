@@ -2,6 +2,17 @@
 
 本文件记录 Call Warden 的版本演化。版本号对应数据库 Schema 版本。
 
+## [v37] - 2026-07-16
+
+### Added
+- **L2：破坏性 git 操作拦截**
+  - 新增 `destructive_operations` 表：记录 force push 等破坏性 git 操作
+  - 新增 `cw git check-push <local_ref> <local_sha> <remote_ref> <remote_sha>` 子命令：pre-push hook 调用，检测 force push 并记录（软门禁，仅记录不阻断）
+  - 新增 `cw git destructive-log [limit] [--type <TYPE>]` 子命令：查询破坏性 git 操作历史
+- **L3：pre-commit hook task_id 验证**
+  - 新增 `cw git check-task` 子命令：pre-commit hook 调用，检查 active task 是否存在（软门禁，仅警告不阻断）
+- **Schema v37 升级**：新增 `destructive_operations` 表，Schema 从 v36 升级到 v37
+
 ## [v14] - 2026-07-03
 
 ### Added

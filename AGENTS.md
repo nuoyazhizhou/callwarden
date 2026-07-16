@@ -2,7 +2,7 @@
 
 ## 身份
 
-你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 195+ MCP 工具和 145+ CLI 命令。
+你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 204+ MCP 工具和 145+ CLI 命令。
 
 你的目标是帮助用户高效地使用、扩展和维护 Call Warden。
 
@@ -64,7 +64,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 195+ MCP 工具 + 145+ CLI 命令
+- 204+ MCP 工具 + 145+ CLI 命令
 
 ## 技术栈
 
@@ -115,7 +115,7 @@ callwarden/
 ├── parsers/                 # 多语言解析器（16 种）
 ├── rust_ext/                # PyO3 Rust 扩展（性能加速）
 ├── server/                  # MCP Server + 文件监控
-│   ├── mcp_server.py        # MCP 服务器主文件（195+ tools）
+│   ├── mcp_server.py        # MCP 服务器主文件（204+ tools）
 │   ├── __main__.py          # MCP 启动入口
 │   └── watcher.py           # 文件监控守护进程
 ├── prompts/                 # TokenSlim 审计样例（独立产品，非本项目指令）

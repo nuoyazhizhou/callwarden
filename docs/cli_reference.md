@@ -1695,6 +1695,52 @@ cw --git-show abc123def456
 cw --git-stats
 ```
 
+### `git check-task`：检查 active task（L3 pre-commit hook）
+
+检查当前是否存在 active task（`in_progress` 状态的任务），供 L3 pre-commit hook 调用，作为软门禁。未设置 active task 时打印警告但不阻断 commit。
+
+```bash
+cw git check-task
+```
+
+> **软门禁**：仅警告不阻断，确保不影响 git commit 正常流程。
+
+### `git check-push`：检测 force push（L2 pre-push hook）
+
+检测 pre-push 场景下的破坏性 git 操作（如 force push），供 L2 pre-push hook 调用。检测到破坏性操作时记录到 `destructive_operations` 表，作为软门禁（仅记录不阻断）。
+
+```bash
+cw git check-push <local_ref> <local_sha> <remote_ref> <remote_sha>
+```
+
+| 参数          | 说明                |
+|---------------|---------------------|
+| `<local_ref>` | 本地引用名          |
+| `<local_sha>` | 本地 commit SHA     |
+| `<remote_ref>`| 远程引用名          |
+| `<remote_sha>`| 远程 commit SHA     |
+
+> **软门禁**：仅记录到 `destructive_operations` 表不阻断 push，确保不影响 git push 正常流程。
+
+### `git destructive-log`：查询破坏性 git 操作历史
+
+查询 `destructive_operations` 表中记录的破坏性 git 操作历史（force push 等）。
+
+```bash
+cw git destructive-log [limit] [--type <TYPE>]
+```
+
+| 参数/选项      | 说明                                              |
+|----------------|---------------------------------------------------|
+| `[limit]`      | 返回条目上限，默认 20                              |
+| `--type <TYPE>`| 按操作类型过滤（如 `force_push`）                  |
+
+```bash
+cw git destructive-log              # 最近 20 条
+cw git destructive-log 50           # 最近 50 条
+cw git destructive-log --type force_push  # 仅 force push 记录
+```
+
 ---
 
 ## 向量与语义搜索命令
