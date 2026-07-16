@@ -300,8 +300,8 @@
 | # | 功能点 | 来源 | 状态 | 备注 |
 |---|--------|------|------|------|
 | L1 | MCP Server 层门禁：file_write 强制关联活跃 task_id | QA1 | ⚠️ 软门禁 | QA1 最终结论"赋能而非门禁"已落地：`db_tasks.is_task_active()` 校验真实性 + `get_task_context()` 赋能字段；`propose_edit` 系列（4 工具）在 `agent_task_id` 非空时返回 `task_validation`（valid/invalid/error）+ `task_context`（title/status/steps 概况）；软门禁语义：不拒绝写入，只在返回值标记；完全向后兼容（`agent_task_id=""` 时跳过） |
-| L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ❌ 未实现 | post-commit hook 已有，但破坏性操作拦截（回滚保护）未实现 |
-| L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ⚠️ 概念 | 讨论发现本地 hook 可被 Agent 绕过（--no-verify/改 hook 脚本），结论：只有 CI/远端才能真正强制 |
+| L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ✅ 已实现 | 软门禁设计（与 L1 一致）：pre-push hook 检测 force push（`git merge-base --is-ancestor`）并记录到 `destructive_operations` 表（schema v37）；`cw git check-push` 供 hook 调用；`cw git destructive-log` 查询历史；记录但不阻止操作 |
+| L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ✅ 已实现 | 软门禁：pre-commit hook 调用 `cw git check-task` 检查 `active_task_id`，有则显示 task 信息，无则警告但**不阻止** commit（本地 hook 可被 `--no-verify` 绕过，与 L1 赋能设计一致） |
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
 | L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ⚠️ 部分 | compile_commands.json 解析器 + build-context CLI（8 子命令含 resolve）+ 8 MCP 工具；resolved_edges 计算引擎已实现 5 级解析（exact_match/simple_name_unique/same_file/include_path/sysroot/unresolved + calls 表降级）；include_path 基于 build_context.include_paths + toolchain.sysroot/include_dirs 消除简名歧义 |
 | L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ⚠️ 部分 | versions + symbols 写入 DB 后释放 file_results 中的 symbols 数据，调用图构建改为 only_files 模式从 DB 读取符号索引；parse 阶段流式回传（pool.imap）未实现 |

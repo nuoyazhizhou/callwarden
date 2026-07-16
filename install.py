@@ -321,27 +321,40 @@ class CallWardenInstaller:
         return f'python "{cw_py}"'
 
     def _pre_commit_hook(self) -> str:
-        """生成 pre-commit hook 内容。"""
+        """生成 pre-commit hook 内容。
+
+        L3 增强：提交前检查 active_task_id（软门禁，警告不阻止）。
+        """
         cmd = self._python_cw_command()
         marker = self._hook_marker()
         return f"""#!/bin/sh
 {marker}
 set -eu
 export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
+# L3: 检查 active_task（软门禁，警告不阻止 commit）
+{cmd} git check-task || true
 echo "[Call Warden] refreshing code graph before commit..."
 {cmd} --refresh-all
 """
 
     def _pre_push_hook(self) -> str:
-        """生成 pre-push hook 内容。"""
+        """生成 pre-push hook 内容。
+
+        L2 增强：检测 force push 并记录到 destructive_operations 表（软门禁，记录不阻止）。
+        保留原有 check-gate 逻辑（CALLWARDEN_TASK_ID 环境变量）。
+        """
         cmd = self._python_cw_command()
         marker = self._hook_marker()
         return f"""#!/bin/sh
 {marker}
 set -eu
 export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
+# L2: 检测 force push（软门禁，记录不阻止）
+while read -r local_ref local_sha remote_ref remote_sha; do
+  {cmd} git check-push "$local_ref" "$local_sha" "$remote_ref" "$remote_sha" || true
+done
+# 保留原有 check-gate 逻辑（CALLWARDEN_TASK_ID 环境变量）
 if [ -z "${{CALLWARDEN_TASK_ID:-}}" ]; then
-  echo "[Call Warden] CALLWARDEN_TASK_ID is not set; skipping check-gate."
   exit 0
 fi
 echo "[Call Warden] running check-gate for $CALLWARDEN_TASK_ID before push..."

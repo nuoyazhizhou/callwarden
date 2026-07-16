@@ -392,3 +392,134 @@ class GitMixin:
             "file_change_count": file_change_count,
             "change_types": change_types,
         }
+
+    # ============================================
+    # L2: 破坏性 git 操作记录
+    # ============================================
+
+    def log_destructive_operation(
+        self,
+        operation_type: str,
+        local_ref: str = "",
+        local_sha: str = "",
+        remote_ref: str = "",
+        remote_sha: str = "",
+        commit_hash: str = "",
+        task_id: str = "",
+        blocked: bool = False,
+        message: str = "",
+    ) -> int:
+        """记录破坏性 git 操作到 destructive_operations 表
+
+        软门禁设计：记录但不阻止操作（blocked 参数预留硬门禁模式）。
+
+        Args:
+            operation_type: 操作类型（'force_push' / 'reset_hard' / 'checkout_clean'）
+            local_ref: 本地 ref（pre-push hook 场景）
+            local_sha: 本地 sha
+            remote_ref: 远程 ref
+            remote_sha: 远程 sha
+            commit_hash: 关联 commit
+            task_id: 关联任务（若 active_task 存在）
+            blocked: 是否被阻止（默认 False，软门禁不阻止）
+            message: 人类可读描述
+
+        Returns:
+            记录 ID，失败返回 0
+        """
+        import time
+        ws_id = self._get_active_workspace_id()
+        now = time.time()
+        try:
+            cur = self.conn.execute(
+                """INSERT INTO destructive_operations
+                   (workspace_id, operation_type, local_ref, local_sha,
+                    remote_ref, remote_sha, commit_hash, task_id,
+                    blocked, message, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (ws_id, operation_type, local_ref, local_sha,
+                 remote_ref, remote_sha, commit_hash, task_id,
+                 1 if blocked else 0, message, now),
+            )
+            self.conn.commit()
+            return cur.lastrowid or 0
+        except Exception:
+            return 0
+
+    def list_destructive_operations(
+        self,
+        limit: int = 20,
+        operation_type: str = "",
+    ) -> List[Dict[str, Any]]:
+        """查询破坏性 git 操作历史
+
+        Args:
+            limit: 返回最大条数
+            operation_type: 筛选操作类型（空=全部）
+
+        Returns:
+            操作记录列表，按时间倒序
+        """
+        ws_id = self._get_active_workspace_id()
+        if operation_type:
+            cur = self.conn.execute(
+                """SELECT * FROM destructive_operations
+                   WHERE workspace_id = ? AND operation_type = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (ws_id, operation_type, limit),
+            )
+        else:
+            cur = self.conn.execute(
+                """SELECT * FROM destructive_operations
+                   WHERE workspace_id = ?
+                   ORDER BY created_at DESC LIMIT ?""",
+                (ws_id, limit),
+            )
+        return [dict(row) for row in cur.fetchall()]
+
+    def check_force_push(
+        self,
+        local_sha: str,
+        remote_sha: str,
+    ) -> bool:
+        """检测是否为 force push
+
+        通过 git merge-base --is-ancestor 判断 remote_sha 是否为 local_sha 的祖先。
+        如果不是祖先关系，则为 force push（非 fast-forward）。
+
+        Args:
+            local_sha: 本地 commit sha
+            remote_sha: 远程 commit sha（全 0 表示新分支，不是 force push）
+
+        Returns:
+            True=force push，False=正常 push
+        """
+        # 远程为空（新分支或删除分支），不是 force push
+        zero_sha = "0" * 40
+        if remote_sha == zero_sha or not remote_sha:
+            return False
+        # 本地为空（删除远程分支），不是 force push
+        if local_sha == zero_sha or not local_sha:
+            return False
+
+        workspace_root = getattr(self, 'workspace_root', None)
+        if not workspace_root:
+            ws = self.get_active_workspace()
+            if ws:
+                workspace_root = ws['root_path']
+
+        if not workspace_root:
+            return False
+
+        try:
+            result = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", remote_sha, local_sha],
+                cwd=workspace_root,
+                capture_output=True,
+                timeout=10,
+            )
+            # exit code 0 = remote_sha 是 local_sha 的祖先（fast-forward）
+            # exit code 1 = 不是祖先（force push）
+            return result.returncode != 0
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return False

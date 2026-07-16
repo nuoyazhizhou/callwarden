@@ -269,6 +269,32 @@ CREATE INDEX IF NOT EXISTS idx_git_symbol_changes_symbol ON git_symbol_changes(s
 CREATE INDEX IF NOT EXISTS idx_file_versions_commit ON file_versions(commit_hash);
 
 -- ============================================
+-- v37: L2 破坏性 git 操作记录表
+-- ============================================
+-- 记录 force push / reset --hard 等破坏性操作历史，供回滚保护和审计追溯。
+-- 软门禁设计：记录但不阻止（与 L1 软门禁一致），由 pre-push hook 自动写入。
+
+CREATE TABLE IF NOT EXISTS destructive_operations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    operation_type TEXT NOT NULL,           -- 'force_push' / 'reset_hard' / 'checkout_clean'
+    local_ref TEXT DEFAULT '',              -- pre-push: 本地 ref
+    local_sha TEXT DEFAULT '',              -- pre-push: 本地 sha
+    remote_ref TEXT DEFAULT '',             -- pre-push: 远程 ref
+    remote_sha TEXT DEFAULT '',             -- pre-push: 远程 sha
+    commit_hash TEXT DEFAULT '',            -- 关联 commit
+    task_id TEXT DEFAULT '',                -- 关联任务（若 active_task 存在）
+    blocked INTEGER DEFAULT 0,              -- 0=未阻止（软门禁），1=已阻止（硬门禁，预留）
+    message TEXT DEFAULT '',                -- 人类可读描述
+    created_at REAL NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_destructive_ops_workspace ON destructive_operations(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_destructive_ops_type ON destructive_operations(operation_type);
+CREATE INDEX IF NOT EXISTS idx_destructive_ops_created ON destructive_operations(created_at);
+
+-- ============================================
 -- v5: 向量嵌入表（sqlite-vec）
 -- ============================================
 
@@ -1005,7 +1031,9 @@ ON test_runs(ci_run_id);
 #      让 task_id → commit_id 通过 JOIN git_commits 可查；打通三角关联。
 # v36: churn_analysis 真实行数 — git_file_changes 加 lines_added / lines_deleted 字段，
 #      用 git show --numstat 填充，替代 file_versions 相邻版本差值近似。
-SCHEMA_VERSION = 36
+# v37: L2 破坏性 git 操作记录 — destructive_operations 表，记录 force push 等破坏性操作。
+#      软门禁设计：记录但不阻止（与 L1 软门禁一致），pre-push hook 自动写入。
+SCHEMA_VERSION = 37
 
 
 # ============================================

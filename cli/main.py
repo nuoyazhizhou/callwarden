@@ -65,7 +65,9 @@ _READONLY_CLONE_ACTIONS = {"list", "stats"}
 # workspace list 只读；register/set/delete 写
 _READONLY_WORKSPACE_ACTIONS = {"list"}
 # git log/show/stats 只读；git import 写
-_READONLY_GIT_ACTIONS = {"log", "show", "stats"}
+# git log/show/stats/check-task/destructive-log 只读；git import/check-push 写
+# check-task 读 active_task（只读）；check-push 写 destructive_operations（写）
+_READONLY_GIT_ACTIONS = {"log", "show", "stats", "check-task", "destructive-log"}
 # semgrep list/stats 只读；semgrep scan 含 --save 写，默认视为写以避免锁
 _READONLY_SEMGREP_ACTIONS = {"list", "stats"}
 # coverage fn/uncovered 只读；coverage import 写
@@ -6987,6 +6989,30 @@ def _handle_git(args, db):
 
     sub.add_parser("stats", help=t("cli.messages.git_action_stats", default="Show git integration stats"))
 
+    # L3: pre-commit hook 调用 — 检查 active_task（软门禁）
+    sub.add_parser("check-task",
+                   help=t("cli.messages.git_action_check_task",
+                          default="Check active task before commit (soft guardrail)"))
+
+    # L2: pre-push hook 调用 — 检测 force push
+    push_p = sub.add_parser("check-push",
+                            help=t("cli.messages.git_action_check_push",
+                                   default="Detect force push (soft guardrail, log only)"))
+    push_p.add_argument("local_ref")
+    push_p.add_argument("local_sha")
+    push_p.add_argument("remote_ref")
+    push_p.add_argument("remote_sha")
+
+    # L2: 查询破坏性操作历史
+    dlog_p = sub.add_parser("destructive-log",
+                            help=t("cli.messages.git_action_destructive_log",
+                                   default="Show destructive git operations log"))
+    dlog_p.add_argument("limit", type=int, nargs="?", default=20,
+                        help=t("cli.messages.git_arg_limit", default="Max results (default 20)"))
+    dlog_p.add_argument("--type", default="",
+                        help=t("cli.messages.git_arg_op_type",
+                               default="Filter by operation type (force_push/reset_hard/checkout_clean)"))
+
     opts = parser.parse_args(args)
 
     if opts.action == "import":
@@ -7060,6 +7086,106 @@ def _handle_git(args, db):
             for ct, cnt in sorted(stats["change_types"].items(), key=lambda x: x[1], reverse=True):
                 label = type_map.get(ct, ct)
                 print(t("cli.messages.git_stats_type_count", default="    {label}: {count} times", label=label, count=cnt))
+        return True
+
+    # L3: pre-commit hook 调用 — 检查 active_task（软门禁）
+    if opts.action == "check-task":
+        try:
+            active_task_id = db.get_active_task() if hasattr(db, "get_active_task") else None
+        except Exception:
+            active_task_id = None
+
+        if active_task_id:
+            # 查询 task 详情（title/status）
+            task_title = ""
+            task_status = ""
+            try:
+                row = db.conn.execute(
+                    "SELECT title, status FROM tasks WHERE id = ?",
+                    (active_task_id,),
+                ).fetchone()
+                if row:
+                    task_title = row["title"] or ""
+                    task_status = row["status"] or ""
+            except Exception:
+                pass
+            print(t("cli.messages.git_check_task_active",
+                    default="[Call Warden] Active task: {task_id} ({title}) [{status}]",
+                    task_id=active_task_id, title=task_title, status=task_status))
+        else:
+            # 软门禁：无 active task 时仅警告，不阻止 commit
+            print(t("cli.messages.git_check_task_none",
+                    default="[Call Warden] Warning: no active task. "
+                            "Consider 'cw task next' to claim a task before committing."))
+        return True
+
+    # L2: pre-push hook 调用 — 检测 force push
+    if opts.action == "check-push":
+        local_ref = opts.local_ref
+        local_sha = opts.local_sha
+        remote_ref = opts.remote_ref
+        remote_sha = opts.remote_sha
+
+        # 检测是否为 force push
+        is_force = False
+        try:
+            is_force = db.check_force_push(local_sha, remote_sha)
+        except Exception:
+            pass
+
+        if is_force:
+            # 获取当前 active task（用于关联）
+            task_id = ""
+            try:
+                task_id = db.get_active_task() or ""
+            except Exception:
+                pass
+
+            # 记录到 destructive_operations 表
+            try:
+                db.log_destructive_operation(
+                    operation_type="force_push",
+                    local_ref=local_ref,
+                    local_sha=local_sha,
+                    remote_ref=remote_ref,
+                    remote_sha=remote_sha,
+                    task_id=task_id,
+                    message=f"Force push: {local_ref} -> {remote_ref}",
+                )
+            except Exception:
+                pass
+
+            # 软门禁：警告不阻止
+            print(t("cli.messages.git_check_push_force",
+                    default="[Call Warden] Warning: force push detected "
+                            "({local_ref} -> {remote_ref}). "
+                            "Operation logged but not blocked (soft guardrail).",
+                    local_ref=local_ref, remote_ref=remote_ref))
+        return True
+
+    # L2: 查询破坏性操作历史
+    if opts.action == "destructive-log":
+        ops = db.list_destructive_operations(limit=opts.limit, operation_type=opts.type)
+        if not ops:
+            print(t("cli.messages.git_destructive_log_empty",
+                    default="No destructive operations recorded."))
+            return True
+
+        print(t("cli.messages.git_destructive_log_title",
+                default="Destructive Operations Log ({count} records)",
+                count=len(ops)))
+        print()
+        for op in ops:
+            timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(op['created_at']))
+            op_type = op['operation_type']
+            task_id = op.get('task_id', '')
+            msg = op.get('message', '')
+            short_local = (op.get('local_sha', '') or '')[:8]
+            short_remote = (op.get('remote_sha', '') or '')[:8]
+            task_label = f" task={task_id}" if task_id else ""
+            print(f"  [{timestamp}] {op_type} {short_local} -> {short_remote}{task_label}")
+            if msg:
+                print(f"    {msg}")
         return True
 
     return True

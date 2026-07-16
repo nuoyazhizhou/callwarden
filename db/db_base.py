@@ -1693,6 +1693,35 @@ def _migrate_v35_to_v36(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE git_file_changes ADD COLUMN lines_deleted INTEGER DEFAULT 0")
 
 
+def _migrate_v36_to_v37(conn: sqlite3.Connection):
+    """v36 -> v37: 创建 destructive_operations 表
+
+    L2 破坏性 git 操作记录：force push / reset --hard 等破坏性操作历史。
+    软门禁设计：记录但不阻止（与 L1 软门禁一致），pre-push hook 自动写入。
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v36 库。
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS destructive_operations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            operation_type TEXT NOT NULL,
+            local_ref TEXT DEFAULT '',
+            local_sha TEXT DEFAULT '',
+            remote_ref TEXT DEFAULT '',
+            remote_sha TEXT DEFAULT '',
+            commit_hash TEXT DEFAULT '',
+            task_id TEXT DEFAULT '',
+            blocked INTEGER DEFAULT 0,
+            message TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_destructive_ops_workspace ON destructive_operations(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_destructive_ops_type ON destructive_operations(operation_type)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_destructive_ops_created ON destructive_operations(created_at)")
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2218,6 +2247,10 @@ class CodeGraphBase:
             36: {
                 "description": t("cli.messages.migration_v36", default="churn_analysis real line counts: add lines_added / lines_deleted columns to git_file_changes (idempotent)"),
                 "func": _migrate_v35_to_v36,
+            },
+            37: {
+                "description": t("cli.messages.migration_v37", default="L2 destructive git operations: create destructive_operations table (idempotent)"),
+                "func": _migrate_v36_to_v37,
             },
         }
 
