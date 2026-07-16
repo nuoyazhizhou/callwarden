@@ -225,7 +225,8 @@ class TestCaptureDiffAutoPrefersActiveTask:
         # Mock task_capture_diff 来捕获传入的 task_id
         captured_task_id = []
 
-        def mock_capture(task_id, step_id="", base="", dry_run=False):
+        def mock_capture(task_id, step_id="", base="", dry_run=False, **kwargs):
+            # **kwargs 接收 source_commit_hash / skip_quality_review 等新参数
             captured_task_id.append(task_id)
             return {
                 "task_id": task_id,
@@ -267,6 +268,31 @@ class TestCaptureDiffAutoPrefersActiveTask:
             result = db.task_capture_diff_auto()
         assert result["success"] is False
         assert result["reason"] == "no_in_progress_task"
+
+    def test_capture_diff_auto_skips_non_in_progress_task(self, db):
+        """active_task 状态为 review/applied/closed 时跳过自动捕获（修复 post-commit hook 卡顿）"""
+        task_id = db.task_create(
+            title="t",
+            steps=[{"action": "annotate"}],
+        )
+        db.task_next_step(task_id)
+        # 模拟任务完成进入 review 状态（post-commit hook 在任务完成后仍会触发）
+        db.conn.execute(
+            "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+            (TASK_STATUS_REVIEW, 1234567890.0, task_id),
+        )
+        db.conn.commit()
+        assert db.get_active_task() == task_id  # active_task 仍指向该任务
+
+        # task_capture_diff 不应被调用
+        with patch.object(db, "task_capture_diff") as mock_capture:
+            result = db.task_capture_diff_auto()
+
+        mock_capture.assert_not_called()
+        assert result["success"] is False
+        assert result["reason"] == "task_not_in_progress"
+        assert result["task_id"] == task_id
+        assert result["next_action"] == "noop"
 
 
 # ============================================

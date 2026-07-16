@@ -1795,6 +1795,7 @@ def create_mcp_server():
         base: str = "",
         dry_run: bool = True,
         source_commit_hash: str = "",
+        skip_quality_review: bool = False,
     ) -> dict:
         """捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
 
@@ -1803,6 +1804,9 @@ def create_mcp_server():
                 填写后会写入 task_symbol_changes.source_commit_hash 字段，
                 支持后续通过 get_task_commits / get_commit_tasks 查询三角关联。
                 post-commit hook 自动调用时取当前 HEAD commit hash。
+            skip_quality_review: True 时跳过 run_task_completion_review
+                （Semgrep + 5 个扩展检查器），用于快速捕获场景。
+                post-commit hook 自动模式默认 True；显式调用建议保持 False。
 
         用于把外部 Agent（非 Call Warden MCP）在文件系统中留下的真实改动
         归因到指定 task/step，并触发质量审查。这是自举闭环的核心入口。
@@ -1815,7 +1819,7 @@ def create_mcp_server():
            - 每个变更文件写 change_audit（含 hash_before/hash_after）
            - 签名审计记录 sign_audit_record（best-effort，失败不阻塞）
            - 关联 task_symbol_changes（best-effort，失败不阻塞）
-           - 调用 run_task_completion_review 收集 quality findings
+           - 调用 run_task_completion_review 收集 quality findings（skip_quality_review=True 时跳过）
            - 根据 quality_decision 决定 next_action
 
         Args:
@@ -1845,6 +1849,7 @@ def create_mcp_server():
                 base=base,
                 dry_run=dry_run,
                 source_commit_hash=source_commit_hash,
+                skip_quality_review=skip_quality_review,
             )
         except Exception as e:
             return {"error": str(e)}

@@ -2731,6 +2731,17 @@ def _handle_task(args, db):
         "--auto", action="store_true",
         help=t("cli_task_arg_auto_capture", default="Auto mode: detect in_progress task, use HEAD~1 as base, auto apply (fail-soft)")
     )
+    capture_p.add_argument(
+        "--skip-quality-review", action="store_true",
+        help=t("cli_task_arg_skip_quality_review",
+               default="Skip run_task_completion_review (Semgrep + 5 extension checkers). "
+                       "Auto mode always skips; manual mode defaults to False.")
+    )
+    capture_p.add_argument(
+        "--source-commit-hash", default="",
+        help=t("cli_task_arg_source_commit_hash",
+               default="Source commit hash for task↔commit triangulation")
+    )
 
     # findings：查看任务质量门禁发现
     findings_p = sub.add_parser(
@@ -3095,6 +3106,12 @@ def _handle_task(args, db):
                 error = result.get("error", "")
                 if reason == "no_in_progress_task":
                     cprint(t("cli.messages.task_capture_diff_auto_no_task"), "yellow")
+                elif reason == "task_not_in_progress":
+                    # active_task 已完成（review/applied/closed），跳过自动捕获
+                    task_id = result.get("task_id", "")
+                    cprint(t("cli.messages.task_capture_diff_auto_task_not_in_progress",
+                             default="[Call Warden] Active task {task_id} is not in_progress (review/applied/closed). Skipping auto-capture. Run 'cw task completion-review {task_id}' explicitly to run quality review.",
+                             task_id=task_id), "yellow")
                 elif reason == "exception":
                     cprint(t("cli.messages.task_capture_diff_auto_exception",
                              error=error), "red")
@@ -3161,6 +3178,7 @@ def _handle_task(args, db):
             base=opts.base,
             dry_run=opts.dry_run,
             source_commit_hash=getattr(opts, "source_commit_hash", "") or "",
+            skip_quality_review=getattr(opts, "skip_quality_review", False),
         )
 
         cprint(t("cli.messages.task_capture_diff_title"), "cyan", bold=True)

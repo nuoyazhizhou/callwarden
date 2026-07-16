@@ -509,6 +509,7 @@ class BootstrapMixin:
         base: str = "",
         dry_run: bool = True,
         source_commit_hash: str = "",
+        skip_quality_review: bool = False,
     ) -> Dict[str, Any]:
         """把外部 Agent 的真实文件改动捕获到 task/change/symbol/audit
 
@@ -520,7 +521,7 @@ class BootstrapMixin:
            b. 对每个变更文件计算 hash_before/hash_after，写入 change_audit
            c. 签名审计记录（sign_audit_record）
            d. 尽量关联 task_symbol_changes（record_task_symbol_change）
-           e. 调用 run_task_completion_review
+           e. 调用 run_task_completion_review（skip_quality_review=True 时跳过）
            f. 更新 scan_run 状态为 completed
         4. 返回 changed_files、linked_symbols、quality_findings、next_action
 
@@ -529,6 +530,10 @@ class BootstrapMixin:
             step_id: 关联步骤 ID（可选）
             base: 基线 commit（空串自动取最近一次 scan baseline 的 git_head）
             dry_run: True 只返回计划不写库
+            skip_quality_review: True 时跳过 run_task_completion_review
+                （post-commit hook 自动模式应传 True，避免每次 commit 卡住
+                Semgrep + 5 个扩展检查器；质量审查应通过 cw task completion-review
+                或 cw check-gate 显式触发）
 
         Returns:
             {
@@ -682,10 +687,14 @@ class BootstrapMixin:
 
         self.conn.commit()
 
-        # 步骤 4：调用 run_task_completion_review
+        # 步骤 4：调用 run_task_completion_review（post-commit hook 自动模式跳过，避免卡顿）
         quality_decision = ""
         quality_findings: List[Dict[str, Any]] = []
-        if hasattr(self, "run_task_completion_review") and recorded_changes:
+        if skip_quality_review:
+            # auto 模式：跳过昂贵的质量审查（Semgrep + 5 个扩展检查器）
+            # 质量审查应通过 `cw task completion-review <TASK_ID>` 或 `cw check-gate <TASK_ID>` 显式触发
+            pass
+        elif hasattr(self, "run_task_completion_review") and recorded_changes:
             try:
                 review = self.run_task_completion_review(task_id, step_id)
                 quality_decision = review.get("decision", "")
@@ -787,6 +796,36 @@ class BootstrapMixin:
                     "next_action": "noop",
                 }
 
+            # 1b. 检查 active_task 实际状态：仅 in_progress 才触发自动捕获
+            # 避免 review/applied/closed 状态的任务在每次 commit 时重复触发卡顿
+            # （post-commit hook 不应在任务完成后继续跑 Semgrep + 扩展检查器）
+            try:
+                cur = self.conn.execute(
+                    "SELECT status FROM tasks WHERE id = ?",
+                    (task_id,),
+                )
+                row = cur.fetchone()
+                if row:
+                    task_status = row["status"] if not isinstance(row, dict) else row.get("status", "")
+                    if task_status != "in_progress":
+                        return {
+                            "auto": True,
+                            "task_id": task_id,
+                            "step_id": "",
+                            "base": "",
+                            "dry_run": False,
+                            "success": False,
+                            "error": "",
+                            "reason": "task_not_in_progress",
+                            "changed_files": [],
+                            "linked_symbols": [],
+                            "quality_findings": [],
+                            "quality_decision": "",
+                            "next_action": "noop",
+                        }
+            except Exception:
+                pass  # 查询失败不阻塞，按原流程继续
+
             # 2. 取 HEAD~1 作为 base（commit 后 hook 触发，HEAD 已是新提交）
             base = ""
             head_commit = ""
@@ -818,12 +857,15 @@ class BootstrapMixin:
                 head_commit = ""
 
             # 3. 自动 apply（dry_run=False），传 source_commit_hash 让三角关联生效
+            #    skip_quality_review=True：post-commit hook 不应跑 Semgrep + 5 个扩展检查器，
+            #    否则每次 commit 卡住数十秒；质量审查应通过 `cw task completion-review` 显式触发
             capture_result = self.task_capture_diff(
                 task_id=task_id,
                 step_id="",
                 base=base,
                 dry_run=False,
                 source_commit_hash=head_commit,
+                skip_quality_review=True,
             )
             capture_result["auto"] = True
             capture_result["success"] = True
