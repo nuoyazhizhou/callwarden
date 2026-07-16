@@ -300,11 +300,13 @@ class TestPhase4SnapshotManagerIntegration:
                 )
                 assert result is None, "Rust 不可用时应返回 None"
             else:
-                # Rust 可用但 DB 无 symbols 表时应抛 RuntimeError（预期）
+                # Rust 可用但空 DB 无业务表时应抛 RuntimeError（预期）
+                # Rust build_and_publish 先查 file_instances，空 DB 会报
+                # "prepare file_instances query failed: no such table: file_instances"
                 db_path = str(tmp_path / "test.db")
                 conn = sqlite3.connect(db_path)
                 conn.close()
-                with pytest.raises(RuntimeError, match="symbols"):
+                with pytest.raises(RuntimeError, match="no such table"):
                     svc.publish_snapshot(
                         workspace_instance_id="ws_test",
                         db_path=db_path,

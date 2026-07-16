@@ -18,6 +18,8 @@ import tempfile
 import time
 import random
 
+import pytest
+
 # 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -62,6 +64,41 @@ def setup_database():
     print(f"临时数据库: {db_path}")
     print(f"工作区 ID: {ws_id}")
     return db, db_path, tmpdir, ws_id
+
+
+# ============================================
+# pytest fixtures（session 级共享，测试按顺序执行）
+# ============================================
+
+@pytest.fixture(scope="module")
+def _stress_setup():
+    """创建临时数据库，返回 (db, db_path, tmpdir, ws_id) 元组"""
+    db, db_path, tmpdir, ws_id = setup_database()
+    yield db, db_path, tmpdir, ws_id
+    try:
+        db.conn.close()
+    except Exception:
+        pass
+    import shutil
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture(scope="module")
+def db(_stress_setup):
+    """共享的 CodeGraphDB 实例"""
+    return _stress_setup[0]
+
+
+@pytest.fixture(scope="module")
+def ws_id(_stress_setup):
+    """工作区 ID"""
+    return _stress_setup[3]
+
+
+@pytest.fixture(scope="module")
+def db_path(_stress_setup):
+    """数据库文件路径"""
+    return _stress_setup[1]
 
 
 def test_generate_symbols(db, ws_id):

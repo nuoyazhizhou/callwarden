@@ -182,22 +182,70 @@ class TaskAttributionMixin:
         )
         return {row["qualified_name"]: dict(row) for row in cur.fetchall()}
 
-    def _file_version_for_hash(self, file_path: str, file_hash: str) -> Optional[int]:
-        if not file_hash:
+    def _file_version_for_hash(self, file_path: str, file_hash: str, position: str = "") -> Optional[int]:
+        """根据文件 hash 查找文件版本 ID
+
+        Args:
+            file_path: 文件路径
+            file_hash: 文件内容 hash（file_edit_audit 中存储的 SHA-256）
+            position: hash 匹配失败时的回退策略，"before" 取编辑前版本（is_current=0），
+                      "after" 取编辑后版本（is_current=1）。空串不回退。
+
+        背景：Rust parser 使用 blake_hash（SipHash u64，16 hex chars）作为
+        file_versions.content_hash，而 file_edit_audit 使用 Python _compute_sha256
+        （SHA-256，64 hex chars）。两种 hash 算法不同，无法直接匹配。
+        当 hash 精确匹配失败时，按版本位置回退查找。
+        """
+        if not file_hash and not position:
             return None
         ws_id = self._get_active_workspace_id()
         rel_path = self._rel_path_for_attribution(file_path)
-        cur = self.conn.execute(
-            """
-            SELECT fv.id
-            FROM file_versions fv
-            JOIN file_instances fi ON fv.file_instance_id = fi.id
-            WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fv.content_hash = ?
-            ORDER BY fv.parsed_at DESC, fv.id DESC
-            LIMIT 1
-            """,
-            (ws_id, rel_path, file_hash),
-        )
+
+        # 优先尝试精确 hash 匹配（Python parser 使用 SHA-256，与 audit 一致）
+        if file_hash:
+            cur = self.conn.execute(
+                """
+                SELECT fv.id
+                FROM file_versions fv
+                JOIN file_instances fi ON fv.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fv.content_hash = ?
+                ORDER BY fv.parsed_at DESC, fv.id DESC
+                LIMIT 1
+                """,
+                (ws_id, rel_path, file_hash),
+            )
+            row = cur.fetchone()
+            if row:
+                return int(row["id"])
+
+        # 回退：Rust parser 的 blake_hash 与 audit 的 SHA-256 不匹配，
+        # 按版本位置查找
+        if position == "after":
+            cur = self.conn.execute(
+                """
+                SELECT fv.id
+                FROM file_versions fv
+                JOIN file_instances fi ON fv.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fv.is_current = 1
+                ORDER BY fv.version_num DESC
+                LIMIT 1
+                """,
+                (ws_id, rel_path),
+            )
+        elif position == "before":
+            cur = self.conn.execute(
+                """
+                SELECT fv.id
+                FROM file_versions fv
+                JOIN file_instances fi ON fv.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND fi.rel_path = ? AND fv.is_current = 0
+                ORDER BY fv.version_num DESC
+                LIMIT 1
+                """,
+                (ws_id, rel_path),
+            )
+        else:
+            return None
         row = cur.fetchone()
         return int(row["id"]) if row else None
 
@@ -214,8 +262,8 @@ class TaskAttributionMixin:
         if not step_id:
             step_id = self._infer_in_progress_step_id(task_id)
 
-        before_version_id = self._file_version_for_hash(audit["file_path"], audit["file_hash_before"] or "")
-        after_version_id = self._file_version_for_hash(audit["file_path"], audit["file_hash_after"] or "")
+        before_version_id = self._file_version_for_hash(audit["file_path"], audit["file_hash_before"] or "", position="before")
+        after_version_id = self._file_version_for_hash(audit["file_path"], audit["file_hash_after"] or "", position="after")
         if not before_version_id and not after_version_id:
             return {"success": False, "error": t("cli.messages.attribution_file_versions_missing", default="file versions not found; refresh graph first"), "linked": 0}
 

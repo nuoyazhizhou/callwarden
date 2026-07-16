@@ -3,7 +3,7 @@
 测试目标：
 1. Rust 支持语言默认走 _rust_multilang_parse，不走 _python_multiprocess_parse
 2. CW_DISABLE_RUST_PARSE=1 时回退到 _python_multiprocess_parse
-3. 不支持语言（kotlin/swift 等）仍走 _python_multiprocess_parse
+3. Rust 不支持语言（hcl 等）仍走 _python_multiprocess_parse
 4. Rust parse 路径的耗时基准（smoke benchmark，不卡 CI）
 """
 
@@ -92,10 +92,15 @@ def test_cw_disable_rust_falls_back_to_processpool():
 
 
 def test_unsupported_lang_uses_processpool():
-    """不支持语言（kotlin/swift/elixir/hcl）走 non_rust_files。"""
+    """Rust 不支持的语言（hcl）走 non_rust_files。
+
+    注意：kotlin/swift/elixir 已在 P31 迁移到 Rust parser，
+    不再属于"不支持语言"。HCL 走 Python parser（引用提取非函数调用模式）。
+    C 有专用 parser 路径，也不在 supported_languages() 中但单独处理。
+    """
     to_parse = [
-        (0, "a.kt", "/abs/a.kt", "kotlin", "", 1),
-        (1, "b.swift", "/abs/b.swift", "swift", "", 2),
+        (0, "a.tf", "/abs/a.tf", "hcl", "", 1),
+        (1, "b.tf", "/abs/b.tf", "hcl", "", 2),
     ]
 
     rust_langs = set()
