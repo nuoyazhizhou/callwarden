@@ -103,7 +103,7 @@ cd /path/to/your/project
 cw --refresh-all
 ```
 
-数据库将创建在 `$HOME/.callwarden/<16位hash>/callwarden.db`。
+数据库将创建在 `$HOME/.callwarden/callwarden.db`（用户级单库，多 workspace 通过 `workspace_id` 逻辑隔离）。
 
 ### 6. （可选）编译 Rust 扩展
 
@@ -259,7 +259,7 @@ mcp.call_tool("set_active_workspace", {"workspace_id_or_name": "my_project"})
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `CALLWARDEN_WORKSPACE` | 默认工作区根路径 | 自动检测当前目录 |
-| `CALLWARDEN_DB_PATH` | 自定义数据库路径 | `$HOME/.callwarden/<hash>/callwarden.db` |
+| `CALLWARDEN_DB_PATH` | 自定义数据库路径 | `$HOME/.callwarden/callwarden.db` |
 | `HOME` | 用户主目录（决定 `.callwarden` 位置） | 系统默认 |
 
 ## 数据库备份与恢复
@@ -270,10 +270,10 @@ SQLite 数据库是单文件，备份简单：
 
 ```bash
 # 方法 1：直接复制（确保没有写入操作进行中）
-cp $HOME/.callwarden/<hash>/callwarden.db backup_$(date +%Y%m%d).db
+cp $HOME/.callwarden/callwarden.db backup_$(date +%Y%m%d).db
 
 # 方法 2：使用 .backup 命令（在线备份，推荐）
-sqlite3 $HOME/.callwarden/<hash>/callwarden.db ".backup backup_$(date +%Y%m%d).db"
+sqlite3 $HOME/.callwarden/callwarden.db ".backup backup_$(date +%Y%m%d).db"
 
 # 方法 3：备份整个 .callwarden 目录
 tar -czf callwarden_backup_$(date +%Y%m%d).tar.gz -C $HOME .callwarden/
@@ -284,7 +284,7 @@ tar -czf callwarden_backup_$(date +%Y%m%d).tar.gz -C $HOME .callwarden/
 ```bash
 # 停止所有 Call Warden 进程
 # 恢复数据库
-cp backup_20260101.db $HOME/.callwarden/<hash>/callwarden.db
+cp backup_20260101.db $HOME/.callwarden/callwarden.db
 ```
 
 ### 自动备份（可选）
@@ -318,7 +318,7 @@ cw --status    # 自动迁移并显示状态
 
 ```bash
 # 1. 备份数据库
-sqlite3 $HOME/.callwarden/<hash>/callwarden.db ".backup '/tmp/cw_backup.db'"
+sqlite3 $HOME/.callwarden/callwarden.db ".backup '/tmp/cw_backup.db'"
 
 # 2. 拉取新代码
 cd callwarden
@@ -362,24 +362,24 @@ docker run --rm \
 
 ```bash
 # 查看锁状态
-sqlite3 $HOME/.callwarden/<hash>/callwarden.db "PRAGMA journal_mode;"
+sqlite3 $HOME/.callwarden/callwarden.db "PRAGMA journal_mode;"
 
 # WAL 模式下不应有锁定问题，如遇到：
 # 1. 确保没有多个写入进程
 # 2. 删除 -wal 和 -shm 文件（停止所有进程后）
-rm $HOME/.callwarden/<hash>/callwarden.db-wal
-rm $HOME/.callwarden/<hash>/callwarden.db-shm
+rm $HOME/.callwarden/callwarden.db-wal
+rm $HOME/.callwarden/callwarden.db-shm
 ```
 
 ### 数据库损坏
 
 ```bash
 # 尝试修复
-sqlite3 $HOME/.callwarden/<hash>/callwarden.db ".recover" > recovered.sql
+sqlite3 $HOME/.callwarden/callwarden.db ".recover" > recovered.sql
 sqlite3 new.db < recovered.sql
 
 # 或从备份恢复
-cp backup.db $HOME/.callwarden/<hash>/callwarden.db
+cp backup.db $HOME/.callwarden/callwarden.db
 ```
 
 ### Semgrep 不可用
