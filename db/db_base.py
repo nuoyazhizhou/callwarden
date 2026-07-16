@@ -1562,7 +1562,15 @@ def _migrate_v32_to_v33(conn: sqlite3.Connection):
     已解析调用通过 callee_id 连接目标符号。整数 key 比 qualified_name 文本 key
     更紧凑，部分索引同时排除 callee_id=0 的未解析调用。先建新索引再删除旧索引，
     迁移失败回滚后仍保留原查询能力。
+
+    Fail-soft：极简库（如测试构造的 v21 库）可能没有 calls 表，此时跳过索引操作。
+    DROP INDEX IF EXISTS 本身对缺失表安全，但 CREATE INDEX ON calls(...) 要求表存在。
     """
+    calls_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='calls'"
+    ).fetchone() is not None
+    if not calls_exists:
+        return  # calls 表不存在（极简库或迁移中间态），跳过索引操作
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_calls_callee_id_resolved "
         "ON calls(callee_id) WHERE callee_id > 0"
@@ -1663,7 +1671,14 @@ def _migrate_v34_to_v35(conn: sqlite3.Connection):
     - 新增 source_commit_hash 字段让 task_symbol_changes 也能查到 commit_id
 
     全新数据库已通过 SCHEMA_SQL 创建（含 source_commit_hash 列），本迁移只补齐既有 v34 库。
+    Fail-soft：极简库可能没有 task_symbol_changes 表，跳过。
     """
+    # 检查表是否存在（极简库可能没有）
+    tsc_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='task_symbol_changes'"
+    ).fetchone() is not None
+    if not tsc_exists:
+        return
     # 检查字段是否已存在（幂等）
     cur = conn.execute("PRAGMA table_info(task_symbol_changes)")
     columns = {row[1] for row in cur.fetchall()}
@@ -1684,7 +1699,14 @@ def _migrate_v35_to_v36(conn: sqlite3.Connection):
     churn_analysis 用真实 git 行数变更替代 file_versions 相邻版本差值近似。
     全新数据库已通过 SCHEMA_SQL 创建（含 lines_added / lines_deleted），
     本迁移只补齐既有 v35 库。
+    Fail-soft：极简库可能没有 git_file_changes 表（未导入 git 历史），跳过。
     """
+    # 检查表是否存在（极简库可能没有 git 历史）
+    gfc_exists = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='git_file_changes'"
+    ).fetchone() is not None
+    if not gfc_exists:
+        return
     cur = conn.execute("PRAGMA table_info(git_file_changes)")
     gfc_columns = {row[1] for row in cur.fetchall()}
     if "lines_added" not in gfc_columns:
