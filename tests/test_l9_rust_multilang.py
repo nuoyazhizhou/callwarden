@@ -1,9 +1,9 @@
 """L9 Rust multilang parser 补齐测试
 
-验证 15 种语言全部纳入 Rust multilang parser 路径：
-- supported_languages() 包含 kotlin + swift + elixir + hcl
-- parse_file_lang 对 Kotlin/Swift/Elixir/HCL 文件能提取符号
-- _can_use_rust_parse 对 15 种语言全部返回 True
+验证 14 种语言纳入 Rust multilang parser 路径（HCL 已移回 Python）：
+- supported_languages() 包含 kotlin + swift + elixir（不含 hcl）
+- parse_file_lang 对 Kotlin/Swift/Elixir/HCL 文件能提取符号（HCL 直接调用仍可用）
+- _can_use_rust_parse 对 14 种语言返回 True，对 hcl 返回 False
 - Python parser 仍能工作（作为 fallback 保证）
 """
 import os
@@ -101,15 +101,18 @@ def test_supported_languages_includes_kotlin_swift():
 
 
 @rust_required
-def test_elixir_hcl_in_rust_supported():
-    """测试 2：Elixir/HCL 已在 Rust supported_languages 中（补齐完成）"""
+def test_elixir_in_rust_supported():
+    """测试 2：Elixir 在 Rust supported_languages 中；HCL 已移回 Python parser"""
     from callwarden_core import supported_languages
 
     langs = supported_languages()
     assert "elixir" in langs, f"elixir 应在 supported_languages 中，实际 {langs}"
-    assert "hcl" in langs, f"hcl 应在 supported_languages 中，实际 {langs}"
-    # 验证总数：11 基础语言 + kotlin + swift + elixir + hcl = 15
-    assert len(langs) == 15, f"应有 15 种语言，实际 {len(langs)}: {langs}"
+    # HCL 的"调用关系"是 attribute 中的引用（非函数调用），Rust CallRule
+    # 框架不适用。HCL 完整走 Python parser（HclParser._extract_refs_from_expression
+    # 专门处理引用），因此不在 Rust supported_languages 中。
+    assert "hcl" not in langs, f"hcl 不应在 Rust supported_languages 中（走 Python），实际 {langs}"
+    # 验证总数：11 基础语言 + kotlin + swift + elixir = 14（HCL 已移出）
+    assert len(langs) == 14, f"应有 14 种语言，实际 {len(langs)}: {langs}"
 
 
 @rust_required
@@ -295,26 +298,28 @@ provider "aws" {
 
 
 @rust_required
-def test_can_use_rust_parse_all_15_langs():
-    """测试 5：_can_use_rust_parse 对 15 种语言全部返回 True"""
+def test_can_use_rust_parse_all_14_langs():
+    """测试 5：_can_use_rust_parse 对 14 种语言全部返回 True（HCL 已移回 Python）"""
     from callwarden.db.db_build import _can_use_rust_parse
 
     all_langs = [
         "python", "rust", "go", "java", "typescript", "javascript",
         "ruby", "php", "scala", "csharp", "cpp",
-        "kotlin", "swift", "elixir", "hcl",
+        "kotlin", "swift", "elixir",
     ]
     for lang in all_langs:
         assert _can_use_rust_parse(lang), f"_can_use_rust_parse('{lang}') 应返回 True"
+    # HCL 不走 Rust 路径（引用提取需要 Python _extract_refs_from_expression）
+    assert not _can_use_rust_parse("hcl"), "hcl 应走 Python 路径"
 
 
 @rust_required
-def test_elixir_hcl_use_rust_path():
-    """测试 6：Elixir/HCL 走 Rust 路径（_can_use_rust_parse 返回 True）"""
+def test_elixir_use_rust_path_hcl_use_python_path():
+    """测试 6：Elixir 走 Rust 路径；HCL 走 Python 路径（引用提取需 Python）"""
     from callwarden.db.db_build import _can_use_rust_parse
 
     assert _can_use_rust_parse("elixir"), "elixir 应走 Rust 路径"
-    assert _can_use_rust_parse("hcl"), "hcl 应走 Rust 路径"
+    assert not _can_use_rust_parse("hcl"), "hcl 应走 Python 路径（引用提取）"
 
 
 @rust_required
@@ -365,15 +370,15 @@ def test_hcl_python_parser_still_works():
 
 def main():
     print("=" * 60)
-    print("L9 Rust multilang parser 补齐测试（15 语言全 Rust 化）")
+    print("L9 Rust multilang parser 补齐测试（14 语言 Rust 化，HCL 走 Python）")
     print("=" * 60)
     if not _rust_available():
         print("SKIP: callwarden_core 不可导入")
         return
     test_supported_languages_includes_kotlin_swift()
     print("PASS test_supported_languages_includes_kotlin_swift")
-    test_elixir_hcl_in_rust_supported()
-    print("PASS test_elixir_hcl_in_rust_supported")
+    test_elixir_in_rust_supported()
+    print("PASS test_elixir_in_rust_supported")
     test_rust_parse_kotlin_symbols()
     print("PASS test_rust_parse_kotlin_symbols")
     test_rust_parse_swift_symbols()
@@ -382,10 +387,10 @@ def main():
     print("PASS test_rust_parse_elixir_symbols")
     test_rust_parse_hcl_symbols()
     print("PASS test_rust_parse_hcl_symbols")
-    test_can_use_rust_parse_all_15_langs()
-    print("PASS test_can_use_rust_parse_all_15_langs")
-    test_elixir_hcl_use_rust_path()
-    print("PASS test_elixir_hcl_use_rust_path")
+    test_can_use_rust_parse_all_14_langs()
+    print("PASS test_can_use_rust_parse_all_14_langs")
+    test_elixir_use_rust_path_hcl_use_python_path()
+    print("PASS test_elixir_use_rust_path_hcl_use_python_path")
     test_elixir_python_parser_still_works()
     print("PASS test_elixir_python_parser_still_works")
     test_hcl_python_parser_still_works()

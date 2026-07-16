@@ -110,18 +110,21 @@ class HclParser(BaseParser):
 
         # 符号名：resource 类型用 type.name（如 aws_instance.web），
         # 其他类型用第一个 label
+        # qualified_name 必须加 module_path 前缀（与 csharp/go/java/php 等解析器约定一致），
+        # 否则 DB 中 symbol.qualified_name 与 raw_calls.callee_name 格式不一致，
+        # 调用解析（_build_call_graph_multi_lang 的 5 策略）无法匹配，导致 calls=0
         if block_type == "resource" and len(labels) >= 2:
             name = f"{labels[0]}.{labels[1]}"
-            qualified_name = name
+            qualified_name = f"{module_path}.{name}" if module_path else name
         elif block_type == "data" and len(labels) >= 2:
             name = f"{labels[0]}.{labels[1]}"
-            qualified_name = name
+            qualified_name = f"{module_path}.{name}" if module_path else name
         elif labels:
             name = labels[0]
-            qualified_name = name
+            qualified_name = f"{module_path}.{name}" if module_path else name
         else:
             name = block_type
-            qualified_name = block_type
+            qualified_name = f"{module_path}.{name}" if module_path else name
 
         # 检测块前注释（HCL 用 # 或 // 行注释、/* */ 块注释）
         comment = self._find_prev_comment(node, source)
@@ -192,12 +195,16 @@ class HclParser(BaseParser):
                         refs = self._extract_refs_from_expression(expr, source)
                         for ref in refs:
                             if current_block:
+                                # callee_module 填 module_path：HCL 引用绝大多数在同 module 内
+                                # （跨文件引用通过 var.xxx/module.xxx/data.xxx 等，目标仍属同 module_path）。
+                                # 这样调用解析策略 1 f"{callee_module}.{callee_name}" 能匹配上
+                                # 同 module 的 symbol qualified_name（已加 module_path 前缀）。
                                 calls.append({
                                     "caller_name": current_block,
                                     "caller_qualified": current_qualified,
                                     "caller_module": module_path,
                                     "callee_name": ref,
-                                    "callee_module": "",
+                                    "callee_module": module_path,
                                     "call_line": child.start_point[0] + 1,
                                 })
                     walk(child, current_block, current_qualified)

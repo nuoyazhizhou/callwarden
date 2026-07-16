@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "purpose": "16 语言×2 知名开源项目清单（浅克隆 --depth 1 用于 Call Warden 多场景测试）",
+    "clone_dir": "testcode/repos/",
+    "clone_opts": "--depth 1 --single-branch",
+    "created": "2026-07-15"
+  },
+  "repos": [
+    {"lang": "rust",    "name": "ripgrep",  "url": "https://github.com/BurntSushi/ripgrep.git"},
+    {"lang": "rust",    "name": "bat",      "url": "https://github.com/sharkdp/bat.git"},
+    {"lang": "typescript", "name": "typeorm",   "url": "https://github.com/typeorm/typeorm.git"},
+    {"lang": "typescript", "name": "deno_std",  "url": "https://github.com/denoland/deno_std.git"},
+    {"lang": "javascript","name": "express",   "url": "https://github.com/expressjs/express.git"},
+    {"lang": "javascript","name": "chalk",     "url": "https://github.com/chalk/chalk.git"},
+    {"lang": "python",  "name": "requests", "url": "https://github.com/psf/requests.git"},
+    {"lang": "python",  "name": "flask",    "url": "https://github.com/pallets/flask.git"},
+    {"lang": "kotlin",  "name": "kotlinx_coroutines", "url": "https://github.com/Kotlin/kotlinx.coroutines.git"},
+    {"lang": "kotlin",  "name": "ktor",     "url": "https://github.com/ktorio/ktor.git"},
+    {"lang": "go",      "name": "gin",      "url": "https://github.com/gin-gonic/gin.git"},
+    {"lang": "go",      "name": "cobra",    "url": "https://github.com/spf13/cobra.git"},
+    {"lang": "java",    "name": "guava",    "url": "https://github.com/google/guava.git"},
+    {"lang": "java",    "name": "retrofit", "url": "https://github.com/square/retrofit.git"},
+    {"lang": "c",       "name": "redis",    "url": "https://github.com/redis/redis.git"},
+    {"lang": "c",       "name": "curl",     "url": "https://github.com/curl/curl.git"},
+    {"lang": "cpp",     "name": "fmt",      "url": "https://github.com/fmtlib/fmt.git"},
+    {"lang": "cpp",     "name": "spdlog",   "url": "https://github.com/gabime/spdlog.git"},
+    {"lang": "csharp",  "name": "csharplang","url": "https://github.com/dotnet/csharplang.git"},
+    {"lang": "csharp",  "name": "Avalonia", "url": "https://github.com/AvaloniaUI/Avalonia.git"},
+    {"lang": "ruby",    "name": "sinatra",  "url": "https://github.com/sinatra/sinatra.git"},
+    {"lang": "ruby",    "name": "rubocop",  "url": "https://github.com/rubocop/rubocop.git"},
+    {"lang": "php",     "name": "composer", "url": "https://github.com/composer/composer.git"},
+    {"lang": "php",     "name": "monolog",  "url": "https://github.com/Seldaek/monolog.git"},
+    {"lang": "swift",   "name": "Alamofire","url": "https://github.com/Alamofire/Alamofire.git"},
+    {"lang": "swift",   "name": "vapor",    "url": "https://github.com/vapor/vapor.git"},
+    {"lang": "scala",   "name": "cats",     "url": "https://github.com/typelevel/cats.git"},
+    {"lang": "scala",   "name": "playframework","url": "https://github.com/playframework/playframework.git"},
+    {"lang": "hcl",     "name": "terraform_aws_vpc",      "url": "https://github.com/terraform-aws-modules/terraform-aws-vpc.git"},
+    {"lang": "hcl",     "name": "terraform_aws_security_group","url": "https://github.com/terraform-aws-modules/terraform-aws-security-group.git"},
+    {"lang": "elixir",  "name": "phoenix",  "url": "https://github.com/phoenixframework/phoenix.git"},
+    {"lang": "elixir",  "name": "ecto",     "url": "https://github.com/elixir-ecto/ecto.git"}
+  ]
+}

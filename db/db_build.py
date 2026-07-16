@@ -1998,6 +1998,11 @@ class BuildMixin:
         all_symbols_map: Dict[str, Dict] = {}
         # 简名 -> [qualified_name, ...]（用于 fallback 匹配）
         name_index: Dict[str, List[str]] = defaultdict(list)
+        # symbol.name -> [qualified_name, ...]（用于 HCL 等多段 name 场景的策略 4.5）
+        # HCL 的 resource block name 是 "aws_security_group.this"（含 "."），
+        # simple_name 只取最后一段 "this"，无法匹配 callee_name "aws_security_group.this"。
+        # 此索引用 symbol.name 字段直接匹配，覆盖 HCL/声明式语言的引用语义。
+        name_to_qname: Dict[str, List[str]] = defaultdict(list)
         # 每个文件的符号简名集合（用于同文件匹配存在性判断）
         file_symbols: Dict[str, Set[str]] = defaultdict(set)
         # P27 优化：每个文件的 简名→qualified_name 映射（用于策略3/4的 O(1) 查找）
@@ -2031,6 +2036,7 @@ class BuildMixin:
                 parts = norm_qname.rsplit(".", 1)
                 simple_name = parts[-1] if parts else qname
                 name_index[simple_name].append(qname)
+                name_to_qname[sym["name"]].append(qname)
                 file_symbols[rel_p].add(simple_name)
                 file_local_qname[rel_p][simple_name] = qname
                 norm_parts = norm_qname.split(".")
@@ -2050,6 +2056,7 @@ class BuildMixin:
                     parts = norm_qname.rsplit(".", 1)
                     simple_name = parts[-1] if parts else qname
                     name_index[simple_name].append(qname)
+                    name_to_qname[sym.get("name", "")].append(qname)
                     file_symbols[rel_path].add(simple_name)
                     # P27：构建 file-local qname 映射（简名→qname）
                     # 注意：同文件内同名符号（如多类同名方法）后写覆盖前写，
@@ -2103,7 +2110,11 @@ class BuildMixin:
             imports = result.get("imports", [])
             import_map = {}
             for imp in imports:
-                module = imp.get("module", "")
+                # 防御性处理：imports 可能是 str（Rust 解析器）或 dict（Python 解析器）
+                if isinstance(imp, str):
+                    module = imp
+                else:
+                    module = imp.get("module", "")
                 if not module:
                     continue
                 # Go: "github.com/user/project/pkg" → 包名 "pkg"
@@ -2232,6 +2243,34 @@ class BuildMixin:
                         callee_qname = local_qname
                         callee_file = rel_path
                         callee_id = all_symbols_map[local_qname]["symbol"].get("id", 0)
+
+                # 策略 4.5：symbol.name 直接匹配（HCL 等声明式语言的多段 name 场景）
+                # HCL resource block 的 name 是 "aws_security_group.this"（含 "."），
+                # callee_name 也是 "aws_security_group.this"，但 simple_name（"this"）无法匹配。
+                # 此策略用 symbol.name 字段直接匹配，覆盖 simple_name 丢失前缀段的情况。
+                # 仅在 callee_name 含 "." 时触发，避免对普通简名（如 "foo"）产生与策略 3 重复的匹配。
+                if not callee_qname and "." in callee_name and callee_name in name_to_qname:
+                    candidates = name_to_qname[callee_name]
+                    if len(candidates) == 1:
+                        callee_qname = candidates[0]
+                        callee_file = all_symbols_map[callee_qname]["file"]
+                        callee_id = all_symbols_map[callee_qname]["symbol"].get("id", 0)
+                        if callee_file != rel_path:
+                            is_cross = 1
+                    elif len(candidates) > 1:
+                        # 多候选：优先同文件（用 all_symbols_map 的 file 字段筛选）
+                        same_file_qnames = [
+                            q for q in candidates
+                            if all_symbols_map[q]["file"] == rel_path
+                        ]
+                        if len(same_file_qnames) == 1:
+                            callee_qname = same_file_qnames[0]
+                            callee_file = rel_path
+                            callee_id = all_symbols_map[callee_qname]["symbol"].get("id", 0)
+                        elif same_file_qnames:
+                            callee_qname = same_file_qnames[0]
+                            callee_file = rel_path
+                            callee_id = all_symbols_map[callee_qname]["symbol"].get("id", 0)
 
                 # 策略 5：查找外部符号表（P3 优化：内存查找替代逐条 DB 查询）
                 if not callee_qname:
@@ -2888,6 +2927,10 @@ class BuildMixin:
         for sym in all_symbols:
             if "content_hash" not in sym:
                 sym["content_hash"] = compute_content_hash(sym.get("content", ""))
+            # 防御性补齐：Rust 解析器不输出 start_col/end_col，
+            # _normalize_rust_symbols 理论上已补齐但部分路径可能遗漏
+            sym.setdefault("start_col", 0)
+            sym.setdefault("end_col", 0)
 
         # 2. 批量 INSERT OR IGNORE symbol_contents（content_hash 是 PK，自动去重）
         self.conn.executemany(

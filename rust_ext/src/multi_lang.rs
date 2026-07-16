@@ -171,12 +171,17 @@ impl LangConfig {
     }
 
     /// 获取支持的语言列表
+    /// 注意：hcl 不在此列表中 —— HCL 的"调用关系"是 attribute 中的引用（如
+    /// `value = aws_instance.web.public_ip`），不是传统函数调用。Rust 的
+    /// walk_node + CallRule 按 AST kind 匹配，不适用于此模式。Python 端
+    /// HclParser._extract_refs_from_expression 专门处理引用提取，因此 HCL
+    /// 完整走 Python parser（符号+引用都由 Python 提取，确保正确性）。
     pub fn supported_languages() -> Vec<&'static str> {
         vec![
             "python", "rust", "go", "java", "typescript", "javascript",
             "ruby", "php", "scala", "csharp", "cpp",
             "kotlin", "swift",
-            "elixir", "hcl",
+            "elixir",
         ]
     }
 }
@@ -434,13 +439,24 @@ fn php_config() -> LangConfig {
         language: Language::from(tree_sitter_php::LANGUAGE_PHP),
         symbol_rules: vec![
             // PHP 方法名在 formal_parameters 之前
+            // body 是 compound_statement（{ ... }），不是 declaration_list
+            // （declaration_list 是 class/interface/trait 的成员列表）
             SymbolRule::new(
                 "method_declaration",
                 NameStrategy::PositionBefore {
                     terminator: "formal_parameters",
                     name_kind: "name",
                 },
-                "method", Some("declaration_list"), true,
+                "method", Some("compound_statement"), true,
+            ),
+            // PHP 独立函数 function foo() { ... }
+            SymbolRule::new(
+                "function_definition",
+                NameStrategy::PositionBefore {
+                    terminator: "formal_parameters",
+                    name_kind: "name",
+                },
+                "fn", Some("compound_statement"), true,
             ),
             SymbolRule::new(
                 "class_declaration",
@@ -459,8 +475,15 @@ fn php_config() -> LangConfig {
             ),
         ],
         call_rules: vec![
-            CallRule { kind: "function_call_expression", callee_field: None },
-            CallRule { kind: "member_call_expression", callee_field: None },
+            // PHP 4 种调用表达式，按 tree-sitter-php 0.23 node-types.json 定义使用正确 field：
+            //   function_call_expression: field "function" → name/qualified_name
+            //   member_call_expression:     field "name"    → name ($obj->method())
+            //   nullsafe_member_call_expression: field "name" → name ($obj?->method())
+            //   scoped_call_expression:     field "name"    → name (Class::method())
+            CallRule { kind: "function_call_expression", callee_field: Some("function") },
+            CallRule { kind: "member_call_expression", callee_field: Some("name") },
+            CallRule { kind: "nullsafe_member_call_expression", callee_field: Some("name") },
+            CallRule { kind: "scoped_call_expression", callee_field: Some("name") },
         ],
         import_kinds: vec!["namespace_use_declaration"],
         skip_kinds: vec![],
@@ -1258,6 +1281,7 @@ fn extract_callee(node: &Node, source: &[u8], field: Option<&str>) -> Option<Str
 /// - `foo.bar()` → (name="bar", module="foo")
 /// - `Foo::bar()` → (name="bar", module="Foo")
 /// - `obj->method()` → (name="method", module="obj")
+/// - `Namespace\func()` → (name="func", module="Namespace")  PHP 命名空间
 /// - `func()` → (name="func", module="")
 fn split_callee(text: &str) -> (String, String) {
     // 优先匹配 :: 和 ->（C++/Rust 风格）
@@ -1266,6 +1290,10 @@ fn split_callee(text: &str) -> (String, String) {
     }
     if let Some(pos) = text.rfind("->") {
         return (text[pos + 2..].to_string(), text[..pos].to_string());
+    }
+    // PHP 命名空间分隔符 \（在 . 之前匹配，避免被 . 截断）
+    if let Some(pos) = text.rfind('\\') {
+        return (text[pos + 1..].to_string(), text[..pos].to_string());
     }
     // 最后一个 . 分隔（Python/Java/TS/Go 风格）
     if let Some(pos) = text.rfind('.') {
