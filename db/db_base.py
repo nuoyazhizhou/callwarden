@@ -2000,14 +2000,16 @@ class CodeGraphBase:
         current_version = self._get_current_version()
 
         if current_version == 0:
-            # 全新数据库：P12 优化 — 只建表（SCHEMA_TABLES_SQL），不建索引/触发器
-            # 索引和触发器延迟到 build_full_graph 完成后通过 _create_indexes_after_build() 建立
-            # 原因：建表时同步建 6+ 个 B-tree 索引，每个 INSERT 都触发索引维护（写放大），
-            #       导致 2M 符号入库 1031s（baseline）。改为延迟建索引后可降到 76s（13.5x）
+            # 全新数据库：建表 + 建索引（SCHEMA_TABLES_SQL + SCHEMA_INDEXES_SQL）
+            # P12 优化原为"只建表，延迟建索引"，但导致不调用 build_full_graph 的场景
+            # （如测试、直接查询）索引缺失。现改为建表后立即建索引。
+            # build_full_graph 入库前会调用 _drop_indexes_for_build() 清理索引避免写放大，
+            # 入库后再通过 _create_indexes_after_build() 重建（幂等）。
             self.conn.executescript(SCHEMA_TABLES_SQL)
+            self.conn.executescript(SCHEMA_INDEXES_SQL)
             self.conn.execute(
                 "INSERT INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)",
-                (SCHEMA_VERSION, time.time(), "初始 schema（仅建表，索引延迟到 build 完成后）"),
+                (SCHEMA_VERSION, time.time(), "初始 schema（建表 + 建索引）"),
             )
             self.conn.commit()
         elif current_version < SCHEMA_VERSION:
@@ -2057,6 +2059,34 @@ class CodeGraphBase:
             # 建索引失败不阻塞 build（已有数据，只是查询慢）
             # 但建议用户手动运行 `cw fts rebuild` 或重新 build
             print(f"[WARN] _create_indexes_after_build 失败: {e}，查询性能可能下降")
+
+    def _drop_indexes_for_build(self):
+        """P12 优化：build_full_graph 入库前 DROP 所有非 UNIQUE 的 idx_ 前缀索引，避免 INSERT 写放大
+
+        _init_schema() 现在建表后立即建索引（保证非 build 场景也有索引）。
+        但 build_full_graph 大规模入库时，每个 INSERT 都会触发 B-tree 索引维护（写放大），
+        导致 2M 符号入库从 31s 膨胀到 1031s。本方法在入库前 DROP 所有非 UNIQUE idx_ 索引，
+        入库后再通过 _create_indexes_after_build() 一次性重建。
+
+        保留：
+        - PRIMARY KEY 约束（随表创建，不可 DROP）
+        - UNIQUE 约束（随表创建，不可 DROP）
+        - UNIQUE INDEX（如 idx_symbols_unique，支撑 symbols 表 UPSERT 语义，删除会破坏 ON CONFLICT）
+        - sqlite_autoindex_* （系统自动管理，不带 idx_ 前缀）
+        """
+        try:
+            # 只 DROP 非 UNIQUE 的 idx_ 索引：通过 sql 字段过滤掉 CREATE UNIQUE INDEX
+            # idx_symbols_unique 是 UNIQUE INDEX，支撑 symbols UPSERT（ON CONFLICT），必须保留
+            rows = self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%' "
+                "AND (sql IS NULL OR sql NOT LIKE '%UNIQUE%')"
+            ).fetchall()
+            for row in rows:
+                idx_name = row["name"]
+                self.conn.execute(f"DROP INDEX IF EXISTS {idx_name}")
+            self.conn.commit()
+        except Exception as e:
+            print(f"[WARN] _drop_indexes_for_build 失败: {e}，入库可能有写放大")
 
 
     def _get_current_version(self) -> int:

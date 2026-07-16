@@ -1546,6 +1546,10 @@ class BuildMixin:
         # P8 优化：full build 期间禁用 FTS 触发器，避免每个 symbol INSERT/UPDATE
         # 都同步维护 trigram FTS 索引（写放大）。批量写完后一次性 rebuild。
         fts_was_disabled = self._disable_fts_triggers()
+        # P12 优化：批量入库前 DROP 所有 idx_ 前缀二级索引，避免 INSERT 维护 B-tree（写放大）
+        # _init_schema() 现在建表后立即建索引（保证非 build 场景也有索引），
+        # 此处把索引 DROP 掉，入库后由 _create_indexes_after_build() 一次性重建（幂等）。
+        self._drop_indexes_for_build()
         t_versions_start = time.perf_counter()
         version_count = 0
         for rel_path, result in file_results.items():
@@ -1612,8 +1616,10 @@ class BuildMixin:
             self._rebuild_and_enable_fts()
         t_fts = time.perf_counter() - t_fts_start
 
-        # P12: 延迟建索引 — 入库完成后一次性建立所有 B-tree 索引和触发器
-        # 全新数据库 _init_schema 只建了表（SCHEMA_TABLES_SQL），此处补建索引
+        # P12: 批量入库完成后一次性重建所有 B-tree 索引（CREATE INDEX IF NOT EXISTS，幂等）
+        # 入库前已通过 _drop_indexes_for_build() DROP 掉 idx_ 前缀索引避免写放大
+        # _init_schema() 现在建表后立即建索引（保证非 build 场景如测试也有索引），
+        # 此处重建是为了 build 场景下恢复索引（DROP 后的幂等重建）
         # 收益：避免 INSERT 期间维护 B-tree 索引（写放大），2M 入库从 1031s 降到 31s
         t_index_start = time.perf_counter()
         self._create_indexes_after_build()
