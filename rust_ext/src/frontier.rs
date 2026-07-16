@@ -119,7 +119,9 @@ impl FrontierComputer {
                 let caller_ids = store.get_caller_ids(sym.id);
                 for caller_id in caller_ids {
                     if let Some(caller) = store.get_symbol_by_id(caller_id) {
-                        frontier.upstream_direct.insert(caller.qualified_name.clone());
+                        frontier
+                            .upstream_direct
+                            .insert(store.symbol_qname(caller).to_string());
                     }
                 }
             }
@@ -131,7 +133,9 @@ impl FrontierComputer {
                 let callee_ids = store.get_callee_ids(sym.id);
                 for callee_id in callee_ids {
                     if let Some(callee) = store.get_symbol_by_id(callee_id) {
-                        frontier.downstream_direct.insert(callee.qualified_name.clone());
+                        frontier
+                            .downstream_direct
+                            .insert(store.symbol_qname(callee).to_string());
                     }
                 }
             }
@@ -187,8 +191,8 @@ impl FrontierComputer {
                 let caller_ids = store.get_caller_ids(sym.id);
                 for caller_id in caller_ids {
                     if let Some(caller) = store.get_symbol_by_id(caller_id) {
-                        let caller_qname = &caller.qualified_name;
-                        if !visited.contains(caller_qname) {
+                        let caller_qname = store.symbol_qname(caller).to_string();
+                        if !visited.contains(&caller_qname) {
                             visited.insert(caller_qname.clone());
                             result.insert(caller_qname.clone());
                             queue.push_back((caller_qname.clone(), depth + 1));
@@ -229,8 +233,8 @@ impl FrontierComputer {
                 let callee_ids = store.get_callee_ids(sym.id);
                 for callee_id in callee_ids {
                     if let Some(callee) = store.get_symbol_by_id(callee_id) {
-                        let callee_qname = &callee.qualified_name;
-                        if !visited.contains(callee_qname) {
+                        let callee_qname = store.symbol_qname(callee).to_string();
+                        if !visited.contains(&callee_qname) {
                             visited.insert(callee_qname.clone());
                             result.insert(callee_qname.clone());
                             queue.push_back((callee_qname.clone(), depth + 1));
@@ -354,7 +358,7 @@ pub fn compute_frontier<'py>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::delta::{ParseDelta, SymbolDelta, SymbolDeltaEntry, SymbolDeltaKind, RawCallDelta};
+    use crate::delta::{ParseDelta, RawCallDelta, SymbolDelta, SymbolDeltaEntry, SymbolDeltaKind};
     use std::path::PathBuf;
 
     #[test]
@@ -386,8 +390,10 @@ mod tests {
                     qualified_name: "test.func".to_string(),
                     name: "func".to_string(),
                     symbol_kind: "function".to_string(),
-                    start_line: 1, end_line: 5,
-                    prev_start_line: None, prev_end_line: None,
+                    start_line: 1,
+                    end_line: 5,
+                    prev_start_line: None,
+                    prev_end_line: None,
                 }],
                 removed: vec![],
                 changed: vec![],

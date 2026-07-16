@@ -61,6 +61,23 @@ def _parser() -> argparse.ArgumentParser:
 
     mode = sub.add_parser("mode", help="查看 daemon 模式")
     mode.add_argument("--set", choices=["auto", "enterprise", "local"])
+
+    # 运维命令（runbook 使用，不需要 workspace_id）
+    sub.add_parser("health", help="检查 daemon 健康状态")
+    sub.add_parser("schema-version", help="查询 registry DB schema 版本")
+
+    backup = sub.add_parser("backup", help="备份 registry DB")
+    backup.add_argument("--output", required=True, help="备份输出路径")
+
+    restore = sub.add_parser("restore", help="从备份恢复 registry DB")
+    restore.add_argument("--from", dest="from_path", required=True, help="备份文件路径")
+
+    gc_cas = sub.add_parser("gc-cas", help="GC CAS 存储（清理未引用 content）")
+    gc_cas.add_argument("--grace-days", type=int, default=7, help="清理 grace_days 天前的未引用 content")
+    gc_cas.add_argument("workspace_id", help="workspace instance ID")
+
+    gc_snapshots = sub.add_parser("gc-snapshots", help="GC 快照（保留最近 N 个）")
+    gc_snapshots.add_argument("--keep-last", type=int, default=3, help="每个 workspace 保留的快照数量")
     return parser
 
 
@@ -127,6 +144,21 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None) -> int:
         elif args.query_type == "callees":
             params.update(caller_name=args.value, qualified_name=args.qualified_name)
         result = client.call(method, params)
+    elif args.action == "health":
+        result = client.call("health", {})
+    elif args.action == "schema-version":
+        result = client.call("schema.version", {})
+    elif args.action == "backup":
+        result = client.call("backup", {"output_path": os.path.abspath(args.output)})
+    elif args.action == "restore":
+        result = client.call("restore", {"source_path": os.path.abspath(args.from_path)})
+    elif args.action == "gc-cas":
+        result = client.call("gc.cas", {
+            "workspace_instance_id": args.workspace_id,
+            "grace_days": args.grace_days,
+        })
+    elif args.action == "gc-snapshots":
+        result = client.call("gc.snapshots", {"keep_last": args.keep_last})
     else:
         raise AssertionError(args.action)
     _print_json(result)

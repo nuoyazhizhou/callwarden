@@ -16,6 +16,7 @@ import stat
 import struct
 import sys
 import threading
+import time
 from contextlib import closing
 from typing import Optional, List, Dict, Any
 
@@ -137,6 +138,8 @@ class EnterpriseDaemonService:
         # workspace_id → {cas_conn, staging_log, replicator, ws_conn}
         self._workspace_resources: Dict[str, Dict] = {}
         self._resources_lock = threading.Lock()
+        import time as _time
+        self._start_time = _time.time()
         with closing(self._registry_conn()):
             pass
 
@@ -288,10 +291,82 @@ class EnterpriseDaemonService:
             except Exception as e:
                 raise DaemonRpcError("connect_failed", str(e))
 
+        # ---- 全局方法（不需要 workspace_id）----
+
+        if method == "health":
+            """daemon 健康检查，返回运行状态"""
+            import time as _time
+            with closing(self._registry_conn()) as conn:
+                ws_count = conn.execute(
+                    "SELECT COUNT(*) FROM workspaces"
+                ).fetchone()[0]
+            return {
+                "status": "ok",
+                "pid": os.getpid(),
+                "uptime_seconds": int(_time.time() - self._start_time),
+                "workspace_count": ws_count,
+                "registry_db": self.registry_db,
+                "data_root": self._data_root,
+            }
+
+        if method == "schema.version":
+            """查询 registry DB 的 schema 版本"""
+            with closing(self._registry_conn()) as conn:
+                row = conn.execute(
+                    "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+                ).fetchone()
+                version = int(row[0]) if row else 0
+            return {"schema_version": version, "registry_db": self.registry_db}
+
+        if method == "backup":
+            """备份 registry DB 到指定路径"""
+            output_path = str(params.get("output_path") or "")
+            if not output_path:
+                raise DaemonRpcError("invalid_params", "缺少 output_path")
+            output_path = os.path.abspath(output_path)
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with closing(self._registry_conn()) as conn:
+                conn.execute(f"VACUUM INTO '{output_path}'")
+            return {"backup_path": output_path, "status": "ok"}
+
+        if method == "restore":
+            """从备份恢复 registry DB"""
+            source_path = str(params.get("source_path") or "")
+            if not source_path:
+                raise DaemonRpcError("invalid_params", "缺少 source_path")
+            source_path = os.path.abspath(source_path)
+            if not os.path.isfile(source_path):
+                raise DaemonRpcError("backup_not_found", source_path)
+            # 关闭当前连接，替换文件，重新打开
+            import shutil
+            shutil.copy2(source_path, self.registry_db)
+            return {"restored_from": source_path, "registry_db": self.registry_db}
+
+        if method == "gc.snapshots":
+            """GC 快照，保留最近 N 个，删除旧的"""
+            keep_last = int(params.get("keep_last", 3))
+            deleted = self.snapshot_service.gc_snapshots(keep_last)
+            return {"deleted_count": deleted, "keep_last": keep_last}
+
+        # gc.cas 需要 workspace_id，在下方处理
+
         workspace_id = str(params.get("workspace_instance_id") or "")
         if not workspace_id:
             raise DaemonRpcError("invalid_params", "缺少 workspace_instance_id")
         workspace = self._owned_workspace(uid, workspace_id)
+
+        if method == "gc.cas":
+            """GC CAS 存储，清理 grace_days 天前未引用的 content"""
+            grace_days = int(params.get("grace_days", 7))
+            resources = self._get_workspace_resources(workspace_id)
+            cas_conn = resources["cas_conn"]
+            cutoff = int(time.time()) - grace_days * 86400
+            cursor = cas_conn.execute(
+                "DELETE FROM cas_contents WHERE ref_count = 0 AND created_at < ?",
+                (cutoff,),
+            )
+            cas_conn.commit()
+            return {"deleted_count": cursor.rowcount, "grace_days": grace_days}
 
         if method == "workspace.status":
             result = dict(workspace)

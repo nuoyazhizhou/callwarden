@@ -14,6 +14,7 @@
 - [cas-gc-protocol.md](cas-gc-protocol.md) — CAS 发布与唯一 GC 协议
 - [watcher-generation-state-machine.md](watcher-generation-state-machine.md) — Watcher Generation 状态机
 - [daemon-ipc-security.md](daemon-ipc-security.md) — Daemon IPC 安全规范
+- [phase-spec-cross-reference.md](phase-spec-cross-reference.md) — 实施阶段 ↔ 短规范跨切面映射（实施者必读）
 - [roadmap_phase2_plan.md](../roadmap_phase2_plan.md) — Phase 2 路线图
 
 ## 1. 决策摘要

@@ -191,6 +191,31 @@ class SnapshotManagerService:
             self._rust_stores.pop(workspace_instance_id, None)
             return self._cache.evict(workspace_instance_id)
 
+    def gc_snapshots(self, keep_last: int = 3) -> int:
+        """GC 快照：每个 workspace 保留最近 keep_last 个 generation，删除旧的。
+
+        Args:
+            keep_last: 每个 workspace 保留的快照数量
+
+        Returns:
+            删除的快照总数
+        """
+        if self._cache is None:
+            return 0
+        deleted_total = 0
+        with self._lock:
+            for ws_id in list(self._cache.list_workspaces()):
+                mgr = self._cache.get(ws_id)
+                if mgr is None:
+                    continue
+                # SnapshotManager 内部应提供 gc_generations 方法
+                # 如果没有，直接跳过（保守策略，不删除）
+                gc_fn = getattr(mgr, "gc_generations", None)
+                if gc_fn is not None:
+                    deleted = gc_fn(keep_last)
+                    deleted_total += deleted if deleted else 0
+        return deleted_total
+
     # ------------------------------------------------------------------
     # 查询代理：通过 Rust GraphStore 查询（ArcSwap 读路径无锁）
     # ------------------------------------------------------------------

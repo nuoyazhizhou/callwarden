@@ -108,8 +108,16 @@ impl LocalMetricsUpdate {
     }
 
     pub fn summary(&self) -> String {
-        let added = self.cycle_changes.iter().filter(|c| c.kind == CycleChangeKind::Added).count();
-        let removed = self.cycle_changes.iter().filter(|c| c.kind == CycleChangeKind::Removed).count();
+        let added = self
+            .cycle_changes
+            .iter()
+            .filter(|c| c.kind == CycleChangeKind::Added)
+            .count();
+        let removed = self
+            .cycle_changes
+            .iter()
+            .filter(|c| c.kind == CycleChangeKind::Removed)
+            .count();
         format!(
             "metrics update: {} depth, {} cycle ({}+{}-), {} impact",
             self.depth_changes.len(),
@@ -173,7 +181,7 @@ impl MetricsComputer {
             store
                 .get_symbols_by_file(&parse_delta.file_path.to_string_lossy())
                 .into_iter()
-                .map(|s| (s.qualified_name.clone(), s.depth))
+                .map(|s| (store.symbol_qname(s).to_string(), s.depth))
                 .collect()
         } else {
             HashMap::new()
@@ -261,10 +269,7 @@ impl MetricsComputer {
 
     /// 在子图上检测环（DFS 三色标记）
     /// 仅遍历子图内的节点和边，使用 GraphStore 的公共方法
-    fn detect_cycles_in_subgraph(
-        store: &GraphStore,
-        node_set: &HashSet<u32>,
-    ) -> Vec<Vec<String>> {
+    fn detect_cycles_in_subgraph(store: &GraphStore, node_set: &HashSet<u32>) -> Vec<Vec<String>> {
         let mut color: HashMap<u32, u8> = HashMap::new(); // 0=white, 1=gray, 2=black
         let mut parent: HashMap<u32, i64> = HashMap::new();
         let mut cycles: Vec<Vec<String>> = Vec::new();
@@ -283,7 +288,9 @@ impl MetricsComputer {
             // 获取 u 的所有 callee
             let callee_ids = store.get_callee_ids(u);
             for v in callee_ids {
-                if !node_set.contains(&v) { continue; }
+                if !node_set.contains(&v) {
+                    continue;
+                }
 
                 let color_v = color.get(&v).copied().unwrap_or(0);
                 if color_v == 0 {
@@ -295,12 +302,12 @@ impl MetricsComputer {
                     let mut cur = u as i64;
                     while cur != -1 && cur != v as i64 {
                         if let Some(sym) = store.get_symbol_by_id(cur as u32) {
-                            cycle.push(sym.qualified_name.clone());
+                            cycle.push(store.symbol_qname(sym).to_string());
                         }
                         cur = parent.get(&(cur as u32)).copied().unwrap_or(-1);
                     }
                     if let Some(sym) = store.get_symbol_by_id(v) {
-                        cycle.push(sym.qualified_name.clone());
+                        cycle.push(store.symbol_qname(sym).to_string());
                     }
                     cycle.reverse();
                     if cycle.len() > 1 {
@@ -366,13 +373,21 @@ impl MetricsComputer {
                 affected_downstream: downstream
                     .iter()
                     .filter_map(|(qname, _)| {
-                        if qname != source_qname { Some(qname.clone()) } else { None }
+                        if qname != source_qname {
+                            Some(qname.clone())
+                        } else {
+                            None
+                        }
                     })
                     .collect(),
                 affected_upstream: upstream
                     .iter()
                     .filter_map(|(qname, _)| {
-                        if qname != source_qname { Some(qname.clone()) } else { None }
+                        if qname != source_qname {
+                            Some(qname.clone())
+                        } else {
+                            None
+                        }
                     })
                     .collect(),
                 depth,
@@ -384,11 +399,7 @@ impl MetricsComputer {
 
     /// 下游 BFS：从 source 出发，遍历 callee 链
     /// 返回 (qualified_name, hop_depth) 列表
-    fn bfs_downstream(
-        store: &GraphStore,
-        source_id: u32,
-        max_depth: u32,
-    ) -> Vec<(String, u32)> {
+    fn bfs_downstream(store: &GraphStore, source_id: u32, max_depth: u32) -> Vec<(String, u32)> {
         let mut visited: HashSet<u32> = HashSet::new();
         let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
         let mut result = Vec::new();
@@ -397,15 +408,19 @@ impl MetricsComputer {
         visited.insert(source_id);
 
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= max_depth { continue; }
+            if depth >= max_depth {
+                continue;
+            }
 
             let callee_ids = store.get_callee_ids(node_id);
             for callee_id in callee_ids {
-                if visited.contains(&callee_id) { continue; }
+                if visited.contains(&callee_id) {
+                    continue;
+                }
                 visited.insert(callee_id);
 
                 if let Some(sym) = store.get_symbol_by_id(callee_id) {
-                    result.push((sym.qualified_name.clone(), depth + 1));
+                    result.push((store.symbol_qname(sym).to_string(), depth + 1));
                     queue.push_back((callee_id, depth + 1));
                 }
             }
@@ -416,11 +431,7 @@ impl MetricsComputer {
 
     /// 上游 BFS：从 source 出发，遍历 caller 链
     /// 返回 (qualified_name, hop_depth) 列表
-    fn bfs_upstream(
-        store: &GraphStore,
-        source_id: u32,
-        max_depth: u32,
-    ) -> Vec<(String, u32)> {
+    fn bfs_upstream(store: &GraphStore, source_id: u32, max_depth: u32) -> Vec<(String, u32)> {
         let mut visited: HashSet<u32> = HashSet::new();
         let mut queue: VecDeque<(u32, u32)> = VecDeque::new();
         let mut result = Vec::new();
@@ -429,15 +440,19 @@ impl MetricsComputer {
         visited.insert(source_id);
 
         while let Some((node_id, depth)) = queue.pop_front() {
-            if depth >= max_depth { continue; }
+            if depth >= max_depth {
+                continue;
+            }
 
             let caller_ids = store.get_caller_ids(node_id);
             for caller_id in caller_ids {
-                if visited.contains(&caller_id) { continue; }
+                if visited.contains(&caller_id) {
+                    continue;
+                }
                 visited.insert(caller_id);
 
                 if let Some(sym) = store.get_symbol_by_id(caller_id) {
-                    result.push((sym.qualified_name.clone(), depth + 1));
+                    result.push((store.symbol_qname(sym).to_string(), depth + 1));
                     queue.push_back((caller_id, depth + 1));
                 }
             }

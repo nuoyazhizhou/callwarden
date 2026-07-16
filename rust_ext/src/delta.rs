@@ -102,9 +102,15 @@ impl SymbolDelta {
     /// 所有受影响的 qualified_name（added + removed + changed）
     pub fn affected_qnames(&self) -> Vec<String> {
         let mut qnames = Vec::new();
-        for e in &self.added { qnames.push(e.qualified_name.clone()); }
-        for e in &self.removed { qnames.push(e.qualified_name.clone()); }
-        for e in &self.changed { qnames.push(e.qualified_name.clone()); }
+        for e in &self.added {
+            qnames.push(e.qualified_name.clone());
+        }
+        for e in &self.removed {
+            qnames.push(e.qualified_name.clone());
+        }
+        for e in &self.changed {
+            qnames.push(e.qualified_name.clone());
+        }
         qnames
     }
 }
@@ -290,8 +296,8 @@ impl DeltaComputer {
                 .into_iter()
                 .map(|s| {
                     (
-                        s.qualified_name.clone(),
-                        (s.start_line, s.end_line, s.kind.clone()),
+                        store.symbol_qname(s).to_string(),
+                        (s.start_line, s.end_line, s.kind.as_str().to_string()),
                     )
                 })
                 .collect()
@@ -439,7 +445,7 @@ impl DeltaComputer {
                 for caller_id in caller_ids {
                     if let Some(caller) = store.get_symbol_by_id(caller_id) {
                         delta.removed.push(ResolvedEdge {
-                            caller_qname: caller.qualified_name.clone(),
+                            caller_qname: store.symbol_qname(caller).to_string(),
                             callee_qname: qname.clone(),
                         });
                     }
@@ -559,7 +565,10 @@ impl PyResolveDelta {
 
     #[getter]
     fn unresolved<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        Ok(PyList::new(py, self.inner.unresolved.iter().map(String::as_str))?)
+        Ok(PyList::new(
+            py,
+            self.inner.unresolved.iter().map(String::as_str),
+        )?)
     }
 
     #[getter]
@@ -653,7 +662,12 @@ impl PyDeltaComputer {
 
         let resolve_delta = DeltaComputer::compute_resolve_delta(&parse_delta.inner, store);
 
-        Py::new(py, PyResolveDelta { inner: resolve_delta })
+        Py::new(
+            py,
+            PyResolveDelta {
+                inner: resolve_delta,
+            },
+        )
     }
 }
 
@@ -667,7 +681,10 @@ mod tests {
         assert_eq!(lang_from_extension(Path::new("test.py")), Some("python"));
         assert_eq!(lang_from_extension(Path::new("test.rs")), Some("rust"));
         assert_eq!(lang_from_extension(Path::new("test.go")), Some("go"));
-        assert_eq!(lang_from_extension(Path::new("test.ts")), Some("typescript"));
+        assert_eq!(
+            lang_from_extension(Path::new("test.ts")),
+            Some("typescript")
+        );
         assert_eq!(lang_from_extension(Path::new("test.unknown")), None);
         assert_eq!(lang_from_extension(Path::new("noext")), None);
     }
@@ -776,16 +793,20 @@ mod tests {
                 qualified_name: "added.fn".to_string(),
                 name: "fn".to_string(),
                 symbol_kind: "function".to_string(),
-                start_line: 1, end_line: 5,
-                prev_start_line: None, prev_end_line: None,
+                start_line: 1,
+                end_line: 5,
+                prev_start_line: None,
+                prev_end_line: None,
             }],
             removed: vec![SymbolDeltaEntry {
                 kind: SymbolDeltaKind::Removed,
                 qualified_name: "removed.fn".to_string(),
                 name: "fn".to_string(),
                 symbol_kind: "function".to_string(),
-                start_line: 0, end_line: 0,
-                prev_start_line: Some(1), prev_end_line: Some(5),
+                start_line: 0,
+                end_line: 0,
+                prev_start_line: Some(1),
+                prev_end_line: Some(5),
             }],
             changed: vec![],
         };
@@ -818,8 +839,10 @@ mod tests {
                     qualified_name: "test.fn".to_string(),
                     name: "fn".to_string(),
                     symbol_kind: "function".to_string(),
-                    start_line: 1, end_line: 5,
-                    prev_start_line: None, prev_end_line: None,
+                    start_line: 1,
+                    end_line: 5,
+                    prev_start_line: None,
+                    prev_end_line: None,
                 }],
                 removed: vec![],
                 changed: vec![],

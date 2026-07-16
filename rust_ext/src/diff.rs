@@ -13,10 +13,10 @@
 //! 2. signature 相似（未来扩展，tier 3）
 //! 3. 低置信度返回 ambiguous（未来扩展，tier 4）
 
-use std::collections::HashSet;
+use crate::graph::GraphStore;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use crate::graph::GraphStore;
+use std::collections::HashSet;
 
 // ============================================
 // 变更类型枚举
@@ -134,17 +134,22 @@ pub fn diff_signature(
     let right_sym = right.get_symbol_ref(qualified_name)?;
 
     Some(SignatureDiff {
-        left_file: left_sym.file_rel_path.clone(),
-        right_file: right_sym.file_rel_path.clone(),
-        file_changed: left_sym.file_rel_path != right_sym.file_rel_path,
+        left_file: left
+            .get_file_rel_path(left_sym.file_instance_id)
+            .to_string(),
+        right_file: right
+            .get_file_rel_path(right_sym.file_instance_id)
+            .to_string(),
+        file_changed: left.get_file_rel_path(left_sym.file_instance_id)
+            != right.get_file_rel_path(right_sym.file_instance_id),
         left_start_line: left_sym.start_line,
         left_end_line: left_sym.end_line,
         right_start_line: right_sym.start_line,
         right_end_line: right_sym.end_line,
         line_range_changed: left_sym.start_line != right_sym.start_line
             || left_sym.end_line != right_sym.end_line,
-        left_kind: left_sym.kind.clone(),
-        right_kind: right_sym.kind.clone(),
+        left_kind: left_sym.kind.as_str().to_string(),
+        right_kind: right_sym.kind.as_str().to_string(),
         kind_changed: left_sym.kind != right_sym.kind,
     })
 }
@@ -227,11 +232,18 @@ fn compute_edge_delta(
     // 用 qualified_name 集合做对比（而非 symbol_id，因为两个 snapshot 的 id 可能不同）
     let left_names: HashSet<String> = left_ids
         .iter()
-        .filter_map(|&id| left.get_symbol_by_id(id).map(|s| s.qualified_name.clone()))
+        .filter_map(|&id| {
+            left.get_symbol_by_id(id)
+                .map(|s| left.symbol_qname(s).to_string())
+        })
         .collect();
     let right_names: HashSet<String> = right_ids
         .iter()
-        .filter_map(|&id| right.get_symbol_by_id(id).map(|s| s.qualified_name.clone()))
+        .filter_map(|&id| {
+            right
+                .get_symbol_by_id(id)
+                .map(|s| right.symbol_qname(s).to_string())
+        })
         .collect();
 
     let added: Vec<String> = right_names.difference(&left_names).cloned().collect();
@@ -367,11 +379,7 @@ impl ScopeFilter {
 ///
 /// 用于判断是否应走同步路径还是转后台 job。
 /// 设计参考：enterprise-daemon-shared-snapshot-plan.md §12.3 / §12.4
-pub fn count_symbols_in_scope(
-    left: &GraphStore,
-    right: &GraphStore,
-    scope: &ScopeFilter,
-) -> usize {
+pub fn count_symbols_in_scope(left: &GraphStore, right: &GraphStore, scope: &ScopeFilter) -> usize {
     let (file_filter, module_filter) = scope.to_filters();
     let mut qnames = HashSet::new();
     for qname in left.get_all_qualified_names(file_filter, module_filter) {
@@ -410,7 +418,8 @@ pub fn compare_snapshots(
     }
 
     // 2. 对每个 qualified_name 调用 diff_symbol，过滤 unchanged
-    qnames.into_iter()
+    qnames
+        .into_iter()
         .filter_map(|qname| {
             let record = diff_symbol(left, right, &qname);
             if record.change_kind != SymbolChangeKind::Unchanged {

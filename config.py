@@ -993,51 +993,110 @@ def compute_content_hash(content: str | bytes) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+# 方言编码候选池（strict 模式依次试错，第一个成功即返回）
+# 顺序按"常见度 + 编码超集关系"排列：GB18030 是 GBK 超集放前面，
+# CP1252 是 latin-1 超集放欧洲组前面。全部 Python 标准库原生支持。
+# 参考：TokenSlim encoding_fallback 的 common_fallback_encodings 池。
+_FALLBACK_ENCODINGS = (
+    # 亚洲编码（中日韩）
+    "gb18030",    # 简体中文超集（GBK 4字节扩展），先于 GBK
+    "gbk",         # 简体中文 Windows 默认
+    "big5",        # 繁体中文
+    "shift_jis",   # 日文 Windows（CP932/Windows-31J）
+    "euc_jp",      # 日文 Unix
+    "euc_kr",      # 韩文（CP949）
+    # 欧洲编码（Windows 代码页，按语种分组）
+    "cp1252",      # 西欧（latin-1 超集，mojibake 主要来源）
+    "cp1251",      # 西里尔（俄/乌/保/塞）
+    "cp1250",      # 中欧（波兰/捷克/匈牙利）
+    "cp1256",      # 阿拉伯
+    "cp1255",      # 希伯来
+    "cp1253",      # 希腊
+    "cp1254",      # 土耳其
+    "cp1258",      # 越南
+    "cp874",       # 泰文
+    "cp866",       # 俄文 DOS（老旧日志/批处理）
+)
+
+
+def _detect_and_decode(raw: bytes, errors: str = "replace") -> str:
+    """统一编码检测链，返回解码后的文本
+
+    检测顺序（可靠度从高到低）：
+    1. UTF-8 BOM → 剥离 BOM 后 UTF-8 解码
+    2. UTF-16 LE/BE BOM → 剥离 BOM 后对应解码
+    3. UTF-8 strict（无 BOM，最常见）
+    4-19. 16 种方言编码 strict 试错（亚洲+欧洲代码页）
+    20. latin-1 降级（逐字节映射，永不失败但可能乱码）
+
+    设计原则：不依赖 chardet 等第三方库，用 strict 模式逐个尝试。
+    全部 Python 标准库原生支持，零新增依赖。
+    编码空间有部分重叠，但 strict 模式下大多数非目标编码会抛
+    UnicodeDecodeError，误判率可接受。
+
+    Args:
+        raw: 文件原始字节
+        errors: 最终降级时的错误处理策略
+
+    Returns:
+        解码后的文本（换行符未标准化，由调用方处理）
+    """
+    # 1. UTF-8 BOM
+    if raw.startswith(codecs.BOM_UTF8):
+        return raw[3:].decode("utf-8", errors=errors)
+    # 2. UTF-16 BOM
+    if raw.startswith(codecs.BOM_UTF16_LE):
+        return raw[2:].decode("utf-16-le", errors=errors)
+    if raw.startswith(codecs.BOM_UTF16_BE):
+        return raw[2:].decode("utf-16-be", errors=errors)
+    # 3. UTF-8 strict（无 BOM，最常见）
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    # 4-19. 16 种方言编码 strict 试错（解码失败则换下一个）
+    for enc in _FALLBACK_ENCODINGS:
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    # 20. latin-1 降级：逐字节映射，永不失败
+    return raw.decode("latin-1", errors=errors)
+
+
 def read_file_normalized(file_path: str) -> Tuple[str, str]:
-    """读取文件并标准化换行符，返回 (标准化后的内容, hash)"""
+    """读取文件并标准化换行符，返回 (标准化后的内容, hash)
+
+    使用统一编码检测链（详见 _detect_and_decode），支持：
+    - UTF-8/UTF-16 LE/BE BOM
+    - 无 BOM 的 UTF-8
+    - 16 种方言编码（GB18030/GBK/Big5/Shift-JIS/EUC-JP/EUC-KR/CP1252/CP1251 等）
+    - latin-1 最终降级
+    """
     with open(file_path, "rb") as f:
         raw = f.read()
-    try:
-        text = raw.decode("utf-8")
-    except UnicodeDecodeError:
-        text = raw.decode("latin-1", errors="replace")
+    text = _detect_and_decode(raw)
     normalized = norm_newlines(text)
     content_hash = compute_content_hash(normalized)
     return normalized, content_hash
 
 
 def read_file_text(file_path: str, errors: str = "replace") -> str:
-    """安全读取文本文件（UTF-8 优先，失败降级 latin-1）
+    """安全读取文本文件（统一编码检测链，详见 _detect_and_decode）
 
-    P23.4: 项目依赖文件（requirements.txt / package.json / Cargo.toml 等）
-    可能使用非 UTF-8 编码（如 UTF-16 BOM、GB2312）。直接 open(encoding="utf-8")
-    会抛 UnicodeDecodeError 导致整个项目构建失败。本函数自动降级，确保任何
-    编码的文件都能读出文本（无效字节用 ? 替换）。
+    支持的编码：UTF-8/UTF-16 BOM、无 BOM UTF-8、16 种方言编码
+    （GB18030/GBK/Big5/Shift-JIS/EUC-JP/EUC-KR/CP1252/CP1251 等）、latin-1 降级。
 
     Args:
         file_path: 文件绝对路径
-        errors: 解码错误处理策略（默认 "replace"，用 ? 替换无效字节）
+        errors: 最终降级时的错误处理策略（默认 "replace"）
 
     Returns:
         文件文本内容（换行符已标准化为 LF）
     """
     with open(file_path, "rb") as f:
         raw = f.read()
-    # 尝试 UTF-8（含 BOM 自动剥离）
-    if raw.startswith(codecs.BOM_UTF8):
-        text = raw[3:].decode("utf-8", errors=errors)
-    else:
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            # UTF-16 BOM 检测
-            if raw.startswith(codecs.BOM_UTF16_LE):
-                text = raw[2:].decode("utf-16-le", errors=errors)
-            elif raw.startswith(codecs.BOM_UTF16_BE):
-                text = raw[2:].decode("utf-16-be", errors=errors)
-            else:
-                # 降级 latin-1：逐字节映射，不会失败
-                text = raw.decode("latin-1", errors=errors)
+    text = _detect_and_decode(raw, errors=errors)
     return norm_newlines(text)
 
 
