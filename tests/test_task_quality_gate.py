@@ -1029,7 +1029,7 @@ def test_run_check_gate_semgrep_warn_finding_passes():
         tmp.write("x = 1\n")
         tmp.close()
         try:
-            def _fake_semgrep(target_paths, config, timeout):
+            def _fake_semgrep(target_paths, config, timeout, **kwargs):
                 return {
                     "success": True,
                     "total_findings": 1,
@@ -1088,7 +1088,7 @@ def test_run_check_gate_semgrep_error_finding_blocks():
         tmp.write("x = 1\n")
         tmp.close()
         try:
-            def _fake_semgrep(target_paths, config, timeout):
+            def _fake_semgrep(target_paths, config, timeout, **kwargs):
                 return {
                     "success": True,
                     "total_findings": 1,

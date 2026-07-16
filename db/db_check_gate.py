@@ -111,11 +111,18 @@ class CheckGateMixin:
                 checks_run.append("syntax")
 
             # 检查 2: Semgrep 增量扫描
+            # 按文件扩展名推断语言并传给 semgrep，避免全量语言规则扫描
+            # （run_semgrep 会把 languages 转换为 --include 过滤，只加载相关语言规则）
             if hasattr(self, "run_semgrep"):
                 try:
+                    from ..config import detect_language_from_path
+                    file_lang = detect_language_from_path(fp)
+                    sem_languages = [file_lang] if file_lang else None
+
                     sem_result = self.run_semgrep(
                         target_paths=[abs_path],
                         config="p/default",
+                        languages=sem_languages,
                         timeout=60,
                     )
                     checks_run.append("semgrep")

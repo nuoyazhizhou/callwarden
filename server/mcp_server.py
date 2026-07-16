@@ -4667,6 +4667,79 @@ def _auto_sync_agents_md() -> Dict[str, Any]:
         }
 
 
+def _ensure_semgrep_rules_cache() -> None:
+    """启动时检查 semgrep 规则缓存，缺失则预下载（fail-soft）
+
+    semgrep --config p/default 首次调用会从 registry 下载规则到本地缓存
+    （~/.cache/semgrep/ 或 %LOCALAPPDATA%\\semgrep\\），可能耗时数十秒。
+    本函数在 MCP 启动时检查缓存是否存在，缺失则后台触发预下载，
+    避免首次 task_capture_diff / check-gate 调用时卡顿。
+
+    安全策略：
+    - 检查/下载失败不阻断 MCP Server 启动（fail-soft）
+    - 所有输出走 stderr，不污染 stdio 协议
+    - 仅检查 p/default 规则集（run_check_gate / run_semgrep 默认配置）
+    """
+    import shutil
+    import subprocess
+
+    semgrep_path = shutil.which("semgrep")
+    if not semgrep_path:
+        return  # semgrep 未安装，静默跳过
+
+    # 检查缓存目录是否存在（semgrep 缓存路径因平台而异）
+    # Linux/Mac: ~/.cache/semgrep/
+    # Windows: %LOCALAPPDATA%\\semgrep\\
+    cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "semgrep")
+    if not os.path.isdir(cache_dir):
+        win_cache = os.path.join(os.environ.get("LOCALAPPDATA", ""), "semgrep")
+        if os.path.isdir(win_cache):
+            cache_dir = win_cache  # Windows 缓存已存在，无需预下载
+
+    # 缓存已存在，跳过预下载（semgrep CLI 会自动管理缓存更新）
+    if os.path.isdir(cache_dir) and os.listdir(cache_dir):
+        return
+
+    print(
+        t(
+            "cli.messages.semgrep_rules_prefetch",
+            default="[Semgrep] Rule cache missing, pre-downloading p/default rules...",
+        ),
+        file=sys.stderr,
+    )
+
+    try:
+        # 用 semgrep --validate 触发规则下载（不实际扫描文件）
+        result = subprocess.run(
+            [semgrep_path, "--config", "p/default", "--validate"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            print(
+                t(
+                    "cli.messages.semgrep_rules_prefetch_ok",
+                    default="[Semgrep] Rule cache ready.",
+                ),
+                file=sys.stderr,
+            )
+        else:
+            print(
+                t(
+                    "cli.messages.semgrep_rules_prefetch_skip",
+                    default="[Semgrep] Rule prefetch skipped (will download on first scan).",
+                ),
+                file=sys.stderr,
+            )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        print(
+            t(
+                "cli.messages.semgrep_rules_prefetch_skip",
+                default="[Semgrep] Rule prefetch skipped (will download on first scan).",
+            ),
+            file=sys.stderr,
+        )
+
+
 def _print_auto_sync_summary(result: Dict[str, Any]) -> None:
     """打印 AGENTS.md 自动同步摘要到 stderr
 
@@ -4714,12 +4787,15 @@ def main():
     启动流程：
     1. create_mcp_server() 创建服务器实例并注册所有 MCP 工具
     2. _auto_sync_agents_md() 自动同步 AGENTS.md（fail-soft，不阻断启动）
-    3. server.run() 启动 stdio 传输
+    3. _ensure_semgrep_rules_cache() 检查 semgrep 规则缓存（fail-soft）
+    4. server.run() 启动 stdio 传输
     """
     server = create_mcp_server()
     # 启动时自动同步 AGENTS.md（C2 新增）
     sync_result = _auto_sync_agents_md()
     _print_auto_sync_summary(sync_result)
+    # 启动时检查 semgrep 规则缓存，缺失则预下载（避免首次扫描卡顿）
+    _ensure_semgrep_rules_cache()
     server.run()
 
 

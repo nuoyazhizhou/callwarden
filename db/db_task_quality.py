@@ -49,6 +49,18 @@ _FILE_SIZE_WARN_THRESHOLD = 1000
 _FILE_SIZE_ERROR_THRESHOLD = 2000
 _COMPLEXITY_HOTSPOT_THRESHOLD = 20
 
+# 检查器适用语言映射表
+# None 表示适用于所有语言（跨语言或由 parser 自动适配）
+# 集合表示仅适用于集合中的语言
+# 用于 run_task_completion_review 按 changed_files 推断的语言集合过滤调度
+_CHECKER_LANGUAGES = {
+    "scope": None,              # 路径比较，与语言无关
+    "symbol_attribution": None,  # DB 查询 task_symbol_changes，与语言无关
+    "file_health": None,        # 通过 tree-sitter check_file_health，parser 自动适配语言
+    "i18n": frozenset({"python"}),  # 仅 Python：匹配 print/cprint/logger/logging
+    "signature_mismatch": None,  # DB 查询 symbol_contents/calls，与语言无关
+}
+
 
 class TaskQualityMixin:
     """任务质量门禁 Mixin
@@ -574,6 +586,12 @@ class TaskQualityMixin:
             if fp_norm.startswith("tests/") or "/tests/" in fp_norm:
                 continue
 
+            # 仅扫描 Python 文件：i18n 硬编码检查器的模式（print/cprint/logger/logging）
+            # 是 Python 特有语法，对 Rust/Go/TS/Java 等其他语言无意义
+            # （Rust 用 println!/eprintln!，Go 用 fmt.Print，TS/JS 用 console.log）
+            if not fp_norm.endswith(".py"):
+                continue
+
             # 解析绝对路径：优先用 _resolve_abs_path，否则用 workspace_root 拼接
             if hasattr(self, "_resolve_abs_path"):
                 abs_path = self._resolve_abs_path(fp) or ""
@@ -934,28 +952,51 @@ class TaskQualityMixin:
         # 步骤 3: 运行扩展检查器（scope / symbol / file_health / i18n / signature）
         # 这些检查器也使用 source='check_gate'，与 run_check_gate 的 finding
         # 一起被清理和决策。
+        # 按 changed_files 推断语言集合，根据 _CHECKER_LANGUAGES 映射表过滤调度：
+        # - i18n 仅适用于 Python 文件（其他语言没有 print/cprint 概念）
+        # - scope/symbol_attribution/file_health/signature_mismatch 跨语言或自动适配
+        from ..config import detect_language_from_path
+        changed_languages: set = set()
+        for fp in changed_files:
+            lang = detect_language_from_path(fp)
+            if lang:
+                changed_languages.add(lang)
+
+        def _checker_applies(checker_name: str) -> bool:
+            """根据 _CHECKER_LANGUAGES 映射表判断检查器是否适用于当前 changed_files"""
+            langs = _CHECKER_LANGUAGES.get(checker_name)
+            if langs is None:
+                return True  # None 表示适用于所有语言
+            # 检查 changed_files 的语言集合是否与检查器适用语言有交集
+            return bool(changed_languages & langs)
+
         if changed_files:
-            try:
-                self._check_scope_violations(task_id, step_id, changed_files)
-            except Exception:
-                pass
-            try:
-                self._check_symbol_attribution(task_id, step_id)
-            except Exception:
-                pass
-            try:
-                self._check_file_health_findings(task_id, step_id, changed_files)
-            except Exception:
-                pass
-            try:
-                self._check_i18n_hardcoded(task_id, step_id, changed_files)
-            except Exception:
-                pass
+            if _checker_applies("scope"):
+                try:
+                    self._check_scope_violations(task_id, step_id, changed_files)
+                except Exception:
+                    pass
+            if _checker_applies("symbol_attribution"):
+                try:
+                    self._check_symbol_attribution(task_id, step_id)
+                except Exception:
+                    pass
+            if _checker_applies("file_health"):
+                try:
+                    self._check_file_health_findings(task_id, step_id, changed_files)
+                except Exception:
+                    pass
+            if _checker_applies("i18n"):
+                try:
+                    self._check_i18n_hardcoded(task_id, step_id, changed_files)
+                except Exception:
+                    pass
         # signature_mismatch 不依赖 changed_files，依赖 task_symbol_changes
-        try:
-            self._check_signature_mismatch(task_id, step_id)
-        except Exception:
-            pass
+        if _checker_applies("signature_mismatch"):
+            try:
+                self._check_signature_mismatch(task_id, step_id)
+            except Exception:
+                pass
 
         # 步骤 4: 收集 open findings 做决策
         findings = self.get_task_quality_findings(task_id, status="open")
