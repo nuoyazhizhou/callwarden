@@ -198,15 +198,16 @@ class CallWardenInstaller:
 
         semgrep --config p/default 首次调用时会从 registry 下载规则到
         ~/.cache/semgrep/，可能导致首次扫描卡顿数十秒。
-        本方法在安装完成后启动后台进程下载规则，不阻塞安装流程。
+        本方法在安装完成后启动后台线程下载规则，不阻塞安装流程。
 
         策略：
-        1. 检查 semgrep CLI 是否可用
-        2. 用 Popen 启动后台进程执行 --validate（触发下载，不实际扫描）
-        3. 立即返回不等待，进程退出由 OS 自动回收
-        4. 失败不阻塞安装（网络不通/semgrep 异常等静默跳过）
+        1. 检查 semgrep CLI 是否可用 + 缓存目录可写权限
+        2. Popen 启动子进程 + 后台线程 wait(timeout) 监控
+        3. 超时杀进程避免子进程挂起；异常分类处理给出明确提示
+        4. 完全非阻塞，失败不影响安装结果
         """
         import shutil
+        import threading
 
         semgrep_path = shutil.which("semgrep")
         if not semgrep_path:
@@ -222,25 +223,103 @@ class CallWardenInstaller:
         if not semgrep_path:
             return  # semgrep 未安装，跳过
 
-        print(t("cli.messages.install_semgrep_prefetch",
-                default="[Semgrep] Starting background rule cache prefetch (p/default, non-blocking)..."))
+        # 检查缓存目录的父目录是否可写（semgrep 会创建缓存目录）
+        # Linux/Mac: ~/.cache/semgrep/  Windows: %LOCALAPPDATA%\\semgrep\\
+        cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "semgrep")
+        if not os.path.isdir(cache_dir):
+            win_cache = os.path.join(os.environ.get("LOCALAPPDATA", ""), "semgrep")
+            if os.path.isdir(win_cache):
+                cache_dir = win_cache  # Windows 缓存已存在，无需预下载
 
-        # 后台异步执行：用 Popen 启动子进程，立即返回不等待
-        # 子进程独立于安装流程，退出后由 OS 自动回收
+        # 缓存已存在，跳过预下载
+        if os.path.isdir(cache_dir) and os.listdir(cache_dir):
+            return
+
+        # 检查缓存父目录是否存在且可写
+        cache_parent = os.path.dirname(cache_dir) or os.path.expanduser("~")
         try:
-            # 用 semgrep --validate 触发规则下载缓存（不实际扫描文件）
-            # stdout/stderr 重定向到 DEVNULL 避免干扰安装输出
-            subprocess.Popen(
+            if not os.path.isdir(cache_parent):
+                print(t("cli.messages.install_semgrep_prefetch_skip",
+                        default="[Semgrep] Cache parent dir not exists: {dir}. Skip prefetch.",
+                        dir=cache_parent))
+                return
+            if not os.access(cache_parent, os.W_OK):
+                print(t("cli.messages.install_semgrep_prefetch_skip",
+                        default="[Semgrep] No write permission for cache dir: {dir}. Skip prefetch.",
+                        dir=cache_parent))
+                return
+        except (OSError, PermissionError) as e:
+            print(t("cli.messages.install_semgrep_prefetch_skip",
+                    default="[Semgrep] Cache dir check failed: {error}. Skip prefetch.",
+                    error=str(e)))
+            return
+
+        print(t("cli.messages.install_semgrep_prefetch",
+                default="[Semgrep] Starting background rule cache prefetch (p/default, non-blocking, 120s timeout)..."))
+
+        # Popen 启动子进程
+        try:
+            proc = subprocess.Popen(
                 [semgrep_path, "--config", "p/default", "--validate"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+                start_new_session=(os.name != "nt"),
             )
-            print(t("cli.messages.install_semgrep_prefetch_scheduled",
-                    default="[Semgrep] Background prefetch scheduled. Rules will be ready for first scan."))
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError:
             print(t("cli.messages.install_semgrep_prefetch_skip",
-                    default="[Semgrep] Rule prefetch skipped (will download on first scan)."))
+                    default="[Semgrep] semgrep binary not found. Skip prefetch."))
+            return
+        except PermissionError as e:
+            print(t("cli.messages.install_semgrep_prefetch_skip",
+                    default="[Semgrep] Permission denied when launching semgrep: {error}. Skip prefetch.",
+                    error=str(e)))
+            return
+        except OSError as e:
+            print(t("cli.messages.install_semgrep_prefetch_skip",
+                    default="[Semgrep] OS error when launching semgrep: {error}. Skip prefetch.",
+                    error=str(e)))
+            return
+        except Exception as e:
+            print(t("cli.messages.install_semgrep_prefetch_skip",
+                    default="[Semgrep] Unexpected error when launching prefetch: {error}. Skip prefetch.",
+                    error=str(e)))
+            return
+
+        print(t("cli.messages.install_semgrep_prefetch_scheduled",
+                default="[Semgrep] Background prefetch scheduled (pid={pid}). Rules will be ready for first scan.",
+                pid=proc.pid))
+
+        # 后台线程监控子进程，超时则 kill
+        def _monitor_timeout(p, timeout=120):
+            try:
+                p.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    if os.name == "nt":
+                        subprocess.run(
+                            ["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                            capture_output=True, timeout=10,
+                        )
+                    else:
+                        import signal
+                        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                except (OSError, subprocess.SubprocessError):
+                    try:
+                        p.kill()
+                    except (OSError, subprocess.SubprocessError):
+                        pass
+                print(t("cli.messages.install_semgrep_prefetch_timeout",
+                        default="[Semgrep] Background prefetch timed out ({timeout}s). Will retry on first scan.",
+                        timeout=timeout))
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        monitor_thread = threading.Thread(
+            target=_monitor_timeout, args=(proc, 120), daemon=True,
+        )
+        monitor_thread.start()
 
     def check_status(self) -> None:
         """仅检查依赖状态，不安装"""

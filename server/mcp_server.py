@@ -4672,17 +4672,20 @@ def _ensure_semgrep_rules_cache() -> None:
 
     semgrep --config p/default 首次调用会从 registry 下载规则到本地缓存
     （~/.cache/semgrep/ 或 %LOCALAPPDATA%\\semgrep\\），可能耗时数十秒。
-    本函数在 MCP 启动时检查缓存是否存在，缺失则启动后台进程下载，
+    本函数在 MCP 启动时检查缓存是否存在，缺失则启动后台线程下载，
     不阻塞 MCP Server 启动和后续命令执行。
 
     安全策略：
-    - 完全非阻塞：用 Popen 启动后台进程，立即返回
-    - 进程退出后自动清理，不影响主进程
+    - 完全非阻塞：Popen 启动子进程 + 后台线程 wait(timeout) 监控
+    - 超时杀进程：后台线程 120s 后 kill 子进程，避免网络卡住时子进程挂起
+    - 异常分类处理：权限/目录/网络/未知异常分别给出明确提示
     - 所有输出走 stderr，不污染 stdio 协议
     - 仅检查 p/default 规则集（run_check_gate / run_semprep 默认配置）
     """
     import shutil
     import subprocess
+    import threading
+    import time
 
     semgrep_path = shutil.which("semgrep")
     if not semgrep_path:
@@ -4701,34 +4704,143 @@ def _ensure_semgrep_rules_cache() -> None:
     if os.path.isdir(cache_dir) and os.listdir(cache_dir):
         return
 
+    # 检查缓存目录的父目录是否可写（semgrep 会创建缓存目录）
+    cache_parent = os.path.dirname(cache_dir) or os.path.expanduser("~")
+    try:
+        if not os.path.isdir(cache_parent):
+            print(
+                t(
+                    "cli.messages.semgrep_rules_prefetch_skip",
+                    default="[Semgrep] Cache parent dir not exists: {dir}. Will download on first scan.",
+                    dir=cache_parent,
+                ),
+                file=sys.stderr,
+            )
+            return
+        # 检查写权限
+        if not os.access(cache_parent, os.W_OK):
+            print(
+                t(
+                    "cli.messages.semgrep_rules_prefetch_skip",
+                    default="[Semgrep] No write permission for cache dir: {dir}. Will download on first scan.",
+                    dir=cache_parent,
+                ),
+                file=sys.stderr,
+            )
+            return
+    except (OSError, PermissionError) as e:
+        print(
+            t(
+                "cli.messages.semgrep_rules_prefetch_skip",
+                default="[Semgrep] Cache dir check failed: {error}. Will download on first scan.",
+                error=str(e),
+            ),
+            file=sys.stderr,
+        )
+        return
+
     print(
         t(
             "cli.messages.semgrep_rules_prefetch",
-            default="[Semgrep] Rule cache missing, starting background prefetch (non-blocking)...",
+            default="[Semgrep] Rule cache missing, starting background prefetch (non-blocking, 120s timeout)...",
         ),
         file=sys.stderr,
     )
 
-    # 后台异步执行：用 Popen 启动子进程，立即返回不等待
-    # 子进程独立于 MCP Server，退出后由 OS 自动回收
+    # 后台异步执行：Popen 启动子进程 + 后台线程监控超时
+    # 主线程立即返回不等待，后台线程在 120s 后 kill 卡住的子进程
     try:
-        # 用 semgrep --validate 触发规则下载（不实际扫描文件）
-        # stdout/stderr 重定向到 DEVNULL 避免阻塞或干扰父进程
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [semgrep_path, "--config", "p/default", "--validate"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            # Windows 下创建新进程组，便于 kill 整个进程树
+            # Linux/Mac 下用 start_new_session=True 形成新会话
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0,
+            start_new_session=(os.name != "nt"),
         )
-    except (FileNotFoundError, OSError):
-        # 启动后台进程失败不阻塞 MCP Server
+    except FileNotFoundError:
         print(
             t(
                 "cli.messages.semgrep_rules_prefetch_skip",
-                default="[Semgrep] Background prefetch skipped (will download on first scan).",
+                default="[Semgrep] semgrep binary not found. Will download on first scan.",
             ),
             file=sys.stderr,
         )
+        return
+    except PermissionError as e:
+        print(
+            t(
+                "cli.messages.semgrep_rules_prefetch_skip",
+                default="[Semgrep] Permission denied when launching semgrep: {error}. Will download on first scan.",
+                error=str(e),
+            ),
+            file=sys.stderr,
+        )
+        return
+    except OSError as e:
+        print(
+            t(
+                "cli.messages.semgrep_rules_prefetch_skip",
+                default="[Semgrep] OS error when launching semgrep: {error}. Will download on first scan.",
+                error=str(e),
+            ),
+            file=sys.stderr,
+        )
+        return
+    except Exception as e:
+        # 兜底捕获所有未知异常，绝不阻塞 MCP Server
+        print(
+            t(
+                "cli.messages.semgrep_rules_prefetch_skip",
+                default="[Semgrep] Unexpected error when launching prefetch: {error}. Will download on first scan.",
+                error=str(e),
+            ),
+            file=sys.stderr,
+        )
+        return
+
+    # 后台线程监控子进程，超时则 kill（避免网络卡住时子进程无限挂起）
+    def _monitor_timeout(p: subprocess.Popen, timeout: int = 120) -> None:
+        try:
+            p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            # 超时杀进程：网络不通或 semgrep 卡住
+            try:
+                if os.name == "nt":
+                    # Windows: taskkill 整个进程树
+                    subprocess.run(
+                        ["taskkill", "/PID", str(p.pid), "/T", "/F"],
+                        capture_output=True, timeout=10,
+                    )
+                else:
+                    # Linux/Mac: kill 整个进程组
+                    import signal
+                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except (OSError, subprocess.SubprocessError):
+                try:
+                    p.kill()
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            print(
+                t(
+                    "cli.messages.semgrep_rules_prefetch_timeout",
+                    default="[Semgrep] Background prefetch timed out ({timeout}s). Will retry on first scan.",
+                    timeout=timeout,
+                ),
+                file=sys.stderr,
+            )
+        except (OSError, subprocess.SubprocessError):
+            # 子进程已退出或异常，静默处理
+            pass
+
+    monitor_thread = threading.Thread(
+        target=_monitor_timeout,
+        args=(proc, 120),
+        daemon=True,  # 守护线程，主进程退出时自动结束
+    )
+    monitor_thread.start()
 
 
 def _print_auto_sync_summary(result: Dict[str, Any]) -> None:
