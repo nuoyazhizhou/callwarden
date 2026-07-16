@@ -4668,17 +4668,18 @@ def _auto_sync_agents_md() -> Dict[str, Any]:
 
 
 def _ensure_semgrep_rules_cache() -> None:
-    """启动时检查 semgrep 规则缓存，缺失则预下载（fail-soft）
+    """启动时检查 semgrep 规则缓存，缺失则后台异步预下载（非阻塞）
 
     semgrep --config p/default 首次调用会从 registry 下载规则到本地缓存
     （~/.cache/semgrep/ 或 %LOCALAPPDATA%\\semgrep\\），可能耗时数十秒。
-    本函数在 MCP 启动时检查缓存是否存在，缺失则后台触发预下载，
-    避免首次 task_capture_diff / check-gate 调用时卡顿。
+    本函数在 MCP 启动时检查缓存是否存在，缺失则启动后台进程下载，
+    不阻塞 MCP Server 启动和后续命令执行。
 
     安全策略：
-    - 检查/下载失败不阻断 MCP Server 启动（fail-soft）
+    - 完全非阻塞：用 Popen 启动后台进程，立即返回
+    - 进程退出后自动清理，不影响主进程
     - 所有输出走 stderr，不污染 stdio 协议
-    - 仅检查 p/default 规则集（run_check_gate / run_semgrep 默认配置）
+    - 仅检查 p/default 规则集（run_check_gate / run_semprep 默认配置）
     """
     import shutil
     import subprocess
@@ -4703,38 +4704,28 @@ def _ensure_semgrep_rules_cache() -> None:
     print(
         t(
             "cli.messages.semgrep_rules_prefetch",
-            default="[Semgrep] Rule cache missing, pre-downloading p/default rules...",
+            default="[Semgrep] Rule cache missing, starting background prefetch (non-blocking)...",
         ),
         file=sys.stderr,
     )
 
+    # 后台异步执行：用 Popen 启动子进程，立即返回不等待
+    # 子进程独立于 MCP Server，退出后由 OS 自动回收
     try:
         # 用 semgrep --validate 触发规则下载（不实际扫描文件）
-        result = subprocess.run(
+        # stdout/stderr 重定向到 DEVNULL 避免阻塞或干扰父进程
+        subprocess.Popen(
             [semgrep_path, "--config", "p/default", "--validate"],
-            capture_output=True, text=True, timeout=120,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
         )
-        if result.returncode == 0:
-            print(
-                t(
-                    "cli.messages.semgrep_rules_prefetch_ok",
-                    default="[Semgrep] Rule cache ready.",
-                ),
-                file=sys.stderr,
-            )
-        else:
-            print(
-                t(
-                    "cli.messages.semgrep_rules_prefetch_skip",
-                    default="[Semgrep] Rule prefetch skipped (will download on first scan).",
-                ),
-                file=sys.stderr,
-            )
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    except (FileNotFoundError, OSError):
+        # 启动后台进程失败不阻塞 MCP Server
         print(
             t(
                 "cli.messages.semgrep_rules_prefetch_skip",
-                default="[Semgrep] Rule prefetch skipped (will download on first scan).",
+                default="[Semgrep] Background prefetch skipped (will download on first scan).",
             ),
             file=sys.stderr,
         )

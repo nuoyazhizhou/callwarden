@@ -194,16 +194,17 @@ class CallWardenInstaller:
         return self.result
 
     def _prefetch_semgrep_rules(self) -> None:
-        """预下载 Semgrep p/default 规则集到本地缓存
+        """后台异步预下载 Semgrep p/default 规则集到本地缓存（非阻塞）
 
         semgrep --config p/default 首次调用时会从 registry 下载规则到
         ~/.cache/semgrep/，可能导致首次扫描卡顿数十秒。
-        本方法在安装阶段触发规则下载，避免运行时卡顿。
+        本方法在安装完成后启动后台进程下载规则，不阻塞安装流程。
 
         策略：
         1. 检查 semgrep CLI 是否可用
-        2. 对 p/default 规则集执行 --validate（触发下载，不实际扫描）
-        3. 失败不阻塞安装（网络不通/semgrep 异常等静默跳过）
+        2. 用 Popen 启动后台进程执行 --validate（触发下载，不实际扫描）
+        3. 立即返回不等待，进程退出由 OS 自动回收
+        4. 失败不阻塞安装（网络不通/semgrep 异常等静默跳过）
         """
         import shutil
 
@@ -222,46 +223,24 @@ class CallWardenInstaller:
             return  # semgrep 未安装，跳过
 
         print(t("cli.messages.install_semgrep_prefetch",
-                default="[Semgrep] Pre-downloading rule cache (p/default)..."))
+                default="[Semgrep] Starting background rule cache prefetch (p/default, non-blocking)..."))
 
-        # 用 semgrep --validate 触发规则下载缓存
-        # --validate 只校验规则语法不实际扫描，但仍会触发远程规则下载
+        # 后台异步执行：用 Popen 启动子进程，立即返回不等待
+        # 子进程独立于安装流程，退出后由 OS 自动回收
         try:
-            result = subprocess.run(
+            # 用 semgrep --validate 触发规则下载缓存（不实际扫描文件）
+            # stdout/stderr 重定向到 DEVNULL 避免干扰安装输出
+            subprocess.Popen(
                 [semgrep_path, "--config", "p/default", "--validate"],
-                capture_output=True, text=True, timeout=120, shell=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
             )
-            if result.returncode == 0:
-                print(t("cli.messages.install_semgrep_prefetch_ok",
-                        default="[Semgrep] Rule cache ready."))
-            else:
-                # --validate 可能不支持某些 semgrep 版本，回退到扫描一个 dummy 文件
-                import tempfile
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".py", delete=False, encoding="utf-8"
-                ) as f:
-                    f.write("# dummy file for semgrep rule prefetch\n")
-                    dummy_path = f.name
-                try:
-                    result = subprocess.run(
-                        [semgrep_path, "--config", "p/default", "--json", "--quiet",
-                         "--include", "*.py", dummy_path],
-                        capture_output=True, text=True, timeout=120, shell=False,
-                    )
-                    if result.returncode in (0, 1):
-                        print(t("cli.messages.install_semgrep_prefetch_ok",
-                                default="[Semgrep] Rule cache ready."))
-                    else:
-                        print(t("cli.messages.install_semgrep_prefetch_skip",
-                                default="[Semgrep] Rule prefetch skipped (network/semgrep issue)."))
-                finally:
-                    try:
-                        os.unlink(dummy_path)
-                    except OSError:
-                        pass
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            print(t("cli.messages.install_semgrep_prefetch_scheduled",
+                    default="[Semgrep] Background prefetch scheduled. Rules will be ready for first scan."))
+        except (FileNotFoundError, OSError):
             print(t("cli.messages.install_semgrep_prefetch_skip",
-                    default="[Semgrep] Rule prefetch skipped (network/semgrep issue)."))
+                    default="[Semgrep] Rule prefetch skipped (will download on first scan)."))
 
     def check_status(self) -> None:
         """仅检查依赖状态，不安装"""
