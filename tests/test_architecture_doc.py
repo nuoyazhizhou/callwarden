@@ -56,21 +56,25 @@ def test_doc_covers_v14_to_v25_versions():
     assert not missing, f"文档缺少以下版本的变更说明: {', '.join(missing)}"
 
 
-def test_doc_lists_25_mixins():
-    """文档应列出 25 个 Mixin。"""
+def test_doc_lists_all_mixins():
+    """文档 Mixin 列表内部一致：标题声明的数量应与表格行数一致。
+
+    文档表格包含基类（db_base.py）和 analyzers Mixin，因此表格行数可能多于
+    db_*.py 文件数。测试只检查文档内部一致性（标题数字 = 表格行数），
+    确保文档不出现"标题说 N 个但表格只有 M 行"的不一致。
+    """
     text = _read_arch_doc()
-    # 检查标题
-    assert "25 个 Mixin" in text, "文档未声明 25 个 Mixin"
-    # 计算表格中的 Mixin 行数（| N | Name | file | ... |）
-    rows = re.findall(r"^\|\s*\d+\s*\|", text, re.MULTILINE)
-    # 混合表里可能还有别的编号行，这里用 Mixin 表特定锚点
-    # 找 "### 25 个 Mixin 列表" 之后的表格行
-    mixin_section = text.split("### 25 个 Mixin 列表", 1)
-    assert len(mixin_section) == 2, "未找到 '### 25 个 Mixin 列表' 章节"
+    # 文档声明的 Mixin 数量
+    m = re.search(r"(\d+) 个 Mixin 列表", text)
+    assert m, "文档未找到 'N 个 Mixin 列表' 标题"
+    doc_count = int(m.group(1))
+    # 表格行数应与声明的数量一致（内部一致性检查）
+    mixin_section = text.split(f"### {doc_count} 个 Mixin 列表", 1)
+    assert len(mixin_section) == 2, f"未找到 '### {doc_count} 个 Mixin 列表' 章节"
     mixin_table = mixin_section[1].split("### ", 1)[0]
     mixin_rows = re.findall(r"^\|\s*\d+\s*\|", mixin_table, re.MULTILINE)
-    assert len(mixin_rows) == 25, (
-        f"Mixin 列表应有 25 行，实际 {len(mixin_rows)} 行"
+    assert len(mixin_rows) == doc_count, (
+        f"Mixin 表格声明 {doc_count} 行，实际 {len(mixin_rows)} 行（文档内部不一致）"
     )
 
 
@@ -93,10 +97,20 @@ def test_doc_has_all_table_group_sections():
 
 
 def test_doc_mcp_tool_count_consistent():
-    """文档中 MCP 工具数声明应一致（166）。"""
+    """文档中 MCP 工具数声明应与实际 @mcp.tool() 数量一致。"""
+    import re
+    # 动态统计 server/mcp_server.py 中 @mcp.tool() 数量
+    mcp_server = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "server", "mcp_server.py")
+    )
+    with open(mcp_server, encoding="utf-8") as f:
+        source = f.read()
+    actual_count = len(re.findall(r"@mcp\.tool\(\)", source))
     text = _read_arch_doc()
-    # 架构图里声明 "166 个 @mcp.tool() 工具"
-    assert "166" in text, "文档未声明 166 个 MCP 工具"
+    # 文档中应声明与实际一致的工具数
+    assert str(actual_count) in text, (
+        f"文档未声明 {actual_count} 个 MCP 工具（实际 @mcp.tool() 数量）"
+    )
 
 
 def test_doc_archived_files_documented():

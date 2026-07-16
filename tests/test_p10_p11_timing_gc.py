@@ -124,11 +124,11 @@ def test_stage_timing_includes_register_and_parse(capsys):
 # ============================================
 
 def test_perf_test_skip_clone_default():
-    """P12: _perf_test.py 的 test_repo 默认 skip_clone=True。"""
+    """P12: _perf_test.py 的 benchmark_repo 默认 skip_clone=True。"""
     import inspect
     import tests._perf_test as perf
 
-    sig = inspect.signature(perf.test_repo)
+    sig = inspect.signature(perf.benchmark_repo)
     assert sig.parameters["skip_clone"].default is True
 
 

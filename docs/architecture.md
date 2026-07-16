@@ -319,7 +319,7 @@ CodeGraphDB 通过 **37 个 Mixin 多继承**组装，每个 Mixin 负责一个�
 - **易于扩展**：新增功能只需添加新 Mixin
 - **避免上帝类**：`db.py` 仅 92 行，职责在 37 个文件中分散
 
-### 37 个 Mixin 列表
+### 40 个 Mixin 列表
 
 | # | Mixin | 文件 | 职责 |
 |---|-------|------|------|
@@ -348,6 +348,21 @@ CodeGraphDB 通过 **37 个 Mixin 多继承**组装，每个 Mixin 负责一个�
 | 23 | CheckGateMixin | db_check_gate.py | 检查门禁（F6） |
 | 24 | AgentRulesMixin | db_agent_rules.py | Agent Rule Memory：候选规则审核、scope 匹配注入、AGENTS.md 同步 |
 | 25 | BootstrapMixin | db_bootstrap.py | 自举闭环：扫描基线检测（workspace_scan_runs）、task_capture_diff 闭环入口、bootstrap_status 健康摘要 |
+| 26 | AuditChainMixin | db_audit_chain.py | 审计签名链：关键审计表的签名记录与验证 |
+| 27 | CasMixin | db_cas.py | Global CAS（Content-Addressable Storage）缓存池，相同文件跨工作区只解析一次 |
+| 28 | CloneDetectionMixin | db_clone_detection.py | 重复代码检测：基于 tree-sitter token 序列检测 Type-1/2/3 克隆 |
+| 29 | CloneGroupsMixin | db_clone_groups.py | Clone Groups 存储：替代 clone_pairs 的分组存储 |
+| 30 | DaemonMixin | db_daemon.py | Enterprise daemon workspace registry：workspace 注册、查询、状态管理 |
+| 31 | ExternalMixin | db_external.py | 第三方包解析（多语言通用版）：从已安装包提取函数/类/常量符号 |
+| 32 | GcMixin | db_gc.py | 代码图谱 GC：分代回收机制（新生代/老年代） |
+| 33 | JobsMixin | db_jobs.py | 后台任务系统：clone/vector/semgrep 等耗时操作异步执行 |
+| 34 | MigrateMixin | db_migrate.py | 数据库迁移工具：旧版多库架构迁移到用户级单库架构 |
+| 35 | StdlibMixin | db_stdlib.py | 标准库符号表：管理 Python 标准库符号信息，用于跨文件调用解析 |
+| 36 | TaskAttributionMixin | db_task_attribution.py | 任务-符号变更归因层：链接 edit audit 到符号版本变更 |
+| 37 | TaskQualityMixin | db_task_quality.py | 任务质量门禁：承载任务完成门禁发现 |
+| 38 | TestsMixin | db_tests.py | 测试关联：建立 test_fn ↔ 被测 fn 的关联关系 |
+| 39 | ToolchainMixin | db_toolchain.py | Toolchain CAS：工具链注册与存储 |
+| 40 | WorkspaceManifestMixin | db_workspace_manifest.py | Workspace manifest：clean snapshot 和 dirty overlay |
 
 ### 组装方式
 

@@ -85,6 +85,7 @@ _ALLOWED_PREFIXES = (
     "parse_", "rotate_", "link_", "prune_", "clear_", "ask_", "remove_",
     "set_", "review_", "test_", "merge_", "switch_", "diff_", "check_",
     "extract_", "resolve_", "cancel_", "submit_", "wait_",
+    "compare_", "count_",
     # —— 模块前缀 ——
     "task_", "gc_", "rule_", "audit_", "lsp_", "guardrail_", "file_",
     "work_", "defect_", "embed_", "semantic_", "project_", "repo_",

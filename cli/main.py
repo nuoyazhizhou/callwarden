@@ -4952,26 +4952,26 @@ def _handle_db_migrate_single(dry_run: bool = True, backup: bool = True) -> bool
 
 def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
                           current_workspace_root: str = "") -> bool:
-    """扫描统一库的 workspaces 表，找出并清理孤儿 workspace
+    """扫描 ~/.callwarden/ 下的旧版 hash 数据库目录，找出并清理孤儿数据库
 
-    单库架构下的 GC 逻辑：扫描 workspaces 表，对每个 workspace 检查 root_path：
+    扫描 CALLWARDEN_DIR 下的 16 位 hex hash 子目录（每个目录内含 callwarden.db），
+    打开每个数据库检查 workspaces 表的 root_path：
     - root_path 为空 → 孤儿
     - root_path 路径不存在（项目目录已删除）→ 孤儿
     - root_path 指向系统临时目录（pytest 残留）→ 孤儿
     - --all-but-current：除当前 workspace 外全部判为孤儿
 
-    清理范围：删除 workspaces 记录 + 带 workspace_id 的业务表数据
-    （file_instances / semgrep_scans / git_commits / destructive_operations）。
-    间接关联表（symbols/calls 通过 file_instance_id）的数据会在下次 gc archive 时清理。
+    dry_run=False 时删除孤儿 hash 目录（整个目录，含 callwarden.db）。
 
     Args:
         dry_run: True 只报告不删除（默认），False 实际删除
         all_but_current: 保留当前 workspace，其他全部判为孤儿
         current_workspace_root: 当前 workspace 的根路径（用于 --all-but-current）
     """
+    import shutil
     import sqlite3
     import tempfile
-    from ..config import DB_PATH, norm_path
+    from ..config import CALLWARDEN_DIR, norm_path
 
     # 系统临时目录特征（用于检测 pytest 残留）
     _temp_dir = tempfile.gettempdir().lower().replace("\\", "/")
@@ -5001,120 +5001,142 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
                 return True, "temp_dir"
         return False, None
 
-    # 打开统一库
-    if not os.path.isfile(DB_PATH):
-        cprint(f"Database not found: {DB_PATH}", "dim")
+    # CALLWARDEN_DIR 不存在
+    if not os.path.isdir(CALLWARDEN_DIR):
+        cprint(f"Directory not found: {CALLWARDEN_DIR}", "dim")
         cprint("Run 'cw --refresh-all' to initialize.", "dim")
         cprint()
         return True
 
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
+    # 扫描 hash 子目录（16 位十六进制名，内含 callwarden.db）
+    hash_dirs = []
+    for name in os.listdir(CALLWARDEN_DIR):
+        if len(name) == 16 and all(c in "0123456789abcdef" for c in name):
+            dir_path = os.path.join(CALLWARDEN_DIR, name)
+            db_file = os.path.join(dir_path, "callwarden.db")
+            if os.path.isfile(db_file):
+                hash_dirs.append((name, dir_path, db_file))
 
-    try:
-        rows = conn.execute(
-            "SELECT id, name, root_path FROM workspaces ORDER BY id"
-        ).fetchall()
-    except sqlite3.OperationalError as e:
-        cprint(f"Failed to query workspaces: {e}", "red")
-        conn.close()
-        return False
+    # 输出报告
+    cprint("Database Cleanup (legacy hash directories)", "cyan", bold=True)
+    if dry_run:
+        cprint("Mode: DRY RUN (preview only)", "yellow")
+    else:
+        cprint("Mode: APPLY (will delete orphan directories)", "green")
+    cprint()
+
+    if not hash_dirs:
+        cprint("No legacy databases found.", "green")
+        cprint()
+        return True
 
     orphans = []
     valid = []
 
-    for row in rows:
-        ws_id = row["id"]
-        ws_name = row["name"] or ""
-        root_path = row["root_path"] or ""
+    for hash_name, dir_path, db_file in hash_dirs:
+        # 打开 hash 目录下的数据库，查询 workspaces 表
+        try:
+            conn = sqlite3.connect(db_file)
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, name, root_path FROM workspaces ORDER BY id"
+            ).fetchall()
+            conn.close()
+        except sqlite3.OperationalError as e:
+            # 无法读取 workspaces 表 → 判为孤儿
+            orphans.append({
+                "hash": hash_name,
+                "dir": dir_path,
+                "name": "",
+                "root_path": "",
+                "reason": f"read_error: {e}",
+            })
+            continue
 
-        # --all-but-current 模式：只看 root_path 是否等于当前
-        if all_but_current:
-            rp_norm = norm_path(os.path.abspath(root_path)) if root_path else ""
-            if current_norm and rp_norm == current_norm:
-                is_orphan = False
-                reason = None
+        # 检查该目录下所有 workspace（旧版通常只有一个）
+        # 只要有一个 workspace 有效，就保留整个目录
+        dir_is_orphan = True
+        dir_reason = "no_workspaces"
+        ws_name = ""
+        ws_root = ""
+
+        for row in rows:
+            ws_name = row["name"] or ""
+            root_path = row["root_path"] or ""
+
+            if all_but_current:
+                rp_norm = norm_path(os.path.abspath(root_path)) if root_path else ""
+                if current_norm and rp_norm == current_norm:
+                    is_orphan = False
+                    reason = None
+                else:
+                    is_orphan = True
+                    reason = "not_current"
             else:
-                is_orphan = True
-                reason = "not_current"
-        else:
-            is_orphan, reason = _is_orphan(root_path)
+                is_orphan, reason = _is_orphan(root_path)
+
+            if not is_orphan:
+                dir_is_orphan = False
+                dir_reason = None
+                ws_root = root_path
+                break
+            else:
+                dir_reason = reason
+                ws_root = root_path
 
         entry = {
-            "id": ws_id,
+            "hash": hash_name,
+            "dir": dir_path,
             "name": ws_name,
-            "root_path": root_path,
-            "reason": reason,
+            "root_path": ws_root,
+            "reason": dir_reason,
         }
-        if is_orphan:
+        if dir_is_orphan:
             orphans.append(entry)
         else:
             valid.append(entry)
 
-    # 输出报告
-    cprint("Workspace Cleanup (single database)", "cyan", bold=True)
-    if dry_run:
-        cprint("Mode: DRY RUN (preview only)", "yellow")
-    else:
-        cprint("Mode: APPLY (will delete workspace records)", "green")
-    cprint()
-
     total = len(orphans) + len(valid)
-    cprint(f"Total workspaces: {total}", "dim")
+    cprint(f"Total databases: {total}", "dim")
     cprint(f"  Valid:   {len(valid)}", "green")
     orphan_color = "yellow" if orphans else "dim"
     cprint(f"  Orphan:  {len(orphans)}", orphan_color)
     cprint()
 
     if not orphans:
-        cprint("No orphan workspaces found.", "green")
+        cprint("No orphan databases found.", "green")
         cprint()
-        conn.close()
         return True
 
-    # 显示有效 workspace
+    # 显示有效数据库
     if valid:
-        cprint("Valid workspaces (will keep):", "green")
+        cprint("Valid databases (will keep):", "green")
         for idx, entry in enumerate(valid, 1):
-            cprint(f"  {idx}. id={entry['id']} {entry['name']} -> {entry['root_path']}", "dim")
+            cprint(f"  {idx}. {entry['hash']} {entry['name']} -> {entry['root_path']}", "dim")
         cprint()
 
-    # 显示孤儿 workspace
-    cprint("Orphan workspaces (will be deleted):", "yellow", bold=True)
+    # 显示孤儿数据库
+    cprint("Orphan databases (will be deleted):", "yellow", bold=True)
     for idx, entry in enumerate(orphans, 1):
-        cprint(f"  {idx}. id={entry['id']} {entry['name']}", "yellow")
-        cprint(f"     Path: {entry['root_path']}", "dim")
+        cprint(f"  {idx}. {entry['hash']} {entry['name']}", "yellow")
+        cprint(f"     Path: {entry['dir']}", "dim")
         cprint(f"     Reason: {entry['reason']}", "dim")
     cprint()
 
     if not dry_run:
-        # 删除孤儿 workspace 及其关联数据
-        # 带 workspace_id 的业务表（按 FK 依赖顺序：先删依赖表，再删 file_instances，最后删 workspaces）
-        cascade_tables = [
-            "destructive_operations",
-            "git_commits",
-            "semgrep_scans",
-            "file_instances",  # 关联的 symbols/calls 通过 file_instance_id，下次 gc archive 清理
-        ]
+        # 实际删除孤儿 hash 目录（整个目录）
         deleted = 0
         for entry in orphans:
-            ws_id = entry["id"]
             try:
-                for table in cascade_tables:
-                    conn.execute(
-                        f"DELETE FROM {table} WHERE workspace_id = ?", (ws_id,)
-                    )
-                conn.execute("DELETE FROM workspaces WHERE id = ?", (ws_id,))
+                shutil.rmtree(entry["dir"])
                 deleted += 1
-            except sqlite3.OperationalError as e:
-                cprint(f"  Failed to delete workspace id={ws_id}: {e}", "red")
-        conn.commit()
-        cprint(f"Deleted {deleted} orphan workspaces (cascaded business data).", "green")
+            except OSError as e:
+                cprint(f"  Failed to delete {entry['hash']}: {e}", "red")
+        cprint(f"Deleted {deleted} orphan directories.", "green")
     else:
-        cprint("Run with --apply to actually delete orphan workspaces.", "dim")
+        cprint("Run with --apply to actually delete orphan directories.", "dim")
 
     cprint()
-    conn.close()
     return True
 
 

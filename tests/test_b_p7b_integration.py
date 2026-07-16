@@ -42,27 +42,36 @@ def _has_rust_ext() -> bool:
 
 
 def _find_callwarden_db() -> str | None:
-    """查找 callwarden 自身的数据库"""
+    """查找 callwarden 自身的数据库
+
+    优先使用用户级单库 ~/.callwarden/callwarden.db（v3 架构）。
+    旧版按 hash 隔离的 <hash>/callwarden.db 可能损坏或 schema 过旧，不再使用。
+    """
     home = os.path.expanduser("~")
     cw_dir = os.path.join(home, ".callwarden")
     if not os.path.isdir(cw_dir):
         return None
-    for hash_dir in os.listdir(cw_dir):
-        db_path = os.path.join(cw_dir, hash_dir, "callwarden.db")
-        if os.path.exists(db_path):
-            # 验证有 symbols 表（用 immutable=1 只读模式，避免 WAL -shm 文件问题）
-            try:
-                normalized = db_path.replace('\\', '/')
-                prefix = "file:" if normalized.startswith('/') else "file:///"
-                uri = f"{prefix}{normalized}?immutable=1"
-                conn = sqlite3.connect(uri, uri=True)
-                cur = conn.execute("SELECT COUNT(*) FROM symbols")
-                count = cur.fetchone()[0]
-                conn.close()
-                if count > 0:
-                    return db_path
-            except Exception:
-                pass
+    # 用户级单库（v3 架构）
+    db_path = os.path.join(cw_dir, "callwarden.db")
+    if os.path.exists(db_path):
+        # 验证有 symbols 表（用 immutable=1 只读模式，避免 WAL -shm 文件问题）
+        # 注意：immutable=1 跳过 WAL，需先 checkpoint 才能读到最新数据
+        try:
+            # 先以读写模式触发 WAL checkpoint（让 -wal 内容合并到主库）
+            chk_conn = sqlite3.connect(db_path)
+            chk_conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            chk_conn.close()
+            normalized = db_path.replace('\\', '/')
+            prefix = "file:" if normalized.startswith('/') else "file:///"
+            uri = f"{prefix}{normalized}?immutable=1"
+            conn = sqlite3.connect(uri, uri=True)
+            cur = conn.execute("SELECT COUNT(*) FROM symbols")
+            count = cur.fetchone()[0]
+            conn.close()
+            if count > 0:
+                return db_path
+        except Exception:
+            pass
     return None
 
 

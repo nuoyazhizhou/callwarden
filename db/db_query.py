@@ -606,7 +606,9 @@ class QueryMixin:
         # Rust 做子串匹配（O(N) 扫描预计算的小写字段，零 SQL），
         # 返回最多 limit 个匹配的 symbol id，
         # 再用 SQL 按 id IN(...) 批量取完整字段（signature/has_comment 等）
-        store = self._get_graph_store()
+        # 注意：空 query 跳过 Rust 短路（Rust 子串匹配空串返回空，语义错误；
+        # 空 query 应返回所有符号，走 FTS5/LIKE 路径）
+        store = self._get_graph_store() if query else None
         if store is not None:
             try:
                 rust_results = store.search_symbols(query, kind, limit)

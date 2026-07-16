@@ -262,14 +262,29 @@ def test_java_archive_scanner_prefers_shallow_public_surface(monkeypatch):
         calls = []
 
         class Result:
-            returncode = 0
-            stdout = "public class com.example.Public {\n  public void run();\n}"
+            def __init__(self, stdout=""):
+                self.returncode = 0
+                self.stdout = stdout
 
         def fake_run(args, **kwargs):
             if args == ["javap", "-version"]:
                 return Result()
-            calls.append(args[-1])
-            return Result()
+            # P16 批量调用：javap -classpath X -public ClassA ClassB ...
+            # args[4:] 是所有 class names；args[-1] 是最后一个（批量时）
+            # 逐类回退时 args[4:] 只有一个 class
+            class_names = args[4:] if len(args) > 4 else [args[-1]]
+            calls.extend(class_names)
+            # 为每个 class 生成对应的 javap 输出块
+            blocks = []
+            for cn in class_names:
+                short_name = cn.rsplit(".", 1)[-1]
+                blocks.append(
+                    f'Compiled from "{short_name}.java"\n'
+                    f"public class {cn} {{\n"
+                    f"  public void run();\n"
+                    f"}}"
+                )
+            return Result("\n".join(blocks))
 
         monkeypatch.setattr("callwarden.db.db_external.subprocess.run", fake_run)
 

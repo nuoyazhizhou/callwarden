@@ -626,6 +626,9 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
     # 场景：无 .git 的裸 monorepo（my_mono/crates/foo/Cargo.toml → 项目根 = my_mono/）
     # 去重：同一个项目根只保留第一次识别（避免 crates/foo + crates/bar 产生 2 条）
     if shallow:
+        # 先收集所有已识别项目的 root（含自身 manifest 的显式项目根）
+        # 用于判断容器父目录是否已有独立项目，避免把嵌套子包错误合并掉
+        explicit_roots = {p["root"] for p in projects}
         seen_roots = set()
         deduped = []
         for p in projects:
@@ -637,16 +640,21 @@ def scan_subprojects(root_dir: str, max_depth: int = 5,
                     # 项目根 = 容器目录的父目录
                     new_rel = "/".join(parts[:-2])
                     new_root = os.path.dirname(os.path.dirname(p["root"]))
-                    if new_root not in seen_roots:
-                        deduped.append({
-                            "root": new_root,
-                            "rel_path": new_rel,
-                            "name": os.path.basename(new_root) if new_rel else os.path.basename(root_dir),
-                            "lang": p["lang"],
-                            "manifest": p["manifest"],
-                        })
-                        seen_roots.add(new_root)
-                    continue
+                    # 仅当容器父目录本身没有独立 manifest 时才向上合并
+                    # （否则 monorepo/packages/core 不应被合并到已有 manifest 的 monorepo/，
+                    # 这种情况是真实 monorepo 的嵌套子包，应作为独立子项目保留）
+                    if new_root not in explicit_roots:
+                        if new_root not in seen_roots:
+                            deduped.append({
+                                "root": new_root,
+                                "rel_path": new_rel,
+                                "name": os.path.basename(new_root) if new_rel else os.path.basename(root_dir),
+                                "lang": p["lang"],
+                                "manifest": p["manifest"],
+                            })
+                            seen_roots.add(new_root)
+                        continue
+                    # 容器父目录已有独立项目根 → 保留嵌套子包本身作为独立子项目
             if p["root"] not in seen_roots:
                 deduped.append(p)
                 seen_roots.add(p["root"])

@@ -66,6 +66,11 @@ def _seed_symbol(db, rel_path, name, qualified_name=None, kind="fn", symbol_hash
         (fv_id, sh, qname),
     )
     db.conn.commit()
+    # 失效 Rust GraphStore 缓存：_seed_symbol 直接 SQL 插入绕过正常 API，
+    # Rust 内存缓存不会自动感知新符号，需手动失效让下次查询重新加载。
+    # 否则 search_symbols 走 Rust 短路时返回旧缓存，FTS5 路径不会被执行。
+    if hasattr(db, "_invalidate_graph_store"):
+        db._invalidate_graph_store()
     return fi_id
 
 
@@ -165,6 +170,10 @@ def test_fts5_update_sync():
             ("new_name", "module::new_name", "old_name"),
         )
         db.conn.commit()
+        # 失效 Rust GraphStore 缓存：直接 SQL UPDATE 绕过正常 API，
+        # Rust 内存缓存仍持有旧的符号名，需手动失效让下次查询重新加载。
+        if hasattr(db, "_invalidate_graph_store"):
+            db._invalidate_graph_store()
         # 旧名不再命中
         assert len(db.search_symbols("old")) == 0
         # 新名命中

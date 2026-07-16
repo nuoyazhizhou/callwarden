@@ -350,7 +350,7 @@ def timed(fn, *args, **kwargs):
     return result, elapsed
 
 
-def test_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool = True) -> dict:
+def benchmark_repo(repo_name: str, skip_refresh: bool = False, skip_clone: bool = True) -> dict:
     """测试单个仓库的性能。
 
     Args:
@@ -580,7 +580,7 @@ def main():
     all_results = []
     for repo_name in repos_to_test:
         try:
-            result = test_repo(repo_name, skip_refresh=args.skip_refresh, skip_clone=not args.clone)
+            result = benchmark_repo(repo_name, skip_refresh=args.skip_refresh, skip_clone=not args.clone)
             all_results.append(result)
         except Exception as e:
             print(f"\n[ERROR] 测试 {repo_name} 时异常: {e}")
