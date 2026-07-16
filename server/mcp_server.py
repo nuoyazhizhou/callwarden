@@ -2326,7 +2326,7 @@ def create_mcp_server():
         """查询后台任务状态
 
         Args:
-            job_id: 任务 ID（如 "J-1783698970719-3a4b"）
+            job_id: 任务 ID（如 "J-1783698970719-3a4b5c6d"）
 
         Returns:
             {
@@ -2429,7 +2429,7 @@ def create_mcp_server():
         适用于 "submit → wait → get result" 模式。
 
         Args:
-            job_id: 任务 ID（如 "J-1783698970719-3a4b"）
+            job_id: 任务 ID（如 "J-1783698970719-3a4b5c6d"）
             timeout: 最大等待秒数（默认 30）
             poll_interval: 轮询间隔秒数（默认 0.5）
 

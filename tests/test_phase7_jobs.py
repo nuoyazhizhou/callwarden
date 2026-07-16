@@ -95,14 +95,14 @@ def db_conn():
 
 class TestGenerateJobId:
     def test_format(self):
-        """job_id 格式：J-<13位时间戳>-<4位hex>"""
+        """job_id 格式：J-<13位时间戳>-<8位hex>"""
         jid = _generate_job_id()
         assert jid.startswith("J-")
         parts = jid.split("-")
         assert len(parts) == 3
         assert parts[0] == "J"
         assert len(parts[1]) == 13  # 毫秒时间戳
-        assert len(parts[2]) == 4  # 4 hex chars
+        assert len(parts[2]) == 8  # 8 hex chars（32 bit 熵，降低碰撞概率）
 
     def test_uniqueness(self):
         """连续生成的 job_id 必须唯一（极大概率）"""

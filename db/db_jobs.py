@@ -33,7 +33,7 @@ JOBS_SCHEMA_DDL = """
 -- 后台任务表：记录 clone/vector/semgrep 等重任务的执行状态
 CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id TEXT NOT NULL UNIQUE,              -- 人类可读 ID（如 "J-1783698970719-3a4b"）
+    job_id TEXT NOT NULL UNIQUE,              -- 人类可读 ID（如 "J-1783698970719-3a4b5c6d"）
     workspace_id INTEGER NOT NULL,
     job_type TEXT NOT NULL,                    -- 'clone_detect' / 'vector_index' / 'semgrep_scan'
     status TEXT NOT NULL DEFAULT 'pending',    -- pending / running / completed / cancelled / failed
@@ -122,11 +122,15 @@ def init_jobs_schema(conn: sqlite3.Connection):
 def _generate_job_id() -> str:
     """生成人类可读的 job_id
 
-    格式：J-<13位时间戳>-<4位随机十六进制>
-    例如：J-1783698970719-3a4b
+    格式：J-<13位时间戳>-<8位随机十六进制>
+    例如：J-1783698970719-3a4b5c6d
+
+    后缀长度选 8 位 hex（32 bit，~42 亿种）而非 4 位 hex：
+    4 位 hex 在毫秒内连续生成 100 个 ID 时按生日悖论有 ~7.3% 碰撞概率；
+    8 位 hex 将此概率降到 ~10⁻⁶，足以支撑测试断言 100% 唯一。
     """
     ts = int(time.time() * 1000)
-    rand = secrets.token_hex(2)  # 4 个十六进制字符
+    rand = secrets.token_hex(4)  # 8 个十六进制字符
     return f"J-{ts}-{rand}"
 
 
@@ -208,7 +212,7 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> Optional[Job]:
     """获取任务详情
 
     参数：
-        job_id: 任务 ID（如 "J-1783698970719-3a4b"）
+        job_id: 任务 ID（如 "J-1783698970719-3a4b5c6d"）
 
     返回：Job 对象；如果不存在返回 None
     """
