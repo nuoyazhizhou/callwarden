@@ -170,7 +170,7 @@ class TestBackupManagerFull:
         parts = backup_id.split("-")
         assert len(parts) == 3
         assert len(parts[1]) == 13
-        assert len(parts[2]) == 4
+        assert len(parts[2]) == 8  # 8 位 hex（32 bit 熵，降低碰撞概率）
 
     def test_backup_id_uniqueness(self, setup_daemon_env):
         cfg, backup_root = setup_daemon_env

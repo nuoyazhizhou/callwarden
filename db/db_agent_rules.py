@@ -55,18 +55,22 @@ VALID_SEVERITY = frozenset(SEVERITY_ORDER.keys())
 def _gen_rule_id(prefix: str) -> str:
     """生成规则唯一 ID
 
-    格式: {prefix}-{timestamp_ms}-{random4hex}
-    例如: ARC-1783253838000-a1b2
+    格式: {prefix}-{timestamp_ms}-{random8hex}
+    例如: ARC-1783253838000-a1b25c6d
+
+    后缀 8 位 hex（32 bit，~42 亿种）而非 4 位 hex：
+    4 位 hex 在毫秒内连续生成 100 个 ID 时按生日悖论有 ~7.3% 碰撞概率；
+    8 位 hex 将此概率降到 ~10⁻⁶，足以支撑快速循环调用。
 
     Args:
         prefix: ID 前缀（ARC=候选 / AR=已生效 / ARSL=同步日志）
 
     Returns:
-        形如 ARC-1783253838000-a1b2 的唯一标识
+        规则 ID 字符串
     """
     ts_ms = int(time.time() * 1000)
-    rand4 = secrets.token_hex(2)
-    return f"{prefix}-{ts_ms}-{rand4}"
+    rand8 = secrets.token_hex(4)
+    return f"{prefix}-{ts_ms}-{rand8}"
 
 
 def _serialize_scope(scope: Optional[Dict[str, Any]]) -> str:

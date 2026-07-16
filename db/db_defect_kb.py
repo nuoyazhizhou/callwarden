@@ -84,11 +84,15 @@ def _compute_diff(old: str, new: str) -> str:
 def _gen_custom_pattern_id() -> str:
     """生成自定义模式 ID（用于非 Semgrep 来源的模式）
 
-    格式: DP-custom-{timestamp}-{random4hex}
+    格式: DP-custom-{timestamp}-{random8hex}
+
+    后缀 8 位 hex（32 bit，~42 亿种）而非 4 位 hex：
+    4 位 hex 在秒内连续生成 100 个 ID 时按生日悖论有 ~7.3% 碰撞概率；
+    8 位 hex 将此概率降到 ~10⁻⁶，足以支撑快速循环调用。
     """
     ts = int(time.time())
-    rand4 = secrets.token_hex(2)  # 2 字节 = 4 个十六进制字符
-    return f"DP-custom-{ts}-{rand4}"
+    rand8 = secrets.token_hex(4)  # 4 字节 = 8 个十六进制字符
+    return f"DP-custom-{ts}-{rand8}"
 
 
 def _snippet_in_content(snippet: str, content: str) -> bool:

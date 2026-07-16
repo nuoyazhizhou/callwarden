@@ -27,7 +27,7 @@
 
 审计日志格式（JSON）：
 {
-    "event_id": "A-<13ts>-<4hex>",
+    "event_id": "A-<13ts>-<8hex>",
     "timestamp": 1783698970.0,
     "event_type": "workspace_register",
     "actor_uid": 1000,
@@ -117,9 +117,12 @@ class AuditEvent:
 
     @staticmethod
     def _generate_event_id() -> str:
-        """生成事件 ID：A-<13ts>-<4hex>。"""
+        """生成事件 ID：A-<13ts>-<8hex>。
+
+        后缀 8 位 hex（32 bit）而非 4 位 hex：降低快速循环内碰撞概率（生日悖论）。
+        """
         ts = int(time.time() * 1000)
-        hex_part = secrets.token_hex(2)
+        hex_part = secrets.token_hex(4)
         return f"A-{ts}-{hex_part}"
 
     def to_dict(self) -> Dict[str, Any]:

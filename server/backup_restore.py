@@ -25,7 +25,7 @@
 
 backup_meta.json 格式：
 {
-    "backup_id": "B-<13ts>-<4hex>",
+    "backup_id": "B-<13ts>-<8hex>",
     "timestamp": 1783698970.0,
     "backup_type": "full",
     "daemon_version": "1.0.0",
@@ -321,9 +321,12 @@ class BackupManager:
 
     @staticmethod
     def _generate_backup_id() -> str:
-        """生成备份 ID：B-<13ts>-<4hex>。"""
+        """生成备份 ID：B-<13ts>-<8hex>。
+
+        后缀 8 位 hex（32 bit）而非 4 位 hex：降低快速循环内碰撞概率（生日悖论）。
+        """
         ts = int(time.time() * 1000)
-        hex_part = secrets.token_hex(2)
+        hex_part = secrets.token_hex(4)
         return f"B-{ts}-{hex_part}"
 
 

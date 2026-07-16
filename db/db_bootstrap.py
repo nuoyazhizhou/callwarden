@@ -616,9 +616,10 @@ class BootstrapMixin:
                     hash_after = ""
 
             # 生成 change_id 并写入 change_audit
+            # 后缀 8 位 hex（32 bit）而非 4 位 hex：降低快速循环内碰撞概率（生日悖论）
             ts_ms = int(time.time() * 1000)
-            rand4 = secrets.token_hex(2)
-            change_id = f"C-{ts_ms}-{rand4}"
+            rand8 = secrets.token_hex(4)
+            change_id = f"C-{ts_ms}-{rand8}"
             try:
                 self.conn.execute(
                     "INSERT INTO change_audit "

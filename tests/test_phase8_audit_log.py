@@ -76,12 +76,12 @@ class TestAuditEvent:
             actor_role="admin",
             action="test",
         )
-        # A-<13ts>-<4hex>
+        # A-<13ts>-<8hex>
         assert event.event_id.startswith("A-")
         parts = event.event_id.split("-")
         assert len(parts) == 3
         assert len(parts[1]) == 13  # 13 位时间戳
-        assert len(parts[2]) == 4   # 4 位 hex
+        assert len(parts[2]) == 8   # 8 位 hex（32 bit 熵，降低碰撞概率）
 
     def test_event_id_uniqueness(self):
         event1 = AuditEvent(

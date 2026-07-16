@@ -37,17 +37,21 @@ from .schema import (
 def _gen_id(prefix: str) -> str:
     """生成唯一 ID
 
-    格式: {prefix}-{timestamp_ms}-{random4hex}
+    格式: {prefix}-{timestamp_ms}-{random8hex}
+
+    后缀 8 位 hex（32 bit，~42 亿种）而非 4 位 hex：
+    4 位 hex 在毫秒内连续生成 100 个 ID 时按生日悖论有 ~7.3% 碰撞概率；
+    8 位 hex 将此概率降到 ~10⁻⁶，足以支撑快速循环调用。
 
     Args:
         prefix: ID 前缀（T / S / C）
 
     Returns:
-        形如 T-1719900000000-a1b2 的唯一标识
+        ID 字符串
     """
     ts_ms = int(time.time() * 1000)
-    rand4 = secrets.token_hex(2)  # 2 字节 = 4 个十六进制字符
-    return f"{prefix}-{ts_ms}-{rand4}"
+    rand8 = secrets.token_hex(4)  # 4 字节 = 8 个十六进制字符
+    return f"{prefix}-{ts_ms}-{rand8}"
 
 
 def _gen_task_id() -> str:
