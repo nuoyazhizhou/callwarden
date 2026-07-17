@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-15 · Schema v37 · 37 Mixin · 204 MCP 工具 · 16 语言
+> 最后更新：2026-07-15 · Schema v37 · 40 Mixin · 204 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -11,10 +11,10 @@
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
 | Schema 版本 | v37  | v3→v37 版本化迁移，事务化执行                                                             |
-| Mixin 模块  | 37   | CodeGraphBase + 36 个功能 Mixin                                                           |
+| Mixin 模块  | 40   | CodeGraphBase + 39 个功能 Mixin                                                           |
 | MCP 工具    | 204  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
-| 解析器文件  | 16   | tree-sitter 多语言                                                                        |
+| 解析器文件  | 18   | tree-sitter 多语言（含 base/call_filter/call_resolver 等辅助模块）                        |
 | 测试套件    | 8    | P0/P1/P2/P3/csharp_ruby/p1_p3/stress/fuzz/gc                                              |
 
 ## 二、核心能力矩阵
@@ -23,7 +23,7 @@
 
 | 能力                                   | 状态 | 关键文件                                 |
 | -------------------------------------- | ---- | ---------------------------------------- |
-| 16 语言 tree-sitter 解析               | ✅    | `parsers/*.py`（16 个解析器）            |
+| 16 语言 tree-sitter 解析               | ✅    | `parsers/*.py`（18 个解析器文件）        |
 | 100% 覆盖 Semgrep GA 语言              | ✅    | `config.py` LANGUAGE_CONFIG              |
 | 函数/类/结构体/接口/枚举提取           | ✅    | `parsers/base.py` BaseParser             |
 | 注释检测（/// 与 //）                  | ✅    | BaseParser._has_comment                  |
@@ -198,33 +198,52 @@
 | PR 检查                            | ✅    | `cicd/pr_check.py`                 |
 | GitHub Actions workflow            | ✅    | `.github/workflows/callwarden.yml` |
 
-## 三、Mixin 模块清单（23 个）
+## 三、Mixin 模块清单（40 个）
 
-| Mixin             | 文件                  | 职责                                  |
-| ----------------- | --------------------- | ------------------------------------- |
-| CodeGraphBase     | `db_base.py`          | 连接管理 + Schema 迁移 + 工作区       |
-| BuildMixin        | `db_build.py`         | 文件扫描 + 多语言解析 + 调用图 + 增量 |
-| QueryMixin        | `db_query.py`         | 符号/调用/拓扑查询                    |
-| CommentMixin      | `db_comment.py`       | 注释恢复                              |
-| MetricsMixin      | `db_metrics.py`       | 圈复杂度 + 健康评分                   |
-| GitMixin          | `db_git.py`           | Git 历史 + 符号变更                   |
-| VectorMixin       | `db_vector.py`        | 向量嵌入 + RAG                        |
-| SummaryMixin      | `db_summary.py`       | AI 摘要 + repo map                    |
-| OwnershipMixin    | `db_ownership.py`     | CODEOWNERS + git blame                |
-| TasksMixin        | `db_tasks.py`         | 任务编排状态机                        |
-| CoverageMixin     | `db_coverage.py`      | LCOV/Cobertura + 测试影响             |
-| LSPMixin          | `db_lsp.py`           | LSP 协议集成                          |
-| CrossRepoMixin    | `db_cross_repo.py`    | 跨仓库分析                            |
-| BranchMixin       | `db_branch.py`        | 分支感知                              |
-| TokenSavingsMixin | `db_token_savings.py` | Token 账本                            |
-| EditSafetyMixin   | `db_edit.py`          | 安全编辑                              |
-| CheckGateMixin    | `db_check_gate.py`    | 检查门禁                              |
-| GuardrailMixin    | `db_guardrail.py`     | 生产安全护栏                          |
-| ImpactMixin       | `db_impact.py`        | 变更影响                              |
-| EvolutionMixin    | `db_evolution.py`     | 代码演化                              |
-| DefectKbMixin     | `db_defect_kb.py`     | 缺陷知识库                            |
-| TokenSavingsMixin | `db_token_savings.py` | Token 节省账本                        |
-| GCMixin           | `db_gc.py`            | 归档/复活/清除（v14）                 |
+权威清单见 [architecture.md §40 个 Mixin 列表](../architecture.md#40-个-mixin-列表)。下表为按文件路径分组的快速索引：
+
+| Mixin                   | 文件                          | 职责                                  |
+| ----------------------- | ----------------------------- | ------------------------------------- |
+| CodeGraphBase           | `db_base.py`                  | 连接管理 + Schema 迁移 + 工作区       |
+| BuildMixin              | `db_build.py`                 | 文件扫描 + 多语言解析 + 调用图 + 增量 |
+| QueryMixin              | `db_query.py`                 | 符号/调用/拓扑查询                    |
+| CommentMixin            | `db_comment.py`               | 注释恢复                              |
+| MetricsMixin            | `db_metrics.py`               | 圈复杂度 + 健康评分                   |
+| GitMixin                | `db_git.py`                   | Git 历史 + 符号变更                   |
+| VectorMixin             | `db_vector.py`                | 向量嵌入 + RAG                        |
+| SummaryMixin            | `db_summary.py`               | AI 摘要 + repo map                    |
+| OwnershipMixin          | `db_ownership.py`             | CODEOWNERS + git blame                |
+| TaskMixin               | `db_tasks.py`                 | 任务编排状态机                        |
+| CoverageMixin           | `db_coverage.py` + analyzers  | LCOV/Cobertura + 测试影响             |
+| LspMixin                | `db_lsp.py`                   | LSP 协议集成                          |
+| CrossRepoMixin          | `db_cross_repo.py`            | 跨仓库分析                            |
+| BranchMixin             | `db_branch.py`                | 分支感知                              |
+| TokenSavingsMixin       | `db_token_savings.py`         | Token 账本                            |
+| EditSafetyMixin         | `db_edit.py`                  | 安全编辑                              |
+| CheckGateMixin          | `db_check_gate.py`            | 检查门禁                              |
+| GuardrailMixin          | `db_guardrail.py`             | 生产安全护栏                          |
+| ImpactMixin             | `db_impact.py`                | 变更影响                              |
+| EvolutionMixin          | `db_evolution.py`             | 代码演化                              |
+| DefectKbMixin           | `db_defect_kb.py`             | 缺陷知识库                            |
+| GcMixin                 | `db_gc.py`                    | 归档/复活/清除（v14）                 |
+| CallChainMixin          | `analyzers/call_chain.py`     | 调用链分析                            |
+| IssueAnalyzerMixin      | `analyzers/issues.py`         | 缺陷检测                              |
+| AgentRulesMixin         | `db_agent_rules.py`           | Agent Rule Memory                     |
+| BootstrapMixin          | `db_bootstrap.py`             | 自举闭环                              |
+| AuditChainMixin         | `db_audit_chain.py`           | 审计签名链                            |
+| CasMixin                | `db_cas.py`                   | Global CAS                            |
+| CloneDetectionMixin     | `db_clone_detection.py`       | 重复代码检测                          |
+| CloneGroupsMixin        | `db_clone_groups.py`          | Clone Groups 存储                     |
+| DaemonMixin             | `db_daemon.py`                | Enterprise daemon workspace registry  |
+| ExternalMixin           | `db_external.py`              | 第三方包解析                          |
+| JobsMixin               | `db_jobs.py`                  | 后台任务系统                          |
+| MigrateMixin            | `db_migrate.py`               | 数据库迁移工具                        |
+| StdlibMixin             | `db_stdlib.py`                | 标准库符号表                          |
+| TaskAttributionMixin    | `db_task_attribution.py`      | 任务-符号变更归因                     |
+| TaskQualityMixin        | `db_task_quality.py`          | 任务质量门禁                          |
+| TestsMixin              | `db_tests.py`                 | 测试关联                              |
+| ToolchainMixin          | `db_toolchain.py`             | Toolchain CAS                         |
+| WorkspaceManifestMixin  | `db_workspace_manifest.py`    | Workspace manifest                    |
 
 ## 四、独占优势（竞品空白）
 

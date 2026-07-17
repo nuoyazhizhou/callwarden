@@ -328,13 +328,13 @@
 | I6 | 数据库路径描述不一致 | UG 说 ~/.callwarden/callwarden.db，IS/RM 说 ~/.callwarden/<hash>/callwarden.db | UG |
 | I7 | CA "不要做跨仓库" 但已实现 | CA 建议不做跨仓库，但 db_cross_repo.py 已实现 | CA |
 | I8 | CA "不要集成 ast-grep" 但 issues.py 存在 | CA 不建议，但实际 issues.py 可能已集成 | CA |
-| I9 | ARC Mixin 数过时 | ARC 说 25 个 Mixin，实际 **37** 个 db_*.py 文件 | ARC |
-| I10 | ARC Schema 版本过时 | ARC 说 v33，实际 **v36** | ARC |
-| I11 | CT Mixin 数过时 | CONTRIBUTING.md 说 23 个 Mixin，实际 **37** | CT |
-| I12 | docs/README.md MCP 工具数过时 | 说 120 个，实际 **195** | docs/README.md |
+| I9 | ✅ 已修复（2026-07-17） | ARC Mixin 数已同步为 40 个，db_*.py 38 个文件 | ARC |
+| I10 | ✅ 已修复（2026-07-17） | ARC Schema 版本已同步为 v37 | ARC |
+| I11 | ✅ 已修复（2026-07-17） | CONTRIBUTING.md Mixin 数已同步为 40 | CT |
+| I12 | ✅ 已修复（2026-07-17） | README.md MCP 工具数已同步为 204 | docs/README.md |
 | I13 | MCT 内部自相矛盾 | 头部说 173 个工具，第二段说 193 个，概览表合计 179 个 | MCT |
 | I14 | GA1/GA2 历史差距分析严重过时 | 基于 9 语言 / 38 MCP 工具的旧现状，所有“缺失”几乎都已实现，但文档未标注过时 | GA1, GA2（建议加过时警告头） |
-| I15 | naming-analysis-report 数据过时 | 说 120 个 MCP 工具，实际 195 | naming-analysis-report.md |
+| I15 | ✅ 已修复（2026-07-17） | naming-analysis-report Mixin 数已同步为 40 | naming-analysis-report.md |
 | I16 | history/README.md 演化轨迹过时 | 说 v14 当前，实际 v36 | docs/history/README.md |
 
 ## J. 灰色地带验证结果（已全部确认）

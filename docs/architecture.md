@@ -20,7 +20,7 @@
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                  CodeGraphDB (db.py)                          │
-│         37 个 Mixin 多继承组装的统一数据库类                  │
+│         40 个 Mixin 多继承组装的统一数据库类                  │
 │  CodeGraphBase + BuildMixin + QueryMixin + ... + CheckGateMixin│
 └────────────────────────────┬──────────────────────────────────┘
                              │
@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（用户级单库）                       │
 │   $HOME/.callwarden/callwarden.db                              │
-│   Schema v37 / WAL 模式 / 40+ 表 / 37 个 Mixin 模块           │
+│   Schema v37 / WAL 模式 / 40+ 表 / 40 个 Mixin 模块           │
 │   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -46,9 +46,9 @@
 | 层 | 职责 | 关键文件 |
 |----|------|----------|
 | 接入层 | CLI 命令解析、MCP 协议处理 | `cli/main.py`、`server/mcp_server.py` |
-| 业务层 | 37 个 Mixin 组合的数据库类 | `db.py` + `db_*.py`（25 个文件） |
-| 解析层 | tree-sitter 多语言解析、调用关系提取 | `parsers/`（10 个文件） |
-| 分析层 | 调用链、覆盖率、缺陷检测 | `analyzers/`（3 个文件） |
+| 业务层 | 40 个 Mixin 组合的数据库类 | `db.py` + `db_*.py`（38 个文件） |
+| 解析层 | tree-sitter 多语言解析、调用关系提取 | `parsers/`（18 个文件） |
+| 分析层 | 调用链、覆盖率、缺陷检测 | `analyzers/`（6 个文件） |
 | 加速层 | PyO3 Rust 扩展（可选） | `rust_ext/` |
 | 存储层 | SQLite 项目级数据库 | `schema.py` |
 
@@ -312,7 +312,7 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 
 ### 设计原理
 
-CodeGraphDB 通过 **37 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
+CodeGraphDB 通过 **40 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
 
 - **单一职责**：每个 Mixin 只关心自己的表和查询
 - **按需组合**：主类只需声明继承即可获得功能
@@ -374,7 +374,7 @@ class CodeGraphDB(
     BuildMixin,
     QueryMixin,
     CommentMixin,
-    # ... 共 24 个 Mixin
+    # ... 共 40 个 Mixin
     CheckGateMixin,
     AgentRulesMixin,
 ):

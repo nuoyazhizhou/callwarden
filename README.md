@@ -149,7 +149,7 @@ callwarden/
 ├── analyzers/                 # 分析层（call_chain / coverage / issues / ignore_spec）
 ├── cicd/                      # CI/CD 集成（sarif / incremental / pr_check）
 ├── cli/                       # CLI 命令行
-├── db/                        # 数据库层（23 个 Mixin + schema）
+├── db/                        # 数据库层（40 个 Mixin + schema）
 ├── docs/                      # 文档
 ├── i18n/                      # 国际化
 ├── parsers/                   # 多语言解析器（16 种）
