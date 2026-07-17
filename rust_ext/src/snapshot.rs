@@ -8,13 +8,13 @@
 //!
 //! 参考：enterprise-daemon-shared-snapshot-plan.md §8
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use crate::diff;
+use crate::graph::GraphStore;
 use arc_swap::{ArcSwap, Guard};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use crate::graph::GraphStore;
-use crate::diff;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 // ============================================
 // 类型别名
@@ -145,7 +145,8 @@ impl SnapshotManager {
 
     /// 分配下一个 generation 号
     pub fn alloc_generation(&self) -> Generation {
-        self.next_generation.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        self.next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     }
 
     /// 获取当前 snapshot 的 GraphStore 引用（供 diff 模块只读访问）
@@ -166,8 +167,14 @@ impl SnapshotManager {
 ///
 /// 按 workspace_instance_id 索引，每个 workspace 独立维护 generation。
 /// LRU 淘汰策略：超过 max_workspaces 时淘汰最久未访问的 workspace。
+///
+/// 内部使用 HashMap 做 O(1) 查找 + Vec 维护插入顺序（供 list_workspaces
+/// 返回稳定顺序 + LRU eviction 取最旧条目）。
 pub struct SnapshotCache {
     managers: parking_lot::RwLock<HashMap<WorkspaceInstanceId, Arc<SnapshotManager>>>,
+    /// 插入顺序队列：与 managers 同步（insert push_back，evict 按值移除）
+    /// 用于 list_workspaces 返回稳定顺序 + LRU eviction 取队首（最旧）
+    order: parking_lot::RwLock<Vec<WorkspaceInstanceId>>,
     max_workspaces: usize,
 }
 
@@ -175,6 +182,7 @@ impl SnapshotCache {
     pub fn new(max_workspaces: usize) -> Self {
         Self {
             managers: parking_lot::RwLock::new(HashMap::new()),
+            order: parking_lot::RwLock::new(Vec::new()),
             max_workspaces,
         }
     }
@@ -185,15 +193,24 @@ impl SnapshotCache {
         if let Some(mgr) = mgrs.get(workspace_id) {
             return mgr.clone();
         }
-        // LRU 淘汰
+        // LRU 淘汰：超过 max_workspaces 时取 order 队首（最旧的 workspace）
         if mgrs.len() >= self.max_workspaces {
-            // 简单策略：淘汰第一个找到的（生产应换成 LRU 时间戳）
-            if let Some(first_key) = mgrs.keys().next().cloned() {
-                mgrs.remove(&first_key);
+            let mut order = self.order.write();
+            // 找到第一个仍然存在于 managers 中的 order 条目（兜底处理
+            // 之前 evict 调用残留的 stale 条目）
+            while let Some(first_key) = order.first().cloned() {
+                if mgrs.contains_key(&first_key) {
+                    mgrs.remove(&first_key);
+                    order.remove(0);
+                    break;
+                }
+                // stale 条目（之前 evict 已从 managers 移除但未从 order 清理）
+                order.remove(0);
             }
         }
         let mgr = Arc::new(SnapshotManager::new(workspace_id.to_string()));
         mgrs.insert(workspace_id.to_string(), mgr.clone());
+        self.order.write().push(workspace_id.to_string());
         mgr
     }
 
@@ -202,14 +219,26 @@ impl SnapshotCache {
         self.managers.read().get(workspace_id).cloned()
     }
 
-    /// 列出所有 workspace_id
+    /// 列出所有 workspace_id（按插入顺序，最旧在前）
     pub fn list_workspaces(&self) -> Vec<WorkspaceInstanceId> {
-        self.managers.read().keys().cloned().collect()
+        let mgrs = self.managers.read();
+        let order = self.order.read();
+        // 过滤掉 stale 条目（理论上 order 与 managers 应同步，但兜底处理）
+        order
+            .iter()
+            .filter(|k| mgrs.contains_key(*k))
+            .cloned()
+            .collect()
     }
 
     /// 移除指定 workspace（用于 workspace 注销）
     pub fn evict(&self, workspace_id: &str) -> Option<Arc<SnapshotManager>> {
-        self.managers.write().remove(workspace_id)
+        let removed = self.managers.write().remove(workspace_id);
+        if removed.is_some() {
+            // 从 order 队列中移除（保留其余条目顺序）
+            self.order.write().retain(|k| k != workspace_id);
+        }
+        removed
     }
 
     /// 当前缓存数量
@@ -352,7 +381,9 @@ impl PySnapshotCache {
 
     /// 获取已存在的 manager（不存在返回 None）
     fn get(&self, workspace_id: &str) -> Option<PySnapshotManager> {
-        self.inner.get(workspace_id).map(|mgr| PySnapshotManager { inner: mgr })
+        self.inner
+            .get(workspace_id)
+            .map(|mgr| PySnapshotManager { inner: mgr })
     }
 
     /// 列出所有 workspace_id
@@ -473,7 +504,11 @@ impl PySnapshotCache {
         let left_store = self.get_store(left_workspace_id)?;
         let right_store = self.get_store(right_workspace_id)?;
         let scope = build_scope_filter(scope_type, scope_value);
-        Ok(diff::count_symbols_in_scope(&left_store, &right_store, &scope))
+        Ok(diff::count_symbols_in_scope(
+            &left_store,
+            &right_store,
+            &scope,
+        ))
     }
 
     /// Phase 4.8: 对比两个 workspace 中指定 scope 内的所有符号差异
@@ -517,13 +552,17 @@ fn build_scope_filter(scope_type: &str, scope_value: &str) -> diff::ScopeFilter 
 impl PySnapshotCache {
     /// 获取指定 workspace 的当前 GraphStore（内部 Rust 接口）
     pub fn get_store(&self, workspace_id: &str) -> PyResult<Arc<GraphStore>> {
-        let mgr = self.inner.get(workspace_id)
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "workspace '{}' not found in cache", workspace_id
-            )))?;
-        mgr.current_store()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "workspace '{}' has no published snapshot yet", workspace_id
-            )))
+        let mgr = self.inner.get(workspace_id).ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "workspace '{}' not found in cache",
+                workspace_id
+            ))
+        })?;
+        mgr.current_store().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "workspace '{}' has no published snapshot yet",
+                workspace_id
+            ))
+        })
     }
 }
