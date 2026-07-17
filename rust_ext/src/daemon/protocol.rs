@@ -211,7 +211,7 @@ mod unix {
     ///
     /// 协议：与 send_message 相同，但通过 SCM_RIGHTS ancillary data 携带 FD
     pub fn send_message_with_fds(
-        sock: &UnixStream,
+        sock: &mut UnixStream,
         message: &Value,
         fds: &[RawFd],
         max_bytes: usize,
@@ -280,7 +280,7 @@ mod unix {
     ///
     /// 返回 (message, received_fds)
     pub fn recv_message_with_fds(
-        sock: &UnixStream,
+        sock: &mut UnixStream,
         max_bytes: usize,
         max_fds: usize,
     ) -> Result<(Value, Vec<RawFd>), ProtocolError> {
@@ -597,7 +597,7 @@ mod unix_tests {
     /// 验证 SCM_RIGHTS FD 传递 roundtrip
     #[test]
     fn test_scm_rights_fd_passing() {
-        let (sock_a, sock_b) = UnixStream::pair().unwrap();
+        let (mut sock_a, mut sock_b) = UnixStream::pair().unwrap();
 
         // 创建临时文件并打开 FD
         let temp_dir = tempfile::tempdir().unwrap();
@@ -608,7 +608,7 @@ mod unix_tests {
 
         // 发送端：发 JSON + FD
         let msg = serde_json::json!({"method": "snapshot.publish", "fd_attached": true});
-        let send_result = send_message_with_fds(&sock_a, &msg, &[raw_fd], DEFAULT_MAX_MESSAGE_BYTES);
+        let send_result = send_message_with_fds(&mut sock_a, &msg, &[raw_fd], DEFAULT_MAX_MESSAGE_BYTES);
         if send_result.is_err() {
             // 某些环境（如无权限的沙箱）可能失败，跳过
             eprintln!("跳过 SCM_RIGHTS 测试：sendmsg 失败");
@@ -617,7 +617,7 @@ mod unix_tests {
 
         // 接收端：收 JSON + FD
         let (received_msg, received_fds) =
-            recv_message_with_fds(&sock_b, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_FDS).unwrap();
+            recv_message_with_fds(&mut sock_b, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_FDS).unwrap();
         assert_eq!(received_msg, msg);
         assert_eq!(received_fds.len(), 1);
 
@@ -632,9 +632,9 @@ mod unix_tests {
     /// 验证空 FD 列表被拒绝
     #[test]
     fn test_empty_fds_rejected() {
-        let (sock_a, _sock_b) = UnixStream::pair().unwrap();
+        let (mut sock_a, _sock_b) = UnixStream::pair().unwrap();
         let msg = serde_json::json!({"method": "test"});
-        let result = send_message_with_fds(&sock_a, &msg, &[], DEFAULT_MAX_MESSAGE_BYTES);
+        let result = send_message_with_fds(&mut sock_a, &msg, &[], DEFAULT_MAX_MESSAGE_BYTES);
         match result {
             Err(ProtocolError::InvalidFdCount { .. }) => (),
             _ => panic!("期望 InvalidFdCount 错误"),
@@ -644,10 +644,10 @@ mod unix_tests {
     /// 验证过多 FD 被拒绝
     #[test]
     fn test_too_many_fds_rejected() {
-        let (sock_a, _sock_b) = UnixStream::pair().unwrap();
+        let (mut sock_a, _sock_b) = UnixStream::pair().unwrap();
         let msg = serde_json::json!({"method": "test"});
         let fds = [0, 1, 2]; // 3 个 FD，超过 DEFAULT_MAX_FDS=1
-        let result = send_message_with_fds(&sock_a, &msg, &fds, DEFAULT_MAX_MESSAGE_BYTES);
+        let result = send_message_with_fds(&mut sock_a, &msg, &fds, DEFAULT_MAX_MESSAGE_BYTES);
         match result {
             Err(ProtocolError::InvalidFdCount { .. }) => (),
             _ => panic!("期望 InvalidFdCount 错误"),

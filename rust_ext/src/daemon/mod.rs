@@ -37,20 +37,3 @@ pub mod peercred;
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
 /// 更新 schema 时记得同步修改。
 pub const SCHEMA_VERSION: u32 = 37;
-
-/// daemon 配置
-pub struct DaemonConfig {
-    pub socket_path: String,
-    pub max_connections: usize,
-    pub workspace_root: String,
-}
-
-impl Default for DaemonConfig {
-    fn default() -> Self {
-        Self {
-            socket_path: "/var/run/callwarden.sock".to_string(),
-            max_connections: 64,
-            workspace_root: "/var/lib/callwarden".to_string(),
-        }
-    }
-}
