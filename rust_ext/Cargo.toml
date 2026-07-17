@@ -60,6 +60,8 @@ memmap2 = "0.9"
 bytemuck = { version = "1.21", features = ["derive"] }
 # R1 daemon 协议层：serde_json 用于 JSON-RPC 帧序列化
 serde_json = "1.0"
+# R5 staging_log：serde 用于 StagingEntry 的 Serialize/Deserialize derive
+serde = { version = "1.0", features = ["derive"] }
 # R1 daemon 协议层：thiserror 用于 ProtocolError 派生 Error trait
 thiserror = "1.0"
 

@@ -11,6 +11,23 @@ pub mod dispatch;
 /// R4：实现 workspace.register / list / status + 路径校验 + owned_workspace ACL
 pub mod workspace;
 
+/// CAS（Content-Addressable Storage）+ file_generations 两阶段 CAS（跨平台）
+/// R5：实现 compute_cas_key_v1 + cas_publish 四阶段原子发布 + cas_pin + cas_gc +
+///     file_generation_seen / file_generation_committed
+pub mod cas;
+
+/// StagingLog——持久化 staging log（append-only + JSON Lines，崩溃安全，跨平台）
+/// R5：实现 StagingEntry + StagingLog（append/read/read_pending/mark_applied_batch/
+///     mark_failed/truncate/compact_applied）
+pub mod staging_log;
+
+/// Replicator——Session 管理 + daemon_handle_connect + daemon_handle_refresh +
+/// Replicator（跨平台，rusqlite + CasStore + StagingLog）
+/// R5：实现 SESSION_SCHEMA_DDL + daemon_handle_connect（session epoch CAS）+
+///     daemon_handle_refresh（两阶段 CAS）+ Replicator（replicate / recover /
+///     get_pending_count）+ SnapshotPublisher trait（R6 扩展点）
+pub mod replicator;
+
 #[cfg(unix)]
 pub mod server;
 #[cfg(unix)]
