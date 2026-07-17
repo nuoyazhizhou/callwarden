@@ -7,6 +7,10 @@ pub mod protocol;
 /// JSON-RPC dispatch 路由表 + 基础方法（跨平台，纯逻辑）
 pub mod dispatch;
 
+/// Workspace registry + UID ACL（跨平台，rusqlite 数据层）
+/// R4：实现 workspace.register / list / status + 路径校验 + owned_workspace ACL
+pub mod workspace;
+
 #[cfg(unix)]
 pub mod server;
 #[cfg(unix)]
