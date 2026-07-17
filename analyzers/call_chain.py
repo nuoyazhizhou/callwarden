@@ -38,21 +38,28 @@ class CallChainMixin:
             next_level = set()
             level_callers = []
 
-            for callee in current_level:
-                # 查找所有调用 callee 的函数
-                sql = """
-                    SELECT DISTINCT cv.caller_qualified as caller_name
+            # 批量优化：对当前层的所有 callee 一次性查询 callers（避免每节点单独查询）
+            # SQLite IN 子句占位符有上限，按 500 一批分块
+            callee_list = [c for c in current_level if c]
+            batch_size = 500
+            for i in range(0, len(callee_list), batch_size):
+                chunk = callee_list[i:i + batch_size]
+                placeholders = ",".join("?" * len(chunk))
+                sql = f"""
+                    SELECT DISTINCT cv.caller_qualified as caller_name,
+                                    cv.callee_qualified as callee_name
                     FROM call_versions cv
                     JOIN file_versions fv ON cv.file_version_id = fv.id
                     JOIN file_instances fi ON fv.file_instance_id = fi.id
                     WHERE fi.workspace_id = ?
                       AND fv.is_current = 1
-                      AND cv.callee_qualified = ?
+                      AND cv.callee_qualified IN ({placeholders})
                       AND cv.caller_qualified != ''
                 """
-                cur = self.conn.execute(sql, (ws_id, callee,))
+                cur = self.conn.execute(sql, [ws_id] + chunk)
                 for row in cur:
                     caller = row["caller_name"]
+                    callee = row["callee_name"]
                     if caller and caller not in visited:
                         visited.add(caller)
                         next_level.add(caller)
@@ -104,21 +111,27 @@ class CallChainMixin:
             next_level = set()
             level_callees = []
 
-            for caller in current_level:
-                # 查找 caller 调用的所有函数
-                sql = """
-                    SELECT DISTINCT cv.callee_qualified as callee_name
+            # 批量优化：对当前层的所有 caller 一次性查询 callees（避免每节点单独查询）
+            caller_list = [c for c in current_level if c]
+            batch_size = 500
+            for i in range(0, len(caller_list), batch_size):
+                chunk = caller_list[i:i + batch_size]
+                placeholders = ",".join("?" * len(chunk))
+                sql = f"""
+                    SELECT DISTINCT cv.callee_qualified as callee_name,
+                                    cv.caller_qualified as caller_name
                     FROM call_versions cv
                     JOIN file_versions fv ON cv.file_version_id = fv.id
                     JOIN file_instances fi ON fv.file_instance_id = fi.id
                     WHERE fi.workspace_id = ?
                       AND fv.is_current = 1
-                      AND cv.caller_qualified = ?
+                      AND cv.caller_qualified IN ({placeholders})
                       AND cv.callee_qualified != ''
                 """
-                cur = self.conn.execute(sql, (ws_id, caller,))
+                cur = self.conn.execute(sql, [ws_id] + chunk)
                 for row in cur:
                     callee = row["callee_name"]
+                    caller = row["caller_name"]
                     if callee and callee not in visited:
                         visited.add(callee)
                         next_level.add(callee)

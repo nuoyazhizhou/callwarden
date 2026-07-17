@@ -189,65 +189,123 @@ class GCMixin:
             skipped_count = 0
             reasons: Dict[str, int] = {}
 
+            # 批量优化：先预查询避免循环内 N+1
+            # 1. 一次性查所有已归档的 file_instance_id
+            already_archived_ids = set()
+            if files_to_check:
+                fi_ids = [fi["id"] for fi in files_to_check]
+                batch_size = 500
+                for i in range(0, len(fi_ids), batch_size):
+                    chunk = fi_ids[i:i + batch_size]
+                    placeholders = ",".join("?" * len(chunk))
+                    cur = self.conn.execute(
+                        f"SELECT file_instance_id FROM archived_files WHERE file_instance_id IN ({placeholders})",
+                        chunk,
+                    )
+                    for r in cur.fetchall():
+                        already_archived_ids.add(r["file_instance_id"])
+
+            # 2. 一次性统计所有 file_instance_id 的 symbol_count 和 call_count
+            # symbols: GROUP BY file_instance_id
+            symbol_counts: Dict[int, int] = {}
+            call_counts: Dict[int, int] = {}
+            if files_to_check:
+                fi_ids = [fi["id"] for fi in files_to_check]
+                for i in range(0, len(fi_ids), batch_size):
+                    chunk = fi_ids[i:i + batch_size]
+                    placeholders = ",".join("?" * len(chunk))
+                    # symbol count per file_instance
+                    cur = self.conn.execute(
+                        f"""SELECT file_instance_id, COUNT(*) as c
+                            FROM symbols WHERE file_instance_id IN ({placeholders})
+                            GROUP BY file_instance_id""",
+                        chunk,
+                    )
+                    for r in cur.fetchall():
+                        symbol_counts[r["file_instance_id"]] = r["c"]
+                    # call count per file_instance（通过子查询 JOIN symbols）
+                    cur = self.conn.execute(
+                        f"""SELECT s.file_instance_id as fi_id, COUNT(*) as c
+                            FROM calls c
+                            JOIN symbols s ON c.caller_id = s.id
+                            WHERE s.file_instance_id IN ({placeholders})
+                            GROUP BY s.file_instance_id""",
+                        chunk,
+                    )
+                    for r in cur.fetchall():
+                        call_counts[r["fi_id"]] = r["c"]
+
+            # 收集要归档的文件 + pending → active 的更新
+            archive_rows = []  # 待 INSERT 的 archived_files 行
+            archive_fi_ids = []  # 待 UPDATE 的 file_instance_id（标记为 archived）
+            active_fi_ids = []  # 待 UPDATE 的 file_instance_id（pending → active）
+            files_to_delete_data = []  # 需要 _delete_file_associated_data 的 fi_id
+
             for fi in files_to_check:
                 rel_path = fi["rel_path"]
 
                 # 用 IgnoreMatcher 判断
                 if not matcher.is_ignored(rel_path, is_dir=False):
-                    # 未被忽略，若状态是 pending 则改为 active
+                    # 未被忽略，若状态是 pending 则改为 active（收集批量 UPDATE）
                     if fi["status"] == "pending":
-                        self.conn.execute(
-                            "UPDATE file_instances SET status = 'active' WHERE id = ?",
-                            (fi["id"],),
-                        )
+                        active_fi_ids.append(fi["id"])
                     continue
 
                 # 已归档过的跳过
-                cur = self.conn.execute(
-                    "SELECT id FROM archived_files WHERE file_instance_id = ?",
-                    (fi["id"],),
-                )
-                if cur.fetchone():
+                if fi["id"] in already_archived_ids:
                     skipped_count += 1
                     continue
 
-                # 统计符号数和调用关系数（用于归档记录，删除前统计）
-                sym_cur = self.conn.execute(
-                    "SELECT COUNT(*) as c FROM symbols WHERE file_instance_id = ?",
-                    (fi["id"],),
-                )
-                symbol_count = sym_cur.fetchone()["c"]
-                call_cur = self.conn.execute(
-                    """SELECT COUNT(*) as c FROM calls
-                       WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?)""",
-                    (fi["id"],),
-                )
-                call_count = call_cur.fetchone()["c"]
+                # 从预查询结果取统计数
+                symbol_count = symbol_counts.get(fi["id"], 0)
+                call_count = call_counts.get(fi["id"], 0)
 
                 # 推断归档原因（找第一条命中的规则）
                 reason = self._find_ignore_reason(matcher, rel_path)
                 reasons[reason] = reasons.get(reason, 0) + 1
 
                 if not dry_run:
-                    # 插入归档记录
-                    self.conn.execute(
+                    # 收集批量 INSERT 行
+                    archive_rows.append((
+                        fi["id"], ws_id, rel_path, fi["abs_path"],
+                        fi["current_content_hash"], symbol_count, call_count,
+                        reason, time.time(),
+                    ))
+                    archive_fi_ids.append(fi["id"])
+                    files_to_delete_data.append(fi["id"])
+
+                archived_count += 1
+
+            # 批量执行写操作
+            if not dry_run:
+                # 批量 INSERT archived_files
+                if archive_rows:
+                    self.conn.executemany(
                         """INSERT INTO archived_files
                            (file_instance_id, workspace_id, rel_path, abs_path,
                             content_hash, symbol_count, call_count, archive_reason, archived_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (fi["id"], ws_id, rel_path, fi["abs_path"],
-                         fi["current_content_hash"], symbol_count, call_count,
-                         reason, time.time()),
+                        archive_rows,
                     )
-                    # 标记文件实例为 archived（不删除，保留 ID 稳定性）
+                # 批量 UPDATE file_instances → archived
+                for i in range(0, len(archive_fi_ids), batch_size):
+                    chunk = archive_fi_ids[i:i + batch_size]
+                    placeholders = ",".join("?" * len(chunk))
                     self.conn.execute(
-                        "UPDATE file_instances SET status = 'archived' WHERE id = ?",
-                        (fi["id"],),
+                        f"UPDATE file_instances SET status = 'archived' WHERE id IN ({placeholders})",
+                        chunk,
                     )
-                    # 删除关联数据（释放空间，复活时重新解析重建）
-                    self._delete_file_associated_data(fi["id"])
-
-                archived_count += 1
+                # 批量 UPDATE pending → active
+                for i in range(0, len(active_fi_ids), batch_size):
+                    chunk = active_fi_ids[i:i + batch_size]
+                    placeholders = ",".join("?" * len(chunk))
+                    self.conn.execute(
+                        f"UPDATE file_instances SET status = 'active' WHERE id IN ({placeholders})",
+                        chunk,
+                    )
+                # 删除关联数据（_delete_file_associated_data 涉及多表 DELETE，保留逐个调用）
+                for fi_id in files_to_delete_data:
+                    self._delete_file_associated_data(fi_id)
 
             if not dry_run:
                 self.conn.commit()

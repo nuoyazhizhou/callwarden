@@ -116,19 +116,62 @@ class TestRelationMixin:
             fn_by_name.setdefault(r["name"], []).append(r["id"])
 
         # 3. 对每个 test_fn 推断关联
-        for test_fn in test_fns:
-            test_fn_id = test_fn["id"]
-            tested_ids = set()  # (tested_fn_id, match_method, confidence)
-
-            # 方法 A：direct_call - test_fn 调用了哪些 fn
+        # 性能优化：批量查询替代 N+1
+        # 3a. 一次性查所有 test_fn 的 direct_call callees（IN 子句，分批避免占位符过多）
+        test_fn_ids = [t["id"] for t in test_fns]
+        direct_calls_map: Dict[int, List[int]] = {}  # test_fn_id -> [callee_id, ...]
+        batch_size = 500
+        for i in range(0, len(test_fn_ids), batch_size):
+            chunk = test_fn_ids[i:i + batch_size]
+            placeholders = ",".join("?" * len(chunk))
             cur = self.conn.execute(
-                """SELECT DISTINCT c.callee_id
-                   FROM calls c
-                   WHERE c.caller_id = ? AND c.callee_id > 0""",
-                (test_fn_id,),
+                f"""SELECT DISTINCT c.caller_id, c.callee_id
+                    FROM calls c
+                    WHERE c.caller_id IN ({placeholders}) AND c.callee_id > 0""",
+                chunk,
             )
             for r in cur:
-                callee_id = r["callee_id"]
+                direct_calls_map.setdefault(r["caller_id"], []).append(r["callee_id"])
+
+        # 3b. 收集所有 test_fn 的 callees（用于方法 C 的 indirect 查询）
+        # 原逻辑：只有"没有 direct_call 命中"的 test_fn 才查 indirect
+        # 但 indirect 查询需要先拿到 test_fn 的 callees（已在 3a 中收集）
+        # 所以这里收集所有 callee_id 用于批量查 callers
+        indirect_callees_to_query: List[int] = []
+        indirect_map: Dict[int, List[int]] = {}  # callee_id -> [caller_id, ...] 用于回查
+        seen_callees = set()
+        for test_fn in test_fns:
+            test_fn_id = test_fn["id"]
+            callees = direct_calls_map.get(test_fn_id, [])
+            for callee_id in callees:
+                if callee_id not in seen_callees:
+                    seen_callees.add(callee_id)
+                    indirect_callees_to_query.append(callee_id)
+
+        # 3c. 批量查所有 indirect callee 的 callers
+        for i in range(0, len(indirect_callees_to_query), batch_size):
+            chunk = indirect_callees_to_query[i:i + batch_size]
+            placeholders = ",".join("?" * len(chunk))
+            cur = self.conn.execute(
+                f"""SELECT DISTINCT c.callee_id, c.caller_id
+                    FROM calls c
+                    JOIN symbols s ON c.caller_id = s.id
+                    JOIN file_instances fi ON s.file_instance_id = fi.id
+                    WHERE fi.workspace_id = ? AND c.callee_id IN ({placeholders})
+                      AND s.kind IN ('fn', 'method', 'function')""",
+                [ws_id] + chunk,
+            )
+            for r in cur:
+                indirect_map.setdefault(r["callee_id"], []).append(r["caller_id"])
+
+        # 3d. 基于批量结果组装关联（避免循环内查 DB）
+        all_relations = []  # [(test_fn_id, tested_fn_id, method, confidence), ...]
+        for test_fn in test_fns:
+            test_fn_id = test_fn["id"]
+            tested_ids = set()  # (tested_fn_id, method, confidence)
+
+            # 方法 A：direct_call
+            for callee_id in direct_calls_map.get(test_fn_id, []):
                 tested_ids.add((callee_id, "direct_call", "high"))
 
             # 方法 B：name_convention - test_foo → foo
@@ -140,47 +183,34 @@ class TestRelationMixin:
                         if not any(t[0] == fid for t in tested_ids):
                             tested_ids.add((fid, "name_convention", "mid"))
 
-            # 方法 C：indirect - test_fn 调用了 fn 的 callers 链中某函数
-            # 只对没有 direct_call 的 test_fn 做（性能优化）
+            # 方法 C：indirect - 通过批量查询结果回查
             if not any(t[1] == "direct_call" for t in tested_ids):
-                # 取 test_fn 调用的所有函数
-                cur = self.conn.execute(
-                    """SELECT DISTINCT c.callee_id
-                       FROM calls c
-                       WHERE c.caller_id = ? AND c.callee_id > 0""",
-                    (test_fn_id,),
-                )
-                test_callees = [r["callee_id"] for r in cur]
-                # 对每个被调函数，看它的 callers 里有没有非 test_fn 的 fn
-                for callee_id in test_callees:
-                    cur = self.conn.execute(
-                        """SELECT DISTINCT c.caller_id
-                           FROM calls c
-                           JOIN symbols s ON c.caller_id = s.id
-                           JOIN file_instances fi ON s.file_instance_id = fi.id
-                           WHERE fi.workspace_id = ? AND c.callee_id = ?
-                             AND s.kind IN ('fn', 'method', 'function')""",
-                        (ws_id, callee_id),
-                    )
-                    for r in cur:
-                        indirect_fn_id = r["caller_id"]
+                callees = direct_calls_map.get(test_fn_id, [])
+                for callee_id in callees:
+                    for indirect_fn_id in indirect_map.get(callee_id, []):
                         if not any(t[0] == indirect_fn_id for t in tested_ids):
                             tested_ids.add((indirect_fn_id, "indirect", "low"))
 
-            # 入库
             for tested_fn_id, method, confidence in tested_ids:
                 stats[method] = stats.get(method, 0) + 1
-                try:
-                    self.conn.execute(
-                        """INSERT OR IGNORE INTO test_case_relations
-                           (workspace_id, test_fn_id, tested_fn_id, match_method, confidence, detected_at)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
-                        (ws_id, test_fn_id, tested_fn_id, method, confidence, now),
-                    )
-                    if self.conn.total_changes > 0:
-                        stats["inserted"] += 1
-                except Exception:
-                    pass  # 忽略约束冲突
+                all_relations.append((test_fn_id, tested_fn_id, method, confidence))
+
+        # 3e. 批量入库（executemany 替代逐条 INSERT）
+        if all_relations:
+            rows = [
+                (ws_id, test_fn_id, tested_fn_id, method, confidence, now)
+                for test_fn_id, tested_fn_id, method, confidence in all_relations
+            ]
+            try:
+                self.conn.executemany(
+                    """INSERT OR IGNORE INTO test_case_relations
+                       (workspace_id, test_fn_id, tested_fn_id, match_method, confidence, detected_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    rows,
+                )
+                stats["inserted"] = self.conn.total_changes
+            except Exception:
+                pass  # 忽略约束冲突
 
         self.conn.commit()
         return stats

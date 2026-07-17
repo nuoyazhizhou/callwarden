@@ -588,24 +588,35 @@ class BootstrapMixin:
         linked_symbols: List[Dict[str, Any]] = []
         recorded_changes: List[Dict[str, Any]] = []
 
+        # 批量优化：一次性查询所有变更文件的 hash_before，避免 N+1 查询
+        # SQLite IN 子句占位符有上限，按 500 一批分块
+        all_rel_paths = [f["path"] for f in changed_files if f.get("path")]
+        hash_before_map: Dict[str, str] = {}  # rel_path -> content_hash
+        batch_size = 500
+        for i in range(0, len(all_rel_paths), batch_size):
+            chunk = all_rel_paths[i:i + batch_size]
+            placeholders = ",".join("?" * len(chunk))
+            try:
+                cur = self.conn.execute(
+                    f"SELECT rel_path, current_content_hash FROM file_instances "
+                    f"WHERE workspace_id = ? AND rel_path IN ({placeholders})",
+                    [ws_id] + chunk,
+                )
+                for row in cur:
+                    if isinstance(row, dict):
+                        hash_before_map[row["rel_path"]] = row["current_content_hash"] or ""
+                    else:
+                        hash_before_map[row[0]] = row[1] or ""
+            except Exception:
+                pass  # 表不存在或查询失败时回退为空 hash
+
         for f in changed_files:
             rel_path = f["path"]
             status_code = f.get("status", "M")
             abs_path = os.path.join(root, rel_path) if root else rel_path
 
-            # 读取 hash_before（从 file_instances）
-            hash_before = ""
-            try:
-                cur = self.conn.execute(
-                    "SELECT current_content_hash FROM file_instances "
-                    "WHERE workspace_id = ? AND rel_path = ?",
-                    (ws_id, rel_path),
-                )
-                row = cur.fetchone()
-                if row:
-                    hash_before = row[0] if not isinstance(row, dict) else row["current_content_hash"]
-            except Exception:
-                pass
+            # 从批量查询结果取 hash_before
+            hash_before = hash_before_map.get(rel_path, "")
 
             # 读取 hash_after（从磁盘）
             hash_after = ""

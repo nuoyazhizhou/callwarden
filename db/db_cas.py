@@ -216,52 +216,77 @@ def cas_publish(conn: sqlite3.Connection, cas_key: str, content_hash: str,
              abi_version, input_abi_version, now)
         )
 
-        # 阶段 2: 写入符号正文
+        # 阶段 2: 写入符号正文（批量 executemany，避免 N 次 INSERT）
+        # 同时预计算 sym_content_hash 供阶段 3 复用，避免重复 SHA-256 计算
         symbols = parse_result.get("symbols", [])
+        sym_content_rows = []  # [(content_hash, content), ...]
+        sym_hash_map = []      # 预计算的 hash 列表，与 symbols 一一对应
         for sym in symbols:
             sym_content = sym.get("content", "")
             sym_content_hash = hashlib.sha256(sym_content.encode()).hexdigest()
-            conn.execute(
+            sym_content_rows.append((sym_content_hash, sym_content))
+            sym_hash_map.append(sym_content_hash)
+
+        if sym_content_rows:
+            conn.executemany(
                 "INSERT OR IGNORE INTO cas_symbol_contents (content_hash, content) VALUES (?, ?)",
-                (sym_content_hash, sym_content)
+                sym_content_rows,
             )
 
-        # 阶段 3: 写入符号 + raw calls + imports
-        for i, sym in enumerate(symbols):
-            sym_content = sym.get("content", "")
-            sym_content_hash = hashlib.sha256(sym_content.encode()).hexdigest()
-            conn.execute(
+        # 阶段 3: 写入符号（批量 executemany，复用预计算的 hash）
+        if symbols:
+            sym_rows = [
+                (
+                    cas_key, i, sym_hash_map[i], sym.get("name", ""),
+                    sym.get("qualified_name", ""), sym.get("parent_id"),
+                    sym.get("kind", "function"), sym.get("start_line", 0),
+                    sym.get("end_line", 0), sym.get("start_col", 0),
+                    sym.get("end_col", 0), sym.get("start_byte", 0),
+                    sym.get("end_byte", 0), sym.get("visibility", "private"),
+                    sym.get("signature", ""), int(sym.get("has_comment", False)),
+                    sym.get("depth", -1),
+                )
+                for i, sym in enumerate(symbols)
+            ]
+            conn.executemany(
                 """INSERT OR REPLACE INTO cas_symbols
                    (cas_key, local_symbol_id, symbol_content_hash, name,
                     local_qualified_name, lexical_parent_local_id, kind,
                     start_line, end_line, start_col, end_col, start_byte, end_byte,
                     visibility, signature, has_comment, depth)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (cas_key, i, sym_content_hash, sym.get("name", ""),
-                 sym.get("qualified_name", ""), sym.get("parent_id"),
-                 sym.get("kind", "function"), sym.get("start_line", 0),
-                 sym.get("end_line", 0), sym.get("start_col", 0),
-                 sym.get("end_col", 0), sym.get("start_byte", 0),
-                 sym.get("end_byte", 0), sym.get("visibility", "private"),
-                 sym.get("signature", ""), int(sym.get("has_comment", False)),
-                 sym.get("depth", -1))
+                sym_rows,
             )
 
-        for call in parse_result.get("raw_calls", []):
-            conn.execute(
+        # 阶段 3b: 写入 raw calls（批量 executemany）
+        raw_calls = parse_result.get("raw_calls", [])
+        if raw_calls:
+            call_rows = [
+                (
+                    cas_key, call.get("caller_id"), call.get("caller_name", ""),
+                    call.get("callee_name", ""), call.get("line", 0),
+                    call.get("ordinal", 0),
+                )
+                for call in raw_calls
+            ]
+            conn.executemany(
                 """INSERT OR IGNORE INTO cas_raw_calls
                    (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal)
                    VALUES (?, ?, ?, ?, ?, ?)""",
-                (cas_key, call.get("caller_id"), call.get("caller_name", ""),
-                 call.get("callee_name", ""), call.get("line", 0),
-                 call.get("ordinal", 0))
+                call_rows,
             )
 
-        for imp in parse_result.get("imports", []):
-            conn.execute(
+        # 阶段 3c: 写入 imports（批量 executemany）
+        imports = parse_result.get("imports", [])
+        if imports:
+            import_rows = [
+                (cas_key, imp.get("path", ""), imp.get("kind", "import"))
+                for imp in imports
+            ]
+            conn.executemany(
                 """INSERT OR IGNORE INTO cas_imports
                    (cas_key, import_path, import_kind) VALUES (?, ?, ?)""",
-                (cas_key, imp.get("path", ""), imp.get("kind", "import"))
+                import_rows,
             )
 
         # 阶段 4: 原子切换 ready

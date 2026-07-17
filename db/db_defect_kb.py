@@ -264,49 +264,68 @@ class DefectKbMixin:
         )
         changes = change_cur.fetchall()
 
+        # 批量优化：预查询避免 N+1
+        # 1. 一次性查所有 symbol_hash → qualified_name 映射
+        symbol_hashes = [ch["symbol_hash"] for ch in changes if ch["symbol_hash"]]
+        qname_map: Dict[str, str] = {}  # symbol_hash -> qualified_name
+        batch_size = 500
+        for i in range(0, len(symbol_hashes), batch_size):
+            chunk = symbol_hashes[i:i + batch_size]
+            placeholders = ",".join("?" * len(chunk))
+            cur = self.conn.execute(
+                f"SELECT content_hash, qualified_name FROM symbol_contents WHERE content_hash IN ({placeholders})",
+                chunk,
+            )
+            for r in cur.fetchall():
+                qname_map[r["content_hash"]] = r["qualified_name"]
+
+        # 2. 一次性查所有相关 semgrep_findings（按 qualified_name 或 content_hash）
+        all_qnames = [q for q in qname_map.values() if q]
+        findings_by_qname: Dict[str, List] = {}
+        findings_by_hash: Dict[str, List] = {}
+        for i in range(0, len(all_qnames), batch_size):
+            chunk = all_qnames[i:i + batch_size]
+            placeholders = ",".join("?" * len(chunk))
+            cur = self.conn.execute(
+                f"""SELECT id, rule_id, snippet, fix, content_hash, symbol_qualified
+                    FROM semgrep_findings WHERE symbol_qualified IN ({placeholders})""",
+                chunk,
+            )
+            for f in cur.fetchall():
+                findings_by_qname.setdefault(f["symbol_qualified"], []).append(f)
+
+        # 对没有 qualified_name 的 symbol_hash 也批量查
+        hash_only = [h for h in symbol_hashes if h not in qname_map or not qname_map.get(h)]
+        for i in range(0, len(hash_only), batch_size):
+            chunk = hash_only[i:i + batch_size]
+            placeholders = ",".join("?" * len(chunk))
+            cur = self.conn.execute(
+                f"""SELECT id, rule_id, snippet, fix, content_hash
+                    FROM semgrep_findings WHERE content_hash IN ({placeholders})""",
+                chunk,
+            )
+            for f in cur.fetchall():
+                findings_by_hash.setdefault(f["content_hash"], []).append(f)
+
+        # 3. 收集所有需要插入的 defect_fixes 行（批量查重后再批量 INSERT）
+        pending_fixes = []  # [(pattern_id, symbol_hash, before_hash, after_hash, fix_diff, ...), ...]
+        dup_keys = set()  # (pattern_id, symbol_hash, before_hash, after_hash)
+        existing_dups: List[tuple] = []
+        # 先收集所有候选 dup key
         for ch in changes:
             symbol_hash = ch["symbol_hash"]
             old_content = ch["old_content"] or ""
             new_content = ch["new_content"] or ""
-
-            # 通过 symbol_hash 查找符号的 qualified_name
-            sym_row = self.conn.execute(
-                "SELECT qualified_name FROM symbol_contents WHERE content_hash = ?",
-                (symbol_hash,),
-            ).fetchone()
-            qualified_name = sym_row["qualified_name"] if sym_row else ""
-
-            # 查找该符号上的 semgrep findings
-            if qualified_name:
-                finding_cur = self.conn.execute(
-                    """
-                    SELECT id, rule_id, snippet, fix, content_hash
-                    FROM semgrep_findings
-                    WHERE symbol_qualified = ?
-                    """,
-                    (qualified_name,),
-                )
-            else:
-                finding_cur = self.conn.execute(
-                    """
-                    SELECT id, rule_id, snippet, fix, content_hash
-                    FROM semgrep_findings
-                    WHERE content_hash = ?
-                    """,
-                    (symbol_hash,),
-                )
-
-            for f in finding_cur.fetchall():
+            qualified_name = qname_map.get(symbol_hash, "")
+            findings = findings_by_qname.get(qualified_name, []) if qualified_name else findings_by_hash.get(symbol_hash, [])
+            for f in findings:
                 snippet = f["snippet"] or ""
-                # 判断缺陷是否在旧版本存在、新版本不存在
                 in_old = _snippet_in_content(snippet, old_content) if snippet else True
                 in_new = _snippet_in_content(snippet, new_content) if snippet else False
                 if not in_old or in_new:
-                    continue  # 未修复或仍存在，跳过
-
+                    continue
                 rule_id = f["rule_id"]
                 pattern_id = f"DP-{rule_id}"
-                # 确保模式存在
                 self._ensure_pattern(
                     pattern_id,
                     _extract_category(rule_id),
@@ -315,31 +334,58 @@ class DefectKbMixin:
                     "info",
                     learned_from="git_fix",
                 )
-
-                # 避免重复插入修复记录
                 before_hash = compute_content_hash(old_content)
                 after_hash = compute_content_hash(new_content)
-                dup = self.conn.execute(
-                    """
-                    SELECT id FROM defect_fixes
-                    WHERE pattern_id = ? AND symbol_hash = ? AND before_hash = ? AND after_hash = ?
-                    """,
-                    (pattern_id, symbol_hash, before_hash, after_hash),
-                ).fetchone()
-                if dup:
+                dup_key = (pattern_id, symbol_hash, before_hash, after_hash)
+                if dup_key in dup_keys:
                     continue
-
+                dup_keys.add(dup_key)
+                existing_dups.append(dup_key)
                 fix_diff = _compute_diff(old_content, new_content)
-                self.conn.execute(
-                    """
-                    INSERT INTO defect_fixes
-                        (pattern_id, symbol_hash, before_hash, after_hash, fix_diff,
-                         effectiveness, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (pattern_id, symbol_hash, before_hash, after_hash, fix_diff, 0.8, now),
+                pending_fixes.append((pattern_id, symbol_hash, before_hash, after_hash, fix_diff, 0.8, now))
+
+        # 4. 一次性查所有 dup（IN 子句按 pattern_id+symbol_hash 批量查）
+        if existing_dups:
+            # SQLite 不支持 IN 多列，分批查（每批 500 个）
+            actual_dups = set()
+            for i in range(0, len(existing_dups), batch_size):
+                chunk = existing_dups[i:i + batch_size]
+                # 用 OR 连接多列查询
+                or_clauses = " OR ".join(
+                    "(pattern_id = ? AND symbol_hash = ? AND before_hash = ? AND after_hash = ?)"
+                    for _ in chunk
                 )
-                fixes_learned += 1
+                params = []
+                for k in chunk:
+                    params.extend(k)
+                cur = self.conn.execute(
+                    f"SELECT pattern_id, symbol_hash, before_hash, after_hash FROM defect_fixes WHERE {or_clauses}",
+                    params,
+                )
+                for r in cur.fetchall():
+                    actual_dups.add((r["pattern_id"], r["symbol_hash"], r["before_hash"], r["after_hash"]))
+
+            # 过滤已存在的
+            new_fixes = []
+            for fix_row in pending_fixes:
+                key = (fix_row[0], fix_row[1], fix_row[2], fix_row[3])
+                if key not in actual_dups:
+                    new_fixes.append(fix_row)
+
+            pending_fixes = new_fixes
+
+        # 5. 批量 INSERT 新的 defect_fixes
+        if pending_fixes:
+            self.conn.executemany(
+                """
+                INSERT INTO defect_fixes
+                    (pattern_id, symbol_hash, before_hash, after_hash, fix_diff,
+                     effectiveness, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                pending_fixes,
+            )
+            fixes_learned = len(pending_fixes)
 
         self.conn.commit()
 

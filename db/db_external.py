@@ -662,39 +662,63 @@ class ExternalMixin:
 
                 try:
                     result = parser.parse_file(abs_path, module_path)
+                    # 批量收集符号 + 一次性查重，避免 N+1 查询
+                    pending = []  # 待插入的符号行
                     for sym in result.get("symbols", []):
                         qualified_name = (
                             f"{module_path}.{sym['name']}"
                             if module_path
                             else sym["name"]
                         )
-                        cur = self.conn.execute(
-                            "SELECT id FROM external_symbols WHERE qualified_name = ?",
-                            (qualified_name,),
-                        )
-                        if cur.fetchone():
-                            continue
+                        pending.append({
+                            "qualified_name": qualified_name,
+                            "sym": sym,
+                        })
 
-                        self.conn.execute(
+                    if not pending:
+                        continue
+
+                    # 一次性查询已存在的 qualified_name（IN 子句，限制单批 <= 500 个占位符）
+                    batch_size = 500
+                    existing = set()
+                    for i in range(0, len(pending), batch_size):
+                        chunk = pending[i:i + batch_size]
+                        placeholders = ",".join("?" * len(chunk))
+                        cur = self.conn.execute(
+                            f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                            [item["qualified_name"] for item in chunk],
+                        )
+                        for row in cur.fetchall():
+                            existing.add(row["qualified_name"])
+
+                    # 批量 INSERT 新符号
+                    new_rows = []
+                    for item in pending:
+                        if item["qualified_name"] in existing:
+                            continue
+                        sym = item["sym"]
+                        new_rows.append((
+                            pkg_key, pkg_ver, module_path,
+                            item["qualified_name"], sym["name"],
+                            sym.get("kind", "fn"),
+                            sym.get("signature", ""),
+                            (sym.get("comment_content") or "")[:500],
+                            abs_path,
+                        ))
+                        created += 1
+                        if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                            break
+
+                    if new_rows:
+                        self.conn.executemany(
                             """INSERT INTO external_symbols
                                (package_name, package_version, module_path, qualified_name,
                                 symbol_name, symbol_kind, signature, docstring, source_file)
                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                            (
-                                pkg_key,
-                                pkg_ver,
-                                module_path,
-                                qualified_name,
-                                sym["name"],
-                                sym.get("kind", "fn"),
-                                sym.get("signature", ""),
-                                (sym.get("comment_content") or "")[:500],
-                                abs_path,
-                            ),
+                            new_rows,
                         )
-                        created += 1
-                        if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
-                            return created
+                    if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                        return created
                 except Exception:
                     continue
 
@@ -853,46 +877,60 @@ class ExternalMixin:
         module_name = prefix if prefix else package_name
         module_path = getattr(module, "__file__", "")
 
+        # 收集所有候选符号 + 一次性查重，避免 N+1 查询
+        candidates = []  # [(qualified_name, name, kind, signature, docstring), ...]
         for name, obj in inspect.getmembers(module):
             if name.startswith("_"):
                 continue
-            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+            if created + len(candidates) >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
                 break
-
             kind = self._infer_symbol_kind(obj)
             if kind is None or kind == "module":
                 continue
-
             qualified_name = f"{module_name}.{name}" if module_name else name
-
-            cur = self.conn.execute(
-                "SELECT id FROM external_symbols WHERE qualified_name = ?",
-                (qualified_name,),
-            )
-            if cur.fetchone():
-                continue
-
             signature = self._get_symbol_signature(obj, name)
             docstring = inspect.getdoc(obj) or ""
+            candidates.append((qualified_name, name, kind, signature, docstring))
 
-            self.conn.execute(
+        if not candidates:
+            return 0
+
+        # 一次性查询已存在的 qualified_name
+        batch_size = 500
+        existing = set()
+        for i in range(0, len(candidates), batch_size):
+            chunk = candidates[i:i + batch_size]
+            placeholders = ",".join("?" * len(chunk))
+            cur = self.conn.execute(
+                f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                [c[0] for c in chunk],
+            )
+            for row in cur.fetchall():
+                existing.add(row["qualified_name"])
+
+        # 批量 INSERT 新符号
+        new_rows = []
+        for qname, name, kind, signature, docstring in candidates:
+            if qname in existing:
+                continue
+            new_rows.append((
+                package_name, package_version, module_name,
+                qname, name, kind, signature,
+                docstring[:500] if docstring else "",
+                module_path,
+            ))
+            created += 1
+            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                break
+
+        if new_rows:
+            self.conn.executemany(
                 """INSERT INTO external_symbols
                    (package_name, package_version, module_path, qualified_name,
                     symbol_name, symbol_kind, signature, docstring, source_file)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    package_name,
-                    package_version,
-                    module_name,
-                    qualified_name,
-                    name,
-                    kind,
-                    signature,
-                    docstring[:500] if docstring else "",
-                    module_path,
-                ),
+                new_rows,
             )
-            created += 1
 
         return created
 
@@ -1437,31 +1475,54 @@ class ExternalMixin:
 
         try:
             result = parser.parse_file(abs_path, module_path)
+            # 批量收集 + 一次性查重，避免 N+1
+            pending = []
             for sym in result.get("symbols", []):
                 qualified_name = (
                     f"{module_path}.{sym['name']}" if module_path else sym["name"]
                 )
+                pending.append({"qualified_name": qualified_name, "sym": sym})
+
+            if not pending:
+                return 0
+
+            # 一次性查询已存在
+            batch_size = 500
+            existing = set()
+            for i in range(0, len(pending), batch_size):
+                chunk = pending[i:i + batch_size]
+                placeholders = ",".join("?" * len(chunk))
                 cur = self.conn.execute(
-                    "SELECT id FROM external_symbols WHERE qualified_name = ?",
-                    (qualified_name,),
+                    f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                    [item["qualified_name"] for item in chunk],
                 )
-                if cur.fetchone():
+                for row in cur.fetchall():
+                    existing.add(row["qualified_name"])
+
+            # 批量 INSERT 新符号
+            new_rows = []
+            for item in pending:
+                if item["qualified_name"] in existing:
                     continue
-                self.conn.execute(
+                sym = item["sym"]
+                new_rows.append((
+                    pkg_key, pkg_ver, module_path,
+                    item["qualified_name"], sym["name"],
+                    sym.get("kind", "fn"),
+                    sym.get("signature", ""),
+                    (sym.get("comment_content") or "")[:500],
+                    abs_path,
+                ))
+                created += 1
+
+            if new_rows:
+                self.conn.executemany(
                     """INSERT INTO external_symbols
                        (package_name, package_version, module_path, qualified_name,
                         symbol_name, symbol_kind, signature, docstring, source_file)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        pkg_key, pkg_ver, module_path,
-                        qualified_name, sym["name"],
-                        sym.get("kind", "fn"),
-                        sym.get("signature", ""),
-                        (sym.get("comment_content") or "")[:500],
-                        abs_path,
-                    ),
+                    new_rows,
                 )
-                created += 1
         except Exception:
             pass
         return created
@@ -2134,34 +2195,59 @@ class ExternalMixin:
                         if "." in module_path:
                             module_path = module_path.rsplit(".", 1)[0]
                         result = parser.parse_file(tmp_path, module_path)
+                        # 批量收集 + 一次性查重，避免 N+1
+                        pending = []
                         for sym in result.get("symbols", []):
                             qualified_name = (
                                 f"{module_path}.{sym['name']}"
                                 if module_path else sym["name"]
                             )
+                            pending.append({"qualified_name": qualified_name, "sym": sym})
+
+                        if not pending:
+                            continue
+
+                        # 一次性查询已存在
+                        batch_size = 500
+                        existing = set()
+                        for i in range(0, len(pending), batch_size):
+                            chunk = pending[i:i + batch_size]
+                            placeholders = ",".join("?" * len(chunk))
                             cur = self.conn.execute(
-                                "SELECT id FROM external_symbols WHERE qualified_name = ?",
-                                (qualified_name,),
+                                f"SELECT qualified_name FROM external_symbols WHERE qualified_name IN ({placeholders})",
+                                [item["qualified_name"] for item in chunk],
                             )
-                            if cur.fetchone():
+                            for row in cur.fetchall():
+                                existing.add(row["qualified_name"])
+
+                        # 批量 INSERT 新符号
+                        new_rows = []
+                        for item in pending:
+                            if item["qualified_name"] in existing:
                                 continue
-                            self.conn.execute(
+                            sym = item["sym"]
+                            new_rows.append((
+                                pkg_key, pkg_ver, module_path,
+                                item["qualified_name"], sym["name"],
+                                sym.get("kind", "fn"),
+                                sym.get("signature", ""),
+                                (sym.get("comment_content") or "")[:500],
+                                f"jar:{jar_path}!/{name}",
+                            ))
+                            created += 1
+                            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                                break
+
+                        if new_rows:
+                            self.conn.executemany(
                                 """INSERT INTO external_symbols
                                    (package_name, package_version, module_path, qualified_name,
                                     symbol_name, symbol_kind, signature, docstring, source_file)
                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                                (
-                                    pkg_key, pkg_ver, module_path,
-                                    qualified_name, sym["name"],
-                                    sym.get("kind", "fn"),
-                                    sym.get("signature", ""),
-                                    (sym.get("comment_content") or "")[:500],
-                                    f"jar:{jar_path}!/{name}",
-                                ),
+                                new_rows,
                             )
-                            created += 1
-                            if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
-                                return created
+                        if created >= MAX_EXTERNAL_SYMBOLS_PER_PACKAGE:
+                            return created
                     except Exception:
                         continue
                     finally:
