@@ -332,10 +332,10 @@
 | I10 | ✅ 已修复（2026-07-17） | ARC Schema 版本已同步为 v37 | ARC |
 | I11 | ✅ 已修复（2026-07-17） | CONTRIBUTING.md Mixin 数已同步为 40 | CT |
 | I12 | ✅ 已修复（2026-07-17） | README.md MCP 工具数已同步为 204 | docs/README.md |
-| I13 | MCT 内部自相矛盾 | 头部说 173 个工具，第二段说 193 个，概览表合计 179 个 | MCT |
-| I14 | GA1/GA2 历史差距分析严重过时 | 基于 9 语言 / 38 MCP 工具的旧现状，所有“缺失”几乎都已实现，但文档未标注过时 | GA1, GA2（建议加过时警告头） |
+| I13 | ✅ 已修复（2026-07-17） | mcp_tools.md 头部已统一为 204；概览表 179 是 12 主分类独有工具合计，注释已说明与 204 的差异（跨分类工具 + 8 L5 工具） | MCT |
+| I14 | ✅ 已修复（2026-07-17） | gap-analysis-2026Q2.md 已归档到 docs/history/，README.md 归档清单第 12 行明确标注"基于 9 语言/38 MCP 旧现状，多数缺失功能现已实现" | GA1, GA2 |
 | I15 | ✅ 已修复（2026-07-17） | naming-analysis-report Mixin 数已同步为 40 | naming-analysis-report.md |
-| I16 | history/README.md 演化轨迹过时 | 说 v14 当前，实际 v36 | docs/history/README.md |
+| I16 | ✅ 已修复（2026-07-17） | history/README.md 演化轨迹已扩展到 v37（含 v15-v25 治理期、v26-v33 优化期、v37 L2 破坏性操作）；implementation-snapshot-v13 归档原因已更新 | docs/history/README.md |
 
 ## J. 灰色地带验证结果（已全部确认）
 
