@@ -56,8 +56,12 @@ rustc-hash = "2.0"
 memchr = "2.7"
 # P5 优化：memmap2 用于 GraphStore 快照 dump/load 零拷贝加载
 memmap2 = "0.9"
-# P5 优化：bytemuck 用于 GraphSymbol/CallEdge 的零拷贝字节转换
+# P5 优化:bytemuck 用于 GraphSymbol/CallEdge 的零拷贝字节转换
 bytemuck = { version = "1.21", features = ["derive"] }
+# R1 daemon 协议层：serde_json 用于 JSON-RPC 帧序列化
+serde_json = "1.0"
+# R1 daemon 协议层：thiserror 用于 ProtocolError 派生 Error trait
+thiserror = "1.0"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,6 +1,9 @@
 //! Enterprise daemon 模块——UDS server + SO_PEERCRED + workspace registry。
 //! Linux 特性用 #[cfg(unix)] 条件编译，Windows 上编译为空模块。
 
+/// JSON-RPC 协议层（跨平台，纯逻辑）
+pub mod protocol;
+
 #[cfg(unix)]
 pub mod server;
 #[cfg(unix)]
