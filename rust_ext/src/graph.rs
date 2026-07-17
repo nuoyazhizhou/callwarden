@@ -1695,6 +1695,168 @@ impl GraphStore {
             .map(|sym| symbols.sym_qname(sym).to_string())
             .collect()
     }
+
+    // ============================================
+    // R6: pub(crate) getter 供 daemon snapshot_state 模块使用
+    // ============================================
+
+    /// 获取 SymbolTable 引用（供 daemon 查询 handler 直接访问，避免 PyO3 GIL）
+    #[inline]
+    pub(crate) fn symbols_table(&self) -> Option<&SymbolTable> {
+        self.symbols.as_deref()
+    }
+
+    /// 获取 CallGraph 引用（供 daemon 查询 handler 直接访问，避免 PyO3 GIL）
+    #[inline]
+    pub(crate) fn call_graph(&self) -> Option<&CallGraph> {
+        self.calls.as_deref()
+    }
+
+    /// Rust 原生 stats（不依赖 Python GIL），返回与 PyO3 stats() 相同字段集
+    ///
+    /// 供 daemon `query.stats` handler 使用。返回 serde_json::Value::Object。
+    pub(crate) fn stats_rust(&self) -> serde_json::Value {
+        use serde_json::{Map, Value};
+        let mut m = Map::new();
+        if let Some(symbols) = &self.symbols {
+            m.insert("symbol_count".into(), Value::Number(symbols.by_id.len().into()));
+            m.insert(
+                "qname_index_size".into(),
+                Value::Number(symbols.by_qname_sorted_ids.len().into()),
+            );
+            m.insert(
+                "simple_name_index_size".into(),
+                Value::Number(symbols.by_simple_name_sorted_ids.len().into()),
+            );
+            m.insert(
+                "file_index_size".into(),
+                Value::Number(symbols.file_paths_offsets.len().saturating_sub(1).into()),
+            );
+            m.insert("name_pool_size".into(), Value::Number(symbols.name_pool.len().into()));
+            m.insert("qname_pool_size".into(), Value::Number(symbols.qname_pool.len().into()));
+            m.insert(
+                "module_pool_size".into(),
+                Value::Number(symbols.module_pool.len().into()),
+            );
+            m.insert(
+                "search_pool_size".into(),
+                Value::Number(symbols.search_pool_lower.len().into()),
+            );
+            m.insert(
+                "search_entry_count".into(),
+                Value::Number(symbols.search_entry_offsets.len().into()),
+            );
+        } else {
+            for k in [
+                "symbol_count",
+                "qname_index_size",
+                "simple_name_index_size",
+                "file_index_size",
+                "name_pool_size",
+                "qname_pool_size",
+                "module_pool_size",
+                "search_pool_size",
+                "search_entry_count",
+            ] {
+                m.insert(k.into(), Value::Number(0u32.into()));
+            }
+        }
+        if let Some(calls) = &self.calls {
+            let resolved = calls.forward_edges.iter().filter(|e| e.callee_id != 0).count();
+            m.insert("edge_count".into(), Value::Number(calls.forward_edges.len().into()));
+            m.insert("resolved_edge_count".into(), Value::Number(resolved.into()));
+            m.insert(
+                "forward_offsets_size".into(),
+                Value::Number(calls.forward_offsets.len().into()),
+            );
+            m.insert(
+                "backward_offsets_size".into(),
+                Value::Number(calls.backward_offsets.len().into()),
+            );
+            m.insert(
+                "callee_name_pool_size".into(),
+                Value::Number(calls.callee_names_pool.len().into()),
+            );
+            m.insert(
+                "callee_name_count".into(),
+                Value::Number(calls.callee_names_offsets.len().saturating_sub(1).into()),
+            );
+            m.insert(
+                "callee_name_to_idx_size".into(),
+                Value::Number(calls.callee_name_sorted_idxs.len().into()),
+            );
+            m.insert("root_count".into(), Value::Number(calls.roots.len().into()));
+        } else {
+            m.insert("edge_count".into(), Value::Number(0u32.into()));
+        }
+        Value::Object(m)
+    }
+
+    /// Rust 原生 search_symbols（不依赖 Python GIL），返回 symbol_id 列表
+    ///
+    /// 算法与 PyO3 `search_symbols` 一致：memchr SIMD 扫描 search_pool_lower
+    /// + 二分查找 entry_offsets + HashSet 去重 + 可选 kind 过滤。
+    pub(crate) fn search_symbols_rust(
+        &self,
+        query: &str,
+        kind: Option<&str>,
+        limit: usize,
+    ) -> Vec<u32> {
+        let symbols = match self.symbols.as_ref() {
+            Some(s) => s,
+            None => return vec![],
+        };
+        let limit = if limit == 0 { 50 } else { limit };
+        let query_lower: Vec<u8> = query.chars().map(|c| c.to_ascii_lowercase() as u8).collect();
+        if query_lower.is_empty() || symbols.search_entry_offsets.is_empty() {
+            return vec![];
+        }
+        let mut symbol_ids: Vec<u32> = Vec::with_capacity(limit.min(64));
+        let mut seen: HashSet<u32> = HashSet::new();
+        let pool = symbols.search_pool_lower.as_bytes();
+        let offsets = &symbols.search_entry_offsets;
+        let sym_ids = &symbols.search_entry_sym_ids;
+
+        let mut search_start = 0usize;
+        loop {
+            if symbol_ids.len() >= limit {
+                break;
+            }
+            let remaining = &pool[search_start..];
+            let rel_pos = match memchr::memmem::find(remaining, &query_lower) {
+                None => break,
+                Some(p) => p,
+            };
+            let pos = (search_start + rel_pos) as u32;
+            search_start = search_start + rel_pos + 1;
+            let entry_idx = match offsets.binary_search(&pos) {
+                Ok(idx) => idx,
+                Err(idx) if idx > 0 => idx - 1,
+                Err(_) => continue,
+            };
+            let sym_id = sym_ids[entry_idx];
+            if !seen.insert(sym_id) {
+                continue;
+            }
+            if let Some(k) = kind {
+                if let Some(sym) = symbols.by_id.get(sym_id as usize) {
+                    if sym.kind != SymbolKind::from_db_str(k) {
+                        continue;
+                    }
+                }
+            }
+            symbol_ids.push(sym_id);
+        }
+        symbol_ids
+    }
+
+    /// 获取调用边的行号（解包 call_line_packed），供 daemon query.callers/callees 返回
+    ///
+    /// CallEdge.call_line_packed 高 12 位 = file_id，低 20 位 = line
+    #[inline]
+    pub(crate) fn edge_call_line(&self, edge: &CallEdge) -> u32 {
+        edge.call_line_packed & 0xFFFFF
+    }
 }
 
 // ============================================

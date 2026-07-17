@@ -157,6 +157,77 @@ impl SnapshotManager {
         // 第二个 as_ref(): Option::as_ref() → Option<&Arc<GraphSnapshot>>
         guard.as_ref().as_ref().map(|snap| snap.store.clone())
     }
+
+    // ============================================
+    // R6: Rust 原生方法（不依赖 PyO3 GIL），供 daemon 模块直接调用
+    // ============================================
+
+    /// 构建 snapshot 并原子发布（Rust 原生入口，不需要 Python token）。
+    ///
+    /// 内部流程与 `PySnapshotManager::build_and_publish` 一致：
+    /// 1. 创建 GraphStore + load_from_sqlite_blocking
+    /// 2. 分配 generation
+    /// 3. 包装为 GraphSnapshot + 原子 publish
+    ///
+    /// 返回 (generation, symbol_count, call_count)
+    pub fn build_and_publish_blocking(
+        &self,
+        db_path: &str,
+        build_context_hash: &str,
+        snapshot_id: Option<String>,
+    ) -> PyResult<(Generation, usize, usize)> {
+        let mut store = GraphStore::new();
+        let (symbol_count, call_count) = store.load_from_sqlite_blocking(db_path)?;
+
+        let generation = self.alloc_generation();
+        let health = SnapshotHealth {
+            symbol_count,
+            call_count,
+            file_count: 0,
+            build_duration_ms: 0,
+            last_error: None,
+        };
+        let snap = Arc::new(GraphSnapshot::new(
+            self.workspace_instance_id.clone(),
+            snapshot_id,
+            generation,
+            build_context_hash.to_string(),
+            db_path.to_string(),
+            Arc::new(store),
+            health,
+        ));
+        self.publish(snap);
+        Ok((generation, symbol_count, call_count))
+    }
+
+    /// GC 历史 generations，保留最近 `keep_last` 个。
+    ///
+    /// **当前实现**：SnapshotManager 内部只保留 `current` 一个 generation，
+    /// 旧 snapshot 在 `publish` 时被替换并自动 drop（若无读者持有）。
+    /// 因此本方法始终返回 0（无历史 generation 可 GC）。
+    ///
+    /// **未来扩展**：若需保留多 generation（如用于 diff），可扩展内部存储
+    /// 为 `VecDeque<Arc<GraphSnapshot>>`，届时本方法删除超出 keep_last 的历史。
+    pub fn gc_generations(&self, _keep_last: usize) -> usize {
+        0
+    }
+
+    /// 获取 workspace_instance_id（供 daemon 跨模块访问）
+    pub fn workspace_instance_id(&self) -> &str {
+        &self.workspace_instance_id
+    }
+
+    /// 当前 snapshot 的 health 信息（供 daemon health RPC 返回）
+    pub fn current_health(&self) -> Option<SnapshotHealth> {
+        let guard = self.current.load();
+        guard.as_ref().as_ref().map(|snap| snap.health.clone())
+    }
+
+    /// 当前 snapshot 的 generation + source_db_path（供 daemon query.stats 附加元信息）
+    pub fn current_meta(&self) -> Option<(Generation, String)> {
+        let guard = self.current.load();
+        guard.as_ref().as_ref().map(|snap| (snap.generation, snap.source_db_path.clone()))
+    }
 }
 
 // ============================================

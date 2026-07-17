@@ -6,15 +6,24 @@ description = "Call Warden 高性能 PyO3 扩展：parse 热路径 + 批量余�
 
 [lib]
 name = "callwarden_core"
-crate-type = ["cdylib"]
+# rlib: 供 cw_daemon bin 和 cargo test 二进制链接（不依赖 Python host 提供符号）
+# cdylib: 供 Python 通过 import 加载的 .pyd/.so
+crate-type = ["cdylib", "rlib"]
 
 [[bin]]
 name = "cw_daemon"
 path = "src/bin/cw_daemon.rs"
 
+[features]
+# 默认开启 extension-module：cdylib 构建时不链接 libpython（由 Python host 提供）
+# 测试时使用 `cargo test --no-default-features` 关闭此 feature，让 PyO3 链接 libpython
+default = ["extension-module"]
+extension-module = ["pyo3/extension-module"]
+
 [dependencies]
 # P29: PyO3 升级到 0.29 以支持 Python 3.14
-pyo3 = { version = "0.29", features = ["extension-module"] }
+# extension-module 通过 [features].default 间接启用，便于测试时 --no-default-features 关闭
+pyo3 = { version = "0.29" }
 numpy = "0.29"
 # P29/P31: tree-sitter parse 热路径下沉（16 语言 grammar）
 tree-sitter = "0.26"
