@@ -1285,8 +1285,11 @@ def safe_walk(root_dir: str, max_depth: int = -1, **kwargs):
 # ── Enterprise daemon 配置 ──
 
 # daemon socket 路径（Linux）
+# R7: 统一为 systemd RuntimeDirectory 风格（/var/run 在现代 Linux 是 /run 的符号链接，
+# 但显式使用 /run 与 release/linux/deb/systemd/callwarden-daemon.service 的
+# RuntimeDirectory=callwarden 保持一致）
 DAEMON_SOCKET_PATH = os.environ.get(
-    "CW_DAEMON_SOCKET", "/var/run/callwarden/callwarden.sock"
+    "CW_DAEMON_SOCKET", "/run/callwarden/callwarden.sock"
 )
 
 # daemon 数据根目录

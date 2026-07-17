@@ -64,7 +64,9 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            socket_path: PathBuf::from("/var/run/callwarden.sock"),
+            // R7: 统一为 systemd RuntimeDirectory 风格，与 release/linux/deb/daemon.{preinst,postinst,prerm} 一致
+            // 旧版路径 /var/run/callwarden.sock 已废弃
+            socket_path: PathBuf::from(super::config::DEFAULT_SOCKET_PATH),
             max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
             max_fds: DEFAULT_MAX_FDS,
             max_workers: 16,
@@ -588,7 +590,8 @@ mod tests {
     #[test]
     fn test_server_config_default_values() {
         let config = ServerConfig::default();
-        assert_eq!(config.socket_path, PathBuf::from("/var/run/callwarden.sock"));
+        // R7: 默认 socket_path 统一为 systemd RuntimeDirectory 风格
+        assert_eq!(config.socket_path, PathBuf::from(super::super::config::DEFAULT_SOCKET_PATH));
         assert_eq!(config.max_message_bytes, DEFAULT_MAX_MESSAGE_BYTES);
         assert_eq!(config.max_fds, DEFAULT_MAX_FDS);
         assert_eq!(config.max_workers, 16);

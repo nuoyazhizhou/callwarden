@@ -9723,19 +9723,83 @@ def run_agent_mode(argv: list) -> int:
 
 
 def run_daemon_mode(argv: list) -> int:
-    """cw-daemon 入口：Linux system daemon。仅 Linux 可用。"""
+    """cw-daemon 入口：Linux system daemon。仅 Linux 可用。
+
+    R7: 优先调度已安装的 Rust cw_daemon 二进制（生产路径），找不到时回退到
+    rust_ext/target/{release,debug}/cw_daemon（开发路径）。两者都不可用时
+    打印错误并返回退出码 2。
+    """
+    import os as _os
+    import shutil as _shutil
     import sys as _sys
+    import subprocess as _subprocess
     if _sys.platform != "linux":
         print("ERROR: cw-daemon is only supported on Linux.", file=_sys.stderr)
         return 2
-    print("Call Warden Daemon Mode (Linux only)")
-    print("  UDS server + SO_PEERCRED ACL + CAS + Replicator + SnapshotManager")
-    if not argv:
-        print("\nUsage: cw-daemon --config <path> [--foreground]")
-        return 0
-    # TODO: 实现 daemon server startup
-    print(f"  Args: {' '.join(argv)}")
-    return 0
+
+    binary = _find_cw_daemon_binary()
+    if binary is None:
+        print(
+            "ERROR: cw_daemon binary not found.\n"
+            "  Production: install callwarden-daemon package (provides /usr/bin/cw-daemon).\n"
+            "  Development: run `cargo build --no-default-features --bin cw_daemon` "
+            "in rust_ext/ first.\n"
+            "  Or set CW_DAEMON_BIN env var to the binary path.",
+            file=_sys.stderr,
+        )
+        return 2
+
+    # exec Rust binary，透传所有参数和环境变量
+    try:
+        env = _os.environ.copy()
+        env.setdefault("CW_DAEMON_MODE", "enterprise")
+        proc = _subprocess.run([str(binary), *argv], env=env)
+        return proc.returncode
+    except OSError as e:
+        print(f"ERROR: failed to exec cw_daemon binary: {e}", file=_sys.stderr)
+        return 1
+
+
+def _find_cw_daemon_binary():
+    """R7: 查找 cw_daemon Rust 二进制。
+
+    查找顺序：
+    1. CW_DAEMON_BIN 环境变量（显式覆盖）
+    2. PATH 中的 cw-daemon（生产安装）或 cw_daemon（开发构建）
+    3. rust_ext/target/release/cw_daemon（cargo build --release）
+    4. rust_ext/target/debug/cw_daemon（cargo build）
+
+    返回 Path 或 None。
+    """
+    import os as _os
+    import shutil as _shutil
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    # 1. 显式环境变量覆盖
+    env_bin = _os.environ.get("CW_DAEMON_BIN")
+    if env_bin and _os.path.isfile(env_bin) and _os.access(env_bin, _os.X_OK):
+        return _Path(env_bin)
+
+    # 2. PATH 查找（生产安装名为 cw-daemon，开发构建名为 cw_daemon）
+    for name in ("cw-daemon", "cw_daemon"):
+        found = _shutil.which(name)
+        if found:
+            return _Path(found)
+
+    # 3./4. 开发构建路径（仓库根目录下的 rust_ext/target/）
+    try:
+        # cli/main.py 位于 <root>/cli/main.py，根目录是父目录
+        root = _Path(__file__).resolve().parent.parent
+        rust_target = root / "rust_ext" / "target"
+        for profile in ("release", "debug"):
+            candidate = rust_target / profile / "cw_daemon"
+            if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
+                return candidate
+    except Exception:
+        pass
+
+    return None
 
 
 if __name__ == "__main__":

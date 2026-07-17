@@ -74,6 +74,12 @@ serde = { version = "1.0", features = ["derive"] }
 # R1 daemon 协议层：thiserror 用于 ProtocolError 派生 Error trait
 thiserror = "1.0"
 
+# R7 cw_daemon binary：clap（CLI 参数解析）+ signal-hook（SIGTERM/SIGINT 优雅关闭）
+# Linux-only 依赖，避免 Windows/macOS 编译时引入不必要的包
+[target.'cfg(unix)'.dependencies]
+clap = { version = "4", features = ["derive"] }
+signal-hook = "0.3"
+
 [dev-dependencies]
 tempfile = "3"
 

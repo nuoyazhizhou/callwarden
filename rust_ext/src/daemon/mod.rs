@@ -38,6 +38,9 @@ pub mod peercred;
 /// 跨平台：query.* 和 gc.snapshots 纯逻辑，snapshot.publish 的 FD 模式仅 Unix
 pub mod snapshot_state;
 
+/// R7: cw_daemon binary 配置加载（DaemonConfig + 环境变量覆盖 + 文件加载）
+pub mod config;
+
 /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
 /// 更新 schema 时记得同步修改。

@@ -22,7 +22,9 @@ use std::sync::Arc;
 use tree_sitter::{Language, Node, Parser};
 
 mod canonicalize;
-mod daemon;
+// R7: daemon/snapshot 模块需对 cw_daemon binary 可见（bin 与 lib 在同一 crate，但
+// 默认 mod 是私有的。改为 pub mod 让 binary 入口能 use callwarden_core::daemon::*
+pub mod daemon;
 mod delta;
 mod diff;
 mod frontier;
@@ -30,7 +32,8 @@ mod graph;
 mod hash_diff;
 mod metrics;
 mod multi_lang;
-mod snapshot;
+// R7: cw_daemon 需要 SnapshotCache 类型（daemon/snapshot_state.rs 中使用）
+pub mod snapshot;
 mod toolchain;
 mod watcher;
 
