@@ -29,7 +29,7 @@ use super::dispatch::{
     require_str_param, get_str_param_or,
 };
 use super::workspace::{WorkspaceDaemonState, WorkspaceRegistry, owned_workspace, validate_owned_path};
-use crate::graph::{GraphStore, SymbolKind};
+use crate::graph::{CallChainEdgeInfo, GraphStore};
 use crate::snapshot::SnapshotCache;
 
 // ============================================
@@ -554,6 +554,205 @@ impl DaemonStateExt for SnapshotDaemonState {
         Ok(Value::Array(callees))
     }
 
+    // ---- G7-T4: 高级查询方法（call_chain_down / topological_order / detect_cycles）----
+    // 对齐 Python snapshot_manager.py:305-373 的 query_call_chain_down 等
+    //
+    // 与 R6 的 query.* 一致：均需 workspace ACL 校验 + snapshot 已发布检查。
+
+    fn handle_query_call_chain_down(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let qualified_name = require_str_param(params, "qualified_name")?;
+        let max_depth = get_str_param(params, "max_depth")
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(5);
+
+        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let store = self
+            .get_store(workspace_instance_id)
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!("workspace {} 未发布 snapshot", workspace_instance_id),
+                )
+            })?;
+
+        let edges = store.call_chain_down_rust(qualified_name, max_depth);
+        let results: Vec<Value> = edges
+            .into_iter()
+            .map(|e| {
+                let mut m = Map::new();
+                m.insert("depth".into(), Value::Number(e.depth.into()));
+                m.insert("caller_name".into(), Value::String(e.caller_name));
+                m.insert("callee_name".into(), Value::String(e.callee_name));
+                m.insert("callee_id".into(), Value::Number(e.callee_id.into()));
+                m.insert("call_line".into(), Value::Number(e.call_line.into()));
+                m.insert("is_cross_file".into(), Value::Bool(e.is_cross_file));
+                Value::Object(m)
+            })
+            .collect();
+        Ok(Value::Array(results))
+    }
+
+    fn handle_query_topological_order(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let store = self
+            .get_store(workspace_instance_id)
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!("workspace {} 未发布 snapshot", workspace_instance_id),
+                )
+            })?;
+
+        let order = store.topological_order_rust();
+        let results: Vec<Value> = order.into_iter().map(Value::String).collect();
+        Ok(Value::Array(results))
+    }
+
+    fn handle_query_detect_cycles(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let store = self
+            .get_store(workspace_instance_id)
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!("workspace {} 未发布 snapshot", workspace_instance_id),
+                )
+            })?;
+
+        let cycles = store.detect_cycles_rust();
+        let results: Vec<Value> = cycles
+            .into_iter()
+            .map(|c| {
+                Value::Array(c.into_iter().map(Value::String).collect())
+            })
+            .collect();
+        Ok(Value::Array(results))
+    }
+
+    // ---- G7-T5: Snapshot 管理方法（stats / list_workspaces / evict）----
+    // 对齐 Python snapshot_manager.py:162-192 的 get_snapshot_stats 等
+    //
+    // 与 snapshot.publish 一样使用 owned_workspace ACL 校验（evict/stats 需 workspace_id），
+    // list_workspaces 不带 workspace_id 参数，返回当前 cache 中所有 workspace 的统计信息。
+
+    fn handle_snapshot_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+
+        let mgr = self.get_snapshot_manager(workspace_instance_id).ok_or_else(|| {
+            DaemonRpcError::new(
+                "snapshot_not_ready",
+                format!("workspace {} 未发布 snapshot", workspace_instance_id),
+            )
+        })?;
+
+        let health = mgr.current_health().ok_or_else(|| {
+            DaemonRpcError::new(
+                "snapshot_not_ready",
+                format!("workspace {} 未发布 snapshot", workspace_instance_id),
+            )
+        })?;
+        let (generation, source_db_path) = mgr
+            .current_meta()
+            .unwrap_or((0, String::new()));
+
+        let mut m = Map::new();
+        m.insert(
+            "workspace_instance_id".into(),
+            Value::String(workspace_instance_id.to_string()),
+        );
+        m.insert("generation".into(), Value::Number(generation.into()));
+        m.insert("symbol_count".into(), Value::Number(health.symbol_count.into()));
+        m.insert("call_count".into(), Value::Number(health.call_count.into()));
+        m.insert("file_count".into(), Value::Number(health.file_count.into()));
+        m.insert(
+            "build_duration_ms".into(),
+            Value::Number(health.build_duration_ms.into()),
+        );
+        m.insert(
+            "last_error".into(),
+            match health.last_error {
+                Some(e) => Value::String(e),
+                None => Value::Null,
+            },
+        );
+        m.insert("source_db_path".into(), Value::String(source_db_path));
+        // history_len 便于运维判断 GC 时机
+        m.insert("history_len".into(), Value::Number(mgr.history_len().into()));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_snapshot_list_workspaces(
+        &mut self,
+        _peer: PeerCredential,
+        _params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // 列出所有已发布 snapshot 的 workspace（对齐 Python list_workspaces）
+        // 返回每个 workspace 的 generation + health 摘要，便于运维监控
+        let ws_ids = self.snapshot_cache.list_workspaces();
+        let mut entries = Vec::with_capacity(ws_ids.len());
+        for ws_id in ws_ids {
+            if let Some(mgr) = self.snapshot_cache.get(&ws_id) {
+                let mut m = Map::new();
+                m.insert("workspace_instance_id".into(), Value::String(ws_id));
+                m.insert(
+                    "generation".into(),
+                    Value::Number(mgr.current_generation().into()),
+                );
+                m.insert("history_len".into(), Value::Number(mgr.history_len().into()));
+                if let Some(h) = mgr.current_health() {
+                    m.insert("symbol_count".into(), Value::Number(h.symbol_count.into()));
+                    m.insert("call_count".into(), Value::Number(h.call_count.into()));
+                    m.insert("file_count".into(), Value::Number(h.file_count.into()));
+                    m.insert(
+                        "build_duration_ms".into(),
+                        Value::Number(h.build_duration_ms.into()),
+                    );
+                }
+                entries.push(Value::Object(m));
+            }
+        }
+        Ok(Value::Array(entries))
+    }
+
+    fn handle_snapshot_evict(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // evict 修改 cache，必须校验 workspace 所有权（与 snapshot.publish 一致）
+        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+
+        let removed = self.snapshot_cache.evict(workspace_instance_id);
+        let mut m = Map::new();
+        m.insert("evicted".into(), Value::Bool(removed.is_some()));
+        m.insert(
+            "workspace_instance_id".into(),
+            Value::String(workspace_instance_id.to_string()),
+        );
+        Ok(Value::Object(m))
+    }
+
     // ---- 以下方法保持默认 method_not_found（R6 范围外）----
     // handle_workspace_connect / handle_workspace_file_refresh / handle_workspace_recover
     // handle_gc_cas / handle_backup / handle_restore
@@ -1008,5 +1207,228 @@ mod tests {
         assert!(result.is_ok());
         let returned_path = result.unwrap();
         assert_eq!(returned_path, format!("/proc/self/fd/{}", fd));
+    }
+
+    // ---- G7-T4/T5: 新增 6 个 RPC handler 的测试 ----
+
+    #[test]
+    fn test_query_call_chain_down_returns_snapshot_not_ready_when_no_snapshot() {
+        // 未发布 snapshot 时，query.call_chain_down 返回 snapshot_not_ready
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "query.call_chain_down",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "qualified_name": "some_fn"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "snapshot_not_ready");
+    }
+
+    #[test]
+    fn test_query_call_chain_down_rejects_non_owner() {
+        // 非 workspace 所有者调用，返回 workspace_forbidden（优先于 snapshot_not_ready）
+        let mut state = make_state();
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let other_peer = make_peer(9999);
+        let response = dispatch(
+            &mut state,
+            other_peer,
+            "query.call_chain_down",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "qualified_name": "some_fn"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_query_call_chain_down_requires_qualified_name() {
+        // 缺 qualified_name 参数时返回 invalid_params
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "query.call_chain_down",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_query_topological_order_returns_snapshot_not_ready_when_no_snapshot() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "query.topological_order",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "snapshot_not_ready");
+    }
+
+    #[test]
+    fn test_query_detect_cycles_returns_snapshot_not_ready_when_no_snapshot() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "query.detect_cycles",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "snapshot_not_ready");
+    }
+
+    #[test]
+    fn test_snapshot_stats_returns_snapshot_not_ready_when_no_snapshot() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "snapshot.stats",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "snapshot_not_ready");
+    }
+
+    #[test]
+    fn test_snapshot_stats_rejects_non_owner() {
+        let mut state = make_state();
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let other_peer = make_peer(9999);
+        let response = dispatch(
+            &mut state,
+            other_peer,
+            "snapshot.stats",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_snapshot_list_workspaces_returns_empty_array_initially() {
+        // 初始空 cache，snapshot.list_workspaces 返回空数组
+        let mut state = make_state();
+        let peer = make_peer(0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "snapshot.list_workspaces",
+            &json!({}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert!(response["result"].is_array());
+        assert_eq!(response["result"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_snapshot_evict_rejects_nonexistent_workspace() {
+        // evict 未注册的 workspace 返回 workspace_not_found
+        let mut state = make_state();
+        let peer = make_peer(0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "snapshot.evict",
+            &json!({"workspace_instance_id": "nonexistent_ws"}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_not_found");
+    }
+
+    #[test]
+    fn test_snapshot_evict_rejects_non_owner() {
+        let mut state = make_state();
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let other_peer = make_peer(9999);
+        let response = dispatch(
+            &mut state,
+            other_peer,
+            "snapshot.evict",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_snapshot_evict_returns_false_for_registered_but_uncached_workspace() {
+        // workspace 已注册但从未发布 snapshot（cache 中无 manager）
+        // evict 应返回 evicted: false（cache.evict 返回 None）
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "snapshot.evict",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["evicted"], false);
+        assert_eq!(response["result"]["workspace_instance_id"], ws_id);
+    }
+
+    #[test]
+    fn test_snapshot_evict_returns_true_after_get_or_create() {
+        // 通过 get_or_create 创建 manager 后 evict 应返回 evicted: true
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        // 触发 cache 创建 manager（不需要真发布 snapshot）
+        let _ = state.snapshot_cache().get_or_create(&ws_id);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "snapshot.evict",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["evicted"], true);
     }
 }

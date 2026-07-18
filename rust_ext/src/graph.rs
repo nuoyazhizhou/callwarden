@@ -249,6 +249,20 @@ impl CallEdge {
     }
 }
 
+/// G7-T4: 调用链 BFS 边的结果信息（daemon 序列化为 JSON 返回给客户端）
+///
+/// 与 PyO3 `get_call_chain_down` 返回的 PyDict 字段对齐：
+/// depth / caller_name / callee_name / callee_id / call_line / is_cross_file
+#[derive(Clone, Debug)]
+pub struct CallChainEdgeInfo {
+    pub depth: usize,
+    pub caller_name: String,
+    pub callee_name: String,
+    pub callee_id: u32,
+    pub call_line: u32,
+    pub is_cross_file: bool,
+}
+
 /// 调用图：CSR 压缩稀疏行邻接表
 pub struct CallGraph {
     /// 所有调用边（按 caller_id 升序排序）
@@ -1528,6 +1542,15 @@ impl GraphStore {
         }
     }
 
+    /// 返回已加载的文件数量（来自 file_paths_offsets，最后一个为 sentinel）
+    /// 对应 stats_rust 中的 file_index_size 字段
+    pub fn file_count(&self) -> usize {
+        self.symbols
+            .as_ref()
+            .map(|s| s.file_paths_offsets.len().saturating_sub(1))
+            .unwrap_or(0)
+    }
+
     /// Rust 内部调用的阻塞加载入口，不需要 Python token。
     pub(crate) fn load_from_sqlite_blocking(
         &mut self,
@@ -1585,6 +1608,241 @@ impl GraphStore {
             }
         }
         callees
+    }
+
+    // ============================================
+    // G7-T4: 高级图遍历（native Rust 版，供 daemon 直接调用，避免 PyO3 GIL）
+    // 对齐 #[pymethods] 中的 get_call_chain_down / get_topological_order / detect_cycles
+    // ============================================
+
+    /// 向下调用链 BFS（native 版本，返回扁平结构供 daemon 序列化为 JSON）
+    ///
+    /// 对齐 PyO3 `get_call_chain_down`：从 `qualified_name` 起点出发，BFS 遍历
+    /// 最大 `max_depth` 层，返回每条边的详情（depth / caller_name / callee_name /
+    /// callee_id / call_line / is_cross_file）。
+    ///
+    /// 性能优化同 PyO3 版本：
+    /// - visited: Vec<bool> 替代 HashSet（O(1) 索引，无哈希开销）
+    /// - SoA 布局：queue_sym_ids + queue_depths 分开存储，缓存友好
+    pub fn call_chain_down_rust(
+        &self,
+        qualified_name: &str,
+        max_depth: usize,
+    ) -> Vec<CallChainEdgeInfo> {
+        let symbols = match self.symbols.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        let calls = match self.calls.as_ref() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let mut results: Vec<CallChainEdgeInfo> = Vec::new();
+        let start_id = match symbols.qname_get(qualified_name) {
+            Some(id) => id,
+            None => return results,
+        };
+
+        let sym_count = symbols.by_id.len();
+        let mut visited: Vec<bool> = vec![false; sym_count];
+        let mut queue_sym_ids: Vec<u32> = Vec::with_capacity(256);
+        let mut queue_depths: Vec<usize> = Vec::with_capacity(256);
+        let mut queue_head: usize = 0;
+
+        visited[start_id as usize] = true;
+        queue_sym_ids.push(start_id);
+        queue_depths.push(0);
+
+        while queue_head < queue_sym_ids.len() {
+            let sym_id = queue_sym_ids[queue_head];
+            let depth = queue_depths[queue_head];
+            queue_head += 1;
+
+            if depth >= max_depth {
+                continue;
+            }
+
+            let start = calls
+                .forward_offsets
+                .get(sym_id as usize)
+                .copied()
+                .unwrap_or(0);
+            let end = calls
+                .forward_offsets
+                .get(sym_id as usize + 1)
+                .copied()
+                .unwrap_or(0);
+
+            let caller_name = symbols
+                .by_id
+                .get(sym_id as usize)
+                .map(|s| symbols.sym_name(s))
+                .unwrap_or("");
+
+            for i in start..end {
+                let edge = &calls.forward_edges[i];
+                let callee_name = calls.callee_name(edge.callee_name_idx);
+
+                results.push(CallChainEdgeInfo {
+                    depth,
+                    caller_name: caller_name.to_string(),
+                    callee_name: callee_name.to_string(),
+                    callee_id: edge.callee_id,
+                    call_line: edge.call_line(),
+                    is_cross_file: edge.is_cross_file(),
+                });
+
+                if edge.callee_id != 0
+                    && (edge.callee_id as usize) < sym_count
+                    && !visited[edge.callee_id as usize]
+                {
+                    visited[edge.callee_id as usize] = true;
+                    queue_sym_ids.push(edge.callee_id);
+                    queue_depths.push(depth + 1);
+                }
+            }
+        }
+
+        results
+    }
+
+    /// 拓扑排序（native 版本，Kahn 算法）
+    ///
+    /// 对齐 PyO3 `get_topological_order`：按调用深度升序返回 qualified_name 列表
+    /// （被调用者在前，根函数在后）。仅统计已解析边。
+    pub fn topological_order_rust(&self) -> Vec<String> {
+        let symbols = match self.symbols.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        let calls = match self.calls.as_ref() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let n = symbols.by_id.len();
+        let mut in_degree = vec![0u32; n];
+
+        for edge in &calls.forward_edges {
+            if edge.callee_id != 0 && (edge.callee_id as usize) < n {
+                in_degree[edge.callee_id as usize] += 1;
+            }
+        }
+
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        for i in 0..n {
+            if symbols.by_id[i].id == 0 && symbols.by_id[i].name_len == 0 {
+                continue;
+            }
+            if in_degree[i] == 0 {
+                queue.push_back(i);
+            }
+        }
+
+        let mut order = Vec::with_capacity(n);
+        while let Some(idx) = queue.pop_front() {
+            let sym = &symbols.by_id[idx];
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
+            order.push(symbols.sym_qname(sym).to_string());
+
+            let start = calls.forward_offsets.get(idx).copied().unwrap_or(0);
+            let end = calls.forward_offsets.get(idx + 1).copied().unwrap_or(0);
+            for i in start..end {
+                let edge = &calls.forward_edges[i];
+                if edge.callee_id != 0 && (edge.callee_id as usize) < n {
+                    let ci = edge.callee_id as usize;
+                    if in_degree[ci] > 0 {
+                        in_degree[ci] -= 1;
+                        if in_degree[ci] == 0 {
+                            queue.push_back(ci);
+                        }
+                    }
+                }
+            }
+        }
+
+        order
+    }
+
+    /// 检测调用图中的环（native 版本，DFS 三色标记）
+    ///
+    /// 对齐 PyO3 `detect_cycles`：返回每个环上的 qualified_name 列表。
+    /// 无环时返回空 Vec。
+    pub fn detect_cycles_rust(&self) -> Vec<Vec<String>> {
+        let symbols = match self.symbols.as_ref() {
+            Some(s) => s,
+            None => return Vec::new(),
+        };
+        let calls = match self.calls.as_ref() {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+
+        let n = symbols.by_id.len();
+        let mut color = vec![0u8; n];
+        let mut parent: Vec<i64> = vec![-1; n];
+        let mut cycles: Vec<Vec<String>> = Vec::new();
+
+        fn dfs(
+            u: usize,
+            symbols: &SymbolTable,
+            calls: &CallGraph,
+            color: &mut [u8],
+            parent: &mut [i64],
+            cycles: &mut Vec<Vec<String>>,
+        ) {
+            color[u] = 1;
+            let start = calls.forward_offsets.get(u).copied().unwrap_or(0);
+            let end = calls.forward_offsets.get(u + 1).copied().unwrap_or(0);
+
+            for i in start..end {
+                let edge = &calls.forward_edges[i];
+                if edge.callee_id == 0 {
+                    continue;
+                }
+                let v = edge.callee_id as usize;
+                if v >= symbols.by_id.len() {
+                    continue;
+                }
+
+                if color[v] == 0 {
+                    parent[v] = u as i64;
+                    dfs(v, symbols, calls, color, parent, cycles);
+                } else if color[v] == 1 {
+                    let mut cycle = Vec::new();
+                    let mut cur = u as i64;
+                    while cur != -1 && cur != v as i64 {
+                        if let Some(sym) = symbols.by_id.get(cur as usize) {
+                            cycle.push(symbols.sym_qname(sym).to_string());
+                        }
+                        cur = parent[cur as usize];
+                    }
+                    if let Some(sym) = symbols.by_id.get(v) {
+                        cycle.push(symbols.sym_qname(sym).to_string());
+                    }
+                    cycle.reverse();
+                    if cycle.len() > 1 {
+                        cycles.push(cycle);
+                    }
+                }
+            }
+            color[u] = 2;
+        }
+
+        for i in 0..n {
+            let sym = &symbols.by_id[i];
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
+            if color[i] == 0 {
+                dfs(i, symbols, calls, &mut color, &mut parent, &mut cycles);
+            }
+        }
+
+        cycles
     }
 
     /// 通过 symbol_id 获取符号引用

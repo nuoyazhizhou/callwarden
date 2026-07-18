@@ -273,6 +273,66 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("query.callees"))
     }
 
+    // ---- 高级查询方法（G7-T4：Python snapshot_manager.py:305-373 对应）----
+    // 默认实现返回 method_not_found，由 SnapshotDaemonState 覆盖
+
+    fn handle_query_call_chain_down(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.call_chain_down"))
+    }
+
+    fn handle_query_topological_order(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.topological_order"))
+    }
+
+    fn handle_query_detect_cycles(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.detect_cycles"))
+    }
+
+    // ---- Snapshot 管理方法（G7-T5：Python snapshot_manager.py:list/evict/stats 对应）----
+    // 默认实现返回 method_not_found，由 SnapshotDaemonState 覆盖
+
+    fn handle_snapshot_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("snapshot.stats"))
+    }
+
+    fn handle_snapshot_list_workspaces(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("snapshot.list_workspaces"))
+    }
+
+    fn handle_snapshot_evict(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("snapshot.evict"))
+    }
+
     fn handle_backup(
         &mut self,
         peer: PeerCredential,
@@ -358,6 +418,16 @@ fn dispatch_inner<S: DaemonStateExt>(
         "query.search" => state.handle_query_search(peer, params),
         "query.callers" => state.handle_query_callers(peer, params),
         "query.callees" => state.handle_query_callees(peer, params),
+
+        // ---- 高级查询方法（G7-T4 实现）----
+        "query.call_chain_down" => state.handle_query_call_chain_down(peer, params),
+        "query.topological_order" => state.handle_query_topological_order(peer, params),
+        "query.detect_cycles" => state.handle_query_detect_cycles(peer, params),
+
+        // ---- Snapshot 管理方法（G7-T5 实现）----
+        "snapshot.stats" => state.handle_snapshot_stats(peer, params),
+        "snapshot.list_workspaces" => state.handle_snapshot_list_workspaces(peer, params),
+        "snapshot.evict" => state.handle_snapshot_evict(peer, params),
 
         // ---- 运维方法（R6 实现）----
         "backup" => state.handle_backup(peer, params),

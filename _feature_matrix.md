@@ -219,7 +219,7 @@
 | G4 | Workspace Registry + Container Mount Mapping | DS/RP | ❓ 待验证 | daemon_workspaces 表已有 |
 | G5 | CAS Key 设计（7 参数 hash） | CG/DS | ✅ 已实现 | cas-gc-protocol 规范 |
 | G6 | CAS GC 协议（LOCK_EX + BEGIN IMMEDIATE） | CG | ❓ 待验证 | |
-| G7 | SnapshotManager + ArcSwap 发布 | DS/EW | ⚠️ 部分 | snapshot_manager.py 已有 |
+| G7 | SnapshotManager + ArcSwap 发布 | DS/EW | ✅ 已实现 | Rust 多 generation history + gc_generations + 6 个 RPC handler |
 | G8 | Watcher Generation 状态机 | WG/EW | ⚠️ 部分 | watcher.py 已有，generation 协议部分 |
 | G9 | Per-UID systemd --user agent | DS/WG | ❌ 未实施 | Linux 专属，Windows 不适用 |
 | G10 | memfd 密封协议（大文件传输） | DI | ❌ 未实施 | Linux 专属 |

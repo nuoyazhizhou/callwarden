@@ -13,8 +13,10 @@ use crate::graph::GraphStore;
 use arc_swap::{ArcSwap, Guard};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Instant;
 
 // ============================================
 // 类型别名
@@ -96,6 +98,12 @@ impl GraphSnapshot {
 /// 读路径无锁：load() 返回 Guard<Arc<GraphSnapshot>>，发布时不阻塞。
 /// 写路径：publish() 原子替换内部 ArcSwap 的指针。
 ///
+/// **多 generation 历史**：publish 时被替换的旧 snapshot 会被推入 `history`
+/// 队列（VecDeque），保留最近若干个 generation 供 diff 查询或回滚。
+/// `gc_generations(keep_last)` 删除超出 keep_last 的历史 generation。
+/// `current` 始终指向最新 generation，旧 generation 被 in-flight 读者持有时
+/// 不会真正释放（Arc 引用计数机制）。
+///
 /// Rust 侧用法：
 /// ```ignore
 /// let mgr = SnapshotManager::new("ws_abc".into());
@@ -107,6 +115,10 @@ pub struct SnapshotManager {
     workspace_instance_id: WorkspaceInstanceId,
     current: ArcSwap<Option<Arc<GraphSnapshot>>>,
     next_generation: std::sync::atomic::AtomicU64,
+    /// 历史 generation 队列（旧的已发布 snapshot，最新在前）
+    /// publish 时 push_front 旧 snapshot；gc_generations 时 truncate
+    /// `current` 不在 history 中（它是最新的）
+    history: Mutex<VecDeque<Arc<GraphSnapshot>>>,
 }
 
 impl SnapshotManager {
@@ -115,6 +127,7 @@ impl SnapshotManager {
             workspace_instance_id,
             current: ArcSwap::from_pointee(None),
             next_generation: std::sync::atomic::AtomicU64::new(1),
+            history: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -132,15 +145,73 @@ impl SnapshotManager {
         self.current.load()
     }
 
-    /// 原子发布新 snapshot，返回被替换的旧 snapshot（若有）
+    /// 原子发布新 snapshot，将被替换的旧 snapshot 推入 history 队列。
+    ///
+    /// 旧 snapshot 在以下条件之一会被丢弃（不入 history）：
+    /// 1. 当前为首次发布（current 为 None）
+    /// 2. 旧 snapshot 仍被 in-flight 读者持有（Arc::try_unwrap 失败）
+    ///
+    /// history 队列不会自动 truncate，需显式调用 `gc_generations(keep_last)`
+    /// 清理。`current` 始终是最新 generation，不在 history 中。
     pub fn publish(&self, snapshot: Arc<GraphSnapshot>) -> Option<Arc<GraphSnapshot>> {
-        // ArcSwap::swap 接收 T = Arc<Option<Arc<GraphSnapshot>>>
-        // 返回旧 T，需要先取 Arc 内部值再 try_unwrap
         let old: Arc<Option<Arc<GraphSnapshot>>> = self.current.swap(Some(snapshot).into());
         match Arc::try_unwrap(old) {
-            Ok(opt) => opt,
-            Err(_arc) => None, // 还有读者在持有，不强制拿回
+            Ok(Some(old_snap)) => {
+                // 无其他读者，旧 snapshot 完整归还，推入 history
+                let mut history = self.history.lock().unwrap();
+                history.push_front(old_snap);
+                None
+            }
+            Ok(None) => None, // 首次发布，无旧 snapshot
+            Err(_arc) => {
+                // 还有 in-flight 读者持有 Arc，无法拿回所有权
+                // 旧 snapshot 仍会被 ArcSwap 替换，但 history 无法记录它
+                // （这是设计取舍：为避免拷贝，牺牲了 history 完整性）
+                None
+            }
         }
+    }
+
+    /// 查询历史 generation 数量（不含 current）
+    pub fn history_len(&self) -> usize {
+        self.history.lock().unwrap().len()
+    }
+
+    /// 获取指定 generation 的 snapshot 引用（current 或 history）
+    ///
+    /// 先检查 current 是否匹配，再在 history 中查找。
+    /// 用于 diff 跨 generation 对比。
+    pub fn get_generation(&self, generation: Generation) -> Option<Arc<GraphSnapshot>> {
+        // 先查 current
+        let current_guard = self.current.load();
+        if let Some(snap) = current_guard.as_ref() {
+            if snap.generation == generation {
+                return Some(snap.clone());
+            }
+        }
+        // drop guard 避免与 history 锁交叉
+        drop(current_guard);
+        // 再查 history
+        let history = self.history.lock().unwrap();
+        history
+            .iter()
+            .find(|s| s.generation == generation)
+            .cloned()
+    }
+
+    /// 列出所有保留的 generation 号（current + history，最新在前）
+    pub fn list_generations(&self) -> Vec<Generation> {
+        let mut gens = Vec::new();
+        let current_guard = self.current.load();
+        if let Some(snap) = current_guard.as_ref() {
+            gens.push(snap.generation);
+        }
+        drop(current_guard);
+        let history = self.history.lock().unwrap();
+        for snap in history.iter() {
+            gens.push(snap.generation);
+        }
+        gens
     }
 
     /// 分配下一个 generation 号
@@ -165,9 +236,10 @@ impl SnapshotManager {
     /// 构建 snapshot 并原子发布（Rust 原生入口，不需要 Python token）。
     ///
     /// 内部流程与 `PySnapshotManager::build_and_publish` 一致：
-    /// 1. 创建 GraphStore + load_from_sqlite_blocking
-    /// 2. 分配 generation
-    /// 3. 包装为 GraphSnapshot + 原子 publish
+    /// 1. wal_checkpoint(PASSIVE) 刷 WAL 到主 DB（GraphStore 用 immutable=1 打开）
+    /// 2. 创建 GraphStore + load_from_sqlite_blocking
+    /// 3. 分配 generation + 计时
+    /// 4. 包装为 GraphSnapshot + 原子 publish
     ///
     /// 返回 (generation, symbol_count, call_count)
     pub fn build_and_publish_blocking(
@@ -176,15 +248,26 @@ impl SnapshotManager {
         build_context_hash: &str,
         snapshot_id: Option<String>,
     ) -> PyResult<(Generation, usize, usize)> {
+        let start = Instant::now();
+
+        // G7-T6: wal_checkpoint 防止 GraphStore 用 immutable=1 读到旧 WAL 数据
+        // 对应 AGENTS.md 第 7 条：SQLite WAL 模式与只读连接
+        let _ = wal_checkpoint_passive(db_path);
+
         let mut store = GraphStore::new();
         let (symbol_count, call_count) = store.load_from_sqlite_blocking(db_path)?;
+
+        // G7-T3: 补全 SnapshotHealth 字段
+        // file_count 从 GraphStore 的 file_paths_offsets 推算（最后一个为 sentinel）
+        let file_count = store.file_count();
+        let build_duration_ms = start.elapsed().as_millis() as u64;
 
         let generation = self.alloc_generation();
         let health = SnapshotHealth {
             symbol_count,
             call_count,
-            file_count: 0,
-            build_duration_ms: 0,
+            file_count,
+            build_duration_ms,
             last_error: None,
         };
         let snap = Arc::new(GraphSnapshot::new(
@@ -200,16 +283,26 @@ impl SnapshotManager {
         Ok((generation, symbol_count, call_count))
     }
 
-    /// GC 历史 generations，保留最近 `keep_last` 个。
+    /// GC 历史 generations，保留最近 `keep_last` 个（不含 current）。
     ///
-    /// **当前实现**：SnapshotManager 内部只保留 `current` 一个 generation，
-    /// 旧 snapshot 在 `publish` 时被替换并自动 drop（若无读者持有）。
-    /// 因此本方法始终返回 0（无历史 generation 可 GC）。
+    /// **实现**：history 是 VecDeque，最新在前（push_front），所以 truncate
+    /// 超出 keep_last 的尾部（最旧的 generation）。被删除的 snapshot 若无
+    /// 其他 Arc 引用会真正 drop；若仍有 diff 查询持有，会延迟到查询结束 drop。
     ///
-    /// **未来扩展**：若需保留多 generation（如用于 diff），可扩展内部存储
-    /// 为 `VecDeque<Arc<GraphSnapshot>>`，届时本方法删除超出 keep_last 的历史。
-    pub fn gc_generations(&self, _keep_last: usize) -> usize {
-        0
+    /// 返回被删除的 generation 数量。
+    ///
+    /// **特殊值**：
+    /// - keep_last = 0：清空所有 history（仅保留 current）
+    /// - keep_last >= history.len()：无操作，返回 0
+    pub fn gc_generations(&self, keep_last: usize) -> usize {
+        let mut history = self.history.lock().unwrap();
+        let current_len = history.len();
+        if keep_last >= current_len {
+            return 0;
+        }
+        let removed = current_len - keep_last;
+        history.truncate(keep_last);
+        removed
     }
 
     /// 获取 workspace_instance_id（供 daemon 跨模块访问）
@@ -357,46 +450,47 @@ impl PySnapshotManager {
 
     /// 构建 snapshot 并原子发布。
     ///
-    /// 内部：创建 GraphStore → load_from_sqlite → 包装为 GraphSnapshot → publish
+    /// 内部：wal_checkpoint → 创建 GraphStore → load_from_sqlite → 包装为 GraphSnapshot → publish
     /// 返回 (generation, symbol_count, call_count)
+    ///
+    /// G7-T2/T6：直接委托给 `SnapshotManager::build_and_publish_blocking`，
+    /// 保证 Python 和 Rust daemon 路径走同一份逻辑（含 wal_checkpoint + 计时 + file_count）。
     fn build_and_publish(
         &self,
         db_path: &str,
         build_context_hash: &str,
         snapshot_id: Option<String>,
     ) -> PyResult<(Generation, usize, usize)> {
-        // 1. 创建 GraphStore 并加载 SQLite
-        let mut store = GraphStore::new();
-        let (symbol_count, call_count) = store.load_from_sqlite_blocking(db_path)?;
+        self.inner.build_and_publish_blocking(db_path, build_context_hash, snapshot_id)
+    }
 
-        // 2. 分配 generation
-        let generation = self.inner.alloc_generation();
+    /// GC 历史 generations，保留最近 `keep_last` 个（不含 current）。
+    ///
+    /// 返回被删除的 generation 数量。
+    /// - keep_last = 0：清空所有 history
+    /// - keep_last >= history.len()：无操作
+    ///
+    /// G7-T1/T2：对应 Python `SnapshotManagerService.gc_snapshots(keep_last=3)`
+    /// 通过 getattr 反射调用此方法。
+    fn gc_generations(&self, keep_last: usize) -> usize {
+        self.inner.gc_generations(keep_last)
+    }
 
-        // 3. 构建 GraphSnapshot
-        let health = SnapshotHealth {
-            symbol_count,
-            call_count,
-            file_count: 0,
-            build_duration_ms: 0,
-            last_error: None,
-        };
-        let snap = Arc::new(GraphSnapshot::new(
-            self.inner.workspace_instance_id.clone(),
-            snapshot_id,
-            generation,
-            build_context_hash.to_string(),
-            db_path.to_string(),
-            Arc::new(store),
-            health,
-        ));
+    /// 查询历史 generation 数量（不含 current）。
+    /// 用于监控/调试，确认 GC 是否生效。
+    fn history_len(&self) -> usize {
+        self.inner.history_len()
+    }
 
-        // 4. 原子发布
-        self.inner.publish(snap);
-
-        Ok((generation, symbol_count, call_count))
+    /// 列出所有保留的 generation 号（current + history，最新在前）。
+    /// 用于 diff 跨 generation 对比时定位目标 generation。
+    fn list_generations(&self) -> Vec<Generation> {
+        self.inner.list_generations()
     }
 
     /// 当前 snapshot 健康统计（若尚未发布返回 None）
+    ///
+    /// G7-T3：补全 file_count 和 build_duration_ms 字段
     fn snapshot_stats<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         let guard = self.inner.load();
         match guard.as_ref() {
@@ -406,6 +500,8 @@ impl PySnapshotManager {
                 d.set_item("generation", snap.generation)?;
                 d.set_item("symbol_count", snap.health.symbol_count)?;
                 d.set_item("call_count", snap.health.call_count)?;
+                d.set_item("file_count", snap.health.file_count)?;
+                d.set_item("build_duration_ms", snap.health.build_duration_ms)?;
                 d.set_item("build_context_hash", snap.build_context_hash.clone())?;
                 if let Some(sid) = &snap.snapshot_id {
                     d.set_item("snapshot_id", sid.clone())?;
@@ -635,5 +731,197 @@ impl PySnapshotCache {
                 workspace_id
             ))
         })
+    }
+}
+
+// ============================================
+// 辅助函数
+// ============================================
+
+/// 对 SQLite 数据库执行 PRAGMA wal_checkpoint(PASSIVE)。
+///
+/// 用于 GraphStore 用 immutable=1 URI 打开 SQLite 前调用，
+/// 防止读到旧 WAL 数据（AGENTS.md 第 7 条）。
+///
+/// - 失败不抛错（只是 warning 级别），因为：
+///   1. db_path 可能不存在（首次创建场景）
+///   2. 数据库可能未启用 WAL（checkpoint 是 no-op）
+///   3. 调用方（build_and_publish_blocking）会继续尝试 load_from_sqlite_blocking
+///
+/// 内部使用独立连接，不影响 GraphStore 后续 immutable=1 打开。
+fn wal_checkpoint_passive(db_path: &str) -> std::result::Result<(), String> {
+    use rusqlite::Connection;
+    let conn = match Connection::open(db_path) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("open {}: {}", db_path, e)),
+    };
+    // busy_timeout 防止与其他写连接撞锁
+    if let Err(e) = conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA wal_checkpoint(PASSIVE);") {
+        return Err(format!("wal_checkpoint {}: {}", db_path, e));
+    }
+    Ok(())
+}
+
+// ============================================
+// 单元测试
+// ============================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_snapshot(generation: Generation, ws_id: &str) -> Arc<GraphSnapshot> {
+        let store = Arc::new(GraphStore::new());
+        Arc::new(GraphSnapshot::new(
+            ws_id.to_string(),
+            None,
+            generation,
+            "ctx_hash".to_string(),
+            "/tmp/test.db".to_string(),
+            store,
+            SnapshotHealth {
+                symbol_count: 0,
+                call_count: 0,
+                file_count: 0,
+                build_duration_ms: 0,
+                last_error: None,
+            },
+        ))
+    }
+
+    #[test]
+    fn test_gc_generations_empty_history() {
+        // 全新 manager，未 publish，history 为空
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        assert_eq!(mgr.history_len(), 0);
+        assert_eq!(mgr.gc_generations(3), 0);
+        assert_eq!(mgr.history_len(), 0);
+    }
+
+    #[test]
+    fn test_publish_pushes_old_to_history() {
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        let snap1 = make_snapshot(1, "ws_test");
+        let snap2 = make_snapshot(2, "ws_test");
+        let snap3 = make_snapshot(3, "ws_test");
+
+        // 首次 publish：current 为 None，不入 history
+        mgr.publish(snap1);
+        assert_eq!(mgr.history_len(), 0);
+        assert_eq!(mgr.current_generation(), 1);
+
+        // 第二次 publish：旧 snap1 入 history
+        mgr.publish(snap2);
+        assert_eq!(mgr.history_len(), 1);
+        assert_eq!(mgr.current_generation(), 2);
+
+        // 第三次 publish：旧 snap2 入 history
+        mgr.publish(snap3);
+        assert_eq!(mgr.history_len(), 2);
+        assert_eq!(mgr.current_generation(), 3);
+    }
+
+    #[test]
+    fn test_gc_generations_truncate_old() {
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        // publish 5 次，history 累积 4 个
+        for gen in 1..=5 {
+            mgr.publish(make_snapshot(gen, "ws_test"));
+        }
+        assert_eq!(mgr.current_generation(), 5);
+        assert_eq!(mgr.history_len(), 4);
+
+        // keep_last=2：应删除 2 个最旧的（gen=1,2）
+        let removed = mgr.gc_generations(2);
+        assert_eq!(removed, 2);
+        assert_eq!(mgr.history_len(), 2);
+
+        // 剩余的 generation 应为 4, 3（最新在前）
+        let gens = mgr.list_generations();
+        assert_eq!(gens, vec![5, 4, 3]);
+    }
+
+    #[test]
+    fn test_gc_generations_keep_all() {
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        for gen in 1..=3 {
+            mgr.publish(make_snapshot(gen, "ws_test"));
+        }
+        // history 有 2 个，keep_last=5 大于 history.len()
+        let removed = mgr.gc_generations(5);
+        assert_eq!(removed, 0);
+        assert_eq!(mgr.history_len(), 2);
+    }
+
+    #[test]
+    fn test_gc_generations_clear_all() {
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        for gen in 1..=3 {
+            mgr.publish(make_snapshot(gen, "ws_test"));
+        }
+        // keep_last=0：清空所有 history
+        let removed = mgr.gc_generations(0);
+        assert_eq!(removed, 2);
+        assert_eq!(mgr.history_len(), 0);
+        // current 仍在
+        assert_eq!(mgr.current_generation(), 3);
+    }
+
+    #[test]
+    fn test_get_generation_from_current() {
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        mgr.publish(make_snapshot(5, "ws_test"));
+        let snap = mgr.get_generation(5).expect("current 必须找到");
+        assert_eq!(snap.generation, 5);
+    }
+
+    #[test]
+    fn test_get_generation_from_history() {
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        mgr.publish(make_snapshot(1, "ws_test"));
+        mgr.publish(make_snapshot(2, "ws_test"));
+        // gen=1 应在 history 中
+        let snap = mgr.get_generation(1).expect("history 中应找到 gen=1");
+        assert_eq!(snap.generation, 1);
+        // gen=2 是 current
+        let snap = mgr.get_generation(2).expect("current 应找到 gen=2");
+        assert_eq!(snap.generation, 2);
+        // gen=99 不存在
+        assert!(mgr.get_generation(99).is_none());
+    }
+
+    #[test]
+    fn test_list_generations_order() {
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        for gen in 1..=4 {
+            mgr.publish(make_snapshot(gen, "ws_test"));
+        }
+        // 期望：current (4) + history (3, 2, 1)
+        let gens = mgr.list_generations();
+        assert_eq!(gens, vec![4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn test_wal_checkpoint_passive_nonexistent_db() {
+        // 不存在的路径不应 panic（仅返回 Err）
+        let result = wal_checkpoint_passive("/nonexistent/path/test.db");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_wal_checkpoint_passive_valid_db() {
+        // 创建临时 SQLite DB 并测试 checkpoint
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("test.db");
+        // 先创建一个有效的 SQLite DB
+        {
+            use rusqlite::Connection;
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch("CREATE TABLE t (id INTEGER); INSERT INTO t VALUES (1);")
+                .unwrap();
+        }
+        // wal_checkpoint 应成功（即便未启用 WAL 也是 no-op）
+        let result = wal_checkpoint_passive(db_path.to_str().unwrap());
+        assert!(result.is_ok(), "checkpoint 应成功: {:?}", result);
     }
 }
