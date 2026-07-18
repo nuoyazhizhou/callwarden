@@ -609,6 +609,34 @@ mod tests {
         WorkspaceDaemonState::new(registry)
     }
 
+    /// 获取当前测试运行的 uid（Unix: getuid()，Windows: 固定 1000）
+    ///
+    /// 用于让 peer_uid 匹配 tempfile::tempdir() 创建目录的实际 owner_uid，
+    /// 避免 WSL 以 root (uid=0) 运行时 peer.uid=1000 触发 validate_owned_path 的 UID ACL 失败。
+    fn current_uid() -> u32 {
+        #[cfg(unix)]
+        {
+            // libc 是 unix target 的正式依赖，dev 也可用
+            unsafe { libc::getuid() }
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows 上 validate_owned_path 跳过 UID 检查，固定值即可
+            1000
+        }
+    }
+
+    /// 构造一个 peer_uid = current_uid() 的 peer（用于注册操作以匹配 tempdir owner）
+    fn make_owner_peer() -> PeerCredential {
+        make_peer(current_uid())
+    }
+
+    /// 构造一个 peer_uid != current_uid() 的 peer（用于验证非 owner 被拒绝）
+    fn make_other_peer() -> PeerCredential {
+        // +1 确保与 owner_uid 不同（getuid() 不会返回 u32::MAX）
+        make_peer(current_uid().wrapping_add(1))
+    }
+
     // ---- WorkspaceRegistry 基础 CRUD ----
 
     #[test]
@@ -961,7 +989,9 @@ mod tests {
     #[test]
     fn test_dispatch_workspace_register_succeeds_with_real_dir() {
         let mut state = make_state();
-        let peer = make_peer(1000);
+        // 用 current_uid() 匹配 tempfile 创建目录的实际 owner_uid，
+        // 避免 WSL root (uid=0) 运行时 peer.uid=1000 触发 path_forbidden
+        let peer = make_owner_peer();
         let tmp = tempfile::tempdir().unwrap();
         let dir_path = tmp.path().to_str().unwrap();
         let params = json!({
@@ -973,7 +1003,7 @@ mod tests {
         let response = dispatch(&mut state, peer, "workspace.register", &params, &[]);
 
         assert_eq!(response["ok"], true);
-        assert_eq!(response["result"]["owner_uid"], 1000);
+        assert_eq!(response["result"]["owner_uid"], current_uid());
         assert_eq!(response["result"]["status"], "active");
         // host_real_root 应该被 canonicalize 处理
         assert!(response["result"]["host_real_root"].as_str().unwrap().len() > 0);
@@ -982,7 +1012,7 @@ mod tests {
     #[test]
     fn test_dispatch_workspace_status_returns_workspace_for_owner() {
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_owner_peer();
 
         // 先注册一个 workspace
         let tmp = tempfile::tempdir().unwrap();
@@ -1006,21 +1036,22 @@ mod tests {
     #[test]
     fn test_dispatch_workspace_status_rejects_non_owner() {
         let mut state = make_state();
-        let peer_owner = make_peer(1000);
-        let peer_other = make_peer(2000);
+        let peer_owner = make_owner_peer();
+        let peer_other = make_other_peer();
 
-        // owner=1000 注册
+        // owner 注册（peer_uid = tempdir owner_uid）
         let tmp = tempfile::tempdir().unwrap();
         let dir_path = tmp.path().to_str().unwrap();
         let reg_params = json!({"client_view_root": dir_path});
         let reg_response =
             dispatch(&mut state, peer_owner, "workspace.register", &reg_params, &[]);
+        assert_eq!(reg_response["ok"], true);
         let instance_id = reg_response["result"]["workspace_instance_id"]
             .as_str()
             .unwrap()
             .to_string();
 
-        // peer_uid=2000 查询 owner=1000 的 workspace
+        // 非owner查询，应被拒绝
         let status_params = json!({"workspace_instance_id": instance_id});
         let response = dispatch(&mut state, peer_other, "workspace.status", &status_params, &[]);
         assert_eq!(response["ok"], false);
@@ -1030,23 +1061,31 @@ mod tests {
     #[test]
     fn test_dispatch_health_returns_workspace_count() {
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_owner_peer();
 
-        // 注册 2 个 workspace
+        // 注册 2 个 workspace（用不同 git_remote_url 生成不同 instance_id）
         let tmp1 = tempfile::tempdir().unwrap();
         let tmp2 = tempfile::tempdir().unwrap();
         dispatch(
             &mut state,
             peer,
             "workspace.register",
-            &json!({"client_view_root": tmp1.path().to_str().unwrap()}),
+            &json!({
+                "client_view_root": tmp1.path().to_str().unwrap(),
+                "git_remote_url": "https://github.com/a/a.git",
+                "git_head_commit_sha": "aaa"
+            }),
             &[],
         );
         dispatch(
             &mut state,
             peer,
             "workspace.register",
-            &json!({"client_view_root": tmp2.path().to_str().unwrap()}),
+            &json!({
+                "client_view_root": tmp2.path().to_str().unwrap(),
+                "git_remote_url": "https://github.com/b/b.git",
+                "git_head_commit_sha": "bbb"
+            }),
             &[],
         );
 
@@ -1072,41 +1111,51 @@ mod tests {
     #[test]
     fn test_workspace_list_isolates_by_uid() {
         let mut state = make_state();
+        let owner_uid = current_uid();
+        let other_uid = current_uid().wrapping_add(1);
 
         let tmp1 = tempfile::tempdir().unwrap();
         let tmp2 = tempfile::tempdir().unwrap();
-        let tmp3 = tempfile::tempdir().unwrap();
 
-        // user 1000 注册 2 个
+        // owner 通过 dispatch 注册 2 个 workspace（dispatch 会做 path 校验，
+        // peer_uid 必须匹配 tempdir owner_uid，用 current_uid() 即可）
         dispatch(
             &mut state,
-            make_peer(1000),
+            make_peer(owner_uid),
             "workspace.register",
-            &json!({"client_view_root": tmp1.path().to_str().unwrap()}),
+            &json!({
+                "client_view_root": tmp1.path().to_str().unwrap(),
+                "git_remote_url": "https://github.com/o1/o1.git",
+                "git_head_commit_sha": "o1"
+            }),
             &[],
         );
         dispatch(
             &mut state,
-            make_peer(1000),
+            make_peer(owner_uid),
             "workspace.register",
-            &json!({"client_view_root": tmp2.path().to_str().unwrap()}),
-            &[],
-        );
-        // user 2000 注册 1 个
-        dispatch(
-            &mut state,
-            make_peer(2000),
-            "workspace.register",
-            &json!({"client_view_root": tmp3.path().to_str().unwrap()}),
+            &json!({
+                "client_view_root": tmp2.path().to_str().unwrap(),
+                "git_remote_url": "https://github.com/o2/o2.git",
+                "git_head_commit_sha": "o2"
+            }),
             &[],
         );
 
-        // user 1000 只看到自己的 2 个
-        let r1 = dispatch(&mut state, make_peer(1000), "workspace.list", &json!({}), &[]);
+        // other_uid 不拥有任何 tempdir，无法通过 dispatch 的 path ACL 检查。
+        // 直接调用 registry.register_workspace 注入 other_uid 的数据，
+        // 用于验证 workspace.list 按 owner_uid 过滤（此测试关注 list 隔离，不关注 register ACL）。
+        state
+            .registry
+            .register_workspace(other_uid, "/tmp/other", "/tmp/other", "", "", "")
+            .unwrap();
+
+        // owner 只看到自己的 2 个
+        let r1 = dispatch(&mut state, make_peer(owner_uid), "workspace.list", &json!({}), &[]);
         assert_eq!(r1["result"].as_array().unwrap().len(), 2);
 
-        // user 2000 只看到自己的 1 个
-        let r2 = dispatch(&mut state, make_peer(2000), "workspace.list", &json!({}), &[]);
+        // other 只看到自己的 1 个
+        let r2 = dispatch(&mut state, make_peer(other_uid), "workspace.list", &json!({}), &[]);
         assert_eq!(r2["result"].as_array().unwrap().len(), 1);
     }
 }
