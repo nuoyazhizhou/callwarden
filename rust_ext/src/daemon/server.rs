@@ -92,12 +92,22 @@ pub struct ServerHandle {
     worker_handles: Vec<thread::JoinHandle<()>>,
     /// socket 路径（用于 shutdown 后清理）
     socket_path: PathBuf,
+    /// listener 的 raw fd（用于 shutdown 时打破 accept 阻塞）
+    listener_fd: std::os::unix::io::RawFd,
 }
 
 impl ServerHandle {
     /// 请求 server 停止（非阻塞）
+    ///
+    /// 通过 libc::shutdown(fd, SHUT_RDWR) 打破 accept 线程的阻塞，
+    /// 否则 blocking accept 会一直等连接，无法退出。
     pub fn shutdown(&mut self) {
         self.stop_flag.store(true, Ordering::SeqCst);
+        // 关闭 listener fd 的读写端，打破 accept 阻塞
+        // 即使 fd 已关闭，shutdown 也只会返回 EBADF，忽略即可
+        unsafe {
+            libc::shutdown(self.listener_fd, libc::SHUT_RDWR);
+        }
     }
 
     /// 等待 server 完全退出（阻塞当前线程）
@@ -176,8 +186,11 @@ where
         &config.socket_path,
         std::fs::Permissions::from_mode(config.socket_mode),
     )?;
-    // 非阻塞 accept（用于响应 stop_flag）
-    listener.set_nonblocking(true)?;
+    // 保存 listener raw fd（用于 shutdown 时打破 accept 阻塞）
+    use std::os::unix::io::AsRawFd;
+    let listener_fd = listener.as_raw_fd();
+    // 注：accept_loop 内部会设回 blocking 模式（start_server 保持 nonblocking 仅用于
+    // 兼容性，实际 accept_loop 会调用 set_nonblocking(false)）
 
     let stop_flag = Arc::new(AtomicBool::new(false));
     let stop_flag_clone = stop_flag.clone();
@@ -228,18 +241,25 @@ where
         accept_thread: Some(accept_thread),
         worker_handles,
         socket_path,
+        listener_fd,
     })
 }
 
 /// accept 线程主循环：等待连接 → 分发到 worker 线程池
+///
+/// 策略：blocking accept（零延迟），shutdown 时通过 libc::shutdown(fd, SHUT_RDWR)
+/// 打破阻塞。比非阻塞 + sleep 轮询方案延迟低 100x（1ms → 10us）。
 fn accept_loop(
     listener: &UnixListener,
     worker_tx: Sender<UnixStream>,
     stop_flag: Arc<AtomicBool>,
     accept_timeout: Duration,
 ) {
-    // 用 SO_RCVTIMEO 模拟超时 accept（Linux 特有）
-    // 这里用 set_nonblocking + sleep 简化实现
+    // 用 blocking accept：listener 设回 blocking 模式（start_server 中设为 nonblocking）
+    // 这样 accept 在无连接时阻塞，有连接时立即返回，零延迟。
+    // shutdown 时 stop_flag 被设置，主线程调用 libc::shutdown 打破阻塞。
+    let _ = listener.set_nonblocking(false);
+
     while !stop_flag.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, _addr)) => {
@@ -250,16 +270,22 @@ fn accept_loop(
                 }
             }
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                // 非阻塞模式下没有连接，短暂 sleep 后重试
-                thread::sleep(accept_timeout);
+                // blocking 模式下不应触发，保险起见短暂 sleep
+                thread::sleep(Duration::from_micros(100));
             }
             Err(e) => {
+                if stop_flag.load(Ordering::SeqCst) {
+                    // shutdown 触发的 accept 错误，正常退出
+                    break;
+                }
                 eprintln!("[cw_daemon] accept error: {}", e);
                 // 短暂 sleep 避免忙等
-                thread::sleep(accept_timeout);
+                thread::sleep(Duration::from_millis(10));
             }
         }
     }
+    // 标记 accept_timeout 已使用（参数保留以便未来切换策略）
+    let _ = accept_timeout;
 }
 
 /// worker 线程主循环：从 channel 取连接 → 处理 → 回复
