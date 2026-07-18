@@ -11,9 +11,11 @@
 //! - `query.callers`：调用 `GraphStore::get_caller_ids` + 组装 JSON
 //! - `query.callees`：调用 `GraphStore::get_callee_ids` + 组装 JSON
 //!
+//! workspace.* 方法（register/list/status/connect/file.refresh/recover）委托给
+//! `WorkspaceDaemonState`（在 base 中实现）。
+//!
 //! 其他高级方法保持 `method_not_found`（R6 范围外）：
 //! - `gc.cas` / `backup` / `restore`（运维方法）
-//! - `workspace.connect` / `workspace.file.refresh`（依赖 R5 完整管道）
 //!
 //! 参考：Python `server/daemon_server.py:EnterpriseDaemonService.dispatch` L441-490
 
@@ -206,6 +208,22 @@ impl DaemonStateExt for SnapshotDaemonState {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         self.base.handle_workspace_recover(peer, params)
+    }
+
+    fn handle_workspace_connect(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_workspace_connect(peer, params)
+    }
+
+    fn handle_workspace_file_refresh(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_workspace_file_refresh(peer, params)
     }
 
     // ---- snapshot 管理（R6 实现）----
@@ -886,7 +904,10 @@ mod tests {
     }
 
     #[test]
-    fn test_workspace_connect_still_method_not_found() {
+    fn test_workspace_connect_delegated_to_base() {
+        // workspace.connect 现已委托给 WorkspaceDaemonState 实现，
+        // dispatch 应进入 handler 而非返回 method_not_found。
+        // 传入缺少 agent_session_id 的参数，应返回 invalid_params（而非 method_not_found）。
         let mut state = make_state();
         let peer = make_peer(0);
         let ws_id = register_workspace_for_test(&mut state, 0);
@@ -899,7 +920,27 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "method_not_found");
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_workspace_file_refresh_delegated_to_base() {
+        // workspace.file.refresh 现已委托给 WorkspaceDaemonState 实现，
+        // dispatch 应进入 handler 而非返回 method_not_found。
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        // 缺 rel_path 等参数：应返回 invalid_params（而非 method_not_found）
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
     }
 
     // ---- 辅助函数测试 ----

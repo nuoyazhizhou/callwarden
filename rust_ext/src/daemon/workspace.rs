@@ -3,16 +3,19 @@
 //! 对应 Python：
 //! - `db/db_daemon.py`（WORKSPACE_REGISTRY_DDL + register/list/get_status/update_status）
 //! - `server/daemon_server.py:_owned_workspace` / `_validate_owned_path` / dispatch 的
-//!   `workspace.register` / `workspace.list` / `workspace.status` 分支
+//!   `workspace.register` / `workspace.list` / `workspace.status` /
+//!   `workspace.connect` / `workspace.file.refresh` / `workspace.recover` 分支
 //!
 //! 跨平台：Windows 上 `_validate_owned_path` 跳过 owner_uid ACL 检查（开发测试用），
 //! Unix 上做完整 ACL 校验（参考 daemon_server.py L227-242）。
-//! `workspace.connect` / `workspace.file.refresh` / `workspace.recover` 依赖 CAS /
-//! Replicator，留给 R5/R6 实现，本模块覆盖 `workspace.register` / `workspace.list`
-//! / `workspace.status` / `workspace.recover`（标记 unimplemented）。
+//! 本模块覆盖 `workspace.register` / `workspace.list` / `workspace.status` /
+//! `workspace.connect` / `workspace.file.refresh` / `workspace.recover`。
+//! `snapshot.*` / `query.*` / `gc.*` / `backup` / `restore` 在 R6 的
+//! `SnapshotDaemonState` 中实现。
 
+use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, Row};
@@ -21,8 +24,13 @@ use sha2::{Digest, Sha256};
 
 use super::dispatch::{
     DaemonRpcError, DaemonState, DaemonStateExt, PeerCredential,
-    get_str_param_or, require_str_param,
+    get_str_param, get_str_param_or, require_str_param,
 };
+use super::replicator::{
+    RefreshMessage, SessionStore, daemon_handle_connect, daemon_handle_refresh,
+};
+use super::staging_log::{StagingEntry, StagingLog};
+use super::cas::CasStore;
 
 /// workspace registry schema DDL（与 Python db_daemon.py:WORKSPACE_REGISTRY_DDL 一致）
 const WORKSPACE_REGISTRY_DDL: &str = r#"
@@ -475,21 +483,46 @@ pub fn owned_workspace(
 
 /// 组合 DaemonState + WorkspaceRegistry + data_root 的 daemon state 实现。
 ///
-/// R4 阶段覆盖：
+/// 覆盖：
 /// - `workspace.register`：注册 workspace（含路径校验）
 /// - `workspace.list`：列出当前 UID 拥有的 workspace
 /// - `workspace.status`：查询指定 workspace 状态（含 ACL）
+/// - `workspace.connect`：session epoch CAS 握手
+/// - `workspace.file.refresh`：增量 refresh 经 CAS 两阶段 + staging log + replicate
 /// - `workspace.recover`：用 Replicator 重放 pending staging entries
 ///
-/// 未覆盖（保留 trait 默认 method_not_found）：
-/// - `workspace.connect`：依赖 R5 daemon_handle_connect
-/// - `workspace.file.refresh`：依赖 R5 CAS 发布流程
-/// - `snapshot.*` / `query.*` / `gc.*` / `backup` / `restore`：依赖 R6
+/// 未覆盖（保留 trait 默认 method_not_found，在 `SnapshotDaemonState` 中实现）：
+/// - `snapshot.*` / `query.*` / `gc.*` / `backup` / `restore`
 pub struct WorkspaceDaemonState {
     pub base: DaemonState,
     pub registry: WorkspaceRegistry,
-    /// workspace 数据根目录（$data_root/$workspace_instance_id/staging.log）
+    /// workspace 数据根目录（$data_root/$workspace_instance_id/{workspace.db,cas.db,staging.log}）
     pub data_root: std::path::PathBuf,
+    /// per-workspace 资源懒缓存：workspace_instance_id → SessionStore/CasStore/StagingLog
+    ///
+    /// 对应 Python EnterpriseDaemonService._workspace_resources（懒初始化 + 线程安全）。
+    /// 这里用 HashMap 缓存（daemon 是单 Arc<Mutex<State>> 持有，&mut self 即可访问，
+    /// 无需额外锁）。资源一旦创建，后续 RPC 直接复用，避免重复 open/schema 初始化。
+    pub resources: HashMap<String, Arc<WorkspaceResources>>,
+}
+
+/// per-workspace 资源（懒初始化，缓存于 WorkspaceDaemonState.resources）
+///
+/// 对应 Python EnterpriseDaemonService._get_workspace_resources 返回的 dict：
+/// - `ws_conn` → SessionStore（含 agent_sessions / workspace_active_session / file_generations）
+/// - `cas_conn` → CasStore（含 cas_file_cache / file_generations）
+/// - `staging_log` → StagingLog（持久化的 JSONL staging log）
+///
+/// 注意：R5 阶段 SessionStore 内部已经初始化了 CAS_SCHEMA_DDL（含 file_generations 表），
+/// 因此 cas_store 与 session_store 中的 file_generations 是分离的两张表（不同 DB）。
+/// daemon_handle_refresh 同时使用 ws_conn（session epoch 校验）和 cas_store（两阶段 CAS）。
+pub struct WorkspaceResources {
+    /// workspace session DB（agent_sessions + workspace_active_session + file_generations）
+    pub session_store: Arc<SessionStore>,
+    /// CAS DB（cas_file_cache + file_generations）
+    pub cas_store: Arc<CasStore>,
+    /// staging log（追加写入 pending entries，replicate 后标记 applied）
+    pub staging_log: Arc<StagingLog>,
 }
 
 impl WorkspaceDaemonState {
@@ -498,10 +531,11 @@ impl WorkspaceDaemonState {
             base: DaemonState::default(),
             registry,
             data_root: std::path::PathBuf::new(),
+            resources: HashMap::new(),
         }
     }
 
-    /// 指定 data_root 构造（用于 workspace.recover 找到 staging.log）
+    /// 指定 data_root 构造（用于 workspace.recover / workspace.connect / workspace.file.refresh）
     pub fn with_data_root(
         registry: WorkspaceRegistry,
         data_root: std::path::PathBuf,
@@ -510,7 +544,73 @@ impl WorkspaceDaemonState {
             base: DaemonState::default(),
             registry,
             data_root,
+            resources: HashMap::new(),
         }
+    }
+
+    /// 懒初始化 per-workspace 资源（SessionStore + CasStore + StagingLog）
+    ///
+    /// 对应 Python EnterpriseDaemonService._get_workspace_resources。
+    /// 路径布局：`$data_root/$workspace_instance_id/{workspace.db, cas.db, staging.log}`
+    ///
+    /// 已缓存则直接返回 Arc clone；未缓存则创建目录 + 打开三个资源 + 缓存。
+    pub fn get_or_init_resources(
+        &mut self,
+        workspace_instance_id: &str,
+    ) -> Result<Arc<WorkspaceResources>, DaemonRpcError> {
+        // 已缓存直接返回
+        if let Some(res) = self.resources.get(workspace_instance_id) {
+            return Ok(Arc::clone(res));
+        }
+
+        // data_root 必须已配置
+        if self.data_root.as_os_str().is_empty() {
+            return Err(DaemonRpcError::new(
+                "resources_init_failed",
+                "data_root 未配置（无法定位 workspace 资源目录）",
+            ));
+        }
+
+        // 创建 workspace 数据目录
+        let ws_dir = self.data_root.join(workspace_instance_id);
+        if let Err(e) = std::fs::create_dir_all(&ws_dir) {
+            return Err(DaemonRpcError::new(
+                "resources_init_failed",
+                format!("create_dir_all({:?}) 失败: {}", ws_dir, e),
+            ));
+        }
+
+        // 打开 SessionStore（workspace.db）
+        let ws_db_path = ws_dir.join("workspace.db");
+        let session_store = SessionStore::open(ws_db_path.to_string_lossy().as_ref())
+            .map_err(|e| DaemonRpcError::new(
+                "resources_init_failed",
+                format!("SessionStore::open 失败: {}", e),
+            ))?;
+
+        // 打开 CasStore（cas.db）
+        let cas_db_path = ws_dir.join("cas.db");
+        let cas_store = CasStore::open(cas_db_path.to_string_lossy().as_ref())
+            .map_err(|e| DaemonRpcError::new(
+                "resources_init_failed",
+                format!("CasStore::open 失败: {}", e),
+            ))?;
+
+        // 打开 StagingLog（staging.log）
+        let staging_log_path = ws_dir.join("staging.log");
+        let staging_log = StagingLog::new(staging_log_path.to_string_lossy().as_ref())
+            .map_err(|e| DaemonRpcError::new(
+                "resources_init_failed",
+                format!("StagingLog::new 失败: {}", e),
+            ))?;
+
+        let resources = Arc::new(WorkspaceResources {
+            session_store: Arc::new(session_store),
+            cas_store: Arc::new(cas_store),
+            staging_log: Arc::new(staging_log),
+        });
+        self.resources.insert(workspace_instance_id.to_string(), Arc::clone(&resources));
+        Ok(resources)
     }
 }
 
@@ -591,6 +691,176 @@ impl DaemonStateExt for WorkspaceDaemonState {
         Ok(workspace)
     }
 
+    fn handle_workspace_connect(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // 对应 Python daemon_server.py L271-292
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // ACL 校验（owner_uid 匹配 + 非 archived）
+        let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+        let agent_session_id = require_str_param(params, "agent_session_id")?;
+
+        // 从 registry 行提取数值 workspace_id（agent_sessions 表的 PK 之一）
+        let workspace_id_num: i64 = workspace
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+
+        // 懒初始化 per-workspace 资源（SessionStore / CasStore / StagingLog）
+        let resources = self.get_or_init_resources(workspace_instance_id)?;
+
+        // 调用 daemon_handle_connect（session epoch CAS）
+        let result = daemon_handle_connect(
+            peer.uid,
+            workspace_id_num,
+            agent_session_id,
+            resources.session_store.conn(),
+        )
+        .map_err(|e| DaemonRpcError::new("connect_failed", e.message))?;
+
+        // 在返回里附上 workspace_instance_id（与 Python 一致）
+        let mut result = result;
+        if let Value::Object(ref mut m) = result {
+            m.insert(
+                "workspace_instance_id".to_string(),
+                Value::String(workspace_instance_id.to_string()),
+            );
+        }
+        Ok(result)
+    }
+
+    fn handle_workspace_file_refresh(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // 对应 Python daemon_server.py L376-423
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // ACL 校验
+        let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+        let workspace_id_num: i64 = workspace
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+
+        // 提取 RefreshMessage 字段
+        let rel_path = require_str_param(params, "rel_path")?.to_string();
+        let agent_session_id = require_str_param(params, "agent_session_id")?.to_string();
+        let monotonic_seq = params
+            .get("monotonic_seq")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少字段: monotonic_seq"))?;
+        let session_epoch = params
+            .get("session_epoch")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少字段: session_epoch"))?;
+        let abs_path = get_str_param(params, "abs_path").map(|s| s.to_string());
+
+        let msg = RefreshMessage {
+            rel_path: rel_path.clone(),
+            agent_session_id: agent_session_id.clone(),
+            monotonic_seq,
+            session_epoch,
+            abs_path,
+        };
+
+        // 懒初始化 per-workspace 资源
+        let resources = self.get_or_init_resources(workspace_instance_id)?;
+
+        // 调用 daemon_handle_refresh（session epoch 校验 + 两阶段 CAS）
+        let result = daemon_handle_refresh(
+            workspace_id_num,
+            &msg,
+            resources.session_store.conn(),
+            Some(&resources.cas_store),
+        )
+        .map_err(|e| DaemonRpcError::new("refresh_failed", e.message))?;
+
+        // 构造响应：status + generation + cas_result（若有）
+        let mut response = Map::new();
+        response.insert(
+            "status".to_string(),
+            Value::String(result.status.clone()),
+        );
+        response.insert(
+            "generation".to_string(),
+            Value::String(result.generation.clone()),
+        );
+        if let Some(cas_result) = result.cas_result {
+            response.insert("cas_result".to_string(), cas_result);
+        }
+
+        // committed 时追加 staging entry 并触发 replicate（与 Python L404-420 一致）
+        if result.status == "committed" {
+            let content_hash = get_str_param_or(params, "content_hash", "");
+            let language = get_str_param_or(params, "language", "");
+
+            let mut entry = StagingEntry::new(
+                workspace_instance_id,
+                &rel_path,
+                &content_hash,
+                &language,
+            );
+            match resources.staging_log.append(&mut entry) {
+                Ok(_lsn) => {
+                    // 触发 replicate（R5 阶段不接 SnapshotManager，db_path 传空，
+                    // Replicator 只做 read_pending → mark_applied_batch，不发布 snapshot）
+                    use crate::daemon::replicator::Replicator;
+                    let replicator = Replicator::new(&resources.staging_log);
+                    let repl_result = replicator.replicate(workspace_instance_id, "", "");
+
+                    let mut repl_map = Map::new();
+                    repl_map.insert(
+                        "generation".to_string(),
+                        Value::Number(repl_result.generation.into()),
+                    );
+                    repl_map.insert(
+                        "applied_count".to_string(),
+                        Value::Number(repl_result.applied_count.into()),
+                    );
+                    repl_map.insert(
+                        "pending_count".to_string(),
+                        Value::Number(repl_result.pending_count.into()),
+                    );
+                    repl_map.insert(
+                        "duration_ms".to_string(),
+                        Value::Number(
+                            serde_json::Number::from_f64(repl_result.duration_ms)
+                                .unwrap_or_else(|| serde_json::Number::from(0u32)),
+                        ),
+                    );
+                    if let Some(err) = repl_result.error {
+                        repl_map.insert(
+                            "error".to_string(),
+                            Value::String(err),
+                        );
+                    }
+                    response.insert("replication".to_string(), Value::Object(repl_map));
+                }
+                Err(e) => {
+                    // staging log append 失败不阻塞 refresh 成功，但记录 error
+                    response.insert(
+                        "staging_error".to_string(),
+                        Value::String(format!("staging_log::append 失败: {}", e)),
+                    );
+                }
+            }
+        }
+
+        // 附 workspace_instance_id（便于客户端关联）
+        response.insert(
+            "workspace_instance_id".to_string(),
+            Value::String(workspace_instance_id.to_string()),
+        );
+        Ok(Value::Object(response))
+    }
+
     fn handle_workspace_recover(
         &mut self,
         peer: PeerCredential,
@@ -624,9 +894,6 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let staging_log_path = ws_dir.join("staging.log");
 
         // 3. 打开 StagingLog（不存在视为无 pending，返回空结果）
-        use crate::daemon::replicator::Replicator;
-        use crate::daemon::staging_log::StagingLog;
-
         let staging_log = match StagingLog::new(staging_log_path.to_string_lossy().as_ref()) {
             Ok(l) => l,
             Err(e) => {
@@ -639,7 +906,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
         // 4. 调用 Replicator::recover（内部：read_pending → filter by ws_id →
         //    mark_applied_batch → compact_applied）
-        let replicator = Replicator::new(&staging_log);
+        let replicator = crate::daemon::replicator::Replicator::new(&staging_log);
         let result = replicator.recover(&ws_id, "");
 
         // 5. 构造返回（与 Python daemon_server.py L430-437 字段一致）
@@ -1456,5 +1723,625 @@ mod tests {
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    // ---- handle_workspace_connect 测试 ----
+
+    /// 注册 workspace 并返回 instance_id（用于 connect/refresh 测试）
+    fn register_ws(state: &mut WorkspaceDaemonState, owner_uid: u32) -> String {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        let response = state
+            .registry
+            .register_workspace(owner_uid, &dir_path, &dir_path, "", "", "")
+            .unwrap();
+        // 注意：tmp 在函数结束时 drop，但 connect/refresh 不依赖 client_view_root 存在
+        response["workspace_instance_id"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn test_connect_returns_session_epoch_1_for_first_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["session_epoch"], 1);
+        assert_eq!(response["result"]["workspace_instance_id"], ws_id);
+    }
+
+    #[test]
+    fn test_connect_assigns_increasing_epoch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        // 第一次：epoch=1
+        let r1 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(r1["result"]["session_epoch"], 1);
+
+        // 第二次（不同 session_id）：epoch=2
+        let r2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+            &[],
+        );
+        assert_eq!(r2["result"]["session_epoch"], 2);
+    }
+
+    #[test]
+    fn test_connect_rejects_non_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let owner = make_owner_peer();
+        let other = make_other_peer();
+        let ws_id = register_ws(&mut state, owner.uid);
+
+        let response = dispatch(
+            &mut state,
+            other,
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_connect_rejects_unknown_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": "nonexistent_ws",
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_not_found");
+    }
+
+    #[test]
+    fn test_connect_missing_workspace_instance_id_param() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.connect",
+            &json!({
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_connect_missing_agent_session_id_param() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_connect_fails_when_data_root_empty() {
+        // data_root 为空：get_or_init_resources 返回 resources_init_failed
+        let mut state = make_state();
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "resources_init_failed");
+    }
+
+    #[test]
+    fn test_connect_caches_resources_in_state() {
+        // 两次 connect 应复用同一 SessionStore（资源缓存生效）
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        // 第一次：初始化资源
+        let r1 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(r1["ok"], true);
+        assert_eq!(r1["result"]["session_epoch"], 1);
+
+        // 第二次：应复用同一 SessionStore（epoch 递增而非重置）
+        let r2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+            &[],
+        );
+        assert_eq!(r2["ok"], true);
+        assert_eq!(r2["result"]["session_epoch"], 2);
+
+        // 资源应已缓存
+        assert!(state.resources.contains_key(&ws_id));
+        assert_eq!(state.resources.len(), 1);
+    }
+
+    // ---- handle_workspace_file_refresh 测试 ----
+
+    /// 注册 workspace + 调用 connect 拿到 epoch，返回 (ws_id, session_epoch)
+    fn setup_connected_workspace(
+        state: &mut WorkspaceDaemonState,
+        peer: PeerCredential,
+        session_id: &str,
+    ) -> (String, i64) {
+        let ws_id = register_ws(state, peer.uid);
+        let r = dispatch(
+            state,
+            peer,
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": session_id
+            }),
+            &[],
+        );
+        assert_eq!(r["ok"], true);
+        let epoch = r["result"]["session_epoch"].as_i64().unwrap();
+        (ws_id, epoch)
+    }
+
+    #[test]
+    fn test_refresh_rejects_when_no_active_session() {
+        // 没有 connect 直接 refresh：refresh_failed (no active session)
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": 1
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "refresh_failed");
+    }
+
+    #[test]
+    fn test_refresh_rejects_stale_session() {
+        // connect 后用错误的 epoch refresh：refresh_failed (stale session)
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, _epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 用错误的 epoch（应该是 1，传 999）
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": 999
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "refresh_failed");
+    }
+
+    #[test]
+    fn test_refresh_committed_triggers_replication() {
+        // 正常 refresh：status=committed，generation="epoch:seq"，
+        // 并且 replication.applied_count=1（追加 staging entry + replicate）
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "content_hash": "abc123",
+                "language": "rust"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["status"], "committed");
+        assert_eq!(response["result"]["generation"], format!("{}:{}", epoch, 1));
+        // replication 应触发并应用 1 条 entry
+        assert_eq!(response["result"]["replication"]["applied_count"], 1);
+        assert_eq!(response["result"]["replication"]["pending_count"], 1);
+        assert_eq!(response["result"]["workspace_instance_id"], ws_id);
+    }
+
+    #[test]
+    fn test_refresh_stale_seq_dropped() {
+        // 第一次 refresh seq=5（committed），第二次用 seq=3 → stale_seq_dropped
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 第一次：seq=5
+        let r1 = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 5,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r1["result"]["status"], "committed");
+
+        // 第二次：seq=3（小于 5）→ stale_seq_dropped，无 replication
+        let r2 = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 3,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r2["ok"], true);
+        assert_eq!(r2["result"]["status"], "stale_seq_dropped");
+        // stale_seq_dropped 时不应触发 replication
+        assert!(r2["result"].get("replication").is_none() || r2["result"]["replication"].is_null());
+    }
+
+    #[test]
+    fn test_refresh_accepts_newer_seq() {
+        // seq=1 → committed；seq=10 → committed（新 seq）
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // seq=1
+        let r1 = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r1["result"]["status"], "committed");
+
+        // seq=10（更大）
+        let r2 = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 10,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r2["result"]["status"], "committed");
+        assert_eq!(r2["result"]["generation"], format!("{}:{}", epoch, 10));
+    }
+
+    #[test]
+    fn test_refresh_rejects_non_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let owner = make_owner_peer();
+        let other = make_other_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, owner, "session-1");
+
+        let response = dispatch(
+            &mut state,
+            other,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_refresh_rejects_unknown_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": "nonexistent_ws",
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": 1
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_not_found");
+    }
+
+    #[test]
+    fn test_refresh_missing_required_params() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 缺 rel_path
+        let r1 = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r1["ok"], false);
+        assert_eq!(r1["error"]["code"], "invalid_params");
+
+        // 缺 monotonic_seq
+        let r2 = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r2["ok"], false);
+        assert_eq!(r2["error"]["code"], "invalid_params");
+
+        // 缺 session_epoch
+        let r3 = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1
+            }),
+            &[],
+        );
+        assert_eq!(r3["ok"], false);
+        assert_eq!(r3["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_refresh_fails_when_data_root_empty() {
+        let mut state = make_state();
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": 1
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "resources_init_failed");
+    }
+
+    #[test]
+    fn test_connect_then_refresh_full_pipeline() {
+        // 端到端：connect → refresh(seq=1) → refresh(seq=2) → connect(new session) → refresh rejected
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        // 1. connect session-1 → epoch=1
+        let r1 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+        assert_eq!(r1["result"]["session_epoch"], 1);
+        let epoch: i64 = r1["result"]["session_epoch"].as_i64().unwrap();
+
+        // 2. refresh seq=1 → committed
+        let r2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r2["result"]["status"], "committed");
+
+        // 3. refresh seq=2 → committed（新 seq）
+        let r3 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 2,
+                "session_epoch": epoch
+            }),
+            &[],
+        );
+        assert_eq!(r3["result"]["status"], "committed");
+        assert_eq!(r3["result"]["generation"], format!("{}:{}", epoch, 2));
+
+        // 4. connect session-2 → epoch=2（旧 session 失效）
+        let r4 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-2"
+            }),
+            &[],
+        );
+        assert_eq!(r4["result"]["session_epoch"], 2);
+
+        // 5. 用旧 session-1 refresh → refresh_failed (stale session)
+        let r5 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 3,
+                "session_epoch": 1
+            }),
+            &[],
+        );
+        assert_eq!(r5["ok"], false);
+        assert_eq!(r5["error"]["code"], "refresh_failed");
     }
 }
