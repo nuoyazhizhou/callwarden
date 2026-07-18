@@ -473,13 +473,13 @@ pub fn owned_workspace(
 // DaemonStateExt 扩展：接入 workspace.* RPC
 // ============================================
 
-/// 组合 DaemonState + WorkspaceRegistry 的 daemon state 实现。
+/// 组合 DaemonState + WorkspaceRegistry + data_root 的 daemon state 实现。
 ///
 /// R4 阶段覆盖：
 /// - `workspace.register`：注册 workspace（含路径校验）
 /// - `workspace.list`：列出当前 UID 拥有的 workspace
 /// - `workspace.status`：查询指定 workspace 状态（含 ACL）
-/// - `workspace.recover`：R5/R6 才能实现，返回 method_not_found
+/// - `workspace.recover`：用 Replicator 重放 pending staging entries
 ///
 /// 未覆盖（保留 trait 默认 method_not_found）：
 /// - `workspace.connect`：依赖 R5 daemon_handle_connect
@@ -488,6 +488,8 @@ pub fn owned_workspace(
 pub struct WorkspaceDaemonState {
     pub base: DaemonState,
     pub registry: WorkspaceRegistry,
+    /// workspace 数据根目录（$data_root/$workspace_instance_id/staging.log）
+    pub data_root: std::path::PathBuf,
 }
 
 impl WorkspaceDaemonState {
@@ -495,6 +497,19 @@ impl WorkspaceDaemonState {
         Self {
             base: DaemonState::default(),
             registry,
+            data_root: std::path::PathBuf::new(),
+        }
+    }
+
+    /// 指定 data_root 构造（用于 workspace.recover 找到 staging.log）
+    pub fn with_data_root(
+        registry: WorkspaceRegistry,
+        data_root: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            base: DaemonState::default(),
+            registry,
+            data_root,
         }
     }
 }
@@ -578,11 +593,92 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
     fn handle_workspace_recover(
         &mut self,
-        _peer: PeerCredential,
-        _params: &Value,
+        peer: PeerCredential,
+        params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        // R5/R6 实现：依赖 StagingLog + Replicator
-        Err(DaemonRpcError::method_not_found("workspace.recover"))
+        // 1. 提取 workspace_instance_id 参数
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+
+        // 2. ACL 校验：必须是 owner 才能触发 recover
+        let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+
+        let ws_id = workspace
+            .get("workspace_instance_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error(
+                    "workspace_instance_id missing in registry record".to_string(),
+                )
+            })?
+            .to_string();
+
+        // 2. 定位 staging.log（$data_root/$ws_id/staging.log）
+        // data_root 为空时（make_state() 测试场景）返回 recover_failed
+        if self.data_root.as_os_str().is_empty() {
+            return Err(DaemonRpcError::new(
+                "recover_failed",
+                "data_root 未配置（无法定位 staging.log）",
+            ));
+        }
+        let ws_dir = self.data_root.join(&ws_id);
+        let staging_log_path = ws_dir.join("staging.log");
+
+        // 3. 打开 StagingLog（不存在视为无 pending，返回空结果）
+        use crate::daemon::replicator::Replicator;
+        use crate::daemon::staging_log::StagingLog;
+
+        let staging_log = match StagingLog::new(staging_log_path.to_string_lossy().as_ref()) {
+            Ok(l) => l,
+            Err(e) => {
+                return Err(DaemonRpcError::new(
+                    "recover_failed",
+                    format!("StagingLog::new 失败: {}", e),
+                ));
+            }
+        };
+
+        // 4. 调用 Replicator::recover（内部：read_pending → filter by ws_id →
+        //    mark_applied_batch → compact_applied）
+        let replicator = Replicator::new(&staging_log);
+        let result = replicator.recover(&ws_id, "");
+
+        // 5. 构造返回（与 Python daemon_server.py L430-437 字段一致）
+        let mut m = Map::new();
+        m.insert(
+            "status".to_string(),
+            Value::String(
+                if result.success {
+                    "recovered"
+                } else {
+                    "failed"
+                }
+                .to_string(),
+            ),
+        );
+        m.insert("generation".to_string(), Value::Number(result.generation.into()));
+        m.insert(
+            "applied_count".to_string(),
+            Value::Number(result.applied_count.into()),
+        );
+        m.insert(
+            "pending_count".to_string(),
+            Value::Number(result.pending_count.into()),
+        );
+        m.insert(
+            "duration_ms".to_string(),
+            Value::Number(
+                serde_json::Number::from_f64(result.duration_ms)
+                    .unwrap_or_else(|| serde_json::Number::from(0u32)),
+            ),
+        );
+        m.insert(
+            "error".to_string(),
+            match result.error {
+                Some(s) => Value::String(s),
+                None => Value::Null,
+            },
+        );
+        Ok(Value::Object(m))
     }
 }
 
@@ -594,6 +690,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
 mod tests {
     use super::*;
     use crate::daemon::dispatch::dispatch;
+    use crate::daemon::staging_log::{StagingEntry, StagingLog};
     use serde_json::json;
 
     fn make_peer(uid: u32) -> PeerCredential {
@@ -1096,14 +1193,16 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_workspace_recover_returns_method_not_found() {
+    fn test_dispatch_workspace_recover_returns_workspace_not_found_for_unknown_ws() {
+        // 实现已接入：对不存在的 workspace 返回 workspace_not_found
+        // （对 ACL 校验前的 data_root 校验会先返回 recover_failed）
         let mut state = make_state();
-        let peer = make_peer(1000);
+        let peer = make_owner_peer();
         let params = json!({"workspace_instance_id": "xyz"});
         let response = dispatch(&mut state, peer, "workspace.recover", &params, &[]);
 
         assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "method_not_found");
+        assert_eq!(response["error"]["code"], "workspace_not_found");
     }
 
     // ---- 跨用户隔离测试 ----
@@ -1157,5 +1256,205 @@ mod tests {
         // other 只看到自己的 1 个
         let r2 = dispatch(&mut state, make_peer(other_uid), "workspace.list", &json!({}), &[]);
         assert_eq!(r2["result"].as_array().unwrap().len(), 1);
+    }
+
+    // ---- handle_workspace_recover 测试 ----
+
+    /// 构造带 data_root 的 state（用于 workspace.recover 测试）
+    fn make_state_with_data_root(data_root: &Path) -> WorkspaceDaemonState {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        WorkspaceDaemonState::with_data_root(registry, data_root.to_path_buf())
+    }
+
+    /// 注册 workspace 并返回 instance_id（直接调用 registry，绕过路径 ACL）
+    fn register_ws_for_recover(state: &mut WorkspaceDaemonState, owner_uid: u32) -> String {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir_path = tmp.path().to_str().unwrap().to_string();
+        let response = state
+            .registry
+            .register_workspace(owner_uid, &dir_path, &dir_path, "", "", "")
+            .unwrap();
+        // 注意：tmp 在函数结束时 drop，workspace.register 只在 ACL 校验时需要路径存在
+        // 这里测试 recover 不依赖 client_view_root 的存在性
+        response["workspace_instance_id"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn test_recover_returns_recover_failed_when_data_root_empty() {
+        // data_root 为空（WorkspaceDaemonState::new 默认值）：应返回 recover_failed
+        let mut state = make_state();
+        let peer = make_owner_peer();
+        let ws_id = register_ws_for_recover(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "recover_failed");
+    }
+
+    #[test]
+    fn test_recover_rejects_non_owner() {
+        // 非 owner 不能 recover
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let owner = make_owner_peer();
+        let other = make_other_peer();
+        let ws_id = register_ws_for_recover(&mut state, owner.uid);
+
+        let response = dispatch(
+            &mut state,
+            other,
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_recover_rejects_nonexistent_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({"workspace_instance_id": "nonexistent_ws"}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_not_found");
+    }
+
+    #[test]
+    fn test_recover_returns_zero_when_no_staging_log() {
+        // 无 staging.log：StagingLog::new 创建空文件，无 pending → applied_count=0
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws_for_recover(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["status"], "recovered");
+        assert_eq!(response["result"]["applied_count"], 0);
+        assert_eq!(response["result"]["pending_count"], 0);
+        assert_eq!(response["result"]["error"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn test_recover_applies_pending_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws_for_recover(&mut state, peer.uid);
+
+        // 在 data_root/$ws_id/staging.log 写入 3 条 pending
+        let ws_dir = tmp.path().join(&ws_id);
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let log_path = ws_dir.join("staging.log");
+        let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+        for i in 0..3 {
+            let mut entry = StagingEntry::new(
+                &ws_id,
+                &format!("file_{}.py", i),
+                &format!("hash_{}", i),
+                "python",
+            );
+            log.append(&mut entry).unwrap();
+        }
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["status"], "recovered");
+        assert_eq!(response["result"]["applied_count"], 3);
+        assert_eq!(response["result"]["pending_count"], 3);
+
+        // 第二次 recover：无 pending，applied_count=0
+        let response2 = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response2["result"]["applied_count"], 0);
+    }
+
+    #[test]
+    fn test_recover_filters_entries_by_workspace_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws_for_recover(&mut state, peer.uid);
+
+        // 写入 2 条 ws_id + 1 条其他 workspace 的 pending entries
+        // （实际上 daemon 一个 workspace 一个 staging.log，但 StagingLog 支持多 workspace entries）
+        let ws_dir = tmp.path().join(&ws_id);
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let log_path = ws_dir.join("staging.log");
+        let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+        for i in 0..2 {
+            let mut entry = StagingEntry::new(
+                &ws_id,
+                &format!("file_{}.py", i),
+                &format!("hash_{}", i),
+                "python",
+            );
+            log.append(&mut entry).unwrap();
+        }
+        // 其他 workspace 的 entry
+        let mut other_entry = StagingEntry::new("other_ws", "other.py", "other_hash", "python");
+        log.append(&mut other_entry).unwrap();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        // 只应用 ws_id 的 2 条，不应用 other_ws 的 1 条
+        assert_eq!(response["result"]["applied_count"], 2);
+        assert_eq!(response["result"]["pending_count"], 2);
+    }
+
+    #[test]
+    fn test_recover_missing_workspace_instance_id_param() {
+        // 缺少 workspace_instance_id 参数：invalid_params
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
     }
 }

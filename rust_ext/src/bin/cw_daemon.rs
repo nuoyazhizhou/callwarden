@@ -186,11 +186,16 @@ mod unix {
         // 每线程独立连接避免锁竞争
         let registry_db_path = config.registry_db_path.to_string_lossy().to_string();
         let cache_capacity = config.snapshot_cache_capacity;
+        let data_root = config.data_root.clone();
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
             let snapshot_cache = Arc::new(SnapshotCache::new(cache_capacity));
-            Ok(SnapshotDaemonState::with_registry(registry, snapshot_cache))
+            Ok(SnapshotDaemonState::with_registry_and_data_root(
+                registry,
+                snapshot_cache,
+                data_root.clone(),
+            ))
         };
 
         // 6. 构造 ServerConfig

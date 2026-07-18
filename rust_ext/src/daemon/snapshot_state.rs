@@ -13,7 +13,7 @@
 //!
 //! 其他高级方法保持 `method_not_found`（R6 范围外）：
 //! - `gc.cas` / `backup` / `restore`（运维方法）
-//! - `workspace.connect` / `workspace.file.refresh` / `workspace.recover`（依赖 R5 完整管道）
+//! - `workspace.connect` / `workspace.file.refresh`（依赖 R5 完整管道）
 //!
 //! 参考：Python `server/daemon_server.py:EnterpriseDaemonService.dispatch` L441-490
 
@@ -64,6 +64,18 @@ impl SnapshotDaemonState {
     /// 便捷构造器：从 `WorkspaceRegistry` + `SnapshotCache` 直接构造
     pub fn with_registry(registry: WorkspaceRegistry, snapshot_cache: Arc<SnapshotCache>) -> Self {
         Self::new(WorkspaceDaemonState::new(registry), snapshot_cache)
+    }
+
+    /// 便捷构造器：指定 data_root（用于 workspace.recover 找到 staging.log）
+    pub fn with_registry_and_data_root(
+        registry: WorkspaceRegistry,
+        snapshot_cache: Arc<SnapshotCache>,
+        data_root: std::path::PathBuf,
+    ) -> Self {
+        Self::new(
+            WorkspaceDaemonState::with_data_root(registry, data_root),
+            snapshot_cache,
+        )
     }
 
     /// 访问内部 registry（供测试或外部查询）
@@ -186,6 +198,14 @@ impl DaemonStateExt for SnapshotDaemonState {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         self.base.handle_workspace_status(peer, params)
+    }
+
+    fn handle_workspace_recover(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_workspace_recover(peer, params)
     }
 
     // ---- snapshot 管理（R6 实现）----
