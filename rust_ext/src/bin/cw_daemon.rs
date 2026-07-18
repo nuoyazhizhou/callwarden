@@ -1,7 +1,7 @@
 //! cw_daemon —— Enterprise daemon binary 入口。
 //!
 //! R7 实现：CLI 参数解析（clap）→ 配置加载 → schema 初始化 → 启动 UDS server →
-//! 信号处理（SIGTERM/SIGINT 优雅关闭 + SIGHUP reload log + SIGUSR1 drain log）。
+//! 信号处理（SIGTERM/SIGINT 优雅关闭 + SIGHUP reload config + SIGUSR1 drain staging logs）。
 //!
 //! ## Linux-only
 //! UDS + SO_PEERCRED 是 Linux 特有。Windows 上编译为 stub，运行时 exit 1。
@@ -241,10 +241,16 @@ mod unix {
                 break;
             }
             if reload_flag.swap(false, Ordering::SeqCst) {
-                eprintln!("[cw_daemon] [INFO] received SIGHUP, reload requested (R7 stub: no-op)");
+                eprintln!("[cw_daemon] [INFO] received SIGHUP, reload requested");
+                handle_reload(&cli.config, &config);
             }
             if drain_flag.swap(false, Ordering::SeqCst) {
-                eprintln!("[cw_daemon] [INFO] received SIGUSR1, drain requested (R7 stub: no-op)");
+                eprintln!("[cw_daemon] [INFO] received SIGUSR1, drain requested");
+                let compacted = handle_drain(&registry, &config.data_root);
+                eprintln!(
+                    "[cw_daemon] [INFO] drain complete: compacted {} applied entries",
+                    compacted
+                );
             }
             thread::sleep(Duration::from_millis(100));
         }
@@ -431,6 +437,189 @@ mod unix {
             )
             .ok();
         Ok(version_str.and_then(|s| s.parse::<u32>().ok()))
+    }
+
+    /// 处理 SIGHUP：重新加载配置文件（如果 --config 指定）。
+    ///
+    /// 运行时不可变字段（启动时已固化）：
+    /// - socket_path（UDS 已绑定）
+    /// - max_workers（worker pool 已创建）
+    /// - registry_db_path（已 open）
+    /// - data_root（已用于 recover）
+    ///
+    /// 这些字段在 reload 时仅输出变更提示，需重启生效；
+    /// 当前没有可热重载的字段（snapshot_cache_capacity 用 Arc，容量已固定），
+    /// 函数主要价值是验证 config file 仍可读 + 输出 diff 日志，便于运维确认。
+    ///
+    /// 如果未指定 --config，仅输出 "no config file" 日志。
+    fn handle_reload(config_path: &Option<PathBuf>, current_config: &DaemonConfig) {
+        let path = match config_path {
+            Some(p) => p,
+            None => {
+                eprintln!("[cw_daemon] [WARN] SIGHUP reload: 未指定 --config，无可重载内容");
+                return;
+            }
+        };
+
+        eprintln!("[cw_daemon] [INFO] SIGHUP reload: 重新加载配置文件 {}", path.display());
+        let new_config = match DaemonConfig::load_from_file(path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] SIGHUP reload: 配置加载失败: {}", e);
+                return;
+            }
+        };
+
+        // 对比字段并输出 diff 日志
+        if new_config.socket_path != current_config.socket_path {
+            eprintln!(
+                "[cw_daemon] [WARN] SIGHUP reload: socket_path 变更 ({} → {})，需重启生效",
+                current_config.socket_path.display(),
+                new_config.socket_path.display()
+            );
+        }
+        if new_config.max_workers != current_config.max_workers {
+            eprintln!(
+                "[cw_daemon] [WARN] SIGHUP reload: max_workers 变更 ({} → {})，需重启生效",
+                current_config.max_workers, new_config.max_workers
+            );
+        }
+        if new_config.registry_db_path != current_config.registry_db_path {
+            eprintln!(
+                "[cw_daemon] [WARN] SIGHUP reload: registry_db_path 变更 ({} → {})，需重启生效",
+                current_config.registry_db_path.display(),
+                new_config.registry_db_path.display()
+            );
+        }
+        if new_config.data_root != current_config.data_root {
+            eprintln!(
+                "[cw_daemon] [WARN] SIGHUP reload: data_root 变更 ({} → {})，需重启生效",
+                current_config.data_root.display(),
+                new_config.data_root.display()
+            );
+        }
+        if new_config.snapshot_cache_capacity != current_config.snapshot_cache_capacity {
+            eprintln!(
+                "[cw_daemon] [WARN] SIGHUP reload: snapshot_cache_capacity 变更 ({} → {})，需重启生效",
+                current_config.snapshot_cache_capacity, new_config.snapshot_cache_capacity
+            );
+        }
+        if new_config.socket_mode != current_config.socket_mode {
+            eprintln!(
+                "[cw_daemon] [WARN] SIGHUP reload: socket_mode 变更 (0o{:o} → 0o{:o})，需重启生效",
+                current_config.socket_mode, new_config.socket_mode
+            );
+        }
+        if new_config.request_timeout_secs != current_config.request_timeout_secs {
+            eprintln!(
+                "[cw_daemon] [WARN] SIGHUP reload: request_timeout_secs 变更 ({} → {})，需重启生效",
+                current_config.request_timeout_secs, new_config.request_timeout_secs
+            );
+        }
+
+        // 无字段变更的提示
+        if new_config.socket_path == current_config.socket_path
+            && new_config.max_workers == current_config.max_workers
+            && new_config.registry_db_path == current_config.registry_db_path
+            && new_config.data_root == current_config.data_root
+            && new_config.snapshot_cache_capacity == current_config.snapshot_cache_capacity
+            && new_config.socket_mode == current_config.socket_mode
+            && new_config.request_timeout_secs == current_config.request_timeout_secs
+        {
+            eprintln!("[cw_daemon] [INFO] SIGHUP reload: 配置无变更");
+        }
+    }
+
+    /// 处理 SIGUSR1：drain 所有 workspace 的 staging log。
+    ///
+    /// 对每个 workspace 执行 `StagingLog::compact_applied`，删除 status=applied 的 entries，
+    /// 释放磁盘空间。返回所有 workspace compact 掉的 entries 总数。
+    ///
+    /// 对应 Runbook L118-119 `cw daemon staging-compact`，但通过 SIGUSR1 触发。
+    fn handle_drain(
+        registry: &WorkspaceRegistry,
+        data_root: &std::path::Path,
+    ) -> usize {
+        use callwarden_core::daemon::staging_log::StagingLog;
+
+        let workspaces = match registry.list_workspaces(None) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[cw_daemon] [WARN] SIGUSR1 drain: list_workspaces 失败: {}", e);
+                return 0;
+            }
+        };
+
+        let mut total_compacted = 0;
+        for ws in workspaces {
+            let ws_id = ws
+                .get("workspace_instance_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if ws_id.is_empty() {
+                continue;
+            }
+
+            let ws_dir = data_root.join(ws_id);
+            let staging_log_path = ws_dir.join("staging.log");
+            if !staging_log_path.exists() {
+                continue;
+            }
+
+            let staging_log_path_str = staging_log_path.to_string_lossy().to_string();
+            let staging_log = match StagingLog::new(&staging_log_path_str) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon] [WARN] SIGUSR1 drain: 打开 staging.log 失败 ws={}: {}",
+                        ws_id, e
+                    );
+                    continue;
+                }
+            };
+
+            // compact 前统计
+            let before_stats = match staging_log.stats() {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon] [WARN] SIGUSR1 drain: 读取 stats 失败 ws={}: {}",
+                        ws_id, e
+                    );
+                    continue;
+                }
+            };
+            let before_total = before_stats.total_entries;
+            let before_applied = before_stats.applied;
+
+            // 执行 compact_applied（按 workspace_id 过滤，避免误删其他 workspace 的 applied）
+            if let Err(e) = staging_log.compact_applied(Some(ws_id)) {
+                eprintln!(
+                    "[cw_daemon] [WARN] SIGUSR1 drain: compact_applied 失败 ws={}: {}",
+                    ws_id, e
+                );
+                continue;
+            }
+
+            // compact 后统计
+            let after_stats = match staging_log.stats() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let after_total = after_stats.total_entries;
+
+            // compact 掉的条数 = before_total - after_total
+            // 注意：compact_applied 只删除 status=applied 且 workspace_id 匹配的条目
+            let compacted = before_total.saturating_sub(after_total);
+            total_compacted += compacted;
+
+            eprintln!(
+                "[cw_daemon] [INFO] SIGUSR1 drain: ws={} compacted {} entries (applied={}, before={}, after={})",
+                ws_id, compacted, before_applied, before_total, after_total
+            );
+        }
+
+        total_compacted
     }
 
     /// 恢复所有 workspace 的 pending staging log entries。
@@ -867,6 +1056,189 @@ mod unix {
             let db_str = db_path.to_string_lossy().to_string();
             let version = read_registry_schema_version(&db_str).unwrap();
             assert_eq!(version, None);
+        }
+
+        // ---- handle_reload 单元测试 ----
+
+        #[test]
+        fn test_handle_reload_no_config_warns_no_config() {
+            // 未指定 --config：应输出 "无可重载内容" 并返回
+            // 验证不 panic + 不修改 current_config
+            let current = DaemonConfig::default();
+            handle_reload(&None, &current);
+            // 无法捕获 stderr，仅验证不 panic
+        }
+
+        #[test]
+        fn test_handle_reload_same_config_reports_no_changes() {
+            // config file 内容与 current 一致：应输出 "配置无变更"
+            let tmp = tempfile::tempdir().unwrap();
+            let cfg_path = tmp.path().join("daemon.json");
+            let cfg = DaemonConfig::default();
+            let json = serde_json::to_string_pretty(&cfg).unwrap();
+            fs::write(&cfg_path, json).unwrap();
+
+            handle_reload(&Some(cfg_path), &cfg);
+            // 不 panic 即通过
+        }
+
+        #[test]
+        fn test_handle_reload_with_changed_config_reports_diff() {
+            // config file 字段变更：应输出对应字段的 diff 日志
+            let tmp = tempfile::tempdir().unwrap();
+            let cfg_path = tmp.path().join("daemon.json");
+            // 写入一个 max_workers 不同的配置
+            let new_cfg = DaemonConfig {
+                max_workers: 32, // 与 default(16) 不同
+                ..DaemonConfig::default()
+            };
+            let json = serde_json::to_string_pretty(&new_cfg).unwrap();
+            fs::write(&cfg_path, json).unwrap();
+
+            let current = DaemonConfig::default();
+            handle_reload(&Some(cfg_path), &current);
+            // 不 panic 即通过（diff 输出到 stderr，无法捕获）
+        }
+
+        #[test]
+        fn test_handle_reload_invalid_config_path_reports_error() {
+            // config file 不存在或 JSON 损坏：应输出 "配置加载失败" 并返回
+            let tmp = tempfile::tempdir().unwrap();
+            let cfg_path = tmp.path().join("nonexistent.json");
+            let current = DaemonConfig::default();
+            handle_reload(&Some(cfg_path), &current);
+            // 不 panic 即通过
+        }
+
+        // ---- handle_drain 单元测试 ----
+
+        /// 在指定 workspace 目录下创建 staging.log 并写入 entries
+        /// mix_applied=true 时一半标记为 applied
+        fn write_staging_entries_with_status(
+            data_root: &Path,
+            ws_id: &str,
+            total: usize,
+            applied_count: usize,
+        ) {
+            let ws_dir = data_root.join(ws_id);
+            fs::create_dir_all(&ws_dir).unwrap();
+            let log_path = ws_dir.join("staging.log");
+            let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+            for i in 0..total {
+                let mut entry = StagingEntry::new(
+                    ws_id,
+                    &format!("file_{}.py", i),
+                    &format!("hash_{}", i),
+                    "python",
+                );
+                log.append(&mut entry).unwrap();
+            }
+            // 标记前 applied_count 条为 applied（用 mark_applied_batch）
+            if applied_count > 0 {
+                let pending = log.read_pending().unwrap();
+                let to_apply: Vec<i64> = pending.iter().take(applied_count).map(|e| e.lsn).collect();
+                log.mark_applied_batch(&to_apply).unwrap();
+            }
+        }
+
+        /// 获取 workspace staging.log 总条目数
+        fn count_staging_total(data_root: &Path, ws_id: &str) -> usize {
+            let log_path = data_root.join(ws_id).join("staging.log");
+            if !log_path.exists() {
+                return 0;
+            }
+            let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+            log.stats().unwrap().total_entries
+        }
+
+        #[test]
+        fn test_handle_drain_empty_registry_returns_zero() {
+            let fixture = RecoverFixture::new();
+            let compacted = handle_drain(&fixture.registry, &fixture.data_root);
+            assert_eq!(compacted, 0);
+        }
+
+        #[test]
+        fn test_handle_drain_workspace_no_staging_log_returns_zero() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+            // 不创建 staging.log
+            let compacted = handle_drain(&fixture.registry, &fixture.data_root);
+            assert_eq!(compacted, 0);
+        }
+
+        #[test]
+        fn test_handle_drain_workspace_no_applied_returns_zero() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+            // 写入 3 条 pending（无 applied）
+            write_staging_entries_with_status(&fixture.data_root, &ws_id, 3, 0);
+
+            let compacted = handle_drain(&fixture.registry, &fixture.data_root);
+            // 没有 applied，compact 不删除任何条目
+            assert_eq!(compacted, 0);
+            // staging.log 仍保留 3 条
+            assert_eq!(count_staging_total(&fixture.data_root, &ws_id), 3);
+        }
+
+        #[test]
+        fn test_handle_drain_workspace_with_applied_compacts_all_applied() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+            // 写入 5 条：2 applied + 3 pending
+            write_staging_entries_with_status(&fixture.data_root, &ws_id, 5, 2);
+
+            let compacted = handle_drain(&fixture.registry, &fixture.data_root);
+            // 应 compact 掉 2 条 applied
+            assert_eq!(compacted, 2);
+            // staging.log 从 5 → 3
+            assert_eq!(count_staging_total(&fixture.data_root, &ws_id), 3);
+        }
+
+        #[test]
+        fn test_handle_drain_multiple_workspaces_compacts_all() {
+            let fixture = RecoverFixture::new();
+
+            // ws1: 4 条（1 applied）
+            let ws1_root = fixture.data_root.join("ws1_root");
+            let ws1_id = fixture.register_workspace(&ws1_root);
+            write_staging_entries_with_status(&fixture.data_root, &ws1_id, 4, 1);
+
+            // ws2: 3 条（3 applied）
+            let ws2_root = fixture.data_root.join("ws2_root");
+            let ws2_id = fixture.register_workspace(&ws2_root);
+            write_staging_entries_with_status(&fixture.data_root, &ws2_id, 3, 3);
+
+            // ws3: 无 staging.log
+            let ws3_root = fixture.data_root.join("ws3_root");
+            let _ws3_id = fixture.register_workspace(&ws3_root);
+
+            let compacted = handle_drain(&fixture.registry, &fixture.data_root);
+            // ws1 compact 1 + ws2 compact 3 = 4
+            assert_eq!(compacted, 4);
+            // ws1: 4 → 3
+            assert_eq!(count_staging_total(&fixture.data_root, &ws1_id), 3);
+            // ws2: 3 → 0
+            assert_eq!(count_staging_total(&fixture.data_root, &ws2_id), 0);
+        }
+
+        #[test]
+        fn test_handle_drain_is_idempotent() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+            write_staging_entries_with_status(&fixture.data_root, &ws_id, 5, 3);
+
+            // 第一次 drain：compact 3 条
+            let c1 = handle_drain(&fixture.registry, &fixture.data_root);
+            assert_eq!(c1, 3);
+
+            // 第二次 drain：无 applied 可 compact
+            let c2 = handle_drain(&fixture.registry, &fixture.data_root);
+            assert_eq!(c2, 0);
         }
     }
 }
