@@ -227,7 +227,7 @@ LOCK_EX → BEGIN IMMEDIATE → scan manifests + pending refs → sweep → COMM
 - **fail-closed**：任何 workspace DB 读取失败 → ROLLBACK + 中止，不删任何条目。
 - **不回收 active generation 的 cas_key**：`file_generations` 中引用到的 key 必须存活。
 
-### 5.2 实现
+### 5.2 Python 实现
 
 ```python
 def gc_cas(cas_conn, grace_period_days=7):
@@ -321,7 +321,54 @@ def gc_cas(cas_conn, grace_period_days=7):
         os.close(flock_fd)
 ```
 
-### 5.3 删除顺序（不变量）
+### 5.3 Rust 实现（G6 落地）
+
+`rust_ext/src/daemon/cas.rs::CasStore` 实现 fs2 flock + BEGIN IMMEDIATE 双保险：
+
+```rust
+pub fn gc(&self, live_keys: &HashSet<String>, _grace_period_days: f64)
+    -> Result<CasGcStats, CasPublishError>
+{
+    // G6: 先获取文件锁（RAII，drop 自动释放）
+    // 内存模式（db_path = None）跳过 flock，返回 Ok(None)
+    let _gc_lock = self.acquire_gc_lock()?;
+
+    let conn = self.conn.lock().unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    // ... mark-sweep 实现（同 Python）...
+}
+```
+
+**关键设计**：
+
+| 维度 | Python 实现 | Rust 实现（G6） |
+|------|------------|------------------|
+| 文件锁 API | `fcntl.flock(fd, LOCK_EX)` | `fs2::FileExt::lock_exclusive(&file)` |
+| 锁路径 | `CAS_FLOCK_PATH`（全局） | `{db_path}.lock`（per-DB） |
+| RAII | `try/finally` + 显式 `LOCK_UN` | `GcLockGuard` struct + `Drop` trait |
+| 跨平台 | 仅 Unix（fcntl） | 跨平台（fs2 在 Windows 用 LockFileEx，Linux 用 flock） |
+| 内存模式 | 不适用 | `db_path = None` 时跳过 flock（单进程内 Mutex 串行化） |
+| 失败策略 | 抛异常 | `Err(CasPublishError::Lock)`，不降级 |
+| BEGIN IMMEDIATE | 是 | 是（双保险：flock 防跨进程，BEGIN 防同进程线程并发） |
+
+**fs2 crate 选择原因**：
+- 跨平台：Windows（`LockFileEx`）+ Linux（`flock`）+ macOS（`flock`）一致 API
+- 不依赖 libc 直接系统调用，避免 unsafe 代码
+- API 简洁：`lock_exclusive`（阻塞）/ `try_lock_exclusive`（非阻塞）/ `unlock`
+
+**降级策略**：
+- fs2 调用失败 **不降级**，直接返回 `Err(CasPublishError::Lock)`
+- 原因：GC 是破坏性操作，宁可失败不可不安全
+- 调用方（`cw_daemon` 或 `Replicator`）负责重试或上报错误
+
+**测试覆盖**（5 个新测试）：
+- `test_gc_in_memory_skips_flock`：内存模式跳过 flock
+- `test_gc_file_mode_creates_lock_file`：文件模式创建 `.lock` 文件
+- `test_gc_file_mode_concurrent_lock_blocks_or_fails`：并发互斥验证
+- `test_gc_with_file_mode_succeeds`：gc() 完整流程
+- `test_gc_unreferenced_with_file_mode_succeeds`：gc_unreferenced() 完整流程
+
+### 5.4 删除顺序（不变量）
 
 ```
 cas_symbols → cas_raw_calls → cas_imports   （子表，先删）

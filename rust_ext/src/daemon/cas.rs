@@ -5,8 +5,8 @@
 //!   file_generation_seen/committed）
 //!
 //! 跨平台：rusqlite + sha2，Windows 可完整验收。
-//! `cas_gc` 的跨平台 flock 用 fs2 crate（如不可用则降级为 BEGIN IMMEDIATE 保护），
-//! 本 R5 阶段仅实现 cas_gc 的 mark-sweep 逻辑（不加 flock，留给后续集成）。
+//! G6: `cas_gc` 的跨进程并发安全由 fs2 flock + BEGIN IMMEDIATE 双保险。
+//! fs2 在 Windows（LockFileEx）和 Linux（flock）上都可用，无需降级。
 //!
 //! 不变量（与 Python cas-gc-protocol.md 一致）：
 //! - C3: building 状态残留由 GC 清理
@@ -227,8 +227,13 @@ pub struct CasPublishInput {
 }
 
 /// CAS store：封装 rusqlite Connection，提供 CAS 原子发布 / lookup / pin / GC
+///
+/// G6: `db_path` 字段用于 GC 文件锁（fs2 flock）。内存模式（`open_in_memory`）
+/// 的 `db_path` 为 None，此时 GC 跳过 flock（单进程内 `conn` Mutex 已串行化）。
 pub struct CasStore {
     conn: Mutex<Connection>,
+    /// CAS DB 文件路径（None 表示内存模式）
+    db_path: Option<String>,
 }
 
 impl CasStore {
@@ -243,15 +248,17 @@ impl CasStore {
         Self::init_conn(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            db_path: Some(db_path.to_string()),
         })
     }
 
-    /// 内存数据库（测试用）
+    /// 内存数据库（测试用，无文件锁）
     pub fn open_in_memory() -> Result<Self, rusqlite::Error> {
         let conn = Connection::open_in_memory()?;
         Self::init_conn(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            db_path: None,
         })
     }
 
@@ -266,6 +273,52 @@ impl CasStore {
         conn.execute_batch(CAS_SCHEMA_DDL)?;
         conn.execute_batch(CAS_INDEX_SQL)?;
         Ok(())
+    }
+
+    /// G6: 获取 CAS DB 文件路径（内存模式返回 None）
+    pub fn db_path(&self) -> Option<&str> {
+        self.db_path.as_deref()
+    }
+
+    /// G6: 获取 GC 文件锁。
+    ///
+    /// 文件锁路径为 `{db_path}.lock`，使用 `fs2::FileExt::lock_exclusive` 阻塞等待
+    /// 跨进程独占访问。返回 RAII guard，drop 时自动释放锁。
+    ///
+    /// **跨进程并发 GC 安全保障**：
+    /// - `BEGIN IMMEDIATE` 仅保证同一进程内并发安全（SQLite 写锁）
+    /// - 多 daemon 实例并发 GC 时，需要 flock 防止跨进程 mark-sweep 数据竞态
+    /// - flock + BEGIN IMMEDIATE 形成双保险
+    ///
+    /// **内存模式**（`db_path = None`）：跳过 flock（单进程内 `conn` Mutex 已串行化），
+    /// 返回 `None`。调用方需处理 `Option`。
+    ///
+    /// **降级策略**：fs2 调用失败不降级，直接返回 `Err(CasPublishError::Lock)`。
+    /// 原因：GC 是破坏性操作，宁可失败不可不安全。
+    fn acquire_gc_lock(&self) -> Result<Option<GcLockGuard>, CasPublishError> {
+        let db_path = match &self.db_path {
+            Some(p) => p,
+            None => return Ok(None),
+        };
+        let lock_path = format!("{}.lock", db_path);
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|e| {
+                CasPublishError::Lock(format!(
+                    "open lock file {} failed: {}",
+                    lock_path, e
+                ))
+            })?;
+        fs2::FileExt::lock_exclusive(&file).map_err(|e| {
+            CasPublishError::Lock(format!(
+                "lock_exclusive {} failed: {}（可能另一进程正在执行 GC）",
+                lock_path, e
+            ))
+        })?;
+        Ok(Some(GcLockGuard { _file: file }))
     }
 
     /// 查询 CAS 是否命中（state='ready'）。返回 Some(json) 表示命中。
@@ -492,7 +545,12 @@ impl CasStore {
 
     /// CAS GC——mark-sweep 实现（对应 Python db_cas.py:cas_gc）
     ///
-    /// 注意：本 R5 阶段不加 flock（跨平台 flock 留给后续），仅靠 BEGIN IMMEDIATE 保护。
+    /// G6: 跨进程并发安全由两层保障：
+    /// 1. **fs2 flock**（文件锁）：跨进程独占，防多 daemon 实例并发 GC mark-sweep 竞态
+    /// 2. **BEGIN IMMEDIATE**（SQLite 写锁）：同进程内串行化，防线程并发
+    ///
+    /// 内存模式（`db_path = None`）跳过 flock（单进程内 `conn` Mutex 已串行化）。
+    ///
     /// live_keys: 仍然存活的 cas_key 集合（manifest 引用）
     /// grace_period_days: 未使用（保留接口与 Python 一致）
     pub fn gc(
@@ -500,6 +558,9 @@ impl CasStore {
         live_keys: &std::collections::HashSet<String>,
         _grace_period_days: f64,
     ) -> Result<CasGcStats, CasPublishError> {
+        // G6: 先获取文件锁（RAII，drop 自动释放）
+        let _gc_lock = self.acquire_gc_lock()?;
+
         let now = now_ts();
         let conn = self.conn.lock().unwrap();
         conn.execute_batch("BEGIN IMMEDIATE")?;
@@ -631,6 +692,9 @@ impl CasStore {
     ///
     /// 返回：删除的 `cas_file_cache` 行数（不含子表）
     pub fn gc_unreferenced(&self, grace_days: u32) -> Result<u64, CasPublishError> {
+        // G6: 先获取文件锁（RAII，drop 自动释放）
+        let _gc_lock = self.acquire_gc_lock()?;
+
         let now = now_ts();
         let cutoff = now - (grace_days as f64) * 86400.0;
         let conn = self.conn.lock().unwrap();
@@ -923,6 +987,33 @@ fn parse_generation(gen: &str) -> Option<(i64, i64)> {
 // 数据结构
 // ============================================
 
+/// G6: GC 文件锁 RAII guard。
+///
+/// 持有 `fs2::File` 的 exclusive lock，drop 时自动释放。
+/// 用于 `CasStore::gc` 和 `gc_unreferenced` 入口防跨进程并发 GC。
+///
+/// **不可 Clone**：同一时刻只能有一个 owner 持有锁。
+pub struct GcLockGuard {
+    /// 持有文件句柄，drop 时 fs2 自动 unlock
+    _file: std::fs::File,
+}
+
+impl Drop for GcLockGuard {
+    fn drop(&mut self) {
+        // fs2::FileExt::unlock 在 Drop 时由 fs2 内部处理，
+        // 但显式调用更清晰（忽略错误：进程退出时锁会自动释放）
+        let _ = fs2::FileExt::unlock(&self._file);
+    }
+}
+
+impl std::fmt::Debug for GcLockGuard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GcLockGuard")
+            .field("file", &self._file)
+            .finish()
+    }
+}
+
 /// cas_file_cache 行（对应 Python cas_lookup 返回的 dict）
 #[derive(Debug, Clone)]
 pub struct CasFileCacheRow {
@@ -956,12 +1047,15 @@ pub struct FileGenerationRow {
 #[derive(Debug)]
 pub enum CasPublishError {
     Sqlite(rusqlite::Error),
+    /// G6: 文件锁获取失败（跨进程 GC 互斥）
+    Lock(String),
 }
 
 impl std::fmt::Display for CasPublishError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CasPublishError::Sqlite(e) => write!(f, "SQLite 错误: {}", e),
+            CasPublishError::Lock(msg) => write!(f, "GC 文件锁错误: {}", msg),
         }
     }
 }
@@ -1458,5 +1552,143 @@ mod tests {
         assert_eq!(parse_generation("invalid"), None);
         assert_eq!(parse_generation("1:not_a_number"), None);
         assert_eq!(parse_generation(""), None);
+    }
+
+    // ---- G6: fs2 flock 跨进程 GC 互斥测试 ----
+
+    #[test]
+    fn test_gc_in_memory_skips_flock() {
+        // G6: 内存模式（db_path = None）应跳过 flock，acquire_gc_lock 返回 Ok(None)
+        let store = CasStore::open_in_memory().unwrap();
+        assert!(store.db_path().is_none());
+        let guard = store.acquire_gc_lock().unwrap();
+        assert!(guard.is_none(), "内存模式应返回 None（跳过 flock）");
+    }
+
+    #[test]
+    fn test_gc_file_mode_creates_lock_file() {
+        // G6: 文件模式应在 db_path + ".lock" 创建锁文件
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("test_cas.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let store = CasStore::open(db_path_str).unwrap();
+        assert_eq!(store.db_path(), Some(db_path_str));
+
+        // 获取锁
+        let guard = store.acquire_gc_lock().unwrap();
+        assert!(guard.is_some(), "文件模式应返回 Some(guard)");
+
+        // 锁文件应存在
+        let lock_path = format!("{}.lock", db_path_str);
+        assert!(
+            std::path::Path::new(&lock_path).exists(),
+            "锁文件应存在: {}",
+            lock_path
+        );
+
+        // guard drop 后锁释放（这里手动 drop 验证）
+        drop(guard);
+
+        // 再次获取应成功（锁已释放）
+        let _guard2 = store.acquire_gc_lock().unwrap();
+    }
+
+    #[test]
+    fn test_gc_file_mode_concurrent_lock_blocks_or_fails() {
+        // G6: 两个 CasStore 实例（同一 db_path），第一个持锁时第二个应阻塞或失败
+        // 注意：fs2::lock_exclusive 是阻塞调用，测试中用 try_lock_exclusive 验证互斥
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("concurrent_cas.db");
+        let db_path_str = db_path.to_str().unwrap();
+        // CasStore::open 会初始化 schema，验证两个实例能共享同一 db_path（WAL 模式）
+        let _store1 = CasStore::open(db_path_str).unwrap();
+        let _store2 = CasStore::open(db_path_str).unwrap();
+
+        // 模拟 store1 持锁（直接操作 lock 文件，等价于 acquire_gc_lock 内部逻辑）
+        let lock_path = format!("{}.lock", db_path_str);
+        let file1 = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&file1).unwrap();
+
+        // store2 尝试 lock_exclusive 应失败（用 try_lock_exclusive 非阻塞验证）
+        let file2 = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        let result = fs2::FileExt::try_lock_exclusive(&file2);
+        assert!(
+            result.is_err(),
+            "第二个实例 try_lock_exclusive 应失败（已被 file1 持有）"
+        );
+
+        // 释放 file1 的锁
+        fs2::FileExt::unlock(&file1).unwrap();
+
+        // 现在 store2 应能获取锁
+        let file3 = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        let result = fs2::FileExt::try_lock_exclusive(&file3);
+        assert!(result.is_ok(), "释放锁后应能获取");
+    }
+
+    #[test]
+    fn test_gc_with_file_mode_succeeds() {
+        // G6: 文件模式 CasStore.gc() 应正常工作（flock + BEGIN IMMEDIATE）
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("gc_test.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let store = CasStore::open(db_path_str).unwrap();
+
+        // 直接插入一条 ready 状态的记录（GC 目标）
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO cas_file_cache
+                 (cas_key, content_hash, language, file_size, total_lines,
+                  parser_version, callwarden_version, extraction_config_version,
+                  abi_version, input_abi_version, state, parsed_at)
+                 VALUES (?1, 'hash', 'rust', 0, 0, 'pv', 'cv', 'ec', 'av', 'iav', 'ready', 0.0)",
+                params!["file_gc_key"],
+            )
+            .unwrap();
+        }
+
+        // GC 清理所有（live_keys 为空）
+        let live = HashSet::new();
+        let stats = store.gc(&live, 7.0).unwrap();
+        // 应删除 1 个 cas_file_cache 行
+        assert_eq!(stats.deleted_files, 1);
+    }
+
+    #[test]
+    fn test_gc_unreferenced_with_file_mode_succeeds() {
+        // G6: 文件模式 CasStore.gc_unreferenced() 应正常工作
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("gc_unref_test.db");
+        let db_path_str = db_path.to_str().unwrap();
+        let store = CasStore::open(db_path_str).unwrap();
+
+        // 直接插入一条 ready 状态的记录（parsed_at 为很久以前，触发 GC）
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO cas_file_cache
+                 (cas_key, content_hash, language, file_size, total_lines,
+                  parser_version, callwarden_version, extraction_config_version,
+                  abi_version, input_abi_version, state, parsed_at)
+                 VALUES (?1, 'hash', 'rust', 0, 0, 'pv', 'cv', 'ec', 'av', 'iav', 'ready', 0.0)",
+                params!["stale_key"],
+            )
+            .unwrap();
+        }
+
+        // gc_unreferenced 应删除（parsed_at=0.0 远小于 cutoff）
+        let deleted = store.gc_unreferenced(7).unwrap();
+        assert_eq!(deleted, 1);
     }
 }

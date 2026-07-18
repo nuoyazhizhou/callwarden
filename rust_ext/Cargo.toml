@@ -75,6 +75,9 @@ serde = { version = "1.0", features = ["derive"] }
 thiserror = "1.0"
 # G8 daemon: base64 用于解码客户端传来的 canonical_bytes_b64（跨平台 fallback，FD 模式仅 Unix）
 base64 = "0.22"
+# G6 CAS GC: fs2 提供跨平台文件锁（lock_exclusive），用于 CasStore::gc 和 gc_unreferenced
+# 多 daemon 实例并发 GC 时与 BEGIN IMMEDIATE 形成双保险，防跨进程 mark-sweep 数据竞态
+fs2 = "0.4"
 
 # R7 cw_daemon binary：clap（CLI 参数解析）+ signal-hook（SIGTERM/SIGINT 优雅关闭）
 # Linux-only 依赖，避免 Windows/macOS 编译时引入不必要的包
