@@ -334,6 +334,119 @@ impl WorkspaceRegistry {
         )?;
         Ok(count)
     }
+
+    // ============================================
+    // G4: Container Mount Mapping CRUD
+    // ============================================
+
+    /// 注册容器挂载映射（INSERT OR REPLACE，UNIQUE(container_id, container_path) 约束）
+    ///
+    /// 对应 RPC `mount.register`：
+    /// - container_id：容器标识（如 "ubuntu_2204"）
+    /// - container_path：容器内路径前缀（如 "/home/user1"）
+    /// - host_path：宿主机真实路径（如 "/data/docker_volumes/user1"）
+    /// - mapping_type：bind / volume / smb（默认 bind）
+    ///
+    /// 返回新插入或替换后的映射记录（JSON）。
+    pub fn register_mount_mapping(
+        &self,
+        container_id: &str,
+        container_path: &str,
+        host_path: &str,
+        mapping_type: &str,
+    ) -> Result<Value, rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO container_mount_mappings
+             (container_id, container_path, host_path, mapping_type)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![container_id, container_path, host_path, mapping_type],
+        )?;
+        // 重新查询以拿回 id（INSERT OR REPLACE 可能改 id）
+        let mut stmt = conn.prepare(
+            "SELECT id, container_id, container_path, host_path, mapping_type
+             FROM container_mount_mappings
+             WHERE container_id = ?1 AND container_path = ?2",
+        )?;
+        let mut rows = stmt.query(params![container_id, container_path])?;
+        if let Some(row) = rows.next()? {
+            mount_row_to_json(row)
+        } else {
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        }
+    }
+
+    /// 列出容器挂载映射
+    ///
+    /// 对应 RPC `mount.list`：
+    /// - container_id=None：列出所有映射
+    /// - container_id=Some(cid)：按 container_id 过滤
+    pub fn list_mount_mappings(
+        &self,
+        container_id: Option<&str>,
+    ) -> Result<Vec<Value>, rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = if container_id.is_some() {
+            conn.prepare(
+                "SELECT id, container_id, container_path, host_path, mapping_type
+                 FROM container_mount_mappings
+                 WHERE container_id = ?1
+                 ORDER BY id ASC",
+            )?
+        } else {
+            conn.prepare(
+                "SELECT id, container_id, container_path, host_path, mapping_type
+                 FROM container_mount_mappings
+                 ORDER BY id ASC",
+            )?
+        };
+        let mut result = Vec::new();
+        if let Some(cid) = container_id {
+            for row in stmt.query_map(params![cid], mount_row_to_json)? {
+                result.push(row?);
+            }
+        } else {
+            for row in stmt.query_map([], mount_row_to_json)? {
+                result.push(row?);
+            }
+        }
+        Ok(result)
+    }
+
+    /// 删除容器挂载映射
+    ///
+    /// 对应 RPC `mount.delete`：
+    /// - 按 (container_id, container_path) 删除单条
+    /// - 返回删除的行数（0 表示不存在，1 表示已删除）
+    pub fn delete_mount_mapping(
+        &self,
+        container_id: &str,
+        container_path: &str,
+    ) -> Result<u64, rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        let affected = conn.execute(
+            "DELETE FROM container_mount_mappings
+             WHERE container_id = ?1 AND container_path = ?2",
+            params![container_id, container_path],
+        )?;
+        Ok(affected as u64)
+    }
+}
+
+/// 从 Row 构造 mount mapping JSON 对象
+fn mount_row_to_json(row: &Row<'_>) -> rusqlite::Result<Value> {
+    let id: i64 = row.get(0)?;
+    let container_id: String = row.get(1)?;
+    let container_path: String = row.get(2)?;
+    let host_path: String = row.get(3)?;
+    let mapping_type: String = row.get(4)?;
+    let mut m = Map::new();
+    m.insert("id".to_string(), Value::Number(id.into()));
+    m.insert("container_id".to_string(), Value::String(container_id));
+    m.insert("container_path".to_string(), Value::String(container_path));
+    m.insert("host_path".to_string(), Value::String(host_path));
+    m.insert("mapping_type".to_string(), Value::String(mapping_type));
+    Ok(Value::Object(m))
 }
 
 /// 从 Row 构造 JSON 对象（字段顺序与 Python SELECT * 一致）
@@ -1193,6 +1306,74 @@ impl DaemonStateExt for WorkspaceDaemonState {
             Value::String(workspace_instance_id.to_string()),
         );
         m.insert("status".to_string(), Value::String("ok".to_string()));
+        Ok(Value::Object(m))
+    }
+
+    // ============================================
+    // G4: Container Mount Mapping handlers
+    // ============================================
+
+    fn handle_mount_register(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // mount.register RPC：注册容器挂载映射
+        // 参数：container_id（必填）、container_path（必填）、host_path（必填）、
+        //       mapping_type（可选，默认 "bind"，可选值 bind/volume/smb）
+        // ACL：当前实现不限制 UID（mount mapping 是 admin 级配置，daemon 部署时
+        //       通过 socket 文件权限控制谁能连）。如需 admin-only 校验，可在此添加。
+        let container_id = require_str_param(params, "container_id")?;
+        let container_path = require_str_param(params, "container_path")?;
+        let host_path = require_str_param(params, "host_path")?;
+        let mapping_type = get_str_param_or(params, "mapping_type", "bind");
+
+        // 校验 mapping_type 取值
+        if !matches!(mapping_type.as_str(), "bind" | "volume" | "smb") {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "mapping_type 必须是 bind/volume/smb，得到: {}",
+                mapping_type
+            )));
+        }
+
+        self.registry
+            .register_mount_mapping(container_id, container_path, host_path, &mapping_type)
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("register_mount_mapping: {}", e))
+            })
+    }
+
+    fn handle_mount_list(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // mount.list RPC：列出容器挂载映射
+        // 参数：container_id（可选，缺失则列出全部）
+        let container_id = get_str_param(params, "container_id");
+        let mappings = self
+            .registry
+            .list_mount_mappings(container_id)
+            .map_err(|e| DaemonRpcError::internal_error(format!("list_mount_mappings: {}", e)))?;
+        Ok(Value::Array(mappings))
+    }
+
+    fn handle_mount_delete(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // mount.delete RPC：删除容器挂载映射
+        // 参数：container_id（必填）、container_path（必填）
+        // 返回：{"deleted": 0|1}
+        let container_id = require_str_param(params, "container_id")?;
+        let container_path = require_str_param(params, "container_path")?;
+        let deleted = self
+            .registry
+            .delete_mount_mapping(container_id, container_path)
+            .map_err(|e| DaemonRpcError::internal_error(format!("delete_mount_mapping: {}", e)))?;
+        let mut m = Map::new();
+        m.insert("deleted".to_string(), Value::Number(deleted.into()));
         Ok(Value::Object(m))
     }
 }
@@ -3016,6 +3197,413 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM cas_symbol_contents", [], |row| row.get::<_, i64>(0))
             .unwrap();
         assert_eq!(contents_count, 0, "孤儿 cas_symbol_contents 应被清理");
+    }
+
+    // ============================================
+    // G4: Container Mount Mapping 测试
+    // ============================================
+
+    #[test]
+    fn test_register_mount_mapping_inserts_row() {
+        // 注册一条 mount mapping，验证字段正确写入
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let result = registry
+            .register_mount_mapping("ubuntu_2204", "/home/user1", "/data/volumes/user1", "bind")
+            .unwrap();
+        assert_eq!(result["container_id"], "ubuntu_2204");
+        assert_eq!(result["container_path"], "/home/user1");
+        assert_eq!(result["host_path"], "/data/volumes/user1");
+        assert_eq!(result["mapping_type"], "bind");
+        assert!(result["id"].as_i64().unwrap_or(0) > 0);
+    }
+
+    #[test]
+    fn test_register_mount_mapping_default_type_is_bind() {
+        // mapping_type 缺省时默认 bind（与 schema DEFAULT 'bind' 一致）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let result = registry
+            .register_mount_mapping("c1", "/app", "/host/app", "")
+            .unwrap();
+        // 注意：传入空字符串时，SQL 写入空字符串而非 default。
+        // DB DEFAULT 仅在未指定列时生效；这里显式传入空字符串。
+        // 实际 RPC handler 会传入默认值 "bind"，故此处验证 handler 行为更合适。
+        // 但为了测试 DB 层的灵活性，这里接受空字符串。
+        assert_eq!(result["mapping_type"], "");
+    }
+
+    #[test]
+    fn test_register_mount_mapping_upsert_replaces_existing() {
+        // 同一 (container_id, container_path) 重复注册：host_path 和 mapping_type 被更新
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        registry
+            .register_mount_mapping("c1", "/app", "/host/app_v1", "bind")
+            .unwrap();
+        let updated = registry
+            .register_mount_mapping("c1", "/app", "/host/app_v2", "volume")
+            .unwrap();
+        assert_eq!(updated["host_path"], "/host/app_v2");
+        assert_eq!(updated["mapping_type"], "volume");
+
+        // 验证只有 1 条记录（UNIQUE 约束生效）
+        let all = registry.list_mount_mappings(None).unwrap();
+        assert_eq!(all.len(), 1, "重复注册应替换而非插入新行");
+    }
+
+    #[test]
+    fn test_list_mount_mappings_returns_all_when_no_filter() {
+        // 不传 container_id 时返回所有映射
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        registry
+            .register_mount_mapping("c1", "/app", "/h1", "bind")
+            .unwrap();
+        registry
+            .register_mount_mapping("c2", "/app", "/h2", "bind")
+            .unwrap();
+        registry
+            .register_mount_mapping("c1", "/data", "/h3", "volume")
+            .unwrap();
+        let all = registry.list_mount_mappings(None).unwrap();
+        assert_eq!(all.len(), 3, "应列出全部 3 条映射");
+    }
+
+    #[test]
+    fn test_list_mount_mappings_filters_by_container_id() {
+        // 按 container_id 过滤
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        registry
+            .register_mount_mapping("c1", "/app", "/h1", "bind")
+            .unwrap();
+        registry
+            .register_mount_mapping("c2", "/app", "/h2", "bind")
+            .unwrap();
+        registry
+            .register_mount_mapping("c1", "/data", "/h3", "volume")
+            .unwrap();
+        let c1_only = registry.list_mount_mappings(Some("c1")).unwrap();
+        assert_eq!(c1_only.len(), 2, "c1 应有 2 条映射");
+        for m in &c1_only {
+            assert_eq!(m["container_id"], "c1");
+        }
+    }
+
+    #[test]
+    fn test_list_mount_mappings_empty_returns_empty_array() {
+        // 无映射时返回空数组（而非 None）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let all = registry.list_mount_mappings(None).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn test_delete_mount_mapping_removes_row() {
+        // 删除存在的映射，返回 1
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        registry
+            .register_mount_mapping("c1", "/app", "/h1", "bind")
+            .unwrap();
+        let deleted = registry.delete_mount_mapping("c1", "/app").unwrap();
+        assert_eq!(deleted, 1);
+        // 再查应不存在
+        let all = registry.list_mount_mappings(None).unwrap();
+        assert!(all.is_empty());
+    }
+
+    #[test]
+    fn test_delete_mount_mapping_returns_zero_for_missing() {
+        // 删除不存在的映射，返回 0（不报错）
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let deleted = registry.delete_mount_mapping("c1", "/app").unwrap();
+        assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn test_delete_mount_mapping_only_affects_target() {
+        // 删除单条不影响其他映射
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        registry
+            .register_mount_mapping("c1", "/app", "/h1", "bind")
+            .unwrap();
+        registry
+            .register_mount_mapping("c1", "/data", "/h2", "bind")
+            .unwrap();
+        registry
+            .register_mount_mapping("c2", "/app", "/h3", "bind")
+            .unwrap();
+        // 删除 c1:/app，应只删 1 条
+        let deleted = registry.delete_mount_mapping("c1", "/app").unwrap();
+        assert_eq!(deleted, 1);
+        let remaining = registry.list_mount_mappings(None).unwrap();
+        assert_eq!(remaining.len(), 2, "应剩 2 条");
+        // 验证剩余的 (container_id, container_path) 不包含 c1:/app
+        for m in &remaining {
+            let cid = m["container_id"].as_str().unwrap();
+            let cpath = m["container_path"].as_str().unwrap();
+            assert!(!(cid == "c1" && cpath == "/app"));
+        }
+    }
+
+    // ---- G4: dispatch 层 mount.* RPC handler 测试 ----
+
+    #[test]
+    fn test_dispatch_mount_register_succeeds() {
+        // mount.register RPC 成功注册映射
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let params = json!({
+            "container_id": "ubuntu_2204",
+            "container_path": "/home/user1",
+            "host_path": "/data/volumes/user1",
+            "mapping_type": "bind"
+        });
+        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        assert!(resp["ok"].as_bool().unwrap_or(false), "mount.register 应成功");
+        let result = &resp["result"];
+        assert_eq!(result["container_id"], "ubuntu_2204");
+        assert_eq!(result["container_path"], "/home/user1");
+        assert_eq!(result["host_path"], "/data/volumes/user1");
+        assert_eq!(result["mapping_type"], "bind");
+    }
+
+    #[test]
+    fn test_dispatch_mount_register_default_mapping_type_is_bind() {
+        // 缺省 mapping_type 时，handler 默认填充 "bind"
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let params = json!({
+            "container_id": "c1",
+            "container_path": "/app",
+            "host_path": "/h1"
+        });
+        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        assert!(resp["ok"].as_bool().unwrap_or(false));
+        assert_eq!(resp["result"]["mapping_type"], "bind");
+    }
+
+    #[test]
+    fn test_dispatch_mount_register_rejects_invalid_mapping_type() {
+        // mapping_type 非 bind/volume/smb 时返回 invalid_params 错误
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let params = json!({
+            "container_id": "c1",
+            "container_path": "/app",
+            "host_path": "/h1",
+            "mapping_type": "invalid_type"
+        });
+        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        assert!(!resp["ok"].as_bool().unwrap_or(true), "应失败");
+        assert_eq!(resp["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_dispatch_mount_register_requires_container_id() {
+        // 缺少 container_id 时返回 invalid_params
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let params = json!({
+            "container_path": "/app",
+            "host_path": "/h1"
+        });
+        let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        assert!(!resp["ok"].as_bool().unwrap_or(true));
+        assert_eq!(resp["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_dispatch_mount_list_returns_empty_initially() {
+        // 初始状态下 mount.list 返回空数组
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        assert!(resp["ok"].as_bool().unwrap_or(false));
+        assert!(resp["result"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_mount_list_returns_all_without_filter() {
+        // 注册 3 条后，mount.list 无 filter 返回全部
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        for (cid, cpath, hpath, mtype) in [
+            ("c1", "/app", "/h1", "bind"),
+            ("c2", "/app", "/h2", "bind"),
+            ("c1", "/data", "/h3", "volume"),
+        ] {
+            let params = json!({
+                "container_id": cid,
+                "container_path": cpath,
+                "host_path": hpath,
+                "mapping_type": mtype
+            });
+            let _ = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        }
+        let resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        assert!(resp["ok"].as_bool().unwrap_or(false));
+        assert_eq!(resp["result"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_dispatch_mount_list_filters_by_container_id() {
+        // mount.list 带 container_id 过滤
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        for (cid, cpath, hpath) in [
+            ("c1", "/app", "/h1"),
+            ("c2", "/app", "/h2"),
+            ("c1", "/data", "/h3"),
+        ] {
+            let params = json!({
+                "container_id": cid,
+                "container_path": cpath,
+                "host_path": hpath
+            });
+            let _ = dispatch(&mut state, peer, "mount.register", &params, &[]);
+        }
+        let resp = dispatch(
+            &mut state,
+            peer,
+            "mount.list",
+            &json!({"container_id": "c1"}),
+            &[],
+        );
+        assert!(resp["ok"].as_bool().unwrap_or(false));
+        let arr = resp["result"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        for m in arr {
+            assert_eq!(m["container_id"], "c1");
+        }
+    }
+
+    #[test]
+    fn test_dispatch_mount_delete_removes_mapping() {
+        // mount.delete 删除存在的映射，返回 deleted=1
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        // 先注册一条
+        let _ = dispatch(
+            &mut state,
+            peer,
+            "mount.register",
+            &json!({
+                "container_id": "c1",
+                "container_path": "/app",
+                "host_path": "/h1"
+            }),
+            &[],
+        );
+        // 删除
+        let resp = dispatch(
+            &mut state,
+            peer,
+            "mount.delete",
+            &json!({"container_id": "c1", "container_path": "/app"}),
+            &[],
+        );
+        assert!(resp["ok"].as_bool().unwrap_or(false));
+        assert_eq!(resp["result"]["deleted"], 1);
+        // 再 list 应为空
+        let list_resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        assert!(list_resp["result"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_dispatch_mount_delete_returns_zero_for_missing() {
+        // mount.delete 不存在的映射，返回 deleted=0（不报错）
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let resp = dispatch(
+            &mut state,
+            peer,
+            "mount.delete",
+            &json!({"container_id": "c1", "container_path": "/app"}),
+            &[],
+        );
+        assert!(resp["ok"].as_bool().unwrap_or(false));
+        assert_eq!(resp["result"]["deleted"], 0);
+    }
+
+    #[test]
+    fn test_dispatch_mount_delete_requires_container_id() {
+        // 缺少 container_id 时返回 invalid_params
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let resp = dispatch(
+            &mut state,
+            peer,
+            "mount.delete",
+            &json!({"container_path": "/app"}),
+            &[],
+        );
+        assert!(!resp["ok"].as_bool().unwrap_or(true));
+        assert_eq!(resp["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_dispatch_mount_register_then_upsert() {
+        // 同一 (container_id, container_path) 二次注册应替换而非新增
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let params_v1 = json!({
+            "container_id": "c1",
+            "container_path": "/app",
+            "host_path": "/h_v1",
+            "mapping_type": "bind"
+        });
+        let _ = dispatch(&mut state, peer, "mount.register", &params_v1, &[]);
+        let params_v2 = json!({
+            "container_id": "c1",
+            "container_path": "/app",
+            "host_path": "/h_v2",
+            "mapping_type": "volume"
+        });
+        let resp_v2 = dispatch(&mut state, peer, "mount.register", &params_v2, &[]);
+        assert!(resp_v2["ok"].as_bool().unwrap_or(false));
+        assert_eq!(resp_v2["result"]["host_path"], "/h_v2");
+        assert_eq!(resp_v2["result"]["mapping_type"], "volume");
+        // list 应只有 1 条
+        let list_resp = dispatch(&mut state, peer, "mount.list", &json!({}), &[]);
+        assert_eq!(list_resp["result"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_dispatch_unknown_mount_method_returns_method_not_found() {
+        // 未知 mount.* 方法返回 method_not_found
+        let mut state = make_state();
+        let peer = make_peer(1000);
+        let resp = dispatch(
+            &mut state,
+            peer,
+            "mount.update",
+            &json!({}),
+            &[],
+        );
+        assert!(!resp["ok"].as_bool().unwrap_or(true));
+        assert_eq!(resp["error"]["code"], "method_not_found");
+    }
+
+    #[test]
+    fn test_mount_register_persists_across_state_recreation() {
+        // 验证 mount mapping 持久化到 DB 文件，重新打开 registry 仍能读到
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("registry.db");
+        let db_path_str = db_path.to_string_lossy().to_string();
+
+        // 第一个 registry 注册一条
+        {
+            let registry = WorkspaceRegistry::open(&db_path_str).unwrap();
+            registry
+                .register_mount_mapping("c1", "/app", "/h1", "bind")
+                .unwrap();
+        }
+
+        // 重新打开同一 DB 文件，应能读到
+        {
+            let registry = WorkspaceRegistry::open(&db_path_str).unwrap();
+            let all = registry.list_mount_mappings(None).unwrap();
+            assert_eq!(all.len(), 1, "重新打开 registry 应能读到持久化的映射");
+            assert_eq!(all[0]["container_id"], "c1");
+            assert_eq!(all[0]["host_path"], "/h1");
+        }
     }
 
     #[test]

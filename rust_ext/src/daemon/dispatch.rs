@@ -351,6 +351,36 @@ pub trait DaemonStateExt {
         let _ = (peer, params);
         Err(DaemonRpcError::method_not_found("restore"))
     }
+
+    // ---- Mount Mapping 管理（G4 实现）----
+    // 默认实现返回 method_not_found，由 WorkspaceDaemonState 覆盖
+
+    fn handle_mount_register(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("mount.register"))
+    }
+
+    fn handle_mount_list(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("mount.list"))
+    }
+
+    fn handle_mount_delete(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("mount.delete"))
+    }
 }
 
 /// daemon state 扩展的默认实现（所有高级方法返回 method_not_found）
@@ -433,6 +463,11 @@ fn dispatch_inner<S: DaemonStateExt>(
         // ---- 运维方法（R6 实现）----
         "backup" => state.handle_backup(peer, params),
         "restore" => state.handle_restore(peer, params),
+
+        // ---- Mount Mapping 管理（G4 实现）----
+        "mount.register" => state.handle_mount_register(peer, params),
+        "mount.list" => state.handle_mount_list(peer, params),
+        "mount.delete" => state.handle_mount_delete(peer, params),
 
         // ---- 未知方法 ----
         _ => Err(DaemonRpcError::method_not_found(method)),

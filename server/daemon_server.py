@@ -26,6 +26,9 @@ from callwarden.db.db_daemon import (
     list_workspaces,
     get_workspace_status,
     update_workspace_status,
+    register_mount_mapping,
+    list_mount_mappings,
+    delete_mount_mapping,
 )
 from callwarden.config import DAEMON_REGISTRY_DB
 from callwarden.server.daemon_protocol import (
@@ -347,6 +350,54 @@ class EnterpriseDaemonService:
             keep_last = int(params.get("keep_last", 3))
             deleted = self.snapshot_service.gc_snapshots(keep_last)
             return {"deleted_count": deleted, "keep_last": keep_last}
+
+        # ---- Mount Mapping 管理（G4 实现）----
+        # mount.register / mount.list / mount.delete 不依赖 workspace_id，
+        # 在下方 workspace_id 必填检查之前处理。
+        if method == "mount.register":
+            container_id = str(params.get("container_id") or "")
+            container_path = str(params.get("container_path") or "")
+            host_path = str(params.get("host_path") or "")
+            if not container_id:
+                raise DaemonRpcError("invalid_params", "缺少 container_id")
+            if not container_path:
+                raise DaemonRpcError("invalid_params", "缺少 container_path")
+            if not host_path:
+                raise DaemonRpcError("invalid_params", "缺少 host_path")
+            mapping_type = str(params.get("mapping_type") or "bind")
+            with closing(self._registry_conn()) as conn:
+                try:
+                    return register_mount_mapping(
+                        conn,
+                        container_id=container_id,
+                        container_path=container_path,
+                        host_path=host_path,
+                        mapping_type=mapping_type,
+                    )
+                except ValueError as e:
+                    raise DaemonRpcError("invalid_params", str(e))
+
+        if method == "mount.list":
+            container_id = params.get("container_id")
+            if container_id is not None:
+                container_id = str(container_id)
+            with closing(self._registry_conn()) as conn:
+                return list_mount_mappings(conn, container_id=container_id)
+
+        if method == "mount.delete":
+            container_id = str(params.get("container_id") or "")
+            container_path = str(params.get("container_path") or "")
+            if not container_id:
+                raise DaemonRpcError("invalid_params", "缺少 container_id")
+            if not container_path:
+                raise DaemonRpcError("invalid_params", "缺少 container_path")
+            with closing(self._registry_conn()) as conn:
+                deleted = delete_mount_mapping(
+                    conn,
+                    container_id=container_id,
+                    container_path=container_path,
+                )
+            return {"deleted": deleted}
 
         # gc.cas 需要 workspace_id，在下方处理
 

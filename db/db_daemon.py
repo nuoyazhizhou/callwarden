@@ -134,3 +134,97 @@ def update_workspace_status(conn: sqlite3.Connection,
         (status, now, workspace_instance_id)
     )
     conn.commit()
+
+
+# ============================================
+# G4: Container Mount Mapping CRUD
+# ============================================
+
+# 允许的 mapping_type 取值（与 Rust workspace.rs handle_mount_register 一致）
+_VALID_MOUNT_TYPES = ("bind", "volume", "smb")
+
+
+def register_mount_mapping(conn: sqlite3.Connection,
+                           container_id: str,
+                           container_path: str,
+                           host_path: str,
+                           mapping_type: str = "bind") -> Dict[str, Any]:
+    """注册容器挂载映射（INSERT OR REPLACE，UNIQUE(container_id, container_path) 约束）。
+
+    同一 (container_id, container_path) 二次调用会替换 host_path 和 mapping_type。
+
+    Args:
+        container_id: 容器标识（如 "ubuntu_2204"）
+        container_path: 容器内路径前缀（如 "/home/user1"）
+        host_path: 宿主机真实路径（如 "/data/volumes/user1"）
+        mapping_type: bind / volume / smb（默认 bind）
+
+    Returns:
+        新插入或替换后的映射记录（dict）
+    """
+    if mapping_type not in _VALID_MOUNT_TYPES:
+        raise ValueError(
+            f"mapping_type 必须是 { _VALID_MOUNT_TYPES }，得到: {mapping_type}"
+        )
+    conn.execute(
+        """INSERT OR REPLACE INTO container_mount_mappings
+           (container_id, container_path, host_path, mapping_type)
+           VALUES (?, ?, ?, ?)""",
+        (container_id, container_path, host_path, mapping_type)
+    )
+    conn.commit()
+    row = conn.execute(
+        """SELECT id, container_id, container_path, host_path, mapping_type
+           FROM container_mount_mappings
+           WHERE container_id = ? AND container_path = ?""",
+        (container_id, container_path)
+    ).fetchone()
+    return dict(row) if row else {}
+
+
+def list_mount_mappings(conn: sqlite3.Connection,
+                       container_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """列出容器挂载映射。
+
+    Args:
+        container_id: 缺省则列出全部，否则按 container_id 过滤
+
+    Returns:
+        list[dict]，按 id 升序
+    """
+    if container_id is not None:
+        rows = conn.execute(
+            """SELECT id, container_id, container_path, host_path, mapping_type
+               FROM container_mount_mappings
+               WHERE container_id = ?
+               ORDER BY id ASC""",
+            (container_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT id, container_id, container_path, host_path, mapping_type
+               FROM container_mount_mappings
+               ORDER BY id ASC"""
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_mount_mapping(conn: sqlite3.Connection,
+                        container_id: str,
+                        container_path: str) -> int:
+    """删除容器挂载映射。
+
+    Args:
+        container_id: 容器标识
+        container_path: 容器内路径
+
+    Returns:
+        删除的行数（0 表示不存在，1 表示已删除）
+    """
+    cur = conn.execute(
+        """DELETE FROM container_mount_mappings
+           WHERE container_id = ? AND container_path = ?""",
+        (container_id, container_path)
+    )
+    conn.commit()
+    return cur.rowcount

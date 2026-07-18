@@ -78,6 +78,26 @@ def _parser() -> argparse.ArgumentParser:
 
     gc_snapshots = sub.add_parser("gc-snapshots", help="GC 快照（保留最近 N 个）")
     gc_snapshots.add_argument("--keep-last", type=int, default=3, help="每个 workspace 保留的快照数量")
+
+    # ---- Mount Mapping 管理命令（G4）----
+    mount = sub.add_parser("mount", help="容器挂载映射管理")
+    mount_sub = mount.add_subparsers(dest="mount_action", required=True)
+
+    mount_register = mount_sub.add_parser("register", help="注册/更新容器挂载映射")
+    mount_register.add_argument("container_id", help="容器标识（如 ubuntu_2204）")
+    mount_register.add_argument("container_path", help="容器内路径前缀")
+    mount_register.add_argument("host_path", help="宿主机真实路径")
+    mount_register.add_argument("--type", dest="mapping_type",
+                                choices=["bind", "volume", "smb"], default="bind",
+                                help="映射类型（默认 bind）")
+
+    mount_list = mount_sub.add_parser("list", help="列出容器挂载映射")
+    mount_list.add_argument("--container-id", default=None,
+                            help="按 container_id 过滤（缺省列出全部）")
+
+    mount_delete = mount_sub.add_parser("delete", help="删除容器挂载映射")
+    mount_delete.add_argument("container_id", help="容器标识")
+    mount_delete.add_argument("container_path", help="容器内路径前缀")
     return parser
 
 
@@ -159,6 +179,26 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None) -> int:
         })
     elif args.action == "gc-snapshots":
         result = client.call("gc.snapshots", {"keep_last": args.keep_last})
+    elif args.action == "mount":
+        if args.mount_action == "register":
+            result = client.call("mount.register", {
+                "container_id": args.container_id,
+                "container_path": args.container_path,
+                "host_path": os.path.abspath(args.host_path),
+                "mapping_type": args.mapping_type,
+            })
+        elif args.mount_action == "list":
+            params = {}
+            if args.container_id:
+                params["container_id"] = args.container_id
+            result = client.call("mount.list", params)
+        elif args.mount_action == "delete":
+            result = client.call("mount.delete", {
+                "container_id": args.container_id,
+                "container_path": args.container_path,
+            })
+        else:
+            raise AssertionError(args.mount_action)
     else:
         raise AssertionError(args.action)
     _print_json(result)

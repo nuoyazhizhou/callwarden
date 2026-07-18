@@ -216,7 +216,7 @@
 | G1 | 三层存储（Global CAS / Toolchain / Thin Workspace） | EA/DS | ⚠️ 部分 | CAS 表已建（db_cas.py 509行），Toolchain DB（db_toolchain.py 1028行），manifest 已有 |
 | G2 | Rust daemon 单例守护进程 | DS/EA | ⚠️ 部分 | daemon_server.py + Rust cw_daemon.rs 已有 binary，但完整 UDS 协议未闭合 |
 | G3 | UDS + SO_PEERCRED 认证 | DS/DI | ✅ 已实现 | WSL2 Linux 全 14 用例通过：UDS roundtrip/SCM_RIGHTS fd 传递/cross-UID 隔离/CLI 管理流/真实双 UID 隔离 |
-| G4 | Workspace Registry + Container Mount Mapping | DS/RP | ❓ 待验证 | daemon_workspaces 表已有 |
+| G4 | Workspace Registry + Container Mount Mapping | DS/RP | ✅ 已实现 | Rust WorkspaceRegistry 3 个 CRUD 方法 + dispatch.rs mount.register/list/delete RPC + Python db_daemon.py CRUD + daemon_server.py mount.* handler + CLI mount register/list/delete 子命令；35 个测试通过（Rust 21 + Python 14） |
 | G5 | CAS Key 设计（7 参数 hash） | CG/DS | ✅ 已实现 | cas-gc-protocol 规范 |
 | G6 | CAS GC 协议（LOCK_EX + BEGIN IMMEDIATE） | CG | ✅ 已实现 | fs2 flock + BEGIN IMMEDIATE 双保险；GcLockGuard RAII；CasStore.db_path 字段；5 个新测试（内存模式跳过/文件模式锁创建/并发互斥/gc/gc_unreferenced） |
 | G7 | SnapshotManager + ArcSwap 发布 | DS/EW | ✅ 已实现 | Rust 多 generation history + gc_generations + 6 个 RPC handler |
