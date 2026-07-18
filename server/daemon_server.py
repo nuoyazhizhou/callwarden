@@ -458,11 +458,38 @@ class EnterpriseDaemonService:
             canonical_bytes = None
             received_fds = received_fds or []
             if received_fds:
-                # FD 模式：从 FD 读取文件内容
+                # FD 模式：检测 memfd vs 常规文件
                 fd = received_fds[0]
                 try:
-                    info = os.fstat(fd)
-                    canonical_bytes = os.read(fd, info.st_size)
+                    from callwarden.server.ipc_transport import is_memfd, validate_memfd_fd
+                    if is_memfd(fd):
+                        # G10: memfd 路径——agent 必须在 params 中提供
+                        # canonical_len + content_hash，daemon 执行四重校验
+                        canonical_len = params.get("canonical_len")
+                        content_hash = params.get("content_hash")
+                        if canonical_len is None or not content_hash:
+                            raise DaemonRpcError(
+                                "invalid_params",
+                                "memfd 模式必须提供 canonical_len + content_hash",
+                            )
+                        try:
+                            validated_fd = validate_memfd_fd(
+                                fd,
+                                expected_canonical_len=int(canonical_len),
+                                expected_content_hash=str(content_hash),
+                                peer_uid=uid,
+                            )
+                            info = os.fstat(validated_fd)
+                            canonical_bytes = os.read(validated_fd, info.st_size)
+                        finally:
+                            try:
+                                os.close(fd)
+                            except OSError:
+                                pass
+                    else:
+                        # 常规文件 FD：直接读取（向后兼容）
+                        info = os.fstat(fd)
+                        canonical_bytes = os.read(fd, info.st_size)
                 except OSError as e:
                     raise DaemonRpcError("fd_read_failed", str(e))
             elif "canonical_bytes_b64" in params:

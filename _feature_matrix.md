@@ -221,8 +221,8 @@
 | G6 | CAS GC 协议（LOCK_EX + BEGIN IMMEDIATE） | CG | ✅ 已实现 | fs2 flock + BEGIN IMMEDIATE 双保险；GcLockGuard RAII；CasStore.db_path 字段；5 个新测试（内存模式跳过/文件模式锁创建/并发互斥/gc/gc_unreferenced） |
 | G7 | SnapshotManager + ArcSwap 发布 | DS/EW | ✅ 已实现 | Rust 多 generation history + gc_generations + 6 个 RPC handler |
 | G8 | Watcher Generation 状态机 | WG/EW | ✅ 已实现 | Rust daemon_handle_refresh 完整 4 步管道（session epoch CAS + 两阶段 CAS + daemon 侧 parse + CAS publish）+ detect_language_from_path + _daemon_parse_and_publish + canonical_bytes FD/base64 提取 |
-| G9 | Per-UID systemd --user agent | DS/WG | ❌ 未实施 | Linux 专属，Windows 不适用 |
-| G10 | memfd 密封协议（大文件传输） | DI | ❌ 未实施 | Linux 专属 |
+| G9 | Per-UID systemd --user agent | DS/WG | ✅ 已实现 | server/agent_session.py (AgentSession: session_id/epoch/seq_counter + RLock 线程安全 + 持久化 ~/.callwarden/agent_session.json) + server/agent_protocol.py (user_agent_connect 握手 + build_refresh_message + send_refresh_to_daemon 小文件 hex 路径/大文件 FD 路径 + AgentProtocolError) + server/agent_watcher.py (AgentWatcher + _AgentChangeHandler watchdog 防抖 + run_agent_watcher_loop) + cli/main.py:9709-10030 (cw-agent start/stop/status 子命令 + PID 文件 + SIGTERM 信号处理) + release/linux/deb/systemd/callwarden-agent.service (systemd --user unit, Type=simple, MemoryMax=512M, ProtectHome=read-only, ReadWritePaths=%h/.callwarden) + build_packages.sh 修正（cp 正式 unit 替代 inline 生成）+ 3 个测试文件 63 个测试全部通过（test_cw_agent_session.py 19 + test_cw_agent_watcher.py 23 + test_cw_agent_daemon_integration.py 21）+ docs/design/daemon-deploy-runbook.md §9 cw-agent 部署指南 |
+| G10 | memfd 密封协议（大文件传输） | DI | ✅ 已实现 | Python 协议层通过 G20-G22 完整实现（server/ipc_transport.py: send_via_memfd + recv_via_memfd 四重校验 + send_msg 透明路径选择 + 30+ 单元测试）；G10 补齐：is_memfd/validate_memfd_fd daemon 侧校验 + daemon_server.py workspace.file.refresh memfd 检测路径 + 3 个 inflight bytes 限制（MAX_CONN_QUEUED_BYTES 256MB/MAX_DAEMON_INFLIGHT_BYTES 2GB/MAX_UID_INFLIGHT_BYTES 512MB）+ InflightTracker 类 + 11 个跨平台测试 + 8 个 Linux 专属测试（真实 memfd_create + seal + roundtrip） |
 | G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ✅ 已实现 | Rust SnapshotCachePublisher 桥接 SnapshotCache → build_and_publish_blocking；ReplicationResult.merged_summary 填充；5 个 E2E 测试（merged_summary + publisher + 多 workspace 隔离） |
 | G12 | Durable Staging（JSONL + fsync） | DS/EW | ✅ 已实现 | durable_staging.py |
 | G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已实现 | metrics.py（691行完整实现） |
@@ -232,9 +232,9 @@
 | G17 | Snapshot GC | DS | ✅ 已实现 | snapshot_gc.py |
 | G18 | Job Executor + Scheduler | DS | ✅ 已实现 | job_executor.py + job_handlers.py |
 | G19 | Refresh Scheduler | DS | ✅ 已实现 | refresh_scheduler.py |
-| G20 | memfd 四重校验实现（seals→size→SHA-256→streaming hash） | E2E | ✅ 已实现 | _validate_snapshot_fd + _sha256_streaming(64KB chunk) |
-| G21 | SCM_RIGHTS FD 传输（_recv_msg_with_fd） | E2E | ✅ 已实现 | ancillary data 接收 + ProtocolError 处理 |
-| G22 | send_msg 统一入口（auto framed/memfd by MAX_MSG_BYTES） | E2E | ✅ 已实现 | daemon_protocol.py 透明路径选择 |
+| G20 | memfd 四重校验实现（seals→size→SHA-256→streaming hash） | E2E | ✅ 已实现 | server/ipc_transport.py:recv_via_memfd 四重校验（F_GET_SEALS→fstat size→MAX_MEMFD_BYTES→_sha256_streaming 64KB chunk）+ 6 个故障注入测试 |
+| G21 | SCM_RIGHTS FD 传输（_recv_msg_with_fd） | E2E | ✅ 已实现 | server/ipc_transport.py:_recv_msg_with_fd ancillary data 接收 + ProtocolError 处理 |
+| G22 | send_msg 统一入口（auto framed/memfd by MAX_MSG_BYTES） | E2E | ✅ 已实现 | server/ipc_transport.py:send_msg 透明路径选择（< 16MB 走 framed / ≥ 16MB 走 memfd）+ send_framed_stream 自动委托 |
 | G23 | EnterpriseDaemonService 完整实现（11 RPC dispatch） | E2E | ✅ 已实现 | ping/workspace.register/list/status/snapshot.publish/query.* |
 | G24 | 有界线程池 UDS server（16 workers） | E2E | ✅ 已实现 | EnterpriseDaemonServer concurrent.futures |
 | G25 | _validate_owned_path（realpath + owner UID 校验） | E2E | ✅ 已实现 | 防路径穿越 + archived workspace 拒绝 |

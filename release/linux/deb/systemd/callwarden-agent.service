@@ -1,0 +1,69 @@
+# Call Warden per-UID agent systemd --user unit
+# Task: T-1784374569181-210c540f (G9)
+# 设计: docs/design/enterprise-architecture-evolution.md §v8
+# 安装路径: /usr/lib/systemd/user/callwarden-agent.service
+#
+# 运行方式：per-UID systemd --user 实例
+# 启用步骤（管理员或用户执行）：
+#   1. （管理员）loginctl enable-linger $USER   # 允许用户 service 在未登录时运行
+#   2. systemctl --user daemon-reload
+#   3. systemctl --user enable --now callwarden-agent.service
+#
+# 二进制：cw-agent（Python entrypoint，调用 callwarden.cli.main:run_agent_mode）
+# 依赖：callwarden-daemon.service（system unit）应已启动并监听 UDS socket
+#
+# 日志：systemd 自动重定向到 journal（journalctl --user -u callwarden-agent）
+# PID 文件：~/.callwarden/agent.pid（用于 cw-agent stop/status 命令）
+# Session 文件：~/.callwarden/agent_session.json（持久化 session_id）
+
+[Unit]
+Description=Call Warden Per-UID File Watcher Agent
+Documentation=https://docs.callwarden.dev/agent
+# 依赖 system daemon（system unit），通过 UDS socket 通信
+# After=network.target 确保网络栈就绪（daemon socket 在 /run/callwarden/）
+After=network.target
+# Requires=callwarden-daemon.service 是 system unit，user service 无法直接 Requires
+# 改用 ExecStartPre 检查 socket 存在性，不存在则启动失败
+
+[Service]
+Type=simple
+
+# 启动命令：cw-agent start --watch-dir <workspace>
+# 默认 watch-dir 为 $HOME/work（用户可在 systemctl --user edit 覆盖）
+# 也可通过 CW_AGENT_WATCH_DIR 环境变量配置
+ExecStart=/usr/bin/cw-agent start ${CW_AGENT_WATCH_DIR:-$HOME/work}
+ExecStop=/usr/bin/cw-agent stop
+
+# 优雅停止：SIGTERM 触发 stop_event.set()，watcher 处理完 pending 后退出
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# 重启策略：失败后 5 秒重启（避免 watcher crash 导致永久退出）
+Restart=on-failure
+RestartSec=5
+
+# 环境变量（可由 systemctl --user edit 覆盖）
+Environment=CW_AGENT_WATCH_DIR=%h/work
+Environment=CW_DAEMON_SOCKET=/run/callwarden/callwarden.sock
+
+# 资源限制（agent 比 daemon 轻量）
+MemoryHigh=256M
+MemoryMax=512M
+LimitNOFILE=4096
+TasksMax=64
+
+# 安全约束（per-UID，需读用户文件，相对宽松）
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# agent 需要写 ~/.callwarden/agent_session.json 和 ~/.callwarden/agent.pid
+# 但 ProtectHome=read-only 不影响 %h/.callwarden/ 的写入（systemd 会自动允许 StateDirectory）
+ReadWritePaths=%h/.callwarden
+
+# 工作目录
+WorkingDirectory=%h
+
+[Install]
+WantedBy=default.target

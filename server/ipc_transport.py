@@ -29,7 +29,13 @@ import sys
 # ============================================================
 
 MAX_MSG_BYTES = 16 * 1024 * 1024  # 16 MB — 超过则走 memfd
-MAX_MEMFD_BYTES = 256 * 1024 * 1024  # 256 MB — 防 OOM
+MAX_MEMFD_BYTES = 256 * 1024 * 1024  # 256 MB — 单 memfd 上限，防 OOM
+
+# G10 inflight bytes 限制（规范：daemon-ipc-security.md §4）
+# S7 不变量：inflight bytes 超任一限制 → 暂停该连接 recv
+MAX_CONN_QUEUED_BYTES = 256 * 1024 * 1024  # 256 MB — 单连接排队上限
+MAX_DAEMON_INFLIGHT_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB — 全局 inflight 上限
+MAX_UID_INFLIGHT_BYTES = 512 * 1024 * 1024  # 512 MB — 单 UID inflight 上限
 
 # Linux memfd seal flags（来自 <linux/memfd.h>）
 F_SEAL_SEAL = 0x0001
@@ -319,3 +325,180 @@ def send_msg(sock, msg_type: int, payload: dict, canonical_bytes: bytes):
     if total_len > MAX_MSG_BYTES:
         return send_via_memfd(sock, msg_type, payload, canonical_bytes)
     return send_framed_stream(sock, msg_type, payload, canonical_bytes)
+
+
+# ============================================================
+# G10: 已接收 FD 的 memfd 校验（daemon 侧）
+# ============================================================
+
+
+def is_memfd(fd: int) -> bool:
+    """检测 FD 是否为 memfd（通过 F_GET_SEALS）。
+
+    规范：daemon-ipc-security.md §3.2
+    仅 Linux 支持 memfd；非 Linux 或非 memfd FD 返回 False。
+    """
+    if not _IS_LINUX:
+        return False
+    import fcntl
+    try:
+        seals = fcntl.fcntl(fd, F_GET_SEALS)
+        return seals > 0
+    except OSError:
+        return False
+
+
+def validate_memfd_fd(
+    fd: int,
+    expected_canonical_len: int,
+    expected_content_hash: str,
+    peer_uid: int,
+) -> int:
+    """G10 daemon 侧：对已接收的 memfd FD 执行四重校验。
+
+    规范：daemon-ipc-security.md §3.2（与 recv_via_memfd 相同的四重校验，但
+    FD 已经通过 SCM_RIGHTS 接收到，无需再调 _recv_msg_with_fd）。
+
+    四重校验（任一失败抛 ProtocolError 并关闭 FD）：
+    1. fstat().st_size == expected_canonical_len
+    2. F_GET_SEALS 包含 F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL
+    3. st_size <= MAX_MEMFD_BYTES
+    4. sha256(memfd content) == expected_content_hash
+
+    Args:
+        fd: 已通过 SCM_RIGHTS 接收的 FD
+        expected_canonical_len: agent 声明的 canonical bytes 长度
+        expected_content_hash: agent 声明的 canonical bytes sha256 hex
+        peer_uid: 发送方 UID（用于 owner 校验，可选）
+
+    Returns:
+        校验通过的 FD（已 lseek 到 0，可直接 os.read 或传给 parser）
+    """
+    try:
+        st = os.fstat(fd)
+
+        # 0. owner UID 校验（与 _validate_snapshot_frame 一致）
+        if st.st_uid != peer_uid:
+            raise ProtocolError(
+                f"memfd owner_uid={st.st_uid}，peer_uid={peer_uid}"
+            )
+
+        # 1. 大小校验
+        if st.st_size != expected_canonical_len:
+            raise ProtocolError(
+                f"memfd size mismatch: {st.st_size} != {expected_canonical_len}"
+            )
+
+        # 2. seal flags 校验（仅 Linux）
+        if _IS_LINUX:
+            import fcntl
+            actual_seals = fcntl.fcntl(fd, F_GET_SEALS)
+            required_seals = (
+                F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL
+            )
+            if (actual_seals & required_seals) != required_seals:
+                raise ProtocolError(
+                    f"memfd missing seals: got {actual_seals:#x}, "
+                    f"need {required_seals:#x}"
+                )
+
+        # 3. 最大尺寸校验
+        if st.st_size > MAX_MEMFD_BYTES:
+            raise ProtocolError(
+                f"memfd exceeds MAX_MEMFD_BYTES: {st.st_size}"
+            )
+
+        # 4. 内容 hash 校验（流式 sha256，64KB chunk）
+        os.lseek(fd, 0, os.SEEK_SET)
+        actual_hash = _sha256_streaming(fd, st.st_size)
+        if actual_hash != expected_content_hash:
+            raise ProtocolError(
+                f"memfd content hash mismatch: {actual_hash} != "
+                f"{expected_content_hash}"
+            )
+
+        # 重置到开头，供后续 os.read 或传给 parser
+        os.lseek(fd, 0, os.SEEK_SET)
+        return fd
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+
+
+# ============================================================
+# G10: Inflight Bytes 跟踪器（S7 不变量）
+# ============================================================
+
+
+class InflightTracker:
+    """G10: 跟踪 per-connection / per-UID / 全局 inflight bytes。
+
+    规范：daemon-ipc-security.md §4
+    S7 不变量：inflight bytes 超任一限制 → 暂停该连接 recv。
+
+    三个维度：
+    - per-connection: MAX_CONN_QUEUED_BYTES (256MB)
+    - per-UID: MAX_UID_INFLIGHT_BYTES (512MB)
+    - global: MAX_DAEMON_INFLIGHT_BYTES (2GB)
+
+    线程安全：所有方法都加锁。
+    """
+
+    def __init__(self):
+        import threading
+        self._lock = threading.Lock()
+        self._conn_bytes: dict[int, int] = {}  # conn_id → bytes
+        self._uid_bytes: dict[int, int] = {}  # uid → bytes
+        self._total_bytes: int = 0
+
+    def acquire(self, conn_id: int, uid: int, size: int) -> bool:
+        """尝试为 size 字节分配 inflight 配额。
+
+        Returns:
+            True 若三个维度都未超限；False 若任一维度超限（调用方应暂停 recv）。
+        """
+        with self._lock:
+            new_conn = self._conn_bytes.get(conn_id, 0) + size
+            new_uid = self._uid_bytes.get(uid, 0) + size
+            new_total = self._total_bytes + size
+
+            if new_conn > MAX_CONN_QUEUED_BYTES:
+                return False
+            if new_uid > MAX_UID_INFLIGHT_BYTES:
+                return False
+            if new_total > MAX_DAEMON_INFLIGHT_BYTES:
+                return False
+
+            self._conn_bytes[conn_id] = new_conn
+            self._uid_bytes[uid] = new_uid
+            self._total_bytes = new_total
+            return True
+
+    def release(self, conn_id: int, uid: int, size: int) -> None:
+        """释放 inflight 配额（处理完成后调用）。"""
+        with self._lock:
+            self._conn_bytes[conn_id] = max(
+                0, self._conn_bytes.get(conn_id, 0) - size
+            )
+            self._uid_bytes[uid] = max(
+                0, self._uid_bytes.get(uid, 0) - size
+            )
+            self._total_bytes = max(0, self._total_bytes - size)
+
+    def stats(self) -> dict:
+        """返回当前 inflight 统计（监控用）。"""
+        with self._lock:
+            return {
+                "conn_bytes": dict(self._conn_bytes),
+                "uid_bytes": dict(self._uid_bytes),
+                "total_bytes": self._total_bytes,
+                "limits": {
+                    "max_conn_queued_bytes": MAX_CONN_QUEUED_BYTES,
+                    "max_uid_inflight_bytes": MAX_UID_INFLIGHT_BYTES,
+                    "max_daemon_inflight_bytes": MAX_DAEMON_INFLIGHT_BYTES,
+                    "max_memfd_bytes": MAX_MEMFD_BYTES,
+                },
+            }

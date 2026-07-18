@@ -86,21 +86,29 @@ rm -rf "$AGENT_ROOT"
 mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/systemd/user"
 cp "$ROOT/dist/linux/cw-agent" "$AGENT_ROOT/usr/bin/" 2>/dev/null || \
     echo "  NOTE: cw-agent binary not found (placeholder root created)"
-# agent systemd user unit（设计 §8.2: 不自动启用 linger，管理员可选）
-cat > "$AGENT_ROOT/usr/lib/systemd/user/callwarden-agent.service" << 'EOF'
+# agent systemd --user unit（设计 §v8: per-UID watcher agent）
+# 优先使用 deb/systemd/callwarden-agent.service 正式 unit（含安全约束、资源限制、
+# 环境变量、ExecStop 等完整配置）；不存在时降级为最小占位 unit。
+if [ -f "$SCRIPT_DIR/deb/systemd/callwarden-agent.service" ]; then
+    cp "$SCRIPT_DIR/deb/systemd/callwarden-agent.service" "$AGENT_ROOT/usr/lib/systemd/user/"
+else
+    # 降级：最小占位 unit（设计 §8.2: 不自动启用 linger，管理员可选）
+    cat > "$AGENT_ROOT/usr/lib/systemd/user/callwarden-agent.service" << 'EOF'
 [Unit]
 Description=Call Warden Per-UID Agent
-After=callwarden-daemon.service
+After=network.target
 
 [Service]
 Type=simple
 ExecStart=/usr/bin/cw-agent start
+ExecStop=/usr/bin/cw-agent stop
 Restart=on-failure
 RestartSec=5
 
 [Install]
 WantedBy=default.target
 EOF
+fi
 
 # --- callwarden-daemon（cw-daemon + system unit + 迁移/备份工具）---
 DAEMON_ROOT="$SCRIPT_DIR/build/daemon"
