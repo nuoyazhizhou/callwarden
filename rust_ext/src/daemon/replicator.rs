@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use pyo3::prelude::*;
 use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 
@@ -706,6 +707,66 @@ pub trait SnapshotPublisher: Send + Sync {
 #[derive(Debug, Clone, Default)]
 pub struct PublishResult {
     pub generation: i64,
+    /// 新 snapshot 中的符号数（供调用方校验）
+    pub symbol_count: usize,
+    /// 新 snapshot 中的调用边数
+    pub call_count: usize,
+}
+
+/// `SnapshotPublisher` 的具体实现——桥接 `SnapshotCache`。
+///
+/// G11：补齐 Replicator 的 CAS → Manifest → Snapshot 管道。
+/// - CAS：由 `_daemon_parse_and_publish` 写入（daemon 侧 parse + publish）
+/// - Manifest：由 `file_generations` 表维护（两阶段 CAS 保证 committed 状态）
+/// - Snapshot：由本 publisher 调用 `SnapshotManager::build_and_publish_blocking`，
+///   从 SQLite 加载符号 + 调用图 → 构建 `GraphSnapshot` → 发布到 `ArcSwap`
+///
+/// 使用：`Replicator::with_snapshot_publisher(&publisher)` 注入。
+///
+/// 注意：`build_and_publish_blocking` 返回 `PyResult`，但内部不持有 GIL——
+/// `PyErr` 仅用作错误类型。错误路径下用 `{:?}`（Debug 格式化）将 `PyErr` 转为
+/// `String`，避免依赖 GIL（`PyErr` 的 `Display` impl 在 PyO3 0.29 需要 GIL，
+/// 而 `Debug` 不需要）。成功路径无需 GIL。
+pub struct SnapshotCachePublisher {
+    cache: Arc<crate::snapshot::SnapshotCache>,
+}
+
+impl SnapshotCachePublisher {
+    pub fn new(cache: Arc<crate::snapshot::SnapshotCache>) -> Self {
+        Self { cache }
+    }
+}
+
+impl SnapshotPublisher for SnapshotCachePublisher {
+    fn publish_snapshot(
+        &self,
+        workspace_instance_id: &str,
+        db_path: &str,
+        build_context_hash: &str,
+    ) -> Result<PublishResult, String> {
+        if db_path.is_empty() {
+            return Err("db_path 不能为空（snapshot publish 需要源数据库路径）".to_string());
+        }
+
+        // 获取或创建 SnapshotManager（per-workspace）
+        let mgr = self.cache.get_or_create(workspace_instance_id);
+
+        // 调用 build_and_publish_blocking（返回 PyResult，但内部不持 GIL）
+        // 成功路径：直接返回 (generation, symbol_count, call_count)
+        // 失败路径：用 Debug 格式化（不需要 GIL）将 PyErr 转为 String
+        match mgr.build_and_publish_blocking(db_path, build_context_hash, None) {
+            Ok((generation, symbol_count, call_count)) => Ok(PublishResult {
+                generation: generation as i64,
+                symbol_count,
+                call_count,
+            }),
+            Err(py_err) => {
+                // PyErr → String：使用 Debug 格式化（不需要 GIL）
+                // 避免 Python::attach（需要初始化解释器，daemon 可能未初始化）
+                Err(format!("build_and_publish_blocking failed: {:?}", py_err))
+            }
+        }
+    }
 }
 
 // ============================================
@@ -723,6 +784,23 @@ pub struct ReplicationResult {
     pub applied_count: usize,
     pub error: Option<String>,
     pub duration_ms: f64,
+    /// G11-T2：本次 replication 合并的 delta 摘要
+    /// （files 数量 + 增删符号/调用边数量），供调用方观测变更规模。
+    pub merged_summary: MergedDeltaSummary,
+}
+
+/// 合并 delta 的摘要（从 `MergedDelta` 提取，供 `ReplicationResult` 携带）
+///
+/// 设计原因：`MergedDelta` 内含 `Vec<MergedFile>`（可能很大），
+/// `ReplicationResult` 只需数值摘要，不需要完整文件列表。
+#[derive(Debug, Clone, Default)]
+pub struct MergedDeltaSummary {
+    pub file_count: usize,
+    pub total_added_symbols: usize,
+    pub total_removed_symbols: usize,
+    pub total_changed_symbols: usize,
+    pub total_added_edges: usize,
+    pub total_removed_edges: usize,
 }
 
 impl ReplicationResult {
@@ -807,9 +885,18 @@ impl<'a> Replicator<'a> {
         }
 
         // 2. 合并 delta（简单汇总，对应 Python _merge_deltas）
-        let _merged = self.merge_deltas(&pending);
+        // G11-T2：将 merged 结果提取为摘要写入 ReplicationResult
+        let merged = self.merge_deltas(&pending);
+        result.merged_summary = MergedDeltaSummary {
+            file_count: merged.files.len(),
+            total_added_symbols: merged.total_added_symbols,
+            total_removed_symbols: merged.total_removed_symbols,
+            total_changed_symbols: merged.total_changed_symbols,
+            total_added_edges: merged.total_added_edges,
+            total_removed_edges: merged.total_removed_edges,
+        };
 
-        // 3. 发布新 generation
+        // 3. 发布新 generation（若 publisher + db_path 均可用）
         if let Some(publisher) = self.snapshot_publisher {
             if !db_path.is_empty() {
                 match publisher.publish_snapshot(workspace_id, db_path, build_context_hash) {
@@ -1386,7 +1473,11 @@ mod tests {
             _build_context_hash: &str,
         ) -> Result<PublishResult, String> {
             *self.call_count.lock().unwrap() += 1;
-            Ok(PublishResult { generation: 42 })
+            Ok(PublishResult {
+                generation: 42,
+                symbol_count: 0,
+                call_count: 0,
+            })
         }
     }
 
@@ -1764,5 +1855,220 @@ mod tests {
             "expected ready_published or ready_cache_hit, got {}",
             cas_state
         );
+    }
+
+    // ---- G11-T2: ReplicationResult.merged_summary 测试 ----
+
+    #[test]
+    fn test_replicator_merged_summary_populated_from_pending_entries() {
+        // G11-T2：replicate() 应将 merge_deltas 结果填充到 ReplicationResult.merged_summary
+        let (_tmp, log) = make_staging_log();
+        let replicator = Replicator::new(&log);
+
+        // 写入 2 条带 parse_delta + resolve_delta 的 pending entries
+        {
+            let mut e = StagingEntry::new("ws1", "file1.rs", "hash1", "rust");
+            // 模拟 parse_delta：2 个 added 符号、1 个 removed 符号
+            e.parse_delta.insert(
+                "symbol_delta".to_string(),
+                serde_json::json!({
+                    "added": [{"name": "fn_a"}, {"name": "fn_b"}],
+                    "removed": [{"name": "old_fn"}],
+                    "changed": []
+                }),
+            );
+            // 模拟 resolve_delta：3 条新增边
+            e.resolve_delta.insert(
+                "added".to_string(),
+                serde_json::json!([{"src": 1, "dst": 2}, {"src": 1, "dst": 3}, {"src": 2, "dst": 3}]),
+            );
+            log.append(&mut e).unwrap();
+        }
+        {
+            let mut e = StagingEntry::new("ws1", "file2.rs", "hash2", "rust");
+            e.parse_delta.insert(
+                "symbol_delta".to_string(),
+                serde_json::json!({
+                    "added": [{"name": "fn_c"}],
+                    "removed": [],
+                    "changed": [{"name": "fn_a"}]
+                }),
+            );
+            e.resolve_delta.insert(
+                "removed".to_string(),
+                serde_json::json!([{"src": 1, "dst": 2}]),
+            );
+            log.append(&mut e).unwrap();
+        }
+
+        let result = replicator.replicate("ws1", "", "");
+        assert!(result.success, "replicate 应成功");
+        // 合并 2 条 entries
+        assert_eq!(result.merged_summary.file_count, 2);
+        // 总计 added: 2 + 1 = 3
+        assert_eq!(result.merged_summary.total_added_symbols, 3);
+        // 总计 removed: 1 + 0 = 1
+        assert_eq!(result.merged_summary.total_removed_symbols, 1);
+        // 总计 changed: 0 + 1 = 1
+        assert_eq!(result.merged_summary.total_changed_symbols, 1);
+        // 总计 added_edges: 3 + 0 = 3
+        assert_eq!(result.merged_summary.total_added_edges, 3);
+        // 总计 removed_edges: 0 + 1 = 1
+        assert_eq!(result.merged_summary.total_removed_edges, 1);
+    }
+
+    #[test]
+    fn test_replicator_merged_summary_empty_for_no_pending() {
+        // G11-T2：无 pending entries 时 merged_summary 应全为 0
+        let (_tmp, log) = make_staging_log();
+        let replicator = Replicator::new(&log);
+
+        let result = replicator.replicate("ws1", "", "");
+        assert!(result.success);
+        assert_eq!(result.merged_summary.file_count, 0);
+        assert_eq!(result.merged_summary.total_added_symbols, 0);
+        assert_eq!(result.merged_summary.total_removed_symbols, 0);
+        assert_eq!(result.merged_summary.total_changed_symbols, 0);
+        assert_eq!(result.merged_summary.total_added_edges, 0);
+        assert_eq!(result.merged_summary.total_removed_edges, 0);
+    }
+
+    // ---- G11-T3: SnapshotCachePublisher E2E 测试 ----
+
+    /// 构造一个带符号和调用边的临时 SQLite DB，供 SnapshotCachePublisher 测试。
+    ///
+    /// schema 对齐 `GraphStore::load_from_sqlite_blocking` 的查询：
+    /// - file_instances(id, rel_path, status)
+    /// - symbols(id, file_instance_id, kind, name, qualified_name, module_path,
+    ///           start_line, end_line, depth)
+    /// - calls(caller_id, callee_id, callee_name, call_line, is_cross_file)
+    fn make_snapshot_test_db() -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("snapshot_test.db");
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE file_instances (
+                    id INTEGER PRIMARY KEY,
+                    rel_path TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active'
+                );
+                CREATE TABLE symbols (
+                    id INTEGER PRIMARY KEY,
+                    file_instance_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    qualified_name TEXT NOT NULL,
+                    module_path TEXT NOT NULL,
+                    start_line INTEGER NOT NULL,
+                    end_line INTEGER NOT NULL,
+                    depth INTEGER NOT NULL
+                );
+                CREATE TABLE calls (
+                    caller_id INTEGER NOT NULL,
+                    callee_id INTEGER NOT NULL,
+                    callee_name TEXT NOT NULL,
+                    call_line INTEGER NOT NULL,
+                    is_cross_file INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO file_instances (id, rel_path, status) VALUES
+                    (1, 'src/main.rs', 'active'),
+                    (2, 'src/lib.rs', 'active'),
+                    (3, 'src/old.rs', 'archived');
+                INSERT INTO symbols (id, file_instance_id, kind, name, qualified_name,
+                                     module_path, start_line, end_line, depth) VALUES
+                    (1, 1, 'fn', 'main', 'src.main', 'src', 1, 5, 0),
+                    (2, 1, 'fn', 'helper', 'src.main.helper', 'src', 2, 3, 1),
+                    (3, 2, 'fn', 'add', 'src.lib.add', 'src', 1, 3, 0),
+                    (4, 2, 'struct', 'Config', 'src.lib.Config', 'src', 5, 8, 0);
+                INSERT INTO calls (caller_id, callee_id, callee_name, call_line, is_cross_file) VALUES
+                    (1, 2, 'helper', 4, 0),
+                    (1, 3, 'add', 4, 1),
+                    (2, 3, 'add', 2, 1);
+                "#,
+            ).unwrap();
+            // WAL checkpoint：确保数据写入主 DB（GraphStore 用 immutable=1 打开）
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+        }
+        (tmp, db_path)
+    }
+
+    #[test]
+    fn test_snapshot_cache_publisher_publishes_and_returns_counts() {
+        // G11-T3 E2E：SnapshotCachePublisher → build_and_publish_blocking → 返回 PublishResult
+        let (_tmp, db_path) = make_snapshot_test_db();
+        let db_path_str = db_path.to_str().unwrap();
+
+        // 创建 SnapshotCache（max_workspaces=4）+ SnapshotCachePublisher
+        let cache = Arc::new(crate::snapshot::SnapshotCache::new(4));
+        let publisher = SnapshotCachePublisher::new(cache.clone());
+
+        // 第一次 publish：
+        // - 4 个真实符号（ids 1-4），archived 文件排除
+        // - GraphStore::load_from_sqlite_blocking 用 by_id.len() 作为 symbol_count，
+        //   包含 index 0 的占位槽，因此返回 5（= 4 真实 + 1 占位）
+        // - 3 条调用边
+        let result = publisher.publish_snapshot("ws_e2e_1", db_path_str, "ctx-hash-1");
+        assert!(result.is_ok(), "publish 应成功: {:?}", result.err());
+        let pr = result.unwrap();
+        assert_eq!(pr.symbol_count, 5, "应加载 5（4 真实 + 1 占位槽）");
+        assert_eq!(pr.call_count, 3, "应加载 3 条调用边");
+        assert!(pr.generation >= 1, "generation 应 >= 1");
+
+        // 第二次 publish：generation 递增，符号/调用边数不变
+        let result2 = publisher.publish_snapshot("ws_e2e_1", db_path_str, "ctx-hash-2");
+        assert!(result2.is_ok());
+        let pr2 = result2.unwrap();
+        assert_eq!(pr2.symbol_count, 5);
+        assert_eq!(pr2.call_count, 3);
+        assert!(pr2.generation > pr.generation, "generation 应递增");
+    }
+
+    #[test]
+    fn test_snapshot_cache_publisher_rejects_empty_db_path() {
+        // G11-T3：空 db_path 应返回错误
+        let cache = Arc::new(crate::snapshot::SnapshotCache::new(4));
+        let publisher = SnapshotCachePublisher::new(cache);
+
+        let result = publisher.publish_snapshot("ws_e2e_2", "", "ctx-hash");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("db_path"),
+            "错误信息应包含 db_path，实际: {}",
+            err_msg
+        );
+    }
+
+    // G11-T3：不存在的 DB 路径错误路径测试省略——build_and_publish_blocking
+    // 内部用 PyRuntimeError::new_err(...) 创建 PyErr，创建 PyErr 需要 Python
+    // 解释器初始化，而 cargo test 默认不初始化（auto-initialize feature 未启用）。
+    // 完整 E2E（含 Python 初始化）在 cw_daemon 集成测试中验证。
+    // 空 db_path 的提前返回路径由 test_snapshot_cache_publisher_rejects_empty_db_path 覆盖。
+
+    #[test]
+    fn test_snapshot_cache_publisher_multiple_workspaces_independent() {
+        // G11-T3：多 workspace 隔离——不同 workspace_instance_id 应有独立 generation
+        let (_tmp, db_path) = make_snapshot_test_db();
+        let db_path_str = db_path.to_str().unwrap();
+        let cache = Arc::new(crate::snapshot::SnapshotCache::new(4));
+        let publisher = SnapshotCachePublisher::new(cache.clone());
+
+        // ws_a 第一次 publish
+        // symbol_count = 5（4 真实符号 + 1 占位槽，见 publishes_and_returns_counts 测试注释）
+        let pr_a1 = publisher.publish_snapshot("ws_a", db_path_str, "ctx-a-1").unwrap();
+        assert_eq!(pr_a1.symbol_count, 5);
+        assert_eq!(pr_a1.generation, 1);
+
+        // ws_b 第一次 publish（独立 generation 序列）
+        let pr_b1 = publisher.publish_snapshot("ws_b", db_path_str, "ctx-b-1").unwrap();
+        assert_eq!(pr_b1.symbol_count, 5);
+        assert_eq!(pr_b1.generation, 1, "ws_b 的 generation 应独立从 1 开始");
+
+        // ws_a 第二次 publish
+        let pr_a2 = publisher.publish_snapshot("ws_a", db_path_str, "ctx-a-2").unwrap();
+        assert_eq!(pr_a2.generation, 2, "ws_a 第二次 generation 应为 2");
     }
 }

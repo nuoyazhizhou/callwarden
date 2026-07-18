@@ -223,7 +223,7 @@
 | G8 | Watcher Generation 状态机 | WG/EW | ✅ 已实现 | Rust daemon_handle_refresh 完整 4 步管道（session epoch CAS + 两阶段 CAS + daemon 侧 parse + CAS publish）+ detect_language_from_path + _daemon_parse_and_publish + canonical_bytes FD/base64 提取 |
 | G9 | Per-UID systemd --user agent | DS/WG | ❌ 未实施 | Linux 专属，Windows 不适用 |
 | G10 | memfd 密封协议（大文件传输） | DI | ❌ 未实施 | Linux 专属 |
-| G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ⚠️ 部分 | replicator.py 已有 |
+| G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ✅ 已实现 | Rust SnapshotCachePublisher 桥接 SnapshotCache → build_and_publish_blocking；ReplicationResult.merged_summary 填充；5 个 E2E 测试（merged_summary + publisher + 多 workspace 隔离） |
 | G12 | Durable Staging（JSONL + fsync） | DS/EW | ✅ 已实现 | durable_staging.py |
 | G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已实现 | metrics.py（691行完整实现） |
 | G14 | Health Check endpoint | DS | ❓ 待验证 | health_check.py 已有 |
