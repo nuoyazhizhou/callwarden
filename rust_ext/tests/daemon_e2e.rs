@@ -45,7 +45,7 @@ impl DaemonFixture {
             "--registry",
             registry.to_str().unwrap(),
             "--workers",
-            "2",
+            "4",
             "serve",
         ])
         .stdout(Stdio::piped())

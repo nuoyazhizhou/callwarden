@@ -272,6 +272,44 @@ mod unix {
         let _ = config.apply_env_overrides();
         apply_cli_overrides(&mut config, cli);
 
+        // strict 模式：先读取 DB 实际 schema_version（不修改 DB）
+        // 必须在 WorkspaceRegistry::open 之前，因为 open 会调用 init_conn
+        // 用 SCHEMA_META_UPSERT 覆盖 schema_version，破坏 strict 检查语义
+        if strict {
+            let db_path = config.registry_db_path.to_string_lossy().to_string();
+            match read_registry_schema_version(&db_path) {
+                Ok(Some(actual_version)) => {
+                    if actual_version != SCHEMA_VERSION {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] schema-check strict: version mismatch: db={}, expected={}",
+                            actual_version, SCHEMA_VERSION
+                        );
+                        return 1;
+                    }
+                    eprintln!(
+                        "[cw_daemon] [INFO] schema-check strict: version={} matches",
+                        actual_version
+                    );
+                }
+                Ok(None) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] schema-check strict: registry DB 未初始化（daemon_state 表或 schema_version 行缺失）: {}",
+                        config.registry_db_path.display()
+                    );
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] schema-check strict: 读取 schema_version 失败: {}: {}",
+                        config.registry_db_path.display(),
+                        e
+                    );
+                    return 1;
+                }
+            }
+        }
+
+        // strict 已验证通过（或非 strict 模式）：正常 open（init schema + 写入当前版本）
         match WorkspaceRegistry::open(&config.registry_db_path.to_string_lossy()) {
             Ok(registry) => {
                 let count = registry.count_workspaces().unwrap_or(0);
@@ -281,11 +319,6 @@ mod unix {
                     count,
                     config.registry_db_path.display()
                 );
-                if strict {
-                    // R7 stub：仅验证 schema 可打开 + 写入 schema_version
-                    // 完整 strict 模式应读取 daemon_state.schema_version 与 SCHEMA_VERSION 比较
-                    eprintln!("[cw_daemon] [INFO] strict mode: schema_version={} written", SCHEMA_VERSION);
-                }
                 0
             }
             Err(e) => {
@@ -371,6 +404,33 @@ mod unix {
         if let Some(capacity) = cli.cache_capacity {
             config.snapshot_cache_capacity = capacity;
         }
+    }
+
+    /// 读取 registry DB 中的 schema_version（只读，不修改 DB）。
+    ///
+    /// 用于 `schema-check --strict` 模式：在不调用 `WorkspaceRegistry::open`（会
+    /// 触发 `init_conn` 并 UPSERT 覆盖 `schema_version`）的前提下，验证 DB 实际
+    /// 版本与二进制编译时的 `SCHEMA_VERSION` 是否匹配。
+    ///
+    /// 返回值：
+    /// - `Ok(Some(v))`：DB 已初始化，schema_version=v
+    /// - `Ok(None)`：DB 未初始化（daemon_state 表不存在或 schema_version 行缺失）
+    /// - `Err(e)`：读取失败（如 DB 文件损坏）
+    ///
+    /// 注意：`Connection::open` 在 DB 不存在时会创建空 DB（SQLite 行为），
+    /// 随后查询因表不存在而返回 None，这是预期行为。
+    fn read_registry_schema_version(db_path: &str) -> Result<Option<u32>, rusqlite::Error> {
+        use rusqlite::Connection;
+        let conn = Connection::open(db_path)?;
+        // 查询 daemon_state.schema_version（表不存在或行不存在都返回 None）
+        let version_str: Option<String> = conn
+            .query_row(
+                "SELECT value FROM daemon_state WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(version_str.and_then(|s| s.parse::<u32>().ok()))
     }
 
     /// 恢复所有 workspace 的 pending staging log entries。
@@ -493,6 +553,7 @@ mod unix {
         use super::*;
         use callwarden_core::daemon::staging_log::{StagingEntry, StagingLog};
         use callwarden_core::daemon::workspace::WorkspaceRegistry;
+        use rusqlite::params;
         use std::fs;
         use std::path::Path;
         use tempfile::TempDir;
@@ -718,6 +779,94 @@ mod unix {
             // 第二次 recover：无 pending，返回 0
             let count2 = recover_all_workspaces(&fixture.registry, &fixture.data_root);
             assert_eq!(count2, 0);
+        }
+
+        // ---- read_registry_schema_version 单元测试 ----
+
+        /// 临时 DB fixture：用 WorkspaceRegistry::open 初始化后返回路径
+        struct SchemaVersionFixture {
+            _tmp: TempDir,
+            db_path: PathBuf,
+        }
+
+        impl SchemaVersionFixture {
+            /// 创建已初始化的 registry DB（schema_version = SCHEMA_VERSION）
+            fn new_initialized() -> Self {
+                let tmp = tempfile::tempdir().unwrap();
+                let db_path = tmp.path().join("registry.db");
+                let db_str = db_path.to_string_lossy().to_string();
+                // open 会调用 init_conn，写入 SCHEMA_VERSION
+                let _ = WorkspaceRegistry::open(&db_str).unwrap();
+                Self {
+                    _tmp: tmp,
+                    db_path,
+                }
+            }
+
+            /// 创建已初始化但 schema_version 被改为 other 的 DB
+            fn new_with_version(version: u32) -> Self {
+                let fixture = Self::new_initialized();
+                // 手动 UPDATE daemon_state.schema_version
+                use rusqlite::Connection;
+                let conn = Connection::open(&fixture.db_path).unwrap();
+                conn.execute(
+                    "UPDATE daemon_state SET value = ?1 WHERE key = 'schema_version'",
+                    params![version.to_string()],
+                )
+                .unwrap();
+                fixture
+            }
+
+            /// 创建空 DB（无 daemon_state 表）
+            fn new_empty_db() -> Self {
+                let tmp = tempfile::tempdir().unwrap();
+                let db_path = tmp.path().join("empty.db");
+                // 仅创建空文件（Connection::open 会创建空 DB，但不创建表）
+                let conn = rusqlite::Connection::open(&db_path).unwrap();
+                drop(conn);
+                Self {
+                    _tmp: tmp,
+                    db_path,
+                }
+            }
+        }
+
+        #[test]
+        fn test_read_schema_version_returns_current_version_for_initialized_db() {
+            let fixture = SchemaVersionFixture::new_initialized();
+            let db_str = fixture.db_path.to_string_lossy().to_string();
+            let version = read_registry_schema_version(&db_str).unwrap();
+            assert_eq!(version, Some(SCHEMA_VERSION));
+        }
+
+        #[test]
+        fn test_read_schema_version_detects_version_mismatch() {
+            // 模拟 DB 版本 = SCHEMA_VERSION + 10（未来版本）
+            let future_version = SCHEMA_VERSION + 10;
+            let fixture = SchemaVersionFixture::new_with_version(future_version);
+            let db_str = fixture.db_path.to_string_lossy().to_string();
+            let version = read_registry_schema_version(&db_str).unwrap();
+            assert_eq!(version, Some(future_version));
+            assert_ne!(version, Some(SCHEMA_VERSION));
+        }
+
+        #[test]
+        fn test_read_schema_version_returns_none_for_empty_db() {
+            // 空 DB（无 daemon_state 表）→ None
+            let fixture = SchemaVersionFixture::new_empty_db();
+            let db_str = fixture.db_path.to_string_lossy().to_string();
+            let version = read_registry_schema_version(&db_str).unwrap();
+            assert_eq!(version, None);
+        }
+
+        #[test]
+        fn test_read_schema_version_returns_none_for_nonexistent_db() {
+            // 不存在的 DB 路径：Connection::open 会创建空 DB，查询返回 None
+            let tmp = tempfile::tempdir().unwrap();
+            let db_path = tmp.path().join("nonexistent.db");
+            let db_str = db_path.to_string_lossy().to_string();
+            let version = read_registry_schema_version(&db_str).unwrap();
+            assert_eq!(version, None);
         }
     }
 }
