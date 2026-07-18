@@ -214,7 +214,7 @@
 | # | 功能点 | 来源 | 状态 | 备注 |
 |---|--------|------|------|------|
 | G1 | 三层存储（Global CAS / Toolchain / Thin Workspace） | EA/DS | ⚠️ 部分 | CAS 表已建（db_cas.py 509行），Toolchain DB（db_toolchain.py 1028行），manifest 已有 |
-| G2 | Rust daemon 单例守护进程 | DS/EA | ⚠️ 部分 | daemon_server.py + Rust cw_daemon.rs 已有 binary，但完整 UDS 协议未闭合 |
+| G2 | Rust daemon 单例守护进程 | DS/EA | ✅ 已实现 | cw_daemon.rs 完整实现：clap CLI + DaemonConfig + schema 初始化 + UDS server + 4 信号（SIGTERM/SIGINT/SIGHUP/SIGUSR1）+ sd_notify（READY=1/STOPPING=1/abstract socket）+ 3 子命令（serve/schema-check/health-check）+ G14 RecoveryHandler + recover_all_workspaces；dispatch.rs 28 RPC（Python 22 全覆盖 + Rust 额外 6：query.call_chain_down/topological_order/detect_cycles + snapshot.stats/list_workspaces/evict）；G3 UDS 协议 14 用例全通过；systemd Type=notify 单例语义 |
 | G3 | UDS + SO_PEERCRED 认证 | DS/DI | ✅ 已实现 | WSL2 Linux 全 14 用例通过：UDS roundtrip/SCM_RIGHTS fd 传递/cross-UID 隔离/CLI 管理流/真实双 UID 隔离 |
 | G4 | Workspace Registry + Container Mount Mapping | DS/RP | ✅ 已实现 | Rust WorkspaceRegistry 3 个 CRUD 方法 + dispatch.rs mount.register/list/delete RPC + Python db_daemon.py CRUD + daemon_server.py mount.* handler + CLI mount register/list/delete 子命令；35 个测试通过（Rust 21 + Python 14） |
 | G5 | CAS Key 设计（7 参数 hash） | CG/DS | ✅ 已实现 | cas-gc-protocol 规范 |
