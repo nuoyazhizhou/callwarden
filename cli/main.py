@@ -9693,17 +9693,38 @@ def main():
 
 
 def run_client_mode(argv: list) -> int:
-    """cw-client 入口：仅 RPC/MCP proxy，不含 parser 和本地 DB 写能力。"""
-    print("Call Warden Client Mode")
-    print("  Connects to Enterprise Daemon via UDS")
-    print("  No local parser or CAS write capability")
+    """cw-client 入口：仅 RPC proxy，不含 parser 和本地 DB 写能力。
+
+    角色定位（与 `cw daemon` 的差异）：
+    - `cw daemon`：daemon 管理员视角，含 `serve` 启动 daemon 本身
+    - `cw-client`：纯 client 视角，禁止 `serve`，只做 RPC 调用
+
+    平台门禁：非 Linux 直接 return 2，与 cw-daemon / cw-agent 一致
+    （UDS + SCM_RIGHTS 是 Linux 特有，Windows/macOS 上 daemon 不可用）。
+
+    实现委托 `run_daemon_command(argv, include_serve=False)`，复用 daemon_commands
+    已实现的 31 个 RPC 方法 CLI 调用（ping/register/list/status/publish/query/
+    health/schema-version/backup/restore/gc-cas/gc-snapshots/mount/toolchain/mode）。
+    """
+    import sys as _sys
+    if _sys.platform != "linux":
+        print("ERROR: cw-client is only supported on Linux (UDS + SCM_RIGHTS).",
+              file=_sys.stderr)
+        return 2
+
+    # 无参数时打印简介 + 帮助提示
     if not argv:
-        print("\nUsage: cw-client <command> [options]")
-        print("Commands: ping, query, refresh, status")
+        print("Call Warden Client Mode")
+        print("  Connects to Enterprise Daemon via UDS")
+        print("  No local parser or CAS write capability")
+        print("  Subcommands: ping, register, list, status, publish, query,")
+        print("               health, schema-version, backup, restore,")
+        print("               gc-cas, gc-snapshots, mount, toolchain, mode")
+        print("  Use 'cw-client --help' for details.")
         return 0
-    # TODO: 实现 client RPC proxy
-    print(f"  Command: {' '.join(argv)}")
-    return 0
+
+    from callwarden.cli.daemon_commands import run_daemon_command
+    return run_daemon_command(argv, include_serve=False)
 
 
 def run_agent_mode(argv: list) -> int:

@@ -21,7 +21,13 @@ from callwarden.server.daemon_server import (
 )
 
 
-def _parser() -> argparse.ArgumentParser:
+def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
+    """构造 daemon/client 共用的 argparse parser。
+
+    Args:
+        include_serve: 是否注册 `serve` 子命令。`cw daemon` 含 serve，
+            `cw-client` 不含（纯 client 视角，禁止启动 daemon 本身）。
+    """
     parser = argparse.ArgumentParser(
         prog="cw daemon", description="Enterprise daemon UDS 管理与查询"
     )
@@ -29,9 +35,10 @@ def _parser() -> argparse.ArgumentParser:
                         help="UDS 路径（默认 CW_DAEMON_SOCKET）")
     sub = parser.add_subparsers(dest="action", required=True)
 
-    serve = sub.add_parser("serve", help="前台启动 daemon")
-    serve.add_argument("--registry", default=DAEMON_REGISTRY_DB)
-    serve.add_argument("--workers", type=int, default=16)
+    if include_serve:
+        serve = sub.add_parser("serve", help="前台启动 daemon")
+        serve.add_argument("--registry", default=DAEMON_REGISTRY_DB)
+        serve.add_argument("--workers", type=int, default=16)
 
     sub.add_parser("ping", help="检查 daemon 与 peer credential")
 
@@ -317,8 +324,16 @@ def _dispatch_toolchain_cli(client, args) -> dict:
     raise AssertionError(action)
 
 
-def run_daemon_command(argv: Optional[Sequence[str]] = None) -> int:
-    args = _parser().parse_args(argv)
+def run_daemon_command(argv: Optional[Sequence[str]] = None,
+                       include_serve: bool = True) -> int:
+    """daemon/client 共用的命令分发入口。
+
+    Args:
+        argv: 命令行参数（不含程序名）
+        include_serve: 是否允许 `serve` 子命令。`cw daemon` 允许，
+            `cw-client` 禁止（纯 client 视角，不能启动 daemon 本身）。
+    """
+    args = _parser(include_serve).parse_args(argv)
     if args.action == "mode":
         if args.set:
             print(f"请设置环境变量 CW_DAEMON_MODE={args.set}")
@@ -331,6 +346,12 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None) -> int:
         return 0
 
     if args.action == "serve":
+        if not include_serve:
+            # argparse 已在 _parser(include_serve=False) 时拒绝 serve，
+            # 此分支理论上不可达，保险起见显式报错
+            print("ERROR: 'serve' is not available in client mode.",
+                  file=__import__("sys").stderr)
+            return 2
         service = EnterpriseDaemonService(args.registry)
         server = EnterpriseDaemonServer(
             args.socket, service, max_workers=max(1, args.workers)

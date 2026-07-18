@@ -2199,6 +2199,83 @@ Call Warden 在 C8 Step #2 中为所有 `--flag` 模式命令添加了 `deprecat
 
 ---
 
+## 角色化入口（cw-client / cw-agent / cw-daemon）
+
+Call Warden 提供三个角色化入口，分离 daemon 管理、client 调用和 agent 监控职责：
+
+| 入口 | 角色 | 平台 | 说明 |
+|------|------|------|------|
+| `cw-daemon` | Enterprise Daemon | 仅 Linux | 启动 daemon server，管理 UDS socket、registry DB、snapshot |
+| `cw-client` | RPC Proxy | 仅 Linux | 纯 client 视角，调用 daemon RPC（不含 `serve` 启动 daemon） |
+| `cw-agent` | Watcher Agent | 仅 Linux | per-UID 文件监控 agent，启动/停止/状态查询 |
+
+### cw-client 子命令
+
+`cw-client` 是 `cw daemon` 的角色化简化版，**禁止 `serve` 子命令**（不能启动 daemon 本身），其他 15 个子命令与 `cw daemon` 完全一致：
+
+```bash
+# 检查 daemon 健康
+cw-client ping
+cw-client health
+
+# Workspace 管理
+cw-client register /path/to/project --git-remote <url> --git-head <sha>
+cw-client list
+cw-client status <workspace_id>
+cw-client publish <workspace_id> <db_path> --build-context <hash>
+
+# 查询共享 snapshot
+cw-client query <workspace_id> stats
+cw-client query <workspace_id> symbol <qualified_name>
+cw-client query <workspace_id> search <query> --kind <kind> --limit 20
+cw-client query <workspace_id> callers <callee_name> --qualified-name <qn>
+cw-client query <workspace_id> callees <caller_name> --qualified-name <qn>
+
+# 运维
+cw-client schema-version
+cw-client backup --output <path>
+cw-client restore --from <path>
+cw-client gc-cas <workspace_id> --grace-days 7
+cw-client gc-snapshots --keep-last 3
+
+# 容器挂载映射
+cw-client mount register <container_id> <container_path> <host_path> --type bind
+cw-client mount list --container-id <id>
+cw-client mount delete <container_id> <container_path>
+
+# 工具链 / build context / resolved edges（与 cw daemon toolchain 子命令一致）
+cw-client toolchain register <name> <compiler_path> --version <v>
+cw-client toolchain list
+cw-client toolchain bind <workspace_id> <toolchain_id>
+cw-client toolchain resolve <workspace_id> --build-context-hash <hash>
+cw-client toolchain build-context register <workspace_id> <name>
+cw-client toolchain resolved-edges store <workspace_id> <hash> --edges-json <json>
+
+# Daemon 模式查询（不能修改，只查询）
+cw-client mode                # 查看当前模式
+cw-client mode --set auto     # 提示如何修改（不会真正设置）
+```
+
+### 与 `cw daemon` 的差异
+
+| 子命令 | `cw daemon` | `cw-client` |
+|--------|-------------|-------------|
+| `serve` | ✓ 启动 daemon | ✗ 禁止（argparse 拒绝） |
+| 其他 15 个子命令 | ✓ 全部可用 | ✓ 全部可用 |
+
+### 平台门禁
+
+`cw-client`、`cw-daemon`、`cw-agent` 三个入口仅 Linux 可用，非 Linux 直接返回 exit code 2：
+
+```
+$ cw-client ping
+ERROR: cw-client is only supported on Linux (UDS + SCM_RIGHTS).
+```
+
+理由：UDS（Unix Domain Socket）+ SCM_RIGHTS FD 传递是 Linux/Unix 特有，Windows/macOS 上 daemon 不可用。Windows/macOS 用户应使用标准 `cw` 命令（基于本地 SQLite，无 daemon）。
+
+---
+
 ## 下一步
 
 - [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 196 个工具
