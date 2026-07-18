@@ -518,6 +518,20 @@ class CallWardenInstaller:
         """生成 pre-commit hook 内容。
 
         L3 增强：提交前检查 active_task_id（软门禁，警告不阻止）。
+
+        容错设计（T-1784403320003）：
+        - `cw --refresh-all` 在 SQLite WAL 模式下偶尔因 SQLITE_CANTOPEN
+          ('unable to open database file') 失败。常见原因：
+          (a) MCP Server 或其他 cw 进程持有 -shm 文件锁（间歇性，重试可恢复）；
+          (b) TRAE IDE 沙箱拦截 sh.exe 子进程对 ~/.callwarden 目录的写操作
+              （持续性，重试无效，需配置沙箱规则）。
+        - 原 hook 用 `set -eu` 在此失败时让整个脚本退出非零，git commit 被
+          取消，迫使用户 `--no-verify` 绕过。
+        - 修复：refresh 失败时重试 3 次（间隔 2 秒），覆盖临时锁场景；
+          重试仍失败时打印明确错误信息 + 解决建议（停 MCP Server /
+          手动 `cw refresh --all` / 配置 TRAE 沙箱规则），并退出非零保持
+          AGENTS.md 规则 1 的硬性要求（提交前必须全量刷新数据库）。
+        - check-task 保持软门禁（`|| true`），不阻止 commit。
         """
         cmd = self._python_cw_command()
         marker = self._hook_marker()
@@ -528,7 +542,37 @@ export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
 # L3: 检查 active_task（软门禁，警告不阻止 commit）
 {cmd} git check-task || true
 echo "[Call Warden] refreshing code graph before commit..."
-{cmd} --refresh-all
+# 容错重试：refresh-all 偶尔因 SQLite WAL 锁冲突失败（SQLITE_CANTOPEN），
+# 重试 3 次（间隔 2 秒）以覆盖临时锁场景；仍失败时打印建议并退出非零
+# （保持 AGENTS.md 规则 1：提交前必须全量刷新数据库）
+_refresh_attempt=0
+_refresh_max=3
+while [ "$_refresh_attempt" -lt "$_refresh_max" ]; do
+  if {cmd} --refresh-all; then
+    break
+  fi
+  _refresh_attempt=$((_refresh_attempt + 1))
+  if [ "$_refresh_attempt" -lt "$_refresh_max" ]; then
+    echo "[Call Warden] refresh 失败，第 $_refresh_attempt/$_refresh_max 次重试（2 秒后）..."
+    sleep 2
+  fi
+done
+if [ "$_refresh_attempt" -ge "$_refresh_max" ]; then
+  echo "[Call Warden] ERROR: cw --refresh-all 重试 $_refresh_max 次后仍失败。"
+  echo "[Call Warden] commit 已被阻止（AGENTS.md 规则 1：提交前必须全量刷新数据库）。"
+  echo "[Call Warden] 排查建议："
+  echo "  1. 停止 MCP Server：cw server --stop"
+  echo "  2. 手动刷新：cw refresh --all"
+  echo "  3. 检查 ~/.callwarden/callwarden.db 文件权限和 -shm/-wal 残留"
+  echo "  4. 若在 TRAE IDE 中运行（git commit 触发 sh.exe hook）："
+  echo "     - TRAE 沙箱可能拦截 sh.exe 子进程对 ~/.callwarden 的写操作"
+  echo "     - 在 Settings -> Conversation -> Custom Sandbox Configuration 中"
+  echo "       添加允许规则：C:\\\\Users\\\\wanpi\\\\.callwarden\\\\（写权限）"
+  echo "     - 或在 PowerShell 终端中手动运行 'cw refresh --all' 后"
+  echo "       用 'git commit --no-verify' 跳过 hook"
+  echo "  5. 确认 DB 已刷新后重新 commit"
+  exit 1
+fi
 """
 
     def _pre_push_hook(self) -> str:

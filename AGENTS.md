@@ -291,6 +291,25 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     **违反示例**：新增了 3 个 MCP 工具但未更新 `docs/mcp_tools.md`，导致文档说 195 个实际 198 个 → 禁止。
     **正确示例**：新增 MCP 工具时，同一次 commit 更新 `docs/mcp_tools.md` 头部数字 + 工具列表 + `README.md` 中的数字。
 
+23. **TRAE IDE 沙箱拦截 sh.exe 子进程对 `~/.callwarden/` 的写操作（SQLITE_CANTOPEN）**：在 TRAE IDE 中通过 `git commit` 触发 Git Bash `sh.exe` 执行 pre-commit hook 时，`cw --refresh-all` 调用 `sqlite3.connect()` + `PRAGMA journal_mode=WAL` 会因沙箱拦截文件创建/写操作而抛 `sqlite3.OperationalError: unable to open database file`（SQLITE_CANTOPEN, code 14），导致 hook 退出非零，commit 被取消，迫使用户 `--no-verify` 绕过。
+
+    **根因**：TRAE IDE 沙箱是**进程树型**拦截，基于父进程链判断，无法通过 `powershell.exe` / `cmd.exe` 中转绕过；同一命令在 PowerShell 终端中直接执行不会触发沙箱（PowerShell 进程不在 sh.exe 进程树下）。
+
+    **症状区分**：
+    - **间歇性 SQLITE_CANTOPEN**：MCP Server 或其他 cw 进程持有 `-shm` 文件锁 → 重试可恢复（hook 已内置 3 次重试，间隔 2 秒）
+    - **持续性 SQLITE_CANTOPEN**：TRAE 沙箱拦截 → 重试无效，必须改用 PowerShell 终端执行 `cw refresh --all` 后用 `git commit --no-verify` 跳过 hook
+
+    **规避方法**（按优先级）：
+    1. **首选**：在 TRAE IDE 的 PowerShell 终端中手动运行 `python cw.py --refresh-all`，然后运行 `git commit --no-verify` 跳过 hook（DB 已刷新，满足规则 1）
+    2. **配置沙箱白名单**：Settings → Conversation → Custom Sandbox Configuration，添加允许规则：`C:\Users\<user>\.callwarden\`（写权限）
+    3. **停 MCP Server**：若间歇性失败，`cw server --stop` 释放 `-shm` 锁后再 commit
+    4. **用 `python cw.py` 替代 `cw.exe`**：entry_point 启动时 sqlite3 偶发失败，`python cw.py` 更稳定
+
+    **已沉淀修复**（见 [install.py](install.py) `_pre_commit_hook()`）：
+    - pre-commit hook 重试 3 次（间隔 2 秒）覆盖间歇性锁场景
+    - 重试耗尽后打印 TRAE 沙箱排查建议 + PowerShell + `--no-verify` 绕过指引
+    - 保持 `exit 1` 硬门禁（AGENTS.md 规则 1：提交前必须全量刷新数据库）
+
 ## 文档索引
 
 | 文档 | 说明 |

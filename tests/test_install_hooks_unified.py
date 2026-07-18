@@ -347,3 +347,64 @@ def test_install_hook_arg_task_id_no_envvar_reference():
         # 不应再出现 "CALLWARDEN_TASK_ID" 字样（应改为 --auto 模式描述）
         assert "CALLWARDEN_TASK_ID" not in text, \
             f"{lang_file} 的 install_hook_arg_task_id 仍引用 CALLWARDEN_TASK_ID"
+
+
+# ----------------------------------------------------------------------
+# pre-commit hook 容错重试逻辑（T-1784403320003）
+# ----------------------------------------------------------------------
+
+def test_pre_commit_hook_has_retry_loop():
+    """pre-commit hook 包含重试循环变量 _refresh_attempt / _refresh_max=3。"""
+    installer = CallWardenInstaller()
+    content = installer._pre_commit_hook()
+    assert "_refresh_attempt" in content, "hook 必须包含重试计数变量 _refresh_attempt"
+    assert "_refresh_max=3" in content, "hook 必须设置最大重试次数 _refresh_max=3"
+    assert "while [ \"$_refresh_attempt\" -lt \"$_refresh_max\" ]" in content, \
+        "hook 必须有 while 重试循环"
+
+
+def test_pre_commit_hook_has_sleep_between_retries():
+    """pre-commit hook 在重试之间有 sleep 2 间隔。"""
+    installer = CallWardenInstaller()
+    content = installer._pre_commit_hook()
+    assert "sleep 2" in content, "hook 必须在重试之间 sleep 2 秒"
+
+
+def test_pre_commit_hook_has_trae_sandbox_diagnostics():
+    """pre-commit hook 失败时打印 TRAE 沙箱排查建议。"""
+    installer = CallWardenInstaller()
+    content = installer._pre_commit_hook()
+    # 必须提及 TRAE 沙箱（根因之一）
+    assert "TRAE" in content, "hook 失败提示必须提及 TRAE 沙箱"
+    assert "沙箱" in content, "hook 失败提示必须提及沙箱拦截"
+    # 必须给出绕过建议（PowerShell + --no-verify）
+    assert "PowerShell" in content, "hook 必须给出 PowerShell 替代方案"
+    assert "--no-verify" in content, "hook 必须提及 --no-verify 绕过方式"
+    # 必须提示停 MCP Server
+    assert "cw server --stop" in content, "hook 必须提示停止 MCP Server"
+
+
+def test_pre_commit_hook_preserves_check_task_soft_gate():
+    """pre-commit hook 中 check-task 保持软门禁（|| true）。"""
+    installer = CallWardenInstaller()
+    content = installer._pre_commit_hook()
+    assert "git check-task || true" in content, \
+        "check-task 必须保留 || true 软门禁（不阻止 commit）"
+
+
+def test_pre_commit_hook_exits_nonzero_on_final_failure():
+    """pre-commit hook 重试耗尽后必须 exit 1（保持 AGENTS.md 规则 1 硬门禁）。"""
+    installer = CallWardenInstaller()
+    content = installer._pre_commit_hook()
+    # 最终失败分支必须 exit 1
+    assert "exit 1" in content, "hook 重试耗尽后必须 exit 1 阻止 commit"
+    # 必须有最终失败判断
+    assert "if [ \"$_refresh_attempt\" -ge \"$_refresh_max\" ]" in content, \
+        "hook 必须有最终失败判断分支"
+
+
+def test_pre_commit_hook_refresh_all_present():
+    """pre-commit hook 必须实际执行 cw --refresh-all。"""
+    installer = CallWardenInstaller()
+    content = installer._pre_commit_hook()
+    assert "--refresh-all" in content, "hook 必须执行 cw --refresh-all"
