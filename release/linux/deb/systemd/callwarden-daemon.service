@@ -1,8 +1,11 @@
 # Call Warden daemon systemd unit（打包占位文件）
-# Task: T-1783983162956-b2a8
+# Task: T-1784351992060-754393b5
 # 设计 §8.2: pre-start 执行 schema compatibility check，迁移失败不得启动
 # 安装路径: /usr/lib/systemd/system/callwarden-daemon.service
 # 注意：本文件为占位，路径用绝对路径；构建时由 dpkg 安装到上述位置。
+#
+# 二进制：cw_daemon（Rust binary，下划线分隔，对应 rust_ext/src/bin/cw_daemon.rs）
+# sd_notify：Type=notify 已对接（Rust sd_notify(state) 函数，commit 5bd01a2）
 
 [Unit]
 Description=Call Warden Enterprise Daemon
@@ -23,12 +26,14 @@ StateDirectoryMode=0750
 LogsDirectory=callwarden
 LogsDirectoryMode=0750
 
-# pre-start: schema 兼容性检查（迁移失败不得启动）
-ExecStartPre=/usr/bin/cw-daemon schema-check --strict
-ExecStart=/usr/bin/cw-daemon serve --enterprise
+# pre-start: schema 兼容性检查（迁移失败不得启动，exit 1）
+# 子命令 schema-check（kebab-case，clap 转换）：--strict 严格版本校验
+ExecStartPre=/usr/bin/cw_daemon schema-check --strict
+# 默认动作 = serve（也可显式写出）；cw_daemon 不接受 --enterprise flag
+ExecStart=/usr/bin/cw_daemon serve
 ExecReload=/bin/kill -HUP $MAINPID
 
-# 优雅停止
+# 优雅停止：SIGTERM 触发 sd_notify STOPPING=1 + drain workers
 KillMode=mixed
 KillSignal=SIGTERM
 TimeoutStopSec=60

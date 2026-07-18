@@ -1,3 +1,14 @@
+# Call Warden daemon systemd unit（CI/CD 部署用）
+# Task: T-1784351992060-754393b5
+# 安装路径：/etc/systemd/system/callwarden-daemon.service（手动部署）
+# 与 release/linux/deb/systemd/callwarden-daemon.service 区别：
+#   - 二进制路径 /usr/local/bin/cw_daemon（非 /usr/bin/cw_daemon）
+#   - 缺少 ExecStartPre（CI 环境首次启动可跳过 schema-check）
+#   - 权限更严格（StateDirectoryMode=0700，无 callwarden-clients 组共享）
+#
+# 二进制：cw_daemon（Rust binary，对应 rust_ext/src/bin/cw_daemon.rs）
+# sd_notify：Type=notify 已对接（Rust sd_notify(state) 函数，commit 5bd01a2）
+
 [Unit]
 Description=Call Warden Enterprise Daemon
 After=network.target
@@ -11,13 +22,18 @@ RuntimeDirectory=callwarden
 StateDirectory=callwarden
 LogsDirectory=callwarden
 
-ExecStart=/usr/local/bin/cw server --enterprise
+# 默认动作 = serve；cw_daemon 不接受 --enterprise flag（旧 Python 时期残留）
+ExecStart=/usr/local/bin/cw_daemon serve
 ExecReload=/bin/kill -HUP $MAINPID
+
+# 优雅停止：SIGTERM 触发 sd_notify STOPPING=1 + drain workers
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=60
 
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=30
-TimeoutStopSec=60
 
 # 资源限制
 LimitNOFILE=65536
@@ -30,12 +46,13 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-UMask=0077
+# UMask=0007 使 UDS socket 可为 callwarden-clients 组读写（与 deb 版本一致）
+UMask=0007
 
 # Socket 和审计目录权限
 RuntimeDirectoryMode=0755
-StateDirectoryMode=0700
-LogsDirectoryMode=0700
+StateDirectoryMode=0750
+LogsDirectoryMode=0750
 
 [Install]
 WantedBy=multi-user.target
