@@ -38,6 +38,11 @@ pub mod peercred;
 /// 跨平台：query.* 和 gc.snapshots 纯逻辑，snapshot.publish 的 FD 模式仅 Unix
 pub mod snapshot_state;
 
+/// G14: Health Check + Recovery Handler
+/// 实现 HealthChecker（4 项检查）+ RecoveryHandler（4 步恢复）
+/// 跨平台：rusqlite + fs2 + std，内存检查仅 Linux（读 /proc/self/status）
+pub mod health;
+
 /// R7: cw_daemon binary 配置加载（DaemonConfig + 环境变量覆盖 + 文件加载）
 pub mod config;
 

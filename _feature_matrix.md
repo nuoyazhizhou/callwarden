@@ -226,7 +226,7 @@
 | G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ✅ 已实现 | Rust SnapshotCachePublisher 桥接 SnapshotCache → build_and_publish_blocking；ReplicationResult.merged_summary 填充；5 个 E2E 测试（merged_summary + publisher + 多 workspace 隔离） |
 | G12 | Durable Staging（JSONL + fsync） | DS/EW | ✅ 已实现 | durable_staging.py |
 | G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已实现 | metrics.py（691行完整实现） |
-| G14 | Health Check endpoint | DS | ❓ 待验证 | health_check.py 已有 |
+| G14 | Health Check endpoint | DS | ✅ 已实现 | Rust HealthChecker（4 项检查：db_registry/disk_space/memory_usage/uptime）+ RecoveryHandler（4 步恢复：workspace_registry/cas_db/stale_jobs/snapshots）；workspace.handle_health 接入完整检查；cw_daemon 启动调用 RecoveryHandler；12 个新测试 |
 | G15 | Schema Migrator | DS | ✅ 已实现 | schema_migrator.py |
 | G16 | Backup/Restore | DS | ✅ 已实现 | backup_restore.py |
 | G17 | Snapshot GC | DS | ✅ 已实现 | snapshot_gc.py |

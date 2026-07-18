@@ -654,28 +654,38 @@ impl DaemonStateExt for WorkspaceDaemonState {
     }
 
     fn handle_health(&mut self, _peer: PeerCredential) -> Result<Value, DaemonRpcError> {
+        // G14: 接入 HealthChecker，返回完整检查结果
+        // 保留向后兼容字段（pid / schema_version / workspace_count）
         let state = self.daemon_state();
-        let uptime = state.start_time.elapsed().as_secs();
         let workspace_count = self
             .registry
             .count_workspaces()
             .map_err(|e| DaemonRpcError::internal_error(format!("count_workspaces: {}", e)))?;
-        let mut m = Map::new();
-        m.insert("status".to_string(), Value::String("ok".to_string()));
-        m.insert("pid".to_string(), Value::Number(state.pid.into()));
-        m.insert(
-            "uptime_seconds".to_string(),
-            Value::Number(uptime.into()),
-        );
-        m.insert(
-            "schema_version".to_string(),
-            Value::Number(state.schema_version.into()),
-        );
-        m.insert(
-            "workspace_count".to_string(),
-            Value::Number(workspace_count.into()),
-        );
-        Ok(Value::Object(m))
+
+        let config = super::health::HealthConfig {
+            registry_db_path: self.registry.db_path.clone(),
+            data_root: self.data_root.to_string_lossy().to_string(),
+            start_time: state.start_time,
+            // 默认 1GB（后续可从 daemon config 读取）
+            memory_max_bytes: 1024 * 1024 * 1024,
+        };
+        let checker = super::health::HealthChecker::new(config);
+        let mut result = checker.check_all();
+
+        // 追加向后兼容字段
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("pid".to_string(), Value::Number(state.pid.into()));
+            obj.insert(
+                "schema_version".to_string(),
+                Value::Number(state.schema_version.into()),
+            );
+            obj.insert(
+                "workspace_count".to_string(),
+                Value::Number(workspace_count.into()),
+            );
+        }
+
+        Ok(result)
     }
 
     fn handle_workspace_register(

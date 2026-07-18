@@ -192,6 +192,29 @@ mod unix {
             recovered_count
         );
 
+        // 4b. G14: RecoveryHandler 执行完整恢复流程
+        // 验证 workspace registry + 更新 last_active_at + 检查 data_root / snapshots
+        let recovery_config = callwarden_core::daemon::health::HealthConfig {
+            registry_db_path: config.registry_db_path.to_string_lossy().to_string(),
+            data_root: config.data_root.to_string_lossy().to_string(),
+            start_time: Instant::now(),
+            memory_max_bytes: 1024 * 1024 * 1024,
+        };
+        let recovery_handler = callwarden_core::daemon::health::RecoveryHandler::new(recovery_config);
+        let recovery_result = recovery_handler.recover();
+        eprintln!(
+            "[cw_daemon] [INFO] recovery status: {} (healthy={}, degraded={}, unhealthy={})",
+            recovery_result["status"],
+            recovery_result["summary"]["healthy"],
+            recovery_result["summary"]["degraded"],
+            recovery_result["summary"]["unhealthy"],
+        );
+        if recovery_result["status"] == "unhealthy" {
+            eprintln!(
+                "[cw_daemon] [WARN] recovery completed with unhealthy status, check logs"
+            );
+        }
+
         // 5. 构造 state_factory 闭包（每个 worker 线程调用一次，独立 WorkspaceRegistry 连接）
         // 必须是 Fn（可多次调用）+ Send + Sync：SnapshotDaemonState 内部有 Mutex<Connection>，
         // 每线程独立连接避免锁竞争
