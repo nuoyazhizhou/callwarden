@@ -89,6 +89,7 @@ class AgentWatcher:
         watch_dir: str,
         supported_exts: Optional[Set[str]] = None,
         debounce_time: float = 1.0,
+        auto_reconnect: bool = True,
     ):
         """初始化 agent watcher。
 
@@ -99,6 +100,8 @@ class AgentWatcher:
             watch_dir: 监控的目录绝对路径
             supported_exts: 支持的文件扩展名集合（如 {".py", ".rs"}）
             debounce_time: 防抖时间（秒）
+            auto_reconnect: 收到 session_not_active/stale_session 错误时
+                是否自动重新握手并重试一次（默认 True）
         """
         self.agent_session = agent_session
         self.daemon_rpc_client = daemon_rpc_client
@@ -106,11 +109,14 @@ class AgentWatcher:
         self.watch_dir = os.path.abspath(watch_dir)
         self.supported_exts = supported_exts or set()
         self.debounce_time = debounce_time
+        self.auto_reconnect = auto_reconnect
 
         self._observer: Optional[Any] = None
         self._handler: Optional["_AgentChangeHandler"] = None
         self._lock = threading.Lock()
         self._running = False
+        # 重连串行化：避免 watchdog 多线程同时触发 reconnect
+        self._reconnect_lock = threading.Lock()
 
         # canonicalize 函数（Rust 扩展，可能未编译）
         self._canonicalize_fn = _get_canonicalize_fn()
@@ -203,6 +209,11 @@ class AgentWatcher:
 
         规范：parse-input-abi.md §2（canonicalize 是唯一输入入口）
 
+        G9 auto-reconnect（runbook §9.7.3）：当 send_refresh_to_daemon 抛
+        AgentProtocolError 且 code 为 session_not_active / stale_session 时，
+        自动调用 user_agent_connect() 重新协商 epoch 并重试一次 refresh。
+        重连串行化（_reconnect_lock）避免 watchdog 多线程同时触发 reconnect。
+
         Args:
             abs_path: 变更文件的绝对路径
 
@@ -247,8 +258,45 @@ class AgentWatcher:
         rel_path = os.path.relpath(abs_path, self.watch_dir).replace("\\", "/")
 
         # 3. 发送 refresh RPC
+        from callwarden.server.agent_protocol import (
+            send_refresh_to_daemon, AgentProtocolError,
+        )
+        try:
+            return self._send_refresh(
+                rel_path, abs_path, canonical_bytes, content_hash,
+            )
+        except AgentProtocolError as e:
+            if not self.auto_reconnect:
+                raise
+            if e.code not in ("session_not_active", "stale_session"):
+                raise
+            # session 失效 → 自动重连一次并重试 refresh
+            logger.warning(
+                "session 失效（code=%s），自动重新握手 workspace=%s: %s",
+                e.code, self.workspace_instance_id, e.message,
+            )
+            if not self._reconnect():
+                # 重连失败：上抛原异常（已记录错误日志）
+                raise
+            # 重连成功 → 重试一次 refresh
+            logger.info(
+                "重连成功，重试 refresh %s workspace=%s",
+                abs_path, self.workspace_instance_id,
+            )
+            return self._send_refresh(
+                rel_path, abs_path, canonical_bytes, content_hash,
+            )
+
+    def _send_refresh(
+        self,
+        rel_path: str,
+        abs_path: str,
+        canonical_bytes: bytes,
+        content_hash: Optional[str],
+    ) -> Dict[str, Any]:
+        """实际调用 send_refresh_to_daemon（抽出以便重试复用）。"""
         from callwarden.server.agent_protocol import send_refresh_to_daemon
-        response = send_refresh_to_daemon(
+        return send_refresh_to_daemon(
             daemon_rpc_client=self.daemon_rpc_client,
             agent_session=self.agent_session,
             workspace_instance_id=self.workspace_instance_id,
@@ -257,7 +305,45 @@ class AgentWatcher:
             canonical_bytes=canonical_bytes,
             content_hash=content_hash,
         )
-        return response
+
+    def _reconnect(self) -> bool:
+        """调用 user_agent_connect 重新握手。
+
+        串行化：多个 watchdog 线程同时撞上 session 失效时，只让第一个
+        执行重连，其余等待并返回 True（让调用方走重试 refresh 路径，
+        若新 epoch 仍无效再各自上抛）。
+
+        Returns:
+            True 重连成功；False 重连失败（已记录错误日志）
+        """
+        from callwarden.server.agent_protocol import (
+            user_agent_connect, AgentProtocolError,
+        )
+        # 用非阻塞 acquire：拿不到锁说明已有重连在进行，本调用方直接
+        # 走重试路径（让重连后的新 epoch 决定结果）
+        if not self._reconnect_lock.acquire(blocking=False):
+            return True
+        try:
+            user_agent_connect(
+                daemon_rpc_client=self.daemon_rpc_client,
+                workspace_instance_id=self.workspace_instance_id,
+                agent_session=self.agent_session,
+            )
+            return True
+        except AgentProtocolError as e:
+            logger.error(
+                "自动重连失败 workspace=%s: code=%s msg=%s",
+                self.workspace_instance_id, e.code, e.message,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "自动重连异常 workspace=%s: %s",
+                self.workspace_instance_id, e,
+            )
+            return False
+        finally:
+            self._reconnect_lock.release()
 
     def handle_file_delete(self, abs_path: str) -> Dict[str, Any]:
         """处理文件删除事件。

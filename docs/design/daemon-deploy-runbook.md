@@ -422,9 +422,28 @@ daemon 重启后：
 - agent 下次 refresh 时会收到 `ProtocolError: no active session for workspace` 或 `stale_seq_dropped`
 - agent 应该捕获此错误并重新调用 `workspace.connect` 协商新 epoch
 
-> **TODO**：当前 `agent_watcher.py` 的错误处理仅记录日志，未自动重连。
-> 生产环境应在 `handle_file_change` 失败时检查 `ProtocolError.code`，
-> 若为 `session_not_active` 则自动调用 `user_agent_connect()` 重新协商。
+> **已实现（G9 auto-reconnect）**：`agent_watcher.handle_file_change` 在
+> 捕获 `AgentProtocolError` 后，检查 `e.code`：
+> - 若为 `session_not_active` 或 `stale_session`（session 失效类错误）：
+>   自动调用 `user_agent_connect()` 与 daemon 重新握手，握手成功后重试一次
+>   refresh；重试失败则向上抛出原异常
+> - 其他 code（如 `stale_manifest_commit`、`protocol_error`、`refresh_failed`）：
+>   不触发重连，直接上抛
+>
+> **重连并发控制**：`_reconnect_lock` 采用非阻塞 `acquire(blocking=False)`，
+> 多个文件变更并发触发重连时，仅第一个线程执行重连，其他线程跳过重连
+> 直接进入重试路径（因为第一个线程已重新握手建立新 session）。
+>
+> **错误码透传链路**：
+> `replicator.ProtocolError.code` → `daemon_server.DaemonRpcError.code`
+> → `daemon_protocol.DaemonRemoteError.code` → `agent_protocol.AgentProtocolError.code`
+> → `agent_watcher` 决定是否重连
+>
+> 测试覆盖：
+> - `tests/test_phase5_session_epoch.py::TestProtocolErrorCodeField`（6 个，replicator 层）
+> - `tests/test_g9_auto_reconnect_daemon_server.py`（6 个，daemon_server 透传层）
+> - `tests/test_cw_agent_daemon_integration.py::TestSendRefreshErrorCodePropagation`（5 个，agent_protocol 层）
+> - `tests/test_cw_agent_daemon_integration.py::TestAgentWatcherAutoReconnect`（6 个，agent_watcher E2E）
 
 ### 9.8 资源限制
 

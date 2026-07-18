@@ -66,8 +66,18 @@ def init_session_schema(conn: sqlite3.Connection):
 
 
 class ProtocolError(Exception):
-    """Session epoch / generation CAS 协议错误。"""
-    pass
+    """Session epoch / generation CAS 协议错误。
+
+    code 字段用于让上层（daemon_server）透传给 client，让 agent 端可基于 code
+    决定是否触发 auto-reconnect（session_not_active / stale_session → 重连；
+    其他 code → 上抛或重试）。
+
+    向后兼容：code 默认为 "protocol_error"，老调用方不传 code 也能用。
+    """
+    def __init__(self, message: str, code: str = "protocol_error"):
+        super().__init__(message)
+        self.code = code
+        self.message = message
 
 
 def daemon_handle_connect(peer_uid: int, workspace_id: int, requested_session_id: str,
@@ -166,12 +176,16 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
         (workspace_id,)
     ).fetchone()
     if active is None:
-        raise ProtocolError(f"no active session for workspace {workspace_id}")
+        raise ProtocolError(
+            f"no active session for workspace {workspace_id}",
+            code="session_not_active",
+        )
     if (incoming_session != active["active_session_id"]
             or incoming_epoch != active["active_session_epoch"]):
         raise ProtocolError(
             f"stale session rejected: incoming={incoming_session}:{incoming_epoch} "
-            f"active={active['active_session_id']}:{active['active_session_epoch']}"
+            f"active={active['active_session_id']}:{active['active_session_epoch']}",
+            code="stale_session",
         )
 
     incoming_gen = f"{incoming_epoch}:{incoming_seq}"
@@ -238,7 +252,10 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
         )
         if gen_cur.rowcount != 1:
             ws_conn.execute("ROLLBACK")
-            raise ProtocolError(f"stale manifest commit for {rel_path}")
+            raise ProtocolError(
+                f"stale manifest commit for {rel_path}",
+                code="stale_manifest_commit",
+            )
         ws_conn.execute("COMMIT")
     except Exception:
         try:

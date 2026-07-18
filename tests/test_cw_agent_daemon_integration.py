@@ -503,5 +503,360 @@ class TestAgentProtocolError:
         assert "test message" in str(err)
 
 
+# ============================================
+# 10. send_refresh_to_daemon 错误码透传（G9 auto-reconnect）
+# ============================================
+
+
+class TestSendRefreshErrorCodePropagation:
+    """send_refresh_to_daemon 保留 DaemonRemoteError.code 作为 AgentProtocolError.code。
+
+    G9 auto-reconnect 前提：daemon 侧 ProtocolError.code → DaemonRpcError.code →
+    DaemonRemoteError.code → AgentProtocolError.code 全链路透传，agent_watcher
+    据此决定是否触发 auto-reconnect。
+    """
+
+    def _make_daemon_remote_error(self, code, message):
+        """构造 DaemonRemoteError（跳过 daemon 真实 RPC，直接抛给 send_refresh）。"""
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+        return DaemonRemoteError(code, message)
+
+    def test_session_not_active_code_propagates(self, tmp_path):
+        """daemon 返回 session_not_active → AgentProtocolError.code 保留。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = self._make_daemon_remote_error(
+            "session_not_active",
+            "no active session for workspace ws_xxx",
+        )
+
+        session = _make_session_with_epoch(ws_id="ws_xxx", epoch=1)
+        canonical = b"print('x')\n"
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            send_refresh_to_daemon(
+                daemon_rpc_client=rpc,
+                agent_session=session,
+                workspace_instance_id="ws_xxx",
+                rel_path="main.py",
+                abs_path=str(tmp_path / "main.py"),
+                canonical_bytes=canonical,
+                content_hash=hashlib.sha256(canonical).hexdigest(),
+            )
+        assert exc_info.value.code == "session_not_active"
+        assert "no active session" in exc_info.value.message
+
+    def test_stale_session_code_propagates(self, tmp_path):
+        """daemon 返回 stale_session → AgentProtocolError.code 保留。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = self._make_daemon_remote_error(
+            "stale_session",
+            "stale session rejected: incoming=old:1 active=new:2",
+        )
+
+        session = _make_session_with_epoch(ws_id="ws_stale", epoch=1)
+        canonical = b"x"
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            send_refresh_to_daemon(
+                daemon_rpc_client=rpc,
+                agent_session=session,
+                workspace_instance_id="ws_stale",
+                rel_path="a.py",
+                abs_path=str(tmp_path / "a.py"),
+                canonical_bytes=canonical,
+                content_hash=hashlib.sha256(canonical).hexdigest(),
+            )
+        assert exc_info.value.code == "stale_session"
+
+    def test_stale_manifest_commit_code_does_not_trigger_reconnect(self, tmp_path):
+        """stale_manifest_commit code 透传但不属于 auto-reconnect 触发 code。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = self._make_daemon_remote_error(
+            "stale_manifest_commit",
+            "stale manifest commit for main.py",
+        )
+
+        session = _make_session_with_epoch(ws_id="ws_mc", epoch=1)
+        canonical = b"y"
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            send_refresh_to_daemon(
+                daemon_rpc_client=rpc,
+                agent_session=session,
+                workspace_instance_id="ws_mc",
+                rel_path="main.py",
+                abs_path=str(tmp_path / "main.py"),
+                canonical_bytes=canonical,
+                content_hash=hashlib.sha256(canonical).hexdigest(),
+            )
+        assert exc_info.value.code == "stale_manifest_commit"
+
+    def test_non_daemon_error_falls_back_to_refresh_failed(self, tmp_path):
+        """非 DaemonRemoteError（如 RuntimeError）→ code 默认 refresh_failed。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = RuntimeError("socket broken")
+
+        session = _make_session_with_epoch(ws_id="ws_rf", epoch=1)
+        canonical = b"z"
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            send_refresh_to_daemon(
+                daemon_rpc_client=rpc,
+                agent_session=session,
+                workspace_instance_id="ws_rf",
+                rel_path="a.py",
+                abs_path=str(tmp_path / "a.py"),
+                canonical_bytes=canonical,
+                content_hash=hashlib.sha256(canonical).hexdigest(),
+            )
+        assert exc_info.value.code == "refresh_failed"
+
+    def test_no_canonical_bytes_path_propagates_code(self, tmp_path):
+        """无 canonical_bytes 路径同样保留 DaemonRemoteError.code。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = self._make_daemon_remote_error(
+            "session_not_active", "no active session",
+        )
+
+        session = _make_session_with_epoch(ws_id="ws_nc", epoch=1)
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            send_refresh_to_daemon(
+                daemon_rpc_client=rpc,
+                agent_session=session,
+                workspace_instance_id="ws_nc",
+                rel_path="main.py",
+                abs_path=str(tmp_path / "main.py"),
+                canonical_bytes=None,
+            )
+        assert exc_info.value.code == "session_not_active"
+
+
+# ============================================
+# 11. AgentWatcher auto-reconnect（G9 runbook §9.7.3）
+# ============================================
+
+
+class TestAgentWatcherAutoReconnect:
+    """AgentWatcher.handle_file_change 自动重连 + 重试一次。
+
+    场景：daemon 重启或 epoch 被 revoke 后，agent 下次 refresh 会收到
+    session_not_active/stale_session，handle_file_change 应：
+    1. 捕获 AgentProtocolError
+    2. 调用 user_agent_connect 重新握手
+    3. 重试一次 _send_refresh
+    """
+
+    def _make_canonical_fn(self, content: bytes = b"print('hi')\n"):
+        """构造 mock canonicalize_fn。"""
+        canonical_fn = MagicMock()
+        canonical_fn.return_value = {
+            "canonical_bytes": content,
+            "content_hash": hashlib.sha256(content).hexdigest(),
+        }
+        return canonical_fn
+
+    def _make_daemon_remote_error(self, code, message):
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+        return DaemonRemoteError(code, message)
+
+    def test_auto_reconnect_on_session_not_active(self, tmp_path):
+        """session_not_active → 自动重连 + 重试成功。"""
+        rpc = MagicMock()
+        # 调用序列：
+        # 1. workspace.file.refresh（首次）→ 抛 DaemonRemoteError(session_not_active)
+        # 2. workspace.connect（_reconnect 内部）→ 返回 epoch=10
+        # 3. workspace.file.refresh（重试）→ 返回 committed
+        rpc.call.side_effect = [
+            self._make_daemon_remote_error(
+                "session_not_active", "no active session for workspace ws_ar1",
+            ),
+            {"session_epoch": 10},  # reconnect 后的新 epoch
+            {"status": "committed", "generation": "gen_after_reconnect"},
+        ]
+
+        session = _make_session_with_epoch(ws_id="ws_ar1", epoch=1)
+        test_file = tmp_path / "main.py"
+        test_file.write_bytes(b"print('hi')\n")
+
+        watcher = AgentWatcher(
+            agent_session=session,
+            daemon_rpc_client=rpc,
+            workspace_instance_id="ws_ar1",
+            watch_dir=str(tmp_path),
+            supported_exts={".py"},
+            auto_reconnect=True,
+        )
+        watcher._canonicalize_fn = self._make_canonical_fn()
+
+        response = watcher.handle_file_change(str(test_file))
+        assert response["status"] == "committed"
+        assert response["generation"] == "gen_after_reconnect"
+
+        # 验证 epoch 已更新到 10
+        assert session.get_epoch("ws_ar1") == 10
+
+        # 验证 RPC 调用顺序
+        methods = [call[0][0] for call in rpc.call.call_args_list]
+        assert methods == [
+            "workspace.file.refresh",  # 首次 refresh（失败）
+            "workspace.connect",       # 自动重连
+            "workspace.file.refresh",  # 重试 refresh（成功）
+        ]
+
+    def test_auto_reconnect_on_stale_session(self, tmp_path):
+        """stale_session → 自动重连 + 重试成功。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = [
+            self._make_daemon_remote_error(
+                "stale_session",
+                "stale session rejected: incoming=old:1 active=new:2",
+            ),
+            {"session_epoch": 2},
+            {"status": "committed"},
+        ]
+
+        session = _make_session_with_epoch(ws_id="ws_ar2", epoch=1)
+        test_file = tmp_path / "a.py"
+        test_file.write_bytes(b"x\n")
+
+        watcher = AgentWatcher(
+            agent_session=session,
+            daemon_rpc_client=rpc,
+            workspace_instance_id="ws_ar2",
+            watch_dir=str(tmp_path),
+            supported_exts={".py"},
+        )
+        watcher._canonicalize_fn = self._make_canonical_fn(content=b"x\n")
+
+        response = watcher.handle_file_change(str(test_file))
+        assert response["status"] == "committed"
+        assert session.get_epoch("ws_ar2") == 2
+
+    def test_auto_reconnect_disabled_reraises(self, tmp_path):
+        """auto_reconnect=False → 不重连，直接上抛 AgentProtocolError。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = self._make_daemon_remote_error(
+            "session_not_active", "no active session",
+        )
+
+        session = _make_session_with_epoch(ws_id="ws_ar3", epoch=1)
+        test_file = tmp_path / "a.py"
+        test_file.write_bytes(b"x\n")
+
+        watcher = AgentWatcher(
+            agent_session=session,
+            daemon_rpc_client=rpc,
+            workspace_instance_id="ws_ar3",
+            watch_dir=str(tmp_path),
+            supported_exts={".py"},
+            auto_reconnect=False,
+        )
+        watcher._canonicalize_fn = self._make_canonical_fn(content=b"x\n")
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            watcher.handle_file_change(str(test_file))
+        assert exc_info.value.code == "session_not_active"
+
+        # 不应有 workspace.connect 调用
+        methods = [call[0][0] for call in rpc.call.call_args_list]
+        assert methods == ["workspace.file.refresh"]
+
+    def test_auto_reconnect_skipped_for_non_session_errors(self, tmp_path):
+        """非 session 失效错误（refresh_failed/stale_manifest_commit）不触发重连。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = self._make_daemon_remote_error(
+            "stale_manifest_commit", "stale manifest commit for main.py",
+        )
+
+        session = _make_session_with_epoch(ws_id="ws_ar4", epoch=1)
+        test_file = tmp_path / "a.py"
+        test_file.write_bytes(b"x\n")
+
+        watcher = AgentWatcher(
+            agent_session=session,
+            daemon_rpc_client=rpc,
+            workspace_instance_id="ws_ar4",
+            watch_dir=str(tmp_path),
+            supported_exts={".py"},
+        )
+        watcher._canonicalize_fn = self._make_canonical_fn(content=b"x\n")
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            watcher.handle_file_change(str(test_file))
+        assert exc_info.value.code == "stale_manifest_commit"
+
+        # 不应有 workspace.connect 调用
+        methods = [call[0][0] for call in rpc.call.call_args_list]
+        assert methods == ["workspace.file.refresh"]
+
+    def test_auto_reconnect_failure_reraises_original(self, tmp_path):
+        """重连握手失败 → 上抛原 AgentProtocolError（不掩盖）。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = [
+            self._make_daemon_remote_error(
+                "session_not_active", "no active session",
+            ),
+            # workspace.connect 也失败
+            self._make_daemon_remote_error(
+                "connect_failed", "daemon connect rejected",
+            ),
+        ]
+
+        session = _make_session_with_epoch(ws_id="ws_ar5", epoch=1)
+        test_file = tmp_path / "a.py"
+        test_file.write_bytes(b"x\n")
+
+        watcher = AgentWatcher(
+            agent_session=session,
+            daemon_rpc_client=rpc,
+            workspace_instance_id="ws_ar5",
+            watch_dir=str(tmp_path),
+            supported_exts={".py"},
+        )
+        watcher._canonicalize_fn = self._make_canonical_fn(content=b"x\n")
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            watcher.handle_file_change(str(test_file))
+        # 上抛的是首次 refresh 的错误（session_not_active），而非重连错误
+        assert exc_info.value.code == "session_not_active"
+
+    def test_auto_reconnect_retry_failure_propagates_retry_error(self, tmp_path):
+        """重连成功但重试 refresh 仍失败 → 上抛重试时的错误。"""
+        rpc = MagicMock()
+        rpc.call.side_effect = [
+            # 首次 refresh：session_not_active
+            self._make_daemon_remote_error(
+                "session_not_active", "no active session",
+            ),
+            # workspace.connect：成功，epoch=2
+            {"session_epoch": 2},
+            # 重试 refresh：daemon 仍报错（如 stale_seq_dropped 不会触发，但其他错误会）
+            self._make_daemon_remote_error(
+                "refresh_failed", "daemon internal error",
+            ),
+        ]
+
+        session = _make_session_with_epoch(ws_id="ws_ar6", epoch=1)
+        test_file = tmp_path / "a.py"
+        test_file.write_bytes(b"x\n")
+
+        watcher = AgentWatcher(
+            agent_session=session,
+            daemon_rpc_client=rpc,
+            workspace_instance_id="ws_ar6",
+            watch_dir=str(tmp_path),
+            supported_exts={".py"},
+        )
+        watcher._canonicalize_fn = self._make_canonical_fn(content=b"x\n")
+
+        with pytest.raises(AgentProtocolError) as exc_info:
+            watcher.handle_file_change(str(test_file))
+        # 上抛的是重试 refresh 的错误（refresh_failed），不是首次的 session_not_active
+        assert exc_info.value.code == "refresh_failed"
+        # 但 epoch 已经被更新到 2（重连确实成功了）
+        assert session.get_epoch("ws_ar6") == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

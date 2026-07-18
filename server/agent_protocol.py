@@ -35,6 +35,26 @@ from callwarden.server.agent_session import AgentSession
 logger = logging.getLogger(__name__)
 
 
+def _resolve_rpc_error_code(exc: Exception, default: str = "refresh_failed") -> str:
+    """从 daemon RPC 异常中提取语义化 code，供 agent 决定是否 auto-reconnect。
+
+    DaemonRemoteError.code 是 daemon 侧 DaemonRpcError.code 的透传（见
+    daemon_protocol.parse_response），其中：
+      - session_not_active：daemon 侧无 active session（应重连）
+      - stale_session：incoming epoch/session 与 active 不匹配（应重连）
+      - stale_manifest_commit：CAS 第二阶段失败（不应重连，重试可能可行）
+      - refresh_failed：其他通用失败
+    """
+    # DaemonRemoteError 在 daemon_protocol 中定义
+    try:
+        from callwarden.server.daemon_protocol import DaemonRemoteError
+        if isinstance(exc, DaemonRemoteError) and getattr(exc, "code", None):
+            return str(exc.code)
+    except ImportError:
+        pass
+    return default
+
+
 # ============================================
 # 消息类型常量（与 daemon 侧约定）
 # ============================================
@@ -244,7 +264,7 @@ def send_refresh_to_daemon(
             return daemon_rpc_client.call("workspace.file.refresh", params)
         except Exception as e:
             raise AgentProtocolError(
-                "refresh_failed",
+                _resolve_rpc_error_code(e),
                 f"workspace.file.refresh RPC 失败（无 canonical_bytes）：{e}",
             ) from e
 
@@ -260,7 +280,7 @@ def send_refresh_to_daemon(
             return daemon_rpc_client.call("workspace.file.refresh", params)
         except Exception as e:
             raise AgentProtocolError(
-                "refresh_failed",
+                _resolve_rpc_error_code(e),
                 f"workspace.file.refresh RPC 失败（小文件路径）：{e}",
             ) from e
 
@@ -274,7 +294,7 @@ def send_refresh_to_daemon(
             return daemon_rpc_client.call("workspace.file.refresh", params)
         except Exception as e:
             raise AgentProtocolError(
-                "refresh_failed",
+                _resolve_rpc_error_code(e),
                 f"workspace.file.refresh RPC 失败（降级 hex）：{e}",
             ) from e
 
@@ -303,7 +323,7 @@ def send_refresh_to_daemon(
             )
         except Exception as e:
             raise AgentProtocolError(
-                "refresh_failed",
+                _resolve_rpc_error_code(e),
                 f"workspace.file.refresh RPC 失败（FD 路径）：{e}",
             ) from e
     finally:

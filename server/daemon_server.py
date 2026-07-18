@@ -524,7 +524,16 @@ class EnterpriseDaemonService:
                     }
                 return result
             except Exception as e:
-                raise DaemonRpcError("refresh_failed", str(e))
+                # G9 auto-reconnect：识别 replicator.ProtocolError 透传语义化 code
+                # 让 agent 端可基于 code 决定是否重新握手（session_not_active/stale_session）
+                err_code = "refresh_failed"
+                try:
+                    from callwarden.server.replicator import ProtocolError as _ReplProtErr
+                    if isinstance(e, _ReplProtErr) and getattr(e, "code", None):
+                        err_code = str(e.code)
+                except ImportError:
+                    pass
+                raise DaemonRpcError(err_code, str(e))
 
         # workspace.recover：崩溃恢复，重放 pending staging entries
         if method == "workspace.recover":

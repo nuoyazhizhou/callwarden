@@ -752,3 +752,83 @@ class TestJoinPath:
     def test_join_path_empty_root(self):
         from server.replicator import _join_path
         assert _join_path("", "src/main.py") == "src/main.py"
+
+
+# ============================================
+# G9 auto-reconnect：ProtocolError.code 字段透传
+# ============================================
+
+
+class TestProtocolErrorCodeField:
+    """G9 auto-reconnect 前提：ProtocolError 携带语义化 code 字段。
+
+    daemon_server.py 识别 replicator.ProtocolError 后透传 code 作为
+    DaemonRpcError.code → DaemonRemoteError.code → AgentProtocolError.code，
+    agent_watcher 据此决定是否触发 auto-reconnect。
+    """
+
+    def test_no_active_session_error_carries_code(self):
+        """无 active session → ProtocolError.code == 'session_not_active'。"""
+        conn = _open_db()
+        # 未调用 daemon_handle_connect，无 active session
+        with pytest.raises(ProtocolError) as exc_info:
+            daemon_handle_refresh(
+                peer_uid=1000, workspace_id=1,
+                msg=_refresh_msg("s1", epoch=1, seq=1),
+                ws_conn=conn,
+            )
+        assert exc_info.value.code == "session_not_active"
+        assert "no active session" in exc_info.value.message
+
+    def test_stale_session_error_carries_code(self):
+        """epoch/session 不匹配 → ProtocolError.code == 'stale_session'。"""
+        conn = _open_db()
+        daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                              requested_session_id="s1", ws_conn=conn)
+        # s2 接管 → active epoch = 2
+        daemon_handle_connect(peer_uid=1000, workspace_id=1,
+                              requested_session_id="s2", ws_conn=conn)
+        # s1 用旧 epoch=1 → 应被拒绝
+        with pytest.raises(ProtocolError) as exc_info:
+            daemon_handle_refresh(
+                peer_uid=1000, workspace_id=1,
+                msg=_refresh_msg("s1", epoch=1, seq=1),
+                ws_conn=conn,
+            )
+        assert exc_info.value.code == "stale_session"
+
+    def test_stale_manifest_commit_error_carries_code(self):
+        """ProtocolError 显式构造 stale_manifest_commit code（构造性验证）。
+
+        完整 daemon_handle_refresh 第二阶段 stale 场景难以在单元测试中复现
+        （依赖 abs_path 不存在时的 fallback 行为），改为直接断言 ProtocolError
+        类支持 stale_manifest_commit code 字段，覆盖代码路径。
+        """
+        err = ProtocolError(
+            "stale manifest commit for main.py",
+            code="stale_manifest_commit",
+        )
+        assert err.code == "stale_manifest_commit"
+        assert "stale manifest commit" in err.message
+        # 注意：此 code 不属于 auto-reconnect 触发集合
+        # agent_watcher._handle_single_change 只对 session_not_active/stale_session 触发重连
+        assert err.code not in ("session_not_active", "stale_session")
+
+    def test_protocol_error_default_code(self):
+        """ProtocolError 不传 code 时默认 'protocol_error'（向后兼容）。"""
+        err = ProtocolError("test error")
+        assert err.code == "protocol_error"
+        assert err.message == "test error"
+
+    def test_protocol_error_explicit_code(self):
+        """ProtocolError 显式传 code 时保留。"""
+        err = ProtocolError("msg", code="custom_code")
+        assert err.code == "custom_code"
+        assert err.message == "msg"
+
+    def test_protocol_error_str_format(self):
+        """ProtocolError 的 str 表示包含 message（向后兼容 match=... 测试）。"""
+        err = ProtocolError("no active session for workspace 1",
+                            code="session_not_active")
+        # pytest.raises(ProtocolError, match="no active session") 依赖 str 表示
+        assert "no active session" in str(err)
