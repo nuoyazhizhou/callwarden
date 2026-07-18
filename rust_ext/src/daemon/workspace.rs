@@ -132,6 +132,8 @@ fn hex_encode(bytes: &[u8]) -> String {
 /// 因为 rusqlite 默认不是 Sync。所有公共方法内部加锁，调用方无需关心。
 pub struct WorkspaceRegistry {
     conn: Mutex<Connection>,
+    /// registry DB 文件路径（用于 backup/restore VACUUM INTO）
+    pub db_path: String,
 }
 
 impl WorkspaceRegistry {
@@ -147,6 +149,7 @@ impl WorkspaceRegistry {
         Self::init_conn(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            db_path: db_path.to_string(),
         })
     }
 
@@ -156,7 +159,38 @@ impl WorkspaceRegistry {
         Self::init_conn(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            db_path: ":memory:".to_string(),
         })
+    }
+
+    /// 关闭当前连接并从 db_path 重新打开（用于 restore 流程）
+    ///
+    /// 实现细节：
+    /// 1. 先把旧 Connection 替换为内存连接（释放对 db 文件的锁）
+    /// 2. 然后用 db_path 重新打开并初始化 schema
+    /// 3. 替换为新连接
+    ///
+    /// 调用方负责确保在调用前文件已被替换（如 std::fs::copy 覆盖）。
+    pub fn reopen(&mut self) -> Result<(), rusqlite::Error> {
+        let db_path = self.db_path.clone();
+        // 内存数据库无法 restore（数据丢失），直接返回错误
+        if db_path == ":memory:" {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "无法对内存数据库执行 restore".to_string(),
+            ));
+        }
+        // 步骤 1：用内存连接占位，旧 Connection 被 drop 释放文件锁
+        let placeholder = Connection::open_in_memory()?;
+        {
+            let mut guard = self.conn.lock().unwrap();
+            *guard = placeholder;
+        }
+        // 步骤 2：现在文件锁已释放，可以打开新连接
+        let new_conn = Connection::open(&db_path)?;
+        Self::init_conn(&new_conn)?;
+        let mut guard = self.conn.lock().unwrap();
+        *guard = new_conn;
+        Ok(())
     }
 
     fn init_conn(conn: &Connection) -> Result<(), rusqlite::Error> {
@@ -945,6 +979,153 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 None => Value::Null,
             },
         );
+        Ok(Value::Object(m))
+    }
+
+    // ---- 运维方法（backup / restore / gc.cas）----
+
+    fn handle_backup(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // 对应 Python daemon_server.py L321-330
+        // VACUUM INTO 将 registry DB 完整备份（含 WAL）到指定路径
+        let output_path = require_str_param(params, "output_path")?;
+        let abs_path = std::path::absolute(output_path).map_err(|e| {
+            DaemonRpcError::invalid_params(format!("output_path 转绝对路径失败: {}", e))
+        })?;
+
+        // 创建父目录
+        if let Some(parent) = abs_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                DaemonRpcError::internal_error(format!("create_dir_all 失败: {}", e))
+            })?;
+        }
+
+        // VACUUM INTO 不支持参数绑定，必须拼接（单引号需 escape 为 ''）
+        let path_str = abs_path.to_string_lossy().replace('\'', "''");
+        let sql = format!("VACUUM INTO '{}'", path_str);
+
+        let conn = self.registry.conn.lock().unwrap();
+        conn.execute_batch(&sql).map_err(|e| {
+            DaemonRpcError::internal_error(format!("VACUUM INTO 失败: {}", e))
+        })?;
+        drop(conn);
+
+        let mut m = Map::new();
+        m.insert(
+            "backup_path".to_string(),
+            Value::String(abs_path.to_string_lossy().to_string()),
+        );
+        m.insert("status".to_string(), Value::String("ok".to_string()));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_restore(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // 对应 Python daemon_server.py L332-343
+        // 从备份文件恢复 registry DB：关闭当前连接 → 文件 copy → 重新打开
+        let source_path = require_str_param(params, "source_path")?;
+        let abs_source = std::path::absolute(source_path).map_err(|e| {
+            DaemonRpcError::invalid_params(format!("source_path 转绝对路径失败: {}", e))
+        })?;
+
+        // 校验备份文件存在
+        if !abs_source.exists() || !abs_source.is_file() {
+            return Err(DaemonRpcError::new(
+                "backup_not_found",
+                abs_source.to_string_lossy().to_string(),
+            ));
+        }
+
+        // 校验 registry DB 路径（内存数据库无法 restore）
+        let db_path = self.registry.db_path.clone();
+        if db_path == ":memory:" {
+            return Err(DaemonRpcError::new(
+                "restore_failed",
+                "无法对内存数据库执行 restore".to_string(),
+            ));
+        }
+
+        // restore 流程（WAL 模式下需谨慎处理）：
+        // 1. 当前连接执行 wal_checkpoint(TRUNCATE)，把 WAL 数据合并到主 .db
+        // 2. copy 备份文件覆盖主 .db
+        // 3. 删除旧 -wal / -shm 文件（避免新连接读到旧 WAL 数据）
+        // 4. reopen registry
+        {
+            let conn = self.registry.conn.lock().unwrap();
+            // wal_checkpoint(TRUNCATE) 把 WAL 合并到主 .db 并截断 WAL 文件
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+
+        std::fs::copy(&abs_source, &db_path).map_err(|e| {
+            DaemonRpcError::internal_error(format!(
+                "文件复制失败 ({} → {}): {}",
+                abs_source.display(),
+                db_path,
+                e
+            ))
+        })?;
+
+        // 删除 -wal / -shm（若存在），确保 reopen 时从纯 .db 文件读取
+        for suffix in &["-wal", "-shm"] {
+            let sidecar = format!("{}{}", db_path, suffix);
+            if std::path::Path::new(&sidecar).exists() {
+                let _ = std::fs::remove_file(&sidecar);
+            }
+        }
+
+        // 重新打开 registry，加载新数据
+        self.registry.reopen().map_err(|e| {
+            DaemonRpcError::internal_error(format!("registry reopen 失败: {}", e))
+        })?;
+
+        let mut m = Map::new();
+        m.insert(
+            "restored_from".to_string(),
+            Value::String(abs_source.to_string_lossy().to_string()),
+        );
+        m.insert("registry_db".to_string(), Value::String(db_path));
+        m.insert("status".to_string(), Value::String("ok".to_string()));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_gc_cas(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // 对应 Python daemon_server.py L358-369
+        // gc.cas 需要 workspace_instance_id（per-workspace CAS GC）
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        // ACL 校验
+        let _workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+
+        let grace_days = get_str_param(params, "grace_days")
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(7);
+
+        // 懒初始化 per-workspace 资源（含 CasStore）
+        let resources = self.get_or_init_resources(workspace_instance_id)?;
+
+        // 调用 CasStore::gc_unreferenced
+        let deleted = resources
+            .cas_store
+            .gc_unreferenced(grace_days)
+            .map_err(|e| DaemonRpcError::new("gc_failed", format!("{}", e)))?;
+
+        let mut m = Map::new();
+        m.insert("deleted_count".to_string(), Value::Number(deleted.into()));
+        m.insert("grace_days".to_string(), Value::Number(grace_days.into()));
+        m.insert(
+            "workspace_instance_id".to_string(),
+            Value::String(workspace_instance_id.to_string()),
+        );
+        m.insert("status".to_string(), Value::String("ok".to_string()));
         Ok(Value::Object(m))
     }
 }
@@ -2343,5 +2524,499 @@ mod tests {
         );
         assert_eq!(r5["ok"], false);
         assert_eq!(r5["error"]["code"], "refresh_failed");
+    }
+
+    // ---- handle_backup / handle_restore / handle_gc_cas 测试 ----
+
+    /// 构造一个使用文件 DB 的 WorkspaceDaemonState（用于 backup/restore 测试）
+    ///
+    /// 返回 (state, registry_db_path, data_root_tempdir)
+    /// tempdir 由调用方持有，drop 时自动清理
+    fn make_state_with_file_registry() -> (
+        WorkspaceDaemonState,
+        std::path::PathBuf,
+        tempfile::TempDir,
+    ) {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry_db_path = tmp.path().join("registry.db");
+        let registry = WorkspaceRegistry::open(registry_db_path.to_str().unwrap()).unwrap();
+        let state = WorkspaceDaemonState::with_data_root(
+            registry,
+            tmp.path().to_path_buf(),
+        );
+        (state, registry_db_path, tmp)
+    }
+
+    #[test]
+    fn test_backup_creates_valid_db_file() {
+        // backup：VACUUM INTO 创建一份完整 backup 文件
+        let (mut state, _reg_path, tmp) = make_state_with_file_registry();
+        let peer = make_owner_peer();
+
+        // 注册一个 workspace，让 registry DB 有数据
+        let dir = tmp.path().to_str().unwrap().to_string();
+        let _ = state
+            .registry
+            .register_workspace(current_uid(), &dir, &dir, "", "", "")
+            .unwrap();
+
+        let backup_path = tmp.path().join("backup.db");
+        let backup_path_str = backup_path.to_str().unwrap().to_string();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "backup",
+            &json!({"output_path": backup_path_str}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["status"], "ok");
+        assert_eq!(response["result"]["backup_path"], backup_path_str);
+
+        // backup 文件应存在且为有效 SQLite DB
+        assert!(backup_path.exists());
+        let conn = rusqlite::Connection::open(&backup_path).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM daemon_workspaces", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_backup_missing_output_path_param() {
+        let (mut state, _reg_path, tmp) = make_state_with_file_registry();
+        let peer = make_owner_peer();
+        let _ = tmp; // 持有 tempdir
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "backup",
+            &json!({}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_backup_creates_parent_directory() {
+        // backup：父目录不存在时自动创建
+        let (mut state, _reg_path, tmp) = make_state_with_file_registry();
+        let peer = make_owner_peer();
+
+        let backup_path = tmp.path().join("nested").join("dir").join("backup.db");
+        let response = dispatch(
+            &mut state,
+            peer,
+            "backup",
+            &json!({"output_path": backup_path.to_str().unwrap()}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert!(backup_path.exists());
+    }
+
+    #[test]
+    fn test_restore_replaces_registry_db() {
+        // restore：从 backup 文件恢复 registry DB
+        // 流程：1. 注册 ws1 → 2. backup → 3. 注册 ws2（破坏数据）
+        //       4. restore from backup → 5. 验证只有 ws1（ws2 被覆盖）
+        let (mut state, reg_path, tmp) = make_state_with_file_registry();
+        let peer = make_owner_peer();
+        let dir = tmp.path().to_str().unwrap().to_string();
+
+        // 1. 注册 ws1
+        let r1 = state
+            .registry
+            .register_workspace(current_uid(), &dir, &dir, "", "", "")
+            .unwrap();
+        let ws1_id = r1["workspace_instance_id"].as_str().unwrap().to_string();
+
+        // 2. backup
+        let backup_path = tmp.path().join("backup.db");
+        let backup_resp = dispatch(
+            &mut state,
+            peer,
+            "backup",
+            &json!({"output_path": backup_path.to_str().unwrap()}),
+            &[],
+        );
+        assert_eq!(backup_resp["ok"], true);
+
+        // 3. 注册 ws2（增加一条数据）
+        let r2 = state
+            .registry
+            .register_workspace(
+                current_uid(),
+                &format!("{}-2", dir),
+                &format!("{}-2", dir),
+                "",
+                "",
+                "",
+            )
+            .unwrap();
+        let ws2_id = r2["workspace_instance_id"].as_str().unwrap().to_string();
+        assert_ne!(ws1_id, ws2_id);
+
+        // 确认 registry 有 2 条
+        assert_eq!(state.registry.count_workspaces().unwrap(), 2);
+
+        // 4. restore from backup
+        let restore_resp = dispatch(
+            &mut state,
+            peer,
+            "restore",
+            &json!({"source_path": backup_path.to_str().unwrap()}),
+            &[],
+        );
+        assert_eq!(restore_resp["ok"], true);
+        assert_eq!(restore_resp["result"]["status"], "ok");
+        assert_eq!(restore_resp["result"]["restored_from"], backup_path.to_str().unwrap());
+        assert_eq!(restore_resp["result"]["registry_db"], reg_path.to_str().unwrap());
+
+        // 5. 验证：registry 应只剩 1 条（ws1）
+        let count = state.registry.count_workspaces().unwrap();
+        assert_eq!(count, 1, "restore 后应只剩 backup 时的 1 条 workspace");
+
+        // ws1 还在
+        let ws1_after = state.registry.get_workspace_status(&ws1_id).unwrap();
+        assert!(ws1_after.is_some(), "ws1 应在 restore 后保留");
+    }
+
+    #[test]
+    fn test_restore_rejects_missing_source_path() {
+        let (mut state, _reg_path, tmp) = make_state_with_file_registry();
+        let peer = make_owner_peer();
+        let _ = tmp;
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "restore",
+            &json!({}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_restore_rejects_nonexistent_file() {
+        let (mut state, _reg_path, tmp) = make_state_with_file_registry();
+        let peer = make_owner_peer();
+        let _ = tmp;
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "restore",
+            &json!({"source_path": "/nonexistent/path/backup.db"}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "backup_not_found");
+    }
+
+    #[test]
+    fn test_restore_rejects_in_memory_db() {
+        // 内存数据库无法 restore（无文件路径可覆盖）
+        let mut state = make_state();
+        let peer = make_owner_peer();
+        let tmp = tempfile::tempdir().unwrap();
+        let fake_backup = tmp.path().join("fake.db");
+        std::fs::write(&fake_backup, b"dummy").unwrap();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "restore",
+            &json!({"source_path": fake_backup.to_str().unwrap()}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "restore_failed");
+    }
+
+    #[test]
+    fn test_gc_cas_returns_zero_for_empty_workspace() {
+        // gc.cas：workspace 没有任何 CAS 条目时返回 deleted_count=0
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "gc.cas",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "grace_days": 7
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["status"], "ok");
+        assert_eq!(response["result"]["deleted_count"], 0);
+        assert_eq!(response["result"]["grace_days"], 7);
+        assert_eq!(response["result"]["workspace_instance_id"], ws_id);
+    }
+
+    #[test]
+    fn test_gc_cas_default_grace_days_is_7() {
+        // 未传 grace_days 参数时默认 7
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "gc.cas",
+            &json!({
+                "workspace_instance_id": ws_id
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["grace_days"], 7);
+    }
+
+    #[test]
+    fn test_gc_cas_rejects_non_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let owner = make_owner_peer();
+        let other = make_other_peer();
+        let ws_id = register_ws(&mut state, owner.uid);
+
+        let response = dispatch(
+            &mut state,
+            other,
+            "gc.cas",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "grace_days": 7
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_gc_cas_rejects_unknown_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "gc.cas",
+            &json!({
+                "workspace_instance_id": "nonexistent_ws",
+                "grace_days": 7
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_not_found");
+    }
+
+    #[test]
+    fn test_gc_cas_missing_workspace_instance_id_param() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "gc.cas",
+            &json!({
+                "grace_days": 7
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_gc_cas_deletes_stale_entries() {
+        // 集成测试：插入 ready + parsed_at 过期的 cas_file_cache 条目，
+        // gc.cas 应删除（grace_days=0 时所有 ready 条目都被视为过期）
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        // 先 connect + 懒初始化资源
+        let _ = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+
+        // 直接通过 CasStore 插入测试数据
+        let resources = state.resources.get(&ws_id).unwrap().clone();
+        let cas_store = &resources.cas_store;
+        {
+            let conn = cas_store.conn().lock().unwrap();
+            // 插入 2 条 ready 条目：1 条 parsed_at=0（很久以前）、1 条 parsed_at=now（刚创建）
+            conn.execute(
+                "INSERT OR REPLACE INTO cas_file_cache
+                 (cas_key, content_hash, language, file_size, total_lines,
+                  parser_version, callwarden_version, extraction_config_version,
+                  abi_version, input_abi_version, state, parsed_at)
+                 VALUES ('stale_key', 'hash1', 'rust', 100, 10,
+                         'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0)",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO cas_file_cache
+                 (cas_key, content_hash, language, file_size, total_lines,
+                  parser_version, callwarden_version, extraction_config_version,
+                  abi_version, input_abi_version, state, parsed_at)
+                 VALUES ('fresh_key', 'hash2', 'rust', 100, 10,
+                         'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 9999999999.0)",
+                [],
+            ).unwrap();
+            // 插入子表数据
+            conn.execute(
+                "INSERT OR REPLACE INTO cas_symbols
+                 (cas_key, local_symbol_id, symbol_content_hash, name,
+                  local_qualified_name, kind, start_line, end_line)
+                 VALUES ('stale_key', 1, 'content_hash_1', 'sym1', 'sym1', 'function', 1, 10)",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO cas_symbol_contents (content_hash, content)
+                 VALUES ('content_hash_1', 'dummy')",
+                [],
+            ).unwrap();
+        }
+
+        // grace_days=0：parsed_at < now 的 ready 条目都应被删除
+        // 注意 fresh_key 的 parsed_at=9999999999（≈2286年）远大于 now（2026年），应保留
+        let response = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "gc.cas",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "grace_days": 0
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["deleted_count"], 1);
+
+        // 验证：stale_key 被删，fresh_key 保留
+        let resources2 = state.resources.get(&ws_id).unwrap().clone();
+        let conn = resources2.cas_store.conn().lock().unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cas_file_cache", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(remaining, 1, "应只剩 fresh_key");
+
+        let fresh_key: String = conn
+            .query_row(
+                "SELECT cas_key FROM cas_file_cache",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(fresh_key, "fresh_key");
+
+        // 子表也应被清理：cas_symbols 中 stale_key 的行被删
+        let symbols_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cas_symbols", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(symbols_count, 0, "stale_key 关联的 cas_symbols 应被级联删除");
+
+        // cas_symbol_contents 中的孤儿 content_hash 也应被清理
+        let contents_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cas_symbol_contents", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(contents_count, 0, "孤儿 cas_symbol_contents 应被清理");
+    }
+
+    #[test]
+    fn test_gc_cas_preserves_pending_refs() {
+        // cas_pending_refs 中未过期的 cas_key 不应被 GC
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        // connect + 懒初始化
+        let _ = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "workspace.connect",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "agent_session_id": "session-1"
+            }),
+            &[],
+        );
+
+        let resources = state.resources.get(&ws_id).unwrap().clone();
+        {
+            let conn = resources.cas_store.conn().lock().unwrap();
+            // 插入 1 条 parsed_at=0 的 ready 条目
+            conn.execute(
+                "INSERT OR REPLACE INTO cas_file_cache
+                 (cas_key, content_hash, language, file_size, total_lines,
+                  parser_version, callwarden_version, extraction_config_version,
+                  abi_version, input_abi_version, state, parsed_at)
+                 VALUES ('pending_key', 'hash1', 'rust', 100, 10,
+                         'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0)",
+                [],
+            ).unwrap();
+            // 插入对应的未过期 pending_ref（expires_at=9999999999，远在未来）
+            conn.execute(
+                "INSERT OR REPLACE INTO cas_pending_refs
+                 (cas_key, workspace_id, expires_at, created_at)
+                 VALUES ('pending_key', 1, 9999999999.0, 0)",
+                [],
+            ).unwrap();
+        }
+
+        // gc.cas grace_days=0：parsed_at=0 的条目本应被删，但因为有未过期 pending_ref，应保留
+        let response = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "gc.cas",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "grace_days": 0
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["deleted_count"], 0);
+
+        // 验证 pending_key 仍在
+        let resources2 = state.resources.get(&ws_id).unwrap().clone();
+        let conn = resources2.cas_store.conn().lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cas_file_cache WHERE cas_key = 'pending_key'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }

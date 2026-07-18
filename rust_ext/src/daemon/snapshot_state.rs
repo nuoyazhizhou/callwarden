@@ -13,9 +13,9 @@
 //!
 //! workspace.* 方法（register/list/status/connect/file.refresh/recover）委托给
 //! `WorkspaceDaemonState`（在 base 中实现）。
+//! 运维方法（backup/restore/gc.cas）也委托给 base。
 //!
-//! 其他高级方法保持 `method_not_found`（R6 范围外）：
-//! - `gc.cas` / `backup` / `restore`（运维方法）
+//! 至此所有 dispatch 路由均有实现（除 `cw_daemon.rs` 中 `sd_notify READY=1` TODO 外）。
 //!
 //! 参考：Python `server/daemon_server.py:EnterpriseDaemonService.dispatch` L441-490
 
@@ -224,6 +224,32 @@ impl DaemonStateExt for SnapshotDaemonState {
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
         self.base.handle_workspace_file_refresh(peer, params)
+    }
+
+    // ---- 运维方法（backup / restore / gc.cas 委托 base）----
+
+    fn handle_backup(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_backup(peer, params)
+    }
+
+    fn handle_restore(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_restore(peer, params)
+    }
+
+    fn handle_gc_cas(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_gc_cas(peer, params)
     }
 
     // ---- snapshot 管理（R6 实现）----
@@ -878,7 +904,10 @@ mod tests {
     // ---- method_not_found for R6-out-of-scope methods ----
 
     #[test]
-    fn test_gc_cas_still_method_not_found() {
+    fn test_gc_cas_delegated_to_base() {
+        // gc.cas 现已委托给 WorkspaceDaemonState 实现，
+        // dispatch 应进入 handler 而非返回 method_not_found。
+        // 传入缺少 workspace_instance_id 的参数，应返回 invalid_params（而非 method_not_found）。
         let mut state = make_state();
         let peer = make_peer(0);
 
@@ -890,17 +919,20 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "method_not_found");
+        assert_eq!(response["error"]["code"], "invalid_params");
     }
 
     #[test]
-    fn test_backup_still_method_not_found() {
+    fn test_backup_delegated_to_base() {
+        // backup 现已委托给 WorkspaceDaemonState 实现，
+        // dispatch 应进入 handler 而非返回 method_not_found。
+        // 传入缺少 output_path 的参数，应返回 invalid_params（而非 method_not_found）。
         let mut state = make_state();
         let peer = make_peer(0);
 
         let response = dispatch(&mut state, peer, "backup", &json!({}), &[]);
         assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "method_not_found");
+        assert_eq!(response["error"]["code"], "invalid_params");
     }
 
     #[test]

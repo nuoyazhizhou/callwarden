@@ -255,6 +255,11 @@ impl CasStore {
         })
     }
 
+    /// 访问内部 Connection（用于跨模块测试或与 SessionStore 类似的场景）
+    pub fn conn(&self) -> &Mutex<Connection> {
+        &self.conn
+    }
+
     fn init_conn(conn: &Connection) -> Result<(), rusqlite::Error> {
         conn.execute_batch("PRAGMA busy_timeout=5000;")?;
         conn.execute_batch("PRAGMA journal_mode=WAL;")?;
@@ -606,6 +611,112 @@ impl CasStore {
         stats.deleted_files = deleted_files + orphan_files;
         stats.expired_refs = expired_refs;
         Ok(stats)
+    }
+
+    /// GC 未引用且超过 grace_days 的 CAS 条目（对应 Python daemon_server.py `gc.cas` method）
+    ///
+    /// Python 原实现：`DELETE FROM cas_contents WHERE ref_count = 0 AND created_at < ?`
+    /// 但 Rust schema 用 `cas_file_cache`（无 `ref_count` 列），故采用等价语义：
+    ///
+    /// 删除规则：
+    /// 1. `cas_file_cache` 中 `state='ready' AND parsed_at < now - grace_days*86400`
+    /// 2. 且 `cas_key` 不在 `cas_pending_refs`（未过期）中
+    /// 3. 级联删除 `cas_symbols` / `cas_raw_calls` / `cas_imports` 中关联行
+    /// 4. 清理 `cas_symbol_contents` 中不再被任何 symbol 引用的 content_hash
+    /// 5. 清理过期的 `cas_pending_refs`（`expires_at <= now`）
+    ///
+    /// 与 `gc(live_keys, ...)` 的区别：
+    /// - `gc` 需要 manifest 提供的 `live_keys`（精确引用集），用于 snapshot GC
+    /// - `gc_unreferenced` 基于 grace_days 时间窗，用于运维定期清理
+    ///
+    /// 返回：删除的 `cas_file_cache` 行数（不含子表）
+    pub fn gc_unreferenced(&self, grace_days: u32) -> Result<u64, CasPublishError> {
+        let now = now_ts();
+        let cutoff = now - (grace_days as f64) * 86400.0;
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+
+        let result = (|| {
+            // 1. 创建临时表存放待删除的 cas_key
+            conn.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS _gc_stale (cas_key TEXT PRIMARY KEY)",
+                [],
+            )?;
+            conn.execute("DELETE FROM _gc_stale", [])?;
+
+            // 2. 找出 ready + parsed_at < cutoff + 不在未过期 pending_refs 的 cas_key
+            {
+                let mut stmt = conn.prepare(
+                    "INSERT OR IGNORE INTO _gc_stale
+                     SELECT cas_key FROM cas_file_cache
+                     WHERE state = 'ready' AND parsed_at < ?1
+                     AND cas_key NOT IN (
+                         SELECT DISTINCT cas_key FROM cas_pending_refs WHERE expires_at > ?2
+                     )",
+                )?;
+                stmt.execute(params![cutoff, now])?;
+            }
+
+            // 3. 检查是否有待删除条目
+            let stale_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM _gc_stale",
+                [],
+                |row| row.get(0),
+            )?;
+            if stale_count == 0 {
+                conn.execute("DROP TABLE _gc_stale", [])?;
+                return Ok(0u64);
+            }
+
+            // 4. 级联删除子表
+            conn.execute(
+                "DELETE FROM cas_symbols WHERE cas_key IN (SELECT cas_key FROM _gc_stale)",
+                [],
+            )?;
+            conn.execute(
+                "DELETE FROM cas_raw_calls WHERE cas_key IN (SELECT cas_key FROM _gc_stale)",
+                [],
+            )?;
+            conn.execute(
+                "DELETE FROM cas_imports WHERE cas_key IN (SELECT cas_key FROM _gc_stale)",
+                [],
+            )?;
+
+            // 5. 删除父表
+            let deleted = conn.execute(
+                "DELETE FROM cas_file_cache WHERE cas_key IN (SELECT cas_key FROM _gc_stale)",
+                [],
+            )?;
+
+            // 6. 清理孤儿 cas_symbol_contents
+            conn.execute(
+                "DELETE FROM cas_symbol_contents WHERE content_hash NOT IN
+                 (SELECT DISTINCT symbol_content_hash FROM cas_symbols)",
+                [],
+            )?;
+
+            // 7. 清理过期 pending_refs
+            conn.execute(
+                "DELETE FROM cas_pending_refs WHERE expires_at <= ?1",
+                params![now],
+            )?;
+
+            // 8. 清理临时表
+            conn.execute("DROP TABLE _gc_stale", [])?;
+
+            Ok(deleted as u64)
+        })();
+
+        match result {
+            Ok(n) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(n)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 
     // ---- file_generations 两阶段 CAS（对应 Python db_cas.py:file_generation_seen/committed）----

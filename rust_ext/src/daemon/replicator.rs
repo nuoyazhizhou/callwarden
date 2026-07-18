@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 
-use super::cas::{CasPublishError, CasStore};
+use super::cas::CasStore;
 use super::staging_log::{StagingEntry, StagingLog};
 
 // ============================================
