@@ -171,10 +171,11 @@ mod unix {
             config.registry_db_path.display()
         );
 
-        // 4. recover_all_workspaces（R7 stub：当前无 workspace 需要恢复，留作后续实现）
-        // 对应 Python daemon_server.py:L191-206
-        // TODO: 遍历 registry.list_workspaces(None) → 为每个 workspace 打开 StagingLog → recover
-        let recovered_count = recover_all_workspaces(&registry);
+        // 4. recover_all_workspaces：daemon 重启恢复
+        // 从 registry DB 读取所有已注册 workspace，对每个 workspace 检查 staging.log
+        // 是否有 pending entries，有则调用 Replicator::recover 恢复。
+        // 修正 Python 版本的 bug：Python 只遍历内存中的 _workspace_resources，重启后是空的。
+        let recovered_count = recover_all_workspaces(&registry, &config.data_root);
         eprintln!(
             "[cw_daemon] [INFO] recovered {} pending entries from workspaces",
             recovered_count
@@ -372,16 +373,351 @@ mod unix {
         }
     }
 
-    /// R7 stub：恢复所有 workspace 的 pending staging log entries。
+    /// 恢复所有 workspace 的 pending staging log entries。
     ///
-    /// 完整实现（参考 Python daemon_server.py:L191-206）：
+    /// daemon 启动时调用。对应 Python daemon_server.py:L191-206，但修正了一个 bug：
+    /// Python 版本只遍历内存中的 _workspace_resources（重启后是空的，实际不恢复任何 workspace）。
+    /// Rust 版本从 registry DB 读取所有已注册 workspace，确保重启后能真正恢复。
+    ///
+    /// 路径约定（与 Python _get_workspace_resources 一致）：
+    /// - ws_dir = data_root / workspace_instance_id
+    /// - staging_log_path = ws_dir / "staging.log"
+    ///
+    /// 恢复策略：
     /// 1. registry.list_workspaces(None) → 遍历所有 workspace
-    /// 2. 为每个 workspace 打开 StagingLog + Replicator
-    /// 3. 调用 replicator.recover(workspace_id, db_path)
+    /// 2. 检查 staging.log 是否存在（不存在说明从未有 pending entries，跳过）
+    /// 3. 打开 StagingLog，读取 pending entries
+    /// 4. 过滤当前 workspace 的 entries（staging log 可能跨 workspace 共享）
+    /// 5. 调用 Replicator::recover（无 SnapshotPublisher，只更新 log 状态）
     ///
-    /// R7 当前返回 0（无 workspace 注册时无需恢复）。
-    /// 实际恢复逻辑在 R8 E2E 测试中验证。
-    fn recover_all_workspaces(_registry: &WorkspaceRegistry) -> usize {
-        0
+    /// 错误容忍：单个 workspace 恢复失败不影响其他 workspace。
+    fn recover_all_workspaces(
+        registry: &WorkspaceRegistry,
+        data_root: &std::path::Path,
+    ) -> usize {
+        use callwarden_core::daemon::replicator::Replicator;
+        use callwarden_core::daemon::staging_log::StagingLog;
+
+        let workspaces = match registry.list_workspaces(None) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[cw_daemon] [WARN] list_workspaces 失败: {}", e);
+                return 0;
+            }
+        };
+
+        let mut recovered_count = 0;
+        for ws in workspaces {
+            let ws_id = ws
+                .get("workspace_instance_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if ws_id.is_empty() {
+                continue;
+            }
+
+            let ws_dir = data_root.join(ws_id);
+            let staging_log_path = ws_dir.join("staging.log");
+
+            // staging.log 不存在 → 该 workspace 从未有 pending entries，跳过
+            if !staging_log_path.exists() {
+                continue;
+            }
+
+            // 打开 StagingLog（自动恢复 next_lsn）
+            let staging_log = match StagingLog::new(staging_log_path.to_string_lossy().as_ref()) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon] [WARN] 打开 staging.log 失败 ws={}: {}",
+                        ws_id, e
+                    );
+                    continue;
+                }
+            };
+
+            // 检查是否有 pending entries
+            let pending = match staging_log.read_pending() {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon] [WARN] read_pending 失败 ws={}: {}",
+                        ws_id, e
+                    );
+                    continue;
+                }
+            };
+
+            // 过滤当前 workspace 的 entries
+            let ws_pending: Vec<_> = pending
+                .into_iter()
+                .filter(|e| e.workspace_id == ws_id)
+                .collect();
+
+            if ws_pending.is_empty() {
+                continue;
+            }
+
+            eprintln!(
+                "[cw_daemon] [INFO] recovering {} pending entries for ws={}",
+                ws_pending.len(),
+                ws_id
+            );
+
+            // 创建 Replicator（无 SnapshotPublisher，只更新 log 状态）
+            // daemon 启动恢复时不需要发布 snapshot（snapshot 可能已是最新），
+            // 只需将 pending entries 标记为 applied 或重试 replication
+            let replicator = Replicator::new(&staging_log);
+            let result = replicator.recover(ws_id, "");
+
+            if result.success {
+                recovered_count += result.applied_count;
+            } else {
+                eprintln!(
+                    "[cw_daemon] [WARN] recovery failed for ws={}: {}",
+                    ws_id,
+                    result.error.unwrap_or_default()
+                );
+            }
+        }
+
+        recovered_count
+    }
+
+    // ============================================
+    // 单元测试
+    // ============================================
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use callwarden_core::daemon::staging_log::{StagingEntry, StagingLog};
+        use callwarden_core::daemon::workspace::WorkspaceRegistry;
+        use std::fs;
+        use std::path::Path;
+        use tempfile::TempDir;
+
+        /// 测试 fixture：临时 registry DB + data_root
+        struct RecoverFixture {
+            _tmp: TempDir,
+            registry_db: PathBuf,
+            data_root: PathBuf,
+            registry: WorkspaceRegistry,
+        }
+
+        impl RecoverFixture {
+            fn new() -> Self {
+                let tmp = tempfile::tempdir().unwrap();
+                let registry_db = tmp.path().join("registry.db");
+                let data_root = tmp.path().join("data");
+                fs::create_dir_all(&data_root).unwrap();
+                let registry = WorkspaceRegistry::open(registry_db.to_str().unwrap()).unwrap();
+                Self {
+                    _tmp: tmp,
+                    registry_db,
+                    data_root,
+                    registry,
+                }
+            }
+
+            /// 注册一个 workspace，返回 workspace_instance_id
+            fn register_workspace(&self, ws_root: &Path) -> String {
+                // register_workspace 要求 client_view_root 真实存在
+                fs::create_dir_all(ws_root).unwrap();
+                let result = self
+                    .registry
+                    .register_workspace(
+                        1000, // owner_uid
+                        ws_root.to_str().unwrap(),
+                        ws_root.to_str().unwrap(), // host_real_root
+                        "",   // git_remote_url
+                        "",   // git_head_commit_sha
+                        "",   // toolchain_fingerprint
+                    )
+                    .unwrap();
+                result["workspace_instance_id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            }
+
+            /// 在 data_root 下创建 staging.log 并写入 pending entries
+            fn write_pending_entries(&self, ws_id: &str, entries: &[(&str, &str)]) {
+                let ws_dir = self.data_root.join(ws_id);
+                fs::create_dir_all(&ws_dir).unwrap();
+                let log_path = ws_dir.join("staging.log");
+                let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+                for (file_path, content_hash) in entries {
+                    let mut entry = StagingEntry::new(ws_id, file_path, content_hash, "python");
+                    log.append(&mut entry).unwrap();
+                }
+            }
+
+            /// 获取 workspace 的 staging.log pending 数量
+            fn count_pending(&self, ws_id: &str) -> usize {
+                let log_path = self.data_root.join(ws_id).join("staging.log");
+                if !log_path.exists() {
+                    return 0;
+                }
+                let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+                log.read_pending().unwrap().len()
+            }
+        }
+
+        #[test]
+        fn test_recover_no_workspaces() {
+            let fixture = RecoverFixture::new();
+            // 无 workspace 注册
+            let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+            assert_eq!(count, 0);
+        }
+
+        #[test]
+        fn test_recover_workspace_no_staging_log() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws1_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+
+            // workspace 已注册但无 staging.log 文件
+            let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+            assert_eq!(count, 0);
+            let _ = ws_id;
+        }
+
+        #[test]
+        fn test_recover_workspace_empty_staging_log() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws2_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+
+            // 创建空的 staging.log（无 pending entries）
+            let ws_dir = fixture.data_root.join(&ws_id);
+            fs::create_dir_all(&ws_dir).unwrap();
+            let log_path = ws_dir.join("staging.log");
+            StagingLog::new(log_path.to_str().unwrap()).unwrap();
+
+            let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+            assert_eq!(count, 0);
+        }
+
+        #[test]
+        fn test_recover_workspace_with_pending_entries() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws3_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+
+            // 写入 3 条 pending entries
+            fixture.write_pending_entries(
+                &ws_id,
+                &[
+                    ("src/main.py", "hash1"),
+                    ("src/utils.py", "hash2"),
+                    ("tests/test_main.py", "hash3"),
+                ],
+            );
+
+            // 验证 recover 返回 3（applied_count）
+            let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+            assert_eq!(count, 3);
+
+            // 验证 pending entries 已被标记为 applied（read_pending 返回空）
+            let pending_after = fixture.count_pending(&ws_id);
+            assert_eq!(pending_after, 0);
+        }
+
+        #[test]
+        fn test_recover_multiple_workspaces_partial_pending() {
+            let fixture = RecoverFixture::new();
+
+            // ws_a：有 2 条 pending
+            let ws_a_root = fixture.data_root.join("ws_a_root");
+            let ws_a_id = fixture.register_workspace(&ws_a_root);
+            fixture.write_pending_entries(
+                &ws_a_id,
+                &[("a.py", "hash_a1"), ("b.py", "hash_a2")],
+            );
+
+            // ws_b：无 staging.log
+            let ws_b_root = fixture.data_root.join("ws_b_root");
+            let ws_b_id = fixture.register_workspace(&ws_b_root);
+
+            // ws_c：有 1 条 pending
+            let ws_c_root = fixture.data_root.join("ws_c_root");
+            let ws_c_id = fixture.register_workspace(&ws_c_root);
+            fixture.write_pending_entries(&ws_c_id, &[("c.py", "hash_c1")]);
+
+            // recover 应返回 2 + 0 + 1 = 3
+            let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+            assert_eq!(count, 3);
+
+            // 验证 ws_a 和 ws_c 的 pending 已清空
+            assert_eq!(fixture.count_pending(&ws_a_id), 0);
+            assert_eq!(fixture.count_pending(&ws_b_id), 0);
+            assert_eq!(fixture.count_pending(&ws_c_id), 0);
+        }
+
+        #[test]
+        fn test_recover_filters_entries_by_workspace_id() {
+            let fixture = RecoverFixture::new();
+
+            // 注册两个 workspace
+            let ws_a_root = fixture.data_root.join("ws_filter_a_root");
+            let ws_a_id = fixture.register_workspace(&ws_a_root);
+
+            let ws_b_root = fixture.data_root.join("ws_filter_b_root");
+            let ws_b_id = fixture.register_workspace(&ws_b_root);
+
+            // 在 ws_a 的 staging.log 中写入 2 条 ws_a 的 + 1 条 ws_b 的
+            // （模拟 staging.log 被跨 workspace 共享的情况）
+            let ws_a_dir = fixture.data_root.join(&ws_a_id);
+            fs::create_dir_all(&ws_a_dir).unwrap();
+            let log_path = ws_a_dir.join("staging.log");
+            let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+
+            // 写入 ws_a 的 entries
+            let mut entry_a1 = StagingEntry::new(&ws_a_id, "a1.py", "hash_a1", "python");
+            log.append(&mut entry_a1).unwrap();
+            let mut entry_a2 = StagingEntry::new(&ws_a_id, "a2.py", "hash_a2", "python");
+            log.append(&mut entry_a2).unwrap();
+            // 写入 ws_b 的 entry（在 ws_a 的 log 中）
+            let mut entry_b = StagingEntry::new(&ws_b_id, "b.py", "hash_b", "python");
+            log.append(&mut entry_b).unwrap();
+
+            // recover：只恢复 ws_a 的 2 条（ws_b 的 entry 在 ws_a 的 log 中，但 ws_b 有自己的 log 路径）
+            // 注意：ws_b 在 data_root/ws_b_id/ 下没有 staging.log，所以不会被恢复
+            let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+
+            // ws_a 的 log 有 2 条 ws_a + 1 条 ws_b = 3 条 pending
+            // recover 只过滤 ws_a 的 2 条，但 read_pending 返回所有 3 条
+            // Replicator::recover 内部会过滤 workspace_id
+            assert_eq!(count, 2); // 只恢复 ws_a 的 2 条
+
+            // ws_a 的 log 中仍有 ws_b 的 entry（未被恢复，因为 workspace_id 不匹配）
+            let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+            let remaining_pending = log.read_pending().unwrap();
+            assert_eq!(remaining_pending.len(), 1);
+            assert_eq!(remaining_pending[0].workspace_id, ws_b_id);
+        }
+
+        #[test]
+        fn test_recover_is_idempotent() {
+            let fixture = RecoverFixture::new();
+            let ws_root = fixture.data_root.join("ws_idem_root");
+            let ws_id = fixture.register_workspace(&ws_root);
+
+            // 写入 2 条 pending
+            fixture.write_pending_entries(
+                &ws_id,
+                &[("x.py", "hash_x"), ("y.py", "hash_y")],
+            );
+
+            // 第一次 recover：恢复 2 条
+            let count1 = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+            assert_eq!(count1, 2);
+
+            // 第二次 recover：无 pending，返回 0
+            let count2 = recover_all_workspaces(&fixture.registry, &fixture.data_root);
+            assert_eq!(count2, 0);
+        }
     }
 }
