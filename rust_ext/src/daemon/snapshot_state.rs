@@ -222,8 +222,9 @@ impl DaemonStateExt for SnapshotDaemonState {
         &mut self,
         peer: PeerCredential,
         params: &Value,
+        received_fds: &[i32],
     ) -> Result<Value, DaemonRpcError> {
-        self.base.handle_workspace_file_refresh(peer, params)
+        self.base.handle_workspace_file_refresh(peer, params, received_fds)
     }
 
     // ---- 运维方法（backup / restore / gc.cas 委托 base）----

@@ -771,6 +771,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
         &mut self,
         peer: PeerCredential,
         params: &Value,
+        received_fds: &[i32],
     ) -> Result<Value, DaemonRpcError> {
         // 对应 Python daemon_server.py L376-423
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
@@ -804,15 +805,71 @@ impl DaemonStateExt for WorkspaceDaemonState {
             abs_path,
         };
 
+        // G8-T3：提取 canonical_bytes（优先 FD，次选 base64）
+        // 规范：daemon-ipc-security.md §3.2 —— daemon 不信任 agent 提供的 hash，必须重新计算
+        // 规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
+        // 三种获取方式（按优先级）：
+        // 1. FD（仅 Unix，SCM_RIGHTS 传递）：daemon 直接读文件内容，消除 TOCTOU
+        // 2. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入
+        // 3. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
+        let canonical_bytes: Option<Vec<u8>> = if !received_fds.is_empty() {
+            #[cfg(unix)]
+            {
+                if received_fds.len() > 1 {
+                    return Err(DaemonRpcError::invalid_params(
+                        "workspace.file.refresh 最多接收 1 个 FD",
+                    ));
+                }
+                let fd = received_fds[0];
+                // from_raw_fd 接管 FD 所有权；read 完成后 file drop 会关闭 FD。
+                // server.rs 在 dispatch 后会再次 close_fds，但关闭已关闭 FD 只返回
+                // EBADF 并被忽略，双重关闭是安全的。
+                use std::os::unix::io::FromRawFd;
+                use std::io::Read;
+                let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+                let mut buf = Vec::new();
+                match file.read_to_end(&mut buf) {
+                    Ok(_) => Some(buf),
+                    Err(e) => {
+                        return Err(DaemonRpcError::new(
+                            "fd_read_failed",
+                            format!("read from fd {} failed: {}", fd, e),
+                        ));
+                    }
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = peer;
+                return Err(DaemonRpcError::invalid_params(
+                    "FD 模式仅 Unix 支持（Windows 请使用 canonical_bytes_b64 参数）",
+                ));
+            }
+        } else if let Some(b64) = params.get("canonical_bytes_b64").and_then(|v| v.as_str()) {
+            use base64::Engine;
+            match base64::engine::general_purpose::STANDARD.decode(b64) {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    return Err(DaemonRpcError::new(
+                        "base64_decode_failed",
+                        format!("canonical_bytes_b64 decode failed: {}", e),
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+
         // 懒初始化 per-workspace 资源
         let resources = self.get_or_init_resources(workspace_instance_id)?;
 
-        // 调用 daemon_handle_refresh（session epoch 校验 + 两阶段 CAS）
+        // 调用 daemon_handle_refresh（session epoch 校验 + 两阶段 CAS + parse + publish）
         let result = daemon_handle_refresh(
             workspace_id_num,
             &msg,
             resources.session_store.conn(),
             Some(&resources.cas_store),
+            canonical_bytes.as_deref(),
         )
         .map_err(|e| DaemonRpcError::new("refresh_failed", e.message))?;
 

@@ -73,6 +73,8 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 # R1 daemon 协议层：thiserror 用于 ProtocolError 派生 Error trait
 thiserror = "1.0"
+# G8 daemon: base64 用于解码客户端传来的 canonical_bytes_b64（跨平台 fallback，FD 模式仅 Unix）
+base64 = "0.22"
 
 # R7 cw_daemon binary：clap（CLI 参数解析）+ signal-hook（SIGTERM/SIGINT 优雅关闭）
 # Linux-only 依赖，避免 Windows/macOS 编译时引入不必要的包

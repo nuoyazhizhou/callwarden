@@ -186,8 +186,9 @@ pub trait DaemonStateExt {
         &mut self,
         peer: PeerCredential,
         params: &Value,
+        received_fds: &[i32],
     ) -> Result<Value, DaemonRpcError> {
-        let _ = (peer, params);
+        let _ = (peer, params, received_fds);
         Err(DaemonRpcError::method_not_found("workspace.file.refresh"))
     }
 
@@ -402,7 +403,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "workspace.list" => state.handle_workspace_list(peer, params),
         "workspace.status" => state.handle_workspace_status(peer, params),
         "workspace.connect" => state.handle_workspace_connect(peer, params),
-        "workspace.file.refresh" => state.handle_workspace_file_refresh(peer, params),
+        "workspace.file.refresh" => state.handle_workspace_file_refresh(peer, params, received_fds),
         "workspace.recover" => state.handle_workspace_recover(peer, params),
 
         // ---- Snapshot 管理（R6 实现）----

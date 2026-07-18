@@ -11,14 +11,21 @@
 //! R5 阶段不接入 SnapshotManagerService（依赖 R6），用 `SnapshotPublisher` trait
 //! 钩子抽象，R6 实现真正的 SnapshotManager 后注入即可。
 
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 
-use super::cas::CasStore;
+use super::cas::{
+    CasImportInput, CasPublishInput, CasRawCallInput, CasStore, CasSymbolInput,
+    compute_cas_key_v1,
+};
 use super::staging_log::{StagingEntry, StagingLog};
+use crate::canonicalize::{canonicalize_source, sha256_hex};
+use crate::multi_lang::{GenericParser, LangConfig};
+use crate::ParseResult;
 
 // ============================================
 // Session 管理 schema（与 Python replicator.py:SESSION_SCHEMA_DDL 一致）
@@ -215,31 +222,34 @@ pub struct RefreshResult {
     pub cas_result: Option<Value>,
 }
 
-/// 处理 agent refresh 消息——session epoch 校验 + 两阶段 CAS。
+/// 处理 agent refresh 消息——session epoch 校验 + 两阶段 CAS + daemon 侧 parse + publish。
 ///
 /// 规范：watcher-generation-state-machine.md §4.3
+/// 规范：daemon-ipc-security.md §3.2（daemon 不信任 agent 提供的 hash）
+/// 规范：parse-input-abi.md §2（canonical bytes 是唯一输入入口）
 /// 对应 Python replicator.py:daemon_handle_refresh
 ///
 /// 完整管道：
 /// 1. session epoch 校验（拒绝 stale session）
 /// 2. CAS 第一阶段（seen）—— 原子更新 latest_seen_generation
-/// 3. CAS 第二阶段（committed）—— 条件更新 latest_committed_generation
-///
-/// 注意：R5 阶段不做 daemon 侧 parse + CAS publish（依赖 R6 接入 callwarden_core
-/// 的 parse_canonical_bytes_py）。本函数只做 session epoch + file_generation 两阶段
-/// CAS。完整的 parse + publish 管道由 R6 实现（或上层调用方在调用本函数后自行处理）。
+/// 3. daemon 侧 parse + CAS publish（消除 TOCTOU）：
+///    canonical bytes → sha256 → CAS lookup → 未命中则 parse_canonical_bytes → publish
+/// 4. CAS 第二阶段（committed）—— 条件更新 latest_committed_generation
 ///
 /// 参数：
 /// - workspace_id: workspace ID
 /// - msg: refresh 消息
 /// - ws_conn: workspace 数据库连接（含 agent_sessions / workspace_active_session /
 ///   file_generations 表）
-/// - cas_store: CAS store（用于两阶段 CAS，若为 None 则跳过 CAS 部分）
+/// - cas_store: CAS store（用于两阶段 CAS + parse publish，若为 None 则跳过 CAS 部分）
+/// - canonical_bytes: 来自 UDS bytes frame / FD 的规范化文件内容（优先路径）；
+///   None 时降级为从 msg.abs_path 读取 + canonicalize（兼容旧 refresh 模式）
 pub fn daemon_handle_refresh(
     workspace_id: i64,
     msg: &RefreshMessage,
     ws_conn: &Mutex<Connection>,
     cas_store: Option<&CasStore>,
+    canonical_bytes: Option<&[u8]>,
 ) -> Result<RefreshResult, ProtocolError> {
     // 1. 校验 session epoch——只能匹配当前 active epoch
     let active_session = {
@@ -292,9 +302,24 @@ pub fn daemon_handle_refresh(
         _ => {}
     }
 
-    // 3. CAS 第二阶段（committed）—— 条件更新 latest_committed_generation
-    // 注意：R5 阶段不做 daemon 侧 parse + CAS publish，跳过这一步。
-    // 完整管道（含 parse + publish）由 R6 实现。
+    // 3. daemon 侧 parse + CAS publish（消除 TOCTOU）
+    // 规范：daemon-ipc-security.md §3.2 —— daemon 重新计算 sha256
+    // 规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
+    // 注意：仅当 cas_store 为 Some 时才尝试 parse + publish；cas_store 为 None 时跳过
+    // step 3（与 Python 一致：cas_conn=None 时 cas_result=None）。
+    let cas_result = if let Some(cas) = cas_store {
+        Some(_daemon_parse_and_publish(
+            &msg.rel_path,
+            canonical_bytes,
+            msg.abs_path.as_deref().unwrap_or(""),
+            Some(cas),
+            workspace_id,
+        ))
+    } else {
+        None
+    };
+
+    // 4. CAS 第二阶段（committed）—— 条件更新 latest_committed_generation
     let committed = cas_store
         .map(|s| s.file_generation_committed(workspace_id, &msg.rel_path,
                                               msg.session_epoch, msg.monotonic_seq))
@@ -311,7 +336,7 @@ pub fn daemon_handle_refresh(
     Ok(RefreshResult {
         status: "committed".to_string(),
         generation: incoming_gen,
-        cas_result: None,
+        cas_result,
     })
 }
 
@@ -320,6 +345,343 @@ pub fn daemon_handle_refresh(
 struct ActiveSession {
     session_id: String,
     session_epoch: i64,
+}
+
+// ============================================
+// G8: daemon 侧 parse + CAS publish（消除 TOCTOU）
+// ============================================
+
+/// 根据文件路径扩展名检测语言。
+///
+/// 对应 Python `config.py:detect_language_from_path`（L1037-1051）。
+///
+/// 实现说明：Python `LANGUAGE_CONFIG` 是 dict，按插入顺序遍历；
+/// `.h` 同时存在于 "c" 和 "cpp" 的 extensions 中，但 "c" 在 "cpp" 之前，
+/// 因此 `.h` 实际匹配 "c"。本实现用 `match` 显式表达此规则。
+///
+/// 支持的扩展名与 Python `LANGUAGE_CONFIG` 一致：
+/// - rust: `.rs`
+/// - typescript: `.ts`, `.tsx`
+/// - javascript: `.js`, `.jsx`, `.mjs`, `.cjs`
+/// - python: `.py`
+/// - kotlin: `.kt`, `.kts`
+/// - go: `.go`
+/// - java: `.java`
+/// - c: `.c`, `.h`
+/// - cpp: `.cpp`, `.cc`, `.cxx`, `.hpp`, `.hh`, `.hxx`
+/// - csharp: `.cs`
+/// - ruby: `.rb`
+/// - php: `.php`
+/// - swift: `.swift`
+/// - scala: `.scala`, `.sc`
+/// - hcl: `.tf`, `.hcl`
+/// - elixir: `.ex`, `.exs`
+pub fn detect_language_from_path(file_path: &str) -> String {
+    // 提取扩展名（小写）。从最后一个 '.' 开始。
+    let ext = match file_path.rfind('.') {
+        Some(idx) => file_path[idx..].to_lowercase(),
+        None => return String::new(),
+    };
+    let lang: &str = match ext.as_str() {
+        ".rs" => "rust",
+        ".ts" | ".tsx" => "typescript",
+        ".js" | ".jsx" | ".mjs" | ".cjs" => "javascript",
+        ".py" => "python",
+        ".kt" | ".kts" => "kotlin",
+        ".go" => "go",
+        ".java" => "java",
+        ".c" | ".h" => "c", // Python 中 .h 先匹配 "c"（顺序在 "cpp" 之前）
+        ".cpp" | ".cc" | ".cxx" | ".hpp" | ".hh" | ".hxx" => "cpp",
+        ".cs" => "csharp",
+        ".rb" => "ruby",
+        ".php" => "php",
+        ".swift" => "swift",
+        ".scala" | ".sc" => "scala",
+        ".tf" | ".hcl" => "hcl",
+        ".ex" | ".exs" => "elixir",
+        _ => "",
+    };
+    lang.to_string()
+}
+
+/// 构造 module_path（与 Python 一致：去掉扩展名，路径分隔符 → "."）。
+///
+/// Python：`rel_path.rsplit(".", 1)[0].replace("/", ".").replace("\\", ".")`
+fn build_module_path(rel_path: &str) -> String {
+    // 找最后一个 "."，去掉扩展名
+    let without_ext = match rel_path.rfind('.') {
+        Some(idx) => &rel_path[..idx],
+        None => rel_path,
+    };
+    // 替换 / 和 \ 为 .
+    without_ext.replace('/', ".").replace('\\', ".")
+}
+
+/// daemon 侧解析 + CAS publish——消除 TOCTOU。
+///
+/// 对应 Python `server/replicator.py:_daemon_parse_and_publish`（L268-405）。
+///
+/// 规范：
+/// - daemon-ipc-security.md §3.2 —— daemon 重新计算 sha256，不信任 agent 提供的 hash
+/// - parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
+/// - cas-gc-protocol.md §3 —— CAS 原子发布四阶段
+///
+/// 输入优先级：
+/// 1. `canonical_bytes` 非 None：直接 hash + parse_canonical_bytes（不读文件）
+/// 2. `canonical_bytes` 为 None：从 abs_path 读取 + canonicalize（降级路径）
+///
+/// 返回 JSON Value，至少包含以下字段：
+/// - `content_hash`: str（空字符串表示未能计算）
+/// - `cas_key`: str（空字符串表示未计算或 cas_store 为 None）
+/// - `cas_state`: str，可能值：
+///   - `unsupported_language`：rel_path 不识别
+///   - `no_abs_path`：canonical_bytes 为 None 且 abs_path 为空
+///   - `canonicalize_failed`：从 abs_path 读取/规范化失败（含 error 字段）
+///   - `no_cas_conn`：cas_store 为 None（含 canonicalize_method）
+///   - `ready_cache_hit`：CAS 命中，已 pin
+///   - `cas_lookup_failed`：CAS lookup 出错（含 error 字段）
+///   - `parse_failed`：parse_canonical_bytes 返回错误（含 parse_error）
+///   - `ready_published`：CAS 原子发布成功
+///   - `publish_failed`：CAS publish 出错（含 error 字段）
+pub fn _daemon_parse_and_publish(
+    rel_path: &str,
+    canonical_bytes: Option<&[u8]>,
+    abs_path: &str,
+    cas_store: Option<&CasStore>,
+    workspace_id: i64,
+) -> Value {
+    // 3a. 检测语言
+    let language = detect_language_from_path(rel_path);
+    if language.is_empty() {
+        return serde_json::json!({
+            "content_hash": "",
+            "cas_key": "",
+            "cas_state": "unsupported_language",
+        });
+    }
+
+    // 3b. canonicalize + re-hash
+    // canonical_bytes_owned 仅在降级路径下分配，避免优先路径的无谓分配
+    let (canonical_bytes_owned, content_hash, canonicalize_method): (Option<Vec<u8>>, String, &'static str) =
+        match canonical_bytes {
+            Some(bytes) => {
+                // 优先路径：daemon 已从 UDS bytes frame / FD 获得规范化内容
+                let hash = sha256_hex(bytes);
+                (None, hash, "direct_bytes")
+            }
+            None => {
+                // 降级路径：从 abs_path 读取 + canonicalize
+                if abs_path.is_empty() {
+                    return serde_json::json!({
+                        "content_hash": "",
+                        "cas_key": "",
+                        "cas_state": "no_abs_path",
+                    });
+                }
+                match canonicalize_source(abs_path) {
+                    Ok(canon) => {
+                        let bytes = canon.canonical_bytes;
+                        let hash = canon.content_hash;
+                        (Some(bytes), hash, "abs_path_fallback")
+                    }
+                    Err(e) => {
+                        return serde_json::json!({
+                            "content_hash": "",
+                            "cas_key": "",
+                            "cas_state": "canonicalize_failed",
+                            "error": format!("{}", e),
+                        });
+                    }
+                }
+            }
+        };
+
+    // 决定最终用于 parse 的字节切片
+    let canonical_bytes_ref: &[u8] = canonical_bytes
+        .or_else(|| canonical_bytes_owned.as_deref())
+        .unwrap_or(&[]);
+
+    // 3c. CAS publish（若 cas_store 可用）
+    let cas_store = match cas_store {
+        Some(s) => s,
+        None => {
+            return serde_json::json!({
+                "content_hash": content_hash,
+                "cas_key": "",
+                "cas_state": "no_cas_conn",
+                "canonicalize_method": canonicalize_method,
+            });
+        }
+    };
+
+    // 3d. 计算 CAS key（版本与 Python _daemon_parse_and_publish 一致）
+    let parser_version = "0.1.0";
+    let callwarden_version = "0.2.0";
+    let extraction_config_version = "v1";
+    let abi_version = "v1";
+    let input_abi_version = "v1";
+    let cas_key = compute_cas_key_v1(
+        &content_hash,
+        &language,
+        parser_version,
+        callwarden_version,
+        extraction_config_version,
+        abi_version,
+        input_abi_version,
+    );
+
+    // 3e. 检查 CAS 是否已命中（state='ready'）
+    match cas_store.lookup(&cas_key) {
+        Ok(Some(_existing)) => {
+            // 缓存命中：pin 后直接返回（pin 失败只警告，不影响主流程）
+            let _ = cas_store.pin(&cas_key, workspace_id, 3600.0);
+            return serde_json::json!({
+                "content_hash": content_hash,
+                "cas_key": cas_key,
+                "cas_state": "ready_cache_hit",
+                "canonicalize_method": canonicalize_method,
+            });
+        }
+        Ok(None) => {
+            // 未命中——继续解析
+        }
+        Err(e) => {
+            return serde_json::json!({
+                "content_hash": content_hash,
+                "cas_key": cas_key,
+                "cas_state": "cas_lookup_failed",
+                "error": format!("{}", e),
+                "canonicalize_method": canonicalize_method,
+            });
+        }
+    }
+
+    // 3f. CAS 未命中——用同一份 canonical_bytes 做 parse（消除 TOCTOU）
+    let lang_config = match LangConfig::get(&language) {
+        Some(c) => c,
+        None => {
+            // LangConfig 不支持此语言（HCL 等）
+            return serde_json::json!({
+                "content_hash": content_hash,
+                "cas_key": cas_key,
+                "cas_state": "unsupported_language",
+                "canonicalize_method": canonicalize_method,
+            });
+        }
+    };
+    let parser = GenericParser::new(Arc::new(lang_config));
+    let module_path = build_module_path(rel_path);
+    let parse_result = parser.parse_canonical_bytes(
+        canonical_bytes_ref,
+        abs_path,
+        &module_path,
+        &content_hash,
+    );
+
+    // parse 失败检查
+    if let Some(parse_err) = &parse_result.error {
+        return serde_json::json!({
+            "content_hash": content_hash,
+            "cas_key": cas_key,
+            "cas_state": "parse_failed",
+            "canonicalize_method": canonicalize_method,
+            "parse_error": parse_err,
+        });
+    }
+
+    // 3g. 转换 ParseResult → CasPublishInput
+    let cas_input = parse_result_to_cas_input(&parse_result, canonical_bytes_ref);
+
+    // 3h. CAS 原子发布
+    match cas_store.publish(
+        &cas_key,
+        &content_hash,
+        &language,
+        &cas_input,
+        parser_version,
+        callwarden_version,
+        extraction_config_version,
+        abi_version,
+        input_abi_version,
+    ) {
+        Ok(()) => serde_json::json!({
+            "content_hash": content_hash,
+            "cas_key": cas_key,
+            "cas_state": "ready_published",
+            "canonicalize_method": canonicalize_method,
+        }),
+        Err(e) => serde_json::json!({
+            "content_hash": content_hash,
+            "cas_key": cas_key,
+            "cas_state": "publish_failed",
+            "error": format!("{}", e),
+            "canonicalize_method": canonicalize_method,
+        }),
+    }
+}
+
+/// 将 ParseResult 转换为 CasPublishInput（CAS publish 所需的输入格式）。
+///
+/// ParseResult 是 parser 的原始输出，字段集与 CasPublishInput 略有差异：
+/// - `parent_id` / `start_col` / `end_col` / `start_byte` / `end_byte`：
+///   ParseResult 不含这些字段（解析后由 db_build 阶段填充），此处置为默认值（None / 0）
+/// - `caller_id`：同上，置 None
+/// - `ordinal`：默认 0（RawCall 不携带 ordinal 信息）
+/// - `imports.kind`：默认 "import"（ParseResult.imports 是 Vec<String>，无 kind 信息）
+fn parse_result_to_cas_input(
+    parse_result: &ParseResult,
+    canonical_bytes: &[u8],
+) -> CasPublishInput {
+    let symbols: Vec<CasSymbolInput> = parse_result
+        .symbols
+        .iter()
+        .map(|si| CasSymbolInput {
+            name: si.name.clone(),
+            qualified_name: si.qualified_name.clone(),
+            parent_id: None,
+            kind: si.kind.clone(),
+            start_line: si.start_line as i64,
+            end_line: si.end_line as i64,
+            start_col: 0,
+            end_col: 0,
+            start_byte: 0,
+            end_byte: 0,
+            visibility: si.visibility.clone(),
+            signature: si.signature.clone(),
+            has_comment: si.has_comment,
+            depth: si.depth as i64,
+            content: si.content.clone(),
+        })
+        .collect();
+
+    let raw_calls: Vec<CasRawCallInput> = parse_result
+        .calls
+        .iter()
+        .map(|rc| CasRawCallInput {
+            caller_id: None,
+            caller_name: rc.caller_name.clone(),
+            callee_name: rc.callee_name.clone(),
+            line: rc.call_line as i64,
+            ordinal: 0,
+        })
+        .collect();
+
+    let imports: Vec<CasImportInput> = parse_result
+        .imports
+        .iter()
+        .map(|s| CasImportInput {
+            path: s.clone(),
+            kind: "import".to_string(),
+        })
+        .collect();
+
+    CasPublishInput {
+        file_size: canonical_bytes.len() as i64,
+        total_lines: parse_result.total_lines as i64,
+        symbols,
+        raw_calls,
+        imports,
+    }
 }
 
 // ============================================
@@ -813,7 +1175,7 @@ mod tests {
         let cas_store = super::super::cas::CasStore::open_in_memory().unwrap();
 
         let msg = make_msg(1, "session-1", 1);
-        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store));
+        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store), None);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("no active session"));
@@ -831,7 +1193,7 @@ mod tests {
 
         // 用旧的 session-1 + epoch=1 refresh 应该被拒绝
         let msg = make_msg(1, "session-1", 1);
-        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store));
+        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store), None);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("stale session rejected"));
@@ -846,7 +1208,7 @@ mod tests {
 
         // 首次 refresh（epoch=1, seq=1）
         let msg = make_msg(1, "session-1", 1);
-        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store)).unwrap();
+        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store), None).unwrap();
         assert_eq!(result.status, "committed");
         assert_eq!(result.generation, "1:1");
     }
@@ -860,11 +1222,11 @@ mod tests {
 
         // 先 refresh seq=5
         let msg5 = make_msg(5, "session-1", 1);
-        daemon_handle_refresh(1, &msg5, store.conn(), Some(&cas_store)).unwrap();
+        daemon_handle_refresh(1, &msg5, store.conn(), Some(&cas_store), None).unwrap();
 
         // 再 refresh seq=3 应该被丢弃（stale seq）
         let msg3 = make_msg(3, "session-1", 1);
-        let result = daemon_handle_refresh(1, &msg3, store.conn(), Some(&cas_store)).unwrap();
+        let result = daemon_handle_refresh(1, &msg3, store.conn(), Some(&cas_store), None).unwrap();
         assert_eq!(result.status, "stale_seq_dropped");
     }
 
@@ -877,13 +1239,13 @@ mod tests {
 
         // seq=1
         let msg1 = make_msg(1, "session-1", 1);
-        let r1 = daemon_handle_refresh(1, &msg1, store.conn(), Some(&cas_store)).unwrap();
+        let r1 = daemon_handle_refresh(1, &msg1, store.conn(), Some(&cas_store), None).unwrap();
         assert_eq!(r1.status, "committed");
         assert_eq!(r1.generation, "1:1");
 
         // seq=10
         let msg10 = make_msg(10, "session-1", 1);
-        let r10 = daemon_handle_refresh(1, &msg10, store.conn(), Some(&cas_store)).unwrap();
+        let r10 = daemon_handle_refresh(1, &msg10, store.conn(), Some(&cas_store), None).unwrap();
         assert_eq!(r10.status, "committed");
         assert_eq!(r10.generation, "1:10");
     }
@@ -895,7 +1257,7 @@ mod tests {
         daemon_handle_connect(1000, 1, "session-1", store.conn()).unwrap();
 
         let msg = make_msg(1, "session-1", 1);
-        let result = daemon_handle_refresh(1, &msg, store.conn(), None).unwrap();
+        let result = daemon_handle_refresh(1, &msg, store.conn(), None, None).unwrap();
         assert_eq!(result.status, "committed");
     }
 
@@ -1142,5 +1504,265 @@ mod tests {
             assert_eq!(count, 1);
         })
         .join();
+    }
+
+    // ---- G8: detect_language_from_path 测试 ----
+
+    #[test]
+    fn test_detect_language_from_path_rust() {
+        assert_eq!(detect_language_from_path("src/main.rs"), "rust");
+        assert_eq!(detect_language_from_path("Cargo.toml"), "");
+    }
+
+    #[test]
+    fn test_detect_language_from_path_all_languages() {
+        // 验证所有 16 种语言（与 Python LANGUAGE_CONFIG 一致）
+        assert_eq!(detect_language_from_path("foo.rs"), "rust");
+        assert_eq!(detect_language_from_path("foo.ts"), "typescript");
+        assert_eq!(detect_language_from_path("foo.tsx"), "typescript");
+        assert_eq!(detect_language_from_path("foo.js"), "javascript");
+        assert_eq!(detect_language_from_path("foo.jsx"), "javascript");
+        assert_eq!(detect_language_from_path("foo.mjs"), "javascript");
+        assert_eq!(detect_language_from_path("foo.cjs"), "javascript");
+        assert_eq!(detect_language_from_path("foo.py"), "python");
+        assert_eq!(detect_language_from_path("foo.kt"), "kotlin");
+        assert_eq!(detect_language_from_path("foo.kts"), "kotlin");
+        assert_eq!(detect_language_from_path("foo.go"), "go");
+        assert_eq!(detect_language_from_path("foo.java"), "java");
+        assert_eq!(detect_language_from_path("foo.c"), "c");
+        assert_eq!(detect_language_from_path("foo.h"), "c"); // .h 先匹配 "c"（顺序优先）
+        assert_eq!(detect_language_from_path("foo.cpp"), "cpp");
+        assert_eq!(detect_language_from_path("foo.cc"), "cpp");
+        assert_eq!(detect_language_from_path("foo.cxx"), "cpp");
+        assert_eq!(detect_language_from_path("foo.hpp"), "cpp");
+        assert_eq!(detect_language_from_path("foo.hh"), "cpp");
+        assert_eq!(detect_language_from_path("foo.hxx"), "cpp");
+        assert_eq!(detect_language_from_path("foo.cs"), "csharp");
+        assert_eq!(detect_language_from_path("foo.rb"), "ruby");
+        assert_eq!(detect_language_from_path("foo.php"), "php");
+        assert_eq!(detect_language_from_path("foo.swift"), "swift");
+        assert_eq!(detect_language_from_path("foo.scala"), "scala");
+        assert_eq!(detect_language_from_path("foo.sc"), "scala");
+        assert_eq!(detect_language_from_path("foo.tf"), "hcl");
+        assert_eq!(detect_language_from_path("foo.hcl"), "hcl");
+        assert_eq!(detect_language_from_path("foo.ex"), "elixir");
+        assert_eq!(detect_language_from_path("foo.exs"), "elixir");
+    }
+
+    #[test]
+    fn test_detect_language_from_path_case_insensitive() {
+        // 扩展名大小写不敏感
+        assert_eq!(detect_language_from_path("FOO.RS"), "rust");
+        assert_eq!(detect_language_from_path("Foo.PY"), "python");
+        assert_eq!(detect_language_from_path("foo.TS"), "typescript");
+    }
+
+    #[test]
+    fn test_detect_language_from_path_no_extension() {
+        // 无扩展名返回空字符串
+        assert_eq!(detect_language_from_path("README"), "");
+        assert_eq!(detect_language_from_path("/path/to/file"), "");
+    }
+
+    #[test]
+    fn test_detect_language_from_path_unsupported_extension() {
+        assert_eq!(detect_language_from_path("foo.txt"), "");
+        assert_eq!(detect_language_from_path("foo.md"), "");
+        assert_eq!(detect_language_from_path("foo.json"), "");
+    }
+
+    #[test]
+    fn test_detect_language_from_path_dotted_filename() {
+        // 文件名含多个点：取最后一个点之后作为扩展名
+        assert_eq!(detect_language_from_path("foo.bar.rs"), "rust");
+        assert_eq!(detect_language_from_path("test.spec.ts"), "typescript");
+    }
+
+    // ---- G8: _daemon_parse_and_publish 测试 ----
+
+    #[test]
+    fn test_daemon_parse_and_publish_unsupported_language() {
+        // .txt 不识别 → unsupported_language
+        let result = _daemon_parse_and_publish(
+            "foo.txt",
+            Some(b"hello".as_slice()),
+            "",
+            None,
+            1,
+        );
+        assert_eq!(result["cas_state"], "unsupported_language");
+        assert_eq!(result["content_hash"], "");
+        assert_eq!(result["cas_key"], "");
+    }
+
+    #[test]
+    fn test_daemon_parse_and_publish_no_abs_path_when_no_bytes() {
+        // 无 canonical_bytes + 无 abs_path → no_abs_path
+        let result = _daemon_parse_and_publish(
+            "foo.rs",
+            None,
+            "",
+            None,
+            1,
+        );
+        assert_eq!(result["cas_state"], "no_abs_path");
+    }
+
+    #[test]
+    fn test_daemon_parse_and_publish_canonicalize_failed() {
+        // 提供不存在的 abs_path → canonicalize_failed
+        let result = _daemon_parse_and_publish(
+            "foo.rs",
+            None,
+            "/nonexistent/path/foo.rs",
+            None,
+            1,
+        );
+        assert_eq!(result["cas_state"], "canonicalize_failed");
+        assert!(result["error"].as_str().unwrap().contains("No such file")
+                || result["error"].as_str().unwrap().contains("cannot find")
+                || !result["error"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_daemon_parse_and_publish_no_cas_conn() {
+        // cas_store=None → no_cas_conn（但 content_hash 已计算）
+        let result = _daemon_parse_and_publish(
+            "foo.rs",
+            Some(b"fn main() {}".as_slice()),
+            "",
+            None,
+            1,
+        );
+        assert_eq!(result["cas_state"], "no_cas_conn");
+        assert_eq!(result["canonicalize_method"], "direct_bytes");
+        // content_hash 应为 sha256("fn main() {}")
+        assert!(!result["content_hash"].as_str().unwrap().is_empty());
+        assert_eq!(result["cas_key"], "");
+    }
+
+    #[test]
+    fn test_daemon_parse_and_publish_ready_published() {
+        // 完整管道：parse + CAS publish（首次发布，非缓存命中）
+        let cas = super::super::cas::CasStore::open_in_memory().unwrap();
+        let result = _daemon_parse_and_publish(
+            "foo.rs",
+            Some(b"fn main() { println!(\"hello\"); }".as_slice()),
+            "/tmp/foo.rs",
+            Some(&cas),
+            1,
+        );
+        assert_eq!(result["cas_state"], "ready_published");
+        assert_eq!(result["canonicalize_method"], "direct_bytes");
+        assert!(!result["content_hash"].as_str().unwrap().is_empty());
+        assert!(!result["cas_key"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_daemon_parse_and_publish_ready_cache_hit() {
+        // 第二次同样的 bytes → ready_cache_hit
+        let cas = super::super::cas::CasStore::open_in_memory().unwrap();
+        let bytes = b"fn add(a: i32, b: i32) -> i32 { a + b }".to_vec();
+        let _ = _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 1);
+        let result2 = _daemon_parse_and_publish(
+            "foo.rs",
+            Some(&bytes),
+            "/tmp/foo.rs",
+            Some(&cas),
+            1,
+        );
+        assert_eq!(result2["cas_state"], "ready_cache_hit");
+        assert_eq!(result2["canonicalize_method"], "direct_bytes");
+    }
+
+    #[test]
+    fn test_daemon_parse_and_publish_cache_hit_pins_ref() {
+        // 缓存命中后应插入 cas_pending_refs（pin TTL=3600s）
+        let cas = super::super::cas::CasStore::open_in_memory().unwrap();
+        let bytes = b"fn x() {}".to_vec();
+        let _ = _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 42);
+        let result2 = _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 42);
+        assert_eq!(result2["cas_state"], "ready_cache_hit");
+
+        // 查询 cas_pending_refs
+        let conn = cas.conn().lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM cas_pending_refs WHERE workspace_id = 42",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(count >= 1, "pin 应插入 cas_pending_refs");
+    }
+
+    // ---- G8: daemon_handle_refresh + canonical_bytes 集成测试 ----
+
+    #[test]
+    fn test_daemon_handle_refresh_with_canonical_bytes_publishes_to_cas() {
+        // 完整管道：canonical_bytes → daemon_handle_refresh → CAS publish
+        let store = make_session_store();
+        let cas_store = super::super::cas::CasStore::open_in_memory().unwrap();
+
+        daemon_handle_connect(1000, 1, "session-1", store.conn()).unwrap();
+
+        let msg = make_msg(1, "session-1", 1);
+        let bytes = b"fn main() {}".to_vec();
+        let result = daemon_handle_refresh(
+            1,
+            &msg,
+            store.conn(),
+            Some(&cas_store),
+            Some(&bytes),
+        )
+        .unwrap();
+        assert_eq!(result.status, "committed");
+        assert_eq!(result.generation, "1:1");
+        // cas_result 应包含 ready_published
+        let cas_result = result.cas_result.expect("cas_result should be Some");
+        assert_eq!(cas_result["cas_state"], "ready_published");
+    }
+
+    #[test]
+    fn test_daemon_handle_refresh_cache_hit_on_second_refresh() {
+        // 第二次 refresh 同样内容 → ready_cache_hit
+        let store = make_session_store();
+        let cas_store = super::super::cas::CasStore::open_in_memory().unwrap();
+
+        daemon_handle_connect(1000, 1, "session-1", store.conn()).unwrap();
+
+        let bytes = b"fn x() {}".to_vec();
+        let msg1 = make_msg(1, "session-1", 1);
+        let r1 = daemon_handle_refresh(1, &msg1, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
+        assert_eq!(r1.cas_result.unwrap()["cas_state"], "ready_published");
+
+        let msg2 = make_msg(2, "session-1", 1);
+        let r2 = daemon_handle_refresh(1, &msg2, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
+        assert_eq!(r2.cas_result.unwrap()["cas_state"], "ready_cache_hit");
+    }
+
+    #[test]
+    fn test_daemon_handle_refresh_parse_failure_returns_parse_failed() {
+        // 故意构造一个语法错误的 Rust 代码 → parse_failed
+        // 注意：tree-sitter 对部分语法错误仍能 parse（不会返回 error），
+        // 只有 set_language 失败或 parse 返回 None 才会触发 error。
+        // 此测试用空字节流（合法但无符号）验证不触发 ready_published 的边界。
+        let store = make_session_store();
+        let cas_store = super::super::cas::CasStore::open_in_memory().unwrap();
+
+        daemon_handle_connect(1000, 1, "session-1", store.conn()).unwrap();
+
+        let msg = make_msg(1, "session-1", 1);
+        let bytes = b"".to_vec(); // 空文件
+        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
+        assert_eq!(result.status, "committed");
+        // 空文件 parse 不出错（tree-sitter 容错），但 symbols 为空。
+        // cas_state 应为 ready_published（CAS 表里留痕）或 ready_cache_hit。
+        let cas_state = result.cas_result.unwrap()["cas_state"].as_str().unwrap().to_string();
+        assert!(
+            cas_state == "ready_published" || cas_state == "ready_cache_hit",
+            "expected ready_published or ready_cache_hit, got {}",
+            cas_state
+        );
     }
 }

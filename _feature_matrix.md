@@ -220,7 +220,7 @@
 | G5 | CAS Key 设计（7 参数 hash） | CG/DS | ✅ 已实现 | cas-gc-protocol 规范 |
 | G6 | CAS GC 协议（LOCK_EX + BEGIN IMMEDIATE） | CG | ❓ 待验证 | |
 | G7 | SnapshotManager + ArcSwap 发布 | DS/EW | ✅ 已实现 | Rust 多 generation history + gc_generations + 6 个 RPC handler |
-| G8 | Watcher Generation 状态机 | WG/EW | ⚠️ 部分 | watcher.py 已有，generation 协议部分 |
+| G8 | Watcher Generation 状态机 | WG/EW | ✅ 已实现 | Rust daemon_handle_refresh 完整 4 步管道（session epoch CAS + 两阶段 CAS + daemon 侧 parse + CAS publish）+ detect_language_from_path + _daemon_parse_and_publish + canonical_bytes FD/base64 提取 |
 | G9 | Per-UID systemd --user agent | DS/WG | ❌ 未实施 | Linux 专属，Windows 不适用 |
 | G10 | memfd 密封协议（大文件传输） | DI | ❌ 未实施 | Linux 专属 |
 | G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ⚠️ 部分 | replicator.py 已有 |
