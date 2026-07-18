@@ -141,10 +141,29 @@ class EnterpriseDaemonService:
         # workspace_id → {cas_conn, staging_log, replicator, ws_conn}
         self._workspace_resources: Dict[str, Dict] = {}
         self._resources_lock = threading.Lock()
+        # G1 Layer 2: 全局共享 toolchain.db（跨 workspace 共享 toolchain / build_context）
+        self._toolchain_db_path = os.path.join(self._data_root, "toolchain.db")
+        self._toolchain_conn: Optional[sqlite3.Connection] = None
+        self._toolchain_lock = threading.Lock()
         import time as _time
         self._start_time = _time.time()
         with closing(self._registry_conn()):
             pass
+
+    def _get_toolchain_conn(self) -> sqlite3.Connection:
+        """G1 Layer 2：懒初始化（或返回缓存的）toolchain.db 连接。
+
+        与 Rust `ToolchainStore::open` 对称：打开独立 toolchain.db，初始化
+        4 张表 + 7 个索引。daemon 单例持有连接，所有 toolchain.*/build_context.*
+        /resolved_edges.* RPC 都走此连接。
+        """
+        if self._toolchain_conn is not None:
+            return self._toolchain_conn
+        with self._toolchain_lock:
+            if self._toolchain_conn is None:
+                from callwarden.db.db_toolchain import open_toolchain_db
+                self._toolchain_conn = open_toolchain_db(self._toolchain_db_path)
+        return self._toolchain_conn
 
     def _get_workspace_resources(self, workspace_id: str) -> Dict:
         """懒初始化 per-workspace 的 CAS conn / StagingLog / Replicator / ws_conn。"""
@@ -399,6 +418,13 @@ class EnterpriseDaemonService:
                 )
             return {"deleted": deleted}
 
+        # ---- Toolchain / Build Context / Resolved Edges（G1 Layer 2）----
+        # 这些 RPC 不依赖 workspace_id（toolchain.db 是全局共享的），
+        # 在下方 workspace_id 必填检查之前处理。
+        # 对应 Rust `dispatch.rs` 的 toolchain.* / build_context.* / resolved_edges.* 路由。
+        if method.startswith(("toolchain.", "build_context.", "resolved_edges.")):
+            return self._dispatch_toolchain_rpc(method, params)
+
         # gc.cas 需要 workspace_id，在下方处理
 
         workspace_id = str(params.get("workspace_instance_id") or "")
@@ -539,6 +565,206 @@ class EnterpriseDaemonService:
                 str(params.get("caller_name") or ""),
                 params.get("qualified_name"),
             )
+        raise DaemonRpcError("method_not_found", method)
+
+    # ============================================
+    # G1 Layer 2: Toolchain / Build Context / Resolved Edges 分发
+    # ============================================
+
+    def _dispatch_toolchain_rpc(self, method: str, params: Dict[str, Any]) -> Any:
+        """toolchain.* / build_context.* / resolved_edges.* RPC 分发。
+
+        所有方法都使用 daemon 全局 toolchain.db 连接（`_get_toolchain_conn()`），
+        不依赖 workspace_id。与 Rust `dispatch.rs` 的 13 个路由一一对应：
+        - toolchain.register / list / get / delete / bind / resolve（6）
+        - build_context.register / list / set_active / delete（4）
+        - resolved_edges.store / get / count（3）
+        """
+        from callwarden.db import db_toolchain
+
+        conn = self._get_toolchain_conn()
+
+        # ---- toolchain CRUD ----
+        if method == "toolchain.register":
+            name = str(params.get("name") or "")
+            if not name:
+                raise DaemonRpcError("invalid_params", "缺少 name")
+            compiler_path = str(params.get("compiler_path") or "")
+            if not compiler_path:
+                raise DaemonRpcError("invalid_params", "缺少 compiler_path")
+            compiler_type = str(params.get("compiler_type") or "")
+            if not compiler_type:
+                raise DaemonRpcError("invalid_params", "缺少 compiler_type")
+            fingerprint = str(params.get("fingerprint") or "")
+            if not fingerprint:
+                raise DaemonRpcError("invalid_params", "缺少 fingerprint")
+            tc = db_toolchain.register_toolchain(
+                conn,
+                name=name,
+                compiler_path=compiler_path,
+                compiler_type=compiler_type,
+                version=str(params.get("version") or ""),
+                target_triple=str(params.get("target_triple") or ""),
+                sysroot=str(params.get("sysroot") or ""),
+                include_dirs=params.get("include_dirs") or [],
+                predefined_macros=params.get("predefined_macros") or {},
+                fingerprint=fingerprint,
+                description=str(params.get("description") or ""),
+                # daemon RPC 直接透传 fingerprint，永远不 probe（probe 是 CLI 的职责）
+                probe=False,
+            )
+            return tc.to_dict() if hasattr(tc, "to_dict") else tc
+
+        if method == "toolchain.list":
+            return [tc.to_dict() if hasattr(tc, "to_dict") else tc
+                    for tc in db_toolchain.list_toolchains(conn)]
+
+        if method == "toolchain.get":
+            name_or_id = str(params.get("name_or_id") or params.get("name") or "")
+            if not name_or_id:
+                raise DaemonRpcError("invalid_params", "缺少 name_or_id")
+            result = db_toolchain.get_toolchain(conn, name_or_id)
+            return result.to_dict() if result and hasattr(result, "to_dict") else result
+
+        if method == "toolchain.delete":
+            name_or_id = str(params.get("name_or_id") or params.get("name") or "")
+            if not name_or_id:
+                raise DaemonRpcError("invalid_params", "缺少 name_or_id")
+            deleted = db_toolchain.delete_toolchain(conn, name_or_id)
+            return {"deleted": deleted}
+
+        if method == "toolchain.bind":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            toolchain_id = params.get("toolchain_id")
+            if toolchain_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 toolchain_id")
+            build_context_hash = str(params.get("build_context_hash") or "")
+            db_toolchain.bind_toolchain_to_workspace(
+                conn,
+                workspace_id=int(workspace_id),
+                toolchain_id=int(toolchain_id),
+                build_context_hash=build_context_hash,
+            )
+            return {"bound": True}
+
+        if method == "toolchain.resolve":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            build_context_hash = params.get("build_context_hash")
+            if build_context_hash is not None:
+                build_context_hash = str(build_context_hash)
+            result = db_toolchain.resolve_toolchain(
+                conn,
+                workspace_id=int(workspace_id),
+                build_context_hash=build_context_hash,
+            )
+            return result.to_dict() if result and hasattr(result, "to_dict") else result
+
+        # ---- build_context CRUD ----
+        if method == "build_context.register":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            name = str(params.get("name") or "")
+            if not name:
+                raise DaemonRpcError("invalid_params", "缺少 name")
+            set_active = bool(params.get("set_active", False))
+            ctx = db_toolchain.register_build_context(
+                conn,
+                workspace_id=int(workspace_id),
+                name=name,
+                compile_flags=params.get("compile_flags") or [],
+                defines=params.get("defines") or {},
+                include_paths=params.get("include_paths") or [],
+                set_active=set_active,
+            )
+            return ctx.to_dict() if hasattr(ctx, "to_dict") else ctx
+
+        if method == "build_context.list":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            return [ctx.to_dict() if hasattr(ctx, "to_dict") else ctx
+                    for ctx in db_toolchain.list_build_contexts(conn, int(workspace_id))]
+
+        if method == "build_context.set_active":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            build_context_hash = str(params.get("build_context_hash") or "")
+            if not build_context_hash:
+                raise DaemonRpcError("invalid_params", "缺少 build_context_hash")
+            ok = db_toolchain.set_active_build_context(
+                conn, int(workspace_id), build_context_hash
+            )
+            return {"updated": ok}
+
+        if method == "build_context.delete":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            build_context_hash = str(params.get("build_context_hash") or "")
+            if not build_context_hash:
+                raise DaemonRpcError("invalid_params", "缺少 build_context_hash")
+            deleted = db_toolchain.delete_build_context(
+                conn, int(workspace_id), build_context_hash
+            )
+            return {"deleted": deleted}
+
+        # ---- resolved_edges CRUD ----
+        if method == "resolved_edges.store":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            build_context_hash = str(params.get("build_context_hash") or "")
+            if not build_context_hash:
+                raise DaemonRpcError("invalid_params", "缺少 build_context_hash")
+            edges = params.get("edges") or []
+            if not isinstance(edges, list):
+                raise DaemonRpcError("invalid_params", "edges 必须是数组")
+            stored = db_toolchain.store_resolved_edges(
+                conn,
+                workspace_id=int(workspace_id),
+                build_context_hash=build_context_hash,
+                edges=edges,
+            )
+            return {"stored": stored}
+
+        if method == "resolved_edges.get":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            build_context_hash = str(params.get("build_context_hash") or "")
+            if not build_context_hash:
+                raise DaemonRpcError("invalid_params", "缺少 build_context_hash")
+            caller_symbol_id = params.get("caller_symbol_id")
+            limit = params.get("limit")
+            edges = db_toolchain.get_resolved_edges(
+                conn,
+                workspace_id=int(workspace_id),
+                build_context_hash=build_context_hash,
+                caller_symbol_id=int(caller_symbol_id) if caller_symbol_id is not None else None,
+                limit=int(limit) if limit is not None else None,
+            )
+            return [e.to_dict() if hasattr(e, "to_dict") else e for e in edges]
+
+        if method == "resolved_edges.count":
+            workspace_id = params.get("workspace_id")
+            if workspace_id is None:
+                raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            build_context_hash = str(params.get("build_context_hash") or "")
+            if not build_context_hash:
+                raise DaemonRpcError("invalid_params", "缺少 build_context_hash")
+            count = db_toolchain.count_resolved_edges(
+                conn,
+                workspace_id=int(workspace_id),
+                build_context_hash=build_context_hash,
+            )
+            return {"count": count}
+
         raise DaemonRpcError("method_not_found", method)
 
     @staticmethod

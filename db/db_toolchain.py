@@ -163,6 +163,130 @@ def init_toolchain_schema(conn: sqlite3.Connection):
 
 
 # ============================================
+# 独立 toolchain.db 与 ATTACH DATABASE 支持
+# ============================================
+
+# ATTACH 后 toolchain 表在目标连接中的 schema 名
+TOOLCHAIN_ATTACH_SCHEMA = "toolchain_db"
+
+
+def open_toolchain_db(db_path: str) -> sqlite3.Connection:
+    """
+    打开（或创建）独立的 toolchain.db，并初始化 schema。
+
+    与 Rust `ToolchainStore::open` 对称。daemon 启动时调用此函数获得独立
+    连接，用于跨 workspace 共享 toolchain / build_context / resolved_edges
+    数据。workspace 连接通过 `attach_toolchain_db` 挂载后可跨连接查询。
+
+    参数：
+        db_path: toolchain.db 文件路径。父目录不存在时自动创建。
+
+    返回：
+        已初始化 schema 的 sqlite3.Connection（调用方负责关闭）
+    """
+    parent = os.path.dirname(os.path.abspath(db_path))
+    if parent and not os.path.isdir(parent):
+        os.makedirs(parent, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        # 注意：toolchain.db 本身不需要 WAL（多读者 + 单写者场景下，
+        # 用默认 rollback journal + busy_timeout 即可；WAL 主要给 workspace
+        # 连接用，以避免 ATTACH 后多连接并发写 WAL 状态混乱）
+        conn.executescript(TOOLCHAIN_SCHEMA_DDL)
+        conn.commit()
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
+def attach_toolchain_db(
+    target_conn: sqlite3.Connection,
+    toolchain_db_path: str,
+    schema: str = TOOLCHAIN_ATTACH_SCHEMA,
+) -> str:
+    """
+    将独立 toolchain.db 挂载到目标连接（通常是 workspace 连接）。
+
+    对应 Rust `ToolchainStore::attach_to`。挂载后，可通过
+    `<schema>.toolchains` / `<schema>.workspace_toolchains` /
+    `<schema>.workspace_build_contexts` / `<schema>.resolved_edges`
+    跨连接查询。
+
+    设计参考：enterprise-architecture-evolution.md §"三层存储设计" Layer 2:
+    > 通过 SQLite `ATTACH DATABASE` 挂载到瘦工作区
+
+    幂等：若同名 schema 已挂载，先 DETACH 再 ATTACH（避免重复 ATTACH 报错）。
+
+    参数：
+        target_conn: workspace 数据库连接（被挂载方）
+        toolchain_db_path: toolchain.db 文件路径
+        schema: ATTACH 后的 schema 名（默认 `toolchain_db`）
+
+    返回：
+        schema 名（便于调用方拼 SQL：`f"{schema}.toolchains"`）
+    """
+    # 幂等：先尝试 DETACH（若未挂载会报错，忽略）
+    try:
+        target_conn.execute(f"DETACH DATABASE {schema}")
+    except sqlite3.OperationalError:
+        pass
+
+    # 防注入：schema 名只能是合法标识符
+    if not schema.replace("_", "").isalnum():
+        raise ValueError(f"非法 schema 名: {schema!r}")
+
+    # 标准化路径（SQLite ATTACH 要求正斜杠或转义反斜杠）
+    abs_path = os.path.abspath(toolchain_db_path).replace("\\", "/")
+    target_conn.execute(
+        f"ATTACH DATABASE ? AS {schema}",
+        (abs_path,),
+    )
+    return schema
+
+
+def detach_toolchain_db(
+    target_conn: sqlite3.Connection,
+    schema: str = TOOLCHAIN_ATTACH_SCHEMA,
+) -> bool:
+    """
+    从目标连接卸载 toolchain.db。
+
+    与 `attach_toolchain_db` 配对。卸载后 target_conn 上的
+    `<schema>.*` 查询将失效。
+
+    返回：
+        True 若成功 DETACH；False 若未挂载（无操作）
+    """
+    if not schema.replace("_", "").isalnum():
+        raise ValueError(f"非法 schema 名: {schema!r}")
+    try:
+        target_conn.execute(f"DETACH DATABASE {schema}")
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def is_toolchain_attached(
+    target_conn: sqlite3.Connection,
+    schema: str = TOOLCHAIN_ATTACH_SCHEMA,
+) -> bool:
+    """
+    检查目标连接是否已挂载 toolchain.db。
+
+    通过 `PRAGMA database_list` 查询当前 ATTACH 的所有 schema。
+    """
+    rows = target_conn.execute("PRAGMA database_list").fetchall()
+    for row in rows:
+        # row: (seq, name, file)
+        if len(row) >= 2 and row[1] == schema:
+            return True
+    return False
+
+
+# ============================================
 # 工具链探测
 # ============================================
 
@@ -355,7 +479,13 @@ def register_toolchain(
     conn: sqlite3.Connection,
     name: str,
     compiler_path: str,
+    compiler_type: str = "",
+    version: str = "",
+    target_triple: str = "",
     sysroot: str = "",
+    include_dirs: Optional[List[str]] = None,
+    predefined_macros: Optional[Dict[str, str]] = None,
+    fingerprint: Optional[str] = None,
     description: str = "",
     probe: bool = True,
 ) -> Toolchain:
@@ -366,35 +496,65 @@ def register_toolchain(
         conn: SQLite 连接
         name: 工具链名称（唯一）
         compiler_path: 编译器可执行文件路径
+        compiler_type: 编译器类型（如 gcc/clang）；空时自动探测（probe=True）
+        version: 版本号；空时自动探测
+        target_triple: 目标三元组；空时自动探测
         sysroot: sysroot 路径
+        include_dirs: 额外 include 目录列表；None 时自动探测
+        predefined_macros: 预定义宏 dict；None 时自动探测
+        fingerprint: 显式指定的 fingerprint；None 时按 compute_toolchain_fingerprint 计算
+                     （与 Rust `ToolchainStore::register_toolchain` 对称：daemon 直接传
+                     fingerprint，CLI/probe 模式自动计算）
         description: 描述
-        probe: 是否自动探测编译器信息
+        probe: 是否自动探测编译器信息（仅当对应字段为空/None 时探测；显式传入字段优先）
 
     返回：注册的 Toolchain 对象
 
     如果 fingerprint 已存在，返回已注册的工具链（不重复注册）。
-    """
-    # 探测编译器信息
-    if probe:
-        info = probe_compiler(compiler_path)
-    else:
-        info = {
-            "compiler_type": _detect_compiler_type(compiler_path),
-            "version": "",
-            "target_triple": "",
-            "include_dirs": [],
-            "predefined_macros": {},
-        }
 
-    fingerprint = compute_toolchain_fingerprint(
-        compiler_path=compiler_path,
-        compiler_type=info["compiler_type"],
-        version=info["version"],
-        target_triple=info["target_triple"],
-        sysroot=sysroot,
-        include_dirs=info["include_dirs"],
-        predefined_macros=info["predefined_macros"],
+    设计：
+    - 与 Rust `ToolchainStore::register_toolchain` API 对称：允许显式传入
+      compiler_type/version/target_triple/include_dirs/predefined_macros/fingerprint，
+      daemon RPC 直接透传（跳过 probe），CLI 默认 probe=True 自动探测。
+    - 显式字段优先：只要 compiler_type 非空、include_dirs 非 None 等，就用调用方传入值；
+      probe=True 只补齐空字段。
+    """
+    # 确定编译器信息：显式字段优先，缺失字段才 probe
+    needs_probe = probe and (
+        not compiler_type
+        or not version
+        or not target_triple
+        or include_dirs is None
+        or predefined_macros is None
     )
+    if needs_probe:
+        probed = probe_compiler(compiler_path)
+        compiler_type = compiler_type or probed["compiler_type"]
+        version = version or probed["version"]
+        target_triple = target_triple or probed["target_triple"]
+        if include_dirs is None:
+            include_dirs = probed["include_dirs"]
+        if predefined_macros is None:
+            predefined_macros = probed["predefined_macros"]
+    # 兜底：probe=False 时缺失字段用空值
+    if include_dirs is None:
+        include_dirs = []
+    if predefined_macros is None:
+        predefined_macros = {}
+    if not compiler_type:
+        compiler_type = _detect_compiler_type(compiler_path)
+
+    # 计算 fingerprint（若调用方未指定）
+    if fingerprint is None:
+        fingerprint = compute_toolchain_fingerprint(
+            compiler_path=compiler_path,
+            compiler_type=compiler_type,
+            version=version,
+            target_triple=target_triple,
+            sysroot=sysroot,
+            include_dirs=include_dirs,
+            predefined_macros=predefined_macros,
+        )
 
     now = time.time()
 
@@ -423,12 +583,12 @@ def register_toolchain(
         (
             name,
             os.path.normpath(compiler_path),
-            info["compiler_type"],
-            info["version"],
-            info["target_triple"],
+            compiler_type,
+            version,
+            target_triple,
             os.path.normpath(sysroot) if sysroot else "",
-            json.dumps(info["include_dirs"]),
-            json.dumps(info["predefined_macros"]),
+            json.dumps(include_dirs),
+            json.dumps(predefined_macros),
             fingerprint,
             now, now,
             description,
@@ -441,12 +601,12 @@ def register_toolchain(
         id=tc_id,
         name=name,
         compiler_path=os.path.normpath(compiler_path),
-        compiler_type=info["compiler_type"],
-        version=info["version"],
-        target_triple=info["target_triple"],
+        compiler_type=compiler_type,
+        version=version,
+        target_triple=target_triple,
         sysroot=os.path.normpath(sysroot) if sysroot else "",
-        include_dirs=info["include_dirs"],
-        predefined_macros=info["predefined_macros"],
+        include_dirs=include_dirs,
+        predefined_macros=predefined_macros,
         fingerprint=fingerprint,
         created_at=now,
         updated_at=now,

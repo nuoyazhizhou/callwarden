@@ -381,6 +381,130 @@ pub trait DaemonStateExt {
         let _ = (peer, params);
         Err(DaemonRpcError::method_not_found("mount.delete"))
     }
+
+    // ---- Toolchain 管理（G1 Layer 2 实现）----
+    // 默认实现返回 method_not_found，由 WorkspaceDaemonState 覆盖
+
+    fn handle_toolchain_register(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("toolchain.register"))
+    }
+
+    fn handle_toolchain_list(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("toolchain.list"))
+    }
+
+    fn handle_toolchain_get(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("toolchain.get"))
+    }
+
+    fn handle_toolchain_delete(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("toolchain.delete"))
+    }
+
+    fn handle_toolchain_bind(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("toolchain.bind"))
+    }
+
+    fn handle_toolchain_resolve(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("toolchain.resolve"))
+    }
+
+    // ---- Build Context 管理（G1 Layer 2 实现）----
+
+    fn handle_build_context_register(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("build_context.register"))
+    }
+
+    fn handle_build_context_list(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("build_context.list"))
+    }
+
+    fn handle_build_context_set_active(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("build_context.set_active"))
+    }
+
+    fn handle_build_context_delete(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("build_context.delete"))
+    }
+
+    // ---- Resolved Edges（G1 Layer 2 实现）----
+
+    fn handle_resolved_edges_store(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("resolved_edges.store"))
+    }
+
+    fn handle_resolved_edges_get(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("resolved_edges.get"))
+    }
+
+    fn handle_resolved_edges_count(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("resolved_edges.count"))
+    }
 }
 
 /// daemon state 扩展的默认实现（所有高级方法返回 method_not_found）
@@ -468,6 +592,25 @@ fn dispatch_inner<S: DaemonStateExt>(
         "mount.register" => state.handle_mount_register(peer, params),
         "mount.list" => state.handle_mount_list(peer, params),
         "mount.delete" => state.handle_mount_delete(peer, params),
+
+        // ---- Toolchain 管理（G1 Layer 2 实现）----
+        "toolchain.register" => state.handle_toolchain_register(peer, params),
+        "toolchain.list" => state.handle_toolchain_list(peer, params),
+        "toolchain.get" => state.handle_toolchain_get(peer, params),
+        "toolchain.delete" => state.handle_toolchain_delete(peer, params),
+        "toolchain.bind" => state.handle_toolchain_bind(peer, params),
+        "toolchain.resolve" => state.handle_toolchain_resolve(peer, params),
+
+        // ---- Build Context 管理（G1 Layer 2 实现）----
+        "build_context.register" => state.handle_build_context_register(peer, params),
+        "build_context.list" => state.handle_build_context_list(peer, params),
+        "build_context.set_active" => state.handle_build_context_set_active(peer, params),
+        "build_context.delete" => state.handle_build_context_delete(peer, params),
+
+        // ---- Resolved Edges（G1 Layer 2 实现）----
+        "resolved_edges.store" => state.handle_resolved_edges_store(peer, params),
+        "resolved_edges.get" => state.handle_resolved_edges_get(peer, params),
+        "resolved_edges.count" => state.handle_resolved_edges_count(peer, params),
 
         // ---- 未知方法 ----
         _ => Err(DaemonRpcError::method_not_found(method)),

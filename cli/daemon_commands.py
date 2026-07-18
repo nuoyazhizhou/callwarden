@@ -98,11 +98,223 @@ def _parser() -> argparse.ArgumentParser:
     mount_delete = mount_sub.add_parser("delete", help="删除容器挂载映射")
     mount_delete.add_argument("container_id", help="容器标识")
     mount_delete.add_argument("container_path", help="容器内路径前缀")
+
+    # ---- Toolchain / Build Context / Resolved Edges 管理命令（G1 Layer 2）----
+    toolchain = sub.add_parser("toolchain", help="工具链与 build context 管理")
+    toolchain_sub = toolchain.add_subparsers(dest="toolchain_action", required=True)
+
+    # toolchain register
+    tc_reg = toolchain_sub.add_parser("register", help="注册工具链")
+    tc_reg.add_argument("name", help="工具链名称（唯一）")
+    tc_reg.add_argument("compiler_path", help="编译器可执行文件路径")
+    tc_reg.add_argument("--compiler-type", default="", help="编译器类型（gcc/clang/...）")
+    tc_reg.add_argument("--version", default="", help="编译器版本")
+    tc_reg.add_argument("--target-triple", default="", help="目标三元组")
+    tc_reg.add_argument("--sysroot", default="", help="sysroot 路径")
+    tc_reg.add_argument("--include-dirs", default="", help="额外 include 目录（分号分隔）")
+    tc_reg.add_argument("--fingerprint", default="",
+                        help="显式指定 fingerprint（不指定则按字段计算）")
+    tc_reg.add_argument("--description", default="", help="工具链描述")
+
+    # toolchain list / get / delete
+    toolchain_sub.add_parser("list", help="列出所有工具链")
+    tc_get = toolchain_sub.add_parser("get", help="查询工具链（按 name 或 id）")
+    tc_get.add_argument("name_or_id", help="工具链名称或 ID")
+    tc_del = toolchain_sub.add_parser("delete", help="删除工具链")
+    tc_del.add_argument("name_or_id", help="工具链名称或 ID")
+
+    # toolchain bind
+    tc_bind = toolchain_sub.add_parser("bind", help="绑定工具链到 workspace")
+    tc_bind.add_argument("workspace_id", type=int, help="workspace ID")
+    tc_bind.add_argument("toolchain_id", type=int, help="toolchain ID")
+    tc_bind.add_argument("--build-context-hash", default="",
+                         help="build context hash（同一 workspace 不同 variant）")
+
+    # toolchain resolve
+    tc_resolve = toolchain_sub.add_parser("resolve",
+                                          help="解析 workspace+build_context 对应的 toolchain")
+    tc_resolve.add_argument("workspace_id", type=int, help="workspace ID")
+    tc_resolve.add_argument("--build-context-hash", default=None,
+                            help="build context hash（缺省用 active）")
+
+    # build-context 子命令组
+    bc = toolchain_sub.add_parser("build-context", help="build context 管理")
+    bc_sub = bc.add_subparsers(dest="bc_action", required=True)
+
+    bc_reg = bc_sub.add_parser("register", help="注册 build context")
+    bc_reg.add_argument("workspace_id", type=int, help="workspace ID")
+    bc_reg.add_argument("name", help="build context 名称（如 debug/release）")
+    bc_reg.add_argument("--compile-flags", default="",
+                        help="编译选项（分号分隔，如 -O2;-g）")
+    bc_reg.add_argument("--defines", default="",
+                        help="预定义宏（key=value;key=value 格式）")
+    bc_reg.add_argument("--include-paths", default="",
+                        help="额外 include 路径（分号分隔）")
+    bc_reg.add_argument("--set-active", action="store_true",
+                        help="设为当前 active context")
+
+    bc_sub.add_parser("list", help="列出 build context").add_argument(
+        "workspace_id", type=int, help="workspace ID"
+    )
+    bc_set = bc_sub.add_parser("set-active", help="设置 active build context")
+    bc_set.add_argument("workspace_id", type=int, help="workspace ID")
+    bc_set.add_argument("build_context_hash", help="build context hash")
+    bc_del = bc_sub.add_parser("delete", help="删除 build context")
+    bc_del.add_argument("workspace_id", type=int, help="workspace ID")
+    bc_del.add_argument("build_context_hash", help="build context hash")
+
+    # resolved-edges 子命令组
+    re_cmd = toolchain_sub.add_parser("resolved-edges", help="resolved edges 管理")
+    re_sub = re_cmd.add_subparsers(dest="re_action", required=True)
+
+    re_store = re_sub.add_parser("store", help="批量存储 resolved edges")
+    re_store.add_argument("workspace_id", type=int, help="workspace ID")
+    re_store.add_argument("build_context_hash", help="build context hash")
+    re_store.add_argument("--edges-json", default="",
+                          help="edges JSON 数组（每个元素含 caller_symbol_id, "
+                               "callee_symbol_id, callee_name, callee_file, "
+                               "call_line, resolution_method）")
+
+    re_get = re_sub.add_parser("get", help="查询 resolved edges")
+    re_get.add_argument("workspace_id", type=int, help="workspace ID")
+    re_get.add_argument("build_context_hash", help="build context hash")
+    re_get.add_argument("--caller-symbol-id", type=int, default=None,
+                        help="按 caller 过滤")
+    re_get.add_argument("--limit", type=int, default=None, help="限制返回条数")
+
+    re_count = re_sub.add_parser("count", help="统计 resolved edges 数量")
+    re_count.add_argument("workspace_id", type=int, help="workspace ID")
+    re_count.add_argument("build_context_hash", help="build context hash")
+
     return parser
 
 
 def _print_json(value) -> None:
     print(json.dumps(value, ensure_ascii=False, indent=2, default=str))
+
+
+def _parse_semi_list(s: str) -> list:
+    """将分号分隔字符串解析为列表（空字符串 → 空列表）。"""
+    if not s:
+        return []
+    return [p for p in s.split(";") if p]
+
+
+def _parse_defines(s: str) -> dict:
+    """将 'key=value;key=value' 格式解析为 dict。"""
+    if not s:
+        return {}
+    result = {}
+    for part in s.split(";"):
+        if not part:
+            continue
+        if "=" in part:
+            k, v = part.split("=", 1)
+            result[k] = v
+        else:
+            result[part] = ""
+    return result
+
+
+def _dispatch_toolchain_cli(client, args) -> dict:
+    """toolchain / build-context / resolved-edges 子命令分发到对应 RPC。"""
+    action = args.toolchain_action
+
+    if action == "register":
+        # 若调用方未提供 fingerprint，让 daemon 端按字段计算
+        params = {
+            "name": args.name,
+            "compiler_path": os.path.abspath(args.compiler_path),
+            "compiler_type": args.compiler_type,
+            "version": args.version,
+            "target_triple": args.target_triple,
+            "sysroot": args.sysroot,
+            "include_dirs": _parse_semi_list(args.include_dirs),
+            "predefined_macros": {},  # CLI 不支持复杂宏，留给 daemon API
+            "description": args.description,
+        }
+        if args.fingerprint:
+            params["fingerprint"] = args.fingerprint
+        return client.call("toolchain.register", params)
+
+    if action == "list":
+        return client.call("toolchain.list", {})
+
+    if action == "get":
+        return client.call("toolchain.get", {"name_or_id": args.name_or_id})
+
+    if action == "delete":
+        return client.call("toolchain.delete", {"name_or_id": args.name_or_id})
+
+    if action == "bind":
+        return client.call("toolchain.bind", {
+            "workspace_id": args.workspace_id,
+            "toolchain_id": args.toolchain_id,
+            "build_context_hash": args.build_context_hash,
+        })
+
+    if action == "resolve":
+        params = {"workspace_id": args.workspace_id}
+        if args.build_context_hash is not None:
+            params["build_context_hash"] = args.build_context_hash
+        return client.call("toolchain.resolve", params)
+
+    # build-context 子命令
+    if action == "build-context":
+        bc_action = args.bc_action
+        if bc_action == "register":
+            return client.call("build_context.register", {
+                "workspace_id": args.workspace_id,
+                "name": args.name,
+                "compile_flags": _parse_semi_list(args.compile_flags),
+                "defines": _parse_defines(args.defines),
+                "include_paths": _parse_semi_list(args.include_paths),
+                "set_active": args.set_active,
+            })
+        if bc_action == "list":
+            return client.call("build_context.list", {
+                "workspace_id": args.workspace_id,
+            })
+        if bc_action == "set-active":
+            return client.call("build_context.set_active", {
+                "workspace_id": args.workspace_id,
+                "build_context_hash": args.build_context_hash,
+            })
+        if bc_action == "delete":
+            return client.call("build_context.delete", {
+                "workspace_id": args.workspace_id,
+                "build_context_hash": args.build_context_hash,
+            })
+        raise AssertionError(bc_action)
+
+    # resolved-edges 子命令
+    if action == "resolved-edges":
+        re_action = args.re_action
+        if re_action == "store":
+            edges = json.loads(args.edges_json) if args.edges_json else []
+            return client.call("resolved_edges.store", {
+                "workspace_id": args.workspace_id,
+                "build_context_hash": args.build_context_hash,
+                "edges": edges,
+            })
+        if re_action == "get":
+            params = {
+                "workspace_id": args.workspace_id,
+                "build_context_hash": args.build_context_hash,
+            }
+            if args.caller_symbol_id is not None:
+                params["caller_symbol_id"] = args.caller_symbol_id
+            if args.limit is not None:
+                params["limit"] = args.limit
+            return client.call("resolved_edges.get", params)
+        if re_action == "count":
+            return client.call("resolved_edges.count", {
+                "workspace_id": args.workspace_id,
+                "build_context_hash": args.build_context_hash,
+            })
+        raise AssertionError(re_action)
+
+    raise AssertionError(action)
 
 
 def run_daemon_command(argv: Optional[Sequence[str]] = None) -> int:
@@ -199,6 +411,8 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None) -> int:
             })
         else:
             raise AssertionError(args.mount_action)
+    elif args.action == "toolchain":
+        result = _dispatch_toolchain_cli(client, args)
     else:
         raise AssertionError(args.action)
     _print_json(result)

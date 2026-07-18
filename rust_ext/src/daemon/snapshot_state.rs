@@ -52,6 +52,8 @@ pub struct SnapshotDaemonState {
     base: WorkspaceDaemonState,
     /// 多 workspace snapshot 缓存
     snapshot_cache: Arc<SnapshotCache>,
+    /// G1 Layer 2: Toolchain DB（独立 toolchain.db，跨 workspace 共享）
+    toolchain_store: Option<Arc<super::toolchain::ToolchainStore>>,
 }
 
 impl SnapshotDaemonState {
@@ -60,6 +62,7 @@ impl SnapshotDaemonState {
         Self {
             base,
             snapshot_cache,
+            toolchain_store: None,
         }
     }
 
@@ -78,6 +81,31 @@ impl SnapshotDaemonState {
             WorkspaceDaemonState::with_data_root(registry, data_root),
             snapshot_cache,
         )
+    }
+
+    /// G1 Layer 2：注入 ToolchainStore
+    pub fn with_toolchain_store(
+        mut self,
+        toolchain_store: Arc<super::toolchain::ToolchainStore>,
+    ) -> Self {
+        self.toolchain_store = Some(toolchain_store);
+        self
+    }
+
+    /// G1 Layer 2：获取 ToolchainStore（若未注入返回 None）
+    pub fn toolchain_store(&self) -> Option<&Arc<super::toolchain::ToolchainStore>> {
+        self.toolchain_store.as_ref()
+    }
+
+    /// G1 Layer 2：要求 ToolchainStore（若未注入返回 internal_error）
+    fn require_toolchain_store(
+        &self,
+    ) -> Result<&Arc<super::toolchain::ToolchainStore>, DaemonRpcError> {
+        self.toolchain_store.as_ref().ok_or_else(|| {
+            DaemonRpcError::internal_error(
+                "ToolchainStore 未注入（daemon 启动时未加载 toolchain.db）",
+            )
+        })
     }
 
     /// 访问内部 registry（供测试或外部查询）
@@ -758,6 +786,333 @@ impl DaemonStateExt for SnapshotDaemonState {
     // handle_workspace_connect / handle_workspace_file_refresh / handle_workspace_recover
     // handle_gc_cas / handle_backup / handle_restore
     // 这些方法使用 DaemonStateExt 的默认实现（返回 method_not_found）
+
+    // ============================================
+    // G1 Layer 2: Toolchain / BuildContext / ResolvedEdges handlers
+    // ============================================
+    //
+    // 实现原则：
+    // - toolchain_store 未注入时返回 internal_error
+    // - 参数校验与 Python daemon_server.py 对齐
+    // - workspace_id 由调用方传入（来自 workspace.register 返回值）
+
+    fn handle_toolchain_register(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let name = require_str_param(params, "name")?;
+        let compiler_path = require_str_param(params, "compiler_path")?;
+        let compiler_type = get_str_param_or(params, "compiler_type", "");
+        let version = get_str_param_or(params, "version", "");
+        let target_triple = get_str_param_or(params, "target_triple", "");
+        let sysroot = get_str_param_or(params, "sysroot", "");
+        let description = get_str_param_or(params, "description", "");
+
+        // include_dirs: JSON array of strings
+        let include_dirs: Vec<String> = params
+            .get("include_dirs")
+            .and_then(|v| serde_json::from_value(v.clone()).unwrap_or(None))
+            .unwrap_or_default();
+        // predefined_macros: JSON object → Vec<(K, V)>（保持顺序）
+        let predefined_macros: Vec<(String, String)> = params
+            .get("predefined_macros")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        // fingerprint：必填（调用方负责计算，与 Python compute_toolchain_fingerprint 一致）
+        let fingerprint = require_str_param(params, "fingerprint")?;
+
+        store
+            .register_toolchain(
+                name,
+                compiler_path,
+                &compiler_type,
+                &version,
+                &target_triple,
+                &sysroot,
+                &include_dirs,
+                &predefined_macros,
+                fingerprint,
+                &description,
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("register_toolchain: {}", e)))
+    }
+
+    fn handle_toolchain_list(
+        &mut self,
+        _peer: PeerCredential,
+        _params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        store
+            .list_toolchains()
+            .map(Value::Array)
+            .map_err(|e| DaemonRpcError::internal_error(format!("list_toolchains: {}", e)))
+    }
+
+    fn handle_toolchain_get(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let name_or_id = require_str_param(params, "name_or_id")?;
+        match store
+            .get_toolchain(name_or_id)
+            .map_err(|e| DaemonRpcError::internal_error(format!("get_toolchain: {}", e)))?
+        {
+            Some(tc) => Ok(tc),
+            None => Err(DaemonRpcError::method_not_found("toolchain not found")),
+        }
+    }
+
+    fn handle_toolchain_delete(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let name_or_id = require_str_param(params, "name_or_id")?;
+        let deleted = store
+            .delete_toolchain(name_or_id)
+            .map_err(|e| DaemonRpcError::internal_error(format!("delete_toolchain: {}", e)))?;
+        let mut m = Map::new();
+        m.insert("deleted".to_string(), Value::Number(deleted.into()));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_toolchain_bind(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let toolchain_id = require_str_param(params, "toolchain_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("toolchain_id 必须是整数".to_string()))?;
+        let build_context_hash = get_str_param_or(params, "build_context_hash", "");
+        store
+            .bind_toolchain_to_workspace(workspace_id, toolchain_id, &build_context_hash)
+            .map(|_| {
+                let mut m = Map::new();
+                m.insert("status".to_string(), Value::String("ok".to_string()));
+                Value::Object(m)
+            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("bind_toolchain: {}", e)))
+    }
+
+    fn handle_toolchain_resolve(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let build_context_hash = get_str_param(params, "build_context_hash");
+        let result = store
+            .resolve_toolchain(workspace_id, build_context_hash)
+            .map_err(|e| DaemonRpcError::internal_error(format!("resolve_toolchain: {}", e)))?;
+        Ok(match result {
+            Some(tc) => tc,
+            None => Value::Null,
+        })
+    }
+
+    fn handle_build_context_register(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let name = require_str_param(params, "name")?;
+        let compile_flags: Vec<String> = params
+            .get("compile_flags")
+            .and_then(|v| serde_json::from_value(v.clone()).unwrap_or(None))
+            .unwrap_or_default();
+        let defines: Vec<(String, String)> = params
+            .get("defines")
+            .and_then(|v| v.as_object())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let include_paths: Vec<String> = params
+            .get("include_paths")
+            .and_then(|v| serde_json::from_value(v.clone()).unwrap_or(None))
+            .unwrap_or_default();
+        let set_active = params
+            .get("set_active")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        store
+            .register_build_context(
+                workspace_id,
+                name,
+                &compile_flags,
+                &defines,
+                &include_paths,
+                set_active,
+            )
+            .map_err(|e| DaemonRpcError::internal_error(format!("register_build_context: {}", e)))
+    }
+
+    fn handle_build_context_list(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        store
+            .list_build_contexts(workspace_id)
+            .map(Value::Array)
+            .map_err(|e| DaemonRpcError::internal_error(format!("list_build_contexts: {}", e)))
+    }
+
+    fn handle_build_context_set_active(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        let ok = store
+            .set_active_build_context(workspace_id, build_context_hash)
+            .map_err(|e| DaemonRpcError::internal_error(format!("set_active_build_context: {}", e)))?;
+        let mut m = Map::new();
+        m.insert("ok".to_string(), Value::Bool(ok));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_build_context_delete(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        let deleted = store
+            .delete_build_context(workspace_id, build_context_hash)
+            .map_err(|e| DaemonRpcError::internal_error(format!("delete_build_context: {}", e)))?;
+        let mut m = Map::new();
+        m.insert("deleted".to_string(), Value::Number(deleted.into()));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_resolved_edges_store(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        // edges: JSON array of edge objects
+        let edges_arr = params
+            .get("edges")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少 edges 数组".to_string()))?;
+        let edges: Vec<super::toolchain::ResolvedEdgeInput> = edges_arr
+            .iter()
+            .map(|e| super::toolchain::ResolvedEdgeInput {
+                caller_symbol_id: e.get("caller_symbol_id")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
+                callee_symbol_id: e.get("callee_symbol_id")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
+                callee_name: e.get("callee_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                callee_file: e.get("callee_file")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                call_line: e.get("call_line")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0),
+                resolution_method: e.get("resolution_method")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            })
+            .collect();
+        let inserted = store
+            .store_resolved_edges(workspace_id, build_context_hash, &edges)
+            .map_err(|e| DaemonRpcError::internal_error(format!("store_resolved_edges: {}", e)))?;
+        let mut m = Map::new();
+        m.insert("inserted".to_string(), Value::Number(inserted.into()));
+        Ok(Value::Object(m))
+    }
+
+    fn handle_resolved_edges_get(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        let caller_symbol_id = params
+            .get("caller_symbol_id")
+            .and_then(|v| v.as_i64());
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize);
+        store
+            .get_resolved_edges(workspace_id, build_context_hash, caller_symbol_id, limit)
+            .map(Value::Array)
+            .map_err(|e| DaemonRpcError::internal_error(format!("get_resolved_edges: {}", e)))
+    }
+
+    fn handle_resolved_edges_count(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let store = self.require_toolchain_store()?;
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        let count = store
+            .count_resolved_edges(workspace_id, build_context_hash)
+            .map_err(|e| DaemonRpcError::internal_error(format!("count_resolved_edges: {}", e)))?;
+        let mut m = Map::new();
+        m.insert("count".to_string(), Value::Number(count.into()));
+        Ok(Value::Object(m))
+    }
 }
 
 // ============================================

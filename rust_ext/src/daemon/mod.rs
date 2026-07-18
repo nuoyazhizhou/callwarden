@@ -16,6 +16,10 @@ pub mod workspace;
 ///     file_generation_seen / file_generation_committed
 pub mod cas;
 
+/// G1 Layer 2: Toolchain DB（独立 toolchain.db，与 CasStore / WorkspaceRegistry 对称）
+/// 实现 toolchain CRUD + build_context CRUD + resolved_edges CRUD + workspace 绑定 + ATTACH
+pub mod toolchain;
+
 /// StagingLog——持久化 staging log（append-only + JSON Lines，崩溃安全，跨平台）
 /// R5：实现 StagingEntry + StagingLog（append/read/read_pending/mark_applied_batch/
 ///     mark_failed/truncate/compact_applied）

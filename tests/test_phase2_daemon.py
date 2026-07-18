@@ -437,3 +437,331 @@ class TestDaemonMode:
         """is_daemon_required 返回 bool。"""
         result = is_daemon_required()
         assert isinstance(result, bool)
+
+
+# ── G1 三层存储 E2E 测试 ──
+
+
+class TestG1ThreeLayerStorageE2E:
+    """G1: 三层存储端到端测试。
+
+    验证 Layer 1 (CAS) + Layer 2 (ToolchainStore / 独立 toolchain.db) +
+    Layer 3 (WorkspaceRegistry / daemon registry DB) 的联动。
+
+    场景：daemon 收到 toolchain.register → build_context.register →
+    toolchain.bind → toolchain.resolve 全链路请求；同时 ATTACH DATABASE
+    让 workspace 连接能跨库查询 toolchain 表。
+    """
+
+    @pytest.fixture
+    def daemon_service(self, tmp_path):
+        """构造 EnterpriseDaemonService（使用 tmp_path 隔离 data_root）。"""
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
+        snapshot_service = SnapshotManagerService(max_workspaces=4)
+        return EnterpriseDaemonService(
+            registry_db=str(tmp_path / "registry.db"),
+            snapshot_service=snapshot_service,
+            data_root=str(tmp_path / "data"),
+        )
+
+    def _peer(self):
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        return {"pid": os.getpid(), "uid": uid, "gid": uid}
+
+    def test_three_layer_e2e_register_resolve(self, daemon_service, tmp_path):
+        """G1 E2E：toolchain.register → bind → resolve 闭环。
+
+        步骤：
+        1. 注册 toolchain（Layer 2，独立 toolchain.db）
+        2. 注册 build_context（Layer 2）
+        3. 绑定 toolchain ↔ workspace（Layer 2 ↔ Layer 3）
+        4. resolve_toolchain 通过 active build_context 找到 toolchain
+        5. toolchain.db 文件确实存在于 data_root（独立于 registry.db）
+        """
+        peer = self._peer()
+
+        # 1. 注册 toolchain（通过 daemon RPC dispatch）
+        tc = daemon_service.dispatch(peer, "toolchain.register", {
+            "name": "arm-gcc-9.3",
+            "compiler_path": "/opt/arm-toolchain/bin/arm-none-eabi-gcc",
+            "compiler_type": "gcc",
+            "version": "9.3.1",
+            "target_triple": "arm-none-eabi",
+            "sysroot": "/opt/arm-toolchain/arm-none-eabi",
+            "fingerprint": "fp_arm_9.3.1_v1",
+            "description": "ARM embedded toolchain",
+        })
+        assert tc["name"] == "arm-gcc-9.3"
+        assert tc["fingerprint"] == "fp_arm_9.3.1_v1"
+        assert tc["id"] > 0
+
+        # 2. 注册 build_context（设为 active）
+        bch = daemon_service.dispatch(peer, "build_context.register", {
+            "workspace_id": 1,
+            "name": "arm-debug",
+            "compile_flags": ["-mcpu=cortex-m4", "-g"],
+            "defines": {"DEBUG": "1"},
+            "include_paths": ["/opt/arm-headers"],
+            "set_active": True,
+        })
+        assert bch["is_active"] is True
+        assert bch["name"] == "arm-debug"
+        assert len(bch["build_context_hash"]) == 64  # SHA-256 hex
+
+        # 3. 绑定 toolchain ↔ workspace（用 build_context_hash）
+        bind_result = daemon_service.dispatch(peer, "toolchain.bind", {
+            "workspace_id": 1,
+            "toolchain_id": tc["id"],
+            "build_context_hash": bch["build_context_hash"],
+        })
+        assert bind_result["bound"] is True
+
+        # 4. resolve_toolchain 通过 active build_context 找到 toolchain
+        resolved = daemon_service.dispatch(peer, "toolchain.resolve", {
+            "workspace_id": 1,
+        })
+        assert resolved is not None
+        assert resolved["fingerprint"] == "fp_arm_9.3.1_v1"
+        assert resolved["name"] == "arm-gcc-9.3"
+
+        # 5. toolchain.db 文件存在于 data_root（独立于 registry.db）
+        toolchain_db = os.path.join(
+            daemon_service._data_root, "toolchain.db"
+        )
+        assert os.path.exists(toolchain_db), \
+            f"toolchain.db 未在 data_root 创建: {toolchain_db}"
+        # registry.db 与 toolchain.db 是两个不同的文件
+        registry_db = daemon_service.registry_db
+        assert os.path.abspath(toolchain_db) != os.path.abspath(registry_db)
+
+    def test_three_layer_attach_database_to_workspace(
+        self, daemon_service, tmp_path
+    ):
+        """G1 ATTACH DATABASE：toolchain.db 可被挂载到外部连接查询。
+
+        场景：
+        1. daemon RPC 注册 toolchain（写入 toolchain.db）
+        2. 用 Python 直接 attach toolchain.db 到一个 workspace 连接
+        3. 通过 `<schema>.toolchains` 跨连接查询到已注册的 toolchain
+        """
+        peer = self._peer()
+        daemon_service.dispatch(peer, "toolchain.register", {
+            "name": "clang-15",
+            "compiler_path": "/usr/bin/clang",
+            "compiler_type": "clang",
+            "fingerprint": "fp_clang_15_v1",
+        })
+
+        # 触发 toolchain.db 创建
+        tc_conn = daemon_service._get_toolchain_conn()
+        assert tc_conn is not None
+
+        # 构造一个"workspace 连接"（内存 SQLite）
+        ws_conn = sqlite3.connect(":memory:")
+
+        # ATTACH toolchain.db
+        from callwarden.db.db_toolchain import (
+            attach_toolchain_db,
+            detach_toolchain_db,
+            is_toolchain_attached,
+            TOOLCHAIN_ATTACH_SCHEMA,
+        )
+        toolchain_db_path = daemon_service._toolchain_db_path
+        schema = attach_toolchain_db(ws_conn, toolchain_db_path)
+        assert schema == TOOLCHAIN_ATTACH_SCHEMA
+        assert is_toolchain_attached(ws_conn)
+
+        # 跨连接查询 toolchain 表
+        rows = ws_conn.execute(
+            f"SELECT name, compiler_type, fingerprint FROM {schema}.toolchains"
+        ).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == "clang-15"
+        assert rows[0][1] == "clang"
+        assert rows[0][2] == "fp_clang_15_v1"
+
+        # DETACH 后再查询应报错（表不存在）
+        detach_toolchain_db(ws_conn)
+        assert not is_toolchain_attached(ws_conn)
+        with pytest.raises(sqlite3.OperationalError):
+            ws_conn.execute(f"SELECT * FROM {schema}.toolchains").fetchall()
+        ws_conn.close()
+
+    def test_three_layer_resolved_edges_isolation(
+        self, daemon_service, tmp_path
+    ):
+        """G1 resolved_edges 按 (workspace_id, build_context_hash) 隔离。
+
+        场景：
+        - workspace 1 在 build_context_a 下有 3 条 edges
+        - workspace 1 在 build_context_b 下有 1 条 edges
+        - workspace 2 在 build_context_a 下有 2 条 edges
+        - 互不干扰：count 只统计本 (ws, bch) 的 edges
+        """
+        peer = self._peer()
+        bch_a = "ctx_a" * 16  # 64-char mock hash
+        bch_b = "ctx_b" * 16
+
+        # workspace 1 / context A: 3 edges
+        daemon_service.dispatch(peer, "resolved_edges.store", {
+            "workspace_id": 1,
+            "build_context_hash": bch_a,
+            "edges": [
+                {"caller_symbol_id": 1, "callee_symbol_id": 10,
+                 "callee_name": "foo", "call_line": 5},
+                {"caller_symbol_id": 1, "callee_symbol_id": 11,
+                 "callee_name": "bar", "call_line": 10},
+                {"caller_symbol_id": 2, "callee_symbol_id": 10,
+                 "callee_name": "foo", "call_line": 15},
+            ],
+        })
+        # workspace 1 / context B: 1 edge
+        daemon_service.dispatch(peer, "resolved_edges.store", {
+            "workspace_id": 1,
+            "build_context_hash": bch_b,
+            "edges": [
+                {"caller_symbol_id": 1, "callee_symbol_id": 20,
+                 "callee_name": "baz", "call_line": 20},
+            ],
+        })
+        # workspace 2 / context A: 2 edges
+        daemon_service.dispatch(peer, "resolved_edges.store", {
+            "workspace_id": 2,
+            "build_context_hash": bch_a,
+            "edges": [
+                {"caller_symbol_id": 100, "callee_symbol_id": 200,
+                 "callee_name": "remote", "call_line": 1},
+                {"caller_symbol_id": 101, "callee_symbol_id": 200,
+                 "callee_name": "remote", "call_line": 2},
+            ],
+        })
+
+        # 验证 isolation
+        c_1_a = daemon_service.dispatch(peer, "resolved_edges.count", {
+            "workspace_id": 1, "build_context_hash": bch_a,
+        })
+        c_1_b = daemon_service.dispatch(peer, "resolved_edges.count", {
+            "workspace_id": 1, "build_context_hash": bch_b,
+        })
+        c_2_a = daemon_service.dispatch(peer, "resolved_edges.count", {
+            "workspace_id": 2, "build_context_hash": bch_a,
+        })
+
+        assert c_1_a["count"] == 3
+        assert c_1_b["count"] == 1
+        assert c_2_a["count"] == 2
+
+        # 验证 caller 过滤
+        edges_caller1 = daemon_service.dispatch(peer, "resolved_edges.get", {
+            "workspace_id": 1, "build_context_hash": bch_a,
+            "caller_symbol_id": 1,
+        })
+        assert len(edges_caller1) == 2  # (1→10) + (1→11)
+        edges_caller2 = daemon_service.dispatch(peer, "resolved_edges.get", {
+            "workspace_id": 1, "build_context_hash": bch_a,
+            "caller_symbol_id": 2,
+        })
+        assert len(edges_caller2) == 1  # (2→10)
+
+    def test_three_layer_toolchain_fingerprint_dedup(
+        self, daemon_service, tmp_path
+    ):
+        """G1 toolchain fingerprint 去重：相同 fingerprint 不重复注册。"""
+        peer = self._peer()
+        # 第一次注册
+        tc1 = daemon_service.dispatch(peer, "toolchain.register", {
+            "name": "gcc-9.3-a",
+            "compiler_path": "/usr/bin/gcc",
+            "compiler_type": "gcc",
+            "fingerprint": "fp_dedup_test",
+        })
+        # 第二次注册（同 fingerprint，不同 name）
+        tc2 = daemon_service.dispatch(peer, "toolchain.register", {
+            "name": "gcc-9.3-b",
+            "compiler_path": "/usr/bin/gcc-9.3",
+            "compiler_type": "gcc",
+            "fingerprint": "fp_dedup_test",
+        })
+
+        # 应返回同一个 toolchain（按 fingerprint 去重）
+        assert tc1["id"] == tc2["id"]
+        assert tc1["fingerprint"] == tc2["fingerprint"]
+
+        # list 应只有 1 个
+        lst = daemon_service.dispatch(peer, "toolchain.list", {})
+        assert len(lst) == 1
+
+    def test_three_layer_resolve_fallback_chain(
+        self, daemon_service, tmp_path
+    ):
+        """G1 resolve_toolchain 4 步降级链。
+
+        步骤：
+        1. 无任何绑定时返回 None
+        2. 注册 build_context_a (active) + 绑定 toolchain_a → resolve 返回 toolchain_a
+        3. 改 active 到 build_context_b（无绑定）→ resolve 返回 None
+           （active 已切走，但 bch 无 toolchain 绑定）
+        4. 绑定 toolchain_b 到 build_context_b（explicit hash）→ 用 bch 显式
+           resolve 返回 toolchain_b
+        """
+        peer = self._peer()
+
+        # 1. 无绑定
+        r1 = daemon_service.dispatch(peer, "toolchain.resolve", {
+            "workspace_id": 1,
+        })
+        assert r1 is None
+
+        # 注册两个 toolchain
+        tc_a = daemon_service.dispatch(peer, "toolchain.register", {
+            "name": "tc-a", "compiler_path": "/x/a",
+            "compiler_type": "gcc", "fingerprint": "fp_a",
+        })
+        tc_b = daemon_service.dispatch(peer, "toolchain.register", {
+            "name": "tc-b", "compiler_path": "/x/b",
+            "compiler_type": "clang", "fingerprint": "fp_b",
+        })
+
+        # 2. context_a (active) + 绑定 tc_a
+        bch_a = daemon_service.dispatch(peer, "build_context.register", {
+            "workspace_id": 1, "name": "a",
+            "compile_flags": ["-g"], "set_active": True,
+        })
+        daemon_service.dispatch(peer, "toolchain.bind", {
+            "workspace_id": 1, "toolchain_id": tc_a["id"],
+            "build_context_hash": bch_a["build_context_hash"],
+        })
+        r2 = daemon_service.dispatch(peer, "toolchain.resolve", {
+            "workspace_id": 1,
+        })
+        assert r2["fingerprint"] == "fp_a"
+
+        # 3. 切换 active 到 context_b（无绑定）
+        bch_b = daemon_service.dispatch(peer, "build_context.register", {
+            "workspace_id": 1, "name": "b",
+            "compile_flags": ["-O2"], "set_active": True,
+        })
+        r3 = daemon_service.dispatch(peer, "toolchain.resolve", {
+            "workspace_id": 1,
+        })
+        # active 已切到 bch_b，但 bch_b 无 toolchain 绑定 → fallback 到 default（空 hash）
+        # → 仍无 → 返回 None
+        assert r3 is None
+
+        # 4. 绑定 tc_b 到 bch_b（explicit hash）
+        daemon_service.dispatch(peer, "toolchain.bind", {
+            "workspace_id": 1, "toolchain_id": tc_b["id"],
+            "build_context_hash": bch_b["build_context_hash"],
+        })
+        # 4a. 用 active（隐式）→ 应返回 tc_b
+        r4a = daemon_service.dispatch(peer, "toolchain.resolve", {
+            "workspace_id": 1,
+        })
+        assert r4a["fingerprint"] == "fp_b"
+        # 4b. 用 explicit bch_a → 应返回 tc_a（精确匹配优先于 active）
+        r4b = daemon_service.dispatch(peer, "toolchain.resolve", {
+            "workspace_id": 1,
+            "build_context_hash": bch_a["build_context_hash"],
+        })
+        assert r4b["fingerprint"] == "fp_a"
