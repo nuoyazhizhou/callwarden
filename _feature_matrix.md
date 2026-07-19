@@ -320,14 +320,14 @@
 
 | # | 问题 | 详情 | 需更新文件 |
 |---|------|------|------------|
-| I1 | MCP 工具数严重过时 | IS 说 120，RM 说 125，MCT 头部说 173 又说 193，概览表说 179，ARC 说 166，实际 **195** | IS, RM, MCT, ARC, .cli_audit, .mcp_audit |
-| I2 | competition-analysis "只差接线"已全部接线 | CA 说向量/任务/所有权/摘要/覆盖率"未暴露"，实际 MCP 全部注册 | CA |
-| I3 | USER_GUIDE 严重过时 | UG 说"v3 Schema / 一个用户一个库"，实际 v36 / hash 隔离 | UG（建议废弃或重写） |
-| I4 | implementation-status 自相矛盾 | IS 第五节说 Prometheus "待办"，但 metrics.py 已完整实现 | IS |
-| I5 | IS TokenSavingsMixin 重复列出 | IS 第三节列出两次 | IS |
-| I6 | 数据库路径描述不一致 | UG 说 ~/.callwarden/callwarden.db，IS/RM 说 ~/.callwarden/<hash>/callwarden.db | UG |
-| I7 | CA "不要做跨仓库" 但已实现 | CA 建议不做跨仓库，但 db_cross_repo.py 已实现 | CA |
-| I8 | CA "不要集成 ast-grep" 但 issues.py 存在 | CA 不建议，但实际 issues.py 可能已集成 | CA |
+| I1 | ✅ 已修复（2026-07-19） | IS/RM/MCT/ARC 头部已统一为 204 MCP / v37 Schema / 40 Mixin。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
+| I2 | ✅ 已修复（2026-07-19） | CA 表格已改"未暴露"为"✅ 已暴露"，"只差接线"为"已完成（2026-07 接入）" | CA |
+| I3 | ✅ 已修复（2026-07-19） | UG 头部已改"v3 Schema"为"v37 Schema · 204 MCP 工具 · 16 语言 · 40 Mixin"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等" | UG |
+| I4 | ✅ 已修复（2026-07-19） | IS §5 待办表已更新：`status != 'archived'` ✅ 已实现 / `UNIQUE UPSERT` ⚠️ 部分（已用 ON CONFLICT，键非 symbol_hash）/ `Prometheus` ⚠️ 部分（metrics.py 有数据结构，缺 /metrics endpoint） | IS |
+| I5 | ✅ 已修复（2026-07-19） | TokenSavingsMixin 在 §2.12（能力描述）和 §3（Mixin 列表）各出现一次，是合理的双视角描述，非重复列出 | IS |
+| I6 | ✅ 已修复（2026-07-19） | RM 数据库位置已从 `~/.callwarden/<hash>/callwarden.db`（旧版多库）改为 `~/.callwarden/callwarden.db`（用户级单库 + workspace_id 逻辑隔离），与 UG/config.py 一致；UG 描述原本正确 | RM |
+| I7 | ✅ 已修复（2026-07-19） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销，db_cross_repo.py 已实现" | CA |
+| I8 | ✅ 已修复（2026-07-19） | CA "不要集成 ast-grep"建议下方加"更新（2026-07-19）：此建议仍有效，issues.py 未集成 ast-grep"。原 I8 描述"issues.py 存在"系误判（issues.py 仅用 Semgrep，无 ast-grep） | CA |
 | I9 | ✅ 已修复（2026-07-17） | ARC Mixin 数已同步为 40 个，db_*.py 38 个文件 | ARC |
 | I10 | ✅ 已修复（2026-07-17） | ARC Schema 版本已同步为 v37 | ARC |
 | I11 | ✅ 已修复（2026-07-17） | CONTRIBUTING.md Mixin 数已同步为 40 | CT |

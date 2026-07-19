@@ -259,11 +259,11 @@
 
 ## 五、待办与后续方向
 
-| 方向                                       | 状态 | 备注                         |
-| ------------------------------------------ | ---- | ---------------------------- |
-| 查询接口添加 status != 'archived' 过滤     | 待办 | 当前靠关联数据已删天然过滤   |
-| 生产者-消费者架构（解析→Queue→写入流水线） | 待办 | 进一步提升构建吞吐           |
-| symbols 表 UNIQUE 索引 + 真正 UPSERT       | 待办 | INSERT ON CONFLICT           |
-| PyO3 Rust 扩展（向量计算加速）             | 部分 | rust_ext/ 已搭建框架，未集成 |
-| 多用户权限系统                             | 待办 | 当前按项目隔离，无 RBAC      |
-| Prometheus 指标导出                        | 待办 | 当前无 metrics endpoint      |
+| 方向                                       | 状态   | 备注                                                   |
+| ------------------------------------------ | ------ | ------------------------------------------------------ |
+| 查询接口添加 status != 'archived' 过滤     | ✅ 已实现 | `db_query.py` 所有查询已加 `AND status != 'archived'` |
+| 生产者-消费者架构（解析→Queue→写入流水线） | 待办   | 进一步提升构建吞吐                                     |
+| symbols 表 UNIQUE 索引 + 真正 UPSERT       | ⚠️ 部分 | `db_build.py` 已用 `ON CONFLICT(file_instance_id, name, start_line) DO UPDATE`（UPSERT），但 UNIQUE 键不是 `symbol_hash` |
+| PyO3 Rust 扩展（向量计算加速）             | ⚠️ 部分 | `rust_ext/` 已搭建 parse/graphstore/canonicalize/hash_diff/multi_lang/daemon；向量计算加速未集成 |
+| 多用户权限系统                             | 待办   | 当前按 workspace_id 逻辑隔离，无 RBAC                  |
+| Prometheus 指标导出                        | ⚠️ 部分 | `server/metrics.py` 已实现 Counter/Gauge/Histogram 数据结构 + Prometheus 文本格式生成；缺 `/metrics` HTTP endpoint 暴露（G13 待补） |

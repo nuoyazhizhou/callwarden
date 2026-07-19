@@ -125,13 +125,15 @@ sym = mcp.file_symbol_content("db_tasks.py", "task_next_step")
 
 ## 数据库位置
 
-按项目隔离，路径格式：
+用户级单库架构，所有项目共用一个数据库，通过 `workspace_id` 逻辑隔离：
 
 ```
-$HOME/.callwarden/<16位hash>/callwarden.db
+$HOME/.callwarden/callwarden.db
 ```
 
-16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目互不干扰。
+设计原则：一个用户一个数据库，所有项目通过 `workspaces` 表的 `workspace_id` 字段在业务表中隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）。相同文件跨项目只解析一次（Global CAS 共享）。详见 [AGENTS.md §2 数据库路径](AGENTS.md)。
+
+> 旧版按项目 hash 隔离的多库架构（`~/.callwarden/<16位hash>/callwarden.db`）已废弃，可通过 `cw gc db-migrate-single --apply` 迁移到用户级单库。
 
 ## 工作目录结构
 
