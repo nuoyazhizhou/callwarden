@@ -2,12 +2,12 @@
 
 ## 集成测试全流程
 
-- [ ] 设计集成测试场景：init → register workspace → refresh-all → task create → task next → edit file → git commit → capture-diff --auto → check-gate → task apply → task close
-- [ ] 编写 tests/test_integration_full_flow.py 覆盖完整闭环
-- [ ] 覆盖多语言混合项目场景（Python + TS + Rust）
-- [ ] 验证 audit_chain 签名完整性贯穿全流程
-- [ ] 验证 task_symbol_changes 关联正确
-- [ ] 运行全量回归确保无回归
+- [x] 设计集成测试场景：init → register workspace → refresh-all → task create → task next → edit file → git commit → capture-diff --auto → check-gate → task apply → task close
+- [x] 编写 tests/test_integration_full_flow.py 覆盖完整闭环
+- [x] 覆盖多语言混合项目场景（Python + TS + Rust）
+- [x] 验证 audit_chain 签名完整性贯穿全流程
+- [x] 验证 task_symbol_changes 关联正确
+- [x] 运行全量回归确保无回归（2026-07-19：6/6 通过 in 79.85s）
 
 ## 千万级符号性能验证
 
@@ -36,11 +36,11 @@
 
 ## MCP Server 测试
 
-- [ ] 编写 MCP Server 启动与协议握手测试
-- [ ] 测试 195+ MCP 工具的输入输出契约
-- [ ] 测试 MCP 与 CLI 并发访问（WAL 模式下读写并发安全验证）
-- [ ] 测试 MCP 长连接稳定性（长时间空闲后恢复）
-- [ ] 编写 tests/test_mcp_server_full.py
+- [x] 编写 MCP Server 启动与协议握手测试
+- [x] 测试 195+ MCP 工具的输入输出契约
+- [x] 测试 MCP 与 CLI 并发访问（WAL 模式下读写并发安全验证）
+- [x] 测试 MCP 长连接稳定性（长时间空闲后恢复）
+- [x] 编写 tests/test_mcp_server_full.py（2026-07-19：15/15 通过 in 6.72s）
 
 ## B1 Clone Detection LSH 增强
 
