@@ -409,7 +409,8 @@ class ImpactMixin:
         - 配置层（config）：从 content 用正则提取配置项引用
           （env::var(...) / std::env::var(...) / config.get(...)）
 
-        分析结果同步持久化到 change_impacts 表（幂等：先清旧再写新）。
+        纯只读 API：分析结果直接返回，不再持久化到 change_impacts 表
+        （原 _persist_impacts 写入的数据从未被读取，移除以消除 fsync 开销）。
 
         Args:
             symbol_hash: 源符号 hash
@@ -529,10 +530,10 @@ class ImpactMixin:
         for key in sorted(config_keys):
             config_layer.append({"config_key": key, "source": source_qn})
 
-        # 持久化到 change_impacts 表
-        self._persist_impacts(
-            symbol_hash, source_qn, code_layer, db_layer, api_layer, config_layer
-        )
+        # 注：change_impacts 表写入已移除（write-only 死表，从未被 SELECT 读取）。
+        # cross_layer_impact 现在是纯只读 API，blast_radius/review_readiness 不再触发
+        # DELETE + INSERT + commit，消除 fsync 开销（1K 79ms → <1ms）。
+        # 如需持久化分析结果，调用方显式调 _persist_impacts。
 
         return {
             "code": code_layer,

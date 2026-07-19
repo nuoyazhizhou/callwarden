@@ -216,8 +216,9 @@ def run_scale(num_files: int, funcs_per_file: int, tmpdir: str) -> dict:
         row = cur.fetchone()
         if row:
             sym_hash = row[0]
+            t_lookup = time.time()
             br = db.blast_radius(sym_hash) if hasattr(db, "blast_radius") else None
-            br_t = time.time() - t0
+            t_br_done = time.time()
             # blast_radius 返回 dict: {"impacted_symbols": [...], "total": N, ...}
             if isinstance(br, dict):
                 br_count = br.get("total", len(br.get("impacted_symbols", [])))
@@ -225,6 +226,8 @@ def run_scale(num_files: int, funcs_per_file: int, tmpdir: str) -> dict:
                 br_count = len(br)
             else:
                 br_count = 0
+            print(f"[7] blast_radius: lookup={int((t_lookup-t0)*1000)}ms, blast={int((t_br_done-t_lookup)*1000)}ms, total={int((t_br_done-t0)*1000)}ms, 影响 {br_count}")
+            br_t = t_br_done - t0
         else:
             br_t = time.time() - t0
             br_count = 0
@@ -232,7 +235,6 @@ def run_scale(num_files: int, funcs_per_file: int, tmpdir: str) -> dict:
         br_t = time.time() - t0
         br_count = -1
         print(f"    [warn] blast_radius 异常: {e}")
-    print(f"[7] blast_radius: {br_t*1000:.2f}ms, 影响 {br_count}")
     metrics["blast_radius_ms"] = round(br_t * 1000, 2)
     metrics["blast_radius_count"] = br_count
 
