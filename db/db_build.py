@@ -1374,21 +1374,29 @@ class BuildMixin:
                                      for abs_path, module_path, _, _ in c_files_filtered]
                         # P30: 优先使用流式 pool API（结果存 Rust 侧，Python 按需 get_at 读取）
                         # 避免 batch_parse_c_files 一次性生成 N 个 Python dict 的转换峰值
-                        pool = None
+                        # L6: 优先 stream 模式（rayon + crossbeam-channel，按完成顺序回传）
+                        #     让 parse 完成的文件立即转 dict 写入 file_results，不必等全部 parse 完
+                        stream = None
                         try:
-                            from callwarden_core import batch_parse_c_files_pool
-                            pool = batch_parse_c_files_pool(rust_args, num_threads=mp_workers)
+                            from callwarden_core import batch_parse_c_files_stream
+                            stream = batch_parse_c_files_stream(rust_args, num_threads=mp_workers)
                         except ImportError:
                             pass
-                        if pool is not None:
-                            # P30 流式：逐个 get_at 转 dict，写入 file_results
-                            for i, (abs_path, module_path, rel_path, file_instance_id) in enumerate(c_files_filtered):
-                                r = pool.get_at(i)
+                        if stream is not None:
+                            # L6 stream: 按完成顺序消费，用 abs_path 反查元数据
+                            # abs_path 在 Rust ParseResult 中已设置（CParser.parse_file）
+                            cprint(f"  (L6 stream mode: {len(c_files_filtered)} files, threads={mp_workers})", "dim")
+                            abs_to_meta = {
+                                abs_path: (module_path, rel_path, file_instance_id)
+                                for abs_path, module_path, rel_path, file_instance_id in c_files_filtered
+                            }
+                            for r in stream:
+                                abs_path = r["abs_path"]
+                                module_path, rel_path, file_instance_id = abs_to_meta[abs_path]
                                 if r.get("error"):
                                     failed += 1
                                     failed_files.append((rel_path, r["error"]))
                                     continue
-                                r["abs_path"] = abs_path
                                 r["file_instance_id"] = file_instance_id
                                 r["module_path"] = module_path
                                 r["rel_path"] = rel_path
@@ -1399,24 +1407,49 @@ class BuildMixin:
                                                t("cli.messages.db_build_parse_progress_lang",
                                                  path=rel_path, lang="c"))
                         else:
-                            # P29 fallback：一次性返回 Python list
-                            from callwarden_core import batch_parse_c_files
-                            rust_results = batch_parse_c_files(rust_args, num_threads=mp_workers)
-                            for (abs_path, module_path, rel_path, file_instance_id), r in zip(c_files_filtered, rust_results):
-                                if r.get("error"):
-                                    failed += 1
-                                    failed_files.append((rel_path, r["error"]))
-                                    continue
-                                r["abs_path"] = abs_path
-                                r["file_instance_id"] = file_instance_id
-                                r["module_path"] = module_path
-                                r["rel_path"] = rel_path
-                                r.setdefault("inline_modules", [])
-                                file_results[rel_path] = r
-                                done_count = len(file_results)
-                                print_progress(done_count, parse_total,
-                                               t("cli.messages.db_build_parse_progress_lang",
-                                                 path=rel_path, lang="c"))
+                            pool = None
+                            try:
+                                from callwarden_core import batch_parse_c_files_pool
+                                pool = batch_parse_c_files_pool(rust_args, num_threads=mp_workers)
+                            except ImportError:
+                                pass
+                            if pool is not None:
+                                # P30 流式：逐个 get_at 转 dict，写入 file_results
+                                for i, (abs_path, module_path, rel_path, file_instance_id) in enumerate(c_files_filtered):
+                                    r = pool.get_at(i)
+                                    if r.get("error"):
+                                        failed += 1
+                                        failed_files.append((rel_path, r["error"]))
+                                        continue
+                                    r["abs_path"] = abs_path
+                                    r["file_instance_id"] = file_instance_id
+                                    r["module_path"] = module_path
+                                    r["rel_path"] = rel_path
+                                    r.setdefault("inline_modules", [])
+                                    file_results[rel_path] = r
+                                    done_count = len(file_results)
+                                    print_progress(done_count, parse_total,
+                                                   t("cli.messages.db_build_parse_progress_lang",
+                                                     path=rel_path, lang="c"))
+                            else:
+                                # P29 fallback：一次性返回 Python list
+                                from callwarden_core import batch_parse_c_files
+                                rust_results = batch_parse_c_files(rust_args, num_threads=mp_workers)
+                                for (abs_path, module_path, rel_path, file_instance_id), r in zip(c_files_filtered, rust_results):
+                                    if r.get("error"):
+                                        failed += 1
+                                        failed_files.append((rel_path, r["error"]))
+                                        continue
+                                    r["abs_path"] = abs_path
+                                    r["file_instance_id"] = file_instance_id
+                                    r["module_path"] = module_path
+                                    r["rel_path"] = rel_path
+                                    r.setdefault("inline_modules", [])
+                                    file_results[rel_path] = r
+                                    done_count = len(file_results)
+                                    print_progress(done_count, parse_total,
+                                                   t("cli.messages.db_build_parse_progress_lang",
+                                                     path=rel_path, lang="c"))
                     except Exception as e:
                         cprint(f"  (P30 rust fallback to multiprocess: {e})", "yellow")
                         c_use_rust = False

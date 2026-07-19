@@ -1,0 +1,50 @@
+{
+  "config": {
+    "num_files": 60,
+    "funcs_per_file": 10,
+    "target_symbols": 600,
+    "num_threads": 4
+  },
+  "rust_path": {
+    "path": "rust",
+    "files": 60,
+    "build_s": 0.014,
+    "symbols": 600,
+    "edges": 599,
+    "rss_before_mb": 64.7,
+    "rss_after_mb": 66.8,
+    "rss_delta_mb": 2.0,
+    "get_callers_s": 0.0,
+    "search_s": 0.0,
+    "stats_s": 0.0,
+    "dump_s": 0.006,
+    "snap_size_mb": 0.09
+  },
+  "python_path": {
+    "path": "python",
+    "build_s": 0.241,
+    "symbols": 600,
+    "edges": 599,
+    "db_size_mb": 2.52,
+    "rss_before_mb": 69.7,
+    "rss_after_mb": 74.8,
+    "rss_delta_mb": 5.2,
+    "get_callers_s": 0.0086,
+    "search_s": 0.0002,
+    "stats_s": 0.0015,
+    "stage_timings": {
+      "register": 0.01051339996047318,
+      "parse": 0.022428199998103082,
+      "symbol_write": 0.11409039999125525,
+      "stdlib_import": 0.003928299993276596,
+      "call_resolve_write": 0.009531899995636195,
+      "depth": 0.028640399978030473,
+      "fts_rebuild": 0.0011301000486128032,
+      "create_indexes": 0.030538399994838983,
+      "gc_archive": 0.006867899966891855,
+      "total": 0.23580193519592285,
+      "files_total": 60,
+      "files_parsed": 60
+    }
+  }
+}

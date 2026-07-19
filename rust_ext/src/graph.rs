@@ -1542,6 +1542,15 @@ impl GraphStore {
         }
     }
 
+    /// F11 方案 A：从已构建的 SymbolTable + CallGraph 创建 GraphStore
+    /// 供 lib.rs::build_graph_from_c_files 调用，跳过 SQLite 加载阶段
+    pub fn new_with_data(symbols: Arc<SymbolTable>, calls: Arc<CallGraph>) -> Self {
+        GraphStore {
+            symbols: Some(symbols),
+            calls: Some(calls),
+        }
+    }
+
     /// 返回已加载的文件数量（来自 file_paths_offsets，最后一个为 sentinel）
     /// 对应 stats_rust 中的 file_index_size 字段
     pub fn file_count(&self) -> usize {
@@ -2122,6 +2131,16 @@ impl GraphStore {
 // ============================================
 
 /// 构建 callee 名称二分索引和 name_idx → edge position 的紧凑 CSR。
+/// F11 方案 A 公开包装：构建 callee_name 索引
+/// 供 lib.rs::build_graph_from_c_files 调用
+pub fn build_callee_name_index_public(
+    forward_edges: &[CallEdge],
+    names_pool: &str,
+    name_offsets: &[u32],
+) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    build_callee_name_index(forward_edges, names_pool, name_offsets)
+}
+
 fn build_callee_name_index(
     forward_edges: &[CallEdge],
     names_pool: &str,
@@ -2262,6 +2281,17 @@ fn load_call_graph(conn: &Connection, symbols: &SymbolTable) -> PyResult<(CallGr
     calls.callee_position_offsets = position_offsets;
     calls.callee_positions = positions;
     Ok((calls, edge_count))
+}
+
+/// F11 方案 A 公开包装：从边列表构建 CSR 邻接表
+/// 供 lib.rs::build_graph_from_c_files 调用
+pub fn build_csr_public(
+    edges: Vec<CallEdge>,
+    callee_names_pool: String,
+    callee_names_offsets: Vec<u32>,
+    max_id: usize,
+) -> CallGraph {
+    build_csr(edges, callee_names_pool, callee_names_offsets, max_id)
 }
 
 fn build_csr(

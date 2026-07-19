@@ -21,6 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering}; // P30: ParseResultPool 迭代�
 use std::sync::Arc;
 use tree_sitter::{Language, Node, Parser};
 
+// F11 方案 A：build_graph_from_c_files 需要访问 graph 模块的 build_csr_public / build_callee_name_index_public / GraphStore::new_with_data
 mod canonicalize;
 // R7: daemon/snapshot 模块需对 cw_daemon binary 可见（bin 与 lib 在同一 crate，但
 // 默认 mod 是私有的。改为 pub mod 让 binary 入口能 use callwarden_core::daemon::*
@@ -778,6 +779,115 @@ impl ParseResultPool {
     }
 }
 
+// ============================================
+// L6: ParseResultStream — 真正流式回传（按完成顺序）
+// ============================================
+//
+// 与 ParseResultPool 的区别：
+// - ParseResultPool：par_iter().collect() 等所有文件 parse 完才返回，Python __next__ 按提交顺序读取
+// - ParseResultStream：rayon scope + crossbeam-channel，parse 完一个就 push 到 channel
+//   Python __next__ 阻塞等待 channel，按完成顺序获取早完成的文件
+//
+// 用途：让 db_build.py 的"早完成 → 早写 DB → 早释放内存"管道成为可能。
+// 大规模仓库（10万+ 文件）下，早完成的文件先写 DB 释放，避免主进程持有全部 parse 结果。
+//
+// Python 用法：
+//   stream = batch_parse_c_files_stream(files, num_threads=8)
+//   for result in stream:  # 按完成顺序获取
+//       db.write_file_result(result)
+//       del result  # 显式释放
+
+/// 按完成顺序流式回传 parse 结果的迭代器。
+///
+/// 内部包装 crossbeam-channel Receiver，rayon worker parse 完一个文件就 push。
+/// Python 端 `for r in stream:` 阻塞等待，按完成顺序获取早完成的文件。
+#[pyclass]
+pub struct ParseResultStream {
+    receiver: crossbeam_channel::Receiver<ParseResult>,
+}
+
+#[pymethods]
+impl ParseResultStream {
+    /// Python 迭代器协议：__iter__ 返回自身
+    fn __iter__(slf: Py<Self>) -> Py<Self> {
+        slf
+    }
+
+    /// Python 迭代器协议：__next__ 阻塞等待 channel，按完成顺序返回下一个 parse 结果。
+    ///
+    /// 当所有文件 parse 完成、sender 全部 drop 后，channel 关闭，返回 None 终止迭代。
+    fn __next__<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        // 释放 GIL 等待 channel，避免阻塞其他 Python 线程
+        let result = py.detach(|| -> Option<ParseResult> {
+            self.receiver.recv().ok()
+        });
+        match result {
+            Some(r) => Ok(Some(parse_result_to_pydict(py, &r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 非阻塞尝试获取下一个已完成的结果（用于轮询场景）。
+    ///
+    /// 返回：
+    /// - Some(dict) — 有已完成结果
+    /// - None — 暂无结果或已结束（调用方需区分：用 is_done 判断）
+    fn try_next<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let result = self.receiver.try_recv().ok();
+        match result {
+            Some(r) => Ok(Some(parse_result_to_pydict(py, &r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// 是否已结束（所有结果已取完且 channel 已关闭）。
+    fn is_done(&self) -> bool {
+        // is_empty 在 channel 关闭且为空时返回 true
+        self.receiver.is_empty() && self.receiver.len() == 0
+    }
+}
+
+/// 批量 parse C 文件，返回按完成顺序的流式迭代器（ParseResultStream）。
+///
+/// 与 batch_parse_c_files_pool 的区别：
+/// - pool：等所有文件 parse 完才返回（par_iter().collect()）
+/// - stream：parse 完一个就 push 到 channel，Python 端按完成顺序消费
+///
+/// 用途：L6 流式回传，让 db_build.py 能"早完成 → 早写 DB → 早释放内存"。
+#[pyfunction]
+#[pyo3(signature = (files, num_threads=None))]
+fn batch_parse_c_files_stream(
+    files: Vec<(String, String)>, // (abs_path, module_path)
+    num_threads: Option<usize>,
+) -> PyResult<ParseResultStream> {
+    // 配置 rayon 线程数
+    if let Some(n) = num_threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .ok();
+    }
+
+    // 创建 channel：容量等于文件数，避免 sender 阻塞（解析完即可立即 push）
+    let (sender, receiver) = crossbeam_channel::bounded::<ParseResult>(files.len());
+
+    // 启动后台线程跑 rayon scope，parse 完一个就 push 到 channel
+    // sender 移动到闭包中，所有任务完成后 sender drop，channel 自动关闭
+    std::thread::spawn(move || {
+        let c_parser = Arc::new(CParser::new());
+        // par_iter：rayon 内部调度，先完成的任务先 push
+        files.par_iter().for_each(|(abs_path, module_path)| {
+            let parser = c_parser.clone();
+            let result = parser.parse_file(abs_path, module_path);
+            // send 失败说明 receiver 已 drop（Python 端提前退出），忽略即可
+            let _ = sender.send(result);
+        });
+        // sender 在闭包结束时 drop，channel 关闭
+    });
+
+    Ok(ParseResultStream { receiver })
+}
+
 /// 批量 parse C 文件，返回 Rust 侧持有的结果池（流式回传）
 ///
 /// 与 batch_parse_c_files 的区别：
@@ -817,6 +927,310 @@ fn batch_parse_c_files_pool(
         results,
         iter_idx: AtomicUsize::new(0),
     })
+}
+
+// ============================================
+// F11 方案 A: Rust 端并行构建 CSR → 一次性 dump
+// ============================================
+//
+// 目标：跳过 Python→SQLite INSERT 阶段，直接从 parse 结果在 Rust 内存中构建 CSR。
+//
+// 背景瓶颈（见 docs/performance_report_million_symbols.md）：
+// - SQLite 单写者模型 ~19万行/秒，10M 符号需 ~110s INSERT
+// - Python→SQLite tuple 转换开销（每行 dict→tuple）
+// - WAL checkpoint 时机无法控制
+//
+// 本函数实现方案 A 的 PoC：
+// 1. rayon 并行 parse C 文件（复用 batch_parse_c_files_pool 的 grammar 共享）
+// 2. 在 Rust 内直接构 SymbolTable + CallGraph（CSR）
+// 3. 返回 GraphStore，可直接用于查询或 dump_to_file 持久化
+//
+// 与 Python 端 build_full_graph 的对比：
+// | 阶段 | Python 路径 | Rust 路径 (本函数) |
+// |------|------------|-------------------|
+// | parse | Rust rayon (已下沉) | Rust rayon (相同) |
+// | symbol INSERT | Python executemany | 跳过，直接构 Vec<GraphSymbol> |
+// | call resolve | Python SQL JOIN | Rust 内存 HashMap 解析 |
+// | call INSERT | Python executemany | 跳过，直接构 Vec<CallEdge> |
+// | depth 计算 | Python BFS | Rust compute_depth_all |
+// | FTS5 索引 | SQLite rebuild | 跳过（search 走 Rust memchr） |
+//
+// 持久化策略：调用方可选
+// - 不持久化：daemon 内存查询，进程退出即丢失
+// - dump_to_file：序列化到 .cwsnap，下次 load_from_file 零拷贝加载
+// - dump_to_sqlite：异步写回 SQLite（未来实现，不阻塞返回）
+
+/// 从 C 文件列表构建 GraphStore（方案 A：Rust 端并行构建，跳过 SQLite INSERT）
+///
+/// Python 用法：
+///   from callwarden_core import build_graph_from_c_files
+///   store = build_graph_from_c_files([("/path/a.c", "module.a"), ...], num_threads=8)
+///   callers = store.get_callers("func_name")
+///   store.dump_to_file("/path/to/snapshot.cwsnap")
+///
+/// 返回：(GraphStore, symbol_count, edge_count)
+#[pyfunction]
+#[pyo3(signature = (files, num_threads=None))]
+fn build_graph_from_c_files<'py>(
+    py: Python<'py>,
+    files: Vec<(String, String)>, // (abs_path, module_path)
+    num_threads: Option<usize>,
+) -> PyResult<(Bound<'py, graph::GraphStore>, usize, usize)> {
+    // 配置 rayon 线程数
+    if let Some(n) = num_threads {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build_global()
+            .ok();
+    }
+
+    // 释放 GIL 做 CPU 密集计算
+    let (store, sym_count, edge_count) = py.detach(|| -> PyResult<(graph::GraphStore, usize, usize)> {
+        // 1. rayon 并行 parse（grammar 共享）
+        let c_parser = Arc::new(CParser::new());
+        let results: Vec<ParseResult> = files
+            .par_iter()
+            .map(|(abs_path, module_path)| {
+                let parser = c_parser.clone();
+                parser.parse_file(abs_path, module_path)
+            })
+            .collect();
+
+        // 2. 构建文件路径表（file_instance_id 用序号代替，不写 DB）
+        // 每个 ParseResult 对应一个 file_instance_id（从 1 开始）
+        let mut file_paths_pool = String::new();
+        let mut file_paths_offsets: Vec<u32> = Vec::with_capacity(results.len() + 1);
+        file_paths_offsets.push(0); // 哨兵：file_instance_id=0 表示无效
+        for r in &results {
+            let rel = if !r.rel_path.is_empty() {
+                &r.rel_path
+            } else {
+                // 从 abs_path 推导 rel_path（去掉 workspace 前缀，简化处理）
+                &r.abs_path
+            };
+            file_paths_offsets.push(file_paths_pool.len() as u32);
+            file_paths_pool.push_str(rel);
+        }
+        // 末尾哨兵
+        file_paths_offsets.push(file_paths_pool.len() as u32);
+
+        // 3. 构建符号表（SymbolTable）
+        // by_id[0] 保留为空槽（对应 sym.id=0，表示无效），与 load_from_sqlite 的语义一致
+        let mut by_id: Vec<graph::GraphSymbol> = vec![graph::GraphSymbol {
+            id: 0, file_instance_id: 0, kind: graph::SymbolKind::Unknown,
+            name_offset: 0, name_len: 0, qname_offset: 0, qname_len: 0,
+            module_offset: 0, module_len: 0, start_line: 0, end_line: 0, depth: -1,
+        }];
+        let mut name_pool = String::new();
+        let mut qname_pool = String::new();
+        let mut module_pool = String::new();
+        // qname → symbol_id 映射（用于 call resolve）
+        let mut qname_to_id: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        // simple_name → Vec<symbol_id>（用于 call resolve by name）
+        let mut name_to_ids: std::collections::HashMap<String, Vec<u32>> = std::collections::HashMap::new();
+
+        let mut sym_id_counter: u32 = 1; // 0 保留为无效
+        for (file_idx, r) in results.iter().enumerate() {
+            let file_instance_id = (file_idx + 1) as u32;
+            for sym in &r.symbols {
+                let id = sym_id_counter;
+                sym_id_counter += 1;
+
+                let name_offset = name_pool.len() as u32;
+                let name_len = sym.name.len() as u32;
+                name_pool.push_str(&sym.name);
+
+                let qname_offset = qname_pool.len() as u32;
+                let qname_len = sym.qualified_name.len() as u32;
+                qname_pool.push_str(&sym.qualified_name);
+
+                let module_offset = module_pool.len() as u32;
+                let module_len = sym.module_path.len() as u32;
+                module_pool.push_str(&sym.module_path);
+
+                let graph_sym = graph::GraphSymbol {
+                    id,
+                    file_instance_id,
+                    kind: graph::SymbolKind::from_db_str(&sym.kind),
+                    name_offset, name_len,
+                    qname_offset, qname_len,
+                    module_offset, module_len,
+                    start_line: sym.start_line,
+                    end_line: sym.end_line,
+                    depth: -1,
+                };
+                by_id.push(graph_sym);
+                qname_to_id.insert(sym.qualified_name.clone(), id);
+                name_to_ids.entry(sym.name.clone()).or_default().push(id);
+            }
+        }
+
+        let sym_count = by_id.len() - 1; // 减去空槽
+
+        // 4. 构建 CallEdge 列表（解析 callee_name → callee_id）
+        let mut edges: Vec<graph::CallEdge> = Vec::new();
+        let mut callee_names_pool = String::new();
+        let mut callee_names_offsets: Vec<u32> = Vec::new();
+        let mut callee_name_idx_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+
+        // 按 caller_qualified 分组调用边（每个 ParseResult 的 calls 用其符号的 qname）
+        for (file_idx, r) in results.iter().enumerate() {
+            // 构建 file 内 qname → symbol_id 映射（用于解析 caller）
+            // caller_qualified 在 parse 时已填充
+            for call in &r.calls {
+                let caller_qname = &call.caller_qualified;
+                let caller_id = qname_to_id.get(caller_qname)
+                    .copied()
+                    .unwrap_or(0);
+
+                // 解析 callee_name → callee_id
+                // 优先按 qualified_name 精确匹配（如果 callee_module 含 ::）
+                let callee_id = if !call.callee_module.is_empty() {
+                    // 跨模块调用：尝试 callee_module + name 拼接
+                    let full_qname = if call.callee_module.contains('.') {
+                        format!("{}.{}", call.callee_module, call.callee_name)
+                    } else {
+                        call.callee_name.clone()
+                    };
+                    qname_to_id.get(&full_qname)
+                        .copied()
+                        .or_else(|| name_to_ids.get(&call.callee_name).and_then(|ids| ids.first().copied()))
+                        .unwrap_or(0)
+                } else {
+                    // 同模块/同文件：按 simple_name 查找
+                    name_to_ids.get(&call.callee_name)
+                        .and_then(|ids| ids.first().copied())
+                        .unwrap_or(0)
+                };
+
+                // callee_name_idx（用于 backward by name 查询）
+                let callee_name_idx = match callee_name_idx_map.get(&call.callee_name) {
+                    Some(&idx) => idx,
+                    None => {
+                        let idx = callee_names_offsets.len() as u32;
+                        callee_names_offsets.push(callee_names_pool.len() as u32);
+                        callee_names_pool.push_str(&call.callee_name);
+                        callee_name_idx_map.insert(call.callee_name.clone(), idx);
+                        idx
+                    }
+                };
+
+                let call_line_packed = graph::CallEdge::pack_call_line(call.call_line, call.is_cross_file);
+                edges.push(graph::CallEdge {
+                    caller_id,
+                    callee_id,
+                    call_line_packed,
+                    callee_name_idx,
+                });
+            }
+        }
+        let edge_count = edges.len();
+
+        // 5. 构建排序索引（by_qname_sorted_ids, by_simple_name_sorted_ids, search_pool）
+        // 注意：by_id 索引从 0 开始，sym.id 从 1 开始，所以 sym_id = idx + 1
+        // by_qname_sorted_ids 存的是 sym.id（与 GraphStore.load_from_sqlite 的语义一致）
+        let mut by_qname_sorted_ids: Vec<u32> = by_id.iter()
+            .filter(|s| s.id != 0)
+            .map(|s| s.id)
+            .collect();
+        by_qname_sorted_ids.sort_unstable_by(|a, b| {
+            // sym.id 从 1 开始，by_id 索引从 0 开始，所以 idx = id - 1
+            let sa = &by_id[*a as usize - 1];
+            let sb = &by_id[*b as usize - 1];
+            let qa = &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
+            let qb = &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
+            qa.cmp(qb)
+        });
+        let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
+        by_simple_name_sorted_ids.sort_unstable_by(|a, b| {
+            let sa = &by_id[*a as usize - 1];
+            let sb = &by_id[*b as usize - 1];
+            let na = &name_pool[sa.name_offset as usize..(sa.name_offset + sa.name_len) as usize];
+            let nb = &name_pool[sb.name_offset as usize..(sb.name_offset + sb.name_len) as usize];
+            na.cmp(nb).then_with(|| a.cmp(b))
+        });
+
+        // P2: 搜索索引（memchr SIMD 加速）
+        let mut search_pool_lower = String::new();
+        let mut search_entry_offsets: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
+        let mut search_entry_sym_ids: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
+        for sym in &by_id {
+            if sym.id == 0 { continue; }
+            let name = &name_pool[sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize];
+            if !name.is_empty() {
+                search_entry_offsets.push(search_pool_lower.len() as u32);
+                search_entry_sym_ids.push(sym.id);
+                for c in name.chars() {
+                    search_pool_lower.push(c.to_ascii_lowercase());
+                }
+                search_pool_lower.push('\0');
+            }
+            let qname = &qname_pool[sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize];
+            if !qname.is_empty() && qname != name {
+                search_entry_offsets.push(search_pool_lower.len() as u32);
+                search_entry_sym_ids.push(sym.id);
+                for c in qname.chars() {
+                    search_pool_lower.push(c.to_ascii_lowercase());
+                }
+                search_pool_lower.push('\0');
+            }
+        }
+
+        // 6. 组装 SymbolTable
+        let symbols = Arc::new(graph::SymbolTable {
+            by_id, by_qname_sorted_ids, by_simple_name_sorted_ids,
+            file_paths_pool, file_paths_offsets,
+            name_pool, qname_pool, module_pool,
+            search_pool_lower, search_entry_offsets, search_entry_sym_ids,
+        });
+
+        // 7. 构建 CallGraph CSR（用 graph::build_csr 公开函数）
+        // callee_names_offsets 末尾需要哨兵
+        callee_names_offsets.push(callee_names_pool.len() as u32);
+        // 使用 graph 模块的 build_csr 函数（max_id = sym_id_counter - 1）
+        let max_id = (sym_id_counter - 1) as usize;
+        let mut calls = graph::build_csr_public(
+            edges,
+            callee_names_pool,
+            callee_names_offsets,
+            max_id,
+        );
+
+        // 计算 roots（无 caller 的函数）
+        let mut has_caller = vec![false; max_id + 1];
+        for &position in &calls.backward_positions {
+            let e = &calls.forward_edges[position as usize];
+            if e.callee_id != 0 && (e.callee_id as usize) < has_caller.len() {
+                has_caller[e.callee_id as usize] = true;
+            }
+        }
+        // 遍历所有非空槽符号
+        for sym in symbols.by_id.iter() {
+            if sym.id == 0 { continue; }
+            if (sym.id as usize) < has_caller.len() && !has_caller[sym.id as usize] && sym.kind == graph::SymbolKind::Fn {
+                calls.roots.push(sym.id);
+            }
+        }
+
+        // 构建 callee_name_sorted_idxs
+        let (name_sorted, position_offsets, positions) = graph::build_callee_name_index_public(
+            &calls.forward_edges,
+            &calls.callee_names_pool,
+            &calls.callee_names_offsets,
+        );
+        calls.callee_name_sorted_idxs = name_sorted;
+        calls.callee_position_offsets = position_offsets;
+        calls.callee_positions = positions;
+
+        // 8. 组装 GraphStore
+        let store = graph::GraphStore::new_with_data(symbols, Arc::new(calls));
+
+        Ok((store, sym_count, edge_count))
+    })?;
+
+    // 转为 Python 对象
+    let py_store = Bound::new(py, store)?;
+    Ok((py_store, sym_count, edge_count))
 }
 
 // ============================================
@@ -916,6 +1330,11 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // P30: 流式回传 — Rust 侧持有结果，Python 按需读取
     m.add_class::<ParseResultPool>()?;
     m.add_function(wrap_pyfunction!(batch_parse_c_files_pool, m)?)?;
+    // L6: 真正流式回传 — rayon + crossbeam-channel，按完成顺序返回
+    m.add_class::<ParseResultStream>()?;
+    m.add_function(wrap_pyfunction!(batch_parse_c_files_stream, m)?)?;
+    // F11 方案 A: Rust 端并行构建 CSR → 一次性 dump
+    m.add_function(wrap_pyfunction!(build_graph_from_c_files, m)?)?;
     // P31: 多语言 parser（config 驱动框架，支持 11 种语言）
     m.add_function(wrap_pyfunction!(multi_lang::parse_file_lang, m)?)?;
     m.add_function(wrap_pyfunction!(multi_lang::parse_canonical_bytes_py, m)?)?;

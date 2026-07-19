@@ -60,11 +60,17 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
 
     query = sub.add_parser("query", help="查询共享 snapshot")
     query.add_argument("workspace_id")
-    query.add_argument("query_type", choices=["stats", "symbol", "search", "callers", "callees"])
+    query.add_argument("query_type", choices=[
+        "stats", "symbol", "search", "callers", "callees",
+        # J8 协议闭合：补齐 Rust daemon 已实现的 3 个高级查询 method
+        "call_chain_down", "topological_order", "detect_cycles",
+    ])
     query.add_argument("value", nargs="?", default="")
     query.add_argument("--qualified-name", default=None)
     query.add_argument("--kind", default=None)
     query.add_argument("--limit", type=int, default=20)
+    query.add_argument("--max-depth", type=int, default=10,
+                       help="call_chain_down / detect_cycles 的最大深度")
 
     mode = sub.add_parser("mode", help="查看 daemon 模式")
     mode.add_argument("--set", choices=["auto", "enterprise", "local"])
@@ -85,6 +91,16 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
 
     gc_snapshots = sub.add_parser("gc-snapshots", help="GC 快照（保留最近 N 个）")
     gc_snapshots.add_argument("--keep-last", type=int, default=3, help="每个 workspace 保留的快照数量")
+
+    # ---- Snapshot 缓存运维命令（J8 协议闭合：Rust daemon 已实现 3 个 method）----
+    sub.add_parser("snapshot-stats",
+                   help="查询 daemon 内 SnapshotCache 统计（hit/miss/evictions）")
+    sub.add_parser("snapshot-list",
+                   help="列出 daemon 已知的所有 workspace snapshot")
+    snap_evict = sub.add_parser("snapshot-evict",
+                                help="驱逐指定 workspace 的 snapshot 缓存")
+    snap_evict.add_argument("workspace_id",
+                            help="workspace instance ID（如驱逐失败可检查 daemon 日志）")
 
     # ---- Mount Mapping 管理命令（G4）----
     mount = sub.add_parser("mount", help="容器挂载映射管理")
@@ -396,6 +412,13 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
             params.update(callee_name=args.value, qualified_name=args.qualified_name)
         elif args.query_type == "callees":
             params.update(caller_name=args.value, qualified_name=args.qualified_name)
+        elif args.query_type == "call_chain_down":
+            # J8 协议闭合：value 是 qualified_name，--max-depth 控制深度
+            params.update(qualified_name=args.value, max_depth=args.max_depth)
+        elif args.query_type == "topological_order":
+            params.update(limit=args.limit)
+        elif args.query_type == "detect_cycles":
+            params.update(max_depth=args.max_depth)
         result = client.call(method, params)
     elif args.action == "health":
         result = client.call("health", {})
@@ -412,6 +435,17 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         })
     elif args.action == "gc-snapshots":
         result = client.call("gc.snapshots", {"keep_last": args.keep_last})
+    elif args.action == "snapshot-stats":
+        # J8 协议闭合：Rust daemon snapshot.stats method
+        result = client.call("snapshot.stats", {})
+    elif args.action == "snapshot-list":
+        # J8 协议闭合：Rust daemon snapshot.list_workspaces method
+        result = client.call("snapshot.list_workspaces", {})
+    elif args.action == "snapshot-evict":
+        # J8 协议闭合：Rust daemon snapshot.evict method
+        result = client.call("snapshot.evict", {
+            "workspace_instance_id": args.workspace_id,
+        })
     elif args.action == "mount":
         if args.mount_action == "register":
             result = client.call("mount.register", {

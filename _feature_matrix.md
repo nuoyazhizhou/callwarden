@@ -198,7 +198,7 @@
 | F8 | P2 FTS5 全文索引替代 LIKE | PP/RP | ✅ 已实现 | symbols_fts 虚拟表 + 同步触发器（v31 迁移） |
 | F9 | P28 get_callers qualified_name 参数 | PP | ✅ 已实施 | capability_showcase Q1 确认 |
 | F10 | P29 FTS 独立重建命令 | PP | ✅ 已实现 | v31 迁移含 rebuild 命令 |
-| F11 | P30 并行 INSERT | PP | ❌ 未实施 | 仅停留在计划阶段 |
+| F11 | P30 方案 A: Rust 端并行构建 CSR → 一次性 dump | PP | ✅ 已实现 | `build_graph_from_c_files` PyO3 函数：rayon 并行 parse → Rust 内存构建 SymbolTable+CallGraph（CSR），跳过 SQLite INSERT 阶段；50K 符号 0.276s vs Python 3.706s（13.43x），1K 符号 22.36x；test_f11_rust_build_graph.py 验证符号数+边数完全匹配 |
 | F12 | P5 冷启动快照 dump/load（二进制 mmap） | BR3 | ✅ 已实现 | `_get_graph_store` 优先 mmap 加载 `.cwsnap`（snap_mtime>=db_mtime 校验），后台线程构建 calls + dump_to_file；Rust dump_to_file/load_from_file 完整实现（HEADER + 12 sections + 对齐 padding）；test_graphstore_compact_indexes + _verify_p4_phase2 覆盖 |
 | F13 | P6 calls 表索引精简（删 2/3 calls 索引） | BR3 | ✅ 已实施 | v32 删除 idx_calls_callee（GraphStore CSR 覆盖 get_callers）；v33 新增 idx_calls_callee_id_resolved 部分索引；保留 idx_calls_caller（SQL 降级路径） |
 | F14 | P12 延迟建索引 + 分段 commit | BR2 | ✅ 已实施 | 10M 符号 19.5min（vs 基线 2h+，8.1x 加速）；WAL TRUNCATE 全生效 |
@@ -303,8 +303,8 @@
 | L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ✅ 已实现 | 软门禁设计（与 L1 一致）：pre-push hook 检测 force push（`git merge-base --is-ancestor`）并记录到 `destructive_operations` 表（schema v37）；`cw git check-push` 供 hook 调用；`cw git destructive-log` 查询历史；记录但不阻止操作 |
 | L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ✅ 已实现 | 软门禁：pre-commit hook 调用 `cw git check-task` 检查 `active_task_id`，有则显示 task 信息，无则警告但**不阻止** commit（本地 hook 可被 `--no-verify` 绕过，与 L1 赋能设计一致） |
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
-| L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ⚠️ 部分 | compile_commands.json 解析器 + build-context CLI（8 子命令含 resolve）+ 8 MCP 工具；resolved_edges 计算引擎已实现 5 级解析（exact_match/simple_name_unique/same_file/include_path/sysroot/unresolved + calls 表降级）；include_path 基于 build_context.include_paths + toolchain.sysroot/include_dirs 消除简名歧义 |
-| L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ⚠️ 部分 | versions + symbols 写入 DB 后释放 file_results 中的 symbols 数据，调用图构建改为 only_files 模式从 DB 读取符号索引；parse 阶段流式回传（pool.imap）未实现 |
+| L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ✅ 已实现 | compile_commands.json 解析器 + build-context CLI（8 子命令含 resolve）+ 8 MCP 工具；resolved_edges 计算引擎已实现 5 级解析（exact_match/simple_name_unique/same_file/include_path/sysroot/unresolved + calls 表降级）；include_path 基于 build_context.include_paths + toolchain.sysroot/include_dirs 消除简名歧义；test_phase6_resolved_edges + test_l5_build_context 验证 |
+| L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ✅ 已实现 | 三层优化：(1) ParseResultStream PyO3 类 + batch_parse_c_files_stream 函数（rayon + crossbeam-channel，parse 完一个就 push 到 channel，Python __next__ 按完成顺序消费）；(2) db_build.py C 语言路径优先 stream 模式（用 abs_path 反查元数据写入 file_results）；(3) versions+symbols 写入 DB 后释放 file_results 中的 symbols（仅保留 fn_hash_map），调用图构建改为 only_files 模式从 DB 读取符号索引 |
 | L7 | RSS 监控采样修复 | PR | ✅ 已实现 | psutil 优先 + Windows ctypes Psapi.GetProcessMemoryInfo fallback（T3 修复） |
 | L8 | 增量调用图更新（只 resolve 受影响文件） | PR/D3 | ✅ 已实现 | `_build_call_graph_multi_lang` 加 only_files 参数；增量路径符号索引从 DB symbols 表全量读取，calls 只 resolve 变化文件；`_refresh_file_rust`/`_refresh_file_generic` 不再调用 `_collect_all_current_file_results()` 全量加载 |
 | L9 | Rust ParseResultPool 共享内存架构 | PR | ✅ 完成 | 4 阶段全部实现：①PoC（`batch_parse_c_files` + Rayon + Arc 共享 grammar）②流式集成（`ParseResultPool` + `batch_parse_files_lang_pool` + `_rust_multilang_parse` 逐个 `get_at` 转 dict）③多语言 15/15（python/rust/go/java/ts/js/ruby/php/scala/csharp/cpp + Kotlin/Swift + Elixir/HCL 已补齐；新增 `call_keyword` + `kind_from_child_text` 字段 + `CallArgName` + `HclLabels` 名称策略处理 AST 特殊结构）④全量接管（`_can_use_rust_parse` + `CW_DISABLE_RUST_PARSE` 开关 + Python 多进程 fallback 链）；C 语言走专用快路径，其他 Rust 支持语言 `>= MP_THRESHOLD(50)` 走流式 pool，小批量走 `parse_file_lang` 单文件 Rust；test_l9_rust_multilang.py 10 测试验证 |
@@ -348,7 +348,7 @@
 | J5 | Agent Rule Memory 注入 | ✅ 已实现 | task_next_step 注入 active 规则 + AGENTS.md 同步 |
 | J6 | Bootstrap scan baseline | ✅ 已实现 | workspace_scan_runs 表 + db_bootstrap.py(987行) |
 | J7 | Rust 扩展集成度 | ✅ 广泛使用 | GraphStore/SnapshotCache/SnapshotManager/FileWatcher/multi-lang parse/canonicalize/hash_diff |
-| J8 | Daemon 真实运行状态 | ⚠️ 部分 | cw_daemon.rs binary 已有，daemon_server.py + daemon_client.py 已有，但完整 UDS 协议未闭合 |
+| J8 | Daemon UDS 协议闭合 | ✅ 已闭合 | (1) Rust 端 SnapshotDaemonState 已实现全部 36 个 handle_xxx（workspace.*/query.*/toolchain.*/build_context.*/resolved_edges.*/mount.*/gc.*/backup/restore + snapshot.stats/list_workspaces/evict）；(2) Python daemon_client 三个高级查询方法（get_call_chain_down / get_topological_order / detect_cycles）补齐 RPC 路径，优先走 `query.call_chain_down/topological_order/detect_cycles`，fallback 到 _svc + SQL；(3) CLI `cw daemon query` 新增 call_chain_down / topological_order / detect_cycles 三个 query_type 选项（带 --max-depth 参数）；(4) CLI 新增 snapshot-stats / snapshot-list / snapshot-evict 三个运维子命令 |
 | J9 | 克隆检测 → 影响分析联动 | ✅ 已实现 | db_impact.py `get_clone_aware_impact` 联动 clone_pairs + blast_radius（H11） |
 
 ## K. 已知的实现缺口（来自审计文档）
@@ -486,9 +486,9 @@
 
 **真正未实现的 18 项按优先级排序**：
 
-1. **高优先级（性能/稳定性）**：（L9 15/15 语言全 Rust 化已完成；L6 部分实现：versions 写入后释放 symbols + 调用图从 DB 读取符号索引，parse 阶段流式回传未实现；F12 快照 dump 已实现；F13 索引精简已实施；L7 RSS 监控已修复；L8 增量调用图已实现；K1-K4/K6 daemon 闭合已全部修复）—— **当前无未完成的高优先级性能任务**
+1. **高优先级（性能/稳定性）**：（L9 15/15 语言全 Rust 化已完成；L6 三层优化已完成（ParseResultStream + crossbeam-channel 按完成顺序流式回传）；F12 快照 dump 已实现；F13 索引精简已实施；L7 RSS 监控已修复；L8 增量调用图已实现；K1-K4/K6 daemon 闭合已全部修复）—— **当前无未完成的高优先级性能任务**
 2. **中优先级（Phase 4 缺失）**：（H17-H18 diff_callers/diff_callees + compare_snapshots 已实现）
 3. **中优先级（Agent 体验）**：（L1 软门禁已实现：is_task_active + task_context；L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N7 脚本已完成（Windows MSI/macOS pkg/Linux deb 5 子包，未实际构建）；N8 CI workflow 11 门禁已补全（待上线运行验证）
-5. **低优先级（测试/生态）**：F11（并行 INSERT）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5 构建上下文感知 MVP（compile_commands.json 解析 + CLI + 8 MCP 工具，resolved_edges 计算引擎待实现）、L9 15/15 语言全 Rust 化（Kotlin/Swift/Elixir/HCL 已补齐，新增 call_keyword + kind_from_child_text 字段处理 AST 特殊结构）
+5. **低优先级（测试/生态）**：F11（Rust 端并行构建 CSR 已实现，50K 符号 13.43x 加速）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5 构建上下文感知 MVP（compile_commands.json 解析 + CLI + 8 MCP 工具 + resolved_edges 5 级解析引擎）、L9 15/15 语言全 Rust 化（Kotlin/Swift/Elixir/HCL 已补齐，新增 call_keyword + kind_from_child_text 字段处理 AST 特殊结构）
 6. **可延后**：H12-H13（Git Hook/多语言测试已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）

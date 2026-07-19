@@ -20,18 +20,18 @@
 
 ## B2 AST 缓存激活
 
-- [ ] 在 db_build.py 增量判断中调用 _read_ast_cache 参与决策
-- [ ] 实现 ast_cache 元数据驱动的跨进程增量复用
-- [ ] 编写测试验证 ast_cache 实际被读取并影响增量决策
-- [ ] 更新 architecture.md 文档说明 AST 缓存两层架构
+- [x] 在 db_build.py 增量判断中调用 _read_ast_cache 参与决策
+- [x] 实现 ast_cache 元数据驱动的跨进程增量复用
+- [x] 编写测试验证 ast_cache 实际被读取并影响增量决策
+- [x] 更新 architecture.md 文档说明 AST 缓存两层架构
 
 ## 统一项目健康报告
 
-- [ ] 设计 cw health-report 子命令（输出 markdown 格式报告）
-- [ ] 聚合 comment_coverage + uncommented + complexity + issues + coupling 为统一报告
-- [ ] 按模块分组输出问题清单
-- [ ] 支持 --output file 参数导出报告文件
-- [ ] 编写 tests/test_health_report.py
+- [x] 设计 cw health-report 子命令（输出 markdown 格式报告）
+- [x] 聚合 comment_coverage + uncommented + complexity + issues + coupling 为统一报告
+- [x] 按模块分组输出问题清单
+- [x] 支持 --output file 参数导出报告文件
+- [x] 编写 tests/test_health_report.py
 - [ ] 更新 cli_reference.md 文档
 
 ## MCP Server 测试
@@ -44,35 +44,35 @@
 
 ## B1 Clone Detection LSH 增强
 
-- [ ] 实现 MinHash + LSH 索引替代符号名前 3 字符分组剪枝
-- [ ] 支持跨命名克隆检测（processOrder vs handleOrder）
-- [ ] 优化 O(n²) 为 O(n) 近似最近邻
-- [ ] 编写测试验证召回率与精确率
-- [ ] 更新 architecture.md 与 cli_reference.md
+- [x] 实现 MinHash + LSH 索引替代符号名前 3 字符分组剪枝
+- [x] 支持跨命名克隆检测（processOrder vs handleOrder）
+- [x] 优化 O(n²) 为 O(n) 近似最近邻
+- [ ] 编写测试验证召回率与精确率（_feature_matrix 注：缺召回率/精确率基准测试）
+- [x] 更新 architecture.md 与 cli_reference.md
 
 ## Clone Detection 影响分析联动
 
-- [ ] 修改 blast_radius / get_impact，检测到受影响符号有克隆时自动提示同步修改
-- [ ] 新增 get_clone_aware_impact MCP 工具
-- [ ] 编写测试验证联动逻辑
-- [ ] 更新 mcp_tools.md 文档
+- [x] 修改 blast_radius / get_impact，检测到受影响符号有克隆时自动提示同步修改
+- [x] 新增 get_clone_aware_impact MCP 工具
+- [x] 编写测试验证联动逻辑
+- [x] 更新 mcp_tools.md 文档
 
 ## 扩展 Git Hook 到 AI CLI IDE
 
-- [ ] 调研知名 AI CLI（Claude Code / Cursor / Aider / Continue / GitHub Copilot CLI）的 hook 机制
-- [ ] 设计 hook 适配层统一接口
-- [ ] 实现 Claude Code 适配
-- [ ] 实现 Cursor 适配
-- [ ] 编写测试验证适配器
-- [ ] 更新文档
+- [x] 调研知名 AI CLI（Claude Code / Cursor / Aider / Continue / GitHub Copilot CLI）的 hook 机制
+- [x] 设计 hook 适配层统一接口
+- [x] 实现 Claude Code 适配
+- [x] 实现 Cursor 适配
+- [x] 编写测试验证适配器
+- [x] 更新文档
 
 ## 15 种语言开源项目测试
 
-- [ ] 为每种语言选择代表性开源项目作为测试 fixture
-- [ ] 编写 tests/test_language_<lang>.py 验证符号提取与调用关系
-- [ ] 验证注释覆盖率统计准确性
-- [ ] 记录每种语言的已知限制与边界情况
-- [ ] 更新 docs/language_support.md 文档
+- [x] 为每种语言选择代表性开源项目作为测试 fixture
+- [x] 编写 tests/test_language_<lang>.py 验证符号提取与调用关系
+- [x] 验证注释覆盖率统计准确性
+- [x] 记录每种语言的已知限制与边界情况
+- [x] 更新 docs/language_support.md 文档
 
 ## Enterprise Daemon 架构演进（基线 v10.2）
 

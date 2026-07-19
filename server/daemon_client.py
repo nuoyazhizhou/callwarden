@@ -396,6 +396,10 @@ class DaemonClient:
         self, limit: int = 50, db_path: Optional[str] = None,
     ) -> List[str]:
         """获取拓扑排序。"""
+        # J8 协议闭合：优先走 RPC（query.topological_order），Rust daemon 端已实现
+        remote = self._remote_query("query.topological_order", {"limit": limit}, db_path)
+        if remote is not _NO_REMOTE:
+            return remote if isinstance(remote, list) else []
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             result = self._svc.query_topological_order(self._workspace_instance_id)
@@ -410,6 +414,13 @@ class DaemonClient:
         db_path: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """向下调用链（BFS）。"""
+        # J8 协议闭合：优先走 RPC（query.call_chain_down），Rust daemon 端已实现
+        remote = self._remote_query("query.call_chain_down", {
+            "qualified_name": qualified_name,
+            "max_depth": max_depth,
+        }, db_path)
+        if remote is not _NO_REMOTE:
+            return remote if isinstance(remote, list) else []
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             budget = default_budget()
@@ -424,6 +435,10 @@ class DaemonClient:
         self, max_depth: int = 10, db_path: Optional[str] = None,
     ) -> List[List[str]]:
         """检测循环依赖。"""
+        # J8 协议闭合：优先走 RPC（query.detect_cycles），Rust daemon 端已实现
+        remote = self._remote_query("query.detect_cycles", {"max_depth": max_depth}, db_path)
+        if remote is not _NO_REMOTE:
+            return remote if isinstance(remote, list) else []
         if db_path and self._ensure_snapshot(db_path):
             self._daemon_hits += 1
             return self._svc.query_detect_cycles(self._workspace_instance_id)
