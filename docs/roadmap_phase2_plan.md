@@ -94,19 +94,67 @@
 - [x] benchmark 验证 Python ProcessPool 退出主路径 — tests/test_phase1_parse_benchmark.py 6 测试：路径选择验证 + Rust/Python 耗时对比 smoke benchmark
 
 ### Phase 2: Daemon Skeleton + UDS + Workspace Registry
-- [ ] Rust daemon crate / binary
-- [ ] UDS server + SO_PEERCRED
-- [ ] workspace registry schema
-- [ ] container mount mapping
-- [ ] register/list/status API
-- [ ] Python CLI daemon client + enterprise/auto/local 模式
+- [x] Rust daemon crate / binary — `rust_ext/src/bin/cw_daemon.rs`（clap CLI + DaemonConfig + schema 初始化 + UDS server + 4 信号 + sd_notify + 3 子命令 serve/schema-check/health-check）
+- [x] UDS server + SO_PEERCRED — G3 `rust_ext/src/daemon/peercred.rs`（libc getsockopt 内核认证 UID/GID/PID）+ `server.rs` UDS server；14 用例 WSL2 全通过
+- [x] workspace registry schema — G4 `rust_ext/src/daemon/workspace.rs` WorkspaceRegistry 3 个 CRUD 方法 + `db/db_daemon.py` Python 端 schema
+- [x] container mount mapping — G4 dispatch.rs mount.register/list/delete RPC + Python db_daemon.py CRUD + daemon_server.py mount.* handler + CLI mount register/list/delete 子命令；35 测试通过
+- [x] register/list/status API — G4 workspace.register/list/status RPC + `cli/daemon_commands.py` 对应子命令
+- [x] Python CLI daemon client + enterprise/auto/local 模式 — `config.py` `get_daemon_mode`/`is_daemon_available`/`is_daemon_required`（auto/enterprise/local 三模式）+ `server/daemon_client.py` UnixDaemonRpcClient + `cli/daemon_commands.py` 完整 CLI
 
 ### Phase 3: Global CAS + Workspace Manifest
-- [ ] CAS schema + key 设计
-- [ ] daemon refresh CAS lookup
-- [ ] clean snapshot manifest
-- [ ] dirty overlay manifest
-- [ ] CAS GC
+- [x] CAS schema + key 设计 — G5 `rust_ext/src/daemon/cas.rs` CasStore + `db/db_cas.py` + `docs/design/cas-gc-protocol.md` 7 参数 hash
+- [x] daemon refresh CAS lookup — G34 `_daemon_parse_and_publish`（lang detect → canonicalize+hash → CAS lookup → parse → atomic publish）
+- [x] clean snapshot manifest — G7 `SnapshotManager` + ArcSwap 发布 + 多 generation history + gc_generations
+- [x] dirty overlay manifest — G11 Replicator CAS → Manifest → Snapshot（SnapshotCachePublisher 桥接 SnapshotCache → build_and_publish_blocking；ReplicationResult.merged_summary 填充）
+- [x] CAS GC — G6 `CasStore` fs2 flock + BEGIN IMMEDIATE 双保险 + GcLockGuard RAII；5 个测试（内存模式跳过/文件模式锁创建/并发互斥/gc/gc_unreferenced）
 
 ### Phase 4-8: Snapshot Query / 秒级 Watcher / Toolchain CAS / Heavy Jobs / 生产化
-- [ ] 详见 enterprise-daemon-shared-snapshot-plan.md §14
+> 详见 [enterprise-daemon-shared-snapshot-plan.md §14](design/enterprise-daemon-shared-snapshot-plan.md#14-实施路线图)
+
+#### Phase 4: Snapshot Query Service
+- [x] 实现 GraphSnapshot generation — G7 SnapshotManager + ArcSwap 发布 + 多 generation history
+- [x] 实现 ArcSwap 原子发布 — G7 ArcSwap 原子发布（无锁读路径）
+- [x] 将当前 GraphStore 演进为 snapshot manager — G7 + G28 SnapshotManagerService 完整查询（8 方法 + QueryBudget）
+- [x] 支持多个 workspace 的 snapshot cache — G7 多 workspace snapshot cache + G37 跨 UID query isolation 测试
+- [x] query API 全部带 workspace_instance_id — G23 EnterpriseDaemonService 11 RPC dispatch（ping/workspace.register/list/status/snapshot.publish/query.*）
+- [x] 加入 query budget — G29 QueryBudget 限制（max_results + max_depth + timeout + truncate）+ default_budget() + truncate_results 所有查询统一接入
+- [x] 实现函数级 diff_symbol / diff_signature — G27 DaemonClient diff_symbol/signature（5 种 diff + ScopeFilter + _ensure_remote_snapshot）
+- [x] 实现 diff_callers / diff_callees — G27 + H17 MCP 已暴露 diff_callers (L3546) + diff_callees (L3574)；DaemonClient 完整实现（daemon_client.py L460/L474）
+- [x] 实现小 scope compare_snapshots 同步查询 — H18 MCP 已暴露 compare_snapshots (L3602)；同步查询 + 后台 job（job_handlers.py L237/L282）+ _should_run_async 大小判断
+- [x] Python MCP 查询工具改为 daemon client — G26 DaemonClient 三级路由（Rust GraphStore → Python SQL fallback）+ 8 查询方法 + routing stats（daemon_hits/sql_fallbacks）
+
+#### Phase 5: 秒级 Watcher + Delta Replicator
+- [x] 使用 Rust notify crate — `rust_ext/Cargo.toml` notify = "7.0" + `rust_ext/src/watcher.rs` notify::Watcher + Event handler
+- [x] 实现 debounce 和 batch event coalescing — G9 `server/agent_watcher.py` _AgentChangeHandler watchdog 防抖 + G8 daemon_handle_refresh 两阶段 CAS
+- [x] 实现 changed file hash diff — G34 canonicalize+hash（CanonicalizeResult.content_hash = sha256(canonical_bytes)）
+- [x] 实现 parse delta、resolve delta — L8 增量调用图更新（`_build_call_graph_multi_lang` only_files 参数，calls 只 resolve 变化文件）
+- [x] 实现 affected frontier 计算 — `rust_ext/src/frontier.rs`（CSR 图遍历计算受影响符号 frontier）
+- [x] 实现局部 depth/cycle/impact 更新 — L8 增量调用图更新 + Rust CSR 短路（get_callers/get_callees 走内存索引）
+- [x] 实现 Staging durable log — G12 `server/durable_staging.py`（JSONL + fsync + G30 mark_applied_batch 单次文件重写 + G31 compact_applied 按 status 过滤）
+- [x] Replicator 合并 delta 并发布新 generation — G11 `rust_ext/src/daemon/replicator.rs` + `server/replicator.py`（CAS → Manifest → Snapshot）；5 个 E2E 测试
+
+#### Phase 6: Toolchain CAS 和 Build Context
+- [x] 实现 register_toolchain — G1 `cli/main.py:7706` register_toolchain + daemon_server.py toolchain.register RPC + db_toolchain.py
+- [x] 实现 compiler version、target triple、sysroot、include_dirs、predefined_macros 探测 — G1 Rust ToolchainStore 1000+ 行 4 表 + Python db_toolchain.py open_toolchain_db/attach_toolchain_db/detach_toolchain_db/is_toolchain_attached
+- [x] 实现 toolchain_fingerprint — `db/db_daemon.py:80` `f"{git_remote_url}|{git_head_commit_sha}|{toolchain_fingerprint}".encode()` + G1 fingerprint 去重
+- [x] workspace 绑定 build context — G1 + L5 `cli/daemon_commands.py` toolchain bind 子命令 + `db/build_context.py`
+- [x] resolved edges 按 build_context_hash 隔离 — G1 + L5 resolved_edges 5 级解析（exact_match/simple_name_unique/same_file/include_path/sysroot/unresolved）+ ATTACH DATABASE workspace 隔离
+- [x] compile_commands.json / Makefile / Kconfig 的接入策略 — L5 compile_commands.json 解析器（`db/build_context.py` parse_compile_commands）+ build-context CLI 8 子命令 + 8 MCP 工具
+
+#### Phase 7: Heavy Jobs 后台化
+- [x] Clone detect 改为 job — G18 JobExecutor + JobContext + 3 handler（clone_detect handler 在 `server/job_handlers.py`）
+- [x] MinHash/LSH 使用稳定 hash 和 shingle — H10 3-gram shingle + _MAX_BUCKET_SIZE=200 + LSH(8 bands, 16 rows) + 降级策略 + 稳定 hash
+- [x] Vector indexing 改为 changed symbol 增量 job — G18 vector_embed handler（`server/job_handlers.py`）
+- [x] Semgrep scan 改为 bounded external process job — G18 semgrep_scan handler（`server/job_handlers.py`）
+- [x] MCP 工具返回 job_id/status/result summary — G18 JobExecutor + JobContext（job_id/status/result 字段）
+
+#### Phase 8: 生产化
+- [x] systemd unit — G9 `release/linux/deb/systemd/callwarden-agent.service`（Type=simple, MemoryMax=512M, ProtectHome=read-only, ReadWritePaths=%h/.callwarden）
+- [x] config 文件和权限模板 — `server/daemon_config.py` + G25 `_validate_owned_path`（realpath + owner UID 校验 + 防路径穿越 + archived workspace 拒绝）
+- [ ] metrics endpoint — ⚠️ 部分：G13 `server/metrics.py`（691 行完整 Counter/Gauge/Histogram 数据结构 + `to_prometheus()` 文本格式生成），缺 `/metrics` HTTP endpoint 暴露（I4 标记待补，G13 待补）
+- [x] health check — G14 Rust HealthChecker（4 项检查：db_registry/disk_space/memory_usage/uptime）+ RecoveryHandler（4 步恢复：workspace_registry/cas_db/stale_jobs/snapshots）；workspace.handle_health 接入完整检查
+- [x] audit log — H2 audit_chain 表 + db_audit_chain.py(491 行) + audit_verify_chain MCP + 密钥轮换
+- [x] backup/restore — G16 `server/backup_restore.py` + CLI `cw daemon backup/restore` 子命令
+- [x] schema migration — G15 `server/schema_migrator.py` + G8 file_generations schema + `cli/daemon_commands.py` schema-version 子命令
+- [x] snapshot GC — G17 `server/snapshot_gc.py` + G32 两阶段 mark→sweep + GCPolicy（retention=3/max_age=7d/batch=1000；5 类扫描范围）
+- [x] chaos tests — G37 跨 UID query isolation 测试（30 passed, 6 skipped；双 UID 隔离验证）+ `scripts/test_enterprise_daemon_dual_uid.sh`
