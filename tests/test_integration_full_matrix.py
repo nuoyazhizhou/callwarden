@@ -109,7 +109,7 @@ DEFAULT_MCP_ARGS = {
     "get_callees": {"caller_name": "get_stats"},
     "get_call_chain_down": {"qualified_name": "CodeGraphDB.get_stats", "max_depth": 2},
     "get_impact": {"qualified_name": "CodeGraphDB.get_stats", "max_depth": 2},
-    "find_issues": {"limit": 5},  # 注意：实际可能不存在此方法
+    "find_issues": {"limit": 5},  # db 层方法 get_function_issues(issue_filter, limit)
     "get_semgrep_findings": {"limit": 5},
     "find_largest_functions": {"limit": 5},
     # ---- 文件相关（参数名是 file_path，不是 path）----
@@ -373,8 +373,6 @@ SKIP_MCP_TOOLS = {
     "run_semgrep_scan", "semgrep_scan_async",
     # ---- 需要真实外部文件输入（冒烟环境没有）----
     "import_coverage",  # 需要 coverage.lcov 真实文件
-    # ---- 已知 bug：find_issues 方法不存在（待修复后移除）----
-    "find_issues",
 }
 
 

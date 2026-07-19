@@ -383,7 +383,8 @@ def create_mcp_server():
             limit: 返回数量限制
         """
         db = get_db()
-        return db.find_issues(issue_type=issue_type or None, limit=limit)
+        # db 层方法名为 get_function_issues，参数 issue_filter 对应 MCP 的 issue_type
+        return db.get_function_issues(issue_filter=issue_type or None, limit=limit)
 
     @mcp.tool()
     def get_semgrep_stats() -> dict:
