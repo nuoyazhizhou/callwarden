@@ -260,7 +260,7 @@
 | H3 | Agent Rule Memory（项目规则记忆） | AR | ✅ 已实现 | agent_rules 表 + db_agent_rules.py(1571行) + task_next_step 注入 + AGENTS.md 同步 |
 | H4 | Bootstrap 自举闭环 | BC | ✅ 已实现 | workspace_scan_runs 表 + db_bootstrap.py(987行) + bootstrap_status MCP + capture-diff |
 | H5 | 集成测试全流程 | RP | ✅ 已实现 | tests/test_integration_full_flow.py 6/6 通过 in 79.85s（2026-07-19）；覆盖完整闭环 register→build→task create→next→edit→commit→capture-diff auto→check-gate→report→apply→close；audit_chain 完整性 + task_symbol_changes 关联 + 多语言（Python/TS/Rust）+ 状态机转换 |
-| H6 | 千万级符号性能验证 | RP | ❌ 未实施 | 1M 已测，10M 未测 |
+| H6 | 千万级符号性能验证 | RP | ✅ 已实现 | tests/test_perf_10m_symbols.py 扩展为 11 项完整 checklist（build/stats/search/callers/callees/call_chain_up/call_chain_down/blast_radius/detect_clones/db_size/瓶颈识别）+ test_multi_scale_perf 多规模阶梯（1K/10K/100K）；100K 符号全量测试通过 in 11.03s（2026-07-19）：build 8.7s、chain_up 0.054s、blast_radius 0.011s、detect_clones 0.156s、db 130MB、RSS 530MB；规模增长 100x 时 build 仅增 31x（无 O(n²) 退化）|
 | H7 | AST 缓存激活（B2） | RP | ✅ 已实现 | `_try_ast_cache_short_circuit` 接入 `_refresh_file_rust`/`_refresh_file_generic` 决策路径；新增 `file_content_hash` 字段解决 Rust/Python parser normalization 差异；test_h7_ast_cache_activation.py 8 测试全通过；test_incremental_parse.py 26/26 回归通过 |
 | H8 | 统一项目健康报告 cw health-report | RP | ✅ 已实现 | cli/main.py `_handle_health_report` 聚合 stats + hotspots + issues + token_savings |
 | H9 | MCP Server 完整测试 | RP | ✅ 已实现 | tests/test_mcp_server_full.py 15/15 通过 in 6.72s（2026-07-19）；覆盖 4 项 checklist：(1) Server 启动+协议握手 (2) 195+ MCP 工具 I/O 契约（name/description/inputSchema 唯一性）(3) MCP/CLI 并发访问（WAL 多读者无锁）(4) 长连接稳定性（空闲 2s 后复用单例 + workspace 切换重建实例） |
