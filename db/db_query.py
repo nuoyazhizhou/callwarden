@@ -286,23 +286,29 @@ class QueryMixin:
 
         # B-P7b: Rust GraphStore 短路（CSR 内存查询，O(degree+k)）
         store = self._get_graph_store()
-        if store is not None and store.load_state() == "graph_ready":
-            try:
-                rust_callers = store.get_callers(callee_name, qualified_name)
-                if rust_callers is not None:
-                    if qualified_name is not None:
-                        materialized = list(rust_callers)
-                        if materialized:
-                            return materialized
-                        # QN 过滤返回空：仅当自动识别 QN 时降级到纯短名
-                        if auto_qn_fallback:
-                            rust_callers = store.get_callers(callee_name, None)
-                            if rust_callers is not None:
-                                return rust_callers
-                        return []  # 显式 QN 未找到 → 返回空
-                    return rust_callers
-            except Exception:
-                pass  # Rust 查询异常 → 降级 SQL
+        if store is not None:
+            # 等待 calls 加载完成（避免首次查询 fallback 到 SQL 全表扫描）
+            if store.load_state() != "graph_ready":
+                self._wait_for_calls_ready(timeout=2.0)
+                # 重新获取 store 引用（后台线程可能已替换 self._graph_store 为 full_store）
+                store = self._get_graph_store()
+            if store is not None and store.load_state() == "graph_ready":
+                try:
+                    rust_callers = store.get_callers(callee_name, qualified_name)
+                    if rust_callers is not None:
+                        if qualified_name is not None:
+                            materialized = list(rust_callers)
+                            if materialized:
+                                return materialized
+                            # QN 过滤返回空：仅当自动识别 QN 时降级到纯短名
+                            if auto_qn_fallback:
+                                rust_callers = store.get_callers(callee_name, None)
+                                if rust_callers is not None:
+                                    return rust_callers
+                            return []  # 显式 QN 未找到 → 返回空
+                        return rust_callers
+                except Exception:
+                    pass  # Rust 查询异常 → 降级 SQL
         # P6 注：idx_calls_callee 已删除（GraphStore 覆盖 get_callers）。
         # SQL 降级路径（callwarden_core 未安装时）WHERE callee_name=? 走全表扫描。
         # P7：传入 qualified_name 时先在当前工作区解析 symbol id，再通过紧凑整数索引查边。
@@ -368,23 +374,27 @@ class QueryMixin:
 
         # B-P7b: Rust GraphStore 短路（CSR forward 遍历，O(degree)）
         store = self._get_graph_store()
-        if store is not None and store.load_state() == "graph_ready":
-            try:
-                rust_callees = store.get_callees(caller_name, qualified_name)
-                if rust_callees is not None:
-                    if qualified_name is not None:
-                        materialized = list(rust_callees)
-                        if materialized:
-                            return materialized
-                        # QN 过滤返回空：仅当自动识别 QN 时降级到纯短名
-                        if auto_qn_fallback:
-                            rust_callees = store.get_callees(caller_name, None)
-                            if rust_callees is not None:
-                                return rust_callees
+        if store is not None:
+            # 等待 calls 加载完成（避免首次查询 fallback 到 SQL 全表扫描）
+            if store.load_state() != "graph_ready":
+                self._wait_for_calls_ready(timeout=2.0)
+            if store.load_state() == "graph_ready":
+                try:
+                    rust_callees = store.get_callees(caller_name, qualified_name)
+                    if rust_callees is not None:
+                        if qualified_name is not None:
+                            materialized = list(rust_callees)
+                            if materialized:
+                                return materialized
+                            # QN 过滤返回空：仅当自动识别 QN 时降级到纯短名
+                            if auto_qn_fallback:
+                                rust_callees = store.get_callees(caller_name, None)
+                                if rust_callees is not None:
+                                    return rust_callees
                         return []  # 显式 QN 未找到 → 返回空
                     return rust_callees
-            except Exception:
-                pass  # Rust 查询异常 → 降级 SQL
+                except Exception:
+                    pass  # Rust 查询异常 → 降级 SQL
         # P28：传入 qualified_name 时，用 qualified_name 精确定位 caller
         if qualified_name is not None:
             cur = self.conn.execute(

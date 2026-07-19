@@ -2022,6 +2022,49 @@ class CodeGraphBase:
                 "last_error": self._graph_store_load_error,
             }
 
+    def _wait_for_calls_ready(self, timeout: float = 2.0) -> bool:
+        """等待 Rust GraphStore 的 calls 加载完成（避免 SQL fallback 全表扫描）
+
+        背景：_get_graph_store() 第一次调用时同步加载 symbols，异步在后台线程加载 calls。
+        如果 get_callers/get_callees 在 calls 加载完成前调用，会 fallback 到 SQL 全表扫描
+        （100K 符号 ~200ms vs Rust CSR 0.001ms）。
+
+        本方法在 store 处于 symbols_ready 且后台正在加载时，轮询等待最多 timeout 秒。
+        如果 timeout 内 calls 加载完成返回 True；否则返回 False（调用方走 SQL fallback）。
+
+        重要：每次轮询都重新获取 self._graph_store 引用，因为后台线程 _load_full_graph_store
+        完成后会替换 self._graph_store 为 full_store。如果只持有旧 store 引用，load_state()
+        永远返回 symbols_ready（旧 store 不会变 ready），导致死等 timeout。
+
+        实测：100K calls 加载约 100-200ms，timeout=2s 充分覆盖。
+        首次调用阻塞 ~100-200ms，但后续查询走 Rust 0.001ms（200000x 加速），整体收益显著。
+        """
+        # 首次快速检查（避免无谓等待）
+        store = self._graph_store
+        if store is None:
+            return False
+        try:
+            s0 = store.load_state()
+        except Exception:
+            return False
+        if s0 == "graph_ready":
+            return True
+        if not self._graph_store_loading:
+            return False  # 后台线程已结束但 state 仍非 graph_ready（加载失败）
+        # 轮询等待：每次重新获取 self._graph_store（后台线程会替换引用）
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(0.02)
+            store = self._graph_store  # 重新获取引用（可能已被替换为 full_store）
+            if store is None:
+                return False
+            try:
+                if store.load_state() == "graph_ready":
+                    return True
+            except Exception:
+                return False
+        return False
+
     def _invalidate_graph_store(self):
         """B-P7b: 标记 GraphStore 缓存为 dirty（延迟失效）
 

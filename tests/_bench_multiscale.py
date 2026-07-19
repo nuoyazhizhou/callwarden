@@ -174,11 +174,18 @@ def run_scale(num_files: int, funcs_per_file: int, tmpdir: str) -> dict:
     metrics["search_symbols_ms"] = round(search_t * 1000, 2)
 
     # 4. get_callers（Rust GraphStore CSR）
+    # 首次查询：含 _get_graph_store + wait_for_calls_ready 开销
     t0 = time.time()
     callers = db.get_callers("fn_0_000006")
     callers_t = time.time() - t0
-    print(f"[4] get_callers: {callers_t*1000:.3f}ms, 结果 {len(callers) if callers else 0}")
+    print(f"[4] get_callers (cold): {callers_t*1000:.3f}ms, 结果 {len(callers) if callers else 0}")
     metrics["get_callers_ms"] = round(callers_t * 1000, 3)
+    # Warm 查询：直接走 Rust CSR，反映真实使用场景
+    t0 = time.time()
+    callers_warm = db.get_callers("fn_0_000006")
+    callers_warm_t = time.time() - t0
+    print(f"[4b] get_callers (warm): {callers_warm_t*1000:.3f}ms, 结果 {len(callers_warm) if callers_warm else 0}")
+    metrics["get_callers_warm_ms"] = round(callers_warm_t * 1000, 3)
 
     # 5. get_callees
     t0 = time.time()
@@ -329,7 +336,8 @@ def main():
             ("build_time_s", "build_full_graph (s)"),
             ("get_stats_ms", "get_stats (ms)"),
             ("search_symbols_ms", "search_symbols (ms)"),
-            ("get_callers_ms", "get_callers (ms)"),
+            ("get_callers_ms", "get_callers cold (ms)"),
+            ("get_callers_warm_ms", "get_callers warm (ms)"),
             ("get_callees_ms", "get_callees (ms)"),
             ("call_chain_up_ms", "call_chain_up d=5 (ms)"),
             ("blast_radius_ms", "blast_radius (ms)"),
