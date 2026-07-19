@@ -48,7 +48,9 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "brief", "map",
                 "health-report",
                 # L5: build-context + toolchain 子命令（resolved_edges 引擎入口）
-                "build-context", "toolchain"}
+                "build-context", "toolchain",
+                # 项目综合状态驾驶舱（7 个 section + 风险预警）
+                "dashboard"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -949,7 +951,7 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
                "metrics", "complexity", "coupling", "comment-coverage", "uncommented",
                "function-issues", "largest-fns", "coupled-fns", "fn-metrics",
                "who", "ownership-map", "brief", "map", "stats", "status",
-               "health-report"}:
+               "health-report", "dashboard"}:
         # 这些查询/分析类子命令均为只读，不写数据库
         return True
     if cmd == "workspace":
@@ -1076,6 +1078,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_stats(argv, db)
         elif cmd == "health-report":
             return _handle_health_report(argv, db)
+        elif cmd == "dashboard":
+            return _handle_dashboard(argv, db)
         elif cmd == "status":
             return _handle_status(argv, db)
         elif cmd == "search":
@@ -5877,6 +5881,265 @@ def _handle_health_report(args, db):
 
     cprint("=" * 60, "cyan")
     return True
+
+
+def _handle_dashboard(args, db):
+    """处理 dashboard 子命令（项目综合状态驾驶舱）
+
+    聚合 7 个 section：overview / code_scale / code_quality / call_graph /
+    task_risk / audit / evolution，并附风险预警列表。
+
+    默认 quick=True（100K ~280ms），--full 启用完整模式（含圈复杂度计算），
+    --with-cycles 启用循环检测，--with-evolution 启用演化趋势（需 git history）。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw dashboard",
+        description="Show project dashboard (7 sections + risk warnings)",
+    )
+    parser.add_argument("--full", action="store_true",
+                        help="Full mode (compute cyclomatic complexity, slow on large repos)")
+    parser.add_argument("--with-cycles", action="store_true",
+                        help="Detect call cycles (detect_cycles, may be slow without Rust GraphStore)")
+    parser.add_argument("--with-evolution", action="store_true",
+                        help="Show evolution trends (requires git history imported)")
+    parser.add_argument("--risks", action="store_true",
+                        help="Show project risk warnings (high complexity / oversized / blocking findings)")
+    parser.add_argument("--top", type=int, default=5,
+                        help="Top N for risk lists (default 5)")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    opts = parser.parse_args(args)
+
+    import time as _time
+    t_start = _time.time()
+
+    dashboard = db.get_project_dashboard(
+        with_cycles=opts.with_cycles,
+        with_evolution=opts.with_evolution,
+        quick=not opts.full,
+        top_n=opts.top,
+    )
+
+    if opts.json:
+        out = dict(dashboard)
+        out["_elapsed_ms"] = round((_time.time() - t_start) * 1000, 1)
+        if opts.risks:
+            out["risks"] = db.get_project_risks(top_n=opts.top)
+        print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
+        return True
+
+    # 格式化输出
+    print()
+    cprint("=" * 70, "cyan")
+    cprint("  Call Warden 项目驾驶舱", "cyan", bold=True)
+    cprint("=" * 70, "cyan")
+
+    # ── 1. 概览 ─────────────────────────────────────────────────────
+    ov = dashboard.get("overview", {})
+    if isinstance(ov, dict) and "error" not in ov:
+        cprint("\n  [1] 概览", "yellow", bold=True)
+        print(f"    Workspace:    {ov.get('workspace_name', '?')}")
+        print(f"    Root:         {ov.get('root_path', '?')}")
+        print(f"    Git HEAD:     {ov.get('git_head') or '(not a git repo)'}")
+        if ov.get('db_stale'):
+            cprint(f"    DB 状态:      ⚠ 滞后于 git HEAD（建议 cw --refresh-all）", "red")
+        else:
+            cprint(f"    DB 状态:      ✓ 同步", "green")
+        lb = ov.get('last_build_ts', 0)
+        if lb:
+            ago = _format_ago(lb)
+            print(f"    最近构建:     {ago}")
+        db_size = ov.get('db_size_bytes', 0)
+        print(f"    DB 大小:      {_format_size(db_size)}")
+
+    # ── 2. 代码规模 ─────────────────────────────────────────────────
+    cs = dashboard.get("code_scale", {})
+    if isinstance(cs, dict) and "error" not in cs:
+        cprint("\n  [2] 代码规模", "yellow", bold=True)
+        print(f"    文件总数:     {cs.get('total_files', 0)}")
+        print(f"    代码总行数:   {cs.get('total_lines', 0):,}")
+        print(f"    符号总数:     {cs.get('total_symbols', 0):,}")
+        print(f"    已注释符号:   {cs.get('commented_symbols', 0):,}")
+        by_kind = cs.get('by_kind', {})
+        if by_kind:
+            kind_str = ", ".join(f"{k}={v}" for k, v in sorted(by_kind.items(), key=lambda x: -x[1])[:6])
+            print(f"    符号分布:     {kind_str}")
+        by_lang = cs.get('by_language', {})
+        if by_lang:
+            lang_str = ", ".join(f".{k}={v}" for k, v in list(by_lang.items())[:6])
+            print(f"    语言分布:     {lang_str}")
+
+    # ── 3. 代码质量 ─────────────────────────────────────────────────
+    cq = dashboard.get("code_quality", {})
+    if isinstance(cq, dict) and "error" not in cq:
+        cprint("\n  [3] 代码质量", "yellow", bold=True)
+        if cq.get('quick_mode'):
+            cprint("    (quick 模式，未算圈复杂度；--full 启用)", "dark_grey")
+        else:
+            print(f"    平均圈复杂度: {cq.get('avg_complexity', 0)}")
+            print(f"    最大圈复杂度: {cq.get('max_complexity', 0)}")
+            dist = cq.get('complexity_distribution', {}) or {}
+            if dist:
+                print("    复杂度分布:")
+                for level, cnt in dist.items():
+                    print(f"      {level:<14s} {cnt}")
+        print(f"    注释覆盖率:   {cq.get('comment_coverage_pct', 0)}%")
+        print(f"    未注释函数:   {cq.get('uncommented_fns', 0)}")
+        largest = cq.get('largest_fns_top', []) or []
+        if largest:
+            cprint("\n    Top 大函数:", "cyan")
+            for i, f in enumerate(largest, 1):
+                name = f.get('qualified_name', '?')
+                lc = f.get('line_count', 0)
+                fp = f.get('file_path', '?')
+                print(f"      {i}. {name}  ({lc} 行, {fp})")
+        hotspots = cq.get('complexity_hotspots_top', []) or []
+        if hotspots:
+            cprint("\n    Top 复杂度函数:", "cyan")
+            for i, h in enumerate(hotspots, 1):
+                name = h.get('qualified_name', '?')
+                cx = h.get('cyclomatic_complexity', 0) or h.get('complexity', 0)
+                print(f"      {i}. {name}  (圈复杂度 {cx})")
+
+    # ── 4. 调用图 ───────────────────────────────────────────────────
+    cg = dashboard.get("call_graph", {})
+    if isinstance(cg, dict) and "error" not in cg:
+        cprint("\n  [4] 调用图", "yellow", bold=True)
+        tc = cg.get('total_calls', 0)
+        rc = cg.get('resolved_calls', 0)
+        rate = cg.get('resolve_rate_pct', 0)
+        cf = cg.get('cross_file_calls', 0)
+        print(f"    调用总数:     {tc:,}")
+        print(f"    已解析:       {rc:,} ({rate}%)")
+        print(f"    跨文件调用:   {cf:,}")
+        cyc = cg.get('cycles_count')
+        if cyc is None:
+            print("    循环调用:     (未计算，--with-cycles 启用)")
+        else:
+            if cyc > 0:
+                cprint(f"    循环调用:     ⚠ {cyc} 个（cw call-chain --detect-cycles 查看）", "red")
+            else:
+                cprint(f"    循环调用:     ✓ 无循环", "green")
+        orphans = cg.get('orphans_count', 0)
+        if orphans > 0:
+            print(f"    孤立函数:     {orphans}（未被任何函数调用）")
+        depth = cg.get('depth_distribution', {}) or {}
+        if depth:
+            items = sorted(depth.items(), key=lambda x: int(x[0]))[:10]
+            depth_str = ", ".join(f"d{k}={v}" for k, v in items)
+            print(f"    深度分布:     {depth_str}{'...' if len(depth) > 10 else ''}")
+
+    # ── 5. 任务与风险 ───────────────────────────────────────────────
+    tr = dashboard.get("task_risk", {})
+    if isinstance(tr, dict) and "error" not in tr:
+        cprint("\n  [5] 任务与风险", "yellow", bold=True)
+        tc = tr.get('task_counts', {})
+        print(f"    任务状态:     open={tc.get('open', 0)}, in_progress={tc.get('in_progress', 0)}, "
+              f"review={tc.get('review', 0)}, applied={tc.get('applied', 0)}")
+        of = tr.get('open_findings_count', 0)
+        bf = tr.get('blocking_findings_count', 0)
+        if bf > 0:
+            cprint(f"    阻塞 findings: ⚠ {bf} 条（cw task findings 查看）", "red")
+        else:
+            cprint(f"    阻塞 findings: ✓ 无", "green")
+        print(f"    open findings: {of}")
+        pc = tr.get('pending_rule_candidates', 0)
+        if pc > 0:
+            print(f"    待审规则候选: {pc}")
+        rec = tr.get('recommended_action', '')
+        if rec:
+            cprint(f"    推荐下一步:   {rec}", "green")
+
+    # ── 6. 审计 ─────────────────────────────────────────────────────
+    au = dashboard.get("audit", {})
+    if isinstance(au, dict) and "error" not in au:
+        cprint("\n  [6] 审计状态", "yellow", bold=True)
+        print(f"    active rules: {au.get('active_rules_count', 0)}")
+        broken = au.get('audit_broken_count', 0)
+        if broken > 0:
+            cprint(f"    审计链损坏:   ⚠ {broken} 条（cw audit verify 查看）", "red")
+        else:
+            cprint(f"    审计链:       ✓ 完整", "green")
+
+    # ── 7. 演化趋势 ─────────────────────────────────────────────────
+    ev = dashboard.get("evolution")
+    if ev is None:
+        cprint("\n  [7] 演化趋势 (未计算，--with-evolution 启用)", "dark_grey")
+    elif isinstance(ev, dict) and "error" not in ev:
+        cprint("\n  [7] 演化趋势", "yellow", bold=True)
+        commits = ev.get('recent_commits', []) or []
+        if commits:
+            cprint(f"    最近 {len(commits)} 次提交:", "cyan")
+            for c in commits[:5]:
+                h = (c.get('commit_hash', '') or '')[:8]
+                msg = (c.get('message', '') or '').split('\n')[0][:60]
+                author = (c.get('author', '') or '')[:20]
+                print(f"      {h}  {author:<20s}  {msg}")
+        else:
+            print("    最近提交:     无（cw git import 导入 git history）")
+        churn = ev.get('churn_30d')
+        if isinstance(churn, dict):
+            print(f"    30 天 churn:  {churn.get('total_lines_changed', 0):,} 行变更, "
+                  f"{churn.get('files_changed', 0)} 文件")
+        hs = ev.get('hotspot_top', []) or []
+        if hs:
+            cprint("\n    Top 演化热点:", "cyan")
+            for i, h in enumerate(hs, 1):
+                name = h.get('qualified_name') or h.get('symbol_name', '?')
+                score = h.get('hotspot_score', 0) or 0
+                print(f"      {i}. {name}  (热点分 {score:.1f})")
+
+    # ── 风险预警 ────────────────────────────────────────────────────
+    if opts.risks:
+        cprint("\n  [风险预警]", "yellow", bold=True)
+        # quick 模式跟随 dashboard 的 --full（quick 默认跳过高复杂度计算）
+        risks = db.get_project_risks(top_n=opts.top, quick=not opts.full)
+        if not risks:
+            cprint("    ✓ 无风险预警", "green")
+        else:
+            sev_color = {"high": "red", "medium": "yellow", "low": "dark_grey"}
+            for i, r in enumerate(risks, 1):
+                sev = r.get('severity', 'low')
+                sev_marker = {"high": "⚠⚠", "medium": "⚠", "low": "•"}.get(sev, "•")
+                rtype = r.get('type', '?')
+                detail = r.get('detail', '')
+                qn = r.get('qualified_name', '')
+                color = sev_color.get(sev, "dark_grey")
+                cprint(f"    {i}. [{sev_marker} {sev}] {rtype}", color)
+                if qn:
+                    cprint(f"       函数: {qn}", color)
+                cprint(f"       详情: {detail}", color)
+
+    # ── 耗时 ────────────────────────────────────────────────────────
+    elapsed = (_time.time() - t_start) * 1000
+    print()
+    cprint(f"  (报表生成耗时 {elapsed:.1f}ms)", "dark_grey")
+    cprint("=" * 70, "cyan")
+    return True
+
+
+def _format_size(n: int) -> str:
+    """格式化字节数为 B/KB/MB/GB"""
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n/1024:.1f} KB"
+    if n < 1024 * 1024 * 1024:
+        return f"{n/1024/1024:.1f} MB"
+    return f"{n/1024/1024/1024:.2f} GB"
+
+
+def _format_ago(ts: float) -> str:
+    """格式化时间戳为"多久之前"的相对描述"""
+    if not ts:
+        return "从未"
+    delta = time.time() - ts
+    if delta < 60:
+        return f"{int(delta)} 秒前"
+    if delta < 3600:
+        return f"{int(delta/60)} 分钟前"
+    if delta < 86400:
+        return f"{int(delta/3600)} 小时前"
+    return f"{int(delta/86400)} 天前"
 
 
 def _handle_status(args, db):

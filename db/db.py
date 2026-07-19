@@ -72,6 +72,7 @@ from .db_clone_detection import CloneDetectionMixin
 from .db_jobs import JobMixin
 from .db_clone_groups import CloneGroupMixin
 from .db_tests import TestRelationMixin
+from .db_dashboard import DashboardMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -111,6 +112,7 @@ class CodeGraphDB(
     JobMixin,
     CloneGroupMixin,
     TestRelationMixin,
+    DashboardMixin,
 ):
     """代码知识图谱数据库
 
