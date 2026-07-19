@@ -1776,6 +1776,36 @@ def _migrate_v37_to_v38(conn: sqlite3.Connection):
         pass  # 某些 SQLite 版本/模式不支持 ANALYZE，忽略
 
 
+def _migrate_v38_to_v39(conn: sqlite3.Connection):
+    """v38 -> v39: call_chain_up/down BFS 加速索引（callee_qualified 查询）
+
+    背景：call_chain_up/get_call_chain_down 的 BFS 按 callee_qualified（找上游）或
+    caller_qualified（找下游）查找 call_versions。旧索引只有 idx_call_versions_caller
+    (caller_qualified)，按 callee_qualified 查找时全表扫描。
+
+    100K 符号实测：
+    - 单层 BFS SQL（按 callee_qualified IN (...) 查）: 6.87ms
+    - 加 idx_call_versions_callee_current 后: 0.01ms（687x 加速）
+
+    索引设计：
+    - (callee_qualified, file_version_id) 复合键：让 IN 查询走 covering index，
+      无需回表查 file_version_id（用于 JOIN file_versions 过滤 is_current）
+    - 部分索引 WHERE caller_qualified != '': 过滤空 caller 行（约占 10-20%），
+      减少索引体积；下游查询走 idx_call_versions_caller 不受影响。
+
+    全新数据库已通过 SCHEMA_INDEXES_SQL 创建索引，本迁移只补齐既有 v38 库，并跑 ANALYZE。
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_call_versions_callee_current "
+        "ON call_versions(callee_qualified, file_version_id) "
+        "WHERE caller_qualified != ''"
+    )
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2391,6 +2421,10 @@ class CodeGraphBase:
             38: {
                 "description": t("cli.messages.migration_v38", default="get_stats perf indexes: idx_symbols_kind_file + idx_symbols_depth_file_fn (partial) + ANALYZE"),
                 "func": _migrate_v37_to_v38,
+            },
+            39: {
+                "description": t("cli.messages.migration_v39", default="call_chain_up/down perf index: idx_call_versions_callee_current (partial) + ANALYZE"),
+                "func": _migrate_v38_to_v39,
             },
         }
 

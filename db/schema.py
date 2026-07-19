@@ -211,6 +211,10 @@ CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_hash ON file_symbol_versions
 CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_qualified ON file_symbol_versions(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_call_versions_file ON call_versions(file_version_id);
 CREATE INDEX IF NOT EXISTS idx_call_versions_caller ON call_versions(caller_qualified);
+-- v39: call_chain_up/get_call_chain_down 的 BFS 按 callee_qualified 找上游/下游
+-- 旧索引只有 caller_qualified，callee_qualified 查询走全表扫描（100K=6.87ms）
+-- 部分索引 WHERE caller_qualified != '' 过滤掉空 caller 行（约 10-20%），减少索引体积
+CREATE INDEX IF NOT EXISTS idx_call_versions_callee_current ON call_versions(callee_qualified, file_version_id) WHERE caller_qualified != '';
 CREATE INDEX IF NOT EXISTS idx_semgrep_instance ON semgrep_findings(file_instance_id);
 CREATE INDEX IF NOT EXISTS idx_semgrep_hash ON semgrep_findings(content_hash);
 CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id);
@@ -1038,7 +1042,9 @@ ON test_runs(ci_run_id);
 # v38: get_stats 加速索引 — idx_symbols_kind_file (kind, file_instance_id) 让 by_kind GROUP BY
 #      走 covering index（避免 TEMP B-TREE 排序）；idx_symbols_depth_file_fn 部分索引让
 #      depth_distribution GROUP BY 走索引扫描。配合 ANALYZE 让优化器选对索引。
-SCHEMA_VERSION = 38
+# v39: call_chain_up/down 加速索引 — idx_call_versions_callee_current 部分索引让 BFS 按
+#      callee_qualified 查找走索引（旧索引只有 caller_qualified，callee 查询全表扫描）。
+SCHEMA_VERSION = 39
 
 
 # ============================================
