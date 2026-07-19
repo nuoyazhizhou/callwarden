@@ -23,7 +23,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **Git 集成**：commit 历史 + 符号级变更追踪
 - **分支感知**：独立工作区方案 + 差异对比 + 合并预览
 - **Java GC 机制**：.gitignore/.callwardenignore 解析 + 归档/复活/清除
-- **204+ MCP 工具 + 145+ CLI 命令**
+- **205+ MCP 工具 + 145+ CLI 命令**
 
 ## 快速开始
 

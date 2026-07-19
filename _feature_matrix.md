@@ -337,6 +337,7 @@
 | I14 | ✅ 已修复（2026-07-17） | gap-analysis-2026Q2.md 已归档到 docs/history/，README.md 归档清单第 12 行明确标注"基于 9 语言/38 MCP 旧现状，多数缺失功能现已实现" | GA1, GA2 |
 | I15 | ✅ 已修复（2026-07-17） | naming-analysis-report Mixin 数已同步为 40 | naming-analysis-report.md |
 | I16 | ✅ 已修复（2026-07-17） | history/README.md 演化轨迹已扩展到 v37（含 v15-v25 治理期、v26-v33 优化期、v37 L2 破坏性操作）；implementation-snapshot-v13 归档原因已更新 | docs/history/README.md |
+| I17 | ✅ 已修复（2026-07-19） | Schema 版本同步 v37→v39：architecture.md（L39/L74/L107-109 加 v38/v39 迁移条目）、implementation-status.md（L3/L13）、_health_check_report.md（L134）；v38=get_stats 加速索引、v39=call_chain_up/down 加速索引 idx_call_versions_callee_current；README.md L26 修复 204+→205+（与 @mcp.tool() 实际数 205 对齐） | ARC, IS, README.md |
 
 ## J. 灰色地带验证结果（已全部确认）
 

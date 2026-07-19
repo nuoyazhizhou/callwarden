@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-19 · Schema v37 · 40 Mixin · 205 MCP 工具 · 16 语言
+> 最后更新：2026-07-19 · Schema v39 · 40 Mixin · 205 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -10,7 +10,7 @@
 | ----------- | ---- | ----------------------------------------------------------------------------------------- |
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
-| Schema 版本 | v37  | v3→v37 版本化迁移，事务化执行                                                             |
+| Schema 版本 | v39  | v3→v39 版本化迁移，事务化执行                                                             |
 | Mixin 模块  | 40   | CodeGraphBase + 39 个功能 Mixin                                                           |
 | MCP 工具    | 205  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
