@@ -195,6 +195,8 @@ CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_instance_id);
 CREATE INDEX IF NOT EXISTS idx_symbols_hash ON symbols(symbol_hash);
 CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
 CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
+CREATE INDEX IF NOT EXISTS idx_symbols_kind_file ON symbols(kind, file_instance_id);
+CREATE INDEX IF NOT EXISTS idx_symbols_depth_file_fn ON symbols(depth, file_instance_id) WHERE kind IN ('fn', 'test_fn') AND depth >= 0;
 CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique ON symbols(file_instance_id, name, start_line);
@@ -1033,7 +1035,10 @@ ON test_runs(ci_run_id);
 #      用 git show --numstat 填充，替代 file_versions 相邻版本差值近似。
 # v37: L2 破坏性 git 操作记录 — destructive_operations 表，记录 force push 等破坏性操作。
 #      软门禁设计：记录但不阻止（与 L1 软门禁一致），pre-push hook 自动写入。
-SCHEMA_VERSION = 37
+# v38: get_stats 加速索引 — idx_symbols_kind_file (kind, file_instance_id) 让 by_kind GROUP BY
+#      走 covering index（避免 TEMP B-TREE 排序）；idx_symbols_depth_file_fn 部分索引让
+#      depth_distribution GROUP BY 走索引扫描。配合 ANALYZE 让优化器选对索引。
+SCHEMA_VERSION = 38
 
 
 # ============================================
