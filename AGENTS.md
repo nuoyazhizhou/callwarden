@@ -64,7 +64,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 204+ MCP 工具 + 145+ CLI 命令
+- 205+ MCP 工具 + 145+ CLI 命令
 
 ## 技术栈
 

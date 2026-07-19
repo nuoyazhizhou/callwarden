@@ -207,7 +207,7 @@
 | F17 | P8 FTS rebuild 替代触发器写放大 | WL2 | ✅ 已实施 | full build 期间禁用 FTS 触发器，最后一次性 rebuild |
 | F18 | P9 C/C++ 显式栈遍历 + thirdParty ignore | WL2 | ✅ 已实施 | firmware 30min+ 卡死 → 22.1s；消除 RecursionError |
 | F19 | P10 多进程 worker 限制 min(4, cpu_count) | WL2 | ✅ 已实施 | 每 worker ~300MB，4 进程 ~1.2GB（原 8 进程 ~2.4GB） |
-| F20 | search_symbols 保留 SQL（GraphStore 反而慢 25%） | BR3 | ⚠️ 设计决策 | memchr 全扫描 vs SQL LIKE B-tree 索引；建议保留 SQL 或改 FTS5 |
+| F20 | search_symbols 保留 SQL（GraphStore 反而慢 25%） | BR3 | ✅ 设计决策已文档化 | memchr 全扫描 O(N×L) vs SQL LIKE B-tree 范围扫描 O(log N + M)；1M 符号实测 SQL 2.354ms vs GraphStore 3.132ms（0.75x 慢 25%）；决策根因 + 路由表 + 未来优化方向已写入 [architecture.md §6](docs/architecture.md#6-查询路径设计决策graphstore-vs-sql-路由) |
 
 ## G. Enterprise Daemon 架构（规划/部分实施）
 
@@ -309,13 +309,13 @@
 | L7 | RSS 监控采样修复 | PR | ✅ 已实现 | psutil 优先 + Windows ctypes Psapi.GetProcessMemoryInfo fallback（T3 修复） |
 | L8 | 增量调用图更新（只 resolve 受影响文件） | PR/D3 | ✅ 已实现 | `_build_call_graph_multi_lang` 加 only_files 参数；增量路径符号索引从 DB symbols 表全量读取，calls 只 resolve 变化文件；`_refresh_file_rust`/`_refresh_file_generic` 不再调用 `_collect_all_current_file_results()` 全量加载 |
 | L9 | Rust ParseResultPool 共享内存架构 | PR | ✅ 完成 | 4 阶段全部实现：①PoC（`batch_parse_c_files` + Rayon + Arc 共享 grammar）②流式集成（`ParseResultPool` + `batch_parse_files_lang_pool` + `_rust_multilang_parse` 逐个 `get_at` 转 dict）③多语言 15/15（python/rust/go/java/ts/js/ruby/php/scala/csharp/cpp + Kotlin/Swift + Elixir/HCL 已补齐；新增 `call_keyword` + `kind_from_child_text` 字段 + `CallArgName` + `HclLabels` 名称策略处理 AST 特殊结构）④全量接管（`_can_use_rust_parse` + `CW_DISABLE_RUST_PARSE` 开关 + Python 多进程 fallback 链）；C 语言走专用快路径，其他 Rust 支持语言 `>= MP_THRESHOLD(50)` 走流式 pool，小批量走 `parse_file_lang` 单文件 Rust；test_l9_rust_multilang.py 10 测试验证 |
-| L10 | MCP 工具优化（优化 schema/错误信息/组合工具而非继续加） | D3 | ⚠️ 设计方向 | 讨论结论：195 个工具已够用，应优化组合查询路径而非继续扩功能面 |
+| L10 | MCP 工具优化（优化 schema/错误信息/组合工具而非继续加） | D3 | ✅ 设计方向已文档化 | 205 工具已够用，优化方向：(1) schema 一致性（list→List[Dict], detail→Optional[Dict], 写→{status}）(2) 错误信息友好度（{error, hint}）(3) 组合查询路径（识别高频串行调用）(4) 批量查询推广；反模式：不为细分场景加新工具、不加元工具、不在工具内做业务判断；详见 [mcp_tools.md L10 章节](docs/mcp_tools.md#l10-mcp-工具优化方向优化组合查询路径而非扩面) |
 | L11 | Windows 控制台 Unicode bug（cw task show 在 GBK 下崩溃） | D3 | ✅ 已修复 | ensure_utf8_output() 统一到 cli/console.py，三入口复用（T2 修复） |
 | L12 | propose_symbol_id_patch（符号级 patch 带 symbol_id） | WL1 | ✅ 已实现 | MCP 工具 propose_symbol_id_patch（symbol_id + patch + expected_hash + expected_symbol_hash） |
 | L13 | work_next_job 返回完整上下文（源码+调用方+风险+patch 范围） | WL1 | ✅ 已实现 | db_tasks.py 增强 callers/callees 摘要 + callers_total/callees_total |
 | L14 | 真懒加载 parser（按语言 import 而非聚合入口） | WL2 | ✅ 已实现 | parsers/__init__.py `__getattr__` 模块级懒加载 + `create_parser` 按需 import |
 | L15 | 分阶段计时日志（scan/parse/symbol/call/depth/FTS/GC） | WL2 | ✅ 已实现 | perf 脚本已输出阶段耗时分解 |
-| L16 | Agent 工具设计原则（“捷径”而非“规则”） | WL1 | ⚠️ 设计方向 | 核心结论：高层工作流工具 > 底层工具集合；工具名/描述/参数影响 Agent 选择 |
+| L16 | Agent 工具设计原则（"捷径"而非"规则"） | WL1 | ✅ 设计方向已文档化 | 4 条原则：(1) 「捷径」语义：工具是任务最佳捷径而非规则约束（L1 软门禁实践）(2) 命名反映任务意图（get_impact > traverse_call_graph_backward）(3) 必填参数 ≤3 + 枚举优于自由字符串 (4) docstring 首句说明"做什么"+ 返回值结构；详见 [mcp_tools.md L16 章节](docs/mcp_tools.md#l16-agent-工具设计原则捷径而非规则) |
 
 ## I. 文档冲突/过时信息（需更新的文档清单）
 

@@ -2048,6 +2048,62 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ---
 
+## 工具设计原则与优化方向
+
+> 对应 [_feature_matrix.md L10 + L16](../_feature_matrix.md) 设计方向项。
+>
+> 来源：D3（Phase 2 收口/增量架构/Daemon 讨论）+ WL1（工具层讨论）。
+
+### L16. Agent 工具设计原则：「捷径」而非「规则」
+
+**核心结论**：高层工作流工具 > 底层工具集合；工具名/描述/参数影响 Agent 选择。
+
+1. **「捷径」语义**：工具应该是 Agent 完成某类任务的"最佳捷径"，而非一堆规则约束 Agent 行为。
+   - 反例（规则式）：`require_task_id_before_edit()` 强制每次 file_write 都传 task_id
+   - 正例（捷径式）：`get_task_context(task_id)` 返回 task 状态 + 相关符号 + 历史 edits，让 Agent 自然知道"当前应该改哪里"
+   - Call Warden 实践：L1 软门禁（file_write 返回 `task_validation` 字段但不拒绝写入）即此原则的体现
+
+2. **工具命名影响 Agent 选择**：Agent 通过工具名 + 描述匹配任务，名称应反映**任务意图**而非**实现细节**。
+   - `get_impact` > `traverse_call_graph_backward`（前者反映任务"评估影响"，后者反映实现）
+   - `propose_edit` > `validate_and_apply_patch`（前者是动作，后者是流程）
+   - `get_callers` / `get_callees` 是例外（接受度高的领域术语，保留）
+
+3. **工具参数影响 Agent 行为**：
+   - 必填参数越少越好（≤3 个），可选参数用合理默认值
+   - 复杂参数用枚举（`kind: "fn"|"class"|"struct"`）而非自由字符串，避免 Agent 探索错误值
+   - `limit` 默认值应贴合典型场景（如 search_symbols 默认 20，足够 Agent 浏览）
+
+4. **工具描述（docstring）影响 Agent 理解**：
+   - 第一句应说明"这个工具做什么"（动作+对象），不是"这是什么"
+   - 复杂工具应在 docstring 给出 1-2 个典型调用示例
+   - 返回值结构应在 docstring 描述（字段名 + 类型 + 含义）
+
+### L10. MCP 工具优化方向：优化组合查询路径而非扩面
+
+**讨论结论**：205 个工具已够用，应优化组合查询路径而非继续扩功能面。
+
+1. **当前状态盘点**：
+   - 工具数：205（含 8 个 L5 构建上下文感知工具 + 1 个 metrics 监控工具 + 若干跨分类工具）
+   - 12 主分类已覆盖所有 Agent 常见任务场景
+   - 已实现的"组合工具"：`compare_snapshots` / `diff_callers` / `diff_callees` / `get_clone_aware_impact` / `get_defect_correlation` / `get_symbol_issues`（聚合 Semgrep + Guardrail findings）
+
+2. **优化方向**（不再加新工具，优化已有）：
+   - **schema 一致性**：所有 list 返回 `List[Dict]`，所有 detail 返回 `Optional[Dict]`，所有写操作返回 `{"status": "ok"/"error", ...}`
+   - **错误信息友好度**：错误返回 `{"error": str(e), "hint": "建议..."}`，而非裸异常字符串
+   - **组合查询路径**：识别 Agent 高频串行调用（如 `get_callers` → `get_symbol` → `get_impact`），提供单步组合工具（如 `get_caller_chain_impact` 一次返回 caller+symbol+impact）
+   - **批量查询**：已有 `batch_callers`，可推广到 `batch_get_symbol` / `batch_search`
+
+3. **反模式（避免）**：
+   - 不为每个细分场景加新工具（如 `get_callers_excluding_tests` / `get_callers_only_public`），应通过参数控制
+   - 不加"元工具"（如 `execute_arbitrary_query`），破坏 MCP 工具的语义清晰性
+   - 不在工具内做业务逻辑判断（如"如果是测试文件就跳过"），应让 Agent 在调用前判断
+
+### 工具数维护原则
+
+- **新增工具门槛**：必须有 (1) 无法用现有工具组合完成的新场景 + (2) 至少 3 个真实 Agent 用例验证
+- **删除工具门槛**：连续 6 个月未被任何 Agent 调用（可通过 `cw daemon metrics --name requests_total` 监控）
+- **重命名工具**：MCP 工具名是 Agent 集成的稳定接口，禁止重命名（详见 [architecture.md §阶段 2](architecture.md#阶段-2mcp-工具审计与文档进行中)）
+
 ## 下一步
 
 - [CLI 命令参考](cli_reference.md)：CLI 等价命令

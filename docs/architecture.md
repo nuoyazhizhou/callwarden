@@ -787,6 +787,40 @@ Schema 中为所有高频查询字段创建索引：
 
 相同内容只存一次（file_contents / symbol_contents），大幅减少存储体积和重复解析。
 
+### 6. 查询路径设计决策（GraphStore vs SQL 路由）
+
+> 对应 [_feature_matrix.md F20](../_feature_matrix.md) 设计决策项。
+
+Call Warden 同时维护两套查询路径：**Rust GraphStore（CSR 内存索引）** 和 **SQLite SQL**。`DaemonClient` 按查询类型选择最优路径（详见 [server/daemon_client.py](../server/daemon_client.py) `_remote_query` / `_sql_fallback_*`）。
+
+**路由策略**（基于 BR3 实测，1M 符号）：
+
+| 查询 | GraphStore | SQL | 选用 | 原因 |
+|------|-----------|-----|------|------|
+| `get_callers` | 0.003ms | 0.165ms | **GraphStore**（54x 加速） | CSR backward 遍历 + `by_callee_name` 哈希索引，完全跳过 SQL |
+| `get_callees` | 0.000ms | 0.146ms | **GraphStore**（330x 加速） | CSR forward 遍历，零 SQL |
+| `get_symbol` | 0.008ms | 0.013ms | **GraphStore**（1.66x 加速） | `by_qualified_name` HashMap O(1) |
+| `call_chain BFS d=5` | 24.4ms | 96.4ms | **GraphStore**（3.95x 加速） | CSR 内存遍历 vs SQL CTE 递归 |
+| `batch_callers(100)` | 0.29ms | 2.45ms | **GraphStore**（8.56x 加速） | 单次 CSR 遍历多次查询 |
+| `search_symbols` | 3.132ms | 2.354ms | **SQL**（**0.75x 反而慢 25%**） | 见下方根因 |
+
+**F20 设计决策根因**：`search_symbols` 反向走 SQL 是有意的，不是遗漏：
+
+1. **GraphStore 实现路径**（[rust_ext/src/graph.rs:756 `search_symbols`](../rust_ext/src/graph.rs) + [rust_ext/src/graph.rs:2066 `search_symbols_rust`](../rust_ext/src/graph.rs)）：把所有符号名拼接成 `search_pool_lower`，用 `memchr::memmem::find` SIMD 一次扫描整个池查找 query 子串。复杂度 O(N×L)（N=符号数，L=query 长度），即使有 SIMD 加速，符号表 1M 时仍需扫 1M 次。
+
+2. **SQL 实现路径**（`_sql_fallback_search_symbols`）：`SELECT * FROM symbols WHERE name LIKE ? || '%'` 走 `idx_symbols_name` B-tree 索引范围扫描，复杂度 O(log N + M)（M=匹配数）。前缀匹配场景下 SQL 直接定位到 B-tree 叶子节点连续段，扫描的只是匹配项，不是全表。
+
+3. **设计选型依据**：
+   - `search_symbols` 是**前缀/子串匹配**场景，B-tree 索引天然适合范围查询
+   - GraphStore 的内存索引结构（CSR + HashMap）适合**精确查找**（`get_callers` 按 callee_name / `get_symbol` 按 qname），不适合范围扫描
+   - 强行用 memchr 全扫描做子串搜索，反而失去了 B-tree 索引的优势，实测慢 25%
+
+4. **未来优化方向**（不在当前路线图）：
+   - 若追求 daemon 路径一致性，可在 Rust 端构建一个简化的 B-tree 索引（按 name 排序的 `Vec<(name, symbol_id)>` + 二分查找），与 SQL B-tree 等效
+   - 或保留 SQL 路径作为永久选择（当前决策），承认 GraphStore 不是银弹
+
+**结论**：`search_symbols` 走 SQL 是经过实测验证的设计决策，不是技术债。`DaemonClient.search_symbols` 仍尝试 `_remote_query("query.search")`（如果 daemon 已发布 snapshot 且远端实现了 SQL 路径），fallback 到本地 SQL。
+
 ## 扩展指南
 
 ### 添加新 Mixin
