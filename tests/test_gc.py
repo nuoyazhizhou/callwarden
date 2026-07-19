@@ -54,7 +54,6 @@ def test_ignore_matcher_basic():
     assert not matcher.is_ignored("src/main.py", is_dir=False), "src/main.py 不应被忽略"
 
     print("PASS: IgnoreMatcher 基础规则匹配正确")
-    return True
 
 
 def test_ignore_matcher_negation():
@@ -69,7 +68,6 @@ def test_ignore_matcher_negation():
     assert matcher.is_ignored("debug.log", is_dir=False), "debug.log 应被忽略"
     assert not matcher.is_ignored("important.log", is_dir=False), "important.log 应被取反"
     print("PASS: ! 取反语法正确")
-    return True
 
 
 def test_ignore_matcher_double_star():
@@ -83,7 +81,6 @@ def test_ignore_matcher_double_star():
     assert matcher.is_ignored("docs/sub/deep/c.md", is_dir=False), "docs/sub/deep/c.md 应被 ** 匹配"
     assert not matcher.is_ignored("README.md", is_dir=False), "README.md 不应被 docs/**/*.md 匹配"
     print("PASS: ** 递归通配符正确")
-    return True
 
 
 def test_gc_archive_basic():
@@ -132,7 +129,6 @@ def test_gc_archive_basic():
 
     print(f"PASS: gc_archive 归档 {result['archived']} 个文件")
     db.close()
-    return True
 
 
 def test_gc_restore():
@@ -167,7 +163,6 @@ def test_gc_restore():
 
     print(f"PASS: gc_restore 复活 {result['restored']} 个文件")
     db.close()
-    return True
 
 
 def test_gc_status():
@@ -198,7 +193,6 @@ def test_gc_status():
 
     print(f"PASS: gc_status 统计正确 (active={status['active_files']}, archived={status['archived_files']})")
     db.close()
-    return True
 
 
 def test_gc_purge():
@@ -230,7 +224,6 @@ def test_gc_purge():
 
     print(f"PASS: gc_purge 清除 {result['purged_files']} 个文件")
     db.close()
-    return True
 
 
 def test_gc_dry_run():
@@ -258,7 +251,6 @@ def test_gc_dry_run():
 
     print("PASS: dry_run 预演模式正确")
     db.close()
-    return True
 
 
 def test_default_autogen_rules():
@@ -286,7 +278,6 @@ def test_default_autogen_rules():
     assert not matcher.is_ignored("src/main.py", is_dir=False), "src/main.py 不应被忽略"
 
     print("PASS: 默认 autogen 规则命中正确")
-    return True
 
 
 def main():
@@ -310,11 +301,8 @@ def main():
     failed = 0
     for test_fn in tests:
         try:
-            if test_fn():
-                passed += 1
-            else:
-                failed += 1
-                print(f"FAIL: {test_fn.__name__}")
+            test_fn()
+            passed += 1
         except Exception as e:
             failed += 1
             import traceback

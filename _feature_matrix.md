@@ -270,8 +270,8 @@
 | H12 | 扩展 Git Hook 到 AI CLI IDE | RP | ✅ 已实现 | `install.py:323-466` 三 hook 模板（pre-commit refresh-all + pre-push check-gate + post-commit capture-diff --auto）；marker 卸载机制保留用户其他 hook；`cw install --hooks` 统一入口；test_install_hooks_unified + test_git_hook_capture 覆盖 |
 | H13 | 15 种语言开源项目测试 | RP | ✅ 已实现 | 16/16 语言全覆盖（test_p1_p3_languages 覆盖 PHP/Swift/Scala/HCL/Elixir；test_csharp_ruby；test_p9_c_parser_stack；test_p29_rust_parse；test_p31_multi_lang TS/Scala；test_kotlin_go 覆盖 Kotlin+Go 端到端：语言检测/工厂分发/符号提取/import/调用关系/db_build 集成） |
 | H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ✅ 已实现 | release/build.py 完整构建管道跑通（cargo build → wheel → wheelhouse → artifact-manifest.json，产出 callwarden-0.3.0-py3-none-any.whl 892 KB）；release/_check_artifacts.py 7/7 验证通过（2026-07-19）：manifest JSON、wheel METADATA、wxs XML、build_pkg.sh bash 语法、build_packages.sh bash 语法、deb 5 子包完整性、enterprise-release.yml 11 门禁编号 1-11 全匹配 + 13 关键门禁关键词匹配；本地 Windows 跑通完整 build，macOS/Linux 用 WSL bash -n 验证语法 |
-| H15 | 多用户权限系统（RBAC） | IS | ❌ 未实施 | 当前按项目隔离 |
-| H16 | 生产者-消费者架构 | IS | ❌ 未实施 | 当前 Map-Reduce |
+| H15 | 多用户权限系统（RBAC） | IS | ❌ 未实施 | 当前按项目隔离（workspace_id 逻辑隔离已覆盖单用户场景）；可延后到 SaaS 化或多团队共享 daemon 时实施 |
+| H16 | 生产者-消费者架构 | IS | ✅ 已实现（G18） | server/job_executor.py 已是完整生产者-消费者：jobs 表队列 + ThreadPoolExecutor worker 池 + submit/cancel/progress API + 多 worker 并发 + 超时保护 |
 | H17 | diff_callers / diff_callees（跨 snapshot 调用差异） | P4M | ✅ 已实现 | MCP 已暴露 diff_callers (L3546) + diff_callees (L3574)；DaemonClient 完整实现（daemon_client.py L460/L474） |
 | H18 | compare_snapshots 同步查询 + 仓库级 diff | P4M | ✅ 已实现 | MCP 已暴露 compare_snapshots (L3602)；同步查询 + 后台 job（job_handlers.py L237/L282）+ _should_run_async 大小判断 |
 
@@ -470,12 +470,12 @@
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
 | F. 性能优化 | 17 | 1 | 1 | 19 |
 | G. Enterprise Daemon | 27 | 4 | 2 | 33+ |
-| H. 规划但未实施 | 11 | 1 | 6 | 18 |
+| H. 规划但未实施 | 12 | 1 | 5 | 18 |
 | L. 讨论文档提取 | 10 | 5 | 1 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 4 | 0 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **137** | **13** | **10** | **162** |
+| **总计** | **138** | **13** | **9** | **162** |
 
 **新增功能点摘要（本次扫描）**：
 
@@ -492,4 +492,4 @@
 3. **中优先级（Agent 体验）**：（L1 软门禁已实现：is_task_active + task_context；L4 file_read 赋能 / L11 Windows Unicode / L12 symbol_id patch / L13 work_next_job 上下文 / L14 懒加载 parser 已实现）
 4. **低优先级（打包发布）**：N5-N7 脚本已完成（Windows MSI/macOS pkg/Linux deb 5 子包，未实际构建）；N8 CI workflow 11 门禁已补全（待上线运行验证）
 5. **低优先级（测试/生态）**：F11（Rust 端并行构建 CSR 已实现，50K 符号 13.43x 加速）、H5-H6（集成测试/千万级验证）、H7（AST 缓存已激活）、H9（MCP 测试）、L5 构建上下文感知 MVP（compile_commands.json 解析 + CLI + 8 MCP 工具 + resolved_edges 5 级解析引擎）、L9 15/15 语言全 Rust 化（Kotlin/Swift/Elixir/HCL 已补齐，新增 call_keyword + kind_from_child_text 字段处理 AST 特殊结构）
-6. **可延后**：H12-H13（Git Hook/多语言测试已实现）、H15-H16（RBAC/生产者-消费者）、L2-L3（破坏性操作拦截）
+6. **可延后**：H12-H13（Git Hook/多语言测试已实现）、H15（RBAC 单用户场景非必要，workspace_id 已隔离）、H16（已被 G18 实现）、L2-L3（破坏性操作拦截）
