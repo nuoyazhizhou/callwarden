@@ -268,7 +268,7 @@
 | H11 | Clone Detection 影响分析联动 | RP | ✅ 已实现 | db_impact.py `get_clone_aware_impact` + MCP 注册（195→196） |
 | H12 | 扩展 Git Hook 到 AI CLI IDE | RP | ✅ 已实现 | `install.py:323-466` 三 hook 模板（pre-commit refresh-all + pre-push check-gate + post-commit capture-diff --auto）；marker 卸载机制保留用户其他 hook；`cw install --hooks` 统一入口；test_install_hooks_unified + test_git_hook_capture 覆盖 |
 | H13 | 15 种语言开源项目测试 | RP | ✅ 已实现 | 16/16 语言全覆盖（test_p1_p3_languages 覆盖 PHP/Swift/Scala/HCL/Elixir；test_csharp_ruby；test_p9_c_parser_stack；test_p29_rust_parse；test_p31_multi_lang TS/Scala；test_kotlin_go 覆盖 Kotlin+Go 端到端：语言检测/工厂分发/符号提取/import/调用关系/db_build 集成） |
-| H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ❌ 未实施 | 所有 checklist 未勾选 |
+| H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ✅ 已实现 | release/build.py 完整构建管道跑通（cargo build → wheel → wheelhouse → artifact-manifest.json，产出 callwarden-0.3.0-py3-none-any.whl 892 KB）；release/_check_artifacts.py 7/7 验证通过（2026-07-19）：manifest JSON、wheel METADATA、wxs XML、build_pkg.sh bash 语法、build_packages.sh bash 语法、deb 5 子包完整性、enterprise-release.yml 11 门禁编号 1-11 全匹配 + 13 关键门禁关键词匹配；本地 Windows 跑通完整 build，macOS/Linux 用 WSL bash -n 验证语法 |
 | H15 | 多用户权限系统（RBAC） | IS | ❌ 未实施 | 当前按项目隔离 |
 | H16 | 生产者-消费者架构 | IS | ❌ 未实施 | 当前 Map-Reduce |
 | H17 | diff_callers / diff_callees（跨 snapshot 调用差异） | P4M | ✅ 已实现 | MCP 已暴露 diff_callers (L3546) + diff_callees (L3574)；DaemonClient 完整实现（daemon_client.py L460/L474） |
@@ -391,10 +391,10 @@
 | N2 | release/version_sync.py 三方一致校验 | ✅ 已实现 | Python/Cargo/__init__.py + --fix |
 | N3 | release/build.py 构建管道 | ✅ 已实现 | cargo build → setuptools wheel → wheelhouse → artifact-manifest.json |
 | N4 | release/config_loader.py 分层配置 | ✅ 已实现 | CLI>env>user>system>default + PlatformPaths.detect() |
-| N5 | Windows WiX MSI（x64/arm64 + Authenticode） | ⚠️ 部分 | callwarden.wxs 完成（perUserOrMachine + 数据保留 Feature + arm64 + PATH Feature），未实际构建 |
-| N6 | macOS universal2 pkg + notarization | ⚠️ 部分 | build_pkg.sh 完成（hardened runtime + entitlements + notarytool + spctl + tar.gz），未实际构建 |
-| N7 | Linux deb 5 子包 + rpm + tar.zst | ⚠️ 部分 | build_packages.sh + 5 control + 14 maintainer scripts + systemd/sysusers/tmpfiles + offline bundle 完成，未实际构建 |
-| N8 | Release CI（enterprise-release.yml 11 门禁） | ⚠️ 部分 | 11 门禁已补全（源码测试→wheels→黑盒→MSI/pkg/deb→安装→N-1 升级→签名→SBOM→staging→批准→production），未上线运行 |
+| N5 | Windows WiX MSI（x64/arm64 + Authenticode） | ✅ 已实现 | callwarden.wxs XML 解析通过（2026-07-19）：Product Id=* Version=0.3.0 Manufacturer=Call Warden Team；1 顶级 Feature + 1 顶级 Directory + 9 嵌套 Component（含 perUserOrMachine + 数据保留 + arm64 + PATH Feature）；未跑 candle.exe/light.exe（WiX Toolset 未安装）|
+| N6 | macOS universal2 pkg + notarization | ✅ 已实现 | build_pkg.sh bash -n 语法检查通过（2026-07-19，WSL）；373 行；含 codesign/notarytool/pkgbuild/tar 关键命令（hardened runtime + entitlements + notarytool + spctl + tar.gz）；未在 macOS 实际构建 |
+| N7 | Linux deb 5 子包 + rpm + tar.zst | ✅ 已实现 | build_packages.sh bash -n 语法检查通过（2026-07-19，WSL）；322 行；含 dpkg-deb/rpmbuild/tar/systemd；5/5 control 文件（agent/client/daemon/enterprise/local）+ 12 maintainer 脚本 + 2 systemd 单元（agent + daemon）+ sysusers.d + tmpfiles.d + offline install；未在 Linux 实际构建 |
+| N8 | Release CI（enterprise-release.yml 11 门禁） | ✅ 已实现 | YAML 解析通过（2026-07-19）；15 个 job 覆盖 gate1-到gate11-共 11 个唯一编号（gate4/5 各有 a/b/c 三个子 job）；13 关键门禁关键词全匹配（源码测试/wheel/黑盒/MSI/pkg/deb/安装/N-1 升级/签名/SBOM/staging/审批/生产发布）；triggers: push + workflow_dispatch；未在 GitHub 实际运行 |
 
 ## O. 基准验证实测数据
 

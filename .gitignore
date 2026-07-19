@@ -35,6 +35,11 @@ var/
 wheels/
 *.whl
 
+# 构建产物（每次 build 都会重写，不入库）
+release/dist/
+release/wheelhouse/
+release/artifact-manifest.json
+
 # 虚拟环境
 venv/
 .venv/
