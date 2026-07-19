@@ -400,8 +400,8 @@ class TestMcpToolsRegistration:
         source = open(ms.__file__, encoding='utf-8').read()
         # 统计 @mcp.tool() 装饰器
         count = source.count("@mcp.tool()")
-        # 原来是 196，新增 8 个应该是 204+
-        assert count >= 204, f"Expected >=204 MCP tools, got {count}"
+        # 原来是 196，新增 8 个 L5 + 1 个 get_metrics = 205+
+        assert count >= 205, f"Expected >=205 MCP tools, got {count}"
 
 
 # ============================================

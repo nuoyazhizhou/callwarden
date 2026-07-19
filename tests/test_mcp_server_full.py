@@ -173,7 +173,7 @@ def test_mcp_server_creates_instance_without_error():
 
 
 def test_mcp_server_registers_at_least_100_tools():
-    """list_tools() 应返回 ≥ 100 个工具（当前 204）。
+    """list_tools() 应返回 ≥ 100 个工具（当前 205）。
 
     覆盖 H9 checklist #1：协议握手后能拿到工具列表。
     """

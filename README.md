@@ -102,7 +102,7 @@ sym = mcp.file_symbol_content("db_tasks.py", "task_next_step")
 | [docs/README.md](docs/README.md)                                                       | 用户文档总入口                          |
 | [docs/quickstart.md](docs/quickstart.md)                                               | 安装、初始化、基本查询、MCP Server 启动 |
 | [docs/cli_reference.md](docs/cli_reference.md)                                         | 全部 CLI 子命令与 --flag 用法           |
-| [docs/mcp_tools.md](docs/mcp_tools.md)                                                 | 204+ MCP 工具按功能分组                 |
+| [docs/mcp_tools.md](docs/mcp_tools.md)                                                 | 205+ MCP 工具按功能分组                 |
 | [docs/architecture.md](docs/architecture.md)                                           | 整体架构、Schema、Mixin 设计、扩展指南  |
 | [docs/deployment.md](docs/deployment.md)                                               | 本地/Docker 部署、MCP 配置、备份恢复    |
 | [docs/design/implementation-status.md](docs/design/implementation-status.md)           | 当前实现状态权威盘点（v15）             |

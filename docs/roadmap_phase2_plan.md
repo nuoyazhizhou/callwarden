@@ -151,7 +151,7 @@
 #### Phase 8: 生产化
 - [x] systemd unit — G9 `release/linux/deb/systemd/callwarden-agent.service`（Type=simple, MemoryMax=512M, ProtectHome=read-only, ReadWritePaths=%h/.callwarden）
 - [x] config 文件和权限模板 — `server/daemon_config.py` + G25 `_validate_owned_path`（realpath + owner UID 校验 + 防路径穿越 + archived workspace 拒绝）
-- [ ] metrics endpoint — ⚠️ 部分：G13 `server/metrics.py`（691 行完整 Counter/Gauge/Histogram 数据结构 + `to_prometheus()` 文本格式生成），缺 `/metrics` HTTP endpoint 暴露（I4 标记待补，G13 待补）
+- [x] metrics endpoint — ✅ 已实现（CLI + MCP，非 HTTP endpoint）：`cw daemon metrics` 子命令（--format prometheus/json + --name 过滤 + --reset）+ `get_metrics` MCP 工具（205 个）；直接复用 `server/metrics.py` 的 `MetricsCollector` 单例（691 行 Counter/Gauge/Histogram + `to_prometheus()` 文本生成），不依赖 daemon RPC；13 测试通过（test_phase8_metrics_endpoint.py）
 - [x] health check — G14 Rust HealthChecker（4 项检查：db_registry/disk_space/memory_usage/uptime）+ RecoveryHandler（4 步恢复：workspace_registry/cas_db/stale_jobs/snapshots）；workspace.handle_health 接入完整检查
 - [x] audit log — H2 audit_chain 表 + db_audit_chain.py(491 行) + audit_verify_chain MCP + 密钥轮换
 - [x] backup/restore — G16 `server/backup_restore.py` + CLI `cw daemon backup/restore` 子命令

@@ -5,7 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import Optional, Sequence
+import time
+from typing import Any, Dict, Optional, Sequence
 
 from callwarden.config import (
     DAEMON_REGISTRY_DB,
@@ -101,6 +102,19 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
                                 help="驱逐指定 workspace 的 snapshot 缓存")
     snap_evict.add_argument("workspace_id",
                             help="workspace instance ID（如驱逐失败可检查 daemon 日志）")
+
+    # ---- Metrics 查询命令（Phase 8 metrics endpoint 闭合）----
+    # 直接复用 server/metrics.py 的 MetricsCollector 单例，
+    # 不依赖 Rust daemon RPC（避免给 daemon 增加方法）。
+    metrics_cmd = sub.add_parser("metrics",
+                                help="查询 daemon 运行时指标（counters/gauges/histograms）")
+    metrics_cmd.add_argument("--format", choices=["prometheus", "json"],
+                             default="json",
+                             help="输出格式（默认 json；prometheus 输出 Prometheus 文本格式）")
+    metrics_cmd.add_argument("--name",
+                             help="仅显示指定指标名（缺省显示全部）")
+    metrics_cmd.add_argument("--reset", action="store_true",
+                             help="重置所有计数器/仪表/直方图（谨慎使用，仅测试或重启后场景）")
 
     # ---- Mount Mapping 管理命令（G4）----
     mount = sub.add_parser("mount", help="容器挂载映射管理")
@@ -359,6 +373,38 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
             "required": is_daemon_required(),
             "socket": args.socket,
         })
+        return 0
+
+    # metrics 路径不需要 daemon client（本地指标直读，避免连不上 daemon 时无法查看）
+    if args.action == "metrics":
+        from callwarden.server.metrics import get_metrics_collector
+        collector = get_metrics_collector()
+        if args.reset:
+            collector.reset()
+            _print_json({"status": "reset", "timestamp": time.time()})
+            return 0
+        if args.format == "prometheus":
+            # Prometheus 文本格式直接打印（不走 _print_json 避免被 JSON 包装）
+            text = collector.to_prometheus()
+            print(text)
+        else:
+            data = collector.to_json()
+            if args.name:
+                # 按指标名过滤（在 counters/gauges/histograms 三类中查找）
+                filtered: Dict[str, Any] = {"timestamp": data["timestamp"],
+                                              "uptime": data["uptime"],
+                                              "name_filter": args.name}
+                found = False
+                for category in ("counters", "gauges", "histograms"):
+                    if args.name in data[category]:
+                        filtered[category] = {args.name: data[category][args.name]}
+                        found = True
+                    else:
+                        filtered[category] = {}
+                filtered["found"] = found
+                _print_json(filtered)
+            else:
+                _print_json(data)
         return 0
 
     if args.action == "serve":

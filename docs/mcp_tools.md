@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 204 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 205 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -20,7 +20,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 12 大功能分类
 
-Call Warden 通过 MCP Server 暴露 204 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 205 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
 
 ### 概览表
 
@@ -40,7 +40,7 @@ Call Warden 通过 MCP Server 暴露 204 个工具，按功能聚合为 12 个�
 | 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
 | **合计** | **179** | | |
 
-> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 204（含若干跨分类工具 + 8 个 L5 构建上下文感知工具）。本表只统计每个分类独有的工具。
+> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 205（含若干跨分类工具 + 8 个 L5 构建上下文感知工具 + 1 个 get_metrics 监控工具）。本表只统计每个分类独有的工具。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 
@@ -1699,6 +1699,21 @@ L5 为固件/嵌入式 C/C++ 场景提供"构建上下文感知"能力。核心�
   - `workspace_id: int`
   - `build_context_hash: str`
 - **返回**：`int`
+
+### `get_metrics(format="json", name="", reset=False)`
+
+查询 daemon 运行时指标（Phase 8 metrics endpoint 闭合）。直接复用 `server/metrics.py` 的 `MetricsCollector` 单例，不依赖 daemon RPC（即使 daemon 未启动也可查询本地指标快照）。
+
+- **参数**：
+  - `format: str = "json"` — 输出格式：`"json"`（默认，结构化 dict）/ `"prometheus"`（Prometheus 文本格式，返回 `{"format": "prometheus", "text": "..."}`）
+  - `name: str = ""` — 仅显示指定指标名（缺省显示全部）；在 counters/gauges/histograms 三类中查找
+  - `reset: bool = False` — `True` 则重置所有计数器/仪表/直方图（仅测试场景使用）
+- **返回**：
+  - `format="json"`：完整指标 dict（`timestamp` / `uptime` / `counters` / `gauges` / `histograms`，含 `memory_rss_bytes` / `cpu_total_seconds` / `uptime_seconds` / `requests_total` / `jobs_submitted_total` / `job_duration_seconds` 等内置指标）
+  - `format="json" + name`：`{"found": bool, "counters": {...}, "gauges": {...}, "histograms": {...}, "name_filter": str}`
+  - `format="prometheus"`：`{"format": "prometheus", "text": "<prometheus 文本>"}`
+  - `reset=True`：`{"status": "reset", "timestamp": float}`
+- **配套 CLI**：`cw daemon metrics [--format prometheus|json] [--name NAME] [--reset]`
 
 ### 配套 CLI 命令
 

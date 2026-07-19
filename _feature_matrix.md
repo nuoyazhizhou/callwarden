@@ -225,7 +225,7 @@
 | G10 | memfd 密封协议（大文件传输） | DI | ✅ 已实现 | Python 协议层通过 G20-G22 完整实现（server/ipc_transport.py: send_via_memfd + recv_via_memfd 四重校验 + send_msg 透明路径选择 + 30+ 单元测试）；G10 补齐：is_memfd/validate_memfd_fd daemon 侧校验 + daemon_server.py workspace.file.refresh memfd 检测路径 + 3 个 inflight bytes 限制（MAX_CONN_QUEUED_BYTES 256MB/MAX_DAEMON_INFLIGHT_BYTES 2GB/MAX_UID_INFLIGHT_BYTES 512MB）+ InflightTracker 类 + 11 个跨平台测试 + 8 个 Linux 专属测试（真实 memfd_create + seal + roundtrip） |
 | G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ✅ 已实现 | Rust SnapshotCachePublisher 桥接 SnapshotCache → build_and_publish_blocking；ReplicationResult.merged_summary 填充；5 个 E2E 测试（merged_summary + publisher + 多 workspace 隔离） |
 | G12 | Durable Staging（JSONL + fsync） | DS/EW | ✅ 已实现 | durable_staging.py |
-| G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已实现 | metrics.py（691行完整实现） |
+| G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已实现 | metrics.py（691行完整实现 Counter/Gauge/Histogram + `to_prometheus()` 文本生成）+ `cw daemon metrics` CLI 子命令（--format prometheus/json + --name 过滤 + --reset）+ `get_metrics` MCP 工具（205 个）；不依赖 daemon RPC，直读 `MetricsCollector` 单例；13 测试通过（test_phase8_metrics_endpoint.py） |
 | G14 | Health Check endpoint | DS | ✅ 已实现 | Rust HealthChecker（4 项检查：db_registry/disk_space/memory_usage/uptime）+ RecoveryHandler（4 步恢复：workspace_registry/cas_db/stale_jobs/snapshots）；workspace.handle_health 接入完整检查；cw_daemon 启动调用 RecoveryHandler；12 个新测试 |
 | G15 | Schema Migrator | DS | ✅ 已实现 | schema_migrator.py |
 | G16 | Backup/Restore | DS | ✅ 已实现 | backup_restore.py |
@@ -321,10 +321,10 @@
 
 | # | 问题 | 详情 | 需更新文件 |
 |---|------|------|------------|
-| I1 | ✅ 已修复（2026-07-19） | IS/RM/MCT/ARC 头部已统一为 204 MCP / v37 Schema / 40 Mixin。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
+| I1 | ✅ 已修复（2026-07-19） | IS/RM/MCT/ARC 头部已统一为 205 MCP / v37 Schema / 40 Mixin。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
 | I2 | ✅ 已修复（2026-07-19） | CA 表格已改"未暴露"为"✅ 已暴露"，"只差接线"为"已完成（2026-07 接入）" | CA |
-| I3 | ✅ 已修复（2026-07-19） | UG 头部已改"v3 Schema"为"v37 Schema · 204 MCP 工具 · 16 语言 · 40 Mixin"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等" | UG |
-| I4 | ✅ 已修复（2026-07-19） | IS §5 待办表已更新：`status != 'archived'` ✅ 已实现 / `UNIQUE UPSERT` ⚠️ 部分（已用 ON CONFLICT，键非 symbol_hash）/ `Prometheus` ⚠️ 部分（metrics.py 有数据结构，缺 /metrics endpoint） | IS |
+| I3 | ✅ 已修复（2026-07-19） | UG 头部已改"v3 Schema"为"v37 Schema · 205 MCP 工具 · 16 语言 · 40 Mixin"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等" | UG |
+| I4 | ✅ 已修复（2026-07-19） | IS §5 待办表已更新：`status != 'archived'` ✅ 已实现 / `UNIQUE UPSERT` ⚠️ 部分（已用 ON CONFLICT，键非 symbol_hash）/ `Prometheus` ✅ 已实现（2026-07-19 metrics endpoint 闭合：`cw daemon metrics` CLI + `get_metrics` MCP 工具，不依赖 daemon RPC，直读 MetricsCollector 单例） | IS |
 | I5 | ✅ 已修复（2026-07-19） | TokenSavingsMixin 在 §2.12（能力描述）和 §3（Mixin 列表）各出现一次，是合理的双视角描述，非重复列出 | IS |
 | I6 | ✅ 已修复（2026-07-19） | RM 数据库位置已从 `~/.callwarden/<hash>/callwarden.db`（旧版多库）改为 `~/.callwarden/callwarden.db`（用户级单库 + workspace_id 逻辑隔离），与 UG/config.py 一致；UG 描述原本正确 | RM |
 | I7 | ✅ 已修复（2026-07-19） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销，db_cross_repo.py 已实现" | CA |
@@ -332,8 +332,8 @@
 | I9 | ✅ 已修复（2026-07-17） | ARC Mixin 数已同步为 40 个，db_*.py 38 个文件 | ARC |
 | I10 | ✅ 已修复（2026-07-17） | ARC Schema 版本已同步为 v37 | ARC |
 | I11 | ✅ 已修复（2026-07-17） | CONTRIBUTING.md Mixin 数已同步为 40 | CT |
-| I12 | ✅ 已修复（2026-07-17） | README.md MCP 工具数已同步为 204 | docs/README.md |
-| I13 | ✅ 已修复（2026-07-17） | mcp_tools.md 头部已统一为 204；概览表 179 是 12 主分类独有工具合计，注释已说明与 204 的差异（跨分类工具 + 8 L5 工具） | MCT |
+| I12 | ✅ 已修复（2026-07-17，2026-07-19 更新） | README.md MCP 工具数已同步为 205+（get_metrics 新增） | docs/README.md |
+| I13 | ✅ 已修复（2026-07-17，2026-07-19 更新） | mcp_tools.md 头部已统一为 205；概览表 179 是 12 主分类独有工具合计，注释已说明与 205 的差异（跨分类工具 + 8 L5 工具 + 1 metrics 监控工具） | MCT |
 | I14 | ✅ 已修复（2026-07-17） | gap-analysis-2026Q2.md 已归档到 docs/history/，README.md 归档清单第 12 行明确标注"基于 9 语言/38 MCP 旧现状，多数缺失功能现已实现" | GA1, GA2 |
 | I15 | ✅ 已修复（2026-07-17） | naming-analysis-report Mixin 数已同步为 40 | naming-analysis-report.md |
 | I16 | ✅ 已修复（2026-07-17） | history/README.md 演化轨迹已扩展到 v37（含 v15-v25 治理期、v26-v33 优化期、v37 L2 破坏性操作）；implementation-snapshot-v13 归档原因已更新 | docs/history/README.md |

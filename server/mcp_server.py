@@ -10,6 +10,7 @@ mcp_server.py
 
 import os
 import sys
+import time
 from typing import Any, Dict, Optional
 
 # 确保可以导入 callwarden 模块
@@ -4626,6 +4627,56 @@ def create_mcp_server():
             return {"count": n}
         except Exception as e:
             return {"error": str(e), "count": 0}
+
+    @mcp.tool()
+    def get_metrics(
+        format: str = "json",
+        name: str = "",
+        reset: bool = False,
+    ) -> dict:
+        """Phase 8: 查询 daemon 运行时指标（counters/gauges/histograms）
+
+        复用 server/metrics.py 的 MetricsCollector 单例，无需 daemon RPC 连接。
+
+        Args:
+            format: 输出格式 — "json"（默认，结构化 dict）或 "prometheus"（Prometheus 文本格式，存到 "text" 字段）
+            name: 仅显示指定指标名（缺省显示全部）
+            reset: True 则重置所有计数器/仪表/直方图（仅测试场景使用）
+
+        Returns:
+            format="json": 完整指标 dict（timestamp/uptime/counters/gauges/histograms）
+            format="json" + name: {"found": bool, "counters": {...}, "gauges": {...}, "histograms": {...}}
+            format="prometheus": {"text": "<prometheus 文本>", "format": "prometheus"}
+            reset=True: {"status": "reset", "timestamp": float}
+        """
+        try:
+            from callwarden.server.metrics import get_metrics_collector
+            collector = get_metrics_collector()
+            if reset:
+                collector.reset()
+                return {"status": "reset", "timestamp": time.time()}
+            if format == "prometheus":
+                return {"format": "prometheus", "text": collector.to_prometheus()}
+            data = collector.to_json()
+            if name:
+                found = False
+                filtered: Dict[str, Any] = {
+                    "timestamp": data["timestamp"],
+                    "uptime": data["uptime"],
+                    "name_filter": name,
+                    "counters": {},
+                    "gauges": {},
+                    "histograms": {},
+                }
+                for category in ("counters", "gauges", "histograms"):
+                    if name in data[category]:
+                        filtered[category] = {name: data[category][name]}
+                        found = True
+                filtered["found"] = found
+                return filtered
+            return data
+        except Exception as e:
+            return {"error": str(e)}
 
     return mcp
 
