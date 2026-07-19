@@ -86,12 +86,12 @@
 - [x] 标记 rust_daemon_architecture.md 已过时的描述
 
 ### Phase 1: Rust 多语言 parse 接入主 refresh 路径
-- [ ] 按 language 对 to_parse 分组
-- [ ] Rust 支持语言调用 batch_parse_files_lang_pool
-- [ ] 不支持语言回退 Python parser
-- [ ] 保留 CW_DISABLE_RUST_PARSE
-- [ ] 增加 parse alignment smoke tests
-- [ ] benchmark 验证 Python ProcessPool 退出主路径
+- [x] 按 language 对 to_parse 分组 — db_build.py:1329 `rust_multilang_files: Dict[str, list] = defaultdict(list)` 按 lang 分组 + `non_rust_files` 收集非 Rust 支持语言
+- [x] Rust 支持语言调用 batch_parse_files_lang_pool — `_rust_multilang_parse` (db_build.py:519/1469) + L6 stream mode 优先 + P30 pool fallback + P29 batch fallback
+- [x] 不支持语言回退 Python parser — `non_rust_files` → `_python_multiprocess_parse` (db_build.py:1481)；小批量走 `parse_file_lang` Rust 单文件，失败 fallback Python parser (db_build.py:1513-1531)
+- [x] 保留 CW_DISABLE_RUST_PARSE — db_build.py:1325 `rust_disabled = bool(os.environ.get("CW_DISABLE_RUST_PARSE"))` + db_build.py:1514 小批量路径同样检查
+- [x] 增加 parse alignment smoke tests — tests/test_phase1_multilang_rust_parse.py 28 测试覆盖分组/fallback/六元组解包/normalize/CW_DISABLE_RUST_PARSE 环境变量
+- [x] benchmark 验证 Python ProcessPool 退出主路径 — tests/test_phase1_parse_benchmark.py 6 测试：路径选择验证 + Rust/Python 耗时对比 smoke benchmark
 
 ### Phase 2: Daemon Skeleton + UDS + Workspace Registry
 - [ ] Rust daemon crate / binary

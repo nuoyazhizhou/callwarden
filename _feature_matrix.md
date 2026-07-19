@@ -250,6 +250,7 @@
 | G35 | daemon_server 新增 RPC（workspace.connect/file.refresh/recover） | E2E | ✅ 已实现 | per-workspace 资源初始化（CAS conn + StagingLog + Replicator） |
 | G36 | JobExecutor 独立线程池 + JobContext + 3 handler | E2E | ✅ 已实现 | clone_detect / vector_embed / semgrep_scan |
 | G37 | 跨 UID query isolation 测试 | E2E | ✅ 已实现 | 30 passed, 6 skipped；双 UID 隔离验证 |
+| G38 | Phase 1: Rust 多语言 parse 接入主 refresh 路径 | RP | ✅ 已实现 | db_build.py:1305-1483 主路径 3 路分组：C 专用快路径（L6 stream 优先 + P30 pool + P29 batch 三级 fallback）+ 非 C Rust 支持语言走 `_rust_multilang_parse`（batch_parse_files_lang_pool）+ 非 Rust 支持语言走 `_python_multiprocess_parse`；小批量路径优先 `parse_file_lang` Rust 单文件 + 失败 fallback Python parser；CW_DISABLE_RUST_PARSE 环境变量双层校验（多进程路径 + 小批量路径）；34 测试通过（test_phase1_multilang_rust_parse.py 28 + test_phase1_parse_benchmark.py 6，覆盖分组/fallback/六元组解包/normalize/环境变量/Rust vs Python 耗时对比 smoke benchmark） |
 
 ## H. 规划但未实施的功能
 
@@ -468,13 +469,13 @@
 | D. 向量搜索 + RAG + LSP + 跨仓库 | 8 | 0 | 0 | 8 |
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
 | F. 性能优化 | 17 | 1 | 1 | 19 |
-| G. Enterprise Daemon | 26 | 4 | 2 | 32+ |
+| G. Enterprise Daemon | 27 | 4 | 2 | 33+ |
 | H. 规划但未实施 | 11 | 1 | 6 | 18 |
 | L. 讨论文档提取 | 10 | 5 | 1 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 4 | 0 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **136** | **13** | **10** | **161** |
+| **总计** | **137** | **13** | **10** | **162** |
 
 **新增功能点摘要（本次扫描）**：
 
