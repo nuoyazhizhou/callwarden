@@ -1,0 +1,822 @@
+[
+  {
+    "name": "get_stats",
+    "desc": "获取代码知识图谱统计信息（文件数、函数数、调用关系数等）"
+  },
+  {
+    "name": "search_symbols",
+    "desc": "搜索符号（函数、类、结构体等）\n\nArgs:\n    query: 搜索关键词（符号名模糊匹配）\n    kind: 按类型过滤（fn/method/class"
+  },
+  {
+    "name": "get_symbol",
+    "desc": "获取符号的详细信息\n\nArgs:\n    qualified_name: 符号限定名（如 crate::module::function_name）\n"
+  },
+  {
+    "name": "get_symbol_location",
+    "desc": "获取符号的位置信息（文件、行号、列号）\n\nArgs:\n    name: 符号名\n    file_path: 可选的文件路径（用于消除重名歧义）\n"
+  },
+  {
+    "name": "get_file_symbols",
+    "desc": "获取文件中的所有符号\n\nArgs:\n    file_path: 文件路径（相对项目根目录）\n"
+  },
+  {
+    "name": "get_callers",
+    "desc": "查询指定函数的所有调用者（谁调用了它）\n\nP28：大规模项目推荐传入 qualified_name 避免短名跨模块误匹配\n\nArgs:\n    callee_n"
+  },
+  {
+    "name": "get_callees",
+    "desc": "查询指定函数调用了哪些函数（它调用了谁）\n\nP28：大规模项目推荐传入 qualified_name 避免短名跨模块误匹配\n\nArgs:\n    caller_"
+  },
+  {
+    "name": "get_symbol_history",
+    "desc": "获取符号的版本历史（所有历史版本）\n\nArgs:\n    qualified_name: 符号限定名\n"
+  },
+  {
+    "name": "get_file_history",
+    "desc": "获取文件的版本历史\n\nArgs:\n    file_path: 文件路径（相对项目根目录）\n"
+  },
+  {
+    "name": "get_recent_changes",
+    "desc": "获取近期变更的文件和符号\n\nArgs:\n    since: 时间范围（如 1h/1d/1w/2024-01-01）\n"
+  },
+  {
+    "name": "get_topological_order",
+    "desc": "获取按依赖拓扑排序的符号列表（被调用最多的在前）\n\nArgs:\n    limit: 返回数量限制\n"
+  },
+  {
+    "name": "get_impact",
+    "desc": "影响面分析：向上追踪所有调用该函数的上游函数\n\nArgs:\n    qualified_name: 起始函数的限定名\n    max_depth: 最大追踪深度"
+  },
+  {
+    "name": "get_call_chain_down",
+    "desc": "调用链向下：追踪该函数调用的所有下游函数\n\nArgs:\n    qualified_name: 起始函数的限定名\n    max_depth: 最大追踪深度（默"
+  },
+  {
+    "name": "get_top_callers",
+    "desc": "获取被调用次数最多的函数排行\n\nArgs:\n    limit: 返回数量限制（默认 20）\n    kind: 符号类型（默认 fn，可选 struct/en"
+  },
+  {
+    "name": "get_orphan_symbols",
+    "desc": "获取未被调用的孤立符号\n\nArgs:\n    kind: 符号类型（默认 fn，可选 struct/enum/trait 等）\n    module_filte"
+  },
+  {
+    "name": "get_deepest_functions",
+    "desc": "获取调用深度最深的函数排行\n\nArgs:\n    limit: 返回数量限制（默认 20）\n    module_filter: 模块过滤（前缀匹配）\n    "
+  },
+  {
+    "name": "get_module_call_stats",
+    "desc": "获取模块间调用统计\n\nArgs:\n    limit: 返回数量限制（默认 30）\n"
+  },
+  {
+    "name": "detect_cycles",
+    "desc": "检测循环调用\n\nArgs:\n    max_depth: 最大追踪深度（默认 10）\n\nReturns:\n    检测到的循环列表，每个循环是一个函数名列表\n"
+  },
+  {
+    "name": "get_comment_from_version",
+    "desc": "从历史版本中获取注释（用于 git checkout 后恢复注释）\n\nArgs:\n    spec: 版本规格（格式: 文件路径:符号名@版本号 或 文件路径:"
+  },
+  {
+    "name": "restore_comment",
+    "desc": "恢复函数注释（从历史版本）\n\nArgs:\n    spec: 版本规格（格式: 文件路径:符号名@版本号 或 文件路径:行号）\n    preview: 预览模"
+  },
+  {
+    "name": "get_issue_summary",
+    "desc": "获取缺陷检测汇总统计"
+  },
+  {
+    "name": "find_issues",
+    "desc": "查找代码缺陷（缺注释、硬编码、unwrap 等）\n\nArgs:\n    issue_type: 缺陷类型（missing_comment/todo_fixme/"
+  },
+  {
+    "name": "get_semgrep_stats",
+    "desc": "获取 Semgrep 缺陷统计（按严重程度、语言、规则分组）"
+  },
+  {
+    "name": "get_semgrep_findings",
+    "desc": "查询 Semgrep 发现的缺陷\n\nArgs:\n    severity: 按严重程度过滤（ERROR/WARNING/INFO）\n    language: "
+  },
+  {
+    "name": "run_semgrep_scan",
+    "desc": "运行 Semgrep 扫描并将结果存入数据库 — 同步版本\n\n注意：对于大型代码库，请使用 semgrep_scan_async 提交后台 job，\n避免阻塞 "
+  },
+  {
+    "name": "get_comment_coverage",
+    "desc": "获取注释覆盖率统计\n\nArgs:\n    group_by: 分组方式：module（按模块）、file（按文件）、kind（按类型）\n"
+  },
+  {
+    "name": "get_uncommented_symbols",
+    "desc": "获取未注释的符号列表\n\nArgs:\n    kind: 符号类型（默认 fn，可选 struct/enum/trait 等）\n    module_filter"
+  },
+  {
+    "name": "get_call_heatmap",
+    "desc": "获取函数调用频率热力图数据\n\nArgs:\n    group_by: 分组方式（module 或 file）\n    top_n: 返回数量限制（默认 20）\n"
+  },
+  {
+    "name": "get_test_coverage",
+    "desc": "获取测试覆盖率统计（test函数分布）"
+  },
+  {
+    "name": "export_module_graph",
+    "desc": "导出模块依赖图\n\nArgs:\n    format: 输出格式（mermaid 或 dot）\n"
+  },
+  {
+    "name": "restore_all_comments",
+    "desc": "批量恢复所有有注释历史的函数注释\n\nArgs:\n    preview: 预览模式（只显示不写入）\n    file_filter: 只恢复指定文件的注释（文件"
+  },
+  {
+    "name": "build_graph",
+    "desc": "完整构建代码知识图谱（全量扫描）"
+  },
+  {
+    "name": "refresh_file",
+    "desc": "刷新单个文件（增量更新）\n\nArgs:\n    file_path: 文件路径（相对或绝对路径）\n"
+  },
+  {
+    "name": "list_workspaces",
+    "desc": "列出所有工作区"
+  },
+  {
+    "name": "register_workspace",
+    "desc": "注册新工作区\n\nArgs:\n    name: 工作区名称（唯一）\n    root_path: 工作区根目录绝对路径\n    description: 描述\n"
+  },
+  {
+    "name": "set_active_workspace",
+    "desc": "设置活动工作区\n\nArgs:\n    workspace_id_or_name: 工作区 ID（数字字符串）或名称\n"
+  },
+  {
+    "name": "delete_workspace",
+    "desc": "删除工作区（级联删除所有实例和版本）\n\nArgs:\n    workspace_id_or_name: 工作区 ID（数字字符串）或名称\n"
+  },
+  {
+    "name": "get_active_workspace",
+    "desc": "获取当前活动工作区信息"
+  },
+  {
+    "name": "file_read",
+    "desc": "读取文件内容（可选附带符号上下文）\n\nAgent 通过此工具读取文件，替代 IDE 内置 Read 工具。\n支持行号偏移和行数限制，避免一次性返回过大内容。\n\n"
+  },
+  {
+    "name": "file_grep",
+    "desc": "在工作区内搜索文件内容（ripgrep 风格）\n\nAgent 通过此工具搜索代码内容，替代 IDE 内置 Grep 工具。\n支持正则表达式、glob 过滤、多种"
+  },
+  {
+    "name": "file_list",
+    "desc": "列出目录下的文件\n\nAgent 通过此工具浏览目录结构，替代 IDE 内置 Glob/LS 工具。\n\nArgs:\n    path: 目录路径（相对或绝对，默认"
+  },
+  {
+    "name": "file_symbol_content",
+    "desc": "读取文件中指定符号的源码内容\n\n结合数据库中的符号位置信息，精确读取函数/类/方法的源码，\n比 file_read 更高效，Agent 无需计算行号范围。\n\nA"
+  },
+  {
+    "name": "import_git_history",
+    "desc": "导入 Git 历史记录到数据库\n\nArgs:\n    max_commits: 最大导入 commit 数量（默认 100）\n\nReturns:\n    导入结"
+  },
+  {
+    "name": "get_git_commits",
+    "desc": "获取 Git commit 列表\n\nArgs:\n    limit: 返回数量限制（默认 20）\n    offset: 偏移量（默认 0）\n\nReturns:"
+  },
+  {
+    "name": "get_commit_changes",
+    "desc": "获取指定 commit 的变更详情\n\nArgs:\n    commit_hash: commit 哈希值\n\nReturns:\n    commit 详情和变更文"
+  },
+  {
+    "name": "get_git_stats",
+    "desc": "获取 Git 集成统计信息\n\nReturns:\n    Git 相关统计数据（commit 数、文件变更数、变更类型分布）\n"
+  },
+  {
+    "name": "get_status",
+    "desc": "获取代码图谱完整状态概览\n\n包含工作区信息、文件分布、语言分布、符号分布、\n调用关系统计、注释覆盖率、缺陷统计等全面信息。\n\nReturns:\n    完整的状"
+  },
+  {
+    "name": "remove_file",
+    "desc": "从图谱中移除指定文件（标记为删除，保留历史）\n\nArgs:\n    file_path: 文件的绝对路径或相对工作区路径\n\nReturns:\n    是否成功移"
+  },
+  {
+    "name": "build_directory",
+    "desc": "构建指定目录的代码图谱\n\nArgs:\n    dir_path: 目录的绝对路径\n\nReturns:\n    构建结果统计\n"
+  },
+  {
+    "name": "get_symbol_content_by_hash",
+    "desc": "根据内容哈希获取符号的完整内容\n\nArgs:\n    content_hash: 符号内容的 SHA-256 哈希\n\nReturns:\n    符号内容详情，包"
+  },
+  {
+    "name": "get_code_metrics_summary",
+    "desc": "获取代码度量汇总统计\n\n包含文件数、函数数、总代码行、调用关系数、\n平均/最高圈复杂度、复杂度分布、注释覆盖率等。\n\nReturns:\n    全局度量统计字典"
+  },
+  {
+    "name": "get_complexity_hotspots",
+    "desc": "获取圈复杂度最高的函数（复杂度热点）\n\n用于识别需要重构的复杂函数。\n\nArgs:\n    limit: 返回数量限制（默认 20）\n    module_fi"
+  },
+  {
+    "name": "get_coupling_analysis",
+    "desc": "获取模块耦合度分析\n\n分析模块间调用关系，计算每个模块的传入/传出耦合度和不稳定性。\n\nArgs:\n    limit: 返回数量限制（默认 30）\n\nRetu"
+  },
+  {
+    "name": "get_function_metrics",
+    "desc": "获取单个函数的度量详情\n\nArgs:\n    qualified_name: 函数限定名\n\nReturns:\n    度量字典，包含圈复杂度、行数、扇入扇出、深"
+  },
+  {
+    "name": "get_largest_functions",
+    "desc": "获取代码行数最多的函数\n\nArgs:\n    limit: 返回数量限制（默认 20）\n    module_filter: 模块路径前缀过滤\n\nReturns"
+  },
+  {
+    "name": "get_most_coupled_functions",
+    "desc": "获取耦合度最高的函数（扇入+扇出最大）\n\nArgs:\n    limit: 返回数量限制（默认 20）\n\nReturns:\n    按总耦合度降序排列的函数列表"
+  },
+  {
+    "name": "get_code_health_check",
+    "desc": "代码健康检查：识别大文件、复杂函数、高耦合模块等问题\n\n⚠️  AI Agent 修改代码前强烈建议先调用此工具！\n\n检查内容：\n- 过大文件（>500/100"
+  },
+  {
+    "name": "check_file_health",
+    "desc": "检查单个文件的健康状态（Agent 修改文件前必调用）\n\n⚠️  重要：在读取或修改任何文件之前，先调用此工具检查文件健康状态！\n\n如果返回 should_sp"
+  },
+  {
+    "name": "semantic_search",
+    "desc": "语义搜索：用自然语言查找相关函数\n\nArgs:\n    query: 自然语言查询（如\"处理用户认证的函数\"）\n    top_k: 返回结果数量（默认 5）\n"
+  },
+  {
+    "name": "find_similar_functions",
+    "desc": "查找与指定函数语义相似的其他函数\n\n用于发现重复代码、隐式依赖和可合并函数。\n\nArgs:\n    qualified_name: 函数限定名\n    thre"
+  },
+  {
+    "name": "embed_symbols",
+    "desc": "为所有函数生成向量嵌入（首次使用前需执行）\n\nArgs:\n    force: 是否强制重新嵌入已有函数\n\nReturns:\n    嵌入统计（总数、成功、跳过"
+  },
+  {
+    "name": "embed_single_symbol",
+    "desc": "为单个函数生成向量嵌入\n\nArgs:\n    symbol_hash: 函数的内容哈希\n\nReturns:\n    {\"success\": bool, \"sym"
+  },
+  {
+    "name": "get_symbol_commit_history",
+    "desc": "获取符号的 Git 变更历史\n\n查询 git_symbol_changes 表，返回该符号的所有 commit 变更记录。\n\nArgs:\n    symbol_"
+  },
+  {
+    "name": "parse_codeowners",
+    "desc": "解析 CODEOWNERS 文件，返回所有权规则列表（不写入数据库）\n\n用于预览 CODEOWNERS 文件内容，不执行导入。\n\nArgs:\n    file_"
+  },
+  {
+    "name": "import_codeowners",
+    "desc": "从 CODEOWNERS 文件导入所有权到数据库\n\n解析 .github/CODEOWNERS 或 CODEOWNERS 文件，将路径模式与所有者关联写入 fi"
+  },
+  {
+    "name": "import_git_blame",
+    "desc": "从 git log 导入每个文件最近一次提交者信息作为所有权补充\n\n对每个 file_instance 执行 git log -1 获取最近提交者，写入 fil"
+  },
+  {
+    "name": "get_project_dependencies",
+    "desc": "读取项目直接依赖清单，不展开传递依赖"
+  },
+  {
+    "name": "import_project_dependencies",
+    "desc": "导入项目直接依赖的第一层外部符号"
+  },
+  {
+    "name": "prune_external_symbols",
+    "desc": "清理外部符号；可保留项目直接依赖并可 VACUUM 释放空间"
+  },
+  {
+    "name": "gc_retention",
+    "desc": "按冷热策略清理旧版本/外部符号；默认只预演，应用前压缩备份整库"
+  },
+  {
+    "name": "gc_policy_get",
+    "desc": "读取当前 workspace 的 GC retention 策略"
+  },
+  {
+    "name": "gc_policy_set",
+    "desc": "更新当前 workspace 的 GC retention 策略"
+  },
+  {
+    "name": "gc_archive_list",
+    "desc": "列出当前数据库目录下的 gc_archives/*.db.gz 备份文件\n\nArgs:\n    limit: 最多返回多少条（默认 20，按 mtime 倒序）"
+  },
+  {
+    "name": "gc_archive_inspect",
+    "desc": "检查 GC 备份文件内容（只读模式，不解压到磁盘永久位置）\n\nArgs:\n    path: 备份文件路径（.db.gz，支持相对 gc_archives 目录"
+  },
+  {
+    "name": "gc_audit_list",
+    "desc": "查询 GC 审计历史记录\n\nArgs:\n    limit: 最多返回多少条（默认 20，钳制到 [1, 500]）\n    operation: 按操作类型过"
+  },
+  {
+    "name": "gc_audit_get",
+    "desc": "查询单条 GC 审计记录详情\n\nArgs:\n    audit_id: gc_runs.id\n\nReturns:\n    审计记录 dict（含反序列化的 JS"
+  },
+  {
+    "name": "gc_archive_import",
+    "desc": "从 GC 备份文件导入历史数据到当前库\n\n设计原则：只 INSERT OR IGNORE，绝不覆盖现有事实（当前库优先）。\n\nArgs:\n    path: 备"
+  },
+  {
+    "name": "task_create",
+    "desc": "创建任务并返回 task_id\n\nAgent 通过此工具创建有步骤的任务，然后通过 task_next_step 逐步执行。\n\nArgs:\n    title:"
+  },
+  {
+    "name": "task_next_step",
+    "desc": "领取任务的下一个待执行步骤\n\nAgent 必须通过此工具领取步骤，不能自由决定下一步操作。\n返回步骤详情（文件、操作、检查项），Agent 只能执行这一步。\n\n"
+  },
+  {
+    "name": "work_next_job",
+    "desc": "领取下一项 Agent 工作，并返回完成它所需的最小上下文\n\n这是 Agent 优先入口：相比手动 read/grep/plan，本工具返回目标、\n符号源码、调"
+  },
+  {
+    "name": "task_resolve_block",
+    "desc": "处理 blocked 步骤的护栏告警，恢复为 pending 以便重新领取\n\n当 task_next_step 返回 guardrail_alert（block"
+  },
+  {
+    "name": "task_report_step",
+    "desc": "回报步骤执行结果\n\n如果失败，系统会自动插入\"修复缺陷\"步骤，Agent 无法跳过。\n如果成功且无更多步骤，任务状态变为 review。\n\nArgs:\n    "
+  },
+  {
+    "name": "record_task_symbol_change",
+    "desc": "记录任务/步骤到文件或符号版本变化的归因"
+  },
+  {
+    "name": "link_edit_audit_symbols",
+    "desc": "刷新图谱后，将某次 edit_audit 的 before/after 文件版本映射到符号变化"
+  },
+  {
+    "name": "get_task_symbol_changes",
+    "desc": "查询任务或步骤归因到的文件/符号变化"
+  },
+  {
+    "name": "get_symbol_change_tasks",
+    "desc": "反查某个符号版本或符号名由哪些任务改变过"
+  },
+  {
+    "name": "get_task_commits",
+    "desc": "查询任务关联的所有 commit（task → commit 正向查询，三角关联）\n\n通过 task_symbol_changes.source_commit_"
+  },
+  {
+    "name": "get_commit_tasks",
+    "desc": "查询 commit 关联的所有 task（commit → task 反向查询，三角关联）\n\n通过 task_symbol_changes.source_com"
+  },
+  {
+    "name": "task_rollback",
+    "desc": "回滚任务中的变更\n\nArgs:\n    task_id: 任务 ID\n    change_id: 变更 ID（可选，不指定则回滚最后一个变更）\n    rea"
+  },
+  {
+    "name": "task_apply",
+    "desc": "审核通过：将任务状态从 review 改为 applied\n\n设计原则：写代码的 Agent 不能自己 applied，必须由其他会话的\nLLM 审核通过后调用"
+  },
+  {
+    "name": "task_close",
+    "desc": "关闭任务：将任务状态从 applied 改为 closed\n\n设计原则：写代码的 Agent 不能自己 closed，必须由其他会话的\nLLM 审核关闭后调用此"
+  },
+  {
+    "name": "task_capture_diff",
+    "desc": "捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环\n\nArgs:\n    source_commit_hash: 引入"
+  },
+  {
+    "name": "audit_verify_chain",
+    "desc": "验证审计签名链连续性与签名匹配\n\n检查 audit_chain 表中每条记录：\n1. record_signature 是否匹配重新计算的签名\n2. prev_"
+  },
+  {
+    "name": "rotate_audit_signing_key",
+    "desc": "轮换审计签名密钥（C7）\n\n流程：\n1. 将当前 active 密钥置为 inactive（is_active=0）\n2. 插入新密钥记录（is_active="
+  },
+  {
+    "name": "list_audit_signing_keys",
+    "desc": "列出所有签名密钥轮换记录（C7）\n\n按 rotated_at 倒序返回，每项含 key_id/rotated_at/is_active，\n不返回 key_sec"
+  },
+  {
+    "name": "bootstrap_status",
+    "desc": "返回自举健康状态摘要\n\n汇总以下信息，帮助判断当前自举闭环是否健康：\n\n1. db_stale：DB 是否滞后（最近一次 scan_run 的 git_head"
+  },
+  {
+    "name": "detect_clones",
+    "desc": "检测重复代码（Type-1/2/3 克隆）— 同步版本\n\n注意：对于 20 万符号级别的大型代码库，请使用 detect_clones_async\n提交后台 j"
+  },
+  {
+    "name": "list_clones",
+    "desc": "列出检测到的克隆对\n\nArgs:\n    clone_type: 克隆类型过滤（0=全部，1/2/3 对应 Type-N）\n    min_similarity"
+  },
+  {
+    "name": "get_clone_stats",
+    "desc": "获取克隆检测统计信息\n\nReturns:\n    {\n        \"total\": int,\n        \"type1\": int, \"type2\": "
+  },
+  {
+    "name": "clear_clones",
+    "desc": "清空当前 workspace 的所有克隆检测结果\n\nReturns:\n    {\"deleted\": int} 被删除的记录数\n"
+  },
+  {
+    "name": "get_symbol_issues",
+    "desc": "查询符号相关的静态检查问题（Semgrep findings + Guardrail findings 聚合）\n\n整合两类静态检查数据，让 agent 查符号时"
+  },
+  {
+    "name": "get_test_cases",
+    "desc": "查询符号的测试 case 列表\n\n回答 agent 高频问题：\"foo() 有哪些 test 在测它？\"\n对应 CLI: cw tests <QN>\n\nArgs"
+  },
+  {
+    "name": "get_tested_functions",
+    "desc": "反向查询：test 函数测了哪些被测函数\n\n对应 CLI: cw tests <QN> --reverse（反向查询）\n\nArgs:\n    test_qual"
+  },
+  {
+    "name": "get_test_coverage_summary",
+    "desc": "查询符号的测试覆盖情况摘要\n\nArgs:\n    qualified_name: 被测函数的限定名\n\nReturns:\n    {\n        \"has_t"
+  },
+  {
+    "name": "get_test_stability",
+    "desc": "查询符号关联测试的稳定性（基于 test_runs 历史）\n\n查找通过 test_case_relations 关联到此符号的所有 test_fn，\n再查 te"
+  },
+  {
+    "name": "get_defect_correlation",
+    "desc": "查询符号的变更-缺陷关联（defect correlation）\n\n分析符号的变更频率与缺陷（Semgrep findings）的时间关联性，\n回答\"这个函数改"
+  },
+  {
+    "name": "detect_clones_async",
+    "desc": "异步检测重复代码（后台 job，不阻塞 MCP 请求）\n\n把 clone detect 提交为后台 job，存 clone groups（不展开 pairs）。"
+  },
+  {
+    "name": "get_job_status",
+    "desc": "查询后台任务状态\n\nArgs:\n    job_id: 任务 ID（如 \"J-1783698970719-3a4b5c6d\"）\n\nReturns:\n    {\n"
+  },
+  {
+    "name": "cancel_job",
+    "desc": "请求取消后台任务\n\n行为：\n- pending 状态：直接标记为 cancelled\n- running 状态：设置 cancel_requested，exec"
+  },
+  {
+    "name": "list_jobs",
+    "desc": "列出后台任务\n\nArgs:\n    job_type: 任务类型过滤（\"\" = 全部，如 \"clone_detect\"）\n    status: 状态过滤（\"\""
+  },
+  {
+    "name": "get_job_stats",
+    "desc": "获取任务统计信息\n\nReturns:\n    {\n        \"pending\": int, \"running\": int,\n        \"comple"
+  },
+  {
+    "name": "wait_for_job",
+    "desc": "等待后台任务完成并返回 result_summary\n\nPhase 7.4：提交 async job 后调用此工具等待完成，获取结果摘要。\n适用于 \"submi"
+  },
+  {
+    "name": "list_clone_groups",
+    "desc": "列出 clone groups（Phase 7.0 新增）\n\n读取 detect_clones_async 的结果。每组含 representative + m"
+  },
+  {
+    "name": "get_clone_group_detail",
+    "desc": "获取 clone group 详情（含成员符号）\n\nArgs:\n    group_id: group ID\n    members_limit: 成员返回上限"
+  },
+  {
+    "name": "get_clone_group_stats",
+    "desc": "获取 clone groups 统计信息\n\nReturns:\n    {\n        \"total_groups\": int, \"type1\": int, "
+  },
+  {
+    "name": "embed_symbols_async",
+    "desc": "异步嵌入向量（后台 job，不阻塞 MCP 请求）\n\nPhase 7.2：把 vector embedding 提交为后台 job。\n增量模式（force=Fa"
+  },
+  {
+    "name": "semgrep_scan_async",
+    "desc": "异步运行 Semgrep 扫描（后台 job，不阻塞 MCP 请求）\n\nPhase 7.3：把 Semgrep CLI 扫描提交为后台 job。\nSemgrep"
+  },
+  {
+    "name": "rule_seed_bootstrap",
+    "desc": "种子化内置自举 active rules\n\n把内置的 5 条 bootstrap 规则写入 agent_rules（status=active），\n让规则注入不"
+  },
+  {
+    "name": "cleanup_agent_rule_sync_log",
+    "desc": "清理 agent_rule_sync_log 表中的旧记录，防止无限增长（C6 GC）\n\n策略（同时满足才删除）：\n1. created_at 早于 older"
+  },
+  {
+    "name": "task_create_subtask",
+    "desc": "在父任务下创建子任务\n\n当任务过大时，可将其拆分为多个子任务。子任务完成后，\n系统自动推进父任务状态，避免 Agent 遗漏任务或遗忘上下文。\n\nArgs:\n "
+  },
+  {
+    "name": "task_split",
+    "desc": "将大任务拆分为多个子任务\n\n当任务步骤过多或单个步骤描述过长时，使用此工具自动拆分。\n原任务的自身步骤保留为汇总/验证步骤，具体工作由子任务完成。\ntask_n"
+  },
+  {
+    "name": "task_status_tree",
+    "desc": "获取任务树详情（含子任务树和进度）\n\n返回完整的任务树结构，包括每层的进度百分比、\n子任务列表、自身步骤状态。用于 Agent 了解整体进展，\n避免因子任务过多"
+  },
+  {
+    "name": "task_create_from_plan",
+    "desc": "从 Markdown 任务计划自动创建父子任务树\n\nAgent 只需传入任务标题和 Markdown 格式的计划，系统会自动：\n- 解析 # / ## / ##"
+  },
+  {
+    "name": "task_plan_template",
+    "desc": "获取 task_create_from_plan 的标准格式模板\n\nAgent 在调用 task_create_from_plan 之前，先获取此模板，\n按模板"
+  },
+  {
+    "name": "task_list",
+    "desc": "列出任务\n\nArgs:\n    status_filter: 状态过滤（open/in_progress/review/applied/closed/rever"
+  },
+  {
+    "name": "task_status",
+    "desc": "获取任务详情和所有步骤\n\nArgs:\n    task_id: 任务 ID\n\nReturns:\n    任务详情和步骤列表\n"
+  },
+  {
+    "name": "task_completion_review",
+    "desc": "运行任务完成质量审查\n\n触发任务质量门禁：自动清理该 step 旧的 check_gate 发现，\n调用 run_check_gate（语法/Semgrep），"
+  },
+  {
+    "name": "task_quality_findings",
+    "desc": "查询任务质量门禁发现\n\n返回 task_quality_findings 表中匹配过滤条件的记录，\n按 created_at 升序（旧的先处理）。\n\nArgs:"
+  },
+  {
+    "name": "task_resolve_quality_finding",
+    "desc": "解决或豁免单条任务质量门禁发现\n\n将 finding 状态从 open 推进到 resolved 或 wontfix，\n记录解决者和解决时间。error/blo"
+  },
+  {
+    "name": "generate_summary",
+    "desc": "为函数生成/保存摘要\n\nArgs:\n    qualified_name: 函数限定名\n    summary: 摘要文本\n    model: 生成模型标识\n"
+  },
+  {
+    "name": "get_summary",
+    "desc": "获取函数的当前摘要\n\nArgs:\n    qualified_name: 函数限定名\n\nReturns:\n    摘要信息\n"
+  },
+  {
+    "name": "project_brief",
+    "desc": "获取项目简报\n\n包含项目类型、入口、模块职责、热点函数、健康评分等。\n适合 Agent 首次接触项目时调用。\n\nReturns:\n    项目简报字典\n"
+  },
+  {
+    "name": "repo_map",
+    "desc": "生成仓库模块依赖图\n\nArgs:\n    format: 输出格式（text 或 mermaid）\n\nReturns:\n    依赖图内容\n"
+  },
+  {
+    "name": "import_coverage",
+    "desc": "导入覆盖率报告\n\nArgs:\n    file_path: 覆盖率报告文件路径\n    format: 格式（lcov 或 cobertura）\n\nReturn"
+  },
+  {
+    "name": "get_coverage_for_symbol",
+    "desc": "获取函数的代码覆盖率\n\nArgs:\n    qualified_name: 函数限定名\n\nReturns:\n    覆盖率信息（总行数、覆盖行数、百分比、未覆盖"
+  },
+  {
+    "name": "find_uncovered_functions",
+    "desc": "查找覆盖率低于阈值的函数\n\nArgs:\n    module_filter: 模块路径前缀过滤\n    threshold: 覆盖率阈值百分比（默认 50）\n\n"
+  },
+  {
+    "name": "test_impact_selection",
+    "desc": "测试影响选择：改了某函数后需要运行哪些测试\n\nArgs:\n    qualified_name: 被修改的函数限定名\n\nReturns:\n    需要运行的测试"
+  },
+  {
+    "name": "who_to_ask",
+    "desc": "查询文件负责人（谁最了解这个文件）\n\n综合 CODEOWNERS 和 git blame 信息。\n\nArgs:\n    file_path: 文件路径\n\nRet"
+  },
+  {
+    "name": "get_ownership_map",
+    "desc": "获取模块所有权映射\n\nArgs:\n    module_filter: 模块路径前缀过滤\n\nReturns:\n    按模块分组的所有权映射\n"
+  },
+  {
+    "name": "guardrail_scan",
+    "desc": "对指定文件运行安全规则扫描\n\n扫描 DB / API / Incident 三类可阻断规则，识别代码中的安全风险。\n\nArgs:\n    file_filter"
+  },
+  {
+    "name": "guardrail_check_edit",
+    "desc": "编辑前阻断式检查\n\n在修改文件前调用，根据规则决定是否阻断本次编辑。\n\nArgs:\n    file_path: 目标文件路径\n    proposed_cha"
+  },
+  {
+    "name": "guardrail_list_rules",
+    "desc": "列出已注册的安全规则\n\nArgs:\n    category_filter: 按类别过滤（如 db / api / incident）\n\nReturns:\n  "
+  },
+  {
+    "name": "guardrail_add_rule",
+    "desc": "添加自定义安全规则\n\nArgs:\n    category: 规则类别（如 db / api / incident）\n    pattern: 匹配模式（正则或"
+  },
+  {
+    "name": "blast_radius",
+    "desc": "计算变更影响半径\n\n以指定符号为起点，沿调用链向上游扩散，计算受影响的调用者数量与范围。\n\nArgs:\n    symbol_hash: 起始符号的内容哈希\n "
+  },
+  {
+    "name": "ask_codebase",
+    "desc": "RAG 管道：基于调用链增强的代码库问答上下文组装\n\n与普通语义搜索的差异：组装完整的 RAG 上下文，包含种子函数 + 调用方 + 被调用方 + 摘要。\n向量"
+  },
+  {
+    "name": "record_token_savings",
+    "desc": "记录一次操作的 token 节省（用于账本和优化分析）\n\nArgs:\n    operation: 操作类型（rag_context / call_chain_"
+  },
+  {
+    "name": "get_token_savings_report",
+    "desc": "获取 Token 节省报告（宣传利器 + 优化依据）\n\nArgs:\n    time_window: 时间窗口（7d / 30d / 90d / \"\" 全部）\n"
+  },
+  {
+    "name": "get_vulnerability_blast_radius",
+    "desc": "计算漏洞的爆炸半径（Semgrep 发现 × 调用链反向传播 = 安全影响面）\n\n全行业空白特性：将 Semgrep findings 与调用图结合，回答\"这个"
+  },
+  {
+    "name": "get_clone_aware_impact",
+    "desc": "克隆感知的变更影响分析（H11）\n\n在 blast_radius 基础上联动 clone_pairs：源符号的克隆代码变更也会影响相同调用方，\n因此影响半径应包"
+  },
+  {
+    "name": "diff_to_symbol",
+    "desc": "将 git diff 映射到受影响符号\n\n解析 diff 文本，定位每个变更对应的符号（函数/方法/类）。\n\nArgs:\n    diff_text: git "
+  },
+  {
+    "name": "review_readiness",
+    "desc": "审查就绪报告\n\n评估指定符号是否满足代码审查就绪条件（测试覆盖、注释完整、无遗留缺陷等）。\n\nArgs:\n    symbol_hash: 符号内容哈希\n\nRe"
+  },
+  {
+    "name": "cross_layer_impact",
+    "desc": "跨层影响分析\n\n分析符号变更对其他层（如 API / DB / UI）的跨层影响。\n\nArgs:\n    symbol_hash: 符号内容哈希\n\nReturn"
+  },
+  {
+    "name": "evolution_frequency",
+    "desc": "函数变更频率分析\n\n统计指定函数在时间窗口内的变更次数、变更作者、关联 commit 等。\n\nArgs:\n    qualified_name: 函数限定名\n "
+  },
+  {
+    "name": "defect_correlation",
+    "desc": "缺陷关联分析\n\n分析指定符号在最近 N 次 commit 内的变更与缺陷修复的关联性。\n\nArgs:\n    symbol_hash: 符号内容哈希\n    w"
+  },
+  {
+    "name": "hotspot_evolution",
+    "desc": "热点函数演化\n\n识别近期变更最频繁的热点函数，辅助聚焦审查与重构资源。\n\nArgs:\n    module_filter: 模块路径前缀过滤\n\nReturns:"
+  },
+  {
+    "name": "churn_analysis",
+    "desc": "代码流失分析\n\n统计指定时间窗口内的代码流失量（新增/删除/修改行数）。\n\nArgs:\n    module_filter: 模块路径前缀过滤\n    time"
+  },
+  {
+    "name": "defect_search",
+    "desc": "缺陷模式搜索\n\n按类别/严重度搜索缺陷知识库中已积累的缺陷模式。\n\nArgs:\n    category: 类别过滤（前缀匹配，如 \"sec\" 匹配 \"secu"
+  },
+  {
+    "name": "defect_suggest_fix",
+    "desc": "修复建议\n\n基于缺陷知识库为指定符号/缺陷推荐修复方案。\n\nArgs:\n    symbol_hash: 符号内容哈希\n    finding_id: 关联缺陷"
+  },
+  {
+    "name": "defect_learn",
+    "desc": "从修复中学习\n\n解析指定修复 commit，提取缺陷模式并入库，供后续推荐使用。\n\nArgs:\n    fix_commit_hash: 修复 commit 的"
+  },
+  {
+    "name": "defect_stats",
+    "desc": "缺陷知识库统计\n\n返回缺陷知识库的整体统计信息（模式总数、分类分布、严重度分布等）。\n\nReturns:\n    统计字典\n"
+  },
+  {
+    "name": "register_branch",
+    "desc": "注册分支工作区\n\n将分支注册为独立 workspace（name=分支名），用于分支感知图谱。\n同一仓库的多个分支通过 root_path 追加 \"#分支名\" "
+  },
+  {
+    "name": "list_branches",
+    "desc": "列出所有分支工作区\n\n返回每个分支工作区的 id / name / root_path / created_at / symbol_count。\n\nReturn"
+  },
+  {
+    "name": "diff_branches",
+    "desc": "比较两个分支的符号差异\n\n通过比较两个 workspace 的 symbols 表（按 qualified_name 对比 symbol_hash）：\n- ad"
+  },
+  {
+    "name": "diff_callers",
+    "desc": "对比两个 workspace 中同一符号的 caller 边集合\n\n基于 resolved edge delta，返回 left/right 各自独有的 cal"
+  },
+  {
+    "name": "diff_callees",
+    "desc": "对比两个 workspace 中同一符号的 callee 边集合\n\n基于 resolved edge delta，返回 left/right 各自独有的 cal"
+  },
+  {
+    "name": "compare_snapshots",
+    "desc": "对比两个 workspace 中指定 scope 内的所有符号差异\n\n同步查询：小 scope（file/module）直接返回结果。\n仓库级 scope 应先"
+  },
+  {
+    "name": "switch_branch",
+    "desc": "切换活动工作区到指定分支\n\n切换当前活动工作区到指定分支，后续查询在该分支上下文中执行。\n\nArgs:\n    branch_name: 分支名\n\nReturn"
+  },
+  {
+    "name": "merge_preview",
+    "desc": "合并预览：分析 source 分支变更对 target 分支的影响\n\n基于 diff_branches 结果，对 added/modified 符号调用 bla"
+  },
+  {
+    "name": "propose_edit",
+    "desc": "提交安全编辑请求（Agent OS 核心能力）\n\n执行流程：\n1. 计算编辑前文件的 SHA-256 hash（file_hash_before）\n2. 计算编"
+  },
+  {
+    "name": "propose_range_patch",
+    "desc": "提交行号范围补丁，避免读写整个大文件\n\n行号为 1-based 闭区间。用于 Agent 只改目标函数、目标代码块或\n插入少量注释，而不需要提交完整文件内容。\n"
+  },
+  {
+    "name": "propose_symbol_patch",
+    "desc": "提交符号级补丁，按图谱定位函数/类范围后局部改写\n\nmode 支持 replace / insert_before / insert_after。注释任务通常使"
+  },
+  {
+    "name": "propose_symbol_id_patch",
+    "desc": "提交基于 symbol_id 的精确符号补丁\n\n使用 symbols.id 定位当前符号快照，并在写入前校验文件 hash\n与符号 hash。工具内部会执行 B"
+  },
+  {
+    "name": "revert_edit",
+    "desc": "回滚编辑（标记审计状态为 reverted）\n\n注意：审计表不存储完整文件内容，本方法仅标记审计状态。\n实际内容回滚需要依赖 git checkout 或外部备"
+  },
+  {
+    "name": "get_edit_history",
+    "desc": "查询文件编辑历史\n\n按文件路径过滤或返回全部编辑记录，按 created_at 倒序排列。\n\nArgs:\n    file_path: 文件路径过滤（为空则返回"
+  },
+  {
+    "name": "get_edit_stats",
+    "desc": "获取文件编辑统计\n\n统计指定时间窗口内的编辑情况：\n- 总编辑数 / 成功数 / 回滚数 / 失败数\n- 按操作类型分组（edit / create / del"
+  },
+  {
+    "name": "detect_cross_repo_deps",
+    "desc": "检测跨仓库依赖关系\n\n通过扫描源仓库中所有符号的 import 语句，匹配目标仓库的符号名，\n识别跨仓库依赖。结果持久化到 cross_repo_deps 表。"
+  },
+  {
+    "name": "find_shared_symbols",
+    "desc": "查找跨仓库共享符号（相同 content_hash 的函数）\n\n利用 symbol_contents 表的 content_hash 去重特性，\n识别两个仓库中"
+  },
+  {
+    "name": "cross_repo_impact",
+    "desc": "跨仓库影响分析\n\n给定一个符号，分析它的变更会影响哪些其他仓库。\n联合 cross_repo_deps 表 + blast_radius 进行多层级传播分析。\n"
+  },
+  {
+    "name": "cross_repo_summary",
+    "desc": "跨仓库分析总览\n\n返回所有已注册仓库的统计信息：仓库列表、跨仓库依赖数、共享符号数、\n依赖类型分布。\n\nReturns:\n    {\n        \"tota"
+  },
+  {
+    "name": "lsp_hover",
+    "desc": "获取符号的 hover 信息（类型签名、文档注释等）\n\n通过 LSP 协议查询符号的悬浮信息，补充 tree-sitter 静态分析。\n支持 Python / "
+  },
+  {
+    "name": "lsp_definition",
+    "desc": "跳转到定义\n\n通过 LSP 协议查询符号定义位置（跨文件跳转）。\n\nArgs:\n    file_path: 文件路径\n    line: 行号（0-based"
+  },
+  {
+    "name": "lsp_references",
+    "desc": "查找符号的所有引用\n\n通过 LSP 协议查找符号在项目中的所有引用位置。\n比 calls 表的静态分析更准确（LSP 理解语义）。\n\nArgs:\n    fil"
+  },
+  {
+    "name": "lsp_diagnostics",
+    "desc": "获取文件诊断信息（错误、警告）\n\n通过 LSP 服务器获取文件的实时诊断（编译错误、类型错误、lint 警告等）。\n比 Semgrep 静态规则更精准（LSP "
+  },
+  {
+    "name": "lsp_completion",
+    "desc": "获取代码补全建议\n\n通过 LSP 协议获取指定位置的补全建议（方法、字段、变量等）。\n可用于 Agent 生成代码时的智能补全。\n\nArgs:\n    file"
+  },
+  {
+    "name": "lsp_check_available",
+    "desc": "检查 LSP 服务器是否可用\n\n检查指定语言（或所有支持语言）的 LSP 服务器是否已安装且可启动。\nAgent 在调用其他 lsp_* 工具前应先调用此方法确"
+  },
+  {
+    "name": "run_check_gate",
+    "desc": "手动触发检查门禁（F6）\n\n对变更文件运行语法检查 + Semgrep 扫描。通常由 task_report_step\n在步骤成功且有文件变更时自动触发，此工具"
+  },
+  {
+    "name": "resolve_gate_findings",
+    "desc": "标记任务的门禁发现为已解决（F6）\n\nAgent 修复缺陷后调用此工具，将该任务关联文件上的所有 open 状态\nguardrail_findings 标记为 "
+  },
+  {
+    "name": "rule_candidate_create",
+    "desc": "创建候选规则（pending 状态）\n\nAgent 在 task 执行过程中观察到的规则候选需要走审核流程：\n创建 → 审核（accept/reject）→ 写"
+  },
+  {
+    "name": "rule_candidate_list",
+    "desc": "列出候选规则\n\nArgs:\n    status: 状态过滤 pending / accepted / rejected，空串返回所有\n    limit: 返"
+  },
+  {
+    "name": "rule_candidate_accept",
+    "desc": "接受候选规则，写入 agent_rules（active）\n\n幂等：重复 accept 已 accepted 的 candidate 会返回原 linked_r"
+  },
+  {
+    "name": "rule_candidate_reject",
+    "desc": "拒绝候选规则\n\nArgs:\n    candidate_id: 候选规则 ID（ARC-xxx）\n    reviewer: 审核人标识\n    reason:"
+  },
+  {
+    "name": "rule_list",
+    "desc": "列出已生效规则\n\nArgs:\n    status: 状态过滤 active / deprecated / removed，空串返回所有\n    limit: "
+  },
+  {
+    "name": "get_applicable_rules",
+    "desc": "按上下文返回匹配的 active 规则\n\nscope 匹配规则：\n- 空 scope = 全局匹配\n- 同字段内多值 OR 匹配（如 languages: [p"
+  },
+  {
+    "name": "rule_sync_agents_md",
+    "desc": "把 active 规则同步到 AGENTS.md 标记区\n\n安全策略：\n- dry_run=True（默认）只返回 preview，不写文件\n- apply 模"
+  },
+  {
+    "name": "rule_insert_agents_md_block",
+    "desc": "在 AGENTS.md 末尾插入 Call Warden 规则标记块\n\n当标记区不存在时调用此方法插入空标记块，之后\nrule_sync_agents_md 才"
+  },
+  {
+    "name": "extract_rule_candidates_from_quality_findings",
+    "desc": "从 task_quality_findings 聚合重复问题生成候选规则\n\n聚合维度：(finding_type, severity, source)\n- 同一"
+  },
+  {
+    "name": "list_toolchains",
+    "desc": "L5: 列出所有已注册的工具链\n\nReturns:\n    工具链摘要列表（id/name/compiler_type/version/target_tripl"
+  },
+  {
+    "name": "get_toolchain",
+    "desc": "L5: 查询工具链详情（含 include_dirs + predefined_macros）\n\nArgs:\n    name_or_id: 工具链名称或 ID"
+  },
+  {
+    "name": "get_workspace_toolchains",
+    "desc": "L5: 查询 workspace 绑定的工具链\n\nArgs:\n    workspace_id: workspace ID\n    build_context_"
+  },
+  {
+    "name": "list_build_contexts",
+    "desc": "L5: 列出 workspace 的所有构建上下文（build variants）\n\nArgs:\n    workspace_id: workspace ID\n"
+  },
+  {
+    "name": "get_build_context",
+    "desc": "L5: 查询构建上下文详情（flags + defines + include_paths）\n\nArgs:\n    workspace_id: workspac"
+  },
+  {
+    "name": "get_active_build_context",
+    "desc": "L5: 查询当前活跃的构建上下文\n\nArgs:\n    workspace_id: workspace ID\n"
+  },
+  {
+    "name": "get_resolved_edges",
+    "desc": "L5: 查询解析后的跨文件调用边（resolved_edges）\n\nresolved_edges 是用 build context（include 路径 + d"
+  },
+  {
+    "name": "count_resolved_edges",
+    "desc": "L5: 统计构建上下文下的 resolved_edges 数量\n\nArgs:\n    workspace_id: workspace ID\n    build_"
+  },
+  {
+    "name": "get_metrics",
+    "desc": "Phase 8: 查询 daemon 运行时指标（counters/gauges/histograms）\n\n复用 server/metrics.py 的 Met"
+  }
+]

@@ -324,3 +324,10 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 | [docs/task_create_subtask.py](docs/task_create_subtask.py) | 挂载子任务的标准脚本模板 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更 |
+
+
+## Call Warden 自动沉淀规则
+
+<!-- CALLWARDEN_RULES_START -->
+<!-- 自动同步区域，请通过 cw rule sync 更新，不要手改 -->
+<!-- CALLWARDEN_RULES_END -->
