@@ -207,7 +207,7 @@
 | F17 | P8 FTS rebuild 替代触发器写放大 | WL2 | ✅ 已实施 | full build 期间禁用 FTS 触发器，最后一次性 rebuild |
 | F18 | P9 C/C++ 显式栈遍历 + thirdParty ignore | WL2 | ✅ 已实施 | firmware 30min+ 卡死 → 22.1s；消除 RecursionError |
 | F19 | P10 多进程 worker 限制 min(4, cpu_count) | WL2 | ✅ 已实施 | 每 worker ~300MB，4 进程 ~1.2GB（原 8 进程 ~2.4GB） |
-| F20 | search_symbols 保留 SQL（GraphStore 反而慢 25%） | BR3 | ✅ 设计决策已文档化 | memchr 全扫描 O(N×L) vs SQL LIKE B-tree 范围扫描 O(log N + M)；1M 符号实测 SQL 2.354ms vs GraphStore 3.132ms（0.75x 慢 25%）；决策根因 + 路由表 + 未来优化方向已写入 [architecture.md §6](docs/architecture.md#6-查询路径设计决策graphstore-vs-sql-路由) |
+| F20 | search_symbols 路由反转（FTS5 优先，Rust fallback） | BR3 | ✅ 已实施（2026-07-19） | 1M 符号实测 FTS5 trigram 2.354ms vs Rust memchr 3.132ms（0.75x 慢 25%）；100K 符号实测 FTS5 0.41ms vs Rust memchr 151.47ms（**370x 加速**）；反转路由：FTS5 优先 → Rust fallback → LIKE fallback；保留 Rust 作为 fallback（FTS5 不可用或 query < 3 字符时启用）；修正 F20 文档错误描述（原写"前缀匹配"实际是"子串匹配"）；详见 [architecture.md §6](docs/architecture.md#6-查询路径设计决策graphstore-vs-sql-路由) |
 
 ## G. Enterprise Daemon 架构（规划/部分实施）
 
@@ -468,14 +468,14 @@
 | C. 任务编排 + Agent OS | 11 | 0 | 0 | 11 |
 | D. 向量搜索 + RAG + LSP + 跨仓库 | 8 | 0 | 0 | 8 |
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
-| F. 性能优化 | 17 | 1 | 1 | 19 |
+| F. 性能优化 | 18 | 1 | 0 | 19 |
 | G. Enterprise Daemon | 27 | 4 | 2 | 33+ |
 | H. 规划但未实施 | 12 | 1 | 5 | 18 |
 | L. 讨论文档提取 | 10 | 5 | 1 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
 | N. 跨平台打包 | 4 | 4 | 0 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **138** | **13** | **9** | **162** |
+| **总计** | **139** | **13** | **8** | **162** |
 
 **新增功能点摘要（本次扫描）**：
 

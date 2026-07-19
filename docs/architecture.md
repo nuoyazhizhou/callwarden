@@ -802,24 +802,35 @@ Call Warden 同时维护两套查询路径：**Rust GraphStore（CSR 内存索�
 | `get_symbol` | 0.008ms | 0.013ms | **GraphStore**（1.66x 加速） | `by_qualified_name` HashMap O(1) |
 | `call_chain BFS d=5` | 24.4ms | 96.4ms | **GraphStore**（3.95x 加速） | CSR 内存遍历 vs SQL CTE 递归 |
 | `batch_callers(100)` | 0.29ms | 2.45ms | **GraphStore**（8.56x 加速） | 单次 CSR 遍历多次查询 |
-| `search_symbols` | 3.132ms | 2.354ms | **SQL**（**0.75x 反而慢 25%**） | 见下方根因 |
+| `search_symbols` | 3.132ms（memchr 子串） | 2.354ms（FTS5 trigram） | **FTS5**（**1.33x 加速**） | 见下方根因 |
 
-**F20 设计决策根因**：`search_symbols` 反向走 SQL 是有意的，不是遗漏：
+**F20 设计决策根因**：`search_symbols` 走 SQL 是有意的，不是遗漏：
 
 1. **GraphStore 实现路径**（[rust_ext/src/graph.rs:756 `search_symbols`](../rust_ext/src/graph.rs) + [rust_ext/src/graph.rs:2066 `search_symbols_rust`](../rust_ext/src/graph.rs)）：把所有符号名拼接成 `search_pool_lower`，用 `memchr::memmem::find` SIMD 一次扫描整个池查找 query 子串。复杂度 O(N×L)（N=符号数，L=query 长度），即使有 SIMD 加速，符号表 1M 时仍需扫 1M 次。
 
-2. **SQL 实现路径**（`_sql_fallback_search_symbols`）：`SELECT * FROM symbols WHERE name LIKE ? || '%'` 走 `idx_symbols_name` B-tree 索引范围扫描，复杂度 O(log N + M)（M=匹配数）。前缀匹配场景下 SQL 直接定位到 B-tree 叶子节点连续段，扫描的只是匹配项，不是全表。
+2. **SQL 实现路径**（`_sql_fallback_search_symbols` → `db_query.search_symbols`）：实际有三层 fallback：
+   - **FTS5 trigram 倒排索引**（主路径，v31 schema 引入）：`symbols_fts MATCH ?`，trigram tokenizer 把 name/qname 切成 3-gram 倒排索引，查询时把 query 切 3-gram 取交集。复杂度 O(log N + M)（M=匹配数），是真正的倒排索引路径
+   - **Rust GraphStore memchr 子串扫描**（fallback 1）：FTS5 不可用或 query < 3 字符时启用
+   - **LIKE `%query%` 全表扫描**（fallback 2）：FTS5 + Rust 都不可用时启用，O(N) 全表扫描
 
 3. **设计选型依据**：
-   - `search_symbols` 是**前缀/子串匹配**场景，B-tree 索引天然适合范围查询
+   - `search_symbols` 是**子串匹配**场景（`LIKE '%query%'`），不是前缀匹配（`LIKE 'query%'`）
+   - 子串匹配不能走 B-tree 索引范围扫描（只有前缀匹配可以），必须用倒排索引
+   - FTS5 trigram 是真正的倒排索引（3-gram → rowid 列表），Rust memchr 是线性 SIMD 扫描
    - GraphStore 的内存索引结构（CSR + HashMap）适合**精确查找**（`get_callers` 按 callee_name / `get_symbol` 按 qname），不适合范围扫描
-   - 强行用 memchr 全扫描做子串搜索，反而失去了 B-tree 索引的优势，实测慢 25%
+   - 强行用 memchr 全扫描做子串搜索，比 FTS5 trigram 倒排索引慢 25%
 
-4. **未来优化方向**（不在当前路线图）：
-   - 若追求 daemon 路径一致性，可在 Rust 端构建一个简化的 B-tree 索引（按 name 排序的 `Vec<(name, symbol_id)>` + 二分查找），与 SQL B-tree 等效
-   - 或保留 SQL 路径作为永久选择（当前决策），承认 GraphStore 不是银弹
+4. **路由反转决策**（2026-07-19 修正）：
+   - **原路由**（2026-07）：Rust memchr 优先 → FTS5 fallback → LIKE fallback
+   - **新路由**：FTS5 trigram 优先 → Rust memchr fallback → LIKE fallback
+   - **修正原因**：实测 FTS5 trigram 比 Rust memchr 快 25%（1M 符号 2.354ms vs 3.132ms），原路由把更慢的 Rust 放在前面是 B-P7b Rust 短路原则的误用
+   - **保留 Rust 作为 fallback**：FTS5 不可用（schema < v31）或 query < 3 字符（trigram 不支持）时启用，Rust memchr 仍比 LIKE 全表快
 
-**结论**：`search_symbols` 走 SQL 是经过实测验证的设计决策，不是技术债。`DaemonClient.search_symbols` 仍尝试 `_remote_query("query.search")`（如果 daemon 已发布 snapshot 且远端实现了 SQL 路径），fallback 到本地 SQL。
+5. **未来优化方向**（不在当前路线图）：
+   - 若追求 daemon 路径一致性，可在 Rust 端构建 trigram 倒排索引（3-gram → symbol_ids HashMap），与 FTS5 等效但跳过 SQL 调用
+   - 或保留 FTS5 路径作为永久选择（当前决策），承认 GraphStore 不是银弹
+
+**结论**：`search_symbols` 走 FTS5 trigram 是经过实测验证的设计决策，不是技术债。`DaemonClient.search_symbols` 仍尝试 `_remote_query("query.search")`（如果 daemon 已发布 snapshot 且远端实现了 SQL 路径），fallback 到本地 FTS5/Rust/LIKE。
 
 ## 扩展指南
 

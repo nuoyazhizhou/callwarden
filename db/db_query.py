@@ -594,51 +594,28 @@ class QueryMixin:
         """搜索符号
 
         Args:
-            query: 搜索关键词（模糊匹配 qualified_name 和 name）
+            query: 搜索关键词（模糊匹配 qualified_name 和 name，子串匹配）
             kind: 符号类型过滤（可选）
             limit: 结果数量限制
 
         Returns:
             匹配的符号列表
+
+        路由策略（F20 路由反转，2026-07-19）：
+        1. FTS5 trigram 倒排索引（主路径，query >= 3 字符）：O(log N + M)
+        2. Rust GraphStore memchr 子串扫描（fallback 1，query < 3 字符或 FTS5 不可用）：O(N×L)
+        3. LIKE %query% 全表扫描（fallback 2，FTS5 + Rust 都不可用）：O(N)
+
+        实测（1M 符号）：FTS5 trigram 2.354ms > Rust memchr 3.132ms > LIKE 全表
+        原路由把 Rust 放在 FTS5 前面是 B-P7b Rust 短路原则的误用，本次反转修正。
+        详见 [docs/architecture.md §6 查询路径设计决策](../docs/architecture.md#6-查询路径设计决策graphstore-vs-sql-路由)。
         """
         ws_id = self._get_active_workspace_id()
-        # B-P7b: Rust GraphStore 快速过滤 + SQL 字段补全
-        # Rust 做子串匹配（O(N) 扫描预计算的小写字段，零 SQL），
-        # 返回最多 limit 个匹配的 symbol id，
-        # 再用 SQL 按 id IN(...) 批量取完整字段（signature/has_comment 等）
-        # 注意：空 query 跳过 Rust 短路（Rust 子串匹配空串返回空，语义错误；
-        # 空 query 应返回所有符号，走 FTS5/LIKE 路径）
-        store = self._get_graph_store() if query else None
-        if store is not None:
-            try:
-                rust_results = store.search_symbols(query, kind, limit)
-                if rust_results is not None and len(rust_results) > 0:
-                    ids = [r["id"] for r in rust_results]
-                    placeholders = ",".join("?" * len(ids))
-                    sql = f"""
-                        SELECT DISTINCT
-                            s.qualified_name, s.module_path, s.start_line, s.end_line,
-                            s.depth, s.name, s.kind, s.signature, s.has_comment,
-                            fi.rel_path as file_path
-                        FROM symbols s
-                        JOIN file_instances fi ON s.file_instance_id = fi.id
-                        WHERE fi.workspace_id = ? AND fi.status != 'archived'
-                          AND s.id IN ({placeholders})
-                        ORDER BY s.kind, s.depth DESC, fi.rel_path, s.start_line
-                        LIMIT ?
-                    """
-                    params: List[Any] = [ws_id] + ids + [limit]
-                    cur = self.conn.execute(sql, params)
-                    return [dict(row) for row in cur]
-                elif rust_results is not None:
-                    # Rust 返回空列表（有结果但为空）→ 直接返回
-                    return []
-            except Exception:
-                pass  # Rust 查询异常 → 降级 FTS5/LIKE
 
-        # P2 优化：优先 FTS5 token 匹配，失败回退 LIKE
-        # FTS5 unicode61 会把 snake_case/camelCase/::./ 自动分词
+        # 1. FTS5 trigram 主路径（query >= 3 字符）
+        # FTS5 unicode61 + trigram tokenizer 把 snake_case/camelCase/::./ 自动分词
         # 例如 user_login_handler → [user, login, handler]，搜 "login" 即可命中
+        # trigram 要求 query >= 3 字符，否则抛 ValueError 触发 fallback
         try:
             fts_query = self._build_fts_query(query)
             sql = """
@@ -659,7 +636,7 @@ class QueryMixin:
                 WHERE fi.workspace_id = ? AND fi.status != 'archived'
                   AND symbols_fts MATCH ?
             """
-            params = [ws_id, fts_query]
+            params: List[Any] = [ws_id, fts_query]
 
             if kind:
                 sql += " AND s.kind = ?"
@@ -671,8 +648,46 @@ class QueryMixin:
             cur = self.conn.execute(sql, params)
             return [dict(row) for row in cur]
         except Exception:
-            # FTS5 不可用或 query 含特殊语法 → 回退 LIKE 路径
-            return self._search_symbols_like(query, kind, limit)
+            # FTS5 不可用 / query < 3 字符 / query 含特殊语法 → 进入 Rust fallback
+            pass
+
+        # 2. Rust GraphStore memchr 子串扫描（fallback 1）
+        # B-P7b: Rust GraphStore 快速过滤 + SQL 字段补全
+        # Rust 做子串匹配（O(N×L) 扫描预计算的小写字段，零 SQL），
+        # 返回最多 limit 个匹配的 symbol id，
+        # 再用 SQL 按 id IN(...) 批量取完整字段（signature/has_comment 等）
+        # 注意：空 query 跳过 Rust 短路（Rust 子串匹配空串返回空，语义错误；
+        # 空 query 应返回所有符号，走 LIKE 路径）
+        store = self._get_graph_store() if query else None
+        if store is not None:
+            try:
+                rust_results = store.search_symbols(query, kind, limit)
+                if rust_results is not None and len(rust_results) > 0:
+                    ids = [r["id"] for r in rust_results]
+                    placeholders = ",".join("?" * len(ids))
+                    sql = f"""
+                        SELECT DISTINCT
+                            s.qualified_name, s.module_path, s.start_line, s.end_line,
+                            s.depth, s.name, s.kind, s.signature, s.has_comment,
+                            fi.rel_path as file_path
+                        FROM symbols s
+                        JOIN file_instances fi ON s.file_instance_id = fi.id
+                        WHERE fi.workspace_id = ? AND fi.status != 'archived'
+                          AND s.id IN ({placeholders})
+                        ORDER BY s.kind, s.depth DESC, fi.rel_path, s.start_line
+                        LIMIT ?
+                    """
+                    params = [ws_id] + ids + [limit]
+                    cur = self.conn.execute(sql, params)
+                    return [dict(row) for row in cur]
+                elif rust_results is not None:
+                    # Rust 返回空列表（有结果但为空）→ 直接返回
+                    return []
+            except Exception:
+                pass  # Rust 查询异常 → 降级 LIKE
+
+        # 3. LIKE %query% 全表扫描（fallback 2，最终兜底）
+        return self._search_symbols_like(query, kind, limit)
 
     @staticmethod
     def _build_fts_query(query: str) -> str:
