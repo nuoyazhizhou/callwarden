@@ -384,12 +384,36 @@ class CallChainMixin:
 
         使用 DFS 遍历调用图，检测所有循环依赖
 
+        优先走 Rust GraphStore.detect_cycles_rust（CSR + 三色 DFS，O(V+E)），
+        Rust 不可用或 GraphStore 未 ready 时降级为 Python DFS。
+
         Args:
-            max_depth: 最大追踪深度
+            max_depth: 最大追踪深度（Python 降级路径使用；Rust 路径用三色 DFS 不需要此参数）
 
         Returns:
             检测到的循环列表，每个循环是一个函数名列表
         """
+        # B-P7b: Rust GraphStore 短路（CSR + 三色 DFS，O(V+E)）
+        # 100K 节点 99.5K 边实测：Python DFS 552ms → Rust <5ms（100x+ 加速）
+        # Python 版瓶颈：1) SQL JOIN 加载慢；2) Python DFS O(N^2) 因 visited 重置；
+        #                3) Python 循环调用本身慢
+        # 注意：PyO3 暴露的方法名是 detect_cycles（不带 _rust 后缀，
+        # _rust 后缀的是 impl CallGraph 的 native 方法，daemon 内部使用）
+        store = self._get_graph_store() if hasattr(self, '_get_graph_store') else None
+        if store is not None:
+            # 等待 calls 加载完成（避免首次查询 fallback 到 Python DFS）
+            if store.load_state() != "graph_ready":
+                if hasattr(self, '_wait_for_calls_ready'):
+                    self._wait_for_calls_ready(timeout=2.0)
+                    store = self._get_graph_store()
+            if store is not None and store.load_state() == "graph_ready":
+                try:
+                    rust_cycles = store.detect_cycles()
+                    if rust_cycles is not None:
+                        return rust_cycles
+                except Exception:
+                    pass  # Rust 失败，降级 Python DFS
+
         ws_id = self._get_active_workspace_id()
         # 获取所有调用关系
         sql = """
