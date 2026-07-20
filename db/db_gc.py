@@ -372,6 +372,13 @@ class GCMixin:
     def _find_ignore_reason(self, matcher: IgnoreMatcher, rel_path: str) -> str:
         """找出命中的第一条 ignore 规则（用于归档原因记录）
 
+        A15 修复（2026-07-20 二轮评审）：
+        - pathspec 主路径下 IgnoreRule.regex 可能为 None（实际匹配由 pathspec
+          完成，元数据仅用于 source 追溯）
+        - 当 rule.regex 为 None 时，用 matcher.is_ignored 替代单规则匹配，
+          然后回退到元数据规则来源列表中查找第一条非 negation 规则作为原因
+        - pathspec 不可用时仍走原 rule.regex.search 逻辑（fallback 自研路径）
+
         Args:
             matcher: 已配置好的 IgnoreMatcher
             rel_path: 文件相对路径
@@ -384,6 +391,9 @@ class GCMixin:
 
         # 按规则来源顺序查找（全局规则 → 子目录规则）
         for rule in matcher.global_rules:
+            # pathspec 主路径下 rule.regex 为 None，跳过单规则匹配
+            if rule.regex is None:
+                continue
             if rule.regex.search(rel_path):
                 if rule.negation:
                     continue
@@ -391,10 +401,25 @@ class GCMixin:
 
         for ancestor_dir, rules in matcher.dir_rules.items():
             for rule in rules:
+                if rule.regex is None:
+                    continue
                 if rule.regex.search(rel_path):
                     if rule.negation:
                         continue
                     return f"{rule.source}:{rule.pattern}" + ("/" if rule.dir_only else "")
+
+        # A15 修复：pathspec 主路径下，所有 rule.regex 都是 None
+        # 此时无法精确确定命中的是哪条规则，回退到元数据查找：
+        # 1. 先确认 matcher.is_ignored(rel_path) 返回 True
+        # 2. 在元数据规则列表中找第一条非 negation 规则作为原因
+        if matcher.is_ignored(rel_path, is_dir=False):
+            for rule in matcher.global_rules:
+                if not rule.negation:
+                    return f"{rule.source}:{rule.pattern}" + ("/" if rule.dir_only else "")
+            for ancestor_dir, rules in matcher.dir_rules.items():
+                for rule in rules:
+                    if not rule.negation:
+                        return f"{rule.source}:{rule.pattern}" + ("/" if rule.dir_only else "")
 
         return "unknown"
 

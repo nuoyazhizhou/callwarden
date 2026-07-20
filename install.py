@@ -55,6 +55,9 @@ class PackageSpec:
 CORE_PACKAGES: List[PackageSpec] = [
     PackageSpec("tree-sitter", "tree_sitter", "core", description="AST 解析引擎"),
     PackageSpec("tree-sitter-languages", "tree_sitter_languages", "core", description="多语言 grammar 预编译包（备份方案）"),
+    # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持（字符类/尾随空格/negation）
+    # pathspec 不可用时 IgnoreMatcher 降级到自研实现（不完整）
+    PackageSpec("pathspec", "pathspec", "core", description=".gitignore 完整语法解析（A15）"),
     PackageSpec("fastmcp", "fastmcp", "core", description="MCP Server 框架"),
 ]
 
@@ -424,18 +427,24 @@ class CallWardenInstaller:
         self,
         force: bool = False,
         with_post_commit: bool = True,
+        with_ref_transaction: bool = True,
     ) -> None:
-        """安装 Git hooks 到当前仓库（统一入口：pre-commit + pre-push + post-commit）
+        """安装 Git hooks 到当前仓库（统一入口：pre-commit + pre-push + reference-transaction + post-commit）
 
-        三种 hook 的职责：
+        四种 hook 的职责：
         - pre-commit：提交前刷新代码图谱（确保数据库与代码同步）
         - pre-push：推送前运行 check-gate 门禁（需设置 CALLWARDEN_TASK_ID）
+        - reference-transaction：审计 ref 变更（reset --hard / branch -f / force push），
+            仅记录到 destructive_operations 表，不能拦截 working tree 破坏
+            （git 无 pre-checkout/pre-reset hook，reset --hard 工作树写入先于 ref 更新）
         - post-commit：提交后自动捕获变更到 task/audit 闭环（--auto 模式，开箱即用）
 
         Args:
             force: 若目标 hook 已存在但不是 Call Warden 生成的，True=强制覆盖
             with_post_commit: 是否安装 post-commit hook（默认 True）。
                 设为 False 可跳过 post-commit（如用户已有自定义 post-commit 流程）。
+            with_ref_transaction: 是否安装 reference-transaction hook（默认 True）。
+                设为 False 可跳过（如 git 版本 < 2.28 不支持此 hook）。
 
         若目标 hook 已存在且不是 Call Warden 生成的，默认拒绝覆盖，
         避免破坏用户自定义流程。
@@ -451,6 +460,10 @@ class CallWardenInstaller:
             "pre-commit": self._pre_commit_hook(),
             "pre-push": self._pre_push_hook(),
         }
+        if with_ref_transaction:
+            # L2 审计层：reference-transaction hook 记录 ref 变更到 destructive_operations
+            # 仅审计，不拦截（git 无 pre-checkout/pre-reset hook，无法阻止 working tree 破坏）
+            hook_defs["reference-transaction"] = self._reference_transaction_hook()
         if with_post_commit:
             # post-commit 使用 --auto 模式（task_id=""），无需环境变量
             hook_defs["post-commit"] = self._post_commit_hook(task_id="")
@@ -597,6 +610,37 @@ if [ -z "${{CALLWARDEN_TASK_ID:-}}" ]; then
 fi
 echo "[Call Warden] running check-gate for $CALLWARDEN_TASK_ID before push..."
 {cmd} check-gate "$CALLWARDEN_TASK_ID"
+"""
+
+    def _reference_transaction_hook(self) -> str:
+        """生成 reference-transaction hook 内容。
+
+        L2 审计层（2026-07-20 二轮评审补全）：
+        - git 无 pre-checkout / pre-reset hook，无法在 working tree 破坏前
+          拦截 `git checkout .` / `git reset --hard`。
+        - reference-transaction hook 在 ref 更新前触发（prepare）+ 完成后
+          触发（committed），但 `reset --hard` 的 working tree 写入先于
+          ref 更新，故此 hook 只能作审计层（记录），不能作拦截层。
+        - 软门禁：仅记录到 destructive_operations 表，永不 exit 非零。
+
+        输入格式（stdin）：
+            <old-value> <new-value> <ref-name> <flags>
+
+        flags 可能包含 "forced" / "no-update" 等，用于识别破坏性 ref 更新
+        （如 reset --hard / branch -f / push --force）。
+        """
+        cmd = self._python_cw_command()
+        marker = self._hook_marker()
+        return f"""#!/bin/sh
+{marker}
+# L2: reference-transaction hook — 审计层（软门禁，仅记录不阻止）
+# git 无 pre-checkout/pre-reset hook；reset --hard 的 working tree 写入
+# 先于 ref 更新，故此 hook 仅用于审计 ref 变更，不能拦截 working tree 破坏
+set -eu
+export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
+while read -r old_value new_value ref_name flags; do
+  {cmd} git check-ref-transaction "$old_value" "$new_value" "$ref_name" "$flags" || true
+done
 """
 
     def _post_commit_hook(self, task_id: str = "") -> str:

@@ -92,21 +92,35 @@ class PRChecker:
                 "db 未提供 check_before_edit 方法，guardrail 检查未执行"
             )
 
-        # 3. Semgrep 扫描（仅当 db 提供该方法时调用）
-        semgrep_fn = getattr(self.db, "run_semgrep_and_save", None)
-        if semgrep_fn is not None and changed_files:
+        # 3. Semgrep 增量扫描（A14 修复 2026-07-20）
+        # 旧实现：semgrep_fn(target_paths=changed_files) — 但底层 save_semgrep_findings
+        # 硬编码 scan_type='full'，不清理变更文件的 stale findings，导致重复计数
+        # 新实现：优先调用 db.scan_semgrep_incremental()，由 db 层统一管理增量扫描+清理
+        incremental_fn = getattr(self.db, "scan_semgrep_incremental", None)
+        if incremental_fn is not None and changed_files:
             try:
-                semgrep_fn(target_paths=changed_files)
+                incremental_fn(base_branch=base_branch, head=head)
             except Exception as e:
                 # Semgrep 失败不阻断 PR 检查汇总，但记录到 run_errors
                 run_errors.append(
-                    f"Semgrep run_semgrep_and_save 失败: "
+                    f"Semgrep scan_semgrep_incremental 失败: "
                     f"{type(e).__name__}: {str(e)[:200]}"
                 )
         elif changed_files:
-            run_errors.append(
-                "db 未提供 run_semgrep_and_save 方法，Semgrep 扫描未执行"
-            )
+            # Fallback：db 不支持增量扫描（旧版本），降级到 run_semgrep_and_save
+            semgrep_fn = getattr(self.db, "run_semgrep_and_save", None)
+            if semgrep_fn is not None:
+                try:
+                    semgrep_fn(target_paths=changed_files)
+                except Exception as e:
+                    run_errors.append(
+                        f"Semgrep run_semgrep_and_save 失败 (fallback): "
+                        f"{type(e).__name__}: {str(e)[:200]}"
+                    )
+            else:
+                run_errors.append(
+                    "db 未提供 scan_semgrep_incremental / run_semgrep_and_save 方法，Semgrep 扫描未执行"
+                )
 
         # 4. 汇总 findings：查询 guardrail_findings 表中 open 状态的记录
         findings = self._query_open_findings(changed_files)

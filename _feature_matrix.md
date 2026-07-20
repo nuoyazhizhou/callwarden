@@ -119,8 +119,8 @@
 | A11 | Git 历史导入 + 符号级变更追踪 | IS/CS | ✅ 已实现 | db_git.py |
 | A12 | Semgrep 多语言静态安全扫描 | IS/CS | ✅ 已实现 | analyzers/issues.py |
 | A13 | 结果按内容去重入库 | IS | ✅ 已实现 | semgrep_findings |
-| A14 | 增量扫描 | IS | ❌ 声明不成立（评审 2026-07-20） | 不存在 `scan_semgrep_incremental`；扫描记录硬编码 `scan_type='full'`，没有增量清理语义。需补：增量扫描方法 + scan_type 标识 + 增量清理 |
-| A15 | .gitignore 完整语法解析 | IS/CL | 🟡 部分完成（评审 2026-07-20） | 自研 ignore parser 不是完整 gitignore 语义：`strip()` 丢失尾随空格语义，不支持字符类，目录剪枝会影响后续 negation 恢复。建议接入 `pathspec` 库或补全 gitignore 规范 |
+| A14 | 增量扫描 | IS | ✅ 已修复（2026-07-20 二轮评审补全） | 新增 `scan_semgrep_incremental()` 方法（analyzers/issues.py）：通过 `git diff --name-only` 取变更文件 → 调用 `run_semgrep` 扫描 → `save_semgrep_findings(scan_type='incremental', stale_file_ids=...)` 清理旧 findings + 关联 scan_id。schema v40 新增 `semgrep_findings.scan_id` 字段 + `idx_semgrep_scan_id` 索引，让 finding 可追溯到具体某次扫描。CLI 新增 `cw semgrep scan --incremental [--base main] [--head HEAD]`，MCP 新增 `scan_semgrep_incremental` 工具。cicd/pr_check.py 优先调用增量扫描，降级到 `run_semgrep_and_save`（向后兼容） |
+| A15 | .gitignore 完整语法解析 | IS/CL | ✅ 已修复（2026-07-20 二轮评审补全） | 接入 pathspec 库作为主路径，获得完整 gitignore 语义：字符类 `[abc]`/`[a-z]`/`[!abc]`、尾随空格保留（除非行末 `\` 转义）、目录剪枝后 negation 恢复（pathspec 内部 last-match-wins）、复杂 `**` 与 `/` 组合。pathspec 不可用时降级到自研实现（保留向后兼容，自研不支持字符类）。pyproject.toml/requirements.txt/install.py 均已加入 pathspec 核心依赖 |
 | A16 | .callwardenignore 项目级规则 | IS | ✅ 已实现 | |
 | A17 | GC 归档/复活/状态/清除 | IS/CL | ✅ 已实现 | db_gc.py |
 | A18 | build 末尾自动 Young GC | IS | ✅ 已实现 | |
@@ -226,7 +226,7 @@
 | G10 | memfd 密封协议（大文件传输） | DI | 🟡 部分完成（评审 2026-07-20） | Python memfd 库存在，实际 agent 传普通 temp FD；Rust 端未校验 seal/size/hash 且无界 `read_to_end`。需补：sealed memfd 真实使用 + Rust 端四重校验接入接收路径 |
 | G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | 🟡 部分完成（评审 2026-07-20） | SnapshotCachePublisher bridge 存在，但只在模块内/测试使用；Rust refresh 主路径没有注入 publisher。需补：Rust refresh 成功后调用 Replicator |
 | G12 | Durable Staging（JSONL + fsync） | DS/EW | ✅ 已实现 | durable_staging.py |
-| G13 | Metrics 收集器 + Prometheus 导出 | DS | ❌ 声明不成立（评审 2026-07-20） | collector/to_prometheus 类存在，但 daemon 无任何埋点；CLI/MCP 新进程读自己的空单例，不是 daemon metrics。需补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 |
+| G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已修复（2026-07-20 二轮评审补全） | `server/metrics.py` 新增 `measure_rpc` 上下文管理器 + 注册 `request_duration_seconds` 内置直方图；`server/daemon_server.py` `_handle_connection()` 用 `measure_rpc(method)` 包裹 `dispatch()` 调用，新增 `metrics.snapshot` / `metrics.prometheus` 两个只读 RPC 方法；`cli/daemon_commands.py` metrics 子命令默认走 RPC 拉 daemon 指标，`--local` 降级本进程直读，`--reset` 仅 `--local` 模式；MCP `get_metrics` 新增 `source` 参数（auto/rpc/local），默认 auto 优先 RPC 失败降级 local。**未实现**：`/metrics` HTTP endpoint（daemon 是纯 UDS，无 HTTP server；外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露） |
 | G14 | Health Check endpoint | DS | 🟡 部分完成（评审 2026-07-20） | HealthChecker/RecoveryHandler 存在，但 RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查。需补：实际执行 db_registry/disk_space/memory_usage/uptime 检查 |
 | G15 | Schema Migrator | DS | 🟡 部分完成（评审 2026-07-20） | `SchemaMigrator` 类存在，没有 daemon/CLI 生产调用方；Rust 只做 schema-check/init，不是版本化迁移。需补：daemon 启动调用 SchemaMigrator |
 | G16 | Backup/Restore | DS | 🟡 部分完成（评审 2026-07-20，P0-1 已修复） | Rust backup/restore RPC 可达，但原忽略 peer/admin 授权（P0-1 已修复：backup/restore 加入 ADMIN_ONLY_METHODS），restore 可覆盖 registry |
@@ -302,7 +302,7 @@
 | # | 功能点 | 来源 | 状态 | 备注 |
 |---|--------|------|------|------|
 | L1 | MCP Server 层门禁：file_write 强制关联活跃 task_id | QA1 | 🟡 部分完成（评审 2026-07-20） | optional task validation/context 存在，但不"强制关联"，无 task_id 时照常写入。属软门禁设计，符合 QA1 "赋能而非门禁"原则 |
-| L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ❌ 声明不成立（评审 2026-07-20） | 标题是 checkout/reset --hard，代码只在 pre-push 记录 force push，不拦截 checkout/reset。需补：checkout/reset --hard 拦截 hook 或在矩阵中标注 "仅 force push 记录" |
+| L2 | 破坏性 git 操作审计（ref 变更记录；checkout/reset --hard 受 git 技术限制只能审计不能拦截） | QA1 | 🟡 部分完成（2026-07-20 二轮评审补全） | 技术限制：git 无 pre-checkout/pre-reset hook，`reset --hard` 的 working tree 写入先于 ref 更新，故无法在 working tree 破坏前拦截。当前实现：1) pre-push hook 记录 force push 到 destructive_operations 表（软门禁）；2) **新增 reference-transaction hook**（2026-07-20）审计 ref 变更（reset_hard/branch -f/branch_delete/branch_create），仅记录不阻止；3) Agent hook 层（仅限参与 Agent）阻止 `git reset --hard` / `git checkout .`，普通 git 用户不受限 |
 | L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ✅ 已实现 | 软门禁：pre-commit hook 调用 `cw git check-task` 检查 `active_task_id`，有则显示 task 信息，无则警告但**不阻止** commit（本地 hook 可被 `--no-verify` 绕过，与 L1 赋能设计一致） |
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
 | L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ✅ 已实现 | compile_commands.json 解析器 + build-context CLI（8 子命令含 resolve）+ 8 MCP 工具；resolved_edges 计算引擎已实现 5 级解析（exact_match/simple_name_unique/same_file/include_path/sysroot/unresolved + calls 表降级）；include_path 基于 build_context.include_paths + toolchain.sysroot/include_dirs 消除简名歧义；test_phase6_resolved_edges + test_l5_build_context 验证 |
@@ -382,7 +382,7 @@
 | # | 缺口 | 严重度 | 详情 |
 |---|------|--------|------|
 | K1 | Replicator TOCTOU 违规 | 高 | ✅ 已修复：`_daemon_parse_and_publish` 优先用 `canonical_bytes`，parse 阶段复用同一份 bytes（T-1783952125417-7a09） |
-| K2 | Replicator 违反禁止读客户端路径 | 高 | ✅ 已修复：`canonical_bytes` 非 None 时不读 abs_path，仅降级 fallback 使用（T-1783952125417-7a09） |
+| K2 | Replicator 违反禁止读客户端路径 | 高 | ✅ 已修复（2026-07-20 二轮评审补全）：`canonical_bytes` 非 None 时不读 abs_path（T-1783952125417-7a09 原修复）；二轮评审发现 canonical_bytes is None 时 abs_path 缺 workspace ownership/escape 校验，已在 server/daemon_server.py + rust_ext/src/daemon/workspace.rs 同步添加 `_validate_owned_path` 调用 + `host_real_root` prefix 校验，新增 `path_escape` DaemonRpcError 错误类型 |
 | K3 | Rust parse_canonical_bytes 未暴露 | 中 | ✅ 已修复：`parse_canonical_bytes_py` 已有 `#[pyfunction]` 包装（multi_lang.rs L989）+ lib.rs L918 注册 |
 | K4 | daemon dispatch 未接入 | 中 | ✅ 已修复：daemon_server.py L396 `workspace.file.refresh` 调用 `daemon_handle_refresh` + staging + replicate |
 | K5 | IPC 双协议未统一 | 低 | ipc_transport.py 先 recv header 再 recvmsg FD 可能丢失 ancillary data，已标记 deprecated |

@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（用户级单库）                       │
 │   $HOME/.callwarden/callwarden.db                              │
-│   Schema v39 / WAL 模式 / 40+ 表 / 33 个 Mixin 类              │
+│   Schema v40 / WAL 模式 / 40+ 表 / 33 个 Mixin 类              │
 │   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -71,7 +71,7 @@ $HOME/.callwarden/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v39**
+当前 Schema 版本：**v40**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -107,6 +107,7 @@ v33 用 calls(callee_id) resolved 部分整数索引替代 calls(callee_qualifie
 v37 L2 破坏性 git 操作记录表 destructive_operations（force push 等记录，软门禁）
 v38 get_stats 加速索引（by_kind / depth_distribution GROUP BY 优化，部分索引 + ANALYZE）
 v39 call_chain_up/down 加速索引 idx_call_versions_callee_current（BFS 按 callee_qualified 走索引）
+v40 A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引（关联 finding 到 scan，支持增量清理）
 ```
 
 Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。

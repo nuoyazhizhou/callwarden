@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 205 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 206 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -375,6 +375,17 @@ Call Warden 通过 MCP Server 暴露 205 个工具，按功能聚合为 12 个�
 运行 Semgrep 扫描并将结果存入数据库。
 - **参数**：`config: str = "p/default"`, `languages: list = None`, `timeout: int = 300`
 - **返回**：`dict`
+
+### `scan_semgrep_incremental`
+增量 Semgrep 扫描：只扫描 git diff 变更文件并清理旧 findings（A14 修复，2026-07-20）。
+- **参数**：`base_branch: str = "main"`, `head: str = "HEAD"`, `config: str = "p/default"`,
+  `languages: list = None`, `timeout: int = 300`
+- **返回**：`dict` — `{success, scan_type, changed_files, scanned_files,
+  saved_findings, total_findings, stale_file_ids}`
+- **场景**：PR 检查、CI 流水线、代码 review 前的快速缺陷检测
+- **与 `run_semgrep_scan` 差异**：本工具按 git diff 取变更文件，scan_type='incremental'
+  写入 semgrep_scans，并清理变更文件的旧 findings（避免重复计数）；每条 finding 关联
+  scan_id，支持审计追溯。
 
 ### `get_semgrep_stats`
 获取 Semgrep 缺陷统计。
@@ -1700,20 +1711,24 @@ L5 为固件/嵌入式 C/C++ 场景提供"构建上下文感知"能力。核心�
   - `build_context_hash: str`
 - **返回**：`int`
 
-### `get_metrics(format="json", name="", reset=False)`
+### `get_metrics(format="json", name="", reset=False, source="auto")`
 
-查询 daemon 运行时指标（Phase 8 metrics endpoint 闭合）。直接复用 `server/metrics.py` 的 `MetricsCollector` 单例，不依赖 daemon RPC（即使 daemon 未启动也可查询本地指标快照）。
+查询 daemon 运行时指标（Phase 8 metrics endpoint 闭合 + G13 二轮评审补全）。
+
+G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时指标；连不上 daemon
+或 `source="local"` 时降级本进程 `MetricsCollector` 单例。
 
 - **参数**：
   - `format: str = "json"` — 输出格式：`"json"`（默认，结构化 dict）/ `"prometheus"`（Prometheus 文本格式，返回 `{"format": "prometheus", "text": "..."}`）
   - `name: str = ""` — 仅显示指定指标名（缺省显示全部）；在 counters/gauges/histograms 三类中查找
-  - `reset: bool = False` — `True` 则重置所有计数器/仪表/直方图（仅测试场景使用）
+  - `reset: bool = False` — `True` 则重置所有计数器/仪表/直方图（仅 `source="local"` 模式支持）
+  - `source: str = "auto"` — 指标来源：`"auto"`（默认，优先 RPC 失败降级 local）/ `"rpc"`（强制 daemon RPC，失败返回 error）/ `"local"`（本进程直读）
 - **返回**：
-  - `format="json"`：完整指标 dict（`timestamp` / `uptime` / `counters` / `gauges` / `histograms`，含 `memory_rss_bytes` / `cpu_total_seconds` / `uptime_seconds` / `requests_total` / `jobs_submitted_total` / `job_duration_seconds` 等内置指标）
-  - `format="json" + name`：`{"found": bool, "counters": {...}, "gauges": {...}, "histograms": {...}, "name_filter": str}`
-  - `format="prometheus"`：`{"format": "prometheus", "text": "<prometheus 文本>"}`
-  - `reset=True`：`{"status": "reset", "timestamp": float}`
-- **配套 CLI**：`cw daemon metrics [--format prometheus|json] [--name NAME] [--reset]`
+  - `format="json"`：完整指标 dict（`timestamp` / `uptime` / `counters` / `gauges` / `histograms`，含 `memory_rss_bytes` / `cpu_total_seconds` / `uptime_seconds` / `requests_total` / `request_duration_seconds` / `jobs_submitted_total` / `job_duration_seconds` 等内置指标）
+  - `format="json" + name`：`{"found": bool, "counters": {...}, "gauges": {...}, "histograms": {...}, "name_filter": str, "source": str}`
+  - `format="prometheus"`：`{"format": "prometheus", "text": "<prometheus 文本>", "source": str}`
+  - `reset=True`：`{"status": "reset", "timestamp": float, "source": "local"}`
+- **配套 CLI**：`cw daemon metrics [--format prometheus|json] [--name NAME] [--reset] [--local]`（默认走 RPC，`--local` 降级本进程直读）
 
 ### 配套 CLI 命令
 

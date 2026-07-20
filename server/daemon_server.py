@@ -37,6 +37,10 @@ from callwarden.server.daemon_protocol import (
     recv_message_with_fds,
     send_message,
 )
+from callwarden.server.metrics import (
+    get_metrics_collector,
+    measure_rpc,
+)
 from callwarden.server.snapshot_manager import (
     SnapshotManagerService,
     get_snapshot_service,
@@ -370,6 +374,21 @@ class EnterpriseDaemonService:
             deleted = self.snapshot_service.gc_snapshots(keep_last)
             return {"deleted_count": deleted, "keep_last": keep_last}
 
+        # ---- G13（2026-07-20）：daemon 运行时指标 ----
+        # 提供 metrics.snapshot（JSON）和 metrics.prometheus（Prometheus 文本）
+        # 两个只读 RPC，供 CLI / MCP / 外部监控系统拉取。
+        if method == "metrics.snapshot":
+            """G13：返回 daemon 运行时指标的 JSON 快照"""
+            collector = get_metrics_collector()
+            # 收集最新运行时指标（内存/CPU/uptime）
+            collector.collect_runtime_metrics()
+            return collector.to_json()
+
+        if method == "metrics.prometheus":
+            """G13：返回 daemon 运行时指标的 Prometheus 文本格式"""
+            collector = get_metrics_collector()
+            return collector.to_prometheus()
+
         # ---- Mount Mapping 管理（G4 实现）----
         # mount.register / mount.list / mount.delete 不依赖 workspace_id，
         # 在下方 workspace_id 必填检查之前处理。
@@ -495,6 +514,22 @@ class EnterpriseDaemonService:
             elif "canonical_bytes_b64" in params:
                 import base64
                 canonical_bytes = base64.b64decode(params["canonical_bytes_b64"])
+            # K2 评审修复（2026-07-20）：canonical_bytes is None 时，
+            # daemon 会从 msg["abs_path"] 直接读取客户端文件，必须校验
+            # 1) owner UID 匹配（_validate_owned_path 已覆盖）
+            # 2) path 必须落在 workspace host_real_root 内（防路径逃逸）
+            if canonical_bytes is None:
+                abs_path = params.get("abs_path") or ""
+                if abs_path:
+                    real_abs = self._validate_owned_path(abs_path, uid, require_file=True)
+                    host_root = str(workspace.get("host_real_root") or "")
+                    if host_root:
+                        real_host_root = os.path.realpath(host_root)
+                        if not (real_abs == real_host_root or real_abs.startswith(real_host_root + os.sep)):
+                            raise DaemonRpcError(
+                                "path_escape",
+                                f"abs_path 不在 workspace host_real_root 内：{real_abs}",
+                            )
             # 调用 daemon_handle_refresh
             try:
                 result = daemon_handle_refresh(
@@ -897,7 +932,11 @@ class EnterpriseDaemonServer:
                 params = request.get("params", {})
                 if not isinstance(method, str) or not isinstance(params, dict):
                     raise DaemonRpcError("invalid_request", "method/params 类型错误")
-                result = self.service.dispatch(peer, method, params, received_fds)
+                # G13（2026-07-20）：用 measure_rpc 埋点 RPC 调用
+                # 自动收集 requests_total / request_duration_seconds /
+                # errors_total / active_connections 指标
+                with measure_rpc(method):
+                    result = self.service.dispatch(peer, method, params, received_fds)
                 response = {"id": request_id, "ok": True, "result": result}
             except DaemonRpcError as exc:
                 response = {

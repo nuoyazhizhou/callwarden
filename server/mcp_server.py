@@ -415,7 +415,7 @@ def create_mcp_server():
                          timeout: int = 300) -> dict:
         """运行 Semgrep 扫描并将结果存入数据库 — 同步版本
 
-        注意：对于大型代码库，请使用 semgrep_scan_async 提交后台 job，
+        注意：对于大型代码库，请使用 semgrep_scan_async 提交后台 job,
         避免阻塞 MCP 请求。semgrep_scan_async 提交后可用 wait_for_job
         等待完成，结果通过 get_semgrep_findings / get_semgrep_stats 查询。
 
@@ -426,6 +426,43 @@ def create_mcp_server():
         """
         db = get_db()
         return db.run_semgrep_and_save(
+            config=config,
+            languages=languages,
+            timeout=timeout,
+        )
+
+    @mcp.tool()
+    def scan_semgrep_incremental(base_branch: str = "main",
+                                 head: str = "HEAD",
+                                 config: str = "p/default",
+                                 languages: list = None,
+                                 timeout: int = 300) -> dict:
+        """增量 Semgrep 扫描：只扫描 git diff 变更文件并清理旧 findings
+
+        A14 修复（2026-07-20）：旧实现 scan_type 硬编码 'full'，不清理变更文件
+        的 stale findings。本工具调用 db.scan_semgrep_incremental()：
+        - 通过 git diff --name-only 取 base_branch...head 的变更文件
+        - 扫描变更文件，scan_type='incremental' 写入 semgrep_scans
+        - 删除变更文件的旧 findings，避免重复计数
+        - 每条 finding 关联 scan_id，支持审计追溯
+
+        适用场景：PR 检查、CI 流水线、代码 review 前的快速缺陷检测。
+
+        Args:
+            base_branch: 基准分支（默认 main）
+            head: 目标提交（默认 HEAD）
+            config: Semgrep 规则配置（默认 p/default）
+            languages: 限制扫描的语言列表
+            timeout: 扫描超时时间（秒，默认 300）
+
+        Returns:
+            dict: {success, scan_type, changed_files, scanned_files,
+                   saved_findings, total_findings, stale_file_ids}
+        """
+        db = get_db()
+        return db.scan_semgrep_incremental(
+            base_branch=base_branch,
+            head=head,
             config=config,
             languages=languages,
             timeout=timeout,
@@ -4634,15 +4671,20 @@ def create_mcp_server():
         format: str = "json",
         name: str = "",
         reset: bool = False,
+        source: str = "auto",
     ) -> dict:
         """Phase 8: 查询 daemon 运行时指标（counters/gauges/histograms）
 
-        复用 server/metrics.py 的 MetricsCollector 单例，无需 daemon RPC 连接。
+        G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时指标；
+        连不上 daemon 或 source="local" 时降级本进程 MetricsCollector 单例。
 
         Args:
             format: 输出格式 — "json"（默认，结构化 dict）或 "prometheus"（Prometheus 文本格式，存到 "text" 字段）
             name: 仅显示指定指标名（缺省显示全部）
-            reset: True 则重置所有计数器/仪表/直方图（仅测试场景使用）
+            reset: True 则重置所有计数器/仪表/直方图（仅 source="local" 模式支持）
+            source: 指标来源 — "auto"（默认，优先 RPC 失败降级 local）/
+                    "rpc"（强制 daemon RPC，失败返回 error）/
+                    "local"（本进程直读）
 
         Returns:
             format="json": 完整指标 dict（timestamp/uptime/counters/gauges/histograms）
@@ -4652,19 +4694,70 @@ def create_mcp_server():
         """
         try:
             from callwarden.server.metrics import get_metrics_collector
+
+            # reset 仅 local 模式支持
+            if reset and source not in ("local", "auto"):
+                return {"error": "reset 仅 source=local 模式支持"}
+
+            # source=auto / rpc：优先尝试 daemon RPC
+            if source in ("auto", "rpc"):
+                try:
+                    from callwarden.server.daemon_client import UnixDaemonRpcClient
+                    socket_path = os.environ.get("CW_DAEMON_SOCKET", "")
+                    if not socket_path:
+                        # 默认 UDS 路径
+                        from callwarden.config import DAEMON_SOCKET_PATH
+                        socket_path = DAEMON_SOCKET_PATH
+                    client = UnixDaemonRpcClient(socket_path)
+                    rpc_method = ("metrics.prometheus" if format == "prometheus"
+                                  else "metrics.snapshot")
+                    rpc_result = client.call(rpc_method)
+                    if format == "prometheus":
+                        return {"format": "prometheus", "text": rpc_result,
+                                "source": "rpc"}
+                    if name:
+                        found = False
+                        filtered: Dict[str, Any] = {
+                            "timestamp": rpc_result.get("timestamp"),
+                            "uptime": rpc_result.get("uptime"),
+                            "name_filter": name,
+                            "source": "rpc",
+                            "counters": {},
+                            "gauges": {},
+                            "histograms": {},
+                        }
+                        for category in ("counters", "gauges", "histograms"):
+                            cat_data = rpc_result.get(category, {})
+                            if name in cat_data:
+                                filtered[category] = {name: cat_data[name]}
+                                found = True
+                        filtered["found"] = found
+                        return filtered
+                    rpc_result["source"] = "rpc"
+                    return rpc_result
+                except Exception as rpc_exc:
+                    if source == "rpc":
+                        return {"error": f"daemon RPC 失败: {rpc_exc}",
+                                "source": "rpc"}
+                    # source=auto → 降级 local
+                    # 继续走下方 local 分支
+            # 本进程直读
             collector = get_metrics_collector()
             if reset:
                 collector.reset()
-                return {"status": "reset", "timestamp": time.time()}
+                return {"status": "reset", "timestamp": time.time(),
+                        "source": "local"}
             if format == "prometheus":
-                return {"format": "prometheus", "text": collector.to_prometheus()}
+                return {"format": "prometheus", "text": collector.to_prometheus(),
+                        "source": "local"}
             data = collector.to_json()
             if name:
                 found = False
-                filtered: Dict[str, Any] = {
+                filtered = {
                     "timestamp": data["timestamp"],
                     "uptime": data["uptime"],
                     "name_filter": name,
+                    "source": "local",
                     "counters": {},
                     "gauges": {},
                     "histograms": {},
@@ -4675,6 +4768,7 @@ def create_mcp_server():
                         found = True
                 filtered["found"] = found
                 return filtered
+            data["source"] = "local"
             return data
         except Exception as e:
             return {"error": str(e)}

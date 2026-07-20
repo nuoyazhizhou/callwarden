@@ -16,6 +16,9 @@ keywords = ["code-analysis", "call-graph", "tree-sitter", "mcp", "semgrep", "ai-
 dependencies = [
     "tree-sitter>=0.21",
     "tree-sitter-languages>=1.10",
+    # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持（字符类/尾随空格/negation）
+    # 仅 pathspec 不可用时降级到自研实现（不完整）
+    "pathspec>=0.10",
     "tree-sitter-rust>=0.21",
     "tree-sitter-typescript>=0.21",
     "tree-sitter-python>=0.21",
@@ -58,6 +61,8 @@ cw_daemon = "callwarden.cli.daemon:main"
 all = [
     "tree-sitter>=0.21",
     "tree-sitter-languages>=1.10",
+    # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持
+    "pathspec>=0.10",
     "tree-sitter-rust>=0.21",
     "tree-sitter-typescript>=0.21",
     "tree-sitter-python>=0.21",
@@ -84,6 +89,8 @@ all = [
 core = [
     "tree-sitter>=0.21",
     "tree-sitter-languages>=1.10",
+    # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持
+    "pathspec>=0.10",
     "fastmcp>=0.8",
     "watchdog>=6.0.0",
 ]

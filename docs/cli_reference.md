@@ -599,6 +599,11 @@ cw --semgrep --semgrep-save
 # 自定义规则配置
 cw --semgrep --semgrep-config p/security
 cw --semgrep --semgrep-config p/security --semgrep-scan-lang rust typescript
+
+# 增量扫描（A14 修复 2026-07-20）：只扫 git diff 变更文件并清理旧 findings
+cw semgrep scan --incremental
+cw semgrep scan --incremental --base develop --head HEAD
+cw semgrep scan --incremental --config p/security
 ```
 
 | 参数 | 说明 |
@@ -609,6 +614,9 @@ cw --semgrep --semgrep-config p/security --semgrep-scan-lang rust typescript
 | `--semgrep-timeout <N>` | 超时秒数（默认 180） |
 | `--semgrep-quick` | 快速汇总模式 |
 | `--semgrep-save` | 扫描结果存入数据库 |
+| `--incremental` | 增量扫描模式：只扫 git diff 变更文件，scan_type='incremental'，清理 stale findings（A14） |
+| `--base <BRANCH>` | 增量扫描基准分支（默认 `main`，A14） |
+| `--head <REF>` | 增量扫描目标提交（默认 `HEAD`，A14） |
 
 ### `--semgrep-stats` / `--semgrep-list`
 
@@ -2262,6 +2270,34 @@ cw-client mode --set auto     # 提示如何修改（不会真正设置）
 |--------|-------------|-------------|
 | `serve` | ✓ 启动 daemon | ✗ 禁止（argparse 拒绝） |
 | 其他 15 个子命令 | ✓ 全部可用 | ✓ 全部可用 |
+
+### `daemon metrics`：查询 daemon 运行时指标（G13 二轮评审补全）
+
+G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时指标；`--local` 降级
+为本进程直读（用于离线调试，daemon 未启动时也能查看本地快照）；`--reset` 仅 `--local`
+模式支持（不能重置远端 daemon 指标）。
+
+```bash
+# 默认走 RPC 拉 daemon 进程指标（JSON 格式）
+cw daemon metrics
+
+# Prometheus 文本格式（适合 Prometheus scrape 通过 sidecar 暴露）
+cw daemon metrics --format prometheus
+
+# 按指标名过滤（在 counters/gauges/histograms 三类中查找）
+cw daemon metrics --name requests_total
+
+# 本进程直读（离线调试，daemon 未启动时也能查看）
+cw daemon metrics --local
+
+# 重置本进程指标（仅 --local 模式，仅测试场景）
+cw daemon metrics --local --reset
+```
+
+返回的指标包含：`memory_rss_bytes` / `cpu_total_seconds` / `uptime_seconds` /
+`requests_total{method, status}` / `request_duration_seconds{method}` /
+`errors_total{type}` / `jobs_submitted_total` / `job_duration_seconds{handler}` 等
+内置指标。
 
 ### 平台门禁
 

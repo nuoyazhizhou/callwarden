@@ -22,12 +22,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import time
 import threading
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 
 # ============================================================
@@ -380,6 +381,10 @@ class MetricsCollector:
                               labels=["method", "status"])
         self.register_counter("errors_total", "Total errors",
                               labels=["type"])
+        # G13（2026-07-20）：daemon RPC 调用延迟直方图，供 measure_rpc 埋点
+        self.register_histogram("request_duration_seconds",
+                                "RPC request duration in seconds",
+                                labels=["method"])
 
         # Job 指标
         self.register_gauge("jobs_pending", "Pending jobs count")
@@ -688,3 +693,66 @@ def reset_metrics_collector() -> None:
     global _global_collector
     with _global_lock:
         _global_collector = None
+
+
+# ============================================
+# G13（2026-07-20 二轮评审补全）：daemon 埋点辅助工具
+# ============================================
+
+
+@contextlib.contextmanager
+def measure_rpc(method: str) -> Iterator[None]:
+    """RPC 调用埋点上下文管理器（G13 daemon metrics 修复）
+
+    用法：
+        with measure_rpc("workspace.file.refresh"):
+            ...
+
+    自动埋点：
+    - requests_total{method, status="ok"|"error"}
+    - request_duration_seconds{method}
+    - errors_total{type="rpc_error|internal"} (仅异常时)
+    - active_connections gauge (执行期间 +1，结束 -1)
+
+    异常类型识别（避免循环 import daemon_server.DaemonRpcError）：
+    - 通过 ``sys.exc_info()[0].__name__`` 字符串比对 DaemonRpcError 类名
+    - DaemonRpcError → errors_total{type="rpc_error"}
+    - 其他异常 → errors_total{type="internal"}（异常被 re-raise，由上层捕获）
+
+    Args:
+        method: RPC 方法名（如 "workspace.file.refresh"）
+
+    Yields:
+        None
+    """
+    collector = get_metrics_collector()
+    start = time.time()
+    collector.inc_gauge("active_connections")
+    status = "ok"
+    error_type = ""
+    try:
+        yield
+    except Exception:
+        status = "error"
+        exc_type = sys.exc_info()[0]
+        if exc_type is not None and exc_type.__name__ == "DaemonRpcError":
+            error_type = "rpc_error"
+        else:
+            error_type = "internal"
+        raise
+    finally:
+        collector.dec_gauge("active_connections")
+        collector.increment(
+            "requests_total",
+            labels={"method": method, "status": status},
+        )
+        if error_type:
+            collector.increment(
+                "errors_total",
+                labels={"type": error_type},
+            )
+        collector.observe(
+            "request_duration_seconds",
+            time.time() - start,
+            labels={"method": method},
+        )

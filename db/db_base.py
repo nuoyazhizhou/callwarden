@@ -1806,6 +1806,38 @@ def _migrate_v38_to_v39(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v39_to_v40(conn: sqlite3.Connection):
+    """v39 -> v40: A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引
+
+    背景：A14 评审缺陷 — 旧 schema 中 semgrep_findings 没有与 semgrep_scans 关联的字段，
+    无法识别某条 finding 属于哪次扫描，导致增量扫描无法清理变更文件的 stale 记录。
+
+    修复：新增 scan_id INTEGER DEFAULT 0 列（向后兼容旧数据为 0），并加索引让按 scan_id
+    清理走索引扫描。增量扫描流程：
+    1) 调用 IncrementalAnalyzer.get_changed_files() 取变更文件列表
+    2) 在 save_semgrep_findings 内 INSERT semgrep_scans(scan_type='incremental')
+    3) 把 scan_id 写入每条 finding 的 scan_id 字段
+    4) 扫描完成后按 file_instance_id 删除该批变更文件的旧 findings（保留本次新增）
+
+    幂等性：用 PRAGMA table_info 检测字段是否存在，已存在则跳过 ALTER TABLE。
+    全新数据库已通过 SCHEMA_SQL 创建字段，本迁移只补齐既有 v39 库。
+    """
+    # 检测 scan_id 列是否已存在（幂等）
+    cur = conn.execute("PRAGMA table_info(semgrep_findings)")
+    columns = {row["name"] for row in cur.fetchall()}
+    if "scan_id" not in columns:
+        conn.execute(
+            "ALTER TABLE semgrep_findings ADD COLUMN scan_id INTEGER DEFAULT 0"
+        )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_scan_id ON semgrep_findings(scan_id)"
+    )
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2425,6 +2457,10 @@ class CodeGraphBase:
             39: {
                 "description": t("cli.messages.migration_v39", default="call_chain_up/down perf index: idx_call_versions_callee_current (partial) + ANALYZE"),
                 "func": _migrate_v38_to_v39,
+            },
+            40: {
+                "description": t("cli.messages.migration_v40", default="A14 incremental scan: add scan_id column to semgrep_findings + index (idempotent)"),
+                "func": _migrate_v39_to_v40,
             },
         }
 

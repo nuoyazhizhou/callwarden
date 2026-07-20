@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS call_versions (
 );
 
 -- Semgrep 缺陷表：存储 Semgrep 扫描发现的问题（按内容去重）
+-- A14（2026-07-20）：新增 scan_id 列，关联到 semgrep_scans.id，用于增量扫描清理旧 findings
 CREATE TABLE IF NOT EXISTS semgrep_findings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     file_instance_id INTEGER NOT NULL,
@@ -167,6 +168,7 @@ CREATE TABLE IF NOT EXISTS semgrep_findings (
     symbol_id INTEGER DEFAULT 0,
     symbol_qualified TEXT DEFAULT '',
     scanned_at REAL DEFAULT 0,
+    scan_id INTEGER DEFAULT 0,
     FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),
     UNIQUE(content_hash, rule_id, start_line)
 );
@@ -221,6 +223,7 @@ CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id);
 CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity);
 CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified);
 CREATE INDEX IF NOT EXISTS idx_semgrep_language ON semgrep_findings(language);
+CREATE INDEX IF NOT EXISTS idx_semgrep_scan_id ON semgrep_findings(scan_id);
 
 -- ============================================
 -- v4: Git 集成表
@@ -1047,7 +1050,9 @@ ON test_runs(ci_run_id);
 #      depth_distribution GROUP BY 走索引扫描。配合 ANALYZE 让优化器选对索引。
 # v39: call_chain_up/down 加速索引 — idx_call_versions_callee_current 部分索引让 BFS 按
 #      callee_qualified 查找走索引（旧索引只有 caller_qualified，callee 查询全表扫描）。
-SCHEMA_VERSION = 39
+# v40: A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引，关联到 semgrep_scans.id，
+#      让增量扫描能按 scan_id 清理旧 findings（变更文件的 stale 记录）。
+SCHEMA_VERSION = 40
 
 
 # ============================================

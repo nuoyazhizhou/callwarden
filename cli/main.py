@@ -7329,6 +7329,18 @@ def _handle_git(args, db):
     push_p.add_argument("remote_ref")
     push_p.add_argument("remote_sha")
 
+    # L2: reference-transaction hook 调用 — 审计 ref 变更（reset_hard / branch -f / force push）
+    # 仅记录到 destructive_operations 表，不能拦截 working tree 破坏
+    reftx_p = sub.add_parser("check-ref-transaction",
+                             help=t("cli.messages.git_action_check_ref_transaction",
+                                    default="Audit ref updates (reset_hard/branch -f/force push, soft guardrail, log only)"))
+    reftx_p.add_argument("old_value")
+    reftx_p.add_argument("new_value")
+    reftx_p.add_argument("ref_name")
+    reftx_p.add_argument("flags", nargs="?", default="",
+                         help=t("cli.messages.git_arg_ref_flags",
+                                default="ref-transaction flags (e.g. 'forced')"))
+
     # L2: 查询破坏性操作历史
     dlog_p = sub.add_parser("destructive-log",
                             help=t("cli.messages.git_action_destructive_log",
@@ -7489,6 +7501,68 @@ def _handle_git(args, db):
                     local_ref=local_ref, remote_ref=remote_ref))
         return True
 
+    # L2: reference-transaction hook 调用 — 审计 ref 变更
+    # git 无 pre-checkout/pre-reset hook；reset --hard 的 working tree 写入
+    # 先于 ref 更新，故此 hook 仅作审计层，不拦截
+    if opts.action == "check-ref-transaction":
+        old_value = opts.old_value
+        new_value = opts.new_value
+        ref_name = opts.ref_name
+        flags = opts.flags or ""
+
+        # 识别破坏性 ref 变更：
+        # - flags 包含 "forced"：reset --hard / branch -f / push --force-with-lease
+        # - new_value 全 0（40 位）：分支删除
+        # - old_value 全 0（40 位）：分支新建（非破坏性，仅记录）
+        # - 其余为常规 fast-forward / commit：忽略（避免噪音）
+        # 空字符串/None 视为无效输入跳过（git 不会传空 sha，但 hook 解析
+        # 可能产生空值，避免误分类为 branch_delete）
+        is_zero_sha = lambda sha: bool(sha) and len(sha) == 40 and set(sha) == {"0"}
+        is_destructive = "forced" in flags.lower() or is_zero_sha(new_value)
+        is_create = is_zero_sha(old_value) and not is_zero_sha(new_value)
+
+        # 常规 fast-forward 不记录（避免日志噪音）
+        if not is_destructive and not is_create:
+            return True
+
+        # 映射到 destructive_operations.operation_type
+        if is_zero_sha(new_value):
+            op_type = "branch_delete"
+        elif "forced" in flags.lower():
+            op_type = "reset_hard"
+        else:
+            op_type = "branch_create"
+
+        # 获取当前 active task（用于关联）
+        task_id = ""
+        try:
+            task_id = db.get_active_task() or ""
+        except Exception:
+            pass
+
+        # 记录到 destructive_operations 表（软门禁，不阻止）
+        try:
+            db.log_destructive_operation(
+                operation_type=op_type,
+                local_ref=ref_name,
+                local_sha=old_value,
+                remote_ref="",
+                remote_sha=new_value,
+                task_id=task_id,
+                message=f"ref-transaction: {ref_name} {old_value[:8]} -> {new_value[:8]} flags={flags!r}",
+            )
+        except Exception:
+            pass
+
+        # 软门禁：警告不阻止
+        if is_destructive:
+            print(t("cli.messages.git_check_ref_tx_destructive",
+                    default="[Call Warden] Warning: destructive ref update detected "
+                            "({ref_name}: {op_type}). "
+                            "Operation logged but not blocked (audit-only).",
+                    ref_name=ref_name, op_type=op_type))
+        return True
+
     # L2: 查询破坏性操作历史
     if opts.action == "destructive-log":
         ops = db.list_destructive_operations(limit=opts.limit, operation_type=opts.type)
@@ -7540,6 +7614,16 @@ def _handle_semgrep(args, db):
     scan_p.add_argument("--timeout", type=int, default=180, help=t("cli.messages.semgrep_arg_timeout", default="Timeout seconds (default 180)"))
     scan_p.add_argument("--save", action="store_true", help=t("cli.messages.semgrep_arg_save", default="Save findings to database"))
     scan_p.add_argument("--quick", action="store_true", help=t("cli.messages.semgrep_arg_quick", default="Quick summary scan"))
+    # A14（2026-07-20）：增量扫描模式 — 只扫 git diff 变更文件并清理旧 findings
+    scan_p.add_argument("--incremental", action="store_true",
+                        help=t("cli.messages.semgrep_arg_incremental",
+                               default="Incremental scan: only scan git diff changed files and clean stale findings"))
+    scan_p.add_argument("--base", dest="base_branch", default="main",
+                        help=t("cli.messages.semgrep_arg_base_branch",
+                               default="Base branch for incremental scan (default main)"))
+    scan_p.add_argument("--head", default="HEAD",
+                        help=t("cli.messages.semgrep_arg_head",
+                               default="Head ref for incremental scan (default HEAD)"))
 
     list_p = sub.add_parser("list", help=t("cli.messages.semgrep_action_list", default="List saved findings"))
     list_p.add_argument("filter", nargs="?", default="", help=t("cli.messages.semgrep_arg_filter", default="Rule id filter"))
@@ -7558,8 +7642,31 @@ def _handle_semgrep(args, db):
         if opts.languages:
             print(t("cli.messages.semgrep_lang_limit", langs=", ".join(opts.languages)))
         print(t("cli.messages.semgrep_timeout_label", timeout=opts.timeout))
+        # A14: 增量扫描模式提示
+        if opts.incremental:
+            print(t("cli.messages.semgrep_incremental_mode",
+                    base=opts.base_branch, head=opts.head))
         print()
-        if opts.save:
+        # A14: 增量扫描分支（优先于 --save / --quick）
+        if opts.incremental:
+            result = db.scan_semgrep_incremental(
+                base_branch=opts.base_branch,
+                head=opts.head,
+                config=opts.config,
+                languages=opts.languages,
+                timeout=opts.timeout,
+            )
+            if not result.get("success"):
+                print(t("cli.messages.semgrep_error",
+                        error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+            else:
+                print(t("cli.messages.semgrep_incremental_done",
+                        changed=result['changed_files'],
+                        scanned=result['scanned_files'],
+                        saved=result['saved_findings'],
+                        total=result['total_findings'],
+                        stale=result['stale_file_ids']))
+        elif opts.save:
             result = db.run_semgrep_and_save(
                 target_paths=target_paths or [db.workspace_root],
                 config=opts.config,

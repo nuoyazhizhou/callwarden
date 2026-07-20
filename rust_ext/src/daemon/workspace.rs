@@ -996,6 +996,38 @@ impl DaemonStateExt for WorkspaceDaemonState {
             None
         };
 
+        // K2 评审修复（2026-07-20）：canonical_bytes is None 时 daemon 会
+        // 从 msg.abs_path 直接读取客户端文件，必须校验：
+        // 1) owner UID 匹配（validate_owned_path 已覆盖）
+        // 2) path 必须落在 workspace host_real_root 内（防路径逃逸）
+        if canonical_bytes.is_none() {
+            if let Some(ref abs_path_str) = msg.abs_path {
+                if !abs_path_str.is_empty() {
+                    let real_abs = validate_owned_path(abs_path_str, peer.uid, true)?;
+                    if let Some(host_root_val) = workspace.get("host_real_root").and_then(|v| v.as_str()) {
+                        if !host_root_val.is_empty() {
+                            let real_host_root = std::fs::canonicalize(host_root_val)
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_else(|_| host_root_val.to_string());
+                            // real_abs == real_host_root 或以 real_host_root + sep 开头
+                            let sep = std::path::MAIN_SEPARATOR.to_string();
+                            let ok = real_abs == real_host_root
+                                || real_abs.starts_with(&format!("{}{}", real_host_root, sep));
+                            if !ok {
+                                return Err(DaemonRpcError::new(
+                                    "path_escape",
+                                    format!(
+                                        "abs_path 不在 workspace host_real_root 内：{}",
+                                        real_abs
+                                    ),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // 懒初始化 per-workspace 资源
         let resources = self.get_or_init_resources(workspace_instance_id)?;
 

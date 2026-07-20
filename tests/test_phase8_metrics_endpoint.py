@@ -124,19 +124,31 @@ def test_metrics_cli_name_filter_nonexistent_returns_found_false(capsys):
 
 
 def test_metrics_cli_reset_clears_counters(capsys):
-    """--reset 重置所有指标。"""
+    """--reset --local 重置所有指标。
+
+    G13（2026-07-20）：--reset 现在仅 --local 模式支持（不能重置远端 daemon 指标），
+    所以需要 --local 参数。
+    """
     # 先 increment 一些计数器
     collector = get_metrics_collector()
     collector.increment("requests_total")
     assert collector.get_metric("requests_total").get() == 1.0
 
-    rc = run_daemon_command(["metrics", "--reset"], include_serve=False)
+    rc = run_daemon_command(["metrics", "--local", "--reset"], include_serve=False)
     out = capsys.readouterr().out
     assert rc == 0
     data = json.loads(out)
     assert data["status"] == "reset"
     # 重置后计数器归零
     assert collector.get_metric("requests_total").get() == 0.0
+
+
+def test_metrics_cli_reset_without_local_returns_error(capsys):
+    """G13: --reset 不带 --local 应返回 exit code 2（不能重置远端 daemon 指标）"""
+    rc = run_daemon_command(["metrics", "--reset"], include_serve=False)
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--reset 仅支持 --local" in err or "仅 --local 模式" in err
 
 
 # ----------------------------------------------------------------------
@@ -165,13 +177,14 @@ def test_get_metrics_mcp_tool_registered():
 
 
 def test_get_metrics_mcp_tool_count_increased():
-    """MCP 工具总数从 204 增至 205（get_metrics 新增）。"""
+    """MCP 工具总数 206（get_metrics + scan_semgrep_incremental A14 新增）。"""
     import re
     mcp_server_path = os.path.join(PROJECT_ROOT, "server", "mcp_server.py")
     with open(mcp_server_path, encoding="utf-8") as f:
         content = f.read()
     matches = re.findall(r'@mcp\.tool\(\)', content)
-    assert len(matches) == 205, f"MCP 工具数应为 205，实际 {len(matches)}"
+    # 205（含 get_metrics）+ 1（A14 新增 scan_semgrep_incremental）= 206
+    assert len(matches) == 206, f"MCP 工具数应为 206，实际 {len(matches)}"
 
 
 def test_get_metrics_mcp_function_callable():

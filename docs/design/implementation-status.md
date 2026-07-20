@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-20 · Schema v39 · 33 Mixin 类（39 个 db_*.py 文件）· 205 MCP 工具 · 16 语言
+> 最后更新：2026-07-20 · Schema v40 · 33 Mixin 类（39 个 db_*.py 文件）· 206 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -10,9 +10,9 @@
 | ----------- | ---- | ----------------------------------------------------------------------------------------- |
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
-| Schema 版本 | v39  | v3→v39 版本化迁移，事务化执行                                                             |
+| Schema 版本 | v40  | v3→v40 版本化迁移，事务化执行                                                             |
 | Mixin 模块  | 33   | CodeGraphBase + 32 个功能 Mixin（39 个 db_*.py 文件）                                     |
-| MCP 工具    | 205  | FastMCP @mcp.tool() 注册                                                                  |
+| MCP 工具    | 206  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
 | 解析器文件  | 18   | tree-sitter 多语言（含 base/call_filter/call_resolver 等辅助模块）                        |
 | 测试套件    | 8    | P0/P1/P2/P3/csharp_ruby/p1_p3/stress/fuzz/gc                                              |
@@ -266,4 +266,4 @@
 | symbols 表 UNIQUE 索引 + 真正 UPSERT       | ⚠️ 部分 | `db_build.py` 已用 `ON CONFLICT(file_instance_id, name, start_line) DO UPDATE`（UPSERT），但 UNIQUE 键不是 `symbol_hash` |
 | PyO3 Rust 扩展（向量计算加速）             | ⚠️ 部分 | `rust_ext/` 已搭建 parse/graphstore/canonicalize/hash_diff/multi_lang/daemon；向量计算加速未集成 |
 | 多用户权限系统                             | 待办   | 当前按 workspace_id 逻辑隔离，无 RBAC                  |
-| Prometheus 指标导出                        | ❌ 未实现 | 评审 G13/I4（2026-07-20）：`server/metrics.py` 有 Counter/Gauge/Histogram 数据结构和 Prometheus 文本格式生成代码，但 daemon 实际无任何埋点；CLI/MCP 新进程读到的是自己的空单例，不是 daemon metrics。`/metrics` HTTP endpoint 也未暴露。需补：daemon 主路径埋点 + endpoint 暴露 + 跨进程 metrics 共享 |
+| Prometheus 指标导出                        | ✅ 已实现 | G13（2026-07-20 二轮评审补全）：`server/metrics.py` 新增 `measure_rpc` 上下文管理器 + `request_duration_seconds` 内置直方图；`server/daemon_server.py` `_handle_connection()` 用 `measure_rpc(method)` 包裹 `dispatch()` 调用，新增 `metrics.snapshot`（JSON）/ `metrics.prometheus`（Prometheus 文本）两个只读 RPC 方法；CLI `cw daemon metrics` 默认走 RPC 拉 daemon 进程指标，`--local` 降级本进程直读；MCP `get_metrics` 新增 `source` 参数（auto/rpc/local），默认 auto 优先 RPC 失败降级 local。**注**：daemon 是纯 UDS（无 HTTP server），外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露 |

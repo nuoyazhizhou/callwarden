@@ -225,15 +225,20 @@ class TestUserGuideMcpCountAligned:
 
 
 # ============================================================
-# 6. implementation-status.md Prometheus 状态 = ❌ 未实现
+# 6. implementation-status.md Prometheus 状态（G13 修复后 = ✅ 已实现）
 # ============================================================
 
 
 class TestImplementationStatusPrometheusCorrected:
-    """implementation-status.md Prometheus 状态必须为 ❌ 未实现。"""
+    """implementation-status.md Prometheus 状态。
 
-    def test_prometheus_status_false(self):
-        """implementation-status.md Prometheus 应标 ❌ 未实现。"""
+    G13（2026-07-20 二轮评审补全）：状态从 ❌ 未实现 改为 ✅ 已实现。
+    measure_rpc 上下文管理器 + metrics.snapshot / metrics.prometheus RPC 方法
+    + CLI/MCP 默认走 RPC 拉取 daemon 指标已完成。
+    """
+
+    def test_prometheus_status_fixed(self):
+        """G13 修复后 implementation-status.md Prometheus 应标 ✅ 已实现。"""
         is_path = ROOT / "docs" / "design" / "implementation-status.md"
         content = is_path.read_text(encoding="utf-8")
 
@@ -242,14 +247,14 @@ class TestImplementationStatusPrometheusCorrected:
         assert prometheus_idx >= 0, (
             "implementation-status.md 必须有 Prometheus 条目"
         )
-        # Prometheus 周边 500 字符应包含 ❌ 未实现
+        # Prometheus 周边 500 字符应包含 ✅ 已实现
         nearby = content[prometheus_idx:prometheus_idx + 500]
-        assert "❌" in nearby or "未实现" in nearby, (
-            "implementation-status.md Prometheus 应标 ❌ 未实现"
+        assert "✅ 已实现" in nearby, (
+            "G13 修复后 implementation-status.md Prometheus 应标 ✅ 已实现"
         )
-        # 不能再标 ⚠️ 部分
-        assert "⚠️ 部分" not in nearby or "Prometheus" not in nearby.split("⚠️ 部分")[0][-100:], (
-            "implementation-status.md Prometheus 不能再标 ⚠️ 部分"
+        # 应提及 G13
+        assert "G13" in nearby, (
+            "implementation-status.md Prometheus 应提及 G13 修复"
         )
 
 

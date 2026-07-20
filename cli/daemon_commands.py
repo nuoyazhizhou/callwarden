@@ -104,8 +104,8 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
                             help="workspace instance ID（如驱逐失败可检查 daemon 日志）")
 
     # ---- Metrics 查询命令（Phase 8 metrics endpoint 闭合）----
-    # 直接复用 server/metrics.py 的 MetricsCollector 单例，
-    # 不依赖 Rust daemon RPC（避免给 daemon 增加方法）。
+    # G13（2026-07-20）：默认通过 RPC 拉取 daemon 进程的指标；
+    # --local 降级为本进程 MetricsCollector 单例（用于离线调试）。
     metrics_cmd = sub.add_parser("metrics",
                                 help="查询 daemon 运行时指标（counters/gauges/histograms）")
     metrics_cmd.add_argument("--format", choices=["prometheus", "json"],
@@ -114,7 +114,11 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     metrics_cmd.add_argument("--name",
                              help="仅显示指定指标名（缺省显示全部）")
     metrics_cmd.add_argument("--reset", action="store_true",
-                             help="重置所有计数器/仪表/直方图（谨慎使用，仅测试或重启后场景）")
+                             help="重置所有计数器/仪表/直方图（谨慎使用，仅测试或重启后场景；"
+                                  "仅 --local 模式有效")
+    metrics_cmd.add_argument("--local", action="store_true",
+                             help="本进程直读（不走 daemon RPC），用于离线调试；"
+                                  "默认走 RPC 拉 daemon 进程指标")
 
     # ---- Mount Mapping 管理命令（G4）----
     mount = sub.add_parser("mount", help="容器挂载映射管理")
@@ -375,36 +379,81 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         })
         return 0
 
-    # metrics 路径不需要 daemon client（本地指标直读，避免连不上 daemon 时无法查看）
+    # G13（2026-07-20）：metrics 默认走 RPC 拉 daemon 进程指标；
+    # --local 走本进程直读（离线调试）；--reset 仅 --local 模式支持。
     if args.action == "metrics":
         from callwarden.server.metrics import get_metrics_collector
-        collector = get_metrics_collector()
+
         if args.reset:
+            if not args.local:
+                print("ERROR: --reset 仅支持 --local 模式（不能重置远端 daemon 指标）",
+                      file=__import__("sys").stderr)
+                return 2
+            collector = get_metrics_collector()
             collector.reset()
             _print_json({"status": "reset", "timestamp": time.time()})
             return 0
-        if args.format == "prometheus":
-            # Prometheus 文本格式直接打印（不走 _print_json 避免被 JSON 包装）
-            text = collector.to_prometheus()
-            print(text)
-        else:
-            data = collector.to_json()
-            if args.name:
-                # 按指标名过滤（在 counters/gauges/histograms 三类中查找）
-                filtered: Dict[str, Any] = {"timestamp": data["timestamp"],
-                                              "uptime": data["uptime"],
-                                              "name_filter": args.name}
-                found = False
-                for category in ("counters", "gauges", "histograms"):
-                    if args.name in data[category]:
-                        filtered[category] = {args.name: data[category][args.name]}
-                        found = True
-                    else:
-                        filtered[category] = {}
-                filtered["found"] = found
-                _print_json(filtered)
+
+        # 默认走 RPC；连不上 daemon 时降级 --local（除非用户显式指定 --local）
+        if not args.local:
+            client = UnixDaemonRpcClient(args.socket)
+            rpc_method = ("metrics.prometheus" if args.format == "prometheus"
+                          else "metrics.snapshot")
+            try:
+                rpc_result = client.call(rpc_method)
+                if args.format == "prometheus":
+                    # Prometheus 文本直接打印
+                    print(rpc_result)
+                elif args.name:
+                    # 按 name 过滤 RPC 返回的 JSON
+                    filtered: Dict[str, Any] = {
+                        "timestamp": rpc_result.get("timestamp"),
+                        "uptime": rpc_result.get("uptime"),
+                        "name_filter": args.name,
+                    }
+                    found = False
+                    for category in ("counters", "gauges", "histograms"):
+                        cat_data = rpc_result.get(category, {})
+                        if args.name in cat_data:
+                            filtered[category] = {args.name: cat_data[args.name]}
+                            found = True
+                        else:
+                            filtered[category] = {}
+                    filtered["found"] = found
+                    _print_json(filtered)
+                else:
+                    _print_json(rpc_result)
+                return 0
+            except Exception as e:
+                # daemon 未启动 / RPC 失败 → 降级本地直读
+                # DaemonUnavailableError 是 RuntimeError 子类，不捕获会冒泡
+                print(f"WARNING: daemon RPC 失败 ({e})，降级本进程直读",
+                      file=__import__("sys").stderr)
+                args.local = True  # 触发下方本地分支
+
+        if args.local:
+            collector = get_metrics_collector()
+            if args.format == "prometheus":
+                text = collector.to_prometheus()
+                print(text)
             else:
-                _print_json(data)
+                data = collector.to_json()
+                if args.name:
+                    filtered = {"timestamp": data["timestamp"],
+                                "uptime": data["uptime"],
+                                "name_filter": args.name}
+                    found = False
+                    for category in ("counters", "gauges", "histograms"):
+                        if args.name in data[category]:
+                            filtered[category] = {args.name: data[category][args.name]}
+                            found = True
+                        else:
+                            filtered[category] = {}
+                    filtered["found"] = found
+                    _print_json(filtered)
+                else:
+                    _print_json(data)
+            return 0
         return 0
 
     if args.action == "serve":

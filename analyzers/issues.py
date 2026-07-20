@@ -635,12 +635,24 @@ class IssueAnalyzerMixin:
     # Semgrep 结果入库与查询
     # --------------------------------------------------------------------
 
-    def save_semgrep_findings(self, findings: List[Dict], scan_config: str = "p/default") -> int:
+    def save_semgrep_findings(self, findings: List[Dict], scan_config: str = "p/default",
+                              scan_type: str = "full", files_scanned: int = 0,
+                              stale_file_ids: Optional[List[int]] = None) -> int:
         """将 Semgrep 扫描结果存入数据库，并关联到符号
+
+        A14 修复（2026-07-20）：新增 scan_type / files_scanned / stale_file_ids 参数，
+        支持 'incremental' 增量扫描语义：
+        - scan_type='incremental' 时，stale_file_ids 中的 file_instance_id 的旧 findings
+          会被清除（避免变更文件出现新旧两份 findings 重复计数）
+        - scan_id 写入每条 finding，让后续审计能追溯到具体某次扫描
 
         Args:
             findings: Semgrep 发现的问题列表
             scan_config: 使用的规则配置
+            scan_type: 扫描类型 'full'（全量）/ 'incremental'（增量）
+            files_scanned: 本次扫描的文件数（写入 semgrep_scans.files_scanned）
+            stale_file_ids: 增量扫描时需清理旧 findings 的 file_instance_id 列表；
+                仅 scan_type='incremental' 时生效
 
         Returns:
             存入的问题数量
@@ -651,14 +663,29 @@ class IssueAnalyzerMixin:
         scanned_at = time.time()
         count = 0
 
-        # 记录扫描
+        # 记录扫描（A14：scan_type 参数化）
         cur = self.conn.execute(
             """INSERT INTO semgrep_scans
-               (scan_type, config, workspace_id, started_at, status)
-               VALUES (?, ?, ?, ?, 'completed')""",
-            ("full", scan_config, ws_id, scanned_at),
+               (scan_type, config, workspace_id, started_at, status, files_scanned)
+               VALUES (?, ?, ?, ?, 'completed', ?)""",
+            (scan_type, scan_config, ws_id, scanned_at, files_scanned),
         )
         scan_id = cur.lastrowid
+
+        # A14：增量扫描清理旧 findings
+        # 变更文件可能有旧 findings（content_hash 不同，UNIQUE 约束不会去重），
+        # 直接清掉这批 file_instance_id 的所有 findings（保留本次即将插入的）
+        if scan_type == "incremental" and stale_file_ids:
+            # 防御式：先批量删除变更文件的旧 findings（含本次 scan 即将插入的也会被删，
+            # 但下面 INSERT OR IGNORE 会重新插入，最终态正确）
+            batch_size = 500
+            for i in range(0, len(stale_file_ids), batch_size):
+                chunk = stale_file_ids[i:i + batch_size]
+                placeholders = ",".join("?" * len(chunk))
+                self.conn.execute(
+                    f"DELETE FROM semgrep_findings WHERE file_instance_id IN ({placeholders})",
+                    chunk,
+                )
 
         # 获取文件实例 id 映射（当前工作区）
         file_map = {}
@@ -699,13 +726,13 @@ class IssueAnalyzerMixin:
                 """INSERT OR IGNORE INTO semgrep_findings
                    (file_instance_id, content_hash, rule_id, rule_name, message, severity, confidence,
                     language, start_line, end_line, snippet, fix,
-                    symbol_id, symbol_qualified, scanned_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    symbol_id, symbol_qualified, scanned_at, scan_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (file_instance_id, content_hash, f.get("rule_id", ""), f.get("rule_name", ""),
                  f.get("message", ""), f.get("severity", "INFO"),
                  f.get("confidence", "UNKNOWN"), f.get("language", ""),
                  start_line, f.get("end_line", 0), f.get("snippet", ""),
-                 f.get("fix", ""), symbol_id, symbol_qualified, scanned_at),
+                 f.get("fix", ""), symbol_id, symbol_qualified, scanned_at, scan_id),
             )
             count += 1
 
@@ -872,4 +899,126 @@ class IssueAnalyzerMixin:
             "success": True,
             "saved_findings": count,
             "total_findings": result["total_findings"],
+        }
+
+    def scan_semgrep_incremental(self, base_branch: str = "main",
+                                 head: str = "HEAD",
+                                 config: str = "p/default",
+                                 languages: List[str] = None,
+                                 timeout: int = 300) -> Dict:
+        """增量 Semgrep 扫描：只扫描 git diff 变更文件并清理旧 findings
+
+        A14 修复（2026-07-20 二轮评审）：
+        - 旧实现 scan_type 硬编码 'full'，无增量扫描语义
+        - 旧 schema semgrep_findings 无 scan_id 字段，无法关联 finding 到 scan
+        - 旧 cicd/pr_check.py 虽传 target_paths=changed_files，但不清理旧 findings，
+          导致变更文件出现新旧两份 findings 重复计数
+
+        修复：
+        1. 通过 IncrementalAnalyzer.get_changed_files() 取 base_branch...head 的变更文件
+        2. 调用 run_semgrep() 扫描变更文件
+        3. save_semgrep_findings(scan_type='incremental', stale_file_ids=...)
+           - 写 semgrep_scans.scan_type='incremental'
+           - 写 semgrep_findings.scan_id 关联到本次扫描
+           - 删除变更文件的旧 findings（stale_file_ids）
+
+        Args:
+            base_branch: 基准分支（默认 main）
+            head: 目标提交（默认 HEAD）
+            config: 规则配置（默认 p/default）
+            languages: 语言过滤
+            timeout: 超时时间（秒）
+
+        Returns:
+            {
+                "success": bool,
+                "scan_type": "incremental",
+                "base_branch": str,
+                "head": str,
+                "changed_files": int,        # git diff 变更文件数
+                "scanned_files": int,        # 实际扫描的文件数
+                "saved_findings": int,       # 本次入库 findings 数
+                "total_findings": int,      # Semgrep 报告的 findings 总数
+                "stale_file_ids": int,      # 清理旧 findings 涉及的文件数
+            }
+        """
+        from ..cicd.incremental import IncrementalAnalyzer
+
+        # 1. 取 git diff 变更文件
+        incremental = IncrementalAnalyzer(self)
+        changed_files = incremental.get_changed_files(
+            base_branch=base_branch, head=head
+        )
+
+        if not changed_files:
+            return {
+                "success": True,
+                "scan_type": "incremental",
+                "base_branch": base_branch,
+                "head": head,
+                "changed_files": 0,
+                "scanned_files": 0,
+                "saved_findings": 0,
+                "total_findings": 0,
+                "stale_file_ids": 0,
+            }
+
+        # 2. 把变更文件路径转为绝对路径（run_semgrep 接受绝对路径）
+        from ..config import norm_path
+        abs_paths = []
+        for rel_path in changed_files:
+            abs_path = norm_path(os.path.join(self.workspace_root, rel_path))
+            if os.path.exists(abs_path):
+                abs_paths.append(abs_path)
+
+        # 3. 找出已注册的 file_instance_id（用于清理旧 findings）
+        ws_id = self._get_active_workspace_id()
+        cur = self.conn.execute(
+            "SELECT id, rel_path FROM file_instances WHERE workspace_id = ? AND status != 'deleted'",
+            (ws_id,),
+        )
+        registered_paths = {row["rel_path"]: row["id"] for row in cur.fetchall()}
+        stale_file_ids = [
+            registered_paths[rel_path]
+            for rel_path in changed_files
+            if rel_path in registered_paths
+        ]
+
+        # 4. 运行 Semgrep 扫描
+        result = self.run_semgrep(abs_paths, config=config,
+                                  languages=languages, timeout=timeout)
+
+        if not result.get("success"):
+            return {
+                "success": False,
+                "scan_type": "incremental",
+                "base_branch": base_branch,
+                "head": head,
+                "changed_files": len(changed_files),
+                "scanned_files": len(abs_paths),
+                "saved_findings": 0,
+                "total_findings": result.get("total_findings", 0),
+                "stale_file_ids": len(stale_file_ids),
+                "error": result.get("error", "Semgrep run failed"),
+            }
+
+        # 5. 入库 + 清理旧 findings
+        count = self.save_semgrep_findings(
+            result.get("results", []),
+            config,
+            scan_type="incremental",
+            files_scanned=len(abs_paths),
+            stale_file_ids=stale_file_ids,
+        )
+
+        return {
+            "success": True,
+            "scan_type": "incremental",
+            "base_branch": base_branch,
+            "head": head,
+            "changed_files": len(changed_files),
+            "scanned_files": len(abs_paths),
+            "saved_findings": count,
+            "total_findings": result["total_findings"],
+            "stale_file_ids": len(stale_file_ids),
         }
