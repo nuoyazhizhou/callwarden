@@ -302,15 +302,26 @@ class EnterpriseDaemonService:
 
         复用 G13 已注册的 memory_rss_bytes / memory_vms_bytes / memory_peak_bytes
         gauge，避免 health / metrics.snapshot RPC 调用时同步触发 psutil。
+
+        G13（2026-07-20 批次6）：采样后 dump 到
+        ``~/.callwarden/metrics_snapshot.json``，让 CLI/MCP 在 daemon 不可达
+        或崩溃后仍能读取最后已知状态用于离线调试。
         """
         from callwarden.server.metrics import get_metrics_collector
         interval = DEFAULT_METRICS_SAMPLE_INTERVAL_SEC
         collector = get_metrics_collector()
+        # G13 批次6：dump 文件路径（与 DAEMON_REGISTRY_DB 同目录）
+        metrics_snapshot_path = os.path.join(
+            os.path.dirname(self.registry_db),
+            "metrics_snapshot.json",
+        )
         while not self._gc_stop.is_set():
             if self._gc_stop.wait(timeout=interval):
                 break
             try:
                 collector.collect_runtime_metrics()
+                # G13 批次6：跨进程共享 - dump 到文件供 CLI 离线读取
+                collector.dump_to_file(metrics_snapshot_path)
             except Exception as e:
                 logger.warning("metrics sample loop error: %s", e)
 

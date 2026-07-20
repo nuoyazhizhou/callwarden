@@ -623,6 +623,66 @@ class MetricsCollector:
         """导出为 JSON 字符串。"""
         return json.dumps(self.to_json(), indent=indent, ensure_ascii=False)
 
+    # ----- G13（2026-07-20 批次6）：跨进程 metrics 共享 -----
+
+    def dump_to_file(self, path: str) -> None:
+        """将当前 metrics 快照写入文件（跨进程共享）。
+
+        G13（2026-07-20 批次6）：daemon 周期性 dump 到
+        ``~/.callwarden/metrics_snapshot.json``，让 CLI/MCP 在 daemon 不可达
+        或崩溃后仍能读取最后已知状态用于离线调试。
+
+        写入采用 atomic_write_file（先写 .tmp 再 rename），避免 daemon 被
+        SIGKILL 时留下半写文件。
+
+        Args:
+            path: 快照文件路径（如 ``~/.callwarden/metrics_snapshot.json``）
+        """
+        snapshot = self.to_json()
+        # 附加 daemon 进程标识，便于 CLI 判断快照来源
+        snapshot["pid"] = os.getpid()
+        snapshot["dumped_at"] = time.time()
+        try:
+            tmp_path = path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(snapshot, f, ensure_ascii=False, indent=2, default=str)
+            # Windows：os.replace 原子替换；Unix：rename 原子替换
+            os.replace(tmp_path, path)
+        except OSError as e:
+            # 写文件失败不应阻塞 daemon 主流程，仅记录 stderr
+            sys.stderr.write(
+                f"[callwarden] G13 metrics dump_to_file({path}) 失败：{e}\n"
+            )
+        except Exception as e:
+            sys.stderr.write(
+                f"[callwarden] G13 metrics dump_to_file({path}) 失败：{e}\n"
+            )
+
+    @classmethod
+    def load_from_file(cls, path: str) -> Optional[Dict[str, Any]]:
+        """从 dump 文件加载 metrics 快照（跨进程读取）。
+
+        G13（2026-07-20 批次6）：CLI/MCP 在 daemon 不可达时降级读取
+        daemon 周期性 dump 的快照文件。返回 None 表示文件不存在或损坏。
+
+        Args:
+            path: 快照文件路径
+
+        Returns:
+            快照 dict（含 ``timestamp`` / ``uptime`` / ``pid`` / ``dumped_at``
+            / ``counters`` / ``gauges`` / ``histograms``），或 None
+        """
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return None
+            return data
+        except (OSError, json.JSONDecodeError):
+            return None
+
     # ----- 工具方法 -----
 
     def get_metric(self, name: str) -> Optional[Any]:

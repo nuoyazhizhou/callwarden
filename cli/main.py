@@ -49,6 +49,10 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 "health-report",
                 # L5: build-context + toolchain 子命令（resolved_edges 引擎入口）
                 "build-context", "toolchain",
+                # F11（2026-07-20 批次6）：build_graph_from_c_files 接入生产路径
+                "graph",
+                # N4（2026-07-20 批次6）：config_loader 分层配置接入
+                "config",
                 # 项目综合状态驾驶舱（7 个 section + 风险预警）
                 "dashboard"}
 
@@ -76,6 +80,11 @@ _READONLY_SEMGREP_ACTIONS = {"list", "stats"}
 _READONLY_COVERAGE_ACTIONS = {"fn", "uncovered"}
 # fts status 只读（查询 FTS5 索引状态）；fts rebuild 写（重建索引）
 _READONLY_FTS_ACTIONS = {"status"}
+# F11（2026-07-20 批次6）：graph build-from-c 只读（仅 parse + 内存构 CSR + 报告；
+# 不写数据库，可选 dump 到 .cwsnap 文件不算写 DB）
+_READONLY_GRAPH_ACTIONS = {"build-from-c"}
+# N4（2026-07-20 批次6）：config explain/paths 只读（只读 TOML + 打印路径）
+_READONLY_CONFIG_ACTIONS = {"explain", "paths"}
 
 # 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
 # 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
@@ -969,6 +978,12 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "fts":
         # fts status 只读（查询 FTS5 状态）；fts rebuild 写（重建索引）
         return action in _READONLY_FTS_ACTIONS
+    if cmd == "graph":
+        # F11（2026-07-20 批次6）：graph build-from-c 只读（不写 DB，仅 parse + 内存构 CSR）
+        return action in _READONLY_GRAPH_ACTIONS
+    if cmd == "config":
+        # N4（2026-07-20 批次6）：config explain/paths 只读（只读 TOML）
+        return action in _READONLY_CONFIG_ACTIONS
     if cmd == "refresh":
         # refresh 始终是写操作（build_full_graph / refresh_file）
         return False
@@ -1140,6 +1155,10 @@ def _dispatch_subcommand(argv, db):
             return _handle_toolchain(argv, db)
         elif cmd == "build-context":
             return _handle_build_context(argv, db)
+        elif cmd == "graph":
+            return _handle_graph(argv, db)
+        elif cmd == "config":
+            return _handle_config(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -6956,6 +6975,261 @@ def _handle_topo(args, db):
         print(t("cli.messages.topo_item",
                 idx=i+1, depth=f"{sym['depth']:2d}", path=sym['path'], line=sym['start_line'], name=sym['name']))
     return True
+
+
+def _handle_graph(args, db):
+    """处理 graph 子命令（F11: build_graph_from_c_files 接入生产路径）
+
+    F11（2026-07-20 批次6）：将 rust_ext/src/lib.rs 的 `build_graph_from_c_files`
+    PyO3 函数接入 CLI。该函数能从 C 文件列表 rayon 并行构建完整 GraphStore
+    （CSR + 符号表 + 调用边），跳过 SQLite INSERT 中间层，适用于 C 重型
+    代码库（如固件）的快速符号图谱构建。
+
+    子命令格式：
+        cw graph build-from-c <dir> [--threads N] [--dump <path>] [--max-files N]
+
+    当前为"可选加速路径"，不替代 db_build.py 的标准 build_full_graph：
+    - 标准路径：parse → SQLite INSERT → GraphStore.load_from_sqlite（持久化）
+    - F11 路径：parse + 内存构 CSR → 可选 dump 到 .cwsnap（无 DB 写入）
+
+    场景：H6 验收 C 语言大规模符号图谱构建；固件项目快速概览调用链。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw graph",
+        description="Graph 构建（F11: Rust 并行构 CSR）",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # graph build-from-c
+    bfc = sub.add_parser("build-from-c",
+                          help="从 C 文件列表 rayon 并行构建 GraphStore（F11）")
+    bfc.add_argument("directory", help="目标目录（递归扫描 .c 文件）")
+    bfc.add_argument("--threads", type=int, default=None,
+                     help="rayon 线程数（默认 None=自动）")
+    bfc.add_argument("--dump", default=None,
+                     help="将 GraphStore dump 到 .cwsnap 文件（可选）")
+    bfc.add_argument("--max-files", type=int, default=10000,
+                     help="最大文件数（避免误扫描超大目录，默认 10000）")
+    bfc.add_argument("--query", default=None,
+                     help="构建后查询指定符号的 callers（可选，用于自检）")
+
+    opts = parser.parse_args(args)
+
+    if opts.action != "build-from-c":
+        print(f"ERROR: 未知 graph action: {opts.action}", file=sys.stderr)
+        return False
+
+    import os as _os
+    import time as _time
+    target_dir = _os.path.abspath(opts.directory)
+    if not _os.path.isdir(target_dir):
+        print(f"ERROR: 目标目录不存在：{target_dir}", file=sys.stderr)
+        return False
+
+    # 1. 扫描 .c 文件
+    print(f"[F11] 扫描 C 文件：{target_dir}")
+    t0 = _time.perf_counter()
+    c_files: list = []
+    for root, _dirs, files in _os.walk(target_dir):
+        for fname in files:
+            if fname.endswith(".c"):
+                abs_path = _os.path.join(root, fname)
+                # module_path 用相对路径去后缀（与 db_build.py 一致）
+                rel_path = _os.path.relpath(abs_path, target_dir)
+                module_path = _os.path.splitext(rel_path)[0].replace(_os.sep, ".")
+                c_files.append((abs_path, module_path))
+                if len(c_files) >= opts.max_files:
+                    print(f"  达到 --max-files 上限 {opts.max_files}，停止扫描")
+                    break
+        if len(c_files) >= opts.max_files:
+            break
+    scan_t = _time.perf_counter() - t0
+
+    if not c_files:
+        print(f"  未找到任何 .c 文件")
+        return True
+
+    print(f"  扫描到 {len(c_files)} 个 .c 文件（耗时 {scan_t:.2f}s）")
+
+    # 2. 调用 build_graph_from_c_files
+    try:
+        from callwarden_core import build_graph_from_c_files
+    except ImportError as e:
+        print(f"ERROR: callwarden_core 不可用（{e}）",
+              file=sys.stderr)
+        print("提示：请先构建 Rust 扩展（cd rust_ext && cargo build --release）",
+              file=sys.stderr)
+        return False
+
+    print(f"[F11] 构建完整 GraphStore（threads={opts.threads}）...")
+    t0 = _time.perf_counter()
+    try:
+        store, sym_count, edge_count = build_graph_from_c_files(
+            c_files, num_threads=opts.threads
+        )
+    except Exception as e:
+        print(f"ERROR: build_graph_from_c_files 失败：{e}", file=sys.stderr)
+        return False
+    build_t = _time.perf_counter() - t0
+
+    print(f"  构建完成：{build_t:.2f}s")
+    print(f"  符号数: {sym_count:,}")
+    print(f"  调用边: {edge_count:,}")
+    if sym_count > 0:
+        print(f"  平均每符号边数: {edge_count / sym_count:.2f}")
+
+    # 3. 可选：dump 到 .cwsnap
+    if opts.dump:
+        dump_path = _os.path.abspath(opts.dump)
+        print(f"[F11] dump 到文件：{dump_path}")
+        t0 = _time.perf_counter()
+        try:
+            store.dump_to_file(dump_path)
+            dump_t = _time.perf_counter() - t0
+            size_mb = _os.path.getsize(dump_path) / (1024 * 1024)
+            print(f"  dump 完成：{dump_t:.2f}s, 大小: {size_mb:.2f} MB")
+        except Exception as e:
+            print(f"ERROR: dump_to_file 失败：{e}", file=sys.stderr)
+            return False
+
+    # 4. 可选：自检查询
+    if opts.query:
+        print(f"[F11] 自检 get_callers({opts.query})...")
+        try:
+            callers = store.get_callers(opts.query)
+            if callers:
+                print(f"  找到 {len(callers)} 个 callers")
+                for c in callers[:5]:
+                    print(f"    - {c}")
+            else:
+                print(f"  未找到 callers（符号不存在或无调用方）")
+        except Exception as e:
+            print(f"WARNING: 自检查询失败：{e}", file=sys.stderr)
+
+    print(f"\n[F11] 完成。耗时: build={build_t:.2f}s")
+    return True
+
+
+def _handle_config(args, db):
+    """处理 config 子命令（N4: config_loader 分层配置接入）
+
+    N4（2026-07-20 批次6）：将 release/config_loader.py 接入 CLI。
+    分层加载器实现存在但此前没有 Python CLI/daemon 生产 import。
+
+    子命令格式：
+        cw config explain          # 输出每个有效值的来源（CLI>env>user>system>default）
+        cw config paths            # 输出当前平台的配置/数据目录路径
+        cw config check-role <r>   # 检查当前平台是否支持指定角色（local/client/agent/daemon/all）
+
+    设计：纯查询命令，不写数据库；可独立于 daemon 运行；TOML 文件不存在时
+    返回默认值，不抛异常（fail-soft）。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw config",
+        description="分层配置加载器（N4: release/config_loader 接入）",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # config explain
+    sub.add_parser("explain",
+                   help="输出每个配置值及其来源（CLI>env>user>system>default）")
+
+    # config paths
+    sub.add_parser("paths",
+                   help="输出当前平台的配置/数据目录路径")
+
+    # config check-role
+    cr = sub.add_parser("check-role",
+                        help="检查当前平台是否支持指定角色")
+    cr.add_argument("role", choices=["local", "client", "agent", "daemon", "all"],
+                    help="要检查的角色")
+
+    opts = parser.parse_args(args)
+
+    # N4：直接 import release.config_loader
+    # 注意：release/ 是 package 化的，需通过 callwarden.release.* 路径或 sys.path 注入
+    import os as _os
+    import sys as _sys
+
+    # 优先尝试 callwarden.release.config_loader（package 模式）
+    config_loader = None
+    try:
+        from callwarden.release.config_loader import (
+            load_config, PlatformPaths, check_role_supported, fail_closed_unsupported,
+        )
+        config_loader = "callwarden.release.config_loader"
+    except ImportError:
+        # fallback：直接从 release 目录加载
+        release_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "release")
+        if _os.path.isdir(release_dir):
+            if release_dir not in _sys.path:
+                _sys.path.insert(0, _os.path.dirname(release_dir))
+            try:
+                from release.config_loader import (
+                    load_config, PlatformPaths, check_role_supported, fail_closed_unsupported,
+                )
+                config_loader = "release.config_loader"
+            except ImportError as e:
+                print(f"ERROR: 无法 import config_loader: {e}", file=_sys.stderr)
+                return False
+        else:
+            print(f"ERROR: release/ 目录不存在", file=_sys.stderr)
+            return False
+
+    if opts.action == "explain":
+        # 加载分层配置（无 CLI overrides，仅 env + TOML + default）
+        config = load_config()
+        explained = config.explain()
+        print(f"# N4 分层配置（来源：{config_loader}）")
+        print(f"# 优先级：CLI > env(CW_*) > user_config > system_config > default")
+        print()
+        print(f"{'Key':<30} {'Value':<40} {'Source'}")
+        print(f"{'-'*30} {'-'*40} {'-'*20}")
+        for item in explained:
+            key = item["key"]
+            value = item["value"]
+            source = item["source"]
+            # 截断过长的 value
+            if len(value) > 38:
+                value = value[:35] + "..."
+            print(f"{key:<30} {value:<40} {source}")
+        print(f"\n共 {len(explained)} 个配置项")
+        return True
+
+    if opts.action == "paths":
+        paths = PlatformPaths.detect()
+        print(f"# N4 PlatformPaths（来源：{config_loader}）")
+        print(f"# 平台：{_sys.platform}")
+        print()
+        print(f"{'Name':<20} {'Path'}")
+        print(f"{'-'*20} {'-'*60}")
+        print(f"{'system_config':<20} {paths.system_config}")
+        print(f"{'user_config':<20} {paths.user_config}")
+        print(f"{'system_data':<20} {paths.system_data}")
+        print(f"{'user_data':<20} {paths.user_data}")
+        if paths.runtime:
+            print(f"{'runtime':<20} {paths.runtime}")
+        print()
+        print("提示：")
+        print(f"  - 系统配置文件：{paths.system_config}（需 root/admin 写入）")
+        print(f"  - 用户配置文件：{paths.user_config}（普通用户写入）")
+        print(f"  - 数据目录：{paths.user_data}（数据库等持久化数据）")
+        return True
+
+    if opts.action == "check-role":
+        supported = check_role_supported(opts.role)
+        if supported:
+            print(f"角色 '{opts.role}' 在当前平台 {_sys.platform} 上 ✅ 支持")
+            return True
+        else:
+            print(f"角色 '{opts.role}' 在当前平台 {_sys.platform} 上 ❌ 不支持")
+            print("提示：")
+            print("  - Windows/macOS 仅支持 local/client 角色")
+            print("  - Linux 才支持 agent/daemon/all 角色（需 SO_PEERCRED + SCM_RIGHTS + UDS）")
+            return False
+
+    print(f"ERROR: 未知 config action: {opts.action}", file=_sys.stderr)
+    return False
 
 
 # --------------------------------------------------------------------

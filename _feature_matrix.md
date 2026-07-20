@@ -199,7 +199,7 @@
 | F8 | P2 FTS5 全文索引替代 LIKE | PP/RP | ✅ 已实现 | symbols_fts 虚拟表 + 同步触发器（v31 迁移） |
 | F9 | P28 get_callers qualified_name 参数 | PP | ✅ 已实施 | capability_showcase Q1 确认 |
 | F10 | P29 FTS 独立重建命令 | PP | ✅ 已实现 | v31 迁移含 rebuild 命令 |
-| F11 | P30 方案 A: Rust 端并行构建 CSR → 一次性 dump | PP | 🟡 部分完成（评审 2026-07-20） | `build_graph_from_c_files` PyO3 函数存在，但非测试生产代码没有调用方。性能数据 13.43x 仅来自基准测试，未进入生产路径。需补：接入 build 主路径或显式标注为可选加速路径 |
+| F11 | P30 方案 A: Rust 端并行构建 CSR → 一次性 dump（批次6 接入 CLI） | PP | ✅ 已实施（2026-07-20 批次6 接入 CLI） | 原 🟡 状态：`build_graph_from_c_files` PyO3 函数存在但非测试生产代码没有调用方。批次6 修复：新增 `cw graph build-from-c <dir>` CLI 子命令（[cli/main.py:_handle_graph](file:///c:/git_work/callwarden/cli/main.py)），递归扫描 `.c` 文件 → rayon 并行 parse + 内存构 CSR → 报告符号/边数 → 可选 `--dump` 输出 .cwsnap → 可选 `--query` 自检查询。定位为"可选加速路径"，不替代 `db_build.py` 的标准 `build_full_graph`（持久化路径），适用于 C 重型代码库（如固件）的快速符号图谱构建。性能数据 13.43x 仍仅来自基准测试 `tests/test_f11_rust_build_graph.py`。 |
 | F12 | P5 冷启动快照 dump/load（二进制 mmap） | BR3 | ✅ 已实现 | `_get_graph_store` 优先 mmap 加载 `.cwsnap`（snap_mtime>=db_mtime 校验），后台线程构建 calls + dump_to_file；Rust dump_to_file/load_from_file 完整实现（HEADER + 12 sections + 对齐 padding）；test_graphstore_compact_indexes + _verify_p4_phase2 覆盖 |
 | F13 | P6 calls 表索引精简（删 2/3 calls 索引） | BR3 | ✅ 已实施 | v32 删除 idx_calls_callee（GraphStore CSR 覆盖 get_callers）；v33 新增 idx_calls_callee_id_resolved 部分索引；保留 idx_calls_caller（SQL 降级路径） |
 | F14 | P12 延迟建索引 + 分段 commit | BR2 | 🟡 部分完成（评审 2026-07-20） | 延迟建索引/分段 commit/WAL truncate 有代码；10M/8.1x 是基准承诺，本次不以测试报告认定 |
@@ -226,7 +226,7 @@
 | G10 | memfd 密封协议（大文件传输） | DI | ✅ 已修复（2026-07-20 批次3） | Rust 端新增 `rust_ext/src/daemon/memfd.rs` 模块（仅 Unix 编译），实现四重校验：1) fstat S_IFREG 类型校验 2) st_size 预分配 buf 3) DEFAULT_MAX_FD_READ_BYTES=64MB 容量上限 4) SHA-256 摘要比对（客户端可传 expected_sha256）。`workspace.rs` `handle_workspace_file_refresh` 的 FD 读取路径从 `read_to_end` 无界读改为 `memfd::read_from_fd_with_validation`，6 测试覆盖小文件/摘要校验/摘要不匹配/超限/非常规文件/空文件 |
 | G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ✅ 已修复（2026-07-20 批次3） | `DaemonConfig` 新增 `codegraph_db_path_template` 字段 + `resolve_codegraph_db_path()` 方法 + CW_DAEMON_CODEGRAPH_DB_TEMPLATE env override；`WorkspaceDaemonState` 新增 `snapshot_publisher` + `codegraph_db_path_template` 字段 + `with_snapshot_publisher` / `with_codegraph_db_path_template` builder；`SnapshotDaemonState` 透传 builder；`cw_daemon.rs` state_factory 提升 `Arc<SnapshotCache>` 共享 + 创建 `Arc<SnapshotCachePublisher>` 注入；`workspace.rs` Replicator 创建点按 publisher + db_path 注入情况触发 publish_snapshot，返回详细 snapshot_published 状态 + 调试字段 codegraph_db_path |
 | G12 | Durable Staging（JSONL + fsync） | DS/EW | ✅ 已实现 | durable_staging.py |
-| G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已修复（2026-07-20 二轮评审补全） | `server/metrics.py` 新增 `measure_rpc` 上下文管理器 + 注册 `request_duration_seconds` 内置直方图；`server/daemon_server.py` `_handle_connection()` 用 `measure_rpc(method)` 包裹 `dispatch()` 调用，新增 `metrics.snapshot` / `metrics.prometheus` 两个只读 RPC 方法；`cli/daemon_commands.py` metrics 子命令默认走 RPC 拉 daemon 指标，`--local` 降级本进程直读，`--reset` 仅 `--local` 模式；MCP `get_metrics` 新增 `source` 参数（auto/rpc/local），默认 auto 优先 RPC 失败降级 local。**未实现**：`/metrics` HTTP endpoint（daemon 是纯 UDS，无 HTTP server；外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露） |
+| G13 | Metrics 收集器 + Prometheus 导出 + 跨进程共享（批次6） | DS | ✅ 已实施（2026-07-20 批次6 跨进程共享补全） | `server/metrics.py` `measure_rpc` 上下文管理器 + `request_duration_seconds` 直方图；`server/daemon_server.py` `_handle_connection()` 用 `measure_rpc(method)` 包裹 `dispatch()` 调用；`metrics.snapshot` / `metrics.prometheus` 两个只读 RPC 方法；`cli/daemon_commands.py` metrics 子命令默认走 RPC 拉 daemon 指标，`--local` 降级本进程直读。**批次6 跨进程共享补全**：`MetricsCollector.dump_to_file(path)` / `load_from_file(path)` 类方法（[server/metrics.py:dump_to_file](file:///c:/git_work/callwarden/server/metrics.py)）；daemon `_metrics_sample_loop` 周期性 dump 到 `~/.callwarden/metrics_snapshot.json`（含 `pid` / `dumped_at` 字段）；CLI `cw daemon metrics --from-file [PATH]` 读取快照，daemon RPC 失败时自动降级到此模式（含 snapshot 年龄告警 >120s）。**未实现**：`/metrics` HTTP endpoint（daemon 是纯 UDS，无 HTTP server；外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露） |
 | G14 | Health Check endpoint | DS | ✅ 已修复（2026-07-20 批次3） | `daemon_server.py` `__init__` 实例化 `HealthChecker(config=..., start_time=...)`；`health` RPC 替代固定 `status=ok`，调用 `HealthChecker.check_all()` 执行四项实际检查（db_registry / disk_space / memory_usage / uptime），合并 workspace_count / pid / uptime_seconds / registry_db / data_root 字段后返回。test_b3_python_daemon_wiring.py 5 测试覆盖：HealthChecker 实例化、health RPC 调用 check_all、不硬编码 status=ok、返回 checks 字段、config 传递 |
 | G15 | Schema Migrator | DS | ✅ 已修复（2026-07-20 批次3） | `daemon_server.py` `__init__` 加载 `DaemonConfig`，新增 `run_startup_migrations` 参数（默认 True）调用 `_run_startup_migrations()`，后者调用 `server.schema_migrator.migrate_daemon_dbs(self._config)` 对 registry.db / audit.db 执行版本化迁移；失败时只记录日志不阻止 daemon 启动（保持向后兼容）。test_b3_python_daemon_wiring.py 6 测试覆盖：方法存在、调用 migrate_daemon_dbs、__init__ 有 run_startup_migrations 参数、加载 DaemonConfig、失败优雅处理、跳过迁移 |
 | G16 | Backup/Restore | DS | 🟡 部分完成（评审 2026-07-20，P0-1 已修复） | Rust backup/restore RPC 可达，但原忽略 peer/admin 授权（P0-1 已修复：backup/restore 加入 ADMIN_ONLY_METHODS），restore 可覆盖 registry |
@@ -347,11 +347,11 @@
 | I23 | ✅ 已修复（2026-07-20 二轮评审） | A23 文件级并行：状态从 "✅ 已实现" 改为 "🟡 部分完成"。主路径现为 Rust pool/ProcessPool，ThreadPool 主要是降级 | _feature_matrix.md A23 |
 | I24 | ✅ 已修复（2026-07-20 二轮评审） | C10 task↔commit↔symbol 关联：状态从 "✅ 已实现" 改为 "🟡 部分完成"。best-effort hook，可被 `--no-verify` 或外部编辑绕过 | _feature_matrix.md C10 |
 | I25 | ✅ 已修复（2026-07-20 二轮评审） | D5 ask_codebase RAG 管道：状态从 "✅ 已实现" 改为 "🟡 部分完成"。`ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，不生成最终问答 | _feature_matrix.md D5 |
-| I26 | ✅ 已修复（2026-07-20 二轮评审） | F11/F14/F15 性能数据：F11 从 "✅ 已实施" 改为 "🟡"（非测试生产代码没有调用方）；F14 从 "✅ 已实施" 改为 "🟡"（10M/8.1x 是基准承诺）；F15 从 "✅ 已实施" 改为 "🟡"（17.8% 数值未复验） | _feature_matrix.md F11/F14/F15 |
+| I26 | ✅ 已修复（2026-07-20 二轮评审 + 批次6 接入 CLI） | F11/F14/F15 性能数据：F11 二轮评审从 "✅ 已实施" 改为 "🟡"（非测试生产代码没有调用方）。批次6 修复：F11 接入 CLI `cw graph build-from-c <dir>` 作为可选加速路径（不替代 build_full_graph），状态改为 "✅ 已实施（接入 CLI）"。F14/F15 维持 🟡（10M/8.1x 基准承诺、17.8% 未复验）。 | _feature_matrix.md F11/F14/F15 |
 | I27 | ✅ 已修复（2026-07-20 二轮评审 + 批次5 文档对齐） | F19 多进程 worker 限制：二轮评审时从 "✅ 已实施" 改为 "❌ 声明不成立"。批次5 文档对齐：标题更新为"P10 多进程 worker 限制（动态算法）"，状态改为 "✅ 已实施（动态算法）"，明确实际算法为 1-8 动态 worker（CPU/内存/规模因子），代码位置 `db_build.py:_detect_optimal_workers`。 | _feature_matrix.md F19 |
 | I28 | ✅ 已修复（2026-07-20 二轮评审） | G1/G3/G4/G8/G9/G16/G34 admin ACL：状态从 "✅ 已实现" 改为 "🟡 部分完成"。P0-1 已修复 admin ACL（ADMIN_ONLY_METHODS + is_admin），原代码忽略 peer 普通用户可改写全局配置 | _feature_matrix.md G1/G3/G4/G8/G9/G16/G34 |
 | I29 | ✅ 已修复（2026-07-20 二轮评审） | G10/G11/G15/G17/G19/G20/G21/G22/G29/G32 daemon 接线：状态从 "✅ 已实现" 改为 "🟡 部分完成"。组件存在但无生产调用方或未接入主路径（memfd/seal 校验/publisher/scheduler/四重校验/recv_msg/send_msg 等） | _feature_matrix.md G10/G11/G15/G17/G19/G20/G21/G22/G29/G32 |
-| I30 | ✅ 已修复（2026-07-20 二轮评审） | G13 daemon metrics：状态从 "✅ 已实现" 改为 "❌ 声明不成立"。collector/to_prometheus 类存在，但 daemon 无任何埋点；CLI/MCP 新进程读自己的空单例。批次 2 待补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 | _feature_matrix.md G13 |
+| I30 | ✅ 已修复（2026-07-20 二轮评审 + 批次6 跨进程共享补全） | G13 daemon metrics：二轮评审时状态从 "✅ 已实现" 改为 "❌ 声明不成立"（daemon 无埋点，CLI/MCP 读空单例）。后续修复：(1) `daemon_server.py` `_handle_connection()` 用 `measure_rpc(method)` 包裹 dispatch 调用；(2) 新增 `metrics.snapshot` / `metrics.prometheus` RPC；(3) CLI `cw daemon metrics` 默认走 RPC，`--local` 降级本进程直读。**批次6 补全**：跨进程 metrics 共享 - `MetricsCollector.dump_to_file/load_from_file` + daemon `_metrics_sample_loop` 周期性 dump 到 `~/.callwarden/metrics_snapshot.json` + CLI `--from-file [PATH]` 选项，daemon 不可达时自动降级到快照文件（含 snapshot 年龄告警 >120s）。**未实现**：`/metrics` HTTP endpoint（daemon 纯 UDS，无 HTTP server）。 | _feature_matrix.md G13 |
 | I31 | ✅ 已修复（2026-07-20 二轮评审） | G14 HealthChecker：状态从 "✅ 已实现" 改为 "🟡 部分完成"。HealthChecker/RecoveryHandler 存在，但 RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查 | _feature_matrix.md G14 |
 | I32 | ✅ 已修复（2026-07-20 二轮评审） | G23/G37 RPC 计数过时：G23 从 "✅ 已实现" 改为 "🟡 部分完成"（"11 RPC"已过时）；G37 从 "✅ 已实现" 改为 "📄 测试记录"（非产品实现项） | _feature_matrix.md G23/G37 |
 | I33 | ✅ 已修复（2026-07-20 二轮评审） | H5/H9/H10 测试声明：H5/H9 从 "✅ 已实现" 改为 "📄 测试记录"（只是测试声明）；H10 从 "✅ 已实现" 改为 "🟡 部分完成"（缺召回率/精确率基准） | _feature_matrix.md H5/H9/H10 |
@@ -414,7 +414,7 @@
 | N1 | release/version.toml 唯一版本源 | ✅ 已实现 | 0.3.0 + ABI 版本 + 平台 + 角色 |
 | N2 | release/version_sync.py 三方一致校验 | ✅ 已实现 | Python/Cargo/__init__.py + --fix |
 | N3 | release/build.py 构建管道（批次5 文档对齐） | CP | 🟡 部分完成（P0-3 已修复 wheel 含 Rust 扩展，2026-07-20 批次5 文档对齐） | 矩阵描述原为"❌ 声明不成立"，P0-3 已修复 [`release/build.py`](file:///c:/git_work/callwarden/release/build.py)：fail-fast 校验 + 平台特定 wheel（非 `py3-none-any`）+ 验证 wheel 包含 `callwarden_core` Rust 扩展。但 wheel 未打包 daemon/角色二进制（仅 Python 扩展），artifact-manifest.json 仍待落地。 |
-| N4 | release/config_loader.py 分层配置 | IS | 🟡 部分完成（评审 2026-07-20） | 分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），没有 Python CLI/daemon 生产 import |
+| N4 | release/config_loader.py 分层配置（批次6 接入 CLI） | IS | ✅ 已实施（2026-07-20 批次6 接入 CLI） | 原 🟡 状态：分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），但无 Python CLI/daemon 生产 import。批次6 修复：新增 `cw config` CLI 子命令组（[cli/main.py:_handle_config](file:///c:/git_work/callwarden/cli/main.py)），含 3 个 action：1) `cw config explain` 输出每个配置值及其来源（secret 字段隐藏），2) `cw config paths` 输出 PlatformPaths.detect() 平台路径，3) `cw config check-role <role>` 检查角色支持。`config_loader` 通过 `callwarden.release.config_loader` 命名空间包路径 import（fallback 至 sys.path 注入）。`toolchain.*`/`build-context.*`/`dashboard` 等已有命令保留 DaemonConfig 加载路径不变。 |
 | N5 | Windows WiX MSI（x64/arm64 + Authenticode） | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | WiX 只有未编译 XML（`callwarden.wxs`），引用的 Windows 输入产物不存在，Authenticode 仅注释命令，未跑 candle.exe/light.exe |
 | N6 | macOS universal2 pkg + notarization | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | macOS 脚本未在 macOS 构建/签名/公证，缺入口时会生成 placeholder |
 | N7 | Linux deb 5 子包 + rpm + tar.zst | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | Linux 无 deb/rpm/tar.zst 成品，缺二进制时仍继续，RPM spec 明确 TODO |
@@ -491,19 +491,23 @@
 | C. 任务编排 + Agent OS | 11 | 0 | 0 | 11 |
 | D. 向量搜索 + RAG + LSP + 跨仓库 | 8 | 0 | 0 | 8 |
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
-| F. 性能优化 | 19 | 0 | 0 | 19 |
+| F. 性能优化 | 20 | 0 | 0 | 20 |
 | G. Enterprise Daemon | 38 | 0 | 0 | 38 |
 | H. 规划但未实施 | 16 | 2 | 1 | 19 |
 | L. 讨论文档提取 | 15 | 1 | 0 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
-| N. 跨平台打包 | 2 | 2 | 3 | 7 |
+| N. 跨平台打包 | 3 | 2 | 3 | 8 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **168** | **5** | **4** | **177** |
+| **总计** | **170** | **5** | **4** | **179** |
 
-> **2026-07-20 批次5 文档对齐后重新核对**：
+> **2026-07-20 批次6 接入生产路径后重新核对**：
 >
 > - **唯一 ❌ 未实施（H 类）**：H15 多用户权限系统（RBAC）——有意延后到 SaaS 化阶段，单用户场景下 `workspace_id` 逻辑隔离已覆盖。
 > - **N 类 ❌ 未实施（3 项）**：N5 Windows WiX MSI / N6 macOS pkg / N7 Linux deb-rpm-tar.zst 仍只有 XML/脚本未实际构建产物。
+> - **批次6 状态升级**（3 项 → ✅）：
+>   - **F11**（接入 CLI）：新增 `cw graph build-from-c <dir>` 子命令，将 `build_graph_from_c_files` PyO3 函数接入生产路径作为"可选加速路径"，不替代 `build_full_graph`。
+>   - **G13**（跨进程共享补全）：`MetricsCollector.dump_to_file/load_from_file` + daemon `_metrics_sample_loop` 周期 dump + CLI `--from-file [PATH]` 选项，daemon 不可达时自动降级到快照。
+>   - **N4**（接入 CLI）：新增 `cw config` 子命令组（`explain` / `paths` / `check-role`），通过 `callwarden.release.config_loader` 命名空间包路径 import。
 > - **批次5 状态升级**（4 项 → ✅）：F19（动态算法文档对齐）、G23（11 → 33 RPC 文档对齐）、H6（标题改为 100K 验收）、M10（描述对齐为同 crate 多 crate-type）。
 > - **批次5 状态调整**（4 项 → 🟡）：H13（synthetic fixtures + 部分真实开源项目）、N3（P0-3 已修复 wheel 含 Rust 扩展）、N8（P0-3 已修复 version key/parser）、H14 描述补充 P0-3 修复内容保留 ❌。
 > - **唯一 ⚠️ 部分**：L1 MCP Server 层门禁——这是"软门禁"设计本身，非缺陷。
