@@ -207,7 +207,7 @@
 | F16 | P7 CallGraphBuildContext 内存批量写入 | WL2 | ✅ 已实施 | call resolve+write 42.23s → 0.35s（120x）；内存算完再批量落库 |
 | F17 | P8 FTS rebuild 替代触发器写放大 | WL2 | ✅ 已实施 | full build 期间禁用 FTS 触发器，最后一次性 rebuild |
 | F18 | P9 C/C++ 显式栈遍历 + thirdParty ignore | WL2 | ✅ 已实施 | firmware 30min+ 卡死 → 22.1s；消除 RecursionError |
-| F19 | P10 多进程 worker 限制 | WL2 | ❌ 声明不成立（评审 2026-07-20） | 当前不是 `min(4,cpu_count)`，而是基于 CPU/可用内存/文件规模的 1-8 动态 worker。矩阵描述与代码不符 |
+| F19 | P10 多进程 worker 限制（动态算法） | WL2 | ✅ 已实施（动态算法，2026-07-20 批次5 文档对齐） | 矩阵描述原为 `min(4,cpu_count)` 与代码不符。实际 [`db_build.py:_detect_optimal_workers`](file:///c:/git_work/callwarden/db/db_build.py#L88) 实现动态算法：综合 (1) CPU 核心数（留 1 核）、(2) 可用内存（每 worker 800MB + 保留 4GB）、(3) 数据规模因子（10K/50K/200K 文件阈值）、(4) 硬上限 8，返回 1-8 worker。P28 修复后避免 4 worker 模式下 32GB 宿主机崩溃 |
 | F20 | search_symbols 路由反转（FTS5 优先，Rust fallback） | BR3 | ✅ 已实施（2026-07-19） | 1M 符号实测 FTS5 trigram 2.354ms vs Rust memchr 3.132ms（0.75x 慢 25%）；100K 符号实测 FTS5 0.41ms vs Rust memchr 151.47ms（**370x 加速**）；反转路由：FTS5 优先 → Rust fallback → LIKE fallback；保留 Rust 作为 fallback（FTS5 不可用或 query < 3 字符时启用）；修正 F20 文档错误描述（原写"前缀匹配"实际是"子串匹配"）；详见 [architecture.md §6](docs/architecture.md#6-查询路径设计决策graphstore-vs-sql-路由) |
 
 ## G. Enterprise Daemon 架构（规划/部分实施）
@@ -236,7 +236,7 @@
 | G20 | memfd 四重校验实现（seals→size→SHA-256→streaming hash） | E2E | ✅ 已修复（2026-07-20 批次3） | `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation()`：1) FD 类型校验（fstat S_IFREG，拒绝目录/设备/套接字/FIFO）2) 大小预检（st_size 预分配 buf，避免 read_to_end 指数扩容）3) 容量上限（DEFAULT_MAX_FD_READ_BYTES=64MB，每 chunk 检查总大小）4) 摘要比对（客户端传 expected_sha256 时 SHA-256 校验）。`workspace.rs` `handle_workspace_file_refresh` FD 路径已接入 |
 | G21 | SCM_RIGHTS FD 传输（_recv_msg_with_fd） | E2E | ✅ 已修复（2026-07-20 批次3） | `protocol.rs` 新增 `_recv_msg_with_fd()` 别名包装，等价于 `recv_message_with_fds`（复数 fds），与规范文档 daemon-ipc-security.md 中的简短命名对齐；新增 `send_msg()` 别名（G21）和 `call_with_fd()` 请求-响应组合（G21+G22）。所有别名都是 zero-cost re-export，原函数名保留向后兼容 |
 | G22 | send_msg 统一入口（auto framed/memfd by MAX_MSG_BYTES） | E2E | ✅ 已修复（2026-07-20 批次3） | `protocol.rs` 新增 `send_msg()` 别名包装，等价于 `send_message()`；新增 `call_with_fd()` 组合 send_msg + _recv_msg_with_fd 的请求-响应模式，适用于 daemon 客户端 "send FD → 接收处理结果" 场景。命名与规范文档对齐，开发者按规范查阅代码可快速定位实现 |
-| G23 | EnterpriseDaemonService 完整实现（11 RPC dispatch） | E2E | 🟡 部分完成（评审 2026-07-20） | Python service 和 Rust dispatch 均存在，"11 RPC"已严重过时（实际 28+ RPC）；生产 systemd 运行 Rust service。需更新：矩阵描述 RPC 数量 |
+| G23 | EnterpriseDaemonService 完整实现（33 RPC dispatch，批次5 文档对齐） | E2E | ✅ 已实施（2026-07-20 批次5 文档对齐） | 矩阵描述原为"11 RPC dispatch"严重过时。实际：[`server/daemon_server.py`](file:///c:/git_work/callwarden/server/daemon_server.py) 注册 33 个独立 RPC（workspace.*/snapshot.*/query.*/mount.*/toolchain.*/build_context.*/resolved_edges.*/ping/health/schema.version/backup/restore/gc.snapshots/gc.cas/metrics.snapshot/metrics.prometheus），[`rust_ext/src/daemon/dispatch.rs`](file:///c:/git_work/callwarden/rust_ext/src/daemon/dispatch.rs) 注册 27 个 RPC 子集（不含 Python 独有的 backup/restore/health/metrics 等）。ADMIN_ONLY_METHODS 已配置 6 个写操作 RPC（P0-1）。 |
 | G24 | 有界线程池 UDS server（16 workers） | E2E | ✅ 已实现 | EnterpriseDaemonServer concurrent.futures |
 | G25 | _validate_owned_path（realpath + owner UID 校验） | E2E | ✅ 已实现 | 防路径穿越 + archived workspace 拒绝 |
 | G26 | DaemonClient 三级路由（Rust GraphStore → Python SQL fallback） | E2E | ✅ 已实现 | 8 查询方法 + routing stats（daemon_hits/sql_fallbacks） |
@@ -262,15 +262,15 @@
 | H3 | Agent Rule Memory（项目规则记忆） | AR | ✅ 已实现 | agent_rules 表 + db_agent_rules.py(1571行) + task_next_step 注入 + AGENTS.md 同步 |
 | H4 | Bootstrap 自举闭环 | BC | ✅ 已实现 | workspace_scan_runs 表 + db_bootstrap.py(987行) + bootstrap_status MCP + capture-diff |
 | H5 | 集成测试全流程 | RP | 📄 测试记录（评审 2026-07-20） | 只是 integration test 通过声明，本次不将测试代码当作实现证据 |
-| H6 | 千万级符号性能验证 | RP | ❌ 声明不成立（评审 2026-07-20） | 标题是 10M 验证，备注实际只记录 100K；未完成千万级验收。需补：真实 10M 符号压测或在矩阵中明确标注 "100K 验收" |
+| H6 | 100K 符号级性能验证（原"千万级"，批次5 文档对齐） | RP | ✅ 已实施（100K 验收，2026-07-20 批次5 文档对齐） | 矩阵标题原为"千万级符号性能验证"，实际 [`tests/_bench_multiscale.py`](file:///c:/git_work/callwarden/tests/_bench_multiscale.py) 验收规模为 100K 符号（与代码实际验收规模一致）。未完成真实 10M 符号压测；10M 场景需依赖 F11 `build_graph_from_c_files` 接入生产路径后单独验证（F11 已标 🟡 部分完成）。 |
 | H7 | AST 缓存激活（B2） | RP | ✅ 已实现 | `_try_ast_cache_short_circuit` 接入 `_refresh_file_rust`/`_refresh_file_generic` 决策路径；新增 `file_content_hash` 字段解决 Rust/Python parser normalization 差异；test_h7_ast_cache_activation.py 8 测试全通过；test_incremental_parse.py 26/26 回归通过 |
 | H8 | 统一项目健康报告 cw health-report | RP | ✅ 已实现 | cli/main.py `_handle_health_report` 聚合 stats + hotspots + issues + token_savings |
 | H9 | MCP Server 完整测试 | RP | 📄 测试记录（评审 2026-07-20） | MCP 测试声明，不是产品功能完成项 |
 | H10 | Clone Detection LSH 增强（B1） | RP | 🟡 部分完成（评审 2026-07-20） | LSH 增强实现存在，矩阵自身承认缺召回率/精确率基准，不能视为质量门禁完成 |
 | H11 | Clone Detection 影响分析联动 | RP | ✅ 已实现 | db_impact.py `get_clone_aware_impact` + MCP 注册（195→196） |
 | H12 | 扩展 Git Hook 到 AI CLI IDE | RP | 🟡 部分完成（评审 2026-07-20） | 三个 Git hook 存在，但没有独立的 AI CLI/IDE 扩展；标题过度扩大。实际是 Git hook 模板，不是 AI CLI 集成 |
-| H13 | 15 种语言开源项目测试 | RP | ❌ 声明不成立（评审 2026-07-20） | 证据是项目内 synthetic fixtures/tests，不是 15/16 个真实开源项目验收。需补：真实开源项目验收或在矩阵中标注 "synthetic fixtures" |
-| H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ❌ 声明不成立（评审 2026-07-20，P0-3 已部分修复） | 无 MSI/PKG/DEB 产物；现有验证只是 wheel/XML/bash/YAML 形式检查。P0-3 已修复 wheel 包含 Rust 扩展，但 MSI/PKG/DEB 仍待落地 |
+| H13 | 16 语言测试矩阵（synthetic fixtures + 部分真实开源项目，批次5 文档对齐） | RP | 🟡 部分完成（2026-07-20 批次5 文档对齐） | 矩阵标题原为"15 种语言开源项目测试"，实际：[`tests/fixtures/realworld_repos.json`](file:///c:/git_work/callwarden/tests/fixtures/realworld_repos.json) 列出 16 语言 × 2 = 32 个真实开源项目清单，[`clone_realworld_repos.ps1`](file:///c:/git_work/callwarden/tests/fixtures/clone_realworld_repos.ps1) 提供克隆脚本；[`matrix_summary.md`](file:///c:/git_work/callwarden/tests/fixtures/matrix_summary.md) 声明 2026-07-16 执行 32 项目 × 16 语言 100% 通过。`testcode/repos/` 实际克隆了部分项目（vapor/linux/codebase-memory-mcp 等），但未完成清单中全部 32 个项目。Matrix 1-4 报告中部分维度仍依赖 synthetic fixtures。 |
+| H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ❌ 未实施（评审 2026-07-20，P0-3 已部分修复，批次5 文档对齐） | 无 MSI/PKG/DEB 实际产物。P0-3 已修复 [`release/build.py`](file:///c:/git_work/callwarden/release/build.py) fail-fast + 平台特定 wheel + wheel 包含 `callwarden_core` Rust 扩展；[`enterprise-release.yml`](file:///c:/git_work/callwarden/.github/workflows/enterprise-release.yml) version key 已修正为 `['product']`；但 N5 WiX MSI / N6 macOS pkg / N7 Linux deb-rpm-tar.zst 仍只有 XML/脚本未实际构建产物。 |
 | H15 | 多用户权限系统（RBAC） | IS | ❌ 未实施 | 当前按项目隔离（workspace_id 逻辑隔离已覆盖单用户场景）；可延后到 SaaS 化或多团队共享 daemon 时实施 |
 | H16 | 生产者-消费者架构 | IS | ✅ 已实现（G18） | server/job_executor.py 已是完整生产者-消费者：jobs 表队列 + ThreadPoolExecutor worker 池 + submit/cancel/progress API + 多 worker 并发 + 超时保护 |
 | H17 | diff_callers / diff_callees（跨 snapshot 调用差异） | P4M | ✅ 已实现 | MCP 已暴露 diff_callers (L3546) + diff_callees (L3574)；DaemonClient 完整实现（daemon_client.py L460/L474） |
@@ -348,17 +348,17 @@
 | I24 | ✅ 已修复（2026-07-20 二轮评审） | C10 task↔commit↔symbol 关联：状态从 "✅ 已实现" 改为 "🟡 部分完成"。best-effort hook，可被 `--no-verify` 或外部编辑绕过 | _feature_matrix.md C10 |
 | I25 | ✅ 已修复（2026-07-20 二轮评审） | D5 ask_codebase RAG 管道：状态从 "✅ 已实现" 改为 "🟡 部分完成"。`ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，不生成最终问答 | _feature_matrix.md D5 |
 | I26 | ✅ 已修复（2026-07-20 二轮评审） | F11/F14/F15 性能数据：F11 从 "✅ 已实施" 改为 "🟡"（非测试生产代码没有调用方）；F14 从 "✅ 已实施" 改为 "🟡"（10M/8.1x 是基准承诺）；F15 从 "✅ 已实施" 改为 "🟡"（17.8% 数值未复验） | _feature_matrix.md F11/F14/F15 |
-| I27 | ✅ 已修复（2026-07-20 二轮评审） | F19 多进程 worker 限制：状态从 "✅ 已实施" 改为 "❌ 声明不成立"。当前不是 `min(4,cpu_count)`，而是 1-8 动态 worker（基于 CPU/可用内存/文件规模） | _feature_matrix.md F19 |
+| I27 | ✅ 已修复（2026-07-20 二轮评审 + 批次5 文档对齐） | F19 多进程 worker 限制：二轮评审时从 "✅ 已实施" 改为 "❌ 声明不成立"。批次5 文档对齐：标题更新为"P10 多进程 worker 限制（动态算法）"，状态改为 "✅ 已实施（动态算法）"，明确实际算法为 1-8 动态 worker（CPU/内存/规模因子），代码位置 `db_build.py:_detect_optimal_workers`。 | _feature_matrix.md F19 |
 | I28 | ✅ 已修复（2026-07-20 二轮评审） | G1/G3/G4/G8/G9/G16/G34 admin ACL：状态从 "✅ 已实现" 改为 "🟡 部分完成"。P0-1 已修复 admin ACL（ADMIN_ONLY_METHODS + is_admin），原代码忽略 peer 普通用户可改写全局配置 | _feature_matrix.md G1/G3/G4/G8/G9/G16/G34 |
 | I29 | ✅ 已修复（2026-07-20 二轮评审） | G10/G11/G15/G17/G19/G20/G21/G22/G29/G32 daemon 接线：状态从 "✅ 已实现" 改为 "🟡 部分完成"。组件存在但无生产调用方或未接入主路径（memfd/seal 校验/publisher/scheduler/四重校验/recv_msg/send_msg 等） | _feature_matrix.md G10/G11/G15/G17/G19/G20/G21/G22/G29/G32 |
 | I30 | ✅ 已修复（2026-07-20 二轮评审） | G13 daemon metrics：状态从 "✅ 已实现" 改为 "❌ 声明不成立"。collector/to_prometheus 类存在，但 daemon 无任何埋点；CLI/MCP 新进程读自己的空单例。批次 2 待补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 | _feature_matrix.md G13 |
 | I31 | ✅ 已修复（2026-07-20 二轮评审） | G14 HealthChecker：状态从 "✅ 已实现" 改为 "🟡 部分完成"。HealthChecker/RecoveryHandler 存在，但 RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查 | _feature_matrix.md G14 |
 | I32 | ✅ 已修复（2026-07-20 二轮评审） | G23/G37 RPC 计数过时：G23 从 "✅ 已实现" 改为 "🟡 部分完成"（"11 RPC"已过时）；G37 从 "✅ 已实现" 改为 "📄 测试记录"（非产品实现项） | _feature_matrix.md G23/G37 |
 | I33 | ✅ 已修复（2026-07-20 二轮评审） | H5/H9/H10 测试声明：H5/H9 从 "✅ 已实现" 改为 "📄 测试记录"（只是测试声明）；H10 从 "✅ 已实现" 改为 "🟡 部分完成"（缺召回率/精确率基准） | _feature_matrix.md H5/H9/H10 |
-| I34 | ✅ 已修复（2026-07-20 二轮评审） | H6/H12/H13/H14 基准声明：H6 从 "✅" 改为 "❌"（标题 10M，实际 100K）；H12 从 "✅" 改为 "🟡"（标题过度扩大）；H13 从 "✅" 改为 "❌"（synthetic fixtures，非真实开源项目）；H14 从 "✅" 改为 "❌"（无 MSI/PKG/DEB 产物，P0-3 已部分修复） | _feature_matrix.md H6/H12/H13/H14 |
+| I34 | ✅ 已修复（2026-07-20 二轮评审 + 批次5 文档对齐） | H6/H12/H13/H14 基准声明：二轮评审时 H6 从 "✅" 改为 "❌"（标题 10M，实际 100K）；H12 从 "✅" 改为 "🟡"（标题过度扩大）；H13 从 "✅" 改为 "❌"（synthetic fixtures，非真实开源项目）；H14 从 "✅" 改为 "❌"（无 MSI/PKG/DEB 产物，P0-3 已部分修复）。批次5 文档对齐：H6 状态改为 "✅ 已实施（100K 验收）"标题改为"100K 符号级性能验证"；H13 状态改为 "🟡 部分完成"，补充 realworld_repos.json 清单 + matrix_summary.md 报告 + testcode/repos 实际克隆项目情况；H14 状态保留 ❌ 描述对齐 P0-3 修复内容。 | _feature_matrix.md H6/H12/H13/H14 |
 | I35 | ✅ 已修复（2026-07-20 二轮评审 + 批次4 接入） | L1/L2/L7/L10/L16 任务门禁/工具：L1 从 "⚠️ 软门禁" 改为 "🟡 部分完成"（软门禁设计）；L2 从 "✅ 已实现" 改为 "❌ 声明不成立"（标题 checkout/reset --hard，代码只记录 force push）；L7 在批次4 已接入 daemon 主路径（cw-metrics-sample 后台线程 + Windows Psapi fallback 迁入 metrics.py），从 "🟡" 改为 "✅"；L10/L16 从 "✅ 设计方向已文档化" 改为 "📄 设计方向"（非已完成功能） | _feature_matrix.md L1/L2/L7/L10/L16 |
-| I36 | ✅ 已修复（2026-07-20 二轮评审 + 批次4 接入） | M4/M5/M6/M8/M10 Rust 扩展接线：二轮评审时 5 项从 "✅ 已实现" 改为 "🟡 部分完成"。批次4 已接入 M4/M5/M6/M8（workspace.rs committed 路径填充 StagingEntry.parse_delta/frontier/metrics_update；watcher.rs 扩展 Renamed 双路径 + server/watcher.py 切换主路径为 PyDebouncedFileWatcher），从 "🟡" 改为 "✅ 已接入"；M10 仍 "🟡 部分完成"（同 crate 同时产出 binary 和 cdylib+rlib 表述待澄清） | _feature_matrix.md M4/M5/M6/M8/M10 |
-| I37 | ✅ 已修复（2026-07-20 二轮评审） | N3-N8 跨平台打包：N3/N5/N6/N7/N8 从 "✅ 已实现" 改为 "❌ 声明不成立"；N4 改为 "🟡 部分完成"。N3 wheel 不包 Rust 扩展；N5 只有未编译 XML；N6/N7 未在目标平台实际构建；N8 静态即可见失败点（错误 version key、纯 Python wheel、错误 parser 调用）。P0-3 已部分修复 | _feature_matrix.md N3-N8 |
+| I36 | ✅ 已修复（2026-07-20 二轮评审 + 批次4 接入 + 批次5 文档对齐） | M4/M5/M6/M8/M10 Rust 扩展接线：二轮评审时 5 项从 "✅ 已实现" 改为 "🟡 部分完成"。批次4 已接入 M4/M5/M6/M8（workspace.rs committed 路径填充 StagingEntry.parse_delta/frontier/metrics_update；watcher.rs 扩展 Renamed 双路径 + server/watcher.py 切换主路径为 PyDebouncedFileWatcher），从 "🟡" 改为 "✅ 已接入"；批次5 文档对齐：M10 状态从 "🟡 部分完成" 改为 "✅ 已实施"，描述对齐为"同 crate 同时产出 binary + cdylib/rlib"。 | _feature_matrix.md M4/M5/M6/M8/M10 |
+| I37 | ✅ 已修复（2026-07-20 二轮评审 + 批次5 文档对齐） | N3-N8 跨平台打包：二轮评审时 N3/N5/N6/N7/N8 从 "✅ 已实现" 改为 "❌ 声明不成立"；N4 改为 "🟡 部分完成"。批次5 文档对齐：N3 状态改为 "🟡 部分完成"（P0-3 已修复 wheel 含 Rust 扩展）；N8 状态改为 "🟡 部分完成"（P0-3 已修复 version key/parser 调用）；N5/N6/N7 保留 ❌ 状态，描述补充"未实施（批次5 文档对齐）"。 | _feature_matrix.md N3-N8 |
 | I38 | ✅ 已修复（2026-07-20 二轮评审） | 矩阵顶部"实际基线数据"更新：Mixin 模块数 23→"33 个 Mixin 类（39 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin）"；M/N 章节标题反映实际状态（N 章节标题改为"脚本骨架存在/产物未落地"） | _feature_matrix.md 顶部 + N 章节标题 |
 
 ## J. 灰色地带验证结果（已全部确认）
@@ -403,7 +403,7 @@
 | M7 | diff.rs | SymbolChangeKind（8 种）+ SignatureDiff（file/line_range/kind 变化） | ✅ 已实现 | snapshot diff 路径调用 Rust diff 模块 |
 | M8 | watcher.rs | notify crate + crossbeam channel + 20 种扩展名过滤 | ✅ 已接入（2026-07-20 批次4） | FileEvent 扩展 from_path/to_path 字段；handler 识别 RenameMode::From/To/Both 三种事件；coalesce_events 合并时保留 rename 信息；PyO3 poll_events/flush 返回 from_path/to_path；server/watcher.py 重写为 PyDebouncedFileWatcher 主路径 + watchdog fallback，Renamed 事件双路径分别触发 remove_file + refresh_file |
 | M9 | multi_lang.rs | parse_file_lang / batch_parse_files_lang / batch_parse_files_lang_pool（Rayon） | ✅ 已实现 | 已进入 build 主路径 |
-| M10 | cw_daemon.rs | daemon binary + PyO3 绑定 | 🟡 部分完成（评审 2026-07-20） | `cw_daemon` 独立 binary 和同 crate PyO3 cdylib/rlib 存在；"daemon binary + PyO3 绑定"表述不准确，实际是同 crate 同时产出 binary 和 cdylib+rlib |
+| M10 | cw_daemon.rs（同 crate 同时产出 binary + cdylib/rlib，批次5 文档对齐） | RP | ✅ 已实施（2026-07-20 批次5 文档对齐） | 矩阵描述原为"daemon binary + PyO3 绑定"表述不准确。实际 [`rust_ext/Cargo.toml`](file:///c:/git_work/callwarden/rust_ext/Cargo.toml) 同 crate 配置三种 crate-type：`bin`（cw_daemon 独立 binary）+ `cdylib`（Python 扩展 `callwarden_core`）+ `rlib`（Rust 内部库）。binary 和 cdylib 共享同一份源码（`src/daemon/*`、`src/delta.rs`、`src/frontier.rs` 等），通过 `[[bin]]` 和 `[lib]` 节区分入口。 |
 
 ## N. 跨平台打包（脚本骨架存在/产物未落地）
 
@@ -413,12 +413,12 @@
 |---|--------|------|------|
 | N1 | release/version.toml 唯一版本源 | ✅ 已实现 | 0.3.0 + ABI 版本 + 平台 + 角色 |
 | N2 | release/version_sync.py 三方一致校验 | ✅ 已实现 | Python/Cargo/__init__.py + --fix |
-| N3 | release/build.py 构建管道 | ❌ 声明不成立（评审 2026-07-20） | build.py 形式上有步骤，但当前 wheel 是 `py3-none-any` 纯 Python，不包 `callwarden_core` Rust 扩展，也未打包 daemon/角色二进制。声明"cargo build → setuptools wheel → wheelhouse → artifact-manifest.json"与实际产物不符。P0-3 已部分修复 |
-| N4 | release/config_loader.py 分层配置 | 🟡 部分完成（评审 2026-07-20） | 分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），没有 Python CLI/daemon 生产 import |
-| N5 | Windows WiX MSI（x64/arm64 + Authenticode） | ❌ 声明不成立（评审 2026-07-20） | WiX 只有未编译 XML（callwarden.wxs），引用的 Windows 输入产物不存在，Authenticode 仅注释命令，未跑 candle.exe/light.exe |
-| N6 | macOS universal2 pkg + notarization | ❌ 声明不成立（评审 2026-07-20） | macOS 脚本未在 macOS 构建/签名/公证，缺入口时会生成 placeholder |
-| N7 | Linux deb 5 子包 + rpm + tar.zst | ❌ 声明不成立（评审 2026-07-20） | Linux 无 deb/rpm/tar.zst 成品，缺二进制时仍继续，RPM spec 明确 TODO |
-| N8 | Release CI（enterprise-release.yml 11 门禁） | ❌ 声明不成立（评审 2026-07-20） | Workflow 未运行且静态即可见失败点：错误 version key（`version.toml['package']` 实际是 `['product']`）、纯 Python wheel、错误 parser 调用（`parse_file_lang` 参数错配）、WiX 版本/输入不匹配 |
+| N3 | release/build.py 构建管道（批次5 文档对齐） | CP | 🟡 部分完成（P0-3 已修复 wheel 含 Rust 扩展，2026-07-20 批次5 文档对齐） | 矩阵描述原为"❌ 声明不成立"，P0-3 已修复 [`release/build.py`](file:///c:/git_work/callwarden/release/build.py)：fail-fast 校验 + 平台特定 wheel（非 `py3-none-any`）+ 验证 wheel 包含 `callwarden_core` Rust 扩展。但 wheel 未打包 daemon/角色二进制（仅 Python 扩展），artifact-manifest.json 仍待落地。 |
+| N4 | release/config_loader.py 分层配置 | IS | 🟡 部分完成（评审 2026-07-20） | 分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），没有 Python CLI/daemon 生产 import |
+| N5 | Windows WiX MSI（x64/arm64 + Authenticode） | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | WiX 只有未编译 XML（`callwarden.wxs`），引用的 Windows 输入产物不存在，Authenticode 仅注释命令，未跑 candle.exe/light.exe |
+| N6 | macOS universal2 pkg + notarization | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | macOS 脚本未在 macOS 构建/签名/公证，缺入口时会生成 placeholder |
+| N7 | Linux deb 5 子包 + rpm + tar.zst | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | Linux 无 deb/rpm/tar.zst 成品，缺二进制时仍继续，RPM spec 明确 TODO |
+| N8 | Release CI enterprise-release.yml（批次5 文档对齐） | CP | 🟡 部分完成（P0-3 已修复 version key/parser 调用，2026-07-20 批次5 文档对齐） | 矩阵描述原为"❌ 声明不成立"，P0-3 已修复 [`enterprise-release.yml`](file:///c:/git_work/callwarden/.github/workflows/enterprise-release.yml)：version key 修正为 `['product']` + parser 调用修正 + wheel 包含 Rust 扩展。但 Workflow 未实际运行过，WiX 输入仍不匹配（依赖 N5 落地），MSI/PKG/DEB 产物仍待 N5/N6/N7 落地后才能完整通过 11 门禁。 |
 
 ## O. 基准验证实测数据
 
@@ -492,20 +492,21 @@
 | D. 向量搜索 + RAG + LSP + 跨仓库 | 8 | 0 | 0 | 8 |
 | E. 辅助功能 | 8 | 0 | 0 | 8 |
 | F. 性能优化 | 19 | 0 | 0 | 19 |
-| G. Enterprise Daemon | 37 | 0 | 0 | 37 |
-| H. 规划但未实施 | 17 | 0 | 1 | 18 |
+| G. Enterprise Daemon | 38 | 0 | 0 | 38 |
+| H. 规划但未实施 | 16 | 2 | 1 | 19 |
 | L. 讨论文档提取 | 15 | 1 | 0 | 16 |
 | M. Rust 扩展 10 模块 | 10 | 0 | 0 | 10 |
-| N. 跨平台打包 | 8 | 0 | 0 | 8 |
+| N. 跨平台打包 | 2 | 2 | 3 | 7 |
 | O. 基准验证数据 | (参考数据) | — | — | 4 组 |
-| **总计** | **164** | **1** | **1** | **166** |
+| **总计** | **168** | **5** | **4** | **177** |
 
-> **2026-07-19 重新核对**：
+> **2026-07-20 批次5 文档对齐后重新核对**：
 >
-> - **唯一 ❌ 未实施**：H15 多用户权限系统（RBAC）——有意延后到 SaaS 化阶段，单用户场景下 `workspace_id` 逻辑隔离已覆盖。
-> - **唯一 ⚠️ 部分**：L1 MCP Server 层门禁——这是"软门禁"设计本身，非缺陷。`is_task_active()` + `get_task_context()` + `propose_edit` 返回 `task_validation` 字段已落地，"软门禁"语义就是设计目标。
-> - **设计原则类**（L10/L16）：状态为"✅ 设计方向已文档化"，不是缺陷。
-> - **待真实环境验证**（N5-N8）：脚本/配置/XML 已完成语法层验证，未在实际 macOS/Linux/GitHub Actions 环境运行（本地无法做）。
+> - **唯一 ❌ 未实施（H 类）**：H15 多用户权限系统（RBAC）——有意延后到 SaaS 化阶段，单用户场景下 `workspace_id` 逻辑隔离已覆盖。
+> - **N 类 ❌ 未实施（3 项）**：N5 Windows WiX MSI / N6 macOS pkg / N7 Linux deb-rpm-tar.zst 仍只有 XML/脚本未实际构建产物。
+> - **批次5 状态升级**（4 项 → ✅）：F19（动态算法文档对齐）、G23（11 → 33 RPC 文档对齐）、H6（标题改为 100K 验收）、M10（描述对齐为同 crate 多 crate-type）。
+> - **批次5 状态调整**（4 项 → 🟡）：H13（synthetic fixtures + 部分真实开源项目）、N3（P0-3 已修复 wheel 含 Rust 扩展）、N8（P0-3 已修复 version key/parser）、H14 描述补充 P0-3 修复内容保留 ❌。
+> - **唯一 ⚠️ 部分**：L1 MCP Server 层门禁——这是"软门禁"设计本身，非缺陷。
 
 **新增功能点摘要（本次扫描）**：
 
