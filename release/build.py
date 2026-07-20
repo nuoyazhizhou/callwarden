@@ -68,10 +68,110 @@ def build_rust_extension():
     print()
 
 
+def _verify_rust_extension_present():
+    """P0-3 修复：构建 wheel 前强制检查 callwarden_core 二进制存在（fail-fast）。
+
+    评审 P0-3：原代码在 Rust 扩展缺失时仍继续构建 wheel，导致 wheel 退化为
+    py3-none-any 且不含 callwarden_core，安装后无 Rust 加速。这是隐性 fail-open。
+    """
+    if sys.platform == "win32":
+        binary_name = "callwarden_core.pyd"
+    else:
+        binary_name = "callwarden_core.so"
+
+    binary_path = ROOT / binary_name
+    if not binary_path.exists():
+        print(f"  [FAIL] Rust extension binary missing: {binary_path}")
+        print(f"  拒绝构建 wheel：先运行 'python release/build.py --rust' 构建 Rust 扩展")
+        sys.exit(1)
+
+    # 验证文件非空（防止复制失败留下 0 字节文件）
+    size = binary_path.stat().st_size
+    if size < 1024:
+        print(f"  [FAIL] Rust extension binary too small ({size} bytes): {binary_path}")
+        print(f"  可能是构建失败或复制被截断，请重新运行 'python release/build.py --rust'")
+        sys.exit(1)
+
+    print(f"  [OK] Rust extension binary present: {binary_name} ({size} bytes)")
+
+
+def _detect_wheel_platform_tag():
+    """P0-3 修复：根据当前平台返回 wheel platform tag。
+
+    让 wheel 标记为平台特定（manylinux2014_x86_64 / win_amd64 / macosx_*），
+    而不是默认的 py3-none-any，避免 pip 在不兼容平台误装。
+    """
+    if sys.platform == "win32":
+        return "win_amd64"
+    elif sys.platform == "darwin":
+        # macOS universal2 暂用当前架构 tag，CI 中通过矩阵构建 universal2
+        import platform
+        machine = platform.machine().lower()
+        if machine == "arm64":
+            return "macosx_11_0_arm64"
+        return "macosx_11_0_x86_64"
+    else:
+        # Linux：默认 manylinux2014_x86_64；arm64 由 CI 矩阵覆盖
+        import platform
+        machine = platform.machine().lower()
+        if machine == "aarch64":
+            return "manylinux2014_aarch64"
+        return "manylinux2014_x86_64"
+
+
+def _verify_wheel_contains_rust_extension(wheel_path):
+    """P0-3 修复：验证 wheel 中确实包含 callwarden_core 二进制。
+
+    防止 pyproject.toml 配置错误导致 wheel 仍缺失 Rust 扩展（fail-visible）。
+    """
+    import zipfile
+    if not wheel_path.exists():
+        print(f"  [FAIL] Wheel not found: {wheel_path}")
+        sys.exit(1)
+
+    with zipfile.ZipFile(str(wheel_path)) as zf:
+        names = zf.namelist()
+        rust_files = [
+            n for n in names
+            if n.startswith("callwarden_core.") and (n.endswith(".pyd") or n.endswith(".so"))
+        ]
+        if not rust_files:
+            print(f"  [FAIL] Wheel does not contain callwarden_core binary: {wheel_path}")
+            print(f"  Wheel contents (first 20 entries):")
+            for n in names[:20]:
+                print(f"    {n}")
+            print(f"  评审 P0-3：pyproject.toml 中 py-modules=['callwarden_core'] 是否配置正确？")
+            sys.exit(1)
+        print(f"  [OK] Wheel contains Rust extension: {rust_files[0]}")
+
+
 def build_python_wheel():
     """构建 Python wheel。"""
     print("Step 3: Building Python wheel")
-    run([sys.executable, "-m", "build", "--wheel", "--outdir", str(RELEASE_DIR / "dist")])
+
+    # P0-3 修复：构建前强制检查 Rust 扩展存在
+    _verify_rust_extension_present()
+
+    # P0-3 修复：用 --plat-name 让 wheel 标记为平台特定（非 py3-none-any）
+    plat_tag = _detect_wheel_platform_tag()
+    print(f"  Using platform tag: {plat_tag}")
+
+    # setuptools 的 bdist_wheel 通过 --config-setting 传递 --plat-name
+    # 这样 wheel 文件名会是 callwarden-0.3.0-cp311-cp311-{plat_tag}.whl
+    # 而不是默认的 callwarden-0.3.0-py3-none-any.whl
+    run([
+        sys.executable, "-m", "build", "--wheel",
+        "--outdir", str(RELEASE_DIR / "dist"),
+        "--config-setting", f"--build-option=--plat-name={plat_tag}",
+    ])
+
+    # P0-3 修复：验证 wheel 中确实包含 Rust 扩展二进制
+    import glob
+    wheels = glob.glob(str(RELEASE_DIR / "dist" / "*.whl"))
+    if not wheels:
+        print("  [FAIL] No wheel produced")
+        sys.exit(1)
+    _verify_wheel_contains_rust_extension(Path(wheels[0]))
     print()
 
 

@@ -113,6 +113,14 @@ packages = [
     "callwarden.parsers",
     "callwarden.server",
 ]
+# P0-3 修复：让 wheel 包含根目录的 Rust 扩展二进制（callwarden_core.pyd/.so）
+# setuptools 的 py-modules 只识别 .py 文件，不识别 .pyd/.so；
+# 必须用 ext-modules + BinaryDistribution(setup.py) 让 setuptools 把 .pyd 当作
+# 预编译扩展模块包含到 wheel 中（参考 setup.py 的 BinaryDistribution）
+# wheel 平台标记由 setup.py 的 BinaryDistribution.has_ext_modules()=True 自动设置
+ext-modules = [
+    { name = "callwarden_core", sources = [] },
+]
 
 [tool.setuptools.package-data]
 callwarden = [

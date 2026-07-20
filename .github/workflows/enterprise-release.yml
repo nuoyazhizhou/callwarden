@@ -70,7 +70,9 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=$(python -c "import tomllib; print(tomllib.load(open('$VERSION_FILE','rb'))['package']['version'])")
+          # P0-3 修复：version.toml 中字段是 [product] 而非 [package]
+          # 原代码 ['package']['version'] 会 KeyError 导致 workflow 失败
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('$VERSION_FILE','rb'))['product']['version'])")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
       - name: Run tests (parallel)
@@ -171,18 +173,25 @@ jobs:
         shell: bash
       - name: Verify Rust extension loaded (不允许 Python fallback)
         run: |
+          # P0-3 修复：parse_canonical_bytes_py 真实签名是
+          #   (canonical_bytes, module_path, language, content_hash)
+          # 原代码 parse_file_lang('def f(): pass','test.py') 只传 2 个参数且第一个传源码内容，
+          # 但 parse_file_lang 真实签名是 (abs_path, module_path, language) 第一个必须是绝对路径。
+          # 改用 parse_canonical_bytes_py 直接传 bytes，不依赖文件系统，更稳定。
           if [ "$RUNNER_OS" = "Windows" ]; then
-            test-env/Scripts/python -c "from callwarden_core import parse_file_lang; r=parse_file_lang('def f(): pass','test.py'); assert r is not None, 'Rust parse failed'; print('Rust extension OK')"
+            test-env/Scripts/python -c "from callwarden_core import parse_canonical_bytes_py; r=parse_canonical_bytes_py(b'def f(): pass', 'test', 'python', '0000000000000000000000000000000000000000000000000000000000000000'); assert r is not None and 'symbols' in r, 'Rust parse failed'; print('Rust extension OK, symbols:', len(r.get('symbols', [])))"
           else
-            test-env/bin/python -c "from callwarden_core import parse_file_lang; r=parse_file_lang('def f(): pass','test.py'); assert r is not None, 'Rust parse failed'; print('Rust extension OK')"
+            test-env/bin/python -c "from callwarden_core import parse_canonical_bytes_py; r=parse_canonical_bytes_py(b'def f(): pass', 'test', 'python', '0000000000000000000000000000000000000000000000000000000000000000'); assert r is not None and 'symbols' in r, 'Rust parse failed'; print('Rust extension OK, symbols:', len(r.get('symbols', [])))"
           fi
         shell: bash
       - name: Smoke test - parse real file
         run: |
+          # P0-3 修复：用 parse_canonical_bytes_py 读取 cw.py 内容后传入，
+          # 避免直接用源码内容作为 abs_path 参数的签名错误。
           if [ "$RUNNER_OS" = "Windows" ]; then
-            test-env/Scripts/python -c "from callwarden_core import parse_file_lang; import os; r=parse_file_lang(open('cw.py').read(), os.path.basename('cw.py')); print('Parsed', len(r.get('symbols',[])), 'symbols')"
+            test-env/Scripts/python -c "from callwarden_core import parse_canonical_bytes_py; import hashlib; src=open('cw.py','rb').read(); h=hashlib.sha256(src).hexdigest(); r=parse_canonical_bytes_py(src, 'cw', 'python', h); print('Parsed', len(r.get('symbols',[])), 'symbols')"
           else
-            test-env/bin/python -c "from callwarden_core import parse_file_lang; import os; r=parse_file_lang(open('cw.py').read(), os.path.basename('cw.py')); print('Parsed', len(r.get('symbols',[])), 'symbols')"
+            test-env/bin/python -c "from callwarden_core import parse_canonical_bytes_py; import hashlib; src=open('cw.py','rb').read(); h=hashlib.sha256(src).hexdigest(); r=parse_canonical_bytes_py(src, 'cw', 'python', h); print('Parsed', len(r.get('symbols',[])), 'symbols')"
           fi
         shell: bash
 
