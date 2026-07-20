@@ -1366,6 +1366,7 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Phase 5.4: Affected Frontier
     m.add_class::<frontier::PyAffectedFrontier>()?;
     m.add_function(wrap_pyfunction!(frontier::compute_frontier, m)?)?;
+    m.add_function(wrap_pyfunction!(frontier::compute_frontier_with_budget, m)?)?;
     // Phase 5.5: Local Metrics Update (depth/cycle/impact)
     m.add_class::<metrics::PyDepthChange>()?;
     m.add_class::<metrics::PyCycleChange>()?;

@@ -218,18 +218,34 @@ mod unix {
         // 5. 构造 state_factory 闭包（每个 worker 线程调用一次，独立 WorkspaceRegistry 连接）
         // 必须是 Fn（可多次调用）+ Send + Sync：SnapshotDaemonState 内部有 Mutex<Connection>，
         // 每线程独立连接避免锁竞争
+        //
+        // G11: 共享 Arc<SnapshotCache> + Arc<SnapshotCachePublisher>
+        // —— 所有 worker 共用同一个 cache（per-workspace ArcSwap 在 cache 内部），
+        // 避免 snapshot 重复构建 + 内存浪费。publisher 是只读包装，可安全共享。
         let registry_db_path = config.registry_db_path.to_string_lossy().to_string();
         let cache_capacity = config.snapshot_cache_capacity;
         let data_root = config.data_root.clone();
+        let codegraph_db_path_template = config.codegraph_db_path_template.clone();
+        // 共享 SnapshotCache：所有 worker 复用同一个 cache 实例
+        let shared_snapshot_cache = Arc::new(SnapshotCache::new(cache_capacity));
+        // 共享 SnapshotCachePublisher（基于共享 cache）
+        let shared_publisher = Arc::new(
+            callwarden_core::daemon::replicator::SnapshotCachePublisher::new(Arc::clone(
+                &shared_snapshot_cache,
+            )),
+        );
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            let snapshot_cache = Arc::new(SnapshotCache::new(cache_capacity));
-            Ok(SnapshotDaemonState::with_registry_and_data_root(
+            // 每个 worker 共享同一个 snapshot_cache + publisher（Arc clone，无锁共享）
+            let state = SnapshotDaemonState::with_registry_and_data_root(
                 registry,
-                snapshot_cache,
+                Arc::clone(&shared_snapshot_cache),
                 data_root.clone(),
-            ))
+            )
+            .with_snapshot_publisher(Arc::clone(&shared_publisher))
+            .with_codegraph_db_path_template(codegraph_db_path_template.clone());
+            Ok(state)
         };
 
         // 6. 构造 ServerConfig

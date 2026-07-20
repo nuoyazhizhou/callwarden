@@ -50,6 +50,15 @@ pub mod health;
 /// R7: cw_daemon binary 配置加载（DaemonConfig + 环境变量覆盖 + 文件加载）
 pub mod config;
 
+/// G10/G20: memfd / FD 读取四重校验（FD 类型 + 大小预检 + 容量上限 + 摘要比对）
+/// 仅 Unix 编译（Windows 无 FD 路径）
+#[cfg(unix)]
+pub mod memfd;
+
+/// G29: QueryBudget + BudgetTracker——查询预算控制（max_depth + max_nodes + timeout）
+/// 防止 BFS/DFS 在大型代码库中指数爆炸
+pub mod budget;
+
 /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
 /// 更新 schema 时记得同步修改。

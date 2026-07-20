@@ -651,6 +651,17 @@ pub struct WorkspaceDaemonState {
     /// 这里用 HashMap 缓存（daemon 是单 Arc<Mutex<State>> 持有，&mut self 即可访问，
     /// 无需额外锁）。资源一旦创建，后续 RPC 直接复用，避免重复 open/schema 初始化。
     pub resources: HashMap<String, Arc<WorkspaceResources>>,
+    /// G11: Snapshot 发布器（可选，None 时 replicate 跳过 publish_snapshot）。
+    ///
+    /// 注入路径：`cw_daemon.rs` 启动时创建共享 `Arc<SnapshotCachePublisher>`，
+    /// 通过 `with_snapshot_publisher` builder 传入。daemon 内部所有 worker 线程
+    /// 共享同一个 publisher 实例（`Arc` 引用计数 + 内部只读）。
+    pub snapshot_publisher: Option<Arc<super::replicator::SnapshotCachePublisher>>,
+    /// G11: CodeGraph DB 路径模板（含 `{workspace_instance_id}` 占位符）。
+    ///
+    /// 空字符串表示不启用 snapshot publish（保持 R5 行为，db_path 传空）。
+    /// 模板来源：`DaemonConfig.codegraph_db_path_template`，daemon 启动时传入。
+    pub codegraph_db_path_template: String,
 }
 
 /// per-workspace 资源（懒初始化，缓存于 WorkspaceDaemonState.resources）
@@ -679,6 +690,8 @@ impl WorkspaceDaemonState {
             registry,
             data_root: std::path::PathBuf::new(),
             resources: HashMap::new(),
+            snapshot_publisher: None,
+            codegraph_db_path_template: String::new(),
         }
     }
 
@@ -692,7 +705,33 @@ impl WorkspaceDaemonState {
             registry,
             data_root,
             resources: HashMap::new(),
+            snapshot_publisher: None,
+            codegraph_db_path_template: String::new(),
         }
+    }
+
+    /// G11: 注入 SnapshotCachePublisher（启用 snapshot publish 主路径）
+    ///
+    /// 配合 `with_codegraph_db_path_template` 一起使用：
+    /// - publisher 注入后，Replicator.replicate() 会调用 publish_snapshot
+    /// - db_path 模板用于运行时替换 `{workspace_instance_id}` 占位符
+    ///
+    /// 二者任一为空/None，replicate 跳过 publish（保持 R5 行为）。
+    pub fn with_snapshot_publisher(
+        mut self,
+        publisher: Arc<super::replicator::SnapshotCachePublisher>,
+    ) -> Self {
+        self.snapshot_publisher = Some(publisher);
+        self
+    }
+
+    /// G11: 设置 CodeGraph DB 路径模板
+    ///
+    /// 模板含 `{workspace_instance_id}` 占位符，运行时替换为实际 workspace ID。
+    /// 空字符串表示不启用 snapshot publish（保持 R5 行为）。
+    pub fn with_codegraph_db_path_template(mut self, template: String) -> Self {
+        self.codegraph_db_path_template = template;
+        self
     }
 
     /// 懒初始化 per-workspace 资源（SessionStore + CasStore + StagingLog）
@@ -936,6 +975,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
         // 2. canonical_bytes_hex（跨平台）：客户端 hex 编码后传入（agent_protocol.py 默认路径）
         // 3. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入（兼容旧客户端）
         // 4. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
+        //
+        // G10/G20: FD 路径用四重校验替代 read_to_end 无界读，避免 OOM 攻击
         let canonical_bytes: Option<Vec<u8>> = if !received_fds.is_empty() {
             #[cfg(unix)]
             {
@@ -945,19 +986,29 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     ));
                 }
                 let fd = received_fds[0];
-                // from_raw_fd 接管 FD 所有权；read 完成后 file drop 会关闭 FD。
+                // G10/G20: 四重校验
+                // 1. FD 类型（fstat S_IFREG）
+                // 2. 大小预检（st_size 预分配）
+                // 3. 容量上限（DEFAULT_MAX_FD_READ_BYTES = 64MB）
+                // 4. 摘要比对（客户端提供 expected_sha256 时校验）
+                //
+                // from_raw_fd 接管 FD 所有权；校验 + 读取完成后 file drop 会关闭 FD。
                 // server.rs 在 dispatch 后会再次 close_fds，但关闭已关闭 FD 只返回
                 // EBADF 并被忽略，双重关闭是安全的。
-                use std::os::unix::io::FromRawFd;
-                use std::io::Read;
-                let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
-                let mut buf = Vec::new();
-                match file.read_to_end(&mut buf) {
-                    Ok(_) => Some(buf),
+                use crate::daemon::memfd;
+                let expected_sha256: Option<&str> = params
+                    .get("expected_sha256")
+                    .and_then(|v| v.as_str());
+                match memfd::read_from_fd_with_validation(
+                    fd,
+                    memfd::DEFAULT_MAX_FD_READ_BYTES,
+                    expected_sha256,
+                ) {
+                    Ok(buf) => Some(buf),
                     Err(e) => {
                         return Err(DaemonRpcError::new(
                             "fd_read_failed",
-                            format!("read from fd {} failed: {}", fd, e),
+                            format!("FD 读取校验失败（fd={}）: {}", fd, e),
                         ));
                     }
                 }
@@ -1068,17 +1119,35 @@ impl DaemonStateExt for WorkspaceDaemonState {
             );
             match resources.staging_log.append(&mut entry) {
                 Ok(_lsn) => {
-                    // 触发 replicate（R5 阶段不接 SnapshotManager，db_path 传空，
-                    // Replicator 只做 read_pending → mark_applied_batch，不发布 snapshot）
+                    // G11: 触发 replicate 并按配置发布 snapshot
                     //
-                    // 设计限制（评审 P0-2）：daemon 内部只有 CAS + session_store + staging_log，
-                    // 没有完整符号图谱数据库（符号图谱由 Python CodeGraphDB 维护）。
-                    // 因此 publish_snapshot 无法在 daemon 端独立完成，db_path 传空跳过发布。
-                    // 后续应通过 IPC 让 Python 端 CodeGraphDB 调用 publish_snapshot，
-                    // 或在 daemon 启动时挂载 SnapshotManager + db_path 配置。
+                    // - 若 daemon 启动时注入了 SnapshotCachePublisher + 配置了
+                    //   codegraph_db_path_template：replicate 会调用 publish_snapshot，
+                    //     从 db_path 指向的 SQLite 加载符号 + 调用图 → 构建 GraphSnapshot
+                    //     → 发布到 SnapshotCache（per-workspace ArcSwap）
+                    // - 若 publisher 为 None 或 db_path 解析为空：保持 R5 行为，
+                    //   只做 read_pending → mark_applied_batch，不发布 snapshot
+                    //
+                    // db_path 解析：模板中 `{workspace_instance_id}` 替换为实际 workspace ID
                     use crate::daemon::replicator::Replicator;
+                    let db_path = if !self.codegraph_db_path_template.is_empty() {
+                        self.codegraph_db_path_template
+                            .replace("{workspace_instance_id}", workspace_instance_id)
+                    } else {
+                        String::new()
+                    };
                     let replicator = Replicator::new(&resources.staging_log);
-                    let repl_result = replicator.replicate(workspace_instance_id, "", "");
+                    // 注入 publisher（若配置齐全）
+                    let replicator = if !db_path.is_empty() {
+                        if let Some(ref publisher) = self.snapshot_publisher {
+                            replicator.with_snapshot_publisher(publisher.as_ref())
+                        } else {
+                            replicator
+                        }
+                    } else {
+                        replicator
+                    };
+                    let repl_result = replicator.replicate(workspace_instance_id, &db_path, "");
 
                     let mut repl_map = Map::new();
                     repl_map.insert(
@@ -1100,20 +1169,34 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                 .unwrap_or_else(|| serde_json::Number::from(0u32)),
                         ),
                     );
-                    // P0-2 显式告警：snapshot 未发布（db_path 为空）
-                    // 让客户端明确知道本次 refresh 没有产生可查询 snapshot
+                    // G11: 根据 publisher + db_path + replicate 结果决定 snapshot_published
+                    let snapshot_published = !db_path.is_empty()
+                        && self.snapshot_publisher.is_some()
+                        && repl_result.success
+                        && repl_result.generation > 0;
                     repl_map.insert(
                         "snapshot_published".to_string(),
-                        Value::Bool(false),
+                        Value::Bool(snapshot_published),
                     );
-                    repl_map.insert(
-                        "snapshot_warning".to_string(),
-                        Value::String(
-                            "snapshot 未发布（daemon 未接入 SnapshotManager，db_path 为空）。\
-                             评审 P0-2：后续通过 IPC 让 Python CodeGraphDB 调用 publish_snapshot。"
-                                .to_string(),
-                        ),
-                    );
+                    if !snapshot_published {
+                        let warning = if db_path.is_empty() {
+                            "snapshot 未发布（codegraph_db_path_template 未配置，db_path 为空）。\
+                             G11 修复：在 daemon 配置中设置 codegraph_db_path_template \
+                             + 注入 SnapshotCachePublisher 后可启用 snapshot 发布。"
+                        } else if self.snapshot_publisher.is_none() {
+                            "snapshot 未发布（SnapshotCachePublisher 未注入）。\
+                             G11 修复：daemon 启动时通过 with_snapshot_publisher 注入 publisher。"
+                        } else if !repl_result.success {
+                            "snapshot 发布失败（replicate 返回 success=false），\
+                             查看 error 字段了解详情。"
+                        } else {
+                            "snapshot 未发布（未知原因：generation <= 0）。"
+                        };
+                        repl_map.insert(
+                            "snapshot_warning".to_string(),
+                            Value::String(warning.to_string()),
+                        );
+                    }
                     if let Some(err) = repl_result.error {
                         repl_map.insert(
                             "error".to_string(),

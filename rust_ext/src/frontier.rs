@@ -36,6 +36,11 @@ pub struct AffectedFrontier {
     pub upstream_transitive: HashSet<String>,
     /// 多跳下游（max_depth > 1 时填充）
     pub downstream_transitive: HashSet<String>,
+    /// G29: 是否因预算超限而返回部分结果
+    ///
+    /// true 表示 BFS 因节点数或超时预算超限而提前终止，结果不完整。
+    /// 调用方可据此决定是否提示用户扩大预算或缩小查询范围。
+    pub partial: bool,
 }
 
 impl AffectedFrontier {
@@ -67,8 +72,9 @@ impl AffectedFrontier {
 
     /// 摘要
     pub fn summary(&self) -> String {
+        let partial_tag = if self.partial { " [PARTIAL]" } else { "" };
         format!(
-            "frontier: {} direct, {} upstream ({}+{}), {} downstream ({}+{})",
+            "frontier: {} direct, {} upstream ({}+{}), {} downstream ({}+{}){}",
             self.directly_affected.len(),
             self.upstream_direct.len() + self.upstream_transitive.len(),
             self.upstream_direct.len(),
@@ -76,6 +82,7 @@ impl AffectedFrontier {
             self.downstream_direct.len() + self.downstream_transitive.len(),
             self.downstream_direct.len(),
             self.downstream_transitive.len(),
+            partial_tag,
         )
     }
 }
@@ -158,6 +165,113 @@ impl FrontierComputer {
                 &frontier.directly_affected,
                 max_depth - 1,
             );
+        }
+
+        frontier
+    }
+
+    /// G29: 带预算的 frontier 计算
+    ///
+    /// 与 `compute_frontier` 行为一致，但在 BFS 循环中接入 `BudgetTracker`，
+    /// 节点数或超时超限时立即返回部分结果（partial=true）。
+    ///
+    /// 参数：
+    /// - parse_delta: 文件 parse delta
+    /// - store: 当前 GraphStore
+    /// - budget: 查询预算（max_depth + max_nodes + timeout_ms）
+    pub fn compute_frontier_with_budget(
+        parse_delta: &ParseDelta,
+        store: Option<&GraphStore>,
+        budget: crate::daemon::budget::QueryBudget,
+    ) -> AffectedFrontier {
+        use crate::daemon::budget::BudgetTracker;
+        let tracker = BudgetTracker::new(budget);
+        let mut frontier = AffectedFrontier::default();
+
+        // 1. 直接受影响的符号
+        frontier.directly_affected = parse_delta
+            .symbol_delta
+            .affected_qnames()
+            .into_iter()
+            .collect();
+
+        if store.is_none() {
+            return frontier;
+        }
+        let store = store.unwrap();
+
+        // 2. 上游 1-hop：谁调用了变更符号
+        for qname in &frontier.directly_affected.clone() {
+            if tracker.is_exceeded() {
+                frontier.partial = true;
+                return frontier;
+            }
+            tracker.visit_node();
+            if let Some(sym) = store.get_symbol_ref(qname) {
+                let caller_ids = store.get_caller_ids(sym.id);
+                for caller_id in caller_ids {
+                    if let Some(caller) = store.get_symbol_by_id(caller_id) {
+                        frontier
+                            .upstream_direct
+                            .insert(store.symbol_qname(caller).to_string());
+                    }
+                }
+            }
+        }
+
+        // 3. 下游 1-hop：变更符号调用了谁
+        for qname in &frontier.directly_affected.clone() {
+            if tracker.is_exceeded() {
+                frontier.partial = true;
+                return frontier;
+            }
+            tracker.visit_node();
+            if let Some(sym) = store.get_symbol_ref(qname) {
+                let callee_ids = store.get_callee_ids(sym.id);
+                for callee_id in callee_ids {
+                    if let Some(callee) = store.get_symbol_by_id(callee_id) {
+                        frontier
+                            .downstream_direct
+                            .insert(store.symbol_qname(callee).to_string());
+                    }
+                }
+            }
+        }
+
+        // 4. 多跳传递闭包（如果 max_depth > 1）
+        if budget.max_depth > 1 {
+            // 上游传递闭包
+            let (up_result, up_partial) = Self::bfs_upstream_with_budget(
+                store,
+                &frontier.upstream_direct,
+                &frontier.directly_affected,
+                budget.max_depth - 1,
+                &tracker,
+            );
+            frontier.upstream_transitive = up_result;
+            if up_partial {
+                frontier.partial = true;
+                return frontier;
+            }
+
+            // 下游传递闭包
+            let (down_result, down_partial) = Self::bfs_downstream_with_budget(
+                store,
+                &frontier.downstream_direct,
+                &frontier.directly_affected,
+                budget.max_depth - 1,
+                &tracker,
+            );
+            frontier.downstream_transitive = down_result;
+            if down_partial {
+                frontier.partial = true;
+                return frontier;
+            }
+        }
+
+        // 最终检查（timeout 可能在多跳后触发）
+        if tracker.is_exceeded() {
+            frontier.partial = true;
         }
 
         frontier
@@ -246,11 +360,103 @@ impl FrontierComputer {
 
         result
     }
-}
 
-// ============================================
-// PyO3 暴露
-// ============================================
+    /// G29: BFS 上游遍历（带预算）
+    ///
+    /// 返回 (result_set, partial)：partial=true 表示因预算超限提前终止
+    fn bfs_upstream_with_budget(
+        store: &GraphStore,
+        initial: &HashSet<String>,
+        exclude: &HashSet<String>,
+        max_hops: u32,
+        tracker: &crate::daemon::budget::BudgetTracker,
+    ) -> (HashSet<String>, bool) {
+        let mut result = HashSet::new();
+        let mut visited: HashSet<String> = exclude.clone();
+        let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+
+        for qname in initial {
+            if !visited.contains(qname) {
+                visited.insert(qname.clone());
+                queue.push_back((qname.clone(), 0));
+            }
+        }
+
+        while let Some((qname, depth)) = queue.pop_front() {
+            if tracker.is_exceeded() {
+                return (result, true);
+            }
+            tracker.visit_node();
+            if depth >= max_hops {
+                continue;
+            }
+
+            if let Some(sym) = store.get_symbol_ref(&qname) {
+                let caller_ids = store.get_caller_ids(sym.id);
+                for caller_id in caller_ids {
+                    if let Some(caller) = store.get_symbol_by_id(caller_id) {
+                        let caller_qname = store.symbol_qname(caller).to_string();
+                        if !visited.contains(&caller_qname) {
+                            visited.insert(caller_qname.clone());
+                            result.insert(caller_qname.clone());
+                            queue.push_back((caller_qname.clone(), depth + 1));
+                        }
+                    }
+                }
+            }
+        }
+
+        (result, false)
+    }
+
+    /// G29: BFS 下游遍历（带预算）
+    ///
+    /// 返回 (result_set, partial)：partial=true 表示因预算超限提前终止
+    fn bfs_downstream_with_budget(
+        store: &GraphStore,
+        initial: &HashSet<String>,
+        exclude: &HashSet<String>,
+        max_hops: u32,
+        tracker: &crate::daemon::budget::BudgetTracker,
+    ) -> (HashSet<String>, bool) {
+        let mut result = HashSet::new();
+        let mut visited: HashSet<String> = exclude.clone();
+        let mut queue: VecDeque<(String, u32)> = VecDeque::new();
+
+        for qname in initial {
+            if !visited.contains(qname) {
+                visited.insert(qname.clone());
+                queue.push_back((qname.clone(), 0));
+            }
+        }
+
+        while let Some((qname, depth)) = queue.pop_front() {
+            if tracker.is_exceeded() {
+                return (result, true);
+            }
+            tracker.visit_node();
+            if depth >= max_hops {
+                continue;
+            }
+
+            if let Some(sym) = store.get_symbol_ref(&qname) {
+                let callee_ids = store.get_callee_ids(sym.id);
+                for callee_id in callee_ids {
+                    if let Some(callee) = store.get_symbol_by_id(callee_id) {
+                        let callee_qname = store.symbol_qname(callee).to_string();
+                        if !visited.contains(&callee_qname) {
+                            visited.insert(callee_qname.clone());
+                            result.insert(callee_qname.clone());
+                            queue.push_back((callee_qname.clone(), depth + 1));
+                        }
+                    }
+                }
+            }
+        }
+
+        (result, false)
+    }
+}
 
 /// Python 侧 AffectedFrontier 包装
 #[pyclass(name = "PyAffectedFrontier")]
@@ -329,6 +535,12 @@ impl PyAffectedFrontier {
         self.inner.summary()
     }
 
+    /// G29: 是否因预算超限返回部分结果
+    #[getter]
+    fn partial(&self) -> bool {
+        self.inner.partial
+    }
+
     fn __repr__(&self) -> String {
         format!("PyAffectedFrontier({})", self.inner.summary())
     }
@@ -351,6 +563,39 @@ pub fn compute_frontier<'py>(
 
     let store = store_ref.as_ref().map(|s| s.as_ref());
     let frontier = FrontierComputer::compute_frontier(&parse_delta.inner, store, max_depth);
+
+    Py::new(py, PyAffectedFrontier { inner: frontier })
+}
+
+/// G29: compute_frontier 带预算版本
+///
+/// 参数：
+/// - parse_delta: 文件 parse delta
+/// - cache + workspace_id: 可选的 GraphStore 来源
+/// - max_depth: 最大深度
+/// - max_nodes: 最大访问节点数（默认 10000）
+/// - timeout_ms: 超时毫秒（默认 5000）
+///
+/// 返回 PyAffectedFrontier，其中 `partial=true` 表示因预算超限返回部分结果。
+#[pyfunction]
+#[pyo3(signature = (parse_delta, cache=None, workspace_id=None, max_depth=1, max_nodes=10000, timeout_ms=5000))]
+pub fn compute_frontier_with_budget<'py>(
+    py: Python<'py>,
+    parse_delta: &crate::delta::PyParseDelta,
+    cache: Option<&crate::snapshot::PySnapshotCache>,
+    workspace_id: Option<&str>,
+    max_depth: u32,
+    max_nodes: usize,
+    timeout_ms: u64,
+) -> PyResult<Py<PyAffectedFrontier>> {
+    let store_ref: Option<std::sync::Arc<GraphStore>> = match (cache, workspace_id) {
+        (Some(c), Some(wid)) => Some(c.get_store(wid)?),
+        _ => None,
+    };
+
+    let store = store_ref.as_ref().map(|s| s.as_ref());
+    let budget = crate::daemon::budget::QueryBudget::new(max_depth, max_nodes, timeout_ms);
+    let frontier = FrontierComputer::compute_frontier_with_budget(&parse_delta.inner, store, budget);
 
     Py::new(py, PyAffectedFrontier { inner: frontier })
 }

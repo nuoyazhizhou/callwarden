@@ -381,6 +381,68 @@ mod unix {
 pub use unix::{recv_message_with_fds, send_message_with_fds};
 
 // ============================================
+// G21/G22: 命名统一包装
+//
+// 规范 daemon-ipc-security.md 中使用了简短命名：
+// - `send_msg`：对应 `send_message`
+// - `_recv_msg_with_fd`：对应 `recv_message_with_fds`（复数 fds）
+// - `call_with_fd`：请求-响应组合（send_msg + _recv_msg_with_fd）
+//
+// 现有代码已实现完整功能，仅函数名与规范文档不一致。这里新增简短别名，
+// 让按规范文档查阅代码的开发者能快速找到对应实现，避免命名困惑。
+//
+// 别名是 zero-cost：直接 re-export，不引入额外间接调用。
+// ============================================
+
+/// G21: `send_msg` 别名，对应规范文档中的简短命名
+///
+/// 等价于 [`send_message`]，详见原函数文档。
+pub fn send_msg<W: Write>(
+    writer: &mut W,
+    message: &Value,
+    max_bytes: usize,
+) -> Result<(), ProtocolError> {
+    send_message(writer, message, max_bytes)
+}
+
+/// G22: `_recv_msg_with_fd` 别名（单数 fd 命名，实际仍接收多个 FD）
+///
+/// 等价于 [`recv_message_with_fds`]（仅在 Unix 下可用）。
+/// 函数名前导下划线表示这是规范文档使用的"内部命名"，与生产代码命名
+/// （复数 fds）保持区分。功能完全相同。
+#[cfg(unix)]
+pub fn _recv_msg_with_fd(
+    sock: &mut std::os::unix::net::UnixStream,
+    max_bytes: usize,
+    max_fds: usize,
+) -> Result<(Value, Vec<RawFd>), ProtocolError> {
+    recv_message_with_fds(sock, max_bytes, max_fds)
+}
+
+/// G21/G22: `call_with_fd` 组合——发送请求 + 接收带 FD 的响应
+///
+/// 便利函数：封装 send_msg + _recv_msg_with_fd 的请求-响应模式。
+/// 适用于 daemon 客户端调用 "send FD → 接收处理结果" 的场景。
+///
+/// 参数：
+/// - `sock`: UDS socket（已连接）
+/// - `request`: 请求 JSON
+/// - `max_bytes`: 单条消息字节上限
+/// - `max_fds`: FD 数量上限
+///
+/// 返回 (response, received_fds)
+#[cfg(unix)]
+pub fn call_with_fd(
+    sock: &mut std::os::unix::net::UnixStream,
+    request: &Value,
+    max_bytes: usize,
+    max_fds: usize,
+) -> Result<(Value, Vec<RawFd>), ProtocolError> {
+    send_msg(sock, request, max_bytes)?;
+    _recv_msg_with_fd(sock, max_bytes, max_fds)
+}
+
+// ============================================
 // 单元测试（跨平台，纯逻辑）
 // ============================================
 

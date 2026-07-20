@@ -49,6 +49,14 @@ pub struct DaemonConfig {
     pub socket_mode: u32,
     /// snapshot cache 容量
     pub snapshot_cache_capacity: usize,
+    /// G11: CodeGraph DB 路径模板（用于 Replicator 发布 snapshot）
+    ///
+    /// 占位符 `{workspace_instance_id}` 在运行时按当前 workspace 替换。
+    /// 空字符串（默认）表示不启用 snapshot publish（保持 R5 行为）。
+    /// 典型值：`/var/lib/callwarden/{workspace_instance_id}/codegraph.db`
+    /// 或 `~/.callwarden/workspaces/{workspace_instance_id}/codegraph.db`
+    #[serde(default)]
+    pub codegraph_db_path_template: String,
 }
 
 impl Default for DaemonConfig {
@@ -61,6 +69,7 @@ impl Default for DaemonConfig {
             request_timeout_secs: 30,
             socket_mode: 0o660,
             snapshot_cache_capacity: DEFAULT_SNAPSHOT_CACHE_CAPACITY,
+            codegraph_db_path_template: String::new(),
         }
     }
 }
@@ -117,6 +126,7 @@ impl DaemonConfig {
     /// - `CW_DAEMON_REGISTRY_DB` → registry_db_path
     /// - `CW_DAEMON_DATA_ROOT` → data_root
     /// - `CW_DAEMON_WORKERS` → max_workers
+    /// - `CW_DAEMON_CODEGRAPH_DB_TEMPLATE` → codegraph_db_path_template（G11）
     pub fn apply_env_overrides(&mut self) -> Result<(), ConfigError> {
         if let Ok(v) = std::env::var("CW_DAEMON_SOCKET") {
             if !v.is_empty() {
@@ -147,7 +157,25 @@ impl DaemonConfig {
                     })?;
             }
         }
+        // G11: CodeGraph DB 路径模板（用于 Replicator 发布 snapshot）
+        if let Ok(v) = std::env::var("CW_DAEMON_CODEGRAPH_DB_TEMPLATE") {
+            if !v.is_empty() {
+                self.codegraph_db_path_template = v;
+            }
+        }
         Ok(())
+    }
+
+    /// G11: 解析 workspace 的 CodeGraph DB 路径
+    ///
+    /// 模板中的 `{workspace_instance_id}` 占位符替换为实际 workspace ID。
+    /// 模板为空时返回空字符串（调用方应判断空值跳过 snapshot 发布）。
+    pub fn resolve_codegraph_db_path(&self, workspace_instance_id: &str) -> String {
+        if self.codegraph_db_path_template.is_empty() {
+            return String::new();
+        }
+        self.codegraph_db_path_template
+            .replace("{workspace_instance_id}", workspace_instance_id)
     }
 
     /// 确保 data_root 和 registry_db_path 的父目录存在（不报错，启动时再检查）
@@ -201,6 +229,9 @@ mod tests {
             request_timeout_secs: 15,
             socket_mode: 0o600,
             snapshot_cache_capacity: 4,
+            codegraph_db_path_template: String::from(
+                "/var/lib/callwarden/{workspace_instance_id}/codegraph.db",
+            ),
         };
         let json = serde_json::to_string_pretty(&original).unwrap();
         std::fs::write(&cfg_path, json).unwrap();
@@ -208,6 +239,46 @@ mod tests {
         assert_eq!(loaded.socket_path, original.socket_path);
         assert_eq!(loaded.max_workers, 8);
         assert_eq!(loaded.socket_mode, 0o600);
+        assert_eq!(
+            loaded.codegraph_db_path_template,
+            original.codegraph_db_path_template
+        );
+    }
+
+    #[test]
+    fn test_resolve_codegraph_db_path_empty_template() {
+        let cfg = DaemonConfig::default();
+        assert_eq!(cfg.resolve_codegraph_db_path("ws-123"), "");
+    }
+
+    #[test]
+    fn test_resolve_codegraph_db_path_placeholder_substitution() {
+        let mut cfg = DaemonConfig::default();
+        cfg.codegraph_db_path_template =
+            "/var/lib/callwarden/{workspace_instance_id}/codegraph.db".to_string();
+        assert_eq!(
+            cfg.resolve_codegraph_db_path("ws-abc-123"),
+            "/var/lib/callwarden/ws-abc-123/codegraph.db"
+        );
+    }
+
+    #[test]
+    fn test_apply_env_overrides_codegraph_db_template() {
+        std::env::set_var(
+            "CW_DAEMON_CODEGRAPH_DB_TEMPLATE",
+            "/tmp/ws_{workspace_instance_id}/cg.db",
+        );
+        let mut cfg = DaemonConfig::default();
+        cfg.apply_env_overrides().unwrap();
+        assert_eq!(
+            cfg.codegraph_db_path_template,
+            "/tmp/ws_{workspace_instance_id}/cg.db"
+        );
+        assert_eq!(
+            cfg.resolve_codegraph_db_path("xyz"),
+            "/tmp/ws_xyz/cg.db"
+        );
+        std::env::remove_var("CW_DAEMON_CODEGRAPH_DB_TEMPLATE");
     }
 
     #[test]

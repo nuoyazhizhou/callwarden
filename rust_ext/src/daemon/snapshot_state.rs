@@ -92,6 +92,31 @@ impl SnapshotDaemonState {
         self
     }
 
+    /// G11：注入 SnapshotCachePublisher，透传到 base `WorkspaceDaemonState`
+    ///
+    /// 启用后 `handle_workspace_file_refresh` 中的 Replicator 会调用
+    /// `publish_snapshot`，从 CodeGraph DB 加载符号 + 调用图 → 发布到
+    /// 共享 `SnapshotCache`（per-workspace ArcSwap）。
+    ///
+    /// 必须配合 `with_codegraph_db_path_template` 一起使用：publisher 提供发布
+    /// 能力，db_path 模板提供源数据库路径。二者任一缺失，replicate 跳过发布。
+    pub fn with_snapshot_publisher(
+        mut self,
+        publisher: Arc<super::replicator::SnapshotCachePublisher>,
+    ) -> Self {
+        self.base = self.base.with_snapshot_publisher(publisher);
+        self
+    }
+
+    /// G11：设置 CodeGraph DB 路径模板，透传到 base
+    ///
+    /// 模板含 `{workspace_instance_id}` 占位符，运行时替换为实际 workspace ID。
+    /// 空字符串表示不启用 snapshot publish（保持 R5 行为）。
+    pub fn with_codegraph_db_path_template(mut self, template: String) -> Self {
+        self.base = self.base.with_codegraph_db_path_template(template);
+        self
+    }
+
     /// G1 Layer 2：获取 ToolchainStore（若未注入返回 None）
     pub fn toolchain_store(&self) -> Option<&Arc<super::toolchain::ToolchainStore>> {
         self.toolchain_store.as_ref()
