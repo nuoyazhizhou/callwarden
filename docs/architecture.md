@@ -314,14 +314,14 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 
 ### 设计原理
 
-CodeGraphDB 通过 **40 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
+CodeGraphDB 通过 **33 个 Mixin 多继承**组装，每个 Mixin 负责一个功能领域。这种设计：
 
 - **单一职责**：每个 Mixin 只关心自己的表和查询
 - **按需组合**：主类只需声明继承即可获得功能
 - **易于扩展**：新增功能只需添加新 Mixin
-- **避免上帝类**：`db.py` 仅 92 行，职责在 37 个文件中分散
+- **避免上帝类**：`db.py` 仅 92 行，职责在 39 个文件中分散
 
-### 40 个 Mixin 列表
+### 33 个 Mixin 列表
 
 | # | Mixin | 文件 | 职责 |
 |---|-------|------|------|
@@ -376,7 +376,7 @@ class CodeGraphDB(
     BuildMixin,
     QueryMixin,
     CommentMixin,
-    # ... 共 40 个 Mixin
+    # ... 共 33 个 Mixin
     CheckGateMixin,
     AgentRulesMixin,
 ):

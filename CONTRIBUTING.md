@@ -9,7 +9,7 @@ callwarden/
 ├── analyzers/        # 分析层：调用链 / 覆盖率 / 缺陷 / ignore 规则
 ├── cicd/             # CI/CD：SARIF / 增量 / PR 检查
 ├── cli/              # CLI 命令行入口
-├── db/               # 数据库层：40 个 Mixin + schema
+├── db/               # 数据库层：33 个 Mixin 类（39 个 db_*.py 文件 + schema）
 ├── parsers/          # 16 种语言 tree-sitter 解析器
 ├── rust_ext/         # PyO3 Rust 扩展（性能加速）
 ├── server/           # MCP Server + 文件监控

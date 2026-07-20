@@ -198,9 +198,9 @@
 | PR 检查                            | ✅    | `cicd/pr_check.py`                 |
 | GitHub Actions workflow            | ✅    | `.github/workflows/callwarden.yml` |
 
-## 三、Mixin 模块清单（40 个）
+## 三、Mixin 模块清单（33 个类，39 个 db_*.py 文件）
 
-权威清单见 [architecture.md §40 个 Mixin 列表](../architecture.md#40-个-mixin-列表)。下表为按文件路径分组的快速索引：
+权威清单见 [architecture.md §33 个 Mixin 列表](../architecture.md#33-个-mixin-列表)。下表为按文件路径分组的快速索引：
 
 | Mixin                   | 文件                          | 职责                                  |
 | ----------------------- | ----------------------------- | ------------------------------------- |
@@ -266,4 +266,4 @@
 | symbols 表 UNIQUE 索引 + 真正 UPSERT       | ⚠️ 部分 | `db_build.py` 已用 `ON CONFLICT(file_instance_id, name, start_line) DO UPDATE`（UPSERT），但 UNIQUE 键不是 `symbol_hash` |
 | PyO3 Rust 扩展（向量计算加速）             | ⚠️ 部分 | `rust_ext/` 已搭建 parse/graphstore/canonicalize/hash_diff/multi_lang/daemon；向量计算加速未集成 |
 | 多用户权限系统                             | 待办   | 当前按 workspace_id 逻辑隔离，无 RBAC                  |
-| Prometheus 指标导出                        | ⚠️ 部分 | `server/metrics.py` 已实现 Counter/Gauge/Histogram 数据结构 + Prometheus 文本格式生成；缺 `/metrics` HTTP endpoint 暴露（G13 待补） |
+| Prometheus 指标导出                        | ❌ 未实现 | 评审 G13/I4（2026-07-20）：`server/metrics.py` 有 Counter/Gauge/Histogram 数据结构和 Prometheus 文本格式生成代码，但 daemon 实际无任何埋点；CLI/MCP 新进程读到的是自己的空单例，不是 daemon metrics。`/metrics` HTTP endpoint 也未暴露。需补：daemon 主路径埋点 + endpoint 暴露 + 跨进程 metrics 共享 |

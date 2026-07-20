@@ -119,16 +119,16 @@
 | A11 | Git 历史导入 + 符号级变更追踪 | IS/CS | ✅ 已实现 | db_git.py |
 | A12 | Semgrep 多语言静态安全扫描 | IS/CS | ✅ 已实现 | analyzers/issues.py |
 | A13 | 结果按内容去重入库 | IS | ✅ 已实现 | semgrep_findings |
-| A14 | 增量扫描 | IS | ✅ 已实现 | scan_semgrep_incremental |
-| A15 | .gitignore 完整语法解析 | IS/CL | ✅ 已实现 | ignore_spec.py |
+| A14 | 增量扫描 | IS | ❌ 声明不成立（评审 2026-07-20） | 不存在 `scan_semgrep_incremental`；扫描记录硬编码 `scan_type='full'`，没有增量清理语义。需补：增量扫描方法 + scan_type 标识 + 增量清理 |
+| A15 | .gitignore 完整语法解析 | IS/CL | 🟡 部分完成（评审 2026-07-20） | 自研 ignore parser 不是完整 gitignore 语义：`strip()` 丢失尾随空格语义，不支持字符类，目录剪枝会影响后续 negation 恢复。建议接入 `pathspec` 库或补全 gitignore 规范 |
 | A16 | .callwardenignore 项目级规则 | IS | ✅ 已实现 | |
 | A17 | GC 归档/复活/状态/清除 | IS/CL | ✅ 已实现 | db_gc.py |
 | A18 | build 末尾自动 Young GC | IS | ✅ 已实现 | |
-| A19 | SARIF 导出 + GitHub Actions | IS/CL | ✅ 已实现 | cicd/ |
+| A19 | SARIF 导出 + GitHub Actions | IS/CL | ✅ 已修复（2026-07-20 P1） | cicd/ SARIF exporter + GitHub Action 入口存在。P1 评审修复：PRChecker 改用 `check_before_edit` + `run_errors` 收集 + SARIF `executionNotifications` 让 fail-visible |
 | A20 | 增量分析（CI/CD） | IS | ✅ 已实现 | incremental.py |
-| A21 | PR 检查 | IS | ✅ 已实现 | pr_check.py |
+| A21 | PR 检查 | IS | ✅ 已修复（2026-07-20 P1） | pr_check.py。P1 评审修复：原调用不存在的 `guardrail_check_edit` 且吞异常（fail-open），改为 `check_before_edit` + 异常上浮 + Semgrep findings 合并进 SARIF |
 | A22 | 安全修复 SEC-001~007 | IS/CL | ✅ 已实现 | 原子写入/LSP安全/日志消毒 |
-| A23 | 文件级并行解析（ThreadPoolExecutor） | IS/CL | ✅ 已实现 | |
+| A23 | 文件级并行解析（ThreadPoolExecutor） | IS/CL | 🟡 部分完成（评审 2026-07-20） | 文件级并行存在，但主路径现为 Rust pool/ProcessPool，ThreadPool 主要是降级；矩阵描述已过时，应更新为 "Rust pool + ProcessPool + ThreadPool 降级" |
 | A24 | PRAGMA WAL + cache + mmap | IS/CL | ✅ 已实现 | |
 | A25 | executemany 批量写入 | IS/CL | ✅ 已实现 | |
 
@@ -156,7 +156,7 @@
 | C7 | work_next_job 结构化指令 | IS/CA | ✅ 已实现 | |
 | C8 | propose_symbol_patch / propose_range_patch | RM | ✅ 已实现 | |
 | C9 | install-agent 集成模板 | RM | ✅ 已实现 | |
-| C10 | task ↔ commit ↔ symbol 三角关联 | CS | ✅ 已实现 | post-commit hook |
+| C10 | task ↔ commit ↔ symbol 三角关联 | CS | 🟡 部分完成（评审 2026-07-20） | post-commit capture 可建立关联，但是 best-effort hook，可被 `--no-verify` 或外部编辑绕过 |
 | C11 | 任务 reopen 机制 | AGENTS.md | ✅ 已实现 | |
 
 ## D. 向量搜索 + RAG + LSP + 跨仓库（D1/D7 评审已修正）
@@ -167,7 +167,7 @@
 | D2 | sentence-transformers 嵌入 | IS | ✅ 已实现 | |
 | D3 | 语义搜索（降级关键词） | IS/CA | ✅ 已实现 | semantic_search（MCP 已注册） |
 | D4 | 相似函数查找 | IS | ✅ 已实现 | find_similar_functions（MCP 已注册） |
-| D5 | ask_codebase RAG 管道 | IS/CA | ✅ 已实现 | ask_codebase（MCP 已注册） |
+| D5 | ask_codebase RAG 管道 | IS/CA | 🟡 部分完成（评审 2026-07-20） | `ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，不生成最终问答 |
 | D6 | LSP hover/定义/引用/诊断/补全 | IS/CL | ✅ 已实现 | db_lsp.py |
 | D7 | 跨仓库依赖检测 + 共享符号 + 影响传播 | IS/CL | ✅ 已修复（2026-07-20） | db_cross_repo.py（D7 评审修复：`target_symbol_names` 字典从 `name→qualified_name` 改为 `name→(qualified_name, symbol_hash)` 元组，INSERT 的 target_symbol_hash 写入真实值，反向查询可命中。原代码写空字符串导致 `WHERE target_symbol_hash = ?` 永远无结果） |
 | D8 | 分支注册/切换/差异对比/合并预览 | IS/CL | ✅ 已实现 | db_branch.py |
@@ -199,58 +199,58 @@
 | F8 | P2 FTS5 全文索引替代 LIKE | PP/RP | ✅ 已实现 | symbols_fts 虚拟表 + 同步触发器（v31 迁移） |
 | F9 | P28 get_callers qualified_name 参数 | PP | ✅ 已实施 | capability_showcase Q1 确认 |
 | F10 | P29 FTS 独立重建命令 | PP | ✅ 已实现 | v31 迁移含 rebuild 命令 |
-| F11 | P30 方案 A: Rust 端并行构建 CSR → 一次性 dump | PP | ✅ 已实现 | `build_graph_from_c_files` PyO3 函数：rayon 并行 parse → Rust 内存构建 SymbolTable+CallGraph（CSR），跳过 SQLite INSERT 阶段；50K 符号 0.276s vs Python 3.706s（13.43x），1K 符号 22.36x；test_f11_rust_build_graph.py 验证符号数+边数完全匹配 |
+| F11 | P30 方案 A: Rust 端并行构建 CSR → 一次性 dump | PP | 🟡 部分完成（评审 2026-07-20） | `build_graph_from_c_files` PyO3 函数存在，但非测试生产代码没有调用方。性能数据 13.43x 仅来自基准测试，未进入生产路径。需补：接入 build 主路径或显式标注为可选加速路径 |
 | F12 | P5 冷启动快照 dump/load（二进制 mmap） | BR3 | ✅ 已实现 | `_get_graph_store` 优先 mmap 加载 `.cwsnap`（snap_mtime>=db_mtime 校验），后台线程构建 calls + dump_to_file；Rust dump_to_file/load_from_file 完整实现（HEADER + 12 sections + 对齐 padding）；test_graphstore_compact_indexes + _verify_p4_phase2 覆盖 |
 | F13 | P6 calls 表索引精简（删 2/3 calls 索引） | BR3 | ✅ 已实施 | v32 删除 idx_calls_callee（GraphStore CSR 覆盖 get_callers）；v33 新增 idx_calls_callee_id_resolved 部分索引；保留 idx_calls_caller（SQL 降级路径） |
-| F14 | P12 延迟建索引 + 分段 commit | BR2 | ✅ 已实施 | 10M 符号 19.5min（vs 基线 2h+，8.1x 加速）；WAL TRUNCATE 全生效 |
-| F15 | P13 cache_size=256MB + P15 page_size=8KB | BR4 | ✅ 已实施 | 联合 17.8% 加速（90.60s → 74.52s @1M）；cache 收益递减点在 256MB |
+| F14 | P12 延迟建索引 + 分段 commit | BR2 | 🟡 部分完成（评审 2026-07-20） | 延迟建索引/分段 commit/WAL truncate 有代码；10M/8.1x 是基准承诺，本次不以测试报告认定 |
+| F15 | P13 cache_size=256MB + P15 page_size=8KB | BR4 | 🟡 部分完成（评审 2026-07-20） | cache/page size 配置已实施；17.8% 数值未作当前环境复验 |
 | F16 | P7 CallGraphBuildContext 内存批量写入 | WL2 | ✅ 已实施 | call resolve+write 42.23s → 0.35s（120x）；内存算完再批量落库 |
 | F17 | P8 FTS rebuild 替代触发器写放大 | WL2 | ✅ 已实施 | full build 期间禁用 FTS 触发器，最后一次性 rebuild |
 | F18 | P9 C/C++ 显式栈遍历 + thirdParty ignore | WL2 | ✅ 已实施 | firmware 30min+ 卡死 → 22.1s；消除 RecursionError |
-| F19 | P10 多进程 worker 限制 min(4, cpu_count) | WL2 | ✅ 已实施 | 每 worker ~300MB，4 进程 ~1.2GB（原 8 进程 ~2.4GB） |
+| F19 | P10 多进程 worker 限制 | WL2 | ❌ 声明不成立（评审 2026-07-20） | 当前不是 `min(4,cpu_count)`，而是基于 CPU/可用内存/文件规模的 1-8 动态 worker。矩阵描述与代码不符 |
 | F20 | search_symbols 路由反转（FTS5 优先，Rust fallback） | BR3 | ✅ 已实施（2026-07-19） | 1M 符号实测 FTS5 trigram 2.354ms vs Rust memchr 3.132ms（0.75x 慢 25%）；100K 符号实测 FTS5 0.41ms vs Rust memchr 151.47ms（**370x 加速**）；反转路由：FTS5 优先 → Rust fallback → LIKE fallback；保留 Rust 作为 fallback（FTS5 不可用或 query < 3 字符时启用）；修正 F20 文档错误描述（原写"前缀匹配"实际是"子串匹配"）；详见 [architecture.md §6](docs/architecture.md#6-查询路径设计决策graphstore-vs-sql-路由) |
 
 ## G. Enterprise Daemon 架构（规划/部分实施）
 
 | # | 功能点 | 来源 | 状态 | 备注 |
 |---|--------|------|------|------|
-| G1 | 三层存储（Global CAS / Toolchain / Thin Workspace） | EA/DS | ✅ 已实现 | Layer 1 Global CAS（cas.rs CasStore）+ Layer 2 独立 toolchain.db（Rust ToolchainStore 1000+行 4 表 + Python db_toolchain.py open_toolchain_db/attach_toolchain_db/detach_toolchain_db/is_toolchain_attached + daemon_server.py 13 RPC dispatch toolchain.*/build_context.*/resolved_edges.* + CLI daemon toolchain register/list/get/delete/bind/resolve/build-context/resolved-edges）+ Layer 3 Thin Workspace（workspace.rs WorkspaceRegistry）；Rust 37 单元测试 + Python 5 三层 E2E 测试（ATTACH DATABASE / fingerprint 去重 / resolved_edges 隔离 / resolve 4 步降级链） |
+| G1 | 三层存储（Global CAS / Toolchain / Thin Workspace） | EA/DS | 🟡 部分完成（评审 2026-07-20） | CAS/toolchain/workspace 三层存在，但全局 toolchain/build-context RPC 没有 UID/admin 授权（P0-1 已修复：ADMIN_ONLY_METHODS + is_admin 检查）。原代码忽略 peer，普通用户可改写全局配置 |
 | G2 | Rust daemon 单例守护进程 | DS/EA | ✅ 已实现 | cw_daemon.rs 完整实现：clap CLI + DaemonConfig + schema 初始化 + UDS server + 4 信号（SIGTERM/SIGINT/SIGHUP/SIGUSR1）+ sd_notify（READY=1/STOPPING=1/abstract socket）+ 3 子命令（serve/schema-check/health-check）+ G14 RecoveryHandler + recover_all_workspaces；dispatch.rs 28 RPC（Python 22 全覆盖 + Rust 额外 6：query.call_chain_down/topological_order/detect_cycles + snapshot.stats/list_workspaces/evict）；G3 UDS 协议 14 用例全通过；systemd Type=notify 单例语义 |
-| G3 | UDS + SO_PEERCRED 认证 | DS/DI | ✅ 已实现 | WSL2 Linux 全 14 用例通过：UDS roundtrip/SCM_RIGHTS fd 传递/cross-UID 隔离/CLI 管理流/真实双 UID 隔离 |
-| G4 | Workspace Registry + Container Mount Mapping | DS/RP | ✅ 已实现 | Rust WorkspaceRegistry 3 个 CRUD 方法 + dispatch.rs mount.register/list/delete RPC + Python db_daemon.py CRUD + daemon_server.py mount.* handler + CLI mount register/list/delete 子命令；35 个测试通过（Rust 21 + Python 14） |
+| G3 | UDS + SO_PEERCRED 认证 | DS/DI | 🟡 部分完成（评审 2026-07-20，P0-1 已修复） | SO_PEERCRED 和 workspace owner 过滤存在，但运维/全局配置 RPC 原本忽略 peer（P0-1 已修复：ADMIN_ONLY_METHODS + is_admin）。真实双 UID 验收不以测试代码代替 |
+| G4 | Workspace Registry + Container Mount Mapping | DS/RP | 🟡 部分完成（评审 2026-07-20，P0-1 已修复） | registry 和 mount CRUD 存在，mount 原为全局可写且无 admin ACL（P0-1 已修复：mount.register/list/delete 加入 ADMIN_ONLY_METHODS） |
 | G5 | CAS Key 设计（7 参数 hash） | CG/DS | ✅ 已实现 | cas-gc-protocol 规范 |
 | G6 | CAS GC 协议（LOCK_EX + BEGIN IMMEDIATE） | CG | ✅ 已实现 | fs2 flock + BEGIN IMMEDIATE 双保险；GcLockGuard RAII；CasStore.db_path 字段；5 个新测试（内存模式跳过/文件模式锁创建/并发互斥/gc/gc_unreferenced） |
 | G7 | SnapshotManager + ArcSwap 发布 | DS/EW | ✅ 已实现 | Rust 多 generation history + gc_generations + 6 个 RPC handler |
-| G8 | Watcher Generation 状态机 | WG/EW | ✅ 已实现 | Rust daemon_handle_refresh 完整 4 步管道（session epoch CAS + 两阶段 CAS + daemon 侧 parse + CAS publish）+ detect_language_from_path + _daemon_parse_and_publish + canonical_bytes FD/base64 提取 |
-| G9 | Per-UID systemd --user agent | DS/WG | ✅ 已实现 | server/agent_session.py (AgentSession: session_id/epoch/seq_counter + RLock 线程安全 + 持久化 ~/.callwarden/agent_session.json) + server/agent_protocol.py (user_agent_connect 握手 + build_refresh_message + send_refresh_to_daemon 小文件 hex 路径/大文件 FD 路径 + AgentProtocolError) + server/agent_watcher.py (AgentWatcher + _AgentChangeHandler watchdog 防抖 + run_agent_watcher_loop) + cli/main.py:9709-10030 (cw-agent start/stop/status 子命令 + PID 文件 + SIGTERM 信号处理) + release/linux/deb/systemd/callwarden-agent.service (systemd --user unit, Type=simple, MemoryMax=512M, ProtectHome=read-only, ReadWritePaths=%h/.callwarden) + build_packages.sh 修正（cp 正式 unit 替代 inline 生成）+ 3 个测试文件 63 个测试全部通过（test_cw_agent_session.py 19 + test_cw_agent_watcher.py 23 + test_cw_agent_daemon_integration.py 21）+ docs/design/daemon-deploy-runbook.md §9 cw-agent 部署指南 |
-| G10 | memfd 密封协议（大文件传输） | DI | ✅ 已实现 | Python 协议层通过 G20-G22 完整实现（server/ipc_transport.py: send_via_memfd + recv_via_memfd 四重校验 + send_msg 透明路径选择 + 30+ 单元测试）；G10 补齐：is_memfd/validate_memfd_fd daemon 侧校验 + daemon_server.py workspace.file.refresh memfd 检测路径 + 3 个 inflight bytes 限制（MAX_CONN_QUEUED_BYTES 256MB/MAX_DAEMON_INFLIGHT_BYTES 2GB/MAX_UID_INFLIGHT_BYTES 512MB）+ InflightTracker 类 + 11 个跨平台测试 + 8 个 Linux 专属测试（真实 memfd_create + seal + roundtrip） |
-| G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | ✅ 已实现 | Rust SnapshotCachePublisher 桥接 SnapshotCache → build_and_publish_blocking；ReplicationResult.merged_summary 填充；5 个 E2E 测试（merged_summary + publisher + 多 workspace 隔离） |
+| G8 | Watcher Generation 状态机 | WG/EW | 🟡 部分完成（评审 2026-07-20，P0-2 已修复） | session/generation CAS 和 CAS publish 存在，但 agent payload 原本不兼容（canonical_bytes_hex vs b64，P0-2 已修复）且 refresh 后原本不发布可查 snapshot（P0-2 已修复：snapshot_warning 字段告警） |
+| G9 | Per-UID systemd --user agent | DS/WG | 🟡 部分完成（评审 2026-07-20，P0-2 已修复） | AgentSession/Watcher/systemd unit 存在，但 hex/b64 协议原错配（P0-2 已修复），包入口名也不一致（cw-agent vs cw_agent） |
+| G10 | memfd 密封协议（大文件传输） | DI | 🟡 部分完成（评审 2026-07-20） | Python memfd 库存在，实际 agent 传普通 temp FD；Rust 端未校验 seal/size/hash 且无界 `read_to_end`。需补：sealed memfd 真实使用 + Rust 端四重校验接入接收路径 |
+| G11 | Replicator（CAS → Manifest → Snapshot） | DS/EW | 🟡 部分完成（评审 2026-07-20） | SnapshotCachePublisher bridge 存在，但只在模块内/测试使用；Rust refresh 主路径没有注入 publisher。需补：Rust refresh 成功后调用 Replicator |
 | G12 | Durable Staging（JSONL + fsync） | DS/EW | ✅ 已实现 | durable_staging.py |
-| G13 | Metrics 收集器 + Prometheus 导出 | DS | ✅ 已实现 | metrics.py（691行完整实现 Counter/Gauge/Histogram + `to_prometheus()` 文本生成）+ `cw daemon metrics` CLI 子命令（--format prometheus/json + --name 过滤 + --reset）+ `get_metrics` MCP 工具（205 个）；不依赖 daemon RPC，直读 `MetricsCollector` 单例；13 测试通过（test_phase8_metrics_endpoint.py） |
-| G14 | Health Check endpoint | DS | ✅ 已实现 | Rust HealthChecker（4 项检查：db_registry/disk_space/memory_usage/uptime）+ RecoveryHandler（4 步恢复：workspace_registry/cas_db/stale_jobs/snapshots）；workspace.handle_health 接入完整检查；cw_daemon 启动调用 RecoveryHandler；12 个新测试 |
-| G15 | Schema Migrator | DS | ✅ 已实现 | schema_migrator.py |
-| G16 | Backup/Restore | DS | ✅ 已实现 | backup_restore.py |
-| G17 | Snapshot GC | DS | ✅ 已实现 | snapshot_gc.py |
+| G13 | Metrics 收集器 + Prometheus 导出 | DS | ❌ 声明不成立（评审 2026-07-20） | collector/to_prometheus 类存在，但 daemon 无任何埋点；CLI/MCP 新进程读自己的空单例，不是 daemon metrics。需补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 |
+| G14 | Health Check endpoint | DS | 🟡 部分完成（评审 2026-07-20） | HealthChecker/RecoveryHandler 存在，但 RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查。需补：实际执行 db_registry/disk_space/memory_usage/uptime 检查 |
+| G15 | Schema Migrator | DS | 🟡 部分完成（评审 2026-07-20） | `SchemaMigrator` 类存在，没有 daemon/CLI 生产调用方；Rust 只做 schema-check/init，不是版本化迁移。需补：daemon 启动调用 SchemaMigrator |
+| G16 | Backup/Restore | DS | 🟡 部分完成（评审 2026-07-20，P0-1 已修复） | Rust backup/restore RPC 可达，但原忽略 peer/admin 授权（P0-1 已修复：backup/restore 加入 ADMIN_ONLY_METHODS），restore 可覆盖 registry |
+| G17 | Snapshot GC | DS | 🟡 部分完成（评审 2026-07-20） | Python disk SnapshotGC 类未接线；Rust `gc.snapshots` 只清内存 generation history。需补：Python disk SnapshotGC 接入 daemon scheduler |
 | G18 | Job Executor + Scheduler | DS | ✅ 已实现 | job_executor.py + job_handlers.py |
-| G19 | Refresh Scheduler | DS | ✅ 已实现 | refresh_scheduler.py |
-| G20 | memfd 四重校验实现（seals→size→SHA-256→streaming hash） | E2E | ✅ 已实现 | server/ipc_transport.py:recv_via_memfd 四重校验（F_GET_SEALS→fstat size→MAX_MEMFD_BYTES→_sha256_streaming 64KB chunk）+ 6 个故障注入测试 |
-| G21 | SCM_RIGHTS FD 传输（_recv_msg_with_fd） | E2E | ✅ 已实现 | server/ipc_transport.py:_recv_msg_with_fd ancillary data 接收 + ProtocolError 处理 |
-| G22 | send_msg 统一入口（auto framed/memfd by MAX_MSG_BYTES） | E2E | ✅ 已实现 | server/ipc_transport.py:send_msg 透明路径选择（< 16MB 走 framed / ≥ 16MB 走 memfd）+ send_framed_stream 自动委托 |
-| G23 | EnterpriseDaemonService 完整实现（11 RPC dispatch） | E2E | ✅ 已实现 | ping/workspace.register/list/status/snapshot.publish/query.* |
+| G19 | Refresh Scheduler | DS | 🟡 部分完成（评审 2026-07-20） | `RefreshScheduler` 类存在，没有非测试生产实例化。需补：daemon 启动时实例化并接入 watcher |
+| G20 | memfd 四重校验实现（seals→size→SHA-256→streaming hash） | E2E | 🟡 部分完成（评审 2026-07-20） | 四重校验函数存在，未被当前 Rust 生产接收路径使用。需补：Rust workspace.file.refresh 接收路径接入四重校验 |
+| G21 | SCM_RIGHTS FD 传输（_recv_msg_with_fd） | E2E | 🟡 部分完成（评审 2026-07-20） | `_recv_msg_with_fd` 存在，没有生产调用方。需补：Rust dispatch 接收路径使用 |
+| G22 | send_msg 统一入口（auto framed/memfd by MAX_MSG_BYTES） | E2E | 🟡 部分完成（评审 2026-07-20） | `send_msg` 存在，没有生产调用方；Agent 另走 `call_with_fd`。需补：统一 Agent 通信路径走 send_msg |
+| G23 | EnterpriseDaemonService 完整实现（11 RPC dispatch） | E2E | 🟡 部分完成（评审 2026-07-20） | Python service 和 Rust dispatch 均存在，"11 RPC"已严重过时（实际 28+ RPC）；生产 systemd 运行 Rust service。需更新：矩阵描述 RPC 数量 |
 | G24 | 有界线程池 UDS server（16 workers） | E2E | ✅ 已实现 | EnterpriseDaemonServer concurrent.futures |
 | G25 | _validate_owned_path（realpath + owner UID 校验） | E2E | ✅ 已实现 | 防路径穿越 + archived workspace 拒绝 |
 | G26 | DaemonClient 三级路由（Rust GraphStore → Python SQL fallback） | E2E | ✅ 已实现 | 8 查询方法 + routing stats（daemon_hits/sql_fallbacks） |
 | G27 | DaemonClient diff 方法（diff_symbol/signature/callers/callees/compare_snapshots） | E2E | ✅ 已实现 | 5 种 diff + ScopeFilter + _ensure_remote_snapshot |
 | G28 | SnapshotManagerService 完整查询（8 方法 + QueryBudget） | E2E | ✅ 已实现 | query_callers/callees/search/symbol/chain/topo/cycles/stats |
-| G29 | QueryBudget 限制（max_results + max_depth + timeout + truncate） | E2E | ✅ 已实现 | default_budget() + truncate_results 所有查询统一接入 |
+| G29 | QueryBudget 限制（max_results + max_depth + timeout + truncate） | E2E | 🟡 部分完成（评审 2026-07-20） | max_results/max_depth 部分生效；timeout/max_nodes/frontier 没有传入 Rust 遍历，`start()` 后从未 `visit_node()`。需补：Rust 端实现 timeout/max_nodes/frontier |
 | G30 | StagingLog mark_applied_batch（单次文件重写） | E2E | ✅ 已实现 | 修复逐条重写开销；_rewrite tmp + atomic os.replace |
 | G31 | StagingLog compact_applied（按 status 过滤） | E2E | ✅ 已实现 | 按 status=applied 过滤而非 LSN |
-| G32 | Snapshot GC 两阶段 mark→sweep + GCPolicy | E2E | ✅ 已实现 | retention=3/max_age=7d/batch=1000；5 类扫描范围 |
+| G32 | Snapshot GC 两阶段 mark→sweep + GCPolicy | E2E | 🟡 部分完成（评审 2026-07-20） | mark/sweep 策略类存在，但未接入 daemon scheduler/运维路径。需补：daemon 定期触发 mark→sweep |
 | G33 | Watcher session epoch 机制（agent_sessions + workspace_active_session + file_generations） | E2E | ✅ 已实现 | daemon_handle_connect 撤销旧 session → 分配新 epoch |
-| G34 | CAS publish 完整流程（lang detect → canonicalize+hash → CAS lookup → parse → atomic publish） | E2E | ✅ 已实现 | _daemon_parse_and_publish 优先 canonical_bytes |
+| G34 | CAS publish 完整流程（lang detect → canonicalize+hash → CAS lookup → parse → atomic publish） | E2E | 🟡 部分完成（评审 2026-07-20，P0-2 已修复） | 内部 parse/publish 函数闭合，但实际 agent 的小文件字段名原不匹配（P0-2 已修复：daemon 同时支持 hex/b64） |
 | G35 | daemon_server 新增 RPC（workspace.connect/file.refresh/recover） | E2E | ✅ 已实现 | per-workspace 资源初始化（CAS conn + StagingLog + Replicator） |
 | G36 | JobExecutor 独立线程池 + JobContext + 3 handler | E2E | ✅ 已实现 | clone_detect / vector_embed / semgrep_scan |
-| G37 | 跨 UID query isolation 测试 | E2E | ✅ 已实现 | 30 passed, 6 skipped；双 UID 隔离验证 |
+| G37 | 跨 UID query isolation 测试 | E2E | 📄 测试记录（评审 2026-07-20） | 这是测试/环境验收声明，不是产品实现项；代码层 ACL 也仍有管理 RPC 缺口（P0-1 已修复） |
 | G38 | Phase 1: Rust 多语言 parse 接入主 refresh 路径 | RP | ✅ 已实现 | db_build.py:1305-1483 主路径 3 路分组：C 专用快路径（L6 stream 优先 + P30 pool + P29 batch 三级 fallback）+ 非 C Rust 支持语言走 `_rust_multilang_parse`（batch_parse_files_lang_pool）+ 非 Rust 支持语言走 `_python_multiprocess_parse`；小批量路径优先 `parse_file_lang` Rust 单文件 + 失败 fallback Python parser；CW_DISABLE_RUST_PARSE 环境变量双层校验（多进程路径 + 小批量路径）；34 测试通过（test_phase1_multilang_rust_parse.py 28 + test_phase1_parse_benchmark.py 6，覆盖分组/fallback/六元组解包/normalize/环境变量/Rust vs Python 耗时对比 smoke benchmark） |
 
 ## H. 规划但未实施的功能
@@ -261,16 +261,16 @@
 | H2 | Audit Chain 签名链 | TQ/BC | ✅ 已实现 | audit_chain 表 + db_audit_chain.py(491行) + audit_verify_chain MCP + 密钥轮换 |
 | H3 | Agent Rule Memory（项目规则记忆） | AR | ✅ 已实现 | agent_rules 表 + db_agent_rules.py(1571行) + task_next_step 注入 + AGENTS.md 同步 |
 | H4 | Bootstrap 自举闭环 | BC | ✅ 已实现 | workspace_scan_runs 表 + db_bootstrap.py(987行) + bootstrap_status MCP + capture-diff |
-| H5 | 集成测试全流程 | RP | ✅ 已实现 | tests/test_integration_full_flow.py 6/6 通过 in 79.85s（2026-07-19）；覆盖完整闭环 register→build→task create→next→edit→commit→capture-diff auto→check-gate→report→apply→close；audit_chain 完整性 + task_symbol_changes 关联 + 多语言（Python/TS/Rust）+ 状态机转换 |
-| H6 | 千万级符号性能验证 | RP | ✅ 已实现 | tests/test_perf_10m_symbols.py 扩展为 11 项完整 checklist（build/stats/search/callers/callees/call_chain_up/call_chain_down/blast_radius/detect_clones/db_size/瓶颈识别）+ test_multi_scale_perf 多规模阶梯（1K/10K/100K）；100K 符号全量测试通过 in 11.03s（2026-07-19）：build 8.7s、chain_up 0.054s、blast_radius 0.011s、detect_clones 0.156s、db 130MB、RSS 530MB；规模增长 100x 时 build 仅增 31x（无 O(n²) 退化）|
+| H5 | 集成测试全流程 | RP | 📄 测试记录（评审 2026-07-20） | 只是 integration test 通过声明，本次不将测试代码当作实现证据 |
+| H6 | 千万级符号性能验证 | RP | ❌ 声明不成立（评审 2026-07-20） | 标题是 10M 验证，备注实际只记录 100K；未完成千万级验收。需补：真实 10M 符号压测或在矩阵中明确标注 "100K 验收" |
 | H7 | AST 缓存激活（B2） | RP | ✅ 已实现 | `_try_ast_cache_short_circuit` 接入 `_refresh_file_rust`/`_refresh_file_generic` 决策路径；新增 `file_content_hash` 字段解决 Rust/Python parser normalization 差异；test_h7_ast_cache_activation.py 8 测试全通过；test_incremental_parse.py 26/26 回归通过 |
 | H8 | 统一项目健康报告 cw health-report | RP | ✅ 已实现 | cli/main.py `_handle_health_report` 聚合 stats + hotspots + issues + token_savings |
-| H9 | MCP Server 完整测试 | RP | ✅ 已实现 | tests/test_mcp_server_full.py 15/15 通过 in 6.72s（2026-07-19）；覆盖 4 项 checklist：(1) Server 启动+协议握手 (2) 195+ MCP 工具 I/O 契约（name/description/inputSchema 唯一性）(3) MCP/CLI 并发访问（WAL 多读者无锁）(4) 长连接稳定性（空闲 2s 后复用单例 + workspace 切换重建实例） |
-| H10 | Clone Detection LSH 增强（B1） | RP | ✅ 已实现 | 3-gram shingle + _MAX_BUCKET_SIZE=200 + LSH(8 bands, 16 rows) + 降级策略 + 稳定 hash 全部就位；test_phase7_minhash_stable.py 覆盖稳定性；缺召回率/精确率基准测试 |
+| H9 | MCP Server 完整测试 | RP | 📄 测试记录（评审 2026-07-20） | MCP 测试声明，不是产品功能完成项 |
+| H10 | Clone Detection LSH 增强（B1） | RP | 🟡 部分完成（评审 2026-07-20） | LSH 增强实现存在，矩阵自身承认缺召回率/精确率基准，不能视为质量门禁完成 |
 | H11 | Clone Detection 影响分析联动 | RP | ✅ 已实现 | db_impact.py `get_clone_aware_impact` + MCP 注册（195→196） |
-| H12 | 扩展 Git Hook 到 AI CLI IDE | RP | ✅ 已实现 | `install.py:323-466` 三 hook 模板（pre-commit refresh-all + pre-push check-gate + post-commit capture-diff --auto）；marker 卸载机制保留用户其他 hook；`cw install --hooks` 统一入口；test_install_hooks_unified + test_git_hook_capture 覆盖 |
-| H13 | 15 种语言开源项目测试 | RP | ✅ 已实现 | 16/16 语言全覆盖（test_p1_p3_languages 覆盖 PHP/Swift/Scala/HCL/Elixir；test_csharp_ruby；test_p9_c_parser_stack；test_p29_rust_parse；test_p31_multi_lang TS/Scala；test_kotlin_go 覆盖 Kotlin+Go 端到端：语言检测/工厂分发/符号提取/import/调用关系/db_build 集成） |
-| H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ✅ 已实现 | release/build.py 完整构建管道跑通（cargo build → wheel → wheelhouse → artifact-manifest.json，产出 callwarden-0.3.0-py3-none-any.whl 892 KB）；release/_check_artifacts.py 7/7 验证通过（2026-07-19）：manifest JSON、wheel METADATA、wxs XML、build_pkg.sh bash 语法、build_packages.sh bash 语法、deb 5 子包完整性、enterprise-release.yml 11 门禁编号 1-11 全匹配 + 13 关键门禁关键词匹配；本地 Windows 跑通完整 build，macOS/Linux 用 WSL bash -n 验证语法 |
+| H12 | 扩展 Git Hook 到 AI CLI IDE | RP | 🟡 部分完成（评审 2026-07-20） | 三个 Git hook 存在，但没有独立的 AI CLI/IDE 扩展；标题过度扩大。实际是 Git hook 模板，不是 AI CLI 集成 |
+| H13 | 15 种语言开源项目测试 | RP | ❌ 声明不成立（评审 2026-07-20） | 证据是项目内 synthetic fixtures/tests，不是 15/16 个真实开源项目验收。需补：真实开源项目验收或在矩阵中标注 "synthetic fixtures" |
+| H14 | 跨平台打包发布（MSI/PKG/DEB） | CP | ❌ 声明不成立（评审 2026-07-20，P0-3 已部分修复） | 无 MSI/PKG/DEB 产物；现有验证只是 wheel/XML/bash/YAML 形式检查。P0-3 已修复 wheel 包含 Rust 扩展，但 MSI/PKG/DEB 仍待落地 |
 | H15 | 多用户权限系统（RBAC） | IS | ❌ 未实施 | 当前按项目隔离（workspace_id 逻辑隔离已覆盖单用户场景）；可延后到 SaaS 化或多团队共享 daemon 时实施 |
 | H16 | 生产者-消费者架构 | IS | ✅ 已实现（G18） | server/job_executor.py 已是完整生产者-消费者：jobs 表队列 + ThreadPoolExecutor worker 池 + submit/cancel/progress API + 多 worker 并发 + 超时保护 |
 | H17 | diff_callers / diff_callees（跨 snapshot 调用差异） | P4M | ✅ 已实现 | MCP 已暴露 diff_callers (L3546) + diff_callees (L3574)；DaemonClient 完整实现（daemon_client.py L460/L474） |
@@ -293,7 +293,7 @@
 | QA2 | 注释生命周期管理 | A8 | 已实现 |
 | QA2 | Before-Edit Contract + 审计闭环 | B5/C5 | 已实现 |
 | QA2 | SQLite 只读连接模式 | A24（WAL） | WAL 模式下并发读已实现 |
-| D3 | Clone Detection 影响分析联动 | H11 | 未实现 |
+| D3 | Clone Detection 影响分析联动 | H11 | 已实现（评审 2026-07-20 确认） |
 | D3 | Rust Daemon 架构 | G2 | 部分实现 |
 | PR | P28 scale_cap 动态 worker 算法 | F6 附近 | 已实施 |
 
@@ -301,34 +301,34 @@
 
 | # | 功能点 | 来源 | 状态 | 备注 |
 |---|--------|------|------|------|
-| L1 | MCP Server 层门禁：file_write 强制关联活跃 task_id | QA1 | ⚠️ 软门禁 | QA1 最终结论"赋能而非门禁"已落地：`db_tasks.is_task_active()` 校验真实性 + `get_task_context()` 赋能字段；`propose_edit` 系列（4 工具）在 `agent_task_id` 非空时返回 `task_validation`（valid/invalid/error）+ `task_context`（title/status/steps 概况）；软门禁语义：不拒绝写入，只在返回值标记；完全向后兼容（`agent_task_id=""` 时跳过） |
-| L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ✅ 已实现 | 软门禁设计（与 L1 一致）：pre-push hook 检测 force push（`git merge-base --is-ancestor`）并记录到 `destructive_operations` 表（schema v37）；`cw git check-push` 供 hook 调用；`cw git destructive-log` 查询历史；记录但不阻止操作 |
+| L1 | MCP Server 层门禁：file_write 强制关联活跃 task_id | QA1 | 🟡 部分完成（评审 2026-07-20） | optional task validation/context 存在，但不"强制关联"，无 task_id 时照常写入。属软门禁设计，符合 QA1 "赋能而非门禁"原则 |
+| L2 | 破坏性 git 操作拦截（git checkout/reset --hard） | QA1 | ❌ 声明不成立（评审 2026-07-20） | 标题是 checkout/reset --hard，代码只在 pre-push 记录 force push，不拦截 checkout/reset。需补：checkout/reset --hard 拦截 hook 或在矩阵中标注 "仅 force push 记录" |
 | L3 | Git pre-commit hook 验证 task_id 真实性 | QA1 | ✅ 已实现 | 软门禁：pre-commit hook 调用 `cw git check-task` 检查 `active_task_id`，有则显示 task 信息，无则警告但**不阻止** commit（本地 hook 可被 `--no-verify` 绕过，与 L1 赋能设计一致） |
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
 | L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ✅ 已实现 | compile_commands.json 解析器 + build-context CLI（8 子命令含 resolve）+ 8 MCP 工具；resolved_edges 计算引擎已实现 5 级解析（exact_match/simple_name_unique/same_file/include_path/sysroot/unresolved + calls 表降级）；include_path 基于 build_context.include_paths + toolchain.sysroot/include_dirs 消除简名歧义；test_phase6_resolved_edges + test_l5_build_context 验证 |
 | L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ✅ 已实现 | 三层优化：(1) ParseResultStream PyO3 类 + batch_parse_c_files_stream 函数（rayon + crossbeam-channel，parse 完一个就 push 到 channel，Python __next__ 按完成顺序消费）；(2) db_build.py C 语言路径优先 stream 模式（用 abs_path 反查元数据写入 file_results）；(3) versions+symbols 写入 DB 后释放 file_results 中的 symbols（仅保留 fn_hash_map），调用图构建改为 only_files 模式从 DB 读取符号索引 |
-| L7 | RSS 监控采样修复 | PR | ✅ 已实现 | psutil 优先 + Windows ctypes Psapi.GetProcessMemoryInfo fallback（T3 修复） |
+| L7 | RSS 监控采样修复 | PR | 🟡 部分完成（评审 2026-07-20） | psutil/Windows Psapi RSS 函数存在 `shared_benefit_metrics.py`，无非测试生产调用方。需补：接入 daemon 主路径或删除未使用代码 |
 | L8 | 增量调用图更新（只 resolve 受影响文件） | PR/D3 | ✅ 已实现 | `_build_call_graph_multi_lang` 加 only_files 参数；增量路径符号索引从 DB symbols 表全量读取，calls 只 resolve 变化文件；`_refresh_file_rust`/`_refresh_file_generic` 不再调用 `_collect_all_current_file_results()` 全量加载 |
 | L9 | Rust ParseResultPool 共享内存架构 | PR | ✅ 完成 | 4 阶段全部实现：①PoC（`batch_parse_c_files` + Rayon + Arc 共享 grammar）②流式集成（`ParseResultPool` + `batch_parse_files_lang_pool` + `_rust_multilang_parse` 逐个 `get_at` 转 dict）③多语言 15/15（python/rust/go/java/ts/js/ruby/php/scala/csharp/cpp + Kotlin/Swift + Elixir/HCL 已补齐；新增 `call_keyword` + `kind_from_child_text` 字段 + `CallArgName` + `HclLabels` 名称策略处理 AST 特殊结构）④全量接管（`_can_use_rust_parse` + `CW_DISABLE_RUST_PARSE` 开关 + Python 多进程 fallback 链）；C 语言走专用快路径，其他 Rust 支持语言 `>= MP_THRESHOLD(50)` 走流式 pool，小批量走 `parse_file_lang` 单文件 Rust；test_l9_rust_multilang.py 10 测试验证 |
-| L10 | MCP 工具优化（优化 schema/错误信息/组合工具而非继续加） | D3 | ✅ 设计方向已文档化 | 205 工具已够用，优化方向：(1) schema 一致性（list→List[Dict], detail→Optional[Dict], 写→{status}）(2) 错误信息友好度（{error, hint}）(3) 组合查询路径（识别高频串行调用）(4) 批量查询推广；反模式：不为细分场景加新工具、不加元工具、不在工具内做业务判断；详见 [mcp_tools.md L10 章节](docs/mcp_tools.md#l10-mcp-工具优化方向优化组合查询路径而非扩面) |
+| L10 | MCP 工具优化（优化 schema/错误信息/组合工具而非继续加） | D3 | 📄 设计方向（评审 2026-07-20） | 只是 MCP 后续设计方向，不是一个已完成功能 |
 | L11 | Windows 控制台 Unicode bug（cw task show 在 GBK 下崩溃） | D3 | ✅ 已修复 | ensure_utf8_output() 统一到 cli/console.py，三入口复用（T2 修复） |
 | L12 | propose_symbol_id_patch（符号级 patch 带 symbol_id） | WL1 | ✅ 已实现 | MCP 工具 propose_symbol_id_patch（symbol_id + patch + expected_hash + expected_symbol_hash） |
 | L13 | work_next_job 返回完整上下文（源码+调用方+风险+patch 范围） | WL1 | ✅ 已实现 | db_tasks.py 增强 callers/callees 摘要 + callers_total/callees_total |
 | L14 | 真懒加载 parser（按语言 import 而非聚合入口） | WL2 | ✅ 已实现 | parsers/__init__.py `__getattr__` 模块级懒加载 + `create_parser` 按需 import |
 | L15 | 分阶段计时日志（scan/parse/symbol/call/depth/FTS/GC） | WL2 | ✅ 已实现 | perf 脚本已输出阶段耗时分解 |
-| L16 | Agent 工具设计原则（"捷径"而非"规则"） | WL1 | ✅ 设计方向已文档化 | 4 条原则：(1) 「捷径」语义：工具是任务最佳捷径而非规则约束（L1 软门禁实践）(2) 命名反映任务意图（get_impact > traverse_call_graph_backward）(3) 必填参数 ≤3 + 枚举优于自由字符串 (4) docstring 首句说明"做什么"+ 返回值结构；详见 [mcp_tools.md L16 章节](docs/mcp_tools.md#l16-agent-工具设计原则捷径而非规则) |
+| L16 | Agent 工具设计原则（"捷径"而非"规则"） | WL1 | 📄 设计方向（评审 2026-07-20） | Agent 工具设计原则是文档方向，不是产品完成项 |
 
 ## I. 文档冲突/过时信息（需更新的文档清单）
 
 | # | 问题 | 详情 | 需更新文件 |
 |---|------|------|------------|
 | I1 | ✅ 已修复（2026-07-20 更新） | IS/RM/MCT/ARC 头部已统一为 205 MCP / v39 Schema / 33 Mixin 类（39 db_*.py 文件）。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
-| I2 | ✅ 已修复（2026-07-19） | CA 表格已改"未暴露"为"✅ 已暴露"，"只差接线"为"已完成（2026-07 接入）" | CA |
+| I2 | ✅ 已修复（2026-07-20 更新） | CA 表格已改"未暴露"为"✅ 已暴露"，"只差接线"为"已完成（2026-07 接入）"。D7 跨仓库影响传播已修复（target_symbol_hash 写入真实值） | CA |
 | I3 | ✅ 已修复（2026-07-20 更新） | UG 头部已统一为 "v39 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类（39 db_*.py）"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等"；Q2 已删除"删除 callwarden.db 重建"危险建议 | UG |
-| I4 | ✅ 已修复（2026-07-19） | IS §5 待办表已更新：`status != 'archived'` ✅ 已实现 / `UNIQUE UPSERT` ⚠️ 部分（已用 ON CONFLICT，键非 symbol_hash）/ `Prometheus` ✅ 已实现（2026-07-19 metrics endpoint 闭合：`cw daemon metrics` CLI + `get_metrics` MCP 工具，不依赖 daemon RPC，直读 MetricsCollector 单例） | IS |
+| I4 | 🟡 部分完成（评审 2026-07-20） | IS §5 待办表已更新 Prometheus 为 ❌ 未实现（daemon 无埋点，CLI/MCP 读空单例）。`status != 'archived'` ✅ / `UNIQUE UPSERT` ⚠️ 部分保持。G13 待补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 | IS |
 | I5 | ✅ 已修复（2026-07-19） | TokenSavingsMixin 在 §2.12（能力描述）和 §3（Mixin 列表）各出现一次，是合理的双视角描述，非重复列出 | IS |
 | I6 | ✅ 已修复（2026-07-19） | RM 数据库位置已从 `~/.callwarden/<hash>/callwarden.db`（旧版多库）改为 `~/.callwarden/callwarden.db`（用户级单库 + workspace_id 逻辑隔离），与 UG/config.py 一致；UG 描述原本正确 | RM |
-| I7 | ✅ 已修复（2026-07-19） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销，db_cross_repo.py 已实现" | CA |
+| I7 | ✅ 已修复（2026-07-20 更新） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销，db_cross_repo.py 已实现"。评审 2026-07-20 标记 🟡（D7 影响传播未真正完成），D7 修复（commit 7256530）后 target_symbol_hash 写入真实值，反向查询可命中，影响传播已闭合 | CA |
 | I8 | ✅ 已修复（2026-07-19） | CA "不要集成 ast-grep"建议下方加"更新（2026-07-19）：此建议仍有效，issues.py 未集成 ast-grep"。原 I8 描述"issues.py 存在"系误判（issues.py 仅用 Semgrep，无 ast-grep） | CA |
 | I9 | ✅ 已修复（2026-07-20 更新） | ARC Mixin 数已同步为 33 个 Mixin 类，db_*.py 39 个文件 | ARC |
 | I10 | ✅ 已修复（2026-07-20 更新） | ARC Schema 版本已同步为 v39 | ARC |
@@ -338,9 +338,28 @@
 | I14 | ✅ 已修复（2026-07-17） | gap-analysis-2026Q2.md 已归档到 docs/history/，README.md 归档清单第 12 行明确标注"基于 9 语言/38 MCP 旧现状，多数缺失功能现已实现" | GA1, GA2 |
 | I15 | ✅ 已修复（2026-07-20 更新） | naming-analysis-report Mixin 数已同步为 33 | naming-analysis-report.md |
 | I16 | ✅ 已修复（2026-07-17） | history/README.md 演化轨迹已扩展到 v37（含 v15-v25 治理期、v26-v33 优化期、v37 L2 破坏性操作）；implementation-snapshot-v13 归档原因已更新 | docs/history/README.md |
-| I17 | ✅ 已修复（2026-07-20 更新） | Schema 版本同步 v37→v39 完成；architecture.md（L23/L39/L49 Mixin 数 + L78 v5 注释 + L766-775 向量章节实际实现说明）、implementation-status.md（L3/L14）、_health_check_report.md（L134）；v38=get_stats 加速索引、v39=call_chain_up/down 加速索引 idx_call_versions_callee_current；README.md L26 修复 204+→205+（与 @mcp.tool() 实际数 205 对齐） | ARC, IS, README.md |
+| I17 | ✅ 已修复（2026-07-20 更新，评审二轮补全） | Schema 版本同步 v37→v39 完成；architecture.md（L23/L39/L49 Mixin 数 + L78 v5 注释 + L766-775 向量章节实际实现说明）、implementation-status.md（L3/L14）、_health_check_report.md（L134）；v38=get_stats 加速索引、v39=call_chain_up/down 加速索引 idx_call_versions_callee_current；README.md L26 修复 204+→205+（与 @mcp.tool() 实际数 205 对齐）；USER_GUIDE.md L118 修复 204→205（评审二轮补查发现遗漏点）；现 205 在 README/USER_GUIDE/docs README/mcp_tools/architecture/implementation-status/matrix 全部一致 | ARC, IS, README.md, UG |
 | I18 | ✅ 已修复（2026-07-20） | deployment.md 数据库锁定/损坏排查章节删除"rm -wal/-shm"危险建议，改为 PRAGMA wal_checkpoint + 备份 + .recover 流程；USER_GUIDE Q2 删除"删除 callwarden.db 重建"危险建议 | deployment.md, UG |
 | I19 | ✅ 已修复（2026-07-20） | D1/D7 评审修正：D1 状态从 "✅ 已实现 sqlite-vec" 改为 "🟡 部分完成（BLOB + Rust/numpy，sqlite-vec 待落地）"；D7 状态从 "✅ 已实现" 改为 "✅ 已修复（2026-07-20）"，说明 target_symbol_hash 写空字符串的根因和修复 | _feature_matrix.md D1/D7 |
+| I20 | ✅ 已修复（2026-07-20 二轮评审） | A14 增量扫描：状态从 "✅ 已实现" 改为 "❌ 声明不成立"。不存在 `scan_semgrep_incremental`，scan_type 硬编码为 'full'。批次 2 待补：增量扫描方法 + scan_type 标识 + 增量清理 | _feature_matrix.md A14 |
+| I21 | ✅ 已修复（2026-07-20 二轮评审） | A15 gitignore 语义：状态从 "✅ 已实现" 改为 "🟡 部分完成"。自研 ignore parser 不完整 gitignore 语义（strip 丢尾随空格、不支持字符类、目录剪枝影响 negation）。建议接入 `pathspec` 库或补全规范 | _feature_matrix.md A15 |
+| I22 | ✅ 已修复（2026-07-20 二轮评审） | A19/A21 PR 检查：状态标注 P1 修复（PRChecker 改用 `check_before_edit` + 异常上浮 + SARIF `executionNotifications`）。原评审标 ❌（fail-open），现已通过 P1 修复 | _feature_matrix.md A19/A21 |
+| I23 | ✅ 已修复（2026-07-20 二轮评审） | A23 文件级并行：状态从 "✅ 已实现" 改为 "🟡 部分完成"。主路径现为 Rust pool/ProcessPool，ThreadPool 主要是降级 | _feature_matrix.md A23 |
+| I24 | ✅ 已修复（2026-07-20 二轮评审） | C10 task↔commit↔symbol 关联：状态从 "✅ 已实现" 改为 "🟡 部分完成"。best-effort hook，可被 `--no-verify` 或外部编辑绕过 | _feature_matrix.md C10 |
+| I25 | ✅ 已修复（2026-07-20 二轮评审） | D5 ask_codebase RAG 管道：状态从 "✅ 已实现" 改为 "🟡 部分完成"。`ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，不生成最终问答 | _feature_matrix.md D5 |
+| I26 | ✅ 已修复（2026-07-20 二轮评审） | F11/F14/F15 性能数据：F11 从 "✅ 已实施" 改为 "🟡"（非测试生产代码没有调用方）；F14 从 "✅ 已实施" 改为 "🟡"（10M/8.1x 是基准承诺）；F15 从 "✅ 已实施" 改为 "🟡"（17.8% 数值未复验） | _feature_matrix.md F11/F14/F15 |
+| I27 | ✅ 已修复（2026-07-20 二轮评审） | F19 多进程 worker 限制：状态从 "✅ 已实施" 改为 "❌ 声明不成立"。当前不是 `min(4,cpu_count)`，而是 1-8 动态 worker（基于 CPU/可用内存/文件规模） | _feature_matrix.md F19 |
+| I28 | ✅ 已修复（2026-07-20 二轮评审） | G1/G3/G4/G8/G9/G16/G34 admin ACL：状态从 "✅ 已实现" 改为 "🟡 部分完成"。P0-1 已修复 admin ACL（ADMIN_ONLY_METHODS + is_admin），原代码忽略 peer 普通用户可改写全局配置 | _feature_matrix.md G1/G3/G4/G8/G9/G16/G34 |
+| I29 | ✅ 已修复（2026-07-20 二轮评审） | G10/G11/G15/G17/G19/G20/G21/G22/G29/G32 daemon 接线：状态从 "✅ 已实现" 改为 "🟡 部分完成"。组件存在但无生产调用方或未接入主路径（memfd/seal 校验/publisher/scheduler/四重校验/recv_msg/send_msg 等） | _feature_matrix.md G10/G11/G15/G17/G19/G20/G21/G22/G29/G32 |
+| I30 | ✅ 已修复（2026-07-20 二轮评审） | G13 daemon metrics：状态从 "✅ 已实现" 改为 "❌ 声明不成立"。collector/to_prometheus 类存在，但 daemon 无任何埋点；CLI/MCP 新进程读自己的空单例。批次 2 待补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 | _feature_matrix.md G13 |
+| I31 | ✅ 已修复（2026-07-20 二轮评审） | G14 HealthChecker：状态从 "✅ 已实现" 改为 "🟡 部分完成"。HealthChecker/RecoveryHandler 存在，但 RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查 | _feature_matrix.md G14 |
+| I32 | ✅ 已修复（2026-07-20 二轮评审） | G23/G37 RPC 计数过时：G23 从 "✅ 已实现" 改为 "🟡 部分完成"（"11 RPC"已过时）；G37 从 "✅ 已实现" 改为 "📄 测试记录"（非产品实现项） | _feature_matrix.md G23/G37 |
+| I33 | ✅ 已修复（2026-07-20 二轮评审） | H5/H9/H10 测试声明：H5/H9 从 "✅ 已实现" 改为 "📄 测试记录"（只是测试声明）；H10 从 "✅ 已实现" 改为 "🟡 部分完成"（缺召回率/精确率基准） | _feature_matrix.md H5/H9/H10 |
+| I34 | ✅ 已修复（2026-07-20 二轮评审） | H6/H12/H13/H14 基准声明：H6 从 "✅" 改为 "❌"（标题 10M，实际 100K）；H12 从 "✅" 改为 "🟡"（标题过度扩大）；H13 从 "✅" 改为 "❌"（synthetic fixtures，非真实开源项目）；H14 从 "✅" 改为 "❌"（无 MSI/PKG/DEB 产物，P0-3 已部分修复） | _feature_matrix.md H6/H12/H13/H14 |
+| I35 | ✅ 已修复（2026-07-20 二轮评审） | L1/L2/L7/L10/L16 任务门禁/工具：L1 从 "⚠️ 软门禁" 改为 "🟡 部分完成"（软门禁设计）；L2 从 "✅ 已实现" 改为 "❌ 声明不成立"（标题 checkout/reset --hard，代码只记录 force push）；L7 从 "✅" 改为 "🟡"（无非测试生产调用方）；L10/L16 从 "✅ 设计方向已文档化" 改为 "📄 设计方向"（非已完成功能） | _feature_matrix.md L1/L2/L7/L10/L16 |
+| I36 | ✅ 已修复（2026-07-20 二轮评审） | M4/M5/M6/M8/M10 Rust 扩展接线：5 项从 "✅ 已实现" 改为 "🟡 部分完成"。delta/frontier/metrics 模块存在但无生产调用方；Rust notify watcher 存在但 CLI/agent 使用 Python watchdog；M10 "daemon binary + PyO3 绑定"表述不准确（同 crate 同时产出 binary 和 cdylib+rlib） | _feature_matrix.md M4/M5/M6/M8/M10 |
+| I37 | ✅ 已修复（2026-07-20 二轮评审） | N3-N8 跨平台打包：N3/N5/N6/N7/N8 从 "✅ 已实现" 改为 "❌ 声明不成立"；N4 改为 "🟡 部分完成"。N3 wheel 不包 Rust 扩展；N5 只有未编译 XML；N6/N7 未在目标平台实际构建；N8 静态即可见失败点（错误 version key、纯 Python wheel、错误 parser 调用）。P0-3 已部分修复 | _feature_matrix.md N3-N8 |
+| I38 | ✅ 已修复（2026-07-20 二轮评审） | 矩阵顶部"实际基线数据"更新：Mixin 模块数 23→"33 个 Mixin 类（39 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin）"；M/N 章节标题反映实际状态（N 章节标题改为"脚本骨架存在/产物未落地"） | _feature_matrix.md 顶部 + N 章节标题 |
 
 ## J. 灰色地带验证结果（已全部确认）
 
@@ -378,15 +397,15 @@
 | M1 | peercred.rs | SO_PEERCRED（libc getsockopt）内核认证 UID/GID/PID | ✅ 已实现 |
 | M2 | canonicalize.rs | BOM 检测+剥离（UTF-8/16LE/16BE）、CRLF→LF、SHA-256 content_hash | ✅ 已实现 |
 | M3 | graph.rs | CSR 邻接表 + FxHashMap + SymbolKind enum(u32) + bytemuck Pod/Zeroable | ✅ 已实现 |
-| M4 | delta.rs | SymbolDeltaKind（Added/Removed/Changed）+ lang_from_extension（13 语言） | ✅ 已实现 |
-| M5 | frontier.rs | AffectedFrontier（directly_affected + upstream/downstream direct/transitive） | ✅ 已实现 |
-| M6 | metrics.rs | DepthChange + CycleChangeKind（Added/Removed） | ✅ 已实现 |
-| M7 | diff.rs | SymbolChangeKind（8 种）+ SignatureDiff（file/line_range/kind 变化） | ✅ 已实现 |
-| M8 | watcher.rs | notify crate + crossbeam channel + 20 种扩展名过滤 | ✅ 已实现 |
-| M9 | multi_lang.rs | parse_file_lang / batch_parse_files_lang / batch_parse_files_lang_pool（Rayon） | ✅ 已实现 |
-| M10 | cw_daemon.rs | daemon binary + PyO3 绑定 | ✅ 已实现 |
+| M4 | delta.rs | SymbolDeltaKind（Added/Removed/Changed）+ lang_from_extension（13 语言） | 🟡 部分完成（评审 2026-07-20） | delta 模块和 PyO3 导出存在，无生产调用方；当前 refresh 未生成 ParseDelta |
+| M5 | frontier.rs | AffectedFrontier（directly_affected + upstream/downstream direct/transitive） | 🟡 部分完成（评审 2026-07-20） | frontier 模块存在，无生产调用方 |
+| M6 | metrics.rs | DepthChange + CycleChangeKind（Added/Removed） | 🟡 部分完成（评审 2026-07-20） | local metrics 更新模块存在，无生产调用方 |
+| M7 | diff.rs | SymbolChangeKind（8 种）+ SignatureDiff（file/line_range/kind 变化） | ✅ 已实现 | snapshot diff 路径调用 Rust diff 模块 |
+| M8 | watcher.rs | notify crate + crossbeam channel + 20 种扩展名过滤 | 🟡 部分完成（评审 2026-07-20） | Rust notify watcher 和 PyO3 类存在，CLI/agent 当前使用 Python watchdog watcher |
+| M9 | multi_lang.rs | parse_file_lang / batch_parse_files_lang / batch_parse_files_lang_pool（Rayon） | ✅ 已实现 | 已进入 build 主路径 |
+| M10 | cw_daemon.rs | daemon binary + PyO3 绑定 | 🟡 部分完成（评审 2026-07-20） | `cw_daemon` 独立 binary 和同 crate PyO3 cdylib/rlib 存在；"daemon binary + PyO3 绑定"表述不准确，实际是同 crate 同时产出 binary 和 cdylib+rlib |
 
-## N. 跨平台打包完整实现
+## N. 跨平台打包（脚本骨架存在/产物未落地）
 
 > 来源：E2E 23500-24673、CP
 
@@ -394,12 +413,12 @@
 |---|--------|------|------|
 | N1 | release/version.toml 唯一版本源 | ✅ 已实现 | 0.3.0 + ABI 版本 + 平台 + 角色 |
 | N2 | release/version_sync.py 三方一致校验 | ✅ 已实现 | Python/Cargo/__init__.py + --fix |
-| N3 | release/build.py 构建管道 | ✅ 已实现 | cargo build → setuptools wheel → wheelhouse → artifact-manifest.json |
-| N4 | release/config_loader.py 分层配置 | ✅ 已实现 | CLI>env>user>system>default + PlatformPaths.detect() |
-| N5 | Windows WiX MSI（x64/arm64 + Authenticode） | ✅ 已实现 | callwarden.wxs XML 解析通过（2026-07-19）：Product Id=* Version=0.3.0 Manufacturer=Call Warden Team；1 顶级 Feature + 1 顶级 Directory + 9 嵌套 Component（含 perUserOrMachine + 数据保留 + arm64 + PATH Feature）；未跑 candle.exe/light.exe（WiX Toolset 未安装）|
-| N6 | macOS universal2 pkg + notarization | ✅ 已实现 | build_pkg.sh bash -n 语法检查通过（2026-07-19，WSL）；373 行；含 codesign/notarytool/pkgbuild/tar 关键命令（hardened runtime + entitlements + notarytool + spctl + tar.gz）；未在 macOS 实际构建 |
-| N7 | Linux deb 5 子包 + rpm + tar.zst | ✅ 已实现 | build_packages.sh bash -n 语法检查通过（2026-07-19，WSL）；322 行；含 dpkg-deb/rpmbuild/tar/systemd；5/5 control 文件（agent/client/daemon/enterprise/local）+ 12 maintainer 脚本 + 2 systemd 单元（agent + daemon）+ sysusers.d + tmpfiles.d + offline install；未在 Linux 实际构建 |
-| N8 | Release CI（enterprise-release.yml 11 门禁） | ✅ 已实现 | YAML 解析通过（2026-07-19）；15 个 job 覆盖 gate1-到gate11-共 11 个唯一编号（gate4/5 各有 a/b/c 三个子 job）；13 关键门禁关键词全匹配（源码测试/wheel/黑盒/MSI/pkg/deb/安装/N-1 升级/签名/SBOM/staging/审批/生产发布）；triggers: push + workflow_dispatch；未在 GitHub 实际运行 |
+| N3 | release/build.py 构建管道 | ❌ 声明不成立（评审 2026-07-20） | build.py 形式上有步骤，但当前 wheel 是 `py3-none-any` 纯 Python，不包 `callwarden_core` Rust 扩展，也未打包 daemon/角色二进制。声明"cargo build → setuptools wheel → wheelhouse → artifact-manifest.json"与实际产物不符。P0-3 已部分修复 |
+| N4 | release/config_loader.py 分层配置 | 🟡 部分完成（评审 2026-07-20） | 分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），没有 Python CLI/daemon 生产 import |
+| N5 | Windows WiX MSI（x64/arm64 + Authenticode） | ❌ 声明不成立（评审 2026-07-20） | WiX 只有未编译 XML（callwarden.wxs），引用的 Windows 输入产物不存在，Authenticode 仅注释命令，未跑 candle.exe/light.exe |
+| N6 | macOS universal2 pkg + notarization | ❌ 声明不成立（评审 2026-07-20） | macOS 脚本未在 macOS 构建/签名/公证，缺入口时会生成 placeholder |
+| N7 | Linux deb 5 子包 + rpm + tar.zst | ❌ 声明不成立（评审 2026-07-20） | Linux 无 deb/rpm/tar.zst 成品，缺二进制时仍继续，RPM spec 明确 TODO |
+| N8 | Release CI（enterprise-release.yml 11 门禁） | ❌ 声明不成立（评审 2026-07-20） | Workflow 未运行且静态即可见失败点：错误 version key（`version.toml['package']` 实际是 `['product']`）、纯 Python wheel、错误 parser 调用（`parse_file_lang` 参数错配）、WiX 版本/输入不匹配 |
 
 ## O. 基准验证实测数据
 
