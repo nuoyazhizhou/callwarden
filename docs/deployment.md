@@ -366,20 +366,34 @@ sqlite3 $HOME/.callwarden/callwarden.db "PRAGMA journal_mode;"
 
 # WAL 模式下不应有锁定问题，如遇到：
 # 1. 确保没有多个写入进程
-# 2. 删除 -wal 和 -shm 文件（停止所有进程后）
-rm $HOME/.callwarden/callwarden.db-wal
-rm $HOME/.callwarden/callwarden.db-shm
+# 2. 停止所有 cw 进程（含 MCP Server / watcher / daemon）后等待 5 秒，让 WAL 自动 checkpoint
+# 3. 显式触发 checkpoint（不会丢数据）：
+sqlite3 $HOME/.callwarden/callwarden.db "PRAGMA wal_checkpoint(PASSIVE);"
+#
+# ⚠ 禁止：rm callwarden.db-wal / callwarden.db-shm
+#   - WAL 文件中的事务可能尚未合并到主库，删除会丢数据
+#   - -shm 文件是 WAL 索引，删除会触发重建但不会解决锁
+#   - 参见 AGENTS.md §数据库路径：禁止删除主数据库或 WAL/SHM 文件
 ```
 
 ### 数据库损坏
 
 ```bash
-# 尝试修复
+# ⚠ 禁止直接删除 ~/.callwarden/callwarden.db 重置数据库
+#   会丢失：任务编排数据 / 符号图谱 / 调用链 / 注释恢复历史 / Semgrep 找出
+#   参见 AGENTS.md §数据库路径
+
+# 1. 先备份当前数据库（即使损坏也保留 -wal/-shm，可能还能 recover）
+cp $HOME/.callwarden/callwarden.db ~/callwarden-backup-$(date +%Y%m%d).db
+cp $HOME/.callwarden/callwarden.db-wal ~/callwarden-backup-$(date +%Y%m%d).db-wal 2>/dev/null || true
+
+# 2. 尝试 .recover 恢复（不修改原库）
 sqlite3 $HOME/.callwarden/callwarden.db ".recover" > recovered.sql
 sqlite3 new.db < recovered.sql
 
-# 或从备份恢复
-cp backup.db $HOME/.callwarden/callwarden.db
+# 3. 确认 new.db 可用后再替换
+cw --refresh-all  # 在临时目录验证 new.db
+mv new.db $HOME/.callwarden/callwarden.db
 ```
 
 ### Semgrep 不可用

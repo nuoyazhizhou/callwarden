@@ -16,7 +16,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **任务驱动编排**：task/step/audit 状态机，**父子任务树**支持大任务自动拆分，深度优先遍历 + 子任务完成自动推进父任务，护栏阻断后自动插入修复步骤。完整状态机 `open → in_progress → review → applied → closed`，最后一个子任务 apply 时**原子级联 close**（兄弟 + 父任务），父任务禁止手动 apply/close，必须由其他会话 LLM 审核执行
 - **Agent 集成闭环**：`work_next_job` 返回下一步最小上下文，`propose_symbol_patch` / `propose_range_patch` 支持手术刀式局部编辑，`install-agent` 生成 Codex/Claude/Cursor 集成模板
 - **文件操作工具组**：file_read / file_grep / file_list / file_symbol_content，Agent 完全通过 MCP 读取代码，无需 IDE 内置工具
-- **向量搜索 + RAG**：sqlite-vec + sentence-transformers，自然语言查找函数
+- **向量搜索 + RAG**：BLOB + Rust/numpy 余弦相似度（sqlite-vec 待落地）+ sentence-transformers，自然语言查找函数
 - **Semgrep 集成**：多语言静态安全扫描，结果按内容去重入库
 - **LSP 集成**：hover / 定义 / 引用 / 诊断 / 补全
 - **跨仓库分析**：依赖检测 + 共享符号 + 影响传播
@@ -120,7 +120,7 @@ sym = mcp.file_symbol_content("db_tasks.py", "task_next_step")
 | Semgrep               | 可选  | 缺陷扫描，未安装时自动降级                 |
 | LSP 服务器            | 可选  | pyright / tsserver / gopls / rust-analyzer |
 | sentence-transformers | 可选  | 向量嵌入，未安装时降级关键词搜索           |
-| sqlite-vec            | 可选  | 向量索引扩展                               |
+| sqlite-vec            | 可选  | 向量索引扩展（当前实际实现为 BLOB + Rust/numpy 余弦相似度，sqlite-vec vec0 虚拟表待落地） |
 | Git                   | 2.20+ | 可选，Git 历史集成需要                     |
 
 ## 数据库位置
@@ -151,7 +151,7 @@ callwarden/
 ├── analyzers/                 # 分析层（call_chain / coverage / issues / ignore_spec）
 ├── cicd/                      # CI/CD 集成（sarif / incremental / pr_check）
 ├── cli/                       # CLI 命令行
-├── db/                        # 数据库层（40 个 Mixin + schema）
+├── db/                        # 数据库层（33 个 Mixin 类，39 个 db_*.py 文件 + schema）
 ├── docs/                      # 文档
 ├── i18n/                      # 国际化
 ├── parsers/                   # 多语言解析器（16 种）

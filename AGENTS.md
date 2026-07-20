@@ -70,7 +70,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 
 - **语言**：Python 3.9+
 - **解析引擎**：tree-sitter（16 种语言）
-- **存储**：SQLite + sqlite-vec（向量扩展）
+- **存储**：SQLite（向量嵌入以 BLOB 存储 + Rust/numpy 余弦相似度，sqlite-vec vec0 虚拟表待落地）
 - **MCP SDK**：fastmcp
 - **性能加速**：PyO3 Rust 扩展（callwarden-core）
 - **文件监控**：watchdog
@@ -92,7 +92,7 @@ callwarden/
 ├── analyzers/               # 分析层（call_chain / coverage / issues / ignore_spec）
 ├── cicd/                    # CI/CD 集成（sarif / incremental / pr_check）
 ├── cli/                     # CLI 命令行（argparse 子命令）
-├── db/                      # 数据库层（40 个 Mixin + schema）
+├── db/                      # 数据库层（33 个 Mixin 类，39 个 db_*.py 文件 + schema）
 │   ├── db.py                # 主类 CodeGraphDB（组合所有 Mixin）
 │   ├── db_base.py           # 基础连接与 schema 初始化
 │   ├── db_query.py          # 查询 Mixin

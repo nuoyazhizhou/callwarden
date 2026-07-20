@@ -14,7 +14,7 @@ Call Warden 是一个面向 AI Agent 的代码知识图谱工具。它通过 tre
 | 安全编辑（propose_edit） | Agent 编辑文件前 SHA-256 校验、原子写入、审计日志、可回滚 |
 | LSP 集成 | 通过 LSP 协议获取 hover/定义/引用/诊断/补全，补充 tree-sitter 静态分析 |
 | 跨仓库分析 | 检测跨仓库依赖、查找共享符号、分析跨仓库影响传播 |
-| 向量搜索 | 基于 sqlite-vec 的语义搜索，支持自然语言查找函数 |
+| 向量搜索 | 基于 BLOB + Rust/numpy 余弦相似度的语义搜索（sqlite-vec vec0 待落地），支持自然语言查找函数 |
 | 注释恢复 | 从历史版本恢复丢失的函数注释，支持批量预览与写入 |
 | 安全护栏 | DB/API/Incident 三类可阻断规则，编辑前阻断式检查 |
 | 任务驱动编排 | 任务/步骤/审计日志的状态机，护栏阻断后自动插入修复步骤 |
@@ -62,18 +62,20 @@ cw --call-chain "module::function_name"
 | Semgrep | 可选 | 缺陷扫描，未安装时相关命令自动降级 |
 | LSP 服务器 | 可选 | 支持 pyright/tsserver/gopls/rust-analyzer |
 | sentence-transformers | 可选 | 向量嵌入，未安装时语义搜索自动回退到关键词匹配 |
-| sqlite-vec | 可选 | 向量索引扩展 |
+| sqlite-vec | 可选 | 向量索引扩展（当前实际未使用 vec0 虚拟表，实现为 BLOB + Rust/numpy 余弦相似度） |
 | Git | 2.20+ | 可选，Git 历史集成功能需要 |
 
 ## 工作目录
 
-数据库按项目隔离，路径格式：
+数据库为用户级单库，路径格式：
 
 ```
-$HOME/.callwarden/<16位hash>/callwarden.db
+$HOME/.callwarden/callwarden.db
 ```
 
-其中 16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位，确保不同项目的数据库互不干扰。详见 [架构设计](architecture.md#数据库架构)。
+一个用户一个数据库，所有项目共用，通过 `workspaces` 表的 `workspace_id` 字段在业务表中逻辑隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）。详见 [架构设计](architecture.md#数据库架构)。
+
+> ⚠ **禁止删除** `~/.callwarden/callwarden.db` 及其 `-wal`/`-shm` 文件，其中包含任务编排数据、符号图谱、调用链等不可恢复的工作成果。详见 [AGENTS.md §数据库路径](../AGENTS.md)。
 
 ## 许可证
 

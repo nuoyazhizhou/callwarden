@@ -12,7 +12,7 @@ Call Warden 提供级联安装脚本，自动安装核心依赖 + 全部已支�
 # 进入代码目录
 cd /path/to/callwarden
 
-# 一键安装：核心依赖 + 9 种已支持语言 + C# / Ruby 扩展语言
+# 一键安装：核心依赖 + 16 种语言 grammar + 可选依赖
 cw install
 
 # 包含可选依赖（semgrep / 向量搜索等）
@@ -81,7 +81,7 @@ cw install --all
 |--------|------|-------------|
 | `semgrep` | 多语言静态安全扫描 | 安全扫描命令自动禁用并提示 |
 | `sentence-transformers` | 向量嵌入（语义搜索） | 语义搜索降级为关键词匹配 |
-| `sqlite-vec` | 向量索引扩展 | 同上 |
+| `sqlite-vec` | 向量索引扩展（当前实际实现为 BLOB + Rust/numpy 余弦相似度，vec0 虚拟表待落地） | 同上 |
 | `numpy` | 向量计算加速 | 同上 |
 
 ### 1.4 获取代码
@@ -156,21 +156,24 @@ cw --status
 
 ### 2.3 工作目录结构
 
-数据库按项目隔离，路径格式：
+数据库为用户级单库，所有项目共用一个数据库，通过 `workspace_id` 逻辑隔离：
 
 ```
-$HOME/.callwarden/<16位hash>/callwarden.db
+$HOME/.callwarden/callwarden.db
 ```
 
 示例（Linux/macOS）：
 
 ```
-/home/user/.callwarden/a3f5e1b2c4d5f6a7/callwarden.db
+/home/user/.callwarden/callwarden.db
 ```
 
-- 16 位 hash 是项目根路径绝对路径的 SHA-256 前 16 位
-- 不同项目使用不同数据库，互不干扰
+- 一个用户一个数据库，所有项目共用
+- 不同项目通过 `workspaces` 表的 `workspace_id` 字段在业务表中隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）
 - 多个分支可通过分支感知功能注册为独立工作区
+- ⚠ **禁止删除** `~/.callwarden/callwarden.db` 及其 `-wal`/`-shm` 文件
+
+> 旧版按项目 hash 隔离的多库架构（`~/.callwarden/<16位hash>/callwarden.db`）已废弃，可通过 `cw gc db-migrate-single --apply` 迁移到用户级单库。
 
 ## 3. 基本查询
 

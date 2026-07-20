@@ -93,11 +93,12 @@
 
 | 指标 | 文档声称 | 代码实查 |
 |------|---------|----------|
-| MCP 工具数 | 120-125 | **196**（@mcp.tool() 装饰器计数） |
+| MCP 工具数 | 120-125 | **205**（@mcp.tool() 装饰器计数） |
 | CLI 子命令 | 145+ | 38 子命令 + ~98 个 --flag 命令 |
 | 支持语言 | 16 | 16（parsers/ 目录 16 个解析器） |
-| Mixin 模块 | 23 | **37**（db_*.py 文件数） |
-| Schema 版本 | v14 | **v36** |
+| Mixin 模块 | 23 | **33 个 Mixin 类**（39 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin） |
+| Schema 版本 | v14 | **v39** |
+| 产品版本 | 0.3.0 | release/version.toml `[product] version = "0.3.0"` |
 
 ---
 
@@ -158,17 +159,17 @@
 | C10 | task ↔ commit ↔ symbol 三角关联 | CS | ✅ 已实现 | post-commit hook |
 | C11 | 任务 reopen 机制 | AGENTS.md | ✅ 已实现 | |
 
-## D. 向量搜索 + RAG + LSP + 跨仓库（已完成，文档一致）
+## D. 向量搜索 + RAG + LSP + 跨仓库（D1/D7 评审已修正）
 
 | # | 功能点 | 来源 | 状态 | 备注 |
 |---|--------|------|------|------|
-| D1 | sqlite-vec 向量索引 | IS/CL | ✅ 已实现 | db_vector.py |
+| D1 | BLOB + Rust/numpy 余弦相似度（sqlite-vec 待落地） | IS/CL | 🟡 部分完成 | db_vector.py（D1 评审修正：实际实现是 BLOB 存储 + `callwarden_core.batch_cosine_similarity` 全量扫描，回退到 numpy 矩阵运算；sqlite-vec vec0 虚拟表未落地。pyproject.toml 仍声明 sqlite-vec>=0.1 依赖。适合 < 100k 符号，大规模需待 sqlite-vec KNN） |
 | D2 | sentence-transformers 嵌入 | IS | ✅ 已实现 | |
 | D3 | 语义搜索（降级关键词） | IS/CA | ✅ 已实现 | semantic_search（MCP 已注册） |
 | D4 | 相似函数查找 | IS | ✅ 已实现 | find_similar_functions（MCP 已注册） |
 | D5 | ask_codebase RAG 管道 | IS/CA | ✅ 已实现 | ask_codebase（MCP 已注册） |
 | D6 | LSP hover/定义/引用/诊断/补全 | IS/CL | ✅ 已实现 | db_lsp.py |
-| D7 | 跨仓库依赖检测 + 共享符号 + 影响传播 | IS/CL | ✅ 已实现 | db_cross_repo.py |
+| D7 | 跨仓库依赖检测 + 共享符号 + 影响传播 | IS/CL | ✅ 已修复（2026-07-20） | db_cross_repo.py（D7 评审修复：`target_symbol_names` 字典从 `name→qualified_name` 改为 `name→(qualified_name, symbol_hash)` 元组，INSERT 的 target_symbol_hash 写入真实值，反向查询可命中。原代码写空字符串导致 `WHERE target_symbol_hash = ?` 永远无结果） |
 | D8 | 分支注册/切换/差异对比/合并预览 | IS/CL | ✅ 已实现 | db_branch.py |
 
 ## E. 辅助功能（已完成，文档一致）
@@ -321,23 +322,25 @@
 
 | # | 问题 | 详情 | 需更新文件 |
 |---|------|------|------------|
-| I1 | ✅ 已修复（2026-07-19） | IS/RM/MCT/ARC 头部已统一为 205 MCP / v37 Schema / 40 Mixin。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
+| I1 | ✅ 已修复（2026-07-20 更新） | IS/RM/MCT/ARC 头部已统一为 205 MCP / v39 Schema / 33 Mixin 类（39 db_*.py 文件）。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
 | I2 | ✅ 已修复（2026-07-19） | CA 表格已改"未暴露"为"✅ 已暴露"，"只差接线"为"已完成（2026-07 接入）" | CA |
-| I3 | ✅ 已修复（2026-07-19） | UG 头部已改"v3 Schema"为"v37 Schema · 205 MCP 工具 · 16 语言 · 40 Mixin"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等" | UG |
+| I3 | ✅ 已修复（2026-07-20 更新） | UG 头部已统一为 "v39 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类（39 db_*.py）"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等"；Q2 已删除"删除 callwarden.db 重建"危险建议 | UG |
 | I4 | ✅ 已修复（2026-07-19） | IS §5 待办表已更新：`status != 'archived'` ✅ 已实现 / `UNIQUE UPSERT` ⚠️ 部分（已用 ON CONFLICT，键非 symbol_hash）/ `Prometheus` ✅ 已实现（2026-07-19 metrics endpoint 闭合：`cw daemon metrics` CLI + `get_metrics` MCP 工具，不依赖 daemon RPC，直读 MetricsCollector 单例） | IS |
 | I5 | ✅ 已修复（2026-07-19） | TokenSavingsMixin 在 §2.12（能力描述）和 §3（Mixin 列表）各出现一次，是合理的双视角描述，非重复列出 | IS |
 | I6 | ✅ 已修复（2026-07-19） | RM 数据库位置已从 `~/.callwarden/<hash>/callwarden.db`（旧版多库）改为 `~/.callwarden/callwarden.db`（用户级单库 + workspace_id 逻辑隔离），与 UG/config.py 一致；UG 描述原本正确 | RM |
 | I7 | ✅ 已修复（2026-07-19） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销，db_cross_repo.py 已实现" | CA |
 | I8 | ✅ 已修复（2026-07-19） | CA "不要集成 ast-grep"建议下方加"更新（2026-07-19）：此建议仍有效，issues.py 未集成 ast-grep"。原 I8 描述"issues.py 存在"系误判（issues.py 仅用 Semgrep，无 ast-grep） | CA |
-| I9 | ✅ 已修复（2026-07-17） | ARC Mixin 数已同步为 40 个，db_*.py 38 个文件 | ARC |
-| I10 | ✅ 已修复（2026-07-17） | ARC Schema 版本已同步为 v37 | ARC |
-| I11 | ✅ 已修复（2026-07-17） | CONTRIBUTING.md Mixin 数已同步为 40 | CT |
+| I9 | ✅ 已修复（2026-07-20 更新） | ARC Mixin 数已同步为 33 个 Mixin 类，db_*.py 39 个文件 | ARC |
+| I10 | ✅ 已修复（2026-07-20 更新） | ARC Schema 版本已同步为 v39 | ARC |
+| I11 | ✅ 已修复（2026-07-20 更新） | CONTRIBUTING.md Mixin 数已同步为 33 | CT |
 | I12 | ✅ 已修复（2026-07-17，2026-07-19 更新） | README.md MCP 工具数已同步为 205+（get_metrics 新增） | docs/README.md |
 | I13 | ✅ 已修复（2026-07-17，2026-07-19 更新） | mcp_tools.md 头部已统一为 205；概览表 179 是 12 主分类独有工具合计，注释已说明与 205 的差异（跨分类工具 + 8 L5 工具 + 1 metrics 监控工具） | MCT |
 | I14 | ✅ 已修复（2026-07-17） | gap-analysis-2026Q2.md 已归档到 docs/history/，README.md 归档清单第 12 行明确标注"基于 9 语言/38 MCP 旧现状，多数缺失功能现已实现" | GA1, GA2 |
-| I15 | ✅ 已修复（2026-07-17） | naming-analysis-report Mixin 数已同步为 40 | naming-analysis-report.md |
+| I15 | ✅ 已修复（2026-07-20 更新） | naming-analysis-report Mixin 数已同步为 33 | naming-analysis-report.md |
 | I16 | ✅ 已修复（2026-07-17） | history/README.md 演化轨迹已扩展到 v37（含 v15-v25 治理期、v26-v33 优化期、v37 L2 破坏性操作）；implementation-snapshot-v13 归档原因已更新 | docs/history/README.md |
-| I17 | ✅ 已修复（2026-07-19） | Schema 版本同步 v37→v39：architecture.md（L39/L74/L107-109 加 v38/v39 迁移条目）、implementation-status.md（L3/L13）、_health_check_report.md（L134）；v38=get_stats 加速索引、v39=call_chain_up/down 加速索引 idx_call_versions_callee_current；README.md L26 修复 204+→205+（与 @mcp.tool() 实际数 205 对齐） | ARC, IS, README.md |
+| I17 | ✅ 已修复（2026-07-20 更新） | Schema 版本同步 v37→v39 完成；architecture.md（L23/L39/L49 Mixin 数 + L78 v5 注释 + L766-775 向量章节实际实现说明）、implementation-status.md（L3/L14）、_health_check_report.md（L134）；v38=get_stats 加速索引、v39=call_chain_up/down 加速索引 idx_call_versions_callee_current；README.md L26 修复 204+→205+（与 @mcp.tool() 实际数 205 对齐） | ARC, IS, README.md |
+| I18 | ✅ 已修复（2026-07-20） | deployment.md 数据库锁定/损坏排查章节删除"rm -wal/-shm"危险建议，改为 PRAGMA wal_checkpoint + 备份 + .recover 流程；USER_GUIDE Q2 删除"删除 callwarden.db 重建"危险建议 | deployment.md, UG |
+| I19 | ✅ 已修复（2026-07-20） | D1/D7 评审修正：D1 状态从 "✅ 已实现 sqlite-vec" 改为 "🟡 部分完成（BLOB + Rust/numpy，sqlite-vec 待落地）"；D7 状态从 "✅ 已实现" 改为 "✅ 已修复（2026-07-20）"，说明 target_symbol_hash 写空字符串的根因和修复 | _feature_matrix.md D1/D7 |
 
 ## J. 灰色地带验证结果（已全部确认）
 

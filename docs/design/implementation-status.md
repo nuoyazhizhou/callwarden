@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-19 · Schema v39 · 40 Mixin · 205 MCP 工具 · 16 语言
+> 最后更新：2026-07-20 · Schema v39 · 33 Mixin 类（39 个 db_*.py 文件）· 205 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -11,7 +11,7 @@
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
 | Schema 版本 | v39  | v3→v39 版本化迁移，事务化执行                                                             |
-| Mixin 模块  | 40   | CodeGraphBase + 39 个功能 Mixin                                                           |
+| Mixin 模块  | 33   | CodeGraphBase + 32 个功能 Mixin（39 个 db_*.py 文件）                                     |
 | MCP 工具    | 205  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
 | 解析器文件  | 18   | tree-sitter 多语言（含 base/call_filter/call_resolver 等辅助模块）                        |
@@ -87,7 +87,7 @@
 
 | 能力                       | 状态 | 关键文件                                             |
 | -------------------------- | ---- | ---------------------------------------------------- |
-| sqlite-vec 向量索引        | ✅    | `db_vector.py` VectorMixin                           |
+| BLOB + Rust/numpy 余弦相似度 | ✅    | `db_vector.py` VectorMixin（D1 评审修正：实际实现是 BLOB 存储 + `callwarden_core.batch_cosine_similarity`，回退到 numpy；sqlite-vec vec0 虚拟表待落地） |
 | sentence-transformers 嵌入 | ✅    | embed_symbols / embed_symbol                         |
 | 语义搜索（自然语言找函数） | ✅    | semantic_search（embedder 不可用时降级关键词）       |
 | 相似函数查找               | ✅    | find_similar_functions                               |

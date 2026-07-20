@@ -12,7 +12,7 @@
                ▼                               ▼
 ┌──────────────────────────┐     ┌──────────────────────────────┐
 │      CLI (cli/main.py)   │     │   MCP Server (FastMCP)       │
-│  子命令 + --flag 双风格  │     │   204 个 @mcp.tool() 工具    │
+│  子命令 + --flag 双风格  │     │   205 个 @mcp.tool() 工具    │
 │  145+ 命令               │     │   stdio / SSE 传输           │
 └────────────┬─────────────┘     └──────────────┬───────────────┘
              │                                  │
@@ -20,7 +20,7 @@
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                  CodeGraphDB (db.py)                          │
-│         40 个 Mixin 多继承组装的统一数据库类                  │
+│         33 个 Mixin 多继承组装的统一数据库类                   │
 │  CodeGraphBase + BuildMixin + QueryMixin + ... + CheckGateMixin│
 └────────────────────────────┬──────────────────────────────────┘
                              │
@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（用户级单库）                       │
 │   $HOME/.callwarden/callwarden.db                              │
-│   Schema v39 / WAL 模式 / 40+ 表 / 40 个 Mixin 模块           │
+│   Schema v39 / WAL 模式 / 40+ 表 / 33 个 Mixin 类              │
 │   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -46,7 +46,7 @@
 | 层 | 职责 | 关键文件 |
 |----|------|----------|
 | 接入层 | CLI 命令解析、MCP 协议处理 | `cli/main.py`、`server/mcp_server.py` |
-| 业务层 | 40 个 Mixin 组合的数据库类 | `db.py` + `db_*.py`（38 个文件） |
+| 业务层 | 33 个 Mixin 组合的数据库类 | `db.py` + `db_*.py`（39 个文件） |
 | 解析层 | tree-sitter 多语言解析、调用关系提取 | `parsers/`（18 个文件） |
 | 分析层 | 调用链、覆盖率、缺陷检测 | `analyzers/`（6 个文件） |
 | 加速层 | PyO3 Rust 扩展（可选） | `rust_ext/` |
@@ -75,7 +75,7 @@ $HOME/.callwarden/callwarden.db
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
-v5  向量嵌入表（symbol_embeddings，sqlite-vec）
+v5  向量嵌入表（symbol_embeddings，BLOB 存储 + Rust/numpy 余弦相似度，sqlite-vec 待落地）
 v6  符号摘要表（symbol_summaries，AI 摘要版本化）
 v7  任务管理表（tasks / task_steps / change_audit）
 v8  文件所有权表（file_ownership）
@@ -763,13 +763,16 @@ if pending_count == 0:
 
 构建：`cd rust_ext && maturin develop --release`
 
-### 2. 向量索引（sqlite-vec）
+### 2. 向量索引（BLOB + Rust/numpy 余弦相似度，sqlite-vec 待落地）
 
-语义搜索使用 sqlite-vec 扩展：
+> D1 文档声明修正（评审报告 2026-07-20）：实际实现是 BLOB 存储 + Rust 批量余弦相似度（`callwarden_core.batch_cosine_similarity`），回退到 numpy 矩阵运算。`pyproject.toml` 仍声明 `sqlite-vec>=0.1` 依赖，但 `vec0` 虚拟表尚未在 schema 中落地。
+
+语义搜索使用 BLOB 存储 + Rust/numpy 余弦相似度：
 - 768 维向量（jina-v2-base-code 模型）
-- 余弦相似度查询
-- 嵌入结果缓存在 `symbol_embeddings` 表
+- `_load_all_embeddings()` 读取全部 embedding 到内存，`_batch_cosine()` 批量计算余弦相似度
+- 嵌入结果缓存在 `symbol_embeddings` 表（BLOB 列）
 - 向量服务不可用时自动回退到关键词匹配
+- 适合中小规模代码库（< 100k 符号）；大规模场景待落地 sqlite-vec vec0 虚拟表 + KNN 查询
 
 ### 3. SQLite WAL 模式
 
