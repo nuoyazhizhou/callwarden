@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class CrossRepoMixin:
@@ -117,7 +117,9 @@ class CrossRepoMixin:
         source_symbols = [dict(r) for r in cur]
 
         # 收集目标仓库的符号名集合（用于匹配 import）
-        target_symbol_names: Dict[int, Dict[str, str]] = {}  # ws_id -> {symbol_name: qualified_name}
+        # D7 修复：原代码只存 name -> qualified_name，导致 target_symbol_hash 写入空字符串，
+        # 反向查询无法命中。改为存 name -> (qualified_name, symbol_hash) 元组。
+        target_symbol_names: Dict[int, Dict[str, Tuple[str, str]]] = {}  # ws_id -> {symbol_name: (qualified_name, symbol_hash)}
         for t in target_ids:
             t_id = t[0] if isinstance(t, tuple) else t
             t_name = t[1] if isinstance(t, tuple) else ""
@@ -130,7 +132,9 @@ class CrossRepoMixin:
                 """,
                 (t_id,),
             )
-            target_symbol_names[t_id] = {r["name"]: r["qualified_name"] for r in cur}
+            target_symbol_names[t_id] = {
+                r["name"]: (r["qualified_name"], r["symbol_hash"]) for r in cur
+            }
 
         # 扫描源符号的 content 中的 import 语句
         detected_deps: List[Dict[str, Any]] = []
@@ -157,7 +161,8 @@ class CrossRepoMixin:
                     for t_id, t_names in target_symbol_names.items():
                         if module_name in t_names:
                             # 找到匹配，记录依赖
-                            target_qn = t_names[module_name]
+                            # D7 修复：同时拿到 qualified_name 和 symbol_hash
+                            target_qn, target_symbol_hash = t_names[module_name]
                             # 获取目标仓库名
                             cur = self.conn.execute(
                                 "SELECT name FROM workspaces WHERE id = ?",
@@ -177,6 +182,8 @@ class CrossRepoMixin:
                             detected_deps.append(dep)
 
                             # 持久化到 cross_repo_deps 表
+                            # D7 修复：写入真实的 target_symbol_hash（原代码写空字符串，
+                            # 导致反向查询 WHERE target_symbol_hash = ? 永远无法命中）
                             self.conn.execute(
                                 """
                                 INSERT INTO cross_repo_deps
@@ -189,7 +196,7 @@ class CrossRepoMixin:
                                     t_id,
                                     "import",
                                     sym["symbol_hash"],
-                                    "",
+                                    target_symbol_hash,
                                     dep["evidence"],
                                     0.8,
                                     now,

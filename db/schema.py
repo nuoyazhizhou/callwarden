@@ -301,8 +301,11 @@ CREATE INDEX IF NOT EXISTS idx_destructive_ops_type ON destructive_operations(op
 CREATE INDEX IF NOT EXISTS idx_destructive_ops_created ON destructive_operations(created_at);
 
 -- ============================================
--- v5: 向量嵌入表（sqlite-vec）
+-- v5: 向量嵌入表（BLOB 存储 + Rust/numpy 余弦相似度，sqlite-vec 待落地）
 -- ============================================
+-- D1 文档声明修正：实际实现是 BLOB 存储 + callwarden_core.batch_cosine_similarity
+-- （Rust 加速，回退到 numpy 矩阵运算），不是 sqlite-vec 扩展。
+-- pyproject.toml 仍声明 sqlite-vec>=0.1 依赖（待未来落地 vec0 虚拟表后启用）。
 
 -- 向量嵌入表（函数代码的语义向量）
 CREATE TABLE IF NOT EXISTS symbol_embeddings (
@@ -1000,7 +1003,7 @@ ON test_runs(ci_run_id);
 
 # Schema 版本号（用于迁移判断）
 # v4: Git 集成表
-# v5: 向量嵌入表（sqlite-vec）
+# v5: 向量嵌入表（BLOB 存储 + Rust/numpy 余弦相似度，sqlite-vec 待落地）
 # v6: 符号摘要表（AI 生成的函数/模块摘要，版本化）
 # v7: 任务管理表（tasks / task_steps / change_audit）
 # v8: 文件所有权表（file_ownership：CODEOWNERS + git blame）

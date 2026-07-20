@@ -12,6 +12,15 @@ db_vector.py
 
 向量以 BLOB 形式存储（numpy.float32 + tobytes），读取时用 numpy.frombuffer 还原。
 numpy / sentence_transformers / requests 均采用延迟导入，避免在模块级别引入重依赖。
+
+D1 文档声明修正（评审报告 2026-07-20）：
+- 实际实现是 BLOB 存储 + Rust 批量余弦相似度（callwarden_core.batch_cosine_similarity），
+  回退到 numpy 矩阵运算（10-100x 加速于逐向量 Python 循环）。
+- 不是 sqlite-vec 扩展（虽然 pyproject.toml 声明 sqlite-vec>=0.1 依赖，
+  但 vec0 虚拟表尚未在 schema 中落地）。
+- 全量扫描：_load_all_embeddings() 读取所有 embedding 到内存，
+  然后 _batch_cosine() 批量计算相似度。适合中小规模代码库（< 100k 符号）。
+- 待落地：sqlite-vec vec0 虚拟表 + KNN 查询，支持大规模近似最近邻搜索。
 """
 
 from __future__ import annotations
