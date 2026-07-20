@@ -538,6 +538,50 @@ pub fn dispatch<S: DaemonStateExt>(
     }
 }
 
+/// 需要管理员权限的运维方法（修改全局配置 / 资源回收 / 数据库备份还原）。
+///
+/// 授权规则：`peer.uid == 0`（root）或 `peer.uid == current_uid()`（daemon 进程自己）。
+/// workspace.file.refresh / workspace.register 等已经通过 owned_workspace / validate_owned_path
+/// 做了 per-workspace UID ACL，不重复检查；只读方法（list/get/query/stats）允许任意已连接 peer。
+const ADMIN_ONLY_METHODS: &[&str] = &[
+    // 数据库备份 / 还原
+    "backup",
+    "restore",
+    // 资源回收（CAS / snapshots / evict）
+    "gc.cas",
+    "gc.snapshots",
+    "snapshot.evict",
+    // Mount Mapping 写操作（register / delete）
+    "mount.register",
+    "mount.delete",
+    // Toolchain 配置变更（register / delete / bind）
+    "toolchain.register",
+    "toolchain.delete",
+    "toolchain.bind",
+    // Build Context 变更（注册 / 切换激活 / 删除）
+    "build_context.register",
+    "build_context.set_active",
+    "build_context.delete",
+];
+
+/// 返回 daemon 进程自己的 uid（Unix: getuid；Windows: 0 视为管理员）
+fn current_daemon_uid() -> u32 {
+    #[cfg(unix)]
+    {
+        // SAFETY: getuid() 是无副作用 syscall，永远安全
+        unsafe { libc::getuid() }
+    }
+    #[cfg(not(unix))]
+    {
+        0
+    }
+}
+
+/// 判断 peer 是否为管理员（root 或 daemon 进程自己）
+fn is_admin(peer: PeerCredential) -> bool {
+    peer.uid == 0 || peer.uid == current_daemon_uid()
+}
+
 /// dispatch 内部实现（返回 Result<Value, DaemonRpcError>）
 fn dispatch_inner<S: DaemonStateExt>(
     state: &mut S,
@@ -546,6 +590,13 @@ fn dispatch_inner<S: DaemonStateExt>(
     params: &Value,
     received_fds: &[i32],
 ) -> Result<Value, DaemonRpcError> {
+    // 管理员方法授权检查（fail-closed：未授权直接拒绝，不进入 handler）
+    if ADMIN_ONLY_METHODS.contains(&method) && !is_admin(peer) {
+        return Err(DaemonRpcError::permission_denied(format!(
+            "方法 {} 需要管理员权限（root 或 daemon uid），当前 peer.uid={}",
+            method, peer.uid
+        )));
+    }
     match method {
         // ---- 基础方法（R3 默认实现）----
         "ping" => state.handle_ping(peer),
@@ -873,6 +924,93 @@ mod tests {
     }
 
     // ---- PeerCredential 测试 ----
+
+    fn make_root_peer() -> PeerCredential {
+        PeerCredential {
+            uid: 0,
+            gid: 0,
+            pid: 1,
+        }
+    }
+
+    /// 非管理员 peer 调用 admin-only 方法应返回 permission_denied
+    #[test]
+    fn test_admin_only_method_denied_for_non_admin() {
+        let mut state = make_state();
+        let peer = make_peer(); // uid=1000，非 root 且非 daemon 自己
+        let params = json!({"output_path": "/tmp/x.db"});
+
+        // backup 是 admin-only 方法
+        let response = dispatch(&mut state, peer, "backup", &params, &[]);
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "permission_denied");
+
+        // 验证多个 admin-only 方法都被拒绝
+        for method in &[
+            "restore",
+            "gc.cas",
+            "gc.snapshots",
+            "snapshot.evict",
+            "mount.register",
+            "mount.delete",
+            "toolchain.register",
+            "toolchain.delete",
+            "toolchain.bind",
+            "build_context.register",
+            "build_context.set_active",
+            "build_context.delete",
+        ] {
+            let response = dispatch(&mut state, make_peer(), method, &params, &[]);
+            assert_eq!(
+                response["error"]["code"], "permission_denied",
+                "方法 {} 应被 permission_denied 拒绝", method
+            );
+        }
+    }
+
+    /// root (uid=0) 调用 admin-only 方法应通过授权检查（进入 handler 后由 handler 返回结果）
+    #[test]
+    fn test_admin_only_method_allowed_for_root() {
+        let mut state = make_state();
+        let peer = make_root_peer();
+        let params = json!({});
+
+        // backup 通过授权检查后，默认 DaemonState 的 handle_backup 返回 method_not_found
+        // 这里只验证授权检查未拒绝（不是 permission_denied）
+        let response = dispatch(&mut state, peer, "backup", &params, &[]);
+        assert_ne!(
+            response["error"]["code"], "permission_denied",
+            "root 调用 backup 不应被 permission_denied"
+        );
+    }
+
+    /// 只读方法（list/get/query/stats）不应被授权检查拦截
+    #[test]
+    fn test_readonly_methods_not_blocked_by_admin_check() {
+        let mut state = make_state();
+        let peer = make_peer(); // 非管理员
+
+        // 只读方法应正常路由（不会被 permission_denied 拦截）
+        for method in &[
+            "workspace.list",
+            "workspace.status",
+            "toolchain.list",
+            "toolchain.get",
+            "mount.list",
+            "build_context.list",
+            "query.stats",
+            "query.symbol",
+            "snapshot.stats",
+            "snapshot.list_workspaces",
+        ] {
+            let params = json!({});
+            let response = dispatch(&mut state, peer, method, &params, &[]);
+            assert_ne!(
+                response["error"]["code"], "permission_denied",
+                "只读方法 {} 不应被 permission_denied 拦截", method
+            );
+        }
+    }
 
     #[test]
     fn test_peer_credential_clone_copy() {
