@@ -928,13 +928,14 @@ impl DaemonStateExt for WorkspaceDaemonState {
             abs_path,
         };
 
-        // G8-T3：提取 canonical_bytes（优先 FD，次选 base64）
+        // G8-T3：提取 canonical_bytes（优先 FD，次选 hex/b64）
         // 规范：daemon-ipc-security.md §3.2 —— daemon 不信任 agent 提供的 hash，必须重新计算
         // 规范：parse-input-abi.md §2 —— canonical bytes 是唯一输入入口
-        // 三种获取方式（按优先级）：
+        // 四种获取方式（按优先级）：
         // 1. FD（仅 Unix，SCM_RIGHTS 传递）：daemon 直接读文件内容，消除 TOCTOU
-        // 2. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入
-        // 3. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
+        // 2. canonical_bytes_hex（跨平台）：客户端 hex 编码后传入（agent_protocol.py 默认路径）
+        // 3. canonical_bytes_b64（跨平台）：客户端 base64 编码后传入（兼容旧客户端）
+        // 4. 均无：返回 None，_daemon_parse_and_publish 内降级为 abs_path 读取
         let canonical_bytes: Option<Vec<u8>> = if !received_fds.is_empty() {
             #[cfg(unix)]
             {
@@ -968,7 +969,19 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     "FD 模式仅 Unix 支持（Windows 请使用 canonical_bytes_b64 参数）",
                 ));
             }
+        } else if let Some(hex) = params.get("canonical_bytes_hex").and_then(|v| v.as_str()) {
+            // canonical_bytes_hex：agent_protocol.py 小文件默认路径
+            match hex::decode(hex) {
+                Ok(bytes) => Some(bytes),
+                Err(e) => {
+                    return Err(DaemonRpcError::new(
+                        "hex_decode_failed",
+                        format!("canonical_bytes_hex decode failed: {}", e),
+                    ));
+                }
+            }
         } else if let Some(b64) = params.get("canonical_bytes_b64").and_then(|v| v.as_str()) {
+            // canonical_bytes_b64：兼容旧客户端 / 显式 base64 路径
             use base64::Engine;
             match base64::engine::general_purpose::STANDARD.decode(b64) {
                 Ok(bytes) => Some(bytes),
@@ -1025,6 +1038,12 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 Ok(_lsn) => {
                     // 触发 replicate（R5 阶段不接 SnapshotManager，db_path 传空，
                     // Replicator 只做 read_pending → mark_applied_batch，不发布 snapshot）
+                    //
+                    // 设计限制（评审 P0-2）：daemon 内部只有 CAS + session_store + staging_log，
+                    // 没有完整符号图谱数据库（符号图谱由 Python CodeGraphDB 维护）。
+                    // 因此 publish_snapshot 无法在 daemon 端独立完成，db_path 传空跳过发布。
+                    // 后续应通过 IPC 让 Python 端 CodeGraphDB 调用 publish_snapshot，
+                    // 或在 daemon 启动时挂载 SnapshotManager + db_path 配置。
                     use crate::daemon::replicator::Replicator;
                     let replicator = Replicator::new(&resources.staging_log);
                     let repl_result = replicator.replicate(workspace_instance_id, "", "");
@@ -1047,6 +1066,20 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         Value::Number(
                             serde_json::Number::from_f64(repl_result.duration_ms)
                                 .unwrap_or_else(|| serde_json::Number::from(0u32)),
+                        ),
+                    );
+                    // P0-2 显式告警：snapshot 未发布（db_path 为空）
+                    // 让客户端明确知道本次 refresh 没有产生可查询 snapshot
+                    repl_map.insert(
+                        "snapshot_published".to_string(),
+                        Value::Bool(false),
+                    );
+                    repl_map.insert(
+                        "snapshot_warning".to_string(),
+                        Value::String(
+                            "snapshot 未发布（daemon 未接入 SnapshotManager，db_path 为空）。\
+                             评审 P0-2：后续通过 IPC 让 Python CodeGraphDB 调用 publish_snapshot。"
+                                .to_string(),
                         ),
                     );
                     if let Some(err) = repl_result.error {
@@ -2473,6 +2506,133 @@ mod tests {
         assert_eq!(response["result"]["replication"]["applied_count"], 1);
         assert_eq!(response["result"]["replication"]["pending_count"], 1);
         assert_eq!(response["result"]["workspace_instance_id"], ws_id);
+    }
+
+    #[test]
+    fn test_refresh_committed_marks_snapshot_not_published() {
+        // P0-2 修复：committed 时 replication 应显式标记 snapshot_published=false
+        // 让客户端明确知道本次 refresh 没有产生可查询 snapshot
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "content_hash": "abc123",
+                "language": "rust"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["status"], "committed");
+        // P0-2：显式标记 snapshot 未发布
+        assert_eq!(response["result"]["replication"]["snapshot_published"], false);
+        assert!(
+            response["result"]["replication"]["snapshot_warning"].is_string(),
+            "snapshot_warning 字段应存在且为字符串"
+        );
+    }
+
+    #[test]
+    fn test_refresh_accepts_canonical_bytes_hex() {
+        // P0-2 修复：daemon 同时支持 canonical_bytes_hex（agent_protocol.py 默认路径）
+        // 和 canonical_bytes_b64（旧客户端）。本测试验证 hex 路径正常工作。
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 准备 canonical bytes（模拟 Python canonicalize_source_py 输出）
+        let canonical = b"pub fn main() {}\n".to_vec();
+        let hex_encoded = hex::encode(&canonical);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "content_hash": "abc123",
+                "language": "rust",
+                "canonical_bytes_hex": hex_encoded,
+                "canonical_len": canonical.len(),
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true, "hex 路径应正常工作");
+        assert_eq!(response["result"]["status"], "committed");
+    }
+
+    #[test]
+    fn test_refresh_accepts_canonical_bytes_b64() {
+        // P0-2 兼容性：canonical_bytes_b64（旧路径）仍正常工作
+        use base64::Engine;
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        let canonical = b"pub fn main() {}\n".to_vec();
+        let b64_encoded = base64::engine::general_purpose::STANDARD.encode(&canonical);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "content_hash": "abc123",
+                "language": "rust",
+                "canonical_bytes_b64": b64_encoded,
+                "canonical_len": canonical.len(),
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true, "b64 路径应正常工作");
+        assert_eq!(response["result"]["status"], "committed");
+    }
+
+    #[test]
+    fn test_refresh_rejects_invalid_hex() {
+        // P0-2 错误路径：hex 解码失败应返回 hex_decode_failed 错误
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "canonical_bytes_hex": "not valid hex!@#",
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "hex_decode_failed");
     }
 
     #[test]
