@@ -294,6 +294,176 @@ class TestSendRefreshSmallFile:
 
 
 # ============================================
+# 4b. send_refresh_to_daemon: 大文件路径（memfd 优先 + 临时文件降级）
+# G10 批次7：验证大文件优先走 sealed memfd，memfd 不可用时降级临时文件
+# ============================================
+
+
+class TestSendRefreshLargeFileMemfd:
+    """G10 批次7：大文件路径优先使用 sealed memfd。
+
+    大文件 FD 路径需要 ``socket.AF_UNIX`` 可用 + ``create_sealed_memfd`` 可用。
+    非 Linux 平台用 monkeypatch 注入 ``socket.AF_UNIX`` 属性并 mock
+    ``create_sealed_memfd`` 返回有效 FD，以测试 FD 路径逻辑分支。
+    """
+
+    def _ensure_af_unix(self, monkeypatch):
+        """确保 socket.AF_UNIX 存在（非 Unix 平台用 monkeypatch 注入）。"""
+        import socket as _socket_mod
+        if not hasattr(_socket_mod, "AF_UNIX"):
+            monkeypatch.setattr(_socket_mod, "AF_UNIX", 1, raising=False)
+
+    def test_large_file_uses_fd_path(self, tmp_path, monkeypatch):
+        """大文件超过阈值时走 call_with_fd 路径（不调 call）。"""
+        self._ensure_af_unix(monkeypatch)
+
+        rpc = _make_mock_daemon_rpc()
+        rpc.call_with_fd.return_value = {
+            "status": "committed", "generation": "gen_large_001",
+        }
+        session = _make_session_with_epoch(ws_id="ws_large", epoch=2)
+
+        # 超过阈值 1 字节
+        canonical = b"y" * (REFRESH_LARGE_FILE_THRESHOLD + 1)
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        # mock create_sealed_memfd 返回一个有效的临时 FD（跨平台）
+        import callwarden.server.ipc_transport as ipc_mod
+        tmp_fd_path = tmp_path / "mock_memfd.bin"
+        tmp_fd_path.write_bytes(canonical)
+
+        def _mock_create_sealed_memfd(data):
+            assert data == canonical, "create_sealed_memfd 应收到完整 canonical_bytes"
+            return os.open(str(tmp_fd_path), os.O_RDONLY)
+
+        monkeypatch.setattr(ipc_mod, "create_sealed_memfd", _mock_create_sealed_memfd)
+
+        send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_large",
+            rel_path="large.py",
+            abs_path=str(tmp_path / "large.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        # 应该走 call_with_fd 路径
+        rpc.call_with_fd.assert_called_once()
+        rpc.call.assert_not_called()
+
+        # params 应包含 canonical_len + content_hash
+        call_args = rpc.call_with_fd.call_args
+        params = call_args[0][1]
+        assert params["canonical_len"] == len(canonical)
+        assert params["content_hash"] == content_hash
+
+    @pytest.mark.skipif(
+        not sys.platform.startswith("linux"),
+        reason="memfd_create 仅 Linux 支持",
+    )
+    def test_large_file_memfd_path_on_linux(self, tmp_path):
+        """Linux 上大文件优先走 sealed memfd（create_sealed_memfd 成功）。"""
+        from callwarden.server.ipc_transport import create_sealed_memfd, is_memfd
+
+        canonical = b"z" * (REFRESH_LARGE_FILE_THRESHOLD + 1)
+
+        fd = create_sealed_memfd(canonical)
+        try:
+            # 验证 FD 是 memfd
+            assert is_memfd(fd), "create_sealed_memfd 应返回 memfd FD"
+
+            # 验证内容正确
+            os.lseek(fd, 0, os.SEEK_SET)
+            content = os.read(fd, len(canonical))
+            assert content == canonical
+        finally:
+            os.close(fd)
+
+    def test_large_file_fallback_to_temp_file_when_memfd_unavailable(
+        self, tmp_path, monkeypatch,
+    ):
+        """memfd 不可用时降级到普通临时文件路径（仍走 call_with_fd）。"""
+        self._ensure_af_unix(monkeypatch)
+
+        rpc = _make_mock_daemon_rpc()
+        rpc.call_with_fd.return_value = {
+            "status": "committed", "generation": "gen_fallback_001",
+        }
+        session = _make_session_with_epoch(ws_id="ws_fallback", epoch=1)
+
+        canonical = b"w" * (REFRESH_LARGE_FILE_THRESHOLD + 1)
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        # 模拟 create_sealed_memfd 抛 AttributeError（非 Linux 行为）
+        import callwarden.server.ipc_transport as ipc_mod
+        def _raise_attr_error(_data):
+            raise AttributeError("memfd_create not available on this platform")
+        monkeypatch.setattr(ipc_mod, "create_sealed_memfd", _raise_attr_error)
+
+        # 重定向 agent_tmp 目录到 tmp_path，避免污染 ~/.callwarden
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_fallback",
+            rel_path="fallback.py",
+            abs_path=str(tmp_path / "fallback.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        # 仍走 call_with_fd（降级路径）
+        rpc.call_with_fd.assert_called_once()
+        rpc.call.assert_not_called()
+
+        # params 应仍包含 canonical_len + content_hash
+        params = rpc.call_with_fd.call_args[0][1]
+        assert params["canonical_len"] == len(canonical)
+        assert params["content_hash"] == content_hash
+
+    def test_large_file_fallback_to_hex_on_non_unix(self, tmp_path, monkeypatch):
+        """非 AF_UNIX 平台大文件降级到 hex 路径（走 call 而非 call_with_fd）。
+
+        Windows/macOS 没有 socket.AF_UNIX，agent 协议降级为 hex 编码
+        通过普通 RPC 传输大文件。
+        """
+        # 确保 socket.AF_UNIX 不存在（模拟非 Unix 平台）
+        import socket as _socket_mod
+        if hasattr(_socket_mod, "AF_UNIX"):
+            monkeypatch.delattr(_socket_mod, "AF_UNIX", raising=False)
+
+        rpc = _make_mock_daemon_rpc()
+        rpc.call.return_value = {
+            "status": "committed", "generation": "gen_hex_fallback_001",
+        }
+        session = _make_session_with_epoch(ws_id="ws_hex_fb", epoch=1)
+
+        canonical = b"h" * (REFRESH_LARGE_FILE_THRESHOLD + 1)
+        content_hash = hashlib.sha256(canonical).hexdigest()
+
+        send_refresh_to_daemon(
+            daemon_rpc_client=rpc,
+            agent_session=session,
+            workspace_instance_id="ws_hex_fb",
+            rel_path="hex_fallback.py",
+            abs_path=str(tmp_path / "hex_fallback.py"),
+            canonical_bytes=canonical,
+            content_hash=content_hash,
+        )
+
+        # 非 Unix 平台走 hex 降级路径
+        rpc.call.assert_called_once()
+        rpc.call_with_fd.assert_not_called()
+
+        params = rpc.call.call_args[0][1]
+        assert params["canonical_bytes_hex"] == canonical.hex()
+        assert params["canonical_len"] == len(canonical)
+        assert params["content_hash"] == content_hash
+
+
+# ============================================
 # 5. send_refresh_to_daemon: 无 canonical_bytes 兼容路径
 # ============================================
 

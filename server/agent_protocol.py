@@ -285,7 +285,12 @@ def send_refresh_to_daemon(
             ) from e
 
     # 2b. 大文件：通过 FD 传递（Linux only，需要 sendmsg + SCM_RIGHTS）
-    # 写入临时文件 → 打开只读 FD → call_with_fd
+    #
+    # G10（2026-07-20 批次7）：优先使用 sealed memfd_create 替代普通临时文件。
+    # memfd 的 seal flags（SHRINK|GROW|WRITE|SEAL）让 daemon 端能识别为不可变
+    # memfd，执行四重校验（含 seal flags 检查），杜绝 TOCTOU 攻击。
+    # 非 Linux 或 memfd_create 不可用时，降级到普通临时文件路径（daemon 端走
+    # 常规文件校验分支：owner UID + 大小上限 + 可选摘要校验）。
     if not hasattr(socket, "AF_UNIX"):
         # 非 Unix 平台：降级到 hex 编码（可能超过 16MB，但 daemon 会处理）
         # 实际上这种情况下不应该走到这里——agent 模式本身仅 Linux 启动
@@ -298,25 +303,30 @@ def send_refresh_to_daemon(
                 f"workspace.file.refresh RPC 失败（降级 hex）：{e}",
             ) from e
 
-    # Linux 大文件路径：写临时文件 → 传 FD
-    tmp_path = None
+    # Linux 大文件路径：优先 memfd，降级普通临时文件
+    from callwarden.server.ipc_transport import create_sealed_memfd
     fd = -1
+    tmp_path = None
+    use_memfd = False
     try:
-        # 写入临时文件（在 agent 用户 home 下）
-        tmp_dir = os.path.join(
-            os.path.expanduser("~"), ".callwarden", "agent_tmp",
-        )
-        os.makedirs(tmp_dir, exist_ok=True)
-        tmp_path = os.path.join(
-            tmp_dir,
-            f"refresh_{agent_session.session_id}_"
-            f"{params['monotonic_seq']}.tmp",
-        )
-        with open(tmp_path, "wb") as f:
-            f.write(canonical_bytes)
+        try:
+            fd = create_sealed_memfd(canonical_bytes)
+            use_memfd = True
+        except (AttributeError, OSError):
+            # memfd 不可用（非 Linux 或内核版本太老）：降级普通临时文件
+            tmp_dir = os.path.join(
+                os.path.expanduser("~"), ".callwarden", "agent_tmp",
+            )
+            os.makedirs(tmp_dir, exist_ok=True)
+            tmp_path = os.path.join(
+                tmp_dir,
+                f"refresh_{agent_session.session_id}_"
+                f"{params['monotonic_seq']}.tmp",
+            )
+            with open(tmp_path, "wb") as f:
+                f.write(canonical_bytes)
+            fd = os.open(tmp_path, os.O_RDONLY)
 
-        # 打开只读 FD
-        fd = os.open(tmp_path, os.O_RDONLY)
         try:
             return daemon_rpc_client.call_with_fd(
                 "workspace.file.refresh", params, fd,
@@ -324,7 +334,8 @@ def send_refresh_to_daemon(
         except Exception as e:
             raise AgentProtocolError(
                 _resolve_rpc_error_code(e),
-                f"workspace.file.refresh RPC 失败（FD 路径）：{e}",
+                f"workspace.file.refresh RPC 失败（FD 路径，"
+                f"{'memfd' if use_memfd else '临时文件'}）：{e}",
             ) from e
     finally:
         if fd >= 0:

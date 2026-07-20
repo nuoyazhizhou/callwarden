@@ -695,13 +695,27 @@ class EnterpriseDaemonService:
             from callwarden.server.replicator import daemon_handle_refresh
             res = self._get_workspace_resources(workspace_id)
             # 从 UDS bytes frame 或 FD 获取 canonical bytes
+            #
+            # G9/G34（2026-07-20 批次7）：Python daemon 同步 Rust 端协议——
+            # 同时支持 canonical_bytes_hex（agent_protocol.py 小文件默认路径）
+            # 和 canonical_bytes_b64（兼容旧客户端）。优先级：FD > hex > b64 > abs_path。
+            #
+            # G10（2026-07-20 批次7）：常规文件 FD 路径补全校验——
+            #   1) 大小上限（DEFAULT_MAX_FD_READ_BYTES，与 Rust 端 64MB 一致）
+            #   2) 客户端提供 content_hash 时执行 sha256 摘要校验
+            #   3) owner UID 校验（防跨用户攻击）
+            # memfd 路径走 validate_memfd_fd 的四重校验（含 seal flags），
+            # 常规文件无 seal，但其他三项校验仍需执行。
             canonical_bytes = None
             received_fds = received_fds or []
             if received_fds:
                 # FD 模式：检测 memfd vs 常规文件
                 fd = received_fds[0]
                 try:
-                    from callwarden.server.ipc_transport import is_memfd, validate_memfd_fd
+                    from callwarden.server.ipc_transport import (
+                        is_memfd, validate_memfd_fd,
+                        MAX_MEMFD_BYTES,
+                    )
                     if is_memfd(fd):
                         # G10: memfd 路径——agent 必须在 params 中提供
                         # canonical_len + content_hash，daemon 执行四重校验
@@ -727,11 +741,60 @@ class EnterpriseDaemonService:
                             except OSError:
                                 pass
                     else:
-                        # 常规文件 FD：直接读取（向后兼容）
+                        # 常规文件 FD：G10 批次7 补全校验
+                        # memfd 有 seal 防篡改，常规文件需手动校验：
+                        #   1) owner UID 必须匹配 peer
+                        #   2) st_size 不超过 MAX_MEMFD_BYTES（与 Rust 端 64MB 默认上限对齐）
+                        #   3) 客户端提供 content_hash 时校验 sha256
+                        #   4) canonical_len 提供时校验大小匹配
                         info = os.fstat(fd)
+                        # 校验 1：owner UID
+                        if info.st_uid != uid:
+                            raise DaemonRpcError(
+                                "fd_owner_mismatch",
+                                f"FD owner_uid={info.st_uid}，peer_uid={uid}",
+                            )
+                        # 校验 2：大小上限
+                        if info.st_size > MAX_MEMFD_BYTES:
+                            raise DaemonRpcError(
+                                "fd_too_large",
+                                f"FD size {info.st_size} 超过上限 {MAX_MEMFD_BYTES}",
+                            )
+                        # 校验 3：canonical_len 匹配（若提供）
+                        canonical_len = params.get("canonical_len")
+                        if canonical_len is not None and info.st_size != int(canonical_len):
+                            raise DaemonRpcError(
+                                "fd_size_mismatch",
+                                f"FD size {info.st_size} != canonical_len {canonical_len}",
+                            )
+                        # 读取内容
                         canonical_bytes = os.read(fd, info.st_size)
+                        # 校验 4：content_hash 匹配（若提供）
+                        content_hash = params.get("content_hash") or ""
+                        if content_hash:
+                            import hashlib
+                            actual_hash = hashlib.sha256(canonical_bytes).hexdigest()
+                            if actual_hash != content_hash:
+                                raise DaemonRpcError(
+                                    "fd_hash_mismatch",
+                                    f"FD content hash {actual_hash} != {content_hash}",
+                                )
+                        try:
+                            os.close(fd)
+                        except OSError:
+                            pass
                 except OSError as e:
                     raise DaemonRpcError("fd_read_failed", str(e))
+            elif "canonical_bytes_hex" in params:
+                # G9/G34 批次7：优先 hex（agent_protocol.py 小文件默认路径）
+                import binascii
+                try:
+                    canonical_bytes = binascii.unhexlify(params["canonical_bytes_hex"])
+                except (ValueError, binascii.Error) as e:
+                    raise DaemonRpcError(
+                        "hex_decode_failed",
+                        f"canonical_bytes_hex decode failed: {e}",
+                    )
             elif "canonical_bytes_b64" in params:
                 import base64
                 canonical_bytes = base64.b64decode(params["canonical_bytes_b64"])

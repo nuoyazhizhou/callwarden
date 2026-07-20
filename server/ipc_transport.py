@@ -158,6 +158,39 @@ def _linux_get_seals(fd: int) -> int:
     return result
 
 
+def create_sealed_memfd(canonical_bytes: bytes) -> int:
+    """创建带完整 seal 的 memfd，写入 canonical_bytes。
+
+    G10（2026-07-20 批次7）：暴露公共 API 供 agent_protocol.py 大文件路径使用。
+    替代之前的「写临时文件 + 传普通 FD」模式——memfd 的 seal flags 让 daemon 端
+    能识别为不可变 memfd，执行四重校验（含 seal flags 检查）。
+
+    seal 集合：F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL
+    —— 完全不可变，daemon 读取期间内容不会变化。
+
+    Args:
+        canonical_bytes: 要写入 memfd 的字节流
+
+    Returns:
+        memfd FD（已 seal，已写入内容，文件指针在末尾；调用方负责 close）
+
+    Raises:
+        OSError: memfd_create / write / seal 任一步失败
+        AttributeError: 非 Linux 平台（memfd_create 不可用）
+    """
+    fd = _linux_memfd_create("cw_canonical", MFD_CLOEXEC | MFD_ALLOW_SEALING)
+    try:
+        _write_all(fd, canonical_bytes)
+        _linux_seal(fd, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        raise
+    return fd
+
+
 def send_via_memfd(sock, msg_type: int, payload: dict, canonical_bytes: bytes):
     """大文件用 memfd_create + seals + SCM_RIGHTS 传 FD。
 
@@ -171,14 +204,12 @@ def send_via_memfd(sock, msg_type: int, payload: dict, canonical_bytes: bytes):
         return _send_framed_unlimited(sock, msg_type, payload, canonical_bytes)
 
     try:
-        fd = _linux_memfd_create("cw_canonical", MFD_CLOEXEC | MFD_ALLOW_SEALING)
+        fd = create_sealed_memfd(canonical_bytes)
     except (AttributeError, OSError):
         # memfd 不可用，降级
         return _send_framed_unlimited(sock, msg_type, payload, canonical_bytes)
 
     try:
-        _write_all(fd, canonical_bytes)
-        _linux_seal(fd, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL)
         payload["canonical_len"] = len(canonical_bytes)
         _send_msg_with_fd(sock, msg_type, payload, fd)
     finally:

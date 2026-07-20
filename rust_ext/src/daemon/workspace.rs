@@ -996,9 +996,19 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 // server.rs 在 dispatch 后会再次 close_fds，但关闭已关闭 FD 只返回
                 // EBADF 并被忽略，双重关闭是安全的。
                 use crate::daemon::memfd;
+                // G9/G34（2026-07-20 批次7）：字段对齐——
+                // agent_protocol.py 实际传 content_hash（小文件 hex 路径 + 大文件 FD 路径），
+                // 但 Rust 端原读 expected_sha256，导致字段错配 + 摘要校验永远跳过。
+                // 修复：优先 expected_sha256（保留旧路径），fallback content_hash（agent 默认）。
                 let expected_sha256: Option<&str> = params
                     .get("expected_sha256")
-                    .and_then(|v| v.as_str());
+                    .and_then(|v| v.as_str())
+                    .or_else(|| {
+                        params
+                            .get("content_hash")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                    });
                 match memfd::read_from_fd_with_validation(
                     fd,
                     memfd::DEFAULT_MAX_FD_READ_BYTES,
