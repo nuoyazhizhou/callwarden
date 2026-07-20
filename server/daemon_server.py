@@ -407,11 +407,18 @@ class EnterpriseDaemonService:
             from callwarden.server.replicator import Replicator
             replicator = Replicator(staging_log, self.snapshot_service)
 
+            # 批次9（K4 snapshot 未发布修复）：解析 codegraph db_path
+            # 用于 replicator.replicate() 触发 snapshot_service.publish_snapshot。
+            # 模板为空时回退到用户级单库 ~/.callwarden/callwarden.db。
+            codegraph_db_path = self._config.resolve_codegraph_db_path(workspace_id)
+
             resources = {
                 "cas_conn": cas_conn,
                 "ws_conn": ws_conn,
                 "staging_log": staging_log,
                 "replicator": replicator,
+                # 批次9：file.refresh / recover 时传给 replicator.replicate
+                "codegraph_db_path": codegraph_db_path,
             }
             self._workspace_resources[workspace_id] = resources
             return resources
@@ -835,12 +842,48 @@ class EnterpriseDaemonService:
                     )
                     res["staging_log"].append(entry)
                     # 触发 replicate 发布新 generation
-                    repl_result = res["replicator"].replicate(workspace_id)
-                    result["replication"] = {
+                    # 批次9（K4 snapshot 未发布修复）：传 db_path 才能触发
+                    # snapshot_service.publish_snapshot，让 watcher→daemon→query
+                    # 事件回环闭合。db_path 来自 _config.resolve_codegraph_db_path。
+                    db_path = res.get("codegraph_db_path", "")
+                    repl_result = res["replicator"].replicate(
+                        workspace_id, db_path=db_path,
+                    )
+                    # 批次9：返回 snapshot_published 标志 + snapshot_warning 提示
+                    # （与 Rust 端 workspace.rs L1359-1385 对齐）
+                    snapshot_published = (
+                        bool(db_path)
+                        and self.snapshot_service is not None
+                        and repl_result.success
+                        and repl_result.generation > 0
+                    )
+                    repl_map = {
                         "generation": repl_result.generation,
                         "applied_count": repl_result.applied_count,
                         "duration_ms": repl_result.duration_ms,
+                        "snapshot_published": snapshot_published,
                     }
+                    if not snapshot_published:
+                        if not db_path:
+                            repl_map["snapshot_warning"] = (
+                                "snapshot 未发布（codegraph_db_path_template 未配置，"
+                                "db_path 为空）。批次9 修复：在 daemon 配置中设置 "
+                                "codegraph_db_path_template 或使用默认用户级单库。"
+                            )
+                        elif self.snapshot_service is None:
+                            repl_map["snapshot_warning"] = (
+                                "snapshot 未发布（snapshot_service 未注入）。"
+                            )
+                        elif not repl_result.success:
+                            repl_map["snapshot_warning"] = (
+                                f"snapshot 发布失败（replicate success=false）: "
+                                f"{repl_result.error or ''}"
+                            )
+                        else:
+                            repl_map["snapshot_warning"] = (
+                                "snapshot 未发布（未知原因：generation <= 0）。"
+                            )
+                    result["replication"] = repl_map
                 return result
             except Exception as e:
                 # G9 auto-reconnect：识别 replicator.ProtocolError 透传语义化 code
@@ -858,15 +901,38 @@ class EnterpriseDaemonService:
         if method == "workspace.recover":
             res = self._get_workspace_resources(workspace_id)
             try:
-                repl_result = res["replicator"].recover(workspace_id)
-                return {
+                # 批次9（K4 snapshot 未发布修复）：recover 也需要传 db_path
+                # 才能触发 snapshot_service.publish_snapshot
+                db_path = res.get("codegraph_db_path", "")
+                repl_result = res["replicator"].recover(
+                    workspace_id, db_path=db_path,
+                )
+                snapshot_published = (
+                    bool(db_path)
+                    and self.snapshot_service is not None
+                    and repl_result.success
+                    and repl_result.generation > 0
+                )
+                result = {
                     "status": "recovered",
                     "generation": repl_result.generation,
                     "applied_count": repl_result.applied_count,
                     "pending_count": repl_result.pending_count,
                     "duration_ms": repl_result.duration_ms,
                     "error": repl_result.error,
+                    "snapshot_published": snapshot_published,
                 }
+                if not snapshot_published and repl_result.applied_count > 0:
+                    # 给出诊断信息（与 file.refresh 一致）
+                    if not db_path:
+                        result["snapshot_warning"] = (
+                            "snapshot 未发布（codegraph_db_path 为空）"
+                        )
+                    elif self.snapshot_service is None:
+                        result["snapshot_warning"] = (
+                            "snapshot 未发布（snapshot_service 未注入）"
+                        )
+                return result
             except Exception as e:
                 raise DaemonRpcError("recover_failed", str(e))
 

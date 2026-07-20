@@ -583,3 +583,346 @@ class TestPerformanceMetrics:
         assert result.applied_count == 10
         assert result.duration_ms >= 0
         assert result.duration_ms < 5000, f"10 条 replicate 应在 5 秒内完成，实际 {result.duration_ms:.1f}ms"
+
+
+# ============================================================
+# 批次9（K4 snapshot 未发布修复）测试
+# ============================================================
+
+
+class TestBatch9CodegraphDbPathResolution:
+    """批次9：DaemonConfig.codegraph_db_path_template + resolve_codegraph_db_path。
+
+    根因：daemon_server.py L838 调用 replicator.replicate(workspace_id) 未传 db_path，
+    导致 Replicator 跳过 publish_snapshot，watcher→daemon→query 事件回环中断。
+    修复：DaemonConfig 加 codegraph_db_path_template 字段 + resolve_codegraph_db_path 方法
+    （与 Rust 端 workspace.rs L1319-1336 对齐）。
+    """
+
+    def test_default_template_falls_back_to_user_db(self):
+        """默认模板为空时，回退到用户级单库 ~/.callwarden/callwarden.db。"""
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.default()
+        assert cfg.codegraph_db_path_template == ""
+
+        db_path = cfg.resolve_codegraph_db_path("ws-test-123")
+        # 必须以 ~/.callwarden/callwarden.db 结尾
+        expected_suffix = os.path.join(".callwarden", "callwarden.db")
+        assert db_path.endswith(expected_suffix), (
+            f"默认 db_path 应以 {expected_suffix} 结尾，实际: {db_path}"
+        )
+
+    def test_template_with_placeholder_substituted(self):
+        """模板含 {workspace_instance_id} 占位符时正确替换。"""
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.load_from_dict({
+            "codegraph_db_path_template": "/var/lib/callwarden/{workspace_instance_id}/codegraph.db",
+        })
+        assert cfg.codegraph_db_path_template == "/var/lib/callwarden/{workspace_instance_id}/codegraph.db"
+
+        db_path = cfg.resolve_codegraph_db_path("ws-abc-123")
+        assert db_path == "/var/lib/callwarden/ws-abc-123/codegraph.db"
+
+    def test_template_without_placeholder_returned_as_is(self):
+        """模板无占位符时原样返回（如统一 db_path 场景）。"""
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.load_from_dict({
+            "codegraph_db_path_template": "/opt/callwarden/shared.db",
+        })
+        db_path = cfg.resolve_codegraph_db_path("any-ws-id")
+        assert db_path == "/opt/callwarden/shared.db"
+
+
+class TestBatch9WorkspaceResourcesHasCodegraphDbPath:
+    """批次9：_get_workspace_resources 把 codegraph_db_path 存到 resources。
+
+    file.refresh / workspace.recover 调用 replicator.replicate 时从 resources
+    取 db_path，确保 publish_snapshot 被触发。
+    """
+
+    def test_resources_contains_codegraph_db_path(self, tmp_path):
+        """resources dict 必须含 codegraph_db_path 键。"""
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
+
+        snapshot_svc = MagicMock(spec=SnapshotManagerService)
+        registry_db = str(tmp_path / "registry.db")
+        service = EnterpriseDaemonService(
+            registry_db=registry_db,
+            snapshot_service=snapshot_svc,
+            data_root=str(tmp_path / "enterprise"),
+        )
+
+        ws_id = "test-ws-cgdb"
+        res = service._get_workspace_resources(ws_id)
+        # 批次9：必须含 codegraph_db_path 键
+        assert "codegraph_db_path" in res, "resources 必须含 codegraph_db_path"
+        # 默认模板为空 → 回退到用户级单库路径
+        assert res["codegraph_db_path"].endswith(
+            os.path.join(".callwarden", "callwarden.db")
+        ), f"默认应回退到用户级单库，实际: {res['codegraph_db_path']}"
+
+    def test_resources_codegraph_db_path_uses_config_template(self, tmp_path):
+        """配置 codegraph_db_path_template 后，resources 用模板解析路径。"""
+        from callwarden.server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
+
+        snapshot_svc = MagicMock(spec=SnapshotManagerService)
+        # 注意：daemon_server.py L175-176 当 cfg.data_root != dirname(registry_db)
+        # 时会重建 config（覆盖 codegraph_db_path_template）。
+        # 所以 registry_db 必须放在 data_root 目录下。
+        data_root = str(tmp_path / "enterprise")
+        custom_cfg = DaemonConfig.load_from_dict({
+            "data_root": data_root,
+            "codegraph_db_path_template": str(tmp_path / "ws_{workspace_instance_id}" / "cg.db"),
+        })
+        registry_db = str(tmp_path / "enterprise" / "registry.db")
+        service = EnterpriseDaemonService(
+            registry_db=registry_db,
+            snapshot_service=snapshot_svc,
+            data_root=data_root,
+            config=custom_cfg,
+        )
+
+        ws_id = "ws-xyz"
+        res = service._get_workspace_resources(ws_id)
+        expected = str(tmp_path / f"ws_{ws_id}" / "cg.db")
+        assert res["codegraph_db_path"] == expected, (
+            f"应使用配置模板解析，期望 {expected}，实际 {res['codegraph_db_path']}"
+        )
+
+
+class TestBatch9FileRefreshPassesDbPath:
+    """批次9：file.refresh / recover 调用 replicator.replicate 时传 db_path。
+
+    根因：原代码 res["replicator"].replicate(workspace_id) 漏传 db_path，
+    Replicator.replicate L529 检查 `if snapshot_service is not None and db_path:` → 跳过 publish。
+    """
+
+    def test_file_refresh_passes_db_path_to_replicate(self, tmp_path, monkeypatch):
+        """file.refresh committed 后调用 replicate 必须传 db_path。"""
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
+
+        snapshot_svc = MagicMock(spec=SnapshotManagerService)
+        # 用 default cfg，db_path 会回退到 ~/.callwarden/callwarden.db
+        registry_db = str(tmp_path / "registry.db")
+        service = EnterpriseDaemonService(
+            registry_db=registry_db,
+            snapshot_service=snapshot_svc,
+            data_root=str(tmp_path / "enterprise"),
+        )
+
+        # 用数字 workspace_id（避免 daemon_server.py L828 int(workspace_id) 失败）
+        # _owned_workspace 校验通过 mock 绕过
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id = "12345"  # 数字字符串
+        # Mock _owned_workspace 绕过 registry 校验
+        monkeypatch.setattr(
+            service, "_owned_workspace",
+            lambda peer_uid, workspace_id: {
+                "workspace_instance_id": workspace_id,
+                "owner_uid": peer_uid,
+                "host_real_root": "/test/root",
+                "status": "active",
+            },
+        )
+
+        res = service._get_workspace_resources(ws_id)
+
+        # Mock replicator 捕获 replicate 调用参数
+        captured_calls = []
+
+        class _MockReplicator:
+            def replicate(self, workspace_id, db_path="", build_context_hash=""):
+                captured_calls.append({
+                    "workspace_id": workspace_id,
+                    "db_path": db_path,
+                })
+                from callwarden.server.replicator import ReplicationResult
+                return ReplicationResult(
+                    success=True, workspace_id=workspace_id,
+                    generation=1, applied_count=1, pending_count=1,
+                )
+
+        res["replicator"] = _MockReplicator()
+
+        # Mock daemon_handle_refresh 返回 committed
+        monkeypatch.setattr(
+            "callwarden.server.replicator.daemon_handle_refresh",
+            lambda **kwargs: {"status": "committed", "content_hash": "abc123"},
+        )
+
+        # 模拟 agent 发 refresh（用 canonical_bytes_hex 避开 abs_path 校验）
+        import binascii
+        canonical_bytes = b"# test content\n"
+        params = {
+            "workspace_instance_id": ws_id,
+            "agent_session_id": "test-session",
+            "session_epoch": 1,
+            "monotonic_seq": 1,
+            "rel_path": "test.py",
+            "canonical_bytes_hex": binascii.hexlify(canonical_bytes).decode(),
+            "content_hash": hashlib.sha256(canonical_bytes).hexdigest(),
+            "language": "python",
+        }
+
+        # 先 connect 建立 session（daemon_handle_refresh 需要 active session）
+        from callwarden.server.replicator import daemon_handle_connect
+        daemon_handle_connect(
+            peer_uid=uid,
+            workspace_id=int(ws_id),
+            requested_session_id="test-session",
+            ws_conn=res["ws_conn"],
+        )
+
+        # 调用 dispatch 触发 file.refresh
+        peer = {"uid": uid}
+        result = service.dispatch(peer, "workspace.file.refresh", params)
+
+        # 验证：committed 状态 + replication 含 db_path
+        assert result["status"] == "committed"
+        assert "replication" in result
+        assert result["replication"]["snapshot_published"] in (True, False)
+        # 核心：replicate 必须被调用，且 db_path 不为空
+        assert len(captured_calls) == 1, f"应调用 replicate 1 次，实际 {len(captured_calls)}"
+        assert captured_calls[0]["db_path"], "db_path 不能为空（修复前 bug）"
+        assert captured_calls[0]["db_path"].endswith(
+            os.path.join(".callwarden", "callwarden.db")
+        ), f"应回退到用户级单库，实际 {captured_calls[0]['db_path']}"
+
+    def test_file_refresh_result_has_snapshot_published_flag(self, tmp_path, monkeypatch):
+        """file.refresh 返回结果含 snapshot_published 标志 + snapshot_warning 提示。"""
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.replicator import ReplicationResult
+
+        snapshot_svc = MagicMock(spec=SnapshotManagerService)
+        registry_db = str(tmp_path / "registry.db")
+        service = EnterpriseDaemonService(
+            registry_db=registry_db,
+            snapshot_service=snapshot_svc,
+            data_root=str(tmp_path / "enterprise"),
+        )
+
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id = "12345"
+        monkeypatch.setattr(
+            service, "_owned_workspace",
+            lambda peer_uid, workspace_id: {
+                "workspace_instance_id": workspace_id,
+                "owner_uid": peer_uid,
+                "host_real_root": "/test/root",
+                "status": "active",
+            },
+        )
+
+        res = service._get_workspace_resources(ws_id)
+
+        # Mock replicator：模拟 publish 失败
+        class _FailingReplicator:
+            def replicate(self, workspace_id, db_path="", build_context_hash=""):
+                return ReplicationResult(
+                    success=False, workspace_id=workspace_id,
+                    generation=0, applied_count=0, pending_count=0,
+                    error="publish failed: Rust backend unavailable",
+                )
+
+        res["replicator"] = _FailingReplicator()
+
+        # Mock daemon_handle_refresh
+        monkeypatch.setattr(
+            "callwarden.server.replicator.daemon_handle_refresh",
+            lambda **kwargs: {"status": "committed", "content_hash": "abc"},
+        )
+
+        # 建立 session
+        from callwarden.server.replicator import daemon_handle_connect
+        daemon_handle_connect(
+            peer_uid=uid,
+            workspace_id=int(ws_id),
+            requested_session_id="test-session",
+            ws_conn=res["ws_conn"],
+        )
+
+        import binascii
+        canonical_bytes = b"# test\n"
+        params = {
+            "workspace_instance_id": ws_id,
+            "agent_session_id": "test-session",
+            "session_epoch": 1,
+            "monotonic_seq": 1,
+            "rel_path": "test.py",
+            "canonical_bytes_hex": binascii.hexlify(canonical_bytes).decode(),
+            "content_hash": hashlib.sha256(canonical_bytes).hexdigest(),
+            "language": "python",
+        }
+
+        peer = {"uid": uid}
+        result = service.dispatch(peer, "workspace.file.refresh", params)
+
+        # snapshot_published 必须为 False（因 publish 失败）
+        assert result["replication"]["snapshot_published"] is False
+        # 必须含 snapshot_warning 诊断信息
+        assert "snapshot_warning" in result["replication"]
+        assert "publish failed" in result["replication"]["snapshot_warning"]
+
+
+class TestBatch9WorkspaceRecoverPassesDbPath:
+    """批次9：workspace.recover 也传 db_path。"""
+
+    def test_recover_passes_db_path(self, tmp_path, monkeypatch):
+        """workspace.recover 调用 recover 时传 db_path。"""
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
+
+        snapshot_svc = MagicMock(spec=SnapshotManagerService)
+        registry_db = str(tmp_path / "registry.db")
+        service = EnterpriseDaemonService(
+            registry_db=registry_db,
+            snapshot_service=snapshot_svc,
+            data_root=str(tmp_path / "enterprise"),
+        )
+
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id = "67890"
+        monkeypatch.setattr(
+            service, "_owned_workspace",
+            lambda peer_uid, workspace_id: {
+                "workspace_instance_id": workspace_id,
+                "owner_uid": peer_uid,
+                "host_real_root": "/test/root",
+                "status": "active",
+            },
+        )
+
+        res = service._get_workspace_resources(ws_id)
+
+        captured = []
+
+        class _MockReplicator:
+            def recover(self, workspace_id, db_path=""):
+                captured.append({"db_path": db_path})
+                from callwarden.server.replicator import ReplicationResult
+                return ReplicationResult(
+                    success=True, workspace_id=workspace_id,
+                    generation=3, applied_count=2, pending_count=0,
+                )
+
+        res["replicator"] = _MockReplicator()
+
+        peer = {"uid": uid}
+        result = service.dispatch(
+            peer, "workspace.recover",
+            {"workspace_instance_id": ws_id},
+        )
+
+        assert result["status"] == "recovered"
+        assert "snapshot_published" in result
+        # 核心：recover 必须传 db_path，不为空
+        assert len(captured) == 1
+        assert captured[0]["db_path"], "recover 必须传 db_path（修复前 bug）"

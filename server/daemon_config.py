@@ -65,6 +65,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 DEFAULT_CONFIG: Dict[str, Any] = {
     "socket_path": "/var/run/callwarden.sock",
     "data_root": "/var/lib/callwarden",
+    # 批次9（K4 snapshot 未发布修复）：codegraph 数据库路径模板。
+    # daemon 处理 file.refresh 后调用 replicator.replicate，需要 db_path 才能
+    # 触发 snapshot_service.publish_snapshot。模板支持 {workspace_instance_id} 占位符。
+    # 默认空字符串——空时使用用户级单库 ~/.callwarden/callwarden.db（向后兼容）。
+    "codegraph_db_path_template": "",
     "tcp": {
         "enabled": False,
         "port": 8765,
@@ -149,6 +154,38 @@ class DaemonConfig:
     @property
     def data_root(self) -> str:
         return self._data["data_root"]
+
+    @property
+    def codegraph_db_path_template(self) -> str:
+        """批次9：codegraph 数据库路径模板，支持 {workspace_instance_id} 占位符。
+
+        空字符串时 resolve_codegraph_db_path 回退到用户级单库
+        ~/.callwarden/callwarden.db（与 AGENTS.md 数据库路径规则一致）。
+        """
+        return self._data.get("codegraph_db_path_template", "") or ""
+
+    def resolve_codegraph_db_path(self, workspace_instance_id: str) -> str:
+        """解析 workspace 实例对应的 codegraph 数据库路径。
+
+        批次9（K4 snapshot 未发布修复）：daemon 处理 file.refresh 后需要 db_path
+        才能触发 snapshot_service.publish_snapshot。
+
+        模板支持 {workspace_instance_id} 占位符替换：
+        - 模板为空：返回用户级单库 ~/.callwarden/callwarden.db
+        - 模板含占位符：替换为实际 workspace_instance_id
+        - 模板无占位符：原样返回
+
+        Args:
+            workspace_instance_id: workspace 实例 ID
+
+        Returns:
+            解析后的 codegraph 数据库绝对路径
+        """
+        tpl = self.codegraph_db_path_template
+        if not tpl:
+            # 回退到用户级单库（与 AGENTS.md 规则一致）
+            return os.path.join(os.path.expanduser("~"), ".callwarden", "callwarden.db")
+        return tpl.replace("{workspace_instance_id}", workspace_instance_id)
 
     @property
     def registry_db_path(self) -> str:
