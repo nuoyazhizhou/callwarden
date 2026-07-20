@@ -68,24 +68,45 @@ class PRChecker:
             base_branch=base_branch, head=head
         )
 
-        # 2. guardrail 编辑前检查（仅当 db 提供该方法时调用）
-        guardrail_check_fn = getattr(self.db, "guardrail_check_edit", None)
+        # P1 修复：收集运行时错误，写入 SARIF executionNotifications
+        # （评审 P1：原代码 try-except pass 静默吞异常，导致 fail-open）
+        run_errors: List[str] = []
+
+        # 2. guardrail 编辑前检查
+        # 评审 P1：原代码 getattr(db, "guardrail_check_edit") 调用不存在的方法，
+        # 真实方法名是 check_before_edit（db/db_guardrail.py:221）
+        guardrail_check_fn = getattr(self.db, "check_before_edit", None)
         if guardrail_check_fn is not None and changed_files:
             for file_path in changed_files:
                 try:
                     guardrail_check_fn(file_path)
-                except Exception:
-                    # 单文件检查失败不中断整体流程
-                    pass
+                except Exception as e:
+                    # 单文件检查失败不中断整体流程，但记录到 run_errors
+                    run_errors.append(
+                        f"guardrail check_before_edit({file_path}) 失败: "
+                        f"{type(e).__name__}: {str(e)[:200]}"
+                    )
+        elif changed_files:
+            # db 未提供 check_before_edit 方法（旧版本或未启用 guardrail）
+            run_errors.append(
+                "db 未提供 check_before_edit 方法，guardrail 检查未执行"
+            )
 
         # 3. Semgrep 扫描（仅当 db 提供该方法时调用）
         semgrep_fn = getattr(self.db, "run_semgrep_and_save", None)
         if semgrep_fn is not None and changed_files:
             try:
                 semgrep_fn(target_paths=changed_files)
-            except Exception:
-                # Semgrep 失败不阻断 PR 检查汇总
-                pass
+            except Exception as e:
+                # Semgrep 失败不阻断 PR 检查汇总，但记录到 run_errors
+                run_errors.append(
+                    f"Semgrep run_semgrep_and_save 失败: "
+                    f"{type(e).__name__}: {str(e)[:200]}"
+                )
+        elif changed_files:
+            run_errors.append(
+                "db 未提供 run_semgrep_and_save 方法，Semgrep 扫描未执行"
+            )
 
         # 4. 汇总 findings：查询 guardrail_findings 表中 open 状态的记录
         findings = self._query_open_findings(changed_files)
@@ -100,8 +121,8 @@ class PRChecker:
             elif sev in _WARNING_SEVERITIES:
                 warnings += 1
 
-        # 6. 生成 SARIF 报告
-        sarif_report = self.sarif_exporter.export_findings(findings)
+        # 6. 生成 SARIF 报告（传入 run_errors 让消费方知道扫描是否完整）
+        sarif_report = self.sarif_exporter.export_findings(findings, run_errors=run_errors)
 
         # passed 判定：无 error 级发现即视为通过
         passed = errors == 0
@@ -112,6 +133,9 @@ class PRChecker:
             "errors": errors,
             "warnings": warnings,
             "sarif_report": sarif_report,
+            # P1 修复：暴露 run_errors，调用方可据此判断扫描是否完整
+            "run_errors": run_errors,
+            "scan_complete": len(run_errors) == 0,
         }
 
     def check_blocking_rules(self, changed_files: List[str]) -> Dict:

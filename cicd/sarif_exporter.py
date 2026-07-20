@@ -107,12 +107,15 @@ class SarifExporter:
     将 Semgrep / guardrail findings 列表转换为 SARIF 2.1.0 兼容的 JSON 结构。
     """
 
-    def export_findings(self, findings: List[Dict]) -> Dict:
+    def export_findings(self, findings: List[Dict], run_errors: List[str] = None) -> Dict:
         """将 findings 列表导出为 SARIF 2.1.0 字典结构
 
         Args:
             findings: finding 字典列表，每个元素至少应包含 severity / message /
                       file_path / start_line / rule_id 中的若干字段
+            run_errors: 运行时错误消息列表（如 guardrail/Semgrep 检查抛异常）。
+                        非 None 时写入 runs[0].invocations[0].tool.executionNotifications，
+                        让 SARIF 消费方知道本次扫描不完整（评审 P1 修复）。
 
         Returns:
             SARIF 2.1.0 完整报告字典，可直接 json.dumps
@@ -142,19 +145,35 @@ class SarifExporter:
                 ],
             })
 
+        run: Dict[str, Any] = {
+            "tool": {
+                "driver": {
+                    "name": _TOOL_NAME,
+                    "version": _TOOL_VERSION,
+                }
+            },
+            "results": results,
+        }
+
+        # P1 修复：run_errors 非 None 时写入 invocations.executionNotifications
+        # 让 SARIF 消费方明确知道本次扫描是否有步骤失败（fail-open → fail-visible）
+        if run_errors is not None:
+            notifications = []
+            for err_msg in run_errors:
+                notifications.append({
+                    "level": "error",
+                    "message": {"text": err_msg},
+                })
+            run["invocations"] = [
+                {
+                    "executionSuccessful": len(notifications) == 0,
+                    "toolExecutionNotifications": notifications,
+                }
+            ]
+
         return {
             "version": _SARIF_VERSION,
-            "runs": [
-                {
-                    "tool": {
-                        "driver": {
-                            "name": _TOOL_NAME,
-                            "version": _TOOL_VERSION,
-                        }
-                    },
-                    "results": results,
-                }
-            ],
+            "runs": [run],
         }
 
     def export_to_file(self, findings: List[Dict], output_path: str) -> str:
