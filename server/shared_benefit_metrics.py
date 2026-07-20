@@ -13,9 +13,6 @@
 """
 
 import hashlib
-import os
-import sys
-import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -229,66 +226,7 @@ def compute_content_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def get_process_rss_mb() -> float:
-    """获取当前进程 RSS（MB）。
-
-    优先用 psutil（跨平台），不可用时回退到平台原生 API：
-    - Linux: resource.getrusage 或 /proc/self/status
-    - Windows: ctypes 调用 Psapi.GetProcessMemoryInfo
-    """
-    # 优先 psutil（跨平台，最可靠）
-    try:
-        import psutil
-        return psutil.Process().memory_info().rss / (1024 * 1024)
-    except Exception:
-        pass
-
-    # Linux: resource.getrusage
-    try:
-        import resource
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-    except (ImportError, AttributeError):
-        pass
-
-    # Linux fallback: /proc/self/status
-    try:
-        with open("/proc/self/status") as f:
-            for line in f:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) / 1024
-    except (FileNotFoundError, ValueError):
-        pass
-
-    # Windows fallback: Psapi.GetProcessMemoryInfo
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
-                _fields_ = [
-                    ("cb", ctypes.c_ulong),
-                    ("PageFaultCount", ctypes.c_ulong),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t),
-                ]
-
-            counters = PROCESS_MEMORY_COUNTERS()
-            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
-            psapi = ctypes.windll.psapi
-            psapi.GetProcessMemoryInfo(
-                ctypes.windll.kernel32.GetCurrentProcess(),
-                ctypes.byref(counters),
-                counters.cb,
-            )
-            return counters.WorkingSetSize / (1024 * 1024)
-        except Exception:
-            pass
-
-    return 0.0
+# L7（2026-07-20 批次4）：get_process_rss_mb() 已迁移到
+# callwarden.server.metrics.get_memory_info()，由 daemon metrics 采样线程
+# 定期调用刷新 G13 MetricsCollector gauge，避免多处重复实现 RSS 采集。
+# Windows Psapi / Linux /proc/self/status fallback 统一在 metrics.py 维护。

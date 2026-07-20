@@ -336,6 +336,11 @@ impl PyHashDiffStore {
                 kind,
                 path: PathBuf::from(&path_str),
                 timestamp_ms: ts,
+                // M8（2026-07-20 批次4）：FileEvent 新增 from_path/to_path，
+                // hash_diff 的输入签名是 (kind, path, ts) 三元组，不携带 rename 信息。
+                // 如需 diff rename 事件，需扩展输入为 (kind, path, ts, from, to) 五元组。
+                from_path: None,
+                to_path: None,
             });
         }
 

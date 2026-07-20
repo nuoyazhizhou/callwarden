@@ -307,7 +307,7 @@
 | L4 | MCP 工具赋能设计（file_read 返回符号上下文） | QA1 | ✅ 已实现 | file_read 新增 include_context 参数，true 时合并返回 symbols + symbol_contexts（callers/callees top 3） |
 | L5 | 构建上下文感知（固件编译配置/宏/include 路径/工具链版本） | D3 | ✅ 已实现 | compile_commands.json 解析器 + build-context CLI（8 子命令含 resolve）+ 8 MCP 工具；resolved_edges 计算引擎已实现 5 级解析（exact_match/simple_name_unique/same_file/include_path/sysroot/unresolved + calls 表降级）；include_path 基于 build_context.include_paths + toolchain.sysroot/include_dirs 消除简名歧义；test_phase6_resolved_edges + test_l5_build_context 验证 |
 | L6 | 流式 parse 回传（pool.map → pool.imap 改造） | PR | ✅ 已实现 | 三层优化：(1) ParseResultStream PyO3 类 + batch_parse_c_files_stream 函数（rayon + crossbeam-channel，parse 完一个就 push 到 channel，Python __next__ 按完成顺序消费）；(2) db_build.py C 语言路径优先 stream 模式（用 abs_path 反查元数据写入 file_results）；(3) versions+symbols 写入 DB 后释放 file_results 中的 symbols（仅保留 fn_hash_map），调用图构建改为 only_files 模式从 DB 读取符号索引 |
-| L7 | RSS 监控采样修复 | PR | 🟡 部分完成（评审 2026-07-20） | psutil/Windows Psapi RSS 函数存在 `shared_benefit_metrics.py`，无非测试生产调用方。需补：接入 daemon 主路径或删除未使用代码 |
+| L7 | RSS 监控采样修复 | PR | ✅ 已修复（2026-07-20 批次4） | daemon_server.py 新增 cw-metrics-sample 后台线程（10s 间隔）定期调用 MetricsCollector.collect_runtime_metrics()；metrics.py:get_memory_info() 迁入 Windows Psapi.GetProcessMemoryInfo fallback（Linux /proc/self/status + psutil 跨平台 + Windows Psapi fallback），成为 daemon 唯一 RSS 入口；shared_benefit_metrics.py 删除重复 get_process_rss_mb 函数 + 无用 import |
 | L8 | 增量调用图更新（只 resolve 受影响文件） | PR/D3 | ✅ 已实现 | `_build_call_graph_multi_lang` 加 only_files 参数；增量路径符号索引从 DB symbols 表全量读取，calls 只 resolve 变化文件；`_refresh_file_rust`/`_refresh_file_generic` 不再调用 `_collect_all_current_file_results()` 全量加载 |
 | L9 | Rust ParseResultPool 共享内存架构 | PR | ✅ 完成 | 4 阶段全部实现：①PoC（`batch_parse_c_files` + Rayon + Arc 共享 grammar）②流式集成（`ParseResultPool` + `batch_parse_files_lang_pool` + `_rust_multilang_parse` 逐个 `get_at` 转 dict）③多语言 15/15（python/rust/go/java/ts/js/ruby/php/scala/csharp/cpp + Kotlin/Swift + Elixir/HCL 已补齐；新增 `call_keyword` + `kind_from_child_text` 字段 + `CallArgName` + `HclLabels` 名称策略处理 AST 特殊结构）④全量接管（`_can_use_rust_parse` + `CW_DISABLE_RUST_PARSE` 开关 + Python 多进程 fallback 链）；C 语言走专用快路径，其他 Rust 支持语言 `>= MP_THRESHOLD(50)` 走流式 pool，小批量走 `parse_file_lang` 单文件 Rust；test_l9_rust_multilang.py 10 测试验证 |
 | L10 | MCP 工具优化（优化 schema/错误信息/组合工具而非继续加） | D3 | 📄 设计方向（评审 2026-07-20） | 只是 MCP 后续设计方向，不是一个已完成功能 |
@@ -356,8 +356,8 @@
 | I32 | ✅ 已修复（2026-07-20 二轮评审） | G23/G37 RPC 计数过时：G23 从 "✅ 已实现" 改为 "🟡 部分完成"（"11 RPC"已过时）；G37 从 "✅ 已实现" 改为 "📄 测试记录"（非产品实现项） | _feature_matrix.md G23/G37 |
 | I33 | ✅ 已修复（2026-07-20 二轮评审） | H5/H9/H10 测试声明：H5/H9 从 "✅ 已实现" 改为 "📄 测试记录"（只是测试声明）；H10 从 "✅ 已实现" 改为 "🟡 部分完成"（缺召回率/精确率基准） | _feature_matrix.md H5/H9/H10 |
 | I34 | ✅ 已修复（2026-07-20 二轮评审） | H6/H12/H13/H14 基准声明：H6 从 "✅" 改为 "❌"（标题 10M，实际 100K）；H12 从 "✅" 改为 "🟡"（标题过度扩大）；H13 从 "✅" 改为 "❌"（synthetic fixtures，非真实开源项目）；H14 从 "✅" 改为 "❌"（无 MSI/PKG/DEB 产物，P0-3 已部分修复） | _feature_matrix.md H6/H12/H13/H14 |
-| I35 | ✅ 已修复（2026-07-20 二轮评审） | L1/L2/L7/L10/L16 任务门禁/工具：L1 从 "⚠️ 软门禁" 改为 "🟡 部分完成"（软门禁设计）；L2 从 "✅ 已实现" 改为 "❌ 声明不成立"（标题 checkout/reset --hard，代码只记录 force push）；L7 从 "✅" 改为 "🟡"（无非测试生产调用方）；L10/L16 从 "✅ 设计方向已文档化" 改为 "📄 设计方向"（非已完成功能） | _feature_matrix.md L1/L2/L7/L10/L16 |
-| I36 | ✅ 已修复（2026-07-20 二轮评审） | M4/M5/M6/M8/M10 Rust 扩展接线：5 项从 "✅ 已实现" 改为 "🟡 部分完成"。delta/frontier/metrics 模块存在但无生产调用方；Rust notify watcher 存在但 CLI/agent 使用 Python watchdog；M10 "daemon binary + PyO3 绑定"表述不准确（同 crate 同时产出 binary 和 cdylib+rlib） | _feature_matrix.md M4/M5/M6/M8/M10 |
+| I35 | ✅ 已修复（2026-07-20 二轮评审 + 批次4 接入） | L1/L2/L7/L10/L16 任务门禁/工具：L1 从 "⚠️ 软门禁" 改为 "🟡 部分完成"（软门禁设计）；L2 从 "✅ 已实现" 改为 "❌ 声明不成立"（标题 checkout/reset --hard，代码只记录 force push）；L7 在批次4 已接入 daemon 主路径（cw-metrics-sample 后台线程 + Windows Psapi fallback 迁入 metrics.py），从 "🟡" 改为 "✅"；L10/L16 从 "✅ 设计方向已文档化" 改为 "📄 设计方向"（非已完成功能） | _feature_matrix.md L1/L2/L7/L10/L16 |
+| I36 | ✅ 已修复（2026-07-20 二轮评审 + 批次4 接入） | M4/M5/M6/M8/M10 Rust 扩展接线：二轮评审时 5 项从 "✅ 已实现" 改为 "🟡 部分完成"。批次4 已接入 M4/M5/M6/M8（workspace.rs committed 路径填充 StagingEntry.parse_delta/frontier/metrics_update；watcher.rs 扩展 Renamed 双路径 + server/watcher.py 切换主路径为 PyDebouncedFileWatcher），从 "🟡" 改为 "✅ 已接入"；M10 仍 "🟡 部分完成"（同 crate 同时产出 binary 和 cdylib+rlib 表述待澄清） | _feature_matrix.md M4/M5/M6/M8/M10 |
 | I37 | ✅ 已修复（2026-07-20 二轮评审） | N3-N8 跨平台打包：N3/N5/N6/N7/N8 从 "✅ 已实现" 改为 "❌ 声明不成立"；N4 改为 "🟡 部分完成"。N3 wheel 不包 Rust 扩展；N5 只有未编译 XML；N6/N7 未在目标平台实际构建；N8 静态即可见失败点（错误 version key、纯 Python wheel、错误 parser 调用）。P0-3 已部分修复 | _feature_matrix.md N3-N8 |
 | I38 | ✅ 已修复（2026-07-20 二轮评审） | 矩阵顶部"实际基线数据"更新：Mixin 模块数 23→"33 个 Mixin 类（39 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin）"；M/N 章节标题反映实际状态（N 章节标题改为"脚本骨架存在/产物未落地"） | _feature_matrix.md 顶部 + N 章节标题 |
 
@@ -397,11 +397,11 @@
 | M1 | peercred.rs | SO_PEERCRED（libc getsockopt）内核认证 UID/GID/PID | ✅ 已实现 |
 | M2 | canonicalize.rs | BOM 检测+剥离（UTF-8/16LE/16BE）、CRLF→LF、SHA-256 content_hash | ✅ 已实现 |
 | M3 | graph.rs | CSR 邻接表 + FxHashMap + SymbolKind enum(u32) + bytemuck Pod/Zeroable | ✅ 已实现 |
-| M4 | delta.rs | SymbolDeltaKind（Added/Removed/Changed）+ lang_from_extension（13 语言） | 🟡 部分完成（评审 2026-07-20） | delta 模块和 PyO3 导出存在，无生产调用方；当前 refresh 未生成 ParseDelta |
-| M5 | frontier.rs | AffectedFrontier（directly_affected + upstream/downstream direct/transitive） | 🟡 部分完成（评审 2026-07-20） | frontier 模块存在，无生产调用方 |
-| M6 | metrics.rs | DepthChange + CycleChangeKind（Added/Removed） | 🟡 部分完成（评审 2026-07-20） | local metrics 更新模块存在，无生产调用方 |
+| M4 | delta.rs | SymbolDeltaKind（Added/Removed/Changed）+ lang_from_extension（13 语言） | ✅ 已接入（2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 DeltaComputer::compute_parse_delta 填充 StagingEntry.parse_delta JSON 摘要（store=None 退化模式） |
+| M5 | frontier.rs | AffectedFrontier（directly_affected + upstream/downstream direct/transitive） | ✅ 已接入（2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 FrontierComputer::compute_frontier_with_budget 填充 StagingEntry.frontier JSON 摘要（QueryBudget::default，store=None 退化模式） |
+| M6 | metrics.rs | DepthChange + CycleChangeKind（Added/Removed） | ✅ 已接入（2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 MetricsComputer::compute_local_update 填充 StagingEntry.metrics_update JSON 摘要（impact_depth=2，store=None 退化模式） |
 | M7 | diff.rs | SymbolChangeKind（8 种）+ SignatureDiff（file/line_range/kind 变化） | ✅ 已实现 | snapshot diff 路径调用 Rust diff 模块 |
-| M8 | watcher.rs | notify crate + crossbeam channel + 20 种扩展名过滤 | 🟡 部分完成（评审 2026-07-20） | Rust notify watcher 和 PyO3 类存在，CLI/agent 当前使用 Python watchdog watcher |
+| M8 | watcher.rs | notify crate + crossbeam channel + 20 种扩展名过滤 | ✅ 已接入（2026-07-20 批次4） | FileEvent 扩展 from_path/to_path 字段；handler 识别 RenameMode::From/To/Both 三种事件；coalesce_events 合并时保留 rename 信息；PyO3 poll_events/flush 返回 from_path/to_path；server/watcher.py 重写为 PyDebouncedFileWatcher 主路径 + watchdog fallback，Renamed 事件双路径分别触发 remove_file + refresh_file |
 | M9 | multi_lang.rs | parse_file_lang / batch_parse_files_lang / batch_parse_files_lang_pool（Rayon） | ✅ 已实现 | 已进入 build 主路径 |
 | M10 | cw_daemon.rs | daemon binary + PyO3 绑定 | 🟡 部分完成（评审 2026-07-20） | `cw_daemon` 独立 binary 和同 crate PyO3 cdylib/rlib 存在；"daemon binary + PyO3 绑定"表述不准确，实际是同 crate 同时产出 binary 和 cdylib+rlib |
 

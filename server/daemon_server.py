@@ -54,6 +54,9 @@ logger = logging.getLogger(__name__)
 # - SnapshotGC run interval：每 6 小时执行一次 mark→sweep
 DEFAULT_REFRESH_FLUSH_INTERVAL_SEC = 60.0
 DEFAULT_SNAPSHOT_GC_INTERVAL_SEC = 6 * 3600.0
+# L7（2026-07-20 批次4）：daemon 后台 metrics 采样间隔
+# 复用 G13 MetricsCollector，定期调用 collect_runtime_metrics() 刷新 RSS/VMS gauge
+DEFAULT_METRICS_SAMPLE_INTERVAL_SEC = 10.0
 
 
 class DaemonRpcError(RuntimeError):
@@ -196,6 +199,9 @@ class EnterpriseDaemonService:
         )
         self._gc_thread: Optional[threading.Thread] = None
         self._gc_stop = threading.Event()
+        # L7（2026-07-20 批次4）：daemon 后台 metrics 采样线程
+        # 复用 G13 MetricsCollector，每 10 秒采样 RSS/VMS，避免 RPC 同步触发 psutil
+        self._metrics_thread: Optional[threading.Thread] = None
 
         # G14（2026-07-20 批次3）：daemon 启动时实例化 HealthChecker
         # （在 health RPC 中执行实际的四项检查：db_registry / disk_space /
@@ -256,6 +262,14 @@ class EnterpriseDaemonService:
         )
         self._gc_thread.start()
 
+        # L7: metrics 采样线程（默认 10s）—— 复用 G13 MetricsCollector
+        self._metrics_thread = threading.Thread(
+            target=self._metrics_sample_loop,
+            name="cw-metrics-sample",
+            daemon=True,
+        )
+        self._metrics_thread.start()
+
     def _refresh_flush_loop(self) -> None:
         """G19：定期强制 flush 所有 workspace 的 pending 事件。"""
         interval = DEFAULT_REFRESH_FLUSH_INTERVAL_SEC
@@ -282,6 +296,23 @@ class EnterpriseDaemonService:
                 )
             except Exception as e:
                 logger.warning("snapshot gc loop error: %s", e)
+
+    def _metrics_sample_loop(self) -> None:
+        """L7（2026-07-20 批次4）：定期采样 daemon RSS/VMS 写入 G13 MetricsCollector。
+
+        复用 G13 已注册的 memory_rss_bytes / memory_vms_bytes / memory_peak_bytes
+        gauge，避免 health / metrics.snapshot RPC 调用时同步触发 psutil。
+        """
+        from callwarden.server.metrics import get_metrics_collector
+        interval = DEFAULT_METRICS_SAMPLE_INTERVAL_SEC
+        collector = get_metrics_collector()
+        while not self._gc_stop.is_set():
+            if self._gc_stop.wait(timeout=interval):
+                break
+            try:
+                collector.collect_runtime_metrics()
+            except Exception as e:
+                logger.warning("metrics sample loop error: %s", e)
 
     def _on_refresh_batch_ready(self, workspace_id: str,
                                 events: List[Any],

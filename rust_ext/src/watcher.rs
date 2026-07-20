@@ -20,7 +20,7 @@ use std::time::Duration;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use notify::{
     Config, Event, EventHandler, RecommendedWatcher, RecursiveMode, Watcher,
-    event::EventKind,
+    event::{EventKind, ModifyKind, RenameMode},
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -66,6 +66,9 @@ impl FileEventKind {
     pub fn from_notify_kind(kind: &EventKind) -> Option<Self> {
         match kind {
             EventKind::Create(_) => Some(FileEventKind::Created),
+            // Modify(Name(_)) 在 handler 中单独处理为 Renamed，
+            // 其他 Modify 统一映射为 Modified。
+            EventKind::Modify(ModifyKind::Name(_)) => Some(FileEventKind::Renamed),
             EventKind::Modify(_) => Some(FileEventKind::Modified),
             EventKind::Remove(_) => Some(FileEventKind::Removed),
             EventKind::Any => Some(FileEventKind::Modified),
@@ -76,11 +79,28 @@ impl FileEventKind {
 }
 
 /// 文件变更事件
+///
+/// M8（2026-07-20 批次4）：扩展 Renamed 事件支持双路径。
+/// notify crate 在不同平台对 rename 事件有不同的派发方式：
+/// - Windows / macOS：Modify(Name(Both)) + paths=[from, to]
+/// - Linux inotify：Modify(Name(From)) + paths=[from] → Modify(Name(To)) + paths=[to]
+///
+/// 为统一这两种派发，FileEvent 增加 from_path / to_path：
+/// - From 事件：from_path=Some(from), to_path=None
+/// - To 事件：from_path=None, to_path=Some(to)
+/// - Both 事件：from_path=Some(from), to_path=Some(to)
+/// - 非 Renamed 事件：from_path=None, to_path=None
+///
+/// Python 端 poll_events 返回的字典会包含 from_path / to_path 字段（None 时省略）。
 #[derive(Clone, Debug)]
 pub struct FileEvent {
     pub kind: FileEventKind,
     pub path: PathBuf,
     pub timestamp_ms: u64,
+    /// Renamed 事件：原路径（From/Both 事件有值）
+    pub from_path: Option<PathBuf>,
+    /// Renamed 事件：目标路径（To/Both 事件有值）
+    pub to_path: Option<PathBuf>,
 }
 
 // ============================================
@@ -150,24 +170,87 @@ impl FileWatcher {
         let handler = move |res: notify::Result<Event>| {
             match res {
                 Ok(event) => {
-                    // 从 event kind 转换
-                    let kind = match FileEventKind::from_notify_kind(&event.kind) {
-                        Some(k) => k,
-                        None => return, // 忽略不关心的事件类型
+                    // M8（2026-07-20 批次4）：识别 Renamed 事件的 from/to 路径
+                    //
+                    // notify 在不同平台派发 rename 的方式不同：
+                    // - Modify(Name(RenameMode::Both))：paths=[from, to]
+                    // - Modify(Name(RenameMode::From))：paths=[from]（Linux）
+                    // - Modify(Name(RenameMode::To))：paths=[to]（Linux）
+                    //
+                    // from_notify_kind 已将 Modify(Name(_)) 映射为 Renamed，
+                    // 这里进一步根据 RenameMode 提取 from_path / to_path。
+                    let (kind, from_path, to_path) = match &event.kind {
+                        EventKind::Modify(ModifyKind::Name(mode)) => {
+                            match mode {
+                                RenameMode::From => (
+                                    FileEventKind::Renamed,
+                                    event.paths.get(0).cloned(),
+                                    None,
+                                ),
+                                RenameMode::To => (
+                                    FileEventKind::Renamed,
+                                    None,
+                                    event.paths.get(0).cloned(),
+                                ),
+                                RenameMode::Both => (
+                                    FileEventKind::Renamed,
+                                    event.paths.get(0).cloned(),
+                                    event.paths.get(1).cloned(),
+                                ),
+                                _ => (
+                                    FileEventKind::Renamed,
+                                    event.paths.get(0).cloned(),
+                                    event.paths.get(1).cloned(),
+                                ),
+                            }
+                        }
+                        _ => match FileEventKind::from_notify_kind(&event.kind) {
+                            Some(k) => (k, None, None),
+                            None => return, // 忽略不关心的事件类型
+                        },
                     };
 
-                    // 过滤路径：只保留匹配扩展名的文件
-                    for path in &event.paths {
-                        if Self::is_supported(path, &extensions) {
-                            let ts = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_millis() as u64;
+                    let ts = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64;
+
+                    // Renamed 事件：path 取 to_path（若无则 from_path），
+                    // 只要 from 或 to 任一匹配扩展名就发送
+                    if kind == FileEventKind::Renamed {
+                        let primary_path = to_path
+                            .clone()
+                            .or_else(|| from_path.clone())
+                            .unwrap_or_default();
+                        let from_matched = from_path
+                            .as_ref()
+                            .map(|p| Self::is_supported(p, &extensions))
+                            .unwrap_or(false);
+                        let to_matched = to_path
+                            .as_ref()
+                            .map(|p| Self::is_supported(p, &extensions))
+                            .unwrap_or(false);
+                        if from_matched || to_matched {
                             let _ = tx.send(FileEvent {
-                                kind: kind.clone(),
-                                path: path.clone(),
+                                kind,
+                                path: primary_path,
                                 timestamp_ms: ts,
+                                from_path,
+                                to_path,
                             });
+                        }
+                    } else {
+                        // 非 Renamed 事件：保持原行为，按 event.paths 逐个发送
+                        for path in &event.paths {
+                            if Self::is_supported(path, &extensions) {
+                                let _ = tx.send(FileEvent {
+                                    kind: kind.clone(),
+                                    path: path.clone(),
+                                    timestamp_ms: ts,
+                                    from_path: None,
+                                    to_path: None,
+                                });
+                            }
                         }
                     }
                 }
@@ -395,35 +478,74 @@ impl DebouncedFileWatcher {
 /// - modified + removed → removed（同窗口内修改并删除，视为删除）
 /// - removed + created → modified（同窗口内删除并重建，视为修改）
 /// - 相同 kind → 保留最新时间戳
+///
+/// M8（2026-07-20 批次4）：合并时优先保留 Renamed 事件的 from_path/to_path
+/// （若新旧任一是 Renamed，则保留 Renamed 的 from_path/to_path 信息）。
 fn coalesce_events(existing: &FileEvent, new: &FileEvent) -> FileEvent {
     use FileEventKind::*;
+    // 优先合并 Renamed 信息：若任一为 Renamed，则保留更完整的 from_path/to_path
+    let merged_from = new.from_path.clone().or_else(|| existing.from_path.clone());
+    let merged_to = new.to_path.clone().or_else(|| existing.to_path.clone());
     match (&existing.kind, &new.kind) {
         // created + modified → created
         (Created, Modified) => FileEvent {
             kind: Created,
             path: new.path.clone(),
             timestamp_ms: new.timestamp_ms,
+            from_path: merged_from,
+            to_path: merged_to,
         },
         // modified + created → modified（删除后重建）
         (Removed, Created) => FileEvent {
             kind: Modified,
             path: new.path.clone(),
             timestamp_ms: new.timestamp_ms,
+            from_path: merged_from,
+            to_path: merged_to,
         },
         // created + removed → removed（创建后立即删除，视为无变更 → 返回 removed）
         (Created, Removed) => FileEvent {
             kind: Removed,
             path: new.path.clone(),
             timestamp_ms: new.timestamp_ms,
+            from_path: merged_from,
+            to_path: merged_to,
         },
         // 其他情况：取最新事件
-        _ => new.clone(),
+        _ => FileEvent {
+            kind: new.kind.clone(),
+            path: new.path.clone(),
+            timestamp_ms: new.timestamp_ms,
+            from_path: merged_from,
+            to_path: merged_to,
+        },
     }
 }
 
 // ============================================
 // PyO3 暴露
 // ============================================
+
+/// 将 FileEvent 转为 Python 字典。
+///
+/// M8（2026-07-20 批次4）：字典包含 from_path / to_path 字段（None 时省略，
+/// 与 Python dict 习惯一致；下游代码可用 `event.get("from_path")` 安全取值）。
+fn file_event_to_pydict<'py>(
+    py: Python<'py>,
+    event: &FileEvent,
+) -> PyResult<Bound<'py, PyDict>> {
+    let d = PyDict::new(py);
+    d.set_item("kind", event.kind.as_str())?;
+    d.set_item("path", event.path.to_string_lossy().to_string())?;
+    d.set_item("timestamp_ms", event.timestamp_ms)?;
+    if let Some(from) = &event.from_path {
+        d.set_item("from_path", from.to_string_lossy().to_string())?;
+    }
+    if let Some(to) = &event.to_path {
+        d.set_item("to_path", to.to_string_lossy().to_string())?;
+    }
+    Ok(d)
+}
 
 /// Python 侧文件监听器包装。
 ///
@@ -474,10 +596,7 @@ impl PyFileWatcher {
         let events = self.inner.poll_events();
         let list = PyList::empty(py);
         for event in events {
-            let d = PyDict::new(py);
-            d.set_item("kind", event.kind.as_str())?;
-            d.set_item("path", event.path.to_string_lossy().to_string())?;
-            d.set_item("timestamp_ms", event.timestamp_ms)?;
+            let d = file_event_to_pydict(py, &event)?;
             list.append(d)?;
         }
         Ok(list)
@@ -553,10 +672,7 @@ impl PyDebouncedFileWatcher {
         let events = self.inner.poll_events();
         let list = PyList::empty(py);
         for event in events {
-            let d = PyDict::new(py);
-            d.set_item("kind", event.kind.as_str())?;
-            d.set_item("path", event.path.to_string_lossy().to_string())?;
-            d.set_item("timestamp_ms", event.timestamp_ms)?;
+            let d = file_event_to_pydict(py, &event)?;
             list.append(d)?;
         }
         Ok(list)
@@ -567,10 +683,7 @@ impl PyDebouncedFileWatcher {
         let events = self.inner.flush();
         let list = PyList::empty(py);
         for event in events {
-            let d = PyDict::new(py);
-            d.set_item("kind", event.kind.as_str())?;
-            d.set_item("path", event.path.to_string_lossy().to_string())?;
-            d.set_item("timestamp_ms", event.timestamp_ms)?;
+            let d = file_event_to_pydict(py, &event)?;
             list.append(d)?;
         }
         Ok(list)

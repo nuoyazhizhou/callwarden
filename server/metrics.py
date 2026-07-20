@@ -40,8 +40,8 @@ def get_memory_info() -> Dict[str, int]:
     """获取当前进程的内存信息（字节）。
 
     Linux: 读取 /proc/self/status
-    Windows: 使用 psutil（如果可用），否则返回 0
-    其他: 尝试 resource 模块
+    Windows: 优先 psutil，回退 Psapi.GetProcessMemoryInfo
+    其他: 尝试 psutil，再尝试 resource 模块
 
     Returns:
         {"rss": int, "vms": int, "peak": int}
@@ -72,8 +72,46 @@ def get_memory_info() -> Dict[str, int]:
         result["rss"] = getattr(mem, "rss", 0)
         result["vms"] = getattr(mem, "vms", 0)
         result["peak"] = getattr(mem, "peak", result["rss"])
+        return result
     except ImportError:
         pass
+
+    # Windows fallback: Psapi.GetProcessMemoryInfo
+    # L7（2026-07-20 批次4）：从 shared_benefit_metrics.py 迁移，
+    # 让 metrics.py 成为 daemon 唯一 RSS 入口（删除重复实现）
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ("cb", ctypes.c_ulong),
+                    ("PageFaultCount", ctypes.c_ulong),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            psapi = ctypes.windll.psapi
+            psapi.GetProcessMemoryInfo(
+                ctypes.windll.kernel32.GetCurrentProcess(),
+                ctypes.byref(counters),
+                counters.cb,
+            )
+            # WorkingSetSize == RSS, PeakWorkingSetSize == peak RSS, PagefileUsage == VMS
+            result["rss"] = counters.WorkingSetSize
+            result["vms"] = counters.PagefileUsage
+            result["peak"] = counters.PeakWorkingSetSize
+        except Exception:
+            pass
 
     return result
 

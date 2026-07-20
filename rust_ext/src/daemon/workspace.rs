@@ -1117,6 +1117,182 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 &content_hash,
                 &language,
             );
+
+            // M4+M5+M6（2026-07-20 批次4）：填充 staging entry 的
+            // parse_delta / frontier / metrics_update 三个 JSON 字段。
+            //
+            // 调用链：
+            //   DeltaComputer::compute_parse_delta
+            //     → FrontierComputer::compute_frontier_with_budget
+            //       → MetricsComputer::compute_local_update
+            //
+            // 当前为 store=None 退化模式：直接 delta + directly_affected，
+            // upstream/downstream 为空（依赖 GraphStore 才能展开）。
+            // GraphStore 可通过 SnapshotCachePublisher 注入（后续接入），
+            // 接入后此分支可改为 if let Some(store) = ... 计算完整 frontier。
+            //
+            // 设计：写入 JSON 摘要而非完整结构体（StagingEntry 字段定义为
+            // Map<String, Value>），便于 Python 端 audit 与可视化。
+            // 任何一步失败都不阻塞 staging_log.append（保持与现状一致的容错）。
+            {
+                use crate::delta::DeltaComputer;
+                use crate::frontier::FrontierComputer;
+                use crate::metrics::MetricsComputer;
+                use crate::daemon::budget::QueryBudget;
+                use std::path::PathBuf;
+
+                // 构造绝对文件路径：优先 msg.abs_path（客户端真实路径），
+                // 否则 host_real_root + rel_path 拼接（daemon 端可读）
+                let abs_file_path: PathBuf = msg
+                    .abs_path
+                    .clone()
+                    .filter(|s| !s.is_empty())
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        workspace
+                            .get("host_real_root")
+                            .and_then(|v| v.as_str())
+                            .filter(|root| !root.is_empty())
+                            .map(|root| Path::new(root).join(&rel_path))
+                    })
+                    .unwrap_or_else(|| Path::new(&rel_path).to_path_buf());
+
+                // M4: parse delta（store=None，纯 tree-sitter 解析）
+                match DeltaComputer::compute_parse_delta(&abs_file_path, None) {
+                    Ok(parse_delta) => {
+                        let mut pd = Map::new();
+                        pd.insert(
+                            "file_path".to_string(),
+                            Value::String(
+                                parse_delta.file_path.to_string_lossy().into_owned(),
+                            ),
+                        );
+                        pd.insert(
+                            "language".to_string(),
+                            Value::String(parse_delta.language.clone()),
+                        );
+                        pd.insert(
+                            "content_hash".to_string(),
+                            Value::String(parse_delta.content_hash.clone()),
+                        );
+                        pd.insert(
+                            "total_lines".to_string(),
+                            Value::Number(parse_delta.total_lines.into()),
+                        );
+                        pd.insert(
+                            "symbols_added".to_string(),
+                            Value::Number(parse_delta.symbol_delta.added.len().into()),
+                        );
+                        pd.insert(
+                            "symbols_removed".to_string(),
+                            Value::Number(parse_delta.symbol_delta.removed.len().into()),
+                        );
+                        pd.insert(
+                            "symbols_changed".to_string(),
+                            Value::Number(parse_delta.symbol_delta.changed.len().into()),
+                        );
+                        pd.insert(
+                            "calls_added".to_string(),
+                            Value::Number(parse_delta.raw_call_delta.added.len().into()),
+                        );
+                        pd.insert(
+                            "calls_removed".to_string(),
+                            Value::Number(parse_delta.raw_call_delta.removed.len().into()),
+                        );
+                        pd.insert(
+                            "summary".to_string(),
+                            Value::String(parse_delta.summary()),
+                        );
+                        entry.parse_delta = pd;
+
+                        // M5: frontier（store=None 退化，QueryBudget::default）
+                        let budget = QueryBudget::default();
+                        let frontier = FrontierComputer::compute_frontier_with_budget(
+                            &parse_delta,
+                            None,
+                            budget,
+                        );
+                        let mut fd = Map::new();
+                        fd.insert(
+                            "directly_affected_count".to_string(),
+                            Value::Number(frontier.directly_affected.len().into()),
+                        );
+                        fd.insert(
+                            "upstream_direct_count".to_string(),
+                            Value::Number(frontier.upstream_direct.len().into()),
+                        );
+                        fd.insert(
+                            "downstream_direct_count".to_string(),
+                            Value::Number(frontier.downstream_direct.len().into()),
+                        );
+                        fd.insert(
+                            "upstream_transitive_count".to_string(),
+                            Value::Number(frontier.upstream_transitive.len().into()),
+                        );
+                        fd.insert(
+                            "downstream_transitive_count".to_string(),
+                            Value::Number(frontier.downstream_transitive.len().into()),
+                        );
+                        fd.insert(
+                            "partial".to_string(),
+                            Value::Bool(frontier.partial),
+                        );
+                        // 直接列出受影响的 qnames（前 50 个，避免 JSON 过大）
+                        let directly_affected: Vec<Value> = frontier
+                            .directly_affected
+                            .iter()
+                            .take(50)
+                            .map(|s| Value::String(s.clone()))
+                            .collect();
+                        fd.insert(
+                            "directly_affected".to_string(),
+                            Value::Array(directly_affected),
+                        );
+                        fd.insert(
+                            "summary".to_string(),
+                            Value::String(frontier.summary()),
+                        );
+                        entry.frontier = fd;
+
+                        // M6: metrics update（store=None 退化，impact_depth=2）
+                        let metrics_update = MetricsComputer::compute_local_update(
+                            &frontier,
+                            &parse_delta,
+                            None,
+                            2,
+                        );
+                        let mut md = Map::new();
+                        md.insert(
+                            "is_empty".to_string(),
+                            Value::Bool(metrics_update.is_empty()),
+                        );
+                        md.insert(
+                            "depth_changes_count".to_string(),
+                            Value::Number(metrics_update.depth_changes.len().into()),
+                        );
+                        md.insert(
+                            "cycle_changes_count".to_string(),
+                            Value::Number(metrics_update.cycle_changes.len().into()),
+                        );
+                        md.insert(
+                            "impact_changes_count".to_string(),
+                            Value::Number(metrics_update.impact_changes.len().into()),
+                        );
+                        entry.metrics_update = md;
+                    }
+                    Err(e) => {
+                        // M4 失败：写入 error 摘要，不阻塞 staging_log.append
+                        let mut pd = Map::new();
+                        pd.insert("error".to_string(), Value::String(e.clone()));
+                        entry.parse_delta = pd;
+                        eprintln!(
+                            "[M4] compute_parse_delta failed for {}: {}",
+                            rel_path, e
+                        );
+                    }
+                }
+            }
+
             match resources.staging_log.append(&mut entry) {
                 Ok(_lsn) => {
                     // G11: 触发 replicate 并按配置发布 snapshot
