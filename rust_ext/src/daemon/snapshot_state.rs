@@ -26,7 +26,7 @@ use serde_json::{Map, Value};
 
 use super::dispatch::{
     DaemonState, DaemonStateExt, DaemonRpcError, PeerCredential, get_str_param,
-    require_str_param, get_str_param_or,
+    require_str_param, get_str_param_or, get_int_param_or,
 };
 use super::workspace::{WorkspaceDaemonState, WorkspaceRegistry, owned_workspace, validate_owned_path};
 use crate::graph::{CallChainEdgeInfo, GraphStore};
@@ -374,9 +374,8 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         // gc.snapshots 不需要 workspace_id（全局 GC）
         // 对应 Python daemon_server.py L345-349
-        let keep_last = get_str_param(params, "keep_last")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(3);
+        // G12 批次8：修复 keep_last 字段错配（同 query.search limit）
+        let keep_last = get_int_param_or(params, "keep_last", 3) as usize;
 
         let mut total_deleted = 0usize;
         for ws_id in self.snapshot_cache.list_workspaces() {
@@ -455,9 +454,11 @@ impl DaemonStateExt for SnapshotDaemonState {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let query = require_str_param(params, "query")?;
         let kind = get_str_param(params, "kind");
-        let limit = get_str_param(params, "limit")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(20);
+        // G12 批次8：修复 limit 字段错配——
+        // Python daemon_client.py 传 int（如 `"limit": 50`），
+        // 原 get_str_param 只接受字符串，数字被忽略导致始终用默认 20。
+        // 改用 get_int_param_or 支持 JSON 数字 + 字符串两种形式。
+        let limit = get_int_param_or(params, "limit", 20) as usize;
 
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
         let store = self
@@ -620,9 +621,8 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let qualified_name = require_str_param(params, "qualified_name")?;
-        let max_depth = get_str_param(params, "max_depth")
-            .and_then(|s| s.parse::<usize>().ok())
-            .unwrap_or(5);
+        // G12 批次8：修复 max_depth 字段错配（同 query.search limit）
+        let max_depth = get_int_param_or(params, "max_depth", 5) as usize;
 
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
         let store = self

@@ -330,3 +330,107 @@ class TestRoutingStatsSummary:
         assert stats["daemon_ratio_percent"] == 0.0
 
         DaemonClient.reset_instance()
+
+
+class TestQueryNumericParamsPropagation:
+    """G12 批次8：验证 query.* 方法的数字参数（limit/max_depth）作为 int 类型传递给 daemon。
+
+    根因：Rust daemon 原用 get_str_param 只接受字符串，Python client 传 int 时被忽略。
+    修复：Rust dispatch.rs 新增 get_int_param/get_int_param_or 支持 JSON 数字 + 字符串。
+    本测试验证 Python client 端确实传 int 类型（而非字符串），与 Rust 端的修复配套。
+    """
+
+    def test_search_symbols_limit_passed_as_int(self, tmp_path):
+        """search_symbols(limit=50) → RPC params["limit"] 是 int 50。"""
+        from callwarden.server.daemon_client import DaemonClient
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+
+        # mock _ensure_remote_snapshot 返回 workspace_id，触发 RPC 路径
+        with patch.object(client, '_ensure_remote_snapshot', return_value="ws_test_limit"):
+            rpc_mock = MagicMock()
+            rpc_mock.call.return_value = []
+            client._rpc = rpc_mock
+
+            client.search_symbols("test_query", limit=50, db_path=str(tmp_path / "dummy.db"))
+
+        # 验证 RPC 调用的 params 中 limit 是 int 50
+        call_args = rpc_mock.call.call_args
+        method = call_args[0][0]
+        params = call_args[0][1]
+        assert method == "query.search"
+        assert params["limit"] == 50
+        assert isinstance(params["limit"], int), "limit 应为 int 类型（Python client 默认传 int）"
+        assert params["query"] == "test_query"
+        assert params["workspace_instance_id"] == "ws_test_limit"
+
+        DaemonClient.reset_instance()
+
+    def test_get_topological_order_limit_passed_as_int(self, tmp_path):
+        """get_topological_order(limit=10) → RPC params["limit"] 是 int 10。"""
+        from callwarden.server.daemon_client import DaemonClient
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+
+        with patch.object(client, '_ensure_remote_snapshot', return_value="ws_test_topo"):
+            rpc_mock = MagicMock()
+            rpc_mock.call.return_value = []
+            client._rpc = rpc_mock
+
+            client.get_topological_order(limit=10, db_path=str(tmp_path / "dummy.db"))
+
+        call_args = rpc_mock.call.call_args
+        method = call_args[0][0]
+        params = call_args[0][1]
+        assert method == "query.topological_order"
+        assert params["limit"] == 10
+        assert isinstance(params["limit"], int)
+
+        DaemonClient.reset_instance()
+
+    def test_get_call_chain_down_max_depth_passed_as_int(self, tmp_path):
+        """get_call_chain_down(max_depth=8) → RPC params["max_depth"] 是 int 8。"""
+        from callwarden.server.daemon_client import DaemonClient
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+
+        with patch.object(client, '_ensure_remote_snapshot', return_value="ws_test_chain"):
+            rpc_mock = MagicMock()
+            rpc_mock.call.return_value = []
+            client._rpc = rpc_mock
+
+            client.get_call_chain_down(
+                "qualified_name_test", max_depth=8, db_path=str(tmp_path / "dummy.db"),
+            )
+
+        call_args = rpc_mock.call.call_args
+        method = call_args[0][0]
+        params = call_args[0][1]
+        assert method == "query.call_chain_down"
+        assert params["max_depth"] == 8
+        assert isinstance(params["max_depth"], int)
+        assert params["qualified_name"] == "qualified_name_test"
+
+        DaemonClient.reset_instance()
+
+    def test_detect_cycles_max_depth_passed_as_int(self, tmp_path):
+        """detect_cycles(max_depth=15) → RPC params["max_depth"] 是 int 15。"""
+        from callwarden.server.daemon_client import DaemonClient
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+
+        with patch.object(client, '_ensure_remote_snapshot', return_value="ws_test_cycles"):
+            rpc_mock = MagicMock()
+            rpc_mock.call.return_value = []
+            client._rpc = rpc_mock
+
+            client.detect_cycles(max_depth=15, db_path=str(tmp_path / "dummy.db"))
+
+        call_args = rpc_mock.call.call_args
+        method = call_args[0][0]
+        params = call_args[0][1]
+        assert method == "query.detect_cycles"
+        assert params["max_depth"] == 15
+        assert isinstance(params["max_depth"], int)
+
+        DaemonClient.reset_instance()

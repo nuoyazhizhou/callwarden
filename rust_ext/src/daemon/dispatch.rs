@@ -693,6 +693,32 @@ pub fn get_str_param_or(params: &Value, key: &str, default: &str) -> String {
         .to_string()
 }
 
+/// 从 params 提取整数字段（缺失或非整数返回 None）
+///
+/// G12 批次8（2026-07-21）：修复 query 字段错配——
+/// Python daemon_client.py 传 int 类型（如 `"limit": 50`），
+/// 原 Rust daemon 用 `get_str_param + parse` 只接受字符串，数字被忽略。
+/// 本函数支持 JSON 数字（i64/u64）和字符串两种形式，兼容旧客户端。
+pub fn get_int_param(params: &Value, key: &str) -> Option<i64> {
+    let v = params.get(key)?;
+    // 优先 JSON 数字（Python client 默认传 int）
+    if let Some(n) = v.as_i64() {
+        return Some(n);
+    }
+    // 兼容字符串形式（旧客户端或 curl 手动调用）
+    if let Some(s) = v.as_str() {
+        return s.parse::<i64>().ok();
+    }
+    None
+}
+
+/// 从 params 提取可选整数字段（缺失或非整数返回默认值）
+///
+/// 与 `get_int_param` 配套，提供默认值回退。
+pub fn get_int_param_or(params: &Value, key: &str, default: i64) -> i64 {
+    get_int_param(params, key).unwrap_or(default)
+}
+
 // ============================================
 // 单元测试
 // ============================================
@@ -863,6 +889,54 @@ mod tests {
     fn test_get_str_param_or_missing_returns_default() {
         let params = json!({});
         assert_eq!(get_str_param_or(&params, "key", "default"), "default");
+    }
+
+    // ---- get_int_param / get_int_param_or 测试（G12 批次8）----
+
+    #[test]
+    fn test_get_int_param_json_number() {
+        // Python client 默认传 JSON 数字
+        let params = json!({"limit": 50, "max_depth": 5});
+        assert_eq!(get_int_param(&params, "limit"), Some(50));
+        assert_eq!(get_int_param(&params, "max_depth"), Some(5));
+    }
+
+    #[test]
+    fn test_get_int_param_string_form() {
+        // 旧客户端或 curl 手动调用传字符串
+        let params = json!({"limit": "50", "max_depth": "5"});
+        assert_eq!(get_int_param(&params, "limit"), Some(50));
+        assert_eq!(get_int_param(&params, "max_depth"), Some(5));
+    }
+
+    #[test]
+    fn test_get_int_param_missing_returns_none() {
+        let params = json!({});
+        assert_eq!(get_int_param(&params, "limit"), None);
+    }
+
+    #[test]
+    fn test_get_int_param_non_numeric_string_returns_none() {
+        let params = json!({"limit": "abc"});
+        assert_eq!(get_int_param(&params, "limit"), None);
+    }
+
+    #[test]
+    fn test_get_int_param_or_json_number() {
+        let params = json!({"limit": 50});
+        assert_eq!(get_int_param_or(&params, "limit", 20), 50);
+    }
+
+    #[test]
+    fn test_get_int_param_or_missing_returns_default() {
+        let params = json!({});
+        assert_eq!(get_int_param_or(&params, "limit", 20), 20);
+    }
+
+    #[test]
+    fn test_get_int_param_or_non_numeric_returns_default() {
+        let params = json!({"limit": "abc"});
+        assert_eq!(get_int_param_or(&params, "limit", 20), 20);
     }
 
     // ---- DaemonRpcError 构造器测试 ----
