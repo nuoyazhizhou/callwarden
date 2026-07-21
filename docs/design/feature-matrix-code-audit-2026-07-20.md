@@ -33,14 +33,16 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 
 证据：`rust_ext/src/daemon/workspace.rs:1167`、`:1205`、`:1316`，`rust_ext/src/daemon/snapshot_state.rs:799`、`:875`、`:932`。
 
-### P0 Watcher 到可查询 Snapshot 的纵向链路未闭合
+### P0 Watcher 到可查询 Snapshot 的纵向链路未闭合（✅ 已闭合，批次3/7/11 修复）
 
-- Agent 小文件发送 `canonical_bytes_hex`，Python/Rust daemon 只读 `canonical_bytes_b64`。
-- Agent 大文件发送普通临时文件 FD，不是文档承诺的 sealed memfd。
-- Rust refresh 成功后用空 `db_path` 调用 Replicator，代码注释明确说“不发布 snapshot”。
-- 因此“保存文件 -> 新 generation -> query 可见”不成立。
+原审计时三个子问题均未闭合，现已全部修复：
 
-证据：`server/agent_protocol.py:214-280`，`server/daemon_server.py:495`，`rust_ext/src/daemon/workspace.rs:931-1030`。
+1. **hex/b64 字段双标准**（✅ 批次3 修复）：`server/agent_protocol.py:278` 默认发送 `canonical_bytes_hex`；`server/daemon_server.py:783-883` 同时支持 `canonical_bytes_hex`（agent 默认路径）+ `canonical_bytes_b64`（兼容旧客户端）；`rust_ext/src/daemon/workspace.rs:1032-1058` Rust 端也同时支持 hex + b64。优先级：FD > hex > b64 > abs_path。
+2. **memfd 协议**（✅ 批次3/7 修复）：`server/agent_protocol.py:307-313` 从 `ipc_transport` 导入并使用 `create_sealed_memfd(canonical_bytes)`，sealed flag = `SHRINK|GROW|WRITE|SEAL`；`server/daemon_server.py:798-802` 通过 `is_memfd(fd)` 检测 FD 类型并走 `validate_memfd_fd` 四重校验；Rust 端 `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation`（类型/大小/容量/摘要四重校验，替代 `read_to_end` 无界读）。
+3. **Replicator 空 db_path**（✅ 批次3 修复）：`rust_ext/src/daemon/workspace.rs:1319-1324` `codegraph_db_path_template` 配置后 db_path 不为空；L1327-1335 db_path 不为空时注入 `SnapshotCachePublisher`，触发 `publish_snapshot`；L1367-1369 snapshot 未发布时写入 warning，不再静默；`rust_ext/src/daemon/replicator.rs:747-748` 空 db_path 返回明确错误。
+4. **admin ACL**（✅ 批次11 修复）：Rust 端 `dispatch.rs:545-564` `ADMIN_ONLY_METHODS` + `is_admin` fail-closed 校验；Python 端 `server/daemon_server.py:75-106` 同步 `ADMIN_ONLY_METHODS` frozenset + L526-544 `_is_admin_peer` 方法 + L550-558 dispatch 顶部 fail-closed 校验。
+
+证据：`server/agent_protocol.py:214-280`，`server/daemon_server.py:495-558, 776-883`，`rust_ext/src/daemon/workspace.rs:931-1110, 1290-1370`，`rust_ext/src/daemon/dispatch.rs:545-610`，`rust_ext/src/daemon/memfd.rs`，`rust_ext/src/daemon/replicator.rs:698-910`。
 
 ### P0 跨平台发布会产出空壳或在 CI 早期失败
 
@@ -156,9 +158,9 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | G6 | ✅ | Rust CAS GC 使用 flock + transaction + pending refs。 |
 | G7 | ✅ | ArcSwap SnapshotManager、history 和 generation GC 存在。 |
 | G8 | 🟡 | session/generation CAS 和 CAS publish 存在，但 agent payload 不兼容且 refresh 后不发布可查 snapshot。 |
-| G9 | 🟡 | AgentSession/Watcher/systemd unit 存在，但 hex/b64 协议错配，包入口名也不一致。 |
-| G10 | 🟡 | Python memfd 库存在，实际 agent 传普通 temp FD；Rust 端未校验 seal/size/hash 且无界 `read_to_end`。 |
-| G11 | 🟡 | SnapshotCachePublisher bridge 存在，但只在模块内/测试使用；Rust refresh 主路径没有注入 publisher。 |
+| G9 | 🟡 | AgentSession/Watcher/systemd unit 存在；hex/b64 协议原错配已修复（Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058` 同时支持 hex/b64/FD/abs_path 四种路径），但包入口名 cw-agent vs cw_agent 仍不一致。 |
+| G10 | ✅ | memfd 已接入主路径：`server/agent_protocol.py:307-313` 使用 `create_sealed_memfd`；`server/daemon_server.py:798-802` 通过 `is_memfd` + `validate_memfd_fd` 四重校验；Rust 端 `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation`（类型/大小/容量/摘要校验，替代 `read_to_end`）。 |
+| G11 | ✅ | SnapshotCachePublisher 已接入主路径：`rust_ext/src/daemon/workspace.rs:1319-1335` `codegraph_db_path_template` 配置后 db_path 不为空，注入 `SnapshotCachePublisher`，触发 `publish_snapshot`；`replicator.rs:741-757` `SnapshotCachePublisher::publish_snapshot` 从 db_path 指向的 SQLite 加载符号 + 调用图 → 构建 GraphSnapshot → 发布到 SnapshotCache（per-workspace ArcSwap）。 |
 | G12 | ✅ | Python/Rust JSONL staging log + fsync/atomic rewrite 存在并接入 refresh。 |
 | G13 | ❌ | collector/to_prometheus 类存在，但 daemon 无任何埋点；CLI/MCP 新进程读自己的空单例，不是 daemon metrics。 |
 | G14 | 🟡 | HealthChecker/RecoveryHandler 存在，但 RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查。 |
@@ -233,12 +235,12 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | J5 | ✅ | active rules 注入 `task_next_step`。 |
 | J6 | ✅ | bootstrap scan baseline 存在。 |
 | J7 | ✅ | GraphStore/Snapshot/multi-lang/canonicalize 确实在多条生产路径使用 Rust。 |
-| J8 | ❌ | RPC 方法注册很多，但 hex/b64、memfd、snapshot publish 和 admin ACL 均未闭合。 |
+| J8 | ✅ | hex/b64、memfd、snapshot publish 和 admin ACL 均已闭合（见 P0 第 2 项修复详情）。批次3/7/11 修复：hex/b64 字段双标准统一支持（Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058`）；memfd 协议接入主路径（`agent_protocol.py:307-313` create_sealed_memfd + `daemon_server.py:798-802` is_memfd + validate_memfd_fd）；snapshot publish 接入主路径（`workspace.rs:1319-1335` codegraph_db_path_template + 注入 SnapshotCachePublisher）；admin ACL fail-closed 校验（Rust `dispatch.rs:545-610` + Python `daemon_server.py:75-106, 526-558`）。 |
 | J9 | ✅ | clone-aware impact 已接入 DB/MCP。 |
 | K1 | ✅ | 内部 parse/publish 在拿到 canonical bytes 时复用同一份 bytes。 |
 | K2 | ❌ | `canonical_bytes is None` 时仍读客户端 `abs_path`，refresh handler 未对该路径执行 workspace ownership/escape 校验。 |
 | K3 | ✅ | `parse_canonical_bytes_py` 已导出和注册。 |
-| K4 | 🟡 | dispatch 已调用 refresh/staging/replicate，但请求字段错配和 snapshot 未发布使端到端仍失败。 |
+| K4 | ✅ | dispatch 已调用 refresh/staging/replicate，请求字段错配已修复（hex/b64 统一支持）、snapshot 已发布（codegraph_db_path_template + SnapshotCachePublisher 注入）。端到端协议链路已闭合（见 P0 第 2 项修复详情）。 |
 | K5 | ⚪ | 原矩阵仍标记未统一，不列入虚假完成项。 |
 | K6 | ✅ | generation DDL 已提取共享。 |
 | L1 | 🟡 | optional task validation/context 存在，但不“强制关联”，无 task_id 时照常写入。 |
