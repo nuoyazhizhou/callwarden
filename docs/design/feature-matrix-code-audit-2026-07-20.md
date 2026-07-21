@@ -13,7 +13,16 @@
 3. 只有测试框架、语法检查或未运行 CI 的验收承诺。
 4. 已被后续代码改变、内部自相矛盾或明确错误的旧结论。
 
-本轮共核验 **200 个唯一 ID**（原矩阵另有 2 行重复的 `D3` 路线图引用）：128 项确认完成，40 项仅部分完成，25 项完成声明不成立，5 项只是测试或设计记录，2 项原矩阵本就未声称完成。换句话说，矩阵中的“完成”类记录只有 **64.6%**（128/198）能按生产代码和公开路径直接确认。
+本轮共核验 **200 个唯一 ID**（原矩阵另有 2 行重复的 `D3` 路线图引用）：128 项确认完成，40 项仅部分完成，25 项完成声明不成立，5 项只是测试或设计记录，2 项原矩阵本就未声称完成。换句话说，矩阵中的"完成"类记录只有 **64.6%**（128/198）能按生产代码和公开路径直接确认。
+
+**复审回退（2026-07-21）**：根据 `docs/design/feature-matrix-code-reaudit-2026-07-21.md`，本轮审计中 20 个 ✅ 状态被复审否决，回退为 🟡/❌：
+
+- ✅→🟡（13 项）：A14、A19、A21、D7、G1、G3、G4、G8、G9、G10、G13、G14、G15、G29、I4、M4-M6（其中 M4-M6 已为 🟡 文本更新）
+- ✅→❌（7 项）：G11、I1、I3、I9、I11、I12、I13、I15、I16、I17、J8、K4、N3、N7、N8
+- 🟡→❌（3 项）：H14、N7、N8（部分原 🟡 升级被否决）
+- 🟡→✅（1 项）：M8（复审确认真实修复）
+
+回退后真实计数：约 110 项确认完成、50 项部分完成、35 项不成立。完整状态回退表见复审报告 §5。下一轮通过门槛见复审报告 §8。
 
 状态含义：
 
@@ -33,35 +42,36 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 
 证据：`rust_ext/src/daemon/workspace.rs:1167`、`:1205`、`:1316`，`rust_ext/src/daemon/snapshot_state.rs:799`、`:875`、`:932`。
 
-### P0 Watcher 到可查询 Snapshot 的纵向链路未闭合（✅ 已闭合，批次3/7/11 修复）
+### P0 Watcher 到可查询 Snapshot 的纵向链路未闭合（❌ 复审回退 2026-07-21）
 
-原审计时三个子问题均未闭合，现已全部修复：
+批次3/7/11 仅修复了 hex/b64 字段双标准、memfd 协议（Python 路径）、Replicator 空 db_path 报错、顶层 admin ACL 四项局部组件，但**核心 save-to-query 链路仍完全断裂**：
 
-1. **hex/b64 字段双标准**（✅ 批次3 修复）：`server/agent_protocol.py:278` 默认发送 `canonical_bytes_hex`；`server/daemon_server.py:783-883` 同时支持 `canonical_bytes_hex`（agent 默认路径）+ `canonical_bytes_b64`（兼容旧客户端）；`rust_ext/src/daemon/workspace.rs:1032-1058` Rust 端也同时支持 hex + b64。优先级：FD > hex > b64 > abs_path。
-2. **memfd 协议**（✅ 批次3/7 修复）：`server/agent_protocol.py:307-313` 从 `ipc_transport` 导入并使用 `create_sealed_memfd(canonical_bytes)`，sealed flag = `SHRINK|GROW|WRITE|SEAL`；`server/daemon_server.py:798-802` 通过 `is_memfd(fd)` 检测 FD 类型并走 `validate_memfd_fd` 四重校验；Rust 端 `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation`（类型/大小/容量/摘要四重校验，替代 `read_to_end` 无界读）。
-3. **Replicator 空 db_path**（✅ 批次3 修复）：`rust_ext/src/daemon/workspace.rs:1319-1324` `codegraph_db_path_template` 配置后 db_path 不为空；L1327-1335 db_path 不为空时注入 `SnapshotCachePublisher`，触发 `publish_snapshot`；L1367-1369 snapshot 未发布时写入 warning，不再静默；`rust_ext/src/daemon/replicator.rs:747-748` 空 db_path 返回明确错误。
-4. **admin ACL**（✅ 批次11 修复）：Rust 端 `dispatch.rs:545-564` `ADMIN_ONLY_METHODS` + `is_admin` fail-closed 校验；Python 端 `server/daemon_server.py:75-106` 同步 `ADMIN_ONLY_METHODS` frozenset + L526-544 `_is_admin_peer` 方法 + L550-558 dispatch 顶部 fail-closed 校验。
+1. **hex/b64 字段双标准**（✅ 批次3 修复，可保留）：`server/agent_protocol.py:278` 默认 `canonical_bytes_hex`；`server/daemon_server.py:783-883` 同时支持 hex + b64；`rust_ext/src/daemon/workspace.rs:1032-1058` Rust 端同步。
+2. **memfd 协议**（🟡 仅 Python 闭合）：Python 路径有 `create_sealed_memfd` + `validate_memfd_fd` 四重校验；**Rust `memfd.rs` 没有 `F_GET_SEALS` 也没有 owner UID 校验**（G10 回退）。
+3. **Replicator 空 db_path**（❌ 复审回退）：`codegraph_db_path_template` 默认空字符串，release/systemd/deployment 未设 `CW_DAEMON_CODEGRAPH_DB_TEMPLATE`；即使手工设置，replicator 只 reload 外部 DB 不先 delta apply；`daemon_handle_refresh` 只更新 CAS/generation，**不写 `workspace_manifests`，不对 symbols/calls 执行 delta apply**（G8/G11 回退）。
+4. **admin ACL**（🟡 仅顶层闭合）：顶层 `ADMIN_ONLY_METHODS` + `is_admin` fail-closed 已闭合；**workspace 级 ACL 仍可绕过**——`snapshot.list_workspaces` 忽略 `_peer`，`mount.list` 暴露全局 path，`toolchain.resolve`/`build_context.list`/`resolved_edges.*` 使用调用方传入的 `workspace_id` 不校验 owner（G3/G4 回退）。
 
-证据：`server/agent_protocol.py:214-280`，`server/daemon_server.py:495-558, 776-883`，`rust_ext/src/daemon/workspace.rs:931-1110, 1290-1370`，`rust_ext/src/daemon/dispatch.rs:545-610`，`rust_ext/src/daemon/memfd.rs`，`rust_ext/src/daemon/replicator.rs:698-910`。
+**save-to-query 真实状态**：watcher refresh 写入 CAS/generation 后，没有把 delta 应用到 workspace manifest、查询 SQLite 或当前 GraphSnapshot。M4/M5/M6 虽已进入 refresh handler，但 `store=None` 退化模式，结果只写 staging JSON。G11 = ❌；G8/G9/M4-M6 = 🟡；J8/K4 = ❌。
 
-### P0 跨平台发布会产出空壳或在 CI 早期失败（✅ 已闭合，批次5/14 修复）
+证据：`server/agent_protocol.py:214-280`，`server/daemon_server.py:495-558, 776-883`，`rust_ext/src/daemon/workspace.rs:931-1110, 1290-1370`，`rust_ext/src/daemon/dispatch.rs:545-610`，`rust_ext/src/daemon/memfd.rs`，`rust_ext/src/daemon/replicator.rs:698-910`。复审报告：`docs/design/feature-matrix-code-reaudit-2026-07-21.md` §3 P0-1。
 
-原审计时四个子问题均未闭合，现已全部修复：
+### P0 跨平台发布会产出空壳或在 CI 早期失败（❌ 复审回退 2026-07-21）
 
-1. **wheel 空壳**（✅ 批次5 修复）：`release/build.py` 改为 fail-fast 校验 + 平台特定 wheel（非 `py3-none-any`）+ 验证 wheel 包含 `callwarden_core` Rust 扩展。
-2. **Linux 脚本空壳包 + RPM 虚假 TODO**（✅ 批次14 修复）：`release/linux/build_packages.sh:65-122` 5 处缺二进制路径从 `cp ... 2>/dev/null || echo "NOTE..."` 改为 fail-fast `exit 1`（避免空壳包）；RPM 章节（L216-225）从 "TODO: 生成 callwarden.spec" 改为明确 "deb-only release, RPM 不在发布范围"，移除虚假承诺。
-3. **入口名不一致**（✅ 批次14 修复）：`pyproject.toml` + `release/version.toml` 的 `[project.scripts]` / `[entry_points]` 从下划线 `cw_client/cw_agent/cw_daemon` 改为连字符 `cw-client/cw-agent/cw-daemon`，与 systemd unit / 打包脚本 / 文档 / `cli/*.py` docstring 一致；`release/windows/callwarden.wxs` 的 `cw_client.exe` 改为 `cw-client.exe`；`release/macos/build_pkg.sh` 8 处 `cw_client` 引用改为 `cw-client`；`tests/test_phase7_packaging.py` 断言改为连字符。
-4. **Release CI version key/parser 调用**（✅ 批次5 修复）：`.github/workflows/enterprise-release.yml` version key 修正为 `['product']` + parser 调用修正 + wheel 包含 Rust 扩展。
+批次5/14 修复仅覆盖 entry_points 连字符统一和 Linux fail-fast 错误处理，**真实 wheel 构建和平台包生成链不可执行**：
 
-证据：`release/build.py:39-75`，`release/linux/build_packages.sh:65-122, 216-225`，`pyproject.toml:54-58`，`release/version.toml:49-53`，`release/windows/callwarden.wxs:134-138`，`release/macos/build_pkg.sh:81, 147-156, 179-183, 248`，`tests/test_phase7_packaging.py:72-76`，`.github/workflows/enterprise-release.yml:70-75, 172-177`。
+1. **wheel 空壳**（❌ 复审回退）：真实运行 `python release/build.py --wheel` 失败（`--config-setting --build-option=--plat-name=win_amd64` 参数错误）；当前唯一 wheel 是 `release/dist/callwarden-0.3.0-py3-none-any.whl` 不含 `callwarden_core`。
+2. **Linux 脚本空壳包**（❌ 复审回退）：批次14 fail-fast 修复只是把 `|| true` 改成 `exit 1`。**Linux 包脚本依赖 `cw-daemon` 二进制，Cargo 只声明 `cw_daemon`（下划线），systemd unit 又执行 `cw_daemon`，三处命名不一致**。RPM 章节从 "TODO" 改为 "deb-only" 可保留。
+3. **入口名不一致**（✅ 批次14 修复，可保留）：`pyproject.toml` + `release/version.toml` 的 `[project.scripts]` 改为连字符 `cw-client/cw-agent/cw-daemon`，与 systemd unit / 打包脚本 / 文档 / `cli/*.py` docstring 一致。
+4. **Release CI version key/parser 调用**（❌ 复审回退）：version key 修正可保留，但 workflow 未实际运行过。WiX 引用 `cw.exe`/`cw-client.exe`/`runtime/python.exe` 但 workflow 不生成这些输入；macOS 脚本 `APPLE_*` 与 `CW_APPLE_*` 环境变量不一致，签名/公证被跳过；Linux offline bundle 调用参数顺序错误且带 `|| true`；workflow 上传的 `manifest.json` 路径与脚本产出不一致。
+5. **CLI `--version`**（❌ 复审新发现）：主 CLI 不支持 `cw --version`，Gate 3 的首个黑盒命令必失败（exit 2）。
 
-### P1 PR 检查 fail-open（✅ 已闭合，二轮评审修复）
+N3/N7/N8 回退至 ❌；H14 回退至 ❌。证据：`release/build.py:39-75`，`release/linux/build_packages.sh:65-122, 216-225`，`pyproject.toml:54-58`，`.github/workflows/enterprise-release.yml`。复审报告：`docs/design/feature-matrix-code-reaudit-2026-07-21.md` §3 P0-3。
 
-原 `PRChecker` 调用不存在的 DB 方法 `guardrail_check_edit`（实际为 `check_before_edit`）并吞掉异常；最后只查 `guardrail_findings`，不把本次 Semgrep findings 并入 SARIF。A19/A21 不能视为闭合。
+### P1 PR 检查 fail-open（🟡 复审回退 2026-07-21）
 
-修复（二轮评审 2026-07-20）：`cicd/pr_check.py` 改用 `check_before_edit` + 异常上浮 + Semgrep findings 合并进 SARIF `executionNotifications` 让 fail-visible；A19/A21 已标 ✅ 已修复。
+二轮评审修复只完成一半：`PRChecker` 改用 `check_before_edit` + 异常上浮，但 `passed` 仍未纳入 `run_errors`/`scan_complete`，`_query_open_findings` 只查 `guardrail_findings` 未合并 `semgrep_findings`，GitHub Action 只读取 `passed` 仍 exit 0。fail-open 未真正闭合。A19/A21 = 🟡。
 
-证据：`cicd/pr_check.py:66-91`、`:153-189`，`db/db_guardrail.py:221`。
+证据：`cicd/pr_check.py:66-91`、`:142-189`，`cicd/github_action.py`，`db/db_guardrail.py:221`。复审报告：`docs/design/feature-matrix-code-reaudit-2026-07-21.md` §4 P1-1。
 
 ### P1 文档包含危险且过时的运维建议（✅ 已闭合，批次12 修复）
 
@@ -86,14 +96,14 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | A11 | ✅ | Git history 和符号级变更入库已接线。 |
 | A12 | ✅ | Semgrep CLI 执行、JSON 解析、入库和 CLI/MCP 入口存在。 |
 | A13 | ✅ | findings 有唯一约束和 `INSERT OR IGNORE`。 |
-| A14 | ✅ | 批次12 修复（2026-07-20 二轮评审补全）：新增 `scan_semgrep_incremental()` 方法（`analyzers/issues.py`）：通过 `git diff --name-only` 取变更文件 → 调用 `run_semgrep` 扫描 → `save_semgrep_findings(scan_type='incremental', stale_file_ids=...)` 清理旧 findings + 关联 scan_id。schema v40 新增 `semgrep_findings.scan_id` 字段 + `idx_semgrep_scan_id` 索引，让 finding 可追溯到具体某次扫描。CLI 新增 `cw semgrep scan --incremental [--base main] [--head HEAD]`，MCP 新增 `scan_semgrep_incremental` 工具。`cicd/pr_check.py` 优先调用增量扫描，降级到 `run_semgrep_and_save`（向后兼容）。 |
+| A14 | 🟡 | 批次12 修复（2026-07-20 二轮评审补全）：新增 `scan_semgrep_incremental()` 方法（`analyzers/issues.py`）：通过 `git diff --name-only` 取变更文件 → 调用 `run_semgrep` 扫描 → `save_semgrep_findings(scan_type='incremental', stale_file_ids=...)` 清理旧 findings + 关联 scan_id。schema v40 新增 `semgrep_findings.scan_id` 字段 + `idx_semgrep_scan_id` 索引。CLI 新增 `cw semgrep scan --incremental [--base main] [--head HEAD]`，MCP 新增 `scan_semgrep_incremental` 工具。**复审回退（2026-07-21）**：增量扫描入口存在，但 git diff/删除及失败边界未闭合——`stale_file_ids` 清理只覆盖已知文件，删除的文件不会触发 finding 清理；scan 失败时 findings 已写入但 scan_id 无对应记录，留下孤儿 finding。 |
 | A15 | ✅ | 批次12 修复（2026-07-20 二轮评审补全）：接入 `pathspec` 库作为主路径，获得完整 gitignore 语义：字符类 `[abc]`/`[a-z]`/`[!abc]`、尾随空格保留（除非行末 `\` 转义）、目录剪枝后 negation 恢复（pathspec 内部 last-match-wins）、复杂 `**` 与 `/` 组合。pathspec 不可用时降级到自研实现（保留向后兼容，自研不支持字符类）。`pyproject.toml`/`requirements.txt`/`install.py` 均已加入 pathspec 核心依赖。 |
 | A16 | ✅ | `.callwardenignore` 加载、生成和 GC 共享 matcher 已接入。 |
 | A17 | ✅ | archive/restore/status/purge/retention 均有生产入口。 |
 | A18 | ✅ | full build 末尾调用 Young GC。 |
-| A19 | ✅ | 二轮评审修复（2026-07-20 P1）：SARIF exporter + GitHub Action 入口存在。P1 评审修复：`PRChecker` 改用 `check_before_edit` + `run_errors` 收集 + SARIF `executionNotifications` 让 fail-visible。 |
+| A19 | 🟡 | 二轮评审修复（2026-07-20 P1）：SARIF exporter + GitHub Action 入口存在，PRChecker 改用 `check_before_edit` + `run_errors` 收集 + SARIF `executionNotifications` 让 fail-visible。**复审回退（2026-07-21）**：`cicd/pr_check.py:142` 的 `passed = errors == 0` 未纳入 `run_errors`/`scan_complete`，`_query_open_findings` 只查 `guardrail_findings` 未合并 `semgrep_findings`，GitHub Action 只读取 `passed` 仍 exit 0。fail-open 未真正闭合。 |
 | A20 | ✅ | changed-file 分析和按文件 refresh 已实现。 |
-| A21 | ✅ | 二轮评审修复（2026-07-20 P1）：`pr_check.py` 原调用不存在的 `guardrail_check_edit` 且吞异常（fail-open），改为 `check_before_edit` + 异常上浮 + Semgrep findings 合并进 SARIF。 |
+| A21 | 🟡 | 二轮评审修复（2026-07-20 P1）：`pr_check.py` 改用 `check_before_edit` + 异常上浮。**复审回退（2026-07-21）**：`passed` 仍为 `errors == 0`，未纳入 `run_errors`/`scan_complete`，Semgrep findings 未合并为阻断结果，`cicd/github_action.py` 仍 exit 0。fail-open 未真正闭合。 |
 | A22 | ✅ | 原子写、LSP 路径/子进程限制、错误脱敏等生产代码存在。 |
 | A23 | 🟡 | 文件级并行存在（ThreadPoolExecutor），但主路径现为 Rust rayon pool + Python ProcessPoolExecutor，ThreadPool 主要是降级路径。矩阵描述已更新为 "Rust pool + ProcessPool + ThreadPool 降级"。状态保持 🟡 是因为矩阵描述本身仍需对齐（不是代码 bug，是文档描述过时）。 |
 | A24 | ✅ | WAL/cache/mmap PRAGMA 存在。 |
@@ -121,7 +131,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | D4 | ✅ | 相似函数查找已公开。 |
 | D5 | 🟡 | `ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，**不生成最终问答是设计决策**（Call Warden 是知识图谱工具，最终问答由外部 LLM/Agent 完成，避免重复实现 LLM 调用），非 bug。 |
 | D6 | ✅ | hover/definition/references/diagnostics/completion 和 MCP 转发存在。 |
-| D7 | ✅ | 批次5 修复（2026-07-20）：`db_cross_repo.py` `target_symbol_names` 字典从 `name→qualified_name` 改为 `name→(qualified_name, symbol_hash)` 元组，INSERT 的 `target_symbol_hash` 写入真实值，反向查询 `WHERE target_symbol_hash = ?` 可命中。原代码写空字符串导致永远无结果的 bug 已修复。 |
+| D7 | 🟡 | **复审回退（2026-07-21）**：批次5 仅修复 `target_symbol_hash` 空字符串问题。但跨仓库检测仍按 import 路径最后一段匹配任意同名符号，`Dict[name]` 会覆盖重名符号；`cross_repo_deps` 没有唯一约束，重复扫描持续追加记录。该算法只能算启发式候选，不能宣称影响传播已完整修复。 |
 | D8 | ✅ | 分支注册/切换/差异/合并 preview 入口存在。 |
 | E1 | ✅ | CODEOWNERS + blame 所有权路径存在。 |
 | E2 | ✅ | `who_to_ask` 已公开。 |
@@ -156,21 +166,21 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | F18 | ✅ | C/C++ 显式栈遍历和 third-party ignore 存在。 |
 | F19 | ✅ | 批次5 修复（2026-07-20 文档对齐）：`db_build.py:_detect_optimal_workers` 实现动态算法（非原矩阵描述的 `min(4,cpu_count)`）：综合 (1) CPU 核心数（留 1 核）、(2) 可用内存（每 worker 800MB + 保留 4GB）、(3) 数据规模因子（10K/50K/200K 文件阈值）、(4) 硬上限 8，返回 1-8 worker。避免 4 worker 模式下 32GB 宿主机崩溃。 |
 | F20 | ✅ | FTS5 -> Rust -> LIKE 路由顺序已进入 search path。 |
-| G1 | ✅ | 批次11 修复（P0-1）：CAS/toolchain/workspace 三层存在；全局 toolchain/build-context RPC 已加入 `ADMIN_ONLY_METHODS`（`toolchain.register`/`toolchain.delete`/`toolchain.bind`/`build_context.register`/`build_context.set_active`/`build_context.delete`），`is_admin` fail-closed 校验。原代码忽略 peer 的安全问题已闭合。 |
+| G1 | 🟡 | 批次11 修复（P0-1 顶层 admin ACL）：CAS/toolchain/workspace 三层存在；全局 toolchain/build-context RPC 已加入 `ADMIN_ONLY_METHODS`。**复审回退（2026-07-21）**：顶层 admin ACL 已闭合，但 workspace 级 ACL 仍有缺口（见 G3/G4）。 |
 | G2 | ✅ | Rust `cw_daemon` binary、UDS server、信号和 systemd notify 存在。 |
-| G3 | ✅ | 批次11 修复（P0-1）：SO_PEERCRED 和 workspace owner 过滤存在；运维/全局配置 RPC 已加入 `ADMIN_ONLY_METHODS` + `is_admin` fail-closed 校验（13 个运维方法：backup/restore/gc.cas/gc.snapshots/snapshot.evict/mount.*/toolchain.*/build_context.*）。真实双 UID 验收仍待真实环境验证（非代码 bug，是验收承诺）。 |
-| G4 | ✅ | 批次11 修复（P0-1）：registry 和 mount CRUD 存在；`mount.register`/`mount.delete` 已加入 `ADMIN_ONLY_METHODS`，`is_admin` fail-closed 校验。原 mount 全局可写无 admin ACL 的安全问题已闭合。 |
+| G3 | 🟡 | 批次11 修复（P0-1 顶层 admin ACL）：SO_PEERCRED + workspace owner 过滤 + `ADMIN_ONLY_METHODS`（13 个运维方法）。**复审回退（2026-07-21）**：workspace 级 ACL 仍有缺口——`snapshot.list_workspaces` 忽略 `_peer` 返回全部 workspace；`mount.list` 向普通用户暴露全局 host/container path；`toolchain.resolve`/`build_context.list`/`resolved_edges.*/store/get/count` 使用调用方传入的 `workspace_id`，未用 `peer_uid` 查 registry owner；`resolved_edges.store` 既不在 admin-only 列表也无 owner 校验，普通用户可写别人的 workspace。这是源码可见的授权缺口，非"只差真实双 UID 验收"。 |
+| G4 | 🟡 | 批次11 修复（P0-1 顶层 admin ACL）：`mount.register`/`mount.delete` 加入 `ADMIN_ONLY_METHODS`。**复审回退（2026-07-21）**：`mount.list` 仍向普通 socket 用户返回全局 host/container path 映射（见 G3）。 |
 | G5 | ✅ | Python/Rust 均以 7 参数 SHA-256 计算 CAS key。 |
 | G6 | ✅ | Rust CAS GC 使用 flock + transaction + pending refs。 |
 | G7 | ✅ | ArcSwap SnapshotManager、history 和 generation GC 存在。 |
-| G8 | ✅ | 批次3 修复（P0-2）：session/generation CAS 和 CAS publish 存在；agent payload 已修复兼容（hex/b64 字段双标准统一支持，见 P0 第 2 项）；refresh 后发布可查 snapshot（`codegraph_db_path_template` 配置后注入 `SnapshotCachePublisher`，触发 `publish_snapshot`）。 |
-| G9 | ✅ | AgentSession/Watcher/systemd unit 存在；hex/b64 协议已修复（批次3：Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058` 同时支持 hex/b64/FD/abs_path 四种路径）；包入口名不一致已修复（批次14：`pyproject.toml` + `release/version.toml` entry_points 从下划线 `cw_agent/cw_daemon/cw_client` 改为连字符 `cw-agent/cw-daemon/cw-client`，与 systemd unit / 打包脚本 / 文档 / `cli/*.py` docstring 一致）。 |
-| G10 | ✅ | memfd 已接入主路径：`server/agent_protocol.py:307-313` 使用 `create_sealed_memfd`；`server/daemon_server.py:798-802` 通过 `is_memfd` + `validate_memfd_fd` 四重校验；Rust 端 `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation`（类型/大小/容量/摘要校验，替代 `read_to_end`）。 |
-| G11 | ✅ | SnapshotCachePublisher 已接入主路径：`rust_ext/src/daemon/workspace.rs:1319-1335` `codegraph_db_path_template` 配置后 db_path 不为空，注入 `SnapshotCachePublisher`，触发 `publish_snapshot`；`replicator.rs:741-757` `SnapshotCachePublisher::publish_snapshot` 从 db_path 指向的 SQLite 加载符号 + 调用图 → 构建 GraphSnapshot → 发布到 SnapshotCache（per-workspace ArcSwap）。 |
+| G8 | 🟡 | 批次3 修复（P0-2 部分）：session/generation CAS 和 CAS publish 存在；agent payload hex/b64 字段双标准统一支持。**复审回退（2026-07-21）**：refresh 只更新 CAS/generation，未将 delta 应用到 workspace manifest、查询 SQLite 和当前 GraphSnapshot。`daemon_handle_refresh` 不写 `workspace_manifests`，replicator 合并 staging 后只 reload 外部 DB 不先 delta apply。save-to-query 链路未闭合。 |
+| G9 | 🟡 | 批次3/14 修复：hex/b64 协议 + 包入口名一致。**复审回退（2026-07-21）**：`cli/main.py:_agent_start` 先调用 `workspace.connect` 后才注册 workspace，全新 agent 无法连接；客户端 workspace_instance_id 算法（项目路径 hash）与 daemon 注册 ID 算法（owner/root/remote/commit hash）不一致。agent fresh start 协议不可用。 |
+| G10 | 🟡 | 批次3/7 修复（Python 路径）：`agent_protocol.py:307-313` 使用 `create_sealed_memfd`；`daemon_server.py:798-802` 通过 `is_memfd` + `validate_memfd_fd` 四重校验（seals/大小/hash/owner）。**复审回退（2026-07-21）**：Rust 端 `rust_ext/src/daemon/memfd.rs` 当前检查常规文件类型、大小、容量和可选 hash，**没有 `F_GET_SEALS`，也没有校验 FD owner 与 peer UID**。Python 和 Rust 两条实现安全等级不一致。 |
+| G11 | ❌ | 批次3 修复失败：`SnapshotCachePublisher::publish_snapshot` 从 `db_path` 加载 GraphStore → 发布 SnapshotCache。**复审回退（2026-07-21）**：`DaemonConfig.codegraph_db_path_template` 默认空字符串；release/systemd/deployment 未设置 `CW_DAEMON_CODEGRAPH_DB_TEMPLATE`。即使手工设置，replicator 只 reload 外部 DB 不先 delta apply；`daemon_handle_refresh` 只更新 CAS/generation，不写 `workspace_manifests`，不应用 delta 到 symbols/calls。save-to-query 链路完全断裂。 |
 | G12 | ✅ | Python/Rust JSONL staging log + fsync/atomic rewrite 存在并接入 refresh。 |
-| G13 | ✅ | `server/metrics.py` `MetricsCollector` + `measure_rpc` 上下文管理器已接入 daemon `_handle_connection()` 包裹 `dispatch()` 调用；`metrics.snapshot` / `metrics.prometheus` 两个只读 RPC 方法；CLI `cw daemon metrics` 默认走 RPC 拉 daemon 指标，`--local` 降级本进程直读。批次6 跨进程共享补全：`dump_to_file` / `load_from_file` + daemon `_metrics_sample_loop` 周期性 dump 到 `~/.callwarden/metrics_snapshot.json`；CLI `--from-file` 读取快照，daemon RPC 失败时自动降级。未实现 `/metrics` HTTP endpoint（daemon 是纯 UDS，外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露）。 |
-| G14 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 实例化 `HealthChecker(config=..., start_time=...)`；`health` RPC 调用 `HealthChecker.check_all()` 执行四项实际检查（db_registry / disk_space / memory_usage / uptime），合并 workspace_count / pid / uptime_seconds / registry_db / data_root 字段后返回。test_b3_python_daemon_wiring.py 5 测试覆盖。 |
-| G15 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 加载 `DaemonConfig`，新增 `run_startup_migrations` 参数（默认 True）调用 `_run_startup_migrations()` → `server.schema_migrator.migrate_daemon_dbs(self._config)` 对 registry.db / audit.db 执行版本化迁移；失败时只记录日志不阻止 daemon 启动。test_b3_python_daemon_wiring.py 6 测试覆盖。 |
+| G13 | 🟡 | 批次6 修复（Python daemon）：`server/metrics.py` `MetricsCollector` + `measure_rpc` + `metrics.snapshot`/`metrics.prometheus` RPC + CLI `cw daemon metrics`。**复审回退（2026-07-21）**：Python daemon 单例有指标，但 Linux systemd unit 启动的是 Rust `cw_daemon`，Rust daemon 无指标埋点。文档必须明确"Python daemon 已实现"还是"企业 system daemon 已实现"。当前 G13 只覆盖 Python daemon，Rust system daemon 未对齐。 |
+| G14 | 🟡 | 批次3 修复（Python daemon）：`daemon_server.py` `__init__` 实例化 `HealthChecker`，`health` RPC 调用 `check_all()` 执行四项检查。**复审回退（2026-07-21）**：同 G13，Python daemon 有 health check，但 Linux systemd 启动 Rust `cw_daemon`，Rust daemon RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查。Python 和 Rust 实现不对齐。 |
+| G15 | 🟡 | 批次3 修复：`daemon_server.py` `__init__` 加载 `DaemonConfig`，新增 `run_startup_migrations` 参数（默认 True）调用 `_run_startup_migrations()` → `server.schema_migrator.migrate_daemon_dbs(self._config)` 对 registry.db / audit.db 执行版本化迁移；失败时只记录日志不阻止 daemon 启动。test_b3_python_daemon_wiring.py 6 测试覆盖。**复审回退（2026-07-21）**：Python daemon 有版本化迁移，但 Linux systemd 启动 Rust `cw_daemon`，Rust 端只做 schema-check/init，不是版本化迁移。Python 和 Rust 实现不对齐。 |
 | G16 | ✅ | 批次11 修复：Rust `dispatch.rs:545-564` `ADMIN_ONLY_METHODS` + `is_admin` fail-closed 校验；Python `daemon_server.py:75-106` 同步 `ADMIN_ONLY_METHODS` frozenset + L526-544 `_is_admin_peer` 方法 + L550-558 dispatch 顶部 fail-closed 校验。backup/restore 已加入 ADMIN_ONLY_METHODS，restore 覆盖 registry 需要 admin 权限。 |
 | G17 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 实例化 `SnapshotGC(cfg=self._config, policy=GCPolicy(), snapshot_cache_evictor=self._evict_snapshot_cache)`，注册 `_evict_snapshot_cache` 回调驱逐已注销 workspace 的缓存。test_b3_python_daemon_wiring.py 3 测试覆盖。 |
 | G18 | ✅ | JobExecutor 有独立连接/线程池，已被 MCP 和 async diff 路径调用。 |
@@ -184,7 +194,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | G26 | ✅ | remote RPC -> local SnapshotManager -> SQL 降级路径存在。 |
 | G27 | ✅ | 五类 diff 和 snapshot ensure 路径存在。 |
 | G28 | ✅ | SnapshotManagerService 查询方法存在。 |
-| G29 | ✅ | 批次3 修复：`rust_ext/src/daemon/budget.rs` 新增 `QueryBudget` 结构体（max_depth + max_nodes + timeout_ms）+ `BudgetTracker` 运行时计数器（visit_node + is_exceeded + is_partial）；`frontier.rs` `AffectedFrontier` 新增 `partial` 字段；`FrontierComputer` 新增 `compute_frontier_with_budget()` 方法 + `bfs_upstream_with_budget` / `bfs_downstream_with_budget`（每节点检查预算，超限返回部分结果 partial=true）；Python 接口 `compute_frontier_with_budget(max_depth, max_nodes, timeout_ms)` + `partial` getter；8 单元测试覆盖。 |
+| G29 | 🟡 | 批次3 修复：`rust_ext/src/daemon/budget.rs` 新增 `QueryBudget` 结构体（max_depth + max_nodes + timeout_ms）+ `BudgetTracker` 运行时计数器（visit_node + is_exceeded + is_partial）；`frontier.rs` `AffectedFrontier` 新增 `partial` 字段；`FrontierComputer` 新增 `compute_frontier_with_budget()` 方法 + `bfs_upstream_with_budget` / `bfs_downstream_with_budget`（每节点检查预算，超限返回部分结果 partial=true）；Python 接口 `compute_frontier_with_budget(max_depth, max_nodes, timeout_ms)` + `partial` getter；8 单元测试覆盖。**复审回退（2026-07-21）**：`QueryBudget` 只接入 `FrontierComputer::compute_frontier_with_budget`。常用 daemon query（search、callers/callees、call-chain、topological、cycle 等）没有统一 max-results/max-depth/timeout/truncate 执行器。G29 当前标题范围过大。 |
 | G30 | ✅ | batch mark 单次原子 rewrite 存在。 |
 | G31 | ✅ | compact 以 status 过滤。 |
 | G32 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 实例化 `SnapshotGC`，`_start_background_tasks()` 启动 `cw-snapshot-gc` 后台线程定期调用 `run_gc()`（默认 6 小时间隔，常量 `DEFAULT_SNAPSHOT_GC_INTERVAL_SEC`），`_snapshot_gc_loop` 执行 mark→sweep 并记录 marked/swept/bytes/duration_ms 指标。test_b3_python_daemon_wiring.py 5 测试覆盖。 |
@@ -207,7 +217,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | H11 | ✅ | clone-aware impact DB 方法和 MCP 存在；矩阵 L-a 仍误写“未实现”。 |
 | H12 | 🟡 | 三个 Git hook 存在，但没有独立的 AI CLI/IDE 扩展；标题过度扩大。 |
 | H13 | 🟡 | 批次5 文档对齐：矩阵标题原为"15 种语言开源项目测试"已修正为"16 语言测试矩阵（synthetic fixtures + 部分真实开源项目）"。`tests/fixtures/realworld_repos.json` 列出 16 语言 × 2 = 32 个真实开源项目清单 + `clone_realworld_repos.ps1` 克隆脚本；`matrix_summary.md` 声明 2026-07-16 执行 32 项目 × 16 语言 100% 通过；`testcode/repos/` 实际克隆部分项目（vapor/linux 等）。状态保持 🟡 是因为未完成清单中全部 32 个项目克隆 + Matrix 1-4 部分维度仍依赖 synthetic fixtures，非代码 bug，是验收范围承诺。 |
-| H14 | 🟡 | 批次5/14 部分修复：P0-3 wheel 空壳 + entry_points 不一致 + Linux fail-fast 已闭合；N5 WiX MSI / N6 macOS pkg / N7 Linux deb 仍只有 XML/脚本未实际构建产物。状态从 ❌ 改为 🟡 是因为发布链路基础设施已修复，但实际打包产物未生成（非代码 bug，是发布流程承诺）。 |
+| H14 | ❌ | **复审回退（2026-07-21）**：旧审计把不可执行的发布脚本升为 🟡，本轮真实运行 `python release/build.py --wheel` 失败（`--config-setting --build-option=--plat-name=win_amd64` 参数错误）。Linux 包脚本依赖的 `cw-daemon` 二进制 cargo 未声明；`release/build.py` 不生成 `dist/linux/cw`、`cw-client`、`cw-agent`、`cw-daemon`；主 CLI 不支持 `cw --version`，Gate 3 必失败；WiX 引用 `cw.exe`/`cw-client.exe`/`runtime/python.exe` 但 workflow 不生成。N5/N6/N7 产物生成链完全不可执行，回到 ❌。 |
 | H15 | ⚪ | 原矩阵已标“未实施”，不列入虚假完成项。 |
 | H16 | ✅ | jobs table + worker pool + handler 形成可用的生产者-消费者。 |
 | H17 | ✅ | callers/callees snapshot diff 已在 MCP/client 公开。 |
@@ -217,23 +227,23 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 
 | ID | 结论 | 代码/文档核验 |
 |---|---|---|
-| I1 | ✅ | 批次12 修复：IS/RM/MCT/ARC 头部已统一为 205 MCP / v40 Schema / 33 Mixin 类（39 db_*.py 文件）。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档。 |
-| I2 | ✅ | 批次12 修复 + D7 已修复：D7 跨仓库 `target_symbol_hash` 已修复（`db_cross_repo.py` 从 `name→qualified_name` 改为 `name→(qualified_name, symbol_hash)` 元组，INSERT 写入真实 hash），竞品文档 D7 标 ✅ 与代码故障不再冲突。 |
-| I3 | ✅ | 批次12 修复：`callwarden_USER_GUIDE.md` 头部已统一为 "v40 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类（39 db_*.py）"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等"；Q2 已删除"删除 callwarden.db 重建"危险建议。 |
-| I4 | ✅ | 批次12 + G13 批次6 修复：`implementation-status.md` L269 Prometheus 已标 "✅ 已实现 G13（2026-07-20 二轮评审补全）"，daemon `_handle_connection()` 接入 `measure_rpc` + `metrics.snapshot`/`metrics.prometheus` RPC + CLI `cw daemon metrics`；代码层 daemon metrics 已闭合。 |
+| I1 | ❌ | **复审回退（2026-07-21）**：源码实算 206 MCP / 35 功能 Mixin（另有 `CodeGraphBase`）/ 39 db_*.py / v40 / 16 语言。旧审计同步文档至 205/33/40 与源码不符。I1 不能视为闭合，需统一至 206/35/39。 |
+| I2 | 🟡 | 批次12 修复 + D7 部分修复：D7 跨仓库 `target_symbol_hash` 空字符串问题已修复（见 D7），但跨仓库检测仍按 import 尾段匹配同名符号，`Dict[name]` 覆盖重名，`cross_repo_deps` 无唯一约束。竞品文档 D7 标 ✅ 与代码故障"部分修复"状态仍冲突。 |
+| I3 | ❌ | **复审回退（2026-07-21）**：USER_GUIDE 头部 "v40 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类" 与源码实算 206/35 不符。Q2 删除"删除 callwarden.db 重建"危险建议这一修复可保留，但计数仍错误。 |
+| I4 | 🟡 | 批次12 + G13 批次6 修复（Python daemon）：`implementation-status.md` L269 Prometheus 已标 "✅ 已实现 G13（2026-07-20 二轮评审补全）"，daemon `_handle_connection()` 接入 `measure_rpc` + `metrics.snapshot`/`metrics.prometheus` RPC + CLI `cw daemon metrics`。**复审回退（2026-07-21）**：Python daemon 有指标，但 Linux systemd unit 启动 Rust `cw_daemon`，Rust daemon 无指标埋点。Python 和 Rust system daemon 能力不对齐。 |
 | I5 | ✅ | TokenSavings 能力描述和 Mixin 索引是两个视角，非重复冲突。 |
 | I6 | ✅ | 根 README 已改为用户级单库并标注旧多库迁移。 |
-| I7 | ✅ | 批次12 修复 + D7 已修复：建议文字已撤销 + D7 影响传播已修复（见 I2）。 |
+| I7 | 🟡 | 批次12 修复（建议文字已撤销） + D7 部分修复：见 I2。 |
 | I8 | ✅ | 文档仍明确不集成 ast-grep，与代码一致。 |
-| I9 | ✅ | 批次12 修复：architecture.md 表格行数=40（含 db_base.py 基类 + 3 个 analyzers Mixin），与标题声明数 40 一致；L49 已写 "39 个文件"；L380 db.py 组合注释仍写 "共 33 个 Mixin"（test_33_mixin_present 覆盖）。40 与 33 是两个视角：表格行数 vs db.py 组合的 Mixin 数。 |
+| I9 | ❌ | **复审回退（2026-07-21）**：源码实算 35 功能 Mixin（`db/db.py` 实际继承列表）+ `CodeGraphBase`。文档用 33（"组合的 Mixin 数"）/40（"表格行数"）两种口径解释 35 是绕开问题，没有把 35 作为单一真相。`test_33_mixin_present` 测试锁定 33 反而阻止修正。 |
 | I10 | ✅ | architecture 当前已进一步更新到 v40。 |
-| I11 | ✅ | 批次12 修复：CONTRIBUTING.md L12 已同步为 "33 个 Mixin 类（39 个 db_*.py 文件 + schema）"。 |
-| I12 | ✅ | 根 README/docs README 的 MCP 数为 205。 |
-| I13 | ✅ | mcp_tools 头部为 205，且已解释 179 分类合计的差异。 |
+| I11 | ❌ | **复审回退（2026-07-21）**：CONTRIBUTING.md "33 个 Mixin 类" 与源码 35 不符。需统一至 35。 |
+| I12 | ❌ | **复审回退（2026-07-21）**：README MCP 数 205 与源码 206 不符。需统一至 206。 |
+| I13 | ❌ | **复审回退（2026-07-21）**：mcp_tools.md 头部 205 与源码 206 不符。需统一至 206。 |
 | I14 | ✅ | 旧 gap analysis 已移入 history 并标注过时。 |
-| I15 | ✅ | 批次12 修复：naming-analysis-report.md L148 已同步为 "33 个 Mixin 组装架构"。 |
-| I16 | ✅ | 批次16 修复：history/README.md L41 演化轨迹已更新为 "v40 (当前) + A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引 / 16 语言 / 205 MCP / 33 Mixin 类（39 db_*.py 文件） / 用户级单库"；旧 v37/204/40 写为"当前"已撤销。 |
-| I17 | ✅ | 批次12 + 批次16 修复：Schema 版本同步 v37→v40 完成；architecture.md / implementation-status.md / _health_check_report.md / README.md / USER_GUIDE.md / mcp_tools.md / _feature_matrix.md / history/README.md 全部统一为 205 MCP / v40 Schema / 33 Mixin 类。204 工具冲突已全部消除。 |
+| I15 | ❌ | **复审回退（2026-07-21）**：naming-analysis-report.md L148 "33 个 Mixin 组装架构" 与源码 35 不符。需统一至 35。 |
+| I16 | ❌ | **复审回退（2026-07-21）**：history/README.md L41 演化轨迹仍写 "205 MCP / 33 Mixin 类"。需统一至 206/35。 |
+| I17 | ❌ | **复审回退（2026-07-21）**：Schema v37→v40 同步可保留，但 205/33 与源码 206/35 仍冲突。"全部统一为 205/33"声明为假。 |
 | J1 | ✅ | MinHash/LSH 代码存在。 |
 | J2 | ✅ | FTS5 + triggers + rebuild 存在。 |
 | J3 | ✅ | completion review 存在。 |
@@ -241,12 +251,12 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | J5 | ✅ | active rules 注入 `task_next_step`。 |
 | J6 | ✅ | bootstrap scan baseline 存在。 |
 | J7 | ✅ | GraphStore/Snapshot/multi-lang/canonicalize 确实在多条生产路径使用 Rust。 |
-| J8 | ✅ | hex/b64、memfd、snapshot publish 和 admin ACL 均已闭合（见 P0 第 2 项修复详情）。批次3/7/11 修复：hex/b64 字段双标准统一支持（Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058`）；memfd 协议接入主路径（`agent_protocol.py:307-313` create_sealed_memfd + `daemon_server.py:798-802` is_memfd + validate_memfd_fd）；snapshot publish 接入主路径（`workspace.rs:1319-1335` codegraph_db_path_template + 注入 SnapshotCachePublisher）；admin ACL fail-closed 校验（Rust `dispatch.rs:545-610` + Python `daemon_server.py:75-106, 526-558`）。 |
+| J8 | ❌ | **复审回退（2026-07-21）**：旧审计声明 hex/b64、memfd、snapshot publish、admin ACL "均已闭合"与源码不符。实际：(1) Rust `memfd.rs` 无 `F_GET_SEALS` 也无 owner UID 校验（见 G10）；(2) `daemon_handle_refresh` 只更新 CAS/generation，未写 `workspace_manifests` 也未对 symbols/calls 执行 delta apply（见 G8/G11）；(3) `codegraph_db_path_template` 默认空，release/systemd/deployment 未设 `CW_DAEMON_CODEGRAPH_DB_TEMPLATE`（见 G11）。端到端协议链未真正闭合。 |
 | J9 | ✅ | clone-aware impact 已接入 DB/MCP。 |
 | K1 | ✅ | 内部 parse/publish 在拿到 canonical bytes 时复用同一份 bytes。 |
 | K2 | ✅ | 批次7 修复（2026-07-20）：`canonical_bytes is None` 时 daemon 从 `msg.abs_path` 读取客户端文件的路径已加双重校验：(1) owner UID 匹配（`_validate_owned_path` / `validate_owned_path` 校验文件 owner == peer_uid，防跨用户攻击）；(2) path 必须落在 workspace `host_real_root` 内（`os.path.realpath` 比对，防路径逃逸）。Python 端 `daemon_server.py:884-899` + Rust 端 `workspace.rs:1060-1081` 同步实现，违反时抛 `path_escape` DaemonRpcError。 |
 | K3 | ✅ | `parse_canonical_bytes_py` 已导出和注册。 |
-| K4 | ✅ | dispatch 已调用 refresh/staging/replicate，请求字段错配已修复（hex/b64 统一支持）、snapshot 已发布（codegraph_db_path_template + SnapshotCachePublisher 注入）。端到端协议链路已闭合（见 P0 第 2 项修复详情）。 |
+| K4 | ❌ | **复审回退（2026-07-21）**：旧审计声明 "端到端协议链路已闭合" 与源码不符。`dispatch.rs` 调用 refresh/staging/replicate 但 `codegraph_db_path_template` 默认空导致 `SnapshotCachePublisher` 不注入；replicator 只 reload 外部 DB 不先 delta apply；`daemon_handle_refresh` 不写 `workspace_manifests`。数据发布链完全断裂（见 G8/G11/J8）。 |
 | K5 | ⚪ | 原矩阵仍标记未统一，不列入虚假完成项。 |
 | K6 | ✅ | generation DDL 已提取共享。 |
 | L1 | 🟡 | optional task validation/context 存在，但不“强制关联”，无 task_id 时照常写入。 |
@@ -273,21 +283,21 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | M1 | ✅ | Rust SO_PEERCRED 实现并被 UDS server 调用。 |
 | M2 | ✅ | BOM/编码/换行规范化和 SHA-256 已进入 daemon refresh。 |
 | M3 | ✅ | CSR/SymbolTable/FxHashMap/Pod 结构已被 GraphStore/Snapshot 使用。 |
-| M4 | 🟡 | delta 模块和 PyO3 导出存在，无生产调用方；当前 refresh 未生成 ParseDelta。 |
-| M5 | 🟡 | frontier 模块存在，无生产调用方。 |
-| M6 | 🟡 | local metrics 更新模块存在，无生产调用方。 |
+| M4 | 🟡 | **复审回退（2026-07-21）**：delta 模块已进入 refresh handler 调用路径，但源码明确使用 `store=None` 退化模式，结果只写 staging JSON，未应用到 GraphSnapshot。 |
+| M5 | 🟡 | **复审回退（2026-07-21）**：frontier 模块已进入 refresh handler 调用路径，但 frontier 没有 upstream/downstream，结果只写 staging JSON，未应用到 GraphSnapshot。 |
+| M6 | 🟡 | **复审回退（2026-07-21）**：local metrics 更新模块已进入 refresh handler 调用路径，但 metrics 没有旧图对比，结果只写 staging JSON，未应用到 GraphSnapshot。 |
 | M7 | ✅ | snapshot diff 路径调用 Rust diff 模块。 |
-| M8 | 🟡 | Rust notify watcher 和 PyO3 类存在，CLI/agent 当前使用 Python watchdog watcher。 |
+| M8 | ✅ | 复审确认真实修复（2026-07-21）：本地 `cw --watch` 已优先使用 Rust `PyDebouncedFileWatcher`（`server/watcher.py`），watchdog 为 fallback。Enterprise agent 仍走 watchdog 路径，但本地路径 Rust-first 已闭合。 |
 | M9 | ✅ | single/batch/pool multi-lang parse 已进入 build 主路径。 |
 | M10 | 🟡 | `cw_daemon` 独立 binary 和同 crate PyO3 cdylib/rlib 存在；“daemon binary + PyO3 绑定”表述不准确。 |
 | N1 | ✅ | `version.toml` 为 0.3.0，ABI/平台/角色字段存在。 |
 | N2 | ✅ | `version_sync.py` 实跑通过 Python/Cargo/__init__ 一致性。 |
-| N3 | 🟡 | 批次5 修复（P0-3）：`release/build.py` 原 `py3-none-any` wheel 不含 Rust 扩展已修复为 fail-fast 校验 + 平台特定 wheel + 验证 wheel 包含 `callwarden_core` Rust 扩展。状态保持 🟡 是因为 wheel 未打包 daemon/角色二进制（仅 Python 扩展），artifact-manifest.json 仍待落地。 |
+| N3 | ❌ | **复审回退（2026-07-21）**：真实运行 `python release/build.py --wheel` 失败（`--config-setting --build-option=--plat-name=win_amd64` 参数错误）。当前唯一 wheel 是 `release/dist/callwarden-0.3.0-py3-none-any.whl` 不含 `callwarden_core`。CI 先在 `rust_ext/target` 构建，但 `release/build.py --wheel` 要求根目录已存在 `.pyd/.so`；干净 runner 不会自动复制，Gate 2 会更早失败。`release/build.py` 不生成 `dist/linux/cw`、`cw-client`、`cw-agent`、`cw-daemon`。wheel 构建链实际不可执行。 |
 | N4 | 🟡 | 分层加载器实现存在，没有 Python CLI/daemon 生产 import。 |
 | N5 | ❌ | WiX 只有未编译 XML，引用的 Windows 输入产物不存在，Authenticode 仅注释命令。 |
 | N6 | ❌ | macOS 脚本未在 macOS 构建/签名/公证，缺入口时会生成 placeholder。 |
-| N7 | 🟡 | 批次14 修复：(1) 5 处缺二进制路径从 `cp ... 2>/dev/null || echo "NOTE..."` 改为 fail-fast `exit 1`（避免空壳包）；(2) RPM 章节从 "TODO: 生成 callwarden.spec" 改为明确 "deb-only release, RPM 不在发布范围"，移除虚假承诺。deb 5 子包 + offline tar.zst bundle 脚本完整（`release/linux/build_packages.sh`），但未在 Linux 环境实际构建过成品。状态保持 🟡 是因为实际打包产物未生成（发布流程承诺，非代码 bug）。 |
-| N8 | 🟡 | 批次5 修复（P0-3）：`enterprise-release.yml` version key 修正为 `['product']` + parser 调用修正 + wheel 包含 Rust 扩展。状态保持 🟡 是因为 Workflow 未实际运行过，WiX 输入仍不匹配（依赖 N5 落地），MSI/PKG/DEB 产物仍待 N5/N6/N7 落地后才能完整通过 11 门禁。 |
+| N7 | ❌ | **复审回退（2026-07-21）**：批次14 fail-fast 修复只是把 `|| true` 改成 `exit 1`，让缺二进制时早失败。但 Linux 包脚本依赖 `cw-daemon` 二进制，Cargo 只声明 `cw_daemon`（下划线），systemd unit 又执行 `cw_daemon`。Cargo/脚本/unit 三处命名不一致，且 cargo 不生成 `cw-daemon`。Linux 打包链实际不可执行。 |
+| N8 | ❌ | **复审回退（2026-07-21）**：`enterprise-release.yml` version key 修正可保留，但 workflow 未实际运行过。WiX 引用 `cw.exe`/`cw-client.exe`/`runtime/python.exe` 但 workflow 不生成这些输入；macOS 脚本 `APPLE_*` 环境变量与脚本读取的 `CW_APPLE_*` 不一致，签名/公证被跳过；Linux offline bundle 调用参数顺序错误且带 `|| true`；workflow 上传的 `manifest.json` 路径与脚本产出不一致。Release CI 链不可执行。 |
 
 ## 实算基线
 
