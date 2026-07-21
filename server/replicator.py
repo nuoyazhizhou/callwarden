@@ -136,30 +136,40 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
                           ws_conn: sqlite3.Connection,
                           cas_conn: Optional[sqlite3.Connection] = None,
                           canonical_bytes: Optional[bytes] = None,
-                          workspace_root: str = "") -> dict:
-    """处理 agent refresh 消息——session epoch 校验 + 两阶段 CAS。
+                          workspace_root: str = "",
+                          codegraph_db_path: str = "",
+                          workspace_root_path: str = "") -> dict:
+    """处理 agent refresh 消息——session epoch 校验 + 两阶段 CAS + P0-1 save-to-query merge。
 
     规范：watcher-generation-state-machine.md §4.3
     规范：daemon-ipc-security.md §3.2（daemon 不信任 agent 提供的 hash）
     规范：parse-input-abi.md §2（canonicalize_source 是唯一输入入口）
     修复 T-1783751525743-7c76
     修复 T-1783952125417-7a09（消除 TOCTOU + 禁止读客户端 abs_path）
+    修复 T-1784644413771-8f1a2d37（P0-1 save-to-query 数据链闭合 2026-07-21）
 
     完整管道：
     1. session epoch 校验（拒绝 stale session）
     2. CAS 第一阶段（seen）——原子更新 latest_seen_generation
     3. daemon 侧 canonical bytes 解析（或 re-canonicalize + re-hash + Rust parse + CAS publish）
     4. CAS 第二阶段（committed）——条件更新 latest_committed_generation
+    5. **P0-1 整改**：CAS committed 后，把 CAS 中的解析结果 merge 到主 CodeGraph DB
+       （file_instances / symbols / calls），并 upsert workspace_manifests。
+       任一步失败不得 mark staging applied——抛异常让上层 staging entry 不追加。
 
     Args:
         peer_uid: agent 的 peer UID
-        workspace_id: workspace ID
+        workspace_id: workspace ID（数字主键，与 daemon_workspaces.workspace_id 对应）
         msg: agent 消息，需包含 rel_path/agent_session_id/monotonic_seq/session_epoch
-        ws_conn: workspace 数据库连接
+        ws_conn: workspace 数据库连接（含 workspace_active_session / file_generations /
+                 workspace_manifests 表）
         cas_conn: CAS 数据库连接（若为 None 则跳过 CAS publish，仅做 generation CAS）
         canonical_bytes: 来自 UDS bytes frame 或 FD 的规范化文件内容（优先使用）；
                          为 None 时降级为从 abs_path 读取（仅用于兼容旧路径）
         workspace_root: workspace 根路径（仅在 canonical_bytes 为 None 时使用）
+        codegraph_db_path: 主 CodeGraph DB 路径（如 ~/.callwarden/callwarden.db）；
+                          非空时触发 P0-1 merge 步骤（断点 B 修复）
+        workspace_root_path: workspace 根路径（用于 workspaces.root_path 字段）
 
     Returns:
         {"status": "committed"/"stale_seq_dropped", "generation": str, ...}
@@ -264,9 +274,127 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
             pass
         raise
 
+    # 5. P0-1 整改（2026-07-21）：CAS → CodeGraph DB merge + workspace_manifests 接入
+    # 复审报告 §3 P0-1 / §8.1 第 1 条：建立真实 save-to-query 数据链。
+    # 断点 B 修复：把 CAS 中的 cas_symbols / cas_raw_calls merge 到主 CodeGraph DB
+    # 的 file_instances / symbols / calls 表，让 publish_snapshot 加载到新数据。
+    # 断点 A 修复：upsert workspace_manifests，让 daemon 能回答"当前 workspace 有哪些文件"。
+    # 失败语义：任一步失败抛异常，上层 daemon_server.py 不会追加 staging entry，
+    # 不标 applied（满足 §8.1 "任一步失败不得 mark staging applied"）。
+    merge_result = None
+    if cas_result and cas_result.get("cas_state") in ("ready_published", "ready_cache_hit"):
+        cas_key = cas_result.get("cas_key", "")
+        content_hash_for_merge = cas_result.get("content_hash", "")
+
+        # 5a. merge 到 CodeGraph DB（断点 B 修复）
+        if codegraph_db_path and cas_key:
+            try:
+                from callwarden.db.db_cas_merge import merge_cas_to_codegraph
+                # 打开 CodeGraph DB 连接（用户级单库，schema 假设已初始化）
+                # WAL 模式下与 CLI/MCP 并发安全（AGENTS.md 规则 2）
+                cg_conn = sqlite3.connect(codegraph_db_path, timeout=10.0)
+                cg_conn.row_factory = sqlite3.Row
+                try:
+                    # 检测 schema 是否初始化（查 file_instances 表是否存在）
+                    try:
+                        cg_conn.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_instances'"
+                        ).fetchone()
+                    except sqlite3.OperationalError:
+                        # schema 未初始化——跳过 merge（不打断 refresh 主流程）
+                        logger.warning(
+                            "CodeGraph DB schema 未初始化（file_instances 表不存在），"
+                            "跳过 P0-1 merge：db=%s", codegraph_db_path
+                        )
+                        cg_conn.close()
+                        cg_conn = None
+
+                    if cg_conn is not None:
+                        # 推断 abs_path 和 language
+                        abs_path_for_merge = msg.get("abs_path") or _join_path(
+                            workspace_root, rel_path
+                        )
+                        language_for_merge = ""
+                        try:
+                            from config import detect_language_from_path
+                            language_for_merge = detect_language_from_path(rel_path) or ""
+                        except ImportError:
+                            pass
+
+                        merge_result = merge_cas_to_codegraph(
+                            cas_conn=cas_conn,
+                            codegraph_conn=cg_conn,
+                            cas_key=cas_key,
+                            workspace_id=workspace_id,
+                            rel_path=rel_path,
+                            abs_path=abs_path_for_merge,
+                            content_hash=content_hash_for_merge,
+                            language=language_for_merge,
+                            workspace_root_path=workspace_root_path,
+                        )
+                        logger.info(
+                            "P0-1 merge done: cas_key=%s ws=%d file_instance=%d "
+                            "symbols=%d calls=%d status=%s",
+                            cas_key, workspace_id,
+                            merge_result.get("file_instance_id", 0),
+                            merge_result.get("symbols_inserted", 0),
+                            merge_result.get("calls_inserted", 0),
+                            merge_result.get("merge_status", ""),
+                        )
+                finally:
+                    try:
+                        cg_conn.close()
+                    except Exception:
+                        pass
+            except Exception as e:
+                # merge 失败——抛异常让上层不追加 staging entry
+                logger.error(
+                    "P0-1 merge failed (cas_key=%s, ws=%d): %s",
+                    cas_key, workspace_id, e,
+                )
+                raise ProtocolError(
+                    f"CAS merge to CodeGraph DB failed: {e}",
+                    code="cas_merge_failed",
+                )
+
+        # 5b. upsert workspace_manifests（断点 A 修复）
+        # ws_conn 已含 workspace_manifests 表（init_session_schema 已初始化）
+        try:
+            from callwarden.db.db_workspace_manifest import upsert_manifest
+            # 检测表是否存在（首次使用可能未初始化）
+            manifest_check = ws_conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='workspace_manifests'"
+            ).fetchone()
+            if manifest_check is None:
+                # 延迟初始化 manifest schema
+                from callwarden.db.db_workspace_manifest import init_manifest_schema
+                init_manifest_schema(ws_conn)
+
+            upsert_manifest(
+                conn=ws_conn,
+                workspace_id=workspace_id,
+                rel_path=rel_path,
+                content_hash=content_hash_for_merge,
+                cas_key=cas_key,
+                file_size=len(canonical_bytes) if canonical_bytes else 0,
+                is_dirty=True,
+            )
+        except Exception as e:
+            # manifest 失败——抛异常让上层不追加 staging entry
+            logger.error(
+                "P0-1 upsert_manifest failed (ws=%d, rel_path=%s): %s",
+                workspace_id, rel_path, e,
+            )
+            raise ProtocolError(
+                f"upsert_manifest failed: {e}",
+                code="manifest_upsert_failed",
+            )
+
     result = {"status": "committed", "generation": incoming_gen}
     if cas_result:
         result.update(cas_result)
+    if merge_result:
+        result["merge"] = merge_result
     return result
 
 

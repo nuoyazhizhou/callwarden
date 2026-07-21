@@ -621,7 +621,11 @@ class EnterpriseDaemonService:
             workspace_id = str(params.get("workspace_instance_id") or "")
             if not workspace_id:
                 raise DaemonRpcError("invalid_params", "缺少 workspace_instance_id")
-            self._owned_workspace(uid, workspace_id)
+            # P0-1 整改（2026-07-21）：保存 workspace row，用数字主键
+            # workspace_id（daemon_workspaces.workspace_id INTEGER PRIMARY KEY）
+            # 而非 hash 字符串传给 daemon_handle_connect（与 workspace_active_session
+            # 表的 INTEGER workspace_id 字段类型匹配）。
+            workspace = self._owned_workspace(uid, workspace_id)
             session_id = str(params.get("agent_session_id") or "")
             if not session_id:
                 raise DaemonRpcError("invalid_params", "缺少 agent_session_id")
@@ -630,7 +634,7 @@ class EnterpriseDaemonService:
             try:
                 result = daemon_handle_connect(
                     peer_uid=uid,
-                    workspace_id=int(workspace_id),
+                    workspace_id=int(workspace["workspace_id"]),
                     requested_session_id=session_id,
                     ws_conn=res["ws_conn"],
                 )
@@ -936,14 +940,26 @@ class EnterpriseDaemonService:
                                 f"abs_path 不在 workspace host_real_root 内：{real_abs}",
                             )
             # 调用 daemon_handle_refresh
+            # P0-1 修复（2026-07-21）：原 int(workspace_id) 把 16 位 hash 字符串转 int
+            # 必抛 ValueError，导致 workspace.file.refresh 从未成功执行过。
+            # 改为从 workspace row 取数字主键 workspace_id（daemon_workspaces 表
+            # INTEGER PRIMARY KEY AUTOINCREMENT），与 file_generations /
+            # workspace_active_session 表的 INTEGER workspace_id 字段类型匹配。
+            # StagingEntry.workspace_id 仍用 hash 字符串（与 Replicator 缓存 key
+            # 一致），不受影响。
             try:
                 result = daemon_handle_refresh(
                     peer_uid=uid,
-                    workspace_id=int(workspace_id),
+                    workspace_id=int(workspace["workspace_id"]),
                     msg=params,
                     ws_conn=res["ws_conn"],
                     cas_conn=res["cas_conn"],
                     canonical_bytes=canonical_bytes,
+                    # P0-1 整改（2026-07-21）：传入 codegraph_db_path 触发
+                    # CAS → CodeGraph DB merge（断点 B 修复），让 publish_snapshot
+                    # 加载到新文件符号。workspace_root_path 用于 workspaces.root_path。
+                    codegraph_db_path=res.get("codegraph_db_path", ""),
+                    workspace_root_path=str(workspace.get("host_real_root") or ""),
                 )
                 # 成功后追加 staging entry 并 replicate
                 if result.get("status") == "committed":

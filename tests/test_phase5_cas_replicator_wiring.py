@@ -730,6 +730,9 @@ class TestBatch9FileRefreshPassesDbPath:
             service, "_owned_workspace",
             lambda peer_uid, workspace_id: {
                 "workspace_instance_id": workspace_id,
+                # P0-1 整改（2026-07-21）：dispatch 用 int(workspace["workspace_id"])
+                # 取数字主键传给 daemon_handle_refresh，mock 必须提供此字段
+                "workspace_id": int(workspace_id) if str(workspace_id).isdigit() else 12345,
                 "owner_uid": peer_uid,
                 "host_real_root": "/test/root",
                 "status": "active",
@@ -819,6 +822,9 @@ class TestBatch9FileRefreshPassesDbPath:
             service, "_owned_workspace",
             lambda peer_uid, workspace_id: {
                 "workspace_instance_id": workspace_id,
+                # P0-1 整改（2026-07-21）：dispatch 用 int(workspace["workspace_id"])
+                # 取数字主键传给 daemon_handle_refresh，mock 必须提供此字段
+                "workspace_id": int(workspace_id) if str(workspace_id).isdigit() else 12345,
                 "owner_uid": peer_uid,
                 "host_real_root": "/test/root",
                 "status": "active",
