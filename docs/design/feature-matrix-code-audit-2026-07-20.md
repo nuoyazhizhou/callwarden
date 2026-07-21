@@ -86,14 +86,14 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | A11 | ✅ | Git history 和符号级变更入库已接线。 |
 | A12 | ✅ | Semgrep CLI 执行、JSON 解析、入库和 CLI/MCP 入口存在。 |
 | A13 | ✅ | findings 有唯一约束和 `INSERT OR IGNORE`。 |
-| A14 | ❌ | 不存在 `scan_semgrep_incremental`；扫描记录仍硬编码 `scan_type='full'`，也没有增量清理语义。 |
-| A15 | ❌ | 自研 ignore parser 不是完整 gitignore 语义：`strip()` 丢失尾随空格语义，不支持字符类，目录剪枝会影响后续 negation 恢复。 |
+| A14 | ✅ | 批次12 修复（2026-07-20 二轮评审补全）：新增 `scan_semgrep_incremental()` 方法（`analyzers/issues.py`）：通过 `git diff --name-only` 取变更文件 → 调用 `run_semgrep` 扫描 → `save_semgrep_findings(scan_type='incremental', stale_file_ids=...)` 清理旧 findings + 关联 scan_id。schema v40 新增 `semgrep_findings.scan_id` 字段 + `idx_semgrep_scan_id` 索引，让 finding 可追溯到具体某次扫描。CLI 新增 `cw semgrep scan --incremental [--base main] [--head HEAD]`，MCP 新增 `scan_semgrep_incremental` 工具。`cicd/pr_check.py` 优先调用增量扫描，降级到 `run_semgrep_and_save`（向后兼容）。 |
+| A15 | ✅ | 批次12 修复（2026-07-20 二轮评审补全）：接入 `pathspec` 库作为主路径，获得完整 gitignore 语义：字符类 `[abc]`/`[a-z]`/`[!abc]`、尾随空格保留（除非行末 `\` 转义）、目录剪枝后 negation 恢复（pathspec 内部 last-match-wins）、复杂 `**` 与 `/` 组合。pathspec 不可用时降级到自研实现（保留向后兼容，自研不支持字符类）。`pyproject.toml`/`requirements.txt`/`install.py` 均已加入 pathspec 核心依赖。 |
 | A16 | ✅ | `.callwardenignore` 加载、生成和 GC 共享 matcher 已接入。 |
 | A17 | ✅ | archive/restore/status/purge/retention 均有生产入口。 |
 | A18 | ✅ | full build 末尾调用 Young GC。 |
-| A19 | 🟡 | SARIF exporter 和 GitHub Action Python 入口存在，但依赖的 PRChecker 不闭合，当前项目 workflow 也未上传 SARIF。 |
+| A19 | ✅ | 二轮评审修复（2026-07-20 P1）：SARIF exporter + GitHub Action 入口存在。P1 评审修复：`PRChecker` 改用 `check_before_edit` + `run_errors` 收集 + SARIF `executionNotifications` 让 fail-visible。 |
 | A20 | ✅ | changed-file 分析和按文件 refresh 已实现。 |
-| A21 | ❌ | guardrail 方法名错配、异常被吞，Semgrep 结果不进最终 findings。 |
+| A21 | ✅ | 二轮评审修复（2026-07-20 P1）：`pr_check.py` 原调用不存在的 `guardrail_check_edit` 且吞异常（fail-open），改为 `check_before_edit` + 异常上浮 + Semgrep findings 合并进 SARIF。 |
 | A22 | ✅ | 原子写、LSP 路径/子进程限制、错误脱敏等生产代码存在。 |
 | A23 | 🟡 | 文件级并行存在，但主路径现为 Rust pool/ProcessPool，ThreadPool 主要是降级；矩阵描述已过时。 |
 | A24 | ✅ | WAL/cache/mmap PRAGMA 存在。 |
@@ -146,7 +146,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | F8 | ✅ | FTS5 表、触发器和迁移存在。 |
 | F9 | ✅ | qualified_name caller 路径存在。 |
 | F10 | ✅ | `cw fts rebuild/status` 及 DB 公开方法存在。 |
-| F11 | 🟡 | `build_graph_from_c_files` PyO3 函数存在，但非测试生产代码没有调用方。 |
+| F11 | ✅ | 批次6 修复（2026-07-20 接入 CLI）：`build_graph_from_c_files` PyO3 函数原仅测试调用，现已接入 CLI `cw graph build-from-c <dir>` 子命令（`cli/main.py:_handle_graph`）：递归扫描 `.c` 文件 → rayon 并行 parse + 内存构 CSR → 报告符号/边数 → 可选 `--dump` 输出 .cwsnap → 可选 `--query` 自检查询。定位为"可选加速路径"，不替代 `db_build.py` 的标准 `build_full_graph`（持久化路径），适用于 C 重型代码库（如固件）的快速符号图谱构建。性能数据 13.43x 仍仅来自基准测试 `tests/test_f11_rust_build_graph.py`。 |
 | F12 | ✅ | `.cwsnap` mtime 校验、mmap load 和后台 dump 已接入 `_get_graph_store`。 |
 | F13 | ✅ | calls 索引迁移与 GraphStore 降级路径一致。 |
 | F14 | 🟡 | 延迟建索引/分段 commit/WAL truncate 有代码；10M/8.1x 是基准承诺，本次不以测试报告认定。 |
