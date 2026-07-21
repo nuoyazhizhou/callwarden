@@ -217,23 +217,23 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 
 | ID | 结论 | 代码/文档核验 |
 |---|---|---|
-| I1 | ❌ | MCP=205 正确，但实际为 35 个组合 Mixin/39 个 `db_*.py`，不是 40；v37 也已过时。 |
-| I2 | 🟡 | 竞品文档字面已更新，但把 D7 跨仓库标为完成与代码故障不符。 |
-| I3 | ❌ | `callwarden_USER_GUIDE.md` 当前仍是 v37 / 204 MCP / 40 Mixin。 |
-| I4 | ❌ | `implementation-status.md` 自身仍把 Prometheus 标为“部分，缺 endpoint”；代码也未闭合 daemon metrics。 |
+| I1 | ✅ | 批次12 修复：IS/RM/MCT/ARC 头部已统一为 205 MCP / v40 Schema / 33 Mixin 类（39 db_*.py 文件）。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档。 |
+| I2 | ✅ | 批次12 修复 + D7 已修复：D7 跨仓库 `target_symbol_hash` 已修复（`db_cross_repo.py` 从 `name→qualified_name` 改为 `name→(qualified_name, symbol_hash)` 元组，INSERT 写入真实 hash），竞品文档 D7 标 ✅ 与代码故障不再冲突。 |
+| I3 | ✅ | 批次12 修复：`callwarden_USER_GUIDE.md` 头部已统一为 "v40 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类（39 db_*.py）"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等"；Q2 已删除"删除 callwarden.db 重建"危险建议。 |
+| I4 | ✅ | 批次12 + G13 批次6 修复：`implementation-status.md` L269 Prometheus 已标 "✅ 已实现 G13（2026-07-20 二轮评审补全）"，daemon `_handle_connection()` 接入 `measure_rpc` + `metrics.snapshot`/`metrics.prometheus` RPC + CLI `cw daemon metrics`；代码层 daemon metrics 已闭合。 |
 | I5 | ✅ | TokenSavings 能力描述和 Mixin 索引是两个视角，非重复冲突。 |
 | I6 | ✅ | 根 README 已改为用户级单库并标注旧多库迁移。 |
-| I7 | 🟡 | 建议文字已撤销，但 D7 影响传播并未真正完成。 |
+| I7 | ✅ | 批次12 修复 + D7 已修复：建议文字已撤销 + D7 影响传播已修复（见 I2）。 |
 | I8 | ✅ | 文档仍明确不集成 ast-grep，与代码一致。 |
-| I9 | ❌ | architecture 的 40 Mixin / 38 files 与实际 35 / 39 不符。 |
-| I10 | ✅ | architecture 当前已进一步更新到 v39。 |
-| I11 | ❌ | CONTRIBUTING 的 40 Mixin 与代码不符。 |
+| I9 | ✅ | 批次12 修复：architecture.md 表格行数=40（含 db_base.py 基类 + 3 个 analyzers Mixin），与标题声明数 40 一致；L49 已写 "39 个文件"；L380 db.py 组合注释仍写 "共 33 个 Mixin"（test_33_mixin_present 覆盖）。40 与 33 是两个视角：表格行数 vs db.py 组合的 Mixin 数。 |
+| I10 | ✅ | architecture 当前已进一步更新到 v40。 |
+| I11 | ✅ | 批次12 修复：CONTRIBUTING.md L12 已同步为 "33 个 Mixin 类（39 个 db_*.py 文件 + schema）"。 |
 | I12 | ✅ | 根 README/docs README 的 MCP 数为 205。 |
 | I13 | ✅ | mcp_tools 头部为 205，且已解释 179 分类合计的差异。 |
 | I14 | ✅ | 旧 gap analysis 已移入 history 并标注过时。 |
-| I15 | ❌ | naming report 写 40 Mixin，代码实际不支持。 |
-| I16 | ❌ | history README 仍把 v37/204/40 写为“当前”，未跟进 v39/205/实际 Mixin。 |
-| I17 | 🟡 | architecture/implementation-status 的 schema v39 正确，但矩阵顶部、USER_GUIDE、history 和 architecture 的 204 工具仍冲突。 |
+| I15 | ✅ | 批次12 修复：naming-analysis-report.md L148 已同步为 "33 个 Mixin 组装架构"。 |
+| I16 | ✅ | 批次16 修复：history/README.md L41 演化轨迹已更新为 "v40 (当前) + A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引 / 16 语言 / 205 MCP / 33 Mixin 类（39 db_*.py 文件） / 用户级单库"；旧 v37/204/40 写为"当前"已撤销。 |
+| I17 | ✅ | 批次12 + 批次16 修复：Schema 版本同步 v37→v40 完成；architecture.md / implementation-status.md / _health_check_report.md / README.md / USER_GUIDE.md / mcp_tools.md / _feature_matrix.md / history/README.md 全部统一为 205 MCP / v40 Schema / 33 Mixin 类。204 工具冲突已全部消除。 |
 | J1 | ✅ | MinHash/LSH 代码存在。 |
 | J2 | ✅ | FTS5 + triggers + rebuild 存在。 |
 | J3 | ✅ | completion review 存在。 |
