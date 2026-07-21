@@ -22,15 +22,15 @@ use rusqlite::{params, Connection, Row};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+use super::cas::CasStore;
 use super::dispatch::{
-    DaemonRpcError, DaemonState, DaemonStateExt, PeerCredential,
-    get_str_param, get_str_param_or, require_str_param,
+    get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
+    DaemonStateExt, PeerCredential,
 };
 use super::replicator::{
-    RefreshMessage, SessionStore, daemon_handle_connect, daemon_handle_refresh,
+    daemon_handle_connect, daemon_handle_refresh, RefreshMessage, SessionStore,
 };
 use super::staging_log::{StagingEntry, StagingLog};
-use super::cas::CasStore;
 
 /// workspace registry schema DDL（与 Python db_daemon.py:WORKSPACE_REGISTRY_DDL 一致）
 const WORKSPACE_REGISTRY_DDL: &str = r#"
@@ -308,6 +308,30 @@ impl WorkspaceRegistry {
         }
     }
 
+    /// P0-1 整改（2026-07-22）：按数字主键 workspace_id 查询 workspace
+    ///
+    /// 用于 toolchain.resolve / build_context.list / resolved_edges.* 等 RPC，
+    /// 这些 RPC 使用 workspace_id（数字）而非 workspace_instance_id（字符串）。
+    /// 对应 Python `daemon_server.py:_owned_workspace_by_id` 的底层查询。
+    pub fn get_workspace_by_numeric_id(
+        &self,
+        workspace_id: i64,
+    ) -> Result<Option<Value>, rusqlite::Error> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT workspace_id, workspace_instance_id, snapshot_id, owner_uid,
+                    git_remote_url, git_head_commit_sha, client_view_root, host_real_root,
+                    toolchain_fingerprint, registered_at, last_active_at, status
+             FROM daemon_workspaces WHERE workspace_id = ?1",
+        )?;
+        let mut rows = stmt.query(params![workspace_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row_to_json(row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
     /// 更新 workspace 状态（对应 Python update_workspace_status）
     pub fn update_workspace_status(
         &self,
@@ -327,11 +351,9 @@ impl WorkspaceRegistry {
     /// 统计 workspace 数量（用于 health 检查）
     pub fn count_workspaces(&self) -> Result<u32, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
-        let count: u32 = conn.query_row(
-            "SELECT COUNT(*) FROM daemon_workspaces",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: u32 = conn.query_row("SELECT COUNT(*) FROM daemon_workspaces", [], |row| {
+            row.get(0)
+        })?;
         Ok(count)
     }
 
@@ -465,7 +487,10 @@ fn row_to_json(row: &Row<'_>) -> rusqlite::Result<Value> {
     let status: String = row.get(11)?;
 
     let mut m = Map::new();
-    m.insert("workspace_id".to_string(), Value::Number(workspace_id.into()));
+    m.insert(
+        "workspace_id".to_string(),
+        Value::Number(workspace_id.into()),
+    );
     m.insert(
         "workspace_instance_id".to_string(),
         Value::String(workspace_instance_id),
@@ -475,10 +500,7 @@ fn row_to_json(row: &Row<'_>) -> rusqlite::Result<Value> {
         snapshot_id.map(Value::String).unwrap_or(Value::Null),
     );
     m.insert("owner_uid".to_string(), Value::Number(owner_uid.into()));
-    m.insert(
-        "git_remote_url".to_string(),
-        Value::String(git_remote_url),
-    );
+    m.insert("git_remote_url".to_string(), Value::String(git_remote_url));
     m.insert(
         "git_head_commit_sha".to_string(),
         Value::String(git_head_commit_sha),
@@ -541,15 +563,13 @@ pub fn validate_owned_path(
     peer_uid: u32,
     require_file: bool,
 ) -> Result<String, DaemonRpcError> {
-    let real_path = std::fs::canonicalize(path).map_err(|_| {
-        DaemonRpcError::new("path_not_found", format!("路径不存在: {}", path))
-    })?;
+    let real_path = std::fs::canonicalize(path)
+        .map_err(|_| DaemonRpcError::new("path_not_found", format!("路径不存在: {}", path)))?;
     let real_path_str = real_path.to_string_lossy().to_string();
 
     // 检查文件类型
-    let metadata = std::fs::metadata(&real_path).map_err(|_| {
-        DaemonRpcError::new("path_not_found", real_path_str.clone())
-    })?;
+    let metadata = std::fs::metadata(&real_path)
+        .map_err(|_| DaemonRpcError::new("path_not_found", real_path_str.clone()))?;
     if require_file && !metadata.is_file() {
         return Err(DaemonRpcError::new(
             "path_not_found",
@@ -572,10 +592,7 @@ pub fn validate_owned_path(
             if owner_uid != peer_uid {
                 return Err(DaemonRpcError::new(
                     "path_forbidden",
-                    format!(
-                        "路径 owner_uid={}，peer_uid={}",
-                        owner_uid, peer_uid
-                    ),
+                    format!("路径 owner_uid={}，peer_uid={}", owner_uid, peer_uid),
                 ));
             }
         }
@@ -620,6 +637,47 @@ pub fn owned_workspace(
         .unwrap_or("");
     if status == "archived" {
         return Err(DaemonRpcError::workspace_archived(workspace_instance_id));
+    }
+    Ok(workspace)
+}
+
+/// P0-1 整改（2026-07-22）：通过 workspace_id（数字主键）校验所有权
+///
+/// 对应 Python `daemon_server.py:_owned_workspace_by_id`。用于
+/// toolchain.resolve / build_context.list / resolved_edges.* 等 RPC，
+/// 这些 RPC 使用 workspace_id（数字）而非 workspace_instance_id（字符串）。
+///
+/// 返回 workspace JSON（用于后续处理）。错误码：
+/// - workspace_not_found：workspace_id 不存在
+/// - workspace_forbidden：owner_uid != peer_uid
+/// - workspace_archived：status == "archived"
+pub fn owned_workspace_by_id(
+    registry: &WorkspaceRegistry,
+    peer_uid: u32,
+    workspace_id: i64,
+) -> Result<Value, DaemonRpcError> {
+    let workspace = registry
+        .get_workspace_by_numeric_id(workspace_id)
+        .map_err(|e| DaemonRpcError::internal_error(format!("registry 查询失败: {}", e)))?
+        .ok_or_else(|| DaemonRpcError::workspace_not_found(&workspace_id.to_string()))?;
+
+    let owner_uid = workspace
+        .get("owner_uid")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-1);
+    if owner_uid != peer_uid as i64 {
+        return Err(DaemonRpcError::workspace_forbidden(
+            "workspace 不属于当前 UID",
+        ));
+    }
+    let status = workspace
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if status == "archived" {
+        return Err(DaemonRpcError::workspace_archived(
+            &workspace_id.to_string(),
+        ));
     }
     Ok(workspace)
 }
@@ -696,10 +754,7 @@ impl WorkspaceDaemonState {
     }
 
     /// 指定 data_root 构造（用于 workspace.recover / workspace.connect / workspace.file.refresh）
-    pub fn with_data_root(
-        registry: WorkspaceRegistry,
-        data_root: std::path::PathBuf,
-    ) -> Self {
+    pub fn with_data_root(registry: WorkspaceRegistry, data_root: std::path::PathBuf) -> Self {
         Self {
             base: DaemonState::default(),
             registry,
@@ -768,34 +823,40 @@ impl WorkspaceDaemonState {
 
         // 打开 SessionStore（workspace.db）
         let ws_db_path = ws_dir.join("workspace.db");
-        let session_store = SessionStore::open(ws_db_path.to_string_lossy().as_ref())
-            .map_err(|e| DaemonRpcError::new(
-                "resources_init_failed",
-                format!("SessionStore::open 失败: {}", e),
-            ))?;
+        let session_store =
+            SessionStore::open(ws_db_path.to_string_lossy().as_ref()).map_err(|e| {
+                DaemonRpcError::new(
+                    "resources_init_failed",
+                    format!("SessionStore::open 失败: {}", e),
+                )
+            })?;
 
         // 打开 CasStore（cas.db）
         let cas_db_path = ws_dir.join("cas.db");
-        let cas_store = CasStore::open(cas_db_path.to_string_lossy().as_ref())
-            .map_err(|e| DaemonRpcError::new(
+        let cas_store = CasStore::open(cas_db_path.to_string_lossy().as_ref()).map_err(|e| {
+            DaemonRpcError::new(
                 "resources_init_failed",
                 format!("CasStore::open 失败: {}", e),
-            ))?;
+            )
+        })?;
 
         // 打开 StagingLog（staging.log）
         let staging_log_path = ws_dir.join("staging.log");
-        let staging_log = StagingLog::new(staging_log_path.to_string_lossy().as_ref())
-            .map_err(|e| DaemonRpcError::new(
-                "resources_init_failed",
-                format!("StagingLog::new 失败: {}", e),
-            ))?;
+        let staging_log =
+            StagingLog::new(staging_log_path.to_string_lossy().as_ref()).map_err(|e| {
+                DaemonRpcError::new(
+                    "resources_init_failed",
+                    format!("StagingLog::new 失败: {}", e),
+                )
+            })?;
 
         let resources = Arc::new(WorkspaceResources {
             session_store: Arc::new(session_store),
             cas_store: Arc::new(cas_store),
             staging_log: Arc::new(staging_log),
         });
-        self.resources.insert(workspace_instance_id.to_string(), Arc::clone(&resources));
+        self.resources
+            .insert(workspace_instance_id.to_string(), Arc::clone(&resources));
         Ok(resources)
     }
 }
@@ -1068,7 +1129,9 @@ impl DaemonStateExt for WorkspaceDaemonState {
             if let Some(ref abs_path_str) = msg.abs_path {
                 if !abs_path_str.is_empty() {
                     let real_abs = validate_owned_path(abs_path_str, peer.uid, true)?;
-                    if let Some(host_root_val) = workspace.get("host_real_root").and_then(|v| v.as_str()) {
+                    if let Some(host_root_val) =
+                        workspace.get("host_real_root").and_then(|v| v.as_str())
+                    {
                         if !host_root_val.is_empty() {
                             let real_host_root = std::fs::canonicalize(host_root_val)
                                 .map(|p| p.to_string_lossy().to_string())
@@ -1107,10 +1170,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
         // 构造响应：status + generation + cas_result（若有）
         let mut response = Map::new();
-        response.insert(
-            "status".to_string(),
-            Value::String(result.status.clone()),
-        );
+        response.insert("status".to_string(), Value::String(result.status.clone()));
         response.insert(
             "generation".to_string(),
             Value::String(result.generation.clone()),
@@ -1124,12 +1184,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
             let content_hash = get_str_param_or(params, "content_hash", "");
             let language = get_str_param_or(params, "language", "");
 
-            let mut entry = StagingEntry::new(
-                workspace_instance_id,
-                &rel_path,
-                &content_hash,
-                &language,
-            );
+            let mut entry =
+                StagingEntry::new(workspace_instance_id, &rel_path, &content_hash, &language);
 
             // M4+M5+M6（2026-07-20 批次4）：填充 staging entry 的
             // parse_delta / frontier / metrics_update 三个 JSON 字段。
@@ -1148,10 +1204,10 @@ impl DaemonStateExt for WorkspaceDaemonState {
             // Map<String, Value>），便于 Python 端 audit 与可视化。
             // 任何一步失败都不阻塞 staging_log.append（保持与现状一致的容错）。
             {
+                use crate::daemon::budget::QueryBudget;
                 use crate::delta::DeltaComputer;
                 use crate::frontier::FrontierComputer;
                 use crate::metrics::MetricsComputer;
-                use crate::daemon::budget::QueryBudget;
                 use std::path::PathBuf;
 
                 // 构造绝对文件路径：优先 msg.abs_path（客户端真实路径），
@@ -1176,9 +1232,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         let mut pd = Map::new();
                         pd.insert(
                             "file_path".to_string(),
-                            Value::String(
-                                parse_delta.file_path.to_string_lossy().into_owned(),
-                            ),
+                            Value::String(parse_delta.file_path.to_string_lossy().into_owned()),
                         );
                         pd.insert(
                             "language".to_string(),
@@ -1212,10 +1266,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                             "calls_removed".to_string(),
                             Value::Number(parse_delta.raw_call_delta.removed.len().into()),
                         );
-                        pd.insert(
-                            "summary".to_string(),
-                            Value::String(parse_delta.summary()),
-                        );
+                        pd.insert("summary".to_string(), Value::String(parse_delta.summary()));
                         entry.parse_delta = pd;
 
                         // M5: frontier（store=None 退化，QueryBudget::default）
@@ -1246,10 +1297,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                             "downstream_transitive_count".to_string(),
                             Value::Number(frontier.downstream_transitive.len().into()),
                         );
-                        fd.insert(
-                            "partial".to_string(),
-                            Value::Bool(frontier.partial),
-                        );
+                        fd.insert("partial".to_string(), Value::Bool(frontier.partial));
                         // 直接列出受影响的 qnames（前 50 个，避免 JSON 过大）
                         let directly_affected: Vec<Value> = frontier
                             .directly_affected
@@ -1261,19 +1309,12 @@ impl DaemonStateExt for WorkspaceDaemonState {
                             "directly_affected".to_string(),
                             Value::Array(directly_affected),
                         );
-                        fd.insert(
-                            "summary".to_string(),
-                            Value::String(frontier.summary()),
-                        );
+                        fd.insert("summary".to_string(), Value::String(frontier.summary()));
                         entry.frontier = fd;
 
                         // M6: metrics update（store=None 退化，impact_depth=2）
-                        let metrics_update = MetricsComputer::compute_local_update(
-                            &frontier,
-                            &parse_delta,
-                            None,
-                            2,
-                        );
+                        let metrics_update =
+                            MetricsComputer::compute_local_update(&frontier, &parse_delta, None, 2);
                         let mut md = Map::new();
                         md.insert(
                             "is_empty".to_string(),
@@ -1298,10 +1339,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         let mut pd = Map::new();
                         pd.insert("error".to_string(), Value::String(e.clone()));
                         entry.parse_delta = pd;
-                        eprintln!(
-                            "[M4] compute_parse_delta failed for {}: {}",
-                            rel_path, e
-                        );
+                        eprintln!("[M4] compute_parse_delta failed for {}: {}", rel_path, e);
                     }
                 }
             }
@@ -1387,10 +1425,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         );
                     }
                     if let Some(err) = repl_result.error {
-                        repl_map.insert(
-                            "error".to_string(),
-                            Value::String(err),
-                        );
+                        repl_map.insert("error".to_string(), Value::String(err));
                     }
                     response.insert("replication".to_string(), Value::Object(repl_map));
                 }
@@ -1473,7 +1508,10 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 .to_string(),
             ),
         );
-        m.insert("generation".to_string(), Value::Number(result.generation.into()));
+        m.insert(
+            "generation".to_string(),
+            Value::Number(result.generation.into()),
+        );
         m.insert(
             "applied_count".to_string(),
             Value::Number(result.applied_count.into()),
@@ -1525,9 +1563,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let sql = format!("VACUUM INTO '{}'", path_str);
 
         let conn = self.registry.conn.lock().unwrap();
-        conn.execute_batch(&sql).map_err(|e| {
-            DaemonRpcError::internal_error(format!("VACUUM INTO 失败: {}", e))
-        })?;
+        conn.execute_batch(&sql)
+            .map_err(|e| DaemonRpcError::internal_error(format!("VACUUM INTO 失败: {}", e)))?;
         drop(conn);
 
         let mut m = Map::new();
@@ -1597,9 +1634,9 @@ impl DaemonStateExt for WorkspaceDaemonState {
         }
 
         // 重新打开 registry，加载新数据
-        self.registry.reopen().map_err(|e| {
-            DaemonRpcError::internal_error(format!("registry reopen 失败: {}", e))
-        })?;
+        self.registry
+            .reopen()
+            .map_err(|e| DaemonRpcError::internal_error(format!("registry reopen 失败: {}", e)))?;
 
         let mut m = Map::new();
         m.insert(
@@ -1675,9 +1712,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
         self.registry
             .register_mount_mapping(container_id, container_path, host_path, &mapping_type)
-            .map_err(|e| {
-                DaemonRpcError::internal_error(format!("register_mount_mapping: {}", e))
-            })
+            .map_err(|e| DaemonRpcError::internal_error(format!("register_mount_mapping: {}", e)))
     }
 
     fn handle_mount_list(
@@ -1841,10 +1876,7 @@ mod tests {
         let r2 = registry
             .register_workspace(1000, "/tmp/cv", "/var/hr", "url", "head", "fp")
             .unwrap();
-        assert_eq!(
-            r1["workspace_instance_id"],
-            r2["workspace_instance_id"]
-        );
+        assert_eq!(r1["workspace_instance_id"], r2["workspace_instance_id"]);
         // 仍然只有一条记录
         assert_eq!(registry.count_workspaces().unwrap(), 1);
     }
@@ -2173,8 +2205,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir_path = tmp.path().to_str().unwrap();
         let reg_params = json!({"client_view_root": dir_path});
-        let reg_response =
-            dispatch(&mut state, peer_owner, "workspace.register", &reg_params, &[]);
+        let reg_response = dispatch(
+            &mut state,
+            peer_owner,
+            "workspace.register",
+            &reg_params,
+            &[],
+        );
         assert_eq!(reg_response["ok"], true);
         let instance_id = reg_response["result"]["workspace_instance_id"]
             .as_str()
@@ -2183,7 +2220,13 @@ mod tests {
 
         // 非owner查询，应被拒绝
         let status_params = json!({"workspace_instance_id": instance_id});
-        let response = dispatch(&mut state, peer_other, "workspace.status", &status_params, &[]);
+        let response = dispatch(
+            &mut state,
+            peer_other,
+            "workspace.status",
+            &status_params,
+            &[],
+        );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
     }
@@ -2283,11 +2326,23 @@ mod tests {
             .unwrap();
 
         // owner 只看到自己的 2 个
-        let r1 = dispatch(&mut state, make_peer(owner_uid), "workspace.list", &json!({}), &[]);
+        let r1 = dispatch(
+            &mut state,
+            make_peer(owner_uid),
+            "workspace.list",
+            &json!({}),
+            &[],
+        );
         assert_eq!(r1["result"].as_array().unwrap().len(), 2);
 
         // other 只看到自己的 1 个
-        let r2 = dispatch(&mut state, make_peer(other_uid), "workspace.list", &json!({}), &[]);
+        let r2 = dispatch(
+            &mut state,
+            make_peer(other_uid),
+            "workspace.list",
+            &json!({}),
+            &[],
+        );
         assert_eq!(r2["result"].as_array().unwrap().len(), 1);
     }
 
@@ -2309,7 +2364,10 @@ mod tests {
             .unwrap();
         // 注意：tmp 在函数结束时 drop，workspace.register 只在 ACL 校验时需要路径存在
         // 这里测试 recover 不依赖 client_view_root 的存在性
-        response["workspace_instance_id"].as_str().unwrap().to_string()
+        response["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     #[test]
@@ -2480,13 +2538,7 @@ mod tests {
         let mut state = make_state_with_data_root(tmp.path());
         let peer = make_owner_peer();
 
-        let response = dispatch(
-            &mut state,
-            peer,
-            "workspace.recover",
-            &json!({}),
-            &[],
-        );
+        let response = dispatch(&mut state, peer, "workspace.recover", &json!({}), &[]);
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -2502,7 +2554,10 @@ mod tests {
             .register_workspace(owner_uid, &dir_path, &dir_path, "", "", "")
             .unwrap();
         // 注意：tmp 在函数结束时 drop，但 connect/refresh 不依赖 client_view_root 存在
-        response["workspace_instance_id"].as_str().unwrap().to_string()
+        response["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     #[test]
@@ -2839,7 +2894,10 @@ mod tests {
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "committed");
         // P0-2：显式标记 snapshot 未发布
-        assert_eq!(response["result"]["replication"]["snapshot_published"], false);
+        assert_eq!(
+            response["result"]["replication"]["snapshot_published"],
+            false
+        );
         assert!(
             response["result"]["replication"]["snapshot_warning"].is_string(),
             "snapshot_warning 字段应存在且为字符串"
@@ -3244,18 +3302,12 @@ mod tests {
     ///
     /// 返回 (state, registry_db_path, data_root_tempdir)
     /// tempdir 由调用方持有，drop 时自动清理
-    fn make_state_with_file_registry() -> (
-        WorkspaceDaemonState,
-        std::path::PathBuf,
-        tempfile::TempDir,
-    ) {
+    fn make_state_with_file_registry(
+    ) -> (WorkspaceDaemonState, std::path::PathBuf, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let registry_db_path = tmp.path().join("registry.db");
         let registry = WorkspaceRegistry::open(registry_db_path.to_str().unwrap()).unwrap();
-        let state = WorkspaceDaemonState::with_data_root(
-            registry,
-            tmp.path().to_path_buf(),
-        );
+        let state = WorkspaceDaemonState::with_data_root(registry, tmp.path().to_path_buf());
         (state, registry_db_path, tmp)
     }
 
@@ -3290,7 +3342,9 @@ mod tests {
         assert!(backup_path.exists());
         let conn = rusqlite::Connection::open(&backup_path).unwrap();
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM daemon_workspaces", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM daemon_workspaces", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 1);
     }
@@ -3301,13 +3355,7 @@ mod tests {
         let peer = make_owner_peer();
         let _ = tmp; // 持有 tempdir
 
-        let response = dispatch(
-            &mut state,
-            peer,
-            "backup",
-            &json!({}),
-            &[],
-        );
+        let response = dispatch(&mut state, peer, "backup", &json!({}), &[]);
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -3385,8 +3433,14 @@ mod tests {
         );
         assert_eq!(restore_resp["ok"], true);
         assert_eq!(restore_resp["result"]["status"], "ok");
-        assert_eq!(restore_resp["result"]["restored_from"], backup_path.to_str().unwrap());
-        assert_eq!(restore_resp["result"]["registry_db"], reg_path.to_str().unwrap());
+        assert_eq!(
+            restore_resp["result"]["restored_from"],
+            backup_path.to_str().unwrap()
+        );
+        assert_eq!(
+            restore_resp["result"]["registry_db"],
+            reg_path.to_str().unwrap()
+        );
 
         // 5. 验证：registry 应只剩 1 条（ws1）
         let count = state.registry.count_workspaces().unwrap();
@@ -3403,13 +3457,7 @@ mod tests {
         let peer = make_owner_peer();
         let _ = tmp;
 
-        let response = dispatch(
-            &mut state,
-            peer,
-            "restore",
-            &json!({}),
-            &[],
-        );
+        let response = dispatch(&mut state, peer, "restore", &json!({}), &[]);
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "invalid_params");
     }
@@ -3593,7 +3641,8 @@ mod tests {
                  VALUES ('stale_key', 'hash1', 'rust', 100, 10,
                          'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0)",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
             conn.execute(
                 "INSERT OR REPLACE INTO cas_file_cache
                  (cas_key, content_hash, language, file_size, total_lines,
@@ -3602,7 +3651,8 @@ mod tests {
                  VALUES ('fresh_key', 'hash2', 'rust', 100, 10,
                          'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 9999999999.0)",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
             // 插入子表数据
             conn.execute(
                 "INSERT OR REPLACE INTO cas_symbols
@@ -3610,12 +3660,14 @@ mod tests {
                   local_qualified_name, kind, start_line, end_line)
                  VALUES ('stale_key', 1, 'content_hash_1', 'sym1', 'sym1', 'function', 1, 10)",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
             conn.execute(
                 "INSERT OR REPLACE INTO cas_symbol_contents (content_hash, content)
                  VALUES ('content_hash_1', 'dummy')",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // grace_days=0：parsed_at < now 的 ready 条目都应被删除
@@ -3637,28 +3689,35 @@ mod tests {
         let resources2 = state.resources.get(&ws_id).unwrap().clone();
         let conn = resources2.cas_store.conn().lock().unwrap();
         let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM cas_file_cache", [], |row| row.get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM cas_file_cache", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
         assert_eq!(remaining, 1, "应只剩 fresh_key");
 
         let fresh_key: String = conn
-            .query_row(
-                "SELECT cas_key FROM cas_file_cache",
-                [],
-                |row| row.get::<_, String>(0),
-            )
+            .query_row("SELECT cas_key FROM cas_file_cache", [], |row| {
+                row.get::<_, String>(0)
+            })
             .unwrap();
         assert_eq!(fresh_key, "fresh_key");
 
         // 子表也应被清理：cas_symbols 中 stale_key 的行被删
         let symbols_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM cas_symbols", [], |row| row.get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM cas_symbols", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
-        assert_eq!(symbols_count, 0, "stale_key 关联的 cas_symbols 应被级联删除");
+        assert_eq!(
+            symbols_count, 0,
+            "stale_key 关联的 cas_symbols 应被级联删除"
+        );
 
         // cas_symbol_contents 中的孤儿 content_hash 也应被清理
         let contents_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM cas_symbol_contents", [], |row| row.get::<_, i64>(0))
+            .query_row("SELECT COUNT(*) FROM cas_symbol_contents", [], |row| {
+                row.get::<_, i64>(0)
+            })
             .unwrap();
         assert_eq!(contents_count, 0, "孤儿 cas_symbol_contents 应被清理");
     }
@@ -3820,7 +3879,10 @@ mod tests {
             "mapping_type": "bind"
         });
         let resp = dispatch(&mut state, peer, "mount.register", &params, &[]);
-        assert!(resp["ok"].as_bool().unwrap_or(false), "mount.register 应成功");
+        assert!(
+            resp["ok"].as_bool().unwrap_or(false),
+            "mount.register 应成功"
+        );
         let result = &resp["result"];
         assert_eq!(result["container_id"], "ubuntu_2204");
         assert_eq!(result["container_path"], "/home/user1");
@@ -4034,13 +4096,7 @@ mod tests {
         // 未知 mount.* 方法返回 method_not_found
         let mut state = make_state();
         let peer = make_peer(1000);
-        let resp = dispatch(
-            &mut state,
-            peer,
-            "mount.update",
-            &json!({}),
-            &[],
-        );
+        let resp = dispatch(&mut state, peer, "mount.update", &json!({}), &[]);
         assert!(!resp["ok"].as_bool().unwrap_or(true));
         assert_eq!(resp["error"]["code"], "method_not_found");
     }
@@ -4102,14 +4158,16 @@ mod tests {
                  VALUES ('pending_key', 'hash1', 'rust', 100, 10,
                          'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0)",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
             // 插入对应的未过期 pending_ref（expires_at=9999999999，远在未来）
             conn.execute(
                 "INSERT OR REPLACE INTO cas_pending_refs
                  (cas_key, workspace_id, expires_at, created_at)
                  VALUES ('pending_key', 1, 9999999999.0, 0)",
                 [],
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // gc.cas grace_days=0：parsed_at=0 的条目本应被删，但因为有未过期 pending_ref，应保留

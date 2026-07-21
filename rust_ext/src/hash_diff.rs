@@ -359,7 +359,8 @@ impl PyHashDiffStore {
 
     /// 手动注册文件 hash（用于初始化）
     fn register_hash(&self, path: &str, hash: &str) {
-        self.inner.register_hash(PathBuf::from(path), hash.to_string());
+        self.inner
+            .register_hash(PathBuf::from(path), hash.to_string());
     }
 
     /// 获取文件的当前 hash
@@ -463,6 +464,8 @@ mod tests {
             kind: FileEventKind::Created,
             path: path.clone(),
             timestamp_ms: 1000,
+            from_path: None,
+            to_path: None,
         }];
 
         let changes = store.diff_events(&events);
@@ -485,6 +488,8 @@ mod tests {
             kind: FileEventKind::Modified,
             path: path.clone(),
             timestamp_ms: 1000,
+            from_path: None,
+            to_path: None,
         }];
         let changes1 = store.diff_events(&events1);
         assert_eq!(changes1.len(), 1);
@@ -494,6 +499,8 @@ mod tests {
             kind: FileEventKind::Modified,
             path: path.clone(),
             timestamp_ms: 2000,
+            from_path: None,
+            to_path: None,
         }];
         let changes2 = store.diff_events(&events2);
         assert_eq!(changes2.len(), 0); // 假阳性被过滤
@@ -512,6 +519,8 @@ mod tests {
             kind: FileEventKind::Created,
             path: path.clone(),
             timestamp_ms: 1000,
+            from_path: None,
+            to_path: None,
         }];
         store.diff_events(&events1);
 
@@ -521,6 +530,8 @@ mod tests {
             kind: FileEventKind::Removed,
             path: path.clone(),
             timestamp_ms: 2000,
+            from_path: None,
+            to_path: None,
         }];
         let changes2 = store.diff_events(&events2);
         assert_eq!(changes2.len(), 1);
@@ -541,6 +552,8 @@ mod tests {
             kind: FileEventKind::Created,
             path: path.clone(),
             timestamp_ms: 1000,
+            from_path: None,
+            to_path: None,
         }];
         store.diff_events(&events1);
 
@@ -550,6 +563,8 @@ mod tests {
             kind: FileEventKind::Modified,
             path: path.clone(),
             timestamp_ms: 2000,
+            from_path: None,
+            to_path: None,
         }];
         let changes2 = store.diff_events(&events2);
         assert_eq!(changes2.len(), 1);
@@ -582,11 +597,15 @@ mod tests {
                 kind: FileEventKind::Created,
                 path: path_a.clone(),
                 timestamp_ms: 1000,
+                from_path: None,
+                to_path: None,
             },
             FileEvent {
                 kind: FileEventKind::Created,
                 path: path_b.clone(),
                 timestamp_ms: 1000,
+                from_path: None,
+                to_path: None,
             },
         ];
         let changes1 = store.diff_events(&events1);
@@ -599,6 +618,8 @@ mod tests {
             kind: FileEventKind::Modified,
             path: path_b.clone(),
             timestamp_ms: 2000,
+            from_path: None,
+            to_path: None,
         }];
         let changes2 = store.diff_events(&events2);
         assert_eq!(changes2.len(), 1);
