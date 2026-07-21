@@ -71,9 +71,9 @@ class TestVersionConsistency:
 
         eps = data["entry_points"]
         assert "cw" in eps
-        assert "cw_client" in eps
-        assert "cw_agent" in eps
-        assert "cw_daemon" in eps
+        assert "cw-client" in eps
+        assert "cw-agent" in eps
+        assert "cw-daemon" in eps
 
 
 # ============================================

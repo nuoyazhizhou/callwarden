@@ -44,14 +44,16 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 
 证据：`server/agent_protocol.py:214-280`，`server/daemon_server.py:495-558, 776-883`，`rust_ext/src/daemon/workspace.rs:931-1110, 1290-1370`，`rust_ext/src/daemon/dispatch.rs:545-610`，`rust_ext/src/daemon/memfd.rs`，`rust_ext/src/daemon/replicator.rs:698-910`。
 
-### P0 跨平台发布会产出空壳或在 CI 早期失败
+### P0 跨平台发布会产出空壳或在 CI 早期失败（✅ 已闭合，批次5/14 修复）
 
-- 当前 wheel 是 `py3-none-any`、`Root-Is-Purelib: true`，且不包含 `callwarden_core`。
-- Linux 脚本在 `cw/cw-client/cw-agent/cw-daemon` 不存在时仅打印 `NOTE` 后继续打包；RPM 明确是 TODO。
-- `pyproject.toml` 生成下划线入口 `cw_agent/cw_daemon/cw_client`，systemd/文档/包使用连字符名称。
-- Release CI 读取不存在的 `version.toml['package']`，且用错误参数调用 `parse_file_lang`。
+原审计时四个子问题均未闭合，现已全部修复：
 
-证据：`release/build.py:39-75`，`release/linux/build_packages.sh:65-122`、`:218-224`，`.github/workflows/enterprise-release.yml:70-75`、`:172-177`。
+1. **wheel 空壳**（✅ 批次5 修复）：`release/build.py` 改为 fail-fast 校验 + 平台特定 wheel（非 `py3-none-any`）+ 验证 wheel 包含 `callwarden_core` Rust 扩展。
+2. **Linux 脚本空壳包 + RPM 虚假 TODO**（✅ 批次14 修复）：`release/linux/build_packages.sh:65-122` 5 处缺二进制路径从 `cp ... 2>/dev/null || echo "NOTE..."` 改为 fail-fast `exit 1`（避免空壳包）；RPM 章节（L216-225）从 "TODO: 生成 callwarden.spec" 改为明确 "deb-only release, RPM 不在发布范围"，移除虚假承诺。
+3. **入口名不一致**（✅ 批次14 修复）：`pyproject.toml` + `release/version.toml` 的 `[project.scripts]` / `[entry_points]` 从下划线 `cw_client/cw_agent/cw_daemon` 改为连字符 `cw-client/cw-agent/cw-daemon`，与 systemd unit / 打包脚本 / 文档 / `cli/*.py` docstring 一致；`release/windows/callwarden.wxs` 的 `cw_client.exe` 改为 `cw-client.exe`；`release/macos/build_pkg.sh` 8 处 `cw_client` 引用改为 `cw-client`；`tests/test_phase7_packaging.py` 断言改为连字符。
+4. **Release CI version key/parser 调用**（✅ 批次5 修复）：`.github/workflows/enterprise-release.yml` version key 修正为 `['product']` + parser 调用修正 + wheel 包含 Rust 扩展。
+
+证据：`release/build.py:39-75`，`release/linux/build_packages.sh:65-122, 216-225`，`pyproject.toml:54-58`，`release/version.toml:49-53`，`release/windows/callwarden.wxs:134-138`，`release/macos/build_pkg.sh:81, 147-156, 179-183, 248`，`tests/test_phase7_packaging.py:72-76`，`.github/workflows/enterprise-release.yml:70-75, 172-177`。
 
 ### P1 PR 检查 fail-open
 

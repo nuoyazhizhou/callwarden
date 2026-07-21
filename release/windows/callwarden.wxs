@@ -131,10 +131,10 @@
       </Component>
     </ComponentGroup>
 
-    <!-- Client 角色组件: 仅 cw_client.exe -->
+    <!-- Client 角色组件: 仅 cw-client.exe -->
     <ComponentGroup Id="ClientComponents" Directory="BinFolder">
       <Component Id="CwClientExe" Guid="*">
-        <File Id="cw_client.exe" Source="$(var.BuildOutputDir)\cw_client.exe" KeyPath="yes" />
+        <File Id="cw-client.exe" Source="$(var.BuildOutputDir)\cw-client.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 

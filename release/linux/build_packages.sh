@@ -66,26 +66,38 @@ echo "Step 2: Preparing package roots"
 CLIENT_ROOT="$SCRIPT_DIR/build/client"
 rm -rf "$CLIENT_ROOT"
 mkdir -p "$CLIENT_ROOT/usr/bin"
-cp "$ROOT/dist/linux/cw-client" "$CLIENT_ROOT/usr/bin/" 2>/dev/null || \
-    echo "  NOTE: cw-client binary not found (placeholder root created)"
+cp "$ROOT/dist/linux/cw-client" "$CLIENT_ROOT/usr/bin/" || {
+    echo "  ERROR: cw-client binary not found at $ROOT/dist/linux/cw-client"
+    echo "  Run 'cargo build --release --bin cw-client' (or release/build.py) first."
+    exit 1
+}
 
 # --- callwarden-local（cw + Rust 扩展 + local DB + MCP + watcher）---
 LOCAL_ROOT="$SCRIPT_DIR/build/local"
 rm -rf "$LOCAL_ROOT"
 mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden" "$LOCAL_ROOT/etc/callwarden"
-cp "$ROOT/dist/linux/cw" "$LOCAL_ROOT/usr/bin/" 2>/dev/null || \
-    echo "  NOTE: cw binary not found (placeholder root created)"
+cp "$ROOT/dist/linux/cw" "$LOCAL_ROOT/usr/bin/" || {
+    echo "  ERROR: cw binary not found at $ROOT/dist/linux/cw"
+    echo "  Run 'cargo build --release --bin cw' (or release/build.py) first."
+    exit 1
+}
 cp "$ROOT/rust_ext/target/$TARGET/release/libcallwarden_core.so" \
-   "$LOCAL_ROOT/usr/lib/callwarden/" 2>/dev/null || \
-    echo "  NOTE: libcallwarden_core.so not found (placeholder root created)"
+   "$LOCAL_ROOT/usr/lib/callwarden/" || {
+    echo "  ERROR: libcallwarden_core.so not found at $ROOT/rust_ext/target/$TARGET/release/"
+    echo "  Run 'cargo build --release' in rust_ext/ first."
+    exit 1
+}
 cp "$SCRIPT_DIR/deb/config.toml.template" "$LOCAL_ROOT/etc/callwarden/config.toml" 2>/dev/null || true
 
 # --- callwarden-agent（cw-agent + systemd user unit + client）---
 AGENT_ROOT="$SCRIPT_DIR/build/agent"
 rm -rf "$AGENT_ROOT"
 mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/systemd/user"
-cp "$ROOT/dist/linux/cw-agent" "$AGENT_ROOT/usr/bin/" 2>/dev/null || \
-    echo "  NOTE: cw-agent binary not found (placeholder root created)"
+cp "$ROOT/dist/linux/cw-agent" "$AGENT_ROOT/usr/bin/" || {
+    echo "  ERROR: cw-agent binary not found at $ROOT/dist/linux/cw-agent"
+    echo "  Run 'cargo build --release --bin cw-agent' (or release/build.py) first."
+    exit 1
+}
 # agent systemd --user unit（设计 §v8: per-UID watcher agent）
 # 优先使用 deb/systemd/callwarden-agent.service 正式 unit（含安全约束、资源限制、
 # 环境变量、ExecStop 等完整配置）；不存在时降级为最小占位 unit。
@@ -118,8 +130,11 @@ mkdir -p "$DAEMON_ROOT/usr/bin" \
          "$DAEMON_ROOT/usr/lib/sysusers.d" \
          "$DAEMON_ROOT/usr/lib/tmpfiles.d" \
          "$DAEMON_ROOT/etc/callwarden"
-cp "$ROOT/dist/linux/cw-daemon" "$DAEMON_ROOT/usr/bin/" 2>/dev/null || \
-    echo "  NOTE: cw-daemon binary not found (placeholder root created)"
+cp "$ROOT/dist/linux/cw-daemon" "$DAEMON_ROOT/usr/bin/" || {
+    echo "  ERROR: cw-daemon binary not found at $ROOT/dist/linux/cw-daemon"
+    echo "  Run 'cargo build --release --bin cw_daemon' (or release/build.py) first."
+    exit 1
+}
 
 # systemd unit（优先使用 deb/systemd/ 占位文件，含 ExecStartPre schema 检查；设计 §8.2）
 if [ -f "$SCRIPT_DIR/deb/systemd/callwarden-daemon.service" ]; then
@@ -213,16 +228,12 @@ else
     tar -czf "${ENTERPRISE_DEB%.deb}.tar.gz" -C "$ENTERPRISE_ROOT" .
 fi
 
-# 6. RPM 构建（设计 §8: deb 优先 / RPM 等同）
-echo "Step 5: RPM build (equivalent capability)"
-if command -v rpmbuild >/dev/null 2>&1; then
-    echo "  rpmbuild available - RPM 提供与 deb 等同能力"
-    # TODO: 生成 callwarden.spec 并调用 rpmbuild -bb
-    # 当前以 deb 为第一优先，RPM spec 待补全以提供等同能力（设计 §8.1）
-    echo "  NOTE: RPM spec not yet implemented; deb is the primary format."
-else
-    echo "  rpmbuild not available - skipping RPM (deb is primary, 设计 §8.1)"
-fi
+# 6. RPM 构建（设计 §8: 当前仅 deb，RPM 不在发布范围）
+echo "Step 5: RPM build (skipped - deb-only release)"
+echo "  NOTE: RPM packaging is not currently supported. deb is the primary and only"
+echo "        Linux package format for Call Warden (设计 §8.1). RPM users should use"
+echo "        the offline tar.zst bundle (Step 6) or convert deb via 'alien' tool."
+echo "  Future: if RPM support is added, generate callwarden.spec and call rpmbuild -bb."
 
 # 7. 离线 tar.zst bundle（设计 §8.1: 含包 + repo metadata + SBOM + manifest + 安装脚本）
 echo "Step 6: Building offline tar.zst bundle"

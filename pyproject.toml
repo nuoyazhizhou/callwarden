@@ -53,9 +53,9 @@ classifiers = [
 
 [project.scripts]
 cw = "callwarden.cw:main"
-cw_client = "callwarden.cli.client:main"
-cw_agent = "callwarden.cli.agent:main"
-cw_daemon = "callwarden.cli.daemon:main"
+cw-client = "callwarden.cli.client:main"
+cw-agent = "callwarden.cli.agent:main"
+cw-daemon = "callwarden.cli.daemon:main"
 
 [project.optional-dependencies]
 all = [

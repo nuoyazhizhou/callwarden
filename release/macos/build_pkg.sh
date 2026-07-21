@@ -78,7 +78,7 @@ SHASUM_TGZ="$DIST_DIR/CallWarden-${VERSION}-universal2.tar.gz.sha256"
 
 # 源产物目录：由 release/build.py 生成
 # 包含 Python wheel（callwarden-<version>-py3-none-any.whl），
-# 其中含 cw/cw_client console_script。Rust 扩展由 Step 1 现场构建 universal2。
+# 其中含 cw/cw-client console_script。Rust 扩展由 Step 1 现场构建 universal2。
 # 本脚本不重新构建 Python wheel，仅消费已构建的产物。
 SRC_DIST="$ROOT/release/dist"
 
@@ -144,15 +144,15 @@ EOF
     chmod +x "$PKG_ROOT/$INSTALL_DIR/bin/cw"
 fi
 
-if [ -f "$SRC_DIST/bin/cw_client" ]; then
-    cp "$SRC_DIST/bin/cw_client" "$PKG_ROOT/$INSTALL_DIR/bin/"
+if [ -f "$SRC_DIST/bin/cw-client" ]; then
+    cp "$SRC_DIST/bin/cw-client" "$PKG_ROOT/$INSTALL_DIR/bin/"
 else
-    echo "  WARNING: $SRC_DIST/bin/cw_client not found; placeholder entry script"
-    cat > "$PKG_ROOT/$INSTALL_DIR/bin/cw_client" << 'EOF'
+    echo "  WARNING: $SRC_DIST/bin/cw-client not found; placeholder entry script"
+    cat > "$PKG_ROOT/$INSTALL_DIR/bin/cw-client" << 'EOF'
 #!/bin/bash
 exec python3 -m callwarden.cli.client "$@"
 EOF
-    chmod +x "$PKG_ROOT/$INSTALL_DIR/bin/cw_client"
+    chmod +x "$PKG_ROOT/$INSTALL_DIR/bin/cw-client"
 fi
 
 cp "$UNIVERSAL_DIR/callwarden_core.so" "$PKG_ROOT/$INSTALL_DIR/lib/"
@@ -178,7 +178,7 @@ chmod +x "$PKG_ROOT/usr/local/bin/cw"
 
 cat > "$PKG_ROOT/usr/local/bin/cw-client" << 'SHIM'
 #!/bin/bash
-exec "/Library/Application Support/CallWarden/bin/cw_client" "$@"
+exec "/Library/Application Support/CallWarden/bin/cw-client" "$@"
 SHIM
 chmod +x "$PKG_ROOT/usr/local/bin/cw-client"
 
@@ -245,7 +245,7 @@ EOF
 SIGN_TARGETS=(
     "$PKG_ROOT/$INSTALL_DIR/lib/callwarden_core.so"
     "$PKG_ROOT/$INSTALL_DIR/bin/cw"
-    "$PKG_ROOT/$INSTALL_DIR/bin/cw_client"
+    "$PKG_ROOT/$INSTALL_DIR/bin/cw-client"
 )
 
 if [ -n "${CW_APPLE_DEVID:-}" ] && command -v codesign &>/dev/null; then

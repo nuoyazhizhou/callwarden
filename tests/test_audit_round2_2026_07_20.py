@@ -83,13 +83,14 @@ class TestMatrixNSectionCorrected:
     def matrix_content(self):
         return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
 
-    @pytest.mark.parametrize("mid", ["N5", "N6", "N7"])
+    @pytest.mark.parametrize("mid", ["N5", "N6"])
     def test_n_entries_false_claim(self, matrix_content, mid):
-        """N5/N6/N7 必须是 ❌ 声明不成立。
+        """N5/N6 必须是 ❌ 声明不成立。
 
         N3/N8 在批次5 修复 P0-3 后真实状态变更为 🟡 部分完成（wheel 含 Rust 扩展），
-        不再是 ❌ 声明不成立。N5/N6/N7 仍是 ❌ 未实施（WiX/MSI/MSI/deb/rpm 产物
-        未落地）。
+        不再是 ❌ 声明不成立。N7 在批次14 修复 fail-fast + RPM 明确 deb-only 后
+        真实状态变更为 🟡 部分完成（脚本完整但未实际构建成品）。N5/N6 仍是 ❌ 未实施
+        （WiX/MSI/pkg 产物未落地）。
         """
         line_match = re.search(rf"^\| {mid} \|.*$", matrix_content, re.MULTILINE)
         assert line_match, f"_feature_matrix.md 必须有 {mid} 行"
@@ -99,13 +100,19 @@ class TestMatrixNSectionCorrected:
             f"{mid} 必须标注评审日期，实际：{line}"
         )
 
-    @pytest.mark.parametrize("mid", ["N3", "N8"])
+    @pytest.mark.parametrize("mid", ["N3", "N7", "N8"])
     def test_n_entries_partial_complete(self, matrix_content, mid):
-        """N3/N8 在批次5 修复后为 🟡 部分完成。
+        """N3/N7/N8 在历史批次修复后为 🟡 部分完成。
 
-        原断言为 ❌ 声明不成立（评审 2026-07-20 二轮评审时），批次5 修复 P0-3
+        N3/N8 原断言为 ❌ 声明不成立（评审 2026-07-20 二轮评审时），批次5 修复 P0-3
         后 wheel 含 Rust 扩展 + version key/parser 调用修正，真实状态变更为
         🟡 部分完成（仍待 N5/N6/N7 落地后才能完整通过 11 门禁）。
+
+        N7 原断言为 ❌ 声明不成立（评审 2026-07-20 二轮评审时），批次14 修复：
+        (1) 5 处缺二进制路径从 `cp ... 2>/dev/null || echo "NOTE..."` 改为 fail-fast
+        `exit 1`（避免空壳包）；(2) RPM 章节从 "TODO: 生成 callwarden.spec" 改为明确
+        "deb-only release, RPM 不在发布范围"，移除虚假承诺。真实状态变更为 🟡 部分
+        完成（脚本完整但未在 Linux 环境实际构建过成品）。
         """
         line_match = re.search(rf"^\| {mid} \|.*$", matrix_content, re.MULTILINE)
         assert line_match, f"_feature_matrix.md 必须有 {mid} 行"
