@@ -986,11 +986,13 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     ));
                 }
                 let fd = received_fds[0];
-                // G10/G20: 四重校验
+                // G10/G20: 六重校验（P1-3 复审整改 2026-07-21）
                 // 1. FD 类型（fstat S_IFREG）
-                // 2. 大小预检（st_size 预分配）
-                // 3. 容量上限（DEFAULT_MAX_FD_READ_BYTES = 64MB）
-                // 4. 摘要比对（客户端提供 expected_sha256 时校验）
+                // 2. owner UID 校验（st_uid == peer_uid，root 跳过）
+                // 3. memfd seals 校验（仅 Linux，F_GET_SEALS 包含完整 seals 集合）
+                // 4. 大小预检（st_size 预分配）
+                // 5. 容量上限（DEFAULT_MAX_FD_READ_BYTES = 64MB）
+                // 6. 摘要比对（客户端提供 expected_sha256 时校验）
                 //
                 // from_raw_fd 接管 FD 所有权；校验 + 读取完成后 file drop 会关闭 FD。
                 // server.rs 在 dispatch 后会再次 close_fds，但关闭已关闭 FD 只返回
@@ -1013,6 +1015,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     fd,
                     memfd::DEFAULT_MAX_FD_READ_BYTES,
                     expected_sha256,
+                    peer.uid,
                 ) {
                     Ok(buf) => Some(buf),
                     Err(e) => {

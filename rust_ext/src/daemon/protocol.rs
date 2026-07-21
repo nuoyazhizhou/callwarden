@@ -9,6 +9,12 @@
 use std::io::{self, Read, Write};
 use serde_json::{Map, Value};
 
+// P1-3（2026-07-21）：修复既有导入错误
+// _recv_msg_with_fd / call_with_fd 在 #[cfg(unix)] 函数签名中使用 RawFd，
+// 但原 use 只在 mod unix 内部，外层函数无法访问。这里在文件顶层补导入。
+#[cfg(unix)]
+use std::os::unix::io::RawFd;
+
 /// 4 字节大端 header（u32）
 pub const HEADER_SIZE: usize = 4;
 
