@@ -72,6 +72,40 @@ def _current_uid() -> int:
     return os.getuid() if hasattr(os, "getuid") else 0
 
 
+# 批次11（P0 运维 RPC 授权）：需要管理员权限的运维方法集合。
+# 与 Rust 端 rust_ext/src/daemon/dispatch.rs L545-564 ADMIN_ONLY_METHODS 完全对齐。
+#
+# 授权规则（fail-closed）：peer uid 必须满足以下任一条件才允许调用：
+# - uid == 0（root，硬编码，与 Rust 端 peer.uid == 0 对齐）
+# - uid == daemon 进程自己的 uid（与 Rust 端 current_daemon_uid() 对齐）
+# - uid in DaemonConfig.admin_uids（Python 端配置扩展，默认 [0]）
+#
+# 这些方法修改全局配置 / 资源回收 / 数据库备份还原，必须 fail-closed。
+# workspace.file.refresh / workspace.register 等已经通过 _owned_workspace /
+# _validate_owned_path 做了 per-workspace UID ACL，不重复检查；
+# 只读方法（list/get/query/stats）允许任意已连接 peer。
+ADMIN_ONLY_METHODS: frozenset = frozenset({
+    # 数据库备份 / 还原
+    "backup",
+    "restore",
+    # 资源回收（CAS / snapshots / evict）
+    "gc.cas",
+    "gc.snapshots",
+    "snapshot.evict",
+    # Mount Mapping 写操作（register / delete）
+    "mount.register",
+    "mount.delete",
+    # Toolchain 配置变更（register / delete / bind）
+    "toolchain.register",
+    "toolchain.delete",
+    "toolchain.bind",
+    # Build Context 变更（注册 / 切换激活 / 删除）
+    "build_context.register",
+    "build_context.set_active",
+    "build_context.delete",
+})
+
+
 def get_peer_credentials(conn: socket.socket) -> Dict[str, int]:
     """从已连接 UDS 获取内核认证的 peer credential。"""
     if hasattr(socket, "SO_PEERCRED"):
@@ -489,10 +523,39 @@ class EnterpriseDaemonService:
                 )
         return real_path
 
+    def _is_admin_peer(self, uid: int) -> bool:
+        """批次11：判断 peer uid 是否为管理员（与 Rust 端 dispatch.rs::is_admin 对齐）。
+
+        授权规则（与 Rust 端 ``peer.uid == 0 || peer.uid == current_daemon_uid()``
+        对齐，额外支持 ``admin_uids`` 配置扩展）：
+
+        - ``uid == 0``（root，硬编码，与 Rust 端 ``peer.uid == 0`` 对齐）
+        - ``uid == daemon 进程自己的 uid``（与 Rust 端 ``current_daemon_uid()`` 对齐）
+        - ``uid in DaemonConfig.admin_uids``（Python 端配置扩展，默认 ``[0]``）
+
+        默认 ``admin_uids=[0]`` 时，root 和 daemon（以 root 启动）都是 admin；
+        daemon 以非 root 启动（如 callwarden 用户）时，进程自己 uid 也算 admin，
+        避免需要把 daemon uid 显式加入 admin_uids。
+        """
+        if uid == 0:
+            return True
+        if hasattr(os, "getuid") and uid == os.getuid():
+            return True
+        return self._config.is_admin(uid)
+
     def dispatch(self, peer: Dict[str, int], method: str,
                  params: Dict[str, Any], received_fds: Optional[List[int]] = None) -> Any:
         """执行单个 RPC；身份始终取自 peer credential。"""
         uid = int(peer["uid"])
+        # 批次11（P0 运维 RPC 授权）：fail-closed admin 校验。
+        # ADMIN_ONLY_METHODS 内的方法必须满足 _is_admin_peer 才允许执行，
+        # 未授权直接抛 permission_denied，不进入具体 handler。
+        # 与 Rust 端 dispatch.rs L593-599 行为对齐。
+        if method in ADMIN_ONLY_METHODS and not self._is_admin_peer(uid):
+            raise DaemonRpcError(
+                "permission_denied",
+                f"方法 {method} 需要管理员权限（root 或 daemon uid），当前 peer.uid={uid}",
+            )
         if method == "ping":
             return {"status": "ok", "peer_uid": uid, "pid": os.getpid()}
 
