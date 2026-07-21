@@ -244,7 +244,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | J8 | ✅ | hex/b64、memfd、snapshot publish 和 admin ACL 均已闭合（见 P0 第 2 项修复详情）。批次3/7/11 修复：hex/b64 字段双标准统一支持（Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058`）；memfd 协议接入主路径（`agent_protocol.py:307-313` create_sealed_memfd + `daemon_server.py:798-802` is_memfd + validate_memfd_fd）；snapshot publish 接入主路径（`workspace.rs:1319-1335` codegraph_db_path_template + 注入 SnapshotCachePublisher）；admin ACL fail-closed 校验（Rust `dispatch.rs:545-610` + Python `daemon_server.py:75-106, 526-558`）。 |
 | J9 | ✅ | clone-aware impact 已接入 DB/MCP。 |
 | K1 | ✅ | 内部 parse/publish 在拿到 canonical bytes 时复用同一份 bytes。 |
-| K2 | ❌ | `canonical_bytes is None` 时仍读客户端 `abs_path`，refresh handler 未对该路径执行 workspace ownership/escape 校验。 |
+| K2 | ✅ | 批次7 修复（2026-07-20）：`canonical_bytes is None` 时 daemon 从 `msg.abs_path` 读取客户端文件的路径已加双重校验：(1) owner UID 匹配（`_validate_owned_path` / `validate_owned_path` 校验文件 owner == peer_uid，防跨用户攻击）；(2) path 必须落在 workspace `host_real_root` 内（`os.path.realpath` 比对，防路径逃逸）。Python 端 `daemon_server.py:884-899` + Rust 端 `workspace.rs:1060-1081` 同步实现，违反时抛 `path_escape` DaemonRpcError。 |
 | K3 | ✅ | `parse_canonical_bytes_py` 已导出和注册。 |
 | K4 | ✅ | dispatch 已调用 refresh/staging/replicate，请求字段错配已修复（hex/b64 统一支持）、snapshot 已发布（codegraph_db_path_template + SnapshotCachePublisher 注入）。端到端协议链路已闭合（见 P0 第 2 项修复详情）。 |
 | K5 | ⚪ | 原矩阵仍标记未统一，不列入虚假完成项。 |
