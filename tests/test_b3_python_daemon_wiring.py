@@ -437,7 +437,12 @@ class TestBatch3DaemonE2E:
 
 
 class TestFeatureMatrixStatusUpdate:
-    """_feature_matrix.md 中 G14/G15/G17/G19/G32 状态应更新为 ✅ 已修复。"""
+    """_feature_matrix.md 中 G14/G15/G17/G19/G32 状态应与复审报告一致。
+
+    复审报告 §6（feature-matrix-code-reaudit-2026-07-21.md）：G14/G15 因
+    Python daemon 有实现但 Linux systemd 启动 Rust cw_daemon 未对齐，回退为 🟡。
+    G17/G19/G32 已通过复审保持 ✅。
+    """
 
     @pytest.fixture
     def matrix_content(self):
@@ -445,22 +450,22 @@ class TestFeatureMatrixStatusUpdate:
             return f.read()
 
     @pytest.mark.parametrize("gid,expected_keyword", [
-        ("G14", "✅"),
-        ("G15", "✅"),
+        ("G14", "🟡"),
+        ("G15", "🟡"),
         ("G17", "✅"),
         ("G19", "✅"),
         ("G32", "✅"),
     ])
     def test_g_entry_status_updated(self, matrix_content, gid, expected_keyword):
-        """G14/G15/G17/G19/G32 状态应为 ✅ 已修复。"""
+        """G14/G15 应为 🟡 复审回退；G17/G19/G32 保持 ✅ 已修复。"""
         line_match = re.search(rf"^\| {gid} \|.*$", matrix_content, re.MULTILINE)
         assert line_match, f"_feature_matrix.md 必须有 {gid} 行"
         line = line_match.group(0)
         assert expected_keyword in line, (
-            f"{gid} 状态应为 {expected_keyword}（已修复），实际：{line}"
+            f"{gid} 状态应为 {expected_keyword}，实际：{line}"
         )
-        assert "批次3" in line or "2026-07-20" in line, (
-            f"{gid} 应标注批次3 或 2026-07-20 修复日期，实际：{line}"
+        assert "批次3" in line or "2026-07-20" in line or "2026-07-21" in line, (
+            f"{gid} 应标注批次3 / 2026-07-20 / 2026-07-21 日期，实际：{line}"
         )
 
 

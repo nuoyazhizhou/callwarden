@@ -95,6 +95,10 @@ ADMIN_ONLY_METHODS: frozenset = frozenset({
     # Mount Mapping 写操作（register / delete）
     "mount.register",
     "mount.delete",
+    # Mount Mapping 读操作（P0-2 整改 2026-07-21）
+    # mount.list 暴露全局 host_path 映射，container_mount_mappings 表无 owner_uid 列，
+    # 无法按 UID 过滤；改为 admin-only 避免普通用户枚举宿主机路径。
+    "mount.list",
     # Toolchain 配置变更（register / delete / bind）
     "toolchain.register",
     "toolchain.delete",
@@ -506,6 +510,39 @@ class EnterpriseDaemonService:
             raise DaemonRpcError("workspace_archived", workspace_id)
         return workspace
 
+    def _owned_workspace_by_id(self, peer_uid: int,
+                               workspace_id: int) -> Dict[str, Any]:
+        """P0-2 整改（2026-07-21）：通过 workspace_id（数字主键）校验所有权。
+
+        用于 toolchain.resolve / build_context.list / resolved_edges.* 等 RPC，
+        这些 RPC 使用 workspace_id（数字）而非 workspace_instance_id（字符串 hash）。
+
+        Args:
+            peer_uid: SO_PEERCRED 获取的 peer UID
+            workspace_id: daemon_workspaces.workspace_id 数字主键
+
+        Returns:
+            workspace dict（含 owner_uid / workspace_instance_id / status 等字段）
+
+        Raises:
+            DaemonRpcError("workspace_not_found")：workspace_id 不存在
+            DaemonRpcError("workspace_forbidden")：owner_uid != peer_uid
+            DaemonRpcError("workspace_archived")：workspace 已归档
+        """
+        with closing(self._registry_conn()) as conn:
+            row = conn.execute(
+                "SELECT * FROM daemon_workspaces WHERE workspace_id = ?",
+                (int(workspace_id),)
+            ).fetchone()
+        if row is None:
+            raise DaemonRpcError("workspace_not_found", str(workspace_id))
+        workspace = dict(row)
+        if int(workspace["owner_uid"]) != peer_uid:
+            raise DaemonRpcError("workspace_forbidden", "workspace 不属于当前 UID")
+        if workspace.get("status") == "archived":
+            raise DaemonRpcError("workspace_archived", str(workspace_id))
+        return workspace
+
     @staticmethod
     def _validate_owned_path(path: str, peer_uid: int,
                              require_file: bool = False) -> str:
@@ -745,8 +782,9 @@ class EnterpriseDaemonService:
         # 这些 RPC 不依赖 workspace_id（toolchain.db 是全局共享的），
         # 在下方 workspace_id 必填检查之前处理。
         # 对应 Rust `dispatch.rs` 的 toolchain.* / build_context.* / resolved_edges.* 路由。
+        # P0-2 整改（2026-07-21）：传入 peer_uid 用于 workspace_id ACL 校验。
         if method.startswith(("toolchain.", "build_context.", "resolved_edges.")):
-            return self._dispatch_toolchain_rpc(method, params)
+            return self._dispatch_toolchain_rpc(method, params, peer_uid=uid)
 
         # gc.cas 需要 workspace_id，在下方处理
 
@@ -1068,7 +1106,8 @@ class EnterpriseDaemonService:
     # G1 Layer 2: Toolchain / Build Context / Resolved Edges 分发
     # ============================================
 
-    def _dispatch_toolchain_rpc(self, method: str, params: Dict[str, Any]) -> Any:
+    def _dispatch_toolchain_rpc(self, method: str, params: Dict[str, Any],
+                                peer_uid: int = 0) -> Any:
         """toolchain.* / build_context.* / resolved_edges.* RPC 分发。
 
         所有方法都使用 daemon 全局 toolchain.db 连接（`_get_toolchain_conn()`），
@@ -1076,6 +1115,13 @@ class EnterpriseDaemonService:
         - toolchain.register / list / get / delete / bind / resolve（6）
         - build_context.register / list / set_active / delete（4）
         - resolved_edges.store / get / count（3）
+
+        P0-2 整改（2026-07-21）：非 admin-only 的 workspace_id 必填方法
+        （toolchain.resolve / build_context.list / resolved_edges.store/get/count）
+        入口调用 `_owned_workspace_by_id(peer_uid, workspace_id)` 校验所有权。
+        ADMIN_ONLY 方法（toolchain.bind / toolchain.register / build_context.register /
+        set_active / delete）已在顶层 dispatch 由 ADMIN_ONLY_METHODS 拦截，
+        admin 受信任不再重复 workspace ACL 校验。
         """
         from callwarden.db import db_toolchain
 
@@ -1150,6 +1196,8 @@ class EnterpriseDaemonService:
             workspace_id = params.get("workspace_id")
             if workspace_id is None:
                 raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            # P0-2 整改（2026-07-21）：workspace owner ACL
+            self._owned_workspace_by_id(peer_uid, int(workspace_id))
             build_context_hash = params.get("build_context_hash")
             if build_context_hash is not None:
                 build_context_hash = str(build_context_hash)
@@ -1184,6 +1232,8 @@ class EnterpriseDaemonService:
             workspace_id = params.get("workspace_id")
             if workspace_id is None:
                 raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            # P0-2 整改（2026-07-21）：workspace owner ACL
+            self._owned_workspace_by_id(peer_uid, int(workspace_id))
             return [ctx.to_dict() if hasattr(ctx, "to_dict") else ctx
                     for ctx in db_toolchain.list_build_contexts(conn, int(workspace_id))]
 
@@ -1216,12 +1266,35 @@ class EnterpriseDaemonService:
             workspace_id = params.get("workspace_id")
             if workspace_id is None:
                 raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            # P0-2 整改（2026-07-21）：workspace owner ACL
+            self._owned_workspace_by_id(peer_uid, int(workspace_id))
             build_context_hash = str(params.get("build_context_hash") or "")
             if not build_context_hash:
                 raise DaemonRpcError("invalid_params", "缺少 build_context_hash")
             edges = params.get("edges") or []
             if not isinstance(edges, list):
                 raise DaemonRpcError("invalid_params", "edges 必须是数组")
+            # P0-2 整改（2026-07-21）：edge 字段合法性校验（symbol/workspace 一致性）
+            # caller_symbol_id / callee_symbol_id 必须是正整数；
+            # symbol 真实归属校验需在业务 DB 端做（符号表在 callwarden.db 而非 toolchain.db），
+            # 这里做基础类型校验防止注入无效 ID。
+            for idx, edge in enumerate(edges):
+                if not isinstance(edge, dict):
+                    raise DaemonRpcError("invalid_params",
+                                         f"edges[{idx}] 必须是 object")
+                for field in ("caller_symbol_id", "callee_symbol_id"):
+                    val = edge.get(field)
+                    if val is None:
+                        raise DaemonRpcError("invalid_params",
+                                             f"edges[{idx}].{field} 缺失")
+                    try:
+                        iv = int(val)
+                    except (TypeError, ValueError):
+                        raise DaemonRpcError("invalid_params",
+                                             f"edges[{idx}].{field} 必须是整数")
+                    if iv <= 0:
+                        raise DaemonRpcError("invalid_params",
+                                             f"edges[{idx}].{field} 必须 > 0")
             stored = db_toolchain.store_resolved_edges(
                 conn,
                 workspace_id=int(workspace_id),
@@ -1234,6 +1307,8 @@ class EnterpriseDaemonService:
             workspace_id = params.get("workspace_id")
             if workspace_id is None:
                 raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            # P0-2 整改（2026-07-21）：workspace owner ACL
+            self._owned_workspace_by_id(peer_uid, int(workspace_id))
             build_context_hash = str(params.get("build_context_hash") or "")
             if not build_context_hash:
                 raise DaemonRpcError("invalid_params", "缺少 build_context_hash")
@@ -1252,6 +1327,8 @@ class EnterpriseDaemonService:
             workspace_id = params.get("workspace_id")
             if workspace_id is None:
                 raise DaemonRpcError("invalid_params", "缺少 workspace_id")
+            # P0-2 整改（2026-07-21）：workspace owner ACL
+            self._owned_workspace_by_id(peer_uid, int(workspace_id))
             build_context_hash = str(params.get("build_context_hash") or "")
             if not build_context_hash:
                 raise DaemonRpcError("invalid_params", "缺少 build_context_hash")

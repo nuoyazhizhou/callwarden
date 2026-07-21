@@ -496,9 +496,17 @@ class TestG1ThreeLayerStorageE2E:
         assert tc["fingerprint"] == "fp_arm_9.3.1_v1"
         assert tc["id"] > 0
 
+        # P0-2 整改（2026-07-21）：toolchain.resolve 等 RPC 现在校验 workspace owner
+        # 先注册 workspace 拿到 workspace_id（owner_uid = peer.uid）
+        workspace = daemon_service.dispatch(peer, "workspace.register", {
+            "client_view_root": str(tmp_path),
+            "host_real_root": str(tmp_path),
+        })
+        ws_id = int(workspace["workspace_id"])
+
         # 2. 注册 build_context（设为 active）
         bch = daemon_service.dispatch(peer, "build_context.register", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
             "name": "arm-debug",
             "compile_flags": ["-mcpu=cortex-m4", "-g"],
             "defines": {"DEBUG": "1"},
@@ -511,7 +519,7 @@ class TestG1ThreeLayerStorageE2E:
 
         # 3. 绑定 toolchain ↔ workspace（用 build_context_hash）
         bind_result = daemon_service.dispatch(peer, "toolchain.bind", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
             "toolchain_id": tc["id"],
             "build_context_hash": bch["build_context_hash"],
         })
@@ -519,7 +527,7 @@ class TestG1ThreeLayerStorageE2E:
 
         # 4. resolve_toolchain 通过 active build_context 找到 toolchain
         resolved = daemon_service.dispatch(peer, "toolchain.resolve", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
         })
         assert resolved is not None
         assert resolved["fingerprint"] == "fp_arm_9.3.1_v1"
@@ -603,9 +611,27 @@ class TestG1ThreeLayerStorageE2E:
         bch_a = "ctx_a" * 16  # 64-char mock hash
         bch_b = "ctx_b" * 16
 
+        # P0-2 整改（2026-07-21）：resolved_edges.* 现在校验 workspace owner
+        # 先注册两个 workspace（owner_uid = peer.uid）
+        ws1_root = tmp_path / "ws1"
+        ws1_root.mkdir()
+        ws1 = daemon_service.dispatch(peer, "workspace.register", {
+            "client_view_root": str(ws1_root),
+            "host_real_root": str(ws1_root),
+        })
+        ws1_id = int(ws1["workspace_id"])
+        ws2_root = tmp_path / "ws2"
+        ws2_root.mkdir()
+        ws2 = daemon_service.dispatch(peer, "workspace.register", {
+            "client_view_root": str(ws2_root),
+            "host_real_root": str(ws2_root),
+            "git_remote_url": "different",  # 避免 instance_id 冲突
+        })
+        ws2_id = int(ws2["workspace_id"])
+
         # workspace 1 / context A: 3 edges
         daemon_service.dispatch(peer, "resolved_edges.store", {
-            "workspace_id": 1,
+            "workspace_id": ws1_id,
             "build_context_hash": bch_a,
             "edges": [
                 {"caller_symbol_id": 1, "callee_symbol_id": 10,
@@ -618,7 +644,7 @@ class TestG1ThreeLayerStorageE2E:
         })
         # workspace 1 / context B: 1 edge
         daemon_service.dispatch(peer, "resolved_edges.store", {
-            "workspace_id": 1,
+            "workspace_id": ws1_id,
             "build_context_hash": bch_b,
             "edges": [
                 {"caller_symbol_id": 1, "callee_symbol_id": 20,
@@ -627,7 +653,7 @@ class TestG1ThreeLayerStorageE2E:
         })
         # workspace 2 / context A: 2 edges
         daemon_service.dispatch(peer, "resolved_edges.store", {
-            "workspace_id": 2,
+            "workspace_id": ws2_id,
             "build_context_hash": bch_a,
             "edges": [
                 {"caller_symbol_id": 100, "callee_symbol_id": 200,
@@ -639,13 +665,13 @@ class TestG1ThreeLayerStorageE2E:
 
         # 验证 isolation
         c_1_a = daemon_service.dispatch(peer, "resolved_edges.count", {
-            "workspace_id": 1, "build_context_hash": bch_a,
+            "workspace_id": ws1_id, "build_context_hash": bch_a,
         })
         c_1_b = daemon_service.dispatch(peer, "resolved_edges.count", {
-            "workspace_id": 1, "build_context_hash": bch_b,
+            "workspace_id": ws1_id, "build_context_hash": bch_b,
         })
         c_2_a = daemon_service.dispatch(peer, "resolved_edges.count", {
-            "workspace_id": 2, "build_context_hash": bch_a,
+            "workspace_id": ws2_id, "build_context_hash": bch_a,
         })
 
         assert c_1_a["count"] == 3
@@ -654,12 +680,12 @@ class TestG1ThreeLayerStorageE2E:
 
         # 验证 caller 过滤
         edges_caller1 = daemon_service.dispatch(peer, "resolved_edges.get", {
-            "workspace_id": 1, "build_context_hash": bch_a,
+            "workspace_id": ws1_id, "build_context_hash": bch_a,
             "caller_symbol_id": 1,
         })
         assert len(edges_caller1) == 2  # (1→10) + (1→11)
         edges_caller2 = daemon_service.dispatch(peer, "resolved_edges.get", {
-            "workspace_id": 1, "build_context_hash": bch_a,
+            "workspace_id": ws1_id, "build_context_hash": bch_a,
             "caller_symbol_id": 2,
         })
         assert len(edges_caller2) == 1  # (2→10)
@@ -707,9 +733,17 @@ class TestG1ThreeLayerStorageE2E:
         """
         peer = self._peer()
 
+        # P0-2 整改（2026-07-21）：toolchain.resolve 现在校验 workspace owner
+        # 先注册 workspace（owner_uid = peer.uid）
+        workspace = daemon_service.dispatch(peer, "workspace.register", {
+            "client_view_root": str(tmp_path),
+            "host_real_root": str(tmp_path),
+        })
+        ws_id = int(workspace["workspace_id"])
+
         # 1. 无绑定
         r1 = daemon_service.dispatch(peer, "toolchain.resolve", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
         })
         assert r1 is None
 
@@ -725,25 +759,25 @@ class TestG1ThreeLayerStorageE2E:
 
         # 2. context_a (active) + 绑定 tc_a
         bch_a = daemon_service.dispatch(peer, "build_context.register", {
-            "workspace_id": 1, "name": "a",
+            "workspace_id": ws_id, "name": "a",
             "compile_flags": ["-g"], "set_active": True,
         })
         daemon_service.dispatch(peer, "toolchain.bind", {
-            "workspace_id": 1, "toolchain_id": tc_a["id"],
+            "workspace_id": ws_id, "toolchain_id": tc_a["id"],
             "build_context_hash": bch_a["build_context_hash"],
         })
         r2 = daemon_service.dispatch(peer, "toolchain.resolve", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
         })
         assert r2["fingerprint"] == "fp_a"
 
         # 3. 切换 active 到 context_b（无绑定）
         bch_b = daemon_service.dispatch(peer, "build_context.register", {
-            "workspace_id": 1, "name": "b",
+            "workspace_id": ws_id, "name": "b",
             "compile_flags": ["-O2"], "set_active": True,
         })
         r3 = daemon_service.dispatch(peer, "toolchain.resolve", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
         })
         # active 已切到 bch_b，但 bch_b 无 toolchain 绑定 → fallback 到 default（空 hash）
         # → 仍无 → 返回 None
@@ -751,17 +785,17 @@ class TestG1ThreeLayerStorageE2E:
 
         # 4. 绑定 tc_b 到 bch_b（explicit hash）
         daemon_service.dispatch(peer, "toolchain.bind", {
-            "workspace_id": 1, "toolchain_id": tc_b["id"],
+            "workspace_id": ws_id, "toolchain_id": tc_b["id"],
             "build_context_hash": bch_b["build_context_hash"],
         })
         # 4a. 用 active（隐式）→ 应返回 tc_b
         r4a = daemon_service.dispatch(peer, "toolchain.resolve", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
         })
         assert r4a["fingerprint"] == "fp_b"
         # 4b. 用 explicit bch_a → 应返回 tc_a（精确匹配优先于 active）
         r4b = daemon_service.dispatch(peer, "toolchain.resolve", {
-            "workspace_id": 1,
+            "workspace_id": ws_id,
             "build_context_hash": bch_a["build_context_hash"],
         })
         assert r4b["fingerprint"] == "fp_a"

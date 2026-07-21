@@ -26,7 +26,7 @@ use serde_json::{Map, Value};
 
 use super::dispatch::{
     DaemonState, DaemonStateExt, DaemonRpcError, PeerCredential, get_str_param,
-    require_str_param, get_str_param_or, get_int_param_or,
+    require_str_param, get_str_param_or, get_int_param_or, current_daemon_uid,
 };
 use super::workspace::{WorkspaceDaemonState, WorkspaceRegistry, owned_workspace, validate_owned_path};
 use crate::graph::{CallChainEdgeInfo, GraphStore};
@@ -757,14 +757,36 @@ impl DaemonStateExt for SnapshotDaemonState {
 
     fn handle_snapshot_list_workspaces(
         &mut self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         _params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        // 列出所有已发布 snapshot 的 workspace（对齐 Python list_workspaces）
-        // 返回每个 workspace 的 generation + health 摘要，便于运维监控
+        // P0-2 整改（2026-07-21）：按 peer_uid 过滤 workspace
+        // 原实现忽略 _peer，返回 snapshot_cache 中全部 workspace，导致跨 UID 泄露。
+        // 修复：先从 registry 拿到当前 peer UID 的 workspace_instance_id 集合，
+        // 再对 snapshot_cache 返回的 ws_ids 做交集过滤。
+        //
+        // admin（peer.uid == 0 或 daemon uid）可以查看所有 workspace（运维监控场景）；
+        // 非 admin 只能看自己的 workspace。
+        let admin_view = peer.uid == 0 || peer.uid == current_daemon_uid();
+
         let ws_ids = self.snapshot_cache.list_workspaces();
         let mut entries = Vec::with_capacity(ws_ids.len());
         for ws_id in ws_ids {
+            // 非 admin 校验 workspace 所有权
+            if !admin_view {
+                let workspace = self.base.registry.get_workspace_status(&ws_id)
+                    .map_err(|e| DaemonRpcError::internal_error(
+                        format!("registry 查询失败: {}", e)))?;
+                let owner_uid = workspace
+                    .as_ref()
+                    .and_then(|w| w.get("owner_uid"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(-1);
+                if owner_uid != peer.uid as i64 {
+                    // 不属于当前 UID 的 workspace 跳过
+                    continue;
+                }
+            }
             if let Some(mgr) = self.snapshot_cache.get(&ws_id) {
                 let mut m = Map::new();
                 m.insert("workspace_instance_id".into(), Value::String(ws_id));

@@ -4,10 +4,10 @@
 规范：docs/design/feature-matrix-code-audit-2026-07-20.md §P0（运维 RPC 缺少管理员授权）
 
 测试覆盖：
-1. ADMIN_ONLY_METHODS 常量与 Rust 端 dispatch.rs L545-564 完全对齐（13 个方法）
+1. ADMIN_ONLY_METHODS 常量与 Rust 端 dispatch.rs 完全对齐（14 个方法，P0-2 整改后加入 mount.list）
 2. _is_admin_peer 行为矩阵（uid=0 / uid=os.getuid() / uid in admin_uids / 其他 uid）
 3. dispatch fail-closed admin 校验（admin 通过 / 非 admin 拒绝 / 只读方法不被拦截）
-4. 13 个 admin 方法的授权矩阵（admin 通过 + 非 admin 抛 permission_denied）
+4. 14 个 admin 方法的授权矩阵（admin 通过 + 非 admin 抛 permission_denied）
 
 与 Rust 端对齐：
 - rust_ext/src/daemon/dispatch.rs L545-564 ADMIN_ONLY_METHODS
@@ -91,13 +91,13 @@ class TestBatch11AdminOnlyMethodsConstant:
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         assert isinstance(ADMIN_ONLY_METHODS, frozenset)
 
-    def test_constant_contains_exactly_13_methods(self):
-        """与 Rust 端对齐：恰好 13 个 admin-only 方法。"""
+    def test_constant_contains_exactly_14_methods(self):
+        """与 Rust 端对齐：恰好 14 个 admin-only 方法（P0-2 整改后加入 mount.list）。"""
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
-        assert len(ADMIN_ONLY_METHODS) == 13
+        assert len(ADMIN_ONLY_METHODS) == 14
 
     def test_constant_contains_all_expected_methods(self):
-        """13 个方法必须与 Rust 端 dispatch.rs L545-564 完全一致。"""
+        """14 个方法必须与 Rust 端 dispatch.rs ADMIN_ONLY_METHODS 完全一致。"""
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         expected = {
             # 数据库备份 / 还原
@@ -106,6 +106,8 @@ class TestBatch11AdminOnlyMethodsConstant:
             "gc.cas", "gc.snapshots", "snapshot.evict",
             # Mount Mapping 写操作
             "mount.register", "mount.delete",
+            # Mount Mapping 读操作（P0-2 整改：暴露全局 host_path，改 admin-only）
+            "mount.list",
             # Toolchain 配置变更
             "toolchain.register", "toolchain.delete", "toolchain.bind",
             # Build Context 变更
@@ -121,7 +123,7 @@ class TestBatch11AdminOnlyMethodsConstant:
             "workspace.list", "workspace.status", "workspace.connect",
             "workspace.file.refresh", "workspace.recover",
             "metrics.snapshot", "metrics.prometheus",
-            "mount.list", "toolchain.list", "toolchain.get", "toolchain.resolve",
+            "toolchain.list", "toolchain.get", "toolchain.resolve",
             "build_context.list",
             "query.stats", "query.symbol", "query.search",
             "query.callers", "query.callees",
@@ -300,15 +302,16 @@ class TestBatch11DispatchAdminEnforcement:
 
 
 # ============================================================
-# 4. 13 个 admin 方法授权矩阵
+# 4. 14 个 admin 方法授权矩阵
 # ============================================================
 
 
 class TestBatch11AdminMethodMatrix:
-    """13 个 admin 方法的授权矩阵：admin 通过 / 非 admin 抛 permission_denied。
+    """14 个 admin 方法的授权矩阵：admin 通过 / 非 admin 抛 permission_denied。
 
     fail-closed 校验在 dispatch 顶部，非 admin 调用会在进入具体 handler 前
     抛 permission_denied，所以不需要完整 handler 实现。
+    P0-2 整改（2026-07-21）后由 13 个增至 14 个（新增 mount.list）。
     """
 
     ADMIN_METHODS = [
@@ -319,6 +322,7 @@ class TestBatch11AdminMethodMatrix:
         "snapshot.evict",
         "mount.register",
         "mount.delete",
+        "mount.list",
         "toolchain.register",
         "toolchain.delete",
         "toolchain.bind",
@@ -327,14 +331,14 @@ class TestBatch11AdminMethodMatrix:
         "build_context.delete",
     ]
 
-    def test_all_13_methods_are_in_admin_only_constant(self):
-        """矩阵中的 13 个方法都在 ADMIN_ONLY_METHODS 中。"""
+    def test_all_14_methods_are_in_admin_only_constant(self):
+        """矩阵中的 14 个方法都在 ADMIN_ONLY_METHODS 中。"""
         from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         for method in self.ADMIN_METHODS:
             assert method in ADMIN_ONLY_METHODS, f"{method} 不在 ADMIN_ONLY_METHODS 中"
 
-    def test_admin_uid_passes_all_13_methods(self, daemon_service):
-        """admin uid 调用所有 13 个 admin 方法都不应被 permission_denied 拒绝。"""
+    def test_admin_uid_passes_all_14_methods(self, daemon_service):
+        """admin uid 调用所有 14 个 admin 方法都不应被 permission_denied 拒绝。"""
         from callwarden.server.daemon_server import DaemonRpcError
         peer = _make_peer(uid=0)
         for method in self.ADMIN_METHODS:
@@ -353,8 +357,8 @@ class TestBatch11AdminMethodMatrix:
                 # 其他异常（handler 内部错误）可接受，关键是没被 permission_denied 拦截
                 pass
 
-    def test_non_admin_uid_rejected_for_all_13_methods(self, daemon_service):
-        """非 admin uid 调用所有 13 个 admin 方法都抛 permission_denied。"""
+    def test_non_admin_uid_rejected_for_all_14_methods(self, daemon_service):
+        """非 admin uid 调用所有 14 个 admin 方法都抛 permission_denied。"""
         from callwarden.server.daemon_server import DaemonRpcError
         daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
         non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
@@ -433,3 +437,160 @@ class TestBatch11RustPythonAlignment:
         assert "permission_denied" in content
         # fail-closed：未授权直接 raise，不进入 handler
         assert "if method in ADMIN_ONLY_METHODS and not self._is_admin_peer" in content
+
+
+# ============================================================
+# 5. P0-2 整改（2026-07-21）：workspace_id 级 ACL 测试
+# ============================================================
+
+
+class TestP02WorkspaceIdAcl:
+    """P0-2 整改验证：toolchain.resolve / build_context.list / resolved_edges.*
+    必须按 workspace_id 校验 owner_uid，跨 UID 调用应抛 workspace_forbidden。
+
+    复审报告 §8.2 要求：所有含 workspace ID 的 RPC 统一调用
+    `owned_workspace(peer_uid, workspace_instance_id)`；list API 按 ACL 过滤。
+    """
+
+    def _register_workspace(self, daemon_service, owner_uid: int, tmp_path):
+        """注册一个 workspace，返回 (workspace_id 数字, workspace_instance_id 字符串)。"""
+        owner_peer = _make_peer(uid=0)  # root 注册
+        workspace = daemon_service.dispatch(owner_peer, "workspace.register", {
+            "client_view_root": str(tmp_path),
+            "owner_uid": owner_uid,
+            "host_real_root": str(tmp_path),
+        })
+        return int(workspace["workspace_id"]), workspace["workspace_instance_id"]
+
+    def test_toolchain_resolve_rejects_cross_uid(self, daemon_service, tmp_path):
+        """toolchain.resolve 跨 UID 调用应抛 workspace_forbidden。"""
+        owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+
+        other_peer = _make_peer(uid=owner_uid + 1000)
+        from callwarden.server.daemon_server import DaemonRpcError
+        with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
+            daemon_service.dispatch(other_peer, "toolchain.resolve", {
+                "workspace_id": ws_id,
+            })
+        assert exc.value.code == "workspace_forbidden"
+
+    def test_build_context_list_rejects_cross_uid(self, daemon_service, tmp_path):
+        """build_context.list 跨 UID 调用应抛 workspace_forbidden。"""
+        owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+
+        other_peer = _make_peer(uid=owner_uid + 1000)
+        from callwarden.server.daemon_server import DaemonRpcError
+        with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
+            daemon_service.dispatch(other_peer, "build_context.list", {
+                "workspace_id": ws_id,
+            })
+        assert exc.value.code == "workspace_forbidden"
+
+    def test_resolved_edges_store_rejects_cross_uid(self, daemon_service, tmp_path):
+        """resolved_edges.store 跨 UID 写应抛 workspace_forbidden（最严重缺口）。"""
+        owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+
+        other_peer = _make_peer(uid=owner_uid + 1000)
+        from callwarden.server.daemon_server import DaemonRpcError
+        with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
+            daemon_service.dispatch(other_peer, "resolved_edges.store", {
+                "workspace_id": ws_id,
+                "build_context_hash": "fake_hash",
+                "edges": [
+                    {"caller_symbol_id": 1, "callee_symbol_id": 2,
+                     "callee_name": "foo", "callee_file": "bar.py",
+                     "call_line": 10, "resolution_method": "exact"},
+                ],
+            })
+        assert exc.value.code == "workspace_forbidden"
+
+    def test_resolved_edges_get_rejects_cross_uid(self, daemon_service, tmp_path):
+        """resolved_edges.get 跨 UID 读应抛 workspace_forbidden。"""
+        owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+
+        other_peer = _make_peer(uid=owner_uid + 1000)
+        from callwarden.server.daemon_server import DaemonRpcError
+        with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
+            daemon_service.dispatch(other_peer, "resolved_edges.get", {
+                "workspace_id": ws_id,
+                "build_context_hash": "fake_hash",
+            })
+        assert exc.value.code == "workspace_forbidden"
+
+    def test_resolved_edges_count_rejects_cross_uid(self, daemon_service, tmp_path):
+        """resolved_edges.count 跨 UID 读应抛 workspace_forbidden。"""
+        owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+
+        other_peer = _make_peer(uid=owner_uid + 1000)
+        from callwarden.server.daemon_server import DaemonRpcError
+        with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
+            daemon_service.dispatch(other_peer, "resolved_edges.count", {
+                "workspace_id": ws_id,
+                "build_context_hash": "fake_hash",
+            })
+        assert exc.value.code == "workspace_forbidden"
+
+    def test_resolved_edges_store_rejects_invalid_symbol_id(self, daemon_service, tmp_path):
+        """resolved_edges.store 校验 edge 字段合法性（symbol_id 必须 > 0）。"""
+        owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+
+        owner_peer = _make_peer(uid=owner_uid)
+        from callwarden.server.daemon_server import DaemonRpcError
+        # caller_symbol_id = 0 应被拒绝
+        with pytest.raises(DaemonRpcError, match="caller_symbol_id 必须 > 0"):
+            daemon_service.dispatch(owner_peer, "resolved_edges.store", {
+                "workspace_id": ws_id,
+                "build_context_hash": "fake_hash",
+                "edges": [
+                    {"caller_symbol_id": 0, "callee_symbol_id": 2,
+                     "callee_name": "foo", "callee_file": "bar.py",
+                     "call_line": 10, "resolution_method": "exact"},
+                ],
+            })
+
+    def test_resolved_edges_store_rejects_missing_symbol_id(self, daemon_service, tmp_path):
+        """resolved_edges.store 校验 edge 字段缺失。"""
+        owner_uid = os.getuid() if hasattr(os, "getuid") else 0
+        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+
+        owner_peer = _make_peer(uid=owner_uid)
+        from callwarden.server.daemon_server import DaemonRpcError
+        # caller_symbol_id 缺失
+        with pytest.raises(DaemonRpcError, match="caller_symbol_id 缺失"):
+            daemon_service.dispatch(owner_peer, "resolved_edges.store", {
+                "workspace_id": ws_id,
+                "build_context_hash": "fake_hash",
+                "edges": [
+                    {"callee_symbol_id": 2,
+                     "callee_name": "foo", "callee_file": "bar.py",
+                     "call_line": 10, "resolution_method": "exact"},
+                ],
+            })
+
+    def test_mount_list_rejects_non_admin(self, daemon_service, tmp_path):
+        """mount.list 改为 admin-only 后，非 admin 调用应抛 permission_denied。"""
+        daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
+        non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
+        other_peer = _make_peer(uid=non_admin_uid)
+
+        from callwarden.server.daemon_server import DaemonRpcError
+        with pytest.raises(DaemonRpcError, match="管理员权限") as exc:
+            daemon_service.dispatch(other_peer, "mount.list", {})
+        assert exc.value.code == "permission_denied"
+
+    def test_mount_list_passes_admin(self, daemon_service, tmp_path):
+        """mount.list 对 admin（root）应放行（不抛 permission_denied）。"""
+        admin_peer = _make_peer(uid=0)
+        from callwarden.server.daemon_server import DaemonRpcError
+        try:
+            daemon_service.dispatch(admin_peer, "mount.list", {})
+        except DaemonRpcError as e:
+            # 不应该收到 permission_denied（可能是空列表返回）
+            assert e.code != "permission_denied", \
+                f"admin 调用 mount.list 不应被 permission_denied 拒绝（实际 {e.code}）"

@@ -554,6 +554,10 @@ const ADMIN_ONLY_METHODS: &[&str] = &[
     // Mount Mapping 写操作（register / delete）
     "mount.register",
     "mount.delete",
+    // Mount Mapping 读操作（P0-2 整改 2026-07-21）
+    // mount.list 暴露全局 host_path 映射，container_mount_mappings 表无 owner_uid 列，
+    // 无法按 UID 过滤；改为 admin-only 避免普通用户枚举宿主机路径。
+    "mount.list",
     // Toolchain 配置变更（register / delete / bind）
     "toolchain.register",
     "toolchain.delete",
@@ -565,7 +569,7 @@ const ADMIN_ONLY_METHODS: &[&str] = &[
 ];
 
 /// 返回 daemon 进程自己的 uid（Unix: getuid；Windows: 0 视为管理员）
-fn current_daemon_uid() -> u32 {
+pub fn current_daemon_uid() -> u32 {
     #[cfg(unix)]
     {
         // SAFETY: getuid() 是无副作用 syscall，永远安全
