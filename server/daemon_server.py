@@ -339,11 +339,21 @@ class EnterpriseDaemonService:
         )
 
     def _evict_snapshot_cache(self, workspace_id: str) -> bool:
-        """G17：SnapshotGC 驱逐 SnapshotManagerService 中已注销 workspace 的缓存。"""
+        """G17：SnapshotGC 驱逐 SnapshotManagerService 中已注销 workspace 的缓存。
+
+        批次10（P2 性能优化）修复：原实现是空 stub，注释声称
+        SnapshotManagerService 未暴露 evict 接口，但 snapshot_manager.py:186
+        已有 evict_workspace 方法。注释滞后导致 workspace 注销后内存泄漏——
+        SnapshotManagerService 缓存中保留已注销 workspace 的 PySnapshotManager，
+        长期累积导致 daemon 内存膨胀。
+
+        修复：直接调用 snapshot_service.evict_workspace(workspace_id)。
+        """
         try:
-            # SnapshotManagerService 没有公开 evict 接口，这里通过 gc_snapshots 兜底
-            # 真实驱逐需要 SnapshotManagerService 暴露 evict_workspace 方法
-            return True
+            if self.snapshot_service is None:
+                logger.debug("evict skipped (snapshot_service is None) for ws=%s", workspace_id)
+                return False
+            return self.snapshot_service.evict_workspace(workspace_id)
         except Exception as e:
             logger.warning("evict snapshot cache failed for ws=%s: %s", workspace_id, e)
             return False
@@ -385,8 +395,9 @@ class EnterpriseDaemonService:
             cas_db_path = os.path.join(ws_dir, "cas.db")
             cas_conn = sqlite3.connect(cas_db_path, timeout=5.0)
             cas_conn.row_factory = sqlite3.Row
-            cas_conn.execute("PRAGMA busy_timeout=5000")
-            cas_conn.execute("PRAGMA journal_mode=WAL")
+            # 批次10（P2 性能优化）：用 DaemonConfig.apply_daemon_rw_pragmas 统一配置
+            # 原本只设 busy_timeout + journal_mode=WAL，缺 cache_size/mmap_size 等
+            self._config.apply_daemon_rw_pragmas(cas_conn)
             init_cas_schema(cas_conn)
 
             # Workspace session 数据库
@@ -394,8 +405,8 @@ class EnterpriseDaemonService:
             ws_db_path = os.path.join(ws_dir, "workspace.db")
             ws_conn = sqlite3.connect(ws_db_path, timeout=5.0)
             ws_conn.row_factory = sqlite3.Row
-            ws_conn.execute("PRAGMA busy_timeout=5000")
-            ws_conn.execute("PRAGMA journal_mode=WAL")
+            # 批次10：同 cas_conn
+            self._config.apply_daemon_rw_pragmas(ws_conn)
             init_session_schema(ws_conn)
 
             # StagingLog
@@ -443,7 +454,9 @@ class EnterpriseDaemonService:
     def _registry_conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.registry_db, timeout=5.0)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA busy_timeout=5000")
+        # 批次10（P2 性能优化）：registry 也补全 cache_size / mmap_size / synchronous=NORMAL
+        # 原 L446 只设 busy_timeout，连 journal_mode 都没设
+        self._config.apply_daemon_rw_pragmas(conn)
         init_daemon_schema(conn)
         return conn
 

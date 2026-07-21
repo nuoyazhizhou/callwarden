@@ -91,9 +91,15 @@ class DurableStagingLog:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._conn = sqlite3.connect(db_path, timeout=10.0)
         self._conn.row_factory = sqlite3.Row
+        # 批次10（P2 性能优化）：补全 cache_size / mmap_size / temp_store=MEMORY
+        # / wal_autocheckpoint，与 daemon 子连接主连接配置对齐
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA wal_autocheckpoint=1000")
+        self._conn.execute("PRAGMA cache_size=-262144")  # 256MB
+        self._conn.execute("PRAGMA mmap_size=268435456")  # 256MB
+        self._conn.execute("PRAGMA temp_store=MEMORY")
         self._init_schema()
 
     def _init_schema(self):

@@ -197,9 +197,16 @@ class JobExecutor:
         )
         self._conn.row_factory = sqlite3.Row
         # WAL 模式：与 MCP server 并发读安全
+        # 批次10（P2 性能优化）：补全 synchronous=NORMAL / cache_size / mmap_size
+        # / temp_store=MEMORY / wal_autocheckpoint，与 daemon 子连接配置对齐
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA busy_timeout=5000")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.execute("PRAGMA wal_autocheckpoint=1000")
+            self._conn.execute("PRAGMA cache_size=-262144")  # 256MB
+            self._conn.execute("PRAGMA mmap_size=268435456")  # 256MB
+            self._conn.execute("PRAGMA temp_store=MEMORY")
         except Exception:
             pass
         # 确保 jobs schema 存在

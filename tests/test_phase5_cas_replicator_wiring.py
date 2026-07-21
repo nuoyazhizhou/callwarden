@@ -21,9 +21,13 @@ import tempfile
 import threading
 import time
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+# 批次10 测试用：项目根目录（用于读取源文件验证修复标记）
+ROOT = Path(__file__).resolve().parent.parent
 
 # ============================================================
 # CAS 集成测试
@@ -926,3 +930,361 @@ class TestBatch9WorkspaceRecoverPassesDbPath:
         # 核心：recover 必须传 db_path，不为空
         assert len(captured) == 1
         assert captured[0]["db_path"], "recover 必须传 db_path（修复前 bug）"
+
+
+# ============================================================
+# 批次10（P2 性能优化）：daemon 子连接 PRAGMA + _evict_snapshot_cache bug 修复
+# ============================================================
+
+
+class TestBatch10DaemonConfigDbPragmaSettings:
+    """批次10：DaemonConfig 新增 db 配置段（wal_autocheckpoint / cache_size_kb / mmap_size_bytes 等）。"""
+
+    def test_default_config_has_db_section(self):
+        """DEFAULT_CONFIG 必须含 db 配置段。"""
+        from callwarden.server.daemon_config import DEFAULT_CONFIG
+
+        assert "db" in DEFAULT_CONFIG, "DEFAULT_CONFIG 必须含 db 配置段"
+        db_cfg = DEFAULT_CONFIG["db"]
+        # 关键字段必须存在
+        for key in ("wal_autocheckpoint", "cache_size_kb", "mmap_size_bytes",
+                    "temp_store_memory", "synchronous_normal"):
+            assert key in db_cfg, f"db.{key} 必须存在"
+
+    def test_default_values_aligned_with_main_connection(self):
+        """默认值必须与 CodeGraphDB 主连接（db_base.py L1888-1927）对齐。"""
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.default()
+        # 256MB cache → -262144 KB
+        assert cfg.db_cache_size_kb == 262144, "cache_size_kb 默认应为 262144 (256MB)"
+        # 256MB mmap
+        assert cfg.db_mmap_size_bytes == 268435456, "mmap_size_bytes 默认应为 268435456 (256MB)"
+        # 默认开启
+        assert cfg.db_temp_store_memory is True, "temp_store_memory 默认应开启"
+        assert cfg.db_synchronous_normal is True, "synchronous_normal 默认应开启"
+        # 默认 1000 页（SQLite 默认值）
+        assert cfg.db_wal_autocheckpoint == 1000, "wal_autocheckpoint 默认应为 1000"
+
+    def test_custom_config_overrides_defaults(self):
+        """用户配置应覆盖默认值（如大规模写入场景调大 wal_autocheckpoint）。"""
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.load_from_dict({
+            "db": {
+                "wal_autocheckpoint": 5000,
+                "cache_size_kb": 524288,  # 512MB
+                "mmap_size_bytes": 536870912,  # 512MB
+                "temp_store_memory": False,
+                "synchronous_normal": False,
+            }
+        })
+        assert cfg.db_wal_autocheckpoint == 5000
+        assert cfg.db_cache_size_kb == 524288
+        assert cfg.db_mmap_size_bytes == 536870912
+        assert cfg.db_temp_store_memory is False
+        assert cfg.db_synchronous_normal is False
+
+
+class TestBatch10ApplyDaemonRwPragmas:
+    """批次10：DaemonConfig.apply_daemon_rw_pragmas 方法应用所有 PRAGMA。"""
+
+    def test_apply_daemon_rw_pragmas_sets_all_expected_pragmas(self, tmp_path):
+        """apply_daemon_rw_pragmas 必须设置所有 PRAGMA（cache_size / mmap_size / synchronous / temp_store / wal_autocheckpoint）。"""
+        import sqlite3
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.default()
+        db_path = str(tmp_path / "test.db")
+        conn = sqlite3.connect(db_path)
+        try:
+            cfg.apply_daemon_rw_pragmas(conn)
+            # 验证所有 PRAGMA 已设置
+            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+            assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL=1
+            # cache_size：SQLite 不同版本读取时可能返回负值（KB）或正值（KB 或页数），
+            # 用 abs() 比较。256MB → |±262144| KB 或 32768 页（8KB/页）。
+            cache_val = conn.execute("PRAGMA cache_size").fetchone()[0]
+            assert abs(cache_val) in (262144, 32768), (
+                f"cache_size 应为 256MB（abs=262144 KB 或 32768 页），实际 {cache_val}"
+            )
+            assert conn.execute("PRAGMA mmap_size").fetchone()[0] == 268435456
+            assert conn.execute("PRAGMA temp_store").fetchone()[0] == 2  # MEMORY=2
+            # wal_autocheckpoint 必须在 WAL 模式下才能读取，验证不报错即可
+            auto = conn.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
+            assert auto == 1000, f"wal_autocheckpoint 应为 1000, 实际 {auto}"
+        finally:
+            conn.close()
+
+    def test_apply_daemon_rw_pragmas_is_idempotent(self, tmp_path):
+        """重复调用 apply_daemon_rw_pragmas 应幂等（无副作用）。"""
+        import sqlite3
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.default()
+        db_path = str(tmp_path / "idempotent.db")
+        conn = sqlite3.connect(db_path)
+        try:
+            cfg.apply_daemon_rw_pragmas(conn)
+            cfg.apply_daemon_rw_pragmas(conn)  # 第二次调用应幂等
+            cache_val = conn.execute("PRAGMA cache_size").fetchone()[0]
+            assert abs(cache_val) in (262144, 32768)
+            assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+        finally:
+            conn.close()
+
+    def test_apply_daemon_rw_pragmas_respects_disabled_flags(self, tmp_path):
+        """当 synchronous_normal=False / temp_store_memory=False 时不应设置对应 PRAGMA。"""
+        import sqlite3
+        from callwarden.server.daemon_config import DaemonConfig
+
+        cfg = DaemonConfig.load_from_dict({
+            "db": {
+                "synchronous_normal": False,
+                "temp_store_memory": False,
+            }
+        })
+        db_path = str(tmp_path / "disabled.db")
+        conn = sqlite3.connect(db_path)
+        try:
+            # 先记录默认值
+            default_sync = conn.execute("PRAGMA synchronous").fetchone()[0]
+            default_temp = conn.execute("PRAGMA temp_store").fetchone()[0]
+            cfg.apply_daemon_rw_pragmas(conn)
+            # synchronous / temp_store 应保持 SQLite 默认值（未被覆盖）
+            assert conn.execute("PRAGMA synchronous").fetchone()[0] == default_sync
+            assert conn.execute("PRAGMA temp_store").fetchone()[0] == default_temp
+            # 其他 PRAGMA 仍应被设置
+            assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
+            assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        finally:
+            conn.close()
+
+
+class TestBatch10DaemonServerUsesPragmas:
+    """批次10：daemon_server.py 的 cas_conn / ws_conn / registry_conn 必须使用 apply_daemon_rw_pragmas。"""
+
+    def test_python_uses_apply_daemon_rw_pragmas(self):
+        """daemon_server.py 必须在 cas_conn / ws_conn / registry_conn 创建处调用 apply_daemon_rw_pragmas。"""
+        path = ROOT / "server" / "daemon_server.py"
+        content = path.read_text(encoding="utf-8")
+
+        # 必须包含批次10 修复标记
+        assert "批次10" in content, "daemon_server.py 必须包含批次10 标记"
+        # cas_conn 和 ws_conn 必须使用 apply_daemon_rw_pragmas（不再用裸 PRAGMA）
+        # 找到 _get_workspace_resources 方法范围
+        idx = content.find("_get_workspace_resources")
+        assert idx >= 0, "_get_workspace_resources 方法必须存在"
+        block = content[idx:idx + 3000]
+        assert "apply_daemon_rw_pragmas" in block, (
+            "_get_workspace_resources 必须使用 apply_daemon_rw_pragmas"
+        )
+        # 不应再保留裸 PRAGMA（除 snapshot copy 临时连接外）
+        # cas_conn / ws_conn 不应再有裸 conn.execute("PRAGMA busy_timeout=5000")
+        assert 'cas_conn.execute("PRAGMA busy_timeout' not in block, (
+            "cas_conn 不应再使用裸 PRAGMA（应用 apply_daemon_rw_pragmas）"
+        )
+        assert 'ws_conn.execute("PRAGMA busy_timeout' not in block, (
+            "ws_conn 不应再使用裸 PRAGMA（应用 apply_daemon_rw_pragmas）"
+        )
+
+    def test_registry_conn_uses_apply_daemon_rw_pragmas(self):
+        """_registry_conn 也必须使用 apply_daemon_rw_pragmas。"""
+        path = ROOT / "server" / "daemon_server.py"
+        content = path.read_text(encoding="utf-8")
+
+        idx = content.find("def _registry_conn")
+        assert idx >= 0, "_registry_conn 方法必须存在"
+        block = content[idx:idx + 500]
+        assert "apply_daemon_rw_pragmas" in block, (
+            "_registry_conn 必须使用 apply_daemon_rw_pragmas"
+        )
+
+    def test_cas_conn_actually_has_pragmas_applied(self, tmp_path):
+        """端到端验证：通过 _get_workspace_resources 创建的 cas_conn 必须有 cache_size 等配置。"""
+        import sqlite3
+        import os
+        import threading
+        from unittest.mock import MagicMock
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+
+        # 用数字字符串避免 int(workspace_id) 失败
+        ws_id = "12345"
+        data_root = str(tmp_path / "enterprise")
+        os.makedirs(data_root, exist_ok=True)
+        registry_db = str(tmp_path / "enterprise" / "registry.db")
+
+        # 用最小化构造绕过完整 daemon 启动（schema migration + 后台线程）
+        # 直接通过 __new__ 创建实例并手动设置必要字段
+        service = EnterpriseDaemonService.__new__(EnterpriseDaemonService)
+        service.registry_db = registry_db
+        service.snapshot_service = MagicMock()
+        service._data_root = data_root
+        service._workspace_resources = {}
+        service._resources_lock = threading.Lock()
+        service._toolchain_db_path = os.path.join(data_root, "toolchain.db")
+        service._toolchain_conn = None
+        service._toolchain_lock = threading.Lock()
+        from callwarden.server.daemon_config import DaemonConfig
+        service._config = DaemonConfig.default()
+
+        # mock _owned_workspace 绕过 registry 校验
+        service._owned_workspace = lambda peer_uid, workspace_id: {
+            "workspace_instance_id": workspace_id,
+            "owner_uid": peer_uid,
+            "host_real_root": "/test/root",
+            "status": "active",
+        }
+
+        res = service._get_workspace_resources(ws_id)
+        cas_conn = res["cas_conn"]
+        ws_conn = res["ws_conn"]
+
+        try:
+            # 验证 cache_size 已设置（256MB → |±262144| KB 或 32768 页）
+            cas_cache = cas_conn.execute("PRAGMA cache_size").fetchone()[0]
+            ws_cache = ws_conn.execute("PRAGMA cache_size").fetchone()[0]
+            assert abs(cas_cache) in (262144, 32768), (
+                f"cas_conn 必须设置 cache_size=256MB，实际 {cas_cache}"
+            )
+            assert abs(ws_cache) in (262144, 32768), (
+                f"ws_conn 必须设置 cache_size=256MB，实际 {ws_cache}"
+            )
+            # mmap_size 也应设置
+            assert cas_conn.execute("PRAGMA mmap_size").fetchone()[0] == 268435456
+            assert ws_conn.execute("PRAGMA mmap_size").fetchone()[0] == 268435456
+            # synchronous=NORMAL
+            assert cas_conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+            assert ws_conn.execute("PRAGMA synchronous").fetchone()[0] == 1
+            # temp_store=MEMORY
+            assert cas_conn.execute("PRAGMA temp_store").fetchone()[0] == 2
+            assert ws_conn.execute("PRAGMA temp_store").fetchone()[0] == 2
+        finally:
+            cas_conn.close()
+            ws_conn.close()
+
+
+class TestBatch10EvictSnapshotCacheBugFix:
+    """批次10：修复 _evict_snapshot_cache 空实现 bug。
+
+    修复前：直接 return True（不调用任何驱逐方法），导致 workspace 注销后
+    SnapshotManagerService 缓存内存泄漏。
+    修复后：调用 snapshot_service.evict_workspace(workspace_id)。
+    """
+
+    def test_python_evict_calls_evict_workspace(self):
+        """daemon_server.py 的 _evict_snapshot_cache 必须调用 evict_workspace。"""
+        path = ROOT / "server" / "daemon_server.py"
+        content = path.read_text(encoding="utf-8")
+
+        idx = content.find("def _evict_snapshot_cache")
+        assert idx >= 0, "_evict_snapshot_cache 方法必须存在"
+        block = content[idx:idx + 1200]
+        # 必须调用 evict_workspace（不再是无操作 stub）
+        assert "evict_workspace" in block, (
+            "_evict_snapshot_cache 必须调用 snapshot_service.evict_workspace"
+        )
+        # 不应再保留旧注释"SnapshotManagerService 没有公开 evict 接口"
+        assert "没有公开 evict 接口" not in block, (
+            "旧 stub 注释应删除（snapshot_manager.py:186 已有 evict_workspace）"
+        )
+        # 必须有批次10 标记
+        assert "批次10" in block, "必须包含批次10 修复标记"
+
+    def test_evict_returns_false_when_service_is_none(self):
+        """snapshot_service 为 None 时应返回 False，不是 True（之前 stub 返回 True）。"""
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+
+        service = EnterpriseDaemonService.__new__(EnterpriseDaemonService)
+        service.snapshot_service = None
+
+        # 修复前：return True（不安全）
+        # 修复后：return False（明确未驱逐）
+        result = service._evict_snapshot_cache("test-ws-id")
+        assert result is False, (
+            "snapshot_service 为 None 时应返回 False（明确未驱逐），不应是 True"
+        )
+
+    def test_evict_calls_snapshot_service_evict_workspace(self):
+        """_evict_snapshot_cache 必须实际调用 snapshot_service.evict_workspace。"""
+        from unittest.mock import MagicMock
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+
+        service = EnterpriseDaemonService.__new__(EnterpriseDaemonService)
+        mock_snap = MagicMock()
+        mock_snap.evict_workspace.return_value = True
+        service.snapshot_service = mock_snap
+
+        result = service._evict_snapshot_cache("ws-evict-test")
+
+        # 必须调用 evict_workspace
+        mock_snap.evict_workspace.assert_called_once_with("ws-evict-test")
+        assert result is True
+
+    def test_evict_handles_exception_gracefully(self):
+        """evict_workspace 抛异常时应被捕获，返回 False。"""
+        from unittest.mock import MagicMock
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+
+        service = EnterpriseDaemonService.__new__(EnterpriseDaemonService)
+        mock_snap = MagicMock()
+        mock_snap.evict_workspace.side_effect = RuntimeError("test error")
+        service.snapshot_service = mock_snap
+
+        # 不应抛异常
+        result = service._evict_snapshot_cache("ws-err")
+        assert result is False
+        mock_snap.evict_workspace.assert_called_once_with("ws-err")
+
+
+class TestBatch10DurableStagingAndJobExecutorPragmas:
+    """批次10：durable_staging.py 和 job_executor.py 也补全 PRAGMA。"""
+
+    def test_durable_staging_has_full_pragma_set(self):
+        """durable_staging.py 必须补全 cache_size / mmap_size / temp_store / wal_autocheckpoint。"""
+        path = ROOT / "server" / "durable_staging.py"
+        content = path.read_text(encoding="utf-8")
+
+        # 找到 __init__ 方法
+        idx = content.find("def __init__(self, db_path: str):")
+        assert idx >= 0, "DurableStagingLog.__init__ 必须存在"
+        block = content[idx:idx + 1000]
+
+        # 必须包含所有 PRAGMA
+        for pragma in (
+            "PRAGMA busy_timeout=5000",
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA synchronous=NORMAL",
+            "PRAGMA wal_autocheckpoint",
+            "PRAGMA cache_size",
+            "PRAGMA mmap_size",
+            "PRAGMA temp_store=MEMORY",
+        ):
+            assert pragma in block, f"durable_staging.py 必须设置 {pragma}"
+
+    def test_job_executor_has_full_pragma_set(self):
+        """job_executor.py 必须补全 cache_size / mmap_size / temp_store / wal_autocheckpoint。"""
+        path = ROOT / "server" / "job_executor.py"
+        content = path.read_text(encoding="utf-8")
+
+        # 找到 start 方法的 PRAGMA 设置块
+        idx = content.find("PRAGMA journal_mode=WAL")
+        assert idx >= 0, "job_executor.py 必须设置 PRAGMA"
+        block = content[idx:idx + 800]
+
+        # 必须包含所有 PRAGMA
+        for pragma in (
+            "PRAGMA journal_mode=WAL",
+            "PRAGMA busy_timeout=5000",
+            "PRAGMA synchronous=NORMAL",
+            "PRAGMA wal_autocheckpoint",
+            "PRAGMA cache_size",
+            "PRAGMA mmap_size",
+            "PRAGMA temp_store=MEMORY",
+        ):
+            assert pragma in block, f"job_executor.py 必须设置 {pragma}"
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

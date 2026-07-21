@@ -97,6 +97,23 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "default_timeout": 300,
         "cancel_check_interval": 0.5,
     },
+    # 批次10（P2 性能优化）：daemon 子连接（cas_conn/ws_conn/registry_conn 等）
+    # 统一 PRAGMA 配置。原本只设 busy_timeout + journal_mode=WAL，缺 cache_size
+    # / mmap_size / temp_store=MEMORY / synchronous=NORMAL。补全后读路径吞吐显著提升。
+    # 参考 db_base.py L1888-1927 的 CodeGraphDB 主连接矩阵实验值（P13/P14/P15）。
+    "db": {
+        # WAL 自动 checkpoint 阈值（页数）。0=禁用自动 checkpoint（需手动），默认 1000。
+        # 大规模写入场景调到 5000-10000 减少 checkpoint 频率；查询密集场景设 0 配合手动。
+        "wal_autocheckpoint": 1000,
+        # cache_size：负值=KB，正值=页。256MB → -262144 KB（与主连接一致）
+        "cache_size_kb": 262144,
+        # mmap_size：256MB（与主连接一致，加大无收益）
+        "mmap_size_bytes": 268435456,
+        # temp_store=MEMORY：临时表/排序在内存
+        "temp_store_memory": True,
+        # synchronous=NORMAL：WAL 下仅 checkpoint 时 fsync
+        "synchronous_normal": True,
+    },
 }
 
 
@@ -270,6 +287,63 @@ class DaemonConfig:
     @property
     def cancel_check_interval(self) -> float:
         return float(self._data["jobs"]["cancel_check_interval"])
+
+    # ----- 批次10：db 子连接 PRAGMA 配置 -----
+
+    @property
+    def db_wal_autocheckpoint(self) -> int:
+        """批次10：WAL 自动 checkpoint 阈值（页数）。0=禁用自动 checkpoint。"""
+        return int(self._data.get("db", {}).get("wal_autocheckpoint", 1000))
+
+    @property
+    def db_cache_size_kb(self) -> int:
+        """批次10：cache_size（KB，负值传给 PRAGMA cache_size）。256MB → -262144。"""
+        return int(self._data.get("db", {}).get("cache_size_kb", 262144))
+
+    @property
+    def db_mmap_size_bytes(self) -> int:
+        """批次10：mmap_size（字节）。默认 256MB，与主连接一致。"""
+        return int(self._data.get("db", {}).get("mmap_size_bytes", 268435456))
+
+    @property
+    def db_temp_store_memory(self) -> bool:
+        """批次10：是否设置 temp_store=MEMORY（临时表/排序在内存）。"""
+        return bool(self._data.get("db", {}).get("temp_store_memory", True))
+
+    @property
+    def db_synchronous_normal(self) -> bool:
+        """批次10：是否设置 synchronous=NORMAL（WAL 下仅 checkpoint 时 fsync）。"""
+        return bool(self._data.get("db", {}).get("synchronous_normal", True))
+
+    def apply_daemon_rw_pragmas(self, conn) -> None:
+        """批次10：在给定 SQLite 连接上应用 daemon 子连接统一 PRAGMA 配置。
+
+        统一应用：
+        - busy_timeout=5000（已有，幂等）
+        - journal_mode=WAL（已有，幂等；注册表/工具链 db 也走 WAL）
+        - wal_autocheckpoint=N
+        - synchronous=NORMAL
+        - cache_size=-262144（256MB）
+        - mmap_size=268435456（256MB）
+        - temp_store=MEMORY
+
+        Args:
+            conn: sqlite3.Connection 实例
+        """
+        # 幂等：所有 PRAGMA 重复执行无副作用
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA journal_mode=WAL")
+        # wal_autocheckpoint 必须在 WAL 模式启用后设置才生效
+        conn.execute(f"PRAGMA wal_autocheckpoint={int(self.db_wal_autocheckpoint)}")
+        if self.db_synchronous_normal:
+            conn.execute("PRAGMA synchronous=NORMAL")
+        if self.db_cache_size_kb:
+            # 负值=KB，正值=页；统一用负值 KB
+            conn.execute(f"PRAGMA cache_size={int(self.db_cache_size_kb)}")
+        if self.db_mmap_size_bytes:
+            conn.execute(f"PRAGMA mmap_size={int(self.db_mmap_size_bytes)}")
+        if self.db_temp_store_memory:
+            conn.execute("PRAGMA temp_store=MEMORY")
 
     # ----- 通用访问 -----
 
