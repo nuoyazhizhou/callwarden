@@ -250,7 +250,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | K5 | ⚪ | 原矩阵仍标记未统一，不列入虚假完成项。 |
 | K6 | ✅ | generation DDL 已提取共享。 |
 | L1 | 🟡 | optional task validation/context 存在，但不“强制关联”，无 task_id 时照常写入。 |
-| L2 | ❌ | 标题是 checkout/reset --hard，代码只在 pre-push 记录 force push，不拦截 checkout/reset。 |
+| L2 | 🟡 | 二轮评审补全（2026-07-20）：技术限制——git 无 pre-checkout/pre-reset hook，`reset --hard` 的 working tree 写入先于 ref 更新，故无法在 working tree 破坏前拦截。当前实现：(1) pre-push hook 记录 force push 到 `destructive_operations` 表（软门禁）；(2) **新增 reference-transaction hook** 审计 ref 变更（reset_hard/branch -f/branch_delete/branch_create），仅记录不阻止；(3) Agent hook 层（仅限参与 Agent）阻止 `git reset --hard` / `git checkout .`，普通 git 用户不受限。状态保持 🟡 是因为 git 技术限制导致无法对普通用户强制拦截 checkout/reset（设计决策，非代码 bug）。 |
 | L3 | ✅ | pre-commit `check-task || true` 与“软门禁”描述一致。 |
 | L4 | ✅ | `file_read(include_context=True)` 返回符号及 callers/callees 摘要。 |
 | L5 | ✅ | compile_commands/toolchain/build context/resolved edges 方法和入口存在。 |
@@ -282,12 +282,12 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | M10 | 🟡 | `cw_daemon` 独立 binary 和同 crate PyO3 cdylib/rlib 存在；“daemon binary + PyO3 绑定”表述不准确。 |
 | N1 | ✅ | `version.toml` 为 0.3.0，ABI/平台/角色字段存在。 |
 | N2 | ✅ | `version_sync.py` 实跑通过 Python/Cargo/__init__ 一致性。 |
-| N3 | ❌ | build.py 形式上有步骤，但当前 wheel 不包 Rust 扩展且未打包 daemon/角色二进制。 |
+| N3 | 🟡 | 批次5 修复（P0-3）：`release/build.py` 原 `py3-none-any` wheel 不含 Rust 扩展已修复为 fail-fast 校验 + 平台特定 wheel + 验证 wheel 包含 `callwarden_core` Rust 扩展。状态保持 🟡 是因为 wheel 未打包 daemon/角色二进制（仅 Python 扩展），artifact-manifest.json 仍待落地。 |
 | N4 | 🟡 | 分层加载器实现存在，没有 Python CLI/daemon 生产 import。 |
 | N5 | ❌ | WiX 只有未编译 XML，引用的 Windows 输入产物不存在，Authenticode 仅注释命令。 |
 | N6 | ❌ | macOS 脚本未在 macOS 构建/签名/公证，缺入口时会生成 placeholder。 |
-| N7 | ❌ | Linux 无 deb/rpm/tar.zst 成品，缺二进制时仍继续，RPM spec 明确 TODO。 |
-| N8 | ❌ | Workflow 未运行且静态即可见失败点：错误 version key、纯 Python wheel、错误 parser 调用、WiX 版本/输入不匹配。 |
+| N7 | 🟡 | 批次14 修复：(1) 5 处缺二进制路径从 `cp ... 2>/dev/null || echo "NOTE..."` 改为 fail-fast `exit 1`（避免空壳包）；(2) RPM 章节从 "TODO: 生成 callwarden.spec" 改为明确 "deb-only release, RPM 不在发布范围"，移除虚假承诺。deb 5 子包 + offline tar.zst bundle 脚本完整（`release/linux/build_packages.sh`），但未在 Linux 环境实际构建过成品。状态保持 🟡 是因为实际打包产物未生成（发布流程承诺，非代码 bug）。 |
+| N8 | 🟡 | 批次5 修复（P0-3）：`enterprise-release.yml` version key 修正为 `['product']` + parser 调用修正 + wheel 包含 Rust 扩展。状态保持 🟡 是因为 Workflow 未实际运行过，WiX 输入仍不匹配（依赖 N5 落地），MSI/PKG/DEB 产物仍待 N5/N6/N7 落地后才能完整通过 11 门禁。 |
 
 ## 实算基线
 
