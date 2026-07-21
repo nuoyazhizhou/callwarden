@@ -11,7 +11,12 @@ name = "callwarden_core"
 crate-type = ["cdylib", "rlib"]
 
 [[bin]]
-name = "cw_daemon"
+# P0-3 修复（问题 5）：Cargo binary name 统一为连字符 cw-daemon
+# 原 cw_daemon（下划线）与 release/linux/build_packages.sh 复制的 cw-daemon（连字符）
+# 和 systemd unit ExecStart 的 cw_daemon（下划线）三方不一致，导致 deb 安装后
+# systemd 启动找不到二进制（/usr/bin/cw-daemon != /usr/bin/cw_daemon）。
+# Linux 文件系统习惯用连字符（如 systemd-analyze、network-manager）。
+name = "cw-daemon"
 path = "src/bin/cw_daemon.rs"
 
 [features]

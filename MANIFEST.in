@@ -1,0 +1,56 @@
+# MANIFEST.in —— P0-3 修复（问题 2）：确保 sdist/wheel 包含预编译的 Rust 扩展二进制
+#
+# 复审报告 §3 P0-3 问题 2 指出：
+#   - setup.py 已声明 BinaryDistribution.has_ext_modules()=True，
+#     wheel 会包含根目录的 callwarden_core.pyd/.so
+#   - 但 sdist 不会自动包含这些二进制（setuptools 默认只打包 .py）
+#   - 干净 runner 上 `python -m build` 默认同时产出 wheel + sdist，
+#     若 sdist 缺失二进制会导致从 sdist 重构建 wheel 时失败
+#
+# 修复策略：显式声明 include 这些二进制文件
+#   - callwarden_core.pyd（Windows）
+#   - callwarden_core.so（Linux / macOS）
+#
+# 注意：wheel 包含由 setup.py BinaryDistribution 处理（has_ext_modules=True），
+#       MANIFEST.in 主要补全 sdist 的内容声明。
+
+# Rust 扩展预编译二进制（核心：必须随包发布，否则 cw 退化为纯 Python 无加速）
+include callwarden_core.pyd
+include callwarden_core.so
+
+# 版本源与构建脚本
+include release/version.toml
+include release/version_sync.py
+include release/build.py
+include pyproject.toml
+include setup.py
+include README.md
+include LICENSE
+
+# 安装器资源（Windows WiX / macOS pkg / Linux deb）
+recursive-include release/windows *
+recursive-include release/macos *
+recursive-include release/linux *
+
+# Rust 扩展源码（cargo build 需要）
+recursive-include rust_ext *.rs
+recursive-include rust_ext Cargo.toml
+recursive-include rust_ext Cargo.lock
+
+# 多语言解析器配置
+include config.py
+include cw.py
+
+# 测试套件（用于 Gate 1 源码测试）
+recursive-include tests *.py
+
+# 国际化资源
+recursive-include i18n *.json
+
+# 忽略构建产物与缓存
+exclude .gitignore
+global-exclude __pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd.bak
+global-exclude .pytest_cache

@@ -8845,6 +8845,19 @@ def main():
         _print_main_help()
         return
 
+    # P0-3 修复：支持 cw --version / cw -V（复审报告 §3 P0-3 问题 6）
+    # Gate 3 的首个黑盒命令 `cw --version` 依赖此分支。
+    # version.toml §6 注释声称 `cw --version` 是版本源之一，必须真实实现。
+    if len(sys.argv) > 1 and sys.argv[1] in ("--version", "-V"):
+        try:
+            from . import __version__ as _cw_version
+        except ImportError:
+            # cw.py 透传模式下，callwarden 包已可导入
+            import importlib
+            _cw_version = importlib.import_module("callwarden").__version__
+        print(f"callwarden {_cw_version}")
+        return
+
     # 第一阶段：先解析 --lang 参数（不创建完整 parser）
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--lang", metavar="LANG", default=DEFAULT_LANG)

@@ -10,6 +10,14 @@
 #   callwarden-enterprise - 元包 = daemon + agent + client
 #
 # 设计 §8: deb 优先 / RPM 等同；离线场景提供 tar.zst（含包+repo metadata+SBOM+manifest+安装脚本）
+#
+# P0-3 修复（问题 4/5/9，2026-07-21）：
+#   - cw / cw-client / cw-agent 不再期望独立 ELF 二进制（Cargo 只声明 cw-daemon），
+#     改为从已构建的 Python wheel 中提取 console_scripts（pip install 到临时 venv 后复制）。
+#   - cw-daemon 是 Rust binary，由 cargo build --release --bin cw-daemon 产出。
+#   - 支持 --offline-bundle-only flag 跳过 Step 1-5，仅构建 tar.zst 离线包。
+#   - 末尾复制 manifest.json 到 dist/，让 workflow upload-artifact 能匹配。
+#   - 删除 workflow 中的 || true，失败必须 fail-fast。
 
 set -euo pipefail
 
@@ -23,8 +31,36 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-ARCH="${1:-amd64}"
 DIST_DIR="$SCRIPT_DIR/dist"
+
+# P0-3 修复（问题 9）：支持 --offline-bundle-only flag
+# 用法：
+#   bash build_packages.sh [ARCH]                      # 完整构建（Step 1-6）
+#   bash build_packages.sh --offline-bundle-only [ARCH]  # 仅 Step 6（离线包）
+ARCH=""
+OFFLINE_ONLY=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --offline-bundle-only)
+            OFFLINE_ONLY=1
+            shift
+            ;;
+        --offline-bundle)
+            # 兼容旧调用（workflow 原用法），等价于完整构建（offline bundle 自动生成）
+            shift
+            ;;
+        amd64|arm64)
+            ARCH="$1"
+            shift
+            ;;
+        *)
+            echo "ERROR: Unknown argument: $1" >&2
+            echo "Usage: $0 [--offline-bundle-only] [amd64|arm64]" >&2
+            exit 1
+            ;;
+    esac
+done
+ARCH="${ARCH:-amd64}"
 
 # 1. 从 release/version.toml 读取版本（唯一真相源，设计 version.toml 头部注释）
 #    [product] 段下的 version 字段
@@ -37,6 +73,7 @@ fi
 echo "=== Building Linux packages ==="
 echo "Version: $VERSION (from release/version.toml)"
 echo "Architecture: $ARCH"
+echo "Offline-only: $OFFLINE_ONLY"
 
 # 架构映射：Debian arch -> Rust target
 case "$ARCH" in
@@ -54,58 +91,116 @@ substitute() {
     sed -e "s/__VERSION__/$VERSION/g" -e "s/__ARCH__/$ARCH/g" "$src" > "$dst"
 }
 
-# 2. 构建 Rust 扩展
-echo "Step 1: Building Rust extension"
-cd "$ROOT/rust_ext"
-cargo build --release --target "$TARGET"
+# P0-3 修复（问题 4）：从 Python wheel 提取 console_scripts
+# cw / cw-client / cw-agent 是 Python entry_points（pyproject.toml [project.scripts]），
+# 不是 Rust binary。原代码期望 dist/linux/cw 等独立 ELF 二进制，但 Cargo 只声明 cw-daemon。
+# 改为：pip install wheel 到临时 venv，pip 自动在 venv/bin/ 创建 console_scripts，
+# 然后复制到 deb 包 /usr/bin/。
+extract_python_console_scripts() {
+    echo "Step 0: Extracting Python console_scripts from wheel"
+    local wheel_path=""
+    # 查找 release/dist/ 下的 wheel
+    local wheel_glob="$ROOT/release/dist/callwarden-${VERSION}-*.whl"
+    for f in $wheel_glob; do
+        if [ -f "$f" ]; then
+            wheel_path="$f"
+            break
+        fi
+    done
+    if [ -z "$wheel_path" ]; then
+        echo "  ERROR: Python wheel not found at $ROOT/release/dist/callwarden-${VERSION}-*.whl" >&2
+        echo "  请先在对应平台运行 'python release/build.py --wheel' 构建 wheel" >&2
+        echo "  或从 GitHub Actions 下载 wheel artifact 到 release/dist/" >&2
+        exit 1
+    fi
+    echo "  Using wheel: $(basename "$wheel_path")"
 
-# 3. 准备各子包 root 目录
-echo "Step 2: Preparing package roots"
+    # 创建临时 venv 并安装 wheel
+    local venv_dir="$SCRIPT_DIR/build/venv"
+    rm -rf "$venv_dir"
+    python3 -m venv "$venv_dir" >/dev/null 2>&1 || {
+        echo "  ERROR: python3 -m venv failed" >&2
+        exit 1
+    }
+    # 升级 pip（确保支持 wheel）
+    "$venv_dir/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
+    # 安装 wheel（自动创建 console_scripts 在 venv/bin/）
+    "$venv_dir/bin/pip" install --no-deps "$wheel_path" || {
+        echo "  ERROR: pip install $wheel_path failed" >&2
+        exit 1
+    }
 
-# --- callwarden-client（设计 §8.1: cw-client + MCP proxy，不含 parser/CAS）---
-CLIENT_ROOT="$SCRIPT_DIR/build/client"
-rm -rf "$CLIENT_ROOT"
-mkdir -p "$CLIENT_ROOT/usr/bin"
-cp "$ROOT/dist/linux/cw-client" "$CLIENT_ROOT/usr/bin/" || {
-    echo "  ERROR: cw-client binary not found at $ROOT/dist/linux/cw-client"
-    echo "  Run 'cargo build --release --bin cw-client' (or release/build.py) first."
-    exit 1
+    # 验证 console_scripts 存在
+    local missing=""
+    for script in cw cw-client cw-agent; do
+        if [ ! -f "$venv_dir/bin/$script" ]; then
+            missing="$missing $script"
+        fi
+    done
+    if [ -n "$missing" ]; then
+        echo "  ERROR: Missing console_scripts after pip install:$missing" >&2
+        echo "  检查 pyproject.toml [project.scripts] 是否声明 cw/cw-client/cw-agent" >&2
+        exit 1
+    fi
+    echo "  [OK] console_scripts extracted: cw, cw-client, cw-agent"
 }
 
-# --- callwarden-local（cw + Rust 扩展 + local DB + MCP + watcher）---
-LOCAL_ROOT="$SCRIPT_DIR/build/local"
-rm -rf "$LOCAL_ROOT"
-mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden" "$LOCAL_ROOT/etc/callwarden"
-cp "$ROOT/dist/linux/cw" "$LOCAL_ROOT/usr/bin/" || {
-    echo "  ERROR: cw binary not found at $ROOT/dist/linux/cw"
-    echo "  Run 'cargo build --release --bin cw' (or release/build.py) first."
-    exit 1
-}
-cp "$ROOT/rust_ext/target/$TARGET/release/libcallwarden_core.so" \
-   "$LOCAL_ROOT/usr/lib/callwarden/" || {
-    echo "  ERROR: libcallwarden_core.so not found at $ROOT/rust_ext/target/$TARGET/release/"
-    echo "  Run 'cargo build --release' in rust_ext/ first."
-    exit 1
-}
-cp "$SCRIPT_DIR/deb/config.toml.template" "$LOCAL_ROOT/etc/callwarden/config.toml" 2>/dev/null || true
+if [ "$OFFLINE_ONLY" = "0" ]; then
+    # 完整构建模式：Step 1-5 都要跑
+    extract_python_console_scripts
 
-# --- callwarden-agent（cw-agent + systemd user unit + client）---
-AGENT_ROOT="$SCRIPT_DIR/build/agent"
-rm -rf "$AGENT_ROOT"
-mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/systemd/user"
-cp "$ROOT/dist/linux/cw-agent" "$AGENT_ROOT/usr/bin/" || {
-    echo "  ERROR: cw-agent binary not found at $ROOT/dist/linux/cw-agent"
-    echo "  Run 'cargo build --release --bin cw-agent' (or release/build.py) first."
-    exit 1
-}
-# agent systemd --user unit（设计 §v8: per-UID watcher agent）
-# 优先使用 deb/systemd/callwarden-agent.service 正式 unit（含安全约束、资源限制、
-# 环境变量、ExecStop 等完整配置）；不存在时降级为最小占位 unit。
-if [ -f "$SCRIPT_DIR/deb/systemd/callwarden-agent.service" ]; then
-    cp "$SCRIPT_DIR/deb/systemd/callwarden-agent.service" "$AGENT_ROOT/usr/lib/systemd/user/"
-else
-    # 降级：最小占位 unit（设计 §8.2: 不自动启用 linger，管理员可选）
-    cat > "$AGENT_ROOT/usr/lib/systemd/user/callwarden-agent.service" << 'EOF'
+    # 2. 构建 Rust 扩展 + cw-daemon binary
+    echo "Step 1: Building Rust extension + cw-daemon binary"
+    cd "$ROOT/rust_ext"
+    # P0-3 修复（问题 5）：cw-daemon 是 Cargo [[bin]] name="cw-daemon"
+    cargo build --release --target "$TARGET" --bin cw-daemon
+
+    # 验证 cw-daemon binary 存在
+    CW_DAEMON_BIN="$ROOT/rust_ext/target/$TARGET/release/cw-daemon"
+    if [ ! -f "$CW_DAEMON_BIN" ]; then
+        echo "  ERROR: cw-daemon binary not built at $CW_DAEMON_BIN" >&2
+        echo "  Run 'cargo build --release --target $TARGET --bin cw-daemon' first." >&2
+        exit 1
+    fi
+    echo "  [OK] cw-daemon binary built: $(basename "$CW_DAEMON_BIN")"
+
+    # 3. 准备各子包 root 目录
+    echo "Step 2: Preparing package roots"
+    VENV_BIN="$SCRIPT_DIR/build/venv/bin"
+
+    # --- callwarden-client（设计 §8.1: cw-client + MCP proxy，不含 parser/CAS）---
+    CLIENT_ROOT="$SCRIPT_DIR/build/client"
+    rm -rf "$CLIENT_ROOT"
+    mkdir -p "$CLIENT_ROOT/usr/bin"
+    # P0-3 修复：从 venv bin/ 复制 console_scripts（Python entry_point，非 Rust binary）
+    cp "$VENV_BIN/cw-client" "$CLIENT_ROOT/usr/bin/"
+
+    # --- callwarden-local（cw + Rust 扩展 + local DB + MCP + watcher）---
+    LOCAL_ROOT="$SCRIPT_DIR/build/local"
+    rm -rf "$LOCAL_ROOT"
+    mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden" "$LOCAL_ROOT/etc/callwarden"
+    cp "$VENV_BIN/cw" "$LOCAL_ROOT/usr/bin/"
+    cp "$ROOT/rust_ext/target/$TARGET/release/libcallwarden_core.so" \
+       "$LOCAL_ROOT/usr/lib/callwarden/" || {
+        echo "  ERROR: libcallwarden_core.so not found at $ROOT/rust_ext/target/$TARGET/release/"
+        echo "  Run 'cargo build --release --target $TARGET' in rust_ext/ first."
+        exit 1
+    }
+    cp "$SCRIPT_DIR/deb/config.toml.template" "$LOCAL_ROOT/etc/callwarden/config.toml" 2>/dev/null || true
+
+    # --- callwarden-agent（cw-agent + systemd user unit + client）---
+    AGENT_ROOT="$SCRIPT_DIR/build/agent"
+    rm -rf "$AGENT_ROOT"
+    mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/systemd/user"
+    cp "$VENV_BIN/cw-agent" "$AGENT_ROOT/usr/bin/"
+    # agent systemd --user unit（设计 §v8: per-UID watcher agent）
+    # 优先使用 deb/systemd/callwarden-agent.service 正式 unit（含安全约束、资源限制、
+    # 环境变量、ExecStop 等完整配置）；不存在时降级为最小占位 unit。
+    if [ -f "$SCRIPT_DIR/deb/systemd/callwarden-agent.service" ]; then
+        cp "$SCRIPT_DIR/deb/systemd/callwarden-agent.service" "$AGENT_ROOT/usr/lib/systemd/user/"
+    else
+        # 降级：最小占位 unit（设计 §8.2: 不自动启用 linger，管理员可选）
+        cat > "$AGENT_ROOT/usr/lib/systemd/user/callwarden-agent.service" << 'EOF'
 [Unit]
 Description=Call Warden Per-UID Agent
 After=network.target
@@ -120,120 +215,119 @@ RestartSec=5
 [Install]
 WantedBy=default.target
 EOF
-fi
+    fi
 
-# --- callwarden-daemon（cw-daemon + system unit + 迁移/备份工具）---
-DAEMON_ROOT="$SCRIPT_DIR/build/daemon"
-rm -rf "$DAEMON_ROOT"
-mkdir -p "$DAEMON_ROOT/usr/bin" \
-         "$DAEMON_ROOT/usr/lib/systemd/system" \
-         "$DAEMON_ROOT/usr/lib/sysusers.d" \
-         "$DAEMON_ROOT/usr/lib/tmpfiles.d" \
-         "$DAEMON_ROOT/etc/callwarden"
-cp "$ROOT/dist/linux/cw-daemon" "$DAEMON_ROOT/usr/bin/" || {
-    echo "  ERROR: cw-daemon binary not found at $ROOT/dist/linux/cw-daemon"
-    echo "  Run 'cargo build --release --bin cw_daemon' (or release/build.py) first."
-    exit 1
-}
+    # --- callwarden-daemon（cw-daemon + system unit + 迁移/备份工具）---
+    DAEMON_ROOT="$SCRIPT_DIR/build/daemon"
+    rm -rf "$DAEMON_ROOT"
+    mkdir -p "$DAEMON_ROOT/usr/bin" \
+             "$DAEMON_ROOT/usr/lib/systemd/system" \
+             "$DAEMON_ROOT/usr/lib/sysusers.d" \
+             "$DAEMON_ROOT/usr/lib/tmpfiles.d" \
+             "$DAEMON_ROOT/etc/callwarden"
+    # P0-3 修复（问题 5）：cw-daemon 由 cargo build 产出（Cargo [[bin]] name="cw-daemon"）
+    cp "$CW_DAEMON_BIN" "$DAEMON_ROOT/usr/bin/"
 
-# systemd unit（优先使用 deb/systemd/ 占位文件，含 ExecStartPre schema 检查；设计 §8.2）
-if [ -f "$SCRIPT_DIR/deb/systemd/callwarden-daemon.service" ]; then
-    cp "$SCRIPT_DIR/deb/systemd/callwarden-daemon.service" "$DAEMON_ROOT/usr/lib/systemd/system/"
-else
-    # 降级：使用 cicd 目录的 unit（无 ExecStartPre schema 检查）
-    cp "$ROOT/cicd/callwarden-daemon.service" "$DAEMON_ROOT/usr/lib/systemd/system/"
-fi
+    # systemd unit（优先使用 deb/systemd/ 占位文件，含 ExecStartPre schema 检查；设计 §8.2）
+    if [ -f "$SCRIPT_DIR/deb/systemd/callwarden-daemon.service" ]; then
+        cp "$SCRIPT_DIR/deb/systemd/callwarden-daemon.service" "$DAEMON_ROOT/usr/lib/systemd/system/"
+    else
+        # 降级：使用 cicd 目录的 unit（无 ExecStartPre schema 检查）
+        cp "$ROOT/cicd/callwarden-daemon.service" "$DAEMON_ROOT/usr/lib/systemd/system/"
+    fi
 
-# sysusers.d：创建 callwarden 用户和 callwarden-clients 组（设计 §8.2）
-if [ -f "$SCRIPT_DIR/deb/sysusers.d/callwarden.conf" ]; then
-    cp "$SCRIPT_DIR/deb/sysusers.d/callwarden.conf" "$DAEMON_ROOT/usr/lib/sysusers.d/"
-else
-    cat > "$DAEMON_ROOT/usr/lib/sysusers.d/callwarden.conf" << 'EOF'
+    # sysusers.d：创建 callwarden 用户和 callwarden-clients 组（设计 §8.2）
+    if [ -f "$SCRIPT_DIR/deb/sysusers.d/callwarden.conf" ]; then
+        cp "$SCRIPT_DIR/deb/sysusers.d/callwarden.conf" "$DAEMON_ROOT/usr/lib/sysusers.d/"
+    else
+        cat > "$DAEMON_ROOT/usr/lib/sysusers.d/callwarden.conf" << 'EOF'
 u callwarden - "Call Warden daemon" /var/lib/callwarden /usr/sbin/nologin
 g callwarden-clients -
 m callwarden callwarden-clients
 EOF
-fi
+    fi
 
-# tmpfiles.d：创建 /run/callwarden（设计 §8.2: socket 0660）
-if [ -f "$SCRIPT_DIR/deb/tmpfiles.d/callwarden.conf" ]; then
-    cp "$SCRIPT_DIR/deb/tmpfiles.d/callwarden.conf" "$DAEMON_ROOT/usr/lib/tmpfiles.d/"
-else
-    cat > "$DAEMON_ROOT/usr/lib/tmpfiles.d/callwarden.conf" << 'EOF'
+    # tmpfiles.d：创建 /run/callwarden（设计 §8.2: socket 0660）
+    if [ -f "$SCRIPT_DIR/deb/tmpfiles.d/callwarden.conf" ]; then
+        cp "$SCRIPT_DIR/deb/tmpfiles.d/callwarden.conf" "$DAEMON_ROOT/usr/lib/tmpfiles.d/"
+    else
+        cat > "$DAEMON_ROOT/usr/lib/tmpfiles.d/callwarden.conf" << 'EOF'
 d /run/callwarden 0755 callwarden callwarden-clients -
 EOF
-fi
-
-# 4. 构建 deb 包（5 子包：client / local / agent / daemon）
-echo "Step 3: Building deb packages"
-mkdir -p "$DIST_DIR"
-
-# 构建单个 deb 包：注入 control + maintainer scripts，调用 dpkg-deb
-build_deb() {
-    local pkg="$1"
-    local pkg_root="$SCRIPT_DIR/build/$pkg"
-    local pkg_name="callwarden-$pkg"
-    local control_src="$SCRIPT_DIR/deb/control.$pkg"
-
-    if [ ! -f "$control_src" ]; then
-        echo "  SKIP: $pkg_name (no control file)"
-        return 0
     fi
 
-    # DEBIAN/control（注入版本/架构）
-    mkdir -p "$pkg_root/DEBIAN"
-    substitute "$control_src" "$pkg_root/DEBIAN/control"
+    # 4. 构建 deb 包（5 子包：client / local / agent / daemon）
+    echo "Step 3: Building deb packages"
+    mkdir -p "$DIST_DIR"
 
-    # maintainer scripts（preinst/postinst/prerm/postrm，存在则注入）
-    local script
-    for script in preinst postinst prerm postrm; do
-        local ms="$SCRIPT_DIR/deb/$pkg.$script"
-        if [ -f "$ms" ]; then
-            substitute "$ms" "$pkg_root/DEBIAN/$script"
-            chmod 0755 "$pkg_root/DEBIAN/$script"
+    # 构建单个 deb 包：注入 control + maintainer scripts，调用 dpkg-deb
+    build_deb() {
+        local pkg="$1"
+        local pkg_root="$SCRIPT_DIR/build/$pkg"
+        local pkg_name="callwarden-$pkg"
+        local control_src="$SCRIPT_DIR/deb/control.$pkg"
+
+        if [ ! -f "$control_src" ]; then
+            echo "  SKIP: $pkg_name (no control file)"
+            return 0
         fi
+
+        # DEBIAN/control（注入版本/架构）
+        mkdir -p "$pkg_root/DEBIAN"
+        substitute "$control_src" "$pkg_root/DEBIAN/control"
+
+        # maintainer scripts（preinst/postinst/prerm/postrm，存在则注入）
+        local script
+        for script in preinst postinst prerm postrm; do
+            local ms="$SCRIPT_DIR/deb/$pkg.$script"
+            if [ -f "$ms" ]; then
+                substitute "$ms" "$pkg_root/DEBIAN/$script"
+                chmod 0755 "$pkg_root/DEBIAN/$script"
+            fi
+        done
+
+        local deb_file="$DIST_DIR/${pkg_name}_${VERSION}_${ARCH}.deb"
+        if command -v dpkg-deb >/dev/null 2>&1; then
+            dpkg-deb --build "$pkg_root" "$deb_file"
+            echo "  Built: ${pkg_name}_${VERSION}_${ARCH}.deb"
+        else
+            # 无 dpkg-deb 时降级为 tar.gz 占位
+            echo "  WARNING: dpkg-deb not available, creating tar.gz placeholder for $pkg_name"
+            tar -czf "${deb_file%.deb}.tar.gz" -C "$pkg_root" .
+        fi
+    }
+
+    for pkg in client local agent daemon; do
+        build_deb "$pkg"
     done
 
-    local deb_file="$DIST_DIR/${pkg_name}_${VERSION}_${ARCH}.deb"
-    if command -v dpkg-deb >/dev/null 2>&1; then
-        dpkg-deb --build "$pkg_root" "$deb_file"
-        echo "  Built: ${pkg_name}_${VERSION}_${ARCH}.deb"
-    else
-        # 无 dpkg-deb 时降级为 tar.gz 占位
-        echo "  WARNING: dpkg-deb not available, creating tar.gz placeholder for $pkg_name"
-        tar -czf "${deb_file%.deb}.tar.gz" -C "$pkg_root" .
+    # 5. 构建 enterprise 元包（设计 §8.1: daemon + agent + client）
+    echo "Step 4: Building enterprise meta-package"
+    ENTERPRISE_ROOT="$SCRIPT_DIR/build/enterprise"
+    rm -rf "$ENTERPRISE_ROOT"
+    mkdir -p "$ENTERPRISE_ROOT/DEBIAN"
+    substitute "$SCRIPT_DIR/deb/control.enterprise" "$ENTERPRISE_ROOT/DEBIAN/control"
+    # enterprise 元包 postinst
+    if [ -f "$SCRIPT_DIR/deb/enterprise.postinst" ]; then
+        substitute "$SCRIPT_DIR/deb/enterprise.postinst" "$ENTERPRISE_ROOT/DEBIAN/postinst"
+        chmod 0755 "$ENTERPRISE_ROOT/DEBIAN/postinst"
     fi
-}
+    ENTERPRISE_DEB="$DIST_DIR/callwarden-enterprise_${VERSION}_${ARCH}.deb"
+    if command -v dpkg-deb >/dev/null 2>&1; then
+        dpkg-deb --build "$ENTERPRISE_ROOT" "$ENTERPRISE_DEB"
+        echo "  Built: callwarden-enterprise_${VERSION}_${ARCH}.deb"
+    else
+        tar -czf "${ENTERPRISE_DEB%.deb}.tar.gz" -C "$ENTERPRISE_ROOT" .
+    fi
 
-for pkg in client local agent daemon; do
-    build_deb "$pkg"
-done
-
-# 5. 构建 enterprise 元包（设计 §8.1: daemon + agent + client）
-echo "Step 4: Building enterprise meta-package"
-ENTERPRISE_ROOT="$SCRIPT_DIR/build/enterprise"
-rm -rf "$ENTERPRISE_ROOT"
-mkdir -p "$ENTERPRISE_ROOT/DEBIAN"
-substitute "$SCRIPT_DIR/deb/control.enterprise" "$ENTERPRISE_ROOT/DEBIAN/control"
-# enterprise 元包 postinst
-if [ -f "$SCRIPT_DIR/deb/enterprise.postinst" ]; then
-    substitute "$SCRIPT_DIR/deb/enterprise.postinst" "$ENTERPRISE_ROOT/DEBIAN/postinst"
-    chmod 0755 "$ENTERPRISE_ROOT/DEBIAN/postinst"
+    # 6. RPM 构建（设计 §8: 当前仅 deb，RPM 不在发布范围）
+    echo "Step 5: RPM build (skipped - deb-only release)"
+    echo "  NOTE: RPM packaging is not currently supported. deb is the primary and only"
+    echo "        Linux package format for Call Warden (设计 §8.1). RPM users should use"
+    echo "        the offline tar.zst bundle (Step 6) or convert deb via 'alien' tool."
+    echo "  Future: if RPM support is added, generate callwarden.spec and call rpmbuild -bb."
 fi
-ENTERPRISE_DEB="$DIST_DIR/callwarden-enterprise_${VERSION}_${ARCH}.deb"
-if command -v dpkg-deb >/dev/null 2>&1; then
-    dpkg-deb --build "$ENTERPRISE_ROOT" "$ENTERPRISE_DEB"
-    echo "  Built: callwarden-enterprise_${VERSION}_${ARCH}.deb"
-else
-    tar -czf "${ENTERPRISE_DEB%.deb}.tar.gz" -C "$ENTERPRISE_ROOT" .
-fi
-
-# 6. RPM 构建（设计 §8: 当前仅 deb，RPM 不在发布范围）
-echo "Step 5: RPM build (skipped - deb-only release)"
-echo "  NOTE: RPM packaging is not currently supported. deb is the primary and only"
-echo "        Linux package format for Call Warden (设计 §8.1). RPM users should use"
-echo "        the offline tar.zst bundle (Step 6) or convert deb via 'alien' tool."
-echo "  Future: if RPM support is added, generate callwarden.spec and call rpmbuild -bb."
+# end OFFLINE_ONLY=0 block
 
 # 7. 离线 tar.zst bundle（设计 §8.1: 含包 + repo metadata + SBOM + manifest + 安装脚本）
 echo "Step 6: Building offline tar.zst bundle"
@@ -323,11 +417,19 @@ else
     (cd "$BUNDLE_DIR" && tar -czf "$DIST_DIR/${BUNDLE_NAME}.tar.gz" "$BUNDLE_NAME")
 fi
 
+# P0-3 修复（问题 9）：复制 manifest.json 到 dist/，让 workflow upload-artifact 能匹配
+# 复审报告 §3 P0-3：原 manifest.json 只在 BUNDLE_ROOT 内，dist/ 下不存在独立文件，
+# workflow 的 `release/linux/dist/manifest.json` 匹配失败，artifact 中缺失 manifest。
+cp "$BUNDLE_ROOT/manifest.json" "$DIST_DIR/manifest.json"
+echo "  [OK] manifest.json copied to $DIST_DIR/manifest.json"
+
 echo ""
 echo "=== Build complete ==="
 ls -lh "$DIST_DIR"/*.deb 2>/dev/null || true
 ls -lh "$DIST_DIR"/*.tar.zst 2>/dev/null || true
 ls -lh "$DIST_DIR"/*.tar.gz 2>/dev/null || true
+ls -lh "$DIST_DIR/manifest.json" 2>/dev/null || true
 echo ""
 echo "Sub-packages: client, local, agent, daemon, enterprise (设计 §8.1)"
 echo "Version: $VERSION (from release/version.toml)"
+

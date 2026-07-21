@@ -14,6 +14,16 @@
 #   CW_APPLE_ID            Apple ID（notarization）
 #   CW_APPLE_TEAM_ID       Team ID
 #   CW_APPLE_APP_PASSWORD  app-specific password
+#   CW_BUILD_UNSIGNED      设为 "true"/"1" 强制跳过签名/notarization（用于 dry_run）
+#
+# P0-3 修复（问题 8，2026-07-21）：
+#   - workflow 原传 APPLE_*（APPLE_DEVELOPER_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID）
+#     与脚本读取的 CW_APPLE_* 不匹配，导致签名/公证永远 skipped。
+#     现已对齐 workflow 也用 CW_APPLE_* 前缀。
+#   - 新增 CW_BUILD_UNSIGNED 支持（与 workflow 旧 env 兼容）。
+#   - bin/cw / bin/cw-client 缺失时改为 fail-closed（原是 placeholder，安装后 cw --version
+#     会因 Python/callwarden 包不在系统 PATH 而 ModuleNotFoundError）。
+#     现在改为从 wheel 提取 console_scripts（pip install 到临时 venv）。
 
 set -euo pipefail
 
@@ -130,30 +140,52 @@ mkdir -p "$PKG_ROOT/$INSTALL_DIR/config"
 mkdir -p "$PKG_ROOT/usr/local/bin"
 
 # 拷贝入口脚本与 Rust 扩展
-# 源是 release/dist/ 下的 Python wheel 产物（console_script 由 release/build.py 生成）。
-# 若上游未预置 bin/，则生成 placeholder 入口（实际安装器应从 wheel 解包 console_script）。
-if [ -f "$SRC_DIST/bin/cw" ]; then
-    cp "$SRC_DIST/bin/cw" "$PKG_ROOT/$INSTALL_DIR/bin/"
-else
-    echo "  WARNING: $SRC_DIST/bin/cw not found; placeholder entry script"
-    cat > "$PKG_ROOT/$INSTALL_DIR/bin/cw" << 'EOF'
-#!/bin/bash
-# Placeholder - 真实安装器应从 Python wheel 解包 console_script
-exec python3 -m callwarden.cw "$@"
-EOF
-    chmod +x "$PKG_ROOT/$INSTALL_DIR/bin/cw"
+# P0-3 修复（问题 8）：原代码在 $SRC_DIST/bin/cw 缺失时生成 placeholder 入口
+# `exec python3 -m callwarden.cw "$@"`，但 macOS pkg 安装到
+# /Library/Application Support/CallWarden/bin/cw，placeholder 假设 python3 + callwarden
+# 包在系统 PATH 中——干净 macOS 上两个假设都不成立。
+# 改为：从已下载的 wheel 中提取 console_scripts（pip install 到临时 venv 后复制）。
+echo "  Extracting Python console_scripts from wheel"
+WHEEL_GLOB="$SRC_DIST/callwarden-${VERSION}-*.whl"
+WHEEL_PATH=""
+for f in $WHEEL_GLOB; do
+    if [ -f "$f" ]; then
+        WHEEL_PATH="$f"
+        break
+    fi
+done
+if [ -z "$WHEEL_PATH" ]; then
+    echo "  ERROR: Python wheel not found at $SRC_DIST/callwarden-${VERSION}-*.whl" >&2
+    echo "  请先在 macOS runner 上构建 wheel（Gate 2），或从 GitHub Actions 下载 wheel artifact" >&2
+    exit 1
 fi
+echo "  Using wheel: $(basename "$WHEEL_PATH")"
 
-if [ -f "$SRC_DIST/bin/cw-client" ]; then
-    cp "$SRC_DIST/bin/cw-client" "$PKG_ROOT/$INSTALL_DIR/bin/"
-else
-    echo "  WARNING: $SRC_DIST/bin/cw-client not found; placeholder entry script"
-    cat > "$PKG_ROOT/$INSTALL_DIR/bin/cw-client" << 'EOF'
-#!/bin/bash
-exec python3 -m callwarden.cli.client "$@"
-EOF
-    chmod +x "$PKG_ROOT/$INSTALL_DIR/bin/cw-client"
-fi
+VENV_DIR="$SCRIPT_DIR/build/venv"
+rm -rf "$VENV_DIR"
+python3 -m venv "$VENV_DIR" >/dev/null 2>&1 || {
+    echo "  ERROR: python3 -m venv failed" >&2
+    exit 1
+}
+"$VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
+"$VENV_DIR/bin/pip" install --no-deps "$WHEEL_PATH" || {
+    echo "  ERROR: pip install $WHEEL_PATH failed" >&2
+    exit 1
+}
+
+# 验证 console_scripts 存在（fail-closed）
+for script in cw cw-client; do
+    if [ ! -f "$VENV_DIR/bin/$script" ]; then
+        echo "  ERROR: console_script $script missing after pip install" >&2
+        echo "  检查 pyproject.toml [project.scripts] 是否声明 $script" >&2
+        exit 1
+    fi
+done
+echo "  [OK] console_scripts extracted: cw, cw-client"
+
+# 复制 console_scripts 到 pkg root
+cp "$VENV_DIR/bin/cw" "$PKG_ROOT/$INSTALL_DIR/bin/"
+cp "$VENV_DIR/bin/cw-client" "$PKG_ROOT/$INSTALL_DIR/bin/"
 
 cp "$UNIVERSAL_DIR/callwarden_core.so" "$PKG_ROOT/$INSTALL_DIR/lib/"
 
@@ -248,7 +280,17 @@ SIGN_TARGETS=(
     "$PKG_ROOT/$INSTALL_DIR/bin/cw-client"
 )
 
-if [ -n "${CW_APPLE_DEVID:-}" ] && command -v codesign &>/dev/null; then
+# P0-3 修复（问题 8）：支持 CW_BUILD_UNSIGNED 显式跳过签名（与 workflow 对齐）
+# workflow dry_run 时设 CW_BUILD_UNSIGNED=true，跳过签名/公证步骤。
+# 原代码只在 CW_APPLE_DEVID 为空时跳过，但 workflow 的 dry_run 不会清空 secrets，
+# 必须显式检查 CW_BUILD_UNSIGNED。
+SKIP_CODESIGN=0
+if [ "${CW_BUILD_UNSIGNED:-false}" = "true" ] || [ "${CW_BUILD_UNSIGNED:-}" = "1" ]; then
+    SKIP_CODESIGN=1
+    echo "  CW_BUILD_UNSIGNED=true, codesign 将被跳过"
+fi
+
+if [ "$SKIP_CODESIGN" = "0" ] && [ -n "${CW_APPLE_DEVID:-}" ] && command -v codesign &>/dev/null; then
     for target in "${SIGN_TARGETS[@]}"; do
         codesign --force --options runtime \
             --entitlements "$ENTITLEMENTS_FILE" \
@@ -259,7 +301,11 @@ if [ -n "${CW_APPLE_DEVID:-}" ] && command -v codesign &>/dev/null; then
     done
     echo "  [OK] hardened runtime + entitlements applied"
 else
-    echo "  WARNING: codesign skipped (set CW_APPLE_DEVID for production signing)"
+    if [ "$SKIP_CODESIGN" = "1" ]; then
+        echo "  WARNING: codesign skipped (CW_BUILD_UNSIGNED=true)"
+    else
+        echo "  WARNING: codesign skipped (set CW_APPLE_DEVID for production signing)"
+    fi
 fi
 
 # ============================================================
@@ -278,7 +324,7 @@ pkgbuild \
 # 6. productsign 签名 product package
 # ============================================================
 echo "Step 5: Signing product package"
-if [ -n "${CW_APPLE_DEVID:-}" ] && command -v productsign &>/dev/null; then
+if [ "$SKIP_CODESIGN" = "0" ] && [ -n "${CW_APPLE_DEVID:-}" ] && command -v productsign &>/dev/null; then
     productsign \
         --sign "$CW_APPLE_DEVID" \
         --timestamp \
@@ -287,7 +333,11 @@ if [ -n "${CW_APPLE_DEVID:-}" ] && command -v productsign &>/dev/null; then
     echo "  [OK] productsign with $CW_APPLE_DEVID"
 else
     cp "$COMPONENT_PKG" "$OUTPUT_PKG"
-    echo "  WARNING: productsign skipped (set CW_APPLE_DEVID)"
+    if [ "$SKIP_CODESIGN" = "1" ]; then
+        echo "  WARNING: productsign skipped (CW_BUILD_UNSIGNED=true)"
+    else
+        echo "  WARNING: productsign skipped (set CW_APPLE_DEVID)"
+    fi
 fi
 
 # ============================================================
@@ -296,7 +346,7 @@ fi
 # 环境变量：CW_APPLE_ID / CW_APPLE_TEAM_ID / CW_APPLE_APP_PASSWORD
 # ============================================================
 echo "Step 6: Notarization + stapling"
-if [ -n "${CW_APPLE_ID:-}" ] && [ -n "${CW_APPLE_APP_PASSWORD:-}" ] && \
+if [ "$SKIP_CODESIGN" = "0" ] && [ -n "${CW_APPLE_ID:-}" ] && [ -n "${CW_APPLE_APP_PASSWORD:-}" ] && \
    [ -n "${CW_APPLE_TEAM_ID:-}" ] && command -v xcrun &>/dev/null; then
     echo "  Submitting to notarytool (may take several minutes)..."
     xcrun notarytool submit "$OUTPUT_PKG" \
@@ -309,8 +359,12 @@ if [ -n "${CW_APPLE_ID:-}" ] && [ -n "${CW_APPLE_APP_PASSWORD:-}" ] && \
     xcrun stapler staple "$OUTPUT_PKG"
     echo "  [OK] notarized and stapled"
 else
-    echo "  WARNING: notarization skipped"
-    echo "    Set CW_APPLE_ID, CW_APPLE_APP_PASSWORD, CW_APPLE_TEAM_ID for production"
+    if [ "$SKIP_CODESIGN" = "1" ]; then
+        echo "  WARNING: notarization skipped (CW_BUILD_UNSIGNED=true)"
+    else
+        echo "  WARNING: notarization skipped"
+        echo "    Set CW_APPLE_ID, CW_APPLE_APP_PASSWORD, CW_APPLE_TEAM_ID for production"
+    fi
 fi
 
 # ============================================================
@@ -337,8 +391,8 @@ if command -v pkgutil &>/dev/null; then
     fi
 fi
 
-# stapler validate（仅公证后才有效）
-if [ -n "${CW_APPLE_ID:-}" ] && command -v xcrun &>/dev/null; then
+# stapler validate（仅公证后才有效；CW_BUILD_UNSIGNED 跳过校验避免误报）
+if [ "$SKIP_CODESIGN" = "0" ] && [ -n "${CW_APPLE_ID:-}" ] && command -v xcrun &>/dev/null; then
     if xcrun stapler validate "$OUTPUT_PKG" 2>&1; then
         echo "  [OK] stapler validate passed"
     else

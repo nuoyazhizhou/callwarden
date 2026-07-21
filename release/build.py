@@ -68,6 +68,40 @@ def build_rust_extension():
     print()
 
 
+def _ensure_rust_ext_at_root():
+    """P0-3 修复（问题 3）：干净 runner 上 Rust 扩展可能尚未复制到根目录。
+
+    复审报告 §3 P0-3：CI 先在 rust_ext/target 构建，但 release/build.py --wheel
+    要求根目录已存在 .pyd/.so；干净 runner 不会自动复制，Gate 2 会更早失败。
+
+    本函数从 rust_ext/target/release/ 查找构建产物并复制到根目录，
+    若根目录已存在且非空则跳过。失败时 fail-fast 退出。
+    """
+    if sys.platform == "win32":
+        binary_name = "callwarden_core.pyd"
+        src_name = "callwarden_core.dll"
+    elif sys.platform == "darwin":
+        binary_name = "callwarden_core.so"
+        src_name = "libcallwarden_core.dylib"
+    else:
+        binary_name = "callwarden_core.so"
+        src_name = "libcallwarden_core.so"
+
+    root_binary = ROOT / binary_name
+    if root_binary.exists() and root_binary.stat().st_size >= 1024:
+        return  # 已存在且非空，无需复制
+
+    src_path = ROOT / "rust_ext" / "target" / "release" / src_name
+    if not src_path.exists():
+        print(f"  [FAIL] Rust extension not built: {src_path}")
+        print(f"  请先运行 'python release/build.py --rust' 或 'cd rust_ext && cargo build --release'")
+        sys.exit(1)
+
+    import shutil
+    shutil.copy2(str(src_path), str(root_binary))
+    print(f"  [OK] Copied Rust extension from rust_ext/target/release/ to {binary_name}")
+
+
 def _verify_rust_extension_present():
     """P0-3 修复：构建 wheel 前强制检查 callwarden_core 二进制存在（fail-fast）。
 
@@ -149,20 +183,28 @@ def build_python_wheel():
     """构建 Python wheel。"""
     print("Step 3: Building Python wheel")
 
+    # P0-3 修复（问题 3）：干净 runner 上 Rust 扩展可能尚未复制到根目录。
+    # 先从 rust_ext/target/release/ 自动复制，再 fail-fast 校验。
+    _ensure_rust_ext_at_root()
+
     # P0-3 修复：构建前强制检查 Rust 扩展存在
     _verify_rust_extension_present()
 
-    # P0-3 修复：用 --plat-name 让 wheel 标记为平台特定（非 py3-none-any）
+    # P0-3 修复（问题 1）：原代码使用 --config-setting --build-option=--plat-name={plat_tag}
+    # 会导致 argparse 报 "argument --config-setting/-C: expected one argument"
+    # （--build-option=... 以 -- 开头，argparse 把它当作新选项而非 --config-setting 的值）。
+    # 同时 --build-option 在 setuptools 60+ 已废弃，setuptools 68+ 完全移除。
+    #
+    # 修复方案：删除 --config-setting 整行，依赖 setup.py 的 BinaryDistribution.has_ext_modules()=True
+    # 让 bdist_wheel 自动把 wheel 标记为平台特定（cp311-cp311-{plat_tag}）。
+    # _detect_wheel_platform_tag() 仅用于日志展示，不再传给 build。
     plat_tag = _detect_wheel_platform_tag()
-    print(f"  Using platform tag: {plat_tag}")
+    print(f"  Target platform tag (auto-detected by setup.py has_ext_modules): {plat_tag}")
 
-    # setuptools 的 bdist_wheel 通过 --config-setting 传递 --plat-name
-    # 这样 wheel 文件名会是 callwarden-0.3.0-cp311-cp311-{plat_tag}.whl
-    # 而不是默认的 callwarden-0.3.0-py3-none-any.whl
+    # 调用 python -m build --wheel，让 setup.py 的 PrebuiltBuildExt 复制 .pyd/.so 到 build/lib/
     run([
         sys.executable, "-m", "build", "--wheel",
         "--outdir", str(RELEASE_DIR / "dist"),
-        "--config-setting", f"--build-option=--plat-name={plat_tag}",
     ])
 
     # P0-3 修复：验证 wheel 中确实包含 Rust 扩展二进制

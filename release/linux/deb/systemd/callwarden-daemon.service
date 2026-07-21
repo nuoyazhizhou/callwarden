@@ -4,7 +4,9 @@
 # 安装路径: /usr/lib/systemd/system/callwarden-daemon.service
 # 注意：本文件为占位，路径用绝对路径；构建时由 dpkg 安装到上述位置。
 #
-# 二进制：cw_daemon（Rust binary，下划线分隔，对应 rust_ext/src/bin/cw_daemon.rs）
+# 二进制：cw-daemon（Rust binary，连字符命名，对应 rust_ext/Cargo.toml [[bin]] name="cw-daemon"）
+# P0-3 修复：原 cw_daemon（下划线）与 build_packages.sh 复制的 cw-daemon（连字符）不一致，
+# 现已统一为 cw-daemon（Cargo [[bin]] name="cw-daemon" + build_packages.sh 复制 cw-daemon + 本 unit ExecStart cw-daemon）。
 # sd_notify：Type=notify 已对接（Rust sd_notify(state) 函数，commit 5bd01a2）
 
 [Unit]
@@ -28,9 +30,9 @@ LogsDirectoryMode=0750
 
 # pre-start: schema 兼容性检查（迁移失败不得启动，exit 1）
 # 子命令 schema-check（kebab-case，clap 转换）：--strict 严格版本校验
-ExecStartPre=/usr/bin/cw_daemon schema-check --strict
-# 默认动作 = serve（也可显式写出）；cw_daemon 不接受 --enterprise flag
-ExecStart=/usr/bin/cw_daemon serve
+ExecStartPre=/usr/bin/cw-daemon schema-check --strict
+# 默认动作 = serve（也可显式写出）；cw-daemon 不接受 --enterprise flag
+ExecStart=/usr/bin/cw-daemon serve
 ExecReload=/bin/kill -HUP $MAINPID
 
 # 优雅停止：SIGTERM 触发 sd_notify STOPPING=1 + drain workers

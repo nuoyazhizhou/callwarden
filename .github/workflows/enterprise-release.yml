@@ -221,6 +221,36 @@ jobs:
           dotnet tool install --global wix
           echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
         shell: bash
+      - name: P0-3 修复（问题 7）：PyInstaller exe fail-fast 检查
+        # callwarden.wxs 引用 $(var.BuildOutputDir)\cw.exe / cw-client.exe / runtime\python.exe
+        # 这些必须由 PyInstaller 步骤产出。当前 workflow 未实现 PyInstaller 步骤，
+        # 干净 runner 上 release/dist/ 只有 wheel，wix build 会因找不到文件而失败或产出空 MSI。
+        # 修复策略：fail-closed，显式告知需要先实现 PyInstaller 步骤。
+        # 未来实现 PyInstaller 后，此检查会通过；在此之前 MSI Gate 必须失败而非误报成功。
+        run: |
+          echo "Checking PyInstaller exe outputs in release/dist/..."
+          MISSING=""
+          for f in cw.exe cw-client.exe runtime/python.exe; do
+            if [ ! -f "release/dist/$f" ]; then
+              MISSING="$MISSING $f"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "ERROR: PyInstaller outputs missing:$MISSING" >&2
+            echo "" >&2
+            echo "callwarden.wxs 引用这些 exe 作为 MSI 内容来源，" >&2
+            echo "但 workflow 当前未实现 PyInstaller 步骤。" >&2
+            echo "需要在 'Build MSI' 之前新增 PyInstaller 步骤：" >&2
+            echo "  - pip install pyinstaller" >&2
+            echo "  - 解压 wheel 到临时目录" >&2
+            echo "  - pyinstaller --onefile --name cw cw.py" >&2
+            echo "  - 复制 cw.exe / cw-client.exe / python.exe 到 release/dist/" >&2
+            echo "" >&2
+            echo "在此实现完成前，MSI Gate 必须 fail-fast（不允许 placeholder 误报成功）。" >&2
+            exit 1
+          fi
+          echo "OK: PyInstaller exe outputs present"
+        shell: bash
       - name: Build MSI (x64)
         run: |
           # WiX 构建命令（参见 release/windows/callwarden.wxs）
@@ -259,17 +289,29 @@ jobs:
           path: release/dist/
       - name: Build universal2 pkg
         env:
-          # dry_run 时跳过签名/notarization
+          # P0-3 修复（问题 8）：环境变量对齐 build_pkg.sh 读取的 CW_APPLE_* 前缀
+          # 原代码传 APPLE_DEVELOPER_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID，
+          # 但 build_pkg.sh 读取 CW_APPLE_DEVID/CW_APPLE_APP_PASSWORD/CW_APPLE_TEAM_ID/CW_APPLE_ID，
+          # 导致签名/公证永远 skipped（即使 secrets 已配置）。
+          # 现已对齐：所有 Apple 凭证统一 CW_APPLE_* 前缀。
+          # dry_run 时跳过签名/notarization（CW_BUILD_UNSIGNED=true）
           CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run || 'true' }}
-          APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          CW_APPLE_DEVID: ${{ secrets.CW_APPLE_DEVID }}
+          CW_APPLE_ID: ${{ secrets.CW_APPLE_ID }}
+          CW_APPLE_TEAM_ID: ${{ secrets.CW_APPLE_TEAM_ID }}
+          CW_APPLE_APP_PASSWORD: ${{ secrets.CW_APPLE_APP_PASSWORD }}
         run: bash release/macos/build_pkg.sh
       - name: Verify pkg
         run: |
           ls -la release/dist/*.pkg
-          # pkgutil 验证
-          pkgutil --check-signature release/dist/*.pkg || echo "Unsigned (dry run)"
+          # P0-3 修复：dry_run 允许 unsigned；非 dry_run 签名验证必须通过
+          if [ "${{ github.event.inputs.dry_run || 'true' }}" = "true" ]; then
+            echo "Dry run mode: signature check skipped"
+            pkgutil --check-signature release/dist/*.pkg || echo "  (unsigned, expected in dry_run)"
+          else
+            echo "Production mode: signature check required"
+            pkgutil --check-signature release/dist/*.pkg
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: macos-pkg
@@ -294,8 +336,19 @@ jobs:
           name: wheel-ubuntu-latest
           path: release/dist/
       - name: Build deb packages (amd64)
+        # P0-3 修复（问题 9）：原代码后面还有一行
+        #   `bash release/linux/build_packages.sh --offline-bundle amd64 || true`
+        # 该行有两个问题：
+        #   1. || true 掩盖失败（违反复审报告 §8 第 3 条：禁止 || true）
+        #   2. --offline-bundle 是旧 flag，build_packages.sh 已重命名为 --offline-bundle-only
+        #      且原代码参数顺序错误（--offline-bundle amd64 中 --offline-bundle 被当成 ARCH）
+        # build_packages.sh 的完整构建（默认调用）已自动生成：
+        #   - 5 个 .deb 子包
+        #   - tar.zst 离线包
+        #   - manifest.json
+        # 故删除冗余的"Build tar.zst offline bundle"步骤，单一构建步骤产出全部产物。
         run: bash release/linux/build_packages.sh amd64
-      - name: Verify 5 subpackages
+      - name: Verify 5 subpackages + offline bundle
         run: |
           echo "=== Built debs ==="
           ls -la release/linux/dist/*.deb
@@ -307,8 +360,17 @@ jobs:
             fi
           done
           echo "=== All 5 subpackages present ==="
-      - name: Build tar.zst offline bundle
-        run: bash release/linux/build_packages.sh --offline-bundle amd64 || true
+          # P0-3 修复：同时验证 tar.zst 离线包和 manifest.json（原代码漏检）
+          echo "=== Offline bundle ==="
+          ls -la release/linux/dist/*.tar.zst || {
+            echo "ERROR: tar.zst offline bundle missing"
+            exit 1
+          }
+          ls -la release/linux/dist/manifest.json || {
+            echo "ERROR: manifest.json missing"
+            exit 1
+          }
+          echo "=== Offline bundle verified ==="
       - uses: actions/upload-artifact@v4
         with:
           name: linux-debs
