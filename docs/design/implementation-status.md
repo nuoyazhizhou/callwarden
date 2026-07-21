@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-20 · Schema v40 · 33 Mixin 类（39 个 db_*.py 文件）· 206 MCP 工具 · 16 语言
+> 最后更新：2026-07-21 · Schema v41 · 35 功能 Mixin（+ CodeGraphBase，39 个 db_*.py 文件）· 206 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -10,7 +10,7 @@
 | ----------- | ---- | ----------------------------------------------------------------------------------------- |
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
-| Schema 版本 | v40  | v3→v40 版本化迁移，事务化执行                                                             |
+| Schema 版本 | v41  | v3→v41 版本化迁移，事务化执行（v41: P1-2 cross_repo_deps 五元组 UNIQUE 索引）            |
 | Mixin 模块  | 35   | CodeGraphBase + 35 个功能 Mixin（39 个 db_*.py 文件）                                     |
 | MCP 工具    | 206  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
@@ -266,4 +266,105 @@
 | symbols 表 UNIQUE 索引 + 真正 UPSERT       | ⚠️ 部分 | `db_build.py` 已用 `ON CONFLICT(file_instance_id, name, start_line) DO UPDATE`（UPSERT），但 UNIQUE 键不是 `symbol_hash` |
 | PyO3 Rust 扩展（向量计算加速）             | ⚠️ 部分 | `rust_ext/` 已搭建 parse/graphstore/canonicalize/hash_diff/multi_lang/daemon；向量计算加速未集成 |
 | 多用户权限系统                             | 待办   | 当前按 workspace_id 逻辑隔离，无 RBAC                  |
-| Prometheus 指标导出                        | ✅ 已实现 | G13（2026-07-20 二轮评审补全）：`server/metrics.py` 新增 `measure_rpc` 上下文管理器 + `request_duration_seconds` 内置直方图；`server/daemon_server.py` `_handle_connection()` 用 `measure_rpc(method)` 包裹 `dispatch()` 调用，新增 `metrics.snapshot`（JSON）/ `metrics.prometheus`（Prometheus 文本）两个只读 RPC 方法；CLI `cw daemon metrics` 默认走 RPC 拉 daemon 进程指标，`--local` 降级本进程直读；MCP `get_metrics` 新增 `source` 参数（auto/rpc/local），默认 auto 优先 RPC 失败降级 local。**注**：daemon 是纯 UDS（无 HTTP server），外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露 |
+| Prometheus 指标导出                        | ✅ 已实现 | G13（2026-07-20 二轮评审补全）：`server/metrics.py` 新增 `measure_rpc` 上下文管理器 + `request_duration_seconds` 内置直方图；`server/daemon_server.py` `_handle_connection()` 用 `measure_rpc(method)` 包裹 `dispatch()` 调用，新增 `metrics.snapshot`（JSON）/ `metrics.prometheus`（Prometheus 文本）两个只读 RPC 方法；CLI `cw daemon metrics` 默认走 RPC 拉 daemon 进程指标，`--local` 降级本进程直读；MCP `get_metrics` 新增 `source` 参数（auto/rpc/local），默认 auto 优先 RPC 失败降级 local。**注**：daemon 是纯 UDS（无 HTTP server），外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露。**P1-6 限制（2026-07-21）**：仅 Python daemon 已实现，Rust system daemon（`cw_daemon`）无指标埋点 |
+
+## 六、复审整改（2026-07-21 批次33：P1-4 + P1-6）
+
+本章节记录复审报告 `feature-matrix-code-reaudit-2026-07-21.md` §P1-4 和 §P1-6 的代码核查结果与剩余项。
+**未修复代码缺陷**，仅做能力区分文档化（矩阵从 ✅ 回退为 🟡 后已正确反映实际状态，本次补充详细缺口清单）。
+
+### P1-4 QueryBudget 不是通用 daemon 查询预算
+
+`QueryBudget` 只接入 `FrontierComputer::compute_frontier_with_budget`。常用 daemon query（search、callers/callees、call-chain、topological、cycle 等）没有统一 max-results/max-depth/timeout/truncate 执行器。G29 标题范围过大，已收紧为「Frontier budget（仅 `compute_frontier_with_budget`，通用 query budget 未实现）」。
+
+#### 6.1 QueryBudget 定义位置（Rust/Python 不对齐）
+
+| 维度 | Rust | Python |
+| ---- | ---- | ------ |
+| 文件 | `rust_ext/src/daemon/budget.rs:34-41` | `server/query_budget.py:28-103` |
+| 字段 | max_depth / max_nodes / timeout_ms（3 字段） | max_depth / max_nodes / timeout_ms / max_results / frontier_limit（5 字段，多了 max_results/frontier_limit） |
+| 运行时追踪 | `BudgetTracker`（visit_node / is_exceeded / is_partial / elapsed_ms） | `QueryBudget.start()` / `visit_node()` / `exhausted` / `truncate_results()` |
+| 预设工厂 | 无（仅 `with_depth()`） | `default_budget()` / `deep_budget()` / `shallow_budget()` / `unlimited_budget()` |
+
+#### 6.2 QueryBudget 的消费点
+
+| 消费点 | 文件:行 | 用途 | 实际效果 |
+| ------ | ------- | ---- | -------- |
+| `FrontierComputer::compute_frontier_with_budget` | `rust_ext/src/frontier.rs:182-278` | Rust 唯一真正接入预算的执行点 | ✅ 完整使用 max_depth/max_nodes/timeout_ms + partial 标记 |
+| `bfs_upstream_with_budget` / `bfs_downstream_with_budget` | `rust_ext/src/frontier.rs:367, 415` | frontier 计算内部 BFS | ✅ 由 tracker.is_exceeded() 检查 |
+| Python `SnapshotManagerService` 6 个查询方法 | `server/snapshot_manager.py:232, 253, 275, 310, 336, 355` | 接受可选 `budget` 参数 | ⚠️ 残缺：仅调用 `b.truncate_results()` 后置截断，未调用 `b.visit_node()` |
+| `workspace.file.refresh` 流程 | `rust_ext/src/daemon/workspace.rs:1154, 1222-1227` | daemon save 时构造 frontier | ⚠️ 硬编码 `QueryBudget::default()` + `store=None` 退化模式 |
+
+#### 6.3 Daemon 查询 RPC 的 budget 接入状态
+
+| RPC 方法 | Rust handler（snapshot_state.rs） | Python daemon（daemon_server.py） | MCP 工具 | 接入 budget |
+| -------- | --------------------------------- | --------------------------------- | -------- | ----------- |
+| `query.stats` | ✅ 实现 | ✅ 实现 | `get_stats` | ❌ 无 |
+| `query.symbol` | ✅ 实现 | ✅ 实现 | `get_symbol` | ❌ 无 |
+| `query.search` | ✅ 实现（limit 默认 20） | ✅ 实现（limit 默认 20） | `search_symbols` | ❌ 仅 `limit`，无 timeout/truncate |
+| `query.callers` | ✅ 实现（无 limit/max_depth/timeout） | ✅ 实现（无 limit） | `get_callers` | ❌ 完全无 budget |
+| `query.callees` | ✅ 实现（同上） | ✅ 实现（同上） | `get_callees` | ❌ 完全无 budget |
+| `query.call_chain_down` | ✅ 实现（max_depth 默认 5） | ❌ **未实现** | `get_call_chain_down` | ⚠️ 仅 max_depth，无 timeout/truncate |
+| `query.topological_order` | ✅ 实现（无 limit） | ❌ **未实现** | `get_topological_order` | ❌ 全量返回，无 budget |
+| `query.detect_cycles` | ✅ 实现（无 max_depth/limit/timeout） | ❌ **未实现** | `detect_cycles` | ❌ 完全无 budget |
+
+#### 6.4 Python `SnapshotManagerService` budget 接入残缺详情
+
+| 方法 | 文件:行 | budget 用法 | 残缺 |
+| ---- | ------- | ----------- | ---- |
+| `query_callers` | snapshot_manager.py:227-246 | `b.truncate_results(result)` 后置截断 | ⚠️ 未传播到 Rust，max_nodes/timeout_ms 不生效 |
+| `query_callees` | snapshot_manager.py:248-267 | 同上 | ⚠️ 同上 |
+| `search_symbols` | snapshot_manager.py:269-292 | 用 `b.max_results` 作 limit | ⚠️ 不调用 `truncate_results()` |
+| `query_symbol` | snapshot_manager.py:294-303 | 不接 budget 参数 | ❌ 无 budget |
+| `query_call_chain_down` | snapshot_manager.py:305-331 | `b.start()` + `b.truncate_results()` | ❌ **从不调用 `b.visit_node()`**，max_nodes/timeout_ms 形同虚设 |
+| `query_topological_order` | snapshot_manager.py:333-350 | 仅 `b.truncate_results()` | ⚠️ 未传播到 Rust |
+| `query_detect_cycles` | snapshot_manager.py:352-373 | `b.start()` + `b.truncate_results()` | ❌ **同 query_call_chain_down，max_nodes/timeout_ms 不生效** |
+
+#### 6.5 MCP 工具层完全不暴露 timeout/truncate
+
+| MCP 工具 | 文件:行 | 当前参数 | 缺失 |
+| -------- | ------- | --------- | ---- |
+| `search_symbols` | mcp_server.py:129 | query, kind="", limit=20 | timeout, truncate |
+| `get_callers` | mcp_server.py:175 | callee_name, qualified_name=None | limit, max_depth, timeout, truncate |
+| `get_callees` | mcp_server.py:191 | caller_name, qualified_name=None | 同上 |
+| `get_topological_order` | mcp_server.py:237 | limit=50 | max_depth, timeout, truncate |
+| `get_impact` | mcp_server.py:253 | qualified_name, max_depth=10 | limit, timeout, truncate |
+| `get_call_chain_down` | mcp_server.py:265 | qualified_name, max_depth=10 | limit, timeout, truncate |
+| `detect_cycles` | mcp_server.py:328 | max_depth=10 | limit, timeout, truncate |
+
+#### 6.6 P1-4 剩余工作（实现通用 query budget 的步骤）
+
+1. **统一 Rust/Python `QueryBudget` 字段**：Rust 加 `max_results` / `frontier_limit`，或 Python 删除（决定单一真相源）
+2. **Rust daemon handler 接入 `BudgetTracker`**：在 `snapshot_state.rs` 的 6 个查询 RPC 中构造 `BudgetTracker`，循环内调用 `tracker.visit_node()` + `tracker.is_exceeded()` 检查
+3. **dispatch.rs 协议层新增参数**：`max_results` / `max_depth` / `timeout_ms` / `truncate` 字段，handler 解析后构造 `QueryBudget`
+4. **Python daemon 补齐 3 个查询 RPC**：`call_chain_down` / `topological_order` / `detect_cycles`
+5. **修复 `SnapshotManagerService` 残缺 budget**：`query_call_chain_down` / `query_detect_cycles` 在循环内调用 `b.visit_node()`
+6. **MCP 工具层暴露 `timeout` / `truncate` 参数**：通过 `DaemonClient` wire protocol 传递到 Rust
+
+### P1-6 Python daemon 与 Rust system daemon 能力被混为一谈
+
+Python `server/daemon_server.py` 确实接入 metrics、health、migration；Linux systemd unit 启动的是 Rust `cw_daemon`。两者 RPC 集、指标导出和启动迁移并不完全相同。文档必须明确「Python daemon 已实现」还是「企业 system daemon 已实现」。
+
+#### 6.7 daemon 能力区分矩阵
+
+| 能力 | Python daemon（`server/daemon_server.py`） | Rust system daemon（`rust_ext/src/daemon/`，systemd 启动） | 差距 |
+| ---- | ------------------------------------------ | ---------------------------------------------------------- | ---- |
+| **Metrics 收集器（G13）** | ✅ `MetricsCollector` 单例 + `measure_rpc` 上下文 + `metrics.snapshot`/`metrics.prometheus` RPC + CLI `cw daemon metrics` | ❌ 无指标埋点，无 RPC endpoint | Python 已实现，Rust 未对齐 |
+| **Health Check（G14）** | ✅ `HealthChecker` 实例化 + `health` RPC 调用 `check_all()` 四项检查 | ❌ RPC endpoint 只返基础统计并固定 `status=ok`，未执行四项检查 | Python 已实现，Rust 未对齐 |
+| **Schema Migrator（G15）** | ✅ `_run_startup_migrations()` 调用 `migrate_daemon_dbs` 对 registry.db/audit.db 版本化迁移 | ❌ 只做 schema-check/init，不是版本化迁移 | Python 已实现，Rust 未对齐 |
+| **Replicator CAS→Manifest→Snapshot（G11）** | ✅ `daemon_handle_refresh` step 5 调用 `merge_cas_to_codegraph` + `upsert_manifest`（P0-1 批次30） | ❌ Rust daemon 路径未接入 merge | Python 已实现，Rust 未对齐 |
+| **memfd 六重校验（G10）** | ✅ `agent_protocol.py:307-313` `create_sealed_memfd` + `daemon_server.py:798-802` `is_memfd`/`validate_memfd_fd` | ✅ `rust_ext/src/daemon/memfd.rs` 六重校验（P1-3 批次28） | ✅ 两侧对齐 |
+| **Workspace ACL（G3/G4/G16）** | ✅ dispatch 层 `_owned_workspace` / `_owned_workspace_by_id`（P0-2 批次29） | ✅ Rust daemon 路径 workspace_id 级 ACL（P0-2 批次29） | ✅ 两侧对齐 |
+| **Backup/Restore（G16）** | ✅ 加入 `ADMIN_ONLY_METHODS` 顶层 fail-closed | ✅ Rust daemon RPC 可达 + 顶层 fail-closed | ✅ 两侧对齐 |
+| **Snapshot GC（G17/G32）** | ✅ `SnapshotGC` 实例化 + `cw-snapshot-gc` 后台线程 | ⚠️ Rust daemon 无 GC 后台线程 | Python 已实现，Rust 未对齐 |
+| **Refresh Scheduler（G19）** | ✅ `RefreshScheduler` 实例化 + `cw-refresh-flush` 后台线程 | ⚠️ Rust daemon 无 scheduler 后台线程 | Python 已实现，Rust 未对齐 |
+| **Job Executor（G18）** | ✅ `job_executor.py` + `job_handlers.py` | ⚠️ Rust daemon 无 job executor | Python 已实现，Rust 未对齐 |
+
+#### 6.8 P1-6 结论
+
+1. **不能用 Python 单例证明 Rust 服务具备相同能力**：G13/G14/G15 在 Python daemon 已实现，但 Rust system daemon 未对齐
+2. **systemd 启动 Rust `cw_daemon`**：Linux 生产环境实际启动的是 Rust daemon，Python daemon 是开发期/Windows 降级路径
+3. **G13/G14/G15 状态保持 🟡**：能力区分已明确文档化，但 Rust daemon 路径仍未补齐 metrics/health/migration
+4. **G11 剩余缺口**：Rust daemon 路径未接入 CAS→Manifest→Snapshot merge（依赖 P1-6 文档明确后由 Rust 端补齐）
+5. **未来 Rust daemon 补齐工作**：metrics 埋点 + health check 四项检查 + 版本化迁移 + CAS merge + snapshot GC 后台线程 + refresh scheduler 后台线程 + job executor
+
