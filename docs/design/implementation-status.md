@@ -11,7 +11,7 @@
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
 | Schema 版本 | v40  | v3→v40 版本化迁移，事务化执行                                                             |
-| Mixin 模块  | 33   | CodeGraphBase + 32 个功能 Mixin（39 个 db_*.py 文件）                                     |
+| Mixin 模块  | 35   | CodeGraphBase + 35 个功能 Mixin（39 个 db_*.py 文件）                                     |
 | MCP 工具    | 206  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
 | 解析器文件  | 18   | tree-sitter 多语言（含 base/call_filter/call_resolver 等辅助模块）                        |
@@ -198,9 +198,9 @@
 | PR 检查                            | ✅    | `cicd/pr_check.py`                 |
 | GitHub Actions workflow            | ✅    | `.github/workflows/callwarden.yml` |
 
-## 三、Mixin 模块清单（33 个类，39 个 db_*.py 文件）
+## 三、Mixin 模块清单（35 个功能 Mixin + 1 基类，39 个 db_*.py 文件）
 
-权威清单见 [architecture.md §33 个 Mixin 列表](../architecture.md#33-个-mixin-列表)。下表为按文件路径分组的快速索引：
+权威清单见 [architecture.md §Mixin 架构](../architecture.md#mixin-架构)。下表为按文件路径分组的快速索引：
 
 | Mixin                   | 文件                          | 职责                                  |
 | ----------------------- | ----------------------------- | ------------------------------------- |

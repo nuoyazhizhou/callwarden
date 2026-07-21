@@ -37,7 +37,7 @@
 ## MCP Server 测试
 
 - [x] 编写 MCP Server 启动与协议握手测试
-- [x] 测试 195+ MCP 工具的输入输出契约
+- [x] 测试 206+ MCP 工具的输入输出契约
 - [x] 测试 MCP 与 CLI 并发访问（WAL 模式下读写并发安全验证）
 - [x] 测试 MCP 长连接稳定性（长时间空闲后恢复）
 - [x] 编写 tests/test_mcp_server_full.py（2026-07-19：15/15 通过 in 6.72s）
@@ -151,7 +151,7 @@
 #### Phase 8: 生产化
 - [x] systemd unit — G9 `release/linux/deb/systemd/callwarden-agent.service`（Type=simple, MemoryMax=512M, ProtectHome=read-only, ReadWritePaths=%h/.callwarden）
 - [x] config 文件和权限模板 — `server/daemon_config.py` + G25 `_validate_owned_path`（realpath + owner UID 校验 + 防路径穿越 + archived workspace 拒绝）
-- [x] metrics endpoint — ✅ 已实现（CLI + MCP，非 HTTP endpoint）：`cw daemon metrics` 子命令（--format prometheus/json + --name 过滤 + --reset）+ `get_metrics` MCP 工具（205 个）；直接复用 `server/metrics.py` 的 `MetricsCollector` 单例（691 行 Counter/Gauge/Histogram + `to_prometheus()` 文本生成），不依赖 daemon RPC；13 测试通过（test_phase8_metrics_endpoint.py）
+- [x] metrics endpoint — ✅ 已实现（CLI + MCP，非 HTTP endpoint）：`cw daemon metrics` 子命令（--format prometheus/json + --name 过滤 + --reset）+ `get_metrics` MCP 工具（206 个）；直接复用 `server/metrics.py` 的 `MetricsCollector` 单例（691 行 Counter/Gauge/Histogram + `to_prometheus()` 文本生成），不依赖 daemon RPC；13 测试通过（test_phase8_metrics_endpoint.py）
 - [x] health check — G14 Rust HealthChecker（4 项检查：db_registry/disk_space/memory_usage/uptime）+ RecoveryHandler（4 步恢复：workspace_registry/cas_db/stale_jobs/snapshots）；workspace.handle_health 接入完整检查
 - [x] audit log — H2 audit_chain 表 + db_audit_chain.py(491 行) + audit_verify_chain MCP + 密钥轮换
 - [x] backup/restore — G16 `server/backup_restore.py` + CLI `cw daemon backup/restore` 子命令

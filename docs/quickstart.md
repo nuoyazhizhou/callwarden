@@ -359,6 +359,6 @@ result = mcp.call_tool("revert_edit", {"audit_id": 42})
 ## 6. 下一步
 
 - [CLI 命令参考](cli_reference.md)：了解全部 145+ CLI 命令
-- [MCP 工具参考](mcp_tools.md)：了解全部 205 个 MCP 工具
+- [MCP 工具参考](mcp_tools.md)：了解全部 206 个 MCP 工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署、多容器共享、备份恢复

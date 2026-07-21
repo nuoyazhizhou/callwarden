@@ -138,8 +138,14 @@ class PRChecker:
         # 6. 生成 SARIF 报告（传入 run_errors 让消费方知道扫描是否完整）
         sarif_report = self.sarif_exporter.export_findings(findings, run_errors=run_errors)
 
-        # passed 判定：无 error 级发现即视为通过
-        passed = errors == 0
+        # 复审回退修复（2026-07-21 P1-1）：
+        # passed 必须同时满足：
+        #   (1) errors == 0 —— 无 error 级阻断发现
+        #   (2) scan_complete —— 扫描本身未发生 run_errors（Guardrail/Semgrep 异常）
+        # 旧实现 passed = errors == 0 会在扫描失败但零 finding 时 fail-open（exit 0），
+        # 让 GitHub Action 错误地放行 PR。现在任一条件不满足都阻断。
+        scan_complete = len(run_errors) == 0
+        passed = (errors == 0) and scan_complete
 
         return {
             "passed": passed,
@@ -149,7 +155,7 @@ class PRChecker:
             "sarif_report": sarif_report,
             # P1 修复：暴露 run_errors，调用方可据此判断扫描是否完整
             "run_errors": run_errors,
-            "scan_complete": len(run_errors) == 0,
+            "scan_complete": scan_complete,
         }
 
     def check_blocking_rules(self, changed_files: List[str]) -> Dict:
@@ -189,13 +195,19 @@ class PRChecker:
     # ------------------------------------------------------------------
 
     def _query_open_findings(self, changed_files: List[str]) -> List[Dict]:
-        """查询 guardrail_findings 表中 status='open' 且 file_path 命中变更文件的记录
+        """合并查询 guardrail_findings + semgrep_findings 中命中变更文件的 open 记录
+
+        复审回退修复（2026-07-21 P1-1）：
+        旧实现只查 guardrail_findings，未合并 semgrep_findings，导致 Semgrep 发现的
+        error 级 finding 无法阻断 PR。现在两类 findings 都纳入阻断判定。
 
         Args:
             changed_files: 变更文件路径列表
 
         Returns:
-            finding 字典列表；db 无 conn 或无表时返回空列表
+            finding 字典列表；db 无 conn 或表不存在时返回空列表。
+            字段统一为：id, rule_id, file_path, severity, status, message, detected_at, source
+            （source: 'guardrail' 或 'semgrep'，便于 SARIF 与日志溯源）
         """
         if not changed_files:
             return []
@@ -214,14 +226,39 @@ class PRChecker:
 
         # 用 IN 子句批量查询；SQL 参数仅支持问号占位符
         placeholders = ",".join("?" * len(normalized))
-        sql = (
-            "SELECT id, rule_id, file_path, severity, status, message, detected_at "
+
+        findings: List[Dict] = []
+
+        # (1) guardrail_findings：status='open' 且 file_path 命中
+        guardrail_sql = (
+            "SELECT id, rule_id, file_path, severity, status, message, detected_at, "
+            "'guardrail' AS source "
             f"FROM guardrail_findings "
             f"WHERE status = 'open' AND file_path IN ({placeholders})"
         )
         try:
-            cur = conn.execute(sql, normalized)
-            return [dict(row) for row in cur]
+            cur = conn.execute(guardrail_sql, normalized)
+            findings.extend(dict(row) for row in cur)
         except Exception:
-            # 表不存在或查询失败时返回空列表，避免阻断 PR 检查
-            return []
+            # 表不存在或查询失败时跳过，不阻断 PR 检查（其他源仍可阻断）
+            pass
+
+        # (2) semgrep_findings：JOIN file_instances 取 rel_path，所有 finding 视为 open
+        # （semgrep_findings 表无 status 字段；增量扫描时 save_semgrep_findings 已删除
+        # 变更文件的 stale 记录，因此查询结果只含最新扫描的 finding）
+        semgrep_sql = (
+            "SELECT sf.id, sf.rule_id, fi.rel_path AS file_path, sf.severity, "
+            "'open' AS status, sf.message, sf.scanned_at AS detected_at, "
+            "'semgrep' AS source "
+            "FROM semgrep_findings sf "
+            "JOIN file_instances fi ON sf.file_instance_id = fi.id "
+            f"WHERE fi.rel_path IN ({placeholders})"
+        )
+        try:
+            cur = conn.execute(semgrep_sql, normalized)
+            findings.extend(dict(row) for row in cur)
+        except Exception:
+            # 表不存在或查询失败时跳过，不阻断 PR 检查
+            pass
+
+        return findings

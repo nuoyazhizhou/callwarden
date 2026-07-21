@@ -12,7 +12,7 @@
                ▼                               ▼
 ┌──────────────────────────┐     ┌──────────────────────────────┐
 │      CLI (cli/main.py)   │     │   MCP Server (FastMCP)       │
-│  子命令 + --flag 双风格  │     │   205 个 @mcp.tool() 工具    │
+│  子命令 + --flag 双风格  │     │   206 个 @mcp.tool() 工具    │
 │  145+ 命令               │     │   stdio / SSE 传输           │
 └────────────┬─────────────┘     └──────────────┬───────────────┘
              │                                  │
@@ -20,7 +20,7 @@
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                  CodeGraphDB (db.py)                          │
-│         40 个 Mixin 多继承组装的统一数据库类                   │
+│         35 个功能 Mixin + 1 基类多继承组装的统一数据库类      │
 │  CodeGraphBase + BuildMixin + QueryMixin + ... + CheckGateMixin│
 └────────────────────────────┬──────────────────────────────────┘
                              │
@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（用户级单库）                       │
 │   $HOME/.callwarden/callwarden.db                              │
-│   Schema v40 / WAL 模式 / 40+ 表 / 40 个 Mixin 类              │
+│   Schema v40 / WAL 模式 / 40+ 表 / 35 个功能 Mixin + 1 基类    │
 │   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -46,7 +46,7 @@
 | 层 | 职责 | 关键文件 |
 |----|------|----------|
 | 接入层 | CLI 命令解析、MCP 协议处理 | `cli/main.py`、`server/mcp_server.py` |
-| 业务层 | 40 个 Mixin 组合的数据库类（含基类 + analyzers） | `db.py` + `db_*.py`（39 个文件） |
+| 业务层 | 35 个功能 Mixin + 1 基类（含 analyzers 3 个） | `db.py` + `db_*.py`（39 个文件） |
 | 解析层 | tree-sitter 多语言解析、调用关系提取 | `parsers/`（18 个文件） |
 | 分析层 | 调用链、覆盖率、缺陷检测 | `analyzers/`（6 个文件） |
 | 加速层 | PyO3 Rust 扩展（可选） | `rust_ext/` |
@@ -315,14 +315,14 @@ UNIQUE 约束：`(workspace_id, rel_path)`
 
 ### 设计原理
 
-CodeGraphDB 通过 **40 个 Mixin 多继承**组装（含 db_base.py 基类 + analyzers 3 个分析器 Mixin），每个 Mixin 负责一个功能领域。这种设计：
+CodeGraphDB 通过 **35 个功能 Mixin 多继承**组装（不含 db_base.py 基类；其中 3 个来自 analyzers/），每个 Mixin 负责一个功能领域。这种设计：
 
 - **单一职责**：每个 Mixin 只关心自己的表和查询
 - **按需组合**：主类只需声明继承即可获得功能
 - **易于扩展**：新增功能只需添加新 Mixin
 - **避免上帝类**：`db.py` 仅 92 行，职责在 39 个文件中分散
 
-### 40 个 Mixin 列表
+### Mixin 列表（35 个功能 Mixin + 1 基类 = 36 项）
 
 | # | Mixin | 文件 | 职责 |
 |---|-------|------|------|
@@ -377,7 +377,7 @@ class CodeGraphDB(
     BuildMixin,
     QueryMixin,
     CommentMixin,
-    # ... 共 33 个 Mixin
+    # ... 共 35 个功能 Mixin（不含 CodeGraphBase）
     CheckGateMixin,
     AgentRulesMixin,
 ):
@@ -941,7 +941,7 @@ Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprec
 
 ### 12 主分类设计
 
-Call Warden 把 145+ 个 CLI 命令和 205 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
+Call Warden 把 145+ 个 CLI 命令和 206 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
 
 | # | 主分类 | CLI 涵盖范围 | MCP 工具数 |
 |---|--------|-------------|-----------|
@@ -1010,7 +1010,7 @@ Call Warden 把 145+ 个 CLI 命令和 205 个 MCP 工具按功能聚合为 12 �
 
 #### 2. 不重命名 MCP 工具
 
-**决策**：205 个 MCP 工具的命名保持不变，仅审计和归档。
+**决策**：206 个 MCP 工具的命名保持不变，仅审计和归档。
 
 **理由**：
 - MCP 工具名是 Agent 集成的稳定接口，重命名会破坏已部署的 Agent workflow

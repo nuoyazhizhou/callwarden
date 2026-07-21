@@ -93,10 +93,10 @@
 
 | 指标 | 文档声称 | 代码实查 |
 |------|---------|----------|
-| MCP 工具数 | 120-125 | **205**（@mcp.tool() 装饰器计数） |
+| MCP 工具数 | 120-125 | **206**（@mcp.tool() 装饰器计数） |
 | CLI 子命令 | 145+ | 38 子命令 + ~98 个 --flag 命令 |
 | 支持语言 | 16 | 16（parsers/ 目录 16 个解析器） |
-| Mixin 模块 | 23 | **33 个 Mixin 类**（39 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin） |
+| Mixin 模块 | 23 | **35 个功能 Mixin**（39 个 db_*.py 文件 + 1 基类 CodeGraphBase） |
 | Schema 版本 | v14 | **v40** |
 | 产品版本 | 0.3.0 | release/version.toml `[product] version = "0.3.0"` |
 

@@ -28,7 +28,7 @@ Call Warden 是一个面向 AI Agent 的代码知识图谱工具。它通过 tre
 |------|------|
 | [快速开始](quickstart.md) | 安装、初始化、基本查询、MCP Server 启动、完整示例会话 |
 | [CLI 命令参考](cli_reference.md) | 全部 CLI 子命令与 --flag 命令的用法、参数、示例 |
-| [MCP 工具参考](mcp_tools.md) | 205 个 MCP 工具按功能分组、关键参数、返回值格式、配置方法 |
+| [MCP 工具参考](mcp_tools.md) | 206 个 MCP 工具按功能分组、关键参数、返回值格式、配置方法 |
 | [架构设计](architecture.md) | 整体架构、数据库 Schema、Mixin 多继承、安全机制、扩展指南 |
 | [部署指南](deployment.md) | 本地部署、Docker 部署、MCP 配置、备份恢复、升级指南 |
 | [Dockerfile](Dockerfile) | Docker 镜像构建文件 |

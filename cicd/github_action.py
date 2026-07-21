@@ -85,6 +85,8 @@ def run_github_action() -> int:
     total = result.get("total_findings", 0)
     errors = result.get("errors", 0)
     warnings = result.get("warnings", 0)
+    scan_complete = bool(result.get("scan_complete", True))
+    run_errors = result.get("run_errors", []) or []
 
     print("-" * 60)
     print(t("cli.messages.github_action_pr_summary"))
@@ -92,8 +94,17 @@ def run_github_action() -> int:
     print(t("cli.messages.github_action_total_findings", count=total))
     print(t("cli.messages.github_action_errors", count=errors))
     print(t("cli.messages.github_action_warnings", count=warnings))
+    if not scan_complete:
+        # 复审回退修复（2026-07-21 P1-1）：扫描未完成时明确提示
+        print(f"  scan_complete: False ({len(run_errors)} run errors)")
+        for idx, err in enumerate(run_errors[:5], 1):
+            print(f"    [{idx}] {err}")
+        if len(run_errors) > 5:
+            print(f"    ... and {len(run_errors) - 5} more")
 
     # 6. 阻断判定：未通过则打印错误并 exit 1
+    # 复审回退修复（2026-07-21 P1-1）：passed 现已纳入 scan_complete，
+    # 即使零 finding 但扫描失败也会被阻断（避免 fail-open 放行 PR）
     if not passed:
         print("-" * 60)
         print(t("cli.messages.github_action_pr_blocked"))

@@ -290,7 +290,7 @@ db.conn.commit()
 - **子命令**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`
 - **flag**：`--refresh-all`、`--refresh`、`--watch`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--restore-comment`、`--restore-all-comments`、`--coverage-import`
 
-## MCP 工具分组（205 个）
+## MCP 工具分组（206 个）
 
 **查询类**：get_stats、search_symbols、get_symbol、get_callers、get_callees、get_symbol_history、get_file_history、get_recent_changes、get_topological_order
 
