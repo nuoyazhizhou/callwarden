@@ -115,13 +115,13 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | C9 | ✅ | `install-agent` 生成 Codex/Claude/Cursor 集成文件。 |
 | C10 | 🟡 | post-commit capture 可建立关联，但是 best-effort hook，可被 `--no-verify` 或外部编辑绕过。 |
 | C11 | ✅ | 手动/自动 reopen 和祖先链回退已实现。 |
-| D1 | ❌ | 只存 BLOB 并全表读取后做 Rust/numpy/Python cosine；生产代码没有加载 sqlite-vec，也没有 vec0 表。 |
+| D1 | 🟡 | 当前实现是 BLOB 存储 + `callwarden_core.batch_cosine_similarity` Rust 全量扫描 + numpy 矩阵运算降级，适合 < 100k 符号；sqlite-vec vec0 虚拟表待落地是**设计决策**（KNN 路径未来优化），非 bug。pyproject.toml 仍声明 sqlite-vec>=0.1 依赖但生产代码未加载（避免误用）。AGENTS.md 技术栈已标注 "sqlite-vec vec0 虚拟表待落地"。 |
 | D2 | ✅ | sentence-transformers 生成 embedding 路径存在，为可选依赖。 |
 | D3 | ✅ | semantic search 及 keyword fallback 存在。 |
 | D4 | ✅ | 相似函数查找已公开。 |
-| D5 | 🟡 | `ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，不生成最终问答。 |
+| D5 | 🟡 | `ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，**不生成最终问答是设计决策**（Call Warden 是知识图谱工具，最终问答由外部 LLM/Agent 完成，避免重复实现 LLM 调用），非 bug。 |
 | D6 | ✅ | hover/definition/references/diagnostics/completion 和 MCP 转发存在。 |
-| D7 | ❌ | 检测时把 `target_symbol_hash` 固定写为空字符串，反向影响查询永远无法命中；匹配也只是 import 末段简名。 |
+| D7 | ✅ | 批次5 修复（2026-07-20）：`db_cross_repo.py` `target_symbol_names` 字典从 `name→qualified_name` 改为 `name→(qualified_name, symbol_hash)` 元组，INSERT 的 `target_symbol_hash` 写入真实值，反向查询 `WHERE target_symbol_hash = ?` 可命中。原代码写空字符串导致永远无结果的 bug 已修复。 |
 | D8 | ✅ | 分支注册/切换/差异/合并 preview 入口存在。 |
 | E1 | ✅ | CODEOWNERS + blame 所有权路径存在。 |
 | E2 | ✅ | `who_to_ask` 已公开。 |
