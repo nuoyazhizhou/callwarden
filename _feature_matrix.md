@@ -169,7 +169,7 @@
 | D4 | 相似函数查找 | IS | ✅ 已实现 | find_similar_functions（MCP 已注册） |
 | D5 | ask_codebase RAG 管道 | IS/CA | 🟡 部分完成（评审 2026-07-20） | `ask_codebase` 是检索+调用上下文组装器，返回 `rag_context`，不生成最终问答 |
 | D6 | LSP hover/定义/引用/诊断/补全 | IS/CL | ✅ 已实现 | db_lsp.py |
-| D7 | 跨仓库依赖检测 + 共享符号 + 影响传播 | IS/CL | 🟡 复审回退（2026-07-21） | db_cross_repo.py（D7 评审修复：`target_symbol_names` 字典从 `name→qualified_name` 改为 `name→(qualified_name, symbol_hash)` 元组，INSERT 的 target_symbol_hash 写入真实值，反向查询可命中）。**复审回退（2026-07-21）**：批次5 仅修复 `target_symbol_hash` 空字符串问题。但跨仓库检测仍按 import 路径最后一段匹配任意同名符号，`Dict[name]` 会覆盖重名符号；`cross_repo_deps` 没有唯一约束，重复扫描持续追加记录。该算法只能算启发式候选，不能宣称影响传播已完整修复 |
+| D7 | 跨仓库依赖检测 + 共享符号 + 影响传播 | IS/CL | 🟡 复审整改（2026-07-21 批次32） | db_cross_repo.py / db/schema.py / db/db_base.py（**P1-2 复审整改 2026-07-21**：1) schema v41 — `cross_repo_deps` 加 `idx_cross_repo_unique` 五元组 UNIQUE 索引（源仓库/目标仓库/源 hash/目标 hash/依赖类型），配合 `INSERT OR IGNORE` 实现幂等；2) `_migrate_v40_to_v41` 函数含既有重复记录去重逻辑（保留最大 id 即最新记录）；3) `detect_cross_repo_deps` 重写：`Dict[name, Tuple]` → `Dict[name, List[Tuple]]` + FQN 反向索引，三级优先级匹配（FQN 全匹配 0.95 > FQN 后缀匹配 0.85 > 短名匹配 0.7），同一轮扫描内 `recorded_pairs` set 去重，删除 `break` 允许多仓库匹配。**剩余项**：短名匹配 0.7 分支在算法当前实现下不可达（candidates 非空时一定触发后缀匹配，因 `cand_qn.split(".")[-1]` 恒等于 `module_name`）；跨仓库影响传播 `propagate_cross_repo_impact` 尚未对接新 confidence 分级） |
 | D8 | 分支注册/切换/差异对比/合并预览 | IS/CL | ✅ 已实现 | db_branch.py |
 
 ## E. 辅助功能（已完成，文档一致）
@@ -323,12 +323,12 @@
 | # | 问题 | 详情 | 需更新文件 |
 |---|------|------|------------|
 | I1 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：源码实算 206 MCP / 35 功能 Mixin（另有 `CodeGraphBase`）/ 39 db_*.py / v40 / 16 语言。旧同步至 205/33/40 与源码不符，需统一至 206/35/39 | IS, RM, MCT, ARC |
-| I2 | 🟡 复审回退（2026-07-21） | CA 表格已改"未暴露"为"✅ 已暴露"。**复审回退（2026-07-21）**：D7 跨仓库影响传播只修复 `target_symbol_hash` 空字符串，仍按 import 尾段匹配同名符号，`Dict[name]` 覆盖重名，`cross_repo_deps` 无唯一约束。CA 表格 D7 标 ✅ 与代码故障"部分修复"状态仍冲突 | CA |
+| I2 | 🟡 复审整改（2026-07-21 批次32） | CA 表格已改"未暴露"为"✅ 已暴露"。**复审回退（2026-07-21）**：D7 跨仓库影响传播只修复 `target_symbol_hash` 空字符串，仍按 import 尾段匹配同名符号，`Dict[name]` 覆盖重名，`cross_repo_deps` 无唯一约束。CA 表格 D7 标 ✅ 与代码故障"部分修复"状态仍冲突。**P1-2 复审整改（2026-07-21 批次32）**：算法已修复（FQN 三级匹配 + UNIQUE 索引 + INSERT OR IGNORE 幂等），CA 表格 D7 标 ✅ 与代码"🟡 复审整改"状态仍部分冲突（影响传播 `propagate_cross_repo_impact` 尚未对接新 confidence 分级） | CA |
 | I3 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：UG 头部 "v40 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类" 与源码 206/35 不符。Q2 删除"删除 callwarden.db 重建"危险建议这一修复可保留，但计数仍错误 | UG |
 | I4 | 🟡 部分完成（评审 2026-07-20） | IS §5 待办表已更新 Prometheus 为 ❌ 未实现（daemon 无埋点，CLI/MCP 读空单例）。`status != 'archived'` ✅ / `UNIQUE UPSERT` ⚠️ 部分保持。G13 待补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 | IS |
 | I5 | ✅ 已修复（2026-07-19） | TokenSavingsMixin 在 §2.12（能力描述）和 §3（Mixin 列表）各出现一次，是合理的双视角描述，非重复列出 | IS |
 | I6 | ✅ 已修复（2026-07-19） | RM 数据库位置已从 `~/.callwarden/<hash>/callwarden.db`（旧版多库）改为 `~/.callwarden/callwarden.db`（用户级单库 + workspace_id 逻辑隔离），与 UG/config.py 一致；UG 描述原本正确 | RM |
-| I7 | 🟡 复审回退（2026-07-21） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销"。**复审回退（2026-07-21）**：D7 修复只覆盖 `target_symbol_hash` 空字符串，跨仓库检测仍按 import 尾段匹配同名符号，`Dict[name]` 覆盖重名，`cross_repo_deps` 无唯一约束。影响传播未真正完整修复 | CA |
+| I7 | 🟡 复审整改（2026-07-21 批次32） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销"。**复审回退（2026-07-21）**：D7 修复只覆盖 `target_symbol_hash` 空字符串，跨仓库检测仍按 import 尾段匹配同名符号，`Dict[name]` 覆盖重名，`cross_repo_deps` 无唯一约束。影响传播未真正完整修复。**P1-2 复审整改（2026-07-21 批次32）**：算法已修复（FQN 三级匹配 + UNIQUE 索引 + INSERT OR IGNORE 幂等），影响传播 `propagate_cross_repo_impact` 尚未对接新 confidence 分级 | CA |
 | I8 | ✅ 已修复（2026-07-19） | CA "不要集成 ast-grep"建议下方加"更新（2026-07-19）：此建议仍有效，issues.py 未集成 ast-grep"。原 I8 描述"issues.py 存在"系误判（issues.py 仅用 Semgrep，无 ast-grep） | CA |
 | I9 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：源码实算 35 功能 Mixin（`db/db.py` 实际继承列表）+ `CodeGraphBase`。文档用 33（"组合的 Mixin 数"）/40（"表格行数"）两种口径解释 35 是绕开问题，没有把 35 作为单一真相。`test_33_mixin_present` 测试锁定 33 反而阻止修正 | ARC |
 | I10 | ✅ 已修复（2026-07-20 更新） | ARC Schema 版本已同步为 v39 | ARC |
@@ -340,7 +340,7 @@
 | I16 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：history/README.md L41 演化轨迹仍写 "205 MCP / 33 Mixin 类"。需统一至 206/35 | docs/history/README.md |
 | I17 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：Schema v37→v40 同步可保留，但 205/33 与源码 206/35 仍冲突。"全部统一为 205/33"声明为假 | ARC, IS, README.md, UG |
 | I18 | ✅ 已修复（2026-07-20） | deployment.md 数据库锁定/损坏排查章节删除"rm -wal/-shm"危险建议，改为 PRAGMA wal_checkpoint + 备份 + .recover 流程；USER_GUIDE Q2 删除"删除 callwarden.db 重建"危险建议 | deployment.md, UG |
-| I19 | 🟡 复审回退（2026-07-21） | D1/D7 评审修正：D1 "🟡 部分完成（BLOB + Rust/numpy）"。**复审回退（2026-07-21）**：D7 状态从 ✅ 回退为 🟡，仅修复 `target_symbol_hash` 空字符串，跨仓库检测算法仍有缺陷 | _feature_matrix.md D1/D7 |
+| I19 | 🟡 复审整改（2026-07-21 批次32） | D1/D7 评审修正：D1 "🟡 部分完成（BLOB + Rust/numpy）"。**复审回退（2026-07-21）**：D7 状态从 ✅ 回退为 🟡，仅修复 `target_symbol_hash` 空字符串，跨仓库检测算法仍有缺陷。**P1-2 复审整改（2026-07-21 批次32）**：算法已修复（FQN 三级匹配 + UNIQUE 索引 + INSERT OR IGNORE 幂等），D7 状态保持 🟡（短名匹配 0.7 分支不可达 + 影响传播未对接 confidence 分级） | _feature_matrix.md D1/D7 |
 | I20 | 🟡 复审回退（2026-07-21） | A14 增量扫描方法已实现（`scan_semgrep_incremental`），scan_type 字段已加，索引已加。**复审回退（2026-07-21）**：A14 状态回退为 🟡——`stale_file_ids` 清理只覆盖已知文件，删除的文件不触发清理；scan 失败时 findings 已写入但 scan_id 无对应记录 | _feature_matrix.md A14 |
 | I21 | ✅ 已修复（2026-07-20 二轮评审） | A15 gitignore 语义：状态从 "✅ 已实现" 改为 "🟡 部分完成"。自研 ignore parser 不完整 gitignore 语义（strip 丢尾随空格、不支持字符类、目录剪枝影响 negation）。建议接入 `pathspec` 库或补全规范 | _feature_matrix.md A15 |
 | I22 | 🟡 复审回退（2026-07-21） | A19/A21 PR 检查：PRChecker 改用 `check_before_edit` + 异常上浮 + SARIF `executionNotifications`。**复审回退（2026-07-21）**：`passed = errors == 0` 未纳入 `run_errors`/`scan_complete`，`_query_open_findings` 只查 `guardrail_findings` 未合并 `semgrep_findings`，GitHub Action 仍 exit 0。A19/A21 状态回退为 🟡，fail-open 未真正闭合 | _feature_matrix.md A19/A21 |

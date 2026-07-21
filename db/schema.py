@@ -589,6 +589,15 @@ CREATE TABLE IF NOT EXISTS cross_repo_deps (
 CREATE INDEX IF NOT EXISTS idx_cross_repo_source ON cross_repo_deps(source_workspace_id);
 CREATE INDEX IF NOT EXISTS idx_cross_repo_target ON cross_repo_deps(target_workspace_id);
 CREATE INDEX IF NOT EXISTS idx_cross_repo_type ON cross_repo_deps(dependency_type);
+-- v41 (P1-2 修复): 跨仓库依赖去重 UNIQUE 索引
+-- 复审报告 P1-2：原 schema 无 UNIQUE 约束，detect_cross_repo_deps 每次扫描都追加新行，
+-- 重复扫描持续追加记录。改为基于 (源仓库, 目标仓库, 源符号 hash, 目标符号 hash, 依赖类型)
+-- 五元组 UNIQUE，配合 INSERT OR IGNORE 实现幂等。
+-- 注意：evidence / confidence / detected_at 不参与 UNIQUE 约束（这些字段可能随扫描更新），
+--       若需要刷新这些字段，应先 DELETE 旧记录再 INSERT，或用 INSERT OR REPLACE。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cross_repo_unique
+    ON cross_repo_deps(source_workspace_id, target_workspace_id,
+                       source_symbol_hash, target_symbol_hash, dependency_type);
 
 -- ============================================
 -- v14: 归档表（类 Java GC 老年代）
@@ -1052,7 +1061,11 @@ ON test_runs(ci_run_id);
 #      callee_qualified 查找走索引（旧索引只有 caller_qualified，callee 查询全表扫描）。
 # v40: A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引，关联到 semgrep_scans.id，
 #      让增量扫描能按 scan_id 清理旧 findings（变更文件的 stale 记录）。
-SCHEMA_VERSION = 40
+# v41: P1-2 跨仓库依赖去重 — cross_repo_deps 加 UNIQUE 索引
+#      (source_workspace_id, target_workspace_id, source_symbol_hash,
+#       target_symbol_hash, dependency_type) 五元组，配合 INSERT OR IGNORE 幂等。
+#      复审报告 P1-2 指出原 schema 无 UNIQUE 约束，重复扫描持续追加记录。
+SCHEMA_VERSION = 41
 
 
 # ============================================

@@ -117,15 +117,22 @@ def test_d7_db_cross_repo_writes_real_target_symbol_hash():
     db_cross_repo = ROOT / "db" / "db_cross_repo.py"
     content = db_cross_repo.read_text(encoding="utf-8")
 
-    # 必须有 INSERT INTO cross_repo_deps
-    assert "INSERT INTO cross_repo_deps" in content, (
-        "db_cross_repo.py 必须有 INSERT INTO cross_repo_deps"
-    )
+    # 必须有 INSERT INTO cross_repo_deps（P1-2 改为 INSERT OR IGNORE INTO 实现幂等，
+    # 两种形式都接受）
+    assert (
+        "INSERT INTO cross_repo_deps" in content
+        or "INSERT OR IGNORE INTO cross_repo_deps" in content
+    ), "db_cross_repo.py 必须有 INSERT INTO cross_repo_deps 或 INSERT OR IGNORE INTO cross_repo_deps"
 
-    # 找到 INSERT INTO cross_repo_deps 的代码块，附近 50 行
+    # 找到 INSERT ... cross_repo_deps 的代码块，附近 50 行
     lines = content.splitlines()
     insert_idx = next(
-        (i for i, line in enumerate(lines) if "INSERT INTO cross_repo_deps" in line),
+        (
+            i
+            for i, line in enumerate(lines)
+            if "INSERT INTO cross_repo_deps" in line
+            or "INSERT OR IGNORE INTO cross_repo_deps" in line
+        ),
         None,
     )
     assert insert_idx is not None

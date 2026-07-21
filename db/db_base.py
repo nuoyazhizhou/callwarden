@@ -1838,6 +1838,64 @@ def _migrate_v39_to_v40(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v40_to_v41(conn: sqlite3.Connection):
+    """v40 -> v41: P1-2 跨仓库依赖去重 — cross_repo_deps 加 UNIQUE 索引
+
+    背景：复审报告 P1-2（feature-matrix-code-reaudit-2026-07-21.md §127-131）指出
+    cross_repo_deps 表无 UNIQUE 约束，detect_cross_repo_deps 每次扫描都追加新行，
+    重复扫描持续追加记录。
+
+    修复：基于 (source_workspace_id, target_workspace_id, source_symbol_hash,
+    target_symbol_hash, dependency_type) 五元组创建 UNIQUE 索引。
+    配合 db_cross_repo.py 的 INSERT OR IGNORE 实现幂等写入。
+
+    幂等性：CREATE UNIQUE INDEX IF NOT EXISTS 自动跳过已存在的索引。
+    全新数据库已通过 SCHEMA_SQL 创建索引，本迁移只补齐既有 v40 库。
+
+    数据清理：若既有库中已有重复记录（多次扫描追加的），CREATE UNIQUE INDEX 会失败。
+    本迁移先尝试创建索引；若失败，先按五元组去重（保留最大 id 即最新记录），
+    再创建索引。
+    """
+    # 先尝试直接创建 UNIQUE 索引（无重复记录时一次成功）
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_cross_repo_unique "
+            "ON cross_repo_deps(source_workspace_id, target_workspace_id, "
+            "source_symbol_hash, target_symbol_hash, dependency_type)"
+        )
+        try:
+            conn.execute("ANALYZE")
+        except sqlite3.OperationalError:
+            pass
+        return
+    except sqlite3.IntegrityError:
+        # 有重复记录，需要先去重
+        pass
+
+    # 去重：按五元组保留最大 id（最新记录）
+    conn.execute(
+        """
+        DELETE FROM cross_repo_deps
+        WHERE id NOT IN (
+            SELECT MAX(id) FROM cross_repo_deps
+            GROUP BY source_workspace_id, target_workspace_id,
+                     source_symbol_hash, target_symbol_hash, dependency_type
+        )
+        """
+    )
+
+    # 去重后再创建 UNIQUE 索引
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_cross_repo_unique "
+        "ON cross_repo_deps(source_workspace_id, target_workspace_id, "
+        "source_symbol_hash, target_symbol_hash, dependency_type)"
+    )
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2461,6 +2519,10 @@ class CodeGraphBase:
             40: {
                 "description": t("cli.messages.migration_v40", default="A14 incremental scan: add scan_id column to semgrep_findings + index (idempotent)"),
                 "func": _migrate_v39_to_v40,
+            },
+            41: {
+                "description": t("cli.messages.migration_v41", default="P1-2 cross_repo_deps dedup: add UNIQUE index on (source_ws, target_ws, source_hash, target_hash, dep_type) + dedup existing rows"),
+                "func": _migrate_v40_to_v41,
             },
         }
 

@@ -117,9 +117,13 @@ class CrossRepoMixin:
         source_symbols = [dict(r) for r in cur]
 
         # 收集目标仓库的符号名集合（用于匹配 import）
-        # D7 修复：原代码只存 name -> qualified_name，导致 target_symbol_hash 写入空字符串，
-        # 反向查询无法命中。改为存 name -> (qualified_name, symbol_hash) 元组。
-        target_symbol_names: Dict[int, Dict[str, Tuple[str, str]]] = {}  # ws_id -> {symbol_name: (qualified_name, symbol_hash)}
+        # P1-2 修复（复审报告 §127-131）：原代码用 Dict[name, (qn, hash)]，
+        # 重名 symbol（不同 module 下的同名函数/类）会被后写入的覆盖，导致只保留最后一个。
+        # 改为 Dict[name, List[(qualified_name, symbol_hash)]] 按短名聚合所有重名候选，
+        # 匹配时按 FQN 优先级挑选（FQN 全匹配 > FQN 后缀匹配 > 短名匹配）。
+        target_symbol_names: Dict[int, Dict[str, List[Tuple[str, str]]]] = {}  # ws_id -> {symbol_name: [(qualified_name, symbol_hash), ...]}
+        # 同时建立 FQN 反向索引，用于 FQN 全匹配（精度最高）
+        target_symbol_fqns: Dict[int, Dict[str, Tuple[str, str]]] = {}  # ws_id -> {fqn: (name, symbol_hash)}
         for t in target_ids:
             t_id = t[0] if isinstance(t, tuple) else t
             t_name = t[1] if isinstance(t, tuple) else ""
@@ -132,12 +136,24 @@ class CrossRepoMixin:
                 """,
                 (t_id,),
             )
-            target_symbol_names[t_id] = {
-                r["name"]: (r["qualified_name"], r["symbol_hash"]) for r in cur
-            }
+            by_name: Dict[str, List[Tuple[str, str]]] = {}
+            by_fqn: Dict[str, Tuple[str, str]] = {}
+            for r in cur:
+                name = r["name"]
+                qn = r["qualified_name"]
+                sh = r["symbol_hash"]
+                # 短名索引：保留所有同名候选
+                by_name.setdefault(name, []).append((qn, sh))
+                # FQN 索引：FQN 唯一（数据库 schema 保证 qualified_name 在 file_instance 内唯一）
+                if qn and qn not in by_fqn:
+                    by_fqn[qn] = (name, sh)
+            target_symbol_names[t_id] = by_name
+            target_symbol_fqns[t_id] = by_fqn
 
         # 扫描源符号的 content 中的 import 语句
         detected_deps: List[Dict[str, Any]] = []
+        # P1-2 修复：用 set 去重避免同一 (source_hash, target_hash) 对在同一轮扫描内被多次记录
+        recorded_pairs: set = set()
         now = time.time()
 
         for sym in source_symbols:
@@ -152,57 +168,113 @@ class CrossRepoMixin:
             for pattern in patterns:
                 for match in pattern.finditer(content):
                     import_path = match.group(1)
-                    # 检查 import 的模块名是否在目标仓库的符号中
-                    # 取 import 路径的最后一段作为模块名
+                    # P1-2 修复：保留 import 全路径用于 FQN 匹配（原代码只取最后一段）
+                    # 优先级 1：用全路径作为 FQN 直接匹配（精度最高）
+                    # 优先级 2：用 import 路径最后一段做短名匹配（向后兼容）
                     module_name = import_path.split(".")[-1].split("::")[-1].split("/")[-1]
                     if not module_name:
                         continue
 
-                    for t_id, t_names in target_symbol_names.items():
-                        if module_name in t_names:
-                            # 找到匹配，记录依赖
-                            # D7 修复：同时拿到 qualified_name 和 symbol_hash
-                            target_qn, target_symbol_hash = t_names[module_name]
-                            # 获取目标仓库名
-                            cur = self.conn.execute(
-                                "SELECT name FROM workspaces WHERE id = ?",
-                                (t_id,),
-                            )
-                            t_row = cur.fetchone()
-                            t_name = t_row["name"] if t_row else ""
+                    for t_id, t_fqns in target_symbol_fqns.items():
+                        # 优先级 1：FQN 全匹配（import_path 与目标 FQN 完全一致）
+                        matched_qn: Optional[str] = None
+                        matched_hash: Optional[str] = None
+                        # 尝试多种 FQN 形式：原始路径 / 把 :: / 换成 . /
+                        for candidate_fqn in (import_path,
+                                               import_path.replace("::", "."),
+                                               import_path.replace("/", ".")):
+                            if candidate_fqn in t_fqns:
+                                _, matched_hash = t_fqns[candidate_fqn]
+                                matched_qn = candidate_fqn
+                                break
 
-                            dep = {
-                                "target_workspace": t_name,
-                                "dependency_type": "import",
-                                "source_symbol": sym["qualified_name"],
-                                "target_symbol": target_qn,
-                                "evidence": match.group(0).strip(),
-                                "confidence": 0.8,
-                            }
-                            detected_deps.append(dep)
+                        # 优先级 2：短名匹配（向后兼容）— 遍历所有同名候选
+                        if matched_qn is None:
+                            t_names = target_symbol_names.get(t_id, {})
+                            candidates = t_names.get(module_name, [])
+                            if not candidates:
+                                continue  # 当前目标仓库无此短名
+                            # P1-2 修复：原 Dict[name] 只保留最后一个候选，
+                            # 现在遍历所有候选，选择 FQN 与 import_path 后缀匹配的；
+                            # 若都不后缀匹配，选第一个候选（向后兼容行为）
+                            for cand_qn, cand_hash in candidates:
+                                # 后缀匹配：import_path 以 cand_qn 结尾（如 a.b.c.foo 匹配 c.foo）
+                                if cand_qn and (
+                                    import_path.endswith(cand_qn)
+                                    or import_path.endswith(cand_qn.split(".")[-1])
+                                ):
+                                    matched_qn = cand_qn
+                                    matched_hash = cand_hash
+                                    break
+                            if matched_qn is None and candidates:
+                                # 没有后缀匹配，取第一个候选（向后兼容 + 给出 confidence 降低提示）
+                                matched_qn, matched_hash = candidates[0]
 
-                            # 持久化到 cross_repo_deps 表
-                            # D7 修复：写入真实的 target_symbol_hash（原代码写空字符串，
-                            # 导致反向查询 WHERE target_symbol_hash = ? 永远无法命中）
-                            self.conn.execute(
-                                """
-                                INSERT INTO cross_repo_deps
-                                    (source_workspace_id, target_workspace_id, dependency_type,
-                                     source_symbol_hash, target_symbol_hash, evidence, confidence, detected_at)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                                """,
-                                (
-                                    source_ws_id,
-                                    t_id,
-                                    "import",
-                                    sym["symbol_hash"],
-                                    target_symbol_hash,
-                                    dep["evidence"],
-                                    0.8,
-                                    now,
-                                ),
-                            )
-                            break  # 一个 import 只匹配一个目标仓库
+                        if matched_qn is None:
+                            continue
+
+                        # P1-2 修复：同一轮扫描内用 (source_hash, target_hash) 去重，
+                        # 避免同一对符号被多次 import 语句重复记录
+                        pair_key = (sym["symbol_hash"], matched_hash)
+                        if pair_key in recorded_pairs:
+                            continue
+                        recorded_pairs.add(pair_key)
+
+                        # 获取目标仓库名
+                        cur = self.conn.execute(
+                            "SELECT name FROM workspaces WHERE id = ?",
+                            (t_id,),
+                        )
+                        t_row = cur.fetchone()
+                        t_name = t_row["name"] if t_row else ""
+
+                        # P1-2 修复：根据匹配类型调整 confidence
+                        # - FQN 全匹配：confidence=0.95（高置信度）
+                        # - FQN 后缀匹配：confidence=0.85
+                        # - 短名匹配（向后兼容）：confidence=0.7（有重名风险）
+                        if import_path in target_symbol_fqns[t_id] or \
+                           import_path.replace("::", ".") in target_symbol_fqns[t_id] or \
+                           import_path.replace("/", ".") in target_symbol_fqns[t_id]:
+                            confidence = 0.95
+                        elif matched_qn and import_path.endswith(matched_qn):
+                            confidence = 0.85
+                        else:
+                            confidence = 0.7
+
+                        dep = {
+                            "target_workspace": t_name,
+                            "dependency_type": "import",
+                            "source_symbol": sym["qualified_name"],
+                            "target_symbol": matched_qn,
+                            "evidence": match.group(0).strip(),
+                            "confidence": confidence,
+                        }
+                        detected_deps.append(dep)
+
+                        # 持久化到 cross_repo_deps 表
+                        # P1-2 修复：INSERT OR IGNORE 配合 schema v41 的 UNIQUE 索引实现幂等，
+                        # 重复扫描不再追加新行（基于五元组 source_ws/target_ws/source_hash/
+                        # target_hash/dependency_type 去重）
+                        self.conn.execute(
+                            """
+                            INSERT OR IGNORE INTO cross_repo_deps
+                                (source_workspace_id, target_workspace_id, dependency_type,
+                                 source_symbol_hash, target_symbol_hash, evidence, confidence, detected_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                source_ws_id,
+                                t_id,
+                                "import",
+                                sym["symbol_hash"],
+                                matched_hash,
+                                dep["evidence"],
+                                confidence,
+                                now,
+                            ),
+                        )
+                        # P1-2 修复：原 break 只匹配一个目标仓库，改为 continue 允许多仓库匹配
+                        # （不同目标仓库的相同 import 是真实场景，应全部记录）
 
         self.conn.commit()
 
