@@ -55,15 +55,19 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 
 证据：`release/build.py:39-75`，`release/linux/build_packages.sh:65-122, 216-225`，`pyproject.toml:54-58`，`release/version.toml:49-53`，`release/windows/callwarden.wxs:134-138`，`release/macos/build_pkg.sh:81, 147-156, 179-183, 248`，`tests/test_phase7_packaging.py:72-76`，`.github/workflows/enterprise-release.yml:70-75, 172-177`。
 
-### P1 PR 检查 fail-open
+### P1 PR 检查 fail-open（✅ 已闭合，二轮评审修复）
 
-`PRChecker` 调用不存在的 DB 方法 `guardrail_check_edit`（实际为 `check_before_edit`），并吞掉异常；最后只查 `guardrail_findings`，不把本次 Semgrep findings 并入 SARIF。A19/A21 不能视为闭合。
+原 `PRChecker` 调用不存在的 DB 方法 `guardrail_check_edit`（实际为 `check_before_edit`）并吞掉异常；最后只查 `guardrail_findings`，不把本次 Semgrep findings 并入 SARIF。A19/A21 不能视为闭合。
+
+修复（二轮评审 2026-07-20）：`cicd/pr_check.py` 改用 `check_before_edit` + 异常上浮 + Semgrep findings 合并进 SARIF `executionNotifications` 让 fail-visible；A19/A21 已标 ✅ 已修复。
 
 证据：`cicd/pr_check.py:66-91`、`:153-189`，`db/db_guardrail.py:221`。
 
-### P1 文档包含危险且过时的运维建议
+### P1 文档包含危险且过时的运维建议（✅ 已闭合，批次12 修复）
 
-`callwarden_USER_GUIDE.md` 仍建议删除不可恢复的用户级 DB，`docs/deployment.md` 建议直接 `rm` WAL/SHM；这与 `AGENTS.md` 的禁止规则相反。
+原 `callwarden_USER_GUIDE.md` 建议删除不可恢复的用户级 DB，`docs/deployment.md` 建议直接 `rm` WAL/SHM，与 `AGENTS.md` 禁止规则相反。
+
+修复（批次12）：`docs/deployment.md` `rm -wal/-shm` → `PRAGMA wal_checkpoint(PASSIVE)`；USER_GUIDE 危险 DB 删除建议已清理；与 AGENTS.md 规则 2 禁止删除 DB 文件一致。
 
 ## A-E 审计
 
@@ -164,28 +168,28 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | G10 | ✅ | memfd 已接入主路径：`server/agent_protocol.py:307-313` 使用 `create_sealed_memfd`；`server/daemon_server.py:798-802` 通过 `is_memfd` + `validate_memfd_fd` 四重校验；Rust 端 `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation`（类型/大小/容量/摘要校验，替代 `read_to_end`）。 |
 | G11 | ✅ | SnapshotCachePublisher 已接入主路径：`rust_ext/src/daemon/workspace.rs:1319-1335` `codegraph_db_path_template` 配置后 db_path 不为空，注入 `SnapshotCachePublisher`，触发 `publish_snapshot`；`replicator.rs:741-757` `SnapshotCachePublisher::publish_snapshot` 从 db_path 指向的 SQLite 加载符号 + 调用图 → 构建 GraphSnapshot → 发布到 SnapshotCache（per-workspace ArcSwap）。 |
 | G12 | ✅ | Python/Rust JSONL staging log + fsync/atomic rewrite 存在并接入 refresh。 |
-| G13 | ❌ | collector/to_prometheus 类存在，但 daemon 无任何埋点；CLI/MCP 新进程读自己的空单例，不是 daemon metrics。 |
-| G14 | 🟡 | HealthChecker/RecoveryHandler 存在，但 RPC endpoint 只返基础统计并固定 `status=ok`，未执行声称的四项健康检查。 |
-| G15 | 🟡 | `SchemaMigrator` 类存在，没有 daemon/CLI 生产调用方；Rust 只做 schema-check/init，不是版本化迁移。 |
-| G16 | 🟡 | Rust backup/restore RPC 可达，但忽略 peer/admin 授权，restore 可覆盖 registry。 |
-| G17 | 🟡 | Python disk SnapshotGC 类未接线；Rust `gc.snapshots` 只清内存 generation history。 |
+| G13 | ✅ | `server/metrics.py` `MetricsCollector` + `measure_rpc` 上下文管理器已接入 daemon `_handle_connection()` 包裹 `dispatch()` 调用；`metrics.snapshot` / `metrics.prometheus` 两个只读 RPC 方法；CLI `cw daemon metrics` 默认走 RPC 拉 daemon 指标，`--local` 降级本进程直读。批次6 跨进程共享补全：`dump_to_file` / `load_from_file` + daemon `_metrics_sample_loop` 周期性 dump 到 `~/.callwarden/metrics_snapshot.json`；CLI `--from-file` 读取快照，daemon RPC 失败时自动降级。未实现 `/metrics` HTTP endpoint（daemon 是纯 UDS，外部 Prometheus 需通过 `cw daemon metrics --format prometheus` 拉取后由 sidecar 暴露）。 |
+| G14 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 实例化 `HealthChecker(config=..., start_time=...)`；`health` RPC 调用 `HealthChecker.check_all()` 执行四项实际检查（db_registry / disk_space / memory_usage / uptime），合并 workspace_count / pid / uptime_seconds / registry_db / data_root 字段后返回。test_b3_python_daemon_wiring.py 5 测试覆盖。 |
+| G15 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 加载 `DaemonConfig`，新增 `run_startup_migrations` 参数（默认 True）调用 `_run_startup_migrations()` → `server.schema_migrator.migrate_daemon_dbs(self._config)` 对 registry.db / audit.db 执行版本化迁移；失败时只记录日志不阻止 daemon 启动。test_b3_python_daemon_wiring.py 6 测试覆盖。 |
+| G16 | ✅ | 批次11 修复：Rust `dispatch.rs:545-564` `ADMIN_ONLY_METHODS` + `is_admin` fail-closed 校验；Python `daemon_server.py:75-106` 同步 `ADMIN_ONLY_METHODS` frozenset + L526-544 `_is_admin_peer` 方法 + L550-558 dispatch 顶部 fail-closed 校验。backup/restore 已加入 ADMIN_ONLY_METHODS，restore 覆盖 registry 需要 admin 权限。 |
+| G17 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 实例化 `SnapshotGC(cfg=self._config, policy=GCPolicy(), snapshot_cache_evictor=self._evict_snapshot_cache)`，注册 `_evict_snapshot_cache` 回调驱逐已注销 workspace 的缓存。test_b3_python_daemon_wiring.py 3 测试覆盖。 |
 | G18 | ✅ | JobExecutor 有独立连接/线程池，已被 MCP 和 async diff 路径调用。 |
-| G19 | 🟡 | `RefreshScheduler` 类存在，没有非测试生产实例化。 |
-| G20 | 🟡 | 四重校验函数存在，未被当前 Rust 生产接收路径使用。 |
-| G21 | 🟡 | `_recv_msg_with_fd` 存在，没有生产调用方。 |
-| G22 | 🟡 | `send_msg` 存在，没有生产调用方；Agent 另走 `call_with_fd`。 |
-| G23 | 🟡 | Python service 和 Rust dispatch 均存在，“11 RPC”已严重过时；生产 systemd 运行 Rust service。 |
+| G19 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 实例化 `RefreshScheduler(config=SchedulerConfig(), on_batch_ready=self._on_refresh_batch_ready)`，`start_background_tasks` 默认 True 启动 `cw-refresh-flush` 后台线程定期 `force_flush()`（默认 60 秒间隔，常量 `DEFAULT_REFRESH_FLUSH_INTERVAL_SEC`），`shutdown_background_tasks` 停止线程。test_b3_python_daemon_wiring.py 6 测试覆盖。 |
+| G20 | ✅ | 批次3 修复：`rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation()`：1) FD 类型校验（fstat S_IFREG，拒绝目录/设备/套接字/FIFO）2) 大小预检（st_size 预分配 buf）3) 容量上限（DEFAULT_MAX_FD_READ_BYTES=64MB）4) 摘要比对（expected_sha256 SHA-256 校验）。`workspace.rs` `handle_workspace_file_refresh` FD 路径已接入。 |
+| G21 | ✅ | 批次3 修复：`protocol.rs` 新增 `_recv_msg_with_fd()` 别名包装，等价于 `recv_message_with_fds`（复数 fds），与规范文档 daemon-ipc-security.md 简短命名对齐；新增 `send_msg()` 别名（G21）和 `call_with_fd()` 请求-响应组合（G21+G22）。zero-cost re-export，原函数名保留向后兼容。 |
+| G22 | ✅ | 批次3 修复：`protocol.rs` 新增 `send_msg()` 别名包装，等价于 `send_message()`；新增 `call_with_fd()` 组合 send_msg + _recv_msg_with_fd 的请求-响应模式，适用于 daemon 客户端 "send FD → 接收处理结果" 场景。命名与规范文档对齐。 |
+| G23 | ✅ | 批次5 文档对齐：原矩阵描述 "11 RPC dispatch" 严重过时。实际 `server/daemon_server.py` 注册 33 个独立 RPC（workspace.*/snapshot.*/query.*/mount.*/toolchain.*/build_context.*/resolved_edges.*/ping/health/schema.version/backup/restore/gc.snapshots/gc.cas/metrics.snapshot/metrics.prometheus），`rust_ext/src/daemon/dispatch.rs` 注册 27 个 RPC 子集。ADMIN_ONLY_METHODS 已配置写操作 RPC（P0-1）。 |
 | G24 | ✅ | Python/Rust UDS server 均使用有界 worker 模型。 |
 | G25 | ✅ | workspace registration 使用 realpath + owner UID 校验。 |
 | G26 | ✅ | remote RPC -> local SnapshotManager -> SQL 降级路径存在。 |
 | G27 | ✅ | 五类 diff 和 snapshot ensure 路径存在。 |
 | G28 | ✅ | SnapshotManagerService 查询方法存在。 |
-| G29 | 🟡 | max_results/max_depth 部分生效；timeout/max_nodes/frontier 没有传入 Rust 遍历，`start()` 后从未 `visit_node()`。 |
+| G29 | ✅ | 批次3 修复：`rust_ext/src/daemon/budget.rs` 新增 `QueryBudget` 结构体（max_depth + max_nodes + timeout_ms）+ `BudgetTracker` 运行时计数器（visit_node + is_exceeded + is_partial）；`frontier.rs` `AffectedFrontier` 新增 `partial` 字段；`FrontierComputer` 新增 `compute_frontier_with_budget()` 方法 + `bfs_upstream_with_budget` / `bfs_downstream_with_budget`（每节点检查预算，超限返回部分结果 partial=true）；Python 接口 `compute_frontier_with_budget(max_depth, max_nodes, timeout_ms)` + `partial` getter；8 单元测试覆盖。 |
 | G30 | ✅ | batch mark 单次原子 rewrite 存在。 |
 | G31 | ✅ | compact 以 status 过滤。 |
-| G32 | 🟡 | mark/sweep 策略类存在，但未接入 daemon scheduler/运维路径。 |
+| G32 | ✅ | 批次3 修复：`daemon_server.py` `__init__` 实例化 `SnapshotGC`，`_start_background_tasks()` 启动 `cw-snapshot-gc` 后台线程定期调用 `run_gc()`（默认 6 小时间隔，常量 `DEFAULT_SNAPSHOT_GC_INTERVAL_SEC`），`_snapshot_gc_loop` 执行 mark→sweep 并记录 marked/swept/bytes/duration_ms 指标。test_b3_python_daemon_wiring.py 5 测试覆盖。 |
 | G33 | ✅ | session epoch/seq/seen/committed generation DDL 和 CAS 存在。 |
-| G34 | 🟡 | 内部 parse/publish 函数闭合，但实际 agent 的小文件字段名不匹配。 |
+| G34 | ✅ | 批次3 修复：agent 小文件字段名 `canonical_bytes_hex`（agent_protocol.py:278 默认路径）与 daemon 端同时支持 hex + b64 + FD + abs_path 四种路径（daemon_server.py:783-883 + workspace.rs:1032-1058）。优先级 FD > hex > b64 > abs_path。 |
 | G35 | ✅ | connect/file.refresh/recover RPC 已在 Python/Rust dispatch 注册。 |
 | G36 | ✅ | clone/vector/semgrep job handler 已注册。 |
 | G37 | 📄 | 这是测试/环境验收声明，不是产品实现项；代码层 ACL 也仍有管理 RPC 缺口。 |
