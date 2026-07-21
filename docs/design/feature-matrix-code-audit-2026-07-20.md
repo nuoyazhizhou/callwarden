@@ -160,7 +160,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | G6 | ✅ | Rust CAS GC 使用 flock + transaction + pending refs。 |
 | G7 | ✅ | ArcSwap SnapshotManager、history 和 generation GC 存在。 |
 | G8 | 🟡 | session/generation CAS 和 CAS publish 存在，但 agent payload 不兼容且 refresh 后不发布可查 snapshot。 |
-| G9 | 🟡 | AgentSession/Watcher/systemd unit 存在；hex/b64 协议原错配已修复（Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058` 同时支持 hex/b64/FD/abs_path 四种路径），但包入口名 cw-agent vs cw_agent 仍不一致。 |
+| G9 | ✅ | AgentSession/Watcher/systemd unit 存在；hex/b64 协议已修复（批次3：Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058` 同时支持 hex/b64/FD/abs_path 四种路径）；包入口名不一致已修复（批次14：`pyproject.toml` + `release/version.toml` entry_points 从下划线 `cw_agent/cw_daemon/cw_client` 改为连字符 `cw-agent/cw-daemon/cw-client`，与 systemd unit / 打包脚本 / 文档 / `cli/*.py` docstring 一致）。 |
 | G10 | ✅ | memfd 已接入主路径：`server/agent_protocol.py:307-313` 使用 `create_sealed_memfd`；`server/daemon_server.py:798-802` 通过 `is_memfd` + `validate_memfd_fd` 四重校验；Rust 端 `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation`（类型/大小/容量/摘要校验，替代 `read_to_end`）。 |
 | G11 | ✅ | SnapshotCachePublisher 已接入主路径：`rust_ext/src/daemon/workspace.rs:1319-1335` `codegraph_db_path_template` 配置后 db_path 不为空，注入 `SnapshotCachePublisher`，触发 `publish_snapshot`；`replicator.rs:741-757` `SnapshotCachePublisher::publish_snapshot` 从 db_path 指向的 SQLite 加载符号 + 调用图 → 构建 GraphSnapshot → 发布到 SnapshotCache（per-workspace ArcSwap）。 |
 | G12 | ✅ | Python/Rust JSONL staging log + fsync/atomic rewrite 存在并接入 refresh。 |
