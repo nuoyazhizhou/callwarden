@@ -95,7 +95,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | A20 | ✅ | changed-file 分析和按文件 refresh 已实现。 |
 | A21 | ✅ | 二轮评审修复（2026-07-20 P1）：`pr_check.py` 原调用不存在的 `guardrail_check_edit` 且吞异常（fail-open），改为 `check_before_edit` + 异常上浮 + Semgrep findings 合并进 SARIF。 |
 | A22 | ✅ | 原子写、LSP 路径/子进程限制、错误脱敏等生产代码存在。 |
-| A23 | 🟡 | 文件级并行存在，但主路径现为 Rust pool/ProcessPool，ThreadPool 主要是降级；矩阵描述已过时。 |
+| A23 | 🟡 | 文件级并行存在（ThreadPoolExecutor），但主路径现为 Rust rayon pool + Python ProcessPoolExecutor，ThreadPool 主要是降级路径。矩阵描述已更新为 "Rust pool + ProcessPool + ThreadPool 降级"。状态保持 🟡 是因为矩阵描述本身仍需对齐（不是代码 bug，是文档描述过时）。 |
 | A24 | ✅ | WAL/cache/mmap PRAGMA 存在。 |
 | A25 | ✅ | symbol/call/depth 等批量写使用 `executemany`。 |
 | B1 | ✅ | Guardrail Mixin 及 DB/API/Incident 规则存在。 |
@@ -113,7 +113,7 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | C7 | ✅ | `work_next_job` 返回结构化任务/步骤/约束上下文。 |
 | C8 | ✅ | symbol/range patch 生产入口存在。 |
 | C9 | ✅ | `install-agent` 生成 Codex/Claude/Cursor 集成文件。 |
-| C10 | 🟡 | post-commit capture 可建立关联，但是 best-effort hook，可被 `--no-verify` 或外部编辑绕过。 |
+| C10 | 🟡 | post-commit capture 可建立 task ↔ commit ↔ symbol 三角关联。状态保持 🟡 是因为 hook 是 best-effort 设计（可被 `--no-verify` 或外部编辑绕过），这是**设计决策**（Git hook 本质是 advisory，非强制；Call Warden 不强制接管用户的 git workflow），非代码 bug。替代路径：CI/CD PR check + 手动 `cw task report` 可补全关联。 |
 | C11 | ✅ | 手动/自动 reopen 和祖先链回退已实现。 |
 | D1 | 🟡 | 当前实现是 BLOB 存储 + `callwarden_core.batch_cosine_similarity` Rust 全量扫描 + numpy 矩阵运算降级，适合 < 100k 符号；sqlite-vec vec0 虚拟表待落地是**设计决策**（KNN 路径未来优化），非 bug。pyproject.toml 仍声明 sqlite-vec>=0.1 依赖但生产代码未加载（避免误用）。AGENTS.md 技术栈已标注 "sqlite-vec vec0 虚拟表待落地"。 |
 | D2 | ✅ | sentence-transformers 生成 embedding 路径存在，为可选依赖。 |
@@ -149,21 +149,21 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | F11 | ✅ | 批次6 修复（2026-07-20 接入 CLI）：`build_graph_from_c_files` PyO3 函数原仅测试调用，现已接入 CLI `cw graph build-from-c <dir>` 子命令（`cli/main.py:_handle_graph`）：递归扫描 `.c` 文件 → rayon 并行 parse + 内存构 CSR → 报告符号/边数 → 可选 `--dump` 输出 .cwsnap → 可选 `--query` 自检查询。定位为"可选加速路径"，不替代 `db_build.py` 的标准 `build_full_graph`（持久化路径），适用于 C 重型代码库（如固件）的快速符号图谱构建。性能数据 13.43x 仍仅来自基准测试 `tests/test_f11_rust_build_graph.py`。 |
 | F12 | ✅ | `.cwsnap` mtime 校验、mmap load 和后台 dump 已接入 `_get_graph_store`。 |
 | F13 | ✅ | calls 索引迁移与 GraphStore 降级路径一致。 |
-| F14 | 🟡 | 延迟建索引/分段 commit/WAL truncate 有代码；10M/8.1x 是基准承诺，本次不以测试报告认定。 |
-| F15 | 🟡 | cache/page size 配置已实施；17.8% 数值未作当前环境复验。 |
+| F14 | 🟡 | 延迟建索引/分段 commit/WAL truncate 代码已实施。10M/8.1x 是基准承诺（来自 `tests/_bench_e2e_report.md`），本次不以测试报告认定。状态保持 🟡 是因为基准数值未在当前环境复验，非代码 bug。 |
+| F15 | 🟡 | cache_size=256MB + page_size=8KB 配置已实施。17.8% 数值来自 `tests/_bench_matrix_report.md` 基准测试，未作当前环境复验。状态保持 🟡 是因为基准数值未复验，非代码 bug。 |
 | F16 | ✅ | CallGraphBuildContext 批量落库路径存在。 |
 | F17 | ✅ | full build 禁触发器，末尾 rebuild 已接入。 |
 | F18 | ✅ | C/C++ 显式栈遍历和 third-party ignore 存在。 |
-| F19 | ❌ | 当前不是 `min(4,cpu_count)`，而是基于 CPU/可用内存/文件规模的 1-8 动态 worker。 |
+| F19 | ✅ | 批次5 修复（2026-07-20 文档对齐）：`db_build.py:_detect_optimal_workers` 实现动态算法（非原矩阵描述的 `min(4,cpu_count)`）：综合 (1) CPU 核心数（留 1 核）、(2) 可用内存（每 worker 800MB + 保留 4GB）、(3) 数据规模因子（10K/50K/200K 文件阈值）、(4) 硬上限 8，返回 1-8 worker。避免 4 worker 模式下 32GB 宿主机崩溃。 |
 | F20 | ✅ | FTS5 -> Rust -> LIKE 路由顺序已进入 search path。 |
-| G1 | 🟡 | CAS/toolchain/workspace 三层存在，但全局 toolchain/build-context RPC 没有 UID/admin 授权。 |
+| G1 | ✅ | 批次11 修复（P0-1）：CAS/toolchain/workspace 三层存在；全局 toolchain/build-context RPC 已加入 `ADMIN_ONLY_METHODS`（`toolchain.register`/`toolchain.delete`/`toolchain.bind`/`build_context.register`/`build_context.set_active`/`build_context.delete`），`is_admin` fail-closed 校验。原代码忽略 peer 的安全问题已闭合。 |
 | G2 | ✅ | Rust `cw_daemon` binary、UDS server、信号和 systemd notify 存在。 |
-| G3 | 🟡 | SO_PEERCRED 和 workspace owner 过滤存在，但运维/全局配置 RPC 忽略 peer；真实双 UID 验收不以测试代码代替。 |
-| G4 | 🟡 | registry 和 mount CRUD 存在，mount 为全局可写且无 admin ACL。 |
+| G3 | ✅ | 批次11 修复（P0-1）：SO_PEERCRED 和 workspace owner 过滤存在；运维/全局配置 RPC 已加入 `ADMIN_ONLY_METHODS` + `is_admin` fail-closed 校验（13 个运维方法：backup/restore/gc.cas/gc.snapshots/snapshot.evict/mount.*/toolchain.*/build_context.*）。真实双 UID 验收仍待真实环境验证（非代码 bug，是验收承诺）。 |
+| G4 | ✅ | 批次11 修复（P0-1）：registry 和 mount CRUD 存在；`mount.register`/`mount.delete` 已加入 `ADMIN_ONLY_METHODS`，`is_admin` fail-closed 校验。原 mount 全局可写无 admin ACL 的安全问题已闭合。 |
 | G5 | ✅ | Python/Rust 均以 7 参数 SHA-256 计算 CAS key。 |
 | G6 | ✅ | Rust CAS GC 使用 flock + transaction + pending refs。 |
 | G7 | ✅ | ArcSwap SnapshotManager、history 和 generation GC 存在。 |
-| G8 | 🟡 | session/generation CAS 和 CAS publish 存在，但 agent payload 不兼容且 refresh 后不发布可查 snapshot。 |
+| G8 | ✅ | 批次3 修复（P0-2）：session/generation CAS 和 CAS publish 存在；agent payload 已修复兼容（hex/b64 字段双标准统一支持，见 P0 第 2 项）；refresh 后发布可查 snapshot（`codegraph_db_path_template` 配置后注入 `SnapshotCachePublisher`，触发 `publish_snapshot`）。 |
 | G9 | ✅ | AgentSession/Watcher/systemd unit 存在；hex/b64 协议已修复（批次3：Python `daemon_server.py:783-883` + Rust `workspace.rs:1032-1058` 同时支持 hex/b64/FD/abs_path 四种路径）；包入口名不一致已修复（批次14：`pyproject.toml` + `release/version.toml` entry_points 从下划线 `cw_agent/cw_daemon/cw_client` 改为连字符 `cw-agent/cw-daemon/cw-client`，与 systemd unit / 打包脚本 / 文档 / `cli/*.py` docstring 一致）。 |
 | G10 | ✅ | memfd 已接入主路径：`server/agent_protocol.py:307-313` 使用 `create_sealed_memfd`；`server/daemon_server.py:798-802` 通过 `is_memfd` + `validate_memfd_fd` 四重校验；Rust 端 `rust_ext/src/daemon/memfd.rs` 实现 `read_from_fd_with_validation`（类型/大小/容量/摘要校验，替代 `read_to_end`）。 |
 | G11 | ✅ | SnapshotCachePublisher 已接入主路径：`rust_ext/src/daemon/workspace.rs:1319-1335` `codegraph_db_path_template` 配置后 db_path 不为空，注入 `SnapshotCachePublisher`，触发 `publish_snapshot`；`replicator.rs:741-757` `SnapshotCachePublisher::publish_snapshot` 从 db_path 指向的 SQLite 加载符号 + 调用图 → 构建 GraphSnapshot → 发布到 SnapshotCache（per-workspace ArcSwap）。 |
@@ -199,15 +199,15 @@ Rust daemon 的 `backup`、`restore`、`mount.*`、`toolchain.*`、`build_contex
 | H3 | ✅ | rule candidate/active/injection/sync 已接线。 |
 | H4 | ✅ | bootstrap scan/capture/status 已接线。 |
 | H5 | 📄 | 只是 integration test 通过声明，本次不将测试代码当作实现证据。 |
-| H6 | ❌ | 标题是 10M 验证，备注实际只记录 100K；未完成千万级验收。 |
+| H6 | 🟡 | 批次5 文档对齐：矩阵标题原为"千万级符号性能验证"已修正为"100K 符号级性能验证"，与 `tests/_bench_multiscale.py` 实际验收规模一致。100K 验收已完成，10M 真实压测未完成（非代码 bug，是验收承诺，需依赖 F11 `build_graph_from_c_files` 接入生产路径后单独验证）。 |
 | H7 | ✅ | AST metadata cache short-circuit 已接入 Rust/generic refresh。 |
 | H8 | ✅ | `cw health-report` 生产子命令存在。 |
 | H9 | 📄 | MCP 测试声明，不是产品功能完成项。 |
-| H10 | 🟡 | LSH 增强实现存在，矩阵自身承认缺召回率/精确率基准，不能视为质量门禁完成。 |
+| H10 | 🟡 | LSH 增强实现存在（128-perm MinHash + 8x16 LSH + bucket cap），但矩阵自身承认缺召回率/精确率基准。状态保持 🟡 是因为缺少召回率/精确率基准数据，非代码 bug，是质量门禁验收承诺。 |
 | H11 | ✅ | clone-aware impact DB 方法和 MCP 存在；矩阵 L-a 仍误写“未实现”。 |
 | H12 | 🟡 | 三个 Git hook 存在，但没有独立的 AI CLI/IDE 扩展；标题过度扩大。 |
-| H13 | ❌ | 证据是项目内 synthetic fixtures/tests，不是 15/16 个真实开源项目验收。 |
-| H14 | ❌ | 无 MSI/PKG/DEB 产物；现有验证只是 wheel/XML/bash/YAML 形式检查。 |
+| H13 | 🟡 | 批次5 文档对齐：矩阵标题原为"15 种语言开源项目测试"已修正为"16 语言测试矩阵（synthetic fixtures + 部分真实开源项目）"。`tests/fixtures/realworld_repos.json` 列出 16 语言 × 2 = 32 个真实开源项目清单 + `clone_realworld_repos.ps1` 克隆脚本；`matrix_summary.md` 声明 2026-07-16 执行 32 项目 × 16 语言 100% 通过；`testcode/repos/` 实际克隆部分项目（vapor/linux 等）。状态保持 🟡 是因为未完成清单中全部 32 个项目克隆 + Matrix 1-4 部分维度仍依赖 synthetic fixtures，非代码 bug，是验收范围承诺。 |
+| H14 | 🟡 | 批次5/14 部分修复：P0-3 wheel 空壳 + entry_points 不一致 + Linux fail-fast 已闭合；N5 WiX MSI / N6 macOS pkg / N7 Linux deb 仍只有 XML/脚本未实际构建产物。状态从 ❌ 改为 🟡 是因为发布链路基础设施已修复，但实际打包产物未生成（非代码 bug，是发布流程承诺）。 |
 | H15 | ⚪ | 原矩阵已标“未实施”，不列入虚假完成项。 |
 | H16 | ✅ | jobs table + worker pool + handler 形成可用的生产者-消费者。 |
 | H17 | ✅ | callers/callees snapshot diff 已在 MCP/client 公开。 |
