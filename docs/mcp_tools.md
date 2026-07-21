@@ -20,7 +20,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 12 大功能分类
 
-Call Warden 通过 MCP Server 暴露 205 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 206 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
 
 ### 概览表
 
@@ -2095,10 +2095,10 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ### L10. MCP 工具优化方向：优化组合查询路径而非扩面
 
-**讨论结论**：205 个工具已够用，应优化组合查询路径而非继续扩功能面。
+**讨论结论**：206 个工具已够用，应优化组合查询路径而非继续扩功能面。
 
 1. **当前状态盘点**：
-   - 工具数：205（含 8 个 L5 构建上下文感知工具 + 1 个 metrics 监控工具 + 若干跨分类工具）
+   - 工具数：206（含 8 个 L5 构建上下文感知工具 + 1 个 metrics 监控工具 + 若干跨分类工具）
    - 12 主分类已覆盖所有 Agent 常见任务场景
    - 已实现的"组合工具"：`compare_snapshots` / `diff_callers` / `diff_callees` / `get_clone_aware_impact` / `get_defect_correlation` / `get_symbol_issues`（聚合 Semgrep + Guardrail findings）
 

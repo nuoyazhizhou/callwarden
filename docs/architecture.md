@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（用户级单库）                       │
 │   $HOME/.callwarden/callwarden.db                              │
-│   Schema v40 / WAL 模式 / 40+ 表 / 35 个功能 Mixin + 1 基类    │
+│   Schema v41 / WAL 模式 / 40+ 表 / 35 个功能 Mixin + 1 基类    │
 │   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -71,7 +71,7 @@ $HOME/.callwarden/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v40**
+当前 Schema 版本：**v41**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -979,7 +979,7 @@ Call Warden 把 145+ 个 CLI 命令和 206 个 MCP 工具按功能聚合为 12 �
 
 | 工作项 | 状态 | 说明 |
 |--------|------|------|
-| MCP 工具命名审计 | ✅ | 205 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
+| MCP 工具命名审计 | ✅ | 206 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
 | 12 大类分组注释 | ✅ | `server/mcp_server.py` 中用统一注释格式标注每个分类起点 |
 | CLI↔MCP 映射对照表 | ✅ | `docs/mcp_tools.md` 末尾添加 171 条 CLI↔MCP 命名映射 |
 | CLI 命令参考 12 大类重构 | ✅ | `docs/cli_reference.md` 开头概览表替换为 12 大功能分类 |
@@ -1041,6 +1041,6 @@ Call Warden 把 145+ 个 CLI 命令和 206 个 MCP 工具按功能聚合为 12 �
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：205 个工具详情
+- [MCP 工具参考](mcp_tools.md)：206 个工具详情
 - [CLI 命令参考](cli_reference.md)：145+ 命令详情
 - [部署指南](deployment.md)：Docker 部署与升级

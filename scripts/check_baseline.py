@@ -144,29 +144,29 @@ def generate_baseline() -> Dict:
 # 反例：mcp_tools=206 时不应出现 "205 个 MCP" / "205+ MCP" / "204 个 MCP"
 _BASELINE_PATTERNS = {
     "mcp_tools": {
-        # (正确模式列表, 错误模式列表)
-        # 文档中常见的引用形式
-        "valid_patterns": [
-            r"\b{N}\s*\+?\s*MCP",
-            r"\b{N}\s*\+?\s*个\s*MCP",
-            r"\b{N}\s*\+?\s*tools",
-            r"MCP.{0,10}\b{N}\b",
-            r"@mcp\.tool\(\).{0,20}\b{N}\b",
-        ],
-        # 任何其他数字（与 N 不同）出现在这些位置都是错误
-        # 要求：数字前是单词边界（避免 H17/G27 中的 17/27 被误识别）
-        "scan_pattern": r"(?<!\w)(\d{2,3})\s*\+?\s*(?:MCP|个\s*MCP|tools|个\s*@mcp\.tool)",
+        # scan_pattern 捕获 "N MCP" / "N 个 MCP" / "N tools" / "N 个工具" / "N 个 `@mcp.tool"
+        # 以及反向 "工具数：N" / "工具数: N"
+        "scan_pattern": r"(?<!\w)(\d{2,3})\s*\+?\s*(?:MCP|个\s*MCP|tools|个\s*@mcp\.tool|个\s*`@mcp\.tool|个\s*工具)",
+        "reverse_pattern": r"工具数\s*[:：]\s*(\d{2,3})",
         "expected_value_name": "MCP 工具数",
     },
     "mixin_functional": {
-        "valid_patterns": [
-            r"\b{N}\s*个\s*功能\s*Mixin",
-            r"\b{N}\s*个\s*Mixin",
-            r"共\s*\b{N}\s*个\s*功能\s*Mixin",
-            r"Mixin.{0,20}\b{N}\b",
-        ],
         "scan_pattern": r"(?<!\w)(\d{1,2})\s*个\s*(?:功能\s*)?Mixin",
         "expected_value_name": "功能 Mixin 数",
+    },
+    "db_files": {
+        # 捕获 "N 个 db_*.py"
+        "scan_pattern": r"(?<!\w)(\d{1,2})\s*个\s*db_\*\.py",
+        "expected_value_name": "db_*.py 文件数",
+    },
+    "schema_version": {
+        # 捕获 "Schema vN" / "vN Schema"，排除 "Schema vN-vM"(范围) / "Schema vN+"(最低版本) / "Schema vN 新增"(历史引用)
+        # (?![\d\-+]|[\s*]*新增) 防止 \d+ 回溯导致 "v30+" 被匹配为 "v3"，
+        # 同时跳过 "**Schema v29** 新增" 等 markdown 加粗格式后的历史引用
+        "scan_pattern": r"Schema\s*v(\d+)(?![\d\-+]|[\s*]*新增)",
+        "reverse_pattern": r"v(\d+)\s*Schema",
+        "expected_value_name": "Schema 版本",
+        "is_version": True,  # 标记：比较时不需要加 v 前缀
     },
 }
 
@@ -198,6 +198,9 @@ def scan_document_consistency(baseline: Dict, doc_paths: List[Path]) -> List[Dic
         "docs/design/rust_daemon_architecture.md",          # 已废弃文档
         "docs/design/enterprise-daemon-shared-snapshot-plan.md",  # 历史设计文档
         "docs/design/enterprise-phase1-phase3-detail.md",   # 历史设计文档
+        "docs/design/feature-matrix-code-audit-2026-07-20.md",    # 历史审计报告
+        "docs/design/feature-matrix-code-reaudit-2026-07-21.md",   # 历史复审报告
+        "callwarden 与 200 个仓库的交叉对比分析.md",              # 历史模块分析
     }
     # 跳过审计/复审报告中的描述性文本（这些是历史记录，记录旧错误）
     SKIP_MARKERS = (
@@ -237,8 +240,7 @@ def scan_document_consistency(baseline: Dict, doc_paths: List[Path]) -> List[Dic
 
             for key, spec in _BASELINE_PATTERNS.items():
                 expected = baseline[key]
-                # 找到所有形如 "数字 MCP/Mixin" 的引用
-                # scan_pattern 中已用 (?<!\w) 排除字母紧邻数字（H17/G27）
+                # 正向扫描："N MCP" / "N 个 Mixin" / "Schema vN" 等
                 for match in re.finditer(spec["scan_pattern"], line):
                     found = int(match.group(1))
                     if found != expected:
@@ -251,6 +253,20 @@ def scan_document_consistency(baseline: Dict, doc_paths: List[Path]) -> List[Dic
                             "key": key,
                             "expected_name": spec["expected_value_name"],
                         })
+                # 反向扫描："工具数：N" / "vN Schema" 等
+                if "reverse_pattern" in spec:
+                    for match in re.finditer(spec["reverse_pattern"], line):
+                        found = int(match.group(1))
+                        if found != expected:
+                            inconsistencies.append({
+                                "file": rel_path,
+                                "line_no": line_no,
+                                "line": line.strip(),
+                                "expected": expected,
+                                "found": found,
+                                "key": key,
+                                "expected_name": spec["expected_value_name"],
+                            })
 
     return inconsistencies
 

@@ -96,8 +96,8 @@
 | MCP 工具数 | 120-125 | **206**（@mcp.tool() 装饰器计数） |
 | CLI 子命令 | 145+ | 38 子命令 + ~98 个 --flag 命令 |
 | 支持语言 | 16 | 16（parsers/ 目录 16 个解析器） |
-| Mixin 模块 | 23 | **35 个功能 Mixin**（39 个 db_*.py 文件 + 1 基类 CodeGraphBase） |
-| Schema 版本 | v14 | **v40** |
+| Mixin 模块 | 23 | **35 个功能 Mixin**（40 个 db_*.py 文件 + 1 基类 CodeGraphBase） |
+| Schema 版本 | v14 | **v41** |
 | 产品版本 | 0.3.0 | release/version.toml `[product] version = "0.3.0"` |
 
 ---
@@ -322,23 +322,23 @@
 
 | # | 问题 | 详情 | 需更新文件 |
 |---|------|------|------------|
-| I1 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：源码实算 206 MCP / 35 功能 Mixin（另有 `CodeGraphBase`）/ 39 db_*.py / v40 / 16 语言。旧同步至 205/33/40 与源码不符，需统一至 206/35/39 | IS, RM, MCT, ARC |
+| I1 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：源码实算 206 MCP / 35 功能 Mixin（另有 `CodeGraphBase`）/ 40 db_*.py / v41 / 16 语言。旧同步至 205/33/40 与源码不符。**P1-5 整改（2026-07-22 批次34）**：全部文档已统一至 206/35/40/v41。`scripts/check_baseline.py --check` 验证 76 个 .md 文档零不一致 | IS, RM, MCT, ARC |
 | I2 | 🟡 复审整改（2026-07-21 批次32） | CA 表格已改"未暴露"为"✅ 已暴露"。**复审回退（2026-07-21）**：D7 跨仓库影响传播只修复 `target_symbol_hash` 空字符串，仍按 import 尾段匹配同名符号，`Dict[name]` 覆盖重名，`cross_repo_deps` 无唯一约束。CA 表格 D7 标 ✅ 与代码故障"部分修复"状态仍冲突。**P1-2 复审整改（2026-07-21 批次32）**：算法已修复（FQN 三级匹配 + UNIQUE 索引 + INSERT OR IGNORE 幂等），CA 表格 D7 标 ✅ 与代码"🟡 复审整改"状态仍部分冲突（影响传播 `propagate_cross_repo_impact` 尚未对接新 confidence 分级） | CA |
-| I3 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：UG 头部 "v40 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类" 与源码 206/35 不符。Q2 删除"删除 callwarden.db 重建"危险建议这一修复可保留，但计数仍错误 | UG |
+| I3 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：UG 头部 "v40 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类" 与源码 206/35 不符。Q2 删除"删除 callwarden.db 重建"危险建议这一修复可保留，但计数仍错误。**P1-5 整改（2026-07-22 批次34）**：UG 头部已更新为 "v41 Schema · 206 MCP 工具 · 16 语言 · 35 功能 Mixin（40 个 db_*.py 文件）"，L98 schema.py 注释同步至 v41 | UG |
 | I4 | 🟡 部分完成（评审 2026-07-20） | IS §5 待办表已更新 Prometheus 为 ❌ 未实现（daemon 无埋点，CLI/MCP 读空单例）。`status != 'archived'` ✅ / `UNIQUE UPSERT` ⚠️ 部分保持。G13 待补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 | IS |
 | I5 | ✅ 已修复（2026-07-19） | TokenSavingsMixin 在 §2.12（能力描述）和 §3（Mixin 列表）各出现一次，是合理的双视角描述，非重复列出 | IS |
 | I6 | ✅ 已修复（2026-07-19） | RM 数据库位置已从 `~/.callwarden/<hash>/callwarden.db`（旧版多库）改为 `~/.callwarden/callwarden.db`（用户级单库 + workspace_id 逻辑隔离），与 UG/config.py 一致；UG 描述原本正确 | RM |
 | I7 | 🟡 复审整改（2026-07-21 批次32） | CA "不要做跨仓库"建议下方加"更新（2026-07-19）：此建议已撤销"。**复审回退（2026-07-21）**：D7 修复只覆盖 `target_symbol_hash` 空字符串，跨仓库检测仍按 import 尾段匹配同名符号，`Dict[name]` 覆盖重名，`cross_repo_deps` 无唯一约束。影响传播未真正完整修复。**P1-2 复审整改（2026-07-21 批次32）**：算法已修复（FQN 三级匹配 + UNIQUE 索引 + INSERT OR IGNORE 幂等），影响传播 `propagate_cross_repo_impact` 尚未对接新 confidence 分级 | CA |
 | I8 | ✅ 已修复（2026-07-19） | CA "不要集成 ast-grep"建议下方加"更新（2026-07-19）：此建议仍有效，issues.py 未集成 ast-grep"。原 I8 描述"issues.py 存在"系误判（issues.py 仅用 Semgrep，无 ast-grep） | CA |
-| I9 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：源码实算 35 功能 Mixin（`db/db.py` 实际继承列表）+ `CodeGraphBase`。文档用 33（"组合的 Mixin 数"）/40（"表格行数"）两种口径解释 35 是绕开问题，没有把 35 作为单一真相。`test_33_mixin_present` 测试锁定 33 反而阻止修正 | ARC |
+| I9 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：源码实算 35 功能 Mixin（`db/db.py` 实际继承列表）+ `CodeGraphBase`。文档用 33（"组合的 Mixin 数"）/40（"表格行数"）两种口径解释 35 是绕开问题，没有把 35 作为单一真相。`test_33_mixin_present` 测试锁定 33 反而阻止修正。**P1-5 整改（2026-07-22 批次34）**：所有文档统一使用 35 作为"功能 Mixin 数"单一真相（40 db_*.py 文件 + 1 CodeGraphBase）。`scripts/check_baseline.py` 基线脚本将 `mixin_functional` 锁定为 35（从 db.py 实际继承列表生成），所有文档引用必须匹配 35 | ARC |
 | I10 | ✅ 已修复（2026-07-20 更新） | ARC Schema 版本已同步为 v39 | ARC |
-| I11 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：CONTRIBUTING.md "33 个 Mixin 类" 与源码 35 不符。需统一至 35 | CT |
-| I12 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：README MCP 数 205 与源码 206 不符。需统一至 206 | docs/README.md |
-| I13 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：mcp_tools.md 头部 205 与源码 206 不符。需统一至 206 | MCT |
+| I11 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：CONTRIBUTING.md "33 个 Mixin 类" 与源码 35 不符。需统一至 35。**P1-5 整改（2026-07-22 批次34）**：CONTRIBUTING.md L12 已更新为 "35 个功能 Mixin（40 个 db_*.py 文件 + schema）" | CT |
+| I12 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：README MCP 数 205 与源码 206 不符。需统一至 206。**P1-5 整改（2026-07-22 批次34）**：README.md L26 已更新为 "206+ MCP 工具 + 145+ CLI 命令"，L154 目录树注释同步至 "35 个功能 Mixin，40 个 db_*.py 文件" | docs/README.md |
+| I13 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：mcp_tools.md 头部 205 与源码 206 不符。需统一至 206。**P1-5 整改（2026-07-22 批次34）**：mcp_tools.md L3/L23/L2098/L2101 共 4 处 205→206 已全部修复（含"工具数：206"反向模式） | MCT |
 | I14 | ✅ 已修复（2026-07-17） | gap-analysis-2026Q2.md 已归档到 docs/history/，README.md 归档清单第 12 行明确标注"基于 9 语言/38 MCP 旧现状，多数缺失功能现已实现" | GA1, GA2 |
-| I15 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：naming-analysis-report.md "33 个 Mixin 组装架构" 与源码 35 不符。需统一至 35 | naming-analysis-report.md |
-| I16 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：history/README.md L41 演化轨迹仍写 "205 MCP / 33 Mixin 类"。需统一至 206/35 | docs/history/README.md |
-| I17 | ❌ 复审回退（2026-07-21） | **复审回退（2026-07-21）**：Schema v37→v40 同步可保留，但 205/33 与源码 206/35 仍冲突。"全部统一为 205/33"声明为假 | ARC, IS, README.md, UG |
+| I15 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：naming-analysis-report.md "33 个 Mixin 组装架构" 与源码 35 不符。需统一至 35。**P1-5 整改（2026-07-22 批次34）**：naming-analysis-report.md L148 已更新为 "35 个功能 Mixin 组装架构"（该文件已在 `check_baseline.py` SKIP_FILES 中标记为"已过时提示"的命名分析文档） | naming-analysis-report.md |
+| I16 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：history/README.md L41 演化轨迹仍写 "205 MCP / 33 Mixin 类"。需统一至 206/35。**P1-5 整改（2026-07-22 批次34）**：docs/history/README.md L42 已更新为 "206 MCP / 35 功能 Mixin（40 db_*.py 文件）"，新增 v41 (当前) 演化节点（cross_repo_deps 五元组 UNIQUE 索引，P1-2 整改） | docs/history/README.md |
+| I17 | ✅ 已修复（2026-07-22 批次34） | **复审回退（2026-07-21）**：Schema v37→v40 同步可保留，但 205/33 与源码 206/35 仍冲突。"全部统一为 205/33"声明为假。**P1-5 整改（2026-07-22 批次34）**：所有活文档已统一至 206/35/40/v41，`scripts/check_baseline.py --check` 验证 76 个 .md 文档零不一致。历史审计/复审报告（audit-2026-07-20 / reaudit-2026-07-21）中保留的 205/33 引用属历史记录，已在 SKIP_FILES 中排除扫描 | ARC, IS, README.md, UG |
 | I18 | ✅ 已修复（2026-07-20） | deployment.md 数据库锁定/损坏排查章节删除"rm -wal/-shm"危险建议，改为 PRAGMA wal_checkpoint + 备份 + .recover 流程；USER_GUIDE Q2 删除"删除 callwarden.db 重建"危险建议 | deployment.md, UG |
 | I19 | 🟡 复审整改（2026-07-21 批次32） | D1/D7 评审修正：D1 "🟡 部分完成（BLOB + Rust/numpy）"。**复审回退（2026-07-21）**：D7 状态从 ✅ 回退为 🟡，仅修复 `target_symbol_hash` 空字符串，跨仓库检测算法仍有缺陷。**P1-2 复审整改（2026-07-21 批次32）**：算法已修复（FQN 三级匹配 + UNIQUE 索引 + INSERT OR IGNORE 幂等），D7 状态保持 🟡（短名匹配 0.7 分支不可达 + 影响传播未对接 confidence 分级） | _feature_matrix.md D1/D7 |
 | I20 | 🟡 复审回退（2026-07-21） | A14 增量扫描方法已实现（`scan_semgrep_incremental`），scan_type 字段已加，索引已加。**复审回退（2026-07-21）**：A14 状态回退为 🟡——`stale_file_ids` 清理只覆盖已知文件，删除的文件不触发清理；scan 失败时 findings 已写入但 scan_id 无对应记录 | _feature_matrix.md A14 |

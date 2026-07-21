@@ -222,7 +222,7 @@ cw --semgrep-list
 
 ## 4. 启动 MCP Server
 
-MCP（Model Context Protocol）Server 模式让 AI Agent 通过标准协议调用 205 个工具。
+MCP（Model Context Protocol）Server 模式让 AI Agent 通过标准协议调用 206 个工具。
 
 ### 4.1 stdio 模式（默认）
 

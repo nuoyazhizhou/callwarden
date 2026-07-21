@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-21 · Schema v41 · 35 功能 Mixin（+ CodeGraphBase，39 个 db_*.py 文件）· 206 MCP 工具 · 16 语言
+> 最后更新：2026-07-21 · Schema v41 · 35 功能 Mixin（+ CodeGraphBase，40 个 db_*.py 文件）· 206 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -11,7 +11,7 @@
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
 | Schema 版本 | v41  | v3→v41 版本化迁移，事务化执行（v41: P1-2 cross_repo_deps 五元组 UNIQUE 索引）            |
-| Mixin 模块  | 35   | CodeGraphBase + 35 个功能 Mixin（39 个 db_*.py 文件）                                     |
+| Mixin 模块  | 35   | CodeGraphBase + 35 个功能 Mixin（40 个 db_*.py 文件）                                     |
 | MCP 工具    | 206  | FastMCP @mcp.tool() 注册                                                                  |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
 | 解析器文件  | 18   | tree-sitter 多语言（含 base/call_filter/call_resolver 等辅助模块）                        |
@@ -198,7 +198,7 @@
 | PR 检查                            | ✅    | `cicd/pr_check.py`                 |
 | GitHub Actions workflow            | ✅    | `.github/workflows/callwarden.yml` |
 
-## 三、Mixin 模块清单（35 个功能 Mixin + 1 基类，39 个 db_*.py 文件）
+## 三、Mixin 模块清单（35 个功能 Mixin + 1 基类，40 个 db_*.py 文件）
 
 权威清单见 [architecture.md §Mixin 架构](../architecture.md#mixin-架构)。下表为按文件路径分组的快速索引：
 
