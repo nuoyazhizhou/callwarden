@@ -97,7 +97,7 @@
 | CLI 子命令 | 145+ | 38 子命令 + ~98 个 --flag 命令 |
 | 支持语言 | 16 | 16（parsers/ 目录 16 个解析器） |
 | Mixin 模块 | 23 | **33 个 Mixin 类**（39 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin） |
-| Schema 版本 | v14 | **v39** |
+| Schema 版本 | v14 | **v40** |
 | 产品版本 | 0.3.0 | release/version.toml `[product] version = "0.3.0"` |
 
 ---
@@ -322,9 +322,9 @@
 
 | # | 问题 | 详情 | 需更新文件 |
 |---|------|------|------------|
-| I1 | ✅ 已修复（2026-07-20 更新） | IS/RM/MCT/ARC 头部已统一为 205 MCP / v39 Schema / 33 Mixin 类（39 db_*.py 文件）。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
+| I1 | ✅ 已修复（2026-07-20 更新，批次12 同步到 v40） | IS/RM/MCT/ARC 头部已统一为 205 MCP / v40 Schema / 33 Mixin 类（39 db_*.py 文件）。`.cli_audit.md`/`.mcp_audit.md` 是 173 工具时点历史审计，保留作归档 | IS, RM, MCT, ARC |
 | I2 | ✅ 已修复（2026-07-20 更新） | CA 表格已改"未暴露"为"✅ 已暴露"，"只差接线"为"已完成（2026-07 接入）"。D7 跨仓库影响传播已修复（target_symbol_hash 写入真实值） | CA |
-| I3 | ✅ 已修复（2026-07-20 更新） | UG 头部已统一为 "v39 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类（39 db_*.py）"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等"；Q2 已删除"删除 callwarden.db 重建"危险建议 | UG |
+| I3 | ✅ 已修复（2026-07-20 更新，批次12 同步到 v40） | UG 头部已统一为 "v40 Schema · 205 MCP 工具 · 16 语言 · 33 Mixin 类（39 db_*.py）"，加"重要：本文档为早期版本，权威参考请见 AGENTS.md 等"；Q2 已删除"删除 callwarden.db 重建"危险建议 | UG |
 | I4 | 🟡 部分完成（评审 2026-07-20） | IS §5 待办表已更新 Prometheus 为 ❌ 未实现（daemon 无埋点，CLI/MCP 读空单例）。`status != 'archived'` ✅ / `UNIQUE UPSERT` ⚠️ 部分保持。G13 待补：daemon 主路径埋点 + `/metrics` HTTP endpoint + 跨进程 metrics 共享 | IS |
 | I5 | ✅ 已修复（2026-07-19） | TokenSavingsMixin 在 §2.12（能力描述）和 §3（Mixin 列表）各出现一次，是合理的双视角描述，非重复列出 | IS |
 | I6 | ✅ 已修复（2026-07-19） | RM 数据库位置已从 `~/.callwarden/<hash>/callwarden.db`（旧版多库）改为 `~/.callwarden/callwarden.db`（用户级单库 + workspace_id 逻辑隔离），与 UG/config.py 一致；UG 描述原本正确 | RM |
@@ -397,13 +397,13 @@
 | M1 | peercred.rs | SO_PEERCRED（libc getsockopt）内核认证 UID/GID/PID | ✅ 已实现 |
 | M2 | canonicalize.rs | BOM 检测+剥离（UTF-8/16LE/16BE）、CRLF→LF、SHA-256 content_hash | ✅ 已实现 |
 | M3 | graph.rs | CSR 邻接表 + FxHashMap + SymbolKind enum(u32) + bytemuck Pod/Zeroable | ✅ 已实现 |
-| M4 | delta.rs | SymbolDeltaKind（Added/Removed/Changed）+ lang_from_extension（13 语言） | ✅ 已接入（2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 DeltaComputer::compute_parse_delta 填充 StagingEntry.parse_delta JSON 摘要（store=None 退化模式） |
-| M5 | frontier.rs | AffectedFrontier（directly_affected + upstream/downstream direct/transitive） | ✅ 已接入（2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 FrontierComputer::compute_frontier_with_budget 填充 StagingEntry.frontier JSON 摘要（QueryBudget::default，store=None 退化模式） |
-| M6 | metrics.rs | DepthChange + CycleChangeKind（Added/Removed） | ✅ 已接入（2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 MetricsComputer::compute_local_update 填充 StagingEntry.metrics_update JSON 摘要（impact_depth=2，store=None 退化模式） |
+| M4 | delta.rs | SymbolDeltaKind（Added/Removed/Changed）+ lang_from_extension（13 语言） | ✅ 已接入（评审 2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 DeltaComputer::compute_parse_delta 填充 StagingEntry.parse_delta JSON 摘要（store=None 退化模式） |
+| M5 | frontier.rs | AffectedFrontier（directly_affected + upstream/downstream direct/transitive） | ✅ 已接入（评审 2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 FrontierComputer::compute_frontier_with_budget 填充 StagingEntry.frontier JSON 摘要（QueryBudget::default，store=None 退化模式） |
+| M6 | metrics.rs | DepthChange + CycleChangeKind（Added/Removed） | ✅ 已接入（评审 2026-07-20 批次4） | daemon workspace.rs refresh committed 路径调用 MetricsComputer::compute_local_update 填充 StagingEntry.metrics_update JSON 摘要（impact_depth=2，store=None 退化模式） |
 | M7 | diff.rs | SymbolChangeKind（8 种）+ SignatureDiff（file/line_range/kind 变化） | ✅ 已实现 | snapshot diff 路径调用 Rust diff 模块 |
-| M8 | watcher.rs | notify crate + crossbeam channel + 20 种扩展名过滤 | ✅ 已接入（2026-07-20 批次4） | FileEvent 扩展 from_path/to_path 字段；handler 识别 RenameMode::From/To/Both 三种事件；coalesce_events 合并时保留 rename 信息；PyO3 poll_events/flush 返回 from_path/to_path；server/watcher.py 重写为 PyDebouncedFileWatcher 主路径 + watchdog fallback，Renamed 事件双路径分别触发 remove_file + refresh_file |
+| M8 | watcher.rs | notify crate + crossbeam channel + 20 种扩展名过滤 | ✅ 已接入（评审 2026-07-20 批次4） | FileEvent 扩展 from_path/to_path 字段；handler 识别 RenameMode::From/To/Both 三种事件；coalesce_events 合并时保留 rename 信息；PyO3 poll_events/flush 返回 from_path/to_path；server/watcher.py 重写为 PyDebouncedFileWatcher 主路径 + watchdog fallback，Renamed 事件双路径分别触发 remove_file + refresh_file |
 | M9 | multi_lang.rs | parse_file_lang / batch_parse_files_lang / batch_parse_files_lang_pool（Rayon） | ✅ 已实现 | 已进入 build 主路径 |
-| M10 | cw_daemon.rs（同 crate 同时产出 binary + cdylib/rlib，批次5 文档对齐） | RP | ✅ 已实施（2026-07-20 批次5 文档对齐） | 矩阵描述原为"daemon binary + PyO3 绑定"表述不准确。实际 [`rust_ext/Cargo.toml`](file:///c:/git_work/callwarden/rust_ext/Cargo.toml) 同 crate 配置三种 crate-type：`bin`（cw_daemon 独立 binary）+ `cdylib`（Python 扩展 `callwarden_core`）+ `rlib`（Rust 内部库）。binary 和 cdylib 共享同一份源码（`src/daemon/*`、`src/delta.rs`、`src/frontier.rs` 等），通过 `[[bin]]` 和 `[lib]` 节区分入口。 |
+| M10 | cw_daemon.rs（同 crate 同时产出 binary + cdylib/rlib，批次5 文档对齐） | RP | ✅ 已实施（评审 2026-07-20 批次5 文档对齐） | 矩阵描述原为"daemon binary + PyO3 绑定"表述不准确。实际 [`rust_ext/Cargo.toml`](file:///c:/git_work/callwarden/rust_ext/Cargo.toml) 同 crate 配置三种 crate-type：`bin`（cw_daemon 独立 binary）+ `cdylib`（Python 扩展 `callwarden_core`）+ `rlib`（Rust 内部库）。binary 和 cdylib 共享同一份源码（`src/daemon/*`、`src/delta.rs`、`src/frontier.rs` 等），通过 `[[bin]]` 和 `[lib]` 节区分入口。 |
 
 ## N. 跨平台打包（脚本骨架存在/产物未落地）
 
@@ -413,12 +413,12 @@
 |---|--------|------|------|
 | N1 | release/version.toml 唯一版本源 | ✅ 已实现 | 0.3.0 + ABI 版本 + 平台 + 角色 |
 | N2 | release/version_sync.py 三方一致校验 | ✅ 已实现 | Python/Cargo/__init__.py + --fix |
-| N3 | release/build.py 构建管道（批次5 文档对齐） | CP | 🟡 部分完成（P0-3 已修复 wheel 含 Rust 扩展，2026-07-20 批次5 文档对齐） | 矩阵描述原为"❌ 声明不成立"，P0-3 已修复 [`release/build.py`](file:///c:/git_work/callwarden/release/build.py)：fail-fast 校验 + 平台特定 wheel（非 `py3-none-any`）+ 验证 wheel 包含 `callwarden_core` Rust 扩展。但 wheel 未打包 daemon/角色二进制（仅 Python 扩展），artifact-manifest.json 仍待落地。 |
-| N4 | release/config_loader.py 分层配置（批次6 接入 CLI） | IS | ✅ 已实施（2026-07-20 批次6 接入 CLI） | 原 🟡 状态：分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），但无 Python CLI/daemon 生产 import。批次6 修复：新增 `cw config` CLI 子命令组（[cli/main.py:_handle_config](file:///c:/git_work/callwarden/cli/main.py)），含 3 个 action：1) `cw config explain` 输出每个配置值及其来源（secret 字段隐藏），2) `cw config paths` 输出 PlatformPaths.detect() 平台路径，3) `cw config check-role <role>` 检查角色支持。`config_loader` 通过 `callwarden.release.config_loader` 命名空间包路径 import（fallback 至 sys.path 注入）。`toolchain.*`/`build-context.*`/`dashboard` 等已有命令保留 DaemonConfig 加载路径不变。 |
+| N3 | release/build.py 构建管道（批次5 文档对齐） | CP | 🟡 部分完成（P0-3 已修复 wheel 含 Rust 扩展，评审 2026-07-20 批次5 文档对齐） | 矩阵描述原为"❌ 声明不成立"，P0-3 已修复 [`release/build.py`](file:///c:/git_work/callwarden/release/build.py)：fail-fast 校验 + 平台特定 wheel（非 `py3-none-any`）+ 验证 wheel 包含 `callwarden_core` Rust 扩展。但 wheel 未打包 daemon/角色二进制（仅 Python 扩展），artifact-manifest.json 仍待落地。 |
+| N4 | release/config_loader.py 分层配置（批次6 接入 CLI） | IS | ✅ 已实施（评审 2026-07-20 批次6 接入 CLI） | 原 🟡 状态：分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），但无 Python CLI/daemon 生产 import。批次6 修复：新增 `cw config` CLI 子命令组（[cli/main.py:_handle_config](file:///c:/git_work/callwarden/cli/main.py)），含 3 个 action：1) `cw config explain` 输出每个配置值及其来源（secret 字段隐藏），2) `cw config paths` 输出 PlatformPaths.detect() 平台路径，3) `cw config check-role <role>` 检查角色支持。`config_loader` 通过 `callwarden.release.config_loader` 命名空间包路径 import（fallback 至 sys.path 注入）。`toolchain.*`/`build-context.*`/`dashboard` 等已有命令保留 DaemonConfig 加载路径不变。 |
 | N5 | Windows WiX MSI（x64/arm64 + Authenticode） | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | WiX 只有未编译 XML（`callwarden.wxs`），引用的 Windows 输入产物不存在，Authenticode 仅注释命令，未跑 candle.exe/light.exe |
 | N6 | macOS universal2 pkg + notarization | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | macOS 脚本未在 macOS 构建/签名/公证，缺入口时会生成 placeholder |
 | N7 | Linux deb 5 子包 + rpm + tar.zst | CP | ❌ 未实施（评审 2026-07-20，批次5 文档对齐） | Linux 无 deb/rpm/tar.zst 成品，缺二进制时仍继续，RPM spec 明确 TODO |
-| N8 | Release CI enterprise-release.yml（批次5 文档对齐） | CP | 🟡 部分完成（P0-3 已修复 version key/parser 调用，2026-07-20 批次5 文档对齐） | 矩阵描述原为"❌ 声明不成立"，P0-3 已修复 [`enterprise-release.yml`](file:///c:/git_work/callwarden/.github/workflows/enterprise-release.yml)：version key 修正为 `['product']` + parser 调用修正 + wheel 包含 Rust 扩展。但 Workflow 未实际运行过，WiX 输入仍不匹配（依赖 N5 落地），MSI/PKG/DEB 产物仍待 N5/N6/N7 落地后才能完整通过 11 门禁。 |
+| N8 | Release CI enterprise-release.yml（批次5 文档对齐） | CP | 🟡 部分完成（P0-3 已修复 version key/parser 调用，评审 2026-07-20 批次5 文档对齐） | 矩阵描述原为"❌ 声明不成立"，P0-3 已修复 [`enterprise-release.yml`](file:///c:/git_work/callwarden/.github/workflows/enterprise-release.yml)：version key 修正为 `['product']` + parser 调用修正 + wheel 包含 Rust 扩展。但 Workflow 未实际运行过，WiX 输入仍不匹配（依赖 N5 落地），MSI/PKG/DEB 产物仍待 N5/N6/N7 落地后才能完整通过 11 门禁。 |
 
 ## O. 基准验证实测数据
 

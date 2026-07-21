@@ -56,11 +56,11 @@ pip install tree-sitter-elixir
 
 # 可选依赖
 pip install semgrep                  # 多语言静态安全扫描
-pip install sentence-transformers    # 向量嵌入（语义搜索）
-pip install sqlite-vec               # 向量索引扩展
+pip install sentence-transformers    # 向量嵌入（语义搜索；当前实现为 BLOB + Rust/numpy 余弦相似度，sqlite-vec/vec0 虚拟表待落地）
 ```
 
 > 未安装某语言 grammar 时，扫描该语言文件会跳过并打印警告，不会崩溃。
+> `sqlite-vec` 当前未在生产代码中加载，安装不会带来额外收益；语义搜索使用 sentence-transformers + BLOB 存储 + Rust/numpy 余弦相似度（D1 状态）。
 
 ### 2. 获取代码
 
@@ -291,7 +291,8 @@ cp backup_20260101.db $HOME/.callwarden/callwarden.db
 
 ```bash
 # 添加到 crontab，每天凌晨 3 点备份
-0 3 * * * sqlite3 $HOME/.callwarden/*/callwarden.db ".backup '/backups/cw_$(date +\%Y\%m\%d).db'"
+# 注：用户级单库架构（AGENTS.md 规则），路径为 ~/.callwarden/callwarden.db（不再使用 hash 子目录）
+0 3 * * * sqlite3 $HOME/.callwarden/callwarden.db ".backup '/backups/cw_$(date +\%Y\%m\%d).db'"
 ```
 
 ## 升级指南
@@ -340,11 +341,11 @@ cw --refresh-all
 ### Docker 升级
 
 ```bash
-# 1. 备份
+# 1. 备份（用户级单库，无 hash 子目录）
 docker run --rm \
   -v $HOME/.callwarden:/root/.callwarden \
   call-warden:latest \
-  sh -c "sqlite3 /root/.callwarden/*/callwarden.db '.backup /root/.callwarden/backup.db'"
+  sh -c "sqlite3 /root/.callwarden/callwarden.db '.backup /root/.callwarden/backup.db'"
 
 # 2. 拉取新镜像
 docker pull call-warden:latest
@@ -424,8 +425,8 @@ rustup component add rust-analyzer  # Rust
 ### 向量嵌入不可用
 
 ```bash
-# 检查依赖
-pip install sentence-transformers sqlite-vec
+# 检查依赖（仅 sentence-transformers；sqlite-vec 当前未接入生产代码）
+pip install sentence-transformers
 
 # 重新生成嵌入
 cw --embed-force

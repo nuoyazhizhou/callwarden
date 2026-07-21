@@ -1,15 +1,21 @@
 """二轮评审整改验证测试（评审报告 2026-07-20 第二轮）。
 
 覆盖首轮测试未涉及的状态修正，确保以下修正不被回退：
-1. _feature_matrix.md M4/M5/M6/M8/M10 状态为 🟡 部分完成
-2. _feature_matrix.md N3/N5/N6/N7/N8 状态为 ❌ 声明不成立，N4 为 🟡
+1. _feature_matrix.md M4/M5/M6/M8/M10 状态为 ✅ 已接入（批次4/5 修复后真实状态，
+   原二轮评审时为 🟡 部分完成）
+2. _feature_matrix.md N3/N8 状态为 🟡 部分完成（批次5 P0-3 修复后，原 ❌），
+   N5/N6/N7 仍为 ❌ 声明不成立，N4 为 ✅ 已实施（批次6 接入 CLI，原 🟡）
 3. _feature_matrix.md N 章节标题反映实际状态（"脚本骨架存在/产物未落地"）
 4. _feature_matrix.md I7 反映 D7 修复后状态（不再是 🟡）
 5. _feature_matrix.md I17 标注 USER_GUIDE L118 修复点
 6. _feature_matrix.md I20-I38 二轮评审新增条目存在
 7. USER_GUIDE.md L118 MCP 工具数 = 205
 8. implementation-status.md Prometheus 状态为 ❌ 未实现
-9. 各文档 Mixin 数 = 33（CONTRIBUTING / architecture / naming-report / implementation-status / _health_check_report / history README）
+9. 各文档 Mixin 数 = 33（CONTRIBUTING / naming-report / implementation-status /
+   _health_check_report / history README）。注意 architecture.md 是 Mixin 列表
+   章节，表格 40 行（含基类 + analyzers），必须写 40 与表格行数一致
+   （test_architecture_doc 要求标题声明数 = 表格行数）；其他文档头部基线
+   仍为 33。
 """
 
 import re
@@ -33,19 +39,24 @@ class TestMatrixMSectionCorrected:
         return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
 
     @pytest.mark.parametrize("mid,expected_keyword", [
-        ("M4", "🟡"),
-        ("M5", "🟡"),
-        ("M6", "🟡"),
-        ("M8", "🟡"),
-        ("M10", "🟡"),
+        ("M4", "✅"),
+        ("M5", "✅"),
+        ("M6", "✅"),
+        ("M8", "✅"),
+        ("M10", "✅"),
     ])
     def test_m_entries_partial_complete(self, matrix_content, mid, expected_keyword):
-        """M4/M5/M6/M8/M10 必须是 🟡 部分完成状态。"""
+        """M4/M5/M6/M8/M10 必须是 ✅ 已接入状态（批次4/5 接入后真实状态）。
+
+        评审 2026-07-20 二轮评审时 M4/M5/M6/M8 是 🟡，但批次4 接入
+        delta/frontier/metrics/watcher 模块后真实状态已变更为 ✅；M10 批次5
+        文档对齐后也变更为 ✅。测试断言随真实状态更新。
+        """
         line_match = re.search(rf"^\| {mid} \|.*$", matrix_content, re.MULTILINE)
         assert line_match, f"_feature_matrix.md 必须有 {mid} 行"
         line = line_match.group(0)
         assert expected_keyword in line, (
-            f"{mid} 状态应为 {expected_keyword}（部分完成），实际：{line}"
+            f"{mid} 状态应为 {expected_keyword}（已接入），实际：{line}"
         )
         assert "评审 2026-07-20" in line, (
             f"{mid} 必须标注评审日期，实际：{line}"
@@ -72,9 +83,14 @@ class TestMatrixNSectionCorrected:
     def matrix_content(self):
         return (ROOT / "_feature_matrix.md").read_text(encoding="utf-8")
 
-    @pytest.mark.parametrize("mid", ["N3", "N5", "N6", "N7", "N8"])
+    @pytest.mark.parametrize("mid", ["N5", "N6", "N7"])
     def test_n_entries_false_claim(self, matrix_content, mid):
-        """N3/N5/N6/N7/N8 必须是 ❌ 声明不成立。"""
+        """N5/N6/N7 必须是 ❌ 声明不成立。
+
+        N3/N8 在批次5 修复 P0-3 后真实状态变更为 🟡 部分完成（wheel 含 Rust 扩展），
+        不再是 ❌ 声明不成立。N5/N6/N7 仍是 ❌ 未实施（WiX/MSI/MSI/deb/rpm 产物
+        未落地）。
+        """
         line_match = re.search(rf"^\| {mid} \|.*$", matrix_content, re.MULTILINE)
         assert line_match, f"_feature_matrix.md 必须有 {mid} 行"
         line = line_match.group(0)
@@ -83,12 +99,34 @@ class TestMatrixNSectionCorrected:
             f"{mid} 必须标注评审日期，实际：{line}"
         )
 
-    def test_n4_partial_complete(self, matrix_content):
-        """N4 必须是 🟡 部分完成。"""
+    @pytest.mark.parametrize("mid", ["N3", "N8"])
+    def test_n_entries_partial_complete(self, matrix_content, mid):
+        """N3/N8 在批次5 修复后为 🟡 部分完成。
+
+        原断言为 ❌ 声明不成立（评审 2026-07-20 二轮评审时），批次5 修复 P0-3
+        后 wheel 含 Rust 扩展 + version key/parser 调用修正，真实状态变更为
+        🟡 部分完成（仍待 N5/N6/N7 落地后才能完整通过 11 门禁）。
+        """
+        line_match = re.search(rf"^\| {mid} \|.*$", matrix_content, re.MULTILINE)
+        assert line_match, f"_feature_matrix.md 必须有 {mid} 行"
+        line = line_match.group(0)
+        assert "🟡" in line, f"{mid} 状态应为 🟡 部分完成，实际：{line}"
+        assert "评审 2026-07-20" in line, (
+            f"{mid} 必须标注评审日期，实际：{line}"
+        )
+
+    def test_n4_complete(self, matrix_content):
+        """N4 批次6 接入 CLI 后为 ✅ 已实施。
+
+        原断言为 🟡 部分完成（评审 2026-07-20 二轮评审时），批次6 新增
+        `cw config` CLI 子命令组（explain/paths/check-role），分层加载器
+        通过 `callwarden.release.config_loader` 命名空间包路径 import，
+        真实状态变更为 ✅ 已实施。
+        """
         line_match = re.search(r"^\| N4 \|.*$", matrix_content, re.MULTILINE)
         assert line_match, "_feature_matrix.md 必须有 N4 行"
         line = line_match.group(0)
-        assert "🟡" in line, f"N4 状态应为 🟡 部分完成，实际：{line}"
+        assert "✅" in line, f"N4 状态应为 ✅ 已实施，实际：{line}"
         assert "评审 2026-07-20" in line
 
     def test_n_section_title_reflects_reality(self, matrix_content):
@@ -264,11 +302,17 @@ class TestImplementationStatusPrometheusCorrected:
 
 
 class TestMixinCountConsistent:
-    """关键文档 Mixin 数必须统一为 33（不能回退到 40）。"""
+    """关键文档 Mixin 数必须统一为 33（不能回退到 40）。
+
+    注意：docs/architecture.md 是 Mixin 列表章节（40 行表格包含基类 + analyzers），
+    必须写 40 与表格行数一致（test_architecture_doc.test_doc_lists_all_mixins
+    要求标题声明数 = 表格行数）。因此 architecture.md 不在 test_no_40_mixin
+    检查范围内，其 db.py 组合注释（"共 33 个 Mixin"）仍由 test_33_mixin_present
+    覆盖。
+    """
 
     @pytest.mark.parametrize("rel_path", [
         "CONTRIBUTING.md",
-        "docs/architecture.md",
         "docs/naming-analysis-report.md",
         "docs/design/implementation-status.md",
         "tests/_health_check_report.md",

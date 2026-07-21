@@ -214,7 +214,7 @@ cw install --check
 
 | 参数 | 说明 |
 |------|------|
-| `--all` | 安装全部依赖（含可选依赖：semgrep / sentence-transformers / sqlite-vec / numpy） |
+| `--all` | 安装全部依赖（含可选依赖：semgrep / sentence-transformers / numpy；sqlite-vec 当前未接入生产代码） |
 | `--lang <LANG...>` | 仅安装指定语言的 grammar（空格分隔多个语言名） |
 | `--check` | 仅检查依赖状态，不安装 |
 | `--hooks` | 安装 Git hooks 到 `.git/hooks`（pre-commit + pre-push + post-commit 三种） |

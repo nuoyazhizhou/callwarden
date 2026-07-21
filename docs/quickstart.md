@@ -70,18 +70,19 @@ cw install --lang rust python
 # 多语言静态安全扫描（守护者架构必需）
 pip install semgrep
 
-# 向量嵌入（语义搜索）
-pip install sentence-transformers sqlite-vec
+# 向量嵌入（语义搜索；当前实现为 BLOB + Rust/numpy 余弦相似度，sqlite-vec/vec0 虚拟表待落地）
+pip install sentence-transformers
 
 # 或通过一键脚本安装全部可选依赖
 cw install --all
 ```
 
+> `sqlite-vec` 当前未在生产代码中加载，安装不会带来额外收益；语义搜索使用 sentence-transformers + BLOB 存储 + Rust/numpy 余弦相似度（D1 状态）。
+
 | 可选包 | 功能 | 未安装时行为 |
 |--------|------|-------------|
 | `semgrep` | 多语言静态安全扫描 | 安全扫描命令自动禁用并提示 |
 | `sentence-transformers` | 向量嵌入（语义搜索） | 语义搜索降级为关键词匹配 |
-| `sqlite-vec` | 向量索引扩展（当前实际实现为 BLOB + Rust/numpy 余弦相似度，vec0 虚拟表待落地） | 同上 |
 | `numpy` | 向量计算加速 | 同上 |
 
 ### 1.4 获取代码

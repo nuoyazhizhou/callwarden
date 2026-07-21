@@ -81,8 +81,8 @@ class TestHeaderBaselineAligned:
         assert "v37" not in header, "USER_GUIDE 头部不能再写 v37"
         assert "204 MCP" not in header, "USER_GUIDE 头部不能再写 204 MCP"
         assert "40 Mixin" not in header, "USER_GUIDE 头部不能再写 40 Mixin"
-        # 应该写实际值
-        assert "v39" in header, "USER_GUIDE 头部应写 v39 Schema"
+        # 应该写实际值（批次12：schema 已升级到 v40）
+        assert "v40" in header, "USER_GUIDE 头部应写 v40 Schema"
         assert "205 MCP" in header, "USER_GUIDE 头部应写 205 MCP 工具"
         assert "33" in header and "Mixin" in header, (
             "USER_GUIDE 头部应写 33 Mixin 类"
@@ -114,9 +114,9 @@ class TestHeaderBaselineAligned:
         assert "**196**" not in baseline_section, (
             "_feature_matrix.md 基线表不能保留 196（已过时）"
         )
-        # 应写 v39 而非 v36
-        assert "**v39**" in baseline_section, (
-            "_feature_matrix.md 基线表 Schema 版本应为 v39（原 v36 已过时）"
+        # 应写 v40 而非 v36（批次12：schema 已升级到 v40）
+        assert "**v40**" in baseline_section, (
+            "_feature_matrix.md 基线表 Schema 版本应为 v40（原 v36 已过时）"
         )
         assert "**v36**" not in baseline_section, (
             "_feature_matrix.md 基线表不能保留 v36（已过时）"
