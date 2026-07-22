@@ -3564,7 +3564,9 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "workspace_forbidden");
+        // gc.cas 在 ADMIN_ONLY_METHODS 中，非 admin 在 dispatch 层
+        // 就被拒绝（permission_denied），不会进入 handler 的 workspace ACL 检查
+        assert_eq!(response["error"]["code"], "permission_denied");
     }
 
     #[test]
