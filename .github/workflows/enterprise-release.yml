@@ -100,16 +100,13 @@ jobs:
         include:
           - os: ubuntu-latest
             rust_target: x86_64-unknown-linux-gnu
-            wheel_platform: manylinux2014_x86_64
           - os: windows-latest
             rust_target: x86_64-pc-windows-msvc
-            wheel_platform: win_amd64
           - os: macos-latest
             # P0-3 整改（2026-07-22）：universal2-apple-darwin 不是有效的 rustc target，
             # rustup 不认识。改为 aarch64-apple-darwin（Apple Silicon runner 默认）。
             # build_pkg.sh 中会 rustup target add x86_64-apple-darwin 并用 lipo 合并为 universal2。
             rust_target: aarch64-apple-darwin
-            wheel_platform: macosx_11_0_universal2
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -287,6 +284,7 @@ jobs:
             -d ClientBuildOutputDir=release/dist/windows/cw-client \
             -d CwInternalDir=release/dist/windows/cw/_internal \
             -d ClientInternalDir=release/dist/windows/cw-client/_internal \
+            -d Version=${{ needs.gate1-source-tests.outputs.version }} \
             -o release/dist/callwarden-${{ needs.gate1-source-tests.outputs.version }}-x64.msi
         shell: bash
       - name: Verify MSI

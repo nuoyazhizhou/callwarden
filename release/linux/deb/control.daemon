@@ -21,4 +21,4 @@ Description: Call Warden Enterprise Daemon
   - Durable staging WAL with crash recovery
   - systemd integration with graceful shutdown
   - Schema migration and online backup tools
-Depends: callwarden-local (= __VERSION__), systemd, libc6 (>= 2.17)
+Depends: callwarden-local (= __VERSION__), systemd, libc6 (>= 2.17), libgcc-s1, libstdc++6

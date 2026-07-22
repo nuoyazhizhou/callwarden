@@ -141,12 +141,17 @@ excludes = ['tree_sitter_languages']
 
 # === Analysis ===
 # 三个入口共用同一个 Analysis，PyInstaller 会自动收集依赖
+# P0-3.6 修复（2026-07-22）：cw-agent 是 Linux-only 角色（systemd user unit），
+# Windows 不需要，跳过构建以节省时间和磁盘空间
+_entry_scripts = [
+    os.path.join(ENTRY_DIR, 'entry_cw.py'),
+    os.path.join(ENTRY_DIR, 'entry_cw_client.py'),
+]
+if sys.platform != 'win32':
+    _entry_scripts.append(os.path.join(ENTRY_DIR, 'entry_cw_agent.py'))
+
 a = Analysis(
-    [
-        os.path.join(ENTRY_DIR, 'entry_cw.py'),
-        os.path.join(ENTRY_DIR, 'entry_cw_client.py'),
-        os.path.join(ENTRY_DIR, 'entry_cw_agent.py'),
-    ],
+    _entry_scripts,
     pathex=[ROOT],
     binaries=binaries,
     datas=datas,
@@ -200,19 +205,21 @@ coll_cw_client = COLLECT(
 )
 
 # cw-agent（scripts[2] 对应 entry_cw_agent.py）
-exe_cw_agent = EXE(
-    pyz,
-    a.scripts[2],
-    [],
-    exclude_binaries=True,
-    name='cw-agent',
-    console=True,
-    cipher=block_cipher,
-)
-coll_cw_agent = COLLECT(
-    exe_cw_agent,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    name='cw-agent',
-)
+# P0-3.6 修复：仅 Linux/macOS 构建 cw-agent，Windows 跳过
+if sys.platform != 'win32':
+    exe_cw_agent = EXE(
+        pyz,
+        a.scripts[2],
+        [],
+        exclude_binaries=True,
+        name='cw-agent',
+        console=True,
+        cipher=block_cipher,
+    )
+    coll_cw_agent = COLLECT(
+        exe_cw_agent,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        name='cw-agent',
+    )
