@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from .incremental import IncrementalAnalyzer
+from .incremental import GitDiffError, IncrementalAnalyzer
 from .sarif_exporter import SarifExporter
 
 
@@ -64,13 +64,16 @@ class PRChecker:
              "warnings": N, "sarif_report": {...}}
         """
         # 1. 获取变更文件
-        changed_files = self.incremental.get_changed_files(
-            base_branch=base_branch, head=head
-        )
-
-        # P1 修复：收集运行时错误，写入 SARIF executionNotifications
-        # （评审 P1：原代码 try-except pass 静默吞异常，导致 fail-open）
+        # P1-1 修复（2026-07-22）：get_changed_files 现在抛 GitDiffError，不再返回空列表
+        # 旧实现 git diff 失败时返回 []，PRChecker 误判为"无改动"通过 → fail-open
         run_errors: List[str] = []
+        try:
+            changed_files = self.incremental.get_changed_files(
+                base_branch=base_branch, head=head
+            )
+        except GitDiffError as e:
+            changed_files = []
+            run_errors.append(f"git diff 失败: {str(e)[:200]}")
 
         # 2. guardrail 编辑前检查
         # 评审 P1：原代码 getattr(db, "guardrail_check_edit") 调用不存在的方法，
@@ -96,12 +99,24 @@ class PRChecker:
         # 旧实现：semgrep_fn(target_paths=changed_files) — 但底层 save_semgrep_findings
         # 硬编码 scan_type='full'，不清理变更文件的 stale findings，导致重复计数
         # 新实现：优先调用 db.scan_semgrep_incremental()，由 db 层统一管理增量扫描+清理
+        #
+        # P1-1 修复（2026-07-22）：scan_semgrep_incremental 返回 {success: false, error: ...}
+        # 时表示扫描失败（如 semgrep CLI 崩溃、配置错误）。旧代码只 try-except 异常，
+        # 不检查返回值，导致失败被静默 → run_errors 为空 → scan_complete=True → fail-open。
+        # 现在显式检查返回值的 success 字段。
         incremental_fn = getattr(self.db, "scan_semgrep_incremental", None)
         if incremental_fn is not None and changed_files:
             try:
-                incremental_fn(base_branch=base_branch, head=head)
+                result = incremental_fn(base_branch=base_branch, head=head)
+                # P1-1 修复：检查返回值的 success 字段（dict 形式）
+                if isinstance(result, dict) and not result.get("success", True):
+                    err_msg = result.get("error") or result.get("message") or "未知错误"
+                    run_errors.append(
+                        f"Semgrep scan_semgrep_incremental 返回 success=false: "
+                        f"{str(err_msg)[:200]}"
+                    )
             except Exception as e:
-                # Semgrep 失败不阻断 PR 检查汇总，但记录到 run_errors
+                # Semgrep 异常不阻断 PR 检查汇总，但记录到 run_errors
                 run_errors.append(
                     f"Semgrep scan_semgrep_incremental 失败: "
                     f"{type(e).__name__}: {str(e)[:200]}"
@@ -124,6 +139,10 @@ class PRChecker:
 
         # 4. 汇总 findings：查询 guardrail_findings 表中 open 状态的记录
         findings = self._query_open_findings(changed_files)
+        # P1-1 修复：合并 _query_open_findings 中捕获的 SQL 错误到 run_errors
+        # 旧实现静默 pass 会让查询损坏变成零 finding → scan_complete=True → fail-open
+        query_errors = getattr(self, "_findings_query_errors", [])
+        run_errors.extend(query_errors)
 
         # 5. 统计错误 / 告警数量
         errors = 0
@@ -201,6 +220,12 @@ class PRChecker:
         旧实现只查 guardrail_findings，未合并 semgrep_findings，导致 Semgrep 发现的
         error 级 finding 无法阻断 PR。现在两类 findings 都纳入阻断判定。
 
+        P1-1 修复（2026-07-22）：
+        1. SQL 异常静默 `pass` 会让查询损坏变成零 finding → fail-open。现在捕获后
+           记录到 self._findings_query_errors，由 run_pr_check 合并到 run_errors。
+        2. Semgrep 查询添加 workspace_id 过滤，防止把另一个 workspace 同路径的
+           finding 混入本次 PR。
+
         Args:
             changed_files: 变更文件路径列表
 
@@ -209,6 +234,9 @@ class PRChecker:
             字段统一为：id, rule_id, file_path, severity, status, message, detected_at, source
             （source: 'guardrail' 或 'semgrep'，便于 SARIF 与日志溯源）
         """
+        # P1-1 修复：每次调用前清空错误收集器
+        self._findings_query_errors: List[str] = []
+
         if not changed_files:
             return []
 
@@ -227,6 +255,19 @@ class PRChecker:
         # 用 IN 子句批量查询；SQL 参数仅支持问号占位符
         placeholders = ",".join("?" * len(normalized))
 
+        # P1-1 修复：获取当前 workspace_id，用于过滤 semgrep_findings
+        # 防止把另一个 workspace 同路径的 finding 混入本次 PR
+        # 注意：用 callable() 检查避免 MagicMock 误判（MagicMock 任意属性都是 Mock 对象）
+        ws_id = 1
+        get_ws_id_fn = getattr(self.db, "_get_active_workspace_id", None)
+        if callable(get_ws_id_fn):
+            try:
+                result = get_ws_id_fn()
+                if isinstance(result, int):
+                    ws_id = result
+            except Exception:
+                pass
+
         findings: List[Dict] = []
 
         # (1) guardrail_findings：status='open' 且 file_path 命中
@@ -239,26 +280,32 @@ class PRChecker:
         try:
             cur = conn.execute(guardrail_sql, normalized)
             findings.extend(dict(row) for row in cur)
-        except Exception:
-            # 表不存在或查询失败时跳过，不阻断 PR 检查（其他源仍可阻断）
-            pass
+        except Exception as e:
+            # P1-1 修复：不再静默 pass，记录错误让 run_pr_check 把 scan_complete=False
+            self._findings_query_errors.append(
+                f"guardrail_findings 查询失败: {type(e).__name__}: {str(e)[:200]}"
+            )
 
         # (2) semgrep_findings：JOIN file_instances 取 rel_path，所有 finding 视为 open
         # （semgrep_findings 表无 status 字段；增量扫描时 save_semgrep_findings 已删除
         # 变更文件的 stale 记录，因此查询结果只含最新扫描的 finding）
+        #
+        # P1-1 修复：添加 fi.workspace_id = ? 条件，防止跨 workspace 混入
         semgrep_sql = (
             "SELECT sf.id, sf.rule_id, fi.rel_path AS file_path, sf.severity, "
             "'open' AS status, sf.message, sf.scanned_at AS detected_at, "
             "'semgrep' AS source "
             "FROM semgrep_findings sf "
             "JOIN file_instances fi ON sf.file_instance_id = fi.id "
-            f"WHERE fi.rel_path IN ({placeholders})"
+            f"WHERE fi.workspace_id = ? AND fi.rel_path IN ({placeholders})"
         )
         try:
-            cur = conn.execute(semgrep_sql, normalized)
+            cur = conn.execute(semgrep_sql, [ws_id] + normalized)
             findings.extend(dict(row) for row in cur)
-        except Exception:
-            # 表不存在或查询失败时跳过，不阻断 PR 检查
-            pass
+        except Exception as e:
+            # P1-1 修复：不再静默 pass，记录错误让 run_pr_check 把 scan_complete=False
+            self._findings_query_errors.append(
+                f"semgrep_findings 查询失败: {type(e).__name__}: {str(e)[:200]}"
+            )
 
         return findings

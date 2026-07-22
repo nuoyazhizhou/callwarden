@@ -397,3 +397,159 @@ def test_pr_check_semgrep_error_finding_blocks_pr():
     assert result["passed"] is False, (
         "复审 P1-1：semgrep error finding 必须阻断 PR，passed=False"
     )
+
+
+# ============================================
+# P1-1 补充测试（2026-07-22）：三条 fail-open 路径闭合验证
+# ============================================
+
+
+def test_p1_1_git_diff_failure_blocks_pr():
+    """P1-1 路径 1：git diff 失败时不能 fail-open。
+
+    旧实现 get_changed_files() 在 git diff 非零时返回空列表，
+    PRChecker 将其解释为"无改动"并通过 → fail-open。
+    修复后 get_changed_files 抛 GitDiffError，run_pr_check 捕获后
+    记录到 run_errors，scan_complete=False，passed=False。
+    """
+    from callwarden.cicd.incremental import GitDiffError
+
+    db = _make_db_with_methods()
+    checker = PRChecker(db)
+    # mock incremental.get_changed_files 抛 GitDiffError
+    checker.incremental.get_changed_files = MagicMock(
+        side_effect=GitDiffError("git diff failed: base branch not found")
+    )
+    result = checker.run_pr_check(base_branch="nonexistent", head="HEAD")
+
+    # git diff 失败 → run_errors 非空 → scan_complete=False → passed=False
+    assert result["scan_complete"] is False, (
+        "git diff 失败时 scan_complete 必须为 False"
+    )
+    assert result["passed"] is False, (
+        "git diff 失败时 passed 必须为 False（不能 fail-open）"
+    )
+    assert any("git diff" in err for err in result["run_errors"]), (
+        f"run_errors 应包含 git diff 错误，实际: {result['run_errors']}"
+    )
+
+
+def test_p1_1_semgrep_success_false_blocks_pr():
+    """P1-1 路径 2：scan_semgrep_incremental 返回 success=False 不能 fail-open。
+
+    旧实现只 try-except 异常，不检查返回值。
+    scan_semgrep_incremental 用 {success: false, error: ...} 表示扫描失败，
+    旧代码不检查 → run_errors 为空 → scan_complete=True → fail-open。
+    修复后显式检查返回值的 success 字段。
+    """
+    db = _make_db_with_methods(
+        scan_semgrep_incremental=MagicMock(
+            return_value={"success": False, "error": "semgrep CLI crashed"}
+        )
+    )
+    # mock incremental.get_changed_files 返回非空列表（进入 semgrep 扫描路径）
+    checker = _make_checker_with_changed_files(db, ["src/main.py"])
+    result = checker.run_pr_check(base_branch="main", head="HEAD")
+
+    # semgrep success=false → run_errors 非空 → scan_complete=False → passed=False
+    assert result["scan_complete"] is False, (
+        "semgrep success=false 时 scan_complete 必须为 False"
+    )
+    assert result["passed"] is False, (
+        "semgrep success=false 时 passed 必须为 False（不能 fail-open）"
+    )
+    assert any("success=false" in err for err in result["run_errors"]), (
+        f"run_errors 应包含 success=false 错误，实际: {result['run_errors']}"
+    )
+
+
+def test_p1_1_sql_failure_blocks_pr():
+    """P1-1 路径 3：_query_open_findings SQL 异常不能静默 pass。
+
+    旧实现 guardrail/semgrep 两个 SQL 异常都静默 pass，
+    查询损坏变成零 finding → scan_complete=True → fail-open。
+    修复后捕获异常记录到 _findings_query_errors，run_pr_check 合并到 run_errors。
+    """
+    import sqlite3
+    db = _make_db_with_methods()
+    # 构造一个故意损坏的 conn：表名不存在
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    # 不创建任何表 → SQL 查询会抛 OperationalError
+    db.conn = conn
+
+    checker = _make_checker_with_changed_files(db, ["src/main.py"])
+    result = checker.run_pr_check(base_branch="main", head="HEAD")
+
+    # SQL 失败 → run_errors 非空 → scan_complete=False → passed=False
+    assert result["scan_complete"] is False, (
+        "SQL 查询失败时 scan_complete 必须为 False"
+    )
+    assert result["passed"] is False, (
+        "SQL 查询失败时 passed 必须为 False（不能 fail-open）"
+    )
+    assert any("查询失败" in err for err in result["run_errors"]), (
+        f"run_errors 应包含查询失败错误，实际: {result['run_errors']}"
+    )
+
+
+def test_p1_1_workspace_id_filter_prevents_cross_workspace_leak():
+    """P1-1 路径 4：Semgrep SQL 添加 workspace_id 过滤防止跨 workspace 混入。
+
+    旧实现 semgrep_findings JOIN file_instances 只按 rel_path 过滤，
+    无 workspace_id 条件，可能把另一个 workspace 同路径的 finding 混入。
+    修复后添加 fi.workspace_id = ? 条件。
+    """
+    import sqlite3
+    db = _make_db_with_methods()
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE guardrail_findings (
+            id INTEGER PRIMARY KEY, rule_id TEXT, file_path TEXT,
+            severity TEXT, status TEXT, message TEXT, detected_at REAL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE file_instances (
+            id INTEGER PRIMARY KEY, workspace_id INTEGER,
+            rel_path TEXT, abs_path TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE semgrep_findings (
+            id INTEGER PRIMARY KEY, file_instance_id INTEGER, content_hash TEXT,
+            rule_id TEXT, rule_name TEXT, message TEXT, severity TEXT,
+            confidence TEXT, language TEXT, start_line INTEGER, end_line INTEGER,
+            snippet TEXT, fix TEXT, symbol_id INTEGER, symbol_qualified TEXT,
+            scanned_at REAL, scan_id INTEGER
+        )
+    """)
+
+    # workspace_id=1 和 workspace_id=2 都有 src/main.py
+    conn.execute(
+        "INSERT INTO file_instances (id, workspace_id, rel_path, abs_path) "
+        "VALUES (1, 1, 'src/main.py', '/abs1/src/main.py')"
+    )
+    conn.execute(
+        "INSERT INTO file_instances (id, workspace_id, rel_path, abs_path) "
+        "VALUES (2, 2, 'src/main.py', '/abs2/src/main.py')"
+    )
+    # workspace_id=2 的 finding（不应被 workspace_id=1 的 PR 查到）
+    conn.execute(
+        "INSERT INTO semgrep_findings (id, file_instance_id, rule_id, severity, message, scanned_at) "
+        "VALUES (100, 2, 'S-OTHER', 'error', 'other workspace finding', 3000.0)"
+    )
+    conn.commit()
+    db.conn = conn
+    # mock _get_active_workspace_id 返回 1
+    db._get_active_workspace_id = MagicMock(return_value=1)
+
+    checker = PRChecker(db)
+    findings = checker._query_open_findings(["src/main.py"])
+
+    # workspace_id=2 的 finding 不应被查到
+    assert len(findings) == 0, (
+        f"workspace_id=1 的 PR 不应查到 workspace_id=2 的 finding，"
+        f"实际查到: {len(findings)} 条"
+    )

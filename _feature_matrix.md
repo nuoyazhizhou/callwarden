@@ -124,9 +124,9 @@
 | A16 | .callwardenignore 项目级规则 | IS | ✅ 已实现 | |
 | A17 | GC 归档/复活/状态/清除 | IS/CL | ✅ 已实现 | db_gc.py |
 | A18 | build 末尾自动 Young GC | IS | ✅ 已实现 | |
-| A19 | SARIF 导出 + GitHub Actions | IS/CL | 🟡 复审回退（2026-07-21） | cicd/ SARIF exporter + GitHub Action 入口存在。二轮评审修复：PRChecker 改用 `check_before_edit` + `run_errors` 收集 + SARIF `executionNotifications` 让 fail-visible。**复审回退（2026-07-21）**：`cicd/pr_check.py:142` `passed = errors == 0` 未纳入 `run_errors`/`scan_complete`，`_query_open_findings` 只查 `guardrail_findings` 未合并 `semgrep_findings`，GitHub Action 只读 `passed` 仍 exit 0。fail-open 未真正闭合 |
+| A19 | SARIF 导出 + GitHub Actions | IS/CL | ✅ 已修复（2026-07-22 P1-1） | cicd/ SARIF exporter + GitHub Action 入口存在。**P1-1 整改（2026-07-22）**：闭合三条 fail-open 路径——git diff 失败、semgrep success=false、SQL 查询异常均不再静默，全部记录到 `run_errors` 让 `scan_complete=False`→`passed=False`→GitHub Action exit 1。详见 A21。 |
 | A20 | 增量分析（CI/CD） | IS | ✅ 已实现 | incremental.py |
-| A21 | PR 检查 | IS | 🟡 复审回退（2026-07-21） | pr_check.py。二轮评审修复：原调用不存在的 `guardrail_check_edit` 且吞异常（fail-open），改为 `check_before_edit` + 异常上浮 + Semgrep findings 合并进 SARIF。**复审回退（2026-07-21）**：`passed` 仍为 `errors == 0`，未纳入 `run_errors`/`scan_complete`，Semgrep findings 未合并为阻断结果，`cicd/github_action.py` 仍 exit 0。fail-open 未真正闭合 |
+| A21 | PR 检查 | IS | ✅ 已修复（2026-07-22 P1-1） | pr_check.py。**P1-1 整改（2026-07-22）**：闭合三条 fail-open 路径：(1) `get_changed_files()` git diff 失败时改抛 `GitDiffError`（原返回空列表被误判为"无改动"）；(2) `scan_semgrep_incremental` 返回 `{success: false}` 时显式检查并记录到 `run_errors`（原只 try-except 异常）；(3) `_query_open_findings` SQL 异常不再静默 `pass`，记录到 `_findings_query_errors` 并合并到 `run_errors`（原静默 pass 导致零 finding → fail-open）。**额外修复**：Semgrep SQL 添加 `fi.workspace_id = ?` 过滤，防止跨 workspace 同路径 finding 混入。新增 4 个测试（`test_p1_1_git_diff_failure_blocks_pr`/`test_p1_1_semgrep_success_false_blocks_pr`/`test_p1_1_sql_failure_blocks_pr`/`test_p1_1_workspace_id_filter_prevents_cross_workspace_leak`），共 16 测试全部通过。 |
 | A22 | 安全修复 SEC-001~007 | IS/CL | ✅ 已实现 | 原子写入/LSP安全/日志消毒 |
 | A23 | 文件级并行解析（ThreadPoolExecutor） | IS/CL | 🟡 部分完成（评审 2026-07-20） | 文件级并行存在，但主路径现为 Rust pool/ProcessPool，ThreadPool 主要是降级；矩阵描述已过时，应更新为 "Rust pool + ProcessPool + ThreadPool 降级" |
 | A24 | PRAGMA WAL + cache + mmap | IS/CL | ✅ 已实现 | |
