@@ -1169,14 +1169,16 @@ impl DaemonStateExt for WorkspaceDaemonState {
         .map_err(|e| DaemonRpcError::new("refresh_failed", e.message))?;
 
         // 构造响应：status + generation + cas_result（若有）
+        // 注意：此处用 borrow（&result.cas_result）而非 move，因为下方
+        // P0-2 子问题1 merge 仍需读取 result.cas_result 中的 cas_key / content_hash。
         let mut response = Map::new();
         response.insert("status".to_string(), Value::String(result.status.clone()));
         response.insert(
             "generation".to_string(),
             Value::String(result.generation.clone()),
         );
-        if let Some(cas_result) = result.cas_result {
-            response.insert("cas_result".to_string(), cas_result);
+        if let Some(cas_result) = &result.cas_result {
+            response.insert("cas_result".to_string(), cas_result.clone());
         }
 
         // committed 时追加 staging entry 并触发 replicate（与 Python L404-420 一致）
@@ -1363,6 +1365,136 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     } else {
                         String::new()
                     };
+
+                    // P0-2 子问题1 修复（2026-07-22）：CAS → CodeGraph merge（方案 3 实现）
+                    // 规范：复审报告 §3 P0-2 子问题1
+                    // 把 CAS DB 中的解析结果（cas_symbols/cas_raw_calls）merge 到
+                    // CodeGraph DB 主表（file_instances/symbols/calls），确保
+                    // publish_snapshot 通过 build_and_publish_blocking 重载时读到新数据。
+                    // merge 失败不阻塞 replicate（与 Python 降级策略一致）。
+                    let mut merge_summary: Option<Value> = None;
+                    if !db_path.is_empty() {
+                        if let Some(ref cas_result) = result.cas_result {
+                            let cas_state = cas_result
+                                .get("cas_state")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            if cas_state == "ready_published"
+                                || cas_state == "ready_cache_hit"
+                            {
+                                let cas_key = cas_result
+                                    .get("cas_key")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let merge_content_hash = cas_result
+                                    .get("content_hash")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let merge_language =
+                                    get_str_param_or(params, "language", "");
+                                // 构造 abs_path：优先 params.abs_path，
+                                // 否则 host_real_root + rel_path 拼接
+                                let abs_path_for_merge = get_str_param(params, "abs_path")
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| s.to_string())
+                                    .or_else(|| {
+                                        workspace
+                                            .get("host_real_root")
+                                            .and_then(|v| v.as_str())
+                                            .filter(|root| !root.is_empty())
+                                            .map(|root| {
+                                                Path::new(root)
+                                                    .join(&rel_path)
+                                                    .to_string_lossy()
+                                                    .into_owned()
+                                            })
+                                    })
+                                    .unwrap_or_else(|| rel_path.clone());
+                                let workspace_root_path = workspace
+                                    .get("host_real_root")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+
+                                if !cas_key.is_empty() {
+                                    // CAS DB 连接（只读）
+                                    let cas_conn_guard =
+                                        resources.cas_store.conn().lock().unwrap();
+                                    // CodeGraph DB 连接（写）
+                                    match rusqlite::Connection::open(&db_path) {
+                                        Ok(cg_conn) => {
+                                            match crate::daemon::cas_merge::merge_cas_to_codegraph(
+                                                &cas_conn_guard,
+                                                &cg_conn,
+                                                cas_key,
+                                                workspace_id_num,
+                                                &rel_path,
+                                                &abs_path_for_merge,
+                                                merge_content_hash,
+                                                &merge_language,
+                                                &workspace_root_path,
+                                            ) {
+                                                Ok(mr) => {
+                                                    let mut m = Map::new();
+                                                    m.insert(
+                        "status".to_string(),
+                        Value::String(mr.merge_status.clone()),
+                                                    );
+                                                    m.insert(
+                        "symbols_inserted".to_string(),
+                        Value::Number(mr.symbols_inserted.into()),
+                                                    );
+                                                    m.insert(
+                        "calls_inserted".to_string(),
+                        Value::Number(mr.calls_inserted.into()),
+                                                    );
+                                                    m.insert(
+                        "file_instance_id".to_string(),
+                        Value::Number(mr.file_instance_id.into()),
+                                                    );
+                                                    merge_summary = Some(Value::Object(m));
+                                                }
+                                                Err(e) => {
+                                                    // merge 失败：记录 warning 但不阻塞 replicate
+                                                    eprintln!(
+                                                        "[P0-2] cas_merge failed for {}: {}",
+                                                        rel_path, e
+                                                    );
+                                                    let mut m = Map::new();
+                                                    m.insert(
+                        "status".to_string(),
+                        Value::String("error".to_string()),
+                                                    );
+                                                    m.insert(
+                        "error".to_string(),
+                        Value::String(e),
+                                                    );
+                                                    merge_summary = Some(Value::Object(m));
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[P0-2] open CodeGraph DB failed for {}: {}",
+                                                db_path, e
+                                            );
+                                            let mut m = Map::new();
+                                            m.insert(
+                                                "status".to_string(),
+                                                Value::String("open_failed".to_string()),
+                                            );
+                                            m.insert(
+                                                "error".to_string(),
+                                                Value::String(format!("{}", e)),
+                                            );
+                                            merge_summary = Some(Value::Object(m));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     let replicator = Replicator::new(&resources.staging_log);
                     // 注入 publisher（若配置齐全）
                     let replicator = if !db_path.is_empty() {
@@ -1426,6 +1558,10 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     }
                     if let Some(err) = repl_result.error {
                         repl_map.insert("error".to_string(), Value::String(err));
+                    }
+                    // P0-2 子问题1：把 merge 摘要附到 replication 响应
+                    if let Some(ms) = merge_summary {
+                        repl_map.insert("cas_merge".to_string(), ms);
                     }
                     response.insert("replication".to_string(), Value::Object(repl_map));
                 }

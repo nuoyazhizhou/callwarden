@@ -32,6 +32,11 @@ pub mod staging_log;
 ///     get_pending_count）+ SnapshotPublisher trait（R6 扩展点）
 pub mod replicator;
 
+/// CAS → CodeGraph DB merge（P0-2 子问题1 修复，2026-07-22）
+/// 把 CAS DB 中的解析结果（cas_symbols/cas_raw_calls）merge 到 CodeGraph DB
+/// 主表（file_instances/symbols/calls），对应 Python db_cas_merge.py
+pub mod cas_merge;
+
 #[cfg(unix)]
 pub mod server;
 #[cfg(unix)]
