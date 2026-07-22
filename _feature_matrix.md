@@ -359,7 +359,7 @@
 | I35 | ✅ 已修复（2026-07-20 二轮评审 + 批次4 接入） | L1/L2/L7/L10/L16 任务门禁/工具：L1 从 "⚠️ 软门禁" 改为 "🟡 部分完成"（软门禁设计）；L2 从 "✅ 已实现" 改为 "❌ 声明不成立"（标题 checkout/reset --hard，代码只记录 force push）；L7 在批次4 已接入 daemon 主路径（cw-metrics-sample 后台线程 + Windows Psapi fallback 迁入 metrics.py），从 "🟡" 改为 "✅"；L10/L16 从 "✅ 设计方向已文档化" 改为 "📄 设计方向"（非已完成功能） | _feature_matrix.md L1/L2/L7/L10/L16 |
 | I36 | ✅ 已修复（2026-07-20 二轮评审 + 批次4 接入 + 批次5 文档对齐） | M4/M5/M6/M8/M10 Rust 扩展接线：二轮评审时 5 项从 "✅ 已实现" 改为 "🟡 部分完成"。批次4 已接入 M4/M5/M6/M8（workspace.rs committed 路径填充 StagingEntry.parse_delta/frontier/metrics_update；watcher.rs 扩展 Renamed 双路径 + server/watcher.py 切换主路径为 PyDebouncedFileWatcher），从 "🟡" 改为 "✅ 已接入"；批次5 文档对齐：M10 状态从 "🟡 部分完成" 改为 "✅ 已实施"，描述对齐为"同 crate 同时产出 binary + cdylib/rlib"。 | _feature_matrix.md M4/M5/M6/M8/M10 |
 | I37 | ✅ 已修复（2026-07-20 二轮评审 + 批次5 文档对齐） | N3-N8 跨平台打包：二轮评审时 N3/N5/N6/N7/N8 从 "✅ 已实现" 改为 "❌ 声明不成立"；N4 改为 "🟡 部分完成"。批次5 文档对齐：N3 状态改为 "🟡 部分完成"（P0-3 已修复 wheel 含 Rust 扩展）；N8 状态改为 "🟡 部分完成"（P0-3 已修复 version key/parser 调用）；N5/N6/N7 保留 ❌ 状态，描述补充"未实施（批次5 文档对齐）"。 | _feature_matrix.md N3-N8 |
-| I38 | ✅ 已修复（2026-07-20 二轮评审） | 矩阵顶部"实际基线数据"更新：Mixin 模块数 23→"33 个 Mixin 类（39 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin）"；M/N 章节标题反映实际状态（N 章节标题改为"脚本骨架存在/产物未落地"） | _feature_matrix.md 顶部 + N 章节标题 |
+| I38 | ✅ 已修复（2026-07-20 二轮评审） | 矩阵顶部"实际基线数据"更新：Mixin 模块数 23→35 个 Mixin 类（40 个 db_*.py 文件，CodeGraphDB 组合 35 个 Mixin）；M/N 章节标题反映实际状态（N 章节标题改为"脚本骨架存在/产物未落地"） | _feature_matrix.md 顶部 + N 章节标题 |
 
 ## J. 灰色地带验证结果（已全部确认）
 

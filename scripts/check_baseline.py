@@ -155,8 +155,12 @@ _BASELINE_PATTERNS = {
         "expected_value_name": "功能 Mixin 数",
     },
     "db_files": {
-        # 捕获 "N 个 db_*.py"
+        # 正向：捕获 "N 个 db_*.py"
         "scan_pattern": r"(?<!\w)(\d{1,2})\s*个\s*db_\*\.py",
+        # 反向：捕获 "db_*.py`（N 个文件）" / "db_*.py（N 个文件）" / "db_*.py (N files)"
+        # P1-5 修复：原扫描器只匹配 "N 个 db_*.py" 正向格式，抓不到 "db_*.py`（N 个文件）"
+        # 这种数字在 db_*.py 之后的格式（如 architecture.md L49）
+        "reverse_pattern": r"db_\*\.py[`'\s\（\(]+(\d+)\s*个?\s*(?:文件|files?)",
         "expected_value_name": "db_*.py 文件数",
     },
     "schema_version": {
@@ -200,14 +204,16 @@ def scan_document_consistency(baseline: Dict, doc_paths: List[Path]) -> List[Dic
         "docs/design/enterprise-phase1-phase3-detail.md",   # 历史设计文档
         "docs/design/feature-matrix-code-audit-2026-07-20.md",    # 历史审计报告
         "docs/design/feature-matrix-code-reaudit-2026-07-21.md",   # 历史复审报告
+        "docs/design/feature-matrix-remediation-reaudit-2026-07-22.md",   # 历史复审报告（引用旧数字作为证据）
         "callwarden 与 200 个仓库的交叉对比分析.md",              # 历史模块分析
     }
     # 跳过审计/复审报告中的描述性文本（这些是历史记录，记录旧错误）
     SKIP_MARKERS = (
         "复审回退", "与源码", "需统一至", "不符",
         "声称", "声称 205", "声称 33", "声称 40",
-        # 版本演化语境
-        "v3 (", "v9-", "v11-v13", "→", "新增约", "→ 9 语言", "→ 16 语言",
+        # 版本演化语境（注意：不再跳过所有含 → 的行，改为分段检查，
+        # 只跳过 → 之前的历史数字，→ 之后的当前数字仍需校验）
+        "v3 (", "v9-", "v11-v13", "新增约", "→ 9 语言", "→ 16 语言",
         # 历史快照标识
         "历史文档", "已过时", "不代表当前",
         # 历史数据引用
@@ -215,6 +221,8 @@ def scan_document_consistency(baseline: Dict, doc_paths: List[Path]) -> List[Dic
         # 序号语境（"第 N 个 Mixin" 是序号，不是总数）
         "第 ", "Guardian 表 + ",
     )
+
+    scanned_count = 0  # P1-5 修复：实际扫描的文件数（排除跳过的目录/文件）
 
     for doc_path in doc_paths:
         # 跳过历史目录
@@ -230,32 +238,35 @@ def scan_document_consistency(baseline: Dict, doc_paths: List[Path]) -> List[Dic
         except Exception:
             continue
 
+        scanned_count += 1
+
         for line_no, line in enumerate(text.splitlines(), 1):
             # 跳过描述性文本
             if any(marker in line for marker in SKIP_MARKERS):
                 continue
-            # 跳过版本演化语境（v3/v9/v10/v11/v13 等历史版本号）
+
+            # P1-5 修复：不再因含 → 跳过整行。→ 用于两种语境：
+            # (1) 版本演化 "v3 → v9"（历史，应跳过）
+            # (2) 计数变更 "23→35"（→ 之前是历史，→ 之后是当前，应检查）
+            # 处理方式：在 → 处分段，只检查最后一段（当前值），跳过历史段。
+            # 仍跳过明确的版本演化行（vN → 模式）。
             if re.search(r"\bv[0-9]+(?:\s*\(|\s*→)", line):
                 continue
 
-            for key, spec in _BASELINE_PATTERNS.items():
-                expected = baseline[key]
-                # 正向扫描："N MCP" / "N 个 Mixin" / "Schema vN" 等
-                for match in re.finditer(spec["scan_pattern"], line):
-                    found = int(match.group(1))
-                    if found != expected:
-                        inconsistencies.append({
-                            "file": rel_path,
-                            "line_no": line_no,
-                            "line": line.strip(),
-                            "expected": expected,
-                            "found": found,
-                            "key": key,
-                            "expected_name": spec["expected_value_name"],
-                        })
-                # 反向扫描："工具数：N" / "vN Schema" 等
-                if "reverse_pattern" in spec:
-                    for match in re.finditer(spec["reverse_pattern"], line):
+            # 在 → 处分段，只检查最后一段（→ 之后的当前值）
+            # 例如 "Mixin 模块数 23→35 个 Mixin 类" → 只检查 "35 个 Mixin 类"
+            segments = line.split("→")
+            scan_segments = [segments[-1]] if len(segments) > 1 else [line]
+            # 合并非首段（如果一行有多个 →，所有 → 之后的都检查）
+            # 但首段如果是纯历史数字（如 "23"），不检查
+            if len(segments) > 1:
+                scan_segments = segments[1:]  # 跳过第一段（→ 之前的历史段）
+
+            for segment in scan_segments:
+                for key, spec in _BASELINE_PATTERNS.items():
+                    expected = baseline[key]
+                    # 正向扫描："N MCP" / "N 个 Mixin" / "Schema vN" 等
+                    for match in re.finditer(spec["scan_pattern"], segment):
                         found = int(match.group(1))
                         if found != expected:
                             inconsistencies.append({
@@ -267,8 +278,22 @@ def scan_document_consistency(baseline: Dict, doc_paths: List[Path]) -> List[Dic
                                 "key": key,
                                 "expected_name": spec["expected_value_name"],
                             })
+                    # 反向扫描："工具数：N" / "vN Schema" / "db_*.py`（N 个文件）" 等
+                    if "reverse_pattern" in spec:
+                        for match in re.finditer(spec["reverse_pattern"], segment):
+                            found = int(match.group(1))
+                            if found != expected:
+                                inconsistencies.append({
+                                    "file": rel_path,
+                                    "line_no": line_no,
+                                    "line": line.strip(),
+                                    "expected": expected,
+                                    "found": found,
+                                    "key": key,
+                                    "expected_name": spec["expected_value_name"],
+                                })
 
-    return inconsistencies
+    return inconsistencies, scanned_count
 
 
 def main() -> int:
@@ -285,7 +310,10 @@ def main() -> int:
             doc_paths = list(PROJECT_ROOT.glob("*.md"))
             doc_paths.extend(PROJECT_ROOT.glob("docs/**/*.md"))
             doc_paths.extend(PROJECT_ROOT.glob("tests/**/*.md"))
-            output["inconsistencies"] = scan_document_consistency(baseline, doc_paths)
+            inconsistencies, scanned = scan_document_consistency(baseline, doc_paths)
+            output["inconsistencies"] = inconsistencies
+            output["scanned_files"] = scanned
+            output["total_files"] = len(doc_paths)
         print(json.dumps(output, ensure_ascii=False, indent=2))
         return 0
 
@@ -306,12 +334,12 @@ def main() -> int:
         doc_paths.extend(PROJECT_ROOT.glob("docs/**/*.md"))
         doc_paths.extend(PROJECT_ROOT.glob("tests/**/*.md"))
 
-        inconsistencies = scan_document_consistency(baseline, doc_paths)
+        inconsistencies, scanned = scan_document_consistency(baseline, doc_paths)
         if not inconsistencies:
-            print(f"OK 全部 {len(doc_paths)} 个 .md 文档与基线一致")
+            print(f"OK 全部 {scanned} 个 .md 文档与基线一致（传入 {len(doc_paths)} 个，跳过 {len(doc_paths) - scanned} 个历史/审计文档）")
             return 0
 
-        print(f"FAIL 发现 {len(inconsistencies)} 处不一致：")
+        print(f"FAIL 发现 {len(inconsistencies)} 处不一致（扫描 {scanned}/{len(doc_paths)} 个文档）：")
         for item in inconsistencies:
             print(f"  [{item['file']}:{item['line_no']}]")
             print(f"    期望 {item['expected_name']}={item['expected']}，实际 {item['found']}")
