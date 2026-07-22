@@ -294,10 +294,16 @@ EOF
 
 # 对 Rust 扩展和入口脚本签名（hardened runtime + entitlements）
 # 先签依赖对象（.so），再签可执行入口。
+# P0-3.1 修复（2026-07-22）：PyInstaller --onedir 模式下实际产物在 runtime/<cmd>/
+#   - 主二进制：runtime/cw/cw、runtime/cw-client/cw-client
+#   - Rust 扩展：runtime/cw/_internal/callwarden_core.so、runtime/cw-client/_internal/callwarden_core.so
+#   - bin/cw 和 bin/cw-client 是 symlink，codesign 签 symlink 无效，应签 target
+# 旧路径 lib/callwarden_core.so 和 bin/cw 在 onedir 模式下不存在，codesign 会失败
 SIGN_TARGETS=(
-    "$PKG_ROOT/$INSTALL_DIR/lib/callwarden_core.so"
-    "$PKG_ROOT/$INSTALL_DIR/bin/cw"
-    "$PKG_ROOT/$INSTALL_DIR/bin/cw-client"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/cw/_internal/callwarden_core.so"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/cw/cw"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/_internal/callwarden_core.so"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/cw-client"
 )
 
 # P0-3 修复（问题 8）：支持 CW_BUILD_UNSIGNED 显式跳过签名（与 workflow 对齐）

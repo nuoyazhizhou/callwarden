@@ -100,8 +100,11 @@
         <Directory Id="INSTALLFOLDER" Name="CallWarden">
           <Directory Id="BinFolder" Name="bin">
             <!-- P0-3：PyInstaller onedir 产物的 _internal 子目录（Python 解释器+依赖+Rust 扩展） -->
-            <!-- heat harvest 把 _internal/ 中的文件安装到此目录，cw.exe/cw-client.exe 运行时共享 -->
+            <!-- heat harvest 把 _internal/ 中的文件安装到此目录，cw.exe 运行时加载 -->
             <Directory Id="InternalFolder" Name="_internal" />
+            <!-- P0-3.2 修复（2026-07-22）：cw-client.exe 也需要自己的 _internal 目录 -->
+            <!-- PyInstaller onedir 模式下每个入口有独立 _internal，不能共享 cw 的 -->
+            <Directory Id="ClientInternalFolder" Name="cw-client_internal" />
           </Directory>
           <Directory Id="LibFolder" Name="lib" />
           <Directory Id="ConfigFolder" Name="config" />
@@ -133,10 +136,14 @@
 
     <!-- Client 角色组件：cw-client.exe + _internal/ -->
     <!-- ClientBuildOutputDir 指向 release/dist/windows/cw-client/ 目录 -->
+    <!-- P0-3.2 修复（2026-07-22）：cw-client.exe 需要自己的 _internal 目录 -->
     <ComponentGroup Id="ClientComponents" Directory="BinFolder">
       <Component Id="CwClientExe" Guid="*">
         <File Id="cw-client.exe" Source="$(var.ClientBuildOutputDir)\cw-client.exe" KeyPath="yes" />
       </Component>
+      <!-- PyInstaller cw-client/_internal/ 目录中的所有文件 -->
+      <!-- WiX heat harvest 自动收集 cw-client/_internal/ 目录，生成 PyInstallerClientInternal ComponentGroup -->
+      <ComponentGroupRef Id="PyInstallerClientInternal" />
     </ComponentGroup>
 
     <!-- Shortcuts -->
