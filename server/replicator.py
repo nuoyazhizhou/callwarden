@@ -220,11 +220,20 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
                 (workspace_id, rel_path, incoming_session, incoming_epoch,
                  incoming_seq, incoming_gen)
             )
-        elif incoming_seq <= row["latest_seq"]:
-            # 同 epoch 内 stale seq——直接丢弃，不报错
+        elif incoming_seq < row["latest_seq"]:
+            # 严格小于——stale seq 直接丢弃，不报错
+            ws_conn.execute("ROLLBACK")
+            return {"status": "stale_seq_dropped"}
+        elif (incoming_seq == row["latest_seq"]
+              and row["latest_committed_generation"] == incoming_gen):
+            # 同 seq 且已 committed——幂等返回，避免重复 merge
             ws_conn.execute("ROLLBACK")
             return {"status": "stale_seq_dropped"}
         else:
+            # P0-2 整改（2026-07-22）：同 seq 但 latest_committed_generation 为空
+            # （上次 seen 后 step 5 merge 失败）→ 允许重新处理。
+            # 旧逻辑 `incoming_seq <= row["latest_seq"]` 会把这种重试判 stale 丢弃，
+            # 导致事件永久无法恢复。新逻辑只在已 committed 时才幂等丢弃。
             ws_conn.execute(
                 "UPDATE file_generations SET latest_session_id = ?, "
                 "latest_session_epoch = ?, latest_seq = ?, latest_seen_generation = ? "
@@ -250,29 +259,6 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
         cas_conn=cas_conn,
         workspace_id=workspace_id,
     )
-
-    # 4. CAS 第二阶段（committed）——条件更新 latest_committed_generation
-    ws_conn.execute("BEGIN IMMEDIATE")
-    try:
-        gen_cur = ws_conn.execute(
-            "UPDATE file_generations SET latest_committed_generation = ? "
-            "WHERE workspace_id = ? AND rel_path = ? "
-            "AND latest_seen_generation = ?",
-            (incoming_gen, workspace_id, rel_path, incoming_gen)
-        )
-        if gen_cur.rowcount != 1:
-            ws_conn.execute("ROLLBACK")
-            raise ProtocolError(
-                f"stale manifest commit for {rel_path}",
-                code="stale_manifest_commit",
-            )
-        ws_conn.execute("COMMIT")
-    except Exception:
-        try:
-            ws_conn.execute("ROLLBACK")
-        except Exception:
-            pass
-        raise
 
     # 5. P0-1 整改（2026-07-21）：CAS → CodeGraph DB merge + workspace_manifests 接入
     # 复审报告 §3 P0-1 / §8.1 第 1 条：建立真实 save-to-query 数据链。
@@ -389,6 +375,31 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
                 f"upsert_manifest failed: {e}",
                 code="manifest_upsert_failed",
             )
+
+    # 4. CAS 第二阶段（committed）——条件更新 latest_committed_generation
+    # P0-2 整改（2026-07-22）：移到 merge/manifest 之后，避免后半段失败后
+    # latest_committed_generation 已提交但 merge 未完成，同一 seq 重试被判 stale 丢弃
+    ws_conn.execute("BEGIN IMMEDIATE")
+    try:
+        gen_cur = ws_conn.execute(
+            "UPDATE file_generations SET latest_committed_generation = ? "
+            "WHERE workspace_id = ? AND rel_path = ? "
+            "AND latest_seen_generation = ?",
+            (incoming_gen, workspace_id, rel_path, incoming_gen)
+        )
+        if gen_cur.rowcount != 1:
+            ws_conn.execute("ROLLBACK")
+            raise ProtocolError(
+                f"stale manifest commit for {rel_path}",
+                code="stale_manifest_commit",
+            )
+        ws_conn.execute("COMMIT")
+    except Exception:
+        try:
+            ws_conn.execute("ROLLBACK")
+        except Exception:
+            pass
+        raise
 
     result = {"status": "committed", "generation": incoming_gen}
     if cas_result:

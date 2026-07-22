@@ -566,10 +566,128 @@ class TestStep3DaemonHandleRefreshIntegration:
                     workspace_root_path=str(tmp_path),
                 )
 
-            # 验证：file_generations 中 latest_committed_generation 已写入
-            # （CAS 第二阶段已成功），但 staging entry 不应被追加
-            # （上层 daemon_server.py 会捕获异常，不追加 staging entry）
-            # 此处只验证异常确实被抛出，证明上层不会标 applied
+            # P0-2 整改（2026-07-22）：step 4（committed_generation）移到 step 5（merge）之后，
+            # merge 失败时 latest_committed_generation 不应被提交。
+            # 旧顺序（step 4 先于 step 5）下 merge 失败后 committed_generation 已写入，
+            # 重试同一 seq 会判 stale 丢弃。新顺序下可安全重试。
+            row = ws_conn.execute(
+                "SELECT latest_committed_generation FROM file_generations "
+                "WHERE workspace_id = ? AND rel_path = ?",
+                (workspace_id, "m.py"),
+            ).fetchone()
+            assert row is not None, "file_generations 应有记录（step 2 seen 已执行）"
+            assert row["latest_committed_generation"] == "", (
+                "merge 失败后 latest_committed_generation 不应被提交（P0-2 顺序调整）"
+            )
+        finally:
+            db_cas_merge.merge_cas_to_codegraph = original_merge
+            sys.modules.pop("callwarden_core", None)
+            ws_conn.close()
+            cas_conn.close()
+
+    def test_retry_after_merge_failure_not_stale(self, tmp_path):
+        """P0-2 整改（2026-07-22）：merge 失败后重试同一 seq 不判 stale。
+
+        旧顺序（step 4 先于 step 5）下 merge 失败后 latest_committed_generation
+        已写入，重试时 incoming_seq <= latest_seq 判 stale 丢弃。
+        新顺序（step 4 后于 step 5）下 merge 失败后 latest_committed_generation
+        未提交，重试可成功完成。
+        """
+        workspace_id = 201
+        cas_key = "retry_cas_v1"
+        content_hash = "retry_hash_v1"
+        symbols = [
+            {"name": "fn", "qname": "m.fn", "kind": "function",
+             "hash": "fn_hash", "start_line": 1, "end_line": 2},
+        ]
+
+        ws_conn = self._make_ws_conn(workspace_id)
+        cas_conn = self._make_cas_db_with_content(
+            cas_key, content_hash, symbols, []
+        )
+        canonical_bytes = b"# test\ndef fn():\n    pass\n"
+
+        # Mock callwarden_core（canonicalize + parse）
+        import sys
+        mock_module = type(sys)("callwarden_core_retry")
+        mock_module.canonicalize_source_py = lambda abs_path: {
+            "canonical_bytes": canonical_bytes,
+            "content_hash": content_hash,
+        }
+        mock_module.parse_canonical_bytes_py = lambda b, m, l, h: {
+            "symbols": [{"name": "fn", "qualified_name": "m.fn",
+                         "kind": "function", "start_line": 1, "end_line": 2,
+                         "start_col": 0, "end_col": 0, "start_byte": 0, "end_byte": 0,
+                         "visibility": "private", "signature": "",
+                         "has_comment": False, "depth": -1,
+                         "symbol_hash": "fn_hash"}],
+            "raw_calls": [], "module_path": "m", "content_hash": h,
+        }
+        sys.modules["callwarden_core"] = mock_module
+
+        # 初始化 CodeGraph DB schema
+        from callwarden.db.schema import SCHEMA_SQL as _SCHEMA_SQL
+        cg_db_path = str(tmp_path / "retry_cg.db")
+        cg_init_conn = sqlite3.connect(cg_db_path)
+        cg_init_conn.executescript(_SCHEMA_SQL)
+        cg_init_conn.commit()
+        cg_init_conn.close()
+
+        # 第一次：mock merge 失败
+        from callwarden.db import db_cas_merge
+        original_merge = db_cas_merge.merge_cas_to_codegraph
+        db_cas_merge.merge_cas_to_codegraph = lambda **kwargs: (_ for _ in ()).throw(
+            Exception("simulated merge failure (attempt 1)")
+        )
+
+        msg = {
+            "rel_path": "m.py",
+            "agent_session_id": "test-session",
+            "monotonic_seq": 1,
+            "session_epoch": 1,
+            "abs_path": str(tmp_path / "m.py"),
+        }
+
+        try:
+            # 第一次：merge 失败，异常抛出
+            with pytest.raises(Exception, match="simulated merge failure"):
+                daemon_handle_refresh(
+                    peer_uid=1000,
+                    workspace_id=workspace_id,
+                    msg=msg,
+                    ws_conn=ws_conn,
+                    cas_conn=cas_conn,
+                    canonical_bytes=canonical_bytes,
+                    codegraph_db_path=cg_db_path,
+                    workspace_root_path=str(tmp_path),
+                )
+
+            # 验证 latest_committed_generation 未提交
+            row = ws_conn.execute(
+                "SELECT latest_committed_generation FROM file_generations "
+                "WHERE workspace_id = ? AND rel_path = ?",
+                (workspace_id, "m.py"),
+            ).fetchone()
+            assert row is not None
+            assert row["latest_committed_generation"] == ""
+
+            # 恢复 merge 函数
+            db_cas_merge.merge_cas_to_codegraph = original_merge
+
+            # 第二次：同一 seq 重试，应成功（不判 stale）
+            result = daemon_handle_refresh(
+                peer_uid=1000,
+                workspace_id=workspace_id,
+                msg=msg,
+                ws_conn=ws_conn,
+                cas_conn=cas_conn,
+                canonical_bytes=canonical_bytes,
+                codegraph_db_path=cg_db_path,
+                workspace_root_path=str(tmp_path),
+            )
+            assert result["status"] == "committed", (
+                f"merge 失败后重试同一 seq 应成功，实际: {result}"
+            )
         finally:
             db_cas_merge.merge_cas_to_codegraph = original_merge
             sys.modules.pop("callwarden_core", None)

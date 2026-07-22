@@ -196,10 +196,16 @@ def _replace_symbols_and_calls(
     ]
 
     # 2. 删除旧 calls（通过 caller_id 关联）
+    # 2b. 入边清理——把指向旧 symbols 的 callee_id 置 0（P0-2 整改 2026-07-22）
     if old_sym_ids:
         placeholders = ",".join("?" * len(old_sym_ids))
         codegraph_conn.execute(
             f"DELETE FROM calls WHERE caller_id IN ({placeholders})",
+            old_sym_ids,
+        )
+        # 旧 symbols 即将被删除，指向它们的入边需置 0 避免悬空引用
+        codegraph_conn.execute(
+            f"UPDATE calls SET callee_id = 0 WHERE callee_id IN ({placeholders})",
             old_sym_ids,
         )
 
@@ -231,6 +237,18 @@ def _replace_symbols_and_calls(
         has_comment = int(_get("has_comment", 0))
         depth = int(_get("depth", -1))
         qualified_name = str(_get("local_qualified_name", ""))
+
+        # P0-2 整改（2026-07-22）：UPSERT symbol_contents
+        # symbols.symbol_hash 指向 symbol_contents.content_hash，
+        # 未写入 symbol_contents 会导致 JOIN 查询断链
+        if sym_hash:
+            codegraph_conn.execute(
+                "INSERT OR IGNORE INTO symbol_contents "
+                "(content_hash, name, kind, content, signature, has_comment, "
+                "comment_content, qualified_name) "
+                "VALUES (?, ?, ?, '', ?, ?, '', ?)",
+                (sym_hash, name, kind, signature, has_comment, qualified_name),
+            )
 
         cur = codegraph_conn.execute(
             "INSERT INTO symbols "
