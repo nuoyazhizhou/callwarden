@@ -18,5 +18,8 @@ Description: Call Warden - Local CLI with code knowledge graph
   - Rust extension (callwarden_core)
   - MCP stdio server
   - File watcher
-Depends: libc6 (>= 2.17), libgcc-s1
+Depends: libc6 (>= 2.17), libgcc-s1, libstdc++6
+# P0-3 整改（2026-07-22）：PyInstaller --onedir 已打包 Python 解释器 + 全部依赖，
+# 不再需要系统 python3 / python3-tree-sitter 等。仅需 C 运行时库（PyInstaller 产物
+# 动态链接 libc/libgcc/libstdc++）。
 Recommends: git

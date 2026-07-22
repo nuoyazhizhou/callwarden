@@ -105,7 +105,10 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             wheel_platform: win_amd64
           - os: macos-latest
-            rust_target: universal2-apple-darwin
+            # P0-3 整改（2026-07-22）：universal2-apple-darwin 不是有效的 rustc target，
+            # rustup 不认识。改为 aarch64-apple-darwin（Apple Silicon runner 默认）。
+            # build_pkg.sh 中会 rustup target add x86_64-apple-darwin 并用 lipo 合并为 universal2。
+            rust_target: aarch64-apple-darwin
             wheel_platform: macosx_11_0_universal2
     runs-on: ${{ matrix.os }}
     steps:
@@ -203,7 +206,10 @@ jobs:
   # ============================================================
   gate4a-windows-msi:
     name: "Gate 4a: Windows MSI"
-    needs: gate3-wheel-blackbox
+    # P0-3 修复：needs 添加 gate1-source-tests 以访问 version 输出
+    # GitHub Actions 不支持跨级 needs，gate3 needs gate2 needs gate1，
+    # 但 gate4a 无法直接读 gate1.outputs，必须显式声明
+    needs: [gate3-wheel-blackbox, gate1-source-tests]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -221,42 +227,56 @@ jobs:
           dotnet tool install --global wix
           echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
         shell: bash
-      - name: P0-3 修复（问题 7）：PyInstaller exe fail-fast 检查
-        # callwarden.wxs 引用 $(var.BuildOutputDir)\cw.exe / cw-client.exe / runtime\python.exe
-        # 这些必须由 PyInstaller 步骤产出。当前 workflow 未实现 PyInstaller 步骤，
-        # 干净 runner 上 release/dist/ 只有 wheel，wix build 会因找不到文件而失败或产出空 MSI。
-        # 修复策略：fail-closed，显式告知需要先实现 PyInstaller 步骤。
-        # 未来实现 PyInstaller 后，此检查会通过；在此之前 MSI Gate 必须失败而非误报成功。
+      - name: P0-3 整改（2026-07-22）：PyInstaller --onedir 构建
+        # 把 cw / cw-client / cw-agent 打包为自包含的 --onedir 目录，
+        # 含 Python 解释器 + 全部依赖 + Rust 扩展，安装后不依赖系统 Python。
+        # 产出到 release/dist/windows/ 供 WiX 打包 MSI。
         run: |
-          echo "Checking PyInstaller exe outputs in release/dist/..."
-          MISSING=""
-          for f in cw.exe cw-client.exe runtime/python.exe; do
-            if [ ! -f "release/dist/$f" ]; then
-              MISSING="$MISSING $f"
+          # 构建 Rust 扩展（PyInstaller spec 从项目根目录收集 callwarden_core.pyd）
+          cd rust_ext && cargo build --release
+          cp target/release/callwarden_core.dll ../callwarden_core.pyd
+          cd ..
+
+          # 创建临时 venv 安装 wheel + PyInstaller + 全部依赖
+          python -m venv build/venv
+          build/venv/Scripts/pip install --upgrade pip
+          build/venv/Scripts/pip install "release/dist/callwarden-*.whl[all]"
+          build/venv/Scripts/pip install pyinstaller
+
+          # 运行 PyInstaller（spec 文件与 Linux/macOS 共用）
+          build/venv/Scripts/pyinstaller release/pyinstaller/callwarden.spec \
+            --noconfirm --clean \
+            --distpath release/dist/windows \
+            --workpath build/pyinstaller_build
+
+          # 清理临时复制的 Rust 扩展
+          rm -f callwarden_core.pyd
+
+          # 验证产物
+          for cmd in cw cw-client cw-agent; do
+            if [ ! -f "release/dist/windows/$cmd/$cmd.exe" ]; then
+              echo "ERROR: PyInstaller 产物缺失: $cmd.exe" >&2
+              exit 1
             fi
           done
-          if [ -n "$MISSING" ]; then
-            echo "ERROR: PyInstaller outputs missing:$MISSING" >&2
-            echo "" >&2
-            echo "callwarden.wxs 引用这些 exe 作为 MSI 内容来源，" >&2
-            echo "但 workflow 当前未实现 PyInstaller 步骤。" >&2
-            echo "需要在 'Build MSI' 之前新增 PyInstaller 步骤：" >&2
-            echo "  - pip install pyinstaller" >&2
-            echo "  - 解压 wheel 到临时目录" >&2
-            echo "  - pyinstaller --onefile --name cw cw.py" >&2
-            echo "  - 复制 cw.exe / cw-client.exe / python.exe 到 release/dist/" >&2
-            echo "" >&2
-            echo "在此实现完成前，MSI Gate 必须 fail-fast（不允许 placeholder 误报成功）。" >&2
-            exit 1
-          fi
-          echo "OK: PyInstaller exe outputs present"
+          echo "OK: PyInstaller --onedir bundle built"
         shell: bash
       - name: Build MSI (x64)
         run: |
-          # WiX 构建命令（参见 release/windows/callwarden.wxs）
-          # harvest + compile + link
-          wix build release/windows/callwarden.wxs \
-            -d BuildOutputDir=release/dist \
+          # P0-3 整改：PyInstaller onedir 产物 + WiX heat harvest
+          # 1. heat 递归收集 _internal/ 目录（Python 解释器+依赖+Rust 扩展）
+          #    生成 PyInstallerInternal ComponentGroup，安装到 InternalFolder（[bin]\_internal\）
+          # 2. wix build 同时编译 callwarden.wxs + _internal.wxs
+          wix heat dir release/dist/windows/cw/_internal \
+            -o release/windows/_internal.wxs \
+            -cg PyInstallerInternal \
+            -dr InternalFolder \
+            -var var.CwInternalDir \
+            -sreg -srd -gg
+          wix build release/windows/callwarden.wxs release/windows/_internal.wxs \
+            -d BuildOutputDir=release/dist/windows/cw \
+            -d ClientBuildOutputDir=release/dist/windows/cw-client \
+            -d CwInternalDir=release/dist/windows/cw/_internal \
             -o release/dist/callwarden-${{ needs.gate1-source-tests.outputs.version }}-x64.msi
         shell: bash
       - name: Verify MSI

@@ -85,16 +85,14 @@ case "$1" in
             systemctl daemon-reload 2>/dev/null || true
         fi
 
-        # 升级路径：N-1 migration → 启动 → health/generation 验证
+        # 升级路径：schema migration → 启动 → health/generation 验证
+        # P0-3 整改（2026-07-22）：cw-daemon 不支持 migrate 子命令，
+        # schema 迁移由 ExecStartPre=/usr/bin/cw-daemon schema-check --strict 处理
+        # （systemd unit 在服务启动前自动执行 schema 兼容性检查）
         if [ -n "$OLD_VERSION" ] && [ -x /usr/bin/cw-daemon ]; then
-            echo "[callwarden-daemon] running N-1 schema migration ($OLD_VERSION -> $CW_VERSION)..."
+            echo "[callwarden-daemon] upgrade from $OLD_VERSION (schema-check in ExecStartPre)"
             # 最近的 pre-upgrade 备份用于失败回滚
             LATEST_BACKUP="$(ls -1dt "$BACKUP_DIR"/pre-upgrade-* 2>/dev/null | head -n1 || true)"
-            if ! /usr/bin/cw-daemon migrate --from "$OLD_VERSION" --to "$CW_VERSION"; then
-                echo "[callwarden-daemon] ERROR: schema migration failed" >&2
-                rollback_upgrade "$LATEST_BACKUP"
-                exit 1
-            fi
 
             # 启动服务（尊重 policy-rc.d）
             if command -v deb-systemd-invoke >/dev/null 2>&1; then

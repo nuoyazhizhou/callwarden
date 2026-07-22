@@ -16,4 +16,6 @@ Description: Call Warden - Client (cw-client + MCP proxy)
  Includes:
   - cw-client CLI
   - MCP proxy (forwards requests to daemon)
-Depends: libc6 (>= 2.17)
+Depends: libc6 (>= 2.17), libgcc-s1, libstdc++6
+# P0-3 整改（2026-07-22）：PyInstaller --onedir 已打包 Python 解释器 + 全部依赖，
+# 不再需要系统 python3。仅需 C 运行时库。

@@ -11,9 +11,9 @@
 #
 # 设计 §8: deb 优先 / RPM 等同；离线场景提供 tar.zst（含包+repo metadata+SBOM+manifest+安装脚本）
 #
-# P0-3 修复（问题 4/5/9，2026-07-21）：
-#   - cw / cw-client / cw-agent 不再期望独立 ELF 二进制（Cargo 只声明 cw-daemon），
-#     改为从已构建的 Python wheel 中提取 console_scripts（pip install 到临时 venv 后复制）。
+# P0-3 修复（问题 4/5/9，2026-07-21 → 2026-07-22 重构）：
+#   - cw / cw-client / cw-agent 改用 PyInstaller --onedir 打包为自包含二进制，
+#     含 Python 解释器 + 全部依赖 + Rust 扩展，安装后不依赖系统 Python。
 #   - cw-daemon 是 Rust binary，由 cargo build --release --bin cw-daemon 产出。
 #   - 支持 --offline-bundle-only flag 跳过 Step 1-5，仅构建 tar.zst 离线包。
 #   - 末尾复制 manifest.json 到 dist/，让 workflow upload-artifact 能匹配。
@@ -91,15 +91,13 @@ substitute() {
     sed -e "s/__VERSION__/$VERSION/g" -e "s/__ARCH__/$ARCH/g" "$src" > "$dst"
 }
 
-# P0-3 修复（问题 4）：从 Python wheel 提取 console_scripts
-# cw / cw-client / cw-agent 是 Python entry_points（pyproject.toml [project.scripts]），
-# 不是 Rust binary。原代码期望 dist/linux/cw 等独立 ELF 二进制，但 Cargo 只声明 cw-daemon。
-# 改为：pip install wheel 到临时 venv，pip 自动在 venv/bin/ 创建 console_scripts，
-# 然后复制到 deb 包 /usr/bin/。
-extract_python_console_scripts() {
-    echo "Step 0: Extracting Python console_scripts from wheel"
+# P0-3 修复（2026-07-22）：用 PyInstaller --onedir 打包自包含二进制
+# cw / cw-client / cw-agent 是 Python entry_points，改用 PyInstaller 打包为
+# 自包含的 --onedir 产物（含 Python 解释器 + 依赖 + Rust 扩展），
+# 安装后不依赖系统 Python 和 site-packages。
+build_pyinstaller_bundle() {
+    echo "Step 0: Building PyInstaller --onedir bundle"
     local wheel_path=""
-    # 查找 release/dist/ 下的 wheel
     local wheel_glob="$ROOT/release/dist/callwarden-${VERSION}-*.whl"
     for f in $wheel_glob; do
         if [ -f "$f" ]; then
@@ -109,45 +107,73 @@ extract_python_console_scripts() {
     done
     if [ -z "$wheel_path" ]; then
         echo "  ERROR: Python wheel not found at $ROOT/release/dist/callwarden-${VERSION}-*.whl" >&2
-        echo "  请先在对应平台运行 'python release/build.py --wheel' 构建 wheel" >&2
-        echo "  或从 GitHub Actions 下载 wheel artifact 到 release/dist/" >&2
+        echo "  请先运行 'python release/build.py --wheel' 构建 wheel" >&2
         exit 1
     fi
     echo "  Using wheel: $(basename "$wheel_path")"
 
-    # 创建临时 venv 并安装 wheel
+    # 创建临时 venv 安装 wheel + PyInstaller + 全部依赖
     local venv_dir="$SCRIPT_DIR/build/venv"
     rm -rf "$venv_dir"
     python3 -m venv "$venv_dir" >/dev/null 2>&1 || {
         echo "  ERROR: python3 -m venv failed" >&2
         exit 1
     }
-    # 升级 pip（确保支持 wheel）
     "$venv_dir/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
-    # 安装 wheel（自动创建 console_scripts 在 venv/bin/）
-    "$venv_dir/bin/pip" install --no-deps "$wheel_path" || {
-        echo "  ERROR: pip install $wheel_path failed" >&2
+    # 安装 wheel + 全部依赖（--no-deps 会漏掉 tree-sitter 等，必须装依赖）
+    "$venv_dir/bin/pip" install "$wheel_path[all]" || {
+        echo "  ERROR: pip install $wheel_path[all] failed" >&2
+        exit 1
+    }
+    # 安装 PyInstaller
+    "$venv_dir/bin/pip" install pyinstaller || {
+        echo "  ERROR: pip install pyinstaller failed" >&2
         exit 1
     }
 
-    # 验证 console_scripts 存在
+    # 复制 Rust 扩展到项目根目录（PyInstaller spec 从根目录收集）
+    local rust_ext_src="$ROOT/rust_ext/target/$TARGET/release/libcallwarden_core.so"
+    local rust_ext_dst="$ROOT/callwarden_core.so"
+    if [ -f "$rust_ext_src" ]; then
+        cp "$rust_ext_src" "$rust_ext_dst"
+        echo "  [OK] Rust extension copied: libcallwarden_core.so -> callwarden_core.so"
+    else
+        echo "  WARNING: Rust extension not found at $rust_ext_src"
+        echo "  callwarden 会在运行时降级到纯 Python（性能下降）"
+    fi
+
+    # 运行 PyInstaller
+    cd "$ROOT"
+    "$venv_dir/bin/pyinstaller" release/pyinstaller/callwarden.spec \
+        --noconfirm --clean \
+        --distpath "$SCRIPT_DIR/build/pyinstaller_dist" \
+        --workpath "$SCRIPT_DIR/build/pyinstaller_build" || {
+        echo "  ERROR: pyinstaller failed" >&2
+        # 清理临时复制的 Rust 扩展
+        rm -f "$rust_ext_dst"
+        exit 1
+    }
+
+    # 清理临时复制的 Rust 扩展
+    rm -f "$rust_ext_dst"
+
+    # 验证产物
     local missing=""
-    for script in cw cw-client cw-agent; do
-        if [ ! -f "$venv_dir/bin/$script" ]; then
-            missing="$missing $script"
+    for cmd in cw cw-client cw-agent; do
+        if [ ! -f "$SCRIPT_DIR/build/pyinstaller_dist/$cmd/$cmd" ]; then
+            missing="$missing $cmd"
         fi
     done
     if [ -n "$missing" ]; then
-        echo "  ERROR: Missing console_scripts after pip install:$missing" >&2
-        echo "  检查 pyproject.toml [project.scripts] 是否声明 cw/cw-client/cw-agent" >&2
+        echo "  ERROR: PyInstaller 产物缺失:$missing" >&2
         exit 1
     fi
-    echo "  [OK] console_scripts extracted: cw, cw-client, cw-agent"
+    echo "  [OK] PyInstaller bundle built: cw, cw-client, cw-agent"
 }
 
 if [ "$OFFLINE_ONLY" = "0" ]; then
     # 完整构建模式：Step 1-5 都要跑
-    extract_python_console_scripts
+    build_pyinstaller_bundle
 
     # 2. 构建 Rust 扩展 + cw-daemon binary
     echo "Step 1: Building Rust extension + cw-daemon binary"
@@ -166,33 +192,33 @@ if [ "$OFFLINE_ONLY" = "0" ]; then
 
     # 3. 准备各子包 root 目录
     echo "Step 2: Preparing package roots"
-    VENV_BIN="$SCRIPT_DIR/build/venv/bin"
+    # P0-3 整改（2026-07-22）：PyInstaller --onedir 产物路径
+    PYINSTALLER_DIST="$SCRIPT_DIR/build/pyinstaller_dist"
 
     # --- callwarden-client（设计 §8.1: cw-client + MCP proxy，不含 parser/CAS）---
     CLIENT_ROOT="$SCRIPT_DIR/build/client"
     rm -rf "$CLIENT_ROOT"
-    mkdir -p "$CLIENT_ROOT/usr/bin"
-    # P0-3 修复：从 venv bin/ 复制 console_scripts（Python entry_point，非 Rust binary）
-    cp "$VENV_BIN/cw-client" "$CLIENT_ROOT/usr/bin/"
+    mkdir -p "$CLIENT_ROOT/usr/bin" "$CLIENT_ROOT/usr/lib/callwarden/runtime"
+    # P0-3 整改：复制整个 --onedir 目录（含 Python 解释器 + 依赖），创建软链接
+    cp -r "$PYINSTALLER_DIST/cw-client/." "$CLIENT_ROOT/usr/lib/callwarden/runtime/"
+    ln -s /usr/lib/callwarden/runtime/cw-client "$CLIENT_ROOT/usr/bin/cw-client"
 
     # --- callwarden-local（cw + Rust 扩展 + local DB + MCP + watcher）---
+    # P0-3 整改：cw 的 --onedir 已含 Rust 扩展（callwarden_core.so），
+    # 不再单独复制 libcallwarden_core.so（PyInstaller spec 已收集）
     LOCAL_ROOT="$SCRIPT_DIR/build/local"
     rm -rf "$LOCAL_ROOT"
-    mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden" "$LOCAL_ROOT/etc/callwarden"
-    cp "$VENV_BIN/cw" "$LOCAL_ROOT/usr/bin/"
-    cp "$ROOT/rust_ext/target/$TARGET/release/libcallwarden_core.so" \
-       "$LOCAL_ROOT/usr/lib/callwarden/" || {
-        echo "  ERROR: libcallwarden_core.so not found at $ROOT/rust_ext/target/$TARGET/release/"
-        echo "  Run 'cargo build --release --target $TARGET' in rust_ext/ first."
-        exit 1
-    }
+    mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden/runtime" "$LOCAL_ROOT/etc/callwarden"
+    cp -r "$PYINSTALLER_DIST/cw/." "$LOCAL_ROOT/usr/lib/callwarden/runtime/"
+    ln -s /usr/lib/callwarden/runtime/cw "$LOCAL_ROOT/usr/bin/cw"
     cp "$SCRIPT_DIR/deb/config.toml.template" "$LOCAL_ROOT/etc/callwarden/config.toml" 2>/dev/null || true
 
     # --- callwarden-agent（cw-agent + systemd user unit + client）---
     AGENT_ROOT="$SCRIPT_DIR/build/agent"
     rm -rf "$AGENT_ROOT"
-    mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/systemd/user"
-    cp "$VENV_BIN/cw-agent" "$AGENT_ROOT/usr/bin/"
+    mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/callwarden/runtime" "$AGENT_ROOT/usr/lib/systemd/user"
+    cp -r "$PYINSTALLER_DIST/cw-agent/." "$AGENT_ROOT/usr/lib/callwarden/runtime/"
+    ln -s /usr/lib/callwarden/runtime/cw-agent "$AGENT_ROOT/usr/bin/cw-agent"
     # agent systemd --user unit（设计 §v8: per-UID watcher agent）
     # 优先使用 deb/systemd/callwarden-agent.service 正式 unit（含安全约束、资源限制、
     # 环境变量、ExecStop 等完整配置）；不存在时降级为最小占位 unit。

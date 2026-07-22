@@ -98,7 +98,11 @@
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="INSTALLFOLDER" Name="CallWarden">
-          <Directory Id="BinFolder" Name="bin" />
+          <Directory Id="BinFolder" Name="bin">
+            <!-- P0-3：PyInstaller onedir 产物的 _internal 子目录（Python 解释器+依赖+Rust 扩展） -->
+            <!-- heat harvest 把 _internal/ 中的文件安装到此目录，cw.exe/cw-client.exe 运行时共享 -->
+            <Directory Id="InternalFolder" Name="_internal" />
+          </Directory>
           <Directory Id="LibFolder" Name="lib" />
           <Directory Id="ConfigFolder" Name="config" />
         </Directory>
@@ -115,26 +119,23 @@
       </Directory>
     </Directory>
 
-    <!-- Main components: local 角色所需文件 -->
-    <!-- BuildOutputDir 通过 candle -dBuildOutputDir=<path> 传入, 默认 release\dist\windows -->
-    <!-- build.py 输出 Python wheel 到 release\dist\, Windows 二进制 (PyInstaller) 输出到 release\dist\windows\ -->
+    <!-- P0-3 整改（2026-07-22）：PyInstaller onedir 目录结构 -->
+    <!-- PyInstaller onedir 产出：cw.exe + _internal/（含 Python 解释器、依赖、Rust 扩展） -->
+    <!-- BuildOutputDir 指向 release/dist/windows/cw/ 目录 -->
     <ComponentGroup Id="MainComponents" Directory="BinFolder">
       <Component Id="CwExe" Guid="*">
         <File Id="cw.exe" Source="$(var.BuildOutputDir)\cw.exe" KeyPath="yes" />
       </Component>
-      <Component Id="CallwardenCorePyd" Guid="*">
-        <File Id="callwarden_core.pyd" Source="$(var.BuildOutputDir)\callwarden_core.pyd" KeyPath="yes" />
-      </Component>
-      <!-- Python runtime (bundled) -->
-      <Component Id="PythonRuntime" Guid="*">
-        <File Id="python.exe" Source="$(var.BuildOutputDir)\runtime\python.exe" KeyPath="yes" />
-      </Component>
+      <!-- PyInstaller _internal/ 目录中的所有文件（Python 解释器 + 依赖 + Rust 扩展） -->
+      <!-- WiX heat harvest 自动收集 _internal/ 目录 -->
+      <ComponentGroupRef Id="PyInstallerInternal" />
     </ComponentGroup>
 
-    <!-- Client 角色组件: 仅 cw-client.exe -->
+    <!-- Client 角色组件：cw-client.exe + _internal/ -->
+    <!-- ClientBuildOutputDir 指向 release/dist/windows/cw-client/ 目录 -->
     <ComponentGroup Id="ClientComponents" Directory="BinFolder">
       <Component Id="CwClientExe" Guid="*">
-        <File Id="cw-client.exe" Source="$(var.BuildOutputDir)\cw-client.exe" KeyPath="yes" />
+        <File Id="cw-client.exe" Source="$(var.ClientBuildOutputDir)\cw-client.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 

@@ -12,10 +12,8 @@ SOCKET="/run/callwarden/callwarden.sock"
 case "$1" in
     remove)
         echo "[callwarden-daemon] prerm: remove"
-        # Drain 并停止服务
-        if [ -S "$SOCKET" ] && command -v cw-daemon >/dev/null 2>&1; then
-            cw-daemon drain --timeout 30 || true
-        fi
+        # P0-3 整改（2026-07-22）：cw-daemon 不支持 drain 子命令，
+        # systemctl stop 会发 SIGTERM，daemon 自己处理 graceful shutdown
         if command -v deb-systemd-invoke >/dev/null 2>&1; then
             deb-systemd-invoke stop "$SERVICE" 2>/dev/null || true
         elif command -v systemctl >/dev/null 2>&1; then
@@ -23,11 +21,8 @@ case "$1" in
         fi
         ;;
     upgrade)
-        # 升级时由 preinst 处理停服务，这里仅 drain
+        # 升级时由 preinst 处理停服务
         echo "[callwarden-daemon] prerm: upgrade"
-        if [ -S "$SOCKET" ] && command -v cw-daemon >/dev/null 2>&1; then
-            cw-daemon drain --timeout 30 || true
-        fi
         ;;
     deconfigure)
         ;;

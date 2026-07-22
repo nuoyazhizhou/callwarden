@@ -27,8 +27,10 @@ case "$1" in
 
         # 1. 版本/兼容性预检（N-1 兼容性）
         # 检查当前 schema 版本与即将安装的二进制 ABI 是否兼容
+        # P0-3 整改（2026-07-22）：cw-daemon 只支持 schema-check --strict
+        # （不支持 --pre-upgrade，也不支持 drain/snapshot create/migrate 子命令）
         if [ -x /usr/bin/cw-daemon ]; then
-            if ! /usr/bin/cw-daemon schema-check --pre-upgrade; then
+            if ! /usr/bin/cw-daemon schema-check --strict; then
                 echo "[callwarden-daemon] ERROR: schema compatibility pre-check failed" >&2
                 echo "[callwarden-daemon] Aborting upgrade to avoid new-schema + old-binary state." >&2
                 exit 1
@@ -48,29 +50,19 @@ case "$1" in
             fi
         fi
 
-        # 3. Drain：通知 daemon 拒绝新连接并等待活跃连接结束
-        if [ -S "$SOCKET" ]; then
-            echo "[callwarden-daemon] draining in-flight connections..."
-            if command -v cw-daemon >/dev/null 2>&1; then
-                cw-daemon drain --timeout 30 || true
-            fi
-        fi
+        # 3. Drain：cw-daemon 不支持 drain 子命令
+        # P0-3 整改（2026-07-22）：移除 cw-daemon drain 调用，
+        # systemctl stop 会发 SIGTERM，daemon 自己处理 graceful shutdown（KillMode=mixed）
 
         # 4. 在线备份（停服务前的最后一致点）
+        # P0-3 整改（2026-07-22）：cw-daemon 不支持 snapshot create 子命令，
+        # 改用 tar 直接备份 state 目录（SQLite WAL 会被 tar 包含）
         if [ -d "$STATE_DIR" ]; then
             mkdir -p "$BACKUP_DIR"
             TS="$(date +%Y%m%d-%H%M%S)"
             BACKUP_TAG="pre-upgrade-${OLD_VERSION}-${TS}"
             echo "[callwarden-daemon] creating online backup: $BACKUP_TAG"
-            if [ -x /usr/bin/cw-daemon ]; then
-                # 优先使用 daemon 自带的 WAL 安全快照
-                if ! /usr/bin/cw-daemon snapshot create --output "$BACKUP_DIR/$BACKUP_TAG"; then
-                    echo "[callwarden-daemon] WARNING: online snapshot failed, falling back to tar copy"
-                    tar -cf "$BACKUP_DIR/$BACKUP_TAG.tar" -C "$STATE_DIR" . 2>/dev/null || true
-                fi
-            else
-                tar -cf "$BACKUP_DIR/$BACKUP_TAG.tar" -C "$STATE_DIR" . 2>/dev/null || true
-            fi
+            tar -cf "$BACKUP_DIR/$BACKUP_TAG.tar" -C "$STATE_DIR" . 2>/dev/null || true
             # 清理过期备份，仅保留最近 BACKUP_KEEP 份
             ls -1dt "$BACKUP_DIR"/pre-upgrade-* 2>/dev/null | tail -n +$((BACKUP_KEEP + 1)) | while read -r old; do
                 rm -rf "$old"

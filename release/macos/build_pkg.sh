@@ -139,13 +139,11 @@ mkdir -p "$PKG_ROOT/$INSTALL_DIR/lib"
 mkdir -p "$PKG_ROOT/$INSTALL_DIR/config"
 mkdir -p "$PKG_ROOT/usr/local/bin"
 
-# 拷贝入口脚本与 Rust 扩展
-# P0-3 修复（问题 8）：原代码在 $SRC_DIST/bin/cw 缺失时生成 placeholder 入口
-# `exec python3 -m callwarden.cw "$@"`，但 macOS pkg 安装到
-# /Library/Application Support/CallWarden/bin/cw，placeholder 假设 python3 + callwarden
-# 包在系统 PATH 中——干净 macOS 上两个假设都不成立。
-# 改为：从已下载的 wheel 中提取 console_scripts（pip install 到临时 venv 后复制）。
-echo "  Extracting Python console_scripts from wheel"
+# P0-3 整改（2026-07-22）：改用 PyInstaller --onedir 打包自包含二进制
+# 原代码只复制 venv 的 console_scripts，shebang 指向构建机临时 venv，
+# 安装到干净 macOS 后无法启动（无 Python 解释器、无 site-packages）。
+# PyInstaller --onedir 产物含 Python 解释器 + 全部依赖 + Rust 扩展，安装后直接可用。
+echo "  Building PyInstaller --onedir bundle"
 WHEEL_GLOB="$SRC_DIST/callwarden-${VERSION}-*.whl"
 WHEEL_PATH=""
 for f in $WHEEL_GLOB; do
@@ -168,26 +166,48 @@ python3 -m venv "$VENV_DIR" >/dev/null 2>&1 || {
     exit 1
 }
 "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
-"$VENV_DIR/bin/pip" install --no-deps "$WHEEL_PATH" || {
-    echo "  ERROR: pip install $WHEEL_PATH failed" >&2
+"$VENV_DIR/bin/pip" install "$WHEEL_PATH[all]" || {
+    echo "  ERROR: pip install $WHEEL_PATH[all] failed" >&2
+    exit 1
+}
+"$VENV_DIR/bin/pip" install pyinstaller || {
+    echo "  ERROR: pip install pyinstaller failed" >&2
     exit 1
 }
 
-# 验证 console_scripts 存在（fail-closed）
-for script in cw cw-client; do
-    if [ ! -f "$VENV_DIR/bin/$script" ]; then
-        echo "  ERROR: console_script $script missing after pip install" >&2
-        echo "  检查 pyproject.toml [project.scripts] 是否声明 $script" >&2
+# 复制 universal2 Rust 扩展到项目根目录（PyInstaller spec 从根目录收集）
+cp "$UNIVERSAL_DIR/callwarden_core.so" "$ROOT/callwarden_core.so"
+
+# 运行 PyInstaller（spec 文件与 Linux 共用 release/pyinstaller/callwarden.spec）
+cd "$ROOT"
+"$VENV_DIR/bin/pyinstaller" release/pyinstaller/callwarden.spec \
+    --noconfirm --clean \
+    --distpath "$SCRIPT_DIR/build/pyinstaller_dist" \
+    --workpath "$SCRIPT_DIR/build/pyinstaller_build" || {
+    echo "  ERROR: pyinstaller failed" >&2
+    rm -f "$ROOT/callwarden_core.so"
+    exit 1
+}
+rm -f "$ROOT/callwarden_core.so"  # 清理临时复制
+
+# 验证产物
+for cmd in cw cw-client cw-agent; do
+    if [ ! -f "$SCRIPT_DIR/build/pyinstaller_dist/$cmd/$cmd" ]; then
+        echo "  ERROR: PyInstaller 产物缺失: $cmd" >&2
         exit 1
     fi
 done
-echo "  [OK] console_scripts extracted: cw, cw-client"
+echo "  [OK] PyInstaller bundle built: cw, cw-client, cw-agent"
 
-# 复制 console_scripts 到 pkg root
-cp "$VENV_DIR/bin/cw" "$PKG_ROOT/$INSTALL_DIR/bin/"
-cp "$VENV_DIR/bin/cw-client" "$PKG_ROOT/$INSTALL_DIR/bin/"
+# 复制 PyInstaller --onedir 目录到 pkg root
+# cw 和 cw-client 各自一个独立目录（含 Python 解释器 + 依赖）
+mkdir -p "$PKG_ROOT/$INSTALL_DIR/runtime"
+cp -r "$SCRIPT_DIR/build/pyinstaller_dist/cw/." "$PKG_ROOT/$INSTALL_DIR/runtime/cw/"
+cp -r "$SCRIPT_DIR/build/pyinstaller_dist/cw-client/." "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/"
 
-cp "$UNIVERSAL_DIR/callwarden_core.so" "$PKG_ROOT/$INSTALL_DIR/lib/"
+# 创建 bin/ 下的软链接
+ln -s "$INSTALL_DIR/runtime/cw/cw" "$PKG_ROOT/$INSTALL_DIR/bin/cw"
+ln -s "$INSTALL_DIR/runtime/cw-client/cw-client" "$PKG_ROOT/$INSTALL_DIR/bin/cw-client"
 
 # 配置模板（不覆盖已存在用户配置）
 cat > "$PKG_ROOT/$INSTALL_DIR/config/config.toml.template" << 'EOF'
