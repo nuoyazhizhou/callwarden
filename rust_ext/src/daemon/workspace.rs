@@ -1374,7 +1374,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     } else {
                         replicator
                     };
-                    let repl_result = replicator.replicate(workspace_instance_id, &db_path, "");
+                    let repl_result = replicator.replicate(workspace_instance_id, workspace_id_num, &db_path, "");
 
                     let mut repl_map = Map::new();
                     repl_map.insert(
@@ -1493,7 +1493,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
         // 4. 调用 Replicator::recover（内部：read_pending → filter by ws_id →
         //    mark_applied_batch → compact_applied）
         let replicator = crate::daemon::replicator::Replicator::new(&staging_log);
-        let result = replicator.recover(&ws_id, "");
+        let result = replicator.recover(&ws_id, 0, "");
 
         // 5. 构造返回（与 Python daemon_server.py L430-437 字段一致）
         let mut m = Map::new();

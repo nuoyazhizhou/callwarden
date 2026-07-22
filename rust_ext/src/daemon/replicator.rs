@@ -706,11 +706,21 @@ fn parse_result_to_cas_input(
 ///
 /// R5 阶段无实现，Replicator 用 `None` 调用方跳过 snapshot 发布。
 /// R6 实现真正的 SnapshotManager 后注入。
+///
+/// P0-2 整改（2026-07-22 复审整改-v2）：`workspace_id`（数字主键）必传，
+/// 用于 GraphStore SQL 层过滤本 workspace 数据，避免 snapshot 混入其他 workspace。
 pub trait SnapshotPublisher: Send + Sync {
     /// 发布新 generation snapshot
+    ///
+    /// 参数：
+    /// - workspace_instance_id: workspace 实例 ID（字符串，用于 per-workspace SnapshotManager）
+    /// - workspace_id: workspace 数字主键（用于 SQL 过滤）
+    /// - db_path: SQLite 数据库路径
+    /// - build_context_hash: build context 哈希
     fn publish_snapshot(
         &self,
         workspace_instance_id: &str,
+        workspace_id: i64,
         db_path: &str,
         build_context_hash: &str,
     ) -> Result<PublishResult, String>;
@@ -754,7 +764,7 @@ impl SnapshotPublisher for SnapshotCachePublisher {
     /// 发布快照到 SnapshotCache。
     ///
     /// **P0-2 降级说明（2026-07-22 复审整改-v2）**：
-    /// 本方法仅调用 `build_and_publish_blocking(db_path, ...)` 重新加载已有 SQLite
+    /// 本方法仅调用 `build_and_publish_blocking(db_path, workspace_id, ...)` 重新加载已有 SQLite
     /// 到内存 GraphStore，**不把本次 CAS delta merge 到 CodeGraph DB**。
     /// 真正的 CAS → CodeGraph merge 由 Python 侧 `db_cas_merge.merge_cas_to_codegraph()`
     /// 实现（server/replicator.py:261-335 step 5），Rust daemon 路径未移植等价逻辑。
@@ -766,9 +776,13 @@ impl SnapshotPublisher for SnapshotCachePublisher {
     /// 企业部署如需 save-to-query 数据链闭合，请使用 Python daemon 路径：
     ///   `python -m callwarden.server`（systemd unit 改用 ExecStart=python -m ...）
     /// 或在 Rust daemon 完成 step 3 CAS publish 后，外部调用 `cw refresh <path>` 补 merge。
+    ///
+    /// P0-2 子问题3 修复：`workspace_id` 传入 `build_and_publish_blocking`，GraphStore
+    /// SQL 层用 `WHERE workspace_id = ?` 过滤，避免 snapshot 混入其他 workspace 数据。
     fn publish_snapshot(
         &self,
         workspace_instance_id: &str,
+        workspace_id: i64,
         db_path: &str,
         build_context_hash: &str,
     ) -> Result<PublishResult, String> {
@@ -782,7 +796,7 @@ impl SnapshotPublisher for SnapshotCachePublisher {
         // 调用 build_and_publish_blocking（返回 PyResult，但内部不持 GIL）
         // 成功路径：直接返回 (generation, symbol_count, call_count)
         // 失败路径：用 Debug 格式化（不需要 GIL）将 PyErr 转为 String
-        match mgr.build_and_publish_blocking(db_path, build_context_hash, None) {
+        match mgr.build_and_publish_blocking(db_path, workspace_id, build_context_hash, None) {
             Ok((generation, symbol_count, call_count)) => Ok(PublishResult {
                 generation: generation as i64,
                 symbol_count,
@@ -874,12 +888,15 @@ impl<'a> Replicator<'a> {
     /// 执行一次 replication：读取 pending → 发布新 generation → 标记 applied。
     ///
     /// 参数：
-    /// - workspace_id: workspace 实例 ID
+    /// - workspace_id: workspace 实例 ID（字符串，用于 per-workspace SnapshotManager）
+    /// - workspace_id_num: workspace 数字主键（用于 GraphStore SQL 过滤；
+    ///   0 表示不过滤，兼容无 publisher 的恢复路径）
     /// - db_path: SQLite 数据库路径（用于 publish_snapshot）
     /// - build_context_hash: build context 哈希
     pub fn replicate(
         &self,
         workspace_id: &str,
+        workspace_id_num: i64,
         db_path: &str,
         build_context_hash: &str,
     ) -> ReplicationResult {
@@ -927,7 +944,7 @@ impl<'a> Replicator<'a> {
         // 3. 发布新 generation（若 publisher + db_path 均可用）
         if let Some(publisher) = self.snapshot_publisher {
             if !db_path.is_empty() {
-                match publisher.publish_snapshot(workspace_id, db_path, build_context_hash) {
+                match publisher.publish_snapshot(workspace_id, workspace_id_num, db_path, build_context_hash) {
                     Ok(pub_result) => {
                         result.generation = pub_result.generation;
                     }
@@ -969,12 +986,16 @@ impl<'a> Replicator<'a> {
     /// 从 crash 恢复：读取所有 pending entries 并重新 replication。
     ///
     /// 在 daemon 启动时调用。
+    ///
+    /// P0-2 整改：新增 `workspace_id_num` 参数。daemon 启动恢复路径通常无
+    /// SnapshotPublisher，`workspace_id_num` 可传 0（无过滤，不发布 snapshot）。
     pub fn recover(
         &self,
         workspace_id: &str,
+        workspace_id_num: i64,
         db_path: &str,
     ) -> ReplicationResult {
-        self.replicate(workspace_id, db_path, "")
+        self.replicate(workspace_id, workspace_id_num, db_path, "")
     }
 
     /// 获取 pending entries 数量。
@@ -1390,7 +1411,7 @@ mod tests {
         let (_tmp, log) = make_staging_log();
         let replicator = Replicator::new(&log);
 
-        let result = replicator.replicate("ws1", "", "");
+        let result = replicator.replicate("ws1", 0, "", "");
         assert!(result.success);
         assert_eq!(result.workspace_id, "ws1");
         assert_eq!(result.pending_count, 0);
@@ -1418,7 +1439,7 @@ mod tests {
             log.append(&mut e).unwrap();
         }
 
-        let result = replicator.replicate("ws1", "", "");
+        let result = replicator.replicate("ws1", 0, "", "");
         assert!(result.success);
         assert_eq!(result.pending_count, 3);
         assert_eq!(result.applied_count, 3);
@@ -1470,7 +1491,7 @@ mod tests {
         }
 
         // recover 应该和 replicate 行为一致
-        let result = replicator.recover("ws1", "");
+        let result = replicator.recover("ws1", 0, "");
         assert!(result.success);
         assert_eq!(result.applied_count, 2);
     }
@@ -1497,6 +1518,7 @@ mod tests {
         fn publish_snapshot(
             &self,
             _workspace_instance_id: &str,
+            _workspace_id: i64,
             _db_path: &str,
             _build_context_hash: &str,
         ) -> Result<PublishResult, String> {
@@ -1521,7 +1543,7 @@ mod tests {
         }
 
         let replicator = Replicator::new(&log).with_snapshot_publisher(&publisher);
-        let result = replicator.replicate("ws1", "/path/to/db", "ctx-hash");
+        let result = replicator.replicate("ws1", 0, "/path/to/db", "ctx-hash");
 
         assert!(result.success);
         assert_eq!(result.generation, 42);
@@ -1536,6 +1558,7 @@ mod tests {
             fn publish_snapshot(
                 &self,
                 _workspace_instance_id: &str,
+                _workspace_id: i64,
                 _db_path: &str,
                 _build_context_hash: &str,
             ) -> Result<PublishResult, String> {
@@ -1551,7 +1574,7 @@ mod tests {
         }
 
         let replicator = Replicator::new(&log).with_snapshot_publisher(&publisher);
-        let result = replicator.replicate("ws1", "/path/to/db", "");
+        let result = replicator.replicate("ws1", 0, "/path/to/db", "");
 
         assert!(!result.success);
         assert!(result.error.as_ref().unwrap().contains("publish failure"));
@@ -1929,7 +1952,7 @@ mod tests {
             log.append(&mut e).unwrap();
         }
 
-        let result = replicator.replicate("ws1", "", "");
+        let result = replicator.replicate("ws1", 0, "", "");
         assert!(result.success, "replicate 应成功");
         // 合并 2 条 entries
         assert_eq!(result.merged_summary.file_count, 2);
@@ -1951,7 +1974,7 @@ mod tests {
         let (_tmp, log) = make_staging_log();
         let replicator = Replicator::new(&log);
 
-        let result = replicator.replicate("ws1", "", "");
+        let result = replicator.replicate("ws1", 0, "", "");
         assert!(result.success);
         assert_eq!(result.merged_summary.file_count, 0);
         assert_eq!(result.merged_summary.total_added_symbols, 0);
@@ -2038,7 +2061,7 @@ mod tests {
         // - GraphStore::load_from_sqlite_blocking 用 by_id.len() 作为 symbol_count，
         //   包含 index 0 的占位槽，因此返回 5（= 4 真实 + 1 占位）
         // - 3 条调用边
-        let result = publisher.publish_snapshot("ws_e2e_1", db_path_str, "ctx-hash-1");
+        let result = publisher.publish_snapshot("ws_e2e_1", 0, db_path_str, "ctx-hash-1");
         assert!(result.is_ok(), "publish 应成功: {:?}", result.err());
         let pr = result.unwrap();
         assert_eq!(pr.symbol_count, 5, "应加载 5（4 真实 + 1 占位槽）");
@@ -2046,7 +2069,7 @@ mod tests {
         assert!(pr.generation >= 1, "generation 应 >= 1");
 
         // 第二次 publish：generation 递增，符号/调用边数不变
-        let result2 = publisher.publish_snapshot("ws_e2e_1", db_path_str, "ctx-hash-2");
+        let result2 = publisher.publish_snapshot("ws_e2e_1", 0, db_path_str, "ctx-hash-2");
         assert!(result2.is_ok());
         let pr2 = result2.unwrap();
         assert_eq!(pr2.symbol_count, 5);
@@ -2060,7 +2083,7 @@ mod tests {
         let cache = Arc::new(crate::snapshot::SnapshotCache::new(4));
         let publisher = SnapshotCachePublisher::new(cache);
 
-        let result = publisher.publish_snapshot("ws_e2e_2", "", "ctx-hash");
+        let result = publisher.publish_snapshot("ws_e2e_2", 0, "", "ctx-hash");
         assert!(result.is_err());
         let err_msg = result.unwrap_err();
         assert!(
@@ -2086,17 +2109,17 @@ mod tests {
 
         // ws_a 第一次 publish
         // symbol_count = 5（4 真实符号 + 1 占位槽，见 publishes_and_returns_counts 测试注释）
-        let pr_a1 = publisher.publish_snapshot("ws_a", db_path_str, "ctx-a-1").unwrap();
+        let pr_a1 = publisher.publish_snapshot("ws_a", 0, db_path_str, "ctx-a-1").unwrap();
         assert_eq!(pr_a1.symbol_count, 5);
         assert_eq!(pr_a1.generation, 1);
 
         // ws_b 第一次 publish（独立 generation 序列）
-        let pr_b1 = publisher.publish_snapshot("ws_b", db_path_str, "ctx-b-1").unwrap();
+        let pr_b1 = publisher.publish_snapshot("ws_b", 0, db_path_str, "ctx-b-1").unwrap();
         assert_eq!(pr_b1.symbol_count, 5);
         assert_eq!(pr_b1.generation, 1, "ws_b 的 generation 应独立从 1 开始");
 
         // ws_a 第二次 publish
-        let pr_a2 = publisher.publish_snapshot("ws_a", db_path_str, "ctx-a-2").unwrap();
+        let pr_a2 = publisher.publish_snapshot("ws_a", 0, db_path_str, "ctx-a-2").unwrap();
         assert_eq!(pr_a2.generation, 2, "ws_a 第二次 generation 应为 2");
     }
 }

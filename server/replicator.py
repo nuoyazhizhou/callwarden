@@ -630,14 +630,17 @@ class Replicator:
         workspace_id: str,
         db_path: str = "",
         build_context_hash: str = "",
+        workspace_id_num: int = 0,
     ) -> ReplicationResult:
         """
         执行一次 replication：读取 pending → 发布新 generation → 标记 applied。
 
         参数：
-            workspace_id: workspace 实例 ID
+            workspace_id: workspace 实例 ID（字符串）
             db_path: SQLite 数据库路径（用于 publish_snapshot）
             build_context_hash: build context 哈希
+            workspace_id_num: workspace 数字主键（P0-2 整改：用于 GraphStore SQL 过滤，
+                0 表示不过滤，生产路径应传 >0）
 
         返回：ReplicationResult
         """
@@ -671,6 +674,7 @@ class Replicator:
                         workspace_instance_id=workspace_id,
                         db_path=db_path,
                         build_context_hash=build_context_hash,
+                        workspace_id=workspace_id_num,
                     )
                     if pub_result is not None:
                         result.generation = pub_result.get("generation", 0)
@@ -745,7 +749,7 @@ class Replicator:
 
         return merged
 
-    def recover(self, workspace_id: str, db_path: str = "") -> ReplicationResult:
+    def recover(self, workspace_id: str, db_path: str = "", workspace_id_num: int = 0) -> ReplicationResult:
         """
         从 crash 恢复：读取所有 pending entries 并重新 replication。
 
@@ -754,11 +758,12 @@ class Replicator:
         参数：
             workspace_id: workspace 实例 ID
             db_path: SQLite 数据库路径
+            workspace_id_num: workspace 数字主键（P0-2 整改，0=不过滤）
 
         返回：ReplicationResult
         """
         logger.info("recovering from staging log for ws=%s", workspace_id)
-        return self.replicate(workspace_id, db_path)
+        return self.replicate(workspace_id, db_path, workspace_id_num=workspace_id_num)
 
     def get_pending_count(self, workspace_id: Optional[str] = None) -> int:
         """

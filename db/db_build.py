@@ -3408,7 +3408,7 @@ class BuildMixin:
             self.conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
 
             store = GraphStore()
-            store.load_from_sqlite(self.db_path)
+            store.load_from_sqlite(self.db_path, self._get_workspace_id())
             depth_updates = store.compute_depth_all()
 
             # 批量 UPDATE（executemany 比逐条快 10x）

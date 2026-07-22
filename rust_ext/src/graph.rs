@@ -365,20 +365,33 @@ impl GraphStore {
 
     /// 从 SQLite 数据库加载 symbols + calls 到内存
     /// 返回加载的符号数 / 边数
+    ///
+    /// P0-2 整改（2026-07-22 复审整改-v2）：新增 `workspace_id` 参数过滤
+    /// 用户级单库多 workspace 数据。`workspace_id=0` 表示不过滤（兼容旧测试）。
+    /// 生产路径（daemon / db_base）必须传 >0 的 workspace_id，避免 snapshot
+    /// 混入其他 workspace 的符号。
+    #[pyo3(signature = (db_path, workspace_id=0))]
     pub fn load_from_sqlite(
         &mut self,
         py: Python<'_>,
         db_path: &str,
+        workspace_id: i64,
     ) -> PyResult<(usize, usize)> {
-        py.detach(|| self._load_from_sqlite_stage(db_path, true))
+        py.detach(|| self._load_from_sqlite_stage(db_path, workspace_id, true))
     }
 
     /// 仅加载文件和符号索引，不读取 calls 表。
     ///
     /// 用于分级冷启动：调用方可先发布 symbols-ready store，
     /// 后台构建完整图后再原子替换。
-    pub fn load_symbols_from_sqlite(&mut self, py: Python<'_>, db_path: &str) -> PyResult<usize> {
-        py.detach(|| self._load_from_sqlite_stage(db_path, false))
+    #[pyo3(signature = (db_path, workspace_id=0))]
+    pub fn load_symbols_from_sqlite(
+        &mut self,
+        py: Python<'_>,
+        db_path: &str,
+        workspace_id: i64,
+    ) -> PyResult<usize> {
+        py.detach(|| self._load_from_sqlite_stage(db_path, workspace_id, false))
             .map(|(symbols, _)| symbols)
     }
 
@@ -393,8 +406,14 @@ impl GraphStore {
     }
 
     /// 复用已加载的符号层，仅从 SQLite 加载 calls 并构建 CSR。
-    pub fn load_calls_from_sqlite(&mut self, py: Python<'_>, db_path: &str) -> PyResult<usize> {
-        py.detach(|| self._load_calls_from_sqlite(db_path))
+    #[pyo3(signature = (db_path, workspace_id=0))]
+    pub fn load_calls_from_sqlite(
+        &mut self,
+        py: Python<'_>,
+        db_path: &str,
+        workspace_id: i64,
+    ) -> PyResult<usize> {
+        py.detach(|| self._load_calls_from_sqlite(db_path, workspace_id))
     }
 
     /// 返回当前加载阶段，供 Python/daemon 选择查询路径。
@@ -409,21 +428,37 @@ impl GraphStore {
     }
 
     /// 内部共享加载路径，`include_calls=false` 时在符号索引完成后返回。
+    ///
+    /// P0-2 整改（2026-07-22 复审整改-v2）：`workspace_id` 参数过滤用户级
+    /// 单库多 workspace 数据。`workspace_id=0` 不过滤（兼容旧测试和单 workspace DB），
+    /// `workspace_id>0` 时在 SQL 层用 `WHERE workspace_id = ?` 过滤 file_instances
+    /// 和 symbols，避免 snapshot 混入其他 workspace 的符号。
     fn _load_from_sqlite_stage(
         &mut self,
         db_path: &str,
+        workspace_id: i64,
         include_calls: bool,
     ) -> PyResult<(usize, usize)> {
         let conn = open_immutable_db(db_path)?;
+
+        // P0-2: 动态构建 WHERE 条件——workspace_id>0 时过滤，=0 时不过滤（兼容）
+        let ws_filter = if workspace_id > 0 {
+            format!("AND workspace_id = {}", workspace_id)
+        } else {
+            String::new()
+        };
 
         // 1a. 先加载 file_paths（P3 优化：file_instance_id → rel_path 独立表）
         // P4: 改为 pool + offsets，消除 20万 String 堆分配（省 11MB）
         let mut file_paths_pool = String::new();
         let mut file_paths_offsets: Vec<u32> = Vec::new();
         {
-            let mut stmt_files = conn.prepare(
-                "SELECT id, rel_path FROM file_instances WHERE status != 'archived' ORDER BY id"
-            ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare file_instances query failed: {}", e)))?;
+            let sql_files = format!(
+                "SELECT id, rel_path FROM file_instances WHERE status != 'archived' {} ORDER BY id",
+                ws_filter
+            );
+            let mut stmt_files = conn.prepare(&sql_files)
+                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare file_instances query failed: {}", e)))?;
             let file_iter = stmt_files.query_map([], |row| {
                 Ok((row.get::<_, i64>(0)? as u32, row.get::<_, String>(1)?))
             }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("query file_instances failed: {}", e)))?;
@@ -464,13 +499,16 @@ impl GraphStore {
         let mut qname_pool = String::new();
         let mut module_pool = String::new();
 
-        let mut stmt = conn.prepare(
+        let sql_symbols = format!(
             "SELECT s.id, s.file_instance_id, s.kind, s.name, s.qualified_name,
                     s.module_path, s.start_line, s.end_line, s.depth
              FROM symbols s
              JOIN file_instances fi ON s.file_instance_id = fi.id
-             WHERE fi.status != 'archived'"
-        ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare symbols query failed: {}", e)))?;
+             WHERE fi.status != 'archived' {}",
+            ws_filter
+        );
+        let mut stmt = conn.prepare(&sql_symbols)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare symbols query failed: {}", e)))?;
 
         let symbol_iter = stmt.query_map([], |row| {
             Ok((
@@ -588,7 +626,7 @@ impl GraphStore {
             return Ok((symbol_count, 0));
         }
 
-        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref())?;
+        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
 
         self.symbols = Some(symbols);
         self.calls = Some(Arc::new(calls));
@@ -596,11 +634,11 @@ impl GraphStore {
         Ok((symbol_count, edge_count))
     }
 
-    fn _load_calls_from_sqlite(&mut self, db_path: &str) -> PyResult<usize> {
+    fn _load_calls_from_sqlite(&mut self, db_path: &str, workspace_id: i64) -> PyResult<usize> {
         let symbols = self.symbols.as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbols not ready"))?;
         let conn = open_immutable_db(db_path)?;
-        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref())?;
+        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
         self.calls = Some(Arc::new(calls));
         Ok(edge_count)
     }
@@ -1561,11 +1599,14 @@ impl GraphStore {
     }
 
     /// Rust 内部调用的阻塞加载入口，不需要 Python token。
+    ///
+    /// P0-2 整改：`workspace_id` 必传，过滤用户级单库多 workspace 数据。
     pub(crate) fn load_from_sqlite_blocking(
         &mut self,
         db_path: &str,
+        workspace_id: i64,
     ) -> PyResult<(usize, usize)> {
-        self._load_from_sqlite_stage(db_path, true)
+        self._load_from_sqlite_stage(db_path, workspace_id, true)
     }
 
     /// 通过 qualified_name 获取符号引用（内部 Rust 接口，零 Python 开销）
@@ -2205,15 +2246,27 @@ fn open_immutable_db(db_path: &str) -> PyResult<Connection> {
     })
 }
 
-fn load_call_graph(conn: &Connection, symbols: &SymbolTable) -> PyResult<(CallGraph, usize)> {
+fn load_call_graph(conn: &Connection, symbols: &SymbolTable, workspace_id: i64) -> PyResult<(CallGraph, usize)> {
     let mut edges: Vec<CallEdge> = Vec::new();
     let mut callee_names_pool = String::new();
     let mut callee_names_offsets: Vec<u32> = Vec::new();
     let mut name_idx_map: FxHashMap<String, u32> = FxHashMap::default();
 
-    let mut stmt = conn.prepare(
-        "SELECT caller_id, callee_id, callee_name, call_line, is_cross_file FROM calls"
-    ).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
+    // P0-2 整改：calls 表无 workspace_id 列，通过 JOIN symbols + file_instances 过滤。
+    // workspace_id=0 时不过滤（兼容旧测试），>0 时限定本 workspace 的 caller。
+    let sql_calls = if workspace_id > 0 {
+        format!(
+            "SELECT c.caller_id, c.callee_id, c.callee_name, c.call_line, c.is_cross_file
+             FROM calls c
+             JOIN symbols s ON c.caller_id = s.id
+             JOIN file_instances fi ON s.file_instance_id = fi.id
+             WHERE fi.workspace_id = {} AND fi.status != 'archived'",
+            workspace_id
+        )
+    } else {
+        "SELECT caller_id, callee_id, callee_name, call_line, is_cross_file FROM calls".to_string()
+    };
+    let mut stmt = conn.prepare(&sql_calls).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
         format!("prepare calls query failed: {}", e)
     ))?;
     let call_iter = stmt.query_map([], |row| {

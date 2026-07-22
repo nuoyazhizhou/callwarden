@@ -241,10 +241,15 @@ impl SnapshotManager {
     /// 3. 分配 generation + 计时
     /// 4. 包装为 GraphSnapshot + 原子 publish
     ///
+    /// P0-2 整改（2026-07-22 复审整改-v2）：`workspace_id` 必传，确保 GraphStore
+    /// 在 SQL 层过滤本 workspace 的 file_instances/symbols/calls，避免用户级
+    /// 单库多 workspace 场景下 snapshot 混入其他 workspace 数据。
+    ///
     /// 返回 (generation, symbol_count, call_count)
     pub fn build_and_publish_blocking(
         &self,
         db_path: &str,
+        workspace_id: i64,
         build_context_hash: &str,
         snapshot_id: Option<String>,
     ) -> PyResult<(Generation, usize, usize)> {
@@ -255,7 +260,7 @@ impl SnapshotManager {
         let _ = wal_checkpoint_passive(db_path);
 
         let mut store = GraphStore::new();
-        let (symbol_count, call_count) = store.load_from_sqlite_blocking(db_path)?;
+        let (symbol_count, call_count) = store.load_from_sqlite_blocking(db_path, workspace_id)?;
 
         // G7-T3: 补全 SnapshotHealth 字段
         // file_count 从 GraphStore 的 file_paths_offsets 推算（最后一个为 sentinel）
@@ -453,15 +458,20 @@ impl PySnapshotManager {
     /// 内部：wal_checkpoint → 创建 GraphStore → load_from_sqlite → 包装为 GraphSnapshot → publish
     /// 返回 (generation, symbol_count, call_count)
     ///
-    /// G7-T2/T6：直接委托给 `SnapshotManager::build_and_publish_blocking`，
-    /// 保证 Python 和 Rust daemon 路径走同一份逻辑（含 wal_checkpoint + 计时 + file_count）。
+    /// P0-2 整改（2026-07-22 复审整改-v2）：新增 `workspace_id` 参数（末尾，
+    /// 默认 0），用于 GraphStore SQL 层过滤本 workspace 数据。`workspace_id=0`
+    /// 表示不过滤（兼容旧测试和单 workspace DB）。生产路径应传 >0 的 workspace_id。
+    ///
+    /// G7-T2/T6：保证 Python 和 Rust daemon 路径走同一份逻辑（含 wal_checkpoint + 计时 + file_count）。
+    #[pyo3(signature = (db_path, build_context_hash="", snapshot_id=None, workspace_id=0))]
     fn build_and_publish(
         &self,
         db_path: &str,
         build_context_hash: &str,
         snapshot_id: Option<String>,
+        workspace_id: i64,
     ) -> PyResult<(Generation, usize, usize)> {
-        self.inner.build_and_publish_blocking(db_path, build_context_hash, snapshot_id)
+        self.inner.build_and_publish_blocking(db_path, workspace_id, build_context_hash, snapshot_id)
     }
 
     /// GC 历史 generations，保留最近 `keep_last` 个（不含 current）。

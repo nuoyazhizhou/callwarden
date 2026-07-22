@@ -978,6 +978,7 @@ class EnterpriseDaemonService:
                     db_path = res.get("codegraph_db_path", "")
                     repl_result = res["replicator"].replicate(
                         workspace_id, db_path=db_path,
+                        workspace_id_num=int(workspace.get("workspace_id") or 0),
                     )
                     # 批次9：返回 snapshot_published 标志 + snapshot_warning 提示
                     # （与 Rust 端 workspace.rs L1359-1385 对齐）
@@ -1083,6 +1084,7 @@ class EnterpriseDaemonService:
                 db_path=db_path,
                 build_context_hash=str(params.get("build_context_hash") or ""),
                 snapshot_id=workspace.get("snapshot_id"),
+                workspace_id=int(workspace.get("workspace_id") or 0),
             )
             if result is None:
                 raise DaemonRpcError("snapshot_unavailable", "Rust snapshot 后端不可用")

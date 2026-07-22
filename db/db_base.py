@@ -2011,6 +2011,16 @@ class CodeGraphBase:
         self._init_schema()
         self._init_workspace()
 
+    def _get_workspace_id(self) -> int:
+        """获取当前活动 workspace 的数字 ID（P0-2 整改：用于 GraphStore SQL 过滤）。
+
+        Returns:
+            workspace_id（>0），或 0 表示无活动 workspace（不过滤，兼容旧测试）
+        """
+        if self.active_workspace and "id" in self.active_workspace:
+            return int(self.active_workspace["id"])
+        return 0
+
     def _get_graph_store(self):
         """B-P7b: 分级懒加载 GraphStore（Rust CSR 内存索引）
 
@@ -2059,7 +2069,7 @@ class CodeGraphBase:
                     except Exception:
                         pass
 
-                store.load_symbols_from_sqlite(self.db_path)
+                store.load_symbols_from_sqlite(self.db_path, self._get_workspace_id())
                 full_store = store.fork_symbols()
                 self._graph_store = store
                 self._graph_store_loading = True
@@ -2081,7 +2091,7 @@ class CodeGraphBase:
                                db_mtime_ns: int, snap_path: str) -> None:
         """后台复用符号层构建 calls，仅在 generation 和 DB mtime 均未变时发布。"""
         try:
-            full_store.load_calls_from_sqlite(self.db_path)
+            full_store.load_calls_from_sqlite(self.db_path, self._get_workspace_id())
         except Exception as exc:
             with self._graph_store_lock:
                 if token == self._graph_store_generation:

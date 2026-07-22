@@ -323,7 +323,16 @@ impl DaemonStateExt for SnapshotDaemonState {
         let snapshot_id = get_str_param(params, "snapshot_id").map(|s| s.to_string());
 
         // ACL 检查（workspace 必须属于 peer）
-        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+
+        // P0-2 整改：提取数值 workspace_id，传入 build_and_publish_blocking
+        // 用于 GraphStore SQL 层过滤，避免 snapshot 混入其他 workspace 数据
+        let workspace_id_num: i64 = workspace
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
 
         // 确定 db_path：优先用 FD（Linux），其次用 db_path 参数
         let db_path = if !received_fds.is_empty() {
@@ -355,9 +364,9 @@ impl DaemonStateExt for SnapshotDaemonState {
         // 获取或创建 SnapshotManager
         let mgr = self.snapshot_cache.get_or_create(workspace_instance_id);
 
-        // 构建 + 发布
+        // 构建 + 发布（传入 workspace_id_num 用于 SQL 过滤）
         let (generation, symbol_count, call_count) = mgr
-            .build_and_publish_blocking(&db_path, &build_context_hash, snapshot_id)
+            .build_and_publish_blocking(&db_path, workspace_id_num, &build_context_hash, snapshot_id)
             .map_err(|e| DaemonRpcError::internal_error(format!("build_and_publish: {}", e)))?;
 
         let mut m = Map::new();

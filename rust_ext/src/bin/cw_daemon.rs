@@ -886,7 +886,8 @@ mod unix {
             // daemon 启动恢复时不需要发布 snapshot（snapshot 可能已是最新），
             // 只需将 pending entries 标记为 applied 或重试 replication
             let replicator = Replicator::new(&staging_log);
-            let result = replicator.recover(ws_id, "");
+            // 恢复路径无 SnapshotPublisher，workspace_id_num=0（不发布 snapshot，无需过滤）
+            let result = replicator.recover(ws_id, 0, "");
 
             if result.success {
                 recovered_count += result.applied_count;

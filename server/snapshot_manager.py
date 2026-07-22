@@ -114,16 +114,22 @@ class SnapshotManagerService:
         db_path: str,
         build_context_hash: str = "",
         snapshot_id: Optional[str] = None,
+        workspace_id: int = 0,
     ) -> Optional[Dict[str, Any]]:
         """为指定 workspace 构建 snapshot 并原子发布。
 
         同时创建一个 GraphStore 实例缓存到 _rust_stores，供后续查询使用。
+
+        P0-2 整改（2026-07-22 复审整改-v2）：新增 `workspace_id` 参数（末尾，
+        默认 0），传入 Rust `build_and_publish` 用于 GraphStore SQL 层过滤本
+        workspace 数据。生产路径应传 >0 的 workspace_id。
 
         Args:
             workspace_instance_id: workspace 实例 ID
             db_path: SQLite 数据库路径（callwarden.db）
             build_context_hash: build context 哈希
             snapshot_id: 共享 snapshot ID（clean workspace 可共享）
+            workspace_id: workspace 数字主键（用于 SQL 过滤，0=不过滤）
 
         Returns:
             发布结果 dict（含 generation/symbol_count/call_count），Rust 不可用时返回 None
@@ -135,7 +141,7 @@ class SnapshotManagerService:
         with self._lock:
             # 1. 通过 PySnapshotManager 构建 snapshot 并原子发布
             mgr = self._cache.get_or_create(workspace_instance_id)
-            gen, syms, calls = mgr.build_and_publish(db_path, build_context_hash, snapshot_id)
+            gen, syms, calls = mgr.build_and_publish(db_path, build_context_hash, snapshot_id, workspace_id)
 
             # 2. 查询视图直接共享刚发布 snapshot 的 symbols/calls Arc。
             store = mgr.current_store()
@@ -401,10 +407,11 @@ def publish_workspace_snapshot(
     db_path: str,
     build_context_hash: str = "",
     snapshot_id: Optional[str] = None,
+    workspace_id: int = 0,
 ) -> Optional[Dict[str, Any]]:
     """便捷函数：发布 workspace snapshot。"""
     return get_snapshot_service().publish_snapshot(
-        workspace_instance_id, db_path, build_context_hash, snapshot_id
+        workspace_instance_id, db_path, build_context_hash, snapshot_id, workspace_id
     )
 
 
