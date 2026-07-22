@@ -197,25 +197,31 @@ class CrossRepoMixin:
                             # P1-2 修复：原 Dict[name] 只保留最后一个候选，
                             # 现在遍历所有候选，选择 FQN 与 import_path 后缀匹配的；
                             # 若都不后缀匹配，选第一个候选（向后兼容行为）
+                            #
+                            # P1-2 修复（2026-07-22）：移除 import_path.endswith(cand_qn.split(".")[-1])
+                            # 条件。candidates 是按 cand_qn.split(".")[-1] == module_name 筛出的，
+                            # 而 import_path 中必然包含 module_name，所以此条件对任意候选恒真，
+                            # 等于取第一个候选而非真正的 FQN 后缀匹配。改为只保留
+                            # import_path.endswith(cand_qn)（完整 FQN 后缀匹配）。
                             for cand_qn, cand_hash in candidates:
-                                # 后缀匹配：import_path 以 cand_qn 结尾（如 a.b.c.foo 匹配 c.foo）
-                                if cand_qn and (
-                                    import_path.endswith(cand_qn)
-                                    or import_path.endswith(cand_qn.split(".")[-1])
-                                ):
+                                # FQN 后缀匹配：import_path 以完整 cand_qn 结尾
+                                # （如 import a.b.c.foo 匹配 b.c.foo，但不匹配 b.c.bar）
+                                if cand_qn and import_path.endswith(cand_qn):
                                     matched_qn = cand_qn
                                     matched_hash = cand_hash
                                     break
                             if matched_qn is None and candidates:
-                                # 没有后缀匹配，取第一个候选（向后兼容 + 给出 confidence 降低提示）
+                                # 没有 FQN 后缀匹配，取第一个候选（向后兼容 + 降低 confidence）
                                 matched_qn, matched_hash = candidates[0]
 
                         if matched_qn is None:
                             continue
 
-                        # P1-2 修复：同一轮扫描内用 (source_hash, target_hash) 去重，
-                        # 避免同一对符号被多次 import 语句重复记录
-                        pair_key = (sym["symbol_hash"], matched_hash)
+                        # P1-2 修复：同一轮扫描内用 (source_hash, target_hash, target_ws_id) 去重，
+                        # 避免同一对符号被多次 import 语句重复记录。
+                        # 旧实现缺 target_ws_id，同一 CAS symbol 出现在多个目标仓库时
+                        # 后续仓库会被误去重（不同 target_workspace 的同 hash 符号被丢弃）
+                        pair_key = (sym["symbol_hash"], matched_hash, t_id)
                         if pair_key in recorded_pairs:
                             continue
                         recorded_pairs.add(pair_key)
@@ -407,7 +413,8 @@ class CrossRepoMixin:
                 "risk_level": "low/medium/high",
             }
         """
-        ws_id = self._get_active_workspace_id()
+        # 注：原 ws_id = self._get_active_workspace_id() 为死代码（声明后从未使用），
+        # 且会阻塞未挂载完整 CodeGraphDB 的测试场景。已移除。
 
         # 查找源符号
         cur = self.conn.execute(
@@ -434,24 +441,15 @@ class CrossRepoMixin:
         source_qn = source_row["qualified_name"]
         source_ws = source_row["ws_name"]
 
-        # 1. 查找直接依赖该符号的其他仓库（cross_repo_deps 表）
-        cur = self.conn.execute(
-            """
-            SELECT DISTINCT
-                crd.target_workspace_id,
-                w.name as target_ws_name,
-                crd.dependency_type,
-                crd.confidence,
-                crd.evidence
-            FROM cross_repo_deps crd
-            JOIN workspaces w ON crd.target_workspace_id = w.id
-            WHERE crd.source_symbol_hash = ?
-            """,
-            (symbol_hash,),
-        )
-        direct_deps = [dict(r) for r in cur]
-
-        # 2. 反向查找：哪些仓库的符号调用了源符号（通过 cross_repo_deps 反查）
+        # P1-2 修复（2026-07-22）：cross_repo_impact 方向修正
+        # cross_repo_deps 表语义：source_workspace 的 source_symbol_hash 导入了
+        # target_workspace 的 target_symbol_hash（source 依赖 target）。
+        # 改变一个符号时，它作为 target（被依赖方），应查找哪些 source 仓库依赖它。
+        #
+        # 旧实现错误地查 WHERE source_symbol_hash = ? 找 target_workspace_id
+        # （即"我作为调用方依赖了哪些仓库"），但改变调用方不会反向影响被调用方。
+        # 正确方向是查 WHERE target_symbol_hash = ? 找 source_workspace_id
+        # （即"哪些仓库依赖了我"）。
         cur = self.conn.execute(
             """
             SELECT DISTINCT
@@ -479,16 +477,8 @@ class CrossRepoMixin:
         # 汇总受影响仓库
         impacted_repos: Dict[str, Dict[str, Any]] = {}
 
-        for dep in direct_deps:
-            ws_name = dep["target_ws_name"]
-            if ws_name not in impacted_repos:
-                impacted_repos[ws_name] = {
-                    "workspace": ws_name,
-                    "impacted_symbols": [],
-                    "dependency_type": dep["dependency_type"],
-                    "confidence": dep["confidence"],
-                }
-
+        # P1-2 修复：只遍历 reverse_deps（依赖了我的仓库），
+        # 移除原 direct_deps 循环（方向错误：我依赖的仓库不受我改变影响）
         for dep in reverse_deps:
             ws_name = dep["source_ws_name"]
             if ws_name not in impacted_repos:

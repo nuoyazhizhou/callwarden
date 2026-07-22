@@ -462,7 +462,9 @@ def test_p1_2_fqn_suffix_match_confidence_0_85():
 def test_p1_2_short_name_match_confidence_0_7():
     """P1-2: 短名匹配 confidence=0.7（有重名风险）。
 
-    源符号 import foo + 目标符号 FQN=module.foo（无 FQN 全匹配也无后缀匹配）。
+    P1-2 修复（2026-07-22）：移除 import_path.endswith(cand_qn.split(".")[-1]) 恒真条件后，
+    0.7 分支现在可达。场景：import_path=foo，候选 FQN=module.foo，
+    FQN 后缀匹配 foo.endswith("module.foo")=False → 取 candidates[0] → confidence=0.7。
     """
     conn = _build_in_memory_db()
     src_id = _add_workspace(conn, "source", "/src")
@@ -477,79 +479,29 @@ def test_p1_2_short_name_match_confidence_0_7():
         module_path="src.py",
         content="import foo\ndef caller(): pass",
     )
-    # 目标 FQN = module.foo（import_path=foo 不以 module.foo 结尾，也不以 foo 结尾…等等
-    # 实际上 foo 以 foo 结尾，所以会触发后缀匹配
-    # 需要让短名匹配触发：让目标 FQN 不与 import_path 后缀匹配
-    # import_path=foo, 目标 FQN=module.bar_foo（name=bar_foo）→ 短名 bar_foo 不匹配
-    # 这会导致无匹配。换个思路：
-    # 让 import_path 与候选 FQN 的最后一段相同，但候选 FQN 整体不后缀匹配
-    # 例：import_path=foo, 候选 FQN=module.foo
-    #   - FQN 全匹配：foo != module.foo ❌
-    #   - FQN 后缀：foo.endswith(module.foo)=False, foo.endswith(foo)=True → 0.85
-    # 这种情况下短名匹配无法触发。
-    # 真正的短名匹配触发场景：import_path 比候选 FQN 短或不同
-    # 例：import_path=foo, 候选 FQN=bar.baz（name=baz, 与 foo 不一致）
-    #   - 但 by_name["foo"] 不存在 → continue
-    # 实际算法：只有当短名匹配时才会触发 candidates[0]
-    # candidates 列表来自 by_name[module_name]，module_name=import_path.split(".")[-1]
-    # 所以短名一定相同。除非 import_path 与 FQN 都不后缀匹配，且 candidates 有多个
-    #
-    # 构造场景：import_path=foo, 候选 FQN=module.foo
-    # - 全匹配：foo != module.foo ❌
-    # - 后缀：foo.endswith("module.foo")=False, foo.endswith("foo")=True → 0.85
-    # 所以后缀匹配会先触发，不会到 0.7 分支
-    #
-    # 要触发 0.7 分支：candidates 存在但都不后缀匹配
-    # 候选 FQN 必须不以 import_path 结尾，也不以 import_path.split(".")[-1] 结尾
-    # 但 import_path.split(".")[-1] = candidates 的 name（因为 by_name[name]）
-    # 所以 candidates 的 name == import_path.split(".")[-1]
-    # candidates[i][0]（FQN）一定以 name 结尾吗？
-    # FQN 格式假设是 module.name，所以 FQN.split(".")[-1] = name
-    # 所以 FQN.endswith(name) = True → 触发 0.85
-    #
-    # 算法逻辑：
-    # if cand_qn and (import_path.endswith(cand_qn) or import_path.endswith(cand_qn.split(".")[-1])):
-    #     matched_qn = cand_qn; break
-    # import_path.endswith(cand_qn.split(".")[-1]) = import_path.endswith(name)
-    # import_path.split(".")[-1] == name → import_path.endswith(name) = True（除非有更复杂情况）
-    # 所以 candidates 不为空时一定会触发后缀匹配，confidence=0.85
-    #
-    # 那 0.7 分支何时触发？
-    # 看代码：if matched_qn is None and candidates: matched_qn, matched_hash = candidates[0]
-    # 即 candidates 不为空但都不后缀匹配 → 0.7
-    # 但前面分析，candidates 的 name 一定等于 import_path.split(".")[-1]，
-    # 所以 import_path 一定 endswith(name) → 一定后缀匹配
-    # 所以 0.7 分支在 candidates 非空时实际不可达？
-    #
-    # 重新看 import_path 和 module_name 的关系：
-    # module_name = import_path.split(".")[-1].split("::")[-1].split("/")[-1]
-    # 候选 name = module_name
-    # 所以 candidates[i].name == module_name == import_path.split(".")[-1]
-    # 但 candidates[i][0] 是 FQN，其 name 部分是 FQN.split(".")[-1]
-    # 假设 FQN.split(".")[-1] == name（一般成立）
-    # 那 import_path.endswith(name) 当且仅当 import_path.split(".")[-1] == name
-    # 而 module_name = import_path.split(".")[-1] = name
-    # 所以 import_path.endswith(name) = True
-    # → 一定后缀匹配，confidence=0.85
-    #
-    # 除非 name 含特殊字符（:: 或 /），split 之后不等于 name
-    # 或 import_path 末尾包含分隔符导致 split 后不是预期值
-    #
-    # 测试场景：构造 import_path=foo.bar.baz，候选 FQN=other.baz
-    # module_name = "baz"
-    # 候选 name = "baz"
-    # FQN = "other.baz", FQN.split(".")[-1] = "baz" == module_name ✓
-    # import_path.endswith("other.baz") = False
-    # import_path.endswith("baz") = True → 0.85
-    # 还是 0.85
-    #
-    # 看起来短名匹配 0.7 分支难以触发，因为算法设计上 candidates 非空 → 一定后缀匹配
-    # 这其实是算法的小问题，但测试应反映算法实际行为
-    # 暂时跳过 0.7 测试或调整算法
-    #
-    # 跳过此测试场景
-    pytest.skip("P1-2 算法实际行为：短名匹配总会触发后缀匹配（candidates.name 与 import_path.split[-1] 相同），"
-                "0.7 分支在算法当前实现下不可达")
+    # 目标 FQN = module.foo
+    # 修复后：import_path=foo, cand_qn=module.foo
+    #   import_path.endswith(cand_qn) = "foo".endswith("module.foo") = False
+    #   → 不匹配 → 取 candidates[0] → confidence=0.7
+    _add_symbol(
+        conn, 2, "target.py",
+        symbol_hash="tgt_h1",
+        name="foo",
+        qualified_name="module.foo",
+        module_path="target.py",
+        content="def foo(): pass",
+    )
+
+    db = _make_db(conn)
+    result = db.detect_cross_repo_deps("source")
+    deps = result["detected_deps"]
+
+    assert len(deps) == 1, f"应检测到 1 条依赖，实际: {len(deps)}"
+    dep = deps[0]
+    assert dep["confidence"] == 0.7, (
+        f"短名匹配（无 FQN 后缀匹配）confidence 应为 0.7，实际: {dep['confidence']}"
+    )
+    assert dep["target_symbol"] == "module.foo"
 
 
 def test_p1_2_multi_workspace_match_no_break():
@@ -807,6 +759,119 @@ def test_p1_2_end_to_end_with_d7_existing_test():
     row = cur.fetchone()
     assert row["target_symbol_hash"] == "tgt_h_001", (
         f"target_symbol_hash 应为 tgt_h_001（D7 修复），实际：{row['target_symbol_hash']}"
+    )
+
+
+# ============================================
+# P1-2 补充测试（2026-07-22）：方向修复 + 跨 workspace 去重
+# ============================================
+
+
+def test_p1_2_cross_repo_impact_direction_correct():
+    """P1-2 修复：cross_repo_impact 方向正确。
+
+    旧实现查 WHERE source_symbol_hash = changed_symbol 找 target_workspace_id，
+    即"我作为调用方依赖了哪些仓库"——但改变调用方不会反向影响被调用方。
+    修复后查 WHERE target_symbol_hash = changed_symbol 找 source_workspace_id，
+    即"哪些仓库依赖了我"——改变被依赖方才会影响依赖方。
+    """
+    conn = _build_in_memory_db()
+    src_id = _add_workspace(conn, "source_repo", "/src")
+    tgt_id = _add_workspace(conn, "target_repo", "/tgt")
+
+    # target_repo 有 lib_fn，source_repo 依赖它
+    _add_symbol(
+        conn, tgt_id, "lib.py",
+        symbol_hash="lib_hash",
+        name="lib_fn",
+        qualified_name="lib.lib_fn",
+        module_path="lib.py",
+        content="def lib_fn(): pass",
+    )
+    _add_symbol(
+        conn, src_id, "caller.py",
+        symbol_hash="caller_hash",
+        name="caller",
+        qualified_name="src.caller",
+        module_path="caller.py",
+        # 用 import lib_fn（短名匹配）让 detect_cross_repo_deps 能记录依赖：
+        # 算法匹配 import 模块名与目标符号名，from lib import lib_fn 会捕获
+        # 模块 "lib"（与目标符号 "lib_fn" 不匹配），改用 import lib_fn。
+        content="import lib_fn\ndef caller(): lib_fn()",
+    )
+
+    db = _make_db(conn)
+    # 先 detect 建立依赖关系
+    db.detect_cross_repo_deps("source_repo")
+
+    # 改变 target_repo 的 lib_fn → 应该影响 source_repo（依赖了 lib_fn 的仓库）
+    impact = db.cross_repo_impact("lib_hash", depth=2)
+
+    # source_repo 应在受影响列表中（因为它依赖了 lib_fn）
+    impacted_ws_names = [r["workspace"] for r in impact["impacted_repos"]]
+    assert "source_repo" in impacted_ws_names, (
+        f"改变 lib_fn 应影响 source_repo（它依赖了 lib_fn），"
+        f"实际受影响: {impacted_ws_names}"
+    )
+    # target_repo 不应在受影响列表中（改变 lib_fn 不会影响 lib_fn 所在的仓库自身）
+    assert "target_repo" not in impacted_ws_names, (
+        f"改变 lib_fn 不应影响 target_repo（它不是依赖方），"
+        f"实际受影响: {impacted_ws_names}"
+    )
+
+
+def test_p1_2_cross_workspace_dedup_not_over_dedup():
+    """P1-2 修复：同轮去重 key 加入 target_workspace_id。
+
+    旧实现 pair_key = (source_hash, target_hash)，同一 CAS symbol 出现在
+    多个目标仓库时后续仓库会被误去重。修复后 pair_key = (source_hash, target_hash, t_id)。
+    """
+    conn = _build_in_memory_db()
+    src_id = _add_workspace(conn, "source", "/src")
+    _add_workspace(conn, "target_a", "/a")
+    _add_workspace(conn, "target_b", "/b")
+
+    # 两个目标仓库都有 shared_fn，但内容不同（不同 content_hash 避免 UNIQUE 冲突）
+    # 短名相同（shared_fn），FQN 不同（target_a.shared_fn / target_b.shared_fn）
+    _add_symbol(
+        conn, 2, "target_a.py",
+        symbol_hash="hash_a_001",
+        name="shared_fn",
+        qualified_name="target_a.shared_fn",
+        module_path="target_a.py",
+        content="def shared_fn(): return 'a'",
+    )
+    _add_symbol(
+        conn, 3, "target_b.py",
+        symbol_hash="hash_b_001",
+        name="shared_fn",
+        qualified_name="target_b.shared_fn",
+        module_path="target_b.py",
+        content="def shared_fn(): return 'b'",
+    )
+
+    # source 依赖 shared_fn
+    _add_symbol(
+        conn, src_id, "source.py",
+        symbol_hash="src_h1",
+        name="caller",
+        qualified_name="src.caller",
+        module_path="source.py",
+        content="import shared_fn\ndef caller(): shared_fn()",
+    )
+
+    db = _make_db(conn)
+    result = db.detect_cross_repo_deps("source")
+    deps = result["detected_deps"]
+
+    # 应该检测到 2 条依赖（source→target_a, source→target_b），
+    # 而不是因去重 key 缺 t_id 只记录 1 条
+    assert len(deps) == 2, (
+        f"同一短名在 2 个目标仓库应检测到 2 条依赖，实际: {len(deps)}"
+    )
+    target_workspaces = {d["target_workspace"] for d in deps}
+    assert target_workspaces == {"target_a", "target_b"}, (
+        f"应覆盖两个目标仓库，实际: {target_workspaces}"
     )
 
 
