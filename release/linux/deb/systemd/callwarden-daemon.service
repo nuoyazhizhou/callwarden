@@ -32,6 +32,18 @@ LogsDirectoryMode=0750
 # 子命令 schema-check（kebab-case，clap 转换）：--strict 严格版本校验
 ExecStartPre=/usr/bin/cw-daemon schema-check --strict
 # 默认动作 = serve（也可显式写出）；cw-daemon 不接受 --enterprise flag
+#
+# P0-2 降级说明（2026-07-22 复审整改-v2）：
+# Rust daemon 为 CAS-only 路径——daemon_handle_refresh 完成后 CAS 数据已 publish 到
+# cas_file_cache / cas_symbols / cas_raw_calls 表，但不会 merge 到主 CodeGraph DB
+# 的 file_instances / symbols / calls 表（参见 rust_ext/src/daemon/replicator.rs
+# daemon_handle_refresh 函数注释 + SnapshotCachePublisher::publish_snapshot 注释）。
+# 即 watcher save 后通过 db_path 重载的 GraphSnapshot 仍是旧数据，无法保证 save-to-query 闭合。
+#
+# 企业部署若需 save-to-query 数据链闭合，请改用 Python daemon：
+#   ExecStart=/usr/bin/python3 -m callwarden.server
+# Python daemon 在 daemon_handle_refresh step 5 调用 merge_cas_to_codegraph + upsert_manifest，
+# 把 CAS delta merge 到 CodeGraph DB 的 file_instances / symbols / calls 表。
 ExecStart=/usr/bin/cw-daemon serve
 ExecReload=/bin/kill -HUP $MAINPID
 

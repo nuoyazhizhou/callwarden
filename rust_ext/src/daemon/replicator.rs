@@ -237,6 +237,19 @@ pub struct RefreshResult {
 ///    canonical bytes → sha256 → CAS lookup → 未命中则 parse_canonical_bytes → publish
 /// 4. CAS 第二阶段（committed）—— 条件更新 latest_committed_generation
 ///
+/// **P0-2 降级说明（2026-07-22 复审整改-v2）**：
+/// 本函数为 **CAS-only 路径**，没有 Python `server/replicator.py` 的 step 5
+/// （CAS → CodeGraph merge + upsert_manifest）。即 CAS 数据已 publish 到
+/// `cas_file_cache` / `cas_symbols` / `cas_raw_calls` 表，但不会 merge 到
+/// 主 CodeGraph DB 的 `file_instances` / `symbols` / `calls` 表。
+/// 后续 `publish_snapshot` 通过 `build_and_publish_blocking` 重载 SQLite 时，
+/// 读到的仍是 merge 之前的旧数据，watcher save 后通过 db_path 查询不到新符号。
+///
+/// 企业部署若需 save-to-query 数据链闭合：
+/// - 方案 1：改用 Python daemon（`python -m callwarden.server`）
+/// - 方案 2：在 Rust daemon step 4 后外部调用 `cw refresh <path>` 补 merge
+/// - 方案 3（未实现）：在 Rust 端移植 `db_cas_merge.merge_cas_to_codegraph()` 逻辑
+///
 /// 参数：
 /// - workspace_id: workspace ID
 /// - msg: refresh 消息
@@ -738,6 +751,21 @@ impl SnapshotCachePublisher {
 }
 
 impl SnapshotPublisher for SnapshotCachePublisher {
+    /// 发布快照到 SnapshotCache。
+    ///
+    /// **P0-2 降级说明（2026-07-22 复审整改-v2）**：
+    /// 本方法仅调用 `build_and_publish_blocking(db_path, ...)` 重新加载已有 SQLite
+    /// 到内存 GraphStore，**不把本次 CAS delta merge 到 CodeGraph DB**。
+    /// 真正的 CAS → CodeGraph merge 由 Python 侧 `db_cas_merge.merge_cas_to_codegraph()`
+    /// 实现（server/replicator.py:261-335 step 5），Rust daemon 路径未移植等价逻辑。
+    ///
+    /// 影响：Linux systemd 启动 Rust `cw-daemon` 时，watcher save 后 CAS 已 publish，
+    /// 但 CodeGraph DB 中 file_instances / symbols / calls 表不会被更新，
+    /// 后续通过 db_path 重载的 GraphSnapshot 仍是旧数据。
+    ///
+    /// 企业部署如需 save-to-query 数据链闭合，请使用 Python daemon 路径：
+    ///   `python -m callwarden.server`（systemd unit 改用 ExecStart=python -m ...）
+    /// 或在 Rust daemon 完成 step 3 CAS publish 后，外部调用 `cw refresh <path>` 补 merge。
     fn publish_snapshot(
         &self,
         workspace_instance_id: &str,
