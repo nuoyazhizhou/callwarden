@@ -4,9 +4,9 @@
 # Spec: docs/design/cross-platform-packaging-release-plan.md §7
 #
 # 产出：
-#   CallWarden-<version>-universal2.pkg      已签名/公证的安装包
-#   CallWarden-<version>-universal2.tar.gz   自动化友好的安装树归档
-#   CallWarden-<version>-universal2.tar.gz.sha256
+#   CallWarden-<version>-arm64.pkg      已签名/公证的安装包
+#   CallWarden-<version>-arm64.tar.gz   自动化友好的安装树归档
+#   CallWarden-<version>-arm64.tar.gz.sha256
 #
 # 要求：macOS + Xcode command line tools + cargo + lipo
 # 签名/公证通过环境变量启用（缺省时跳过并 warning）：
@@ -82,9 +82,15 @@ INSTALL_DIR="/Library/Application Support/CallWarden"
 PKG_ID="dev.callwarden.pkg"
 DIST_DIR="$SCRIPT_DIR/dist"
 mkdir -p "$DIST_DIR"
-OUTPUT_PKG="$DIST_DIR/CallWarden-${VERSION}-universal2.pkg"
-OUTPUT_TGZ="$DIST_DIR/CallWarden-${VERSION}-universal2.tar.gz"
-SHASUM_TGZ="$DIST_DIR/CallWarden-${VERSION}-universal2.tar.gz.sha256"
+# P0-4 修复（2026-07-22）：产物标记为 arm64，不假装 universal2
+# 原代码只把 Rust 扩展用 lipo 合成 universal2，PyInstaller runtime 仍是宿主架构，
+# 产物文件名为 universal2 但入口和嵌入式 Python 实际只有单架构。
+# 要支持真正的 universal2，需要在 x86_64 和 arm64 两个 runner 上分别构建 PyInstaller，
+# 然后合并 --onedir 目录（当前 CI 不具备双 runner 条件）。
+# GitHub Actions macOS runner 默认是 arm64（Apple Silicon），故产物标记为 arm64。
+OUTPUT_PKG="$DIST_DIR/CallWarden-${VERSION}-arm64.pkg"
+OUTPUT_TGZ="$DIST_DIR/CallWarden-${VERSION}-arm64.tar.gz"
+SHASUM_TGZ="$DIST_DIR/CallWarden-${VERSION}-arm64.tar.gz.sha256"
 
 # 源产物目录：由 release/build.py 生成
 # 包含 Python wheel（callwarden-<version>-py3-none-any.whl），
@@ -99,34 +105,39 @@ echo "Install:   $INSTALL_DIR"
 echo "Source:    $SRC_DIST (Python wheel + Rust ext)"
 
 # ============================================================
-# 2. 构建 universal2 Rust 扩展
+# 2. 构建 arm64 Rust 扩展（P0-5 v2 修复：诚实降级为 arm64-only）
 # ============================================================
-echo "Step 1: Building universal2 Rust extension"
+# P0-5 v2 修复（2026-07-22 完整复审）：
+# 旧代码试图构建 universal2 Rust 扩展（x86_64 + arm64 lipo 合成），
+# 但 PyInstaller runtime 仍是宿主架构（macos-latest = arm64），
+# 导致入口二进制和嵌入式 Python 只有 arm64，而 Rust 扩展是 universal2。
+# 复审报告指出："脚本没有对 PyInstaller 入口和嵌入式 Python 执行 file/lipo
+# 架构校验，却无条件把产物命名为 arm64"。
+#
+# 修复方案：诚实降级为 arm64-only：
+# 1. 只构建 aarch64-apple-darwin Rust 扩展（不再 lipo 合成 universal2）
+# 2. 构建后用 file/lipo 校验所有 Mach-O 产物架构（cw, cw-client, cw-agent, Rust 扩展）
+# 3. 产物文件名标记 arm64（与实际架构一致）
+# 4. 如需 x86_64 支持，需要在 macos-13 runner 上单独构建（未来扩展）
+echo "Step 1: Building arm64 Rust extension (P0-5 v2: arm64-only)"
 cd "$ROOT/rust_ext"
-cargo build --release --target x86_64-apple-darwin
 cargo build --release --target aarch64-apple-darwin
 
-UNIVERSAL_DIR="$SCRIPT_DIR/build/universal2"
-mkdir -p "$UNIVERSAL_DIR"
-lipo -create \
-    target/x86_64-apple-darwin/release/libcallwarden_core.dylib \
-    target/aarch64-apple-darwin/release/libcallwarden_core.dylib \
-    -output "$UNIVERSAL_DIR/callwarden_core.so"
+ARM64_DIR="$SCRIPT_DIR/build/arm64"
+mkdir -p "$ARM64_DIR"
+cp target/aarch64-apple-darwin/release/libcallwarden_core.dylib "$ARM64_DIR/callwarden_core.so"
 
-# universal2 架构验证（规范 §7：Intel 与 Apple Silicon 都要原生支持）
-echo "  Verifying universal2 architecture:"
-ARCHS=$(lipo -archs "$UNIVERSAL_DIR/callwarden_core.so")
-echo "    lipo -archs: $ARCHS"
-LIPO_INFO=$(lipo -info "$UNIVERSAL_DIR/callwarden_core.so")
-echo "    lipo -info: $LIPO_INFO"
+# arm64 架构验证
+echo "  Verifying arm64 architecture:"
 echo "    file:"
-file "$UNIVERSAL_DIR/callwarden_core.so" | sed 's/^/      /'
-
-if [[ "$ARCHS" != *"x86_64"* ]] || [[ "$ARCHS" != *"arm64"* ]]; then
-    echo "ERROR: Not a universal2 binary (missing x86_64 or arm64)" >&2
+file "$ARM64_DIR/callwarden_core.so" | sed 's/^/      /'
+ARCHS=$(lipo -archs "$ARM64_DIR/callwarden_core.so")
+echo "    lipo -archs: $ARCHS"
+if [[ "$ARCHS" != "arm64" ]]; then
+    echo "ERROR: Rust 扩展不是 arm64（实际: $ARCHS）" >&2
     exit 1
 fi
-echo "  [OK] universal2 verified"
+echo "  [OK] Rust 扩展 arm64 verified"
 
 # ============================================================
 # 3. 准备 package root
@@ -175,8 +186,8 @@ python3 -m venv "$VENV_DIR" >/dev/null 2>&1 || {
     exit 1
 }
 
-# 复制 universal2 Rust 扩展到项目根目录（PyInstaller spec 从根目录收集）
-cp "$UNIVERSAL_DIR/callwarden_core.so" "$ROOT/callwarden_core.so"
+# 复制 arm64 Rust 扩展到项目根目录（PyInstaller spec 从根目录收集）
+cp "$ARM64_DIR/callwarden_core.so" "$ROOT/callwarden_core.so"
 
 # 运行 PyInstaller（spec 文件与 Linux 共用 release/pyinstaller/callwarden.spec）
 cd "$ROOT"
@@ -198,6 +209,31 @@ for cmd in cw cw-client cw-agent; do
     fi
 done
 echo "  [OK] PyInstaller bundle built: cw, cw-client, cw-agent"
+
+# P0-5 v2 修复：校验 PyInstaller 产物架构（所有 Mach-O 必须 arm64）
+echo "  Verifying PyInstaller bundle architecture (arm64-only):"
+for cmd in cw cw-client cw-agent; do
+    BIN="$SCRIPT_DIR/build/pyinstaller_dist/$cmd/$cmd"
+    ARCHS=$(lipo -archs "$BIN" 2>/dev/null || echo "not-a-Mach-O")
+    echo "    $cmd: $ARCHS"
+    if [[ "$ARCHS" != "arm64" ]]; then
+        echo "    ERROR: $cmd 不是 arm64（实际: $ARCHS）" >&2
+        echo "    PyInstaller runtime 是宿主架构，macos-latest 应为 arm64" >&2
+        exit 1
+    fi
+done
+
+# 校验 _internal 中的嵌入式 Python 解释器架构
+PY_BIN="$SCRIPT_DIR/build/pyinstaller_dist/cw/_internal/python"
+if [ -f "$PY_BIN" ]; then
+    PY_ARCHS=$(lipo -archs "$PY_BIN" 2>/dev/null || echo "not-a-Mach-O")
+    echo "    python: $PY_ARCHS"
+    if [[ "$PY_ARCHS" != "arm64" ]]; then
+        echo "    ERROR: 嵌入式 Python 不是 arm64（实际: $PY_ARCHS）" >&2
+        exit 1
+    fi
+fi
+echo "  [OK] 所有 Mach-O 产物 arm64 架构校验通过"
 
 # 复制 PyInstaller --onedir 目录到 pkg root
 # cw 和 cw-client 各自一个独立目录（含 Python 解释器 + 依赖）
@@ -299,10 +335,17 @@ EOF
 #   - Rust 扩展：runtime/cw/_internal/callwarden_core.so、runtime/cw-client/_internal/callwarden_core.so
 #   - bin/cw 和 bin/cw-client 是 symlink，codesign 签 symlink 无效，应签 target
 # 旧路径 lib/callwarden_core.so 和 bin/cw 在 onedir 模式下不存在，codesign 会失败
+#
+# P0-4 修复（2026-07-22）：codesign 改为 --deep 递归签名
+# 原代码只签两个入口和两个 callwarden_core.so，没有递归签 _internal/ 中的其他 Mach-O 依赖
+# （如 Python 解释器、tree-sitter grammar .so 等），导致 notarization 失败
+# （Apple 要求所有 Mach-O 都已签名）。
+# 现在对 _internal/ 目录使用 --deep 递归签名，覆盖所有嵌套的 .so/.dylib/可执行文件，
+# 然后签主入口二进制。
 SIGN_TARGETS=(
-    "$PKG_ROOT/$INSTALL_DIR/runtime/cw/_internal/callwarden_core.so"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/cw/_internal"
     "$PKG_ROOT/$INSTALL_DIR/runtime/cw/cw"
-    "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/_internal/callwarden_core.so"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/_internal"
     "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/cw-client"
 )
 
@@ -318,14 +361,15 @@ fi
 
 if [ "$SKIP_CODESIGN" = "0" ] && [ -n "${CW_APPLE_DEVID:-}" ] && command -v codesign &>/dev/null; then
     for target in "${SIGN_TARGETS[@]}"; do
-        codesign --force --options runtime \
+        # P0-4 修复：--deep 递归签名 _internal/ 中的所有 Mach-O 依赖
+        codesign --force --options runtime --deep \
             --entitlements "$ENTITLEMENTS_FILE" \
             --sign "$CW_APPLE_DEVID" \
             --timestamp \
             "$target"
-        echo "  Signed: $target"
+        echo "  Signed (deep): $target"
     done
-    echo "  [OK] hardened runtime + entitlements applied"
+    echo "  [OK] hardened runtime + entitlements applied (deep signing)"
 else
     if [ "$SKIP_CODESIGN" = "1" ]; then
         echo "  WARNING: codesign skipped (CW_BUILD_UNSIGNED=true)"

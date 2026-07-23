@@ -32,7 +32,11 @@ pyo3 = "0.29"
 
 [platforms]
 windows = ["x64", "arm64"]
-macos = ["x86_64", "arm64"]
+# P0-5 v2 修复（2026-07-22）：macOS 诚实降级为 arm64-only
+# 旧值 ["x86_64", "arm64"] 假装 universal2，但 PyInstaller runtime 是宿主架构，
+# 当前 CI 只有 macos-latest（arm64），无法构建真正的 universal2。
+# 如需 x86_64 支持，需要在 macos-13 runner 上单独构建（未来扩展）。
+macos = ["arm64"]
 linux = ["x86_64", "aarch64"]
 
 [roles]

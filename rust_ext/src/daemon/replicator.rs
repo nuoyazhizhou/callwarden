@@ -332,20 +332,10 @@ pub fn daemon_handle_refresh(
         None
     };
 
-    // 4. CAS 第二阶段（committed）—— 条件更新 latest_committed_generation
-    let committed = cas_store
-        .map(|s| s.file_generation_committed(workspace_id, &msg.rel_path,
-                                              msg.session_epoch, msg.monotonic_seq))
-        .transpose()
-        .map_err(|e| ProtocolError::new(format!("file_generation_committed 失败: {}", e)))?;
-
-    if committed == Some(false) {
-        return Err(ProtocolError::new(format!(
-            "stale manifest commit for {}",
-            msg.rel_path
-        )));
-    }
-
+    // P0-1 修复：committed 移到 workspace.rs 中 merge 成功之后执行
+    // 此处只返回 CAS 已发布状态，不更新 latest_committed_generation
+    // 如果 merge 失败/崩溃，同 seq 重试时 cas.rs 的 stale 检查会发现
+    // latest_committed_generation 为空，允许重试（不会被判 stale）
     Ok(RefreshResult {
         status: "committed".to_string(),
         generation: incoming_gen,
@@ -1348,16 +1338,22 @@ mod tests {
 
     #[test]
     fn test_daemon_handle_refresh_stale_seq_dropped() {
+        // P0-1 修复后：daemon_handle_refresh 不再调用 file_generation_committed
+        // committed 移到 workspace.rs merge 成功后调用
+        // 本测试验证：committed 后 stale seq 会被 file_generation_seen 拒绝
         let store = make_session_store();
         let cas_store = super::super::cas::CasStore::open_in_memory().unwrap();
 
         daemon_handle_connect(1000, 1, "session-1", store.conn()).unwrap();
 
-        // 先 refresh seq=5
+        // 先 refresh seq=5（CAS publish 后只 seen，未 committed）
         let msg5 = make_msg(5, "session-1", 1);
         daemon_handle_refresh(1, &msg5, store.conn(), Some(&cas_store), None).unwrap();
 
-        // 再 refresh seq=3 应该被丢弃（stale seq）
+        // 模拟 workspace.rs merge 成功后调用 committed
+        cas_store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+
+        // 再 refresh seq=3 应该被丢弃（stale seq < committed 5）
         let msg3 = make_msg(3, "session-1", 1);
         let result = daemon_handle_refresh(1, &msg3, store.conn(), Some(&cas_store), None).unwrap();
         assert_eq!(result.status, "stale_seq_dropped");

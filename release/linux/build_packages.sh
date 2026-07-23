@@ -196,29 +196,32 @@ if [ "$OFFLINE_ONLY" = "0" ]; then
     PYINSTALLER_DIST="$SCRIPT_DIR/build/pyinstaller_dist"
 
     # --- callwarden-client（设计 §8.1: cw-client + MCP proxy，不含 parser/CAS）---
+    # P0-4 修复（2026-07-22）：原代码三个包都复制到同一个 /usr/lib/callwarden/runtime/，
+    # 导致 _internal/* 跨包覆盖冲突且无 Replaces/Conflicts 声明。
+    # 现改为每个 role 使用独立 runtime 目录：runtime-cw-client/、runtime-cw/、runtime-cw-agent/
     CLIENT_ROOT="$SCRIPT_DIR/build/client"
     rm -rf "$CLIENT_ROOT"
-    mkdir -p "$CLIENT_ROOT/usr/bin" "$CLIENT_ROOT/usr/lib/callwarden/runtime"
+    mkdir -p "$CLIENT_ROOT/usr/bin" "$CLIENT_ROOT/usr/lib/callwarden/runtime-cw-client"
     # P0-3 整改：复制整个 --onedir 目录（含 Python 解释器 + 依赖），创建软链接
-    cp -r "$PYINSTALLER_DIST/cw-client/." "$CLIENT_ROOT/usr/lib/callwarden/runtime/"
-    ln -s /usr/lib/callwarden/runtime/cw-client "$CLIENT_ROOT/usr/bin/cw-client"
+    cp -r "$PYINSTALLER_DIST/cw-client/." "$CLIENT_ROOT/usr/lib/callwarden/runtime-cw-client/"
+    ln -s /usr/lib/callwarden/runtime-cw-client/cw-client "$CLIENT_ROOT/usr/bin/cw-client"
 
     # --- callwarden-local（cw + Rust 扩展 + local DB + MCP + watcher）---
     # P0-3 整改：cw 的 --onedir 已含 Rust 扩展（callwarden_core.so），
     # 不再单独复制 libcallwarden_core.so（PyInstaller spec 已收集）
     LOCAL_ROOT="$SCRIPT_DIR/build/local"
     rm -rf "$LOCAL_ROOT"
-    mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden/runtime" "$LOCAL_ROOT/etc/callwarden"
-    cp -r "$PYINSTALLER_DIST/cw/." "$LOCAL_ROOT/usr/lib/callwarden/runtime/"
-    ln -s /usr/lib/callwarden/runtime/cw "$LOCAL_ROOT/usr/bin/cw"
+    mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden/runtime-cw" "$LOCAL_ROOT/etc/callwarden"
+    cp -r "$PYINSTALLER_DIST/cw/." "$LOCAL_ROOT/usr/lib/callwarden/runtime-cw/"
+    ln -s /usr/lib/callwarden/runtime-cw/cw "$LOCAL_ROOT/usr/bin/cw"
     cp "$SCRIPT_DIR/deb/config.toml.template" "$LOCAL_ROOT/etc/callwarden/config.toml" 2>/dev/null || true
 
     # --- callwarden-agent（cw-agent + systemd user unit + client）---
     AGENT_ROOT="$SCRIPT_DIR/build/agent"
     rm -rf "$AGENT_ROOT"
-    mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/callwarden/runtime" "$AGENT_ROOT/usr/lib/systemd/user"
-    cp -r "$PYINSTALLER_DIST/cw-agent/." "$AGENT_ROOT/usr/lib/callwarden/runtime/"
-    ln -s /usr/lib/callwarden/runtime/cw-agent "$AGENT_ROOT/usr/bin/cw-agent"
+    mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/callwarden/runtime-cw-agent" "$AGENT_ROOT/usr/lib/systemd/user"
+    cp -r "$PYINSTALLER_DIST/cw-agent/." "$AGENT_ROOT/usr/lib/callwarden/runtime-cw-agent/"
+    ln -s /usr/lib/callwarden/runtime-cw-agent/cw-agent "$AGENT_ROOT/usr/bin/cw-agent"
     # agent systemd --user unit（设计 §v8: per-UID watcher agent）
     # 优先使用 deb/systemd/callwarden-agent.service 正式 unit（含安全约束、资源限制、
     # 环境变量、ExecStop 等完整配置）；不存在时降级为最小占位 unit。

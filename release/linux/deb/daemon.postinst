@@ -87,8 +87,9 @@ case "$1" in
 
         # 升级路径：schema migration → 启动 → health/generation 验证
         # P0-3 整改（2026-07-22）：cw-daemon 不支持 migrate 子命令，
-        # schema 迁移由 ExecStartPre=/usr/bin/cw-daemon schema-check --strict 处理
+        # schema 迁移由 ExecStartPre=/usr/bin/cw-daemon schema-check 处理
         # （systemd unit 在服务启动前自动执行 schema 兼容性检查）
+        # P0-4 修复（2026-07-22）：去掉 --strict，允许 fresh install 时自动初始化 schema
         if [ -n "$OLD_VERSION" ] && [ -x /usr/bin/cw-daemon ]; then
             echo "[callwarden-daemon] upgrade from $OLD_VERSION (schema-check in ExecStartPre)"
             # 最近的 pre-upgrade 备份用于失败回滚

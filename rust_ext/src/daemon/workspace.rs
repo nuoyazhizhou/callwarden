@@ -1366,6 +1366,18 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         String::new()
                     };
 
+                    // P0-2 修复：确保 CodeGraph DB 父目录存在（首次访问时自动创建）
+                    if !db_path.is_empty() {
+                        if let Some(parent) = std::path::Path::new(&db_path).parent() {
+                            if let Err(e) = std::fs::create_dir_all(parent) {
+                                eprintln!(
+                                    "[P0-2] 创建 CodeGraph DB 目录失败: {} -> {}",
+                                    parent.display(), e
+                                );
+                            }
+                        }
+                    }
+
                     // P0-2 子问题1 修复（2026-07-22）：CAS → CodeGraph merge（方案 3 实现）
                     // 规范：复审报告 §3 P0-2 子问题1
                     // 把 CAS DB 中的解析结果（cas_symbols/cas_raw_calls）merge 到
@@ -1423,6 +1435,34 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                     // CodeGraph DB 连接（写）
                                     match rusqlite::Connection::open(&db_path) {
                                         Ok(cg_conn) => {
+                                            // P0-2 v2 修复：fresh CodeGraph DB 首次打开时初始化主 schema
+                                            //
+                                            // 复审报告指出：默认 codegraph_db_path_template 非空后，
+                                            // Connection::open 只创建空 SQLite 文件，merge 时查询
+                                            // workspaces 等表会报 "no such table"。
+                                            // init_codegraph_schema 用 CREATE IF NOT EXISTS 幂等建表。
+                                            if let Err(schema_err) =
+                                                crate::daemon::cas_merge::init_codegraph_schema(&cg_conn)
+                                            {
+                                                eprintln!(
+                                                    "[P0-2] init_codegraph_schema failed for {}: {}",
+                                                    db_path, schema_err
+                                                );
+                                                let mut m = Map::new();
+                                                m.insert(
+                                                    "status".to_string(),
+                                                    Value::String("open_failed".to_string()),
+                                                );
+                                                m.insert(
+                                                    "error".to_string(),
+                                                    Value::String(format!(
+                                                        "init_codegraph_schema: {}",
+                                                        schema_err
+                                                    )),
+                                                );
+                                                merge_summary = Some(Value::Object(m));
+                                                // 跳过 merge（schema 未初始化）
+                                            } else {
                                             match crate::daemon::cas_merge::merge_cas_to_codegraph(
                                                 &cas_conn_guard,
                                                 &cg_conn,
@@ -1462,16 +1502,17 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                                     );
                                                     let mut m = Map::new();
                                                     m.insert(
-                        "status".to_string(),
-                        Value::String("error".to_string()),
+                                                        "status".to_string(),
+                                                        Value::String("error".to_string()),
                                                     );
                                                     m.insert(
-                        "error".to_string(),
-                        Value::String(e),
+                                                        "error".to_string(),
+                                                        Value::String(e),
                                                     );
                                                     merge_summary = Some(Value::Object(m));
                                                 }
                                             }
+                                            } // end else (schema 初始化成功后 merge)
                                         }
                                         Err(e) => {
                                             eprintln!(
@@ -1492,6 +1533,116 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // P0-1 修复（v2 完整复审）：committed 移到 replicate 成功之后
+                    //
+                    // 旧实现的 bug：committed 在 replicate（含 snapshot publish）之前调用，
+                    // snapshot 加载/发布或 staging apply 失败时 generation 已被 committed，
+                    // 同 seq 重试会被 stale 检查拒绝。
+                    //
+                    // 新实现：
+                    // 1. 先判断 merge 是否成功（只接受 merged/no_symbols；cas_miss/error/open_failed 不 committed）
+                    // 2. 如果 merge 失败，跳过 replicate，直接返回（不 committed）
+                    // 3. 如果 file_generation_committed() 返回 Ok(false)，说明 seen 已被覆盖（其他 handler 并发），中止
+                    // 4. replicate 成功后（repl_result.success=true）才真正 committed
+                    //
+                    // 注意：file_generation_committed 在 replicate 之前调用，因为 replicate 依赖
+                    // committed 状态（snapshot publish 需要读 committed generation）。
+                    // 真正的"完整发布成功后才 committed"语义通过以下方式实现：
+                    // - replicate 失败时回滚 committed（见下方 rollback）
+                    // - Ok(false) 表示并发冲突，中止 replicate
+                    let merge_ok = match merge_summary.as_ref()
+                        .and_then(|m| m.get("status"))
+                        .and_then(|s| s.as_str()) {
+                        Some("merged") | Some("no_symbols") => true,
+                        Some("cas_miss") | Some("error") | Some("open_failed") => false,
+                        None => true, // 无 merge_summary（db_path 为空或无 cas_result）→ 视为 ok（无 merge 需要）
+                        Some(_) => true, // 未知 status，保守视为 ok
+                    };
+
+                    // P0-1 v2: 用 labeled block 替代 continue（此处不在循环中）
+                    'replicate_block: {
+                    if !merge_ok {
+                        eprintln!(
+                            "[P0-1] skip committed + replicate (merge failed) for {} \
+                             (merge_status={:?}) — 同 seq 重试可恢复",
+                            rel_path,
+                            merge_summary.as_ref()
+                                .and_then(|m| m.get("status"))
+                                .and_then(|s| s.as_str())
+                        );
+                        let mut repl_map = Map::new();
+                        repl_map.insert(
+                            "snapshot_published".to_string(),
+                            Value::Bool(false),
+                        );
+                        repl_map.insert(
+                            "snapshot_warning".to_string(),
+                            Value::String(
+                                "merge 失败，未 committed 也未 replicate，同 seq 可重试".to_string()
+                            ),
+                        );
+                        if let Some(ms) = merge_summary {
+                            repl_map.insert("cas_merge".to_string(), ms);
+                        }
+                        response.insert("replication".to_string(), Value::Object(repl_map));
+                        break 'replicate_block;
+                    }
+
+                    // 尝试 committed（条件 UPDATE：只更新 seen == incoming_gen 的行）
+                    let committed_result = resources.cas_store.file_generation_committed(
+                        workspace_id_num,
+                        &rel_path,
+                        session_epoch,
+                        monotonic_seq,
+                    );
+                    match committed_result {
+                        Ok(true) => {
+                            // committed 成功，继续 replicate
+                        }
+                        Ok(false) => {
+                            // P0-1 v2 修复：Ok(false) 表示 seen 已被其他 handler 并发覆盖
+                            // 当前 handler 的 generation 已 stale，必须中止 replicate
+                            // 避免发布基于旧 generation 的 snapshot
+                            eprintln!(
+                                "[P0-1] committed Ok(false) for {} — seen 已被并发覆盖，中止 replicate",
+                                rel_path
+                            );
+                            let mut repl_map = Map::new();
+                            repl_map.insert(
+                                "snapshot_published".to_string(),
+                                Value::Bool(false),
+                            );
+                            repl_map.insert(
+                                "snapshot_warning".to_string(),
+                                Value::String(
+                                    "committed 条件失效（seen 已被并发覆盖），未 replicate".to_string()
+                                ),
+                            );
+                            response.insert("replication".to_string(), Value::Object(repl_map));
+                            break 'replicate_block;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[P0-1] file_generation_committed failed for {}: {}",
+                                rel_path, e
+                            );
+                            let mut repl_map = Map::new();
+                            repl_map.insert(
+                                "snapshot_published".to_string(),
+                                Value::Bool(false),
+                            );
+                            repl_map.insert(
+                                "snapshot_warning".to_string(),
+                                Value::String(format!(
+                                    "committed 失败（{}），未 replicate，同 seq 可重试",
+                                    e
+                                )),
+                            );
+                            response.insert("replication".to_string(), Value::Object(repl_map));
+                            break 'replicate_block;
                         }
                     }
 
@@ -1546,7 +1697,20 @@ impl DaemonStateExt for WorkspaceDaemonState {
                             "snapshot 未发布（SnapshotCachePublisher 未注入）。\
                              G11 修复：daemon 启动时通过 with_snapshot_publisher 注入 publisher。"
                         } else if !repl_result.success {
+                            // P0-1 v2 修复：replicate 失败时回滚 committed（标记未真正发布）
+                            // 让同 seq 重试时 stale 检查不会拒绝
+                            // 实现方式：通过 file_generation_uncommit 清除 committed generation
+                            if let Err(uncommit_err) = resources.cas_store.file_generation_uncommit(
+                                workspace_id_num,
+                                &rel_path,
+                            ) {
+                                eprintln!(
+                                    "[P0-1] uncommit failed for {} after replicate failure: {}",
+                                    rel_path, uncommit_err
+                                );
+                            }
                             "snapshot 发布失败（replicate 返回 success=false），\
+                             已回滚 committed，同 seq 可重试。\
                              查看 error 字段了解详情。"
                         } else {
                             "snapshot 未发布（未知原因：generation <= 0）。"
@@ -1564,6 +1728,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         repl_map.insert("cas_merge".to_string(), ms);
                     }
                     response.insert("replication".to_string(), Value::Object(repl_map));
+                    } // end 'replicate_block
                 }
                 Err(e) => {
                     // staging log append 失败不阻塞 refresh 成功，但记录 error

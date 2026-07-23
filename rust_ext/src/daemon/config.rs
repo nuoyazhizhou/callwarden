@@ -52,11 +52,15 @@ pub struct DaemonConfig {
     /// G11: CodeGraph DB 路径模板（用于 Replicator 发布 snapshot）
     ///
     /// 占位符 `{workspace_instance_id}` 在运行时按当前 workspace 替换。
-    /// 空字符串（默认）表示不启用 snapshot publish（保持 R5 行为）。
-    /// 典型值：`/var/lib/callwarden/{workspace_instance_id}/codegraph.db`
-    /// 或 `~/.callwarden/workspaces/{workspace_instance_id}/codegraph.db`
-    #[serde(default)]
+    /// P0-2 修复（2026-07-22 完整复审）：默认值改为非空，启用 save-to-query 数据链。
+    /// daemon 首次打开 CodeGraph DB 时自动创建目录。
     pub codegraph_db_path_template: String,
+    /// P0-3 修复：socket 文件组名（用于多用户 UDS 访问）
+    ///
+    /// 非空时，socket bind 后 chown 到该组。空表示不 chown（使用进程 GID）。
+    /// 典型值：`callwarden-clients`（Linux 多用户安装）
+    #[serde(default)]
+    pub socket_group: String,
 }
 
 impl Default for DaemonConfig {
@@ -69,7 +73,13 @@ impl Default for DaemonConfig {
             request_timeout_secs: 30,
             socket_mode: 0o660,
             snapshot_cache_capacity: DEFAULT_SNAPSHOT_CACHE_CAPACITY,
-            codegraph_db_path_template: String::new(),
+            // P0-2 修复：默认启用 CodeGraph 发布（save-to-query 数据链闭合）
+            codegraph_db_path_template: format!(
+                "{}/workspaces/{{workspace_instance_id}}/codegraph.db",
+                DEFAULT_DATA_ROOT
+            ),
+            // P0-3 修复：默认 socket 组为 callwarden-clients（多用户 UDS 访问）
+            socket_group: String::from("callwarden-clients"),
         }
     }
 }
@@ -232,6 +242,7 @@ mod tests {
             codegraph_db_path_template: String::from(
                 "/var/lib/callwarden/{workspace_instance_id}/codegraph.db",
             ),
+            socket_group: String::from("callwarden-clients"),
         };
         let json = serde_json::to_string_pretty(&original).unwrap();
         std::fs::write(&cfg_path, json).unwrap();
@@ -247,7 +258,9 @@ mod tests {
 
     #[test]
     fn test_resolve_codegraph_db_path_empty_template() {
-        let cfg = DaemonConfig::default();
+        // P0-2 修复后：默认模板不再为空，需显式构造空模板验证 resolve 行为
+        let mut cfg = DaemonConfig::default();
+        cfg.codegraph_db_path_template = String::new();
         assert_eq!(cfg.resolve_codegraph_db_path("ws-123"), "");
     }
 

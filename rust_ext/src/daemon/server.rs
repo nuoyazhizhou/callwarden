@@ -59,6 +59,8 @@ pub struct ServerConfig {
     pub socket_mode: mode_t,
     /// accept 循环的超时（用于响应 shutdown 信号）
     pub accept_timeout: Duration,
+    /// P0-3 修复：socket 文件组名（非空时 chown 到该组，用于多用户 UDS 访问）
+    pub socket_group: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -73,6 +75,7 @@ impl Default for ServerConfig {
             request_timeout: Duration::from_secs(30),
             socket_mode: 0o660,
             accept_timeout: Duration::from_millis(200),
+            socket_group: None,
         }
     }
 }
@@ -186,6 +189,101 @@ where
         &config.socket_path,
         std::fs::Permissions::from_mode(config.socket_mode),
     )?;
+
+    // P0-3 v2 修复：socket chown 到指定组（多用户 UDS 访问）—— fail-closed
+    //
+    // 复审报告指出：组不存在或 chown 失败时只 warning，daemon 继续 ready，
+    // 导致"服务健康但所有真实客户端无权连接"。
+    //
+    // 修复：
+    // 1. socket_group 非空时，组不存在或 chown 失败必须 return Err（fail-closed）
+    // 2. chown 后回读 stat 校验 owner/group/mode
+    // 3. 用 io::Error::last_os_error() 替代 libc::__errno_location()（macOS 用 __error）
+    #[cfg(unix)]
+    if let Some(ref group_name) = config.socket_group {
+        if !group_name.is_empty() {
+            use std::ffi::CString;
+            let c_group = CString::new(group_name.as_str())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+            // 查找 GID
+            let grp_ptr = unsafe { libc::getgrnam(c_group.as_ptr()) };
+            if grp_ptr.is_null() {
+                // P0-3 v2: fail-closed —— 组不存在时拒绝启动
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "[P0-3] socket_group '{}' 不存在，daemon 拒绝启动（fail-closed）。\
+                         请创建组（groupadd {}）或在配置中清空 socket_group。",
+                        group_name, group_name
+                    ),
+                ));
+            }
+            let gid = unsafe { (*grp_ptr).gr_gid };
+            let c_path = CString::new(config.socket_path.to_string_lossy().as_bytes())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+
+            // chown：uid 用 -1（不改变 owner），只改 group
+            let ret = unsafe { libc::chown(c_path.as_ptr(), libc::uid_t::MAX, gid) };
+            if ret != 0 {
+                // P0-3 v2: fail-closed —— chown 失败时拒绝启动
+                // 用 io::Error::last_os_error() 替代 libc::__errno_location()（跨平台）
+                let err = io::Error::last_os_error();
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "[P0-3] chown socket 到组 {} (gid={}) 失败（fail-closed）: {}。\
+                         daemon 拒绝启动以避免无权连接的客户端被静默拒绝。",
+                        group_name, gid, err
+                    ),
+                ));
+            }
+
+            // P0-3 v2: 回读 stat 校验 socket owner/group/mode
+            let c_stat_path = CString::new(config.socket_path.to_string_lossy().as_bytes())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            let mut stat_buf: libc::stat = unsafe { std::mem::zeroed() };
+            let stat_ret = unsafe { libc::stat(c_stat_path.as_ptr(), &mut stat_buf) };
+            if stat_ret != 0 {
+                let err = io::Error::last_os_error();
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!(
+                        "[P0-3] stat socket 回读校验失败（fail-closed）: {}",
+                        err
+                    ),
+                ));
+            }
+            // 校验 GID
+            if stat_buf.st_gid != gid {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "[P0-3] socket GID 校验失败（fail-closed）：期望 {} 实际 {}。\
+                         可能被其他进程覆盖。",
+                        gid, stat_buf.st_gid
+                    ),
+                ));
+            }
+            // 校验 mode（socket_mode 的低 9 位）
+            let actual_mode = stat_buf.st_mode & 0o777;
+            if actual_mode != config.socket_mode as libc::mode_t {
+                return Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!(
+                        "[P0-3] socket mode 校验失败（fail-closed）：期望 0o{:o} 实际 0o{:o}。\
+                         可能被 umask 或其他进程覆盖。",
+                        config.socket_mode, actual_mode
+                    ),
+                ));
+            }
+
+            eprintln!(
+                "[P0-3] socket chown 到组 {} (gid={}) + mode 0o{:o} 校验通过",
+                group_name, gid, config.socket_mode
+            );
+        }
+    }
     // 保存 listener raw fd（用于 shutdown 时打破 accept 阻塞）
     use std::os::unix::io::AsRawFd;
     let listener_fd = listener.as_raw_fd();

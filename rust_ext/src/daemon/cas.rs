@@ -841,29 +841,32 @@ impl CasStore {
             params![workspace_id, rel_path],
         )?;
 
-        // 检查是否 stale
+        // P0-1 修复：stale 检查改为检查 latest_committed_generation（而非 latest_seen_generation）
+        // 如果 committed 为空（只 seen 未 committed），允许同 seq 重试（merge 失败恢复）
+        // 修复崩溃窗口：CAS published → merge 失败/崩溃 → 同 seq 重试被 stale 拒绝
         let mut stmt = conn.prepare(
-            "SELECT latest_seen_generation FROM file_generations
+            "SELECT latest_committed_generation FROM file_generations
              WHERE workspace_id = ?1 AND rel_path = ?2",
         )?;
         let mut rows = stmt.query(params![workspace_id, rel_path])?;
-        let existing: Option<String> = if let Some(row) = rows.next()? {
+        let existing_committed: Option<String> = if let Some(row) = rows.next()? {
             row.get(0)?
         } else {
             None
         };
 
-        if let Some(existing_gen) = existing {
-            if !existing_gen.is_empty() {
+        if let Some(committed_gen) = existing_committed {
+            if !committed_gen.is_empty() {
                 // 比较 generation：格式 "epoch:seq"
-                if let Some((existing_epoch, existing_seq)) = parse_generation(&existing_gen) {
-                    if epoch < existing_epoch || (epoch == existing_epoch && seq <= existing_seq) {
-                        // stale：incoming_gen <= latest_seen
+                if let Some((c_epoch, c_seq)) = parse_generation(&committed_gen) {
+                    if epoch < c_epoch || (epoch == c_epoch && seq <= c_seq) {
+                        // stale：incoming_gen <= latest_committed
                         return Ok(false);
                     }
                 }
                 // 格式异常则允许更新
             }
+            // committed 为空（只 seen 未 committed）→ 允许同 seq 重试
         }
 
         // 更新 seen generation
@@ -926,6 +929,49 @@ impl CasStore {
             params![incoming_gen, workspace_id, rel_path, incoming_gen],
         )?;
         Ok(affected == 1)
+    }
+
+    /// P0-1 v2 修复：回滚 committed generation（清空 latest_committed_generation）。
+    ///
+    /// 用于 replicate / snapshot publish 失败时回滚 committed 状态，
+    /// 让同 seq 重试时 stale 检查（基于 latest_committed_generation）不会拒绝。
+    ///
+    /// 条件 UPDATE：只清除 latest_committed_generation == incoming_gen 的行，
+    /// 避免清除其他 handler 已更新的更新的 committed generation。
+    pub fn file_generation_uncommit(
+        &self,
+        workspace_id: i64,
+        rel_path: &str,
+    ) -> Result<bool, CasPublishError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = Self::file_generation_uncommit_inner(&conn, workspace_id, rel_path);
+        match result {
+            Ok(uncommitted) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(uncommitted)
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
+    fn file_generation_uncommit_inner(
+        conn: &Connection,
+        workspace_id: i64,
+        rel_path: &str,
+    ) -> Result<bool, CasPublishError> {
+        // 清空 latest_committed_generation（设为空字符串）
+        // 条件：latest_committed_generation 非空（避免无操作 UPDATE）
+        let affected = conn.execute(
+            "UPDATE file_generations SET latest_committed_generation = '' \
+             WHERE workspace_id = ?1 AND rel_path = ?2 \
+             AND latest_committed_generation != ''",
+            params![workspace_id, rel_path],
+        )?;
+        Ok(affected > 0)
     }
 
     /// 查询 file_generation 状态（用于测试和调试）
@@ -1462,15 +1508,18 @@ mod tests {
 
     #[test]
     fn test_file_generation_seen_rejects_stale_seq() {
+        // P0-1 修复后：stale 检查基于 latest_committed_generation（而非 latest_seen_generation）
+        // 需要先 committed，才能拒绝 stale seq
         let store = make_store();
-        // epoch=1, seq=5
+        // epoch=1, seq=5：先 seen 再 committed
         store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
 
-        // stale: epoch=1, seq=3（小于 5）
+        // stale: epoch=1, seq=3（小于 committed 的 5）
         let seen = store
             .file_generation_seen(1, "src/main.rs", "session-1", 1, 3)
             .unwrap();
-        assert!(!seen, "stale seq 应该被拒绝");
+        assert!(!seen, "stale seq 应该被拒绝（committed=1:5 > incoming=1:3）");
 
         // row 不应该被更新
         let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
@@ -1479,15 +1528,17 @@ mod tests {
 
     #[test]
     fn test_file_generation_seen_rejects_stale_epoch() {
+        // P0-1 修复后：stale 检查基于 latest_committed_generation
         let store = make_store();
-        // epoch=2, seq=1
+        // epoch=2, seq=1：先 seen 再 committed
         store.file_generation_seen(1, "src/main.rs", "session-2", 2, 1).unwrap();
+        store.file_generation_committed(1, "src/main.rs", 2, 1).unwrap();
 
-        // stale: epoch=1（小于 2）
+        // stale: epoch=1（小于 committed 的 2）
         let seen = store
             .file_generation_seen(1, "src/main.rs", "session-1", 1, 100)
             .unwrap();
-        assert!(!seen, "stale epoch 应该被拒绝");
+        assert!(!seen, "stale epoch 应该被拒绝（committed=2:1 > incoming=1:100）");
     }
 
     #[test]
@@ -1504,6 +1555,61 @@ mod tests {
         let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
         assert_eq!(row.latest_seq, 10);
         assert_eq!(row.latest_seen_generation, "1:10");
+    }
+
+    // ---- P0-1 v2: file_generation_uncommit 测试 ----
+
+    #[test]
+    fn test_file_generation_uncommit_clears_committed() {
+        // P0-1 v2 修复：replicate/snapshot publish 失败时回滚 committed
+        let store = make_store();
+        // seen + committed: epoch=1, seq=5
+        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+
+        // committed 应有值
+        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        assert_eq!(row.latest_committed_generation, "1:5");
+
+        // uncommit
+        let uncommitted = store.file_generation_uncommit(1, "src/main.rs").unwrap();
+        assert!(uncommitted, "uncommit 应返回 true（已清除 committed）");
+
+        // committed 应清空
+        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        assert_eq!(row.latest_committed_generation, "", "committed 应被清空");
+
+        // seen 应保留（uncommit 只清 committed，不清 seen）
+        assert_eq!(row.latest_seen_generation, "1:5");
+    }
+
+    #[test]
+    fn test_file_generation_uncommit_allows_same_seq_retry() {
+        // P0-1 v2 修复：uncommit 后同 seq 重试不会被 stale 拒绝
+        let store = make_store();
+        // seen + committed: epoch=1, seq=5
+        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+
+        // uncommit（模拟 replicate 失败回滚）
+        store.file_generation_uncommit(1, "src/main.rs").unwrap();
+
+        // 同 seq 重试 file_generation_seen 应该被接受（committed 已清空）
+        let seen = store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
+        assert!(seen, "uncommit 后同 seq 重试应被接受");
+    }
+
+    #[test]
+    fn test_file_generation_uncommit_no_op_when_not_committed() {
+        // P0-1 v2 修复：uncommit 未 committed 的行应返回 false（无操作）
+        let store = make_store();
+        // 只 seen，未 committed
+        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+
+        let uncommitted = store.file_generation_uncommit(1, "src/main.rs").unwrap();
+        assert!(!uncommitted, "未 committed 时 uncommit 应返回 false");
     }
 
     // ---- file_generation_committed 测试 ----
@@ -1537,6 +1643,145 @@ mod tests {
 
         let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
         assert_eq!(row.latest_committed_generation, ""); // 仍然为空
+    }
+
+    // ---- 门槛 1：committed/replicate 失败回滚 + 双 handler 交错 集成测试 ----
+    //
+    // 复审报告 §6 门槛 1 要求：
+    //   "把 committed 放到 snapshot publish 成功之后；Ok(false) 必须中止 stale handler，
+    //    并补 snapshot 失败、双 handler 交错、同 seq 重试测试。"
+    //
+    // P0-1 v2 整改后流程：
+    //   1. seen（条件 INSERT：epoch/seq 比 latest_seen 新才接受）
+    //   2. merge_cas_to_codegraph（失败则不 committed，直接返回）
+    //   3. committed（条件 UPDATE：latest_seen 仍为当前 handler 的 seen 才成功）
+    //      - Ok(true)：继续 replicate
+    //      - Ok(false)：seen 已被并发覆盖，中止 replicate（不发布 stale snapshot）
+    //      - Err：committed 失败，中止 replicate
+    //   4. replicate（snapshot publish）
+    //      - success：完成
+    //      - failure：uncommit 回滚 committed，让同 seq 重试时 stale 检查不会拒绝
+
+    /// 门槛 1 集成测试：snapshot publish 失败 → uncommit 回滚 → 同 seq 重试可恢复
+    ///
+    /// 模拟完整流程：
+    /// 1. handler A: seen (epoch=1, seq=5) → committed
+    /// 2. replicate 失败（snapshot publish error）
+    /// 3. uncommit 回滚 committed
+    /// 4. 同 seq 重试 seen (epoch=1, seq=5) 应被接受（committed 已清空）
+    #[test]
+    fn test_integration_snapshot_fail_uncommit_then_retry() {
+        let store = make_store();
+
+        // 1. handler A: seen + committed
+        let seen = store
+            .file_generation_seen(1, "src/main.rs", "session-a", 1, 5)
+            .unwrap();
+        assert!(seen, "首次 seen 应被接受");
+        let committed = store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
+        assert!(committed, "committed 应成功（seen 匹配）");
+
+        // 2. 模拟 replicate 失败（workspace.rs 中 repl_result.success == false 分支）
+        // 3. uncommit 回滚 committed
+        let uncommitted = store.file_generation_uncommit(1, "src/main.rs").unwrap();
+        assert!(uncommitted, "uncommit 应返回 true（committed 已清空）");
+
+        // 4. 同 seq 重试 seen 应被接受（committed 已清空，stale 检查不再拒绝）
+        let retry_seen = store
+            .file_generation_seen(1, "src/main.rs", "session-a", 1, 5)
+            .unwrap();
+        assert!(
+            retry_seen,
+            "门槛 1: uncommit 后同 seq 重试 seen 应被接受（committed 已清空）"
+        );
+
+        // 5. 重试 committed 也应成功
+        let retry_committed = store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
+        assert!(
+            retry_committed,
+            "门槛 1: 重试 committed 应成功（seen 仍匹配）"
+        );
+    }
+
+    /// 门槛 1 集成测试：双 handler 交错 → Ok(false) 中止 stale handler
+    ///
+    /// 模拟完整流程：
+    /// 1. handler A: seen (epoch=1, seq=5)
+    /// 2. handler B: seen (epoch=1, seq=10) — 覆盖 A 的 seen（B 更新）
+    /// 3. handler A: committed (epoch=1, seq=5) → Ok(false)（seen 已被 B 覆盖为 1:10）
+    /// 4. handler A 应中止 replicate（不发布基于 stale generation 的 snapshot）
+    #[test]
+    fn test_integration_dual_handler_interleave_ok_false_aborts() {
+        let store = make_store();
+
+        // 1. handler A: seen (epoch=1, seq=5)
+        let seen_a = store
+            .file_generation_seen(1, "src/main.rs", "session-a", 1, 5)
+            .unwrap();
+        assert!(seen_a, "handler A 首次 seen 应被接受");
+
+        // 2. handler B: seen (epoch=1, seq=10) — 覆盖 A 的 seen
+        let seen_b = store
+            .file_generation_seen(1, "src/main.rs", "session-b", 1, 10)
+            .unwrap();
+        assert!(seen_b, "handler B newer seen 应被接受");
+
+        // 3. handler A: committed (epoch=1, seq=5) → Ok(false)
+        //    seen 已被 B 覆盖为 "1:10"，A 的 "1:5" 已 stale
+        let committed_a = store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
+        assert!(
+            !committed_a,
+            "门槛 1: handler A committed 应返回 Ok(false)（seen 已被 B 并发覆盖），\
+             A 必须中止 replicate 避免发布 stale snapshot"
+        );
+
+        // 4. 验证 committed_generation 仍为空（A 未成功 committed）
+        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        assert_eq!(
+            row.latest_committed_generation, "",
+            "handler A committed 失败，latest_committed_generation 应仍为空"
+        );
+        assert_eq!(
+            row.latest_seen_generation, "1:10",
+            "latest_seen_generation 应为 B 的 1:10"
+        );
+
+        // 5. handler B: committed (epoch=1, seq=10) 应成功（B 是最新 seen）
+        let committed_b = store
+            .file_generation_committed(1, "src/main.rs", 1, 10)
+            .unwrap();
+        assert!(
+            committed_b,
+            "handler B committed 应成功（B 是最新 seen）"
+        );
+    }
+
+    /// 门槛 1 集成测试：同 seq 重试在未 uncommit 时被 stale 拒绝
+    ///
+    /// 对比测试：如果 committed 成功后不 uncommit（replicate 成功路径），
+    /// 同 seq 重试 seen 应被 stale 检查拒绝（避免重复处理已发布的 generation）。
+    #[test]
+    fn test_integration_same_seq_retry_rejected_when_committed() {
+        let store = make_store();
+
+        // 1. seen + committed + replicate 成功（不 uncommit）
+        store.file_generation_seen(1, "src/main.rs", "session-a", 1, 5).unwrap();
+        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+
+        // 2. 同 seq 重试 seen 应被拒绝（committed 已存在，stale 检查阻止重复处理）
+        let retry_seen = store
+            .file_generation_seen(1, "src/main.rs", "session-a", 1, 5)
+            .unwrap();
+        assert!(
+            !retry_seen,
+            "门槛 1: committed 状态下同 seq 重试 seen 应被拒绝（避免重复发布已 committed generation）"
+        );
     }
 
     // ---- parse_generation 辅助函数测试 ----

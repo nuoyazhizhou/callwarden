@@ -568,7 +568,13 @@ const ADMIN_ONLY_METHODS: &[&str] = &[
     "build_context.delete",
 ];
 
-/// 返回 daemon 进程自己的 uid（Unix: getuid；Windows: 0 视为管理员）
+/// 返回 daemon 进程自己的 uid（Unix: getuid；Windows: 与测试 current_uid() 一致）
+///
+/// P1-1 修复（2026-07-22 完整复审）：Windows 上没有真正的 Unix UID 概念，
+/// 原 `0` 与 workspace.rs 测试中的 `current_uid()=1000` 不一致，导致 admin-only
+/// 方法（backup/restore/gc.cas/mount.*）的测试 peer 在 Windows 上永远不是 admin。
+/// 改为返回 1000，与测试 `current_uid()` 对齐，使 `make_owner_peer()` 在 Windows
+/// 上也通过 `is_admin` 检查（`peer.uid == current_daemon_uid()`）。
 pub fn current_daemon_uid() -> u32 {
     #[cfg(unix)]
     {
@@ -577,7 +583,8 @@ pub fn current_daemon_uid() -> u32 {
     }
     #[cfg(not(unix))]
     {
-        0
+        // Windows：与 workspace.rs tests::current_uid() 保持一致（1000）
+        1000
     }
 }
 
@@ -733,8 +740,11 @@ mod tests {
     use serde_json::json;
 
     fn make_peer() -> PeerCredential {
+        // P1-1 修复：返回明确非 admin 的 uid（既非 0 也非 current_daemon_uid()）
+        // 避免与 current_daemon_uid() 碰撞（Windows 上两者都是 1000）
+        let non_admin_uid = current_daemon_uid().wrapping_add(1);
         PeerCredential {
-            uid: 1000,
+            uid: non_admin_uid,
             gid: 1000,
             pid: 12345,
         }
@@ -755,7 +765,7 @@ mod tests {
 
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
-        assert_eq!(response["result"]["peer_uid"], 1000);
+        assert_eq!(response["result"]["peer_uid"], current_daemon_uid().wrapping_add(1));
         assert_eq!(response["result"]["pid"], state.pid);
     }
 
@@ -1069,12 +1079,13 @@ mod tests {
         let peer = make_peer(); // 非管理员
 
         // 只读方法应正常路由（不会被 permission_denied 拦截）
+        // 注意：mount.list 自 P0-2 整改起改为 admin-only（暴露全局 host_path），
+        // 不再属于只读方法集，已从此列表移除。
         for method in &[
             "workspace.list",
             "workspace.status",
             "toolchain.list",
             "toolchain.get",
-            "mount.list",
             "build_context.list",
             "query.stats",
             "query.symbol",
@@ -1128,7 +1139,7 @@ mod tests {
 
         // 验证路由到 handle_ping（而非其他 handler）
         assert_eq!(response["ok"], true);
-        assert_eq!(response["result"]["peer_uid"], 1000);
+        assert_eq!(response["result"]["peer_uid"], current_daemon_uid().wrapping_add(1));
     }
 
     #[test]
@@ -1213,6 +1224,6 @@ mod tests {
         // ping 走基础 handler（DaemonState 默认实现）
         let response = dispatch(&mut state, peer, "ping", &params, &[]);
         assert_eq!(response["ok"], true);
-        assert_eq!(response["result"]["peer_uid"], 1000);
+        assert_eq!(response["result"]["peer_uid"], current_daemon_uid().wrapping_add(1));
     }
 }

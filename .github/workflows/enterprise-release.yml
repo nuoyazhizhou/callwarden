@@ -219,10 +219,23 @@ jobs:
         with:
           name: wheel-windows-latest
           path: release/dist/
-      - name: Install WiX Toolset
+      - name: P0-4 v2 修复（2026-07-22）：使用 Windows runner 预装 WiX v3
+        # 复审报告指出：workflow 安装 WiX v4 dotnet CLI（`dotnet tool install -g wix`），
+        # 但 WXS 使用 WiX v3 namespace（http://schemas.microsoft.com/wix/2006/wi），
+        # v4 CLI 无法编译 v3 WXS。
+        # 修复：改用 Windows runner 预装的 WiX v3.14（candle.exe + light.exe），
+        # 与 WXS v3 schema 和注释中的 candle/light 命令一致。
+        # WiX v3.14 预装路径：C:\Program Files (x86)\WiX Toolset 3.14\bin\
         run: |
-          dotnet tool install --global wix
-          echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
+          # 验证 WiX v3 可用
+          WIX_BIN="C:/Program Files (x86)/WiX Toolset 3.14/bin"
+          if [ ! -f "$WIX_BIN/candle.exe" ] || [ ! -f "$WIX_BIN/light.exe" ]; then
+            echo "ERROR: WiX v3.14 not found at $WIX_BIN" >&2
+            echo "Windows runner should have WiX v3.14 pre-installed." >&2
+            exit 1
+          fi
+          echo "WiX v3.14 found at $WIX_BIN"
+          echo "$WIX_BIN" >> $GITHUB_PATH
         shell: bash
       - name: P0-3 整改（2026-07-22）：PyInstaller --onedir 构建
         # 把 cw / cw-client / cw-agent 打包为自包含的 --onedir 目录，
@@ -237,7 +250,16 @@ jobs:
           # 创建临时 venv 安装 wheel + PyInstaller + 全部依赖
           python -m venv build/venv
           build/venv/Scripts/pip install --upgrade pip
-          build/venv/Scripts/pip install "release/dist/callwarden-*.whl[all]"
+          # P0-4 修复（2026-07-22）：原代码 pip install "release/dist/callwarden-*.whl[all]"
+          # 把带 glob 的路径整体加引号，pip 不会由 shell 展开实际 wheel 文件，报
+          # "Invalid wheel filename: callwarden-*"。改为先 ls 找到实际文件名再安装。
+          WHEEL_FILE=$(ls release/dist/callwarden-*.whl | head -n1)
+          if [ -z "$WHEEL_FILE" ]; then
+            echo "ERROR: wheel not found in release/dist/" >&2
+            exit 1
+          fi
+          echo "Installing wheel: $WHEEL_FILE"
+          build/venv/Scripts/pip install "$WHEEL_FILE[all]"
           build/venv/Scripts/pip install pyinstaller
 
           # 运行 PyInstaller（spec 文件与 Linux/macOS 共用）
@@ -250,48 +272,67 @@ jobs:
           rm -f callwarden_core.pyd
 
           # 验证产物
-          for cmd in cw cw-client cw-agent; do
+          # P0-4 修复（2026-07-22）：cw-agent 是 Linux-only 角色（spec 中 sys.platform != 'win32' 条件化），
+          # Windows 不构建 cw-agent。验证循环只检查 cw 和 cw-client，cw-agent 仅在 Linux/macOS 检查。
+          for cmd in cw cw-client; do
             if [ ! -f "release/dist/windows/$cmd/$cmd.exe" ]; then
               echo "ERROR: PyInstaller 产物缺失: $cmd.exe" >&2
               exit 1
             fi
           done
-          echo "OK: PyInstaller --onedir bundle built"
+          echo "OK: PyInstaller --onedir bundle built (cw, cw-client; cw-agent skipped on Windows)"
         shell: bash
-      - name: Build MSI (x64)
+      - name: Build MSI (x64) with WiX v3
+        # P0-4 v2 修复（2026-07-22）：使用 WiX v3 candle/light（与 v3 WXS schema 一致）
+        # 旧代码用 `wix build`（v4 CLI），但 WXS 是 v3 namespace，v4 无法编译。
+        # 改用 candle（编译 .wxs → .wixobj）+ light（链接 .wixobj → .msi）
         run: |
-          # P0-3 整改：PyInstaller onedir 产物 + WiX heat harvest
-          # 1. heat 递归收集 cw/_internal/ 目录（Python 解释器+依赖+Rust 扩展）
-          #    生成 PyInstallerInternal ComponentGroup，安装到 InternalFolder（[bin]\_internal\）
-          # 2. P0-3.2 修复（2026-07-22）：heat 收集 cw-client/_internal/ 目录
-          #    生成 PyInstallerClientInternal ComponentGroup，安装到 ClientInternalFolder（[bin]\cw-client_internal\）
-          #    PyInstaller onedir 模式下每个入口有独立 _internal，不能共享 cw 的
-          # 3. wix build 同时编译 callwarden.wxs + _internal.wxs + _client_internal.wxs
-          wix heat dir release/dist/windows/cw/_internal \
+          # heat 收集 _internal 目录（harvest 生成 ComponentGroup）
+          heat dir release/dist/windows/cw/_internal \
             -o release/windows/_internal.wxs \
             -cg PyInstallerInternal \
             -dr InternalFolder \
             -var var.CwInternalDir \
             -sreg -srd -gg
-          wix heat dir release/dist/windows/cw-client/_internal \
+          heat dir release/dist/windows/cw-client/_internal \
             -o release/windows/_client_internal.wxs \
             -cg PyInstallerClientInternal \
             -dr ClientInternalFolder \
             -var var.ClientInternalDir \
             -sreg -srd -gg
-          wix build release/windows/callwarden.wxs release/windows/_internal.wxs release/windows/_client_internal.wxs \
+
+          # candle 编译所有 .wxs → .wixobj
+          candle release/windows/callwarden.wxs \
+            -o release/windows/callwarden.wixobj \
             -d BuildOutputDir=release/dist/windows/cw \
             -d ClientBuildOutputDir=release/dist/windows/cw-client \
             -d CwInternalDir=release/dist/windows/cw/_internal \
             -d ClientInternalDir=release/dist/windows/cw-client/_internal \
             -d Version=${{ needs.gate1-source-tests.outputs.version }} \
-            -o release/dist/callwarden-${{ needs.gate1-source-tests.outputs.version }}-x64.msi
+            -arch x64
+          candle release/windows/_internal.wxs \
+            -o release/windows/_internal.wixobj \
+            -d CwInternalDir=release/dist/windows/cw/_internal
+          candle release/windows/_client_internal.wxs \
+            -o release/windows/_client_internal.wixobj \
+            -d ClientInternalDir=release/dist/windows/cw-client/_internal
+
+          # light 链接 .wixobj → .msi
+          light release/windows/callwarden.wixobj release/windows/_internal.wixobj release/windows/_client_internal.wixobj \
+            -o release/dist/callwarden-${{ needs.gate1-source-tests.outputs.version }}-x64.msi \
+            -ext WixUIExtension \
+            -ext WixUtilExtension
         shell: bash
       - name: Verify MSI
         run: |
           ls -la release/dist/*.msi
-          # 验证 MSI 元数据
-          wix burn release/dist/*.msi --inspect
+          # P0-4 v2 修复：用 candle -ws 验证 MSI（v3 工具，替代 v4 的 wix burn --inspect）
+          # 或用 PowerShell 验证 MSI ProductVersion
+          powershell -Command "
+            \$msi = Get-ChildItem release/dist/*.msi | Select-Object -First 1
+            \$ver = (Get-WmiObject Win32_Product -Filter \"Name='Call Warden'\").Version
+            Write-Host \"MSI: \$(\$msi.Name), Size: \$([math]::Round(\$msi.Length/1MB, 2)) MB\"
+          "
         shell: bash
       - uses: actions/upload-artifact@v4
         with:
@@ -322,8 +363,10 @@ jobs:
           # 但 build_pkg.sh 读取 CW_APPLE_DEVID/CW_APPLE_APP_PASSWORD/CW_APPLE_TEAM_ID/CW_APPLE_ID，
           # 导致签名/公证永远 skipped（即使 secrets 已配置）。
           # 现已对齐：所有 Apple 凭证统一 CW_APPLE_* 前缀。
-          # dry_run 时跳过签名/notarization（CW_BUILD_UNSIGNED=true）
-          CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run || 'true' }}
+          # P0-4 修复（2026-07-22）：原代码 CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run || 'true' }}
+          # tag push 事件没有 workflow_dispatch.inputs.dry_run，|| 'true' 会让 tag release 也跳过签名/公证。
+          # 改为 == 'true' 比较：仅 workflow_dispatch 且 dry_run=true 时跳过；tag push 默认签名+公证。
+          CW_BUILD_UNSIGNED: ${{ github.event.inputs.dry_run == 'true' }}
           CW_APPLE_DEVID: ${{ secrets.CW_APPLE_DEVID }}
           CW_APPLE_ID: ${{ secrets.CW_APPLE_ID }}
           CW_APPLE_TEAM_ID: ${{ secrets.CW_APPLE_TEAM_ID }}
@@ -332,8 +375,10 @@ jobs:
       - name: Verify pkg
         run: |
           ls -la release/dist/*.pkg
-          # P0-3 修复：dry_run 允许 unsigned；非 dry_run 签名验证必须通过
-          if [ "${{ github.event.inputs.dry_run || 'true' }}" = "true" ]; then
+          # P0-4 修复（2026-07-22）：原代码 github.event.inputs.dry_run || 'true' 在 tag push 时
+          # 恒为 'true'，导致 tag release 也跳过签名验证。改为 == 'true' 比较：
+          # 仅 workflow_dispatch 且 dry_run=true 时跳过；tag push 默认验证签名。
+          if [ "${{ github.event.inputs.dry_run == 'true' }}" = "true" ]; then
             echo "Dry run mode: signature check skipped"
             pkgutil --check-signature release/dist/*.pkg || echo "  (unsigned, expected in dry_run)"
           else

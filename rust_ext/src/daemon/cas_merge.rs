@@ -47,6 +47,147 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
+/// P0-2 v2 修复：初始化 fresh CodeGraph DB 的主 schema。
+///
+/// 复审报告指出：默认 `codegraph_db_path_template` 非空后，`rusqlite::Connection::open(&db_path)`
+/// 只创建空 SQLite 文件，merge 时查询 `workspaces` 等表会报 `no such table`。
+///
+/// 本函数用 `CREATE TABLE IF NOT EXISTS` 创建主 schema（与 schema.py 对齐），
+/// 已存在时无操作，幂等可重复调用。
+///
+/// 包括：workspaces / file_contents / file_instances / symbols / calls / symbol_contents
+/// + 索引 + FTS5 虚拟表与触发器。
+///
+/// 调用时机：每次打开 CodeGraph DB 后立即调用（CREATE IF NOT EXISTS 保证幂等）。
+pub fn init_codegraph_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+    // 先启用外键约束（与 Python 一致）
+    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workspaces (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            name TEXT UNIQUE NOT NULL,\
+            root_path TEXT UNIQUE NOT NULL,\
+            created_at REAL NOT NULL,\
+            is_active INTEGER DEFAULT 0,\
+            description TEXT DEFAULT '',\
+            active_task_id TEXT DEFAULT ''\
+         );\
+         CREATE TABLE IF NOT EXISTS file_contents (\
+            content_hash TEXT PRIMARY KEY,\
+            language TEXT DEFAULT '',\
+            total_lines INTEGER DEFAULT 0,\
+            first_seen_at REAL NOT NULL\
+         );\
+         CREATE TABLE IF NOT EXISTS file_instances (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            workspace_id INTEGER NOT NULL,\
+            rel_path TEXT NOT NULL,\
+            abs_path TEXT NOT NULL,\
+            current_content_hash TEXT DEFAULT '',\
+            mtime REAL NOT NULL,\
+            total_lines INTEGER DEFAULT 0,\
+            last_parsed REAL DEFAULT 0,\
+            status TEXT DEFAULT 'pending',\
+            module_path TEXT DEFAULT '',\
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),\
+            FOREIGN KEY (current_content_hash) REFERENCES file_contents(content_hash),\
+            UNIQUE(workspace_id, rel_path)\
+         );\
+         CREATE TABLE IF NOT EXISTS symbols (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            file_instance_id INTEGER NOT NULL,\
+            symbol_hash TEXT NOT NULL,\
+            name TEXT NOT NULL,\
+            kind TEXT NOT NULL,\
+            visibility TEXT DEFAULT 'private',\
+            start_line INTEGER NOT NULL,\
+            end_line INTEGER NOT NULL,\
+            start_col INTEGER DEFAULT 0,\
+            end_col INTEGER DEFAULT 0,\
+            signature TEXT DEFAULT '',\
+            has_comment INTEGER DEFAULT 0,\
+            comment_status TEXT DEFAULT 'pending',\
+            module_path TEXT DEFAULT '',\
+            qualified_name TEXT DEFAULT '',\
+            depth INTEGER DEFAULT -1,\
+            FOREIGN KEY (file_instance_id) REFERENCES file_instances(id),\
+            FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)\
+         );\
+         CREATE TABLE IF NOT EXISTS calls (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT,\
+            caller_id INTEGER NOT NULL,\
+            caller_name TEXT NOT NULL,\
+            caller_module TEXT NOT NULL,\
+            callee_name TEXT NOT NULL,\
+            callee_module TEXT DEFAULT '',\
+            callee_qualified TEXT DEFAULT '',\
+            callee_file TEXT DEFAULT '',\
+            callee_id INTEGER DEFAULT 0,\
+            call_line INTEGER DEFAULT 0,\
+            is_cross_file INTEGER DEFAULT 0,\
+            FOREIGN KEY (caller_id) REFERENCES symbols(id)\
+         );\
+         CREATE TABLE IF NOT EXISTS symbol_contents (\
+            content_hash TEXT PRIMARY KEY,\
+            name TEXT NOT NULL,\
+            kind TEXT NOT NULL,\
+            content TEXT NOT NULL,\
+            signature TEXT DEFAULT '',\
+            has_comment INTEGER DEFAULT 0,\
+            comment_content TEXT DEFAULT '',\
+            qualified_name TEXT DEFAULT ''\
+         );",
+    )?;
+
+    // 索引（IF NOT EXISTS 幂等）
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active);\
+         CREATE INDEX IF NOT EXISTS idx_workspaces_active_task ON workspaces(active_task_id);\
+         CREATE INDEX IF NOT EXISTS idx_file_contents_lang ON file_contents(language);\
+         CREATE INDEX IF NOT EXISTS idx_file_instances_workspace ON file_instances(workspace_id);\
+         CREATE INDEX IF NOT EXISTS idx_file_instances_hash ON file_instances(current_content_hash);\
+         CREATE INDEX IF NOT EXISTS idx_file_instances_relpath ON file_instances(rel_path);\
+         CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_instance_id);\
+         CREATE INDEX IF NOT EXISTS idx_symbols_hash ON symbols(symbol_hash);\
+         CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);\
+         CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);\
+         CREATE INDEX IF NOT EXISTS idx_symbols_kind_file ON symbols(kind, file_instance_id);\
+         CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name);\
+         CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path);\
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_symbols_unique ON symbols(file_instance_id, name, start_line);\
+         CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id);\
+         CREATE INDEX IF NOT EXISTS idx_calls_callee_id_resolved ON calls(callee_id) WHERE callee_id > 0;",
+    )?;
+
+    // FTS5 虚拟表与触发器（与 schema.py 对齐，trigram tokenizer）
+    // 注意：FTS5 需要 SQLite 编译时启用 SQLITE_ENABLE_FTS5，rusqlite bundled 版本已启用
+    // 注意：Rust 字符串字面量用 \ 续行不会自动加空格，BEGIN 后必须显式空格
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(\
+            name, qualified_name,\
+            content='symbols', content_rowid='id',\
+            tokenize='trigram'\
+         );\
+         CREATE TRIGGER IF NOT EXISTS symbols_fts_ai AFTER INSERT ON symbols BEGIN \
+            INSERT INTO symbols_fts(rowid, name, qualified_name) \
+            VALUES (new.id, new.name, new.qualified_name); \
+         END;\
+         CREATE TRIGGER IF NOT EXISTS symbols_fts_ad AFTER DELETE ON symbols BEGIN \
+            INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name) \
+            VALUES ('delete', old.id, old.name, old.qualified_name); \
+         END;\
+         CREATE TRIGGER IF NOT EXISTS symbols_fts_au AFTER UPDATE ON symbols BEGIN \
+            INSERT INTO symbols_fts(symbols_fts, rowid, name, qualified_name) \
+            VALUES ('delete', old.id, old.name, old.qualified_name); \
+            INSERT INTO symbols_fts(rowid, name, qualified_name) \
+            VALUES (new.id, new.name, new.qualified_name); \
+         END;",
+    )?;
+
+    Ok(())
+}
+
 /// 从 rel_path 推导 module_path（简化版，与 Python `_module_path_from_rel` 一致）。
 ///
 /// 完整实现见 `db_build.py:_infer_module_path_generic`（含 src/lib/app/main 前缀
@@ -155,7 +296,7 @@ fn upsert_file_records(
     }
 }
 
-/// CAS symbols 行（从 cas_symbols 读出）
+/// CAS symbols 行（从 cas_symbols 读出，P1-2 修复：含符号正文 content）
 struct CasSymbolRow {
     local_symbol_id: i64,
     symbol_content_hash: String,
@@ -170,6 +311,8 @@ struct CasSymbolRow {
     signature: String,
     has_comment: i64,
     depth: i64,
+    /// P1-2 修复：从 cas_symbol_contents JOIN 读出的实际符号源码内容
+    content: String,
 }
 
 /// CAS raw calls 行（从 cas_raw_calls 读出）
@@ -194,6 +337,7 @@ struct CasRawCallRow {
 fn replace_symbols_and_calls(
     codegraph_conn: &Connection,
     file_instance_id: i64,
+    workspace_id: i64,
     cas_symbols: &[CasSymbolRow],
     cas_raw_calls: &[CasRawCallRow],
     rel_path: &str,
@@ -228,23 +372,51 @@ fn replace_symbols_and_calls(
 
     // 4. INSERT 新 symbols，构建 local_symbol_id → 全局 id 映射
     let mut local_to_global: HashMap<i64, i64> = HashMap::new();
+    let sym_count = cas_symbols.len(); // 提前保存，避免 for 消费后无法访问
     for sym in cas_symbols {
-        // UPSERT symbol_contents（INSERT OR IGNORE）
-        // symbols.symbol_hash 指向 symbol_contents.content_hash，
-        // 未写入 symbol_contents 会导致 JOIN 查询断链
+        // UPSERT symbol_contents（INSERT OR IGNORE + UPDATE 空正文）
+        // P1-2 v2 修复：原实现只用 INSERT OR IGNORE，若旧版本已写入空 content 行
+        // （content=''),新版本 merge 后 IGNORE 不覆盖，仍读到空正文。
+        //
+        // 不能用 INSERT OR REPLACE：symbol_contents.content_hash 被其他文件的
+        // symbols.symbol_hash 引用（全局共享），REPLACE 会先 DELETE 旧行，
+        // 生产环境 PRAGMA foreign_keys=ON 时触发 FK 约束失败。
+        //
+        // 正确策略：
+        // 1. INSERT OR IGNORE：行不存在时创建（带实际 content）
+        // 2. UPDATE ... WHERE content=''：行已存在但 content 为空时，填入实际 content
+        //    （修复旧版本遗留的空正文行，不影响已有有效 content 的行）
         if !sym.symbol_content_hash.is_empty() {
             codegraph_conn.execute(
                 "INSERT OR IGNORE INTO symbol_contents \
                  (content_hash, name, kind, content, signature, has_comment, \
                  comment_content, qualified_name) \
-                 VALUES (?1, ?2, ?3, '', ?4, ?5, '', ?6)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', ?7)",
                 params![
                     &sym.symbol_content_hash,
+                    &sym.name,
+                    &sym.kind,
+                    &sym.content,
+                    &sym.signature,
+                    sym.has_comment,
+                    &sym.local_qualified_name,
+                ],
+            )?;
+            // P1-2 v2 修复：UPDATE 空正文行（旧版本遗留）
+            // 仅当 content 为空或 NULL 时更新，避免覆盖已有的有效 content
+            codegraph_conn.execute(
+                "UPDATE symbol_contents SET \
+                 content = ?1, name = ?2, kind = ?3, signature = ?4, \
+                 has_comment = ?5, qualified_name = ?6 \
+                 WHERE content_hash = ?7 AND (content = '' OR content IS NULL)",
+                params![
+                    &sym.content,
                     &sym.name,
                     &sym.kind,
                     &sym.signature,
                     sym.has_comment,
                     &sym.local_qualified_name,
+                    &sym.symbol_content_hash,
                 ],
             )?;
         }
@@ -276,31 +448,209 @@ fn replace_symbols_and_calls(
         local_to_global.insert(sym.local_symbol_id, new_id);
     }
 
-    // 5. INSERT 新 calls
+    // 5. INSERT 新 calls（P1-2 修复：跨文件 callee_id resolve）
+    //
+    // resolve 策略（与 db_build.py 对齐）：
+    // a) 先在本文件内按 qualified_name 精确匹配（is_cross_file=0）
+    // b) 再在本文件内按 name 短名匹配（is_cross_file=0）
+    // c) 再跨文件按 qualified_name 匹配（is_cross_file=1）
+    // d) 最后跨文件按 name 短名匹配（is_cross_file=1）
+    // e) 全部未命中 → callee_id=0, callee_module='', is_cross_file=0（保留调用关系）
+    //
+    // 注意：本文件 symbols 已在 step 4 全部 INSERT，可以立即查询。
+    // 跨文件查询在 CodeGraph DB 全量 symbols 表上进行（可能命中其他文件已 merge 的符号）。
     let mut inserted_calls: usize = 0;
     for call in cas_raw_calls {
         let caller_global_id = call
             .caller_local_id
             .and_then(|lid| local_to_global.get(&lid).copied())
             .unwrap_or(0);
+
+        // P1-2 修复：resolve callee_id
+        let (callee_id, callee_module, is_cross_file) = resolve_callee(
+            codegraph_conn,
+            &call.callee_name,
+            file_instance_id,
+            workspace_id,
+        )?;
+
         codegraph_conn.execute(
             "INSERT INTO calls \
              (caller_id, caller_name, caller_module, callee_name, callee_module, \
              callee_file, callee_id, call_line, is_cross_file) \
-             VALUES (?1, ?2, ?3, ?4, '', ?5, 0, ?6, 0)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 caller_global_id,
                 &call.caller_name,
                 module_path,
                 &call.callee_name,
+                &callee_module,
                 rel_path,
+                callee_id,
                 call.call_line,
+                is_cross_file,
             ],
         )?;
         inserted_calls += 1;
     }
 
-    Ok((cas_symbols.len(), inserted_calls))
+    Ok((sym_count, inserted_calls))
+}
+
+/// P1-2 修复：resolve callee_id —— 按 qualified_name / name 在本文件和跨文件查找符号。
+///
+/// 返回 (callee_id, callee_module, is_cross_file)。未命中返回 (0, "", 0)。
+///
+/// 查找顺序（与 db_build.py resolve_calls 对齐）：
+/// 1. 本文件按 qualified_name 精确匹配
+/// 2. 本文件按 name 短名匹配
+/// 3. 跨文件按 qualified_name 精确匹配
+/// 4. 跨文件按 name 短名匹配
+///
+/// P1-2 v2 修复：所有 4 个查询添加 `ORDER BY s.id ASC` 消除同名符号歧义。
+/// 复审报告指出旧实现 `LIMIT 1` 无 `ORDER BY`，同名符号任取一条，行为不确定。
+/// 按 `s.id ASC` 排序保证返回最早插入的符号，行为稳定可预测。
+fn resolve_callee(
+    codegraph_conn: &Connection,
+    callee_name: &str,
+    file_instance_id: i64,
+    workspace_id: i64,
+) -> Result<(i64, String, i64), rusqlite::Error> {
+    if callee_name.is_empty() {
+        return Ok((0, String::new(), 0));
+    }
+
+    // 1. 本文件按 qualified_name 精确匹配
+    let mut stmt = codegraph_conn.prepare(
+        "SELECT s.id, s.module_path FROM symbols s \
+         JOIN file_instances fi ON s.file_instance_id = fi.id \
+         WHERE fi.id = ?1 AND s.qualified_name = ?2 \
+         ORDER BY s.id ASC LIMIT 1",
+    )?;
+    if let Some(row) = stmt
+        .query_map(params![file_instance_id, callee_name], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .next()
+    {
+        let (id, module) = row?;
+        return Ok((id, module, 0));
+    }
+
+    // 2. 本文件按 name 短名匹配
+    let mut stmt = codegraph_conn.prepare(
+        "SELECT s.id, s.module_path FROM symbols s \
+         JOIN file_instances fi ON s.file_instance_id = fi.id \
+         WHERE fi.id = ?1 AND s.name = ?2 \
+         ORDER BY s.id ASC LIMIT 1",
+    )?;
+    if let Some(row) = stmt
+        .query_map(params![file_instance_id, callee_name], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .next()
+    {
+        let (id, module) = row?;
+        return Ok((id, module, 0));
+    }
+
+    // 3. 跨文件按 qualified_name 精确匹配（同 workspace 内其他文件）
+    let mut stmt = codegraph_conn.prepare(
+        "SELECT s.id, s.module_path FROM symbols s \
+         JOIN file_instances fi ON s.file_instance_id = fi.id \
+         WHERE fi.workspace_id = ?1 AND fi.id != ?2 AND s.qualified_name = ?3 \
+         ORDER BY s.id ASC LIMIT 1",
+    )?;
+    if let Some(row) = stmt
+        .query_map(params![workspace_id, file_instance_id, callee_name], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .next()
+    {
+        let (id, module) = row?;
+        return Ok((id, module, 1));
+    }
+
+    // 4. 跨文件按 name 短名匹配
+    let mut stmt = codegraph_conn.prepare(
+        "SELECT s.id, s.module_path FROM symbols s \
+         JOIN file_instances fi ON s.file_instance_id = fi.id \
+         WHERE fi.workspace_id = ?1 AND fi.id != ?2 AND s.name = ?3 \
+         ORDER BY s.id ASC LIMIT 1",
+    )?;
+    if let Some(row) = stmt
+        .query_map(params![workspace_id, file_instance_id, callee_name], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?
+        .next()
+    {
+        let (id, module) = row?;
+        return Ok((id, module, 1));
+    }
+
+    // 5. 未命中：保留调用关系，callee_id=0
+    Ok((0, String::new(), 0))
+}
+
+/// P1-2 v2 修复：workspace 级回扫 pass。
+///
+/// 复审报告指出：A→B 在 A 先 merge 时 callee_id=0（B 尚未 merge），
+/// B 后到不会回扫 A 的入边，导致跨文件调用永久 unresolved。
+///
+/// 本函数在 merge 单个文件完成后调用，扫描当前 workspace 内所有
+/// `callee_id=0` 的 calls，对每个 call 用 `resolve_callee` 跨文件 resolve。
+/// 命中则 UPDATE calls SET callee_id=?, callee_module=?, is_cross_file=?。
+///
+/// 注意：仅扫描 callee_id=0 的行（增量），避免全表扫描。
+/// 对于本文件内 callee_id=0 的 calls，resolve_callee 会重新尝试本文件查找。
+///
+/// 返回成功 resolve 的 calls 数量。
+fn resolve_unresolved_calls_in_workspace(
+    codegraph_conn: &Connection,
+    workspace_id: i64,
+) -> Result<usize, rusqlite::Error> {
+    // 查询所有 callee_id=0 的 calls（同 workspace）
+    // JOIN file_instances 获取 file_instance_id，用于 resolve_callee 的本文件查找
+    let mut stmt = codegraph_conn.prepare(
+        "SELECT c.id, c.callee_name, s.file_instance_id \
+         FROM calls c \
+         JOIN symbols s ON c.caller_id = s.id \
+         JOIN file_instances fi ON s.file_instance_id = fi.id \
+         WHERE fi.workspace_id = ?1 AND c.callee_id = 0 AND c.callee_name != ''",
+    )?;
+    let unresolved_rows: Vec<(i64, String, i64)> = stmt
+        .query_map(params![workspace_id], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut resolved_count: usize = 0;
+    for (call_id, callee_name, caller_file_instance_id) in unresolved_rows {
+        // 用 caller 所在文件作为"本文件"上下文尝试 resolve
+        let (callee_id, callee_module, is_cross_file) = resolve_callee(
+            codegraph_conn,
+            &callee_name,
+            caller_file_instance_id,
+            workspace_id,
+        )?;
+        if callee_id > 0 {
+            // UPDATE calls SET callee_id=?, callee_module=?, is_cross_file=? WHERE id=?
+            let affected = codegraph_conn.execute(
+                "UPDATE calls SET callee_id = ?1, callee_module = ?2, is_cross_file = ?3 \
+                 WHERE id = ?4 AND callee_id = 0",
+                params![callee_id, callee_module, is_cross_file, call_id],
+            )?;
+            if affected > 0 {
+                resolved_count += 1;
+            }
+        }
+    }
+    Ok(resolved_count)
 }
 
 /// DELETE calls WHERE caller_id IN (ids)
@@ -348,6 +698,76 @@ fn clear_callee_ids(conn: &Connection, ids: &[i64]) -> Result<(), rusqlite::Erro
     Ok(())
 }
 
+/// P1-2 修复：确保 workspace_manifests 表存在。
+///
+/// schema 与 db_workspace_manifest.py:MANIFEST_SCHEMA_DDL 对齐。
+/// 使用 CREATE TABLE IF NOT EXISTS，已存在时无操作。
+fn ensure_manifest_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workspace_manifests (\
+            workspace_id INTEGER NOT NULL,\
+            rel_path TEXT NOT NULL,\
+            content_hash TEXT NOT NULL,\
+            cas_key TEXT,\
+            raw_hash TEXT,\
+            source_encoding TEXT DEFAULT 'utf-8',\
+            bom_kind TEXT DEFAULT 'none',\
+            newline_style TEXT DEFAULT 'lf',\
+            file_size INTEGER DEFAULT 0,\
+            mtime_ns INTEGER DEFAULT 0,\
+            is_dirty INTEGER DEFAULT 0,\
+            updated_at REAL NOT NULL,\
+            PRIMARY KEY (workspace_id, rel_path)\
+         );\
+         CREATE INDEX IF NOT EXISTS idx_manifests_hash ON workspace_manifests(content_hash);\
+         CREATE INDEX IF NOT EXISTS idx_manifests_cas ON workspace_manifests(cas_key);\
+         CREATE INDEX IF NOT EXISTS idx_manifests_dirty ON workspace_manifests(workspace_id, is_dirty);",
+    )?;
+    Ok(())
+}
+
+/// P1-2 v2 修复：UPSERT workspace_manifests 行。
+///
+/// 记录文件的 content_hash / cas_key / file_size，标记为 dirty（daemon merge 写入）。
+/// 对应 db_workspace_manifest.py:upsert_manifest。
+///
+/// P1-2 v2 修复（复审报告 §3 P1-2 第 3、4 点）：
+/// 1. file_size 与 total_lines 分离：原实现把 total_lines 当 file_size 传入，
+///    manifest 中 file_size 字段实际是文件总行数，造成下游 snapshot overlay 错误。
+///    现在接受 file_size 参数（从 cas_file_cache.file_size 读取，单位字节）。
+/// 2. 硬编码字段说明：raw_hash/source_encoding/bom_kind/newline_style/mtime_ns
+///    这些字段属于 file scan 阶段从文件系统读取的元数据，CAS DB 不存储。
+///    本函数用合理默认值（utf-8 / none / lf / 0），snapshot publish 时若需真实值，
+///    应从 file scan 阶段补全或 link_to_snapshot 引用 clean snapshot 的 manifest。
+/// 3. is_dirty=1：标记为 daemon merge 写入（与 snapshot-level clean manifest 区分）。
+fn upsert_manifest(
+    conn: &Connection,
+    workspace_id: i64,
+    rel_path: &str,
+    content_hash: &str,
+    cas_key: &str,
+    file_size: i64,
+) -> Result<(), rusqlite::Error> {
+    let now = now_ts();
+    // is_dirty=1：标记为 daemon merge 写入（与 snapshot-level clean manifest 区分）
+    //
+    // P1-2 v2 注：以下字段使用默认值，因 CAS DB 不存储这些 file scan 阶段的元数据：
+    // - raw_hash=''：文件原始内容 hash（去除 BOM/normalize 后），daemon 无此信息
+    // - source_encoding='utf-8'：默认 UTF-8，Python 侧 file scan 会覆盖为真实值
+    // - bom_kind='none'：默认无 BOM
+    // - newline_style='lf'：默认 LF
+    // - mtime_ns=0：文件修改时间（纳秒），daemon 无此信息；snapshot publish 不依赖此字段
+    conn.execute(
+        "INSERT OR REPLACE INTO workspace_manifests \
+         (workspace_id, rel_path, content_hash, cas_key, raw_hash, \
+          source_encoding, bom_kind, newline_style, file_size, mtime_ns, \
+          is_dirty, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, '', 'utf-8', 'none', 'lf', ?5, 0, 1, ?6)",
+        params![workspace_id, rel_path, content_hash, cas_key, file_size, now],
+    )?;
+    Ok(())
+}
+
 /// 把 CAS 中的解析结果 merge 到 CodeGraph DB 主表。
 ///
 /// 对应 Python `db/db_cas_merge.py:merge_cas_to_codegraph`。
@@ -383,12 +803,15 @@ pub fn merge_cas_to_codegraph(
     language: &str,
     workspace_root_path: &str,
 ) -> Result<MergeResult, String> {
-    // 1. 查 CAS file cache（取 total_lines）
-    let total_lines: i64 = match cas_conn
+    // 1. 查 CAS file cache（P1-2 v2 修复：同时取 file_size 和 total_lines）
+    //    复审报告指出旧实现只取 total_lines，把 total_lines 当 file_size 传给 upsert_manifest，
+    //    manifest 中 file_size 字段实际是文件总行数。现分开读取，file_size 用于 manifest，
+    //    total_lines 用于 file_contents/file_instances。
+    let (file_size, total_lines): (i64, i64) = match cas_conn
         .query_row(
             "SELECT file_size, total_lines FROM cas_file_cache WHERE cas_key = ?1",
             params![cas_key],
-            |row| row.get::<_, i64>(1),
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
         )
         .optional()
     {
@@ -408,15 +831,18 @@ pub fn merge_cas_to_codegraph(
         }
     };
 
-    // 2. 查 CAS symbols
+    // 2. 查 CAS symbols（P1-2 修复：LEFT JOIN cas_symbol_contents 读取实际符号正文）
     let mut cas_symbols: Vec<CasSymbolRow> = Vec::new();
     {
         let mut stmt = cas_conn
             .prepare(
-                "SELECT local_symbol_id, symbol_content_hash, name, local_qualified_name, \
-                 kind, start_line, end_line, start_col, end_col, visibility, signature, \
-                 has_comment, depth \
-                 FROM cas_symbols WHERE cas_key = ?1 ORDER BY local_symbol_id",
+                "SELECT s.local_symbol_id, s.symbol_content_hash, s.name, s.local_qualified_name, \
+                 s.kind, s.start_line, s.end_line, s.start_col, s.end_col, s.visibility, \
+                 s.signature, s.has_comment, s.depth, \
+                 COALESCE(sc.content, '') AS content \
+                 FROM cas_symbols s \
+                 LEFT JOIN cas_symbol_contents sc ON s.symbol_content_hash = sc.content_hash \
+                 WHERE s.cas_key = ?1 ORDER BY s.local_symbol_id",
             )
             .map_err(|e| format!("prepare cas_symbols 查询失败: {}", e))?;
         let rows = stmt
@@ -441,6 +867,7 @@ pub fn merge_cas_to_codegraph(
                     depth: row
                         .get::<_, Option<i64>>(12)?
                         .unwrap_or(-1),
+                    content: row.get::<_, Option<String>>(13)?.unwrap_or_default(),
                 })
             })
             .map_err(|e| format!("query cas_symbols 失败: {}", e))?;
@@ -473,8 +900,9 @@ pub fn merge_cas_to_codegraph(
         }
     }
 
-    // 4-6. 在 CodeGraph DB 上执行事务
-    //     BEGIN IMMEDIATE → UPSERT workspaces / file_records → 替换 symbols/calls → COMMIT
+    // 4-7. 在 CodeGraph DB 上执行事务
+    //      BEGIN IMMEDIATE → UPSERT workspaces / file_records → 替换 symbols/calls →
+    //      UPSERT workspace_manifests → COMMIT
     if let Err(e) = codegraph_conn.execute_batch("BEGIN IMMEDIATE") {
         return Err(format!("BEGIN IMMEDIATE 失败: {}", e));
     }
@@ -500,11 +928,44 @@ pub fn merge_cas_to_codegraph(
         let (sym_count, call_count) = replace_symbols_and_calls(
             codegraph_conn,
             file_instance_id,
+            workspace_id,
             &cas_symbols,
             &cas_raw_calls,
             rel_path,
         )
         .map_err(|e| format!("replace_symbols_and_calls 失败: {}", e))?;
+
+        // 6b. P1-2 v2 修复：workspace 级回扫 pass
+        //
+        // 复审报告指出：A→B 在 A 先 merge 时 callee_id=0（B 尚未 merge），
+        // B 后到不会回扫 A 的入边。本 pass 在每次 merge 完成后扫描当前 workspace 内
+        // 所有 callee_id=0 的 calls，尝试用新 merge 的 symbols resolve。
+        //
+        // 这是 workspace 级 pass，开销与 unresolved calls 数量成正比（增量扫描）。
+        // 多文件 merge 时，每次 merge 后都会触发回扫，但已 resolve 的 calls 不会被重复处理。
+        if !cas_symbols.is_empty() {
+            resolve_unresolved_calls_in_workspace(codegraph_conn, workspace_id)
+                .map_err(|e| format!("resolve_unresolved_calls_in_workspace 失败: {}", e))?;
+        }
+
+        // 7. P1-2 修复：UPSERT workspace_manifests（记录文件 CAS key + content_hash）
+        //
+        // workspace_manifests 表由 db_workspace_manifest.py 管理，记录每个 workspace 中
+        // 每个文件的 content_hash / cas_key / file_size 等元数据。merge 完成后写入 manifest
+        // 使后续 snapshot publish / dirty overlay 能正确引用。
+        //
+        // P1-2 v2 修复：传入 file_size（字节）而非 total_lines（行数）。
+        ensure_manifest_schema(codegraph_conn)
+            .map_err(|e| format!("ensure_manifest_schema 失败: {}", e))?;
+        upsert_manifest(
+            codegraph_conn,
+            workspace_id,
+            rel_path,
+            content_hash,
+            cas_key,
+            file_size,
+        )
+        .map_err(|e| format!("upsert_manifest 失败: {}", e))?;
 
         let merge_status = if cas_symbols.is_empty() {
             "no_symbols"
@@ -679,12 +1140,17 @@ mod tests {
                 call_ordinal INTEGER DEFAULT 0,
                 UNIQUE(cas_key, caller_local_id, call_line, callee_name, call_ordinal)
             );
+            -- P1-2 修复：cas_symbol_contents 表（存储符号实际源码内容）
+            CREATE TABLE IF NOT EXISTS cas_symbol_contents (
+                content_hash TEXT PRIMARY KEY,
+                content TEXT NOT NULL
+            );
             "#,
         )
         .unwrap();
     }
 
-    /// 往 CAS DB 插入一个 cas_key + 2 个 symbols + 1 个 raw_call
+    /// 往 CAS DB 插入一个 cas_key + 2 个 symbols + 1 个 raw_call + 2 个 symbol_contents
     fn seed_cas(
         conn: &Connection,
         cas_key: &str,
@@ -699,6 +1165,20 @@ mod tests {
              abi_version, input_abi_version, state, parsed_at) \
              VALUES (?1, ?2, ?3, 100, ?4, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
             params![cas_key, content_hash, language, total_lines],
+        )
+        .unwrap();
+
+        // P1-2 修复：写入符号实际源码内容到 cas_symbol_contents
+        conn.execute(
+            "INSERT OR IGNORE INTO cas_symbol_contents (content_hash, content) \
+             VALUES (?1, ?2)",
+            params!["sym_hash_main", "fn main() {\n    helper();\n}"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO cas_symbol_contents (content_hash, content) \
+             VALUES (?1, ?2)",
+            params!["sym_hash_helper", "fn helper() {\n    println!(\"hi\");\n}"],
         )
         .unwrap();
 
@@ -776,6 +1256,114 @@ mod tests {
         assert_eq!(result.file_instance_id, 0);
         assert_eq!(result.symbols_inserted, 0);
         assert_eq!(result.calls_inserted, 0);
+    }
+
+    #[test]
+    fn test_init_codegraph_schema_on_fresh_db() {
+        // P0-2 v2 修复：fresh CodeGraph DB 首次打开时初始化主 schema
+        //
+        // 复审报告指出：Connection::open 只创建空 SQLite 文件，
+        // merge 时查询 workspaces 等表会报 "no such table"。
+        // init_codegraph_schema 应幂等建表。
+        let cg_conn = Connection::open_in_memory().unwrap();
+
+        // fresh DB：不应有任何业务表
+        let table_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
+                 ('workspaces','file_contents','file_instances','symbols','calls','symbol_contents')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 0, "fresh DB 不应有业务表");
+
+        // 初始化 schema
+        init_codegraph_schema(&cg_conn).expect("init_codegraph_schema 应成功");
+
+        // 验证所有业务表都已创建
+        let table_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
+                 ('workspaces','file_contents','file_instances','symbols','calls','symbol_contents')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 6, "应有 6 张业务表");
+
+        // 验证 FTS5 虚拟表
+        let fts_exists: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='symbols_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_exists, 1, "应有 symbols_fts 虚拟表");
+
+        // 验证触发器
+        let trigger_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'symbols_fts_%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(trigger_count, 3, "应有 3 个 FTS5 同步触发器");
+    }
+
+    #[test]
+    fn test_init_codegraph_schema_idempotent() {
+        // P0-2 v2 修复：init_codegraph_schema 应幂等可重复调用
+        let cg_conn = Connection::open_in_memory().unwrap();
+        init_codegraph_schema(&cg_conn).expect("第一次调用应成功");
+        // 第二次调用应无操作（CREATE IF NOT EXISTS）
+        init_codegraph_schema(&cg_conn).expect("第二次调用应成功（幂等）");
+
+        // 验证仍只有 6 张业务表（没有重复创建）
+        let table_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN \
+                 ('workspaces','file_contents','file_instances','symbols','calls','symbol_contents')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 6);
+    }
+
+    #[test]
+    fn test_merge_succeeds_on_fresh_db_with_init_schema() {
+        // P0-2 v2 修复：fresh DB 调用 init_codegraph_schema 后 merge 应成功
+        //
+        // 复现复审报告场景：默认 codegraph_db_path_template 非空后，
+        // fresh DB 首次 merge 不会报 "no such table"
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+        seed_cas(&cas_conn, "ck1", "ch1", "rust", 10);
+
+        // fresh CodeGraph DB（不调用 make_codegraph_schema，只调用 init_codegraph_schema）
+        let cg_conn = Connection::open_in_memory().unwrap();
+        init_codegraph_schema(&cg_conn).expect("init_codegraph_schema 应成功");
+
+        // merge 应成功（不会报 no such table）
+        let result = merge_cas_to_codegraph(
+            &cas_conn,
+            &cg_conn,
+            "ck1",
+            42,
+            "src/main.rs",
+            "/app/src/main.rs",
+            "ch1",
+            "rust",
+            "/app",
+        )
+        .expect("merge 在 fresh DB 上应成功");
+
+        assert_eq!(result.merge_status, "merged");
+        assert_eq!(result.symbols_inserted, 2);
+        assert_eq!(result.calls_inserted, 1);
     }
 
     #[test]
@@ -883,6 +1471,98 @@ mod tests {
         assert_eq!(caller_name, "main");
         assert_eq!(callee_name, "helper");
         assert_eq!(call_line, 3);
+
+        // ---- P1-2 修复验证 ----
+
+        // 1. symbol_contents.content 不再为空（从 cas_symbol_contents JOIN 读取）
+        let main_content: String = cg_conn
+            .query_row(
+                "SELECT content FROM symbol_contents WHERE content_hash = 'sym_hash_main'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !main_content.is_empty(),
+            "P1-2: symbol_contents.content 不应为空"
+        );
+        assert!(
+            main_content.contains("fn main"),
+            "P1-2: content 应包含 main 函数源码"
+        );
+
+        let helper_content: String = cg_conn
+            .query_row(
+                "SELECT content FROM symbol_contents WHERE content_hash = 'sym_hash_helper'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !helper_content.is_empty(),
+            "P1-2: symbol_contents.content 不应为空"
+        );
+        assert!(
+            helper_content.contains("fn helper"),
+            "P1-2: content 应包含 helper 函数源码"
+        );
+
+        // 2. callee_id 已 resolve（不再是 0，指向 helper symbol 的 id）
+        let (callee_id, is_cross_file): (i64, i64) = cg_conn
+            .query_row(
+                "SELECT callee_id, is_cross_file FROM calls \
+                 WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?1) \
+                 AND callee_name = 'helper'",
+                params![fi_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            callee_id > 0,
+            "P1-2: callee_id 应被 resolve 到有效 symbol id（>0），实际={}",
+            callee_id
+        );
+        assert_eq!(
+            is_cross_file, 0,
+            "P1-2: main -> helper 在同文件内，is_cross_file 应为 0"
+        );
+
+        // 校验 callee_id 指向的 symbol 确实是 helper
+        let callee_name_from_id: String = cg_conn
+            .query_row(
+                "SELECT name FROM symbols WHERE id = ?1",
+                params![callee_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(callee_name_from_id, "helper");
+
+        // 3. workspace_manifests 表有对应行
+        let manifest_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM workspace_manifests \
+                 WHERE workspace_id = 42 AND rel_path = 'src/main.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            manifest_count, 1,
+            "P1-2: workspace_manifests 应有 1 行记录"
+        );
+
+        // 校验 manifest 内容
+        let (m_cas_key, m_content_hash, m_is_dirty): (String, String, i64) = cg_conn
+            .query_row(
+                "SELECT cas_key, content_hash, is_dirty FROM workspace_manifests \
+                 WHERE workspace_id = 42 AND rel_path = 'src/main.rs'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(m_cas_key, "ck1");
+        assert_eq!(m_content_hash, "ch1");
+        assert_eq!(m_is_dirty, 1, "daemon merge 写入的 manifest 应标记为 dirty");
     }
 
     #[test]
@@ -1069,17 +1749,42 @@ mod tests {
             .unwrap();
         assert_eq!(old_main_count, 0);
 
-        // 验证：跨文件 call 的 callee_id 应被置 0（入边清理）
-        let callee_id_after: i64 = cg_conn
+        // P0-2 + P1-2 v2 联合行为验证：
+        // 1. P0-2 入边清理：旧 main_sym_id 被删除后，指向它的 callee_id 应被置 0（避免悬空引用）
+        // 2. P1-2 v2 回扫 pass：merge 完成后，回扫 pass 会扫描 callee_id=0 的 calls，
+        //    尝试用新插入的 symbols resolve。因此 callee_id 应被 resolve 到新的 main symbol。
+        //
+        // 旧断言 callee_id == 0 已不适用——回扫 pass 会主动修复悬空引用。
+        // 新断言：callee_id > 0 且 != main_sym_id（旧 id），指向新的 main symbol。
+        let (callee_id_after, callee_name_after): (i64, String) = cg_conn
             .query_row(
-                "SELECT callee_id FROM calls WHERE caller_id = ?1",
+                "SELECT callee_id, callee_name FROM calls WHERE caller_id = ?1",
                 params![caller_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            callee_id_after > 0,
+            "P1-2 v2: 回扫 pass 应 resolve callee_id > 0，实际={}",
+            callee_id_after
+        );
+        assert_ne!(
+            callee_id_after, main_sym_id,
+            "P0-2: 不应仍指向旧 main_sym_id（已被删除）"
+        );
+        assert_eq!(callee_name_after, "main", "callee_name 应保持为 'main'");
+
+        // 验证：callee_id 指向新的 main symbol
+        let new_main_id: i64 = cg_conn
+            .query_row(
+                "SELECT id FROM symbols WHERE file_instance_id = ?1 AND name = 'main'",
+                params![r2.file_instance_id],
                 |row| row.get(0),
             )
             .unwrap();
         assert_eq!(
-            callee_id_after, 0,
-            "入边 callee_id 应被置 0，避免悬空引用"
+            callee_id_after, new_main_id,
+            "P1-2 v2: 回扫 pass 应 resolve 到新的 main symbol id"
         );
 
         // r2 仍应正常 merge
@@ -1123,5 +1828,808 @@ mod tests {
         assert_eq!(name, "cli_ws_name");
         assert_eq!(root_path, "/custom/root");
         assert_eq!(description, "CLI registered");
+    }
+
+    /// P1-2 v2 修复：workspace 级回扫 pass 测试
+    ///
+    /// 场景：A.rs 有 call to helper()，但 helper 定义在 B.rs。
+    /// 先 merge A.rs（callee_id=0，因 B.rs 尚未 merge），
+    /// 再 merge B.rs——回扫 pass 应将 A.rs 中 callee_id=0 的 call resolve 到 B.rs 的 helper。
+    #[test]
+    fn test_workspace_resolve_backfill_after_late_merge() {
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+
+        // CAS for A.rs：caller "fn_a" 调用 "helper"（helper 不在 A.rs 中）
+        // file_size=200, total_lines=20（不同值用于校验 manifest file_size 字段）
+        cas_conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES ('ck_a', 'ch_a', 'rust', 200, 20, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbol_contents (content_hash, content) VALUES ('sh_fn_a', 'fn fn_a() { helper(); }')",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, \
+             has_comment, depth) \
+             VALUES ('ck_a', 1, 'sh_fn_a', 'fn_a', 'fn_a', 'function', 1, 3, 0, 0, 'public', 'fn fn_a()', 0, 0)",
+            [],
+        ).unwrap();
+        // fn_a 调用 helper（callee 在 A.rs 中不存在）
+        cas_conn.execute(
+            "INSERT INTO cas_raw_calls \
+             (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal) \
+             VALUES ('ck_a', 1, 'fn_a', 'helper', 2, 0)",
+            [],
+        ).unwrap();
+
+        // CAS for B.rs：定义 helper 函数
+        cas_conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES ('ck_b', 'ch_b', 'rust', 80, 8, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbol_contents (content_hash, content) VALUES ('sh_helper', 'fn helper() { }')",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, \
+             has_comment, depth) \
+             VALUES ('ck_b', 1, 'sh_helper', 'helper', 'helper', 'function', 1, 3, 0, 0, 'public', 'fn helper()', 0, 0)",
+            [],
+        ).unwrap();
+
+        let cg_conn = Connection::open_in_memory().unwrap();
+        make_codegraph_schema(&cg_conn);
+
+        // 先 merge A.rs：fn_a 调用 helper，但 helper 尚未 merge
+        // callee_id 应为 0（A.rs 内查找 helper 失败，B.rs 还没 merge）
+        let r_a = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_a", 7, "src/a.rs", "/app/src/a.rs", "ch_a", "rust",
+            "/app",
+        ).unwrap();
+        assert_eq!(r_a.merge_status, "merged");
+        assert_eq!(r_a.symbols_inserted, 1);
+
+        // 校验 A.rs merge 后 callee_id=0（B.rs 尚未 merge）
+        let callee_id_after_a: i64 = cg_conn
+            .query_row(
+                "SELECT callee_id FROM calls WHERE callee_name = 'helper'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            callee_id_after_a, 0,
+            "A.rs merge 后 callee_id 应为 0（B.rs 尚未 merge）"
+        );
+
+        // 再 merge B.rs：helper 函数被插入
+        // 回扫 pass 应将 A.rs 中 callee_id=0 的 call resolve 到 B.rs 的 helper
+        let r_b = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_b", 7, "src/b.rs", "/app/src/b.rs", "ch_b", "rust",
+            "/app",
+        ).unwrap();
+        assert_eq!(r_b.merge_status, "merged");
+        assert_eq!(r_b.symbols_inserted, 1);
+
+        // 校验回扫 pass 已 resolve callee_id
+        let (callee_id, is_cross_file): (i64, i64) = cg_conn
+            .query_row(
+                "SELECT callee_id, is_cross_file FROM calls WHERE callee_name = 'helper'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            callee_id > 0,
+            "P1-2 v2: 回扫 pass 应 resolve callee_id > 0，实际={}",
+            callee_id
+        );
+        assert_eq!(
+            is_cross_file, 1,
+            "P1-2 v2: 跨文件调用 is_cross_file 应为 1"
+        );
+
+        // 校验 callee_id 指向 B.rs 的 helper symbol
+        let callee_name: String = cg_conn
+            .query_row(
+                "SELECT name FROM symbols WHERE id = ?1",
+                params![callee_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(callee_name, "helper");
+    }
+
+    /// P1-2 v2 修复：manifest file_size 正确性测试
+    ///
+    /// 复审报告指出：旧实现把 total_lines 当 file_size 传给 upsert_manifest，
+    /// manifest 中 file_size 字段实际是文件总行数。
+    /// 本测试校验 manifest.file_size == cas_file_cache.file_size（字节），而非 total_lines。
+    #[test]
+    fn test_manifest_file_size_correctness() {
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+        // file_size=256 字节，total_lines=10 行（不同值）
+        seed_cas_with_file_size(&cas_conn, "ck_fs", "ch_fs", "rust", 256, 10);
+
+        let cg_conn = Connection::open_in_memory().unwrap();
+        make_codegraph_schema(&cg_conn);
+
+        let _r = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_fs", 1, "src/main.rs", "/app/src/main.rs", "ch_fs", "rust",
+            "/app",
+        )
+        .unwrap();
+
+        // 校验 manifest.file_size == 256（字节，来自 cas_file_cache.file_size）
+        let (m_file_size, m_total_lines_unused): (i64, i64) = cg_conn
+            .query_row(
+                "SELECT file_size, mtime_ns FROM workspace_manifests \
+                 WHERE workspace_id = 1 AND rel_path = 'src/main.rs'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            m_file_size, 256,
+            "P1-2 v2: manifest.file_size 应为字节大小（256），实际={}",
+            m_file_size
+        );
+        // m_total_lines_unused（实际查的是 mtime_ns）应为 0（daemon 无此信息）
+        assert_eq!(m_total_lines_unused, 0, "mtime_ns 应为默认值 0");
+
+        // 同时校验 file_instances.total_lines == 10（行数）
+        let fi_total_lines: i64 = cg_conn
+            .query_row(
+                "SELECT total_lines FROM file_instances \
+                 WHERE workspace_id = 1 AND rel_path = 'src/main.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fi_total_lines, 10, "file_instances.total_lines 应为 10");
+    }
+
+    /// P1-2 v2 修复：symbol_contents 空正文修复测试
+    ///
+    /// 复审报告指出：旧版本可能写入 content='' 的 symbol_contents 行，
+    /// 新版本 merge 后 INSERT OR IGNORE 不覆盖，仍读到空正文。
+    /// 本测试模拟：预插入空正文行 → merge → 验证 content 被更新为实际值。
+    #[test]
+    fn test_symbol_contents_empty_content_repair() {
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+        seed_cas(&cas_conn, "ck_ec", "ch_ec", "rust", 10);
+
+        let cg_conn = Connection::open_in_memory().unwrap();
+        make_codegraph_schema(&cg_conn);
+
+        // 预插入空正文行（模拟旧版本遗留）
+        cg_conn.execute(
+            "INSERT INTO symbol_contents (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
+             VALUES ('sym_hash_main', 'main', 'function', '', '', 0, '', 'main')",
+            [],
+        ).unwrap();
+        cg_conn.execute(
+            "INSERT INTO symbol_contents (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
+             VALUES ('sym_hash_helper', 'helper', 'function', '', '', 0, '', 'main.helper')",
+            [],
+        ).unwrap();
+
+        // 校验预插入的空正文
+        let empty_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbol_contents WHERE content = ''",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(empty_count, 2, "预插入 2 个空正文行");
+
+        // merge：应修复空正文
+        let _r = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_ec", 1, "src/main.rs", "/app/src/main.rs", "ch_ec", "rust",
+            "/app",
+        )
+        .unwrap();
+
+        // 校验空正文已被修复
+        let main_content: String = cg_conn
+            .query_row(
+                "SELECT content FROM symbol_contents WHERE content_hash = 'sym_hash_main'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !main_content.is_empty(),
+            "P1-2 v2: 空正文应被修复为实际 content"
+        );
+        assert!(
+            main_content.contains("fn main"),
+            "P1-2 v2: content 应包含 main 函数源码"
+        );
+
+        let helper_content: String = cg_conn
+            .query_row(
+                "SELECT content FROM symbol_contents WHERE content_hash = 'sym_hash_helper'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            !helper_content.is_empty(),
+            "P1-2 v2: helper 空正文应被修复"
+        );
+
+        // 不应再有空正文行
+        let empty_after: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbol_contents WHERE content = ''",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(empty_after, 0, "merge 后不应有空正文行");
+    }
+
+    /// P1-2 v2 修复：resolve_callee ORDER BY 稳定性测试
+    ///
+    /// 复审报告指出：旧实现 LIMIT 1 无 ORDER BY，同名符号任取一条。
+    /// 本测试插入两个同名 symbol，验证 resolve 总是返回 id 较小的（ORDER BY s.id ASC）。
+    #[test]
+    fn test_resolve_callee_order_by_stability() {
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+
+        // CAS：A.rs 中 caller 调用 "shared"（同名符号在两个文件中都有）
+        cas_conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES ('ck_o1', 'ch_o1', 'rust', 100, 10, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbol_contents (content_hash, content) VALUES ('sh_caller', 'fn caller() { shared(); }')",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, has_comment, depth) \
+             VALUES ('ck_o1', 1, 'sh_caller', 'caller', 'caller', 'function', 1, 3, 0, 0, 'public', 'fn caller()', 0, 0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_raw_calls \
+             (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal) \
+             VALUES ('ck_o1', 1, 'caller', 'shared', 2, 0)",
+            [],
+        ).unwrap();
+
+        // CAS：B.rs 中定义 "shared"
+        cas_conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES ('ck_o2', 'ch_o2', 'rust', 100, 10, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbol_contents (content_hash, content) VALUES ('sh_shared_b', 'fn shared() {}')",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, has_comment, depth) \
+             VALUES ('ck_o2', 1, 'sh_shared_b', 'shared', 'shared', 'function', 1, 3, 0, 0, 'public', 'fn shared()', 0, 0)",
+            [],
+        ).unwrap();
+
+        // CAS：C.rs 中也定义 "shared"（同名，模拟跨文件同名符号）
+        cas_conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES ('ck_o3', 'ch_o3', 'rust', 100, 10, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbol_contents (content_hash, content) VALUES ('sh_shared_c', 'fn shared() { /* c */ }')",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, has_comment, depth) \
+             VALUES ('ck_o3', 1, 'sh_shared_c', 'shared', 'shared', 'function', 1, 3, 0, 0, 'public', 'fn shared()', 0, 0)",
+            [],
+        ).unwrap();
+
+        let cg_conn = Connection::open_in_memory().unwrap();
+        make_codegraph_schema(&cg_conn);
+
+        // merge 顺序：B → C → A（B 先 merge，shared id 较小）
+        // merge A 时 resolve_callee 跨文件查找 shared，应返回 B 的 shared（id 较小）
+        merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_o2", 9, "src/b.rs", "/app/src/b.rs", "ch_o2", "rust", "/app",
+        ).unwrap();
+        merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_o3", 9, "src/c.rs", "/app/src/c.rs", "ch_o3", "rust", "/app",
+        ).unwrap();
+        merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_o1", 9, "src/a.rs", "/app/src/a.rs", "ch_o1", "rust", "/app",
+        ).unwrap();
+
+        // 获取 B 和 C 的 shared symbol id
+        let (b_shared_id, c_shared_id): (i64, i64) = cg_conn
+            .query_row(
+                "SELECT \
+                 (SELECT s.id FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id \
+                  WHERE fi.rel_path = 'src/b.rs' AND s.name = 'shared'), \
+                 (SELECT s.id FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id \
+                  WHERE fi.rel_path = 'src/c.rs' AND s.name = 'shared')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(b_shared_id < c_shared_id, "B 先 merge，id 应较小");
+
+        // 校验 callee_id 解析到 B 的 shared（ORDER BY s.id ASC）
+        let callee_id: i64 = cg_conn
+            .query_row(
+                "SELECT callee_id FROM calls WHERE callee_name = 'shared'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            callee_id, b_shared_id,
+            "P1-2 v2: resolve 应返回 id 较小的 B 的 shared（ORDER BY s.id ASC），实际={}",
+            callee_id
+        );
+    }
+
+    /// 辅助：seed CAS with 自定义 file_size 和 total_lines
+    fn seed_cas_with_file_size(
+        conn: &Connection,
+        cas_key: &str,
+        content_hash: &str,
+        language: &str,
+        file_size: i64,
+        total_lines: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            params![cas_key, content_hash, language, file_size, total_lines],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO cas_symbol_contents (content_hash, content) \
+             VALUES (?1, ?2)",
+            params!["sym_hash_main", "fn main() {\n    helper();\n}"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO cas_symbol_contents (content_hash, content) \
+             VALUES (?1, ?2)",
+            params!["sym_hash_helper", "fn helper() {\n    println!(\"hi\");\n}"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, \
+             has_comment, depth) \
+             VALUES (?1, 1, ?2, 'main', 'main', 'function', 1, 5, 0, 0, 'public', \
+             'fn main()', 1, 0)",
+            params![cas_key, "sym_hash_main"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, \
+             has_comment, depth) \
+             VALUES (?1, 2, ?2, 'helper', 'main.helper', 'function', 6, 8, 4, 4, 'private', \
+             'fn helper()', 0, 1)",
+            params![cas_key, "sym_hash_helper"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO cas_raw_calls \
+             (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal) \
+             VALUES (?1, 1, 'main', 'helper', 3, 0)",
+            params![cas_key],
+        )
+        .unwrap();
+    }
+
+    // ---- 门槛 2：空文件 DB → schema → merge → query E2E 集成测试 ----
+    //
+    // 复审报告 §6 门槛 2 要求：
+    //   "用唯一 schema/migration 入口初始化每 workspace CodeGraph DB，补空文件 DB 的真实
+    //    refresh 到 query E2E。"
+    //
+    // 本组测试模拟完整生产链路：
+    // 1. fresh CodeGraph DB（Connection::open 只创建空 SQLite 文件，无任何表）
+    // 2. 调用 init_codegraph_schema() 初始化主 schema
+    // 3. seed CAS（模拟 daemon_handle_refresh 解析结果）
+    // 4. 调用 merge_cas_to_codegraph()
+    // 5. 查询 symbols / calls / file_instances / workspace_manifests 验证完整链路
+
+    /// 门槛 2 E2E：fresh DB → schema init → merge → query 完整链路
+    ///
+    /// 关键验证点：
+    /// - init_codegraph_schema 能在完全空的 SQLite 文件上成功执行
+    /// - merge_cas_to_codegraph 能在 fresh schema 上成功 merge
+    /// - merge 后 symbols/calls/file_instances/workspace_manifests 行数正确
+    /// - 跨文件 resolve（回扫 pass）能正确 resolve callee_id
+    /// - symbol_contents 有实际 content（非空字符串）
+    #[test]
+    fn test_e2e_fresh_db_schema_init_merge_then_query() {
+        // 1. fresh CodeGraph DB（空 SQLite 文件）
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("fresh_codegraph.db");
+        let cg_conn = Connection::open(&db_path).unwrap();
+
+        // 验证 fresh DB 无任何表
+        let table_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(table_count, 0, "fresh DB 不应有任何表");
+
+        // 2. 初始化 schema
+        init_codegraph_schema(&cg_conn).unwrap();
+
+        // 验证关键表存在（workspace_manifests 由 ensure_manifest_schema 在 merge 时创建）
+        let key_tables = [
+            "workspaces",
+            "file_contents",
+            "file_instances",
+            "symbols",
+            "calls",
+            "symbol_contents",
+            "symbols_fts",
+        ];
+        for tbl in &key_tables {
+            let exists: i64 = cg_conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                    params![tbl],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 1, "门槛 2: 表 {} 应存在", tbl);
+        }
+
+        // workspace_manifests 应在 merge 时由 ensure_manifest_schema 创建（init_codegraph_schema 不创建）
+        let manifest_exists_before: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'workspace_manifests'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            manifest_exists_before, 0,
+            "门槛 2: workspace_manifests 应在 merge 时创建（init 不创建）"
+        );
+
+        // 3. seed CAS（两个文件，A 调用 B 的函数——测试跨文件 resolve 回扫）
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+
+        // CAS A：定义 caller "fn_a"，调用 "helper"（在 B 中定义）
+        cas_conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES ('ck_a', 'ch_a', 'rust', 150, 15, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbol_contents (content_hash, content) \
+             VALUES ('sh_fn_a', 'fn fn_a() { helper(); }')",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, \
+             has_comment, depth) \
+             VALUES ('ck_a', 1, 'sh_fn_a', 'fn_a', 'fn_a', 'function', 1, 3, 0, 0, 'public', 'fn fn_a()', 0, 0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_raw_calls \
+             (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal) \
+             VALUES ('ck_a', 1, 'fn_a', 'helper', 2, 0)",
+            [],
+        ).unwrap();
+
+        // CAS B：定义 "helper"
+        cas_conn.execute(
+            "INSERT INTO cas_file_cache \
+             (cas_key, content_hash, language, file_size, total_lines, \
+             parser_version, callwarden_version, extraction_config_version, \
+             abi_version, input_abi_version, state, parsed_at) \
+             VALUES ('ck_b', 'ch_b', 'rust', 60, 6, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbol_contents (content_hash, content) \
+             VALUES ('sh_helper', 'fn helper() { /* B */ }')",
+            [],
+        ).unwrap();
+        cas_conn.execute(
+            "INSERT INTO cas_symbols \
+             (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
+             kind, start_line, end_line, start_col, end_col, visibility, signature, \
+             has_comment, depth) \
+             VALUES ('ck_b', 1, 'sh_helper', 'helper', 'helper', 'function', 1, 3, 0, 0, 'public', 'fn helper()', 0, 0)",
+            [],
+        ).unwrap();
+
+        // 4. merge A → B（A 先 merge，B 后到——测试回扫 pass）
+        let r_a = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_a", 42, "src/a.rs", "/app/src/a.rs", "ch_a", "rust", "/app",
+        ).unwrap();
+        assert_eq!(r_a.merge_status, "merged");
+        assert_eq!(r_a.symbols_inserted, 1);
+
+        // A merge 后 callee_id 应为 0（B 尚未 merge）
+        let callee_id_after_a: i64 = cg_conn
+            .query_row(
+                "SELECT callee_id FROM calls WHERE callee_name = 'helper'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(callee_id_after_a, 0, "A merge 后 callee_id 应为 0");
+
+        let r_b = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_b", 42, "src/b.rs", "/app/src/b.rs", "ch_b", "rust", "/app",
+        ).unwrap();
+        assert_eq!(r_b.merge_status, "merged");
+        assert_eq!(r_b.symbols_inserted, 1);
+
+        // 5. 查询验证完整链路
+
+        // 5a. symbols 表应有 2 行（fn_a + helper）
+        let sym_count: i64 = cg_conn
+            .query_row("SELECT COUNT(*) FROM symbols", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(sym_count, 2, "门槛 2: symbols 应有 2 行");
+
+        // 5b. calls 表应有 1 行，callee_id 已 resolve（回扫 pass）
+        let (call_count, resolved_calls): (i64, i64) = cg_conn
+            .query_row(
+                "SELECT COUNT(*), COUNT(CASE WHEN callee_id > 0 THEN 1 END) FROM calls",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(call_count, 1, "门槛 2: calls 应有 1 行");
+        assert_eq!(
+            resolved_calls, 1,
+            "门槛 2: 回扫 pass 应 resolve 1 个 callee_id"
+        );
+
+        // 5c. file_instances 表应有 2 行（src/a.rs + src/b.rs）
+        let fi_count: i64 = cg_conn
+            .query_row("SELECT COUNT(*) FROM file_instances", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(fi_count, 2, "门槛 2: file_instances 应有 2 行");
+
+        // 5d. workspace_manifests 表应有 2 行，file_size 正确
+        //     merge 时由 ensure_manifest_schema 创建
+        let manifest_exists_after: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'workspace_manifests'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            manifest_exists_after, 1,
+            "门槛 2: workspace_manifests 应在 merge 时创建"
+        );
+
+        let manifest_count: i64 = cg_conn
+            .query_row("SELECT COUNT(*) FROM workspace_manifests", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(manifest_count, 2, "门槛 2: workspace_manifests 应有 2 行");
+
+        let (a_file_size, b_file_size): (i64, i64) = cg_conn
+            .query_row(
+                "SELECT \
+                 (SELECT file_size FROM workspace_manifests WHERE rel_path = 'src/a.rs'), \
+                 (SELECT file_size FROM workspace_manifests WHERE rel_path = 'src/b.rs')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(a_file_size, 150, "门槛 2: manifest A.file_size 应为 150 字节");
+        assert_eq!(b_file_size, 60, "门槛 2: manifest B.file_size 应为 60 字节");
+
+        // 5e. symbol_contents 应有实际 content（非空）
+        let empty_content_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbol_contents WHERE content = '' OR content IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(empty_content_count, 0, "门槛 2: 不应有空 content 行");
+
+        let fn_a_content: String = cg_conn
+            .query_row(
+                "SELECT content FROM symbol_contents WHERE content_hash = 'sh_fn_a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(fn_a_content.contains("fn fn_a"), "content 应含 fn fn_a 源码");
+
+        // 5f. 跨文件 resolve 校验：A 中的 call 指向 B 的 helper symbol
+        let (callee_id, is_cross_file): (i64, i64) = cg_conn
+            .query_row(
+                "SELECT callee_id, is_cross_file FROM calls WHERE callee_name = 'helper'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(callee_id > 0, "门槛 2: callee_id 应已 resolve");
+        assert_eq!(is_cross_file, 1, "门槛 2: is_cross_file 应为 1");
+
+        let callee_file: String = cg_conn
+            .query_row(
+                "SELECT fi.rel_path FROM symbols s \
+                 JOIN file_instances fi ON s.file_instance_id = fi.id \
+                 WHERE s.id = ?1",
+                params![callee_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            callee_file, "src/b.rs",
+            "门槛 2: callee 应指向 src/b.rs 的 helper"
+        );
+
+        // 5g. workspace 行存在
+        let ws_count: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM workspaces WHERE id = 42",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ws_count, 1, "门槛 2: workspace 42 应存在");
+    }
+
+    /// 门槛 2 E2E：fresh DB schema 初始化幂等性（多次调用不报错）
+    #[test]
+    fn test_e2e_fresh_db_schema_init_idempotent_e2e() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("idempotent.db");
+        let cg_conn = Connection::open(&db_path).unwrap();
+
+        // 第一次初始化
+        init_codegraph_schema(&cg_conn).unwrap();
+        let count_1: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // 第二次初始化（应幂等，不报错，表数量不变）
+        init_codegraph_schema(&cg_conn).unwrap();
+        let count_2: i64 = cg_conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(count_1, count_2, "门槛 2: 幂等初始化不应增加表数量");
+
+        // merge 仍能成功执行
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+        seed_cas(&cas_conn, "ck_idem", "ch_idem", "rust", 5);
+
+        let r = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_idem", 7, "src/x.rs", "/app/src/x.rs", "ch_idem", "rust",
+            "/app",
+        )
+        .unwrap();
+        assert_eq!(r.merge_status, "merged");
+        assert_eq!(r.symbols_inserted, 2);
+    }
+
+    /// 门槛 2 E2E：fresh DB merge 后 file_instances.total_lines 与 cas_file_cache 一致
+    #[test]
+    fn test_e2e_fresh_db_total_lines_correctness() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db_path = tmp.path().join("total_lines.db");
+        let cg_conn = Connection::open(&db_path).unwrap();
+        init_codegraph_schema(&cg_conn).unwrap();
+
+        let cas_conn = Connection::open_in_memory().unwrap();
+        make_cas_schema(&cas_conn);
+        // file_size=300 字节, total_lines=30 行
+        seed_cas_with_file_size(&cas_conn, "ck_tl", "ch_tl", "rust", 300, 30);
+
+        let r = merge_cas_to_codegraph(
+            &cas_conn, &cg_conn, "ck_tl", 1, "src/main.rs", "/app/src/main.rs", "ch_tl", "rust",
+            "/app",
+        )
+        .unwrap();
+        assert_eq!(r.merge_status, "merged");
+
+        // file_instances.total_lines 应为 30（行数）
+        let fi_total_lines: i64 = cg_conn
+            .query_row(
+                "SELECT total_lines FROM file_instances \
+                 WHERE workspace_id = 1 AND rel_path = 'src/main.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fi_total_lines, 30, "门槛 2: file_instances.total_lines 应为 30");
+
+        // file_contents.total_lines 也应为 30
+        let fc_total_lines: i64 = cg_conn
+            .query_row(
+                "SELECT total_lines FROM file_contents WHERE content_hash = 'ch_tl'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(fc_total_lines, 30, "门槛 2: file_contents.total_lines 应为 30");
+
+        // manifest.file_size 应为 300（字节）
+        let m_file_size: i64 = cg_conn
+            .query_row(
+                "SELECT file_size FROM workspace_manifests \
+                 WHERE workspace_id = 1 AND rel_path = 'src/main.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(m_file_size, 300, "门槛 2: manifest.file_size 应为 300 字节");
     }
 }

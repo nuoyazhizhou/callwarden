@@ -257,6 +257,12 @@ mod unix {
             request_timeout: config.request_timeout(),
             socket_mode: config.socket_mode as libc::mode_t,
             accept_timeout: Duration::from_millis(200),
+            // P0-3 修复：传递 socket_group 到 ServerConfig
+            socket_group: if config.socket_group.is_empty() {
+                None
+            } else {
+                Some(config.socket_group.clone())
+            },
         };
 
         // 7. 启动 server

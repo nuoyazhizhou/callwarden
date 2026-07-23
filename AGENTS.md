@@ -310,6 +310,8 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     - 重试耗尽后打印 TRAE 沙箱排查建议 + PowerShell + `--no-verify` 绕过指引
     - 保持 `exit 1` 硬门禁（AGENTS.md 规则 1：提交前必须全量刷新数据库）
 
+24. **Rust daemon ACL 变更必须跑完整 daemon 测试集**：扩展 `ADMIN_ONLY_METHODS` 或 workspace owner 校验后，只跑新增 ACL 用例会漏掉旧测试契约失配。必须运行 `cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib`，并逐项处理失败；backup/restore/GC/mount 等 admin-only handler 的测试必须使用 admin peer，readonly 方法清单也必须同步更新。不得用局部模块测试通过替代完整 daemon 回归结果。
+
 ## 文档索引
 
 | 文档 | 说明 |

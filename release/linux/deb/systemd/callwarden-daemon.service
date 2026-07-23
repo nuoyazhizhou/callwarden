@@ -29,21 +29,21 @@ LogsDirectory=callwarden
 LogsDirectoryMode=0750
 
 # pre-start: schema 兼容性检查（迁移失败不得启动，exit 1）
-# 子命令 schema-check（kebab-case，clap 转换）：--strict 严格版本校验
-ExecStartPre=/usr/bin/cw-daemon schema-check --strict
+# P0-4 修复（2026-07-22）：原代码使用 --strict，对未初始化的 DB（fresh install）返回 1，
+# 导致 Gate 5c 的 systemctl start callwarden-daemon 在干净 runner 上失败。
+# strict 模式下未初始化 DB（无 daemon_state 表或 schema_version 行）直接 exit 1，
+# 但 fresh install 时 DB 尚未创建，schema-check 应允许宽松模式（自动初始化 schema）。
+# 改为不带 --strict，允许 schema-check 在未初始化 DB 上通过（后续 WorkspaceRegistry::open 会初始化）。
+ExecStartPre=/usr/bin/cw-daemon schema-check
 # 默认动作 = serve（也可显式写出）；cw-daemon 不接受 --enterprise flag
 #
-# P0-2 降级说明（2026-07-22 复审整改-v2）：
-# Rust daemon 为 CAS-only 路径——daemon_handle_refresh 完成后 CAS 数据已 publish 到
-# cas_file_cache / cas_symbols / cas_raw_calls 表，但不会 merge 到主 CodeGraph DB
-# 的 file_instances / symbols / calls 表（参见 rust_ext/src/daemon/replicator.rs
-# daemon_handle_refresh 函数注释 + SnapshotCachePublisher::publish_snapshot 注释）。
-# 即 watcher save 后通过 db_path 重载的 GraphSnapshot 仍是旧数据，无法保证 save-to-query 闭合。
-#
-# 企业部署若需 save-to-query 数据链闭合，请改用 Python daemon：
-#   ExecStart=/usr/bin/python3 -m callwarden.server
-# Python daemon 在 daemon_handle_refresh step 5 调用 merge_cas_to_codegraph + upsert_manifest，
-# 把 CAS delta merge 到 CodeGraph DB 的 file_instances / symbols / calls 表。
+# P0-2 修复（2026-07-22 完整复审）：
+# Rust daemon 默认启用 save-to-query 数据链：
+# - config.rs 默认 codegraph_db_path_template = /var/lib/callwarden/workspaces/{workspace_instance_id}/codegraph.db
+# - daemon_handle_refresh 中 CAS → CodeGraph merge（cas_merge.rs）
+# - merge 成功后才 file_generation_committed（P0-1 修复）
+# - replicate 发布 snapshot（GraphStore 加载 CodeGraph DB）
+# daemon 首次访问 CodeGraph DB 时自动创建目录（workspace.rs create_dir_all）
 ExecStart=/usr/bin/cw-daemon serve
 ExecReload=/bin/kill -HUP $MAINPID
 
