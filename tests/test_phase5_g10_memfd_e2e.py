@@ -70,7 +70,8 @@ class TestInflightTracker:
 
         tracker = InflightTracker()
         # 分配接近上限
-        ok = tracker.acquire(conn_id=1, uid=100, size=MAX_CONN_QUEUED_BYTES - 1)
+        ok = tracker.acquire(conn_id=1, uid=100,
+                             size=MAX_CONN_QUEUED_BYTES - 1)
         assert ok is True
 
         # 再分配 2 字节 → 超限
@@ -225,7 +226,8 @@ class TestIsMemfd:
             assert is_memfd(fd) is True
             # 写入数据后加 seal
             os.write(fd, b"x" * 1024)
-            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, 0x0001 | 0x0002 | 0x0004 | 0x0008)
+            fcntl.fcntl(fd, fcntl.F_ADD_SEALS, 0x0001 |
+                        0x0002 | 0x0004 | 0x0008)
             assert is_memfd(fd) is True
         finally:
             os.close(fd)
@@ -259,7 +261,8 @@ class TestValidateMemfdFd:
                     validate_memfd_fd(
                         fd,
                         expected_canonical_len=5,
-                        expected_content_hash=hashlib.sha256(b"hello").hexdigest(),
+                        expected_content_hash=hashlib.sha256(
+                            b"hello").hexdigest(),
                         peer_uid=uid,
                     )
                 # Linux 应在 seal 校验阶段失败
@@ -481,7 +484,8 @@ class TestWorkspaceRefreshMemfdDetection:
                 },
                 received_fds=[fd],
             )
-        assert "invalid_params" in str(exc_info.value) or "canonical_len" in str(exc_info.value)
+        assert "invalid_params" in str(
+            exc_info.value) or "canonical_len" in str(exc_info.value)
         os.close(fd)
 
 
@@ -517,7 +521,8 @@ class TestLinuxMemfdRoundtripE2E:
 
             # 在另一个线程发送
             def sender():
-                send_msg(sock1, msg_type=1, payload=payload, canonical_bytes=large_content)
+                send_msg(sock1, msg_type=1, payload=payload,
+                         canonical_bytes=large_content)
 
             t = threading.Thread(target=sender)
             t.start()
@@ -528,7 +533,8 @@ class TestLinuxMemfdRoundtripE2E:
             fd, received_msg = recv_via_memfd(
                 sock2,
                 expected_canonical_len=len(large_content),
-                expected_content_hash=hashlib.sha256(large_content).hexdigest(),
+                expected_content_hash=hashlib.sha256(
+                    large_content).hexdigest(),
                 peer_uid=uid,
             )
             try:
@@ -556,7 +562,8 @@ class TestLinuxMemfdRoundtripE2E:
             payload = {"rel_path": "small.txt"}
 
             def sender():
-                send_msg(sock1, msg_type=1, payload=payload, canonical_bytes=small_content)
+                send_msg(sock1, msg_type=1, payload=payload,
+                         canonical_bytes=small_content)
 
             t = threading.Thread(target=sender)
             t.start()
@@ -613,7 +620,8 @@ class TestLargeFileE2E:
             # 准备发送（需要流式发送，不能一次性载入 256MB）
             # send_msg 当前实现是接受 bytes，对 256MB 来说会占内存
             # 这里跳过实际发送，只验证 hash 计算逻辑
-            pytest.skip("256MB roundtrip 需要流式 send_msg 实现（当前 send_msg 接受 bytes）")
+            pytest.skip(
+                "256MB roundtrip 需要流式 send_msg 实现（当前 send_msg 接受 bytes）")
         finally:
             sock1.close()
             sock2.close()

@@ -33,7 +33,8 @@ try:
 except ImportError:
     HAS_RUST = False
 
-pytestmark = pytest.mark.skipif(not HAS_RUST, reason="callwarden_core Rust 扩展未构建")
+pytestmark = pytest.mark.skipif(
+    not HAS_RUST, reason="callwarden_core Rust 扩展未构建")
 
 
 class TestDebouncedFileWatcherBasic:
@@ -43,7 +44,8 @@ class TestDebouncedFileWatcherBasic:
         """使用默认配置创建"""
         w = PyDebouncedFileWatcher(str(tmp_path))
         assert w.debounce_ms() == 500
-        assert str(tmp_path) in w.root() or w.root().endswith(str(tmp_path).replace(str(tmp_path), ""))
+        assert str(tmp_path) in w.root() or w.root().endswith(
+            str(tmp_path).replace(str(tmp_path), ""))
         assert w.pending_count() == 0
         assert w.is_running() is False
 
@@ -169,7 +171,8 @@ class TestCoalescingMultipleFiles:
             paths = [e["path"] for e in events]
             assert len(events) >= 1
             # 应包含我们创建的文件（至少一个）
-            found = sum(1 for p in paths if any(f in p for f in ["file1.py", "file2.py", "file3.py"]))
+            found = sum(1 for p in paths if any(
+                f in p for f in ["file1.py", "file2.py", "file3.py"]))
             assert found >= 1
         finally:
             w.stop()
@@ -247,7 +250,8 @@ class TestFileRemoval:
             os.remove(str(f))
             time.sleep(0.3)
             events = w.flush()
-            removed = [e for e in events if e["kind"] == "removed" and "del.py" in e["path"]]
+            removed = [e for e in events if e["kind"]
+                       == "removed" and "del.py" in e["path"]]
             assert len(removed) >= 1
         finally:
             w.stop()

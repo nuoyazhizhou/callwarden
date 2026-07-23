@@ -464,7 +464,8 @@ class TestP02WorkspaceIdAcl:
     def test_toolchain_resolve_rejects_cross_uid(self, daemon_service, tmp_path):
         """toolchain.resolve 跨 UID 调用应抛 workspace_forbidden。"""
         owner_uid = os.getuid() if hasattr(os, "getuid") else 0
-        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+        ws_id, _ = self._register_workspace(
+            daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
         from callwarden.server.daemon_server import DaemonRpcError
@@ -477,7 +478,8 @@ class TestP02WorkspaceIdAcl:
     def test_build_context_list_rejects_cross_uid(self, daemon_service, tmp_path):
         """build_context.list 跨 UID 调用应抛 workspace_forbidden。"""
         owner_uid = os.getuid() if hasattr(os, "getuid") else 0
-        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+        ws_id, _ = self._register_workspace(
+            daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
         from callwarden.server.daemon_server import DaemonRpcError
@@ -490,7 +492,8 @@ class TestP02WorkspaceIdAcl:
     def test_resolved_edges_store_rejects_cross_uid(self, daemon_service, tmp_path):
         """resolved_edges.store 跨 UID 写应抛 workspace_forbidden（最严重缺口）。"""
         owner_uid = os.getuid() if hasattr(os, "getuid") else 0
-        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+        ws_id, _ = self._register_workspace(
+            daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
         from callwarden.server.daemon_server import DaemonRpcError
@@ -509,7 +512,8 @@ class TestP02WorkspaceIdAcl:
     def test_resolved_edges_get_rejects_cross_uid(self, daemon_service, tmp_path):
         """resolved_edges.get 跨 UID 读应抛 workspace_forbidden。"""
         owner_uid = os.getuid() if hasattr(os, "getuid") else 0
-        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+        ws_id, _ = self._register_workspace(
+            daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
         from callwarden.server.daemon_server import DaemonRpcError
@@ -523,7 +527,8 @@ class TestP02WorkspaceIdAcl:
     def test_resolved_edges_count_rejects_cross_uid(self, daemon_service, tmp_path):
         """resolved_edges.count 跨 UID 读应抛 workspace_forbidden。"""
         owner_uid = os.getuid() if hasattr(os, "getuid") else 0
-        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+        ws_id, _ = self._register_workspace(
+            daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
         from callwarden.server.daemon_server import DaemonRpcError
@@ -537,7 +542,8 @@ class TestP02WorkspaceIdAcl:
     def test_resolved_edges_store_rejects_invalid_symbol_id(self, daemon_service, tmp_path):
         """resolved_edges.store 校验 edge 字段合法性（symbol_id 必须 > 0）。"""
         owner_uid = os.getuid() if hasattr(os, "getuid") else 0
-        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+        ws_id, _ = self._register_workspace(
+            daemon_service, owner_uid, tmp_path)
 
         owner_peer = _make_peer(uid=owner_uid)
         from callwarden.server.daemon_server import DaemonRpcError
@@ -556,7 +562,8 @@ class TestP02WorkspaceIdAcl:
     def test_resolved_edges_store_rejects_missing_symbol_id(self, daemon_service, tmp_path):
         """resolved_edges.store 校验 edge 字段缺失。"""
         owner_uid = os.getuid() if hasattr(os, "getuid") else 0
-        ws_id, _ = self._register_workspace(daemon_service, owner_uid, tmp_path)
+        ws_id, _ = self._register_workspace(
+            daemon_service, owner_uid, tmp_path)
 
         owner_peer = _make_peer(uid=owner_uid)
         from callwarden.server.daemon_server import DaemonRpcError

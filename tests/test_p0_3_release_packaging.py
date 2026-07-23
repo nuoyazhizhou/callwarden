@@ -126,7 +126,8 @@ class TestP03Issue4ConsoleScriptExtraction(unittest.TestCase):
     """问题 4：build_packages.sh 新增 extract_python_console_scripts()。"""
 
     def setUp(self):
-        self.script_path = os.path.join(_PKG_PARENT, "release", "linux", "build_packages.sh")
+        self.script_path = os.path.join(
+            _PKG_PARENT, "release", "linux", "build_packages.sh")
         with open(self.script_path, encoding="utf-8") as f:
             self.content = f.read()
 
@@ -166,7 +167,8 @@ class TestP03Issue5CwDaemonNaming(unittest.TestCase):
         with open(cargo_path, encoding="utf-8") as f:
             content = f.read()
         # 检查 [[bin]] 块的 name 字段为 cw-daemon
-        match = re.search(r'\[\[bin\]\][^[]*?name\s*=\s*"([^"]+)"', content, re.DOTALL)
+        match = re.search(
+            r'\[\[bin\]\][^[]*?name\s*=\s*"([^"]+)"', content, re.DOTALL)
         self.assertIsNotNone(match, "Cargo.toml 应有 [[bin]] name 字段")
         self.assertEqual(match.group(1), "cw-daemon",
                          f"Cargo [[bin]] name 应为 'cw-daemon'（连字符），实际: {match.group(1)}")
@@ -189,7 +191,8 @@ class TestP03Issue5CwDaemonNaming(unittest.TestCase):
 
     def test_build_packages_sh_uses_cw_daemon_bin(self):
         """build_packages.sh cargo build --bin cw-daemon（连字符）。"""
-        script_path = os.path.join(_PKG_PARENT, "release", "linux", "build_packages.sh")
+        script_path = os.path.join(
+            _PKG_PARENT, "release", "linux", "build_packages.sh")
         with open(script_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("--bin cw-daemon", content,
@@ -225,7 +228,7 @@ class TestP03Issue6CwVersion(unittest.TestCase):
         self.assertEqual(result.returncode, 0,
                          f"`cw --version` 退出码非 0: {result.stderr}")
         self.assertRegex(result.stdout.strip(), r"^callwarden \d+\.\d+\.\d+",
-                        f"`cw --version` 输出应为 'callwarden <version>'，实际: {result.stdout!r}")
+                         f"`cw --version` 输出应为 'callwarden <version>'，实际: {result.stdout!r}")
 
     def test_cw_short_version_flag(self):
         """`python cw.py -V` 等效于 `--version`。"""
@@ -237,7 +240,7 @@ class TestP03Issue6CwVersion(unittest.TestCase):
         self.assertEqual(result.returncode, 0,
                          f"`cw -V` 退出码非 0: {result.stderr}")
         self.assertRegex(result.stdout.strip(), r"^callwarden \d+\.\d+\.\d+",
-                        f"`cw -V` 输出应为 'callwarden <version>'，实际: {result.stdout!r}")
+                         f"`cw -V` 输出应为 'callwarden <version>'，实际: {result.stdout!r}")
 
 
 # ============================================
@@ -283,7 +286,8 @@ class TestP03Issue8MacosEnvVarAlignment(unittest.TestCase):
 
     def test_build_pkg_sh_no_placeholder(self):
         """build_pkg.sh 不再生成 placeholder 入口脚本。"""
-        script_path = os.path.join(_PKG_PARENT, "release", "macos", "build_pkg.sh")
+        script_path = os.path.join(
+            _PKG_PARENT, "release", "macos", "build_pkg.sh")
         with open(script_path, encoding="utf-8") as f:
             content = f.read()
         # P0-3 修复后，placeholder 逻辑已删除，改为 PyInstaller --onedir 打包
@@ -292,7 +296,8 @@ class TestP03Issue8MacosEnvVarAlignment(unittest.TestCase):
 
     def test_build_pkg_sh_uses_cw_apple_env(self):
         """build_pkg.sh 读取 CW_APPLE_* 环境变量。"""
-        script_path = os.path.join(_PKG_PARENT, "release", "macos", "build_pkg.sh")
+        script_path = os.path.join(
+            _PKG_PARENT, "release", "macos", "build_pkg.sh")
         with open(script_path, encoding="utf-8") as f:
             content = f.read()
         # 应读取 CW_APPLE_DEVID / CW_APPLE_ID / CW_APPLE_TEAM_ID / CW_APPLE_APP_PASSWORD
@@ -303,7 +308,8 @@ class TestP03Issue8MacosEnvVarAlignment(unittest.TestCase):
 
     def test_build_pkg_sh_supports_cw_build_unsigned(self):
         """build_pkg.sh 支持 CW_BUILD_UNSIGNED 显式跳过签名。"""
-        script_path = os.path.join(_PKG_PARENT, "release", "macos", "build_pkg.sh")
+        script_path = os.path.join(
+            _PKG_PARENT, "release", "macos", "build_pkg.sh")
         with open(script_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("CW_BUILD_UNSIGNED", content,
@@ -316,12 +322,12 @@ class TestP03Issue8MacosEnvVarAlignment(unittest.TestCase):
         for old_var in ["APPLE_DEVELOPER_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID"]:
             # 仅在 secrets. 引用上下文中检查
             self.assertNotIn(f"secrets.{old_var}", content,
-                            f"workflow 不应再引用 secrets.{old_var}（应改为 CW_APPLE_*）")
+                             f"workflow 不应再引用 secrets.{old_var}（应改为 CW_APPLE_*）")
         # 应引用 CW_APPLE_* secrets
         for new_var in ["CW_APPLE_DEVID", "CW_APPLE_ID",
                         "CW_APPLE_TEAM_ID", "CW_APPLE_APP_PASSWORD"]:
             self.assertIn(f"secrets.{new_var}", content,
-                         f"workflow 应引用 secrets.{new_var}")
+                          f"workflow 应引用 secrets.{new_var}")
 
 
 # ============================================
@@ -341,7 +347,8 @@ class TestP03Issue9OfflineBundleFlag(unittest.TestCase):
 
     def test_build_packages_sh_offline_bundle_only_flag(self):
         """build_packages.sh 支持 --offline-bundle-only flag。"""
-        script_path = os.path.join(_PKG_PARENT, "release", "linux", "build_packages.sh")
+        script_path = os.path.join(
+            _PKG_PARENT, "release", "linux", "build_packages.sh")
         with open(script_path, encoding="utf-8") as f:
             content = f.read()
         self.assertIn("--offline-bundle-only", content,
@@ -358,8 +365,8 @@ class TestP03Issue9OfflineBundleFlag(unittest.TestCase):
                 continue  # 跳过注释行
             match = bad_pattern.search(line)
             self.assertIsNone(match,
-                            f"workflow 不应有 `build_packages.sh ... || true`（注释除外），"
-                            f"找到: {match.group(0) if match else None}")
+                              f"workflow 不应有 `build_packages.sh ... || true`（注释除外），"
+                              f"找到: {match.group(0) if match else None}")
 
     def test_workflow_no_offline_bundle_redundant_step(self):
         """workflow 已删除冗余的 'Build tar.zst offline bundle' 步骤名（仅在 name: 字段，不含注释）。"""
@@ -370,8 +377,8 @@ class TestP03Issue9OfflineBundleFlag(unittest.TestCase):
                                  re.MULTILINE)
         match = bad_pattern.search(content)
         self.assertIsNone(match,
-                         f"workflow 不应有冗余的 'Build tar.zst offline bundle' 步骤名，"
-                         f"找到: {match.group(0) if match else None}")
+                          f"workflow 不应有冗余的 'Build tar.zst offline bundle' 步骤名，"
+                          f"找到: {match.group(0) if match else None}")
 
 
 if __name__ == "__main__":

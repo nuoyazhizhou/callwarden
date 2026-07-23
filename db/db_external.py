@@ -233,7 +233,8 @@ class ExternalMixin:
                     name for name in deps.keys() if name.lower() in installed
                 ]
                 if pkg_names:
-                    total += self.import_external_packages(pkg_names, ["python"])
+                    total += self.import_external_packages(
+                        pkg_names, ["python"])
             else:
                 # 非Python语言：派发到 _import_<lang>_package_symbols 或默认实现
                 for pkg_name, version in deps.items():
@@ -353,7 +354,8 @@ class ExternalMixin:
             if "*" in manifest:
                 import glob
 
-                matches = glob.glob(os.path.join(self.workspace_root, manifest))
+                matches = glob.glob(os.path.join(
+                    self.workspace_root, manifest))
                 if matches:
                     return parser(matches[0])
             else:
@@ -394,7 +396,8 @@ class ExternalMixin:
             skipped = 0
             for pkg_name, pkg_version in packages.items():
                 try:
-                    created += self._import_python_package(pkg_name, pkg_version)
+                    created += self._import_python_package(
+                        pkg_name, pkg_version)
                     self._touch_package_version(
                         pkg_name, pkg_version, "last_seen_at", "manifest"
                     )
@@ -465,7 +468,8 @@ class ExternalMixin:
         ext = config.get("ext", "")
 
         for install_dir in install_dirs:
-            pkg_path = os.path.join(self.workspace_root, install_dir, package_name)
+            pkg_path = os.path.join(
+                self.workspace_root, install_dir, package_name)
             if os.path.isdir(pkg_path):
                 return self._scan_package_source_files(
                     lang,
@@ -509,7 +513,8 @@ class ExternalMixin:
             return 0
 
         # 定位 cargo registry 源码目录
-        pkg_path = self._find_cargo_registry_package_path(package_name, version)
+        pkg_path = self._find_cargo_registry_package_path(
+            package_name, version)
         if not pkg_path:
             # 未找到源码：仅记录依赖关系到 package_versions
             self.conn.execute(
@@ -730,7 +735,8 @@ class ExternalMixin:
         """读取 Python 项目依赖（requirements.txt > pyproject.toml > setup.py）"""
         deps: Dict[str, str] = {}
 
-        requirements_path = os.path.join(self.workspace_root, "requirements.txt")
+        requirements_path = os.path.join(
+            self.workspace_root, "requirements.txt")
         if os.path.exists(requirements_path):
             deps.update(self._parse_requirements_txt(requirements_path))
 
@@ -881,7 +887,8 @@ class ExternalMixin:
         module_path = getattr(module, "__file__", "")
 
         # 收集所有候选符号 + 一次性查重，避免 N+1 查询
-        candidates = []  # [(qualified_name, name, kind, signature, docstring), ...]
+        # [(qualified_name, name, kind, signature, docstring), ...]
+        candidates = []
         for name, obj in inspect.getmembers(module):
             if name.startswith("_"):
                 continue
@@ -893,7 +900,8 @@ class ExternalMixin:
             qualified_name = f"{module_name}.{name}" if module_name else name
             signature = self._get_symbol_signature(obj, name)
             docstring = inspect.getdoc(obj) or ""
-            candidates.append((qualified_name, name, kind, signature, docstring))
+            candidates.append(
+                (qualified_name, name, kind, signature, docstring))
 
         if not candidates:
             return 0
@@ -1358,7 +1366,8 @@ class ExternalMixin:
             return 0
 
         # 定位包目录
-        pkg_dir = os.path.join(self.workspace_root, "node_modules", package_name)
+        pkg_dir = os.path.join(self.workspace_root,
+                               "node_modules", package_name)
         if not os.path.isdir(pkg_dir):
             # 标记已完成（避免重复查找）
             self.conn.execute(
@@ -1746,7 +1755,7 @@ class ExternalMixin:
             replacement = properties.get(key)
             if replacement is None:
                 break
-            result = result[: m.start()] + replacement + result[m.end() :]
+            result = result[: m.start()] + replacement + result[m.end():]
         return result
 
     def _import_java_package_symbols(
@@ -1861,7 +1870,8 @@ class ExternalMixin:
         if not ver_clean or ver_clean == "unknown":
             return None
 
-        artifact_dir = os.path.join(m2_home, group_path, artifact_id, ver_clean)
+        artifact_dir = os.path.join(
+            m2_home, group_path, artifact_id, ver_clean)
         if not os.path.isdir(artifact_dir):
             return None
 
@@ -1972,7 +1982,8 @@ class ExternalMixin:
 
                 content = read_file_text(settings_path)
                 # 去除命名空间
-                content_no_ns = re.sub(r'\sxmlns="[^"]+"', "", content, count=1)
+                content_no_ns = re.sub(
+                    r'\sxmlns="[^"]+"', "", content, count=1)
                 root = ET.fromstring(content_no_ns)
                 local_repo = root.findtext("localRepository")
                 if local_repo and local_repo.strip():
@@ -1983,7 +1994,8 @@ class ExternalMixin:
                 pass
 
         # 3) 项目级 .mvn/maven.config（含 -Dmaven.repo.local=...）
-        project_mvn_config = os.path.join(self.workspace_root, ".mvn", "maven.config")
+        project_mvn_config = os.path.join(
+            self.workspace_root, ".mvn", "maven.config")
         if os.path.isfile(project_mvn_config):
             try:
                 for line in read_file_text(project_mvn_config).splitlines():
@@ -2018,7 +2030,8 @@ class ExternalMixin:
         # 2) 解析 gradle.properties 文件
         candidate_files = [
             # 用户级：~/.gradle/gradle.properties
-            os.path.join(os.path.expanduser("~"), ".gradle", "gradle.properties"),
+            os.path.join(os.path.expanduser("~"),
+                         ".gradle", "gradle.properties"),
             # 项目级：<workspace>/gradle.properties
             os.path.join(self.workspace_root, "gradle.properties"),
         ]
@@ -2064,7 +2077,8 @@ class ExternalMixin:
         # 2) nuget.config 配置文件
         candidate_configs = [
             # 用户级：~/.nuget/NuGet/NuGet.Config
-            os.path.join(os.path.expanduser("~"), ".nuget", "NuGet", "NuGet.Config"),
+            os.path.join(os.path.expanduser("~"), ".nuget",
+                         "NuGet", "NuGet.Config"),
             # 项目级：<workspace>/nuget.config
             os.path.join(self.workspace_root, "nuget.config"),
         ]
@@ -2075,7 +2089,8 @@ class ExternalMixin:
                 import xml.etree.ElementTree as ET
 
                 content = read_file_text(config_path)
-                content_no_ns = re.sub(r'\sxmlns="[^"]+"', "", content, count=1)
+                content_no_ns = re.sub(
+                    r'\sxmlns="[^"]+"', "", content, count=1)
                 root = ET.fromstring(content_no_ns)
                 # 查找 <config><add key="globalPackagesFolder" value="..." /></config>
                 config_elem = root.find("config")
@@ -2132,7 +2147,8 @@ class ExternalMixin:
                     if not in_env_section:
                         continue
                     # CARGO_HOME = "/path" 或 CARGO_HOME = '/path'
-                    m = re.match(r'^CARGO_HOME\s*=\s*["\']([^"\']+)["\']', stripped)
+                    m = re.match(
+                        r'^CARGO_HOME\s*=\s*["\']([^"\']+)["\']', stripped)
                     if m:
                         path = os.path.expanduser(m.group(1).strip())
                         if os.path.isdir(path):
@@ -2186,7 +2202,8 @@ class ExternalMixin:
                         break
                     file_count += 1
                     try:
-                        content = zf.read(name).decode("utf-8", errors="replace")
+                        content = zf.read(name).decode(
+                            "utf-8", errors="replace")
                     except Exception:
                         continue
                     # 写入临时文件让 parser 解析
@@ -2199,7 +2216,8 @@ class ExternalMixin:
                         tmp_path = tmp.name
                     try:
                         # 推导 module_path：jar 内路径的目录替换为 .
-                        module_path = os.path.splitext(name.replace("/", "."))[0]
+                        module_path = os.path.splitext(
+                            name.replace("/", "."))[0]
                         # 去掉 module_path 末尾的文件名
                         if "." in module_path:
                             module_path = module_path.rsplit(".", 1)[0]
@@ -2211,7 +2229,8 @@ class ExternalMixin:
                                 f"{module_path}.{sym['name']}"
                                 if module_path else sym["name"]
                             )
-                            pending.append({"qualified_name": qualified_name, "sym": sym})
+                            pending.append(
+                                {"qualified_name": qualified_name, "sym": sym})
 
                         if not pending:
                             continue
@@ -2347,7 +2366,8 @@ class ExternalMixin:
 
                     try:
                         result = subprocess.run(
-                            ["javap", "-classpath", jar_path, "-public"] + class_names,
+                            ["javap", "-classpath", jar_path,
+                                "-public"] + class_names,
                             capture_output=True,
                             text=True,
                             encoding="utf-8",
@@ -2912,7 +2932,8 @@ class ExternalMixin:
                 for framework, framework_deps in dependencies.items():
                     if isinstance(framework_deps, dict) and "dependencies" in framework_deps:
                         for name, info in framework_deps["dependencies"].items():
-                            deps[name] = info.get("resolved", "") if isinstance(info, dict) else ""
+                            deps[name] = info.get("resolved", "") if isinstance(
+                                info, dict) else ""
                     elif isinstance(framework_deps, dict):
                         # 直接格式：{ "dep": {"resolved": "1.0"} }
                         for name, info in framework_deps.items():
@@ -3130,7 +3151,8 @@ class ExternalMixin:
         rbenv_dir = os.path.join(os.path.expanduser("~"), ".rbenv", "versions")
         if os.path.isdir(rbenv_dir):
             for rbver in os.listdir(rbenv_dir):
-                gems_dir = os.path.join(rbenv_dir, rbver, "lib", "ruby", "gems")
+                gems_dir = os.path.join(
+                    rbenv_dir, rbver, "lib", "ruby", "gems")
                 if not os.path.isdir(gems_dir):
                     continue
                 for sub in os.listdir(gems_dir):
@@ -3408,7 +3430,8 @@ class ExternalMixin:
             package_names: 指定要删除的 package_name 前缀列表，例如 ["networkx", "ext-python-networkx"]
             vacuum: True 时在删除后执行 VACUUM 释放磁盘空间
         """
-        before = self.conn.execute("SELECT COUNT(*) as cnt FROM external_symbols").fetchone()["cnt"]
+        before = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM external_symbols").fetchone()["cnt"]
         keep: set[str] = {"stdlib"}
         if keep_project_deps:
             deps = self.get_project_dependencies()
@@ -3445,7 +3468,8 @@ class ExternalMixin:
         self.conn.commit()
         if vacuum:
             self.conn.execute("VACUUM")
-        after = self.conn.execute("SELECT COUNT(*) as cnt FROM external_symbols").fetchone()["cnt"]
+        after = self.conn.execute(
+            "SELECT COUNT(*) as cnt FROM external_symbols").fetchone()["cnt"]
         return {"before": before, "after": after, "deleted": deleted, "vacuum": vacuum}
 
     def has_external_symbol(self, qualified_name: str) -> bool:
@@ -3456,7 +3480,8 @@ class ExternalMixin:
         )
         row = cur.fetchone()
         if row:
-            self._touch_package_version(row["package_name"], row["package_version"], "last_used_at")
+            self._touch_package_version(
+                row["package_name"], row["package_version"], "last_used_at")
             self.conn.commit()
             return True
         return False

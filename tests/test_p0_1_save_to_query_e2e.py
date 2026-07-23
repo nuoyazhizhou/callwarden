@@ -65,7 +65,7 @@ class TestStep1DispatchIntBug:
         """
         source = open(
             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                        "server", "daemon_server.py"),
+                         "server", "daemon_server.py"),
             encoding="utf-8",
         ).read()
 
@@ -104,7 +104,7 @@ class TestStep2CasMerge:
     """验证 db_cas_merge.merge_cas_to_codegraph 单元功能。"""
 
     def _make_cas_db(self, cas_key: str, content_hash: str,
-                    symbols: list, raw_calls: list) -> sqlite3.Connection:
+                     symbols: list, raw_calls: list) -> sqlite3.Connection:
         """构造一个含给定 cas_key 数据的 CAS DB。"""
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -233,8 +233,8 @@ class TestStep2CasMerge:
         cas_key = "cas_v2"
         content_hash = "hash_v2"
         cas_conn = self._make_cas_db(cas_key, content_hash,
-            [{"name": "new_fn", "qname": "m.new_fn", "kind": "function",
-              "hash": "newhash", "start_line": 1, "end_line": 2}], [])
+                                     [{"name": "new_fn", "qname": "m.new_fn", "kind": "function",
+                                       "hash": "newhash", "start_line": 1, "end_line": 2}], [])
         cg_conn = self._make_codegraph_db()
 
         # 第一次 merge（含 2 个符号）
@@ -321,8 +321,8 @@ class TestStep3DaemonHandleRefreshIntegration:
         return conn
 
     def _make_cas_db_with_content(self, cas_key: str,
-                                 content_hash: str, symbols: list,
-                                 raw_calls: list) -> sqlite3.Connection:
+                                  content_hash: str, symbols: list,
+                                  raw_calls: list) -> sqlite3.Connection:
         """构造含内容的 CAS DB。"""
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -398,11 +398,12 @@ class TestStep3DaemonHandleRefreshIntegration:
         import sys
         mock_module = type(sys)("callwarden_core_mock")
         mock_module.canonpath = None
+
         def mock_canonicalize_source_py(abs_path):
             return {"canonical_bytes": canonical_bytes,
                     "content_hash": content_hash}
         def mock_parse_canonical_bytes_py(canonical_bytes_, module_path,
-                                         language, content_hash_):
+                                          language, content_hash_):
             return {
                 "symbols": [
                     {"name": "processed_fn", "qualified_name": "module.processed_fn",
@@ -442,7 +443,8 @@ class TestStep3DaemonHandleRefreshIntegration:
         finally:
             # 恢复 sys.modules
             if original_parse is not None:
-                sys.modules["callwarden_core"] = original_parse.__module__ if hasattr(original_parse, "__module__") else None
+                sys.modules["callwarden_core"] = original_parse.__module__ if hasattr(
+                    original_parse, "__module__") else None
             else:
                 sys.modules.pop("callwarden_core", None)
 
@@ -814,7 +816,8 @@ class TestStep4FullE2E:
 
         # 验证 refresh 成功
         assert refresh_result["status"] == "committed"
-        assert refresh_result.get("cas_state") in ("ready_published", "ready_cache_hit")
+        assert refresh_result.get("cas_state") in (
+            "ready_published", "ready_cache_hit")
 
         # 验证 P0-1 merge：CodeGraph DB 中应有新文件符号
         cg_conn2 = sqlite3.connect(cg_db_path)

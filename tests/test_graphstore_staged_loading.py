@@ -1,19 +1,18 @@
 """GraphStore 分级加载的后台发布与代次隔离测试。"""
 
 from __future__ import annotations
+from callwarden.db.db import CodeGraphDB
+import pytest
+import callwarden_core
 
 import threading
 import time
 import sys
 from pathlib import Path
 
-RUST_TARGET = Path(__file__).parent.parent / "rust_ext" / "target" / "pyinstall"
+RUST_TARGET = Path(__file__).parent.parent / \
+    "rust_ext" / "target" / "pyinstall"
 sys.path.insert(0, str(RUST_TARGET))
-
-import callwarden_core
-import pytest
-
-from callwarden.db.db import CodeGraphDB
 
 
 class ControlledGraphStore:
@@ -84,7 +83,8 @@ def _wait_for_state(db: CodeGraphDB, expected: str, timeout: float = 5.0) -> Non
         if db._graph_store_status()["state"] == expected:
             return
         time.sleep(0.01)
-    raise AssertionError(f"GraphStore did not reach {expected}: {db._graph_store_status()}")
+    raise AssertionError(
+        f"GraphStore did not reach {expected}: {db._graph_store_status()}")
 
 
 def test_symbols_publish_before_background_full_graph(

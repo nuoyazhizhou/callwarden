@@ -117,7 +117,8 @@ def test_scm_rights_transfers_read_only_fd(tmp_path):
     left, right = socket.socketpair()
     received = []
     try:
-        send_message_with_fds(left, {"id": 3, "method": "snapshot.publish"}, [fd])
+        send_message_with_fds(
+            left, {"id": 3, "method": "snapshot.publish"}, [fd])
         message, received = recv_message_with_fds(right)
         assert message["id"] == 3
         assert len(received) == 1
@@ -359,10 +360,13 @@ def test_service_rejects_cross_uid_query_isolation(daemon_service, tmp_path):
     # query.* 方法需要先 publish snapshot，但跨 UID 在 _owned_workspace 就被拦截
     query_methods = [
         ("query.stats", {"workspace_instance_id": ws_id}),
-        ("query.symbol", {"workspace_instance_id": ws_id, "qualified_name": "foo"}),
+        ("query.symbol", {
+         "workspace_instance_id": ws_id, "qualified_name": "foo"}),
         ("query.search", {"workspace_instance_id": ws_id, "query": "foo"}),
-        ("query.callers", {"workspace_instance_id": ws_id, "callee_name": "foo"}),
-        ("query.callees", {"workspace_instance_id": ws_id, "caller_name": "foo"}),
+        ("query.callers", {
+         "workspace_instance_id": ws_id, "callee_name": "foo"}),
+        ("query.callees", {
+         "workspace_instance_id": ws_id, "caller_name": "foo"}),
     ]
     for method, params in query_methods:
         with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID"):

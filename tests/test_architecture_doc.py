@@ -88,7 +88,7 @@ def test_doc_has_all_table_group_sections():
         "任务-符号变更归因表",   # v17
         "任务质量门禁表",        # v21
         "审计签名链表",          # v22
-        "Agent Rule Memory 表", # v23
+        "Agent Rule Memory 表",  # v23
         "自举闭环与代码克隆表",  # v25 + v27
         "守护者架构表",          # v10
         "任务与编辑审计表",      # v7 + v12 + v15 + v24
@@ -102,7 +102,8 @@ def test_doc_mcp_tool_count_consistent():
     import re
     # 动态统计 server/mcp_server.py 中 @mcp.tool() 数量
     mcp_server = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "server", "mcp_server.py")
+        os.path.join(os.path.dirname(__file__),
+                     "..", "server", "mcp_server.py")
     )
     with open(mcp_server, encoding="utf-8") as f:
         source = f.read()

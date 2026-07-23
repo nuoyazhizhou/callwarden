@@ -212,7 +212,8 @@ class EnterpriseDaemonService:
         # 用 registry_db 所在目录重建 config，避免迁移错误的 DB 路径
         cfg_data_root = os.path.dirname(self.registry_db)
         if self._config.data_root != cfg_data_root:
-            self._config = DaemonConfig.load_from_dict({"data_root": cfg_data_root})
+            self._config = DaemonConfig.load_from_dict(
+                {"data_root": cfg_data_root})
         if run_startup_migrations:
             self._run_startup_migrations()
 
@@ -389,11 +390,13 @@ class EnterpriseDaemonService:
         """
         try:
             if self.snapshot_service is None:
-                logger.debug("evict skipped (snapshot_service is None) for ws=%s", workspace_id)
+                logger.debug(
+                    "evict skipped (snapshot_service is None) for ws=%s", workspace_id)
                 return False
             return self.snapshot_service.evict_workspace(workspace_id)
         except Exception as e:
-            logger.warning("evict snapshot cache failed for ws=%s: %s", workspace_id, e)
+            logger.warning(
+                "evict snapshot cache failed for ws=%s: %s", workspace_id, e)
             return False
 
     def shutdown_background_tasks(self) -> None:
@@ -416,7 +419,8 @@ class EnterpriseDaemonService:
         with self._toolchain_lock:
             if self._toolchain_conn is None:
                 from callwarden.db.db_toolchain import open_toolchain_db
-                self._toolchain_conn = open_toolchain_db(self._toolchain_db_path)
+                self._toolchain_conn = open_toolchain_db(
+                    self._toolchain_db_path)
         return self._toolchain_conn
 
     def _get_workspace_resources(self, workspace_id: str) -> Dict:
@@ -459,7 +463,8 @@ class EnterpriseDaemonService:
             # 批次9（K4 snapshot 未发布修复）：解析 codegraph db_path
             # 用于 replicator.replicate() 触发 snapshot_service.publish_snapshot。
             # 模板为空时回退到用户级单库 ~/.callwarden/callwarden.db。
-            codegraph_db_path = self._config.resolve_codegraph_db_path(workspace_id)
+            codegraph_db_path = self._config.resolve_codegraph_db_path(
+                workspace_id)
 
             resources = {
                 "cas_conn": cas_conn,
@@ -484,7 +489,8 @@ class EnterpriseDaemonService:
                 pending = res["staging_log"].read_pending()
                 ws_pending = [e for e in pending if e.workspace_id == ws_id]
                 if ws_pending:
-                    logger.info("recovering %d pending entries for ws=%s", len(ws_pending), ws_id)
+                    logger.info("recovering %d pending entries for ws=%s", len(
+                        ws_pending), ws_id)
                     res["replicator"].recover(ws_id)
             except Exception as e:
                 logger.error("recovery failed for ws=%s: %s", ws_id, e)
@@ -608,8 +614,10 @@ class EnterpriseDaemonService:
                     client_view_root=client_root,
                     host_real_root=host_root,
                     git_remote_url=str(params.get("git_remote_url") or ""),
-                    git_head_commit_sha=str(params.get("git_head_commit_sha") or ""),
-                    toolchain_fingerprint=str(params.get("toolchain_fingerprint") or ""),
+                    git_head_commit_sha=str(
+                        params.get("git_head_commit_sha") or ""),
+                    toolchain_fingerprint=str(
+                        params.get("toolchain_fingerprint") or ""),
                 )
 
         if method == "workspace.list":
@@ -620,7 +628,8 @@ class EnterpriseDaemonService:
         if method == "workspace.connect":
             workspace_id = str(params.get("workspace_instance_id") or "")
             if not workspace_id:
-                raise DaemonRpcError("invalid_params", "缺少 workspace_instance_id")
+                raise DaemonRpcError(
+                    "invalid_params", "缺少 workspace_instance_id")
             # P0-1 整改（2026-07-21）：保存 workspace row，用数字主键
             # workspace_id（daemon_workspaces.workspace_id INTEGER PRIMARY KEY）
             # 而非 hash 字符串传给 daemon_handle_connect（与 workspace_active_session
@@ -812,7 +821,8 @@ class EnterpriseDaemonService:
 
         if method == "workspace.status":
             result = dict(workspace)
-            result["snapshot"] = self.snapshot_service.get_snapshot_stats(workspace_id)
+            result["snapshot"] = self.snapshot_service.get_snapshot_stats(
+                workspace_id)
             return result
 
         # workspace.file.refresh：增量 refresh 经 CAS/Replicator
@@ -859,7 +869,8 @@ class EnterpriseDaemonService:
                                 peer_uid=uid,
                             )
                             info = os.fstat(validated_fd)
-                            canonical_bytes = os.read(validated_fd, info.st_size)
+                            canonical_bytes = os.read(
+                                validated_fd, info.st_size)
                         finally:
                             try:
                                 os.close(fd)
@@ -898,7 +909,8 @@ class EnterpriseDaemonService:
                         content_hash = params.get("content_hash") or ""
                         if content_hash:
                             import hashlib
-                            actual_hash = hashlib.sha256(canonical_bytes).hexdigest()
+                            actual_hash = hashlib.sha256(
+                                canonical_bytes).hexdigest()
                             if actual_hash != content_hash:
                                 raise DaemonRpcError(
                                     "fd_hash_mismatch",
@@ -914,7 +926,8 @@ class EnterpriseDaemonService:
                 # G9/G34 批次7：优先 hex（agent_protocol.py 小文件默认路径）
                 import binascii
                 try:
-                    canonical_bytes = binascii.unhexlify(params["canonical_bytes_hex"])
+                    canonical_bytes = binascii.unhexlify(
+                        params["canonical_bytes_hex"])
                 except (ValueError, binascii.Error) as e:
                     raise DaemonRpcError(
                         "hex_decode_failed",
@@ -922,7 +935,8 @@ class EnterpriseDaemonService:
                     )
             elif "canonical_bytes_b64" in params:
                 import base64
-                canonical_bytes = base64.b64decode(params["canonical_bytes_b64"])
+                canonical_bytes = base64.b64decode(
+                    params["canonical_bytes_b64"])
             # K2 评审修复（2026-07-20）：canonical_bytes is None 时，
             # daemon 会从 msg["abs_path"] 直接读取客户端文件，必须校验
             # 1) owner UID 匹配（_validate_owned_path 已覆盖）
@@ -930,7 +944,8 @@ class EnterpriseDaemonService:
             if canonical_bytes is None:
                 abs_path = params.get("abs_path") or ""
                 if abs_path:
-                    real_abs = self._validate_owned_path(abs_path, uid, require_file=True)
+                    real_abs = self._validate_owned_path(
+                        abs_path, uid, require_file=True)
                     host_root = str(workspace.get("host_real_root") or "")
                     if host_root:
                         real_host_root = os.path.realpath(host_root)
@@ -959,7 +974,8 @@ class EnterpriseDaemonService:
                     # CAS → CodeGraph DB merge（断点 B 修复），让 publish_snapshot
                     # 加载到新文件符号。workspace_root_path 用于 workspaces.root_path。
                     codegraph_db_path=res.get("codegraph_db_path", ""),
-                    workspace_root_path=str(workspace.get("host_real_root") or ""),
+                    workspace_root_path=str(
+                        workspace.get("host_real_root") or ""),
                 )
                 # 成功后追加 staging entry 并 replicate
                 if result.get("status") == "committed":
@@ -978,7 +994,8 @@ class EnterpriseDaemonService:
                     db_path = res.get("codegraph_db_path", "")
                     repl_result = res["replicator"].replicate(
                         workspace_id, db_path=db_path,
-                        workspace_id_num=int(workspace.get("workspace_id") or 0),
+                        workspace_id_num=int(
+                            workspace.get("workspace_id") or 0),
                     )
                     # 批次9：返回 snapshot_published 标志 + snapshot_warning 提示
                     # （与 Rust 端 workspace.rs L1359-1385 对齐）
@@ -1087,7 +1104,8 @@ class EnterpriseDaemonService:
                 workspace_id=int(workspace.get("workspace_id") or 0),
             )
             if result is None:
-                raise DaemonRpcError("snapshot_unavailable", "Rust snapshot 后端不可用")
+                raise DaemonRpcError(
+                    "snapshot_unavailable", "Rust snapshot 后端不可用")
             return result
 
         if not self.snapshot_service.ensure_workspace(workspace_id):
@@ -1181,14 +1199,16 @@ class EnterpriseDaemonService:
                     for tc in db_toolchain.list_toolchains(conn)]
 
         if method == "toolchain.get":
-            name_or_id = str(params.get("name_or_id") or params.get("name") or "")
+            name_or_id = str(params.get("name_or_id")
+                             or params.get("name") or "")
             if not name_or_id:
                 raise DaemonRpcError("invalid_params", "缺少 name_or_id")
             result = db_toolchain.get_toolchain(conn, name_or_id)
             return result.to_dict() if result and hasattr(result, "to_dict") else result
 
         if method == "toolchain.delete":
-            name_or_id = str(params.get("name_or_id") or params.get("name") or "")
+            name_or_id = str(params.get("name_or_id")
+                             or params.get("name") or "")
             if not name_or_id:
                 raise DaemonRpcError("invalid_params", "缺少 name_or_id")
             deleted = db_toolchain.delete_toolchain(conn, name_or_id)
@@ -1336,7 +1356,8 @@ class EnterpriseDaemonService:
                 conn,
                 workspace_id=int(workspace_id),
                 build_context_hash=build_context_hash,
-                caller_symbol_id=int(caller_symbol_id) if caller_symbol_id is not None else None,
+                caller_symbol_id=int(
+                    caller_symbol_id) if caller_symbol_id is not None else None,
                 limit=int(limit) if limit is not None else None,
             )
             return [e.to_dict() if hasattr(e, "to_dict") else e for e in edges]
@@ -1370,7 +1391,8 @@ class EnterpriseDaemonService:
                 "snapshot_fd_forbidden",
                 f"FD owner_uid={info.st_uid}，peer_uid={peer_uid}",
             )
-        max_bytes = int(os.environ.get("CW_MAX_SNAPSHOT_DB_BYTES", str(64 << 30)))
+        max_bytes = int(os.environ.get(
+            "CW_MAX_SNAPSHOT_DB_BYTES", str(64 << 30)))
         if info.st_size <= 0 or info.st_size > max_bytes:
             raise DaemonRpcError(
                 "snapshot_too_large", f"snapshot bytes={info.st_size}, max={max_bytes}"
@@ -1452,12 +1474,14 @@ class EnterpriseDaemonServer:
                 method = request.get("method")
                 params = request.get("params", {})
                 if not isinstance(method, str) or not isinstance(params, dict):
-                    raise DaemonRpcError("invalid_request", "method/params 类型错误")
+                    raise DaemonRpcError(
+                        "invalid_request", "method/params 类型错误")
                 # G13（2026-07-20）：用 measure_rpc 埋点 RPC 调用
                 # 自动收集 requests_total / request_duration_seconds /
                 # errors_total / active_connections 指标
                 with measure_rpc(method):
-                    result = self.service.dispatch(peer, method, params, received_fds)
+                    result = self.service.dispatch(
+                        peer, method, params, received_fds)
                 response = {"id": request_id, "ok": True, "result": result}
             except DaemonRpcError as exc:
                 response = {
