@@ -41,6 +41,7 @@ dependencies = [
     "semgrep>=1.50",
     "sentence-transformers>=2.2",
     "sqlite-vec>=0.1",
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
