@@ -264,8 +264,9 @@ class TestDebouncedFileWatcherNestedDirs:
             # 创建嵌套目录并写入文件
             sub = tmp_path / "subdir"
             sub.mkdir(parents=True, exist_ok=True)
+            time.sleep(0.3)  # 等待 watcher 注册新目录
             (sub / "nested.py").write_text("nested = True\n")
-            time.sleep(0.3)
+            time.sleep(1.0)  # CI 环境 inotify 注册较慢，给足时间
             events = w.flush()
             nested_events = [e for e in events if "nested.py" in e["path"]]
             assert len(nested_events) >= 1

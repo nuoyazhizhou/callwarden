@@ -2085,7 +2085,7 @@ class CodeGraphBase:
         _last_err = None
         for _attempt in range(3):
             try:
-                self.conn = sqlite3.connect(db_path)
+                self.conn = sqlite3.connect(db_path, check_same_thread=False)
                 self.conn.row_factory = sqlite3.Row
                 # 前置 busy_timeout：内核级锁等待，5 秒内锁释放立即返回
                 self.conn.execute("PRAGMA busy_timeout=5000")

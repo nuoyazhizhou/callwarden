@@ -811,7 +811,10 @@ class ExternalMixin:
         """解析 pyproject.toml"""
         deps: Dict[str, str] = {}
         try:
-            import tomllib
+            try:
+                import tomllib
+            except ModuleNotFoundError:
+                import tomli as tomllib  # Python 3.10 回退
 
             with open(path, "rb") as f:
                 data = tomllib.load(f)
@@ -980,7 +983,10 @@ class ExternalMixin:
         """
         deps: Dict[str, str] = {}
         try:
-            import tomllib
+            try:
+                import tomllib
+            except ModuleNotFoundError:
+                import tomli as tomllib  # Python 3.10 回退
 
             with open(path, "rb") as f:
                 data = tomllib.load(f)
@@ -1001,7 +1007,10 @@ class ExternalMixin:
         """解析 Cargo.lock"""
         deps: Dict[str, str] = {}
         try:
-            import tomllib
+            try:
+                import tomllib
+            except ModuleNotFoundError:
+                import tomli as tomllib  # Python 3.10 回退
 
             with open(path, "rb") as f:
                 data = tomllib.load(f)

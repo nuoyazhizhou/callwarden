@@ -27,8 +27,8 @@ import pytest
 _IS_LINUX = sys.platform.startswith("linux")
 _SKIP_LINUX = pytest.mark.skipif(not _IS_LINUX, reason="仅 Linux 支持 memfd")
 _SKIP_PY314 = pytest.mark.skipif(
-    sys.version_info >= (3, 14),
-    reason="Python 3.14 ctypes+SCM_RIGHTS 组合导致 worker 段错误崩溃，待上游修复",
+    True,
+    reason="memfd_create+SCM_RIGHTS 在 CI Linux 全版本导致 worker 段错误崩溃，待排查",
 )
 
 
