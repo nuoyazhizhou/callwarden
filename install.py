@@ -59,6 +59,8 @@ CORE_PACKAGES: List[PackageSpec] = [
     # pathspec 不可用时 IgnoreMatcher 降级到自研实现（不完整）
     PackageSpec("pathspec", "pathspec", "core", description=".gitignore 完整语法解析（A15）"),
     PackageSpec("fastmcp", "fastmcp", "core", description="MCP Server 框架"),
+    PackageSpec("watchdog", "watchdog", "core", description="文件监控守护进程"),
+    PackageSpec("numpy", "numpy", "core", description="向量与重复代码检测计算引擎"),
 ]
 
 # 已支持语言（9 种，与 Semgrep 交集）
@@ -102,7 +104,6 @@ OPTIONAL_PACKAGES: List[PackageSpec] = [
     PackageSpec("semgrep", "semgrep", "optional", description="多语言静态安全扫描（守护者架构必需）"),
     PackageSpec("sentence-transformers", "sentence_transformers", "optional", description="向量嵌入（语义搜索）"),
     PackageSpec("sqlite-vec", "sqlite_vec", "optional", description="向量索引扩展"),
-    PackageSpec("numpy", "numpy", "optional", description="向量计算（PyO3 加速时需要）"),
 ]
 
 

@@ -37,6 +37,7 @@ dependencies = [
     "tree-sitter-elixir>=0.3",
     "fastmcp>=0.8",
     "watchdog>=6.0.0",
+    "numpy>=1.24",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

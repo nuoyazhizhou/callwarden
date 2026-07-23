@@ -6,6 +6,7 @@ tree-sitter-languages>=1.10
 pathspec>=0.10
 fastmcp>=0.8
 watchdog>=6.0.0
+numpy>=1.24
 
 # 各语言 tree-sitter grammar（按需安装，install.py 会自动处理）
 # 已支持语言（9 种）
