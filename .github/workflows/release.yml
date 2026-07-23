@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-pypi:
-    name: Build and publish to PyPI
-    runs-on: ubuntu-latest
+  build-wheels:
+    name: Build wheel on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -33,8 +37,35 @@ jobs:
         run: python -m build
 
       - name: Verify package
-        run: |
-          twine check dist/*
+        run: twine check dist/*
+
+      - name: Upload Python package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*
+
+  publish-pypi:
+    name: Publish wheels to PyPI
+    runs-on: ubuntu-latest
+    needs: build-wheels
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install twine
+        run: pip install twine
+
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist/
+          merge-multiple: true
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -43,16 +74,10 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: twine upload dist/*
 
-      - name: Upload Python package artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-package
-          path: dist/*
-
   build-npm:
     name: Build and publish to npm
     runs-on: ubuntu-latest
-    needs: build-pypi
+    needs: publish-pypi
     steps:
       - uses: actions/checkout@v4
 
@@ -71,15 +96,16 @@ jobs:
   github-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-pypi, build-npm]
+    needs: [publish-pypi, build-npm]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Python package artifacts
+      - name: Download all wheels
         uses: actions/download-artifact@v4
         with:
-          name: python-package
+          pattern: wheels-*
           path: dist/
+          merge-multiple: true
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
