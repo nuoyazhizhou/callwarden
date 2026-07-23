@@ -30,7 +30,7 @@ jobs:
       - name: Install Call Warden
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[core]"
+          pip install -e ".[all]"
 
       - name: Refresh code graph
         run: |
