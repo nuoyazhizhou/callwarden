@@ -20,6 +20,12 @@ import random
 
 import pytest
 
+# 常规 CI 默认跳过重度压测，需 RUN_STRESS_TESTS=1 环境变量显式触发
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_STRESS_TESTS") != "1",
+    reason="重度 10w 符号数据库压测仅在 RUN_STRESS_TESTS=1 时运行"
+)
+
 # 确保能导入 callwarden 包
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 

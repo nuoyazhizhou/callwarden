@@ -34,6 +34,12 @@ import json
 
 import pytest
 
+# 常规 CI 默认跳过重度性能测试，需 RUN_PERF_10M=1 环境变量显式触发
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_PERF_10M") != "1",
+    reason="重度性能测试仅在 RUN_PERF_10M=1 时运行"
+)
+
 # 确保能导入 callwarden
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
