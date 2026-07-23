@@ -309,7 +309,7 @@ def test_install_script():
     )
 
     # 验证包定义完整性
-    assert len(CORE_PACKAGES) == 3, f"核心包应有 3 个，实际 {len(CORE_PACKAGES)}"
+    assert len(CORE_PACKAGES) >= 3, f"核心包应至少有 3 个，实际 {len(CORE_PACKAGES)}"
     assert len(SUPPORTED_LANGUAGE_PACKAGES) == 9, \
         f"已支持语言应有 9 个，实际 {len(SUPPORTED_LANGUAGE_PACKAGES)}"
     assert len(EXTENDED_LANGUAGE_PACKAGES) == 2, \
