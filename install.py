@@ -61,8 +61,6 @@ CORE_PACKAGES: List[PackageSpec] = [
     PackageSpec("watchdog", "watchdog", "core", description="文件监控守护进程"),
     PackageSpec("numpy", "numpy", "core", description="向量与重复代码检测计算引擎"),
     PackageSpec("semgrep", "semgrep", "core", description="多语言静态安全扫描（守护者架构必需）"),
-    PackageSpec("sentence-transformers", "sentence_transformers", "core", description="向量嵌入（语义搜索）"),
-    PackageSpec("sqlite-vec", "sqlite_vec", "core", description="向量索引扩展"),
 ]
 
 # 已支持语言（9 种，与 Semgrep 交集）
@@ -101,8 +99,11 @@ P3_LANGUAGE_PACKAGES: List[PackageSpec] = [
     PackageSpec("tree-sitter-elixir", "tree_sitter_elixir", "language", "elixir", "Elixir grammar（Semgrep 仅 Beta）"),
 ]
 
-# 可选依赖（留空，默认全量打入核心）
-OPTIONAL_PACKAGES: List[PackageSpec] = []
+# 可选依赖（AI 语义向量 RAG 扩展，按需启用 cw install --all）
+OPTIONAL_PACKAGES: List[PackageSpec] = [
+    PackageSpec("sentence-transformers", "sentence_transformers", "optional", description="向量嵌入（语义搜索，依赖 PyTorch）"),
+    PackageSpec("sqlite-vec", "sqlite_vec", "optional", description="向量索引扩展"),
+]
 
 
 # ---------------------------------------------------------------------
