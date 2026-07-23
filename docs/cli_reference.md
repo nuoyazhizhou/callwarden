@@ -347,7 +347,7 @@ cw install-hook post-commit --uninstall
 
 ### `install-agent`：生成 AI Agent 集成包
 
-为 12 种主流 AI Agent 生成 Call Warden 集成文件（MCP 配置 + rules/skill + hooks）。
+为 18 种主流 AI Agent 生成 Call Warden 集成文件（MCP 配置 + rules/skill + hooks）。
 
 ```bash
 # 生成单个 agent 的项目级集成模板
@@ -366,28 +366,41 @@ cw install-agent cursor --output-dir /path/to/output
 cw install-agent all --force
 ```
 
-**支持的 Agent（12 个）**：
+**支持的 Agent（18 个）**：
 
-| Agent | 项目级 MCP 配置 | 全局 MCP 配置 | 额外文件 |
-|-------|----------------|-------------|---------|
-| claude-code | `.mcp.json` | `~/.claude.json` | settings.json hooks + CALLWARDEN.md |
-| claude-desktop | N/A | `claude_desktop_config.json` | N/A |
-| cursor | `.cursor/mcp.json` | `~/.cursor/mcp.json` | `.cursor/rules/callwarden.mdc` |
-| cline | `.cline/mcp_settings.json` | `cline_mcp_settings.json` | N/A |
-| windsurf | `.windsurf/mcp_config.json` | `~/.codeium/windsurf/mcp_config.json` | `callwarden.md` |
-| trae | `.trae/mcp.json` | `~/.trae/mcp.json` | CALLWARDEN.md |
-| gemini-cli | `.gemini/settings.json` | `~/.gemini/settings.json` | N/A |
-| codex | `.codex/.mcp.json` | `~/.codex/.mcp.json` | 完整插件包 |
-| opencode | `.opencode/opencode.json` | `~/.opencode/opencode.json` | N/A |
-| kiro | `.kiro/mcp.json` | `~/.kiro/mcp.json` | `callwarden.md` |
-| antigravity | `.antigravity/mcp_config.json` | `~/.antigravity/mcp_config.json` | `callwarden.md` |
-| qoder | `.qoder/mcp.json` | DeepLink 添加 | N/A |
+| Tier | Agent | 项目级 MCP 配置 | 全局 MCP 配置 | 格式 | 额外文件 |
+|------|-------|----------------|-------------|------|---------|
+| T1 | claude-code | `.mcp.json` | `~/.claude.json` | JSON mcpServers | settings.json hooks + CALLWARDEN.md |
+| T1 | claude-desktop | N/A | `claude_desktop_config.json` | JSON mcpServers | N/A |
+| T1 | cursor | `.cursor/mcp.json` | `~/.cursor/mcp.json` | JSON mcpServers | `.cursor/rules/callwarden.mdc` |
+| T1 | trae | `.trae/mcp.json` | `~/.trae/mcp.json`（Win: `TRAE SOLO CN\User\mcp.json`） | JSON mcpServers | CALLWARDEN.md |
+| T1 | qoder | `.qoder/mcp.json` | `~/.mcp.json` | JSON mcpServers | N/A |
+| T1 | antigravity | `.antigravity/mcp_config.json` | `~/.gemini/config/mcp_config.json` | JSON mcpServers | `callwarden.md` |
+| T1 | gemini-cli | `.gemini/settings.json` | `~/.gemini/settings.json` | JSON mcpServers | N/A |
+| T2 | windsurf (= Devin Desktop) | `.windsurf/mcp_config.json` | `~/.codeium/windsurf/mcp_config.json` | JSON mcpServers | `callwarden.md` |
+| T2 | opencode | `.opencode/opencode.json` | `~/.config/opencode/opencode.json` | JSON mcpServers | N/A |
+| T2 | jetbrains-junie | `.junie/mcp/mcp.json` | N/A（仅项目级） | JSON mcpServers | N/A |
+| T2 | cline | `.cline/mcp.json` | `~/.cline/mcp.json` | JSON mcpServers | N/A |
+| T2 | kimi-code | `.kimi-code/mcp.json` | `~/.kimi-code/mcp.json`（启动加 `--mcp-config`） | JSON mcpServers | N/A |
+| T2 | codebuddy-cli | `.codebuddy/mcp.json` | `~/.codebuddy/mcp.json` | JSON mcpServers | N/A |
+| T2 | deep-code | `.deepcode/mcp.json` | `~/.deepcode/mcp.json` | JSON mcpServers | N/A |
+| T2 | kiro (AWS) | `.kiro/mcp.json` | `~/.kiro/mcp.json` | JSON mcpServers | `callwarden.md` |
+| T3 | codex | `.codex/.mcp.json` | `~/.codex/config.toml` | **TOML** `[mcp_servers]` | 完整插件包 |
+| T3 | zed | `.zed/settings.json` | `~/.config/zed/settings.json`（Win: `AppData/Roaming/Zed/`） | JSON **context_servers** | N/A |
+| T3 | pearai | `.pearai/mcp.json` | `~/.pearai/mcp.json` | JSON mcpServers（兼容 Cursor） | N/A |
+
+> **市场发布类**（不可脚本写入）：Comate AI IDE（百度 MCP World）、CodeBuddy IDE（IDE 设置面板）、华为云码道（IDE 配置，公测中）— 需在对应平台手动发布。
 
 **模式说明**：
 - **项目级**（默认）：生成到 `.callwarden/agent-integrations/<agent>/`，可入库共享给团队
 - **全局**（`--global`）：安全合并到用户全局配置，开箱即用
 
-**安全合并**：全局写入时读取现有 JSON → 在 `mcpServers` 下添加 `callwarden` 条目 → 保留所有其他已有配置 → 原子写入。
+**安全合并**（三种格式）：
+- **merge_mcpServers**（标准 JSON）：读取现有 JSON → 在 `mcpServers` 下添加 `callwarden` 条目 → 原子写入
+- **merge_context_servers**（Zed JSON）：合并到 `context_servers` 字段，`command` 为嵌套对象
+- **toml_mcp_servers**（Codex TOML）：合并到 `[mcp_servers.callwarden]` 节，保留其他 TOML 节
+
+**自动检测**：`cw install --detect-agents` 通过三层策略（CLI 命令 → `~/` 配置目录 → Windows `%APPDATA%`/`%LOCALAPPDATA%` 路径）发现已安装 Agent，配合 `cw install --agent` 自动写入对应 MCP 配置。
 
 ---
 

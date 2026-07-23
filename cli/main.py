@@ -808,9 +808,9 @@ _SUBCOMMAND_HELP_SPECS = {
     },
     "install-agent": {
         "usage": "cw install-agent <agent|all> [--output-dir D] [--force] [--global]",
-        "description": "Generate Call Warden integration files for 12 AI agents (project-level bundle or --global MCP config)",
+        "description": "Generate Call Warden integration files for 18 AI agents (project-level bundle or --global MCP config)",
         "parameters": [
-            ("agent", True, "Target Agent: claude-code/claude-desktop/cursor/cline/windsurf/trae/gemini-cli/codex/opencode/kiro/antigravity/qoder/all"),
+            ("agent", True, "Target Agent: claude-code/claude-desktop/cursor/cline/windsurf/trae/gemini-cli/codex/opencode/kiro/antigravity/qoder/jetbrains-junie/zed/pearai/kimi-code/codebuddy-cli/deep-code/all"),
             ("--output-dir D", False, "Output directory (default: .callwarden/agent-integrations)"),
             ("--force", False, "Overwrite existing integration files"),
             ("--global", False, "Write to user global MCP config instead of project-level bundle"),
@@ -1176,7 +1176,7 @@ def _dispatch_subcommand(argv, db):
 
 
 # --------------------------------------------------------------------
-# install-agent：AI Agent 集成包生成（数据驱动，支持 12 个 Agent + --global）
+# install-agent：AI Agent 集成包生成（数据驱动，支持 18 个 Agent + --global）
 # --------------------------------------------------------------------
 
 # Agent 注册表：描述每个 Agent 的配置能力与路径
@@ -1252,10 +1252,11 @@ AGENT_SPECS = {
         "supports_hooks": False,
         "supports_rules": False,
         "reads_agents_md": False,
-        "project_mcp_relpath": ".cline/mcp_settings.json",
+        # 项目级支持两种路径：Cline CLI 用 .cline/mcp.json，VSCode 扩展用 .cline/mcp_settings.json
+        "project_mcp_relpath": ".cline/mcp.json",
         "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
-        "global_mcp_relpath_win": "~/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+        # 全局配置：Cline CLI 用 ~/.cline/mcp.json（用户清单指定）
+        "global_mcp_relpath": "~/.cline/mcp.json",
         "global_mcp_format": "merge_mcpServers",
         "rules_relpath": None,
         "rules_type": None,
@@ -1284,6 +1285,8 @@ AGENT_SPECS = {
         "project_mcp_relpath": ".trae/mcp.json",
         "project_mcp_format": "mcpServers",
         "global_mcp_relpath": "~/.trae/mcp.json",
+        # Trae CN Windows 版使用独立路径
+        "global_mcp_relpath_win": "~/AppData/Roaming/TRAE SOLO CN/User/mcp.json",
         "global_mcp_format": "merge_mcpServers",
         "rules_relpath": ".callwarden/agent-integrations/trae/CALLWARDEN.md",
         "rules_type": "skill_md",
@@ -1311,8 +1314,9 @@ AGENT_SPECS = {
         "reads_agents_md": False,
         "project_mcp_relpath": ".codex/.mcp.json",
         "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.codex/.mcp.json",
-        "global_mcp_format": "merge_mcpServers",
+        # Codex CLI 使用 TOML 格式配置（~/.codex/config.toml）
+        "global_mcp_relpath": "~/.codex/config.toml",
+        "global_mcp_format": "toml_mcp_servers",
         "rules_relpath": ".codex-plugin/",
         "rules_type": "codex_skill",
         "hooks_type": "codex_hooks",
@@ -1325,7 +1329,7 @@ AGENT_SPECS = {
         "reads_agents_md": True,
         "project_mcp_relpath": ".opencode/opencode.json",
         "project_mcp_format": "merge_mcpServers",
-        "global_mcp_relpath": "~/.opencode/opencode.json",
+        "global_mcp_relpath": "~/.config/opencode/opencode.json",
         "global_mcp_format": "merge_mcpServers",
         "rules_relpath": None,
         "rules_type": None,
@@ -1353,7 +1357,8 @@ AGENT_SPECS = {
         "reads_agents_md": False,
         "project_mcp_relpath": ".antigravity/mcp_config.json",
         "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.antigravity/mcp_config.json",
+        # 用户清单指定：~/.gemini/config/mcp_config.json（与 Gemini CLI 共用 .gemini 目录但文件不同）
+        "global_mcp_relpath": "~/.gemini/config/mcp_config.json",
         "global_mcp_format": "merge_mcpServers",
         "rules_relpath": ".antigravity/rules/callwarden.md",
         "rules_type": "generic_md",
@@ -1367,8 +1372,102 @@ AGENT_SPECS = {
         "reads_agents_md": False,
         "project_mcp_relpath": ".qoder/mcp.json",
         "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": None,  # 通过 DeepLink qoder://aicoding.aicoding-deeplink/mcp/add 添加
+        # 用户清单指定：~/.mcp.json（共享路径，多 Agent 共用）
+        "global_mcp_relpath": "~/.mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    # ---- 新增 6 个 Agent（对齐用户提供的 16 产品清单） ----
+    "jetbrains-junie": {
+        "display": "JetBrains Junie",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        # Junie 仅支持项目级配置（.junie/mcp/mcp.json）
+        "project_mcp_relpath": ".junie/mcp/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": None,
         "global_mcp_format": None,
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "zed": {
+        "display": "Zed Editor",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        # Zed 使用 context_servers 字段（非标准 mcpServers），command 为嵌套对象
+        "project_mcp_relpath": ".zed/settings.json",
+        "project_mcp_format": "context_servers",
+        "global_mcp_relpath": "~/.config/zed/settings.json",
+        "global_mcp_relpath_win": "~/AppData/Roaming/Zed/settings.json",
+        "global_mcp_format": "merge_context_servers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "pearai": {
+        "display": "PearAI",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        # PearAI 兼容 Cursor 格式（mcpServers）
+        "project_mcp_relpath": ".pearai/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.pearai/mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "kimi-code": {
+        "display": "Kimi Code CLI",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        # Kimi Code CLI 通过 --mcp-config <file> 启动时加载 MCP 配置
+        # 写入 ~/.kimi-code/mcp.json，启动时用 kimi-code --mcp-config ~/.kimi-code/mcp.json
+        "project_mcp_relpath": ".kimi-code/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.kimi-code/mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "codebuddy-cli": {
+        "display": "CodeBuddy Code CLI",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        # 腾讯云 CodeBuddy Code CLI，配置路径无公开文档，使用合理默认 ~/.codebuddy/mcp.json
+        "project_mcp_relpath": ".codebuddy/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.codebuddy/mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "deep-code": {
+        "display": "Deep Code CLI",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        # Deep Code CLI（DeepSeek），配置路径无公开文档，使用合理默认 ~/.deepcode/mcp.json
+        "project_mcp_relpath": ".deepcode/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.deepcode/mcp.json",
+        "global_mcp_format": "merge_mcpServers",
         "rules_relpath": None,
         "rules_type": None,
         "hooks_type": "none",
@@ -1385,17 +1484,17 @@ def _mcp_callwarden_entry(root: str) -> dict:
 
 
 def _handle_install_agent(args, db):
-    """生成 Agent 集成包（MCP + skills/rules + hooks），支持 12 个 Agent 与 --global 全局写入"""
+    """生成 Agent 集成包（MCP + skills/rules + hooks），支持 18 个 Agent 与 --global 全局写入"""
     parser = argparse.ArgumentParser(
         prog="cw install-agent",
-        description=t("cli.messages.install_agent_desc", default="Generate Call Warden integration files for 12 AI agents"),
+        description=t("cli.messages.install_agent_desc", default="Generate Call Warden integration files for 18 AI agents"),
         epilog=_get_subcommand_epilog("install-agent"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "agent",
         choices=list(AGENT_SPECS.keys()) + ["all"],
-        help=t("cli.messages.install_agent_arg_agent", default="Target Agent (one of 12 supported agents or 'all')"),
+        help=t("cli.messages.install_agent_arg_agent", default="Target Agent (one of 18 supported agents or 'all')"),
     )
     parser.add_argument(
         "--output-dir",
@@ -1486,11 +1585,23 @@ def _global_mcp_path(spec: dict) -> str:
     return os.path.expanduser(rel)
 
 
+def _mcp_callwarden_entry_zed(root: str) -> dict:
+    """构造 Zed 风格的 MCP server 配置条目（command 为嵌套对象）"""
+    return {
+        "command": {
+            "command": "python",
+            "args": [os.path.join(root, "cw.py"), "server"],
+        }
+    }
+
+
 def _write_global_mcp_config(spec: dict, root: str, force: bool) -> list:
     """安全合并写入用户全局 MCP 配置（不覆盖已有配置）
 
-    读取现有 JSON，在 mcpServers 字段下添加/更新 callwarden 条目，保留其他字段。
-    文件不存在时创建新文件。原子写入。
+    支持三种格式：
+    - merge_mcpServers: JSON，合并到 mcpServers 字段（标准 MCP 格式）
+    - merge_context_servers: JSON，合并到 context_servers 字段（Zed 格式）
+    - toml_mcp_servers: TOML，合并到 [mcp_servers] 节（Codex CLI 格式）
     """
     created = []
     target = _global_mcp_path(spec)
@@ -1501,6 +1612,12 @@ def _write_global_mcp_config(spec: dict, root: str, force: bool) -> list:
     if parent:
         os.makedirs(parent, exist_ok=True)
 
+    fmt = spec.get("global_mcp_format") or "merge_mcpServers"
+
+    if fmt == "toml_mcp_servers":
+        return _write_global_toml_mcp_config(target, root, force)
+
+    # JSON 格式（merge_mcpServers 和 merge_context_servers）
     existing = {}
     existed = os.path.exists(target)
     if existed:
@@ -1512,12 +1629,94 @@ def _write_global_mcp_config(spec: dict, root: str, force: bool) -> list:
         except (ValueError, OSError):
             existing = {}
 
-    # 安全合并：仅更新 callwarden 条目，保留其他 mcpServers 与顶层字段
-    servers = existing.get("mcpServers") or {}
-    servers["callwarden"] = _mcp_callwarden_entry(root)
-    existing["mcpServers"] = servers
+    if fmt == "merge_context_servers":
+        # Zed 格式：context_servers 键 + 嵌套 command 对象
+        servers_key = "context_servers"
+        entry = _mcp_callwarden_entry_zed(root)
+    else:
+        # 标准 MCP 格式：mcpServers 键
+        servers_key = "mcpServers"
+        entry = _mcp_callwarden_entry(root)
+
+    # 安全合并：仅更新 callwarden 条目，保留其他配置
+    servers = existing.get(servers_key) or {}
+    servers["callwarden"] = entry
+    existing[servers_key] = servers
 
     atomic_write_file(target, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
+    if existed:
+        created.append(target + t("cli.messages.install_agent_updated", default=" (updated)"))
+    else:
+        created.append(target + t("cli.messages.install_agent_created", default=" (created)"))
+    return created
+
+
+def _write_global_toml_mcp_config(target: str, root: str, force: bool) -> list:
+    """安全合并写入 TOML 格式的全局 MCP 配置（Codex CLI 用）
+
+    Codex CLI 使用 ~/.codex/config.toml，MCP 配置格式：
+        [mcp_servers.callwarden]
+        command = "python"
+        args = ["path/to/cw.py", "server"]
+    """
+    created = []
+    existed = os.path.exists(target)
+
+    # 尝试读取现有 TOML
+    existing_lines = []
+    if existed:
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                existing_lines = f.readlines()
+        except OSError:
+            existing_lines = []
+
+    cw_cmd = "python"
+    cw_args = [os.path.join(root, "cw.py"), "server"]
+    # 构造 callwarden 节的 TOML 文本
+    args_str = ", ".join(json.dumps(a) for a in cw_args)
+    cw_section = (
+        f"\n[mcp_servers.callwarden]\n"
+        f'command = {json.dumps(cw_cmd)}\n'
+        f'args = [{args_str}]\n'
+    )
+
+    # 检查是否已有 [mcp_servers.callwarden] 节
+    has_cw = any("[mcp_servers.callwarden]" in line for line in existing_lines)
+
+    if has_cw and not force:
+        created.append(target + t("cli.messages.install_agent_exists_skipped", default=" (exists, skipped)"))
+        return created
+
+    if has_cw:
+        # 替换已有节：找到 [mcp_servers.callwarden] 行，替换到下一个节或文件末尾
+        new_lines = []
+        i = 0
+        replaced = False
+        while i < len(existing_lines):
+            line = existing_lines[i]
+            if "[mcp_servers.callwarden]" in line:
+                # 跳过旧节（到下一个 [ 节或文件末尾）
+                i += 1
+                while i < len(existing_lines) and not existing_lines[i].strip().startswith("["):
+                    i += 1
+                # 插入新节
+                new_lines.append(cw_section)
+                replaced = True
+                continue
+            new_lines.append(line)
+            i += 1
+        if not replaced:
+            new_lines.append(cw_section)
+        content = "".join(new_lines)
+    else:
+        # 追加新节
+        content = "".join(existing_lines)
+        if content and not content.endswith("\n"):
+            content += "\n"
+        content += cw_section
+
+    atomic_write_file(target, content)
     if existed:
         created.append(target + t("cli.messages.install_agent_updated", default=" (updated)"))
     else:

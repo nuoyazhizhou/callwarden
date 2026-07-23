@@ -193,7 +193,16 @@ cw install-agent claude-code --global
 cw install-agent cursor --global
 ```
 
-支持 12 种 AI Agent：claude-code、claude-desktop、cursor、cline、windsurf、trae、gemini-cli、codex、opencode、kiro、antigravity、qoder。
+支持 18 种 AI Agent（覆盖用户清单的 16 个 + claude-desktop + kiro）：
+
+- **T1（6）**：claude-code、cursor、trae、qoder、antigravity、gemini-cli
+- **T2（8）**：windsurf（= Devin Desktop）、opencode、jetbrains-junie、cline、kimi-code、codebuddy-cli、deep-code、kiro
+- **T3（3）**：codex（TOML 格式）、zed（context_servers 格式）、pearai（兼容 Cursor 格式）
+- **额外**：claude-desktop（桌面应用）
+
+另有 3 个**市场发布类**（不可脚本写入）：Comate AI IDE（百度 MCP World）、CodeBuddy IDE（IDE 设置面板）、华为云码道（IDE 配置，公测中）。
+
+**自动检测**：`cw install --detect-agents` 通过三层策略（CLI 命令 → `~/` 配置目录 → Windows `%APPDATA%`/`%LOCALAPPDATA%` 路径）发现本机已安装 Agent，配合 `cw install --agent` 自动写入对应 MCP 配置。
 
 详见 [CLI 参考 → install-agent](cli_reference.md#install-agent生成-ai-agent-集成包)。
 

@@ -145,9 +145,9 @@ AGENT_DETECT_SPECS: List[AgentDetectSpec] = [
     ),
     AgentDetectSpec(
         agent_key="cline",
-        display="Cline (VSCode 扩展)",
+        display="Cline",
         cli_commands=["cline"],
-        config_dirs=[".config/Code/User/globalStorage/saoudrizwan.claude-dev"],
+        config_dirs=[".cline"],
         win_config_dirs=["Code/User/globalStorage/saoudrizwan.claude-dev"],
     ),
     AgentDetectSpec(
@@ -161,6 +161,7 @@ AGENT_DETECT_SPECS: List[AgentDetectSpec] = [
         display="Trae IDE",
         cli_commands=["trae"],
         config_dirs=[".trae", ".trae-cn"],
+        win_config_dirs=["TRAE SOLO CN"],
     ),
     AgentDetectSpec(
         agent_key="gemini-cli",
@@ -178,7 +179,7 @@ AGENT_DETECT_SPECS: List[AgentDetectSpec] = [
         agent_key="opencode",
         display="OpenCode",
         cli_commands=["opencode"],
-        config_dirs=[".opencode"],
+        config_dirs=[".config/opencode", ".opencode"],
     ),
     AgentDetectSpec(
         agent_key="kiro",
@@ -190,6 +191,8 @@ AGENT_DETECT_SPECS: List[AgentDetectSpec] = [
         agent_key="antigravity",
         display="Antigravity IDE (Google)",
         cli_commands=["antigravity"],
+        # 仅靠 .antigravity 目录检测，避免与 gemini-cli 的 .gemini 目录冲突
+        # （两者都写入 ~/.gemini/ 下不同文件，但 antigravity 安装时会额外创建 .antigravity）
         config_dirs=[".antigravity"],
     ),
     AgentDetectSpec(
@@ -197,6 +200,42 @@ AGENT_DETECT_SPECS: List[AgentDetectSpec] = [
         display="Qoder (Alibaba)",
         cli_commands=["qoder"],
         config_dirs=[".qoder"],
+    ),
+    AgentDetectSpec(
+        agent_key="jetbrains-junie",
+        display="JetBrains Junie",
+        cli_commands=[],
+        config_dirs=[".junie"],
+    ),
+    AgentDetectSpec(
+        agent_key="zed",
+        display="Zed Editor",
+        cli_commands=["zed", "zeditor"],
+        config_dirs=[".config/zed", ".zed"],
+    ),
+    AgentDetectSpec(
+        agent_key="pearai",
+        display="PearAI",
+        cli_commands=["pearai"],
+        config_dirs=[".pearai"],
+    ),
+    AgentDetectSpec(
+        agent_key="kimi-code",
+        display="Kimi Code CLI",
+        cli_commands=["kimi-code", "kimi"],
+        config_dirs=[".kimi-code", ".kimi"],
+    ),
+    AgentDetectSpec(
+        agent_key="codebuddy-cli",
+        display="CodeBuddy Code CLI",
+        cli_commands=["codebuddy"],
+        config_dirs=[".codebuddy"],
+    ),
+    AgentDetectSpec(
+        agent_key="deep-code",
+        display="Deep Code CLI",
+        cli_commands=["deep-code", "deepcode"],
+        config_dirs=[".deepcode", ".deep-code"],
     ),
 ]
 
