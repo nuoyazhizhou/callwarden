@@ -27,7 +27,9 @@ Call Warden 一键安装脚本：级联安装核心依赖 + 各语言 tree-sitte
 from __future__ import annotations
 
 import importlib
+import json
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -104,6 +106,108 @@ OPTIONAL_PACKAGES: List[PackageSpec] = [
     PackageSpec("sentence-transformers", "sentence_transformers", "optional", description="向量嵌入（语义搜索，依赖 PyTorch）"),
     PackageSpec("sqlite-vec", "sqlite_vec", "optional", description="向量索引扩展"),
 ]
+
+
+# ---------------------------------------------------------------------
+# AI Agent 自动检测定义
+# ---------------------------------------------------------------------
+
+@dataclass
+class AgentDetectSpec:
+    """单个 AI Agent 的检测规格"""
+    agent_key: str          # 对应 cli/main.py 中 AGENT_SPECS 的 key
+    display: str            # 显示名
+    cli_commands: List[str] = field(default_factory=list)   # CLI 命令名（PATH 中检测）
+    config_dirs: List[str] = field(default_factory=list)    # 配置目录（~ 下检测）
+    win_config_dirs: List[str] = field(default_factory=list)  # Windows 特有配置目录（%APPDATA%/LOCALAPPDATA 下）
+    win_registry_keys: List[str] = field(default_factory=list)  # Windows 注册表路径（可选）
+
+
+AGENT_DETECT_SPECS: List[AgentDetectSpec] = [
+    AgentDetectSpec(
+        agent_key="claude-code",
+        display="Claude Code",
+        cli_commands=["claude"],
+        config_dirs=[".claude"],
+    ),
+    AgentDetectSpec(
+        agent_key="claude-desktop",
+        display="Claude Desktop",
+        cli_commands=[],
+        config_dirs=[],
+        win_config_dirs=["Claude"],
+    ),
+    AgentDetectSpec(
+        agent_key="cursor",
+        display="Cursor IDE",
+        cli_commands=["cursor"],
+        config_dirs=[".cursor"],
+    ),
+    AgentDetectSpec(
+        agent_key="cline",
+        display="Cline (VSCode 扩展)",
+        cli_commands=["cline"],
+        config_dirs=[".config/Code/User/globalStorage/saoudrizwan.claude-dev"],
+        win_config_dirs=["Code/User/globalStorage/saoudrizwan.claude-dev"],
+    ),
+    AgentDetectSpec(
+        agent_key="windsurf",
+        display="Windsurf IDE",
+        cli_commands=["windsurf"],
+        config_dirs=[".windsurf", ".codeium/windsurf"],
+    ),
+    AgentDetectSpec(
+        agent_key="trae",
+        display="Trae IDE",
+        cli_commands=["trae"],
+        config_dirs=[".trae", ".trae-cn"],
+    ),
+    AgentDetectSpec(
+        agent_key="gemini-cli",
+        display="Gemini CLI",
+        cli_commands=["gemini"],
+        config_dirs=[".gemini"],
+    ),
+    AgentDetectSpec(
+        agent_key="codex",
+        display="Codex CLI",
+        cli_commands=["codex"],
+        config_dirs=[".codex"],
+    ),
+    AgentDetectSpec(
+        agent_key="opencode",
+        display="OpenCode",
+        cli_commands=["opencode"],
+        config_dirs=[".opencode"],
+    ),
+    AgentDetectSpec(
+        agent_key="kiro",
+        display="Kiro (AWS)",
+        cli_commands=["kiro"],
+        config_dirs=[".kiro"],
+    ),
+    AgentDetectSpec(
+        agent_key="antigravity",
+        display="Antigravity IDE (Google)",
+        cli_commands=["antigravity"],
+        config_dirs=[".antigravity"],
+    ),
+    AgentDetectSpec(
+        agent_key="qoder",
+        display="Qoder (Alibaba)",
+        cli_commands=["qoder"],
+        config_dirs=[".qoder"],
+    ),
+]
+
+
+@dataclass
+class DetectedAgent:
+    """检测到的已安装 Agent 信息"""
+    agent_key: str
+    display: str
+    detected_by: str       # "cli" / "config_dir" / "win_config"
+    detect_detail: str     # 具体检测到的路径或命令
 
 
 # ---------------------------------------------------------------------
@@ -195,6 +299,165 @@ class CallWardenInstaller:
         # 打印汇总
         self._print_summary()
         return self.result
+
+    def detect_installed_agents(self) -> List[DetectedAgent]:
+        """检测本机已安装的 AI Agent（多层检测：CLI → 配置目录 → Windows 特有路径）
+
+        Returns:
+            检测到的 Agent 列表，按检测可信度排序（CLI > config_dir > win_config）
+        """
+        detected: List[DetectedAgent] = []
+        seen: Set[str] = set()
+        home = os.path.expanduser("~")
+        appdata = os.environ.get("APPDATA", "")
+        localappdata = os.environ.get("LOCALAPPDATA", "")
+
+        for spec in AGENT_DETECT_SPECS:
+            if spec.agent_key in seen:
+                continue
+
+            # 第 1 层：检测 CLI 命令（最高可信度）
+            for cmd in spec.cli_commands:
+                cmd_path = shutil.which(cmd)
+                if cmd_path:
+                    detected.append(DetectedAgent(
+                        agent_key=spec.agent_key,
+                        display=spec.display,
+                        detected_by="cli",
+                        detect_detail=cmd_path,
+                    ))
+                    seen.add(spec.agent_key)
+                    break
+            if spec.agent_key in seen:
+                continue
+
+            # 第 2 层：检测 ~/ 下的配置目录
+            for d in spec.config_dirs:
+                dir_path = os.path.join(home, d)
+                if os.path.isdir(dir_path):
+                    detected.append(DetectedAgent(
+                        agent_key=spec.agent_key,
+                        display=spec.display,
+                        detected_by="config_dir",
+                        detect_detail=dir_path,
+                    ))
+                    seen.add(spec.agent_key)
+                    break
+            if spec.agent_key in seen:
+                continue
+
+            # 第 3 层：Windows 特有路径（%APPDATA% / %LOCALAPPDATA% 下）
+            if sys.platform == "win32":
+                for d in spec.win_config_dirs:
+                    for base in [appdata, localappdata]:
+                        if not base:
+                            continue
+                        dir_path = os.path.join(base, d)
+                        if os.path.isdir(dir_path):
+                            detected.append(DetectedAgent(
+                                agent_key=spec.agent_key,
+                                display=spec.display,
+                                detected_by="win_config",
+                                detect_detail=dir_path,
+                            ))
+                            seen.add(spec.agent_key)
+                            break
+                    if spec.agent_key in seen:
+                        break
+
+        return detected
+
+    def print_detected_agents(self, agents: List[DetectedAgent]) -> None:
+        """打印检测到的 Agent 列表"""
+        print(t("cli.messages.install_agent_detect_title",
+                default="=== Detected AI Agents ==="))
+        if not agents:
+            print(t("cli.messages.install_agent_detect_none",
+                    default="  No supported AI agents detected."))
+            print()
+            return
+
+        for a in agents:
+            icon = "[CLI]" if a.detected_by == "cli" else (
+                "[CFG]" if a.detected_by == "config_dir" else "[WIN]")
+            print(f"  {icon} {a.display} ({a.agent_key})")
+            print(f"       -> {a.detect_detail}")
+        print()
+
+    def install_agent_integrations(
+        self,
+        agents: Optional[List[DetectedAgent]] = None,
+        global_mode: bool = True,
+        force: bool = False,
+    ) -> List[str]:
+        """为检测到的 Agent 安装 Call Warden MCP 集成
+
+        直接复用 cli/main.py 中的 _write_global_mcp_config 逻辑，
+        避免 subprocess 调用自身的复杂性。
+
+        Args:
+            agents: 要安装的 Agent 列表，None 时自动检测
+            global_mode: True=写入全局配置，False=写入项目级配置
+            force: 是否强制覆盖已有配置
+
+        Returns:
+            创建/更新的文件路径列表
+        """
+        if agents is None:
+            agents = self.detect_installed_agents()
+
+        if not agents:
+            print(t("cli.messages.install_agent_detect_none",
+                    default="  No supported AI agents detected."))
+            return []
+
+        # 延迟导入，避免循环依赖
+        from .cli.main import AGENT_SPECS, _write_global_mcp_config, _write_agent_integration
+        from .config import detect_project_root
+
+        created: List[str] = []
+        root = detect_project_root(os.getcwd()) or os.getcwd()
+        mode = "global" if global_mode else "project"
+
+        print(t("cli.messages.install_agent_install_title",
+                default="=== Installing Agent Integrations ==="))
+        print(t("cli.messages.install_agent_install_mode",
+                default="  Mode: {mode}", mode=mode))
+        print(t("cli.messages.install_agent_install_count",
+                default="  Agents: {count}", count=len(agents)))
+        print()
+
+        for a in agents:
+            spec = AGENT_SPECS.get(a.agent_key)
+            if not spec:
+                print(t("cli.messages.install_agent_unknown",
+                        default="  [SKIP] Unknown agent: {key}", key=a.agent_key))
+                continue
+
+            if global_mode and not spec.get("global_mcp_relpath"):
+                print(t("cli.messages.install_agent_no_global",
+                        default="  [SKIP] {name}: no global config path (use project mode)",
+                        name=a.display))
+                continue
+
+            print(t("cli.messages.install_agent_installing",
+                    default="  Installing for {name}...", name=a.display))
+
+            if global_mode:
+                files = _write_global_mcp_config(spec, root, force)
+            else:
+                out_root = os.path.join(root, ".callwarden", "agent-integrations")
+                files = _write_agent_integration(root, out_root, a.agent_key, spec, force)
+
+            created.extend(files)
+            for f in files:
+                print(f"    -> {f}")
+
+        print()
+        print(t("cli.messages.install_agent_install_done",
+                default="  Done. {count} file(s) created/updated.", count=len(created)))
+        print()
+        return created
 
     def _prefetch_semgrep_rules(self) -> None:
         """后台异步预下载 Semgrep p/default 规则集到本地缓存（非阻塞）
@@ -908,6 +1171,18 @@ def main():
                         help=t("cli.args.install_no_optional"))
     parser.add_argument("--verbose", action="store_true",
                         help=t("cli.args.install_verbose"))
+    parser.add_argument("--agent", action="store_true",
+                        help=t("cli.args.install_agent",
+                                default="Auto-detect and install Call Warden MCP integration for installed AI agents"))
+    parser.add_argument("--detect-agents", action="store_true",
+                        help=t("cli.args.install_detect_agents",
+                                default="Only detect installed AI agents, do not install"))
+    parser.add_argument("--force-agent", action="store_true",
+                        help=t("cli.args.install_force_agent",
+                                default="Force overwrite existing agent MCP configs"))
+    parser.add_argument("--agent-project", action="store_true",
+                        help=t("cli.args.install_agent_project",
+                                default="Install agent integration at project level instead of global"))
 
     args = parser.parse_args()
 
@@ -915,6 +1190,11 @@ def main():
 
     if args.check:
         installer.check_status()
+        return
+
+    if args.detect_agents:
+        agents = installer.detect_installed_agents()
+        installer.print_detected_agents(agents)
         return
 
     if args.hooks:
@@ -931,6 +1211,18 @@ def main():
         # 完整安装（默认包含全量依赖，除非指定 --no-optional）
         include_optional = not args.no_optional
         installer.install_all(include_optional=include_optional)
+
+    # 自动安装 Agent 集成（--agent flag）
+    if args.agent:
+        print()
+        agents = installer.detect_installed_agents()
+        installer.print_detected_agents(agents)
+        if agents:
+            installer.install_agent_integrations(
+                agents=agents,
+                global_mode=not args.agent_project,
+                force=args.force_agent,
+            )
 
     # 退出码
     sys.exit(0 if installer.result.failed == 0 else 1)
