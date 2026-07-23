@@ -7,7 +7,7 @@ name = "callwarden"
 version = "0.3.0"
 description = "Call Warden - AI Agent 的代码知识图谱工具，多语言代码分析、版本管理、缺陷检测"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 requires-python = ">=3.9"
 authors = [
     { name = "Call Warden Team" }
@@ -41,7 +41,6 @@ dependencies = [
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",

@@ -41,8 +41,8 @@ def build_rust_extension():
     print("Step 2: Building Rust extension (callwarden_core)")
     rust_ext_dir = ROOT / "rust_ext"
 
-    # cargo build --release
-    run(["cargo", "build", "--release"], cwd=rust_ext_dir)
+    # cargo build --lib --release (限定构建 cdylib 扩展库)
+    run(["cargo", "build", "--lib", "--release"], cwd=rust_ext_dir)
 
     # 查找构建产物
     target_dir = rust_ext_dir / "target" / "release"

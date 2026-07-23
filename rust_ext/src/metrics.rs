@@ -13,7 +13,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
 
 use crate::delta::ParseDelta;
 use crate::frontier::AffectedFrontier;
@@ -467,7 +466,7 @@ impl MetricsComputer {
 // ============================================
 
 /// PyO3 包装的 DepthChange
-#[pyclass(name = "DepthChange")]
+#[pyclass(name = "DepthChange", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyDepthChange {
     #[pyo3(get)]
@@ -494,7 +493,7 @@ impl PyDepthChange {
 }
 
 /// PyO3 包装的 CycleChange
-#[pyclass(name = "CycleChange")]
+#[pyclass(name = "CycleChange", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyCycleChange {
     #[pyo3(get)]
@@ -511,7 +510,7 @@ impl PyCycleChange {
 }
 
 /// PyO3 包装的 ImpactChange
-#[pyclass(name = "ImpactChange")]
+#[pyclass(name = "ImpactChange", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyImpactChange {
     #[pyo3(get)]
@@ -538,7 +537,7 @@ impl PyImpactChange {
 }
 
 /// PyO3 包装的 LocalMetricsUpdate
-#[pyclass(name = "LocalMetricsUpdate")]
+#[pyclass(name = "LocalMetricsUpdate", skip_from_py_object)]
 #[derive(Clone, Default)]
 pub struct PyLocalMetricsUpdate {
     #[pyo3(get)]
