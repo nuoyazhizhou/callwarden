@@ -54,7 +54,6 @@ class PackageSpec:
 # 核心依赖（必需全功能运行）
 CORE_PACKAGES: List[PackageSpec] = [
     PackageSpec("tree-sitter", "tree_sitter", "core", description="AST 解析引擎"),
-    PackageSpec("tree-sitter-languages", "tree_sitter_languages", "core", description="多语言 grammar 预编译包（备份方案）"),
     # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持（字符类/尾随空格/negation）
     # pathspec 不可用时 IgnoreMatcher 降级到自研实现（不完整）
     PackageSpec("pathspec", "pathspec", "core", description=".gitignore 完整语法解析（A15）"),
