@@ -133,3 +133,8 @@ ext-modules = [
 callwarden = [
     "i18n/*.json",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["testcode", "build", "dist", "rust_ext", ".git"]
+addopts = "-q --tb=short"
