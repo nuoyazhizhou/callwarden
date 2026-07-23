@@ -38,6 +38,9 @@ dependencies = [
     "fastmcp>=0.8",
     "watchdog>=6.0.0",
     "numpy>=1.24",
+    "semgrep>=1.50",
+    "sentence-transformers>=2.2",
+    "sqlite-vec>=0.1",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

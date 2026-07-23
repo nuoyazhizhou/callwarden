@@ -51,7 +51,7 @@ class PackageSpec:
     description: str = ""   # 人类可读说明
 
 
-# 核心依赖（必需）
+# 核心依赖（必需全功能运行）
 CORE_PACKAGES: List[PackageSpec] = [
     PackageSpec("tree-sitter", "tree_sitter", "core", description="AST 解析引擎"),
     PackageSpec("tree-sitter-languages", "tree_sitter_languages", "core", description="多语言 grammar 预编译包（备份方案）"),
@@ -61,6 +61,9 @@ CORE_PACKAGES: List[PackageSpec] = [
     PackageSpec("fastmcp", "fastmcp", "core", description="MCP Server 框架"),
     PackageSpec("watchdog", "watchdog", "core", description="文件监控守护进程"),
     PackageSpec("numpy", "numpy", "core", description="向量与重复代码检测计算引擎"),
+    PackageSpec("semgrep", "semgrep", "core", description="多语言静态安全扫描（守护者架构必需）"),
+    PackageSpec("sentence-transformers", "sentence_transformers", "core", description="向量嵌入（语义搜索）"),
+    PackageSpec("sqlite-vec", "sqlite_vec", "core", description="向量索引扩展"),
 ]
 
 # 已支持语言（9 种，与 Semgrep 交集）
@@ -99,12 +102,8 @@ P3_LANGUAGE_PACKAGES: List[PackageSpec] = [
     PackageSpec("tree-sitter-elixir", "tree_sitter_elixir", "language", "elixir", "Elixir grammar（Semgrep 仅 Beta）"),
 ]
 
-# 可选依赖（按需启用）
-OPTIONAL_PACKAGES: List[PackageSpec] = [
-    PackageSpec("semgrep", "semgrep", "optional", description="多语言静态安全扫描（守护者架构必需）"),
-    PackageSpec("sentence-transformers", "sentence_transformers", "optional", description="向量嵌入（语义搜索）"),
-    PackageSpec("sqlite-vec", "sqlite_vec", "optional", description="向量索引扩展"),
-]
+# 可选依赖（留空，默认全量打入核心）
+OPTIONAL_PACKAGES: List[PackageSpec] = []
 
 
 # ---------------------------------------------------------------------
@@ -929,8 +928,8 @@ def main():
         # 仅安装指定语言
         installer.install_all(languages_only=set(args.lang))
     else:
-        # 完整安装
-        include_optional = args.all and not args.no_optional
+        # 完整安装（默认包含全量依赖，除非指定 --no-optional）
+        include_optional = not args.no_optional
         installer.install_all(include_optional=include_optional)
 
     # 退出码
