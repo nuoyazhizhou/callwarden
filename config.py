@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 # 路径常量
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = SCRIPT_DIR  # callwarden 包根目录（parsers/module_resolver.py 等模块依赖）
 PACKAGES_DIR = os.path.dirname(SCRIPT_DIR)  # scripts/
 SRC_DIR = os.path.join(PACKAGES_DIR, "..", "src")
 
