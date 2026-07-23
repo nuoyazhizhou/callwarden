@@ -2502,6 +2502,7 @@ def _inject_caller(db, caller_name, caller_file, callee_name,
          caller_file, callee_id, call_line),
     )
     db.conn.commit()
+    db._invalidate_graph_store()
 
 
 def test_check_signature_mismatch_blocks_when_unresolved_callers():

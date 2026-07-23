@@ -734,8 +734,7 @@ class TaskQualityMixin:
             unresolved_callers = []
             for c in callers:
                 callee_id = c.get("callee_id", 0) or 0
-                callee_qualified = c.get("callee_qualified", "") or ""
-                if callee_id == 0 or not callee_qualified:
+                if callee_id == 0:
                     unresolved_callers.append({
                         "caller": c.get("caller_name", ""),
                         "file": c.get("caller_file", ""),
