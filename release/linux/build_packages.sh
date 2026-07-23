@@ -120,6 +120,8 @@ build_pyinstaller_bundle() {
         exit 1
     }
     "$venv_dir/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
+    # CPU-only torch：代码图谱工具不需要 CUDA，避免产物包含 ~2GB nvidia 包
+    "$venv_dir/bin/pip" install torch --index-url https://download.pytorch.org/whl/cpu || true
     # 安装 wheel + 全部依赖（--no-deps 会漏掉 tree-sitter 等，必须装依赖）
     "$venv_dir/bin/pip" install "$wheel_path[all]" || {
         echo "  ERROR: pip install $wheel_path[all] failed" >&2

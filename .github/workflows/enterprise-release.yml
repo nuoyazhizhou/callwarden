@@ -65,6 +65,7 @@ jobs:
         run: python release/build.py --rust
       - name: Install dependencies
         run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[all]" pytest pytest-xdist
       - name: Version sync check (三方一致)
         run: python release/version_sync.py
@@ -260,6 +261,8 @@ jobs:
             exit 1
           fi
           echo "Installing wheel: $WHEEL_FILE"
+          # CPU-only torch：代码图谱工具不需要 CUDA，避免产物包含 ~2GB nvidia 包
+          build/venv/Scripts/pip install torch --index-url https://download.pytorch.org/whl/cpu
           build/venv/Scripts/pip install "$WHEEL_FILE[all]"
           build/venv/Scripts/pip install pyinstaller
 
@@ -728,7 +731,9 @@ jobs:
           # syft 用于二进制 SBOM
           curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | sh -s -- -b /usr/local/bin
       - name: Install package
-        run: pip install -e ".[all]"
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[all]"
       - name: Generate SPDX SBOM (Python)
         run: |
           cyclonedx-py environment -o sbom-python.spdx.json --schema-version 1.5

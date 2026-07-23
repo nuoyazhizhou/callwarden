@@ -177,6 +177,8 @@ python3 -m venv "$VENV_DIR" >/dev/null 2>&1 || {
     exit 1
 }
 "$VENV_DIR/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
+# CPU-only torch：代码图谱工具不需要 CUDA，避免产物包含 ~2GB nvidia 包
+"$VENV_DIR/bin/pip" install torch --index-url https://download.pytorch.org/whl/cpu || true
 "$VENV_DIR/bin/pip" install "$WHEEL_PATH[all]" || {
     echo "  ERROR: pip install $WHEEL_PATH[all] failed" >&2
     exit 1
