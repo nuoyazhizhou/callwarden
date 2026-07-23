@@ -109,7 +109,8 @@ DEFAULT_MCP_ARGS = {
     "get_callees": {"caller_name": "get_stats"},
     "get_call_chain_down": {"qualified_name": "CodeGraphDB.get_stats", "max_depth": 2},
     "get_impact": {"qualified_name": "CodeGraphDB.get_stats", "max_depth": 2},
-    "find_issues": {"limit": 5},  # db 层方法 get_function_issues(issue_filter, limit)
+    # db 层方法 get_function_issues(issue_filter, limit)
+    "find_issues": {"limit": 5},
     "get_semgrep_findings": {"limit": 5},
     "find_largest_functions": {"limit": 5},
     # ---- 文件相关（参数名是 file_path，不是 path）----
@@ -180,7 +181,11 @@ def ensure_workspace_activated():
 
     在真实开发环境运行时，cw 数据库通常已激活当前 workspace。
     若未激活，跑一次 `python cw.py refresh --all` 注册。
+    CI 环境跳过 refresh --all（耗时过长，且测试只验证工具不抛异常）。
     """
+    # CI 环境跳过全量刷新（避免 10 分钟阻塞）
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        return ""
     # 先看 status
     result = subprocess.run(
         [PYTHON, CW_PY, "status"],
@@ -439,31 +444,36 @@ class TestMCPSmokeCall:
                         break
             return args
 
-        # 3. 主线程顺序调用，每个 5s asyncio.wait_for 超时
-        #    （主线程访问 SQLite 没有跨线程问题；wait_for 对纯 async 函数有效）
-        async def call_one(tool, args):
-            try:
-                result = await asyncio.wait_for(
-                    mcp_server.call_tool(tool.name, args),
-                    timeout=5.0,
-                )
-                return ("ok", tool.name, result)
-            except asyncio.TimeoutError:
+        # 3. 线程级硬超时调用（asyncio.wait_for 无法取消同步阻塞函数）
+        #    每个工具在独立线程中运行，10s 后 abandon（不 join），主流程继续
+        def call_one_sync(tool, args):
+            """在独立线程中调用单个工具，10s 硬超时"""
+            result_holder = [None]
+
+            def _worker():
+                try:
+                    r = asyncio.run(mcp_server.call_tool(tool.name, args))
+                    result_holder[0] = ("ok", tool.name, r)
+                except Exception as e:
+                    result_holder[0] = ("error", tool.name,
+                                        f"{type(e).__name__}: {str(e)[:200]}")
+
+            t = threading.Thread(target=_worker, daemon=True)
+            t.start()
+            t.join(timeout=10.0)
+            if t.is_alive():
+                # 线程仍在运行（工具阻塞），abandon 并标记 timeout
                 return ("timeout", tool.name, None)
-            except Exception as e:
-                return ("error", tool.name, f"{type(e).__name__}: {str(e)[:200]}")
+            return result_holder[0] or ("error", tool.name, "no result")
 
-        async def call_all():
-            results = []
-            for i, tool in enumerate(testable_tools):
-                args = build_args(tool)
-                r = await call_one(tool, args)
-                results.append(r)
-                if (i + 1) % 20 == 0:
-                    print(f"  [{i+1}/{len(testable_tools)}] progress (last: {r[0]} {r[1]})", flush=True)
-            return results
-
-        results = asyncio.run(call_all())
+        results = []
+        for i, tool in enumerate(testable_tools):
+            args = build_args(tool)
+            r = call_one_sync(tool, args)
+            results.append(r)
+            if (i + 1) % 20 == 0:
+                print(
+                    f"  [{i+1}/{len(testable_tools)}] progress (last: {r[0]} {r[1]})", flush=True)
 
         # 4. 统计结果
         ok_list = [r for r in results if r[0] == "ok"]

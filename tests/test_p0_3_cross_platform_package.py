@@ -92,9 +92,11 @@ def test_build_py_wheel_platform_tag_not_any():
     if sys.platform == "win32":
         assert plat_tag == "win_amd64", f"Windows 必须是 win_amd64，实际: {plat_tag}"
     elif sys.platform == "darwin":
-        assert plat_tag.startswith("macosx_"), f"macOS 必须以 macosx_ 开头，实际: {plat_tag}"
+        assert plat_tag.startswith(
+            "macosx_"), f"macOS 必须以 macosx_ 开头，实际: {plat_tag}"
     else:
-        assert plat_tag.startswith("manylinux"), f"Linux 必须以 manylinux 开头，实际: {plat_tag}"
+        assert plat_tag.startswith(
+            "manylinux"), f"Linux 必须以 manylinux 开头，实际: {plat_tag}"
 
 
 def test_build_py_verify_rust_extension_present_passes_when_exists(tmp_path, capsys):
@@ -107,7 +109,8 @@ def test_build_py_verify_rust_extension_present_passes_when_exists(tmp_path, cap
         sys.path.pop(0)
 
     # 用 monkeypatch 替换 ROOT 为 tmp_path，并放一个假的 .pyd
-    fake_binary = tmp_path / "callwarden_core.pyd" if sys.platform == "win32" else tmp_path / "callwarden_core.so"
+    fake_binary = tmp_path / \
+        "callwarden_core.pyd" if sys.platform == "win32" else tmp_path / "callwarden_core.so"
     fake_binary.write_bytes(b"x" * 2048)  # 大于 1024 字节
 
     with patch.object(build_module, "ROOT", tmp_path):
@@ -150,7 +153,8 @@ def test_build_py_verify_rust_extension_present_fails_when_too_small(tmp_path, c
         sys.path.pop(0)
 
     # 放一个小于 1024 字节的假二进制（损坏）
-    fake_binary = tmp_path / "callwarden_core.pyd" if sys.platform == "win32" else tmp_path / "callwarden_core.so"
+    fake_binary = tmp_path / \
+        "callwarden_core.pyd" if sys.platform == "win32" else tmp_path / "callwarden_core.so"
     fake_binary.write_bytes(b"x" * 100)  # 只有 100 字节，损坏
 
     with patch.object(build_module, "ROOT", tmp_path):
@@ -226,14 +230,16 @@ def test_enterprise_release_workflow_uses_correct_version_field():
         line.strip() for line in lines
         if line.strip() and not line.strip().startswith("#")
     ]
-    bad_lines = [line for line in code_lines if "['package']['version']" in line]
+    bad_lines = [
+        line for line in code_lines if "['package']['version']" in line]
     assert not bad_lines, (
         f"workflow 不能再使用 ['package']['version']，应改为 ['product']['version']，"
         f"违规行：{bad_lines}"
     )
 
     # 必须使用正确的 ['product']['version']
-    good_lines = [line for line in code_lines if "['product']['version']" in line]
+    good_lines = [
+        line for line in code_lines if "['product']['version']" in line]
     assert good_lines, (
         "workflow 必须使用 ['product']['version']（version.toml 中字段是 [product]）"
     )
@@ -260,7 +266,8 @@ def test_enterprise_release_workflow_uses_correct_rust_parser_signature():
     ]
 
     # 不能再有错误的 parse_file_lang('def f(): pass', ...) 调用（非注释行）
-    bad_lines = [line for line in code_lines if "parse_file_lang('def f(): pass'" in line]
+    bad_lines = [
+        line for line in code_lines if "parse_file_lang('def f(): pass'" in line]
     assert not bad_lines, (
         f"workflow 不能再用错误签名的 parse_file_lang，违规行：{bad_lines}"
     )
@@ -270,7 +277,8 @@ def test_enterprise_release_workflow_uses_correct_rust_parser_signature():
     )
 
     # 必须使用 parse_canonical_bytes_py
-    good_lines = [line for line in code_lines if "parse_canonical_bytes_py" in line]
+    good_lines = [
+        line for line in code_lines if "parse_canonical_bytes_py" in line]
     assert good_lines, (
         "workflow 必须改用 parse_canonical_bytes_py 正确签名"
     )
@@ -370,6 +378,7 @@ def test_end_to_end_wheel_contains_rust_extension():
             cwd=str(ROOT),
             capture_output=True,
             text=True,
+            timeout=300,
         )
         if result.returncode != 0:
             pytest.skip(f"build wheel 失败：{result.stderr[:500]}")
