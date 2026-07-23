@@ -102,8 +102,10 @@ class TestCASHitMiss:
 
         content_hash = hashlib.sha256(b"def foo(): pass\n").hexdigest()
         # 不同 workspace，相同内容 → 相同 CAS key
-        key1 = compute_cas_key_v1(content_hash, "python", "0.1.0", "0.2.0", "v1", "v1", "v1")
-        key2 = compute_cas_key_v1(content_hash, "python", "0.1.0", "0.2.0", "v1", "v1", "v1")
+        key1 = compute_cas_key_v1(
+            content_hash, "python", "0.1.0", "0.2.0", "v1", "v1", "v1")
+        key2 = compute_cas_key_v1(
+            content_hash, "python", "0.1.0", "0.2.0", "v1", "v1", "v1")
         assert key1 == key2, "相同内容必须得到相同 CAS key，与路径/UID/branch 无关"
 
 
@@ -158,7 +160,8 @@ class TestDaemonHandleRefreshCanonicalBytes:
         assert result["status"] == "committed"
         assert result["generation"] == f"{epoch}:1"
         # canonical_bytes 模式下 content_hash 应该从 bytes 计算
-        assert result.get("content_hash") == hashlib.sha256(canonical_bytes).hexdigest()
+        assert result.get("content_hash") == hashlib.sha256(
+            canonical_bytes).hexdigest()
 
         ws_conn.close()
 
@@ -462,7 +465,8 @@ class TestConcurrentReaders:
             t.join(timeout=30)
 
         assert len(errors) == 0, f"并发 reader 出现 SQLite 锁错误: {errors}"
-        assert len(hits) == 1000, f"100 reader × 10 次查询 = 1000 次命中，实际 {len(hits)}"
+        assert len(
+            hits) == 1000, f"100 reader × 10 次查询 = 1000 次命中，实际 {len(hits)}"
 
 
 # ============================================================
@@ -745,7 +749,7 @@ class TestBatch9FileRefreshPassesDbPath:
         captured_calls = []
 
         class _MockReplicator:
-            def replicate(self, workspace_id, db_path="", build_context_hash=""):
+            def replicate(self, workspace_id, db_path="", build_context_hash="", workspace_id_num=0):
                 captured_calls.append({
                     "workspace_id": workspace_id,
                     "db_path": db_path,
@@ -796,7 +800,8 @@ class TestBatch9FileRefreshPassesDbPath:
         assert "replication" in result
         assert result["replication"]["snapshot_published"] in (True, False)
         # 核心：replicate 必须被调用，且 db_path 不为空
-        assert len(captured_calls) == 1, f"应调用 replicate 1 次，实际 {len(captured_calls)}"
+        assert len(
+            captured_calls) == 1, f"应调用 replicate 1 次，实际 {len(captured_calls)}"
         assert captured_calls[0]["db_path"], "db_path 不能为空（修复前 bug）"
         assert captured_calls[0]["db_path"].endswith(
             os.path.join(".callwarden", "callwarden.db")
@@ -835,7 +840,7 @@ class TestBatch9FileRefreshPassesDbPath:
 
         # Mock replicator：模拟 publish 失败
         class _FailingReplicator:
-            def replicate(self, workspace_id, db_path="", build_context_hash=""):
+            def replicate(self, workspace_id, db_path="", build_context_hash="", workspace_id_num=0):
                 return ReplicationResult(
                     success=False, workspace_id=workspace_id,
                     generation=0, applied_count=0, pending_count=0,
@@ -1008,7 +1013,8 @@ class TestBatch10ApplyDaemonRwPragmas:
             # 验证所有 PRAGMA 已设置
             assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
             assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-            assert conn.execute("PRAGMA synchronous").fetchone()[0] == 1  # NORMAL=1
+            assert conn.execute("PRAGMA synchronous").fetchone()[
+                0] == 1  # NORMAL=1
             # cache_size：SQLite 不同版本读取时可能返回负值（KB）或正值（KB 或页数），
             # 用 abs() 比较。256MB → |±262144| KB 或 32768 页（8KB/页）。
             cache_val = conn.execute("PRAGMA cache_size").fetchone()[0]
@@ -1016,7 +1022,8 @@ class TestBatch10ApplyDaemonRwPragmas:
                 f"cache_size 应为 256MB（abs=262144 KB 或 32768 页），实际 {cache_val}"
             )
             assert conn.execute("PRAGMA mmap_size").fetchone()[0] == 268435456
-            assert conn.execute("PRAGMA temp_store").fetchone()[0] == 2  # MEMORY=2
+            assert conn.execute("PRAGMA temp_store").fetchone()[
+                0] == 2  # MEMORY=2
             # wal_autocheckpoint 必须在 WAL 模式下才能读取，验证不报错即可
             auto = conn.execute("PRAGMA wal_autocheckpoint").fetchone()[0]
             assert auto == 1000, f"wal_autocheckpoint 应为 1000, 实际 {auto}"
@@ -1059,8 +1066,10 @@ class TestBatch10ApplyDaemonRwPragmas:
             default_temp = conn.execute("PRAGMA temp_store").fetchone()[0]
             cfg.apply_daemon_rw_pragmas(conn)
             # synchronous / temp_store 应保持 SQLite 默认值（未被覆盖）
-            assert conn.execute("PRAGMA synchronous").fetchone()[0] == default_sync
-            assert conn.execute("PRAGMA temp_store").fetchone()[0] == default_temp
+            assert conn.execute("PRAGMA synchronous").fetchone()[
+                0] == default_sync
+            assert conn.execute("PRAGMA temp_store").fetchone()[
+                0] == default_temp
             # 其他 PRAGMA 仍应被设置
             assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
             assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -1158,8 +1167,10 @@ class TestBatch10DaemonServerUsesPragmas:
                 f"ws_conn 必须设置 cache_size=256MB，实际 {ws_cache}"
             )
             # mmap_size 也应设置
-            assert cas_conn.execute("PRAGMA mmap_size").fetchone()[0] == 268435456
-            assert ws_conn.execute("PRAGMA mmap_size").fetchone()[0] == 268435456
+            assert cas_conn.execute("PRAGMA mmap_size").fetchone()[
+                0] == 268435456
+            assert ws_conn.execute("PRAGMA mmap_size").fetchone()[
+                0] == 268435456
             # synchronous=NORMAL
             assert cas_conn.execute("PRAGMA synchronous").fetchone()[0] == 1
             assert ws_conn.execute("PRAGMA synchronous").fetchone()[0] == 1

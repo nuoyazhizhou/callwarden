@@ -43,6 +43,10 @@ F_SEAL_SHRINK = 0x0002
 F_SEAL_GROW = 0x0004
 F_SEAL_WRITE = 0x0008
 
+# Linux fcntl seal 操作码（来自 <linux/fcntl.h>）
+F_GET_SEALS = 1034
+F_ADD_SEALS = 1033
+
 # memfd_create flags
 MFD_CLOEXEC = 0x0001
 MFD_ALLOW_SEALING = 0x0002
@@ -80,7 +84,8 @@ def send_framed_stream(sock, msg_type: int, payload: dict, canonical_bytes: byte
     total_len = 1 + 4 + 8 + len(payload_json) + len(canonical_bytes)
     if total_len > MAX_MSG_BYTES:
         return send_via_memfd(sock, msg_type, payload, canonical_bytes)
-    header = struct.pack(">BIQ", msg_type, len(payload_json), len(canonical_bytes))
+    header = struct.pack(">BIQ", msg_type, len(
+        payload_json), len(canonical_bytes))
     sock.sendall(header + payload_json + canonical_bytes)
 
 
@@ -181,7 +186,8 @@ def create_sealed_memfd(canonical_bytes: bytes) -> int:
     fd = _linux_memfd_create("cw_canonical", MFD_CLOEXEC | MFD_ALLOW_SEALING)
     try:
         _write_all(fd, canonical_bytes)
-        _linux_seal(fd, F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL)
+        _linux_seal(fd, F_SEAL_SHRINK | F_SEAL_GROW |
+                    F_SEAL_WRITE | F_SEAL_SEAL)
     except Exception:
         try:
             os.close(fd)
@@ -219,7 +225,8 @@ def send_via_memfd(sock, msg_type: int, payload: dict, canonical_bytes: bytes):
 def _send_framed_unlimited(sock, msg_type: int, payload: dict, canonical_bytes: bytes):
     """非 Linux 降级传输：分帧但不限制 16MB。"""
     payload_json = json.dumps(payload).encode("utf-8")
-    header = struct.pack(">BIQ", msg_type, len(payload_json), len(canonical_bytes))
+    header = struct.pack(">BIQ", msg_type, len(
+        payload_json), len(canonical_bytes))
     sock.sendall(header + payload_json + canonical_bytes)
 
 
@@ -234,7 +241,8 @@ def _send_msg_with_fd(sock, msg_type: int, payload: dict, fd: int):
 
     # SCM_RIGHTS ancillary data
     fds = array.array("i", [fd])
-    sock.sendmsg([msg], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds.tobytes())])
+    sock.sendmsg(
+        [msg], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fds.tobytes())])
 
 
 # ============================================================
@@ -305,7 +313,8 @@ def _recv_msg_with_fd(sock):
 
     # 接收 FD
     fds = array.array("i")
-    msg_data, ancdata, flags, addr = sock.recvmsg(0, socket.CMSG_LEN(fds.itemsize))
+    msg_data, ancdata, flags, addr = sock.recvmsg(
+        0, socket.CMSG_LEN(fds.itemsize))
     for cmsg_level, cmsg_type, cmsg_data in ancdata:
         if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
             fds.frombytes(cmsg_data[: fds.itemsize])

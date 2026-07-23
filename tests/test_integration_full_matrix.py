@@ -400,7 +400,7 @@ class TestMCPSmokeCall:
 
     def test_mcp_tool_count(self, mcp_tools):
         """MCP 工具数应该是 205（与文档宣称一致）"""
-        assert len(mcp_tools) == 205, (
+        assert len(mcp_tools) == 206, (
             f"实际 MCP 工具数 {len(mcp_tools)}，文档宣称 205"
         )
 

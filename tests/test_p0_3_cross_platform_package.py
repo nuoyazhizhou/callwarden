@@ -84,9 +84,9 @@ def test_build_py_wheel_platform_tag_not_any():
 
     plat_tag = build_module._detect_wheel_platform_tag()
 
-    # 不能是 any（必须平台特定）
+    # 不能是 pure-python "any"（必须平台特定，注意 "manylinux" 合法包含 "any" 子串）
     assert plat_tag != "any", f"plat_tag 不能是 any，实际: {plat_tag}"
-    assert "any" not in plat_tag, f"plat_tag 不能包含 any，实际: {plat_tag}"
+    assert not plat_tag.endswith("-any"), f"plat_tag 不能以 -any 结尾，实际: {plat_tag}"
 
     # 必须匹配当前平台
     if sys.platform == "win32":

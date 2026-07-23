@@ -112,12 +112,12 @@ ADMIN_ONLY_METHODS: frozenset = frozenset({
 
 def get_peer_credentials(conn: socket.socket) -> Dict[str, int]:
     """从已连接 UDS 获取内核认证的 peer credential。"""
-    if hasattr(socket, "SO_PEERCRED"):
+    if conn is not None and hasattr(socket, "SO_PEERCRED"):
         raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED,
                               struct.calcsize("3i"))
         pid, uid, gid = struct.unpack("3i", raw)
         return {"pid": pid, "uid": uid, "gid": gid}
-    # 非 Linux 仅用于开发测试；企业部署门禁要求 SO_PEERCRED。
+    # 非 Linux 或无连接时仅用于开发测试；企业部署门禁要求 SO_PEERCRED。
     return {"pid": os.getpid(), "uid": _current_uid(), "gid": 0}
 
 
@@ -180,13 +180,13 @@ class EnterpriseDaemonService:
     refresh 管道走 daemon_handle_refresh → CAS → StagingLog → Replicator → SnapshotManager。
     """
 
-    def __init__(self, registry_db: str = DAEMON_REGISTRY_DB,
+    def __init__(self, registry_db: str = "",
                  snapshot_service: Optional[SnapshotManagerService] = None,
                  data_root: str = "",
                  config: Optional[Any] = None,
                  run_startup_migrations: bool = True,
                  start_background_tasks: bool = True):
-        self.registry_db = os.path.abspath(registry_db)
+        self.registry_db = os.path.abspath(registry_db or DAEMON_REGISTRY_DB)
         self.snapshot_service = snapshot_service or get_snapshot_service()
         self._data_root = data_root or os.path.join(
             os.path.dirname(self.registry_db), "enterprise"

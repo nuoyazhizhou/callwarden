@@ -22,6 +22,15 @@ from unittest import mock
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _redirect_daemon_data_root(tmp_path, monkeypatch):
+    """CI 无 root 权限，重定向 /var/lib/callwarden 到临时目录"""
+    monkeypatch.setattr(
+        "callwarden.server.daemon_server.DAEMON_REGISTRY_DB",
+        str(tmp_path / "registry.db"),
+    )
+
 # ============================================================
 # 1. server/metrics.py — measure_rpc 上下文管理器
 # ============================================================
@@ -95,7 +104,8 @@ class TestG13MeasureRpcBehavior:
             pass
         # 验证 requests_total counter
         counter = collector._counters["requests_total"]
-        ok_value = counter.get(labels={"method": "test.success", "status": "ok"})
+        ok_value = counter.get(
+            labels={"method": "test.success", "status": "ok"})
         assert ok_value == 1.0, f"成功路径应 +1 requests_total{{status=ok}}, 实际: {ok_value}"
 
     def test_measure_rpc_records_duration(self):
@@ -129,7 +139,8 @@ class TestG13MeasureRpcBehavior:
             with measure_rpc("test.internal_error"):
                 raise ValueError("test error")
         counter = collector._counters["requests_total"]
-        err_value = counter.get(labels={"method": "test.internal_error", "status": "error"})
+        err_value = counter.get(
+            labels={"method": "test.internal_error", "status": "error"})
         assert err_value == 1.0, f"异常路径应 +1 requests_total{{status=error}}, 实际: {err_value}"
         errors = collector._counters["errors_total"]
         internal_value = errors.get(labels={"type": "internal"})
@@ -334,7 +345,8 @@ class TestG13CliMetricsCommand:
         from callwarden.server.metrics import get_metrics_collector
         # 先记录一些指标
         collector = get_metrics_collector()
-        collector.increment("requests_total", labels={"method": "test", "status": "ok"})
+        collector.increment("requests_total", labels={
+                            "method": "test", "status": "ok"})
         # 重置
         rc = run_daemon_command(["metrics", "--local", "--reset"])
         assert rc == 0
@@ -354,7 +366,8 @@ class TestG13CliMetricsCommand:
     def test_metrics_cmd_local_prometheus_returns_0(self, capsys):
         """--local --format prometheus 应返回 Prometheus 文本"""
         from callwarden.cli.daemon_commands import run_daemon_command
-        rc = run_daemon_command(["metrics", "--local", "--format", "prometheus"])
+        rc = run_daemon_command(
+            ["metrics", "--local", "--format", "prometheus"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "# TYPE" in out
@@ -411,7 +424,8 @@ class TestG13McpGetMetricsSource:
         from callwarden.server.metrics import reset_metrics_collector, get_metrics_collector
         reset_metrics_collector()
         collector = get_metrics_collector()
-        collector.increment("requests_total", labels={"method": "test_local", "status": "ok"})
+        collector.increment("requests_total", labels={
+                            "method": "test_local", "status": "ok"})
         # 通过导入源码并执行 get_metrics 函数
         # 实际上 get_metrics 是闭包，我们通过解析源码 + 静态检查代替
         # 这里改用 cli/daemon_commands.py 的 --local 路径间接验证
@@ -452,7 +466,7 @@ class TestG13FeatureMatrixStatus:
     """验证 _feature_matrix.md 中 G13 条目状态更新"""
 
     def test_g13_status_updated_to_fixed(self):
-        """G13 条目状态应更新为 ✅ 已修复"""
+        """G13 条目状态应更新为 ✅ 已修复或 🟡 复审整改"""
         matrix_path = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "_feature_matrix.md"
@@ -465,8 +479,9 @@ class TestG13FeatureMatrixStatus:
                 g13_line = line
                 break
         assert g13_line is not None, "_feature_matrix.md 应包含 G13 行"
-        assert "✅ 已修复" in g13_line, \
-            f"G13 状态应为 ✅ 已修复, 实际: {g13_line}"
+        # G13 经复审回退为 🟡 复审整改（Rust daemon 无指标埋点）
+        assert "✅ 已修复" in g13_line or "🟡 复审整改" in g13_line, \
+            f"G13 状态应为 ✅ 已修复 或 🟡 复审整改, 实际: {g13_line}"
 
     def test_g13_description_mentions_measure_rpc(self):
         """G13 描述应提及 measure_rpc"""
@@ -604,7 +619,8 @@ class TestG13EndToEndInstrumentation:
             with _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM) as client:
                 client.settimeout(2.0)
                 client.connect(socket_path)
-                send_message(client, {"id": 1, "method": "ping", "params": {}}, 65536)
+                send_message(
+                    client, {"id": 1, "method": "ping", "params": {}}, 65536)
                 response = recv_message(client, 65536)
             assert response.get("ok") is True
             assert response.get("result", {}).get("status") == "ok"

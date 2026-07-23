@@ -454,10 +454,9 @@ class TestP02WorkspaceIdAcl:
 
     def _register_workspace(self, daemon_service, owner_uid: int, tmp_path):
         """注册一个 workspace，返回 (workspace_id 数字, workspace_instance_id 字符串)。"""
-        owner_peer = _make_peer(uid=0)  # root 注册
+        owner_peer = _make_peer(uid=owner_uid)  # 用实际 owner 注册，保证 ACL 一致
         workspace = daemon_service.dispatch(owner_peer, "workspace.register", {
             "client_view_root": str(tmp_path),
-            "owner_uid": owner_uid,
             "host_real_root": str(tmp_path),
         })
         return int(workspace["workspace_id"]), workspace["workspace_instance_id"]

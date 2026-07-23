@@ -9,6 +9,12 @@ db.py
 """
 
 from __future__ import annotations
+from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
+from ..analyzers import CallChainMixin, IssueAnalyzerMixin, CoverageMixin
+from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
+from .schema import SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
+from .. import config as _config_module
+import sys
 
 import os
 import sqlite3
@@ -32,15 +38,8 @@ PACKAGES_DIR = os.path.dirname(SCRIPT_DIR)  # callwarden/ 根目录
 PROJECT_ROOT = PACKAGES_DIR
 
 # 为 config 模块补充 PROJECT_ROOT（兼容其他模块的导入）
-import sys
-from .. import config as _config_module
 if not hasattr(_config_module, 'PROJECT_ROOT'):
     _config_module.PROJECT_ROOT = PROJECT_ROOT
-
-from .schema import SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
-from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
-from ..analyzers import CallChainMixin, IssueAnalyzerMixin, CoverageMixin
-from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection):
@@ -80,12 +79,16 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection):
     """)
 
     # 索引
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_file ON semgrep_findings(file_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_lang ON semgrep_findings(language)")
-
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_file ON semgrep_findings(file_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_lang ON semgrep_findings(language)")
 
 
 def _migrate_v2_to_v3(conn: sqlite3.Connection):
@@ -254,7 +257,8 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
 
     # ---- 5. 改造 comments 表 ----
     # 检查旧 comments 表是否存在（v2 可能没有）
-    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='comments'")
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='comments'")
     if cur.fetchone():
         conn.execute("ALTER TABLE comments RENAME TO comments_old_v2")
 
@@ -271,7 +275,8 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     """)
 
     # 迁移旧数据（如果有的话）
-    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='comments_old_v2'")
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='comments_old_v2'")
     if cur.fetchone():
         conn.execute("""
             INSERT INTO comments (symbol_hash, comment_type, content, created_at)
@@ -372,7 +377,8 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     conn.execute("DROP TABLE file_versions_old_v2")
 
     # ---- 8. 改造 file_symbol_versions 表 ----
-    conn.execute("ALTER TABLE file_symbol_versions RENAME TO file_symbol_versions_old_v2")
+    conn.execute(
+        "ALTER TABLE file_symbol_versions RENAME TO file_symbol_versions_old_v2")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS file_symbol_versions (
@@ -415,7 +421,8 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     conn.execute("DROP TABLE file_symbol_versions_old_v2")
 
     # ---- 9. 改造 semgrep_findings 表 ----
-    conn.execute("ALTER TABLE semgrep_findings RENAME TO semgrep_findings_old_v2")
+    conn.execute(
+        "ALTER TABLE semgrep_findings RENAME TO semgrep_findings_old_v2")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS semgrep_findings (
@@ -497,39 +504,66 @@ def _migrate_v2_to_v3(conn: sqlite3.Connection):
     conn.execute("DROP TABLE IF EXISTS files")
 
     # ---- 12. 创建所有索引 ----
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_contents_lang ON file_contents(language)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_instances_workspace ON file_instances(workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_instances_hash ON file_instances(current_content_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_instances_relpath ON file_instances(rel_path)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_instance_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_hash ON symbols(symbol_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspaces_active ON workspaces(is_active)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_contents_lang ON file_contents(language)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_instances_workspace ON file_instances(workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_instances_hash ON file_instances(current_content_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_instances_relpath ON file_instances(rel_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_instance_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_hash ON symbols(symbol_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_module ON symbols(module_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calls_caller ON calls(caller_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calls_callee ON calls(callee_name)")
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_calls_callee_id_resolved "
         "ON calls(callee_id) WHERE callee_id > 0"
     )
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_hash ON file_versions(content_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_current ON file_versions(is_current)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_file ON file_symbol_versions(file_version_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_hash ON file_symbol_versions(symbol_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_qualified ON file_symbol_versions(qualified_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_call_versions_file ON call_versions(file_version_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_call_versions_caller ON call_versions(caller_qualified)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_instance ON semgrep_findings(file_instance_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_hash ON semgrep_findings(content_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_semgrep_language ON semgrep_findings(language)")
-
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_comments_hash ON comments(symbol_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_versions_instance ON file_versions(file_instance_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_versions_hash ON file_versions(content_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_versions_current ON file_versions(is_current)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_file ON file_symbol_versions(file_version_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_hash ON file_symbol_versions(symbol_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_symbol_versions_qualified ON file_symbol_versions(qualified_name)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_call_versions_file ON call_versions(file_version_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_call_versions_caller ON call_versions(caller_qualified)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_instance ON semgrep_findings(file_instance_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_hash ON semgrep_findings(content_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_rule ON semgrep_findings(rule_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_severity ON semgrep_findings(severity)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_symbol ON semgrep_findings(symbol_qualified)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semgrep_language ON semgrep_findings(language)")
 
 
 def _migrate_v3_to_v4(conn: sqlite3.Connection):
@@ -579,17 +613,25 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection):
         )
     """)
 
-    conn.execute("ALTER TABLE file_versions ADD COLUMN commit_hash TEXT DEFAULT ''")
+    conn.execute(
+        "ALTER TABLE file_versions ADD COLUMN commit_hash TEXT DEFAULT ''")
 
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_commits_hash ON git_commits(commit_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_commits_workspace ON git_commits(workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_commits_timestamp ON git_commits(timestamp)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_file_changes_commit ON git_file_changes(commit_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_file_changes_file ON git_file_changes(file_instance_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_symbol_changes_commit ON git_symbol_changes(commit_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_git_symbol_changes_symbol ON git_symbol_changes(symbol_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_file_versions_commit ON file_versions(commit_hash)")
-
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_git_commits_hash ON git_commits(commit_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_git_commits_workspace ON git_commits(workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_git_commits_timestamp ON git_commits(timestamp)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_git_file_changes_commit ON git_file_changes(commit_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_git_file_changes_file ON git_file_changes(file_instance_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_git_symbol_changes_commit ON git_symbol_changes(commit_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_git_symbol_changes_symbol ON git_symbol_changes(symbol_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_versions_commit ON file_versions(commit_hash)")
 
 
 def _migrate_v4_to_v5(conn: sqlite3.Connection):
@@ -609,7 +651,8 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection):
             FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_model ON symbol_embeddings(model_version)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_embeddings_model ON symbol_embeddings(model_version)")
 
 
 def _migrate_v5_to_v6(conn: sqlite3.Connection):
@@ -632,8 +675,10 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection):
             FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_summaries_hash ON symbol_summaries(symbol_hash)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_summaries_current ON symbol_summaries(is_current)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_summaries_hash ON symbol_summaries(symbol_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_summaries_current ON symbol_summaries(is_current)")
 
 
 def _migrate_v6_to_v7(conn: sqlite3.Connection):
@@ -673,8 +718,10 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection):
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_steps_status ON task_steps(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_steps_status ON task_steps(status)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS change_audit (
@@ -690,7 +737,8 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection):
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_task ON change_audit(task_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_task ON change_audit(task_id)")
 
 
 def _migrate_v7_to_v8(conn: sqlite3.Connection):
@@ -715,7 +763,8 @@ def _migrate_v7_to_v8(conn: sqlite3.Connection):
             FOREIGN KEY (file_instance_id) REFERENCES file_instances(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_ownership_file ON file_ownership(file_instance_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ownership_file ON file_ownership(file_instance_id)")
 
 
 def _migrate_v8_to_v9(conn: sqlite3.Connection):
@@ -740,9 +789,12 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection):
             FOREIGN KEY (symbol_id) REFERENCES symbols(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_coverage_file ON coverage_data(file_instance_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_coverage_symbol ON coverage_data(symbol_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_coverage_source ON coverage_data(report_source)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coverage_file ON coverage_data(file_instance_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coverage_symbol ON coverage_data(symbol_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_coverage_source ON coverage_data(report_source)")
 
 
 def _migrate_v9_to_v10(conn: sqlite3.Connection):
@@ -781,10 +833,14 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection):
             FOREIGN KEY (rule_id) REFERENCES guardrail_rules(rule_id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_rule ON guardrail_findings(rule_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_file ON guardrail_findings(file_path)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_severity ON guardrail_findings(severity)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_guardrail_findings_status ON guardrail_findings(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_rule ON guardrail_findings(rule_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_file ON guardrail_findings(file_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_severity ON guardrail_findings(severity)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_status ON guardrail_findings(status)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS change_impacts (
@@ -797,8 +853,10 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection):
             detected_at REAL NOT NULL
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_change_impacts_source ON change_impacts(source_symbol)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_change_impacts_layer ON change_impacts(target_layer)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_change_impacts_source ON change_impacts(source_symbol)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_change_impacts_layer ON change_impacts(target_layer)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS evolution_metrics (
@@ -812,7 +870,8 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection):
             FOREIGN KEY (symbol_hash) REFERENCES symbol_contents(content_hash)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_evolution_hotspot ON evolution_metrics(hotspot_score)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_evolution_hotspot ON evolution_metrics(hotspot_score)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS defect_patterns (
@@ -827,8 +886,10 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection):
             created_at REAL NOT NULL
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_patterns_category ON defect_patterns(category)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_patterns_severity ON defect_patterns(severity)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_defect_patterns_category ON defect_patterns(category)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_defect_patterns_severity ON defect_patterns(severity)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS defect_fixes (
@@ -843,8 +904,10 @@ def _migrate_v9_to_v10(conn: sqlite3.Connection):
             FOREIGN KEY (pattern_id) REFERENCES defect_patterns(pattern_id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_fixes_pattern ON defect_fixes(pattern_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_defect_fixes_symbol ON defect_fixes(symbol_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_defect_fixes_pattern ON defect_fixes(pattern_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_defect_fixes_symbol ON defect_fixes(symbol_hash)")
 
 
 def _migrate_v10_to_v11(conn: sqlite3.Connection):
@@ -868,9 +931,12 @@ def _migrate_v10_to_v11(conn: sqlite3.Connection):
             FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_token_savings_op ON token_savings_ledger(operation)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_token_savings_workspace ON token_savings_ledger(workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_token_savings_created ON token_savings_ledger(created_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_savings_op ON token_savings_ledger(operation)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_savings_workspace ON token_savings_ledger(workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_token_savings_created ON token_savings_ledger(created_at)")
 
 
 def _migrate_v11_to_v12(conn: sqlite3.Connection):
@@ -900,9 +966,12 @@ def _migrate_v11_to_v12(conn: sqlite3.Connection):
             FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_edit_audit_file ON file_edit_audit(file_path)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_edit_audit_status ON file_edit_audit(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_edit_audit_task ON file_edit_audit(agent_task_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_edit_audit_file ON file_edit_audit(file_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_edit_audit_status ON file_edit_audit(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_edit_audit_task ON file_edit_audit(agent_task_id)")
 
 
 def _migrate_v12_to_v13(conn: sqlite3.Connection):
@@ -926,9 +995,12 @@ def _migrate_v12_to_v13(conn: sqlite3.Connection):
             FOREIGN KEY (target_workspace_id) REFERENCES workspaces(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_repo_source ON cross_repo_deps(source_workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_repo_target ON cross_repo_deps(target_workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_cross_repo_type ON cross_repo_deps(dependency_type)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cross_repo_source ON cross_repo_deps(source_workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cross_repo_target ON cross_repo_deps(target_workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_cross_repo_type ON cross_repo_deps(dependency_type)")
 
 
 def _migrate_v13_to_v14(conn: sqlite3.Connection):
@@ -954,10 +1026,14 @@ def _migrate_v13_to_v14(conn: sqlite3.Connection):
             FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_instance ON archived_files(file_instance_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_workspace ON archived_files(workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_path ON archived_files(rel_path)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_hash)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archived_files_instance ON archived_files(file_instance_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archived_files_workspace ON archived_files(workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archived_files_path ON archived_files(rel_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archived_files_hash ON archived_files(content_hash)")
 
 
 def _migrate_v14_to_v15(conn: sqlite3.Connection):
@@ -974,18 +1050,23 @@ def _migrate_v14_to_v15(conn: sqlite3.Connection):
     if "parent_id" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN parent_id TEXT DEFAULT ''")
     if "depth" not in cols:
-        conn.execute("ALTER TABLE tasks ADD COLUMN depth INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN depth INTEGER NOT NULL DEFAULT 0")
     if "sort_order" not in cols:
-        conn.execute("ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
 
     # 已有任务设置默认值
-    conn.execute("UPDATE tasks SET parent_id = '' WHERE parent_id IS NULL OR parent_id = ''")
+    conn.execute(
+        "UPDATE tasks SET parent_id = '' WHERE parent_id IS NULL OR parent_id = ''")
     conn.execute("UPDATE tasks SET depth = 0 WHERE depth IS NULL")
     conn.execute("UPDATE tasks SET sort_order = 0 WHERE sort_order IS NULL")
 
     # 索引
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
 
 
 def _migrate_v15_to_v16(conn: sqlite3.Connection):
@@ -1010,10 +1091,14 @@ def _migrate_v15_to_v16(conn: sqlite3.Connection):
         )
     """)
 
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_name ON external_symbols(symbol_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_qualified ON external_symbols(qualified_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_package ON external_symbols(package_name)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_external_symbols_module ON external_symbols(module_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_symbols_name ON external_symbols(symbol_name)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_symbols_qualified ON external_symbols(qualified_name)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_symbols_package ON external_symbols(package_name)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_external_symbols_module ON external_symbols(module_path)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS package_versions (
@@ -1048,12 +1133,18 @@ def _migrate_v16_to_v17(conn: sqlite3.Connection):
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_task ON task_symbol_changes(task_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_step ON task_symbol_changes(step_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_edit ON task_symbol_changes(edit_audit_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_file ON task_symbol_changes(file_path)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_before ON task_symbol_changes(symbol_hash_before)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(symbol_hash_after)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_task ON task_symbol_changes(task_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_step ON task_symbol_changes(step_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_edit ON task_symbol_changes(edit_audit_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_file ON task_symbol_changes(file_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_before ON task_symbol_changes(symbol_hash_before)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_symbol_changes_after ON task_symbol_changes(symbol_hash_after)")
 
 
 def _migrate_v17_to_v18(conn: sqlite3.Connection):
@@ -1062,12 +1153,16 @@ def _migrate_v17_to_v18(conn: sqlite3.Connection):
     cols = {row[1] for row in cur.fetchall()}
 
     if "last_seen_at" not in cols:
-        conn.execute("ALTER TABLE package_versions ADD COLUMN last_seen_at REAL NOT NULL DEFAULT 0")
-        conn.execute("UPDATE package_versions SET last_seen_at = installed_at WHERE last_seen_at IS NULL OR last_seen_at = 0")
+        conn.execute(
+            "ALTER TABLE package_versions ADD COLUMN last_seen_at REAL NOT NULL DEFAULT 0")
+        conn.execute(
+            "UPDATE package_versions SET last_seen_at = installed_at WHERE last_seen_at IS NULL OR last_seen_at = 0")
     if "last_used_at" not in cols:
-        conn.execute("ALTER TABLE package_versions ADD COLUMN last_used_at REAL DEFAULT 0")
+        conn.execute(
+            "ALTER TABLE package_versions ADD COLUMN last_used_at REAL DEFAULT 0")
     if "import_source" not in cols:
-        conn.execute("ALTER TABLE package_versions ADD COLUMN import_source TEXT DEFAULT 'external'")
+        conn.execute(
+            "ALTER TABLE package_versions ADD COLUMN import_source TEXT DEFAULT 'external'")
 
 
 def _migrate_v18_to_v19(conn: sqlite3.Connection):
@@ -1113,10 +1208,14 @@ def _migrate_v19_to_v20(conn: sqlite3.Connection):
             FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_workspace ON gc_runs(workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_operation ON gc_runs(operation)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_status ON gc_runs(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_gc_runs_started ON gc_runs(started_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gc_runs_workspace ON gc_runs(workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gc_runs_operation ON gc_runs(operation)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gc_runs_status ON gc_runs(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_gc_runs_started ON gc_runs(started_at)")
 
 
 def _migrate_v20_to_v21(conn: sqlite3.Connection):
@@ -1146,10 +1245,14 @@ def _migrate_v20_to_v21(conn: sqlite3.Connection):
             FOREIGN KEY (task_id) REFERENCES tasks(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_task ON task_quality_findings(task_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_step ON task_quality_findings(step_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_status ON task_quality_findings(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_task_quality_severity ON task_quality_findings(severity)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_quality_task ON task_quality_findings(task_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_quality_step ON task_quality_findings(step_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_quality_status ON task_quality_findings(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_task_quality_severity ON task_quality_findings(severity)")
 
 
 def _migrate_v21_to_v22(conn: sqlite3.Connection):
@@ -1174,8 +1277,10 @@ def _migrate_v21_to_v22(conn: sqlite3.Connection):
             signed_at REAL NOT NULL
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record ON audit_chain(table_name, record_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signature)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_chain_table_record ON audit_chain(table_name, record_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_audit_chain_signature ON audit_chain(record_signature)")
 
 
 def _migrate_v22_to_v23(conn: sqlite3.Connection):
@@ -1211,9 +1316,12 @@ def _migrate_v22_to_v23(conn: sqlite3.Connection):
             linked_rule_id TEXT DEFAULT ''
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_status ON agent_rule_candidates(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_source ON agent_rule_candidates(source)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_severity ON agent_rule_candidates(severity)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_status ON agent_rule_candidates(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_source ON agent_rule_candidates(source)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rule_candidates_severity ON agent_rule_candidates(severity)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS agent_rules (
@@ -1231,9 +1339,12 @@ def _migrate_v22_to_v23(conn: sqlite3.Connection):
             sync_hash TEXT DEFAULT ''
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rules_status ON agent_rules(status)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rules_severity ON agent_rules(severity)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rules_synced ON agent_rules(synced_to_agents_md)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rules_status ON agent_rules(status)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rules_severity ON agent_rules(severity)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rules_synced ON agent_rules(synced_to_agents_md)")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS agent_rule_sync_log (
@@ -1247,8 +1358,10 @@ def _migrate_v22_to_v23(conn: sqlite3.Connection):
             actor TEXT DEFAULT 'agent'
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_target ON agent_rule_sync_log(target_path)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_log(created_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_target ON agent_rule_sync_log(target_path)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_rule_sync_log_created ON agent_rule_sync_log(created_at)")
 
 
 def _migrate_v23_to_v24(conn: sqlite3.Connection):
@@ -1431,7 +1544,8 @@ def _migrate_v27_to_v28(conn: sqlite3.Connection):
     cur = conn.execute("PRAGMA table_info(file_versions)")
     cols = {row[1] for row in cur.fetchall()}
     if "ast_cache" not in cols:
-        conn.execute("ALTER TABLE file_versions ADD COLUMN ast_cache BLOB DEFAULT NULL")
+        conn.execute(
+            "ALTER TABLE file_versions ADD COLUMN ast_cache BLOB DEFAULT NULL")
 
 
 def _migrate_v28_to_v29(conn: sqlite3.Connection):
@@ -1710,9 +1824,11 @@ def _migrate_v35_to_v36(conn: sqlite3.Connection):
     cur = conn.execute("PRAGMA table_info(git_file_changes)")
     gfc_columns = {row[1] for row in cur.fetchall()}
     if "lines_added" not in gfc_columns:
-        conn.execute("ALTER TABLE git_file_changes ADD COLUMN lines_added INTEGER DEFAULT 0")
+        conn.execute(
+            "ALTER TABLE git_file_changes ADD COLUMN lines_added INTEGER DEFAULT 0")
     if "lines_deleted" not in gfc_columns:
-        conn.execute("ALTER TABLE git_file_changes ADD COLUMN lines_deleted INTEGER DEFAULT 0")
+        conn.execute(
+            "ALTER TABLE git_file_changes ADD COLUMN lines_deleted INTEGER DEFAULT 0")
 
 
 def _migrate_v36_to_v37(conn: sqlite3.Connection):
@@ -1739,9 +1855,12 @@ def _migrate_v36_to_v37(conn: sqlite3.Connection):
             FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
         )
     """)
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_destructive_ops_workspace ON destructive_operations(workspace_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_destructive_ops_type ON destructive_operations(operation_type)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_destructive_ops_created ON destructive_operations(created_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_destructive_ops_workspace ON destructive_operations(workspace_id)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_destructive_ops_type ON destructive_operations(operation_type)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_destructive_ops_created ON destructive_operations(created_at)")
 
 
 def _migrate_v37_to_v38(conn: sqlite3.Connection):
@@ -1767,7 +1886,14 @@ def _migrate_v37_to_v38(conn: sqlite3.Connection):
 
     全新数据库已通过 SCHEMA_INDEXES_SQL 创建索引，本迁移只补齐既有 v37 库，并跑 ANALYZE。
     """
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_kind_file ON symbols(kind, file_instance_id)")
+    # 空库（如 v21 初始 DB）可能还没有 symbols 表，先检查再建索引
+    has_symbols = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbols'"
+    ).fetchone()
+    if not has_symbols:
+        return
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_symbols_kind_file ON symbols(kind, file_instance_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_depth_file_fn ON symbols(depth, file_instance_id) WHERE kind IN ('fn', 'test_fn') AND depth >= 0")
     # ANALYZE 让优化器收集 sqlite_stat1 统计信息，否则不会选新索引
     try:
@@ -1968,7 +2094,8 @@ class CodeGraphBase:
                 import time as _time
                 _time.sleep(0.5 * (_attempt + 1))
         if self.conn is None:
-            raise _last_err if _last_err else sqlite3.OperationalError("connect failed")
+            raise _last_err if _last_err else sqlite3.OperationalError(
+                "connect failed")
         # 性能优化 PRAGMA（WAL 和 busy_timeout 已在连接重试阶段前置）
         # synchronous=NORMAL：WAL 模式下仅在 checkpoint 时 fsync，比 FULL 快 5-10 倍
         # page_size=8192：8KB 页（P15 优化，已在连接重试阶段前置设置）
@@ -2069,7 +2196,8 @@ class CodeGraphBase:
                     except Exception:
                         pass
 
-                store.load_symbols_from_sqlite(self.db_path, self._get_workspace_id())
+                store.load_symbols_from_sqlite(
+                    self.db_path, self._get_workspace_id())
                 full_store = store.fork_symbols()
                 self._graph_store = store
                 self._graph_store_loading = True
@@ -2091,7 +2219,8 @@ class CodeGraphBase:
                                db_mtime_ns: int, snap_path: str) -> None:
         """后台复用符号层构建 calls，仅在 generation 和 DB mtime 均未变时发布。"""
         try:
-            full_store.load_calls_from_sqlite(self.db_path, self._get_workspace_id())
+            full_store.load_calls_from_sqlite(
+                self.db_path, self._get_workspace_id())
         except Exception as exc:
             with self._graph_store_lock:
                 if token == self._graph_store_generation:
@@ -2210,7 +2339,6 @@ class CodeGraphBase:
         # 同时失效 qname_id_map 缓存（symbols/external_symbols 已变更）
         self._qname_cache = None
 
-
     def _init_schema(self):
         """初始化数据库 Schema，支持版本化自动迁移（保留数据）"""
         # 确保 schema_version 表存在
@@ -2262,7 +2390,6 @@ class CodeGraphBase:
             init_clone_groups_schema(self.conn)
         except Exception:
             pass
-
 
     def _create_indexes_after_build(self):
         """P12 优化：在 build_full_graph 入库完成后建立所有索引和触发器
@@ -2323,16 +2450,15 @@ class CodeGraphBase:
         except Exception as e:
             print(f"[WARN] _drop_indexes_for_build 失败: {e}，入库可能有写放大")
 
-
     def _get_current_version(self) -> int:
         """获取当前数据库 schema 版本"""
         try:
-            cur = self.conn.execute("SELECT MAX(version) as v FROM schema_version")
+            cur = self.conn.execute(
+                "SELECT MAX(version) as v FROM schema_version")
             row = cur.fetchone()
             return row["v"] if row and row["v"] is not None else 0
         except Exception:
             return 0
-
 
     def _migrate_schema(self, from_version: int, to_version: int):
         """按版本顺序执行增量迁移
@@ -2350,7 +2476,8 @@ class CodeGraphBase:
                 continue
 
             migration = migrations[v]
-            print(t("cli.messages.db_base_migration_start", from_version=from_version, to=v, desc=migration['description']))
+            print(t("cli.messages.db_base_migration_start",
+                  from_version=from_version, to=v, desc=migration['description']))
 
             try:
                 self.conn.execute("BEGIN")
@@ -2365,7 +2492,6 @@ class CodeGraphBase:
                 print(t("cli.messages.db_base_migration_failed", version=v, error=e))
                 traceback.print_exc()
                 raise
-
 
     def _get_migrations(self) -> Dict[int, Dict]:
         """获取所有版本迁移函数
@@ -2536,7 +2662,6 @@ class CodeGraphBase:
             },
         }
 
-
     def _init_workspace(self):
         """初始化工作区：确保工作区存在，设置为活动工作区"""
         # 检查是否已有活动工作区
@@ -2580,7 +2705,6 @@ class CodeGraphBase:
         self.conn.commit()
         self.active_workspace = dict(row) if row else None
 
-
     def close(self):
         """关闭数据库连接，释放底层资源"""
         self.conn.close()
@@ -2588,7 +2712,6 @@ class CodeGraphBase:
     # --------------------------------------------------------------------
     # 工作区管理方法
     # --------------------------------------------------------------------
-
 
     def register_workspace(self, name: str, root_path: str, description: str = "") -> int:
         """注册新工作区
@@ -2619,14 +2742,12 @@ class CodeGraphBase:
         self.conn.commit()
         return cur.lastrowid
 
-
     def list_workspaces(self) -> List[Dict]:
         """列出所有工作区"""
         cur = self.conn.execute(
             "SELECT * FROM workspaces ORDER BY is_active DESC, id ASC"
         )
         return [dict(row) for row in cur]
-
 
     def set_active_workspace(self, workspace_id_or_name) -> bool:
         """设置活动工作区
@@ -2658,7 +2779,8 @@ class CodeGraphBase:
             self.active_workspace = dict(row)
             self.workspace_root = row["root_path"]
             self.module_resolver = ModuleResolver(self.workspace_root)
-            self.call_resolver = CallResolver(self.module_resolver, self.parser)
+            self.call_resolver = CallResolver(
+                self.module_resolver, self.parser)
             return True
 
         # 取消其他工作区的活动状态
@@ -2676,11 +2798,9 @@ class CodeGraphBase:
 
         return True
 
-
     def get_active_workspace(self) -> Optional[Dict]:
         """获取当前活动工作区"""
         return self.active_workspace
-
 
     def delete_workspace(self, workspace_id_or_name) -> bool:
         """删除工作区（级联删除所有实例和版本）
@@ -2744,7 +2864,8 @@ class CodeGraphBase:
             """, (ws_id,))
 
             # 删除 semgrep 扫描记录
-            self.conn.execute("DELETE FROM semgrep_scans WHERE workspace_id = ?", (ws_id,))
+            self.conn.execute(
+                "DELETE FROM semgrep_scans WHERE workspace_id = ?", (ws_id,))
 
             # 删除符号（当前快照）
             self.conn.execute("""
@@ -2754,7 +2875,8 @@ class CodeGraphBase:
             """, (ws_id,))
 
             # 删除文件实例
-            self.conn.execute("DELETE FROM file_instances WHERE workspace_id = ?", (ws_id,))
+            self.conn.execute(
+                "DELETE FROM file_instances WHERE workspace_id = ?", (ws_id,))
 
             # 删除工作区
             self.conn.execute("DELETE FROM workspaces WHERE id = ?", (ws_id,))
@@ -2774,7 +2896,6 @@ class CodeGraphBase:
     # --------------------------------------------------------------------
     # 完整构建流程
     # --------------------------------------------------------------------
-
 
     def _get_active_workspace_id(self) -> int:
         """获取当前活动工作区 ID"""

@@ -723,6 +723,8 @@ class TestStep4FullE2E:
         # 构造 daemon service
         registry_db = str(tmp_path / "registry.db")
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
+        # publish_snapshot 必须返回含 generation 的 dict，否则 repl_result.generation 为 MagicMock
+        snapshot_svc.publish_snapshot.return_value = {"generation": 1}
         service = EnterpriseDaemonService(
             registry_db=registry_db,
             snapshot_service=snapshot_svc,

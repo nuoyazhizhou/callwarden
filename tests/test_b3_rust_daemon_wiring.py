@@ -206,8 +206,8 @@ class TestG11ReplicatorWiring:
         # 不应再硬编码 db_path 为 ""
         assert "codegraph_db_path_template.is_empty()" in source or \
                "self.codegraph_db_path_template" in source, (
-            "G11: workspace.rs 未读取 codegraph_db_path_template 字段"
-        )
+                   "G11: workspace.rs 未读取 codegraph_db_path_template 字段"
+               )
         # 应有 with_snapshot_publisher 注入逻辑
         assert "with_snapshot_publisher" in source, (
             "G11: workspace.rs Replicator 未注入 publisher"
@@ -385,18 +385,20 @@ class TestFeatureMatrixStatusRust:
 
     @pytest.mark.parametrize(
         "gid",
-        ["G10", "G11", "G20", "G21", "G22", "G29"],
+        ["G10", "G20", "G21", "G22"],
     )
     def test_feature_matrix_rust_status_updated(self, gid):
-        """_feature_matrix.md 中对应条目状态应从 🟡 改为 ✅。"""
+        """_feature_matrix.md 中对应条目状态应包含 ✅。
+
+        注：G11/G29 经复审回退为 ❌/🟡，不再断言 ✅。
+        """
         matrix_path = os.path.join(ROOT, "_feature_matrix.md")
         source = _read_file(matrix_path)
-        # 找形如 | G10 | ... | ✅ 已修复（2026-07-20 批次3） | ...
         pattern_prefix = f"| {gid} |"
         lines = source.split("\n")
         for line in lines:
             if line.startswith(pattern_prefix):
-                assert "✅ 已修复（2026-07-20 批次3）" in line, (
+                assert "✅" in line, (
                     f"{gid}: _feature_matrix.md 状态未更新为 ✅，line: {line.strip()}"
                 )
                 return

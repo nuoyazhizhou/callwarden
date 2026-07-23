@@ -131,9 +131,11 @@ class TestP03Issue4ConsoleScriptExtraction(unittest.TestCase):
             self.content = f.read()
 
     def test_extract_function_defined(self):
-        """extract_python_console_scripts() 函数已定义。"""
-        self.assertIn("extract_python_console_scripts()", self.content,
-                      "build_packages.sh 应定义 extract_python_console_scripts()")
+        """构建函数已定义（PyInstaller 重构后为 build_pyinstaller_bundle）。"""
+        self.assertTrue(
+            "build_pyinstaller_bundle()" in self.content or "extract_python_console_scripts()" in self.content,
+            "build_packages.sh 应定义构建函数"
+        )
 
     def test_uses_pip_install_wheel(self):
         """通过 pip install wheel 到临时 venv 提取 console_scripts。"""
@@ -257,10 +259,11 @@ class TestP03Issue7WindowsMsiFailFast(unittest.TestCase):
         """workflow Gate 4a 有 PyInstaller exe fail-fast 检查步骤。"""
         self.assertIn("PyInstaller", self.content,
                       "workflow 应有 PyInstaller fail-fast 检查步骤")
-        # 应检查 cw.exe / cw-client.exe / runtime/python.exe
-        for f in ["cw.exe", "cw-client.exe", "runtime/python.exe"]:
-            self.assertIn(f, self.content,
-                          f"workflow fail-fast 检查应包含 {f}")
+        # P0-4 修复后使用 for 循环检查 cw/cw-client（cw-agent 仅 Linux/macOS）
+        self.assertIn("for cmd in cw cw-client", self.content,
+                      "workflow fail-fast 应循环检查 cw 和 cw-client")
+        self.assertIn("$cmd.exe", self.content,
+                      "workflow fail-fast 应检查 $cmd.exe 产物")
 
 
 # ============================================
@@ -283,9 +286,9 @@ class TestP03Issue8MacosEnvVarAlignment(unittest.TestCase):
         script_path = os.path.join(_PKG_PARENT, "release", "macos", "build_pkg.sh")
         with open(script_path, encoding="utf-8") as f:
             content = f.read()
-        # P0-3 修复后，placeholder 逻辑已删除，改为从 wheel 提取 console_scripts
-        self.assertIn("Extracting Python console_scripts from wheel", content,
-                      "build_pkg.sh 应从 wheel 提取 console_scripts")
+        # P0-3 修复后，placeholder 逻辑已删除，改为 PyInstaller --onedir 打包
+        self.assertIn("Building PyInstaller --onedir bundle", content,
+                      "build_pkg.sh 应使用 PyInstaller --onedir 打包")
 
     def test_build_pkg_sh_uses_cw_apple_env(self):
         """build_pkg.sh 读取 CW_APPLE_* 环境变量。"""

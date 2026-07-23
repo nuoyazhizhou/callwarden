@@ -152,7 +152,6 @@ class QueryMixin:
 
         return stats
 
-
     def get_status(self) -> Dict:
         """获取代码图谱状态概览（用于 cg status 命令）"""
         import time as _time
@@ -216,12 +215,14 @@ class QueryMixin:
             FROM file_instances fi WHERE fi.workspace_id = ? AND fi.rel_path LIKE '%.%'
             GROUP BY ext ORDER BY cnt DESC
         """, (ws_id,)):
-            ext = row["ext"].rsplit(".", 1)[-1] if "." in row["ext"] else row["ext"]
+            ext = row["ext"].rsplit(
+                ".", 1)[-1] if "." in row["ext"] else row["ext"]
             lang_dist[ext] = lang_dist.get(ext, 0) + row["cnt"]
 
         total_calls = stats.get("total_calls", 0)
         resolved_calls = stats.get("resolved_calls", 0)
-        resolve_rate = (resolved_calls / total_calls * 100) if total_calls > 0 else 0
+        resolve_rate = (resolved_calls / total_calls *
+                        100) if total_calls > 0 else 0
 
         return {
             "workspace": {
@@ -256,7 +257,6 @@ class QueryMixin:
             "needs_rebuild": len(new_files) + len(stale_files) > 0,
         }
 
-
     def get_topological_order(self, limit: int = 100) -> List[Dict]:
         """按拓扑深度排序（depth 小的在前 = 底层函数在前）"""
         ws_id = self._get_active_workspace_id()
@@ -269,7 +269,6 @@ class QueryMixin:
             (ws_id, limit),
         )
         return [dict(row) for row in cur]
-
 
     def get_callers(self, callee_name: str, qualified_name: Optional[str] = None) -> List[Dict]:
         """查询谁调用了这个函数
@@ -303,7 +302,8 @@ class QueryMixin:
                 store = self._get_graph_store()
             if store is not None and store.load_state() == "graph_ready":
                 try:
-                    rust_callers = store.get_callers(callee_name, qualified_name)
+                    rust_callers = store.get_callers(
+                        callee_name, qualified_name)
                     if rust_callers is not None:
                         if qualified_name is not None:
                             materialized = list(rust_callers)
@@ -311,11 +311,12 @@ class QueryMixin:
                                 return materialized
                             # QN 过滤返回空：仅当自动识别 QN 时降级到纯短名
                             if auto_qn_fallback:
-                                rust_callers = store.get_callers(callee_name, None)
+                                rust_callers = store.get_callers(
+                                    callee_name, None)
                                 if rust_callers is not None:
-                                    return rust_callers
+                                    return list(rust_callers)
                             return []  # 显式 QN 未找到 → 返回空
-                        return rust_callers
+                        return list(rust_callers)
                 except Exception:
                     pass  # Rust 查询异常 → 降级 SQL
         # P6 注：idx_calls_callee 已删除（GraphStore 覆盖 get_callers）。
@@ -359,7 +360,6 @@ class QueryMixin:
         )
         return [dict(row) for row in cur]
 
-
     def get_callees(self, caller_name: str, qualified_name: Optional[str] = None) -> List[Dict]:
         """查询这个函数调用了谁
 
@@ -389,7 +389,8 @@ class QueryMixin:
                 self._wait_for_calls_ready(timeout=2.0)
             if store.load_state() == "graph_ready":
                 try:
-                    rust_callees = store.get_callees(caller_name, qualified_name)
+                    rust_callees = store.get_callees(
+                        caller_name, qualified_name)
                     if rust_callees is not None:
                         if qualified_name is not None:
                             materialized = list(rust_callees)
@@ -397,7 +398,8 @@ class QueryMixin:
                                 return materialized
                             # QN 过滤返回空：仅当自动识别 QN 时降级到纯短名
                             if auto_qn_fallback:
-                                rust_callees = store.get_callees(caller_name, None)
+                                rust_callees = store.get_callees(
+                                    caller_name, None)
                                 if rust_callees is not None:
                                     return rust_callees
                         return []  # 显式 QN 未找到 → 返回空
@@ -430,7 +432,6 @@ class QueryMixin:
         )
         return [dict(row) for row in cur]
 
-
     def get_file_by_path(self, file_path: str) -> Optional[Dict]:
         """通过路径获取文件实例信息"""
         ws_id = self._get_active_workspace_id()
@@ -441,7 +442,6 @@ class QueryMixin:
         )
         row = cur.fetchone()
         return dict(row) if row else None
-
 
     def get_symbol_history(self, qualified_name: str) -> List[Dict]:
         """查看某个符号的所有历史版本（按时间排序）"""
@@ -468,11 +468,11 @@ class QueryMixin:
         )
         return [dict(row) for row in cur]
 
-
     def get_file_history(self, file_path: str) -> List[Dict]:
         """查看某个文件的所有历史版本（按时间排序）"""
         ws_id = self._get_active_workspace_id()
-        rel_path = norm_path(os.path.relpath(file_path, self.workspace_root)) if os.path.isabs(file_path) else file_path
+        rel_path = norm_path(os.path.relpath(
+            file_path, self.workspace_root)) if os.path.isabs(file_path) else file_path
         cur = self.conn.execute(
             """SELECT fv.*, fi.rel_path
                FROM file_versions fv
@@ -483,7 +483,6 @@ class QueryMixin:
         )
         return [dict(row) for row in cur]
 
-
     def get_symbol_content_by_hash(self, content_hash: str) -> Optional[Dict]:
         """通过 hash 获取函数内容"""
         cur = self.conn.execute(
@@ -492,7 +491,6 @@ class QueryMixin:
         )
         row = cur.fetchone()
         return dict(row) if row else None
-
 
     def _parse_since(self, since: str) -> float:
         """解析时间字符串（1h, 30m, 1d, 2h30m）返回秒数"""
@@ -510,7 +508,6 @@ class QueryMixin:
             elif unit == 's':
                 total += num
         return total
-
 
     def get_recent_changes(self, since: str) -> Dict:
         """查看最近变化的文件和函数"""
@@ -542,7 +539,7 @@ class QueryMixin:
                    )""",
                 (fv["file_instance_id"], fv["version_num"] - 1),
             )
-            prev_hashes = {row["qualified_name"]: row["symbol_hash"] for row in cur}
+            prev_hashes = {row["qualified_name"]                           : row["symbol_hash"] for row in cur}
 
             cur = self.conn.execute(
                 """SELECT qualified_name, symbol_hash, start_line, is_deleted
@@ -550,7 +547,8 @@ class QueryMixin:
                    WHERE file_version_id = ?""",
                 (fv["id"],),
             )
-            curr_hashes = {row["qualified_name"]: (row["symbol_hash"], row["start_line"], row["is_deleted"]) for row in cur}
+            curr_hashes = {row["qualified_name"]: (
+                row["symbol_hash"], row["start_line"], row["is_deleted"]) for row in cur}
 
             all_names = set(prev_hashes.keys()) | set(curr_hashes.keys())
             for name in all_names:
@@ -586,7 +584,6 @@ class QueryMixin:
             "since_seconds": seconds,
         }
 
-
     def get_symbol_location(self, name: str, file_path: Optional[str] = None) -> Optional[Dict]:
         """查询符号位置"""
         ws_id = self._get_active_workspace_id()
@@ -608,11 +605,11 @@ class QueryMixin:
         row = cur.fetchone()
         return dict(row) if row else None
 
-
     def get_file_symbols(self, file_path: str) -> List[Dict]:
         """获取文件内所有符号"""
         ws_id = self._get_active_workspace_id()
-        rel_path = os.path.relpath(file_path, self.workspace_root) if os.path.isabs(file_path) else file_path
+        rel_path = os.path.relpath(file_path, self.workspace_root) if os.path.isabs(
+            file_path) else file_path
         cur = self.conn.execute(
             """SELECT s.* FROM symbols s 
                JOIN file_instances fi ON s.file_instance_id = fi.id
@@ -621,7 +618,6 @@ class QueryMixin:
             (ws_id, rel_path),
         )
         return [dict(row) for row in cur]
-
 
     def search_symbols(self, query: str, kind: Optional[str] = None, limit: int = 50) -> List[Dict]:
         """搜索符号
@@ -741,7 +737,8 @@ class QueryMixin:
         # trigram 要求每个 token >= 3 字符
         valid_tokens = [t for t in tokens if len(t) >= 3]
         if not valid_tokens:
-            raise ValueError("all tokens shorter than 3 chars, fallback to LIKE")
+            raise ValueError(
+                "all tokens shorter than 3 chars, fallback to LIKE")
         # 用双引号包裹每个 token，避免被解释为 FTS5 关键字（OR/AND/NOT）
         return ' '.join(f'"{t}"' for t in valid_tokens)
 
@@ -779,7 +776,6 @@ class QueryMixin:
 
         cur = self.conn.execute(sql, params)
         return [dict(row) for row in cur]
-
 
     def get_symbol(self, qualified_name: str) -> Optional[Dict]:
         """获取符号详情（包括调用关系）
@@ -865,7 +861,8 @@ class QueryMixin:
         if hasattr(self, "get_applicable_rules_for_symbol"):
             try:
                 result["applicable_rules"] = self.get_applicable_rules_for_symbol(
-                    qualified_name=result.get("qualified_name", qualified_name),
+                    qualified_name=result.get(
+                        "qualified_name", qualified_name),
                     file_path=result.get("file_path", ""),
                     kind=result.get("kind", ""),
                     limit=5,
@@ -879,7 +876,8 @@ class QueryMixin:
         # 注入 issues（fail-soft：静态检查数据缺失时降级为空列表）
         # 只注入前 5 条 WARNING+ 问题，避免 token 爆炸；完整列表用 cw issues <QN>
         try:
-            all_issues = self.get_symbol_issues(qualified_name, include_info=False)
+            all_issues = self.get_symbol_issues(
+                qualified_name, include_info=False)
             result["issues"] = all_issues[:5]
             result["issues_total"] = len(all_issues)
         except Exception:
@@ -901,7 +899,8 @@ class QueryMixin:
         # 注入 evolution_summary（fail-soft：变更-缺陷关联数据缺失时降级为空）
         # 只注入摘要（change_count / defect_count / defect_rate / recent_defects 前3条）
         try:
-            result["evolution_summary"] = self.get_defect_correlation_by_qn(qualified_name)
+            result["evolution_summary"] = self.get_defect_correlation_by_qn(
+                qualified_name)
         except Exception:
             result["evolution_summary"] = {
                 "qualified_name": qualified_name,
@@ -1030,7 +1029,8 @@ class QueryMixin:
               AND (fi.rel_path = ? OR fi.abs_path = ? OR fi.rel_path LIKE '%' || ?)
             LIMIT 1
         """
-        cur = self.conn.execute(sql, (ws_id, symbol_name, symbol_name, file_path, file_path, file_path))
+        cur = self.conn.execute(
+            sql, (ws_id, symbol_name, symbol_name, file_path, file_path, file_path))
         row = cur.fetchone()
         if not row:
             return None
@@ -1113,7 +1113,8 @@ class QueryMixin:
             guard_sql += " AND gf.severity != 'info'"
         guard_sql += " ORDER BY CASE gf.severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END"
         try:
-            cur = self.conn.execute(guard_sql, (sym["file_path"], sym["symbol_hash"]))
+            cur = self.conn.execute(
+                guard_sql, (sym["file_path"], sym["symbol_hash"]))
             for row in cur:
                 d = dict(row)
                 d["source"] = "guardrail"
@@ -1124,7 +1125,6 @@ class QueryMixin:
             pass  # fail-soft
 
         return issues
-
 
     def export_module_graph(self, format: str = "mermaid", output_file: str = "") -> str:
         """导出模块依赖图
@@ -1201,7 +1201,8 @@ class QueryMixin:
         elif format == "dot":
             lines = ["digraph module_dependencies {"]
             lines.append("    rankdir=LR;")
-            lines.append("    node [shape=box, style=filled, fillcolor=lightblue];")
+            lines.append(
+                "    node [shape=box, style=filled, fillcolor=lightblue];")
             lines.append("")
 
             for mod in sorted(all_modules):
@@ -1213,7 +1214,8 @@ class QueryMixin:
                 caller_safe = caller.replace("::", "_").replace("-", "_")
                 callee_safe = callee.replace("::", "_").replace("-", "_")
                 penwidth = max(1, min(stats["call_count"] / 10, 5))
-                lines.append(f'    {caller_safe} -> {callee_safe} [label="{stats["call_count"]}", penwidth={penwidth:.1f}];')
+                lines.append(
+                    f'    {caller_safe} -> {callee_safe} [label="{stats["call_count"]}", penwidth={penwidth:.1f}];')
 
             lines.append("}")
             content = "\n".join(lines) + "\n"
