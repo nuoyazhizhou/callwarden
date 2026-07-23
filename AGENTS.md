@@ -323,6 +323,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 | [docs/mcp_tools.md](docs/mcp_tools.md) | MCP 工具参考 |
 | [docs/architecture.md](docs/architecture.md) | 架构设计 |
 | [docs/deployment.md](docs/deployment.md) | 部署指南 |
+| [docs/agent-usage-guide.md](docs/agent-usage-guide.md) | 面向 AI Agent 的使用指南（从本文件抽取） |
 | [docs/task_create_subtask.py](docs/task_create_subtask.py) | 挂载子任务的标准脚本模板 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本变更 |

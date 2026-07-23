@@ -340,7 +340,7 @@ def test_install_agent_generates_templates():
     )
     assert result.returncode == 0, result.stderr or result.stdout
     assert os.path.isfile(os.path.join(out_dir, "codex", "callwarden-plugin", ".codex-plugin", "plugin.json"))
-    assert os.path.isfile(os.path.join(out_dir, "claude", "settings.snippet.json"))
+    assert os.path.isfile(os.path.join(out_dir, "claude-code", "settings.snippet.json"))
     assert os.path.isfile(os.path.join(out_dir, "cursor", "callwarden.mdc"))
 
 

@@ -807,16 +807,18 @@ _SUBCOMMAND_HELP_SPECS = {
         ],
     },
     "install-agent": {
-        "usage": "cw install-agent <codex|claude|cursor|all> [--output-dir D] [--force]",
-        "description": "Generate Call Warden integration files for Codex/Claude/Cursor",
+        "usage": "cw install-agent <agent|all> [--output-dir D] [--force] [--global]",
+        "description": "Generate Call Warden integration files for 12 AI agents (project-level bundle or --global MCP config)",
         "parameters": [
-            ("agent", True, "Target Agent: codex / claude / cursor / all"),
+            ("agent", True, "Target Agent: claude-code/claude-desktop/cursor/cline/windsurf/trae/gemini-cli/codex/opencode/kiro/antigravity/qoder/all"),
             ("--output-dir D", False, "Output directory (default: .callwarden/agent-integrations)"),
             ("--force", False, "Overwrite existing integration files"),
+            ("--global", False, "Write to user global MCP config instead of project-level bundle"),
         ],
         "examples": [
-            "cw install-agent claude",
+            "cw install-agent claude-code",
             "cw install-agent all --force",
+            "cw install-agent cline --global",
             "cw install-agent codex --output-dir ./integrations",
         ],
         "exit_codes": [
@@ -1173,18 +1175,227 @@ def _dispatch_subcommand(argv, db):
     return False
 
 
+# --------------------------------------------------------------------
+# install-agent：AI Agent 集成包生成（数据驱动，支持 12 个 Agent + --global）
+# --------------------------------------------------------------------
+
+# Agent 注册表：描述每个 Agent 的配置能力与路径
+#
+# 字段说明：
+# - display:              显示名
+# - supports_mcp:         是否支持 MCP
+# - supports_hooks:       是否支持生命周期 hooks（仅 claude-code/codex/cursor）
+# - supports_rules:       是否生成 skill/rules 文件
+# - reads_agents_md:      是否读取项目根 AGENTS.md
+# - project_mcp_relpath:  项目级 MCP 配置实际路径（相对项目根，文档/参考用）
+# - project_mcp_format:   项目级 MCP 格式（mcpServers / merge_mcpServers）
+# - global_mcp_relpath:   全局 MCP 配置路径（~ 展开，--global 模式写入）
+# - global_mcp_relpath_win: Windows 下的全局路径（可选，缺省回退 global_mcp_relpath）
+# - global_mcp_format:    全局 MCP 合并格式（merge_mcpServers 安全合并）
+# - rules_relpath:        规则文件实际路径（相对项目根，文档/参考用）
+# - rules_type:           规则文件类型
+#       skill_md   → CALLWARDEN.md（claude-code/trae 等）
+#       cursor_mdc → callwarden.mdc（cursor）
+#       generic_md → callwarden.md（windsurf/kiro/antigravity）
+#       codex_skill→ 插件包内 SKILL.md（codex）
+# - hooks_type:           hooks 配置类型
+#       claude_settings → settings.snippet.json
+#       codex_hooks     → 插件包内 hooks/hooks.json
+#       none            → 无 hooks
+AGENT_SPECS = {
+    "claude-code": {
+        "display": "Claude Code",
+        "supports_mcp": True,
+        "supports_hooks": True,
+        "supports_rules": True,
+        "reads_agents_md": True,
+        "project_mcp_relpath": ".mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.claude.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": ".callwarden/agent-integrations/claude-code/CALLWARDEN.md",
+        "rules_type": "skill_md",
+        "hooks_type": "claude_settings",
+    },
+    "claude-desktop": {
+        "display": "Claude Desktop",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        "project_mcp_relpath": None,
+        "project_mcp_format": None,
+        "global_mcp_relpath": "~/Library/Application Support/Claude/claude_desktop_config.json",
+        "global_mcp_relpath_win": "~/AppData/Roaming/Claude/claude_desktop_config.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "cursor": {
+        "display": "Cursor",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": True,
+        "reads_agents_md": False,
+        "project_mcp_relpath": ".cursor/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.cursor/mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": ".cursor/rules/callwarden.mdc",
+        "rules_type": "cursor_mdc",
+        "hooks_type": "none",
+    },
+    "cline": {
+        "display": "Cline",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        "project_mcp_relpath": ".cline/mcp_settings.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+        "global_mcp_relpath_win": "~/AppData/Roaming/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "windsurf": {
+        "display": "Windsurf",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": True,
+        "reads_agents_md": False,
+        "project_mcp_relpath": ".windsurf/mcp_config.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.codeium/windsurf/mcp_config.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": ".windsurf/rules/callwarden.md",
+        "rules_type": "generic_md",
+        "hooks_type": "none",
+    },
+    "trae": {
+        "display": "Trae IDE",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": True,
+        "reads_agents_md": True,
+        "project_mcp_relpath": ".trae/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.trae/mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": ".callwarden/agent-integrations/trae/CALLWARDEN.md",
+        "rules_type": "skill_md",
+        "hooks_type": "none",
+    },
+    "gemini-cli": {
+        "display": "Gemini CLI",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": True,
+        "project_mcp_relpath": ".gemini/settings.json",
+        "project_mcp_format": "merge_mcpServers",
+        "global_mcp_relpath": "~/.gemini/settings.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "codex": {
+        "display": "Codex CLI",
+        "supports_mcp": True,
+        "supports_hooks": True,
+        "supports_rules": True,
+        "reads_agents_md": False,
+        "project_mcp_relpath": ".codex/.mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.codex/.mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": ".codex-plugin/",
+        "rules_type": "codex_skill",
+        "hooks_type": "codex_hooks",
+    },
+    "opencode": {
+        "display": "OpenCode",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": True,
+        "project_mcp_relpath": ".opencode/opencode.json",
+        "project_mcp_format": "merge_mcpServers",
+        "global_mcp_relpath": "~/.opencode/opencode.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+    "kiro": {
+        "display": "Kiro (AWS)",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": True,
+        "reads_agents_md": False,
+        "project_mcp_relpath": ".kiro/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.kiro/mcp.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": ".kiro/rules/callwarden.md",
+        "rules_type": "generic_md",
+        "hooks_type": "none",
+    },
+    "antigravity": {
+        "display": "Antigravity IDE (Google)",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": True,
+        "reads_agents_md": False,
+        "project_mcp_relpath": ".antigravity/mcp_config.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": "~/.antigravity/mcp_config.json",
+        "global_mcp_format": "merge_mcpServers",
+        "rules_relpath": ".antigravity/rules/callwarden.md",
+        "rules_type": "generic_md",
+        "hooks_type": "none",
+    },
+    "qoder": {
+        "display": "Qoder (Alibaba)",
+        "supports_mcp": True,
+        "supports_hooks": False,
+        "supports_rules": False,
+        "reads_agents_md": False,
+        "project_mcp_relpath": ".qoder/mcp.json",
+        "project_mcp_format": "mcpServers",
+        "global_mcp_relpath": None,  # 通过 DeepLink qoder://aicoding.aicoding-deeplink/mcp/add 添加
+        "global_mcp_format": None,
+        "rules_relpath": None,
+        "rules_type": None,
+        "hooks_type": "none",
+    },
+}
+
+
+def _mcp_callwarden_entry(root: str) -> dict:
+    """构造 callwarden MCP server 配置条目"""
+    return {
+        "command": "python",
+        "args": [os.path.join(root, "cw.py"), "server"],
+    }
+
+
 def _handle_install_agent(args, db):
-    """生成 Agent 集成包（MCP + skills/rules + hooks）"""
+    """生成 Agent 集成包（MCP + skills/rules + hooks），支持 12 个 Agent 与 --global 全局写入"""
     parser = argparse.ArgumentParser(
         prog="cw install-agent",
-        description=t("cli.messages.install_agent_desc", default="Generate Call Warden integration files for Codex/Claude/Cursor"),
+        description=t("cli.messages.install_agent_desc", default="Generate Call Warden integration files for 12 AI agents"),
         epilog=_get_subcommand_epilog("install-agent"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "agent",
-        choices=["codex", "claude", "cursor", "all"],
-        help=t("cli.messages.install_agent_arg_agent", default="Target Agent"),
+        choices=list(AGENT_SPECS.keys()) + ["all"],
+        help=t("cli.messages.install_agent_arg_agent", default="Target Agent (one of 12 supported agents or 'all')"),
     )
     parser.add_argument(
         "--output-dir",
@@ -1196,22 +1407,55 @@ def _handle_install_agent(args, db):
         action="store_true",
         help=t("cli.messages.install_agent_arg_force", default="Overwrite existing integration files"),
     )
+    parser.add_argument(
+        "--global",
+        dest="global_mode",
+        action="store_true",
+        help=t("cli.messages.install_agent_arg_global", default="Write to user global MCP config instead of project-level bundle"),
+    )
     opts = parser.parse_args(args)
 
     root = db.workspace_root
-    out_root = opts.output_dir or os.path.join(root, ".callwarden", "agent-integrations")
-    out_root = os.path.abspath(out_root)
-    agents = ["codex", "claude", "cursor"] if opts.agent == "all" else [opts.agent]
+    out_root = os.path.abspath(opts.output_dir or os.path.join(root, ".callwarden", "agent-integrations"))
+    mode = "global" if opts.global_mode else "project"
+
+    if opts.agent == "all":
+        agents = list(AGENT_SPECS.keys())
+    else:
+        agents = [opts.agent]
+
+    # --global 模式跳过无全局路径的 agent（如 qoder 走 DeepLink）
+    if opts.global_mode:
+        skipped = [a for a in agents if not AGENT_SPECS[a].get("global_mcp_relpath")]
+        agents = [a for a in agents if AGENT_SPECS[a].get("global_mcp_relpath")]
+        for a in skipped:
+            cprint(t(
+                "cli.messages.install_agent_global_skipped",
+                default="  Skipped {agent}: no global config path (use project mode instead)",
+                agent=a,
+            ), "yellow")
+
+    if not agents:
+        cprint(t("cli.messages.install_agent_no_agents", default="No agents to process."), "yellow")
+        return True
 
     created = []
     for agent in agents:
-        created.extend(_write_agent_integration(root, out_root, agent, opts.force))
+        spec = AGENT_SPECS[agent]
+        if opts.global_mode:
+            created.extend(_write_global_mcp_config(spec, root, opts.force))
+        else:
+            created.extend(_write_agent_integration(root, out_root, agent, spec, opts.force))
 
+    # 输出摘要
     cprint(t("cli.messages.install_agent_title", default="=== Agent Integration Generated ==="), "cyan", bold=True)
     print(t("cli.messages.install_agent_root", default="  Root: {root}", root=root))
-    print(t("cli.messages.install_agent_output", default="  Output: {path}", path=out_root))
+    if not opts.global_mode:
+        print(t("cli.messages.install_agent_output", default="  Output: {path}", path=out_root))
     print(t("cli.messages.install_agent_agents", default="  Agents: {agents}", agents=', '.join(agents)))
+    print(t("cli.messages.install_agent_mode", default="  Mode: {mode}", mode=mode))
     print()
+    cprint(t("cli.messages.install_agent_files", default="Files created/updated:"), "cyan")
     for path in created:
         print(t("cli.messages.install_agent_path_item", path=path))
     print()
@@ -1231,106 +1475,170 @@ def _write_if_needed(path: str, content: str, force: bool, created: list) -> Non
     created.append(path)
 
 
-def _write_agent_integration(root: str, out_root: str, agent: str, force: bool) -> list:
-    """写入单个 Agent 的集成模板"""
+def _global_mcp_path(spec: dict) -> str:
+    """返回 agent 的全局 MCP 配置路径（平台感知，已展开 ~），无则返回空串"""
+    if sys.platform == "win32":
+        rel = spec.get("global_mcp_relpath_win") or spec.get("global_mcp_relpath")
+    else:
+        rel = spec.get("global_mcp_relpath")
+    if not rel:
+        return ""
+    return os.path.expanduser(rel)
+
+
+def _write_global_mcp_config(spec: dict, root: str, force: bool) -> list:
+    """安全合并写入用户全局 MCP 配置（不覆盖已有配置）
+
+    读取现有 JSON，在 mcpServers 字段下添加/更新 callwarden 条目，保留其他字段。
+    文件不存在时创建新文件。原子写入。
+    """
     created = []
-    base = os.path.join(out_root, agent)
-    os.makedirs(base, exist_ok=True)
+    target = _global_mcp_path(spec)
+    if not target:
+        return created
 
-    hook_dir = os.path.join(base, "hooks")
-    os.makedirs(hook_dir, exist_ok=True)
-    hook_script = os.path.join(hook_dir, "callwarden_hook.py")
-    _write_if_needed(hook_script, _agent_hook_script(), force, created)
+    parent = os.path.dirname(target)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
-    if agent == "codex":
-        plugin_root = os.path.join(base, "callwarden-plugin")
-        os.makedirs(os.path.join(plugin_root, ".codex-plugin"), exist_ok=True)
-        os.makedirs(os.path.join(plugin_root, "skills", "callwarden-workflow"), exist_ok=True)
-        os.makedirs(os.path.join(plugin_root, "hooks"), exist_ok=True)
-        _write_if_needed(
-            os.path.join(plugin_root, ".codex-plugin", "plugin.json"),
-            json.dumps({
-                "name": "callwarden",
-                "version": "0.1.0",
-                "description": t(
-                    "cli.messages.install_agent_plugin_description",
-                    default="Call Warden Agent workflow, MCP tools, and lifecycle hooks.",
+    existing = {}
+    existed = os.path.exists(target)
+    if existed:
+        try:
+            with open(target, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+            if not isinstance(existing, dict):
+                existing = {}
+        except (ValueError, OSError):
+            existing = {}
+
+    # 安全合并：仅更新 callwarden 条目，保留其他 mcpServers 与顶层字段
+    servers = existing.get("mcpServers") or {}
+    servers["callwarden"] = _mcp_callwarden_entry(root)
+    existing["mcpServers"] = servers
+
+    atomic_write_file(target, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
+    if existed:
+        created.append(target + t("cli.messages.install_agent_updated", default=" (updated)"))
+    else:
+        created.append(target + t("cli.messages.install_agent_created", default=" (created)"))
+    return created
+
+
+def _write_codex_plugin_package(base: str, root: str, hook_script: str, force: bool) -> list:
+    """生成 codex 完整插件包（.codex-plugin/ + skills + hooks + .mcp.json）"""
+    created = []
+    plugin_root = os.path.join(base, "callwarden-plugin")
+    os.makedirs(os.path.join(plugin_root, ".codex-plugin"), exist_ok=True)
+    os.makedirs(os.path.join(plugin_root, "skills", "callwarden-workflow"), exist_ok=True)
+    os.makedirs(os.path.join(plugin_root, "hooks"), exist_ok=True)
+    _write_if_needed(
+        os.path.join(plugin_root, ".codex-plugin", "plugin.json"),
+        json.dumps({
+            "name": "callwarden",
+            "version": "0.1.0",
+            "description": t(
+                "cli.messages.install_agent_plugin_description",
+                default="Call Warden Agent workflow, MCP tools, and lifecycle hooks.",
+            ),
+            "skills": "./skills/",
+            "mcpServers": "./.mcp.json",
+            "hooks": "./hooks/hooks.json",
+            "interface": {
+                "displayName": "Call Warden",
+                "shortDescription": t(
+                    "cli.messages.install_agent_plugin_short_description",
+                    default="Code graph workflow and safe patch tools for coding agents.",
                 ),
-                "skills": "./skills/",
-                "mcpServers": "./.mcp.json",
-                "hooks": "./hooks/hooks.json",
-                "interface": {
-                    "displayName": "Call Warden",
-                    "shortDescription": t(
-                        "cli.messages.install_agent_plugin_short_description",
-                        default="Code graph workflow and safe patch tools for coding agents.",
-                    ),
-                    "capabilities": ["Read", "Write"],
-                },
-            }, ensure_ascii=False, indent=2) + "\n",
-            force,
-            created,
-        )
-        _write_if_needed(
-            os.path.join(plugin_root, ".mcp.json"),
-            json.dumps({
-                "mcpServers": {
-                    "callwarden": {
-                        "command": "python",
-                        "args": [os.path.join(root, "cw.py"), "server"],
-                    }
-                }
-            }, ensure_ascii=False, indent=2) + "\n",
-            force,
-            created,
-        )
-        _write_if_needed(
-            os.path.join(plugin_root, "skills", "callwarden-workflow", "SKILL.md"),
-            _callwarden_skill_md(),
-            force,
-            created,
-        )
+                "capabilities": ["Read", "Write"],
+            },
+        }, ensure_ascii=False, indent=2) + "\n",
+        force,
+        created,
+    )
+    _write_if_needed(
+        os.path.join(plugin_root, ".mcp.json"),
+        json.dumps({"mcpServers": {"callwarden": _mcp_callwarden_entry(root)}},
+                   ensure_ascii=False, indent=2) + "\n",
+        force,
+        created,
+    )
+    _write_if_needed(
+        os.path.join(plugin_root, "skills", "callwarden-workflow", "SKILL.md"),
+        _callwarden_skill_md(),
+        force,
+        created,
+    )
+    if hook_script:
         _write_if_needed(
             os.path.join(plugin_root, "hooks", "hooks.json"),
             _codex_hooks_json(hook_script),
             force,
             created,
         )
+    return created
 
-    elif agent == "claude":
-        _write_if_needed(
-            os.path.join(base, "settings.snippet.json"),
-            _claude_settings_json(hook_script),
-            force,
-            created,
-        )
-        _write_if_needed(
-            os.path.join(base, "CALLWARDEN.md"),
-            _callwarden_skill_md(),
-            force,
-            created,
-        )
 
-    elif agent == "cursor":
-        _write_if_needed(
-            os.path.join(base, "callwarden.mdc"),
-            _cursor_rule_mdc(),
-            force,
-            created,
-        )
-        _write_if_needed(
-            os.path.join(base, "mcp.json"),
-            json.dumps({
-                "mcpServers": {
-                    "callwarden": {
-                        "command": "python",
-                        "args": [os.path.join(root, "cw.py"), "server"],
-                    }
-                }
-            }, ensure_ascii=False, indent=2) + "\n",
-            force,
-            created,
-        )
+def _write_agent_integration(root: str, out_root: str, agent: str, spec: dict, force: bool) -> list:
+    """写入单个 Agent 的集成模板（数据驱动，按 spec 生成对应文件）"""
+    created = []
+    base = os.path.join(out_root, agent)
+    os.makedirs(base, exist_ok=True)
+
+    # hooks 脚本（仅支持 hooks 的 agent：claude-code/codex/cursor）
+    hook_script = None
+    if spec.get("supports_hooks"):
+        hook_dir = os.path.join(base, "hooks")
+        os.makedirs(hook_dir, exist_ok=True)
+        hook_script = os.path.join(hook_dir, "callwarden_hook.py")
+        _write_if_needed(hook_script, _agent_hook_script(), force, created)
+
+    hooks_type = spec.get("hooks_type") or "none"
+    rules_type = spec.get("rules_type")
+
+    # codex 走完整插件包逻辑
+    if agent == "codex":
+        created.extend(_write_codex_plugin_package(base, root, hook_script, force))
+    else:
+        # hooks 配置文件
+        if hooks_type == "claude_settings" and hook_script:
+            _write_if_needed(
+                os.path.join(base, "settings.snippet.json"),
+                _claude_settings_json(hook_script),
+                force,
+                created,
+            )
+        # rules/skill 文件
+        if rules_type == "skill_md":
+            _write_if_needed(
+                os.path.join(base, "CALLWARDEN.md"),
+                _callwarden_skill_md(),
+                force,
+                created,
+            )
+        elif rules_type == "cursor_mdc":
+            _write_if_needed(
+                os.path.join(base, "callwarden.mdc"),
+                _cursor_rule_mdc(),
+                force,
+                created,
+            )
+        elif rules_type == "generic_md":
+            _write_if_needed(
+                os.path.join(base, "callwarden.md"),
+                _generic_rules_md(spec.get("display", agent)),
+                force,
+                created,
+            )
+        # MCP 配置 snippet（项目级参考文件，供用户复制到实际路径）
+        if spec.get("supports_mcp") and spec.get("project_mcp_relpath"):
+            _write_if_needed(
+                os.path.join(base, "mcp.json"),
+                json.dumps({"mcpServers": {"callwarden": _mcp_callwarden_entry(root)}},
+                           ensure_ascii=False, indent=2) + "\n",
+                force,
+                created,
+            )
 
     _write_if_needed(os.path.join(base, "README.md"), _agent_readme(agent), force, created)
     return created
@@ -1929,6 +2237,8 @@ description: Use Call Warden for codebase-aware tasks in large or risky reposito
 
 Use the Call Warden MCP server as the primary workflow entrypoint.
 
+Full usage guide: https://github.com/nuoyazhizhou/callwarden/blob/master/docs/agent-usage-guide.md
+
 1. Prefer `work_next_job` over manual file search when a task_id exists.
 2. Prefer `file_symbol_content` / `symbol_context` style tools over whole-file reads.
 3. Prefer `propose_symbol_patch` or `propose_range_patch` over whole-file rewrites.
@@ -1987,6 +2297,25 @@ When the Call Warden MCP server is available, prefer it for broad or risky codin
 - Use Call Warden impact and guardrail tools before DB/API/config changes.
 - Avoid destructive git cleanup commands unless the user explicitly requests them.
 """)
+
+
+def _generic_rules_md(display: str) -> str:
+    """通用 rules 文件（windsurf/kiro/antigravity 等 .md 格式）"""
+    return t("cli.messages.install_agent_generic_rule", default="""---
+description: Call Warden workflow for codebase-aware Agent tasks
+globs: "**/*"
+---
+
+When the Call Warden MCP server is available, prefer it for broad or risky coding tasks in {display}.
+
+- Use `work_next_job` for task-driven work instead of manually deciding the next file.
+- Use symbol/range patch tools (`propose_range_patch` / `propose_symbol_patch`) instead of full-file rewrites.
+- Use Call Warden impact and guardrail tools before DB/API/config changes.
+- After editing, report the step with `task_report_step` and include changed files.
+- Avoid destructive git cleanup commands (`git reset --hard`, `git checkout .`, `git clean -fd`) unless explicitly requested.
+
+Full usage guide: https://github.com/nuoyazhizhou/callwarden/blob/master/docs/agent-usage-guide.md
+""", display=display)
 
 
 def _agent_readme(agent: str) -> str:

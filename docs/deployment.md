@@ -180,6 +180,27 @@ docker run --rm \
 
 适用于 MCP client 直接启动并管理 Server 进程。
 
+#### 自动安装（推荐）
+
+使用 `cw install-agent` 自动生成 MCP 配置 + rules/skill + hooks：
+
+```bash
+# 项目级（生成到 .callwarden/agent-integrations/，可入库共享）
+cw install-agent all
+
+# 全局写入（安全合并到用户配置，开箱即用）
+cw install-agent claude-code --global
+cw install-agent cursor --global
+```
+
+支持 12 种 AI Agent：claude-code、claude-desktop、cursor、cline、windsurf、trae、gemini-cli、codex、opencode、kiro、antigravity、qoder。
+
+详见 [CLI 参考 → install-agent](cli_reference.md#install-agent生成-ai-agent-集成包)。
+
+#### 手动配置
+
+如果需要手动配置，以下各 Agent 的配置文件路径供参考：
+
 **Claude Desktop**（`~/Library/Application Support/Claude/claude_desktop_config.json`）：
 
 ```json
