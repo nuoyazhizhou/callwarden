@@ -8,7 +8,7 @@ version = "0.3.0"
 description = "Call Warden - AI Agent 的代码知识图谱工具，多语言代码分析、版本管理、缺陷检测"
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [
     { name = "Call Warden Team" }
 ]
@@ -33,7 +33,7 @@ dependencies = [
     "tree-sitter-php>=0.22",
     "tree-sitter-swift>=0.5",
     "tree-sitter-scala>=0.23",
-    "tree-sitter-hcl>=1.0",
+    "tree-sitter-hcl>=0.21",
     "tree-sitter-elixir>=0.3",
     "fastmcp>=0.8",
     "watchdog>=6.0.0",
@@ -47,10 +47,11 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Code Generators",
     "Topic :: Software Development :: Quality Assurance",
 ]

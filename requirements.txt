@@ -35,7 +35,7 @@ tree-sitter-swift>=0.5
 
 # P2 扩展语言（JVM 与 IaC 生态）
 tree-sitter-scala>=0.23
-tree-sitter-hcl>=1.0
+tree-sitter-hcl>=0.21
 
 # P3 扩展语言（Semgrep Beta）
 tree-sitter-elixir>=0.3
