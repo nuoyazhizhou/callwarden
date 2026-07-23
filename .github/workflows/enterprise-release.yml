@@ -61,10 +61,11 @@ jobs:
         with:
           python-version: '3.11'
       - uses: dtolnay/rust-toolchain@stable
+      - name: Build Rust extension
+        run: python release/build.py --rust
       - name: Install dependencies
         run: |
           pip install -e ".[all]" pytest pytest-xdist
-          cd rust_ext && cargo build --release
       - name: Version sync check (三方一致)
         run: python release/version_sync.py
       - name: Extract version
