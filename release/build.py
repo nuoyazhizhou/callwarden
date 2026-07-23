@@ -232,6 +232,51 @@ def build_wheelhouse():
     print()
 
 
+def _parse_toml_simple(text: str) -> dict:
+    """Python < 3.11 且未安装 tomli 时的零依赖 TOML 解析降级实现。"""
+    import re
+    result: dict = {}
+    cur_sec = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m_sec = re.match(r"^\[([a-zA-Z0-9_\-]+)\]$", line)
+        if m_sec:
+            cur_sec = m_sec.group(1)
+            result.setdefault(cur_sec, {})
+            continue
+        m_kv = re.match(r"^([a-zA-Z0-9_\-]+)\s*=\s*(.+)$", line)
+        if m_kv and cur_sec:
+            k, v_str = m_kv.group(1), m_kv.group(2).strip()
+            if v_str.startswith('"') and v_str.endswith('"'):
+                v = v_str[1:-1]
+            elif v_str.startswith("[") and v_str.endswith("]"):
+                v = re.findall(r'"([^"]*)"', v_str)
+            elif v_str.isdigit():
+                v = int(v_str)
+            else:
+                v = v_str
+            result[cur_sec][k] = v
+    return result
+
+
+def load_version_toml() -> dict:
+    """加载 release/version.toml。"""
+    version_file = RELEASE_DIR / "version.toml"
+    with open(version_file, "r", encoding="utf-8") as f:
+        content = f.read()
+    try:
+        import tomllib
+        return tomllib.loads(content)
+    except ImportError:
+        try:
+            import tomli
+            return tomli.loads(content)
+        except ImportError:
+            return _parse_toml_simple(content)
+
+
 def generate_manifest():
     """生成 artifact manifest。"""
     print("Step 5: Generating artifact manifest")
@@ -239,13 +284,7 @@ def generate_manifest():
     import json
     import time
 
-    try:
-        import tomllib
-    except ImportError:
-        import tomli as tomllib
-
-    with open(RELEASE_DIR / "version.toml", "rb") as f:
-        version_data = tomllib.load(f)
+    version_data = load_version_toml()
 
     manifest = {
         "product": version_data["product"]["name"],
