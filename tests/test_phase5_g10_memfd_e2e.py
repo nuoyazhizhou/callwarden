@@ -26,6 +26,10 @@ import pytest
 # 跳过条件
 _IS_LINUX = sys.platform.startswith("linux")
 _SKIP_LINUX = pytest.mark.skipif(not _IS_LINUX, reason="仅 Linux 支持 memfd")
+_SKIP_PY314 = pytest.mark.skipif(
+    sys.version_info >= (3, 14),
+    reason="Python 3.14 ctypes+SCM_RIGHTS 组合导致 worker 段错误崩溃，待上游修复",
+)
 
 
 # ============================================================
@@ -487,6 +491,7 @@ class TestWorkspaceRefreshMemfdDetection:
 
 
 @_SKIP_LINUX
+@_SKIP_PY314
 class TestLinuxMemfdRoundtripE2E:
     """Linux 专属：真实 memfd_create + send_msg + recv_via_memfd 全链路。"""
 

@@ -1954,6 +1954,12 @@ def _migrate_v39_to_v40(conn: sqlite3.Connection):
     幂等性：用 PRAGMA table_info 检测字段是否存在，已存在则跳过 ALTER TABLE。
     全新数据库已通过 SCHEMA_SQL 创建字段，本迁移只补齐既有 v39 库。
     """
+    # 空库（如 v21 初始 DB）可能还没有 semgrep_findings 表，先检查
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='semgrep_findings'"
+    ).fetchone()
+    if not has_table:
+        return
     # 检测 scan_id 列是否已存在（幂等）
     cur = conn.execute("PRAGMA table_info(semgrep_findings)")
     columns = {row["name"] for row in cur.fetchall()}
@@ -1988,6 +1994,12 @@ def _migrate_v40_to_v41(conn: sqlite3.Connection):
     本迁移先尝试创建索引；若失败，先按五元组去重（保留最大 id 即最新记录），
     再创建索引。
     """
+    # 空库（如 v21 初始 DB）可能还没有 cross_repo_deps 表，先检查
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cross_repo_deps'"
+    ).fetchone()
+    if not has_table:
+        return
     # 先尝试直接创建 UNIQUE 索引（无重复记录时一次成功）
     try:
         conn.execute(
