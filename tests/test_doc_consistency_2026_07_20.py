@@ -114,9 +114,9 @@ class TestHeaderBaselineAligned:
         assert "**v36**" not in baseline_section, (
             "_feature_matrix.md 基线表不能保留 v36（已过时）"
         )
-        # Mixin 类应写 33
-        assert "33" in baseline_section and "Mixin 类" in baseline_section, (
-            "_feature_matrix.md 基线表应写 33 个 Mixin 类"
+        # Mixin 类应写 35
+        assert "35" in baseline_section and "Mixin" in baseline_section, (
+            "_feature_matrix.md 基线表应写 35 个功能 Mixin"
         )
 
 

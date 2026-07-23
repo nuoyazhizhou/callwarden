@@ -136,9 +136,10 @@ def _create_graph_db(db_path: Path) -> None:
         CREATE TABLE file_instances (
             id INTEGER PRIMARY KEY,
             rel_path TEXT,
-            status TEXT DEFAULT 'active'
+            status TEXT DEFAULT 'active',
+            workspace_id INTEGER DEFAULT 1
         );
-        INSERT INTO file_instances VALUES (1, 'src/main.py', 'active');
+        INSERT INTO file_instances VALUES (1, 'src/main.py', 'active', 1);
         CREATE TABLE symbols (
             id INTEGER PRIMARY KEY,
             file_instance_id INTEGER,

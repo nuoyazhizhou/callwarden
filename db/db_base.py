@@ -1921,6 +1921,12 @@ def _migrate_v38_to_v39(conn: sqlite3.Connection):
 
     全新数据库已通过 SCHEMA_INDEXES_SQL 创建索引，本迁移只补齐既有 v38 库，并跑 ANALYZE。
     """
+    # 空库（如 v21 初始 DB）可能还没有 call_versions 表，先检查再建索引
+    has_table = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='call_versions'"
+    ).fetchone()
+    if not has_table:
+        return
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_call_versions_callee_current "
         "ON call_versions(callee_qualified, file_version_id) "

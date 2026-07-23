@@ -377,13 +377,16 @@ def is_memfd(fd: int) -> bool:
 
     规范：daemon-ipc-security.md §3.2
     仅 Linux 支持 memfd；非 Linux 或非 memfd FD 返回 False。
+    注意：F_GET_SEALS 成功即表明是 memfd（即使 seals == 0，
+    因为新建 memfd 允许 sealing 但未加 seal 时返回 0）。
+    普通文件/pipe 等会抛 OSError(EINVAL)。
     """
     if not _IS_LINUX:
         return False
     import fcntl
     try:
-        seals = fcntl.fcntl(fd, F_GET_SEALS)
-        return seals > 0
+        fcntl.fcntl(fd, F_GET_SEALS)
+        return True  # F_GET_SEALS 成功即为 memfd（seals 可以为 0）
     except OSError:
         return False
 
@@ -432,7 +435,12 @@ def validate_memfd_fd(
         # 2. seal flags 校验（仅 Linux）
         if _IS_LINUX:
             import fcntl
-            actual_seals = fcntl.fcntl(fd, F_GET_SEALS)
+            try:
+                actual_seals = fcntl.fcntl(fd, F_GET_SEALS)
+            except OSError:
+                raise ProtocolError(
+                    "fd is not a memfd (seal check F_GET_SEALS failed with EINVAL)"
+                )
             required_seals = (
                 F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_SEAL
             )
