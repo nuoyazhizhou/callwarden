@@ -30,6 +30,12 @@ jobs:
       - name: Build Rust extension
         run: python release/build.py --rust
 
+      - name: Clean build artifacts
+        # 清理 dist/ build/ egg-info 防止旧缓存导致 wheel 包含已删除文件
+        run: |
+          rm -rf dist/ build/ *.egg-info
+        shell: bash
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -41,12 +47,6 @@ jobs:
       - name: Run tests
         run: |
           pytest tests/ -n auto --tb=short --timeout=300 --timeout-method=thread || echo "Some tests may need additional dependencies"
-
-      - name: Clean build artifacts
-        # 清理 dist/ 和 build/ 防止旧文件残留导致产物损坏
-        run: |
-          rm -rf dist/ build/ *.egg-info
-        shell: bash
 
       - name: Build package
         run: |
