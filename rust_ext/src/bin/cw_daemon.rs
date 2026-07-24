@@ -565,18 +565,45 @@ mod unix {
         // 使用 libc::socket + sendto（支持 abstract socket）
         // UnixDatagram::connect 不支持 abstract namespace（需要 path 以 \0 开头）
         unsafe {
+            // macOS 不支持 SOCK_CLOEXEC，需创建后用 fcntl 设置 FD_CLOEXEC
+            #[cfg(target_os = "linux")]
             let fd = libc::socket(
                 libc::AF_UNIX,
                 libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
                 0,
             );
+            #[cfg(not(target_os = "linux"))]
+            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM, 0);
             if fd < 0 {
                 return Err(io::Error::last_os_error());
             }
 
+            // 非 Linux 平台：手动设置 FD_CLOEXEC
+            #[cfg(not(target_os = "linux"))]
+            {
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                if flags >= 0 {
+                    libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+                }
+            }
+
+            // macOS 不支持 MSG_NOSIGNAL，需用 SO_NOSIGPIPE 阻止 SIGPIPE
+            #[cfg(not(target_os = "linux"))]
+            {
+                let optval: libc::c_int = 1;
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_NOSIGPIPE,
+                    &optval as *const _ as *const libc::c_void,
+                    std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+                );
+            }
+
             // 构造 sockaddr_un
             let mut addr: libc::sockaddr_un = std::mem::zeroed();
-            addr.sun_family = libc::AF_UNIX as u16;
+            // sa_family_t 在 Linux 是 u16，macOS 是 u8，用 libc::sa_family_t 适配
+            addr.sun_family = libc::AF_UNIX as libc::sa_family_t;
             if path_bytes.len() > addr.sun_path.len() {
                 libc::close(fd);
                 return Err(io::Error::new(
@@ -596,11 +623,17 @@ mod unix {
                 std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t
             };
 
+            // Linux 用 MSG_NOSIGNAL 阻止 SIGPIPE；macOS 已在上方用 SO_NOSIGPIPE 设置
+            #[cfg(target_os = "linux")]
+            let send_flags = libc::MSG_NOSIGNAL;
+            #[cfg(not(target_os = "linux"))]
+            let send_flags = 0;
+
             let sent = libc::sendto(
                 fd,
                 state.as_ptr() as *const _,
                 state.len(),
-                libc::MSG_NOSIGNAL,
+                send_flags,
                 &addr as *const _ as *const libc::sockaddr,
                 addr_len,
             );

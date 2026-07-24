@@ -211,7 +211,7 @@ mod unix {
     use super::*;
     use std::os::unix::io::{AsRawFd, RawFd};
     use std::os::unix::net::UnixStream;
-    use libc::{c_void, iovec, msghdr, recvmsg, sendmsg, sockaddr_un, socket, AF_UNIX, SOCK_STREAM, SOL_SOCKET, SCM_RIGHTS, CMSG_SPACE, CMSG_DATA, CMSG_FIRSTHDR, CMSG_LEN};
+    use libc::{c_void, iovec, msghdr, recvmsg, sendmsg, SOL_SOCKET, SCM_RIGHTS, CMSG_SPACE, CMSG_DATA, CMSG_FIRSTHDR, CMSG_LEN};
 
     /// 发送 JSON 帧并附带少量 SCM_RIGHTS 文件描述符
     ///
@@ -253,7 +253,8 @@ mod unix {
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;
         msg.msg_control = cmsg_buf.as_mut_ptr() as *mut c_void;
-        msg.msg_controllen = cmsg_space;
+        // macOS 上 msg_controllen 是 socklen_t (u32)，Linux 上是 size_t (usize)，用 as _ 适配
+        msg.msg_controllen = cmsg_space as _;
 
         // 填充 cmsg
         unsafe {
@@ -263,7 +264,8 @@ mod unix {
             }
             (*cmsg).cmsg_level = SOL_SOCKET;
             (*cmsg).cmsg_type = SCM_RIGHTS;
-            (*cmsg).cmsg_len = CMSG_LEN((fd_count * std::mem::size_of::<RawFd>()) as u32) as usize;
+            // cmsg_len 字段在 Linux/macOS 上均为 u32，CMSG_LEN 返回 usize，需显式转换
+            (*cmsg).cmsg_len = CMSG_LEN((fd_count * std::mem::size_of::<RawFd>()) as u32) as u32;
             let data_ptr = CMSG_DATA(cmsg) as *mut RawFd;
             for (i, &fd) in fds.iter().enumerate() {
                 *data_ptr.add(i) = fd;
@@ -304,7 +306,8 @@ mod unix {
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;
         msg.msg_control = cmsg_buf.as_mut_ptr() as *mut c_void;
-        msg.msg_controllen = cmsg_space;
+        // macOS 上 msg_controllen 是 socklen_t (u32)，Linux 上是 size_t (usize)，用 as _ 适配
+        msg.msg_controllen = cmsg_space as _;
 
         let mut received_fds: Vec<RawFd> = Vec::new();
         let ret = unsafe { recvmsg(sock.as_raw_fd(), &mut msg, 0) };

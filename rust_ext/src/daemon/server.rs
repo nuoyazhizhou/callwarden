@@ -267,8 +267,9 @@ where
                 ));
             }
             // 校验 mode（socket_mode 的低 9 位）
-            let actual_mode = stat_buf.st_mode & 0o777;
-            if actual_mode != config.socket_mode as libc::mode_t {
+            // macOS 上 st_mode 是 u16，Linux 上是 u32，统一转 u32 比较
+            let actual_mode = (stat_buf.st_mode & 0o777) as u32;
+            if actual_mode != config.socket_mode as u32 {
                 return Err(io::Error::new(
                     io::ErrorKind::PermissionDenied,
                     format!(
