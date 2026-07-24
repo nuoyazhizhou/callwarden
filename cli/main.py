@@ -22,10 +22,11 @@ import sys
 import time
 
 from ..db import CodeGraphDB
-from ..config import detect_project_root, get_default_workspace_name, atomic_write_file
+from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER
 from ..server.watcher import FileWatcher
 from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
 from .console import cprint
+from .agent_registry import get_merged_specs
 
 
 # ====================================================================
@@ -73,7 +74,8 @@ _READONLY_WORKSPACE_ACTIONS = {"list"}
 # git log/show/stats 只读；git import 写
 # git log/show/stats/check-task/destructive-log 只读；git import/check-push 写
 # check-task 读 active_task（只读）；check-push 写 destructive_operations（写）
-_READONLY_GIT_ACTIONS = {"log", "show", "stats", "check-task", "destructive-log"}
+_READONLY_GIT_ACTIONS = {"log", "show",
+                         "stats", "check-task", "destructive-log"}
 # semgrep list/stats 只读；semgrep scan 含 --save 写，默认视为写以避免锁
 _READONLY_SEMGREP_ACTIONS = {"list", "stats"}
 # coverage fn/uncovered 只读；coverage import 写
@@ -227,11 +229,13 @@ def _emit_deprecated_flag_warning(args):
 _MAIN_HELP_GROUPS = [
     ("cli.messages.help_group_workspace", [
         ("workspace list", "cli.messages.help_workspace_list"),
-        ("workspace register <NAME> <ROOT>", "cli.messages.help_workspace_register"),
+        ("workspace register <NAME> <ROOT>",
+         "cli.messages.help_workspace_register"),
         ("workspace set <ID_OR_NAME>", "cli.messages.help_workspace_set"),
         ("workspace delete <ID_OR_NAME>", "cli.messages.help_workspace_delete"),
         ("workspace scan [<DIR>]", "cli.messages.help_workspace_scan"),
-        ("workspace generate-ignore [<DIR>] [--apply]", "cli.messages.help_workspace_generate_ignore"),
+        ("workspace generate-ignore [<DIR>] [--apply]",
+         "cli.messages.help_workspace_generate_ignore"),
         ("refresh all | <paths> | --watch", "cli.messages.help_refresh"),
         ("stats", "cli.messages.help_stats"),
         ("status", "cli.messages.help_status"),
@@ -257,7 +261,8 @@ _MAIN_HELP_GROUPS = [
         ("callers --top N", "cli.messages.help_chain_top_callers"),
         ("call-chain --module-calls", "cli.messages.help_chain_module_calls"),
         ("call-chain --heatmap", "cli.messages.help_chain_heatmap"),
-        ("call-chain --export-module-graph", "cli.messages.help_chain_module_graph"),
+        ("call-chain --export-module-graph",
+         "cli.messages.help_chain_module_graph"),
     ]),
     ("cli.messages.help_group_metrics", [
         ("metrics", "cli.messages.help_metrics"),
@@ -281,14 +286,18 @@ _MAIN_HELP_GROUPS = [
         ("task list [--blocked]", "cli.messages.help_task_list"),
         ("task show <TASK_ID>", "cli.messages.help_task_show"),
         ("task findings <TASK_ID>", "cli.messages.help_task_findings"),
-        ("task capture-diff [TASK_ID] [--auto]", "cli.messages.help_task_capture_diff"),
-        ("task resolve-finding <FINDING_ID>", "cli.messages.help_task_resolve_finding"),
-        ("task completion-review <TASK_ID>", "cli.messages.help_task_completion_review"),
+        ("task capture-diff [TASK_ID] [--auto]",
+         "cli.messages.help_task_capture_diff"),
+        ("task resolve-finding <FINDING_ID>",
+         "cli.messages.help_task_resolve_finding"),
+        ("task completion-review <TASK_ID>",
+         "cli.messages.help_task_completion_review"),
         ("task split <TASK_ID>", "cli.messages.help_task_split"),
         ("task status-tree", "cli.messages.help_task_status_tree"),
     ]),
     ("cli.messages.help_group_rule", [
-        ("rule candidate create/list/accept/reject", "cli.messages.help_rule_candidate"),
+        ("rule candidate create/list/accept/reject",
+         "cli.messages.help_rule_candidate"),
         ("rule list", "cli.messages.help_rule_list"),
         ("rule applicable --context ...", "cli.messages.help_rule_applicable"),
         ("rule sync [--target AGENTS.md]", "cli.messages.help_rule_sync"),
@@ -298,7 +307,8 @@ _MAIN_HELP_GROUPS = [
         ("rule cleanup-sync-log", "cli.messages.help_rule_cleanup_sync_log"),
     ]),
     ("cli.messages.help_group_audit", [
-        ("audit verify [--table T] [--limit N]", "cli.messages.help_audit_verify"),
+        ("audit verify [--table T] [--limit N]",
+         "cli.messages.help_audit_verify"),
         ("audit rotate-key --key-id <ID>", "cli.messages.help_audit_rotate_key"),
         ("audit keys", "cli.messages.help_audit_keys"),
         ("bootstrap status", "cli.messages.help_bootstrap_status"),
@@ -316,7 +326,8 @@ _MAIN_HELP_GROUPS = [
         ("semgrep scan [PATH]", "cli.messages.help_semgrep_scan"),
         ("semgrep list [FILTER]", "cli.messages.help_semgrep_list"),
         ("semgrep stats", "cli.messages.help_semgrep_stats"),
-        ("defect search [--category C] [--severity S]", "cli.messages.help_defect_search"),
+        ("defect search [--category C] [--severity S]",
+         "cli.messages.help_defect_search"),
         ("defect suggest <SYMBOL_HASH>", "cli.messages.help_defect_suggest"),
         ("defect learn <COMMIT_HASH>", "cli.messages.help_defect_learn"),
         ("defect stats", "cli.messages.help_defect_stats"),
@@ -334,7 +345,8 @@ _MAIN_HELP_GROUPS = [
     ]),
     ("cli.messages.help_group_gc", [
         ("gc archive [--force] [--dry-run]", "cli.messages.help_gc_archive"),
-        ("gc restore [--path P ...] [--force]", "cli.messages.help_gc_restore"),
+        ("gc restore [--path P ...] [--force]",
+         "cli.messages.help_gc_restore"),
         ("gc status", "cli.messages.help_gc_status"),
         ("gc purge [--older-than N]", "cli.messages.help_gc_purge"),
         ("gc policy show|set", "cli.messages.help_gc_policy"),
@@ -348,10 +360,13 @@ _MAIN_HELP_GROUPS = [
     ]),
     ("cli.messages.help_group_diagnostics", [
         ("doctor [--add-defender-exclusion]", "cli.messages.help_doctor"),
-        ("install-agent <codex|claude|cursor|all>", "cli.messages.help_install_agent"),
+        ("install-agent <codex|claude|cursor|all>",
+         "cli.messages.help_install_agent"),
         ("install-hook", "cli.messages.help_install_hook"),
-        ("guardrail scan [--file P] [--category C]", "cli.messages.help_guardrail_scan"),
-        ("guardrail rules [--category C]", "cli.messages.help_guardrail_rules"),
+        ("guardrail scan [--file P] [--category C]",
+         "cli.messages.help_guardrail_scan"),
+        ("guardrail rules [--category C]",
+         "cli.messages.help_guardrail_rules"),
         ("clone detect [--file-filter P]", "cli.messages.help_clone_detect"),
         ("clone list [--type 1|2|3]", "cli.messages.help_clone_list"),
         ("clone stats", "cli.messages.help_clone_stats"),
@@ -359,6 +374,7 @@ _MAIN_HELP_GROUPS = [
         ("evolution <QUALIFIED_NAME>", "cli.messages.help_evolution"),
         ("hotspot [--module P]", "cli.messages.help_hotspot"),
         ("churn [--module P] [--window 90d]", "cli.messages.help_churn"),
+        ("setup [--force] [--dry-run]", "cli.messages.help_setup"),
     ]),
 ]
 
@@ -377,11 +393,17 @@ def _print_main_help():
     print(t("cli.messages.main_help_intro"))
     print()
 
+    # 获取当前可用 Agent 数量，用于 help_install_agent 等动态占位符
+    try:
+        _agent_count = len(get_merged_specs(""))
+    except Exception:
+        _agent_count = 0
+
     # 12 组分组
     for group_title_key, items in _MAIN_HELP_GROUPS:
         cprint(t(group_title_key), "yellow", bold=True)
         for cmd, desc_key in items:
-            desc = t(desc_key)
+            desc = t(desc_key, count=_agent_count)
             print(f"  {cmd:45s}  {desc}")
         print()
 
@@ -400,11 +422,129 @@ def _print_main_help():
     # 最底部全局选项
     cprint(t("cli.messages.help_global_options_title"), "cyan", bold=True)
     print(f"  --lang LANG                 {t('cli.messages.help_lang')}")
-    print(f"  --workspace ROOT            {t('cli.messages.help_workspace_root')}")
+    print(
+        f"  --workspace ROOT            {t('cli.messages.help_workspace_root')}")
     print(f"  --root ROOT                 {t('cli.messages.help_root')}")
     print(f"  -h, --help                  {t('cli.messages.help_help')}")
     print()
     print(t("cli.messages.help_footer"))
+
+
+# ====================================================================
+# Lazy Auto-Setup：首次运行自动探测 AI 工具并注册 MCP Server
+# ====================================================================
+
+def _check_auto_setup():
+    """检查并执行首次自动配置（幂等）
+
+    在 main() 参数解析后、命令分发前调用。
+    跳过条件：
+    1. 环境变量 CALLWARDEN_SKIP_AUTO_SETUP=1
+    2. CLI flag --no-auto-setup（pre-parse 检查 sys.argv）
+    3. 标记文件已存在（幂等）
+    4. setup/install 等命令本身自己处理，不重复触发
+    """
+    # Opt-out 检查：环境变量禁用
+    if os.environ.get("CALLWARDEN_SKIP_AUTO_SETUP") == "1":
+        return
+    # CLI flag opt-out（pre-parse 检查 sys.argv）
+    if "--no-auto-setup" in sys.argv:
+        return
+
+    # 检查标记文件是否已存在（快速短路，避免导入 installer 开销）
+    if os.path.isfile(AUTO_SETUP_MARKER):
+        return
+
+    # 跳过某些不需要自动配置的命令
+    skip_commands = {"server", "setup", "install",
+                     "daemon", "install-agent", "install-hook"}
+    if len(sys.argv) > 1 and sys.argv[1] in skip_commands:
+        return
+
+    # 执行自动配置
+    try:
+        from ..install import CallWardenInstaller
+        installer = CallWardenInstaller()
+        configured = installer.auto_setup()
+        if configured:
+            names = ", ".join(configured)
+            print(t("cli.messages.auto_setup_done",
+                    default=f"已自动为 {names} 配置 CW MCP Server",
+                    agents=names))
+    except Exception as e:
+        # 自动配置失败时只打印警告，不影响主命令执行
+        print(t("cli.messages.auto_setup_error",
+                default="[WARN] Auto-setup skipped: {error}",
+                error=str(e)))
+
+
+def _handle_setup():
+    """处理 cw setup 子命令
+
+    解析 setup 专属参数（--force / --dry-run），探测已安装 AI 工具并配置 MCP 集成。
+    不需要数据库初始化，在 main() 中单独处理。
+    """
+    import argparse as _argparse
+    from ..install import CallWardenInstaller
+
+    parser = _argparse.ArgumentParser(
+        prog="cw setup",
+        description=t("cli.messages.setup_command_help",
+                      default="自动配置已安装 AI 工具的 MCP 集成"),
+    )
+    parser.add_argument("--force", action="store_true",
+                        help=t("cli.messages.setup_force_help",
+                               default="强制重新配置（忽略已完成标记）"))
+    parser.add_argument("--dry-run", action="store_true",
+                        help=t("cli.messages.setup_dry_run_help",
+                               default="仅探测不写入"))
+
+    args = parser.parse_args(sys.argv[2:])
+
+    installer = CallWardenInstaller()
+
+    # 探测已安装的 AI 工具
+    detected = installer.detect_installed_agents()
+    if not detected:
+        print(t("cli.messages.setup_no_agents",
+                default="未检测到已安装的 AI 编码工具"))
+        return
+
+    print(t("cli.messages.setup_detected",
+            default=f"检测到 {len(detected)} 个 AI 工具：",
+            count=len(detected)))
+    for d in detected:
+        icon = "[CLI]" if d.detected_by == "cli" else (
+            "[CFG]" if d.detected_by == "config_dir" else "[WIN]")
+        print(f"  {icon} {d.display} ({d.agent_key})")
+        print(f"       -> {d.detect_detail}")
+    print()
+
+    if args.dry_run:
+        print(t("cli.messages.setup_dry_run_msg",
+                default="（dry-run 模式，未写入配置）"))
+        return
+
+    # --force 时删除标记文件以允许重新配置
+    if args.force and os.path.isfile(AUTO_SETUP_MARKER):
+        try:
+            os.remove(AUTO_SETUP_MARKER)
+        except OSError:
+            pass
+
+    configured = installer.auto_setup(force=args.force)
+    if configured:
+        print(t("cli.messages.setup_done",
+                default=f"已为 {len(configured)} 个工具配置 CW MCP Server",
+                count=len(configured)))
+    elif not args.force and os.path.isfile(AUTO_SETUP_MARKER):
+        # 标记文件已存在，说明已完成过配置
+        print(t("cli.messages.setup_already_done",
+                default="已完成标记存在，使用 --force 重新配置"))
+    else:
+        # 探测到 Agent 但未能写入配置（权限等原因）
+        print(t("cli.messages.setup_no_write",
+                default="探测到 AI 工具但未能写入配置，请检查权限"))
 
 
 # ====================================================================
@@ -415,7 +555,7 @@ def _print_main_help():
 # ====================================================================
 
 def _format_subcommand_help(usage: str, description: str, parameters: list,
-                             examples: list, exit_codes: list) -> str:
+                            examples: list, exit_codes: list) -> str:
     """按统一模板格式化子命令帮助文本（C8 Step #4）
 
     模板章节（5 个）：
@@ -450,7 +590,8 @@ def _format_subcommand_help(usage: str, description: str, parameters: list,
     # 参数
     lines.append(t("cli.messages.help_template_parameters"))
     for name, required, desc in parameters:
-        mark = t("cli.messages.help_template_required") if required else t("cli.messages.help_template_optional")
+        mark = t("cli.messages.help_template_required") if required else t(
+            "cli.messages.help_template_optional")
         lines.append(f"  {mark} {name:25s}  {desc}")
     lines.append("")
     # 示例
@@ -481,15 +622,21 @@ _SUBCOMMAND_HELP_SPECS = {
         "parameters": [
             ("create --title T --steps J", True, "Create task and steps"),
             ("next <task_id>", True, "Claim current pending step"),
-            ("report <task_id> <step_id> [--fail]", True, "Report step result"),
+            ("report <task_id> <step_id> [--fail]",
+             True, "Report step result"),
             ("rollback <task_id> <step_id>", True, "Roll back changes"),
-            ("apply <task_id> [--reviewer R]", True, "Approve task (review -> applied)"),
-            ("close <task_id> [--reviewer R]", True, "Close task (applied -> closed)"),
-            ("capture-diff [task_id] [--auto] [--dry-run]", False, "Capture external agent file changes"),
+            ("apply <task_id> [--reviewer R]", True,
+             "Approve task (review -> applied)"),
+            ("close <task_id> [--reviewer R]", True,
+             "Close task (applied -> closed)"),
+            ("capture-diff [task_id] [--auto] [--dry-run]",
+             False, "Capture external agent file changes"),
             ("list [--blocked] [--status S] [--limit N]", False, "List tasks"),
             ("show <task_id> [--flat]", False, "Show task details"),
-            ("findings <task_id> [--status S] [--severity S]", False, "List task quality findings"),
-            ("resolve-finding <finding_id> [--resolution R]", False, "Resolve a quality gate finding"),
+            ("findings <task_id> [--status S] [--severity S]",
+             False, "List task quality findings"),
+            ("resolve-finding <finding_id> [--resolution R]",
+             False, "Resolve a quality gate finding"),
         ],
         "examples": [
             "cw task create --title 'Add login feature' --steps '[{\"action\":\"annotate\",\"target_file\":\"a.py\"}]'",
@@ -508,13 +655,19 @@ _SUBCOMMAND_HELP_SPECS = {
         "usage": "cw rule <subcommand> [options]",
         "description": "Agent Rule Memory: candidate create/list/accept/reject, list, applicable, sync, insert-block, extract, seed-bootstrap, cleanup-sync-log",
         "parameters": [
-            ("candidate create --title T --text T", True, "Create pending candidate rule"),
-            ("candidate list [--status S] [--limit N]", False, "List candidate rules"),
-            ("candidate accept <candidate_id> [--reviewer R]", True, "Accept candidate -> active"),
-            ("candidate reject <candidate_id> [--reason R]", True, "Reject candidate"),
+            ("candidate create --title T --text T",
+             True, "Create pending candidate rule"),
+            ("candidate list [--status S] [--limit N]",
+             False, "List candidate rules"),
+            ("candidate accept <candidate_id> [--reviewer R]",
+             True, "Accept candidate -> active"),
+            ("candidate reject <candidate_id> [--reason R]",
+             True, "Reject candidate"),
             ("list [--status S] [--limit N]", False, "List active rules"),
-            ("applicable --context JSON [--limit N]", False, "Get applicable rules by context"),
-            ("sync [--target AGENTS.md]", False, "Sync active rules to AGENTS.md marker block"),
+            ("applicable --context JSON [--limit N]",
+             False, "Get applicable rules by context"),
+            ("sync [--target AGENTS.md]", False,
+             "Sync active rules to AGENTS.md marker block"),
             ("extract", False, "Aggregate findings into candidates"),
             ("seed-bootstrap", False, "Seed rule library from built-in templates"),
         ],
@@ -535,16 +688,23 @@ _SUBCOMMAND_HELP_SPECS = {
         "usage": "cw gc <subcommand> [options]",
         "description": "Code graph GC: archive / restore / status / purge / policy / retention / archive-list / archive-inspect / archive-import / audit-list / audit-show",
         "parameters": [
-            ("archive [--force] [--dry-run]", True, "Archive files matched by ignore rules"),
-            ("restore [--path P ...] [--force]", False, "Restore archived files"),
+            ("archive [--force] [--dry-run]", True,
+             "Archive files matched by ignore rules"),
+            ("restore [--path P ...] [--force]",
+             False, "Restore archived files"),
             ("status", False, "View GC status"),
-            ("purge [--older-than N]", False, "Permanently purge files archived >N days"),
+            ("purge [--older-than N]", False,
+             "Permanently purge files archived >N days"),
             ("policy show|set", False, "Show or update GC retention policy"),
-            ("retention [--apply] [--save-policy]", False, "Cold data pruning with compressed backup"),
+            ("retention [--apply] [--save-policy]", False,
+             "Cold data pruning with compressed backup"),
             ("archive-list [--limit N]", False, "List GC backup files"),
-            ("archive-inspect <path>", False, "Inspect backup file contents (read-only)"),
-            ("archive-import <path> [--apply]", False, "Import historical data from backup"),
-            ("audit-list [--limit N] [--operation O]", False, "View GC audit history"),
+            ("archive-inspect <path>", False,
+             "Inspect backup file contents (read-only)"),
+            ("archive-import <path> [--apply]", False,
+             "Import historical data from backup"),
+            ("audit-list [--limit N] [--operation O]",
+             False, "View GC audit history"),
             ("audit-show <id>", False, "View details of a single GC audit record"),
         ],
         "examples": [
@@ -564,8 +724,10 @@ _SUBCOMMAND_HELP_SPECS = {
         "usage": "cw audit <subcommand> [options]",
         "description": "Audit chain verification and signing key rotation: verify / rotate-key / keys",
         "parameters": [
-            ("verify [--table T] [--limit N]", False, "Verify audit chain continuity and signatures"),
-            ("rotate-key --key-id ID [--secret S]", True, "Rotate audit signing key"),
+            ("verify [--table T] [--limit N]", False,
+             "Verify audit chain continuity and signatures"),
+            ("rotate-key --key-id ID [--secret S]",
+             True, "Rotate audit signing key"),
             ("keys", False, "List all signing key rotation records"),
         ],
         "examples": [
@@ -600,8 +762,10 @@ _SUBCOMMAND_HELP_SPECS = {
         "usage": "cw defect <subcommand> [options]",
         "description": "Defect knowledge base: search / suggest / learn / stats / build",
         "parameters": [
-            ("search [--category C] [--severity S] [--limit N]", False, "Search defect patterns"),
-            ("suggest <symbol_hash> [--finding ID]", True, "Recommend fix suggestions"),
+            ("search [--category C] [--severity S] [--limit N]",
+             False, "Search defect patterns"),
+            ("suggest <symbol_hash> [--finding ID]",
+             True, "Recommend fix suggestions"),
             ("learn <commit_hash>", True, "Learn defect patterns from a fix commit"),
             ("stats", False, "Defect knowledge base statistics"),
             ("build", False, "Build defect knowledge base"),
@@ -622,7 +786,8 @@ _SUBCOMMAND_HELP_SPECS = {
         "usage": "cw guardrail <subcommand> [options]",
         "description": "Production safety guardrails: scan / rules",
         "parameters": [
-            ("scan [--file P] [--category C]", True, "Scan guardrail violations"),
+            ("scan [--file P] [--category C]",
+             True, "Scan guardrail violations"),
             ("rules [--category C]", False, "List guardrail rules"),
         ],
         "examples": [
@@ -761,7 +926,8 @@ _SUBCOMMAND_HELP_SPECS = {
         "description": "Check gate (F6): run quality gate checks on task's changed files",
         "parameters": [
             ("task_id", True, "Task ID"),
-            ("--resolve", False, "Mark gate findings for this task as resolved (after agent fix)"),
+            ("--resolve", False,
+             "Mark gate findings for this task as resolved (after agent fix)"),
             ("--step-id S", False, "Related step ID (optional)"),
         ],
         "examples": [
@@ -794,7 +960,8 @@ _SUBCOMMAND_HELP_SPECS = {
         "usage": "cw doctor [--add-defender-exclusion]",
         "description": "Environment diagnostics and maintenance (db status, PRAGMA, WAL, Defender)",
         "parameters": [
-            ("--add-defender-exclusion", False, "Add .callwarden to Windows Defender exclusions (requires admin)"),
+            ("--add-defender-exclusion", False,
+             "Add .callwarden to Windows Defender exclusions (requires admin)"),
         ],
         "examples": [
             "cw doctor",
@@ -808,12 +975,14 @@ _SUBCOMMAND_HELP_SPECS = {
     },
     "install-agent": {
         "usage": "cw install-agent <agent|all> [--output-dir D] [--force] [--global]",
-        "description": "Generate Call Warden integration files for 18 AI agents (project-level bundle or --global MCP config)",
+        "description": "Generate Call Warden integration files for {count} AI agents (project-level bundle or --global MCP config)",
         "parameters": [
-            ("agent", True, "Target Agent: claude-code/claude-desktop/cursor/cline/windsurf/trae/gemini-cli/codex/opencode/kiro/antigravity/qoder/jetbrains-junie/zed/pearai/kimi-code/codebuddy-cli/deep-code/all"),
-            ("--output-dir D", False, "Output directory (default: .callwarden/agent-integrations)"),
+            ("agent", True, "Target Agent: claude-code/claude-desktop/cursor/cline/windsurf/trae/gemini-cli/codex/opencode/kiro/antigravity/qoder/jetbrains-junie/zed/pearai/kimi-code/codebuddy-cli/deep-code/comate/all"),
+            ("--output-dir D", False,
+             "Output directory (default: .callwarden/agent-integrations)"),
             ("--force", False, "Overwrite existing integration files"),
-            ("--global", False, "Write to user global MCP config instead of project-level bundle"),
+            ("--global", False,
+             "Write to user global MCP config instead of project-level bundle"),
         ],
         "examples": [
             "cw install-agent claude-code",
@@ -829,11 +998,12 @@ _SUBCOMMAND_HELP_SPECS = {
 }
 
 
-def _get_subcommand_epilog(cmd: str) -> str:
+def _get_subcommand_epilog(cmd: str, **kwargs) -> str:
     """根据子命令名取出统一模板格式化的 epilog 文本（C8 Step #4）
 
     Args:
         cmd: 子命令名（如 "task"/"rule"/"gc" 等）
+        **kwargs: 占位符参数（如 count=19），用于 description 中的动态替换
 
     Returns:
         格式化后的 epilog 字符串；若 cmd 不在规格表中，返回空字符串
@@ -841,9 +1011,16 @@ def _get_subcommand_epilog(cmd: str) -> str:
     spec = _SUBCOMMAND_HELP_SPECS.get(cmd)
     if not spec:
         return ""
+    # 支持 description 中的 {count} 等动态占位符
+    desc = spec["description"]
+    if kwargs:
+        try:
+            desc = desc.format(**kwargs)
+        except (KeyError, ValueError, IndexError):
+            pass
     return _format_subcommand_help(
         usage=spec["usage"],
-        description=spec["description"],
+        description=desc,
         parameters=spec["parameters"],
         examples=spec["examples"],
         exit_codes=spec["exit_codes"],
@@ -859,6 +1036,9 @@ def _run_subcommand_mode():
     # 使用系统检测到的默认语言（CALLWARDEN_LANG / LANG / LC_ALL / 系统语言）
     # 用户可通过环境变量 CALLWARDEN_LANG=en_US 切换为英文
     set_language(DEFAULT_LANG)
+
+    # Lazy Auto-Setup：首次运行自动探测 AI 工具并注册 MCP Server（幂等，失败不影响主命令）
+    _check_auto_setup()
 
     # 检测子命令是否请求帮助（避免初始化 db 触发锁等待）
     sub_argv = sys.argv[2:] if len(sys.argv) > 2 else []
@@ -878,7 +1058,8 @@ def _run_subcommand_mode():
         workspace_root = detected if detected else None
 
     # 初始化数据库
-    db = CodeGraphDB(workspace_root=workspace_root) if workspace_root else CodeGraphDB()
+    db = CodeGraphDB(
+        workspace_root=workspace_root) if workspace_root else CodeGraphDB()
 
     try:
         # 自动注册工作区（与 --flag 模式行为一致）
@@ -1176,7 +1357,7 @@ def _dispatch_subcommand(argv, db):
 
 
 # --------------------------------------------------------------------
-# install-agent：AI Agent 集成包生成（数据驱动，支持 18 个 Agent + --global）
+# install-agent：AI Agent 集成包生成（数据驱动，支持动态 Agent 数量 + --global）
 # --------------------------------------------------------------------
 
 # Agent 注册表：描述每个 Agent 的配置能力与路径
@@ -1202,277 +1383,8 @@ def _dispatch_subcommand(argv, db):
 #       claude_settings → settings.snippet.json
 #       codex_hooks     → 插件包内 hooks/hooks.json
 #       none            → 无 hooks
-AGENT_SPECS = {
-    "claude-code": {
-        "display": "Claude Code",
-        "supports_mcp": True,
-        "supports_hooks": True,
-        "supports_rules": True,
-        "reads_agents_md": True,
-        "project_mcp_relpath": ".mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.claude.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": ".callwarden/agent-integrations/claude-code/CALLWARDEN.md",
-        "rules_type": "skill_md",
-        "hooks_type": "claude_settings",
-    },
-    "claude-desktop": {
-        "display": "Claude Desktop",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        "project_mcp_relpath": None,
-        "project_mcp_format": None,
-        "global_mcp_relpath": "~/Library/Application Support/Claude/claude_desktop_config.json",
-        "global_mcp_relpath_win": "~/AppData/Roaming/Claude/claude_desktop_config.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "cursor": {
-        "display": "Cursor",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": True,
-        "reads_agents_md": False,
-        "project_mcp_relpath": ".cursor/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.cursor/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": ".cursor/rules/callwarden.mdc",
-        "rules_type": "cursor_mdc",
-        "hooks_type": "none",
-    },
-    "cline": {
-        "display": "Cline",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        # 项目级支持两种路径：Cline CLI 用 .cline/mcp.json，VSCode 扩展用 .cline/mcp_settings.json
-        "project_mcp_relpath": ".cline/mcp.json",
-        "project_mcp_format": "mcpServers",
-        # 全局配置：Cline CLI 用 ~/.cline/mcp.json（用户清单指定）
-        "global_mcp_relpath": "~/.cline/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "windsurf": {
-        "display": "Windsurf",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": True,
-        "reads_agents_md": False,
-        "project_mcp_relpath": ".windsurf/mcp_config.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.codeium/windsurf/mcp_config.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": ".windsurf/rules/callwarden.md",
-        "rules_type": "generic_md",
-        "hooks_type": "none",
-    },
-    "trae": {
-        "display": "Trae IDE",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": True,
-        "reads_agents_md": True,
-        "project_mcp_relpath": ".trae/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.trae/mcp.json",
-        # Trae CN Windows 版使用独立路径
-        "global_mcp_relpath_win": "~/AppData/Roaming/TRAE SOLO CN/User/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": ".callwarden/agent-integrations/trae/CALLWARDEN.md",
-        "rules_type": "skill_md",
-        "hooks_type": "none",
-    },
-    "gemini-cli": {
-        "display": "Gemini CLI",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": True,
-        "project_mcp_relpath": ".gemini/settings.json",
-        "project_mcp_format": "merge_mcpServers",
-        "global_mcp_relpath": "~/.gemini/settings.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "codex": {
-        "display": "Codex CLI",
-        "supports_mcp": True,
-        "supports_hooks": True,
-        "supports_rules": True,
-        "reads_agents_md": False,
-        "project_mcp_relpath": ".codex/.mcp.json",
-        "project_mcp_format": "mcpServers",
-        # Codex CLI 使用 TOML 格式配置（~/.codex/config.toml）
-        "global_mcp_relpath": "~/.codex/config.toml",
-        "global_mcp_format": "toml_mcp_servers",
-        "rules_relpath": ".codex-plugin/",
-        "rules_type": "codex_skill",
-        "hooks_type": "codex_hooks",
-    },
-    "opencode": {
-        "display": "OpenCode",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": True,
-        "project_mcp_relpath": ".opencode/opencode.json",
-        "project_mcp_format": "merge_mcpServers",
-        "global_mcp_relpath": "~/.config/opencode/opencode.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "kiro": {
-        "display": "Kiro (AWS)",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": True,
-        "reads_agents_md": False,
-        "project_mcp_relpath": ".kiro/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.kiro/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": ".kiro/rules/callwarden.md",
-        "rules_type": "generic_md",
-        "hooks_type": "none",
-    },
-    "antigravity": {
-        "display": "Antigravity IDE (Google)",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": True,
-        "reads_agents_md": False,
-        "project_mcp_relpath": ".antigravity/mcp_config.json",
-        "project_mcp_format": "mcpServers",
-        # 用户清单指定：~/.gemini/config/mcp_config.json（与 Gemini CLI 共用 .gemini 目录但文件不同）
-        "global_mcp_relpath": "~/.gemini/config/mcp_config.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": ".antigravity/rules/callwarden.md",
-        "rules_type": "generic_md",
-        "hooks_type": "none",
-    },
-    "qoder": {
-        "display": "Qoder (Alibaba)",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        "project_mcp_relpath": ".qoder/mcp.json",
-        "project_mcp_format": "mcpServers",
-        # 用户清单指定：~/.mcp.json（共享路径，多 Agent 共用）
-        "global_mcp_relpath": "~/.mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    # ---- 新增 6 个 Agent（对齐用户提供的 16 产品清单） ----
-    "jetbrains-junie": {
-        "display": "JetBrains Junie",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        # Junie 仅支持项目级配置（.junie/mcp/mcp.json）
-        "project_mcp_relpath": ".junie/mcp/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": None,
-        "global_mcp_format": None,
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "zed": {
-        "display": "Zed Editor",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        # Zed 使用 context_servers 字段（非标准 mcpServers），command 为嵌套对象
-        "project_mcp_relpath": ".zed/settings.json",
-        "project_mcp_format": "context_servers",
-        "global_mcp_relpath": "~/.config/zed/settings.json",
-        "global_mcp_relpath_win": "~/AppData/Roaming/Zed/settings.json",
-        "global_mcp_format": "merge_context_servers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "pearai": {
-        "display": "PearAI",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        # PearAI 兼容 Cursor 格式（mcpServers）
-        "project_mcp_relpath": ".pearai/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.pearai/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "kimi-code": {
-        "display": "Kimi Code CLI",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        # Kimi Code CLI 通过 --mcp-config <file> 启动时加载 MCP 配置
-        # 写入 ~/.kimi-code/mcp.json，启动时用 kimi-code --mcp-config ~/.kimi-code/mcp.json
-        "project_mcp_relpath": ".kimi-code/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.kimi-code/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "codebuddy-cli": {
-        "display": "CodeBuddy Code CLI",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        # 腾讯云 CodeBuddy Code CLI，配置路径无公开文档，使用合理默认 ~/.codebuddy/mcp.json
-        "project_mcp_relpath": ".codebuddy/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.codebuddy/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-    "deep-code": {
-        "display": "Deep Code CLI",
-        "supports_mcp": True,
-        "supports_hooks": False,
-        "supports_rules": False,
-        "reads_agents_md": False,
-        # Deep Code CLI（DeepSeek），配置路径无公开文档，使用合理默认 ~/.deepcode/mcp.json
-        "project_mcp_relpath": ".deepcode/mcp.json",
-        "project_mcp_format": "mcpServers",
-        "global_mcp_relpath": "~/.deepcode/mcp.json",
-        "global_mcp_format": "merge_mcpServers",
-        "rules_relpath": None,
-        "rules_type": None,
-        "hooks_type": "none",
-    },
-}
+# AGENT_SPECS 数据已迁移至 cli/agent_registry.py 模块
+# 通过 get_merged_specs(overlay_path) 获取合并后的 specs（内置 + 外部 JSON 叠加层）
 
 
 def _mcp_callwarden_entry(root: str) -> dict:
@@ -1484,49 +1396,96 @@ def _mcp_callwarden_entry(root: str) -> dict:
 
 
 def _handle_install_agent(args, db):
-    """生成 Agent 集成包（MCP + skills/rules + hooks），支持 18 个 Agent 与 --global 全局写入"""
+    """生成 Agent 集成包（MCP + skills/rules + hooks），支持动态注册表与 --global 全局写入"""
+    # 先解析 --registry 参数以便传入 get_merged_specs
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--registry", default="")
+    pre_opts, _ = pre_parser.parse_known_args(args)
+    merged_specs = get_merged_specs(pre_opts.registry)
+
     parser = argparse.ArgumentParser(
         prog="cw install-agent",
-        description=t("cli.messages.install_agent_desc", default="Generate Call Warden integration files for 18 AI agents"),
-        epilog=_get_subcommand_epilog("install-agent"),
+        description=t("cli.messages.install_agent_desc",
+                      default=f"Generate Call Warden integration files for {len(merged_specs)} AI agents", count=len(merged_specs)),
+        epilog=_get_subcommand_epilog(
+            "install-agent", count=len(merged_specs)),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "agent",
-        choices=list(AGENT_SPECS.keys()) + ["all"],
-        help=t("cli.messages.install_agent_arg_agent", default="Target Agent (one of 18 supported agents or 'all')"),
+        nargs="?",
+        choices=list(merged_specs.keys()) + ["all"],
+        help=t("cli.messages.install_agent_arg_agent",
+               default=f"Target Agent (one of {len(merged_specs)} supported agents or 'all')", count=len(merged_specs)),
     )
     parser.add_argument(
         "--output-dir",
         default="",
-        help=t("cli.messages.install_agent_arg_output_dir", default="Output directory, defaults to .callwarden/agent-integrations"),
+        help=t("cli.messages.install_agent_arg_output_dir",
+               default="Output directory, defaults to .callwarden/agent-integrations"),
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help=t("cli.messages.install_agent_arg_force", default="Overwrite existing integration files"),
+        help=t("cli.messages.install_agent_arg_force",
+               default="Overwrite existing integration files"),
     )
     parser.add_argument(
         "--global",
         dest="global_mode",
         action="store_true",
-        help=t("cli.messages.install_agent_arg_global", default="Write to user global MCP config instead of project-level bundle"),
+        help=t("cli.messages.install_agent_arg_global",
+               default="Write to user global MCP config instead of project-level bundle"),
+    )
+    parser.add_argument(
+        "--auto-detect",
+        action="store_true",
+        help=t("cli.messages.install_agent_arg_auto_detect",
+               default="Auto-detect installed agents and install for all detected"),
+    )
+    parser.add_argument(
+        "--registry",
+        default="",
+        help=t("cli.messages.install_agent_arg_registry",
+               default="Path to custom agent registry JSON (extends built-in agents)"),
     )
     opts = parser.parse_args(args)
 
     root = db.workspace_root
-    out_root = os.path.abspath(opts.output_dir or os.path.join(root, ".callwarden", "agent-integrations"))
+    out_root = os.path.abspath(opts.output_dir or os.path.join(
+        root, ".callwarden", "agent-integrations"))
     mode = "global" if opts.global_mode else "project"
 
-    if opts.agent == "all":
-        agents = list(AGENT_SPECS.keys())
+    # --auto-detect 模式：自动探测已安装的 Agent
+    if opts.auto_detect:
+        from ..install import CallWardenInstaller
+        installer = CallWardenInstaller()
+        detected = installer.detect_installed_agents()
+        if not detected:
+            cprint(t("cli.messages.install_agent_no_detected",
+                     default="No supported AI agents detected on this system."), "yellow")
+            return True
+        # 共享配置家族去重（如 cline 家族只需安装一次）
+        detected = installer._deduplicate_by_shared_config(detected)
+        agents = [d.agent_key for d in detected]
+        cprint(t("cli.messages.install_agent_detected",
+                 default="Detected {count} agents: {names}",
+                 count=len(agents), names=", ".join(agents)), "cyan")
+    elif opts.agent == "all":
+        agents = list(merged_specs.keys())
+    elif opts.agent is None:
+        # 未提供 agent 且未使用 --auto-detect
+        parser.error(
+            "the following arguments are required: agent (or use --auto-detect)")
     else:
         agents = [opts.agent]
 
     # --global 模式跳过无全局路径的 agent（如 qoder 走 DeepLink）
     if opts.global_mode:
-        skipped = [a for a in agents if not AGENT_SPECS[a].get("global_mcp_relpath")]
-        agents = [a for a in agents if AGENT_SPECS[a].get("global_mcp_relpath")]
+        skipped = [a for a in agents if not merged_specs[a].get(
+            "global_mcp_relpath")]
+        agents = [a for a in agents if merged_specs[a].get(
+            "global_mcp_relpath")]
         for a in skipped:
             cprint(t(
                 "cli.messages.install_agent_global_skipped",
@@ -1535,26 +1494,34 @@ def _handle_install_agent(args, db):
             ), "yellow")
 
     if not agents:
-        cprint(t("cli.messages.install_agent_no_agents", default="No agents to process."), "yellow")
+        cprint(t("cli.messages.install_agent_no_agents",
+               default="No agents to process."), "yellow")
         return True
 
     created = []
     for agent in agents:
-        spec = AGENT_SPECS[agent]
+        spec = merged_specs[agent]
         if opts.global_mode:
             created.extend(_write_global_mcp_config(spec, root, opts.force))
         else:
-            created.extend(_write_agent_integration(root, out_root, agent, spec, opts.force))
+            created.extend(_write_agent_integration(
+                root, out_root, agent, spec, opts.force))
 
     # 输出摘要
-    cprint(t("cli.messages.install_agent_title", default="=== Agent Integration Generated ==="), "cyan", bold=True)
-    print(t("cli.messages.install_agent_root", default="  Root: {root}", root=root))
+    cprint(t("cli.messages.install_agent_title",
+           default="=== Agent Integration Generated ==="), "cyan", bold=True)
+    print(t("cli.messages.install_agent_root",
+          default="  Root: {root}", root=root))
     if not opts.global_mode:
-        print(t("cli.messages.install_agent_output", default="  Output: {path}", path=out_root))
-    print(t("cli.messages.install_agent_agents", default="  Agents: {agents}", agents=', '.join(agents)))
-    print(t("cli.messages.install_agent_mode", default="  Mode: {mode}", mode=mode))
+        print(t("cli.messages.install_agent_output",
+              default="  Output: {path}", path=out_root))
+    print(t("cli.messages.install_agent_agents",
+          default="  Agents: {agents}", agents=', '.join(agents)))
+    print(t("cli.messages.install_agent_mode",
+          default="  Mode: {mode}", mode=mode))
     print()
-    cprint(t("cli.messages.install_agent_files", default="Files created/updated:"), "cyan")
+    cprint(t("cli.messages.install_agent_files",
+           default="Files created/updated:"), "cyan")
     for path in created:
         print(t("cli.messages.install_agent_path_item", path=path))
     print()
@@ -1568,7 +1535,8 @@ def _handle_install_agent(args, db):
 def _write_if_needed(path: str, content: str, force: bool, created: list) -> None:
     """写入文件，默认不覆盖已有内容"""
     if os.path.exists(path) and not force:
-        created.append(path + t("cli.messages.install_agent_exists_skipped", default=" (exists, skipped)"))
+        created.append(
+            path + t("cli.messages.install_agent_exists_skipped", default=" (exists, skipped)"))
         return
     atomic_write_file(path, content)
     created.append(path)
@@ -1577,7 +1545,8 @@ def _write_if_needed(path: str, content: str, force: bool, created: list) -> Non
 def _global_mcp_path(spec: dict) -> str:
     """返回 agent 的全局 MCP 配置路径（平台感知，已展开 ~），无则返回空串"""
     if sys.platform == "win32":
-        rel = spec.get("global_mcp_relpath_win") or spec.get("global_mcp_relpath")
+        rel = spec.get("global_mcp_relpath_win") or spec.get(
+            "global_mcp_relpath")
     else:
         rel = spec.get("global_mcp_relpath")
     if not rel:
@@ -1643,11 +1612,14 @@ def _write_global_mcp_config(spec: dict, root: str, force: bool) -> list:
     servers["callwarden"] = entry
     existing[servers_key] = servers
 
-    atomic_write_file(target, json.dumps(existing, ensure_ascii=False, indent=2) + "\n")
+    atomic_write_file(target, json.dumps(
+        existing, ensure_ascii=False, indent=2) + "\n")
     if existed:
-        created.append(target + t("cli.messages.install_agent_updated", default=" (updated)"))
+        created.append(
+            target + t("cli.messages.install_agent_updated", default=" (updated)"))
     else:
-        created.append(target + t("cli.messages.install_agent_created", default=" (created)"))
+        created.append(
+            target + t("cli.messages.install_agent_created", default=" (created)"))
     return created
 
 
@@ -1685,7 +1657,8 @@ def _write_global_toml_mcp_config(target: str, root: str, force: bool) -> list:
     has_cw = any("[mcp_servers.callwarden]" in line for line in existing_lines)
 
     if has_cw and not force:
-        created.append(target + t("cli.messages.install_agent_exists_skipped", default=" (exists, skipped)"))
+        created.append(
+            target + t("cli.messages.install_agent_exists_skipped", default=" (exists, skipped)"))
         return created
 
     if has_cw:
@@ -1718,9 +1691,11 @@ def _write_global_toml_mcp_config(target: str, root: str, force: bool) -> list:
 
     atomic_write_file(target, content)
     if existed:
-        created.append(target + t("cli.messages.install_agent_updated", default=" (updated)"))
+        created.append(
+            target + t("cli.messages.install_agent_updated", default=" (updated)"))
     else:
-        created.append(target + t("cli.messages.install_agent_created", default=" (created)"))
+        created.append(
+            target + t("cli.messages.install_agent_created", default=" (created)"))
     return created
 
 
@@ -1729,7 +1704,8 @@ def _write_codex_plugin_package(base: str, root: str, hook_script: str, force: b
     created = []
     plugin_root = os.path.join(base, "callwarden-plugin")
     os.makedirs(os.path.join(plugin_root, ".codex-plugin"), exist_ok=True)
-    os.makedirs(os.path.join(plugin_root, "skills", "callwarden-workflow"), exist_ok=True)
+    os.makedirs(os.path.join(plugin_root, "skills",
+                "callwarden-workflow"), exist_ok=True)
     os.makedirs(os.path.join(plugin_root, "hooks"), exist_ok=True)
     _write_if_needed(
         os.path.join(plugin_root, ".codex-plugin", "plugin.json"),
@@ -1797,7 +1773,8 @@ def _write_agent_integration(root: str, out_root: str, agent: str, spec: dict, f
 
     # codex 走完整插件包逻辑
     if agent == "codex":
-        created.extend(_write_codex_plugin_package(base, root, hook_script, force))
+        created.extend(_write_codex_plugin_package(
+            base, root, hook_script, force))
     else:
         # hooks 配置文件
         if hooks_type == "claude_settings" and hook_script:
@@ -1839,7 +1816,8 @@ def _write_agent_integration(root: str, out_root: str, agent: str, spec: dict, f
                 created,
             )
 
-    _write_if_needed(os.path.join(base, "README.md"), _agent_readme(agent), force, created)
+    _write_if_needed(os.path.join(base, "README.md"),
+                     _agent_readme(agent), force, created)
     return created
 
 
@@ -1918,7 +1896,8 @@ def _handle_rule(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw rule",
-        description=t("cli_rule_desc", default="Agent Rule Memory: candidate / accept / active / sync"),
+        description=t(
+            "cli_rule_desc", default="Agent Rule Memory: candidate / accept / active / sync"),
         epilog=_get_subcommand_epilog("rule"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -1934,111 +1913,112 @@ def _handle_rule(args, db):
         "create", help=t("cli_rule_candidate_create_desc", default="Create pending candidate rule")
     )
     cand_create.add_argument("--title", required=True,
-        help=t("cli_rule_arg_title", default="Rule title (short)"))
+                             help=t("cli_rule_arg_title", default="Rule title (short)"))
     cand_create.add_argument("--text", required=True,
-        help=t("cli_rule_arg_text", default="Rule text (Agent will receive it verbatim)"))
+                             help=t("cli_rule_arg_text", default="Rule text (Agent will receive it verbatim)"))
     cand_create.add_argument("--scope", default="",
-        help=t("cli_rule_arg_scope", default='Scope JSON, e.g. {"languages":["python"],"actions":["edit"]}'))
+                             help=t("cli_rule_arg_scope", default='Scope JSON, e.g. {"languages":["python"],"actions":["edit"]}'))
     cand_create.add_argument("--severity", default="info",
-        help=t("cli_rule_arg_severity", default="Severity: critical/error/warning/info"))
+                             help=t("cli_rule_arg_severity", default="Severity: critical/error/warning/info"))
     cand_create.add_argument("--source", default="manual",
-        help=t("cli_rule_arg_source", default="Source: manual/auto_quality_findings/auto_semgrep/task_review/other"))
+                             help=t("cli_rule_arg_source", default="Source: manual/auto_quality_findings/auto_semgrep/task_review/other"))
     cand_create.add_argument("--evidence", default="",
-        help=t("cli_rule_arg_evidence", default='Evidence JSON, e.g. {"task_id":"T-xxx","occurrences":3}'))
+                             help=t("cli_rule_arg_evidence", default='Evidence JSON, e.g. {"task_id":"T-xxx","occurrences":3}'))
     cand_create.add_argument("--confidence", type=float, default=0.0,
-        help=t("cli_rule_arg_confidence", default="Confidence 0.0-1.0"))
+                             help=t("cli_rule_arg_confidence", default="Confidence 0.0-1.0"))
 
     cand_list = cand_sub.add_parser(
         "list", help=t("cli_rule_candidate_list_desc", default="List candidate rules")
     )
     cand_list.add_argument("--status", default="pending",
-        help=t("cli_rule_arg_status_filter", default="Status filter: pending/accepted/rejected, empty = all"))
+                           help=t("cli_rule_arg_status_filter", default="Status filter: pending/accepted/rejected, empty = all"))
     cand_list.add_argument("--limit", type=int, default=50,
-        help=t("cli_rule_arg_limit", default="Maximum count (default 50)"))
+                           help=t("cli_rule_arg_limit", default="Maximum count (default 50)"))
 
     cand_accept = cand_sub.add_parser(
         "accept", help=t("cli_rule_candidate_accept_desc", default="Accept candidate -> active rule")
     )
     cand_accept.add_argument("candidate_id",
-        help=t("cli_rule_arg_candidate_id", default="Candidate rule ID (ARC-xxx)"))
+                             help=t("cli_rule_arg_candidate_id", default="Candidate rule ID (ARC-xxx)"))
     cand_accept.add_argument("--reviewer", default="agent",
-        help=t("cli_rule_arg_reviewer", default="Reviewer identifier"))
+                             help=t("cli_rule_arg_reviewer", default="Reviewer identifier"))
 
     cand_reject = cand_sub.add_parser(
         "reject", help=t("cli_rule_candidate_reject_desc", default="Reject candidate rule")
     )
     cand_reject.add_argument("candidate_id",
-        help=t("cli_rule_arg_candidate_id", default="Candidate rule ID (ARC-xxx)"))
+                             help=t("cli_rule_arg_candidate_id", default="Candidate rule ID (ARC-xxx)"))
     cand_reject.add_argument("--reviewer", default="agent",
-        help=t("cli_rule_arg_reviewer", default="Reviewer identifier"))
+                             help=t("cli_rule_arg_reviewer", default="Reviewer identifier"))
     cand_reject.add_argument("--reason", default="",
-        help=t("cli_rule_arg_reason", default="Reject reason (optional)"))
+                             help=t("cli_rule_arg_reason", default="Reject reason (optional)"))
 
     # list：已生效规则
     list_p = sub.add_parser(
         "list", help=t("cli_rule_list_desc", default="List active rules")
     )
     list_p.add_argument("--status", default="active",
-        help=t("cli_rule_arg_status_filter_active", default="Status: active/deprecated/removed, empty = all"))
+                        help=t("cli_rule_arg_status_filter_active", default="Status: active/deprecated/removed, empty = all"))
     list_p.add_argument("--limit", type=int, default=100,
-        help=t("cli_rule_arg_limit_active", default="Maximum count (default 100)"))
+                        help=t("cli_rule_arg_limit_active", default="Maximum count (default 100)"))
 
     # applicable：按上下文查询
     app_p = sub.add_parser(
         "applicable", help=t("cli_rule_applicable_desc", default="Get applicable rules by context")
     )
     app_p.add_argument("--context", default="{}",
-        help=t("cli_rule_arg_context", default='Context JSON, e.g. {"languages":["python"],"actions":["edit"]}'))
+                       help=t("cli_rule_arg_context", default='Context JSON, e.g. {"languages":["python"],"actions":["edit"]}'))
     app_p.add_argument("--limit", type=int, default=10,
-        help=t("cli_rule_arg_applicable_limit", default="Maximum count (default 10)"))
+                       help=t("cli_rule_arg_applicable_limit", default="Maximum count (default 10)"))
 
     # sync：同步到 AGENTS.md
     sync_p = sub.add_parser(
         "sync", help=t("cli_rule_sync_desc", default="Sync active rules to AGENTS.md marker block")
     )
     sync_p.add_argument("--target", default="AGENTS.md",
-        help=t("cli_rule_arg_target", default="Target AGENTS.md path (relative to workspace or absolute)"))
+                        help=t("cli_rule_arg_target", default="Target AGENTS.md path (relative to workspace or absolute)"))
     sync_p.add_argument("--apply", action="store_true",
-        help=t("cli_rule_arg_apply", default="Actually write to file (default: dry-run)"))
+                        help=t("cli_rule_arg_apply", default="Actually write to file (default: dry-run)"))
     sync_p.add_argument("--actor", default="agent",
-        help=t("cli_rule_arg_actor", default="Actor identifier"))
+                        help=t("cli_rule_arg_actor", default="Actor identifier"))
 
     # insert-block：插入标记块
     insert_p = sub.add_parser(
         "insert-block", help=t("cli_rule_insert_block_desc", default="Insert marker block at end of AGENTS.md")
     )
     insert_p.add_argument("--target", default="AGENTS.md",
-        help=t("cli_rule_arg_target_insert", default="Target AGENTS.md path"))
+                          help=t("cli_rule_arg_target_insert", default="Target AGENTS.md path"))
     insert_p.add_argument("--actor", default="agent",
-        help=t("cli_rule_arg_actor", default="Actor identifier"))
+                          help=t("cli_rule_arg_actor", default="Actor identifier"))
 
     # extract：从质量发现聚合
     extract_p = sub.add_parser(
         "extract", help=t("cli_rule_extract_desc", default="Extract candidate rules from task quality findings")
     )
     extract_p.add_argument("--task-id", default="",
-        help=t("cli_rule_arg_task_id_extract", default="Task ID (empty = scan all tasks)"))
+                           help=t("cli_rule_arg_task_id_extract", default="Task ID (empty = scan all tasks)"))
     extract_p.add_argument("--min-occurrences", type=int, default=2,
-        help=t("cli_rule_arg_min_occurrences", default="Min occurrences threshold (default 2)"))
+                           help=t("cli_rule_arg_min_occurrences", default="Min occurrences threshold (default 2)"))
 
     # seed-bootstrap：种子化内置自举规则
     seed_p = sub.add_parser(
         "seed-bootstrap", help=t("cli_rule_seed_bootstrap_desc", default="Seed built-in bootstrap active rules")
     )
     seed_p.add_argument("--apply", action="store_true",
-        help=t("cli_rule_seed_bootstrap_arg_apply", default="Actually write to db (default: dry-run)"))
+                        help=t("cli_rule_seed_bootstrap_arg_apply", default="Actually write to db (default: dry-run)"))
 
     # cleanup-sync-log：清理 agent_rule_sync_log 旧记录（C6 GC）
     cleanup_p = sub.add_parser(
         "cleanup-sync-log",
-        help=t("cli_rule_cleanup_sync_log_desc", default="Cleanup old agent_rule_sync_log records")
+        help=t("cli_rule_cleanup_sync_log_desc",
+               default="Cleanup old agent_rule_sync_log records")
     )
     cleanup_p.add_argument("--older-than", type=int, default=90,
-        help=t("cli_rule_cleanup_sync_log_arg_older_than", default="Records older than N days (default 90)"))
+                           help=t("cli_rule_cleanup_sync_log_arg_older_than", default="Records older than N days (default 90)"))
     cleanup_p.add_argument("--keep-latest", type=int, default=100,
-        help=t("cli_rule_cleanup_sync_log_arg_keep_latest", default="Keep latest N records (default 100)"))
+                           help=t("cli_rule_cleanup_sync_log_arg_keep_latest", default="Keep latest N records (default 100)"))
     cleanup_p.add_argument("--apply", action="store_true",
-        help=t("cli_rule_cleanup_sync_log_arg_apply", default="Actually delete (default: dry-run)"))
+                           help=t("cli_rule_cleanup_sync_log_arg_apply", default="Actually delete (default: dry-run)"))
 
     opts = parser.parse_args(args)
 
@@ -2076,9 +2056,11 @@ def _handle_rule_candidate(opts, db):
                 evidence=evidence,
                 confidence=opts.confidence,
             )
-            cprint(t("cli.messages.rule_candidate_created", default="Created candidate: {id}", id=cid), "green")
+            cprint(t("cli.messages.rule_candidate_created",
+                   default="Created candidate: {id}", id=cid), "green")
         except Exception as e:
-            cprint(t("cli.messages.rule_candidate_create_failed", default="Create failed: {error}", error=e), "red")
+            cprint(t("cli.messages.rule_candidate_create_failed",
+                   default="Create failed: {error}", error=e), "red")
         return True
 
     elif opts.cand_action == "list":
@@ -2101,7 +2083,8 @@ def _handle_rule_candidate(opts, db):
 
     elif opts.cand_action == "accept":
         try:
-            rid = db.rule_candidate_accept(candidate_id=opts.candidate_id, reviewer=opts.reviewer)
+            rid = db.rule_candidate_accept(
+                candidate_id=opts.candidate_id, reviewer=opts.reviewer)
             cprint(t("cli.messages.rule_candidate_accepted",
                      default="Accepted: candidate={cid} -> active_rule={rid}",
                      cid=opts.candidate_id, rid=rid), "green")
@@ -2206,7 +2189,8 @@ def _handle_rule_sync(opts, db):
 
 def _handle_rule_insert_block(opts, db):
     """rule insert-block 子命令"""
-    result = db.rule_insert_agents_md_block(target_path=opts.target, actor=opts.actor)
+    result = db.rule_insert_agents_md_block(
+        target_path=opts.target, actor=opts.actor)
     if result.get("success"):
         cprint(t("cli.messages.rule_insert_block_success",
                  default="Inserted marker block: {path}", path=opts.target), "green")
@@ -2541,19 +2525,24 @@ def _handle_guardrail(args, db):
     """处理 guardrail 子命令（安全护栏）"""
     parser = argparse.ArgumentParser(
         prog="cw guardrail",
-        description=t("cli.messages.guardrail_desc", default="Production safety guardrails"),
+        description=t("cli.messages.guardrail_desc",
+                      default="Production safety guardrails"),
         epilog=_get_subcommand_epilog("guardrail"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
-    scan_p = sub.add_parser("scan", help=t("cli.messages.guardrail_scan_help", default="Scan guardrail violations"))
-    scan_p.add_argument("--file", default="", help=t("cli.messages.guardrail_file_help", default="Filter by file path prefix"))
+    scan_p = sub.add_parser("scan", help=t(
+        "cli.messages.guardrail_scan_help", default="Scan guardrail violations"))
+    scan_p.add_argument("--file", default="", help=t(
+        "cli.messages.guardrail_file_help", default="Filter by file path prefix"))
     scan_p.add_argument("--category", default="",
                         help=t("cli.messages.guardrail_category_help", default="Filter by category (db_safety/api_compat/incident)"))
 
-    rules_p = sub.add_parser("rules", help=t("cli.messages.guardrail_rules_help", default="List guardrail rules"))
-    rules_p.add_argument("--category", default="", help=t("cli.messages.guardrail_category_filter_help", default="Filter by category"))
+    rules_p = sub.add_parser("rules", help=t(
+        "cli.messages.guardrail_rules_help", default="List guardrail rules"))
+    rules_p.add_argument("--category", default="", help=t(
+        "cli.messages.guardrail_category_filter_help", default="Filter by category"))
 
     opts = parser.parse_args(args)
 
@@ -2599,7 +2588,8 @@ def _handle_guardrail(args, db):
         rules = db.guardrail_list_rules(category_filter=opts.category)
         cprint(t("cli.messages.guardrail_rules_title"), "cyan", bold=True)
         cat_info = f"（{t('cli.args.category')}: {opts.category}）" if opts.category else ""
-        print(t("cli.messages.guardrail_rules_count", count=len(rules), cat_info=cat_info))
+        print(t("cli.messages.guardrail_rules_count",
+              count=len(rules), cat_info=cat_info))
         print()
 
         if not rules:
@@ -2609,14 +2599,16 @@ def _handle_guardrail(args, db):
             for i, r in enumerate(rules, 1):
                 sev = r.get("severity", "warn")
                 icon = sev_icon.get(sev, "[?]")
-                builtin = t("cli.messages.guardrail_builtin") if r.get("is_builtin") else t("cli.messages.guardrail_custom")
+                builtin = t("cli.messages.guardrail_builtin") if r.get(
+                    "is_builtin") else t("cli.messages.guardrail_custom")
                 print(t("cli.messages.guardrail_rules_item",
                         idx=i, icon=icon, rule_id=r['rule_id'],
                         category=r.get('category', ''), builtin=builtin))
                 print(t("cli.messages.guardrail_rules_severity",
                         severity=sev, action=r.get('action', '')))
                 if r.get("description"):
-                    print(t("cli.messages.guardrail_rules_desc", desc=r['description']))
+                    print(t("cli.messages.guardrail_rules_desc",
+                          desc=r['description']))
                 print()
         print()
 
@@ -2631,12 +2623,15 @@ def _handle_impact(args, db):
     """处理 impact 子命令（变更影响半径）"""
     parser = argparse.ArgumentParser(
         prog="cw impact",
-        description=t("cli.messages.impact_desc", default="Change impact radius analysis"),
+        description=t("cli.messages.impact_desc",
+                      default="Change impact radius analysis"),
         epilog=_get_subcommand_epilog("impact"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("symbol_hash", help=t("cli.messages.impact_symbol_hash_help", default="Source symbol hash"))
-    parser.add_argument("--depth", type=int, default=3, help=t("cli.messages.impact_depth_help", default="Maximum BFS traversal depth (default: 3)"))
+    parser.add_argument("symbol_hash", help=t(
+        "cli.messages.impact_symbol_hash_help", default="Source symbol hash"))
+    parser.add_argument("--depth", type=int, default=3, help=t(
+        "cli.messages.impact_depth_help", default="Maximum BFS traversal depth (default: 3)"))
 
     opts = parser.parse_args(args)
     result = db.blast_radius(opts.symbol_hash, depth=opts.depth)
@@ -2698,7 +2693,8 @@ def _handle_review(args, db):
         epilog=_get_subcommand_epilog("review"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("symbol_hash", help=t("cli_review_arg_symbol_hash", default="Source symbol hash"))
+    parser.add_argument("symbol_hash", help=t(
+        "cli_review_arg_symbol_hash", default="Source symbol hash"))
 
     opts = parser.parse_args(args)
     report = db.review_readiness_report(opts.symbol_hash)
@@ -2706,7 +2702,8 @@ def _handle_review(args, db):
     cprint(t("cli.messages.review_title"), "cyan", bold=True)
 
     scope = report.get("impact_scope", "low")
-    scope_color = {"high": "red", "medium": "yellow", "low": "green"}.get(scope, "white")
+    scope_color = {"high": "red", "medium": "yellow",
+                   "low": "green"}.get(scope, "white")
     scope_i18n = {
         "high": t("cli.messages.review_scope_high"),
         "medium": t("cli.messages.review_scope_medium"),
@@ -2714,7 +2711,8 @@ def _handle_review(args, db):
     }.get(scope, scope)
     print(t("cli.messages.review_risk_level"), end="")
     cprint(scope_i18n, scope_color, bold=True)
-    print(t("cli.messages.review_impact_scope", count=report.get('total_impacted', 0)))
+    print(t("cli.messages.review_impact_scope",
+          count=report.get('total_impacted', 0)))
     print()
 
     # 跨层影响
@@ -2733,7 +2731,8 @@ def _handle_review(args, db):
             print(t("cli.messages.review_must_test_item",
                     idx=i, name=m.get('qualified_name', '')))
             if m.get("file_path"):
-                print(t("cli.messages.review_must_test_file", path=m['file_path']))
+                print(t("cli.messages.review_must_test_file",
+                      path=m['file_path']))
     else:
         cprint(t("cli.messages.review_none"), "dim")
     print()
@@ -2758,7 +2757,8 @@ def _handle_review(args, db):
     cov = report.get("coverage")
     if cov:
         print(t("cli.messages.review_coverage_title"))
-        print(t("cli.messages.review_coverage_fn", name=cov.get('qualified_name', '')))
+        print(t("cli.messages.review_coverage_fn",
+              name=cov.get('qualified_name', '')))
         print(t("cli.messages.review_coverage_pct",
                 pct=cov.get('coverage_pct', 0),
                 covered=cov.get('covered_lines', 0),
@@ -2780,8 +2780,10 @@ def _handle_evolution(args, db):
         epilog=_get_subcommand_epilog("evolution"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("qualified_name", help=t("cli_evolution_arg_qualified_name", default="Function qualified name"))
-    parser.add_argument("--window", default="", help=t("cli_evolution_arg_window", default="Time window (for example 30d/90d/1y)"))
+    parser.add_argument("qualified_name", help=t(
+        "cli_evolution_arg_qualified_name", default="Function qualified name"))
+    parser.add_argument("--window", default="", help=t("cli_evolution_arg_window",
+                        default="Time window (for example 30d/90d/1y)"))
     parser.add_argument("--defects", action="store_true",
                         help="Show defect correlation (changes vs defects introduced)")
 
@@ -2812,10 +2814,12 @@ def _handle_evolution(args, db):
             print("No defects found after changes.")
         return True
 
-    result = db.function_change_frequency(opts.qualified_name, time_window=opts.window)
+    result = db.function_change_frequency(
+        opts.qualified_name, time_window=opts.window)
 
     cprint(t("cli.messages.evolution_title"), "cyan", bold=True)
-    print(t("cli.messages.evolution_function", name=result.get('qualified_name', '')))
+    print(t("cli.messages.evolution_function",
+          name=result.get('qualified_name', '')))
 
     window_info = (t("cli.messages.evolution_window", window=opts.window)
                    if opts.window
@@ -2824,15 +2828,18 @@ def _handle_evolution(args, db):
             count=result.get('change_count', 0), window=window_info))
 
     if result.get("first_seen"):
-        first = time.strftime("%Y-%m-%d %H:%M", time.localtime(result["first_seen"]))
+        first = time.strftime(
+            "%Y-%m-%d %H:%M", time.localtime(result["first_seen"]))
         print(t("cli.messages.evolution_first_seen", time=first))
     if result.get("last_changed"):
-        last = time.strftime("%Y-%m-%d %H:%M", time.localtime(result["last_changed"]))
+        last = time.strftime(
+            "%Y-%m-%d %H:%M", time.localtime(result["last_changed"]))
         print(t("cli.messages.evolution_last_changed", time=last))
 
     avg_interval = result.get("avg_interval", 0)
     if avg_interval > 0:
-        print(t("cli.messages.evolution_avg_interval", days=f"{avg_interval / 86400:.1f}"))
+        print(t("cli.messages.evolution_avg_interval",
+              days=f"{avg_interval / 86400:.1f}"))
     print()
 
     # 变更者
@@ -2852,7 +2859,8 @@ def _handle_evolution(args, db):
     print(t("cli.messages.evolution_timeline_title", count=len(timeline)))
     if timeline:
         for i, tl in enumerate(timeline[:20], 1):
-            ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(tl.get("timestamp", 0)))
+            ts = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(tl.get("timestamp", 0)))
             author = (tl.get("author", "") or "unknown")[:12]
             msg = (tl.get("message", "") or "")[:50]
             commit = (tl.get("commit_hash", "") or "")[:8]
@@ -2869,7 +2877,8 @@ def _handle_evolution(args, db):
     if dist:
         print(t("cli.messages.evolution_distribution_title"))
         for period, counts in dist.items():
-            print(t("cli.messages.evolution_distribution_item", period=period, counts=counts))
+            print(t("cli.messages.evolution_distribution_item",
+                  period=period, counts=counts))
         print()
 
     return True
@@ -2883,8 +2892,10 @@ def _handle_hotspot(args, db):
         epilog=_get_subcommand_epilog("hotspot"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--module", default="", help=t("cli_hotspot_arg_module", default="Filter by module path prefix"))
-    parser.add_argument("--limit", type=int, default=20, help=t("cli_hotspot_arg_limit", default="Number of items to show (default: 20)"))
+    parser.add_argument("--module", default="", help=t(
+        "cli_hotspot_arg_module", default="Filter by module path prefix"))
+    parser.add_argument("--limit", type=int, default=20, help=t(
+        "cli_hotspot_arg_limit", default="Number of items to show (default: 20)"))
 
     opts = parser.parse_args(args)
     results = db.hotspot_evolution(module_filter=opts.module)
@@ -2949,11 +2960,14 @@ def _handle_churn(args, db):
         epilog=_get_subcommand_epilog("churn"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--module", default="", help=t("cli_churn_arg_module", default="Filter by module path prefix"))
-    parser.add_argument("--window", default="90d", help=t("cli_churn_arg_window", default="Time window (default: 90d)"))
+    parser.add_argument("--module", default="", help=t("cli_churn_arg_module",
+                        default="Filter by module path prefix"))
+    parser.add_argument("--window", default="90d",
+                        help=t("cli_churn_arg_window", default="Time window (default: 90d)"))
 
     opts = parser.parse_args(args)
-    result = db.churn_analysis(module_filter=opts.module, time_window=opts.window)
+    result = db.churn_analysis(
+        module_filter=opts.module, time_window=opts.window)
 
     cprint(t("cli.messages.churn_title"), "cyan", bold=True)
     mod_info = (t("cli.messages.hotspot_module_info", module=opts.module)
@@ -2961,9 +2975,12 @@ def _handle_churn(args, db):
     print(t("cli.messages.churn_window", window=opts.window, mod_info=mod_info))
     print()
 
-    print(t("cli.messages.churn_changed_files", count=result.get('changed_files', 0)))
-    print(t("cli.messages.churn_total_lines", count=result.get('total_lines_current', 0)))
-    print(t("cli.messages.churn_total_churned", count=result.get('total_churned_lines', 0)))
+    print(t("cli.messages.churn_changed_files",
+          count=result.get('changed_files', 0)))
+    print(t("cli.messages.churn_total_lines",
+          count=result.get('total_lines_current', 0)))
+    print(t("cli.messages.churn_total_churned",
+          count=result.get('total_churned_lines', 0)))
     churn_rate = result.get("churn_rate", 0)
     print(t("cli.messages.churn_rate", rate=f"{churn_rate * 100:.2f}"))
     print()
@@ -2977,7 +2994,8 @@ def _handle_churn(args, db):
             changes = f.get("change_count", 0)
             churned = f.get("churned_lines", 0)
             print(t("cli.messages.churn_top_file_item", idx=i, path=path))
-            print(t("cli.messages.churn_top_file_detail", changes=changes, churned=churned))
+            print(t("cli.messages.churn_top_file_detail",
+                  changes=changes, churned=churned))
     else:
         cprint(t("cli.messages.review_none"), "dim")
     print()
@@ -2991,7 +3009,8 @@ def _handle_churn(args, db):
             lines = t.get("churned_lines", 0)
             bar_len = min(int(lines / 10), 30)
             bar = "█" * bar_len
-            print(t("cli.messages.churn_trend_item", date=date, bar=bar, lines=lines))
+            print(t("cli.messages.churn_trend_item",
+                  date=date, bar=bar, lines=lines))
         if len(trend) > 20:
             print(t("cli.messages.churn_more_trend", count=len(trend) - 20))
     else:
@@ -3015,21 +3034,31 @@ def _handle_defect(args, db):
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
-    search_p = sub.add_parser("search", help=t("cli_defect_search_desc", default="Search defect patterns"))
-    search_p.add_argument("--category", default="", help=t("cli_defect_arg_category", default="Category filter (prefix match)"))
+    search_p = sub.add_parser("search", help=t(
+        "cli_defect_search_desc", default="Search defect patterns"))
+    search_p.add_argument("--category", default="", help=t(
+        "cli_defect_arg_category", default="Category filter (prefix match)"))
     search_p.add_argument("--severity", default="",
                           help=t("cli_defect_arg_severity", default="Severity filter (error/warning/info)"))
-    search_p.add_argument("--limit", type=int, default=20, help=t("cli_defect_arg_limit", default="Number of items to show"))
+    search_p.add_argument("--limit", type=int, default=20,
+                          help=t("cli_defect_arg_limit", default="Number of items to show"))
 
-    suggest_p = sub.add_parser("suggest", help=t("cli_defect_suggest_desc", default="Suggest fixes"))
-    suggest_p.add_argument("symbol_hash", help=t("cli_defect_arg_symbol_hash", default="Symbol content hash"))
-    suggest_p.add_argument("--finding", type=int, default=0, help=t("cli_defect_arg_finding", default="Specific finding ID"))
+    suggest_p = sub.add_parser("suggest", help=t(
+        "cli_defect_suggest_desc", default="Suggest fixes"))
+    suggest_p.add_argument("symbol_hash", help=t(
+        "cli_defect_arg_symbol_hash", default="Symbol content hash"))
+    suggest_p.add_argument("--finding", type=int, default=0,
+                           help=t("cli_defect_arg_finding", default="Specific finding ID"))
 
-    learn_p = sub.add_parser("learn", help=t("cli_defect_learn_desc", default="Learn defect patterns from a fix commit"))
-    learn_p.add_argument("commit_hash", help=t("cli_defect_arg_commit_hash", default="Fix commit hash"))
+    learn_p = sub.add_parser("learn", help=t(
+        "cli_defect_learn_desc", default="Learn defect patterns from a fix commit"))
+    learn_p.add_argument("commit_hash", help=t(
+        "cli_defect_arg_commit_hash", default="Fix commit hash"))
 
-    sub.add_parser("stats", help=t("cli_defect_stats_desc", default="Defect knowledge base statistics"))
-    sub.add_parser("build", help=t("cli_defect_build_desc", default="Build defect knowledge base"))
+    sub.add_parser("stats", help=t("cli_defect_stats_desc",
+                   default="Defect knowledge base statistics"))
+    sub.add_parser("build", help=t("cli_defect_build_desc",
+                   default="Build defect knowledge base"))
 
     opts = parser.parse_args(args)
     sev_icon_map = {"error": "[!]", "warning": "[~]", "info": "[i]"}
@@ -3042,10 +3071,13 @@ def _handle_defect(args, db):
         cprint(t("cli.messages.defect_search_title"), "cyan", bold=True)
         filter_parts = []
         if opts.category:
-            filter_parts.append(t("cli.messages.defect_filter_label", cat=opts.category))
+            filter_parts.append(
+                t("cli.messages.defect_filter_label", cat=opts.category))
         if opts.severity:
-            filter_parts.append(t("cli.messages.defect_severity_label", sev=opts.severity))
-        filter_str = " | ".join(filter_parts) if filter_parts else t("cli.messages.defect_filter_all")
+            filter_parts.append(
+                t("cli.messages.defect_severity_label", sev=opts.severity))
+        filter_str = " | ".join(filter_parts) if filter_parts else t(
+            "cli.messages.defect_filter_all")
         print(t("cli.messages.defect_filter_str", filter=filter_str))
         print(t("cli.messages.defect_search_count", count=len(patterns)))
         print()
@@ -3066,14 +3098,16 @@ def _handle_defect(args, db):
                 if desc:
                     print(t("cli.messages.defect_search_desc", desc=desc))
             if len(patterns) > opts.limit:
-                print(t("cli.messages.defect_search_more", count=len(patterns) - opts.limit))
+                print(t("cli.messages.defect_search_more",
+                      count=len(patterns) - opts.limit))
         print()
 
     elif opts.action == "suggest":
         result = db.suggest_fix(opts.symbol_hash, finding_id=opts.finding)
 
         cprint(t("cli.messages.defect_suggest_title"), "cyan", bold=True)
-        print(t("cli.messages.defect_suggest_symbol", hash=opts.symbol_hash[:12]))
+        print(t("cli.messages.defect_suggest_symbol",
+              hash=opts.symbol_hash[:12]))
         if opts.finding:
             print(t("cli.messages.defect_suggest_finding", id=opts.finding))
         print()
@@ -3115,8 +3149,10 @@ def _handle_defect(args, db):
         result = db.learn_defect_from_fix(opts.commit_hash)
 
         print()
-        print(t("cli.messages.defect_learn_patterns", count=result.get('learned_patterns', 0)))
-        print(t("cli.messages.defect_learn_fixes", count=result.get('learned_fixes', 0)))
+        print(t("cli.messages.defect_learn_patterns",
+              count=result.get('learned_patterns', 0)))
+        print(t("cli.messages.defect_learn_fixes",
+              count=result.get('learned_fixes', 0)))
 
         details = result.get("details", [])
         if details:
@@ -3125,15 +3161,18 @@ def _handle_defect(args, db):
             for i, d in enumerate(details[:20], 1):
                 print(t("cli.messages.defect_learn_detail_item", idx=i, detail=d))
             if len(details) > 20:
-                print(t("cli.messages.defect_learn_more_details", count=len(details) - 20))
+                print(t("cli.messages.defect_learn_more_details",
+                      count=len(details) - 20))
         print()
 
     elif opts.action == "stats":
         stats = db.defect_stats()
 
         cprint(t("cli.messages.defect_stats_title"), "cyan", bold=True)
-        print(t("cli.messages.defect_stats_patterns", count=stats.get('total_patterns', 0)))
-        print(t("cli.messages.defect_stats_fixes", count=stats.get('total_fixes', 0)))
+        print(t("cli.messages.defect_stats_patterns",
+              count=stats.get('total_patterns', 0)))
+        print(t("cli.messages.defect_stats_fixes",
+              count=stats.get('total_fixes', 0)))
         print(t("cli.messages.defect_stats_effectiveness",
                 score=f"{stats.get('avg_effectiveness', 0):.2f}"))
         print()
@@ -3150,7 +3189,8 @@ def _handle_defect(args, db):
             print(t("cli.messages.defect_stats_by_sev_title"))
             for sev, cnt in sorted(by_sev.items(), key=lambda x: -x[1]):
                 icon = sev_icon_map.get(sev, "[?]")
-                print(t("cli.messages.defect_stats_by_sev_item", icon=icon, sev=sev, cnt=cnt))
+                print(t("cli.messages.defect_stats_by_sev_item",
+                      icon=icon, sev=sev, cnt=cnt))
             print()
 
         top = stats.get("top_defects", [])
@@ -3161,7 +3201,8 @@ def _handle_defect(args, db):
                 cat = d.get("category", "")
                 cnt = d.get("case_count", 0)
                 desc = (d.get("description", "") or "")[:50]
-                print(t("cli.messages.defect_stats_top_item", idx=i, cat=cat, pid=pid, cnt=cnt))
+                print(t("cli.messages.defect_stats_top_item",
+                      idx=i, cat=cat, pid=pid, cnt=cnt))
                 if desc:
                     print(t("cli.messages.defect_search_desc", desc=desc))
             print()
@@ -3174,8 +3215,10 @@ def _handle_defect(args, db):
 
         print()
         cprint(t("cli.messages.defect_build_done"), "green")
-        print(t("cli.messages.defect_build_patterns", count=result.get('patterns_built', 0)))
-        print(t("cli.messages.defect_build_fixes", count=result.get('fixes_learned', 0)))
+        print(t("cli.messages.defect_build_patterns",
+              count=result.get('patterns_built', 0)))
+        print(t("cli.messages.defect_build_fixes",
+              count=result.get('fixes_learned', 0)))
 
         cats = result.get("categories", {})
         if cats:
@@ -3203,39 +3246,56 @@ def _handle_task(args, db):
     sub = parser.add_subparsers(dest="action", required=True)
 
     # create：创建任务和步骤
-    create_p = sub.add_parser("create", help=t("cli_task_create_desc", default="Create task and steps"))
-    create_p.add_argument("--title", required=True, help=t("cli_task_arg_title", default="Task title"))
-    create_p.add_argument("--desc", default="", help=t("cli_task_arg_desc", default="Task description"))
+    create_p = sub.add_parser("create", help=t(
+        "cli_task_create_desc", default="Create task and steps"))
+    create_p.add_argument("--title", required=True,
+                          help=t("cli_task_arg_title", default="Task title"))
+    create_p.add_argument(
+        "--desc", default="", help=t("cli_task_arg_desc", default="Task description"))
     create_p.add_argument("--steps", default="",
                           help=t("cli_task_arg_steps", default='Step JSON array, for example [{"action":"annotate","target_file":"a.py"}]'))
 
     # next：领取下一个待执行步骤
-    next_p = sub.add_parser("next", help=t("cli_task_next_desc", default="Claim current pending step"))
-    next_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    next_p = sub.add_parser("next", help=t(
+        "cli_task_next_desc", default="Claim current pending step"))
+    next_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
 
     # report：回报步骤执行结果
-    report_p = sub.add_parser("report", help=t("cli_task_report_desc", default="Report step result"))
-    report_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
-    report_p.add_argument("step_id", help=t("cli_task_arg_step_id", default="Step ID"))
-    report_p.add_argument("--result", default="", help=t("cli_task_arg_result", default="Result description"))
-    report_p.add_argument("--fail", action="store_true", help=t("cli_task_arg_fail", default="Mark as failed (default: success)"))
+    report_p = sub.add_parser("report", help=t(
+        "cli_task_report_desc", default="Report step result"))
+    report_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
+    report_p.add_argument("step_id", help=t(
+        "cli_task_arg_step_id", default="Step ID"))
+    report_p.add_argument("--result", default="",
+                          help=t("cli_task_arg_result", default="Result description"))
+    report_p.add_argument("--fail", action="store_true", help=t(
+        "cli_task_arg_fail", default="Mark as failed (default: success)"))
 
     # rollback：回滚变更
-    rollback_p = sub.add_parser("rollback", help=t("cli_task_rollback_desc", default="Roll back changes"))
-    rollback_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
-    rollback_p.add_argument("step_id", help=t("cli_task_arg_step_id_rollback", default="Step ID (used as change_id to locate rollback scope)"))
+    rollback_p = sub.add_parser("rollback", help=t(
+        "cli_task_rollback_desc", default="Roll back changes"))
+    rollback_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
+    rollback_p.add_argument("step_id", help=t("cli_task_arg_step_id_rollback",
+                            default="Step ID (used as change_id to locate rollback scope)"))
 
     # apply：审核通过（review -> applied），由其他会话的 LLM 调用
-    apply_p = sub.add_parser("apply", help=t("cli_task_apply_desc", default="Approve task (review -> applied)"))
-    apply_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    apply_p = sub.add_parser("apply", help=t(
+        "cli_task_apply_desc", default="Approve task (review -> applied)"))
+    apply_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
     apply_p.add_argument(
         "--reviewer", default="reviewer",
         help=t("cli_task_arg_reviewer", default="Reviewer identity")
     )
 
     # close：关闭任务（applied -> closed），由其他会话的 LLM 调用
-    close_p = sub.add_parser("close", help=t("cli_task_close_desc", default="Close task (applied -> closed)"))
-    close_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    close_p = sub.add_parser("close", help=t(
+        "cli_task_close_desc", default="Close task (applied -> closed)"))
+    close_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
     close_p.add_argument(
         "--reviewer", default="reviewer",
         help=t("cli_task_arg_reviewer", default="Reviewer identity")
@@ -3244,22 +3304,26 @@ def _handle_task(args, db):
     # reopen：重新打开任务（review/applied/closed -> in_progress），用于 code review 发现问题或挂新子任务
     reopen_p = sub.add_parser(
         "reopen",
-        help=t("cli_task_reopen_desc", default="Reopen task (review/applied/closed -> in_progress)"),
+        help=t("cli_task_reopen_desc",
+               default="Reopen task (review/applied/closed -> in_progress)"),
     )
-    reopen_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    reopen_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
     reopen_p.add_argument(
         "--reviewer", default="reviewer",
         help=t("cli_task_arg_reviewer", default="Reviewer identity")
     )
     reopen_p.add_argument(
         "--reason", default="",
-        help=t("cli_task_arg_reopen_reason", default="Reason for reopening (optional)")
+        help=t("cli_task_arg_reopen_reason",
+               default="Reason for reopening (optional)")
     )
 
     # capture-diff：捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
     capture_p = sub.add_parser(
         "capture-diff",
-        help=t("cli_task_capture_diff_desc", default="Capture external agent file changes into task/audit closure")
+        help=t("cli_task_capture_diff_desc",
+               default="Capture external agent file changes into task/audit closure")
     )
     # task_id 在 --auto 模式下可省略（nargs='?'）
     capture_p.add_argument(
@@ -3268,19 +3332,23 @@ def _handle_task(args, db):
     )
     capture_p.add_argument(
         "--step-id", default="",
-        help=t("cli_task_arg_step_id_capture", default="Associated step ID (optional)")
+        help=t("cli_task_arg_step_id_capture",
+               default="Associated step ID (optional)")
     )
     capture_p.add_argument(
         "--base", default="",
-        help=t("cli_task_arg_base", default="Base commit (empty = latest scan baseline)")
+        help=t("cli_task_arg_base",
+               default="Base commit (empty = latest scan baseline)")
     )
     capture_p.add_argument(
         "--dry-run", action="store_true",
-        help=t("cli_task_arg_dry_run", default="Dry-run mode: only return plan, do not write to DB")
+        help=t("cli_task_arg_dry_run",
+               default="Dry-run mode: only return plan, do not write to DB")
     )
     capture_p.add_argument(
         "--auto", action="store_true",
-        help=t("cli_task_arg_auto_capture", default="Auto mode: detect in_progress task, use HEAD~1 as base, auto apply (fail-soft)")
+        help=t("cli_task_arg_auto_capture",
+               default="Auto mode: detect in_progress task, use HEAD~1 as base, auto apply (fail-soft)")
     )
     capture_p.add_argument(
         "--skip-quality-review", action="store_true",
@@ -3298,25 +3366,31 @@ def _handle_task(args, db):
     findings_p = sub.add_parser(
         "findings", help=t("cli_task_findings_desc", default="List task quality findings")
     )
-    findings_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    findings_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
     findings_p.add_argument(
         "--status", default="open",
-        help=t("cli_task_arg_status", default="Status filter (open/resolved/wontfix/all)")
+        help=t("cli_task_arg_status",
+               default="Status filter (open/resolved/wontfix/all)")
     )
     findings_p.add_argument(
         "--severity", default="",
-        help=t("cli_task_arg_severity", default="Severity filter (info/warn/error/block)")
+        help=t("cli_task_arg_severity",
+               default="Severity filter (info/warn/error/block)")
     )
 
     # resolve-finding：解决或豁免质量门禁发现
     resolve_p = sub.add_parser(
         "resolve-finding",
-        help=t("cli_task_resolve_finding_desc", default="Resolve a task quality finding")
+        help=t("cli_task_resolve_finding_desc",
+               default="Resolve a task quality finding")
     )
-    resolve_p.add_argument("finding_id", type=int, help=t("cli_task_arg_finding_id", default="Finding ID"))
+    resolve_p.add_argument("finding_id", type=int, help=t(
+        "cli_task_arg_finding_id", default="Finding ID"))
     resolve_p.add_argument(
         "--resolution", default="fixed",
-        help=t("cli_task_arg_resolution", default="Resolution (fixed/wontfix/false_positive)")
+        help=t("cli_task_arg_resolution",
+               default="Resolution (fixed/wontfix/false_positive)")
     )
     resolve_p.add_argument(
         "--by", default="agent",
@@ -3324,18 +3398,22 @@ def _handle_task(args, db):
     )
 
     # list：列出任务（支持 --blocked 过滤）
-    list_p = sub.add_parser("list", help=t("cli_task_list_desc", default="List tasks"))
+    list_p = sub.add_parser("list", help=t(
+        "cli_task_list_desc", default="List tasks"))
     list_p.add_argument(
         "--blocked", action="store_true",
-        help=t("cli_task_arg_blocked", default="Only show tasks with blocking findings")
+        help=t("cli_task_arg_blocked",
+               default="Only show tasks with blocking findings")
     )
     list_p.add_argument(
         "--limit", type=int, default=200,
-        help=t("cli_task_arg_limit", default="Maximum number of tasks to list (default: 200)")
+        help=t("cli_task_arg_limit",
+               default="Maximum number of tasks to list (default: 200)")
     )
     list_p.add_argument(
         "--status", default="",
-        help=t("cli_task_arg_status_filter", default="Status filter (open/in_progress/review/applied/closed/reverted)")
+        help=t("cli_task_arg_status_filter",
+               default="Status filter (open/in_progress/review/applied/closed/reverted)")
     )
     list_p.add_argument(
         "--flat", action="store_true",
@@ -3343,30 +3421,38 @@ def _handle_task(args, db):
     )
 
     # show：查看任务详情（默认树形展示子任务）
-    show_p = sub.add_parser("show", help=t("cli_task_show_desc", default="Show task details (tree mode by default)"))
-    show_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    show_p = sub.add_parser("show", help=t(
+        "cli_task_show_desc", default="Show task details (tree mode by default)"))
+    show_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
     show_p.add_argument(
         "--flat", action="store_true",
-        help=t("cli_task_arg_flat_show", default="Flat mode (do not show subtasks recursively)")
+        help=t("cli_task_arg_flat_show",
+               default="Flat mode (do not show subtasks recursively)")
     )
 
     # completion-review：运行任务完成质量审查（C9 新增）
     cr_p = sub.add_parser(
         "completion-review",
-        help=t("cli_task_completion_review_desc", default="Run task completion quality review"),
+        help=t("cli_task_completion_review_desc",
+               default="Run task completion quality review"),
     )
-    cr_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    cr_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
     cr_p.add_argument(
         "--step-id", default="",
-        help=t("cli_task_arg_step_id", default="Step ID (optional, task-level review if empty)"),
+        help=t("cli_task_arg_step_id",
+               default="Step ID (optional, task-level review if empty)"),
     )
 
     # split：从 Markdown 计划拆分父子任务树（C9 新增）
     split_p = sub.add_parser(
         "split",
-        help=t("cli_task_split_desc", default="Split task into subtasks from Markdown plan"),
+        help=t("cli_task_split_desc",
+               default="Split task into subtasks from Markdown plan"),
     )
-    split_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    split_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
     split_p.add_argument(
         "--plan", required=True,
         help=t("cli_task_arg_plan_file", default="Markdown plan file path"),
@@ -3377,7 +3463,8 @@ def _handle_task(args, db):
         "status-tree",
         help=t("cli_task_status_tree_desc", default="Show task status tree"),
     )
-    st_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    st_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
 
     opts = parser.parse_args(args)
 
@@ -3431,7 +3518,8 @@ def _handle_task(args, db):
             for i, s in enumerate(steps, 1):
                 action = s.get("action", "")
                 target = s.get("target_file", "") or s.get("target_symbol", "")
-                print(t("cli.messages.task_step_item", idx=i, action=action, target=target))
+                print(t("cli.messages.task_step_item",
+                      idx=i, action=action, target=target))
         print()
         return True
 
@@ -3448,9 +3536,11 @@ def _handle_task(args, db):
         print(t("cli.messages.task_step_index", idx=result.get('step_index', 0)))
         print(t("cli.messages.task_action", action=result.get('action', '')))
         if result.get("target_file"):
-            print(t("cli.messages.task_target_file", file=result['target_file']))
+            print(t("cli.messages.task_target_file",
+                  file=result['target_file']))
         if result.get("target_symbol"):
-            print(t("cli.messages.task_target_symbol", symbol=result['target_symbol']))
+            print(t("cli.messages.task_target_symbol",
+                  symbol=result['target_symbol']))
         print(t("cli.messages.task_status", status=result.get('status', '')))
         print()
 
@@ -3469,11 +3559,14 @@ def _handle_task(args, db):
         alert = result.get("guardrail_alert")
         if alert:
             cprint(t("cli.messages.task_guardrail_alert_title"), "red", bold=True)
-            print(t("cli.messages.task_guardrail_decision", decision=alert.get('decision', '')))
-            print(t("cli.messages.task_guardrail_message", msg=alert.get('message', '')))
+            print(t("cli.messages.task_guardrail_decision",
+                  decision=alert.get('decision', '')))
+            print(t("cli.messages.task_guardrail_message",
+                  msg=alert.get('message', '')))
             findings = alert.get("findings", [])
             if findings:
-                print(t("cli.messages.task_guardrail_findings_count", count=len(findings)))
+                print(t("cli.messages.task_guardrail_findings_count",
+                      count=len(findings)))
             cprint(t("cli.messages.task_guardrail_resolve_hint"), "yellow")
             print()
 
@@ -3481,13 +3574,15 @@ def _handle_task(args, db):
         warning = result.get("guardrail_warning")
         if warning:
             cprint(t("cli.messages.task_guardrail_warning_title"), "yellow")
-            print(t("cli.messages.task_guardrail_message", msg=warning.get('message', '')))
+            print(t("cli.messages.task_guardrail_message",
+                  msg=warning.get('message', '')))
             print()
 
         # F7: 结构化指令展示（Agent 必须遵循的操作约束）
         si = result.get("structured_instruction")
         if si:
-            cprint(t("cli.messages.task_structured_instruction_title"), "cyan", bold=True)
+            cprint(t("cli.messages.task_structured_instruction_title"),
+                   "cyan", bold=True)
             if si.get("read_targets"):
                 print(t("cli.messages.task_si_read_targets"))
                 for rt in si["read_targets"]:
@@ -3500,10 +3595,12 @@ def _handle_task(args, db):
                 for c in si["constraints"]:
                     print(t("cli.messages.task_si_constraint_item", constraint=c))
             if si.get("checks"):
-                print(t("cli.messages.task_si_checks", checks=', '.join(si['checks'])))
+                print(t("cli.messages.task_si_checks",
+                      checks=', '.join(si['checks'])))
             ctx = si.get("context", {})
             if ctx.get("callers"):
-                callers_str = ", ".join(c.get("name", "") for c in ctx["callers"][:3])
+                callers_str = ", ".join(c.get("name", "")
+                                        for c in ctx["callers"][:3])
                 print(t("cli.messages.task_si_callers", callers=callers_str))
             if ctx.get("existing_summary"):
                 print(t("cli.messages.task_si_existing_summary",
@@ -3533,9 +3630,11 @@ def _handle_task(args, db):
         else:
             cprint(t("cli.messages.task_next_ready"), "green")
             print(t("cli.messages.task_next_step_id", id=result.get('step_id', '')))
-            print(t("cli.messages.task_next_action", action=result.get('action', '')))
+            print(t("cli.messages.task_next_action",
+                  action=result.get('action', '')))
             if result.get("target_file"):
-                print(t("cli.messages.task_next_target_file", file=result['target_file']))
+                print(t("cli.messages.task_next_target_file",
+                      file=result['target_file']))
         print()
         return True
 
@@ -3548,7 +3647,8 @@ def _handle_task(args, db):
 
         cprint(t("cli.messages.task_rollback_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
-        print(t("cli.messages.task_rollback_status", status=result.get('task_status', '')))
+        print(t("cli.messages.task_rollback_status",
+              status=result.get('task_status', '')))
         rolled = result.get("rolled_back_changes", [])
         print(t("cli.messages.task_rollback_count", count=len(rolled)))
         print()
@@ -3559,9 +3659,11 @@ def _handle_task(args, db):
                 fp = c.get("file_path", "")
                 restorable = c.get("restorable", False)
                 icon = "[✓]" if restorable else "[✗]"
-                print(t("cli.messages.task_rollback_item", idx=i, icon=icon, path=fp))
+                print(t("cli.messages.task_rollback_item",
+                      idx=i, icon=icon, path=fp))
                 if c.get("hash_before"):
-                    print(t("cli.messages.task_rollback_hash", hash=c['hash_before'][:12]))
+                    print(t("cli.messages.task_rollback_hash",
+                          hash=c['hash_before'][:12]))
 
         note = result.get("note", "")
         if note:
@@ -3574,10 +3676,12 @@ def _handle_task(args, db):
         # 审核通过：review -> applied（由其他会话的 LLM 调用）
         result = db.task_apply(opts.task_id, reviewer=opts.reviewer)
         if "error" in result:
-            cprint(t("cli.messages.task_apply_failed", error=result["error"]), "red")
+            cprint(t("cli.messages.task_apply_failed",
+                   error=result["error"]), "red")
             print()
             return True
-        cprint(t("cli.messages.task_apply_success", id=result["task_id"]), "green", bold=True)
+        cprint(t("cli.messages.task_apply_success",
+               id=result["task_id"]), "green", bold=True)
         print(t("cli.messages.task_status_label", status=result["status"]))
         if result.get("applied_at"):
             print(t("cli.messages.task_applied_at", ts=result["applied_at"]))
@@ -3588,10 +3692,12 @@ def _handle_task(args, db):
         # 关闭任务：applied -> closed（由其他会话的 LLM 调用）
         result = db.task_close(opts.task_id, reviewer=opts.reviewer)
         if "error" in result:
-            cprint(t("cli.messages.task_close_failed", error=result["error"]), "red")
+            cprint(t("cli.messages.task_close_failed",
+                   error=result["error"]), "red")
             print()
             return True
-        cprint(t("cli.messages.task_close_success", id=result["task_id"]), "green", bold=True)
+        cprint(t("cli.messages.task_close_success",
+               id=result["task_id"]), "green", bold=True)
         print(t("cli.messages.task_status_label", status=result["status"]))
         if result.get("closed_at"):
             print(t("cli.messages.task_closed_at", ts=result["closed_at"]))
@@ -3605,7 +3711,8 @@ def _handle_task(args, db):
             opts.task_id, reviewer=opts.reviewer, reason=opts.reason
         )
         if "error" in result:
-            cprint(t("cli.messages.task_reopen_failed", error=result["error"]), "red")
+            cprint(t("cli.messages.task_reopen_failed",
+                   error=result["error"]), "red")
             print()
             return True
         cprint(
@@ -3648,7 +3755,8 @@ def _handle_task(args, db):
                 }
 
             cprint(t("cli.messages.task_capture_diff_title"), "cyan", bold=True)
-            cprint(t("cli.messages.task_capture_diff_auto_mode"), "yellow", bold=True)
+            cprint(t("cli.messages.task_capture_diff_auto_mode"),
+                   "yellow", bold=True)
             print()
 
             if not result.get("success"):
@@ -3693,26 +3801,29 @@ def _handle_task(args, db):
                 print()
 
             print(t("cli.messages.task_capture_diff_scan_id",
-                     scan_id=result.get("scan_id", 0)))
+                    scan_id=result.get("scan_id", 0)))
             linked = result.get("linked_symbols", [])
             print(t("cli.messages.task_capture_diff_linked_count", count=len(linked)))
 
             decision = result.get("quality_decision", "")
             findings = result.get("quality_findings", [])
-            decision_color = {"pass": "green", "warn": "yellow", "block": "red"}.get(decision, "white")
+            decision_color = {"pass": "green", "warn": "yellow",
+                              "block": "red"}.get(decision, "white")
             if decision:
                 cprint(t("cli.messages.task_capture_diff_quality_decision",
                          decision=decision, count=len(findings)), decision_color)
                 for f in findings:
                     sev = f.get("severity", "info")
-                    color = {"error": "red", "block": "red", "warn": "yellow", "info": "cyan"}.get(sev, "white")
+                    color = {"error": "red", "block": "red",
+                             "warn": "yellow", "info": "cyan"}.get(sev, "white")
                     cprint(t("cli.messages.task_capture_diff_finding_item",
                              sev=sev, ftype=f.get("finding_type", ""),
                              msg=f.get("message", "")), color)
             print()
 
             next_action = result.get("next_action", "")
-            next_color = {"review": "green", "fix": "red", "noop": "yellow"}.get(next_action, "white")
+            next_color = {"review": "green", "fix": "red",
+                          "noop": "yellow"}.get(next_action, "white")
             cprint(t("cli.messages.task_capture_diff_next_action",
                      action=next_action), next_color, bold=True)
             print()
@@ -3760,20 +3871,23 @@ def _handle_task(args, db):
             return True
 
         # apply 模式：显示 scan_id / linked_symbols / quality_findings / next_action
-        print(t("cli.messages.task_capture_diff_scan_id", scan_id=result.get("scan_id", 0)))
+        print(t("cli.messages.task_capture_diff_scan_id",
+              scan_id=result.get("scan_id", 0)))
         linked = result.get("linked_symbols", [])
         print(t("cli.messages.task_capture_diff_linked_count", count=len(linked)))
 
         # 质量审查结果
         decision = result.get("quality_decision", "")
         findings = result.get("quality_findings", [])
-        decision_color = {"pass": "green", "warn": "yellow", "block": "red"}.get(decision, "white")
+        decision_color = {"pass": "green", "warn": "yellow",
+                          "block": "red"}.get(decision, "white")
         if decision:
             cprint(t("cli.messages.task_capture_diff_quality_decision",
                      decision=decision, count=len(findings)), decision_color)
             for f in findings:
                 sev = f.get("severity", "info")
-                color = {"error": "red", "block": "red", "warn": "yellow", "info": "cyan"}.get(sev, "white")
+                color = {"error": "red", "block": "red",
+                         "warn": "yellow", "info": "cyan"}.get(sev, "white")
                 cprint(t("cli.messages.task_capture_diff_finding_item",
                          sev=sev, ftype=f.get("finding_type", ""),
                          msg=f.get("message", "")), color)
@@ -3781,7 +3895,8 @@ def _handle_task(args, db):
 
         # next_action 提示
         next_action = result.get("next_action", "")
-        next_color = {"review": "green", "fix": "red", "noop": "yellow"}.get(next_action, "white")
+        next_color = {"review": "green", "fix": "red",
+                      "noop": "yellow"}.get(next_action, "white")
         cprint(t("cli.messages.task_capture_diff_next_action",
                  action=next_action), next_color, bold=True)
         print()
@@ -3804,9 +3919,11 @@ def _handle_task(args, db):
         # 按严重度分组展示
         for f in findings:
             sev = f.get("severity", "warn")
-            color = {"error": "red", "block": "red", "warn": "yellow", "info": "cyan"}.get(sev, "white")
+            color = {"error": "red", "block": "red",
+                     "warn": "yellow", "info": "cyan"}.get(sev, "white")
             status = f.get("status", "open")
-            icon = "[!]" if sev in ("error", "block") else ("[~]" if sev == "warn" else "[i]")
+            icon = "[!]" if sev in ("error", "block") else (
+                "[~]" if sev == "warn" else "[i]")
             cprint(
                 t("cli.messages.task_finding_item",
                   icon=icon, id=f.get('id', 0), sev=sev, status=status,
@@ -3857,7 +3974,8 @@ def _handle_task(args, db):
         if opts.blocked:
             cprint(t("cli.messages.task_panel_blocked_only"), "yellow")
         if opts.status:
-            cprint(t("cli.messages.task_panel_status_filter", status=opts.status), "yellow")
+            cprint(t("cli.messages.task_panel_status_filter",
+                   status=opts.status), "yellow")
         if not opts.flat:
             cprint(t("cli.messages.task_panel_tree_mode"), "yellow")
         print(t("cli.messages.task_panel_count", count=len(tasks)))
@@ -3880,7 +3998,8 @@ def _handle_task(args, db):
             title = task_node.get("title", "")
             status = task_node.get("status", "")
             # 若 --blocked，跳过无阻塞发现的任务（但仍递归其子任务）
-            blocking = db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False
+            blocking = db.task_has_blocking_findings(tid) if hasattr(
+                db, "task_has_blocking_findings") else False
             if opts.blocked and not blocking:
                 # 检查子任务是否有阻塞发现，没有则整体跳过
                 has_blocked_child = False
@@ -3896,7 +4015,8 @@ def _handle_task(args, db):
                     return
             icon = "[!]" if blocking else "[ ]"
             color = "red" if blocking else "white"
-            indent = "" if opts.flat else (t("cli.messages.task_list_indent") * depth)
+            indent = "" if opts.flat else (
+                t("cli.messages.task_list_indent") * depth)
             cprint(
                 t("cli.messages.task_panel_item",
                   icon=icon, id=tid, status=status, title=title),
@@ -3919,7 +4039,8 @@ def _handle_task(args, db):
                 if opts.blocked:
                     if not (db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False):
                         continue
-                blocking = db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False
+                blocking = db.task_has_blocking_findings(tid) if hasattr(
+                    db, "task_has_blocking_findings") else False
                 icon = "[!]" if blocking else "[ ]"
                 color = "red" if blocking else "white"
                 cprint(
@@ -3953,7 +4074,8 @@ def _handle_task(args, db):
             cprint(t("cli.messages.task_completion_review_unavailable",
                      default="Task completion review not available"), "red")
             return True
-        result = db.run_task_completion_review(opts.task_id, step_id=opts.step_id)
+        result = db.run_task_completion_review(
+            opts.task_id, step_id=opts.step_id)
         if "error" in result:
             cprint(t("cli.messages.task_completion_review_failed",
                      error=result["error"]), "red")
@@ -3961,7 +4083,8 @@ def _handle_task(args, db):
             return True
         decision = result.get("decision", "unknown")
         counts = result.get("counts", {})
-        decision_color = {"pass": "green", "warn": "yellow", "block": "red"}.get(decision, "white")
+        decision_color = {"pass": "green", "warn": "yellow",
+                          "block": "red"}.get(decision, "white")
         cprint(t("cli.messages.task_completion_review_result",
                  decision=decision), decision_color, bold=True)
         print(t("cli.messages.task_completion_review_task", task_id=opts.task_id))
@@ -3980,7 +4103,8 @@ def _handle_task(args, db):
         findings = result.get("findings", [])
         if findings:
             print()
-            print(t("cli.messages.task_completion_review_findings_title", count=len(findings)))
+            print(t("cli.messages.task_completion_review_findings_title",
+                  count=len(findings)))
             for i, f in enumerate(findings, 1):
                 sev = f.get("severity", "?")
                 msg = f.get("message", "")
@@ -4000,10 +4124,12 @@ def _handle_task(args, db):
         with open(plan_path, encoding="utf-8") as f:
             plan_md = f.read()
         # 验证任务存在
-        cur = db.conn.execute("SELECT title FROM tasks WHERE id = ?", (opts.task_id,))
+        cur = db.conn.execute(
+            "SELECT title FROM tasks WHERE id = ?", (opts.task_id,))
         task_row = cur.fetchone()
         if not task_row:
-            cprint(t("cli.messages.task_not_found", default="Task not found"), "red")
+            cprint(t("cli.messages.task_not_found",
+                   default="Task not found"), "red")
             print()
             return True
         # 解析 Markdown 计划为子任务定义
@@ -4146,7 +4272,8 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
         return True
 
     # 树形模式：使用 task_status_tree 递归展示
-    tree = db.task_status_tree(task_id) if hasattr(db, "task_status_tree") else None
+    tree = db.task_status_tree(task_id) if hasattr(
+        db, "task_status_tree") else None
     if not tree:
         print(t("cli.messages.task_show_not_found", id=task_id))
         return True
@@ -4166,11 +4293,13 @@ def _print_task_link_section(db, task_id: str):
     fail-soft：方法不存在或查询失败时静默跳过。
     """
     try:
-        commits = db.get_task_commits(task_id) if hasattr(db, "get_task_commits") else []
+        commits = db.get_task_commits(task_id) if hasattr(
+            db, "get_task_commits") else []
     except Exception:
         commits = []
     try:
-        changes = db.get_task_symbol_changes(task_id, limit=20) if hasattr(db, "get_task_symbol_changes") else []
+        changes = db.get_task_symbol_changes(task_id, limit=20) if hasattr(
+            db, "get_task_symbol_changes") else []
     except Exception:
         changes = []
 
@@ -4179,17 +4308,20 @@ def _print_task_link_section(db, task_id: str):
 
     cprint(t("cli.messages.task_show_link_title", default="── Related ──"), "cyan")
     if commits:
-        print(t("cli.messages.task_show_commits_count", default="Commits ({}):".format(len(commits)), count=len(commits)))
+        print(t("cli.messages.task_show_commits_count",
+              default="Commits ({}):".format(len(commits)), count=len(commits)))
         for c in commits:
             short = (c.get("source_commit_hash") or "")[:8]
             subject = c.get("commit_subject") or ""
             author = c.get("commit_author") or ""
             cnt = c.get("change_count", 0)
-            print("  {} {} [{} change{}]".format(short, subject, cnt, "s" if cnt != 1 else ""))
+            print("  {} {} [{} change{}]".format(
+                short, subject, cnt, "s" if cnt != 1 else ""))
             if author:
                 print("       by {}".format(author))
     if changes:
-        print(t("cli.messages.task_show_changes_count", default="Symbol changes ({}):".format(len(changes)), count=len(changes)))
+        print(t("cli.messages.task_show_changes_count",
+              default="Symbol changes ({}):".format(len(changes)), count=len(changes)))
         for ch in changes[:10]:
             qn = ch.get("qualified_name") or ch.get("symbol_name") or ""
             ct = ch.get("change_type", "")
@@ -4211,17 +4343,20 @@ def _print_task_detail_single(detail: dict, indent_depth: int = 0):
         print(t("cli.messages.task_show_desc", desc=detail['description']))
     if detail.get('creator'):
         print(t("cli.messages.task_show_creator", creator=detail['creator']))
-    created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(detail['created_at'])) if detail.get('created_at') else '?'
+    created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(
+        detail['created_at'])) if detail.get('created_at') else '?'
     print(t("cli.messages.task_show_created", time=created))
     print()
     steps = detail.get('steps', [])
     print(t("cli.messages.task_show_steps", count=len(steps)))
     for s in steps:
-        print(t("cli.messages.task_show_step", idx=s['step_index'], status=s['status'], action=s['action']))
+        print(t("cli.messages.task_show_step",
+              idx=s['step_index'], status=s['status'], action=s['action']))
         if s.get('target_file'):
             print(t("cli.messages.task_show_step_file", file=s['target_file']))
         if s.get('target_symbol'):
-            print(t("cli.messages.task_show_step_symbol", symbol=s['target_symbol']))
+            print(t("cli.messages.task_show_step_symbol",
+                  symbol=s['target_symbol']))
 
 
 def _print_task_tree_node(node: dict, depth: int = 0):
@@ -4242,7 +4377,8 @@ def _print_task_tree_node(node: dict, depth: int = 0):
             print(t("cli.messages.task_show_desc", desc=node['description']))
         if node.get('creator'):
             print(t("cli.messages.task_show_creator", creator=node['creator']))
-        created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(node['created_at'])) if node.get('created_at') else '?'
+        created = time.strftime(
+            '%Y-%m-%d %H:%M:%S', time.localtime(node['created_at'])) if node.get('created_at') else '?'
         print(t("cli.messages.task_show_created", time=created))
     else:
         # 子任务用缩进格式
@@ -4270,18 +4406,22 @@ def _print_task_tree_node(node: dict, depth: int = 0):
         steps = node.get('steps', [])
         print(t("cli.messages.task_show_steps", count=len(steps)))
         for s in steps:
-            print(t("cli.messages.task_show_step", idx=s['step_index'], status=s['status'], action=s['action']))
+            print(t("cli.messages.task_show_step",
+                  idx=s['step_index'], status=s['status'], action=s['action']))
             if s.get('target_file'):
-                print(t("cli.messages.task_show_step_file", file=s['target_file']))
+                print(t("cli.messages.task_show_step_file",
+                      file=s['target_file']))
             if s.get('target_symbol'):
-                print(t("cli.messages.task_show_step_symbol", symbol=s['target_symbol']))
+                print(t("cli.messages.task_show_step_symbol",
+                      symbol=s['target_symbol']))
 
     # 递归子任务
     subtasks = node.get('subtasks', []) or []
     if subtasks:
         if depth == 0:
             print()
-            cprint(t("cli.messages.task_show_subtasks_title", count=len(subtasks)), "cyan", bold=True)
+            cprint(t("cli.messages.task_show_subtasks_title",
+                   count=len(subtasks)), "cyan", bold=True)
         for st in subtasks:
             _print_task_tree_node(st, depth + 1)
     elif depth > 0:
@@ -4301,7 +4441,8 @@ def _handle_audit(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw audit",
-        description=t("cli_audit_desc", default="Audit chain verification and signing key rotation"),
+        description=t(
+            "cli_audit_desc", default="Audit chain verification and signing key rotation"),
         epilog=_get_subcommand_epilog("audit"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -4310,15 +4451,18 @@ def _handle_audit(args, db):
     # verify：验证审计签名链
     verify_p = sub.add_parser(
         "verify",
-        help=t("cli_audit_verify_desc", default="Verify audit chain continuity and signatures"),
+        help=t("cli_audit_verify_desc",
+               default="Verify audit chain continuity and signatures"),
     )
     verify_p.add_argument(
         "--table", default="",
-        help=t("cli_audit_verify_arg_table", default="Filter by table name (empty = all tables)"),
+        help=t("cli_audit_verify_arg_table",
+               default="Filter by table name (empty = all tables)"),
     )
     verify_p.add_argument(
         "--limit", type=int, default=1000,
-        help=t("cli_audit_verify_arg_limit", default="Maximum records to verify (default 1000)"),
+        help=t("cli_audit_verify_arg_limit",
+               default="Maximum records to verify (default 1000)"),
     )
 
     # rotate-key：轮换审计签名密钥（C7）
@@ -4394,7 +4538,8 @@ def _handle_audit(args, db):
         elif broken == 0:
             cprint(t("cli.messages.audit_verify_pass"), "green", bold=True)
         else:
-            cprint(t("cli.messages.audit_verify_fail", count=broken), "red", bold=True)
+            cprint(t("cli.messages.audit_verify_fail",
+                   count=broken), "red", bold=True)
         print()
         return True
 
@@ -4449,7 +4594,8 @@ def _handle_audit(args, db):
         print(t("cli.messages.audit_keys_count", count=len(rows)))
         print()
         for idx, r in enumerate(rows, start=1):
-            active_flag = t("cli.messages.audit_keys_active_yes") if r.get("is_active") else t("cli.messages.audit_keys_active_no")
+            active_flag = t("cli.messages.audit_keys_active_yes") if r.get(
+                "is_active") else t("cli.messages.audit_keys_active_no")
             ts = r.get("rotated_at", 0.0)
             print(t("cli.messages.audit_keys_item",
                     idx=idx,
@@ -4476,7 +4622,8 @@ def _handle_bootstrap(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw bootstrap",
-        description=t("cli_bootstrap_desc", default="Bootstrap health summary"),
+        description=t("cli_bootstrap_desc",
+                      default="Bootstrap health summary"),
         epilog=_get_subcommand_epilog("bootstrap"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -4485,7 +4632,8 @@ def _handle_bootstrap(args, db):
     # status：自举健康摘要
     status_p = sub.add_parser(
         "status",
-        help=t("cli_bootstrap_status_desc", default="Show bootstrap health summary"),
+        help=t("cli_bootstrap_status_desc",
+               default="Show bootstrap health summary"),
     )
 
     opts = parser.parse_args(args)
@@ -4501,11 +4649,13 @@ def _handle_bootstrap(args, db):
         db_stale = result.get("db_stale", False)
         current_head = result.get("current_head", "")
         if db_stale:
-            cprint(t("cli.messages.bootstrap_status_db_stale_yes"), "red", bold=True)
+            cprint(t("cli.messages.bootstrap_status_db_stale_yes"),
+                   "red", bold=True)
         else:
             cprint(t("cli.messages.bootstrap_status_db_stale_no"), "green")
         if current_head:
-            print(t("cli.messages.bootstrap_status_current_head", head=current_head[:12]))
+            print(t("cli.messages.bootstrap_status_current_head",
+                  head=current_head[:12]))
         print()
 
         # 2. 规则与候选
@@ -4583,26 +4733,31 @@ def _handle_clone(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw clone",
-        description=t("cli_clone_desc", default="Duplicate code detection (Type-1/2/3 clones)"),
+        description=t("cli_clone_desc",
+                      default="Duplicate code detection (Type-1/2/3 clones)"),
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
     # detect：检测克隆
     detect_p = sub.add_parser(
         "detect",
-        help=t("cli_clone_detect_desc", default="Detect Type-1/2/3 clones and persist to clone_pairs table"),
+        help=t("cli_clone_detect_desc",
+               default="Detect Type-1/2/3 clones and persist to clone_pairs table"),
     )
     detect_p.add_argument(
         "--file-filter", default="",
-        help=t("cli_clone_detect_arg_file_filter", default="File path prefix filter (e.g. 'src/core/'), empty for all"),
+        help=t("cli_clone_detect_arg_file_filter",
+               default="File path prefix filter (e.g. 'src/core/'), empty for all"),
     )
     detect_p.add_argument(
         "--min-lines", type=int, default=5,
-        help=t("cli_clone_detect_arg_min_lines", default="Minimum symbol line count (default: 5, skip shorter symbols)"),
+        help=t("cli_clone_detect_arg_min_lines",
+               default="Minimum symbol line count (default: 5, skip shorter symbols)"),
     )
     detect_p.add_argument(
         "--similarity", type=float, default=0.8,
-        help=t("cli_clone_detect_arg_similarity", default="Type-3 similarity threshold [0,1] (default: 0.8)"),
+        help=t("cli_clone_detect_arg_similarity",
+               default="Type-3 similarity threshold [0,1] (default: 0.8)"),
     )
 
     # list：列出克隆对
@@ -4612,15 +4767,18 @@ def _handle_clone(args, db):
     )
     list_p.add_argument(
         "--type", type=int, default=0, choices=[0, 1, 2, 3],
-        help=t("cli_clone_list_arg_type", default="Clone type filter (0=all, 1/2/3=Type-N)"),
+        help=t("cli_clone_list_arg_type",
+               default="Clone type filter (0=all, 1/2/3=Type-N)"),
     )
     list_p.add_argument(
         "--min-similarity", type=float, default=0.0,
-        help=t("cli_clone_list_arg_min_similarity", default="Minimum similarity filter (default: 0.0)"),
+        help=t("cli_clone_list_arg_min_similarity",
+               default="Minimum similarity filter (default: 0.0)"),
     )
     list_p.add_argument(
         "--limit", type=int, default=100,
-        help=t("cli_clone_list_arg_limit", default="Max results (default: 100)"),
+        help=t("cli_clone_list_arg_limit",
+               default="Max results (default: 100)"),
     )
     list_p.add_argument(
         "--symbol", default="",
@@ -4636,7 +4794,8 @@ def _handle_clone(args, db):
     # clear：清空结果
     sub.add_parser(
         "clear",
-        help=t("cli_clone_clear_desc", default="Clear all clone detection results for current workspace"),
+        help=t("cli_clone_clear_desc",
+               default="Clear all clone detection results for current workspace"),
     )
 
     opts = parser.parse_args(args)
@@ -4649,16 +4808,22 @@ def _handle_clone(args, db):
         )
         cprint(t("cli.messages.clone_detect_title"), "cyan", bold=True)
         print()
-        print(t("cli.messages.clone_detect_total_pairs", count=result.get("total_pairs", 0)))
-        print(t("cli.messages.clone_detect_type1", count=result.get("type1_pairs", 0)))
-        print(t("cli.messages.clone_detect_type2", count=result.get("type2_pairs", 0)))
-        print(t("cli.messages.clone_detect_type3", count=result.get("type3_pairs", 0)))
+        print(t("cli.messages.clone_detect_total_pairs",
+              count=result.get("total_pairs", 0)))
+        print(t("cli.messages.clone_detect_type1",
+              count=result.get("type1_pairs", 0)))
+        print(t("cli.messages.clone_detect_type2",
+              count=result.get("type2_pairs", 0)))
+        print(t("cli.messages.clone_detect_type3",
+              count=result.get("type3_pairs", 0)))
         print()
-        print(t("cli.messages.clone_detect_scanned", count=result.get("scanned_symbols", 0)))
-        print(t("cli.messages.clone_detect_skipped", count=result.get("skipped_symbols", 0)))
+        print(t("cli.messages.clone_detect_scanned",
+              count=result.get("scanned_symbols", 0)))
+        print(t("cli.messages.clone_detect_skipped",
+              count=result.get("skipped_symbols", 0)))
         print(t("cli.messages.clone_detect_threshold",
-                 sim=result.get("similarity_threshold", 0.8),
-                 min_lines=result.get("min_lines", 5)))
+                sim=result.get("similarity_threshold", 0.8),
+                min_lines=result.get("min_lines", 5)))
         return True
 
     if opts.action == "list":
@@ -4689,13 +4854,15 @@ def _handle_clone(args, db):
             limit=opts.limit,
             symbol_id=symbol_id,
         )
-        cprint(t("cli.messages.clone_list_title", count=len(clones)), "cyan", bold=True)
+        cprint(t("cli.messages.clone_list_title",
+               count=len(clones)), "cyan", bold=True)
         print()
         if not clones:
             print(t("cli.messages.clone_list_empty"))
             return True
         for c in clones:
-            type_label = {1: "Type-1", 2: "Type-2", 3: "Type-3"}.get(c["clone_type"], "?")
+            type_label = {1: "Type-1", 2: "Type-2",
+                          3: "Type-3"}.get(c["clone_type"], "?")
             print(t("cli.messages.clone_list_item",
                     type=type_label,
                     sim=c["similarity"],
@@ -4716,8 +4883,10 @@ def _handle_clone(args, db):
         print(t("cli.messages.clone_stats_type2", count=stats.get("type2", 0)))
         print(t("cli.messages.clone_stats_type3", count=stats.get("type3", 0)))
         print()
-        print(t("cli.messages.clone_stats_affected_files", count=stats.get("affected_files", 0)))
-        print(t("cli.messages.clone_stats_affected_symbols", count=stats.get("affected_symbols", 0)))
+        print(t("cli.messages.clone_stats_affected_files",
+              count=stats.get("affected_files", 0)))
+        print(t("cli.messages.clone_stats_affected_symbols",
+              count=stats.get("affected_symbols", 0)))
         return True
 
     if opts.action == "clear":
@@ -4732,7 +4901,8 @@ def _handle_vuln_blast(args, db):
     """处理 vuln-blast 子命令（漏洞爆炸半径分析）"""
     parser = argparse.ArgumentParser(
         prog="cw vuln-blast",
-        description=t("cli_vuln_blast_desc", default="Vulnerability blast radius analysis"),
+        description=t("cli_vuln_blast_desc",
+                      default="Vulnerability blast radius analysis"),
         epilog=_get_subcommand_epilog("vuln-blast"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -4756,8 +4926,10 @@ def _handle_vuln_blast(args, db):
                   "medium": "yellow", "low": "green"}.get(risk, "white")
     print(t("cli.messages.vuln_blast_risk_level"), end="")
     cprint(risk, risk_color, bold=True)
-    print(t("cli.messages.vuln_blast_total_findings", count=result.get('total_findings', 0)))
-    print(t("cli.messages.vuln_blast_impacted_symbols", count=result.get('total_impacted_symbols', 0)))
+    print(t("cli.messages.vuln_blast_total_findings",
+          count=result.get('total_findings', 0)))
+    print(t("cli.messages.vuln_blast_impacted_symbols",
+          count=result.get('total_impacted_symbols', 0)))
     print()
 
     # 过滤条件
@@ -4783,10 +4955,13 @@ def _handle_vuln_blast(args, db):
                 idx=i, icon=icon, fid=f.get('finding_id', ''), sev=sev))
         print(t("cli.messages.vuln_blast_finding_rule", rule=rule))
         if f.get("file_path"):
-            print(t("cli.messages.vuln_blast_finding_file", file=f['file_path']))
+            print(t("cli.messages.vuln_blast_finding_file",
+                  file=f['file_path']))
         if f.get("symbol_qualified"):
-            print(t("cli.messages.vuln_blast_finding_symbol", symbol=f['symbol_qualified']))
-        print(t("cli.messages.vuln_blast_finding_impacted", count=f.get('impacted_count', 0)))
+            print(t("cli.messages.vuln_blast_finding_symbol",
+                  symbol=f['symbol_qualified']))
+        print(t("cli.messages.vuln_blast_finding_impacted",
+              count=f.get('impacted_count', 0)))
 
         # 影响树（复用 blast_radius 输出）
         br = f.get("blast_radius", {})
@@ -4811,10 +4986,12 @@ def _handle_vuln_blast(args, db):
         if high_risk:
             print(t("cli.messages.vuln_blast_high_risk_title", count=len(high_risk)))
             for i, h in enumerate(high_risk[:10], 1):
-                qn = h.get("qualified_name", "") if isinstance(h, dict) else str(h)
+                qn = h.get("qualified_name", "") if isinstance(
+                    h, dict) else str(h)
                 print(t("cli.messages.vuln_blast_high_risk_item", idx=i, name=qn))
             if len(high_risk) > 10:
-                print(t("cli.messages.vuln_blast_high_risk_more", count=len(high_risk) - 10))
+                print(t("cli.messages.vuln_blast_high_risk_more",
+                      count=len(high_risk) - 10))
             print()
 
     return True
@@ -4824,7 +5001,8 @@ def _handle_symbol_history(args, db):
     """处理 symbol-history 子命令（符号 Git 变更历史）"""
     parser = argparse.ArgumentParser(
         prog="cw symbol-history",
-        description=t("cli_symbol_history_desc", default="Symbol Git change history"),
+        description=t("cli_symbol_history_desc",
+                      default="Symbol Git change history"),
         epilog=_get_subcommand_epilog("symbol-history"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -4871,12 +5049,15 @@ def _handle_symbol_history(args, db):
 
     # 三角关联段：symbol → task
     try:
-        related_tasks = db.get_symbol_change_tasks(symbol_hash=opts.symbol_hash, limit=20) if hasattr(db, "get_symbol_change_tasks") else []
+        related_tasks = db.get_symbol_change_tasks(
+            symbol_hash=opts.symbol_hash, limit=20) if hasattr(db, "get_symbol_change_tasks") else []
     except Exception:
         related_tasks = []
     if related_tasks:
-        cprint(t("cli.messages.symbol_history_tasks_title", default="── Related Tasks ──"), "cyan")
-        print(t("cli.messages.symbol_history_tasks_count", default="Tasks ({}):".format(len(related_tasks)), count=len(related_tasks)))
+        cprint(t("cli.messages.symbol_history_tasks_title",
+               default="── Related Tasks ──"), "cyan")
+        print(t("cli.messages.symbol_history_tasks_count", default="Tasks ({}):".format(
+            len(related_tasks)), count=len(related_tasks)))
         for rt in related_tasks:
             tid = rt.get("task_id", "")
             ct = rt.get("change_type", "")
@@ -4905,7 +5086,8 @@ def _handle_check_gate(args, db):
         epilog=_get_subcommand_epilog("check-gate"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("task_id", help=t("cli_check_gate_arg_task_id", default="Task ID"))
+    parser.add_argument("task_id", help=t(
+        "cli_check_gate_arg_task_id", default="Task ID"))
     parser.add_argument("--resolve", action="store_true",
                         help=t("cli_check_gate_arg_resolve", default="Mark gate findings for this task as resolved (call after agent fix)"))
     parser.add_argument("--step-id", default="",
@@ -4917,7 +5099,8 @@ def _handle_check_gate(args, db):
         result = db.resolve_gate_findings(task_id=opts.task_id)
         cprint(t("cli.messages.check_gate_resolved_title"), "cyan", bold=True)
         print(t("cli.messages.check_gate_task_id", id=opts.task_id))
-        print(t("cli.messages.check_gate_resolved_count", count=result.get('resolved_count', 0)))
+        print(t("cli.messages.check_gate_resolved_count",
+              count=result.get('resolved_count', 0)))
         print()
         return True
 
@@ -4939,7 +5122,8 @@ def _handle_check_gate(args, db):
 
     findings = result.get("findings", [])
     if findings:
-        cprint(t("cli.messages.check_gate_findings_title", count=len(findings)), "yellow")
+        cprint(t("cli.messages.check_gate_findings_title",
+               count=len(findings)), "yellow")
         sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}
         sev_color = {"ERROR": "red", "WARNING": "yellow", "INFO": "cyan"}
         for i, f in enumerate(findings, 1):
@@ -4951,7 +5135,8 @@ def _handle_check_gate(args, db):
                      file=f.get('file', ''), line=f.get('line', '?'),
                      check=f.get('check', '')), color)
             if f.get("message"):
-                print(t("cli.messages.check_gate_finding_msg", msg=f['message']))
+                print(
+                    t("cli.messages.check_gate_finding_msg", msg=f['message']))
         print()
 
     if result.get("fix_required"):
@@ -5013,7 +5198,8 @@ def _handle_gc(args, db):
     """处理 gc 子命令（代码图谱 GC）"""
     parser = argparse.ArgumentParser(
         prog="cw gc",
-        description=t("cli_gc_desc", default="Code graph GC (archive/restore/purge ignored files)"),
+        description=t(
+            "cli_gc_desc", default="Code graph GC (archive/restore/purge ignored files)"),
         epilog=_get_subcommand_epilog("gc"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -5021,7 +5207,7 @@ def _handle_gc(args, db):
 
     # gc archive
     archive_p = sub.add_parser("archive",
-                              help=t("cli_gc_archive_desc", default="Archive files matched by ignore rules"))
+                               help=t("cli_gc_archive_desc", default="Archive files matched by ignore rules"))
     archive_p.add_argument("--force", action="store_true",
                            help=t("cli_gc_archive_arg_force", default="Full GC: scan all active files (default: only pending)"))
     archive_p.add_argument("--dry-run", action="store_true",
@@ -5036,7 +5222,8 @@ def _handle_gc(args, db):
                            help=t("cli_gc_restore_arg_force", default="Restore even if still matched by ignore rules"))
 
     # gc status
-    sub.add_parser("status", help=t("cli_gc_status_desc", default="Show GC status"))
+    sub.add_parser("status", help=t(
+        "cli_gc_status_desc", default="Show GC status"))
 
     # gc purge
     purge_p = sub.add_parser("purge",
@@ -5048,8 +5235,10 @@ def _handle_gc(args, db):
     policy_p = sub.add_parser("policy",
                               help=t("cli_gc_policy_desc", default="Show or update GC retention policy"))
     policy_sub = policy_p.add_subparsers(dest="policy_action", required=True)
-    policy_sub.add_parser("show", help=t("cli_gc_policy_show_desc", default="Show current GC retention policy"))
-    policy_set = policy_sub.add_parser("set", help=t("cli_gc_policy_set_desc", default="Update GC retention policy"))
+    policy_sub.add_parser("show", help=t(
+        "cli_gc_policy_show_desc", default="Show current GC retention policy"))
+    policy_set = policy_sub.add_parser("set", help=t(
+        "cli_gc_policy_set_desc", default="Update GC retention policy"))
     _add_gc_policy_options(policy_set)
 
     # gc retention
@@ -5060,7 +5249,7 @@ def _handle_gc(args, db):
     run_group.add_argument("--dry-run", action="store_true", dest="dry_run", default=True,
                            help=t("cli_gc_retention_arg_dry_run", default="Preview only; do not modify database"))
     run_group.add_argument("--apply", action="store_false", dest="dry_run",
-                             help=t("cli_gc_retention_arg_apply", default="Apply changes; default is dry run"))
+                           help=t("cli_gc_retention_arg_apply", default="Apply changes; default is dry run"))
     retention_p.add_argument("--save-policy", action="store_true",
                              help=t("cli_gc_retention_arg_save_policy", default="Persist provided policy options before running"))
 
@@ -5093,23 +5282,23 @@ def _handle_gc(args, db):
 
     # gc archive-import（v20 新增：从备份导回历史数据到当前库）
     archive_import_p = sub.add_parser("archive-import",
-                                     help=t("cli_gc_archive_import_desc", default="Import historical data from GC backup file"))
+                                      help=t("cli_gc_archive_import_desc", default="Import historical data from GC backup file"))
     archive_import_p.add_argument("path",
-                                 help=t("cli_gc_archive_import_arg_path",
-                                        default="Backup file path (.db.gz, supports shorthand relative to gc_archives)"))
+                                  help=t("cli_gc_archive_import_arg_path",
+                                         default="Backup file path (.db.gz, supports shorthand relative to gc_archives)"))
     archive_import_p.add_argument("--file", default="",
                                   help=t("cli_gc_archive_import_arg_file", default="Relative file path to import (e.g. src/a.py)"))
     archive_import_p.add_argument("--package", default="",
                                   help=t("cli_gc_archive_import_arg_package", default="External package name to import"))
     archive_import_p.add_argument("--dry-run", action="store_true", dest="dry_run", default=True,
-                                 help=t("cli_gc_archive_import_arg_dry_run", default="Preview only (default); do not modify database"))
+                                  help=t("cli_gc_archive_import_arg_dry_run", default="Preview only (default); do not modify database"))
     archive_import_p.add_argument("--apply", action="store_false", dest="dry_run",
-                                   help=t("cli_gc_archive_import_arg_apply", default="Apply import; default is dry run"))
+                                  help=t("cli_gc_archive_import_arg_apply", default="Apply import; default is dry run"))
 
     # gc db-cleanup（扫描 ~/.callwarden/ 下所有数据库，找出孤儿数据库）
     db_cleanup_p = sub.add_parser("db-cleanup",
-                                   help=t("cli_gc_db_cleanup_desc",
-                                          default="Scan ~/.callwarden/ for orphan databases (test residue / deleted projects)"))
+                                  help=t("cli_gc_db_cleanup_desc",
+                                         default="Scan ~/.callwarden/ for orphan databases (test residue / deleted projects)"))
     db_cleanup_p.add_argument("--dry-run", action="store_true", dest="dry_run", default=True,
                               help=t("cli_gc_db_cleanup_arg_dry_run",
                                      default="Preview only (default); do not delete"))
@@ -5122,7 +5311,7 @@ def _handle_gc(args, db):
 
     # db-migrate-single：旧版多库 → 用户级单库迁移
     db_migrate_p = sub.add_parser("db-migrate-single",
-                                   help="Migrate legacy per-project databases to single user database")
+                                  help="Migrate legacy per-project databases to single user database")
     db_migrate_p.add_argument("--dry-run", action="store_true", dest="dry_run", default=True,
                               help="Preview only (default); do not write")
     db_migrate_p.add_argument("--apply", action="store_false", dest="dry_run",
@@ -5134,9 +5323,11 @@ def _handle_gc(args, db):
 
     if parsed.action == "archive":
         result = db.gc_archive(force=parsed.force, dry_run=parsed.dry_run)
-        mode = t("cli.messages.gc_mode_full") if parsed.force else t("cli.messages.gc_mode_young")
+        mode = t("cli.messages.gc_mode_full") if parsed.force else t(
+            "cli.messages.gc_mode_young")
         dry = t("cli.messages.gc_dry_run") if parsed.dry_run else ""
-        cprint(t("cli.messages.gc_archive_title", mode=mode, dry=dry), "cyan", bold=True)
+        cprint(t("cli.messages.gc_archive_title",
+               mode=mode, dry=dry), "cyan", bold=True)
         cprint(t("cli.messages.gc_scanned", count=result['scanned']), "dim")
         cprint(t("cli.messages.gc_archived", count=result['archived']),
                "yellow" if result["archived"] else "green")
@@ -5144,17 +5335,20 @@ def _handle_gc(args, db):
         if result["reasons"]:
             cprint(t("cli.messages.gc_reasons_title"), "dim")
             for reason, count in result["reasons"].items():
-                cprint(t("cli.messages.gc_reason_item", reason=reason, count=count), "dim")
+                cprint(t("cli.messages.gc_reason_item",
+                       reason=reason, count=count), "dim")
         cprint()
         return True
 
     elif parsed.action == "restore":
         result = db.gc_restore(rel_paths=parsed.path, force=parsed.force)
         cprint(t("cli.messages.gc_restore_title"), "cyan", bold=True)
-        cprint(t("cli.messages.gc_scanned_archived", count=result['scanned']), "dim")
+        cprint(t("cli.messages.gc_scanned_archived",
+               count=result['scanned']), "dim")
         cprint(t("cli.messages.gc_restored", count=result['restored']),
                "green" if result["restored"] else "dim")
-        cprint(t("cli.messages.gc_still_ignored", count=result['still_ignored']), "dim")
+        cprint(t("cli.messages.gc_still_ignored",
+               count=result['still_ignored']), "dim")
         if result["restored"] > 0:
             cprint(t("cli.messages.gc_restore_hint"), "yellow")
         cprint()
@@ -5163,20 +5357,25 @@ def _handle_gc(args, db):
     elif parsed.action == "status":
         status = db.gc_status()
         cprint(t("cli.messages.gc_status_title"), "cyan", bold=True)
-        cprint(t("cli.messages.gc_active_files", count=status['active_files']), "green")
+        cprint(t("cli.messages.gc_active_files",
+               count=status['active_files']), "green")
         cprint(t("cli.messages.gc_archived_files", count=status['archived_files']),
                "yellow" if status["archived_files"] else "dim")
-        cprint(t("cli.messages.gc_deleted_files", count=status['deleted_files']), "dim")
+        cprint(t("cli.messages.gc_deleted_files",
+               count=status['deleted_files']), "dim")
         ratio = f"{status['archive_ratio']*100:.1f}"
         cprint(t("cli.messages.gc_archive_ratio", ratio=ratio), "dim")
         if status["archived_files"] > 0:
-            cprint(t("cli.messages.gc_archived_symbols", count=status['archived_symbols']), "dim")
-            cprint(t("cli.messages.gc_archived_calls", count=status['archived_calls']), "dim")
+            cprint(t("cli.messages.gc_archived_symbols",
+                   count=status['archived_symbols']), "dim")
+            cprint(t("cli.messages.gc_archived_calls",
+                   count=status['archived_calls']), "dim")
         if status["recent_archives"]:
             cprint(t("cli.messages.gc_recent_archives"), "dim")
             for r in status["recent_archives"]:
                 from datetime import datetime
-                ts = datetime.fromtimestamp(r["archived_at"]).strftime("%Y-%m-%d %H:%M")
+                ts = datetime.fromtimestamp(
+                    r["archived_at"]).strftime("%Y-%m-%d %H:%M")
                 cprint(t("cli.messages.gc_recent_archive_item",
                          ts=ts, path=r['rel_path'],
                          count=r['symbol_count'], reason=r['archive_reason']), "dim")
@@ -5188,8 +5387,10 @@ def _handle_gc(args, db):
         cprint(t("cli.messages.gc_purge_title"), "cyan", bold=True)
         cprint(t("cli.messages.gc_purged_files", count=result['purged_files']),
                "yellow" if result["purged_files"] else "green")
-        cprint(t("cli.messages.gc_purged_symbols", count=result['purged_symbols']), "dim")
-        cprint(t("cli.messages.gc_purged_calls", count=result['purged_calls']), "dim")
+        cprint(t("cli.messages.gc_purged_symbols",
+               count=result['purged_symbols']), "dim")
+        cprint(t("cli.messages.gc_purged_calls",
+               count=result['purged_calls']), "dim")
         cprint()
         return True
 
@@ -5220,18 +5421,25 @@ def _handle_gc(args, db):
             save_policy=parsed.save_policy,
         )
         cprint(t("cli.messages.gc_retention_title"), "cyan", bold=True)
-        mode_key = "cli.messages.gc_retention_mode_dry_run" if result["dry_run"] else "cli.messages.gc_retention_mode_apply"
+        mode_key = "cli.messages.gc_retention_mode_dry_run" if result[
+            "dry_run"] else "cli.messages.gc_retention_mode_apply"
         cprint(t(mode_key), "yellow" if result["dry_run"] else "green")
         if result["saved_policy"]:
             cprint(t("cli.messages.gc_retention_policy_saved"), "green")
-        cprint(t("cli.messages.gc_retention_candidate_versions", count=result["candidate_file_versions"]), "dim")
-        cprint(t("cli.messages.gc_retention_candidate_external", count=result["candidate_external_packages"]), "dim")
+        cprint(t("cli.messages.gc_retention_candidate_versions",
+               count=result["candidate_file_versions"]), "dim")
+        cprint(t("cli.messages.gc_retention_candidate_external",
+               count=result["candidate_external_packages"]), "dim")
         if result["backup_path"]:
-            cprint(t("cli.messages.gc_retention_backup", path=result["backup_path"]), "dim")
+            cprint(t("cli.messages.gc_retention_backup",
+                   path=result["backup_path"]), "dim")
         if not result["dry_run"]:
-            cprint(t("cli.messages.gc_retention_deleted_versions", count=result["deleted_file_versions"]), "dim")
-            cprint(t("cli.messages.gc_retention_deleted_external", count=result["deleted_external_symbols"]), "dim")
-            cprint(t("cli.messages.gc_retention_deleted_orphans", count=result["deleted_orphan_symbol_contents"]), "dim")
+            cprint(t("cli.messages.gc_retention_deleted_versions",
+                   count=result["deleted_file_versions"]), "dim")
+            cprint(t("cli.messages.gc_retention_deleted_external",
+                   count=result["deleted_external_symbols"]), "dim")
+            cprint(t("cli.messages.gc_retention_deleted_orphans",
+                   count=result["deleted_orphan_symbol_contents"]), "dim")
 
         # v20 新增：Top N 收益预估（dry-run 和 apply 都展示）
         estimate = result.get("estimate") or {}
@@ -5251,7 +5459,8 @@ def _handle_gc(args, db):
                 ep=approx.get("external_packages", 0),
             ), "dim")
             if affected_files:
-                cprint(t("cli.messages.gc_retention_estimate_files_top", top_n=len(affected_files)), "dim")
+                cprint(t("cli.messages.gc_retention_estimate_files_top",
+                       top_n=len(affected_files)), "dim")
                 for idx, item in enumerate(affected_files, 1):
                     newest = item.get("newest_parsed") or 0
                     cprint(t(
@@ -5264,7 +5473,8 @@ def _handle_gc(args, db):
             else:
                 cprint(t("cli.messages.gc_retention_estimate_files_empty"), "dim")
             if external_top:
-                cprint(t("cli.messages.gc_retention_estimate_pkgs_top", top_n=len(external_top)), "dim")
+                cprint(t("cli.messages.gc_retention_estimate_pkgs_top",
+                       top_n=len(external_top)), "dim")
                 for idx, item in enumerate(external_top, 1):
                     last = item.get("last_touch") or 0
                     cprint(t(
@@ -5292,8 +5502,10 @@ def _handle_gc(args, db):
             return True
         from datetime import datetime
         for idx, item in enumerate(items, 1):
-            cprint(t("cli.messages.gc_archive_list_item", idx=idx, name=item["name"]), "dim")
-            ts = datetime.fromtimestamp(item["mtime"]).strftime("%Y-%m-%d %H:%M:%S")
+            cprint(t("cli.messages.gc_archive_list_item",
+                   idx=idx, name=item["name"]), "dim")
+            ts = datetime.fromtimestamp(
+                item["mtime"]).strftime("%Y-%m-%d %H:%M:%S")
             size_str = _format_bytes(item["size"])
             cprint(t("cli.messages.gc_archive_list_size",
                      size=size_str, reason=item["reason"]), "dim")
@@ -5309,9 +5521,12 @@ def _handle_gc(args, db):
             cprint(str(e), "red")
             return False
         cprint(t("cli.messages.gc_archive_inspect_title"), "cyan", bold=True)
-        cprint(t("cli.messages.gc_archive_inspect_file", name=info["name"]), "dim")
-        cprint(t("cli.messages.gc_archive_inspect_size", size=_format_bytes(info["size"])), "dim")
-        cprint(t("cli.messages.gc_archive_inspect_schema_version", version=info["schema_version"]), "dim")
+        cprint(t("cli.messages.gc_archive_inspect_file",
+               name=info["name"]), "dim")
+        cprint(t("cli.messages.gc_archive_inspect_size",
+               size=_format_bytes(info["size"])), "dim")
+        cprint(t("cli.messages.gc_archive_inspect_schema_version",
+               version=info["schema_version"]), "dim")
         cprint(t("cli.messages.gc_archive_inspect_tables_title"), "dim")
         for tb in info["tables"]:
             cprint(t("cli.messages.gc_archive_inspect_table_item",
@@ -5341,22 +5556,27 @@ def _handle_gc(args, db):
             cprint()
             return True
         for idx, row in enumerate(rows, 1):
-            dry_label = t("cli.messages.gc_audit_dry_run_yes") if row["dry_run"] else t("cli.messages.gc_audit_dry_run_no")
+            dry_label = t("cli.messages.gc_audit_dry_run_yes") if row["dry_run"] else t(
+                "cli.messages.gc_audit_dry_run_no")
             cprint(t("cli.messages.gc_audit_list_item",
                      idx=idx, id=row["id"], operation=row["operation"],
                      status=row["status"], dry_run=dry_label), "dim")
-            ts = datetime.fromtimestamp(row["started_at"]).strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.fromtimestamp(
+                row["started_at"]).strftime("%Y-%m-%d %H:%M:%S")
             cprint(t("cli.messages.gc_audit_list_started", ts=ts), "dim")
             if row.get("backup_path"):
-                cprint(t("cli.messages.gc_audit_list_backup", path=row["backup_path"]), "dim")
+                cprint(t("cli.messages.gc_audit_list_backup",
+                       path=row["backup_path"]), "dim")
             cands = row.get("candidate_counts") or {}
             if cands:
-                cprint(t("cli.messages.gc_audit_list_candidates", candidates=cands), "dim")
+                cprint(t("cli.messages.gc_audit_list_candidates",
+                       candidates=cands), "dim")
             dels = row.get("deleted_counts") or {}
             if dels:
                 cprint(t("cli.messages.gc_audit_list_deleted", deleted=dels), "dim")
             if row["status"] == "failed" and row.get("error"):
-                cprint(t("cli.messages.gc_audit_list_error", error=row["error"]), "red")
+                cprint(t("cli.messages.gc_audit_list_error",
+                       error=row["error"]), "red")
         cprint()
         return True
 
@@ -5369,36 +5589,45 @@ def _handle_gc(args, db):
             return False
         cprint(t("cli.messages.gc_audit_show_title"), "cyan", bold=True)
         cprint(t("cli.messages.gc_audit_show_id", id=row["id"]), "dim")
-        cprint(t("cli.messages.gc_audit_show_operation", operation=row["operation"]), "dim")
-        cprint(t("cli.messages.gc_audit_show_status", status=row["status"]), "dim")
+        cprint(t("cli.messages.gc_audit_show_operation",
+               operation=row["operation"]), "dim")
+        cprint(t("cli.messages.gc_audit_show_status",
+               status=row["status"]), "dim")
         cprint(t("cli.messages.gc_audit_show_dry_run",
                  value=str(row["dry_run"]).lower()), "dim")
-        cprint(t("cli.messages.gc_audit_show_operator", operator=row["operator"]), "dim")
-        started_ts = datetime.fromtimestamp(row["started_at"]).strftime("%Y-%m-%d %H:%M:%S")
+        cprint(t("cli.messages.gc_audit_show_operator",
+               operator=row["operator"]), "dim")
+        started_ts = datetime.fromtimestamp(
+            row["started_at"]).strftime("%Y-%m-%d %H:%M:%S")
         cprint(t("cli.messages.gc_audit_show_started", ts=started_ts), "dim")
         if row.get("completed_at"):
-            completed_ts = datetime.fromtimestamp(row["completed_at"]).strftime("%Y-%m-%d %H:%M:%S")
+            completed_ts = datetime.fromtimestamp(
+                row["completed_at"]).strftime("%Y-%m-%d %H:%M:%S")
             cprint(t("cli.messages.gc_audit_show_completed", ts=completed_ts), "dim")
         policy = row.get("policy_json") or {}
         if policy:
             cprint(t("cli.messages.gc_audit_show_policy"), "dim")
             for k, v in policy.items():
-                cprint(t("cli.messages.gc_audit_show_policy_item", key=k, value=v), "dim")
+                cprint(t("cli.messages.gc_audit_show_policy_item",
+                       key=k, value=v), "dim")
         cands = row.get("candidate_counts") or {}
         if cands:
             cprint(t("cli.messages.gc_audit_show_candidates"), "dim")
             for k, v in cands.items():
-                cprint(t("cli.messages.gc_audit_show_count_item", key=k, count=v), "dim")
+                cprint(t("cli.messages.gc_audit_show_count_item",
+                       key=k, count=v), "dim")
         dels = row.get("deleted_counts") or {}
         if dels:
             cprint(t("cli.messages.gc_audit_show_deleted"), "dim")
             for k, v in dels.items():
-                cprint(t("cli.messages.gc_audit_show_count_item", key=k, count=v), "dim")
+                cprint(t("cli.messages.gc_audit_show_count_item",
+                       key=k, count=v), "dim")
         if row.get("backup_path"):
             cprint(t("cli.messages.gc_audit_show_backup",
                      path=row["backup_path"], size=row.get("backup_size", 0)), "dim")
         if row["status"] == "failed" and row.get("error"):
-            cprint(t("cli.messages.gc_audit_show_error", error=row["error"]), "red")
+            cprint(t("cli.messages.gc_audit_show_error",
+                   error=row["error"]), "red")
         cprint()
         return True
 
@@ -5415,29 +5644,34 @@ def _handle_gc(args, db):
             cprint(str(e), "red")
             return False
         cprint(t("cli.messages.gc_archive_import_title"), "cyan", bold=True)
-        mode_key = "cli.messages.gc_archive_import_mode_dry_run" if result["dry_run"] else "cli.messages.gc_archive_import_mode_apply"
+        mode_key = "cli.messages.gc_archive_import_mode_dry_run" if result[
+            "dry_run"] else "cli.messages.gc_archive_import_mode_apply"
         cprint(t(mode_key), "yellow" if result["dry_run"] else "green")
         cprint(t("cli.messages.gc_archive_import_target",
                  target=result["target"], value=result["target_value"]), "dim")
-        cprint(t("cli.messages.gc_archive_import_path", path=result["path"]), "dim")
+        cprint(t("cli.messages.gc_archive_import_path",
+               path=result["path"]), "dim")
         if result.get("errors"):
             cprint(t("cli.messages.gc_archive_import_errors_title"), "red")
             for err in result["errors"]:
-                cprint(t("cli.messages.gc_archive_import_error_item", error=err), "red")
+                cprint(
+                    t("cli.messages.gc_archive_import_error_item", error=err), "red")
         # 导入明细
         imported = result.get("imported") or {}
         if imported:
             cprint(t("cli.messages.gc_archive_import_imported_title"), "green")
             for k, v in imported.items():
                 if v > 0:
-                    cprint(t("cli.messages.gc_archive_import_count_item", key=k, count=v), "green")
+                    cprint(t("cli.messages.gc_archive_import_count_item",
+                           key=k, count=v), "green")
         # 跳过明细
         skipped = result.get("skipped") or {}
         if any(v > 0 for v in skipped.values()):
             cprint(t("cli.messages.gc_archive_import_skipped_title"), "yellow")
             for k, v in skipped.items():
                 if v > 0:
-                    cprint(t("cli.messages.gc_archive_import_count_item", key=k, count=v), "yellow")
+                    cprint(t("cli.messages.gc_archive_import_count_item",
+                           key=k, count=v), "yellow")
         cprint()
         return True
 
@@ -5464,7 +5698,8 @@ def _handle_db_migrate_single(dry_run: bool = True, backup: bool = True) -> bool
     from ..db.db_migrate import migrate_to_single_db
 
     mode = "[DRY-RUN] " if dry_run else ""
-    cprint(f"{mode}Database migration: legacy per-project → single user database", "cyan", bold=True)
+    cprint(f"{mode}Database migration: legacy per-project → single user database",
+           "cyan", bold=True)
 
     result = migrate_to_single_db(dry_run=dry_run, backup=backup)
 
@@ -5477,10 +5712,14 @@ def _handle_db_migrate_single(dry_run: bool = True, backup: bool = True) -> bool
     for d in result["legacy_dbs"]:
         cprint(f"    {d}", "dim")
 
-    cprint(f"  Workspaces migrated: {result['migrated_workspaces']}", "green" if result["migrated_workspaces"] else "dim")
-    cprint(f"  Workspaces skipped (root_path exists): {result['skipped_workspaces']}", "dim")
-    cprint(f"  Tasks migrated: {result['migrated_tasks']}", "green" if result["migrated_tasks"] else "dim")
-    cprint(f"  Task steps migrated: {result['migrated_steps']}", "green" if result["migrated_steps"] else "dim")
+    cprint(f"  Workspaces migrated: {result['migrated_workspaces']}",
+           "green" if result["migrated_workspaces"] else "dim")
+    cprint(
+        f"  Workspaces skipped (root_path exists): {result['skipped_workspaces']}", "dim")
+    cprint(f"  Tasks migrated: {result['migrated_tasks']}",
+           "green" if result["migrated_tasks"] else "dim")
+    cprint(f"  Task steps migrated: {result['migrated_steps']}",
+           "green" if result["migrated_steps"] else "dim")
 
     if result["errors"]:
         cprint("  Errors:", "yellow")
@@ -5491,10 +5730,13 @@ def _handle_db_migrate_single(dry_run: bool = True, backup: bool = True) -> bool
         cprint(f"  Backup created: {result['backup_path']}", "dim")
 
     if dry_run:
-        cprint("  [DRY-RUN] No data written. Run with --apply to migrate.", "yellow")
+        cprint(
+            "  [DRY-RUN] No data written. Run with --apply to migrate.", "yellow")
     else:
-        cprint("  Migration complete. Run 'cw refresh --all' to rebuild symbol graph.", "green")
-        cprint("  Legacy databases kept for backup. Delete manually after verification:", "dim")
+        cprint(
+            "  Migration complete. Run 'cw refresh --all' to rebuild symbol graph.", "green")
+        cprint(
+            "  Legacy databases kept for backup. Delete manually after verification:", "dim")
         for d in result["legacy_dbs"]:
             cprint(f"    rm -rf {d}", "dim")
 
@@ -5534,7 +5776,8 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
         "pytest-",
     )
 
-    current_norm = norm_path(os.path.abspath(current_workspace_root)) if current_workspace_root else ""
+    current_norm = norm_path(os.path.abspath(
+        current_workspace_root)) if current_workspace_root else ""
 
     def _is_orphan(root_path: str) -> tuple:
         """判断 workspace root_path 是否为孤儿
@@ -5616,7 +5859,8 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
             root_path = row["root_path"] or ""
 
             if all_but_current:
-                rp_norm = norm_path(os.path.abspath(root_path)) if root_path else ""
+                rp_norm = norm_path(os.path.abspath(
+                    root_path)) if root_path else ""
                 if current_norm and rp_norm == current_norm:
                     is_orphan = False
                     reason = None
@@ -5663,7 +5907,8 @@ def _handle_gc_db_cleanup(dry_run: bool = True, all_but_current: bool = False,
     if valid:
         cprint("Valid databases (will keep):", "green")
         for idx, entry in enumerate(valid, 1):
-            cprint(f"  {idx}. {entry['hash']} {entry['name']} -> {entry['root_path']}", "dim")
+            cprint(
+                f"  {idx}. {entry['hash']} {entry['name']} -> {entry['root_path']}", "dim")
         cprint()
 
     # 显示孤儿数据库
@@ -5710,12 +5955,18 @@ def _add_gc_policy_options(parser):
 def _print_gc_policy(policy):
     """打印 GC policy。"""
     cprint(t("cli.messages.gc_policy_title"), "cyan", bold=True)
-    cprint(t("cli.messages.gc_policy_older_than", count=policy["older_than_days"]), "dim")
-    cprint(t("cli.messages.gc_policy_keep_versions", count=policy["keep_versions"]), "dim")
-    cprint(t("cli.messages.gc_policy_include_external", value=str(policy["include_external"]).lower()), "dim")
-    cprint(t("cli.messages.gc_policy_external_stale_days", count=policy["external_stale_days"]), "dim")
-    cprint(t("cli.messages.gc_policy_backup", value=str(policy["backup_enabled"]).lower()), "dim")
-    cprint(t("cli.messages.gc_policy_vacuum", value=str(policy["vacuum_enabled"]).lower()), "dim")
+    cprint(t("cli.messages.gc_policy_older_than",
+           count=policy["older_than_days"]), "dim")
+    cprint(t("cli.messages.gc_policy_keep_versions",
+           count=policy["keep_versions"]), "dim")
+    cprint(t("cli.messages.gc_policy_include_external",
+           value=str(policy["include_external"]).lower()), "dim")
+    cprint(t("cli.messages.gc_policy_external_stale_days",
+           count=policy["external_stale_days"]), "dim")
+    cprint(t("cli.messages.gc_policy_backup", value=str(
+        policy["backup_enabled"]).lower()), "dim")
+    cprint(t("cli.messages.gc_policy_vacuum", value=str(
+        policy["vacuum_enabled"]).lower()), "dim")
     cprint()
 
 
@@ -5775,7 +6026,8 @@ def _handle_fts(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw fts",
-        description=t("cli_fts_desc", default="FTS5 full-text index maintenance (rebuild/status)"),
+        description=t(
+            "cli_fts_desc", default="FTS5 full-text index maintenance (rebuild/status)"),
         epilog=_get_subcommand_epilog("fts"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -5809,7 +6061,8 @@ def _handle_fts(args, db):
     elif opts.action == "status":
         status = db.get_fts_status()
         if not status["exists"]:
-            print(t("cli_fts_not_exist", default="symbols_fts table does not exist (database version too low or not initialized)"))
+            print(t("cli_fts_not_exist",
+                  default="symbols_fts table does not exist (database version too low or not initialized)"))
             return True
         print(t("cli_fts_status_symbols",
                 default="Symbols: {count}",
@@ -5821,7 +6074,8 @@ def _handle_fts(args, db):
                 default="Triggers: {triggers}",
                 triggers=", ".join(status["triggers"]) if status["triggers"] else "(none)"))
         if status["consistent"]:
-            print(t("cli_fts_status_consistent", default="✓ Consistent (fts_rows == symbols_count)"))
+            print(t("cli_fts_status_consistent",
+                  default="✓ Consistent (fts_rows == symbols_count)"))
         else:
             print(t("cli_fts_status_inconsistent",
                     default="✗ Inconsistent (symbols={symbols}, fts_rows={fts_rows})",
@@ -5845,12 +6099,13 @@ def _handle_doctor(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw doctor",
-        description=t("cli.messages.doctor_desc", default="Environment diagnostics and maintenance"),
+        description=t("cli.messages.doctor_desc",
+                      default="Environment diagnostics and maintenance"),
         epilog=_get_subcommand_epilog("doctor"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--add-defender-exclusion", action="store_true",
-                       help=t("cli.messages.doctor_add_defender_help", default="Add .callwarden directory to Windows Defender exclusions (requires admin privileges)"))
+                        help=t("cli.messages.doctor_add_defender_help", default="Add .callwarden directory to Windows Defender exclusions (requires admin privileges)"))
     opts = parser.parse_args(args)
 
     if opts.add_defender_exclusion:
@@ -5861,16 +6116,20 @@ def _handle_doctor(args, db):
 
 def _doctor_check(db):
     """环境诊断：检查数据库状态、性能配置、Defender 状态等"""
-    cprint(t("cli.messages.doctor_title", default="=== Call Warden Environment Diagnostics ==="), "cyan", bold=True)
+    cprint(t("cli.messages.doctor_title",
+           default="=== Call Warden Environment Diagnostics ==="), "cyan", bold=True)
     print()
 
     # 1. 数据库基本信息
-    cprint(t("cli.messages.doctor_db_info_title", default="[1] Database information"), "yellow", bold=True)
+    cprint(t("cli.messages.doctor_db_info_title",
+           default="[1] Database information"), "yellow", bold=True)
     db_path = db.db_path
     import os
     import sqlite3
-    print(t("cli.messages.doctor_db_path", default="  Path: {path}", path=db_path))
-    print(t("cli.messages.doctor_db_size", default="  Size: {size:.2f} MB", size=os.path.getsize(db_path) / 1024 / 1024))
+    print(t("cli.messages.doctor_db_path",
+          default="  Path: {path}", path=db_path))
+    print(t("cli.messages.doctor_db_size",
+          default="  Size: {size:.2f} MB", size=os.path.getsize(db_path) / 1024 / 1024))
 
     # PRAGMA 检查
     # 注意：SQLite 返回值可能是小写或数字（如 wal 而非 WAL，1 而非 NORMAL）
@@ -5893,35 +6152,45 @@ def _doctor_check(db):
         actual_str = str(actual)
         # 应用别名映射
         aliases = pragma_aliases.get(key, {})
-        actual_normalized = aliases.get(actual_str.lower(), aliases.get(actual_str, actual_str))
-        expected_normalized = aliases.get(expected.lower(), aliases.get(expected, expected))
+        actual_normalized = aliases.get(
+            actual_str.lower(), aliases.get(actual_str, actual_str))
+        expected_normalized = aliases.get(
+            expected.lower(), aliases.get(expected, expected))
         ok = actual_normalized == expected_normalized
         mark = "✓" if ok else "✗"
         color = "green" if ok else "red"
-        cprint(t("cli.messages.doctor_pragma_item", default="    {mark} {key} = {actual} (expected: {expected})", mark=mark, key=key, actual=actual_str, expected=expected), color)
+        cprint(t("cli.messages.doctor_pragma_item",
+               default="    {mark} {key} = {actual} (expected: {expected})", mark=mark, key=key, actual=actual_str, expected=expected), color)
         if not ok:
             all_pragma_ok = False
     print()
 
     # 2. WAL 文件检查
-    cprint(t("cli.messages.doctor_wal_title", default="[2] WAL file status"), "yellow", bold=True)
+    cprint(t("cli.messages.doctor_wal_title",
+           default="[2] WAL file status"), "yellow", bold=True)
     wal_path = db_path + "-wal"
     shm_path = db_path + "-shm"
-    print(t("cli.messages.doctor_wal_file", default="  WAL file: {path}", path=wal_path))
+    print(t("cli.messages.doctor_wal_file",
+          default="  WAL file: {path}", path=wal_path))
     if os.path.exists(wal_path):
         wal_size = os.path.getsize(wal_path) / 1024
-        print(t("cli.messages.doctor_wal_size", default="    Size: {size:.1f} KB", size=wal_size))
+        print(t("cli.messages.doctor_wal_size",
+              default="    Size: {size:.1f} KB", size=wal_size))
         if wal_size > 1024 * 10:  # > 10MB
-            cprint(t("cli.messages.doctor_wal_large", default="    ! WAL file is large; consider running cw doctor --checkpoint"), "yellow")
+            cprint(t("cli.messages.doctor_wal_large",
+                   default="    ! WAL file is large; consider running cw doctor --checkpoint"), "yellow")
         else:
-            print(t("cli.messages.doctor_wal_size_ok", default="    ✓ Size is normal"))
+            print(t("cli.messages.doctor_wal_size_ok",
+                  default="    ✓ Size is normal"))
     else:
-        print(t("cli.messages.doctor_wal_missing_ok", default="    ✓ Not present (checkpointed)"))
+        print(t("cli.messages.doctor_wal_missing_ok",
+              default="    ✓ Not present (checkpointed)"))
     print()
 
     # 3. Defender 排除项检查（仅 Windows）
     if sys.platform == "win32":
-        cprint(t("cli.messages.doctor_defender_title", default="[3] Windows Defender exclusions"), "yellow", bold=True)
+        cprint(t("cli.messages.doctor_defender_title",
+               default="[3] Windows Defender exclusions"), "yellow", bold=True)
         callwarden_dir = os.path.dirname(db_path)
         try:
             import subprocess
@@ -5932,21 +6201,28 @@ def _doctor_check(db):
             )
             exclusions = result.stdout.strip()
             if callwarden_dir.lower() in exclusions.lower():
-                cprint(t("cli.messages.doctor_defender_added", default="  ✓ Exclusion already added: {path}", path=callwarden_dir), "green")
+                cprint(t("cli.messages.doctor_defender_added",
+                       default="  ✓ Exclusion already added: {path}", path=callwarden_dir), "green")
             else:
-                cprint(t("cli.messages.doctor_defender_missing", default="  ✗ Exclusion missing (recommended to avoid intermittent SQLITE_CANTOPEN)"), "red")
-                cprint(t("cli.messages.doctor_defender_dir", default="    Exclusion directory: {path}", path=callwarden_dir), "dim")
-                cprint(t("cli.messages.doctor_defender_command", default="    Add command (requires admin):"), "dim")
+                cprint(t("cli.messages.doctor_defender_missing",
+                       default="  ✗ Exclusion missing (recommended to avoid intermittent SQLITE_CANTOPEN)"), "red")
+                cprint(t("cli.messages.doctor_defender_dir",
+                       default="    Exclusion directory: {path}", path=callwarden_dir), "dim")
+                cprint(t("cli.messages.doctor_defender_command",
+                       default="    Add command (requires admin):"), "dim")
                 cprint(f"      cw doctor --add-defender-exclusion", "dim")
-                cprint(t("cli.messages.doctor_defender_manual", default="    Or run manually:"), "dim")
+                cprint(t("cli.messages.doctor_defender_manual",
+                       default="    Or run manually:"), "dim")
                 cprint(f"      powershell -Command \"Add-MpPreference -ExclusionPath '{callwarden_dir}'\"",
                        "dim")
         except Exception as e:
-            cprint(t("cli.messages.doctor_defender_check_failed", default="  ? Could not check Defender status: {error}", error=e), "yellow")
+            cprint(t("cli.messages.doctor_defender_check_failed",
+                   default="  ? Could not check Defender status: {error}", error=e), "yellow")
         print()
 
     # 4. 快速连接测试
-    cprint(t("cli.messages.doctor_connection_title", default="[4] Database connection test"), "yellow", bold=True)
+    cprint(t("cli.messages.doctor_connection_title",
+           default="[4] Database connection test"), "yellow", bold=True)
     import time
     success = 0
     fail = 0
@@ -5960,19 +6236,25 @@ def _doctor_check(db):
             fail += 1
         time.sleep(0.1)
     if fail == 0:
-        cprint(t("cli.messages.doctor_connection_success", default="  ✓ All 5 connection tests succeeded"), "green")
+        cprint(t("cli.messages.doctor_connection_success",
+               default="  ✓ All 5 connection tests succeeded"), "green")
     else:
-        cprint(t("cli.messages.doctor_connection_failed", default="  ✗ {fail}/5 failed, possible intermittent Defender lock", fail=fail), "red")
+        cprint(t("cli.messages.doctor_connection_failed",
+               default="  ✗ {fail}/5 failed, possible intermittent Defender lock", fail=fail), "red")
     print()
 
     # 5. 总体评估
-    cprint(t("cli.messages.doctor_overall_title", default="[5] Overall assessment"), "yellow", bold=True)
+    cprint(t("cli.messages.doctor_overall_title",
+           default="[5] Overall assessment"), "yellow", bold=True)
     if all_pragma_ok and fail == 0:
-        cprint(t("cli.messages.doctor_overall_healthy", default="  ✓ Environment is healthy"), "green")
+        cprint(t("cli.messages.doctor_overall_healthy",
+               default="  ✓ Environment is healthy"), "green")
     elif all_pragma_ok:
-        cprint(t("cli.messages.doctor_overall_mostly_healthy", default="  ~ Environment is mostly healthy, but connection failures occurred (consider adding Defender exclusion)"), "yellow")
+        cprint(t("cli.messages.doctor_overall_mostly_healthy",
+               default="  ~ Environment is mostly healthy, but connection failures occurred (consider adding Defender exclusion)"), "yellow")
     else:
-        cprint(t("cli.messages.doctor_overall_needs_work", default="  ✗ Environment needs optimization (PRAGMA config is incorrect)"), "red")
+        cprint(t("cli.messages.doctor_overall_needs_work",
+               default="  ✗ Environment needs optimization (PRAGMA config is incorrect)"), "red")
     print()
 
     return True
@@ -5981,7 +6263,8 @@ def _doctor_check(db):
 def _doctor_add_defender_exclusion(db):
     """添加 Windows Defender 排除项（需管理员权限）"""
     if sys.platform != "win32":
-        cprint(t("cli.messages.doctor_windows_only", default="✗ This command is only available on Windows"), "red")
+        cprint(t("cli.messages.doctor_windows_only",
+               default="✗ This command is only available on Windows"), "red")
         return True
 
     import os
@@ -5990,9 +6273,12 @@ def _doctor_add_defender_exclusion(db):
     # 排除到 .callwarden 根目录（涵盖所有项目的 db）
     parent_dir = os.path.dirname(callwarden_dir)
 
-    cprint(t("cli.messages.doctor_add_defender_title", default="=== Add Windows Defender Exclusion ==="), "cyan", bold=True)
-    print(t("cli.messages.doctor_add_defender_dir", default="  Exclusion directory to add: {path}", path=parent_dir))
-    cprint(t("cli.messages.doctor_add_defender_admin_note", default="  Note: this operation requires admin privileges"), "yellow")
+    cprint(t("cli.messages.doctor_add_defender_title",
+           default="=== Add Windows Defender Exclusion ==="), "cyan", bold=True)
+    print(t("cli.messages.doctor_add_defender_dir",
+          default="  Exclusion directory to add: {path}", path=parent_dir))
+    cprint(t("cli.messages.doctor_add_defender_admin_note",
+           default="  Note: this operation requires admin privileges"), "yellow")
     print()
 
     # 检查当前是否已是管理员
@@ -6003,7 +6289,8 @@ def _doctor_add_defender_exclusion(db):
         is_admin = False
 
     if not is_admin:
-        cprint(t("cli.messages.doctor_uac_try", default="✗ Current process is not elevated; trying UAC elevation..."), "yellow")
+        cprint(t("cli.messages.doctor_uac_try",
+               default="✗ Current process is not elevated; trying UAC elevation..."), "yellow")
         # 通过 PowerShell Start-Process -Verb RunAs 提权
         cmd = f"Add-MpPreference -ExclusionPath '{parent_dir}'"
         try:
@@ -6011,15 +6298,20 @@ def _doctor_add_defender_exclusion(db):
                 ["powershell", "-Command",
                  f"Start-Process powershell -Verb RunAs -ArgumentList '-Command', '{cmd}; Start-Sleep 2'"],
             )
-            cprint(t("cli.messages.doctor_uac_prompted", default="✓ UAC prompt opened; confirm in the popup window"), "green")
+            cprint(t("cli.messages.doctor_uac_prompted",
+                   default="✓ UAC prompt opened; confirm in the popup window"), "green")
             print()
-            print(t("cli.messages.doctor_verify_hint", default="  Verify success with:"))
+            print(t("cli.messages.doctor_verify_hint",
+                  default="  Verify success with:"))
             cprint(f"    cw doctor", "cyan")
         except Exception as e:
-            cprint(t("cli.messages.doctor_uac_failed", default="✗ UAC elevation failed: {error}", error=e), "red")
+            cprint(t("cli.messages.doctor_uac_failed",
+                   default="✗ UAC elevation failed: {error}", error=e), "red")
             print()
-            print(t("cli.messages.doctor_manual_admin_hint", default="  Run PowerShell as administrator and execute:"))
-            cprint(f"    Add-MpPreference -ExclusionPath '{parent_dir}'", "yellow")
+            print(t("cli.messages.doctor_manual_admin_hint",
+                  default="  Run PowerShell as administrator and execute:"))
+            cprint(
+                f"    Add-MpPreference -ExclusionPath '{parent_dir}'", "yellow")
         return True
 
     # 已是管理员
@@ -6029,9 +6321,11 @@ def _doctor_add_defender_exclusion(db):
              f"Add-MpPreference -ExclusionPath '{parent_dir}'"],
             capture_output=True, text=True, timeout=10,
         )
-        cprint(t("cli.messages.doctor_add_defender_success", default="✓ Defender exclusion added: {path}", path=parent_dir), "green")
+        cprint(t("cli.messages.doctor_add_defender_success",
+               default="✓ Defender exclusion added: {path}", path=parent_dir), "green")
     except Exception as e:
-        cprint(t("cli.messages.doctor_add_defender_failed", default="✗ Add failed: {error}", error=e), "red")
+        cprint(t("cli.messages.doctor_add_defender_failed",
+               default="✗ Add failed: {error}", error=e), "red")
 
     return True
 
@@ -6054,33 +6348,45 @@ def _handle_workspace(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw workspace",
-        description=t("cli.messages.workspace_subcommand_desc", default="Workspace management (list/register/set/delete)"),
+        description=t("cli.messages.workspace_subcommand_desc",
+                      default="Workspace management (list/register/set/delete)"),
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
-    sub.add_parser("list", help=t("cli.messages.workspace_action_list", default="List all workspaces"))
+    sub.add_parser("list", help=t(
+        "cli.messages.workspace_action_list", default="List all workspaces"))
 
-    reg = sub.add_parser("register", help=t("cli.messages.workspace_action_register", default="Register a new workspace"))
-    reg.add_argument("name", help=t("cli.messages.workspace_arg_name", default="Workspace name"))
-    reg.add_argument("root", help=t("cli.messages.workspace_arg_root", default="Workspace root path"))
+    reg = sub.add_parser("register", help=t(
+        "cli.messages.workspace_action_register", default="Register a new workspace"))
+    reg.add_argument("name", help=t(
+        "cli.messages.workspace_arg_name", default="Workspace name"))
+    reg.add_argument("root", help=t(
+        "cli.messages.workspace_arg_root", default="Workspace root path"))
 
-    set_p = sub.add_parser("set", help=t("cli.messages.workspace_action_set", default="Set active workspace"))
-    set_p.add_argument("id_or_name", help=t("cli.messages.workspace_arg_id_or_name", default="Workspace ID or name"))
+    set_p = sub.add_parser("set", help=t(
+        "cli.messages.workspace_action_set", default="Set active workspace"))
+    set_p.add_argument("id_or_name", help=t(
+        "cli.messages.workspace_arg_id_or_name", default="Workspace ID or name"))
 
-    del_p = sub.add_parser("delete", help=t("cli.messages.workspace_action_delete", default="Delete a workspace"))
-    del_p.add_argument("id_or_name", help=t("cli.messages.workspace_arg_id_or_name", default="Workspace ID or name"))
+    del_p = sub.add_parser("delete", help=t(
+        "cli.messages.workspace_action_delete", default="Delete a workspace"))
+    del_p.add_argument("id_or_name", help=t(
+        "cli.messages.workspace_arg_id_or_name", default="Workspace ID or name"))
 
-    scan_p = sub.add_parser("scan", help=t("cli.messages.workspace_action_scan", default="Scan directory for subprojects"))
-    scan_p.add_argument("dir", nargs="?", default=".", help="Directory to scan (default: current)")
-    scan_p.add_argument("--register", action="store_true", help="Register all found projects as workspaces")
+    scan_p = sub.add_parser("scan", help=t(
+        "cli.messages.workspace_action_scan", default="Scan directory for subprojects"))
+    scan_p.add_argument("dir", nargs="?", default=".",
+                        help="Directory to scan (default: current)")
+    scan_p.add_argument("--register", action="store_true",
+                        help="Register all found projects as workspaces")
     scan_p.add_argument("--include-all", action="store_true",
-                       help="Include non-real subprojects (tests/fixtures/npm/examples etc)")
+                        help="Include non-real subprojects (tests/fixtures/npm/examples etc)")
     scan_p.add_argument("--deep", action="store_true",
-                       help="Deep scan: enter git repo to find monorepo subprojects "
-                            "(default: shallow mode, each .git = 1 project)")
+                        help="Deep scan: enter git repo to find monorepo subprojects "
+                        "(default: shallow mode, each .git = 1 project)")
 
     gen_ignore_p = sub.add_parser("generate-ignore",
-                                   help="Auto-generate .callwardenignore based on project characteristics")
+                                  help="Auto-generate .callwardenignore based on project characteristics")
     gen_ignore_p.add_argument("dir", nargs="?", default=".",
                               help="Directory to scan (default: current workspace root)")
     gen_ignore_p.add_argument("--apply", action="store_true",
@@ -6092,8 +6398,10 @@ def _handle_workspace(args, db):
         workspaces = db.list_workspaces()
         print(t("cli.messages.workspaces_title", count=len(workspaces)))
         for ws in workspaces:
-            active_mark = t("cli.messages.workspace_active_mark") if ws.get("is_active") else ""
-            print(t("cli.messages.workspace_normal", id=ws['id'], name=ws['name']) + active_mark)
+            active_mark = t("cli.messages.workspace_active_mark") if ws.get(
+                "is_active") else ""
+            print(t("cli.messages.workspace_normal",
+                  id=ws['id'], name=ws['name']) + active_mark)
             print(t("cli.messages.workspace_path", path=ws['root_path']))
             if ws.get("description"):
                 print(t("cli.messages.workspace_desc", desc=ws['description']))
@@ -6114,7 +6422,8 @@ def _handle_workspace(args, db):
             success = db.set_active_workspace(ws_arg)
         if success:
             active = db.get_active_workspace()
-            print(t("cli.messages.set_success", name=active['name'], root=active['root_path']))
+            print(t("cli.messages.set_success",
+                  name=active['name'], root=active['root_path']))
         else:
             print(t("cli.messages.workspace_set_fail", name=ws_arg))
         return True
@@ -6189,7 +6498,8 @@ def _handle_workspace(args, db):
 
         print(f"  New patterns:     {len(result['new_patterns'])}")
         print(f"  Existing patterns: {len(result['existing_patterns'])}")
-        print(f"  Default covered:   {len(result['default_covered'])} (built-in, not listed)")
+        print(
+            f"  Default covered:   {len(result['default_covered'])} (built-in, not listed)")
         print()
 
         if result["new_patterns"]:
@@ -6199,7 +6509,8 @@ def _handle_workspace(args, db):
             print()
 
         if not dry_run and not result["new_patterns"]:
-            print("No new patterns needed (all covered by default baseline or existing rules).")
+            print(
+                "No new patterns needed (all covered by default baseline or existing rules).")
         elif dry_run and result["new_patterns"]:
             print("Run with --apply to write these rules to .callwardenignore")
 
@@ -6219,13 +6530,15 @@ def _handle_refresh(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw refresh",
-        description=t("cli.messages.refresh_subcommand_desc", default="Refresh code graph (incremental or by file)"),
+        description=t("cli.messages.refresh_subcommand_desc",
+                      default="Refresh code graph (incremental or by file)"),
     )
     parser.add_argument("--all", action="store_true", dest="refresh_all",
                         help=t("cli.messages.refresh_arg_all", default="Refresh all files (equivalent to --refresh-all)"))
     parser.add_argument("--force", action="store_true",
                         help=t("cli.messages.refresh_arg_force", default="Force full rebuild (only with --all)"))
-    parser.add_argument("paths", nargs="*", help=t("cli.messages.refresh_arg_paths", default="File paths to refresh"))
+    parser.add_argument(
+        "paths", nargs="*", help=t("cli.messages.refresh_arg_paths", default="File paths to refresh"))
     opts = parser.parse_args(args)
 
     if opts.refresh_all:
@@ -6277,7 +6590,8 @@ def _handle_refresh(args, db):
             except Exception as exc:
                 failure_count += 1
                 failed_paths.append((path, str(exc)))
-                cprint(t("cli.messages.refresh_failed", path=path, error=str(exc)), "red")
+                cprint(t("cli.messages.refresh_failed",
+                       path=path, error=str(exc)), "red")
         elapsed = time.time() - start_ts
         # 多文件时输出汇总
         if len(opts.paths) > 1:
@@ -6285,7 +6599,8 @@ def _handle_refresh(args, db):
                      success=success_count, failure=failure_count,
                      total=len(opts.paths), elapsed=f"{elapsed:.2f}"), "cyan", bold=True)
             if failed_paths:
-                cprint(t("cli.messages.refresh_multi_failed_title"), "red", bold=True)
+                cprint(t("cli.messages.refresh_multi_failed_title"),
+                       "red", bold=True)
                 for path, err in failed_paths:
                     print(t("cli.messages.refresh_multi_failed_item",
                             path=path, error=err))
@@ -6303,7 +6618,8 @@ def _handle_stats(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw stats",
-        description=t("cli.messages.stats_subcommand_desc", default="Show database statistics"),
+        description=t("cli.messages.stats_subcommand_desc",
+                      default="Show database statistics"),
     )
     parser.parse_args(args)
     stats = db.get_stats()
@@ -6353,7 +6669,8 @@ def _handle_health_report(args, db):
     # 4. Token 节省摘要
     try:
         if hasattr(db, "get_token_savings_report"):
-            report["token_savings"] = db.get_token_savings_report(time_window="30d")
+            report["token_savings"] = db.get_token_savings_report(
+                time_window="30d")
     except Exception as e:
         report["token_savings"] = {"error": str(e)}
 
@@ -6375,7 +6692,8 @@ def _handle_health_report(args, db):
         print(f"    符号总数:     {st.get('total_symbols', 'N/A')}")
         print(f"    文件总数:     {st.get('total_files', 'N/A')}")
         print(f"    调用关系数:   {st.get('total_calls', 'N/A')}")
-        print(f"    语言数:       {st.get('total_languages', st.get('languages', 'N/A'))}")
+        print(
+            f"    语言数:       {st.get('total_languages', st.get('languages', 'N/A'))}")
         print()
     else:
         print(f"  [基础统计] 获取失败: {st.get('error', 'unknown')}")
@@ -6386,7 +6704,8 @@ def _handle_health_report(args, db):
     if hs and isinstance(hs, list) and isinstance(hs[0], dict) and "error" not in hs[0]:
         cprint("  [演化热点 Top 5]（变更最频繁）", "yellow", bold=True)
         for i, h in enumerate(hs, 1):
-            name = h.get("qualified_name") or h.get("symbol_name") or h.get("name", "?")
+            name = h.get("qualified_name") or h.get(
+                "symbol_name") or h.get("name", "?")
             score = h.get("hotspot_score") or h.get("score", 0)
             changes = h.get("change_count") or h.get("commits", 0)
             print(f"    {i}. {name}  (变更 {changes} 次, 热点分 {score:.1f})")
@@ -6399,8 +6718,10 @@ def _handle_health_report(args, db):
     iss = report.get("issues", {})
     if isinstance(iss, dict) and "error" not in iss:
         cprint("  [静态检查问题]", "yellow", bold=True)
-        total = iss.get("total_findings", 0) if isinstance(iss.get("total_findings"), int) else 0
-        by_sev = iss.get("by_severity", {}) if isinstance(iss.get("by_severity"), dict) else iss
+        total = iss.get("total_findings", 0) if isinstance(
+            iss.get("total_findings"), int) else 0
+        by_sev = iss.get("by_severity", {}) if isinstance(
+            iss.get("by_severity"), dict) else iss
         if total:
             print(f"    总数: {total}")
         if by_sev:
@@ -6410,7 +6731,8 @@ def _handle_health_report(args, db):
             print("    无问题")
         print()
     else:
-        print(f"  [静态检查] 获取失败: {iss.get('error', 'unknown') if isinstance(iss, dict) else iss}")
+        print(
+            f"  [静态检查] 获取失败: {iss.get('error', 'unknown') if isinstance(iss, dict) else iss}")
         print()
 
     # Token 节省
@@ -6508,11 +6830,13 @@ def _handle_dashboard(args, db):
         print(f"    已注释符号:   {cs.get('commented_symbols', 0):,}")
         by_kind = cs.get('by_kind', {})
         if by_kind:
-            kind_str = ", ".join(f"{k}={v}" for k, v in sorted(by_kind.items(), key=lambda x: -x[1])[:6])
+            kind_str = ", ".join(f"{k}={v}" for k, v in sorted(
+                by_kind.items(), key=lambda x: -x[1])[:6])
             print(f"    符号分布:     {kind_str}")
         by_lang = cs.get('by_language', {})
         if by_lang:
-            lang_str = ", ".join(f".{k}={v}" for k, v in list(by_lang.items())[:6])
+            lang_str = ", ".join(
+                f".{k}={v}" for k, v in list(by_lang.items())[:6])
             print(f"    语言分布:     {lang_str}")
 
     # ── 3. 代码质量 ─────────────────────────────────────────────────
@@ -6544,7 +6868,8 @@ def _handle_dashboard(args, db):
             cprint("\n    Top 复杂度函数:", "cyan")
             for i, h in enumerate(hotspots, 1):
                 name = h.get('qualified_name', '?')
-                cx = h.get('cyclomatic_complexity', 0) or h.get('complexity', 0)
+                cx = h.get('cyclomatic_complexity',
+                           0) or h.get('complexity', 0)
                 print(f"      {i}. {name}  (圈复杂度 {cx})")
 
     # ── 4. 调用图 ───────────────────────────────────────────────────
@@ -6563,7 +6888,8 @@ def _handle_dashboard(args, db):
             print("    循环调用:     (未计算，--with-cycles 启用)")
         else:
             if cyc > 0:
-                cprint(f"    循环调用:     ⚠ {cyc} 个（cw call-chain --detect-cycles 查看）", "red")
+                cprint(
+                    f"    循环调用:     ⚠ {cyc} 个（cw call-chain --detect-cycles 查看）", "red")
             else:
                 cprint(f"    循环调用:     ✓ 无循环", "green")
         orphans = cg.get('orphans_count', 0)
@@ -6573,7 +6899,8 @@ def _handle_dashboard(args, db):
         if depth:
             items = sorted(depth.items(), key=lambda x: int(x[0]))[:10]
             depth_str = ", ".join(f"d{k}={v}" for k, v in items)
-            print(f"    深度分布:     {depth_str}{'...' if len(depth) > 10 else ''}")
+            print(
+                f"    深度分布:     {depth_str}{'...' if len(depth) > 10 else ''}")
 
     # ── 5. 任务与风险 ───────────────────────────────────────────────
     tr = dashboard.get("task_risk", {})
@@ -6646,7 +6973,8 @@ def _handle_dashboard(args, db):
             sev_color = {"high": "red", "medium": "yellow", "low": "dark_grey"}
             for i, r in enumerate(risks, 1):
                 sev = r.get('severity', 'low')
-                sev_marker = {"high": "⚠⚠", "medium": "⚠", "low": "•"}.get(sev, "•")
+                sev_marker = {"high": "⚠⚠", "medium": "⚠",
+                              "low": "•"}.get(sev, "•")
                 rtype = r.get('type', '?')
                 detail = r.get('detail', '')
                 qn = r.get('qualified_name', '')
@@ -6696,7 +7024,8 @@ def _handle_status(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw status",
-        description=t("cli.messages.status_subcommand_desc", default="Show full status overview"),
+        description=t("cli.messages.status_subcommand_desc",
+                      default="Show full status overview"),
     )
     parser.parse_args(args)
     status = db.get_status()
@@ -6735,7 +7064,8 @@ def _handle_status(args, db):
     print(f"  {t('cli.messages.status_workspace')}: {ws['name']}")
     print(f"  {t('cli.messages.status_root')}: {ws['root']}")
     print(f"  {t('cli.messages.status_db_size')}: {fmt_size(ws['db_size'])}")
-    print(f"  {t('cli.messages.status_last_build')}: {fmt_ago(status['last_build'])}")
+    print(
+        f"  {t('cli.messages.status_last_build')}: {fmt_ago(status['last_build'])}")
     print()
     print(f"  {t('cli.messages.status_files_title')}")
     on_disk = t("cli.messages.status_files_on_disk")
@@ -6743,13 +7073,16 @@ def _handle_status(args, db):
     print(f"    {on_disk}: {fi['on_disk']}  ({tracked}: {fi['tracked']})")
     if fi["new"]:
         new_label = t("cli.messages.status_files_new")
-        print(f"    {new_label}: {fi['new']}  {', '.join(fi['new_files'][:5])}{'...' if len(fi['new_files'])>5 else ''}")
+        print(
+            f"    {new_label}: {fi['new']}  {', '.join(fi['new_files'][:5])}{'...' if len(fi['new_files']) > 5 else ''}")
     if fi["stale"]:
         stale_label = t("cli.messages.status_files_stale")
-        print(f"    {stale_label}: {fi['stale']}  {', '.join(fi['stale_files'][:5])}{'...' if len(fi['stale_files'])>5 else ''}")
+        print(
+            f"    {stale_label}: {fi['stale']}  {', '.join(fi['stale_files'][:5])}{'...' if len(fi['stale_files']) > 5 else ''}")
     if fi["deleted"]:
         deleted_label = t("cli.messages.status_files_deleted")
-        print(f"    {deleted_label}: {fi['deleted']}  {', '.join(fi['deleted_files'][:5])}{'...' if len(fi['deleted_files'])>5 else ''}")
+        print(
+            f"    {deleted_label}: {fi['deleted']}  {', '.join(fi['deleted_files'][:5])}{'...' if len(fi['deleted_files']) > 5 else ''}")
     if fi["by_language"]:
         parts = []
         for ext, cnt in sorted(fi["by_language"].items(), key=lambda x: -x[1])[:6]:
@@ -6768,13 +7101,15 @@ def _handle_status(args, db):
         kn = kind_names.get(kind, kind)
         kind_parts.append(f"{kn}: {cnt}")
     print(f"    {t('cli.messages.status_by_kind')}: {', '.join(kind_parts)}")
-    print(f"    {t('cli.messages.status_uncommented_fns')}: {sy['uncommented_fns']}")
+    print(
+        f"    {t('cli.messages.status_uncommented_fns')}: {sy['uncommented_fns']}")
     print()
     print(f"  {t('cli.messages.status_calls_title')}")
     print(f"    {t('cli.messages.status_calls_total')}: {ca['total']}")
     resolved_label = t("cli.messages.status_calls_resolved")
     rate_label = t("cli.messages.status_calls_rate")
-    print(f"    {resolved_label}: {ca['resolved']}  ({rate_label}: {ca['resolve_rate']}%)")
+    print(
+        f"    {resolved_label}: {ca['resolved']}  ({rate_label}: {ca['resolve_rate']}%)")
     print(f"    {t('cli.messages.status_calls_cross')}: {ca['cross_file']}")
     print()
     if status["needs_rebuild"]:
@@ -6797,15 +7132,20 @@ def _handle_search(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw search",
-        description=t("cli.messages.search_subcommand_desc", default="Search symbols"),
+        description=t("cli.messages.search_subcommand_desc",
+                      default="Search symbols"),
     )
-    parser.add_argument("query", help=t("cli.messages.search_arg_query", default="Search query"))
-    parser.add_argument("--kind", default=None, help=t("cli.messages.search_arg_kind", default="Filter by kind"))
-    parser.add_argument("--limit", type=int, default=50, help=t("cli.messages.search_arg_limit", default="Max results (default 50)"))
+    parser.add_argument("query", help=t(
+        "cli.messages.search_arg_query", default="Search query"))
+    parser.add_argument("--kind", default=None,
+                        help=t("cli.messages.search_arg_kind", default="Filter by kind"))
+    parser.add_argument("--limit", type=int, default=50, help=t(
+        "cli.messages.search_arg_limit", default="Max results (default 50)"))
     opts = parser.parse_args(args)
 
     symbols = db.search_symbols(opts.query, kind=opts.kind, limit=opts.limit)
-    kind_info = t("cli.messages.search_kind_info", kind=opts.kind) if opts.kind else ""
+    kind_info = t("cli.messages.search_kind_info",
+                  kind=opts.kind) if opts.kind else ""
     print(t("cli.messages.search_title", query=opts.query, kind_info=kind_info,
             total=len(symbols), shown=min(opts.limit, len(symbols))))
     print()
@@ -6813,7 +7153,8 @@ def _handle_search(args, db):
         depth = sym["depth"] if sym["depth"] >= 0 else "?"
         sig = sym.get("signature", "")[:50] if sym.get("signature") else ""
         comment_mark = "✓" if sym["has_comment"] else " "
-        print(f"  [{i+1:3d}] depth={depth:>3} [{comment_mark}] {sym['kind']:8s} {sym['qualified_name']}")
+        print(
+            f"  [{i+1:3d}] depth={depth:>3} [{comment_mark}] {sym['kind']:8s} {sym['qualified_name']}")
         print(f"         {sym['file_path']}:{sym['start_line']}")
         if sig:
             print(f"         {sig}")
@@ -6912,14 +7253,16 @@ def _handle_grep(args, db):
         # 2b. 无 rg → Python re 回退（慢但可用）
         try:
             # fixed 模式：用 re.escape 转义所有正则元字符
-            pat = _re.escape(primary_pattern) if opts.fixed else primary_pattern
+            pat = _re.escape(
+                primary_pattern) if opts.fixed else primary_pattern
             pattern = _re.compile(pat)
         except _re.error as e:
             print(f"Error: regex error: {e}")
             return False
         for dirpath, dirnames, filenames in os.walk(search_root):
             # 跳过常见忽略目录
-            dirnames[:] = [d for d in dirnames if d not in (".git", "__pycache__", "node_modules", "target", ".venv", "venv", "dist", "build")]
+            dirnames[:] = [d for d in dirnames if d not in (
+                ".git", "__pycache__", "node_modules", "target", ".venv", "venv", "dist", "build")]
             for fname in filenames:
                 # 只扫源码文件（避免二进制和大文件）
                 if not fname.endswith((".py", ".rs", ".ts", ".js", ".go", ".java", ".c", ".h", ".cpp", ".hpp", ".cs", ".rb", ".php", ".kt", ".swift", ".scala")):
@@ -6929,7 +7272,8 @@ def _handle_grep(args, db):
                     with open(fpath, "r", encoding="utf-8", errors="replace") as f:
                         for i, line in enumerate(f, 1):
                             if pattern.search(line):
-                                raw_lines.append(f"{fpath}:{i}:{line.rstrip()}")
+                                raw_lines.append(
+                                    f"{fpath}:{i}:{line.rstrip()}")
                 except OSError:
                     continue
 
@@ -6958,7 +7302,8 @@ def _handle_grep(args, db):
         else:
             # 正则模式：编译剩余 patterns
             try:
-                remaining_compiled = [_re.compile(p) for p in remaining_patterns]
+                remaining_compiled = [_re.compile(
+                    p) for p in remaining_patterns]
             except _re.error as e:
                 print(f"Error: regex error in pattern: {e}")
                 return False
@@ -7021,7 +7366,8 @@ def _handle_grep(args, db):
             # 仅 --include-all 时才会到这（import/顶层语句/注释块外）
             print(f"{fpath}:{lineno} [no symbol] {content}")
     print()
-    print(f"Total: {len(matches)} matches (of {total_before_limit} after filter)")
+    print(
+        f"Total: {len(matches)} matches (of {total_before_limit} after filter)")
     return True
 
 
@@ -7044,7 +7390,8 @@ def _handle_issues(args, db):
                         help="Include INFO level findings (default: WARNING+ only)")
     opts = parser.parse_args(args)
 
-    issues = db.get_symbol_issues(opts.qualified_name, include_info=opts.include_info)
+    issues = db.get_symbol_issues(
+        opts.qualified_name, include_info=opts.include_info)
 
     if not issues:
         print(f"No issues found for: {opts.qualified_name}")
@@ -7060,8 +7407,10 @@ def _handle_issues(args, db):
         by_source[src] = by_source.get(src, 0) + 1
         by_severity[sev] = by_severity.get(sev, 0) + 1
 
-    sev_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_severity.items(), key=lambda x: -x[1]))
-    src_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_source.items(), key=lambda x: -x[1]))
+    sev_str = ", ".join(f"{k}:{v}" for k, v in sorted(
+        by_severity.items(), key=lambda x: -x[1]))
+    src_str = ", ".join(f"{k}:{v}" for k, v in sorted(
+        by_source.items(), key=lambda x: -x[1]))
     info_note = " (+INFO)" if opts.include_info else ""
     print(f"Issues for {opts.qualified_name}: {len(issues)} total{info_note}")
     print(f"  by severity: {sev_str}")
@@ -7123,7 +7472,8 @@ def _handle_tests(args, db):
         prog="cw tests",
         description="Symbol-level test case relations and test run history",
     )
-    parser.add_argument("qualified_name", nargs="?", help="Symbol qualified name")
+    parser.add_argument("qualified_name", nargs="?",
+                        help="Symbol qualified name")
     parser.add_argument("--reverse", action="store_true",
                         help="Reverse query: what does this test function test?")
     parser.add_argument("--build", action="store_true",
@@ -7180,7 +7530,8 @@ def _handle_tests(args, db):
         if result['recent_failures']:
             print(f"\nRecent failures (top {len(result['recent_failures'])}):")
             for f in result['recent_failures']:
-                ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(f.get('run_at', 0)))
+                ts = time.strftime(
+                    "%Y-%m-%d %H:%M", time.localtime(f.get('run_at', 0)))
                 err_type = f.get('error_type', '') or '?'
                 print(f"  - {f['test_name']} [{err_type}] @ {ts}")
                 msg = f.get('error_message', '')
@@ -7192,12 +7543,15 @@ def _handle_tests(args, db):
             # 按通过率升序（最不稳定的在前）
             sorted_tests = sorted(
                 result['by_test'].items(),
-                key=lambda kv: (kv[1]['passed'] / kv[1]['total'] if kv[1]['total'] else 1, kv[1]['total']),
+                key=lambda kv: (kv[1]['passed'] / kv[1]['total']
+                                if kv[1]['total'] else 1, kv[1]['total']),
             )
             for name, st in sorted_tests:
                 rate = st['passed'] * 100 / st['total'] if st['total'] else 0
-                failed_str = f", {st['failed']} failed" if st.get('failed', 0) else ""
-                print(f"  {name}: {st['passed']}/{st['total']} ({rate:.0f}%{failed_str})")
+                failed_str = f", {st['failed']} failed" if st.get(
+                    'failed', 0) else ""
+                print(
+                    f"  {name}: {st['passed']}/{st['total']} ({rate:.0f}%{failed_str})")
         return True
 
     # --build 模式：重建关联表
@@ -7206,7 +7560,8 @@ def _handle_tests(args, db):
         print(f"Test relations built:")
         print(f"  Total test functions scanned: {stats['total_test_fns']}")
         print(f"  direct_call relations:     {stats.get('direct_call', 0)}")
-        print(f"  name_convention relations:  {stats.get('name_convention', 0)}")
+        print(
+            f"  name_convention relations:  {stats.get('name_convention', 0)}")
         print(f"  indirect relations:         {stats.get('indirect', 0)}")
         print(f"  Total inserted:             {stats['inserted']}")
         return True
@@ -7223,7 +7578,8 @@ def _handle_tests(args, db):
             print("（可能原因：1. 未运行 cw tests --build；2. 此 test_fn 未关联到任何函数；3. 符号不存在）")
             return True
 
-        print(f"Tested functions for {opts.qualified_name}: {len(tested)} total")
+        print(
+            f"Tested functions for {opts.qualified_name}: {len(tested)} total")
         print()
         for i, t in enumerate(tested, 1):
             method = t.get("match_method", "?")
@@ -7256,8 +7612,10 @@ def _handle_tests(args, db):
         by_confidence[conf] = by_confidence.get(conf, 0) + 1
         by_method[method] = by_method.get(method, 0) + 1
 
-    conf_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_confidence.items(), key=lambda x: -x[1]))
-    method_str = ", ".join(f"{k}:{v}" for k, v in sorted(by_method.items(), key=lambda x: -x[1]))
+    conf_str = ", ".join(f"{k}:{v}" for k, v in sorted(
+        by_confidence.items(), key=lambda x: -x[1]))
+    method_str = ", ".join(f"{k}:{v}" for k, v in sorted(
+        by_method.items(), key=lambda x: -x[1]))
     print(f"Test cases for {opts.qualified_name}: {len(test_cases)} total")
     print(f"  by confidence: {conf_str}")
     print(f"  by method:     {method_str}")
@@ -7285,9 +7643,11 @@ def _handle_symbol(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw symbol",
-        description=t("cli.messages.symbol_subcommand_desc", default="Show symbol detail"),
+        description=t("cli.messages.symbol_subcommand_desc",
+                      default="Show symbol detail"),
     )
-    parser.add_argument("name", help=t("cli.messages.symbol_arg_name", default="Qualified symbol name"))
+    parser.add_argument("name", help=t(
+        "cli.messages.symbol_arg_name", default="Qualified symbol name"))
     opts = parser.parse_args(args)
 
     detail = db.get_symbol(opts.name)
@@ -7315,7 +7675,8 @@ def _handle_symbol(args, db):
         for line in detail["comment_content"].split("\n")[:10]:
             print(f"    {line}")
     print()
-    print(t("cli.messages.symbol_calls_out_title", count=len(detail['calls_out'])))
+    print(t("cli.messages.symbol_calls_out_title",
+          count=len(detail['calls_out'])))
     if detail["calls_out"]:
         for call in detail["calls_out"][:20]:
             target = call["target_name"]
@@ -7323,11 +7684,13 @@ def _handle_symbol(args, db):
             line_info = f" (line {line})" if line else ""
             print(f"  → {target}{line_info}")
         if len(detail["calls_out"]) > 20:
-            print(t("cli.messages.symbol_more", count=len(detail['calls_out']) - 20))
+            print(t("cli.messages.symbol_more",
+                  count=len(detail['calls_out']) - 20))
     else:
         print(t("cli.messages.symbol_none"))
     print()
-    print(t("cli.messages.symbol_called_by_title", count=len(detail['called_by'])))
+    print(t("cli.messages.symbol_called_by_title",
+          count=len(detail['called_by'])))
     if detail["called_by"]:
         for call in detail["called_by"][:20]:
             caller = call["caller_name"]
@@ -7335,7 +7698,8 @@ def _handle_symbol(args, db):
             line_info = f" (line {line})" if line else ""
             print(f"  ← {caller}{line_info}")
         if len(detail["called_by"]) > 20:
-            print(t("cli.messages.symbol_more", count=len(detail['called_by']) - 20))
+            print(t("cli.messages.symbol_more",
+                  count=len(detail['called_by']) - 20))
     else:
         print(t("cli.messages.symbol_none"))
 
@@ -7344,7 +7708,8 @@ def _handle_symbol(args, db):
     issues_total = detail.get("issues_total", 0)
     if issues:
         print()
-        print(f"Issues ({len(issues)} of {issues_total}, use 'cw issues {opts.name}' for full):")
+        print(
+            f"Issues ({len(issues)} of {issues_total}, use 'cw issues {opts.name}' for full):")
         for issue in issues:
             src = issue.get("source", "?")
             sev = issue.get("severity", "?").upper()
@@ -7359,7 +7724,8 @@ def _handle_symbol(args, db):
     else:
         # 有问题但都被过滤（如全是 INFO），提示
         print()
-        print(f"Issues: {issues_total} total (filtered, use 'cw issues {opts.name} --include-info')")
+        print(
+            f"Issues: {issues_total} total (filtered, use 'cw issues {opts.name} --include-info')")
     return True
 
 
@@ -7370,15 +7736,18 @@ def _handle_file(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw file",
-        description=t("cli.messages.file_subcommand_desc", default="List symbols in a file"),
+        description=t("cli.messages.file_subcommand_desc",
+                      default="List symbols in a file"),
     )
-    parser.add_argument("path", help=t("cli.messages.file_arg_path", default="File path"))
+    parser.add_argument("path", help=t(
+        "cli.messages.file_arg_path", default="File path"))
     opts = parser.parse_args(args)
 
     symbols = db.get_file_symbols(opts.path)
     print(t("cli.messages.file_symbols_title", path=opts.path, count=len(symbols)))
     for s in symbols:
-        print(f"  {s['start_line']}-{s['end_line']}: {s['kind']} {s['name']} ({s['visibility']})")
+        print(
+            f"  {s['start_line']}-{s['end_line']}: {s['kind']} {s['name']} ({s['visibility']})")
     return True
 
 
@@ -7389,10 +7758,13 @@ def _handle_query(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw query",
-        description=t("cli.messages.query_subcommand_desc", default="Query symbol location"),
+        description=t("cli.messages.query_subcommand_desc",
+                      default="Query symbol location"),
     )
-    parser.add_argument("name", help=t("cli.messages.query_arg_name", default="Symbol name"))
-    parser.add_argument("file", help=t("cli.messages.query_arg_file", default="File path"))
+    parser.add_argument("name", help=t(
+        "cli.messages.query_arg_name", default="Symbol name"))
+    parser.add_argument("file", help=t(
+        "cli.messages.query_arg_file", default="File path"))
     opts = parser.parse_args(args)
 
     result = db.get_symbol_location(opts.name, opts.file)
@@ -7416,9 +7788,11 @@ def _handle_callers(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw callers",
-        description=t("cli.messages.callers_subcommand_desc", default="Show callers of a symbol"),
+        description=t("cli.messages.callers_subcommand_desc",
+                      default="Show callers of a symbol"),
     )
-    parser.add_argument("name", help=t("cli.messages.callers_arg_name", default="Symbol name"))
+    parser.add_argument("name", help=t(
+        "cli.messages.callers_arg_name", default="Symbol name"))
     parser.add_argument("--qualified", default=None,
                         help="完整限定名（如 module::Class::method），精确匹配避免跨模块误匹配")
     opts = parser.parse_args(args)
@@ -7426,7 +7800,8 @@ def _handle_callers(args, db):
     callers = db.get_callers(opts.name, opts.qualified)
     print(t("cli.messages.callers_title", name=opts.name, count=len(callers)))
     for c in callers:
-        cross = t("cli.messages.callers_cross_file") if c["is_cross_file"] else ""
+        cross = t(
+            "cli.messages.callers_cross_file") if c["is_cross_file"] else ""
         print(t("cli.messages.callers_item",
                 file=c['caller_file'], line=c['call_line'], name=c['caller_name'], cross=cross))
     return True
@@ -7440,9 +7815,11 @@ def _handle_callees(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw callees",
-        description=t("cli.messages.callees_subcommand_desc", default="Show callees of a symbol"),
+        description=t("cli.messages.callees_subcommand_desc",
+                      default="Show callees of a symbol"),
     )
-    parser.add_argument("name", help=t("cli.messages.callees_arg_name", default="Symbol name"))
+    parser.add_argument("name", help=t(
+        "cli.messages.callees_arg_name", default="Symbol name"))
     parser.add_argument("--qualified", default=None,
                         help="完整限定名（如 module::Class::method），精确匹配避免跨模块误匹配")
     opts = parser.parse_args(args)
@@ -7450,8 +7827,10 @@ def _handle_callees(args, db):
     callees = db.get_callees(opts.name, opts.qualified)
     print(t("cli.messages.callees_title", name=opts.name, count=len(callees)))
     for c in callees:
-        cross = t("cli.messages.callees_cross_file") if c["is_cross_file"] else ""
-        file_info = f" ({c['callee_file']})" if c["callee_file"] else t("cli.messages.callees_unresolved")
+        cross = t(
+            "cli.messages.callees_cross_file") if c["is_cross_file"] else ""
+        file_info = f" ({c['callee_file']})" if c["callee_file"] else t(
+            "cli.messages.callees_unresolved")
         print(t("cli.messages.callees_item",
                 line=c['call_line'], name=c['callee_name'], cross=cross, file_info=file_info))
     return True
@@ -7464,23 +7843,30 @@ def _handle_call_chain(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw call-chain",
-        description=t("cli.messages.call_chain_subcommand_desc", default="Show call chain down"),
+        description=t("cli.messages.call_chain_subcommand_desc",
+                      default="Show call chain down"),
     )
-    parser.add_argument("name", help=t("cli.messages.call_chain_arg_name", default="Symbol name"))
-    parser.add_argument("--depth", type=int, default=10, help=t("cli.messages.call_chain_arg_depth", default="Max depth (default 10)"))
+    parser.add_argument("name", help=t(
+        "cli.messages.call_chain_arg_name", default="Symbol name"))
+    parser.add_argument("--depth", type=int, default=10, help=t(
+        "cli.messages.call_chain_arg_depth", default="Max depth (default 10)"))
     opts = parser.parse_args(args)
 
     result = db.get_call_chain_down(opts.name, max_depth=opts.depth)
     print(t("cli.messages.call_chain_down_title", name=result['start']))
-    print(t("cli.messages.call_chain_down_total", count=result['total_downstream']))
-    print(t("cli.messages.call_chain_down_max_depth", depth=result['max_depth_reached']))
+    print(t("cli.messages.call_chain_down_total",
+          count=result['total_downstream']))
+    print(t("cli.messages.call_chain_down_max_depth",
+          depth=result['max_depth_reached']))
     print()
     for level in result["levels"]:
-        print(t("cli.messages.call_chain_down_level", depth=level['depth'], count=level['count']))
+        print(t("cli.messages.call_chain_down_level",
+              depth=level['depth'], count=level['count']))
         for item in level["callees"][:15]:
             print(f"  → {item['callee']}")
         if level["count"] > 15:
-            print(t("cli.messages.call_chain_down_more", count=level['count'] - 15))
+            print(t("cli.messages.call_chain_down_more",
+                  count=level['count'] - 15))
         print()
     return True
 
@@ -7492,9 +7878,11 @@ def _handle_topo(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw topo",
-        description=t("cli.messages.topo_subcommand_desc", default="Topological order"),
+        description=t("cli.messages.topo_subcommand_desc",
+                      default="Topological order"),
     )
-    parser.add_argument("--limit", type=int, default=50, help=t("cli.messages.topo_arg_limit", default="Max results (default 50)"))
+    parser.add_argument("--limit", type=int, default=50, help=t(
+        "cli.messages.topo_arg_limit", default="Max results (default 50)"))
     opts = parser.parse_args(args)
 
     order = db.get_topological_order(opts.limit)
@@ -7530,7 +7918,7 @@ def _handle_graph(args, db):
 
     # graph build-from-c
     bfc = sub.add_parser("build-from-c",
-                          help="从 C 文件列表 rayon 并行构建 GraphStore（F11）")
+                         help="从 C 文件列表 rayon 并行构建 GraphStore（F11）")
     bfc.add_argument("directory", help="目标目录（递归扫描 .c 文件）")
     bfc.add_argument("--threads", type=int, default=None,
                      help="rayon 线程数（默认 None=自动）")
@@ -7564,7 +7952,8 @@ def _handle_graph(args, db):
                 abs_path = _os.path.join(root, fname)
                 # module_path 用相对路径去后缀（与 db_build.py 一致）
                 rel_path = _os.path.relpath(abs_path, target_dir)
-                module_path = _os.path.splitext(rel_path)[0].replace(_os.sep, ".")
+                module_path = _os.path.splitext(
+                    rel_path)[0].replace(_os.sep, ".")
                 c_files.append((abs_path, module_path))
                 if len(c_files) >= opts.max_files:
                     print(f"  达到 --max-files 上限 {opts.max_files}，停止扫描")
@@ -7688,7 +8077,8 @@ def _handle_config(args, db):
         config_loader = "callwarden.release.config_loader"
     except ImportError:
         # fallback：直接从 release 目录加载
-        release_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "release")
+        release_dir = _os.path.join(_os.path.dirname(
+            _os.path.dirname(_os.path.abspath(__file__))), "release")
         if _os.path.isdir(release_dir):
             if release_dir not in _sys.path:
                 _sys.path.insert(0, _os.path.dirname(release_dir))
@@ -7772,7 +8162,8 @@ def _handle_metrics(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw metrics",
-        description=t("cli.messages.metrics_subcommand_desc", default="Show code metrics summary"),
+        description=t("cli.messages.metrics_subcommand_desc",
+                      default="Show code metrics summary"),
     )
     parser.parse_args(args)
     summary = db.get_code_metrics_summary()
@@ -7782,8 +8173,10 @@ def _handle_metrics(args, db):
     print(t("cli.messages.metrics_total_lines", count=summary['total_lines']))
     print(t("cli.messages.metrics_calls", count=summary['total_calls']))
     print()
-    print(t("cli.messages.metrics_avg_complexity", value=summary['avg_complexity']))
-    print(t("cli.messages.metrics_max_complexity", value=summary['max_complexity']))
+    print(t("cli.messages.metrics_avg_complexity",
+          value=summary['avg_complexity']))
+    print(t("cli.messages.metrics_max_complexity",
+          value=summary['max_complexity']))
     print()
     print(t("cli.messages.metrics_complexity_dist"))
     dist = summary["complexity_distribution"]
@@ -7793,7 +8186,8 @@ def _handle_metrics(args, db):
         bar = "#" * int(pct / 2)
         print(f"    {level:<12s} {count:4d} ({pct:5.1f}%) {bar}")
     print()
-    print(t("cli.messages.metrics_comment_coverage", pct=summary['comment_coverage']))
+    print(t("cli.messages.metrics_comment_coverage",
+          pct=summary['comment_coverage']))
     return True
 
 
@@ -7804,15 +8198,21 @@ def _handle_complexity(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw complexity",
-        description=t("cli.messages.complexity_subcommand_desc", default="Show complexity hotspots"),
+        description=t("cli.messages.complexity_subcommand_desc",
+                      default="Show complexity hotspots"),
     )
-    parser.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.complexity_arg_limit", default="Max results (default 20)"))
-    parser.add_argument("--module", default=None, help=t("cli.messages.complexity_arg_module", default="Filter by module"))
+    parser.add_argument("limit", type=int, nargs="?", default=20, help=t(
+        "cli.messages.complexity_arg_limit", default="Max results (default 20)"))
+    parser.add_argument("--module", default=None, help=t(
+        "cli.messages.complexity_arg_module", default="Filter by module"))
     opts = parser.parse_args(args)
 
-    hotspots = db.get_complexity_hotspots(limit=opts.limit, module_filter=opts.module or "")
-    filter_info = t("cli.messages.complexity_filter", module=opts.module) if opts.module else ""
-    print(t("cli.messages.complexity_title", filter_info=filter_info, count=len(hotspots)))
+    hotspots = db.get_complexity_hotspots(
+        limit=opts.limit, module_filter=opts.module or "")
+    filter_info = t("cli.messages.complexity_filter",
+                    module=opts.module) if opts.module else ""
+    print(t("cli.messages.complexity_title",
+          filter_info=filter_info, count=len(hotspots)))
     print()
     complexity_h = t("cli.messages.col_complexity", default="Complexity")
     lines_h = t("cli.messages.col_lines", default="Lines")
@@ -7822,7 +8222,8 @@ def _handle_complexity(args, db):
     print(f"  {'-'*3}  {'-'*6}  {'-'*5}  {'-'*4}  {'-'*50}")
     for i, fn in enumerate(hotspots, 1):
         risk = "!" if fn["cyclomatic_complexity"] > 10 else " "
-        print(f"  {i:3d}{risk}  {fn['cyclomatic_complexity']:>6}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
+        print(
+            f"  {i:3d}{risk}  {fn['cyclomatic_complexity']:>6}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
         print(f"        {fn['file_path']}:{fn['start_line']}")
     print()
     print(t("cli.messages.complexity_hint"))
@@ -7836,7 +8237,8 @@ def _handle_coupling(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw coupling",
-        description=t("cli.messages.coupling_subcommand_desc", default="Show module coupling analysis"),
+        description=t("cli.messages.coupling_subcommand_desc",
+                      default="Show module coupling analysis"),
     )
     parser.parse_args(args)
     modules = db.get_coupling_analysis(limit=30)
@@ -7856,7 +8258,8 @@ def _handle_coupling(args, db):
             inst_label += t("cli.messages.coupling_unstable")
         elif inst < 0.3:
             inst_label += t("cli.messages.coupling_stable")
-        print(f"  {i:3d}  {mod['module'][:40]:<40s}  {mod['afferent']:>4}  {mod['efferent']:>4}  {mod['total_coupling']:>4}  {inst_label:>6}")
+        print(
+            f"  {i:3d}  {mod['module'][:40]:<40s}  {mod['afferent']:>4}  {mod['efferent']:>4}  {mod['total_coupling']:>4}  {inst_label:>6}")
     return True
 
 
@@ -7867,43 +8270,53 @@ def _handle_comment_coverage(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw comment-coverage",
-        description=t("cli.messages.comment_coverage_subcommand_desc", default="Show comment coverage"),
+        description=t("cli.messages.comment_coverage_subcommand_desc",
+                      default="Show comment coverage"),
     )
-    parser.add_argument("--by", default="module", dest="group_by", help=t("cli.messages.comment_coverage_arg_by", default="Group by (default module)"))
+    parser.add_argument("--by", default="module", dest="group_by", help=t(
+        "cli.messages.comment_coverage_arg_by", default="Group by (default module)"))
     opts = parser.parse_args(args)
 
     result = db.get_comment_coverage(group_by=opts.group_by)
     print(t("cli.messages.comment_coverage_title"))
     print(t("cli.messages.comment_coverage_total", count=result['total']))
-    print(t("cli.messages.comment_coverage_commented", count=result['commented']))
+    print(t("cli.messages.comment_coverage_commented",
+          count=result['commented']))
     print(t("cli.messages.comment_coverage_rate", pct=result['coverage']))
     print()
     print(t("cli.messages.comment_coverage_by_kind"))
     for kind, info in sorted(result["by_kind"].items(), key=lambda x: -x[1]["total"]):
-        pct = round(info["commented"] / info["total"] * 100, 1) if info["total"] > 0 else 0
+        pct = round(info["commented"] / info["total"] *
+                    100, 1) if info["total"] > 0 else 0
         bar_len = int(pct / 5)
         bar = "█" * bar_len + "░" * (20 - bar_len)
-        print(f"  {bar} {pct:5.1f}%  {kind:12s}  ({info['commented']}/{info['total']})")
+        print(
+            f"  {bar} {pct:5.1f}%  {kind:12s}  ({info['commented']}/{info['total']})")
     if result.get("by_module"):
         print()
         print(t("cli.messages.comment_coverage_by_module"))
-        modules = sorted(result["by_module"].items(), key=lambda x: x[1]["coverage"])
+        modules = sorted(result["by_module"].items(),
+                         key=lambda x: x[1]["coverage"])
         for i, (mod, info) in enumerate(modules[:30]):
             pct = info["coverage"]
             bar_len = int(pct / 5)
             bar = "█" * bar_len + "░" * (20 - bar_len)
-            print(f"  {bar} {pct:5.1f}%  {mod:50s}  ({info['commented']}/{info['total']})")
+            print(
+                f"  {bar} {pct:5.1f}%  {mod:50s}  ({info['commented']}/{info['total']})")
         if len(modules) > 30:
-            print(t("cli.messages.comment_coverage_more_modules", count=len(modules) - 30))
+            print(t("cli.messages.comment_coverage_more_modules",
+                  count=len(modules) - 30))
     if result.get("by_file"):
         print()
         print(t("cli.messages.comment_coverage_by_file"))
-        files = sorted(result["by_file"].items(), key=lambda x: x[1]["coverage"])
+        files = sorted(result["by_file"].items(),
+                       key=lambda x: x[1]["coverage"])
         for i, (fpath, info) in enumerate(files[:30]):
             pct = info["coverage"]
             bar_len = int(pct / 5)
             bar = "█" * bar_len + "░" * (20 - bar_len)
-            print(f"  {bar} {pct:5.1f}%  {fpath:50s}  ({info['commented']}/{info['total']})")
+            print(
+                f"  {bar} {pct:5.1f}%  {fpath:50s}  ({info['commented']}/{info['total']})")
         if len(files) > 30:
             print(t("cli.messages.comment_coverage_more_files", count=len(files) - 30))
     return True
@@ -7916,17 +8329,23 @@ def _handle_uncommented(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw uncommented",
-        description=t("cli.messages.uncommented_subcommand_desc", default="Show uncommented symbols"),
+        description=t("cli.messages.uncommented_subcommand_desc",
+                      default="Show uncommented symbols"),
     )
-    parser.add_argument("kind", nargs="?", default="fn", help=t("cli.messages.uncommented_arg_kind", default="Symbol kind (default fn)"))
-    parser.add_argument("--module", default=None, help=t("cli.messages.uncommented_arg_module", default="Filter by module"))
-    parser.add_argument("--limit", type=int, default=50, help=t("cli.messages.uncommented_arg_limit", default="Max results (default 50)"))
+    parser.add_argument("kind", nargs="?", default="fn", help=t(
+        "cli.messages.uncommented_arg_kind", default="Symbol kind (default fn)"))
+    parser.add_argument("--module", default=None, help=t(
+        "cli.messages.uncommented_arg_module", default="Filter by module"))
+    parser.add_argument("--limit", type=int, default=50, help=t(
+        "cli.messages.uncommented_arg_limit", default="Max results (default 50)"))
     opts = parser.parse_args(args)
 
-    symbols = db.get_uncommented_symbols(kind=opts.kind, module_filter=opts.module)
-    filter_info = t("cli.messages.uncommented_module_filter", module=opts.module) if opts.module else ""
+    symbols = db.get_uncommented_symbols(
+        kind=opts.kind, module_filter=opts.module)
+    filter_info = t("cli.messages.uncommented_module_filter",
+                    module=opts.module) if opts.module else ""
     print(t("cli.messages.uncommented_title", kind=opts.kind, filter_info=filter_info,
-           total=len(symbols), shown=min(opts.limit, len(symbols))))
+            total=len(symbols), shown=min(opts.limit, len(symbols))))
     print()
     for i, sym in enumerate(symbols[:opts.limit]):
         depth = sym["depth"] if sym["depth"] >= 0 else "?"
@@ -7948,12 +8367,17 @@ def _handle_function_issues(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw function-issues",
-        description=t("cli.messages.function_issues_subcommand_desc", default="Show function issues"),
+        description=t("cli.messages.function_issues_subcommand_desc",
+                      default="Show function issues"),
     )
-    parser.add_argument("fn", nargs="?", default="", help=t("cli.messages.function_issues_arg_fn", default="Function name (empty for list mode)"))
-    parser.add_argument("--type", default=None, help=t("cli.messages.function_issues_arg_type", default="Filter by issue type"))
-    parser.add_argument("--module", default=None, help=t("cli.messages.function_issues_arg_module", default="Filter by module"))
-    parser.add_argument("--limit", type=int, default=30, help=t("cli.messages.function_issues_arg_limit", default="Max results (default 30)"))
+    parser.add_argument("fn", nargs="?", default="", help=t(
+        "cli.messages.function_issues_arg_fn", default="Function name (empty for list mode)"))
+    parser.add_argument("--type", default=None, help=t(
+        "cli.messages.function_issues_arg_type", default="Filter by issue type"))
+    parser.add_argument("--module", default=None, help=t(
+        "cli.messages.function_issues_arg_module", default="Filter by module"))
+    parser.add_argument("--limit", type=int, default=30, help=t(
+        "cli.messages.function_issues_arg_limit", default="Max results (default 30)"))
     opts = parser.parse_args(args)
 
     fn_name = opts.fn
@@ -7971,9 +8395,12 @@ def _handle_function_issues(args, db):
         # 单函数详情模式
         if results:
             r = results[0]
-            print(t("cli.messages.function_issues_title", name=r['qualified_name']))
-            print(t("cli.messages.function_issues_module", module=r['module_path'] or '(unknown)'))
-            print(t("cli.messages.function_issues_count", count=r['issue_count']))
+            print(t("cli.messages.function_issues_title",
+                  name=r['qualified_name']))
+            print(t("cli.messages.function_issues_module",
+                  module=r['module_path'] or '(unknown)'))
+            print(t("cli.messages.function_issues_count",
+                  count=r['issue_count']))
             print()
             for issue in r["issues"]:
                 icon = severity_icon.get(issue["severity"], "[?]")
@@ -7982,15 +8409,18 @@ def _handle_function_issues(args, db):
             print()
         else:
             print(t("cli.messages.function_issues_title", name=fn_name))
-            filter_str = t("cli.messages.function_issues_filter", filter=issue_filter) if issue_filter else ""
+            filter_str = t("cli.messages.function_issues_filter",
+                           filter=issue_filter) if issue_filter else ""
             print(t("cli.messages.function_issues_no_issues") + filter_str)
             print()
     else:
         # 列表模式
         if issue_filter:
-            print(t("cli.messages.function_issues_list_title_type", filter=issue_filter, count=len(results)))
+            print(t("cli.messages.function_issues_list_title_type",
+                  filter=issue_filter, count=len(results)))
         elif module_filter:
-            print(t("cli.messages.function_issues_list_title_module", module=module_filter, count=len(results)))
+            print(t("cli.messages.function_issues_list_title_module",
+                  module=module_filter, count=len(results)))
         else:
             print(t("cli.messages.function_issues_list_title", count=len(results)))
         print()
@@ -7998,7 +8428,8 @@ def _handle_function_issues(args, db):
             issue_labels = []
             for issue in r["issues"]:
                 icon = severity_icon.get(issue["severity"], "")
-                issue_labels.append(f"{icon}{issue['label']}" + (f"(x{issue['count']})" if issue["count"] > 1 else ""))
+                issue_labels.append(
+                    f"{icon}{issue['label']}" + (f"(x{issue['count']})" if issue["count"] > 1 else ""))
             issue_str = "  ".join(issue_labels)
             print(f"  #{i:2d}  {r['qualified_name']}")
             print(f"        {issue_str}")
@@ -8013,9 +8444,11 @@ def _handle_largest_fns(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw largest-fns",
-        description=t("cli.messages.largest_fns_subcommand_desc", default="Show largest functions"),
+        description=t("cli.messages.largest_fns_subcommand_desc",
+                      default="Show largest functions"),
     )
-    parser.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.largest_fns_arg_limit", default="Max results (default 20)"))
+    parser.add_argument("limit", type=int, nargs="?", default=20, help=t(
+        "cli.messages.largest_fns_arg_limit", default="Max results (default 20)"))
     opts = parser.parse_args(args)
 
     fns = db.get_largest_functions(limit=opts.limit)
@@ -8027,7 +8460,8 @@ def _handle_largest_fns(args, db):
     print(f"  {'#':>3}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
     print(f"  {'-'*3}  {'-'*5}  {'-'*4}  {'-'*50}")
     for i, fn in enumerate(fns, 1):
-        print(f"  {i:3d}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
+        print(
+            f"  {i:3d}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
         print(f"        {fn['file_path']}:{fn['start_line']}")
     return True
 
@@ -8039,9 +8473,11 @@ def _handle_coupled_fns(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw coupled-fns",
-        description=t("cli.messages.coupled_fns_subcommand_desc", default="Show most coupled functions"),
+        description=t("cli.messages.coupled_fns_subcommand_desc",
+                      default="Show most coupled functions"),
     )
-    parser.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.coupled_fns_arg_limit", default="Max results (default 20)"))
+    parser.add_argument("limit", type=int, nargs="?", default=20, help=t(
+        "cli.messages.coupled_fns_arg_limit", default="Max results (default 20)"))
     opts = parser.parse_args(args)
 
     fns = db.get_most_coupled_functions(limit=opts.limit)
@@ -8054,7 +8490,8 @@ def _handle_coupled_fns(args, db):
     print(f"  {'#':>3}  {fan_in_h:>4}  {fan_out_h:>4}  {total_h:>4}  {fn_h}")
     print(f"  {'-'*3}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*50}")
     for i, fn in enumerate(fns, 1):
-        print(f"  {i:3d}  {fn['fan_in']:>4}  {fn['fan_out']:>4}  {fn['total_coupling']:>4}  {fn['qualified_name'][:60]}")
+        print(
+            f"  {i:3d}  {fn['fan_in']:>4}  {fn['fan_out']:>4}  {fn['total_coupling']:>4}  {fn['qualified_name'][:60]}")
         print(f"        {fn['file_path']}")
     return True
 
@@ -8066,9 +8503,11 @@ def _handle_fn_metrics(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw fn-metrics",
-        description=t("cli.messages.fn_metrics_subcommand_desc", default="Show function metrics"),
+        description=t("cli.messages.fn_metrics_subcommand_desc",
+                      default="Show function metrics"),
     )
-    parser.add_argument("name", help=t("cli.messages.fn_metrics_arg_name", default="Function name"))
+    parser.add_argument("name", help=t(
+        "cli.messages.fn_metrics_arg_name", default="Function name"))
     opts = parser.parse_args(args)
 
     metrics = db.get_function_metrics(opts.name)
@@ -8076,17 +8515,22 @@ def _handle_fn_metrics(args, db):
         print(t("cli.messages.fn_metrics_not_found", name=opts.name))
         print(t("cli.messages.fn_metrics_search_hint"))
     else:
-        print(t("cli.messages.fn_metrics_title", name=metrics['qualified_name']))
+        print(t("cli.messages.fn_metrics_title",
+              name=metrics['qualified_name']))
         print(t("cli.messages.fn_metrics_kind", kind=metrics['kind']))
-        print(t("cli.messages.fn_metrics_file", file=metrics['file_path'], start=metrics['start_line'], end=metrics['end_line']))
+        print(t("cli.messages.fn_metrics_file",
+              file=metrics['file_path'], start=metrics['start_line'], end=metrics['end_line']))
         print(t("cli.messages.fn_metrics_lines", count=metrics['line_count']))
-        print(t("cli.messages.fn_metrics_complexity", value=metrics['cyclomatic_complexity'], risk=metrics['risk_level']))
+        print(t("cli.messages.fn_metrics_complexity",
+              value=metrics['cyclomatic_complexity'], risk=metrics['risk_level']))
         print(t("cli.messages.fn_metrics_fan_in", count=metrics['fan_in']))
         print(t("cli.messages.fn_metrics_fan_out", count=metrics['fan_out']))
         print(t("cli.messages.fn_metrics_depth", depth=metrics['depth']))
-        print(t("cli.messages.fn_metrics_module", module=metrics['module_path']))
+        print(t("cli.messages.fn_metrics_module",
+              module=metrics['module_path']))
         if metrics['signature']:
-            print(t("cli.messages.fn_metrics_signature", sig=metrics['signature'][:100]))
+            print(t("cli.messages.fn_metrics_signature",
+                  sig=metrics['signature'][:100]))
     return True
 
 
@@ -8102,20 +8546,28 @@ def _handle_git(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw git",
-        description=t("cli.messages.git_subcommand_desc", default="Git integration (import/log/show/stats)"),
+        description=t("cli.messages.git_subcommand_desc",
+                      default="Git integration (import/log/show/stats)"),
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
-    imp = sub.add_parser("import", help=t("cli.messages.git_action_import", default="Import git history"))
-    imp.add_argument("limit", type=int, nargs="?", default=100, help=t("cli.messages.git_arg_limit", default="Max commits (default 100)"))
+    imp = sub.add_parser("import", help=t(
+        "cli.messages.git_action_import", default="Import git history"))
+    imp.add_argument("limit", type=int, nargs="?", default=100, help=t(
+        "cli.messages.git_arg_limit", default="Max commits (default 100)"))
 
-    log_p = sub.add_parser("log", help=t("cli.messages.git_action_log", default="Show git log"))
-    log_p.add_argument("limit", type=int, nargs="?", default=20, help=t("cli.messages.git_arg_log_limit", default="Max commits (default 20)"))
+    log_p = sub.add_parser("log", help=t(
+        "cli.messages.git_action_log", default="Show git log"))
+    log_p.add_argument("limit", type=int, nargs="?", default=20, help=t(
+        "cli.messages.git_arg_log_limit", default="Max commits (default 20)"))
 
-    show_p = sub.add_parser("show", help=t("cli.messages.git_action_show", default="Show commit details"))
-    show_p.add_argument("commit", help=t("cli.messages.git_arg_commit", default="Commit hash"))
+    show_p = sub.add_parser("show", help=t(
+        "cli.messages.git_action_show", default="Show commit details"))
+    show_p.add_argument("commit", help=t(
+        "cli.messages.git_arg_commit", default="Commit hash"))
 
-    sub.add_parser("stats", help=t("cli.messages.git_action_stats", default="Show git integration stats"))
+    sub.add_parser("stats", help=t("cli.messages.git_action_stats",
+                   default="Show git integration stats"))
 
     # L3: pre-commit hook 调用 — 检查 active_task（软门禁）
     sub.add_parser("check-task",
@@ -8159,10 +8611,13 @@ def _handle_git(args, db):
         print(t("cli.messages.git_import_start", count=opts.limit))
         result = db.import_git_history(max_commits=opts.limit)
         if result.get("success"):
-            print(t("cli.messages.git_import_success", count=result['commits_imported']))
-            print(t("cli.messages.git_import_total", count=result['total_commits']))
+            print(t("cli.messages.git_import_success",
+                  count=result['commits_imported']))
+            print(t("cli.messages.git_import_total",
+                  count=result['total_commits']))
         else:
-            print(t("cli.messages.git_import_fail", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+            print(t("cli.messages.git_import_fail", error=result.get(
+                'error', t("cli.messages.semgrep_unknown_error"))))
         return True
 
     if opts.action == "log":
@@ -8171,8 +8626,10 @@ def _handle_git(args, db):
         print()
         for c in commits:
             short_hash = c['commit_hash'][:8]
-            timestamp = time.strftime('%Y-%m-%d %H:%M', time.localtime(c['timestamp']))
-            msg = c['message'][:60] if c['message'] else t("cli.messages.git_log_no_msg")
+            timestamp = time.strftime(
+                '%Y-%m-%d %H:%M', time.localtime(c['timestamp']))
+            msg = c['message'][:60] if c['message'] else t(
+                "cli.messages.git_log_no_msg")
             author = c['author'][:15] if c['author'] else 'unknown'
             print(f"  {short_hash}  {timestamp}  {author:<15s}  {msg}")
         return True
@@ -8183,9 +8640,12 @@ def _handle_git(args, db):
         if not commit:
             print(t("cli.messages.git_show_not_found", hash=opts.commit))
         else:
-            print(t("cli.messages.git_show_commit", hash=commit['commit_hash']))
-            print(t("cli.messages.git_show_author", author=commit['author'], email=commit['email']))
-            print(t("cli.messages.git_show_time", time=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(commit['timestamp']))))
+            print(t("cli.messages.git_show_commit",
+                  hash=commit['commit_hash']))
+            print(t("cli.messages.git_show_author",
+                  author=commit['author'], email=commit['email']))
+            print(t("cli.messages.git_show_time", time=time.strftime(
+                '%Y-%m-%d %H:%M:%S', time.localtime(commit['timestamp']))))
             print(t("cli.messages.git_show_message", msg=commit['message']))
             print()
             file_changes = details.get("file_changes", [])
@@ -8199,25 +8659,30 @@ def _handle_git(args, db):
                 print(f"  [{type_label}] {path}")
             # 三角关联段：commit → task
             try:
-                related_tasks = db.get_commit_tasks(commit["commit_hash"]) if hasattr(db, "get_commit_tasks") else []
+                related_tasks = db.get_commit_tasks(
+                    commit["commit_hash"]) if hasattr(db, "get_commit_tasks") else []
             except Exception:
                 related_tasks = []
             if related_tasks:
                 print()
-                cprint(t("cli.messages.git_show_tasks_title", default="── Related Tasks ──"), "cyan")
-                print(t("cli.messages.git_show_tasks_count", default="Tasks ({}):".format(len(related_tasks)), count=len(related_tasks)))
+                cprint(t("cli.messages.git_show_tasks_title",
+                       default="── Related Tasks ──"), "cyan")
+                print(t("cli.messages.git_show_tasks_count", default="Tasks ({}):".format(
+                    len(related_tasks)), count=len(related_tasks)))
                 for rt in related_tasks:
                     tid = rt.get("task_id", "")
                     title = rt.get("task_title") or ""
                     cnt = rt.get("change_count", 0)
-                    print("  {} {} [{} change{}]".format(tid, title, cnt, "s" if cnt != 1 else ""))
+                    print("  {} {} [{} change{}]".format(
+                        tid, title, cnt, "s" if cnt != 1 else ""))
         return True
 
     if opts.action == "stats":
         stats = db.get_git_stats()
         print(t("cli.messages.git_stats_title"))
         print(t("cli.messages.git_stats_commits", count=stats['commit_count']))
-        print(t("cli.messages.git_stats_file_changes", count=stats['file_change_count']))
+        print(t("cli.messages.git_stats_file_changes",
+              count=stats['file_change_count']))
         print()
         if stats.get("change_types"):
             print(t("cli.messages.git_stats_by_type"))
@@ -8225,7 +8690,8 @@ def _handle_git(args, db):
                         'D': t("cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
             for ct, cnt in sorted(stats["change_types"].items(), key=lambda x: x[1], reverse=True):
                 label = type_map.get(ct, ct)
-                print(t("cli.messages.git_stats_type_count", default="    {label}: {count} times", label=label, count=cnt))
+                print(t("cli.messages.git_stats_type_count",
+                      default="    {label}: {count} times", label=label, count=cnt))
         return True
 
     # L3: pre-commit hook 调用 — 检查 active_task（软门禁）
@@ -8319,7 +8785,8 @@ def _handle_git(args, db):
         # - 其余为常规 fast-forward / commit：忽略（避免噪音）
         # 空字符串/None 视为无效输入跳过（git 不会传空 sha，但 hook 解析
         # 可能产生空值，避免误分类为 branch_delete）
-        is_zero_sha = lambda sha: bool(sha) and len(sha) == 40 and set(sha) == {"0"}
+        def is_zero_sha(sha): return bool(sha) and len(
+            sha) == 40 and set(sha) == {"0"}
         is_destructive = "forced" in flags.lower() or is_zero_sha(new_value)
         is_create = is_zero_sha(old_value) and not is_zero_sha(new_value)
 
@@ -8367,7 +8834,8 @@ def _handle_git(args, db):
 
     # L2: 查询破坏性操作历史
     if opts.action == "destructive-log":
-        ops = db.list_destructive_operations(limit=opts.limit, operation_type=opts.type)
+        ops = db.list_destructive_operations(
+            limit=opts.limit, operation_type=opts.type)
         if not ops:
             print(t("cli.messages.git_destructive_log_empty",
                     default="No destructive operations recorded."))
@@ -8378,14 +8846,16 @@ def _handle_git(args, db):
                 count=len(ops)))
         print()
         for op in ops:
-            timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(op['created_at']))
+            timestamp = time.strftime(
+                '%Y-%m-%d %H:%M:%S', time.localtime(op['created_at']))
             op_type = op['operation_type']
             task_id = op.get('task_id', '')
             msg = op.get('message', '')
             short_local = (op.get('local_sha', '') or '')[:8]
             short_remote = (op.get('remote_sha', '') or '')[:8]
             task_label = f" task={task_id}" if task_id else ""
-            print(f"  [{timestamp}] {op_type} {short_local} -> {short_remote}{task_label}")
+            print(
+                f"  [{timestamp}] {op_type} {short_local} -> {short_remote}{task_label}")
             if msg:
                 print(f"    {msg}")
         return True
@@ -8405,17 +8875,25 @@ def _handle_semgrep(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw semgrep",
-        description=t("cli.messages.semgrep_subcommand_desc", default="Semgrep static analysis (scan/list/stats)"),
+        description=t("cli.messages.semgrep_subcommand_desc",
+                      default="Semgrep static analysis (scan/list/stats)"),
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
-    scan_p = sub.add_parser("scan", help=t("cli.messages.semgrep_action_scan", default="Run Semgrep scan"))
-    scan_p.add_argument("paths", nargs="*", help=t("cli.messages.semgrep_arg_paths", default="Target paths (empty for workspace root)"))
-    scan_p.add_argument("--config", default="p/default", help=t("cli.messages.semgrep_arg_config", default="Semgrep config (default p/default)"))
-    scan_p.add_argument("--lang", dest="languages", nargs="*", help=t("cli.messages.semgrep_arg_lang", default="Limit to languages"))
-    scan_p.add_argument("--timeout", type=int, default=180, help=t("cli.messages.semgrep_arg_timeout", default="Timeout seconds (default 180)"))
-    scan_p.add_argument("--save", action="store_true", help=t("cli.messages.semgrep_arg_save", default="Save findings to database"))
-    scan_p.add_argument("--quick", action="store_true", help=t("cli.messages.semgrep_arg_quick", default="Quick summary scan"))
+    scan_p = sub.add_parser("scan", help=t(
+        "cli.messages.semgrep_action_scan", default="Run Semgrep scan"))
+    scan_p.add_argument("paths", nargs="*", help=t("cli.messages.semgrep_arg_paths",
+                        default="Target paths (empty for workspace root)"))
+    scan_p.add_argument("--config", default="p/default", help=t(
+        "cli.messages.semgrep_arg_config", default="Semgrep config (default p/default)"))
+    scan_p.add_argument("--lang", dest="languages", nargs="*",
+                        help=t("cli.messages.semgrep_arg_lang", default="Limit to languages"))
+    scan_p.add_argument("--timeout", type=int, default=180, help=t(
+        "cli.messages.semgrep_arg_timeout", default="Timeout seconds (default 180)"))
+    scan_p.add_argument("--save", action="store_true", help=t(
+        "cli.messages.semgrep_arg_save", default="Save findings to database"))
+    scan_p.add_argument("--quick", action="store_true",
+                        help=t("cli.messages.semgrep_arg_quick", default="Quick summary scan"))
     # A14（2026-07-20）：增量扫描模式 — 只扫 git diff 变更文件并清理旧 findings
     scan_p.add_argument("--incremental", action="store_true",
                         help=t("cli.messages.semgrep_arg_incremental",
@@ -8427,13 +8905,19 @@ def _handle_semgrep(args, db):
                         help=t("cli.messages.semgrep_arg_head",
                                default="Head ref for incremental scan (default HEAD)"))
 
-    list_p = sub.add_parser("list", help=t("cli.messages.semgrep_action_list", default="List saved findings"))
-    list_p.add_argument("filter", nargs="?", default="", help=t("cli.messages.semgrep_arg_filter", default="Rule id filter"))
-    list_p.add_argument("--severity", default=None, help=t("cli.messages.semgrep_arg_severity", default="Filter by severity"))
-    list_p.add_argument("--lang", dest="language", default=None, help=t("cli.messages.semgrep_arg_list_lang", default="Filter by language"))
-    list_p.add_argument("--limit", type=int, default=50, help=t("cli.messages.semgrep_arg_list_limit", default="Max results (default 50)"))
+    list_p = sub.add_parser("list", help=t(
+        "cli.messages.semgrep_action_list", default="List saved findings"))
+    list_p.add_argument("filter", nargs="?", default="", help=t(
+        "cli.messages.semgrep_arg_filter", default="Rule id filter"))
+    list_p.add_argument("--severity", default=None, help=t(
+        "cli.messages.semgrep_arg_severity", default="Filter by severity"))
+    list_p.add_argument("--lang", dest="language", default=None, help=t(
+        "cli.messages.semgrep_arg_list_lang", default="Filter by language"))
+    list_p.add_argument("--limit", type=int, default=50, help=t(
+        "cli.messages.semgrep_arg_list_limit", default="Max results (default 50)"))
 
-    sub.add_parser("stats", help=t("cli.messages.semgrep_action_stats", default="Show Semgrep stats"))
+    sub.add_parser("stats", help=t(
+        "cli.messages.semgrep_action_stats", default="Show Semgrep stats"))
 
     opts = parser.parse_args(args)
 
@@ -8442,7 +8926,8 @@ def _handle_semgrep(args, db):
         print(t("cli.messages.semgrep_title"))
         print(t("cli.messages.semgrep_config_label", config=opts.config))
         if opts.languages:
-            print(t("cli.messages.semgrep_lang_limit", langs=", ".join(opts.languages)))
+            print(t("cli.messages.semgrep_lang_limit",
+                  langs=", ".join(opts.languages)))
         print(t("cli.messages.semgrep_timeout_label", timeout=opts.timeout))
         # A14: 增量扫描模式提示
         if opts.incremental:
@@ -8476,41 +8961,52 @@ def _handle_semgrep(args, db):
                 timeout=opts.timeout,
             )
             if not result.get("success"):
-                print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                print(t("cli.messages.semgrep_error", error=result.get(
+                    'error', t("cli.messages.semgrep_unknown_error"))))
             else:
-                print(t("cli.messages.semgrep_scan_done", count=result['total_findings']))
-                print(t("cli.messages.semgrep_saved", count=result['saved_findings']))
+                print(t("cli.messages.semgrep_scan_done",
+                      count=result['total_findings']))
+                print(t("cli.messages.semgrep_saved",
+                      count=result['saved_findings']))
                 print()
                 print(t("cli.messages.semgrep_save_hint"))
         elif opts.quick:
             result = db.get_semgrep_summary(target_paths)
             if not result.get("success"):
-                print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                print(t("cli.messages.semgrep_error", error=result.get(
+                    'error', t("cli.messages.semgrep_unknown_error"))))
             else:
-                print(t("cli.messages.semgrep_quick_total", count=result['total_findings']))
+                print(t("cli.messages.semgrep_quick_total",
+                      count=result['total_findings']))
                 print()
                 if result.get("by_severity"):
                     print(t("cli.messages.semgrep_severity_dist"))
                     for sev in ["ERROR", "WARNING", "INFO"]:
                         count = result["by_severity"].get(sev, 0)
                         if count > 0:
-                            icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
-                            print(t("cli.messages.semgrep_severity_count", icon=icon, sev=sev, count=count))
+                            icon = {
+                                "ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
+                            print(t("cli.messages.semgrep_severity_count",
+                                  icon=icon, sev=sev, count=count))
                     print()
                 if result.get("by_language"):
                     print(t("cli.messages.semgrep_lang_dist"))
                     for lang, count in sorted(result["by_language"].items(), key=lambda x: x[1], reverse=True):
-                        print(t("cli.messages.semgrep_lang_count", lang=lang, count=count))
+                        print(t("cli.messages.semgrep_lang_count",
+                              lang=lang, count=count))
                     print()
                 if result.get("top_rules"):
                     print(t("cli.messages.semgrep_top_rules"))
                     for rule_id, stats in result["top_rules"][:10]:
-                        sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[stats.get("severity", "INFO")]
-                        print(t("cli.messages.semgrep_rule_item", icon=sev_icon, rule=rule_id, count=stats['count']))
+                        sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[
+                            stats.get("severity", "INFO")]
+                        print(t("cli.messages.semgrep_rule_item",
+                              icon=sev_icon, rule=rule_id, count=stats['count']))
                         print(f"        {stats['message'][:80]}...")
                     print()
             if result.get("errors"):
-                print(t("cli.messages.semgrep_warning_count", count=len(result['errors'])))
+                print(t("cli.messages.semgrep_warning_count",
+                      count=len(result['errors'])))
         else:
             result = db.run_semgrep(
                 target_paths=target_paths or [db.workspace_root],
@@ -8519,13 +9015,17 @@ def _handle_semgrep(args, db):
                 timeout=opts.timeout,
             )
             if not result.get("success"):
-                print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                print(t("cli.messages.semgrep_error", error=result.get(
+                    'error', t("cli.messages.semgrep_unknown_error"))))
             else:
-                print(t("cli.messages.semgrep_scan_done", count=result['total_findings']))
+                print(t("cli.messages.semgrep_scan_done",
+                      count=result['total_findings']))
                 print()
-                severity_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}
+                severity_icon = {"ERROR": "[!]",
+                                 "WARNING": "[~]", "INFO": "[i]"}
                 for sev in ["ERROR", "WARNING", "INFO"]:
-                    sev_findings = [f for f in result["results"] if f["severity"] == sev]
+                    sev_findings = [f for f in result["results"]
+                                    if f["severity"] == sev]
                     if sev_findings:
                         icon = severity_icon[sev]
                         if sev == "ERROR":
@@ -8534,18 +9034,24 @@ def _handle_semgrep(args, db):
                             sev_label = t("cli.messages.semgrep_sev_warning")
                         else:
                             sev_label = t("cli.messages.semgrep_sev_info")
-                        print(t("cli.messages.semgrep_detail_title", label=sev_label, count=len(sev_findings)))
+                        print(t("cli.messages.semgrep_detail_title",
+                              label=sev_label, count=len(sev_findings)))
                         print()
                         for f in sev_findings[:15]:
                             print(f"    {icon} {f['rule_name']}")
-                            print(t("cli.messages.semgrep_finding_file", file=f['path'], line=f['start_line']))
-                            print(t("cli.messages.semgrep_finding_lang", lang=f['language']))
-                            print(t("cli.messages.semgrep_finding_msg", msg=f['message'][:100]))
+                            print(t("cli.messages.semgrep_finding_file",
+                                  file=f['path'], line=f['start_line']))
+                            print(
+                                t("cli.messages.semgrep_finding_lang", lang=f['language']))
+                            print(t("cli.messages.semgrep_finding_msg",
+                                  msg=f['message'][:100]))
                             if f.get("fix"):
-                                print(t("cli.messages.semgrep_fix_hint", fix=f['fix'][:50]))
+                                print(
+                                    t("cli.messages.semgrep_fix_hint", fix=f['fix'][:50]))
                             print()
                         if len(sev_findings) > 15:
-                            print(t("cli.messages.semgrep_more", count=len(sev_findings) - 15))
+                            print(t("cli.messages.semgrep_more",
+                                  count=len(sev_findings) - 15))
                             print()
         print(t("cli.messages.semgrep_hint"))
         print()
@@ -8554,15 +9060,18 @@ def _handle_semgrep(args, db):
     if opts.action == "stats":
         stats = db.get_semgrep_stats()
         print(t("cli.messages.semgrep_stats_title"))
-        print(t("cli.messages.semgrep_stats_total", count=stats['total_findings']))
+        print(t("cli.messages.semgrep_stats_total",
+              count=stats['total_findings']))
         print()
         if stats["by_severity"]:
             print(t("cli.messages.semgrep_stats_by_sev"))
             for sev in ["ERROR", "WARNING", "INFO"]:
                 count = stats["by_severity"].get(sev, 0)
                 if count > 0:
-                    icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
-                    print(t("cli.messages.semgrep_severity_count", icon=icon, sev=sev, count=count))
+                    icon = {"ERROR": "[!]",
+                            "WARNING": "[~]", "INFO": "[i]"}[sev]
+                    print(t("cli.messages.semgrep_severity_count",
+                          icon=icon, sev=sev, count=count))
             print()
         if stats["by_language"]:
             print(t("cli.messages.semgrep_stats_by_lang"))
@@ -8572,13 +9081,16 @@ def _handle_semgrep(args, db):
         if stats["by_rule"]:
             print(t("cli.messages.semgrep_stats_top_rules"))
             for i, rule in enumerate(stats["by_rule"][:10], 1):
-                sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}.get(rule["severity"], "[?]")
-                print(f"    #{i:2d} {sev_icon} {rule['rule_id'][:50]:<50s}  {rule['cnt']:3d}")
+                sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}.get(
+                    rule["severity"], "[?]")
+                print(
+                    f"    #{i:2d} {sev_icon} {rule['rule_id'][:50]:<50s}  {rule['cnt']:3d}")
             print()
         if stats["by_symbol"]:
             print(t("cli.messages.semgrep_stats_top_symbols"))
             for i, sym in enumerate(stats["by_symbol"][:10], 1):
-                print(f"    #{i:2d} {sym['symbol_qualified'][:60]:<60s}  {sym['cnt']:2d}")
+                print(
+                    f"    #{i:2d} {sym['symbol_qualified'][:60]:<60s}  {sym['cnt']:2d}")
             print()
         return True
 
@@ -8594,24 +9106,31 @@ def _handle_semgrep(args, db):
         )
         filter_parts = []
         if severity:
-            filter_parts.append(t("cli.messages.semgrep_list_filter_sev", sev=severity))
+            filter_parts.append(
+                t("cli.messages.semgrep_list_filter_sev", sev=severity))
         if language:
-            filter_parts.append(t("cli.messages.semgrep_list_filter_lang", lang=language))
+            filter_parts.append(
+                t("cli.messages.semgrep_list_filter_lang", lang=language))
         if rule_filter:
-            filter_parts.append(t("cli.messages.semgrep_list_filter_rule", rule=rule_filter))
-        filter_str = " | ".join(filter_parts) if filter_parts else t("cli.messages.semgrep_list_filter_all")
-        print(t("cli.messages.semgrep_list_title", filter=filter_str, total=len(findings), shown=min(opts.limit, len(findings))))
+            filter_parts.append(
+                t("cli.messages.semgrep_list_filter_rule", rule=rule_filter))
+        filter_str = " | ".join(filter_parts) if filter_parts else t(
+            "cli.messages.semgrep_list_filter_all")
+        print(t("cli.messages.semgrep_list_title", filter=filter_str,
+              total=len(findings), shown=min(opts.limit, len(findings))))
         print()
         sev_icon_map = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}
         for i, f in enumerate(findings[:opts.limit], 1):
             icon = sev_icon_map.get(f["severity"], "[?]")
             sym_info = f" -> {f['symbol_qualified']}" if f["symbol_qualified"] else ""
-            print(f"  #{i:3d} {icon} {f['rule_name'][:40]:<40s} {f['language']:<12s}{sym_info}")
+            print(
+                f"  #{i:3d} {icon} {f['rule_name'][:40]:<40s} {f['language']:<12s}{sym_info}")
             print(f"        {f['file_path']}:{f['start_line']}")
             print(f"        {f['message'][:80]}")
             print()
         if len(findings) > opts.limit:
-            print(t("cli.messages.semgrep_list_more", count=len(findings) - opts.limit))
+            print(t("cli.messages.semgrep_list_more",
+                  count=len(findings) - opts.limit))
         return True
 
     return True
@@ -8629,33 +9148,45 @@ def _handle_coverage(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw coverage",
-        description=t("cli.messages.coverage_subcommand_desc", default="Coverage import and query (import/fn/uncovered)"),
+        description=t("cli.messages.coverage_subcommand_desc",
+                      default="Coverage import and query (import/fn/uncovered)"),
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
-    imp = sub.add_parser("import", help=t("cli.messages.coverage_action_import", default="Import coverage report"))
-    imp.add_argument("file", help=t("cli.messages.coverage_arg_file", default="Coverage report file"))
-    imp.add_argument("--format", choices=["lcov", "cobertura"], default="lcov", help=t("cli.messages.coverage_arg_format", default="Report format (default lcov)"))
+    imp = sub.add_parser("import", help=t(
+        "cli.messages.coverage_action_import", default="Import coverage report"))
+    imp.add_argument("file", help=t(
+        "cli.messages.coverage_arg_file", default="Coverage report file"))
+    imp.add_argument("--format", choices=["lcov", "cobertura"], default="lcov", help=t(
+        "cli.messages.coverage_arg_format", default="Report format (default lcov)"))
 
-    fn_p = sub.add_parser("fn", help=t("cli.messages.coverage_action_fn", default="Coverage for a function"))
-    fn_p.add_argument("name", help=t("cli.messages.coverage_arg_name", default="Function name"))
+    fn_p = sub.add_parser("fn", help=t(
+        "cli.messages.coverage_action_fn", default="Coverage for a function"))
+    fn_p.add_argument("name", help=t(
+        "cli.messages.coverage_arg_name", default="Function name"))
 
-    sub.add_parser("uncovered", help=t("cli.messages.coverage_action_uncovered", default="Find uncovered functions"))
+    sub.add_parser("uncovered", help=t(
+        "cli.messages.coverage_action_uncovered", default="Find uncovered functions"))
 
     opts = parser.parse_args(args)
 
     if opts.action == "import":
-        print(t("cli.messages.coverage_import_title", file=opts.file, format=opts.format))
+        print(t("cli.messages.coverage_import_title",
+              file=opts.file, format=opts.format))
         print("-" * 50)
         try:
             if opts.format == "lcov":
                 stats = db.import_lcov(opts.file)
             else:
                 stats = db.import_cobertura(opts.file)
-            print(t("cli.messages.coverage_import_files_total", count=stats['files_total']))
-            print(t("cli.messages.coverage_import_files_matched", count=stats['files_matched']))
-            print(t("cli.messages.coverage_import_lines", count=stats['lines_imported']))
-            print(t("cli.messages.coverage_import_symbols", count=stats['symbols_matched']))
+            print(t("cli.messages.coverage_import_files_total",
+                  count=stats['files_total']))
+            print(t("cli.messages.coverage_import_files_matched",
+                  count=stats['files_matched']))
+            print(t("cli.messages.coverage_import_lines",
+                  count=stats['lines_imported']))
+            print(t("cli.messages.coverage_import_symbols",
+                  count=stats['symbols_matched']))
         except FileNotFoundError:
             print(t("cli.messages.coverage_import_file_not_found", file=opts.file))
         except Exception as e:
@@ -8669,17 +9200,23 @@ def _handle_coverage(args, db):
             print(t("cli.messages.coverage_fn_not_found", name=opts.name))
             print(t("cli.messages.coverage_fn_search_hint"))
         else:
-            print(t("cli.messages.coverage_fn_title", name=info['qualified_name']))
+            print(t("cli.messages.coverage_fn_title",
+                  name=info['qualified_name']))
             print("-" * 50)
-            print(t("cli.messages.coverage_fn_file", file=info['file_path'], start=info['start_line'], end=info['end_line']))
-            print(t("cli.messages.coverage_fn_total", count=info['total_lines']))
-            print(t("cli.messages.coverage_fn_tracked", count=info['tracked_lines']))
-            print(t("cli.messages.coverage_fn_covered", count=info['covered_lines']))
+            print(t("cli.messages.coverage_fn_file",
+                  file=info['file_path'], start=info['start_line'], end=info['end_line']))
+            print(t("cli.messages.coverage_fn_total",
+                  count=info['total_lines']))
+            print(t("cli.messages.coverage_fn_tracked",
+                  count=info['tracked_lines']))
+            print(t("cli.messages.coverage_fn_covered",
+                  count=info['covered_lines']))
             print(t("cli.messages.coverage_fn_pct", pct=info['coverage_pct']))
             if info['uncovered_lines']:
                 lines_preview = info['uncovered_lines'][:30]
                 more = '...' if len(info['uncovered_lines']) > 30 else ''
-                print(t("cli.messages.coverage_fn_uncovered", lines=lines_preview, more=more))
+                print(t("cli.messages.coverage_fn_uncovered",
+                      lines=lines_preview, more=more))
         print()
         return True
 
@@ -8688,9 +9225,12 @@ def _handle_coverage(args, db):
         print(t("cli.messages.coverage_uncovered_title", count=len(results)))
         print("-" * 50)
         for i, r in enumerate(results, 1):
-            pct_label = t("cli.messages.coverage_fn_pct", pct="").strip().rstrip(":").strip()
-            print(f"  [{i:3d}] {pct_label}={r['coverage_pct']:5.1f}%  {r['qualified_name']}")
-            print(t("cli.messages.coverage_uncovered_item", file=r['file_path'], start=r['start_line'], end=r['end_line'], covered=r['covered_lines'], tracked=r['tracked_lines']))
+            pct_label = t("cli.messages.coverage_fn_pct",
+                          pct="").strip().rstrip(":").strip()
+            print(
+                f"  [{i:3d}] {pct_label}={r['coverage_pct']:5.1f}%  {r['qualified_name']}")
+            print(t("cli.messages.coverage_uncovered_item",
+                  file=r['file_path'], start=r['start_line'], end=r['end_line'], covered=r['covered_lines'], tracked=r['tracked_lines']))
         print()
         return True
 
@@ -8704,9 +9244,11 @@ def _handle_who(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw who",
-        description=t("cli.messages.who_subcommand_desc", default="Show file owner (who to ask)"),
+        description=t("cli.messages.who_subcommand_desc",
+                      default="Show file owner (who to ask)"),
     )
-    parser.add_argument("file", help=t("cli.messages.who_arg_file", default="File path"))
+    parser.add_argument("file", help=t(
+        "cli.messages.who_arg_file", default="File path"))
     opts = parser.parse_args(args)
 
     info = db.who_to_ask(opts.file)
@@ -8721,12 +9263,15 @@ def _handle_who(args, db):
         print(t("cli.messages.who_source", source=info['source']))
         print(t("cli.messages.who_confidence", confidence=info['confidence']))
         if info.get('last_commit_author'):
-            print(t("cli.messages.who_last_author", author=info['last_commit_author']))
+            print(t("cli.messages.who_last_author",
+                  author=info['last_commit_author']))
         if info.get('last_commit_time'):
-            ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(info['last_commit_time']))
+            ts = time.strftime('%Y-%m-%d %H:%M:%S',
+                               time.localtime(info['last_commit_time']))
             print(t("cli.messages.who_last_time", time=ts))
         if info.get('last_commit_hash'):
-            print(t("cli.messages.who_last_hash", hash=info['last_commit_hash'][:12]))
+            print(t("cli.messages.who_last_hash",
+                  hash=info['last_commit_hash'][:12]))
     print()
     return True
 
@@ -8738,7 +9283,8 @@ def _handle_ownership_map(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw ownership-map",
-        description=t("cli.messages.ownership_map_subcommand_desc", default="Show ownership map"),
+        description=t("cli.messages.ownership_map_subcommand_desc",
+                      default="Show ownership map"),
     )
     parser.parse_args(args)
     results = db.get_ownership_map()
@@ -8746,11 +9292,14 @@ def _handle_ownership_map(args, db):
     print("-" * 50)
     for i, m in enumerate(results, 1):
         print(f"  [{i}] {m['module']}")
-        print(t("cli.messages.ownership_map_primary", owner=m['primary_owner'], count=m['file_count']))
-        owners_str = ", ".join(f"{o['name']}({o['file_count']})" for o in m['owners'][:5])
+        print(t("cli.messages.ownership_map_primary",
+              owner=m['primary_owner'], count=m['file_count']))
+        owners_str = ", ".join(
+            f"{o['name']}({o['file_count']})" for o in m['owners'][:5])
         print(t("cli.messages.ownership_map_dist", owners=owners_str))
         if len(m['owners']) > 5:
-            print(t("cli.messages.ownership_map_more", count=len(m['owners']) - 5))
+            print(t("cli.messages.ownership_map_more",
+                  count=len(m['owners']) - 5))
     print()
     return True
 
@@ -8767,7 +9316,8 @@ def _handle_brief(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw brief",
-        description=t("cli.messages.brief_subcommand_desc", default="Show project brief"),
+        description=t("cli.messages.brief_subcommand_desc",
+                      default="Show project brief"),
     )
     parser.parse_args(args)
     brief = db.project_brief()
@@ -8777,21 +9327,26 @@ def _handle_brief(args, db):
     print(t("cli.messages.brief_files", count=brief['file_count']))
     print(t("cli.messages.brief_functions", count=brief['function_count']))
     print(t("cli.messages.brief_total_lines", count=brief['total_lines']))
-    print(t("cli.messages.brief_health", score=brief['health_score'], level=brief['health_level']))
-    print(t("cli.messages.brief_avg_complexity", value=brief['avg_complexity']))
-    print(t("cli.messages.brief_comment_coverage", pct=brief['comment_coverage']))
+    print(t("cli.messages.brief_health",
+          score=brief['health_score'], level=brief['health_level']))
+    print(t("cli.messages.brief_avg_complexity",
+          value=brief['avg_complexity']))
+    print(t("cli.messages.brief_comment_coverage",
+          pct=brief['comment_coverage']))
     print()
     modules = brief.get('modules', [])
     if modules:
         print(t("cli.messages.brief_modules", count=len(modules)))
         for i, m in enumerate(modules, 1):
-            print(t("cli.messages.brief_module_item", idx=i, module=m['module'], count=m['function_count']))
+            print(t("cli.messages.brief_module_item", idx=i,
+                  module=m['module'], count=m['function_count']))
         print()
     hotspots = brief.get('hot_functions', [])
     if hotspots:
         print(t("cli.messages.brief_hotspots", count=len(hotspots)))
         for i, fn in enumerate(hotspots, 1):
-            print(t("cli.messages.brief_hotspot_item", idx=i, value=fn['cyclomatic_complexity'], name=fn['qualified_name']))
+            print(t("cli.messages.brief_hotspot_item", idx=i,
+                  value=fn['cyclomatic_complexity'], name=fn['qualified_name']))
     print()
     return True
 
@@ -8803,9 +9358,11 @@ def _handle_map(args, db):
     """
     parser = argparse.ArgumentParser(
         prog="cw map",
-        description=t("cli.messages.map_subcommand_desc", default="Show repo module map"),
+        description=t("cli.messages.map_subcommand_desc",
+                      default="Show repo module map"),
     )
-    parser.add_argument("--format", choices=["text", "mermaid"], default="text", help=t("cli.messages.map_arg_format", default="Output format (default text)"))
+    parser.add_argument("--format", choices=["text", "mermaid"], default="text", help=t(
+        "cli.messages.map_arg_format", default="Output format (default text)"))
     opts = parser.parse_args(args)
 
     output = db.repo_map(format=opts.format)
@@ -8861,12 +9418,15 @@ def _handle_toolchain(args, db):
     bind_p = sub.add_parser("bind", help="Bind toolchain to workspace")
     bind_p.add_argument("workspace_id", type=int, help="Workspace ID")
     bind_p.add_argument("toolchain_name", help="Toolchain name")
-    bind_p.add_argument("--build-context-hash", default="", help="Build context hash")
+    bind_p.add_argument("--build-context-hash", default="",
+                        help="Build context hash")
 
     # list-bound
-    bound_p = sub.add_parser("list-bound", help="List toolchains bound to a workspace")
+    bound_p = sub.add_parser(
+        "list-bound", help="List toolchains bound to a workspace")
     bound_p.add_argument("workspace_id", type=int, help="Workspace ID")
-    bound_p.add_argument("--build-context-hash", default="", help="Filter by build context hash")
+    bound_p.add_argument("--build-context-hash", default="",
+                         help="Filter by build context hash")
 
     opts = parser.parse_args(args)
 
@@ -8886,9 +9446,11 @@ def _handle_toolchain(args, db):
             print(f"Toolchain registered: {tc.summary()}")
             print(f"  fingerprint: {tc.fingerprint}")
             if tc.include_dirs:
-                print(f"  include_dirs ({len(tc.include_dirs)}): {', '.join(tc.include_dirs[:3])}...")
+                print(
+                    f"  include_dirs ({len(tc.include_dirs)}): {', '.join(tc.include_dirs[:3])}...")
             if tc.predefined_macros:
-                print(f"  predefined_macros: {len(tc.predefined_macros)} macros")
+                print(
+                    f"  predefined_macros: {len(tc.predefined_macros)} macros")
         except Exception as e:
             print(f"Error: {e}")
             return False
@@ -8901,7 +9463,8 @@ def _handle_toolchain(args, db):
         print(f"{'ID':<5} {'Name':<20} {'Type':<20} {'Version':<30} {'Target':<25}")
         print("-" * 100)
         for tc in tcs:
-            print(f"{tc.id:<5} {tc.name:<20} {tc.compiler_type:<20} {tc.version[:30]:<30} {tc.target_triple:<25}")
+            print(
+                f"{tc.id:<5} {tc.name:<20} {tc.compiler_type:<20} {tc.version[:30]:<30} {tc.target_triple:<25}")
 
     elif opts.action == "show":
         # 尝试 ID 或名称
@@ -8948,7 +9511,8 @@ def _handle_toolchain(args, db):
         if bind_toolchain_to_workspace(
             db.conn, opts.workspace_id, tc.id, opts.build_context_hash
         ):
-            print(f"Toolchain '{tc.name}' bound to workspace {opts.workspace_id}")
+            print(
+                f"Toolchain '{tc.name}' bound to workspace {opts.workspace_id}")
         else:
             print(f"Failed to bind (already bound?)")
             return False
@@ -8996,10 +9560,13 @@ def _handle_build_context(args, db):
     reg = sub.add_parser("register", help="Register a build context")
     reg.add_argument("workspace_id", type=int, help="Workspace ID")
     reg.add_argument("name", help="Context name (e.g. debug, release)")
-    reg.add_argument("--flags", nargs="*", default=[], help="Compile flags (e.g. -O2 -g)")
-    reg.add_argument("--defines", nargs="*", default=[], help="Defines (e.g. DEBUG=1 BOARD=A98)")
+    reg.add_argument("--flags", nargs="*", default=[],
+                     help="Compile flags (e.g. -O2 -g)")
+    reg.add_argument("--defines", nargs="*", default=[],
+                     help="Defines (e.g. DEBUG=1 BOARD=A98)")
     reg.add_argument("--includes", nargs="*", default=[], help="Include paths")
-    reg.add_argument("--activate", action="store_true", help="Set as active context")
+    reg.add_argument("--activate", action="store_true",
+                     help="Set as active context")
 
     # list
     lst = sub.add_parser("list", help="List build contexts")
@@ -9021,23 +9588,29 @@ def _handle_build_context(args, db):
     del_p.add_argument("hash", help="Build context hash")
 
     # import-compile-commands
-    imp = sub.add_parser("import-compile-commands", help="Import from compile_commands.json")
+    imp = sub.add_parser("import-compile-commands",
+                         help="Import from compile_commands.json")
     imp.add_argument("file", help="Path to compile_commands.json")
     imp.add_argument("workspace_id", type=int, help="Workspace ID")
     imp.add_argument("--name", default="imported", help="Context name")
-    imp.add_argument("--activate", action="store_true", help="Set as active context")
-    imp.add_argument("--workspace-root", default="", help="Workspace root for path normalization")
+    imp.add_argument("--activate", action="store_true",
+                     help="Set as active context")
+    imp.add_argument("--workspace-root", default="",
+                     help="Workspace root for path normalization")
 
     # resolve（计算 resolved_edges）
-    resolve_p = sub.add_parser("resolve", help="Compute resolved edges for a build context")
+    resolve_p = sub.add_parser(
+        "resolve", help="Compute resolved edges for a build context")
     resolve_p.add_argument("workspace_id", type=int, help="Workspace ID")
     resolve_p.add_argument("hash", help="Build context hash")
 
     # edges
-    edges_p = sub.add_parser("edges", help="List resolved edges for a build context")
+    edges_p = sub.add_parser(
+        "edges", help="List resolved edges for a build context")
     edges_p.add_argument("workspace_id", type=int, help="Workspace ID")
     edges_p.add_argument("hash", help="Build context hash")
-    edges_p.add_argument("--caller", type=int, default=None, help="Filter by caller symbol ID")
+    edges_p.add_argument("--caller", type=int, default=None,
+                         help="Filter by caller symbol ID")
     edges_p.add_argument("--limit", type=int, default=50, help="Max results")
 
     opts = parser.parse_args(args)
@@ -9107,7 +9680,8 @@ def _handle_build_context(args, db):
         if len(ctx.include_paths) > 10:
             print(f"    ... and {len(ctx.include_paths) - 10} more")
         # 统计 resolved edges（用完整 hash）
-        count = count_resolved_edges(db.conn, opts.workspace_id, ctx.build_context_hash)
+        count = count_resolved_edges(
+            db.conn, opts.workspace_id, ctx.build_context_hash)
         print(f"  Resolved edges: {count}")
 
     elif opts.action == "activate":
@@ -9140,7 +9714,8 @@ def _handle_build_context(args, db):
             print(f"File not found: {opts.file}")
             return False
 
-        agg = import_compile_commands(opts.file, opts.workspace_root or os.getcwd())
+        agg = import_compile_commands(
+            opts.file, opts.workspace_root or os.getcwd())
         print(f"Imported {agg.file_count} compile entries:")
         print(f"  compiler: {agg.compiler_path or '(not detected)'}")
         print(f"  defines: {len(agg.defines)}")
@@ -9165,7 +9740,8 @@ def _handle_build_context(args, db):
         # 如果检测到编译器，提示注册 toolchain
         if agg.compiler_path:
             print(f"\n  Hint: Detected compiler '{agg.compiler_path}'")
-            print(f"  Run: cw toolchain register auto_{int(time.time())} {agg.compiler_path}")
+            print(
+                f"  Run: cw toolchain register auto_{int(time.time())} {agg.compiler_path}")
 
     elif opts.action == "resolve":
         from ..analyzers.resolved_edges_engine import compute_resolved_edges
@@ -9209,7 +9785,8 @@ def _handle_build_context(args, db):
             print(f"No resolved edges found")
             return True
         print(f"Resolved edges ({len(edges)} shown):")
-        print(f"{'Caller':<10} {'Callee':<10} {'Callee Name':<30} {'File':<20} {'Line':<6} {'Method':<15}")
+        print(
+            f"{'Caller':<10} {'Callee':<10} {'Callee Name':<30} {'File':<20} {'Line':<6} {'Method':<15}")
         print("-" * 95)
         for e in edges:
             print(f"{e.caller_symbol_id:<10} {e.callee_symbol_id:<10} "
@@ -9226,118 +9803,209 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--lang", metavar="LANG", default=DEFAULT_LANG,
-                       help=get_arg_help("lang"))
-    parser.add_argument("--workspace", metavar="ROOT", help=get_arg_help("workspace"))
+                        help=get_arg_help("lang"))
+    parser.add_argument("--workspace", metavar="ROOT",
+                        help=get_arg_help("workspace"))
     parser.add_argument("--root", metavar="ROOT", help=get_arg_help("root"))
-    parser.add_argument("--list-workspaces", action="store_true", help=get_arg_help("list_workspaces"))
-    parser.add_argument("--register-workspace", nargs=2, metavar=("NAME", "ROOT"), help=get_arg_help("register_workspace"))
-    parser.add_argument("--set-workspace", metavar="ID_OR_NAME", help=get_arg_help("set_workspace"))
-    parser.add_argument("--delete-workspace", metavar="ID_OR_NAME", help=get_arg_help("delete_workspace"))
-    parser.add_argument("--refresh-all", action="store_true", dest="refresh_all", help=get_arg_help("refresh_all"))
-    parser.add_argument("--force", action="store_true", help=get_arg_help("force"))
-    parser.add_argument("--watch", action="store_true", help=get_arg_help("watch"))
-    parser.add_argument("--stats", action="store_true", help=get_arg_help("stats"))
-    parser.add_argument("--status", action="store_true", help=get_arg_help("status"))
-    parser.add_argument("--query", nargs=2, metavar=("NAME", "FILE"), help=get_arg_help("query"))
-    parser.add_argument("--callers", metavar="NAME", help=get_arg_help("callers"))
-    parser.add_argument("--callees", metavar="NAME", help=get_arg_help("callees"))
-    parser.add_argument("--topo", action="store_true", help=get_arg_help("topo"))
-    parser.add_argument("--topo-limit", type=int, default=50, help=get_arg_help("topo_limit"))
+    parser.add_argument("--list-workspaces", action="store_true",
+                        help=get_arg_help("list_workspaces"))
+    parser.add_argument("--register-workspace", nargs=2, metavar=("NAME",
+                        "ROOT"), help=get_arg_help("register_workspace"))
+    parser.add_argument("--set-workspace", metavar="ID_OR_NAME",
+                        help=get_arg_help("set_workspace"))
+    parser.add_argument("--delete-workspace", metavar="ID_OR_NAME",
+                        help=get_arg_help("delete_workspace"))
+    parser.add_argument("--refresh-all", action="store_true",
+                        dest="refresh_all", help=get_arg_help("refresh_all"))
+    parser.add_argument("--force", action="store_true",
+                        help=get_arg_help("force"))
+    parser.add_argument("--watch", action="store_true",
+                        help=get_arg_help("watch"))
+    parser.add_argument("--stats", action="store_true",
+                        help=get_arg_help("stats"))
+    parser.add_argument("--status", action="store_true",
+                        help=get_arg_help("status"))
+    parser.add_argument("--query", nargs=2, metavar=("NAME",
+                        "FILE"), help=get_arg_help("query"))
+    parser.add_argument("--callers", metavar="NAME",
+                        help=get_arg_help("callers"))
+    parser.add_argument("--callees", metavar="NAME",
+                        help=get_arg_help("callees"))
+    parser.add_argument("--topo", action="store_true",
+                        help=get_arg_help("topo"))
+    parser.add_argument("--topo-limit", type=int, default=50,
+                        help=get_arg_help("topo_limit"))
     parser.add_argument("--file", metavar="PATH", help=get_arg_help("file"))
     parser.add_argument("--refresh", metavar="PATH [...]", nargs="+",
                         help=get_arg_help("refresh"))
-    parser.add_argument("--history", metavar="NAME", help=get_arg_help("history"))
-    parser.add_argument("--show-content", action="store_true", help=get_arg_help("show_content"))
-    parser.add_argument("--diff", nargs=2, metavar=("HASH1", "HASH2"), help=get_arg_help("diff"))
-    parser.add_argument("--changes", metavar="SINCE", nargs="?", const="1h", help=get_arg_help("changes"))
-    parser.add_argument("--changes-detail", action="store_true", help=get_arg_help("changes_detail"))
-    parser.add_argument("--restore-comment", metavar="SPEC", help=get_arg_help("restore_comment"))
-    parser.add_argument("--restore-all-comments", action="store_true", help=get_arg_help("restore_all_comments"))
-    parser.add_argument("--restore-file", metavar="PATH", help=get_arg_help("restore_file"))
-    parser.add_argument("--preview", action="store_true", help=get_arg_help("preview"))
-    parser.add_argument("--comment-coverage", action="store_true", help=get_arg_help("comment_coverage"))
-    parser.add_argument("--coverage-by", metavar="GROUP", default="module", help=get_arg_help("coverage_by"))
-    parser.add_argument("--uncommented", metavar="KIND", nargs="?", const="fn", help=get_arg_help("uncommented"))
-    parser.add_argument("--uncommented-module", metavar="MODULE", help=get_arg_help("uncommented_module"))
-    parser.add_argument("--uncommented-limit", metavar="N", type=int, default=50, help=get_arg_help("uncommented_limit"))
-    parser.add_argument("--search", metavar="QUERY", help=get_arg_help("search"))
-    parser.add_argument("--search-kind", metavar="KIND", help=get_arg_help("search_kind"))
-    parser.add_argument("--search-limit", metavar="N", type=int, default=50, help=get_arg_help("search_limit"))
-    parser.add_argument("--symbol", metavar="QUALIFIED_NAME", help=get_arg_help("symbol"))
-    parser.add_argument("--impact", metavar="QUALIFIED_NAME", help=get_arg_help("impact"))
-    parser.add_argument("--call-chain", metavar="QUALIFIED_NAME", help=get_arg_help("call_chain"))
-    parser.add_argument("--chain-depth", metavar="N", type=int, default=10, help=get_arg_help("chain_depth"))
-    parser.add_argument("--top-callers", metavar="N", type=int, nargs="?", const=20, help=get_arg_help("top_callers"))
-    parser.add_argument("--top-callers-module", metavar="MODULE", help=get_arg_help("top_callers_module"))
-    parser.add_argument("--orphan-symbols", metavar="KIND", nargs="?", const="fn", help=get_arg_help("orphan_symbols"))
-    parser.add_argument("--orphan-module", metavar="MODULE", help=get_arg_help("orphan_module"))
-    parser.add_argument("--orphan-limit", metavar="N", type=int, default=50, help=get_arg_help("orphan_limit"))
-    parser.add_argument("--deepest", metavar="N", type=int, nargs="?", const=20, help=get_arg_help("deepest"))
-    parser.add_argument("--deepest-module", metavar="MODULE", help=get_arg_help("deepest_module"))
-    parser.add_argument("--module-calls", metavar="N", type=int, nargs="?", const=20, help=get_arg_help("module_calls"))
-    parser.add_argument("--detect-cycles", action="store_true", help=get_arg_help("detect_cycles"))
-    parser.add_argument("--cycle-depth", metavar="N", type=int, default=10, help=get_arg_help("cycle_depth"))
-    parser.add_argument("--export-module-graph", metavar="FORMAT", nargs="?", const="mermaid", help=get_arg_help("export_module_graph"))
-    parser.add_argument("--graph-output", metavar="FILE", help=get_arg_help("graph_output"))
-    parser.add_argument("--call-heatmap", metavar="GROUP_BY", nargs="?", const="module", help=get_arg_help("call_heatmap"))
-    parser.add_argument("--heatmap-limit", metavar="N", type=int, default=20, help=get_arg_help("heatmap_limit"))
-    parser.add_argument("--test-coverage", action="store_true", help=get_arg_help("test_coverage"))
-    parser.add_argument("--function-issues", metavar="FN", nargs="?", const="", help=get_arg_help("function_issues"))
-    parser.add_argument("--issue-summary", action="store_true", help=get_arg_help("issue_summary"))
-    parser.add_argument("--issue-type", metavar="TYPE", help=get_arg_help("issue_type"))
-    parser.add_argument("--issue-module", metavar="MODULE", help=get_arg_help("issue_module"))
-    parser.add_argument("--issue-limit", metavar="N", type=int, default=30, help=get_arg_help("issue_limit"))
-    parser.add_argument("--semgrep", metavar="PATH", nargs="*", help=get_arg_help("semgrep"))
-    parser.add_argument("--semgrep-config", metavar="CONFIG", default="p/default", help=get_arg_help("semgrep_config"))
-    parser.add_argument("--semgrep-scan-lang", metavar="LANG", nargs="*", help=get_arg_help("semgrep_scan_lang"))
-    parser.add_argument("--semgrep-timeout", metavar="N", type=int, default=180, help=get_arg_help("semgrep_timeout"))
-    parser.add_argument("--semgrep-quick", action="store_true", help=get_arg_help("semgrep_quick"))
-    parser.add_argument("--semgrep-save", action="store_true", help=get_arg_help("semgrep_save"))
-    parser.add_argument("--semgrep-list", nargs="?", const="", metavar="FILTER", help=get_arg_help("semgrep_list"))
-    parser.add_argument("--semgrep-severity", metavar="SEV", help=get_arg_help("semgrep_severity"))
-    parser.add_argument("--semgrep-list-lang", metavar="LANG", help=get_arg_help("semgrep_list_lang"))
-    parser.add_argument("--semgrep-stats", action="store_true", help=get_arg_help("semgrep_stats"))
-    parser.add_argument("--semgrep-limit", metavar="N", type=int, default=50, help=get_arg_help("semgrep_limit"))
-    
+    parser.add_argument("--history", metavar="NAME",
+                        help=get_arg_help("history"))
+    parser.add_argument("--show-content", action="store_true",
+                        help=get_arg_help("show_content"))
+    parser.add_argument("--diff", nargs=2, metavar=("HASH1",
+                        "HASH2"), help=get_arg_help("diff"))
+    parser.add_argument("--changes", metavar="SINCE", nargs="?",
+                        const="1h", help=get_arg_help("changes"))
+    parser.add_argument("--changes-detail", action="store_true",
+                        help=get_arg_help("changes_detail"))
+    parser.add_argument("--restore-comment", metavar="SPEC",
+                        help=get_arg_help("restore_comment"))
+    parser.add_argument("--restore-all-comments", action="store_true",
+                        help=get_arg_help("restore_all_comments"))
+    parser.add_argument("--restore-file", metavar="PATH",
+                        help=get_arg_help("restore_file"))
+    parser.add_argument("--preview", action="store_true",
+                        help=get_arg_help("preview"))
+    parser.add_argument("--comment-coverage", action="store_true",
+                        help=get_arg_help("comment_coverage"))
+    parser.add_argument("--coverage-by", metavar="GROUP",
+                        default="module", help=get_arg_help("coverage_by"))
+    parser.add_argument("--uncommented", metavar="KIND",
+                        nargs="?", const="fn", help=get_arg_help("uncommented"))
+    parser.add_argument("--uncommented-module", metavar="MODULE",
+                        help=get_arg_help("uncommented_module"))
+    parser.add_argument("--uncommented-limit", metavar="N", type=int,
+                        default=50, help=get_arg_help("uncommented_limit"))
+    parser.add_argument("--search", metavar="QUERY",
+                        help=get_arg_help("search"))
+    parser.add_argument("--search-kind", metavar="KIND",
+                        help=get_arg_help("search_kind"))
+    parser.add_argument("--search-limit", metavar="N", type=int,
+                        default=50, help=get_arg_help("search_limit"))
+    parser.add_argument("--symbol", metavar="QUALIFIED_NAME",
+                        help=get_arg_help("symbol"))
+    parser.add_argument("--impact", metavar="QUALIFIED_NAME",
+                        help=get_arg_help("impact"))
+    parser.add_argument("--call-chain", metavar="QUALIFIED_NAME",
+                        help=get_arg_help("call_chain"))
+    parser.add_argument("--chain-depth", metavar="N", type=int,
+                        default=10, help=get_arg_help("chain_depth"))
+    parser.add_argument("--top-callers", metavar="N", type=int,
+                        nargs="?", const=20, help=get_arg_help("top_callers"))
+    parser.add_argument("--top-callers-module", metavar="MODULE",
+                        help=get_arg_help("top_callers_module"))
+    parser.add_argument("--orphan-symbols", metavar="KIND",
+                        nargs="?", const="fn", help=get_arg_help("orphan_symbols"))
+    parser.add_argument("--orphan-module", metavar="MODULE",
+                        help=get_arg_help("orphan_module"))
+    parser.add_argument("--orphan-limit", metavar="N", type=int,
+                        default=50, help=get_arg_help("orphan_limit"))
+    parser.add_argument("--deepest", metavar="N", type=int,
+                        nargs="?", const=20, help=get_arg_help("deepest"))
+    parser.add_argument("--deepest-module", metavar="MODULE",
+                        help=get_arg_help("deepest_module"))
+    parser.add_argument("--module-calls", metavar="N", type=int,
+                        nargs="?", const=20, help=get_arg_help("module_calls"))
+    parser.add_argument("--detect-cycles", action="store_true",
+                        help=get_arg_help("detect_cycles"))
+    parser.add_argument("--cycle-depth", metavar="N", type=int,
+                        default=10, help=get_arg_help("cycle_depth"))
+    parser.add_argument("--export-module-graph", metavar="FORMAT", nargs="?",
+                        const="mermaid", help=get_arg_help("export_module_graph"))
+    parser.add_argument("--graph-output", metavar="FILE",
+                        help=get_arg_help("graph_output"))
+    parser.add_argument("--call-heatmap", metavar="GROUP_BY",
+                        nargs="?", const="module", help=get_arg_help("call_heatmap"))
+    parser.add_argument("--heatmap-limit", metavar="N", type=int,
+                        default=20, help=get_arg_help("heatmap_limit"))
+    parser.add_argument("--test-coverage", action="store_true",
+                        help=get_arg_help("test_coverage"))
+    parser.add_argument("--function-issues", metavar="FN",
+                        nargs="?", const="", help=get_arg_help("function_issues"))
+    parser.add_argument("--issue-summary", action="store_true",
+                        help=get_arg_help("issue_summary"))
+    parser.add_argument("--issue-type", metavar="TYPE",
+                        help=get_arg_help("issue_type"))
+    parser.add_argument("--issue-module", metavar="MODULE",
+                        help=get_arg_help("issue_module"))
+    parser.add_argument("--issue-limit", metavar="N", type=int,
+                        default=30, help=get_arg_help("issue_limit"))
+    parser.add_argument("--semgrep", metavar="PATH",
+                        nargs="*", help=get_arg_help("semgrep"))
+    parser.add_argument("--semgrep-config", metavar="CONFIG",
+                        default="p/default", help=get_arg_help("semgrep_config"))
+    parser.add_argument("--semgrep-scan-lang", metavar="LANG",
+                        nargs="*", help=get_arg_help("semgrep_scan_lang"))
+    parser.add_argument("--semgrep-timeout", metavar="N", type=int,
+                        default=180, help=get_arg_help("semgrep_timeout"))
+    parser.add_argument("--semgrep-quick", action="store_true",
+                        help=get_arg_help("semgrep_quick"))
+    parser.add_argument("--semgrep-save", action="store_true",
+                        help=get_arg_help("semgrep_save"))
+    parser.add_argument("--semgrep-list", nargs="?", const="",
+                        metavar="FILTER", help=get_arg_help("semgrep_list"))
+    parser.add_argument("--semgrep-severity", metavar="SEV",
+                        help=get_arg_help("semgrep_severity"))
+    parser.add_argument("--semgrep-list-lang", metavar="LANG",
+                        help=get_arg_help("semgrep_list_lang"))
+    parser.add_argument("--semgrep-stats", action="store_true",
+                        help=get_arg_help("semgrep_stats"))
+    parser.add_argument("--semgrep-limit", metavar="N", type=int,
+                        default=50, help=get_arg_help("semgrep_limit"))
+
     # Git 集成
-    parser.add_argument("--git-import", metavar="N", type=int, nargs="?", const=100, help=get_arg_help("git_import"))
-    parser.add_argument("--git-log", metavar="N", type=int, nargs="?", const=20, help=get_arg_help("git_log"))
-    parser.add_argument("--git-show", metavar="COMMIT", help=get_arg_help("git_show"))
-    parser.add_argument("--git-stats", action="store_true", help=get_arg_help("git_stats"))
+    parser.add_argument("--git-import", metavar="N", type=int,
+                        nargs="?", const=100, help=get_arg_help("git_import"))
+    parser.add_argument("--git-log", metavar="N", type=int,
+                        nargs="?", const=20, help=get_arg_help("git_log"))
+    parser.add_argument("--git-show", metavar="COMMIT",
+                        help=get_arg_help("git_show"))
+    parser.add_argument("--git-stats", action="store_true",
+                        help=get_arg_help("git_stats"))
 
     # 代码度量
-    parser.add_argument("--metrics", action="store_true", help=get_arg_help("metrics"))
-    parser.add_argument("--complexity", metavar="N", type=int, nargs="?", const=20, help=get_arg_help("complexity"))
-    parser.add_argument("--complexity-module", metavar="MODULE", help=get_arg_help("complexity_module"))
-    parser.add_argument("--coupling", action="store_true", help=get_arg_help("coupling"))
-    parser.add_argument("--largest-fns", metavar="N", type=int, nargs="?", const=20, help=get_arg_help("largest_fns"))
-    parser.add_argument("--coupled-fns", metavar="N", type=int, nargs="?", const=20, help=get_arg_help("coupled_fns"))
-    parser.add_argument("--fn-metrics", metavar="NAME", help=get_arg_help("fn_metrics"))
+    parser.add_argument("--metrics", action="store_true",
+                        help=get_arg_help("metrics"))
+    parser.add_argument("--complexity", metavar="N", type=int,
+                        nargs="?", const=20, help=get_arg_help("complexity"))
+    parser.add_argument("--complexity-module", metavar="MODULE",
+                        help=get_arg_help("complexity_module"))
+    parser.add_argument("--coupling", action="store_true",
+                        help=get_arg_help("coupling"))
+    parser.add_argument("--largest-fns", metavar="N", type=int,
+                        nargs="?", const=20, help=get_arg_help("largest_fns"))
+    parser.add_argument("--coupled-fns", metavar="N", type=int,
+                        nargs="?", const=20, help=get_arg_help("coupled_fns"))
+    parser.add_argument("--fn-metrics", metavar="NAME",
+                        help=get_arg_help("fn_metrics"))
 
     # 语义搜索
-    parser.add_argument("--semantic-search", metavar="QUERY", help=get_arg_help("semantic_search"))
-    parser.add_argument("--embed", action="store_true", help=get_arg_help("embed"))
-    parser.add_argument("--embed-force", action="store_true", help=get_arg_help("embed_force"))
-    parser.add_argument("--similar", metavar="NAME", help=get_arg_help("similar"))
+    parser.add_argument("--semantic-search", metavar="QUERY",
+                        help=get_arg_help("semantic_search"))
+    parser.add_argument("--embed", action="store_true",
+                        help=get_arg_help("embed"))
+    parser.add_argument("--embed-force", action="store_true",
+                        help=get_arg_help("embed_force"))
+    parser.add_argument("--similar", metavar="NAME",
+                        help=get_arg_help("similar"))
 
     # 任务管理
-    parser.add_argument("--task-list", action="store_true", help=get_arg_help("task_list"))
-    parser.add_argument("--task-show", metavar="TASK_ID", help=get_arg_help("task_show"))
+    parser.add_argument("--task-list", action="store_true",
+                        help=get_arg_help("task_list"))
+    parser.add_argument("--task-show", metavar="TASK_ID",
+                        help=get_arg_help("task_show"))
 
     # 项目简报和仓库地图
-    parser.add_argument("--brief", action="store_true", help=get_arg_help("brief"))
+    parser.add_argument("--brief", action="store_true",
+                        help=get_arg_help("brief"))
     parser.add_argument("--map", action="store_true", help=get_arg_help("map"))
-    parser.add_argument("--map-format", choices=["text", "mermaid"], default="text", help=get_arg_help("map_format"))
+    parser.add_argument(
+        "--map-format", choices=["text", "mermaid"], default="text", help=get_arg_help("map_format"))
 
     # 覆盖率
-    parser.add_argument("--coverage-import", metavar="FILE", help=get_arg_help("coverage_import"))
-    parser.add_argument("--coverage-format", choices=["lcov", "cobertura"], default="lcov", help=get_arg_help("coverage_format"))
-    parser.add_argument("--coverage-fn", metavar="NAME", help=get_arg_help("coverage_fn"))
-    parser.add_argument("--coverage-uncovered", action="store_true", help=get_arg_help("coverage_uncovered"))
+    parser.add_argument("--coverage-import", metavar="FILE",
+                        help=get_arg_help("coverage_import"))
+    parser.add_argument("--coverage-format", choices=[
+                        "lcov", "cobertura"], default="lcov", help=get_arg_help("coverage_format"))
+    parser.add_argument("--coverage-fn", metavar="NAME",
+                        help=get_arg_help("coverage_fn"))
+    parser.add_argument("--coverage-uncovered", action="store_true",
+                        help=get_arg_help("coverage_uncovered"))
 
     # 所有权
     parser.add_argument("--who", metavar="FILE", help=get_arg_help("who"))
-    parser.add_argument("--ownership-map", action="store_true", help=get_arg_help("ownership_map"))
+    parser.add_argument("--ownership-map", action="store_true",
+                        help=get_arg_help("ownership_map"))
 
     return parser
 
@@ -9373,6 +10041,16 @@ def main():
         _print_main_help()
         return
 
+    # Lazy Auto-Setup：setup 子命令拦截（不需要数据库初始化，在 _SUBCOMMANDS 检查前处理）
+    if len(sys.argv) > 1 and sys.argv[1] == "setup":
+        # 先设置语言（复用 pre_parser 解析 --lang）
+        _pre = argparse.ArgumentParser(add_help=False)
+        _pre.add_argument("--lang", metavar="LANG", default=DEFAULT_LANG)
+        _pa, _ = _pre.parse_known_args()
+        set_language(_pa.lang)
+        _handle_setup()
+        return
+
     # P0-3 修复：支持 cw --version / cw -V（复审报告 §3 P0-3 问题 6）
     # Gate 3 的首个黑盒命令 `cw --version` 依赖此分支。
     # version.toml §6 注释声称 `cw --version` 是版本源之一，必须真实实现。
@@ -9390,10 +10068,13 @@ def main():
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--lang", metavar="LANG", default=DEFAULT_LANG)
     pre_args, _ = pre_parser.parse_known_args()
-    
+
     # 设置语言
     set_language(pre_args.lang)
-    
+
+    # Lazy Auto-Setup：首次运行自动探测 AI 工具并注册 MCP Server（幂等，失败不影响主命令）
+    _check_auto_setup()
+
     # 第二阶段：用正确的语言创建完整 parser 并解析所有参数
     parser = create_parser()
     args = parser.parse_args()
@@ -9413,9 +10094,10 @@ def main():
         detected = detect_project_root(cwd)
         if detected:
             workspace_root = detected
-    
+
     # 初始化数据库
-    db = CodeGraphDB(workspace_root=workspace_root) if workspace_root else CodeGraphDB()
+    db = CodeGraphDB(
+        workspace_root=workspace_root) if workspace_root else CodeGraphDB()
 
     # 如果自动检测到了工作区，自动注册并设置为活动工作区
     # 优化：只读命令（search/symbol/callers 等查询类）跳过 register/set_active_workspace 写操作，
@@ -9439,24 +10121,28 @@ def main():
                 cprint(get_error("db_locked"), "red")
                 sys.exit(2)
             raise
-    
+
     try:
         # 工作区管理命令
         if args.list_workspaces:
             workspaces = db.list_workspaces()
             print(t("cli.messages.workspaces_title", count=len(workspaces)))
             for ws in workspaces:
-                active_mark = t("cli.messages.workspace_active_mark") if ws.get("is_active") else ""
-                print(t("cli.messages.workspace_normal", id=ws['id'], name=ws['name']) + active_mark)
+                active_mark = t("cli.messages.workspace_active_mark") if ws.get(
+                    "is_active") else ""
+                print(t("cli.messages.workspace_normal",
+                      id=ws['id'], name=ws['name']) + active_mark)
                 print(t("cli.messages.workspace_path", path=ws['root_path']))
                 if ws.get("description"):
-                    print(t("cli.messages.workspace_desc", desc=ws['description']))
+                    print(t("cli.messages.workspace_desc",
+                          desc=ws['description']))
             return
 
         if args.register_workspace:
             name, root = args.register_workspace
             ws_id = db.register_workspace(name, root)
-            print(t("cli.messages.register_success", id=ws_id, name=name, root=root))
+            print(t("cli.messages.register_success",
+                  id=ws_id, name=name, root=root))
             return
 
         if args.set_workspace:
@@ -9469,7 +10155,8 @@ def main():
                 success = db.set_active_workspace(ws_arg)
             if success:
                 active = db.get_active_workspace()
-                print(t("cli.messages.set_success", name=active['name'], root=active['root_path']))
+                print(t("cli.messages.set_success",
+                      name=active['name'], root=active['root_path']))
             else:
                 print(t("cli.messages.workspace_set_fail", name=ws_arg))
             return
@@ -9521,7 +10208,7 @@ def main():
                     "cli.messages.agents_md_auto_sync_skipped",
                     error=str(exc),
                 ))
-        
+
         elif args.watch:
             watcher = FileWatcher(db)
             watcher.start()
@@ -9566,22 +10253,28 @@ def main():
             print()
             print(f"  {t('cli.messages.status_workspace')}: {ws['name']}")
             print(f"  {t('cli.messages.status_root')}: {ws['root']}")
-            print(f"  {t('cli.messages.status_db_size')}: {fmt_size(ws['db_size'])}")
-            print(f"  {t('cli.messages.status_last_build')}: {fmt_ago(status['last_build'])}")
+            print(
+                f"  {t('cli.messages.status_db_size')}: {fmt_size(ws['db_size'])}")
+            print(
+                f"  {t('cli.messages.status_last_build')}: {fmt_ago(status['last_build'])}")
             print()
             print(f"  {t('cli.messages.status_files_title')}")
             on_disk = t("cli.messages.status_files_on_disk")
             tracked = t("cli.messages.status_files_tracked")
-            print(f"    {on_disk}: {fi['on_disk']}  ({tracked}: {fi['tracked']})")
+            print(
+                f"    {on_disk}: {fi['on_disk']}  ({tracked}: {fi['tracked']})")
             if fi["new"]:
                 new_label = t("cli.messages.status_files_new")
-                print(f"    {new_label}: {fi['new']}  {', '.join(fi['new_files'][:5])}{'...' if len(fi['new_files'])>5 else ''}")
+                print(
+                    f"    {new_label}: {fi['new']}  {', '.join(fi['new_files'][:5])}{'...' if len(fi['new_files']) > 5 else ''}")
             if fi["stale"]:
                 stale_label = t("cli.messages.status_files_stale")
-                print(f"    {stale_label}: {fi['stale']}  {', '.join(fi['stale_files'][:5])}{'...' if len(fi['stale_files'])>5 else ''}")
+                print(
+                    f"    {stale_label}: {fi['stale']}  {', '.join(fi['stale_files'][:5])}{'...' if len(fi['stale_files']) > 5 else ''}")
             if fi["deleted"]:
                 deleted_label = t("cli.messages.status_files_deleted")
-                print(f"    {deleted_label}: {fi['deleted']}  {', '.join(fi['deleted_files'][:5])}{'...' if len(fi['deleted_files'])>5 else ''}")
+                print(
+                    f"    {deleted_label}: {fi['deleted']}  {', '.join(fi['deleted_files'][:5])}{'...' if len(fi['deleted_files']) > 5 else ''}")
             if fi["by_language"]:
                 parts = []
                 for ext, cnt in sorted(fi["by_language"].items(), key=lambda x: -x[1])[:6]:
@@ -9590,7 +10283,8 @@ def main():
                 print(f"    {by_lang}: {', '.join(parts)}")
             print()
             print(f"  {t('cli.messages.status_symbols_title')}")
-            print(f"    {t('cli.messages.status_symbols_total')}: {sy['total']}")
+            print(
+                f"    {t('cli.messages.status_symbols_total')}: {sy['total']}")
             kind_parts = []
             kind_names = {"fn": t("cli.messages.kind_fn"), "test_fn": t("cli.messages.kind_test_fn"), "struct": t("cli.messages.kind_struct"),
                           "enum": t("cli.messages.kind_enum"), "trait": t("cli.messages.kind_trait"), "impl": "impl",
@@ -9599,15 +10293,19 @@ def main():
             for kind, cnt in sorted(sy["by_kind"].items(), key=lambda x: -x[1])[:8]:
                 kn = kind_names.get(kind, kind)
                 kind_parts.append(f"{kn}: {cnt}")
-            print(f"    {t('cli.messages.status_by_kind')}: {', '.join(kind_parts)}")
-            print(f"    {t('cli.messages.status_uncommented_fns')}: {sy['uncommented_fns']}")
+            print(
+                f"    {t('cli.messages.status_by_kind')}: {', '.join(kind_parts)}")
+            print(
+                f"    {t('cli.messages.status_uncommented_fns')}: {sy['uncommented_fns']}")
             print()
             print(f"  {t('cli.messages.status_calls_title')}")
             print(f"    {t('cli.messages.status_calls_total')}: {ca['total']}")
             resolved_label = t("cli.messages.status_calls_resolved")
             rate_label = t("cli.messages.status_calls_rate")
-            print(f"    {resolved_label}: {ca['resolved']}  ({rate_label}: {ca['resolve_rate']}%)")
-            print(f"    {t('cli.messages.status_calls_cross')}: {ca['cross_file']}")
+            print(
+                f"    {resolved_label}: {ca['resolved']}  ({rate_label}: {ca['resolve_rate']}%)")
+            print(
+                f"    {t('cli.messages.status_calls_cross')}: {ca['cross_file']}")
             print()
             if status["needs_rebuild"]:
                 print(f"  ⚠ {t('cli.messages.status_rebuild_hint')}")
@@ -9625,18 +10323,23 @@ def main():
 
         elif args.callers:
             callers = db.get_callers(args.callers)
-            print(t("cli.messages.callers_title", name=args.callers, count=len(callers)))
+            print(t("cli.messages.callers_title",
+                  name=args.callers, count=len(callers)))
             for c in callers:
-                cross = t("cli.messages.callers_cross_file") if c["is_cross_file"] else ""
+                cross = t(
+                    "cli.messages.callers_cross_file") if c["is_cross_file"] else ""
                 print(t("cli.messages.callers_item",
                         file=c['caller_file'], line=c['call_line'], name=c['caller_name'], cross=cross))
 
         elif args.callees:
             callees = db.get_callees(args.callees)
-            print(t("cli.messages.callees_title", name=args.callees, count=len(callees)))
+            print(t("cli.messages.callees_title",
+                  name=args.callees, count=len(callees)))
             for c in callees:
-                cross = t("cli.messages.callees_cross_file") if c["is_cross_file"] else ""
-                file_info = f" ({c['callee_file']})" if c["callee_file"] else t("cli.messages.callees_unresolved")
+                cross = t(
+                    "cli.messages.callees_cross_file") if c["is_cross_file"] else ""
+                file_info = f" ({c['callee_file']})" if c["callee_file"] else t(
+                    "cli.messages.callees_unresolved")
                 print(t("cli.messages.callees_item",
                         line=c['call_line'], name=c['callee_name'], cross=cross, file_info=file_info))
 
@@ -9649,14 +10352,17 @@ def main():
 
         elif args.file:
             symbols = db.get_file_symbols(args.file)
-            print(t("cli.messages.file_symbols_title", path=args.file, count=len(symbols)))
+            print(t("cli.messages.file_symbols_title",
+                  path=args.file, count=len(symbols)))
             for s in symbols:
-                print(f"  {s['start_line']}-{s['end_line']}: {s['kind']} {s['name']} ({s['visibility']})")
+                print(
+                    f"  {s['start_line']}-{s['end_line']}: {s['kind']} {s['name']} ({s['visibility']})")
 
         elif args.refresh:
             # C8 Step #5: --refresh 支持多 path（nargs='+'）
             # 循环调用 db.refresh_file(p)，输出每个文件刷新结果汇总
-            paths = args.refresh if isinstance(args.refresh, list) else [args.refresh]
+            paths = args.refresh if isinstance(
+                args.refresh, list) else [args.refresh]
             success_count = 0
             failure_count = 0
             failed_paths = []
@@ -9669,7 +10375,8 @@ def main():
                 except Exception as exc:
                     failure_count += 1
                     failed_paths.append((path, str(exc)))
-                    cprint(t("cli.messages.refresh_failed", path=path, error=str(exc)), "red")
+                    cprint(t("cli.messages.refresh_failed",
+                           path=path, error=str(exc)), "red")
             elapsed = time.time() - start_ts
             # 输出汇总
             if len(paths) > 1:
@@ -9677,7 +10384,8 @@ def main():
                          success=success_count, failure=failure_count,
                          total=len(paths), elapsed=f"{elapsed:.2f}"), "cyan", bold=True)
                 if failed_paths:
-                    cprint(t("cli.messages.refresh_multi_failed_title"), "red", bold=True)
+                    cprint(t("cli.messages.refresh_multi_failed_title"),
+                           "red", bold=True)
                     for path, err in failed_paths:
                         print(t("cli.messages.refresh_multi_failed_item",
                                 path=path, error=err))
@@ -9687,14 +10395,19 @@ def main():
             if not history:
                 print(t("cli.messages.history_not_found", name=args.history))
             else:
-                print(t("cli.messages.history_title", name=args.history, count=len(history)))
+                print(t("cli.messages.history_title",
+                      name=args.history, count=len(history)))
                 for i, h in enumerate(history, 1):
-                    current = t("cli.messages.history_current") if h["is_current"] else ""
-                    parsed_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(h["parsed_at"]))
-                    print(f"  {i}. v{h['version_num']}{current} | {parsed_time} | hash={h['symbol_hash'][:12]}... | {h['file_path']}:{h['start_line']}-{h['end_line']}")
+                    current = t(
+                        "cli.messages.history_current") if h["is_current"] else ""
+                    parsed_time = time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(h["parsed_at"]))
+                    print(
+                        f"  {i}. v{h['version_num']}{current} | {parsed_time} | hash={h['symbol_hash'][:12]}... | {h['file_path']}:{h['start_line']}-{h['end_line']}")
 
                     if args.show_content:
-                        content = db.get_symbol_content_by_hash(h["symbol_hash"])
+                        content = db.get_symbol_content_by_hash(
+                            h["symbol_hash"])
                         if content:
                             print(t("cli.messages.history_content"))
                             for line in content["content"].split("\n")[:5]:
@@ -9712,8 +10425,10 @@ def main():
             elif not content2:
                 print(t("cli.messages.diff_hash_not_found", hash=hash2))
             else:
-                print(t("cli.messages.diff_title", hash1=hash1[:12], hash2=hash2[:12]))
-                print(t("cli.messages.diff_function", name=content1['qualified_name']))
+                print(t("cli.messages.diff_title",
+                      hash1=hash1[:12], hash2=hash2[:12]))
+                print(t("cli.messages.diff_function",
+                      name=content1['qualified_name']))
                 print(t("cli.messages.diff_type", kind=content1['kind']))
                 print("-" * 40)
 
@@ -9727,9 +10442,11 @@ def main():
                     l2 = lines2[i] if i < len(lines2) else ""
                     if l1 != l2:
                         if l1:
-                            print(t("cli.messages.diff_remove_line", idx=i+1, content=l1))
+                            print(t("cli.messages.diff_remove_line",
+                                  idx=i+1, content=l1))
                         if l2:
-                            print(t("cli.messages.diff_add_line", idx=i+1, content=l2))
+                            print(t("cli.messages.diff_add_line",
+                                  idx=i+1, content=l2))
 
         elif args.changes:
             result = db.get_recent_changes(args.changes)
@@ -9737,29 +10454,36 @@ def main():
             changed_funcs = result["changed_functions"]
 
             # 只显示真正有变化的文件（有多个版本的）
-            multi_version_files = [f for f in changed_files if f["version_num"] > 1]
+            multi_version_files = [
+                f for f in changed_files if f["version_num"] > 1]
 
             print(t("cli.messages.changes_title", since=args.changes))
             print(t("cli.messages.changes_file_versions", count=len(changed_files)))
-            print(t("cli.messages.changes_multi_files", count=len(multi_version_files)))
+            print(t("cli.messages.changes_multi_files",
+                  count=len(multi_version_files)))
             print(t("cli.messages.changed_funcs_count", count=len(changed_funcs)))
             print()
 
             if multi_version_files:
                 print(t("cli.messages.changed_files_title"))
                 for fv in multi_version_files:
-                    parsed_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(fv["parsed_at"]))
-                    current = t("cli.messages.history_current") if fv["is_current"] else ""
-                    print(f"  v{fv['version_num']}{current} | {parsed_time} | {fv['path']}")
+                    parsed_time = time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(fv["parsed_at"]))
+                    current = t(
+                        "cli.messages.history_current") if fv["is_current"] else ""
+                    print(
+                        f"  v{fv['version_num']}{current} | {parsed_time} | {fv['path']}")
 
             if changed_funcs:
                 print()
                 print(t("cli.messages.changed_funcs_title"))
                 for cf in changed_funcs:
-                    parsed_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(cf["parsed_at"]))
+                    parsed_time = time.strftime(
+                        "%Y-%m-%d %H:%M:%S", time.localtime(cf["parsed_at"]))
                     type_tag = f"[{cf['change_type']}]"
                     print(f"  {type_tag:4} {cf['qualified_name']}")
-                    print(f"       {cf['file_path']}:{cf['line']} | {parsed_time}")
+                    print(
+                        f"       {cf['file_path']}:{cf['line']} | {parsed_time}")
 
                     if args.changes_detail:
                         prev = cf['prev_hash']
@@ -9772,17 +10496,20 @@ def main():
                             print(f"       curr: {curr[:12]}...")
                         else:
                             print(t("cli.messages.changes_curr_none"))
-        
+
         elif args.restore_comment:
-            result = db.restore_comment(args.restore_comment, preview=args.preview)
+            result = db.restore_comment(
+                args.restore_comment, preview=args.preview)
 
             if not result["success"]:
                 print(t("cli.messages.restore_fail", error=result['error']))
             elif result.get("preview"):
                 print(t("cli.messages.restore_preview_title"))
-                print(t("cli.messages.restore_function", name=result['qualified_name']))
+                print(t("cli.messages.restore_function",
+                      name=result['qualified_name']))
                 print(t("cli.messages.restore_file", path=result['file_path']))
-                print(t("cli.messages.restore_current_comment", comment=result['old_comment']))
+                print(t("cli.messages.restore_current_comment",
+                      comment=result['old_comment']))
                 print(t("cli.messages.restore_new_comment"))
                 print(result['new_comment'])
                 print()
@@ -9790,21 +10517,29 @@ def main():
                 print(result['new_content_preview'])
             else:
                 print(t("cli.messages.restore_success"))
-                print(t("cli.messages.restore_function", name=result['qualified_name']))
+                print(t("cli.messages.restore_function",
+                      name=result['qualified_name']))
                 print(t("cli.messages.restore_file", path=result['file_path']))
-                print(t("cli.messages.restore_from_version", version=result['restored_from'], lines=result['comment_lines']))
+                print(t("cli.messages.restore_from_version",
+                      version=result['restored_from'], lines=result['comment_lines']))
 
         elif args.restore_all_comments:
             file_filter = args.restore_file if args.restore_file else None
-            result = db.restore_all_comments(preview=args.preview, file_filter=file_filter)
+            result = db.restore_all_comments(
+                preview=args.preview, file_filter=file_filter)
 
-            mode = t("cli.messages.restore_all_mode_preview") if args.preview else t("cli.messages.restore_all_mode_restore")
+            mode = t("cli.messages.restore_all_mode_preview") if args.preview else t(
+                "cli.messages.restore_all_mode_restore")
             print(t("cli.messages.restore_all_done", mode=mode))
-            print(t("cli.messages.restore_all_found", count=result['total_found']))
-            print(t("cli.messages.restore_all_restored", count=result['restored']))
-            print(t("cli.messages.restore_all_skipped", count=result['skipped']))
+            print(t("cli.messages.restore_all_found",
+                  count=result['total_found']))
+            print(t("cli.messages.restore_all_restored",
+                  count=result['restored']))
+            print(t("cli.messages.restore_all_skipped",
+                  count=result['skipped']))
             print(t("cli.messages.restore_all_failed", count=result['failed']))
-            print(t("cli.messages.restore_all_files", count=len(result['files'])))
+            print(t("cli.messages.restore_all_files",
+                  count=len(result['files'])))
 
             if result["files"]:
                 print()
@@ -9812,8 +10547,8 @@ def main():
                 for fpath, finfo in sorted(result["files"].items()):
                     if finfo["restored"] > 0 or finfo["failed"] > 0:
                         print(t("cli.messages.restore_all_file_item",
-                               path=fpath, restored=finfo['restored'], skipped=finfo['skipped'],
-                               failed=finfo['failed'], total=finfo['total']))
+                                path=fpath, restored=finfo['restored'], skipped=finfo['skipped'],
+                                failed=finfo['failed'], total=finfo['total']))
 
             if result["errors"]:
                 print()
@@ -9825,57 +10560,71 @@ def main():
             result = db.get_comment_coverage(group_by=args.coverage_by)
 
             print(t("cli.messages.comment_coverage_title"))
-            print(t("cli.messages.comment_coverage_total", count=result['total']))
-            print(t("cli.messages.comment_coverage_commented", count=result['commented']))
-            print(t("cli.messages.comment_coverage_rate", pct=result['coverage']))
+            print(t("cli.messages.comment_coverage_total",
+                  count=result['total']))
+            print(t("cli.messages.comment_coverage_commented",
+                  count=result['commented']))
+            print(t("cli.messages.comment_coverage_rate",
+                  pct=result['coverage']))
             print()
 
             print(t("cli.messages.comment_coverage_by_kind"))
             for kind, info in sorted(result["by_kind"].items(), key=lambda x: -x[1]["total"]):
-                pct = round(info["commented"] / info["total"] * 100, 1) if info["total"] > 0 else 0
+                pct = round(info["commented"] / info["total"]
+                            * 100, 1) if info["total"] > 0 else 0
                 bar_len = int(pct / 5)
                 bar = "█" * bar_len + "░" * (20 - bar_len)
-                print(f"  {bar} {pct:5.1f}%  {kind:12s}  ({info['commented']}/{info['total']})")
+                print(
+                    f"  {bar} {pct:5.1f}%  {kind:12s}  ({info['commented']}/{info['total']})")
 
             if result.get("by_module"):
                 print()
                 print(t("cli.messages.comment_coverage_by_module"))
-                modules = sorted(result["by_module"].items(), key=lambda x: x[1]["coverage"])
+                modules = sorted(
+                    result["by_module"].items(), key=lambda x: x[1]["coverage"])
                 for i, (mod, info) in enumerate(modules[:30]):
                     pct = info["coverage"]
                     bar_len = int(pct / 5)
                     bar = "█" * bar_len + "░" * (20 - bar_len)
-                    print(f"  {bar} {pct:5.1f}%  {mod:50s}  ({info['commented']}/{info['total']})")
+                    print(
+                        f"  {bar} {pct:5.1f}%  {mod:50s}  ({info['commented']}/{info['total']})")
                 if len(modules) > 30:
-                    print(t("cli.messages.comment_coverage_more_modules", count=len(modules) - 30))
+                    print(t("cli.messages.comment_coverage_more_modules",
+                          count=len(modules) - 30))
 
             if result.get("by_file"):
                 print()
                 print(t("cli.messages.comment_coverage_by_file"))
-                files = sorted(result["by_file"].items(), key=lambda x: x[1]["coverage"])
+                files = sorted(result["by_file"].items(),
+                               key=lambda x: x[1]["coverage"])
                 for i, (fpath, info) in enumerate(files[:30]):
                     pct = info["coverage"]
                     bar_len = int(pct / 5)
                     bar = "█" * bar_len + "░" * (20 - bar_len)
-                    print(f"  {bar} {pct:5.1f}%  {fpath:50s}  ({info['commented']}/{info['total']})")
+                    print(
+                        f"  {bar} {pct:5.1f}%  {fpath:50s}  ({info['commented']}/{info['total']})")
                 if len(files) > 30:
-                    print(t("cli.messages.comment_coverage_more_files", count=len(files) - 30))
+                    print(t("cli.messages.comment_coverage_more_files",
+                          count=len(files) - 30))
 
         elif args.uncommented is not None:
             kind = args.uncommented
             mod_filter = args.uncommented_module
             limit = args.uncommented_limit
 
-            symbols = db.get_uncommented_symbols(kind=kind, module_filter=mod_filter)
+            symbols = db.get_uncommented_symbols(
+                kind=kind, module_filter=mod_filter)
 
-            filter_info = t("cli.messages.uncommented_module_filter", module=mod_filter) if mod_filter else ""
+            filter_info = t("cli.messages.uncommented_module_filter",
+                            module=mod_filter) if mod_filter else ""
             print(t("cli.messages.uncommented_title", kind=kind, filter_info=filter_info,
-                   total=len(symbols), shown=min(limit, len(symbols))))
+                    total=len(symbols), shown=min(limit, len(symbols))))
             print()
 
             for i, sym in enumerate(symbols[:limit]):
                 depth = sym["depth"] if sym["depth"] >= 0 else "?"
-                sig = sym.get("signature", "")[:60] if sym.get("signature") else ""
+                sig = sym.get("signature", "")[
+                    :60] if sym.get("signature") else ""
                 print(f"  [{i+1:3d}] depth={depth:>3}  {sym['qualified_name']}")
                 print(f"         {sym['file_path']}:{sym['start_line']}")
                 if sig:
@@ -9883,23 +10632,28 @@ def main():
 
             if len(symbols) > limit:
                 print()
-                print(t("cli.messages.uncommented_more", count=len(symbols) - limit))
-        
+                print(t("cli.messages.uncommented_more",
+                      count=len(symbols) - limit))
+
         elif args.search:
             kind = args.search_kind
             limit = args.search_limit
 
             symbols = db.search_symbols(args.search, kind=kind, limit=limit)
 
-            kind_info = t("cli.messages.search_kind_info", kind=kind) if kind else ""
-            print(t("cli.messages.search_title", query=args.search, kind_info=kind_info, total=len(symbols), shown=min(limit, len(symbols))))
+            kind_info = t("cli.messages.search_kind_info",
+                          kind=kind) if kind else ""
+            print(t("cli.messages.search_title", query=args.search,
+                  kind_info=kind_info, total=len(symbols), shown=min(limit, len(symbols))))
             print()
 
             for i, sym in enumerate(symbols[:limit]):
                 depth = sym["depth"] if sym["depth"] >= 0 else "?"
-                sig = sym.get("signature", "")[:50] if sym.get("signature") else ""
+                sig = sym.get("signature", "")[
+                    :50] if sym.get("signature") else ""
                 comment_mark = "✓" if sym["has_comment"] else " "
-                print(f"  [{i+1:3d}] depth={depth:>3} [{comment_mark}] {sym['kind']:8s} {sym['qualified_name']}")
+                print(
+                    f"  [{i+1:3d}] depth={depth:>3} [{comment_mark}] {sym['kind']:8s} {sym['qualified_name']}")
                 print(f"         {sym['file_path']}:{sym['start_line']}")
                 if sig:
                     print(f"         {sig}")
@@ -9916,7 +10670,8 @@ def main():
                 print(t("cli.messages.symbol_search_hint"))
             else:
                 print(t("cli.messages.symbol_detail_title"))
-                print(t("cli.messages.symbol_name", name=detail['qualified_name']))
+                print(t("cli.messages.symbol_name",
+                      name=detail['qualified_name']))
                 print(t("cli.messages.symbol_kind", kind=detail['kind']))
                 print(t("cli.messages.symbol_depth", depth=detail['depth']))
                 file_loc = f"{detail['file_path']}:{detail['start_line']}-{detail['end_line']}"
@@ -9936,7 +10691,8 @@ def main():
                         print(f"    {line}")
 
                 print()
-                print(t("cli.messages.symbol_calls_out_title", count=len(detail['calls_out'])))
+                print(t("cli.messages.symbol_calls_out_title",
+                      count=len(detail['calls_out'])))
                 if detail["calls_out"]:
                     for call in detail["calls_out"][:20]:
                         target = call["target_name"]
@@ -9944,12 +10700,14 @@ def main():
                         line_info = f" (line {line})" if line else ""
                         print(f"  → {target}{line_info}")
                     if len(detail["calls_out"]) > 20:
-                        print(t("cli.messages.symbol_more", count=len(detail['calls_out']) - 20))
+                        print(t("cli.messages.symbol_more",
+                              count=len(detail['calls_out']) - 20))
                 else:
                     print(t("cli.messages.symbol_none"))
 
                 print()
-                print(t("cli.messages.symbol_called_by_title", count=len(detail['called_by'])))
+                print(t("cli.messages.symbol_called_by_title",
+                      count=len(detail['called_by'])))
                 if detail["called_by"]:
                     for call in detail["called_by"][:20]:
                         caller = call["caller_name"]
@@ -9957,49 +10715,63 @@ def main():
                         line_info = f" (line {line})" if line else ""
                         print(f"  ← {caller}{line_info}")
                     if len(detail["called_by"]) > 20:
-                        print(t("cli.messages.symbol_more", count=len(detail['called_by']) - 20))
+                        print(t("cli.messages.symbol_more",
+                              count=len(detail['called_by']) - 20))
                 else:
                     print(t("cli.messages.symbol_none"))
-        
+
         elif args.impact:
-            result = db.get_call_chain_up(args.impact, max_depth=args.chain_depth)
+            result = db.get_call_chain_up(
+                args.impact, max_depth=args.chain_depth)
 
             print(t("cli.messages.impact_up_title", name=result['start']))
-            print(t("cli.messages.impact_up_total", count=result['total_upstream']))
-            print(t("cli.messages.impact_up_max_depth", depth=result['max_depth_reached']))
+            print(t("cli.messages.impact_up_total",
+                  count=result['total_upstream']))
+            print(t("cli.messages.impact_up_max_depth",
+                  depth=result['max_depth_reached']))
             print()
 
             for level in result["levels"]:
-                print(t("cli.messages.impact_up_level", depth=level['depth'], count=level['count']))
+                print(t("cli.messages.impact_up_level",
+                      depth=level['depth'], count=level['count']))
                 for item in level["callers"][:15]:
                     print(f"  ← {item['caller']}")
                 if level["count"] > 15:
-                    print(t("cli.messages.impact_up_more", count=level['count'] - 15))
+                    print(t("cli.messages.impact_up_more",
+                          count=level['count'] - 15))
                 print()
 
         elif args.call_chain:
-            result = db.get_call_chain_down(args.call_chain, max_depth=args.chain_depth)
+            result = db.get_call_chain_down(
+                args.call_chain, max_depth=args.chain_depth)
 
-            print(t("cli.messages.call_chain_down_title", name=result['start']))
-            print(t("cli.messages.call_chain_down_total", count=result['total_downstream']))
-            print(t("cli.messages.call_chain_down_max_depth", depth=result['max_depth_reached']))
+            print(t("cli.messages.call_chain_down_title",
+                  name=result['start']))
+            print(t("cli.messages.call_chain_down_total",
+                  count=result['total_downstream']))
+            print(t("cli.messages.call_chain_down_max_depth",
+                  depth=result['max_depth_reached']))
             print()
 
             for level in result["levels"]:
-                print(t("cli.messages.call_chain_down_level", depth=level['depth'], count=level['count']))
+                print(t("cli.messages.call_chain_down_level",
+                      depth=level['depth'], count=level['count']))
                 for item in level["callees"][:15]:
                     print(f"  → {item['callee']}")
                 if level["count"] > 15:
-                    print(t("cli.messages.call_chain_down_more", count=level['count'] - 15))
+                    print(t("cli.messages.call_chain_down_more",
+                          count=level['count'] - 15))
                 print()
-        
+
         elif args.top_callers is not None:
             limit = args.top_callers if args.top_callers else 20
             module_filter = args.top_callers_module or ""
-            results = db.get_top_callers(limit=limit, module_filter=module_filter)
+            results = db.get_top_callers(
+                limit=limit, module_filter=module_filter)
 
             if module_filter:
-                print(t("cli.messages.top_callers_title_module", module=module_filter, count=len(results)))
+                print(t("cli.messages.top_callers_title_module",
+                      module=module_filter, count=len(results)))
             else:
                 print(t("cli.messages.top_callers_title", count=len(results)))
             print()
@@ -10009,8 +10781,10 @@ def main():
 
             for i, item in enumerate(results, 1):
                 rank = str(i).rjust(rank_width)
-                callers = t("cli.messages.top_callers_callers", count=item['caller_count'])
-                calls = t("cli.messages.top_callers_calls", count=item['call_count'])
+                callers = t("cli.messages.top_callers_callers",
+                            count=item['caller_count'])
+                calls = t("cli.messages.top_callers_calls",
+                          count=item['call_count'])
                 print(f"  #{rank}  {item['qualified_name']}")
                 print(f"        {callers} {calls}")
             print()
@@ -10019,12 +10793,15 @@ def main():
             kind = args.orphan_symbols
             module_filter = args.orphan_module or ""
             limit = args.orphan_limit
-            results = db.get_orphan_symbols(kind=kind, module_filter=module_filter, limit=limit)
+            results = db.get_orphan_symbols(
+                kind=kind, module_filter=module_filter, limit=limit)
 
             if module_filter:
-                print(t("cli.messages.orphan_title_module", kind=kind, module=module_filter, count=len(results)))
+                print(t("cli.messages.orphan_title_module", kind=kind,
+                      module=module_filter, count=len(results)))
             else:
-                print(t("cli.messages.orphan_title", kind=kind, count=len(results)))
+                print(t("cli.messages.orphan_title",
+                      kind=kind, count=len(results)))
             print()
 
             if results:
@@ -10046,10 +10823,12 @@ def main():
         elif args.deepest is not None:
             limit = args.deepest if args.deepest else 20
             module_filter = args.deepest_module or ""
-            results = db.get_deepest_functions(limit=limit, module_filter=module_filter)
+            results = db.get_deepest_functions(
+                limit=limit, module_filter=module_filter)
 
             if module_filter:
-                print(t("cli.messages.deepest_title_module", module=module_filter, count=len(results)))
+                print(t("cli.messages.deepest_title_module",
+                      module=module_filter, count=len(results)))
             else:
                 print(t("cli.messages.deepest_title", count=len(results)))
             print()
@@ -10058,7 +10837,8 @@ def main():
 
             for i, item in enumerate(results, 1):
                 rank = str(i).rjust(rank_width)
-                print(t("cli.messages.deepest_item", default="  #{rank}  [depth {depth:2d}]  {name}", rank=rank, depth=item["depth"], name=item["qualified_name"]))
+                print(t("cli.messages.deepest_item",
+                      default="  #{rank}  [depth {depth:2d}]  {name}", rank=rank, depth=item["depth"], name=item["qualified_name"]))
             print()
 
         elif args.module_calls is not None:
@@ -10069,13 +10849,16 @@ def main():
             print()
 
             # 计算列宽
-            max_caller_len = max(len(r["caller_module"]) for r in results) if results else 0
-            max_callee_len = max(len(r["callee_module"]) for r in results) if results else 0
+            max_caller_len = max(len(r["caller_module"])
+                                 for r in results) if results else 0
+            max_callee_len = max(len(r["callee_module"])
+                                 for r in results) if results else 0
 
             for i, item in enumerate(results, 1):
                 caller = item["caller_module"].ljust(max_caller_len)
                 callee = item["callee_module"].ljust(max_callee_len)
-                print(t("cli.messages.module_calls_item", idx=i, caller=caller, callee=callee, calls=item['call_count'], callers=item['unique_caller_count'], callees=item['unique_callee_count']))
+                print(t("cli.messages.module_calls_item", idx=i, caller=caller, callee=callee,
+                      calls=item['call_count'], callers=item['unique_caller_count'], callees=item['unique_callee_count']))
             print()
 
         elif args.detect_cycles:
@@ -10112,7 +10895,8 @@ def main():
             if fmt not in ("mermaid", "dot"):
                 print(t("cli.messages.module_graph_unsupported", fmt=fmt))
             else:
-                result = db.export_module_graph(format=fmt, output_file=output_file)
+                result = db.export_module_graph(
+                    format=fmt, output_file=output_file)
 
                 if output_file:
                     print(t("cli.messages.module_graph_exported", file=output_file))
@@ -10132,8 +10916,10 @@ def main():
             else:
                 results = db.get_call_heatmap(group_by=group_by, top_n=top_n)
 
-                unit = t("cli.messages.heatmap_unit_module") if group_by == "module" else t("cli.messages.heatmap_unit_file")
-                print(t("cli.messages.heatmap_title", unit=unit, count=len(results)))
+                unit = t("cli.messages.heatmap_unit_module") if group_by == "module" else t(
+                    "cli.messages.heatmap_unit_file")
+                print(t("cli.messages.heatmap_title",
+                      unit=unit, count=len(results)))
                 print()
 
                 if results:
@@ -10145,7 +10931,8 @@ def main():
 
                     for i, item in enumerate(results, 1):
                         # 计算热力等级（0-8）
-                        ratio = item["total_calls"] / max_calls if max_calls > 0 else 0
+                        ratio = item["total_calls"] / \
+                            max_calls if max_calls > 0 else 0
                         heat_level = min(int(ratio * 8), 8)
                         heat_bar = heat_chars[heat_level] * (heat_level + 1)
 
@@ -10163,36 +10950,47 @@ def main():
                 else:
                     print(t("cli.messages.heatmap_none"))
                 print()
-        
+
         elif args.test_coverage:
             stats = db.get_test_coverage()
 
             print(t("cli.messages.test_coverage_title"))
             print()
-            print(t("cli.messages.test_coverage_total_fns", count=stats['total_functions']))
-            print(t("cli.messages.test_coverage_test_fns", count=stats['test_functions']))
-            print(t("cli.messages.test_coverage_ratio", pct=stats['test_ratio']))
+            print(t("cli.messages.test_coverage_total_fns",
+                  count=stats['total_functions']))
+            print(t("cli.messages.test_coverage_test_fns",
+                  count=stats['test_functions']))
+            print(t("cli.messages.test_coverage_ratio",
+                  pct=stats['test_ratio']))
             print()
-            print(t("cli.messages.test_coverage_total_mods", count=stats['total_modules']))
-            print(t("cli.messages.test_coverage_mods_with_tests", count=stats['modules_with_tests']))
-            print(t("cli.messages.test_coverage_mod_ratio", pct=stats['module_coverage']))
+            print(t("cli.messages.test_coverage_total_mods",
+                  count=stats['total_modules']))
+            print(t("cli.messages.test_coverage_mods_with_tests",
+                  count=stats['modules_with_tests']))
+            print(t("cli.messages.test_coverage_mod_ratio",
+                  pct=stats['module_coverage']))
             print()
 
             if stats["test_by_module"]:
                 print(t("cli.messages.test_coverage_dist_title"))
                 print()
 
-                max_test_count = max(m["test_count"] for m in stats["test_by_module"])
-                max_mod_len = max(len(m["module"]) for m in stats["test_by_module"][:20])
+                max_test_count = max(m["test_count"]
+                                     for m in stats["test_by_module"])
+                max_mod_len = max(len(m["module"])
+                                  for m in stats["test_by_module"][:20])
 
                 for i, mod in enumerate(stats["test_by_module"][:20], 1):
-                    bar_len = int(mod["test_count"] / max_test_count * 30) if max_test_count > 0 else 0
+                    bar_len = int(
+                        mod["test_count"] / max_test_count * 30) if max_test_count > 0 else 0
                     bar = "█" * bar_len
                     mod_name = mod["module"].ljust(max_mod_len)
-                    print(f"  #{i:2d}  {mod_name}  {bar}  {mod['test_count']:3d} {t('cli.messages.test_coverage_test_count', count='')}".rstrip())
+                    print(
+                        f"  #{i:2d}  {mod_name}  {bar}  {mod['test_count']:3d} {t('cli.messages.test_coverage_test_count', count='')}".rstrip())
 
                 if len(stats["test_by_module"]) > 20:
-                    print(t("cli.messages.test_coverage_more", count=len(stats['test_by_module']) - 20))
+                    print(t("cli.messages.test_coverage_more",
+                          count=len(stats['test_by_module']) - 20))
             print()
 
         elif args.function_issues is not None:
@@ -10215,35 +11013,44 @@ def main():
                 # 单函数详情模式
                 if results:
                     r = results[0]
-                    print(t("cli.messages.function_issues_title", name=r['qualified_name']))
-                    print(t("cli.messages.function_issues_module", module=r['module_path'] or '(unknown)'))
-                    print(t("cli.messages.function_issues_count", count=r['issue_count']))
+                    print(t("cli.messages.function_issues_title",
+                          name=r['qualified_name']))
+                    print(t("cli.messages.function_issues_module",
+                          module=r['module_path'] or '(unknown)'))
+                    print(t("cli.messages.function_issues_count",
+                          count=r['issue_count']))
                     print()
                     for issue in r["issues"]:
                         icon = severity_icon.get(issue["severity"], "[?]")
-                        print(f"  {icon} {issue['label']}  (x{issue['count']})")
+                        print(
+                            f"  {icon} {issue['label']}  (x{issue['count']})")
                         print(f"      {issue['description']}")
                     print()
                 else:
                     print(t("cli.messages.function_issues_title", name=fn_name))
-                    filter_str = t("cli.messages.function_issues_filter", filter=issue_filter) if issue_filter else ""
+                    filter_str = t("cli.messages.function_issues_filter",
+                                   filter=issue_filter) if issue_filter else ""
                     print(t("cli.messages.function_issues_no_issues") + filter_str)
                     print()
             else:
                 # 列表模式
                 if issue_filter:
-                    print(t("cli.messages.function_issues_list_title_type", filter=issue_filter, count=len(results)))
+                    print(t("cli.messages.function_issues_list_title_type",
+                          filter=issue_filter, count=len(results)))
                 elif module_filter:
-                    print(t("cli.messages.function_issues_list_title_module", module=module_filter, count=len(results)))
+                    print(t("cli.messages.function_issues_list_title_module",
+                          module=module_filter, count=len(results)))
                 else:
-                    print(t("cli.messages.function_issues_list_title", count=len(results)))
+                    print(
+                        t("cli.messages.function_issues_list_title", count=len(results)))
                 print()
 
                 for i, r in enumerate(results, 1):
                     issue_labels = []
                     for issue in r["issues"]:
                         icon = severity_icon.get(issue["severity"], "")
-                        issue_labels.append(f"{icon}{issue['label']}" + (f"(x{issue['count']})" if issue["count"] > 1 else ""))
+                        issue_labels.append(
+                            f"{icon}{issue['label']}" + (f"(x{issue['count']})" if issue["count"] > 1 else ""))
 
                     issue_str = "  ".join(issue_labels)
                     print(f"  #{i:2d}  {r['qualified_name']}")
@@ -10255,13 +11062,17 @@ def main():
             stats = db.get_issue_summary(module_filter=module_filter)
 
             if module_filter:
-                print(t("cli.messages.issue_summary_title_module", module=module_filter))
+                print(t("cli.messages.issue_summary_title_module",
+                      module=module_filter))
             else:
                 print(t("cli.messages.issue_summary_title"))
             print()
-            print(t("cli.messages.issue_summary_total_fns", count=stats['total_functions']))
-            print(t("cli.messages.issue_summary_with_issues", count=stats['functions_with_issues']))
-            print(t("cli.messages.issue_summary_issue_free", count=stats['issue_free_functions'], pct=stats['issue_free_ratio']))
+            print(t("cli.messages.issue_summary_total_fns",
+                  count=stats['total_functions']))
+            print(t("cli.messages.issue_summary_with_issues",
+                  count=stats['functions_with_issues']))
+            print(t("cli.messages.issue_summary_issue_free",
+                  count=stats['issue_free_functions'], pct=stats['issue_free_ratio']))
             print()
 
             severity_icon = {"danger": "[!]", "warn": "[~]", "info": "[i]"}
@@ -10271,18 +11082,23 @@ def main():
 
             # 按严重程度分组
             for severity in ["danger", "warn", "info"]:
-                severity_issues = [i for i in stats["issues"] if i["severity"] == severity and i["function_count"] > 0]
+                severity_issues = [i for i in stats["issues"]
+                                   if i["severity"] == severity and i["function_count"] > 0]
                 if severity_issues:
                     if severity == "danger":
-                        severity_label = t("cli.messages.issue_summary_severity_danger")
+                        severity_label = t(
+                            "cli.messages.issue_summary_severity_danger")
                     elif severity == "warn":
-                        severity_label = t("cli.messages.issue_summary_severity_warn")
+                        severity_label = t(
+                            "cli.messages.issue_summary_severity_warn")
                     else:
-                        severity_label = t("cli.messages.issue_summary_severity_info")
+                        severity_label = t(
+                            "cli.messages.issue_summary_severity_info")
                     print(f"  [{severity_label}]")
                     for issue in severity_issues:
                         icon = severity_icon.get(issue["severity"], "")
-                        bar_len = int(issue["function_count"] / stats["total_functions"] * 40) if stats["total_functions"] > 0 else 0
+                        bar_len = int(issue["function_count"] / stats["total_functions"]
+                                      * 40) if stats["total_functions"] > 0 else 0
                         bar = "█" * bar_len
                         print(t(
                             "cli.messages.issue_summary_dist_item",
@@ -10297,13 +11113,15 @@ def main():
                     print()
 
             # 显示零缺陷的函数
-            zero_issues = [i for i in stats["issues"] if i["function_count"] == 0]
+            zero_issues = [i for i in stats["issues"]
+                           if i["function_count"] == 0]
             if zero_issues:
                 print(t("cli.messages.issue_summary_zero_title"))
                 for issue in zero_issues:
-                    print(t("cli.messages.issue_summary_zero_item", label=issue['label']))
+                    print(t("cli.messages.issue_summary_zero_item",
+                          label=issue['label']))
                 print()
-        
+
         elif args.semgrep is not None:
             # Semgrep 多语言静态分析
             target_paths = args.semgrep if args.semgrep else None  # None 表示扫描整个 workspace
@@ -10314,7 +11132,8 @@ def main():
             print(t("cli.messages.semgrep_title"))
             print(t("cli.messages.semgrep_config_label", config=config))
             if languages:
-                print(t("cli.messages.semgrep_lang_limit", langs=", ".join(languages)))
+                print(t("cli.messages.semgrep_lang_limit",
+                      langs=", ".join(languages)))
             print(t("cli.messages.semgrep_timeout_label", timeout=timeout))
             print()
 
@@ -10327,10 +11146,13 @@ def main():
                     timeout=timeout,
                 )
                 if not result.get("success"):
-                    print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                    print(t("cli.messages.semgrep_error", error=result.get(
+                        'error', t("cli.messages.semgrep_unknown_error"))))
                 else:
-                    print(t("cli.messages.semgrep_scan_done", count=result['total_findings']))
-                    print(t("cli.messages.semgrep_saved", count=result['saved_findings']))
+                    print(t("cli.messages.semgrep_scan_done",
+                          count=result['total_findings']))
+                    print(t("cli.messages.semgrep_saved",
+                          count=result['saved_findings']))
                     print()
                     print(t("cli.messages.semgrep_save_hint"))
 
@@ -10339,9 +11161,11 @@ def main():
                 result = db.get_semgrep_summary(target_paths)
 
                 if not result.get("success"):
-                    print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                    print(t("cli.messages.semgrep_error", error=result.get(
+                        'error', t("cli.messages.semgrep_unknown_error"))))
                 else:
-                    print(t("cli.messages.semgrep_quick_total", count=result['total_findings']))
+                    print(t("cli.messages.semgrep_quick_total",
+                          count=result['total_findings']))
                     print()
 
                     # 按严重程度展示
@@ -10350,28 +11174,34 @@ def main():
                         for sev in ["ERROR", "WARNING", "INFO"]:
                             count = result["by_severity"].get(sev, 0)
                             if count > 0:
-                                icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
-                                print(t("cli.messages.semgrep_severity_count", icon=icon, sev=sev, count=count))
+                                icon = {
+                                    "ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
+                                print(t("cli.messages.semgrep_severity_count",
+                                      icon=icon, sev=sev, count=count))
                         print()
 
                     # 按语言展示
                     if result.get("by_language"):
                         print(t("cli.messages.semgrep_lang_dist"))
                         for lang, count in sorted(result["by_language"].items(), key=lambda x: x[1], reverse=True):
-                            print(t("cli.messages.semgrep_lang_count", lang=lang, count=count))
+                            print(t("cli.messages.semgrep_lang_count",
+                                  lang=lang, count=count))
                         print()
 
                     # Top 规则
                     if result.get("top_rules"):
                         print(t("cli.messages.semgrep_top_rules"))
                         for rule_id, stats in result["top_rules"][:10]:
-                            sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[stats.get("severity", "INFO")]
-                            print(t("cli.messages.semgrep_rule_item", icon=sev_icon, rule=rule_id, count=stats['count']))
+                            sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[
+                                stats.get("severity", "INFO")]
+                            print(t("cli.messages.semgrep_rule_item",
+                                  icon=sev_icon, rule=rule_id, count=stats['count']))
                             print(f"        {stats['message'][:80]}...")
                         print()
 
                 if result.get("errors"):
-                    print(t("cli.messages.semgrep_warning_count", count=len(result['errors'])))
+                    print(t("cli.messages.semgrep_warning_count",
+                          count=len(result['errors'])))
 
             else:
                 # 详细扫描
@@ -10383,38 +11213,49 @@ def main():
                 )
 
                 if not result.get("success"):
-                    print(t("cli.messages.semgrep_error", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                    print(t("cli.messages.semgrep_error", error=result.get(
+                        'error', t("cli.messages.semgrep_unknown_error"))))
                 else:
-                    print(t("cli.messages.semgrep_scan_done", count=result['total_findings']))
+                    print(t("cli.messages.semgrep_scan_done",
+                          count=result['total_findings']))
                     print()
 
                     # 按严重程度分组展示
-                    severity_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}
+                    severity_icon = {"ERROR": "[!]",
+                                     "WARNING": "[~]", "INFO": "[i]"}
 
                     for sev in ["ERROR", "WARNING", "INFO"]:
-                        sev_findings = [f for f in result["results"] if f["severity"] == sev]
+                        sev_findings = [
+                            f for f in result["results"] if f["severity"] == sev]
                         if sev_findings:
                             icon = severity_icon[sev]
                             if sev == "ERROR":
                                 sev_label = t("cli.messages.semgrep_sev_error")
                             elif sev == "WARNING":
-                                sev_label = t("cli.messages.semgrep_sev_warning")
+                                sev_label = t(
+                                    "cli.messages.semgrep_sev_warning")
                             else:
                                 sev_label = t("cli.messages.semgrep_sev_info")
-                            print(t("cli.messages.semgrep_detail_title", label=sev_label, count=len(sev_findings)))
+                            print(t("cli.messages.semgrep_detail_title",
+                                  label=sev_label, count=len(sev_findings)))
                             print()
 
                             for f in sev_findings[:15]:
                                 print(f"    {icon} {f['rule_name']}")
-                                print(t("cli.messages.semgrep_finding_file", file=f['path'], line=f['start_line']))
-                                print(t("cli.messages.semgrep_finding_lang", lang=f['language']))
-                                print(t("cli.messages.semgrep_finding_msg", msg=f['message'][:100]))
+                                print(t("cli.messages.semgrep_finding_file",
+                                      file=f['path'], line=f['start_line']))
+                                print(
+                                    t("cli.messages.semgrep_finding_lang", lang=f['language']))
+                                print(
+                                    t("cli.messages.semgrep_finding_msg", msg=f['message'][:100]))
                                 if f.get("fix"):
-                                    print(t("cli.messages.semgrep_fix_hint", fix=f['fix'][:50]))
+                                    print(
+                                        t("cli.messages.semgrep_fix_hint", fix=f['fix'][:50]))
                                 print()
 
                             if len(sev_findings) > 15:
-                                print(t("cli.messages.semgrep_more", count=len(sev_findings) - 15))
+                                print(t("cli.messages.semgrep_more",
+                                      count=len(sev_findings) - 15))
                                 print()
 
             print(t("cli.messages.semgrep_hint"))
@@ -10423,7 +11264,8 @@ def main():
         elif args.semgrep_stats:
             stats = db.get_semgrep_stats()
             print(t("cli.messages.semgrep_stats_title"))
-            print(t("cli.messages.semgrep_stats_total", count=stats['total_findings']))
+            print(t("cli.messages.semgrep_stats_total",
+                  count=stats['total_findings']))
             print()
 
             if stats["by_severity"]:
@@ -10431,8 +11273,10 @@ def main():
                 for sev in ["ERROR", "WARNING", "INFO"]:
                     count = stats["by_severity"].get(sev, 0)
                     if count > 0:
-                        icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}[sev]
-                        print(t("cli.messages.semgrep_severity_count", icon=icon, sev=sev, count=count))
+                        icon = {"ERROR": "[!]",
+                                "WARNING": "[~]", "INFO": "[i]"}[sev]
+                        print(t("cli.messages.semgrep_severity_count",
+                              icon=icon, sev=sev, count=count))
                 print()
 
             if stats["by_language"]:
@@ -10444,14 +11288,17 @@ def main():
             if stats["by_rule"]:
                 print(t("cli.messages.semgrep_stats_top_rules"))
                 for i, rule in enumerate(stats["by_rule"][:10], 1):
-                    sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}.get(rule["severity"], "[?]")
-                    print(f"    #{i:2d} {sev_icon} {rule['rule_id'][:50]:<50s}  {rule['cnt']:3d}")
+                    sev_icon = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}.get(
+                        rule["severity"], "[?]")
+                    print(
+                        f"    #{i:2d} {sev_icon} {rule['rule_id'][:50]:<50s}  {rule['cnt']:3d}")
                 print()
 
             if stats["by_symbol"]:
                 print(t("cli.messages.semgrep_stats_top_symbols"))
                 for i, sym in enumerate(stats["by_symbol"][:10], 1):
-                    print(f"    #{i:2d} {sym['symbol_qualified'][:60]:<60s}  {sym['cnt']:2d}")
+                    print(
+                        f"    #{i:2d} {sym['symbol_qualified'][:60]:<60s}  {sym['cnt']:2d}")
                 print()
 
         elif args.semgrep_list is not None:
@@ -10469,14 +11316,19 @@ def main():
 
             filter_parts = []
             if severity:
-                filter_parts.append(t("cli.messages.semgrep_list_filter_sev", sev=severity))
+                filter_parts.append(
+                    t("cli.messages.semgrep_list_filter_sev", sev=severity))
             if language:
-                filter_parts.append(t("cli.messages.semgrep_list_filter_lang", lang=language))
+                filter_parts.append(
+                    t("cli.messages.semgrep_list_filter_lang", lang=language))
             if rule_filter:
-                filter_parts.append(t("cli.messages.semgrep_list_filter_rule", rule=rule_filter))
-            filter_str = " | ".join(filter_parts) if filter_parts else t("cli.messages.semgrep_list_filter_all")
+                filter_parts.append(
+                    t("cli.messages.semgrep_list_filter_rule", rule=rule_filter))
+            filter_str = " | ".join(filter_parts) if filter_parts else t(
+                "cli.messages.semgrep_list_filter_all")
 
-            print(t("cli.messages.semgrep_list_title", filter=filter_str, total=len(findings), shown=min(limit, len(findings))))
+            print(t("cli.messages.semgrep_list_title", filter=filter_str,
+                  total=len(findings), shown=min(limit, len(findings))))
             print()
 
             sev_icon_map = {"ERROR": "[!]", "WARNING": "[~]", "INFO": "[i]"}
@@ -10484,23 +11336,28 @@ def main():
             for i, f in enumerate(findings[:limit], 1):
                 icon = sev_icon_map.get(f["severity"], "[?]")
                 sym_info = f" -> {f['symbol_qualified']}" if f["symbol_qualified"] else ""
-                print(f"  #{i:3d} {icon} {f['rule_name'][:40]:<40s} {f['language']:<12s}{sym_info}")
+                print(
+                    f"  #{i:3d} {icon} {f['rule_name'][:40]:<40s} {f['language']:<12s}{sym_info}")
                 print(f"        {f['file_path']}:{f['start_line']}")
                 print(f"        {f['message'][:80]}")
                 print()
 
             if len(findings) > limit:
-                print(t("cli.messages.semgrep_list_more", count=len(findings) - limit))
-        
+                print(t("cli.messages.semgrep_list_more",
+                      count=len(findings) - limit))
+
         elif args.git_import is not None:
             max_commits = args.git_import if args.git_import else 100
             print(t("cli.messages.git_import_start", count=max_commits))
             result = db.import_git_history(max_commits=max_commits)
             if result.get("success"):
-                print(t("cli.messages.git_import_success", count=result['commits_imported']))
-                print(t("cli.messages.git_import_total", count=result['total_commits']))
+                print(t("cli.messages.git_import_success",
+                      count=result['commits_imported']))
+                print(t("cli.messages.git_import_total",
+                      count=result['total_commits']))
             else:
-                print(t("cli.messages.git_import_fail", error=result.get('error', t("cli.messages.semgrep_unknown_error"))))
+                print(t("cli.messages.git_import_fail", error=result.get(
+                    'error', t("cli.messages.semgrep_unknown_error"))))
 
         elif args.git_log is not None:
             limit = args.git_log if args.git_log else 20
@@ -10509,8 +11366,10 @@ def main():
             print()
             for c in commits:
                 short_hash = c['commit_hash'][:8]
-                timestamp = time.strftime('%Y-%m-%d %H:%M', time.localtime(c['timestamp']))
-                msg = c['message'][:60] if c['message'] else t("cli.messages.git_log_no_msg")
+                timestamp = time.strftime(
+                    '%Y-%m-%d %H:%M', time.localtime(c['timestamp']))
+                msg = c['message'][:60] if c['message'] else t(
+                    "cli.messages.git_log_no_msg")
                 author = c['author'][:15] if c['author'] else 'unknown'
                 print(f"  {short_hash}  {timestamp}  {author:<15s}  {msg}")
 
@@ -10520,47 +11379,62 @@ def main():
             if not commit:
                 print(t("cli.messages.git_show_not_found", hash=args.git_show))
             else:
-                print(t("cli.messages.git_show_commit", hash=commit['commit_hash']))
-                print(t("cli.messages.git_show_author", author=commit['author'], email=commit['email']))
-                print(t("cli.messages.git_show_time", time=time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(commit['timestamp']))))
-                print(t("cli.messages.git_show_message", msg=commit['message']))
+                print(t("cli.messages.git_show_commit",
+                      hash=commit['commit_hash']))
+                print(t("cli.messages.git_show_author",
+                      author=commit['author'], email=commit['email']))
+                print(t("cli.messages.git_show_time", time=time.strftime(
+                    '%Y-%m-%d %H:%M:%S', time.localtime(commit['timestamp']))))
+                print(t("cli.messages.git_show_message",
+                      msg=commit['message']))
                 print()
                 file_changes = details.get("file_changes", [])
                 print(t("cli.messages.git_show_files", count=len(file_changes)))
-                type_map = {'A': t("cli.messages.git_type_added"), 'M': t("cli.messages.git_type_modified"), 'D': t("cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
+                type_map = {'A': t("cli.messages.git_type_added"), 'M': t("cli.messages.git_type_modified"), 'D': t(
+                    "cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
                 for fc in file_changes:
                     ct = fc.get('change_type', '?')
                     type_label = type_map.get(ct, ct)
-                    path = fc.get('rel_path') or fc.get('abs_path') or 'unknown'
+                    path = fc.get('rel_path') or fc.get(
+                        'abs_path') or 'unknown'
                     print(f"  [{type_label}] {path}")
 
         elif args.git_stats:
             stats = db.get_git_stats()
             print(t("cli.messages.git_stats_title"))
-            print(t("cli.messages.git_stats_commits", count=stats['commit_count']))
-            print(t("cli.messages.git_stats_file_changes", count=stats['file_change_count']))
+            print(t("cli.messages.git_stats_commits",
+                  count=stats['commit_count']))
+            print(t("cli.messages.git_stats_file_changes",
+                  count=stats['file_change_count']))
             print()
             if stats.get("change_types"):
                 print(t("cli.messages.git_stats_by_type"))
-                type_map = {'A': t("cli.messages.git_type_added"), 'M': t("cli.messages.git_type_modified"), 'D': t("cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
+                type_map = {'A': t("cli.messages.git_type_added"), 'M': t("cli.messages.git_type_modified"), 'D': t(
+                    "cli.messages.git_type_deleted"), 'R': t("cli.messages.git_type_renamed")}
                 for ct, cnt in sorted(stats["change_types"].items(), key=lambda x: x[1], reverse=True):
                     label = type_map.get(ct, ct)
-                    print(t("cli.messages.git_stats_type_count", default="    {label}: {count} times", label=label, count=cnt))
-        
+                    print(t("cli.messages.git_stats_type_count",
+                          default="    {label}: {count} times", label=label, count=cnt))
+
         # ----------------------------------------------------------------
         # 代码度量
         # ----------------------------------------------------------------
-        
+
         elif args.metrics:
             summary = db.get_code_metrics_summary()
             print(t("cli.messages.metrics_title"))
             print(t("cli.messages.metrics_files", count=summary['file_count']))
-            print(t("cli.messages.metrics_functions", count=summary['function_count']))
-            print(t("cli.messages.metrics_total_lines", count=summary['total_lines']))
-            print(t("cli.messages.metrics_calls", count=summary['total_calls']))
+            print(t("cli.messages.metrics_functions",
+                  count=summary['function_count']))
+            print(t("cli.messages.metrics_total_lines",
+                  count=summary['total_lines']))
+            print(t("cli.messages.metrics_calls",
+                  count=summary['total_calls']))
             print()
-            print(t("cli.messages.metrics_avg_complexity", value=summary['avg_complexity']))
-            print(t("cli.messages.metrics_max_complexity", value=summary['max_complexity']))
+            print(t("cli.messages.metrics_avg_complexity",
+                  value=summary['avg_complexity']))
+            print(t("cli.messages.metrics_max_complexity",
+                  value=summary['max_complexity']))
             print()
             print(t("cli.messages.metrics_complexity_dist"))
             dist = summary["complexity_distribution"]
@@ -10570,26 +11444,33 @@ def main():
                 bar = "#" * int(pct / 2)
                 print(f"    {level:<12s} {count:4d} ({pct:5.1f}%) {bar}")
             print()
-            print(t("cli.messages.metrics_comment_coverage", pct=summary['comment_coverage']))
+            print(t("cli.messages.metrics_comment_coverage",
+                  pct=summary['comment_coverage']))
 
         elif args.complexity is not None:
             limit = args.complexity if args.complexity else 20
             mod_filter = args.complexity_module or ""
-            hotspots = db.get_complexity_hotspots(limit=limit, module_filter=mod_filter)
+            hotspots = db.get_complexity_hotspots(
+                limit=limit, module_filter=mod_filter)
 
-            filter_info = t("cli.messages.complexity_filter", module=mod_filter) if mod_filter else ""
-            print(t("cli.messages.complexity_title", filter_info=filter_info, count=len(hotspots)))
+            filter_info = t("cli.messages.complexity_filter",
+                            module=mod_filter) if mod_filter else ""
+            print(t("cli.messages.complexity_title",
+                  filter_info=filter_info, count=len(hotspots)))
             print()
-            complexity_h = t("cli.messages.col_complexity", default="Complexity")
+            complexity_h = t("cli.messages.col_complexity",
+                             default="Complexity")
             lines_h = t("cli.messages.col_lines", default="Lines")
             depth_h = t("cli.messages.col_depth", default="Depth")
             fn_h = t("cli.messages.col_function", default="Function")
-            print(f"  {'#':>3}  {complexity_h:>6}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
+            print(
+                f"  {'#':>3}  {complexity_h:>6}  {lines_h:>5}  {depth_h:>4}  {fn_h}")
             print(f"  {'-'*3}  {'-'*6}  {'-'*5}  {'-'*4}  {'-'*50}")
 
             for i, fn in enumerate(hotspots, 1):
                 risk = "!" if fn["cyclomatic_complexity"] > 10 else " "
-                print(f"  {i:3d}{risk}  {fn['cyclomatic_complexity']:>6}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
+                print(
+                    f"  {i:3d}{risk}  {fn['cyclomatic_complexity']:>6}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
                 print(f"        {fn['file_path']}:{fn['start_line']}")
             print()
             print(t("cli.messages.complexity_hint"))
@@ -10603,7 +11484,8 @@ def main():
             efferent_h = t("cli.messages.col_efferent", default="Out")
             total_h = t("cli.messages.col_total", default="Total")
             instability_h = t("cli.messages.col_instability", default="Instab")
-            print(f"  {'#':>3}  {module_h:<40s}  {afferent_h:>4}  {efferent_h:>4}  {total_h:>4}  {instability_h:>6}")
+            print(
+                f"  {'#':>3}  {module_h:<40s}  {afferent_h:>4}  {efferent_h:>4}  {total_h:>4}  {instability_h:>6}")
             print(f"  {'-'*3}  {'-'*40}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*6}")
 
             for i, mod in enumerate(modules, 1):
@@ -10613,7 +11495,8 @@ def main():
                     inst_label += t("cli.messages.coupling_unstable")
                 elif inst < 0.3:
                     inst_label += t("cli.messages.coupling_stable")
-                print(f"  {i:3d}  {mod['module'][:40]:<40s}  {mod['afferent']:>4}  {mod['efferent']:>4}  {mod['total_coupling']:>4}  {inst_label:>6}")
+                print(
+                    f"  {i:3d}  {mod['module'][:40]:<40s}  {mod['afferent']:>4}  {mod['efferent']:>4}  {mod['total_coupling']:>4}  {inst_label:>6}")
 
         elif args.largest_fns is not None:
             limit = args.largest_fns if args.largest_fns else 20
@@ -10627,7 +11510,8 @@ def main():
             print(f"  {'-'*3}  {'-'*5}  {'-'*4}  {'-'*50}")
 
             for i, fn in enumerate(fns, 1):
-                print(f"  {i:3d}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
+                print(
+                    f"  {i:3d}  {fn['line_count']:>5}  {fn['depth']:>4}  {fn['qualified_name'][:60]}")
                 print(f"        {fn['file_path']}:{fn['start_line']}")
 
         elif args.coupled_fns is not None:
@@ -10639,11 +11523,13 @@ def main():
             fan_out_h = t("cli.messages.col_fan_out", default="Fan-out")
             total_h = t("cli.messages.col_total", default="Total")
             fn_h = t("cli.messages.col_function", default="Function")
-            print(f"  {'#':>3}  {fan_in_h:>4}  {fan_out_h:>4}  {total_h:>4}  {fn_h}")
+            print(
+                f"  {'#':>3}  {fan_in_h:>4}  {fan_out_h:>4}  {total_h:>4}  {fn_h}")
             print(f"  {'-'*3}  {'-'*4}  {'-'*4}  {'-'*4}  {'-'*50}")
 
             for i, fn in enumerate(fns, 1):
-                print(f"  {i:3d}  {fn['fan_in']:>4}  {fn['fan_out']:>4}  {fn['total_coupling']:>4}  {fn['qualified_name'][:60]}")
+                print(
+                    f"  {i:3d}  {fn['fan_in']:>4}  {fn['fan_out']:>4}  {fn['total_coupling']:>4}  {fn['qualified_name'][:60]}")
                 print(f"        {fn['file_path']}")
 
         elif args.fn_metrics:
@@ -10652,17 +11538,26 @@ def main():
                 print(t("cli.messages.fn_metrics_not_found", name=args.fn_metrics))
                 print(t("cli.messages.fn_metrics_search_hint"))
             else:
-                print(t("cli.messages.fn_metrics_title", name=metrics['qualified_name']))
+                print(t("cli.messages.fn_metrics_title",
+                      name=metrics['qualified_name']))
                 print(t("cli.messages.fn_metrics_kind", kind=metrics['kind']))
-                print(t("cli.messages.fn_metrics_file", file=metrics['file_path'], start=metrics['start_line'], end=metrics['end_line']))
-                print(t("cli.messages.fn_metrics_lines", count=metrics['line_count']))
-                print(t("cli.messages.fn_metrics_complexity", value=metrics['cyclomatic_complexity'], risk=metrics['risk_level']))
-                print(t("cli.messages.fn_metrics_fan_in", count=metrics['fan_in']))
-                print(t("cli.messages.fn_metrics_fan_out", count=metrics['fan_out']))
-                print(t("cli.messages.fn_metrics_depth", depth=metrics['depth']))
-                print(t("cli.messages.fn_metrics_module", module=metrics['module_path']))
+                print(t("cli.messages.fn_metrics_file",
+                      file=metrics['file_path'], start=metrics['start_line'], end=metrics['end_line']))
+                print(t("cli.messages.fn_metrics_lines",
+                      count=metrics['line_count']))
+                print(t("cli.messages.fn_metrics_complexity",
+                      value=metrics['cyclomatic_complexity'], risk=metrics['risk_level']))
+                print(t("cli.messages.fn_metrics_fan_in",
+                      count=metrics['fan_in']))
+                print(t("cli.messages.fn_metrics_fan_out",
+                      count=metrics['fan_out']))
+                print(t("cli.messages.fn_metrics_depth",
+                      depth=metrics['depth']))
+                print(t("cli.messages.fn_metrics_module",
+                      module=metrics['module_path']))
                 if metrics['signature']:
-                    print(t("cli.messages.fn_metrics_signature", sig=metrics['signature'][:100]))
+                    print(t("cli.messages.fn_metrics_signature",
+                          sig=metrics['signature'][:100]))
 
         # ----------------------------------------------------------------
         # 语义搜索 / 向量嵌入
@@ -10678,15 +11573,19 @@ def main():
                 print(t("cli.messages.semantic_hint"))
             else:
                 for i, r in enumerate(results, 1):
-                    print(t("cli.messages.semantic_similarity", idx=i, value=r['similarity'], name=r['qualified_name']))
-                    print(t("cli.messages.semantic_location", file=r['file_path'], line=r['start_line']))
+                    print(t("cli.messages.semantic_similarity", idx=i,
+                          value=r['similarity'], name=r['qualified_name']))
+                    print(t("cli.messages.semantic_location",
+                          file=r['file_path'], line=r['start_line']))
                     if r.get('summary'):
-                        print(t("cli.messages.semantic_summary", summary=r['summary'][:80]))
+                        print(t("cli.messages.semantic_summary",
+                              summary=r['summary'][:80]))
             print()
 
         elif args.embed or args.embed_force:
             force = args.embed_force
-            mode = t("cli.messages.embed_mode_force") if force else t("cli.messages.embed_mode_incremental")
+            mode = t("cli.messages.embed_mode_force") if force else t(
+                "cli.messages.embed_mode_incremental")
             print(t("cli.messages.embed_title", mode=mode))
             print("-" * 50)
             stats = db.embed_all_symbols(force=force)
@@ -10709,10 +11608,13 @@ def main():
                 print(t("cli.messages.similar_hint"))
             else:
                 for i, r in enumerate(results, 1):
-                    print(t("cli.messages.semantic_similarity", idx=i, value=r['similarity'], name=r['qualified_name']))
-                    print(t("cli.messages.semantic_location", file=r['file_path'], line=r['start_line']))
+                    print(t("cli.messages.semantic_similarity", idx=i,
+                          value=r['similarity'], name=r['qualified_name']))
+                    print(t("cli.messages.semantic_location",
+                          file=r['file_path'], line=r['start_line']))
                     if r.get('summary'):
-                        print(t("cli.messages.semantic_summary", summary=r['summary'][:80]))
+                        print(t("cli.messages.semantic_summary",
+                              summary=r['summary'][:80]))
             print()
 
         # ----------------------------------------------------------------
@@ -10739,25 +11641,33 @@ def main():
             brief = db.project_brief()
             print(t("cli.messages.brief_title"))
             print()
-            print(t("cli.messages.brief_project_type", type=brief['project_type']))
+            print(t("cli.messages.brief_project_type",
+                  type=brief['project_type']))
             print(t("cli.messages.brief_files", count=brief['file_count']))
-            print(t("cli.messages.brief_functions", count=brief['function_count']))
-            print(t("cli.messages.brief_total_lines", count=brief['total_lines']))
-            print(t("cli.messages.brief_health", score=brief['health_score'], level=brief['health_level']))
-            print(t("cli.messages.brief_avg_complexity", value=brief['avg_complexity']))
-            print(t("cli.messages.brief_comment_coverage", pct=brief['comment_coverage']))
+            print(t("cli.messages.brief_functions",
+                  count=brief['function_count']))
+            print(t("cli.messages.brief_total_lines",
+                  count=brief['total_lines']))
+            print(t("cli.messages.brief_health",
+                  score=brief['health_score'], level=brief['health_level']))
+            print(t("cli.messages.brief_avg_complexity",
+                  value=brief['avg_complexity']))
+            print(t("cli.messages.brief_comment_coverage",
+                  pct=brief['comment_coverage']))
             print()
             modules = brief.get('modules', [])
             if modules:
                 print(t("cli.messages.brief_modules", count=len(modules)))
                 for i, m in enumerate(modules, 1):
-                    print(t("cli.messages.brief_module_item", idx=i, module=m['module'], count=m['function_count']))
+                    print(t("cli.messages.brief_module_item", idx=i,
+                          module=m['module'], count=m['function_count']))
                 print()
             hotspots = brief.get('hot_functions', [])
             if hotspots:
                 print(t("cli.messages.brief_hotspots", count=len(hotspots)))
                 for i, fn in enumerate(hotspots, 1):
-                    print(t("cli.messages.brief_hotspot_item", idx=i, value=fn['cyclomatic_complexity'], name=fn['qualified_name']))
+                    print(t("cli.messages.brief_hotspot_item", idx=i,
+                          value=fn['cyclomatic_complexity'], name=fn['qualified_name']))
             print()
 
         elif args.map:
@@ -10774,17 +11684,22 @@ def main():
         elif args.coverage_import:
             file_path = args.coverage_import
             fmt = args.coverage_format
-            print(t("cli.messages.coverage_import_title", file=file_path, format=fmt))
+            print(t("cli.messages.coverage_import_title",
+                  file=file_path, format=fmt))
             print("-" * 50)
             try:
                 if fmt == "lcov":
                     stats = db.import_lcov(file_path)
                 else:
                     stats = db.import_cobertura(file_path)
-                print(t("cli.messages.coverage_import_files_total", count=stats['files_total']))
-                print(t("cli.messages.coverage_import_files_matched", count=stats['files_matched']))
-                print(t("cli.messages.coverage_import_lines", count=stats['lines_imported']))
-                print(t("cli.messages.coverage_import_symbols", count=stats['symbols_matched']))
+                print(t("cli.messages.coverage_import_files_total",
+                      count=stats['files_total']))
+                print(t("cli.messages.coverage_import_files_matched",
+                      count=stats['files_matched']))
+                print(t("cli.messages.coverage_import_lines",
+                      count=stats['lines_imported']))
+                print(t("cli.messages.coverage_import_symbols",
+                      count=stats['symbols_matched']))
             except FileNotFoundError:
                 print(t("cli.messages.coverage_import_file_not_found", file=file_path))
             except Exception as e:
@@ -10798,17 +11713,24 @@ def main():
                 print(t("cli.messages.coverage_fn_not_found", name=name))
                 print(t("cli.messages.coverage_fn_search_hint"))
             else:
-                print(t("cli.messages.coverage_fn_title", name=info['qualified_name']))
+                print(t("cli.messages.coverage_fn_title",
+                      name=info['qualified_name']))
                 print("-" * 50)
-                print(t("cli.messages.coverage_fn_file", file=info['file_path'], start=info['start_line'], end=info['end_line']))
-                print(t("cli.messages.coverage_fn_total", count=info['total_lines']))
-                print(t("cli.messages.coverage_fn_tracked", count=info['tracked_lines']))
-                print(t("cli.messages.coverage_fn_covered", count=info['covered_lines']))
-                print(t("cli.messages.coverage_fn_pct", pct=info['coverage_pct']))
+                print(t("cli.messages.coverage_fn_file",
+                      file=info['file_path'], start=info['start_line'], end=info['end_line']))
+                print(t("cli.messages.coverage_fn_total",
+                      count=info['total_lines']))
+                print(t("cli.messages.coverage_fn_tracked",
+                      count=info['tracked_lines']))
+                print(t("cli.messages.coverage_fn_covered",
+                      count=info['covered_lines']))
+                print(t("cli.messages.coverage_fn_pct",
+                      pct=info['coverage_pct']))
                 if info['uncovered_lines']:
                     lines_preview = info['uncovered_lines'][:30]
                     more = '...' if len(info['uncovered_lines']) > 30 else ''
-                    print(t("cli.messages.coverage_fn_uncovered", lines=lines_preview, more=more))
+                    print(t("cli.messages.coverage_fn_uncovered",
+                          lines=lines_preview, more=more))
             print()
 
         elif args.coverage_uncovered:
@@ -10816,9 +11738,12 @@ def main():
             print(t("cli.messages.coverage_uncovered_title", count=len(results)))
             print("-" * 50)
             for i, r in enumerate(results, 1):
-                pct_label = t("cli.messages.coverage_fn_pct", pct="").strip().rstrip(":").strip()
-                print(f"  [{i:3d}] {pct_label}={r['coverage_pct']:5.1f}%  {r['qualified_name']}")
-                print(t("cli.messages.coverage_uncovered_item", file=r['file_path'], start=r['start_line'], end=r['end_line'], covered=r['covered_lines'], tracked=r['tracked_lines']))
+                pct_label = t("cli.messages.coverage_fn_pct",
+                              pct="").strip().rstrip(":").strip()
+                print(
+                    f"  [{i:3d}] {pct_label}={r['coverage_pct']:5.1f}%  {r['qualified_name']}")
+                print(t("cli.messages.coverage_uncovered_item",
+                      file=r['file_path'], start=r['start_line'], end=r['end_line'], covered=r['covered_lines'], tracked=r['tracked_lines']))
             print()
 
         # ----------------------------------------------------------------
@@ -10836,14 +11761,18 @@ def main():
                 print(t("cli.messages.who_file", file=info['file_path']))
                 print(t("cli.messages.who_owner", owner=info['owner']))
                 print(t("cli.messages.who_source", source=info['source']))
-                print(t("cli.messages.who_confidence", confidence=info['confidence']))
+                print(t("cli.messages.who_confidence",
+                      confidence=info['confidence']))
                 if info.get('last_commit_author'):
-                    print(t("cli.messages.who_last_author", author=info['last_commit_author']))
+                    print(t("cli.messages.who_last_author",
+                          author=info['last_commit_author']))
                 if info.get('last_commit_time'):
-                    ts = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(info['last_commit_time']))
+                    ts = time.strftime('%Y-%m-%d %H:%M:%S',
+                                       time.localtime(info['last_commit_time']))
                     print(t("cli.messages.who_last_time", time=ts))
                 if info.get('last_commit_hash'):
-                    print(t("cli.messages.who_last_hash", hash=info['last_commit_hash'][:12]))
+                    print(t("cli.messages.who_last_hash",
+                          hash=info['last_commit_hash'][:12]))
             print()
 
         elif args.ownership_map:
@@ -10852,11 +11781,14 @@ def main():
             print("-" * 50)
             for i, m in enumerate(results, 1):
                 print(f"  [{i}] {m['module']}")
-                print(t("cli.messages.ownership_map_primary", owner=m['primary_owner'], count=m['file_count']))
-                owners_str = ", ".join(f"{o['name']}({o['file_count']})" for o in m['owners'][:5])
+                print(t("cli.messages.ownership_map_primary",
+                      owner=m['primary_owner'], count=m['file_count']))
+                owners_str = ", ".join(
+                    f"{o['name']}({o['file_count']})" for o in m['owners'][:5])
                 print(t("cli.messages.ownership_map_dist", owners=owners_str))
                 if len(m['owners']) > 5:
-                    print(t("cli.messages.ownership_map_more", count=len(m['owners']) - 5))
+                    print(t("cli.messages.ownership_map_more",
+                          count=len(m['owners']) - 5))
             print()
 
         else:

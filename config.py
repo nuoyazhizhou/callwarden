@@ -9,14 +9,30 @@ import codecs
 import hashlib
 import os
 import re
+import sys
 import tempfile
 from typing import Dict, List, Optional, Tuple
 
+# === PyInstaller 冻结环境检测 ===
+_IS_FROZEN = getattr(sys, 'frozen', False)
+_FROZEN_BASE = getattr(sys, '_MEIPASS', None)
+
+if _IS_FROZEN and _FROZEN_BASE:
+    # PyInstaller --onedir 模式
+    # _MEIPASS 包含打包的 Python 模块和数据文件（i18n/ 等）
+    _MODULE_DIR = _FROZEN_BASE
+    # sys.executable 的目录是用户安装位置（dist/cw/）
+    _EXE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    # 正常 Python 运行
+    _MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
+    _EXE_DIR = os.path.dirname(_MODULE_DIR)
+
 # 路径常量
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = SCRIPT_DIR  # callwarden 包根目录（parsers/module_resolver.py 等模块依赖）
-PACKAGES_DIR = os.path.dirname(SCRIPT_DIR)  # scripts/
-SRC_DIR = os.path.join(PACKAGES_DIR, "..", "src")
+SCRIPT_DIR = _MODULE_DIR
+PROJECT_ROOT = _MODULE_DIR  # callwarden 包根目录（parsers/module_resolver.py 等模块依赖）
+PACKAGES_DIR = _EXE_DIR  # 冻结模式下为可执行文件所在目录，开发模式下为父目录
+SRC_DIR = os.path.join(_EXE_DIR, "..", "src")
 
 # 数据库根目录：用户主目录下的 .callwarden/
 USER_HOME = os.path.expanduser("~")
@@ -24,6 +40,11 @@ CALLWARDEN_DIR = os.path.join(USER_HOME, ".callwarden")
 
 # 向后兼容的默认 DB_PATH（推荐使用 get_project_db_path 按项目隔离）
 DB_PATH = os.path.join(CALLWARDEN_DIR, "callwarden.db")
+
+# Lazy Auto-Setup 标记文件：首次运行 cw 时自动探测 AI 工具并注册 MCP Server
+# 文件内容为 JSON：{"timestamp": ISO8601, "agents": ["cursor", "claude-code", ...]}
+# 存在即表示已完成首次自动配置，除非使用 --force 或删除该文件
+AUTO_SETUP_MARKER = os.path.join(CALLWARDEN_DIR, ".auto_setup_done")
 
 # 系统级共享缓存目录（root 安装时预下载 semgrep 规则到此目录）
 # Linux: /var/lib/callwarden/semgrep_rules/

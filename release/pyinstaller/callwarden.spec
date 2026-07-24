@@ -62,24 +62,12 @@ else:
 # === Hidden imports ===
 hiddenimports = []
 
-# 1. tree-sitter grammar 包（16 种语言，直接 import，非动态加载）
+# 1. tree-sitter 核心 API（不含 grammar 二进制）
+# 注意：16 种语言的 tree-sitter grammar 已由 callwarden_core（Rust 扩展）静态链接。
+# 打包版本通过 Rust 路径加载 grammar，排除 Python grammar 包可节省约 300MB。
+# 开发环境（pip install）仍使用 Python grammar 包作为 Rust 扩展未安装时的回退。
 hiddenimports += [
     'tree_sitter',
-    'tree_sitter_rust',
-    'tree_sitter_python',
-    'tree_sitter_typescript',
-    'tree_sitter_kotlin',
-    'tree_sitter_go',
-    'tree_sitter_java',
-    'tree_sitter_c',
-    'tree_sitter_cpp',
-    'tree_sitter_c_sharp',
-    'tree_sitter_ruby',
-    'tree_sitter_php',
-    'tree_sitter_swift',
-    'tree_sitter_scala',
-    'tree_sitter_hcl',
-    'tree_sitter_elixir',
 ]
 
 # 2. callwarden.parsers 懒加载子模块（__init__.py 的 __getattr__ 用 importlib 动态加载）
@@ -136,8 +124,58 @@ except Exception:
 hiddenimports += ['pydantic', 'pydantic_core', 'watchdog', 'pathspec']
 
 # === Excludes（减小体积）===
-# tree_sitter_languages 包未实际使用（callwarden 直接 import 各语言 grammar）
-excludes = ['tree_sitter_languages']
+excludes = [
+    # --- Python tree-sitter grammar 包（Rust 扩展已静态链接，打包时冗余）---
+    'tree_sitter_rust', 'tree_sitter_python', 'tree_sitter_typescript',
+    'tree_sitter_kotlin', 'tree_sitter_go', 'tree_sitter_java',
+    'tree_sitter_c', 'tree_sitter_cpp', 'tree_sitter_c_sharp',
+    'tree_sitter_ruby', 'tree_sitter_php', 'tree_sitter_swift',
+    'tree_sitter_scala', 'tree_sitter_hcl', 'tree_sitter_elixir',
+
+    # --- 未使用的间接依赖 ---
+    'tree_sitter_languages',   # CW 直接 import 各语言 grammar，不通过此聚合包
+
+    # --- 可选依赖：向量搜索（PyTorch 全家桶 ~2GB）---
+    'torch', 'torchvision', 'torchaudio',
+    'sentence_transformers', 'sentence-transformers',
+    'transformers', 'tokenizers', 'safetensors',
+    'huggingface_hub', 'huggingface-hub',
+
+    # --- 可选依赖：sqlite-vec ---
+    'sqlite_vec', 'sqlite-vec',
+
+    # --- 开发/测试工具（生产环境不需要）---
+    'pytest', 'pytest_asyncio', 'pytest_xdist', 'pytest_timeout',
+    '_pytest', 'pluggy', 'iniconfig',
+    'setuptools', 'setuptools_scm',
+    'pip', 'wheel', 'distutils',
+    'build', 'twine', 'keyring',
+
+    # --- GUI 库（CW 是 CLI/MCP 工具）---
+    'tkinter', '_tkinter', 'tk', 'turtle', 'idlelib',
+
+    # --- 未使用的标准库模块 ---
+    'unittest', 'unittest2', 'doctest',
+    'lib2to3', 'ensurepip', 'venv',
+    'pydoc', 'pdb', 'bdb',
+    'profile', 'cProfile', 'pstats',
+    'xmlrpc', 'xmlrpc.server', 'xmlrpc.client',
+    'mailbox', 'mimetypes',
+    'ftplib', 'poplib', 'imaplib', 'nntplib',
+    'curses', 'readline',
+    'test', 'test.support',
+
+    # --- 其他不需要的包 ---
+    'IPython', 'jupyter', 'notebook',
+    'matplotlib', 'scipy', 'pandas',
+    'PIL', 'Pillow',
+    'Crypto', 'cryptography',
+    'lxml',
+]
+
+# 注意：semgrep 未排除，因为它是 CW 的核心功能（安全扫描）。
+# 如果 PyInstaller 打包 semgrep 失败（OCaml 引擎兼容性问题），
+# 可在此添加 'semgrep' 到 excludes，用户需要单独 pip install semgrep。
 
 # === Analysis ===
 # 三个入口共用同一个 Analysis，PyInstaller 会自动收集依赖

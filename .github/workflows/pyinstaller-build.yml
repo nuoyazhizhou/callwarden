@@ -1,0 +1,99 @@
+name: PyInstaller Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      skip_release:
+        description: 'Skip GitHub Release upload'
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-amd64
+            ext: zip
+          - os: ubuntu-22.04
+            platform: linux-amd64
+            ext: tar.gz
+          - os: macos-latest
+            platform: macos-arm64
+            ext: tar.gz
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust extension and copy to project root
+        run: python release/build.py --rust
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch：sentence-transformers 依赖 torch，先装 CPU 版避免拉入 ~2GB CUDA
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Run PyInstaller
+        run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+
+      - name: Package artifacts
+        shell: bash
+        run: |
+          ARTIFACT="callwarden-${{ matrix.platform }}.${{ matrix.ext }}"
+          cd dist
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            # Windows: zip archive（bash 变量通过参数传给 PowerShell）
+            powershell -Command "Compress-Archive -Path 'cw','cw-client' -DestinationPath \"../$ARTIFACT\""
+          else
+            # Linux/macOS: tar.gz archive
+            AGENT_DIR=""
+            [ -d "cw-agent" ] && AGENT_DIR="cw-agent"
+            tar czf "../$ARTIFACT" cw/ cw-client/ $AGENT_DIR
+          fi
+          echo "artifact=$ARTIFACT" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact }}
+          path: ${{ env.artifact }}
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') && !inputs.skip_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            callwarden-windows-amd64.zip
+            callwarden-linux-amd64.tar.gz
+            callwarden-macos-arm64.tar.gz
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref, '-') }}

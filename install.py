@@ -58,185 +58,72 @@ CORE_PACKAGES: List[PackageSpec] = [
     PackageSpec("tree-sitter", "tree_sitter", "core", description="AST 解析引擎"),
     # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持（字符类/尾随空格/negation）
     # pathspec 不可用时 IgnoreMatcher 降级到自研实现（不完整）
-    PackageSpec("pathspec", "pathspec", "core", description=".gitignore 完整语法解析（A15）"),
+    PackageSpec("pathspec", "pathspec", "core",
+                description=".gitignore 完整语法解析（A15）"),
     PackageSpec("fastmcp", "fastmcp", "core", description="MCP Server 框架"),
     PackageSpec("watchdog", "watchdog", "core", description="文件监控守护进程"),
     PackageSpec("numpy", "numpy", "core", description="向量与重复代码检测计算引擎"),
-    PackageSpec("semgrep", "semgrep", "core", description="多语言静态安全扫描（守护者架构必需）"),
+    PackageSpec("semgrep", "semgrep", "core",
+                description="多语言静态安全扫描（守护者架构必需）"),
 ]
 
 # 已支持语言（9 种，与 Semgrep 交集）
 SUPPORTED_LANGUAGE_PACKAGES: List[PackageSpec] = [
-    PackageSpec("tree-sitter-rust", "tree_sitter_rust", "language", "rust", "Rust grammar"),
-    PackageSpec("tree-sitter-typescript", "tree_sitter_typescript", "language", "typescript", "TypeScript/TSX grammar"),
-    PackageSpec("tree-sitter-python", "tree_sitter_python", "language", "python", "Python grammar"),
-    PackageSpec("tree-sitter-kotlin", "tree_sitter_kotlin", "language", "kotlin", "Kotlin grammar"),
-    PackageSpec("tree-sitter-go", "tree_sitter_go", "language", "go", "Go grammar"),
-    PackageSpec("tree-sitter-java", "tree_sitter_java", "language", "java", "Java grammar"),
-    PackageSpec("tree-sitter-c", "tree_sitter_c", "language", "c", "C grammar"),
-    PackageSpec("tree-sitter-cpp", "tree_sitter_cpp", "language", "cpp", "C++ grammar"),
-    PackageSpec("tree-sitter-javascript", "tree_sitter_javascript", "language", "javascript", "JavaScript/JSX grammar"),
+    PackageSpec("tree-sitter-rust", "tree_sitter_rust",
+                "language", "rust", "Rust grammar"),
+    PackageSpec("tree-sitter-typescript", "tree_sitter_typescript",
+                "language", "typescript", "TypeScript/TSX grammar"),
+    PackageSpec("tree-sitter-python", "tree_sitter_python",
+                "language", "python", "Python grammar"),
+    PackageSpec("tree-sitter-kotlin", "tree_sitter_kotlin",
+                "language", "kotlin", "Kotlin grammar"),
+    PackageSpec("tree-sitter-go", "tree_sitter_go",
+                "language", "go", "Go grammar"),
+    PackageSpec("tree-sitter-java", "tree_sitter_java",
+                "language", "java", "Java grammar"),
+    PackageSpec("tree-sitter-c", "tree_sitter_c",
+                "language", "c", "C grammar"),
+    PackageSpec("tree-sitter-cpp", "tree_sitter_cpp",
+                "language", "cpp", "C++ grammar"),
+    PackageSpec("tree-sitter-javascript", "tree_sitter_javascript",
+                "language", "javascript", "JavaScript/JSX grammar"),
 ]
 
 # P0 扩展语言（Semgrep 独有，新增支持）
 EXTENDED_LANGUAGE_PACKAGES: List[PackageSpec] = [
-    PackageSpec("tree-sitter-c-sharp", "tree_sitter_c_sharp", "language", "csharp", "C# grammar（Semgrep 170+ Pro 规则）"),
-    PackageSpec("tree-sitter-ruby", "tree_sitter_ruby", "language", "ruby", "Ruby grammar（Semgrep 40+ Pro 规则）"),
+    PackageSpec("tree-sitter-c-sharp", "tree_sitter_c_sharp",
+                "language", "csharp", "C# grammar（Semgrep 170+ Pro 规则）"),
+    PackageSpec("tree-sitter-ruby", "tree_sitter_ruby", "language",
+                "ruby", "Ruby grammar（Semgrep 40+ Pro 规则）"),
 ]
 
 # P1 扩展语言（Web 与 iOS 生态）
 P1_LANGUAGE_PACKAGES: List[PackageSpec] = [
-    PackageSpec("tree-sitter-php", "tree_sitter_php", "language", "php", "PHP grammar（Semgrep 50+ Pro 规则，Web 安全场景）"),
-    PackageSpec("tree-sitter-swift", "tree_sitter_swift", "language", "swift", "Swift grammar（iOS 生态，Semgrep 60+ Pro 规则）"),
+    PackageSpec("tree-sitter-php", "tree_sitter_php", "language",
+                "php", "PHP grammar（Semgrep 50+ Pro 规则，Web 安全场景）"),
+    PackageSpec("tree-sitter-swift", "tree_sitter_swift", "language",
+                "swift", "Swift grammar（iOS 生态，Semgrep 60+ Pro 规则）"),
 ]
 
 # P2 扩展语言（JVM 与 IaC 生态）
 P2_LANGUAGE_PACKAGES: List[PackageSpec] = [
-    PackageSpec("tree-sitter-scala", "tree_sitter_scala", "language", "scala", "Scala grammar（JVM 生态，社区规则）"),
-    PackageSpec("tree-sitter-hcl", "tree_sitter_hcl", "language", "hcl", "Terraform/HCL grammar（IaC 场景）"),
+    PackageSpec("tree-sitter-scala", "tree_sitter_scala",
+                "language", "scala", "Scala grammar（JVM 生态，社区规则）"),
+    PackageSpec("tree-sitter-hcl", "tree_sitter_hcl", "language",
+                "hcl", "Terraform/HCL grammar（IaC 场景）"),
 ]
 
 # P3 扩展语言（Semgrep Beta）
 P3_LANGUAGE_PACKAGES: List[PackageSpec] = [
-    PackageSpec("tree-sitter-elixir", "tree_sitter_elixir", "language", "elixir", "Elixir grammar（Semgrep 仅 Beta）"),
+    PackageSpec("tree-sitter-elixir", "tree_sitter_elixir",
+                "language", "elixir", "Elixir grammar（Semgrep 仅 Beta）"),
 ]
 
 # 可选依赖（AI 语义向量 RAG 扩展，按需启用 cw install --all）
 OPTIONAL_PACKAGES: List[PackageSpec] = [
-    PackageSpec("sentence-transformers", "sentence_transformers", "optional", description="向量嵌入（语义搜索，依赖 PyTorch）"),
+    PackageSpec("sentence-transformers", "sentence_transformers",
+                "optional", description="向量嵌入（语义搜索，依赖 PyTorch）"),
     PackageSpec("sqlite-vec", "sqlite_vec", "optional", description="向量索引扩展"),
-]
-
-
-# ---------------------------------------------------------------------
-# AI Agent 自动检测定义
-# ---------------------------------------------------------------------
-
-@dataclass
-class AgentDetectSpec:
-    """单个 AI Agent 的检测规格"""
-    agent_key: str          # 对应 cli/main.py 中 AGENT_SPECS 的 key
-    display: str            # 显示名
-    cli_commands: List[str] = field(default_factory=list)   # CLI 命令名（PATH 中检测）
-    config_dirs: List[str] = field(default_factory=list)    # 配置目录（~ 下检测）
-    win_config_dirs: List[str] = field(default_factory=list)  # Windows 特有配置目录（%APPDATA%/LOCALAPPDATA 下）
-    win_registry_keys: List[str] = field(default_factory=list)  # Windows 注册表路径（可选）
-
-
-AGENT_DETECT_SPECS: List[AgentDetectSpec] = [
-    AgentDetectSpec(
-        agent_key="claude-code",
-        display="Claude Code",
-        cli_commands=["claude"],
-        config_dirs=[".claude"],
-    ),
-    AgentDetectSpec(
-        agent_key="claude-desktop",
-        display="Claude Desktop",
-        cli_commands=[],
-        config_dirs=[],
-        win_config_dirs=["Claude"],
-    ),
-    AgentDetectSpec(
-        agent_key="cursor",
-        display="Cursor IDE",
-        cli_commands=["cursor"],
-        config_dirs=[".cursor"],
-    ),
-    AgentDetectSpec(
-        agent_key="cline",
-        display="Cline",
-        cli_commands=["cline"],
-        config_dirs=[".cline"],
-        win_config_dirs=["Code/User/globalStorage/saoudrizwan.claude-dev"],
-    ),
-    AgentDetectSpec(
-        agent_key="windsurf",
-        display="Windsurf IDE",
-        cli_commands=["windsurf"],
-        config_dirs=[".windsurf", ".codeium/windsurf"],
-    ),
-    AgentDetectSpec(
-        agent_key="trae",
-        display="Trae IDE",
-        cli_commands=["trae"],
-        config_dirs=[".trae", ".trae-cn"],
-        win_config_dirs=["TRAE SOLO CN"],
-    ),
-    AgentDetectSpec(
-        agent_key="gemini-cli",
-        display="Gemini CLI",
-        cli_commands=["gemini"],
-        config_dirs=[".gemini"],
-    ),
-    AgentDetectSpec(
-        agent_key="codex",
-        display="Codex CLI",
-        cli_commands=["codex"],
-        config_dirs=[".codex"],
-    ),
-    AgentDetectSpec(
-        agent_key="opencode",
-        display="OpenCode",
-        cli_commands=["opencode"],
-        config_dirs=[".config/opencode", ".opencode"],
-    ),
-    AgentDetectSpec(
-        agent_key="kiro",
-        display="Kiro (AWS)",
-        cli_commands=["kiro"],
-        config_dirs=[".kiro"],
-    ),
-    AgentDetectSpec(
-        agent_key="antigravity",
-        display="Antigravity IDE (Google)",
-        cli_commands=["antigravity"],
-        # 仅靠 .antigravity 目录检测，避免与 gemini-cli 的 .gemini 目录冲突
-        # （两者都写入 ~/.gemini/ 下不同文件，但 antigravity 安装时会额外创建 .antigravity）
-        config_dirs=[".antigravity"],
-    ),
-    AgentDetectSpec(
-        agent_key="qoder",
-        display="Qoder (Alibaba)",
-        cli_commands=["qoder"],
-        config_dirs=[".qoder"],
-    ),
-    AgentDetectSpec(
-        agent_key="jetbrains-junie",
-        display="JetBrains Junie",
-        cli_commands=[],
-        config_dirs=[".junie"],
-    ),
-    AgentDetectSpec(
-        agent_key="zed",
-        display="Zed Editor",
-        cli_commands=["zed", "zeditor"],
-        config_dirs=[".config/zed", ".zed"],
-    ),
-    AgentDetectSpec(
-        agent_key="pearai",
-        display="PearAI",
-        cli_commands=["pearai"],
-        config_dirs=[".pearai"],
-    ),
-    AgentDetectSpec(
-        agent_key="kimi-code",
-        display="Kimi Code CLI",
-        cli_commands=["kimi-code", "kimi"],
-        config_dirs=[".kimi-code", ".kimi"],
-    ),
-    AgentDetectSpec(
-        agent_key="codebuddy-cli",
-        display="CodeBuddy Code CLI",
-        cli_commands=["codebuddy"],
-        config_dirs=[".codebuddy"],
-    ),
-    AgentDetectSpec(
-        agent_key="deep-code",
-        display="Deep Code CLI",
-        cli_commands=["deep-code", "deepcode"],
-        config_dirs=[".deepcode", ".deep-code"],
-    ),
 ]
 
 
@@ -247,6 +134,7 @@ class DetectedAgent:
     display: str
     detected_by: str       # "cli" / "config_dir" / "win_config"
     detect_detail: str     # 具体检测到的路径或命令
+    family: str = ""       # 产品家族（如 anthropic, cline, google），用于去重和分组摘要
 
 
 # ---------------------------------------------------------------------
@@ -342,17 +230,19 @@ class CallWardenInstaller:
     def detect_installed_agents(self) -> List[DetectedAgent]:
         """检测本机已安装的 AI Agent（多层检测：CLI → 配置目录 → Windows 特有路径）
 
-        Returns:
-            检测到的 Agent 列表，按检测可信度排序（CLI > config_dir > win_config）
+        数据源：cli.agent_registry.AGENT_REGISTRY（统一注册表）
         """
+        # 延迟导入，避免循环依赖
+        from .cli.agent_registry import AGENT_REGISTRY
+
         detected: List[DetectedAgent] = []
         seen: Set[str] = set()
         home = os.path.expanduser("~")
         appdata = os.environ.get("APPDATA", "")
         localappdata = os.environ.get("LOCALAPPDATA", "")
 
-        for spec in AGENT_DETECT_SPECS:
-            if spec.agent_key in seen:
+        for key, spec in AGENT_REGISTRY.items():
+            if key in seen:
                 continue
 
             # 第 1 层：检测 CLI 命令（最高可信度）
@@ -360,14 +250,15 @@ class CallWardenInstaller:
                 cmd_path = shutil.which(cmd)
                 if cmd_path:
                     detected.append(DetectedAgent(
-                        agent_key=spec.agent_key,
+                        agent_key=key,
                         display=spec.display,
                         detected_by="cli",
                         detect_detail=cmd_path,
+                        family=spec.family,
                     ))
-                    seen.add(spec.agent_key)
+                    seen.add(key)
                     break
-            if spec.agent_key in seen:
+            if key in seen:
                 continue
 
             # 第 2 层：检测 ~/ 下的配置目录
@@ -375,14 +266,15 @@ class CallWardenInstaller:
                 dir_path = os.path.join(home, d)
                 if os.path.isdir(dir_path):
                     detected.append(DetectedAgent(
-                        agent_key=spec.agent_key,
+                        agent_key=key,
                         display=spec.display,
                         detected_by="config_dir",
                         detect_detail=dir_path,
+                        family=spec.family,
                     ))
-                    seen.add(spec.agent_key)
+                    seen.add(key)
                     break
-            if spec.agent_key in seen:
+            if key in seen:
                 continue
 
             # 第 3 层：Windows 特有路径（%APPDATA% / %LOCALAPPDATA% 下）
@@ -394,20 +286,21 @@ class CallWardenInstaller:
                         dir_path = os.path.join(base, d)
                         if os.path.isdir(dir_path):
                             detected.append(DetectedAgent(
-                                agent_key=spec.agent_key,
+                                agent_key=key,
                                 display=spec.display,
                                 detected_by="win_config",
                                 detect_detail=dir_path,
+                                family=spec.family,
                             ))
-                            seen.add(spec.agent_key)
+                            seen.add(key)
                             break
-                    if spec.agent_key in seen:
+                    if key in seen:
                         break
 
         return detected
 
     def print_detected_agents(self, agents: List[DetectedAgent]) -> None:
-        """打印检测到的 Agent 列表"""
+        """打印检测到的 Agent 列表（含按家族分组摘要）"""
         print(t("cli.messages.install_agent_detect_title",
                 default="=== Detected AI Agents ==="))
         if not agents:
@@ -423,11 +316,65 @@ class CallWardenInstaller:
             print(f"       -> {a.detect_detail}")
         print()
 
+        # 按家族分组摘要
+        from collections import defaultdict
+        family_groups: Dict[str, List[str]] = defaultdict(list)
+        for a in agents:
+            family_groups[a.family].append(a.display)
+        print("检测到以下 AI 编码工具（按家族分组）：")
+        for fam in sorted(family_groups.keys()):
+            names = ", ".join(family_groups[fam])
+            print(f"  {fam}: {names}")
+        print()
+
+    @staticmethod
+    def _deduplicate_by_shared_config(detected: List[DetectedAgent]) -> List[DetectedAgent]:
+        """对于共享 MCP 配置文件的家族，只保留一个代表 Agent，避免重复写入同一配置文件。
+
+        当前共享配置的家族：
+        - cline: cline (VS Code 扩展) 和 cline-cli 都写入 ~/.cline/mcp.json，只需安装一次。
+          优先保留 cline-cli（CLI 形态更可靠，配置路径更明确）
+
+        注意：
+        - anthropic 家族：claude-code (~/.claude.json) 和 claude-desktop (claude_desktop_config.json)
+          使用不同配置文件，两者都需要安装
+        - google 家族：gemini-cli (~/.gemini/settings.json) 和 antigravity
+          (~/.gemini/config/mcp_config.json) 使用不同配置文件，两者都需要安装
+        - 此方法仅在 auto-detect 模式下调用，不影响用户显式指定的 Agent 列表
+        """
+        # 完全共享配置文件的家族：同家族内多个形态只需安装一次
+        shared_config_families = {"cline"}
+        # 共享家族内的优先保留 key（CLI 形态更可靠）
+        preferred_keys = {"cline": "cline-cli"}
+
+        # 对共享家族内的 Agent 排序：优先 key 排在前面，确保被优先选中
+        def _sort_key(agent: DetectedAgent) -> int:
+            pref = preferred_keys.get(agent.family)
+            if pref and agent.agent_key == pref:
+                return -1  # 优先形态排最前面
+            if agent.family in shared_config_families:
+                return 1   # 同家族非优先排后面
+            return 0       # 非共享家族保持原位
+
+        sorted_detected = sorted(detected, key=_sort_key)
+
+        seen_families: Set[str] = set()
+        deduped: List[DetectedAgent] = []
+        for agent in sorted_detected:
+            if agent.family in shared_config_families:
+                if agent.family in seen_families:
+                    # 同家族已有代表，跳过以避免重复写入同一配置文件
+                    continue
+                seen_families.add(agent.family)
+            deduped.append(agent)
+        return deduped
+
     def install_agent_integrations(
         self,
         agents: Optional[List[DetectedAgent]] = None,
         global_mode: bool = True,
         force: bool = False,
+        auto_detect: bool = False,
     ) -> List[str]:
         """为检测到的 Agent 安装 Call Warden MCP 集成
 
@@ -438,20 +385,31 @@ class CallWardenInstaller:
             agents: 要安装的 Agent 列表，None 时自动检测
             global_mode: True=写入全局配置，False=写入项目级配置
             force: 是否强制覆盖已有配置
+            auto_detect: 是否为自动探测模式（True 时对共享配置家族去重）
 
         Returns:
             创建/更新的文件路径列表
         """
         if agents is None:
             agents = self.detect_installed_agents()
+            auto_detect = True  # 自动探测时标记，以便后续去重
 
         if not agents:
             print(t("cli.messages.install_agent_detect_none",
                     default="  No supported AI agents detected."))
             return []
 
-        # 延迟导入，避免循环依赖
-        from .cli.main import AGENT_SPECS, _write_global_mcp_config, _write_agent_integration
+        # 自动探测模式下，对共享配置文件的家族去重（如 cline 家族只需安装一次）
+        if auto_detect:
+            original_count = len(agents)
+            agents = self._deduplicate_by_shared_config(agents)
+            if len(agents) < original_count:
+                print(
+                    f"  [去重] 共享配置家族去重：{original_count} → {len(agents)} 个 Agent")
+
+        # 延迟导入，避免循环依赖；使用 get_merged_specs 以包含外部 overlay 的 Agent
+        from .cli.agent_registry import get_merged_specs
+        from .cli.main import _write_global_mcp_config, _write_agent_integration
         from .config import detect_project_root
 
         created: List[str] = []
@@ -466,8 +424,10 @@ class CallWardenInstaller:
                 default="  Agents: {count}", count=len(agents)))
         print()
 
+        # 合并内置 + 外部 overlay，保证外部注册的 Agent 也能被安装
+        merged_specs = get_merged_specs()
         for a in agents:
-            spec = AGENT_SPECS.get(a.agent_key)
+            spec = merged_specs.get(a.agent_key)
             if not spec:
                 print(t("cli.messages.install_agent_unknown",
                         default="  [SKIP] Unknown agent: {key}", key=a.agent_key))
@@ -485,8 +445,10 @@ class CallWardenInstaller:
             if global_mode:
                 files = _write_global_mcp_config(spec, root, force)
             else:
-                out_root = os.path.join(root, ".callwarden", "agent-integrations")
-                files = _write_agent_integration(root, out_root, a.agent_key, spec, force)
+                out_root = os.path.join(
+                    root, ".callwarden", "agent-integrations")
+                files = _write_agent_integration(
+                    root, out_root, a.agent_key, spec, force)
 
             created.extend(files)
             for f in files:
@@ -497,6 +459,89 @@ class CallWardenInstaller:
                 default="  Done. {count} file(s) created/updated.", count=len(created)))
         print()
         return created
+
+    def auto_setup(self, force: bool = False, skip_agents_md: bool = True) -> list:
+        """首次运行自动配置：探测已安装 AI 工具 + 全局 MCP 注册。
+
+        设计原则：
+        - 幂等：标记文件存在时直接返回，不重复配置
+        - 安全：探测为空时不报错，写入失败时打印警告但不崩溃
+        - 只处理全局 MCP 注册（global_mode=True），不涉及 AGENTS.md 注入
+
+        Args:
+            force: 强制重新配置（忽略标记文件）
+            skip_agents_md: 跳过 AGENTS.md 注入（全局安装无项目上下文，默认 True）
+
+        Returns:
+            已配置的 Agent key 列表；空列表表示未执行任何配置
+        """
+        from datetime import datetime, timezone
+        from .config import AUTO_SETUP_MARKER
+
+        # 检查标记文件是否已存在（幂等保护）
+        if not force and os.path.isfile(AUTO_SETUP_MARKER):
+            return []
+
+        # 探测已安装的 AI Agent
+        detected = self.detect_installed_agents()
+        if not detected:
+            # 无探测到的工具，仍然创建标记文件避免每次都扫描
+            self._write_auto_setup_marker(AUTO_SETUP_MARKER, [])
+            return []
+
+        # 调用全局 MCP 注册
+        configured_keys: List[str] = []
+        try:
+            created_files = self.install_agent_integrations(
+                agents=detected,
+                global_mode=True,
+                force=False,
+                auto_detect=True,
+            )
+            # 只记录实际有文件创建的 agent
+            if created_files:
+                for a in detected:
+                    if any(a.agent_key in f for f in created_files):
+                        configured_keys.append(a.agent_key)
+        except Exception as e:
+            # 写入失败时打印警告但不崩溃
+            print(t("cli.messages.auto_setup_write_failed",
+                    default="  [WARN] Auto-setup write failed: {error}",
+                    error=str(e)))
+
+        # 创建标记文件（无论是否成功都创建，避免每次都重试）
+        self._write_auto_setup_marker(AUTO_SETUP_MARKER, configured_keys)
+
+        return configured_keys
+
+    @staticmethod
+    def _write_auto_setup_marker(marker_path: str, agents: List[str]) -> None:
+        """写入自动配置标记文件（JSON 格式，包含时间戳和已配置的 Agent 列表）
+
+        Args:
+            marker_path: 标记文件路径
+            agents: 已配置的 Agent key 列表
+        """
+        from datetime import datetime, timezone
+
+        marker_dir = os.path.dirname(marker_path)
+        try:
+            os.makedirs(marker_dir, exist_ok=True)
+            payload = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "agents": agents,
+            }
+            # 原子写入：临时文件 + rename，避免写入中途崩溃导致标记文件损坏
+            content = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+            tmp_path = marker_path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            os.replace(tmp_path, marker_path)
+        except OSError as e:
+            # 标记文件写入失败时只打印警告，不中断流程
+            print(t("cli.messages.auto_setup_marker_write_failed",
+                    default="  [WARN] Could not write auto-setup marker: {error}",
+                    error=str(e)))
 
     def _prefetch_semgrep_rules(self) -> None:
         """后台异步预下载 Semgrep p/default 规则集到本地缓存（非阻塞）
@@ -520,14 +565,15 @@ class CallWardenInstaller:
         """
         import shutil
         import threading
-        from config import SYSTEM_SEMGREP_RULES_DIR, is_system_cache_available
+        from .config import SYSTEM_SEMGREP_RULES_DIR, is_system_cache_available
 
         semgrep_path = shutil.which("semgrep")
         if not semgrep_path:
             # Windows: 检查 Python Scripts 目录
             import site
             for site_path in site.getsitepackages():
-                scripts_dir = os.path.join(os.path.dirname(site_path), "Scripts")
+                scripts_dir = os.path.join(
+                    os.path.dirname(site_path), "Scripts")
                 semgrep_exe = os.path.join(scripts_dir, "semgrep.exe")
                 if os.path.exists(semgrep_exe):
                     semgrep_path = semgrep_exe
@@ -546,7 +592,8 @@ class CallWardenInstaller:
             cache_type = "system"
         else:
             # 普通用户安装：下载到用户级缓存 ~/.cache/semgrep/
-            target_cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "semgrep")
+            target_cache_dir = os.path.join(
+                os.path.expanduser("~"), ".cache", "semgrep")
             cache_type = "user"
 
         # 系统级缓存已存在且非空，跳过预下载
@@ -555,16 +602,19 @@ class CallWardenInstaller:
 
         # 用户级缓存已存在且非空，跳过预下载
         if cache_type == "user":
-            user_cache = os.path.join(os.path.expanduser("~"), ".cache", "semgrep")
+            user_cache = os.path.join(
+                os.path.expanduser("~"), ".cache", "semgrep")
             if os.path.isdir(user_cache) and os.listdir(user_cache):
                 return
             # Windows: 检查 %LOCALAPPDATA%/semgrep/
-            win_cache = os.path.join(os.environ.get("LOCALAPPDATA", ""), "semgrep")
+            win_cache = os.path.join(
+                os.environ.get("LOCALAPPDATA", ""), "semgrep")
             if win_cache and os.path.isdir(win_cache) and os.listdir(win_cache):
                 return
 
         # 检查缓存父目录是否存在且可写
-        cache_parent = os.path.dirname(target_cache_dir) or os.path.expanduser("~")
+        cache_parent = os.path.dirname(
+            target_cache_dir) or os.path.expanduser("~")
         try:
             # root 安装时创建系统级目录
             if cache_type == "system" and not os.path.isdir(cache_parent):
@@ -643,7 +693,8 @@ class CallWardenInstaller:
                                 src = os.path.join(root_user_cache, item)
                                 dst = os.path.join(cache_dir, item)
                                 if os.path.isdir(src):
-                                    _shutil.copytree(src, dst, dirs_exist_ok=True)
+                                    _shutil.copytree(
+                                        src, dst, dirs_exist_ok=True)
                                 else:
                                     _shutil.copy2(src, dst)
                             # 设置系统级缓存目录权限为 755（所有用户可读）
@@ -683,7 +734,8 @@ class CallWardenInstaller:
 
         monitor_thread = threading.Thread(
             target=_monitor_timeout,
-            args=(proc, 120, target_cache_dir if cache_type == "system" else None, cache_type == "system"),
+            args=(proc, 120, target_cache_dir if cache_type ==
+                  "system" else None, cache_type == "system"),
             daemon=True,
         )
         monitor_thread.start()
@@ -753,7 +805,8 @@ class CallWardenInstaller:
         """
         git_dir = self._find_git_dir(os.getcwd())
         if not git_dir:
-            print(t("cli.messages.install_hooks_no_git", default="Not inside a Git repository; hooks were not installed."))
+            print(t("cli.messages.install_hooks_no_git",
+                  default="Not inside a Git repository; hooks were not installed."))
             return
 
         hooks_dir = os.path.join(git_dir, "hooks")
@@ -781,7 +834,8 @@ class CallWardenInstaller:
                 skipped += 1
                 print(t("cli.messages.install_hooks_skipped", hook=hook_path))
 
-        print(t("cli.messages.install_hooks_summary", installed=installed, skipped=skipped))
+        print(t("cli.messages.install_hooks_summary",
+              installed=installed, skipped=skipped))
 
     # ------------------------------------------------------------------
     # 内部方法
@@ -825,7 +879,8 @@ class CallWardenInstaller:
 
     def _python_cw_command(self) -> str:
         """生成 hook 中调用 cw.py 的跨平台命令。"""
-        cw_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "cw.py"))
+        cw_py = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "cw.py"))
         cw_py = cw_py.replace(os.sep, "/")
         return f'python "{cw_py}"'
 
@@ -1117,7 +1172,8 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
             else:
                 self.result.failed += 1
                 self.result.failed_packages.append(spec.pip_name)
-                err_msg = result.stderr.strip().split("\n")[-1] if result.stderr else t("cli.messages.install_unknown_error")
+                err_msg = result.stderr.strip().split(
+                    "\n")[-1] if result.stderr else t("cli.messages.install_unknown_error")
                 print(t("cli.messages.install_status_failed",
                         pip_name=spec.pip_name, err_msg=err_msg))
         except subprocess.TimeoutExpired:
@@ -1148,7 +1204,8 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
         """检查一组包的安装状态"""
         for spec in packages:
             installed = self._is_package_installed(spec)
-            status = t("cli.messages.install_check_ok") if installed else t("cli.messages.install_check_miss")
+            status = t("cli.messages.install_check_ok") if installed else t(
+                "cli.messages.install_check_miss")
             lang_tag = f" ({spec.language})" if spec.language else ""
             print(t("cli.messages.install_check_item",
                     status=status, pip_name=spec.pip_name, desc=spec.description, lang_tag=lang_tag))
@@ -1159,7 +1216,8 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
         print(t("cli.messages.install_summary_title"))
         print("=" * 60)
         print(t("cli.messages.install_summary_total", total=self.result.total))
-        print(t("cli.messages.install_summary_installed", installed=self.result.installed))
+        print(t("cli.messages.install_summary_installed",
+              installed=self.result.installed))
         print(t("cli.messages.install_summary_skipped", skipped=self.result.skipped))
         print(t("cli.messages.install_summary_failed", failed=self.result.failed))
         if self.result.failed_packages:
@@ -1175,7 +1233,8 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
             print(t("cli.messages.install_next_step_2"))
             print(t("cli.messages.install_next_step_3"))
         else:
-            print(t("cli.messages.install_partial_failure", failed=self.result.failed))
+            print(t("cli.messages.install_partial_failure",
+                  failed=self.result.failed))
             print(t("cli.messages.install_manual_install_hint"))
             print(t("cli.messages.install_retry_hint"))
         print()
@@ -1212,16 +1271,16 @@ def main():
                         help=t("cli.args.install_verbose"))
     parser.add_argument("--agent", action="store_true",
                         help=t("cli.args.install_agent",
-                                default="Auto-detect and install Call Warden MCP integration for installed AI agents"))
+                               default="Auto-detect and install Call Warden MCP integration for installed AI agents"))
     parser.add_argument("--detect-agents", action="store_true",
                         help=t("cli.args.install_detect_agents",
-                                default="Only detect installed AI agents, do not install"))
+                               default="Only detect installed AI agents, do not install"))
     parser.add_argument("--force-agent", action="store_true",
                         help=t("cli.args.install_force_agent",
-                                default="Force overwrite existing agent MCP configs"))
+                               default="Force overwrite existing agent MCP configs"))
     parser.add_argument("--agent-project", action="store_true",
                         help=t("cli.args.install_agent_project",
-                                default="Install agent integration at project level instead of global"))
+                               default="Install agent integration at project level instead of global"))
 
     args = parser.parse_args()
 
@@ -1261,6 +1320,7 @@ def main():
                 agents=agents,
                 global_mode=not args.agent_project,
                 force=args.force_agent,
+                auto_detect=True,
             )
 
     # 退出码

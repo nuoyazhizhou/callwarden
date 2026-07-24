@@ -24,7 +24,7 @@ Call Warden 把 145+ 个 CLI 命令按功能聚合为 12 个主分类，每个�
 | 9 | **Semgrep & Defects** | Semgrep 扫描、缺陷检测、缺陷知识库、漏洞爆炸半径、符号静态检查、变更-缺陷关联 | `semgrep scan/list/stats`、`function-issues`、`defect search/suggest/learn/stats/build`、`vuln-blast`、`issues`、`evolution --defects` | `--semgrep`、`--semgrep-list`、`--semgrep-stats`、`--function-issues`、`--issue-summary` |
 | 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射 | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）| `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map` |
 | 11 | **GC** | 归档、恢复、清理、策略、备份、审计 | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show` | — |
-| 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑 | `doctor`、`install`、`install-agent`、`install-hook` | — |
+| 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置 | `doctor`、`install`、`install-agent`、`install-hook`、`setup` | — |
 
 > **注**：详细 subcommand 用法见下文章节；deprecated `--flag` 的完整映射见本文档末尾「Deprecated --flag 清单」章节。
 
@@ -347,7 +347,7 @@ cw install-hook post-commit --uninstall
 
 ### `install-agent`：生成 AI Agent 集成包
 
-为 18 种主流 AI Agent 生成 Call Warden 集成文件（MCP 配置 + rules/skill + hooks）。
+为 23 种主流 AI Agent 生成 Call Warden 集成文件（MCP 配置 + rules/skill + hooks）。
 
 ```bash
 # 生成单个 agent 的项目级集成模板
@@ -366,10 +366,10 @@ cw install-agent cursor --output-dir /path/to/output
 cw install-agent all --force
 ```
 
-**支持的 Agent（18 个）**：
+**支持的 Agent（23 个）**：
 
 | Tier | Agent | 项目级 MCP 配置 | 全局 MCP 配置 | 格式 | 额外文件 |
-|------|-------|----------------|-------------|------|---------|
+|------|-------|----------------|-------------|------|--------|
 | T1 | claude-code | `.mcp.json` | `~/.claude.json` | JSON mcpServers | settings.json hooks + CALLWARDEN.md |
 | T1 | claude-desktop | N/A | `claude_desktop_config.json` | JSON mcpServers | N/A |
 | T1 | cursor | `.cursor/mcp.json` | `~/.cursor/mcp.json` | JSON mcpServers | `.cursor/rules/callwarden.mdc` |
@@ -377,17 +377,22 @@ cw install-agent all --force
 | T1 | qoder | `.qoder/mcp.json` | `~/.mcp.json` | JSON mcpServers | N/A |
 | T1 | antigravity | `.antigravity/mcp_config.json` | `~/.gemini/config/mcp_config.json` | JSON mcpServers | `callwarden.md` |
 | T1 | gemini-cli | `.gemini/settings.json` | `~/.gemini/settings.json` | JSON mcpServers | N/A |
-| T2 | windsurf (= Devin Desktop) | `.windsurf/mcp_config.json` | `~/.codeium/windsurf/mcp_config.json` | JSON mcpServers | `callwarden.md` |
+| T1 | codex | `.codex/.mcp.json` | `~/.codex/config.toml` | **TOML** `[mcp_servers]` | 完整插件包 |
+| T2 | windsurf | `.windsurf/mcp_config.json` | `~/.codeium/windsurf/mcp_config.json` | JSON mcpServers | `callwarden.md` |
 | T2 | opencode | `.opencode/opencode.json` | `~/.config/opencode/opencode.json` | JSON mcpServers | N/A |
 | T2 | jetbrains-junie | `.junie/mcp/mcp.json` | N/A（仅项目级） | JSON mcpServers | N/A |
 | T2 | cline | `.cline/mcp.json` | `~/.cline/mcp.json` | JSON mcpServers | N/A |
+| T2 | cline-cli | `.cline/mcp.json` | `~/.cline/mcp.json` | JSON json_mcp_servers | N/A |
+| T2 | devin-cli | `.devin/config.json` | `~/.config/devin/config.json` | JSON json_mcp_servers | N/A |
 | T2 | kimi-code | `.kimi-code/mcp.json` | `~/.kimi-code/mcp.json`（启动加 `--mcp-config`） | JSON mcpServers | N/A |
 | T2 | codebuddy-cli | `.codebuddy/mcp.json` | `~/.codebuddy/mcp.json` | JSON mcpServers | N/A |
 | T2 | deep-code | `.deepcode/mcp.json` | `~/.deepcode/mcp.json` | JSON mcpServers | N/A |
 | T2 | kiro (AWS) | `.kiro/mcp.json` | `~/.kiro/mcp.json` | JSON mcpServers | `callwarden.md` |
-| T3 | codex | `.codex/.mcp.json` | `~/.codex/config.toml` | **TOML** `[mcp_servers]` | 完整插件包 |
+| T2 | comate | `.comate/mcp.json` | `~/.comate/mcp.json` | JSON mcpServers | N/A |
 | T3 | zed | `.zed/settings.json` | `~/.config/zed/settings.json`（Win: `AppData/Roaming/Zed/`） | JSON **context_servers** | N/A |
 | T3 | pearai | `.pearai/mcp.json` | `~/.pearai/mcp.json` | JSON mcpServers（兼容 Cursor） | N/A |
+| T3 | grok-build | `.grok/mcp.json` | `~/.grok/mcp.json` | JSON json_mcp_servers | N/A |
+| T3 | zcode | `.zcode/mcp.json` | `~/.zcode/mcp.json` | JSON json_mcp_servers | N/A |
 
 > **市场发布类**（不可脚本写入）：Comate AI IDE（百度 MCP World）、CodeBuddy IDE（IDE 设置面板）、华为云码道（IDE 配置，公测中）— 需在对应平台手动发布。
 
@@ -401,6 +406,53 @@ cw install-agent all --force
 - **toml_mcp_servers**（Codex TOML）：合并到 `[mcp_servers.callwarden]` 节，保留其他 TOML 节
 
 **自动检测**：`cw install --detect-agents` 通过三层策略（CLI 命令 → `~/` 配置目录 → Windows `%APPDATA%`/`%LOCALAPPDATA%` 路径）发现已安装 Agent，配合 `cw install --agent` 自动写入对应 MCP 配置。
+
+---
+
+### `setup`：自动配置已安装 AI 工具的 MCP 集成
+
+探测本机已安装的 AI 编码工具（通过 CLI 命令、配置目录、Windows 注册表三层策略），自动将 Call Warden MCP Server 配置写入对应的 MCP 配置文件。
+
+```bash
+# 探测并配置（首次运行会写入配置，后续运行跳过）
+cw setup
+
+# 仅探测不写入（查看已安装的 AI 工具）
+cw setup --dry-run
+
+# 强制重新配置（忽略已完成标记）
+cw setup --force
+```
+
+**参数**：
+
+| 参数 | 说明 |
+|------|------|
+| `--force` | 强制重新配置（删除已完成标记文件，重新写入配置） |
+| `--dry-run` | 仅探测不写入（显示检测结果但不修改任何配置文件） |
+
+**输出示例**：
+
+```
+检测到 3 个 AI 工具：
+  [CLI] Claude Code (claude-code)
+       -> claude 命令可用
+  [CFG] Cursor (cursor)
+       -> ~/.cursor/mcp.json 已存在
+  [WIN] Trae IDE (trae)
+       -> ~/AppData/Roaming/TRAE SOLO CN/User/mcp.json 已存在
+
+已为 3 个工具配置 CW MCP Server
+```
+
+**探测策略**（三层）：
+1. **CLI 命令**：检查 `claude`、`cursor`、`trae` 等命令是否在 PATH 中
+2. **配置目录**：检查 `~/.cursor`、`~/.trae` 等目录是否存在
+3. **Windows 路径**：检查 `%APPDATA%`/`%LOCALAPPDATA%` 下的配置目录
+
+**幂等性**：首次运行后创建标记文件 `~/.callwarden/.auto_setup_done`，后续运行自动跳过，除非使用 `--force`。
+
+> **提示**：`cw setup` 在首次运行 `cw` 时也会自动触发（Lazy Auto-Setup），可通过 `--no-auto-setup` 全局参数禁用。
 
 ---
 
@@ -2263,6 +2315,7 @@ Call Warden 在 C8 Step #2 中为所有 `--flag` 模式命令添加了 `deprecat
 | `--semgrep-save` | Semgrep 结果存入数据库 |
 | `--semgrep-severity <SEV>` | Semgrep 严重度过滤 |
 | `--map-format <FORMAT>` | 模块图格式（text/mermaid） |
+| `--no-auto-setup` | 禁用首次运行时的自动 AI 工具配置（Lazy Auto-Setup） |
 
 ---
 
@@ -2373,6 +2426,6 @@ ERROR: cw-client is only supported on Linux (UDS + SCM_RIGHTS).
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 206 个工具
+- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 229 个工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署与多容器共享

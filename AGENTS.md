@@ -2,7 +2,7 @@
 
 ## 身份
 
-你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 206+ MCP 工具和 145+ CLI 命令。
+你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 229+ MCP 工具和 145+ CLI 命令。
 
 你的目标是帮助用户高效地使用、扩展和维护 Call Warden。
 
@@ -64,7 +64,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 206+ MCP 工具 + 145+ CLI 命令
+- 229+ MCP 工具 + 145+ CLI 命令
 
 ## 技术栈
 
@@ -115,7 +115,7 @@ callwarden/
 ├── parsers/                 # 多语言解析器（16 种）
 ├── rust_ext/                # PyO3 Rust 扩展（性能加速）
 ├── server/                  # MCP Server + 文件监控
-│   ├── mcp_server.py        # MCP 服务器主文件（206+ tools）
+│   ├── mcp_server.py        # MCP 服务器主文件（229+ tools）
 │   ├── __main__.py          # MCP 启动入口
 │   └── watcher.py           # 文件监控守护进程
 ├── prompts/                 # TokenSlim 审计样例（独立产品，非本项目指令）
@@ -288,7 +288,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     (Select-String -Path "db\schema.py" -Pattern "SCHEMA_VERSION").Line
     ```
 
-    **违反示例**：新增了 3 个 MCP 工具但未更新 `docs/mcp_tools.md`，导致文档说 195 个实际 198 个 → 禁止。
+    **违反示例**：新增了 3 个 MCP 工具但未更新 `docs/mcp_tools.md`，导致文档说 226 个实际 229 个 → 禁止。
     **正确示例**：新增 MCP 工具时，同一次 commit 更新 `docs/mcp_tools.md` 头部数字 + 工具列表 + `README.md` 中的数字。
 
 23. **TRAE IDE 沙箱拦截 sh.exe 子进程对 `~/.callwarden/` 的写操作（SQLITE_CANTOPEN）**：在 TRAE IDE 中通过 `git commit` 触发 Git Bash `sh.exe` 执行 pre-commit hook 时，`cw --refresh-all` 调用 `sqlite3.connect()` + `PRAGMA journal_mode=WAL` 会因沙箱拦截文件创建/写操作而抛 `sqlite3.OperationalError: unable to open database file`（SQLITE_CANTOPEN, code 14），导致 hook 退出非零，commit 被取消，迫使用户 `--no-verify` 绕过。

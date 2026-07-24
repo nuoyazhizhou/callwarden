@@ -106,6 +106,18 @@ cw install --check
 
 如果看到 CLI 帮助信息（含子命令概览和 --flag 列表），且 `--check` 输出全部 `[OK]`，说明安装成功。
 
+### 1.6 配置 AI 工具集成
+
+```bash
+# 探测已安装的 AI 编码工具并自动配置 MCP 集成
+cw setup
+
+# 仅探测不写入（查看已安装哪些 AI 工具）
+cw setup --dry-run
+```
+
+`cw setup` 会自动检测本机已安装的 AI 工具（Claude Code、Cursor、Trae 等 23 种），并将 Call Warden MCP Server 配置写入对应的配置文件。首次运行 `cw` 时也会自动触发（可通过 `--no-auto-setup` 禁用）。
+
 ## 2. 初始化数据库
 
 ### 2.1 构建代码图谱
@@ -222,7 +234,7 @@ cw --semgrep-list
 
 ## 4. 启动 MCP Server
 
-MCP（Model Context Protocol）Server 模式让 AI Agent 通过标准协议调用 206 个工具。
+MCP（Model Context Protocol）Server 模式让 AI Agent 通过标准协议调用 229 个工具。
 
 ### 4.1 stdio 模式（默认）
 
@@ -359,6 +371,6 @@ result = mcp.call_tool("revert_edit", {"audit_id": 42})
 ## 6. 下一步
 
 - [CLI 命令参考](cli_reference.md)：了解全部 145+ CLI 命令
-- [MCP 工具参考](mcp_tools.md)：了解全部 206 个 MCP 工具
+- [MCP 工具参考](mcp_tools.md)：了解全部 229 个 MCP 工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署、多容器共享、备份恢复

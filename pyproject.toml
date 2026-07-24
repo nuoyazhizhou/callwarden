@@ -138,3 +138,6 @@ callwarden = [
 testpaths = ["tests"]
 norecursedirs = ["testcode", "build", "dist", "rust_ext", ".git"]
 addopts = "-q --tb=short"
+markers = [
+    "xdist_group(name): 将测试分组，避免多个测试同时创建/删除相同临时文件",
+]

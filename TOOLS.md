@@ -180,6 +180,11 @@ cw grep TODO --path server                 # 限定搜索目录
 cw server              # 启动 MCP Server（stdio 模式）
 cw server --transport sse  # SSE 模式
 
+# 自动配置 AI 工具集成
+cw setup               # 探测已安装的 AI 工具并配置 MCP 集成
+cw setup --dry-run     # 仅探测不写入
+cw setup --force       # 强制重新配置
+
 # 安全护栏
 cw guardrail scan      # 扫描安全规则
 cw guardrail list      # 列出规则
@@ -287,10 +292,10 @@ db.conn.commit()
 
 ### 写命令（需激活 workspace，可能撞锁）
 
-- **子命令**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`
+- **子命令**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`、`setup`
 - **flag**：`--refresh-all`、`--refresh`、`--watch`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--restore-comment`、`--restore-all-comments`、`--coverage-import`
 
-## MCP 工具分组（206 个）
+## MCP 工具分组（229 个）
 
 **查询类**：get_stats、search_symbols、get_symbol、get_callers、get_callees、get_symbol_history、get_file_history、get_recent_changes、get_topological_order
 
