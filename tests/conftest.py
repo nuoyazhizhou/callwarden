@@ -21,20 +21,31 @@ import pytest
 from callwarden import config as _cw_config
 from callwarden.db import db_base as _db_base
 
-# i18n 子包别名：package-dir={callwarden=.} 布局下，CI 安装后
-# callwarden.i18n 可能解析为 namespace package（无 __init__.py），
-# 导致 from callwarden.i18n import X 报 (unknown location) ImportError。
-# 直接从文件系统加载 i18n/__init__.py 并注册别名，确保测试能找到。
+# 子包别名：package-dir={callwarden=.} 布局下，CI 安装后
+# callwarden.i18n / callwarden.server 等子包可能解析为 namespace package
+# （无 __init__.py），导致 ImportError / AttributeError。
+# 直接从文件系统加载各子包 __init__.py 并注册别名，确保测试能找到。
 import importlib.util as _importlib_util
 import os as _os
 
 _project_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
-_i18n_init = _os.path.join(_project_root, 'i18n', '__init__.py')
-if _os.path.isfile(_i18n_init):
-    _spec = _importlib_util.spec_from_file_location('callwarden.i18n', _i18n_init)
-    _i18n_module = _importlib_util.module_from_spec(_spec)
-    _spec.loader.exec_module(_i18n_module)
-    sys.modules.setdefault('callwarden.i18n', _i18n_module)
+
+
+def _register_subpackage(dir_name: str, module_name: str) -> None:
+    """从文件系统加载子包并注册到 sys.modules（含子模块搜索路径）"""
+    init_file = _os.path.join(_project_root, dir_name, '__init__.py')
+    if _os.path.isfile(init_file):
+        spec = _importlib_util.spec_from_file_location(
+            module_name, init_file,
+            submodule_search_locations=[_os.path.join(_project_root, dir_name)],
+        )
+        mod = _importlib_util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        sys.modules[module_name] = mod
+
+
+_register_subpackage('i18n', 'callwarden.i18n')
+_register_subpackage('server', 'callwarden.server')
 
 
 @pytest.fixture(autouse=True)
