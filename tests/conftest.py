@@ -14,10 +14,19 @@
     1. callwarden.config.get_project_db_path（原始定义）
     2. callwarden.db.db_base.get_project_db_path（from ..config import 引入的引用）
 """
+import sys
+
 import pytest
 
 from callwarden import config as _cw_config
 from callwarden.db import db_base as _db_base
+
+# i18n 子包别名：package-dir={callwarden=.} 布局下，CI 安装后
+# callwarden.i18n 可能解析为 namespace package（无 __init__.py），
+# 导致 from callwarden.i18n import X 报 (unknown location) ImportError。
+# 直接从顶层 i18n 包导入并注册别名，确保测试能找到。
+import i18n as _i18n_module
+sys.modules.setdefault('callwarden.i18n', _i18n_module)
 
 
 @pytest.fixture(autouse=True)
