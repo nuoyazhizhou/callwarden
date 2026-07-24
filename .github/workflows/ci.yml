@@ -38,6 +38,12 @@ jobs:
           pip install -e ".[all,dev]"
           pip install pytest-xdist pytest-timeout
 
+      - name: Clean build artifacts
+        # 清理 dist/ 和 build/ 防止旧文件残留导致产物损坏
+        run: |
+          rm -rf dist/ build/ *.egg-info
+        shell: bash
+
       - name: Build package
         run: |
           pip install build

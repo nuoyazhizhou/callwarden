@@ -28,9 +28,11 @@ include README.md
 include LICENSE
 
 # 安装器资源（Windows WiX / macOS pkg / Linux deb）
-recursive-include release/windows *
-recursive-include release/macos *
-recursive-include release/linux *
+# 只包含源码/配置，排除构建产物（.msi/.pkg/.deb/.wixobj 等）
+recursive-include release/windows *.wxs
+recursive-include release/macos *.sh
+recursive-include release/linux *.sh *.service *.conf *.postinst *.postrm *.preinst *.preinst
+recursive-include release/linux/deb *
 
 # Rust 扩展源码（cargo build 需要）
 recursive-include rust_ext *.rs

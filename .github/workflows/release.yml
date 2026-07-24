@@ -33,11 +33,60 @@ jobs:
           python -m pip install --upgrade pip
           pip install build twine
 
-      - name: Build package
-        run: python -m build
+      - name: Clean build artifacts
+        # 清理 dist/ 和 build/ 防止旧文件残留导致产物损坏
+        run: |
+          rm -rf dist/ build/ *.egg-info
+          echo "Cleaned build artifacts"
+        shell: bash
 
-      - name: Verify package
-        run: twine check dist/*
+      - name: Build package
+        # sdist 只在 ubuntu 上构建一次，避免多平台产出同名 .tar.gz
+        # 合并时冲突/覆盖导致 gzip 解压失败（invalid distance code）
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            python -m build
+          else
+            python -m build --wheel
+          fi
+        shell: bash
+
+      - name: Verify package integrity
+        # 构建后立即验证所有产物完整性，fail-fast
+        run: |
+          echo "=== Verifying dist/ contents ==="
+          ls -la dist/
+          python -c "
+          import sys, glob, zipfile, tarfile
+          errors = []
+          for f in glob.glob('dist/*.whl'):
+              try:
+                  z = zipfile.ZipFile(f)
+                  bad = z.testzip()
+                  if bad:
+                      errors.append(f)
+                      print(f'FAIL wheel: {f} - corrupt entry: {bad}')
+                  else:
+                      print(f'OK wheel: {f} ({len(z.namelist())} files)')
+                  z.close()
+              except Exception as e:
+                  errors.append(f)
+                  print(f'FAIL wheel: {f} - {e}')
+          for f in glob.glob('dist/*.tar.gz'):
+              try:
+                  t = tarfile.open(f)
+                  names = t.getnames()
+                  t.close()
+                  print(f'OK sdist: {f} ({len(names)} entries)')
+              except Exception as e:
+                  errors.append(f)
+                  print(f'FAIL sdist: {f} - {e}')
+          if errors:
+              print(f'\nFAILED: {len(errors)} corrupted artifacts')
+              sys.exit(1)
+          print('All artifacts verified')
+          "
+        shell: bash
 
       - name: Upload Python package artifacts
         uses: actions/upload-artifact@v4
@@ -66,6 +115,65 @@ jobs:
           pattern: wheels-*
           path: dist/
           merge-multiple: true
+
+      - name: Verify package integrity before upload
+        # 上传前再次验证所有产物完整性，防止 artifact 传输过程中损坏
+        run: |
+          echo "=== dist/ contents ==="
+          ls -la dist/
+          echo ""
+          # 去重 + 完整性验证（纯 Python，避免 shell 嵌套引号问题）
+          python -c "
+          import os, sys, hashlib, glob, zipfile, tarfile
+          errors = []
+          # 1. 去重：多平台可能产出重复文件
+          seen = {}
+          for f in sorted(glob.glob('dist/*')):
+              sha = hashlib.sha256(open(f, 'rb').read()).hexdigest()
+              key = os.path.basename(f)
+              if key in seen:
+                  if seen[key] == sha:
+                      print(f'Duplicate (same hash), removing: {f}')
+                      os.remove(f)
+                  else:
+                      print(f'WARNING: Same name different hash: {f}')
+                      errors.append(f)
+              else:
+                  seen[key] = sha
+                  print(f'OK: {f} ({sha[:16]}...)')
+          print()
+          # 2. 验证 wheel 完整性
+          for f in glob.glob('dist/*.whl'):
+              try:
+                  z = zipfile.ZipFile(f)
+                  bad = z.testzip()
+                  if bad:
+                      errors.append(f'{f}: corrupt entry {bad}')
+                      print(f'FAIL: {f} - corrupt entry: {bad}')
+                  else:
+                      print(f'OK wheel: {f} ({len(z.namelist())} files)')
+                  z.close()
+              except Exception as e:
+                  errors.append(f'{f}: {e}')
+                  print(f'FAIL: {f} - {e}')
+          # 3. 验证 sdist 完整性
+          for f in glob.glob('dist/*.tar.gz'):
+              try:
+                  t = tarfile.open(f)
+                  names = t.getnames()
+                  t.close()
+                  print(f'OK sdist: {f} ({len(names)} entries)')
+              except Exception as e:
+                  errors.append(f'{f}: {e}')
+                  print(f'FAIL: {f} - {e}')
+          if errors:
+              print(f'\nFAILED: {len(errors)} errors found')
+              sys.exit(1)
+          print('\nAll artifacts verified successfully')
+          "
+          # twine check 最终验证
+          twine check dist/*
+        shell: bash
 
       - name: Publish to PyPI
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
