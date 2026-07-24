@@ -1,0 +1,5 @@
+# macOS 链接器配置：允许 Python C API 符号在运行时动态解析
+# pyo3 cdylib 构建时，Python 符号由宿主 Python 解释器提供，不需要链接时静态解析。
+# Linux 默认允许 undefined symbols；macOS 需要显式指定。
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
