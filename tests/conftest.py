@@ -24,9 +24,17 @@ from callwarden.db import db_base as _db_base
 # i18n 子包别名：package-dir={callwarden=.} 布局下，CI 安装后
 # callwarden.i18n 可能解析为 namespace package（无 __init__.py），
 # 导致 from callwarden.i18n import X 报 (unknown location) ImportError。
-# 直接从顶层 i18n 包导入并注册别名，确保测试能找到。
-import i18n as _i18n_module
-sys.modules.setdefault('callwarden.i18n', _i18n_module)
+# 直接从文件系统加载 i18n/__init__.py 并注册别名，确保测试能找到。
+import importlib.util as _importlib_util
+import os as _os
+
+_project_root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+_i18n_init = _os.path.join(_project_root, 'i18n', '__init__.py')
+if _os.path.isfile(_i18n_init):
+    _spec = _importlib_util.spec_from_file_location('callwarden.i18n', _i18n_init)
+    _i18n_module = _importlib_util.module_from_spec(_spec)
+    _spec.loader.exec_module(_i18n_module)
+    sys.modules.setdefault('callwarden.i18n', _i18n_module)
 
 
 @pytest.fixture(autouse=True)
