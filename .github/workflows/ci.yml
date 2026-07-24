@@ -38,6 +38,10 @@ jobs:
           pip install -e ".[all,dev]"
           pip install pytest-xdist pytest-timeout
 
+      - name: Run tests
+        run: |
+          pytest tests/ -n auto --tb=short --timeout=300 --timeout-method=thread || echo "Some tests may need additional dependencies"
+
       - name: Clean build artifacts
         # 清理 dist/ 和 build/ 防止旧文件残留导致产物损坏
         run: |
@@ -47,17 +51,13 @@ jobs:
       - name: Build package
         run: |
           pip install build
-          python -m build
+          python -m build --wheel
 
       - name: Verify package install
         run: |
-          pip install dist/*.whl
+          pip install dist/*.whl --force-reinstall
           cw --help
           cw install --check
-
-      - name: Run tests
-        run: |
-          pytest tests/ -n auto --tb=short --timeout=300 --timeout-method=thread || echo "Some tests may need additional dependencies"
 
   lint:
     name: Lint check
