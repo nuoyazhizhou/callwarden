@@ -49,7 +49,7 @@ mod unix {
     use signal_hook::flag as signal_flag;
 
     use callwarden_core::daemon::config::DaemonConfig;
-    use callwarden_core::daemon::server::{ServerConfig, ServerHandle, start_server};
+    use callwarden_core::daemon::server::{start_server, ServerConfig, ServerHandle};
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
     use callwarden_core::daemon::SCHEMA_VERSION;
@@ -200,7 +200,8 @@ mod unix {
             start_time: Instant::now(),
             memory_max_bytes: 1024 * 1024 * 1024,
         };
-        let recovery_handler = callwarden_core::daemon::health::RecoveryHandler::new(recovery_config);
+        let recovery_handler =
+            callwarden_core::daemon::health::RecoveryHandler::new(recovery_config);
         let recovery_result = recovery_handler.recover();
         eprintln!(
             "[cw_daemon] [INFO] recovery status: {} (healthy={}, degraded={}, unhealthy={})",
@@ -210,9 +211,7 @@ mod unix {
             recovery_result["summary"]["unhealthy"],
         );
         if recovery_result["status"] == "unhealthy" {
-            eprintln!(
-                "[cw_daemon] [WARN] recovery completed with unhealthy status, check logs"
-            );
+            eprintln!("[cw_daemon] [WARN] recovery completed with unhealthy status, check logs");
         }
 
         // 5. 构造 state_factory 闭包（每个 worker 线程调用一次，独立 WorkspaceRegistry 连接）
@@ -441,7 +440,10 @@ mod unix {
                     if stream.write_all(&len.to_be_bytes()).is_ok()
                         && stream.write_all(body).is_ok()
                     {
-                        eprintln!("[cw_daemon] [INFO] health-check OK: daemon responding at {}", socket_path.display());
+                        eprintln!(
+                            "[cw_daemon] [INFO] health-check OK: daemon responding at {}",
+                            socket_path.display()
+                        );
                         return 0;
                     }
                 }
@@ -463,7 +465,9 @@ mod unix {
     // ============================================
 
     /// 加载配置：默认值 → 文件覆盖（如果 --config 指定）
-    fn load_config(cli: &Cli) -> Result<DaemonConfig, callwarden_core::daemon::config::ConfigError> {
+    fn load_config(
+        cli: &Cli,
+    ) -> Result<DaemonConfig, callwarden_core::daemon::config::ConfigError> {
         if let Some(cfg_path) = &cli.config {
             DaemonConfig::load_from_file(cfg_path)
         } else {
@@ -567,11 +571,7 @@ mod unix {
         unsafe {
             // macOS 不支持 SOCK_CLOEXEC，需创建后用 fcntl 设置 FD_CLOEXEC
             #[cfg(target_os = "linux")]
-            let fd = libc::socket(
-                libc::AF_UNIX,
-                libc::SOCK_DGRAM | libc::SOCK_CLOEXEC,
-                0,
-            );
+            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM | libc::SOCK_CLOEXEC, 0);
             #[cfg(not(target_os = "linux"))]
             let fd = libc::socket(libc::AF_UNIX, libc::SOCK_DGRAM, 0);
             if fd < 0 {
@@ -669,7 +669,10 @@ mod unix {
             }
         };
 
-        eprintln!("[cw_daemon] [INFO] SIGHUP reload: 重新加载配置文件 {}", path.display());
+        eprintln!(
+            "[cw_daemon] [INFO] SIGHUP reload: 重新加载配置文件 {}",
+            path.display()
+        );
         let new_config = match DaemonConfig::load_from_file(path) {
             Ok(c) => c,
             Err(e) => {
@@ -744,16 +747,16 @@ mod unix {
     /// 释放磁盘空间。返回所有 workspace compact 掉的 entries 总数。
     ///
     /// 对应 Runbook L118-119 `cw daemon staging-compact`，但通过 SIGUSR1 触发。
-    fn handle_drain(
-        registry: &WorkspaceRegistry,
-        data_root: &std::path::Path,
-    ) -> usize {
+    fn handle_drain(registry: &WorkspaceRegistry, data_root: &std::path::Path) -> usize {
         use callwarden_core::daemon::staging_log::StagingLog;
 
         let workspaces = match registry.list_workspaces(None) {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("[cw_daemon] [WARN] SIGUSR1 drain: list_workspaces 失败: {}", e);
+                eprintln!(
+                    "[cw_daemon] [WARN] SIGUSR1 drain: list_workspaces 失败: {}",
+                    e
+                );
                 return 0;
             }
         };
@@ -848,10 +851,7 @@ mod unix {
     /// 5. 调用 Replicator::recover（无 SnapshotPublisher，只更新 log 状态）
     ///
     /// 错误容忍：单个 workspace 恢复失败不影响其他 workspace。
-    fn recover_all_workspaces(
-        registry: &WorkspaceRegistry,
-        data_root: &std::path::Path,
-    ) -> usize {
+    fn recover_all_workspaces(registry: &WorkspaceRegistry, data_root: &std::path::Path) -> usize {
         use callwarden_core::daemon::replicator::Replicator;
         use callwarden_core::daemon::staging_log::StagingLog;
 
@@ -897,10 +897,7 @@ mod unix {
             let pending = match staging_log.read_pending() {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!(
-                        "[cw_daemon] [WARN] read_pending 失败 ws={}: {}",
-                        ws_id, e
-                    );
+                    eprintln!("[cw_daemon] [WARN] read_pending 失败 ws={}: {}", ws_id, e);
                     continue;
                 }
             };
@@ -989,9 +986,9 @@ mod unix {
                         1000, // owner_uid
                         ws_root.to_str().unwrap(),
                         ws_root.to_str().unwrap(), // host_real_root
-                        "",   // git_remote_url
-                        "",   // git_head_commit_sha
-                        "",   // toolchain_fingerprint
+                        "",                        // git_remote_url
+                        "",                        // git_head_commit_sha
+                        "",                        // toolchain_fingerprint
                     )
                     .unwrap();
                 result["workspace_instance_id"]
@@ -1091,10 +1088,7 @@ mod unix {
             // ws_a：有 2 条 pending
             let ws_a_root = fixture.data_root.join("ws_a_root");
             let ws_a_id = fixture.register_workspace(&ws_a_root);
-            fixture.write_pending_entries(
-                &ws_a_id,
-                &[("a.py", "hash_a1"), ("b.py", "hash_a2")],
-            );
+            fixture.write_pending_entries(&ws_a_id, &[("a.py", "hash_a1"), ("b.py", "hash_a2")]);
 
             // ws_b：无 staging.log
             let ws_b_root = fixture.data_root.join("ws_b_root");
@@ -1165,10 +1159,7 @@ mod unix {
             let ws_id = fixture.register_workspace(&ws_root);
 
             // 写入 2 条 pending
-            fixture.write_pending_entries(
-                &ws_id,
-                &[("x.py", "hash_x"), ("y.py", "hash_y")],
-            );
+            fixture.write_pending_entries(&ws_id, &[("x.py", "hash_x"), ("y.py", "hash_y")]);
 
             // 第一次 recover：恢复 2 条
             let count1 = recover_all_workspaces(&fixture.registry, &fixture.data_root);
@@ -1195,10 +1186,7 @@ mod unix {
                 let db_str = db_path.to_string_lossy().to_string();
                 // open 会调用 init_conn，写入 SCHEMA_VERSION
                 let _ = WorkspaceRegistry::open(&db_str).unwrap();
-                Self {
-                    _tmp: tmp,
-                    db_path,
-                }
+                Self { _tmp: tmp, db_path }
             }
 
             /// 创建已初始化但 schema_version 被改为 other 的 DB
@@ -1222,10 +1210,7 @@ mod unix {
                 // 仅创建空文件（Connection::open 会创建空 DB，但不创建表）
                 let conn = rusqlite::Connection::open(&db_path).unwrap();
                 drop(conn);
-                Self {
-                    _tmp: tmp,
-                    db_path,
-                }
+                Self { _tmp: tmp, db_path }
             }
         }
 
@@ -1345,7 +1330,8 @@ mod unix {
             // 标记前 applied_count 条为 applied（用 mark_applied_batch）
             if applied_count > 0 {
                 let pending = log.read_pending().unwrap();
-                let to_apply: Vec<i64> = pending.iter().take(applied_count).map(|e| e.lsn).collect();
+                let to_apply: Vec<i64> =
+                    pending.iter().take(applied_count).map(|e| e.lsn).collect();
                 log.mark_applied_batch(&to_apply).unwrap();
             }
         }
@@ -1571,7 +1557,8 @@ mod unix {
         fn test_sd_notify_returns_error_for_nonexistent_socket() {
             // NOTIFY_SOCKET 指向不存在的路径：sendto 失败，返回 Err
             // （注意：UnixDatagram sendto 对不存在的路径会报 ENOENT）
-            let _guard = NotifySocketGuard::set(Some("/tmp/nonexistent_sd_notify_socket_12345.sock"));
+            let _guard =
+                NotifySocketGuard::set(Some("/tmp/nonexistent_sd_notify_socket_12345.sock"));
             let result = sd_notify("READY=1");
             // sendto 到不存在的 UnixDatagram 路径会返回 ENOENT 或 ECONNREFUSED
             assert!(result.is_err(), "sendto 到不存在的 socket 应失败");

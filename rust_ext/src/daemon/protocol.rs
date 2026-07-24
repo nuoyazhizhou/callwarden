@@ -6,8 +6,8 @@
 //! 参考：server/daemon_protocol.py（Python 权威实现）。
 //! 本模块为 Rust 等价实现，供 cw_daemon binary 与 Python daemon 互通。
 
-use std::io::{self, Read, Write};
 use serde_json::{Map, Value};
+use std::io::{self, Read, Write};
 
 // P1-3（2026-07-21）：修复既有导入错误
 // _recv_msg_with_fd / call_with_fd 在 #[cfg(unix)] 函数签名中使用 RawFd，
@@ -132,10 +132,7 @@ pub fn send_message<W: Write>(
 }
 
 /// 接收单个长度分帧 JSON 对象
-pub fn recv_message<R: Read>(
-    reader: &mut R,
-    max_bytes: usize,
-) -> Result<Value, ProtocolError> {
+pub fn recv_message<R: Read>(reader: &mut R, max_bytes: usize) -> Result<Value, ProtocolError> {
     let header = recv_exact(reader, HEADER_SIZE)?;
     let size = parse_header(&header)?;
     if size == 0 || size as usize > max_bytes {
@@ -177,7 +174,10 @@ pub fn parse_response(response: &Value) -> Result<Value, DaemonRemoteError> {
                 .to_string();
             (code, message)
         } else {
-            ("daemon_error".to_string(), "unknown daemon error".to_string())
+            (
+                "daemon_error".to_string(),
+                "unknown daemon error".to_string(),
+            )
         };
         Err(DaemonRemoteError { code, message })
     }
@@ -209,9 +209,12 @@ pub fn make_error_response(code: &str, message: &str) -> Value {
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use libc::{
+        c_void, iovec, msghdr, recvmsg, sendmsg, CMSG_DATA, CMSG_FIRSTHDR, CMSG_LEN, CMSG_SPACE,
+        SCM_RIGHTS, SOL_SOCKET,
+    };
     use std::os::unix::io::{AsRawFd, RawFd};
     use std::os::unix::net::UnixStream;
-    use libc::{c_void, iovec, msghdr, recvmsg, sendmsg, SOL_SOCKET, SCM_RIGHTS, CMSG_SPACE, CMSG_DATA, CMSG_FIRSTHDR, CMSG_LEN};
 
     /// 发送 JSON 帧并附带少量 SCM_RIGHTS 文件描述符
     ///
@@ -239,7 +242,8 @@ mod unix {
         frame.extend_from_slice(&payload);
 
         let fd_count = fds.len();
-        let cmsg_space = unsafe { CMSG_SPACE((fd_count * std::mem::size_of::<RawFd>()) as u32) } as usize;
+        let cmsg_space =
+            unsafe { CMSG_SPACE((fd_count * std::mem::size_of::<RawFd>()) as u32) } as usize;
 
         // 构建 iov
         let mut iov = iovec {
@@ -331,8 +335,8 @@ mod unix {
                 if (*cmsg).cmsg_level == SOL_SOCKET && (*cmsg).cmsg_type == SCM_RIGHTS {
                     let data_ptr = CMSG_DATA(cmsg) as *const RawFd;
                     // 计算 cmsg 数据部分能容纳多少个 RawFd
-                    let cmsg_data_len = (*cmsg).cmsg_len as usize
-                        - (CMSG_DATA(cmsg) as usize - cmsg as usize);
+                    let cmsg_data_len =
+                        (*cmsg).cmsg_len as usize - (CMSG_DATA(cmsg) as usize - cmsg as usize);
                     let fd_count = cmsg_data_len / fd_size;
                     for i in 0..fd_count {
                         received_fds.push(*data_ptr.add(i));
@@ -680,7 +684,8 @@ mod unix_tests {
 
         // 发送端：发 JSON + FD
         let msg = serde_json::json!({"method": "snapshot.publish", "fd_attached": true});
-        let send_result = send_message_with_fds(&mut sock_a, &msg, &[raw_fd], DEFAULT_MAX_MESSAGE_BYTES);
+        let send_result =
+            send_message_with_fds(&mut sock_a, &msg, &[raw_fd], DEFAULT_MAX_MESSAGE_BYTES);
         if send_result.is_err() {
             // 某些环境（如无权限的沙箱）可能失败，跳过
             eprintln!("跳过 SCM_RIGHTS 测试：sendmsg 失败");

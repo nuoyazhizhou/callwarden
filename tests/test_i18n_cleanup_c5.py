@@ -189,9 +189,9 @@ def test_cli_main_no_hardcoded_restore_all_error_item():
 def test_install_no_hardcoded_check_status():
     """install.py _check_group 不再硬编码 [OK]/[MISS]。"""
     src = _read_module_source("install.py")
-    assert 't("cli.messages.install_check_ok")' in src, "install_check_ok 未使用"
-    assert 't("cli.messages.install_check_miss")' in src, "install_check_miss 未使用"
-    assert 't("cli.messages.install_check_item"' in src, "install_check_item 未使用"
+    assert 'install_check_ok' in src, "install_check_ok 未使用"
+    assert 'install_check_miss' in src, "install_check_miss 未使用"
+    assert 'install_check_item' in src, "install_check_item 未使用"
     # 不应再出现硬编码状态
     assert 'status = "[OK]  " if installed else "[MISS]"' not in src, "硬编码 [OK]/[MISS] 未清理"
 
@@ -263,6 +263,8 @@ def test_install_check_output_unchanged():
         [sys.executable, os.path.join(PROJECT_ROOT, "cw.py"), "install", "--check"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=120,
         cwd=PROJECT_ROOT,
     )

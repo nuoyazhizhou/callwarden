@@ -1,8 +1,10 @@
 """
-i18n.py
-=======
+i18n —— Call Warden 多语言国际化支持包。
 
-多语言国际化支持模块。
+本文件是 callwarden.i18n 包的入口（__init__.py），
+同时包含所有 i18n 逻辑（原 i18n.py 模块内容）。
+
+JSON 翻译文件（zh_CN.json / en_US.json）与本文件同目录。
 """
 
 import json
@@ -18,8 +20,8 @@ _lang_cache: Dict[str, Dict] = {}
 
 
 def _get_i18n_dir() -> str:
-    """获取 i18n 资源目录"""
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n")
+    """获取 i18n 资源目录（与本文件同目录）"""
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def _detect_system_language() -> str:
