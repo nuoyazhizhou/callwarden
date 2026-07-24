@@ -43,10 +43,19 @@ recursive-include rust_ext Cargo.lock
 include config.py
 include cw.py
 
+# 所有包目录的 Python 源文件（确保 sdist 完整，wheel 从 sdist 构建时不会缺文件）
+recursive-include analyzers *.py
+recursive-include cicd *.py
+recursive-include cli *.py
+recursive-include db *.py
+recursive-include parsers *.py
+recursive-include server *.py
+
 # 测试套件（用于 Gate 1 源码测试）
 recursive-include tests *.py
 
-# 国际化资源
+# 国际化资源（包含 __init__.py 包入口 + JSON 翻译文件）
+include i18n/__init__.py
 recursive-include i18n *.json
 
 # 忽略构建产物与缓存
