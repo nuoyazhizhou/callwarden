@@ -264,8 +264,9 @@ mod unix {
             }
             (*cmsg).cmsg_level = SOL_SOCKET;
             (*cmsg).cmsg_type = SCM_RIGHTS;
-            // cmsg_len 字段在 Linux/macOS 上均为 u32，CMSG_LEN 返回 usize，需显式转换
-            (*cmsg).cmsg_len = CMSG_LEN((fd_count * std::mem::size_of::<RawFd>()) as u32) as u32;
+            // cmsg_len: Linux 上为 size_t (usize)，macOS 上为 socklen_t (u32)
+            // 用 as _ 让编译器根据目标平台自动推导类型
+            (*cmsg).cmsg_len = CMSG_LEN((fd_count * std::mem::size_of::<RawFd>()) as u32) as _;
             let data_ptr = CMSG_DATA(cmsg) as *mut RawFd;
             for (i, &fd) in fds.iter().enumerate() {
                 *data_ptr.add(i) = fd;
