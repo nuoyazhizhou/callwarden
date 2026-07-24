@@ -202,15 +202,20 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# === EXE + COLLECT ===
-# 多入口模式：Analysis 为每个入口生成独立的 a.scripts[i]
-# EXE + COLLECT 分别构建三个 --onedir 目录
+# === 按名称提取入口脚本（PyInstaller 6.x 会在 scripts 中混入 rthook，不能按固定下标取）===
+_entry_toc = [s for s in a.scripts if s[0].startswith('entry_')]
+assert len(_entry_toc) >= 2, f'期望至少 2 个入口脚本，实际: {_entry_toc}'
+_scripts_cw = [s for s in _entry_toc if s[0] == 'entry_cw']
+_scripts_client = [s for s in _entry_toc if s[0] == 'entry_cw_client']
+_scripts_agent = [s for s in _entry_toc if s[0] == 'entry_cw_agent']
 
-# cw 主入口（Analysis 中 scripts[0] 对应 entry_cw.py）
+# === EXE + COLLECT ===
+# 多入口模式：每个 EXE 只包含自己的入口脚本（rthook 由 PyInstaller 自动注入 PKG）
+
+# cw 主入口
 exe_cw = EXE(
     pyz,
-    a.scripts[0],
-    [],
+    _scripts_cw,
     exclude_binaries=True,
     name='cw',
     console=True,
@@ -224,11 +229,10 @@ coll_cw = COLLECT(
     name='cw',
 )
 
-# cw-client（scripts[1] 对应 entry_cw_client.py）
+# cw-client
 exe_cw_client = EXE(
     pyz,
-    a.scripts[1],
-    [],
+    _scripts_client,
     exclude_binaries=True,
     name='cw-client',
     console=True,
@@ -242,13 +246,11 @@ coll_cw_client = COLLECT(
     name='cw-client',
 )
 
-# cw-agent（scripts[2] 对应 entry_cw_agent.py）
-# P0-3.6 修复：仅 Linux/macOS 构建 cw-agent，Windows 跳过
-if sys.platform != 'win32':
+# cw-agent（仅 Linux/macOS 构建）
+if sys.platform != 'win32' and _scripts_agent:
     exe_cw_agent = EXE(
         pyz,
-        a.scripts[2],
-        [],
+        _scripts_agent,
         exclude_binaries=True,
         name='cw-agent',
         console=True,

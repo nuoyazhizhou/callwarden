@@ -185,9 +185,10 @@ where
 
     let listener = UnixListener::bind(&config.socket_path)?;
     // 设置 socket 文件权限（0o660：owner + group 可读写）
+    // macOS 上 libc::mode_t 是 u16，但 Permissions::from_mode 期望 u32，需要显式转换
     std::fs::set_permissions(
         &config.socket_path,
-        std::fs::Permissions::from_mode(config.socket_mode),
+        std::fs::Permissions::from_mode(config.socket_mode as u32),
     )?;
 
     // P0-3 v2 修复：socket chown 到指定组（多用户 UDS 访问）—— fail-closed
