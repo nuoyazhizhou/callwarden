@@ -260,7 +260,8 @@ def test_install_check_output_unchanged():
     from callwarden.config import PROJECT_ROOT
 
     result = subprocess.run(
-        [sys.executable, os.path.join(PROJECT_ROOT, "cw.py"), "install", "--check"],
+        [sys.executable, os.path.join(
+            PROJECT_ROOT, "cw.py"), "install", "--check"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -285,7 +286,8 @@ def test_all_new_keys_used_in_source():
     all_source = []
     for root, dirs, files in os.walk(PROJECT_ROOT):
         # 跳过 .git, __pycache__, tests
-        dirs[:] = [d for d in dirs if d not in (".git", "__pycache__", ".pytest_cache")]
+        dirs[:] = [d for d in dirs if d not in (
+            ".git", "__pycache__", ".pytest_cache")]
         for f in files:
             if f.endswith(".py"):
                 try:
