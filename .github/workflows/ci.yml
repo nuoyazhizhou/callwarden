@@ -46,7 +46,7 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest tests/ -n 1 --tb=short --timeout=300 --timeout-method=thread || echo "Some tests may need additional dependencies"
+          pytest tests/ -p no:xdist --tb=short --timeout=300 --timeout-method=thread || echo "Some tests may need additional dependencies"
 
       - name: Build package
         run: |
