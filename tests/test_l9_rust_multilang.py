@@ -1,9 +1,9 @@
 """L9 Rust multilang parser 补齐测试
 
-验证 14 种语言纳入 Rust multilang parser 路径（HCL 已移回 Python）：
-- supported_languages() 包含 kotlin + swift + elixir（不含 hcl）
-- parse_file_lang 对 Kotlin/Swift/Elixir/HCL 文件能提取符号（HCL 直接调用仍可用）
-- _can_use_rust_parse 对 14 种语言返回 True，对 hcl 返回 False
+验证 15 种语言纳入 Rust multilang parser 路径（P0-D 将 HCL 移回 Rust）：
+- supported_languages() 包含 kotlin + swift + elixir + hcl
+- parse_file_lang 对 Kotlin/Swift/Elixir/HCL 文件能提取符号
+- _can_use_rust_parse 对 15 种语言返回 True（含 hcl）
 - Python parser 仍能工作（作为 fallback 保证）
 """
 import os
@@ -102,17 +102,16 @@ def test_supported_languages_includes_kotlin_swift():
 
 @rust_required
 def test_elixir_in_rust_supported():
-    """测试 2：Elixir 在 Rust supported_languages 中；HCL 已移回 Python parser"""
+    """测试 2：Elixir 和 HCL 都在 Rust supported_languages 中（P0-D 将 HCL 移回 Rust）"""
     from callwarden_core import supported_languages
 
     langs = supported_languages()
     assert "elixir" in langs, f"elixir 应在 supported_languages 中，实际 {langs}"
-    # HCL 的"调用关系"是 attribute 中的引用（非函数调用），Rust CallRule
-    # 框架不适用。HCL 完整走 Python parser（HclParser._extract_refs_from_expression
-    # 专门处理引用），因此不在 Rust supported_languages 中。
-    assert "hcl" not in langs, f"hcl 不应在 Rust supported_languages 中（走 Python），实际 {langs}"
-    # 验证总数：11 基础语言 + kotlin + swift + elixir = 14（HCL 已移出）
-    assert len(langs) == 14, f"应有 14 种语言，实际 {len(langs)}: {langs}"
+    # P0-D: HCL 引用语义已在 Rust 路径实现（ReferenceRule + extract_traversal_references），
+    # 不再依赖 Python parser 的 _extract_refs_from_expression。
+    assert "hcl" in langs, f"hcl 应在 supported_languages 中（P0-D 已支持），实际 {langs}"
+    # 验证总数：11 基础语言 + kotlin + swift + elixir + hcl = 15
+    assert len(langs) == 15, f"应有 15 种语言，实际 {len(langs)}: {langs}"
 
 
 @rust_required
@@ -190,9 +189,10 @@ def test_rust_parse_swift_symbols():
         # kind 验证
         # 注意：tree-sitter-swift 0.7.x 把 struct/enum/actor 统一为 class_declaration
         # Rust multilang 框架暂不支持 declaration_kind 字段值映射，统一标记为 "class"
+        # P0-C Step 5: 类内方法 kind 从 "fn" 对齐为 "method"（golden contract）
         assert symbol_kinds["UserService"] == "class"
-        assert symbol_kinds["findUser"] == "fn"
-        assert symbol_kinds["getName"] == "fn"
+        assert symbol_kinds["findUser"] == "method"
+        assert symbol_kinds["getName"] == "method"
         assert symbol_kinds["Drawable"] == "protocol"
 
         # import 验证
@@ -298,28 +298,26 @@ provider "aws" {
 
 
 @rust_required
-def test_can_use_rust_parse_all_14_langs():
-    """测试 5：_can_use_rust_parse 对 14 种语言全部返回 True（HCL 已移回 Python）"""
+def test_can_use_rust_parse_all_15_langs():
+    """测试 5：_can_use_rust_parse 对 15 种语言全部返回 True（P0-D 将 HCL 移回 Rust）"""
     from callwarden.db.db_build import _can_use_rust_parse
 
     all_langs = [
         "python", "rust", "go", "java", "typescript", "javascript",
         "ruby", "php", "scala", "csharp", "cpp",
-        "kotlin", "swift", "elixir",
+        "kotlin", "swift", "elixir", "hcl",
     ]
     for lang in all_langs:
         assert _can_use_rust_parse(lang), f"_can_use_rust_parse('{lang}') 应返回 True"
-    # HCL 不走 Rust 路径（引用提取需要 Python _extract_refs_from_expression）
-    assert not _can_use_rust_parse("hcl"), "hcl 应走 Python 路径"
 
 
 @rust_required
-def test_elixir_use_rust_path_hcl_use_python_path():
-    """测试 6：Elixir 走 Rust 路径；HCL 走 Python 路径（引用提取需 Python）"""
+def test_elixir_and_hcl_use_rust_path():
+    """测试 6：Elixir 和 HCL 都走 Rust 路径（P0-D 将 HCL 引用语义移植到 Rust）"""
     from callwarden.db.db_build import _can_use_rust_parse
 
     assert _can_use_rust_parse("elixir"), "elixir 应走 Rust 路径"
-    assert not _can_use_rust_parse("hcl"), "hcl 应走 Python 路径（引用提取）"
+    assert _can_use_rust_parse("hcl"), "hcl 应走 Rust 路径（P0-D 已实现引用语义）"
 
 
 @rust_required
@@ -364,13 +362,161 @@ def test_hcl_python_parser_still_works():
         os.unlink(hcl_path)
 
 
+@rust_required
+def test_rust_parse_hcl_references():
+    """测试 9：P0-D — Rust parse HCL 提取 attribute traversal 引用
+
+    验证 ``aws_instance.web.private_ip`` 被提取为：
+    - references: callee_name="aws_instance.web"（资源地址）
+    - raw_calls: callee_name="aws_instance.web.private_ip"（完整 traversal）
+    """
+    from callwarden_core import parse_file_lang
+
+    hcl_code = '''resource "aws_instance" "web" {
+  ami           = "ami-12345"
+  instance_type = "t3.micro"
+  public_ip     = aws_instance.web.private_ip
+}
+
+variable "region" {
+  default = "us-east-1"
+}
+'''
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".hcl", delete=False, encoding="utf-8") as f:
+        f.write(hcl_code)
+        hcl_path = f.name
+
+    try:
+        result = parse_file_lang(hcl_path, "test.sample", "hcl")
+
+        assert result.get("error") is None, f"parse 不应有错误，实际 {result.get('error')}"
+        assert result["language"] == "hcl"
+
+        # P0-D: references 必须包含 attribute traversal 引用
+        references = result.get("references", [])
+        assert len(references) > 0, "应提取到至少 1 个 reference（aws_instance.web.private_ip）"
+
+        ref = references[0]
+        assert ref["callee_name"] == "aws_instance.web", (
+            f"reference callee_name 应为 'aws_instance.web'，实际 {ref['callee_name']!r}"
+        )
+        assert ref["reference_kind"] == "attribute_traversal", (
+            f"reference_kind 应为 'attribute_traversal'，实际 {ref['reference_kind']!r}"
+        )
+        assert ref["source_text"] == "aws_instance.web.private_ip", (
+            f"source_text 应为 'aws_instance.web.private_ip'，实际 {ref['source_text']!r}"
+        )
+        assert ref["caller_name"] == "aws_instance.web", (
+            f"caller_name 应为 'aws_instance.web'（所在 block），实际 {ref['caller_name']!r}"
+        )
+        assert ref["call_line"] == 4, f"call_line 应为 4，实际 {ref['call_line']}"
+
+        # raw_calls 也应包含完整 traversal（向后兼容 Python parser 行为）
+        calls = result.get("raw_calls", [])
+        traversal_calls = [c for c in calls if c["callee_name"] == "aws_instance.web.private_ip"]
+        assert len(traversal_calls) > 0, (
+            f"raw_calls 应包含完整 traversal 'aws_instance.web.private_ip'，实际 calls={calls}"
+        )
+    finally:
+        os.unlink(hcl_path)
+
+
+@rust_required
+def test_rust_parse_elixir_io_puts_call():
+    """测试 10：P0-D — Rust parse Elixir 提取 IO.puts 调用
+
+    验证 ``IO.puts("Hello")`` 被提取为：
+    - callee_name="puts"，callee_module="IO"（dot 节点拆分）
+    - caller_name="hello"（调用者归属到包含函数）
+    """
+    from callwarden_core import parse_file_lang
+
+    elixir_code = '''defmodule MyModule do
+  def hello(name) do
+    IO.puts("Hello, " <> name)
+  end
+end
+'''
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ex", delete=False, encoding="utf-8") as f:
+        f.write(elixir_code)
+        ex_path = f.name
+
+    try:
+        result = parse_file_lang(ex_path, "", "elixir")
+
+        assert result.get("error") is None, f"parse 不应有错误，实际 {result.get('error')}"
+        assert result["language"] == "elixir"
+
+        calls = result.get("raw_calls", [])
+        io_puts_calls = [
+            c for c in calls
+            if c["callee_name"] == "puts" and c["callee_module"] == "IO"
+        ]
+        assert len(io_puts_calls) > 0, (
+            f"应提取到 IO.puts 调用（callee_name='puts', callee_module='IO'），实际 calls={calls}"
+        )
+        call = io_puts_calls[0]
+        assert call["caller_name"] == "hello", (
+            f"caller_name 应为 'hello'，实际 {call['caller_name']!r}"
+        )
+        assert call["call_line"] == 3, f"call_line 应为 3，实际 {call['call_line']}"
+    finally:
+        os.unlink(ex_path)
+
+
+@rust_required
+def test_rust_parse_elixir_import_directives():
+    """测试 11：P0-D — Rust parse Elixir 提取 alias/import/use/require 指令
+
+    验证这 4 个关键字被提取为 import 而非普通 call。
+    """
+    from callwarden_core import parse_file_lang
+
+    elixir_code = '''defmodule MyModule do
+  alias Foo.Bar
+  import Baz.Qux
+  use GenServer
+  require Logger
+
+  def hello do
+    :ok
+  end
+end
+'''
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ex", delete=False, encoding="utf-8") as f:
+        f.write(elixir_code)
+        ex_path = f.name
+
+    try:
+        result = parse_file_lang(ex_path, "", "elixir")
+
+        assert result.get("error") is None, f"parse 不应有错误，实际 {result.get('error')}"
+
+        imports = result.get("imports", [])
+        # 应提取到 4 个 import（alias/import/use/require）
+        assert "Foo.Bar" in imports, f"应提取 alias Foo.Bar，实际 imports={imports}"
+        assert "Baz.Qux" in imports, f"应提取 import Baz.Qux，实际 imports={imports}"
+        assert "GenServer" in imports, f"应提取 use GenServer，实际 imports={imports}"
+        assert "Logger" in imports, f"应提取 require Logger，实际 imports={imports}"
+
+        # 这些关键字不应作为普通 call 出现在 raw_calls 中
+        calls = result.get("raw_calls", [])
+        callee_names = [c["callee_name"] for c in calls]
+        assert "alias" not in callee_names, "alias 不应作为普通 call，实际出现在 raw_calls 中"
+        assert "import" not in callee_names, "import 不应作为普通 call"
+        assert "use" not in callee_names, "use 不应作为普通 call"
+        assert "require" not in callee_names, "require 不应作为普通 call"
+    finally:
+        os.unlink(ex_path)
+
+
 # ====================================================================
 # 主入口
 # ====================================================================
 
 def main():
     print("=" * 60)
-    print("L9 Rust multilang parser 补齐测试（14 语言 Rust 化，HCL 走 Python）")
+    print("L9 Rust multilang parser 补齐测试（15 语言 Rust 化，P0-D HCL 移回 Rust）")
     print("=" * 60)
     if not _rust_available():
         print("SKIP: callwarden_core 不可导入")
@@ -387,14 +533,20 @@ def main():
     print("PASS test_rust_parse_elixir_symbols")
     test_rust_parse_hcl_symbols()
     print("PASS test_rust_parse_hcl_symbols")
-    test_can_use_rust_parse_all_14_langs()
-    print("PASS test_can_use_rust_parse_all_14_langs")
-    test_elixir_use_rust_path_hcl_use_python_path()
-    print("PASS test_elixir_use_rust_path_hcl_use_python_path")
+    test_can_use_rust_parse_all_15_langs()
+    print("PASS test_can_use_rust_parse_all_15_langs")
+    test_elixir_and_hcl_use_rust_path()
+    print("PASS test_elixir_and_hcl_use_rust_path")
     test_elixir_python_parser_still_works()
     print("PASS test_elixir_python_parser_still_works")
     test_hcl_python_parser_still_works()
     print("PASS test_hcl_python_parser_still_works")
+    test_rust_parse_hcl_references()
+    print("PASS test_rust_parse_hcl_references")
+    test_rust_parse_elixir_io_puts_call()
+    print("PASS test_rust_parse_elixir_io_puts_call")
+    test_rust_parse_elixir_import_directives()
+    print("PASS test_rust_parse_elixir_import_directives")
     print("=" * 60)
     print("=== ALL L9 RUST MULTILANG TESTS PASSED ===")
     print("=" * 60)

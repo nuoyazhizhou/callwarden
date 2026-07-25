@@ -1,12 +1,12 @@
 //! HCL 语言配置（从 multi_lang.rs 拆分，P0-C Step 0）
 //!
-//! P0-D 将在本文件扩展 HCL 引用语义。本步骤仅做等价迁移。
-//!
-//! 注意：HCL 不在 `LangConfig::supported_languages()` 列表中——HCL 的"调用关系"
-//! 是 attribute 中的引用，不是传统函数调用，完整走 Python parser。但配置本身
-//! 仍保留在此，供 Python 端按需取用符号。
+//! P0-D Step 0+1: 实现 HCL attribute traversal 引用语义。
+//! HCL 的"调用关系"是 attribute 表达式中的引用，如：
+//!   value = aws_instance.web.private_ip
+//! 通过 ReferenceRule + walk_node 的 reference 提取路径处理，
+//! 同时产出 references（语义化资源地址）和 raw_calls（完整 traversal 文本）。
 
-use crate::multi_lang::{LangConfig, SymbolRule, NameStrategy};
+use crate::multi_lang::{LangConfig, SymbolRule, NameStrategy, ReferenceRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -25,7 +25,10 @@ pub(crate) fn config() -> LangConfig {
                 sym_kind: "block",
                 // HCL block 的 body 子节点用于递归提取 attribute 中的引用（调用关系）
                 body: Some("body"),
-                is_fn: false,
+                // P0-D: is_fn=true 让 walk_node 把 block 名设为 current_fn，
+                // 这样 attribute 中的引用能正确归属到包含它的 block。
+                // HCL 无 CallRule，is_fn 仅用于设置调用/引用上下文，不触发 call 提取。
+                is_fn: true,
                 dynamic_kind: vec![],
                 call_keyword: None,
                 kind_from_child_text: vec![
@@ -43,13 +46,22 @@ pub(crate) fn config() -> LangConfig {
                 constructor_if_name_matches_parent: false,
             },
         ],
-        // HCL 无传统函数调用；引用关系在 attribute 表达式中（如 value = aws_instance.web.public_ip）
-        // 当前 walk_node 的 CallRule 按 kind 匹配，不适用于 attribute。
-        // Python parser 的 _extract_refs_from_expression 专门处理，这里留空，
-        // 由 Python 端补充提取（或后续扩展框架支持 attribute 引用）
+        // HCL 无传统函数调用；引用通过 reference_rules 提取
         call_rules: vec![],
         // HCL 无 import 概念
         import_kinds: vec![],
+        // P0-D: 无 Elixir 风格的 import 指令
+        import_directives: vec![],
+        // P0-D: HCL attribute traversal 引用提取规则
+        // attribute 节点 → expression 子节点 → variable_expr + get_attr 链
+        reference_rules: vec![
+            ReferenceRule {
+                attribute_kind: "attribute",
+                expression_kind: "expression",
+                variable_kind: "variable_expr",
+                get_attr_kind: "get_attr",
+            },
+        ],
         skip_kinds: vec![],
     }
 }

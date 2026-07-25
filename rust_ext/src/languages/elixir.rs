@@ -1,8 +1,12 @@
 //! Elixir 语言配置（从 multi_lang.rs 拆分，P0-C Step 0）
 //!
-//! P0-D 将在本文件扩展 Elixir 引用语义。本步骤仅做等价迁移。
+//! P0-D Step 2: 扩展 Elixir 引用语义。
+//! - 添加 import_directives 提取 alias/import/use/require 指令
+//!   （这些是 call 节点但语义上是 import，不应作为普通 call 处理）
+//! - call_rules 中已配置 dot 节点提取（extract_callee 支持 dot），
+//!   IO.puts 等 dot 调用会被拆分为 (callee_name="puts", callee_module="IO")
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy};
+use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy, ImportDirective};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -144,10 +148,41 @@ pub(crate) fn config() -> LangConfig {
         // Elixir 普通 call 调用：identifier 是函数名，callee_field=None
         // 注意：def/defp 等 call_keyword 匹配的 SymbolRule 会先命中走符号路径，
         // 其他普通 call（如 IO.puts、Enum.map）会走此调用规则路径
+        // P0-D Step 2: extract_callee 已支持 dot 节点（IO.puts），
+        // split_callee 会将 "IO.puts" 拆分为 (callee_name="puts", callee_module="IO")
         call_rules: vec![CallRule { kind: "call", callee_field: None }],
-        // Elixir 的 alias/import/use/require 也是 call 节点，不走 import 路径
-        // （Python parser 的 _extract_imports 专门处理，这里留空，由 Python 端补充）
+        // Elixir 的 alias/import/use/require 也是 call 节点，不走 import_kinds 路径
+        // （由 import_directives 在 walk_node 中专门处理）
         import_kinds: vec![],
+        // P0-D Step 2: Elixir import 指令规则
+        // alias/import/use/require 都是 call 节点，首个 identifier 文本为关键字，
+        // arguments 内的 alias 节点是目标模块名。
+        // walk_node 会优先匹配 import_directives，提取为 import 而非普通 call。
+        // 对齐 Python parser 的 _extract_imports 实现。
+        import_directives: vec![
+            ImportDirective {
+                keyword: "alias",
+                arguments_kind: "arguments",
+                alias_kind: "alias",
+            },
+            ImportDirective {
+                keyword: "import",
+                arguments_kind: "arguments",
+                alias_kind: "alias",
+            },
+            ImportDirective {
+                keyword: "use",
+                arguments_kind: "arguments",
+                alias_kind: "alias",
+            },
+            ImportDirective {
+                keyword: "require",
+                arguments_kind: "arguments",
+                alias_kind: "alias",
+            },
+        ],
+        // Elixir 无 HCL 风格的 attribute traversal 引用
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

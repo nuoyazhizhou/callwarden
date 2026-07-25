@@ -59,7 +59,26 @@ pub struct ParseResult {
     pub symbols: Vec<SymbolInfo>,
     pub calls: Vec<RawCall>,
     pub imports: Vec<String>,
+    /// P0-D: 引用关系（HCL attribute traversal 等声明式引用）
+    /// 与 raw_calls 区别：references 记录语义化引用（resource 地址），
+    /// raw_calls 记录完整 traversal 文本（向后兼容 Python parser 行为）
+    pub references: Vec<RawReference>,
     pub error: Option<String>,
+}
+
+/// P0-D: 声明式引用（HCL attribute traversal）
+/// 如 `value = aws_instance.web.private_ip` 引用了 `aws_instance.web` 资源块
+#[derive(Clone, Debug)]
+pub struct RawReference {
+    /// 引用者符号名（当前所在 block 的 qualified name 末段）
+    pub caller_name: String,
+    /// 被引用资源地址（如 "aws_instance.web"，不含尾部 attribute）
+    pub callee_name: String,
+    pub call_line: u32,
+    /// 引用类型（如 "attribute_traversal"）
+    pub reference_kind: String,
+    /// 完整 traversal 源文本（如 "aws_instance.web.private_ip"）
+    pub source_text: String,
 }
 
 /// 符号信息（紧凑 struct，对应 Python 侧的 dict）
@@ -121,6 +140,7 @@ impl CParser {
                     symbols: Vec::new(),
                     calls: Vec::new(),
                     imports: Vec::new(),
+                    references: Vec::new(),
                     error: Some(format!("read error: {}", e)),
                 };
             }
@@ -138,6 +158,7 @@ impl CParser {
                 symbols: Vec::new(),
                 calls: Vec::new(),
                 imports: Vec::new(),
+                references: Vec::new(),
                 error: Some("set_language failed".to_string()),
             };
         }
@@ -155,6 +176,7 @@ impl CParser {
                     symbols: Vec::new(),
                     calls: Vec::new(),
                     imports: Vec::new(),
+                    references: Vec::new(),
                     error: Some("parse returned None".to_string()),
                 };
             }
@@ -188,6 +210,7 @@ impl CParser {
             symbols,
             calls,
             imports,
+            references: Vec::new(),
             error: None,
         }
     }
@@ -677,6 +700,22 @@ pub(crate) fn parse_result_to_pydict<'py>(
     dict.set_item("raw_calls", calls)?;
 
     dict.set_item("imports", r.imports.clone())?;
+
+    // P0-D: references 转为 list of dict（HCL attribute traversal 等）
+    let references: Vec<Bound<'py, PyAny>> = r
+        .references
+        .iter()
+        .map(|rf| {
+            let d = PyDict::new(py);
+            d.set_item("caller_name", rf.caller_name.clone()).ok();
+            d.set_item("callee_name", rf.callee_name.clone()).ok();
+            d.set_item("call_line", rf.call_line).ok();
+            d.set_item("reference_kind", rf.reference_kind.clone()).ok();
+            d.set_item("source_text", rf.source_text.clone()).ok();
+            d.into_any().into_bound()
+        })
+        .collect();
+    dict.set_item("references", references)?;
 
     if let Some(err) = &r.error {
         dict.set_item("error", err.clone())?;

@@ -18,7 +18,7 @@ use tree_sitter::{Language, Node, Parser};
 use std::sync::Arc;
 use rayon::prelude::*;
 use crate::{
-    ParseResult, SymbolInfo, RawCall, ParseResultPool,
+    ParseResult, SymbolInfo, RawCall, RawReference, ParseResultPool,
     find_child, node_text, make_qualified, blake_hash, parse_result_to_pydict,
 };
 
@@ -182,6 +182,35 @@ pub struct CallRule {
     pub callee_field: Option<&'static str>,
 }
 
+/// P0-D: 引用提取规则（HCL attribute traversal）
+/// 用于声明式语言中属性表达式内的跨块引用，如 HCL 的：
+///   value = aws_instance.web.private_ip
+/// expression 子节点包含 variable_expr + get_attr 链，需提取为引用关系。
+#[derive(Clone, Debug)]
+pub struct ReferenceRule {
+    /// attribute 节点 kind（如 HCL 的 "attribute"）
+    pub attribute_kind: &'static str,
+    /// expression 子节点 kind（如 HCL 的 "expression"）
+    pub expression_kind: &'static str,
+    /// variable 节点 kind（如 HCL 的 "variable_expr"）
+    pub variable_kind: &'static str,
+    /// get_attr 节点 kind（如 HCL 的 "get_attr"）
+    pub get_attr_kind: &'static str,
+}
+
+/// P0-D: import 指令规则（Elixir alias/import/use/require）
+/// Elixir 中这 4 个关键字都是 call 节点，但语义上是 import 指令，
+/// 不应作为普通 call 处理，需提取为 import。
+#[derive(Clone, Debug)]
+pub struct ImportDirective {
+    /// call 节点首个 identifier 文本（如 "alias", "import", "use", "require"）
+    pub keyword: &'static str,
+    /// arguments 子节点 kind（Elixir 固定为 "arguments"）
+    pub arguments_kind: &'static str,
+    /// alias 子节点 kind（Elixir 固定为 "alias"）
+    pub alias_kind: &'static str,
+}
+
 /// 语言配置
 pub struct LangConfig {
     pub lang_id: &'static str,
@@ -189,6 +218,12 @@ pub struct LangConfig {
     pub symbol_rules: Vec<SymbolRule>,
     pub call_rules: Vec<CallRule>,
     pub import_kinds: Vec<&'static str>,
+    /// P0-D: import 指令规则（Elixir alias/import/use/require）
+    /// 匹配 call 节点首个 identifier 文本，提取为 import 而非普通 call
+    pub import_directives: Vec<ImportDirective>,
+    /// P0-D: 引用提取规则（HCL attribute traversal）
+    /// 匹配 attribute 节点，提取 expression 中的 variable_expr + get_attr 链
+    pub reference_rules: Vec<ReferenceRule>,
     /// 跳过的节点 kind：既不提取符号也不递归子节点
     /// 用于 Rust 的 mod_item（Python 不提取到 symbols，放到 inline_modules）
     pub skip_kinds: Vec<&'static str>,
@@ -202,17 +237,17 @@ impl LangConfig {
     }
 
     /// 获取支持的语言列表
-    /// 注意：hcl 不在此列表中 —— HCL 的"调用关系"是 attribute 中的引用（如
-    /// `value = aws_instance.web.public_ip`），不是传统函数调用。Rust 的
-    /// walk_node + CallRule 按 AST kind 匹配，不适用于此模式。Python 端
-    /// HclParser._extract_refs_from_expression 专门处理引用提取，因此 HCL
-    /// 完整走 Python parser（符号+引用都由 Python 提取，确保正确性）。
+    /// P0-D Step 3: HCL 已加入 Rust supported_languages。
+    /// HCL 的"调用关系"是 attribute 中的引用（如 `value = aws_instance.web.public_ip`），
+    /// 通过 ReferenceRule + walk_node 的 reference 提取路径处理，
+    /// 不再依赖 Python parser 的 _extract_refs_from_expression。
     pub fn supported_languages() -> Vec<&'static str> {
         vec![
             "python", "rust", "go", "java", "typescript", "javascript",
             "ruby", "php", "scala", "csharp", "cpp",
             "kotlin", "swift",
             "elixir",
+            "hcl",
         ]
     }
 }
@@ -231,7 +266,7 @@ impl GenericParser {
         Self { config }
     }
 
-    /// parse 单个文件，提取符号 + 调用 + import
+    /// parse 单个文件，提取符号 + 调用 + import + 引用
     pub fn parse_file(&self, abs_path: &str, module_path: &str) -> ParseResult {
         let source = match std::fs::read(abs_path) {
             Ok(s) => s,
@@ -261,12 +296,13 @@ impl GenericParser {
         let mut symbols = Vec::new();
         let mut calls = Vec::new();
         let mut imports = Vec::new();
+        let mut references = Vec::new();
 
         let root = tree.root_node();
         walk_node(
             &root, &source, &self.config, module_path, "",
             "", "",
-            &mut symbols, &mut calls, &mut imports,
+            &mut symbols, &mut calls, &mut imports, &mut references,
         );
 
         ParseResult {
@@ -279,6 +315,7 @@ impl GenericParser {
             symbols,
             calls,
             imports,
+            references,
             error: None,
         }
     }
@@ -315,12 +352,13 @@ impl GenericParser {
         let mut symbols = Vec::new();
         let mut calls = Vec::new();
         let mut imports = Vec::new();
+        let mut references = Vec::new();
 
         let root = tree.root_node();
         walk_node(
             &root, canonical_bytes, &self.config, module_path, "",
             "", "",
-            &mut symbols, &mut calls, &mut imports,
+            &mut symbols, &mut calls, &mut imports, &mut references,
         );
 
         ParseResult {
@@ -333,6 +371,7 @@ impl GenericParser {
             symbols,
             calls,
             imports,
+            references,
             error: None,
         }
     }
@@ -350,6 +389,7 @@ fn error_result(abs_path: &str, module_path: &str, lang_id: &str, err: &str) -> 
         symbols: Vec::new(),
         calls: Vec::new(),
         imports: Vec::new(),
+        references: Vec::new(),
         error: Some(err.to_string()),
     }
 }
@@ -358,16 +398,18 @@ fn error_result(abs_path: &str, module_path: &str, lang_id: &str, err: &str) -> 
 // 统一 walk 逻辑
 // ============================================
 
-/// 递归遍历 AST，同时提取符号、调用关系、import
+/// 递归遍历 AST，同时提取符号、调用关系、import、引用
 ///
 /// Walker 逻辑：
 /// 1. 匹配符号规则 → 提取符号 → 递归进 body（设置新的调用上下文）
-/// 2. 匹配调用规则 → 提取调用 → 递归子节点（调用可能嵌套）
-/// 3. 匹配 import kind → 提取 import → 不递归
-/// 4. 默认 → 递归子节点（保持当前调用上下文）
+/// 2. P0-D: 匹配 import 指令（Elixir alias/import/use/require）→ 提取 import → 不递归
+/// 3. 匹配调用规则 → 提取调用 → 递归子节点（调用可能嵌套）
+/// 4. 匹配 import kind → 提取 import → 不递归
+/// 5. P0-D: 匹配引用规则（HCL attribute traversal）→ 提取引用 + raw_calls → 递归子节点
+/// 6. 默认 → 递归子节点（保持当前调用上下文）
 ///
-/// 调用上下文：current_fn / current_qualified 跟踪当前所在函数，
-/// 只有在函数体内（current_fn 非空）才记录调用关系。
+/// 调用上下文：current_fn / current_qualified 跟踪当前所在函数或 block，
+/// 只有在函数体内（current_fn 非空）才记录调用关系和引用。
 fn walk_node(
     node: &Node,
     source: &[u8],
@@ -379,6 +421,7 @@ fn walk_node(
     symbols: &mut Vec<SymbolInfo>,
     calls: &mut Vec<RawCall>,
     imports: &mut Vec<String>,
+    references: &mut Vec<RawReference>,
 ) {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -469,7 +512,7 @@ fn walk_node(
                             walk_node(
                                 &body, source, config, module_path, &qualified,
                                 new_fn, new_qual,
-                                symbols, calls, imports,
+                                symbols, calls, imports, references,
                             );
                         }
                     }
@@ -479,10 +522,27 @@ fn walk_node(
                 walk_node(
                     &child, source, config, module_path, parent_qualified,
                     current_fn, current_qualified,
-                    symbols, calls, imports,
+                    symbols, calls, imports, references,
                 );
             }
             continue;
+        }
+
+        // 1.5. P0-D: 检查 import 指令（Elixir alias/import/use/require）
+        //      这些是 call 节点但语义上是 import 指令，不作为普通 call 处理
+        if !config.import_directives.is_empty() {
+            if let Some(directive) = config.import_directives.iter().find(|d| {
+                find_child(&child, "identifier")
+                    .map(|n| node_text(&n, source) == d.keyword)
+                    .unwrap_or(false)
+            }) {
+                if let Some(args) = find_child(&child, directive.arguments_kind) {
+                    if let Some(alias_node) = find_child(&args, directive.alias_kind) {
+                        imports.push(node_text(&alias_node, source).to_string());
+                    }
+                }
+                continue;  // 不作为普通 call 处理，不递归
+            }
         }
 
         // 2. 检查调用规则
@@ -504,7 +564,7 @@ fn walk_node(
             walk_node(
                 &child, source, config, module_path, parent_qualified,
                 current_fn, current_qualified,
-                symbols, calls, imports,
+                symbols, calls, imports, references,
             );
             continue;
         }
@@ -516,12 +576,124 @@ fn walk_node(
             continue;
         }
 
-        // 4. 默认：递归子节点
+        // 4. P0-D: 检查引用规则（HCL attribute traversal）
+        //    attribute 节点内 expression 含 variable_expr + get_attr 链，
+        //    提取为 references + raw_calls（向后兼容 Python parser 行为）
+        if let Some(ref_rule) = config.reference_rules.iter().find(|r| r.attribute_kind == kind) {
+            if let Some(expr) = find_child(&child, ref_rule.expression_kind) {
+                extract_traversal_references(
+                    &expr, source, ref_rule,
+                    module_path, current_fn, current_qualified,
+                    calls, references,
+                );
+            }
+            // 递归子节点（attribute 内可能有嵌套结构）
+            walk_node(
+                &child, source, config, module_path, parent_qualified,
+                current_fn, current_qualified,
+                symbols, calls, imports, references,
+            );
+            continue;
+        }
+
+        // 5. 默认：递归子节点
         walk_node(
             &child, source, config, module_path, parent_qualified,
             current_fn, current_qualified,
-            symbols, calls, imports,
+            symbols, calls, imports, references,
         );
+    }
+}
+
+/// P0-D: 从 HCL expression 中提取 attribute traversal 引用
+///
+/// expression 内含 variable_expr + get_attr 链，如：
+///   aws_instance.web.private_ip
+///   variable_expr(get_attr(identifier='aws_instance'))
+///     + get_attr(identifier='web')
+///     + get_attr(identifier='private_ip')
+///
+/// 提取逻辑：
+/// - 遍历 expression 的 named_children，找 variable_expr 起始的链
+/// - 拼接 variable_expr.identifier + 后续 get_attr.identifier 形成完整 traversal
+/// - 至少含 1 个 get_attr（即 >= 2 段）才记录为引用
+/// - references.callee_name = 前 2 段（资源地址，如 aws_instance.web）
+/// - raw_calls.callee_name = 完整 traversal（如 aws_instance.web.private_ip）
+fn extract_traversal_references(
+    expr: &Node,
+    source: &[u8],
+    ref_rule: &ReferenceRule,
+    module_path: &str,
+    current_fn: &str,
+    current_qualified: &str,
+    calls: &mut Vec<RawCall>,
+    references: &mut Vec<RawReference>,
+) {
+    if current_fn.is_empty() {
+        return;  // 不在 block 上下文中，不记录引用
+    }
+
+    let call_line = expr.start_position().row as u32 + 1;
+
+    // 遍历 expression 的 named_children，找 variable_expr 起始的链
+    let mut cursor = expr.walk();
+    let children: Vec<Node> = expr.named_children(&mut cursor).collect();
+
+    let mut i = 0;
+    while i < children.len() {
+        if children[i].kind() == ref_rule.variable_kind {
+            // 找到 variable_expr，提取其 identifier 文本作为链起始
+            let var_node = &children[i];
+            let var_ident = match find_child(var_node, "identifier") {
+                Some(n) => node_text(&n, source).to_string(),
+                None => { i += 1; continue; }
+            };
+
+            // 收集后续连续的 get_attr
+            let mut segments: Vec<String> = vec![var_ident.clone()];
+            let mut j = i + 1;
+            while j < children.len() && children[j].kind() == ref_rule.get_attr_kind {
+                if let Some(attr_ident) = find_child(&children[j], "identifier") {
+                    segments.push(node_text(&attr_ident, source).to_string());
+                }
+                j += 1;
+            }
+
+            // 至少含 1 个 get_attr（即 >= 2 段）才记录为引用
+            if segments.len() >= 2 {
+                let source_text = segments.join(".");
+                // callee_name = 前 2 段（资源地址，如 aws_instance.web）
+                // 若只有 2 段则与 source_text 相同
+                let resource_address = if segments.len() >= 2 {
+                    format!("{}.{}", segments[0], segments[1])
+                } else {
+                    segments[0].clone()
+                };
+
+                // references: 语义化引用（资源地址）
+                references.push(RawReference {
+                    caller_name: current_fn.to_string(),
+                    callee_name: resource_address.clone(),
+                    call_line,
+                    reference_kind: "attribute_traversal".to_string(),
+                    source_text: source_text.clone(),
+                });
+
+                // raw_calls: 完整 traversal 文本（向后兼容 Python parser 行为）
+                calls.push(RawCall {
+                    callee_name: source_text,
+                    callee_module: module_path.to_string(),
+                    caller_name: current_fn.to_string(),
+                    caller_qualified: current_qualified.to_string(),
+                    call_line,
+                    is_cross_file: false,
+                });
+            }
+
+            i = j;
+        } else {
+            i += 1;
+        }
     }
 }
 
@@ -650,7 +822,10 @@ fn extract_callee(node: &Node, source: &[u8], field: Option<&str>) -> Option<Str
             // field_expression 文本为 "calc.add"，由 split_callee 拆分为 (add, calc)
             .or_else(|| find_child(node, "field_expression"))
             // P0-C Step 3: Scala instance_expression（new Calculator）的 type_identifier
-            .or_else(|| find_child(node, "type_identifier"))?,
+            .or_else(|| find_child(node, "type_identifier"))
+            // P0-D Step 2: Elixir dot 节点（IO.puts）作为 callee
+            // dot 文本为 "IO.puts"，由 split_callee 拆分为 (puts, IO)
+            .or_else(|| find_child(node, "dot"))?,
     };
     Some(node_text(&callee, source).to_string())
 }
