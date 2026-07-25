@@ -41,7 +41,7 @@ jobs:
           python -m pip install --upgrade pip
           # CPU-only torch：代码图谱工具不需要 CUDA，避免拉入 ~2GB nvidia 包
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install ".[all,dev]"
+          pip install -e ".[all,dev]"
           pip install pytest-xdist pytest-timeout
 
       - name: Debug package structure
@@ -50,18 +50,7 @@ jobs:
           python -c "import callwarden.i18n; print('i18n.__file__:', callwarden.i18n.__file__)"
           python -c "from callwarden.i18n import t; print('t OK')"
           python -c "import setuptools; print('setuptools:', setuptools.__version__)"
-
-      - name: Debug pytest single test no-xdist
-        run: |
-          pytest tests/test_i18n_print_cleanup.py -x -q -n 0 2>&1 | tail -20
-
-      - name: Debug pytest single test 1-worker
-        run: |
-          pytest tests/test_i18n_print_cleanup.py -x -q -n 1 2>&1 | tail -20
-
-      - name: Debug pytest failing test no-xdist
-        run: |
-          pytest tests/test_i18n_cleanup_c5.py -x -q -n 0 2>&1 | tail -20
+          ls -la i18n/__init__.py
 
       - name: Run tests
         run: |
