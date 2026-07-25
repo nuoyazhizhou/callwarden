@@ -14,26 +14,14 @@ authors = [
 ]
 keywords = ["code-analysis", "call-graph", "tree-sitter", "mcp", "semgrep", "ai-agent"]
 dependencies = [
-    "tree-sitter>=0.21",
+    # P1-G（2026-07-25）：Python tree-sitter 核心和 16 种 grammar wheel 已从默认
+    # 依赖移到 `parser-reference` extra。生产解析统一由 Rust callwarden_core 完成，
+    # Python parser 保留在源码仓库作为开发 reference，通过 `pip install -e .[parser-reference]`
+    # 或 `pip install -e .[dev]`（dev 自动包含 parser-reference）安装。
+    # 设计：rust-only-parser-cutover-plan.md §8 Phase 5 步骤 5。
     # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持（字符类/尾随空格/negation）
     # 仅 pathspec 不可用时降级到自研实现（不完整）
     "pathspec>=0.10",
-    "tree-sitter-rust>=0.21",
-    "tree-sitter-typescript>=0.21",
-    "tree-sitter-python>=0.21",
-    "tree-sitter-kotlin>=0.21",
-    "tree-sitter-go>=0.21",
-    "tree-sitter-java>=0.21",
-    "tree-sitter-c>=0.21",
-    "tree-sitter-cpp>=0.21",
-    "tree-sitter-javascript>=0.21",
-    "tree-sitter-c-sharp>=0.21",
-    "tree-sitter-ruby>=0.21",
-    "tree-sitter-php>=0.22",
-    "tree-sitter-swift>=0.5",
-    "tree-sitter-scala>=0.23",
-    "tree-sitter-hcl>=0.21",
-    "tree-sitter-elixir>=0.3",
     "mcp[rich]>=1.28,<2",
     "watchdog>=6.0.0",
     "numpy>=1.24",
@@ -61,9 +49,38 @@ cw-daemon = "callwarden.cli.daemon:main"
 
 [project.optional-dependencies]
 all = [
-    "tree-sitter>=0.21",
+    # P1-G（2026-07-25）：`all` 不再包含 Python tree-sitter parser，parser 通过
+    # `parser-reference` extra 单独安装。`all` 仍包含其他可选能力（semgrep/vector）。
     # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持
     "pathspec>=0.10",
+    "mcp[rich]>=1.28,<2",
+    "watchdog>=6.0.0",
+    "semgrep>=1.50",
+    "sentence-transformers>=2.2",
+    "sqlite-vec>=0.1",
+    "numpy>=1.24",
+]
+core = [
+    # P1-G（2026-07-25）：core 不再包含 tree-sitter，生产解析由 Rust 完成。
+    # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持
+    "pathspec>=0.10",
+    "mcp[rich]>=1.28,<2",
+    "watchdog>=6.0.0",
+]
+semgrep = ["semgrep>=1.50"]
+vector = [
+    "sentence-transformers>=2.2",
+    "sqlite-vec>=0.1",
+    "numpy>=1.24",
+]
+# P1-G（2026-07-25）：Python parser reference extra。
+# 仅用于开发期 alignment、回归定位和旧版本对照，不进入默认 wheel 和 PyInstaller
+# 冻结包（PyInstaller 通过 callwarden.spec 的 _PARSER_GRAMMAR_EXCLUDES 排除）。
+# 版本下限保持与历史 dependencies 一致，避免 alignment baseline 漂移；
+# 正式发布包不安装此 extra。
+# 设计：rust-only-parser-cutover-plan.md §3.1 目标 9、§8 Phase 5 步骤 5。
+parser-reference = [
+    "tree-sitter>=0.21",
     "tree-sitter-rust>=0.21",
     "tree-sitter-typescript>=0.21",
     "tree-sitter-python>=0.21",
@@ -80,25 +97,6 @@ all = [
     "tree-sitter-scala>=0.23",
     "tree-sitter-hcl>=0.21",
     "tree-sitter-elixir>=0.3",
-    "mcp[rich]>=1.28,<2",
-    "watchdog>=6.0.0",
-    "semgrep>=1.50",
-    "sentence-transformers>=2.2",
-    "sqlite-vec>=0.1",
-    "numpy>=1.24",
-]
-core = [
-    "tree-sitter>=0.21",
-    # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持
-    "pathspec>=0.10",
-    "mcp[rich]>=1.28,<2",
-    "watchdog>=6.0.0",
-]
-semgrep = ["semgrep>=1.50"]
-vector = [
-    "sentence-transformers>=2.2",
-    "sqlite-vec>=0.1",
-    "numpy>=1.24",
 ]
 dev = [
     "pytest>=7.0",
@@ -106,6 +104,9 @@ dev = [
     "ruff>=0.4",
     "build>=1.0",
     "twine>=5.0",
+    # P1-G：开发测试需要 Python parser reference（contract/alignment 测试依赖）。
+    # 通过 `pip install -e .[dev]` 自动拉入 parser-reference extra。
+    "callwarden[parser-reference]",
 ]
 
 [tool.setuptools]

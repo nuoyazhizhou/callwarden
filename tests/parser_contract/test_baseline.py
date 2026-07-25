@@ -185,7 +185,14 @@ def test_inspector_distribution_classification_is_stable():
 
 
 def test_inspector_forbid_distribution_gate(tmp_path):
-    """inspector --forbid-distribution 必须在存在文件时报错，缺失时通过。"""
+    """inspector --forbid-distribution 必须在存在文件时报错，缺失时通过。
+
+    P1-G（2026-07-25）：inspector 默认 fail closed，所有 role 都禁止
+    PARSER_DISTRIBUTIONS。本测试用 ``allow_parser_distributions=True`` 模拟
+    旧版本/过渡期对齐工具，验证 ``--forbid-distribution`` 旗标本身的行为，
+    而非默认 fail closed 行为（默认 fail closed 由
+    ``test_release_bundle_inspector.py`` 覆盖）。
+    """
     from release.inspect_pyinstaller_bundle import (  # type: ignore
         CALLWARDEN_PARSERS_DISTRIBUTION,
         inspect_bundle,
@@ -210,13 +217,14 @@ def test_inspector_forbid_distribution_gate(tmp_path):
         encoding="utf-8",
     )
 
-    # 不限制时通过（仅检查结构和 forbidden_modules）
-    _, errors_ok = inspect_bundle(bundle, toc)
+    # 不限制 parser distribution 时通过（allow_parser_distributions=True 跳过默认 fail closed）
+    # 仅检查结构和 forbidden_modules
+    _, errors_ok = inspect_bundle(bundle, toc, allow_parser_distributions=True)
     # 单层 _internal + 必需模块根缺失才会报错，这里只断言 forbid_distributions 不触发
     forbid_errors = [e for e in errors_ok if "必须为空" in e]
     assert forbid_errors == []
 
-    # 限制 CALLWARDEN_PARSERS_DISTRIBUTION 时必须报错
+    # 限制 CALLWARDEN_PARSERS_DISTRIBUTION 时必须报错（显式传入，与默认 fail closed 行为一致）
     _, errors_fail = inspect_bundle(
         bundle, toc, forbid_distributions=(CALLWARDEN_PARSERS_DISTRIBUTION,)
     )

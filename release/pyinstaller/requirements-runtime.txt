@@ -4,7 +4,7 @@
 #
 # 本文件只包含 local 与 client/agent 两个 bundle 都需要的 core 依赖。
 # 角色专属依赖见：
-#   - requirements-runtime-local.txt   local bundle（追加 parser/grammar/numpy）
+#   - requirements-runtime-local.txt   local bundle（追加 numpy；P1-G 后无 parser/grammar）
 #   - requirements-runtime-client.txt  client/agent bundle（无 parser，仅 core）
 mcp[rich]==1.28.1
 pathspec==1.1.1

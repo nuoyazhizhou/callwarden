@@ -2,15 +2,23 @@
 r"""PyInstaller spec：把 cw / cw-client / cw-agent 打包成自包含的 --onedir 产物。
 
 P0-B 拆分（2026-07-25）：原 spec 三个入口共享同一 Analysis，导致 cw-client/cw-agent
-也携带 parser/grammar。现拆为两个独立 Analysis + 两个 COLLECT：
+也携带 parser/grammar。现拆为两个独立 Analysis + 两个 COLLECT。
 
-  - ``dist/callwarden/``        local runtime（含 parser），入口 cw
-  - ``dist/callwarden-client/`` client/agent runtime（无 parser），入口
+P1-G（2026-07-25）：Rust-only parser 生产切换完成，正式发布物物理移除 Python
+tree-sitter 核心、16 种 grammar wheel 和 ``callwarden.parsers.*`` 语言实现模块
+（设计：rust-only-parser-cutover-plan.md §8 Phase 5）。所有 bundle（local +
+client/agent）现在都通过 ``_PARSER_GRAMMAR_EXCLUDES`` 排除 parser，生产解析
+统一由 Rust ``callwarden_core`` 完成，失败显式 fail closed，不再有 Python fallback。
+Python parser 保留在源码仓库作为开发 reference，通过 ``pyproject.toml`` 的
+``parser-reference`` extra 安装，不进入冻结包。
+
+  - ``dist/callwarden/``        local runtime（无 Python parser，仅 Rust 扩展），入口 cw
+  - ``dist/callwarden-client/`` client/agent runtime（无 parser/numpy），入口
     cw-client + cw-agent（仅 Linux）
 
-client/agent bundle 严禁收集 ``callwarden.parsers.*``、``tree_sitter``、
-``tree_sitter_*``、``numpy`` 以及 ``callwarden.db`` 中除 ``db_daemon`` 外的子模块。
-通过 excludes + 入口绕过 ``cli.main`` 实现：
+所有 bundle 严禁收集 ``callwarden.parsers.*``、``tree_sitter``、
+``tree_sitter_*``；client/agent bundle 额外排除 ``numpy`` 以及 ``callwarden.db``
+中除 ``db_daemon`` 外的子模块。通过 excludes + 入口绕过 ``cli.main`` 实现：
 ``entry_cw_client.py`` / ``entry_cw_agent.py`` 直接调用
 ``callwarden.cli.daemon_commands`` / ``callwarden.server.agent_watcher``，
 不经过 ``cli.main`` 的顶层 ``db``/``parser`` import。同时这两个入口在
@@ -29,8 +37,8 @@ client/agent bundle 严禁收集 ``callwarden.parsers.*``、``tree_sitter``、
 
 产物：
     dist/callwarden/           local bundle（所有平台）
-      cw                       主入口（含 parser）
-      _internal/               Python + Rust 扩展 + parser + grammar
+      cw                       主入口（Rust-only parser）
+      _internal/               Python + Rust 扩展（无 Python parser/grammar）
     dist/callwarden-client/    client/agent bundle（仅 Linux）
       cw-client                RPC client（无 parser）
       cw-agent                 watcher agent（无 parser）
@@ -129,33 +137,12 @@ _common_excludes = [
     'lxml',
 ]
 
-# === local runtime hiddenimports（含 parser）===
+# === local runtime hiddenimports（Rust-only，无 Python parser）===
+# P1-G（2026-07-25）：删除 tree_sitter 和 16 个 callwarden.parsers.* 子模块，
+# 生产解析由 Rust callwarden_core 完成。Python parser 保留在源码仓库作为
+# 开发 reference，不进入冻结包。
 _local_hiddenimports = [
-    # 1. tree-sitter 核心 API
-    # Python parser 仍是解析失败和 CW_DISABLE_RUST_PARSE 场景的正式回退路径，
-    # PyInstaller 会从下面的语言 parser hidden imports 自动收集对应 grammar。
-    'tree_sitter',
-
-    # 2. callwarden.parsers 懒加载子模块（__init__.py 的 __getattr__ 用 importlib 动态加载）
-    'callwarden.parsers.base',
-    'callwarden.parsers.module_resolver',
-    'callwarden.parsers.call_resolver',
-    'callwarden.parsers.rust',
-    'callwarden.parsers.typescript',
-    'callwarden.parsers.python_parser',
-    'callwarden.parsers.kotlin_parser',
-    'callwarden.parsers.go_parser',
-    'callwarden.parsers.java_parser',
-    'callwarden.parsers.c_parser',
-    'callwarden.parsers.csharp_parser',
-    'callwarden.parsers.ruby_parser',
-    'callwarden.parsers.php_parser',
-    'callwarden.parsers.swift_parser',
-    'callwarden.parsers.scala_parser',
-    'callwarden.parsers.hcl_parser',
-    'callwarden.parsers.elixir_parser',
-
-    # 3. cw.py 动态分发的入口模块（importlib.import_module）
+    # 1. cw.py 动态分发的入口模块（importlib.import_module）
     'callwarden.install',
     'callwarden.server.mcp_server',
     'callwarden.cli.main',
@@ -163,10 +150,10 @@ _local_hiddenimports = [
     # 但 tests 是开发期工具，打包产物中不收集。cw test 在打包后会 ImportError，
     # 这是预期行为——生产环境用户不应运行测试。
 
-    # 4. Rust 扩展模块
+    # 2. Rust 扩展模块（生产 parser，必须收集）
     'callwarden_core',
 
-    # 5. MCP stdio server 的目标化模块集合
+    # 3. MCP stdio server 的目标化模块集合
     # CallWarden 使用 mcp.server.fastmcp，不使用 fastmcp 顶层 CLI、云认证 provider、
     # OpenAPI proxy 或实验 sampling。全量 collect_submodules 会拉入 AWS SDK 等无关依赖。
     'mcp.server.fastmcp',
@@ -188,7 +175,7 @@ _local_hiddenimports = [
     'mcp.shared.exceptions',
     'mcp.types',
 
-    # 6. 其他运行时依赖
+    # 4. 其他运行时依赖（numpy 被 db_vector / Rust 余弦相似度辅助路径使用）
     'pydantic', 'pydantic_core', 'watchdog', 'pathspec', 'numpy',
 ]
 
@@ -227,8 +214,14 @@ _client_agent_hiddenimports = [
     'pydantic', 'pydantic_core', 'watchdog', 'pathspec',
 ]
 
-# === client/agent 严禁收集的 parser 模块 ===
-_PARSER_EXCLUDES = [
+# === parser/grammar excludes（local + client/agent 共享，P1-G 后所有 bundle 都用）===
+# P1-G（2026-07-25）：Rust-only parser 生产切换后，正式发布物不再包含 Python
+# tree-sitter 核心、16 种 grammar wheel 和 callwarden.parsers.* 语言实现模块。
+# 所有 bundle（local + client/agent）都通过此列表排除，并由 fail closed 检查
+# 兜底，确保 PyInstaller 静态收集阶段不会因间接 import 拉入 parser。
+# Python parser 保留在源码仓库作为开发 reference，通过 pyproject.toml 的
+# parser-reference extra 安装，不进入冻结包。
+_PARSER_GRAMMAR_EXCLUDES = [
     # callwarden.parsers.* 全部（含 base/module_resolver/call_resolver/call_filter）
     'callwarden.parsers',
     'callwarden.parsers.base',
@@ -269,8 +262,12 @@ _PARSER_EXCLUDES = [
     'tree_sitter_scala',
     'tree_sitter_hcl',
     'tree_sitter_elixir',
+]
 
-    # client/agent 不做本地解析，不需要 numpy
+# === client/agent 专用 excludes（local bundle 需要 numpy）===
+# numpy 被 local bundle 的 db_vector / Rust 余弦相似度辅助路径使用；
+# client/agent 不做本地解析也不需要向量辅助，故排除。
+_CLIENT_AGENT_ONLY_EXCLUDES = [
     'numpy',
 ]
 
@@ -336,13 +333,20 @@ _LOCAL_DB_EXCLUDES = [
     'callwarden.server.mcp_server',
 ]
 
-_client_agent_excludes = list(_common_excludes) + _PARSER_EXCLUDES + _LOCAL_DB_EXCLUDES
+_client_agent_excludes = (
+    list(_common_excludes)
+    + _PARSER_GRAMMAR_EXCLUDES
+    + _CLIENT_AGENT_ONLY_EXCLUDES
+    + _LOCAL_DB_EXCLUDES
+)
 
 # 注意：semgrep 的 Python/OCaml 运行时不嵌入冻结包。需要安全扫描时，用户单独安装
 # semgrep 可执行文件；CallWarden 通过 shutil.which("semgrep") 调用它。
 
-# === Analysis 1: local runtime（含 parser，所有平台）===
-# cw 主入口共享同一份 Analysis、PYZ 和 COLLECT，最终目录只有一份运行时。
+# === Analysis 1: local runtime（Rust-only parser，所有平台）===
+# P1-G（2026-07-25）：local bundle 不再收集 Python parser/grammar，生产解析
+# 统一由 Rust callwarden_core 完成。_PARSER_GRAMMAR_EXCLUDES 显式排除所有
+# callwarden.parsers.* 和 tree_sitter* 模块，下方 fail closed 检查兜底。
 a_local = Analysis(
     [os.path.join(ENTRY_DIR, 'entry_cw.py')],
     pathex=[PACKAGE_PARENT],
@@ -351,23 +355,47 @@ a_local = Analysis(
     hiddenimports=_local_hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=_common_excludes,
+    excludes=list(_common_excludes) + _PARSER_GRAMMAR_EXCLUDES,
     cipher=block_cipher,
 )
 
 # PyInstaller 对 hidden import 缺失默认只发 warning，发布构建必须 fail closed。
 _collected_local = {item[0] for item in a_local.pure}
+
+# fail closed: local bundle 必须包含 Rust 扩展和 cw 主入口核心模块。
+# 注意：P1-G 后 local bundle 不再收集 callwarden.parsers.*，因此不再要求
+# callwarden.parsers.base 存在；改要求 callwarden_core 必须被收集。
 _required_local = {
     'callwarden',
     'callwarden.cw',
-    'callwarden.parsers.base',
     'callwarden.server.mcp_server',
+    'callwarden_core',
 }
 _missing_local = sorted(_required_local - _collected_local)
 if _missing_local:
     raise RuntimeError(
         'local bundle 未收集 CallWarden 核心模块: '
         + ', '.join(_missing_local)
+    )
+
+# fail closed: P1-G 后 local bundle 也严禁包含 Python parser/grammar 模块。
+# 与 client/agent 共用 _PARSER_GRAMMAR_EXCLUDES 列表，确保任何间接 import
+# 拉入的 parser 模块都会在此暴露。
+_FORBIDDEN_PARSER_MODULES = {
+    'callwarden.parsers',
+    'callwarden.parsers.base',
+    'callwarden.parsers.rust',
+    'callwarden.parsers.python_parser',
+    'tree_sitter',
+    'tree_sitter_rust',
+    'tree_sitter_python',
+    'tree_sitter_javascript',
+}
+_leaked_local = sorted(_FORBIDDEN_PARSER_MODULES & _collected_local)
+if _leaked_local:
+    raise RuntimeError(
+        'local bundle 严禁包含 Python parser/grammar 模块（P1-G），leaked: '
+        + ', '.join(_leaked_local)
     )
 
 pyz_local = PYZ(a_local.pure, a_local.zipped_data, cipher=block_cipher)

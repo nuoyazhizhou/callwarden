@@ -3,11 +3,21 @@
 确保 Python wheel 安装时自带平台 Rust 扩展。
 构建顺序：Rust .pyd/.so → Python wheel (包含 Rust 扩展) → wheelhouse 锁定依赖。
 
+P1-G（2026-07-25）：新增 ``--pyinstaller`` 子命令构建角色产物（local / client）。
+PyInstaller spec 已删除 Python tree-sitter 和 16 种 grammar 的 hidden imports，
+并通过 ``_PARSER_GRAMMAR_EXCLUDES`` 显式排除 ``callwarden.parsers.*`` 和
+``tree_sitter*``。本脚本在 PyInstaller 构建后自动调用
+``release/inspect_pyinstaller_bundle.py`` 执行 fail closed 检查，并生成包含
+parser ABI 的 artifact manifest（设计：rust-only-parser-cutover-plan.md
+§8 Phase 5 步骤 6 + §8 Phase 6 manifest 字段）。
+
 用法：
-    python release/build.py              # 完整构建
+    python release/build.py              # 完整构建（rust + wheel + wheelhouse + manifest）
     python release/build.py --check      # 只验证版本一致性
     python release/build.py --wheel      # 只构建 Python wheel
     python release/build.py --rust       # 只构建 Rust 扩展
+    python release/build.py --pyinstaller [--role local|client|all]
+                                        # 构建 PyInstaller 角色产物并运行 bundle inspector
 """
 
 import os
@@ -277,11 +287,22 @@ def load_version_toml() -> dict:
             return _parse_toml_simple(content)
 
 
-def generate_manifest():
-    """生成 artifact manifest。"""
+def generate_manifest(bundles=None, bundle_reports=None):
+    """生成 artifact manifest。
+
+    P1-G（2026-07-25）：manifest 现在记录 parser ABI（设计 §8 Phase 6）和
+    PyInstaller 角色产物的体积/distribution 信息，便于发布审计与回滚对照。
+
+    Args:
+        bundles: 可选，PyInstaller 产物路径列表（``dist/callwarden`` 等）。
+            提供时把这些目录一并写入 manifest 的 ``bundles`` 字段。
+        bundle_reports: 可选，bundle inspector 报告 dict 列表（与 bundles 一一对应）。
+            提供时把每个 bundle 的 role / unpacked_bytes / distribution 信息写入 manifest。
+    """
     print("Step 5: Generating artifact manifest")
     import hashlib
     import json
+    import platform as _platform
     import time
 
     version_data = load_version_toml()
@@ -290,8 +311,16 @@ def generate_manifest():
         "product": version_data["product"]["name"],
         "version": version_data["product"]["version"],
         "build_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # P1-G: 显式记录 parser ABI 与 runtime 元数据（设计 §8 Phase 6）
         "abi": version_data["abi"],
+        "runtime": version_data.get("runtime", {}),
         "platforms": version_data["platforms"],
+        # 构建机平台元数据（用于跨平台产物对照，CI 多矩阵构建时区分 OS/arch/libc）
+        "build_host": {
+            "os": _platform.system(),
+            "machine": _platform.machine(),
+            "python": sys.version.split()[0],
+        },
         "artifacts": [],
     }
 
@@ -307,12 +336,250 @@ def generate_manifest():
                     "sha256": sha256,
                 })
 
+    # P1-G: PyInstaller 角色产物清单
+    if bundles:
+        manifest_bundles = []
+        for idx, bundle_path in enumerate(bundles):
+            entry = {
+                "path": str(bundle_path.relative_to(ROOT)) if bundle_path.is_absolute()
+                else str(bundle_path),
+            }
+            if bundle_reports and idx < len(bundle_reports):
+                report = bundle_reports[idx]
+                entry["role"] = report.get("role", "local")
+                entry["unpacked_bytes"] = report.get("unpacked_bytes", 0)
+                entry["unpacked_mb"] = report.get("unpacked_mb", 0.0)
+                entry["file_count"] = report.get("file_count", 0)
+                entry["module_count"] = report.get("module_count", 0)
+                # distribution 摘要（仅记录非零 distribution，便于审计）
+                distributions = report.get("distributions", {})
+                entry["distributions"] = {
+                    name: {
+                        "file_count": info["file_count"],
+                        "byte_count": info["byte_count"],
+                    }
+                    for name, info in distributions.items()
+                    if info.get("file_count", 0) > 0
+                }
+            manifest_bundles.append(entry)
+        manifest["bundles"] = manifest_bundles
+
     manifest_path = RELEASE_DIR / "artifact-manifest.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2, ensure_ascii=False)
     print(f"  [OK] Manifest: {manifest_path}")
     print(f"  Artifacts: {len(manifest['artifacts'])}")
+    if bundles:
+        print(f"  Bundles: {len(bundles)}")
     print()
+
+
+# ============================================================
+# P1-G: PyInstaller 角色产物构建（设计 §8 Phase 5 步骤 6 + Phase 6）
+# ============================================================
+
+# 角色 → (bundle 目录名, PYZ TOC 文件名, 产物存在平台) 映射
+# spec 文件中两个 COLLECT 共享同一份 spec 调用，PYZ TOC 编号由 PyInstaller 分配：
+#   - PYZ-00.toc：local bundle（Analysis 1，所有平台）
+#   - PYZ-01.toc：client/agent bundle（Analysis 2，仅 Linux）
+# 这里只描述目标产物，spec 内部已通过 _PARSER_GRAMMAR_EXCLUDES fail closed。
+_ROLE_BUNDLE_MAP = {
+    "local": {
+        "bundle_dir": "callwarden",
+        "pyz_toc_candidates": ("PYZ-00.toc",),
+        "role_flag": "local",
+        "linux_only": False,
+    },
+    "client": {
+        "bundle_dir": "callwarden-client",
+        "pyz_toc_candidates": ("PYZ-01.toc", "PYZ-00.toc"),
+        "role_flag": "client",
+        "linux_only": True,
+    },
+}
+
+
+def _parse_role_arg(argv):
+    """从 sys.argv 解析 ``--role`` 参数，返回 (role, consumed_argv)。
+
+    支持的值：``local`` / ``client`` / ``all``（默认 ``all``，构建当前平台支持的全部 bundle）。
+    返回的 consumed_argv 用于从 sys.argv 中剥离 ``--role <value>`` 后再传给 main 流程。
+    """
+    role = "all"
+    consumed = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--role":
+            if i + 1 >= len(argv):
+                print("  [FAIL] --role 需要一个参数（local/client/all）")
+                sys.exit(1)
+            role = argv[i + 1]
+            consumed.extend([i, i + 1])
+            i += 2
+            continue
+        if arg.startswith("--role="):
+            role = arg.split("=", 1)[1]
+            consumed.append(i)
+            i += 1
+            continue
+        i += 1
+
+    if role not in ("local", "client", "all"):
+        print(f"  [FAIL] 未知 role: {role}（支持: local/client/all）")
+        sys.exit(1)
+    return role, consumed
+
+
+def _resolve_pyz_toc(spec_work_dir, candidates):
+    """在 PyInstaller 工作目录下查找 PYZ TOC 文件。
+
+    PyInstaller 6 多 COLLECT spec 把不同 Analysis 的 PYZ 写在 build/<specname>/ 下，
+    编号 PYZ-00 / PYZ-01 / ...。Windows/macOS 只构建 local bundle（无 PYZ-01）。
+    """
+    for name in candidates:
+        path = spec_work_dir / name
+        if path.is_file():
+            return path
+    return None
+
+
+def build_pyinstaller_bundle(role="all"):
+    """运行 PyInstaller spec 构建角色产物。
+
+    P1-G（2026-07-25）：spec 已删除 Python tree-sitter 和 16 种 grammar 的
+    hidden imports，并通过 ``_PARSER_GRAMMAR_EXCLUDES`` 排除 ``callwarden.parsers.*``
+    和 ``tree_sitter*``。本函数只负责调用 PyInstaller，spec 内部完成 fail closed
+    排除；fail closed 检查由 ``inspect_bundle_artifacts`` 调用 bundle inspector 完成。
+
+    Args:
+        role: ``local`` / ``client`` / ``all``（默认 ``all``，构建当前平台支持的全部 bundle）。
+            ``client`` bundle 仅在 Linux 上由 spec 生成（Windows/macOS 不构建）。
+    """
+    print("Step P1-G: Building PyInstaller role artifacts")
+    print(f"  Role: {role}")
+    print(f"  Platform: {sys.platform}")
+
+    spec_path = RELEASE_DIR / "pyinstaller" / "callwarden.spec"
+    if not spec_path.is_file():
+        print(f"  [FAIL] spec 不存在: {spec_path}")
+        sys.exit(1)
+
+    # P1-G 前置：Rust 扩展必须在根目录（spec 通过 CW_RUST_EXT_PATH 或根目录加载）
+    _ensure_rust_ext_at_root()
+    _verify_rust_extension_present()
+
+    # PyInstaller 工作目录：build/<specname>/（specname = callwarden）
+    spec_work_dir = ROOT / "build" / "callwarden"
+
+    # 调用 PyInstaller，spec 内部决定构建哪些 bundle（Linux 多 COLLECT，其他平台仅 local）
+    run([
+        sys.executable, "-m", "PyInstaller",
+        str(spec_path),
+        "--noconfirm",
+        "--clean",
+        "--workpath", str(spec_work_dir),
+        "--distpath", str(ROOT / "dist"),
+    ])
+
+    # 列出实际生成的 bundle，供 inspect 阶段使用
+    produced_bundles = []
+    for role_name, info in _ROLE_BUNDLE_MAP.items():
+        if role not in ("all", role_name):
+            continue
+        if info["linux_only"] and not sys.platform.startswith("linux"):
+            print(f"  [SKIP] role={role_name} 仅在 Linux 上构建，当前平台跳过")
+            continue
+        bundle_path = ROOT / "dist" / info["bundle_dir"]
+        if not bundle_path.is_dir():
+            print(f"  [WARN] role={role_name} 产物未生成: {bundle_path}")
+            continue
+        pyz_toc = _resolve_pyz_toc(spec_work_dir, info["pyz_toc_candidates"])
+        if pyz_toc is None:
+            print(f"  [FAIL] role={role_name} PYZ TOC 未找到于 {spec_work_dir}")
+            sys.exit(1)
+        produced_bundles.append((role_name, bundle_path, pyz_toc))
+        print(f"  [OK] role={role_name} bundle={bundle_path} pyz_toc={pyz_toc}")
+
+    if not produced_bundles:
+        print("  [FAIL] 未生成任何 bundle（检查 spec 和平台支持）")
+        sys.exit(1)
+
+    print()
+    return produced_bundles
+
+
+def inspect_bundle_artifacts(produced_bundles, max_unpacked_mb=None):
+    """对 PyInstaller 产物运行 bundle inspector（fail closed）。
+
+    P1-G 设计 §8 Phase 5 步骤 6 要求：所有 role 默认禁止 PARSER_DISTRIBUTIONS，
+    文件级检查 ``_binding*.pyd/.so`` 和 ``callwarden/parsers/*_parser.py``，
+    以及 Rust ``callwarden_core`` 必须存在。
+
+    Args:
+        produced_bundles: ``build_pyinstaller_bundle`` 返回的 (role, bundle_path, pyz_toc) 列表。
+        max_unpacked_mb: 可选，解压体积上限（MiB）。
+
+    Returns:
+        (reports, errors) 元组：reports 为每个 bundle 的 inspector 报告 dict，
+        errors 为所有 fail closed 错误列表（非空时调用方应 sys.exit(1)）。
+    """
+    print("Step P1-G: Inspecting bundles (fail closed)")
+    import json as _json
+
+    inspector = RELEASE_DIR / "inspect_pyinstaller_bundle.py"
+    if not inspector.is_file():
+        print(f"  [FAIL] bundle inspector 不存在: {inspector}")
+        sys.exit(1)
+
+    reports = []
+    all_errors = []
+    for role_name, bundle_path, pyz_toc in produced_bundles:
+        report_path = RELEASE_DIR / f"bundle-report-{role_name}.json"
+        cmd = [
+            sys.executable, str(inspector),
+            "--bundle", str(bundle_path),
+            "--pyz-toc", str(pyz_toc),
+            "--report", str(report_path),
+            "--role", role_name,
+        ]
+        if max_unpacked_mb is not None:
+            cmd.extend(["--max-unpacked-mb", str(max_unpacked_mb)])
+        # 同平台 bundle 额外验证 Rust parse API（CI/本地构建场景）
+        cmd.append("--verify-rust-parse")
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"  [FAIL] role={role_name} inspector 退出 {result.returncode}")
+            if result.stderr:
+                for line in result.stderr.splitlines():
+                    print(f"    {line}")
+            all_errors.append(f"role={role_name}: inspector 退出 {result.returncode}")
+            continue
+
+        # 读取报告
+        try:
+            report = _json.loads(report_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001 - 报告解析失败需捕获
+            print(f"  [FAIL] role={role_name} 报告解析失败: {exc}")
+            all_errors.append(f"role={role_name}: 报告解析失败 {exc}")
+            continue
+
+        # 报告内部 errors 字段（inspector 可能 exit 0 但报告里仍有 errors）
+        report_errors = report.get("errors", []) or []
+        if report_errors:
+            for err in report_errors:
+                all_errors.append(f"role={role_name}: {err}")
+            print(f"  [FAIL] role={role_name} 报告包含 {len(report_errors)} 个错误")
+        else:
+            print(
+                f"  [OK] role={role_name} unpacked={report.get('unpacked_mb', 0)} MB "
+                f"modules={report.get('module_count', 0)} files={report.get('file_count', 0)}"
+            )
+        reports.append(report)
+
+    print()
+    return reports, all_errors
 
 
 def main():
@@ -336,6 +603,33 @@ def main():
         build_python_wheel()
         return
 
+    # P1-G: PyInstaller 角色产物构建
+    if "--pyinstaller" in sys.argv:
+        role, consumed = _parse_role_arg(sys.argv)
+        # 剥离 --role 参数后剩余 argv 仅供日志，不影响 PyInstaller 流程
+        build_pyinstaller_bundle(role=role)
+        # inspect 阶段单独运行，便于调用方只构建不 inspect
+        if "--no-inspect" in sys.argv:
+            return
+        # 重新构建产物列表（build_pyinstaller_bundle 已返回，这里复用）
+        # 通过扫描 dist/ 重新发现，避免 main 与 build 阶段的状态耦合
+        produced = _discover_produced_bundles(role)
+        reports, errors = inspect_bundle_artifacts(produced)
+        # 同步生成 manifest，包含 parser ABI 和 bundle 报告
+        bundle_paths = [p for (_, p, _) in produced]
+        generate_manifest(bundles=bundle_paths, bundle_reports=reports)
+        if errors:
+            print("=" * 60)
+            print(f"[FAIL] Bundle inspector found {len(errors)} errors")
+            for err in errors:
+                print(f"  - {err}")
+            print("=" * 60)
+            sys.exit(1)
+        print("=" * 60)
+        print("[PASS] PyInstaller bundles built and inspected")
+        print("=" * 60)
+        return
+
     # 完整构建
     build_rust_extension()
     build_python_wheel()
@@ -345,6 +639,30 @@ def main():
     print("=" * 60)
     print("[PASS] Build complete")
     print("=" * 60)
+
+
+def _discover_produced_bundles(role):
+    """扫描 dist/ 目录发现已构建的 bundle，用于 inspect 阶段复用。
+
+    与 ``build_pyinstaller_bundle`` 内部的发现逻辑保持一致，但只读不构建。
+    返回 (role_name, bundle_path, pyz_toc) 列表；缺失则 fail-fast 退出。
+    """
+    spec_work_dir = ROOT / "build" / "callwarden"
+    produced = []
+    for role_name, info in _ROLE_BUNDLE_MAP.items():
+        if role not in ("all", role_name):
+            continue
+        if info["linux_only"] and not sys.platform.startswith("linux"):
+            continue
+        bundle_path = ROOT / "dist" / info["bundle_dir"]
+        if not bundle_path.is_dir():
+            continue
+        pyz_toc = _resolve_pyz_toc(spec_work_dir, info["pyz_toc_candidates"])
+        if pyz_toc is None:
+            print(f"  [FAIL] role={role_name} PYZ TOC 未找到于 {spec_work_dir}")
+            sys.exit(1)
+        produced.append((role_name, bundle_path, pyz_toc))
+    return produced
 
 
 if __name__ == "__main__":

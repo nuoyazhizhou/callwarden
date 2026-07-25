@@ -14,6 +14,14 @@ P0-A 扩展（2026-07-25）：新增 distribution 字节占比报告，用于 Ru
 每个 distribution 输出 file_count / byte_count / byte_ratio，
 配合 ``--forbid-distribution`` 可对指定 distribution 设置零容忍门禁，
 供 Phase 1 拆 client/agent 轻包时使用（本步骤只产报告，不强制零容忍）。
+
+P1-G 扩展（2026-07-25）：默认 fail closed，所有 role 都禁止 PARSER_DISTRIBUTIONS。
+新增文件级 fail closed 检查（设计 §8 Phase 5 步骤 6）：
+- distribution 名禁止（tree_sitter, tree_sitter_*）—— 所有 role 默认零容忍
+- ``_binding*.pyd/.so`` 禁止 —— tree-sitter Python 核心 binding 原生库
+- ``callwarden/parsers/*_parser.py`` 禁止 —— Python parser 实现源文件
+- Rust ``callwarden_core`` 必须存在 —— 文件存在检查（默认）+ 真实 parse 验证（``--verify-rust-parse``）
+向后兼容通过 ``--allow-parser-distributions`` 旗标显式开启（仅用于旧版本 bundle 验证）。
 """
 
 from __future__ import annotations
@@ -259,6 +267,140 @@ def _read_pyz_modules(toc_path: Path) -> list[str]:
     return sorted(set(modules))
 
 
+# ============================================
+# P1-G: 文件级 fail closed 检查（设计 §8 Phase 5 步骤 6）
+# ============================================
+
+
+def _check_callwarden_core_present(bundle: Path) -> list[str]:
+    """检查 Rust callwarden_core 扩展是否存在于 bundle 中。
+
+    P1-G 后生产解析统一由 Rust callwarden_core 完成，bundle 中必须存在
+    callwarden_core.pyd（Windows）或 callwarden_core.so（Linux/macOS）。
+    """
+    errors: list[str] = []
+    pyd = list(bundle.rglob("callwarden_core.pyd"))
+    so = list(bundle.rglob("callwarden_core.so"))
+    if not pyd and not so:
+        errors.append(
+            "Rust 扩展 callwarden_core.pyd/.so 未在 bundle 中找到，"
+            "P1-G 后生产解析必须由 Rust callwarden_core 完成"
+        )
+    return errors
+
+
+def _check_tree_sitter_binding_files(bundle: Path) -> list[str]:
+    """检查 tree-sitter Python binding 原生库文件（_binding*.pyd/.so）。
+
+    tree-sitter Python 核心 wheel 包含 ``_binding.abi3.so`` /
+    ``_binding.cp310-win_amd64.pyd`` 等原生库文件，是 Python tree-sitter
+    核心的必要组件。P1-G 后正式发布包严禁包含这些文件。
+    """
+    errors: list[str] = []
+    forbidden: list[str] = []
+    for path in bundle.rglob("*"):
+        if not path.is_file():
+            continue
+        name = path.name
+        # _binding.abi3.so / _binding.cp310-win_amd64.pyd 等
+        if name.startswith("_binding") and (
+            name.endswith(".pyd") or name.endswith(".so")
+        ):
+            forbidden.append(str(path.relative_to(bundle)).replace("\\", "/"))
+    if forbidden:
+        errors.append(
+            "发现 tree-sitter Python binding 原生库（_binding*.pyd/.so），"
+            "P1-G 后正式发布包严禁包含 Python tree-sitter 核心 binding: "
+            + ", ".join(forbidden)
+        )
+    return errors
+
+
+def _check_callwarden_parser_source_files(bundle: Path) -> list[str]:
+    """检查 callwarden/parsers/*_parser.py 等源文件。
+
+    P1-G 后正式发布包严禁包含 callwarden.parsers Python 实现模块的源文件
+    或 .pyc 字节码。检查 _internal/callwarden/parsers/ 和 callwarden/parsers/
+    路径下的 .py/.pyc/.pyo 文件。
+    """
+    errors: list[str] = []
+    forbidden: list[str] = []
+    # PyInstaller --onedir 布局：_internal/callwarden/parsers/ 或 callwarden/parsers/
+    candidate_dirs = [
+        bundle / "_internal" / "callwarden" / "parsers",
+        bundle / "callwarden" / "parsers",
+    ]
+    for parsers_dir in candidate_dirs:
+        if not parsers_dir.is_dir():
+            continue
+        for path in parsers_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            name = path.name
+            if name.endswith(".py") or name.endswith(".pyc") or name.endswith(".pyo"):
+                forbidden.append(str(path.relative_to(bundle)).replace("\\", "/"))
+    if forbidden:
+        # 限制输出长度，避免大量文件时错误信息过长
+        preview = forbidden[:10]
+        suffix = f" ... (+{len(forbidden) - 10} 更多)" if len(forbidden) > 10 else ""
+        errors.append(
+            "发现 callwarden.parsers Python 实现源文件（*_parser.py 等），"
+            "P1-G 后正式发布包严禁包含 Python parser 实现: "
+            + ", ".join(preview)
+            + suffix
+        )
+    return errors
+
+
+def _verify_rust_parse(bundle: Path) -> list[str]:
+    """尝试加载 bundle 中的 callwarden_core 并执行一次基础验证。
+
+    仅在同平台 bundle 上使用（cross-platform 场景应跳过此检查）。
+    验证步骤：
+    1. 找到 callwarden_core.pyd/.so 文件
+    2. 用 importlib 加载模块
+    3. 检查 supported_languages() API 存在且返回非空列表
+
+    返回错误列表，空列表表示验证通过。无法加载或 API 缺失都会报错。
+    """
+    errors: list[str] = []
+    core_files = list(bundle.rglob("callwarden_core.pyd")) + list(
+        bundle.rglob("callwarden_core.so")
+    )
+    if not core_files:
+        # 文件存在性由 _check_callwarden_core_present 负责，这里直接返回
+        return errors
+
+    core_path = core_files[0]
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "callwarden_core_verify", core_path
+        )
+        if spec is None or spec.loader is None:
+            errors.append(f"无法从 {core_path} 创建模块 spec")
+            return errors
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+
+        if not hasattr(mod, "supported_languages"):
+            errors.append(
+                f"callwarden_core 缺少 supported_languages API: {core_path}"
+            )
+            return errors
+
+        langs = list(mod.supported_languages())
+        if not langs:
+            errors.append(
+                f"callwarden_core.supported_languages() 返回空列表: {core_path}"
+            )
+            return errors
+    except Exception as exc:  # noqa: BLE001 - 验证场景需捕获所有异常
+        errors.append(f"加载 callwarden_core 验证 parse 失败: {exc}")
+    return errors
+
+
 def inspect_bundle(
     bundle: Path,
     pyz_toc: Path,
@@ -266,6 +408,8 @@ def inspect_bundle(
     max_unpacked_mb: float | None = None,
     forbid_distributions: tuple[str, ...] | None = None,
     role: str | None = None,
+    allow_parser_distributions: bool = False,
+    verify_rust_parse: bool = False,
 ) -> tuple[dict, list[str]]:
     """生成报告并返回不满足发布门禁的错误列表。
 
@@ -275,13 +419,19 @@ def inspect_bundle(
         artifact: 压缩包路径，可选。提供时记录压缩包大小用于包体门禁。
         max_unpacked_mb: 解压目录体积上限（MiB），超过则报错。
         forbid_distributions: 零容忍 distribution 名列表，存在任意文件即报错。
-            用于 Phase 1 拆 client/agent 轻包时强制 parser distribution 为 0。
+            P1-G 后所有 role 默认禁止 PARSER_DISTRIBUTIONS，此参数用于追加额外禁止。
         role: bundle 角色（``"local"`` / ``"client"`` / ``None``）。
 
-            - ``"client"``：使用 ``REQUIRED_MODULE_ROOTS_CLIENT``（不含 numpy），
-              并自动将 ``PARSER_DISTRIBUTIONS`` 加入零容忍列表（parser distribution=0）。
-            - ``"local"`` 或 ``None``：使用 ``REQUIRED_MODULE_ROOTS``（含 numpy），
-              不自动禁止 parser distribution（local bundle 保留 parser 回退路径）。
+            - ``"client"``：使用 ``REQUIRED_MODULE_ROOTS_CLIENT``（不含 numpy）。
+            - ``"local"`` 或 ``None``：使用 ``REQUIRED_MODULE_ROOTS``（含 numpy）。
+
+        allow_parser_distributions: P1-G 向后兼容旗标。默认 False，所有 role
+            都禁止 PARSER_DISTRIBUTIONS（设计 §8 Phase 5 步骤 6 fail closed）。
+            设为 True 时跳过 parser distribution 零容忍检查，仅用于旧版本
+            bundle 验证或过渡期对齐工具。正式发布构建严禁启用。
+        verify_rust_parse: 是否实际加载 callwarden_core 并验证 parse API。
+            默认 False（仅检查文件存在）。设为 True 时尝试加载并调用
+            supported_languages()，适用于同平台 bundle 真实验证。
     """
     bundle = bundle.resolve()
     if not bundle.is_dir():
@@ -289,15 +439,18 @@ def inspect_bundle(
     if not pyz_toc.is_file():
         return {"bundle": str(bundle)}, [f"PYZ TOC 不存在: {pyz_toc}"]
 
-    # 角色驱动的必需模块根与零容忍 distribution
+    # 角色驱动的必需模块根
     if role == "client":
         required_roots = REQUIRED_MODULE_ROOTS_CLIENT
-        # client/agent 自动禁止所有 parser distribution（parser distribution=0）
-        forbid_set = set(forbid_distributions or ())
-        forbid_set.update(PARSER_DISTRIBUTIONS)
-        forbid_distributions = tuple(sorted(forbid_set))
     else:
         required_roots = REQUIRED_MODULE_ROOTS
+
+    # P1-G: 所有 role 默认禁止 PARSER_DISTRIBUTIONS（fail closed）。
+    # allow_parser_distributions=True 时跳过（仅用于旧版本/过渡期验证）。
+    forbid_set = set(forbid_distributions or ())
+    if not allow_parser_distributions:
+        forbid_set.update(PARSER_DISTRIBUTIONS)
+    forbid_distributions = tuple(sorted(forbid_set))
 
     files = list(_iter_files(bundle))
     total_bytes = sum(path.stat().st_size for path in files)
@@ -375,9 +528,9 @@ def inspect_bundle(
             f"解压体积 {report['unpacked_mb']} MB 超过门禁 {max_unpacked_mb} MB"
         )
 
-    # P0-A/P0-B: 零容忍 distribution 门禁
-    # 用于 Phase 1 拆 client/agent 轻包时强制 parser/grammar 为 0。
-    # role="client" 自动注入 PARSER_DISTRIBUTIONS；local 角色默认不触发。
+    # P0-A/P0-B/P1-G: 零容忍 distribution 门禁
+    # P1-G 后所有 role 默认禁止 PARSER_DISTRIBUTIONS（fail closed）。
+    # allow_parser_distributions=True 时跳过（仅用于旧版本/过渡期验证）。
     if forbid_distributions:
         for dist_name in forbid_distributions:
             info = breakdown["distributions"].get(dist_name)
@@ -390,6 +543,21 @@ def inspect_bundle(
                     f"实际 {info['file_count']} 文件 / "
                     f"{info['byte_count']} 字节"
                 )
+
+    # P1-G: 文件级 fail closed 检查（设计 §8 Phase 5 步骤 6）
+    # 这些检查与 distribution 门禁互补：distribution 门禁基于路径归类，
+    # 文件级检查直接命中禁止文件名/路径模式，覆盖归类盲区。
+    if not allow_parser_distributions:
+        errors.extend(_check_tree_sitter_binding_files(bundle))
+        errors.extend(_check_callwarden_parser_source_files(bundle))
+
+    # P1-G: Rust callwarden_core 必须存在（所有 bundle 都需要 Rust 扩展）
+    errors.extend(_check_callwarden_core_present(bundle))
+
+    # P1-G: 可选真实 parse 验证（同平台 bundle）
+    if verify_rust_parse:
+        errors.extend(_verify_rust_parse(bundle))
+
     return report, errors
 
 
@@ -422,9 +590,26 @@ def main() -> int:
         default="local",
         help=(
             "bundle 角色（默认 local）。"
-            "client 角色自动禁止所有 parser distribution（parser distribution=0），"
-            "且不要求 numpy 模块根。"
-            "local 角色保留 parser 回退路径，要求 numpy。"
+            "client 角色不要求 numpy 模块根（client 不做本地解析）。"
+            "P1-G 后所有 role 都默认禁止 parser distribution（fail closed）。"
+        ),
+    )
+    parser.add_argument(
+        "--allow-parser-distributions",
+        action="store_true",
+        help=(
+            "P1-G 向后兼容旗标：跳过 parser distribution 零容忍检查和文件级 "
+            "fail closed 检查（_binding*.pyd/.so、callwarden/parsers/*_parser.py）。"
+            "仅用于旧版本 bundle 验证或过渡期对齐工具，正式发布构建严禁启用。"
+        ),
+    )
+    parser.add_argument(
+        "--verify-rust-parse",
+        action="store_true",
+        help=(
+            "实际加载 bundle 中的 callwarden_core 并验证 supported_languages() API。"
+            "仅适用于同平台 bundle（cross-platform 场景会因 ABI 不匹配失败）。"
+            "默认仅检查文件存在，不加载模块。"
         ),
     )
     args = parser.parse_args()
@@ -436,6 +621,8 @@ def main() -> int:
         max_unpacked_mb=args.max_unpacked_mb,
         forbid_distributions=tuple(args.forbid_distribution) or None,
         role=args.role,
+        allow_parser_distributions=args.allow_parser_distributions,
+        verify_rust_parse=args.verify_rust_parse,
     )
     report["errors"] = errors
     args.report.parent.mkdir(parents=True, exist_ok=True)
