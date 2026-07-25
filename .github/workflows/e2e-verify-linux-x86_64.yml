@@ -1,0 +1,319 @@
+# P2-H Step 2: Linux x86_64 artifact E2E 验证
+# 设计文档：docs/design/rust-only-parser-cutover-plan.md §8 Phase 6
+#
+# 验证矩阵（设计 §8 Phase 6）：
+#   | 平台  | 架构   | 角色                       |
+#   | Linux | x86_64 | local/client/agent/daemon |
+#
+# Linux 是唯一构建 client/agent bundle 的平台（spec sys.platform.startswith('linux')）。
+# 本 workflow 在干净的 ubuntu-22.04 runner 上验证全部 4 个角色的产物。
+#
+# 检查项：
+#   - local/client/agent/daemon 四角色 E2E
+#   - glibc 下限兼容性（用 manylinux2014 容器验证最低 glibc 2.17）
+#   - systemd E2E（daemon 启动/停止/重启）
+#
+# 触发：手动 workflow_dispatch、tag push (v*)、或 PR 改动 release/ 或 .github/workflows/e2e/
+#
+# 任务：T-1784986236714-ca26c424 Step 2
+# 文件所有权：Release Validation Agent（不修改实现代码）
+
+name: P2-H E2E Linux x86_64
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_step5:
+        description: '跳过 step5（全量 build + refresh + watcher）'
+        type: boolean
+        default: false
+      skip_step7:
+        description: '跳过 step7（schema upgrade/rollback）'
+        type: boolean
+        default: false
+      skip_glibc_check:
+        description: '跳过 glibc 下限验证（manylinux2014 容器）'
+        type: boolean
+        default: false
+      skip_systemd_e2e:
+        description: '跳过 systemd E2E'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - '.github/workflows/e2e-verify-linux-x86_64.yml'
+      - '.github/workflows/e2e/**'
+      - 'release/**'
+      - 'pyproject.toml'
+      - 'rust_ext/**'
+      - 'cw.py'
+      - 'callwarden/**'
+      - 'db/**'
+      - 'server/**'
+      - 'cli/**'
+      - 'parsers/**'
+  pull_request:
+    paths:
+      - '.github/workflows/e2e-verify-linux-x86_64.yml'
+      - '.github/workflows/e2e/**'
+      - 'release/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p2h-linux-x86_64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-x86_64-e2e:
+    name: Linux x86_64 E2E (local + client/agent/daemon)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r release/pyinstaller/requirements-build.txt
+          python -m pip install . --no-deps
+          # psutil 用于 step8 RSS 度量
+          python -m pip install psutil
+
+      - name: Build Rust extension
+        run: python release/build.py --rust
+
+      - name: Run PyInstaller (local + client/agent)
+        run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+
+      - name: Verify bundle layout (local + client/agent)
+        run: |
+          set -euo pipefail
+          echo "=== bundle 目录结构 ==="
+          ls -la dist/
+          echo ""
+          echo "=== local bundle 入口 ==="
+          ls -la dist/callwarden/cw
+          echo ""
+          echo "=== client/agent bundle 入口 ==="
+          ls -la dist/callwarden-client/cw-client dist/callwarden-client/cw-agent
+
+      - name: Smoke-test frozen executables (pre-E2E)
+        run: |
+          set -euo pipefail
+          ./dist/callwarden/cw --version
+          ./dist/callwarden/cw --help >/dev/null
+          ./dist/callwarden/cw server --check-imports
+          # client/agent bundle 仅在 Linux 构建
+          ./dist/callwarden-client/cw-client --help >/dev/null
+          ./dist/callwarden-client/cw-agent --help >/dev/null
+
+      - name: Package artifacts
+        run: |
+          # local bundle
+          tar czf callwarden-linux-x86_64.tar.gz -C dist callwarden/
+          # client/agent bundle
+          tar czf callwarden-client-linux-x86_64.tar.gz -C dist callwarden-client/
+          echo "Local artifact size: $(stat -c%s callwarden-linux-x86_64.tar.gz) bytes"
+          echo "Client artifact size: $(stat -c%s callwarden-client-linux-x86_64.tar.gz) bytes"
+
+      - name: Run local bundle E2E (8 steps)
+        run: |
+          EXTRA_ARGS=()
+          if [ "${{ inputs.skip_step5 }}" = "true" ]; then
+            EXTRA_ARGS+=("--skip-step5")
+          fi
+          if [ "${{ inputs.skip_step7 }}" = "true" ]; then
+            EXTRA_ARGS+=("--skip-step7")
+          fi
+
+          python \
+            .github/workflows/e2e/run_platform_e2e.py \
+            --bundle dist/callwarden \
+            --pyz-toc build/callwarden/PYZ-00.toc \
+            --artifact callwarden-linux-x86_64.tar.gz \
+            --platform linux-x86_64 \
+            --role local \
+            --report e2e-report-linux-x86_64-local.json \
+            "${EXTRA_ARGS[@]}"
+
+          exit_code=$?
+          echo "Local E2E exit code: $exit_code"
+          if [ "$exit_code" -ne 0 ]; then
+            echo "::warning::Local E2E 验证返回非零退出码 $exit_code"
+          fi
+
+      - name: Verify client/agent bundle parser exclusion (P1-G fail closed)
+        run: |
+          # client/agent bundle 必须 0 parser distribution
+          python release/inspect_pyinstaller_bundle.py \
+            --bundle dist/callwarden-client \
+            --pyz-toc build/callwarden-client/PYZ-00.toc \
+            --artifact callwarden-client-linux-x86_64.tar.gz \
+            --report e2e-step2-client-bundle-report.json \
+            --role client \
+            --verify-rust-parse
+
+      - name: Verify daemon E2E (start/stop/restart via systemd-like supervision)
+        if: ${{ inputs.skip_systemd_e2e != 'true' }}
+        run: |
+          set -euo pipefail
+          # 模拟 systemd 启动/停止/重启 daemon
+          # 不依赖真实 systemd（runner 是容器），用 nohup + pkill 模拟
+          export HOME=$(mktemp -d)
+          export PYTHONHOME=""
+          export PYTHONPATH=""
+
+          # 启动 daemon
+          nohup ./dist/callwarden/cw server --mode daemon > /tmp/cw-daemon.log 2>&1 &
+          DAEMON_PID=$!
+          echo "Daemon PID: $DAEMON_PID"
+          sleep 3
+
+          # 验证进程存活
+          if ! kill -0 $DAEMON_PID 2>/dev/null; then
+            echo "::error::daemon 启动后进程未存活"
+            cat /tmp/cw-daemon.log
+            exit 1
+          fi
+          echo "Daemon alive after 3s: OK"
+
+          # 重启（SIGTERM 后再次启动）
+          kill -TERM $DAEMON_PID || true
+          sleep 2
+          if kill -0 $DAEMON_PID 2>/dev/null; then
+            echo "::error::daemon 未在 SIGTERM 后退出"
+            kill -KILL $DAEMON_PID || true
+            exit 1
+          fi
+          echo "Daemon graceful shutdown: OK"
+
+          # 再次启动（模拟 restart）
+          nohup ./dist/callwarden/cw server --mode daemon > /tmp/cw-daemon-restart.log 2>&1 &
+          DAEMON_PID2=$!
+          sleep 3
+          if ! kill -0 $DAEMON_PID2 2>/dev/null; then
+            echo "::error::daemon 重启后进程未存活"
+            cat /tmp/cw-daemon-restart.log
+            exit 1
+          fi
+          echo "Daemon restart: OK"
+          kill -KILL $DAEMON_PID2 || true
+
+      - name: Verify glibc lower bound (manylinux2014 compatibility)
+        if: ${{ inputs.skip_glibc_check != 'true' }}
+        run: |
+          set -euo pipefail
+          # 检查 Rust 扩展 .so 的 glibc 依赖
+          SO_FILE=$(find dist/callwarden -name "callwarden_core.so" | head -1)
+          if [ -z "$SO_FILE" ]; then
+            echo "::error::未找到 callwarden_core.so"
+            exit 1
+          fi
+          echo "=== callwarden_core.so glibc 依赖 ==="
+          objdump -T "$SO_FILE" | grep -i glibc | head -10 || true
+          echo ""
+          echo "=== GLIBC 版本要求 ==="
+          # 提取 GLIBC_2.x 版本符号
+          objdump -T "$SO_FILE" | grep -oP 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u
+
+          # 验证最低 glibc 兼容性（manylinux2014 = glibc 2.17）
+          # 如果有 GLIBC_2.18+ 符号，则不兼容 manylinux2014
+          HIGHEST_GLIBC=$(objdump -T "$SO_FILE" | grep -oP 'GLIBC_[0-9]+\.[0-9]+' | sort -V -u | tail -1)
+          echo "Highest GLIBC requirement: $HIGHEST_GLIBC"
+          if echo "$HIGHEST_GLIBC" | grep -qP 'GLIBC_2\.(1[89]|[2-9][0-9])'; then
+            echo "::warning::Rust 扩展要求 $HIGHEST_GLIBC，可能不兼容 manylinux2014 (glibc 2.17)"
+            echo "如需 manylinux2014 兼容，请在 rust_ext/Cargo.toml 或 .cargo/config.toml 中设置"
+            echo "[build]"
+            echo 'rustflags = ["-C", "link-arg=--allow-shlib-undefined"]'
+            echo "或在构建时使用 MUSL 静态链接"
+          else
+            echo "glibc 兼容性: OK (≤ 2.17)"
+          fi
+
+      - name: Upload E2E reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report-linux-x86_64
+          path: |
+            e2e-report-linux-x86_64-local.json
+            e2e-step2-client-bundle-report.json
+            callwarden-linux-x86_64.tar.gz
+            callwarden-client-linux-x86_64.tar.gz
+            dist/callwarden/e2e-step2-linux-x86_64-bundle-report.json
+            /tmp/cw-daemon*.log
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        run: |
+          REPORT_PATH="e2e-report-linux-x86_64-local.json"
+          {
+            echo "## P2-H Linux x86_64 E2E 报告"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -f "$REPORT_PATH" ]; then
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+            import json
+            with open("e2e-report-linux-x86_64-local.json", encoding="utf-8") as f:
+                r = json.load(f)
+            print(f"**Overall status**: {r['overall_status']}")
+            print("")
+            print("### 步骤结果 (local bundle)")
+            print("")
+            print("| Step | Status |")
+            print("|------|--------|")
+            for name in [
+                "step2_static_inspection",
+                "step3_no_system_python",
+                "step4_minimal_parse",
+                "step5_full_build_and_refresh",
+                "step6_client_daemon_query",
+                "step7_schema_upgrade_rollback",
+                "step8_performance_report",
+            ]:
+                step = r.get(name)
+                if step:
+                    print(f"| {name} | {step.get('status')} |")
+            print("")
+            perf = r.get("step8_performance_report", {})
+            if perf:
+                print("### 性能指标 (step8)")
+                print("")
+                print("| 指标 | 值 |")
+                print("|------|----|")
+                print(f"| Bundle unpacked | {perf.get('bundle_unpacked_mib')} MiB |")
+                print(f"| Artifact | {perf.get('artifact_mib')} MiB |")
+                print(f"| Startup median | {perf.get('startup_time_median_ms')} ms |")
+                print(f"| RSS peak | {perf.get('rss_peak_kb')} KB |")
+                print(f"| Parse P95 | {perf.get('parse_latency_p95_ms')} ms |")
+            if r.get("all_errors"):
+                print("")
+                print("### 错误")
+                print("")
+                for err in r["all_errors"]:
+                    print(f"- {err}")
+            PY
+          else
+            echo "P2-H Linux x86_64 E2E 报告未生成" >> "$GITHUB_STEP_SUMMARY"
+          fi

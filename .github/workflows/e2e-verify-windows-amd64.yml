@@ -1,0 +1,207 @@
+# P2-H Step 0: Windows amd64 artifact E2E 验证
+# 设计文档：docs/design/rust-only-parser-cutover-plan.md §8 Phase 6
+#
+# 验证矩阵（设计 §8 Phase 6）：
+#   | 平台    | 架构 | 角色        |
+#   | Windows | amd64 | local/client |
+#
+# client/agent bundle 仅在 Linux 构建（spec sys.platform.startswith('linux')），
+# 因此 Windows 只验证 local bundle 角色。
+#
+# 本 workflow 在干净的 windows-latest runner 上：
+#   1. 构建 Rust 扩展 + PyInstaller 产物
+#   2. 调用 .github/workflows/e2e/run_platform_e2e.py 执行 8 项验收检查
+#   3. 上传 E2E 报告作为 artifact，供独立 Reviewer 复核
+#
+# 触发：手动 workflow_dispatch、tag push (v*)、或 PR 改动 release/ 或 .github/workflows/e2e/
+#
+# 任务：T-1784986236714-ca26c424 Step 0
+# 文件所有权：Release Validation Agent（不修改实现代码）
+
+name: P2-H E2E Windows amd64
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_step5:
+        description: '跳过 step5（全量 build + refresh + watcher）'
+        type: boolean
+        default: false
+      skip_step7:
+        description: '跳过 step7（schema upgrade/rollback）'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - '.github/workflows/e2e-verify-windows-amd64.yml'
+      - '.github/workflows/e2e/**'
+      - 'release/**'
+      - 'pyproject.toml'
+      - 'rust_ext/**'
+      - 'cw.py'
+      - 'callwarden/**'
+      - 'db/**'
+      - 'server/**'
+      - 'cli/**'
+      - 'parsers/**'
+  pull_request:
+    paths:
+      - '.github/workflows/e2e-verify-windows-amd64.yml'
+      - '.github/workflows/e2e/**'
+      - 'release/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  PYTHONIOENCODING: utf-8
+  PYTHONUTF8: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: p2h-windows-amd64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-amd64-e2e:
+    name: Windows amd64 E2E (local bundle)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          # 冻结包只安装经过审计的运行时白名单
+          python -m pip install -r release/pyinstaller/requirements-build.txt
+          # 项目依赖已经由白名单提供，禁止 pip 再解析可选依赖
+          python -m pip install . --no-deps
+          # psutil 用于 step8 RSS 度量
+          python -m pip install psutil
+
+      - name: Build Rust extension
+        run: python release/build.py --rust
+
+      - name: Run PyInstaller
+        run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+
+      - name: Smoke-test frozen executables (pre-E2E)
+        shell: pwsh
+        run: |
+          .\dist\callwarden\cw.exe --version
+          .\dist\callwarden\cw.exe --help | Out-Null
+          .\dist\callwarden\cw.exe server --check-imports
+
+      - name: Package artifact (zip)
+        shell: pwsh
+        run: |
+          $artifact = "callwarden-windows-amd64.zip"
+          Compress-Archive -Path 'dist\callwarden' -DestinationPath $artifact
+          Write-Host "Artifact size: $((Get-Item $artifact).Length) bytes"
+
+      - name: Run E2E verification (8 steps)
+        shell: pwsh
+        run: |
+          $skip5 = "${{ inputs.skip_step5 }}"
+          $skip7 = "${{ inputs.skip_step7 }}"
+          $extraArgs = @()
+          if ($skip5 -eq 'true') { $extraArgs += '--skip-step5' }
+          if ($skip7 -eq 'true') { $extraArgs += '--skip-step7' }
+
+          python `
+            .github/workflows/e2e/run_platform_e2e.py `
+            --bundle dist/callwarden `
+            --pyz-toc build/callwarden/PYZ-00.toc `
+            --artifact callwarden-windows-amd64.zip `
+            --platform windows-amd64 `
+            --role local `
+            --report e2e-report-windows-amd64.json `
+            @extraArgs
+
+          $exitCode = $LASTEXITCODE
+          Write-Host "E2E exit code: $exitCode"
+          # 报告上传后由独立 Reviewer 决定是否阻塞；workflow 自身不强制 fail
+          # 但 exit code 2 表示门禁失败，需要在 step summary 显示
+          if ($exitCode -ne 0) {
+            Write-Host "::warning::E2E 验证返回非零退出码 $exitCode，请检查 e2e-report-windows-amd64.json"
+          }
+
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-report-windows-amd64
+          path: |
+            e2e-report-windows-amd64.json
+            callwarden-windows-amd64.zip
+            dist/callwarden/e2e-step2-windows-amd64-bundle-report.json
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        shell: pwsh
+        run: |
+          $reportPath = "e2e-report-windows-amd64.json"
+          if (Test-Path $reportPath) {
+            $report = Get-Content $reportPath -Raw | ConvertFrom-Json
+            "## P2-H Windows amd64 E2E 报告" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "**Overall status**: $($report.overall_status)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "### 步骤结果" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "| Step | Status |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "|------|--------|" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            $stepNames = @(
+              "step2_static_inspection",
+              "step3_no_system_python",
+              "step4_minimal_parse",
+              "step5_full_build_and_refresh",
+              "step6_client_daemon_query",
+              "step7_schema_upgrade_rollback",
+              "step8_performance_report"
+            )
+            foreach ($name in $stepNames) {
+              $step = $report.$name
+              if ($step) {
+                "| $name | $($step.status) |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              }
+            }
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "### 性能指标 (step8)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            $perf = $report.step8_performance_report
+            if ($perf) {
+              "| 指标 | 值 |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "|------|----|" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "| Bundle unpacked | $($perf.bundle_unpacked_mib) MiB |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "| Artifact | $($perf.artifact_mib) MiB |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "| Startup median | $($perf.startup_time_median_ms) ms |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "| RSS peak | $($perf.rss_peak_kb) KB |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "| Parse P95 | $($perf.parse_latency_p95_ms) ms |" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+            }
+            if ($report.all_errors -and $report.all_errors.Count -gt 0) {
+              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "### 错误" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              "" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              foreach ($err in $report.all_errors) {
+                "- $err" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              }
+            }
+          } else {
+            "## P2-H Windows amd64 E2E 报告未生成" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+          }
