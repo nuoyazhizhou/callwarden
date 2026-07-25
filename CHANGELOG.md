@@ -8,6 +8,12 @@
 - 修复 Linux `cw-agent --help` 被当成未知命令并返回 2，导致 v0.3.1
   PyInstaller 发布 smoke 失败的问题。
 
+### Verified
+- v0.3.2 三平台 PyInstaller build、入口 smoke、制品门禁、上传和 GitHub
+  Release 全部通过。
+- Release 资产：Linux amd64 76.96 MB、macOS arm64 29.20 MB、Windows
+  amd64 37.15 MB。
+
 ## [0.3.1] - 2026-07-25
 
 ### Fixed
