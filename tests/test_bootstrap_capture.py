@@ -932,7 +932,7 @@ def test_cli_task_capture_diff_apply_passes_dry_run_false():
 def test_mcp_task_capture_diff_registered():
     """MCP server 注册了 task_capture_diff 工具。"""
     import inspect
-    from callwarden.server import mcp_server
+    from server import mcp_server
 
     # create_mcp_server 内部定义 task_capture_diff，无法直接拿到引用，
     # 但可以通过源代码字符串验证工具已注册。

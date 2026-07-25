@@ -33,7 +33,7 @@ class TestLocalMode:
         env["CW_DAEMON_SOCKET"] = "/tmp/nonexistent-daemon.sock"
 
         # 验证 local 模式不会抛出连接错误
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         # 不实际连接，只验证模式设置
         assert env["CW_DAEMON_MODE"] == "local"
 
@@ -41,7 +41,7 @@ class TestLocalMode:
         """local 模式使用 SQL fallback 查询。"""
         # DaemonClient 在 local 模式下应走 _sql_fallback_* 路径
         # 这个测试验证 fallback 方法存在
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         assert hasattr(DaemonClient, '_sql_fallback_get_callers')
         assert hasattr(DaemonClient, '_sql_fallback_get_callees')
         assert hasattr(DaemonClient, '_sql_fallback_search_symbols')
@@ -68,7 +68,7 @@ class TestAutoMode:
     def test_auto_mode_uses_daemon_when_available(self):
         """auto 模式下 daemon 可用时走 UDS。"""
         # 这个测试验证 auto 模式的检测逻辑
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         # DaemonClient.is_daemon_ready() 检查 socket + snapshot state
         assert hasattr(DaemonClient, 'is_daemon_ready')
 
@@ -78,7 +78,7 @@ class TestEnterpriseMode:
 
     def test_enterprise_mode_no_silent_fallback(self):
         """enterprise 模式下 daemon 不可用时不应静默回退到 SQL。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         # 验证 DaemonClient 有 enterprise 模式的概念
         # 在 enterprise 模式下，daemon 不可用应抛异常而非静默回退
         assert hasattr(DaemonClient, 'is_daemon_ready')
@@ -86,14 +86,14 @@ class TestEnterpriseMode:
     def test_enterprise_mode_acl_failure(self):
         """enterprise 模式下 ACL 失败应明确报错。"""
         # ACL 检查在 daemon_server.py 的 dispatch 中实现
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
         # 验证 DaemonRpcError 有正确的错误码
         err = DaemonRpcError("workspace_forbidden", "test")
         assert err.code == "workspace_forbidden"
 
     def test_enterprise_mode_refresh_failure(self):
         """enterprise 模式下 refresh 失败应明确报错。"""
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
         err = DaemonRpcError("refresh_failed", "test")
         assert err.code == "refresh_failed"
 
@@ -107,7 +107,7 @@ class TestMCPQueryConsistency:
 
     def test_query_methods_exist(self):
         """验证所有必需的查询方法存在。"""
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.snapshot_manager import SnapshotManagerService
         svc = SnapshotManagerService()
         assert hasattr(svc, 'query_stats')
         assert hasattr(svc, 'query_symbol')
@@ -119,7 +119,7 @@ class TestMCPQueryConsistency:
         """验证 CLI 也有对应的查询命令。"""
         # CLI 命令通过 cw.py 的子命令实现
         # 验证关键方法存在
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         assert hasattr(DaemonClient, 'get_callers')
         assert hasattr(DaemonClient, 'get_callees')
         assert hasattr(DaemonClient, 'search_symbols')

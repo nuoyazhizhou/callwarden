@@ -298,7 +298,7 @@ def test_cli_install_hooks_force_hooks_dispatches():
 
 def test_i18n_keys_for_install_hooks_unified_exist():
     """zh_CN.json / en_US.json 包含 install_hooks 统一入口的所有 i18n key。"""
-    from callwarden.i18n import _get_i18n_dir
+    from i18n import _get_i18n_dir
 
     for lang_file in ("zh_CN.json", "en_US.json"):
         with open(os.path.join(_get_i18n_dir(), lang_file), encoding="utf-8") as f:
@@ -326,7 +326,7 @@ def test_i18n_keys_for_install_hooks_unified_exist():
 
 def test_old_i18n_key_install_hook_task_id_envvar_removed():
     """旧的 install_hook_task_id_envvar i18n key 应已删除（改为 install_hook_task_id_auto）。"""
-    from callwarden.i18n import _get_i18n_dir
+    from i18n import _get_i18n_dir
 
     for lang_file in ("zh_CN.json", "en_US.json"):
         with open(os.path.join(_get_i18n_dir(), lang_file), encoding="utf-8") as f:
@@ -338,7 +338,7 @@ def test_old_i18n_key_install_hook_task_id_envvar_removed():
 
 def test_install_hook_arg_task_id_no_envvar_reference():
     """install_hook_arg_task_id i18n 描述不应再引用 CALLWARDEN_TASK_ID 环境变量。"""
-    from callwarden.i18n import _get_i18n_dir
+    from i18n import _get_i18n_dir
 
     for lang_file in ("zh_CN.json", "en_US.json"):
         with open(os.path.join(_get_i18n_dir(), lang_file), encoding="utf-8") as f:

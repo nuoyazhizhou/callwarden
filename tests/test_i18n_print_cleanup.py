@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-from callwarden.i18n import _get_i18n_dir
+from i18n import _get_i18n_dir
 
 
 # ----------------------------------------------------------------------

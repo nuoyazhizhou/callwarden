@@ -28,8 +28,8 @@ sys.path.insert(
 
 def _make_daemon_service(tmp_path):
     """构造一个 EnterpriseDaemonService 实例（不启动 UDS server）。"""
-    from callwarden.server.daemon_server import EnterpriseDaemonService
-    from callwarden.server.snapshot_manager import SnapshotManagerService
+    from server.daemon_server import EnterpriseDaemonService
+    from server.snapshot_manager import SnapshotManagerService
     snapshot_service = SnapshotManagerService(max_workspaces=8)
     return EnterpriseDaemonService(
         registry_db=str(tmp_path / "registry.db"),
@@ -109,8 +109,8 @@ class TestDaemonServerRefreshCodePropagation:
     ):
         """daemon_handle_refresh 抛 ProtocolError(session_not_active) →
         dispatch 抛 DaemonRpcError(code=session_not_active)。"""
-        from callwarden.server.daemon_server import DaemonRpcError
-        from callwarden.server.replicator import ProtocolError
+        from server.daemon_server import DaemonRpcError
+        from server.replicator import ProtocolError
 
         peer = _peer()
 
@@ -120,10 +120,10 @@ class TestDaemonServerRefreshCodePropagation:
                 code="session_not_active",
             )
 
-        # daemon_server.py 中通过 from callwarden.server.replicator import
+        # daemon_server.py 中通过 from server.replicator import
         # daemon_handle_refresh 局部导入，需 patch 源模块
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_raise_session_not_active,
         ):
             with pytest.raises(DaemonRpcError) as exc_info:
@@ -137,8 +137,8 @@ class TestDaemonServerRefreshCodePropagation:
     ):
         """daemon_handle_refresh 抛 ProtocolError(stale_session) →
         dispatch 抛 DaemonRpcError(code=stale_session)。"""
-        from callwarden.server.daemon_server import DaemonRpcError
-        from callwarden.server.replicator import ProtocolError
+        from server.daemon_server import DaemonRpcError
+        from server.replicator import ProtocolError
 
         peer = _peer()
 
@@ -149,7 +149,7 @@ class TestDaemonServerRefreshCodePropagation:
             )
 
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_raise_stale_session,
         ):
             with pytest.raises(DaemonRpcError) as exc_info:
@@ -160,8 +160,8 @@ class TestDaemonServerRefreshCodePropagation:
         self, daemon_service, mock_resources,
     ):
         """stale_manifest_commit code 也应透传（虽不触发 auto-reconnect）。"""
-        from callwarden.server.daemon_server import DaemonRpcError
-        from callwarden.server.replicator import ProtocolError
+        from server.daemon_server import DaemonRpcError
+        from server.replicator import ProtocolError
 
         peer = _peer()
 
@@ -172,7 +172,7 @@ class TestDaemonServerRefreshCodePropagation:
             )
 
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_raise_stale_manifest,
         ):
             with pytest.raises(DaemonRpcError) as exc_info:
@@ -184,8 +184,8 @@ class TestDaemonServerRefreshCodePropagation:
     ):
         """ProtocolError 不传 code 时 code='protocol_error'，
         dispatch 也应透传此值而非 refresh_failed。"""
-        from callwarden.server.daemon_server import DaemonRpcError
-        from callwarden.server.replicator import ProtocolError
+        from server.daemon_server import DaemonRpcError
+        from server.replicator import ProtocolError
 
         peer = _peer()
 
@@ -194,7 +194,7 @@ class TestDaemonServerRefreshCodePropagation:
             raise ProtocolError("some protocol error")
 
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_raise_default,
         ):
             with pytest.raises(DaemonRpcError) as exc_info:
@@ -206,7 +206,7 @@ class TestDaemonServerRefreshCodePropagation:
         self, daemon_service, mock_resources,
     ):
         """非 ProtocolError（如 ValueError）→ code 默认 refresh_failed。"""
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
 
         peer = _peer()
 
@@ -214,7 +214,7 @@ class TestDaemonServerRefreshCodePropagation:
             raise ValueError("daemon internal error")
 
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_raise_value_error,
         ):
             with pytest.raises(DaemonRpcError) as exc_info:
@@ -237,7 +237,7 @@ class TestDaemonServerRefreshCodePropagation:
             return {"status": "committed", "generation": "1:1", "content_hash": "abc"}
 
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_committed_response,
         ):
             result = _dispatch_refresh(daemon_service, peer, ws_id="1")
@@ -292,7 +292,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
 
     def test_hex_decode_success(self, daemon_service, mock_resources):
         """canonical_bytes_hex 成功解码并传给 daemon_handle_refresh。"""
-        from callwarden.server.replicator import daemon_handle_refresh
+        from server.replicator import daemon_handle_refresh
 
         canonical = b"# Python source\nprint('hello')\n"
         hex_str = canonical.hex()
@@ -309,7 +309,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
         peer = _peer()
         mock_workspace = MagicMock()
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_capture,
         ), patch.object(
             daemon_service, "_owned_workspace", return_value=mock_workspace,
@@ -325,7 +325,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
 
     def test_hex_decode_invalid_raises(self, daemon_service, mock_resources):
         """无效 hex 字符串触发 hex_decode_failed 错误码。"""
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
 
         peer = _peer()
         mock_workspace = MagicMock()
@@ -366,7 +366,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
             "canonical_bytes_b64": b64_str,
         }
         with patch(
-            "callwarden.server.replicator.daemon_handle_refresh",
+            "server.replicator.daemon_handle_refresh",
             side_effect=_capture,
         ), patch.object(
             daemon_service, "_owned_workspace", return_value=mock_workspace,
@@ -380,7 +380,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
 
     def test_abs_path_path_escape_rejected(self, daemon_service, mock_resources, tmp_path):
         """abs_path 落在 host_real_root 外被拒绝（path_escape）。"""
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
 
         peer = _peer()
         # host_real_root 设为 tmp_path
@@ -414,7 +414,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
 
         G10 批次7：常规文件 FD 无 seal 保护，必须校验 owner UID 防跨用户攻击。
         """
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
 
         # 创建临时文件作为 FD
         tmp_file = tmp_path / "fd_content.bin"
@@ -433,7 +433,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
                 daemon_service, "_owned_workspace", return_value=mock_workspace,
             ), patch("os.fstat", return_value=fake_stat):
                 with patch(
-                    "callwarden.server.ipc_transport.is_memfd",
+                    "server.ipc_transport.is_memfd",
                     return_value=False,
                 ):
                     params = {
@@ -464,7 +464,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
         """
         import hashlib
 
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
 
         canonical = b"actual file content"
         tmp_file = tmp_path / "fd_content.bin"
@@ -485,7 +485,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
                 daemon_service, "_owned_workspace", return_value=mock_workspace,
             ), patch("os.fstat", return_value=fake_stat):
                 with patch(
-                    "callwarden.server.ipc_transport.is_memfd",
+                    "server.ipc_transport.is_memfd",
                     return_value=False,
                 ):
                     params = {
@@ -514,7 +514,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
 
         G10 批次7：canonical_len 与实际 FD 大小不一致视为篡改。
         """
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
 
         canonical = b"size mismatch test"
         tmp_file = tmp_path / "fd_content.bin"
@@ -533,7 +533,7 @@ class TestDaemonServerRefreshCanonicalBytesExtraction:
                 daemon_service, "_owned_workspace", return_value=mock_workspace,
             ), patch("os.fstat", return_value=fake_stat):
                 with patch(
-                    "callwarden.server.ipc_transport.is_memfd",
+                    "server.ipc_transport.is_memfd",
                     return_value=False,
                 ):
                     params = {

@@ -378,7 +378,7 @@ class TestMcpToolsRegistration:
         """L5 相关 MCP 工具应该已注册"""
         # 由于 MCP 工具在 create_mcp_server() 内部定义，
         # 我们通过检查源码来验证工具存在
-        import callwarden.server.mcp_server as ms
+        import server.mcp_server as ms
         source = open(ms.__file__, encoding='utf-8').read()
 
         l5_tools = [
@@ -396,7 +396,7 @@ class TestMcpToolsRegistration:
 
     def test_l5_tools_count(self):
         """L5 新增 8 个 MCP 工具"""
-        import callwarden.server.mcp_server as ms
+        import server.mcp_server as ms
         source = open(ms.__file__, encoding='utf-8').read()
         # 统计 @mcp.tool() 装饰器
         count = source.count("@mcp.tool()")

@@ -42,7 +42,7 @@ class TestInflightTracker:
 
     def test_acquire_release_basic(self):
         """基础 acquire + release + stats。"""
-        from callwarden.server.ipc_transport import InflightTracker
+        from server.ipc_transport import InflightTracker
 
         tracker = InflightTracker()
         # 分配 1MB
@@ -64,7 +64,7 @@ class TestInflightTracker:
 
     def test_acquire_per_connection_limit(self):
         """单连接超限拒绝。"""
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             InflightTracker, MAX_CONN_QUEUED_BYTES,
         )
 
@@ -80,7 +80,7 @@ class TestInflightTracker:
 
     def test_acquire_per_uid_limit(self):
         """单 UID 超限拒绝（多连接累计）。"""
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             InflightTracker, MAX_UID_INFLIGHT_BYTES,
         )
 
@@ -105,7 +105,7 @@ class TestInflightTracker:
         使用 monkeypatch 临时降低 MAX_DAEMON_INFLIGHT_BYTES 到可测试的值，
         避免实际分配 2GB 内存。
         """
-        from callwarden.server import ipc_transport
+        from server import ipc_transport
 
         tracker = ipc_transport.InflightTracker()
         # 临时降低限制到 10MB 便于测试
@@ -139,7 +139,7 @@ class TestInflightTracker:
 
     def test_release_idempotent_below_zero(self):
         """release 不会让计数变负（max(0, ...)）。"""
-        from callwarden.server.ipc_transport import InflightTracker
+        from server.ipc_transport import InflightTracker
 
         tracker = InflightTracker()
         tracker.acquire(conn_id=1, uid=100, size=100)
@@ -152,7 +152,7 @@ class TestInflightTracker:
 
     def test_independent_dimensions(self):
         """三个维度独立：连接超限不阻断其他连接。"""
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             InflightTracker, MAX_CONN_QUEUED_BYTES,
         )
 
@@ -168,7 +168,7 @@ class TestInflightTracker:
 
     def test_stats_includes_all_limits(self):
         """stats 包含 4 个限制常量。"""
-        from callwarden.server.ipc_transport import InflightTracker
+        from server.ipc_transport import InflightTracker
 
         tracker = InflightTracker()
         stats = tracker.stats()
@@ -191,7 +191,7 @@ class TestIsMemfd:
         """非 Linux 平台 is_memfd 返回 False。"""
         if _IS_LINUX:
             pytest.skip("仅测非 Linux")
-        from callwarden.server.ipc_transport import is_memfd
+        from server.ipc_transport import is_memfd
 
         # 用 stdin（FD 0）测试，不会是 memfd
         assert is_memfd(0) is False
@@ -201,7 +201,7 @@ class TestIsMemfd:
         """Linux: 真实 memfd_create 创建的 FD 应被识别。"""
         import ctypes
         import fcntl
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             is_memfd, MFD_CLOEXEC, MFD_ALLOW_SEALING, F_GET_SEALS,
         )
 
@@ -235,7 +235,7 @@ class TestIsMemfd:
     @_SKIP_LINUX
     def test_is_memfd_returns_false_for_regular_file(self):
         """Linux: 常规文件不是 memfd。"""
-        from callwarden.server.ipc_transport import is_memfd
+        from server.ipc_transport import is_memfd
 
         with tempfile.NamedTemporaryFile() as f:
             fd = f.fileno()
@@ -248,7 +248,7 @@ class TestValidateMemfdFd:
     @_SKIP_LINUX
     def test_validate_rejects_non_memfd_on_linux(self):
         """Linux: 非 memfd FD（常规文件）应在 seal 校验阶段失败。"""
-        from callwarden.server.ipc_transport import validate_memfd_fd, ProtocolError
+        from server.ipc_transport import validate_memfd_fd, ProtocolError
 
         # 用临时文件 FD
         with tempfile.NamedTemporaryFile() as f:
@@ -275,7 +275,7 @@ class TestValidateMemfdFd:
 
     def test_validate_rejects_size_mismatch(self):
         """size mismatch 应抛 ProtocolError（跨平台）。"""
-        from callwarden.server.ipc_transport import validate_memfd_fd, ProtocolError
+        from server.ipc_transport import validate_memfd_fd, ProtocolError
 
         with tempfile.NamedTemporaryFile() as f:
             f.write(b"hello world")  # 11 bytes
@@ -300,7 +300,7 @@ class TestValidateMemfdFd:
 
     def test_validate_rejects_owner_uid_mismatch(self):
         """owner UID 不匹配应抛 ProtocolError。"""
-        from callwarden.server.ipc_transport import validate_memfd_fd, ProtocolError
+        from server.ipc_transport import validate_memfd_fd, ProtocolError
 
         with tempfile.NamedTemporaryFile() as f:
             fd = os.dup(f.fileno())
@@ -326,7 +326,7 @@ class TestValidateMemfdFd:
         import ctypes
         import ctypes.util
         import fcntl
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             validate_memfd_fd,
             MFD_CLOEXEC, MFD_ALLOW_SEALING,
             F_SEAL_SEAL, F_SEAL_SHRINK, F_SEAL_GROW, F_SEAL_WRITE,
@@ -381,7 +381,7 @@ class TestValidateMemfdFd:
         import ctypes
         import ctypes.util
         import fcntl
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             validate_memfd_fd, ProtocolError,
             MFD_CLOEXEC, MFD_ALLOW_SEALING,
             F_SEAL_SEAL, F_SEAL_SHRINK, F_SEAL_GROW, F_SEAL_WRITE,
@@ -435,8 +435,8 @@ class TestWorkspaceRefreshMemfdDetection:
     @pytest.fixture
     def daemon_service(self, tmp_path):
         """构造 EnterpriseDaemonService（tmp_path 隔离）。"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_server import EnterpriseDaemonService
+        from server.snapshot_manager import SnapshotManagerService
         snapshot_service = SnapshotManagerService(max_workspaces=4)
         return EnterpriseDaemonService(
             registry_db=str(tmp_path / "registry.db"),
@@ -465,13 +465,13 @@ class TestWorkspaceRefreshMemfdDetection:
         fd = os.open(str(tmp_file), os.O_RDONLY)
 
         # mock is_memfd 返回 True，模拟 memfd 路径
-        # 注意：daemon_server.py 通过 `from callwarden.server.ipc_transport import is_memfd`
+        # 注意：daemon_server.py 通过 `from server.ipc_transport import is_memfd`
         # 局部 import，所以直接 patch ipc_transport.is_memfd 即可
-        from callwarden.server import ipc_transport
+        from server import ipc_transport
         monkeypatch.setattr(ipc_transport, "is_memfd", lambda f: True)
 
         # 缺少 canonical_len / content_hash → invalid_params
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError) as exc_info:
             daemon_service.dispatch(
                 peer, "workspace.file.refresh",
@@ -503,7 +503,7 @@ class TestLinuxMemfdRoundtripE2E:
         """send_msg 对大 payload 自动走 memfd 路径。"""
         import ctypes
         import ctypes.util
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             send_msg, MAX_MSG_BYTES,
         )
 
@@ -528,7 +528,7 @@ class TestLinuxMemfdRoundtripE2E:
             t.start()
 
             # 接收端：用 recv_via_memfd 接收
-            from callwarden.server.ipc_transport import recv_via_memfd
+            from server.ipc_transport import recv_via_memfd
             uid = os.getuid()
             fd, received_msg = recv_via_memfd(
                 sock2,
@@ -554,7 +554,7 @@ class TestLinuxMemfdRoundtripE2E:
 
     def test_send_msg_small_payload_uses_framed(self):
         """send_msg 对小 payload 走 framed 路径（无 memfd）。"""
-        from callwarden.server.ipc_transport import send_msg
+        from server.ipc_transport import send_msg
 
         sock1, sock2 = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
@@ -599,7 +599,7 @@ class TestLargeFileE2E:
 
     def test_256mb_memfd_roundtrip(self):
         """256MB memfd roundtrip（验证 MAX_MEMFD_BYTES 边界）。"""
-        from callwarden.server.ipc_transport import (
+        from server.ipc_transport import (
             send_msg, recv_via_memfd, MAX_MEMFD_BYTES,
         )
 

@@ -35,7 +35,7 @@ if hasattr(os, "O_BINARY"):
     _READ_FLAGS |= os.O_BINARY
     _WRITE_FLAGS |= os.O_BINARY
 
-from callwarden.server.ipc_transport import (
+from server.ipc_transport import (
     MAX_MEMFD_BYTES,
     MAX_MSG_BYTES,
     F_SEAL_GROW,
@@ -161,7 +161,7 @@ class TestSendFramedStream:
         canonical_bytes = b"x" * (MAX_MSG_BYTES + 100)
 
         with mock.patch(
-            "callwarden.server.ipc_transport.send_via_memfd"
+            "server.ipc_transport.send_via_memfd"
         ) as mock_send:
             send_framed_stream(sock, msg_type=1, payload=payload, canonical_bytes=canonical_bytes)
             mock_send.assert_called_once()
@@ -198,7 +198,7 @@ class TestWriteAll:
                 # 调用真实 os.write 但只写 7 字节
                 return original_write(fd_arg, buf[:7])
 
-            with mock.patch("callwarden.server.ipc_transport.os.write", side_effect=fake_write):
+            with mock.patch("server.ipc_transport.os.write", side_effect=fake_write):
                 _write_all(fd, data)
 
             # 确实被短写了多次
@@ -224,7 +224,7 @@ class TestWriteAll:
                 call_count["n"] += 1
                 return original_write(fd_arg, buf)
 
-            with mock.patch("callwarden.server.ipc_transport.os.write", side_effect=fake_write):
+            with mock.patch("server.ipc_transport.os.write", side_effect=fake_write):
                 _write_all(fd, data)
 
             assert call_count["n"] == 1
@@ -238,7 +238,7 @@ class TestWriteAll:
         """os.write 返回 0 时抛 OSError"""
         fd = os.open(str(tmp_path / "test_write_all_zero.bin"), _WRITE_FLAGS)
         try:
-            with mock.patch("callwarden.server.ipc_transport.os.write", return_value=0):
+            with mock.patch("server.ipc_transport.os.write", return_value=0):
                 with pytest.raises(OSError, match="memfd write returned 0"):
                     _write_all(fd, b"hello")
         finally:
@@ -372,7 +372,7 @@ class TestSendMsg:
         canonical_bytes = b"x" * (MAX_MSG_BYTES + 1)
 
         with mock.patch(
-            "callwarden.server.ipc_transport.send_via_memfd"
+            "server.ipc_transport.send_via_memfd"
         ) as mock_send:
             send_msg(sock, msg_type=1, payload=payload, canonical_bytes=canonical_bytes)
             mock_send.assert_called_once()
@@ -406,14 +406,14 @@ def _build_recv_via_memfd_patches(
     - os 模块全局函数：os.fstat / os.lseek / os.close
     """
     return [
-        mock.patch("callwarden.server.ipc_transport._recv_msg_with_fd",
+        mock.patch("server.ipc_transport._recv_msg_with_fd",
                    return_value=(fd, {"path": "test"})),
         mock.patch("os.fstat", return_value=FakeStat(file_size)),
-        mock.patch("callwarden.server.ipc_transport._sha256_streaming",
+        mock.patch("server.ipc_transport._sha256_streaming",
                    return_value=sha256_return),
-        mock.patch("callwarden.server.ipc_transport._linux_get_seals",
+        mock.patch("server.ipc_transport._linux_get_seals",
                    return_value=seals_return),
-        mock.patch("callwarden.server.ipc_transport._IS_LINUX", is_linux),
+        mock.patch("server.ipc_transport._IS_LINUX", is_linux),
         mock.patch("os.lseek"),
         mock.patch("os.close"),
     ]
@@ -595,7 +595,7 @@ class TestWindowsFallback:
 
         # 强制 _IS_LINUX=False，模拟 Windows
         with mock.patch(
-            "callwarden.server.ipc_transport._IS_LINUX", False
+            "server.ipc_transport._IS_LINUX", False
         ):
             # 不应抛异常，应降级为 _send_framed_unlimited
             send_via_memfd(sock, msg_type=1, payload=payload, canonical_bytes=canonical_bytes)
@@ -613,9 +613,9 @@ class TestWindowsFallback:
         canonical_bytes = b"x" * (MAX_MSG_BYTES + 100)
 
         with mock.patch(
-            "callwarden.server.ipc_transport._IS_LINUX", False
+            "server.ipc_transport._IS_LINUX", False
         ), mock.patch(
-            "callwarden.server.ipc_transport._send_framed_unlimited",
+            "server.ipc_transport._send_framed_unlimited",
             wraps=lambda *a, **kw: None,
         ) as mock_unlimited:
             send_via_memfd(sock, msg_type=1, payload=payload, canonical_bytes=canonical_bytes)
@@ -629,12 +629,12 @@ class TestWindowsFallback:
 
         # _IS_LINUX=True 但 memfd_create 失败
         with mock.patch(
-            "callwarden.server.ipc_transport._IS_LINUX", True
+            "server.ipc_transport._IS_LINUX", True
         ), mock.patch(
-            "callwarden.server.ipc_transport._linux_memfd_create",
+            "server.ipc_transport._linux_memfd_create",
             side_effect=OSError("memfd_create not available"),
         ), mock.patch(
-            "callwarden.server.ipc_transport._send_framed_unlimited",
+            "server.ipc_transport._send_framed_unlimited",
             wraps=lambda *a, **kw: None,
         ) as mock_unlimited:
             send_via_memfd(sock, msg_type=1, payload=payload, canonical_bytes=canonical_bytes)

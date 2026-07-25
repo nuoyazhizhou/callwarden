@@ -27,7 +27,7 @@ import pytest
 def _redirect_daemon_data_root(tmp_path, monkeypatch):
     """CI 无 root 权限，重定向 /var/lib/callwarden 到临时目录"""
     monkeypatch.setattr(
-        "callwarden.server.daemon_server.DAEMON_REGISTRY_DB",
+        "server.daemon_server.DAEMON_REGISTRY_DB",
         str(tmp_path / "registry.db"),
     )
 
@@ -41,12 +41,12 @@ class TestG13MeasureRpcDefinition:
 
     def test_measure_rpc_importable_from_metrics(self):
         """measure_rpc 可以从 callwarden.server.metrics 导入"""
-        from callwarden.server.metrics import measure_rpc
+        from server.metrics import measure_rpc
         assert measure_rpc is not None
 
     def test_measure_rpc_is_context_manager(self):
         """measure_rpc 是 contextmanager（可 with 调用）"""
-        from callwarden.server.metrics import measure_rpc
+        from server.metrics import measure_rpc
         import contextlib
         # contextmanager 装饰器返回的是 _GeneratorContextManager
         # 验证 measure_rpc(method) 可以作为 with 语句的目标
@@ -55,20 +55,20 @@ class TestG13MeasureRpcDefinition:
 
     def test_measure_rpc_no_daemon_rpc_error_marker_class(self):
         """G13 清理后不应存在 DaemonRpcErrorMarker 内部类"""
-        from callwarden.server import metrics as metrics_mod
+        from server import metrics as metrics_mod
         # 清理后不应有 DaemonRpcErrorMarker
         assert not hasattr(metrics_mod, "DaemonRpcErrorMarker"), \
             "DaemonRpcErrorMarker 应在 G13 清理中删除"
 
     def test_measure_rpc_no_real_measure_rpc_impl(self):
         """G13 清理后不应存在 _real_measure_rpc_impl 未使用函数"""
-        from callwarden.server import metrics as metrics_mod
+        from server import metrics as metrics_mod
         assert not hasattr(metrics_mod, "_real_measure_rpc_impl"), \
             "_real_measure_rpc_impl 应在 G13 清理中删除"
 
     def test_measure_rpc_no_measure_rpc_v2(self):
         """G13 清理后不应存在 measure_rpc_v2 中间版本"""
-        from callwarden.server import metrics as metrics_mod
+        from server import metrics as metrics_mod
         assert not hasattr(metrics_mod, "measure_rpc_v2"), \
             "measure_rpc_v2 应在 G13 清理中删除"
 
@@ -93,12 +93,12 @@ class TestG13MeasureRpcBehavior:
 
     def setup_method(self):
         """每个测试前重置全局 collector"""
-        from callwarden.server.metrics import reset_metrics_collector
+        from server.metrics import reset_metrics_collector
         reset_metrics_collector()
 
     def test_measure_rpc_records_success(self):
         """成功路径：requests_total{status=ok} +1，duration 记录"""
-        from callwarden.server.metrics import measure_rpc, get_metrics_collector
+        from server.metrics import measure_rpc, get_metrics_collector
         collector = get_metrics_collector()
         with measure_rpc("test.success"):
             pass
@@ -110,7 +110,7 @@ class TestG13MeasureRpcBehavior:
 
     def test_measure_rpc_records_duration(self):
         """成功路径：request_duration_seconds histogram 记录一次观测"""
-        from callwarden.server.metrics import measure_rpc, get_metrics_collector
+        from server.metrics import measure_rpc, get_metrics_collector
         collector = get_metrics_collector()
         with measure_rpc("test.duration"):
             time.sleep(0.001)  # 1ms
@@ -121,7 +121,7 @@ class TestG13MeasureRpcBehavior:
 
     def test_measure_rpc_active_connections_gauge(self):
         """执行期间 active_connections +1，结束 -1"""
-        from callwarden.server.metrics import measure_rpc, get_metrics_collector
+        from server.metrics import measure_rpc, get_metrics_collector
         collector = get_metrics_collector()
         # 执行前为 0
         assert collector._gauges["active_connections"].get() == 0.0
@@ -133,7 +133,7 @@ class TestG13MeasureRpcBehavior:
 
     def test_measure_rpc_records_error_on_exception(self):
         """异常路径：requests_total{status=error} +1，errors_total{type=internal} +1"""
-        from callwarden.server.metrics import measure_rpc, get_metrics_collector
+        from server.metrics import measure_rpc, get_metrics_collector
         collector = get_metrics_collector()
         with pytest.raises(ValueError):
             with measure_rpc("test.internal_error"):
@@ -149,7 +149,7 @@ class TestG13MeasureRpcBehavior:
 
     def test_measure_rpc_identifies_daemon_rpc_error(self):
         """DaemonRpcError 异常被识别为 errors_total{type=rpc_error}"""
-        from callwarden.server.metrics import measure_rpc, get_metrics_collector
+        from server.metrics import measure_rpc, get_metrics_collector
         collector = get_metrics_collector()
 
         # 定义与 daemon_server 中同名的异常类
@@ -170,7 +170,7 @@ class TestG13RequestDurationHistogramRegistered:
 
     def test_request_duration_seconds_registered_by_default(self):
         """MetricsCollector 初始化时注册 request_duration_seconds 直方图"""
-        from callwarden.server.metrics import MetricsCollector
+        from server.metrics import MetricsCollector
         collector = MetricsCollector()
         assert "request_duration_seconds" in collector._histograms, \
             "request_duration_seconds 应作为内置直方图注册"
@@ -180,7 +180,7 @@ class TestG13RequestDurationHistogramRegistered:
 
     def test_request_duration_seconds_in_builtin_metrics_doc(self):
         """内置指标应包含 request_duration_seconds（通过 list_metrics 验证）"""
-        from callwarden.server.metrics import MetricsCollector
+        from server.metrics import MetricsCollector
         collector = MetricsCollector()
         listed = collector.list_metrics()
         assert "request_duration_seconds" in listed["histograms"], \
@@ -197,8 +197,8 @@ class TestG13DaemonServerRpcMethods:
 
     def test_metrics_snapshot_rpc_returns_dict(self):
         """metrics.snapshot RPC 返回 JSON dict"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
+        from server.daemon_server import EnterpriseDaemonService
+        from server.metrics import reset_metrics_collector
         reset_metrics_collector()
         svc = EnterpriseDaemonService()
         peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
@@ -210,8 +210,8 @@ class TestG13DaemonServerRpcMethods:
 
     def test_metrics_prometheus_rpc_returns_str(self):
         """metrics.prometheus RPC 返回 Prometheus 文本格式字符串"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
+        from server.daemon_server import EnterpriseDaemonService
+        from server.metrics import reset_metrics_collector
         reset_metrics_collector()
         svc = EnterpriseDaemonService()
         peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
@@ -224,8 +224,8 @@ class TestG13DaemonServerRpcMethods:
 
     def test_metrics_snapshot_rpc_collects_runtime_metrics(self):
         """metrics.snapshot 调用 collect_runtime_metrics 后返回最新运行时指标"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
+        from server.daemon_server import EnterpriseDaemonService
+        from server.metrics import reset_metrics_collector
         reset_metrics_collector()
         svc = EnterpriseDaemonService()
         peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
@@ -238,8 +238,8 @@ class TestG13DaemonServerRpcMethods:
 
     def test_metrics_prometheus_includes_request_duration_histogram(self):
         """metrics.prometheus 输出应包含 request_duration_seconds 直方图"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.metrics import reset_metrics_collector
+        from server.daemon_server import EnterpriseDaemonService
+        from server.metrics import reset_metrics_collector
         reset_metrics_collector()
         svc = EnterpriseDaemonService()
         peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
@@ -249,7 +249,7 @@ class TestG13DaemonServerRpcMethods:
 
     def test_metrics_rpc_methods_do_not_require_workspace_id(self):
         """metrics.snapshot / metrics.prometheus 是全局方法，不需要 workspace_id"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from server.daemon_server import EnterpriseDaemonService
         svc = EnterpriseDaemonService()
         peer = {"pid": os.getpid(), "uid": 0, "gid": 0}
         # 直接调用应成功（不抛 workspace_not_found 等 workspace 相关错误）
@@ -269,7 +269,7 @@ class TestG13DaemonServerHandleConnectionInstrumentation:
     def test_handle_connection_source_has_measure_rpc(self):
         """_handle_connection 源代码应包含 measure_rpc 调用"""
         import inspect
-        from callwarden.server.daemon_server import EnterpriseDaemonServer
+        from server.daemon_server import EnterpriseDaemonServer
         src = inspect.getsource(EnterpriseDaemonServer._handle_connection)
         assert "measure_rpc" in src, \
             "_handle_connection 应使用 measure_rpc 埋点"
@@ -278,7 +278,7 @@ class TestG13DaemonServerHandleConnectionInstrumentation:
 
     def test_daemon_server_imports_measure_rpc(self):
         """daemon_server 模块应导入 measure_rpc"""
-        from callwarden.server import daemon_server
+        from server import daemon_server
         assert hasattr(daemon_server, "measure_rpc"), \
             "daemon_server 模块应导入 measure_rpc"
         assert hasattr(daemon_server, "get_metrics_collector"), \
@@ -287,7 +287,7 @@ class TestG13DaemonServerHandleConnectionInstrumentation:
     def test_dispatch_source_has_metrics_snapshot(self):
         """dispatch 源代码应包含 metrics.snapshot 分支"""
         import inspect
-        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from server.daemon_server import EnterpriseDaemonService
         src = inspect.getsource(EnterpriseDaemonService.dispatch)
         assert '"metrics.snapshot"' in src, \
             "dispatch 应处理 metrics.snapshot RPC 方法"
@@ -297,7 +297,7 @@ class TestG13DaemonServerHandleConnectionInstrumentation:
     def test_dispatch_source_has_g13_comment(self):
         """dispatch 源代码应包含 G13 注释"""
         import inspect
-        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from server.daemon_server import EnterpriseDaemonService
         src = inspect.getsource(EnterpriseDaemonService.dispatch)
         assert "G13" in src, "dispatch 应包含 G13 注释"
 
@@ -342,7 +342,7 @@ class TestG13CliMetricsCommand:
     def test_metrics_cmd_local_with_reset_returns_0(self, capsys):
         """--local --reset 应重置本进程指标并返回 0"""
         from callwarden.cli.daemon_commands import run_daemon_command
-        from callwarden.server.metrics import get_metrics_collector
+        from server.metrics import get_metrics_collector
         # 先记录一些指标
         collector = get_metrics_collector()
         collector.increment("requests_total", labels={
@@ -402,7 +402,7 @@ class TestG13McpGetMetricsSource:
     def test_get_metrics_signature_has_source(self):
         """get_metrics 函数签名应包含 source 参数"""
         import inspect
-        from callwarden.server.mcp_server import create_mcp_server
+        from server.mcp_server import create_mcp_server
         mcp = create_mcp_server()
         # 通过 mcp._tool_manager 查找 get_metrics 工具
         # 不同版本的 fastmcp API 不同，这里用工具名匹配
@@ -421,7 +421,7 @@ class TestG13McpGetMetricsSource:
         """source=local 应返回本进程指标（不尝试 RPC）"""
         # 直接调用 get_metrics 函数（绕过 MCP 协议层）
         # 由于 get_metrics 是闭包在 create_mcp_server 内部，我们用脚本模拟
-        from callwarden.server.metrics import reset_metrics_collector, get_metrics_collector
+        from server.metrics import reset_metrics_collector, get_metrics_collector
         reset_metrics_collector()
         collector = get_metrics_collector()
         collector.increment("requests_total", labels={
@@ -595,9 +595,9 @@ class TestG13EndToEndInstrumentation:
     )
     def test_handle_connection_records_rpc_metric(self, tmp_path):
         """端到端：通过 _handle_connection 触发 ping RPC，验证 requests_total 埋点"""
-        from callwarden.server.daemon_server import EnterpriseDaemonServer, EnterpriseDaemonService
-        from callwarden.server.daemon_protocol import send_message, recv_message
-        from callwarden.server.metrics import reset_metrics_collector, get_metrics_collector
+        from server.daemon_server import EnterpriseDaemonServer, EnterpriseDaemonService
+        from server.daemon_protocol import send_message, recv_message
+        from server.metrics import reset_metrics_collector, get_metrics_collector
         reset_metrics_collector()
         # 构造 service 和 server（不启动 serve_forever）
         socket_path = str(tmp_path / "test.sock")

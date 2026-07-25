@@ -38,7 +38,7 @@ from callwarden.db.db_cas import (
 )
 from callwarden.db.db_daemon import init_daemon_schema, register_workspace
 from callwarden.db.db_workspace_manifest import init_manifest_schema
-from callwarden.server.replicator import init_session_schema, daemon_handle_refresh
+from server.replicator import init_session_schema, daemon_handle_refresh
 
 
 # ============================================
@@ -386,7 +386,7 @@ class TestStep3DaemonHandleRefreshIntegration:
         canonical_bytes = b"# test file\ndef processed_fn():\n    pass\n"
 
         # 需要 mock parse_canonical_bytes_py 以返回预定 cas_key 对应的解析结果
-        import callwarden.server.replicator as repl_mod
+        import server.replicator as repl_mod
         original_parse = None
         try:
             from callwarden_core import parse_canonical_bytes_py as _orig_parse
@@ -717,8 +717,8 @@ class TestStep4FullE2E:
         Windows 环境下 _validate_owned_path 的 owner_uid 校验被跳过（无 os.getuid），
         本测试主要验证 P0-1 数据链闭合，不依赖 Unix peer credentials。
         """
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_server import EnterpriseDaemonService
+        from server.snapshot_manager import SnapshotManagerService
         from unittest.mock import MagicMock
         import hashlib
 

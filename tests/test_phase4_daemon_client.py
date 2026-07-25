@@ -58,7 +58,7 @@ def _make_test_db(db_path):
 
 class TestDaemonClientSingleton:
     def test_singleton(self):
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         c1 = DaemonClient.get_instance()
         c2 = DaemonClient.get_instance()
@@ -66,7 +66,7 @@ class TestDaemonClientSingleton:
         DaemonClient.reset_instance()
 
     def test_configure_workspace(self):
-        from callwarden.server.daemon_client import DaemonClient, derive_workspace_instance_id
+        from server.daemon_client import DaemonClient, derive_workspace_instance_id
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         client.configure_workspace("/some/project/root")
@@ -80,26 +80,26 @@ class TestDaemonClientSingleton:
 
 class TestDeriveWorkspaceId:
     def test_same_path_same_id(self):
-        from callwarden.server.daemon_client import derive_workspace_instance_id
+        from server.daemon_client import derive_workspace_instance_id
         id1 = derive_workspace_instance_id("/path/to/project")
         id2 = derive_workspace_instance_id("/path/to/project")
         assert id1 == id2
 
     def test_different_path_different_id(self):
-        from callwarden.server.daemon_client import derive_workspace_instance_id
+        from server.daemon_client import derive_workspace_instance_id
         id1 = derive_workspace_instance_id("/path/to/projectA")
         id2 = derive_workspace_instance_id("/path/to/projectB")
         assert id1 != id2
 
     def test_id_is_16_chars(self):
-        from callwarden.server.daemon_client import derive_workspace_instance_id
+        from server.daemon_client import derive_workspace_instance_id
         wid = derive_workspace_instance_id("/test")
         assert len(wid) == 16
 
 
 class TestRoutingStats:
     def test_initial_stats_zero(self):
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         stats = client.get_routing_stats()
@@ -110,7 +110,7 @@ class TestRoutingStats:
 
     def test_stats_after_sql_fallback(self):
         """无 db_path 时走 SQL 回退，sql_fallbacks 增加。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         # 不提供 db_path，应该走 SQL 回退
@@ -127,8 +127,8 @@ class TestDaemonRoutingWithRust:
     """Rust 后端可用时的 daemon 路由测试。"""
 
     def test_get_stats_via_daemon(self, tmp_path):
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         DaemonClient.reset_instance()
 
@@ -151,8 +151,8 @@ class TestDaemonRoutingWithRust:
         DaemonClient.reset_instance()
 
     def test_search_symbols_via_daemon(self, tmp_path):
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         DaemonClient.reset_instance()
 
@@ -172,8 +172,8 @@ class TestDaemonRoutingWithRust:
         DaemonClient.reset_instance()
 
     def test_get_callers_via_daemon(self, tmp_path):
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         DaemonClient.reset_instance()
 
@@ -194,8 +194,8 @@ class TestDaemonRoutingWithRust:
         DaemonClient.reset_instance()
 
     def test_get_symbol_via_daemon(self, tmp_path):
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         DaemonClient.reset_instance()
 
@@ -213,8 +213,8 @@ class TestDaemonRoutingWithRust:
         DaemonClient.reset_instance()
 
     def test_detect_cycles_via_daemon(self, tmp_path):
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         DaemonClient.reset_instance()
 
@@ -231,8 +231,8 @@ class TestDaemonRoutingWithRust:
         DaemonClient.reset_instance()
 
     def test_get_topological_order_via_daemon(self, tmp_path):
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         DaemonClient.reset_instance()
 
@@ -254,7 +254,7 @@ class TestSQLFallback:
     """daemon 不可用时走 SQL 回退。"""
 
     def test_sql_fallback_when_no_db_path(self):
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
@@ -267,7 +267,7 @@ class TestSQLFallback:
         DaemonClient.reset_instance()
 
     def test_sql_fallback_get_callers(self):
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
@@ -279,7 +279,7 @@ class TestSQLFallback:
         DaemonClient.reset_instance()
 
     def test_sql_fallback_search_symbols(self):
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
@@ -292,14 +292,14 @@ class TestSQLFallback:
 
 class TestDaemonReady:
     def test_daemon_not_ready_without_workspace(self):
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         assert client.is_daemon_ready() is False
         DaemonClient.reset_instance()
 
     def test_daemon_not_ready_with_nonexistent_db(self):
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
         client._workspace_instance_id = "nonexistent_ws"
@@ -311,7 +311,7 @@ class TestDaemonReady:
 class TestRoutingStatsSummary:
     def test_routing_stats_after_mixed_queries(self, tmp_path):
         """混合查询后统计正确。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
@@ -342,7 +342,7 @@ class TestQueryNumericParamsPropagation:
 
     def test_search_symbols_limit_passed_as_int(self, tmp_path):
         """search_symbols(limit=50) → RPC params["limit"] 是 int 50。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
@@ -368,7 +368,7 @@ class TestQueryNumericParamsPropagation:
 
     def test_get_topological_order_limit_passed_as_int(self, tmp_path):
         """get_topological_order(limit=10) → RPC params["limit"] 是 int 10。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
@@ -390,7 +390,7 @@ class TestQueryNumericParamsPropagation:
 
     def test_get_call_chain_down_max_depth_passed_as_int(self, tmp_path):
         """get_call_chain_down(max_depth=8) → RPC params["max_depth"] 是 int 8。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
@@ -415,7 +415,7 @@ class TestQueryNumericParamsPropagation:
 
     def test_detect_cycles_max_depth_passed_as_int(self, tmp_path):
         """detect_cycles(max_depth=15) → RPC params["max_depth"] 是 int 15。"""
-        from callwarden.server.daemon_client import DaemonClient
+        from server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 

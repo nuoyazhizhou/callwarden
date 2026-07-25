@@ -24,7 +24,7 @@ from callwarden.db.db_jobs import (
     JOB_CANCELLED,
     JOB_FAILED,
 )
-from callwarden.server.job_executor import (
+from server.job_executor import (
     JobExecutor,
     JobContext,
     JobCancelled,

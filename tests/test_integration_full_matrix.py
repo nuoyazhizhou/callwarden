@@ -163,7 +163,7 @@ def _get_tool_param_hints(tool_name: str) -> str:
 @pytest.fixture(scope="module")
 def mcp_server():
     """创建一次 MCP 服务器实例，模块内所有测试复用"""
-    from callwarden.server.mcp_server import create_mcp_server
+    from server.mcp_server import create_mcp_server
     server = create_mcp_server()
     return server
 

@@ -285,8 +285,8 @@ class TestDaemonClientCompareSnapshots:
     def test_daemon_client_compare_snapshots(self, two_version_dbs):
         """DaemonClient.compare_snapshots 应返回包含 changes 的 dict。"""
         from callwarden_core import PySnapshotCache
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
 
         v1, v2 = two_version_dbs
         SnapshotManagerService.reset_instance()
@@ -308,8 +308,8 @@ class TestDaemonClientCompareSnapshots:
     def test_daemon_client_count_symbols_in_scope(self, two_version_dbs):
         """DaemonClient.count_symbols_in_scope 应返回符号数量。"""
         from callwarden_core import PySnapshotCache
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
 
         v1, v2 = two_version_dbs
         SnapshotManagerService.reset_instance()
@@ -327,8 +327,8 @@ class TestDaemonClientCompareSnapshots:
     def test_daemon_client_count_file_scope(self, two_version_dbs):
         """DaemonClient.count_symbols_in_scope 文件级 scope。"""
         from callwarden_core import PySnapshotCache
-        from callwarden.server.daemon_client import DaemonClient
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_client import DaemonClient
+        from server.snapshot_manager import SnapshotManagerService
 
         v1, v2 = two_version_dbs
         SnapshotManagerService.reset_instance()
@@ -352,8 +352,8 @@ class TestSnapshotDiffHandler:
     def test_handler_returns_stats(self, two_version_dbs):
         """snapshot_diff_handler 应返回按 change_kind 分类的统计。"""
         from callwarden_core import PySnapshotCache
-        from callwarden.server.snapshot_manager import SnapshotManagerService
-        from callwarden.server.job_handlers import snapshot_diff_handler
+        from server.snapshot_manager import SnapshotManagerService
+        from server.job_handlers import snapshot_diff_handler
 
         v1, v2 = two_version_dbs
         SnapshotManagerService.reset_instance()
@@ -391,8 +391,8 @@ class TestSnapshotDiffHandler:
     def test_handler_file_scope(self, two_version_dbs):
         """snapshot_diff_handler 文件级 scope。"""
         from callwarden_core import PySnapshotCache
-        from callwarden.server.snapshot_manager import SnapshotManagerService
-        from callwarden.server.job_handlers import snapshot_diff_handler
+        from server.snapshot_manager import SnapshotManagerService
+        from server.job_handlers import snapshot_diff_handler
 
         v1, v2 = two_version_dbs
         SnapshotManagerService.reset_instance()
@@ -419,8 +419,8 @@ class TestSnapshotDiffHandler:
     def test_handler_unchanged(self, tmp_path):
         """snapshot_diff_handler 对完全相同的 snapshot 应返回 0 changes。"""
         from callwarden_core import PySnapshotCache
-        from callwarden.server.snapshot_manager import SnapshotManagerService
-        from callwarden.server.job_handlers import snapshot_diff_handler
+        from server.snapshot_manager import SnapshotManagerService
+        from server.job_handlers import snapshot_diff_handler
 
         v1 = tmp_path / "v1.db"
         v1b = tmp_path / "v1b.db"
@@ -448,7 +448,7 @@ class TestSnapshotDiffHandler:
 
     def test_handler_rust_unavailable(self):
         """Rust 不可用时 handler 应返回 error。"""
-        from callwarden.server.job_handlers import snapshot_diff_handler
+        from server.job_handlers import snapshot_diff_handler
 
         ctx = MagicMock()
         ctx.params = {
@@ -459,7 +459,7 @@ class TestSnapshotDiffHandler:
         }
         ctx.update_progress = MagicMock()
 
-        with patch("callwarden.server.snapshot_manager.get_snapshot_service") as mock_svc:
+        with patch("server.snapshot_manager.get_snapshot_service") as mock_svc:
             mock_svc_obj = MagicMock()
             mock_svc_obj.rust_available = False
             mock_svc.return_value = mock_svc_obj

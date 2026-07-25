@@ -14,13 +14,13 @@ import time
 import sqlite3
 import pytest
 
-from callwarden.server.snapshot_gc import (
+from server.snapshot_gc import (
     SnapshotGC,
     GCPolicy,
     GarbageItem,
     GCStats,
 )
-from callwarden.server.daemon_config import DaemonConfig
+from server.daemon_config import DaemonConfig
 
 
 # ======================================================================

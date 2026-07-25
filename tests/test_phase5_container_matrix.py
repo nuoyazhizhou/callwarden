@@ -52,7 +52,7 @@ class TestLegacyContainerStrategy:
 
     def test_client_view_root_is_display_only(self, tmp_path):
         """client_view_root 仅作为展示信息，内容身份来自 blob/FD。"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from server.daemon_server import EnterpriseDaemonService
 
         registry_db = str(tmp_path / "registry.db")
         service = EnterpriseDaemonService(registry_db=registry_db)
@@ -106,7 +106,7 @@ class TestCrossMountNamespace:
         if not hasattr(socket, "SO_PEERCRED"):
             pytest.skip("当前平台不支持 SO_PEERCRED")
         # 验证 daemon_server 的 get_peer_credentials 返回内核 UID
-        from callwarden.server.daemon_server import get_peer_credentials
+        from server.daemon_server import get_peer_credentials
         # 在非连接环境下返回 fallback
         creds = get_peer_credentials(None)
         assert "uid" in creds
@@ -171,7 +171,7 @@ class TestVSCodeRemoteFixture:
 
     def test_workspace_switch_without_restart(self, tmp_path):
         """workspace 切换后无需重启 MCP 即可看到新 snapshot。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
+        from server.replicator import daemon_handle_connect, daemon_handle_refresh, init_session_schema
 
         ws_db_path = str(tmp_path / "vscode_ws.db")
         ws_conn = sqlite3.connect(ws_db_path)
@@ -231,7 +231,7 @@ class TestDisconnectReconnect:
 
     def test_reconnect_gets_new_epoch(self, tmp_path):
         """断线重连后获得新 epoch，旧 session 失效。"""
-        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError, init_session_schema
+        from server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError, init_session_schema
 
         ws_db_path = str(tmp_path / "reconnect.db")
         ws_conn = sqlite3.connect(ws_db_path)

@@ -176,7 +176,7 @@ def test_mcp_total_tools():
     """验证 MCP 工具总数"""
     print("--- MCP 工具总数验证 ---")
     import asyncio
-    from callwarden.server.mcp_server import create_mcp_server
+    from server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = asyncio.run(mcp.list_tools())

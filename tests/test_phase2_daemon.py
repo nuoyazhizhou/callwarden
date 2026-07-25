@@ -248,8 +248,8 @@ class TestMountMappingRpcDispatch:
     @pytest.fixture
     def daemon_service(self, tmp_path):
         """构造一个 EnterpriseDaemonService 实例（不启动 UDS server）。"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_server import EnterpriseDaemonService
+        from server.snapshot_manager import SnapshotManagerService
         snapshot_service = SnapshotManagerService(max_workspaces=8)
         return EnterpriseDaemonService(
             registry_db=str(tmp_path / "registry.db"),
@@ -292,7 +292,7 @@ class TestMountMappingRpcDispatch:
 
     def test_mount_register_rejects_missing_container_id(self, daemon_service):
         """缺少 container_id 时返回 invalid_params。"""
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="container_id"):
             daemon_service.dispatch(
                 self._peer(),
@@ -302,7 +302,7 @@ class TestMountMappingRpcDispatch:
 
     def test_mount_register_rejects_invalid_mapping_type(self, daemon_service):
         """非法 mapping_type 返回 invalid_params。"""
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError) as exc_info:
             daemon_service.dispatch(
                 self._peer(),
@@ -382,7 +382,7 @@ class TestMountMappingRpcDispatch:
 
     def test_mount_delete_rejects_missing_container_id(self, daemon_service):
         """缺少 container_id 时返回 invalid_params。"""
-        from callwarden.server.daemon_server import DaemonRpcError
+        from server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="container_id"):
             daemon_service.dispatch(
                 self._peer(),
@@ -456,8 +456,8 @@ class TestG1ThreeLayerStorageE2E:
     @pytest.fixture
     def daemon_service(self, tmp_path):
         """构造 EnterpriseDaemonService（使用 tmp_path 隔离 data_root）。"""
-        from callwarden.server.daemon_server import EnterpriseDaemonService
-        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from server.daemon_server import EnterpriseDaemonService
+        from server.snapshot_manager import SnapshotManagerService
         snapshot_service = SnapshotManagerService(max_workspaces=4)
         return EnterpriseDaemonService(
             registry_db=str(tmp_path / "registry.db"),

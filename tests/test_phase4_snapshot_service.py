@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from callwarden.server.snapshot_manager import (
+from server.snapshot_manager import (
     SnapshotManagerService,
     get_snapshot_service,
     publish_workspace_snapshot,

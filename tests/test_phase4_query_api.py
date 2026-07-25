@@ -14,7 +14,7 @@
 import sqlite3
 import pytest
 
-from callwarden.server.snapshot_manager import SnapshotManagerService
+from server.snapshot_manager import SnapshotManagerService
 
 callwarden_core = pytest.importorskip("callwarden_core")
 

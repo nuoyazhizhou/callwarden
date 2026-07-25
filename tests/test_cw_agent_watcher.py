@@ -31,8 +31,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "rust_ext" / "target" / "pyinstall"))
 
-from callwarden.server.agent_session import AgentSession
-from callwarden.server.agent_watcher import (
+from server.agent_session import AgentSession
+from server.agent_watcher import (
     AgentWatcher,
     _AgentChangeHandler,
     run_agent_watcher_loop,
@@ -242,7 +242,7 @@ class TestAgentWatcherHandleFileChange:
         test_file = tmp_path / "fail.py"
         test_file.write_text("content\n", encoding="utf-8")
 
-        from callwarden.server.agent_protocol import AgentProtocolError
+        from server.agent_protocol import AgentProtocolError
         with pytest.raises(AgentProtocolError, match="refresh_failed"):
             watcher.handle_file_change(str(test_file))
 
@@ -430,7 +430,7 @@ class TestAgentWatcherStartStop:
     def test_start_initializes_observer(self, tmp_path):
         """start 创建并启动 Observer。"""
         watcher, _, _ = _make_watcher(tmp_path)
-        with patch("callwarden.server.agent_watcher.Observer") as MockObserver:
+        with patch("server.agent_watcher.Observer") as MockObserver:
             mock_observer = MagicMock()
             MockObserver.return_value = mock_observer
 
@@ -443,7 +443,7 @@ class TestAgentWatcherStartStop:
     def test_start_idempotent(self, tmp_path):
         """重复 start 返回 True 不重启 Observer。"""
         watcher, _, _ = _make_watcher(tmp_path)
-        with patch("callwarden.server.agent_watcher.Observer") as MockObserver:
+        with patch("server.agent_watcher.Observer") as MockObserver:
             mock_observer = MagicMock()
             MockObserver.return_value = mock_observer
 
@@ -464,7 +464,7 @@ class TestAgentWatcherStartStop:
     def test_stop_cleans_observer(self, tmp_path):
         """stop 停止并清理 Observer。"""
         watcher, _, _ = _make_watcher(tmp_path)
-        with patch("callwarden.server.agent_watcher.Observer") as MockObserver:
+        with patch("server.agent_watcher.Observer") as MockObserver:
             mock_observer = MagicMock()
             MockObserver.return_value = mock_observer
 
@@ -504,7 +504,7 @@ class TestRunAgentWatcherLoop:
 
         threading.Thread(target=setter, daemon=True).start()
 
-        with patch("callwarden.server.agent_watcher.Observer") as MockObserver:
+        with patch("server.agent_watcher.Observer") as MockObserver:
             mock_observer = MagicMock()
             MockObserver.return_value = mock_observer
 
@@ -524,7 +524,7 @@ class TestRunAgentWatcherLoop:
         rpc = _make_mock_daemon_rpc()
         stop_event = threading.Event()
 
-        with patch("callwarden.server.agent_watcher.HAS_WATCHDOG", False):
+        with patch("server.agent_watcher.HAS_WATCHDOG", False):
             result = run_agent_watcher_loop(
                 agent_session=session,
                 daemon_rpc_client=rpc,

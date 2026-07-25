@@ -419,7 +419,7 @@ def test_cli_bootstrap_dispatched():
 def test_mcp_bootstrap_status_registered():
     """MCP server 注册了 bootstrap_status 工具。"""
     import inspect
-    from callwarden.server import mcp_server
+    from server import mcp_server
 
     src = inspect.getsource(mcp_server.create_mcp_server)
     assert "def bootstrap_status(" in src, "MCP 源码缺少 bootstrap_status 工具定义"
@@ -453,7 +453,7 @@ def test_mcp_bootstrap_status_no_params():
 
 def test_mcp_bootstrap_status_in_tool_list():
     """create_mcp_server 返回的 server 工具列表包含 bootstrap_status。"""
-    from callwarden.server.mcp_server import create_mcp_server
+    from server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = [t.name for t in mcp._tool_manager.list_tools()]

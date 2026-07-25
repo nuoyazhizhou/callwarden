@@ -20,7 +20,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from callwarden.server.metrics import (
+from server.metrics import (
     get_metrics_collector,
     reset_metrics_collector,
 )
@@ -171,7 +171,7 @@ def test_get_metrics_mcp_tool_registered():
     assert match is not None, "get_metrics MCP 工具未在 mcp_server.py 中注册"
 
     # 验证 mcp_server 能正常 import 并创建
-    from callwarden.server.mcp_server import create_mcp_server
+    from server.mcp_server import create_mcp_server
     mcp = create_mcp_server()
     assert mcp is not None
 
@@ -191,7 +191,7 @@ def test_get_metrics_mcp_function_callable():
     """直接验证 get_metrics 函数体内的逻辑可执行。
 
     不通过 fastmcp 协议层，而是验证关键代码路径：
-    1. from callwarden.server.metrics import get_metrics_collector 可用
+    1. from server.metrics import get_metrics_collector 可用
     2. collector.to_prometheus() / to_json() 可调用
     3. reset 路径可执行
     """

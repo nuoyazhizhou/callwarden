@@ -28,7 +28,7 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.cli import main as cli_main
-from callwarden.i18n import set_language, t
+from i18n import set_language, t
 from callwarden.db import CodeGraphDB
 
 set_language("zh_CN")
@@ -329,21 +329,21 @@ class TestI18nCompleteness:
 
     def test_subcommand_desc_keys_exist_zh(self):
         """zh_CN 应包含所有 subcommand desc key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         zh = _load_lang("zh_CN")
         for key in self.REQUIRED_KEYS:
             assert key in zh, f"zh_CN 缺失 key: {key}"
 
     def test_subcommand_desc_keys_exist_en(self):
         """en_US 应包含所有 subcommand desc key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         en = _load_lang("en_US")
         for key in self.REQUIRED_KEYS:
             assert key in en, f"en_US 缺失 key: {key}"
 
     def test_message_keys_exist_zh(self):
         """zh_CN 应包含所有 messages key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         zh = _load_lang("zh_CN")
         cli_msgs = zh.get("cli", {}).get("messages", {})
         for key in self.REQUIRED_MSG_KEYS:
@@ -351,7 +351,7 @@ class TestI18nCompleteness:
 
     def test_message_keys_exist_en(self):
         """en_US 应包含所有 messages key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         en = _load_lang("en_US")
         cli_msgs = en.get("cli", {}).get("messages", {})
         for key in self.REQUIRED_MSG_KEYS:
@@ -359,7 +359,7 @@ class TestI18nCompleteness:
 
     def test_help_keys_exist_zh(self):
         """zh_CN 应包含所有 help 模板 key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         zh = _load_lang("zh_CN")
         cli_msgs = zh.get("cli", {}).get("messages", {})
         for key in self.REQUIRED_HELP_KEYS:
@@ -367,7 +367,7 @@ class TestI18nCompleteness:
 
     def test_help_keys_exist_en(self):
         """en_US 应包含所有 help 模板 key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         en = _load_lang("en_US")
         cli_msgs = en.get("cli", {}).get("messages", {})
         for key in self.REQUIRED_HELP_KEYS:
@@ -375,7 +375,7 @@ class TestI18nCompleteness:
 
     def test_zh_en_keys_aligned(self):
         """zh_CN 和 en_US 的 key 集合应一致"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         zh = _load_lang("zh_CN")
         en = _load_lang("en_US")
 
@@ -443,7 +443,7 @@ class TestHelpTemplateConsistency:
 
     def test_help_template_msg_keys_resolve(self):
         """所有 help 模板引用的 msg_key 应可解析"""
-        from callwarden.i18n import set_language, t as _t
+        from i18n import set_language, t as _t
         set_language("en_US")
         try:
             for group_title, items in cli_main._MAIN_HELP_GROUPS:

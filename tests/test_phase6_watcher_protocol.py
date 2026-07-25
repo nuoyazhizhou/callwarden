@@ -21,13 +21,13 @@ class TestWatcherProtocol:
     """协议定义与 generation 比较测试。"""
 
     def test_event_kind_values(self):
-        from callwarden.server.watcher_protocol import EventKind
+        from server.watcher_protocol import EventKind
         assert EventKind.MODIFY.value == "modify"
         assert EventKind.DELETE.value == "delete"
         assert EventKind.RENAME.value == "rename"
 
     def test_watcher_event_serialization(self):
-        from callwarden.server.watcher_protocol import WatcherEvent, EventKind
+        from server.watcher_protocol import WatcherEvent, EventKind
         event = WatcherEvent(
             workspace_instance_id="ws_1",
             agent_session_id="sess_1",
@@ -51,7 +51,7 @@ class TestWatcherProtocol:
         assert event2.generation == (5, 10)
 
     def test_compare_generations(self):
-        from callwarden.server.watcher_protocol import compare_generations
+        from server.watcher_protocol import compare_generations
         assert compare_generations("1:5", "1:5") == 0
         assert compare_generations("1:5", "1:6") == -1
         assert compare_generations("2:1", "1:100") == 1
@@ -60,14 +60,14 @@ class TestWatcherProtocol:
         assert compare_generations("", "") == 0
 
     def test_is_stale_generation(self):
-        from callwarden.server.watcher_protocol import is_stale_generation
+        from server.watcher_protocol import is_stale_generation
         assert is_stale_generation("1:5", "1:6") is True
         assert is_stale_generation("1:5", "1:5") is True
         assert is_stale_generation("1:6", "1:5") is False
         assert is_stale_generation("2:1", "1:100") is False
 
     def test_stage_timestamps(self):
-        from callwarden.server.watcher_protocol import StageTimestamps
+        from server.watcher_protocol import StageTimestamps
         ts = StageTimestamps()
         ts.set_stage("0", 1000)
         ts.set_stage("1", 2000)
@@ -77,7 +77,7 @@ class TestWatcherProtocol:
         assert durations["T0→T1 coalesce"] == pytest.approx(0.001, abs=0.0001)
 
     def test_refresh_response_serialization(self):
-        from callwarden.server.watcher_protocol import RefreshResponse, CASResult
+        from server.watcher_protocol import RefreshResponse, CASResult
         resp = RefreshResponse(
             file_generation="3:7",
             snapshot_generation=42,
@@ -101,7 +101,7 @@ class TestEventCoalescing:
     """事件合并规则测试。"""
 
     def _make_event(self, kind, seq=1):
-        from callwarden.server.watcher_protocol import WatcherEvent, EventKind
+        from server.watcher_protocol import WatcherEvent, EventKind
         return WatcherEvent(
             workspace_instance_id="ws_1",
             agent_session_id="sess_1",
@@ -113,7 +113,7 @@ class TestEventCoalescing:
         )
 
     def test_modify_modify_coalesce(self):
-        from callwarden.server.watcher_protocol import coalesce_events, EventKind
+        from server.watcher_protocol import coalesce_events, EventKind
         e1 = self._make_event(EventKind.MODIFY, seq=1)
         e2 = self._make_event(EventKind.MODIFY, seq=2)
         merged = coalesce_events(e1, e2)
@@ -122,7 +122,7 @@ class TestEventCoalescing:
         assert merged.monotonic_seq == 2
 
     def test_create_modify_coalesce(self):
-        from callwarden.server.watcher_protocol import coalesce_events, EventKind
+        from server.watcher_protocol import coalesce_events, EventKind
         e1 = self._make_event(EventKind.CREATE, seq=1)
         e2 = self._make_event(EventKind.MODIFY, seq=2)
         merged = coalesce_events(e1, e2)
@@ -130,7 +130,7 @@ class TestEventCoalescing:
         assert merged.event_kind == EventKind.CREATE  # 合并为 create
 
     def test_delete_create_coalesce(self):
-        from callwarden.server.watcher_protocol import coalesce_events, EventKind
+        from server.watcher_protocol import coalesce_events, EventKind
         e1 = self._make_event(EventKind.DELETE, seq=1)
         e2 = self._make_event(EventKind.CREATE, seq=2)
         merged = coalesce_events(e1, e2)
@@ -138,7 +138,7 @@ class TestEventCoalescing:
         assert merged.event_kind == EventKind.MODIFY  # replace
 
     def test_modify_delete_coalesce(self):
-        from callwarden.server.watcher_protocol import coalesce_events, EventKind
+        from server.watcher_protocol import coalesce_events, EventKind
         e1 = self._make_event(EventKind.MODIFY, seq=1)
         e2 = self._make_event(EventKind.DELETE, seq=2)
         merged = coalesce_events(e1, e2)
@@ -146,7 +146,7 @@ class TestEventCoalescing:
         assert merged.event_kind == EventKind.DELETE
 
     def test_create_delete_cancel(self):
-        from callwarden.server.watcher_protocol import coalesce_events, EventKind
+        from server.watcher_protocol import coalesce_events, EventKind
         e1 = self._make_event(EventKind.CREATE, seq=1)
         e2 = self._make_event(EventKind.DELETE, seq=2)
         merged = coalesce_events(e1, e2)
@@ -162,7 +162,7 @@ class TestRefreshScheduler:
     """事件合并调度器测试。"""
 
     def _make_event(self, ws_id, path, kind_str="modify", seq=1):
-        from callwarden.server.watcher_protocol import WatcherEvent, EventKind
+        from server.watcher_protocol import WatcherEvent, EventKind
         return WatcherEvent(
             workspace_instance_id=ws_id,
             agent_session_id="sess_1",
@@ -174,7 +174,7 @@ class TestRefreshScheduler:
         )
 
     def test_submit_and_coalesce(self):
-        from callwarden.server.refresh_scheduler import RefreshScheduler, SchedulerConfig
+        from server.refresh_scheduler import RefreshScheduler, SchedulerConfig
 
         results = []
         def on_batch(ws_id, events, needs_reconcile):
@@ -201,7 +201,7 @@ class TestRefreshScheduler:
         scheduler.shutdown()
 
     def test_submit_different_paths(self):
-        from callwarden.server.refresh_scheduler import RefreshScheduler, SchedulerConfig
+        from server.refresh_scheduler import RefreshScheduler, SchedulerConfig
 
         results = []
         def on_batch(ws_id, events, needs_reconcile):
@@ -223,7 +223,7 @@ class TestRefreshScheduler:
         scheduler.shutdown()
 
     def test_queue_overflow(self):
-        from callwarden.server.refresh_scheduler import RefreshScheduler, SchedulerConfig
+        from server.refresh_scheduler import RefreshScheduler, SchedulerConfig
 
         config = SchedulerConfig(max_queue_entries=2, batch_quiet_window_ms=5000)
         scheduler = RefreshScheduler(config=config)
@@ -242,7 +242,7 @@ class TestRefreshScheduler:
         scheduler.shutdown()
 
     def test_create_delete_cancel(self):
-        from callwarden.server.refresh_scheduler import RefreshScheduler, SchedulerConfig
+        from server.refresh_scheduler import RefreshScheduler, SchedulerConfig
 
         results = []
         def on_batch(ws_id, events, needs_reconcile):
@@ -272,7 +272,7 @@ class TestDurableStagingLog:
     """SQLite WAL staging log 测试。"""
 
     def test_append_and_read(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
         log = DurableStagingLog(db_path)
@@ -290,7 +290,7 @@ class TestDurableStagingLog:
         log.close()
 
     def test_state_transitions(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
         log = DurableStagingLog(db_path)
@@ -311,7 +311,7 @@ class TestDurableStagingLog:
         log.close()
 
     def test_invalid_transition(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
         log = DurableStagingLog(db_path)
@@ -324,7 +324,7 @@ class TestDurableStagingLog:
         log.close()
 
     def test_transition_to_failed(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
         log = DurableStagingLog(db_path)
@@ -339,7 +339,7 @@ class TestDurableStagingLog:
         log.close()
 
     def test_compact_applied(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
         log = DurableStagingLog(db_path)
@@ -363,7 +363,7 @@ class TestDurableStagingLog:
         log.close()
 
     def test_recovery(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
 
@@ -386,7 +386,7 @@ class TestDurableStagingLog:
         log2.close()
 
     def test_stats(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
         log = DurableStagingLog(db_path)
@@ -404,7 +404,7 @@ class TestDurableStagingLog:
         log.close()
 
     def test_workspace_filter(self, tmp_path):
-        from callwarden.server.durable_staging import DurableStagingLog
+        from server.durable_staging import DurableStagingLog
 
         db_path = str(tmp_path / "staging.db")
         log = DurableStagingLog(db_path)

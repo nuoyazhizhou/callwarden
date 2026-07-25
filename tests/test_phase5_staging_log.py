@@ -15,7 +15,7 @@ import pytest
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from callwarden.server.staging_log import StagingLog, StagingEntry, create_staging_entry
+from server.staging_log import StagingLog, StagingEntry, create_staging_entry
 
 
 # ============================================

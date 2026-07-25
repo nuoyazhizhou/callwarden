@@ -19,8 +19,8 @@ import pytest
 
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.db_jobs import init_jobs_schema, get_job, JOB_COMPLETED
-from callwarden.server.job_executor import JobExecutor
-from callwarden.server.job_handlers import (
+from server.job_executor import JobExecutor
+from server.job_handlers import (
     semgrep_scan_handler,
     _SemgrepScanWrapper,
     register_default_handlers,

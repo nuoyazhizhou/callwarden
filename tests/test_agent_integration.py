@@ -11,7 +11,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from callwarden.db import CodeGraphDB
-from callwarden.server.mcp_server import create_mcp_server
+from server.mcp_server import create_mcp_server
 
 
 def test_propose_range_patch_updates_only_target_lines():
@@ -179,7 +179,7 @@ def test_task_quality_gate_mcp_tools_registered():
 def test_task_quality_findings_mcp_end_to_end():
     """task_quality_findings / task_resolve_quality_finding 端到端"""
     import asyncio
-    import callwarden.server.mcp_server as mcp_mod
+    import server.mcp_server as mcp_mod
 
     tmpdir = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
@@ -250,7 +250,7 @@ def test_task_quality_findings_mcp_end_to_end():
 def test_task_completion_review_mcp_end_to_end():
     """task_completion_review MCP 工具端到端（空数据库 pass）"""
     import asyncio
-    import callwarden.server.mcp_server as mcp_mod
+    import server.mcp_server as mcp_mod
 
     tmpdir = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)

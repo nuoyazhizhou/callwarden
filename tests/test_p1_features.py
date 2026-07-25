@@ -54,7 +54,7 @@ def test_mcp_5_new_tools():
     """MCP: 5 个新工具接线"""
     print("--- MCP: 5 个新工具接线 ---")
     import asyncio
-    from callwarden.server.mcp_server import create_mcp_server
+    from server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = asyncio.run(mcp.list_tools())

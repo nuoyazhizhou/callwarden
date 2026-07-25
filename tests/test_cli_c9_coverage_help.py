@@ -25,7 +25,7 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.cli import main as cli_main
-from callwarden.i18n import set_language
+from i18n import set_language
 from callwarden.db import CodeGraphDB
 
 set_language("zh_CN")
@@ -172,7 +172,7 @@ class TestI18nKeysRetained:
 
     def test_keys_retained_zh(self):
         """zh_CN 应保留 3 个 key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         zh = _load_lang("zh_CN")
         cli_msgs = zh.get("cli", {}).get("messages", {})
         for key in self.RETAINED_KEYS:
@@ -180,7 +180,7 @@ class TestI18nKeysRetained:
 
     def test_keys_retained_en(self):
         """en_US 应保留 3 个 key"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         en = _load_lang("en_US")
         cli_msgs = en.get("cli", {}).get("messages", {})
         for key in self.RETAINED_KEYS:
@@ -188,7 +188,7 @@ class TestI18nKeysRetained:
 
     def test_keys_have_nonempty_text_zh(self):
         """zh_CN 保留的 key 应有非空文本"""
-        from callwarden.i18n import _load_lang, t
+        from i18n import _load_lang, t
         zh = _load_lang("zh_CN")
         cli_msgs = zh.get("cli", {}).get("messages", {})
         for key in self.RETAINED_KEYS:
@@ -197,7 +197,7 @@ class TestI18nKeysRetained:
 
     def test_keys_have_nonempty_text_en(self):
         """en_US 保留的 key 应有非空文本"""
-        from callwarden.i18n import _load_lang
+        from i18n import _load_lang
         en = _load_lang("en_US")
         cli_msgs = en.get("cli", {}).get("messages", {})
         for key in self.RETAINED_KEYS:
@@ -242,7 +242,7 @@ class TestHelpTemplateConsistency:
 
     def test_help_template_msg_keys_resolve(self):
         """所有保留的 help 模板 msg_key 应可解析"""
-        from callwarden.i18n import set_language, t as _t
+        from i18n import set_language, t as _t
         set_language("en_US")
         try:
             for group_title, items in cli_main._MAIN_HELP_GROUPS:
