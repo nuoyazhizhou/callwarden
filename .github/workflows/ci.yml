@@ -46,10 +46,14 @@ jobs:
 
       - name: Debug package structure
         run: |
-          python -c "import callwarden; print('callwarden.__file__:', callwarden.__file__)"
-          python -c "import callwarden.i18n; print('callwarden.i18n.__file__:', callwarden.i18n.__file__)"
-          python -c "import callwarden.server; print('callwarden.server.__file__:', callwarden.server.__file__)"
-          python -c "from callwarden.i18n import t; print('t imported OK')"
+          python -c "import callwarden; import os; p=callwarden.__path__[0]; print('dir:', p); print('contents:', sorted(os.listdir(p)))"
+          python -c "import callwarden.i18n; print('i18n.__file__:', callwarden.i18n.__file__)"
+          python -c "from callwarden.i18n import t; print('t OK')"
+          python -c "import setuptools; print('setuptools:', setuptools.__version__)"
+
+      - name: Debug pytest single test no-xdist
+        run: |
+          pytest tests/test_i18n_print_cleanup.py -x -q -n 0 2>&1 | tail -20
 
       - name: Run tests
         run: |
