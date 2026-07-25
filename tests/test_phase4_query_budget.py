@@ -13,10 +13,10 @@ import time
 import sqlite3
 import pytest
 
-from server.query_budget import (
+from callwarden.server.query_budget import (
     QueryBudget, default_budget, deep_budget, shallow_budget, unlimited_budget,
 )
-from server.snapshot_manager import SnapshotManagerService
+from callwarden.server.snapshot_manager import SnapshotManagerService
 
 callwarden_core = pytest.importorskip("callwarden_core")
 

@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from server.daemon_client import (
+from callwarden.server.daemon_client import (
     DaemonClient,
     DaemonUnavailableError,
     UnixDaemonRpcClient,
 )
-from server.daemon_protocol import (
+from callwarden.server.daemon_protocol import (
     DaemonRemoteError,
     ProtocolError,
     parse_response,
@@ -28,12 +28,12 @@ from server.daemon_protocol import (
     send_message,
     send_message_with_fds,
 )
-from server.daemon_server import (
+from callwarden.server.daemon_server import (
     DaemonRpcError,
     EnterpriseDaemonServer,
     EnterpriseDaemonService,
 )
-from server.snapshot_manager import SnapshotManagerService
+from callwarden.server.snapshot_manager import SnapshotManagerService
 
 
 callwarden_core = pytest.importorskip("callwarden_core")
@@ -86,7 +86,7 @@ def test_structured_remote_error_preserves_code():
 def test_enterprise_mode_never_silently_falls_back(monkeypatch, tmp_path):
     missing_socket = str(tmp_path / "missing.sock")
     monkeypatch.setattr(
-        "server.daemon_client.get_daemon_mode", lambda: "enterprise"
+        "callwarden.server.daemon_client.get_daemon_mode", lambda: "enterprise"
     )
     client = DaemonClient(socket_path=missing_socket)
     with pytest.raises(DaemonUnavailableError, match="enterprise 模式要求 daemon"):
@@ -96,7 +96,7 @@ def test_enterprise_mode_never_silently_falls_back(monkeypatch, tmp_path):
 
 def test_auto_mode_falls_back_when_socket_is_absent(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        "server.daemon_client.get_daemon_mode", lambda: "auto"
+        "callwarden.server.daemon_client.get_daemon_mode", lambda: "auto"
     )
     client = DaemonClient(socket_path=str(tmp_path / "missing.sock"))
     monkeypatch.setattr(
@@ -248,7 +248,7 @@ def test_high_level_daemon_client_routes_to_uds(
     db_path = tmp_path / "callwarden.db"
     _create_graph_db(db_path)
     monkeypatch.setattr(
-        "server.daemon_client.get_daemon_mode", lambda: "enterprise"
+        "callwarden.server.daemon_client.get_daemon_mode", lambda: "enterprise"
     )
     client = DaemonClient(socket_path=low_level.socket_path)
     client.configure_workspace(str(tmp_path))
@@ -431,7 +431,7 @@ def test_linux_two_real_uids_are_isolated(running_daemon, tmp_path):
 
     def publish_code(root: Path, db_path: Path) -> str:
         return (
-            "import json; from server.daemon_client import UnixDaemonRpcClient; "
+            "import json; from callwarden.server.daemon_client import UnixDaemonRpcClient; "
             f"c=UnixDaemonRpcClient({socket_path!r}); "
             f"w=c.call('workspace.register', {{'client_view_root': {str(root)!r}}}); "
             f"p=c.publish_snapshot(w['workspace_instance_id'], {str(db_path)!r}); "
@@ -455,8 +455,8 @@ def test_linux_two_real_uids_are_isolated(running_daemon, tmp_path):
     assert payload_b["symbol"]["name"] == "helper"
 
     forbidden_code = (
-        "from server.daemon_client import UnixDaemonRpcClient; "
-        "from server.daemon_protocol import DaemonRemoteError; "
+        "from callwarden.server.daemon_client import UnixDaemonRpcClient; "
+        "from callwarden.server.daemon_protocol import DaemonRemoteError; "
         f"c=UnixDaemonRpcClient({socket_path!r}); "
         "\ntry:\n"
         f" c.call('workspace.status', {{'workspace_instance_id': {workspace['workspace_instance_id']!r}}})\n"

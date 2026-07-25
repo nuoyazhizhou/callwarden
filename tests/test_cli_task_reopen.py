@@ -24,7 +24,7 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.cli import main as cli_main
-from i18n import set_language
+from callwarden.i18n import set_language
 from callwarden.db import CodeGraphDB
 from callwarden.db.schema import (
     TASK_STATUS_OPEN,
@@ -67,7 +67,7 @@ class TestTaskReopenArgparse:
     def _get_task_subparser(self):
         """获取 _handle_task 的内部 parser，并返回 subparsers"""
         import io
-        from i18n import t
+        from callwarden.i18n import t
 
         # 构造 task parser（复制 _handle_task 内部逻辑）
         import argparse
@@ -90,7 +90,7 @@ class TestTaskReopenArgparse:
 
         def capture_handle(args, db):
             import argparse
-            from i18n import t
+            from callwarden.i18n import t
             parser = argparse.ArgumentParser(prog="cw task")
             sub = parser.add_subparsers(dest="action", required=True)
             # 调用原始函数以注册所有子命令

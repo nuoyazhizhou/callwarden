@@ -15,8 +15,8 @@ import sqlite3
 import shutil
 import pytest
 
-from server.backup_restore import BackupManager, RestoreManager
-from server.daemon_config import DaemonConfig
+from callwarden.server.backup_restore import BackupManager, RestoreManager
+from callwarden.server.daemon_config import DaemonConfig
 
 
 @pytest.fixture

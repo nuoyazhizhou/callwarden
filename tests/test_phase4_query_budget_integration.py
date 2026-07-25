@@ -13,7 +13,7 @@ class TestQueryBudgetIntegration(unittest.TestCase):
     """验证 4 个查询方法已集成 QueryBudget"""
 
     def setUp(self):
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
         self.service = SnapshotManagerService()
         # Mock Rust store
         self.mock_store = MagicMock()
@@ -41,7 +41,7 @@ class TestQueryBudgetIntegration(unittest.TestCase):
 
     def test_query_callers_truncates_results(self):
         """query_callers 应按 budget.max_results 截断结果"""
-        from server.query_budget import QueryBudget
+        from callwarden.server.query_budget import QueryBudget
         self.mock_store.get_callers.return_value = [{"name": f"caller_{i}"} for i in range(200)]
         budget = QueryBudget(max_results=10)
         result = self.service.query_callers("ws1", "foo", budget=budget)
@@ -49,7 +49,7 @@ class TestQueryBudgetIntegration(unittest.TestCase):
 
     def test_query_callees_truncates_results(self):
         """query_callees 应按 budget.max_results 截断结果"""
-        from server.query_budget import QueryBudget
+        from callwarden.server.query_budget import QueryBudget
         self.mock_store.get_callees.return_value = [{"name": f"callee_{i}"} for i in range(200)]
         budget = QueryBudget(max_results=10)
         result = self.service.query_callees("ws1", "foo", budget=budget)
@@ -57,7 +57,7 @@ class TestQueryBudgetIntegration(unittest.TestCase):
 
     def test_query_topological_order_truncates_results(self):
         """query_topological_order 应按 budget.max_results 截断结果"""
-        from server.query_budget import QueryBudget
+        from callwarden.server.query_budget import QueryBudget
         self.mock_store.get_topological_order.return_value = [f"node_{i}" for i in range(200)]
         budget = QueryBudget(max_results=10)
         result = self.service.query_topological_order("ws1", budget=budget)
@@ -65,7 +65,7 @@ class TestQueryBudgetIntegration(unittest.TestCase):
 
     def test_query_detect_cycles_truncates_results(self):
         """query_detect_cycles 应按 budget.max_results 截断结果"""
-        from server.query_budget import QueryBudget
+        from callwarden.server.query_budget import QueryBudget
         self.mock_store.detect_cycles.return_value = [[f"cycle_{i}"] for i in range(200)]
         budget = QueryBudget(max_results=10)
         result = self.service.query_detect_cycles("ws1", budget=budget)
@@ -79,7 +79,7 @@ class TestQueryBudgetIntegration(unittest.TestCase):
 
     def test_query_detect_cycles_calls_start(self):
         """query_detect_cycles 应调用 budget.start()（启动计时）"""
-        from server.query_budget import QueryBudget
+        from callwarden.server.query_budget import QueryBudget
         budget = QueryBudget()
         self.mock_store.detect_cycles.return_value = []
         self.service.query_detect_cycles("ws1", budget=budget)

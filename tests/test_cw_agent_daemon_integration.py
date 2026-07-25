@@ -33,8 +33,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "rust_ext" / "target" / "pyinstall"))
 
-from server.agent_session import AgentSession
-from server.agent_protocol import (
+from callwarden.server.agent_session import AgentSession
+from callwarden.server.agent_protocol import (
     user_agent_connect,
     user_agent_ping,
     build_refresh_message,
@@ -45,7 +45,7 @@ from server.agent_protocol import (
     MSG_PING,
     REFRESH_LARGE_FILE_THRESHOLD,
 )
-from server.agent_watcher import AgentWatcher
+from callwarden.server.agent_watcher import AgentWatcher
 
 
 # ============================================
@@ -328,7 +328,7 @@ class TestSendRefreshLargeFileMemfd:
         content_hash = hashlib.sha256(canonical).hexdigest()
 
         # mock create_sealed_memfd 返回一个有效的临时 FD（跨平台）
-        import server.ipc_transport as ipc_mod
+        import callwarden.server.ipc_transport as ipc_mod
         tmp_fd_path = tmp_path / "mock_memfd.bin"
         tmp_fd_path.write_bytes(canonical)
 
@@ -364,7 +364,7 @@ class TestSendRefreshLargeFileMemfd:
     )
     def test_large_file_memfd_path_on_linux(self, tmp_path):
         """Linux 上大文件优先走 sealed memfd（create_sealed_memfd 成功）。"""
-        from server.ipc_transport import create_sealed_memfd, is_memfd
+        from callwarden.server.ipc_transport import create_sealed_memfd, is_memfd
 
         canonical = b"z" * (REFRESH_LARGE_FILE_THRESHOLD + 1)
 
@@ -396,7 +396,7 @@ class TestSendRefreshLargeFileMemfd:
         content_hash = hashlib.sha256(canonical).hexdigest()
 
         # 模拟 create_sealed_memfd 抛 AttributeError（非 Linux 行为）
-        import server.ipc_transport as ipc_mod
+        import callwarden.server.ipc_transport as ipc_mod
         def _raise_attr_error(_data):
             raise AttributeError("memfd_create not available on this platform")
         monkeypatch.setattr(ipc_mod, "create_sealed_memfd", _raise_attr_error)
@@ -688,7 +688,7 @@ class TestSendRefreshErrorCodePropagation:
 
     def _make_daemon_remote_error(self, code, message):
         """构造 DaemonRemoteError（跳过 daemon 真实 RPC，直接抛给 send_refresh）。"""
-        from server.daemon_protocol import DaemonRemoteError
+        from callwarden.server.daemon_protocol import DaemonRemoteError
         return DaemonRemoteError(code, message)
 
     def test_session_not_active_code_propagates(self, tmp_path):
@@ -827,7 +827,7 @@ class TestAgentWatcherAutoReconnect:
         return canonical_fn
 
     def _make_daemon_remote_error(self, code, message):
-        from server.daemon_protocol import DaemonRemoteError
+        from callwarden.server.daemon_protocol import DaemonRemoteError
         return DaemonRemoteError(code, message)
 
     def test_auto_reconnect_on_session_not_active(self, tmp_path):

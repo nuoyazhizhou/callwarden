@@ -24,7 +24,7 @@ import pytest
 
 def _load_i18n(lang: str) -> dict:
     """加载 i18n 文件"""
-    from i18n import _get_i18n_dir
+    from callwarden.i18n import _get_i18n_dir
 
     with open(
         os.path.join(_get_i18n_dir(), f"{lang}.json"),
@@ -244,7 +244,7 @@ def test_python_syntax_ok(rel_path):
 
 def test_json_files_valid():
     """两个 i18n JSON 文件语法合法。"""
-    from i18n import _get_i18n_dir
+    from callwarden.i18n import _get_i18n_dir
 
     for lang in ("zh_CN", "en_US"):
         with open(os.path.join(_get_i18n_dir(), f"{lang}.json"), encoding="utf-8") as f:

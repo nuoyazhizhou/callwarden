@@ -1209,8 +1209,8 @@ def test_file_symbol_content_mcp_tool_injects_applicable_rules():
     import asyncio
     import json as _json
 
-    import server.mcp_server as mcp_mod
-    from server.mcp_server import create_mcp_server
+    import callwarden.server.mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
 
     with tempfile.TemporaryDirectory() as tmp:
         db, _qn = _setup_db_with_symbol(tmp)
@@ -1259,8 +1259,8 @@ def test_file_symbol_content_mcp_tool_fail_soft_on_missing_table():
     import asyncio
     import json as _json
 
-    import server.mcp_server as mcp_mod
-    from server.mcp_server import create_mcp_server
+    import callwarden.server.mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
 
     with tempfile.TemporaryDirectory() as tmp:
         db, _qn = _setup_db_with_symbol(tmp)
@@ -1801,7 +1801,7 @@ def test_mcp_server_registers_all_rule_tools():
     """MCP Server 应注册全部 9 个 rule MCP 工具"""
     import asyncio
 
-    from server.mcp_server import create_mcp_server
+    from callwarden.server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = asyncio.run(mcp.list_tools())
@@ -1853,8 +1853,8 @@ def test_mcp_rule_candidate_create_returns_candidate_id():
     """MCP rule_candidate_create 应返回 candidate_id"""
     import asyncio
 
-    from server import mcp_server as mcp_mod
-    from server.mcp_server import create_mcp_server
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
     from callwarden.db.db import CodeGraphDB
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1882,8 +1882,8 @@ def test_mcp_rule_list_returns_rules():
     """MCP rule_list 应返回 rules 列表"""
     import asyncio
 
-    from server import mcp_server as mcp_mod
-    from server.mcp_server import create_mcp_server
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
     from callwarden.db.db import CodeGraphDB
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -2312,7 +2312,7 @@ def test_mcp_rule_seed_bootstrap_registered():
     """MCP Server 应注册 rule_seed_bootstrap 工具"""
     import asyncio
 
-    from server.mcp_server import create_mcp_server
+    from callwarden.server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = asyncio.run(mcp.list_tools())
@@ -2324,8 +2324,8 @@ def test_mcp_rule_seed_bootstrap_dry_run():
     """MCP rule_seed_bootstrap dry_run=True 应返回 5 条 created 计划"""
     import asyncio
 
-    from server import mcp_server as mcp_mod
-    from server.mcp_server import create_mcp_server
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
 
     with tempfile.TemporaryDirectory() as tmp:
         db = CodeGraphDB(workspace_root=tmp)
@@ -2351,8 +2351,8 @@ def test_mcp_rule_seed_bootstrap_apply_writes_5():
     """MCP rule_seed_bootstrap dry_run=False 应实际写入 5 条规则"""
     import asyncio
 
-    from server import mcp_server as mcp_mod
-    from server.mcp_server import create_mcp_server
+    from callwarden.server import mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
 
     with tempfile.TemporaryDirectory() as tmp:
         db = CodeGraphDB(workspace_root=tmp)
@@ -2439,8 +2439,8 @@ def test_seed_bootstrap_injects_into_file_symbol_content_mcp():
     import asyncio
     import json as _json
 
-    import server.mcp_server as mcp_mod
-    from server.mcp_server import create_mcp_server
+    import callwarden.server.mcp_server as mcp_mod
+    from callwarden.server.mcp_server import create_mcp_server
 
     with tempfile.TemporaryDirectory() as tmp:
         db, _qn = _setup_db_with_symbol(tmp)

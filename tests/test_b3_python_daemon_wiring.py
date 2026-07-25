@@ -91,7 +91,7 @@ class TestG15SchemaMigratorWiring:
 
     def test_g15_run_startup_migrations_param_default_true(self):
         """run_startup_migrations 默认应为 True（启用迁移）。"""
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
         import inspect
         sig = inspect.signature(EnterpriseDaemonService.__init__)
         param = sig.parameters.get("run_startup_migrations")
@@ -133,7 +133,7 @@ class TestG19RefreshSchedulerWiring:
 
     def test_g19_start_background_tasks_default_true(self):
         """start_background_tasks 默认应为 True。"""
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
         import inspect
         sig = inspect.signature(EnterpriseDaemonService.__init__)
         param = sig.parameters.get("start_background_tasks")
@@ -353,7 +353,7 @@ class TestBatch3DaemonE2E:
         """构造 service 时应启动后台任务并执行 schema 迁移。"""
         registry_db = str(tmp_path / "registry.db")
         # 构造 service，启用所有接线
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
         service = EnterpriseDaemonService(
             registry_db=registry_db,
             data_root=str(tmp_path / "enterprise"),
@@ -372,7 +372,7 @@ class TestBatch3DaemonE2E:
     def test_health_rpc_returns_real_checks(self, tmp_path):
         """health RPC 应返回四项实际检查结果（而非固定 status=ok）。"""
         registry_db = str(tmp_path / "registry.db")
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
         service = EnterpriseDaemonService(
             registry_db=registry_db,
             data_root=str(tmp_path / "enterprise"),
@@ -401,7 +401,7 @@ class TestBatch3DaemonE2E:
     def test_service_init_without_background_tasks(self, tmp_path):
         """构造 service 时可禁用后台任务（用于测试）。"""
         registry_db = str(tmp_path / "registry.db")
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
         service = EnterpriseDaemonService(
             registry_db=registry_db,
             data_root=str(tmp_path / "enterprise"),
@@ -417,7 +417,7 @@ class TestBatch3DaemonE2E:
     def test_service_init_without_migrations(self, tmp_path):
         """构造 service 时可禁用 schema 迁移（用于测试）。"""
         registry_db = str(tmp_path / "registry.db")
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
         service = EnterpriseDaemonService(
             registry_db=registry_db,
             data_root=str(tmp_path / "enterprise"),

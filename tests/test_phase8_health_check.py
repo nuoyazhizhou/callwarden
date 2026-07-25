@@ -16,7 +16,7 @@ import sqlite3
 import json
 import pytest
 
-from server.health_check import (
+from callwarden.server.health_check import (
     HealthStatus,
     HealthCheck,
     HealthChecker,
@@ -25,7 +25,7 @@ from server.health_check import (
     reset_health_checker,
     _parse_size_to_bytes,
 )
-from server.daemon_config import DaemonConfig
+from callwarden.server.daemon_config import DaemonConfig
 
 
 # ============================================================

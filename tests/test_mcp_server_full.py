@@ -30,8 +30,8 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from server import mcp_server as _mcp_server_module
-from server.mcp_server import HAS_FASTMCP, create_mcp_server, get_db
+from callwarden.server import mcp_server as _mcp_server_module
+from callwarden.server.mcp_server import HAS_FASTMCP, create_mcp_server, get_db
 
 
 pytestmark = pytest.mark.skipif(

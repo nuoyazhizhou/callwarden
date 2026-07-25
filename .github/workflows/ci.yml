@@ -44,9 +44,17 @@ jobs:
           pip install ".[all,dev]"
           pip install pytest-xdist pytest-timeout
 
+      - name: Debug package structure
+        run: |
+          python -c "import callwarden; print('callwarden.__file__:', callwarden.__file__)"
+          python -c "import callwarden.i18n; print('callwarden.i18n.__file__:', callwarden.i18n.__file__)"
+          python -c "import callwarden.server; print('callwarden.server.__file__:', callwarden.server.__file__)"
+          python -c "from callwarden.i18n import t; print('t imported OK')"
+          python -c "from callwarden.server.mcp_server import mcp; print('mcp imported OK')"
+
       - name: Run tests
         run: |
-          pytest tests/ -n auto --tb=short --timeout=300 --timeout-method=thread || echo "Some tests may need additional dependencies"
+          pytest tests/ -n auto --tb=short --timeout=300 --timeout-method=thread
 
       - name: Build package
         run: |

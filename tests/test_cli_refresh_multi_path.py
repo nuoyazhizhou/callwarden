@@ -21,7 +21,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from callwarden.cli import main as cli_main
-from i18n import set_language
+from callwarden.i18n import set_language
 
 set_language("zh_CN")
 

@@ -23,8 +23,8 @@ import pytest
 
 from callwarden.db.db import CodeGraphDB
 from callwarden.db.db_jobs import init_jobs_schema, get_job, JOB_COMPLETED
-from server.job_executor import JobExecutor, JobContext
-from server.job_handlers import (
+from callwarden.server.job_executor import JobExecutor, JobContext
+from callwarden.server.job_handlers import (
     vector_embed_handler,
     _VectorEmbedWrapper,
     register_default_handlers,

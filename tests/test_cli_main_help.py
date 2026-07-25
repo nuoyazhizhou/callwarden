@@ -26,7 +26,7 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.cli import main as cli_main
-from i18n import set_language, t
+from callwarden.i18n import set_language, t
 
 
 # ============================================

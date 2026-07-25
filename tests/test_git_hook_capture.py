@@ -344,7 +344,7 @@ def test_cli_install_hook_no_git_returns_false():
 def test_i18n_keys_for_install_hook_exist():
     """zh_CN.json / en_US.json 包含 install-hook 相关的所有 i18n key。"""
     import json
-    from i18n import _get_i18n_dir
+    from callwarden.i18n import _get_i18n_dir
 
     for lang_file in ("zh_CN.json", "en_US.json"):
         with open(os.path.join(_get_i18n_dir(), lang_file), encoding="utf-8") as f:

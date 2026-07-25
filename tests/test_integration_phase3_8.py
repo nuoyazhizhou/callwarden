@@ -42,20 +42,20 @@ from callwarden.db.db_cas import (
     cas_publish_with_retry,
     cas_pin,
 )
-from server.replicator import (
+from callwarden.server.replicator import (
     ProtocolError,
     daemon_handle_connect,
     daemon_handle_refresh,
     init_session_schema,
 )
-from server.query_budget import (
+from callwarden.server.query_budget import (
     QueryBudget,
     default_budget,
     shallow_budget,
 )
-from server.daemon_config import DaemonConfig
-from server.schema_migrator import migrate_daemon_dbs
-from server.backup_restore import BackupManager, RestoreManager
+from callwarden.server.daemon_config import DaemonConfig
+from callwarden.server.schema_migrator import migrate_daemon_dbs
+from callwarden.server.backup_restore import BackupManager, RestoreManager
 
 
 # ============================================
@@ -276,7 +276,7 @@ class TestPhase4SnapshotManagerIntegration:
 
     def test_snapshot_manager_singleton(self):
         """get_instance 返回同一实例"""
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         try:
             svc1 = SnapshotManagerService.get_instance()
@@ -287,7 +287,7 @@ class TestPhase4SnapshotManagerIntegration:
 
     def test_publish_snapshot_returns_dict_or_none(self, tmp_path):
         """publish_snapshot 在 Rust 可用时返回 dict，空 DB 抛 RuntimeError（预期行为）"""
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
         SnapshotManagerService.reset_instance()
         try:
             svc = SnapshotManagerService.get_instance()

@@ -30,7 +30,7 @@ class TestMetricsDefinition:
     """验证指标定义与计算。"""
 
     def test_cas_hit_rate(self):
-        from server.shared_benefit_metrics import CASMetrics
+        from callwarden.server.shared_benefit_metrics import CASMetrics
         m = CASMetrics()
         m.record_lookup(is_hit=True)
         m.record_lookup(is_hit=True)
@@ -41,7 +41,7 @@ class TestMetricsDefinition:
         assert m.hit_rate == pytest.approx(2 / 3)
 
     def test_duplicate_parse_rate(self):
-        from server.shared_benefit_metrics import ParseMetrics
+        from callwarden.server.shared_benefit_metrics import ParseMetrics
         m = ParseMetrics()
         # 第一个 workspace：不算 eligible
         m.record_parse(is_after_first_ws=False)
@@ -56,7 +56,7 @@ class TestMetricsDefinition:
         assert m.duplicate_parse_rate == pytest.approx(4 / 5)
 
     def test_refresh_latency_percentiles(self):
-        from server.shared_benefit_metrics import RefreshLatency
+        from callwarden.server.shared_benefit_metrics import RefreshLatency
         lat = RefreshLatency()
         for i in range(100):
             lat.add(float(i))  # 0, 1, 2, ..., 99 ms
@@ -65,7 +65,7 @@ class TestMetricsDefinition:
         assert lat.p99 == pytest.approx(99.0, abs=1.0)
 
     def test_snapshot_payload_count(self):
-        from server.shared_benefit_metrics import SnapshotMetrics
+        from callwarden.server.shared_benefit_metrics import SnapshotMetrics
         m = SnapshotMetrics()
         m.record_payload("snap_1", strong_count=5, control_bytes=1024)
         m.record_payload("snap_1", strong_count=10, control_bytes=1024)
@@ -120,7 +120,7 @@ class TestCASSharing:
                                parse_result, workspace_id=1)
 
         # 后续 49 个 workspace：CAS hit + pin
-        from server.shared_benefit_metrics import CASMetrics
+        from callwarden.server.shared_benefit_metrics import CASMetrics
         cas_metrics = CASMetrics()
         for ws_id in range(2, 51):
             row = cas_lookup(conn, cas_key)
@@ -141,7 +141,7 @@ class TestCASSharing:
             compute_cas_key_v1, init_cas_schema, cas_lookup,
             cas_publish_with_retry,
         )
-        from server.shared_benefit_metrics import ParseMetrics, CASMetrics
+        from callwarden.server.shared_benefit_metrics import ParseMetrics, CASMetrics
 
         db_path = str(tmp_path / "cas_50ws.db")
         conn = sqlite3.connect(db_path)
@@ -203,7 +203,7 @@ class TestDirtyOverlayIsolation:
             compute_cas_key_v1, init_cas_schema, cas_lookup,
             cas_publish_with_retry,
         )
-        from server.shared_benefit_metrics import DirtyOverlayAssertion
+        from callwarden.server.shared_benefit_metrics import DirtyOverlayAssertion
 
         db_path = str(tmp_path / "cas_dirty.db")
         conn = sqlite3.connect(db_path)
@@ -256,7 +256,7 @@ class TestSharedBenefitReport:
     """验证实验报告生成。"""
 
     def test_report_generation(self):
-        from server.shared_benefit_metrics import (
+        from callwarden.server.shared_benefit_metrics import (
             SharedBenefitReport, CASMetrics, ParseMetrics,
             SnapshotMetrics, RefreshLatency,
         )
@@ -285,7 +285,7 @@ class TestSharedBenefitReport:
         assert d["gates"]["same_snapshot_payload_count == 1"] is True
 
     def test_gate_failure_detection(self):
-        from server.shared_benefit_metrics import (
+        from callwarden.server.shared_benefit_metrics import (
             SharedBenefitReport, CASMetrics, ParseMetrics,
         )
 

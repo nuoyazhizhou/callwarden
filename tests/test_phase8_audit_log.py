@@ -16,7 +16,7 @@ import json
 import sqlite3
 import pytest
 
-from server.audit_log import (
+from callwarden.server.audit_log import (
     AuditEventType,
     AuditResult,
     AuditEvent,

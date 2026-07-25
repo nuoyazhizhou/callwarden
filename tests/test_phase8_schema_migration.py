@@ -15,7 +15,7 @@ import os
 import sqlite3
 import pytest
 
-from server.schema_migrator import (
+from callwarden.server.schema_migrator import (
     SchemaMigrator,
     MigrationSpec,
     MigrationResult,
@@ -24,7 +24,7 @@ from server.schema_migrator import (
     migrate_daemon_dbs,
     validate_daemon_dbs,
 )
-from server.daemon_config import DaemonConfig
+from callwarden.server.daemon_config import DaemonConfig
 
 
 # ======================================================================

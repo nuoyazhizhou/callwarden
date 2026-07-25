@@ -438,7 +438,7 @@ def test_cli_capture_diff_auto_with_task_id_uses_auto():
 def test_i18n_keys_exist_zh():
     """zh_CN.json 包含 C4 新增的所有 i18n key。"""
     import json
-    from i18n import _get_i18n_dir
+    from callwarden.i18n import _get_i18n_dir
 
     with open(
         os.path.join(_get_i18n_dir(), "zh_CN.json"),
@@ -465,7 +465,7 @@ def test_i18n_keys_exist_zh():
 def test_i18n_keys_exist_en():
     """en_US.json 包含 C4 新增的所有 i18n key。"""
     import json
-    from i18n import _get_i18n_dir
+    from callwarden.i18n import _get_i18n_dir
 
     with open(
         os.path.join(_get_i18n_dir(), "en_US.json"),
@@ -491,7 +491,7 @@ def test_i18n_keys_exist_en():
 def test_i18n_keys_have_placeholders():
     """带占位符的 i18n key 文案中包含正确的占位符。"""
     import json
-    from i18n import _get_i18n_dir
+    from callwarden.i18n import _get_i18n_dir
 
     with open(
         os.path.join(_get_i18n_dir(), "zh_CN.json"),

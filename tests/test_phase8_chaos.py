@@ -29,22 +29,22 @@ import random
 import pytest
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from server.daemon_config import (
+from callwarden.server.daemon_config import (
     DaemonConfig, PermissionRole, PermissionTemplate,
     AccessChecker, AccessDeniedError, TokenValidator,
 )
-from server.schema_migrator import (
+from callwarden.server.schema_migrator import (
     SchemaMigrator, MigrationSpec, migrate_daemon_dbs,
 )
-from server.backup_restore import BackupManager, RestoreManager
-from server.snapshot_gc import SnapshotGC, GCPolicy
-from server.metrics import (
+from callwarden.server.backup_restore import BackupManager, RestoreManager
+from callwarden.server.snapshot_gc import SnapshotGC, GCPolicy
+from callwarden.server.metrics import (
     get_metrics_collector, Counter, Gauge, MetricsCollector,
 )
-from server.audit_log import (
+from callwarden.server.audit_log import (
     AuditLogger, AuditEventType, AuditResult,
 )
-from server.health_check import (
+from callwarden.server.health_check import (
     HealthChecker, HealthStatus, RecoveryHandler,
 )
 

@@ -29,7 +29,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from callwarden.db.db import CodeGraphDB
-from server.mcp_server import (
+from callwarden.server.mcp_server import (
     _auto_sync_agents_md,
     _print_auto_sync_summary,
     get_db,
@@ -82,7 +82,7 @@ def test_auto_sync_agents_md_success_with_marker():
             agents_md = _write_agents_md_with_marker(tmp)
 
             # Mock get_db 返回测试 db
-            with patch("server.mcp_server.get_db", return_value=db):
+            with patch("callwarden.server.mcp_server.get_db", return_value=db):
                 result = _auto_sync_agents_md()
 
             assert result["success"] is True
@@ -112,7 +112,7 @@ def test_auto_sync_agents_md_no_marker_returns_error():
             with open(agents_md, "w", encoding="utf-8") as f:
                 f.write("# Project\n\nno marker\n")
 
-            with patch("server.mcp_server.get_db", return_value=db):
+            with patch("callwarden.server.mcp_server.get_db", return_value=db):
                 result = _auto_sync_agents_md()
 
             # fail-soft：返回 error dict 而非抛异常
@@ -128,7 +128,7 @@ def test_auto_sync_agents_md_fail_soft_on_exception():
     """_auto_sync_agents_md 异常时 fail-soft 返回 error dict"""
     # Mock get_db 抛异常
     mock_get_db = MagicMock(side_effect=RuntimeError("DB connection failed"))
-    with patch("server.mcp_server.get_db", mock_get_db):
+    with patch("callwarden.server.mcp_server.get_db", mock_get_db):
         result = _auto_sync_agents_md()
 
     # fail-soft：不抛异常，返回 error dict
@@ -195,7 +195,7 @@ def test_sync_log_records_mcp_server_startup_actor():
             _setup_active_rules(db, count=1)
             _write_agents_md_with_marker(tmp)
 
-            with patch("server.mcp_server.get_db", return_value=db):
+            with patch("callwarden.server.mcp_server.get_db", return_value=db):
                 _auto_sync_agents_md()
 
             # 验证 agent_rule_sync_log 表有记录
@@ -292,7 +292,7 @@ def test_auto_sync_idempotent():
             _setup_active_rules(db, count=2)
             _write_agents_md_with_marker(tmp)
 
-            with patch("server.mcp_server.get_db", return_value=db):
+            with patch("callwarden.server.mcp_server.get_db", return_value=db):
                 result1 = _auto_sync_agents_md()
                 result2 = _auto_sync_agents_md()
 
@@ -314,7 +314,7 @@ def test_auto_sync_with_empty_active_rules():
             _write_agents_md_with_marker(tmp)
             # 不创建任何规则
 
-            with patch("server.mcp_server.get_db", return_value=db):
+            with patch("callwarden.server.mcp_server.get_db", return_value=db):
                 result = _auto_sync_agents_md()
 
             assert result["success"] is True

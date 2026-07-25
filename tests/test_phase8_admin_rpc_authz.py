@@ -38,8 +38,8 @@ def daemon_service(tmp_path):
     非 admin 调用 admin 方法会在进入具体 handler 前抛 permission_denied，
     所以不需要完整实现 handler 逻辑。
     """
-    from server.daemon_server import EnterpriseDaemonService
-    from server.daemon_config import DaemonConfig
+    from callwarden.server.daemon_server import EnterpriseDaemonService
+    from callwarden.server.daemon_config import DaemonConfig
 
     registry_db = str(tmp_path / "registry.db")
     data_root = str(tmp_path / "data")
@@ -88,17 +88,17 @@ class TestBatch11AdminOnlyMethodsConstant:
 
     def test_constant_is_frozenset(self):
         """ADMIN_ONLY_METHODS 必须是 frozenset（不可变，避免运行时被篡改）。"""
-        from server.daemon_server import ADMIN_ONLY_METHODS
+        from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         assert isinstance(ADMIN_ONLY_METHODS, frozenset)
 
     def test_constant_contains_exactly_14_methods(self):
         """与 Rust 端对齐：恰好 14 个 admin-only 方法（P0-2 整改后加入 mount.list）。"""
-        from server.daemon_server import ADMIN_ONLY_METHODS
+        from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         assert len(ADMIN_ONLY_METHODS) == 14
 
     def test_constant_contains_all_expected_methods(self):
         """14 个方法必须与 Rust 端 dispatch.rs ADMIN_ONLY_METHODS 完全一致。"""
-        from server.daemon_server import ADMIN_ONLY_METHODS
+        from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         expected = {
             # 数据库备份 / 还原
             "backup", "restore",
@@ -117,7 +117,7 @@ class TestBatch11AdminOnlyMethodsConstant:
 
     def test_readonly_methods_not_in_admin_only(self):
         """只读方法不在 ADMIN_ONLY_METHODS 中（任意已连接 peer 可调用）。"""
-        from server.daemon_server import ADMIN_ONLY_METHODS
+        from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         readonly_methods = [
             "ping", "health", "schema.version",
             "workspace.list", "workspace.status", "workspace.connect",
@@ -152,8 +152,8 @@ class TestBatch11IsAdminPeer:
 
     def test_configured_admin_uid_is_admin(self, tmp_path):
         """admin_uids 配置中的 uid 是 admin（Python 端配置扩展）。"""
-        from server.daemon_server import EnterpriseDaemonService
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_config import DaemonConfig
         from callwarden.db.db_daemon import init_daemon_schema
 
         registry_db = str(tmp_path / "sub" / "registry.db")
@@ -221,7 +221,7 @@ class TestBatch11DispatchAdminEnforcement:
         except Exception as e:
             # admin 通过校验后，handler 内可能因 VACUUM INTO 等失败
             # 关键是不能是 permission_denied
-            assert not (isinstance(e, __import__("server.daemon_server", fromlist=["DaemonRpcError"]).DaemonRpcError) and e.code == "permission_denied"), \
+            assert not (isinstance(e, __import__("callwarden.server.daemon_server", fromlist=["DaemonRpcError"]).DaemonRpcError) and e.code == "permission_denied"), \
                 f"admin uid 不应被 permission_denied 拒绝，但收到: {e}"
 
     def test_non_admin_uid_rejected_for_admin_method(self, daemon_service):
@@ -233,7 +233,7 @@ class TestBatch11DispatchAdminEnforcement:
             non_admin_uid = daemon_uid + 1000
         peer = _make_peer(uid=non_admin_uid)
 
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError) as exc_info:
             daemon_service.dispatch(
                 peer=peer,
@@ -281,7 +281,7 @@ class TestBatch11DispatchAdminEnforcement:
         注：handler 内部可能因 schema_meta 表未初始化而失败（fixture 未建该表），
         但关键是错误不是 permission_denied（说明 admin 校验放行了）。
         """
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
         non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
         peer = _make_peer(uid=non_admin_uid)
@@ -333,13 +333,13 @@ class TestBatch11AdminMethodMatrix:
 
     def test_all_14_methods_are_in_admin_only_constant(self):
         """矩阵中的 14 个方法都在 ADMIN_ONLY_METHODS 中。"""
-        from server.daemon_server import ADMIN_ONLY_METHODS
+        from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
         for method in self.ADMIN_METHODS:
             assert method in ADMIN_ONLY_METHODS, f"{method} 不在 ADMIN_ONLY_METHODS 中"
 
     def test_admin_uid_passes_all_14_methods(self, daemon_service):
         """admin uid 调用所有 14 个 admin 方法都不应被 permission_denied 拒绝。"""
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         peer = _make_peer(uid=0)
         for method in self.ADMIN_METHODS:
             try:
@@ -359,7 +359,7 @@ class TestBatch11AdminMethodMatrix:
 
     def test_non_admin_uid_rejected_for_all_14_methods(self, daemon_service):
         """非 admin uid 调用所有 14 个 admin 方法都抛 permission_denied。"""
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
         non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
         peer = _make_peer(uid=non_admin_uid)
@@ -390,7 +390,7 @@ class TestBatch11RustPythonAlignment:
         """从 rust_ext/src/daemon/dispatch.rs 读取 ADMIN_ONLY_METHODS 列表，
         验证与 Python 端常量完全一致。
         """
-        from server.daemon_server import ADMIN_ONLY_METHODS
+        from callwarden.server.daemon_server import ADMIN_ONLY_METHODS
 
         rust_dispatch = ROOT / "rust_ext" / "src" / "daemon" / "dispatch.rs"
         if not rust_dispatch.is_file():
@@ -468,7 +468,7 @@ class TestP02WorkspaceIdAcl:
             daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
             daemon_service.dispatch(other_peer, "toolchain.resolve", {
                 "workspace_id": ws_id,
@@ -482,7 +482,7 @@ class TestP02WorkspaceIdAcl:
             daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
             daemon_service.dispatch(other_peer, "build_context.list", {
                 "workspace_id": ws_id,
@@ -496,7 +496,7 @@ class TestP02WorkspaceIdAcl:
             daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
             daemon_service.dispatch(other_peer, "resolved_edges.store", {
                 "workspace_id": ws_id,
@@ -516,7 +516,7 @@ class TestP02WorkspaceIdAcl:
             daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
             daemon_service.dispatch(other_peer, "resolved_edges.get", {
                 "workspace_id": ws_id,
@@ -531,7 +531,7 @@ class TestP02WorkspaceIdAcl:
             daemon_service, owner_uid, tmp_path)
 
         other_peer = _make_peer(uid=owner_uid + 1000)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="workspace 不属于当前 UID") as exc:
             daemon_service.dispatch(other_peer, "resolved_edges.count", {
                 "workspace_id": ws_id,
@@ -546,7 +546,7 @@ class TestP02WorkspaceIdAcl:
             daemon_service, owner_uid, tmp_path)
 
         owner_peer = _make_peer(uid=owner_uid)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         # caller_symbol_id = 0 应被拒绝
         with pytest.raises(DaemonRpcError, match="caller_symbol_id 必须 > 0"):
             daemon_service.dispatch(owner_peer, "resolved_edges.store", {
@@ -566,7 +566,7 @@ class TestP02WorkspaceIdAcl:
             daemon_service, owner_uid, tmp_path)
 
         owner_peer = _make_peer(uid=owner_uid)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         # caller_symbol_id 缺失
         with pytest.raises(DaemonRpcError, match="caller_symbol_id 缺失"):
             daemon_service.dispatch(owner_peer, "resolved_edges.store", {
@@ -585,7 +585,7 @@ class TestP02WorkspaceIdAcl:
         non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
         other_peer = _make_peer(uid=non_admin_uid)
 
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         with pytest.raises(DaemonRpcError, match="管理员权限") as exc:
             daemon_service.dispatch(other_peer, "mount.list", {})
         assert exc.value.code == "permission_denied"
@@ -593,7 +593,7 @@ class TestP02WorkspaceIdAcl:
     def test_mount_list_passes_admin(self, daemon_service, tmp_path):
         """mount.list 对 admin（root）应放行（不抛 permission_denied）。"""
         admin_peer = _make_peer(uid=0)
-        from server.daemon_server import DaemonRpcError
+        from callwarden.server.daemon_server import DaemonRpcError
         try:
             daemon_service.dispatch(admin_peer, "mount.list", {})
         except DaemonRpcError as e:

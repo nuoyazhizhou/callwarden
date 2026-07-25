@@ -15,7 +15,7 @@ import time
 import threading
 import pytest
 
-from server.metrics import (
+from callwarden.server.metrics import (
     Counter,
     Gauge,
     Histogram,

@@ -26,7 +26,7 @@ if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
 from callwarden.cli import main as cli_main
-from i18n import set_language
+from callwarden.i18n import set_language
 
 
 # ============================================
@@ -251,7 +251,7 @@ def test_i18n_placeholders():
 
 def test_i18n_placeholder_substitution():
     """t() 函数能正确替换 deprecated_flag_warning 的占位符"""
-    from i18n import t
+    from callwarden.i18n import t
     set_language("zh_CN")
     result = t("cli.messages.deprecated_flag_warning",
                flag="--search", subcommand="search <QUERY>")

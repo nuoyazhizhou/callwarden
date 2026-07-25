@@ -4,7 +4,7 @@ import os
 
 from pathlib import Path
 
-from analyzers.ignore_spec import IgnoreMatcher
+from callwarden.analyzers.ignore_spec import IgnoreMatcher
 
 
 def _write(path: Path, content: str = "") -> None:
@@ -37,7 +37,7 @@ def test_pruned_subtree_is_never_visited(tmp_path: Path, monkeypatch):
             visited.append(Path(current).relative_to(tmp_path).as_posix())
             yield current, dirs, files
 
-    monkeypatch.setattr("analyzers.ignore_spec.os.walk", tracking_walk)
+    monkeypatch.setattr("callwarden.analyzers.ignore_spec.os.walk", tracking_walk)
 
     matcher = IgnoreMatcher(str(tmp_path))
     matcher.load_workspace_ignores()

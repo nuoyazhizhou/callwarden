@@ -708,7 +708,7 @@ def test_cli_audit_dispatched():
 def test_mcp_audit_verify_chain_registered():
     """MCP server 注册了 audit_verify_chain 工具。"""
     import inspect
-    from server import mcp_server
+    from callwarden.server import mcp_server
 
     src = inspect.getsource(mcp_server.create_mcp_server)
     assert "def audit_verify_chain(" in src, "MCP 源码缺少 audit_verify_chain 工具定义"
@@ -741,7 +741,7 @@ def test_mcp_audit_verify_chain_signature():
 
 def test_mcp_audit_verify_chain_in_tool_list():
     """create_mcp_server 返回的 server 工具列表包含 audit_verify_chain。"""
-    from server.mcp_server import create_mcp_server
+    from callwarden.server.mcp_server import create_mcp_server
 
     mcp = create_mcp_server()
     tools = [t.name for t in mcp._tool_manager.list_tools()]

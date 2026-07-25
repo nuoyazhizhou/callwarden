@@ -21,7 +21,7 @@ import tempfile
 import time
 import pytest
 
-from server.daemon_config import (
+from callwarden.server.daemon_config import (
     DaemonConfig,
     PermissionRole,
     PermissionTemplate,

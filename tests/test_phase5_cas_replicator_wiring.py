@@ -119,7 +119,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def _setup_workspace(self, tmp_dir):
         """创建 workspace session DB。"""
-        from server.replicator import init_session_schema
+        from callwarden.server.replicator import init_session_schema
         ws_path = os.path.join(tmp_dir, "workspace.db")
         ws_conn = sqlite3.connect(ws_path)
         ws_conn.row_factory = sqlite3.Row
@@ -129,7 +129,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_with_canonical_bytes_no_abs_path(self, tmp_path):
         """传入 canonical_bytes 时不读 abs_path。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -167,7 +167,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_stale_session_rejected_with_canonical_bytes(self, tmp_path):
         """canonical_bytes 模式下 stale session 仍然被拒绝。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh, ProtocolError
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -204,7 +204,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_duplicate_seq_dropped(self, tmp_path):
         """重复 seq 直接丢弃，不报错。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -242,7 +242,7 @@ class TestDaemonHandleRefreshCanonicalBytes:
 
     def test_refresh_out_of_order_seq(self, tmp_path):
         """乱序 seq：先 seq=2 再 seq=1，seq=1 被丢弃。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
         ws_conn = self._setup_workspace(tmp_dir)
@@ -295,7 +295,7 @@ class TestStagingLogBatchMark:
 
     def test_mark_applied_batch(self, tmp_path):
         """批量标记多个 LSN 为 applied，单次文件重写。"""
-        from server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.staging_log import StagingLog, StagingEntry
 
         log_path = str(tmp_path / "test.log")
         log = StagingLog(log_path)
@@ -328,7 +328,7 @@ class TestStagingLogBatchMark:
 
     def test_mark_applied_batch_empty(self, tmp_path):
         """空 lsns 列表不应报错。"""
-        from server.staging_log import StagingLog
+        from callwarden.server.staging_log import StagingLog
 
         log_path = str(tmp_path / "empty.log")
         log = StagingLog(log_path)
@@ -345,7 +345,7 @@ class TestCrashRecovery:
 
     def test_staging_log_survives_crash(self, tmp_path):
         """模拟 daemon crash：pending entries 在 log 文件中持久化。"""
-        from server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.staging_log import StagingLog, StagingEntry
 
         log_path = str(tmp_path / "crash.log")
 
@@ -375,8 +375,8 @@ class TestCrashRecovery:
 
     def test_recover_idempotent(self, tmp_path):
         """重复 recover 应该幂等。"""
-        from server.staging_log import StagingLog, StagingEntry
-        from server.replicator import Replicator
+        from callwarden.server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.replicator import Replicator
 
         log_path = str(tmp_path / "idempotent.log")
         log = StagingLog(log_path)
@@ -479,8 +479,8 @@ class TestEnterpriseDaemonServiceResources:
 
     def test_workspace_resources_lazy_init(self, tmp_path):
         """_get_workspace_resources 懒初始化 CAS/StagingLog/Replicator。"""
-        from server.daemon_server import EnterpriseDaemonService
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
 
         # 创建 mock snapshot service
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
@@ -530,10 +530,10 @@ class TestPerformanceMetrics:
 
     def test_refresh_timing(self, tmp_path):
         """验证 refresh 返回耗时指标。"""
-        from server.replicator import daemon_handle_connect, daemon_handle_refresh
+        from callwarden.server.replicator import daemon_handle_connect, daemon_handle_refresh
 
         tmp_dir = str(tmp_path)
-        from server.replicator import init_session_schema
+        from callwarden.server.replicator import init_session_schema
         ws_path = os.path.join(tmp_dir, "ws_perf.db")
         ws_conn = sqlite3.connect(ws_path)
         ws_conn.row_factory = sqlite3.Row
@@ -569,8 +569,8 @@ class TestPerformanceMetrics:
 
     def test_replicate_timing(self, tmp_path):
         """验证 replicate 返回耗时指标。"""
-        from server.staging_log import StagingLog, StagingEntry
-        from server.replicator import Replicator
+        from callwarden.server.staging_log import StagingLog, StagingEntry
+        from callwarden.server.replicator import Replicator
 
         log_path = str(tmp_path / "perf.log")
         log = StagingLog(log_path)
@@ -609,7 +609,7 @@ class TestBatch9CodegraphDbPathResolution:
 
     def test_default_template_falls_back_to_user_db(self):
         """默认模板为空时，回退到用户级单库 ~/.callwarden/callwarden.db。"""
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.default()
         assert cfg.codegraph_db_path_template == ""
@@ -623,7 +623,7 @@ class TestBatch9CodegraphDbPathResolution:
 
     def test_template_with_placeholder_substituted(self):
         """模板含 {workspace_instance_id} 占位符时正确替换。"""
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.load_from_dict({
             "codegraph_db_path_template": "/var/lib/callwarden/{workspace_instance_id}/codegraph.db",
@@ -635,7 +635,7 @@ class TestBatch9CodegraphDbPathResolution:
 
     def test_template_without_placeholder_returned_as_is(self):
         """模板无占位符时原样返回（如统一 db_path 场景）。"""
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.load_from_dict({
             "codegraph_db_path_template": "/opt/callwarden/shared.db",
@@ -653,8 +653,8 @@ class TestBatch9WorkspaceResourcesHasCodegraphDbPath:
 
     def test_resources_contains_codegraph_db_path(self, tmp_path):
         """resources dict 必须含 codegraph_db_path 键。"""
-        from server.daemon_server import EnterpriseDaemonService
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
 
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
         registry_db = str(tmp_path / "registry.db")
@@ -675,9 +675,9 @@ class TestBatch9WorkspaceResourcesHasCodegraphDbPath:
 
     def test_resources_codegraph_db_path_uses_config_template(self, tmp_path):
         """配置 codegraph_db_path_template 后，resources 用模板解析路径。"""
-        from server.daemon_config import DaemonConfig
-        from server.daemon_server import EnterpriseDaemonService
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
 
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
         # 注意：daemon_server.py L175-176 当 cfg.data_root != dirname(registry_db)
@@ -713,8 +713,8 @@ class TestBatch9FileRefreshPassesDbPath:
 
     def test_file_refresh_passes_db_path_to_replicate(self, tmp_path, monkeypatch):
         """file.refresh committed 后调用 replicate 必须传 db_path。"""
-        from server.daemon_server import EnterpriseDaemonService
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
 
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
         # 用 default cfg，db_path 会回退到 ~/.callwarden/callwarden.db
@@ -754,7 +754,7 @@ class TestBatch9FileRefreshPassesDbPath:
                     "workspace_id": workspace_id,
                     "db_path": db_path,
                 })
-                from server.replicator import ReplicationResult
+                from callwarden.server.replicator import ReplicationResult
                 return ReplicationResult(
                     success=True, workspace_id=workspace_id,
                     generation=1, applied_count=1, pending_count=1,
@@ -764,7 +764,7 @@ class TestBatch9FileRefreshPassesDbPath:
 
         # Mock daemon_handle_refresh 返回 committed
         monkeypatch.setattr(
-            "server.replicator.daemon_handle_refresh",
+            "callwarden.server.replicator.daemon_handle_refresh",
             lambda **kwargs: {"status": "committed", "content_hash": "abc123"},
         )
 
@@ -783,7 +783,7 @@ class TestBatch9FileRefreshPassesDbPath:
         }
 
         # 先 connect 建立 session（daemon_handle_refresh 需要 active session）
-        from server.replicator import daemon_handle_connect
+        from callwarden.server.replicator import daemon_handle_connect
         daemon_handle_connect(
             peer_uid=uid,
             workspace_id=int(ws_id),
@@ -809,9 +809,9 @@ class TestBatch9FileRefreshPassesDbPath:
 
     def test_file_refresh_result_has_snapshot_published_flag(self, tmp_path, monkeypatch):
         """file.refresh 返回结果含 snapshot_published 标志 + snapshot_warning 提示。"""
-        from server.daemon_server import EnterpriseDaemonService
-        from server.snapshot_manager import SnapshotManagerService
-        from server.replicator import ReplicationResult
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.replicator import ReplicationResult
 
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
         registry_db = str(tmp_path / "registry.db")
@@ -851,12 +851,12 @@ class TestBatch9FileRefreshPassesDbPath:
 
         # Mock daemon_handle_refresh
         monkeypatch.setattr(
-            "server.replicator.daemon_handle_refresh",
+            "callwarden.server.replicator.daemon_handle_refresh",
             lambda **kwargs: {"status": "committed", "content_hash": "abc"},
         )
 
         # 建立 session
-        from server.replicator import daemon_handle_connect
+        from callwarden.server.replicator import daemon_handle_connect
         daemon_handle_connect(
             peer_uid=uid,
             workspace_id=int(ws_id),
@@ -892,8 +892,8 @@ class TestBatch9WorkspaceRecoverPassesDbPath:
 
     def test_recover_passes_db_path(self, tmp_path, monkeypatch):
         """workspace.recover 调用 recover 时传 db_path。"""
-        from server.daemon_server import EnterpriseDaemonService
-        from server.snapshot_manager import SnapshotManagerService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.snapshot_manager import SnapshotManagerService
 
         snapshot_svc = MagicMock(spec=SnapshotManagerService)
         registry_db = str(tmp_path / "registry.db")
@@ -922,7 +922,7 @@ class TestBatch9WorkspaceRecoverPassesDbPath:
         class _MockReplicator:
             def recover(self, workspace_id, db_path=""):
                 captured.append({"db_path": db_path})
-                from server.replicator import ReplicationResult
+                from callwarden.server.replicator import ReplicationResult
                 return ReplicationResult(
                     success=True, workspace_id=workspace_id,
                     generation=3, applied_count=2, pending_count=0,
@@ -953,7 +953,7 @@ class TestBatch10DaemonConfigDbPragmaSettings:
 
     def test_default_config_has_db_section(self):
         """DEFAULT_CONFIG 必须含 db 配置段。"""
-        from server.daemon_config import DEFAULT_CONFIG
+        from callwarden.server.daemon_config import DEFAULT_CONFIG
 
         assert "db" in DEFAULT_CONFIG, "DEFAULT_CONFIG 必须含 db 配置段"
         db_cfg = DEFAULT_CONFIG["db"]
@@ -964,7 +964,7 @@ class TestBatch10DaemonConfigDbPragmaSettings:
 
     def test_default_values_aligned_with_main_connection(self):
         """默认值必须与 CodeGraphDB 主连接（db_base.py L1888-1927）对齐。"""
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.default()
         # 256MB cache → -262144 KB
@@ -979,7 +979,7 @@ class TestBatch10DaemonConfigDbPragmaSettings:
 
     def test_custom_config_overrides_defaults(self):
         """用户配置应覆盖默认值（如大规模写入场景调大 wal_autocheckpoint）。"""
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.load_from_dict({
             "db": {
@@ -1003,7 +1003,7 @@ class TestBatch10ApplyDaemonRwPragmas:
     def test_apply_daemon_rw_pragmas_sets_all_expected_pragmas(self, tmp_path):
         """apply_daemon_rw_pragmas 必须设置所有 PRAGMA（cache_size / mmap_size / synchronous / temp_store / wal_autocheckpoint）。"""
         import sqlite3
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.default()
         db_path = str(tmp_path / "test.db")
@@ -1033,7 +1033,7 @@ class TestBatch10ApplyDaemonRwPragmas:
     def test_apply_daemon_rw_pragmas_is_idempotent(self, tmp_path):
         """重复调用 apply_daemon_rw_pragmas 应幂等（无副作用）。"""
         import sqlite3
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.default()
         db_path = str(tmp_path / "idempotent.db")
@@ -1050,7 +1050,7 @@ class TestBatch10ApplyDaemonRwPragmas:
     def test_apply_daemon_rw_pragmas_respects_disabled_flags(self, tmp_path):
         """当 synchronous_normal=False / temp_store_memory=False 时不应设置对应 PRAGMA。"""
         import sqlite3
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
 
         cfg = DaemonConfig.load_from_dict({
             "db": {
@@ -1122,7 +1122,7 @@ class TestBatch10DaemonServerUsesPragmas:
         import os
         import threading
         from unittest.mock import MagicMock
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
 
         # 用数字字符串避免 int(workspace_id) 失败
         ws_id = "12345"
@@ -1141,7 +1141,7 @@ class TestBatch10DaemonServerUsesPragmas:
         service._toolchain_db_path = os.path.join(data_root, "toolchain.db")
         service._toolchain_conn = None
         service._toolchain_lock = threading.Lock()
-        from server.daemon_config import DaemonConfig
+        from callwarden.server.daemon_config import DaemonConfig
         service._config = DaemonConfig.default()
 
         # mock _owned_workspace 绕过 registry 校验
@@ -1211,7 +1211,7 @@ class TestBatch10EvictSnapshotCacheBugFix:
 
     def test_evict_returns_false_when_service_is_none(self):
         """snapshot_service 为 None 时应返回 False，不是 True（之前 stub 返回 True）。"""
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
 
         service = EnterpriseDaemonService.__new__(EnterpriseDaemonService)
         service.snapshot_service = None
@@ -1226,7 +1226,7 @@ class TestBatch10EvictSnapshotCacheBugFix:
     def test_evict_calls_snapshot_service_evict_workspace(self):
         """_evict_snapshot_cache 必须实际调用 snapshot_service.evict_workspace。"""
         from unittest.mock import MagicMock
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
 
         service = EnterpriseDaemonService.__new__(EnterpriseDaemonService)
         mock_snap = MagicMock()
@@ -1242,7 +1242,7 @@ class TestBatch10EvictSnapshotCacheBugFix:
     def test_evict_handles_exception_gracefully(self):
         """evict_workspace 抛异常时应被捕获，返回 False。"""
         from unittest.mock import MagicMock
-        from server.daemon_server import EnterpriseDaemonService
+        from callwarden.server.daemon_server import EnterpriseDaemonService
 
         service = EnterpriseDaemonService.__new__(EnterpriseDaemonService)
         mock_snap = MagicMock()

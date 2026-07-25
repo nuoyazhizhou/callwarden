@@ -5,7 +5,7 @@ import tempfile
 import types
 import zipfile
 
-from db.db import CodeGraphDB
+from callwarden.db.db import CodeGraphDB
 
 
 def _db_with_workspace():
@@ -286,7 +286,7 @@ def test_java_archive_scanner_prefers_shallow_public_surface(monkeypatch):
                 )
             return Result("\n".join(blocks))
 
-        monkeypatch.setattr("db.db_external.subprocess.run", fake_run)
+        monkeypatch.setattr("callwarden.db.db_external.subprocess.run", fake_run)
 
         created = db._scan_java_class_jar_via_javap(
             jar_path, "com.example:demo", "1.0.0"
