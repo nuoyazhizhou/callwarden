@@ -55,6 +55,14 @@ jobs:
         run: |
           pytest tests/test_i18n_print_cleanup.py -x -q -n 0 2>&1 | tail -20
 
+      - name: Debug pytest single test 1-worker
+        run: |
+          pytest tests/test_i18n_print_cleanup.py -x -q -n 1 2>&1 | tail -20
+
+      - name: Debug pytest failing test no-xdist
+        run: |
+          pytest tests/test_i18n_cleanup_c5.py -x -q -n 0 2>&1 | tail -20
+
       - name: Run tests
         run: |
           pytest tests/ -n auto --tb=short --timeout=300 --timeout-method=thread
