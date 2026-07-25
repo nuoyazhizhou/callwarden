@@ -33,9 +33,17 @@ def _register_subpackage(dir_name: str, module_name: str) -> None:
 _register_subpackage('i18n', 'callwarden.i18n')
 _register_subpackage('server', 'callwarden.server')
 
+# DEBUG: 验证别名注册
+_i18n_mod = sys.modules.get('callwarden.i18n')
+print(f"[conftest] i18n registered: {_i18n_mod is not None}, __file__={getattr(_i18n_mod, '__file__', 'N/A')}")
+
 # ── 第二步：导入 callwarden（此时子包别名已在 sys.modules 中）──
 from callwarden import config as _cw_config  # noqa: E402
 from callwarden.db import db_base as _db_base  # noqa: E402
+
+# DEBUG: 导入后再次验证
+_i18n_mod2 = sys.modules.get('callwarden.i18n')
+print(f"[conftest] after import callwarden, i18n __file__={getattr(_i18n_mod2, '__file__', 'N/A')}")
 
 # ── 第三步：设置父模块属性（使 getattr(callwarden, 'X') 可用）──
 import callwarden as _cw  # noqa: E402
