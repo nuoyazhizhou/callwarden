@@ -41,7 +41,7 @@ jobs:
           python -m pip install --upgrade pip
           # CPU-only torch：代码图谱工具不需要 CUDA，避免拉入 ~2GB nvidia 包
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[all,dev]" --config-settings editable_mode=compat
+          pip install ".[all,dev]"
           pip install pytest-xdist pytest-timeout
 
       - name: Debug package structure
@@ -49,8 +49,28 @@ jobs:
           python -c "import callwarden; import os; p=callwarden.__path__[0]; print('dir:', p); print('contents:', sorted(os.listdir(p)))"
           python -c "import callwarden.i18n; print('i18n.__file__:', callwarden.i18n.__file__)"
           python -c "from callwarden.i18n import t; print('t OK')"
-          python -c "import setuptools; print('setuptools:', setuptools.__version__)"
-          ls -la i18n/__init__.py
+
+      - name: Debug xdist worker sys.path
+        run: |
+          cat > /tmp/test_debug_worker.py << 'PYEOF'
+          def test_debug_worker():
+              import sys, os
+              print(f"\nsys.path: {sys.path}")
+              try:
+                  import callwarden
+                  print(f"callwarden.__file__: {callwarden.__file__}")
+                  print(f"callwarden.__path__: {list(callwarden.__path__)}")
+                  for p in callwarden.__path__:
+                      i18n_dir = os.path.join(p, 'i18n')
+                      init_py = os.path.join(i18n_dir, '__init__.py')
+                      print(f"  i18n in {p}: dir_exists={os.path.isdir(i18n_dir)}, init_exists={os.path.exists(init_py)}")
+                  import callwarden.i18n
+                  print(f"callwarden.i18n.__file__: {callwarden.i18n.__file__}")
+                  print(f"has _load_lang: {hasattr(callwarden.i18n, '_load_lang')}")
+              except Exception as e:
+                  print(f"Error: {type(e).__name__}: {e}")
+          PYEOF
+          pytest /tmp/test_debug_worker.py -v -s -n 2
 
       - name: Run tests
         run: |
