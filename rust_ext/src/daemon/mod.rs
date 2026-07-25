@@ -64,6 +64,22 @@ pub mod memfd;
 /// 防止 BFS/DFS 在大型代码库中指数爆炸
 pub mod budget;
 
+/// P1-F Step 2: 失败 generation 保护 + dirty overlay 隔离（设计 §5.3 + §9.3）
+/// 提供 `evaluate_generation_protection` / `should_replace_snapshot` /
+/// `is_dirty_overlay`，供 daemon 在 publish_snapshot 前显式检查失败状态
+pub mod snapshot_guard;
+
+/// P1-F Step 3: Parse 失败 durable log + daemon 重启重放（设计 §8 Phase 4）
+/// 提供 `ParseRetryLog`（append-only + JSON Lines + 崩溃安全）记录 failed/partial/
+/// unsupported/stale 状态，`replay_pending` 只重放 allows_retry=true 的 generation
+pub mod parse_retry_log;
+
+/// P1-F Step 4: Parser metrics + doctor 自检（设计 §8 Phase 4）
+/// 提供 `ParserMetrics`（AtomicU64 计数器 + 有界 recent_failures）和
+/// `ParserDoctor`（Rust grammar/ABI 自检），任何 parse 失败可定位到
+/// workspace/file/generation/language
+pub mod parser_metrics;
+
 /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
 /// 更新 schema 时记得同步修改。

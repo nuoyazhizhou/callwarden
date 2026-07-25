@@ -19,6 +19,15 @@
 应按 ``failed`` / ``partial`` / ``unsupported`` 状态处理，不得覆盖上一代
 snapshot。
 
+解析模式（设计 §7，P1-F Step 0）：
+    - ``rust-strict``：正式发布默认，只用 Rust，失败显式记录
+    - ``shadow``：源码开发/CI，Rust 为主，Python reference 同步解析并只比较，
+      不影响发布结果；diagnostics 写独立目录，不污染 CAS/manifest/snapshot
+    - ``python-reference``：源码开发，仅历史对照，不进入冻结包
+    通过环境变量 ``CW_PARSE_MODE`` 配置。frozen build（PyInstaller）强制
+    ``rust-strict``，收到 ``python-reference`` 或 ``CW_DISABLE_RUST_PARSE``
+    时返回明确错误。
+
 注意：
     - Python parser 仍保留在源码仓库作为开发 reference，但本 facade 不调用它。
     - 单文件 / 批量 / 流式三种调用形态共享同一份 canonical bytes 合约。
@@ -28,6 +37,7 @@ snapshot。
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -53,6 +63,141 @@ def _rust_core_version() -> str:
         return core_version()
     except ImportError:
         return "unknown"
+
+
+# ────────────────────────────────────────────────────────────────────
+# 解析模式（设计 §7，P1-F Step 0）
+# ────────────────────────────────────────────────────────────────────
+
+
+class ParseMode:
+    """解析模式枚举（设计 §7）
+
+    三种模式：
+        - ``rust-strict``：正式发布默认，只用 Rust，失败显式记录
+        - ``shadow``：源码开发/CI，Rust 为主，Python reference 同步解析并只比较
+        - ``python-reference``：源码开发，仅历史对照，不进入冻结包
+
+    通过环境变量 ``CW_PARSE_MODE`` 配置。frozen build 强制 ``rust-strict``，
+    收到 ``python-reference`` 或 ``CW_DISABLE_RUST_PARSE`` 时报错。
+
+    本类仅提供模式判断与环境校验，不负责实际 shadow 比较逻辑（那是开发期
+    reference adapter 的职责，见设计 §11 Agent D）。
+    """
+
+    RUST_STRICT = "rust-strict"
+    SHADOW = "shadow"
+    PYTHON_REFERENCE = "python-reference"
+
+    _ALL_MODES: Tuple[str, ...] = (RUST_STRICT, SHADOW, PYTHON_REFERENCE)
+
+    @classmethod
+    def get_active_mode(cls) -> str:
+        """读取 ``CW_PARSE_MODE`` 环境变量并返回当前解析模式
+
+        默认值：``rust-strict``（设计 §7 正式发布默认）
+
+        Returns:
+            当前激活的解析模式字符串（属于 ``_ALL_MODES``）
+
+        Raises:
+            ValueError: ``CW_PARSE_MODE`` 设置为未知值时
+        """
+        raw = os.environ.get("CW_PARSE_MODE", "").strip().lower()
+        if not raw:
+            return cls.RUST_STRICT
+        if raw not in cls._ALL_MODES:
+            raise ValueError(
+                f"未知 CW_PARSE_MODE={raw!r}，应为 {cls._ALL_MODES} 之一"
+            )
+        return raw
+
+    @classmethod
+    def is_frozen_build(cls) -> bool:
+        """检测当前是否运行在 PyInstaller frozen build 中
+
+        frozen build 的判定：``sys.frozen`` 为真且存在 ``_MEIPASS`` 属性
+        （PyInstaller 单文件/单目录打包的标志）。
+
+        设计 §7：正式 frozen build 固定允许 ``rust-strict``，收到
+        ``python-reference`` 或 ``CW_DISABLE_RUST_PARSE`` 时返回明确错误。
+        """
+        return bool(getattr(sys, "frozen", False)) and hasattr(sys, "_MEIPASS")
+
+    @classmethod
+    def validate_for_environment(cls, mode: Optional[str] = None) -> str:
+        """校验解析模式在当前环境是否可用
+
+        设计 §7 约束：
+            - frozen build 仅允许 ``rust-strict``
+            - frozen build 不允许 ``CW_DISABLE_RUST_PARSE``
+            - frozen build 不允许 ``python-reference`` / ``shadow``
+
+        Args:
+            mode: 待校验的模式；None 时读取当前激活模式
+
+        Returns:
+            校验通过的模式字符串
+
+        Raises:
+            RuntimeError: frozen build 收到非 rust-strict 模式或 CW_DISABLE_RUST_PARSE
+        """
+        active = mode or cls.get_active_mode()
+        if cls.is_frozen_build():
+            if active != cls.RUST_STRICT:
+                raise RuntimeError(
+                    f"frozen build 仅允许 rust-strict 模式，"
+                    f"当前 CW_PARSE_MODE={active!r}。frozen build 不支持 "
+                    f"python-reference 或 shadow 模式（设计 §7）。"
+                )
+            if bool(os.environ.get("CW_DISABLE_RUST_PARSE")):
+                raise RuntimeError(
+                    "frozen build 不允许设置 CW_DISABLE_RUST_PARSE。"
+                    "Rust parser 是 frozen build 的唯一解析路径（设计 §7）。"
+                )
+        return active
+
+    @classmethod
+    def shadow_diagnostics_path(cls) -> Optional[str]:
+        """返回 shadow 模式独立 diagnostics 写入路径
+
+        设计 §7：``shadow`` 结果写独立 diagnostics，不污染 CAS、manifest、snapshot。
+        本方法仅返回路径，不创建目录；调用方（开发期 reference adapter）负责
+        创建文件并写入差异结果。
+
+        Returns:
+            非 shadow 模式返回 None；shadow 模式返回
+            ``$HOME/.callwarden/shadow_diagnostics/`` 路径字符串
+        """
+        try:
+            if cls.get_active_mode() != cls.SHADOW:
+                return None
+        except ValueError:
+            return None
+        home = os.path.expanduser("~")
+        return os.path.join(home, ".callwarden", "shadow_diagnostics")
+
+    @classmethod
+    def allows_python_reference(cls) -> bool:
+        """检测当前模式是否允许调用 Python reference parser
+
+        设计 §7：
+            - ``python-reference``：仅此模式允许调用 Python parser
+            - ``shadow``：Python reference 仅用于差异比较，不进入生产路径
+              （仍可调用，但结果只写 diagnostics）
+            - ``rust-strict``：禁止任何 Python parser 调用
+
+        本方法供开发期 reference adapter 判断是否启动 Python 比较分支，
+        生产路径（db_build / db_check_gate / db_external）不调用本方法。
+
+        Returns:
+            True 表示当前模式允许调用 Python reference parser
+        """
+        try:
+            mode = cls.get_active_mode()
+        except ValueError:
+            return False
+        return mode in (cls.SHADOW, cls.PYTHON_REFERENCE)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -109,8 +254,23 @@ class RustParserFacade:
         """检测是否通过环境变量强制关闭 Rust 路径
 
         设计文档 §7 ``CW_PARSE_MODE`` 的迁移期兼容开关。
-        生产 rust-strict 模式下应忽略此环境变量（由调用方判断）。
+
+        规则（P1-F Step 0）：
+            - ``rust-strict`` 模式：始终返回 False（fail closed，不允许禁用 Rust）
+            - ``shadow`` / ``python-reference`` 模式：尊重 ``CW_DISABLE_RUST_PARSE``
+            - 未知 ``CW_PARSE_MODE``：保留旧行为（尊重 ``CW_DISABLE_RUST_PARSE``）
+            - frozen build：始终返回 False（frozen build 的 Rust 是唯一解析路径）
         """
+        # frozen build 强制 Rust，不允许禁用
+        if ParseMode.is_frozen_build():
+            return False
+        try:
+            mode = ParseMode.get_active_mode()
+        except ValueError:
+            # 未知 mode 保留旧行为
+            return bool(os.environ.get("CW_DISABLE_RUST_PARSE"))
+        if mode == ParseMode.RUST_STRICT:
+            return False
         return bool(os.environ.get("CW_DISABLE_RUST_PARSE"))
 
     @staticmethod

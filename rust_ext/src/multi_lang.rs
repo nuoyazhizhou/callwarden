@@ -17,6 +17,7 @@
 use tree_sitter::{Language, Node, Parser};
 use std::sync::Arc;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use crate::{
     ParseResult, SymbolInfo, RawCall, RawReference, ParseResultPool,
     find_child, node_text, make_qualified, blake_hash, parse_result_to_pydict,
@@ -932,6 +933,7 @@ fn clean_import(text: &str) -> String {
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use pyo3::Bound;
+use pyo3::BoundObject; // P1-F: PyO3 0.29 需要 trait 导入才能用 into_bound()
 
 /// 解析单个文件（多语言）
 ///
@@ -1070,4 +1072,250 @@ pub fn batch_parse_files_lang_pool(
 #[pyfunction]
 pub fn supported_languages() -> Vec<&'static str> {
     LangConfig::supported_languages()
+}
+
+// ============================================
+// P1-F Step 1: Parse 失败状态定义（设计 §5.3）
+// ============================================
+
+/// Parse 结果状态（设计 §5.3 错误语义）
+///
+/// | 状态 | 行为 |
+/// |------|------|
+/// | `Ok` | 发布完整 ParseFact |
+/// | `Partial` | 发布可用事实并持久化 diagnostics，不冒充完整成功 |
+/// | `Unsupported` | 不发布空图谱，记录语言/构造并进入可观测失败 |
+/// | `Failed` | 不替换上一代可查询 snapshot，记录失败并允许重试 |
+/// | `Stale` | generation CAS 拒绝，不覆盖新状态 |
+///
+/// 设计原则：
+/// - `parse_status_from_result` 只能推导出 `Ok` / `Partial` / `Failed`
+/// - `Unsupported` 由调用方在 parse 之前判断语言是否支持时显式设置
+/// - `Stale` 由 daemon CAS 层在 generation 拒绝时显式设置
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParseStatus {
+    Ok,
+    Partial,
+    Unsupported,
+    Failed,
+    Stale,
+}
+
+impl ParseStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ParseStatus::Ok => "ok",
+            ParseStatus::Partial => "partial",
+            ParseStatus::Unsupported => "unsupported",
+            ParseStatus::Failed => "failed",
+            ParseStatus::Stale => "stale",
+        }
+    }
+
+    /// 是否发布完整或部分 ParseFact
+    ///
+    /// 设计 §5.3：`Ok` / `Partial` 发布事实；`Unsupported` / `Failed` / `Stale`
+    /// 不发布（避免空图谱覆盖上一代 snapshot）。
+    pub fn publishes_fact(&self) -> bool {
+        matches!(self, ParseStatus::Ok | ParseStatus::Partial)
+    }
+
+    /// 是否允许重试
+    ///
+    /// 设计 §5.3：`Failed` 允许重试（daemon 重启后重放）；
+    /// `Stale` / `Unsupported` 不允许重试（永久拒绝）。
+    pub fn allows_retry(&self) -> bool {
+        matches!(self, ParseStatus::Failed)
+    }
+
+    /// 是否替换上一代 snapshot
+    ///
+    /// 设计 §5.3：只有 `Ok` / `Partial` 替换 snapshot；
+    /// `Failed` 不替换（保留上一代可查询 snapshot）；
+    /// `Stale` / `Unsupported` 不替换。
+    pub fn replaces_snapshot(&self) -> bool {
+        matches!(self, ParseStatus::Ok | ParseStatus::Partial)
+    }
+}
+
+impl std::fmt::Display for ParseStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Parse 诊断信息（设计 §5.2 输出契约 + §5.3 错误语义）
+///
+/// 每个语言至少覆盖：syntax error count / unsupported construct count /
+/// partial parse marker / fatal parse error。本 struct 提供可序列化的
+/// 诊断载体，供 daemon 持久化到 durable log（P1-F Step 3）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ParseDiagnostics {
+    /// 状态字符串（"ok" / "partial" / "unsupported" / "failed" / "stale"）
+    pub status: String,
+    /// 语法错误数量（tree-sitter has_error 节点数）
+    pub syntax_error_count: u32,
+    /// 不支持的构造数量（lang rule 未覆盖的 AST 节点）
+    pub unsupported_construct_count: u32,
+    /// 致命解析错误（parse 返回 None / set_language 失败 / IO 错误）
+    pub fatal_parse_error: Option<String>,
+    /// 是否为部分解析（有 syntax error 或 unsupported construct，但仍发布了事实）
+    pub partial_parse: bool,
+    /// 兼容顶层 error 字段（与 ParseResult.error 对齐）
+    pub error: Option<String>,
+}
+
+impl ParseDiagnostics {
+    /// 从 ParseResult 推导诊断信息
+    ///
+    /// 注意：`Unsupported` 和 `Stale` 不能从 ParseResult 推导，
+    /// 需调用方使用 `unsupported()` / `stale()` 显式构造。
+    pub fn from_result(result: &ParseResult) -> Self {
+        if let Some(err) = &result.error {
+            return Self {
+                status: ParseStatus::Failed.as_str().to_string(),
+                syntax_error_count: 0,
+                unsupported_construct_count: 0,
+                fatal_parse_error: Some(err.clone()),
+                partial_parse: false,
+                error: Some(err.clone()),
+            };
+        }
+        // 当前 ParseResult struct 不携带 syntax_error_count / unsupported_construct_count
+        // 字段（定义在 lib.rs，未含这些字段）。tree-sitter 的语法错误信息需要从
+        // tree.root_node().has_error() 提取，但当前 GenericParser::parse_file /
+        // parse_canonical_bytes 未提取该信息到 ParseResult。
+        //
+        // P1-F Step 1 仅定义状态语义和推导骨架，syntax_error_count /
+        // unsupported_construct_count 的实际值在后续 step 或 languages/ 模块补齐。
+        // 当前默认 Ok 状态。
+        Self {
+            status: ParseStatus::Ok.as_str().to_string(),
+            syntax_error_count: 0,
+            unsupported_construct_count: 0,
+            fatal_parse_error: None,
+            partial_parse: false,
+            error: None,
+        }
+    }
+
+    /// 显式构造 `Unsupported` 状态（语言不支持时调用方使用）
+    pub fn unsupported(language: &str) -> Self {
+        let msg = format!("unsupported language: {}", language);
+        Self {
+            status: ParseStatus::Unsupported.as_str().to_string(),
+            syntax_error_count: 0,
+            unsupported_construct_count: 0,
+            fatal_parse_error: Some(msg.clone()),
+            partial_parse: false,
+            error: Some(msg),
+        }
+    }
+
+    /// 显式构造 `Stale` 状态（generation CAS 拒绝时调用方使用）
+    pub fn stale(reason: &str) -> Self {
+        Self {
+            status: ParseStatus::Stale.as_str().to_string(),
+            syntax_error_count: 0,
+            unsupported_construct_count: 0,
+            fatal_parse_error: Some(reason.to_string()),
+            partial_parse: false,
+            error: Some(reason.to_string()),
+        }
+    }
+
+    /// 显式构造 `Failed` 状态（parse 异常时调用方使用）
+    pub fn failed(reason: &str) -> Self {
+        Self {
+            status: ParseStatus::Failed.as_str().to_string(),
+            syntax_error_count: 0,
+            unsupported_construct_count: 0,
+            fatal_parse_error: Some(reason.to_string()),
+            partial_parse: false,
+            error: Some(reason.to_string()),
+        }
+    }
+
+    /// 转为 serde_json::Value（供 daemon durable log 序列化）
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap_or_else(|_| {
+            serde_json::json!({
+                "status": "failed",
+                "error": "diagnostics serialization failed",
+            })
+        })
+    }
+}
+
+/// 从 ParseResult 推导 ParseStatus（不含 Unsupported/Stale）
+///
+/// 规则：
+/// - `result.error.is_some()` → `Failed`
+/// - 无 error，且（syntax_error_count > 0 或 unsupported_construct_count > 0）→ `Partial`
+/// - 无 error，无 syntax/unsupported 问题 → `Ok`
+///
+/// 注意：当前 ParseResult 不携带 syntax_error_count / unsupported_construct_count，
+/// 所以只能返回 `Ok` / `Failed`。`Partial` 状态需调用方补充诊断信息后判断。
+pub fn parse_status_from_result(result: &ParseResult) -> ParseStatus {
+    if result.error.is_some() {
+        return ParseStatus::Failed;
+    }
+    // TODO: 后续 step 补充 syntax_error_count / unsupported_construct_count 检测
+    ParseStatus::Ok
+}
+
+/// 从 ParseResult 推导 ParseDiagnostics
+pub fn parse_diagnostics_from_result(result: &ParseResult) -> ParseDiagnostics {
+    ParseDiagnostics::from_result(result)
+}
+
+/// PyO3 接口：从 result 字段推导权威 ParseStatus 字符串
+///
+/// Python 调用：
+///   from callwarden_core import parse_status_from_fields
+///   status = parse_status_from_fields(error, syntax_error_count, unsupported_construct_count)
+///
+/// 供 RustParserFacade.extract_diagnostics() 调用，确保 Python 与 Rust 状态判定一致。
+#[pyfunction]
+#[pyo3(signature = (error, syntax_error_count=0, unsupported_construct_count=0))]
+pub fn parse_status_from_fields(
+    error: Option<String>,
+    syntax_error_count: u32,
+    unsupported_construct_count: u32,
+) -> String {
+    if error.is_some() {
+        return ParseStatus::Failed.as_str().to_string();
+    }
+    if syntax_error_count > 0 || unsupported_construct_count > 0 {
+        return ParseStatus::Partial.as_str().to_string();
+    }
+    ParseStatus::Ok.as_str().to_string()
+}
+
+/// PyO3 接口：从 result 字段推导权威 ParseDiagnostics（dict 形式）
+///
+/// Python 调用：
+///   from callwarden_core import parse_diagnostics_from_fields
+///   diag = parse_diagnostics_from_fields(error, syntax_error_count, unsupported_construct_count)
+#[pyfunction]
+#[pyo3(signature = (error, syntax_error_count=0, unsupported_construct_count=0))]
+pub fn parse_diagnostics_from_fields<'py>(
+    py: Python<'py>,
+    error: Option<String>,
+    syntax_error_count: u32,
+    unsupported_construct_count: u32,
+) -> PyResult<Bound<'py, PyAny>> {
+    let status = parse_status_from_fields(error.clone(), syntax_error_count, unsupported_construct_count);
+    let fatal_parse_error = error.clone();
+    let partial_parse = status == ParseStatus::Partial.as_str();
+
+    let dict = pyo3::types::PyDict::new(py);
+    dict.set_item("status", status)?;
+    dict.set_item("syntax_error_count", syntax_error_count)?;
+    dict.set_item("unsupported_construct_count", unsupported_construct_count)?;
+    dict.set_item("fatal_parse_error", fatal_parse_error)?;
+    dict.set_item("partial_parse", partial_parse)?;
+    dict.set_item("error", error)?;
+    Ok(dict.into_any().into_bound())
 }
