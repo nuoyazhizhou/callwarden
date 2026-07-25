@@ -91,7 +91,7 @@ schema_workspace = 4
 
 ```text
 cw                 完整 CLI，根据平台和配置路由 local/enterprise
-cw-client          仅 RPC/MCP proxy，不含 parser 和本地 DB 写能力
+cw-client          Linux RPC/MCP proxy，不含 parser 和本地 DB 写能力
 cw-agent           Linux per-UID watcher agent
 cw-daemon          Linux system daemon 前台入口
 ```
@@ -103,11 +103,15 @@ cw-daemon          Linux system daemon 前台入口
 最终安装器携带经过固定版本验证的 CPython 运行时和 site-packages，安装到产品私有目录。
 不修改系统 Python，不依赖用户预装 Python，不把包安装进全局 site-packages。
 
-Rust 扩展必须由对应平台 runner 构建：
+Rust 扩展必须由对应平台 runner 构建。v0.3 发布边界为：
 
-- Windows：`.pyd`，x64 与 arm64；
-- macOS：`.so`，x86_64 与 arm64，合成/验证 universal2；
-- Linux：manylinux 基线 `.so`，x86_64 与 aarch64。
+- Windows：当前 x64 `.pyd`；arm64 仍需独立 runner；
+- macOS：当前 arm64 `.so`；不把单架构 PyInstaller runtime 声称为 universal2；
+- Linux：当前 x86_64 `.so`；aarch64 仍需独立 runner。
+
+同一 PyInstaller bundle 中的全部入口必须共享一个根级 `_internal/`。Windows/macOS
+只冻结 `cw`；Linux bundle 冻结 `cw`、`cw-client`、`cw-agent` 三个入口。发布前必须运行
+`cw server --check-imports`，仅 `--version`/`--help` 通过不代表 MCP 动态依赖完整。
 
 运行时启动时输出 Python/Rust/parser/snapshot/schema ABI，并对不兼容组合 fail-closed。
 
@@ -118,7 +122,7 @@ Rust 扩展必须由对应平台 runner 构建：
 | 角色 | 内容 |
 |---|---|
 | `local` | `cw`、Rust 扩展、local DB、MCP、watcher |
-| `client` | `cw-client`、MCP proxy、配置，不含 parser/CAS |
+| `client` | Linux `cw-client`、MCP proxy、配置，不含 parser/CAS |
 | `agent` | Linux `cw-agent`、systemd user unit、client |
 | `daemon` | Linux `cw-daemon`、system unit、迁移/备份工具 |
 | `all` | 平台支持的全部角色；Linux 等价 enterprise 元包 |
@@ -144,10 +148,11 @@ Linux daemon runtime 固定为 `/run/callwarden`。容器通过挂载整个目�
 
 任务：`T-1783983162956-ab68`
 
-主产物为 MSI，支持 x64 和 arm64。安装器至少提供：
+主产物为 MSI。v0.3 当前构建/验证 x64，arm64 是后续独立 runner 目标。Windows
+只安装 `local` 角色，不发布依赖 Linux UDS 的 `cw-client`。安装器至少提供：
 
 - `CurrentUser` 与管理员 `AllUsers` 两种范围；
-- `local`/`client` 组件选择，默认 `local`；
+- `local` 组件；
 - 可选加入 PATH、写入 MCP 配置、安装本地 watcher 自启动；
 - 静默参数、确定的退出码、repair 和日志路径；
 - 默认不删除 `%LocalAppData%` 数据，显式勾选才清理；
@@ -164,8 +169,9 @@ Linux daemon runtime 固定为 `/run/callwarden`。容器通过挂载整个目�
 `/Library/Application Support/CallWarden`，在 `/usr/local/bin` 或 Apple Silicon 标准路径
 创建稳定 shim。可选安装用户 LaunchAgent watcher，不安装 system daemon。
 
-必须完成 universal2 架构验证、hardened runtime、codesign、notarization、stapling 和
-`spctl`/Gatekeeper 验证。Intel 与 Apple Silicon runner 都要原生运行，不能仅靠 Rosetta。
+v0.3 当前只发布 arm64。必须完成 hardened runtime、codesign、notarization、stapling 和
+`spctl`/Gatekeeper 验证。若后续恢复 Intel 支持，应增加 x86_64 runner 独立产物或真正
+构建 universal2，不能只把 Rust 扩展合并后就声称整个 PyInstaller runtime 是 universal2。
 
 ## 8. Linux Enterprise 安装包
 

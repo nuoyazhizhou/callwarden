@@ -3,7 +3,7 @@
   Call Warden Windows MSI Installer (WiX Toolset v3)
   Task: T-1783983162956-ab68
   支持架构: x64, arm64 (由 candle -arch 参数决定)
-  角色组件: local (CLI + MCP + Watcher), client (仅 RPC 代理)
+  角色组件: local (CLI + MCP + Watcher)
   安装范围: CurrentUser (默认) / AllUsers (管理员提权)
 
   构建命令:
@@ -76,10 +76,6 @@
         <ComponentGroupRef Id="ShortcutComponents" />
         <ComponentRef Id="DataDir" />
       </Feature>
-      <!-- client 角色: 仅 RPC 代理 (可选, 静默安装用 ADDLOCAL=ClientRole) -->
-      <Feature Id="ClientRole" Title="Client 模式 (仅 RPC 代理)" Level="2" Absent="allow">
-        <ComponentGroupRef Id="ClientComponents" />
-      </Feature>
       <!-- 加入 PATH (可选, 静默安装用 ADDLOCAL=AddToPath) -->
       <Feature Id="AddToPath" Title="加入 PATH 环境变量" Level="2" Absent="allow">
         <ComponentRef Id="PathEntry" />
@@ -102,13 +98,6 @@
             <!-- P0-3：PyInstaller onedir 产物的 _internal 子目录（Python 解释器+依赖+Rust 扩展） -->
             <!-- heat harvest 把 _internal/ 中的文件安装到此目录，cw.exe 运行时加载 -->
             <Directory Id="InternalFolder" Name="_internal" />
-            <!-- P0-4 修复（2026-07-22）：cw-client.exe 需要自己的 _internal 目录作为 sibling -->
-            <!-- PyInstaller onedir 模式下入口二进制和 _internal 必须在同一目录 -->
-            <!-- 旧布局把 cw-client.exe 放在 bin/，_internal 放在 bin/cw-client_internal/（错误） -->
-            <!-- 正确布局：cw-client.exe 和 _internal 都放在 bin/cw-client/ 下 -->
-            <Directory Id="CwClientDir" Name="cw-client">
-              <Directory Id="ClientInternalFolder" Name="_internal" />
-            </Directory>
           </Directory>
           <Directory Id="LibFolder" Name="lib" />
           <Directory Id="ConfigFolder" Name="config" />
@@ -128,7 +117,7 @@
 
     <!-- P0-3 整改（2026-07-22）：PyInstaller onedir 目录结构 -->
     <!-- PyInstaller onedir 产出：cw.exe + _internal/（含 Python 解释器、依赖、Rust 扩展） -->
-    <!-- BuildOutputDir 指向 release/dist/windows/cw/ 目录 -->
+    <!-- BuildOutputDir 指向 release/dist/windows/callwarden/ 共享目录 -->
     <ComponentGroup Id="MainComponents" Directory="BinFolder">
       <Component Id="CwExe" Guid="*">
         <File Id="cw.exe" Source="$(var.BuildOutputDir)\cw.exe" KeyPath="yes" />
@@ -136,19 +125,6 @@
       <!-- PyInstaller _internal/ 目录中的所有文件（Python 解释器 + 依赖 + Rust 扩展） -->
       <!-- WiX heat harvest 自动收集 _internal/ 目录 -->
       <ComponentGroupRef Id="PyInstallerInternal" />
-    </ComponentGroup>
-
-    <!-- Client 角色组件：cw-client.exe + _internal/ -->
-    <!-- ClientBuildOutputDir 指向 release/dist/windows/cw-client/ 目录 -->
-    <!-- P0-4 修复（2026-07-22）：cw-client.exe 和 _internal 必须在同一目录（PyInstaller onedir 要求 sibling） -->
-    <!-- Directory 改为 CwClientDir（bin/cw-client/），_internal 作为其子目录 -->
-    <ComponentGroup Id="ClientComponents" Directory="CwClientDir">
-      <Component Id="CwClientExe" Guid="*">
-        <File Id="cw-client.exe" Source="$(var.ClientBuildOutputDir)\cw-client.exe" KeyPath="yes" />
-      </Component>
-      <!-- PyInstaller cw-client/_internal/ 目录中的所有文件 -->
-      <!-- WiX heat harvest 自动收集 cw-client/_internal/ 目录，生成 PyInstallerClientInternal ComponentGroup -->
-      <ComponentGroupRef Id="PyInstallerClientInternal" />
     </ComponentGroup>
 
     <!-- Shortcuts -->

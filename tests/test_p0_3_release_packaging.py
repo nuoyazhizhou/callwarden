@@ -262,11 +262,21 @@ class TestP03Issue7WindowsMsiFailFast(unittest.TestCase):
         """workflow Gate 4a 有 PyInstaller exe fail-fast 检查步骤。"""
         self.assertIn("PyInstaller", self.content,
                       "workflow 应有 PyInstaller fail-fast 检查步骤")
-        # P0-4 修复后使用 for 循环检查 cw/cw-client（cw-agent 仅 Linux/macOS）
-        self.assertIn("for cmd in cw cw-client", self.content,
-                      "workflow fail-fast 应循环检查 cw 和 cw-client")
-        self.assertIn("$cmd.exe", self.content,
-                      "workflow fail-fast 应检查 $cmd.exe 产物")
+        self.assertIn(
+            "release/dist/windows/callwarden/cw.exe",
+            self.content,
+            "workflow fail-fast 应检查共享 bundle 中的 cw.exe",
+        )
+        self.assertIn(
+            "release/dist/windows/callwarden/_internal",
+            self.content,
+            "workflow fail-fast 应检查共享 _internal",
+        )
+        self.assertIn(
+            "cw.exe --version",
+            self.content,
+            "workflow 应真实运行冻结入口",
+        )
 
 
 # ============================================
@@ -379,6 +389,86 @@ class TestP03Issue9OfflineBundleFlag(unittest.TestCase):
         self.assertIsNone(match,
                           f"workflow 不应有冗余的 'Build tar.zst offline bundle' 步骤名，"
                           f"找到: {match.group(0) if match else None}")
+
+
+class TestPyInstallerReleaseFailClosed(unittest.TestCase):
+    """发布产物必须包含 CallWarden 本体并经过真实启动门禁。"""
+
+    def setUp(self):
+        spec_path = os.path.join(
+            _PKG_PARENT, "release", "pyinstaller", "callwarden.spec"
+        )
+        workflow_path = os.path.join(
+            _PKG_PARENT, ".github", "workflows", "pyinstaller-build.yml"
+        )
+        with open(spec_path, encoding="utf-8") as f:
+            self.spec = f.read()
+        with open(workflow_path, encoding="utf-8") as f:
+            self.workflow = f.read()
+
+    def test_spec_uses_package_parent_for_source_layout(self):
+        """仓库根目录映射为 callwarden 包，PyInstaller 必须搜索其父目录。"""
+        self.assertIn("PACKAGE_PARENT = os.path.dirname(ROOT)", self.spec)
+        self.assertIn("pathex=[PACKAGE_PARENT]", self.spec)
+        self.assertNotIn("pathex=[ROOT]", self.spec)
+
+    def test_spec_fails_when_core_modules_are_missing(self):
+        """hidden import 缺失不能只记录 warning 后继续上传。"""
+        self.assertIn("_required_modules", self.spec)
+        self.assertIn("'callwarden.cw'", self.spec)
+        self.assertIn("'callwarden.server.mcp_server'", self.spec)
+        self.assertIn("if sys.platform.startswith('linux')", self.spec)
+        self.assertIn("'callwarden.cli.client'", self.spec)
+        self.assertIn("raise RuntimeError", self.spec)
+
+    def test_spec_keeps_python_grammar_fallbacks(self):
+        """正式 Python parser 回退所需的 grammar 不得从冻结包排除。"""
+        excluded_block = self.spec[
+            self.spec.index("excludes = ["):self.spec.index("# 注意：semgrep")
+        ]
+        for grammar in [
+            "tree_sitter_rust",
+            "tree_sitter_python",
+            "tree_sitter_typescript",
+            "tree_sitter_kotlin",
+            "tree_sitter_c",
+        ]:
+            self.assertNotIn(grammar, excluded_block)
+
+    def test_workflow_installs_current_project(self):
+        """构建环境必须安装当前 checkout，而不只是第三方 requirements。"""
+        self.assertIn("python -m pip install . --no-deps", self.workflow)
+
+    def test_workflow_runs_frozen_executables_before_packaging(self):
+        """归档前必须执行冻结入口，不能只检查目录是否存在。"""
+        smoke_index = self.workflow.index("Smoke-test frozen executables")
+        package_index = self.workflow.index("Package artifacts")
+        self.assertLess(smoke_index, package_index)
+        for command in [
+            '"./dist/callwarden/cw${EXE_SUFFIX}" --version',
+            '"./dist/callwarden/cw${EXE_SUFFIX}" --help',
+            '"./dist/callwarden/cw-client${EXE_SUFFIX}" --help',
+            '"./dist/callwarden/cw-agent${EXE_SUFFIX}" --help',
+        ]:
+            self.assertIn(command, self.workflow)
+        self.assertIn('if [ "${{ runner.os }}" = "Linux" ]; then', self.workflow)
+
+    def test_non_linux_artifacts_do_not_ship_linux_only_roles(self):
+        """Windows/macOS 不应发布启动后必然返回 2 的企业角色入口。"""
+        self.assertIn("if sys.platform.startswith('linux'):", self.spec)
+        self.assertIn(
+            "powershell -Command \"Compress-Archive -Path 'callwarden'",
+            self.workflow,
+        )
+
+    def test_all_entrypoints_share_one_collect_directory(self):
+        """多入口只能有一个 COLLECT 和一个 _internal。"""
+        self.assertEqual(self.spec.count("COLLECT("), 1)
+        self.assertIn("*_executables", self.spec)
+        self.assertIn("name='callwarden'", self.spec)
+        self.assertNotIn("coll_cw_client", self.spec)
+        self.assertNotIn("coll_cw_agent", self.spec)
+        self.assertIn('tar czf "../$ARTIFACT" callwarden/', self.workflow)
 
 
 if __name__ == "__main__":

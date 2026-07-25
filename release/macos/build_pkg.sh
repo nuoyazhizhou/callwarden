@@ -21,9 +21,7 @@
 #     与脚本读取的 CW_APPLE_* 不匹配，导致签名/公证永远 skipped。
 #     现已对齐 workflow 也用 CW_APPLE_* 前缀。
 #   - 新增 CW_BUILD_UNSIGNED 支持（与 workflow 旧 env 兼容）。
-#   - bin/cw / bin/cw-client 缺失时改为 fail-closed（原是 placeholder，安装后 cw --version
-#     会因 Python/callwarden 包不在系统 PATH 而 ModuleNotFoundError）。
-#     现在改为从 wheel 提取 console_scripts（pip install 到临时 venv）。
+#   - bin/cw 缺失时 fail-closed，不再生成安装后无法运行的 placeholder。
 
 set -euo pipefail
 
@@ -33,23 +31,23 @@ ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # ============================================================
 # 0. 平台角色 fail-closed 检查
 # 规范 §3 平台能力矩阵 + config_loader.fail_closed_unsupported
-# macOS 仅支持 local/client；daemon/agent 是 Linux 企业版角色。
-# 收到 daemon/agent 时必须 fail-closed（exit 2），禁止安装伪 daemon。
+# macOS 仅支持 local；client/daemon/agent 是 Linux 企业版角色。
+# 收到其他角色时必须 fail-closed（exit 2），禁止安装伪入口。
 # 通过环境变量 CW_ROLE 传入（默认 local）。
 # ============================================================
 CW_ROLE="${CW_ROLE:-local}"
 case "$CW_ROLE" in
-    local|client)
+    local)
         echo "Role: $CW_ROLE (supported on macOS)"
         ;;
-    daemon|agent)
+    client|daemon|agent)
         echo "ERROR: Role '$CW_ROLE' is not supported on macOS." >&2
-        echo "Supported roles: client, local" >&2
-        echo "Enterprise daemon/agent requires Linux with SO_PEERCRED, SCM_RIGHTS, and UDS." >&2
+        echo "Supported roles: local" >&2
+        echo "Enterprise client/daemon/agent requires Linux UDS capabilities." >&2
         exit 2
         ;;
     *)
-        echo "ERROR: Unknown role '$CW_ROLE'. Supported: local, client" >&2
+        echo "ERROR: Unknown role '$CW_ROLE'. Supported: local" >&2
         exit 2
         ;;
 esac
@@ -94,7 +92,7 @@ SHASUM_TGZ="$DIST_DIR/CallWarden-${VERSION}-arm64.tar.gz.sha256"
 
 # 源产物目录：由 release/build.py 生成
 # 包含 Python wheel（callwarden-<version>-py3-none-any.whl），
-# 其中含 cw/cw-client console_script。Rust 扩展由 Step 1 现场构建 universal2。
+# 其中含 cw console_script。Rust 扩展由 Step 1 现场构建 arm64。
 # 本脚本不重新构建 Python wheel，仅消费已构建的产物。
 SRC_DIST="$ROOT/release/dist"
 
@@ -116,7 +114,7 @@ echo "Source:    $SRC_DIST (Python wheel + Rust ext)"
 #
 # 修复方案：诚实降级为 arm64-only：
 # 1. 只构建 aarch64-apple-darwin Rust 扩展（不再 lipo 合成 universal2）
-# 2. 构建后用 file/lipo 校验所有 Mach-O 产物架构（cw, cw-client, cw-agent, Rust 扩展）
+# 2. 构建后用 file/lipo 校验所有 Mach-O 产物架构（cw、Rust 扩展）
 # 3. 产物文件名标记 arm64（与实际架构一致）
 # 4. 如需 x86_64 支持，需要在 macos-13 runner 上单独构建（未来扩展）
 echo "Step 1: Building arm64 Rust extension (P0-5 v2: arm64-only)"
@@ -203,30 +201,27 @@ cd "$ROOT"
 }
 rm -f "$ROOT/callwarden_core.so"  # 清理临时复制
 
-# 验证产物
-for cmd in cw cw-client cw-agent; do
-    if [ ! -f "$SCRIPT_DIR/build/pyinstaller_dist/$cmd/$cmd" ]; then
-        echo "  ERROR: PyInstaller 产物缺失: $cmd" >&2
-        exit 1
-    fi
-done
-echo "  [OK] PyInstaller bundle built: cw, cw-client, cw-agent"
+# macOS 仅发布 local 入口；client/agent 依赖 Linux UDS 能力。
+PYINSTALLER_BUNDLE="$SCRIPT_DIR/build/pyinstaller_dist/callwarden"
+if [ ! -f "$PYINSTALLER_BUNDLE/cw" ] || [ ! -d "$PYINSTALLER_BUNDLE/_internal" ]; then
+    echo "  ERROR: PyInstaller 共享产物缺失: $PYINSTALLER_BUNDLE" >&2
+    exit 1
+fi
+echo "  [OK] PyInstaller shared bundle built: cw"
 
 # P0-5 v2 修复：校验 PyInstaller 产物架构（所有 Mach-O 必须 arm64）
 echo "  Verifying PyInstaller bundle architecture (arm64-only):"
-for cmd in cw cw-client cw-agent; do
-    BIN="$SCRIPT_DIR/build/pyinstaller_dist/$cmd/$cmd"
-    ARCHS=$(lipo -archs "$BIN" 2>/dev/null || echo "not-a-Mach-O")
-    echo "    $cmd: $ARCHS"
-    if [[ "$ARCHS" != "arm64" ]]; then
-        echo "    ERROR: $cmd 不是 arm64（实际: $ARCHS）" >&2
-        echo "    PyInstaller runtime 是宿主架构，macos-latest 应为 arm64" >&2
-        exit 1
-    fi
-done
+BIN="$PYINSTALLER_BUNDLE/cw"
+ARCHS=$(lipo -archs "$BIN" 2>/dev/null || echo "not-a-Mach-O")
+echo "    cw: $ARCHS"
+if [[ "$ARCHS" != "arm64" ]]; then
+    echo "    ERROR: cw 不是 arm64（实际: $ARCHS）" >&2
+    echo "    PyInstaller runtime 是宿主架构，macos-latest 应为 arm64" >&2
+    exit 1
+fi
 
 # 校验 _internal 中的嵌入式 Python 解释器架构
-PY_BIN="$SCRIPT_DIR/build/pyinstaller_dist/cw/_internal/python"
+PY_BIN="$PYINSTALLER_BUNDLE/_internal/python"
 if [ -f "$PY_BIN" ]; then
     PY_ARCHS=$(lipo -archs "$PY_BIN" 2>/dev/null || echo "not-a-Mach-O")
     echo "    python: $PY_ARCHS"
@@ -237,15 +232,12 @@ if [ -f "$PY_BIN" ]; then
 fi
 echo "  [OK] 所有 Mach-O 产物 arm64 架构校验通过"
 
-# 复制 PyInstaller --onedir 目录到 pkg root
-# cw 和 cw-client 各自一个独立目录（含 Python 解释器 + 依赖）
+# 复制单一 PyInstaller --onedir 目录到 pkg root
 mkdir -p "$PKG_ROOT/$INSTALL_DIR/runtime"
-cp -r "$SCRIPT_DIR/build/pyinstaller_dist/cw/." "$PKG_ROOT/$INSTALL_DIR/runtime/cw/"
-cp -r "$SCRIPT_DIR/build/pyinstaller_dist/cw-client/." "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/"
+cp -r "$PYINSTALLER_BUNDLE/." "$PKG_ROOT/$INSTALL_DIR/runtime/"
 
 # 创建 bin/ 下的软链接
-ln -s "$INSTALL_DIR/runtime/cw/cw" "$PKG_ROOT/$INSTALL_DIR/bin/cw"
-ln -s "$INSTALL_DIR/runtime/cw-client/cw-client" "$PKG_ROOT/$INSTALL_DIR/bin/cw-client"
+ln -s "$INSTALL_DIR/runtime/cw" "$PKG_ROOT/$INSTALL_DIR/bin/cw"
 
 # 配置模板（不覆盖已存在用户配置）
 cat > "$PKG_ROOT/$INSTALL_DIR/config/config.toml.template" << 'EOF'
@@ -265,12 +257,6 @@ cat > "$PKG_ROOT/usr/local/bin/cw" << 'SHIM'
 exec "/Library/Application Support/CallWarden/bin/cw" "$@"
 SHIM
 chmod +x "$PKG_ROOT/usr/local/bin/cw"
-
-cat > "$PKG_ROOT/usr/local/bin/cw-client" << 'SHIM'
-#!/bin/bash
-exec "/Library/Application Support/CallWarden/bin/cw-client" "$@"
-SHIM
-chmod +x "$PKG_ROOT/usr/local/bin/cw-client"
 
 # ============================================================
 # 可选 LaunchAgent watcher plist（规范 §7）
@@ -332,10 +318,10 @@ EOF
 
 # 对 Rust 扩展和入口脚本签名（hardened runtime + entitlements）
 # 先签依赖对象（.so），再签可执行入口。
-# P0-3.1 修复（2026-07-22）：PyInstaller --onedir 模式下实际产物在 runtime/<cmd>/
-#   - 主二进制：runtime/cw/cw、runtime/cw-client/cw-client
-#   - Rust 扩展：runtime/cw/_internal/callwarden_core.so、runtime/cw-client/_internal/callwarden_core.so
-#   - bin/cw 和 bin/cw-client 是 symlink，codesign 签 symlink 无效，应签 target
+# PyInstaller --onedir 共享布局：
+#   - 主二进制：runtime/cw
+#   - Rust 扩展：runtime/_internal/callwarden_core.so
+#   - bin/cw 是 symlink，codesign 应签真实 target
 # 旧路径 lib/callwarden_core.so 和 bin/cw 在 onedir 模式下不存在，codesign 会失败
 #
 # P0-4 修复（2026-07-22）：codesign 改为 --deep 递归签名
@@ -345,10 +331,8 @@ EOF
 # 现在对 _internal/ 目录使用 --deep 递归签名，覆盖所有嵌套的 .so/.dylib/可执行文件，
 # 然后签主入口二进制。
 SIGN_TARGETS=(
-    "$PKG_ROOT/$INSTALL_DIR/runtime/cw/_internal"
-    "$PKG_ROOT/$INSTALL_DIR/runtime/cw/cw"
-    "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/_internal"
-    "$PKG_ROOT/$INSTALL_DIR/runtime/cw-client/cw-client"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/_internal"
+    "$PKG_ROOT/$INSTALL_DIR/runtime/cw"
 )
 
 # P0-3 修复（问题 8）：支持 CW_BUILD_UNSIGNED 显式跳过签名（与 workflow 对齐）

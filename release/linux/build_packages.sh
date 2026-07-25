@@ -161,8 +161,9 @@ build_pyinstaller_bundle() {
 
     # 验证产物
     local missing=""
+    local bundle_dir="$SCRIPT_DIR/build/pyinstaller_dist/callwarden"
     for cmd in cw cw-client cw-agent; do
-        if [ ! -f "$SCRIPT_DIR/build/pyinstaller_dist/$cmd/$cmd" ]; then
+        if [ ! -f "$bundle_dir/$cmd" ]; then
             missing="$missing $cmd"
         fi
     done
@@ -170,7 +171,11 @@ build_pyinstaller_bundle() {
         echo "  ERROR: PyInstaller 产物缺失:$missing" >&2
         exit 1
     fi
-    echo "  [OK] PyInstaller bundle built: cw, cw-client, cw-agent"
+    if [ ! -d "$bundle_dir/_internal" ]; then
+        echo "  ERROR: PyInstaller 共享运行时缺失: $bundle_dir/_internal" >&2
+        exit 1
+    fi
+    echo "  [OK] PyInstaller shared bundle built: cw, cw-client, cw-agent"
 }
 
 if [ "$OFFLINE_ONLY" = "0" ]; then
@@ -195,17 +200,16 @@ if [ "$OFFLINE_ONLY" = "0" ]; then
     # 3. 准备各子包 root 目录
     echo "Step 2: Preparing package roots"
     # P0-3 整改（2026-07-22）：PyInstaller --onedir 产物路径
-    PYINSTALLER_DIST="$SCRIPT_DIR/build/pyinstaller_dist"
+    PYINSTALLER_BUNDLE="$SCRIPT_DIR/build/pyinstaller_dist/callwarden"
 
     # --- callwarden-client（设计 §8.1: cw-client + MCP proxy，不含 parser/CAS）---
-    # P0-4 修复（2026-07-22）：原代码三个包都复制到同一个 /usr/lib/callwarden/runtime/，
-    # 导致 _internal/* 跨包覆盖冲突且无 Replaces/Conflicts 声明。
-    # 现改为每个 role 使用独立 runtime 目录：runtime-cw-client/、runtime-cw/、runtime-cw-agent/
+    # 各角色包必须可独立安装：从共享构建目录复制目标入口和一份 _internal。
+    # 普通 tar 发布包仍只包含一个共享运行时；deb 拆包不能跨包依赖未安装的文件。
     CLIENT_ROOT="$SCRIPT_DIR/build/client"
     rm -rf "$CLIENT_ROOT"
     mkdir -p "$CLIENT_ROOT/usr/bin" "$CLIENT_ROOT/usr/lib/callwarden/runtime-cw-client"
-    # P0-3 整改：复制整个 --onedir 目录（含 Python 解释器 + 依赖），创建软链接
-    cp -r "$PYINSTALLER_DIST/cw-client/." "$CLIENT_ROOT/usr/lib/callwarden/runtime-cw-client/"
+    cp "$PYINSTALLER_BUNDLE/cw-client" "$CLIENT_ROOT/usr/lib/callwarden/runtime-cw-client/"
+    cp -r "$PYINSTALLER_BUNDLE/_internal" "$CLIENT_ROOT/usr/lib/callwarden/runtime-cw-client/"
     ln -s /usr/lib/callwarden/runtime-cw-client/cw-client "$CLIENT_ROOT/usr/bin/cw-client"
 
     # --- callwarden-local（cw + Rust 扩展 + local DB + MCP + watcher）---
@@ -214,7 +218,8 @@ if [ "$OFFLINE_ONLY" = "0" ]; then
     LOCAL_ROOT="$SCRIPT_DIR/build/local"
     rm -rf "$LOCAL_ROOT"
     mkdir -p "$LOCAL_ROOT/usr/bin" "$LOCAL_ROOT/usr/lib/callwarden/runtime-cw" "$LOCAL_ROOT/etc/callwarden"
-    cp -r "$PYINSTALLER_DIST/cw/." "$LOCAL_ROOT/usr/lib/callwarden/runtime-cw/"
+    cp "$PYINSTALLER_BUNDLE/cw" "$LOCAL_ROOT/usr/lib/callwarden/runtime-cw/"
+    cp -r "$PYINSTALLER_BUNDLE/_internal" "$LOCAL_ROOT/usr/lib/callwarden/runtime-cw/"
     ln -s /usr/lib/callwarden/runtime-cw/cw "$LOCAL_ROOT/usr/bin/cw"
     cp "$SCRIPT_DIR/deb/config.toml.template" "$LOCAL_ROOT/etc/callwarden/config.toml" 2>/dev/null || true
 
@@ -222,7 +227,8 @@ if [ "$OFFLINE_ONLY" = "0" ]; then
     AGENT_ROOT="$SCRIPT_DIR/build/agent"
     rm -rf "$AGENT_ROOT"
     mkdir -p "$AGENT_ROOT/usr/bin" "$AGENT_ROOT/usr/lib/callwarden/runtime-cw-agent" "$AGENT_ROOT/usr/lib/systemd/user"
-    cp -r "$PYINSTALLER_DIST/cw-agent/." "$AGENT_ROOT/usr/lib/callwarden/runtime-cw-agent/"
+    cp "$PYINSTALLER_BUNDLE/cw-agent" "$AGENT_ROOT/usr/lib/callwarden/runtime-cw-agent/"
+    cp -r "$PYINSTALLER_BUNDLE/_internal" "$AGENT_ROOT/usr/lib/callwarden/runtime-cw-agent/"
     ln -s /usr/lib/callwarden/runtime-cw-agent/cw-agent "$AGENT_ROOT/usr/bin/cw-agent"
     # agent systemd --user unit（设计 §v8: per-UID watcher agent）
     # 优先使用 deb/systemd/callwarden-agent.service 正式 unit（含安全约束、资源限制、
@@ -463,4 +469,3 @@ ls -lh "$DIST_DIR/manifest.json" 2>/dev/null || true
 echo ""
 echo "Sub-packages: client, local, agent, daemon, enterprise (设计 §8.1)"
 echo "Version: $VERSION (from release/version.toml)"
-

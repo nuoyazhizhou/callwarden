@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec：把 cw / cw-client / cw-agent 打包成自包含的 --onedir 产物。
+r"""PyInstaller spec：把 cw / cw-client / cw-agent 打包成自包含的 --onedir 产物。
 
 P0-3 整改（2026-07-22）：原 build_packages.sh 只复制 venv 的 console_scripts，
 shebang 指向构建机临时 venv，安装后无法启动。改用 PyInstaller --onedir 打包，
@@ -14,23 +14,24 @@ shebang 指向构建机临时 venv，安装后无法启动。改用 PyInstaller 
     pyinstaller release\pyinstaller\callwarden.spec --noconfirm --clean
 
 产物：
-    dist/cw/              --onedir 目录（cw 主入口）
-    dist/cw-client/       --onedir 目录（cw-client）
-    dist/cw-agent/        --onedir 目录（cw-agent）
+    dist/callwarden/      --onedir 目录
+      cw                  主入口
+      cw-client           仅 Linux
+      cw-agent            仅 Linux
+      _internal/          所有入口共享的 Python 与原生依赖
 
-注意：三个入口共用同一个 Analysis（依赖收集一次），分别 EXE + COLLECT。
-PyInstaller 会自动去重共享的 .so/.pyd，但 --onedir 模式下每个目录独立。
-deb/rpm 打包时建议把三个目录合并到 /usr/lib/callwarden/runtime/ 并创建软链接。
+所有入口共用同一个 Analysis、PYZ 和 COLLECT，最终目录只有一份运行时。
 """
 
 import sys
 import os
-from PyInstaller.utils.hooks import collect_submodules
 
 # === 路径常量 ===
 # spec 文件位于 release/pyinstaller/callwarden.spec，项目根目录是上两级
 SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
 ROOT = os.path.dirname(os.path.dirname(SPEC_DIR))
+# pyproject.toml 将仓库根目录映射为 callwarden 包，因此源码导入需要仓库父目录。
+PACKAGE_PARENT = os.path.dirname(ROOT)
 ENTRY_DIR = os.path.join(SPEC_DIR)
 
 block_cipher = None
@@ -50,22 +51,28 @@ else:
     # Linux: .so, macOS: .so（Python 扩展统一 .so 后缀）
     rust_ext_name = 'callwarden_core.so'
 
-rust_ext_path = os.path.join(ROOT, rust_ext_name)
+# 开发机上的根目录扩展可能正被 MCP/watcher 加载。允许发布验证从 Cargo
+# staging 目录读取新构建，CI 和正式发布仍默认使用项目根目录。
+rust_ext_path = os.environ.get(
+    'CW_RUST_EXT_PATH',
+    os.path.join(ROOT, rust_ext_name),
+)
+rust_ext_path = os.path.abspath(rust_ext_path)
 binaries = []
 if os.path.exists(rust_ext_path):
     binaries = [(rust_ext_path, '.')]
 else:
-    print(f'WARNING: Rust 扩展 {rust_ext_name} 不存在于 {rust_ext_path}')
-    print('  请先运行 cargo build --release（rust_ext/）')
-    print('  callwarden 会在运行时降级到纯 Python，但性能会显著下降')
+    raise FileNotFoundError(
+        f'发布构建要求 Rust 扩展存在: {rust_ext_path}\n'
+        '请先运行 python release/build.py --rust'
+    )
 
 # === Hidden imports ===
 hiddenimports = []
 
-# 1. tree-sitter 核心 API（不含 grammar 二进制）
-# 注意：16 种语言的 tree-sitter grammar 已由 callwarden_core（Rust 扩展）静态链接。
-# 打包版本通过 Rust 路径加载 grammar，排除 Python grammar 包可节省约 300MB。
-# 开发环境（pip install）仍使用 Python grammar 包作为 Rust 扩展未安装时的回退。
+# 1. tree-sitter 核心 API
+# Python parser 仍是解析失败和 CW_DISABLE_RUST_PARSE 场景的正式回退路径，
+# PyInstaller 会从下面的语言 parser hidden imports 自动收集对应 grammar。
 hiddenimports += [
     'tree_sitter',
 ]
@@ -104,36 +111,40 @@ hiddenimports += [
 # 4. Rust 扩展模块
 hiddenimports += ['callwarden_core']
 
-# 5. fastmcp / mcp SDK（动态子模块收集）
-# pip 包名 fastmcp，实际导入路径 mcp.server.fastmcp
-try:
-    hiddenimports += collect_submodules('mcp')
-except Exception:
-    hiddenimports += [
-        'mcp', 'mcp.server', 'mcp.server.fastmcp',
-        'mcp.server.stdio', 'mcp.server.sse',
-        'mcp.types', 'mcp.shared', 'mcp.shared.exceptions',
-    ]
-
-try:
-    hiddenimports += collect_submodules('fastmcp')
-except Exception:
-    pass
+# 5. MCP stdio server 的目标化模块集合
+# CallWarden 使用 mcp.server.fastmcp，不使用 fastmcp 顶层 CLI、云认证 provider、
+# OpenAPI proxy 或实验 sampling。全量 collect_submodules 会拉入 AWS SDK 等无关依赖。
+hiddenimports += [
+    'mcp.server.fastmcp',
+    'mcp.server.fastmcp.exceptions',
+    'mcp.server.fastmcp.server',
+    'mcp.server.fastmcp.prompts.base',
+    'mcp.server.fastmcp.prompts.manager',
+    'mcp.server.fastmcp.resources.base',
+    'mcp.server.fastmcp.resources.resource_manager',
+    'mcp.server.fastmcp.resources.templates',
+    'mcp.server.fastmcp.resources.types',
+    'mcp.server.fastmcp.tools.base',
+    'mcp.server.fastmcp.tools.tool_manager',
+    'mcp.server.fastmcp.utilities.context_injection',
+    'mcp.server.fastmcp.utilities.func_metadata',
+    'mcp.server.fastmcp.utilities.logging',
+    'mcp.server.fastmcp.utilities.types',
+    'mcp.server.stdio',
+    'mcp.shared.exceptions',
+    'mcp.types',
+]
 
 # 6. 其他运行时依赖
 hiddenimports += ['pydantic', 'pydantic_core', 'watchdog', 'pathspec']
 
 # === Excludes（减小体积）===
 excludes = [
-    # --- Python tree-sitter grammar 包（Rust 扩展已静态链接，打包时冗余）---
-    'tree_sitter_rust', 'tree_sitter_python', 'tree_sitter_typescript',
-    'tree_sitter_kotlin', 'tree_sitter_go', 'tree_sitter_java',
-    'tree_sitter_c', 'tree_sitter_cpp', 'tree_sitter_c_sharp',
-    'tree_sitter_ruby', 'tree_sitter_php', 'tree_sitter_swift',
-    'tree_sitter_scala', 'tree_sitter_hcl', 'tree_sitter_elixir',
-
     # --- 未使用的间接依赖 ---
     'tree_sitter_languages',   # CW 直接 import 各语言 grammar，不通过此聚合包
+    'fastmcp',                 # 未使用的新版 CLI/provider/experimental 聚合包
+    'boto3', 'botocore', 's3transfer',
+    'opentelemetry', 'opentelemetry_api', 'opentelemetry_sdk',
 
     # --- 可选依赖：向量搜索（PyTorch 全家桶 ~2GB）---
     'torch', 'torchvision', 'torchaudio',
@@ -160,7 +171,7 @@ excludes = [
     'pydoc', 'pdb', 'bdb',
     'profile', 'cProfile', 'pstats',
     'xmlrpc', 'xmlrpc.server', 'xmlrpc.client',
-    'mailbox', 'mimetypes',
+    'mailbox',
     'ftplib', 'poplib', 'imaplib', 'nntplib',
     'curses', 'readline',
     'test', 'test.support',
@@ -181,16 +192,16 @@ excludes = [
 # 三个入口共用同一个 Analysis，PyInstaller 会自动收集依赖
 # P0-3.6 修复（2026-07-22）：cw-agent 是 Linux-only 角色（systemd user unit），
 # Windows 不需要，跳过构建以节省时间和磁盘空间
-_entry_scripts = [
-    os.path.join(ENTRY_DIR, 'entry_cw.py'),
-    os.path.join(ENTRY_DIR, 'entry_cw_client.py'),
-]
-if sys.platform != 'win32':
-    _entry_scripts.append(os.path.join(ENTRY_DIR, 'entry_cw_agent.py'))
+_entry_scripts = [os.path.join(ENTRY_DIR, 'entry_cw.py')]
+if sys.platform.startswith('linux'):
+    _entry_scripts.extend([
+        os.path.join(ENTRY_DIR, 'entry_cw_client.py'),
+        os.path.join(ENTRY_DIR, 'entry_cw_agent.py'),
+    ])
 
 a = Analysis(
     _entry_scripts,
-    pathex=[ROOT],
+    pathex=[PACKAGE_PARENT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -200,17 +211,40 @@ a = Analysis(
     cipher=block_cipher,
 )
 
+# PyInstaller 对 hidden import 缺失默认只发 warning，发布构建必须 fail closed。
+_collected_modules = {item[0] for item in a.pure}
+_required_modules = {
+    'callwarden',
+    'callwarden.cw',
+    'callwarden.parsers.base',
+    'callwarden.server.mcp_server',
+}
+if sys.platform.startswith('linux'):
+    _required_modules.update({
+        'callwarden.cli.client',
+        'callwarden.cli.agent',
+    })
+_missing_modules = sorted(_required_modules - _collected_modules)
+if _missing_modules:
+    raise RuntimeError(
+        'PyInstaller 未收集 CallWarden 核心模块: '
+        + ', '.join(_missing_modules)
+    )
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 # === 按名称提取入口脚本（PyInstaller 6.x 会在 scripts 中混入 rthook，不能按固定下标取）===
 _entry_toc = [s for s in a.scripts if s[0].startswith('entry_')]
-assert len(_entry_toc) >= 2, f'期望至少 2 个入口脚本，实际: {_entry_toc}'
+_expected_entry_count = 3 if sys.platform.startswith('linux') else 1
+assert len(_entry_toc) == _expected_entry_count, (
+    f'期望 {_expected_entry_count} 个入口脚本，实际: {_entry_toc}'
+)
 _scripts_cw = [s for s in _entry_toc if s[0] == 'entry_cw']
 _scripts_client = [s for s in _entry_toc if s[0] == 'entry_cw_client']
 _scripts_agent = [s for s in _entry_toc if s[0] == 'entry_cw_agent']
 
-# === EXE + COLLECT ===
-# 多入口模式：每个 EXE 只包含自己的入口脚本（rthook 由 PyInstaller 自动注入 PKG）
+# === EXE + 单一 COLLECT ===
+# 每个 EXE 只包含自己的入口脚本，所有 EXE 共享同一份运行时依赖。
 
 # cw 主入口
 exe_cw = EXE(
@@ -221,33 +255,20 @@ exe_cw = EXE(
     console=True,
     cipher=block_cipher,
 )
-coll_cw = COLLECT(
-    exe_cw,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    name='cw',
-)
+_executables = [exe_cw]
 
-# cw-client
-exe_cw_client = EXE(
-    pyz,
-    _scripts_client,
-    exclude_binaries=True,
-    name='cw-client',
-    console=True,
-    cipher=block_cipher,
-)
-coll_cw_client = COLLECT(
-    exe_cw_client,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    name='cw-client',
-)
+# 企业 client/agent 依赖 Linux UDS、SO_PEERCRED 和 SCM_RIGHTS。
+if sys.platform.startswith('linux'):
+    exe_cw_client = EXE(
+        pyz,
+        _scripts_client,
+        exclude_binaries=True,
+        name='cw-client',
+        console=True,
+        cipher=block_cipher,
+    )
+    _executables.append(exe_cw_client)
 
-# cw-agent（仅 Linux/macOS 构建）
-if sys.platform != 'win32' and _scripts_agent:
     exe_cw_agent = EXE(
         pyz,
         _scripts_agent,
@@ -256,10 +277,12 @@ if sys.platform != 'win32' and _scripts_agent:
         console=True,
         cipher=block_cipher,
     )
-    coll_cw_agent = COLLECT(
-        exe_cw_agent,
-        a.binaries,
-        a.zipfiles,
-        a.datas,
-        name='cw-agent',
-    )
+    _executables.append(exe_cw_agent)
+
+bundle = COLLECT(
+    *_executables,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    name='callwarden',
+)

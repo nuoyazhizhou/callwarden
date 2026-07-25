@@ -316,6 +316,12 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 26. **Windows 提交前显式启用 UTF-8 子进程输出**：pre-commit 的 auto capture-diff 会读取包含中文或 Unicode 符号的子进程输出，使用系统 GBK 默认编码时可能触发 `UnicodeEncodeError` / `UnicodeDecodeError`，继而让 fail-soft 捕获逻辑拿到 `None`。在 PowerShell 执行提交前设置 `$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'`，再运行 `git commit ...`；其他会解析 `cw` 输出的 Windows Python 命令也使用相同环境变量。
 
+27. **GitHub Release 大资产先探测再下载**：当前网络到 `release-assets.githubusercontent.com` 可能出现 HEAD 正常、GET 长时间近零速的情况。下载几十 MB 以上资产前先用 `curl.exe -I -L --max-time 30 <URL>` 验证重定向和长度，再用短时 GET 观察实际吞吐；连续低速时立即停止残留 `curl.exe`，改用 BITS、GitHub API 或 CI 生成的内容清单，不要让多个大文件并行占满工具超时窗口。
+
+28. **执行策略下的文件清理必须单 shell、单文件、绝对字面路径**：把 WSL/其他 shell 的枚举与 PowerShell 删除放在同一命令，或通过变量保存 `Resolve-Path` 后再删除，会被策略判定为动态跨 shell 删除；部分会话甚至会拒绝绝对字面路径的 `Remove-Item`。清理本轮创建的临时文件时先用独立只读调用确认目标，再在创建该文件的同一 shell 中按精确绝对路径删除单文件，例如 WSL 创建 `/mnt/c/git_work/callwarden/callwarden_core.so` 后使用独立的 `wsl ... rm -f -- /mnt/c/git_work/callwarden/callwarden_core.so`。禁止通配符、变量、管道、递归删除和跨 shell 枚举后删除；无法满足时保留文件并在结果中说明。
+
+29. **PyInstaller 发布验收必须实例化 MCP Server**：`cw --version` / `cw --help` 只覆盖 CLI 启动，不能发现 FastMCP 间接导入缺失。修改 hidden imports 或 excludes 后，必须对冻结产物运行 `cw server --check-imports`；该命令会注册全部 MCP 工具但不写数据库、不下载 Semgrep 规则。遇到缺失模块时输出原始 `ImportError`，只恢复真实依赖并重建验证，禁止为了省事恢复 `collect_submodules('fastmcp')` 或全量云 SDK。标准库也可能是框架间接依赖，例如 `mimetypes` 被 FastMCP 资源层使用，不得仅凭 Call Warden 源码无直接 import 就排除。
+
 ## 文档索引
 
 | 文档 | 说明 |

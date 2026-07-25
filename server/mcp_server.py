@@ -19,8 +19,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from mcp.server.fastmcp import FastMCP
     HAS_FASTMCP = True
-except ImportError:
+    _FASTMCP_IMPORT_ERROR = None
+except ImportError as exc:
     HAS_FASTMCP = False
+    _FASTMCP_IMPORT_ERROR = exc
 
 from ..db import CodeGraphDB
 from ..config import PROJECT_ROOT, get_project_db_path
@@ -76,7 +78,10 @@ def get_db(workspace: Optional[str] = None) -> CodeGraphDB:
 def create_mcp_server():
     """创建 MCP 服务器实例"""
     if not HAS_FASTMCP:
-        print(t("cli.messages.mcp_server_fastmcp_not_installed"), file=sys.stderr)
+        message = t("cli.messages.mcp_server_fastmcp_not_installed")
+        if _FASTMCP_IMPORT_ERROR is not None:
+            message = f"{message}: {_FASTMCP_IMPORT_ERROR}"
+        print(message, file=sys.stderr)
         sys.exit(1)
 
     mcp = FastMCP("callwarden", dependencies=["callwarden"])
@@ -5084,11 +5089,15 @@ def main():
 
     启动流程：
     1. create_mcp_server() 创建服务器实例并注册所有 MCP 工具
-    2. _auto_sync_agents_md() 自动同步 AGENTS.md（fail-soft，不阻断启动）
-    3. _ensure_semgrep_rules_cache() 检查 semgrep 规则缓存（fail-soft）
-    4. server.run() 启动 stdio 传输
+    2. --check-imports 模式完成注册后立即退出，不触发数据库写入和网络下载
+    3. _auto_sync_agents_md() 自动同步 AGENTS.md（fail-soft，不阻断启动）
+    4. _ensure_semgrep_rules_cache() 检查 semgrep 规则缓存（fail-soft）
+    5. server.run() 启动 stdio 传输
     """
     server = create_mcp_server()
+    if "--check-imports" in sys.argv[1:]:
+        print("Call Warden MCP imports OK")
+        return
     # 启动时自动同步 AGENTS.md（C2 新增）
     sync_result = _auto_sync_agents_md()
     _print_auto_sync_summary(sync_result)

@@ -240,7 +240,7 @@ jobs:
           echo "$WIX_BIN" >> $GITHUB_PATH
         shell: bash
       - name: P0-3 整改（2026-07-22）：PyInstaller --onedir 构建
-        # 把 cw / cw-client / cw-agent 打包为自包含的 --onedir 目录，
+        # 把 Windows 支持的 cw 打包为自包含的 --onedir 目录，
         # 含 Python 解释器 + 全部依赖 + Rust 扩展，安装后不依赖系统 Python。
         # 产出到 release/dist/windows/ 供 WiX 打包 MSI。
         run: |
@@ -275,16 +275,21 @@ jobs:
           # 清理临时复制的 Rust 扩展
           rm -f callwarden_core.pyd
 
-          # 验证产物
-          # P0-4 修复（2026-07-22）：cw-agent 是 Linux-only 角色（spec 中 sys.platform != 'win32' 条件化），
-          # Windows 不构建 cw-agent。验证循环只检查 cw 和 cw-client，cw-agent 仅在 Linux/macOS 检查。
-          for cmd in cw cw-client; do
-            if [ ! -f "release/dist/windows/$cmd/$cmd.exe" ]; then
-              echo "ERROR: PyInstaller 产物缺失: $cmd.exe" >&2
-              exit 1
-            fi
-          done
-          echo "OK: PyInstaller --onedir bundle built (cw, cw-client; cw-agent skipped on Windows)"
+          # Windows 仅支持 local 角色；client/agent 依赖 Linux UDS 能力。
+          if [ ! -f "release/dist/windows/callwarden/cw.exe" ] || \
+             [ ! -d "release/dist/windows/callwarden/_internal" ]; then
+            echo "ERROR: PyInstaller 共享产物缺失: callwarden/cw.exe 或 _internal" >&2
+            exit 1
+          fi
+          release/dist/windows/callwarden/cw.exe --version
+          release/dist/windows/callwarden/cw.exe --help >/dev/null
+          release/dist/windows/callwarden/cw.exe server --check-imports
+          python release/inspect_pyinstaller_bundle.py \
+            --bundle release/dist/windows/callwarden \
+            --pyz-toc build/pyinstaller_build/callwarden/PYZ-00.toc \
+            --report release/dist/windows-bundle-report.json \
+            --max-unpacked-mb 180
+          echo "OK: PyInstaller shared bundle built and smoke-tested (cw)"
         shell: bash
       - name: Build MSI (x64) with WiX v3
         # P0-4 v2 修复（2026-07-22）：使用 WiX v3 candle/light（与 v3 WXS schema 一致）
@@ -292,37 +297,26 @@ jobs:
         # 改用 candle（编译 .wxs → .wixobj）+ light（链接 .wixobj → .msi）
         run: |
           # heat 收集 _internal 目录（harvest 生成 ComponentGroup）
-          heat dir release/dist/windows/cw/_internal \
+          heat dir release/dist/windows/callwarden/_internal \
             -o release/windows/_internal.wxs \
             -cg PyInstallerInternal \
             -dr InternalFolder \
             -var var.CwInternalDir \
             -sreg -srd -gg
-          heat dir release/dist/windows/cw-client/_internal \
-            -o release/windows/_client_internal.wxs \
-            -cg PyInstallerClientInternal \
-            -dr ClientInternalFolder \
-            -var var.ClientInternalDir \
-            -sreg -srd -gg
 
           # candle 编译所有 .wxs → .wixobj
           candle release/windows/callwarden.wxs \
             -o release/windows/callwarden.wixobj \
-            -d BuildOutputDir=release/dist/windows/cw \
-            -d ClientBuildOutputDir=release/dist/windows/cw-client \
-            -d CwInternalDir=release/dist/windows/cw/_internal \
-            -d ClientInternalDir=release/dist/windows/cw-client/_internal \
+            -d BuildOutputDir=release/dist/windows/callwarden \
+            -d CwInternalDir=release/dist/windows/callwarden/_internal \
             -d Version=${{ needs.gate1-source-tests.outputs.version }} \
             -arch x64
           candle release/windows/_internal.wxs \
             -o release/windows/_internal.wixobj \
-            -d CwInternalDir=release/dist/windows/cw/_internal
-          candle release/windows/_client_internal.wxs \
-            -o release/windows/_client_internal.wixobj \
-            -d ClientInternalDir=release/dist/windows/cw-client/_internal
+            -d CwInternalDir=release/dist/windows/callwarden/_internal
 
           # light 链接 .wixobj → .msi
-          light release/windows/callwarden.wixobj release/windows/_internal.wixobj release/windows/_client_internal.wixobj \
+          light release/windows/callwarden.wixobj release/windows/_internal.wixobj \
             -o release/dist/callwarden-${{ needs.gate1-source-tests.outputs.version }}-x64.msi \
             -ext WixUIExtension \
             -ext WixUtilExtension
@@ -341,7 +335,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-msi
-          path: release/dist/*.msi
+          path: |
+            release/dist/*.msi
+            release/dist/windows-bundle-report.json
 
   gate4b-macos-pkg:
     name: "Gate 4b: macOS pkg"

@@ -32,6 +32,20 @@ Call Warden 把 145+ 个 CLI 命令按功能聚合为 12 个主分类，每个�
 
 ---
 
+## MCP Server 启动与发布自检
+
+```bash
+cw server
+cw server --check-imports
+```
+
+`cw server` 启动 stdio MCP Server。`--check-imports` 仅创建服务器并注册全部 MCP 工具，
+随后立即退出；它不会同步 AGENTS.md、预下载 Semgrep 规则或进入 stdio 循环。发布流水线
+用该模式验证冻结包中的 FastMCP 动态依赖，成功时输出
+`Call Warden MCP imports OK`。
+
+---
+
 ## GC 命令
 
 GC 分两类：

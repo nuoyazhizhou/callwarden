@@ -20,12 +20,15 @@ jobs:
           - os: windows-latest
             platform: windows-amd64
             ext: zip
+            max_unpacked_mb: 180
           - os: ubuntu-22.04
             platform: linux-amd64
             ext: tar.gz
+            max_unpacked_mb: 260
           - os: macos-latest
             platform: macos-arm64
             ext: tar.gz
+            max_unpacked_mb: 220
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -49,9 +52,28 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -r requirements.txt
           pip install pyinstaller
+          # 安装当前项目，确保冻结环境中的包映射与最终 wheel 一致。
+          python -m pip install . --no-deps
 
       - name: Run PyInstaller
         run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+
+      - name: Smoke-test frozen executables
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE_SUFFIX=""
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            EXE_SUFFIX=".exe"
+          fi
+
+          "./dist/callwarden/cw${EXE_SUFFIX}" --version
+          "./dist/callwarden/cw${EXE_SUFFIX}" --help >/dev/null
+          "./dist/callwarden/cw${EXE_SUFFIX}" server --check-imports
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            "./dist/callwarden/cw-client${EXE_SUFFIX}" --help >/dev/null
+            "./dist/callwarden/cw-agent${EXE_SUFFIX}" --help >/dev/null
+          fi
 
       - name: Package artifacts
         shell: bash
@@ -60,20 +82,29 @@ jobs:
           cd dist
           if [ "${{ matrix.ext }}" = "zip" ]; then
             # Windows: zip archive（bash 变量通过参数传给 PowerShell）
-            powershell -Command "Compress-Archive -Path 'cw','cw-client' -DestinationPath \"../$ARTIFACT\""
+            powershell -Command "Compress-Archive -Path 'callwarden' -DestinationPath \"../$ARTIFACT\""
           else
-            # Linux/macOS: tar.gz archive
-            AGENT_DIR=""
-            [ -d "cw-agent" ] && AGENT_DIR="cw-agent"
-            tar czf "../$ARTIFACT" cw/ cw-client/ $AGENT_DIR
+            # Linux/macOS: 单一共享运行时目录
+            tar czf "../$ARTIFACT" callwarden/
           fi
+          cd ..
+          REPORT="callwarden-${{ matrix.platform }}-bundle-report.json"
+          python release/inspect_pyinstaller_bundle.py \
+            --bundle dist/callwarden \
+            --pyz-toc build/callwarden/PYZ-00.toc \
+            --artifact "$ARTIFACT" \
+            --report "$REPORT" \
+            --max-unpacked-mb "${{ matrix.max_unpacked_mb }}"
           echo "artifact=$ARTIFACT" >> $GITHUB_ENV
+          echo "report=$REPORT" >> $GITHUB_ENV
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.artifact }}
-          path: ${{ env.artifact }}
+          path: |
+            ${{ env.artifact }}
+            ${{ env.report }}
 
   release:
     needs: build
