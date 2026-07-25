@@ -25,7 +25,8 @@ from ..config import (
     detect_language_from_path, get_supported_extensions, compute_content_hash,
     safe_walk,
 )
-from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
+from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser  # noqa: F401  create_parser 保留供 dev reference / 测试 mock；生产路径不再调用（P1-E）
+from .rust_parser_facade import RustParserFacade
 from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
 from ..i18n import t
 
@@ -481,39 +482,16 @@ def _detect_third_party_dir(abs_dir_path: str, rel_dir_path: str) -> tuple:
 def _can_use_rust_parse(lang: Optional[str] = None) -> bool:
     """P29/P30/Phase1: 检测 Rust 扩展是否可用且支持指定语言的 parse。
 
-    P30 起优先使用流式 pool API（batch_parse_c_files_pool + ParseResultPool），
-    结果存 Rust 侧 Vec，Python 按需 get_at 读取单个 dict，避免一次性生成 N 个
-    Python dict 的转换峰值。不可用时回退到 P29 的 batch_parse_c_files。
-
-    Phase 1 起新增多语言通用路径（batch_parse_files_lang_pool），支持 11 种语言。
-    C 语言仍走专用快路径 batch_parse_c_files_pool（已稳定，不破坏）。
+    P1-E 起委托给 RustParserFacade.supports_language，统一 Rust 可用性判定入口。
+    保留本函数仅为向后兼容（测试 mock / 旧调用点），新代码应直接调用 facade。
 
     Args:
-        lang: 语言标识。None 检测 C 语言专用接口；"c" 同上；
-              其他语言检测多语言通用接口。
+        lang: 语言标识。None 视为 "c"（C 专用快路径）；其他语言检测多语言通用接口。
 
     Returns:
         True 表示 callwarden_core 的对应 parse 接口可用
     """
-    # C 语言专用快路径
-    if lang is None or lang == "c":
-        try:
-            from callwarden_core import batch_parse_c_files_pool  # noqa: F401
-            return True
-        except ImportError:
-            pass
-        try:
-            from callwarden_core import batch_parse_c_files  # noqa: F401
-            return True
-        except ImportError:
-            return False
-
-    # 多语言通用路径（Phase 1）
-    try:
-        from callwarden_core import batch_parse_files_lang_pool, supported_languages  # noqa: F401
-        return lang in supported_languages()
-    except ImportError:
-        return False
+    return RustParserFacade.supports_language(lang)
 
 
 def _rust_multilang_parse(
@@ -570,28 +548,20 @@ def _rust_multilang_parse(
     try:
         pool = batch_parse_files_lang_pool(rust_args, lang, num_threads=mp_workers)
     except Exception as e:
-        # Rust pool 运行时异常 → 回退 Python
-        cprint(f"  (Phase 1 rust pool exception, fallback to Python: {e})", "yellow")
+        # Rust pool 运行时异常 → fail closed（设计 §3.1.5 不允许静默回退 Python）
+        cprint(f"  (Phase 1 rust pool exception, fail closed: {e})", "yellow")
         return False
 
     # 流式回传：逐个 get_at 转 dict 写入 file_results
     for i, (abs_path, module_path, rel_path, file_instance_id) in enumerate(filtered):
         r = pool.get_at(i)
         if r.get("error"):
-            # 单文件 Rust parse 出错 → 尝试 Python parser 回退
-            py_result = _python_parse_single_file(
-                abs_path, module_path, lang, rel_path, file_instance_id
-            )
-            if py_result is not None:
-                file_results[rel_path] = py_result
-                done_count = len(file_results)
-                print_progress(done_count, parse_total,
-                               t("cli.messages.db_build_parse_progress_lang",
-                                 path=rel_path, lang=lang))
-            else:
-                if failed_ref is not None:
-                    failed_ref[0] += 1
-                failed_files.append((rel_path, r["error"]))
+            # P1-E: 单文件 Rust parse 出错 → fail closed（不再回退 Python parser）
+            # 设计 §3.1.5：Rust 解析失败必须显式记录，不允许静默回退后伪装成功
+            if failed_ref is not None:
+                failed_ref[0] += 1
+            failed_files.append((rel_path, r["error"]))
+            cprint(f"  (Rust parse failed for {rel_path}: {r['error']})", "yellow")
             continue
         r["abs_path"] = abs_path
         r["file_instance_id"] = file_instance_id
@@ -841,12 +811,14 @@ class BuildMixin:
             abs_path = os.path.join(self.workspace_root, rel_path)
             file_instance_id = self._register_file_db(abs_path, mod_path)
             try:
-                result = self.parser.parse_file(abs_path, mod_path)
-                result["abs_path"] = abs_path
-                result["file_instance_id"] = file_instance_id
-                result["module_path"] = mod_path
-                result["rel_path"] = norm_path(rel_path)
-                result.setdefault("inline_modules", [])
+                # P1-E: legacy build() 路径也走 RustParserFacade（统一窄接口）
+                # 旧实现 self.parser.parse_file 是 Python RustParser，新实现走 Rust 扩展
+                result = RustParserFacade.parse_file(abs_path, mod_path, "rust")
+                if result.get("error"):
+                    raise RuntimeError(f"Rust parse failed: {result['error']}")
+                result = RustParserFacade.normalize_result(
+                    result, abs_path, mod_path, norm_path(rel_path), file_instance_id
+                )
                 file_results[norm_path(rel_path)] = result
                 print(t("cli.messages.db_build_parse_progress", i=i, total=total, path=rel_path))
             except Exception as e:
@@ -1213,9 +1185,10 @@ class BuildMixin:
         for i, rel_path in enumerate(files, 1):
             abs_path = os.path.join(self.workspace_root, rel_path)
             lang = detect_language_from_path(rel_path)
-            parser = create_parser(rel_path)
-
-            if not parser:
+            # P1-E: 用 RustParserFacade 替代 create_parser 做语言支持检测
+            # 旧实现 create_parser(rel_path) 会实例化 Python parser（携带 tree-sitter grammar），
+            # 新实现只查询 Rust 扩展支持语言集合，不实例化任何 Python parser。
+            if not lang or not RustParserFacade.supports_language(lang):
                 skipped += 1
                 continue
 
@@ -1453,9 +1426,27 @@ class BuildMixin:
                     except Exception as e:
                         cprint(f"  (P30 rust fallback to multiprocess: {e})", "yellow")
                         c_use_rust = False
-                # C 语言 fallback 到 Python 多进程
+                # C 语言未达批量阈值或 Rust 不可用 → 走 RustParserFacade 单文件路径（不再回退 Python）
                 if not c_use_rust and c_files_to_parse:
-                    non_rust_files.extend(c_files_to_parse)
+                    for _idx, rel_path, abs_path, lang, module_path, file_instance_id in c_files_to_parse:
+                        is_res, reason = _is_resource_file(abs_path)
+                        if is_res:
+                            skipped += 1
+                            failed_files.append((rel_path, f"skip_resource:{reason}"))
+                            continue
+                        r = RustParserFacade.parse_file(abs_path, module_path, "c")
+                        if r.get("error"):
+                            failed += 1
+                            failed_files.append((rel_path, r["error"]))
+                            continue
+                        r = RustParserFacade.normalize_result(
+                            r, abs_path, module_path, rel_path, file_instance_id
+                        )
+                        file_results[rel_path] = r
+                        done_count = len(file_results)
+                        print_progress(done_count, parse_total,
+                                       t("cli.messages.db_build_parse_progress_lang",
+                                         path=rel_path, lang="c"))
 
                 # 2. 多语言通用路径（Phase 1 新增）
                 for lang, files in rust_multilang_files.items():
@@ -1472,15 +1463,52 @@ class BuildMixin:
                             skipped_ref=[skipped], failed_ref=[failed]
                         )
                         if not success:
-                            non_rust_files.extend(files)
+                            # Rust pool 异常 → 走 RustParserFacade 单文件路径（fail closed，不回退 Python）
+                            for _idx, rel_path, abs_path, _lang, module_path, file_instance_id in files:
+                                r = RustParserFacade.parse_file(abs_path, module_path, lang)
+                                if r.get("error"):
+                                    failed += 1
+                                    failed_files.append((rel_path, r["error"]))
+                                    continue
+                                r = RustParserFacade.normalize_result(
+                                    r, abs_path, module_path, rel_path, file_instance_id
+                                )
+                                file_results[rel_path] = r
+                                done_count = len(file_results)
+                                print_progress(done_count, parse_total,
+                                               t("cli.messages.db_build_parse_progress_lang",
+                                                 path=rel_path, lang=lang))
                     else:
-                        non_rust_files.extend(files)
+                        # 文件数 < MP_THRESHOLD → 走 RustParserFacade 单文件路径（不回退 Python）
+                        for _idx, rel_path, abs_path, _lang, module_path, file_instance_id in files:
+                            is_res, reason = _is_resource_file(abs_path)
+                            if is_res:
+                                skipped += 1
+                                failed_files.append((rel_path, f"skip_resource:{reason}"))
+                                continue
+                            r = RustParserFacade.parse_file(abs_path, module_path, lang)
+                            if r.get("error"):
+                                failed += 1
+                                failed_files.append((rel_path, r["error"]))
+                                continue
+                            r = RustParserFacade.normalize_result(
+                                r, abs_path, module_path, rel_path, file_instance_id
+                            )
+                            file_results[rel_path] = r
+                            done_count = len(file_results)
+                            print_progress(done_count, parse_total,
+                                           t("cli.messages.db_build_parse_progress_lang",
+                                             path=rel_path, lang=lang))
 
-                # 3. 非 Rust 支持语言 + fallback 走 Python ProcessPoolExecutor
+                # 3. 非 Rust 支持语言 → fail closed（P1-E：不再回退 Python multiprocess）
+                # 设计 §3.1.5：生产 rust-strict 模式不允许 Python parser 回退。
+                # P0-D 后 16 种语言全部由 Rust 支持，正常情况下 non_rust_files 为空。
+                # 仅当 Rust 扩展不可用 / 单文件 Rust pool 异常时才会进入此分支。
                 if non_rust_files:
-                    _python_multiprocess_parse(non_rust_files, mp_workers, file_results,
-                                               failed_files, parse_total,
-                                               skipped_ref=[skipped], failed_ref=[failed])
+                    for _idx, rel_path, abs_path, lang, module_path, file_instance_id in non_rust_files:
+                        failed += 1
+                        failed_files.append((rel_path, f"Rust 不支持的语言或扩展不可用: lang={lang}"))
+                        cprint(f"  ⚠ fail closed: {rel_path} (lang={lang})", "yellow")
 
             if not use_multiprocess:
                 # 原多线程路径（小文件量或 fallback）
@@ -1497,8 +1525,8 @@ class BuildMixin:
                 def _parse_one(args):
                     """多线程工作函数：解析单个源文件并返回结果元组
 
-                    Phase 1: 小批量路径优先用 Rust parse_file_lang（单文件），
-                    失败则回退 Python parser。
+                    P1-E: 统一走 RustParserFacade（Rust-only）。
+                    设计 §3.1.5：Rust 解析失败显式记录，不允许静默回退 Python parser。
                     """
                     _, rel_path, abs_path, lang, module_path, file_instance_id = args
                     try:
@@ -1509,42 +1537,26 @@ class BuildMixin:
                                 done_count[0] += 1
                                 print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
                             return ("skip_resource", rel_path, reason)
-                        # Phase 1: 小批量优先用 Rust parse_file_lang（非 C 的 Rust 支持语言）
-                        if (lang != "c" and _can_use_rust_parse(lang)
-                                and not os.environ.get("CW_DISABLE_RUST_PARSE")):
-                            try:
-                                from callwarden_core import parse_file_lang
-                                r = parse_file_lang(abs_path, module_path, lang)
-                                if not r.get("error"):
-                                    r["abs_path"] = abs_path
-                                    r["file_instance_id"] = file_instance_id
-                                    r["module_path"] = module_path
-                                    r["rel_path"] = rel_path
-                                    r.setdefault("inline_modules", [])
-                                    _normalize_rust_symbols(r)
-                                    with print_lock:
-                                        done_count[0] += 1
-                                        print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
-                                    return ("ok", rel_path, r)
-                                # Rust 返回 error → 回退 Python parser
-                            except Exception:
-                                pass  # Rust 异常 → 回退 Python parser
-                        # Python parser（fallback 或非 Rust 支持语言）
-                        p = _get_or_create_parser(lang, rel_path)
-                        if not p:
+                        # P1-E: 全语言走 RustParserFacade（C 走 parse_c_file，其他走 parse_file_lang）
+                        if RustParserFacade.is_available() and not RustParserFacade.is_rust_disabled():
+                            r = RustParserFacade.parse_file(abs_path, module_path, lang)
+                            if not r.get("error"):
+                                r = RustParserFacade.normalize_result(
+                                    r, abs_path, module_path, rel_path, file_instance_id
+                                )
+                                with print_lock:
+                                    done_count[0] += 1
+                                    print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
+                                return ("ok", rel_path, r)
+                            # Rust 返回 error → fail closed（不再回退 Python parser）
                             with print_lock:
                                 done_count[0] += 1
-                            return ("skip", rel_path, None)
-                        result = p.parse_file(abs_path, module_path)
-                        result["abs_path"] = abs_path
-                        result["file_instance_id"] = file_instance_id
-                        result["module_path"] = module_path
-                        result["rel_path"] = rel_path
-                        result.setdefault("inline_modules", [])
+                                print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
+                            return ("fail", rel_path, f"Rust parse error: {r['error']}")
+                        # Rust 扩展不可用 → fail closed（生产 rust-strict 模式不允许 Python 回退）
                         with print_lock:
                             done_count[0] += 1
-                            print_progress(done_count[0], parse_total, t("cli.messages.db_build_parse_progress_lang", path=rel_path, lang=lang))
-                        return ("ok", rel_path, result)
+                        return ("fail", rel_path, "callwarden_core 不可用（rust-strict 模式禁止 Python fallback）")
                     except Exception as e:
                         with print_lock:
                             done_count[0] += 1
@@ -3456,7 +3468,13 @@ class BuildMixin:
 
 
     def _refresh_file_rust(self, abs_path: str, rel_path: str):
-        """Rust 文件刷新逻辑（增量方式）"""
+        """Rust 文件刷新逻辑（增量方式）
+
+        P1-E: parse 走 RustParserFacade（Rust-only），不再调用 Python RustParser。
+        module_resolver.resolve_all 仍接收 self.parser 用于 mod_decls 提取
+        （Rust 扩展未返回 mod_decls，模块结构发现暂保留 Python reference，
+        将在 Step 5 审计剩余生产调用点时统一处理）。
+        """
         if not self.module_resolver.module_to_file:
             self.module_resolver.resolve_all(self.parser)
 
@@ -3471,12 +3489,16 @@ class BuildMixin:
         if self._try_ast_cache_short_circuit(abs_path, rel_path, file_instance_id, "rust"):
             return
 
-        result = self.parser.parse_file(abs_path, module_path)
-        result["abs_path"] = abs_path
-        result["file_instance_id"] = file_instance_id
-        result["module_path"] = module_path
-        result["rel_path"] = rel_path
-        result.setdefault("inline_modules", [])
+        # P1-E: Rust-only 解析（不再调用 self.parser.parse_file）
+        result = RustParserFacade.parse_file(abs_path, module_path, "rust")
+        if result.get("error"):
+            print(t("cli.messages.db_build_refresh_fail",
+                    path=rel_path, error=result["error"]))
+            return
+
+        result = RustParserFacade.normalize_result(
+            result, abs_path, module_path, rel_path, file_instance_id
+        )
 
         latest_fv = self._get_file_version(file_instance_id)
         if latest_fv and latest_fv["content_hash"] == result["content_hash"]:
@@ -3508,13 +3530,11 @@ class BuildMixin:
 
 
     def _refresh_file_generic(self, abs_path: str, rel_path: str, lang: str):
-        """通用语言文件刷新逻辑（增量方式）"""
-        from ..parsers import create_parser
+        """通用语言文件刷新逻辑（增量方式）
 
-        parser = create_parser(rel_path)
-        if not parser:
-            return
-
+        P1-E: 改走 RustParserFacade（Rust-only），不再实例化 Python parser。
+        设计 §3.1.5：Rust 解析失败 fail closed，不静默回退 Python parser。
+        """
         module_path = self._infer_module_path_generic(rel_path, lang)
         file_instance_id = self._register_file_db(abs_path, module_path)
 
@@ -3522,17 +3542,16 @@ class BuildMixin:
         if self._try_ast_cache_short_circuit(abs_path, rel_path, file_instance_id, lang):
             return
 
-        try:
-            result = parser.parse_file(abs_path, module_path)
-        except Exception as e:
-            print(t("cli.messages.db_build_refresh_fail", path=rel_path, error=e))
+        # P1-E: Rust-only 解析（不再回退 Python parser）
+        result = RustParserFacade.parse_file(abs_path, module_path, lang)
+        if result.get("error"):
+            print(t("cli.messages.db_build_refresh_fail",
+                    path=rel_path, error=result["error"]))
             return
 
-        result["abs_path"] = abs_path
-        result["file_instance_id"] = file_instance_id
-        result["module_path"] = module_path
-        result["rel_path"] = rel_path
-        result.setdefault("inline_modules", [])
+        result = RustParserFacade.normalize_result(
+            result, abs_path, module_path, rel_path, file_instance_id
+        )
 
         latest_fv = self._get_file_version(file_instance_id)
         if latest_fv and latest_fv["content_hash"] == result.get("content_hash", ""):

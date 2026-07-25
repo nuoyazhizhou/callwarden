@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..config import norm_path, read_file_text
 from ..i18n import t
+from .rust_parser_facade import RustParserFacade
 
 MAX_EXTERNAL_SYMBOLS_PER_PACKAGE = 300
 MAX_EXTERNAL_SOURCE_FILES_PER_PACKAGE = 20
@@ -626,14 +627,9 @@ class ExternalMixin:
         Returns:
             导入的符号数量
         """
-        from ..parsers import create_parser
-
-        try:
-            # create_parser 接受文件路径，根据扩展名判断语言
-            # 构造一个虚拟文件路径触发语言检测
-            dummy_path = f"dummy_pkg_src{ext}"
-            parser = create_parser(dummy_path)
-        except Exception:
+        # P1-E: 改走 RustParserFacade（Rust-only），不再实例化 Python parser。
+        # 设计 §3.1.5：Rust 解析失败 fail closed（跳过该文件，不静默回退 Python）。
+        if not RustParserFacade.supports_language(lang):
             return 0
 
         created = 0
@@ -666,7 +662,10 @@ class ExternalMixin:
                 )
 
                 try:
-                    result = parser.parse_file(abs_path, module_path)
+                    result = RustParserFacade.parse_file(abs_path, module_path, lang)
+                    if result.get("error"):
+                        # Rust parse 失败 → fail closed，跳过该文件
+                        continue
                     # 批量收集符号 + 一次性查重，避免 N+1 查询
                     pending = []  # 待插入的符号行
                     for sym in result.get("symbols", []):
@@ -1466,17 +1465,16 @@ class ExternalMixin:
         Returns:
             导入的符号数量
         """
-        from ..parsers import create_parser
-
+        # P1-E: 改走 RustParserFacade（Rust-only），不再实例化 Python parser。
         ext = os.path.splitext(abs_path)[1]
-        # 根据扩展名决定实际使用的 parser
+        # 根据扩展名决定解析语言
         if ext in (".ts", ".tsx", ".d.ts"):
-            parser = create_parser("dummy.ts")
+            file_lang = "typescript"
         elif ext in (".js", ".jsx"):
-            parser = create_parser("dummy.js")
+            file_lang = "javascript"
         else:
             return 0
-        if parser is None:
+        if not RustParserFacade.supports_language(file_lang):
             return 0
 
         # 推导 module_path
@@ -1492,7 +1490,10 @@ class ExternalMixin:
         created = 0
 
         try:
-            result = parser.parse_file(abs_path, module_path)
+            result = RustParserFacade.parse_file(abs_path, module_path, file_lang)
+            if result.get("error"):
+                # Rust parse 失败 → fail closed，返回 0
+                return 0
             # 批量收集 + 一次性查重，避免 N+1
             pending = []
             for sym in result.get("symbols", []):
@@ -2174,13 +2175,8 @@ class ExternalMixin:
         """
         import zipfile
 
-        from ..parsers import create_parser
-
-        try:
-            parser = create_parser("dummy_pkg.java")
-        except Exception:
-            return 0
-        if parser is None:
+        # P1-E: 改走 RustParserFacade（Rust-only），不再实例化 Python parser。
+        if not RustParserFacade.supports_language("java"):
             return 0
 
         pkg_key = f"ext-java-{package_name}"
@@ -2221,7 +2217,10 @@ class ExternalMixin:
                         # 去掉 module_path 末尾的文件名
                         if "." in module_path:
                             module_path = module_path.rsplit(".", 1)[0]
-                        result = parser.parse_file(tmp_path, module_path)
+                        result = RustParserFacade.parse_file(tmp_path, module_path, "java")
+                        if result.get("error"):
+                            # Rust parse 失败 → fail closed，跳过该文件
+                            continue
                         # 批量收集 + 一次性查重，避免 N+1
                         pending = []
                         for sym in result.get("symbols", []):

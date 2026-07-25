@@ -7,7 +7,7 @@
 - 提供 resolve_gate_findings 标记门禁发现为已解决
 
 设计要点：
-- 语法检查通过 tree-sitter re-parse（复用 BuildMixin.create_parser，hasattr 防御）
+- P1-E: 语法检查通过 RustParserFacade re-parse + extract_diagnostics（Rust-only）
 - Semgrep 增量扫描只扫修改的文件（复用 IssueAnalyzerMixin.run_semgrep，hasattr 防御）
 - 工具不可用时降级跳过，不阻塞任务流
 - run_check_gate 只负责检查与报告，不直接承担 task 状态决策（由 task_report_step 决定）
@@ -19,6 +19,8 @@ from __future__ import annotations
 import os
 import time
 from typing import Any, Dict, List
+
+from .rust_parser_facade import RustParserFacade
 
 
 # severity 大写 → 小写映射（与 task_quality_findings.severity 对齐）
@@ -39,7 +41,7 @@ class CheckGateMixin:
     """检查门禁 Mixin（F6）
 
     通过 Mixin 组合复用 EditSafetyMixin._resolve_abs_path 解析文件路径，
-    复用 BuildMixin.create_parser 做语法检查，复用 IssueAnalyzerMixin.run_semgrep 做安全扫描。
+    P1-E: 语法检查走 RustParserFacade（Rust-only），复用 IssueAnalyzerMixin.run_semgrep 做安全扫描。
     """
 
     def run_check_gate(
@@ -75,27 +77,45 @@ class CheckGateMixin:
             if not abs_path or not os.path.exists(abs_path):
                 continue
 
-            # 检查 1: 语法检查（tree-sitter re-parse）
-            # 优先用 db.create_parser（允许测试注入 mock），否则回退到模块级函数。
-            # 原实现 hasattr(self, "create_parser") 永远为 False（create_parser 是
-            # callwarden.parsers 模块函数而非 db 方法），导致 syntax 检查从未运行。
-            # 修复：先检查 db 属性（向后兼容 mock 注入），无则 import 模块级函数。
+            # 检查 1: 语法检查（P1-E: RustParserFacade re-parse + extract_diagnostics）
+            # 设计 §5.3：Rust 解析失败 fail closed，partial/failed 状态显式记录。
+            # 不再实例化 Python parser，通过 RustParserFacade 统一窄接口访问 Rust diagnostics。
             try:
-                _parser = None
-                if hasattr(self, "create_parser"):
-                    _parser = self.create_parser(abs_path)
-                else:
-                    from ..parsers import create_parser as _create_parser
-                    _parser = _create_parser(abs_path)
-                if _parser:
-                    result = _parser.parse_file(abs_path) if hasattr(_parser, "parse_file") else {}
-                    if result.get("parse_error"):
+                from ..config import detect_language_from_path
+                file_lang = detect_language_from_path(fp)
+                if file_lang and RustParserFacade.supports_language(file_lang):
+                    result = RustParserFacade.parse_file(abs_path, "", file_lang)
+                    diag = RustParserFacade.extract_diagnostics(result)
+                    status = diag.get("status", "ok")
+                    if status == "failed":
+                        # fatal parse error → error 级 finding
+                        msg = diag.get("fatal_parse_error") or "Rust parse failed"
                         findings.append(
                             self._standardize_finding(
                                 check="syntax",
                                 file_path=fp,
                                 severity="ERROR",
-                                message=f"语法错误: {result['parse_error']}",
+                                message=f"语法错误: {msg}",
+                            )
+                        )
+                    elif diag.get("syntax_error_count", 0) > 0:
+                        # 有语法错误但 parse 未完全失败 → error 级 finding
+                        findings.append(
+                            self._standardize_finding(
+                                check="syntax",
+                                file_path=fp,
+                                severity="ERROR",
+                                message=f"语法错误: {diag['syntax_error_count']} 处",
+                            )
+                        )
+                    elif status == "partial" and diag.get("unsupported_construct_count", 0) > 0:
+                        # partial 状态（unsupported construct）→ warning 级 finding
+                        findings.append(
+                            self._standardize_finding(
+                                check="syntax",
+                                file_path=fp,
+                                severity="WARNING",
+                                message=f"部分构造不支持: {diag['unsupported_construct_count']} 处",
                             )
                         )
                     checks_run.append("syntax")
