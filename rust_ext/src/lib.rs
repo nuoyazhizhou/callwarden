@@ -32,7 +32,11 @@ mod frontier;
 mod graph;
 mod hash_diff;
 mod metrics;
-mod multi_lang;
+// P0-C Step 0: multi_lang 改为 pub(crate) 以便 languages 子模块复用类型
+// (LangConfig/SymbolRule/CallRule/NameStrategy 等)
+pub(crate) mod multi_lang;
+// P0-C Step 0: 按语言拆分的配置模块（languages/typescript.rs 等）
+mod languages;
 // R7: cw_daemon 需要 SnapshotCache 类型（daemon/snapshot_state.rs 中使用）
 pub mod snapshot;
 mod toolchain;

@@ -333,37 +333,45 @@ def test_typescript_fixture_documents_symbol_gap():
 
 
 def test_php_fixture_documents_property_gap():
-    """PHP fixture 的 known_gaps 必须记录 property 缺失。"""
+    """PHP fixture 的 property 契约（P0-C Step 2 已修复 Rust 缺口）。"""
     if not _fixture_exists("php"):
         pytest.skip("php.json 不存在")
     data = _load_fixture("php")
-    # expected.symbols 必须包含 property 符号
+    # expected.symbols 必须包含 property 符号（golden 契约真相）
     kinds = {s["kind"] for s in data["expected"]["symbols"]}
-    assert "property" in kinds, "php fixture expected.symbols 必须包含 property（Rust 当前缺失）"
-    # known_gaps 必须记录 Rust property 缺失
-    has_property_gap = any(
-        "property" in gap["description"].lower() for gap in data["known_gaps"]
+    assert "property" in kinds, "php fixture expected.symbols 必须包含 property"
+    # P0-C Step 2: Rust 现已提取 PHP property，known_gaps 不再记录此 Rust 缺口
+    has_rust_property_gap = any(
+        gap["parser"] == "rust" and "property" in gap["description"].lower()
+        for gap in data["known_gaps"]
     )
-    assert has_property_gap, "php fixture known_gaps 必须记录 property 缺失"
+    assert not has_rust_property_gap, (
+        "php fixture known_gaps 不应再记录 Rust property 缺失（P0-C Step 2 已修复）"
+    )
 
 
 def test_scala_fixture_documents_object_method_call_gap():
-    """Scala fixture 的 known_gaps 必须记录对象方法调用缺失。"""
+    """Scala fixture 的对象方法调用契约（P0-C Step 3 已修复 Rust 缺口）。"""
     if not _fixture_exists("scala"):
         pytest.skip("scala.json 不存在")
     data = _load_fixture("scala")
-    # expected.raw_calls 必须包含 calc.add 对象方法调用
+    # expected.raw_calls 必须包含 calc.add 对象方法调用（golden 契约真相）
     has_add_call = any(
         call["callee_name"] == "add" and call["callee_module"] == "calc"
         for call in data["expected"]["raw_calls"]
     )
     assert has_add_call, "scala fixture expected.raw_calls 必须包含 calc.add 对象方法调用"
-    # known_gaps 必须记录 Rust 不提取对象方法调用
-    has_call_gap = any(
-        "calc.add" in gap["description"] or "object method" in gap["description"].lower()
+    # P0-C Step 3: Rust 现已提取 calc.add() 和 new Calculator，known_gaps 不再记录此 Rust 缺口
+    has_rust_call_gap = any(
+        gap["parser"] == "rust" and (
+            "calc.add" in gap["description"] or "object method" in gap["description"].lower()
+            or "new Calculator" in gap["description"]
+        )
         for gap in data["known_gaps"]
     )
-    assert has_call_gap, "scala fixture known_gaps 必须记录对象方法调用缺失"
+    assert not has_rust_call_gap, (
+        "scala fixture known_gaps 不应再记录 Rust 对象方法/构造调用缺失（P0-C Step 3 已修复）"
+    )
 
 
 def test_hcl_fixture_documents_reference_gap():

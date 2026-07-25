@@ -81,20 +81,8 @@
     },
     {
       "parser": "rust",
-      "field": "symbols",
-      "description": "Rust 不提取 PHP property 符号（$value）；golden 期望含 property",
-      "phase": "Phase 2.2"
-    },
-    {
-      "parser": "rust",
-      "field": "symbols.kind",
-      "description": "Rust 把 __construct 标记为 'method'，golden 期望为 'constructor'",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
       "field": "raw_calls",
-      "description": "Rust 不提取 $calc->add(10) 调用；golden 期望含 add 调用",
+      "description": "Rust 不提取文件作用域调用（$calc->add(10) 等）；golden 期望含 add 调用。Rust walk_node 仅在 current_fn 非空时记录调用，文件作用域调用被跳过",
       "phase": "Phase 2.2"
     },
     {

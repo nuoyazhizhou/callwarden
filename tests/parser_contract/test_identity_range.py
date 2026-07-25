@@ -263,8 +263,8 @@ class TestParentAlignment:
                 ("main", 15, ""): 1,
             })
         elif lang == "php":
-            # Rust 缺 property value
-            known += Counter({("value", 7, "Calculator"): 1})
+            # P0-C Step 2: Rust 已提取 property value，parent 对齐（无差异）
+            pass
         elif lang == "cpp":
             # Rust 多 namespace example（namespace 范围包含所有内部符号）
             # 1. namespace example 本身：Rust 有，Python 无
@@ -434,8 +434,9 @@ _KNOWN_CALL_ORDER_DIFFS: dict[str, Counter] = {
         ("main", "clear", 23): 1,
     }),
     "scala": Counter({
-        # Rust 不识别 calc.add()，Python 识别
-        ("main", "add", 17): 1,
+        # P0-C Step 3: Rust 提取 new Calculator 构造调用，Python parser 不提取（Python 限制）
+        # Rust 现在也提取 calc.add()，与 Python 一致（无差异）
+        ("main", "Calculator", 16): 1,
     }),
     "cpp": Counter({
         # Rust 识别 p.distance()，Python 不提取
@@ -444,6 +445,14 @@ _KNOWN_CALL_ORDER_DIFFS: dict[str, Counter] = {
     "swift": Counter({
         # Rust 不识别 getName(id) 调用，Python 识别（Phase 1.4 待修复）
         ("findUser", "getName", 5): 1,
+    }),
+    # P0-C Step 1: Rust 提取 new User(...) 构造调用，Python parser 不提取（Python 限制）
+    # Rust 行为对齐 golden 契约（golden 期望包含构造调用）
+    "typescript": Counter({
+        ("main", "User", 16): 1,
+    }),
+    "javascript": Counter({
+        ("main", "User", 16): 1,
     }),
 }
 

@@ -67,11 +67,11 @@ KNOWN_SYMBOL_DIFFS: dict[str, tuple[str, Counter]] = {
             ("main", 15, 20): 1,
         }),
     ),
-    # PHP: Rust 不提取 property 类型的符号（Python 提取 $value 属性）
-    # Phase 1.4 可在 php_config 的 symbol_rules 中增加 property 支持
+    # PHP: P0-C Step 2 修复后 Rust 提取 property 符号，与 Python 一致（无差异）
+    # 保留空 Counter 以占位，便于后续若再出现差异时填充
     "php": (
-        "Rust 不提取 PHP property 符号，Phase 1.4 待修复",
-        Counter({("value", 7, 7): 1}),
+        "P0-C Step 2: Rust 已提取 PHP property 符号，与 Python 一致",
+        Counter(),
     ),
     # C++: Rust 额外提取 namespace 作为符号（Python 不提取）
     # 这是 Rust 更 thorough，不是 bug；投影差异
@@ -88,17 +88,29 @@ KNOWN_CALL_DIFFS: dict[str, tuple[str, Counter]] = {
         "Rust 识别对象方法调用，Python parser 不提取（Python 限制）",
         Counter({("add", 22): 1, ("clear", 23): 1}),
     ),
-    # Scala: Rust 不识别对象方法调用（calc.add()），Python 识别
-    # 这是 Rust Scala parser 的 bug，Phase 1.4 待修复
+    # Scala: P0-C Step 3 修复后 Rust 提取 new Calculator 构造调用，Python parser 不提取
+    # Rust 行为对齐 golden 契约（golden 期望包含 Calculator 构造调用）
+    # 同时 Rust 现在也提取 calc.add()，与 Python 一致（无差异）
     "scala": (
-        "Rust 不识别 Scala 对象方法调用，Phase 1.4 待修复",
-        Counter({("add", 17): 1}),
+        "Rust 提取 new Calculator 构造调用，Python parser 不提取（Python 限制，P0-C Step 3 修复）",
+        Counter({("Calculator", 16): 1}),
     ),
     # C++: Rust 识别对象方法调用（p.distance()），Python 不提取
     # 同 Python 语言：Python parser 不提取方法调用
     "cpp": (
         "Rust 识别 C++ 对象方法调用，Python parser 不提取（Python 限制）",
         Counter({("distance", 25): 1}),
+    ),
+    # TypeScript: P0-C Step 1 修复后 Rust 提取 new User(...) 构造调用，Python parser 不提取
+    # 这是 Python parser 的已知限制，Rust 行为对齐 golden 契约（golden 期望包含构造调用）
+    "typescript": (
+        "Rust 提取 new User(...) 构造调用，Python parser 不提取（Python 限制，P0-C Step 1 修复）",
+        Counter({("User", 16): 1}),
+    ),
+    # JavaScript: 同 TypeScript，Rust 提取 new User(...) 构造调用，Python 不提取
+    "javascript": (
+        "Rust 提取 new User(...) 构造调用，Python parser 不提取（Python 限制，P0-C Step 1 修复）",
+        Counter({("User", 16): 1}),
     ),
 }
 
@@ -120,68 +132,107 @@ KNOWN_CALL_DIFFS: dict[str, tuple[str, Counter]] = {
 # - typescript: Python 重复提取符号（每个 2 次），Rust 1 次（5 个差异）
 
 KNOWN_KIND_DIFFS: dict[str, tuple[str, Counter]] = {
-    # Ruby: Rust 用 'fn'，Python 用 'method'（initialize/add/main）
+    # Ruby: P0-C Step 5 修复后 Rust 区分 constructor/method/function：
+    # - initialize → "constructor"（kind_from_name 映射，对齐 golden）
+    # - add → "method"（类内方法，require_parent_kind="body_statement"）
+    # - main → "function"（顶层方法，无 require_parent_kind 限制）
+    # Python 仍统一标记为 'method'（Python parser 限制，未区分）
+    # add(6) 在两边都是 method，无差异；initialize 和 main 有 kind 差异。
     "ruby": (
-        "Rust 把 Ruby 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
+        "P0-C Step 5: Rust 区分 constructor/method/function，Python 仍用 method",
         Counter({
             ("initialize", 2, "method"): 1,
-            ("add", 6, "method"): 1,
+            ("initialize", 2, "constructor"): 1,
             ("main", 12, "method"): 1,
-            ("initialize", 2, "fn"): 1,
-            ("add", 6, "fn"): 1,
-            ("main", 12, "fn"): 1,
+            ("main", 12, "function"): 1,
         }),
     ),
-    # Scala: Rust 用 'fn'，Python 用 'method'（add/main）
+    # Scala: P0-C Step 3 修复后 Rust 把方法标记为 'method'，与 Python 一致（无差异）
+    # 保留空 Counter 以占位，便于后续若再出现差异时填充
     "scala": (
-        "Rust 把 Scala 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
-        Counter({
-            ("add", 8, "method"): 1,
-            ("main", 15, "method"): 1,
-            ("add", 8, "fn"): 1,
-            ("main", 15, "fn"): 1,
-        }),
+        "P0-C Step 3: Rust Scala 方法 kind='method'，与 Python 一致",
+        Counter(),
     ),
-    # C++: Rust 用 'fn'，Python 用 'method'（Point 构造器 + distance）
+    # C++: P0-C Step 4 修复后 Rust kind 对齐 golden（constructor/method/function）
+    # Python 仍用 fn/method（Python parser 限制，未区分构造器和自由函数）
     # 另: Rust 多 namespace example（与 KNOWN_SYMBOL_DIFFS 同步）
     "cpp": (
-        "Rust 把 C++ 构造器/方法标记为 'fn'，Python 标记为 'method'；"
-        "Rust 额外提取 namespace（投影差异，Phase 2.6/2.7 待修复）",
+        "P0-C Step 4: Rust kind 对齐 golden（constructor/method/function），Python 仍用 fn/method",
         Counter({
+            # Point constructor: Rust="constructor"（对齐 golden），Python="method"
             ("Point", 8, "method"): 1,
-            ("distance", 10, "method"): 1,
-            ("Point", 8, "fn"): 1,
-            ("distance", 10, "fn"): 1,
+            ("Point", 8, "constructor"): 1,
+            # add: Rust="function"（对齐 golden），Python="fn"
+            ("add", 19, "fn"): 1,
+            ("add", 19, "function"): 1,
+            # main: Rust="function"（对齐 golden），Python="fn"
+            ("main", 23, "fn"): 1,
+            ("main", 23, "function"): 1,
+            # namespace: Rust 额外提取（投影差异）
             ("example", 4, "namespace"): 1,
         }),
     ),
-    # Swift: Rust 用 'fn'，Python 用 'function'（findUser/getName/draw）
+    # Swift: P0-C Step 5 修复后 Rust kind='method'（对齐 golden，原为 'fn'），
+    # Python 仍标记为 'function'（Python parser 限制）。
+    # 注意：Swift 不在 _LANGUAGE_SAMPLES 中，此差异为文档记录，未被测试覆盖。
     "swift": (
-        "Rust 把 Swift 函数标记为 'fn'，Python 标记为 'function'（Phase 2.7 待修复）",
+        "P0-C Step 5: Rust kind='method'（对齐 golden），Python 仍为 'function'",
         Counter({
             ("findUser", 4, "function"): 1,
+            ("findUser", 4, "method"): 1,
             ("getName", 7, "function"): 1,
+            ("getName", 7, "method"): 1,
             ("draw", 13, "function"): 1,
-            ("findUser", 4, "fn"): 1,
-            ("getName", 7, "fn"): 1,
-            ("draw", 13, "fn"): 1,
+            ("draw", 13, "method"): 1,
         }),
     ),
-    # PHP: Rust 缺 property 符号（value），与 KNOWN_SYMBOL_DIFFS 同步
+    # PHP: P0-C Step 2 修复后 Rust 提取 property 符号（kind="property"），
+    # 但 __construct kind 与 Python 不同：Rust="constructor"（对齐 golden），
+    # Python="method"（Python parser 限制，未区分构造器）。
     "php": (
-        "Rust 不提取 PHP property 符号，Python 提取为 'property'（Phase 2.2 待修复）",
-        Counter({("value", 7, "property"): 1}),
-    ),
-    # TypeScript: Python 重复提取符号（每个 2 次），Rust 1 次
-    # 这是 Python parser 的已知 bug，不是 Rust 的缺陷
-    "typescript": (
-        "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",
+        "P0-C Step 2: Rust __construct kind='constructor'（对齐 golden），Python 仍为 'method'",
         Counter({
+            ("__construct", 9, "method"): 1,
+            ("__construct", 9, "constructor"): 1,
+        }),
+    ),
+    # TypeScript: P0-C Step 1 修复后 Rust kind 对齐 golden（function/constructor），
+    # Python parser 仍用 fn/method 且重复提取 2 次。
+    # 差异来源：
+    # 1. Python 重复提取（每符号 2 次 vs Rust 1 次）→ py-rs 各 1
+    # 2. Rust constructor kind="constructor" vs Python kind="method"
+    # 3. Rust function kind="function" vs Python kind="fn"
+    "typescript": (
+        "P0-C Step 1: Rust kind 对齐 golden（function/constructor），Python 仍用 fn/method 且重复提取",
+        Counter({
+            # Python 重复提取导致的差异（每符号 py=2, rs=1 → py-rs=1）
             ("User", 3, "class"): 1,
-            ("constructor", 4, "method"): 1,
             ("greet", 6, "method"): 1,
+            # constructor: Python=method(2次), Rust=constructor(1次) → py-rs=2 + rs-py=1
+            ("constructor", 4, "method"): 2,
+            ("constructor", 4, "constructor"): 1,
+            # add: Python=fn(2次), Rust=function(1次) → py-rs=2 + rs-py=1
+            ("add", 11, "fn"): 2,
+            ("add", 11, "function"): 1,
+            # main: Python=fn(2次), Rust=function(1次) → py-rs=2 + rs-py=1
+            ("main", 15, "fn"): 2,
+            ("main", 15, "function"): 1,
+        }),
+    ),
+    # JavaScript: P0-C Step 1 修复后 Rust kind 对齐 golden（function/constructor），
+    # Python parser 仍用 fn/method。
+    "javascript": (
+        "P0-C Step 1: Rust kind 对齐 golden（function/constructor），Python 仍用 fn/method",
+        Counter({
+            # constructor: Python=method, Rust=constructor
+            ("constructor", 2, "method"): 1,
+            ("constructor", 2, "constructor"): 1,
+            # add: Python=fn, Rust=function
             ("add", 11, "fn"): 1,
+            ("add", 11, "function"): 1,
+            # main: Python=fn, Rust=function
             ("main", 15, "fn"): 1,
+            ("main", 15, "function"): 1,
         }),
     ),
 }
@@ -268,9 +319,11 @@ KNOWN_VISIBILITY_DIFFS: dict[str, tuple[str, Counter]] = {
         "Rust 额外提取 C++ namespace example（visibility=public，投影差异，与 KNOWN_SYMBOL_DIFFS 同步）",
         Counter({("example", 4, "public"): 1}),
     ),
+    # PHP: P0-C Step 2 修复后 Rust 提取 property value 的 visibility="private"，
+    # 与 Python 一致（无差异）。保留空 Counter 占位。
     "php": (
-        "Rust 不提取 PHP property value，Python 提取为 private（与 KNOWN_SYMBOL_DIFFS 同步）",
-        Counter({("value", 7, "private"): 1}),
+        "P0-C Step 2: Rust 已提取 PHP property visibility，与 Python 一致",
+        Counter(),
     ),
     "typescript": (
         "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",

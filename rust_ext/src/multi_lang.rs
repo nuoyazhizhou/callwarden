@@ -10,6 +10,9 @@
 //! - 名称提取策略：ChildByType / FieldName / PositionBefore / ChildByTypeNested /
 //!   ImplTraitForType / CallArgName / HclLabels（后两个为 Elixir/HCL 专用）
 //! - 调用关系按当前函数上下文标注 caller
+//!
+//! P0-C Step 0: 各语言配置函数已拆分到 languages/ 目录下的按语言模块。
+//! 本文件保留通用框架代码（类型定义、walker、PyO3 接口）。
 
 use tree_sitter::{Language, Node, Parser};
 use std::sync::Arc;
@@ -73,6 +76,12 @@ pub enum NameStrategy {
     HclLabels {
         fallback: &'static str,
     },
+
+    /// PHP property 专用：3 层嵌套提取
+    /// property_declaration → property_element → variable_name → name
+    /// 返回 name 节点文本（已去掉 $ 前缀，因为 $ 是 variable_name 的匿名子节点）
+    /// P0-C Step 2: 新增，支持 PHP property 符号提取
+    PhpProperty,
 }
 
 // ============================================
@@ -104,11 +113,27 @@ pub struct SymbolRule {
     /// 块类型（resource/provider/variable/...）由首个 identifier 文本决定。
     /// 空时不做文本映射（默认行为，不影响已接入的 13 种语言）
     pub kind_from_child_text: Vec<(&'static str, &'static str)>,
+    /// 按提取到的符号名映射 sym_kind：当 extract_name 返回的 name 匹配此映射时，
+    /// 用映射值覆盖 sym_kind。用于 TS/JS：method_definition 的 name="constructor"
+    /// 时 sym_kind 应为 "constructor" 而非 "method"。
+    /// 空时不做名称映射（默认行为）。
+    /// P0-C Step 1: 新增字段，支持 TS/JS constructor kind 区分
+    pub kind_from_name: Vec<(&'static str, &'static str)>,
+    /// 要求父节点 kind 匹配此值才命中规则。None 时不限制父节点（默认行为）。
+    /// 用于 C++：function_definition 在 field_declaration_list 内为 method，
+    /// 在 declaration_list 或文件作用域为 function。
+    /// P0-C Step 4: 新增字段，支持 C++ method/function 区分
+    pub require_parent_kind: Option<&'static str>,
+    /// 当 true 且提取到的 name 等于 parent_qualified 的最后一段（即类名）时，
+    /// 将 sym_kind 覆盖为 "constructor"。用于 C++ 构造函数检测（名称与类名相同）。
+    /// P0-C Step 4: 新增字段，支持 C++ constructor 检测
+    pub constructor_if_name_matches_parent: bool,
 }
 
 impl SymbolRule {
-    /// 快速构造（无动态 kind / call_keyword / kind_from_child_text）
-    const fn new(
+    /// 快速构造（无动态 kind / call_keyword / kind_from_child_text / kind_from_name）
+    // P0-C Step 0: 改为 pub(crate) 以便 languages 子模块复用
+    pub(crate) const fn new(
         kind: &'static str,
         name: NameStrategy,
         sym_kind: &'static str,
@@ -120,7 +145,30 @@ impl SymbolRule {
             dynamic_kind: vec![],
             call_keyword: None,
             kind_from_child_text: vec![],
+            kind_from_name: vec![],
+            require_parent_kind: None,
+            constructor_if_name_matches_parent: false,
         }
+    }
+
+    /// P0-C Step 1: 链式设置 kind_from_name（用于 TS/JS constructor 区分）
+    /// 返回 Self 以便在配置函数中链式调用：
+    ///   SymbolRule::new(...).with_kind_from_name(vec![("constructor", "constructor")])
+    pub(crate) fn with_kind_from_name(mut self, mapping: Vec<(&'static str, &'static str)>) -> Self {
+        self.kind_from_name = mapping;
+        self
+    }
+
+    /// P0-C Step 4: 链式设置 require_parent_kind（用于 C++ method/function 区分）
+    pub(crate) fn with_require_parent_kind(mut self, parent_kind: &'static str) -> Self {
+        self.require_parent_kind = Some(parent_kind);
+        self
+    }
+
+    /// P0-C Step 4: 链式设置 constructor_if_name_matches_parent（用于 C++ constructor 检测）
+    pub(crate) fn with_constructor_detection(mut self) -> Self {
+        self.constructor_if_name_matches_parent = true;
+        self
     }
 }
 
@@ -148,26 +196,9 @@ pub struct LangConfig {
 
 impl LangConfig {
     /// 按 language_id 获取配置
+    /// P0-C Step 0: 实现委托给 languages 模块（按语言拆分到 languages/{lang}.rs）
     pub fn get(lang_id: &str) -> Option<Self> {
-        let config = match lang_id {
-            "python" => python_config(),
-            "rust" => rust_config(),
-            "go" => go_config(),
-            "java" => java_config(),
-            "typescript" => typescript_config(),
-            "javascript" => javascript_config(),
-            "ruby" => ruby_config(),
-            "php" => php_config(),
-            "scala" => scala_config(),
-            "csharp" => csharp_config(),
-            "cpp" => cpp_config(),
-            "kotlin" => kotlin_config(),
-            "swift" => swift_config(),
-            "elixir" => elixir_config(),
-            "hcl" => hcl_config(),
-            _ => return None,
-        };
-        Some(config)
+        crate::languages::get_config(lang_id)
     }
 
     /// 获取支持的语言列表
@@ -183,694 +214,6 @@ impl LangConfig {
             "kotlin", "swift",
             "elixir",
         ]
-    }
-}
-
-// ============================================
-// 各语言配置
-// ============================================
-
-fn python_config() -> LangConfig {
-    LangConfig {
-        lang_id: "python",
-        language: Language::from(tree_sitter_python::LANGUAGE),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "function_definition",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "fn", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "class_definition",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "class", Some("block"), false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "call", callee_field: Some("function") }],
-        import_kinds: vec!["import_statement", "import_from_statement"],
-        skip_kinds: vec![],
-    }
-}
-
-fn rust_config() -> LangConfig {
-    LangConfig {
-        lang_id: "rust",
-        language: Language::from(tree_sitter_rust::LANGUAGE),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "function_item",
-                NameStrategy::FieldName("name"),
-                "fn", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "struct_item",
-                NameStrategy::FieldName("name"),
-                "struct", None, false,
-            ),
-            SymbolRule::new(
-                "enum_item",
-                NameStrategy::FieldName("name"),
-                "enum", None, false,
-            ),
-            SymbolRule::new(
-                "trait_item",
-                NameStrategy::FieldName("name"),
-                "trait", None, false,
-            ),
-            // impl 块：不递归进 body（对齐 Python rust_parser._parse_impl 行为）
-            // name 格式 "Trait for Type" 或 "Type"
-            SymbolRule::new(
-                "impl_item",
-                NameStrategy::ImplTraitForType { trait_field: "trait", type_field: "type" },
-                "impl", None, false,
-            ),
-            // const/static/macro（对齐 Python rust_parser 的符号种类）
-            SymbolRule::new(
-                "const_item",
-                NameStrategy::FieldName("name"),
-                "const", None, false,
-            ),
-            SymbolRule::new(
-                "static_item",
-                NameStrategy::FieldName("name"),
-                "static", None, false,
-            ),
-            SymbolRule::new(
-                "macro_definition",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "macro_rules", None, false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
-        import_kinds: vec!["use_declaration"],
-        skip_kinds: vec!["mod_item"],
-    }
-}
-
-fn go_config() -> LangConfig {
-    LangConfig {
-        lang_id: "go",
-        language: Language::from(tree_sitter_go::LANGUAGE),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "function_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "fn", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "method_declaration",
-                NameStrategy::ChildByType(vec!["field_identifier"]),
-                "method", Some("block"), true,
-            ),
-            // Go 的 type_spec 需要动态 kind（struct_type/interface_type）
-            SymbolRule {
-                kind: "type_spec",
-                name: NameStrategy::ChildByType(vec!["type_identifier"]),
-                sym_kind: "type",
-                body: None,
-                is_fn: false,
-                dynamic_kind: vec![
-                    ("struct_type", "struct"),
-                    ("interface_type", "interface"),
-                ],
-                call_keyword: None,
-                kind_from_child_text: vec![],
-            },
-        ],
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
-        import_kinds: vec!["import_spec"],
-        skip_kinds: vec![],
-    }
-}
-
-fn java_config() -> LangConfig {
-    LangConfig {
-        lang_id: "java",
-        language: Language::from(tree_sitter_java::LANGUAGE),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "method_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "method", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "constructor_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "constructor", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "class_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "class", Some("class_body"), false,
-            ),
-            SymbolRule::new(
-                "interface_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "interface", Some("interface_body"), false,
-            ),
-            SymbolRule::new(
-                "enum_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "enum", Some("enum_body"), false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "method_invocation", callee_field: None }],
-        import_kinds: vec!["import_declaration"],
-        skip_kinds: vec![],
-    }
-}
-
-fn typescript_config() -> LangConfig {
-    LangConfig {
-        lang_id: "typescript",
-        language: Language::from(tree_sitter_typescript::LANGUAGE_TSX),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "function_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "fn", Some("statement_block"), true,
-            ),
-            SymbolRule::new(
-                "method_definition",
-                NameStrategy::ChildByType(vec!["property_identifier"]),
-                "method", Some("statement_block"), true,
-            ),
-            SymbolRule::new(
-                "class_declaration",
-                NameStrategy::ChildByType(vec!["type_identifier"]),
-                "class", Some("class_body"), false,
-            ),
-            SymbolRule::new(
-                "interface_declaration",
-                NameStrategy::ChildByType(vec!["type_identifier"]),
-                "interface", None, false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
-        import_kinds: vec!["import_statement"],
-        skip_kinds: vec![],
-    }
-}
-
-fn javascript_config() -> LangConfig {
-    LangConfig {
-        lang_id: "javascript",
-        // JavaScript 使用 TypeScript grammar 解析（TS 是 JS 的超集）
-        language: Language::from(tree_sitter_typescript::LANGUAGE_TYPESCRIPT),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "function_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "fn", Some("statement_block"), true,
-            ),
-            SymbolRule::new(
-                "method_definition",
-                NameStrategy::ChildByType(vec!["property_identifier"]),
-                "method", Some("statement_block"), true,
-            ),
-            SymbolRule::new(
-                "class_declaration",
-                NameStrategy::ChildByType(vec!["type_identifier"]),
-                "class", Some("class_body"), false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
-        import_kinds: vec!["import_statement"],
-        skip_kinds: vec![],
-    }
-}
-
-fn ruby_config() -> LangConfig {
-    LangConfig {
-        lang_id: "ruby",
-        language: Language::from(tree_sitter_ruby::LANGUAGE),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "method",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "fn", Some("body_statement"), true,
-            ),
-            SymbolRule::new(
-                "singleton_method",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "method", Some("body_statement"), true,
-            ),
-            SymbolRule::new(
-                "class",
-                NameStrategy::ChildByType(vec!["constant", "scope_resolution"]),
-                "class", Some("body_statement"), false,
-            ),
-            SymbolRule::new(
-                "module",
-                NameStrategy::ChildByType(vec!["constant", "scope_resolution"]),
-                "module", Some("body_statement"), false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "call", callee_field: Some("method") }],
-        // Ruby 的 require 是 call 节点，不走 import 逻辑
-        import_kinds: vec![],
-        skip_kinds: vec![],
-    }
-}
-
-fn php_config() -> LangConfig {
-    LangConfig {
-        lang_id: "php",
-        language: Language::from(tree_sitter_php::LANGUAGE_PHP),
-        symbol_rules: vec![
-            // PHP 方法名在 formal_parameters 之前
-            // body 是 compound_statement（{ ... }），不是 declaration_list
-            // （declaration_list 是 class/interface/trait 的成员列表）
-            SymbolRule::new(
-                "method_declaration",
-                NameStrategy::PositionBefore {
-                    terminator: "formal_parameters",
-                    name_kind: "name",
-                },
-                "method", Some("compound_statement"), true,
-            ),
-            // PHP 独立函数 function foo() { ... }
-            SymbolRule::new(
-                "function_definition",
-                NameStrategy::PositionBefore {
-                    terminator: "formal_parameters",
-                    name_kind: "name",
-                },
-                "fn", Some("compound_statement"), true,
-            ),
-            SymbolRule::new(
-                "class_declaration",
-                NameStrategy::ChildByType(vec!["name"]),
-                "class", Some("declaration_list"), false,
-            ),
-            SymbolRule::new(
-                "interface_declaration",
-                NameStrategy::ChildByType(vec!["name"]),
-                "interface", Some("declaration_list"), false,
-            ),
-            SymbolRule::new(
-                "trait_declaration",
-                NameStrategy::ChildByType(vec!["name"]),
-                "trait", Some("declaration_list"), false,
-            ),
-        ],
-        call_rules: vec![
-            // PHP 4 种调用表达式，按 tree-sitter-php 0.23 node-types.json 定义使用正确 field：
-            //   function_call_expression: field "function" → name/qualified_name
-            //   member_call_expression:     field "name"    → name ($obj->method())
-            //   nullsafe_member_call_expression: field "name" → name ($obj?->method())
-            //   scoped_call_expression:     field "name"    → name (Class::method())
-            CallRule { kind: "function_call_expression", callee_field: Some("function") },
-            CallRule { kind: "member_call_expression", callee_field: Some("name") },
-            CallRule { kind: "nullsafe_member_call_expression", callee_field: Some("name") },
-            CallRule { kind: "scoped_call_expression", callee_field: Some("name") },
-        ],
-        import_kinds: vec!["namespace_use_declaration"],
-        skip_kinds: vec![],
-    }
-}
-
-fn scala_config() -> LangConfig {
-    LangConfig {
-        lang_id: "scala",
-        language: Language::from(tree_sitter_scala::LANGUAGE),
-        symbol_rules: vec![
-            SymbolRule::new(
-                "function_definition",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "fn", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "function_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "fn", None, false,  // 抽象方法无 body
-            ),
-            SymbolRule::new(
-                "class_definition",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "class", Some("template_body"), false,
-            ),
-            SymbolRule::new(
-                "trait_definition",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "trait", Some("template_body"), false,
-            ),
-            SymbolRule::new(
-                "object_definition",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "object", Some("template_body"), false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: None }],
-        import_kinds: vec!["import_declaration"],
-        skip_kinds: vec![],
-    }
-}
-
-fn csharp_config() -> LangConfig {
-    LangConfig {
-        lang_id: "csharp",
-        language: Language::from(tree_sitter_c_sharp::LANGUAGE),
-        symbol_rules: vec![
-            // C# 方法名在 parameter_list 之前
-            SymbolRule::new(
-                "method_declaration",
-                NameStrategy::PositionBefore {
-                    terminator: "parameter_list",
-                    name_kind: "identifier",
-                },
-                "method", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "constructor_declaration",
-                NameStrategy::PositionBefore {
-                    terminator: "parameter_list",
-                    name_kind: "identifier",
-                },
-                "constructor", Some("block"), true,
-            ),
-            SymbolRule::new(
-                "class_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "class", Some("declaration_list"), false,
-            ),
-            SymbolRule::new(
-                "struct_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "struct", Some("declaration_list"), false,
-            ),
-            SymbolRule::new(
-                "interface_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "interface", Some("declaration_list"), false,
-            ),
-            SymbolRule::new(
-                "enum_declaration",
-                NameStrategy::ChildByType(vec!["identifier"]),
-                "enum", Some("declaration_list"), false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "invocation_expression", callee_field: None }],
-        import_kinds: vec!["using_directive"],
-        skip_kinds: vec![],
-    }
-}
-
-fn cpp_config() -> LangConfig {
-    LangConfig {
-        lang_id: "cpp",
-        language: Language::from(tree_sitter_cpp::LANGUAGE),
-        symbol_rules: vec![
-            // C++ 函数名在 function_declarator 内（类似 C）
-            SymbolRule::new(
-                "function_definition",
-                NameStrategy::ChildByTypeNested {
-                    intermediate: "function_declarator",
-                    name_kinds: vec!["identifier", "field_identifier", "qualified_identifier"],
-                },
-                "fn", Some("compound_statement"), true,
-            ),
-            SymbolRule::new(
-                "class_specifier",
-                NameStrategy::ChildByType(vec!["type_identifier"]),
-                "class", Some("field_declaration_list"), false,
-            ),
-            SymbolRule::new(
-                "struct_specifier",
-                NameStrategy::ChildByType(vec!["type_identifier"]),
-                "struct", Some("field_declaration_list"), false,
-            ),
-            SymbolRule::new(
-                "enum_specifier",
-                NameStrategy::ChildByType(vec!["type_identifier"]),
-                "enum", None, false,
-            ),
-            SymbolRule::new(
-                "namespace_definition",
-                NameStrategy::ChildByType(vec!["namespace_identifier", "identifier"]),
-                "namespace", Some("declaration_list"), false,
-            ),
-        ],
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
-        import_kinds: vec!["preproc_include"],
-        skip_kinds: vec![],
-    }
-}
-
-fn kotlin_config() -> LangConfig {
-    LangConfig {
-        lang_id: "kotlin",
-        language: Language::from(tree_sitter_kotlin_ng::LANGUAGE),
-        symbol_rules: vec![
-            // Kotlin 函数声明：function_declaration → identifier + function_body
-            SymbolRule::new(
-                "function_declaration",
-                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
-                "fn", Some("function_body"), true,
-            ),
-            // Kotlin 类声明
-            SymbolRule::new(
-                "class_declaration",
-                NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
-                "class", Some("class_body"), false,
-            ),
-            // Kotlin object 声明（单例对象）
-            SymbolRule::new(
-                "object_declaration",
-                NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
-                "object", Some("class_body"), false,
-            ),
-            // Kotlin 接口声明
-            SymbolRule::new(
-                "interface_declaration",
-                NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
-                "interface", Some("class_body"), false,
-            ),
-        ],
-        // Kotlin 调用：call_expression 无 callee field，从 identifier 提取
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: None }],
-        import_kinds: vec!["import"],
-        skip_kinds: vec![],
-    }
-}
-
-fn swift_config() -> LangConfig {
-    LangConfig {
-        lang_id: "swift",
-        language: Language::from(tree_sitter_swift::LANGUAGE),
-        symbol_rules: vec![
-            // Swift 函数声明
-            SymbolRule::new(
-                "function_declaration",
-                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
-                "fn", Some("function_body"), true,
-            ),
-            // Swift init 声明（构造函数）
-            SymbolRule::new(
-                "init_declaration",
-                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
-                "constructor", Some("function_body"), true,
-            ),
-            // Swift 协议内的方法声明（无方法体）
-            SymbolRule::new(
-                "protocol_function_declaration",
-                NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
-                "fn", None, true,
-            ),
-            // Swift 类型声明：tree-sitter-swift 0.7.x 把 class/struct/enum/actor
-            // 统一为 class_declaration（用 declaration_kind 字段区分）。
-            // Rust multilang 框架暂不支持字段值映射，统一标记为 "class"。
-            // name 通过 "name" field 提取（比 ChildByType 更可靠）。
-            SymbolRule::new(
-                "class_declaration",
-                NameStrategy::FieldName("name"),
-                "class", Some("class_body"), false,
-            ),
-            // Swift protocol
-            SymbolRule::new(
-                "protocol_declaration",
-                NameStrategy::FieldName("name"),
-                "protocol", Some("protocol_body"), false,
-            ),
-            // Swift typealias（类型别名）
-            SymbolRule::new(
-                "typealias_declaration",
-                NameStrategy::FieldName("name"),
-                "typealias", None, false,
-            ),
-        ],
-        // Swift 调用：call_expression 有 "function" field
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
-        import_kinds: vec!["import_declaration"],
-        skip_kinds: vec![],
-    }
-}
-
-fn elixir_config() -> LangConfig {
-    // Elixir AST 特殊性：所有声明都是 call 节点（同 kind="call"），
-    // 需按首个 identifier 文本区分 defmodule/def/defp/defmacro/defmacrop/defguard/defguardp。
-    // 用 SymbolRule.call_keyword 字段过滤，name 用 CallArgName 从 arguments 提取。
-    LangConfig {
-        lang_id: "elixir",
-        language: Language::from(tree_sitter_elixir::LANGUAGE),
-        symbol_rules: vec![
-            // defmodule Foo.Bar do ... end → kind="module"，name 从 arguments 内 alias 取
-            SymbolRule {
-                kind: "call",
-                name: NameStrategy::CallArgName {
-                    container: "arguments",
-                    child_kind: "alias",
-                    name_kind: "alias",
-                },
-                sym_kind: "module",
-                body: Some("do_block"),
-                is_fn: false,
-                dynamic_kind: vec![],
-                call_keyword: Some("defmodule"),
-                kind_from_child_text: vec![],
-            },
-            // def foo(args) do ... end → kind="function"，is_fn=true（设置调用上下文）
-            // name 从 arguments 内首个 call 节点的 identifier 提取
-            SymbolRule {
-                kind: "call",
-                name: NameStrategy::CallArgName {
-                    container: "arguments",
-                    child_kind: "call",
-                    name_kind: "identifier",
-                },
-                sym_kind: "function",
-                body: Some("do_block"),
-                is_fn: true,
-                dynamic_kind: vec![],
-                call_keyword: Some("def"),
-                kind_from_child_text: vec![],
-            },
-            // defp foo(args) do ... end → kind="function"（私有）
-            SymbolRule {
-                kind: "call",
-                name: NameStrategy::CallArgName {
-                    container: "arguments",
-                    child_kind: "call",
-                    name_kind: "identifier",
-                },
-                sym_kind: "function",
-                body: Some("do_block"),
-                is_fn: true,
-                dynamic_kind: vec![],
-                call_keyword: Some("defp"),
-                kind_from_child_text: vec![],
-            },
-            // defmacro name(args) do ... end → kind="macro"
-            SymbolRule {
-                kind: "call",
-                name: NameStrategy::CallArgName {
-                    container: "arguments",
-                    child_kind: "call",
-                    name_kind: "identifier",
-                },
-                sym_kind: "macro",
-                body: Some("do_block"),
-                is_fn: true,
-                dynamic_kind: vec![],
-                call_keyword: Some("defmacro"),
-                kind_from_child_text: vec![],
-            },
-            // defmacrop name(args) do ... end → kind="macro"（私有）
-            SymbolRule {
-                kind: "call",
-                name: NameStrategy::CallArgName {
-                    container: "arguments",
-                    child_kind: "call",
-                    name_kind: "identifier",
-                },
-                sym_kind: "macro",
-                body: Some("do_block"),
-                is_fn: true,
-                dynamic_kind: vec![],
-                call_keyword: Some("defmacrop"),
-                kind_from_child_text: vec![],
-            },
-            // defguard name(args) do ... end → kind="guard"
-            SymbolRule {
-                kind: "call",
-                name: NameStrategy::CallArgName {
-                    container: "arguments",
-                    child_kind: "call",
-                    name_kind: "identifier",
-                },
-                sym_kind: "guard",
-                body: Some("do_block"),
-                is_fn: true,
-                dynamic_kind: vec![],
-                call_keyword: Some("defguard"),
-                kind_from_child_text: vec![],
-            },
-            // defguardp name(args) do ... end → kind="guard"（私有）
-            SymbolRule {
-                kind: "call",
-                name: NameStrategy::CallArgName {
-                    container: "arguments",
-                    child_kind: "call",
-                    name_kind: "identifier",
-                },
-                sym_kind: "guard",
-                body: Some("do_block"),
-                is_fn: true,
-                dynamic_kind: vec![],
-                call_keyword: Some("defguardp"),
-                kind_from_child_text: vec![],
-            },
-        ],
-        // Elixir 普通 call 调用：identifier 是函数名，callee_field=None
-        // 注意：def/defp 等 call_keyword 匹配的 SymbolRule 会先命中走符号路径，
-        // 其他普通 call（如 IO.puts、Enum.map）会走此调用规则路径
-        call_rules: vec![CallRule { kind: "call", callee_field: None }],
-        // Elixir 的 alias/import/use/require 也是 call 节点，不走 import 路径
-        // （Python parser 的 _extract_imports 专门处理，这里留空，由 Python 端补充）
-        import_kinds: vec![],
-        skip_kinds: vec![],
-    }
-}
-
-fn hcl_config() -> LangConfig {
-    // HCL AST 特殊性：所有顶层块统一为 kind="block"，块类型由首个 identifier 子节点
-    // 文本决定（resource/provider/variable/output/module/data/locals/terraform）。
-    // 用 SymbolRule.kind_from_child_text 按 identifier 文本映射 sym_kind。
-    // name 用 HclLabels 收集 string_lit 标签拼接（resource/data 用 type.name 风格）。
-    LangConfig {
-        lang_id: "hcl",
-        language: Language::from(tree_sitter_hcl::LANGUAGE),
-        symbol_rules: vec![
-            SymbolRule {
-                kind: "block",
-                name: NameStrategy::HclLabels { fallback: "block" },
-                // sym_kind 是兜底值；实际由 kind_from_child_text 覆盖
-                sym_kind: "block",
-                // HCL block 的 body 子节点用于递归提取 attribute 中的引用（调用关系）
-                body: Some("body"),
-                is_fn: false,
-                dynamic_kind: vec![],
-                call_keyword: None,
-                kind_from_child_text: vec![
-                    ("resource", "resource"),
-                    ("provider", "provider"),
-                    ("variable", "variable"),
-                    ("output", "output"),
-                    ("module", "module"),
-                    ("data", "data"),
-                    ("locals", "locals"),
-                    ("terraform", "terraform"),
-                ],
-            },
-        ],
-        // HCL 无传统函数调用；引用关系在 attribute 表达式中（如 value = aws_instance.web.public_ip）
-        // 当前 walk_node 的 CallRule 按 kind 匹配，不适用于 attribute。
-        // Python parser 的 _extract_refs_from_expression 专门处理，这里留空，
-        // 由 Python 端补充提取（或后续扩展框架支持 attribute 引用）
-        call_rules: vec![],
-        // HCL 无 import 概念
-        import_kinds: vec![],
-        skip_kinds: vec![],
     }
 }
 
@@ -1046,10 +389,16 @@ fn walk_node(
             continue;
         }
 
-        // 1. 检查符号规则（kind + call_keyword 都匹配）
+        // 1. 检查符号规则（kind + call_keyword + require_parent_kind 都匹配）
         //    Elixir 的 defmodule/def/defp 等都是 call 节点，需按首个 identifier 文本过滤
+        //    P0-C Step 4: require_parent_kind 用于 C++ 区分类内方法 vs 自由函数
+        let parent_kind = node.kind();
         let rule_match = config.symbol_rules.iter().find(|r| {
             if r.kind != kind { return false; }
+            // P0-C Step 4: 父节点 kind 必须匹配（若配置了 require_parent_kind）
+            if let Some(req_pk) = r.require_parent_kind {
+                if parent_kind != req_pk { return false; }
+            }
             if let Some(kw) = r.call_keyword {
                 // Elixir：要求首个 identifier 子节点文本等于 kw
                 return find_child(&child, "identifier")
@@ -1085,8 +434,26 @@ fn walk_node(
 
             if let Some(actual_kind) = actual_kind_opt {
                 if let Some(name) = extract_name(&child, source, &rule.name) {
+                    // P0-C Step 1: kind_from_name 映射（TS/JS constructor 区分）
+                    // 提取到 name 后，若 name 命中 kind_from_name 映射，覆盖 actual_kind
+                    let final_kind = if !rule.kind_from_name.is_empty() {
+                        rule.kind_from_name.iter()
+                            .find_map(|(n, k)| if *n == name.as_str() { Some(*k) } else { None })
+                            .unwrap_or(actual_kind)
+                    } else {
+                        actual_kind
+                    };
+                    // P0-C Step 4: constructor_if_name_matches_parent（C++ 构造函数检测）
+                    // 当配置了此标志且 name 等于 parent_qualified 的最后一段（类名）时，
+                    // 覆盖 kind 为 "constructor"
+                    let final_kind = if rule.constructor_if_name_matches_parent && !parent_qualified.is_empty() {
+                        let parent_class = parent_qualified.rsplit('.').next().unwrap_or("");
+                        if name.as_str() == parent_class { "constructor" } else { final_kind }
+                    } else {
+                        final_kind
+                    };
                     let qualified = make_qualified(module_path, parent_qualified, &name);
-                    let sym = make_symbol(&child, source, module_path, &name, &qualified, actual_kind);
+                    let sym = make_symbol(&child, source, module_path, &name, &qualified, final_kind);
                     symbols.push(sym);
 
                     // 设置新的调用上下文
@@ -1258,6 +625,14 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
                 _ => Some(format!("{}.{}", labels[0], labels[1])),
             }
         }
+        NameStrategy::PhpProperty => {
+            // P0-C Step 2: PHP property_declaration → property_element → variable_name → name
+            // $ 是 variable_name 的匿名子节点，name 是命名子节点（已无 $ 前缀）
+            let prop_elem = find_child(node, "property_element")?;
+            let var_name = find_child(&prop_elem, "variable_name")?;
+            let name_node = find_child(&var_name, "name")?;
+            Some(node_text(&name_node, source).to_string())
+        }
     }
 }
 
@@ -1270,7 +645,12 @@ fn extract_callee(node: &Node, source: &[u8], field: Option<&str>) -> Option<Str
     let callee = match field {
         Some(f) => node.child_by_field_name(f)?,
         None => find_child(node, "identifier")
-            .or_else(|| find_child(node, "simple_identifier"))?,
+            .or_else(|| find_child(node, "simple_identifier"))
+            // P0-C Step 3: Scala field_expression（calc.add）作为 callee
+            // field_expression 文本为 "calc.add"，由 split_callee 拆分为 (add, calc)
+            .or_else(|| find_child(node, "field_expression"))
+            // P0-C Step 3: Scala instance_expression（new Calculator）的 type_identifier
+            .or_else(|| find_child(node, "type_identifier"))?,
     };
     Some(node_text(&callee, source).to_string())
 }
@@ -1326,10 +706,28 @@ fn make_symbol(
         symbol_hash: format!("{:x}", blake_hash(content.as_bytes())),
         depth: -1,
         has_comment: false,
-        visibility: "public".to_string(),
+        visibility: extract_visibility(node, source),
         content,
         signature: String::new(),
     }
+}
+
+/// 提取符号可见性
+///
+/// P0-C Step 2: PHP 用 visibility_modifier 节点包裹 public/protected/private。
+/// 其他语言暂保持 "public" 默认（Phase 2.7 待补全其他语言的 visibility 提取）。
+fn extract_visibility(node: &Node, source: &[u8]) -> String {
+    if let Some(vis_mod) = find_child(node, "visibility_modifier") {
+        let text = node_text(&vis_mod, source);
+        if text.contains("private") {
+            return "private".to_string();
+        } else if text.contains("protected") {
+            return "protected".to_string();
+        } else if text.contains("public") {
+            return "public".to_string();
+        }
+    }
+    "public".to_string()
 }
 
 // ============================================
