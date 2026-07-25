@@ -9,18 +9,18 @@
   构建命令:
     x64:   candle -arch x64   -dBuildOutputDir=release\dist\windows callwarden.wxs
     arm64: candle -arch arm64 -dBuildOutputDir=release\dist\windows callwarden.wxs
-    链接:  light -out CallWarden-0.3.0-<arch>.msi callwarden.wixobj
+    链接:  light -out CallWarden-<version>-<arch>.msi callwarden.wixobj
     注意: arm64 变体需要 arm64 工具链构建的二进制产物 (PyInstaller target-arch arm64)
 
   Authenticode 签名 (仅 tag release, CI 中执行, 普通构建为 unsigned):
     signtool sign /fd SHA256 /tr <timestamp-url> /td SHA256 \
-      /sha1 <cert-thumbprint> CallWarden-0.3.0-<arch>.msi
+      /sha1 <cert-thumbprint> CallWarden-<version>-<arch>.msi
 
   静默参数 / 退出码:
-    安装: msiexec /i CallWarden-0.3.0-x64.msi /qn /l*v "%TEMP%\cw-install.log"
-    卸载: msiexec /x CallWarden-0.3.0-x64.msi /qn
-    修复: msiexec /fa CallWarden-0.3.0-x64.msi /qn
-    卸载并清理数据: msiexec /x CallWarden-0.3.0-x64.msi /qn ADDLOCAL=RemoveDataOnUninstall
+    安装: msiexec /i CallWarden-<version>-x64.msi /qn /l*v "%TEMP%\cw-install.log"
+    卸载: msiexec /x CallWarden-<version>-x64.msi /qn
+    修复: msiexec /fa CallWarden-<version>-x64.msi /qn
+    卸载并清理数据: msiexec /x CallWarden-<version>-x64.msi /qn ADDLOCAL=RemoveDataOnUninstall
     退出码: 0=成功, 1602=用户取消, 1603=致命错误, 1605=未安装
 
   数据保留策略:

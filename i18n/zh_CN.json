@@ -1095,7 +1095,7 @@
       "db_vector_rag_role_callee": "被调用方",
       "db_vector_rag_role_default": "相关",
       "db_vector_rag_summary": "摘要: {summary}",
-      "mcp_server_fastmcp_not_installed": "错误: fastmcp 未安装。请运行: pip install fastmcp",
+      "mcp_server_fastmcp_not_installed": "错误: MCP SDK 未安装。请运行: pip install \"mcp[rich]\"",
       "console_build_summary_title": "  ═══════ 构建总结 ═══════",
       "console_files_label": "  文件:",
       "console_files_parsed": "    新增/更新: {parsed}",

@@ -249,7 +249,7 @@ jobs:
           cp target/release/callwarden_core.dll ../callwarden_core.pyd
           cd ..
 
-          # 创建临时 venv 安装 wheel + PyInstaller + 全部依赖
+          # 创建临时 venv，安装经过审计的冻结依赖白名单。
           python -m venv build/venv
           build/venv/Scripts/pip install --upgrade pip
           # P0-4 修复（2026-07-22）：原代码 pip install "release/dist/callwarden-*.whl[all]"
@@ -261,10 +261,8 @@ jobs:
             exit 1
           fi
           echo "Installing wheel: $WHEEL_FILE"
-          # CPU-only torch：代码图谱工具不需要 CUDA，避免产物包含 ~2GB nvidia 包
-          build/venv/Scripts/pip install torch --index-url https://download.pytorch.org/whl/cpu
-          build/venv/Scripts/pip install "$WHEEL_FILE[all]"
-          build/venv/Scripts/pip install pyinstaller
+          build/venv/Scripts/pip install -r release/pyinstaller/requirements-build.txt
+          build/venv/Scripts/pip install "$WHEEL_FILE" --no-deps
 
           # 运行 PyInstaller（spec 文件与 Linux/macOS 共用）
           build/venv/Scripts/pyinstaller release/pyinstaller/callwarden.spec \
@@ -288,7 +286,7 @@ jobs:
             --bundle release/dist/windows/callwarden \
             --pyz-toc build/pyinstaller_build/callwarden/PYZ-00.toc \
             --report release/dist/windows-bundle-report.json \
-            --max-unpacked-mb 180
+            --max-unpacked-mb 150
           echo "OK: PyInstaller shared bundle built and smoke-tested (cw)"
         shell: bash
       - name: Build MSI (x64) with WiX v3

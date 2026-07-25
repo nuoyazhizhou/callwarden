@@ -112,7 +112,7 @@ build_pyinstaller_bundle() {
     fi
     echo "  Using wheel: $(basename "$wheel_path")"
 
-    # 创建临时 venv 安装 wheel + PyInstaller + 全部依赖
+    # 创建临时 venv，安装经过审计的冻结依赖白名单。
     local venv_dir="$SCRIPT_DIR/build/venv"
     rm -rf "$venv_dir"
     python3 -m venv "$venv_dir" >/dev/null 2>&1 || {
@@ -120,16 +120,12 @@ build_pyinstaller_bundle() {
         exit 1
     }
     "$venv_dir/bin/pip" install --upgrade pip >/dev/null 2>&1 || true
-    # CPU-only torch：代码图谱工具不需要 CUDA，避免产物包含 ~2GB nvidia 包
-    "$venv_dir/bin/pip" install torch --index-url https://download.pytorch.org/whl/cpu || true
-    # 安装 wheel + 全部依赖（--no-deps 会漏掉 tree-sitter 等，必须装依赖）
-    "$venv_dir/bin/pip" install "$wheel_path[all]" || {
-        echo "  ERROR: pip install $wheel_path[all] failed" >&2
+    "$venv_dir/bin/pip" install -r "$ROOT/release/pyinstaller/requirements-build.txt" || {
+        echo "  ERROR: 安装 PyInstaller 发布依赖白名单失败" >&2
         exit 1
     }
-    # 安装 PyInstaller
-    "$venv_dir/bin/pip" install pyinstaller || {
-        echo "  ERROR: pip install pyinstaller failed" >&2
+    "$venv_dir/bin/pip" install "$wheel_path" --no-deps || {
+        echo "  ERROR: pip install $wheel_path --no-deps failed" >&2
         exit 1
     }
 

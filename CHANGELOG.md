@@ -2,6 +2,21 @@
 
 本文件记录 Call Warden 的版本演化。版本号对应数据库 Schema 版本。
 
+## [0.3.1] - 2026-07-25
+
+### Fixed
+- 修复三平台 PyInstaller 发布链：所有入口共享单一 `_internal`，冻结后执行真实 CLI/MCP smoke。
+- Windows 自包含包改为只发布受支持的 `cw` local 角色，并将解压体积门禁收紧到 150 MB。
+
+### Changed
+- 冻结包改用 `release/pyinstaller/requirements-build.txt` 显式依赖白名单，不再安装 `requirements.txt`、wheel `[all]` 或 CPU torch。
+- Semgrep、sentence-transformers 和 sqlite-vec 保持外置/可选，不嵌入自包含包。
+- 制品检查器同时阻断禁入模块并检查 MCP、parser、watcher、NumPy 等必需运行时。
+
+### Verified
+- Windows x64 本地真实构建：ZIP 41.09 MB，解压 130.24 MB，824 个文件，一个 `_internal`。
+- `cw --version`、`cw --help`、`cw server --check-imports` 通过；禁入模块 0，必需模块缺失 0。
+
 ## [v37] - 2026-07-16
 
 ### Added

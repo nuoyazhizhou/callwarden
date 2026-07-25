@@ -1095,7 +1095,7 @@
       "db_vector_rag_role_callee": "callee",
       "db_vector_rag_role_default": "related",
       "db_vector_rag_summary": "Summary: {summary}",
-      "mcp_server_fastmcp_not_installed": "Error: fastmcp not installed. Please run: pip install fastmcp",
+      "mcp_server_fastmcp_not_installed": "Error: MCP SDK is not installed. Run: pip install \"mcp[rich]\"",
       "console_build_summary_title": "  ═══════ Build Summary ═══════",
       "console_files_label": "  Files:",
       "console_files_parsed": "    New/Updated: {parsed}",

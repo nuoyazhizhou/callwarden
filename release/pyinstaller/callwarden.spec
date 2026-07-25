@@ -145,6 +145,7 @@ excludes = [
     'fastmcp',                 # 未使用的新版 CLI/provider/experimental 聚合包
     'boto3', 'botocore', 's3transfer',
     'opentelemetry', 'opentelemetry_api', 'opentelemetry_sdk',
+    'dns', 'email_validator',  # CallWarden 不使用 Pydantic 的 EmailStr/network extra
 
     # --- 可选依赖：向量搜索（PyTorch 全家桶 ~2GB）---
     'torch', 'torchvision', 'torchaudio',
@@ -154,6 +155,9 @@ excludes = [
 
     # --- 可选依赖：sqlite-vec ---
     'sqlite_vec', 'sqlite-vec',
+
+    # --- 外置能力：冻结包通过 PATH 调用 semgrep 可执行文件 ---
+    'semgrep',
 
     # --- 开发/测试工具（生产环境不需要）---
     'pytest', 'pytest_asyncio', 'pytest_xdist', 'pytest_timeout',
@@ -184,9 +188,8 @@ excludes = [
     'lxml',
 ]
 
-# 注意：semgrep 未排除，因为它是 CW 的核心功能（安全扫描）。
-# 如果 PyInstaller 打包 semgrep 失败（OCaml 引擎兼容性问题），
-# 可在此添加 'semgrep' 到 excludes，用户需要单独 pip install semgrep。
+# 注意：semgrep 的 Python/OCaml 运行时不嵌入冻结包。需要安全扫描时，用户单独安装
+# semgrep 可执行文件；CallWarden 通过 shutil.which("semgrep") 调用它。
 
 # === Analysis ===
 # 三个入口共用同一个 Analysis，PyInstaller 会自动收集依赖

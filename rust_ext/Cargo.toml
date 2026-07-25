@@ -1,6 +1,6 @@
 [package]
 name = "callwarden-core"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 description = "Call Warden 高性能 PyO3 扩展：parse 热路径 + 批量余弦相似度"
 

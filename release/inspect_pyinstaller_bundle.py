@@ -15,9 +15,27 @@ from typing import Iterable
 FORBIDDEN_MODULE_ROOTS = {
     "boto3",
     "botocore",
+    "dns",
+    "email_validator",
     "fastmcp",
     "opentelemetry",
     "s3transfer",
+    "semgrep",
+    "sentence_transformers",
+    "sqlite_vec",
+    "torch",
+    "transformers",
+}
+
+REQUIRED_MODULE_ROOTS = {
+    "callwarden",
+    "mcp",
+    "numpy",
+    "pathspec",
+    "psutil",
+    "requests",
+    "rich",
+    "watchdog",
 }
 
 
@@ -70,6 +88,7 @@ def inspect_bundle(
         for name in modules
         if name.split(".", 1)[0] in FORBIDDEN_MODULE_ROOTS
     )
+    missing_required_roots = sorted(REQUIRED_MODULE_ROOTS - set(module_roots))
     top_files = [
         {
             "path": str(path.relative_to(bundle)).replace("\\", "/"),
@@ -90,6 +109,7 @@ def inspect_bundle(
         "module_count": len(modules),
         "module_roots": dict(sorted(module_roots.items())),
         "forbidden_modules": forbidden_modules,
+        "missing_required_module_roots": missing_required_roots,
         "top_files": top_files,
     }
 
@@ -110,6 +130,10 @@ def inspect_bundle(
     if forbidden_modules:
         roots = sorted({name.split(".", 1)[0] for name in forbidden_modules})
         errors.append(f"发现禁止打包的模块根: {', '.join(roots)}")
+    if missing_required_roots:
+        errors.append(
+            "发布运行时缺少必需模块根: " + ", ".join(missing_required_roots)
+        )
     if (
         max_unpacked_mb is not None
         and total_bytes > max_unpacked_mb * 1024 * 1024

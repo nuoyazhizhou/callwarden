@@ -429,6 +429,9 @@ mv new.db $HOME/.callwarden/callwarden.db
 
 ### Semgrep 不可用
 
+PyInstaller 自包含包不会嵌入 Semgrep 的 Python/OCaml 运行时。Call Warden
+通过 `PATH` 查找 `semgrep` 可执行文件，因此需要安全扫描能力时仍需单独安装。
+
 ```bash
 # 检查安装
 semgrep --version

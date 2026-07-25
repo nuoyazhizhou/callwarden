@@ -20,7 +20,7 @@ jobs:
           - os: windows-latest
             platform: windows-amd64
             ext: zip
-            max_unpacked_mb: 180
+            max_unpacked_mb: 150
           - os: ubuntu-22.04
             platform: linux-amd64
             ext: tar.gz
@@ -48,11 +48,9 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # CPU-only torch：sentence-transformers 依赖 torch，先装 CPU 版避免拉入 ~2GB CUDA
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r requirements.txt
-          pip install pyinstaller
-          # 安装当前项目，确保冻结环境中的包映射与最终 wheel 一致。
+          # 冻结包只安装经过审计的运行时白名单，不安装 requirements.txt/[all]。
+          python -m pip install -r release/pyinstaller/requirements-build.txt
+          # 项目依赖已经由白名单提供，禁止 pip 再解析可选依赖。
           python -m pip install . --no-deps
 
       - name: Run PyInstaller

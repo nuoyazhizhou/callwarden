@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "callwarden"
-version = "0.3.0"
+version = "0.3.1"
 description = "Call Warden - AI Agent 的代码知识图谱工具，多语言代码分析、版本管理、缺陷检测"
 readme = "README.md"
 license = "MIT"
@@ -34,7 +34,7 @@ dependencies = [
     "tree-sitter-scala>=0.23",
     "tree-sitter-hcl>=0.21",
     "tree-sitter-elixir>=0.3",
-    "fastmcp>=0.8",
+    "mcp[rich]>=1.28,<2",
     "watchdog>=6.0.0",
     "numpy>=1.24",
     "semgrep>=1.50",
@@ -80,7 +80,7 @@ all = [
     "tree-sitter-scala>=0.23",
     "tree-sitter-hcl>=0.21",
     "tree-sitter-elixir>=0.3",
-    "fastmcp>=0.8",
+    "mcp[rich]>=1.28,<2",
     "watchdog>=6.0.0",
     "semgrep>=1.50",
     "sentence-transformers>=2.2",
@@ -91,7 +91,7 @@ core = [
     "tree-sitter>=0.21",
     # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持
     "pathspec>=0.10",
-    "fastmcp>=0.8",
+    "mcp[rich]>=1.28,<2",
     "watchdog>=6.0.0",
 ]
 semgrep = ["semgrep>=1.50"]
