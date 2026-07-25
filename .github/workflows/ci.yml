@@ -41,7 +41,7 @@ jobs:
           python -m pip install --upgrade pip
           # CPU-only torch：代码图谱工具不需要 CUDA，避免拉入 ~2GB nvidia 包
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[all,dev]"
+          pip install -e ".[all,dev]" --config-settings editable_mode=compat
           pip install pytest-xdist pytest-timeout
 
       - name: Debug package structure
