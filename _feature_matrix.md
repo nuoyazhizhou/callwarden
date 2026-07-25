@@ -98,7 +98,7 @@
 | 支持语言 | 16 | 16（parsers/ 目录 16 个解析器） |
 | Mixin 模块 | 23 | **35 个功能 Mixin**（40 个 db_*.py 文件 + 1 基类 CodeGraphBase） |
 | Schema 版本 | v14 | **v41** |
-| 产品版本 | 0.3.1 | release/version.toml `[product] version = "0.3.1"` |
+| 产品版本 | 0.3.2 | release/version.toml `[product] version = "0.3.2"` |
 
 ---
 
@@ -411,14 +411,14 @@
 
 | # | 功能点 | 状态 | 详情 |
 |---|--------|------|------|
-| N1 | release/version.toml 唯一版本源 | ✅ 已实现 | 0.3.1 + ABI 版本 + 平台 + 角色 |
+| N1 | release/version.toml 唯一版本源 | ✅ 已实现 | 0.3.2 + ABI 版本 + 平台 + 角色 |
 | N2 | release/version_sync.py 三方一致校验 | ✅ 已实现 | Python/Cargo/__init__.py + --fix |
 | N3 | release/build.py 构建管道（批次5 文档对齐） | CP | 🟡 复审整改（2026-07-21 批次31） | **P0-3 整改**：1) 删除 `--config-setting --build-option=--plat-name=...` argparse 错误（问题 1，setuptools 60+ 已废弃 `--build-option`）；2) 新增 `_ensure_rust_ext_at_root()` 从 `rust_ext/target/release/` 自动复制 .pyd/.so 到根目录（问题 3，干净 runner 兼容）；3) 新增 `MANIFEST.in` 显式声明 `callwarden_core.pyd`/`callwarden_core.so` 让 sdist 包含二进制（问题 2）。`setup.py` 的 `BinaryDistribution.has_ext_modules()=True` 已让 wheel 平台标记为 `cp311-cp311-{plat_tag}`（非 `py3-none-any`），wheel 含 Rust 扩展。**剩余**：未在干净 runner E2E 验证完整 wheel 构建 + 安装链。证据：复审报告 `docs/design/feature-matrix-code-reaudit-2026-07-21.md` §3 P0-3 |
 | N4 | release/config_loader.py 分层配置（批次6 接入 CLI） | IS | ✅ 已实施（评审 2026-07-20 批次6 接入 CLI） | 原 🟡 状态：分层加载器实现存在（CLI>env>user>system>default + PlatformPaths.detect()），但无 Python CLI/daemon 生产 import。批次6 修复：新增 `cw config` CLI 子命令组（[cli/main.py:_handle_config](file:///c:/git_work/callwarden/cli/main.py)），含 3 个 action：1) `cw config explain` 输出每个配置值及其来源（secret 字段隐藏），2) `cw config paths` 输出 PlatformPaths.detect() 平台路径，3) `cw config check-role <role>` 检查角色支持。`config_loader` 通过 `callwarden.release.config_loader` 命名空间包路径 import（fallback 至 sys.path 注入）。`toolchain.*`/`build-context.*`/`dashboard` 等已有命令保留 DaemonConfig 加载路径不变。 |
 | N5 | Windows WiX MSI（x64/arm64 + Authenticode） | CP | 🟡 部分完成（2026-07-25） | WiX 输入统一为 `release/dist/windows/callwarden/{cw.exe,_internal}`，不再引用 Windows 不支持的 `cw-client`；v0.3.1 Windows x64 PyInstaller 真实构建为 ZIP 41.09 MB/解压 130.24 MB，CLI/MCP smoke、第三方禁入/必需模块门禁通过，企业 workflow 用 heat 收集唯一 `_internal`。**剩余**：MSI 尚未在干净 Windows runner 完成安装/repair/卸载 E2E；arm64 与 Authenticode 未验收。 |
 | N6 | macOS arm64 pkg + notarization（原 universal2，2026-07-22 降级） | CP | 🟡 部分完成（2026-07-25） | `build_pkg.sh` 只发布 macOS 支持的 `cw` local 角色并复用唯一 `_internal`，其他角色 fail closed；arm64 架构校验保留。**剩余**：本机无 macOS runner，仅完成 Bash 语法/静态契约验证；实际 pkg、codesign、notarization、stapling、Gatekeeper E2E 仍待 CI。 |
 | N7 | Linux deb 5 子包 + tar.zst（RPM 不在发布范围） | CP | 🟡 部分完成（2026-07-25） | Linux PyInstaller 构建目录内三个入口共享唯一 `_internal`；各 deb 角色复制自己的入口和独立 runtime 以支持单包安装，daemon 仍为 Rust 二进制；WSL Rust release 与 Bash 语法通过。**剩余**：WSL 依赖下载受网络阻塞，尚未完成 Linux 冻结三入口 smoke、dpkg 安装、systemd/双 UID E2E，交由干净 Actions runner 门禁。 |
-| N8 | Release CI enterprise-release.yml（批次5 文档对齐） | CP | 🟡 部分完成（2026-07-25） | 普通发布与 enterprise Windows gate 均改用固定版本的冻结依赖白名单，不再安装 wheel `[all]`/torch；先运行真实冻结入口，再生成/上传包体 JSON。门禁检查单一 `_internal`、禁入模块、必需模块和平台解压体积。Windows 本地等价步骤已通过。**剩余**：v0.3.1 三平台 Actions 尚未实际跑完，故继续保持 🟡。 |
+| N8 | Release CI enterprise-release.yml（批次5 文档对齐） | CP | 🟡 部分完成（2026-07-25） | 普通发布与 enterprise Windows gate 均改用固定版本的冻结依赖白名单，不再安装 wheel `[all]`/torch；先运行真实冻结入口，再生成/上传包体 JSON。门禁检查单一 `_internal`、禁入模块、必需模块和平台解压体积。Windows 本地等价步骤已通过；v0.3.1 Actions 进一步发现并修复 Linux `cw-agent --help` 返回 2。**剩余**：等待 v0.3.2 三平台 Actions 完整验收，故继续保持 🟡。 |
 
 ## O. 基准验证实测数据
 

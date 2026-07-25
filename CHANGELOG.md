@@ -2,6 +2,12 @@
 
 本文件记录 Call Warden 的版本演化。版本号对应数据库 Schema 版本。
 
+## [0.3.2] - 2026-07-25
+
+### Fixed
+- 修复 Linux `cw-agent --help` 被当成未知命令并返回 2，导致 v0.3.1
+  PyInstaller 发布 smoke 失败的问题。
+
 ## [0.3.1] - 2026-07-25
 
 ### Fixed

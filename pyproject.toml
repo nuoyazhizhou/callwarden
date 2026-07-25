@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "callwarden"
-version = "0.3.1"
+version = "0.3.2"
 description = "Call Warden - AI Agent 的代码知识图谱工具，多语言代码分析、版本管理、缺陷检测"
 readme = "README.md"
 license = "MIT"

@@ -75,7 +75,7 @@ wheelhouse 或自包含运行时。
 建立一个机器可读版本源，例如 `release/version.toml`：
 
 ```toml
-product = "0.3.1"
+product = "0.3.2"
 python_abi = "cp311"
 parser_abi = 2
 snapshot_abi = 2

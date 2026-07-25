@@ -105,6 +105,15 @@ class TestEntryPoints:
             main()
         assert exc_info.value.code == 2
 
+    def test_agent_help_succeeds_on_linux(self, monkeypatch, capsys):
+        """发布 smoke 使用的 cw-agent --help 必须返回成功。"""
+        from callwarden.cli.main import run_agent_mode
+
+        monkeypatch.setattr(sys, "platform", "linux")
+
+        assert run_agent_mode(["--help"]) == 0
+        assert "Usage: cw-agent" in capsys.readouterr().out
+
     def test_daemon_fail_closed_on_windows(self):
         """cw-daemon 在非 Linux 上 fail-closed。"""
         if sys.platform == "linux":

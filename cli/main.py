@@ -11865,6 +11865,9 @@ def run_agent_mode(argv: list) -> int:
     cmd = argv[0]
     rest = argv[1:]
 
+    if cmd in {"-h", "--help"}:
+        _print_agent_usage()
+        return 0
     if cmd == "start":
         return _agent_start(rest)
     if cmd == "stop":
