@@ -312,6 +312,10 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 24. **Rust daemon ACL 变更必须跑完整 daemon 测试集**：扩展 `ADMIN_ONLY_METHODS` 或 workspace owner 校验后，只跑新增 ACL 用例会漏掉旧测试契约失配。必须运行 `cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib`，并逐项处理失败；backup/restore/GC/mount 等 admin-only handler 的测试必须使用 admin peer，readonly 方法清单也必须同步更新。不得用局部模块测试通过替代完整 daemon 回归结果。
 
+25. **`functions.exec` 中避免嵌套 PowerShell 复杂引号**：JavaScript 字符串内再嵌入同时含单双引号的 PowerShell 正则时，可能在命令执行前触发 `JavaScriptSyntaxError`。复杂检索应拆成独立 `shell_command`，每条使用简单 `rg -e` 模式；确需通过 `functions.exec` 并行时，优先使用不含内嵌引号的命令字符串，不要把 PowerShell、正则和 JavaScript 三层转义揉在一起。
+
+26. **Windows 提交前显式启用 UTF-8 子进程输出**：pre-commit 的 auto capture-diff 会读取包含中文或 Unicode 符号的子进程输出，使用系统 GBK 默认编码时可能触发 `UnicodeEncodeError` / `UnicodeDecodeError`，继而让 fail-soft 捕获逻辑拿到 `None`。在 PowerShell 执行提交前设置 `$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'`，再运行 `git commit ...`；其他会解析 `cw` 输出的 Windows Python 命令也使用相同环境变量。
+
 ## 文档索引
 
 | 文档 | 说明 |

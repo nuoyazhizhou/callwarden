@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
 
@@ -72,9 +73,13 @@ jobs:
           PYEOF
           pytest /tmp/test_debug_worker.py -v -s -n 2
 
+      - name: Collect tests (fast import gate)
+        run: |
+          pytest tests/ --collect-only -q --tb=short --maxfail=1
+
       - name: Run tests
         run: |
-          pytest tests/ -n auto --tb=short --timeout=300 --timeout-method=thread
+          pytest tests/ -n auto --tb=short --maxfail=10 --timeout=300 --timeout-method=thread
 
       - name: Build package
         run: |

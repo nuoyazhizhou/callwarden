@@ -1,18 +1,5 @@
 """验证 _deduplicate_by_shared_config 去重逻辑"""
 from callwarden.install import DetectedAgent, CallWardenInstaller
-import sys
-import os
-import types
-
-# 设置 callwarden 包以便相对导入正常工作
-pkg = types.ModuleType("callwarden")
-pkg.__path__ = [os.path.dirname(os.path.dirname(os.path.abspath(__file__)))]
-sys.modules["callwarden"] = pkg
-
-# mock i18n 模块避免导入错误
-i18n_mock = types.ModuleType("callwarden.i18n")
-i18n_mock.t = lambda *a, **kw: kw.get("default", a[0] if a else "")
-sys.modules["callwarden.i18n"] = i18n_mock
 
 
 def make_agent(key, display, family):

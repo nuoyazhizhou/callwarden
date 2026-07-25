@@ -27,6 +27,12 @@ from callwarden.server.job_handlers import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _disable_semgrep_cli(monkeypatch):
+    """固定验证无 CLI 路径，避免测试启动真实外部扫描。"""
+    monkeypatch.setattr(_SemgrepScanWrapper, "_find_semgrep_cli", lambda self: "")
+
+
 # ============================================
 # 辅助函数
 # ============================================
