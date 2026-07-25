@@ -1,2 +1,6 @@
--r requirements-runtime.txt
+# 构建环境白名单：local bundle 全量依赖 + PyInstaller。
+# 构建环境安装 local bundle 的全部依赖（含 parser/grammar/numpy），
+# PyInstaller 通过 callwarden.spec 的 excludes 确保 client/agent bundle
+# 不收集 parser 模块（requirements 层 + spec excludes 层双重隔离）。
+-r requirements-runtime-local.txt
 pyinstaller==6.21.0

@@ -1,0 +1,102 @@
+{
+  "language": "java",
+  "sample_file": "Sample.java",
+  "sample_source": "package com.example;\n\nimport java.util.List;\n\npublic class Calculator {\n    private int value;\n\n    public Calculator() {\n        this.value = 0;\n    }\n\n    public int add(int x) {\n        this.value += x;\n        return this.value;\n    }\n\n    public static void main(String[] args) {\n        Calculator calc = new Calculator();\n        calc.add(10);\n        System.out.println(calc.value);\n    }\n}\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_JAVA",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Calculator",
+        "kind": "class",
+        "signature": "public class Calculator",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 5,
+        "line_end": 22
+      },
+      {
+        "name": "Calculator",
+        "kind": "constructor",
+        "signature": "public Calculator()",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 8,
+        "line_end": 10
+      },
+      {
+        "name": "add",
+        "kind": "method",
+        "signature": "public int add(int x)",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 12,
+        "line_end": 15
+      },
+      {
+        "name": "main",
+        "kind": "method",
+        "signature": "public static void main(String[] args)",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 17,
+        "line_end": 21
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "Calculator",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 19
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "add",
+        "callee_module": "calc",
+        "ordinal": 1,
+        "line": 20
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "println",
+        "callee_module": "System.out",
+        "ordinal": 2,
+        "line": 20
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "import java.util.List",
+        "normalized_target": "java.util.List"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 把 calc.add(10) 错误地解析为对 calc 的调用（callee_name='calc'），应解析为对 add 的调用（callee_name='add', callee_module='calc'）",
+      "phase": "Phase 2.x"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 把 calc.add(10) 错误地解析为对 calc 的调用（callee_name='calc'），应解析为对 add 的调用",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

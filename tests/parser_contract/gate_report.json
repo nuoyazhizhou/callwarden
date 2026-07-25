@@ -1,0 +1,556 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-25T15:03:16.294574+00:00",
+  "task_id": "T-1784986236713-5c859568",
+  "task_title": "P0-A 建立 16 语言 ParseFact 契约与可信放行门禁",
+  "overall_status": "pass",
+  "fail_closed": true,
+  "rust_extension_available": true,
+  "environment": {
+    "python_version": "3.14.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "repo_root": "C:/git_work/callwarden"
+  },
+  "gates": {
+    "kind_signature_visibility": {
+      "status": "pass",
+      "description": "Step 2+3: symbol kind / signature / visibility 对齐门禁。验证 Rust 与 Python parser 输出的 kind、signature、visibility 一致（已知差异用 Counter 相减，残余差异必须为零）。",
+      "test_file": "tests/test_rust_python_alignment.py",
+      "total": 92,
+      "passed": 92,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 705.0,
+      "failed_tests": []
+    },
+    "identity_range": {
+      "status": "pass",
+      "description": "Step 4: symbol/call 身份与范围对齐门禁。验证 lexical parent（range-based 推导）、line range 有效性、Rust symbol_hash 确定性、call ordinal 对齐、ABI 缺口文档化、content 一致性、Rust depth 一致性。",
+      "test_file": "tests/parser_contract/test_identity_range.py",
+      "total": 240,
+      "passed": 240,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 1654.0,
+      "failed_tests": []
+    },
+    "encoding_error": {
+      "status": "pass",
+      "description": "Step 5: encoding/error 契约门禁。验证 canonicalize_source 行为（BOM/CRLF/UTF-16/GBK）、空文件、语法错误、partial parse、大文件、no panic、error 语义。",
+      "test_file": "tests/parser_contract/test_encoding_error.py",
+      "total": 70,
+      "passed": 70,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 786.0,
+      "failed_tests": []
+    },
+    "golden_contract": {
+      "status": "pass",
+      "description": "Step 1: golden fixture 契约门禁。验证 16 语言 golden fixture 结构完整、字段齐全、known_gaps 文档化、provenance 可追溯。",
+      "test_file": "tests/parser_contract/test_golden_fixtures.py",
+      "total": 296,
+      "passed": 296,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 1531.0,
+      "failed_tests": []
+    },
+    "baseline": {
+      "status": "pass",
+      "description": "Step 0: baseline 与 bundle inspector 门禁。验证 baseline.json 有效、暴露 Phase 0 缺口、bundle inspector 分类稳定且 forbid distribution 门禁通过。",
+      "test_file": "tests/parser_contract/test_baseline.py",
+      "total": 6,
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "duration_ms": 53.0,
+      "failed_tests": []
+    }
+  },
+  "known_differences": {
+    "symbol_diffs": {
+      "typescript": {
+        "reason": "Rust TypeScript parser 未提取任何符号，Phase 1.4 待修复",
+        "count": 5,
+        "items": [
+          [
+            "User",
+            3,
+            9
+          ],
+          [
+            "add",
+            11,
+            13
+          ],
+          [
+            "constructor",
+            4,
+            4
+          ],
+          [
+            "greet",
+            6,
+            8
+          ],
+          [
+            "main",
+            15,
+            20
+          ]
+        ]
+      },
+      "php": {
+        "reason": "Rust 不提取 PHP property 符号，Phase 1.4 待修复",
+        "count": 1,
+        "items": [
+          [
+            "value",
+            7,
+            7
+          ]
+        ]
+      },
+      "cpp": {
+        "reason": "Rust 额外提取 C++ namespace 符号（投影差异）",
+        "count": 1,
+        "items": [
+          [
+            "example",
+            4,
+            31
+          ]
+        ]
+      }
+    },
+    "call_diffs": {
+      "python": {
+        "reason": "Rust 识别对象方法调用，Python parser 不提取（Python 限制）",
+        "count": 2,
+        "items": [
+          [
+            "add",
+            22
+          ],
+          [
+            "clear",
+            23
+          ]
+        ]
+      },
+      "scala": {
+        "reason": "Rust 不识别 Scala 对象方法调用，Phase 1.4 待修复",
+        "count": 1,
+        "items": [
+          [
+            "add",
+            17
+          ]
+        ]
+      },
+      "cpp": {
+        "reason": "Rust 识别 C++ 对象方法调用，Python parser 不提取（Python 限制）",
+        "count": 1,
+        "items": [
+          [
+            "distance",
+            25
+          ]
+        ]
+      }
+    },
+    "kind_diffs": {
+      "ruby": {
+        "reason": "Rust 把 Ruby 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
+        "count": 6,
+        "items": [
+          [
+            "initialize",
+            2,
+            "method"
+          ],
+          [
+            "add",
+            6,
+            "method"
+          ],
+          [
+            "main",
+            12,
+            "method"
+          ],
+          [
+            "initialize",
+            2,
+            "fn"
+          ],
+          [
+            "add",
+            6,
+            "fn"
+          ],
+          [
+            "main",
+            12,
+            "fn"
+          ]
+        ]
+      },
+      "scala": {
+        "reason": "Rust 把 Scala 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
+        "count": 4,
+        "items": [
+          [
+            "add",
+            8,
+            "method"
+          ],
+          [
+            "main",
+            15,
+            "method"
+          ],
+          [
+            "add",
+            8,
+            "fn"
+          ],
+          [
+            "main",
+            15,
+            "fn"
+          ]
+        ]
+      },
+      "cpp": {
+        "reason": "Rust 把 C++ 构造器/方法标记为 'fn'，Python 标记为 'method'；Rust 额外提取 namespace（投影差异，Phase 2.6/2.7 待修复）",
+        "count": 5,
+        "items": [
+          [
+            "Point",
+            8,
+            "method"
+          ],
+          [
+            "distance",
+            10,
+            "method"
+          ],
+          [
+            "Point",
+            8,
+            "fn"
+          ],
+          [
+            "distance",
+            10,
+            "fn"
+          ],
+          [
+            "example",
+            4,
+            "namespace"
+          ]
+        ]
+      },
+      "swift": {
+        "reason": "Rust 把 Swift 函数标记为 'fn'，Python 标记为 'function'（Phase 2.7 待修复）",
+        "count": 6,
+        "items": [
+          [
+            "findUser",
+            4,
+            "function"
+          ],
+          [
+            "getName",
+            7,
+            "function"
+          ],
+          [
+            "draw",
+            13,
+            "function"
+          ],
+          [
+            "findUser",
+            4,
+            "fn"
+          ],
+          [
+            "getName",
+            7,
+            "fn"
+          ],
+          [
+            "draw",
+            13,
+            "fn"
+          ]
+        ]
+      },
+      "php": {
+        "reason": "Rust 不提取 PHP property 符号，Python 提取为 'property'（Phase 2.2 待修复）",
+        "count": 1,
+        "items": [
+          [
+            "value",
+            7,
+            "property"
+          ]
+        ]
+      },
+      "typescript": {
+        "reason": "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",
+        "count": 5,
+        "items": [
+          [
+            "User",
+            3,
+            "class"
+          ],
+          [
+            "constructor",
+            4,
+            "method"
+          ],
+          [
+            "greet",
+            6,
+            "method"
+          ],
+          [
+            "add",
+            11,
+            "fn"
+          ],
+          [
+            "main",
+            15,
+            "fn"
+          ]
+        ]
+      }
+    },
+    "visibility_diffs": {
+      "python": {
+        "reason": "Python 把 __init__ 标记为 private（__ 前缀规则），Rust 标记为 public（Phase 2.7 待修复）",
+        "count": 2,
+        "items": [
+          [
+            "__init__",
+            9,
+            "private"
+          ],
+          [
+            "__init__",
+            9,
+            "public"
+          ]
+        ]
+      },
+      "rust": {
+        "reason": "Python 把 impl 块标记为 private，Rust 标记为 public（投影差异）",
+        "count": 2,
+        "items": [
+          [
+            "Point",
+            8,
+            "private"
+          ],
+          [
+            "Point",
+            8,
+            "public"
+          ]
+        ]
+      },
+      "go": {
+        "reason": "Python 把 main 标记为 private（小写开头），Rust 标记为 public（Phase 2.7 待修复）",
+        "count": 2,
+        "items": [
+          [
+            "main",
+            25,
+            "private"
+          ],
+          [
+            "main",
+            25,
+            "public"
+          ]
+        ]
+      },
+      "javascript": {
+        "reason": "Python 把 User/add/main 标记为 private（无 export），Rust 标记为 public（Phase 2.7 待修复）",
+        "count": 6,
+        "items": [
+          [
+            "User",
+            1,
+            "private"
+          ],
+          [
+            "add",
+            11,
+            "private"
+          ],
+          [
+            "main",
+            15,
+            "private"
+          ],
+          [
+            "User",
+            1,
+            "public"
+          ],
+          [
+            "add",
+            11,
+            "public"
+          ],
+          [
+            "main",
+            15,
+            "public"
+          ]
+        ]
+      },
+      "swift": {
+        "reason": "Python 把 Swift 符号标记为 internal（默认访问级别），Rust 标记为 public（Phase 2.7 待修复）",
+        "count": 10,
+        "items": [
+          [
+            "UserService",
+            3,
+            "internal"
+          ],
+          [
+            "findUser",
+            4,
+            "internal"
+          ],
+          [
+            "getName",
+            7,
+            "internal"
+          ],
+          [
+            "Drawable",
+            12,
+            "internal"
+          ],
+          [
+            "draw",
+            13,
+            "internal"
+          ],
+          [
+            "UserService",
+            3,
+            "public"
+          ],
+          [
+            "findUser",
+            4,
+            "public"
+          ],
+          [
+            "getName",
+            7,
+            "public"
+          ],
+          [
+            "Drawable",
+            12,
+            "public"
+          ],
+          [
+            "draw",
+            13,
+            "public"
+          ]
+        ]
+      },
+      "cpp": {
+        "reason": "Rust 额外提取 C++ namespace example（visibility=public，投影差异，与 KNOWN_SYMBOL_DIFFS 同步）",
+        "count": 1,
+        "items": [
+          [
+            "example",
+            4,
+            "public"
+          ]
+        ]
+      },
+      "php": {
+        "reason": "Rust 不提取 PHP property value，Python 提取为 private（与 KNOWN_SYMBOL_DIFFS 同步）",
+        "count": 1,
+        "items": [
+          [
+            "value",
+            7,
+            "private"
+          ]
+        ]
+      },
+      "typescript": {
+        "reason": "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",
+        "count": 5,
+        "items": [
+          [
+            "User",
+            3,
+            "public"
+          ],
+          [
+            "constructor",
+            4,
+            "public"
+          ],
+          [
+            "greet",
+            6,
+            "public"
+          ],
+          [
+            "add",
+            11,
+            "public"
+          ],
+          [
+            "main",
+            15,
+            "public"
+          ]
+        ]
+      }
+    }
+  },
+  "ci_artifact": {
+    "artifact_type": "parser_contract_gate_report",
+    "persist_as": "tests/parser_contract/gate_report.json",
+    "fail_closed_policy": "任何门禁失败或未知差异导致 exit code 1，CI 必须拦截。已知差异白名单不计入失败，但必须经评审确认并在 known_differences 中显式记录。"
+  },
+  "languages_covered": [
+    "rust",
+    "typescript",
+    "javascript",
+    "python",
+    "kotlin",
+    "go",
+    "java",
+    "c",
+    "cpp",
+    "csharp",
+    "ruby",
+    "php",
+    "swift",
+    "scala",
+    "hcl",
+    "elixir"
+  ]
+}

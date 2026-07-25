@@ -104,6 +104,210 @@ KNOWN_CALL_DIFFS: dict[str, tuple[str, Counter]] = {
 
 
 # ============================================
+# kind 对齐已知差异（Step 2 新增）
+# ============================================
+# key = (name, start_line, kind)
+# diff = (py_counter - rs_counter) + (rs_counter - py_counter)
+# 设计文档 §6.2: kind 对齐是单语言放行门之一
+#
+# 实际探测得到的差异（基于 _LANGUAGE_SAMPLES 样本）：
+# - ruby: Rust 把方法标记为 'fn'，Python 标记为 'method'（3 个符号）
+# - scala: Rust 把方法标记为 'fn'，Python 标记为 'method'（2 个符号）
+# - cpp: Rust 把构造器/方法标记为 'fn'，Python 标记为 'method'（2 个符号）
+#         + Rust 额外提取 namespace（已在 KNOWN_SYMBOL_DIFFS 记录）
+# - swift: Rust 把函数标记为 'fn'，Python 标记为 'function'（3 个符号）
+# - php: Rust 缺 property 符号（1 个，与 KNOWN_SYMBOL_DIFFS 同步）
+# - typescript: Python 重复提取符号（每个 2 次），Rust 1 次（5 个差异）
+
+KNOWN_KIND_DIFFS: dict[str, tuple[str, Counter]] = {
+    # Ruby: Rust 用 'fn'，Python 用 'method'（initialize/add/main）
+    "ruby": (
+        "Rust 把 Ruby 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
+        Counter({
+            ("initialize", 2, "method"): 1,
+            ("add", 6, "method"): 1,
+            ("main", 12, "method"): 1,
+            ("initialize", 2, "fn"): 1,
+            ("add", 6, "fn"): 1,
+            ("main", 12, "fn"): 1,
+        }),
+    ),
+    # Scala: Rust 用 'fn'，Python 用 'method'（add/main）
+    "scala": (
+        "Rust 把 Scala 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
+        Counter({
+            ("add", 8, "method"): 1,
+            ("main", 15, "method"): 1,
+            ("add", 8, "fn"): 1,
+            ("main", 15, "fn"): 1,
+        }),
+    ),
+    # C++: Rust 用 'fn'，Python 用 'method'（Point 构造器 + distance）
+    # 另: Rust 多 namespace example（与 KNOWN_SYMBOL_DIFFS 同步）
+    "cpp": (
+        "Rust 把 C++ 构造器/方法标记为 'fn'，Python 标记为 'method'；"
+        "Rust 额外提取 namespace（投影差异，Phase 2.6/2.7 待修复）",
+        Counter({
+            ("Point", 8, "method"): 1,
+            ("distance", 10, "method"): 1,
+            ("Point", 8, "fn"): 1,
+            ("distance", 10, "fn"): 1,
+            ("example", 4, "namespace"): 1,
+        }),
+    ),
+    # Swift: Rust 用 'fn'，Python 用 'function'（findUser/getName/draw）
+    "swift": (
+        "Rust 把 Swift 函数标记为 'fn'，Python 标记为 'function'（Phase 2.7 待修复）",
+        Counter({
+            ("findUser", 4, "function"): 1,
+            ("getName", 7, "function"): 1,
+            ("draw", 13, "function"): 1,
+            ("findUser", 4, "fn"): 1,
+            ("getName", 7, "fn"): 1,
+            ("draw", 13, "fn"): 1,
+        }),
+    ),
+    # PHP: Rust 缺 property 符号（value），与 KNOWN_SYMBOL_DIFFS 同步
+    "php": (
+        "Rust 不提取 PHP property 符号，Python 提取为 'property'（Phase 2.2 待修复）",
+        Counter({("value", 7, "property"): 1}),
+    ),
+    # TypeScript: Python 重复提取符号（每个 2 次），Rust 1 次
+    # 这是 Python parser 的已知 bug，不是 Rust 的缺陷
+    "typescript": (
+        "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",
+        Counter({
+            ("User", 3, "class"): 1,
+            ("constructor", 4, "method"): 1,
+            ("greet", 6, "method"): 1,
+            ("add", 11, "fn"): 1,
+            ("main", 15, "fn"): 1,
+        }),
+    ),
+}
+
+
+# ============================================
+# visibility 对齐已知差异（Step 3 新增）
+# ============================================
+# key = (name, start_line, normalized_visibility)
+# normalized_visibility: 'pub' → 'public'（语义等价的关键字归一化）
+# 设计文档 §6.2: visibility 对齐是单语言放行门之一
+#
+# 实际探测得到的差异：
+# - python: __init__ 被 Python 标记为 private（__ 前缀规则），Rust 标记为 public
+# - rust: Python 把 impl 块标记为 private，Rust 标记为 public
+# - go: Python 把 main 标记为 private（小写开头），Rust 标记为 public
+# - javascript: Python 把 User/add/main 标记为 private（无 export），Rust 标记为 public
+# - swift: Python 把所有符号标记为 internal（Swift 默认），Rust 标记为 public
+# - php: Rust 缺 property value（与 KNOWN_SYMBOL_DIFFS 同步）
+# - typescript: Python 重复提取符号（与 KNOWN_KIND_DIFFS 同步）
+
+def _normalize_visibility(v: str) -> str:
+    """归一化 visibility 关键字（'pub' → 'public'，其他保持不变）。
+
+    Rust 和 Python 对同语义的 visibility 使用不同关键字：
+    - Rust 源码用 'pub'，Python parser 提取为 'pub'
+    - Rust parser 归一化为 'public'
+    归一化后比较，避免关键字差异被误报为语义差异。
+    """
+    if v == "pub":
+        return "public"
+    return v
+
+
+KNOWN_VISIBILITY_DIFFS: dict[str, tuple[str, Counter]] = {
+    "python": (
+        "Python 把 __init__ 标记为 private（__ 前缀规则），Rust 标记为 public（Phase 2.7 待修复）",
+        Counter({
+            ("__init__", 9, "private"): 1,
+            ("__init__", 9, "public"): 1,
+        }),
+    ),
+    "rust": (
+        "Python 把 impl 块标记为 private，Rust 标记为 public（投影差异）",
+        Counter({
+            ("Point", 8, "private"): 1,
+            ("Point", 8, "public"): 1,
+        }),
+    ),
+    "go": (
+        "Python 把 main 标记为 private（小写开头），Rust 标记为 public（Phase 2.7 待修复）",
+        Counter({
+            ("main", 25, "private"): 1,
+            ("main", 25, "public"): 1,
+        }),
+    ),
+    "javascript": (
+        "Python 把 User/add/main 标记为 private（无 export），Rust 标记为 public（Phase 2.7 待修复）",
+        Counter({
+            ("User", 1, "private"): 1,
+            ("add", 11, "private"): 1,
+            ("main", 15, "private"): 1,
+            ("User", 1, "public"): 1,
+            ("add", 11, "public"): 1,
+            ("main", 15, "public"): 1,
+        }),
+    ),
+    "swift": (
+        "Python 把 Swift 符号标记为 internal（默认访问级别），Rust 标记为 public（Phase 2.7 待修复）",
+        Counter({
+            ("UserService", 3, "internal"): 1,
+            ("findUser", 4, "internal"): 1,
+            ("getName", 7, "internal"): 1,
+            ("Drawable", 12, "internal"): 1,
+            ("draw", 13, "internal"): 1,
+            ("UserService", 3, "public"): 1,
+            ("findUser", 4, "public"): 1,
+            ("getName", 7, "public"): 1,
+            ("Drawable", 12, "public"): 1,
+            ("draw", 13, "public"): 1,
+        }),
+    ),
+    "cpp": (
+        "Rust 额外提取 C++ namespace example（visibility=public，投影差异，与 KNOWN_SYMBOL_DIFFS 同步）",
+        Counter({("example", 4, "public"): 1}),
+    ),
+    "php": (
+        "Rust 不提取 PHP property value，Python 提取为 private（与 KNOWN_SYMBOL_DIFFS 同步）",
+        Counter({("value", 7, "private"): 1}),
+    ),
+    "typescript": (
+        "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",
+        Counter({
+            ("User", 3, "public"): 1,
+            ("constructor", 4, "public"): 1,
+            ("greet", 6, "public"): 1,
+            ("add", 11, "public"): 1,
+            ("main", 15, "public"): 1,
+        }),
+    ),
+}
+
+
+# ============================================
+# signature 对齐已知差异（Step 3 新增）
+# ============================================
+# 设计文档 §5.2 输出契约: 每个 symbol 必须包含 signature 字段
+# 设计文档 §6.2: signature 对齐是单语言放行门之一
+#
+# 当前已知系统性缺口（所有 16 语言）：
+# - Rust SymbolInfo.signature 始终为空字符串（Phase 2.7 待修复）
+# - Python parser 提取了完整签名
+#
+# 测试策略：
+# 1. test_signature_alignment: 若双方都有非空 signature，内容必须一致（零未知差异）
+#    - 当前 Rust 全空 → 0 个比较项 → 测试通过（trivially）
+#    - 当 Rust 开始填充 signature 时，必须与 Python 一致
+# 2. test_signature_rust_all_empty: 文档化 Rust signature 全空这一已知缺口
+#    - 若 Rust 开始填充 signature，此测试会失败，提醒更新 alignment 测试
+#    - 这是 Phase 2.7 的硬门禁：signature 缺口必须被显式记录
+
+# signature 测试不使用 Counter 相减（因为 Rust 全空，diff = 全部 Python 符号）
+# 改用"双方都有非空 signature 时必须一致"的强约束 + "Rust 全空"的文档化约束
+
+
+# ============================================
 # 归一化函数
 # ============================================
 
@@ -117,6 +321,33 @@ def normalize_symbols(symbols):
     """
     return Counter(
         (s["name"], s["start_line"], s["end_line"])
+        for s in symbols
+    )
+
+
+def normalize_symbols_with_kind(symbols):
+    """按 (name, start_line, kind) 归一化为 Counter 多重集合。
+
+    用于 kind 对齐测试（Step 2）。
+    - 包含 kind 字段，用于检测 Rust/Python 在 kind 标签上的差异
+    - 不包含 end_line：同一符号的行范围差异不影响 kind 判定
+    - key 含 start_line 以区分同名符号（如 Point class 与 Point constructor）
+    """
+    return Counter(
+        (s["name"], s["start_line"], s.get("kind", ""))
+        for s in symbols
+    )
+
+
+def normalize_symbols_with_visibility(symbols):
+    """按 (name, start_line, normalized_visibility) 归一化为 Counter 多重集合。
+
+    用于 visibility 对齐测试（Step 3）。
+    - visibility 经过 _normalize_visibility 归一化（'pub' → 'public'）
+    - key 含 start_line 以区分同名符号
+    """
+    return Counter(
+        (s["name"], s["start_line"], _normalize_visibility(s.get("visibility", "")))
         for s in symbols
     )
 
@@ -286,6 +517,187 @@ class TestRustPythonAlignment:
         assert abs(py_count - rs_count) <= known_tolerance, (
             f"[{lang}] 符号数量差异 {abs(py_count - rs_count)} 超过已知差异 {known_tolerance}\n"
             f"  Python: {py_count} symbols, Rust: {rs_count} symbols"
+        )
+
+    def test_kind_alignment(self, lang, filename, content, tmp_path):
+        """symbol kind 对齐（Step 2 新增）。
+
+        断言逻辑：actual_kind_diff - KNOWN_KIND_DIFFS == empty
+        - key = (name, start_line, kind)
+        - 已知 kind 差异从 KNOWN_KIND_DIFFS 中减去
+        - 剩余差异必须为零（任何未知 kind 差异都会失败）
+
+        设计文档 §6.2: kind 对齐是单语言放行门之一。
+        设计文档 §6.3: 不允许整种语言零符号或整类 kind 系统性缺失。
+        """
+        py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
+
+        py_kinds = normalize_symbols_with_kind(py_result["symbols"])
+        rs_kinds = normalize_symbols_with_kind(rs_result["symbols"])
+
+        diff_counter, missing_in_rs, missing_in_py = compute_diff(py_kinds, rs_kinds)
+
+        # 从实际差异中减去已知差异
+        reason = ""
+        known = Counter()
+        if lang in KNOWN_KIND_DIFFS:
+            reason, known = KNOWN_KIND_DIFFS[lang]
+        remaining = subtract_known_diffs(diff_counter, known)
+
+        assert not remaining, (
+            f"[{lang}] kind 对齐发现未知差异（已知差异已减去）\n"
+            f"  已知差异原因: {reason}\n"
+            f"  已知差异 Counter: {dict(known)}\n"
+            f"  剩余未知差异: {dict(remaining)}\n"
+            f"  missing_in_rs (Python 有 Rust 没有): {dict(missing_in_rs)}\n"
+            f"  missing_in_py (Rust 有 Python 没有): {dict(missing_in_py)}\n"
+            f"  提示: 若为新增已知差异，请更新 KNOWN_KIND_DIFFS[{lang!r}]"
+        )
+
+    def test_kind_set_nonempty(self, lang, filename, content, tmp_path):
+        """Rust parser 的 kind 集合必须非空（禁止整语言零符号白名单）。
+
+        设计文档 §6.3 明确禁止：
+        - 整种语言零 symbols
+        - 整类 symbol/call/reference 系统性缺失
+
+        此测试是 kind 对齐的硬门禁：若 Rust 返回 0 个符号，
+        kind 集合为空，本测试会立即失败（无法被 KNOWN_KIND_DIFFS 白名单绕过）。
+        """
+        py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
+
+        rs_symbols = rs_result.get("symbols", [])
+        rs_kinds = {s.get("kind", "") for s in rs_symbols}
+
+        # Rust 必须返回至少 1 个符号（禁止整语言零符号）
+        assert len(rs_symbols) > 0, (
+            f"[{lang}] Rust parser 返回 0 个符号（违反 §6.3 禁止整语言零符号）"
+        )
+        # kind 集合必须非空（每个符号都应有 kind 标签）
+        assert rs_kinds, (
+            f"[{lang}] Rust parser kind 集合为空（所有符号 kind 字段为空）"
+        )
+        # 不允许 kind 全部为空字符串（系统性 kind 缺失）
+        assert rs_kinds != {""}, (
+            f"[{lang}] Rust parser 所有符号 kind 为空字符串（系统性 kind 缺失）"
+        )
+
+    def test_visibility_alignment(self, lang, filename, content, tmp_path):
+        """symbol visibility 对齐（Step 3 新增）。
+
+        断言逻辑：actual_visibility_diff - KNOWN_VISIBILITY_DIFFS == empty
+        - key = (name, start_line, normalized_visibility)
+        - visibility 经过 _normalize_visibility 归一化（'pub' → 'public'）
+        - 已知差异从 KNOWN_VISIBILITY_DIFFS 中减去
+        - 剩余差异必须为零（任何未知 visibility 差异都会失败）
+
+        设计文档 §6.2: visibility 对齐是单语言放行门之一。
+        """
+        py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
+
+        py_vis = normalize_symbols_with_visibility(py_result["symbols"])
+        rs_vis = normalize_symbols_with_visibility(rs_result["symbols"])
+
+        diff_counter, missing_in_rs, missing_in_py = compute_diff(py_vis, rs_vis)
+
+        # 从实际差异中减去已知差异
+        reason = ""
+        known = Counter()
+        if lang in KNOWN_VISIBILITY_DIFFS:
+            reason, known = KNOWN_VISIBILITY_DIFFS[lang]
+        remaining = subtract_known_diffs(diff_counter, known)
+
+        assert not remaining, (
+            f"[{lang}] visibility 对齐发现未知差异（已知差异已减去）\n"
+            f"  已知差异原因: {reason}\n"
+            f"  已知差异 Counter: {dict(known)}\n"
+            f"  剩余未知差异: {dict(remaining)}\n"
+            f"  missing_in_rs (Python 有 Rust 没有): {dict(missing_in_rs)}\n"
+            f"  missing_in_py (Rust 有 Python 没有): {dict(missing_in_py)}\n"
+            f"  提示: 若为新增已知差异，请更新 KNOWN_VISIBILITY_DIFFS[{lang!r}]"
+        )
+
+    def test_signature_alignment(self, lang, filename, content, tmp_path):
+        """symbol signature 对齐（Step 3 新增）。
+
+        断言逻辑：若双方都有非空 signature，内容必须一致（零未知差异）。
+
+        设计文档 §5.2 输出契约: 每个 symbol 必须包含 signature 字段。
+        设计文档 §6.2: signature 对齐是单语言放行门之一。
+
+        当前已知系统性缺口（所有 16 语言）：
+        - Rust SymbolInfo.signature 始终为空字符串（Phase 2.7 待修复）
+        - 因此本测试当前 trivially 通过（0 个比较项）
+        - 当 Rust 开始填充 signature 时，本测试会强制与 Python 一致
+
+        配套测试 test_signature_rust_all_empty 文档化此已知缺口。
+        """
+        py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
+
+        py_syms = py_result["symbols"]
+        rs_syms = rs_result["symbols"]
+
+        # 按 (name, start_line) 建立索引，取首个 signature
+        py_sig_map: dict[tuple, str] = {}
+        for s in py_syms:
+            key = (s["name"], s["start_line"])
+            sig = s.get("signature", "") or ""
+            if sig and key not in py_sig_map:
+                py_sig_map[key] = sig
+
+        rs_sig_map: dict[tuple, str] = {}
+        for s in rs_syms:
+            key = (s["name"], s["start_line"])
+            sig = s.get("signature", "") or ""
+            if sig and key not in rs_sig_map:
+                rs_sig_map[key] = sig
+
+        # 只比较双方都有非空 signature 的符号
+        common_keys = set(py_sig_map.keys()) & set(rs_sig_map.keys())
+        mismatches = []
+        for key in common_keys:
+            if py_sig_map[key] != rs_sig_map[key]:
+                mismatches.append(
+                    f"  {key}: py={py_sig_map[key]!r} vs rs={rs_sig_map[key]!r}"
+                )
+
+        assert not mismatches, (
+            f"[{lang}] signature 对齐发现未知差异（双方都有非空 signature 但内容不一致）\n"
+            + "\n".join(mismatches)
+        )
+
+    def test_signature_rust_all_empty(self, lang, filename, content, tmp_path):
+        """文档化 Rust signature 全空这一已知系统性缺口（Step 3 新增）。
+
+        设计文档 §5.2 输出契约要求每个 symbol 包含 signature。
+        当前 Rust SymbolInfo.signature 始终为空字符串（Phase 2.7 待修复）。
+
+        本测试是 Phase 2.7 的硬门禁：
+        - 当前：Rust 所有 signature 为空 → 测试通过（文档化已知缺口）
+        - 未来：Rust 开始填充 signature → 测试失败，提醒更新 test_signature_alignment
+          和 golden fixture 的 known_gaps
+
+        若 Rust 部分语言开始填充 signature，应将该语言从此测试的"全空"集合中移除，
+        并在 test_signature_alignment 中验证与 Python 一致。
+        """
+        py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
+
+        rs_syms = rs_result["symbols"]
+        rs_non_empty_sig = [
+            (s["name"], s["start_line"], s.get("signature", ""))
+            for s in rs_syms
+            if s.get("signature", "")
+        ]
+
+        # 当前所有 16 语言的 Rust signature 都应为空
+        # 若不为空，说明 Rust parser 已开始填充 signature，需更新此测试和 golden fixture
+        assert not rs_non_empty_sig, (
+            f"[{lang}] Rust parser 开始返回非空 signature（Phase 2.7 修复进展）\n"
+            f"  非空 signature 符号: {rs_non_empty_sig}\n"
+            f"  请更新:\n"
+            f"    1. test_signature_alignment: 验证非空 signature 与 Python 一致\n"
+            f"    2. golden fixture known_gaps: 移除 signature 缺口记录\n"
+            f"    3. 本测试: 将 {lang!r} 从'全空'集合中移除"
         )
 
 

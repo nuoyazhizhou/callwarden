@@ -1,0 +1,131 @@
+{
+  "language": "javascript",
+  "sample_file": "sample.js",
+  "sample_source": "class User {\n    constructor(name) {\n        this.name = name;\n    }\n\n    greet() {\n        return 'Hello, ' + this.name;\n    }\n}\n\nfunction add(a, b) {\n    return a + b;\n}\n\nfunction main() {\n    const u = new User('Bob');\n    const s = u.greet();\n    const sum = add(1, 2);\n    console.log(s, sum);\n}\n\nmain();\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_JAVASCRIPT",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "User",
+        "kind": "class",
+        "signature": "class User",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 1,
+        "line_end": 9
+      },
+      {
+        "name": "constructor",
+        "kind": "constructor",
+        "signature": "constructor(name)",
+        "visibility": "public",
+        "lexical_parent": "User",
+        "line_start": 2,
+        "line_end": 4
+      },
+      {
+        "name": "greet",
+        "kind": "method",
+        "signature": "greet()",
+        "visibility": "public",
+        "lexical_parent": "User",
+        "line_start": 6,
+        "line_end": 8
+      },
+      {
+        "name": "add",
+        "kind": "function",
+        "signature": "function add(a, b)",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 11,
+        "line_end": 13
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "function main()",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 15,
+        "line_end": 20
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "User",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 16
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "greet",
+        "callee_module": "u",
+        "ordinal": 1,
+        "line": 17
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "add",
+        "callee_module": "",
+        "ordinal": 2,
+        "line": 18
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "log",
+        "callee_module": "console",
+        "ordinal": 3,
+        "line": 19
+      }
+    ],
+    "imports": [],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望区分 function 与 method",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.visibility",
+      "description": "Rust 把 User class 标记为 'public'，但 JS 无 export 关键字时应为 'private'（模块私有）",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 new User('Bob') 构造调用；golden 期望包含 User 构造调用",
+      "phase": "Phase 2.1"
+    },
+    {
+      "parser": "python",
+      "field": "symbols.visibility",
+      "description": "Python parser 把 User class 标记为 'private'，add/main 也标记为 'private'，这与 Python 限制（无 export 概念）一致但与 JS 语义不完全匹配",
+      "phase": "Phase 1.x"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 new User('Bob') 构造调用；golden 期望包含",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

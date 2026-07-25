@@ -1,0 +1,103 @@
+{
+  "language": "swift",
+  "sample_file": "sample.swift",
+  "sample_source": "import Foundation\n\nclass UserService {\n    func findUser(id: Int) -> String {\n        return getName(id: Int)\n    }\n    func getName(id: Int) -> String {\n        return \"user_\\(id)\"\n    }\n}\n\nprotocol Drawable {\n    func draw()\n}\n",
+  "provenance": {
+    "source": "tests/parser_contract/generate_baseline.py _SWIFT_SAMPLE",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "UserService",
+        "kind": "class",
+        "signature": "class UserService",
+        "visibility": "internal",
+        "lexical_parent": "",
+        "line_start": 3,
+        "line_end": 10
+      },
+      {
+        "name": "findUser",
+        "kind": "method",
+        "signature": "func findUser(id: Int) -> String",
+        "visibility": "internal",
+        "lexical_parent": "UserService",
+        "line_start": 4,
+        "line_end": 6
+      },
+      {
+        "name": "getName",
+        "kind": "method",
+        "signature": "func getName(id: Int) -> String",
+        "visibility": "internal",
+        "lexical_parent": "UserService",
+        "line_start": 7,
+        "line_end": 9
+      },
+      {
+        "name": "Drawable",
+        "kind": "protocol",
+        "signature": "protocol Drawable",
+        "visibility": "internal",
+        "lexical_parent": "",
+        "line_start": 12,
+        "line_end": 14
+      },
+      {
+        "name": "draw",
+        "kind": "method",
+        "signature": "func draw()",
+        "visibility": "internal",
+        "lexical_parent": "Drawable",
+        "line_start": 13,
+        "line_end": 13
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "findUser",
+        "callee_name": "getName",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 5
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "import Foundation",
+        "normalized_target": "Foundation"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把方法标记为 'fn'，golden 期望为 'method'",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.visibility",
+      "description": "Rust 把所有符号标记为 'public'，但 Swift 默认访问级别是 'internal'，golden 期望为 'internal'",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "python",
+      "field": "symbols.kind",
+      "description": "Python parser 把方法标记为 'function'，golden 期望区分 class method（'method'）与 protocol method（'method'）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

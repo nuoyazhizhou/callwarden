@@ -3,9 +3,11 @@
 验证内容：
 - N5 Windows: callwarden.wxs WiX 源文件 XML 语法
 - N6 macOS: build_pkg.sh bash 语法
-- N7 Linux: build_packages.sh + 5 control + 14 maintainer scripts
+- N7 Linux: build_packages.sh + 5 control + 14 maintainer 脚本
 - N8 Release CI: enterprise-release.yml YAML 语法 + 11 门禁 job 列表
 - H14 整体: artifact-manifest.json + wheel 元数据
+- P0-B 轻量包体积度量: local vs client/agent 安装目录差值、压缩包差值、
+  三平台报告格式（设计：docs/design/rust-only-parser-cutover-plan.md Phase 1 步骤 5）
 
 用法：
     python release/_check_artifacts.py
@@ -14,10 +16,17 @@ import json
 import os
 import subprocess
 import sys
+import tarfile
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RELEASE_DIR = ROOT / "release"
+
+# PyInstaller --onedir 产物根目录（callwarden.spec 的默认输出）
+PYINSTALLER_DIST_DIR = ROOT / "dist"
+LOCAL_BUNDLE_DIR = PYINSTALLER_DIST_DIR / "callwarden"
+CLIENT_BUNDLE_DIR = PYINSTALLER_DIST_DIR / "callwarden-client"
 
 
 def check_wxs():
@@ -308,6 +317,289 @@ def check_wheel_metadata():
         return False
 
 
+def _iter_bundle_files(bundle_dir: Path):
+    """稳定顺序返回 bundle 目录中的所有普通文件。"""
+    return sorted(p for p in bundle_dir.rglob("*") if p.is_file())
+
+
+def _bundle_unpacked_bytes(bundle_dir: Path) -> int:
+    """计算 bundle 解压目录总字节数。"""
+    return sum(p.stat().st_size for p in _iter_bundle_files(bundle_dir))
+
+
+def _bundle_parser_bytes(bundle_dir: Path) -> int:
+    """计算 bundle 中 parser 相关 distribution 的字节数。
+
+    复用 inspect_pyinstaller_bundle.compute_distribution_breakdown 的分类逻辑，
+    把 tree_sitter 核心、16 种 grammar、callwarden.parsers 子模块字节数加总。
+    """
+    try:
+        sys.path.insert(0, str(RELEASE_DIR))
+        try:
+            from inspect_pyinstaller_bundle import (
+                compute_distribution_breakdown,
+                PARSER_DISTRIBUTIONS,
+            )
+        finally:
+            sys.path.pop(0)
+    except ImportError:
+        return 0
+
+    breakdown = compute_distribution_breakdown(bundle_dir)
+    return sum(
+        breakdown["distributions"][name]["byte_count"]
+        for name in PARSER_DISTRIBUTIONS
+        if name in breakdown["distributions"]
+    )
+
+
+def _format_bytes(n: int) -> str:
+    """字节数格式化为人类可读的 MiB/KiB。"""
+    if n >= 1024 * 1024:
+        return f"{n / 1024 / 1024:.2f} MiB"
+    if n >= 1024:
+        return f"{n / 1024:.2f} KiB"
+    return f"{n} B"
+
+
+def _make_compressed_artifact(bundle_dir: Path, suffix: str) -> Path | None:
+    """为 bundle 生成临时压缩包用于体积度量。
+
+    Linux 用 tar.gz，Windows/macOS 用 zip。返回压缩包路径，失败返回 None。
+    """
+    import tempfile
+
+    artifact = Path(tempfile.gettempdir()) / f"{bundle_dir.name}{suffix}"
+    try:
+        artifact.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    files = _iter_bundle_files(bundle_dir)
+    if not files:
+        return None
+
+    try:
+        if suffix.endswith(".tar.gz"):
+            import tarfile
+            with tarfile.open(artifact, "w:gz") as tf:
+                for f in files:
+                    tf.add(f, arcname=str(f.relative_to(bundle_dir)))
+        elif suffix.endswith(".zip"):
+            import zipfile
+            with zipfile.ZipFile(artifact, "w", zipfile.ZIP_DEFLATED) as zf:
+                for f in files:
+                    zf.write(f, arcname=str(f.relative_to(bundle_dir)))
+        else:
+            return None
+    except OSError:
+        return None
+    return artifact
+
+
+def check_light_bundle_unpacked_diff():
+    """P0-B 步骤 5: 度量 local vs client/agent 安装目录差值。
+
+    设计：docs/design/rust-only-parser-cutover-plan.md Phase 1 步骤 5
+    度量项：安装目录差值（_internal/ 解压后字节数差异）。
+
+    - Linux：两个 bundle 都应存在，计算差值与节省百分比
+    - Windows/macOS：只有 local bundle，client/agent bundle 不构建（UDS Linux 特有），
+      报告 local bundle 的 parser distribution 占比作为「潜在节省」估算
+    - bundle 不存在时打印 SKIP 并返回 True（度量不是发布门禁）
+    """
+    print("\n=== P0-B: 轻量包安装目录差值度量 ===")
+    print(f"  平台: {sys.platform}")
+
+    local_exists = LOCAL_BUNDLE_DIR.is_dir()
+    client_exists = CLIENT_BUNDLE_DIR.is_dir()
+
+    if not local_exists and not client_exists:
+        print(f"  [SKIP] 未找到 PyInstaller 产物（{LOCAL_BUNDLE_DIR} 不存在）")
+        print("         请先运行: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean")
+        return True
+
+    if not local_exists:
+        print(f"  [SKIP] local bundle 不存在: {LOCAL_BUNDLE_DIR}")
+        return True
+
+    local_bytes = _bundle_unpacked_bytes(LOCAL_BUNDLE_DIR)
+    local_parser_bytes = _bundle_parser_bytes(LOCAL_BUNDLE_DIR)
+    print(f"  local bundle:   {LOCAL_BUNDLE_DIR.name}/")
+    print(f"    总体积:       {_format_bytes(local_bytes)}")
+    print(f"    parser 占比:  {_format_bytes(local_parser_bytes)} "
+          f"({(local_parser_bytes / local_bytes * 100) if local_bytes else 0:.1f}%)")
+
+    if sys.platform.startswith("linux") and client_exists:
+        # Linux: 实际度量 client/agent bundle 差值
+        client_bytes = _bundle_unpacked_bytes(CLIENT_BUNDLE_DIR)
+        client_parser_bytes = _bundle_parser_bytes(CLIENT_BUNDLE_DIR)
+        print(f"  client bundle:  {CLIENT_BUNDLE_DIR.name}/")
+        print(f"    总体积:       {_format_bytes(client_bytes)}")
+        print(f"    parser 占比:  {_format_bytes(client_parser_bytes)} "
+              f"({(client_parser_bytes / client_bytes * 100) if client_bytes else 0:.1f}%)")
+
+        diff = local_bytes - client_bytes
+        pct = (diff / local_bytes * 100) if local_bytes else 0
+        print(f"  安装目录差值:   {_format_bytes(diff)} （节省 {pct:.1f}%）")
+
+        # client/agent bundle 必须 parser 字节数为 0（fail closed）
+        if client_parser_bytes > 0:
+            print(f"  [FAIL] client/agent bundle 不应包含 parser 文件，"
+                  f"实际 {_format_bytes(client_parser_bytes)}")
+            return False
+        print("  [OK] client/agent bundle parser distribution = 0 bytes")
+    elif sys.platform.startswith("linux"):
+        print(f"  [SKIP] Linux 上未找到 client bundle: {CLIENT_BUNDLE_DIR}")
+        print("         （仅 local bundle 构建，未拆分 client/agent）")
+        print(f"  预期节省（parser 占比）: ~{_format_bytes(local_parser_bytes)}")
+    else:
+        # Windows/macOS: client/agent bundle 不构建
+        print(f"  client bundle:  N/A（{sys.platform} 不构建 client/agent，UDS 是 Linux 特有）")
+        print(f"  预期节省（parser 占比）: ~{_format_bytes(local_parser_bytes)}")
+
+    return True
+
+
+def check_light_bundle_compressed_diff():
+    """P0-B 步骤 5: 度量 local vs client/agent 压缩包差值。
+
+    度量项：压缩包差值（tar.gz/zip 体积差异）。
+    Linux 用 tar.gz，Windows/macOS 用 zip（与 release/build.py 一致）。
+
+    bundle 不存在时打印 SKIP 并返回 True。
+    """
+    print("\n=== P0-B: 轻量包压缩包差值度量 ===")
+
+    local_exists = LOCAL_BUNDLE_DIR.is_dir()
+    client_exists = CLIENT_BUNDLE_DIR.is_dir()
+
+    if not local_exists:
+        print(f"  [SKIP] local bundle 不存在: {LOCAL_BUNDLE_DIR}")
+        return True
+
+    # 选择压缩格式（Linux: tar.gz，其他: zip）
+    if sys.platform.startswith("linux"):
+        suffix = ".tar.gz"
+    else:
+        suffix = ".zip"
+
+    local_artifact = _make_compressed_artifact(LOCAL_BUNDLE_DIR, suffix)
+    if local_artifact is None:
+        print(f"  [SKIP] local bundle 压缩失败")
+        return True
+
+    local_compressed = local_artifact.stat().st_size
+    print(f"  local 压缩包 ({suffix}): {_format_bytes(local_compressed)}")
+
+    if sys.platform.startswith("linux") and client_exists:
+        client_artifact = _make_compressed_artifact(CLIENT_BUNDLE_DIR, suffix)
+        if client_artifact is None:
+            print(f"  [SKIP] client bundle 压缩失败")
+            try:
+                local_artifact.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return True
+
+        client_compressed = client_artifact.stat().st_size
+        print(f"  client 压缩包 ({suffix}): {_format_bytes(client_compressed)}")
+
+        diff = local_compressed - client_compressed
+        pct = (diff / local_compressed * 100) if local_compressed else 0
+        print(f"  压缩包差值:     {_format_bytes(diff)} （节省 {pct:.1f}%）")
+
+        try:
+            client_artifact.unlink(missing_ok=True)
+        except OSError:
+            pass
+    elif sys.platform.startswith("linux"):
+        print(f"  [SKIP] Linux 上未找到 client bundle，无法度量压缩包差值")
+    else:
+        print(f"  client 压缩包: N/A（{sys.platform} 不构建 client/agent）")
+
+    try:
+        local_artifact.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return True
+
+
+def check_light_bundle_three_platform_report():
+    """P0-B 步骤 5: 三平台报告格式验证。
+
+    确保报告在 Windows/macOS/Linux 三种平台下都能输出，并且：
+    - Linux 报告 local + client 两个 bundle 的差值
+    - Windows/macOS 报告 local bundle + 说明 client/agent 不构建
+    - 报告字段名跨平台一致（便于 CI 自动解析）
+    """
+    print("\n=== P0-B: 三平台报告格式验证 ===")
+
+    report = {
+        "platform": sys.platform,
+        "local_bundle": str(LOCAL_BUNDLE_DIR),
+        "client_bundle": str(CLIENT_BUNDLE_DIR),
+        "local_exists": LOCAL_BUNDLE_DIR.is_dir(),
+        "client_exists": CLIENT_BUNDLE_DIR.is_dir(),
+        "client_supported": sys.platform.startswith("linux"),
+    }
+
+    # 度量值（如果 bundle 存在）
+    if report["local_exists"]:
+        report["local_unpacked_bytes"] = _bundle_unpacked_bytes(LOCAL_BUNDLE_DIR)
+        report["local_parser_bytes"] = _bundle_parser_bytes(LOCAL_BUNDLE_DIR)
+    if report["client_exists"]:
+        report["client_unpacked_bytes"] = _bundle_unpacked_bytes(CLIENT_BUNDLE_DIR)
+        report["client_parser_bytes"] = _bundle_parser_bytes(CLIENT_BUNDLE_DIR)
+
+    # 差值（仅 Linux 且两个 bundle 都存在时）
+    if report["local_exists"] and report["client_exists"]:
+        report["unpacked_diff_bytes"] = (
+            report["local_unpacked_bytes"] - report["client_unpacked_bytes"]
+        )
+        report["parser_diff_bytes"] = (
+            report["local_parser_bytes"] - report["client_parser_bytes"]
+        )
+
+    # 打印 JSON 报告（CI 可解析）
+    print("  报告内容（JSON）:")
+    for key, value in report.items():
+        if isinstance(value, int) and key.endswith("_bytes"):
+            print(f"    {key}: {value} ({_format_bytes(value)})")
+        else:
+            print(f"    {key}: {value}")
+
+    # 三平台格式验证：字段名必须一致
+    required_keys = {
+        "platform",
+        "local_bundle",
+        "client_bundle",
+        "local_exists",
+        "client_exists",
+        "client_supported",
+    }
+    missing = required_keys - set(report.keys())
+    if missing:
+        print(f"  [FAIL] 报告缺少跨平台必需字段: {sorted(missing)}")
+        return False
+
+    # client_supported 必须与平台匹配
+    expected_client_supported = sys.platform.startswith("linux")
+    if report["client_supported"] != expected_client_supported:
+        print(f"  [FAIL] client_supported={report['client_supported']} "
+              f"但平台 {sys.platform} 期望 {expected_client_supported}")
+        return False
+
+    # Windows/macOS 不应有 client bundle
+    if not expected_client_supported and report["client_exists"]:
+        print(f"  [FAIL] {sys.platform} 不应构建 client/agent bundle，"
+              f"但 {CLIENT_BUNDLE_DIR} 存在")
+        return False
+
+    print("  [OK] 三平台报告格式一致")
+    return True
+
+
 def main():
     print("=" * 60)
     print("H14/N5-N8 跨平台打包产物验证")
@@ -335,6 +627,11 @@ def main():
 
     # N8 CI
     results["n8_ci"] = check_ci_yaml()
+
+    # P0-B 轻量包体积度量（设计 Phase 1 步骤 5）
+    results["p0b_unpacked_diff"] = check_light_bundle_unpacked_diff()
+    results["p0b_compressed_diff"] = check_light_bundle_compressed_diff()
+    results["p0b_three_platform_report"] = check_light_bundle_three_platform_report()
 
     # 汇总
     print("\n" + "=" * 60)

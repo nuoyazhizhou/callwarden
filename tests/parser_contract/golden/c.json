@@ -1,0 +1,86 @@
+{
+  "language": "c",
+  "sample_file": "sample.c",
+  "sample_source": "#include <stdio.h>\n\nstruct Point {\n    int x;\n    int y;\n};\n\nint add(int a, int b) {\n    return a + b;\n}\n\nint main() {\n    struct Point p;\n    p.x = 1;\n    p.y = 2;\n    int s = add(1, 2);\n    printf(\"%d\\n\", s);\n    return 0;\n}\n",
+  "provenance": {
+    "source": "tests/parser_contract/generate_baseline.py _C_SAMPLE",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Point",
+        "kind": "struct",
+        "signature": "struct Point { int x; int y; }",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 3,
+        "line_end": 6
+      },
+      {
+        "name": "add",
+        "kind": "function",
+        "signature": "int add(int a, int b)",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 8,
+        "line_end": 10
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "int main()",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 12,
+        "line_end": 19
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "add",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 16
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "printf",
+        "callee_module": "",
+        "ordinal": 1,
+        "line": 17
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "#include <stdio.h>",
+        "normalized_target": "<stdio.h>"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串（C 走专用 parse_c_file 路径）",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把函数标记为 'fn'，golden 期望为 'function'",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 printf 调用；golden 期望含 printf 调用（Python 限制）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "language": "php",
+  "sample_file": "sample.php",
+  "sample_source": "<?php\nnamespace App;\n\nuse App\\Service;\n\nclass Calculator {\n    private $value;\n\n    public function __construct() {\n        $this->value = 0;\n    }\n\n    public function add($x) {\n        $this->value += $x;\n        return $this->value;\n    }\n}\n\n$calc = new Calculator();\n$calc->add(10);\necho $calc->value;\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_PHP",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Calculator",
+        "kind": "class",
+        "signature": "class Calculator",
+        "visibility": "public",
+        "lexical_parent": "App",
+        "line_start": 6,
+        "line_end": 17
+      },
+      {
+        "name": "value",
+        "kind": "property",
+        "signature": "private $value",
+        "visibility": "private",
+        "lexical_parent": "Calculator",
+        "line_start": 7,
+        "line_end": 7
+      },
+      {
+        "name": "__construct",
+        "kind": "constructor",
+        "signature": "public function __construct()",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 9,
+        "line_end": 11
+      },
+      {
+        "name": "add",
+        "kind": "method",
+        "signature": "public function add($x)",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 13,
+        "line_end": 16
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "<file-scope>",
+        "callee_name": "Calculator",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 19
+      },
+      {
+        "caller_name": "<file-scope>",
+        "callee_name": "add",
+        "callee_module": "calc",
+        "ordinal": 1,
+        "line": 20
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "use App\\Service",
+        "normalized_target": "App\\Service"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols",
+      "description": "Rust 不提取 PHP property 符号（$value）；golden 期望含 property",
+      "phase": "Phase 2.2"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把 __construct 标记为 'method'，golden 期望为 'constructor'",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 $calc->add(10) 调用；golden 期望含 add 调用",
+      "phase": "Phase 2.2"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.module_path",
+      "description": "Rust module_path 用传入参数（test.sample），未读取 PHP namespace（App）",
+      "phase": "Phase 2.2"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 $calc->add(10) 对象方法调用（Python 限制）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+# client/agent bundle 运行时白名单：仅 core，无 parser/grammar/numpy。
+# client/agent 不做本地解析（Rust parser 也不在 client/agent 进程内执行），
+# 所有解析由 daemon 完成，client/agent 仅做 UDS RPC 和文件监控。
+# 严禁追加 tree-sitter / tree-sitter-* / numpy / callwarden.parsers 依赖。
+-r requirements-runtime.txt

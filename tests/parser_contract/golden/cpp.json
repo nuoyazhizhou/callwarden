@@ -1,0 +1,150 @@
+{
+  "language": "cpp",
+  "sample_file": "sample.cpp",
+  "sample_source": "#include <iostream>\n#include <vector>\n\nnamespace example {\n\nclass Point {\npublic:\n    Point(int x, int y) : x_(x), y_(y) {}\n\n    int distance() {\n        return x_ * x_ + y_ * y_;\n    }\n\nprivate:\n    int x_;\n    int y_;\n};\n\nint add(int a, int b) {\n    return a + b;\n}\n\nint main() {\n    Point p(1, 2);\n    int d = p.distance();\n    int s = add(1, 2);\n    std::cout << d << s << std::endl;\n    return 0;\n}\n\n}  // namespace example\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_CPP",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "example",
+        "kind": "namespace",
+        "signature": "namespace example",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 4,
+        "line_end": 26
+      },
+      {
+        "name": "Point",
+        "kind": "class",
+        "signature": "class Point",
+        "visibility": "public",
+        "lexical_parent": "example",
+        "line_start": 6,
+        "line_end": 16
+      },
+      {
+        "name": "Point",
+        "kind": "constructor",
+        "signature": "Point(int x, int y)",
+        "visibility": "public",
+        "lexical_parent": "Point",
+        "line_start": 8,
+        "line_end": 8
+      },
+      {
+        "name": "distance",
+        "kind": "method",
+        "signature": "int distance()",
+        "visibility": "public",
+        "lexical_parent": "Point",
+        "line_start": 10,
+        "line_end": 12
+      },
+      {
+        "name": "add",
+        "kind": "function",
+        "signature": "int add(int a, int b)",
+        "visibility": "public",
+        "lexical_parent": "example",
+        "line_start": 19,
+        "line_end": 21
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "int main()",
+        "visibility": "public",
+        "lexical_parent": "example",
+        "line_start": 23,
+        "line_end": 25
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "Point",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 23
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "distance",
+        "callee_module": "p",
+        "ordinal": 1,
+        "line": 24
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "add",
+        "callee_module": "",
+        "ordinal": 2,
+        "line": 24
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "operator<<",
+        "callee_module": "std::cout",
+        "ordinal": 3,
+        "line": 25
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "endl",
+        "callee_module": "std",
+        "ordinal": 4,
+        "line": 25
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "#include <iostream>",
+        "normalized_target": "<iostream>"
+      },
+      {
+        "source_text": "#include <vector>",
+        "normalized_target": "<vector>"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把 namespace 标记为 'namespace' 但 method 标记为 'fn'，golden 期望区分 function 与 method",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 Point 构造调用 / p.distance() / operator<< / endl 调用；golden 期望含 5 个调用",
+      "phase": "Phase 2.6"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols",
+      "description": "Rust 额外提取 'example' namespace 符号（kind='namespace'）；Python 不提取。golden 期望含 namespace 符号（Rust 正确，Python 缺失）",
+      "phase": "Phase 1.x"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 p.distance() 对象方法调用（Python 限制）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

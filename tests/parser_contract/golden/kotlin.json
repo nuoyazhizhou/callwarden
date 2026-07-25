@@ -1,0 +1,98 @@
+{
+  "language": "kotlin",
+  "sample_file": "Sample.kt",
+  "sample_source": "package com.example\n\nimport kotlin.collections.List\n\nclass UserService {\n    fun findUser(id: Int): String {\n        return getName(id)\n    }\n    fun getName(id: Int): String {\n        return \"user_\" + id.toString()\n    }\n}\n",
+  "provenance": {
+    "source": "tests/parser_contract/generate_baseline.py _KOTLIN_SAMPLE",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "UserService",
+        "kind": "class",
+        "signature": "class UserService",
+        "visibility": "public",
+        "lexical_parent": "com.example",
+        "line_start": 5,
+        "line_end": 12
+      },
+      {
+        "name": "findUser",
+        "kind": "method",
+        "signature": "fun findUser(id: Int): String",
+        "visibility": "public",
+        "lexical_parent": "UserService",
+        "line_start": 6,
+        "line_end": 8
+      },
+      {
+        "name": "getName",
+        "kind": "method",
+        "signature": "fun getName(id: Int): String",
+        "visibility": "public",
+        "lexical_parent": "UserService",
+        "line_start": 9,
+        "line_end": 11
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "findUser",
+        "callee_name": "getName",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 7
+      },
+      {
+        "caller_name": "getName",
+        "callee_name": "toString",
+        "callee_module": "id",
+        "ordinal": 0,
+        "line": 10
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "import kotlin.collections.List",
+        "normalized_target": "kotlin.collections.List"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望为 'method'",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 id.toString() 对象方法调用；golden 期望含 toString 调用",
+      "phase": "Phase 2.x"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.module_path",
+      "description": "Rust module_path 用传入参数（test.sample），未读取 Kotlin package（com.example）",
+      "phase": "Phase 2.x"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 id.toString() 对象方法调用（Python 限制）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

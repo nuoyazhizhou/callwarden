@@ -413,19 +413,39 @@ class TestPyInstallerReleaseFailClosed(unittest.TestCase):
         self.assertNotIn("pathex=[ROOT]", self.spec)
 
     def test_spec_fails_when_core_modules_are_missing(self):
-        """hidden import 缺失不能只记录 warning 后继续上传。"""
-        self.assertIn("_required_modules", self.spec)
+        """hidden import 缺失不能只记录 warning 后继续上传。
+
+        P0-B 拆分后 spec 有两组 fail-closed 校验：
+        - local bundle: ``_required_local``（含 callwarden.cw / mcp_server）
+        - client/agent bundle: ``_required_client``（含 daemon_commands /
+          agent_watcher，仅 Linux）
+        两个 bundle 都必须 ``raise RuntimeError``，不能只 warning。
+        """
+        # local bundle fail-closed
+        self.assertIn("_required_local", self.spec)
         self.assertIn("'callwarden.cw'", self.spec)
         self.assertIn("'callwarden.server.mcp_server'", self.spec)
+        # client/agent bundle fail-closed（仅 Linux）
         self.assertIn("if sys.platform.startswith('linux')", self.spec)
-        self.assertIn("'callwarden.cli.client'", self.spec)
-        self.assertIn("raise RuntimeError", self.spec)
+        self.assertIn("_required_client", self.spec)
+        # client/agent 入口绕过 cli.main，直接走 daemon_commands（不再要求 cli.client）
+        self.assertIn("'callwarden.cli.daemon_commands'", self.spec)
+        self.assertIn("'callwarden.server.agent_watcher'", self.spec)
+        # local 缺失 + client 泄漏 + client 缺失 = 至少 3 处 raise
+        self.assertGreaterEqual(self.spec.count("raise RuntimeError"), 3)
 
     def test_spec_keeps_python_grammar_fallbacks(self):
-        """正式 Python parser 回退所需的 grammar 不得从冻结包排除。"""
-        excluded_block = self.spec[
-            self.spec.index("excludes = ["):self.spec.index("# 注意：semgrep")
-        ]
+        """local bundle 的 Python parser 回退所需 grammar 不得从冻结包排除。
+
+        P0-B 拆分后 grammar 仅在 client/agent bundle 的 ``_PARSER_EXCLUDES``
+        中排除；local bundle 的 ``_common_excludes`` 不得包含任何 grammar
+        （保留 Python parser 回退路径）。client/agent 不做本地解析，其
+        grammar 排除由 ``test_client_agent_bundle_excludes_parser`` 等步骤覆盖。
+        """
+        # local bundle 的 excludes 是 _common_excludes（不含 grammar）
+        start = self.spec.index("_common_excludes = [")
+        end = self.spec.index("_local_hiddenimports = [")
+        common_block = self.spec[start:end]
         for grammar in [
             "tree_sitter_rust",
             "tree_sitter_python",
@@ -433,7 +453,10 @@ class TestPyInstallerReleaseFailClosed(unittest.TestCase):
             "tree_sitter_kotlin",
             "tree_sitter_c",
         ]:
-            self.assertNotIn(grammar, excluded_block)
+            self.assertNotIn(
+                grammar, common_block,
+                f"local bundle _common_excludes 不应排除 {grammar}（保留 parser 回退）",
+            )
 
     def test_workflow_installs_current_project(self):
         """构建环境必须安装当前 checkout，而不只是第三方 requirements。"""
@@ -462,12 +485,28 @@ class TestPyInstallerReleaseFailClosed(unittest.TestCase):
         )
 
     def test_all_entrypoints_share_one_collect_directory(self):
-        """多入口只能有一个 COLLECT 和一个 _internal。"""
-        self.assertEqual(self.spec.count("COLLECT("), 1)
-        self.assertIn("*_executables", self.spec)
+        """同一 bundle 内多入口共享一个 COLLECT/_internal。
+
+        P0-B 拆分后有两个独立 bundle，每个 bundle 内部共享一份 COLLECT：
+        - ``bundle_local``（``dist/callwarden/``）：cw 单入口，1 个 COLLECT
+        - ``bundle_client``（``dist/callwarden-client/``，仅 Linux）：cw-client
+          与 cw-agent 共享同一份 COLLECT/_internal（不各自独立打包）
+        不再使用旧的 ``*_executables`` 聚合模式，改为显式 EXE + COLLECT。
+        """
+        # 两个 bundle 各自一个 COLLECT
+        self.assertEqual(self.spec.count("COLLECT("), 2)
+        self.assertIn("bundle_local = COLLECT(", self.spec)
+        self.assertIn("bundle_client = COLLECT(", self.spec)
         self.assertIn("name='callwarden'", self.spec)
-        self.assertNotIn("coll_cw_client", self.spec)
-        self.assertNotIn("coll_cw_agent", self.spec)
+        self.assertIn("name='callwarden-client'", self.spec)
+        # client/agent 共享同一 COLLECT（两个 EXE 都传入 bundle_client）
+        bundle_client_start = self.spec.index("bundle_client = COLLECT(")
+        bundle_client_block = self.spec[bundle_client_start:]
+        self.assertIn("exe_cw_client", bundle_client_block)
+        self.assertIn("exe_cw_agent", bundle_client_block)
+        # 不再使用旧的 *_executables 聚合模式
+        self.assertNotIn("*_executables", self.spec)
+        # local bundle 打包路径不变（client bundle 打包由后续步骤补充）
         self.assertIn('tar czf "../$ARTIFACT" callwarden/', self.workflow)
 
 

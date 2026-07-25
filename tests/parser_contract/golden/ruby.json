@@ -1,0 +1,109 @@
+{
+  "language": "ruby",
+  "sample_file": "sample.rb",
+  "sample_source": "class Calculator\n  def initialize\n    @value = 0\n  end\n\n  def add(x)\n    @value += x\n    return @value\n  end\nend\n\ndef main\n  calc = Calculator.new\n  calc.add(10)\n  puts calc\nend\n\nmain\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_RUBY",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Calculator",
+        "kind": "class",
+        "signature": "class Calculator",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 1,
+        "line_end": 10
+      },
+      {
+        "name": "initialize",
+        "kind": "constructor",
+        "signature": "def initialize",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 2,
+        "line_end": 4
+      },
+      {
+        "name": "add",
+        "kind": "method",
+        "signature": "def add(x)",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 6,
+        "line_end": 9
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "def main",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 12,
+        "line_end": 16
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "new",
+        "callee_module": "Calculator",
+        "ordinal": 0,
+        "line": 13
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "add",
+        "callee_module": "calc",
+        "ordinal": 1,
+        "line": 14
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "puts",
+        "callee_module": "",
+        "ordinal": 2,
+        "line": 15
+      }
+    ],
+    "imports": [],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望区分 class method（kind='method'）与顶层 function（kind='function'）",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols",
+      "description": "Rust 不提取 Ruby initialize 构造器；golden 期望含 initialize",
+      "phase": "Phase 2.x"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 Calculator.new / calc.add / puts 调用；golden 期望含 3 个调用",
+      "phase": "Phase 2.x"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 Calculator.new / calc.add 对象方法调用（Python 限制）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

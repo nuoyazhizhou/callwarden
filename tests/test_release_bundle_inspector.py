@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 
 from release.inspect_pyinstaller_bundle import (
+    PARSER_DISTRIBUTIONS,
     REQUIRED_MODULE_ROOTS,
+    REQUIRED_MODULE_ROOTS_CLIENT,
     inspect_bundle,
 )
 
@@ -203,3 +205,132 @@ def test_mcp_import_check_has_no_startup_side_effects(monkeypatch, capsys):
 
     assert calls == []
     assert capsys.readouterr().out.strip() == "Call Warden MCP imports OK"
+
+
+# ============================================
+# P0-B: 角色专属 bundle 检查（client/agent 无 parser）
+# ============================================
+
+
+def _write_client_bundle(tmp_path: Path, modules: list[str]) -> tuple[Path, Path]:
+    """创建 client/agent 发布目录（含 cw-client 入口）和 PYZ TOC。"""
+    bundle = tmp_path / "callwarden-client"
+    internal = bundle / "_internal"
+    internal.mkdir(parents=True)
+    (bundle / "cw-client").write_bytes(b"cw-client")
+    (bundle / "cw-agent").write_bytes(b"cw-agent")
+    (internal / "python-runtime.bin").write_bytes(b"x" * 512)
+    toc = tmp_path / "PYZ-00.toc"
+    toc.write_text(
+        repr([(name, f"/fake/{name}.pyc", "PYMODULE") for name in modules]),
+        encoding="utf-8",
+    )
+    return bundle, toc
+
+
+def _add_parser_files(bundle: Path) -> None:
+    """向 bundle 注入 parser/grammar 文件（模拟泄漏场景）。"""
+    internal = bundle / "_internal"
+    # tree-sitter 核心
+    (internal / "tree_sitter").mkdir(parents=True, exist_ok=True)
+    (internal / "tree_sitter" / "__init__.pyc").write_bytes(b"tree_sitter")
+    # grammar wheel
+    (internal / "tree_sitter_python").mkdir(parents=True, exist_ok=True)
+    (internal / "tree_sitter_python" / "binding.pyd").write_bytes(b"grammar")
+    # callwarden.parsers 实现模块
+    (internal / "callwarden" / "parsers").mkdir(parents=True, exist_ok=True)
+    (internal / "callwarden" / "parsers" / "rust.pyc").write_bytes(b"parser")
+
+
+_CLIENT_FIXTURE_MODULES = sorted(
+    f"{root}.__init__" for root in REQUIRED_MODULE_ROOTS_CLIENT
+)
+
+
+def test_inspector_client_role_does_not_require_numpy(tmp_path):
+    """client 角色不要求 numpy 模块根（client 不做本地解析）。"""
+    bundle, toc = _write_client_bundle(
+        tmp_path,
+        _CLIENT_FIXTURE_MODULES + ["callwarden.cli.daemon_commands"],
+    )
+
+    report, errors = inspect_bundle(bundle, toc, role="client")
+
+    assert "numpy" not in report["missing_required_module_roots"]
+    assert report["role"] == "client"
+
+
+def test_inspector_client_role_forbids_parser_distributions(tmp_path):
+    """client 角色自动禁止所有 parser distribution（parser distribution=0）。"""
+    bundle, toc = _write_client_bundle(
+        tmp_path,
+        _CLIENT_FIXTURE_MODULES + ["callwarden.cli.daemon_commands"],
+    )
+    _add_parser_files(bundle)
+
+    report, errors = inspect_bundle(bundle, toc, role="client")
+
+    # parser distribution 必须被报告为非零
+    dists = report["distributions"]
+    assert dists["tree_sitter"]["file_count"] > 0
+    assert dists["tree_sitter_python"]["file_count"] > 0
+    assert dists["callwarden_parsers"]["file_count"] > 0
+    # 必须有零容忍错误
+    assert any("必须为空" in error for error in errors)
+    assert any("tree_sitter" in error for error in errors)
+
+
+def test_inspector_local_role_allows_parser_distributions(tmp_path):
+    """local 角色不禁止 parser distribution（保留 Python parser 回退路径）。"""
+    bundle, toc = _write_bundle(
+        tmp_path,
+        REQUIRED_FIXTURE_MODULES + ["callwarden.cw", "tree_sitter"],
+    )
+    _add_parser_files(bundle)
+
+    report, errors = inspect_bundle(bundle, toc, role="local")
+
+    # local 角色不应因 parser distribution 报错
+    assert not any("必须为空" in error for error in errors)
+    assert report["role"] == "local"
+
+
+def test_inspector_parser_distributions_constant_covers_all_parsers():
+    """PARSER_DISTRIBUTIONS 常量覆盖 tree_sitter 核心 + grammar + callwarden_parsers。"""
+    assert "tree_sitter" in PARSER_DISTRIBUTIONS
+    assert "callwarden_parsers" in PARSER_DISTRIBUTIONS
+    assert "tree_sitter_rust" in PARSER_DISTRIBUTIONS
+    assert "tree_sitter_python" in PARSER_DISTRIBUTIONS
+    assert len(PARSER_DISTRIBUTIONS) >= 18  # 1 核心 + 1 parsers + 16 grammar
+
+
+def test_inspector_client_role_cli_passes_role(tmp_path):
+    """CLI --role client 正确传递到 inspect_bundle 并写入报告。"""
+    bundle, toc = _write_client_bundle(
+        tmp_path,
+        _CLIENT_FIXTURE_MODULES + ["callwarden.cli.daemon_commands"],
+    )
+    report_path = tmp_path / "reports" / "client-bundle.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(INSPECTOR),
+            "--bundle",
+            str(bundle),
+            "--pyz-toc",
+            str(toc),
+            "--report",
+            str(report_path),
+            "--role",
+            "client",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["role"] == "client"
+    assert "numpy" not in report["missing_required_module_roots"]

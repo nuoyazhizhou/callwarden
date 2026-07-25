@@ -1,0 +1,130 @@
+{
+  "language": "rust",
+  "sample_file": "sample.rs",
+  "sample_source": "use std::collections::HashMap;\n\npub struct Point {\n    pub x: f64,\n    pub y: f64,\n}\n\nimpl Point {\n    pub fn new(x: f64, y: f64) -> Self {\n        Point { x, y }\n    }\n\n    pub fn distance(&self, other: &Point) -> f64 {\n        let dx = self.x - other.x;\n        let dy = self.y - other.y;\n        (dx * dx + dy * dy).sqrt()\n    }\n}\n\npub fn main() {\n    let p1 = Point::new(0.0, 0.0);\n    let p2 = Point::new(3.0, 4.0);\n    let d = p1.distance(&p2);\n    println!(\"{}\", d);\n}\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_RUST",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Point",
+        "kind": "struct",
+        "signature": "pub struct Point { pub x: f64, pub y: f64 }",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 3,
+        "line_end": 6
+      },
+      {
+        "name": "Point",
+        "kind": "impl",
+        "signature": "impl Point",
+        "visibility": "private",
+        "lexical_parent": "",
+        "line_start": 8,
+        "line_end": 18
+      },
+      {
+        "name": "new",
+        "kind": "method",
+        "signature": "pub fn new(x: f64, y: f64) -> Self",
+        "visibility": "public",
+        "lexical_parent": "Point",
+        "line_start": 9,
+        "line_end": 11
+      },
+      {
+        "name": "distance",
+        "kind": "method",
+        "signature": "pub fn distance(&self, other: &Point) -> f64",
+        "visibility": "public",
+        "lexical_parent": "Point",
+        "line_start": 13,
+        "line_end": 17
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "pub fn main()",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 20,
+        "line_end": 25
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "new",
+        "callee_module": "Point",
+        "ordinal": 0,
+        "line": 21
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "new",
+        "callee_module": "Point",
+        "ordinal": 1,
+        "line": 22
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "distance",
+        "callee_module": "p1",
+        "ordinal": 2,
+        "line": 23
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "println",
+        "callee_module": "",
+        "ordinal": 3,
+        "line": 24
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "use std::collections::HashMap",
+        "normalized_target": "std::collections::HashMap"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols",
+      "description": "Rust 不递归提取 impl 块内部方法（new/distance）；golden 期望含方法符号",
+      "phase": "Phase 2.6"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望区分 function 与 method",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 println! 宏调用；golden 期望包含 println",
+      "phase": "Phase 2.6"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 p1.distance(&p2) 对象方法调用（Python 限制）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

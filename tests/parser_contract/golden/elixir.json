@@ -1,0 +1,65 @@
+{
+  "language": "elixir",
+  "sample_file": "sample.ex",
+  "sample_source": "defmodule MyModule do\n  def hello(name) do\n    IO.puts(\"Hello, \" <> name)\n  end\nend\n",
+  "provenance": {
+    "source": "tests/parser_contract/generate_baseline.py _ELIXIR_SAMPLE",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "MyModule",
+        "kind": "module",
+        "signature": "defmodule MyModule",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 1,
+        "line_end": 5
+      },
+      {
+        "name": "hello",
+        "kind": "function",
+        "signature": "def hello(name)",
+        "visibility": "public",
+        "lexical_parent": "MyModule",
+        "line_start": 2,
+        "line_end": 4
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "hello",
+        "callee_name": "puts",
+        "callee_module": "IO",
+        "ordinal": 0,
+        "line": 3
+      }
+    ],
+    "imports": [],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 IO.puts 调用；golden 期望含 puts 调用（callee_module='IO'）",
+      "phase": "Phase 2.5"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 IO.puts 调用（Python 限制）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

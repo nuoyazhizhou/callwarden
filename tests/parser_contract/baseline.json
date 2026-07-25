@@ -1,0 +1,608 @@
+{
+  "generated_at": "2026-07-25T13:51:34.220713+00:00",
+  "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+  "platform": {
+    "python": "3.14.3",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "rust_extension_available": true,
+    "rust_supported_languages": [
+      "cpp",
+      "csharp",
+      "elixir",
+      "go",
+      "java",
+      "javascript",
+      "kotlin",
+      "php",
+      "python",
+      "ruby",
+      "rust",
+      "scala",
+      "swift",
+      "typescript"
+    ]
+  },
+  "language_capability": {
+    "python": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.py",
+      "symbols_count_py": 5,
+      "symbols_count_rs": 5,
+      "kinds_py": [
+        "class",
+        "fn"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 3,
+      "calls_count_rs": 4,
+      "imports_count_py": 2,
+      "imports_count_rs": 2,
+      "references_present_py": true,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 2,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "Rust 识别对象方法调用，Python parser 不提取（Python 限制）",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "rust": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.rs",
+      "symbols_count_py": 3,
+      "symbols_count_rs": 3,
+      "kinds_py": [
+        "fn",
+        "impl",
+        "struct"
+      ],
+      "kinds_rs": [
+        "fn",
+        "impl",
+        "struct"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 2,
+      "calls_count_rs": 3,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "go": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.go",
+      "symbols_count_py": 5,
+      "symbols_count_rs": 5,
+      "kinds_py": [
+        "fn",
+        "interface",
+        "method",
+        "struct"
+      ],
+      "kinds_rs": [
+        "fn",
+        "interface",
+        "method",
+        "struct"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 5,
+      "calls_count_rs": 5,
+      "imports_count_py": 2,
+      "imports_count_rs": 2,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "java": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "Sample.java",
+      "symbols_count_py": 4,
+      "symbols_count_rs": 4,
+      "kinds_py": [
+        "class",
+        "constructor",
+        "method"
+      ],
+      "kinds_rs": [
+        "class",
+        "constructor",
+        "method"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 1,
+      "calls_count_rs": 2,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "typescript": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.ts",
+      "symbols_count_py": 10,
+      "symbols_count_rs": 5,
+      "kinds_py": [
+        "class",
+        "fn",
+        "method"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn",
+        "method"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 4,
+      "calls_count_rs": 4,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 5,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "Rust TypeScript parser 未提取任何符号，Phase 1.4 待修复",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "typescript_missing_symbols: Rust 5 < Python 10",
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "javascript": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.js",
+      "symbols_count_py": 5,
+      "symbols_count_rs": 5,
+      "kinds_py": [
+        "class",
+        "fn",
+        "method"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn",
+        "method"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 3,
+      "calls_count_rs": 3,
+      "imports_count_py": 0,
+      "imports_count_rs": 0,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "ruby": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.rb",
+      "symbols_count_py": 4,
+      "symbols_count_rs": 4,
+      "kinds_py": [
+        "class",
+        "method"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 3,
+      "calls_count_rs": 3,
+      "imports_count_py": 0,
+      "imports_count_rs": 0,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "php": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.php",
+      "symbols_count_py": 4,
+      "symbols_count_rs": 3,
+      "kinds_py": [
+        "class",
+        "method",
+        "property"
+      ],
+      "kinds_rs": [
+        "class",
+        "method"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 0,
+      "calls_count_rs": 0,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 1,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "Rust 不提取 PHP property 符号，Phase 1.4 待修复",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "php_missing_symbols: Rust 3 < Python 4（property 缺失）",
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "scala": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "Sample.scala",
+      "symbols_count_py": 4,
+      "symbols_count_rs": 4,
+      "kinds_py": [
+        "class",
+        "method",
+        "object"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn",
+        "object"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 2,
+      "calls_count_rs": 1,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 1,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "Rust 不识别 Scala 对象方法调用，Phase 1.4 待修复",
+      "gaps": [
+        "scala_missing_calls: Rust 1 < Python 2（对象方法调用缺失）",
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "csharp": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "Sample.cs",
+      "symbols_count_py": 4,
+      "symbols_count_rs": 4,
+      "kinds_py": [
+        "class",
+        "constructor",
+        "method"
+      ],
+      "kinds_rs": [
+        "class",
+        "constructor",
+        "method"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 2,
+      "calls_count_rs": 0,
+      "imports_count_py": 2,
+      "imports_count_rs": 2,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "cpp": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.cpp",
+      "symbols_count_py": 5,
+      "symbols_count_rs": 6,
+      "kinds_py": [
+        "class",
+        "fn",
+        "method"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn",
+        "namespace"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 2,
+      "calls_count_rs": 2,
+      "imports_count_py": 2,
+      "imports_count_rs": 2,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 1,
+      "known_call_diffs_count": 1,
+      "known_symbol_diffs_reason": "Rust 额外提取 C++ namespace 符号（投影差异）",
+      "known_call_diffs_reason": "Rust 识别 C++ 对象方法调用，Python parser 不提取（Python 限制）",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "kotlin": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "Sample.kt",
+      "symbols_count_py": 3,
+      "symbols_count_rs": 3,
+      "kinds_py": [
+        "class",
+        "fn"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 2,
+      "calls_count_rs": 1,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "swift": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.swift",
+      "symbols_count_py": 5,
+      "symbols_count_rs": 5,
+      "kinds_py": [
+        "class",
+        "function",
+        "protocol"
+      ],
+      "kinds_rs": [
+        "class",
+        "fn",
+        "protocol"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 1,
+      "calls_count_rs": 0,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "elixir": {
+      "rust_supported": true,
+      "python_parser_available": true,
+      "sample_path": "sample.ex",
+      "symbols_count_py": 2,
+      "symbols_count_rs": 2,
+      "kinds_py": [
+        "function",
+        "module"
+      ],
+      "kinds_rs": [
+        "function",
+        "module"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 0,
+      "calls_count_rs": 0,
+      "imports_count_py": 0,
+      "imports_count_rs": 0,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    },
+    "hcl": {
+      "rust_supported": false,
+      "python_parser_available": true,
+      "sample_path": "sample.tf",
+      "symbols_count_py": 2,
+      "symbols_count_rs": 0,
+      "kinds_py": [
+        "resource",
+        "variable"
+      ],
+      "kinds_rs": [],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": false,
+      "calls_count_py": 1,
+      "calls_count_rs": 0,
+      "imports_count_py": 0,
+      "imports_count_rs": 0,
+      "references_present_py": true,
+      "references_present_rs": false,
+      "rust_module_path": false,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "hcl_not_in_rust_supported_languages: HCL 引用提取未在 Rust 路径实现",
+        "hcl_references_not_extracted_in_rust: attribute 引用未由 Rust 提取"
+      ]
+    },
+    "c": {
+      "rust_supported": false,
+      "python_parser_available": true,
+      "sample_path": "sample.c",
+      "symbols_count_py": 3,
+      "symbols_count_rs": 3,
+      "kinds_py": [
+        "fn",
+        "struct"
+      ],
+      "kinds_rs": [
+        "fn",
+        "struct"
+      ],
+      "signature_present_py": true,
+      "signature_present_rs": false,
+      "visibility_present_py": true,
+      "visibility_present_rs": true,
+      "calls_count_py": 1,
+      "calls_count_rs": 2,
+      "imports_count_py": 1,
+      "imports_count_rs": 1,
+      "references_present_py": false,
+      "references_present_rs": false,
+      "rust_module_path": true,
+      "python_module_path": true,
+      "known_symbol_diffs_count": 0,
+      "known_call_diffs_count": 0,
+      "known_symbol_diffs_reason": "",
+      "known_call_diffs_reason": "",
+      "gaps": [
+        "signature_missing_in_rust: Python 有非空 signature，Rust 全空"
+      ]
+    }
+  },
+  "bundle_size_baseline": {
+    "bundle_path": null,
+    "unpacked_bytes": null,
+    "unpacked_mb": null,
+    "distributions": null,
+    "methodology": "无可用 PyInstaller 构建产物。基线获取方法：在目标平台运行 `pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean`，然后运行 `py -3.14 release/inspect_pyinstaller_bundle.py --bundle dist/callwarden --pyz-toc dist/callwarden/_internal/PYZ-00.toc --report tests/parser_contract/bundle_snapshot.json`，并将 bundle_snapshot.json 的 distributions 字段合并到 baseline.json。CI 应将 dist/callwarden/ 作为 artifact 持久化，再由 baseline 生成步骤读取。"
+  },
+  "phase0_completion_gates": {
+    "tests_expose_typescript_gap": true,
+    "tests_expose_php_gap": true,
+    "tests_expose_scala_gap": true,
+    "tests_expose_hcl_gap": true,
+    "baseline_persisted_as_ci_artifact": false
+  }
+}

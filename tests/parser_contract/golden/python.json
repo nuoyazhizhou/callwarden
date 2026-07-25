@@ -1,0 +1,128 @@
+{
+  "language": "python",
+  "sample_file": "sample.py",
+  "sample_source": "\"\"\"模块文档。\"\"\"\nimport os\nfrom typing import List\n\n\nclass Calculator:\n    \"\"\"计算器类。\"\"\"\n\n    def __init__(self):\n        self.value = 0\n\n    def add(self, x: int) -> int:\n        self.value += x\n        return self.value\n\n    def clear(self):\n        self.value = 0\n\n\ndef main():\n    calc = Calculator()\n    calc.add(10)\n    calc.clear()\n    print(calc.value)\n\n\nif __name__ == \"__main__\":\n    main()\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_PYTHON",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Calculator",
+        "kind": "class",
+        "signature": "class Calculator",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 6,
+        "line_end": 17
+      },
+      {
+        "name": "__init__",
+        "kind": "method",
+        "signature": "def __init__(self)",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 9,
+        "line_end": 10
+      },
+      {
+        "name": "add",
+        "kind": "method",
+        "signature": "def add(self, x: int) -> int",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 12,
+        "line_end": 14
+      },
+      {
+        "name": "clear",
+        "kind": "method",
+        "signature": "def clear(self)",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 16,
+        "line_end": 17
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "def main()",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 20,
+        "line_end": 24
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "Calculator",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 21
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "add",
+        "callee_module": "calc",
+        "ordinal": 1,
+        "line": 22
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "clear",
+        "callee_module": "calc",
+        "ordinal": 2,
+        "line": 23
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "print",
+        "callee_module": "",
+        "ordinal": 3,
+        "line": 24
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "import os",
+        "normalized_target": "os"
+      },
+      {
+        "source_text": "from typing import List",
+        "normalized_target": "typing.List"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串；Python parser 提取了完整签名",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望区分顶层 function（kind='function'）与方法（kind='method'）",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "python",
+      "field": "symbols.visibility",
+      "description": "Python parser 把 __init__ 标记为 'private'（按 __ 前缀规则），但 __init__ 是公开构造器，应为 'public'",
+      "phase": "Phase 1.x"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 print(calc.value) 中的 print 调用；Rust 提取了。Golden 期望包含 print",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

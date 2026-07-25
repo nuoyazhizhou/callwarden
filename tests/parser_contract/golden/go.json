@@ -1,0 +1,135 @@
+{
+  "language": "go",
+  "sample_file": "sample.go",
+  "sample_source": "package main\n\nimport (\n    \"fmt\"\n    \"strings\"\n)\n\ntype Point struct {\n    X int\n    Y int\n}\n\ntype Printer interface {\n    Print() string\n}\n\nfunc (p *Point) Print() string {\n    return fmt.Sprintf(\"%d,%d\", p.X, p.Y)\n}\n\nfunc Add(a, b int) int {\n    return a + b\n}\n\nfunc main() {\n    p := &Point{X: 1, Y: 2}\n    s := p.Print()\n    sum := Add(1, 2)\n    fmt.Println(s, sum, strings.HasPrefix(\"a\", \"b\"))\n}\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_GO",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Point",
+        "kind": "struct",
+        "signature": "type Point struct",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 8,
+        "line_end": 11
+      },
+      {
+        "name": "Printer",
+        "kind": "interface",
+        "signature": "type Printer interface",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 13,
+        "line_end": 15
+      },
+      {
+        "name": "Print",
+        "kind": "method",
+        "signature": "func (p *Point) Print() string",
+        "visibility": "public",
+        "lexical_parent": "Point",
+        "line_start": 17,
+        "line_end": 19
+      },
+      {
+        "name": "Add",
+        "kind": "function",
+        "signature": "func Add(a, b int) int",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 21,
+        "line_end": 23
+      },
+      {
+        "name": "main",
+        "kind": "function",
+        "signature": "func main()",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 25,
+        "line_end": 30
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "Print",
+        "callee_name": "Sprintf",
+        "callee_module": "fmt",
+        "ordinal": 0,
+        "line": 18
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "Print",
+        "callee_module": "p",
+        "ordinal": 0,
+        "line": 26
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "Add",
+        "callee_module": "",
+        "ordinal": 1,
+        "line": 27
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "Println",
+        "callee_module": "fmt",
+        "ordinal": 2,
+        "line": 28
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "HasPrefix",
+        "callee_module": "strings",
+        "ordinal": 3,
+        "line": 28
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "\"fmt\"",
+        "normalized_target": "fmt"
+      },
+      {
+        "source_text": "\"strings\"",
+        "normalized_target": "strings"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望区分 function 与 method",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.visibility",
+      "description": "Rust 把 main 标记为 'public'，但 Go 约定 main 是包私有（应为 'private' 或 'package-private'）",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "python",
+      "field": "symbols.signature",
+      "description": "Python parser 的 signature 缺参数列表（如 'func Add()' 而非 'func Add(a, b int) int'）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

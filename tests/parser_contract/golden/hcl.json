@@ -1,0 +1,73 @@
+{
+  "language": "hcl",
+  "sample_file": "sample.tf",
+  "sample_source": "resource \"aws_instance\" \"web\" {\n  ami           = \"ami-12345\"\n  instance_type = \"t3.micro\"\n  public_ip     = aws_instance.web.private_ip\n}\n\nvariable \"region\" {\n  default = \"us-east-1\"\n}\n",
+  "provenance": {
+    "source": "tests/parser_contract/generate_baseline.py _HCL_SAMPLE",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "aws_instance.web",
+        "kind": "resource",
+        "signature": "resource \"aws_instance\" \"web\"",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 1,
+        "line_end": 5
+      },
+      {
+        "name": "region",
+        "kind": "variable",
+        "signature": "variable \"region\"",
+        "visibility": "public",
+        "lexical_parent": "",
+        "line_start": 7,
+        "line_end": 9
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "aws_instance.web",
+        "callee_name": "aws_instance.web.private_ip",
+        "callee_module": "test.sample",
+        "ordinal": 0,
+        "line": 4
+      }
+    ],
+    "imports": [],
+    "references": [
+      {
+        "caller_name": "aws_instance.web",
+        "callee_name": "aws_instance.web",
+        "line": 4,
+        "reference_kind": "attribute_traversal",
+        "source_text": "aws_instance.web.private_ip"
+      }
+    ]
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "symbols",
+      "description": "Rust parser 不支持 HCL（不在 supported_languages 中），完全无法提取符号；HCL 走 Python parser 专用路径",
+      "phase": "Phase 2.4"
+    },
+    {
+      "parser": "rust",
+      "field": "references",
+      "description": "Rust 不提取 HCL attribute traversal 引用（aws_instance.web.private_ip）；HCL 引用提取未在 Rust 路径实现",
+      "phase": "Phase 2.4"
+    },
+    {
+      "parser": "python",
+      "field": "signature",
+      "description": "Python parser signature 形如 'resource \"aws_instance\" \"web\"'，与 golden 一致（Python 正确）",
+      "phase": "Phase 1.x"
+    }
+  ]
+}

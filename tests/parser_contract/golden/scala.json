@@ -1,0 +1,120 @@
+{
+  "language": "scala",
+  "sample_file": "Sample.scala",
+  "sample_source": "package com.example\n\nimport scala.collection.mutable.ListBuffer\n\nclass Calculator {\n  private var value: Int = 0\n\n  def add(x: Int): Int = {\n    value += x\n    value\n  }\n}\n\nobject Main {\n  def main(args: Array[String]): Unit = {\n    val calc = new Calculator\n    calc.add(10)\n    println(calc)\n  }\n}\n",
+  "provenance": {
+    "source": "tests/test_p31_multi_lang.py _SAMPLE_SCALA",
+    "confirmed_by": "P0-A Step 1 (S-1784986236713-936ac928)",
+    "confirmed_at": "2026-07-25T14:10:00+00:00",
+    "commit_sha": "9409ede8fdfb1daa491db28a797bb0da94519118",
+    "method": "hand-curated based on source code semantic analysis; represents long-term contract truth, not current parser output. Cross-referenced with tests/parser_contract/_probe_output.json (Rust+Python actual outputs)."
+  },
+  "expected": {
+    "symbols": [
+      {
+        "name": "Calculator",
+        "kind": "class",
+        "signature": "class Calculator",
+        "visibility": "public",
+        "lexical_parent": "com.example",
+        "line_start": 5,
+        "line_end": 12
+      },
+      {
+        "name": "add",
+        "kind": "method",
+        "signature": "def add(x: Int): Int",
+        "visibility": "public",
+        "lexical_parent": "Calculator",
+        "line_start": 8,
+        "line_end": 11
+      },
+      {
+        "name": "Main",
+        "kind": "object",
+        "signature": "object Main",
+        "visibility": "public",
+        "lexical_parent": "com.example",
+        "line_start": 14,
+        "line_end": 20
+      },
+      {
+        "name": "main",
+        "kind": "method",
+        "signature": "def main(args: Array[String]): Unit",
+        "visibility": "public",
+        "lexical_parent": "Main",
+        "line_start": 15,
+        "line_end": 19
+      }
+    ],
+    "raw_calls": [
+      {
+        "caller_name": "main",
+        "callee_name": "Calculator",
+        "callee_module": "",
+        "ordinal": 0,
+        "line": 16
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "add",
+        "callee_module": "calc",
+        "ordinal": 1,
+        "line": 17
+      },
+      {
+        "caller_name": "main",
+        "callee_name": "println",
+        "callee_module": "",
+        "ordinal": 2,
+        "line": 18
+      }
+    ],
+    "imports": [
+      {
+        "source_text": "import scala.collection.mutable.ListBuffer",
+        "normalized_target": "scala.collection.mutable.ListBuffer"
+      }
+    ],
+    "references": []
+  },
+  "known_gaps": [
+    {
+      "parser": "rust",
+      "field": "signature",
+      "description": "Rust SymbolInfo.signature 始终为空字符串",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.kind",
+      "description": "Rust 把方法统一标记为 'fn'，golden 期望为 'method'",
+      "phase": "Phase 2.7"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 calc.add(10) 对象方法调用；golden 期望含 add 调用（Phase 1.4 重点）",
+      "phase": "Phase 2.3"
+    },
+    {
+      "parser": "rust",
+      "field": "raw_calls",
+      "description": "Rust 不提取 new Calculator 构造调用；golden 期望含 Calculator 构造调用",
+      "phase": "Phase 2.3"
+    },
+    {
+      "parser": "rust",
+      "field": "symbols.module_path",
+      "description": "Rust module_path 用传入参数（test.sample），未读取 Scala package（com.example）",
+      "phase": "Phase 2.3"
+    },
+    {
+      "parser": "python",
+      "field": "raw_calls",
+      "description": "Python parser 不提取 new Calculator 构造调用",
+      "phase": "Phase 1.x"
+    }
+  ]
+}
