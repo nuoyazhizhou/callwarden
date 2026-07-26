@@ -6160,7 +6160,7 @@ def _doctor_check(db):
         mark = "✓" if ok else "✗"
         color = "green" if ok else "red"
         cprint(t("cli.messages.doctor_pragma_item",
-               default="    {mark} {key} = {actual} (expected: {expected})", mark=mark, key=key, actual=actual_str, expected=expected), color)
+               default="    {mark} {pragma_key} = {actual} (expected: {expected})", mark=mark, pragma_key=key, actual=actual_str, expected=expected), color)
         if not ok:
             all_pragma_ok = False
     print()

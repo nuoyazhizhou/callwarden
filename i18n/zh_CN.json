@@ -1311,7 +1311,7 @@
       "doctor_db_path": "  路径: {path}",
       "doctor_db_size": "  大小: {size:.2f} MB",
       "doctor_pragma_config": "  PRAGMA 配置:",
-      "doctor_pragma_item": "    {mark} {key} = {actual} (期望: {expected})",
+      "doctor_pragma_item": "    {mark} {pragma_key} = {actual} (期望: {expected})",
       "doctor_wal_title": "[2] WAL 文件状态",
       "doctor_wal_file": "  WAL 文件: {path}",
       "doctor_wal_size": "    大小: {size:.1f} KB",

@@ -418,7 +418,7 @@ def step5_full_build_and_refresh(
 
     # 5.1 全量 build
     rc, stdout, stderr = _run_command(
-        [str(cw_exe), "--refresh-all", str(ws_dir)],
+        [str(cw_exe), "--refresh-all"],
         cwd=ws_dir,
         timeout=180.0,
         env=env,
@@ -571,7 +571,7 @@ def step7_schema_upgrade_rollback(
     if not init_ok and not db_path.is_file():
         # doctor 命令可能在某些版本不存在，尝试 --refresh-all 触发初始化
         rc_init2, stdout_init2, stderr_init2 = _run_command(
-            [str(cw_exe), "--refresh-all", str(ws_root)],
+            [str(cw_exe), "--refresh-all"],
             cwd=ws_root,
             timeout=120.0,
             env=env,

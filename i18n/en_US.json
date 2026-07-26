@@ -1311,7 +1311,7 @@
       "doctor_db_path": "  Path: {path}",
       "doctor_db_size": "  Size: {size:.2f} MB",
       "doctor_pragma_config": "  PRAGMA config:",
-      "doctor_pragma_item": "    {mark} {key} = {actual} (expected: {expected})",
+      "doctor_pragma_item": "    {mark} {pragma_key} = {actual} (expected: {expected})",
       "doctor_wal_title": "[2] WAL file status",
       "doctor_wal_file": "  WAL file: {path}",
       "doctor_wal_size": "    Size: {size:.1f} KB",
