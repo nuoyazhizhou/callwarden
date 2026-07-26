@@ -301,7 +301,10 @@ _CLIENT_AGENT_ONLY_EXCLUDES = [
 # callwarden.db 包，跳过 db/__init__.py 的 `from .db import CodeGraphDB`，
 # 避免 db.py → db_build.py → parsers 拉入链。
 _LOCAL_DB_EXCLUDES = [
-    'callwarden.db',
+    # 不排除父包：client/agent 需要收集 callwarden.db.db_daemon。若排除
+    # ``callwarden.db``，PyInstaller 会把其显式 hiddenimport 的子模块也排除，
+    # 导致 Linux 专属 Analysis 在 _required_client 门禁处失败。下面按模块
+    # 排除会拉入完整 CodeGraphDB/parser 链的具体实现，保留轻量父包容器。
     'callwarden.db.db',
     'callwarden.db.db_base',
     'callwarden.db.db_build',

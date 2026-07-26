@@ -40,7 +40,7 @@ else:
 if 'callwarden' not in sys.modules:
     _cw_stub = types.ModuleType('callwarden')
     _cw_stub.__path__ = _PKG_PATH
-    _cw_stub.__version__ = '0.3.3'
+    _cw_stub.__version__ = '0.3.4'
     sys.modules['callwarden'] = _cw_stub
 
 # === sys.modules stub：跳过 callwarden/db/__init__.py 的 CodeGraphDB import ===
