@@ -62,14 +62,11 @@ REQUIRED_MODULE_ROOTS = {
 }
 
 # client/agent bundle 必需模块根（无 numpy/parser，纯 RPC + watcher）。
-# client/agent 不做本地解析，numpy 仅由 local bundle 的向量搜索/余弦相似度路径使用。
+# 这些 bundle 不启动 MCP server，也不执行本地 DB/HTTP/终端渲染路径；
+# 因此不能把 local bundle 的 mcp/psutil/requests/rich 依赖误当成 client 门禁。
 REQUIRED_MODULE_ROOTS_CLIENT = {
     "callwarden",
-    "mcp",
     "pathspec",
-    "psutil",
-    "requests",
-    "rich",
     "watchdog",
 }
 

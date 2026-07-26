@@ -269,51 +269,9 @@ jobs:
           REPORT_PATH="e2e-report-linux-x86_64-local.json"
           {
             echo "## P2-H Linux x86_64 E2E 报告"
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ -f "$REPORT_PATH" ]; then
-            python - <<'PY' >> "$GITHUB_STEP_SUMMARY" || echo "E2E summary rendering failed" >> "$GITHUB_STEP_SUMMARY"
-            import json
-            with open("e2e-report-linux-x86_64-local.json", encoding="utf-8") as f:
-                r = json.load(f)
-            print(f"**Overall status**: {r['overall_status']}")
-            print("")
-            print("### 步骤结果 (local bundle)")
-            print("")
-            print("| Step | Status |")
-            print("|------|--------|")
-            for name in [
-                "step2_static_inspection",
-                "step3_no_system_python",
-                "step4_minimal_parse",
-                "step5_full_build_and_refresh",
-                "step6_client_daemon_query",
-                "step7_schema_upgrade_rollback",
-                "step8_performance_report",
-            ]:
-                step = r.get(name)
-                if step:
-                    print(f"| {name} | {step.get('status')} |")
-            print("")
-            perf = r.get("step8_performance_report", {})
-            if perf:
-                print("### 性能指标 (step8)")
-                print("")
-                print("| 指标 | 值 |")
-                print("|------|----|")
-                print(f"| Bundle unpacked | {perf.get('bundle_unpacked_mib')} MiB |")
-                print(f"| Artifact | {perf.get('artifact_mib')} MiB |")
-                print(f"| Startup median | {perf.get('startup_time_median_ms')} ms |")
-                print(f"| RSS peak | {perf.get('rss_peak_kb')} KB |")
-                print(f"| Parse P95 | {perf.get('parse_latency_p95_ms')} ms |")
-            if r.get("all_errors"):
-                print("")
-                print("### 错误")
-                print("")
-                for err in r["all_errors"]:
-                    print(f"- {err}")
-            PY
-          else
-            echo "P2-H Linux x86_64 E2E 报告未生成" >> "$GITHUB_STEP_SUMMARY"
-          fi
+            if [ -f "$REPORT_PATH" ]; then
+              python -c 'import json, pathlib; r=json.loads(pathlib.Path("e2e-report-linux-x86_64-local.json").read_text(encoding="utf-8")); print("**Overall status**: " + str(r.get("overall_status", "unknown")))'
+            else
+              echo "P2-H Linux x86_64 E2E 报告未生成"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
