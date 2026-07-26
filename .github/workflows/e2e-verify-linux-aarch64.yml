@@ -119,8 +119,8 @@ jobs:
           ./dist/callwarden/cw --version
           ./dist/callwarden/cw --help >/dev/null
           ./dist/callwarden/cw server --check-imports
-          ./dist/callwarden-client/cw-client --help >/dev/null
-          ./dist/callwarden-client/cw-agent --help >/dev/null
+          ./dist/callwarden-client/cw-client >/dev/null
+          ./dist/callwarden-client/cw-agent >/dev/null
 
       - name: Package artifacts
         run: |

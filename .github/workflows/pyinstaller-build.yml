@@ -70,8 +70,8 @@ jobs:
           "./dist/callwarden/cw${EXE_SUFFIX}" server --check-imports
           if [ "${{ runner.os }}" = "Linux" ]; then
             # client/agent 是独立的轻量 bundle，不在 local bundle 目录内。
-            "./dist/callwarden-client/cw-client${EXE_SUFFIX}" --help >/dev/null
-            "./dist/callwarden-client/cw-agent${EXE_SUFFIX}" --help >/dev/null
+            "./dist/callwarden-client/cw-client${EXE_SUFFIX}" >/dev/null
+            "./dist/callwarden-client/cw-agent${EXE_SUFFIX}" >/dev/null
           fi
 
       - name: Package artifacts

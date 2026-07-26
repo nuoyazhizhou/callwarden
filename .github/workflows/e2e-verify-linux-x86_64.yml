@@ -123,8 +123,8 @@ jobs:
           ./dist/callwarden/cw --help >/dev/null
           ./dist/callwarden/cw server --check-imports
           # client/agent bundle 仅在 Linux 构建
-          ./dist/callwarden-client/cw-client --help >/dev/null
-          ./dist/callwarden-client/cw-agent --help >/dev/null
+          ./dist/callwarden-client/cw-client >/dev/null
+          ./dist/callwarden-client/cw-agent >/dev/null
 
       - name: Package artifacts
         run: |
@@ -273,7 +273,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ -f "$REPORT_PATH" ]; then
-            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY" || echo "E2E summary rendering failed" >> "$GITHUB_STEP_SUMMARY"
             import json
             with open("e2e-report-linux-x86_64-local.json", encoding="utf-8") as f:
                 r = json.load(f)

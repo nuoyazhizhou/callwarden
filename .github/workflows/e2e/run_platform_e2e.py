@@ -510,8 +510,10 @@ def step6_client_daemon_query(
     # 启动 daemon（后台）
     # TODO: 完整 UDS 测试需要 daemon 启动 + client register + client query
     # 这里先验证 client/agent bundle 可执行文件能启动 --help
-    rc1, _, stderr1 = _run_command([str(cw_client), "--help"], timeout=30.0)
-    rc2, _, stderr2 = _run_command([str(cw_agent), "--help"], timeout=30.0)
+    # 无参数是 client/agent 入口的轻量自检：不需要 daemon，也不触发
+    # argparse 的必选子命令和 RPC 连接；完整 RPC 验收由 Linux daemon E2E 执行。
+    rc1, _, stderr1 = _run_command([str(cw_client)], timeout=30.0)
+    rc2, _, stderr2 = _run_command([str(cw_agent)], timeout=30.0)
     if rc1 != 0:
         errors.append(f"cw-client --help 失败: exit={rc1}, stderr={stderr1[:300]}")
     if rc2 != 0:

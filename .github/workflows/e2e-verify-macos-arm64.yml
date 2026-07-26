@@ -162,7 +162,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ -f "$REPORT_PATH" ]; then
-            python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+            python - <<'PY' >> "$GITHUB_STEP_SUMMARY" || echo "E2E summary rendering failed" >> "$GITHUB_STEP_SUMMARY"
             import json
             with open("e2e-report-macos-arm64.json", encoding="utf-8") as f:
                 r = json.load(f)
