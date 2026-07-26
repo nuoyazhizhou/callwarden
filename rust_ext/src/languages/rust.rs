@@ -8,6 +8,16 @@ pub(crate) fn config() -> LangConfig {
         lang_id: "rust",
         language: Language::from(tree_sitter_rust::LANGUAGE),
         symbol_rules: vec![
+            // R15-P0-3: impl 块内方法优先匹配（require_parent_kind="declaration_list"）
+            // 必须在 function_item 规则之前，因为 walk_node 用 find() 取首个匹配
+            // impl/trait 体内 function_item 的 parent_kind="declaration_list" → method
+            SymbolRule::new(
+                "function_item",
+                NameStrategy::FieldName("name"),
+                "method", Some("block"), true,
+            )
+            .with_require_parent_kind("declaration_list"),
+            // 顶层或 mod 内函数：parent_kind 不是 declaration_list → fn
             SymbolRule::new(
                 "function_item",
                 NameStrategy::FieldName("name"),
@@ -23,17 +33,18 @@ pub(crate) fn config() -> LangConfig {
                 NameStrategy::FieldName("name"),
                 "enum", None, false,
             ),
+            // R15-P0-3: trait 块递归进 declaration_list 提取方法签名
             SymbolRule::new(
                 "trait_item",
                 NameStrategy::FieldName("name"),
-                "trait", None, false,
+                "trait", Some("declaration_list"), false,
             ),
-            // impl 块：不递归进 body（对齐 Python rust_parser._parse_impl 行为）
+            // R15-P0-3: impl 块递归进 declaration_list 提取方法（golden 期望 new/distance）
             // name 格式 "Trait for Type" 或 "Type"
             SymbolRule::new(
                 "impl_item",
                 NameStrategy::ImplTraitForType { trait_field: "trait", type_field: "type" },
-                "impl", None, false,
+                "impl", Some("declaration_list"), false,
             ),
             // const/static/macro（对齐 Python rust_parser 的符号种类）
             SymbolRule::new(

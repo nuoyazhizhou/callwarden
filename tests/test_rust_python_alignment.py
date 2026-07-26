@@ -130,6 +130,16 @@ KNOWN_SYMBOL_DIFFS: dict[str, tuple[str, Counter]] = {
         "Rust 额外提取 C++ namespace 符号（投影差异）",
         Counter({("example", 4, 31): 1}),
     ),
+    # R15-P0-3: Rust 额外提取 impl 块内方法（Python 不提取）
+    "rust": (
+        "R15-P0-3: Rust 额外提取 impl 块内方法 new/distance（Python 不提取）",
+        Counter({("new", 9, 11): 1, ("distance", 13, 17): 1}),
+    ),
+    # R15-P0-3: Rust 额外提取 C# field（Python 不提取 field）
+    "csharp": (
+        "R15-P0-3: Rust 额外提取 C# field value（Python 不提取 field）",
+        Counter({("value", 6, 6): 1}),
+    ),
 }
 
 KNOWN_CALL_DIFFS: dict[str, tuple[str, Counter]] = {
@@ -162,6 +172,11 @@ KNOWN_CALL_DIFFS: dict[str, tuple[str, Counter]] = {
     "javascript": (
         "Rust 提取 new User(...) 构造调用，Python parser 不提取（Python 限制，P0-C Step 1 修复）",
         Counter({("User", 16): 1}),
+    ),
+    # R15-P0-3: Rust 额外提取 impl 方法内的调用（Python 不提取 impl 方法）
+    "rust": (
+        "R15-P0-3: Rust 额外提取 impl 方法内调用 distance（Python 不提取 impl 方法）",
+        Counter({("distance", 23): 1}),
     ),
 }
 
@@ -286,6 +301,19 @@ KNOWN_KIND_DIFFS: dict[str, tuple[str, Counter]] = {
             ("main", 15, "function"): 1,
         }),
     ),
+    # R15-P0-3: Rust 额外提取 impl 块内方法（kind=method，Python 不提取）
+    "rust": (
+        "R15-P0-3: Rust 额外提取 impl 块内方法 new/distance（Python 不提取）",
+        Counter({
+            ("new", 9, "method"): 1,
+            ("distance", 13, "method"): 1,
+        }),
+    ),
+    # R15-P0-3: Rust 额外提取 C# field（kind=field，Python 不提取 field）
+    "csharp": (
+        "R15-P0-3: Rust 额外提取 C# field value（Python 不提取 field）",
+        Counter({("value", 6, "field"): 1}),
+    ),
 }
 
 
@@ -327,10 +355,13 @@ KNOWN_VISIBILITY_DIFFS: dict[str, tuple[str, Counter]] = {
         }),
     ),
     "rust": (
-        "Python 把 impl 块标记为 private，Rust 标记为 public（投影差异）",
+        "Python 把 impl 块标记为 private，Rust 标记为 public（投影差异）；"
+        "R15-P0-3: Rust 额外提取 impl 块内方法 new/distance（Python 不提取）",
         Counter({
             ("Point", 8, "private"): 1,
             ("Point", 8, "public"): 1,
+            ("new", 9, "public"): 1,
+            ("distance", 13, "public"): 1,
         }),
     ),
     "go": (
@@ -375,6 +406,10 @@ KNOWN_VISIBILITY_DIFFS: dict[str, tuple[str, Counter]] = {
     "php": (
         "P0-C Step 2: Rust 已提取 PHP property visibility，与 Python 一致",
         Counter(),
+    ),
+    "csharp": (
+        "R15-P0-3: Rust 额外提取 C# field value（visibility=private，Python 不提取 field）",
+        Counter({("value", 6, "private"): 1}),
     ),
     "typescript": (
         "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",
@@ -785,16 +820,14 @@ class TestRustPythonAlignment:
                 # 差异项：(name, line_start, expected_sig, actual_sig)
                 actual_diff[(key[0], key[1], expected_sig, actual_sig)] += 1
 
-        # 已知缺口：golden known_gaps 中 field="signature" phase="Phase 2.7" 的语言
-        # 该语言所有 signature 不一致都被容忍（当前 Rust signature 全空）
-        known_gap_langs = _golden_signature_known_gap_langs()
-        if lang in known_gap_langs:
-            # 已知缺口语言：所有 signature 差异都被容忍
-            # 当 Rust 修复该语言 signature 后，必须从 golden known_gaps 移除该缺口
-            # 此时 actual_diff 仍非空 → 测试失败 → 强制与 golden 一致
-            return
-
-        # 非已知缺口语言：剩余差异必须为零
+        # R8-P0-4 修复（复审 §P0-3）：旧实现对 known_gap_langs 直接 return，
+        # 导致所有 signature 差异被静默放行（假绿）。现已：
+        # 1. 清理 15 个支持语言的 signature known_gaps（Rust 已实现 extract_signature）
+        # 2. 移除 blanket return，改为严格比较
+        # 3. 仅 C 语言（Rust 不支持）保留 signature known_gap，但 C 不在
+        #    _LANGUAGE_SAMPLES 中，不会触发此测试
+        # 若未来 C 被加入测试，actual_diff 非空会直接失败（正确行为：
+        # C 是真实缺口，需实现 C parser 或显式 skip）
         assert not actual_diff, (
             f"[{lang}] signature 与 golden 契约不一致（未知差异）\n"
             f"  golden expected signature 与 Rust 实际 signature 不一致项:\n"

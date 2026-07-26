@@ -45,6 +45,16 @@ pub(crate) fn config() -> LangConfig {
                 NameStrategy::ChildByType(vec!["identifier"]),
                 "enum", Some("declaration_list"), false,
             ),
+            // R15-P0-3: C# field 提取（golden 期望 value 字段）
+            // AST: field_declaration → variable_declaration → variable_declarator → identifier
+            SymbolRule::new(
+                "field_declaration",
+                NameStrategy::ChildByTypeNested {
+                    intermediate: "variable_declaration",
+                    name_kinds: vec!["variable_declarator"],
+                },
+                "field", None, false,
+            ),
         ],
         call_rules: vec![CallRule { kind: "invocation_expression", callee_field: None }],
         import_kinds: vec!["using_directive"],

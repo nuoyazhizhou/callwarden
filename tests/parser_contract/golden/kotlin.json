@@ -66,18 +66,6 @@
   "known_gaps": [
     {
       "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
-      "field": "symbols.kind",
-      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望为 'method'",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
       "field": "raw_calls",
       "description": "Rust 不提取 id.toString() 对象方法调用；golden 期望含 toString 调用",
       "phase": "Phase 2.x"

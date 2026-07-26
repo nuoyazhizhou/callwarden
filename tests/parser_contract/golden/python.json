@@ -101,18 +101,6 @@
   },
   "known_gaps": [
     {
-      "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串；Python parser 提取了完整签名",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
-      "field": "symbols.kind",
-      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望区分顶层 function（kind='function'）与方法（kind='method'）",
-      "phase": "Phase 2.7"
-    },
-    {
       "parser": "python",
       "field": "symbols.visibility",
       "description": "Python parser 把 __init__ 标记为 'private'（按 __ 前缀规则），但 __init__ 是公开构造器，应为 'public'",

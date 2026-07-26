@@ -77,18 +77,6 @@
   "known_gaps": [
     {
       "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
-      "field": "symbols.kind",
-      "description": "Rust 把方法标记为 'fn'，golden 期望为 'method'",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
       "field": "symbols.visibility",
       "description": "Rust 把所有符号标记为 'public'，但 Swift 默认访问级别是 'internal'，golden 期望为 'internal'",
       "phase": "Phase 2.7"

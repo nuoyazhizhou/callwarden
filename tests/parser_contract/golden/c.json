@@ -71,12 +71,6 @@
       "phase": "Phase 2.7"
     },
     {
-      "parser": "rust",
-      "field": "symbols.kind",
-      "description": "Rust 把函数标记为 'fn'，golden 期望为 'function'",
-      "phase": "Phase 2.7"
-    },
-    {
       "parser": "python",
       "field": "raw_calls",
       "description": "Python parser 不提取 printf 调用；golden 期望含 printf 调用（Python 限制）",

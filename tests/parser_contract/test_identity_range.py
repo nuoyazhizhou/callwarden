@@ -279,6 +279,18 @@ class TestParentAlignment:
                 ("main", 23, ""): 1,        # py: 顶层；rs: parent='example'
                 ("main", 23, "example"): 1,
             })
+        elif lang == "rust":
+            # R15-P0-3: Rust 额外提取 impl 块内方法 new/distance
+            # Python 不提取这些符号，因此 parent 差异为 Rust 多出 new/distance
+            known += Counter({
+                ("new", 9, "Point"): 1,
+                ("distance", 13, "Point"): 1,
+            })
+        elif lang == "csharp":
+            # R15-P0-3: Rust 额外提取 C# field value（parent=Calculator）
+            known += Counter({
+                ("value", 6, "Calculator"): 1,
+            })
 
         remaining = diff - known
         assert not remaining, (
@@ -456,6 +468,10 @@ _KNOWN_CALL_ORDER_DIFFS: dict[str, Counter] = {
     }),
     "javascript": Counter({
         ("main", "User", 16): 1,
+    }),
+    # R15-P0-3: Rust 额外提取 impl 块内方法 distance 的调用（Python 不提取 impl 方法）
+    "rust": Counter({
+        ("main", "distance", 23): 1,
     }),
 }
 
@@ -667,7 +683,7 @@ class TestParseFactAbiAlignment:
             )
 
     def test_symbol_lexical_parent_chain_valid(self, lang, filename, content, tmp_path):
-        """R7-P0-3: lexical_parent_local_id 必须指向真实存在或为 0（顶层）。"""
+        """R14-P0-2: lexical_parent_local_id 必须指向真实存在或为 None（顶层，NULL ABI）。"""
         path = tmp_path / filename
         # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
         path.write_bytes(content.encode("utf-8"))
@@ -680,18 +696,18 @@ class TestParseFactAbiAlignment:
 
         for s in syms:
             parent = s["lexical_parent_local_id"]
-            # R7-P0-3: 0 表示顶层（父是 synthetic module symbol），>=1 必须指向真实符号
-            assert parent == 0 or parent in valid_ids, (
+            # R14-P0-2: None 表示顶层（无词法父，NULL ABI），Some(x) 必须指向真实符号
+            assert parent is None or parent in valid_ids, (
                 f"[{lang}] symbol {s.get('name')!r} parent_local_id={parent} "
-                f"不在有效符号集合 {sorted(valid_ids)} 中（0=顶层）"
+                f"不在有效符号集合 {sorted(valid_ids)} 中（None=顶层）"
             )
 
-        # 检查父链无环（沿 parent_local_id 走必须最终到达 0=顶层）
+        # 检查父链无环（沿 parent_local_id 走必须最终到达 None=顶层）
         sym_by_id = {s["local_id"]: s for s in syms}
         for s in syms:
             visited = {s["local_id"]}
             cur = s
-            while cur["lexical_parent_local_id"] != 0:
+            while cur["lexical_parent_local_id"] is not None:
                 parent_id = cur["lexical_parent_local_id"]
                 assert parent_id not in visited, (
                     f"[{lang}] symbol {s.get('name')!r} 的父链有环: {visited}"
@@ -756,7 +772,7 @@ class TestParseFactAbiAlignment:
             )
 
     def test_call_caller_local_id_valid(self, lang, filename, content, tmp_path):
-        """R7-P0-3: caller_local_id 要么为 0（未解析/synthetic module symbol），要么指向真实 symbol。"""
+        """R14-P0-2: caller_local_id 要么为 None（顶层裸调用，NULL ABI），要么指向真实 symbol。"""
         path = tmp_path / filename
         # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
         path.write_bytes(content.encode("utf-8"))
@@ -765,14 +781,14 @@ class TestParseFactAbiAlignment:
         syms = rs_result["symbols"]
         if not syms:
             return
-        # R7-P0-3: 0 表示未解析（synthetic module symbol），不在 syms 集合中
-        valid_ids = {s["local_id"] for s in syms} | {0}
+        # R14-P0-2: None 表示未解析（顶层裸调用，NULL ABI），不在 syms 集合中
+        valid_ids = {s["local_id"] for s in syms} | {None}
 
         for c in rs_result.get("raw_calls", []):
             caller_lid = c["caller_local_id"]
             assert caller_lid in valid_ids, (
                 f"[{lang}] call caller_local_id={caller_lid} 不在有效符号集合 "
-                f"{sorted(valid_ids)} 中，callee={c.get('callee_name')!r}"
+                f"{sorted(v for v in valid_ids if v is not None)} 中（None=未解析）"
             )
 
     def test_diagnostics_field_present(self, lang, filename, content, tmp_path):

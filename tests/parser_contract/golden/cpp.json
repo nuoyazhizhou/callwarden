@@ -118,12 +118,6 @@
   "known_gaps": [
     {
       "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
       "field": "raw_calls",
       "description": "Rust 不提取 Point 构造调用（Point p(1,2) 是 declaration 非 call_expression）/ operator<< / endl 调用；golden 期望含 5 个调用",
       "phase": "Phase 2.6"

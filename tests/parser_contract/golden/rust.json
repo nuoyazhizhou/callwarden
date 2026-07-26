@@ -98,24 +98,6 @@
   "known_gaps": [
     {
       "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
-      "field": "symbols",
-      "description": "Rust 不递归提取 impl 块内部方法（new/distance）；golden 期望含方法符号",
-      "phase": "Phase 2.6"
-    },
-    {
-      "parser": "rust",
-      "field": "symbols.kind",
-      "description": "Rust 把所有函数统一标记为 'fn'，golden 期望区分 function 与 method",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
       "field": "raw_calls",
       "description": "Rust 不提取 println! 宏调用；golden 期望包含 println",
       "phase": "Phase 2.6"

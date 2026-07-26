@@ -89,6 +89,15 @@ binaries = [(rust_ext_path, '.')]
 
 # === 共享 excludes（local 和 client/agent 都用）===
 _common_excludes = [
+    # --- Rust 扩展（R17-P1-2: 阻止 PyInstaller 从 wheel package 收集 callwarden_core/）---
+    # callwarden_core 是 PyO3 扩展，wheel 安装时同时存在：
+    #   1. 顶层 callwarden_core.cp310-win_amd64.pyd（生产 .pyd）
+    #   2. callwarden_core/ 目录（package 元数据 + 第二份 .pyd 副本）
+    # binaries 显式提供根级 .pyd；excludes 阻止 PyInstaller 静态收集 package 目录，
+    # 避免冻结包出现两份 36MB 的 .pyd（R10-c 复审失败根因）。
+    # 运行时 sys.path 包含 _internal/，import callwarden_core 命中 binaries 提供的 .pyd。
+    'callwarden_core',
+
     # --- 未使用的间接依赖 ---
     'tree_sitter_languages',   # CW 直接 import 各语言 grammar，不通过此聚合包
     'fastmcp',                 # 未使用的新版 CLI/provider/experimental 聚合包

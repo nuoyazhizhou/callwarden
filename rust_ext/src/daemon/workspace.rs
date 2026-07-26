@@ -686,6 +686,28 @@ pub fn owned_workspace_by_id(
     Ok(workspace)
 }
 
+/// R16-P1-1: 解析 parse_retry entry 的 generation 字段。
+///
+/// generation 格式为 "session_epoch:monotonic_seq"（与 file_generation_seen
+/// 的 latest_seen_generation 一致）。解析失败返回 (0, 0)，调用方需处理
+/// workspace_id_num=0 或 file_generation_committed Ok(false) 的情况。
+///
+/// 用例：daemon 启动重放或 RPC workspace.recover 时，从 parse_retry entry
+/// 恢复 session_epoch 和 monotonic_seq，用于 file_generation_committed
+/// 条件 UPDATE（要求 latest_seen_generation == incoming_gen）。
+fn parse_generation_fields(generation: &str) -> (i64, i64) {
+    if generation.is_empty() {
+        return (0, 0);
+    }
+    let parts: Vec<&str> = generation.splitn(2, ':').collect();
+    if parts.len() != 2 {
+        return (0, 0);
+    }
+    let epoch = parts[0].parse::<i64>().unwrap_or(0);
+    let seq = parts[1].parse::<i64>().unwrap_or(0);
+    (epoch, seq)
+}
+
 // ============================================
 // DaemonStateExt 扩展：接入 workspace.* RPC
 // ============================================
@@ -1952,30 +1974,64 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let replicator = crate::daemon::replicator::Replicator::new(&staging_log);
         let result = replicator.recover(&ws_id, 0, "");
 
-        // R9-P1-1: 重放 parse_retry.log（daemon 崩溃后可重试 generation 重放）
-        // 设计 §8 Phase 4：daemon 重启后只重放可重试 generation
-        // 旧实现只重放 staging.log，parse_retry.log 只追加不重放，恢复链未闭合
+        // R9-P1-1 / R16-P1-1: 重放 parse_retry.log，执行完整状态机
+        // （staging append + merge + committed + replicate + snapshot）
+        //
+        // 复审 §P1-1：旧实现只调用 _daemon_parse_and_publish + mark_applied，
+        // 缺少 staging append / merge / committed / replicate / snapshot，
+        // daemon 崩溃后即使 RPC recover 也只重发 CAS，未进入可查询 snapshot。
+        //
+        // 完整状态机（对齐 handle_workspace_file_refresh 路径）：
+        // 1. _daemon_parse_and_publish → CAS publish
+        // 2. staging_log.append（追加 staging entry）
+        // 3. cas_merge::merge_cas_to_codegraph（合并 CAS → CodeGraph DB）
+        // 4. file_generation_committed（持久化 generation compare-and-swap）
+        // 5. Replicator::replicate（发布 snapshot + mark_applied_batch）
+        // 6. 失败回滚：file_generation_uncommit
+        // 7. mark_applied on parse_retry_log
         let mut retry_recovered_count: u64 = 0;
         let mut retry_exhausted_count: u64 = 0;
         let mut retry_failed_count: u64 = 0;
+        let mut retry_snapshot_published: u64 = 0;
         if let Some(resources) = self.resources.get(&ws_id) {
             let parse_retry_log = &resources.parse_retry_log;
             let cas_store = &resources.cas_store;
             let replay_config = ReplayConfig::default();
+
+            // R16-P1-1: 获取 workspace_id_num（用于 file_generation_committed 和 merge）
+            let workspace_id_num: i64 = workspace
+                .get("workspace_id")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+
+            // R16-P1-1: 解析 codegraph db_path（用于 merge 和 replicate）
+            let db_path = if !self.codegraph_db_path_template.is_empty() {
+                self.codegraph_db_path_template
+                    .replace("{workspace_instance_id}", &ws_id)
+            } else {
+                String::new()
+            };
+
+            // R16-P1-1: 获取 host_real_root（用于 merge 的 abs_path 拼接）
+            let host_real_root = workspace
+                .get("host_real_root")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
             match replay_pending(parse_retry_log, &replay_config) {
                 Ok(retryable_entries) => {
                     for entry in retryable_entries {
                         // 重试前增加 retry_count + 更新 last_retry_at
                         let _ = parse_retry_log.increment_retry(entry.lsn);
 
-                        // 调用 _daemon_parse_and_publish 重新 parse + publish
-                        // workspace_id_num 用 0（重放不 pin file_generation，只关心 CAS publish）
+                        // Step 1: CAS publish（重新 parse + publish 到 CAS）
                         let cas_result = _daemon_parse_and_publish(
                             &entry.rel_path,
                             None, // 重放时无 canonical_bytes，从 abs_path 读取
                             &entry.abs_path,
                             Some(cas_store.as_ref()),
-                            0,
+                            workspace_id_num, // R16-P1-1: 用真实 workspace_id_num
                         );
                         let cas_state = cas_result
                             .get("cas_state")
@@ -1984,8 +2040,175 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
                         match cas_state {
                             "ready_published" | "ready_cache_hit" => {
+                                // Step 2: staging append
+                                let cas_key = cas_result
+                                    .get("cas_key")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let content_hash = cas_result
+                                    .get("content_hash")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                let language = &entry.language;
+
+                                let mut staging_entry = StagingEntry::new(
+                                    &ws_id,
+                                    &entry.rel_path,
+                                    content_hash,
+                                    language,
+                                );
+                                let staging_lsn =
+                                    match resources.staging_log.append(&mut staging_entry) {
+                                        Ok(lsn) => lsn,
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[R16-P1-1] staging_log::append failed for {}: {}",
+                                                entry.rel_path, e
+                                            );
+                                            retry_failed_count += 1;
+                                            continue;
+                                        }
+                                    };
+
+                                // Step 3: merge CAS → CodeGraph DB
+                                let mut merge_ok = true;
+                                if !db_path.is_empty() && !cas_key.is_empty() {
+                                    // 确保父目录存在
+                                    if let Some(parent) =
+                                        std::path::Path::new(&db_path).parent()
+                                    {
+                                        let _ = std::fs::create_dir_all(parent);
+                                    }
+                                    let cas_conn_guard =
+                                        resources.cas_store.conn().lock().unwrap();
+                                    match rusqlite::Connection::open(&db_path) {
+                                        Ok(cg_conn) => {
+                                            if let Err(schema_err) =
+                                                crate::daemon::cas_merge::init_codegraph_schema(
+                                                    &cg_conn,
+                                                )
+                                            {
+                                                eprintln!(
+                                                    "[R16-P1-1] init_codegraph_schema failed: {}",
+                                                    schema_err
+                                                );
+                                                merge_ok = false;
+                                            } else {
+                                                let abs_path_for_merge = if !entry.abs_path.is_empty() {
+                                                    entry.abs_path.clone()
+                                                } else if !host_real_root.is_empty() {
+                                                    std::path::Path::new(&host_real_root)
+                                                        .join(&entry.rel_path)
+                                                        .to_string_lossy()
+                                                        .into_owned()
+                                                } else {
+                                                    entry.rel_path.clone()
+                                                };
+                                                match crate::daemon::cas_merge::merge_cas_to_codegraph(
+                                                    &cas_conn_guard,
+                                                    &cg_conn,
+                                                    cas_key,
+                                                    workspace_id_num,
+                                                    &entry.rel_path,
+                                                    &abs_path_for_merge,
+                                                    content_hash,
+                                                    language,
+                                                    &host_real_root,
+                                                ) {
+                                                    Ok(_mr) => {
+                                                        // merge 成功
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!(
+                                                            "[R16-P1-1] cas_merge failed for {}: {}",
+                                                            entry.rel_path, e
+                                                        );
+                                                        merge_ok = false;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[R16-P1-1] open codegraph db failed: {}",
+                                                e
+                                            );
+                                            merge_ok = false;
+                                        }
+                                    }
+                                }
+
+                                // Step 4: file_generation_committed（持久化 generation CAS）
+                                // 解析 generation 字段 "session_epoch:monotonic_seq"
+                                let (session_epoch, monotonic_seq) =
+                                    parse_generation_fields(&entry.generation);
+
+                                let mut snapshot_published = false;
+                                if merge_ok && workspace_id_num != 0 {
+                                    let committed_result = cas_store.file_generation_committed(
+                                        workspace_id_num,
+                                        &entry.rel_path,
+                                        session_epoch,
+                                        monotonic_seq,
+                                    );
+                                    match committed_result {
+                                        Ok(true) => {
+                                            // Step 5: Replicator::replicate（发布 snapshot）
+                                            let replicator =
+                                                crate::daemon::replicator::Replicator::new(
+                                                    &resources.staging_log,
+                                                );
+                                            let replicator = if !db_path.is_empty() {
+                                                if let Some(ref publisher) = self.snapshot_publisher
+                                                {
+                                                    replicator.with_snapshot_publisher(publisher.as_ref())
+                                                } else {
+                                                    replicator
+                                                }
+                                            } else {
+                                                replicator
+                                            };
+                                            let repl_result = replicator.replicate(
+                                                &ws_id,
+                                                workspace_id_num,
+                                                &db_path,
+                                                "",
+                                            );
+                                            snapshot_published = repl_result.success;
+                                            if !repl_result.success {
+                                                // Step 6: 回滚 committed
+                                                let _ = cas_store.file_generation_uncommit(
+                                                    workspace_id_num,
+                                                    &entry.rel_path,
+                                                );
+                                                eprintln!(
+                                                    "[R16-P1-1] replicate failed for {}: {:?}",
+                                                    entry.rel_path, repl_result.error
+                                                );
+                                            }
+                                        }
+                                        Ok(false) => {
+                                            eprintln!(
+                                                "[R16-P1-1] committed Ok(false) for {}: seen 已被并发覆盖",
+                                                entry.rel_path
+                                            );
+                                        }
+                                        Err(e) => {
+                                            eprintln!(
+                                                "[R16-P1-1] committed failed for {}: {}",
+                                                entry.rel_path, e
+                                            );
+                                        }
+                                    }
+                                }
+
+                                // Step 7: mark_applied on parse_retry_log
                                 let _ = parse_retry_log.mark_applied(entry.lsn);
                                 retry_recovered_count += 1;
+                                if snapshot_published {
+                                    retry_snapshot_published += 1;
+                                }
+                                let _ = staging_lsn; // 避免未使用警告
                             }
                             "parse_failed" | "canonicalize_failed" | "publish_failed" => {
                                 // 重试仍失败：检查是否耗尽
@@ -2017,7 +2240,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 Err(e) => {
                     // replay_pending 失败不阻塞 staging recover，仅在返回值中标记
                     eprintln!(
-                        "[R9-P1-1] replay_pending 失败 for {}: {}",
+                        "[R16-P1-1] replay_pending 失败 for {}: {}",
                         ws_id,
                         e
                     );
@@ -2064,7 +2287,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 None => Value::Null,
             },
         );
-        // R9-P1-1: parse_retry.log 重放结果
+        // R9-P1-1 / R16-P1-1: parse_retry.log 重放结果
         m.insert(
             "retry_recovered_count".to_string(),
             Value::Number(retry_recovered_count.into()),
@@ -2076,6 +2299,11 @@ impl DaemonStateExt for WorkspaceDaemonState {
         m.insert(
             "retry_failed_count".to_string(),
             Value::Number(retry_failed_count.into()),
+        );
+        // R16-P1-1: snapshot 发布计数（完整状态机成功的子集）
+        m.insert(
+            "retry_snapshot_published".to_string(),
+            Value::Number(retry_snapshot_published.into()),
         );
         Ok(Value::Object(m))
     }
@@ -3009,7 +3237,9 @@ mod tests {
     /// 在 workspace.recover 时被重放，成功后 mark_applied。
     #[test]
     fn test_recover_replays_parse_retry_log() {
-        use super::parse_retry_log::{ParseFailureEntry, ParseRetryLog};
+        // R12-P0-4: 在 #[cfg(test)] 内 `super::xxx` 指向当前 workspace 模块，
+        // 而非 daemon 父模块。必须用 `crate::daemon::xxx` 绝对路径才能正确解析。
+        use crate::daemon::parse_retry_log::{ParseFailureEntry, ParseRetryLog};
 
         let tmp = tempfile::tempdir().unwrap();
         let mut state = make_state_with_data_root(tmp.path());
@@ -3023,12 +3253,13 @@ mod tests {
         std::fs::write(&sample_file, "fn main() {}\n").unwrap();
 
         // 初始化 workspace resources（含 ParseRetryLog + CasStore）
-        let cas_store = super::cas::CasStore::open_in_memory();
-        let staging_log = super::staging_log::StagingLog::new(
+        // R12-P0-4: 使用 crate::daemon::xxx 绝对路径
+        let cas_store = crate::daemon::cas::CasStore::open_in_memory().unwrap();
+        let staging_log = crate::daemon::staging_log::StagingLog::new(
             ws_dir.join("staging.log").to_string_lossy().as_ref(),
         )
         .unwrap();
-        let parser_metrics = std::sync::Arc::new(super::parser_metrics::ParserMetrics::new());
+        let parser_metrics = std::sync::Arc::new(crate::daemon::parser_metrics::ParserMetrics::new());
         let parse_retry_log = std::sync::Arc::new(
             ParseRetryLog::new(ws_dir.join("parse_retry.log").to_string_lossy().as_ref()).unwrap(),
         );
@@ -3049,7 +3280,7 @@ mod tests {
 
         let resources = std::sync::Arc::new(super::WorkspaceResources {
             session_store: std::sync::Arc::new(
-                super::replicator::SessionStore::open_in_memory(),
+                crate::daemon::replicator::SessionStore::open_in_memory().unwrap(),
             ),
             cas_store: std::sync::Arc::new(cas_store),
             staging_log: std::sync::Arc::new(staging_log),

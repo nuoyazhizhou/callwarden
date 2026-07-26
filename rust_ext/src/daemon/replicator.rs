@@ -627,20 +627,43 @@ pub fn _daemon_parse_and_publish(
     let cas_input = parse_result_to_cas_input(&parse_result, canonical_bytes_ref);
 
     // 3h. CAS 原子发布
-    match cas_store.publish(
-        &cas_key,
-        &content_hash,
-        &language,
-        &cas_input,
-        parser_version,
-        callwarden_version,
-        extraction_config_version,
-        abi_version,
-        input_abi_version,
-    ) {
+    // R13-P0-1: Partial 解析用 publish_with_status(..., "partial") 发布，
+    // 使其 state='partial'，lookup() 不会命中（lookup 只查 state='ready'）。
+    // 第二次相同内容 refresh 不会返回 ready_cache_hit，必须重新 parse，
+    // snapshot_guard 因此能再次看到 partial_published 并阻止替换上一代好 snapshot。
+    let is_partial = parse_status == crate::multi_lang::ParseStatus::Partial;
+    let final_state = if is_partial { "partial" } else { "ready" };
+    let publish_result = if is_partial {
+        cas_store.publish_with_status(
+            &cas_key,
+            &content_hash,
+            &language,
+            &cas_input,
+            parser_version,
+            callwarden_version,
+            extraction_config_version,
+            abi_version,
+            input_abi_version,
+            final_state,
+        )
+    } else {
+        cas_store.publish(
+            &cas_key,
+            &content_hash,
+            &language,
+            &cas_input,
+            parser_version,
+            callwarden_version,
+            extraction_config_version,
+            abi_version,
+            input_abi_version,
+        )
+    };
+    match publish_result {
         Ok(()) => {
             // R6-P0-2: Partial 状态返回独立 cas_state，让 snapshot_guard 阻止替换
-            let cas_state = if parse_status == crate::multi_lang::ParseStatus::Partial {
+            // R13-P0-1: 同时 CAS 中 state='partial'，第二次 refresh 不会 ready_cache_hit
+            let cas_state = if is_partial {
                 "partial_published"
             } else {
                 "ready_published"
@@ -696,13 +719,9 @@ fn parse_result_to_cas_input(
         .map(|si| CasSymbolInput {
             name: si.name.clone(),
             qualified_name: si.qualified_name.clone(),
-            // R1-P0-2: 用 local_id 作为 parent_id（lexical_parent_local_id == -1 视为 None）
-            // R7-P0-3: lexical_parent_local_id 改为 u32，0 表示顶层（无父）
-            parent_id: if si.lexical_parent_local_id > 0 {
-                Some(si.lexical_parent_local_id as i64)
-            } else {
-                None
-            },
+            // R14-P0-2: lexical_parent_local_id 已是 Option<u32>，直接 map 转换
+            // None = 顶层（无词法父），Some(x) = 真实父符号 local_id
+            parent_id: si.lexical_parent_local_id.map(|x| x as i64),
             kind: si.kind.clone(),
             start_line: si.start_line as i64,
             end_line: si.end_line as i64,
@@ -723,12 +742,9 @@ fn parse_result_to_cas_input(
         .calls
         .iter()
         .map(|rc| CasRawCallInput {
-            // R1-P0-2: caller_local_id == 0 表示未解析到调用者符号，置 None
-            caller_id: if rc.caller_local_id > 0 {
-                Some(rc.caller_local_id as i64)
-            } else {
-                None
-            },
+            // R14-P0-2: caller_local_id 已是 Option<u32>，直接 map 转换
+            // None = 顶层裸调用（未解析到调用者符号），Some(x) = 真实调用者 local_id
+            caller_id: rc.caller_local_id.map(|x| x as i64),
             caller_name: rc.caller_name.clone(),
             callee_name: rc.callee_name.clone(),
             line: rc.call_line as i64,

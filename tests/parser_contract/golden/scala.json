@@ -82,12 +82,6 @@
   "known_gaps": [
     {
       "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
       "field": "symbols.module_path",
       "description": "Rust module_path 用传入参数（test.sample），未读取 Scala package（com.example）",
       "phase": "Phase 2.3"

@@ -50,18 +50,5 @@
       }
     ]
   },
-  "known_gaps": [
-    {
-      "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串（HCL block 签名未实现）",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "python",
-      "field": "signature",
-      "description": "Python parser signature 形如 'resource \"aws_instance\" \"web\"'，与 golden 一致（Python 正确）",
-      "phase": "Phase 1.x"
-    }
-  ]
+  "known_gaps": []
 }

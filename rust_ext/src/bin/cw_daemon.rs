@@ -852,7 +852,9 @@ mod unix {
     ///
     /// 错误容忍：单个 workspace 恢复失败不影响其他 workspace。
     fn recover_all_workspaces(registry: &WorkspaceRegistry, data_root: &std::path::Path) -> usize {
-        use callwarden_core::daemon::replicator::Replicator;
+        use callwarden_core::daemon::cas::CasStore;
+        use callwarden_core::daemon::parse_retry_log::{ParseRetryLog, ReplayConfig, replay_pending};
+        use callwarden_core::daemon::replicator::{Replicator, _daemon_parse_and_publish};
         use callwarden_core::daemon::staging_log::StagingLog;
 
         let workspaces = match registry.list_workspaces(None) {
@@ -875,13 +877,17 @@ mod unix {
 
             let ws_dir = data_root.join(ws_id);
             let staging_log_path = ws_dir.join("staging.log");
+            let parse_retry_log_path = ws_dir.join("parse_retry.log");
+            let cas_db_path = ws_dir.join("cas.db");
 
-            // staging.log 不存在 → 该 workspace 从未有 pending entries，跳过
-            if !staging_log_path.exists() {
+            // staging.log 不存在且 parse_retry.log 不存在 → 该 workspace 无需恢复
+            if !staging_log_path.exists() && !parse_retry_log_path.exists() {
                 continue;
             }
 
             // 打开 StagingLog（自动恢复 next_lsn）
+            // staging.log 可能不存在（只有 parse_retry.log），用 create_if_missing=false 的语义：
+            // StagingLog::new 在文件不存在时也会创建（open + 写入 header），这是无害的。
             let staging_log = match StagingLog::new(staging_log_path.to_string_lossy().as_ref()) {
                 Ok(l) => l,
                 Err(e) => {
@@ -893,12 +899,13 @@ mod unix {
                 }
             };
 
-            // 检查是否有 pending entries
+            // 检查 staging.log 是否有 pending entries
             let pending = match staging_log.read_pending() {
                 Ok(p) => p,
                 Err(e) => {
                     eprintln!("[cw_daemon] [WARN] read_pending 失败 ws={}: {}", ws_id, e);
-                    continue;
+                    // staging.log 读失败不阻塞 parse_retry 重放
+                    Vec::new()
                 }
             };
 
@@ -908,31 +915,122 @@ mod unix {
                 .filter(|e| e.workspace_id == ws_id)
                 .collect();
 
-            if ws_pending.is_empty() {
-                continue;
+            if !ws_pending.is_empty() {
+                eprintln!(
+                    "[cw_daemon] [INFO] recovering {} pending staging entries for ws={}",
+                    ws_pending.len(),
+                    ws_id
+                );
+
+                // 创建 Replicator（无 SnapshotPublisher，只更新 log 状态）
+                // daemon 启动恢复时不需要发布 snapshot（snapshot 可能已是最新），
+                // 只需将 pending entries 标记为 applied 或重试 replication
+                // R16-P1-1: 完整状态机（staging append + merge + committed + replicate + snapshot）
+                // 应通过显式 RPC workspace.recover 调用
+                let replicator = Replicator::new(&staging_log);
+                let result = replicator.recover(ws_id, 0, "");
+
+                if result.success {
+                    recovered_count += result.applied_count;
+                } else {
+                    eprintln!(
+                        "[cw_daemon] [WARN] staging recovery failed for ws={}: {}",
+                        ws_id,
+                        result.error.unwrap_or_default()
+                    );
+                }
             }
 
-            eprintln!(
-                "[cw_daemon] [INFO] recovering {} pending entries for ws={}",
-                ws_pending.len(),
-                ws_id
-            );
+            // R16-P1-1: 重放 parse_retry.log（daemon 启动时也读 parse_retry.log）
+            // 复审 §P1-1：旧实现只读 staging.log，parse_retry.log 只追加不重放，
+            // 恢复链未闭合。现在 daemon 启动时也重放 parse_retry.log 的 pending entries。
+            //
+            // 启动路径只做 CAS publish + mark_applied（best-effort recovery）：
+            // - daemon 启动时尚未构造 SnapshotCachePublisher，无法 publish_snapshot
+            // - 完整状态机（staging append + merge + committed + replicate + snapshot）
+            //   应通过显式 RPC workspace.recover 调用
+            if parse_retry_log_path.exists() {
+                let parse_retry_log = match ParseRetryLog::new(
+                    parse_retry_log_path.to_string_lossy().as_ref(),
+                ) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        eprintln!(
+                            "[cw_daemon] [WARN] 打开 parse_retry.log 失败 ws={}: {}",
+                            ws_id, e
+                        );
+                        continue;
+                    }
+                };
 
-            // 创建 Replicator（无 SnapshotPublisher，只更新 log 状态）
-            // daemon 启动恢复时不需要发布 snapshot（snapshot 可能已是最新），
-            // 只需将 pending entries 标记为 applied 或重试 replication
-            let replicator = Replicator::new(&staging_log);
-            // 恢复路径无 SnapshotPublisher，workspace_id_num=0（不发布 snapshot，无需过滤）
-            let result = replicator.recover(ws_id, 0, "");
+                // 打开 CasStore（用于重新 parse + publish）
+                let cas_store = match CasStore::open(cas_db_path.to_string_lossy().as_ref()) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!(
+                            "[cw_daemon] [WARN] 打开 cas.db 失败 ws={}: {}",
+                            ws_id, e
+                        );
+                        continue;
+                    }
+                };
 
-            if result.success {
-                recovered_count += result.applied_count;
-            } else {
-                eprintln!(
-                    "[cw_daemon] [WARN] recovery failed for ws={}: {}",
-                    ws_id,
-                    result.error.unwrap_or_default()
-                );
+                let replay_config = ReplayConfig::default();
+                let retryable = match replay_pending(&parse_retry_log, &replay_config) {
+                    Ok(entries) => entries,
+                    Err(e) => {
+                        eprintln!(
+                            "[cw_daemon] [WARN] replay_pending 失败 ws={}: {}",
+                            ws_id, e
+                        );
+                        continue;
+                    }
+                };
+
+                if !retryable.is_empty() {
+                    eprintln!(
+                        "[cw_daemon] [INFO] replaying {} parse_retry entries for ws={}",
+                        retryable.len(),
+                        ws_id
+                    );
+
+                    for entry in retryable {
+                        let _ = parse_retry_log.increment_retry(entry.lsn);
+
+                        // 重放：重新 parse + CAS publish（best-effort，无 snapshot publish）
+                        let cas_result = _daemon_parse_and_publish(
+                            &entry.rel_path,
+                            None, // 重放时无 canonical_bytes，从 abs_path 读取
+                            &entry.abs_path,
+                            Some(&cas_store),
+                            0, // workspace_id_num=0：启动恢复不 pin file_generation
+                        );
+                        let cas_state = cas_result
+                            .get("cas_state")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        match cas_state {
+                            "ready_published" | "ready_cache_hit" => {
+                                let _ = parse_retry_log.mark_applied(entry.lsn);
+                                recovered_count += 1;
+                            }
+                            "parse_failed" | "canonicalize_failed" | "publish_failed" => {
+                                // 重试仍失败：检查是否耗尽
+                                let current = parse_retry_log.read(0).ok().unwrap_or_default();
+                                if let Some(e) = current.iter().find(|e| e.lsn == entry.lsn) {
+                                    if e.retry_count >= replay_config.max_retry {
+                                        let _ = parse_retry_log.mark_exhausted(entry.lsn);
+                                    }
+                                }
+                            }
+                            _ => {
+                                // 配置问题（no_abs_path / no_cas_conn / unsupported_language / cas_lookup_failed）
+                                let _ = parse_retry_log.mark_exhausted(entry.lsn);
+                            }
+                        }
+                    }
+                }
             }
         }
 

@@ -511,7 +511,16 @@ fn walk_node(
                         final_kind
                     };
                     let qualified = make_qualified(module_path, parent_qualified, &name);
-                    let sym = make_symbol(&child, source, module_path, &name, &qualified, final_kind);
+                    let sym = make_symbol(
+                        &child,
+                        source,
+                        module_path,
+                        &name,
+                        &qualified,
+                        final_kind,
+                        config.lang_id,
+                        rule.body,
+                    );
                     symbols.push(sym);
 
                     // 设置新的调用上下文
@@ -574,7 +583,8 @@ fn walk_node(
                         is_cross_file: false,
                         // R1-P0-2: ParseFact ABI 字段
                         // caller_local_id / ordinal 由 assign_local_ids 后处理填入
-                        caller_local_id: 0,
+                        // R14-P0-2: caller_local_id 改为 None（Option<u32>，None=未解析）
+                        caller_local_id: None,
                         ordinal: 0,
                         byte_start: child.start_byte() as u32,
                         byte_end: child.end_byte() as u32,
@@ -711,7 +721,8 @@ fn extract_traversal_references(
                     // R1-P0-2: ParseFact ABI 字段
                     // 注意：HCL traversal 没有单一 AST 节点对应整个 call 表达式，
                     // 用起始 variable_expr 的 byte range 作为近似（便于 range 包含查询）
-                    caller_local_id: 0,
+                    // R14-P0-2: caller_local_id 改为 None（Option<u32>，None=未解析）
+                    caller_local_id: None,
                     ordinal: 0,
                     byte_start: expr.start_byte() as u32,
                     byte_end: expr.end_byte() as u32,
@@ -890,6 +901,8 @@ fn split_callee(text: &str) -> (String, String) {
 // ============================================
 
 /// 从 AST 节点构造 SymbolInfo
+///
+/// R15-P0-3: 增加 lang_id 和 body_kind 参数，用于提取 signature 和 per-language visibility
 fn make_symbol(
     node: &Node,
     source: &[u8],
@@ -897,6 +910,8 @@ fn make_symbol(
     name: &str,
     qualified: &str,
     kind: &str,
+    lang_id: &str,
+    body_kind: Option<&str>,
 ) -> SymbolInfo {
     let content = node_text(node, source).to_string();
     SymbolInfo {
@@ -909,36 +924,265 @@ fn make_symbol(
         symbol_hash: format!("{:x}", blake_hash(content.as_bytes())),
         depth: -1,
         has_comment: false,
-        visibility: extract_visibility(node, source),
+        visibility: extract_visibility(node, source, lang_id, name, kind),
         content,
-        signature: String::new(),
+        signature: extract_signature(node, source, lang_id, kind, body_kind),
         // R1-P0-2: ParseFact ABI 字段
         // byte range 直接从 AST 节点取；
         // local_id / lexical_parent_local_id 由 assign_local_ids 后处理填入
-        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
+        // R14-P0-2: lexical_parent_local_id 改为 None（Option<u32>，None=顶层）
         local_id: 0,
-        lexical_parent_local_id: 0,
+        lexical_parent_local_id: None,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     }
 }
 
-/// 提取符号可见性
+/// R15-P0-3: 提取符号 signature（声明头，不含函数体）
 ///
-/// P0-C Step 2: PHP 用 visibility_modifier 节点包裹 public/protected/private。
-/// 其他语言暂保持 "public" 默认（Phase 2.7 待补全其他语言的 visibility 提取）。
-fn extract_visibility(node: &Node, source: &[u8]) -> String {
-    if let Some(vis_mod) = find_child(node, "visibility_modifier") {
-        let text = node_text(&vis_mod, source);
-        if text.contains("private") {
-            return "private".to_string();
-        } else if text.contains("protected") {
-            return "protected".to_string();
-        } else if text.contains("public") {
-            return "public".to_string();
+/// 策略按语言和符号类型：
+/// - Rust struct / C struct: 完整声明（含字段），空白归一化为单行，去掉尾逗号
+/// - Go type_spec: "type Name kind" 格式（type 关键字在父节点，需补全）
+/// - TypeScript/JavaScript: 检查 export 前缀并补全
+/// - 函数/方法/类等有 body 的声明: body 起始位置之前的文本，clean_sig 清理
+/// - Ruby: 节点首行（无大括号语法）
+/// - Elixir: "do" 之前的文本
+/// - HCL: "{" 之前的文本
+/// - PHP property / C# field: ";" 之前的文本
+fn extract_signature(
+    node: &Node,
+    source: &[u8],
+    lang_id: &str,
+    kind: &str,
+    body_kind: Option<&str>,
+) -> String {
+    let node_start = node.start_byte();
+    let node_end = node.end_byte();
+    let full_bytes = &source[node_start..node_end];
+    let full_text = std::str::from_utf8(full_bytes).unwrap_or("");
+
+    // Rust struct: 完整声明含字段，空白归一化为单行，去掉尾逗号
+    // golden 期望 "pub struct Point { pub x: f64, pub y: f64 }"
+    if lang_id == "rust" && kind == "struct" {
+        let normalized = normalize_ws(full_text);
+        // 去掉尾逗号: "pub struct Point { pub x: f64, pub y: f64, }" → "..., pub y: f64 }"
+        return normalized.replace(", }", " }");
+    }
+
+    // Go type_spec: 节点不含 "type" 关键字（在父节点 type_declaration 中）
+    // golden 期望 "type Point struct" / "type Printer interface"
+    if lang_id == "go" && node.kind() == "type_spec" {
+        let first_line = full_text.lines().next().unwrap_or("").trim();
+        // 去掉尾部的 { 和空白
+        let cleaned = first_line.trim_end_matches('{').trim().to_string();
+        return format!("type {}", cleaned);
+    }
+
+    // 提取基础 signature（body 之前的文本或首行）
+    let base_sig = extract_base_signature(node, source, lang_id, kind, body_kind, full_text);
+
+    // TypeScript/JavaScript: 检查 export 前缀
+    // tree-sitter 将 export class/function 包装在 export_statement 中，
+    // class_declaration/function_declaration 节点不含 "export" 关键字
+    if lang_id == "typescript" || lang_id == "javascript" {
+        let prefix_bytes = &source[..node_start];
+        let line_start = prefix_bytes.iter().rposition(|&b| b == b'\n').map(|p| p + 1).unwrap_or(0);
+        let prefix = std::str::from_utf8(&prefix_bytes[line_start..]).unwrap_or("").trim();
+        if prefix == "export" {
+            return format!("export {}", base_sig);
         }
     }
-    "public".to_string()
+
+    base_sig
+}
+
+/// 提取基础 signature（不含 export 前缀等修饰）
+fn extract_base_signature(
+    node: &Node,
+    source: &[u8],
+    lang_id: &str,
+    kind: &str,
+    body_kind: Option<&str>,
+    full_text: &str,
+) -> String {
+    let node_start = node.start_byte();
+
+    // 优先用 rule.body 指定的 body kind 找到 body 节点
+    if let Some(bk) = body_kind {
+        if let Some(body) = find_child(node, bk) {
+            let body_start = body.start_byte();
+            let sig = std::str::from_utf8(&source[node_start..body_start]).unwrap_or("");
+            return clean_sig(sig, lang_id, kind);
+        }
+    }
+
+    // 回退：尝试常见 body kind（含 Java constructor_body）
+    for bk in &[
+        "block", "declaration_list", "class_body", "statement_block",
+        "function_body", "field_declaration_list", "protocol_body",
+        "constructor_body", "interface_body",
+    ] {
+        if let Some(body) = find_child(node, bk) {
+            let body_start = body.start_byte();
+            let sig = std::str::from_utf8(&source[node_start..body_start]).unwrap_or("");
+            return clean_sig(sig, lang_id, kind);
+        }
+    }
+
+    // Ruby: 无大括号，取首行
+    if lang_id == "ruby" {
+        return clean_sig(full_text.lines().next().unwrap_or(""), lang_id, kind);
+    }
+
+    // Elixir: "do" 之前
+    if lang_id == "elixir" {
+        if let Some(pos) = full_text.find(" do") {
+            return full_text[..pos].trim().to_string();
+        }
+        return clean_sig(full_text.lines().next().unwrap_or(""), lang_id, kind);
+    }
+
+    // HCL: "{" 之前
+    if lang_id == "hcl" {
+        if let Some(pos) = full_text.find('{') {
+            return full_text[..pos].trim().to_string();
+        }
+        return clean_sig(full_text.lines().next().unwrap_or(""), lang_id, kind);
+    }
+
+    // PHP property / C# field 等: ";" 之前
+    if kind == "property" || kind == "field" {
+        if let Some(pos) = full_text.find(';') {
+            return full_text[..pos].trim().to_string();
+        }
+    }
+
+    // 最终回退: 首行（也调用 clean_sig 去掉尾部 { 等）
+    clean_sig(full_text.lines().next().unwrap_or(""), lang_id, kind)
+}
+
+/// 清理 signature 文本：去掉尾部 {、: (Python)、= (Scala)、initializer list (C++ 构造器)
+fn clean_sig(sig: &str, lang_id: &str, kind: &str) -> String {
+    let mut s = sig.trim().to_string();
+    // 去掉尾部的 { 和空白
+    while s.ends_with('{') || s.ends_with(' ') {
+        s.pop();
+    }
+    s = s.trim().to_string();
+    // Python: 去掉尾部的 :
+    if lang_id == "python" {
+        while s.ends_with(':') {
+            s.pop();
+        }
+        s = s.trim().to_string();
+    }
+    // Scala: 去掉尾部的 = (def 语法 "def foo() = {")
+    if lang_id == "scala" && s.ends_with('=') {
+        s.pop();
+        s = s.trim().to_string();
+    }
+    // C++ 构造器: 去掉 initializer list "Point(int x) : x_(x)"
+    // 模式: 找到参数列表后的 " : " 并截断
+    if lang_id == "cpp" && kind == "constructor" {
+        if let Some(pos) = s.rfind(" : ") {
+            // 确保是参数列表后的 initializer list，不是其他场景
+            if s.contains(')') {
+                s = s[..pos].trim().to_string();
+            }
+        }
+    }
+    s
+}
+
+/// 空白归一化：多个空白字符合并为单空格
+fn normalize_ws(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// R15-P0-3: 提取符号 visibility（对齐 golden fixture 契约真相）
+///
+/// golden fixture 是手工策划的"长期契约真相"，代表语义分析结果而非 parser 当前输出。
+/// 按语言分类：
+/// - Python/Go/JavaScript/TypeScript/Ruby/Elixir/HCL: golden 全部标 public
+///   （契约简化：这些语言的符号在调用图中均视为可访问）
+/// - Rust: impl → private；pub → public；无 pub → private（对齐 golden）
+/// - Swift: 默认 internal；public/open → public；private/fileprivate → private（对齐 golden）
+/// - C#/Java/C++/Kotlin/Scala/PHP: 检查 visibility_modifier/modifiers 节点（对齐 golden）
+fn extract_visibility(
+    node: &Node,
+    source: &[u8],
+    lang_id: &str,
+    name: &str,
+    kind: &str,
+) -> String {
+    match lang_id {
+        // R15-P0-3: golden 对这些语言全部标 public（契约简化）
+        "python" | "go" | "javascript" | "typescript" | "ruby" | "elixir" | "hcl" => {
+            "public".to_string()
+        }
+        "rust" => {
+            // golden: impl 块标 private；pub 关键字 → public；无 pub → private
+            if kind == "impl" {
+                return "private".to_string();
+            }
+            let text = node_text(node, source);
+            if text.split_whitespace().any(|w| w == "pub") {
+                return "public".to_string();
+            }
+            "private".to_string()
+        }
+        "swift" => {
+            // golden: 默认 internal；public/open → public；private/fileprivate → private
+            let text = node_text(node, source);
+            let words: Vec<&str> = text.split_whitespace().collect();
+            if words.iter().any(|w| *w == "public" || *w == "open") {
+                return "public".to_string();
+            }
+            if words.iter().any(|w| *w == "private" || *w == "fileprivate") {
+                return "private".to_string();
+            }
+            "internal".to_string()
+        }
+        _ => {
+            // PHP/C#/Java/C++/Kotlin/Scala/C:
+            // 1. 检查 visibility_modifier 节点（PHP/C# 等）
+            if let Some(vis_mod) = find_child(node, "visibility_modifier") {
+                let text = node_text(&vis_mod, source);
+                if text.contains("private") {
+                    return "private".to_string();
+                } else if text.contains("protected") {
+                    return "protected".to_string();
+                } else if text.contains("public") {
+                    return "public".to_string();
+                }
+            }
+            // 2. 检查 modifiers 节点（Java/Kotlin/C#）
+            if let Some(modifier) = find_child(node, "modifiers") {
+                let text = node_text(&modifier, source);
+                if text.contains("private") {
+                    return "private".to_string();
+                } else if text.contains("protected") {
+                    return "protected".to_string();
+                } else if text.contains("public") {
+                    return "public".to_string();
+                }
+            }
+            // 3. 回退：检查节点首行的 visibility 关键字
+            // C# field_declaration 的 modifier 可能不包装在 modifiers 节点中
+            // 只检查首行避免误匹配 body 内的 private 字段
+            let text = node_text(node, source);
+            let first_line = text.lines().next().unwrap_or("");
+            let words: Vec<&str> = first_line.split_whitespace().collect();
+            if words.iter().any(|w| *w == "private") {
+                return "private".to_string();
+            } else if words.iter().any(|w| *w == "protected") {
+                return "protected".to_string();
+            } else if words.iter().any(|w| *w == "public") {
+                return "public".to_string();
+            }
+            "public".to_string()
+        }
+    }
 }
 
 // ============================================

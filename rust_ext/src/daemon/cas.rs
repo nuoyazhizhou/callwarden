@@ -355,6 +355,11 @@ impl CasStore {
     ///
     /// 对应 Python db_cas.py:cas_publish。BEGIN IMMEDIATE 保证原子性，
     /// 崩溃后 building 残留由 GC 清理（不变量 C3）。
+    ///
+    /// R13-P0-1：默认 state='ready'。partial 解析应调用
+    /// [`publish_with_status`](Self::publish_with_status) 传入 "partial"，
+    /// 使其不进入 `lookup()` 的 ready 命中范围，防止第二次 refresh 绕过
+    /// snapshot_guard 的 partial 保护。
     pub fn publish(
         &self,
         cas_key: &str,
@@ -366,6 +371,43 @@ impl CasStore {
         extraction_config_version: &str,
         abi_version: &str,
         input_abi_version: &str,
+    ) -> Result<(), CasPublishError> {
+        self.publish_with_status(
+            cas_key,
+            content_hash,
+            language,
+            parse_result,
+            parser_version,
+            callwarden_version,
+            extraction_config_version,
+            abi_version,
+            input_abi_version,
+            "ready",
+        )
+    }
+
+    /// R13-P0-1: CAS 原子发布，可指定最终 state。
+    ///
+    /// `final_state` 取值：
+    /// - `"ready"`：正常发布，`lookup()` 可命中
+    /// - `"partial"`：partial 解析发布事实到 CAS，但 `lookup()` 不会命中
+    ///   （`lookup()` 只查 `state='ready'`）。第二次相同内容 refresh 不会
+    ///   返回 `ready_cache_hit`，必须重新 parse，snapshot_guard 因此能
+    ///   再次看到 `partial_published` 并阻止替换上一代好 snapshot。
+    ///
+    /// 其他取值（如 `"building"`）会让 `lookup()` 无法命中，调用方应避免使用。
+    pub fn publish_with_status(
+        &self,
+        cas_key: &str,
+        content_hash: &str,
+        language: &str,
+        parse_result: &CasPublishInput,
+        parser_version: &str,
+        callwarden_version: &str,
+        extraction_config_version: &str,
+        abi_version: &str,
+        input_abi_version: &str,
+        final_state: &str,
     ) -> Result<(), CasPublishError> {
         let now = now_ts();
         let conn = self.conn.lock().unwrap();
@@ -384,6 +426,7 @@ impl CasStore {
             abi_version,
             input_abi_version,
             now,
+            final_state,
         );
         match result {
             Ok(()) => {
@@ -410,6 +453,7 @@ impl CasStore {
         abi_version: &str,
         input_abi_version: &str,
         now: f64,
+        final_state: &str,
     ) -> Result<(), CasPublishError> {
         // 阶段 1: 插入 building 状态（INSERT OR IGNORE 保证幂等）
         conn.execute(
@@ -516,10 +560,11 @@ impl CasStore {
             }
         }
 
-        // 阶段 4: 原子切换 ready
+        // 阶段 4: 原子切换到 final_state
+        // R13-P0-1: partial 解析传入 "partial"，使其不进入 lookup() 的 ready 命中范围
         conn.execute(
-            "UPDATE cas_file_cache SET state = 'ready' WHERE cas_key = ?1",
-            params![cas_key],
+            "UPDATE cas_file_cache SET state = ?2 WHERE cas_key = ?1",
+            params![cas_key, final_state],
         )?;
         Ok(())
     }
@@ -1935,5 +1980,105 @@ mod tests {
         // gc_unreferenced 应删除（parsed_at=0.0 远小于 cutoff）
         let deleted = store.gc_unreferenced(7).unwrap();
         assert_eq!(deleted, 1);
+    }
+
+    /// R13-P0-1 回归测试：partial CAS 发布不会被 lookup() 命中
+    ///
+    /// 复审 §P0-1 描述的场景：
+    /// 1. 第一次 partial 解析用 `publish_with_status(..., "partial")` 发布
+    /// 2. 第二次相同内容 refresh 调用 `lookup()`，因 state='partial' 不匹配
+    ///    `state='ready'` 条件，返回 `None`
+    /// 3. 因此调用方必须重新 parse，snapshot_guard 会再次看到
+    ///    `partial_published` 并阻止替换上一代好 snapshot
+    ///
+    /// 对比：正常 `publish()`（state='ready'）会被 `lookup()` 命中。
+    #[test]
+    fn test_r13_partial_publish_not_hit_by_lookup() {
+        let store = make_store();
+        let input = make_input();
+        let cas_key = "test_r13_partial_key";
+        let content_hash = "test_r13_partial_hash";
+
+        // 1. 用 partial 状态发布
+        store
+            .publish_with_status(
+                cas_key,
+                content_hash,
+                "rust",
+                &input,
+                "0.1.0",
+                "0.2.0",
+                "v1",
+                "v1",
+                "v1",
+                "partial",
+            )
+            .unwrap();
+
+        // 2. lookup() 应返回 None（state='partial' 不匹配 state='ready'）
+        let lookup_result = store.lookup(cas_key).unwrap();
+        assert!(
+            lookup_result.is_none(),
+            "R13-P0-1: partial 状态的 CAS 不应被 lookup() 命中，\
+             防止第二次 refresh 绕过 snapshot_guard 的 partial 保护"
+        );
+
+        // 3. 直接查询 cas_file_cache 应能查到记录，且 state='partial'
+        {
+            let conn = store.conn().lock().unwrap();
+            let state: String = conn
+                .query_row(
+                    "SELECT state FROM cas_file_cache WHERE cas_key = ?1",
+                    params![cas_key],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(state, "partial", "CAS 记录应保留 state='partial'");
+        }
+
+        // 4. 对比：用 ready 状态发布另一个 cas_key，lookup() 应命中
+        let ready_key = "test_r13_ready_key";
+        store
+            .publish_with_status(
+                ready_key,
+                content_hash,
+                "rust",
+                &input,
+                "0.1.0",
+                "0.2.0",
+                "v1",
+                "v1",
+                "v1",
+                "ready",
+            )
+            .unwrap();
+        let ready_lookup = store.lookup(ready_key).unwrap();
+        assert!(
+            ready_lookup.is_some(),
+            "ready 状态的 CAS 应被 lookup() 命中（对照组）"
+        );
+        assert_eq!(ready_lookup.unwrap().state, "ready");
+
+        // 5. 将 partial cas_key 重新用 ready 发布（模拟修复后重新 parse）
+        store
+            .publish_with_status(
+                cas_key,
+                content_hash,
+                "rust",
+                &input,
+                "0.1.0",
+                "0.2.0",
+                "v1",
+                "v1",
+                "v1",
+                "ready",
+            )
+            .unwrap();
+        let final_lookup = store.lookup(cas_key).unwrap();
+        assert!(
+            final_lookup.is_some(),
+            "重新用 ready 发布后，lookup() 应命中"
+        );
+        assert_eq!(final_lookup.unwrap().state, "ready");
     }
 }

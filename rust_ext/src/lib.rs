@@ -104,9 +104,13 @@ pub struct SymbolInfo {
     /// R1-P0-2 / R7-P0-3: ParseFact ABI — 文件内稳定符号 ID（1-based，0 保留给
     /// synthetic module symbol）。按 byte_start 排序后从 1 递增。
     pub local_id: u32,
-    /// R1-P0-2 / R7-P0-3: 词法父符号的 local_id（0 = 顶层，父是 synthetic
-    /// module symbol；>=1 = 真实父符号的 local_id）
-    pub lexical_parent_local_id: u32,
+    /// R14-P0-2: 词法父符号的 local_id（None = 顶层，无词法父；
+    /// Some(x) = 真实父符号的 local_id，x>=1）
+    ///
+    /// 企业设计 enterprise-phase1-phase3-detail.md:1075 要求用 NULL（Option<u32>）
+    /// 表示"无父节点"，不用 0。SQLite UNIQUE 约束对 NULL 视为 distinct，
+    /// 所以多个 lexical_parent_local_id=NULL 的符号靠 local_id 区分。
+    pub lexical_parent_local_id: Option<u32>,
     /// R1-P0-2: 符号在文件字节流中的起始偏移（canonical bytes 偏移）
     pub byte_start: u32,
     /// R1-P0-2: 符号在文件字节流中的结束偏移（exclusive）
@@ -122,9 +126,15 @@ pub struct RawCall {
     pub caller_qualified: String,
     pub call_line: u32,
     pub is_cross_file: bool,
-    /// R1-P0-2 / R7-P0-3: ParseFact ABI — 调用者符号的 local_id
-    /// （0 = 未解析到调用者，指向 synthetic module symbol；>=1 = 真实调用者 local_id）
-    pub caller_local_id: u32,
+    /// R14-P0-2: 调用者符号的 local_id（None = 顶层裸调用，无词法容器；
+    /// Some(x) = 真实调用者 local_id，x>=1）
+    ///
+    /// 企业设计 enterprise-phase1-phase3-detail.md:1076 要求用 NULL（Option<u32>）
+    /// 表示"顶层裸调用"（无词法容器）。顶层裸调用仍保留在 cas_raw_calls 中，
+    /// caller_name 为 "__module__"（synthetic）或源码中实际出现的表达式。
+    /// SQLite UNIQUE 约束对 NULL 视为 distinct，所以多个 caller_local_id=NULL
+    /// 的同行同 callee 调用靠 call_ordinal 区分。
+    pub caller_local_id: Option<u32>,
     /// R1-P0-2: 同一调用者内 call 序号（0-based，按 byte_start 排序）
     pub ordinal: u32,
     /// R1-P0-2: call 表达式的字节起始偏移
@@ -260,22 +270,23 @@ impl CParser {
 /// 为 symbols 和 calls 赋值 ParseFact ABI 的 local_id / lexical_parent_local_id /
 /// caller_local_id / ordinal 字段。
 ///
-/// R7-P0-3 哨兵冲突修复（企业设计 enterprise-phase1-phase3-detail.md:1074-1077）：
+/// R14-P0-2 NULL ABI 修复（企业设计 enterprise-phase1-phase3-detail.md:1074-1077）：
 /// - `local_id` 从 **1** 开始（1-based），0 保留给 synthetic module symbol
-/// - `lexical_parent_local_id` 用 **0** 表示顶层（父是 synthetic module symbol），
-///   >=1 表示真实父符号的 local_id
-/// - `caller_local_id` 用 **0** 表示未解析到调用者（指向 synthetic module symbol），
-///   >=1 表示真实调用者符号的 local_id
+/// - `lexical_parent_local_id` 用 **None** 表示顶层（无词法父），
+///   Some(x) 表示真实父符号的 local_id（x>=1）
+/// - `caller_local_id` 用 **None** 表示顶层裸调用（无词法容器），
+///   Some(x) 表示真实调用者符号的 local_id（x>=1）
 ///
-/// 这样第一个真实符号 local_id=1 与"未解析/synthetic"哨兵 0 不再冲突。
+/// 这样第一个真实符号 local_id=1 与"未解析/synthetic"哨兵 0 不再冲突，
+/// 同时 NULL 语义清晰区分"顶层/未解析"与"local_id=0 的 synthetic module symbol"。
 ///
 /// 算法：
 /// 1. 按 (byte_start, byte_end) 升序排序 symbols（稳定排序）
 /// 2. local_id = 排序后的索引 + 1（1-based，0 保留给 synthetic module symbol）
 /// 3. 对每个 symbol S，找词法父：byte_start < S.byte_start 且 byte_end > S.byte_end
-///    且自身 byte 范围最小的 symbol（最内层包含者）；未找到则置 0（顶层）
+///    且自身 byte 范围最小的 symbol（最内层包含者）；未找到则置 None（顶层）
 /// 4. 对每个 call C，按 caller_qualified 匹配找到对应 symbol，写入 caller_local_id；
-///    未匹配则置 0（未解析）
+///    未匹配则置 None（未解析/顶层裸调用）
 /// 5. 对每个 caller_local_id，按 byte_start 升序赋值 ordinal（0-based）
 ///
 /// 设计要点：通过 byte range 包含关系推导父子，避免在递归 walk 中传递状态。
@@ -299,8 +310,8 @@ pub(crate) fn assign_local_ids(symbols: &mut Vec<SymbolInfo>, calls: &mut Vec<Ra
     //    O(n^2) 但 n 通常为文件级符号数（< 1000），可接受
     for i in 0..symbols.len() {
         let (cur_start, cur_end) = (symbols[i].byte_start, symbols[i].byte_end);
-        // R7-P0-3: 0 表示顶层（父是 synthetic module symbol）
-        let mut best_parent: u32 = 0;
+        // R14-P0-2: None 表示顶层（无词法父）
+        let mut best_parent: Option<u32> = None;
         let mut best_parent_end: u32 = u32::MAX;
         for j in 0..symbols.len() {
             if i == j {
@@ -310,7 +321,7 @@ pub(crate) fn assign_local_ids(symbols: &mut Vec<SymbolInfo>, calls: &mut Vec<Ra
             // 父必须严格包含 cur（byte_start < cur.byte_start 且 byte_end >= cur.byte_end）
             // 严格 < 避免同位置重叠；end 可以等于（同位置起止）
             if p_start < cur_start && p_end >= cur_end && p_end < best_parent_end {
-                best_parent = symbols[j].local_id;
+                best_parent = Some(symbols[j].local_id);
                 best_parent_end = p_end;
             }
         }
@@ -331,23 +342,27 @@ pub(crate) fn assign_local_ids(symbols: &mut Vec<SymbolInfo>, calls: &mut Vec<Ra
     //    先按 caller_local_id 分组，组内按 byte_start 排序赋 ordinal
     for c in calls.iter_mut() {
         if let Some(&lid) = caller_map.get(&c.caller_qualified) {
-            c.caller_local_id = lid;
+            c.caller_local_id = Some(lid);
         } else {
-            // R7-P0-3: 0 表示未解析到调用者（synthetic module symbol）
-            c.caller_local_id = 0;
+            // R14-P0-2: None 表示未解析到调用者（顶层裸调用）
+            c.caller_local_id = None;
         }
     }
     // 组内按 byte_start 排序赋 ordinal
+    // R14-P0-2: Option<u32> 排序——None 排在最前（视为 0），Some(x) 按 x 升序
     calls.sort_by(|a, b| {
         a.caller_local_id
             .cmp(&b.caller_local_id)
             .then(a.byte_start.cmp(&b.byte_start))
     });
-    let mut current_caller: u32 = u32::MAX;
+    // R14-P0-2: 用 Option<u32> 跟踪当前 caller 组（None 是独立组）
+    let mut current_caller: Option<u32> = None;
+    let mut current_caller_initialized = false;
     let mut ordinal_counter: u32 = 0;
     for c in calls.iter_mut() {
-        if c.caller_local_id != current_caller {
+        if !current_caller_initialized || c.caller_local_id != current_caller {
             current_caller = c.caller_local_id;
+            current_caller_initialized = true;
             ordinal_counter = 0;
         }
         c.ordinal = ordinal_counter;
@@ -562,9 +577,9 @@ fn parse_c_function(
         signature: String::new(),
         // R1-P0-2: ParseFact ABI — byte range 直接从 AST 节点取；
         // local_id / lexical_parent_local_id 由 assign_local_ids 后处理填入
-        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
+        // R14-P0-2: lexical_parent_local_id 改为 None（Option<u32>，None=顶层）
         local_id: 0,
-        lexical_parent_local_id: 0,
+        lexical_parent_local_id: None,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     })
@@ -605,9 +620,9 @@ fn parse_c_struct(
         content: node_text(node, source).to_string(),
         signature: String::new(),
         // R1-P0-2: ParseFact ABI 字段
-        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
+        // R14-P0-2: lexical_parent_local_id 改为 None（Option<u32>，None=顶层）
         local_id: 0,
-        lexical_parent_local_id: 0,
+        lexical_parent_local_id: None,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     })
@@ -646,9 +661,9 @@ fn parse_c_enum(
         content: node_text(node, source).to_string(),
         signature: String::new(),
         // R1-P0-2: ParseFact ABI 字段
-        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
+        // R14-P0-2: lexical_parent_local_id 改为 None（Option<u32>，None=顶层）
         local_id: 0,
-        lexical_parent_local_id: 0,
+        lexical_parent_local_id: None,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     })
@@ -702,7 +717,8 @@ fn extract_calls_from_function(
                         is_cross_file: false,
                         // R1-P0-2: ParseFact ABI 字段
                         // caller_local_id / ordinal 由 assign_local_ids 后处理填入
-                        caller_local_id: 0,
+                        // R14-P0-2: caller_local_id 改为 None（Option<u32>，None=未解析）
+                        caller_local_id: None,
                         ordinal: 0,
                         byte_start: child.start_byte() as u32,
                         byte_end: child.end_byte() as u32,
@@ -1644,4 +1660,167 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // T-1783751519227-18d8: 输入规范化入口（BOM 剥离 + 编码检测 + CRLF→LF）
     m.add_function(wrap_pyfunction!(canonicalize_source_py, m)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 辅助函数：构造 SymbolInfo（仅填必要字段，byte range 用于推导父子关系）
+    fn make_symbol(
+        name: &str,
+        qualified: &str,
+        byte_start: u32,
+        byte_end: u32,
+    ) -> SymbolInfo {
+        SymbolInfo {
+            name: name.to_string(),
+            qualified_name: qualified.to_string(),
+            kind: "fn".to_string(),
+            start_line: 1,
+            end_line: 1,
+            module_path: "test".to_string(),
+            symbol_hash: "h".to_string(),
+            depth: -1,
+            has_comment: false,
+            visibility: "public".to_string(),
+            content: String::new(),
+            signature: String::new(),
+            local_id: 0,
+            lexical_parent_local_id: None,
+            byte_start,
+            byte_end,
+        }
+    }
+
+    /// 辅助函数：构造 RawCall（caller_qualified 决定是否解析到调用者）
+    fn make_call(caller_qualified: &str, byte_start: u32) -> RawCall {
+        RawCall {
+            callee_name: "callee".to_string(),
+            callee_module: String::new(),
+            caller_name: caller_qualified.to_string(),
+            caller_qualified: caller_qualified.to_string(),
+            call_line: 1,
+            is_cross_file: false,
+            caller_local_id: None,
+            ordinal: 0,
+            byte_start,
+            byte_end: byte_start + 1,
+        }
+    }
+
+    /// R14-P0-2 回归测试：NULL ABI 语义验证
+    ///
+    /// 企业设计 enterprise-phase1-phase3-detail.md:1074-1077 要求：
+    /// - `lexical_parent_local_id` 用 None（NULL）表示顶层，不用 0
+    /// - `caller_local_id` 用 None（NULL）表示顶层裸调用，不用 0
+    ///
+    /// 复审 §P0-2 指出原实现用 u32 + 0 哨兵，无法区分"顶层"与
+    /// "synthetic module symbol local_id=0"。本测试验证 Option<u32> 实现：
+    /// 1. 顶层符号 lexical_parent_local_id == None
+    /// 2. 嵌套符号 lexical_parent_local_id == Some(父 local_id)
+    /// 3. 已解析调用 caller_local_id == Some(调用者 local_id)
+    /// 4. 未解析调用（caller_qualified 不匹配任何符号）caller_local_id == None
+    #[test]
+    fn test_r14_null_abi_for_parent_and_caller() {
+        // 构造 2 个符号：outer (byte 0-100) 包含 inner (byte 10-50)
+        // outer 是顶层 → lexical_parent_local_id == None
+        // inner 嵌套在 outer 中 → lexical_parent_local_id == Some(outer.local_id)
+        let mut symbols = vec![
+            make_symbol("outer", "mod.outer", 0, 100),
+            make_symbol("inner", "mod.outer.inner", 10, 50),
+        ];
+        // 构造 2 个调用：
+        // call1: caller_qualified="mod.outer" → 解析到 outer，caller_local_id=Some(1)
+        // call2: caller_qualified="mod.unknown" → 未解析，caller_local_id=None
+        let mut calls = vec![
+            make_call("mod.outer", 20),
+            make_call("mod.unknown", 70),
+        ];
+
+        assign_local_ids(&mut symbols, &mut calls);
+
+        // 验证 local_id（1-based，按 byte_start 排序）
+        // outer (byte_start=0) → local_id=1
+        // inner (byte_start=10) → local_id=2
+        assert_eq!(symbols[0].local_id, 1, "outer.local_id 应为 1（1-based）");
+        assert_eq!(symbols[1].local_id, 2, "inner.local_id 应为 2");
+
+        // 验证 lexical_parent_local_id（NULL ABI）
+        assert_eq!(
+            symbols[0].lexical_parent_local_id,
+            None,
+            "R14-P0-2: outer 是顶层，lexical_parent_local_id 应为 None（NULL），不是 0"
+        );
+        assert_eq!(
+            symbols[1].lexical_parent_local_id,
+            Some(1),
+            "R14-P0-2: inner 嵌套在 outer 中，lexical_parent_local_id 应为 Some(1)"
+        );
+
+        // 验证 caller_local_id（NULL ABI）
+        // calls 按 caller_local_id 排序：None 排在最前，Some(1) 排在后
+        // 排序后：call2 (None) → ordinal=0, call1 (Some(1)) → ordinal=0
+        let call_with_none = calls
+            .iter()
+            .find(|c| c.caller_local_id.is_none())
+            .expect("应有一个 caller_local_id=None 的调用（未解析）");
+        assert_eq!(
+            call_with_none.caller_qualified, "mod.unknown",
+            "未解析调用的 caller_qualified 应为 mod.unknown"
+        );
+
+        let call_with_some = calls
+            .iter()
+            .find(|c| c.caller_local_id == Some(1))
+            .expect("应有一个 caller_local_id=Some(1) 的调用（解析到 outer）");
+        assert_eq!(
+            call_with_some.caller_qualified, "mod.outer",
+            "已解析调用的 caller_qualified 应为 mod.outer"
+        );
+    }
+
+    /// R14-P0-2 回归测试：所有符号都在顶层时，lexical_parent_local_id 全为 None
+    #[test]
+    fn test_r14_all_top_level_symbols_have_none_parent() {
+        // 两个不重叠的符号都是顶层
+        let mut symbols = vec![
+            make_symbol("foo", "mod.foo", 0, 10),
+            make_symbol("bar", "mod.bar", 20, 30),
+        ];
+        let mut calls: Vec<RawCall> = vec![];
+
+        assign_local_ids(&mut symbols, &mut calls);
+
+        for s in &symbols {
+            assert_eq!(
+                s.lexical_parent_local_id,
+                None,
+                "R14-P0-2: 顶层符号 {} 的 lexical_parent_local_id 应为 None",
+                s.name
+            );
+        }
+    }
+
+    /// R14-P0-2 回归测试：所有调用都未解析时，caller_local_id 全为 None
+    #[test]
+    fn test_r14_all_unresolved_calls_have_none_caller() {
+        let mut symbols = vec![make_symbol("foo", "mod.foo", 0, 10)];
+        // caller_qualified 不匹配任何符号
+        let mut calls = vec![
+            make_call("mod.unknown1", 5),
+            make_call("mod.unknown2", 6),
+        ];
+
+        assign_local_ids(&mut symbols, &mut calls);
+
+        for c in &calls {
+            assert_eq!(
+                c.caller_local_id,
+                None,
+                "R14-P0-2: 未解析调用 {} 的 caller_local_id 应为 None",
+                c.caller_qualified
+            );
+        }
+    }
 }

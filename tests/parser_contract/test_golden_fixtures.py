@@ -322,14 +322,18 @@ def test_fixture_known_gaps_have_required_fields(lang):
 # ============================================
 
 def test_typescript_fixture_documents_symbol_gap():
-    """TypeScript fixture 的 known_gaps 必须记录符号提取缺口。"""
+    """TypeScript fixture 的 known_gaps 必须记录已知缺口。
+
+    R15-P0-3 修复后 Rust 已实现 signature 提取，signature 缺口已移除。
+    当前已知缺口：raw_calls（Rust 不提取 new User() 构造调用）。
+    """
     if not _fixture_exists("typescript"):
         pytest.skip("typescript.json 不存在")
     data = _load_fixture("typescript")
-    # 当前 Rust 提取 5 个符号（User/constructor/greet/add/main），但缺少构造调用解析
-    # 主要缺口是 signature/kind/构造调用
+    # R15-P0-3: signature 缺口已修复，现在只记录 raw_calls 缺口
     gap_fields = {gap["field"] for gap in data["known_gaps"]}
-    assert "signature" in gap_fields, "typescript fixture 应记录 signature 缺口"
+    assert "raw_calls" in gap_fields, "typescript fixture 应记录 raw_calls 缺口"
+    assert "signature" not in gap_fields, "typescript signature 缺口已修复（R15-P0-3）"
 
 
 def test_php_fixture_documents_property_gap():

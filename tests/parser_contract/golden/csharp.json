@@ -95,12 +95,6 @@
   "known_gaps": [
     {
       "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串",
-      "phase": "Phase 2.7"
-    },
-    {
-      "parser": "rust",
       "field": "symbols",
       "description": "Rust 不提取 C# field（value）；golden 期望含 field",
       "phase": "Phase 2.x"
