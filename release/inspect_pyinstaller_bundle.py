@@ -308,6 +308,12 @@ def _check_callwarden_core_present(bundle: Path) -> list[str]:
 
     PyInstaller 打包 PyO3 扩展时会保留 wheel 的 ABI 后缀，因此使用
     :func:`_is_callwarden_core_file` 而非精确文件名匹配。
+
+    R10-P1-2-b：同时检测重复扩展。PyInstaller spec 同时声明 ``binaries``
+    和 ``hiddenimports`` 中的 ``callwarden_core`` 会导致同一份 .pyd/.so
+    被收集两次（一份来自项目根目录的 binaries，一份来自 site-packages
+    的 hiddenimports），冻结包体积膨胀 ~36MB 且运行时 sys.modules 行为
+    不确定。本检查在发现多于一份 callwarden_core 文件时立即报错。
     """
     errors: list[str] = []
     found: list[Path] = []
@@ -318,6 +324,19 @@ def _check_callwarden_core_present(bundle: Path) -> list[str]:
         errors.append(
             "Rust 扩展 callwarden_core.pyd/.so 未在 bundle 中找到，"
             "P1-G 后生产解析必须由 Rust callwarden_core 完成"
+        )
+        return errors
+    # R10-P1-2-b: 重复扩展检测（fail closed）
+    # 冻结包中只能有一份 callwarden_core 文件，否则会导致：
+    # 1. 体积膨胀（每份 ~36MB）
+    # 2. sys.modules 加载顺序不确定，可能加载到旧版本
+    # 3. PyInstaller bootstrap 可能产生 import 冲突
+    if len(found) > 1:
+        rel_paths = sorted(str(p.relative_to(bundle)).replace("\\", "/") for p in found)
+        errors.append(
+            "Rust 扩展 callwarden_core 在 bundle 中重复存在（R10-P1-2-b），"
+            "应仅有 1 份，实际 " + str(len(found)) + " 份: "
+            + ", ".join(rel_paths)
         )
     return errors
 
@@ -397,6 +416,16 @@ def _verify_rust_parse(bundle: Path) -> list[str]:
     返回错误列表，空列表表示验证通过。无法加载或 API 缺失都会报错。
 
     支持的文件命名形式见 :func:`_is_callwarden_core_file`。
+
+    R10-P1-2-a：模块名必须为 ``callwarden_core``（与 Rust #[pymodule] 声明
+    一致）。若使用 ``callwarden_core_verify`` 等自定义名称，PyO3 扩展在
+    Python 3.11+ 会因 module name mismatch 抛 ``SystemError: module
+    callwarden_core cannot be loaded under name callwarden_core_verify``。
+    同时使用真实模块名可让加载后的模块注册到 ``sys.modules['callwarden_core']``，
+    让后续 ``import callwarden_core`` 命中已加载实例，与生产路径一致。
+
+    R10-P1-2-b：发现重复扩展时直接报错，不取第一个加载（避免误判后续
+    符号契约时使用了错误版本）。
     """
     errors: list[str] = []
     core_files: list[Path] = []
@@ -407,12 +436,27 @@ def _verify_rust_parse(bundle: Path) -> list[str]:
         # 文件存在性由 _check_callwarden_core_present 负责，这里直接返回
         return errors
 
+    # R10-P1-2-b: 重复扩展直接 fail closed（_check_callwarden_core_present
+    # 也会报同样错误，这里复用检查避免在错误状态下加载）。
+    if len(core_files) > 1:
+        rel_paths = sorted(str(p.relative_to(bundle)).replace("\\", "/") for p in core_files)
+        errors.append(
+            "Rust 扩展 callwarden_core 在 bundle 中重复存在（R10-P1-2-b），"
+            "无法安全选择加载目标，实际 " + str(len(core_files)) + " 份: "
+            + ", ".join(rel_paths)
+        )
+        return errors
+
     core_path = core_files[0]
     try:
         import importlib.util
 
+        # R10-P1-2-a: 模块名必须与 Rust #[pymodule] 声明一致。
+        # 之前使用 "callwarden_core_verify" 会导致 PyO3 在 Python 3.11+
+        # 抛 SystemError，且加载后的模块不会注册到 sys.modules['callwarden_core']，
+        # 后续生产代码 import callwarden_core 仍会找不到模块。
         spec = importlib.util.spec_from_file_location(
-            "callwarden_core_verify", core_path
+            "callwarden_core", core_path
         )
         if spec is None or spec.loader is None:
             errors.append(f"无法从 {core_path} 创建模块 spec")

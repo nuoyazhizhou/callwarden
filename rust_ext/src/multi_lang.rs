@@ -915,8 +915,9 @@ fn make_symbol(
         // R1-P0-2: ParseFact ABI 字段
         // byte range 直接从 AST 节点取；
         // local_id / lexical_parent_local_id 由 assign_local_ids 后处理填入
+        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
         local_id: 0,
-        lexical_parent_local_id: -1,
+        lexical_parent_local_id: 0,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     }

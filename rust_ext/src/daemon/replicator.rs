@@ -581,15 +581,46 @@ pub fn _daemon_parse_and_publish(
         &content_hash,
     );
 
-    // parse 失败检查
-    if let Some(parse_err) = &parse_result.error {
-        return serde_json::json!({
-            "content_hash": content_hash,
-            "cas_key": cas_key,
-            "cas_state": "parse_failed",
-            "canonicalize_method": canonicalize_method,
-            "parse_error": parse_err,
-        });
+    // R6-P0-2: parse 失败 / partial 检查（读取 diagnostics 字段，权威源）
+    //
+    // 复审 §P0-2：原实现只检查 parse_result.error，未读取 diagnostics。
+    // 畸形源码（如 `fn broken( {`）实测 error=null, status=partial,
+    // syntax_error_count=1，仍会继续 publish 并返回 ready_published，
+    // 导致坏解析污染 CAS 并替换上一代好 snapshot。
+    //
+    // 修复：调用 parse_status_from_result 推导权威状态：
+    // - Failed (error/fatal_parse_error) → cas_state="parse_failed"，跳过 publish
+    // - Partial (syntax_error_count>0 / unsupported_construct_count>0) →
+    //   cas_state="partial_published"，仍 publish 事实到 CAS（设计 §5.3
+    //   "Partial 发布事实"），但 snapshot_guard 会阻止替换上一代 snapshot
+    // - Ok → cas_state="ready_published"，正常 publish + 替换 snapshot
+    use crate::multi_lang::parse_status_from_result;
+    let parse_status = parse_status_from_result(&parse_result);
+    match parse_status {
+        crate::multi_lang::ParseStatus::Failed => {
+            return serde_json::json!({
+                "content_hash": content_hash,
+                "cas_key": cas_key,
+                "cas_state": "parse_failed",
+                "canonicalize_method": canonicalize_method,
+                "parse_error": parse_result.error.clone()
+                    .or_else(|| parse_result.diagnostics.fatal_parse_error.clone())
+                    .unwrap_or_else(|| "parse failed (diagnostics)".to_string()),
+                "diagnostics": parse_diagnostics_to_json(&parse_result),
+            });
+        }
+        crate::multi_lang::ParseStatus::Unsupported => {
+            // Unsupported 状态不应从 parse_status_from_result 推导（设计要求
+            // 调用方显式设置），此处兜底处理
+            return serde_json::json!({
+                "content_hash": content_hash,
+                "cas_key": cas_key,
+                "cas_state": "unsupported_language",
+                "canonicalize_method": canonicalize_method,
+                "diagnostics": parse_diagnostics_to_json(&parse_result),
+            });
+        }
+        _ => {} // Ok / Partial 继续发布
     }
 
     // 3g. 转换 ParseResult → CasPublishInput
@@ -607,12 +638,21 @@ pub fn _daemon_parse_and_publish(
         abi_version,
         input_abi_version,
     ) {
-        Ok(()) => serde_json::json!({
-            "content_hash": content_hash,
-            "cas_key": cas_key,
-            "cas_state": "ready_published",
-            "canonicalize_method": canonicalize_method,
-        }),
+        Ok(()) => {
+            // R6-P0-2: Partial 状态返回独立 cas_state，让 snapshot_guard 阻止替换
+            let cas_state = if parse_status == crate::multi_lang::ParseStatus::Partial {
+                "partial_published"
+            } else {
+                "ready_published"
+            };
+            serde_json::json!({
+                "content_hash": content_hash,
+                "cas_key": cas_key,
+                "cas_state": cas_state,
+                "canonicalize_method": canonicalize_method,
+                "diagnostics": parse_diagnostics_to_json(&parse_result),
+            })
+        }
         Err(e) => serde_json::json!({
             "content_hash": content_hash,
             "cas_key": cas_key,
@@ -621,6 +661,23 @@ pub fn _daemon_parse_and_publish(
             "canonicalize_method": canonicalize_method,
         }),
     }
+}
+
+/// R6-P0-2: 将 ParseResult.diagnostics 序列化为 JSON（供 cas_result 携带）
+///
+/// 复审 §P0-2 要求 cas_result 暴露结构化 diagnostics，便于：
+/// 1. snapshot_guard 评估 generation 保护
+/// 2. parser_metrics 记录 syntax_error_count / unsupported_construct_count
+/// 3. ParseRetryLog 持久化诊断信息供 daemon 重启后诊断
+fn parse_diagnostics_to_json(parse_result: &ParseResult) -> serde_json::Value {
+    serde_json::json!({
+        "status": parse_result.diagnostics.status,
+        "syntax_error_count": parse_result.diagnostics.syntax_error_count,
+        "unsupported_construct_count": parse_result.diagnostics.unsupported_construct_count,
+        "fatal_parse_error": parse_result.diagnostics.fatal_parse_error,
+        "partial_parse": parse_result.diagnostics.partial_parse,
+        "error": parse_result.diagnostics.error,
+    })
 }
 
 /// 将 ParseResult 转换为 CasPublishInput（CAS publish 所需的输入格式）。
@@ -640,7 +697,8 @@ fn parse_result_to_cas_input(
             name: si.name.clone(),
             qualified_name: si.qualified_name.clone(),
             // R1-P0-2: 用 local_id 作为 parent_id（lexical_parent_local_id == -1 视为 None）
-            parent_id: if si.lexical_parent_local_id >= 0 {
+            // R7-P0-3: lexical_parent_local_id 改为 u32，0 表示顶层（无父）
+            parent_id: if si.lexical_parent_local_id > 0 {
                 Some(si.lexical_parent_local_id as i64)
             } else {
                 None

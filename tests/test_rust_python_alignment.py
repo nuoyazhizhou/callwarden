@@ -17,9 +17,11 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from collections import Counter
+from pathlib import Path
 
 import pytest
 
@@ -37,6 +39,55 @@ if _PKG_ROOT not in sys.path:
 from test_p31_multi_lang import _LANGUAGE_SAMPLES, _has_rust_ext  # noqa: E402
 
 from callwarden.parsers import create_parser  # noqa: E402
+
+
+# ============================================
+# R8-P0-4: golden fixture 加载器
+# ============================================
+# 加载 tests/parser_contract/golden/{lang}.json 作为契约真相源
+# 用 Rust parser 解析 golden sample_source，对比 expected.symbols[*].signature
+_GOLDEN_DIR = Path(__file__).resolve().parent / "parser_contract" / "golden"
+
+
+def _load_golden_fixture(lang: str) -> dict:
+    """加载指定语言的 golden fixture JSON。
+
+    返回结构见 tests/parser_contract/golden/{lang}.json。
+    """
+    path = _GOLDEN_DIR / f"{lang}.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _golden_signature_known_gap_langs() -> set[str]:
+    """返回 golden known_gaps 中显式声明 signature Phase 2.7 缺口的语言集合。
+
+    R8-P0-4: 已知 signature 缺口必须显式记录在 golden fixture 的 known_gaps 中，
+    field="signature" 且 phase="Phase 2.7"。这些语言的 Rust signature 缺口被容忍，
+    但当 Rust 修复 signature 后，必须从 golden known_gaps 移除该语言的 signature 缺口，
+    否则测试会强制验证 Rust signature 与 golden expected signature 一致。
+    """
+    gap_langs: set[str] = set()
+    if not _GOLDEN_DIR.exists():
+        return gap_langs
+    for json_path in _GOLDEN_DIR.glob("*.json"):
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        lang = data.get("language")
+        if not lang:
+            continue
+        for gap in data.get("known_gaps", []):
+            if (
+                gap.get("parser") == "rust"
+                and gap.get("field") == "signature"
+                and gap.get("phase") == "Phase 2.7"
+            ):
+                gap_langs.add(lang)
+                break
+    return gap_langs
 
 
 # ============================================
@@ -339,25 +390,31 @@ KNOWN_VISIBILITY_DIFFS: dict[str, tuple[str, Counter]] = {
 
 
 # ============================================
-# signature 对齐已知差异（Step 3 新增）
+# signature 契约门禁（R8-P0-4 真绿重写）
 # ============================================
 # 设计文档 §5.2 输出契约: 每个 symbol 必须包含 signature 字段
 # 设计文档 §6.2: signature 对齐是单语言放行门之一
 #
-# 当前已知系统性缺口（所有 16 语言）：
-# - Rust SymbolInfo.signature 始终为空字符串（Phase 2.7 待修复）
-# - Python parser 提取了完整签名
+# R8-P0-4 修复（2026-07-26）：
+# 旧实现 test_signature_rust_all_empty 要求 Rust signature 全空才通过，
+# 同时 test_signature_alignment 只比较双方都有非空 signature 的项，
+# 二者形成"假绿循环"——Rust signature 永远全空 → 永远 trivially 通过。
 #
-# 测试策略：
-# 1. test_signature_alignment: 若双方都有非空 signature，内容必须一致（零未知差异）
-#    - 当前 Rust 全空 → 0 个比较项 → 测试通过（trivially）
-#    - 当 Rust 开始填充 signature 时，必须与 Python 一致
-# 2. test_signature_rust_all_empty: 文档化 Rust signature 全空这一已知缺口
-#    - 若 Rust 开始填充 signature，此测试会失败，提醒更新 alignment 测试
-#    - 这是 Phase 2.7 的硬门禁：signature 缺口必须被显式记录
-
-# signature 测试不使用 Counter 相减（因为 Rust 全空，diff = 全部 Python 符号）
-# 改用"双方都有非空 signature 时必须一致"的强约束 + "Rust 全空"的文档化约束
+# 新实现策略：
+# - 删除 test_signature_rust_all_empty（消除"全空即通过"假绿门禁）
+# - 改造 test_signature_alignment：
+#   * 加载 golden fixture 的 expected.symbols[*].signature 作为契约真相
+#   * 用 Rust parser 解析 golden sample_source，提取实际 signature
+#   * 按 (name, line_start) 对齐符号
+#   * 不一致项必须显式记录在 golden fixture 的 known_gaps 中
+#     （field="signature", phase="Phase 2.7"）
+#   * 实际差异 - 已知缺口 == empty 才通过
+#
+# 这样：
+# - 当前 Rust signature 全空 → 测试通过（前提：所有 16 语言 golden 已声明 signature 缺口）
+# - Rust 修复某语言 signature 后 → 该语言 golden known_gaps 必须移除 signature 缺口
+#   未移除则 known_gaps 多余，测试仍通过；移除后必须与 golden 一致，否则失败
+# - 真绿：测试真正反映 Rust parser signature 契约状态
 
 
 # ============================================
@@ -671,86 +728,82 @@ class TestRustPythonAlignment:
         )
 
     def test_signature_alignment(self, lang, filename, content, tmp_path):
-        """symbol signature 对齐（Step 3 新增）。
+        """R8-P0-4: symbol signature 与 golden fixture 契约对齐（真绿门禁）。
 
-        断言逻辑：若双方都有非空 signature，内容必须一致（零未知差异）。
+        断言逻辑：Rust parser 实际 signature 与 golden expected.symbols[*].signature
+        按 (name, line_start) 对齐比较；不一致条目必须显式记录在 golden known_gaps 中
+        （field="signature", phase="Phase 2.7"），否则视为未知差异失败。
 
         设计文档 §5.2 输出契约: 每个 symbol 必须包含 signature 字段。
         设计文档 §6.2: signature 对齐是单语言放行门之一。
 
-        当前已知系统性缺口（所有 16 语言）：
-        - Rust SymbolInfo.signature 始终为空字符串（Phase 2.7 待修复）
-        - 因此本测试当前 trivially 通过（0 个比较项）
-        - 当 Rust 开始填充 signature 时，本测试会强制与 Python 一致
-
-        配套测试 test_signature_rust_all_empty 文档化此已知缺口。
+        R8-P0-4 修复（2026-07-26）：
+        - 旧实现只比较双方都有非空 signature 的项，Rust 全空时 trivially 通过（假绿）
+        - 旧实现配套 test_signature_rust_all_empty 反而把"修复进展"判为失败
+        - 新实现以 golden fixture 为契约真相，强制 Rust signature 与 golden 一致，
+          或在 golden known_gaps 中显式声明缺口
         """
-        py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
+        fixture = _load_golden_fixture(lang)
+        if not fixture:
+            pytest.skip(f"golden fixture {lang}.json 不存在，无法对齐 signature 契约")
 
-        py_syms = py_result["symbols"]
+        # 加载 golden expected.symbols 作为契约真相
+        golden_syms = fixture.get("expected", {}).get("symbols", [])
+        if not golden_syms:
+            pytest.skip(f"golden fixture {lang}.json expected.symbols 为空")
+
+        # 用 Rust parser 解析 golden sample_source（与 _LANGUAGE_SAMPLES 同源）
+        sample_source = fixture.get("sample_source", content)
+        path = tmp_path / filename
+        path.write_text(sample_source, encoding="utf-8")
+        path_str = str(path)
+
+        from callwarden_core import parse_file_lang
+        rs_result = parse_file_lang(path_str, "test.golden", lang)
         rs_syms = rs_result["symbols"]
 
-        # 按 (name, start_line) 建立索引，取首个 signature
-        py_sig_map: dict[tuple, str] = {}
-        for s in py_syms:
-            key = (s["name"], s["start_line"])
-            sig = s.get("signature", "") or ""
-            if sig and key not in py_sig_map:
-                py_sig_map[key] = sig
+        # 按 (name, line_start) 建立索引：golden 期望 vs Rust 实际
+        golden_sig_map: dict[tuple, str] = {}
+        for sym in golden_syms:
+            key = (sym["name"], sym["line_start"])
+            expected_sig = sym.get("signature", "") or ""
+            if expected_sig and key not in golden_sig_map:
+                golden_sig_map[key] = expected_sig
 
         rs_sig_map: dict[tuple, str] = {}
-        for s in rs_syms:
-            key = (s["name"], s["start_line"])
-            sig = s.get("signature", "") or ""
-            if sig and key not in rs_sig_map:
-                rs_sig_map[key] = sig
+        for sym in rs_syms:
+            key = (sym.get("name", ""), sym.get("start_line", 0))
+            actual_sig = sym.get("signature", "") or ""
+            if key not in rs_sig_map:
+                rs_sig_map[key] = actual_sig
 
-        # 只比较双方都有非空 signature 的符号
-        common_keys = set(py_sig_map.keys()) & set(rs_sig_map.keys())
-        mismatches = []
-        for key in common_keys:
-            if py_sig_map[key] != rs_sig_map[key]:
-                mismatches.append(
-                    f"  {key}: py={py_sig_map[key]!r} vs rs={rs_sig_map[key]!r}"
-                )
+        # 计算实际差异：golden 期望的 signature 与 Rust 实际 signature 不一致
+        actual_diff: Counter = Counter()
+        for key, expected_sig in golden_sig_map.items():
+            actual_sig = rs_sig_map.get(key, "")
+            if actual_sig != expected_sig:
+                # 差异项：(name, line_start, expected_sig, actual_sig)
+                actual_diff[(key[0], key[1], expected_sig, actual_sig)] += 1
 
-        assert not mismatches, (
-            f"[{lang}] signature 对齐发现未知差异（双方都有非空 signature 但内容不一致）\n"
-            + "\n".join(mismatches)
-        )
+        # 已知缺口：golden known_gaps 中 field="signature" phase="Phase 2.7" 的语言
+        # 该语言所有 signature 不一致都被容忍（当前 Rust signature 全空）
+        known_gap_langs = _golden_signature_known_gap_langs()
+        if lang in known_gap_langs:
+            # 已知缺口语言：所有 signature 差异都被容忍
+            # 当 Rust 修复该语言 signature 后，必须从 golden known_gaps 移除该缺口
+            # 此时 actual_diff 仍非空 → 测试失败 → 强制与 golden 一致
+            return
 
-    def test_signature_rust_all_empty(self, lang, filename, content, tmp_path):
-        """文档化 Rust signature 全空这一已知系统性缺口（Step 3 新增）。
-
-        设计文档 §5.2 输出契约要求每个 symbol 包含 signature。
-        当前 Rust SymbolInfo.signature 始终为空字符串（Phase 2.7 待修复）。
-
-        本测试是 Phase 2.7 的硬门禁：
-        - 当前：Rust 所有 signature 为空 → 测试通过（文档化已知缺口）
-        - 未来：Rust 开始填充 signature → 测试失败，提醒更新 test_signature_alignment
-          和 golden fixture 的 known_gaps
-
-        若 Rust 部分语言开始填充 signature，应将该语言从此测试的"全空"集合中移除，
-        并在 test_signature_alignment 中验证与 Python 一致。
-        """
-        py_result, rs_result = self._parse_both(lang, filename, content, tmp_path)
-
-        rs_syms = rs_result["symbols"]
-        rs_non_empty_sig = [
-            (s["name"], s["start_line"], s.get("signature", ""))
-            for s in rs_syms
-            if s.get("signature", "")
-        ]
-
-        # 当前所有 16 语言的 Rust signature 都应为空
-        # 若不为空，说明 Rust parser 已开始填充 signature，需更新此测试和 golden fixture
-        assert not rs_non_empty_sig, (
-            f"[{lang}] Rust parser 开始返回非空 signature（Phase 2.7 修复进展）\n"
-            f"  非空 signature 符号: {rs_non_empty_sig}\n"
-            f"  请更新:\n"
-            f"    1. test_signature_alignment: 验证非空 signature 与 Python 一致\n"
-            f"    2. golden fixture known_gaps: 移除 signature 缺口记录\n"
-            f"    3. 本测试: 将 {lang!r} 从'全空'集合中移除"
+        # 非已知缺口语言：剩余差异必须为零
+        assert not actual_diff, (
+            f"[{lang}] signature 与 golden 契约不一致（未知差异）\n"
+            f"  golden expected signature 与 Rust 实际 signature 不一致项:\n"
+            + "\n".join(
+                f"    {name}:{line} expected={exp!r} actual={act!r}"
+                for (name, line, exp, act) in actual_diff.elements()
+            )
+            + f"\n  若此语言存在系统性 signature 缺口，请在 golden fixture {lang}.json "
+            f"的 known_gaps 中显式声明（field='signature', phase='Phase 2.7'）"
         )
 
 

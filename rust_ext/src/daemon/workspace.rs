@@ -27,10 +27,11 @@ use super::dispatch::{
     get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
     DaemonStateExt, PeerCredential,
 };
-use super::parse_retry_log::ParseRetryLog;
+use super::parse_retry_log::{ParseRetryLog, ReplayConfig, replay_pending};
 use super::parser_metrics::ParserMetrics;
 use super::replicator::{
-    daemon_handle_connect, daemon_handle_refresh, RefreshMessage, SessionStore,
+    daemon_handle_connect, daemon_handle_refresh, _daemon_parse_and_publish, RefreshMessage,
+    SessionStore,
 };
 use super::snapshot_guard::evaluate_generation_protection;
 use super::staging_log::{StagingEntry, StagingLog};
@@ -1951,7 +1952,80 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let replicator = crate::daemon::replicator::Replicator::new(&staging_log);
         let result = replicator.recover(&ws_id, 0, "");
 
-        // 5. 构造返回（与 Python daemon_server.py L430-437 字段一致）
+        // R9-P1-1: 重放 parse_retry.log（daemon 崩溃后可重试 generation 重放）
+        // 设计 §8 Phase 4：daemon 重启后只重放可重试 generation
+        // 旧实现只重放 staging.log，parse_retry.log 只追加不重放，恢复链未闭合
+        let mut retry_recovered_count: u64 = 0;
+        let mut retry_exhausted_count: u64 = 0;
+        let mut retry_failed_count: u64 = 0;
+        if let Some(resources) = self.resources.get(&ws_id) {
+            let parse_retry_log = &resources.parse_retry_log;
+            let cas_store = &resources.cas_store;
+            let replay_config = ReplayConfig::default();
+            match replay_pending(parse_retry_log, &replay_config) {
+                Ok(retryable_entries) => {
+                    for entry in retryable_entries {
+                        // 重试前增加 retry_count + 更新 last_retry_at
+                        let _ = parse_retry_log.increment_retry(entry.lsn);
+
+                        // 调用 _daemon_parse_and_publish 重新 parse + publish
+                        // workspace_id_num 用 0（重放不 pin file_generation，只关心 CAS publish）
+                        let cas_result = _daemon_parse_and_publish(
+                            &entry.rel_path,
+                            None, // 重放时无 canonical_bytes，从 abs_path 读取
+                            &entry.abs_path,
+                            Some(cas_store.as_ref()),
+                            0,
+                        );
+                        let cas_state = cas_result
+                            .get("cas_state")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+
+                        match cas_state {
+                            "ready_published" | "ready_cache_hit" => {
+                                let _ = parse_retry_log.mark_applied(entry.lsn);
+                                retry_recovered_count += 1;
+                            }
+                            "parse_failed" | "canonicalize_failed" | "publish_failed" => {
+                                // 重试仍失败：检查是否耗尽
+                                let current_entry =
+                                    parse_retry_log.read(0).ok().unwrap_or_default();
+                                let updated = current_entry
+                                    .iter()
+                                    .find(|e| e.lsn == entry.lsn);
+                                if let Some(e) = updated {
+                                    if e.retry_count >= replay_config.max_retry {
+                                        let _ = parse_retry_log.mark_exhausted(entry.lsn);
+                                        retry_exhausted_count += 1;
+                                    } else {
+                                        retry_failed_count += 1;
+                                    }
+                                } else {
+                                    retry_failed_count += 1;
+                                }
+                            }
+                            _ => {
+                                // 其他状态（no_abs_path / no_cas_conn / unsupported_language / cas_lookup_failed）
+                                // 这些是配置问题，不重试
+                                let _ = parse_retry_log.mark_exhausted(entry.lsn);
+                                retry_exhausted_count += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    // replay_pending 失败不阻塞 staging recover，仅在返回值中标记
+                    eprintln!(
+                        "[R9-P1-1] replay_pending 失败 for {}: {}",
+                        ws_id,
+                        e
+                    );
+                }
+            }
+        }
+
+        // 5. 构造返回（与 Python daemon_server.py L430-437 字段一致，并追加 R9 retry 字段）
         let mut m = Map::new();
         m.insert(
             "status".to_string(),
@@ -1989,6 +2063,19 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 Some(s) => Value::String(s),
                 None => Value::Null,
             },
+        );
+        // R9-P1-1: parse_retry.log 重放结果
+        m.insert(
+            "retry_recovered_count".to_string(),
+            Value::Number(retry_recovered_count.into()),
+        );
+        m.insert(
+            "retry_exhausted_count".to_string(),
+            Value::Number(retry_exhausted_count.into()),
+        );
+        m.insert(
+            "retry_failed_count".to_string(),
+            Value::Number(retry_failed_count.into()),
         );
         Ok(Value::Object(m))
     }
@@ -2910,6 +2997,84 @@ mod tests {
         assert_eq!(response["result"]["applied_count"], 0);
         assert_eq!(response["result"]["pending_count"], 0);
         assert_eq!(response["result"]["error"], serde_json::Value::Null);
+        // R9-P1-1: 即使 resources 为空，retry 字段也必须存在（默认 0）
+        assert_eq!(response["result"]["retry_recovered_count"], 0);
+        assert_eq!(response["result"]["retry_exhausted_count"], 0);
+        assert_eq!(response["result"]["retry_failed_count"], 0);
+    }
+
+    /// R9-P1-1: workspace.recover 必须重放 parse_retry.log 中的可重试 entries
+    ///
+    /// 验证恢复链闭合：daemon 崩溃后 parse_retry.log 中的 pending entries
+    /// 在 workspace.recover 时被重放，成功后 mark_applied。
+    #[test]
+    fn test_recover_replays_parse_retry_log() {
+        use super::parse_retry_log::{ParseFailureEntry, ParseRetryLog};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws_id = register_ws_for_recover(&mut state, peer.uid);
+
+        // 创建一个真实的可解析 Rust 文件作为重放目标
+        let ws_dir = tmp.path().join(&ws_id);
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let sample_file = ws_dir.join("sample.rs");
+        std::fs::write(&sample_file, "fn main() {}\n").unwrap();
+
+        // 初始化 workspace resources（含 ParseRetryLog + CasStore）
+        let cas_store = super::cas::CasStore::open_in_memory();
+        let staging_log = super::staging_log::StagingLog::new(
+            ws_dir.join("staging.log").to_string_lossy().as_ref(),
+        )
+        .unwrap();
+        let parser_metrics = std::sync::Arc::new(super::parser_metrics::ParserMetrics::new());
+        let parse_retry_log = std::sync::Arc::new(
+            ParseRetryLog::new(ws_dir.join("parse_retry.log").to_string_lossy().as_ref()).unwrap(),
+        );
+
+        // 写入 1 条 pending retryable entry（指向真实可解析的 Rust 文件）
+        let mut entry = ParseFailureEntry::new(
+            &ws_id,
+            "sample.rs",
+            sample_file.to_string_lossy().as_ref(),
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "previous parse failed",
+            true, // allows_retry
+        );
+        parse_retry_log.append(&mut entry).unwrap();
+
+        let resources = std::sync::Arc::new(super::WorkspaceResources {
+            session_store: std::sync::Arc::new(
+                super::replicator::SessionStore::open_in_memory(),
+            ),
+            cas_store: std::sync::Arc::new(cas_store),
+            staging_log: std::sync::Arc::new(staging_log),
+            parser_metrics,
+            parse_retry_log: parse_retry_log.clone(),
+        });
+        state.resources.insert(ws_id.clone(), resources);
+
+        // 调用 workspace.recover，应触发 parse_retry.log 重放
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        // R9: retry_recovered_count 应为 1（重放成功，cas_state=ready_published）
+        assert_eq!(response["result"]["retry_recovered_count"], 1);
+        assert_eq!(response["result"]["retry_exhausted_count"], 0);
+        assert_eq!(response["result"]["retry_failed_count"], 0);
+
+        // 验证 entry 已被 mark_applied（不再在 pending 中）
+        let pending = parse_retry_log.read_pending().unwrap();
+        assert_eq!(pending.len(), 0, "重放成功后 entry 应被 mark_applied");
     }
 
     #[test]

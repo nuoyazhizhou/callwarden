@@ -351,6 +351,103 @@ def test_inspector_p1_g_requires_callwarden_core_present(tmp_path):
     assert any("P1-G" in error or "Rust" in error for error in errors)
 
 
+def test_inspector_rejects_duplicate_callwarden_core(tmp_path):
+    """R10-P1-2-b: bundle 中重复的 callwarden_core 扩展必须 fail closed。
+
+    场景：PyInstaller spec 同时声明 ``binaries`` 和 ``hiddenimports`` 中的
+    ``callwarden_core`` 会导致两份 .pyd/.so 被收集（一份来自项目根目录的
+    binaries，一份来自 site-packages 的 hiddenimports）。冻结包体积膨胀
+    ~36MB，且运行时 sys.modules 加载顺序不确定。
+    """
+    bundle, toc = _write_bundle(
+        tmp_path,
+        REQUIRED_FIXTURE_MODULES + ["callwarden.cw"],
+    )
+    # _write_bundle 已在 _internal 下放置一份 callwarden_core
+    # 再添加第二份（模拟 PyInstaller 重复收集场景）
+    core_ext = ".pyd" if sys.platform == "win32" else ".so"
+    # 模拟 binaries 收集的根级副本（PyInstaller --onedir 中 binaries='.' 会放到 _internal/）
+    # 同时模拟 hiddenimports 收集的带 ABI 后缀副本
+    abi_name = (
+        "callwarden_core.cp314-win_amd64.pyd"
+        if sys.platform == "win32"
+        else "callwarden_core.cpython-314-x86_64-linux-gnu.so"
+    )
+    (bundle / "_internal" / abi_name).write_bytes(b"duplicate-rust-core")
+
+    report, errors = inspect_bundle(bundle, toc, role="local")
+
+    # 必须报重复扩展错误
+    dup_errors = [e for e in errors if "重复存在" in e or "R10-P1-2-b" in e]
+    assert dup_errors, (
+        f"期望检测到重复 callwarden_core 扩展，实际错误: {errors}"
+    )
+    # distribution 报告中 callwarden_core 应有 2 个文件
+    assert report["distributions"]["callwarden_core"]["file_count"] == 2
+
+
+def test_inspector_verify_rust_parse_rejects_duplicate(tmp_path):
+    """R10-P1-2-b: --verify-rust-parse 在发现重复扩展时直接 fail closed。
+
+    之前 ``_verify_rust_parse`` 用 ``core_files[0]`` 取第一个加载，
+    重复场景下可能加载到错误版本。修复后必须报错，不选择加载。
+    """
+    from release.inspect_pyinstaller_bundle import _verify_rust_parse
+
+    bundle = tmp_path / "callwarden"
+    internal = bundle / "_internal"
+    internal.mkdir(parents=True)
+    # 放置两份 callwarden_core 文件
+    core_ext = ".pyd" if sys.platform == "win32" else ".so"
+    (internal / f"callwarden_core{core_ext}").write_bytes(b"core-1")
+    abi_name = (
+        "callwarden_core.cp314-win_amd64.pyd"
+        if sys.platform == "win32"
+        else "callwarden_core.cpython-314-x86_64-linux-gnu.so"
+    )
+    (internal / abi_name).write_bytes(b"core-2")
+
+    errors = _verify_rust_parse(bundle)
+
+    assert errors, "期望重复扩展时 _verify_rust_parse 报错"
+    assert any("重复存在" in e or "R10-P1-2-b" in e for e in errors), errors
+
+
+def test_inspector_spec_does_not_declare_callwarden_core_in_hiddenimports():
+    """R10-P1-2-c: PyInstaller spec 不应在 hiddenimports 中声明 callwarden_core。
+
+    之前同时声明 binaries 和 hiddenimports 中的 callwarden_core 会导致
+    PyInstaller 收集两份 .pyd/.so（一份来自 binaries，一份来自 site-packages）。
+    修复后仅通过 binaries 提供。
+    """
+    spec = (ROOT / "release" / "pyinstaller" / "callwarden.spec").read_text(
+        encoding="utf-8"
+    )
+
+    # 提取 _local_hiddenimports 和 _client_agent_hiddenimports 块
+    # 简单方法：检查整个 spec 中没有独立行的 'callwarden_core'（带引号）
+    # 但允许在注释中出现。这里用更精确的方式：查找 hiddenimports 列表内的条目。
+    import re
+    # 匹配形如 'callwarden_core' 的字符串字面量（带引号）
+    # 但排除注释行（以 # 开头）
+    code_lines = [
+        line for line in spec.splitlines()
+        if not line.strip().startswith("#")
+    ]
+    code_without_comments = "\n".join(code_lines)
+    # 在非注释代码中查找 'callwarden_core' 作为字符串字面量
+    # 排除 binaries 检查中的字符串比较（如 name == rust_ext_name 或 startswith('callwarden_core.')）
+    # 这些是 R10-P1-2-c 新增的检查代码，是允许的。
+    # 我们要检查的是 hiddenimports 列表中是否还有 'callwarden_core' 条目。
+    # hiddenimports 列表项的形式：    'callwarden_core',
+    pattern = re.compile(r"^\s*'callwarden_core'\s*,\s*$", re.MULTILINE)
+    matches = pattern.findall(code_without_comments)
+    assert not matches, (
+        "spec 的 hiddenimports 中仍声明了 'callwarden_core'，"
+        "应仅通过 binaries 提供（R10-P1-2-c）"
+    )
+
+
 @pytest.mark.parametrize(
     "filename",
     [

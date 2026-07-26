@@ -11,13 +11,10 @@ db.py
 from __future__ import annotations
 from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin, CoverageMixin
-# R2-P0-3: parsers 导入链断开 tree_sitter 依赖
-# ModuleResolver / CallResolver 不依赖 tree_sitter（仅 base.py 依赖，已改为懒加载）。
-# RustParser / create_parser 不在顶层导入：RustParser 实例化会触发 tree_sitter_rust
-# 导入，local wheel / frozen bundle 不安装 parser-reference extra 时会失败。
-# 改为在使用点（_init_parser）懒加载 + guarded，让 CodeGraphDB 在无 tree_sitter
-# 环境下可正常初始化（Rust 模块结构发现降级为不可用）。
-from ..parsers import ModuleResolver, CallResolver
+# R5-P0-1: 彻底断开顶层 parsers 导入（frozen bundle 排除 callwarden.parsers）
+# ModuleResolver / CallResolver / RustParser 都在 _try_init_resolvers /
+# _try_init_rust_parser 中懒加载。frozen 包无 callwarden.parsers 时，
+# CodeGraphDB 仍可初始化，仅 Rust mod_decls 提取降级。
 from .schema import SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
 from .. import config as _config_module
 import sys

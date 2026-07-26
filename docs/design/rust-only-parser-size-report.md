@@ -88,6 +88,13 @@ tree-sitter distribution 实际字节数需以 bundle inspector 报告为准。
 > 占位字段：CI 在 P1-G 合并前的最后一次正式构建中，由
 > `python release/build.py --pyinstaller` 生成 `bundle-report-local.json`，
 > 把其中 `unpacked_bytes` / `distributions` 字段填入下表。
+>
+> **R11 依赖说明（2026-07-26）**：四平台体积数据必须由 CI 真实构建产出，
+> 不能本地伪造。R5-R10 修复未推送前，CI 无法触发新构建；当前 `origin/master`
+> 仍为 `9409ede`，最新 tag 仍为 `v0.3.2`，对应旧版本（含 Python parser）的
+> 基线数据理论上可从该 commit 拉起 CI 收集，但 R5-R10 修复未推送前
+> `after` 数据无法产出。下表待 R5-R10 推送并触发 CI 后由 release manager
+> 填入。
 
 | 平台 | runner | commit | unpacked_bytes | unpacked_mb | tree_sitter bytes | tree_sitter_<lang> bytes | callwarden_parsers bytes | 压缩包 bytes | 压缩包 MiB |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -114,6 +121,12 @@ parser/grammar，并由 bundle inspector 的文件级 fail closed 检查兜底�
 > 占位字段：P1-G 合并后由 `python release/build.py --pyinstaller` 在同 runner、
 > 同 commit、同压缩参数下生成。每个平台的 `bundle-report-local.json` 和
 > `artifact-manifest.json` 作为 CI artifact 持久化。
+>
+> **R11 依赖说明（2026-07-26）**：R5-R10 修复（含 R10 修复 inspector 重复扩展
+> 检测、spec 不再同时声明 binaries 与 hiddenimports）必须先推送并通过 CI 构建，
+> 才能产出真实的 `after` 数据。Windows frozen 三入口 smoke 已验证修复后可启动
+> （R5：移除 db_base.py 顶层 parsers 导入）。本表待 CI 产出后由 release manager
+> 填入。
 
 | 平台 | runner | commit | unpacked_bytes | unpacked_mb | callwarden_core bytes | python_runtime bytes | 压缩包 bytes | 压缩包 MiB |
 |---|---|---|---:|---:|---:|---:|---:|---:|

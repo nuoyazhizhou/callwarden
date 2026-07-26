@@ -60,9 +60,21 @@ pub fn is_stale_state(cas_state: &str) -> bool {
     matches!(cas_state, "stale_seq_dropped" | "stale_generation")
 }
 
-/// 判断给定 cas_state 是否表示成功（设计 §5.3 `ok` 或 `partial`）
+/// 判断给定 cas_state 是否表示 partial（设计 §5.3 `partial`）
+///
+/// R6-P0-2: partial 状态发布事实到 CAS（保留符号图谱可查询），
+/// 但**不替换上一代 snapshot**（保留好 snapshot 供生产查询）。
+/// allows_retry=false（partial 不是致命错误，等下次文件变化自然恢复）。
+pub fn is_partial_state(cas_state: &str) -> bool {
+    matches!(cas_state, "partial_published")
+}
+
+/// 判断给定 cas_state 是否表示成功（设计 §5.3 `ok`）
 ///
 /// 成功状态：CAS 已发布或缓存命中，可以替换 snapshot
+///
+/// 注意：partial_published 不属于 success（R6-P0-2 改为单独的 partial 状态，
+/// 见 `is_partial_state`），避免坏解析替换上一代好 snapshot。
 pub fn is_success_state(cas_state: &str) -> bool {
     matches!(cas_state, "ready_published" | "ready_cache_hit")
 }
@@ -212,7 +224,8 @@ impl FailureProtectionResult {
 /// 2. parse 失败 → `Failed`（不替换 snapshot，允许重试）
 /// 3. unsupported → `Unsupported`（不发布空图谱，不重试）
 /// 4. stale → `Stale`（generation CAS 拒绝，不重试）
-/// 5. 成功 → 不保护（替换 snapshot）
+/// 5. partial → `Partial`（已发布事实到 CAS，但不替换上一代好 snapshot）
+/// 6. 成功 → 不保护（替换 snapshot）
 ///
 /// 调用方应在 `merge_cas_to_codegraph` + `publish_snapshot` 之前调用本函数，
 /// 根据 `blocked` 字段决定是否继续。
@@ -277,7 +290,25 @@ pub fn evaluate_generation_protection(
         );
     }
 
-    // 5. 成功（ok / partial / ready_published / ready_cache_hit）
+    // 5. partial（设计 §5.3 partial）
+    //
+    // R6-P0-2: partial 已发布事实到 CAS，但不替换上一代 snapshot。
+    // allows_retry=false（partial 不是致命错误，等下次文件变化自然恢复）。
+    if is_partial_state(cas_state) {
+        return FailureProtectionResult {
+            blocked: true,
+            reason: format!(
+                "partial parse (设计 §5.3 partial): cas_state={}, 保留上一代好 snapshot",
+                cas_state
+            ),
+            cas_state: cas_state.to_string(),
+            parse_status: ParseStatus::Partial.as_str().to_string(),
+            dirty_overlay: false,
+            allows_retry: false,
+        };
+    }
+
+    // 6. 成功（ok / ready_published / ready_cache_hit）
     FailureProtectionResult::ok(cas_state)
 }
 
@@ -331,6 +362,18 @@ mod tests {
         assert!(is_success_state("ready_cache_hit"));
         assert!(!is_success_state("parse_failed"));
         assert!(!is_success_state("unsupported_language"));
+        // R6-P0-2: partial 不属于 success（不替换 snapshot）
+        assert!(!is_success_state("partial_published"));
+    }
+
+    // ---- is_partial_state ----
+
+    #[test]
+    fn test_is_partial_state() {
+        assert!(is_partial_state("partial_published"));
+        assert!(!is_partial_state("ready_published"));
+        assert!(!is_partial_state("parse_failed"));
+        assert!(!is_partial_state("ready_cache_hit"));
     }
 
     // ---- should_replace_snapshot ----
@@ -349,6 +392,8 @@ mod tests {
         assert!(!should_replace_snapshot("unsupported_language"));
         assert!(!should_replace_snapshot("stale_seq_dropped"));
         assert!(!should_replace_snapshot("no_cas_conn"));
+        // R6-P0-2: partial 不替换 snapshot
+        assert!(!should_replace_snapshot("partial_published"));
     }
 
     // ---- is_dirty_overlay ----
@@ -480,5 +525,27 @@ mod tests {
         let json = r.to_json();
         assert_eq!(json["blocked"], false);
         assert_eq!(json["parse_status"], "ok");
+    }
+
+    // ---- R6-P0-2: partial_published 状态保护 ----
+
+    #[test]
+    fn test_evaluate_protection_partial_published() {
+        let r = evaluate_generation_protection(
+            "partial_published",
+            "/repo/src/main.rs",
+            "src/main.rs",
+        );
+        assert!(r.blocked, "partial 应阻止替换 snapshot");
+        assert_eq!(r.parse_status, "partial");
+        assert!(!r.allows_retry, "partial 不重试（等下次文件变化）");
+        assert!(!r.dirty_overlay);
+    }
+
+    #[test]
+    fn test_evaluate_protection_partial_takes_priority_over_success_only_check() {
+        // partial_published 不应被识别为 success（保留好 snapshot）
+        assert!(!is_success_state("partial_published"));
+        assert!(is_partial_state("partial_published"));
     }
 }

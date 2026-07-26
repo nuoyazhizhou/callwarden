@@ -322,6 +322,8 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 29. **PyInstaller 发布验收必须实例化 MCP Server**：`cw --version` / `cw --help` 只覆盖 CLI 启动，不能发现 FastMCP 间接导入缺失。修改 hidden imports 或 excludes 后，必须对冻结产物运行 `cw server --check-imports`；该命令会注册全部 MCP 工具但不写数据库、不下载 Semgrep 规则。遇到缺失模块时输出原始 `ImportError`，只恢复真实依赖并重建验证，禁止为了省事恢复 `collect_submodules('fastmcp')` 或全量云 SDK。标准库也可能是框架间接依赖，例如 `mimetypes` 被 FastMCP 资源层使用，不得仅凭 Call Warden 源码无直接 import 就排除。
 
+30. **PyInstaller 排除包前必须审计生产顶层导入**：`Analysis.excludes` 只阻止模块进入冻结产物，不会自动消除生产代码中的 `from package import ...`。若仍有顶层导入，被排除的包会在最早入口直接触发 `ModuleNotFoundError`，即使 PyInstaller 构建和静态 inspector 都通过。删除或外置依赖时，先用 `rg` 追踪所有生产 import，把可选依赖改为使用点懒加载或拆到不参与冻结入口的模块；构建后必须实际运行 `cw --version`、`cw --help`、`cw server --check-imports`，三者任一失败都不得发布。静态模块清单和单元测试不能替代冻结可执行文件 smoke。
+
 ## 文档索引
 
 | 文档 | 说明 |

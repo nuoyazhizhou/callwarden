@@ -141,6 +141,16 @@ _common_excludes = [
 # P1-G（2026-07-25）：删除 tree_sitter 和 16 个 callwarden.parsers.* 子模块，
 # 生产解析由 Rust callwarden_core 完成。Python parser 保留在源码仓库作为
 # 开发 reference，不进入冻结包。
+#
+# R10-P1-2-c（2026-07-26）：``callwarden_core`` 不在 hiddenimports 中声明。
+# 之前同时声明 ``binaries`` 和 ``hiddenimports`` 中的 ``callwarden_core`` 会导致
+# PyInstaller 收集两份 .pyd/.so：一份来自项目根目录的 binaries（指向 ``.``），
+# 另一份来自 site-packages 的 hiddenimports（PyInstaller 会从 Python path
+# 查找 wheel 安装的副本）。冻结包体积膨胀 ~36MB，且运行时 sys.modules
+# 加载顺序不确定。修复后仅通过 ``binaries`` 显式声明，PyInstaller bootstrap
+# 会将 ``_internal/`` 加入 sys.path，``import callwarden_core`` 能命中
+# binaries 提供的文件。详见 release/inspect_pyinstaller_bundle.py 的
+# ``_check_callwarden_core_present`` 重复扩展检测（R10-P1-2-b）。
 _local_hiddenimports = [
     # 1. cw.py 动态分发的入口模块（importlib.import_module）
     'callwarden.install',
@@ -150,8 +160,9 @@ _local_hiddenimports = [
     # 但 tests 是开发期工具，打包产物中不收集。cw test 在打包后会 ImportError，
     # 这是预期行为——生产环境用户不应运行测试。
 
-    # 2. Rust 扩展模块（生产 parser，必须收集）
-    'callwarden_core',
+    # 2. Rust 扩展模块（生产 parser）—— R10-P1-2-c: 不在 hiddenimports 声明，
+    #    仅通过上方 ``binaries = [(rust_ext_path, '.')]`` 显式提供，避免重复收集。
+    #    'callwarden_core' 已从 hiddenimports 移除。
 
     # 3. MCP stdio server 的目标化模块集合
     # CallWarden 使用 mcp.server.fastmcp，不使用 fastmcp 顶层 CLI、云认证 provider、
@@ -181,6 +192,9 @@ _local_hiddenimports = [
 
 # === client/agent runtime hiddenimports（无 parser，仅 Linux）===
 # 直接走 daemon_commands / agent_watcher，绕过 cli.main（避免拉入 db → parsers）
+#
+# R10-P1-2-c（2026-07-26）：``callwarden_core`` 不在 hiddenimports 中声明，
+# 仅通过上方 ``binaries = [(rust_ext_path, '.')]`` 提供。理由同 local bundle。
 _client_agent_hiddenimports = [
     # daemon RPC 链路（cw-client 入口）
     'callwarden.cli.daemon_commands',
@@ -207,8 +221,9 @@ _client_agent_hiddenimports = [
     'callwarden.i18n',
     'callwarden.cli.console',
 
-    # Rust 扩展（canonicalize_source_py / PySnapshotCache 等，不含 Python parser）
-    'callwarden_core',
+    # Rust 扩展（canonicalize_source_py / PySnapshotCache 等）
+    # R10-P1-2-c: 仅通过 binaries 提供，避免重复收集。
+    # 'callwarden_core' 已从 hiddenimports 移除。
 
     # 运行时依赖（无 numpy）
     'pydantic', 'pydantic_core', 'watchdog', 'pathspec',
@@ -362,20 +377,36 @@ a_local = Analysis(
 # PyInstaller 对 hidden import 缺失默认只发 warning，发布构建必须 fail closed。
 _collected_local = {item[0] for item in a_local.pure}
 
-# fail closed: local bundle 必须包含 Rust 扩展和 cw 主入口核心模块。
+# fail closed: local bundle 必须包含 cw 主入口核心模块。
 # 注意：P1-G 后 local bundle 不再收集 callwarden.parsers.*，因此不再要求
-# callwarden.parsers.base 存在；改要求 callwarden_core 必须被收集。
+# callwarden.parsers.base 存在。
+# R10-P1-2-c: callwarden_core 不再通过 hiddenimports 收集（避免与 binaries
+# 重复），改由下方 _collected_local_binaries 检查。
 _required_local = {
     'callwarden',
     'callwarden.cw',
     'callwarden.server.mcp_server',
-    'callwarden_core',
 }
 _missing_local = sorted(_required_local - _collected_local)
 if _missing_local:
     raise RuntimeError(
         'local bundle 未收集 CallWarden 核心模块: '
         + ', '.join(_missing_local)
+    )
+
+# R10-P1-2-c: fail closed —— callwarden_core 必须出现在 binaries 中。
+# 之前 hiddenimports + binaries 同时声明会导致两份 .pyd 被收集（体积膨胀
+# ~36MB）。修复后仅通过 binaries 提供，此处检查 binaries 列表确保
+# callwarden_core 文件已被 PyInstaller 收集，避免运行时 import 失败。
+_collected_local_binaries = {os.path.basename(item[0]) for item in a_local.binaries}
+_has_callwarden_core_in_binaries = any(
+    name == rust_ext_name or name.startswith('callwarden_core.')
+    for name in _collected_local_binaries
+)
+if not _has_callwarden_core_in_binaries:
+    raise RuntimeError(
+        'local bundle 未通过 binaries 收集 callwarden_core 扩展（R10-P1-2-c），'
+        'binaries 中未找到 ' + rust_ext_name + ' 或其 ABI 变体'
     )
 
 # fail closed: P1-G 后 local bundle 也严禁包含 Python parser/grammar 模块。
@@ -461,19 +492,33 @@ if sys.platform.startswith('linux'):
         )
 
     # fail closed: client/agent bundle 必须包含 daemon RPC / agent watcher 核心模块
+    # R10-P1-2-c: callwarden_core 不再通过 hiddenimports 收集（避免与 binaries
+    # 重复），改由下方 _collected_client_binaries 检查。
     _required_client = {
         'callwarden.cli.daemon_commands',
         'callwarden.server.daemon_client',
         'callwarden.server.daemon_server',
         'callwarden.server.agent_watcher',
         'callwarden.db.db_daemon',
-        'callwarden_core',
     }
     _missing_client = sorted(_required_client - _collected_client)
     if _missing_client:
         raise RuntimeError(
             'client/agent bundle 缺少 RPC/agent 核心模块: '
             + ', '.join(_missing_client)
+        )
+
+    # R10-P1-2-c: fail closed —— callwarden_core 必须出现在 binaries 中。
+    # 与 local bundle 一致，仅通过 binaries 提供避免重复收集。
+    _collected_client_binaries = {os.path.basename(item[0]) for item in a_client.binaries}
+    _has_callwarden_core_in_client_binaries = any(
+        name == rust_ext_name or name.startswith('callwarden_core.')
+        for name in _collected_client_binaries
+    )
+    if not _has_callwarden_core_in_client_binaries:
+        raise RuntimeError(
+            'client/agent bundle 未通过 binaries 收集 callwarden_core 扩展（R10-P1-2-c），'
+            'binaries 中未找到 ' + rust_ext_name + ' 或其 ABI 变体'
         )
 
     pyz_client = PYZ(a_client.pure, a_client.zipped_data, cipher=block_cipher)

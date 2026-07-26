@@ -101,10 +101,12 @@ pub struct SymbolInfo {
     pub visibility: String,
     pub content: String, // 符号源码内容
     pub signature: String,
-    /// R1-P0-2: ParseFact ABI — 文件内稳定符号 ID（按 byte_start 排序后 0-based）
+    /// R1-P0-2 / R7-P0-3: ParseFact ABI — 文件内稳定符号 ID（1-based，0 保留给
+    /// synthetic module symbol）。按 byte_start 排序后从 1 递增。
     pub local_id: u32,
-    /// R1-P0-2: 词法父符号的 local_id（-1 = 顶层，无父符号）
-    pub lexical_parent_local_id: i32,
+    /// R1-P0-2 / R7-P0-3: 词法父符号的 local_id（0 = 顶层，父是 synthetic
+    /// module symbol；>=1 = 真实父符号的 local_id）
+    pub lexical_parent_local_id: u32,
     /// R1-P0-2: 符号在文件字节流中的起始偏移（canonical bytes 偏移）
     pub byte_start: u32,
     /// R1-P0-2: 符号在文件字节流中的结束偏移（exclusive）
@@ -120,7 +122,8 @@ pub struct RawCall {
     pub caller_qualified: String,
     pub call_line: u32,
     pub is_cross_file: bool,
-    /// R1-P0-2: ParseFact ABI — 调用者符号的 local_id（0 表示未解析到符号）
+    /// R1-P0-2 / R7-P0-3: ParseFact ABI — 调用者符号的 local_id
+    /// （0 = 未解析到调用者，指向 synthetic module symbol；>=1 = 真实调用者 local_id）
     pub caller_local_id: u32,
     /// R1-P0-2: 同一调用者内 call 序号（0-based，按 byte_start 排序）
     pub ordinal: u32,
@@ -251,18 +254,28 @@ impl CParser {
 }
 
 // ============================================
-// R1-P0-2: ParseFact ABI 后处理 — local_id / parent / ordinal 赋值
+// R1-P0-2 / R7-P0-3: ParseFact ABI 后处理 — local_id / parent / ordinal 赋值
 // ============================================
 
 /// 为 symbols 和 calls 赋值 ParseFact ABI 的 local_id / lexical_parent_local_id /
 /// caller_local_id / ordinal 字段。
 ///
+/// R7-P0-3 哨兵冲突修复（企业设计 enterprise-phase1-phase3-detail.md:1074-1077）：
+/// - `local_id` 从 **1** 开始（1-based），0 保留给 synthetic module symbol
+/// - `lexical_parent_local_id` 用 **0** 表示顶层（父是 synthetic module symbol），
+///   >=1 表示真实父符号的 local_id
+/// - `caller_local_id` 用 **0** 表示未解析到调用者（指向 synthetic module symbol），
+///   >=1 表示真实调用者符号的 local_id
+///
+/// 这样第一个真实符号 local_id=1 与"未解析/synthetic"哨兵 0 不再冲突。
+///
 /// 算法：
 /// 1. 按 (byte_start, byte_end) 升序排序 symbols（稳定排序）
-/// 2. local_id = 排序后的索引（0-based）
+/// 2. local_id = 排序后的索引 + 1（1-based，0 保留给 synthetic module symbol）
 /// 3. 对每个 symbol S，找词法父：byte_start < S.byte_start 且 byte_end > S.byte_end
-///    且自身 byte 范围最小的 symbol（最内层包含者）
-/// 4. 对每个 call C，按 caller_qualified 匹配找到对应 symbol，写入 caller_local_id
+///    且自身 byte 范围最小的 symbol（最内层包含者）；未找到则置 0（顶层）
+/// 4. 对每个 call C，按 caller_qualified 匹配找到对应 symbol，写入 caller_local_id；
+///    未匹配则置 0（未解析）
 /// 5. 对每个 caller_local_id，按 byte_start 升序赋值 ordinal（0-based）
 ///
 /// 设计要点：通过 byte range 包含关系推导父子，避免在递归 walk 中传递状态。
@@ -271,21 +284,23 @@ pub(crate) fn assign_local_ids(symbols: &mut Vec<SymbolInfo>, calls: &mut Vec<Ra
         return;
     }
 
-    // 1. 按 (byte_start, byte_end) 排序并赋 local_id
+    // 1. 按 (byte_start, byte_end) 排序并赋 local_id（1-based）
     symbols.sort_by(|a, b| {
         a.byte_start
             .cmp(&b.byte_start)
             .then(a.byte_end.cmp(&b.byte_end))
     });
     for (idx, sym) in symbols.iter_mut().enumerate() {
-        sym.local_id = idx as u32;
+        // R7-P0-3: 1-based，0 保留给 synthetic module symbol
+        sym.local_id = (idx + 1) as u32;
     }
 
     // 2. 对每个 symbol，找最内层包含者作为词法父
     //    O(n^2) 但 n 通常为文件级符号数（< 1000），可接受
     for i in 0..symbols.len() {
         let (cur_start, cur_end) = (symbols[i].byte_start, symbols[i].byte_end);
-        let mut best_parent: i32 = -1;
+        // R7-P0-3: 0 表示顶层（父是 synthetic module symbol）
+        let mut best_parent: u32 = 0;
         let mut best_parent_end: u32 = u32::MAX;
         for j in 0..symbols.len() {
             if i == j {
@@ -295,7 +310,7 @@ pub(crate) fn assign_local_ids(symbols: &mut Vec<SymbolInfo>, calls: &mut Vec<Ra
             // 父必须严格包含 cur（byte_start < cur.byte_start 且 byte_end >= cur.byte_end）
             // 严格 < 避免同位置重叠；end 可以等于（同位置起止）
             if p_start < cur_start && p_end >= cur_end && p_end < best_parent_end {
-                best_parent = symbols[j].local_id as i32;
+                best_parent = symbols[j].local_id;
                 best_parent_end = p_end;
             }
         }
@@ -318,6 +333,7 @@ pub(crate) fn assign_local_ids(symbols: &mut Vec<SymbolInfo>, calls: &mut Vec<Ra
         if let Some(&lid) = caller_map.get(&c.caller_qualified) {
             c.caller_local_id = lid;
         } else {
+            // R7-P0-3: 0 表示未解析到调用者（synthetic module symbol）
             c.caller_local_id = 0;
         }
     }
@@ -546,8 +562,9 @@ fn parse_c_function(
         signature: String::new(),
         // R1-P0-2: ParseFact ABI — byte range 直接从 AST 节点取；
         // local_id / lexical_parent_local_id 由 assign_local_ids 后处理填入
+        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
         local_id: 0,
-        lexical_parent_local_id: -1,
+        lexical_parent_local_id: 0,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     })
@@ -588,8 +605,9 @@ fn parse_c_struct(
         content: node_text(node, source).to_string(),
         signature: String::new(),
         // R1-P0-2: ParseFact ABI 字段
+        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
         local_id: 0,
-        lexical_parent_local_id: -1,
+        lexical_parent_local_id: 0,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     })
@@ -628,8 +646,9 @@ fn parse_c_enum(
         content: node_text(node, source).to_string(),
         signature: String::new(),
         // R1-P0-2: ParseFact ABI 字段
+        // R7-P0-3: lexical_parent_local_id 改为 0（u32，0=顶层）
         local_id: 0,
-        lexical_parent_local_id: -1,
+        lexical_parent_local_id: 0,
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     })

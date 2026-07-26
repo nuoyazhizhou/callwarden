@@ -593,9 +593,10 @@ class TestParseFactAbiAlignment:
 
     Python parser 当前未产出这些字段（仅 Rust 侧补齐），所以对齐测试只验证：
     1. Rust 输出包含所有 ABI 字段（非空、有效范围）
-    2. local_id 唯一性 + byte_start 单调性
-    3. lexical_parent_local_id 形成合法父链（无环、指向真实存在的 local_id）
-    4. caller_local_id 要么为 0（未解析到调用者），要么指向真实存在的 local_id
+    2. local_id 唯一性 + byte_start 单调性（1-based，0 保留给 synthetic module symbol）
+    3. lexical_parent_local_id 形成合法父链（无环、0=顶层或指向真实存在的 local_id）
+    4. caller_local_id 要么为 0（未解析到调用者/synthetic module symbol），
+       要么指向真实存在的 local_id
     5. 同一 caller_local_id 内 ordinal 连续 0-based
     6. byte range 不越界（byte_start < byte_end <= len(content_bytes)）
 
@@ -633,15 +634,20 @@ class TestParseFactAbiAlignment:
         assert len(set(local_ids)) == len(local_ids), (
             f"[{lang}] local_id 重复: {local_ids}"
         )
-        # local_id 按 byte_start 排序赋值（0-based 连续）
+        # R7-P0-3: local_id 按 byte_start 排序赋值（1-based 连续，0 保留给
+        # synthetic module symbol）。第一个真实符号 local_id=1。
         byte_starts = [s["byte_start"] for s in syms]
         expected_ids = [i for i, _ in sorted(enumerate(byte_starts), key=lambda x: x[1])]
-        expected_local_ids = list(range(len(syms)))
+        expected_local_ids = list(range(1, len(syms) + 1))
         actual_by_byte = [s["local_id"] for s in sorted(syms, key=lambda x: x["byte_start"])]
         assert actual_by_byte == expected_local_ids, (
-            f"[{lang}] local_id 未按 byte_start 排序赋值\n"
+            f"[{lang}] local_id 未按 byte_start 排序赋值（1-based）\n"
             f"  expected: {expected_local_ids}\n"
             f"  actual:   {actual_by_byte}"
+        )
+        # 0 保留给 synthetic module symbol，不应出现在真实符号中
+        assert 0 not in local_ids, (
+            f"[{lang}] local_id=0 出现在真实符号中（应保留给 synthetic module symbol）: {local_ids}"
         )
 
     def test_symbol_byte_range_in_bounds(self, lang, filename, content, tmp_path):
@@ -661,7 +667,7 @@ class TestParseFactAbiAlignment:
             )
 
     def test_symbol_lexical_parent_chain_valid(self, lang, filename, content, tmp_path):
-        """lexical_parent_local_id 必须指向真实存在或为 -1（顶层）。"""
+        """R7-P0-3: lexical_parent_local_id 必须指向真实存在或为 0（顶层）。"""
         path = tmp_path / filename
         # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
         path.write_bytes(content.encode("utf-8"))
@@ -674,17 +680,18 @@ class TestParseFactAbiAlignment:
 
         for s in syms:
             parent = s["lexical_parent_local_id"]
-            assert parent == -1 or parent in valid_ids, (
+            # R7-P0-3: 0 表示顶层（父是 synthetic module symbol），>=1 必须指向真实符号
+            assert parent == 0 or parent in valid_ids, (
                 f"[{lang}] symbol {s.get('name')!r} parent_local_id={parent} "
-                f"不在有效符号集合 {sorted(valid_ids)} 中"
+                f"不在有效符号集合 {sorted(valid_ids)} 中（0=顶层）"
             )
 
-        # 检查父链无环（沿 parent_local_id 走必须最终到达 -1）
+        # 检查父链无环（沿 parent_local_id 走必须最终到达 0=顶层）
         sym_by_id = {s["local_id"]: s for s in syms}
         for s in syms:
             visited = {s["local_id"]}
             cur = s
-            while cur["lexical_parent_local_id"] != -1:
+            while cur["lexical_parent_local_id"] != 0:
                 parent_id = cur["lexical_parent_local_id"]
                 assert parent_id not in visited, (
                     f"[{lang}] symbol {s.get('name')!r} 的父链有环: {visited}"
@@ -749,7 +756,7 @@ class TestParseFactAbiAlignment:
             )
 
     def test_call_caller_local_id_valid(self, lang, filename, content, tmp_path):
-        """caller_local_id 要么为 0（未解析到），要么指向真实 symbol。"""
+        """R7-P0-3: caller_local_id 要么为 0（未解析/synthetic module symbol），要么指向真实 symbol。"""
         path = tmp_path / filename
         # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
         path.write_bytes(content.encode("utf-8"))
@@ -758,7 +765,8 @@ class TestParseFactAbiAlignment:
         syms = rs_result["symbols"]
         if not syms:
             return
-        valid_ids = {s["local_id"] for s in syms} | {0}  # 0 表示未解析到调用者
+        # R7-P0-3: 0 表示未解析（synthetic module symbol），不在 syms 集合中
+        valid_ids = {s["local_id"] for s in syms} | {0}
 
         for c in rs_result.get("raw_calls", []):
             caller_lid = c["caller_local_id"]
