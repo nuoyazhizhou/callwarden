@@ -306,6 +306,11 @@ impl GenericParser {
             &mut symbols, &mut calls, &mut imports, &mut references,
         );
 
+        // R1-P0-2: ParseFact ABI 后处理 + diagnostics
+        crate::assign_local_ids(&mut symbols, &mut calls);
+        let syntax_error_count = crate::count_syntax_errors(&root);
+        let diagnostics = ParseDiagnostics::from_syntax_count(syntax_error_count, None);
+
         ParseResult {
             rel_path: String::new(),
             abs_path: abs_path.to_string(),
@@ -318,6 +323,7 @@ impl GenericParser {
             imports,
             references,
             error: None,
+            diagnostics,
         }
     }
 
@@ -362,6 +368,11 @@ impl GenericParser {
             &mut symbols, &mut calls, &mut imports, &mut references,
         );
 
+        // R1-P0-2: ParseFact ABI 后处理 + diagnostics
+        crate::assign_local_ids(&mut symbols, &mut calls);
+        let syntax_error_count = crate::count_syntax_errors(&root);
+        let diagnostics = ParseDiagnostics::from_syntax_count(syntax_error_count, None);
+
         ParseResult {
             rel_path: String::new(),
             abs_path: abs_path.to_string(),
@@ -374,6 +385,7 @@ impl GenericParser {
             imports,
             references,
             error: None,
+            diagnostics,
         }
     }
 }
@@ -392,6 +404,8 @@ fn error_result(abs_path: &str, module_path: &str, lang_id: &str, err: &str) -> 
         imports: Vec::new(),
         references: Vec::new(),
         error: Some(err.to_string()),
+        // R1-P0-2: diagnostics 与 error 同步（保持向后兼容）
+        diagnostics: ParseDiagnostics::failed(err),
     }
 }
 
@@ -558,6 +572,12 @@ fn walk_node(
                         caller_qualified: current_qualified.to_string(),
                         call_line: child.start_position().row as u32 + 1,
                         is_cross_file: false,
+                        // R1-P0-2: ParseFact ABI 字段
+                        // caller_local_id / ordinal 由 assign_local_ids 后处理填入
+                        caller_local_id: 0,
+                        ordinal: 0,
+                        byte_start: child.start_byte() as u32,
+                        byte_end: child.end_byte() as u32,
                     });
                 }
             }
@@ -688,6 +708,13 @@ fn extract_traversal_references(
                     caller_qualified: current_qualified.to_string(),
                     call_line,
                     is_cross_file: false,
+                    // R1-P0-2: ParseFact ABI 字段
+                    // 注意：HCL traversal 没有单一 AST 节点对应整个 call 表达式，
+                    // 用起始 variable_expr 的 byte range 作为近似（便于 range 包含查询）
+                    caller_local_id: 0,
+                    ordinal: 0,
+                    byte_start: expr.start_byte() as u32,
+                    byte_end: expr.end_byte() as u32,
                 });
             }
 
@@ -885,6 +912,13 @@ fn make_symbol(
         visibility: extract_visibility(node, source),
         content,
         signature: String::new(),
+        // R1-P0-2: ParseFact ABI 字段
+        // byte range 直接从 AST 节点取；
+        // local_id / lexical_parent_local_id 由 assign_local_ids 后处理填入
+        local_id: 0,
+        lexical_parent_local_id: -1,
+        byte_start: node.start_byte() as u32,
+        byte_end: node.end_byte() as u32,
     }
 }
 
@@ -1169,35 +1203,27 @@ pub struct ParseDiagnostics {
 impl ParseDiagnostics {
     /// 从 ParseResult 推导诊断信息
     ///
+    /// R1-P0-2: 现在 ParseResult 已携带 `diagnostics` 字段，直接返回其克隆。
+    /// 保留此方法以兼容旧调用方（如 daemon replicator）。
+    ///
     /// 注意：`Unsupported` 和 `Stale` 不能从 ParseResult 推导，
     /// 需调用方使用 `unsupported()` / `stale()` 显式构造。
     pub fn from_result(result: &ParseResult) -> Self {
+        // 兼容旧 error 字段：若 error 非空但 diagnostics.status 不是 failed，
+        // 视为 Failed 状态
         if let Some(err) = &result.error {
-            return Self {
-                status: ParseStatus::Failed.as_str().to_string(),
-                syntax_error_count: 0,
-                unsupported_construct_count: 0,
-                fatal_parse_error: Some(err.clone()),
-                partial_parse: false,
-                error: Some(err.clone()),
-            };
+            if result.diagnostics.status != ParseStatus::Failed.as_str() {
+                return Self {
+                    status: ParseStatus::Failed.as_str().to_string(),
+                    syntax_error_count: result.diagnostics.syntax_error_count,
+                    unsupported_construct_count: result.diagnostics.unsupported_construct_count,
+                    fatal_parse_error: Some(err.clone()),
+                    partial_parse: false,
+                    error: Some(err.clone()),
+                };
+            }
         }
-        // 当前 ParseResult struct 不携带 syntax_error_count / unsupported_construct_count
-        // 字段（定义在 lib.rs，未含这些字段）。tree-sitter 的语法错误信息需要从
-        // tree.root_node().has_error() 提取，但当前 GenericParser::parse_file /
-        // parse_canonical_bytes 未提取该信息到 ParseResult。
-        //
-        // P1-F Step 1 仅定义状态语义和推导骨架，syntax_error_count /
-        // unsupported_construct_count 的实际值在后续 step 或 languages/ 模块补齐。
-        // 当前默认 Ok 状态。
-        Self {
-            status: ParseStatus::Ok.as_str().to_string(),
-            syntax_error_count: 0,
-            unsupported_construct_count: 0,
-            fatal_parse_error: None,
-            partial_parse: false,
-            error: None,
-        }
+        result.diagnostics.clone()
     }
 
     /// 显式构造 `Unsupported` 状态（语言不支持时调用方使用）
@@ -1237,6 +1263,35 @@ impl ParseDiagnostics {
         }
     }
 
+    /// R1-P0-2: 从 syntax_error_count 构造 Ok / Partial 状态
+    ///
+    /// syntax_error_count > 0 时返回 Partial，否则返回 Ok。
+    /// fatal_error 用于覆盖 Failed 状态（parse 返回 None / set_language 失败等）。
+    pub fn from_syntax_count(syntax_error_count: u32, fatal_error: Option<&str>) -> Self {
+        if let Some(err) = fatal_error {
+            return Self::failed(err);
+        }
+        if syntax_error_count > 0 {
+            Self {
+                status: ParseStatus::Partial.as_str().to_string(),
+                syntax_error_count,
+                unsupported_construct_count: 0,
+                fatal_parse_error: None,
+                partial_parse: true,
+                error: None,
+            }
+        } else {
+            Self {
+                status: ParseStatus::Ok.as_str().to_string(),
+                syntax_error_count: 0,
+                unsupported_construct_count: 0,
+                fatal_parse_error: None,
+                partial_parse: false,
+                error: None,
+            }
+        }
+    }
+
     /// 转为 serde_json::Value（供 daemon durable log 序列化）
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).unwrap_or_else(|_| {
@@ -1250,19 +1305,30 @@ impl ParseDiagnostics {
 
 /// 从 ParseResult 推导 ParseStatus（不含 Unsupported/Stale）
 ///
-/// 规则：
-/// - `result.error.is_some()` → `Failed`
-/// - 无 error，且（syntax_error_count > 0 或 unsupported_construct_count > 0）→ `Partial`
-/// - 无 error，无 syntax/unsupported 问题 → `Ok`
+/// R1-P0-2: 现在从 `result.diagnostics` 字段推导，规则：
+/// - `result.diagnostics.fatal_parse_error.is_some()` 或 `result.error.is_some()` → `Failed`
+/// - 否则 `result.diagnostics.syntax_error_count > 0` 或 `unsupported_construct_count > 0` → `Partial`
+/// - 否则 → `Ok`
 ///
-/// 注意：当前 ParseResult 不携带 syntax_error_count / unsupported_construct_count，
-/// 所以只能返回 `Ok` / `Failed`。`Partial` 状态需调用方补充诊断信息后判断。
+/// 注意：`Unsupported` 和 `Stale` 不能从 ParseResult 推导，
+/// 需调用方使用 `ParseDiagnostics::unsupported()` / `stale()` 显式构造。
 pub fn parse_status_from_result(result: &ParseResult) -> ParseStatus {
-    if result.error.is_some() {
+    // 优先看 diagnostics（结构化诊断，权威源）
+    let d = &result.diagnostics;
+    if d.fatal_parse_error.is_some() || result.error.is_some() {
         return ParseStatus::Failed;
     }
-    // TODO: 后续 step 补充 syntax_error_count / unsupported_construct_count 检测
-    ParseStatus::Ok
+    if d.syntax_error_count > 0 || d.unsupported_construct_count > 0 {
+        return ParseStatus::Partial;
+    }
+    // 兼容旧调用：若 diagnostics.status 已被显式设为 partial/failed，遵循之
+    match d.status.as_str() {
+        "failed" => ParseStatus::Failed,
+        "partial" => ParseStatus::Partial,
+        "unsupported" => ParseStatus::Unsupported,
+        "stale" => ParseStatus::Stale,
+        _ => ParseStatus::Ok,
+    }
 }
 
 /// 从 ParseResult 推导 ParseDiagnostics

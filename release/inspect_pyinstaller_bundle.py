@@ -113,6 +113,29 @@ PYTHON_RUNTIME_DISTRIBUTION = "python_runtime"
 # 兜底 distribution 名
 OTHER_DISTRIBUTION = "other"
 
+
+def _is_callwarden_core_file(filename: str) -> bool:
+    """判断文件名是否为 Rust 扩展 callwarden_core。
+
+    支持以下命名形式（PEP 3149 / Windows ABI tag）：
+    - ``callwarden_core.pyd`` (Windows 无 ABI 后缀)
+    - ``callwarden_core.so`` (Linux/macOS 无 ABI 后缀)
+    - ``callwarden_core.cp314-win_amd64.pyd`` (Windows 带 ABI 后缀)
+    - ``callwarden_core.cpython-314-x86_64-linux-gnu.so`` (Linux 带 ABI 后缀)
+
+    PyInstaller 打包 Rust PyO3 扩展时会保留 wheel 的 ABI 后缀，
+    inspector 必须识别这些变体，否则会误报"Rust 扩展缺失"。
+    """
+    if not (filename.endswith(".pyd") or filename.endswith(".so")):
+        return False
+    stem = filename.rsplit(".", 1)[0]  # 去掉 .pyd/.so
+    # 精确匹配（无 ABI 后缀）
+    if stem == "callwarden_core":
+        return True
+    # 带 ABI 后缀：callwarden_core.<abi-tag>
+    return stem.startswith("callwarden_core.")
+
+
 # 所有 parser 相关 distribution 名（client/agent bundle 零容忍）。
 # 包含 tree-sitter 核心、16 种 grammar、callwarden.parsers Python 实现模块。
 # 用于 ``--role client`` 自动禁止，或 ``--forbid-all-parser-distributions`` 显式禁止。
@@ -150,8 +173,9 @@ def _classify_distribution(rel_path: str) -> str:
     parts = norm.split("/")
 
     # 4. Rust 扩展：根级或 _internal/ 下的 callwarden_core.{pyd,so}
+    #    支持带 ABI 后缀的变体（如 callwarden_core.cp314-win_amd64.pyd）
     base = parts[-1]
-    if base in {"callwarden_core.pyd", "callwarden_core.so"}:
+    if _is_callwarden_core_file(base):
         return CALLWARDEN_CORE_DISTRIBUTION
 
     # 1. grammar：tree_sitter_<lang>/ 目录或 tree_sitter_<lang>.* 文件
@@ -277,11 +301,20 @@ def _check_callwarden_core_present(bundle: Path) -> list[str]:
 
     P1-G 后生产解析统一由 Rust callwarden_core 完成，bundle 中必须存在
     callwarden_core.pyd（Windows）或 callwarden_core.so（Linux/macOS）。
+
+    支持带 ABI 后缀的变体（PEP 3149 / Windows ABI tag），例如：
+    - ``callwarden_core.cp314-win_amd64.pyd``
+    - ``callwarden_core.cpython-314-x86_64-linux-gnu.so``
+
+    PyInstaller 打包 PyO3 扩展时会保留 wheel 的 ABI 后缀，因此使用
+    :func:`_is_callwarden_core_file` 而非精确文件名匹配。
     """
     errors: list[str] = []
-    pyd = list(bundle.rglob("callwarden_core.pyd"))
-    so = list(bundle.rglob("callwarden_core.so"))
-    if not pyd and not so:
+    found: list[Path] = []
+    for path in bundle.rglob("*"):
+        if path.is_file() and _is_callwarden_core_file(path.name):
+            found.append(path)
+    if not found:
         errors.append(
             "Rust 扩展 callwarden_core.pyd/.so 未在 bundle 中找到，"
             "P1-G 后生产解析必须由 Rust callwarden_core 完成"
@@ -357,16 +390,19 @@ def _verify_rust_parse(bundle: Path) -> list[str]:
 
     仅在同平台 bundle 上使用（cross-platform 场景应跳过此检查）。
     验证步骤：
-    1. 找到 callwarden_core.pyd/.so 文件
+    1. 找到 callwarden_core.pyd/.so 文件（含带 ABI 后缀的变体）
     2. 用 importlib 加载模块
     3. 检查 supported_languages() API 存在且返回非空列表
 
     返回错误列表，空列表表示验证通过。无法加载或 API 缺失都会报错。
+
+    支持的文件命名形式见 :func:`_is_callwarden_core_file`。
     """
     errors: list[str] = []
-    core_files = list(bundle.rglob("callwarden_core.pyd")) + list(
-        bundle.rglob("callwarden_core.so")
-    )
+    core_files: list[Path] = []
+    for path in bundle.rglob("*"):
+        if path.is_file() and _is_callwarden_core_file(path.name):
+            core_files.append(path)
     if not core_files:
         # 文件存在性由 _check_callwarden_core_present 负责，这里直接返回
         return errors

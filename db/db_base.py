@@ -11,7 +11,13 @@ db.py
 from __future__ import annotations
 from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin, CoverageMixin
-from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser
+# R2-P0-3: parsers 导入链断开 tree_sitter 依赖
+# ModuleResolver / CallResolver 不依赖 tree_sitter（仅 base.py 依赖，已改为懒加载）。
+# RustParser / create_parser 不在顶层导入：RustParser 实例化会触发 tree_sitter_rust
+# 导入，local wheel / frozen bundle 不安装 parser-reference extra 时会失败。
+# 改为在使用点（_init_parser）懒加载 + guarded，让 CodeGraphDB 在无 tree_sitter
+# 环境下可正常初始化（Rust 模块结构发现降级为不可用）。
+from ..parsers import ModuleResolver, CallResolver
 from .schema import SCHEMA_SQL, SCHEMA_VERSION, SCHEMA_TABLES_SQL, SCHEMA_INDEXES_SQL
 from .. import config as _config_module
 import sys
@@ -2129,10 +2135,13 @@ class CodeGraphBase:
         self.conn.execute("PRAGMA mmap_size=268435456")
         self.conn.execute("PRAGMA locking_mode=NORMAL")
         self.conn.execute("PRAGMA foreign_keys=OFF")
-        self.parser = RustParser()
-
-        self.module_resolver = ModuleResolver(self.workspace_root)
-        self.call_resolver = CallResolver(self.module_resolver, self.parser)
+        # R2-P0-3: parser/resolvers 懒加载 + guarded
+        # local wheel 无 parser-reference extra（无 tree_sitter_rust）或
+        # frozen bundle 排除 callwarden.parsers 时，降级为 None。
+        # 生产解析走 RustParserFacade（Rust 扩展），此处仅用于 Rust mod_decls
+        # 模块结构发现，不可用时 build 路径跳过 mod_decls 提取。
+        self.parser = self._try_init_rust_parser()
+        self.module_resolver, self.call_resolver = self._try_init_resolvers()
 
         # B-P7b: GraphStore 查询加速层（懒加载 + 延迟失效）
         # 首次查询时从 SQLite 加载到内存 CSR
@@ -2155,6 +2164,36 @@ class CodeGraphBase:
 
         self._init_schema()
         self._init_workspace()
+
+    def _try_init_rust_parser(self):
+        """R2-P0-3: 懒加载 Python RustParser（仅用于 ModuleResolver 模块结构发现）。
+
+        生产解析走 RustParserFacade（Rust 扩展），此处仅用于 Rust mod_decls 提取。
+        tree_sitter_rust 不可用（local wheel 未安装 parser-reference extra）时
+        返回 None，build 路径会跳过 mod_decls 提取。
+        """
+        try:
+            from ..parsers.rust import RustParser
+            return RustParser()
+        except (ImportError, ModuleNotFoundError):
+            return None
+
+    def _try_init_resolvers(self):
+        """R2-P0-3: 懒加载 ModuleResolver / CallResolver。
+
+        callwarden.parsers 不可用（frozen bundle 排除）或 self.parser 为 None
+        时返回 (None, None)。生产解析走 RustParserFacade，resolvers 仅用于
+        Rust 模块结构发现和调用关系解析的 Python reference 路径。
+        """
+        if self.parser is None:
+            return None, None
+        try:
+            from ..parsers import ModuleResolver, CallResolver
+            mr = ModuleResolver(self.workspace_root)
+            cr = CallResolver(mr, self.parser)
+            return mr, cr
+        except (ImportError, ModuleNotFoundError):
+            return None, None
 
     def _get_workspace_id(self) -> int:
         """获取当前活动 workspace 的数字 ID（P0-2 整改：用于 GraphStore SQL 过滤）。
@@ -2796,9 +2835,7 @@ class CodeGraphBase:
         if row["is_active"] == 1:
             self.active_workspace = dict(row)
             self.workspace_root = row["root_path"]
-            self.module_resolver = ModuleResolver(self.workspace_root)
-            self.call_resolver = CallResolver(
-                self.module_resolver, self.parser)
+            self.module_resolver, self.call_resolver = self._try_init_resolvers()
             return True
 
         # 取消其他工作区的活动状态
@@ -2811,8 +2848,7 @@ class CodeGraphBase:
 
         self.active_workspace = dict(row)
         self.workspace_root = row["root_path"]
-        self.module_resolver = ModuleResolver(self.workspace_root)
-        self.call_resolver = CallResolver(self.module_resolver, self.parser)
+        self.module_resolver, self.call_resolver = self._try_init_resolvers()
 
         return True
 

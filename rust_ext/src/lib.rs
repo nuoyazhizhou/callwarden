@@ -35,6 +35,8 @@ mod metrics;
 // P0-C Step 0: multi_lang 改为 pub(crate) 以便 languages 子模块复用类型
 // (LangConfig/SymbolRule/CallRule/NameStrategy 等)
 pub(crate) mod multi_lang;
+// R1-P0-2: ParseDiagnostics 由 multi_lang 模块定义，lib.rs 的 ParseResult 引用之
+pub(crate) use multi_lang::ParseDiagnostics;
 // P0-C Step 0: 按语言拆分的配置模块（languages/typescript.rs 等）
 mod languages;
 // R7: cw_daemon 需要 SnapshotCache 类型（daemon/snapshot_state.rs 中使用）
@@ -64,6 +66,9 @@ pub struct ParseResult {
     /// raw_calls 记录完整 traversal 文本（向后兼容 Python parser 行为）
     pub references: Vec<RawReference>,
     pub error: Option<String>,
+    /// R1-P0-2: ParseFact ABI 诊断字段（syntax error / unsupported / partial / fatal）
+    /// 替代旧 `error` 字段用于结构化诊断；`error` 保留以兼容旧调用方。
+    pub diagnostics: ParseDiagnostics,
 }
 
 /// P0-D: 声明式引用（HCL attribute traversal）
@@ -96,6 +101,14 @@ pub struct SymbolInfo {
     pub visibility: String,
     pub content: String, // 符号源码内容
     pub signature: String,
+    /// R1-P0-2: ParseFact ABI — 文件内稳定符号 ID（按 byte_start 排序后 0-based）
+    pub local_id: u32,
+    /// R1-P0-2: 词法父符号的 local_id（-1 = 顶层，无父符号）
+    pub lexical_parent_local_id: i32,
+    /// R1-P0-2: 符号在文件字节流中的起始偏移（canonical bytes 偏移）
+    pub byte_start: u32,
+    /// R1-P0-2: 符号在文件字节流中的结束偏移（exclusive）
+    pub byte_end: u32,
 }
 
 /// 原始调用关系（parse 阶段提取，未解析）
@@ -107,6 +120,14 @@ pub struct RawCall {
     pub caller_qualified: String,
     pub call_line: u32,
     pub is_cross_file: bool,
+    /// R1-P0-2: ParseFact ABI — 调用者符号的 local_id（0 表示未解析到符号）
+    pub caller_local_id: u32,
+    /// R1-P0-2: 同一调用者内 call 序号（0-based，按 byte_start 排序）
+    pub ordinal: u32,
+    /// R1-P0-2: call 表达式的字节起始偏移
+    pub byte_start: u32,
+    /// R1-P0-2: call 表达式的字节结束偏移（exclusive）
+    pub byte_end: u32,
 }
 
 // ============================================
@@ -142,6 +163,7 @@ impl CParser {
                     imports: Vec::new(),
                     references: Vec::new(),
                     error: Some(format!("read error: {}", e)),
+                    diagnostics: ParseDiagnostics::failed(&format!("read error: {}", e)),
                 };
             }
         };
@@ -160,6 +182,7 @@ impl CParser {
                 imports: Vec::new(),
                 references: Vec::new(),
                 error: Some("set_language failed".to_string()),
+                diagnostics: ParseDiagnostics::failed("set_language failed"),
             };
         }
 
@@ -178,6 +201,7 @@ impl CParser {
                     imports: Vec::new(),
                     references: Vec::new(),
                     error: Some("parse returned None".to_string()),
+                    diagnostics: ParseDiagnostics::failed("parse returned None"),
                 };
             }
         };
@@ -200,6 +224,15 @@ impl CParser {
             &mut imports,
         );
 
+        // R1-P0-2: ParseFact ABI 后处理 — 赋值 local_id / lexical_parent_local_id /
+        // caller_local_id / ordinal（按 byte_start 排序，通过 byte range 包含关系
+        // 推导父子与调用者）
+        assign_local_ids(&mut symbols, &mut calls);
+
+        // R1-P0-2: 计算语法错误数（has_error 节点计数），构造 ParseDiagnostics
+        let syntax_error_count = count_syntax_errors(&root);
+        let diagnostics = ParseDiagnostics::from_syntax_count(syntax_error_count, None);
+
         ParseResult {
             rel_path: String::new(),
             abs_path: abs_path.to_string(),
@@ -212,8 +245,123 @@ impl CParser {
             imports,
             references: Vec::new(),
             error: None,
+            diagnostics,
         }
     }
+}
+
+// ============================================
+// R1-P0-2: ParseFact ABI 后处理 — local_id / parent / ordinal 赋值
+// ============================================
+
+/// 为 symbols 和 calls 赋值 ParseFact ABI 的 local_id / lexical_parent_local_id /
+/// caller_local_id / ordinal 字段。
+///
+/// 算法：
+/// 1. 按 (byte_start, byte_end) 升序排序 symbols（稳定排序）
+/// 2. local_id = 排序后的索引（0-based）
+/// 3. 对每个 symbol S，找词法父：byte_start < S.byte_start 且 byte_end > S.byte_end
+///    且自身 byte 范围最小的 symbol（最内层包含者）
+/// 4. 对每个 call C，按 caller_qualified 匹配找到对应 symbol，写入 caller_local_id
+/// 5. 对每个 caller_local_id，按 byte_start 升序赋值 ordinal（0-based）
+///
+/// 设计要点：通过 byte range 包含关系推导父子，避免在递归 walk 中传递状态。
+pub(crate) fn assign_local_ids(symbols: &mut Vec<SymbolInfo>, calls: &mut Vec<RawCall>) {
+    if symbols.is_empty() {
+        return;
+    }
+
+    // 1. 按 (byte_start, byte_end) 排序并赋 local_id
+    symbols.sort_by(|a, b| {
+        a.byte_start
+            .cmp(&b.byte_start)
+            .then(a.byte_end.cmp(&b.byte_end))
+    });
+    for (idx, sym) in symbols.iter_mut().enumerate() {
+        sym.local_id = idx as u32;
+    }
+
+    // 2. 对每个 symbol，找最内层包含者作为词法父
+    //    O(n^2) 但 n 通常为文件级符号数（< 1000），可接受
+    for i in 0..symbols.len() {
+        let (cur_start, cur_end) = (symbols[i].byte_start, symbols[i].byte_end);
+        let mut best_parent: i32 = -1;
+        let mut best_parent_end: u32 = u32::MAX;
+        for j in 0..symbols.len() {
+            if i == j {
+                continue;
+            }
+            let (p_start, p_end) = (symbols[j].byte_start, symbols[j].byte_end);
+            // 父必须严格包含 cur（byte_start < cur.byte_start 且 byte_end >= cur.byte_end）
+            // 严格 < 避免同位置重叠；end 可以等于（同位置起止）
+            if p_start < cur_start && p_end >= cur_end && p_end < best_parent_end {
+                best_parent = symbols[j].local_id as i32;
+                best_parent_end = p_end;
+            }
+        }
+        symbols[i].lexical_parent_local_id = best_parent;
+    }
+
+    // 3. 构造 caller_qualified -> local_id 映射
+    use std::collections::HashMap;
+    let mut caller_map: HashMap<String, u32> = HashMap::new();
+    for s in symbols.iter() {
+        // 用第一个匹配的 local_id（按 byte_start 排序后是最靠前的）
+        caller_map
+            .entry(s.qualified_name.clone())
+            .or_insert(s.local_id);
+    }
+
+    // 4. 为每个 call 赋 caller_local_id 和 ordinal
+    //    先按 caller_local_id 分组，组内按 byte_start 排序赋 ordinal
+    for c in calls.iter_mut() {
+        if let Some(&lid) = caller_map.get(&c.caller_qualified) {
+            c.caller_local_id = lid;
+        } else {
+            c.caller_local_id = 0;
+        }
+    }
+    // 组内按 byte_start 排序赋 ordinal
+    calls.sort_by(|a, b| {
+        a.caller_local_id
+            .cmp(&b.caller_local_id)
+            .then(a.byte_start.cmp(&b.byte_start))
+    });
+    let mut current_caller: u32 = u32::MAX;
+    let mut ordinal_counter: u32 = 0;
+    for c in calls.iter_mut() {
+        if c.caller_local_id != current_caller {
+            current_caller = c.caller_local_id;
+            ordinal_counter = 0;
+        }
+        c.ordinal = ordinal_counter;
+        ordinal_counter += 1;
+    }
+}
+
+/// 递归统计 tree-sitter AST 中的 ERROR / MISSING 节点数（语法错误指标）
+///
+/// 使用 has_error() 快速剪枝：子树无 error 时直接跳过。
+/// tree-sitter 的 ERROR 节点 unnamed，需用 children() 而非 named_children() 遍历。
+pub(crate) fn count_syntax_errors(root: &Node) -> u32 {
+    let mut count = 0u32;
+    let mut stack = vec![*root];
+    while let Some(node) = stack.pop() {
+        if !node.has_error() {
+            continue;
+        }
+        // 当前节点是 ERROR 或 MISSING → 计数
+        if node.kind() == "ERROR" || node.is_missing() {
+            count += 1;
+            continue; // ERROR 子节点通常是 token，不再深入
+        }
+        // 遍历所有子节点（含 unnamed，因为 ERROR 是 unnamed）
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+    count
 }
 
 /// 递归遍历 C AST，提取符号和调用关系
@@ -396,6 +544,12 @@ fn parse_c_function(
         visibility: "public".to_string(),
         content,
         signature: String::new(),
+        // R1-P0-2: ParseFact ABI — byte range 直接从 AST 节点取；
+        // local_id / lexical_parent_local_id 由 assign_local_ids 后处理填入
+        local_id: 0,
+        lexical_parent_local_id: -1,
+        byte_start: node.start_byte() as u32,
+        byte_end: node.end_byte() as u32,
     })
 }
 
@@ -433,6 +587,11 @@ fn parse_c_struct(
         visibility: "public".to_string(),
         content: node_text(node, source).to_string(),
         signature: String::new(),
+        // R1-P0-2: ParseFact ABI 字段
+        local_id: 0,
+        lexical_parent_local_id: -1,
+        byte_start: node.start_byte() as u32,
+        byte_end: node.end_byte() as u32,
     })
 }
 
@@ -468,6 +627,11 @@ fn parse_c_enum(
         visibility: "public".to_string(),
         content: node_text(node, source).to_string(),
         signature: String::new(),
+        // R1-P0-2: ParseFact ABI 字段
+        local_id: 0,
+        lexical_parent_local_id: -1,
+        byte_start: node.start_byte() as u32,
+        byte_end: node.end_byte() as u32,
     })
 }
 
@@ -517,6 +681,12 @@ fn extract_calls_from_function(
                         caller_qualified: caller_qualified.to_string(),
                         call_line: child.start_position().row as u32 + 1,
                         is_cross_file: false,
+                        // R1-P0-2: ParseFact ABI 字段
+                        // caller_local_id / ordinal 由 assign_local_ids 后处理填入
+                        caller_local_id: 0,
+                        ordinal: 0,
+                        byte_start: child.start_byte() as u32,
+                        byte_end: child.end_byte() as u32,
                     });
                 }
             }
@@ -676,6 +846,11 @@ pub(crate) fn parse_result_to_pydict<'py>(
             d.set_item("visibility", s.visibility.clone()).ok();
             d.set_item("content", s.content.clone()).ok();
             d.set_item("signature", s.signature.clone()).ok();
+            // R1-P0-2: ParseFact ABI 字段
+            d.set_item("local_id", s.local_id).ok();
+            d.set_item("lexical_parent_local_id", s.lexical_parent_local_id).ok();
+            d.set_item("byte_start", s.byte_start).ok();
+            d.set_item("byte_end", s.byte_end).ok();
             d.into_any().into_bound()
         })
         .collect();
@@ -694,6 +869,11 @@ pub(crate) fn parse_result_to_pydict<'py>(
                 .ok();
             d.set_item("call_line", c.call_line).ok();
             d.set_item("is_cross_file", c.is_cross_file).ok();
+            // R1-P0-2: ParseFact ABI 字段
+            d.set_item("caller_local_id", c.caller_local_id).ok();
+            d.set_item("ordinal", c.ordinal).ok();
+            d.set_item("byte_start", c.byte_start).ok();
+            d.set_item("byte_end", c.byte_end).ok();
             d.into_any().into_bound()
         })
         .collect();
@@ -720,6 +900,20 @@ pub(crate) fn parse_result_to_pydict<'py>(
     if let Some(err) = &r.error {
         dict.set_item("error", err.clone())?;
     }
+
+    // R1-P0-2: diagnostics 字段（ParseFact ABI 诊断）
+    let diag = PyDict::new(py);
+    diag.set_item("status", r.diagnostics.status.clone())?;
+    diag.set_item("syntax_error_count", r.diagnostics.syntax_error_count)?;
+    diag.set_item("unsupported_construct_count", r.diagnostics.unsupported_construct_count)?;
+    diag.set_item("partial_parse", r.diagnostics.partial_parse)?;
+    if let Some(fatal) = &r.diagnostics.fatal_parse_error {
+        diag.set_item("fatal_parse_error", fatal.clone())?;
+    }
+    if let Some(err) = &r.diagnostics.error {
+        diag.set_item("error", err.clone())?;
+    }
+    dict.set_item("diagnostics", diag)?;
 
     Ok(dict.into_any().into_bound())
 }

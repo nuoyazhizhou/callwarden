@@ -27,9 +27,12 @@ use super::dispatch::{
     get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
     DaemonStateExt, PeerCredential,
 };
+use super::parse_retry_log::ParseRetryLog;
+use super::parser_metrics::ParserMetrics;
 use super::replicator::{
     daemon_handle_connect, daemon_handle_refresh, RefreshMessage, SessionStore,
 };
+use super::snapshot_guard::evaluate_generation_protection;
 use super::staging_log::{StagingEntry, StagingLog};
 
 /// workspace registry schema DDL（与 Python db_daemon.py:WORKSPACE_REGISTRY_DDL 一致）
@@ -739,6 +742,10 @@ pub struct WorkspaceResources {
     pub cas_store: Arc<CasStore>,
     /// staging log（追加写入 pending entries，replicate 后标记 applied）
     pub staging_log: Arc<StagingLog>,
+    /// P0-4 R3: parser metrics（parse_total / parse_ok / parse_failed / ...）
+    pub parser_metrics: Arc<ParserMetrics>,
+    /// P0-4 R3: parse retry log（持久化失败 generation，daemon 重启后重放）
+    pub parse_retry_log: Arc<ParseRetryLog>,
 }
 
 impl WorkspaceDaemonState {
@@ -850,10 +857,26 @@ impl WorkspaceDaemonState {
                 )
             })?;
 
+        // P0-4 R3: 初始化 ParserMetrics（per-workspace，进程内原子计数器）
+        let parser_metrics = Arc::new(ParserMetrics::new());
+
+        // P0-4 R3: 打开 ParseRetryLog（parse_retry.log，JSONL 持久化失败 generation）
+        // daemon 重启后可重放 pending entries（replay_pending），实现失败恢复
+        let parse_retry_log_path = ws_dir.join("parse_retry.log");
+        let parse_retry_log =
+            ParseRetryLog::new(parse_retry_log_path.to_string_lossy().as_ref()).map_err(|e| {
+                DaemonRpcError::new(
+                    "resources_init_failed",
+                    format!("ParseRetryLog::new 失败: {}", e),
+                )
+            })?;
+
         let resources = Arc::new(WorkspaceResources {
             session_store: Arc::new(session_store),
             cas_store: Arc::new(cas_store),
             staging_log: Arc::new(staging_log),
+            parser_metrics,
+            parse_retry_log: Arc::new(parse_retry_log),
         });
         self.resources
             .insert(workspace_instance_id.to_string(), Arc::clone(&resources));
@@ -885,6 +908,25 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let checker = super::health::HealthChecker::new(config);
         let mut result = checker.check_all();
 
+        // R3 P0-4: 聚合 per-workspace parser_metrics + parse_retry_log pending 数
+        // 让 doctor / metrics 接入主链后可通过 health 端点观测
+        let mut parser_metrics_array = Vec::new();
+        let mut total_pending_retries: u64 = 0;
+        for (ws_id, resources) in &self.resources {
+            let metrics_snapshot = resources.parser_metrics.snapshot();
+            let pending_count = resources
+                .parse_retry_log
+                .read_pending()
+                .map(|v| v.len() as u64)
+                .unwrap_or(0);
+            total_pending_retries += pending_count;
+            parser_metrics_array.push(serde_json::json!({
+                "workspace_instance_id": ws_id,
+                "metrics": metrics_snapshot,
+                "pending_retries": pending_count,
+            }));
+        }
+
         // 追加向后兼容字段
         if let Some(obj) = result.as_object_mut() {
             obj.insert("pid".to_string(), Value::Number(state.pid.into()));
@@ -895,6 +937,15 @@ impl DaemonStateExt for WorkspaceDaemonState {
             obj.insert(
                 "workspace_count".to_string(),
                 Value::Number(workspace_count.into()),
+            );
+            // R3 P0-4: parser metrics + retry log 接入 health
+            obj.insert(
+                "parser_metrics".to_string(),
+                Value::Array(parser_metrics_array),
+            );
+            obj.insert(
+                "total_pending_retries".to_string(),
+                Value::Number(total_pending_retries.into()),
             );
         }
 
@@ -1025,7 +1076,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
             agent_session_id: agent_session_id.clone(),
             monotonic_seq,
             session_epoch,
-            abs_path,
+            abs_path: abs_path.clone(),
         };
 
         // G8-T3：提取 canonical_bytes（优先 FD，次选 hex/b64）
@@ -1179,6 +1230,106 @@ impl DaemonStateExt for WorkspaceDaemonState {
         );
         if let Some(cas_result) = &result.cas_result {
             response.insert("cas_result".to_string(), cas_result.clone());
+        }
+
+        // P0-4 R3: 失败 generation 保护 + retry log + metrics 接入 daemon 主链
+        //
+        // 复审报告 §P0-4：SnapshotGenerationGuard / ParseRetryLog / ParserMetrics
+        // 原本只是孤立模块，未接入 dispatch/workspace/replicator 主链。失败状态
+        // （parse_failed / unsupported_language / cas_lookup_failed 等）仍返回
+        // status="committed"，继续追加 staging entry 并 committed + replicate。
+        //
+        // 本块接入：
+        // 1. 从 result.cas_result 提取 cas_state
+        // 2. 调用 snapshot_guard::evaluate_generation_protection 评估是否保护
+        // 3. 记录 parser_metrics（无论成功/失败，都记录 parse_total + 状态分桶）
+        // 4. 若 protection.blocked：
+        //    - allows_retry=true（parse_failed/canonicalize_failed/publish_failed/
+        //      cas_lookup_failed/no_abs_path/no_cas_conn）→ append ParseRetryLog
+        //      持久化失败 generation，daemon 重启后 replay_pending 重放
+        //    - allows_retry=false（unsupported_language / dirty_overlay）→
+        //      不重试（unsupported 不发布空图谱，dirty_overlay 路径不进 CAS）
+        //    - 更新 response 为 "blocked"，跳过 staging entry + committed + replicate
+        let cas_state_str: String = result
+            .cas_result
+            .as_ref()
+            .and_then(|c| c.get("cas_state"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let abs_path_for_guard: String = abs_path
+            .clone()
+            .unwrap_or_else(|| rel_path.clone());
+        let protection = evaluate_generation_protection(
+            &cas_state_str,
+            &abs_path_for_guard,
+            &rel_path,
+        );
+
+        // 记录 parser_metrics（R3 接入主链）
+        // parse_status 映射：protection.parse_status 已是 "ok"/"partial"/"failed"/
+        // "unsupported"/"stale" 之一
+        let parse_status_for_metrics = protection.parse_status.as_str();
+        let bytes_parsed = canonical_bytes.as_ref().map(|b| b.len() as u64).unwrap_or(0);
+        resources.parser_metrics.record_parse(
+            parse_status_for_metrics,
+            0.0, // latency_ms 留空（daemon_handle_refresh 内部不计时，未来可补）
+            bytes_parsed,
+            if protection.blocked {
+                Some(super::parser_metrics::FailureLabel {
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs_f64())
+                        .unwrap_or(0.0),
+                    workspace_id: workspace_instance_id.to_string(),
+                    rel_path: rel_path.clone(),
+                    generation: result.generation.clone(),
+                    language: get_str_param_or(params, "language", "").to_string(),
+                    parse_status: protection.parse_status.clone(),
+                    reason: format!("{} (cas_state={})", protection.reason, cas_state_str),
+                })
+            } else {
+                None
+            },
+        );
+
+        if protection.blocked {
+            // 失败保护：不追加 staging entry，不 committed，不 replicate
+            // allows_retry=true → append ParseRetryLog 持久化，daemon 重启后重放
+            if protection.allows_retry {
+                let mut failure_entry = super::parse_retry_log::ParseFailureEntry::new(
+                    workspace_instance_id,
+                    &rel_path,
+                    &abs_path_for_guard,
+                    &result.generation,
+                    &get_str_param_or(params, "language", ""),
+                    protection.parse_status.as_str(),
+                    &cas_state_str,
+                    &protection.reason,
+                    protection.allows_retry,
+                );
+                if let Err(e) = resources.parse_retry_log.append(&mut failure_entry) {
+                    eprintln!(
+                        "[P0-4 R3] parse_retry_log::append 失败 for {}: {}",
+                        rel_path, e
+                    );
+                }
+            }
+
+            // 更新 response 反映 blocked 状态
+            response.insert(
+                "status".to_string(),
+                Value::String("blocked".to_string()),
+            );
+            response.insert(
+                "protection".to_string(),
+                protection.to_json(),
+            );
+            response.insert(
+                "snapshot_published".to_string(),
+                Value::Bool(false),
+            );
+            return Ok(Value::Object(response));
         }
 
         // committed 时追加 staging entry 并触发 replicate（与 Python L404-420 一致）
@@ -1558,7 +1709,11 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         .and_then(|s| s.as_str()) {
                         Some("merged") | Some("no_symbols") => true,
                         Some("cas_miss") | Some("error") | Some("open_failed") => false,
-                        None => true, // 无 merge_summary（db_path 为空或无 cas_result）→ 视为 ok（无 merge 需要）
+                        // R3 P0-4 修复：None 仅出现在 db_path 为空或无 cas_result 场景。
+                        // 失败状态（parse_failed / unsupported_language 等）已在
+                        // 上方 evaluate_generation_protection 拦截，不会到达此处。
+                        // None 在此处表示"无需 merge"（无 CAS store 或无 cas_result），视为 ok。
+                        None => true,
                         Some(_) => true, // 未知 status，保守视为 ok
                     };
 
@@ -2095,6 +2250,15 @@ mod tests {
     /// 构造一个 peer_uid = current_uid() 的 peer（用于注册操作以匹配 tempdir owner）
     fn make_owner_peer() -> PeerCredential {
         make_peer(current_uid())
+    }
+
+    /// R3 P0-4: 生成有效的 Rust canonical bytes hex（供 refresh 测试使用）
+    ///
+    /// 复审报告 §P0-4 指出：原测试不提供 canonical_bytes，依赖 no_abs_path
+    /// 的假 committed 行为。R3 接入失败保护后，no_abs_path 会被 blocked。
+    /// 本 helper 提供最小有效 Rust 源码的 hex 编码，让测试走真实 happy path。
+    fn rust_canon_hex() -> String {
+        hex::encode(b"pub fn main() {}\n")
     }
 
     /// 构造一个 peer_uid != current_uid() 的 peer（用于验证非 owner 被拒绝）
@@ -3155,7 +3319,8 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": epoch,
                 "content_hash": "abc123",
-                "language": "rust"
+                "language": "rust",
+                "canonical_bytes_hex": rust_canon_hex()
             }),
             &[],
         );
@@ -3188,7 +3353,8 @@ mod tests {
                 "monotonic_seq": 1,
                 "session_epoch": epoch,
                 "content_hash": "abc123",
-                "language": "rust"
+                "language": "rust",
+                "canonical_bytes_hex": rust_canon_hex()
             }),
             &[],
         );
@@ -3237,6 +3403,266 @@ mod tests {
         );
         assert_eq!(response["ok"], true, "hex 路径应正常工作");
         assert_eq!(response["result"]["status"], "committed");
+    }
+
+    #[test]
+    fn test_refresh_parse_failure_is_blocked_not_committed() {
+        // R3 P0-4: 失败 generation 保护 E2E
+        //
+        // 复审报告 §P0-4：原实现中 _daemon_parse_and_publish 返回 parse_failed /
+        // unsupported_language / cas_lookup_failed 时，daemon_handle_refresh 仍返回
+        // status="committed"，workspace.rs 继续追加 staging entry + committed + replicate。
+        //
+        // R3 接入 evaluate_generation_protection 后：
+        // - parse_failed/canonicalize_failed/publish_failed/cas_lookup_failed/no_abs_path/
+        //   no_cas_conn → blocked=true, allows_retry=true → append ParseRetryLog
+        // - unsupported_language → blocked=true, allows_retry=false → 不重试
+        // - dirty_overlay → blocked=true, allows_retry=false → 不进 CAS
+        //
+        // 本测试验证：不提供 canonical_bytes 且不提供 abs_path → cas_state=no_abs_path
+        // → response.status="blocked"（不是 "committed"），protection.blocked=true，
+        // protection.allows_retry=true，parse_retry.log 持久化失败 entry。
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 不提供 canonical_bytes_hex / canonical_bytes_b64 / abs_path
+        // → _daemon_parse_and_publish 返回 cas_state="no_abs_path"
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "content_hash": "abc123",
+                "language": "rust"
+                // 故意不提供 canonical_bytes_hex / abs_path
+            }),
+            &[],
+        );
+
+        // 关键断言：status 应为 "blocked"，不是 "committed"
+        assert_eq!(response["ok"], true);
+        let status = response["result"]["status"].as_str().unwrap();
+        assert_eq!(
+            status, "blocked",
+            "R3 P0-4: parse 失败应返回 blocked，实际: {}（旧实现会假 committed）",
+            status
+        );
+
+        // protection 字段应存在且 blocked=true
+        let protection = &response["result"]["protection"];
+        assert_eq!(protection["blocked"], true, "protection.blocked 应为 true");
+        assert_eq!(
+            protection["allows_retry"], true,
+            "no_abs_path 应 allows_retry=true（可重试）"
+        );
+        assert_eq!(
+            protection["parse_status"], "failed",
+            "parse_status 应为 failed"
+        );
+
+        // cas_result 应包含 cas_state="no_abs_path"
+        assert_eq!(
+            response["result"]["cas_result"]["cas_state"], "no_abs_path",
+            "cas_state 应为 no_abs_path"
+        );
+
+        // snapshot_published 应为 false
+        assert_eq!(response["result"]["snapshot_published"], false);
+
+        // 不应有 replication 字段（blocked 时跳过 staging + replicate）
+        assert!(
+            response["result"].get("replication").is_none()
+                || response["result"]["replication"].is_null(),
+            "blocked 时不应触发 replication"
+        );
+    }
+
+    #[test]
+    fn test_refresh_unsupported_language_is_blocked_no_retry() {
+        // R3 P0-4: unsupported_language 应 blocked 但 allows_retry=false
+        // 不发布空图谱，也不写入 parse_retry.log
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // .txt 文件 → unsupported_language
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "README.txt",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "canonical_bytes_hex": hex::encode(b"hello\n")
+            }),
+            &[],
+        );
+
+        assert_eq!(response["ok"], true);
+        let status = response["result"]["status"].as_str().unwrap();
+        assert_eq!(status, "blocked", "unsupported 应 blocked");
+
+        let protection = &response["result"]["protection"];
+        assert_eq!(protection["blocked"], true);
+        assert_eq!(
+            protection["allows_retry"], false,
+            "unsupported 不应允许重试（不发布空图谱）"
+        );
+        assert_eq!(protection["parse_status"], "unsupported");
+    }
+
+    #[test]
+    fn test_refresh_dirty_overlay_is_blocked() {
+        // R3 P0-4: dirty overlay 路径应被 blocked，不进入 Global CAS
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // .git/ 路径 → dirty overlay
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": ".git/HEAD",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "canonical_bytes_hex": hex::encode(b"ref: refs/heads/main\n")
+            }),
+            &[],
+        );
+
+        assert_eq!(response["ok"], true);
+        let status = response["result"]["status"].as_str().unwrap();
+        assert_eq!(status, "blocked", "dirty overlay 应 blocked");
+
+        let protection = &response["result"]["protection"];
+        assert_eq!(protection["blocked"], true);
+        assert_eq!(protection["dirty_overlay"], true);
+        assert_eq!(
+            protection["allows_retry"], false,
+            "dirty overlay 不应重试"
+        );
+    }
+
+    #[test]
+    fn test_refresh_blocked_writes_parse_retry_log() {
+        // R3 P0-4: allows_retry=true 的失败应持久化到 parse_retry.log
+        // daemon 重启后可 replay_pending 重放
+        let tmp = tempfile::tempdir().unwrap();
+        let data_root = tmp.path().to_path_buf();
+        let mut state = make_state_with_data_root(&data_root);
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 触发 no_abs_path（allows_retry=true）
+        let _response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "language": "rust"
+            }),
+            &[],
+        );
+
+        // 验证 parse_retry.log 已写入
+        // workspace 目录路径：$data_root/$workspace_instance_id/parse_retry.log
+        let ws_dir = data_root.join(ws_id);
+        let retry_log_path = ws_dir.join("parse_retry.log");
+        assert!(
+            retry_log_path.exists(),
+            "parse_retry.log 应存在：{:?}",
+            retry_log_path
+        );
+
+        // 读取并验证内容
+        let log_content = std::fs::read_to_string(&retry_log_path).unwrap();
+        assert!(
+            log_content.contains("no_abs_path"),
+            "parse_retry.log 应包含 cas_state=no_abs_path：{}",
+            log_content
+        );
+        assert!(
+            log_content.contains("src/main.rs"),
+            "parse_retry.log 应包含 rel_path=src/main.rs：{}",
+            log_content
+        );
+    }
+
+    #[test]
+    fn test_health_includes_parser_metrics_and_retries() {
+        // R3 P0-4: health 端点应包含 parser_metrics + total_pending_retries
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let (ws_id, epoch) = setup_connected_workspace(&mut state, peer, "session-1");
+
+        // 触发一次 blocked refresh（no_abs_path）
+        let _ = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.refresh",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/main.rs",
+                "agent_session_id": "session-1",
+                "monotonic_seq": 1,
+                "session_epoch": epoch,
+                "language": "rust"
+            }),
+            &[],
+        );
+
+        // 调用 health
+        let health = dispatch(
+            &mut state,
+            make_owner_peer(),
+            "health",
+            &json!({}),
+            &[],
+        );
+
+        assert_eq!(health["ok"], true);
+        // parser_metrics 数组应存在且至少 1 个 workspace
+        let metrics_array = health["result"]["parser_metrics"].as_array();
+        assert!(
+            metrics_array.is_some(),
+            "health 应包含 parser_metrics 数组"
+        );
+        let metrics_array = metrics_array.unwrap();
+        assert!(
+            !metrics_array.is_empty(),
+            "parser_metrics 应至少有 1 个 workspace 条目"
+        );
+
+        // 第一个 workspace 的 metrics 应包含 parse_total=1, parse_failed=1
+        let first = &metrics_array[0];
+        assert_eq!(first["metrics"]["parse_total"], 1);
+        assert_eq!(first["metrics"]["parse_failed"], 1);
+        assert_eq!(first["pending_retries"], 1);
+
+        // total_pending_retries 应为 1
+        assert_eq!(health["result"]["total_pending_retries"], 1);
     }
 
     #[test]
@@ -3316,7 +3742,8 @@ mod tests {
                 "rel_path": "src/main.rs",
                 "agent_session_id": "session-1",
                 "monotonic_seq": 5,
-                "session_epoch": epoch
+                "session_epoch": epoch,
+                "canonical_bytes_hex": rust_canon_hex()
             }),
             &[],
         );
@@ -3360,7 +3787,8 @@ mod tests {
                 "rel_path": "src/main.rs",
                 "agent_session_id": "session-1",
                 "monotonic_seq": 1,
-                "session_epoch": epoch
+                "session_epoch": epoch,
+                "canonical_bytes_hex": rust_canon_hex()
             }),
             &[],
         );
@@ -3376,7 +3804,8 @@ mod tests {
                 "rel_path": "src/main.rs",
                 "agent_session_id": "session-1",
                 "monotonic_seq": 10,
-                "session_epoch": epoch
+                "session_epoch": epoch,
+                "canonical_bytes_hex": rust_canon_hex()
             }),
             &[],
         );
@@ -3543,7 +3972,8 @@ mod tests {
                 "rel_path": "src/main.rs",
                 "agent_session_id": "session-1",
                 "monotonic_seq": 1,
-                "session_epoch": epoch
+                "session_epoch": epoch,
+                "canonical_bytes_hex": rust_canon_hex()
             }),
             &[],
         );
@@ -3559,7 +3989,8 @@ mod tests {
                 "rel_path": "src/main.rs",
                 "agent_session_id": "session-1",
                 "monotonic_seq": 2,
-                "session_epoch": epoch
+                "session_epoch": epoch,
+                "canonical_bytes_hex": rust_canon_hex()
             }),
             &[],
         );

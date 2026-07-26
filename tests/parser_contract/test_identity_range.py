@@ -235,7 +235,8 @@ class TestParentAlignment:
         已知差异用 Counter 相减处理（与 KNOWN_SYMBOL_DIFFS 同步）。
         """
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
         py_parents = Counter()
@@ -304,7 +305,8 @@ class TestLineRangeValidity:
     def test_symbol_line_range_valid(self, lang, filename, content, tmp_path):
         """所有 symbol 的 line_start <= line_end 且在源码范围内。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
         source_lines = content.count("\n") + 1
@@ -329,7 +331,8 @@ class TestLineRangeValidity:
     def test_call_line_valid(self, lang, filename, content, tmp_path):
         """所有 call 的 call_line 在源码行数范围内。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
         source_lines = content.count("\n") + 1
@@ -360,7 +363,7 @@ class TestSymbolHashConsistency:
     def test_rust_symbol_hash_nonempty(self, lang, filename, content, tmp_path):
         """Rust 所有 symbol 的 symbol_hash 必须非空。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        path.write_bytes(content.encode("utf-8"))
         _, rs_result = _parse_both(str(path), lang)
 
         for i, s in enumerate(rs_result["symbols"]):
@@ -372,7 +375,7 @@ class TestSymbolHashConsistency:
     def test_rust_symbol_hash_deterministic(self, lang, filename, content, tmp_path):
         """同一文件两次解析，symbol_hash 必须一致（确定性）。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        path.write_bytes(content.encode("utf-8"))
 
         if lang == "c":
             from callwarden_core import parse_c_file
@@ -399,7 +402,7 @@ class TestSymbolHashConsistency:
         同名同内容符号可以共享 hash，但不同内容符号应有不同 hash。
         """
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        path.write_bytes(content.encode("utf-8"))
         _, rs_result = _parse_both(str(path), lang)
 
         # 按 (name, start_line, end_line) 去重，检查不同符号是否不同 hash
@@ -478,7 +481,8 @@ class TestCallOrdinalAlignment:
         用 Counter diff 替代严格列表相等，避免顺序敏感的伪失败。
         """
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
         py_names = {s["name"] for s in py_result["symbols"]}
@@ -514,7 +518,8 @@ class TestCallOrdinalAlignment:
         这比严格相等更鲁棒（容忍 Rust 多提取的 call）。
         """
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
         py_names = {s["name"] for s in py_result["symbols"]}
@@ -569,103 +574,216 @@ class TestCallOrdinalAlignment:
 
 
 # ============================================
-# 5. ABI 缺口文档化门禁
+# 5. ParseFact ABI 字段存在与对齐门禁（R1-P0-2 整改）
 # ============================================
 
 @pytest.mark.skipif(not _has_rust_ext(), reason="callwarden_core 未安装")
 @pytest.mark.parametrize("lang,filename,content", _ALL_LANGUAGE_SAMPLES, ids=[s[0] for s in _ALL_LANGUAGE_SAMPLES])
-class TestAbiGapDocumentation:
-    """ABI 缺口文档化门禁（Step 4）。
+class TestParseFactAbiAlignment:
+    """R1-P0-2 整改：ParseFact ABI 字段真实对齐门禁。
 
-    设计文档 §5.2 要求的输出契约字段中，当前 ABI 缺失：
-    - local_id / stable local ID
-    - canonical byte start/end
-    - call ordinal（显式字段）
-    - lexical_parent local ID（显式字段）
+    替代旧的 TestAbiGapDocumentation（断言字段缺失的"假绿"测试）。
+    现在要求 Rust parser 必须产出 local_id / lexical_parent_local_id /
+    byte_start / byte_end / caller_local_id / ordinal 字段，并通过
+    与 Python parser 的行为一致性验证。
 
-    本测试文档化这些缺口。当 Rust/Python 开始补齐这些字段时，
-    测试会失败，提醒更新 alignment 测试和 golden fixture。
+    设计文档 §5.2 输出契约：
+    - 每个 symbol 必须有 stable local ID（按 byte_start 排序）+ lexical parent + byte range
+    - 每个 raw_call 必须有 caller_local_id + ordinal + byte range
+
+    Python parser 当前未产出这些字段（仅 Rust 侧补齐），所以对齐测试只验证：
+    1. Rust 输出包含所有 ABI 字段（非空、有效范围）
+    2. local_id 唯一性 + byte_start 单调性
+    3. lexical_parent_local_id 形成合法父链（无环、指向真实存在的 local_id）
+    4. caller_local_id 要么为 0（未解析到调用者），要么指向真实存在的 local_id
+    5. 同一 caller_local_id 内 ordinal 连续 0-based
+    6. byte range 不越界（byte_start < byte_end <= len(content_bytes)）
+
+    Python 端的对齐仍由 §6 (TestContentConsistency) 等测试保证已有字段一致。
     """
 
-    _EXPECTED_ABI_FIELDS = {
-        "symbol": {"local_id", "byte_start", "byte_end", "lexical_parent_id"},
-        "call": {"ordinal", "byte_start", "byte_end", "caller_local_id"},
-    }
-
-    def test_symbol_local_id_abi_gap(self, lang, filename, content, tmp_path):
-        """文档化 symbol.local_id 缺口（设计文档 §5.2 要求）。
-
-        当前双方均无 local_id 字段。补齐后此测试会失败，提醒：
-        1. 验证 local_id 在 Rust/Python 间一致
-        2. 更新 golden fixture
-        """
+    def test_symbol_abi_fields_present(self, lang, filename, content, tmp_path):
+        """Rust symbol 必须包含所有 ParseFact ABI 字段。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
-        for parser_name, result in [("python", py_result), ("rust", rs_result)]:
-            has_local_id = any("local_id" in s for s in result["symbols"])
-            assert not has_local_id, (
-                f"[{lang}] {parser_name} parser 开始返回 local_id 字段（ABI 补齐进展）\n"
-                f"  请更新:\n"
-                f"    1. 添加 test_symbol_local_id_alignment 验证双方一致\n"
-                f"    2. 更新 golden fixture expected.symbols 添加 local_id 字段\n"
-                f"    3. 移除此 ABI 缺口文档化测试"
-            )
+        assert rs_result.get("symbols"), f"[{lang}] Rust 解析无符号"
+        required_fields = ("local_id", "lexical_parent_local_id", "byte_start", "byte_end")
+        for s in rs_result["symbols"]:
+            for f in required_fields:
+                assert f in s, (
+                    f"[{lang}] Rust symbol {s.get('name')!r} 缺少 ParseFact ABI 字段: {f}\n"
+                    f"  symbol: {s}"
+                )
 
-    def test_symbol_byte_range_abi_gap(self, lang, filename, content, tmp_path):
-        """文档化 symbol.byte_start/byte_end 缺口（设计文档 §5.2 要求）。
-
-        当前双方均无 byte_start/byte_end 字段（Python 有 start_col/end_col，
-        但这是列号不是字节偏移）。补齐后此测试会失败。
-        """
+    def test_symbol_local_id_unique_and_byte_sorted(self, lang, filename, content, tmp_path):
+        """local_id 必须唯一且按 byte_start 升序赋值。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
-        for parser_name, result in [("python", py_result), ("rust", rs_result)]:
-            has_byte_start = any("byte_start" in s for s in result["symbols"])
-            has_byte_end = any("byte_end" in s for s in result["symbols"])
-            assert not (has_byte_start or has_byte_end), (
-                f"[{lang}] {parser_name} parser 开始返回 byte_start/byte_end 字段（ABI 补齐进展）\n"
-                f"  请更新:\n"
-                f"    1. 添加 test_symbol_byte_range_alignment 验证双方一致\n"
-                f"    2. 验证 byte range 不越界（设计文档 §6.3 禁止 byte range 越界）\n"
-                f"    3. 更新 golden fixture expected.symbols 添加 byte_start/byte_end 字段"
-            )
+        syms = rs_result["symbols"]
+        if not syms:
+            return
 
-    def test_call_ordinal_abi_gap(self, lang, filename, content, tmp_path):
-        """文档化 call.ordinal 缺口（设计文档 §5.2 要求）。
+        local_ids = [s["local_id"] for s in syms]
+        assert len(set(local_ids)) == len(local_ids), (
+            f"[{lang}] local_id 重复: {local_ids}"
+        )
+        # local_id 按 byte_start 排序赋值（0-based 连续）
+        byte_starts = [s["byte_start"] for s in syms]
+        expected_ids = [i for i, _ in sorted(enumerate(byte_starts), key=lambda x: x[1])]
+        expected_local_ids = list(range(len(syms)))
+        actual_by_byte = [s["local_id"] for s in sorted(syms, key=lambda x: x["byte_start"])]
+        assert actual_by_byte == expected_local_ids, (
+            f"[{lang}] local_id 未按 byte_start 排序赋值\n"
+            f"  expected: {expected_local_ids}\n"
+            f"  actual:   {actual_by_byte}"
+        )
 
-        当前双方均无显式 ordinal 字段（顺序隐含在 raw_calls 列表中）。
-        补齐后此测试会失败。
-        """
+    def test_symbol_byte_range_in_bounds(self, lang, filename, content, tmp_path):
+        """byte range 必须满足 byte_start < byte_end <= len(content_bytes)。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        content_bytes = content.encode("utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content_bytes)
+        file_size = len(content_bytes)
         py_result, rs_result = _parse_both(str(path), lang)
 
-        for parser_name, result in [("python", py_result), ("rust", rs_result)]:
-            has_ordinal = any("ordinal" in c for c in result.get("raw_calls", []))
-            assert not has_ordinal, (
-                f"[{lang}] {parser_name} parser 开始返回 ordinal 字段（ABI 补齐进展）\n"
-                f"  请更新:\n"
-                f"    1. 添加 test_call_ordinal_alignment 验证双方一致\n"
-                f"    2. 更新 golden fixture expected.raw_calls 添加 ordinal 字段"
+        for s in rs_result["symbols"]:
+            bs, be = s["byte_start"], s["byte_end"]
+            assert 0 <= bs < be <= file_size, (
+                f"[{lang}] symbol {s.get('name')!r} byte range 越界: "
+                f"[{bs}, {be})，文件大小 {file_size}"
             )
 
-    def test_call_byte_range_abi_gap(self, lang, filename, content, tmp_path):
-        """文档化 call.byte_start/byte_end 缺口（设计文档 §5.2 要求）。"""
+    def test_symbol_lexical_parent_chain_valid(self, lang, filename, content, tmp_path):
+        """lexical_parent_local_id 必须指向真实存在或为 -1（顶层）。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
-        for parser_name, result in [("python", py_result), ("rust", rs_result)]:
-            has_byte_start = any("byte_start" in c for c in result.get("raw_calls", []))
-            has_byte_end = any("byte_end" in c for c in result.get("raw_calls", []))
-            assert not (has_byte_start or has_byte_end), (
-                f"[{lang}] {parser_name} parser 开始返回 call byte_start/byte_end 字段（ABI 补齐进展）\n"
-                f"  请更新 alignment 测试和 golden fixture"
+        syms = rs_result["symbols"]
+        if not syms:
+            return
+        valid_ids = {s["local_id"] for s in syms}
+
+        for s in syms:
+            parent = s["lexical_parent_local_id"]
+            assert parent == -1 or parent in valid_ids, (
+                f"[{lang}] symbol {s.get('name')!r} parent_local_id={parent} "
+                f"不在有效符号集合 {sorted(valid_ids)} 中"
             )
+
+        # 检查父链无环（沿 parent_local_id 走必须最终到达 -1）
+        sym_by_id = {s["local_id"]: s for s in syms}
+        for s in syms:
+            visited = {s["local_id"]}
+            cur = s
+            while cur["lexical_parent_local_id"] != -1:
+                parent_id = cur["lexical_parent_local_id"]
+                assert parent_id not in visited, (
+                    f"[{lang}] symbol {s.get('name')!r} 的父链有环: {visited}"
+                )
+                visited.add(parent_id)
+                cur = sym_by_id[parent_id]
+
+    def test_call_abi_fields_present(self, lang, filename, content, tmp_path):
+        """Rust raw_calls 必须包含所有 ParseFact ABI 字段。"""
+        path = tmp_path / filename
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
+        py_result, rs_result = _parse_both(str(path), lang)
+
+        calls = rs_result.get("raw_calls", [])
+        if not calls:
+            return
+        required_fields = ("caller_local_id", "ordinal", "byte_start", "byte_end")
+        for c in calls:
+            for f in required_fields:
+                assert f in c, (
+                    f"[{lang}] Rust raw_call 缺少 ParseFact ABI 字段: {f}\n"
+                    f"  call: {c}"
+                )
+
+    def test_call_ordinal_sequential_per_caller(self, lang, filename, content, tmp_path):
+        """同一 caller_local_id 内 ordinal 必须 0-based 连续。"""
+        path = tmp_path / filename
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
+        py_result, rs_result = _parse_both(str(path), lang)
+
+        calls = rs_result.get("raw_calls", [])
+        if not calls:
+            return
+
+        from collections import defaultdict
+        by_caller = defaultdict(list)
+        for c in calls:
+            by_caller[c["caller_local_id"]].append(c["ordinal"])
+
+        for caller_lid, ordinals in by_caller.items():
+            expected = list(range(len(ordinals)))
+            assert sorted(ordinals) == expected, (
+                f"[{lang}] caller_local_id={caller_lid} ordinal 不连续: "
+                f"got={sorted(ordinals)} expected={expected}"
+            )
+
+    def test_call_byte_range_in_bounds(self, lang, filename, content, tmp_path):
+        """call 的 byte range 必须在文件范围内。"""
+        path = tmp_path / filename
+        path.write_bytes(content.encode("utf-8"))
+        content_bytes = content.encode("utf-8")
+        file_size = len(content_bytes)
+        py_result, rs_result = _parse_both(str(path), lang)
+
+        for c in rs_result.get("raw_calls", []):
+            bs, be = c["byte_start"], c["byte_end"]
+            assert 0 <= bs <= be <= file_size, (
+                f"[{lang}] call byte range 越界: [{bs}, {be}]，"
+                f"文件大小 {file_size}, callee={c.get('callee_name')!r}"
+            )
+
+    def test_call_caller_local_id_valid(self, lang, filename, content, tmp_path):
+        """caller_local_id 要么为 0（未解析到），要么指向真实 symbol。"""
+        path = tmp_path / filename
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
+        py_result, rs_result = _parse_both(str(path), lang)
+
+        syms = rs_result["symbols"]
+        if not syms:
+            return
+        valid_ids = {s["local_id"] for s in syms} | {0}  # 0 表示未解析到调用者
+
+        for c in rs_result.get("raw_calls", []):
+            caller_lid = c["caller_local_id"]
+            assert caller_lid in valid_ids, (
+                f"[{lang}] call caller_local_id={caller_lid} 不在有效符号集合 "
+                f"{sorted(valid_ids)} 中，callee={c.get('callee_name')!r}"
+            )
+
+    def test_diagnostics_field_present(self, lang, filename, content, tmp_path):
+        """Rust ParseResult 必须包含 diagnostics 字段（ParseFact ABI 诊断）。"""
+        path = tmp_path / filename
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
+        py_result, rs_result = _parse_both(str(path), lang)
+
+        diag = rs_result.get("diagnostics")
+        assert diag is not None, f"[{lang}] Rust ParseResult 缺少 diagnostics 字段"
+        assert "status" in diag, f"[{lang}] diagnostics 缺少 status 字段"
+        assert "syntax_error_count" in diag, f"[{lang}] diagnostics 缺少 syntax_error_count 字段"
+        assert diag["status"] in ("ok", "partial", "failed", "unsupported", "stale"), (
+            f"[{lang}] diagnostics.status={diag['status']} 不在合法枚举中"
+        )
+        assert isinstance(diag["syntax_error_count"], int) and diag["syntax_error_count"] >= 0, (
+            f"[{lang}] syntax_error_count={diag.get('syntax_error_count')} 必须为非负整数"
+        )
 
 
 # ============================================
@@ -686,7 +804,8 @@ class TestContentConsistency:
     def test_symbol_content_nonempty(self, lang, filename, content, tmp_path):
         """所有 symbol 的 content 必须非空。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
         for parser_name, result in [("python", py_result), ("rust", rs_result)]:
@@ -702,7 +821,8 @@ class TestContentConsistency:
         允许 \r\n 和 \n 差异（canonicalization），只比较行数。
         """
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        # R1-P0-2: 用 write_bytes 避免 Windows newline 转换导致 byte range 不一致
+        path.write_bytes(content.encode("utf-8"))
         py_result, rs_result = _parse_both(str(path), lang)
 
         for parser_name, result in [("python", py_result), ("rust", rs_result)]:
@@ -735,7 +855,7 @@ class TestRustDepthConsistency:
     def test_rust_depth_valid(self, lang, filename, content, tmp_path):
         """Rust symbol depth 必须是整数，且 >= -1。"""
         path = tmp_path / filename
-        path.write_text(content, encoding="utf-8")
+        path.write_bytes(content.encode("utf-8"))
         _, rs_result = _parse_both(str(path), lang)
 
         for i, s in enumerate(rs_result["symbols"]):

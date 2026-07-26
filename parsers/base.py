@@ -16,7 +16,11 @@ from __future__ import annotations
 import difflib
 from typing import Any, Dict, List, Optional, Tuple
 
-from tree_sitter import Language, Parser
+# R2-P0-3: tree_sitter 延迟导入 — local wheel / frozen bundle 不安装
+# parser-reference extra（tree-sitter 核心 + 16 grammar）时，import callwarden
+# 不应在模块加载阶段失败。Language/Parser 仅在 BaseParser.__init__ 实例化时
+# 需要（生产路径走 RustParserFacade，不实例化 Python parser）。
+# 将导入推迟到 __init__ 内，让 base.py 可在无 tree_sitter 环境下安全 import。
 
 from ..config import read_file_normalized
 from .call_filter import should_filter_call
@@ -52,6 +56,9 @@ class BaseParser:
         """
         if self.language_module is None:
             raise NotImplementedError("子类必须设置 language_module")
+        # R2-P0-3: tree_sitter 延迟导入 — 仅在实例化 Python parser 时加载
+        from tree_sitter import Language, Parser
+
         self.language = Language(self.language_module.language())
         self.parser = Parser(self.language)
         # AST 增量缓存：{file_path: (Tree, content_hash)}

@@ -25,7 +25,10 @@ from ..config import (
     detect_language_from_path, get_supported_extensions, compute_content_hash,
     safe_walk,
 )
-from ..parsers import RustParser, ModuleResolver, CallResolver, create_parser  # noqa: F401  create_parser 保留供 dev reference / 测试 mock；生产路径不再调用（P1-E）
+# R2-P0-3: 不在顶层导入 callwarden.parsers — local wheel 无 parser-reference
+# extra（无 tree_sitter）或 frozen bundle 排除 callwarden.parsers 时会失败。
+# legacy _get_or_create_parser 内部已用函数级懒导入（from ..parsers.rust import
+# RustParser 等），生产路径走 RustParserFacade（Rust 扩展）。
 from .rust_parser_facade import RustParserFacade
 from ..cli.console import cprint, print_progress, clear_progress, Spinner, format_duration, print_build_summary
 from ..i18n import t

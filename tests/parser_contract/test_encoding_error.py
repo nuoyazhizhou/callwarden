@@ -674,7 +674,7 @@ class TestNoCrashContract:
 
 @pytest.mark.skipif(not _HAS_RUST, reason="callwarden_core 未安装")
 class TestErrorSemanticsContract:
-    """错误语义状态文档化（设计文档 §5.3）。
+    """错误语义状态对齐测试（设计文档 §5.3，R1-P0-2 补齐 diagnostics ABI）。
 
     设计文档 §5.3 定义统一状态：
     | 状态 | 行为 |
@@ -684,43 +684,67 @@ class TestErrorSemanticsContract:
     | failed  | 不替换上一代 snapshot，记录失败并允许重试 |
     | stale   | generation CAS 拒绝 |
 
-    当前 ABI 未暴露 status 字段（Phase 4 待补）。
-    本测试文档化此缺口：补齐后此测试会失败，提醒更新 alignment 测试。
+    R1-P0-2: diagnostics 字段已补齐到 ParseResult（替代旧 `error` 字段用于
+    结构化诊断）。本测试验证：
+    - diagnostics 字段存在且结构完整（status / syntax_error_count / partial_parse）
+    - 干净文件返回 status="ok"，syntax_error_count=0
+    - 语法错误文件返回 status="partial"，syntax_error_count>0，partial_parse=True
+    - status 嵌套在 diagnostics 内，不在 ParseResult 顶层
     """
 
-    def test_parse_result_has_no_status_field(self, tmp_path):
-        """文档化：当前 ParseResult 未暴露 status 字段（§5.3 缺口）。
+    def test_diagnostics_field_present_and_well_formed(self, tmp_path):
+        """diagnostics 字段存在且包含必填子字段（§5.2 ABI）。"""
+        path = _write_tmp(tmp_path, "ok.py", _PY_SAMPLE)
+        rs_result = _parse_rust(path, "python")
+        assert "diagnostics" in rs_result, (
+            "Rust parser 未返回 diagnostics 字段（§5.2 ABI 缺口）"
+        )
+        diag = rs_result["diagnostics"]
+        assert isinstance(diag, dict), f"diagnostics 必须是 dict，实际 {type(diag)}"
+        for field in ("status", "syntax_error_count", "partial_parse"):
+            assert field in diag, (
+                f"diagnostics 缺少必填字段 {field}（§5.2 ABI）"
+            )
 
-        补齐后此测试会失败，提醒：
-        1. 验证 syntax error 文件返回 status="partial"
-        2. 验证空文件返回 status="ok"
-        3. 更新 golden fixture
+    def test_diagnostics_ok_on_clean_file(self, tmp_path):
+        """干净文件返回 status="ok"，syntax_error_count=0，partial_parse=False。"""
+        path = _write_tmp(tmp_path, "ok.py", _PY_SAMPLE)
+        rs_result = _parse_rust(path, "python")
+        diag = rs_result["diagnostics"]
+        assert diag["status"] == "ok", (
+            f"干净文件 status 应为 'ok'，实际 {diag['status']!r}"
+        )
+        assert diag["syntax_error_count"] == 0, (
+            f"干净文件 syntax_error_count 应为 0，实际 {diag['syntax_error_count']}"
+        )
+        assert diag["partial_parse"] is False, (
+            f"干净文件 partial_parse 应为 False，实际 {diag['partial_parse']}"
+        )
+
+    def test_diagnostics_partial_on_syntax_error(self, tmp_path):
+        """语法错误文件返回 status="partial"，syntax_error_count>0，partial_parse=True。"""
+        path = _write_tmp(tmp_path, "err.py", b"def :\n")
+        rs_result = _parse_rust(path, "python")
+        diag = rs_result["diagnostics"]
+        assert diag["status"] == "partial", (
+            f"语法错误文件 status 应为 'partial'，实际 {diag['status']!r}"
+        )
+        assert diag["syntax_error_count"] > 0, (
+            f"语法错误文件 syntax_error_count 应 > 0，实际 {diag['syntax_error_count']}"
+        )
+        assert diag["partial_parse"] is True, (
+            f"语法错误文件 partial_parse 应为 True，实际 {diag['partial_parse']}"
+        )
+
+    def test_diagnostics_status_nested_not_top_level(self, tmp_path):
+        """§5.3 status 嵌套在 diagnostics 内，不在 ParseResult 顶层。
+
+        设计：status 是 diagnostics 的子字段，避免顶层字段膨胀。
+        顶层仅有 diagnostics 复合字段。
         """
         path = _write_tmp(tmp_path, "ok.py", _PY_SAMPLE)
         rs_result = _parse_rust(path, "python")
         assert "status" not in rs_result, (
-            "Rust parser 开始返回 status 字段（§5.3 ABI 补齐进展）\n"
-            "请更新：\n"
-            "  1. 添加 test_status_alignment 验证各状态语义\n"
-            "  2. 更新 golden fixture 添加 status 字段\n"
-            "  3. 移除此 ABI 缺口文档化测试"
+            "status 应嵌套在 diagnostics 内，不应出现在 ParseResult 顶层"
         )
-
-    def test_parse_result_has_no_diagnostics_field(self, tmp_path):
-        """文档化：当前 ParseResult 未暴露 diagnostics 字段（§5.2 缺口）。
-
-        设计文档 §5.2 要求输出 diagnostics：
-        - syntax error count
-        - unsupported construct count
-        - partial parse marker
-        - fatal parse error
-        """
-        path = _write_tmp(tmp_path, "err.py", b"def :\n")
-        rs_result = _parse_rust(path, "python")
-        assert "diagnostics" not in rs_result, (
-            "Rust parser 开始返回 diagnostics 字段（§5.2 ABI 补齐进展）\n"
-            "请更新：\n"
-            "  1. 添加 test_diagnostics_alignment 验证 syntax error count\n"
-            "  2. 更新 golden fixture 添加 diagnostics 字段\n"
-            "  3. 移除此 ABI 缺口文档化测试"
-        )
+        assert rs_result["diagnostics"]["status"] == "ok"

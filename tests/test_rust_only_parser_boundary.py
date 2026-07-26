@@ -13,14 +13,17 @@
 3. 生产路径不再实例化 Python tree-sitter parser 类
    （PythonParser/TypeScriptParser/KotlinParser/... 等 16 种语言 parser）
 
-已知例外（P1-E 范围外，文档化保留）：
-- db/db_base.py:2132 `self.parser = RustParser()` ——
-  RustParser（parsers/rust.py，Python tree-sitter-rust 绑定）用于
-  ModuleResolver.resolve_all() 提取 Rust mod_decls。
-  Rust 扩展（callwarden_core）尚未返回 mod_decls，模块结构发现暂保留
-  Python reference，待后续 phase 统一迁移。
-- db/db_build.py:28 / db/db_base.py:14 的 `create_parser` import 带
-  `# noqa: F401`，仅保留供 dev reference / 测试 mock，生产路径不调用。
+已知例外（R2-P0-3 整改后的懒加载模式）：
+- db/db_base.py: `RustParser` 不在顶层 import，改为 `_try_init_rust_parser()`
+  方法内 `from ..parsers.rust import RustParser` 懒加载，并捕获 ImportError
+  返回 None（graceful degradation）。用于 ModuleResolver.resolve_all() 提取
+  Rust mod_decls。Rust 扩展（callwarden_core）尚未返回 mod_decls，模块结构
+  发现暂保留 Python reference，待后续 phase 统一迁移。无 tree_sitter 环境
+  下 CodeGraphDB 可正常初始化（parser=None 降级）。
+- db/db_build.py: 顶层无 callwarden.parsers import（RustParser /
+  ModuleResolver / CallResolver / create_parser 均移除）。生产解析走
+  RustParserFacade（Rust 扩展）。legacy _get_or_create_parser 内部用
+  函数级懒导入（仅 dev/测试用）。
 - db/db_build.py 中 _get_or_create_parser / _python_parse_single_file /
   _python_multiprocess_parse / _parse_file_worker 为 legacy 定义，
   生产路径已不再调用（本测试会验证）。
@@ -304,11 +307,17 @@ class TestRustOnlyParserBoundary:
             + "\n".join(violations)
         )
 
-    def test_db_base_rustparser_is_documented_exception(self):
-        """验证 db_base.py 的 RustParser() 实例化是已知文档化例外。
+    def test_db_base_rustparser_is_lazy_and_guarded(self):
+        """验证 db_base.py 的 RustParser 实例化走懒加载 + guarded 路径。
 
-        这是 ModuleResolver.resolve_all(self.parser) 的依赖，用于 Rust
-        模块结构发现。Rust 扩展未返回 mod_decls，暂保留 Python reference。
+        R2-P0-3 整改：RustParser 不再在顶层 import，也不在 __init__ 直接
+        实例化。改为 `_try_init_rust_parser()` 方法内 `from ..parsers.rust
+        import RustParser` 懒加载，并捕获 ImportError 返回 None（graceful
+        degradation），让 CodeGraphDB 在无 tree_sitter 环境下可正常初始化。
+
+        本测试替代旧 test_db_base_rustparser_is_documented_exception：
+        - 旧测试要求 `self.parser = RustParser()` 直接实例化（顶层 import）
+        - 新测试要求 `self.parser = self._try_init_rust_parser()` 懒加载
         """
         db_base = PROJECT_ROOT / "db" / "db_base.py"
         assert db_base.exists(), "db/db_base.py 应存在"
@@ -316,23 +325,45 @@ class TestRustOnlyParserBoundary:
         source = db_base.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(db_base))
 
-        instantiations = _list_instantiations(tree)
-        rust_parser_instantiations = [
-            (name, line) for name, line in instantiations if name == "RustParser"
+        # 1. 顶层不得 import RustParser（必须在方法内懒加载）
+        top_level_rust_imports = [
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            and node.names
+            and any(alias.name == "RustParser" for alias in node.names)
+            and node.col_offset == 0  # 顶层 import
         ]
-
-        # 应恰好有 1 处 RustParser() 实例化（self.parser = RustParser()）
-        assert len(rust_parser_instantiations) == 1, (
-            f"db_base.py 应仅有 1 处 RustParser() 实例化（ModuleResolver 依赖），"
-            f"实际 {len(rust_parser_instantiations)} 处: {rust_parser_instantiations}"
+        assert not top_level_rust_imports, (
+            "db_base.py 顶层不得 import RustParser，必须懒加载到方法内"
         )
 
-        # 验证紧邻有 ModuleResolver / CallResolver 初始化（证明用于模块解析）
+        # 2. 应有 _try_init_rust_parser 方法定义
+        assert "def _try_init_rust_parser" in source, (
+            "db_base.py 应定义 _try_init_rust_parser 懒加载方法"
+        )
+
+        # 3. __init__ 应通过 _try_init_rust_parser() 赋值（非直接 RustParser()）
+        assert "self.parser = self._try_init_rust_parser()" in source, (
+            "db_base.py 应使用 self.parser = self._try_init_rust_parser() 懒加载"
+        )
+
+        # 4. _try_init_rust_parser 内部应捕获 ImportError（graceful degradation）
+        #    验证方法内有 try/except 且 except ImportError
+        method_start = source.find("def _try_init_rust_parser")
+        assert method_start >= 0, "找不到 _try_init_rust_parser 方法定义"
+        # 截取方法体（到下一个 def 或文件末尾）
+        next_def = source.find("\n    def ", method_start + 1)
+        method_body = source[method_start:next_def if next_def > 0 else len(source)]
+        assert "try:" in method_body, (
+            "_try_init_rust_parser 应有 try 块捕获 ImportError"
+        )
+        assert "ImportError" in method_body, (
+            "_try_init_rust_parser 应捕获 ImportError 返回 None（graceful degradation）"
+        )
+
+        # 5. 验证紧邻有 ModuleResolver / CallResolver 初始化（证明用于模块解析）
         assert "ModuleResolver" in source, "db_base.py 应使用 ModuleResolver"
         assert "CallResolver" in source, "db_base.py 应使用 CallResolver"
-        assert "self.parser = RustParser()" in source, (
-            "db_base.py 应包含 self.parser = RustParser() 语句"
-        )
 
     def test_legacy_python_parse_functions_are_dead_in_production(self):
         """验证 legacy Python parse 函数在生产路径未被调用（仅定义存在）。
@@ -401,27 +432,56 @@ class TestRustOnlyParserBoundary:
             + "\n".join(violations)
         )
 
-    def test_db_build_create_parser_import_is_noqa_marked(self):
-        """验证 db_build.py 的 create_parser import 带 noqa 标记（dev reference 用途）。
+    def test_db_build_no_top_level_parser_imports(self):
+        """验证 db_build.py 顶层无 callwarden.parsers / RustParser / create_parser import。
 
-        生产路径不调用 create_parser，但 import 保留供 dev reference / 测试 mock。
-        必须有 `# noqa: F401` 标记表明这是有意保留的未使用导入。
+        R2-P0-3 整改：移除 db_build.py 顶层对 callwarden.parsers 的所有 import
+        （RustParser / ModuleResolver / CallResolver / create_parser）。
+        生产解析走 RustParserFacade（Rust 扩展），不依赖 Python parser。
+        legacy _get_or_create_parser 内部已用函数级懒导入（仅 dev/测试用）。
+
+        本测试替代旧 test_db_build_create_parser_import_is_noqa_marked：
+        - 旧测试要求 create_parser import 带 noqa（容忍顶层 import）
+        - 新测试要求顶层完全不 import create_parser / RustParser 等
         """
         db_build = PROJECT_ROOT / "db" / "db_build.py"
         assert db_build.exists(), "db/db_build.py 应存在"
 
         source = db_build.read_text(encoding="utf-8")
-        # 查找 create_parser 的 import 行
-        import_lines = [
-            line
-            for line in source.splitlines()
-            if "create_parser" in line and ("import" in line or "from" in line)
-        ]
-        assert import_lines, "db_build.py 应有 create_parser import 行"
+        tree = ast.parse(source, filename=str(db_build))
 
-        # 至少一行带 noqa: F401 标记
-        noqa_lines = [line for line in import_lines if "noqa" in line.lower()]
-        assert noqa_lines, (
-            "db_build.py 的 create_parser import 必须带 # noqa 标记"
-            "（表明是 dev reference / 测试 mock 用途，非生产调用）"
+        # 1. 顶层不得 import callwarden.parsers 子模块的符号
+        forbidden_top_level = {"RustParser", "ModuleResolver", "CallResolver",
+                               "create_parser"}
+        top_level_violations = []
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Import, ast.ImportFrom)):
+                continue
+            if node.col_offset != 0:  # 仅检查顶层 import
+                continue
+            names = [alias.name for alias in node.names] if isinstance(node, ast.Import) \
+                else [alias.name for alias in node.names]
+            for name in names:
+                if name in forbidden_top_level:
+                    top_level_violations.append(
+                        f"line {node.lineno}: 顶层 import {name}"
+                    )
+            # 检查 ImportFrom 的 module 路径
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if "callwarden.parsers" in node.module or "..parsers" in (node.module or ""):
+                    for alias in node.names:
+                        if alias.name in forbidden_top_level:
+                            top_level_violations.append(
+                                f"line {node.lineno}: 顶层 from {node.module} import {alias.name}"
+                            )
+
+        assert not top_level_violations, (
+            "db_build.py 顶层不得 import callwarden.parsers 符号（RustParser/"
+            "ModuleResolver/CallResolver/create_parser），发现违规:\n"
+            + "\n".join(top_level_violations)
+        )
+
+        # 2. 应有 RustParserFacade 顶层 import（生产解析路径）
+        assert "RustParserFacade" in source, (
+            "db_build.py 应 import RustParserFacade（生产 Rust 解析路径）"
         )

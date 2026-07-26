@@ -351,6 +351,60 @@ def test_inspector_p1_g_requires_callwarden_core_present(tmp_path):
     assert any("P1-G" in error or "Rust" in error for error in errors)
 
 
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "callwarden_core.pyd",
+        "callwarden_core.so",
+        "callwarden_core.cp314-win_amd64.pyd",
+        "callwarden_core.cpython-314-x86_64-linux-gnu.so",
+        "callwarden_core.abi3.so",
+    ],
+)
+def test_inspector_classify_callwarden_core_with_abi_suffix(filename):
+    """R4: inspector 识别带 ABI 后缀的 Rust 扩展变体（PEP 3149 / Windows ABI tag）。
+
+    PyInstaller 打包 PyO3 扩展时会保留 wheel 的 ABI 后缀，inspector 必须识别
+    这些变体，否则会误报"Rust 扩展缺失"导致 P1-G 门禁假红。
+    """
+    from release.inspect_pyinstaller_bundle import _is_callwarden_core_file
+
+    assert _is_callwarden_core_file(filename) is True
+    # 不相关文件必须返回 False
+    assert _is_callwarden_core_file("tree_sitter.pyd") is False
+    assert _is_callwarden_core_file("callwarden_core.py") is False
+    assert _is_callwarden_core_file("not_callwarden_core.pyd") is False
+
+
+def test_inspector_accepts_abi_suffixed_callwarden_core(tmp_path):
+    """R4: bundle 中带 ABI 后缀的 callwarden_core 应通过 P1-G 存在性检查。"""
+    bundle = tmp_path / "callwarden"
+    internal = bundle / "_internal"
+    internal.mkdir(parents=True)
+    (bundle / "cw.exe").write_bytes(b"cw")
+    (internal / "python-runtime.bin").write_bytes(b"x" * 64)
+    # 模拟 PyInstaller 打包 PyO3 扩展时的 ABI 后缀文件名
+    abi_name = (
+        "callwarden_core.cp314-win_amd64.pyd"
+        if sys.platform == "win32"
+        else "callwarden_core.cpython-314-x86_64-linux-gnu.so"
+    )
+    (internal / abi_name).write_bytes(b"rust-core-placeholder")
+
+    toc = tmp_path / "PYZ-00.toc"
+    toc.write_text(
+        repr([(name, f"/fake/{name}.pyc", "PYMODULE") for name in REQUIRED_FIXTURE_MODULES]),
+        encoding="utf-8",
+    )
+
+    report, errors = inspect_bundle(bundle, toc, role="local")
+
+    # 不应报 Rust 扩展缺失
+    assert not any("callwarden_core" in error for error in errors), errors
+    # distribution 报告中应将 ABI 后缀文件归入 callwarden_core
+    assert report["distributions"]["callwarden_core"]["file_count"] == 1
+
+
 def test_inspector_parser_distributions_constant_covers_all_parsers():
     """PARSER_DISTRIBUTIONS 常量覆盖 tree_sitter 核心 + grammar + callwarden_parsers。"""
     assert "tree_sitter" in PARSER_DISTRIBUTIONS

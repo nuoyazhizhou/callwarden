@@ -625,12 +625,10 @@ pub fn _daemon_parse_and_publish(
 
 /// 将 ParseResult 转换为 CasPublishInput（CAS publish 所需的输入格式）。
 ///
-/// ParseResult 是 parser 的原始输出，字段集与 CasPublishInput 略有差异：
-/// - `parent_id` / `start_col` / `end_col` / `start_byte` / `end_byte`：
-///   ParseResult 不含这些字段（解析后由 db_build 阶段填充），此处置为默认值（None / 0）
-/// - `caller_id`：同上，置 None
-/// - `ordinal`：默认 0（RawCall 不携带 ordinal 信息）
-/// - `imports.kind`：默认 "import"（ParseResult.imports 是 Vec<String>，无 kind 信息）
+/// R1-P0-2: ParseFact ABI 已在 lib.rs::SymbolInfo / RawCall 上携带
+/// local_id / lexical_parent_local_id / byte_start / byte_end / ordinal /
+/// caller_local_id 字段，本函数直接转发这些值（不再写死 None / 0）。
+/// start_col / end_col 仍置 0（parser 暂不提取列号；后续可补）。
 fn parse_result_to_cas_input(
     parse_result: &ParseResult,
     canonical_bytes: &[u8],
@@ -641,14 +639,20 @@ fn parse_result_to_cas_input(
         .map(|si| CasSymbolInput {
             name: si.name.clone(),
             qualified_name: si.qualified_name.clone(),
-            parent_id: None,
+            // R1-P0-2: 用 local_id 作为 parent_id（lexical_parent_local_id == -1 视为 None）
+            parent_id: if si.lexical_parent_local_id >= 0 {
+                Some(si.lexical_parent_local_id as i64)
+            } else {
+                None
+            },
             kind: si.kind.clone(),
             start_line: si.start_line as i64,
             end_line: si.end_line as i64,
             start_col: 0,
             end_col: 0,
-            start_byte: 0,
-            end_byte: 0,
+            // R1-P0-2: 转发真实 byte range
+            start_byte: si.byte_start as i64,
+            end_byte: si.byte_end as i64,
             visibility: si.visibility.clone(),
             signature: si.signature.clone(),
             has_comment: si.has_comment,
@@ -661,11 +665,17 @@ fn parse_result_to_cas_input(
         .calls
         .iter()
         .map(|rc| CasRawCallInput {
-            caller_id: None,
+            // R1-P0-2: caller_local_id == 0 表示未解析到调用者符号，置 None
+            caller_id: if rc.caller_local_id > 0 {
+                Some(rc.caller_local_id as i64)
+            } else {
+                None
+            },
             caller_name: rc.caller_name.clone(),
             callee_name: rc.callee_name.clone(),
             line: rc.call_line as i64,
-            ordinal: 0,
+            // R1-P0-2: 转发真实 ordinal
+            ordinal: rc.ordinal as i64,
         })
         .collect();
 
