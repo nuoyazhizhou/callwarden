@@ -46,6 +46,8 @@ pub(crate) fn config() -> LangConfig {
             CallRule { kind: "new_expression", callee_field: Some("constructor") },
         ],
         import_kinds: vec!["import_statement"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

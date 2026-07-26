@@ -1387,6 +1387,12 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(multi_lang::supported_languages, m)?)?;
+    // P1-F Step 1: Parse 失败状态定义（设计 §5.3）
+    m.add_function(wrap_pyfunction!(multi_lang::parse_status_from_fields, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        multi_lang::parse_diagnostics_from_fields,
+        m
+    )?)?;
     // P28: 批量余弦相似度（保留）
     m.add_function(wrap_pyfunction!(batch_cosine_similarity, m)?)?;
     // B-PoC: 图存储 + 查询下沉（CSR 邻接表 + 内存索引 + rusqlite 加载）

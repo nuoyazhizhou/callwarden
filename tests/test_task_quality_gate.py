@@ -905,8 +905,12 @@ def test_run_check_gate_nonexistent_file_skipped():
 
 
 def test_run_check_gate_syntax_error_emits_standardized_finding():
-    """语法错误 → 返回 error 级 finding，包含标准化字段，并写入 guardrail_findings 表"""
+    """语法错误 → 返回 error 级 finding，包含标准化字段，并写入 guardrail_findings 表
+
+    P1-E: 语法检查走 RustParserFacade，mock RustParserFacade.parse_file 返回 error。
+    """
     import tempfile as _tempfile
+    from unittest.mock import patch as _patch
 
     db, _root = _db_with_workspace()
     try:
@@ -919,26 +923,21 @@ def test_run_check_gate_syntax_error_emits_standardized_finding():
         tmp.write("def broken(:\n")
         tmp.close()
         try:
-            # 注入 mock create_parser 触发语法错误
-            class _FakeParser:
-                def parse_file(self, path):
-                    return {"parse_error": "SyntaxError at line 1"}
+            # P1-E: mock RustParserFacade.parse_file 返回 error（fail closed）
+            def _fake_parse_file(abs_path, module_path, lang):
+                return {"error": "SyntaxError at line 1"}
 
-            _had = hasattr(db, "create_parser")
-            _orig = getattr(db, "create_parser", None)
-            db.create_parser = lambda path: _FakeParser()
-            try:
-                result = db.run_check_gate(
-                    task_id, step["step_id"], changed_files=[tmp.name]
-                )
-            finally:
-                if _had and _orig is not None:
-                    db.create_parser = _orig
-                else:
-                    try:
-                        delattr(db, "create_parser")
-                    except AttributeError:
-                        pass
+            with _patch(
+                "callwarden.db.db_check_gate.RustParserFacade.parse_file",
+                side_effect=_fake_parse_file,
+            ):
+                with _patch(
+                    "callwarden.db.db_check_gate.RustParserFacade.supports_language",
+                    return_value=True,
+                ):
+                    result = db.run_check_gate(
+                        task_id, step["step_id"], changed_files=[tmp.name]
+                    )
 
             # 验证：passed=False，findings 标准化
             assert result["passed"] is False
@@ -969,7 +968,12 @@ def test_run_check_gate_syntax_error_emits_standardized_finding():
 
 
 def test_run_check_gate_does_not_modify_task_or_step_status():
-    """run_check_gate 不直接修改 task/step 状态（只负责检查与报告）"""
+    """run_check_gate 不直接修改 task/step 状态（只负责检查与报告）
+
+    P1-E: mock RustParserFacade 触发语法错误，验证 task/step 状态不变。
+    """
+    from unittest.mock import patch as _patch
+
     db, _root = _db_with_workspace()
     try:
         task_id = _create_task_with_step(db)
@@ -980,25 +984,21 @@ def test_run_check_gate_does_not_modify_task_or_step_status():
         ).fetchone()
         original_task_status = original_task_status_row["status"]
 
-        class _FakeParser:
-            def parse_file(self, path):
-                return {"parse_error": "SyntaxError"}
+        # P1-E: mock RustParserFacade.parse_file 返回 error
+        def _fake_parse_file(abs_path, module_path, lang):
+            return {"error": "SyntaxError"}
 
-        _had = hasattr(db, "create_parser")
-        _orig = getattr(db, "create_parser", None)
-        db.create_parser = lambda path: _FakeParser()
-        try:
-            db.run_check_gate(
-                task_id, step["step_id"], changed_files=["dummy.py"]
-            )
-        finally:
-            if _had and _orig is not None:
-                db.create_parser = _orig
-            else:
-                try:
-                    delattr(db, "create_parser")
-                except AttributeError:
-                    pass
+        with _patch(
+            "callwarden.db.db_check_gate.RustParserFacade.parse_file",
+            side_effect=_fake_parse_file,
+        ):
+            with _patch(
+                "callwarden.db.db_check_gate.RustParserFacade.supports_language",
+                return_value=True,
+            ):
+                db.run_check_gate(
+                    task_id, step["step_id"], changed_files=["dummy.py"]
+                )
 
         # step 状态不应改变
         cur = db.conn.execute(
@@ -1130,8 +1130,12 @@ def test_run_check_gate_semgrep_error_finding_blocks():
 
 
 def test_run_check_gate_summary_contains_check_status():
-    """summary 包含检查项状态（pass/FAIL）"""
+    """summary 包含检查项状态（pass/FAIL）
+
+    P1-E: mock RustParserFacade 触发语法错误，验证 summary 含 syntax:FAIL。
+    """
     import tempfile as _tempfile
+    from unittest.mock import patch as _patch
 
     db, _root = _db_with_workspace()
     try:
@@ -1143,25 +1147,20 @@ def test_run_check_gate_summary_contains_check_status():
         tmp.write("def broken(:\n")
         tmp.close()
         try:
-            class _FakeParser:
-                def parse_file(self, path):
-                    return {"parse_error": "SyntaxError"}
+            def _fake_parse_file(abs_path, module_path, lang):
+                return {"error": "SyntaxError"}
 
-            _had = hasattr(db, "create_parser")
-            _orig = getattr(db, "create_parser", None)
-            db.create_parser = lambda path: _FakeParser()
-            try:
-                result = db.run_check_gate(
-                    task_id, step["step_id"], changed_files=[tmp.name]
-                )
-            finally:
-                if _had and _orig is not None:
-                    db.create_parser = _orig
-                else:
-                    try:
-                        delattr(db, "create_parser")
-                    except AttributeError:
-                        pass
+            with _patch(
+                "callwarden.db.db_check_gate.RustParserFacade.parse_file",
+                side_effect=_fake_parse_file,
+            ):
+                with _patch(
+                    "callwarden.db.db_check_gate.RustParserFacade.supports_language",
+                    return_value=True,
+                ):
+                    result = db.run_check_gate(
+                        task_id, step["step_id"], changed_files=[tmp.name]
+                    )
 
             assert "syntax:FAIL" in result["summary"]
             assert "检查失败" in result["summary"]
@@ -1172,8 +1171,12 @@ def test_run_check_gate_summary_contains_check_status():
 
 
 def test_run_check_gate_save_gate_findings_uses_lowercase_severity():
-    """_save_gate_findings 写入 guardrail_findings 时 severity 为小写"""
+    """_save_gate_findings 写入 guardrail_findings 时 severity 为小写
+
+    P1-E: mock RustParserFacade 触发语法错误，验证 severity 小写。
+    """
     import tempfile as _tempfile
+    from unittest.mock import patch as _patch
 
     db, _root = _db_with_workspace()
     try:
@@ -1185,25 +1188,20 @@ def test_run_check_gate_save_gate_findings_uses_lowercase_severity():
         tmp.write("def broken(:\n")
         tmp.close()
         try:
-            class _FakeParser:
-                def parse_file(self, path):
-                    return {"parse_error": "SyntaxError"}
+            def _fake_parse_file(abs_path, module_path, lang):
+                return {"error": "SyntaxError"}
 
-            _had = hasattr(db, "create_parser")
-            _orig = getattr(db, "create_parser", None)
-            db.create_parser = lambda path: _FakeParser()
-            try:
-                db.run_check_gate(
-                    task_id, step["step_id"], changed_files=[tmp.name]
-                )
-            finally:
-                if _had and _orig is not None:
-                    db.create_parser = _orig
-                else:
-                    try:
-                        delattr(db, "create_parser")
-                    except AttributeError:
-                        pass
+            with _patch(
+                "callwarden.db.db_check_gate.RustParserFacade.parse_file",
+                side_effect=_fake_parse_file,
+            ):
+                with _patch(
+                    "callwarden.db.db_check_gate.RustParserFacade.supports_language",
+                    return_value=True,
+                ):
+                    db.run_check_gate(
+                        task_id, step["step_id"], changed_files=[tmp.name]
+                    )
 
             # 验证 guardrail_findings 表中 severity 为小写
             cur = db.conn.execute(

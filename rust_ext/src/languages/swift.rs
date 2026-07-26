@@ -54,6 +54,8 @@ pub(crate) fn config() -> LangConfig {
         // Swift 调用：call_expression 有 "function" field
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
         import_kinds: vec!["import_declaration"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

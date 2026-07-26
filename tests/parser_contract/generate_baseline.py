@@ -344,7 +344,7 @@ def _probe_language(lang: str, filename: str, content: str, rust_supported: set[
                         s.get("module_path") for s in rs_symbols
                     )
                 )
-                # references：HCL Rust 路径暂未实现；其他语言不适用
+                # references：P0-D 起 HCL Rust 路径已实现（ReferenceRule + extract_traversal_references）
                 capability["references_present_rs"] = any(
                     "." in (c.get("callee_name") or "") for c in rs_calls
                 )

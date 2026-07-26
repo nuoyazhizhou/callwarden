@@ -375,7 +375,7 @@ def test_scala_fixture_documents_object_method_call_gap():
 
 
 def test_hcl_fixture_documents_reference_gap():
-    """HCL fixture 的 known_gaps 必须记录 Rust 不提取引用。"""
+    """HCL fixture 的引用契约（P0-D 已修复 Rust 缺口）。"""
     if not _fixture_exists("hcl"):
         pytest.skip("hcl.json 不存在")
     data = _load_fixture("hcl")
@@ -383,12 +383,21 @@ def test_hcl_fixture_documents_reference_gap():
     assert len(data["expected"]["references"]) > 0, (
         "hcl fixture expected.references 必须非空"
     )
-    # known_gaps 必须记录 Rust 不支持 HCL
-    has_rust_hcl_gap = any(
-        "hcl" in gap["description"].lower() and gap["parser"] == "rust"
+    # P0-D: Rust 现已支持 HCL（加入 supported_languages + ReferenceRule 提取引用），
+    # known_gaps 不再记录 Rust 不支持 HCL / 不提取引用的缺口
+    has_rust_hcl_unsupported_gap = any(
+        gap["parser"] == "rust"
+        and (
+            "不支持 hcl" in gap["description"].lower()
+            or "不在 supported_languages" in gap["description"].lower()
+            or "不提取 hcl attribute traversal" in gap["description"].lower()
+        )
         for gap in data["known_gaps"]
     )
-    assert has_rust_hcl_gap, "hcl fixture known_gaps 必须记录 Rust 不支持 HCL"
+    assert not has_rust_hcl_unsupported_gap, (
+        "hcl fixture known_gaps 不应再记录 Rust 不支持 HCL / 不提取引用的缺口"
+        "（P0-D 已修复：HCL 加入 supported_languages + ReferenceRule 实现）"
+    )
 
 
 # ============================================

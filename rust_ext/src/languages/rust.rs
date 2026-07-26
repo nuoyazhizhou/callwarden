@@ -54,6 +54,8 @@ pub(crate) fn config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
         import_kinds: vec!["use_declaration"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec!["mod_item"],
     }
 }

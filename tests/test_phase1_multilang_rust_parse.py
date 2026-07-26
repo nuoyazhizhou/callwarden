@@ -323,15 +323,16 @@ def test_rust_multilang_parse_pool_exception_returns_false():
 
 
 # ----------------------------------------------------------------------
-# 单文件 Rust error → _python_parse_single_file 回退
+# 单文件 Rust error → fail closed（P1-E：不再回退 Python parser）
 # ----------------------------------------------------------------------
 
-def test_rust_multilang_parse_single_file_error_python_fallback_succeeds(tmp_path):
-    """单文件 Rust parse error 时，_python_parse_single_file 成功回退。
+def test_rust_multilang_parse_single_file_error_fail_closed(tmp_path):
+    """P1-E: 单文件 Rust parse error 时 fail closed，记录到 failed_files。
 
-    覆盖 reviewer P2: "单文件 error 后真正回退 Python 的集成测试"
+    设计 §3.1.5：Rust 解析失败必须显式记录，不允许静默回退 Python parser。
+    旧实现调用 _python_parse_single_file 回退；新实现直接 fail closed。
     """
-    # 创建一个真实的 Python 文件供 _python_parse_single_file 解析
+    # 创建一个真实的 Python 文件（不再被 Python fallback 解析）
     code = "def real_func():\n    return 42\n"
     path = tmp_path / "real.py"
     path.write_text(code, encoding="utf-8")
@@ -352,17 +353,18 @@ def test_rust_multilang_parse_single_file_error_python_fallback_succeeds(tmp_pat
             files, "python", 4, file_results, failed_files, 1
         )
 
-    assert result is True  # Rust 路径执行完毕（单文件 error 已 fallback）
-    # _python_parse_single_file 应成功解析，结果写入 file_results
-    assert str(path) in file_results
-    assert "symbols" in file_results[str(path)]
-    # 不应记录为失败
-    assert len(failed_files) == 0
+    assert result is True  # Rust 路径执行完毕（fail closed，不返回 False）
+    # file_results 不应包含失败文件
+    assert str(path) not in file_results
+    # 应记录到 failed_files
+    assert len(failed_files) == 1
+    assert failed_files[0][0] == str(path)
+    assert "rust parse failed" in failed_files[0][1]
 
 
-def test_rust_multilang_parse_single_file_error_python_fallback_also_fails(tmp_path):
-    """单文件 Rust error 且 Python fallback 也失败时，记录到 failed_files。"""
-    # 使用一个不存在的文件路径，_python_parse_single_file 会返回 None
+def test_rust_multilang_parse_single_file_error_fail_closed_missing_file(tmp_path):
+    """P1-E: 单文件 Rust error 且文件不存在时，同样 fail closed 记录失败。"""
+    # 使用一个不存在的文件路径
     files = [("missing.py", "/nonexistent/missing.py", "", "python", 1)]
     file_results = {}
     failed_files = []
@@ -379,20 +381,20 @@ def test_rust_multilang_parse_single_file_error_python_fallback_also_fails(tmp_p
         )
 
     assert result is True  # Rust 路径执行完毕
-    # Python fallback 也失败 → 记录到 failed_files
+    # fail closed → 记录到 failed_files
     assert len(failed_files) == 1
     assert failed_files[0][0] == "missing.py"
     assert "rust parse failed" in failed_files[0][1]
 
 
-def test_rust_multilang_parse_mixed_success_and_error(tmp_path):
-    """混合场景：部分文件 Rust 成功，部分 error 后 Python fallback。"""
+def test_rust_multilang_parse_mixed_success_and_fail_closed(tmp_path):
+    """P1-E: 混合场景 - 部分文件 Rust 成功，部分 error 后 fail closed。"""
     # 文件 1：真实文件，Rust 成功
     code1 = "def func_a():\n    pass\n"
     path1 = tmp_path / "a.py"
     path1.write_text(code1, encoding="utf-8")
 
-    # 文件 2：真实文件，Rust error 但 Python fallback 成功
+    # 文件 2：真实文件，Rust error 后 fail closed（不再 Python fallback）
     code2 = "def func_b():\n    pass\n"
     path2 = tmp_path / "b.py"
     path2.write_text(code2, encoding="utf-8")
@@ -426,10 +428,12 @@ def test_rust_multilang_parse_mixed_success_and_error(tmp_path):
         )
 
     assert result is True
-    # 两个文件都应有结果（一个来自 Rust，一个来自 Python fallback）
+    # 只有 Rust 成功的文件在 file_results
     assert str(path1) in file_results
-    assert str(path2) in file_results
-    assert len(failed_files) == 0
+    assert str(path2) not in file_results  # fail closed，不写入
+    # Rust 失败的文件记录到 failed_files
+    assert len(failed_files) == 1
+    assert failed_files[0][0] == str(path2)
 
 
 # ----------------------------------------------------------------------

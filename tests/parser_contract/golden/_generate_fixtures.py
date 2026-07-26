@@ -1951,12 +1951,6 @@ _FIXTURES: dict[str, dict] = {
                 "phase": "Phase 2.7",
             },
             {
-                "parser": "rust",
-                "field": "raw_calls",
-                "description": "Rust 不提取 IO.puts 调用；golden 期望含 puts 调用（callee_module='IO'）",
-                "phase": "Phase 2.5",
-            },
-            {
                 "parser": "python",
                 "field": "raw_calls",
                 "description": "Python parser 不提取 IO.puts 调用（Python 限制）",
@@ -2015,15 +2009,9 @@ _FIXTURES: dict[str, dict] = {
         "known_gaps": [
             {
                 "parser": "rust",
-                "field": "symbols",
-                "description": "Rust parser 不支持 HCL（不在 supported_languages 中），完全无法提取符号；HCL 走 Python parser 专用路径",
-                "phase": "Phase 2.4",
-            },
-            {
-                "parser": "rust",
-                "field": "references",
-                "description": "Rust 不提取 HCL attribute traversal 引用（aws_instance.web.private_ip）；HCL 引用提取未在 Rust 路径实现",
-                "phase": "Phase 2.4",
+                "field": "signature",
+                "description": "Rust SymbolInfo.signature 始终为空字符串（HCL block 签名未实现）",
+                "phase": "Phase 2.7",
             },
             {
                 "parser": "python",

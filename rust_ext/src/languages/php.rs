@@ -72,6 +72,8 @@ pub(crate) fn config() -> LangConfig {
             CallRule { kind: "scoped_call_expression", callee_field: Some("name") },
         ],
         import_kinds: vec!["namespace_use_declaration"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

@@ -514,11 +514,18 @@ def test_client_agent_hiddenimports_exclude_parsers():
 
 
 def test_client_agent_excludes_block_contains_parsers():
-    """spec 中 _PARSER_EXCLUDES 显式排除所有 parser 模块（fail closed）。"""
+    """spec 中 _PARSER_GRAMMAR_EXCLUDES 显式排除所有 parser 模块（fail closed）。
+
+    P1-G（2026-07-25）：原 _PARSER_EXCLUDES 拆分为：
+    - _PARSER_GRAMMAR_EXCLUDES（共享，含 parser/grammar，local + client/agent 都用）
+    - _CLIENT_AGENT_ONLY_EXCLUDES（仅 numpy，client/agent 专用）
+    numpy 不再在 parser 列表中，而是 client/agent 专用排除。
+    """
     spec = (ROOT / "release" / "pyinstaller" / "callwarden.spec").read_text(
         encoding="utf-8"
     )
-    start = spec.index("_PARSER_EXCLUDES = [")
+    # P1-G: _PARSER_GRAMMAR_EXCLUDES 包含 tree-sitter 核心 + 16 种 grammar + callwarden.parsers.*
+    start = spec.index("_PARSER_GRAMMAR_EXCLUDES = [")
     end = spec.index("]", start) + 1
     block = spec[start:end]
     # tree-sitter 核心
@@ -528,8 +535,22 @@ def test_client_agent_excludes_block_contains_parsers():
     assert "'tree_sitter_python'" in block
     # callwarden.parsers 整包
     assert "'callwarden.parsers'" in block
-    # numpy
-    assert "'numpy'" in block
+    # P1-G: numpy 移到 _CLIENT_AGENT_ONLY_EXCLUDES，不再在 parser 列表中
+    assert "'numpy'" not in block, (
+        "P1-G: numpy 应在 _CLIENT_AGENT_ONLY_EXCLUDES 中，不在 _PARSER_GRAMMAR_EXCLUDES"
+    )
+
+    # P1-G: _CLIENT_AGENT_ONLY_EXCLUDES 包含 numpy
+    numpy_start = spec.index("_CLIENT_AGENT_ONLY_EXCLUDES = [")
+    numpy_end = spec.index("]", numpy_start) + 1
+    numpy_block = spec[numpy_start:numpy_end]
+    assert "'numpy'" in numpy_block
+
+    # P1-G: local bundle Analysis 也使用 _PARSER_GRAMMAR_EXCLUDES（fail closed）
+    # 验证 local Analysis 的 excludes 参数包含 _PARSER_GRAMMAR_EXCLUDES
+    assert "excludes=list(_common_excludes) + _PARSER_GRAMMAR_EXCLUDES" in spec, (
+        "P1-G: local bundle Analysis 应使用 _PARSER_GRAMMAR_EXCLUDES 排除 parser"
+    )
 
 
 def test_entry_cw_client_dev_mode_runs_without_import_error():

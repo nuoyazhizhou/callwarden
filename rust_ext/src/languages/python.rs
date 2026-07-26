@@ -21,6 +21,8 @@ pub(crate) fn config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "call", callee_field: Some("function") }],
         import_kinds: vec!["import_statement", "import_from_statement"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

@@ -36,6 +36,8 @@ pub(crate) fn config() -> LangConfig {
         // Kotlin 调用：call_expression 无 callee field，从 identifier 提取
         call_rules: vec![CallRule { kind: "call_expression", callee_field: None }],
         import_kinds: vec!["import"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

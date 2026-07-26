@@ -32,6 +32,9 @@ def _write_bundle(tmp_path: Path, modules: list[str]) -> tuple[Path, Path]:
     internal.mkdir(parents=True)
     (bundle / ("cw.exe" if sys.platform == "win32" else "cw")).write_bytes(b"cw")
     (internal / "python-runtime.bin").write_bytes(b"x" * 1024)
+    # P1-G：bundle 必须包含 Rust callwarden_core 扩展（占位文件，不真实加载）
+    core_ext = ".pyd" if sys.platform == "win32" else ".so"
+    (internal / f"callwarden_core{core_ext}").write_bytes(b"rust-core-placeholder")
     toc = tmp_path / "PYZ-00.toc"
     toc.write_text(
         repr([(name, f"/fake/{name}.pyc", "PYMODULE") for name in modules]),
@@ -220,6 +223,9 @@ def _write_client_bundle(tmp_path: Path, modules: list[str]) -> tuple[Path, Path
     (bundle / "cw-client").write_bytes(b"cw-client")
     (bundle / "cw-agent").write_bytes(b"cw-agent")
     (internal / "python-runtime.bin").write_bytes(b"x" * 512)
+    # P1-G：client/agent bundle 也需要 Rust callwarden_core（canonicalize_source_py 等）
+    core_ext = ".pyd" if sys.platform == "win32" else ".so"
+    (internal / f"callwarden_core{core_ext}").write_bytes(b"rust-core-placeholder")
     toc = tmp_path / "PYZ-00.toc"
     toc.write_text(
         repr([(name, f"/fake/{name}.pyc", "PYMODULE") for name in modules]),
@@ -234,12 +240,16 @@ def _add_parser_files(bundle: Path) -> None:
     # tree-sitter 核心
     (internal / "tree_sitter").mkdir(parents=True, exist_ok=True)
     (internal / "tree_sitter" / "__init__.pyc").write_bytes(b"tree_sitter")
+    # tree-sitter 核心 binding 原生库（_binding.abi3.so / _binding.cp*.pyd）
+    core_ext = ".pyd" if sys.platform == "win32" else ".so"
+    (internal / "tree_sitter" / f"_binding.abi3{core_ext}").write_bytes(b"binding")
     # grammar wheel
     (internal / "tree_sitter_python").mkdir(parents=True, exist_ok=True)
     (internal / "tree_sitter_python" / "binding.pyd").write_bytes(b"grammar")
-    # callwarden.parsers 实现模块
+    # callwarden.parsers 实现模块（源文件 + 字节码）
     (internal / "callwarden" / "parsers").mkdir(parents=True, exist_ok=True)
     (internal / "callwarden" / "parsers" / "rust.pyc").write_bytes(b"parser")
+    (internal / "callwarden" / "parsers" / "python_parser.py").write_bytes(b"# py")
 
 
 _CLIENT_FIXTURE_MODULES = sorted(
@@ -280,8 +290,12 @@ def test_inspector_client_role_forbids_parser_distributions(tmp_path):
     assert any("tree_sitter" in error for error in errors)
 
 
-def test_inspector_local_role_allows_parser_distributions(tmp_path):
-    """local 角色不禁止 parser distribution（保留 Python parser 回退路径）。"""
+def test_inspector_local_role_p1_g_forbids_parser_distributions(tmp_path):
+    """P1-G 后 local 角色也禁止 parser distribution（fail closed）。
+
+    设计 §8 Phase 5 步骤 6：所有 bundle 都禁止 PARSER_DISTRIBUTIONS。
+    向后兼容通过 ``allow_parser_distributions=True`` 显式开启。
+    """
     bundle, toc = _write_bundle(
         tmp_path,
         REQUIRED_FIXTURE_MODULES + ["callwarden.cw", "tree_sitter"],
@@ -290,9 +304,51 @@ def test_inspector_local_role_allows_parser_distributions(tmp_path):
 
     report, errors = inspect_bundle(bundle, toc, role="local")
 
-    # local 角色不应因 parser distribution 报错
-    assert not any("必须为空" in error for error in errors)
+    # P1-G 后 local 角色也必须报 parser distribution 错误
+    assert any("必须为空" in error for error in errors)
+    assert any("tree_sitter" in error for error in errors)
+    # 文件级 fail closed 检查也必须触发
+    assert any("_binding" in error for error in errors), (
+        "应检测到 _binding*.pyd/.so 文件"
+    )
+    assert any("callwarden.parsers" in error for error in errors), (
+        "应检测到 callwarden/parsers 源文件"
+    )
     assert report["role"] == "local"
+
+
+def test_inspector_allow_parser_distributions_flag_skips_p1_g_checks(tmp_path):
+    """``allow_parser_distributions=True`` 跳过 P1-G fail closed 检查（向后兼容）。"""
+    bundle, toc = _write_bundle(
+        tmp_path,
+        REQUIRED_FIXTURE_MODULES + ["callwarden.cw", "tree_sitter"],
+    )
+    _add_parser_files(bundle)
+
+    report, errors = inspect_bundle(
+        bundle, toc, role="local", allow_parser_distributions=True
+    )
+
+    # 向后兼容模式下不报 parser distribution 错误
+    assert not any("必须为空" in error for error in errors)
+    assert not any("_binding" in error for error in errors)
+    assert not any("callwarden.parsers" in error for error in errors)
+
+
+def test_inspector_p1_g_requires_callwarden_core_present(tmp_path):
+    """P1-G: bundle 中必须存在 Rust callwarden_core 扩展。"""
+    bundle, toc = _write_bundle(
+        tmp_path,
+        REQUIRED_FIXTURE_MODULES + ["callwarden.cw"],
+    )
+    # 删除 callwarden_core 文件
+    core_ext = ".pyd" if sys.platform == "win32" else ".so"
+    (bundle / "_internal" / f"callwarden_core{core_ext}").unlink()
+
+    report, errors = inspect_bundle(bundle, toc, role="local")
+
+    assert any("callwarden_core" in error for error in errors)
+    assert any("P1-G" in error or "Rust" in error for error in errors)
 
 
 def test_inspector_parser_distributions_constant_covers_all_parsers():

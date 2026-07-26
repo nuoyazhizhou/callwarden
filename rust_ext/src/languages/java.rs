@@ -36,6 +36,8 @@ pub(crate) fn config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "method_invocation", callee_field: None }],
         import_kinds: vec!["import_declaration"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

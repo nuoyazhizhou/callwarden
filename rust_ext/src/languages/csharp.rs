@@ -48,6 +48,8 @@ pub(crate) fn config() -> LangConfig {
         ],
         call_rules: vec![CallRule { kind: "invocation_expression", callee_field: None }],
         import_kinds: vec!["using_directive"],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }

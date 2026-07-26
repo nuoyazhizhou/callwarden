@@ -92,15 +92,16 @@ def test_cw_disable_rust_falls_back_to_processpool():
 
 
 def test_unsupported_lang_uses_processpool():
-    """Rust 不支持的语言（hcl）走 non_rust_files。
+    """Rust 不支持的语言（如 markdown）走 non_rust_files。
 
     注意：kotlin/swift/elixir 已在 P31 迁移到 Rust parser，
-    不再属于"不支持语言"。HCL 走 Python parser（引用提取非函数调用模式）。
+    HCL 已在 P0-D 迁移到 Rust parser（ReferenceRule 实现引用提取），
+    不再属于"不支持语言"。
     C 有专用 parser 路径，也不在 supported_languages() 中但单独处理。
     """
     to_parse = [
-        (0, "a.tf", "/abs/a.tf", "hcl", "", 1),
-        (1, "b.tf", "/abs/b.tf", "hcl", "", 2),
+        (0, "a.md", "/abs/a.md", "markdown", "", 1),
+        (1, "b.md", "/abs/b.md", "markdown", "", 2),
     ]
 
     rust_langs = set()

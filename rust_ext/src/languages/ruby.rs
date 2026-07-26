@@ -47,6 +47,8 @@ pub(crate) fn config() -> LangConfig {
         call_rules: vec![CallRule { kind: "call", callee_field: Some("method") }],
         // Ruby 的 require 是 call 节点，不走 import 逻辑
         import_kinds: vec![],
+        import_directives: vec![],
+        reference_rules: vec![],
         skip_kinds: vec![],
     }
 }
