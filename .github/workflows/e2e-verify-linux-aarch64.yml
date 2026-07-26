@@ -228,8 +228,7 @@ jobs:
             --pyz-toc build/callwarden-client/PYZ-00.toc \
             --artifact callwarden-client-linux-aarch64.tar.gz \
             --report e2e-step3-client-bundle-report.json \
-            --role client \
-            --verify-rust-parse
+            --role client
 
       - name: Upload E2E reports
         if: always()

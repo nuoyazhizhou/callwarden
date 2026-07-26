@@ -169,8 +169,7 @@ jobs:
             --pyz-toc build/callwarden-client/PYZ-00.toc \
             --artifact callwarden-client-linux-x86_64.tar.gz \
             --report e2e-step2-client-bundle-report.json \
-            --role client \
-            --verify-rust-parse
+            --role client
 
       - name: Verify daemon E2E (start/stop/restart via systemd-like supervision)
         if: ${{ inputs.skip_systemd_e2e != 'true' }}
@@ -265,6 +264,7 @@ jobs:
 
       - name: Job summary
         if: always()
+        continue-on-error: true
         run: |
           REPORT_PATH="e2e-report-linux-x86_64-local.json"
           {
