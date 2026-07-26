@@ -27,10 +27,10 @@ use super::dispatch::{
     get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
     DaemonStateExt, PeerCredential,
 };
-use super::parse_retry_log::{ParseRetryLog, ReplayConfig, replay_pending};
+use super::parse_retry_log::{replay_pending, ParseRetryLog, ReplayConfig};
 use super::parser_metrics::ParserMetrics;
 use super::replicator::{
-    daemon_handle_connect, daemon_handle_refresh, _daemon_parse_and_publish, RefreshMessage,
+    _daemon_parse_and_publish, daemon_handle_connect, daemon_handle_refresh, RefreshMessage,
     SessionStore,
 };
 use super::snapshot_guard::evaluate_generation_protection;
@@ -886,13 +886,13 @@ impl WorkspaceDaemonState {
         // P0-4 R3: 打开 ParseRetryLog（parse_retry.log，JSONL 持久化失败 generation）
         // daemon 重启后可重放 pending entries（replay_pending），实现失败恢复
         let parse_retry_log_path = ws_dir.join("parse_retry.log");
-        let parse_retry_log =
-            ParseRetryLog::new(parse_retry_log_path.to_string_lossy().as_ref()).map_err(|e| {
-                DaemonRpcError::new(
-                    "resources_init_failed",
-                    format!("ParseRetryLog::new 失败: {}", e),
-                )
-            })?;
+        let parse_retry_log = ParseRetryLog::new(parse_retry_log_path.to_string_lossy().as_ref())
+            .map_err(|e| {
+            DaemonRpcError::new(
+                "resources_init_failed",
+                format!("ParseRetryLog::new 失败: {}", e),
+            )
+        })?;
 
         let resources = Arc::new(WorkspaceResources {
             session_store: Arc::new(session_store),
@@ -1280,20 +1280,18 @@ impl DaemonStateExt for WorkspaceDaemonState {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let abs_path_for_guard: String = abs_path
-            .clone()
-            .unwrap_or_else(|| rel_path.clone());
-        let protection = evaluate_generation_protection(
-            &cas_state_str,
-            &abs_path_for_guard,
-            &rel_path,
-        );
+        let abs_path_for_guard: String = abs_path.clone().unwrap_or_else(|| rel_path.clone());
+        let protection =
+            evaluate_generation_protection(&cas_state_str, &abs_path_for_guard, &rel_path);
 
         // 记录 parser_metrics（R3 接入主链）
         // parse_status 映射：protection.parse_status 已是 "ok"/"partial"/"failed"/
         // "unsupported"/"stale" 之一
         let parse_status_for_metrics = protection.parse_status.as_str();
-        let bytes_parsed = canonical_bytes.as_ref().map(|b| b.len() as u64).unwrap_or(0);
+        let bytes_parsed = canonical_bytes
+            .as_ref()
+            .map(|b| b.len() as u64)
+            .unwrap_or(0);
         resources.parser_metrics.record_parse(
             parse_status_for_metrics,
             0.0, // latency_ms 留空（daemon_handle_refresh 内部不计时，未来可补）
@@ -1340,18 +1338,9 @@ impl DaemonStateExt for WorkspaceDaemonState {
             }
 
             // 更新 response 反映 blocked 状态
-            response.insert(
-                "status".to_string(),
-                Value::String("blocked".to_string()),
-            );
-            response.insert(
-                "protection".to_string(),
-                protection.to_json(),
-            );
-            response.insert(
-                "snapshot_published".to_string(),
-                Value::Bool(false),
-            );
+            response.insert("status".to_string(), Value::String("blocked".to_string()));
+            response.insert("protection".to_string(), protection.to_json());
+            response.insert("snapshot_published".to_string(), Value::Bool(false));
             return Ok(Value::Object(response));
         }
 
@@ -1546,7 +1535,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
                             if let Err(e) = std::fs::create_dir_all(parent) {
                                 eprintln!(
                                     "[P0-2] 创建 CodeGraph DB 目录失败: {} -> {}",
-                                    parent.display(), e
+                                    parent.display(),
+                                    e
                                 );
                             }
                         }
@@ -1565,9 +1555,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                 .get("cas_state")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
-                            if cas_state == "ready_published"
-                                || cas_state == "ready_cache_hit"
-                            {
+                            if cas_state == "ready_published" || cas_state == "ready_cache_hit" {
                                 let cas_key = cas_result
                                     .get("cas_key")
                                     .and_then(|v| v.as_str())
@@ -1576,8 +1564,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                     .get("content_hash")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
-                                let merge_language =
-                                    get_str_param_or(params, "language", "");
+                                let merge_language = get_str_param_or(params, "language", "");
                                 // 构造 abs_path：优先 params.abs_path，
                                 // 否则 host_real_root + rel_path 拼接
                                 let abs_path_for_merge = get_str_param(params, "abs_path")
@@ -1604,8 +1591,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
                                 if !cas_key.is_empty() {
                                     // CAS DB 连接（只读）
-                                    let cas_conn_guard =
-                                        resources.cas_store.conn().lock().unwrap();
+                                    let cas_conn_guard = resources.cas_store.conn().lock().unwrap();
                                     // CodeGraph DB 连接（写）
                                     match rusqlite::Connection::open(&db_path) {
                                         Ok(cg_conn) => {
@@ -1616,7 +1602,9 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                             // workspaces 等表会报 "no such table"。
                                             // init_codegraph_schema 用 CREATE IF NOT EXISTS 幂等建表。
                                             if let Err(schema_err) =
-                                                crate::daemon::cas_merge::init_codegraph_schema(&cg_conn)
+                                                crate::daemon::cas_merge::init_codegraph_schema(
+                                                    &cg_conn,
+                                                )
                                             {
                                                 eprintln!(
                                                     "[P0-2] init_codegraph_schema failed for {}: {}",
@@ -1637,7 +1625,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                                 merge_summary = Some(Value::Object(m));
                                                 // 跳过 merge（schema 未初始化）
                                             } else {
-                                            match crate::daemon::cas_merge::merge_cas_to_codegraph(
+                                                match crate::daemon::cas_merge::merge_cas_to_codegraph(
                                                 &cas_conn_guard,
                                                 &cg_conn,
                                                 cas_key,
@@ -1727,9 +1715,11 @@ impl DaemonStateExt for WorkspaceDaemonState {
                     // 真正的"完整发布成功后才 committed"语义通过以下方式实现：
                     // - replicate 失败时回滚 committed（见下方 rollback）
                     // - Ok(false) 表示并发冲突，中止 replicate
-                    let merge_ok = match merge_summary.as_ref()
+                    let merge_ok = match merge_summary
+                        .as_ref()
                         .and_then(|m| m.get("status"))
-                        .and_then(|s| s.as_str()) {
+                        .and_then(|s| s.as_str())
+                    {
                         Some("merged") | Some("no_symbols") => true,
                         Some("cas_miss") | Some("error") | Some("open_failed") => false,
                         // R3 P0-4 修复：None 仅出现在 db_path 为空或无 cas_result 场景。
@@ -1742,170 +1732,171 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
                     // P0-1 v2: 用 labeled block 替代 continue（此处不在循环中）
                     'replicate_block: {
-                    if !merge_ok {
-                        eprintln!(
-                            "[P0-1] skip committed + replicate (merge failed) for {} \
+                        if !merge_ok {
+                            eprintln!(
+                                "[P0-1] skip committed + replicate (merge failed) for {} \
                              (merge_status={:?}) — 同 seq 重试可恢复",
-                            rel_path,
-                            merge_summary.as_ref()
-                                .and_then(|m| m.get("status"))
-                                .and_then(|s| s.as_str())
+                                rel_path,
+                                merge_summary
+                                    .as_ref()
+                                    .and_then(|m| m.get("status"))
+                                    .and_then(|s| s.as_str())
+                            );
+                            let mut repl_map = Map::new();
+                            repl_map.insert("snapshot_published".to_string(), Value::Bool(false));
+                            repl_map.insert(
+                                "snapshot_warning".to_string(),
+                                Value::String(
+                                    "merge 失败，未 committed 也未 replicate，同 seq 可重试"
+                                        .to_string(),
+                                ),
+                            );
+                            if let Some(ms) = merge_summary {
+                                repl_map.insert("cas_merge".to_string(), ms);
+                            }
+                            response.insert("replication".to_string(), Value::Object(repl_map));
+                            break 'replicate_block;
+                        }
+
+                        // 尝试 committed（条件 UPDATE：只更新 seen == incoming_gen 的行）
+                        let committed_result = resources.cas_store.file_generation_committed(
+                            workspace_id_num,
+                            &rel_path,
+                            session_epoch,
+                            monotonic_seq,
                         );
+                        match committed_result {
+                            Ok(true) => {
+                                // committed 成功，继续 replicate
+                            }
+                            Ok(false) => {
+                                // P0-1 v2 修复：Ok(false) 表示 seen 已被其他 handler 并发覆盖
+                                // 当前 handler 的 generation 已 stale，必须中止 replicate
+                                // 避免发布基于旧 generation 的 snapshot
+                                eprintln!(
+                                "[P0-1] committed Ok(false) for {} — seen 已被并发覆盖，中止 replicate",
+                                rel_path
+                            );
+                                let mut repl_map = Map::new();
+                                repl_map
+                                    .insert("snapshot_published".to_string(), Value::Bool(false));
+                                repl_map.insert(
+                                    "snapshot_warning".to_string(),
+                                    Value::String(
+                                        "committed 条件失效（seen 已被并发覆盖），未 replicate"
+                                            .to_string(),
+                                    ),
+                                );
+                                response.insert("replication".to_string(), Value::Object(repl_map));
+                                break 'replicate_block;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[P0-1] file_generation_committed failed for {}: {}",
+                                    rel_path, e
+                                );
+                                let mut repl_map = Map::new();
+                                repl_map
+                                    .insert("snapshot_published".to_string(), Value::Bool(false));
+                                repl_map.insert(
+                                    "snapshot_warning".to_string(),
+                                    Value::String(format!(
+                                        "committed 失败（{}），未 replicate，同 seq 可重试",
+                                        e
+                                    )),
+                                );
+                                response.insert("replication".to_string(), Value::Object(repl_map));
+                                break 'replicate_block;
+                            }
+                        }
+
+                        let replicator = Replicator::new(&resources.staging_log);
+                        // 注入 publisher（若配置齐全）
+                        let replicator = if !db_path.is_empty() {
+                            if let Some(ref publisher) = self.snapshot_publisher {
+                                replicator.with_snapshot_publisher(publisher.as_ref())
+                            } else {
+                                replicator
+                            }
+                        } else {
+                            replicator
+                        };
+                        let repl_result = replicator.replicate(
+                            workspace_instance_id,
+                            workspace_id_num,
+                            &db_path,
+                            "",
+                        );
+
                         let mut repl_map = Map::new();
                         repl_map.insert(
-                            "snapshot_published".to_string(),
-                            Value::Bool(false),
+                            "generation".to_string(),
+                            Value::Number(repl_result.generation.into()),
                         );
                         repl_map.insert(
-                            "snapshot_warning".to_string(),
-                            Value::String(
-                                "merge 失败，未 committed 也未 replicate，同 seq 可重试".to_string()
+                            "applied_count".to_string(),
+                            Value::Number(repl_result.applied_count.into()),
+                        );
+                        repl_map.insert(
+                            "pending_count".to_string(),
+                            Value::Number(repl_result.pending_count.into()),
+                        );
+                        repl_map.insert(
+                            "duration_ms".to_string(),
+                            Value::Number(
+                                serde_json::Number::from_f64(repl_result.duration_ms)
+                                    .unwrap_or_else(|| serde_json::Number::from(0u32)),
                             ),
                         );
+                        // G11: 根据 publisher + db_path + replicate 结果决定 snapshot_published
+                        let snapshot_published = !db_path.is_empty()
+                            && self.snapshot_publisher.is_some()
+                            && repl_result.success
+                            && repl_result.generation > 0;
+                        repl_map.insert(
+                            "snapshot_published".to_string(),
+                            Value::Bool(snapshot_published),
+                        );
+                        if !snapshot_published {
+                            let warning = if db_path.is_empty() {
+                                "snapshot 未发布（codegraph_db_path_template 未配置，db_path 为空）。\
+                             G11 修复：在 daemon 配置中设置 codegraph_db_path_template \
+                             + 注入 SnapshotCachePublisher 后可启用 snapshot 发布。"
+                            } else if self.snapshot_publisher.is_none() {
+                                "snapshot 未发布（SnapshotCachePublisher 未注入）。\
+                             G11 修复：daemon 启动时通过 with_snapshot_publisher 注入 publisher。"
+                            } else if !repl_result.success {
+                                // P0-1 v2 修复：replicate 失败时回滚 committed（标记未真正发布）
+                                // 让同 seq 重试时 stale 检查不会拒绝
+                                // 实现方式：通过 file_generation_uncommit 清除 committed generation
+                                if let Err(uncommit_err) = resources
+                                    .cas_store
+                                    .file_generation_uncommit(workspace_id_num, &rel_path)
+                                {
+                                    eprintln!(
+                                        "[P0-1] uncommit failed for {} after replicate failure: {}",
+                                        rel_path, uncommit_err
+                                    );
+                                }
+                                "snapshot 发布失败（replicate 返回 success=false），\
+                             已回滚 committed，同 seq 可重试。\
+                             查看 error 字段了解详情。"
+                            } else {
+                                "snapshot 未发布（未知原因：generation <= 0）。"
+                            };
+                            repl_map.insert(
+                                "snapshot_warning".to_string(),
+                                Value::String(warning.to_string()),
+                            );
+                        }
+                        if let Some(err) = repl_result.error {
+                            repl_map.insert("error".to_string(), Value::String(err));
+                        }
+                        // P0-2 子问题1：把 merge 摘要附到 replication 响应
                         if let Some(ms) = merge_summary {
                             repl_map.insert("cas_merge".to_string(), ms);
                         }
                         response.insert("replication".to_string(), Value::Object(repl_map));
-                        break 'replicate_block;
-                    }
-
-                    // 尝试 committed（条件 UPDATE：只更新 seen == incoming_gen 的行）
-                    let committed_result = resources.cas_store.file_generation_committed(
-                        workspace_id_num,
-                        &rel_path,
-                        session_epoch,
-                        monotonic_seq,
-                    );
-                    match committed_result {
-                        Ok(true) => {
-                            // committed 成功，继续 replicate
-                        }
-                        Ok(false) => {
-                            // P0-1 v2 修复：Ok(false) 表示 seen 已被其他 handler 并发覆盖
-                            // 当前 handler 的 generation 已 stale，必须中止 replicate
-                            // 避免发布基于旧 generation 的 snapshot
-                            eprintln!(
-                                "[P0-1] committed Ok(false) for {} — seen 已被并发覆盖，中止 replicate",
-                                rel_path
-                            );
-                            let mut repl_map = Map::new();
-                            repl_map.insert(
-                                "snapshot_published".to_string(),
-                                Value::Bool(false),
-                            );
-                            repl_map.insert(
-                                "snapshot_warning".to_string(),
-                                Value::String(
-                                    "committed 条件失效（seen 已被并发覆盖），未 replicate".to_string()
-                                ),
-                            );
-                            response.insert("replication".to_string(), Value::Object(repl_map));
-                            break 'replicate_block;
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "[P0-1] file_generation_committed failed for {}: {}",
-                                rel_path, e
-                            );
-                            let mut repl_map = Map::new();
-                            repl_map.insert(
-                                "snapshot_published".to_string(),
-                                Value::Bool(false),
-                            );
-                            repl_map.insert(
-                                "snapshot_warning".to_string(),
-                                Value::String(format!(
-                                    "committed 失败（{}），未 replicate，同 seq 可重试",
-                                    e
-                                )),
-                            );
-                            response.insert("replication".to_string(), Value::Object(repl_map));
-                            break 'replicate_block;
-                        }
-                    }
-
-                    let replicator = Replicator::new(&resources.staging_log);
-                    // 注入 publisher（若配置齐全）
-                    let replicator = if !db_path.is_empty() {
-                        if let Some(ref publisher) = self.snapshot_publisher {
-                            replicator.with_snapshot_publisher(publisher.as_ref())
-                        } else {
-                            replicator
-                        }
-                    } else {
-                        replicator
-                    };
-                    let repl_result = replicator.replicate(workspace_instance_id, workspace_id_num, &db_path, "");
-
-                    let mut repl_map = Map::new();
-                    repl_map.insert(
-                        "generation".to_string(),
-                        Value::Number(repl_result.generation.into()),
-                    );
-                    repl_map.insert(
-                        "applied_count".to_string(),
-                        Value::Number(repl_result.applied_count.into()),
-                    );
-                    repl_map.insert(
-                        "pending_count".to_string(),
-                        Value::Number(repl_result.pending_count.into()),
-                    );
-                    repl_map.insert(
-                        "duration_ms".to_string(),
-                        Value::Number(
-                            serde_json::Number::from_f64(repl_result.duration_ms)
-                                .unwrap_or_else(|| serde_json::Number::from(0u32)),
-                        ),
-                    );
-                    // G11: 根据 publisher + db_path + replicate 结果决定 snapshot_published
-                    let snapshot_published = !db_path.is_empty()
-                        && self.snapshot_publisher.is_some()
-                        && repl_result.success
-                        && repl_result.generation > 0;
-                    repl_map.insert(
-                        "snapshot_published".to_string(),
-                        Value::Bool(snapshot_published),
-                    );
-                    if !snapshot_published {
-                        let warning = if db_path.is_empty() {
-                            "snapshot 未发布（codegraph_db_path_template 未配置，db_path 为空）。\
-                             G11 修复：在 daemon 配置中设置 codegraph_db_path_template \
-                             + 注入 SnapshotCachePublisher 后可启用 snapshot 发布。"
-                        } else if self.snapshot_publisher.is_none() {
-                            "snapshot 未发布（SnapshotCachePublisher 未注入）。\
-                             G11 修复：daemon 启动时通过 with_snapshot_publisher 注入 publisher。"
-                        } else if !repl_result.success {
-                            // P0-1 v2 修复：replicate 失败时回滚 committed（标记未真正发布）
-                            // 让同 seq 重试时 stale 检查不会拒绝
-                            // 实现方式：通过 file_generation_uncommit 清除 committed generation
-                            if let Err(uncommit_err) = resources.cas_store.file_generation_uncommit(
-                                workspace_id_num,
-                                &rel_path,
-                            ) {
-                                eprintln!(
-                                    "[P0-1] uncommit failed for {} after replicate failure: {}",
-                                    rel_path, uncommit_err
-                                );
-                            }
-                            "snapshot 发布失败（replicate 返回 success=false），\
-                             已回滚 committed，同 seq 可重试。\
-                             查看 error 字段了解详情。"
-                        } else {
-                            "snapshot 未发布（未知原因：generation <= 0）。"
-                        };
-                        repl_map.insert(
-                            "snapshot_warning".to_string(),
-                            Value::String(warning.to_string()),
-                        );
-                    }
-                    if let Some(err) = repl_result.error {
-                        repl_map.insert("error".to_string(), Value::String(err));
-                    }
-                    // P0-2 子问题1：把 merge 摘要附到 replication 响应
-                    if let Some(ms) = merge_summary {
-                        repl_map.insert("cas_merge".to_string(), ms);
-                    }
-                    response.insert("replication".to_string(), Value::Object(repl_map));
                     } // end 'replicate_block
                 }
                 Err(e) => {
@@ -1947,7 +1938,9 @@ impl DaemonStateExt for WorkspaceDaemonState {
             })?
             .to_string();
 
-        // 2. 定位 staging.log（$data_root/$ws_id/staging.log）
+        // 2. 初始化 workspace 资源（包括 staging/retry/CAS 日志）。
+        //    不能只从 self.resources 读取：daemon 重启后该缓存为空，
+        //    否则 durable parse_retry.log 会被静默跳过。
         // data_root 为空时（make_state() 测试场景）返回 recover_failed
         if self.data_root.as_os_str().is_empty() {
             return Err(DaemonRpcError::new(
@@ -1955,24 +1948,53 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 "data_root 未配置（无法定位 staging.log）",
             ));
         }
-        let ws_dir = self.data_root.join(&ws_id);
-        let staging_log_path = ws_dir.join("staging.log");
+        let resources = self.get_or_init_resources(&ws_id)?;
 
-        // 3. 打开 StagingLog（不存在视为无 pending，返回空结果）
-        let staging_log = match StagingLog::new(staging_log_path.to_string_lossy().as_ref()) {
-            Ok(l) => l,
-            Err(e) => {
-                return Err(DaemonRpcError::new(
-                    "recover_failed",
-                    format!("StagingLog::new 失败: {}", e),
-                ));
-            }
+        // 3. staging 恢复也必须经过 snapshot publish。没有完整发布能力时
+        //    fail closed，保留 pending entries，等待下一次恢复。
+        let db_path = if !self.codegraph_db_path_template.is_empty() {
+            self.codegraph_db_path_template
+                .replace("{workspace_instance_id}", &ws_id)
+        } else {
+            String::new()
         };
-
-        // 4. 调用 Replicator::recover（内部：read_pending → filter by ws_id →
-        //    mark_applied_batch → compact_applied）
-        let replicator = crate::daemon::replicator::Replicator::new(&staging_log);
-        let result = replicator.recover(&ws_id, 0, "");
+        let workspace_id_num: i64 = workspace
+            .get("workspace_id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let pending_for_workspace = resources
+            .staging_log
+            .read_pending()
+            .map(|entries| entries.iter().filter(|e| e.workspace_id == ws_id).count())
+            .unwrap_or(0);
+        let result = if pending_for_workspace == 0 {
+            crate::daemon::replicator::ReplicationResult {
+                success: true,
+                workspace_id: ws_id.clone(),
+                ..Default::default()
+            }
+        } else if workspace_id_num != 0 && !db_path.is_empty() && self.snapshot_publisher.is_some()
+        {
+            let replicator = crate::daemon::replicator::Replicator::new(&resources.staging_log)
+                .with_snapshot_publisher(
+                    self.snapshot_publisher
+                        .as_ref()
+                        .expect("snapshot_publisher checked above")
+                        .as_ref(),
+                );
+            replicator.replicate(&ws_id, workspace_id_num, &db_path, "")
+        } else {
+            let mut deferred = crate::daemon::replicator::ReplicationResult {
+                success: false,
+                workspace_id: ws_id.clone(),
+                error: Some(
+                    "snapshot recovery deferred: publisher/codegraph db unavailable".to_string(),
+                ),
+                ..Default::default()
+            };
+            deferred.pending_count = pending_for_workspace;
+            deferred
+        };
 
         // R9-P1-1 / R16-P1-1: 重放 parse_retry.log，执行完整状态机
         // （staging append + merge + committed + replicate + snapshot）
@@ -1993,25 +2015,12 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let mut retry_exhausted_count: u64 = 0;
         let mut retry_failed_count: u64 = 0;
         let mut retry_snapshot_published: u64 = 0;
-        if let Some(resources) = self.resources.get(&ws_id) {
+        {
             let parse_retry_log = &resources.parse_retry_log;
             let cas_store = &resources.cas_store;
             let replay_config = ReplayConfig::default();
 
             // R16-P1-1: 获取 workspace_id_num（用于 file_generation_committed 和 merge）
-            let workspace_id_num: i64 = workspace
-                .get("workspace_id")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-
-            // R16-P1-1: 解析 codegraph db_path（用于 merge 和 replicate）
-            let db_path = if !self.codegraph_db_path_template.is_empty() {
-                self.codegraph_db_path_template
-                    .replace("{workspace_instance_id}", &ws_id)
-            } else {
-                String::new()
-            };
-
             // R16-P1-1: 获取 host_real_root（用于 merge 的 abs_path 拼接）
             let host_real_root = workspace
                 .get("host_real_root")
@@ -2071,16 +2080,16 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                     };
 
                                 // Step 3: merge CAS → CodeGraph DB
-                                let mut merge_ok = true;
-                                if !db_path.is_empty() && !cas_key.is_empty() {
+                                let mut merge_ok = !db_path.is_empty()
+                                    && self.snapshot_publisher.is_some()
+                                    && workspace_id_num != 0
+                                    && !cas_key.is_empty();
+                                if merge_ok {
                                     // 确保父目录存在
-                                    if let Some(parent) =
-                                        std::path::Path::new(&db_path).parent()
-                                    {
+                                    if let Some(parent) = std::path::Path::new(&db_path).parent() {
                                         let _ = std::fs::create_dir_all(parent);
                                     }
-                                    let cas_conn_guard =
-                                        resources.cas_store.conn().lock().unwrap();
+                                    let cas_conn_guard = resources.cas_store.conn().lock().unwrap();
                                     match rusqlite::Connection::open(&db_path) {
                                         Ok(cg_conn) => {
                                             if let Err(schema_err) =
@@ -2094,16 +2103,17 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                                 );
                                                 merge_ok = false;
                                             } else {
-                                                let abs_path_for_merge = if !entry.abs_path.is_empty() {
-                                                    entry.abs_path.clone()
-                                                } else if !host_real_root.is_empty() {
-                                                    std::path::Path::new(&host_real_root)
-                                                        .join(&entry.rel_path)
-                                                        .to_string_lossy()
-                                                        .into_owned()
-                                                } else {
-                                                    entry.rel_path.clone()
-                                                };
+                                                let abs_path_for_merge =
+                                                    if !entry.abs_path.is_empty() {
+                                                        entry.abs_path.clone()
+                                                    } else if !host_real_root.is_empty() {
+                                                        std::path::Path::new(&host_real_root)
+                                                            .join(&entry.rel_path)
+                                                            .to_string_lossy()
+                                                            .into_owned()
+                                                    } else {
+                                                        entry.rel_path.clone()
+                                                    };
                                                 match crate::daemon::cas_merge::merge_cas_to_codegraph(
                                                     &cas_conn_guard,
                                                     &cg_conn,
@@ -2129,10 +2139,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!(
-                                                "[R16-P1-1] open codegraph db failed: {}",
-                                                e
-                                            );
+                                            eprintln!("[R16-P1-1] open codegraph db failed: {}", e);
                                             merge_ok = false;
                                         }
                                     }
@@ -2161,7 +2168,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                             let replicator = if !db_path.is_empty() {
                                                 if let Some(ref publisher) = self.snapshot_publisher
                                                 {
-                                                    replicator.with_snapshot_publisher(publisher.as_ref())
+                                                    replicator
+                                                        .with_snapshot_publisher(publisher.as_ref())
                                                 } else {
                                                     replicator
                                                 }
@@ -2202,11 +2210,14 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                     }
                                 }
 
-                                // Step 7: mark_applied on parse_retry_log
-                                let _ = parse_retry_log.mark_applied(entry.lsn);
-                                retry_recovered_count += 1;
+                                // 只有完整链路成功才清除 durable retry。CAS 命中或
+                                // merge 成功都不足以证明 snapshot 已可查询。
                                 if snapshot_published {
+                                    let _ = parse_retry_log.mark_applied(entry.lsn);
+                                    retry_recovered_count += 1;
                                     retry_snapshot_published += 1;
+                                } else {
+                                    retry_failed_count += 1;
                                 }
                                 let _ = staging_lsn; // 避免未使用警告
                             }
@@ -2214,9 +2225,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                 // 重试仍失败：检查是否耗尽
                                 let current_entry =
                                     parse_retry_log.read(0).ok().unwrap_or_default();
-                                let updated = current_entry
-                                    .iter()
-                                    .find(|e| e.lsn == entry.lsn);
+                                let updated = current_entry.iter().find(|e| e.lsn == entry.lsn);
                                 if let Some(e) = updated {
                                     if e.retry_count >= replay_config.max_retry {
                                         let _ = parse_retry_log.mark_exhausted(entry.lsn);
@@ -2239,11 +2248,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 }
                 Err(e) => {
                     // replay_pending 失败不阻塞 staging recover，仅在返回值中标记
-                    eprintln!(
-                        "[R16-P1-1] replay_pending 失败 for {}: {}",
-                        ws_id,
-                        e
-                    );
+                    eprintln!("[R16-P1-1] replay_pending 失败 for {}: {}", ws_id, e);
                 }
             }
         }
@@ -3259,7 +3264,8 @@ mod tests {
             ws_dir.join("staging.log").to_string_lossy().as_ref(),
         )
         .unwrap();
-        let parser_metrics = std::sync::Arc::new(crate::daemon::parser_metrics::ParserMetrics::new());
+        let parser_metrics =
+            std::sync::Arc::new(crate::daemon::parser_metrics::ParserMetrics::new());
         let parse_retry_log = std::sync::Arc::new(
             ParseRetryLog::new(ws_dir.join("parse_retry.log").to_string_lossy().as_ref()).unwrap(),
         );
@@ -3298,14 +3304,14 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], true);
-        // R9: retry_recovered_count 应为 1（重放成功，cas_state=ready_published）
-        assert_eq!(response["result"]["retry_recovered_count"], 1);
+        // 没有 snapshot publisher/codegraph DB 时只能安全延期，不能清除 durable retry。
+        assert_eq!(response["result"]["retry_recovered_count"], 0);
         assert_eq!(response["result"]["retry_exhausted_count"], 0);
-        assert_eq!(response["result"]["retry_failed_count"], 0);
+        assert_eq!(response["result"]["retry_failed_count"], 1);
 
-        // 验证 entry 已被 mark_applied（不再在 pending 中）
+        // 验证 entry 仍在 pending，等待具备完整 snapshot pipeline 的恢复请求。
         let pending = parse_retry_log.read_pending().unwrap();
-        assert_eq!(pending.len(), 0, "重放成功后 entry 应被 mark_applied");
+        assert_eq!(pending.len(), 1, "缺少 snapshot 时不得 mark_applied");
     }
 
     #[test]
@@ -3338,11 +3344,11 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], true);
-        assert_eq!(response["result"]["status"], "recovered");
-        assert_eq!(response["result"]["applied_count"], 3);
+        assert_eq!(response["result"]["status"], "failed");
+        assert_eq!(response["result"]["applied_count"], 0);
         assert_eq!(response["result"]["pending_count"], 3);
 
-        // 第二次 recover：无 pending，applied_count=0
+        // 第二次 recover：仍延期，pending 不得被静默清除。
         let response2 = dispatch(
             &mut state,
             make_owner_peer(),
@@ -3350,7 +3356,9 @@ mod tests {
             &json!({"workspace_instance_id": ws_id}),
             &[],
         );
+        assert_eq!(response2["result"]["status"], "failed");
         assert_eq!(response2["result"]["applied_count"], 0);
+        assert_eq!(response2["result"]["pending_count"], 3);
     }
 
     #[test]
@@ -3387,8 +3395,8 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], true);
-        // 只应用 ws_id 的 2 条，不应用 other_ws 的 1 条
-        assert_eq!(response["result"]["applied_count"], 2);
+        // 没有完整发布链路时不应用任何 entry，也不触碰其他 workspace 的 entry。
+        assert_eq!(response["result"]["applied_count"], 0);
         assert_eq!(response["result"]["pending_count"], 2);
     }
 
@@ -3949,10 +3957,7 @@ mod tests {
         let protection = &response["result"]["protection"];
         assert_eq!(protection["blocked"], true);
         assert_eq!(protection["dirty_overlay"], true);
-        assert_eq!(
-            protection["allows_retry"], false,
-            "dirty overlay 不应重试"
-        );
+        assert_eq!(protection["allows_retry"], false, "dirty overlay 不应重试");
     }
 
     #[test]
@@ -4030,21 +4035,12 @@ mod tests {
         );
 
         // 调用 health
-        let health = dispatch(
-            &mut state,
-            make_owner_peer(),
-            "health",
-            &json!({}),
-            &[],
-        );
+        let health = dispatch(&mut state, make_owner_peer(), "health", &json!({}), &[]);
 
         assert_eq!(health["ok"], true);
         // parser_metrics 数组应存在且至少 1 个 workspace
         let metrics_array = health["result"]["parser_metrics"].as_array();
-        assert!(
-            metrics_array.is_some(),
-            "health 应包含 parser_metrics 数组"
-        );
+        assert!(metrics_array.is_some(), "health 应包含 parser_metrics 数组");
         let metrics_array = metrics_array.unwrap();
         assert!(
             !metrics_array.is_empty(),

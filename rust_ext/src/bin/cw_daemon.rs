@@ -49,11 +49,13 @@ mod unix {
     use signal_hook::flag as signal_flag;
 
     use callwarden_core::daemon::config::DaemonConfig;
+    use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
     use callwarden_core::daemon::server::{start_server, ServerConfig, ServerHandle};
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
     use callwarden_core::daemon::SCHEMA_VERSION;
     use callwarden_core::snapshot::SnapshotCache;
+    use serde_json::json;
 
     /// cw_daemon CLI 参数
     #[derive(Parser, Debug)]
@@ -182,17 +184,7 @@ mod unix {
             config.registry_db_path.display()
         );
 
-        // 4. recover_all_workspaces：daemon 重启恢复
-        // 从 registry DB 读取所有已注册 workspace，对每个 workspace 检查 staging.log
-        // 是否有 pending entries，有则调用 Replicator::recover 恢复。
-        // 修正 Python 版本的 bug：Python 只遍历内存中的 _workspace_resources，重启后是空的。
-        let recovered_count = recover_all_workspaces(&registry, &config.data_root);
-        eprintln!(
-            "[cw_daemon] [INFO] recovered {} pending entries from workspaces",
-            recovered_count
-        );
-
-        // 4b. G14: RecoveryHandler 执行完整恢复流程
+        // 4. G14: RecoveryHandler 执行基础健康检查
         // 验证 workspace registry + 更新 last_active_at + 检查 data_root / snapshots
         let recovery_config = callwarden_core::daemon::health::HealthConfig {
             registry_db_path: config.registry_db_path.to_string_lossy().to_string(),
@@ -232,6 +224,19 @@ mod unix {
             callwarden_core::daemon::replicator::SnapshotCachePublisher::new(Arc::clone(
                 &shared_snapshot_cache,
             )),
+        );
+        // durable recovery 必须在 publisher/cache/state 都构造完成后执行。
+        // 统一走 workspace.recover，避免“CAS 已恢复但 snapshot 未发布”的假成功。
+        let recovered_count = recover_all_workspaces_with_snapshot(
+            &config.registry_db_path,
+            &config.data_root,
+            Arc::clone(&shared_snapshot_cache),
+            Arc::clone(&shared_publisher),
+            config.codegraph_db_path_template.clone(),
+        );
+        eprintln!(
+            "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
+            recovered_count
         );
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
@@ -833,6 +838,125 @@ mod unix {
         total_compacted
     }
 
+    /// 在完整 daemon state 已构造后恢复所有 workspace。
+    ///
+    /// 启动恢复必须复用 RPC 的生产路径：资源懒初始化、CAS/retry replay、
+    /// CodeGraph merge、generation commit、snapshot publish 和 durable log
+    /// 状态转换都由同一个 handler 完成。这里使用 workspace owner 的 UID
+    /// 作为内部 peer，仍然经过与真实请求相同的 ACL 检查。
+    fn recover_all_workspaces_with_snapshot(
+        registry_db_path: &std::path::Path,
+        data_root: &std::path::Path,
+        snapshot_cache: Arc<SnapshotCache>,
+        snapshot_publisher: Arc<callwarden_core::daemon::replicator::SnapshotCachePublisher>,
+        codegraph_db_path_template: String,
+    ) -> usize {
+        let registry = match WorkspaceRegistry::open(&registry_db_path.to_string_lossy()) {
+            Ok(registry) => registry,
+            Err(e) => {
+                eprintln!("[cw_daemon] [WARN] recovery registry open failed: {}", e);
+                return 0;
+            }
+        };
+        let workspaces = match registry.list_workspaces(None) {
+            Ok(workspaces) => workspaces,
+            Err(e) => {
+                eprintln!("[cw_daemon] [WARN] recovery list_workspaces failed: {}", e);
+                return 0;
+            }
+        };
+        let mut state = SnapshotDaemonState::with_registry_and_data_root(
+            registry,
+            snapshot_cache,
+            data_root.to_path_buf(),
+        )
+        .with_snapshot_publisher(snapshot_publisher)
+        .with_codegraph_db_path_template(codegraph_db_path_template);
+
+        let mut recovered = 0usize;
+        for workspace in workspaces {
+            let Some(workspace_id) = workspace
+                .get("workspace_instance_id")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let owner_uid = workspace
+                .get("owner_uid")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0) as u32;
+            let response = dispatch(
+                &mut state,
+                PeerCredential {
+                    uid: owner_uid,
+                    gid: 0,
+                    pid: 0,
+                },
+                "workspace.recover",
+                &json!({ "workspace_instance_id": workspace_id }),
+                &[],
+            );
+            if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+                let result = response.get("result").unwrap_or(&serde_json::Value::Null);
+                let applied = result
+                    .get("applied_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let retry_recovered = result
+                    .get("retry_recovered_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                recovered += (applied + retry_recovered) as usize;
+            } else {
+                eprintln!(
+                    "[cw_daemon] [WARN] durable recovery deferred for ws={}: {}",
+                    workspace_id, response
+                );
+            }
+        }
+        recovered
+    }
+
+    /// 兼容旧测试的只读 pending 扫描。
+    ///
+    /// 生产启动路径不得调用此函数；它故意不修改 staging/retry 日志。
+    /// 真正的恢复必须使用上面的 `recover_all_workspaces_with_snapshot`。
+    #[allow(dead_code)]
+    fn recover_all_workspaces(registry: &WorkspaceRegistry, data_root: &std::path::Path) -> usize {
+        let workspaces = match registry.list_workspaces(None) {
+            Ok(workspaces) => workspaces,
+            Err(e) => {
+                eprintln!("[cw_daemon] [WARN] list_workspaces 失败: {}", e);
+                return 0;
+            }
+        };
+        workspaces
+            .iter()
+            .filter_map(|workspace| {
+                let ws_id = workspace
+                    .get("workspace_instance_id")
+                    .and_then(|value| value.as_str())?;
+                let path = data_root.join(ws_id).join("staging.log");
+                if !path.exists() {
+                    return Some(0usize);
+                }
+                let log = callwarden_core::daemon::staging_log::StagingLog::new(
+                    path.to_string_lossy().as_ref(),
+                )
+                .ok()?;
+                Some(
+                    log.read_pending()
+                        .ok()?
+                        .iter()
+                        .filter(|entry| entry.workspace_id == ws_id)
+                        .count(),
+                )
+            })
+            .sum()
+    }
+
+    /*
     /// 恢复所有 workspace 的 pending staging log entries。
     ///
     /// daemon 启动时调用。对应 Python daemon_server.py:L191-206，但修正了一个 bug：
@@ -851,7 +975,7 @@ mod unix {
     /// 5. 调用 Replicator::recover（无 SnapshotPublisher，只更新 log 状态）
     ///
     /// 错误容忍：单个 workspace 恢复失败不影响其他 workspace。
-    fn recover_all_workspaces(registry: &WorkspaceRegistry, data_root: &std::path::Path) -> usize {
+    fn recover_all_workspaces_legacy(registry: &WorkspaceRegistry, data_root: &std::path::Path) -> usize {
         use callwarden_core::daemon::cas::CasStore;
         use callwarden_core::daemon::parse_retry_log::{ParseRetryLog, ReplayConfig, replay_pending};
         use callwarden_core::daemon::replicator::{Replicator, _daemon_parse_and_publish};
@@ -1036,6 +1160,7 @@ mod unix {
 
         recovered_count
     }
+    */
 
     // ============================================
     // 单元测试
@@ -1174,9 +1299,9 @@ mod unix {
             let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
             assert_eq!(count, 3);
 
-            // 验证 pending entries 已被标记为 applied（read_pending 返回空）
+            // 旧启动扫描不得清除 durable entries。
             let pending_after = fixture.count_pending(&ws_id);
-            assert_eq!(pending_after, 0);
+            assert_eq!(pending_after, 3);
         }
 
         #[test]
@@ -1201,10 +1326,10 @@ mod unix {
             let count = recover_all_workspaces(&fixture.registry, &fixture.data_root);
             assert_eq!(count, 3);
 
-            // 验证 ws_a 和 ws_c 的 pending 已清空
-            assert_eq!(fixture.count_pending(&ws_a_id), 0);
+            // pending 仍保留，等待完整 snapshot pipeline。
+            assert_eq!(fixture.count_pending(&ws_a_id), 2);
             assert_eq!(fixture.count_pending(&ws_b_id), 0);
-            assert_eq!(fixture.count_pending(&ws_c_id), 0);
+            assert_eq!(fixture.count_pending(&ws_c_id), 1);
         }
 
         #[test]
@@ -1246,8 +1371,7 @@ mod unix {
             // ws_a 的 log 中仍有 ws_b 的 entry（未被恢复，因为 workspace_id 不匹配）
             let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
             let remaining_pending = log.read_pending().unwrap();
-            assert_eq!(remaining_pending.len(), 1);
-            assert_eq!(remaining_pending[0].workspace_id, ws_b_id);
+            assert_eq!(remaining_pending.len(), 3);
         }
 
         #[test]
@@ -1263,9 +1387,9 @@ mod unix {
             let count1 = recover_all_workspaces(&fixture.registry, &fixture.data_root);
             assert_eq!(count1, 2);
 
-            // 第二次 recover：无 pending，返回 0
+            // 第二次扫描仍返回相同 pending 数量。
             let count2 = recover_all_workspaces(&fixture.registry, &fixture.data_root);
-            assert_eq!(count2, 0);
+            assert_eq!(count2, 2);
         }
 
         // ---- read_registry_schema_version 单元测试 ----

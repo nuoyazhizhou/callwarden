@@ -1,6 +1,7 @@
 """Phase 1.2: Rust multi_lang parser 与 Python parser 对齐测试。
 
-使用 Counter（多重集合）比较 11 种语言的 parser 输出：
+使用 Counter（多重集合）比较 15 种语言的 parser 输出；C 通过专用
+`parse_c_file` 路径单独验证：
 - symbols: (name, start_line, end_line) — 结构身份（不比较 qualified_name，因双方 module_path 策略不同）
 - raw_calls: (callee_name, call_line) — 调用身份（不比较 caller_qualified，同上）
 
@@ -58,6 +59,33 @@ def _load_golden_fixture(lang: str) -> dict:
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _all_language_samples() -> list[tuple[str, str, str]]:
+    """从 golden fixture 补齐 alignment 的 15 个 Rust parse_file_lang 语言。
+
+    P31 的基础样例历史上只有 11 种语言；契约 gate 不能仅凭报告硬编码覆盖数，
+    这里直接从同一份 golden sample_source 构造剩余 Kotlin/Swift/HCL/Elixir 样例。
+    C 使用 parse_c_file，不加入这个通用 parse_file_lang 参数集。
+    """
+    samples = list(_LANGUAGE_SAMPLES)
+    present = {lang for lang, _filename, _content in samples}
+    for lang in ("kotlin", "swift", "hcl", "elixir"):
+        fixture = _load_golden_fixture(lang)
+        if lang in present or not fixture:
+            continue
+        samples.append(
+            (
+                lang,
+                fixture["sample_file"],
+                fixture["sample_source"],
+            )
+        )
+    return samples
+
+
+# 真实 gate 参数集：15 个 supported_languages() 语言，而不是报告层的静态数字。
+_LANGUAGE_SAMPLES = _all_language_samples()
 
 
 def _golden_signature_known_gap_langs() -> set[str]:
@@ -172,6 +200,11 @@ KNOWN_CALL_DIFFS: dict[str, tuple[str, Counter]] = {
     "javascript": (
         "Rust 提取 new User(...) 构造调用，Python parser 不提取（Python 限制，P0-C Step 1 修复）",
         Counter({("User", 16): 1}),
+    ),
+    # Swift: Python parser 提取参数标签调用，Rust 当前只提取无标签调用。
+    "swift": (
+        "Swift 参数标签调用的 Python/Rust 投影差异",
+        Counter({("getName", 5): 1}),
     ),
     # R15-P0-3: Rust 额外提取 impl 方法内的调用（Python 不提取 impl 方法）
     "rust": (
@@ -762,6 +795,29 @@ class TestRustPythonAlignment:
             f"  提示: 若为新增已知差异，请更新 KNOWN_VISIBILITY_DIFFS[{lang!r}]"
         )
 
+    def test_visibility_matches_golden_contract(self, lang, filename, content, tmp_path):
+        """Rust visibility 必须逐符号匹配 golden，不得靠 Python 白名单放行。"""
+        fixture = _load_golden_fixture(lang)
+        assert fixture, f"缺少 {lang}.json golden fixture"
+        sample_source = fixture.get("sample_source", content)
+        path = tmp_path / filename
+        path.write_text(sample_source, encoding="utf-8")
+
+        from callwarden_core import parse_file_lang
+
+        result = parse_file_lang(str(path), "test.golden", lang)
+        expected = {
+            (s["name"], s["line_start"]): s.get("visibility", "")
+            for s in fixture.get("expected", {}).get("symbols", [])
+        }
+        actual = {
+            (s.get("name", ""), s.get("start_line", 0)): s.get("visibility", "")
+            for s in result.get("symbols", [])
+        }
+        assert expected, f"{lang} golden 没有 visibility 契约"
+        assert actual, f"{lang} Rust 没有输出 visibility 符号"
+        assert {k: actual.get(k, "") for k in expected} == expected
+
     def test_signature_alignment(self, lang, filename, content, tmp_path):
         """R8-P0-4: symbol signature 与 golden fixture 契约对齐（真绿门禁）。
 
@@ -838,6 +894,35 @@ class TestRustPythonAlignment:
             + f"\n  若此语言存在系统性 signature 缺口，请在 golden fixture {lang}.json "
             f"的 known_gaps 中显式声明（field='signature', phase='Phase 2.7'）"
         )
+
+
+@pytest.mark.skipif(not _has_rust_ext(), reason="callwarden_core 未安装")
+def test_c_signature_visibility_matches_golden(tmp_path):
+    """C 专用 parse_c_file 路径也必须满足 signature/visibility 契约。"""
+    fixture = _load_golden_fixture("c")
+    assert fixture, "缺少 c.json golden fixture"
+    path = tmp_path / fixture["sample_file"]
+    path.write_text(fixture["sample_source"], encoding="utf-8")
+
+    from callwarden_core import parse_c_file
+
+    result = parse_c_file(str(path), "test.golden")
+    actual = {
+        (s.get("name", ""), s.get("start_line", 0)): (
+            s.get("signature", ""),
+            s.get("visibility", ""),
+        )
+        for s in result.get("symbols", [])
+    }
+    expected = {
+        (s["name"], s["line_start"]): (
+            s.get("signature", ""),
+            s.get("visibility", ""),
+        )
+        for s in fixture.get("expected", {}).get("symbols", [])
+    }
+    assert expected, "C golden 没有 signature/visibility 契约"
+    assert {key: actual.get(key) for key in expected} == expected
 
 
 @pytest.mark.skipif(not _has_rust_ext(), reason="callwarden_core 未安装")

@@ -82,6 +82,15 @@ _GATE_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+def _alignment_languages() -> list[tuple[str, str, str]]:
+    """读取实际 alignment 参数集，不能从报告层硬编码覆盖数。"""
+    try:
+        from test_rust_python_alignment import _LANGUAGE_SAMPLES  # type: ignore[import-not-found]
+    except Exception:
+        return []
+    return list(_LANGUAGE_SAMPLES)
+
+
 def _collect_known_differences() -> dict[str, Any]:
     """从 test_rust_python_alignment.py 收集已知差异白名单。
 
@@ -387,11 +396,11 @@ def _build_gate_report(
                 "已知差异白名单不计入失败，但必须经评审确认并在 known_differences 中显式记录。"
             ),
         },
-        "languages_covered": [
-            "rust", "typescript", "javascript", "python", "kotlin", "go",
-            "java", "c", "cpp", "csharp", "ruby", "php", "swift", "scala",
-            "hcl", "elixir",
-        ],
+        # 从实际参数化契约测试读取覆盖语言，避免报告数字与测试集合脱节。
+        "languages_covered": sorted(
+            {lang for lang, _filename, _content in _alignment_languages()}
+            | {"c"}
+        ),
     }
     return report
 

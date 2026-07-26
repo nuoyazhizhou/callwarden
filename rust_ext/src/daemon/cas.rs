@@ -182,6 +182,8 @@ fn now_ts() -> f64 {
 /// CAS 输入符号（对应 Python parse_result["symbols"][i]）
 #[derive(Debug, Clone)]
 pub struct CasSymbolInput {
+    /// ParseFact ABI 的文件内稳定 ID（1-based；0 保留给 synthetic module）。
+    pub local_symbol_id: i64,
     pub name: String,
     pub qualified_name: String,
     pub parent_id: Option<i64>,
@@ -307,10 +309,7 @@ impl CasStore {
             .truncate(false)
             .open(&lock_path)
             .map_err(|e| {
-                CasPublishError::Lock(format!(
-                    "open lock file {} failed: {}",
-                    lock_path, e
-                ))
+                CasPublishError::Lock(format!("open lock file {} failed: {}", lock_path, e))
             })?;
         fs2::FileExt::lock_exclusive(&file).map_err(|e| {
             CasPublishError::Lock(format!(
@@ -455,6 +454,35 @@ impl CasStore {
         now: f64,
         final_state: &str,
     ) -> Result<(), CasPublishError> {
+        // ParseFact 的 parent/caller 都引用同一文件内的 1-based local ID。
+        // 在 CAS 边界拒绝 0 或负值，避免数组下标重新编号后污染持久化图谱。
+        for sym in &parse_result.symbols {
+            if sym.local_symbol_id < 1 {
+                return Err(CasPublishError::InvalidInput(format!(
+                    "local_symbol_id must be >= 1, got {} for {}",
+                    sym.local_symbol_id, sym.name
+                )));
+            }
+            if let Some(parent_id) = sym.parent_id {
+                if parent_id < 1 {
+                    return Err(CasPublishError::InvalidInput(format!(
+                        "parent_id must be NULL or >= 1, got {} for {}",
+                        parent_id, sym.name
+                    )));
+                }
+            }
+        }
+        for call in &parse_result.raw_calls {
+            if let Some(caller_id) = call.caller_id {
+                if caller_id < 1 {
+                    return Err(CasPublishError::InvalidInput(format!(
+                        "caller_id must be NULL or >= 1, got {}",
+                        caller_id
+                    )));
+                }
+            }
+        }
+
         // 阶段 1: 插入 building 状态（INSERT OR IGNORE 保证幂等）
         conn.execute(
             "INSERT OR IGNORE INTO cas_file_cache
@@ -510,7 +538,7 @@ impl CasStore {
             for (i, sym) in parse_result.symbols.iter().enumerate() {
                 stmt.execute(params![
                     cas_key,
-                    i as i64,
+                    sym.local_symbol_id,
                     &sym_hash_map[i],
                     &sym.name,
                     &sym.qualified_name,
@@ -630,9 +658,8 @@ impl CasStore {
     ) -> Result<CasGcStats, CasPublishError> {
         // 阶段 2: pending_refs 未过期的 cas_key 并入 live set（不变量 C9）
         let mut all_live: std::collections::HashSet<String> = live_keys.clone();
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT cas_key FROM cas_pending_refs WHERE expires_at > ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT DISTINCT cas_key FROM cas_pending_refs WHERE expires_at > ?1")?;
         let pending_keys: Vec<String> = stmt
             .query_map(params![now], |row| row.get(0))?
             .filter_map(|r| r.ok())
@@ -642,7 +669,10 @@ impl CasStore {
         }
 
         // 创建临时 live 表
-        conn.execute("CREATE TEMP TABLE IF NOT EXISTS _gc_live (cas_key TEXT PRIMARY KEY)", [])?;
+        conn.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS _gc_live (cas_key TEXT PRIMARY KEY)",
+            [],
+        )?;
         conn.execute("DELETE FROM _gc_live", [])?;
         // 批量插入 live keys
         {
@@ -675,10 +705,11 @@ impl CasStore {
             [],
         )?;
 
-        // 3c. 最后删父表（只删 ready）
+        // 3c. 最后删父表：ready 与 partial 都是已发布但未被 live set 引用的
+        //      内容；partial 不能因为 lookup 不命中就永久绕过 GC。
         let deleted_files = conn.execute(
             "DELETE FROM cas_file_cache WHERE cas_key NOT IN (SELECT cas_key FROM _gc_live)
-             AND state = 'ready'",
+             AND state IN ('ready', 'partial')",
             [],
         )?;
 
@@ -703,10 +734,14 @@ impl CasStore {
              (SELECT DISTINCT symbol_content_hash FROM cas_symbols)",
             [],
         )?;
-        let orphan_files = conn.execute("DELETE FROM cas_file_cache WHERE state = 'building'", [])?;
+        let orphan_files =
+            conn.execute("DELETE FROM cas_file_cache WHERE state = 'building'", [])?;
 
         // 3e. 清理过期 pending_refs
-        let expired_refs = conn.execute("DELETE FROM cas_pending_refs WHERE expires_at <= ?1", params![now])?;
+        let expired_refs = conn.execute(
+            "DELETE FROM cas_pending_refs WHERE expires_at <= ?1",
+            params![now],
+        )?;
 
         conn.execute("DROP TABLE _gc_live", [])?;
 
@@ -725,7 +760,7 @@ impl CasStore {
     /// 但 Rust schema 用 `cas_file_cache`（无 `ref_count` 列），故采用等价语义：
     ///
     /// 删除规则：
-    /// 1. `cas_file_cache` 中 `state='ready' AND parsed_at < now - grace_days*86400`
+    /// 1. `cas_file_cache` 中 `state IN ('ready', 'partial') AND parsed_at < now - grace_days*86400`
     /// 2. 且 `cas_key` 不在 `cas_pending_refs`（未过期）中
     /// 3. 级联删除 `cas_symbols` / `cas_raw_calls` / `cas_imports` 中关联行
     /// 4. 清理 `cas_symbol_contents` 中不再被任何 symbol 引用的 content_hash
@@ -753,12 +788,12 @@ impl CasStore {
             )?;
             conn.execute("DELETE FROM _gc_stale", [])?;
 
-            // 2. 找出 ready + parsed_at < cutoff + 不在未过期 pending_refs 的 cas_key
+            // 2. 找出 ready/partial + parsed_at < cutoff + 不在未过期 pending_refs 的 cas_key
             {
                 let mut stmt = conn.prepare(
                     "INSERT OR IGNORE INTO _gc_stale
                      SELECT cas_key FROM cas_file_cache
-                     WHERE state = 'ready' AND parsed_at < ?1
+                     WHERE state IN ('ready', 'partial') AND parsed_at < ?1
                      AND cas_key NOT IN (
                          SELECT DISTINCT cas_key FROM cas_pending_refs WHERE expires_at > ?2
                      )",
@@ -767,11 +802,8 @@ impl CasStore {
             }
 
             // 3. 检查是否有待删除条目
-            let stale_count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM _gc_stale",
-                [],
-                |row| row.get(0),
-            )?;
+            let stale_count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM _gc_stale", [], |row| row.get(0))?;
             if stale_count == 0 {
                 conn.execute("DROP TABLE _gc_stale", [])?;
                 return Ok(0u64);
@@ -1140,6 +1172,7 @@ pub enum CasPublishError {
     Sqlite(rusqlite::Error),
     /// G6: 文件锁获取失败（跨进程 GC 互斥）
     Lock(String),
+    InvalidInput(String),
 }
 
 impl std::fmt::Display for CasPublishError {
@@ -1147,6 +1180,7 @@ impl std::fmt::Display for CasPublishError {
         match self {
             CasPublishError::Sqlite(e) => write!(f, "SQLite 错误: {}", e),
             CasPublishError::Lock(msg) => write!(f, "GC 文件锁错误: {}", msg),
+            CasPublishError::InvalidInput(msg) => write!(f, "CAS 输入无效: {}", msg),
         }
     }
 }
@@ -1189,6 +1223,7 @@ mod tests {
             total_lines: 10,
             symbols: vec![
                 CasSymbolInput {
+                    local_symbol_id: 1,
                     name: "foo".to_string(),
                     qualified_name: "module.foo".to_string(),
                     parent_id: None,
@@ -1206,9 +1241,10 @@ mod tests {
                     content: "fn foo() {}".to_string(),
                 },
                 CasSymbolInput {
+                    local_symbol_id: 2,
                     name: "bar".to_string(),
                     qualified_name: "module.bar".to_string(),
-                    parent_id: None,
+                    parent_id: Some(1),
                     kind: "fn".to_string(),
                     start_line: 7,
                     end_line: 9,
@@ -1224,7 +1260,7 @@ mod tests {
                 },
             ],
             raw_calls: vec![CasRawCallInput {
-                caller_id: Some(0),
+                caller_id: Some(1),
                 caller_name: "foo".to_string(),
                 callee_name: "bar".to_string(),
                 line: 3,
@@ -1292,15 +1328,7 @@ mod tests {
 
         store
             .publish(
-                &cas_key,
-                "hash1",
-                "rust",
-                &input,
-                "0.1.0",
-                "0.2.0",
-                "v1",
-                "v1",
-                "v1",
+                &cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
             )
             .unwrap();
 
@@ -1314,6 +1342,66 @@ mod tests {
         assert_eq!(row.state, "ready");
         assert_eq!(row.file_size, 100);
         assert_eq!(row.total_lines, 10);
+    }
+
+    #[test]
+    fn test_publish_preserves_parse_fact_local_ids() {
+        let store = make_store();
+        let cas_key = compute_cas_key_v1("identity", "rust", "0.1.0", "0.2.0", "v1", "v1", "v1");
+        let input = make_input();
+
+        store
+            .publish(
+                &cas_key, "identity", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
+            .unwrap();
+
+        let conn = store.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, local_symbol_id, lexical_parent_local_id
+                 FROM cas_symbols WHERE cas_key = ?1 ORDER BY local_symbol_id",
+            )
+            .unwrap();
+        let rows: Vec<(String, i64, Option<i64>)> = stmt
+            .query_map(params![cas_key], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect();
+
+        assert_eq!(
+            rows,
+            vec![
+                ("foo".to_string(), 1, None),
+                ("bar".to_string(), 2, Some(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_publish_rejects_zero_local_id() {
+        let store = make_store();
+        let cas_key = compute_cas_key_v1("invalid-id", "rust", "0.1.0", "0.2.0", "v1", "v1", "v1");
+        let mut input = make_input();
+        input.symbols[0].local_symbol_id = 0;
+
+        let error = store
+            .publish(
+                &cas_key,
+                "invalid-id",
+                "rust",
+                &input,
+                "0.1.0",
+                "0.2.0",
+                "v1",
+                "v1",
+                "v1",
+            )
+            .unwrap_err();
+        assert!(matches!(error, CasPublishError::InvalidInput(_)));
+        assert_eq!(store.count_cas_files().unwrap(), 0);
     }
 
     #[test]
@@ -1358,15 +1446,22 @@ mod tests {
 
         // 相同 cas_key publish 两次应该成功（INSERT OR IGNORE + UPDATE ready）
         store
-            .publish(&cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
         store
-            .publish(&cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
 
         // 仍然只有一条记录，state='ready'
         assert_eq!(store.count_cas_files().unwrap(), 1);
-        assert_eq!(store.get_cas_state(&cas_key).unwrap(), Some("ready".to_string()));
+        assert_eq!(
+            store.get_cas_state(&cas_key).unwrap(),
+            Some("ready".to_string())
+        );
     }
 
     #[test]
@@ -1382,9 +1477,14 @@ mod tests {
         };
 
         store
-            .publish(&cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
-        assert_eq!(store.get_cas_state(&cas_key).unwrap(), Some("ready".to_string()));
+        assert_eq!(
+            store.get_cas_state(&cas_key).unwrap(),
+            Some("ready".to_string())
+        );
     }
 
     // ---- cas_pin 测试 ----
@@ -1395,7 +1495,9 @@ mod tests {
         let cas_key = compute_cas_key_v1("hash1", "rust", "0.1.0", "0.2.0", "v1", "v1", "v1");
         let input = make_input();
         store
-            .publish(&cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
 
         // pin
@@ -1419,7 +1521,9 @@ mod tests {
         let cas_key = compute_cas_key_v1("hash1", "rust", "0.1.0", "0.2.0", "v1", "v1", "v1");
         let input = make_input();
         store
-            .publish(&cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
 
         // 同一 workspace pin 两次（INSERT OR REPLACE 幂等）
@@ -1446,10 +1550,14 @@ mod tests {
         let cas_key2 = compute_cas_key_v1("hash2", "rust", "0.1.0", "0.2.0", "v1", "v1", "v1");
         let input = make_input();
         store
-            .publish(&cas_key1, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key1, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
         store
-            .publish(&cas_key2, "hash2", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key2, "hash2", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
         assert_eq!(store.count_cas_files().unwrap(), 2);
 
@@ -1479,10 +1587,14 @@ mod tests {
         let cas_key2 = compute_cas_key_v1("hash2", "rust", "0.1.0", "0.2.0", "v1", "v1", "v1");
         let input = make_input();
         store
-            .publish(&cas_key1, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key1, "hash1", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
         store
-            .publish(&cas_key2, "hash2", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1")
+            .publish(
+                &cas_key2, "hash2", "rust", &input, "0.1.0", "0.2.0", "v1", "v1", "v1",
+            )
             .unwrap();
 
         // pin cas_key2（GC 保护窗口）
@@ -1532,6 +1644,29 @@ mod tests {
         assert_eq!(stats.deleted_files, 1); // orphan_files
     }
 
+    #[test]
+    fn test_gc_cleans_unreferenced_partial_state() {
+        let store = make_store();
+        let cas_key = "orphan_partial_key";
+        {
+            let conn = store.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO cas_file_cache
+                 (cas_key, content_hash, language, file_size, total_lines,
+                  parser_version, callwarden_version, extraction_config_version,
+                  abi_version, input_abi_version, state, parsed_at)
+                 VALUES (?1, 'hash', 'rust', 0, 0, 'pv', 'cv', 'ec', 'av', 'iav', 'partial', 0.0)",
+                params![cas_key],
+            )
+            .unwrap();
+        }
+
+        let stats = store.gc(&HashSet::new(), 7.0).unwrap();
+
+        assert_eq!(store.count_cas_files().unwrap(), 0);
+        assert_eq!(stats.deleted_files, 1);
+    }
+
     // ---- file_generation_seen 测试 ----
 
     #[test]
@@ -1543,7 +1678,10 @@ mod tests {
             .unwrap();
         assert!(seen);
 
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.latest_session_id, "session-1");
         assert_eq!(row.latest_session_epoch, 1);
         assert_eq!(row.latest_seq, 1);
@@ -1557,17 +1695,27 @@ mod tests {
         // 需要先 committed，才能拒绝 stale seq
         let store = make_store();
         // epoch=1, seq=5：先 seen 再 committed
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
-        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
+        store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
 
         // stale: epoch=1, seq=3（小于 committed 的 5）
         let seen = store
             .file_generation_seen(1, "src/main.rs", "session-1", 1, 3)
             .unwrap();
-        assert!(!seen, "stale seq 应该被拒绝（committed=1:5 > incoming=1:3）");
+        assert!(
+            !seen,
+            "stale seq 应该被拒绝（committed=1:5 > incoming=1:3）"
+        );
 
         // row 不应该被更新
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.latest_seq, 5);
     }
 
@@ -1576,20 +1724,29 @@ mod tests {
         // P0-1 修复后：stale 检查基于 latest_committed_generation
         let store = make_store();
         // epoch=2, seq=1：先 seen 再 committed
-        store.file_generation_seen(1, "src/main.rs", "session-2", 2, 1).unwrap();
-        store.file_generation_committed(1, "src/main.rs", 2, 1).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-2", 2, 1)
+            .unwrap();
+        store
+            .file_generation_committed(1, "src/main.rs", 2, 1)
+            .unwrap();
 
         // stale: epoch=1（小于 committed 的 2）
         let seen = store
             .file_generation_seen(1, "src/main.rs", "session-1", 1, 100)
             .unwrap();
-        assert!(!seen, "stale epoch 应该被拒绝（committed=2:1 > incoming=1:100）");
+        assert!(
+            !seen,
+            "stale epoch 应该被拒绝（committed=2:1 > incoming=1:100）"
+        );
     }
 
     #[test]
     fn test_file_generation_seen_accepts_newer_seq() {
         let store = make_store();
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
 
         // newer: epoch=1, seq=10
         let seen = store
@@ -1597,7 +1754,10 @@ mod tests {
             .unwrap();
         assert!(seen);
 
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.latest_seq, 10);
         assert_eq!(row.latest_seen_generation, "1:10");
     }
@@ -1609,11 +1769,18 @@ mod tests {
         // P0-1 v2 修复：replicate/snapshot publish 失败时回滚 committed
         let store = make_store();
         // seen + committed: epoch=1, seq=5
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
-        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
+        store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
 
         // committed 应有值
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.latest_committed_generation, "1:5");
 
         // uncommit
@@ -1621,7 +1788,10 @@ mod tests {
         assert!(uncommitted, "uncommit 应返回 true（已清除 committed）");
 
         // committed 应清空
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.latest_committed_generation, "", "committed 应被清空");
 
         // seen 应保留（uncommit 只清 committed，不清 seen）
@@ -1633,8 +1803,12 @@ mod tests {
         // P0-1 v2 修复：uncommit 后同 seq 重试不会被 stale 拒绝
         let store = make_store();
         // seen + committed: epoch=1, seq=5
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
-        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
+        store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
 
         // uncommit（模拟 replicate 失败回滚）
         store.file_generation_uncommit(1, "src/main.rs").unwrap();
@@ -1651,7 +1825,9 @@ mod tests {
         // P0-1 v2 修复：uncommit 未 committed 的行应返回 false（无操作）
         let store = make_store();
         // 只 seen，未 committed
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
 
         let uncommitted = store.file_generation_uncommit(1, "src/main.rs").unwrap();
         assert!(!uncommitted, "未 committed 时 uncommit 应返回 false");
@@ -1663,13 +1839,20 @@ mod tests {
     fn test_file_generation_committed_updates_on_matching_seen() {
         let store = make_store();
         // seen: epoch=1, seq=5
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
 
         // committed: epoch=1, seq=5（与 seen 一致）
-        let committed = store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+        let committed = store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
         assert!(committed);
 
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.latest_committed_generation, "1:5");
     }
 
@@ -1677,16 +1860,25 @@ mod tests {
     fn test_file_generation_committed_rejects_stale() {
         let store = make_store();
         // seen: epoch=1, seq=5
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 5)
+            .unwrap();
 
         // 其他 handler 已覆盖 seen（变为 epoch=1, seq=10）
-        store.file_generation_seen(1, "src/main.rs", "session-1", 1, 10).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-1", 1, 10)
+            .unwrap();
 
         // 现在 committed: epoch=1, seq=5 应该被拒绝（latest_seen_generation 已变为 "1:10"）
-        let committed = store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+        let committed = store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
         assert!(!committed, "stale manifest commit 应该被条件 UPDATE 阻止");
 
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(row.latest_committed_generation, ""); // 仍然为空
     }
 
@@ -1787,7 +1979,10 @@ mod tests {
         );
 
         // 4. 验证 committed_generation 仍为空（A 未成功 committed）
-        let row = store.get_file_generation(1, "src/main.rs").unwrap().unwrap();
+        let row = store
+            .get_file_generation(1, "src/main.rs")
+            .unwrap()
+            .unwrap();
         assert_eq!(
             row.latest_committed_generation, "",
             "handler A committed 失败，latest_committed_generation 应仍为空"
@@ -1801,10 +1996,7 @@ mod tests {
         let committed_b = store
             .file_generation_committed(1, "src/main.rs", 1, 10)
             .unwrap();
-        assert!(
-            committed_b,
-            "handler B committed 应成功（B 是最新 seen）"
-        );
+        assert!(committed_b, "handler B committed 应成功（B 是最新 seen）");
     }
 
     /// 门槛 1 集成测试：同 seq 重试在未 uncommit 时被 stale 拒绝
@@ -1816,8 +2008,12 @@ mod tests {
         let store = make_store();
 
         // 1. seen + committed + replicate 成功（不 uncommit）
-        store.file_generation_seen(1, "src/main.rs", "session-a", 1, 5).unwrap();
-        store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+        store
+            .file_generation_seen(1, "src/main.rs", "session-a", 1, 5)
+            .unwrap();
+        store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
 
         // 2. 同 seq 重试 seen 应被拒绝（committed 已存在，stale 检查阻止重复处理）
         let retry_seen = store

@@ -424,24 +424,20 @@ def test_inspector_spec_does_not_declare_callwarden_core_in_hiddenimports():
         encoding="utf-8"
     )
 
-    # 提取 _local_hiddenimports 和 _client_agent_hiddenimports 块
-    # 简单方法：检查整个 spec 中没有独立行的 'callwarden_core'（带引号）
-    # 但允许在注释中出现。这里用更精确的方式：查找 hiddenimports 列表内的条目。
+    # 只检查两个 hiddenimports 列表本身。`_common_excludes` 必须保留
+    # `callwarden_core`，用于阻止 PyInstaller 从 site-packages 再收集一份
+    # 扩展；把它当成 hiddenimport 会产生假失败。
     import re
-    # 匹配形如 'callwarden_core' 的字符串字面量（带引号）
-    # 但排除注释行（以 # 开头）
-    code_lines = [
-        line for line in spec.splitlines()
-        if not line.strip().startswith("#")
-    ]
-    code_without_comments = "\n".join(code_lines)
-    # 在非注释代码中查找 'callwarden_core' 作为字符串字面量
-    # 排除 binaries 检查中的字符串比较（如 name == rust_ext_name 或 startswith('callwarden_core.')）
-    # 这些是 R10-P1-2-c 新增的检查代码，是允许的。
-    # 我们要检查的是 hiddenimports 列表中是否还有 'callwarden_core' 条目。
-    # hiddenimports 列表项的形式：    'callwarden_core',
-    pattern = re.compile(r"^\s*'callwarden_core'\s*,\s*$", re.MULTILINE)
-    matches = pattern.findall(code_without_comments)
+
+    matches = []
+    for list_name in ("_local_hiddenimports", "_client_agent_hiddenimports"):
+        block = re.search(
+            rf"{list_name}\s*=\s*\[(.*?)\]",
+            spec,
+            flags=re.DOTALL,
+        )
+        assert block is not None, f"spec 缺少 {list_name} 列表"
+        matches.extend(re.findall(r"^\s*'callwarden_core'\s*,\s*$", block.group(1), re.MULTILINE))
     assert not matches, (
         "spec 的 hiddenimports 中仍声明了 'callwarden_core'，"
         "应仅通过 binaries 提供（R10-P1-2-c）"

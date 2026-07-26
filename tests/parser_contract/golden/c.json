@@ -65,12 +65,6 @@
   },
   "known_gaps": [
     {
-      "parser": "rust",
-      "field": "signature",
-      "description": "Rust SymbolInfo.signature 始终为空字符串（C 走专用 parse_c_file 路径）",
-      "phase": "Phase 2.7"
-    },
-    {
       "parser": "python",
       "field": "raw_calls",
       "description": "Python parser 不提取 printf 调用；golden 期望含 printf 调用（Python 限制）",

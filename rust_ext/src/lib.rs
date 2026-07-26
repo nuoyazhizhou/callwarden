@@ -561,6 +561,7 @@ fn parse_c_function(
     let start_line = node.start_position().row as u32 + 1;
     let end_line = node.end_position().row as u32 + 1;
     let content = node_text(node, source).to_string();
+    let signature = c_signature(node, source, true);
 
     Some(SymbolInfo {
         name,
@@ -574,7 +575,7 @@ fn parse_c_function(
         has_comment: false,
         visibility: "public".to_string(),
         content,
-        signature: String::new(),
+        signature,
         // R1-P0-2: ParseFact ABI — byte range 直接从 AST 节点取；
         // local_id / lexical_parent_local_id 由 assign_local_ids 后处理填入
         // R14-P0-2: lexical_parent_local_id 改为 None（Option<u32>，None=顶层）
@@ -606,6 +607,8 @@ fn parse_c_struct(
     };
     let qualified = make_qualified(module_path, parent_qualified, &name);
 
+    let signature = c_signature(node, source, false);
+
     Some(SymbolInfo {
         name,
         qualified_name: qualified,
@@ -618,7 +621,7 @@ fn parse_c_struct(
         has_comment: false,
         visibility: "public".to_string(),
         content: node_text(node, source).to_string(),
-        signature: String::new(),
+        signature,
         // R1-P0-2: ParseFact ABI 字段
         // R14-P0-2: lexical_parent_local_id 改为 None（Option<u32>，None=顶层）
         local_id: 0,
@@ -647,6 +650,8 @@ fn parse_c_enum(
     };
     let qualified = make_qualified(module_path, parent_qualified, &name);
 
+    let signature = c_signature(node, source, false);
+
     Some(SymbolInfo {
         name,
         qualified_name: qualified,
@@ -659,7 +664,7 @@ fn parse_c_enum(
         has_comment: false,
         visibility: "public".to_string(),
         content: node_text(node, source).to_string(),
-        signature: String::new(),
+        signature,
         // R1-P0-2: ParseFact ABI 字段
         // R14-P0-2: lexical_parent_local_id 改为 None（Option<u32>，None=顶层）
         local_id: 0,
@@ -667,6 +672,19 @@ fn parse_c_enum(
         byte_start: node.start_byte() as u32,
         byte_end: node.end_byte() as u32,
     })
+}
+
+/// 提取 C declaration signature：函数去掉 compound_statement，类型声明保留完整声明。
+fn c_signature(node: &Node, source: &[u8], function: bool) -> String {
+    let end = if function {
+        find_child(node, "compound_statement")
+            .map(|body| body.start_byte())
+            .unwrap_or_else(|| node.end_byte())
+    } else {
+        node.end_byte()
+    };
+    let text = std::str::from_utf8(&source[node.start_byte()..end]).unwrap_or("");
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// 从函数体内提取调用关系（call_expression）

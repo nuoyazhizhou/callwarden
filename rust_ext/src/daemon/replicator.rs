@@ -20,8 +20,7 @@ use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 
 use super::cas::{
-    CasImportInput, CasPublishInput, CasRawCallInput, CasStore, CasSymbolInput,
-    compute_cas_key_v1,
+    compute_cas_key_v1, CasImportInput, CasPublishInput, CasRawCallInput, CasStore, CasSymbolInput,
 };
 use super::staging_log::{StagingEntry, StagingLog};
 use crate::canonicalize::{canonicalize_source, sha256_hex};
@@ -117,16 +116,10 @@ pub fn daemon_handle_connect(
 ) -> Result<Value, ProtocolError> {
     let now = now_unix();
     let conn = ws_conn.lock().unwrap();
-    conn.execute_batch("BEGIN IMMEDIATE").map_err(|e| {
-        ProtocolError::new(format!("BEGIN IMMEDIATE 失败: {}", e))
-    })?;
-    let result = daemon_handle_connect_inner(
-        &conn,
-        peer_uid,
-        workspace_id,
-        requested_session_id,
-        now,
-    );
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| ProtocolError::new(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+    let result =
+        daemon_handle_connect_inner(&conn, peer_uid, workspace_id, requested_session_id, now);
     match result {
         Ok(value) => {
             if let Err(e) = conn.execute_batch("COMMIT") {
@@ -192,10 +185,7 @@ fn daemon_handle_connect_inner(
     .map_err(|e| ProtocolError::new(format!("UPDATE file_generations 失败: {}", e)))?;
 
     let mut m = Map::new();
-    m.insert(
-        "session_epoch".to_string(),
-        Value::Number(new_epoch.into()),
-    );
+    m.insert("session_epoch".to_string(), Value::Number(new_epoch.into()));
     Ok(Value::Object(m))
 }
 
@@ -284,13 +274,10 @@ pub fn daemon_handle_refresh(
     let active = active_session.ok_or_else(|| {
         ProtocolError::new(format!("no active session for workspace {}", workspace_id))
     })?;
-    if msg.agent_session_id != active.session_id
-        || msg.session_epoch != active.session_epoch
-    {
+    if msg.agent_session_id != active.session_id || msg.session_epoch != active.session_epoch {
         return Err(ProtocolError::new(format!(
             "stale session rejected: incoming={}:{} active={}:{}",
-            msg.agent_session_id, msg.session_epoch,
-            active.session_id, active.session_epoch
+            msg.agent_session_id, msg.session_epoch, active.session_id, active.session_epoch
         )));
     }
 
@@ -298,8 +285,15 @@ pub fn daemon_handle_refresh(
 
     // 2. CAS 第一阶段（seen）—— 原子更新 latest_seen_generation
     let seen_result = cas_store
-        .map(|s| s.file_generation_seen(workspace_id, &msg.rel_path, &msg.agent_session_id,
-                                         msg.session_epoch, msg.monotonic_seq))
+        .map(|s| {
+            s.file_generation_seen(
+                workspace_id,
+                &msg.rel_path,
+                &msg.agent_session_id,
+                msg.session_epoch,
+                msg.monotonic_seq,
+            )
+        })
         .transpose()
         .map_err(|e| ProtocolError::new(format!("file_generation_seen 失败: {}", e)))?;
 
@@ -465,39 +459,42 @@ pub fn _daemon_parse_and_publish(
 
     // 3b. canonicalize + re-hash
     // canonical_bytes_owned 仅在降级路径下分配，避免优先路径的无谓分配
-    let (canonical_bytes_owned, content_hash, canonicalize_method): (Option<Vec<u8>>, String, &'static str) =
-        match canonical_bytes {
-            Some(bytes) => {
-                // 优先路径：daemon 已从 UDS bytes frame / FD 获得规范化内容
-                let hash = sha256_hex(bytes);
-                (None, hash, "direct_bytes")
+    let (canonical_bytes_owned, content_hash, canonicalize_method): (
+        Option<Vec<u8>>,
+        String,
+        &'static str,
+    ) = match canonical_bytes {
+        Some(bytes) => {
+            // 优先路径：daemon 已从 UDS bytes frame / FD 获得规范化内容
+            let hash = sha256_hex(bytes);
+            (None, hash, "direct_bytes")
+        }
+        None => {
+            // 降级路径：从 abs_path 读取 + canonicalize
+            if abs_path.is_empty() {
+                return serde_json::json!({
+                    "content_hash": "",
+                    "cas_key": "",
+                    "cas_state": "no_abs_path",
+                });
             }
-            None => {
-                // 降级路径：从 abs_path 读取 + canonicalize
-                if abs_path.is_empty() {
+            match canonicalize_source(abs_path) {
+                Ok(canon) => {
+                    let bytes = canon.canonical_bytes;
+                    let hash = canon.content_hash;
+                    (Some(bytes), hash, "abs_path_fallback")
+                }
+                Err(e) => {
                     return serde_json::json!({
                         "content_hash": "",
                         "cas_key": "",
-                        "cas_state": "no_abs_path",
+                        "cas_state": "canonicalize_failed",
+                        "error": format!("{}", e),
                     });
                 }
-                match canonicalize_source(abs_path) {
-                    Ok(canon) => {
-                        let bytes = canon.canonical_bytes;
-                        let hash = canon.content_hash;
-                        (Some(bytes), hash, "abs_path_fallback")
-                    }
-                    Err(e) => {
-                        return serde_json::json!({
-                            "content_hash": "",
-                            "cas_key": "",
-                            "cas_state": "canonicalize_failed",
-                            "error": format!("{}", e),
-                        });
-                    }
-                }
             }
-        };
+        }
+    };
 
     // 决定最终用于 parse 的字节切片
     let canonical_bytes_ref: &[u8] = canonical_bytes
@@ -574,12 +571,8 @@ pub fn _daemon_parse_and_publish(
     };
     let parser = GenericParser::new(Arc::new(lang_config));
     let module_path = build_module_path(rel_path);
-    let parse_result = parser.parse_canonical_bytes(
-        canonical_bytes_ref,
-        abs_path,
-        &module_path,
-        &content_hash,
-    );
+    let parse_result =
+        parser.parse_canonical_bytes(canonical_bytes_ref, abs_path, &module_path, &content_hash);
 
     // R6-P0-2: parse 失败 / partial 检查（读取 diagnostics 字段，权威源）
     //
@@ -717,6 +710,8 @@ fn parse_result_to_cas_input(
         .symbols
         .iter()
         .map(|si| CasSymbolInput {
+            // R14-P0-2: 保留 ParseFact 的 1-based local_id，不使用 vector 下标重编号。
+            local_symbol_id: si.local_id as i64,
             name: si.name.clone(),
             qualified_name: si.qualified_name.clone(),
             // R14-P0-2: lexical_parent_local_id 已是 Option<u32>，直接 map 转换
@@ -921,11 +916,7 @@ impl ReplicationResult {
         let status = if self.success { "ok" } else { "failed" };
         format!(
             "ReplicationResult({}, ws={}, gen={}, {}/{}) applied",
-            status,
-            self.workspace_id,
-            self.generation,
-            self.applied_count,
-            self.pending_count
+            status, self.workspace_id, self.generation, self.applied_count, self.pending_count
         )
     }
 }
@@ -948,10 +939,7 @@ impl<'a> Replicator<'a> {
         }
     }
 
-    pub fn with_snapshot_publisher(
-        mut self,
-        publisher: &'a dyn SnapshotPublisher,
-    ) -> Self {
+    pub fn with_snapshot_publisher(mut self, publisher: &'a dyn SnapshotPublisher) -> Self {
         self.snapshot_publisher = Some(publisher);
         self
     }
@@ -1015,7 +1003,12 @@ impl<'a> Replicator<'a> {
         // 3. 发布新 generation（若 publisher + db_path 均可用）
         if let Some(publisher) = self.snapshot_publisher {
             if !db_path.is_empty() {
-                match publisher.publish_snapshot(workspace_id, workspace_id_num, db_path, build_context_hash) {
+                match publisher.publish_snapshot(
+                    workspace_id,
+                    workspace_id_num,
+                    db_path,
+                    build_context_hash,
+                ) {
                     Ok(pub_result) => {
                         result.generation = pub_result.generation;
                     }
@@ -1107,10 +1100,15 @@ impl<'a> Replicator<'a> {
                 }
             }
             // resolve_delta.added/removed 数量
-            if let Some(resolve_delta) = entry.resolve_delta.get("added").and_then(|v| v.as_array()) {
+            if let Some(resolve_delta) = entry.resolve_delta.get("added").and_then(|v| v.as_array())
+            {
                 merged.total_added_edges += resolve_delta.len();
             }
-            if let Some(resolve_delta) = entry.resolve_delta.get("removed").and_then(|v| v.as_array()) {
+            if let Some(resolve_delta) = entry
+                .resolve_delta
+                .get("removed")
+                .and_then(|v| v.as_array())
+            {
                 merged.total_removed_edges += resolve_delta.len();
             }
         }
@@ -1119,7 +1117,10 @@ impl<'a> Replicator<'a> {
 }
 
 fn elapsed_ms(start: &SystemTime) -> f64 {
-    start.elapsed().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
+    start
+        .elapsed()
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0)
 }
 
 /// 合并后的 delta summary（对应 Python _merge_deltas 返回的 dict）
@@ -1245,11 +1246,15 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM workspace_active_session", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM workspace_active_session", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM file_generations", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM file_generations", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(count, 0);
     }
@@ -1361,7 +1366,10 @@ mod tests {
             )
             .unwrap();
         assert_eq!(latest_seq, 0, "latest_seq 应该被重置为 0");
-        assert!(latest_seen_gen.is_empty(), "latest_seen_generation 应该被清空");
+        assert!(
+            latest_seen_gen.is_empty(),
+            "latest_seen_generation 应该被清空"
+        );
     }
 
     // ---- daemon_handle_refresh 测试 ----
@@ -1435,7 +1443,9 @@ mod tests {
         daemon_handle_refresh(1, &msg5, store.conn(), Some(&cas_store), None).unwrap();
 
         // 模拟 workspace.rs merge 成功后调用 committed
-        cas_store.file_generation_committed(1, "src/main.rs", 1, 5).unwrap();
+        cas_store
+            .file_generation_committed(1, "src/main.rs", 1, 5)
+            .unwrap();
 
         // 再 refresh seq=3 应该被丢弃（stale seq < committed 5）
         let msg3 = make_msg(3, "session-1", 1);
@@ -1660,7 +1670,11 @@ mod tests {
         let entries = log.read(0).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, "failed");
-        assert!(entries[0].error.as_ref().unwrap().contains("publish failure"));
+        assert!(entries[0]
+            .error
+            .as_ref()
+            .unwrap()
+            .contains("publish failure"));
     }
 
     // ---- ReplicationResult.summary 测试 ----
@@ -1802,13 +1816,7 @@ mod tests {
     #[test]
     fn test_daemon_parse_and_publish_unsupported_language() {
         // .txt 不识别 → unsupported_language
-        let result = _daemon_parse_and_publish(
-            "foo.txt",
-            Some(b"hello".as_slice()),
-            "",
-            None,
-            1,
-        );
+        let result = _daemon_parse_and_publish("foo.txt", Some(b"hello".as_slice()), "", None, 1);
         assert_eq!(result["cas_state"], "unsupported_language");
         assert_eq!(result["content_hash"], "");
         assert_eq!(result["cas_key"], "");
@@ -1817,42 +1825,27 @@ mod tests {
     #[test]
     fn test_daemon_parse_and_publish_no_abs_path_when_no_bytes() {
         // 无 canonical_bytes + 无 abs_path → no_abs_path
-        let result = _daemon_parse_and_publish(
-            "foo.rs",
-            None,
-            "",
-            None,
-            1,
-        );
+        let result = _daemon_parse_and_publish("foo.rs", None, "", None, 1);
         assert_eq!(result["cas_state"], "no_abs_path");
     }
 
     #[test]
     fn test_daemon_parse_and_publish_canonicalize_failed() {
         // 提供不存在的 abs_path → canonicalize_failed
-        let result = _daemon_parse_and_publish(
-            "foo.rs",
-            None,
-            "/nonexistent/path/foo.rs",
-            None,
-            1,
-        );
+        let result = _daemon_parse_and_publish("foo.rs", None, "/nonexistent/path/foo.rs", None, 1);
         assert_eq!(result["cas_state"], "canonicalize_failed");
-        assert!(result["error"].as_str().unwrap().contains("No such file")
+        assert!(
+            result["error"].as_str().unwrap().contains("No such file")
                 || result["error"].as_str().unwrap().contains("cannot find")
-                || !result["error"].as_str().unwrap().is_empty());
+                || !result["error"].as_str().unwrap().is_empty()
+        );
     }
 
     #[test]
     fn test_daemon_parse_and_publish_no_cas_conn() {
         // cas_store=None → no_cas_conn（但 content_hash 已计算）
-        let result = _daemon_parse_and_publish(
-            "foo.rs",
-            Some(b"fn main() {}".as_slice()),
-            "",
-            None,
-            1,
-        );
+        let result =
+            _daemon_parse_and_publish("foo.rs", Some(b"fn main() {}".as_slice()), "", None, 1);
         assert_eq!(result["cas_state"], "no_cas_conn");
         assert_eq!(result["canonicalize_method"], "direct_bytes");
         // content_hash 应为 sha256("fn main() {}")
@@ -1883,13 +1876,8 @@ mod tests {
         let cas = super::super::cas::CasStore::open_in_memory().unwrap();
         let bytes = b"fn add(a: i32, b: i32) -> i32 { a + b }".to_vec();
         let _ = _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 1);
-        let result2 = _daemon_parse_and_publish(
-            "foo.rs",
-            Some(&bytes),
-            "/tmp/foo.rs",
-            Some(&cas),
-            1,
-        );
+        let result2 =
+            _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 1);
         assert_eq!(result2["cas_state"], "ready_cache_hit");
         assert_eq!(result2["canonicalize_method"], "direct_bytes");
     }
@@ -1900,7 +1888,8 @@ mod tests {
         let cas = super::super::cas::CasStore::open_in_memory().unwrap();
         let bytes = b"fn x() {}".to_vec();
         let _ = _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 42);
-        let result2 = _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 42);
+        let result2 =
+            _daemon_parse_and_publish("foo.rs", Some(&bytes), "/tmp/foo.rs", Some(&cas), 42);
         assert_eq!(result2["cas_state"], "ready_cache_hit");
 
         // 查询 cas_pending_refs
@@ -1927,14 +1916,8 @@ mod tests {
 
         let msg = make_msg(1, "session-1", 1);
         let bytes = b"fn main() {}".to_vec();
-        let result = daemon_handle_refresh(
-            1,
-            &msg,
-            store.conn(),
-            Some(&cas_store),
-            Some(&bytes),
-        )
-        .unwrap();
+        let result =
+            daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
         assert_eq!(result.status, "committed");
         assert_eq!(result.generation, "1:1");
         // cas_result 应包含 ready_published
@@ -1952,11 +1935,13 @@ mod tests {
 
         let bytes = b"fn x() {}".to_vec();
         let msg1 = make_msg(1, "session-1", 1);
-        let r1 = daemon_handle_refresh(1, &msg1, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
+        let r1 =
+            daemon_handle_refresh(1, &msg1, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
         assert_eq!(r1.cas_result.unwrap()["cas_state"], "ready_published");
 
         let msg2 = make_msg(2, "session-1", 1);
-        let r2 = daemon_handle_refresh(1, &msg2, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
+        let r2 =
+            daemon_handle_refresh(1, &msg2, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
         assert_eq!(r2.cas_result.unwrap()["cas_state"], "ready_cache_hit");
     }
 
@@ -1973,11 +1958,15 @@ mod tests {
 
         let msg = make_msg(1, "session-1", 1);
         let bytes = b"".to_vec(); // 空文件
-        let result = daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
+        let result =
+            daemon_handle_refresh(1, &msg, store.conn(), Some(&cas_store), Some(&bytes)).unwrap();
         assert_eq!(result.status, "committed");
         // 空文件 parse 不出错（tree-sitter 容错），但 symbols 为空。
         // cas_state 应为 ready_published（CAS 表里留痕）或 ready_cache_hit。
-        let cas_state = result.cas_result.unwrap()["cas_state"].as_str().unwrap().to_string();
+        let cas_state = result.cas_result.unwrap()["cas_state"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(
             cas_state == "ready_published" || cas_state == "ready_cache_hit",
             "expected ready_published or ready_cache_hit, got {}",
@@ -2118,7 +2107,8 @@ mod tests {
                 "#,
             ).unwrap();
             // WAL checkpoint：确保数据写入主 DB（GraphStore 用 immutable=1 打开）
-            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+                .unwrap();
         }
         (tmp, db_path)
     }
@@ -2186,17 +2176,23 @@ mod tests {
 
         // ws_a 第一次 publish
         // symbol_count = 5（4 真实符号 + 1 占位槽，见 publishes_and_returns_counts 测试注释）
-        let pr_a1 = publisher.publish_snapshot("ws_a", 0, db_path_str, "ctx-a-1").unwrap();
+        let pr_a1 = publisher
+            .publish_snapshot("ws_a", 0, db_path_str, "ctx-a-1")
+            .unwrap();
         assert_eq!(pr_a1.symbol_count, 5);
         assert_eq!(pr_a1.generation, 1);
 
         // ws_b 第一次 publish（独立 generation 序列）
-        let pr_b1 = publisher.publish_snapshot("ws_b", 0, db_path_str, "ctx-b-1").unwrap();
+        let pr_b1 = publisher
+            .publish_snapshot("ws_b", 0, db_path_str, "ctx-b-1")
+            .unwrap();
         assert_eq!(pr_b1.symbol_count, 5);
         assert_eq!(pr_b1.generation, 1, "ws_b 的 generation 应独立从 1 开始");
 
         // ws_a 第二次 publish
-        let pr_a2 = publisher.publish_snapshot("ws_a", 0, db_path_str, "ctx-a-2").unwrap();
+        let pr_a2 = publisher
+            .publish_snapshot("ws_a", 0, db_path_str, "ctx-a-2")
+            .unwrap();
         assert_eq!(pr_a2.generation, 2, "ws_a 第二次 generation 应为 2");
     }
 }
