@@ -90,16 +90,16 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Build Rust extension
+        run: python release/build.py --rust
+
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r release/pyinstaller/requirements-build.txt
+          python -m pip install --prefer-binary --retries 5 --timeout 60 -r release/pyinstaller/requirements-build.txt
           python -m pip install . --no-deps
           # psutil 用于 step8 RSS 度量
-          python -m pip install psutil
-
-      - name: Build Rust extension
-        run: python release/build.py --rust
+          python -m pip install --prefer-binary --retries 5 --timeout 60 psutil
 
       - name: Run PyInstaller (local + client/agent)
         run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
