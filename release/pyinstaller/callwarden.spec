@@ -47,6 +47,7 @@ Python parser 保留在源码仓库作为开发 reference，通过 ``pyproject.t
 
 import sys
 import os
+from PyInstaller.utils.hooks import collect_all
 
 # === 路径常量 ===
 # spec 文件位于 release/pyinstaller/callwarden.spec，项目根目录是上两级
@@ -64,6 +65,13 @@ datas = [
     (os.path.join(ROOT, 'i18n', 'en_US.json'), 'callwarden/i18n'),
     (os.path.join(ROOT, 'i18n', 'zh_CN.json'), 'callwarden/i18n'),
 ]
+
+# numpy 含平台相关的动态库和大量子模块。仅把 ``numpy`` 放进
+# hiddenimports 在 ARM runner 上不够，显式收集完整运行时，避免冻结后启动时
+# 才出现 ``ModuleNotFoundError: numpy``。
+_numpy_datas, _numpy_binaries, _numpy_hiddenimports = collect_all('numpy')
+local_datas = datas + _numpy_datas
+local_binaries_extra = _numpy_binaries
 
 # === Binaries: Rust 扩展 callwarden_core（两个 bundle 都需要）===
 # 构建后的二进制在项目根目录（release/build.py 复制到这里）
@@ -399,9 +407,9 @@ _client_agent_excludes = (
 a_local = Analysis(
     [os.path.join(ENTRY_DIR, 'entry_cw.py')],
     pathex=[PACKAGE_PARENT],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=_local_hiddenimports,
+    binaries=binaries + local_binaries_extra,
+    datas=local_datas,
+    hiddenimports=_local_hiddenimports + _numpy_hiddenimports,
     hookspath=[],
     runtime_hooks=[],
     excludes=list(_common_excludes) + _PARSER_GRAMMAR_EXCLUDES,
