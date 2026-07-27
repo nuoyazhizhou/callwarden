@@ -20,7 +20,12 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import numpy as np
+try:
+    import numpy as np
+    _NUMPY_IMPORT_ERROR = None
+except Exception as _exc:  # 平台原生库加载失败时不阻断 CLI/MCP 启动
+    np = None
+    _NUMPY_IMPORT_ERROR = _exc
 
 from ..i18n import t
 
@@ -180,10 +185,16 @@ for _i in range(128):
     _b = int.from_bytes(_h[4:8], "little") & 0xFFFFFFFF       # 32 位
     _HASH_COEFFS.append((_a, _b))
 
-# 预生成 numpy 数组，向量化计算（避免每次构造）
-_HASH_A_NP = np.array([c[0] for c in _HASH_COEFFS], dtype=np.uint64)
-_HASH_B_NP = np.array([c[1] for c in _HASH_COEFFS], dtype=np.uint64)
-_MASK_32 = np.uint64(0xFFFFFFFF)
+# 仅在 numpy 可用时预生成数组；平台原生库不可用不应阻断普通查询启动。
+_HASH_A_NP = (
+    np.array([c[0] for c in _HASH_COEFFS], dtype=np.uint64)
+    if np is not None else None
+)
+_HASH_B_NP = (
+    np.array([c[1] for c in _HASH_COEFFS], dtype=np.uint64)
+    if np is not None else None
+)
+_MASK_32 = np.uint64(0xFFFFFFFF) if np is not None else None
 
 # Phase 7.1：大桶保护参数
 # LSH 桶中符号数超过此值时跳过该桶（降级为暴力比较的子集），
@@ -217,6 +228,12 @@ def _minhash_signature(token_set: set, num_perm: int = 128) -> tuple:
     """
     if not token_set:
         return tuple([0xFFFFFFFF] * num_perm)
+
+    if np is None or _HASH_A_NP is None or _HASH_B_NP is None or _MASK_32 is None:
+        raise RuntimeError(
+            "clone detection requires a working numpy runtime; "
+            f"import failed: {_NUMPY_IMPORT_ERROR}"
+        )
 
     # numpy 向量化：对所有 perm × 所有 token 一次性计算
     # shape: (num_perm, N)，每行是该 perm 下所有 token 的 hash
