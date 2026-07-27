@@ -44,7 +44,7 @@ cw workspace status <workspace_id>
 
 ```bash
 # Linux x86_64
-wget https://github.com/callwarden/callwarden/releases/download/v0.3.3/callwarden-linux-x86_64.tar.gz
+wget https://github.com/nuoyazhizhou/callwarden/releases/download/v0.3.14/callwarden-linux-amd64.tar.gz
 
 # macOS arm64
 wget https://github.com/callwarden/callwarden/releases/download/v0.3.3/callwarden-macos-arm64.tar.gz
@@ -58,7 +58,7 @@ curl -L -o callwarden-windows-amd64.zip https://github.com/callwarden/callwarden
 ```bash
 # Linux/macOS
 mv callwarden callwarden.old  # 备份旧版本
-tar xzf callwarden-linux-x86_64.tar.gz
+tar xzf callwarden-linux-amd64.tar.gz
 ./callwarden/cw --version  # 验证新版本
 
 # Windows

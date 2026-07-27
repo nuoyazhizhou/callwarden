@@ -21,8 +21,16 @@ jobs:
             platform: windows-amd64
             ext: zip
             max_unpacked_mb: 150
+          - os: windows-11-arm
+            platform: windows-arm64
+            ext: zip
+            max_unpacked_mb: 150
           - os: ubuntu-22.04
             platform: linux-amd64
+            ext: tar.gz
+            max_unpacked_mb: 260
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
             ext: tar.gz
             max_unpacked_mb: 260
           - os: macos-latest
@@ -87,8 +95,12 @@ jobs:
             # Windows: zip archive（bash 变量通过参数传给 PowerShell）
             powershell -Command "Compress-Archive -Path 'callwarden' -DestinationPath \"../$ARTIFACT\""
           else
-            # Linux/macOS: 单一共享运行时目录
-            tar czf "../$ARTIFACT" callwarden/
+            if [ "${{ matrix.platform }}" = "linux-amd64" ] || [ "${{ matrix.platform }}" = "linux-arm64" ]; then
+              # Linux enterprise all-in-one：local + client/agent 共用一个归档。
+              tar czf "../$ARTIFACT" callwarden/ callwarden-client/
+            else
+              tar czf "../$ARTIFACT" callwarden/
+            fi
           fi
           cd ..
           REPORT="callwarden-${{ matrix.platform }}-bundle-report.json"
@@ -98,6 +110,14 @@ jobs:
             --artifact "$ARTIFACT" \
             --report "$REPORT" \
             --max-unpacked-mb "${{ matrix.max_unpacked_mb }}"
+          if [ "${{ matrix.platform }}" = "linux-amd64" ] || [ "${{ matrix.platform }}" = "linux-arm64" ]; then
+            python release/inspect_pyinstaller_bundle.py \
+              --bundle dist/callwarden-client \
+              --pyz-toc build/callwarden/PYZ-01.toc \
+              --artifact "$ARTIFACT" \
+              --report "callwarden-${{ matrix.platform }}-client-bundle-report.json" \
+              --role client
+          fi
           echo "artifact=$ARTIFACT" >> $GITHUB_ENV
           echo "report=$REPORT" >> $GITHUB_ENV
 
@@ -108,6 +128,13 @@ jobs:
           path: |
             ${{ env.artifact }}
             ${{ env.report }}
+
+      - name: Upload Linux client bundle report
+        if: startsWith(matrix.os, 'ubuntu')
+        uses: actions/upload-artifact@v4
+        with:
+          name: callwarden-${{ matrix.platform }}-client-bundle-report
+          path: callwarden-${{ matrix.platform }}-client-bundle-report.json
 
   release:
     needs: build
@@ -127,7 +154,9 @@ jobs:
         with:
           files: |
             callwarden-windows-amd64.zip
+            callwarden-windows-arm64.zip
             callwarden-linux-amd64.tar.gz
+            callwarden-linux-arm64.tar.gz
             callwarden-macos-arm64.tar.gz
           generate_release_notes: true
           prerelease: ${{ contains(github.ref, '-') }}

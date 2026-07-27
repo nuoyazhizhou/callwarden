@@ -43,18 +43,19 @@ grammar wheel 和 `callwarden.parsers.*` 语言实现模块，生产解析统一
 | 平台 | 架构 | 压缩包 | 角色 |
 |------|------|--------|------|
 | Windows | amd64 | `callwarden-windows-amd64.zip` | local |
+| Windows | arm64 | `callwarden-windows-arm64.zip` | local |
 | macOS | arm64 | `callwarden-macos-arm64.tar.gz` | local |
-| Linux | x86_64 | `callwarden-linux-x86_64.tar.gz` | local + client/agent/daemon |
-| Linux | aarch64 | `callwarden-linux-aarch64.tar.gz` | local + client/agent/daemon |
+| Linux | amd64 | `callwarden-linux-amd64.tar.gz` | enterprise all-in-one |
+| Linux | arm64 | `callwarden-linux-arm64.tar.gz` | enterprise all-in-one |
 
-**Linux 独有 client/agent 包**：`callwarden-client-linux-<arch>.tar.gz`（无 parser/numpy，
-仅 RPC + watcher，UDS/TCP 通信）。
+Linux enterprise 归档同时包含 `cw`、`cw-client`、`cw-agent` 和 `cw-daemon` 四个入口；
+不再发布单独的 client/agent 便携归档。Windows 和 macOS 只发布 local 入口。
 
 ### 2.2 解压即用
 
 ```bash
 # Linux/macOS
-tar xzf callwarden-linux-x86_64.tar.gz
+tar xzf callwarden-linux-amd64.tar.gz
 ./callwarden/cw --version
 ./callwarden/cw --help
 
@@ -113,7 +114,8 @@ Rust parser 失败时**不再静默回退 Python**，而是按设计 §5.3 错�
 ### 4.1 发布前回滚（gate 失败）
 
 任一语言 gate 失败时，该版本不得删除 local/daemon 的 Python grammar（设计 §9.1）。
-client/agent 轻包可独立发布，不受 local parser gate 阻塞。
+Linux all-in-one 归档中的 client/agent 与 local 共用同一版本和发布校验；其 client/agent
+目录不含 parser/CAS，便于在共享开发机或容器中按需启用。
 
 ### 4.2 发布后回滚优先级
 

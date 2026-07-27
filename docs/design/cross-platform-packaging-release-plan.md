@@ -105,13 +105,14 @@ cw-daemon          Linux system daemon 前台入口
 
 Rust 扩展必须由对应平台 runner 构建。v0.3 发布边界为：
 
-- Windows：当前 x64 `.pyd`；arm64 仍需独立 runner；
+- Windows：amd64 和 arm64 `.pyd`，分别由对应 runner 构建；
 - macOS：当前 arm64 `.so`；不把单架构 PyInstaller runtime 声称为 universal2；
-- Linux：当前 x86_64 `.so`；aarch64 仍需独立 runner。
+- Linux：amd64 和 arm64 `.so`，分别由对应 runner 构建。
 
 同一 PyInstaller bundle 中的全部入口必须共享一个根级 `_internal/`。Windows/macOS
-只冻结 `cw`；Linux bundle 冻结 `cw`、`cw-client`、`cw-agent` 三个入口。发布前必须运行
-`cw server --check-imports`，仅 `--version`/`--help` 通过不代表 MCP 动态依赖完整。
+只冻结 `cw`；Linux enterprise 归档组合 `cw`、`cw-client`、`cw-agent`、`cw-daemon`
+四个入口。发布前必须运行 `cw server --check-imports`，仅 `--version`/`--help` 通过不代表
+MCP 动态依赖完整。
 
 运行时启动时输出 Python/Rust/parser/snapshot/schema ABI，并对不兼容组合 fail-closed。
 
