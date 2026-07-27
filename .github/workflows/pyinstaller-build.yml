@@ -64,6 +64,10 @@ jobs:
           python -m pip install -r release/pyinstaller/requirements-build.txt
           # 项目依赖已经由白名单提供，禁止 pip 再解析可选依赖。
           python -m pip install . --no-deps
+          # ARM runner 上确保 PyInstaller 安装到当前 setup-python 解释器，不能只依赖
+          # requirements 的间接安装结果；立即导入验证，避免构建阶段才报缺包。
+          python -m pip install --upgrade --force-reinstall --no-cache-dir PyInstaller==6.21.0
+          python -c "import PyInstaller, sys; print('PyInstaller', PyInstaller.__version__, 'Python', sys.executable)"
 
       - name: Run PyInstaller
         run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
