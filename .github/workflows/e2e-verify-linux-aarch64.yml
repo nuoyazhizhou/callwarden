@@ -230,6 +230,11 @@ jobs:
             --report e2e-step3-client-bundle-report.json \
             --role client
 
+      - name: Diagnose client bundle gate (always)
+        if: always()
+        run: |
+          python -c 'import json, pathlib; p=pathlib.Path("e2e-step3-client-bundle-report.json"); r=json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"errors":["client inspector report missing"]}; [print("::error file=.github/workflows/e2e-verify-linux-aarch64.yml::" + str(e)) for e in r.get("errors", [])]'
+
       - name: Upload E2E reports
         if: always()
         uses: actions/upload-artifact@v4

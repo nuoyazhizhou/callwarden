@@ -171,6 +171,11 @@ jobs:
             --report e2e-step2-client-bundle-report.json \
             --role client
 
+      - name: Diagnose client bundle gate (always)
+        if: always()
+        run: |
+          python -c 'import json, pathlib; p=pathlib.Path("e2e-step2-client-bundle-report.json"); r=json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"errors":["client inspector report missing"]}; [print("::error file=.github/workflows/e2e-verify-linux-x86_64.yml::" + str(e)) for e in r.get("errors", [])]'
+
       - name: Verify daemon E2E (start/stop/restart via systemd-like supervision)
         if: ${{ inputs.skip_systemd_e2e != 'true' }}
         run: |
