@@ -225,7 +225,7 @@ jobs:
         run: |
           python release/inspect_pyinstaller_bundle.py \
             --bundle dist/callwarden-client \
-            --pyz-toc build/callwarden-client/PYZ-00.toc \
+            --pyz-toc build/callwarden/PYZ-01.toc \
             --artifact callwarden-client-linux-aarch64.tar.gz \
             --report e2e-step3-client-bundle-report.json \
             --role client
