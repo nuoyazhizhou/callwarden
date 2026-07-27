@@ -69,7 +69,7 @@ jobs:
           python -m pip install --upgrade --force-reinstall --no-cache-dir PyInstaller==6.21.0
           python -m pip install --upgrade --force-reinstall --no-cache-dir numpy==2.4.3
           python -m pip install --upgrade --force-reinstall --no-cache-dir "mcp[rich]==1.28.1"
-          python -c "import PyInstaller, numpy, mcp, sys; print('PyInstaller', PyInstaller.__version__, 'numpy', numpy.__version__, 'mcp', mcp.__version__, 'Python', sys.executable)"
+          python -c "import PyInstaller, numpy, mcp, sys; print('PyInstaller', PyInstaller.__version__, 'numpy', numpy.__version__, 'mcp', getattr(mcp, '__version__', 'unknown'), 'Python', sys.executable)"
 
       - name: Run PyInstaller
         run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
