@@ -66,7 +66,7 @@ jobs:
           python -m pip install . --no-deps
 
       - name: Run PyInstaller
-        run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+        run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
 
       - name: Smoke-test frozen executables
         shell: bash

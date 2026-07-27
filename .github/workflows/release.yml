@@ -180,7 +180,22 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+        run: |
+          set -u
+          max_attempts=4
+          for attempt in $(seq 1 "$max_attempts"); do
+            echo "PyPI upload attempt ${attempt}/${max_attempts}"
+            if twine upload --skip-existing dist/*; then
+              exit 0
+            fi
+            if [ "$attempt" -lt "$max_attempts" ]; then
+              delay=$((attempt * 15))
+              echo "Upload failed; retrying in ${delay}s..."
+              sleep "$delay"
+            fi
+          done
+          echo "PyPI upload failed after ${max_attempts} attempts" >&2
+          exit 1
 
   build-npm:
     name: Build and publish to npm

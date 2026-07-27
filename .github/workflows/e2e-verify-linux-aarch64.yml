@@ -102,7 +102,7 @@ jobs:
           python -m pip install --prefer-binary --retries 5 --timeout 60 psutil
 
       - name: Run PyInstaller (local + client/agent)
-        run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+        run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
 
       - name: Verify bundle layout
         run: |
@@ -305,7 +305,7 @@ jobs:
 
               echo ""
               echo "=== PyInstaller 构建 ==="
-              pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean || {
+              python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean || {
                 echo "::warning::PyInstaller 在 musl 环境下构建失败（已知问题，记录但不阻塞）"
                 exit 0
               }

@@ -105,7 +105,7 @@ jobs:
           python -m pip install --prefer-binary --retries 5 --timeout 60 psutil
 
       - name: Run PyInstaller (local + client/agent)
-        run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+        run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
 
       - name: Verify bundle layout (local + client/agent)
         run: |

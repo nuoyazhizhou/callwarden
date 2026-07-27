@@ -97,7 +97,7 @@ jobs:
           python -m pip install --prefer-binary --retries 5 --timeout 60 psutil
 
       - name: Run PyInstaller
-        run: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean
+        run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
 
       - name: Smoke-test frozen executables (pre-E2E)
         shell: pwsh

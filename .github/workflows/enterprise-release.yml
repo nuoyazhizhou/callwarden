@@ -265,7 +265,7 @@ jobs:
           build/venv/Scripts/pip install "$WHEEL_FILE" --no-deps
 
           # 运行 PyInstaller（spec 文件与 Linux/macOS 共用）
-          build/venv/Scripts/pyinstaller release/pyinstaller/callwarden.spec \
+          build/venv/Scripts/python -m PyInstaller release/pyinstaller/callwarden.spec \
             --noconfirm --clean \
             --distpath release/dist/windows \
             --workpath build/pyinstaller_build
