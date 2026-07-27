@@ -179,6 +179,10 @@ _common_excludes = [
 # binaries 提供的文件。详见 release/inspect_pyinstaller_bundle.py 的
 # ``_check_callwarden_core_present`` 重复扩展检测（R10-P1-2-b）。
 _local_hiddenimports = [
+    # db_clone_detection 通过顶层 import 使用 numpy；显式声明避免 ARM
+    # runner 上 PyInstaller 的依赖分析漏掉该可选但生产必需的模块。
+    'numpy',
+
     # 1. cw.py 动态分发的入口模块（importlib.import_module）
     'callwarden.install',
     'callwarden.server.mcp_server',
@@ -213,8 +217,8 @@ _local_hiddenimports = [
     'mcp.shared.exceptions',
     'mcp.types',
 
-    # 4. 其他运行时依赖（numpy 被 db_vector / Rust 余弦相似度辅助路径使用）
-    'pydantic', 'pydantic_core', 'watchdog', 'pathspec', 'numpy',
+    # 4. 其他运行时依赖（local 的 clone/vector 路径需要 numpy）
+    'pydantic', 'pydantic_core', 'watchdog', 'pathspec',
 ]
 
 # === client/agent runtime hiddenimports（无 parser，仅 Linux）===

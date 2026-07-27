@@ -470,8 +470,8 @@ class TestPyInstallerReleaseFailClosed(unittest.TestCase):
         for command in [
             '"./dist/callwarden/cw${EXE_SUFFIX}" --version',
             '"./dist/callwarden/cw${EXE_SUFFIX}" --help',
-            '"./dist/callwarden/cw-client${EXE_SUFFIX}" --help',
-            '"./dist/callwarden/cw-agent${EXE_SUFFIX}" --help',
+            '"./dist/callwarden-client/cw-client${EXE_SUFFIX}" --help',
+            '"./dist/callwarden-client/cw-agent${EXE_SUFFIX}" --help',
         ]:
             self.assertIn(command, self.workflow)
         self.assertIn('if [ "${{ runner.os }}" = "Linux" ]; then', self.workflow)
