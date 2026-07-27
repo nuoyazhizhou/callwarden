@@ -47,7 +47,6 @@ Python parser 保留在源码仓库作为开发 reference，通过 ``pyproject.t
 
 import sys
 import os
-from PyInstaller.utils.hooks import collect_all
 
 # === 路径常量 ===
 # spec 文件位于 release/pyinstaller/callwarden.spec，项目根目录是上两级
@@ -65,13 +64,6 @@ datas = [
     (os.path.join(ROOT, 'i18n', 'en_US.json'), 'callwarden/i18n'),
     (os.path.join(ROOT, 'i18n', 'zh_CN.json'), 'callwarden/i18n'),
 ]
-
-# numpy 含平台相关的动态库和大量子模块。仅把 ``numpy`` 放进
-# hiddenimports 在 ARM runner 上不够，显式收集完整运行时，避免冻结后启动时
-# 才出现 ``ModuleNotFoundError: numpy``。
-_numpy_datas, _numpy_binaries, _numpy_hiddenimports = collect_all('numpy')
-local_datas = datas + _numpy_datas
-local_binaries_extra = _numpy_binaries
 
 # === Binaries: Rust 扩展 callwarden_core（两个 bundle 都需要）===
 # 构建后的二进制在项目根目录（release/build.py 复制到这里）
@@ -187,10 +179,6 @@ _common_excludes = [
 # binaries 提供的文件。详见 release/inspect_pyinstaller_bundle.py 的
 # ``_check_callwarden_core_present`` 重复扩展检测（R10-P1-2-b）。
 _local_hiddenimports = [
-    # db_clone_detection 通过顶层 import 使用 numpy；显式声明避免 ARM
-    # runner 上 PyInstaller 的依赖分析漏掉该可选但生产必需的模块。
-    'numpy',
-
     # 1. cw.py 动态分发的入口模块（importlib.import_module）
     'callwarden.install',
     'callwarden.server.mcp_server',
@@ -407,9 +395,9 @@ _client_agent_excludes = (
 a_local = Analysis(
     [os.path.join(ENTRY_DIR, 'entry_cw.py')],
     pathex=[PACKAGE_PARENT],
-    binaries=binaries + local_binaries_extra,
-    datas=local_datas,
-    hiddenimports=_local_hiddenimports + _numpy_hiddenimports,
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=_local_hiddenimports,
     hookspath=[],
     runtime_hooks=[],
     excludes=list(_common_excludes) + _PARSER_GRAMMAR_EXCLUDES,
