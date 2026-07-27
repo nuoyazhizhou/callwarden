@@ -15,5 +15,5 @@ Call Warden：面向 AI Agent 的代码知识图谱工具，基于 tree-sitter �
 from .db import CodeGraphDB
 from .config import PROJECT_ROOT, norm_path, norm_newlines, compute_content_hash, read_file_normalized
 
-__version__ = "0.3.22"
+__version__ = "0.3.23"
 __all__ = ["CodeGraphDB", "PROJECT_ROOT", "norm_path", "norm_newlines", "compute_content_hash", "read_file_normalized"]
