@@ -194,6 +194,9 @@ _local_hiddenimports = [
     # 3. MCP stdio server 的目标化模块集合
     # CallWarden 使用 mcp.server.fastmcp，不使用 fastmcp 顶层 CLI、云认证 provider、
     # OpenAPI proxy 或实验 sampling。全量 collect_submodules 会拉入 AWS SDK 等无关依赖。
+    'mcp',
+    'mcp.server',
+    'mcp.shared',
     'mcp.server.fastmcp',
     'mcp.server.fastmcp.exceptions',
     'mcp.server.fastmcp.server',
@@ -223,6 +226,9 @@ _local_hiddenimports = [
 # R10-P1-2-c（2026-07-26）：``callwarden_core`` 不在 hiddenimports 中声明，
 # 仅通过上方 ``binaries = [(rust_ext_path, '.')]`` 提供。理由同 local bundle。
 _client_agent_hiddenimports = [
+    # 入口使用 callwarden.cli.daemon_commands；FrozenImporter 需要父包节点。
+    'callwarden.cli',
+
     # daemon RPC 链路（cw-client 入口）
     'callwarden.cli.daemon_commands',
     'callwarden.server.daemon_client',
