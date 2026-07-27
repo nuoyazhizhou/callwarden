@@ -87,6 +87,24 @@ if not os.path.exists(rust_ext_path):
     )
 binaries = [(rust_ext_path, '.')]
 
+# Linux local bundle 运行 `cw server --mode daemon` 时需要同包 Rust daemon。
+# client/agent 只通过 UDS 连接，不启动 daemon。
+if sys.platform.startswith('linux'):
+    daemon_path = os.environ.get(
+        'CW_DAEMON_BIN',
+        os.path.join(ROOT, 'rust_ext', 'target', 'release', 'cw-daemon'),
+    )
+    daemon_path = os.path.abspath(daemon_path)
+    if not os.path.isfile(daemon_path) or not os.access(daemon_path, os.X_OK):
+        raise FileNotFoundError(
+            f'Linux 发布构建要求 Rust daemon 存在: {daemon_path}\n'
+            '请先运行 cargo build --release --no-default-features --bin cw-daemon'
+        )
+    binaries.append((daemon_path, '.'))
+
+# client/agent 只需要 Rust canonicalization 扩展，不启动 daemon。
+client_binaries = [(rust_ext_path, '.')]
+
 # === 共享 excludes（local 和 client/agent 都用）===
 _common_excludes = [
     # --- Rust 扩展（R17-P1-2: 阻止 PyInstaller 从 wheel package 收集 callwarden_core/）---
@@ -477,7 +495,7 @@ if sys.platform.startswith('linux'):
             os.path.join(ENTRY_DIR, 'entry_cw_agent.py'),
         ],
         pathex=[PACKAGE_PARENT],
-        binaries=binaries,
+        binaries=client_binaries,
         datas=datas,
         hiddenimports=_client_agent_hiddenimports,
         hookspath=[],

@@ -12238,6 +12238,20 @@ def _find_cw_daemon_binary():
         if found:
             return _Path(found)
 
+    # 冻结 one-dir 包内的 daemon 二进制。PyInstaller 将 binaries 放到
+    # _MEIPASS；保留可执行文件目录回退，兼容手工解压布局。
+    if getattr(_sys, "frozen", False):
+        roots = []
+        meipass = getattr(_sys, "_MEIPASS", None)
+        if meipass:
+            roots.append(_Path(meipass))
+        roots.append(_Path(_sys.executable).resolve().parent)
+        for root in roots:
+            for name in ("cw-daemon", "cw_daemon"):
+                candidate = root / name
+                if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
+                    return candidate
+
     # 3./4. 开发构建路径（仓库根目录下的 rust_ext/target/）
     try:
         # cli/main.py 位于 <root>/cli/main.py，根目录是父目录

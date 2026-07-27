@@ -215,6 +215,13 @@ def main():
 
     # cw server [opts] → 启动 MCP Server
     if args and args[0] == "server":
+        # 企业 daemon 是独立 Rust 进程，不能交给 FastMCP stdio。
+        # nohup/systemd 下 stdin 可能已关闭，MCP runner 会因此抛 closed-file。
+        if "--mode" in args[1:]:
+            mode_index = args.index("--mode", 1)
+            if mode_index + 1 < len(args) and args[mode_index + 1] == "daemon":
+                from callwarden.cli.main import run_daemon_mode
+                raise SystemExit(run_daemon_mode(args[1:]))
         sys.argv = ["cw"] + args[1:]
         mod = importlib.import_module(f"{_PKG}.server.mcp_server")
         mod.main()
