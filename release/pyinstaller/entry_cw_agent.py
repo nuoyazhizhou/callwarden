@@ -50,6 +50,12 @@ if 'callwarden.db' not in sys.modules:
     _db_stub.CodeGraphDB = None
     sys.modules['callwarden.db'] = _db_stub
 
+# 与 cw-client 一致，显式创建父包让 FrozenImporter 能加载 server/CLI 子模块。
+if 'callwarden.cli' not in sys.modules:
+    _cli_stub = types.ModuleType('callwarden.cli')
+    _cli_stub.__path__ = _PKG_PATH
+    sys.modules['callwarden.cli'] = _cli_stub
+
 
 # === cw-agent 辅助函数（等价于 cli/main.py 的 _agent_* 系列）===
 

@@ -68,7 +68,8 @@ jobs:
           # requirements 的间接安装结果；立即导入验证，避免构建阶段才报缺包。
           python -m pip install --upgrade --force-reinstall --no-cache-dir PyInstaller==6.21.0
           python -m pip install --upgrade --force-reinstall --no-cache-dir numpy==2.4.3
-          python -c "import PyInstaller, numpy, sys; print('PyInstaller', PyInstaller.__version__, 'numpy', numpy.__version__, 'Python', sys.executable)"
+          python -m pip install --upgrade --force-reinstall --no-cache-dir "mcp[rich]==1.28.1"
+          python -c "import PyInstaller, numpy, mcp, sys; print('PyInstaller', PyInstaller.__version__, 'numpy', numpy.__version__, 'mcp', mcp.__version__, 'Python', sys.executable)"
 
       - name: Run PyInstaller
         run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean

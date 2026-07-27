@@ -49,6 +49,13 @@ if 'callwarden.db' not in sys.modules:
     _db_stub.CodeGraphDB = None  # 满足 `from callwarden.db import CodeGraphDB` 语法
     sys.modules['callwarden.db'] = _db_stub
 
+# FrozenImporter 需要父包节点先存在；仅收集 daemon_commands 子模块时，
+# 某些平台不会自动创建 callwarden.cli，显式注入轻量父包避免运行时缺包。
+if 'callwarden.cli' not in sys.modules:
+    _cli_stub = types.ModuleType('callwarden.cli')
+    _cli_stub.__path__ = _PKG_PATH
+    sys.modules['callwarden.cli'] = _cli_stub
+
 
 def main():
     """cw-client 主入口：直接调用 daemon_commands，绕过 cli.main。
