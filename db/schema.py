@@ -1011,6 +1011,34 @@ CREATE INDEX IF NOT EXISTS idx_test_runs_status
 ON test_runs(status, run_at);
 CREATE INDEX IF NOT EXISTS idx_test_runs_ci
 ON test_runs(ci_run_id);
+
+-- ============================================
+-- v42: 迁移回滚配置表（rollback_config）
+-- ============================================
+-- 全量 Rust 迁移自举计划使用：每个功能子任务在 wire-production step
+-- 必须登记一条 rollback_config 记录，声明生产入口、回滚入口和回滚窗口。
+-- rollback_flag=1 时生产入口走 rollback_entry（切回 Python），
+-- rollback_window_until 过期后 Phase 7 删除 rollback_entry。
+-- 详见 docs/design/migration-quality-gate-contract.md §3.4
+CREATE TABLE IF NOT EXISTS rollback_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER,
+    task_id TEXT NOT NULL,
+    feature_name TEXT NOT NULL,
+    phase INTEGER NOT NULL,
+    production_entry TEXT NOT NULL,
+    rollback_entry TEXT NOT NULL,
+    rollback_flag INTEGER NOT NULL DEFAULT 0,
+    rollback_window_until TEXT DEFAULT '',
+    config_blob TEXT DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id)
+);
+CREATE INDEX IF NOT EXISTS idx_rollback_config_task ON rollback_config(task_id);
+CREATE INDEX IF NOT EXISTS idx_rollback_config_feature ON rollback_config(feature_name);
+CREATE INDEX IF NOT EXISTS idx_rollback_config_flag ON rollback_config(rollback_flag);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -1065,7 +1093,10 @@ ON test_runs(ci_run_id);
 #      (source_workspace_id, target_workspace_id, source_symbol_hash,
 #       target_symbol_hash, dependency_type) 五元组，配合 INSERT OR IGNORE 幂等。
 #      复审报告 P1-2 指出原 schema 无 UNIQUE 约束，重复扫描持续追加记录。
-SCHEMA_VERSION = 41
+# v42: 迁移回滚配置表（rollback_config）— 全量 Rust 迁移自举计划使用，
+#      每个功能子任务登记生产入口、回滚入口和回滚窗口，支持紧急回滚开关。
+#      详见 docs/design/migration-quality-gate-contract.md
+SCHEMA_VERSION = 42
 
 
 # ============================================

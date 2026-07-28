@@ -53,12 +53,22 @@ class FileWatcher:
     分别触发 ``remove_file`` 和 ``refresh_file``。
     """
 
-    def __init__(self, db, watch_dir: str = None):
+    def __init__(self, db, watch_dir: str = None,
+                 staging_log=None, replicator=None,
+                 workspace_id: str = "", db_path: str = ""):
         """初始化文件监控器。
+
+        Phase 3-2：接入 staging 管道。若提供 staging_log + replicator，
+        文件变更处理后写入 staging entry 并触发 replicate 发布新 generation。
+        否则保持原行为（直接 db.refresh_file，不经过 staging 管道）。
 
         Args:
             db: CodeGraphDB 实例（用于增量刷新）
             watch_dir: 监控目录，为空时使用 db.workspace_root 或 PROJECT_ROOT
+            staging_log: StagingLog 实例（可选，接入 staging 管道时提供）
+            replicator: Replicator 实例（可选，接入 staging 管道时提供）
+            workspace_id: workspace ID 字符串（接入 staging 管道时必填）
+            db_path: CodeGraph DB 路径（接入 staging 管道时必填，用于 publish_snapshot）
         """
         self.db = db
         self.watch_dir = watch_dir or db.workspace_root or PROJECT_ROOT
@@ -73,6 +83,12 @@ class FileWatcher:
         # watchdog fallback 状态
         self._observer = None
         self._handler = None
+
+        # Phase 3-2: staging 管道（可选）
+        self._staging_log = staging_log
+        self._replicator = replicator
+        self._workspace_id = workspace_id
+        self._db_path = db_path
 
     # ----------------------------------------------------------------
     # 启动入口
@@ -201,6 +217,9 @@ class FileWatcher:
         Renamed 事件携带 from_path / to_path：
         - from_path 非空 → remove_file（src 已不存在）
         - to_path 非空 → refresh_file（dest 新路径）
+
+        Phase 3-3：过滤 dirty overlay 文件（.git/、.callwarden/、.bak 等），
+        不进入 refresh/CAS 管道（与 Rust snapshot_guard.rs::is_dirty_overlay 对齐）。
         """
         modified: List[str] = []
         deleted: List[str] = []
@@ -213,13 +232,16 @@ class FileWatcher:
 
             if kind == "renamed":
                 # M8：Renamed 事件双路径处理
-                if from_path and self._is_supported(from_path):
+                if from_path and self._is_supported(from_path) and not self._is_dirty_overlay(from_path):
                     deleted.append(from_path)
-                if to_path and self._is_supported(to_path) and os.path.exists(to_path):
+                if to_path and self._is_supported(to_path) and os.path.exists(to_path) and not self._is_dirty_overlay(to_path):
                     modified.append(to_path)
                 continue
 
             if not path:
+                continue
+            # Phase 3-3: 过滤 dirty overlay
+            if self._is_dirty_overlay(path):
                 continue
             if kind in ("modified", "created"):
                 if os.path.exists(path):
@@ -238,7 +260,13 @@ class FileWatcher:
 
     def _start_with_watchdog(self):
         """watchdog 实现（fallback）。"""
-        self._handler = _WatchdogChangeHandler(self.db, self._supported_exts)
+        self._handler = _WatchdogChangeHandler(
+            self.db, self._supported_exts,
+            staging_log=self._staging_log,
+            replicator=self._replicator,
+            workspace_id=self._workspace_id,
+            db_path=self._db_path,
+        )
 
         self._observer = Observer()
         self._observer.schedule(self._handler, self.watch_dir, recursive=True)
@@ -275,23 +303,71 @@ class FileWatcher:
         ext = os.path.splitext(path)[1].lower()
         return ext in self._supported_exts
 
+    def _is_dirty_overlay(self, abs_path: str, rel_path: str = "") -> bool:
+        """Phase 3-3: 检测文件是否属于 dirty overlay（不应进入 refresh/CAS 管道）。
+
+        与 Rust snapshot_guard.rs::is_dirty_overlay 对齐。
+        dirty overlay 判定规则：
+        - 路径包含 .git/（VCS 内部文件）
+        - 路径包含 .callwarden/（daemon 内部文件）
+        - 路径以 .callwarden-tmp- 开头（daemon 临时文件）
+        - 路径以 ~ 开头或结尾（备份文件）
+        - 路径以 .bak / .orig / .rej 结尾（patch 残留文件）
+        """
+        # VCS 内部文件（.git/）
+        if "/.git/" in abs_path or "\\.git\\" in abs_path:
+            return True
+        if rel_path.startswith(".git/") or "/.git/" in rel_path:
+            return True
+        # daemon 内部文件（.callwarden/）
+        if "/.callwarden/" in abs_path or "\\.callwarden\\" in abs_path:
+            return True
+        if rel_path.startswith(".callwarden/") or "/.callwarden/" in rel_path:
+            return True
+        # daemon 临时文件（.callwarden-tmp-）
+        if "/.callwarden-tmp-" in abs_path or "\\.callwarden-tmp-" in abs_path:
+            return True
+        # 备份文件（~ / .bak / .orig / .rej）
+        if abs_path.endswith("~") or rel_path.endswith("~"):
+            return True
+        if abs_path.endswith(".bak") or rel_path.endswith(".bak"):
+            return True
+        if abs_path.endswith(".orig") or rel_path.endswith(".orig"):
+            return True
+        if abs_path.endswith(".rej") or rel_path.endswith(".rej"):
+            return True
+        return False
+
     def _handle_modified(self, paths: List[str]):
-        """处理文件修改/创建。"""
+        """处理文件修改/创建。
+
+        Phase 3-2：若接入 staging 管道（staging_log + replicator 已提供），
+        refresh 后写入 staging entry 并触发 replicate 发布新 generation。
+        否则保持原行为（仅 db.refresh_file）。
+        """
         print(t("cli.messages.watcher_modified_detected", count=len(paths)))
         success = 0
         for path in paths:
             try:
                 rel_path = os.path.relpath(path, self.db.workspace_root)
                 rel_path = norm_path(rel_path)
+                # 增量刷新 DB（解析 + 写入 symbols/calls/file_versions）
                 self.db.refresh_file(rel_path)
                 success += 1
                 print(t("cli.messages.watcher_update_item", path=rel_path))
+
+                # Phase 3-2: 写入 staging entry + 触发 replicate
+                if self._staging_log is not None and self._replicator is not None:
+                    self._append_staging_and_replicate(rel_path, "modified")
             except Exception as e:
                 print(t("cli.messages.watcher_update_fail", path=path, error=e))
         print(t("cli.messages.watcher_update_done", success=success, total=len(paths)))
 
     def _handle_deleted(self, paths: List[str]):
-        """处理文件删除。"""
+        """处理文件删除。
+
+        Phase 3-2：若接入 staging 管道，remove_file 后写入 staging entry。
+        """
         print(t("cli.messages.watcher_deleted_detected", count=len(paths)))
         for path in paths:
             try:
@@ -299,9 +375,55 @@ class FileWatcher:
                 rel_path = norm_path(rel_path)
                 self.db.remove_file(rel_path)
                 print(t("cli.messages.watcher_delete_item", path=rel_path))
+
+                # Phase 3-2: 写入 staging entry + 触发 replicate
+                if self._staging_log is not None and self._replicator is not None:
+                    self._append_staging_and_replicate(rel_path, "removed")
             except Exception as e:
                 print(t("cli.messages.watcher_update_fail", path=path, error=e))
         print(t("cli.messages.watcher_delete_done"))
+
+    def _append_staging_and_replicate(self, rel_path: str, change_type: str):
+        """Phase 3-2: 写入 staging entry 并触发 replicate。
+
+        Args:
+            rel_path: 文件相对路径
+            change_type: "modified" 或 "removed"
+        """
+        try:
+            from callwarden.server.staging_log import create_staging_entry
+
+            # 获取文件信息（content_hash + language）
+            content_hash = ""
+            language = ""
+            try:
+                abs_path = os.path.join(self.db.workspace_root, rel_path)
+                if os.path.exists(abs_path):
+                    from ..config import compute_content_hash, detect_language_from_path
+                    with open(abs_path, "rb") as f:
+                        content = f.read()
+                    content_hash = compute_content_hash(content.decode("utf-8", errors="replace"))
+                    language = detect_language_from_path(rel_path) or ""
+            except Exception:
+                pass  # content_hash/language 为空也可写入 staging entry
+
+            entry = create_staging_entry(
+                workspace_id=self._workspace_id,
+                file_path=rel_path,
+                content_hash=content_hash,
+                language=language,
+            )
+            self._staging_log.append(entry)
+
+            # 触发 replicate（发布新 generation）
+            self._replicator.replicate(
+                self._workspace_id,
+                db_path=self._db_path,
+            )
+        except Exception as e:
+            # staging 管道失败不影响已完成的 refresh_file（DB 已更新）
+            # 仅打印警告，不回滚 DB
+            print(f"[Phase3-2] staging replicate 失败（不影响 DB 刷新）: {e}")
 
 
 class _WatchdogChangeHandler(FileSystemEventHandler):
@@ -311,7 +433,9 @@ class _WatchdogChangeHandler(FileSystemEventHandler):
     主路径已切换到 Rust PyDebouncedFileWatcher，本类仅作 fallback。
     """
 
-    def __init__(self, db, supported_exts: Set[str]):
+    def __init__(self, db, supported_exts: Set[str],
+                 staging_log=None, replicator=None,
+                 workspace_id: str = "", db_path: str = ""):
         self.db = db
         self.supported_exts = supported_exts
         self._debounce_time = 1.0  # 1 秒防抖
@@ -319,12 +443,44 @@ class _WatchdogChangeHandler(FileSystemEventHandler):
         self._pending_lock = threading.Lock()
         self._timer = None
         self._running = True
+        # Phase 3-2: staging 管道（可选）
+        self._staging_log = staging_log
+        self._replicator = replicator
+        self._workspace_id = workspace_id
+        self._db_path = db_path
 
     def _is_supported(self, path: str) -> bool:
         if not path:
             return False
         ext = os.path.splitext(path)[1].lower()
-        return ext in self.supported_exts
+        if ext not in self.supported_exts:
+            return False
+        # Phase 3-3: 过滤 dirty overlay（与 FileWatcher._is_dirty_overlay 对齐）
+        if self._is_dirty_overlay(path):
+            return False
+        return True
+
+    def _is_dirty_overlay(self, abs_path: str, rel_path: str = "") -> bool:
+        """Phase 3-3: dirty overlay 检测（与 FileWatcher._is_dirty_overlay 对齐）。"""
+        if "/.git/" in abs_path or "\\.git\\" in abs_path:
+            return True
+        if rel_path.startswith(".git/") or "/.git/" in rel_path:
+            return True
+        if "/.callwarden/" in abs_path or "\\.callwarden\\" in abs_path:
+            return True
+        if rel_path.startswith(".callwarden/") or "/.callwarden/" in rel_path:
+            return True
+        if "/.callwarden-tmp-" in abs_path or "\\.callwarden-tmp-" in abs_path:
+            return True
+        if abs_path.endswith("~") or rel_path.endswith("~"):
+            return True
+        if abs_path.endswith(".bak") or rel_path.endswith(".bak"):
+            return True
+        if abs_path.endswith(".orig") or rel_path.endswith(".orig"):
+            return True
+        if abs_path.endswith(".rej") or rel_path.endswith(".rej"):
+            return True
+        return False
 
     def _schedule_process(self):
         """调度批量处理（防抖）。"""
@@ -382,6 +538,10 @@ class _WatchdogChangeHandler(FileSystemEventHandler):
                 self.db.refresh_file(rel_path)
                 success += 1
                 print(t("cli.messages.watcher_update_item", path=rel_path))
+
+                # Phase 3-2: 写入 staging entry + 触发 replicate
+                if self._staging_log is not None and self._replicator is not None:
+                    self._append_staging_and_replicate(rel_path)
             except Exception as e:
                 print(t("cli.messages.watcher_update_fail", path=path, error=e))
         print(t("cli.messages.watcher_update_done", success=success, total=len(paths)))
@@ -394,9 +554,42 @@ class _WatchdogChangeHandler(FileSystemEventHandler):
                 rel_path = norm_path(rel_path)
                 self.db.remove_file(rel_path)
                 print(t("cli.messages.watcher_delete_item", path=rel_path))
+
+                # Phase 3-2: 写入 staging entry + 触发 replicate
+                if self._staging_log is not None and self._replicator is not None:
+                    self._append_staging_and_replicate(rel_path)
             except Exception as e:
                 print(t("cli.messages.watcher_update_fail", path=path, error=e))
         print(t("cli.messages.watcher_delete_done"))
+
+    def _append_staging_and_replicate(self, rel_path: str):
+        """Phase 3-2: 写入 staging entry 并触发 replicate（watchdog fallback 路径）。"""
+        try:
+            from callwarden.server.staging_log import create_staging_entry
+
+            content_hash = ""
+            language = ""
+            try:
+                abs_path = os.path.join(self.db.workspace_root, rel_path)
+                if os.path.exists(abs_path):
+                    from ..config import compute_content_hash, detect_language_from_path
+                    with open(abs_path, "rb") as f:
+                        content = f.read()
+                    content_hash = compute_content_hash(content.decode("utf-8", errors="replace"))
+                    language = detect_language_from_path(rel_path) or ""
+            except Exception:
+                pass
+
+            entry = create_staging_entry(
+                workspace_id=self._workspace_id,
+                file_path=rel_path,
+                content_hash=content_hash,
+                language=language,
+            )
+            self._staging_log.append(entry)
+            self._replicator.replicate(self._workspace_id, db_path=self._db_path)
+        except Exception as e:
+            print(f"[Phase3-2] staging replicate 失败（不影响 DB 刷新）: {e}")
 
     def on_modified(self, event):
         if event.is_directory:

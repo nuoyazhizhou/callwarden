@@ -63,6 +63,8 @@ Rust 核心通过稳定的内部 service trait 和 UDS RPC 暴露能力。Python
 
 先固定现有 Python 行为和 Rust 已有能力，建立 `migration_manifest`、结果 hash、错误码、性能基线和回滚配置。此阶段不删除 Python。
 
+**Contract 交付物**：[migration-manifest.md](migration-manifest.md)（Phase 0 第一个子任务产出，盘点 Python 生产入口、Rust 已有能力、迁移目标 trait、ABI 契约、错误码、权限与事务边界、迁移状态跟踪表）。
+
 ### Phase 1：Rust service/kernel 与存储真相
 
 迁移数据库连接、schema migration、事务、workspace registry、CAS、manifest、replicator 和 SnapshotManager。完成后 Python 只能通过 facade 访问这些能力。

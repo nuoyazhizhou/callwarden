@@ -287,6 +287,16 @@ impl ParseRetryLog {
         Ok(removed)
     }
 
+    /// 获取下一个 LSN（用于测试 / PyO3 暴露）
+    pub fn next_lsn(&self) -> i64 {
+        self.inner.lock().unwrap().next_lsn
+    }
+
+    /// log 文件路径
+    pub fn log_path(&self) -> &str {
+        &self.log_path
+    }
+
     /// 更新指定 lsn 的 entry 状态
     fn update_entry_status(&self, lsn: i64, new_status: &str) -> std::io::Result<()> {
         let _inner = self.inner.lock().unwrap();

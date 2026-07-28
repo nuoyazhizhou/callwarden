@@ -55,7 +55,9 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 # N4（2026-07-20 批次6）：config_loader 分层配置接入
                 "config",
                 # 项目综合状态驾驶舱（7 个 section + 风险预警）
-                "dashboard"}
+                "dashboard",
+                # Phase 0 子任务 4：迁移回滚配置
+                "rollback"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -87,6 +89,8 @@ _READONLY_FTS_ACTIONS = {"status"}
 _READONLY_GRAPH_ACTIONS = {"build-from-c"}
 # N4（2026-07-20 批次6）：config explain/paths 只读（只读 TOML + 打印路径）
 _READONLY_CONFIG_ACTIONS = {"explain", "paths"}
+# Phase 0 子任务 4：rollback config/show/is-rolled-back 只读；register/set 写
+_READONLY_ROLLBACK_ACTIONS = {"config", "show", "is-rolled-back"}
 
 # 写 flag 集合：设置这些 flag 的命令需要写数据库，必须激活 workspace
 # 不在此集合内的 flag 命令均为只读（search/symbol/callers/callees/topo/file/history/diff/
@@ -1167,6 +1171,9 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "config":
         # N4（2026-07-20 批次6）：config explain/paths 只读（只读 TOML）
         return action in _READONLY_CONFIG_ACTIONS
+    if cmd == "rollback":
+        # Phase 0 子任务 4：rollback config/show/is-rolled-back 只读；register/set 写
+        return action in _READONLY_ROLLBACK_ACTIONS
     if cmd == "refresh":
         # refresh 始终是写操作（build_full_graph / refresh_file）
         return False
@@ -1342,6 +1349,8 @@ def _dispatch_subcommand(argv, db):
             return _handle_graph(argv, db)
         elif cmd == "config":
             return _handle_config(argv, db)
+        elif cmd == "rollback":
+            return _handle_rollback(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -9526,6 +9535,173 @@ def _handle_toolchain(args, db):
             return True
         for tc in tcs:
             print(f"  {tc.summary()}")
+
+    return True
+
+
+def _handle_rollback(args, db):
+    """处理 rollback 子命令（迁移回滚配置管理）
+
+    Phase 0 子任务 4：全量 Rust 迁移自举计划使用。
+    每个功能子任务在 wire-production step 登记回滚配置。
+
+    子命令：
+        register --task-id <ID> --feature <NAME> --phase <N>
+                 --production-entry <PATH> --rollback-entry <PATH>
+                 [--window <ISO8601>] [--config-json <JSON>]
+            注册一条 rollback_config 记录
+        show <TASK_ID>
+            查询单个任务的回滚配置
+        config [--phase <N>] [--flag <0|1>]
+            列出回滚配置
+        set <TASK_ID> <0|1> [--reason "..."]
+            设置回滚标志（0=正常 Rust，1=已回滚到 Python）
+        is-rolled-back <FEATURE_NAME>
+            查询功能是否已回滚（生产入口快速查询）
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw rollback",
+        description=t("cli_rollback_desc",
+                      default="Migration rollback config management"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # register：注册回滚配置
+    reg_p = sub.add_parser("register", help=t(
+        "cli_rollback_register_desc",
+        default="Register rollback config for a migration feature"))
+    reg_p.add_argument("--task-id", required=True, help="Migration task ID")
+    reg_p.add_argument("--feature", required=True, help="Feature name")
+    reg_p.add_argument("--phase", type=int, required=True, help="Phase number (0-7)")
+    reg_p.add_argument("--production-entry", required=True,
+                       help="Production entry path (e.g. db/db_base.py:CodeGraphDB._connect)")
+    reg_p.add_argument("--rollback-entry", required=True,
+                       help="Rollback entry path (Python fallback location)")
+    reg_p.add_argument("--window", default="",
+                       help="Rollback window until (ISO8601, e.g. 2026-12-31T00:00:00)")
+    reg_p.add_argument("--config-json", default="",
+                       help="Extra config JSON (e.g. {\"flag\":\"CW_USE_RUST\"})")
+
+    # show：查询单个任务
+    show_p = sub.add_parser("show", help=t(
+        "cli_rollback_show_desc",
+        default="Show rollback config for a task"))
+    show_p.add_argument("task_id", help="Task ID")
+
+    # config：列出所有配置
+    list_p = sub.add_parser("config", help=t(
+        "cli_rollback_config_desc",
+        default="List rollback configs"))
+    list_p.add_argument("--phase", type=int, default=0,
+                        help="Filter by phase (0=all)")
+    list_p.add_argument("--flag", type=int, default=-1, choices=[-1, 0, 1],
+                        help="Filter by rollback flag (-1=all, 0=normal, 1=rolled-back)")
+
+    # set：设置回滚标志
+    set_p = sub.add_parser("set", help=t(
+        "cli_rollback_set_desc",
+        default="Set rollback flag (0=Rust, 1=rollback to Python)"))
+    set_p.add_argument("task_id", help="Task ID")
+    set_p.add_argument("flag", type=int, choices=[0, 1],
+                       help="Rollback flag (0=normal Rust, 1=rolled back to Python)")
+    set_p.add_argument("--reason", default="", help="Rollback reason")
+
+    # is-rolled-back：快速查询
+    check_p = sub.add_parser("is-rolled-back", help=t(
+        "cli_rollback_is_rolled_back_desc",
+        default="Check if a feature is rolled back"))
+    check_p.add_argument("feature_name", help="Feature name")
+
+    opts = parser.parse_args(args)
+
+    if opts.action == "register":
+        # 解析 config-json
+        config_blob = None
+        if opts.config_json:
+            import json as _json
+            try:
+                config_blob = _json.loads(opts.config_json)
+            except _json.JSONDecodeError as e:
+                cprint(t("cli.messages.rollback_config_invalid_json",
+                         error=e), "red")
+                return True
+        result = db.register_rollback_config(
+            task_id=opts.task_id,
+            feature_name=opts.feature,
+            phase=opts.phase,
+            production_entry=opts.production_entry,
+            rollback_entry=opts.rollback_entry,
+            rollback_window_until=opts.window,
+            config_blob=config_blob,
+        )
+        if not result.get("success"):
+            cprint(t("cli.messages.rollback_register_failed",
+                     error=result.get("error", "unknown")), "red")
+            return True
+        action = result.get("action", "unknown")
+        cprint(t("cli.messages.rollback_register_ok",
+                 action=action, id=result.get("id", ""),
+                 task_id=opts.task_id), "green")
+        return True
+
+    if opts.action == "show":
+        config = db.get_rollback_config(opts.task_id)
+        if not config:
+            cprint(t("cli.messages.rollback_config_not_found",
+                     task_id=opts.task_id), "yellow")
+            return True
+        print(f"Task ID:          {config['task_id']}")
+        print(f"Feature:          {config['feature_name']}")
+        print(f"Phase:            {config['phase']}")
+        print(f"Production entry: {config['production_entry']}")
+        print(f"Rollback entry:   {config['rollback_entry']}")
+        flag_str = "ROLLED BACK (Python)" if config['rollback_flag'] == 1 else "Normal (Rust)"
+        print(f"Rollback flag:    {config['rollback_flag']} ({flag_str})")
+        if config.get('rollback_window_until'):
+            print(f"Window until:     {config['rollback_window_until']}")
+        if config.get('config_blob'):
+            import json as _json
+            print(f"Config blob:      {_json.dumps(config['config_blob'], ensure_ascii=False)}")
+        return True
+
+    if opts.action == "config":
+        configs = db.list_rollback_configs(phase=opts.phase, rollback_flag=opts.flag)
+        if not configs:
+            print(t("cli.messages.rollback_config_empty",
+                    default="No rollback configs found"))
+            return True
+        print(f"{'Task ID':<40} {'Phase':<6} {'Feature':<30} {'Flag':<5} {'Production Entry'}")
+        print("-" * 120)
+        for c in configs:
+            flag_str = "ROLLBACK" if c['rollback_flag'] == 1 else "normal"
+            print(f"{c['task_id']:<40} {c['phase']:<6} {c['feature_name']:<30} {flag_str:<5} {c['production_entry']}")
+        print(f"\nTotal: {len(configs)} config(s)")
+        return True
+
+    if opts.action == "set":
+        result = db.set_rollback_flag(opts.task_id, opts.flag, reason=opts.reason)
+        if not result.get("success"):
+            cprint(t("cli.messages.rollback_set_failed",
+                     error=result.get("error", "unknown")), "red")
+            return True
+        flag_str = "ROLLED BACK to Python" if opts.flag == 1 else "Normal (Rust)"
+        cprint(t("cli.messages.rollback_set_ok",
+                 feature=result.get("feature_name", ""),
+                 flag_str=flag_str,
+                 previous=result.get("previous_flag", "?")), "green")
+        return True
+
+    if opts.action == "is-rolled-back":
+        rolled_back = db.is_feature_rolled_back(opts.feature_name)
+        if rolled_back:
+            cprint(t("cli.messages.rollback_feature_rolled_back",
+                     feature=opts.feature_name), "yellow")
+        else:
+            cprint(t("cli.messages.rollback_feature_normal",
+                     feature=opts.feature_name), "green")
+        # exit code: 0=normal, 1=rolled back (便于脚本判断)
+        import sys as _sys
+        _sys.exit(1 if rolled_back else 0)
 
     return True
 

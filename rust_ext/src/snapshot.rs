@@ -526,6 +526,129 @@ impl PySnapshotManager {
     fn current_store(&self) -> Option<GraphStore> {
         self.inner.current_store().map(|store| store.fork_shared())
     }
+
+    // ============================================================
+    // Phase 1-4: 便捷查询方法（封装 GraphStore 的 4 个查询方法）
+    //
+    // 与 Python `SnapshotManagerService.query_*` 行为一致：
+    // - 调用前需通过 build_and_publish 加载 snapshot 到内存
+    // - snapshot 未加载时返回空列表 / 空 dict，不抛错
+    // - 所有查询走内存 ArcSwap 保护的 GraphStore，无 SQLite 锁
+    // ============================================================
+
+    /// 向下调用链查询（BFS）。
+    ///
+    /// 与 Python `SnapshotManagerService.query_call_chain_down(workspace_instance_id, root)`
+    /// 行为一致：
+    /// - root 符号不存在 → 返回 []
+    /// - root 存在 → 返回 [{depth, caller_name, callee_name, callee_id, call_line, is_cross_file}, ...]
+    /// - snapshot 未加载 → 返回 []
+    /// - max_depth 限制递归深度（默认 10，对齐 Python `QueryBudget.max_depth`）
+    #[pyo3(signature = (root, max_depth=10))]
+    fn query_call_chain_down<'py>(
+        &self,
+        py: Python<'py>,
+        root: &str,
+        max_depth: usize,
+    ) -> PyResult<Bound<'py, PyList>> {
+        let store = match self.inner.current_store() {
+            Some(s) => s,
+            None => return Ok(PyList::empty(py)),
+        };
+        // 调用 native 实现，避免 GIL 边界
+        let edges = store.call_chain_down_rust(root, max_depth);
+        let list = PyList::empty(py);
+        for edge in edges {
+            let dict = PyDict::new(py);
+            dict.set_item("depth", edge.depth)?;
+            dict.set_item("caller_name", edge.caller_name.clone())?;
+            dict.set_item("callee_name", edge.callee_name.clone())?;
+            dict.set_item("callee_id", edge.callee_id)?;
+            dict.set_item("call_line", edge.call_line)?;
+            dict.set_item("is_cross_file", edge.is_cross_file)?;
+            list.append(dict)?;
+        }
+        Ok(list)
+    }
+
+    /// 拓扑排序（Kahn 算法，按调用深度升序返回 qualified_name 列表）。
+    ///
+    /// 与 Python `SnapshotManagerService.query_topological_order(workspace_instance_id)`
+    /// 行为一致：
+    /// - 空 GraphStore → 返回 []
+    /// - DAG 无循环 → 返回拓扑序列表
+    /// - 含循环 → 返回部分排序（不抛错）
+    /// - snapshot 未加载 → 返回 []
+    fn query_topological_order(&self) -> Vec<String> {
+        match self.inner.current_store() {
+            Some(store) => store.topological_order_rust(),
+            None => Vec::new(),
+        }
+    }
+
+    /// 循环检测（DFS 三色标记）。
+    ///
+    /// 与 Python `SnapshotManagerService.query_detect_cycles(workspace_instance_id)`
+    /// 行为一致：
+    /// - 无循环 → 返回 []
+    /// - 有循环 → 返回 [[node1, node2, ...], ...] 每个内层列表是一个循环
+    /// - snapshot 未加载 → 返回 []
+    fn query_detect_cycles(&self) -> Vec<Vec<String>> {
+        match self.inner.current_store() {
+            Some(store) => store.detect_cycles_rust(),
+            None => Vec::new(),
+        }
+    }
+
+    /// 统计信息（符号数 / 边数 / 已解析边数 / 索引大小）。
+    ///
+    /// 与 Python `SnapshotManagerService.query_stats(workspace_instance_id)` 行为一致：
+    /// - 返回 dict，含 symbol_count / edge_count / resolved_edge_count 等字段
+    /// - snapshot 未加载 → 返回 None
+    fn query_stats<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        let store = match self.inner.current_store() {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        // 复用 GraphStore::stats() PyO3 方法的字段集（与 graph.rs:1052 一致）
+        // 通过 pub(crate) 访问器 symbols_table() / call_graph() 读取内部状态
+        let dict = PyDict::new(py);
+        if let Some(symbols) = store.symbols_table() {
+            dict.set_item("symbol_count", symbols.by_id.len())?;
+            dict.set_item("qname_index_size", symbols.by_qname_sorted_ids.len())?;
+            dict.set_item("simple_name_index_size", symbols.by_simple_name_sorted_ids.len())?;
+            dict.set_item("file_index_size", symbols.file_paths_offsets.len().saturating_sub(1))?;
+            dict.set_item("name_pool_size", symbols.name_pool.len())?;
+            dict.set_item("qname_pool_size", symbols.qname_pool.len())?;
+            dict.set_item("module_pool_size", symbols.module_pool.len())?;
+            dict.set_item("search_pool_size", symbols.search_pool_lower.len())?;
+            dict.set_item("search_entry_count", symbols.search_entry_offsets.len())?;
+        } else {
+            dict.set_item("symbol_count", 0)?;
+            dict.set_item("qname_index_size", 0)?;
+            dict.set_item("simple_name_index_size", 0)?;
+            dict.set_item("file_index_size", 0)?;
+            dict.set_item("name_pool_size", 0)?;
+            dict.set_item("qname_pool_size", 0)?;
+            dict.set_item("module_pool_size", 0)?;
+            dict.set_item("search_pool_size", 0)?;
+            dict.set_item("search_entry_count", 0)?;
+        }
+        if let Some(calls) = store.call_graph() {
+            let resolved = calls.forward_edges.iter().filter(|e| e.callee_id != 0).count();
+            dict.set_item("edge_count", calls.forward_edges.len())?;
+            dict.set_item("resolved_edge_count", resolved)?;
+            dict.set_item("forward_offsets_size", calls.forward_offsets.len())?;
+            dict.set_item("backward_offsets_size", calls.backward_offsets.len())?;
+            dict.set_item("callee_name_pool_size", calls.callee_names_pool.len())?;
+            dict.set_item("callee_name_count", calls.callee_names_offsets.len().saturating_sub(1))?;
+            dict.set_item("callee_name_to_idx_size", calls.callee_name_sorted_idxs.len())?;
+            dict.set_item("root_count", calls.roots.len())?;
+        } else {
+            dict.set_item("edge_count", 0)?;
+        }
+        Ok(Some(dict))
+    }
 }
 
 /// Python 侧多 workspace snapshot 缓存包装。

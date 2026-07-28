@@ -1935,7 +1935,63 @@ class BuildMixin:
 
     def _load_file_result_from_db(self, file_instance_id: int, file_version_id: int,
         rel_path: str, abs_path: str, module_path: str) -> Optional[Dict]:
-        """从数据库加载已解析的文件结果（增量构建用）"""
+        """从数据库加载已解析的文件结果（增量构建用）
+
+        Phase 2-6-1 wire-production：默认走 Rust ``load_file_result_from_db`` 短路。
+        rollback_config 中 feature=rust_load_file_result 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 路径。
+        只读查询，WAL 模式下与 Python 写连接并发安全。
+        """
+        if not self.is_feature_rolled_back("rust_load_file_result"):
+            result = self._load_file_result_from_db_via_rust(
+                file_instance_id, file_version_id, rel_path, abs_path, module_path
+            )
+            if result is not None:
+                return result
+            # Rust 失败 → 降级 Python 路径（fail-soft）
+        return self._load_file_result_from_db_python(
+            file_instance_id, file_version_id, rel_path, abs_path, module_path
+        )
+
+    def _load_file_result_from_db_via_rust(self, file_instance_id: int, file_version_id: int,
+        rel_path: str, abs_path: str, module_path: str) -> Optional[Dict]:
+        """Rust 短路路径：调用 load_file_result_from_db 从 DB 加载文件结果
+
+        返回 None 表示 Rust 路径失败（调用方应降级到 Python）。
+        成功时返回结果 dict（与 Python 路径格式一致）。
+
+        注意：Rust 端返回 None 也可能表示"版本不存在"（正常业务语义）。
+        为区分"失败"和"版本不存在"，Rust API 在版本不存在时返回 None，
+        在查询异常时返回 None 且设置 error 字段。调用方不区分，统一降级。
+        """
+        try:
+            from callwarden_core import load_file_result_from_db
+        except ImportError:
+            return None
+
+        try:
+            rust_ret = load_file_result_from_db(
+                self.db_path,
+                file_instance_id,
+                file_version_id,
+                rel_path,
+                abs_path,
+                module_path,
+            )
+        except Exception:
+            return None
+
+        if rust_ret is None:
+            return None
+
+        # Rust 返回 dict 或 None。dict 表示成功加载，None 表示版本不存在或失败。
+        # 注意：None 既可能是"版本不存在"（正常业务），也可能是"查询失败"。
+        # 调用方对 None 统一降级到 Python 路径重新查询，确保正确性。
+        return rust_ret
+
+    def _load_file_result_from_db_python(self, file_instance_id: int, file_version_id: int,
+        rel_path: str, abs_path: str, module_path: str) -> Optional[Dict]:
+        """Python 降级路径：原 _load_file_result_from_db 实现"""
         try:
             # 加载文件版本的基本信息
             cur = self.conn.execute(
@@ -2031,7 +2087,162 @@ class BuildMixin:
                                      only_files: Optional[Set[str]] = None):
         """多语言调用关系构建（多级解析策略）
 
+        Phase 2-6 wire-production：默认走 Rust ``batch_resolve_and_save_calls`` 短路。
+        rollback_config 中 feature=rust_batch_resolve_and_save_calls 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 路径。
+
         解析策略（按优先级）：
+        1. 精确匹配：callee_module.callee_name 完全匹配 qualified_name
+        2. import 解析：通过文件的 import 列表将 callee_module 映射到实际模块路径
+        3. 简名唯一匹配：callee_name 在全局符号表中唯一存在
+        4. 简名同文件匹配：callee_name 在当前文件中存在
+
+        性能优化（P0/P3）：
+        - 后缀反向索引：策略 2/4 的后缀匹配从 O(M*N) 优化为 O(M*K)
+        - external_symbols 批量加载：策略 5 从 M 次 DB 查询优化为 1 次批量加载
+
+        L8 增量优化：only_files 非空时，符号索引从 DB 全量读取（不依赖 file_results），
+        calls 只 resolve + 写入 only_files 中的文件，避免全量 _collect_all_current_file_results。
+        """
+        # Phase 2-6 wire-production: Rust 短路
+        if not self.is_feature_rolled_back("rust_batch_resolve_and_save_calls"):
+            if self._build_call_graph_multi_lang_via_rust(file_results, only_files):
+                return
+            # Rust 失败 → 降级 Python 路径（fail-soft）
+
+        # Python 降级路径
+        self._build_call_graph_multi_lang_python(file_results, only_files)
+
+    def _build_call_graph_multi_lang_via_rust(self, file_results: Dict[str, Dict[str, Any]],
+                                             only_files: Optional[Set[str]] = None) -> bool:
+        """Rust 短路路径：调用 batch_resolve_and_save_calls 处理调用关系 resolve + 写入
+
+        返回 False 表示 Rust 路径失败（调用方应降级到 Python）。
+        成功时返回 True。
+
+        数据准备：
+        - all_symbols：only_files 模式从 DB 读取，全量模式从 file_results 构建
+        - external_symbols：从 DB external_symbols 表读取
+        - changed_file_instance_ids：非 _from_db 文件的 file_instance_id 列表
+        - file_results 列表：过滤掉 _from_db 文件（契约 §9.5）
+
+        事务边界：Rust 内部 BEGIN IMMEDIATE → 全部 SQL → COMMIT/ROLLBACK
+        """
+        try:
+            from callwarden_core import batch_resolve_and_save_calls
+        except ImportError:
+            return False
+
+        # 1. 过滤 _from_db 文件（契约 §9.5：Rust 假设所有传入文件都需要 resolve+写入）
+        file_results_filtered = []
+        changed_file_instance_ids = []
+        for rel_path, result in file_results.items():
+            if result.get("_from_db"):
+                continue  # _from_db 文件跳过（calls 已在表中）
+            file_results_filtered.append((rel_path, result))
+            changed_file_instance_ids.append(result["file_instance_id"])
+
+        if not file_results_filtered:
+            # 无文件需要处理，直接成功（与 Python C14 一致）
+            print(t("cli.messages.db_build_calls_summary", total=0, resolved=0, percent=0))
+            return True
+
+        # 2. 准备 all_symbols 列表
+        all_symbols_list = []
+        ws_id = self._get_active_workspace_id()
+        if only_files:
+            # only_files 模式：从 DB 全量读取符号（与 Python 一致）
+            cur = self.conn.execute("""
+                SELECT s.id, s.name, s.qualified_name, s.kind,
+                       s.file_instance_id, fi.rel_path
+                FROM symbols s
+                JOIN file_instances fi ON s.file_instance_id = fi.id
+                WHERE fi.workspace_id = ? AND s.qualified_name != ''
+            """, (ws_id,))
+            for row in cur:
+                all_symbols_list.append({
+                    "id": row["id"],
+                    "name": row["name"],
+                    "qualified_name": row["qualified_name"],
+                    "kind": row["kind"],
+                    "file_instance_id": row["file_instance_id"],
+                    "rel_path": row["rel_path"],
+                })
+        else:
+            # 全量模式：从 file_results 构建（与 Python 一致）
+            for rel_path, result in file_results.items():
+                fi_id = result.get("file_instance_id", 0)
+                for sym in result.get("symbols", []):
+                    qname = sym.get("qualified_name", "")
+                    if qname:
+                        all_symbols_list.append({
+                            "id": sym.get("id", 0),
+                            "name": sym.get("name", ""),
+                            "qualified_name": qname,
+                            "kind": sym.get("kind", ""),
+                            "file_instance_id": fi_id,
+                            "rel_path": rel_path,
+                        })
+
+        # 3. 准备 external_symbols 列表（从 DB 读取）
+        external_symbols_list = []
+        try:
+            cur = self.conn.execute(
+                "SELECT id, symbol_name, qualified_name, package_name FROM external_symbols"
+            )
+            for row in cur:
+                external_symbols_list.append({
+                    "id": row[0],
+                    "symbol_name": row[1],
+                    "qualified_name": row[2],
+                    "package_name": row[3],
+                })
+        except Exception:
+            # external_symbols 表可能不存在（旧版本 DB）
+            pass
+
+        # 4. 构造 file_results 的 dict 列表（Rust API 接收 List[Dict]）
+        # 注意：file_results_filtered 是 [(rel_path, result), ...] 列表
+        file_results_dicts = []
+        for rel_path, result in file_results_filtered:
+            # 确保 rel_path 在 result 中（Rust extract_file_info 需要从 dict 读取 rel_path）
+            d = result
+            if "rel_path" not in d:
+                # 不修改原 dict，用浅拷贝 + rel_path
+                d = dict(result)
+                d["rel_path"] = rel_path
+            file_results_dicts.append(d)
+
+        # 5. 调用 Rust batch_resolve_and_save_calls
+        try:
+            rust_ret = batch_resolve_and_save_calls(
+                self.db_path,
+                ws_id,
+                file_results_dicts,
+                all_symbols_list,
+                external_symbols_list,
+                changed_file_instance_ids,
+            )
+        except Exception:
+            return False  # Rust 调用异常 → 降级 Python
+
+        if not rust_ret.get("success"):
+            return False  # Rust 返回失败 → 降级 Python
+
+        # 6. 打印摘要（与 Python 路径一致）
+        total_calls = rust_ret.get("total_calls", 0)
+        resolved_count = rust_ret.get("resolved_count", 0)
+        percent = resolved_count * 100 // total_calls if total_calls else 0
+        print(t("cli.messages.db_build_calls_summary",
+                total=total_calls, resolved=resolved_count, percent=percent))
+
+        return True
+
+    def _build_call_graph_multi_lang_python(self, file_results: Dict[str, Dict[str, Any]],
+                                            only_files: Optional[Set[str]] = None):
+        """Python 降级路径：原 _build_call_graph_multi_lang 实现
+
+        多级解析策略：
         1. 精确匹配：callee_module.callee_name 完全匹配 qualified_name
         2. import 解析：通过文件的 import 列表将 callee_module 映射到实际模块路径
         3. 简名唯一匹配：callee_name 在全局符号表中唯一存在
@@ -2613,6 +2824,102 @@ class BuildMixin:
 
         会写入当前 git HEAD commit_hash，用于 function_change_frequency 等
         演化智能查询 JOIN git_commits 获取 author/changers。
+
+        Phase 2-4 wire-production：默认走 Rust ``batch_save_file_versions`` 短路。
+        rollback_config 中 feature=rust_batch_save_file_versions 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 路径。
+        """
+        # Phase 2-4 wire-production: Rust 短路
+        if not self.is_feature_rolled_back("rust_batch_save_file_versions"):
+            rust_version_id = self._save_file_version_via_rust(file_instance_id, result)
+            if rust_version_id is not None:
+                return rust_version_id
+            # Rust 失败 → 降级 Python 路径（fail-soft）
+
+        # Python 降级路径
+        return self._save_file_version_python(file_instance_id, result)
+
+    def _save_file_version_via_rust(self, file_instance_id: int, result: Dict[str, Any]) -> Optional[int]:
+        """Rust 短路路径：调用 batch_save_file_versions 处理单文件
+
+        返回 None 表示 Rust 路径失败（调用方应降级到 Python）。
+        成功时返回 file_version_id。
+
+        与 Python 路径的差异：
+        - ast_cache_metadata 在此预构建后传给 Rust（Rust 不读文件系统）
+        - _compute_and_apply_symbol_diff 在此回调（Rust 返回 prev_version_id）
+        - file_contents INSERT OR IGNORE 由 Rust 内部完成
+        """
+        try:
+            from callwarden_core import batch_save_file_versions
+        except ImportError:
+            return None
+
+        content_hash = result["content_hash"]
+        mtime = os.path.getmtime(result["abs_path"]) if "abs_path" in result else 0
+        total_lines = result["total_lines"]
+        parsed_at = time.time()
+        language = detect_language_from_path(result.get("rel_path", ""))
+        commit_hash = self._get_head_commit_cached()
+
+        # 预构建 ast_cache_metadata（对应 Python _update_ast_cache 内部 metadata）
+        file_content_hash = ""
+        abs_path = result.get("abs_path")
+        if abs_path:
+            try:
+                _, file_content_hash = read_file_normalized(abs_path)
+            except Exception:
+                pass
+
+        ast_cache_metadata = {
+            "content_hash": content_hash,
+            "file_content_hash": file_content_hash,
+            "parsed_at": parsed_at,
+            "incremental": result.get("incremental", False),
+            "changed_ranges_count": len(result.get("changed_ranges", [])),
+            "language": result.get("language", ""),
+        }
+
+        file_result = {
+            "file_instance_id": file_instance_id,
+            "content_hash": content_hash,
+            "mtime": mtime,
+            "total_lines": total_lines,
+            "parsed_at": parsed_at,
+            "language": language,
+            "commit_hash": commit_hash,
+            "ast_cache_metadata": ast_cache_metadata,
+        }
+
+        try:
+            rust_ret = batch_save_file_versions(self.db_path, [file_result])
+        except Exception:
+            return None  # Rust 调用异常 → 降级 Python
+
+        if not rust_ret.get("success"):
+            return None  # Rust 返回失败 → 降级 Python
+
+        results = rust_ret.get("results") or []
+        if not results:
+            return None
+
+        single = results[0]
+        file_version_id = single["file_version_id"]
+
+        # 回调 _compute_and_apply_symbol_diff（仅新建版本时）
+        # Rust 不实现此逻辑，由 Python 调用方负责（契约 §9.1）
+        if single.get("is_new_version") and single.get("prev_version_id") is not None:
+            self._compute_and_apply_symbol_diff(single["prev_version_id"], file_version_id)
+
+        return file_version_id
+
+    def _save_file_version_python(self, file_instance_id: int, result: Dict[str, Any]) -> int:
+        """Python 降级路径：原 _save_file_version 实现
+
+        保留为独立方法以便：
+        1. Rust 短路失败时降级调用
+        2. rollback_flag=1 时直接调用
+        3. 差分测试对照基准
         """
         content_hash = result["content_hash"]
         mtime = os.path.getmtime(result["abs_path"]) if "abs_path" in result else 0
@@ -2919,7 +3226,48 @@ class BuildMixin:
         """计算符号 diff 并应用删除标记
 
         为当前版本中不存在的符号（相对于上一版本）设置 is_deleted=1
+
+        Phase 2-6-1 wire-production：默认走 Rust ``compute_and_apply_symbol_diff`` 短路。
+        rollback_config 中 feature=rust_compute_symbol_diff 置为 1 时回退 Python。
+        Rust 失败时（含写锁冲突）fail-soft 降级到 Python 路径。
+
+        事务边界注意：Rust 路径使用独立短连接 + BEGIN IMMEDIATE。
+        若 Python 外层事务持有写锁，Rust BEGIN IMMEDIATE 会等待 5s 后失败，
+        自动 fail-soft 降级到 Python 路径（使用 self.conn，在外层事务中执行）。
         """
+        if not self.is_feature_rolled_back("rust_compute_symbol_diff"):
+            if self._compute_and_apply_symbol_diff_via_rust(prev_version_id, curr_version_id):
+                return
+            # Rust 失败 → 降级 Python 路径（fail-soft）
+        self._compute_and_apply_symbol_diff_python(prev_version_id, curr_version_id)
+
+    def _compute_and_apply_symbol_diff_via_rust(self, prev_version_id: int, curr_version_id: int) -> bool:
+        """Rust 短路路径：调用 compute_and_apply_symbol_diff 计算并应用符号 diff
+
+        返回 False 表示 Rust 路径失败（调用方应降级到 Python）。
+        成功时返回 True。
+
+        事务边界：Rust 使用独立短连接 + BEGIN IMMEDIATE。
+        若 Python 外层事务持有写锁，Rust 会 busy_timeout=5000 后失败。
+        """
+        try:
+            from callwarden_core import compute_and_apply_symbol_diff
+        except ImportError:
+            return False
+
+        try:
+            rust_ret = compute_and_apply_symbol_diff(
+                self.db_path,
+                prev_version_id,
+                curr_version_id,
+            )
+        except Exception:
+            return False
+
+        return rust_ret.get("success", False)
+
+    def _compute_and_apply_symbol_diff_python(self, prev_version_id: int, curr_version_id: int):
+        """Python 降级路径：原 _compute_and_apply_symbol_diff 实现"""
         # 获取上一版本的符号
         cur = self.conn.execute(
             "SELECT symbol_hash, qualified_name FROM file_symbol_versions WHERE file_version_id = ?",
@@ -2960,6 +3308,68 @@ class BuildMixin:
 
     def _save_symbols_for_version(self, file_version_id: int, file_instance_id: int, result: Dict[str, Any]):
         """为文件版本创建所有符号版本（批量写入优化，相同 hash 只存一次）
+
+        Phase 2-6 wire-production：默认走 Rust ``batch_save_symbols`` 短路。
+        rollback_config 中 feature=rust_batch_save_symbols 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 路径。
+        """
+        # Phase 2-6 wire-production: Rust 短路
+        if not self.is_feature_rolled_back("rust_batch_save_symbols"):
+            if self._save_symbols_for_version_via_rust(file_version_id, file_instance_id, result):
+                return
+            # Rust 失败 → 降级 Python 路径（fail-soft）
+
+        # Python 降级路径
+        self._save_symbols_for_version_python(file_version_id, file_instance_id, result)
+
+    def _save_symbols_for_version_via_rust(self, file_version_id: int, file_instance_id: int, result: Dict[str, Any]) -> bool:
+        """Rust 短路路径：调用 batch_save_symbols 处理单文件符号写入
+
+        返回 False 表示 Rust 路径失败（调用方应降级到 Python）。
+        成功时返回 True。
+
+        与 Python 路径的差异：
+        - content_hash 在此预计算（Rust API 不内部补算）
+        - 短连接 + BEGIN IMMEDIATE（与 Phase 2-4 一致）
+        """
+        try:
+            from callwarden_core import batch_save_symbols
+        except ImportError:
+            return False
+
+        # 收集所有 symbols（含 inline_modules）
+        all_symbols = list(result["symbols"])
+        for inline_mod in result.get("inline_modules", []):
+            all_symbols.extend(inline_mod["symbols"])
+
+        if not all_symbols:
+            return True  # 空列表直接成功（与 Python 一致）
+
+        # 预计算 content_hash + 补齐 start_col/end_col（Rust API 不内部补算）
+        for sym in all_symbols:
+            if "content_hash" not in sym:
+                sym["content_hash"] = compute_content_hash(sym.get("content", ""))
+            sym.setdefault("start_col", 0)
+            sym.setdefault("end_col", 0)
+
+        try:
+            rust_ret = batch_save_symbols(
+                self.db_path,
+                self._get_active_workspace_id(),
+                file_instance_id,
+                file_version_id,
+                all_symbols,
+            )
+        except Exception:
+            return False  # Rust 调用异常 → 降级 Python
+
+        if not rust_ret.get("success"):
+            return False  # Rust 返回失败 → 降级 Python
+
+        return True
+
+    def _save_symbols_for_version_python(self, file_version_id: int, file_instance_id: int, result: Dict[str, Any]):
+        """Python 降级路径：原 _save_symbols_for_version 实现
 
         性能优化（原 N×3 次 SQL → 现 5 次 SQL）：
         1. 批量 INSERT OR IGNORE symbol_contents（content_hash 是 PK，自动去重）

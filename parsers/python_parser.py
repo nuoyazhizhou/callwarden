@@ -380,17 +380,17 @@ class PythonParser(BaseParser):
         callee_module = ""
 
         if func_node.type == "attribute":
-            attr_name = None
-            obj_name = ""
-            for child in func_node.named_children:
-                if child.type == "identifier":
-                    if not attr_name:
-                        obj_name = self._node_text(child, source)
-                    else:
-                        attr_name = self._node_text(child, source)
-            if attr_name:
-                callee_name = attr_name
-                callee_module = obj_name
+            # 直接通过 tree-sitter 字段名获取，避免遍历 named_children
+            # 旧实现遍历 named_children 用 `if not attr_name` 判断，但 attr_name
+            # 初始为 None 且循环中只赋值 obj_name，导致第二次循环仍进入 `if not
+            # attr_name` 分支把 obj_name 覆盖，attr_name 永远为 None，最终
+            # callee_name 保留为 "self._helper" 形式，被 should_filter_call
+            # 以 base="self" ∈ PYTHON_BUILTINS 误过滤（与 Rust 端行为不一致）。
+            obj_node = func_node.child_by_field_name("object")
+            attr_node = func_node.child_by_field_name("attribute")
+            if attr_node is not None:
+                callee_name = self._node_text(attr_node, source)
+                callee_module = self._node_text(obj_node, source) if obj_node is not None else ""
 
         elif import_map and callee_name in import_map:
             callee_module = import_map[callee_name]

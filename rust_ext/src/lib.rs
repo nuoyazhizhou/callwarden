@@ -22,7 +22,10 @@ use std::sync::Arc;
 use tree_sitter::{Language, Node, Parser};
 
 // F11 方案 A：build_graph_from_c_files 需要访问 graph 模块的 build_csr_public / build_callee_name_index_public / GraphStore::new_with_data
+mod abi_contract;
 mod canonicalize;
+// Phase 0 子任务 3 Step 2: Python/Rust 差分对照基线数据结构
+mod differential_baseline;
 // R7: daemon/snapshot 模块需对 cw_daemon binary 可见（bin 与 lib 在同一 crate，但
 // 默认 mod 是私有的。改为 pub mod 让 binary 入口能 use callwarden_core::daemon::*
 pub mod daemon;
@@ -31,7 +34,33 @@ mod diff;
 mod frontier;
 mod graph;
 mod hash_diff;
+// Phase 0 Step 2: 迁移状态程序化基线（数据结构 + trait，不暴露 PyO3）
+mod migration_manifest;
 mod metrics;
+// Phase 1-1: SQLite 只读查询 API（schema_version 查询，不写入）
+mod sqlite_query;
+// Phase 1-2: CAS 只读查询 API（lookup/get_state/count_files/get_file_generation + 纯函数）
+mod cas_query;
+// Phase 1-3: workspace manifest 只读查询 API（manifest_get/list/count + snapshot_get_files + verify_raw_hash）
+mod manifest_query;
+// Phase 1-4: Replicator 只读查询 API（replicator_get_pending_count）
+mod replicator_query;
+// Phase 2-1: CAS→CodeGraph Merge PyO3 暴露层（cas_merge_to_codegraph + cas_merge_init_schema）
+mod cas_merge_query;
+// Phase 2-2: 批量 symbols 写入 PyO3 暴露层（batch_save_symbols）
+mod batch_build_query;
+// Phase 2-3: 调用边 resolve + 批量写入 PyO3 暴露层（batch_resolve_and_save_calls）
+mod batch_calls_query;
+// Phase 2-4: 批量文件历史版本写入 PyO3 暴露层（batch_save_file_versions）
+mod batch_file_versions_query;
+// Phase 3-4-1: StagingLog PyO3 暴露层（append/read/read_pending/mark_applied_batch/mark_failed/
+//             truncate/compact_applied/stats/next_lsn）
+mod staging_log_query;
+// Phase 3-4-2: ParseRetryLog PyO3 暴露层（append/read/read_pending/read_retryable/
+//              mark_applied/mark_exhausted/increment_retry/compact/next_lsn）
+mod parse_retry_log_query;
+// Phase 2-6-1: 增量构建 PyO3 暴露层（compute_and_apply_symbol_diff + load_file_result_from_db）
+mod incremental_build_query;
 // P0-C Step 0: multi_lang 改为 pub(crate) 以便 languages 子模块复用类型
 // (LangConfig/SymbolRule/CallRule/NameStrategy 等)
 pub(crate) mod multi_lang;
@@ -1677,6 +1706,55 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     // T-1783751519227-18d8: 输入规范化入口（BOM 剥离 + 编码检测 + CRLF→LF）
     m.add_function(wrap_pyfunction!(canonicalize_source_py, m)?)?;
+    // Phase 1-1: SQLite 只读查询 API（schema_version，与 Python _get_current_version 行为一致）
+    m.add_function(wrap_pyfunction!(sqlite_query::sqlite_query_schema_version, m)?)?;
+    // Phase 1-2: CAS 只读查询 API（compute_cas_key_v1 纯函数 + lookup/get_state/count_files/get_file_generation 只读查询）
+    m.add_function(wrap_pyfunction!(cas_query::compute_cas_key_v1, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_query::compute_symbol_content_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_query::cas_global_lookup, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_query::cas_global_get_state, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_query::cas_global_count_files, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_query::cas_local_get_file_generation, m)?)?;
+    // Phase 1-3: workspace manifest 只读查询 API
+    m.add_function(wrap_pyfunction!(manifest_query::manifest_get, m)?)?;
+    m.add_function(wrap_pyfunction!(manifest_query::manifest_list, m)?)?;
+    m.add_function(wrap_pyfunction!(manifest_query::manifest_count, m)?)?;
+    m.add_function(wrap_pyfunction!(manifest_query::snapshot_get_files, m)?)?;
+    m.add_function(wrap_pyfunction!(manifest_query::manifest_verify_raw_hash, m)?)?;
+    // Phase 1-4: Replicator 只读查询 API
+    m.add_function(wrap_pyfunction!(replicator_query::replicator_get_pending_count, m)?)?;
+    // Phase 2-1: CAS→CodeGraph Merge PyO3 暴露层（cas_merge_to_codegraph + cas_merge_init_schema）
+    m.add_function(wrap_pyfunction!(cas_merge_query::cas_merge_to_codegraph, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_merge_query::cas_merge_init_schema, m)?)?;
+    // Phase 2-2: 批量 symbols 写入 PyO3 暴露层（batch_save_symbols）
+    m.add_function(wrap_pyfunction!(batch_build_query::batch_save_symbols, m)?)?;
+    // Phase 2-3: 调用边 resolve + 批量写入 PyO3 暴露层（batch_resolve_and_save_calls）
+    m.add_function(wrap_pyfunction!(batch_calls_query::batch_resolve_and_save_calls, m)?)?;
+    // Phase 2-4: 批量文件历史版本写入
+    m.add_function(wrap_pyfunction!(batch_file_versions_query::batch_save_file_versions, m)?)?;
+    // Phase 3-4-1: StagingLog PyO3 暴露层（9 个 API）
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_append, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_read, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_read_pending, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_mark_applied_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_mark_failed, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_truncate, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_compact_applied, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_next_lsn, m)?)?;
+    // Phase 3-4-2: ParseRetryLog PyO3 暴露层（9 个 API）
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_append, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_read, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_read_pending, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_read_retryable, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_mark_applied, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_mark_exhausted, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_increment_retry, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_compact, m)?)?;
+    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_next_lsn, m)?)?;
+    // Phase 2-6-1: 增量构建 PyO3 暴露层（compute_and_apply_symbol_diff + load_file_result_from_db）
+    m.add_function(wrap_pyfunction!(incremental_build_query::compute_and_apply_symbol_diff, m)?)?;
+    m.add_function(wrap_pyfunction!(incremental_build_query::load_file_result_from_db, m)?)?;
     Ok(())
 }
 

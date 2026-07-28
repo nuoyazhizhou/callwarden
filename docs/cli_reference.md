@@ -2,14 +2,14 @@
 
 Call Warden CLI 提供两种命令风格，遵循"subcommand 为主，--flag deprecated 为辅"的长期方向（详见 [架构设计 - 命令风格统一规范](architecture.md#命令风格统一规范c8)）：
 
-1. **子命令风格（推荐）**：`cw <subcommand> [options]`，对应 12 大功能分类，是长期支持的方向
+1. **子命令风格（推荐）**：`cw <subcommand> [options]`，对应 13 大功能分类，是长期支持的方向
 2. **Flag 风格（已废弃）**：`cw --flag [options]`，作为兼容入口保留，使用时会打印 `deprecated` 警告，将在未来版本移除
 
 > 下文用 `cw` 作为命令前缀。本文档末尾附「Deprecated --flag 清单」章节，列出所有 60 个 `--flag` 及其推荐的 subcommand 替代。
 
-## 命令概览（按 12 大功能分类）
+## 命令概览（按 13 大功能分类）
 
-Call Warden 把 145+ 个 CLI 命令按功能聚合为 12 个主分类，每个主分类下包含若干 subcommand 与（兼容期保留的）`--flag`。详细分组设计见 `.cli_audit.md` §2。
+Call Warden 把 150+ 个 CLI 命令按功能聚合为 13 个主分类，每个主分类下包含若干 subcommand 与（兼容期保留的）`--flag`。详细分组设计见 `.cli_audit.md` §2。
 
 | # | 主分类 | 涵盖范围 | 主要 subcommand | 等价 --flag（deprecated） |
 |---|--------|----------|-----------------|--------------------------|
@@ -25,6 +25,7 @@ Call Warden 把 145+ 个 CLI 命令按功能聚合为 12 个主分类，每个�
 | 10 | **Coverage & Ownership** | 注释覆盖、测试覆盖、测试 case 关联、测试稳定性、CODEOWNERS、所有权映射 | `coverage import/fn/uncovered`、`who`、`ownership-map`、`tests`（case/reverse/coverage/history/build/import）| `--coverage-import`、`--coverage-fn`、`--coverage-uncovered`、`--test-coverage`、`--who`、`--ownership-map` |
 | 11 | **GC** | 归档、恢复、清理、策略、备份、审计 | `gc archive/restore/status/purge`、`gc policy show/set`、`gc retention`、`gc archive list/inspect/import`、`gc audit list/show` | — |
 | 12 | **Diagnostics** | doctor、安装集成、install-hook、clone 检测、LSP、跨仓库、安全编辑、AI 工具配置 | `doctor`、`install`、`install-agent`、`install-hook`、`setup` | — |
+| 13 | **Migration Rollback** | 全量 Rust 迁移自举计划专用：每个功能子任务 wire-production step 登记回滚配置，紧急回滚开关 | `rollback register/show/config/set/is-rolled-back` | — |
 
 > **注**：详细 subcommand 用法见下文章节；deprecated `--flag` 的完整映射见本文档末尾「Deprecated --flag 清单」章节。
 
@@ -1797,6 +1798,78 @@ cw bootstrap status
 
 > **只读命令**：`bootstrap status` 不会写数据库，不会触发 workspace 激活，
 > 不会与 MCP Server 长连接撞锁。
+
+---
+
+## 迁移回滚命令
+
+全量 Rust 迁移自举计划专用：每个功能子任务在 wire-production step 完成后必须登记一条 `rollback_config` 记录，声明生产入口、回滚入口和回滚窗口。`rollback_flag=1` 时生产入口走 `rollback_entry`（切回 Python），用于线上紧急回滚。
+
+### `rollback register`：登记回滚配置
+
+```bash
+cw rollback register --task-id <TASK_ID> --feature <FEATURE_NAME> \
+    --phase <N> --production-entry <PATH> --rollback-entry <PATH> \
+    [--window <ISO8601>] [--config-json <JSON>]
+```
+
+**用途**：在功能子任务的 wire-production step 完成后调用，登记该功能的 Rust 生产入口路径与 Python 回滚入口路径。若同一 `task_id` 已有记录，更新之。
+
+- `--production-entry`：Rust 生产入口，格式 `文件:类.方法`（如 `db/db_build.py:CodeGraphDB._save_file_version`）
+- `--rollback-entry`：Python 回滚入口路径
+- `--window`：回滚窗口截止时间（ISO8601，如 `2026-12-31T00:00:00`），过期后 Phase 7 删除 `rollback_entry`
+- `--config-json`：附加配置 JSON（可选）
+
+> **写命令**：走 CLI，避免与 MCP 长连接撞锁。
+
+### `rollback show <TASK_ID>`：查看回滚配置
+
+```bash
+cw rollback show <TASK_ID>
+```
+
+**用途**：查看指定任务的回滚配置详情（生产入口、回滚入口、rollback_flag、回滚窗口等）。
+
+> **只读命令**：可走 MCP，WAL 安全。
+
+### `rollback config`：列出回滚配置
+
+```bash
+cw rollback config [--phase <N>] [--flag <0|1>]
+```
+
+**用途**：列出所有回滚配置，可按 phase 或 rollback_flag 过滤。
+
+- `--phase <N>`：按迁移阶段过滤（1-7）
+- `--flag <-1|0|1>`：按回滚标志过滤（-1=全部、0=正常 Rust、1=已回退到 Python）
+
+> **只读命令**：可走 MCP，WAL 安全。
+
+### `rollback set <TASK_ID> <FLAG>`：设置回滚标志
+
+```bash
+cw rollback set <TASK_ID> <0|1> [--reason "<原因>"]
+```
+
+**用途**：紧急回滚开关。`flag=1` 时该功能切回 Python 回滚入口；`flag=0` 时恢复正常 Rust 路径。
+
+- `flag=0`：正常 Rust 路径
+- `flag=1`：回退到 Python 路径
+- `--reason`：回滚原因（可选，建议填写以便事后追溯）
+
+> **写命令**：走 CLI。这是线上紧急回滚的主入口。
+
+### `rollback is-rolled-back <FEATURE_NAME>`：检查功能是否回滚
+
+```bash
+cw rollback is-rolled-back <FEATURE_NAME>
+```
+
+**用途**：检查指定功能是否已回滚到 Python。生产代码通过 `is_feature_rolled_back()` 方法（内部调用此命令的等价查询）决定走 Rust 还是 Python 路径。
+
+**返回**：`true`（已回滚）/ `false`（正常 Rust 路径）。
+
+> **只读命令**：可走 MCP，WAL 安全。生产代码内联调用时走 `CodeGraphDB.is_feature_rolled_back()` 方法。
 
 ---
 

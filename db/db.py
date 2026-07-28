@@ -73,6 +73,7 @@ from .db_jobs import JobMixin
 from .db_clone_groups import CloneGroupMixin
 from .db_tests import TestRelationMixin
 from .db_dashboard import DashboardMixin
+from .db_rollback_config import RollbackConfigMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -113,6 +114,7 @@ class CodeGraphDB(
     CloneGroupMixin,
     TestRelationMixin,
     DashboardMixin,
+    RollbackConfigMixin,
 ):
     """代码知识图谱数据库
 

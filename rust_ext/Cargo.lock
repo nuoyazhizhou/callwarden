@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "callwarden-core"
-version = "0.3.12"
+version = "0.3.23"
 dependencies = [
  "arc-swap",
  "base64",

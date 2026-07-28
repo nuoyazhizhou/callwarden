@@ -269,13 +269,20 @@ impl GenericParser {
 
     /// parse 单个文件，提取符号 + 调用 + import + 引用
     pub fn parse_file(&self, abs_path: &str, module_path: &str) -> ParseResult {
-        let source = match std::fs::read(abs_path) {
-            Ok(s) => s,
+        // 走 canonicalize_source：BOM 剥离 + UTF-8 编码 + CRLF/CR→LF + SHA-256
+        // 与 Python 端 read_file_normalized + compute_content_hash 行为对齐
+        // （Phase 1 行为差分测试要求两端 content_hash 一致）。
+        // 旧实现直接 std::fs::read + blake_hash（DefaultHasher SipHash → u64），
+        // 既未规范化也未用 SHA-256，与 Python 端结果不一致。
+        let canon = match crate::canonicalize::canonicalize_source(abs_path) {
+            Ok(c) => c,
             Err(e) => {
                 return error_result(abs_path, module_path, self.config.lang_id,
-                                    &format!("read error: {}", e));
+                                    &format!("canonicalize error: {}", e));
             }
         };
+        let source = canon.canonical_bytes;
+        let content_hash = canon.content_hash;
 
         let mut parser = Parser::new();
         if parser.set_language(&self.config.language).is_err() {
@@ -291,7 +298,6 @@ impl GenericParser {
             }
         };
 
-        let content_hash = format!("{:x}", blake_hash(&source));
         let total_lines = source.iter().filter(|&&b| b == b'\n').count() as u32 + 1;
 
         let mut symbols = Vec::new();

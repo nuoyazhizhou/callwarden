@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（用户级单库）                       │
 │   $HOME/.callwarden/callwarden.db                              │
-│   Schema v41 / WAL 模式 / 40+ 表 / 35 个功能 Mixin + 1 基类    │
+│   Schema v42 / WAL 模式 / 40+ 表 / 40 个功能 Mixin + 1 基类    │
 │   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -108,6 +108,8 @@ v37 L2 破坏性 git 操作记录表 destructive_operations（force push 等记�
 v38 get_stats 加速索引（by_kind / depth_distribution GROUP BY 优化，部分索引 + ANALYZE）
 v39 call_chain_up/down 加速索引 idx_call_versions_callee_current（BFS 按 callee_qualified 走索引）
 v40 A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引（关联 finding 到 scan，支持增量清理）
+v41 P1-2 修复 — 跨仓库依赖去重 UNIQUE 索引（detect_cross_repo_deps 五元组幂等）
+v42 迁移回滚配置表（rollback_config，全量 Rust 迁移自举计划用：每个功能子任务 wire-production step 登记生产入口/回滚入口/回滚窗口）
 ```
 
 Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。
@@ -366,6 +368,7 @@ CodeGraphDB 通过 **35 个功能 Mixin 多继承**组装（不含 db_base.py �
 | 38 | TestsMixin | db_tests.py | 测试关联：建立 test_fn ↔ 被测 fn 的关联关系 |
 | 39 | ToolchainMixin | db_toolchain.py | Toolchain CAS：工具链注册与存储 |
 | 40 | WorkspaceManifestMixin | db_workspace_manifest.py | Workspace manifest：clean snapshot 和 dirty overlay |
+| 41 | RollbackConfigMixin | db_rollback_config.py | 迁移回滚配置：rollback_config 表注册/查询/紧急回滚开关（schema v42，全量 Rust 迁移自举计划用） |
 
 ### 组装方式
 

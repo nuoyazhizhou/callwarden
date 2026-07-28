@@ -18,6 +18,55 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
+# ============================================
+# Phase 3-4-5 wire-production: Rust 短路
+# ============================================
+# StagingLog 默认走 Rust PyO3 API（callwarden_core.staging_log_*），
+# rollback_config 中 feature=rust_staging_log 置为 1 时回退 Python。
+# Rust 失败时 fail-soft 降级到 Python 路径（与 Phase 2-6 模式一致）。
+
+_RUST_STAGING_LOG_AVAILABLE = False
+_callwarden_core = None
+try:
+    import callwarden_core as _callwarden_core  # type: ignore
+    _RUST_STAGING_LOG_AVAILABLE = True
+except ImportError:
+    _callwarden_core = None
+
+# rollback_config 查询缓存（60s TTL，避免每次方法调用都打开 DB）
+_ROLLBACK_CACHE: Dict[str, float] = {"ts": 0.0, "value": False}
+_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _is_rust_staging_log_rolled_back() -> bool:
+    """检查 rust_staging_log feature 是否已回滚（60s 缓存）
+
+    StagingLog 是独立类（非 CodeGraphDB Mixin），无法用 self.is_feature_rolled_back。
+    通过短连接查询 rollback_config 表，结果缓存 60s 避免频繁开 DB。
+    """
+    now = time.time()
+    if now - _ROLLBACK_CACHE["ts"] < _ROLLBACK_CACHE_TTL:
+        return _ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    try:
+        import sqlite3 as _sqlite3
+        from callwarden.config import DB_PATH as _DB_PATH
+        conn = _sqlite3.connect(_DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                ("rust_staging_log",),
+            )
+            row = cur.fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _ROLLBACK_CACHE["ts"] = now
+    _ROLLBACK_CACHE["value"] = value
+    return value
+
 
 # ============================================
 # 数据结构
@@ -150,7 +199,22 @@ class StagingLog:
             entry: 要追加的 entry（lsn 会被自动分配）
 
         返回：分配的 LSN
+
+        Phase 3-4-5 wire-production：默认走 Rust ``staging_log_append`` 短路。
+        rollback_config 中 feature=rust_staging_log 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 路径。
         """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                lsn = _callwarden_core.staging_log_append(self.log_path, entry.to_json_line())
+                entry.lsn = lsn
+                if lsn >= self._next_lsn:
+                    self._next_lsn = lsn + 1
+                return lsn
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         with self._lock:
             entry.lsn = self._next_lsn
             entry.timestamp = entry.timestamp or time.time()
@@ -172,7 +236,18 @@ class StagingLog:
             since_lsn: 起始 LSN（不包含）
 
         返回：entries 列表（按 LSN 升序）
+
+        Phase 3-4-5 wire-production：默认走 Rust ``staging_log_read`` 短路。
         """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                json_str = _callwarden_core.staging_log_read(self.log_path, since_lsn)
+                data = json.loads(json_str)
+                return [StagingEntry.from_dict(d) for d in data]
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         entries = []
         if not os.path.exists(self.log_path):
             return entries
@@ -193,20 +268,54 @@ class StagingLog:
         return entries
 
     def read_pending(self) -> List[StagingEntry]:
-        """读取所有 status=pending 的 entries"""
+        """读取所有 status=pending 的 entries
+
+        Phase 3-4-5 wire-production：默认走 Rust ``staging_log_read_pending`` 短路
+        （Rust 在文件读取时直接过滤，比 Python 读全部再过滤更高效）。
+        """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                json_str = _callwarden_core.staging_log_read_pending(self.log_path)
+                data = json.loads(json_str)
+                return [StagingEntry.from_dict(d) for d in data]
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         return [e for e in self.read() if e.status == "pending"]
 
     def mark_applied(self, lsn: int):
-        """标记指定 LSN 的 entry 为 applied"""
+        """标记指定 LSN 的 entry 为 applied
+
+        Phase 3-4-5 wire-production：走 Rust ``staging_log_mark_applied_batch([lsn])`` 短路。
+        """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                _callwarden_core.staging_log_mark_applied_batch(self.log_path, [lsn])
+                return
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         self._update_status(lsn, "applied")
 
     def mark_applied_batch(self, lsns: List[int]):
         """批量标记多个 LSN 为 applied——单次文件重写。
 
         修复 T-1783952125417-7a09：减少 mark_applied 逐条重写整个文件的开销。
+
+        Phase 3-4-5 wire-production：走 Rust ``staging_log_mark_applied_batch`` 短路。
         """
         if not lsns:
             return
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                _callwarden_core.staging_log_mark_applied_batch(self.log_path, lsns)
+                return
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         target_lsns = set(lsns)
         with self._lock:
             entries = []
@@ -226,7 +335,18 @@ class StagingLog:
             self._rewrite(entries)
 
     def mark_failed(self, lsn: int, error: str):
-        """标记指定 LSN 的 entry 为 failed"""
+        """标记指定 LSN 的 entry 为 failed
+
+        Phase 3-4-5 wire-production：走 Rust ``staging_log_mark_failed`` 短路。
+        """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                _callwarden_core.staging_log_mark_failed(self.log_path, lsn, error)
+                return
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         self._update_status(lsn, "failed", error)
 
     def _update_status(self, lsn: int, status: str, error: Optional[str] = None):
@@ -258,7 +378,17 @@ class StagingLog:
 
         参数：
             up_to_lsn: 截断到的 LSN（包含）
+
+        Phase 3-4-5 wire-production：走 Rust ``staging_log_truncate`` 短路。
         """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                _callwarden_core.staging_log_truncate(self.log_path, up_to_lsn)
+                return
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         with self._lock:
             entries = []
             if os.path.exists(self.log_path):
@@ -285,7 +415,17 @@ class StagingLog:
 
         参数：
             workspace_id: 如果指定，只删除该 workspace 的 applied entries
+
+        Phase 3-4-5 wire-production：走 Rust ``staging_log_compact_applied`` 短路。
         """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                _callwarden_core.staging_log_compact_applied(self.log_path, workspace_id)
+                return
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         with self._lock:
             entries = []
             if os.path.exists(self.log_path):
@@ -319,7 +459,24 @@ class StagingLog:
         os.replace(tmp_path, self.log_path)
 
     def stats(self) -> Dict[str, Any]:
-        """返回 log 统计信息"""
+        """返回 log 统计信息
+
+        Phase 3-4-5 wire-production：走 Rust ``staging_log_stats`` 短路
+        （Rust 直接统计，无需 Python 读取+过滤全部 entries）。
+        """
+        # Phase 3-4-5 wire-production: Rust 短路
+        if _RUST_STAGING_LOG_AVAILABLE and not _is_rust_staging_log_rolled_back():
+            try:
+                json_str = _callwarden_core.staging_log_stats(self.log_path)
+                stats = json.loads(json_str)
+                # 同步 _next_lsn（Rust 端可能已推进）
+                rust_next = stats.get("next_lsn", 0)
+                if rust_next > self._next_lsn:
+                    self._next_lsn = rust_next
+                return stats
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        # Python 降级路径
         entries = self.read()
         pending = [e for e in entries if e.status == "pending"]
         applied = [e for e in entries if e.status == "applied"]

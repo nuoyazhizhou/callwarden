@@ -2043,6 +2043,50 @@ def _migrate_v40_to_v41(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v41_to_v42(conn: sqlite3.Connection):
+    """v41 -> v42: 迁移回滚配置表（rollback_config）
+
+    背景：全量 Rust 迁移自举计划 Phase 0 子任务 4 新增 rollback_config 表，
+    每个功能子任务在 wire-production step 登记生产入口、回滚入口和回滚窗口。
+
+    幂等性：CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS 自动跳过已存在对象。
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v41 库。
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rollback_config (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER,
+            task_id TEXT NOT NULL,
+            feature_name TEXT NOT NULL,
+            phase INTEGER NOT NULL,
+            production_entry TEXT NOT NULL,
+            rollback_entry TEXT NOT NULL,
+            rollback_flag INTEGER NOT NULL DEFAULT 0,
+            rollback_window_until TEXT DEFAULT '',
+            config_blob TEXT DEFAULT '',
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (task_id) REFERENCES tasks(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rollback_config_task ON rollback_config(task_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rollback_config_feature ON rollback_config(feature_name)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rollback_config_flag ON rollback_config(rollback_flag)"
+    )
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2213,9 +2257,15 @@ class CodeGraphBase:
         P5 优化：优先从快照文件加载（mmap 零拷贝，2.91x 加速），
         快照不存在或过期时回退到 load_from_sqlite 并自动 dump 新快照。
 
+        Phase 2-5 wire-production：rollback_config 控制 Rust 图查询短路。
+        feature=rust_graph_query 置为 1 时返回 None，所有图查询降级到 SQL。
+
         Returns:
-            GraphStore 实例，或 None（callwarden_core 未安装时降级到 SQL）
+            GraphStore 实例，或 None（callwarden_core 未安装 / rollback 时降级到 SQL）
         """
+        # Phase 2-5 wire-production: rollback 控制
+        if self.is_feature_rolled_back("rust_graph_query"):
+            return None
         with self._graph_store_lock:
             if self._graph_store_dirty:
                 self._graph_store = None
@@ -2713,6 +2763,10 @@ class CodeGraphBase:
             41: {
                 "description": t("cli.messages.migration_v41", default="P1-2 cross_repo_deps dedup: add UNIQUE index on (source_ws, target_ws, source_hash, target_hash, dep_type) + dedup existing rows"),
                 "func": _migrate_v40_to_v41,
+            },
+            42: {
+                "description": t("cli.messages.migration_v42", default="Migration rollback config: create rollback_config table for Rust migration self-bootstrap (idempotent)"),
+                "func": _migrate_v41_to_v42,
             },
         }
 

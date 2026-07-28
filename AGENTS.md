@@ -92,7 +92,7 @@ callwarden/
 ├── analyzers/               # 分析层（call_chain / coverage / issues / ignore_spec）
 ├── cicd/                    # CI/CD 集成（sarif / incremental / pr_check）
 ├── cli/                     # CLI 命令行（argparse 子命令）
-├── db/                      # 数据库层（35 个功能 Mixin + 1 基类，40 个 db_*.py 文件 + schema）
+├── db/                      # 数据库层（40 个功能 Mixin + 1 基类，41 个 db_*.py 文件 + schema）
 │   ├── db.py                # 主类 CodeGraphDB（组合所有 Mixin）
 │   ├── db_base.py           # 基础连接与 schema 初始化
 │   ├── db_query.py          # 查询 Mixin
