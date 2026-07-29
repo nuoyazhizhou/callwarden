@@ -104,12 +104,6 @@
   },
   "known_gaps": [
     {
-      "parser": "rust",
-      "field": "raw_calls",
-      "description": "Rust 不提取 new User('Alice') 构造调用；golden 期望包含 User 构造调用",
-      "phase": "Phase 2.1"
-    },
-    {
       "parser": "python",
       "field": "symbols",
       "description": "Python parser 重复提取符号（每个符号出现 2 次），是已知 bug",

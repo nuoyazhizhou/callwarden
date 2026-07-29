@@ -9,9 +9,9 @@
 设计要点：
 - tree-sitter 是错误容忍的，语法错误不应抛异常（§5.3 partial 状态）
 - canonicalize_source_py 是 Rust 侧输入规范化唯一入口（§5.1）
-- parse_file_lang 当前直接读文件路径，未走 canonicalize，UTF-16 输入会
-  产生 0 符号（已知生产缺口，Phase 3 修复生产调用点时统一改为
-  canonicalize + parse_canonical_bytes_py）
+- parse_file_lang 内部调用 parse_file，parse_file 第一步调用
+  canonicalize_source，因此 UTF-16 输入会被正确解码为 UTF-8 再 parse
+  （Phase 3 已修复：parse_file_lang 走 canonicalize 路径）
 - 本测试同时验证当前行为和契约期望，缺口用 xfail 或文档化断言标记
 
 关键约束（§6.3 永远不能白名单）：
@@ -247,7 +247,7 @@ class TestUtf8BomContract:
 
     设计文档 §5.1：BOM 必须被剥离，canonical bytes 不含 BOM。
     Python parser 通过 read_file_normalized 处理 BOM；
-    Rust parse_file_lang 直接读文件路径，tree-sitter 容忍 UTF-8 BOM。
+    Rust parse_file_lang 内部走 canonicalize_source，BOM 被剥离后再 parse。
     """
 
     @pytest.mark.parametrize("lang,filename,sample", [
@@ -336,7 +336,7 @@ class TestCrlfContract:
 
 
 # ============================================
-# 5. UTF-16 契约测试（含已知生产缺口）
+# 5. UTF-16 契约测试
 # ============================================
 
 @pytest.mark.skipif(not _HAS_RUST, reason="callwarden_core 未安装")
@@ -345,12 +345,9 @@ class TestUtf16Contract:
 
     设计文档 §5.1：canonicalize_source 必须解码 UTF-16 → UTF-8。
     Python parser 通过 read_file_normalized 处理 UTF-16 BOM；
-    Rust parse_file_lang 直接读文件路径，tree-sitter 无法解析 UTF-16 字节流。
-
-    已知生产缺口（设计文档 §3.1 目标 4）：
-    - parse_file_lang 不走 canonicalize，UTF-16 输入返回 0 符号
-    - 修复路径：Phase 3 改为 canonicalize + parse_canonical_bytes_py
-    - 本测试同时验证当前缺口和契约期望（canonicalize 路径正确）
+    Rust parse_file_lang 内部调用 parse_file，parse_file 第一步调用
+    canonicalize_source，因此 UTF-16 输入会被正确解码为 UTF-8 再 parse
+    （Phase 3 已修复：parse_file_lang 走 canonicalize 路径）。
     """
 
     def test_utf16_le_python_handles(self, tmp_path):
@@ -372,31 +369,33 @@ class TestUtf16Contract:
         assert "hello" in names, "Python parser 应从 UTF-16 BE 提取 hello"
 
     def test_utf16_le_rust_parse_file_lang_returns_zero(self, tmp_path):
-        """已知缺口：Rust parse_file_lang 直接读路径，UTF-16 LE 返回 0 符号。
+        """Phase 3 已修复：Rust parse_file_lang 走 canonicalize，UTF-16 LE 返回符号。
 
         设计文档 §3.1 目标 4：所有生产入口必须用同一 canonical bytes 和 ParseFact 合约。
-        当前 parse_file_lang 违反此合约（直接读路径，不走 canonicalize）。
-        Phase 3 迁移生产调用点时修复为 canonicalize + parse_canonical_bytes_py。
+        parse_file_lang 内部调用 parse_file，parse_file 第一步调用
+        canonicalize_source，UTF-16 LE 被解码为 UTF-8 再 parse。
         """
         text = _PY_SAMPLE.decode("utf-8")
         raw = b"\xff\xfe" + text.encode("utf-16-le")
         path = _write_tmp(tmp_path, "utf16le.py", raw)
         rs_result = _parse_rust(path, "python")
-        # 文档化缺口：Rust 返回 0 符号
-        assert len(rs_result["symbols"]) == 0, (
-            "若 Rust parse_file_lang 已修复 UTF-16 输入（走 canonicalize），"
-            "请更新此测试为 assert > 0 并移除缺口文档化"
+        # Phase 3 修复：Rust 走 canonicalize，应提取到 hello 符号
+        names = {s["name"] for s in rs_result["symbols"]}
+        assert "hello" in names, (
+            f"Rust parse_file_lang 应从 UTF-16 LE 提取 hello（走 canonicalize），"
+            f"实际 symbols={rs_result['symbols']}"
         )
 
     def test_utf16_be_rust_parse_file_lang_returns_zero(self, tmp_path):
-        """已知缺口：Rust parse_file_lang 直接读路径，UTF-16 BE 返回 0 符号。"""
+        """Phase 3 已修复：Rust parse_file_lang 走 canonicalize，UTF-16 BE 返回符号。"""
         text = _PY_SAMPLE.decode("utf-8")
         raw = b"\xfe\xff" + text.encode("utf-16-be")
         path = _write_tmp(tmp_path, "utf16be.py", raw)
         rs_result = _parse_rust(path, "python")
-        assert len(rs_result["symbols"]) == 0, (
-            "若 Rust parse_file_lang 已修复 UTF-16 输入（走 canonicalize），"
-            "请更新此测试为 assert > 0 并移除缺口文档化"
+        names = {s["name"] for s in rs_result["symbols"]}
+        assert "hello" in names, (
+            f"Rust parse_file_lang 应从 UTF-16 BE 提取 hello（走 canonicalize），"
+            f"实际 symbols={rs_result['symbols']}"
         )
 
     def test_utf16_le_canonicalize_then_parse_works(self, tmp_path):

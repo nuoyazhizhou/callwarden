@@ -324,15 +324,33 @@ def test_fixture_known_gaps_have_required_fields(lang):
 def test_typescript_fixture_documents_symbol_gap():
     """TypeScript fixture 的 known_gaps 必须记录已知缺口。
 
-    R15-P0-3 修复后 Rust 已实现 signature 提取，signature 缺口已移除。
-    当前已知缺口：raw_calls（Rust 不提取 new User() 构造调用）。
+    P0-C Step 1 修复后 Rust 已提取 new User(...) 构造调用（new_expression CallRule
+    + method_definition name=constructor 通过 kind_from_name 映射为 constructor kind），
+    Rust 的 raw_calls 缺口已移除。Python parser 仍不提取构造调用（Python 限制）。
     """
     if not _fixture_exists("typescript"):
         pytest.skip("typescript.json 不存在")
     data = _load_fixture("typescript")
-    # R15-P0-3: signature 缺口已修复，现在只记录 raw_calls 缺口
+    # P0-C Step 1: Rust raw_calls 缺口已修复（new User('Alice') → callee=User 提取），
+    # known_gaps 不应再记录 Rust raw_calls 缺失
+    rust_raw_calls_gaps = [
+        gap for gap in data["known_gaps"]
+        if gap["parser"] == "rust" and gap["field"] == "raw_calls"
+    ]
+    assert not rust_raw_calls_gaps, (
+        "typescript fixture known_gaps 不应再记录 Rust raw_calls 缺失（P0-C Step 1 已修复："
+        "new_expression CallRule + kind_from_name=constructor）"
+    )
+    # Python parser 仍不提取 new User 构造调用（Python 限制，未修复）
+    python_raw_calls_gaps = [
+        gap for gap in data["known_gaps"]
+        if gap["parser"] == "python" and gap["field"] == "raw_calls"
+    ]
+    assert python_raw_calls_gaps, (
+        "typescript fixture known_gaps 应记录 Python parser 不提取 new User 构造调用（Python 限制）"
+    )
+    # R15-P0-3: signature 缺口已修复
     gap_fields = {gap["field"] for gap in data["known_gaps"]}
-    assert "raw_calls" in gap_fields, "typescript fixture 应记录 raw_calls 缺口"
     assert "signature" not in gap_fields, "typescript signature 缺口已修复（R15-P0-3）"
 
 
