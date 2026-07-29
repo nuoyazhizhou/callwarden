@@ -78,6 +78,27 @@ def _make_peer(uid: int) -> dict:
     return {"pid": os.getpid(), "uid": uid, "gid": 0}
 
 
+def _non_admin_uid() -> int:
+    """返回一个保证不是 admin 的 uid（既不是 0 也不是 daemon self uid）。
+
+    Windows 上 os.getuid() 不存在，daemon_uid 回退为 0，
+    但 Rust 端 current_daemon_uid() 在 Windows 返回 1000。
+    直接用 daemon_uid + 1000 会得到 1000 = current_daemon_uid()，被判定为 admin。
+    必须获取真实 daemon uid 后 +1，确保不冲突。
+    """
+    # 优先用 Rust 端 current_daemon_uid_py() 获取真实 daemon uid
+    try:
+        from callwarden_core import current_daemon_uid_py
+        daemon_uid = int(current_daemon_uid_py())
+    except Exception:
+        daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
+    # non_admin_uid 既不能是 0（root）也不能是 daemon_uid（daemon self）
+    candidate = daemon_uid + 1
+    if candidate == 0:
+        candidate = 1
+    return candidate
+
+
 # ============================================================
 # 1. ADMIN_ONLY_METHODS 常量与 Rust 端对齐
 # ============================================================
@@ -264,8 +285,7 @@ class TestBatch11DispatchAdminEnforcement:
 
     def test_health_not_blocked_for_non_admin(self, daemon_service):
         """health 是只读方法，非 admin 也能调用。"""
-        daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
-        non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
+        non_admin_uid = _non_admin_uid()
         peer = _make_peer(uid=non_admin_uid)
         result = daemon_service.dispatch(
             peer=peer,
@@ -282,8 +302,7 @@ class TestBatch11DispatchAdminEnforcement:
         但关键是错误不是 permission_denied（说明 admin 校验放行了）。
         """
         from callwarden.server.daemon_server import DaemonRpcError
-        daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
-        non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
+        non_admin_uid = _non_admin_uid()
         peer = _make_peer(uid=non_admin_uid)
         try:
             daemon_service.dispatch(
@@ -360,8 +379,7 @@ class TestBatch11AdminMethodMatrix:
     def test_non_admin_uid_rejected_for_all_14_methods(self, daemon_service):
         """非 admin uid 调用所有 14 个 admin 方法都抛 permission_denied。"""
         from callwarden.server.daemon_server import DaemonRpcError
-        daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
-        non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
+        non_admin_uid = _non_admin_uid()
         peer = _make_peer(uid=non_admin_uid)
 
         for method in self.ADMIN_METHODS:
@@ -581,8 +599,7 @@ class TestP02WorkspaceIdAcl:
 
     def test_mount_list_rejects_non_admin(self, daemon_service, tmp_path):
         """mount.list 改为 admin-only 后，非 admin 调用应抛 permission_denied。"""
-        daemon_uid = os.getuid() if hasattr(os, "getuid") else 0
-        non_admin_uid = daemon_uid + 1000 if daemon_uid == 0 else daemon_uid + 1000
+        non_admin_uid = _non_admin_uid()
         other_peer = _make_peer(uid=non_admin_uid)
 
         from callwarden.server.daemon_server import DaemonRpcError
