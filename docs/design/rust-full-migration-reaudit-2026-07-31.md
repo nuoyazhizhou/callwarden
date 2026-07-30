@@ -45,3 +45,30 @@ WSL/Linux cargo test --bin cw-agent --no-default-features: 12 passed
 3. 补 ACL/admin audit 持久化与恢复测试。
 4. 逐项复核 Phase 0、4、5、6 的已关闭任务。
 5. 对 Phase 1、2、3、7 的未开始任务按依赖顺序实施，不能通过修改状态批量关闭。
+
+## 5. `workspace.file.delete` 契约
+
+删除请求必须包含：
+
+- `workspace_instance_id`
+- `rel_path`
+- `agent_session_id`
+- `session_epoch`
+- `monotonic_seq`
+
+服务端按以下顺序处理：
+
+1. 用 `SO_PEERCRED.uid` 校验 workspace owner。
+2. 校验 active session，并用 `(session_epoch, monotonic_seq)` 执行 generation CAS；旧 session 或旧序号不得删除新状态。
+3. 在 CodeGraph DB 的单个 `BEGIN IMMEDIATE` 事务中：
+   - 删除目标文件符号发出的 calls；
+   - 将其他文件指向目标符号的 `callee_id` 清零，保留待解析的调用文本；
+   - 删除目标文件当前 symbols；
+   - 将 `file_instances.status` 标为 `deleted`，保留文件和符号版本历史；
+   - 若存在 `file_versions`，将当前版本标为 deleted；
+   - 删除目标 workspace 的 manifest 行。
+4. 不删除 `file_contents`、`symbol_contents` 或 CAS 条目；这些内容可能被历史版本和其他 workspace 共享。
+5. 删除操作写入 durable staging；崩溃重放必须幂等。
+6. 数据库删除和 snapshot 发布成功后才提交 generation；失败时允许同一 generation 重试。
+
+验收至少覆盖：非 owner、stale session、stale sequence、幂等删除、同路径跨 workspace 隔离、事务失败回滚、删除后 snapshot 查询不可见、崩溃恢复。

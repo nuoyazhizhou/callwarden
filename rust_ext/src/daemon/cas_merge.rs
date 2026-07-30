@@ -39,6 +39,21 @@ pub struct MergeResult {
     pub merge_status: String,
 }
 
+/// workspace 文件 tombstone 的事务结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeleteFileResult {
+    pub workspace_id: i64,
+    pub rel_path: String,
+    pub file_instance_id: i64,
+    pub symbols_removed: usize,
+    pub outgoing_calls_removed: usize,
+    pub incoming_edges_cleared: usize,
+    pub manifest_removed: usize,
+    pub history_versions_marked: usize,
+    /// `deleted` / `already_deleted` / `not_found`
+    pub delete_status: String,
+}
+
 /// 当前时间戳（Unix epoch 秒，f64）
 fn now_ts() -> f64 {
     SystemTime::now()
@@ -271,7 +286,15 @@ fn upsert_file_records(
              abs_path = ?1, current_content_hash = ?2, mtime = ?3, \
              total_lines = ?4, last_parsed = ?5, status = 'parsed', module_path = ?6 \
              WHERE id = ?7",
-            params![abs_path, content_hash, now, total_lines, now, module_path, id],
+            params![
+                abs_path,
+                content_hash,
+                now,
+                total_lines,
+                now,
+                module_path,
+                id
+            ],
         )?;
         Ok(id)
     } else {
@@ -347,9 +370,8 @@ fn replace_symbols_and_calls(
     // 1. 查询旧 symbol_ids
     let mut old_sym_ids: Vec<i64> = Vec::new();
     {
-        let mut stmt = codegraph_conn.prepare(
-            "SELECT id FROM symbols WHERE file_instance_id = ?1",
-        )?;
+        let mut stmt =
+            codegraph_conn.prepare("SELECT id FROM symbols WHERE file_instance_id = ?1")?;
         let rows = stmt.query_map(params![file_instance_id], |row| row.get::<_, i64>(0))?;
         for r in rows {
             old_sym_ids.push(r?);
@@ -562,9 +584,10 @@ fn resolve_callee(
          ORDER BY s.id ASC LIMIT 1",
     )?;
     if let Some(row) = stmt
-        .query_map(params![workspace_id, file_instance_id, callee_name], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?
+        .query_map(
+            params![workspace_id, file_instance_id, callee_name],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )?
         .next()
     {
         let (id, module) = row?;
@@ -579,9 +602,10 @@ fn resolve_callee(
          ORDER BY s.id ASC LIMIT 1",
     )?;
     if let Some(row) = stmt
-        .query_map(params![workspace_id, file_instance_id, callee_name], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?
+        .query_map(
+            params![workspace_id, file_instance_id, callee_name],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )?
         .next()
     {
         let (id, module) = row?;
@@ -660,17 +684,13 @@ fn delete_calls_by_caller_ids(conn: &Connection, ids: &[i64]) -> Result<(), rusq
         if chunk.is_empty() {
             continue;
         }
-        let placeholders: Vec<String> = (0..chunk.len())
-            .map(|i| format!("?{}", i + 1))
-            .collect();
+        let placeholders: Vec<String> = (0..chunk.len()).map(|i| format!("?{}", i + 1)).collect();
         let sql = format!(
             "DELETE FROM calls WHERE caller_id IN ({})",
             placeholders.join(",")
         );
-        let params_iter: Vec<&dyn rusqlite::ToSql> = chunk
-            .iter()
-            .map(|id| id as &dyn rusqlite::ToSql)
-            .collect();
+        let params_iter: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
         conn.execute(&sql, params_iter.as_slice())?;
     }
     Ok(())
@@ -682,17 +702,13 @@ fn clear_callee_ids(conn: &Connection, ids: &[i64]) -> Result<(), rusqlite::Erro
         if chunk.is_empty() {
             continue;
         }
-        let placeholders: Vec<String> = (0..chunk.len())
-            .map(|i| format!("?{}", i + 1))
-            .collect();
+        let placeholders: Vec<String> = (0..chunk.len()).map(|i| format!("?{}", i + 1)).collect();
         let sql = format!(
             "UPDATE calls SET callee_id = 0 WHERE callee_id IN ({})",
             placeholders.join(",")
         );
-        let params_iter: Vec<&dyn rusqlite::ToSql> = chunk
-            .iter()
-            .map(|id| id as &dyn rusqlite::ToSql)
-            .collect();
+        let params_iter: Vec<&dyn rusqlite::ToSql> =
+            chunk.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
         conn.execute(&sql, params_iter.as_slice())?;
     }
     Ok(())
@@ -763,9 +779,140 @@ fn upsert_manifest(
           source_encoding, bom_kind, newline_style, file_size, mtime_ns, \
           is_dirty, updated_at) \
          VALUES (?1, ?2, ?3, ?4, '', 'utf-8', 'none', 'lf', ?5, 0, 1, ?6)",
-        params![workspace_id, rel_path, content_hash, cas_key, file_size, now],
+        params![
+            workspace_id,
+            rel_path,
+            content_hash,
+            cas_key,
+            file_size,
+            now
+        ],
     )?;
     Ok(())
+}
+
+/// 在单个事务中删除 workspace 文件的当前图快照并保留历史/CAS 内容。
+///
+/// 语义对齐 Python `db_build.py:remove_file`：
+/// - `file_instances` 只标记为 deleted，不物理删除；
+/// - `file_versions` 若存在，只标记当前版本为 deleted；
+/// - `file_contents` / `symbol_contents` / CAS 条目均保留；
+/// - 其他文件指向被删符号的调用边保留调用文本，只清空 `callee_id`。
+pub fn delete_workspace_file_from_codegraph(
+    codegraph_conn: &Connection,
+    workspace_id: i64,
+    rel_path: &str,
+) -> Result<DeleteFileResult, String> {
+    ensure_manifest_schema(codegraph_conn)
+        .map_err(|e| format!("ensure_manifest_schema 失败: {}", e))?;
+
+    if let Err(e) = codegraph_conn.execute_batch("BEGIN IMMEDIATE") {
+        return Err(format!("BEGIN IMMEDIATE 失败: {}", e));
+    }
+
+    let inner = || -> Result<DeleteFileResult, String> {
+        let file_row: Option<(i64, String)> = codegraph_conn
+            .query_row(
+                "SELECT id, status FROM file_instances \
+                 WHERE workspace_id = ?1 AND rel_path = ?2",
+                params![workspace_id, rel_path],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| format!("查询 file_instances 失败: {}", e))?;
+
+        let mut result = DeleteFileResult {
+            workspace_id,
+            rel_path: rel_path.to_string(),
+            file_instance_id: file_row.as_ref().map(|row| row.0).unwrap_or(0),
+            symbols_removed: 0,
+            outgoing_calls_removed: 0,
+            incoming_edges_cleared: 0,
+            manifest_removed: 0,
+            history_versions_marked: 0,
+            delete_status: "not_found".to_string(),
+        };
+
+        if let Some((file_instance_id, previous_status)) = file_row {
+            result.outgoing_calls_removed = codegraph_conn
+                .execute(
+                    "DELETE FROM calls WHERE caller_id IN \
+                     (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+                    params![file_instance_id],
+                )
+                .map_err(|e| format!("删除文件出边失败: {}", e))?;
+            result.incoming_edges_cleared = codegraph_conn
+                .execute(
+                    "UPDATE calls SET callee_id = 0 WHERE callee_id IN \
+                     (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+                    params![file_instance_id],
+                )
+                .map_err(|e| format!("清理文件入边失败: {}", e))?;
+            result.symbols_removed = codegraph_conn
+                .execute(
+                    "DELETE FROM symbols WHERE file_instance_id = ?1",
+                    params![file_instance_id],
+                )
+                .map_err(|e| format!("删除文件符号失败: {}", e))?;
+
+            codegraph_conn
+                .execute(
+                    "UPDATE file_instances SET status = 'deleted', mtime = ?1 WHERE id = ?2",
+                    params![now_ts(), file_instance_id],
+                )
+                .map_err(|e| format!("写入文件 tombstone 失败: {}", e))?;
+
+            let has_file_versions: bool = codegraph_conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master \
+                     WHERE type = 'table' AND name = 'file_versions')",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(|e| format!("检查 file_versions schema 失败: {}", e))?;
+            if has_file_versions {
+                result.history_versions_marked = codegraph_conn
+                    .execute(
+                        "UPDATE file_versions SET is_deleted = 1 \
+                         WHERE file_instance_id = ?1 AND is_current = 1",
+                        params![file_instance_id],
+                    )
+                    .map_err(|e| format!("标记当前文件版本失败: {}", e))?;
+            }
+
+            result.delete_status = if previous_status == "deleted" {
+                "already_deleted".to_string()
+            } else {
+                "deleted".to_string()
+            };
+        }
+
+        result.manifest_removed = codegraph_conn
+            .execute(
+                "DELETE FROM workspace_manifests WHERE workspace_id = ?1 AND rel_path = ?2",
+                params![workspace_id, rel_path],
+            )
+            .map_err(|e| format!("删除 workspace manifest 失败: {}", e))?;
+
+        if result.file_instance_id == 0 && result.manifest_removed > 0 {
+            result.delete_status = "deleted".to_string();
+        }
+        Ok(result)
+    };
+
+    match inner() {
+        Ok(result) => {
+            if let Err(e) = codegraph_conn.execute_batch("COMMIT") {
+                let _ = codegraph_conn.execute_batch("ROLLBACK");
+                return Err(format!("COMMIT 失败: {}", e));
+            }
+            Ok(result)
+        }
+        Err(e) => {
+            let _ = codegraph_conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }
 
 /// 把 CAS 中的解析结果 merge 到 CodeGraph DB 主表。
@@ -864,9 +1011,7 @@ pub fn merge_cas_to_codegraph(
                         .unwrap_or_else(|| "private".to_string()),
                     signature: row.get::<_, Option<String>>(10)?.unwrap_or_default(),
                     has_comment: row.get(11)?,
-                    depth: row
-                        .get::<_, Option<i64>>(12)?
-                        .unwrap_or(-1),
+                    depth: row.get::<_, Option<i64>>(12)?.unwrap_or(-1),
                     content: row.get::<_, Option<String>>(13)?.unwrap_or_default(),
                 })
             })
@@ -973,7 +1118,12 @@ pub fn merge_cas_to_codegraph(
             "merged"
         };
 
-        Ok((file_instance_id, sym_count, call_count, merge_status.to_string()))
+        Ok((
+            file_instance_id,
+            sym_count,
+            call_count,
+            merge_status.to_string(),
+        ))
     };
 
     match inner() {
@@ -1218,12 +1368,18 @@ mod tests {
 
     #[test]
     fn test_module_path_from_rel_basic() {
-        assert_eq!(module_path_from_rel("src/server/main.py"), "src.server.main");
+        assert_eq!(
+            module_path_from_rel("src/server/main.py"),
+            "src.server.main"
+        );
         assert_eq!(module_path_from_rel("lib/util.rs"), "lib.util");
         // 无扩展名
         assert_eq!(module_path_from_rel("src/server/main"), "src.server.main");
         // Windows 路径
-        assert_eq!(module_path_from_rel("src\\server\\main.py"), "src.server.main");
+        assert_eq!(
+            module_path_from_rel("src\\server\\main.py"),
+            "src.server.main"
+        );
         // 仅 basename
         assert_eq!(module_path_from_rel("main.py"), "main");
         // basename 中无 .
@@ -1397,11 +1553,9 @@ mod tests {
 
         // 校验 workspaces 行
         let ws_count: i64 = cg_conn
-            .query_row(
-                "SELECT COUNT(*) FROM workspaces WHERE id = 42",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM workspaces WHERE id = 42", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(ws_count, 1);
 
@@ -1546,10 +1700,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(
-            manifest_count, 1,
-            "P1-2: workspace_manifests 应有 1 行记录"
-        );
+        assert_eq!(manifest_count, 1, "P1-2: workspace_manifests 应有 1 行记录");
 
         // 校验 manifest 内容
         let (m_cas_key, m_content_hash, m_is_dirty): (String, String, i64) = cg_conn
@@ -1685,9 +1836,17 @@ mod tests {
 
         // 第一次 merge 创建 file_instance + symbols（包含 main 的 id）
         let r1 = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck1", 1, "src/main.rs", "/app/src/main.rs", "ch1", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck1",
+            1,
+            "src/main.rs",
+            "/app/src/main.rs",
+            "ch1",
+            "rust",
             "/app",
-        ).unwrap();
+        )
+        .unwrap();
 
         // 获取 main symbol 的 id
         let main_sym_id: i64 = cg_conn
@@ -1735,9 +1894,17 @@ mod tests {
 
         // 再次 merge 同一文件——旧 main_sym_id 会被删除，入边 callee_id 应置 0
         let r2 = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck1", 1, "src/main.rs", "/app/src/main.rs", "ch1", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck1",
+            1,
+            "src/main.rs",
+            "/app/src/main.rs",
+            "ch1",
+            "rust",
             "/app",
-        ).unwrap();
+        )
+        .unwrap();
 
         // 验证：旧的 main_sym_id 已不存在
         let old_main_count: i64 = cg_conn
@@ -1813,9 +1980,17 @@ mod tests {
 
         // merge 时尝试 INSERT OR IGNORE workspace_id=1
         let _r = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck1", 1, "src/main.rs", "/app/src/main.rs", "ch1", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck1",
+            1,
+            "src/main.rs",
+            "/app/src/main.rs",
+            "ch1",
+            "rust",
             "/app",
-        ).unwrap();
+        )
+        .unwrap();
 
         // 验证：workspace 行未被覆盖
         let (name, root_path, description): (String, String, String) = cg_conn
@@ -1842,14 +2017,16 @@ mod tests {
 
         // CAS for A.rs：caller "fn_a" 调用 "helper"（helper 不在 A.rs 中）
         // file_size=200, total_lines=20（不同值用于校验 manifest file_size 字段）
-        cas_conn.execute(
-            "INSERT INTO cas_file_cache \
+        cas_conn
+            .execute(
+                "INSERT INTO cas_file_cache \
              (cas_key, content_hash, language, file_size, total_lines, \
              parser_version, callwarden_version, extraction_config_version, \
              abi_version, input_abi_version, state, parsed_at) \
              VALUES ('ck_a', 'ch_a', 'rust', 200, 20, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
         cas_conn.execute(
             "INSERT INTO cas_symbol_contents (content_hash, content) VALUES ('sh_fn_a', 'fn fn_a() { helper(); }')",
             [],
@@ -1863,22 +2040,26 @@ mod tests {
             [],
         ).unwrap();
         // fn_a 调用 helper（callee 在 A.rs 中不存在）
-        cas_conn.execute(
-            "INSERT INTO cas_raw_calls \
+        cas_conn
+            .execute(
+                "INSERT INTO cas_raw_calls \
              (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal) \
              VALUES ('ck_a', 1, 'fn_a', 'helper', 2, 0)",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
 
         // CAS for B.rs：定义 helper 函数
-        cas_conn.execute(
-            "INSERT INTO cas_file_cache \
+        cas_conn
+            .execute(
+                "INSERT INTO cas_file_cache \
              (cas_key, content_hash, language, file_size, total_lines, \
              parser_version, callwarden_version, extraction_config_version, \
              abi_version, input_abi_version, state, parsed_at) \
              VALUES ('ck_b', 'ch_b', 'rust', 80, 8, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
         cas_conn.execute(
             "INSERT INTO cas_symbol_contents (content_hash, content) VALUES ('sh_helper', 'fn helper() { }')",
             [],
@@ -1898,9 +2079,17 @@ mod tests {
         // 先 merge A.rs：fn_a 调用 helper，但 helper 尚未 merge
         // callee_id 应为 0（A.rs 内查找 helper 失败，B.rs 还没 merge）
         let r_a = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_a", 7, "src/a.rs", "/app/src/a.rs", "ch_a", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck_a",
+            7,
+            "src/a.rs",
+            "/app/src/a.rs",
+            "ch_a",
+            "rust",
             "/app",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(r_a.merge_status, "merged");
         assert_eq!(r_a.symbols_inserted, 1);
 
@@ -1920,9 +2109,17 @@ mod tests {
         // 再 merge B.rs：helper 函数被插入
         // 回扫 pass 应将 A.rs 中 callee_id=0 的 call resolve 到 B.rs 的 helper
         let r_b = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_b", 7, "src/b.rs", "/app/src/b.rs", "ch_b", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck_b",
+            7,
+            "src/b.rs",
+            "/app/src/b.rs",
+            "ch_b",
+            "rust",
             "/app",
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(r_b.merge_status, "merged");
         assert_eq!(r_b.symbols_inserted, 1);
 
@@ -1939,10 +2136,7 @@ mod tests {
             "P1-2 v2: 回扫 pass 应 resolve callee_id > 0，实际={}",
             callee_id
         );
-        assert_eq!(
-            is_cross_file, 1,
-            "P1-2 v2: 跨文件调用 is_cross_file 应为 1"
-        );
+        assert_eq!(is_cross_file, 1, "P1-2 v2: 跨文件调用 is_cross_file 应为 1");
 
         // 校验 callee_id 指向 B.rs 的 helper symbol
         let callee_name: String = cg_conn
@@ -1971,7 +2165,14 @@ mod tests {
         make_codegraph_schema(&cg_conn);
 
         let _r = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_fs", 1, "src/main.rs", "/app/src/main.rs", "ch_fs", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck_fs",
+            1,
+            "src/main.rs",
+            "/app/src/main.rs",
+            "ch_fs",
+            "rust",
             "/app",
         )
         .unwrap();
@@ -2043,7 +2244,14 @@ mod tests {
 
         // merge：应修复空正文
         let _r = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_ec", 1, "src/main.rs", "/app/src/main.rs", "ch_ec", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck_ec",
+            1,
+            "src/main.rs",
+            "/app/src/main.rs",
+            "ch_ec",
+            "rust",
             "/app",
         )
         .unwrap();
@@ -2072,10 +2280,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(
-            !helper_content.is_empty(),
-            "P1-2 v2: helper 空正文应被修复"
-        );
+        assert!(!helper_content.is_empty(), "P1-2 v2: helper 空正文应被修复");
 
         // 不应再有空正文行
         let empty_after: i64 = cg_conn
@@ -2117,12 +2322,14 @@ mod tests {
              VALUES ('ck_o1', 1, 'sh_caller', 'caller', 'caller', 'function', 1, 3, 0, 0, 'public', 'fn caller()', 0, 0)",
             [],
         ).unwrap();
-        cas_conn.execute(
-            "INSERT INTO cas_raw_calls \
+        cas_conn
+            .execute(
+                "INSERT INTO cas_raw_calls \
              (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal) \
              VALUES ('ck_o1', 1, 'caller', 'shared', 2, 0)",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
 
         // CAS：B.rs 中定义 "shared"
         cas_conn.execute(
@@ -2172,14 +2379,41 @@ mod tests {
         // merge 顺序：B → C → A（B 先 merge，shared id 较小）
         // merge A 时 resolve_callee 跨文件查找 shared，应返回 B 的 shared（id 较小）
         merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_o2", 9, "src/b.rs", "/app/src/b.rs", "ch_o2", "rust", "/app",
-        ).unwrap();
+            &cas_conn,
+            &cg_conn,
+            "ck_o2",
+            9,
+            "src/b.rs",
+            "/app/src/b.rs",
+            "ch_o2",
+            "rust",
+            "/app",
+        )
+        .unwrap();
         merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_o3", 9, "src/c.rs", "/app/src/c.rs", "ch_o3", "rust", "/app",
-        ).unwrap();
+            &cas_conn,
+            &cg_conn,
+            "ck_o3",
+            9,
+            "src/c.rs",
+            "/app/src/c.rs",
+            "ch_o3",
+            "rust",
+            "/app",
+        )
+        .unwrap();
         merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_o1", 9, "src/a.rs", "/app/src/a.rs", "ch_o1", "rust", "/app",
-        ).unwrap();
+            &cas_conn,
+            &cg_conn,
+            "ck_o1",
+            9,
+            "src/a.rs",
+            "/app/src/a.rs",
+            "ch_o1",
+            "rust",
+            "/app",
+        )
+        .unwrap();
 
         // 获取 B 和 C 的 shared symbol id
         let (b_shared_id, c_shared_id): (i64, i64) = cg_conn
@@ -2349,19 +2583,23 @@ mod tests {
         make_cas_schema(&cas_conn);
 
         // CAS A：定义 caller "fn_a"，调用 "helper"（在 B 中定义）
-        cas_conn.execute(
-            "INSERT INTO cas_file_cache \
+        cas_conn
+            .execute(
+                "INSERT INTO cas_file_cache \
              (cas_key, content_hash, language, file_size, total_lines, \
              parser_version, callwarden_version, extraction_config_version, \
              abi_version, input_abi_version, state, parsed_at) \
              VALUES ('ck_a', 'ch_a', 'rust', 150, 15, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
-            [],
-        ).unwrap();
-        cas_conn.execute(
-            "INSERT INTO cas_symbol_contents (content_hash, content) \
+                [],
+            )
+            .unwrap();
+        cas_conn
+            .execute(
+                "INSERT INTO cas_symbol_contents (content_hash, content) \
              VALUES ('sh_fn_a', 'fn fn_a() { helper(); }')",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
         cas_conn.execute(
             "INSERT INTO cas_symbols \
              (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
@@ -2370,27 +2608,33 @@ mod tests {
              VALUES ('ck_a', 1, 'sh_fn_a', 'fn_a', 'fn_a', 'function', 1, 3, 0, 0, 'public', 'fn fn_a()', 0, 0)",
             [],
         ).unwrap();
-        cas_conn.execute(
-            "INSERT INTO cas_raw_calls \
+        cas_conn
+            .execute(
+                "INSERT INTO cas_raw_calls \
              (cas_key, caller_local_id, caller_name, callee_name, call_line, call_ordinal) \
              VALUES ('ck_a', 1, 'fn_a', 'helper', 2, 0)",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
 
         // CAS B：定义 "helper"
-        cas_conn.execute(
-            "INSERT INTO cas_file_cache \
+        cas_conn
+            .execute(
+                "INSERT INTO cas_file_cache \
              (cas_key, content_hash, language, file_size, total_lines, \
              parser_version, callwarden_version, extraction_config_version, \
              abi_version, input_abi_version, state, parsed_at) \
              VALUES ('ck_b', 'ch_b', 'rust', 60, 6, 'v1', 'v1', 'v1', 'v1', 'v1', 'ready', 0.0)",
-            [],
-        ).unwrap();
-        cas_conn.execute(
-            "INSERT INTO cas_symbol_contents (content_hash, content) \
+                [],
+            )
+            .unwrap();
+        cas_conn
+            .execute(
+                "INSERT INTO cas_symbol_contents (content_hash, content) \
              VALUES ('sh_helper', 'fn helper() { /* B */ }')",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
         cas_conn.execute(
             "INSERT INTO cas_symbols \
              (cas_key, local_symbol_id, symbol_content_hash, name, local_qualified_name, \
@@ -2402,8 +2646,17 @@ mod tests {
 
         // 4. merge A → B（A 先 merge，B 后到——测试回扫 pass）
         let r_a = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_a", 42, "src/a.rs", "/app/src/a.rs", "ch_a", "rust", "/app",
-        ).unwrap();
+            &cas_conn,
+            &cg_conn,
+            "ck_a",
+            42,
+            "src/a.rs",
+            "/app/src/a.rs",
+            "ch_a",
+            "rust",
+            "/app",
+        )
+        .unwrap();
         assert_eq!(r_a.merge_status, "merged");
         assert_eq!(r_a.symbols_inserted, 1);
 
@@ -2418,8 +2671,17 @@ mod tests {
         assert_eq!(callee_id_after_a, 0, "A merge 后 callee_id 应为 0");
 
         let r_b = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_b", 42, "src/b.rs", "/app/src/b.rs", "ch_b", "rust", "/app",
-        ).unwrap();
+            &cas_conn,
+            &cg_conn,
+            "ck_b",
+            42,
+            "src/b.rs",
+            "/app/src/b.rs",
+            "ch_b",
+            "rust",
+            "/app",
+        )
+        .unwrap();
         assert_eq!(r_b.merge_status, "merged");
         assert_eq!(r_b.symbols_inserted, 1);
 
@@ -2466,7 +2728,9 @@ mod tests {
         );
 
         let manifest_count: i64 = cg_conn
-            .query_row("SELECT COUNT(*) FROM workspace_manifests", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM workspace_manifests", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(manifest_count, 2, "门槛 2: workspace_manifests 应有 2 行");
 
@@ -2479,7 +2743,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!(a_file_size, 150, "门槛 2: manifest A.file_size 应为 150 字节");
+        assert_eq!(
+            a_file_size, 150,
+            "门槛 2: manifest A.file_size 应为 150 字节"
+        );
         assert_eq!(b_file_size, 60, "门槛 2: manifest B.file_size 应为 60 字节");
 
         // 5e. symbol_contents 应有实际 content（非空）
@@ -2499,7 +2766,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(fn_a_content.contains("fn fn_a"), "content 应含 fn fn_a 源码");
+        assert!(
+            fn_a_content.contains("fn fn_a"),
+            "content 应含 fn fn_a 源码"
+        );
 
         // 5f. 跨文件 resolve 校验：A 中的 call 指向 B 的 helper symbol
         let (callee_id, is_cross_file): (i64, i64) = cg_conn
@@ -2528,11 +2798,9 @@ mod tests {
 
         // 5g. workspace 行存在
         let ws_count: i64 = cg_conn
-            .query_row(
-                "SELECT COUNT(*) FROM workspaces WHERE id = 42",
-                [],
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM workspaces WHERE id = 42", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(ws_count, 1, "门槛 2: workspace 42 应存在");
     }
@@ -2572,7 +2840,14 @@ mod tests {
         seed_cas(&cas_conn, "ck_idem", "ch_idem", "rust", 5);
 
         let r = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_idem", 7, "src/x.rs", "/app/src/x.rs", "ch_idem", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck_idem",
+            7,
+            "src/x.rs",
+            "/app/src/x.rs",
+            "ch_idem",
+            "rust",
             "/app",
         )
         .unwrap();
@@ -2594,7 +2869,14 @@ mod tests {
         seed_cas_with_file_size(&cas_conn, "ck_tl", "ch_tl", "rust", 300, 30);
 
         let r = merge_cas_to_codegraph(
-            &cas_conn, &cg_conn, "ck_tl", 1, "src/main.rs", "/app/src/main.rs", "ch_tl", "rust",
+            &cas_conn,
+            &cg_conn,
+            "ck_tl",
+            1,
+            "src/main.rs",
+            "/app/src/main.rs",
+            "ch_tl",
+            "rust",
             "/app",
         )
         .unwrap();
@@ -2609,7 +2891,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(fi_total_lines, 30, "门槛 2: file_instances.total_lines 应为 30");
+        assert_eq!(
+            fi_total_lines, 30,
+            "门槛 2: file_instances.total_lines 应为 30"
+        );
 
         // file_contents.total_lines 也应为 30
         let fc_total_lines: i64 = cg_conn
@@ -2619,7 +2904,10 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(fc_total_lines, 30, "门槛 2: file_contents.total_lines 应为 30");
+        assert_eq!(
+            fc_total_lines, 30,
+            "门槛 2: file_contents.total_lines 应为 30"
+        );
 
         // manifest.file_size 应为 300（字节）
         let m_file_size: i64 = cg_conn
@@ -2631,5 +2919,211 @@ mod tests {
             )
             .unwrap();
         assert_eq!(m_file_size, 300, "门槛 2: manifest.file_size 应为 300 字节");
+    }
+
+    #[test]
+    fn test_delete_workspace_file_is_idempotent_and_workspace_scoped() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_codegraph_schema(&conn).unwrap();
+        ensure_manifest_schema(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE file_versions (\
+                id INTEGER PRIMARY KEY,\
+                file_instance_id INTEGER NOT NULL,\
+                is_current INTEGER DEFAULT 1,\
+                is_deleted INTEGER DEFAULT 0\
+             );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, name, root_path, created_at) \
+             VALUES (1, 'ws1', '/ws1', 0), (2, 'ws2', '/ws2', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) \
+             VALUES ('shared-content', 'rust', 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO symbol_contents \
+             (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
+             VALUES ('sym-a', 'a', 'function', 'fn a() {}', '', 0, '', 'a'), \
+                    ('sym-b', 'b', 'function', 'fn b() {}', '', 0, '', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_instances \
+             (id, workspace_id, rel_path, abs_path, current_content_hash, mtime, status) \
+             VALUES (10, 1, 'src/shared.rs', '/ws1/src/shared.rs', 'shared-content', 0, 'ok'), \
+                    (20, 2, 'src/shared.rs', '/ws2/src/shared.rs', 'shared-content', 0, 'ok')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO symbols \
+             (id, file_instance_id, symbol_hash, name, kind, start_line, end_line, qualified_name) \
+             VALUES (100, 10, 'sym-a', 'a', 'function', 1, 1, 'a'), \
+                    (200, 20, 'sym-b', 'b', 'function', 1, 1, 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO calls \
+             (caller_id, caller_name, caller_module, callee_name, callee_id) \
+             VALUES (100, 'a', '', 'b', 200), (200, 'b', '', 'a', 100)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_versions (id, file_instance_id, is_current, is_deleted) \
+             VALUES (1, 10, 1, 0), (2, 20, 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspace_manifests \
+             (workspace_id, rel_path, content_hash, updated_at) \
+             VALUES (1, 'src/shared.rs', 'shared-content', 0), \
+                    (2, 'src/shared.rs', 'shared-content', 0)",
+            [],
+        )
+        .unwrap();
+
+        let result = delete_workspace_file_from_codegraph(&conn, 1, "src/shared.rs").unwrap();
+        assert_eq!(result.delete_status, "deleted");
+        assert_eq!(result.symbols_removed, 1);
+        assert_eq!(result.outgoing_calls_removed, 1);
+        assert_eq!(result.incoming_edges_cleared, 1);
+        assert_eq!(result.manifest_removed, 1);
+        assert_eq!(result.history_versions_marked, 1);
+
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM file_instances WHERE id = 10",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "deleted");
+        let incoming: (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(callee_id), -1) FROM calls WHERE caller_id = 200",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(incoming, (1, 0));
+        let other_workspace_symbols: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbols WHERE file_instance_id = 20",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(other_workspace_symbols, 1);
+        let other_manifest: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM workspace_manifests \
+                 WHERE workspace_id = 2 AND rel_path = 'src/shared.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(other_manifest, 1);
+        let shared_contents: (i64, i64) = conn
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM file_contents), \
+                        (SELECT COUNT(*) FROM symbol_contents)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(shared_contents, (1, 2));
+
+        let repeated = delete_workspace_file_from_codegraph(&conn, 1, "src/shared.rs").unwrap();
+        assert_eq!(repeated.delete_status, "already_deleted");
+        assert_eq!(repeated.symbols_removed, 0);
+        assert_eq!(repeated.outgoing_calls_removed, 0);
+        assert_eq!(repeated.manifest_removed, 0);
+    }
+
+    #[test]
+    fn test_delete_workspace_file_rolls_back_on_manifest_failure() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_codegraph_schema(&conn).unwrap();
+        ensure_manifest_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, name, root_path, created_at) \
+             VALUES (1, 'ws1', '/ws1', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) \
+             VALUES ('content-a', 'rust', 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO symbol_contents \
+             (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
+             VALUES ('sym-a', 'a', 'function', 'fn a() {}', '', 0, '', 'a')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_instances \
+             (id, workspace_id, rel_path, abs_path, current_content_hash, mtime, status) \
+             VALUES (10, 1, 'src/a.rs', '/ws1/src/a.rs', 'content-a', 0, 'ok')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO symbols \
+             (id, file_instance_id, symbol_hash, name, kind, start_line, end_line, qualified_name) \
+             VALUES (100, 10, 'sym-a', 'a', 'function', 1, 1, 'a')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO calls \
+             (caller_id, caller_name, caller_module, callee_name) \
+             VALUES (100, 'a', '', 'external')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO workspace_manifests \
+             (workspace_id, rel_path, content_hash, updated_at) \
+             VALUES (1, 'src/a.rs', 'content-a', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER fail_manifest_delete \
+             BEFORE DELETE ON workspace_manifests \
+             BEGIN SELECT RAISE(ABORT, 'forced manifest failure'); END;",
+        )
+        .unwrap();
+
+        let error = delete_workspace_file_from_codegraph(&conn, 1, "src/a.rs").unwrap_err();
+        assert!(error.contains("forced manifest failure"));
+        let preserved: (String, i64, i64, i64) = conn
+            .query_row(
+                "SELECT \
+                    (SELECT status FROM file_instances WHERE id = 10), \
+                    (SELECT COUNT(*) FROM symbols WHERE file_instance_id = 10), \
+                    (SELECT COUNT(*) FROM calls WHERE caller_id = 100), \
+                    (SELECT COUNT(*) FROM workspace_manifests \
+                     WHERE workspace_id = 1 AND rel_path = 'src/a.rs')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(preserved, ("ok".to_string(), 1, 1, 1));
     }
 }
