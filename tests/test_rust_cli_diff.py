@@ -105,6 +105,59 @@ def _seed_stats_fixture(db: CodeGraphDB) -> int:
     return workspace_id
 
 
+def _seed_status_files(db: CodeGraphDB, workspace_id: int) -> None:
+    """构造 synced/new/stale/deleted 以及三类 ignore 文件。"""
+    root = Path(db.workspace_root)
+    tracked_mtime = db.conn.execute(
+        "SELECT mtime FROM file_instances "
+        "WHERE workspace_id = ? AND rel_path = 'a.py'",
+        (workspace_id,),
+    ).fetchone()["mtime"]
+    synced = root / "a.py"
+    synced.write_text("def alpha():\n    pass\n", encoding="utf-8")
+    os.utime(synced, (tracked_mtime, tracked_mtime))
+
+    (root / "new.py").write_text("value = 1\n", encoding="utf-8")
+    stale = root / "stale.rs"
+    stale.write_text("fn stale() {}\n", encoding="utf-8")
+    stale_mtime = stale.stat().st_mtime
+
+    (root / "target").mkdir()
+    (root / "target" / "generated.py").write_text("", encoding="utf-8")
+    (root / "custom").mkdir()
+    (root / "custom" / "ignored.py").write_text("", encoding="utf-8")
+    (root / "assets").mkdir()
+    (root / "assets" / "bundle.min.js").write_text("", encoding="utf-8")
+    (root / ".callwardenignore").write_text("custom/\n", encoding="utf-8")
+
+    now = time.time()
+    db.conn.execute(
+        "INSERT INTO file_contents(content_hash, language, total_lines, first_seen_at) "
+        "VALUES ('status-stale', 'rust', 1, ?), "
+        "('status-deleted', 'go', 1, ?)",
+        (now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO file_instances("
+        "workspace_id, rel_path, abs_path, current_content_hash, mtime, total_lines, "
+        "last_parsed, status, module_path"
+        ") VALUES "
+        "(?, 'stale.rs', ?, 'status-stale', ?, 1, ?, 'active', 'stale'), "
+        "(?, 'deleted.go', ?, 'status-deleted', ?, 1, ?, 'active', 'deleted')",
+        (
+            workspace_id,
+            str(stale),
+            stale_mtime - 100,
+            now - 20,
+            workspace_id,
+            str(root / "deleted.go"),
+            now - 100,
+            now - 10,
+        ),
+    )
+    db.conn.commit()
+
+
 def test_stats_binary_matches_python_get_stats(tmp_path: Path) -> None:
     binary = _rust_cw_binary()
     if not binary.exists():
@@ -130,6 +183,43 @@ def test_stats_binary_matches_python_get_stats(tmp_path: Path) -> None:
             "--workspace-id",
             str(workspace_id),
             "stats",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(completed.stdout) == expected
+
+
+def test_status_binary_matches_python_get_status(tmp_path: Path) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    db_path = tmp_path / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = _seed_stats_fixture(db)
+        _seed_status_files(db, workspace_id)
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        expected = json.loads(json.dumps(db.get_status(), ensure_ascii=False))
+    finally:
+        db.close()
+
+    completed = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "--workspace-id",
+            str(workspace_id),
+            "status",
         ],
         check=False,
         capture_output=True,

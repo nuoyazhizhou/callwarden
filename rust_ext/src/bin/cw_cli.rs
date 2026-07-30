@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use callwarden_core::cli::router::DaemonMode;
 use callwarden_core::cli::runtime::{CommandResult, RuntimeOptions};
 use callwarden_core::cli::stats::query_local_stats;
+use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// Call Warden — 代码知识图谱工具
@@ -222,6 +223,9 @@ fn main() {
                 Commands::Stats => {
                     emit_result(run_stats(&runtime));
                 }
+                Commands::Status => {
+                    emit_result(run_status(&runtime));
+                }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
                     // Phase 5-1 C 扩展阶段将逐命令迁移业务逻辑
@@ -265,6 +269,47 @@ fn run_stats(runtime: &RuntimeOptions) -> CommandResult {
             runtime.daemon_call(&method, params)
         },
     )
+}
+
+fn run_status(runtime: &RuntimeOptions) -> CommandResult {
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_status(&conn, workspace_id, &runtime.db_path)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise status requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_status(workspace_id, |method, params| {
+                runtime.daemon_call(method, params)
+            })
+        },
+    )
+}
+
+fn query_enterprise_status<F>(workspace_id: &str, mut call: F) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    let (status_method, status_params) =
+        callwarden_core::daemon::client::build_simple_request("status", Some(workspace_id))
+            .map_err(|error| format!("cannot build workspace status RPC: {error}"))?;
+    let workspace_registry = call(&status_method, status_params)?;
+
+    let (stats_method, stats_params) = callwarden_core::daemon::client::build_query_request(
+        workspace_id,
+        "stats",
+        "",
+        None,
+        None,
+        None,
+        None,
+    )
+    .map_err(|error| format!("cannot build status stats RPC: {error}"))?;
+    let graph_stats = call(&stats_method, stats_params)?;
+    Ok(combine_enterprise_status(workspace_registry, graph_stats))
 }
 
 fn emit_result(result: CommandResult) {
@@ -447,6 +492,37 @@ mod tests {
         assert_eq!(command_name(&Commands::Search), "search");
         assert_eq!(command_name(&Commands::Config), "config");
         assert_eq!(command_name(&Commands::Rollback), "rollback");
+    }
+
+    #[test]
+    fn enterprise_status_calls_registry_then_snapshot_stats() {
+        let mut methods = Vec::new();
+        let result = query_enterprise_status("ws-1", |method, params| {
+            methods.push(method.to_string());
+            assert_eq!(params["workspace_instance_id"], "ws-1");
+            match method {
+                "workspace.status" => Ok(serde_json::json!({"status": "active"})),
+                "query.stats" => Ok(serde_json::json!({"symbol_count": 7})),
+                _ => panic!("unexpected method: {method}"),
+            }
+        })
+        .unwrap();
+
+        assert_eq!(methods, vec!["workspace.status", "query.stats"]);
+        assert_eq!(result["workspace_registry"]["status"], "active");
+        assert_eq!(result["graph_stats"]["symbol_count"], 7);
+    }
+
+    #[test]
+    fn enterprise_status_fails_when_snapshot_stats_fail() {
+        let error = query_enterprise_status("ws-1", |method, _params| match method {
+            "workspace.status" => Ok(serde_json::json!({"status": "active"})),
+            "query.stats" => Err("snapshot_not_ready".to_string()),
+            _ => panic!("unexpected method: {method}"),
+        })
+        .unwrap_err();
+
+        assert_eq!(error, "snapshot_not_ready");
     }
 
     #[test]

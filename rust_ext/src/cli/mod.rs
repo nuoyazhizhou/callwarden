@@ -19,3 +19,4 @@ pub mod readonly;
 pub mod router;
 pub mod runtime;
 pub mod stats;
+pub mod status;

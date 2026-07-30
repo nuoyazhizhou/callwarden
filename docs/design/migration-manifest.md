@@ -309,7 +309,7 @@ Phase 0 的第 1、2、4 个子任务都是契约/基础设施类，没有 Rust 
 | 4 | UID/workspace ACL、路径安全与资源预算 | ✅ | ✅ | ✅(behavioral) | ✅ | ✅ | ✅ | ⏸️ |
 | 4 | metrics、health、audit 与 admin operations | ✅ | ✅ | ✅(behavioral) | ✅ | ✅ | ✅ | ⏸️ |
 | 4 | systemd、双 UID、容器挂载与真实 Linux E2E | ✅ | ✅ | ✅(behavioral) | ✅(validation-only) | ✅ | ✅ | ⏸️ |
-| 5 | Rust CLI 命令树与配置加载 | ✅ | ✅ | ✅(behavioral) | 🟡(骨架+wired) | ✅ | ✅ | ⏸️ 5-1 A/B/C 完成；stats 垂直切片已 wired，其他 58 子命令待迁移 |
+| 5 | Rust CLI 命令树与配置加载 | ✅ | ✅ | ✅(behavioral) | 🟡(骨架+wired) | ✅ | ✅ | ⏸️ 执行内核与 stats/status 已 wired，其他 57 子命令待迁移 |
 | 5 | Rust client/agent 与 daemon RPC | ✅ | 🟡(Slice1-5) | ✅(D1,D3,D5,D7,D9) | 🔴 | ✅ | ✅ | 🟡 Slice 1-5 完成（UDS Client + ping + query + 核心子命令 + 11 RPC 命令 + publish SCM_RIGHTS），Slice 6/7 待续 |
 | 5 | local/enterprise/auto 路由与兼容输出 | ✅ | ✅ | ✅(behavioral) | ✅ | ✅ | ✅ | ✅ Phase 5-3 完成（output.rs 38 单元测试 + 6 差分测试），2026-07-30 数据库任务补建 closed |
 | 5 | 安装器、升级、回滚和六平台 smoke | ✅ | ✅ | ✅(D1-D4) | ✅ | ✅ | ✅ | ✅ Phase 5-4 完成（22 rollback features + schema v42 + 六平台 CI smoke + 本地 smoke 全通过），Phase 5 全部收尾 |
@@ -3570,4 +3570,41 @@ test result: ok. 5 passed; 0 failed
 
 ### 49.3 尚未完成
 
-执行内核完成不等于 59 个命令完成。`stats` 已由 `T-1785432329672-8d606ce9` 接入真实 local SQLite 与 enterprise `query.stats`，固定 fixture 和当前生产数据库均与 Python JSON 完全一致；`status/config` 仍由 `T-1785431708349-54f7c367` 的后续子任务实施。其余命令按 P0-CLI B-F 分批迁移，在对应命令通过 local/enterprise/Python 差分前，仍不得从 skeleton 升级为“已完成”。
+执行内核完成不等于 59 个命令完成。`stats` 已由 `T-1785432329672-8d606ce9` 接入真实 local SQLite 与 enterprise `query.stats`；`status` 已由 `T-1785432329706-58888011` 接入，证据见 §50。`config` 仍由 `T-1785431708349-54f7c367` 的后续子任务实施。其余命令按 P0-CLI B-F 分批迁移，在对应命令通过 local/enterprise/Python 差分前，仍不得从 skeleton 升级为“已完成”。
+
+---
+
+## §50 自举复审整改：Rust `cw status`
+
+**任务**：`T-1785432329706-58888011`（P0-CLI-A2-2）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 50.1 已实现
+
+- local 模式从只读 SQLite 查询 workspace、files、symbols、calls、depth 和
+  last_build，并扫描 workspace 计算 new/stale/deleted；
+- Rust 扫描器与 Python `_scan_supported_files()` 对齐 16 语言扩展、默认 ignore、
+  `.callwardenignore` 通配符和 P21 第三方目录识别；
+- enterprise 模式顺序调用经 owner ACL 校验的 `workspace.status` 和 snapshot
+  `query.stats`，任一失败时整体失败；
+- enterprise payload 明确 `filesystem_freshness.available=false`，不把 daemon
+  注册状态冒充用户目录的 mtime 扫描结果；
+- auto 模式沿用执行内核的 daemon 优先与失败回退规则。
+
+### 50.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::status --lib --no-default-features
+test result: ok. 3 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 7 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+2 passed
+```
+
+差分 fixture 同时覆盖 synced/new/stale/deleted、默认 ignore、用户 ignore 和 P21
+自动忽略。enterprise binary 单测验证 RPC 顺序及 snapshot_not_ready 的
+fail-closed 行为；真实双 UID UDS ACL 继续复用 daemon 的 Linux 验收门禁。

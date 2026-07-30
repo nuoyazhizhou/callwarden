@@ -154,6 +154,33 @@ P0 `T-1785427715161-888e304c` 不是单个漏接命令：当前 59 个顶层命�
 4. D：refresh/workspace/build-context/toolchain 写路径；
 5. E：task/audit/security/外部工具集成；
 6. F：59 命令覆盖清单、跨平台产物和生产入口切换。
+
+### 8.5 `cw status` 模式契约
+
+`cw status` 不能把 daemon 的 `workspace.status` 直接当作 Python
+`CodeGraphDB.get_status()` 的等价实现。二者名字相近，但观测范围不同：
+
+- local 模式读取本地 SQLite，并扫描 workspace 文件系统。返回值必须与
+  `get_status()` 的 JSON 边界一致，包括 workspace、files、symbols、calls、
+  depth、last_build 和 needs_rebuild；文件扫描必须复用相同的支持语言、
+  默认 ignore、`.callwardenignore` 和 P21 第三方目录识别规则。
+- enterprise 模式先调用 `workspace.status` 获取经 owner ACL 校验的注册表状态，
+  再调用 `query.stats` 获取已发布 snapshot 的图统计。输出使用
+  `source=enterprise`、`workspace_registry`、`graph_stats` 和
+  `filesystem_freshness` 四部分；`filesystem_freshness.available=false`，
+  明确说明 daemon 不直接扫描用户挂载目录，不能伪造 local 模式的
+  new/stale/deleted 结果。
+- auto 模式遵守 §8.2：daemon 可用且两个 RPC 均成功时返回 enterprise
+  payload；daemon 不可用或查询失败时回退 local，并把回退原因写入 stderr。
+- `workspace.status` 只表示 daemon registry/snapshot 注册状态；秒级 watcher
+  的 generation 延迟和 durable log 恢复状态应由后续 watcher/health 指标表达，
+  不与 local 文件 mtime 状态混为同一字段。
+- local 与 enterprise payload 的差异属于有意的能力边界，不进入“字段完全相同”
+  的差分白名单。local payload 必须逐字段与 Python 真相源比较；enterprise
+  必须分别验证两个 RPC、ACL 和 fail-closed 行为。
+
+退出码沿用 §8.3。任何扫描错误只能跳过不可访问路径，不得把整个 workspace
+误报为空；显式 enterprise 模式中任一 RPC 失败必须返回非零，不能降级到本地。
 6. 数据库删除和 snapshot 发布成功后才提交 generation；失败时允许同一 generation 重试。
 
 验收至少覆盖：非 owner、stale session、stale sequence、幂等删除、同路径跨 workspace 隔离、事务失败回滚、删除后 snapshot 查询不可见、崩溃恢复。
