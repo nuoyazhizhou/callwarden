@@ -324,6 +324,8 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 30. **PyInstaller 排除包前必须审计生产顶层导入**：`Analysis.excludes` 只阻止模块进入冻结产物，不会自动消除生产代码中的 `from package import ...`。若仍有顶层导入，被排除的包会在最早入口直接触发 `ModuleNotFoundError`，即使 PyInstaller 构建和静态 inspector 都通过。删除或外置依赖时，先用 `rg` 追踪所有生产 import，把可选依赖改为使用点懒加载或拆到不参与冻结入口的模块；构建后必须实际运行 `cw --version`、`cw --help`、`cw server --check-imports`，三者任一失败都不得发布。静态模块清单和单元测试不能替代冻结可执行文件 smoke。
 
+31. **Windows/WSL 不得共用 Cargo target 目录**：从 WSL 在 `/mnt/c/...` 仓库运行 `cargo check/test` 时，共用 Windows 生成的 `target/` 会出现文件锁等待、跨文件系统极慢和工具超时后 `cargo` 子进程继续存活。Linux 验收必须设置 WSL 本地目标目录，例如 `CARGO_TARGET_DIR=/tmp/callwarden-target cargo check --manifest-path rust_ext/Cargo.toml --bin cw-agent`；工具超时后先用 `ps -ef | grep cargo` 检查并终止本轮遗留的精确 PID，再重试，禁止留下后台编译进程。
+
 ## 文档索引
 
 | 文档 | 说明 |

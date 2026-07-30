@@ -2826,11 +2826,15 @@ Phase 5-2 Slice 6 在 Slice 1-5（cw-client UDS RPC 客户端）基础上，新�
    - per-workspace monotonic_seq（`next_seq` 单调递增）
    - `register_workspace` / `is_active` / `get_epoch` 辅助方法
 
-3. **cw-agent binary**（clap CLI 骨架）：
+3. **cw-agent binary**（clap CLI + Unix watcher 生产循环）：
    - 子命令 `start` / `stop` / `status`
    - `start` 参数：`<ROOT>`（监控目录）+ `--workspace-id` + `--session-id` + `--debounce-ms` + 全局 `--socket` / `--timeout`
    - 跨平台编译：Windows 上 watcher 循环被 `#[cfg(not(unix))]` 替换为平台提示
-   - Unix 路径：ping daemon → `workspace.connect` 握手 → 写 PID 文件 → watcher 循环 stub
+   - Unix 路径：ping daemon → `workspace.connect` 握手 → 写 PID 文件 → `DebouncedFileWatcher` 持续循环
+   - 创建/修改事件：Rust canonicalization → 小文件内联 hex / 大文件 FD → `workspace.file.refresh`
+   - 删除/重命名事件：发送 workspace-scoped `workspace.file.delete`；daemon 服务端实现由独立 P0 跟踪
+   - session 失效：收到 `session_not_active` / `stale_session` 后重新 connect 并重试一次
+   - SIGTERM/SIGINT：flush 已成熟事件、停止 watcher、清理 PID 文件
 
 ### 41.2 实现内容
 
@@ -2846,10 +2850,12 @@ Phase 5-2 Slice 6 在 Slice 1-5（cw-client UDS RPC 客户端）基础上，新�
    - PyO3 注册 `build_connect_params_py` / `build_refresh_params_py`
 
 3. **[rust_ext/src/bin/cw_agent.rs](../../rust_ext/src/bin/cw_agent.rs)**（新增）：
-   - clap CLI 骨架（`Commands` enum：Start/Stop/Status）
-   - `run_start_unix`：Unix watcher stub（ping → connect → PID 文件 → watcher 循环占位）
+   - clap CLI（`Commands` enum：Start/Stop/Status）
+   - `run_start_unix`：Unix watcher 生产循环（ping → connect → PID 文件 → 事件刷新/删除 → 优雅退出）
+   - `AgentRpcClient` 边界允许 watcher/RPC 协议做无 daemon 单元测试
+   - 大文件临时 FD 发送前回卷到 byte 0，避免 daemon 收到空 payload
    - `run_status` / `run_stop`：PID 文件路径辅助逻辑
-   - 9 个单元测试（CLI 解析 + 默认参数 + PID 文件路径）
+   - 12 个单元测试（CLI 解析 + 默认参数 + PID 文件路径 + canonical refresh + 大文件 FD + delete RPC）
 
 4. **[rust_ext/Cargo.toml](../../rust_ext/Cargo.toml)**：
    - 新增 `[[bin]]` 段 `cw-agent` → `src/bin/cw_agent.rs`
@@ -2865,8 +2871,9 @@ Phase 5-2 Slice 6 在 Slice 1-5（cw-client UDS RPC 客户端）基础上，新�
 cargo test --manifest-path rust_ext/Cargo.toml --lib daemon::client::tests::test_d10
 test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured
 
-cargo test --manifest-path rust_ext/Cargo.toml --bin cw-agent
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured
+CARGO_TARGET_DIR=/tmp/callwarden-target cargo test \
+  --manifest-path rust_ext/Cargo.toml --bin cw-agent --no-default-features --quiet
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured
 ```
 
 **PyO3 差分测试**（D10，对齐 Python `agent_protocol.py`）：
@@ -2896,15 +2903,13 @@ Built wheel for CPython 3.10 to rust_ext/target/wheels/callwarden_core-0.1.0-cp3
 - **跨平台参数构建分离**：将纯逻辑（参数 JSON 构建）从 Unix-only UDS 客户端中拆出，使 Windows 上也可单元测试 + 差分测试。
 - **session_id 48-bit 掩码**：`generate_session_id` 用 `(ts ^ pid) & 0xFFFF_FFFF_FFFF` 确保 `{:012x}` 恰好输出 12 字符（对齐 Python `uuid4().hex[:12]`），避免纳秒时间戳超出 48 位导致长度漂移。
 - **AgentSession 非线程安全**：对齐 Python RLock 的简化版（单线程使用，如需并发在调用方加锁）。
-- **Unix watcher stub**：当前为占位实现，后续 Slice 集成 `DebouncedFileWatcher`（来自 `rust_ext/src/watcher.rs`）。
+- **Unix watcher 已接入**：`DebouncedFileWatcher` 的 created/modified/removed/renamed 事件已进入真实 RPC 路径。
 - **PID 文件路径**：`~/.callwarden/cw-agent.pid`，对齐 Python `run_agent_mode` 的 PID 管理约定。
 
 ### 41.5 风险与限制
 
-- **watcher 循环未实现**：当前 `run_start_unix` 仅打印 stub 提示，未真正启动 `DebouncedFileWatcher`。后续 Slice 需集成：
-  1. notify 事件回调 → 防抖队列
-  2. 变更文件 → `canonicalize_source_py` → `send_refresh_to_daemon`
-  3. session_epoch 失效自动重连逻辑
+- **删除事件尚未端到端闭合**：agent 已发送 `workspace.file.delete`，但 Rust daemon 尚无对应 dispatch/handler。由 P0 修复任务 `T-1785427715194-719b1517` 跟踪；该任务完成前不得声称 watcher save/delete-to-query 全链路完成。
+- **真实 daemon E2E 尚待补齐**：本轮验证覆盖 Windows 编译和 WSL/Linux 12 个 binary 单测，尚未替代真实 UDS + inotify + snapshot 可查询验收。
 - **PyO3 暴露仅 connect/refresh**：`build_agent_ping_params` 无需差分测试（params 为空 Object，跨语言等价无歧义），未在 PyO3 注册。
 - **不修改 Python CLI**：本 Slice 仅扩展 Rust 侧 `cw-agent` binary，不修改 Python `cw agent` 命令。Python 保持真相源。
 - **不涉及 rollback_config 登记**：新增 binary + 跨平台参数构建逻辑，不修改 Python 生产路径。无需 rollback_config。
@@ -2914,14 +2919,15 @@ Built wheel for CPython 3.10 to rust_ext/target/wheels/callwarden_core-0.1.0-cp3
 - [x] 契约对齐 `server/agent_protocol.py:user_agent_connect` (L87-150) + `build_refresh_message` (L158-206)
 - [x] Rust 实现：`build_connect_params` / `build_refresh_params` / `build_agent_ping_params` + `AgentSession` struct（14 单元测试）
 - [x] PyO3 暴露 `build_connect_params_py` / `build_refresh_params_py` 并在 lib.rs 注册
-- [x] cw-agent binary 3 子命令（Start/Stop/Status）+ `run_start_unix` watcher stub（9 单元测试）
+- [x] cw-agent binary 3 子命令（Start/Stop/Status）+ `run_start_unix` watcher 生产循环（12 单元测试）
 - [x] 差分测试 D10 全部通过（14 passed, 0 failed）
-- [x] Rust 单元测试 14 + 9 = 23 passed
+- [x] Rust 单元测试 14 + 12 = 26 passed
 - [x] Binary smoke：`--help` / `--version` / `start --help` / `status` 均符合预期
 - [x] Maturin 构建成功，wheel 安装到 Python 3.10
 - [x] migration-manifest.md §41 记录完整
 - [x] 不修改 Python CLI（Python 保持真相源）
 - [x] 不涉及 rollback_config 登记（新增功能 + 扩展 binary）
+- [ ] daemon `workspace.file.delete` handler 与真实 UDS/inotify E2E（独立 P0，不能由本 Slice 的单元测试代替）
 
 ## §42 Phase 5-2 Slice 7：wire-production 路由整合
 

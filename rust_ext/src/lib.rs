@@ -23,7 +23,7 @@ use tree_sitter::{Language, Node, Parser};
 
 // F11 方案 A：build_graph_from_c_files 需要访问 graph 模块的 build_csr_public / build_callee_name_index_public / GraphStore::new_with_data
 mod abi_contract;
-mod canonicalize;
+pub mod canonicalize;
 // Phase 0 子任务 3 Step 2: Python/Rust 差分对照基线数据结构
 mod differential_baseline;
 // R7: daemon/snapshot 模块需对 cw_daemon binary 可见（bin 与 lib 在同一 crate，但
@@ -73,7 +73,7 @@ mod languages;
 // R7: cw_daemon 需要 SnapshotCache 类型（daemon/snapshot_state.rs 中使用）
 pub mod snapshot;
 mod toolchain;
-mod watcher;
+pub mod watcher;
 // Phase 6-2: MinHash/LSH clone detection 核心计算（FNV-1a + 128 perm + LSH 分桶）
 // 契约：docs/design/phase6-2-minhash-lsh-clone-detection-contract.md
 mod clone_detection;
