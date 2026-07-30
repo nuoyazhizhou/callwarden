@@ -3539,3 +3539,35 @@ rollback_flag: 0  # 默认不回滚，走 Rust 短路
 2. **6-2 完成**：MinHash/LSH clone detection 迁移完成，Rust 短路已接入
 3. **6-3 完成**：vector_topk + load_embeddings_from_blobs 迁移完成，Rust 短路已接入 semantic_search / find_similar_functions
 4. **6-4 完成**：MCP 边界明确，MCP 层保留 Python（FastMCP 框架原生）
+
+---
+
+## §49 自举复审整改：Rust `cw` 执行内核
+
+**任务**：`T-1785431708348-0e6702a9`（P0-CLI-A1）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 49.1 已实现
+
+- `RuntimeOptions` 统一承载 `mode/socket/db/workspace_id/timeout`；
+- local 数据源以 read-only + no-mutex 打开 `$HOME/.callwarden/callwarden.db` 或显式 `--db`；
+- 未显式传 workspace 时只接受唯一 active workspace，零个或多个均 fail closed；
+- enterprise 数据源复用 Rust `UnixDaemonRpcClient`；
+- `local` 不探测 daemon，`enterprise` 不可用时 exit 2，`auto` 在 socket 不存在或 RPC 失败时回退 local；
+- `CommandResult` 统一 stdout/stderr/exit code/实际 route，JSON 序列化失败不 panic；
+- Rust `cw` 已解析全局 `--mode/--socket/--db/--workspace-id/--timeout`，参数可位于子命令前后。
+
+### 49.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::runtime::tests --lib
+test result: ok. 7 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw
+test result: ok. 5 passed; 0 failed
+```
+
+### 49.3 尚未完成
+
+执行内核完成不等于 59 个命令完成。当前 `stats/status/config` 的真实查询与输出由下一子任务 `T-1785431708349-54f7c367` 接入；其余命令按 P0-CLI B-F 分批迁移。在对应命令通过 local/enterprise/Python 差分前，仍不得从 skeleton 升级为“已完成”。

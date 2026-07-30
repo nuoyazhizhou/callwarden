@@ -108,6 +108,52 @@ test result: ok. 516 passed; 0 failed
 ```
 
 该任务只修复测试证据的确定性，不改变生产环境变量读取逻辑，保持在 `review` 等待独立复核。
+
+## 8. Rust `cw` 生产执行契约
+
+P0 `T-1785427715161-888e304c` 不是单个漏接命令：当前 59 个顶层命令中，58 个统一返回 `not implemented`，`stats` 也因没有数据源而退出 1。修复按 A-F 六个能力域推进，禁止用 clap 能解析或 help 中出现命令作为完成证据。
+
+### 8.1 统一执行上下文
+
+所有 Rust `cw` 命令共享以下全局输入：
+
+- `--mode local|enterprise|auto`，未显式提供时读取 `CW_DAEMON_MODE`；
+- `--socket PATH`，未显式提供时读取 `CW_DAEMON_SOCKET`；
+- `--db PATH`，local 模式未提供时使用 `$HOME/.callwarden/callwarden.db`；
+- `--workspace-id ID`，需要 workspace 隔离的查询必须显式提供或从数据库中的 active workspace 唯一解析，歧义时 fail closed；
+- `--timeout SECONDS`，仅用于 daemon RPC。
+
+### 8.2 路由语义
+
+| 模式 | daemon 可用 | 行为 |
+|---|---:|---|
+| `local` | 任意 | 只访问本地 SQLite，不探测 daemon |
+| `enterprise` | 是 | 只走 daemon RPC |
+| `enterprise` | 否 | fail closed，不回退本地 |
+| `auto` | 是 | 优先 daemon RPC |
+| `auto` | 否 | 回退本地 SQLite |
+
+只读查询可以按上表路由。写命令在各自子任务定义事务、锁和失败恢复前，不得通过通用 RPC 或字符串透传提前开放。
+
+### 8.3 结果与退出码
+
+统一执行器返回结构化 `CommandResult { exit_code, stdout, stderr, route }`：
+
+- `0`：命令成功且输出契约完整；
+- `1`：参数、查询或业务错误；
+- `2`：明确要求 enterprise 但 daemon 不可用，或当前平台不支持所需传输；
+- 不允许 panic、静默空结果或 skeleton 文案；
+- JSON 命令的 stdout 必须是合法 JSON，诊断信息只写 stderr；
+- local 与 enterprise 的业务 payload 做差分比较，传输元数据允许显式白名单差异。
+
+### 8.4 分批顺序
+
+1. A：执行内核与 `stats/status/config` 纵向切片；
+2. B：本地高频只读命令；
+3. C：图查询和 enterprise snapshot 查询；
+4. D：refresh/workspace/build-context/toolchain 写路径；
+5. E：task/audit/security/外部工具集成；
+6. F：59 命令覆盖清单、跨平台产物和生产入口切换。
 6. 数据库删除和 snapshot 发布成功后才提交 generation；失败时允许同一 generation 重试。
 
 验收至少覆盖：非 owner、stale session、stale sequence、幂等删除、同路径跨 workspace 隔离、事务失败回滚、删除后 snapshot 查询不可见、崩溃恢复。

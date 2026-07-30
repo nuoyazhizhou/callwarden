@@ -5,15 +5,56 @@
 //!
 //! 契约：docs/design/phase5-1-cli-config-contract.md §3.2
 
-use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+use callwarden_core::cli::router::DaemonMode;
+use callwarden_core::cli::runtime::RuntimeOptions;
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Call Warden — 代码知识图谱工具
 #[derive(Parser)]
 #[command(name = "cw", version, about = "Call Warden CLI", long_about = None)]
 struct Cli {
+    /// 数据源模式：local / enterprise / auto
+    #[arg(long, value_enum, global = true)]
+    mode: Option<ModeArg>,
+
+    /// daemon UDS 路径
+    #[arg(long, global = true)]
+    socket: Option<PathBuf>,
+
+    /// 本地 SQLite 路径
+    #[arg(long, global = true)]
+    db: Option<PathBuf>,
+
+    /// workspace ID；未提供时 local 模式解析唯一 active workspace
+    #[arg(long, global = true)]
+    workspace_id: Option<i64>,
+
+    /// daemon RPC 超时秒数
+    #[arg(long, default_value_t = 30, global = true)]
+    timeout: u64,
+
     /// 子命令
     #[command(subcommand)]
     command: Option<Commands>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ModeArg {
+    Local,
+    Enterprise,
+    Auto,
+}
+
+impl From<ModeArg> for DaemonMode {
+    fn from(value: ModeArg) -> Self {
+        match value {
+            ModeArg::Local => DaemonMode::Local,
+            ModeArg::Enterprise => DaemonMode::Enterprise,
+            ModeArg::Auto => DaemonMode::Auto,
+        }
+    }
 }
 
 /// 59 个子命令枚举（对齐 Python `cli/main.py:_SUBCOMMANDS`）
@@ -164,6 +205,13 @@ struct SubcommandArgs {
 
 fn main() {
     let cli = Cli::parse();
+    let runtime = RuntimeOptions::from_overrides(
+        cli.mode.map(Into::into),
+        cli.socket,
+        cli.db,
+        cli.workspace_id,
+        cli.timeout,
+    );
 
     match cli.command {
         Some(cmd) => {
@@ -171,12 +219,15 @@ fn main() {
             // 其他子命令仍返回 "not implemented"（Phase 5-1 C 扩展阶段逐命令迁移）
             match cmd {
                 Commands::Stats => {
+                    let _ = runtime;
                     // 业务逻辑已在 `callwarden_core::cli::stats::stats_command_run` 实现
                     // 但 cw_cli binary 无数据库连接，无法获取 stats_json
                     // wire-production 阶段通过 daemon client（Phase 5-2）或直接 SQL 接入
                     eprintln!("cw stats: data source not available in standalone mode");
                     eprintln!("  (Phase 5-1 C: business logic implemented in lib, awaiting data source wiring)");
-                    eprintln!("  Use 'python cw.py stats' for now, or wait for Phase 5-2 daemon client.");
+                    eprintln!(
+                        "  Use 'python cw.py stats' for now, or wait for Phase 5-2 daemon client."
+                    );
                     std::process::exit(1);
                 }
                 _ => {
@@ -366,5 +417,43 @@ mod tests {
         assert_eq!(command_name(&Commands::Search), "search");
         assert_eq!(command_name(&Commands::Config), "config");
         assert_eq!(command_name(&Commands::Rollback), "rollback");
+    }
+
+    #[test]
+    fn parses_global_runtime_options_before_command() {
+        let cli = Cli::try_parse_from([
+            "cw",
+            "--mode",
+            "local",
+            "--db",
+            "/tmp/callwarden.db",
+            "--workspace-id",
+            "17",
+            "--timeout",
+            "9",
+            "stats",
+        ])
+        .unwrap();
+        assert!(matches!(cli.mode, Some(ModeArg::Local)));
+        assert_eq!(cli.db, Some(PathBuf::from("/tmp/callwarden.db")));
+        assert_eq!(cli.workspace_id, Some(17));
+        assert_eq!(cli.timeout, 9);
+        assert!(matches!(cli.command, Some(Commands::Stats)));
+    }
+
+    #[test]
+    fn parses_global_runtime_options_after_command() {
+        let cli = Cli::try_parse_from([
+            "cw",
+            "stats",
+            "--mode",
+            "enterprise",
+            "--socket",
+            "/tmp/callwarden.sock",
+        ])
+        .unwrap();
+        assert!(matches!(cli.mode, Some(ModeArg::Enterprise)));
+        assert_eq!(cli.socket, Some(PathBuf::from("/tmp/callwarden.sock")));
+        assert!(matches!(cli.command, Some(Commands::Stats)));
     }
 }
