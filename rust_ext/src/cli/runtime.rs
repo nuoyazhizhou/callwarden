@@ -58,7 +58,7 @@ pub struct RuntimeOptions {
     pub mode: DaemonMode,
     pub socket_path: PathBuf,
     pub db_path: PathBuf,
-    pub workspace_id: Option<i64>,
+    pub workspace_id: Option<String>,
     pub timeout: Duration,
 }
 
@@ -67,7 +67,7 @@ impl RuntimeOptions {
         mode: Option<DaemonMode>,
         socket_path: Option<PathBuf>,
         db_path: Option<PathBuf>,
-        workspace_id: Option<i64>,
+        workspace_id: Option<String>,
         timeout_secs: u64,
     ) -> Self {
         Self {
@@ -95,7 +95,10 @@ impl RuntimeOptions {
 
     /// 返回显式 workspace，或从本地库解析唯一 active workspace。
     pub fn resolve_local_workspace_id(&self, conn: &Connection) -> Result<i64, String> {
-        if let Some(workspace_id) = self.workspace_id {
+        if let Some(workspace_id) = self.workspace_id.as_deref() {
+            let workspace_id = workspace_id.parse::<i64>().map_err(|_| {
+                format!("local workspace_id must be a positive integer, got {workspace_id:?}")
+            })?;
             if workspace_id <= 0 {
                 return Err("workspace_id must be greater than zero".to_string());
             }
@@ -341,5 +344,31 @@ mod tests {
         let runtime = options(DaemonMode::Local, db_path);
         let error = runtime.resolve_local_workspace_id(&conn).unwrap_err();
         assert!(error.contains("multiple active workspaces"));
+    }
+
+    #[test]
+    fn preserves_enterprise_workspace_instance_id() {
+        let runtime = RuntimeOptions::from_overrides(
+            Some(DaemonMode::Enterprise),
+            None,
+            None,
+            Some("ws-user-project-main".to_string()),
+            30,
+        );
+        assert_eq!(
+            runtime.workspace_id.as_deref(),
+            Some("ws-user-project-main")
+        );
+    }
+
+    #[test]
+    fn rejects_non_numeric_workspace_id_for_local_sqlite() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("callwarden.db");
+        let conn = Connection::open(&db_path).unwrap();
+        let mut runtime = options(DaemonMode::Local, db_path);
+        runtime.workspace_id = Some("ws-enterprise-id".to_string());
+        let error = runtime.resolve_local_workspace_id(&conn).unwrap_err();
+        assert!(error.contains("positive integer"));
     }
 }

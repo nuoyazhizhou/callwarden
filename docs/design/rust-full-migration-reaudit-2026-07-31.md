@@ -120,7 +120,7 @@ P0 `T-1785427715161-888e304c` 不是单个漏接命令：当前 59 个顶层命�
 - `--mode local|enterprise|auto`，未显式提供时读取 `CW_DAEMON_MODE`；
 - `--socket PATH`，未显式提供时读取 `CW_DAEMON_SOCKET`；
 - `--db PATH`，local 模式未提供时使用 `$HOME/.callwarden/callwarden.db`；
-- `--workspace-id ID`，需要 workspace 隔离的查询必须显式提供或从数据库中的 active workspace 唯一解析，歧义时 fail closed；
+- `--workspace-id ID` 保留原始字符串：enterprise 直接作为 `workspace_instance_id`（允许 `ws-*`），local 则严格解析为正整数 `workspaces.id`；未提供时仅 local 可从数据库中的 active workspace 唯一解析，歧义时 fail closed；
 - `--timeout SECONDS`，仅用于 daemon RPC。
 
 ### 8.2 路由语义

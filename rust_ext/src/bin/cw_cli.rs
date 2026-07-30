@@ -29,7 +29,7 @@ struct Cli {
 
     /// workspace ID；未提供时 local 模式解析唯一 active workspace
     #[arg(long, global = true)]
-    workspace_id: Option<i64>,
+    workspace_id: Option<String>,
 
     /// daemon RPC 超时秒数
     #[arg(long, default_value_t = 30, global = true)]
@@ -436,7 +436,7 @@ mod tests {
         .unwrap();
         assert!(matches!(cli.mode, Some(ModeArg::Local)));
         assert_eq!(cli.db, Some(PathBuf::from("/tmp/callwarden.db")));
-        assert_eq!(cli.workspace_id, Some(17));
+        assert_eq!(cli.workspace_id.as_deref(), Some("17"));
         assert_eq!(cli.timeout, 9);
         assert!(matches!(cli.command, Some(Commands::Stats)));
     }
