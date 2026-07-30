@@ -3570,4 +3570,4 @@ test result: ok. 5 passed; 0 failed
 
 ### 49.3 尚未完成
 
-执行内核完成不等于 59 个命令完成。当前 `stats/status/config` 的真实查询与输出由下一子任务 `T-1785431708349-54f7c367` 接入；其余命令按 P0-CLI B-F 分批迁移。在对应命令通过 local/enterprise/Python 差分前，仍不得从 skeleton 升级为“已完成”。
+执行内核完成不等于 59 个命令完成。`stats` 已由 `T-1785432329672-8d606ce9` 接入真实 local SQLite 与 enterprise `query.stats`，固定 fixture 和当前生产数据库均与 Python JSON 完全一致；`status/config` 仍由 `T-1785431708349-54f7c367` 的后续子任务实施。其余命令按 P0-CLI B-F 分批迁移，在对应命令通过 local/enterprise/Python 差分前，仍不得从 skeleton 升级为“已完成”。

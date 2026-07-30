@@ -8,7 +8,8 @@
 use std::path::PathBuf;
 
 use callwarden_core::cli::router::DaemonMode;
-use callwarden_core::cli::runtime::RuntimeOptions;
+use callwarden_core::cli::runtime::{CommandResult, RuntimeOptions};
+use callwarden_core::cli::stats::query_local_stats;
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// Call Warden — 代码知识图谱工具
@@ -219,16 +220,7 @@ fn main() {
             // 其他子命令仍返回 "not implemented"（Phase 5-1 C 扩展阶段逐命令迁移）
             match cmd {
                 Commands::Stats => {
-                    let _ = runtime;
-                    // 业务逻辑已在 `callwarden_core::cli::stats::stats_command_run` 实现
-                    // 但 cw_cli binary 无数据库连接，无法获取 stats_json
-                    // wire-production 阶段通过 daemon client（Phase 5-2）或直接 SQL 接入
-                    eprintln!("cw stats: data source not available in standalone mode");
-                    eprintln!("  (Phase 5-1 C: business logic implemented in lib, awaiting data source wiring)");
-                    eprintln!(
-                        "  Use 'python cw.py stats' for now, or wait for Phase 5-2 daemon client."
-                    );
-                    std::process::exit(1);
+                    emit_result(run_stats(&runtime));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -246,6 +238,44 @@ fn main() {
             // 无子命令时打印 help
             Cli::parse_from(["cw", "--help"]);
         }
+    }
+}
+
+fn run_stats(runtime: &RuntimeOptions) -> CommandResult {
+    runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_stats(&conn, workspace_id)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise stats requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            let (method, params) = callwarden_core::daemon::client::build_query_request(
+                workspace_id,
+                "stats",
+                "",
+                None,
+                None,
+                None,
+                None,
+            )
+            .map_err(|error| format!("cannot build stats RPC: {error}"))?;
+            runtime.daemon_call(&method, params)
+        },
+    )
+}
+
+fn emit_result(result: CommandResult) {
+    if !result.stdout.is_empty() {
+        println!("{}", result.stdout);
+    }
+    if !result.stderr.is_empty() {
+        eprintln!("{}", result.stderr);
+    }
+    if result.exit_code != 0 {
+        std::process::exit(result.exit_code);
     }
 }
 

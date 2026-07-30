@@ -8,6 +8,8 @@
 //! 契约：docs/design/phase5-1c-stats-vertical-slice-contract.md §3
 
 use pyo3::prelude::*;
+use rusqlite::{params, Connection};
+use serde_json::{json, Map, Value};
 
 use super::output::json_dumps_pretty;
 
@@ -65,6 +67,149 @@ pub fn stats_command_run(stats_json: &str) -> StatsResult {
     }
 }
 
+/// 从本地 SQLite 查询与 Python `QueryMixin.get_stats()` 等价的统计数据。
+pub fn query_local_stats(conn: &Connection, workspace_id: i64) -> Result<Value, String> {
+    let (total_files, unique_symbol_contents): (i64, i64) = conn
+        .query_row(
+            "SELECT
+                (SELECT COUNT(*) FROM file_instances
+                 WHERE workspace_id = ?1 AND status != 'archived'),
+                (SELECT COUNT(*) FROM symbol_contents)",
+            params![workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(sql_error)?;
+
+    let (total_symbols, commented): (i64, i64) = conn
+        .query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN s.comment_status = 'done' THEN 1 ELSE 0 END), 0)
+             FROM symbols s
+             JOIN file_instances fi ON s.file_instance_id = fi.id
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            params![workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(sql_error)?;
+
+    let (total_calls, cross_file_calls, resolved_calls): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN c.is_cross_file = 1 THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN c.callee_id IS NOT NULL THEN 1 ELSE 0 END), 0)
+             FROM calls c
+             JOIN symbols s ON c.caller_id = s.id
+             JOIN file_instances fi ON s.file_instance_id = fi.id
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            params![workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(sql_error)?;
+
+    let (total_file_versions, current_files, multi_version_files): (i64, i64, i64) = conn
+        .query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(CASE WHEN fv.is_current = 1 THEN 1 ELSE 0 END), 0),
+                (SELECT COUNT(*) FROM (
+                    SELECT fv2.file_instance_id FROM file_versions fv2
+                    JOIN file_instances fi2 ON fv2.file_instance_id = fi2.id
+                    WHERE fi2.workspace_id = ?1 AND fi2.status != 'archived'
+                    GROUP BY fv2.file_instance_id HAVING COUNT(*) > 1
+                ))
+             FROM file_versions fv
+             JOIN file_instances fi ON fv.file_instance_id = fi.id
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            params![workspace_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(sql_error)?;
+
+    let total_file_symbol_links: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM file_symbol_versions fsv
+             JOIN file_versions fv ON fsv.file_version_id = fv.id
+             JOIN file_instances fi ON fv.file_instance_id = fi.id
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            params![workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)?;
+    let total_call_versions: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM call_versions cv
+             JOIN file_versions fv ON cv.file_version_id = fv.id
+             JOIN file_instances fi ON fv.file_instance_id = fi.id
+             WHERE fi.workspace_id = ?1 AND fi.status != 'archived'",
+            params![workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(sql_error)?;
+
+    let by_kind = grouped_counts(
+        conn,
+        "SELECT s.kind, COUNT(*) FROM symbols s
+         WHERE s.file_instance_id IN (
+             SELECT id FROM file_instances
+             WHERE workspace_id = ?1 AND status != 'archived'
+         )
+         GROUP BY s.kind ORDER BY COUNT(*) DESC",
+        workspace_id,
+    )?;
+    let depth_distribution = grouped_counts(
+        conn,
+        "SELECT CAST(s.depth AS TEXT), COUNT(*) FROM symbols s
+         WHERE s.file_instance_id IN (
+             SELECT id FROM file_instances
+             WHERE workspace_id = ?1 AND status != 'archived'
+         ) AND s.kind IN ('fn', 'test_fn') AND s.depth >= 0
+         GROUP BY s.depth ORDER BY s.depth",
+        workspace_id,
+    )?;
+
+    Ok(json!({
+        "total_files": total_files,
+        "unique_symbol_contents": unique_symbol_contents,
+        "total_symbols": total_symbols,
+        "commented": commented,
+        "total_calls": total_calls,
+        "cross_file_calls": cross_file_calls,
+        "resolved_calls": resolved_calls,
+        "total_file_versions": total_file_versions,
+        "current_files": current_files,
+        "multi_version_files": multi_version_files,
+        "total_file_symbol_links": total_file_symbol_links,
+        "total_call_versions": total_call_versions,
+        "by_kind": by_kind,
+        "depth_distribution": depth_distribution,
+    }))
+}
+
+fn grouped_counts(
+    conn: &Connection,
+    sql: &str,
+    workspace_id: i64,
+) -> Result<Map<String, Value>, String> {
+    let mut stmt = conn.prepare(sql).map_err(sql_error)?;
+    let rows = stmt
+        .query_map(params![workspace_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(sql_error)?;
+    let mut counts = Map::new();
+    for row in rows {
+        let (key, count) = row.map_err(sql_error)?;
+        counts.insert(key, Value::from(count));
+    }
+    Ok(counts)
+}
+
+fn sql_error(error: rusqlite::Error) -> String {
+    format!("stats query failed: {error}")
+}
+
 /// Python 暴露的 stats_command_run。
 ///
 /// 对齐 Python `cli/main.py:_handle_stats()` (L6623-6636)
@@ -114,7 +259,10 @@ mod tests {
     fn test_d1_2_nested_object() {
         let result = stats_command_run(r#"{"outer": {"inner": "v"}}"#);
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.stdout, "{\n  \"outer\": {\n    \"inner\": \"v\"\n  }\n}");
+        assert_eq!(
+            result.stdout,
+            "{\n  \"outer\": {\n    \"inner\": \"v\"\n  }\n}"
+        );
         assert_eq!(result.stderr, "");
     }
 
@@ -300,5 +448,81 @@ mod tests {
         assert_eq!(result.exit_code, 1);
         assert_eq!(result.stdout, "");
         assert!(!result.stderr.is_empty());
+    }
+
+    #[test]
+    fn query_local_stats_matches_python_fields_and_workspace_scope() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE file_instances (
+                id INTEGER PRIMARY KEY,
+                workspace_id INTEGER NOT NULL,
+                status TEXT NOT NULL
+            );
+            CREATE TABLE symbol_contents (content_hash TEXT PRIMARY KEY);
+            CREATE TABLE symbols (
+                id INTEGER PRIMARY KEY,
+                file_instance_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                comment_status TEXT,
+                depth INTEGER NOT NULL
+            );
+            CREATE TABLE calls (
+                caller_id INTEGER NOT NULL,
+                is_cross_file INTEGER NOT NULL,
+                callee_id INTEGER
+            );
+            CREATE TABLE file_versions (
+                id INTEGER PRIMARY KEY,
+                file_instance_id INTEGER NOT NULL,
+                is_current INTEGER NOT NULL
+            );
+            CREATE TABLE file_symbol_versions (file_version_id INTEGER NOT NULL);
+            CREATE TABLE call_versions (file_version_id INTEGER NOT NULL);
+
+            INSERT INTO file_instances VALUES
+                (10, 1, 'active'),
+                (20, 2, 'active');
+            INSERT INTO symbol_contents VALUES ('shared-a'), ('shared-b');
+            INSERT INTO symbols VALUES
+                (100, 10, 'fn', 'done', 0),
+                (101, 10, 'struct', 'none', -1),
+                (200, 20, 'fn', 'done', 4);
+            INSERT INTO calls VALUES
+                (100, 1, 101),
+                (200, 0, NULL);
+            INSERT INTO file_versions VALUES
+                (1000, 10, 0),
+                (1001, 10, 1),
+                (2000, 20, 1);
+            INSERT INTO file_symbol_versions VALUES (1001), (2000);
+            INSERT INTO call_versions VALUES (1001), (2000);",
+        )
+        .unwrap();
+
+        let stats = query_local_stats(&conn, 1).unwrap();
+        assert_eq!(stats["total_files"], 1);
+        assert_eq!(stats["unique_symbol_contents"], 2);
+        assert_eq!(stats["total_symbols"], 2);
+        assert_eq!(stats["commented"], 1);
+        assert_eq!(stats["total_calls"], 1);
+        assert_eq!(stats["cross_file_calls"], 1);
+        assert_eq!(stats["resolved_calls"], 1);
+        assert_eq!(stats["total_file_versions"], 2);
+        assert_eq!(stats["current_files"], 1);
+        assert_eq!(stats["multi_version_files"], 1);
+        assert_eq!(stats["total_file_symbol_links"], 1);
+        assert_eq!(stats["total_call_versions"], 1);
+        assert_eq!(stats["by_kind"]["fn"], 1);
+        assert_eq!(stats["by_kind"]["struct"], 1);
+        assert_eq!(stats["depth_distribution"]["0"], 1);
+        assert!(stats["depth_distribution"].get("4").is_none());
+    }
+
+    #[test]
+    fn query_local_stats_fails_closed_on_missing_schema() {
+        let conn = Connection::open_in_memory().unwrap();
+        let error = query_local_stats(&conn, 1).unwrap_err();
+        assert!(error.contains("stats query failed"));
     }
 }
