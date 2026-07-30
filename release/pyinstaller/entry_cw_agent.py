@@ -51,11 +51,11 @@ if 'callwarden.db' not in sys.modules:
     _db_stub.CodeGraphDB = None
     sys.modules['callwarden.db'] = _db_stub
 
-# 与 cw-client 一致，显式创建父包让 FrozenImporter 能加载 server/CLI 子模块。
-if 'callwarden.cli' not in sys.modules:
-    _cli_stub = types.ModuleType('callwarden.cli')
-    _cli_stub.__path__ = _PKG_PATH
-    sys.modules['callwarden.cli'] = _cli_stub
+# 与 cw-client 一致，不 stub ``callwarden.cli``。``cli/__init__.py`` 是空文件，
+# PyInstaller FrozenInstaller 会从 PYZ 归档自动加载 ``callwarden.cli``
+# （已在 _client_agent_hiddenimports 声明）。手动 stub 会覆盖 PyInstaller
+# 真实包，导致子模块加载失败（ModuleNotFoundError）。详见 entry_cw_client.py
+# 同名注释。
 
 
 # === cw-agent 辅助函数（等价于 cli/main.py 的 _agent_* 系列）===

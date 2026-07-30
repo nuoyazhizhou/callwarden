@@ -50,12 +50,11 @@ if 'callwarden.db' not in sys.modules:
     _db_stub.CodeGraphDB = None  # 满足 `from callwarden.db import CodeGraphDB` 语法
     sys.modules['callwarden.db'] = _db_stub
 
-# FrozenImporter 需要父包节点先存在；仅收集 daemon_commands 子模块时，
-# 某些平台不会自动创建 callwarden.cli，显式注入轻量父包避免运行时缺包。
-if 'callwarden.cli' not in sys.modules:
-    _cli_stub = types.ModuleType('callwarden.cli')
-    _cli_stub.__path__ = _PKG_PATH
-    sys.modules['callwarden.cli'] = _cli_stub
+# 注：不 stub ``callwarden.cli``。``cli/__init__.py`` 是空文件，不会拉入
+# 被 spec exclude 的模块（db/parsers），PyInstaller FrozenInstaller 会从
+# PYZ 归档自动加载 ``callwarden.cli``（已在 _client_agent_hiddenimports 声明）。
+# 之前手动 stub 会覆盖 PyInstaller 真实包，导致 FrozenInstaller 无法定位
+# 子模块 ``callwarden.cli.daemon_commands``（ModuleNotFoundError）。
 
 
 def main():

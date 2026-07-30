@@ -61,20 +61,24 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          # windows-arm64 上 cryptography 最新版（49.x）没有预编译 wheel，
-          # 会触发源码编译失败（缺 OpenSSL）；先安装有 wheel 的版本约束。
+          # windows-arm64 上 cryptography 仅 46.0.x 系列有 win_arm64 wheel（43-45/47-49 均无）。
+          # mcp[rich] → pyjwt[crypto] → cryptography 会拉最新版导致源码编译失败。
+          # 使用 constraints 文件约束所有 pip 调用，防止 --force-reinstall 升级。
+          CONSTRAINTS_OPT=""
           if [ "${{ matrix.platform }}" = "windows-arm64" ]; then
-            python -m pip install "cryptography>=43,<49"
+            echo "cryptography==46.0.3" > /tmp/cw_constraints.txt
+            CONSTRAINTS_OPT="-c /tmp/cw_constraints.txt"
+            python -m pip install $CONSTRAINTS_OPT "cryptography==46.0.3"
           fi
           # 冻结包只安装经过审计的运行时白名单，不安装 requirements.txt/[all]。
-          python -m pip install -r release/pyinstaller/requirements-build.txt
+          python -m pip install $CONSTRAINTS_OPT -r release/pyinstaller/requirements-build.txt
           # 项目依赖已经由白名单提供，禁止 pip 再解析可选依赖。
           python -m pip install . --no-deps
           # ARM runner 上确保 PyInstaller 安装到当前 setup-python 解释器，不能只依赖
           # requirements 的间接安装结果；立即导入验证，避免构建阶段才报缺包。
-          python -m pip install --upgrade --force-reinstall --no-cache-dir PyInstaller==6.21.0
-          python -m pip install --upgrade --force-reinstall --no-cache-dir numpy==2.4.3
-          python -m pip install --upgrade --force-reinstall --no-cache-dir "mcp[rich]==1.28.1"
+          python -m pip install --upgrade --force-reinstall --no-cache-dir $CONSTRAINTS_OPT PyInstaller==6.21.0
+          python -m pip install --upgrade --force-reinstall --no-cache-dir $CONSTRAINTS_OPT numpy==2.4.3
+          python -m pip install --upgrade --force-reinstall --no-cache-dir $CONSTRAINTS_OPT "mcp[rich]==1.28.1"
           python -c "import PyInstaller, numpy, mcp, sys; print('PyInstaller', PyInstaller.__version__, 'numpy', numpy.__version__, 'mcp', getattr(mcp, '__version__', 'unknown'), 'Python', sys.executable)"
 
       - name: Run PyInstaller
@@ -89,13 +93,17 @@ jobs:
             EXE_SUFFIX=".exe"
           fi
 
+          echo "=== cw --version ==="
           "./dist/callwarden/cw${EXE_SUFFIX}" --version
+          echo "=== cw --help ==="
           "./dist/callwarden/cw${EXE_SUFFIX}" --help >/dev/null
+          echo "=== cw server --check-imports ==="
           "./dist/callwarden/cw${EXE_SUFFIX}" server --check-imports
           if [ "${{ runner.os }}" = "Linux" ]; then
-            # client/agent 是独立的轻量 bundle，不在 local bundle 目录内。
-            "./dist/callwarden-client/cw-client${EXE_SUFFIX}" --help >/dev/null
-            "./dist/callwarden-client/cw-agent${EXE_SUFFIX}" --help >/dev/null
+            echo "=== cw-client --help ==="
+            "./dist/callwarden-client/cw-client${EXE_SUFFIX}" --help
+            echo "=== cw-agent --help ==="
+            "./dist/callwarden-client/cw-agent${EXE_SUFFIX}" --help
           fi
 
       - name: Package artifacts
