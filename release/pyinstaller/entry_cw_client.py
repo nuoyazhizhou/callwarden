@@ -18,15 +18,16 @@ import os
 import sys
 import types
 
-# === 计算 callwarden 包源码路径（dev 模式用于子模块导入）===
-# 冻结模式下 FrozenImporter 通过 sys.meta_path 从 PYZ 加载，__path__ 可为空。
-# 开发模式下 __path__ 需指向源码目录，否则文件系统 importer 找不到子模块。
+# === 计算 callwarden 包源码路径 ===
+# 冻结模式下 FrozenImporter 通过 sys.meta_path 从 PYZ 加载，但 __path__
+# 不能为空列表——FrozenImporter 查找子模块时会检查父包 __path__。
+# 设置为 _MEIPASS 中的实际路径，FrozenImporter 能正确定位 PYZ 子模块。
 if hasattr(sys, 'frozen') and sys.frozen:
-    _PKG_PATH = []  # PyInstaller FrozenImporter 接管
-    _DB_PATH = []
+    _MEIPASS = getattr(sys, '_MEIPASS', '')
+    _PKG_PATH = [os.path.join(_MEIPASS, 'callwarden')]
+    _DB_PATH = [os.path.join(_MEIPASS, 'callwarden', 'db')]
 else:
     # entry 脚本在 release/pyinstaller/，callwarden 包根在上三级
-    # __file__ → release/pyinstaller/ → release/ → 项目根（callwarden 包根）
     _ENTRY_DIR = os.path.dirname(os.path.abspath(__file__))
     _PKG_ROOT = os.path.dirname(os.path.dirname(_ENTRY_DIR))
     _PKG_PATH = [_PKG_ROOT]

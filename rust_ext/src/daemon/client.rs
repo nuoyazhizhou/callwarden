@@ -241,7 +241,8 @@ pub mod unix {
             use std::os::unix::io::RawFd;
 
             // 1. 打开 db_path（O_RDONLY）
-            let fd: RawFd = unsafe { libc::open(db_path.as_ptr() as *const i8, libc::O_RDONLY) };
+            // arm64 Linux 上 c_char 是 u8，x86_64 上是 i8；用 libc::c_char 兼容
+            let fd: RawFd = unsafe { libc::open(db_path.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
             if fd < 0 {
                 return Err(ClientError::ConnectFailed {
                     path: db_path.to_string(),
