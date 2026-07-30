@@ -126,11 +126,20 @@ struct BatchSaveCallsResult {
 // ===========================================================================
 
 /// 打开读写连接（与 batch_build_query.rs 一致）
+/// PRAGMA 与 Python db_base.py 完全对齐，避免两个 SQLite 实例
+/// 对 WAL 文件操作不一致导致 database disk image is malformed
 fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(db_path)
         .map_err(|e| PyIOError::new_err(format!("打开 CodeGraph 数据库失败: {}", e)))?;
     conn.busy_timeout(std::time::Duration::from_secs(5))
         .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .map_err(|e| PyIOError::new_err(format!("设置 WAL 模式失败: {}", e)))?;
+    conn.pragma_update(None, "synchronous", "NORMAL")
+        .map_err(|e| PyIOError::new_err(format!("设置 synchronous 失败: {}", e)))?;
+    conn.pragma_update(None, "foreign_keys", "OFF")
+        .map_err(|e| PyIOError::new_err(format!("设置 foreign_keys 失败: {}", e)))?;
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
     Ok(conn)
 }
 

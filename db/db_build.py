@@ -2159,6 +2159,12 @@ class BuildMixin:
         except ImportError:
             return False
 
+        # 提交 Python self.conn 的未提交事务，避免 Rust BEGIN IMMEDIATE
+        # 与 Python 隐式事务冲突（database is locked / disk image malformed）。
+        # import_all_stdlib_symbols / import_project_dependencies 可能通过
+        # self.conn 执行了 INSERT，开启隐式事务。
+        self.conn.commit()
+
         # 1. 过滤 _from_db 文件（契约 §9.5：Rust 假设所有传入文件都需要 resolve+写入）
         file_results_filtered = []
         changed_file_instance_ids = []
@@ -3000,6 +3006,10 @@ class BuildMixin:
         except ImportError:
             return None
 
+        # 提交 Python self.conn 的未提交事务，避免 Rust BEGIN IMMEDIATE
+        # 与 Python 隐式事务冲突（database is locked / disk image malformed）。
+        self.conn.commit()
+
         content_hash = result["content_hash"]
         mtime = os.path.getmtime(result["abs_path"]) if "abs_path" in result else 0
         total_lines = result["total_lines"]
@@ -3481,6 +3491,11 @@ class BuildMixin:
             from callwarden_core import batch_save_symbols
         except ImportError:
             return False
+
+        # 提交 Python self.conn 的未提交事务，避免 Rust BEGIN IMMEDIATE
+        # 与 Python 隐式事务冲突（database is locked / disk image malformed）。
+        # _save_file_version 可能通过 self.conn 执行了 INSERT，开启隐式事务。
+        self.conn.commit()
 
         # 收集所有 symbols（含 inline_modules）
         all_symbols = list(result["symbols"])
