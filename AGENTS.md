@@ -326,6 +326,8 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 31. **Windows/WSL 不得共用 Cargo target 目录**：从 WSL 在 `/mnt/c/...` 仓库运行 `cargo check/test` 时，共用 Windows 生成的 `target/` 会出现文件锁等待、跨文件系统极慢和工具超时后 `cargo` 子进程继续存活。Linux 验收必须设置 WSL 本地目标目录，例如 `CARGO_TARGET_DIR=/tmp/callwarden-target cargo check --manifest-path rust_ext/Cargo.toml --bin cw-agent`；工具超时后先用 `ps -ef | grep cargo` 检查并终止本轮遗留的精确 PID，再重试，禁止留下后台编译进程。
 
+32. **pre-commit 全库刷新卡死时改用显式文件刷新**：Windows 上 `git commit` 的 pre-commit `cw --refresh-all` 偶尔会在启动后进入无 CPU、无 DB/WAL 进展的等待状态，父提交超时后还会留下孤立 Python 进程。先确认目标 PID 的命令行确为本轮 `cw.py --refresh-all` 且数据库时间戳持续不变，再终止该精确 PID；随后运行 `python cw.py refresh <全部修改文件...>`，确认 summary 为全成功，最后使用 `git commit --no-verify`。只有显式刷新覆盖全部修改文件时才允许跳过 hook，禁止未经刷新直接绕过。
+
 ## 文档索引
 
 | 文档 | 说明 |
