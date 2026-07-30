@@ -14,9 +14,10 @@
 |---|---|---|---|
 | P0 | `T-1785427715161-888e304c` | Rust `cw` 除少数骨架命令外仍返回 `not implemented` | open |
 | P0 | `T-1785427715192-ec391036` | Rust `cw-agent` 握手后打印 watcher stub 并退出 | 已实现，待独立 review |
-| P0 | `T-1785427715194-719b1517` | agent/Python 会调用 `workspace.file.delete`，Rust daemon 无 dispatch/handler | open |
+| P0 | `T-1785427715194-719b1517` | agent/Python 会调用 `workspace.file.delete`，Rust daemon 原先无 dispatch/handler | 已实现，待独立 review |
 | P1 | `T-1785427715194-b201967a` | ACL 拒绝和管理员操作只留有 `TODO(audit)`，没有持久化审计 | open |
 | P1 | `T-1785427715194-73f0f95d` | Phase 4-1 被关闭，但 7 个步骤的进度仍为 0/7，缺生产接线证据 | open |
+| P1 | `T-1785431356786-f981a60b` | daemon config 测试并行修改 `CW_DAEMON_*`，完整回归偶发失败 | 已修复，待独立 review |
 
 ## 3. 首项整改证据
 
@@ -36,7 +37,7 @@ WSL/Linux cargo check --bin cw-agent: PASS
 WSL/Linux cargo test --bin cw-agent --no-default-features: 12 passed
 ```
 
-该整改只证明 agent 事件循环不再是 stub。由于 daemon 删除 handler 尚缺失，不能据此声称 watcher 端到端闭合。
+该整改证明 agent 事件循环不再是 stub；后续 P0 已补齐 daemon 删除状态链，证据见下一节。root + 双真实 UID + 真实 UDS/inotify 仍是部署环境验收门禁。
 
 ## 4. 后续复审顺序
 
@@ -69,6 +70,44 @@ WSL/Linux cargo test --bin cw-agent --no-default-features: 12 passed
    - 删除目标 workspace 的 manifest 行。
 4. 不删除 `file_contents`、`symbol_contents` 或 CAS 条目；这些内容可能被历史版本和其他 workspace 共享。
 5. 删除操作写入 durable staging；崩溃重放必须幂等。
+
+## 6. `workspace.file.delete` 整改证据
+
+P0 `T-1785427715194-719b1517` 拆为事务契约和 RPC/snapshot 两个子任务实施：
+
+- `delete_workspace_file_from_codegraph` 在单个 `BEGIN IMMEDIATE` 事务内执行 workspace-scoped tombstone，保留共享内容和历史；
+- dispatch、`WorkspaceDaemonState` 与 `SnapshotDaemonState` 已接入 `workspace.file.delete`；
+- active session、epoch、monotonic sequence 和 workspace owner 在写入前校验；
+- durable staging 记录 `delete` 操作，daemon 崩溃后在 snapshot 发布前幂等重放；
+- 发布后的 GraphStore snapshot 不再返回已删除文件的符号；
+- 跨 UID、stale session、无 active session 和 stale sequence 均被拒绝或丢弃。
+
+验证结果：
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib
+test result: ok. 516 passed; 0 failed
+
+CARGO_TARGET_DIR=/tmp/callwarden-target cargo test \
+  --manifest-path rust_ext/Cargo.toml --bin cw-agent --no-default-features --quiet
+test result: ok. 12 passed; 0 failed
+```
+
+尚未完成的环境门禁是 root + 双真实 UID + 真实 UDS/inotify E2E；它不阻塞删除状态链进入独立代码 review，但阻塞“企业部署验收完成”的声明。
+
+## 7. daemon config 测试隔离整改
+
+完整 daemon 回归在同一代码版本上出现过 `515/516` 和 `514/516` 的偶发结果。根因是多个 config 测试并行修改进程级 `CW_DAEMON_*` 环境变量，其中 invalid-workers 用例可被 socket/template 用例读到。
+
+P1 `T-1785431356786-f981a60b` 增加测试级共享锁和 panic-safe 环境守卫：进入用例时保存并清空全部 daemon 环境变量，退出时恢复原值。验证结果：
+
+```text
+daemon::config::tests::test_apply_env_overrides 子集连续 10 轮：PASS
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib
+test result: ok. 516 passed; 0 failed
+```
+
+该任务只修复测试证据的确定性，不改变生产环境变量读取逻辑，保持在 `review` 等待独立复核。
 6. 数据库删除和 snapshot 发布成功后才提交 generation；失败时允许同一 generation 重试。
 
 验收至少覆盖：非 owner、stale session、stale sequence、幂等删除、同路径跨 workspace 隔离、事务失败回滚、删除后 snapshot 查询不可见、崩溃恢复。

@@ -1306,7 +1306,16 @@ impl DaemonStateExt for WorkspaceDaemonState {
             Some(&resources.cas_store),
             canonical_bytes.as_deref(),
         )
-        .map_err(|e| DaemonRpcError::new("refresh_failed", e.message))?;
+        .map_err(|e| {
+            let code = if e.message.contains("no active session") {
+                "session_not_active"
+            } else if e.message.contains("stale session rejected") {
+                "stale_session"
+            } else {
+                "refresh_failed"
+            };
+            DaemonRpcError::new(code, e.message)
+        })?;
         let parse_latency_ms = parse_started_at.elapsed().as_secs_f64() * 1000.0;
 
         // 构造响应：status + generation + cas_result（若有）
@@ -1982,6 +1991,155 @@ impl DaemonStateExt for WorkspaceDaemonState {
             Value::String(workspace_instance_id.to_string()),
         );
         Ok(Value::Object(response))
+    }
+
+    fn handle_workspace_file_delete(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+        let workspace_id_num = workspace
+            .get("workspace_id")
+            .and_then(|value| value.as_i64())
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+        let rel_path = require_str_param(params, "rel_path")?.to_string();
+        let agent_session_id = require_str_param(params, "agent_session_id")?.to_string();
+        let session_epoch = params
+            .get("session_epoch")
+            .and_then(|value| value.as_i64())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少字段: session_epoch"))?;
+        let monotonic_seq = params
+            .get("monotonic_seq")
+            .and_then(|value| value.as_i64())
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少字段: monotonic_seq"))?;
+
+        if self.codegraph_db_path_template.is_empty() || self.snapshot_publisher.is_none() {
+            return Err(DaemonRpcError::new(
+                "delete_unavailable",
+                "workspace.file.delete 需要 CodeGraph DB 路径和 SnapshotCachePublisher",
+            ));
+        }
+        let db_path = self
+            .codegraph_db_path_template
+            .replace("{workspace_instance_id}", workspace_instance_id);
+        let resources = self.get_or_init_resources(workspace_instance_id)?;
+
+        let active_session = {
+            let conn = resources.session_store.conn().lock().unwrap();
+            conn.query_row(
+                "SELECT active_session_id, active_session_epoch \
+                 FROM workspace_active_session WHERE workspace_id = ?1",
+                params![workspace_id_num],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+            )
+        };
+        let (active_session_id, active_epoch) = match active_session {
+            Ok(active) => active,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err(DaemonRpcError::new(
+                    "session_not_active",
+                    format!("workspace {} 没有 active session", workspace_instance_id),
+                ));
+            }
+            Err(e) => {
+                return Err(DaemonRpcError::internal_error(format!(
+                    "查询 active session 失败: {}",
+                    e
+                )));
+            }
+        };
+        if active_session_id != agent_session_id || active_epoch != session_epoch {
+            return Err(DaemonRpcError::new(
+                "stale_session",
+                format!(
+                    "stale session rejected: incoming={}:{} active={}:{}",
+                    agent_session_id, session_epoch, active_session_id, active_epoch
+                ),
+            ));
+        }
+
+        let seen = resources
+            .cas_store
+            .file_generation_seen(
+                workspace_id_num,
+                &rel_path,
+                &agent_session_id,
+                session_epoch,
+                monotonic_seq,
+            )
+            .map_err(|e| {
+                DaemonRpcError::new("delete_failed", format!("file_generation_seen 失败: {}", e))
+            })?;
+        if !seen {
+            return Ok(serde_json::json!({
+                "status": "stale_seq_dropped",
+                "workspace_instance_id": workspace_instance_id,
+                "rel_path": rel_path,
+            }));
+        }
+
+        let mut entry = StagingEntry::new_delete(workspace_instance_id, &rel_path);
+        let lsn = resources.staging_log.append(&mut entry).map_err(|e| {
+            DaemonRpcError::new("delete_failed", format!("staging_log::append 失败: {}", e))
+        })?;
+
+        let committed = resources
+            .cas_store
+            .file_generation_committed(workspace_id_num, &rel_path, session_epoch, monotonic_seq)
+            .map_err(|e| {
+                let _ = resources
+                    .staging_log
+                    .mark_failed(lsn, &format!("generation commit failed: {}", e));
+                DaemonRpcError::new(
+                    "delete_failed",
+                    format!("file_generation_committed 失败: {}", e),
+                )
+            })?;
+        if !committed {
+            let _ = resources
+                .staging_log
+                .mark_failed(lsn, "generation 被更新状态覆盖");
+            return Ok(serde_json::json!({
+                "status": "stale_seq_dropped",
+                "workspace_instance_id": workspace_instance_id,
+                "rel_path": rel_path,
+            }));
+        }
+
+        let replicator = crate::daemon::replicator::Replicator::new(&resources.staging_log)
+            .with_snapshot_publisher(
+                self.snapshot_publisher
+                    .as_ref()
+                    .expect("snapshot_publisher 已在上方校验")
+                    .as_ref(),
+            );
+        let replication =
+            replicator.replicate(workspace_instance_id, workspace_id_num, &db_path, "");
+        if !replication.success {
+            let _ = resources
+                .cas_store
+                .file_generation_uncommit(workspace_id_num, &rel_path);
+            return Err(DaemonRpcError::new(
+                "delete_failed",
+                replication
+                    .error
+                    .unwrap_or_else(|| "delete replication 失败".to_string()),
+            ));
+        }
+
+        Ok(serde_json::json!({
+            "status": "deleted",
+            "workspace_instance_id": workspace_instance_id,
+            "rel_path": rel_path,
+            "generation": format!("{}:{}", session_epoch, monotonic_seq),
+            "staging_lsn": lsn,
+            "snapshot_published": replication.generation > 0,
+            "snapshot_generation": replication.generation,
+        }))
     }
 
     fn handle_workspace_recover(
@@ -3519,14 +3677,7 @@ mod tests {
         let client_view_root = tmp.path().to_str().unwrap().to_string();
         let reg_response = state
             .registry
-            .register_workspace(
-                peer.uid,
-                &client_view_root,
-                &client_view_root,
-                "",
-                "",
-                "",
-            )
+            .register_workspace(peer.uid, &client_view_root, &client_view_root, "", "", "")
             .unwrap();
         let ws_id = reg_response["workspace_instance_id"]
             .as_str()
@@ -3549,8 +3700,7 @@ mod tests {
             ws_dir.join("staging.log").to_string_lossy().as_ref(),
         )
         .unwrap();
-        let parser_metrics =
-            Arc::new(crate::daemon::parser_metrics::ParserMetrics::new());
+        let parser_metrics = Arc::new(crate::daemon::parser_metrics::ParserMetrics::new());
         let parse_retry_log = Arc::new(
             ParseRetryLog::new(ws_dir.join("parse_retry.log").to_string_lossy().as_ref()).unwrap(),
         );
@@ -3869,9 +4019,246 @@ mod tests {
         (ws_id, epoch)
     }
 
+    fn setup_delete_workspace() -> (
+        tempfile::TempDir,
+        WorkspaceDaemonState,
+        PeerCredential,
+        String,
+        i64,
+        std::path::PathBuf,
+        Arc<crate::snapshot::SnapshotCache>,
+    ) {
+        use crate::daemon::replicator::SnapshotCachePublisher;
+        use crate::snapshot::SnapshotCache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let db_dir = tmp.path().join("codegraph");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        let db_template = db_dir
+            .join("{workspace_instance_id}.db")
+            .to_string_lossy()
+            .to_string();
+        let cache = Arc::new(SnapshotCache::new(4));
+        let publisher = Arc::new(SnapshotCachePublisher::new(Arc::clone(&cache)));
+        let mut state = make_state_with_data_root(tmp.path())
+            .with_snapshot_publisher(publisher)
+            .with_codegraph_db_path_template(db_template);
+        let peer = make_owner_peer();
+        let (workspace_instance_id, epoch) =
+            setup_connected_workspace(&mut state, peer, "session-delete");
+        let workspace = owned_workspace(&state.registry, peer.uid, &workspace_instance_id).unwrap();
+        let workspace_id_num = workspace["workspace_id"].as_i64().unwrap();
+        let db_path = db_dir.join(format!("{}.db", workspace_instance_id));
+
+        let conn = Connection::open(&db_path).unwrap();
+        crate::daemon::cas_merge::init_codegraph_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, name, root_path, created_at) \
+             VALUES (?1, ?2, ?3, 0)",
+            params![
+                workspace_id_num,
+                format!("ws-{}", workspace_id_num),
+                format!("/ws/{}", workspace_id_num)
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) \
+             VALUES ('delete-content', 'rust', 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO symbol_contents \
+             (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
+             VALUES ('delete-symbol', 'removed', 'function', 'fn removed() {}', '', 0, '', 'removed')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_instances \
+             (workspace_id, rel_path, abs_path, current_content_hash, mtime, status) \
+             VALUES (?1, 'src/removed.rs', '/ws/src/removed.rs', 'delete-content', 0, 'ok')",
+            params![workspace_id_num],
+        )
+        .unwrap();
+        let file_instance_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO symbols \
+             (file_instance_id, symbol_hash, name, kind, start_line, end_line, qualified_name) \
+             VALUES (?1, 'delete-symbol', 'removed', 'function', 1, 1, 'removed')",
+            params![file_instance_id],
+        )
+        .unwrap();
+        drop(conn);
+
+        (
+            tmp,
+            state,
+            peer,
+            workspace_instance_id,
+            epoch,
+            db_path,
+            cache,
+        )
+    }
+
+    #[test]
+    fn test_workspace_file_delete_publishes_tombstone_snapshot() {
+        let (_tmp, mut state, peer, ws_id, epoch, db_path, cache) = setup_delete_workspace();
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.delete",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/removed.rs",
+                "agent_session_id": "session-delete",
+                "session_epoch": epoch,
+                "monotonic_seq": 1,
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], true, "{:?}", response);
+        assert_eq!(response["result"]["status"], "deleted");
+        assert_eq!(response["result"]["snapshot_published"], true);
+
+        let workspace_id_num = owned_workspace(&state.registry, peer.uid, &ws_id).unwrap()
+            ["workspace_id"]
+            .as_i64()
+            .unwrap();
+        let conn = Connection::open(db_path).unwrap();
+        let state_after: (String, i64) = conn
+            .query_row(
+                "SELECT status, \
+                    (SELECT COUNT(*) FROM symbols WHERE file_instance_id = file_instances.id) \
+                 FROM file_instances \
+                 WHERE workspace_id = ?1 AND rel_path = 'src/removed.rs'",
+                params![workspace_id_num],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(state_after, ("deleted".to_string(), 0));
+        let resources = state.resources.get(&ws_id).unwrap();
+        assert!(resources.staging_log.read_pending().unwrap().is_empty());
+        let manager = cache
+            .get(&ws_id)
+            .expect("delete 后应发布 workspace snapshot");
+        let store = manager.current_store().expect("snapshot 应包含 GraphStore");
+        assert!(
+            store.search_symbols_rust("removed", None, 10).is_empty(),
+            "删除后的 snapshot 不得再查询到 removed 符号"
+        );
+    }
+
+    #[test]
+    fn test_workspace_file_delete_rejects_cross_uid_and_stale_session() {
+        let (_tmp, mut state, peer, ws_id, epoch, _db_path, _cache) = setup_delete_workspace();
+        let params = json!({
+            "workspace_instance_id": ws_id,
+            "rel_path": "src/removed.rs",
+            "agent_session_id": "session-delete",
+            "session_epoch": epoch,
+            "monotonic_seq": 1,
+        });
+        let forbidden = dispatch(
+            &mut state,
+            make_other_peer(),
+            "workspace.file.delete",
+            &params,
+            &[],
+        );
+        assert_eq!(forbidden["error"]["code"], "workspace_forbidden");
+
+        let stale = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.delete",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/removed.rs",
+                "agent_session_id": "old-session",
+                "session_epoch": epoch,
+                "monotonic_seq": 1,
+            }),
+            &[],
+        );
+        assert_eq!(stale["error"]["code"], "stale_session");
+    }
+
+    #[test]
+    fn test_workspace_file_delete_requires_active_session() {
+        use crate::daemon::replicator::SnapshotCachePublisher;
+        use crate::snapshot::SnapshotCache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = Arc::new(SnapshotCache::new(2));
+        let publisher = Arc::new(SnapshotCachePublisher::new(cache));
+        let db_template = tmp
+            .path()
+            .join("{workspace_instance_id}.db")
+            .to_string_lossy()
+            .to_string();
+        let mut state = make_state_with_data_root(tmp.path())
+            .with_snapshot_publisher(publisher)
+            .with_codegraph_db_path_template(db_template);
+        let peer = make_owner_peer();
+        let ws_id = register_ws(&mut state, peer.uid);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.delete",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/removed.rs",
+                "agent_session_id": "session-delete",
+                "session_epoch": 1,
+                "monotonic_seq": 1,
+            }),
+            &[],
+        );
+        assert_eq!(response["error"]["code"], "session_not_active");
+    }
+
+    #[test]
+    fn test_workspace_file_delete_rejects_stale_sequence() {
+        let (_tmp, mut state, peer, ws_id, epoch, _db_path, _cache) = setup_delete_workspace();
+        let first = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.delete",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/removed.rs",
+                "agent_session_id": "session-delete",
+                "session_epoch": epoch,
+                "monotonic_seq": 5,
+            }),
+            &[],
+        );
+        assert_eq!(first["ok"], true, "{:?}", first);
+
+        let stale = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.delete",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "rel_path": "src/removed.rs",
+                "agent_session_id": "session-delete",
+                "session_epoch": epoch,
+                "monotonic_seq": 3,
+            }),
+            &[],
+        );
+        assert_eq!(stale["ok"], true);
+        assert_eq!(stale["result"]["status"], "stale_seq_dropped");
+    }
+
     #[test]
     fn test_refresh_rejects_when_no_active_session() {
-        // 没有 connect 直接 refresh：refresh_failed (no active session)
+        // 没有 connect 直接 refresh：session_not_active
         let tmp = tempfile::tempdir().unwrap();
         let mut state = make_state_with_data_root(tmp.path());
         let peer = make_owner_peer();
@@ -3891,12 +4278,12 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "refresh_failed");
+        assert_eq!(response["error"]["code"], "session_not_active");
     }
 
     #[test]
     fn test_refresh_rejects_stale_session() {
-        // connect 后用错误的 epoch refresh：refresh_failed (stale session)
+        // connect 后用错误的 epoch refresh：stale_session
         let tmp = tempfile::tempdir().unwrap();
         let mut state = make_state_with_data_root(tmp.path());
         let peer = make_owner_peer();
@@ -3917,7 +4304,7 @@ mod tests {
             &[],
         );
         assert_eq!(response["ok"], false);
-        assert_eq!(response["error"]["code"], "refresh_failed");
+        assert_eq!(response["error"]["code"], "stale_session");
     }
 
     #[test]
@@ -4290,10 +4677,7 @@ mod tests {
             "parser_doctor.status 应为 healthy/degraded/unhealthy: {}",
             doctor_status
         );
-        assert!(
-            doctor["checks"].is_array(),
-            "parser_doctor.checks 应为数组"
-        );
+        assert!(doctor["checks"].is_array(), "parser_doctor.checks 应为数组");
         assert!(
             !doctor["checks"].as_array().unwrap().is_empty(),
             "parser_doctor.checks 应至少有 1 项"
@@ -4672,7 +5056,7 @@ mod tests {
             &[],
         );
         assert_eq!(r5["ok"], false);
-        assert_eq!(r5["error"]["code"], "refresh_failed");
+        assert_eq!(r5["error"]["code"], "stale_session");
     }
 
     // ---- handle_backup / handle_restore / handle_gc_cas 测试 ----

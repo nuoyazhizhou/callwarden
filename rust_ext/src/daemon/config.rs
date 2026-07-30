@@ -159,12 +159,10 @@ impl DaemonConfig {
         }
         if let Ok(v) = std::env::var("CW_DAEMON_WORKERS") {
             if !v.is_empty() {
-                self.max_workers = v
-                    .parse::<usize>()
-                    .map_err(|e| ConfigError::EnvVar {
-                        name: "CW_DAEMON_WORKERS".to_string(),
-                        reason: e.to_string(),
-                    })?;
+                self.max_workers = v.parse::<usize>().map_err(|e| ConfigError::EnvVar {
+                    name: "CW_DAEMON_WORKERS".to_string(),
+                    reason: e.to_string(),
+                })?;
             }
         }
         // G11: CodeGraph DB 路径模板（用于 Replicator 发布 snapshot）
@@ -213,6 +211,53 @@ impl DaemonConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard};
+
+    const DAEMON_ENV_KEYS: [&str; 5] = [
+        "CW_DAEMON_SOCKET",
+        "CW_DAEMON_REGISTRY_DB",
+        "CW_DAEMON_DATA_ROOT",
+        "CW_DAEMON_WORKERS",
+        "CW_DAEMON_CODEGRAPH_DB_TEMPLATE",
+    ];
+    static DAEMON_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct IsolatedDaemonEnv {
+        saved: Vec<(&'static str, Option<OsString>)>,
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl IsolatedDaemonEnv {
+        fn new() -> Self {
+            let lock = DAEMON_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let saved = DAEMON_ENV_KEYS
+                .iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect();
+            for key in DAEMON_ENV_KEYS {
+                std::env::remove_var(key);
+            }
+            Self { saved, _lock: lock }
+        }
+
+        fn set(&self, key: &'static str, value: &str) {
+            std::env::set_var(key, value);
+        }
+    }
+
+    impl Drop for IsolatedDaemonEnv {
+        fn drop(&mut self) {
+            for (key, value) in self.saved.drain(..) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
 
     #[test]
     fn test_default_config_paths() {
@@ -277,7 +322,8 @@ mod tests {
 
     #[test]
     fn test_apply_env_overrides_codegraph_db_template() {
-        std::env::set_var(
+        let env = IsolatedDaemonEnv::new();
+        env.set(
             "CW_DAEMON_CODEGRAPH_DB_TEMPLATE",
             "/tmp/ws_{workspace_instance_id}/cg.db",
         );
@@ -287,34 +333,31 @@ mod tests {
             cfg.codegraph_db_path_template,
             "/tmp/ws_{workspace_instance_id}/cg.db"
         );
-        assert_eq!(
-            cfg.resolve_codegraph_db_path("xyz"),
-            "/tmp/ws_xyz/cg.db"
-        );
-        std::env::remove_var("CW_DAEMON_CODEGRAPH_DB_TEMPLATE");
+        assert_eq!(cfg.resolve_codegraph_db_path("xyz"), "/tmp/ws_xyz/cg.db");
     }
 
     #[test]
     fn test_apply_env_overrides_socket() {
-        std::env::set_var("CW_DAEMON_SOCKET", "/tmp/env_override.sock");
+        let env = IsolatedDaemonEnv::new();
+        env.set("CW_DAEMON_SOCKET", "/tmp/env_override.sock");
         let mut cfg = DaemonConfig::default();
         cfg.apply_env_overrides().unwrap();
         assert_eq!(cfg.socket_path, PathBuf::from("/tmp/env_override.sock"));
-        std::env::remove_var("CW_DAEMON_SOCKET");
     }
 
     #[test]
     fn test_apply_env_overrides_workers_invalid() {
-        std::env::set_var("CW_DAEMON_WORKERS", "not-a-number");
+        let env = IsolatedDaemonEnv::new();
+        env.set("CW_DAEMON_WORKERS", "not-a-number");
         let mut cfg = DaemonConfig::default();
         let result = cfg.apply_env_overrides();
         assert!(result.is_err());
-        std::env::remove_var("CW_DAEMON_WORKERS");
     }
 
     #[test]
     fn test_apply_env_overrides_data_root_updates_registry() {
-        std::env::set_var("CW_DAEMON_DATA_ROOT", "/tmp/custom_data");
+        let env = IsolatedDaemonEnv::new();
+        env.set("CW_DAEMON_DATA_ROOT", "/tmp/custom_data");
         let mut cfg = DaemonConfig::default();
         cfg.apply_env_overrides().unwrap();
         assert_eq!(cfg.data_root, PathBuf::from("/tmp/custom_data"));
@@ -323,7 +366,6 @@ mod tests {
             cfg.registry_db_path,
             PathBuf::from("/tmp/custom_data/registry.db")
         );
-        std::env::remove_var("CW_DAEMON_DATA_ROOT");
     }
 
     #[test]

@@ -42,6 +42,9 @@ pub struct StagingEntry {
     pub content_hash: String,
     /// 语言 ID
     pub language: String,
+    /// refresh / delete。旧日志缺少该字段时按 refresh 处理。
+    #[serde(default = "default_operation")]
+    pub operation: String,
     /// 序列化的 ParseDelta（JSON object）
     #[serde(default)]
     pub parse_delta: Map<String, Value>,
@@ -66,14 +69,13 @@ fn default_status() -> String {
     "pending".to_string()
 }
 
+fn default_operation() -> String {
+    "refresh".to_string()
+}
+
 impl StagingEntry {
     /// 创建新的 StagingEntry（lsn=0，由 log.append 分配实际 lsn）
-    pub fn new(
-        workspace_id: &str,
-        file_path: &str,
-        content_hash: &str,
-        language: &str,
-    ) -> Self {
+    pub fn new(workspace_id: &str, file_path: &str, content_hash: &str, language: &str) -> Self {
         Self {
             lsn: 0,
             timestamp: now_ts(),
@@ -81,6 +83,7 @@ impl StagingEntry {
             file_path: file_path.to_string(),
             content_hash: content_hash.to_string(),
             language: language.to_string(),
+            operation: default_operation(),
             parse_delta: Map::new(),
             resolve_delta: Map::new(),
             frontier: Map::new(),
@@ -88,6 +91,13 @@ impl StagingEntry {
             status: "pending".to_string(),
             error: None,
         }
+    }
+
+    /// 创建删除 tombstone 记录。
+    pub fn new_delete(workspace_id: &str, file_path: &str) -> Self {
+        let mut entry = Self::new(workspace_id, file_path, "", "");
+        entry.operation = "delete".to_string();
+        entry
     }
 
     /// 序列化为 JSON line（单行 JSON，ensure_ascii=false）
@@ -461,6 +471,7 @@ mod tests {
         assert_eq!(entry.file_path, "src/main.rs");
         assert_eq!(entry.content_hash, "hash123");
         assert_eq!(entry.language, "rust");
+        assert_eq!(entry.operation, "refresh");
         assert_eq!(entry.status, "pending");
         assert!(entry.error.is_none());
         assert!(entry.timestamp > 0.0);
@@ -503,8 +514,19 @@ mod tests {
         assert_eq!(entry.lsn, 1);
         assert_eq!(entry.workspace_id, "ws");
         // 缺省字段应使用默认值
+        assert_eq!(entry.operation, "refresh");
         assert_eq!(entry.status, "pending");
         assert!(entry.error.is_none());
+    }
+
+    #[test]
+    fn test_entry_new_delete_sets_durable_operation() {
+        let entry = StagingEntry::new_delete("ws1", "src/removed.rs");
+        assert_eq!(entry.operation, "delete");
+        assert_eq!(entry.workspace_id, "ws1");
+        assert_eq!(entry.file_path, "src/removed.rs");
+        assert!(entry.content_hash.is_empty());
+        assert!(entry.language.is_empty());
     }
 
     #[test]
@@ -658,7 +680,10 @@ mod tests {
         let entries = log.read(0).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].status, "failed");
-        assert_eq!(entries[0].error, Some("parse failed: syntax error".to_string()));
+        assert_eq!(
+            entries[0].error,
+            Some("parse failed: syntax error".to_string())
+        );
     }
 
     // ---- truncate 测试 ----
@@ -784,10 +809,7 @@ mod tests {
         // 手动追加损坏行 + 有效 entry
         {
             use std::io::Write;
-            let mut f = OpenOptions::new()
-                .append(true)
-                .open(&log_path_str)
-                .unwrap();
+            let mut f = OpenOptions::new().append(true).open(&log_path_str).unwrap();
             writeln!(f, "this is corrupted json line").unwrap();
             writeln!(f, "{{invalid").unwrap();
             let valid_entry = StagingEntry::new("ws1", "file2.rs", "hash123", "rust");

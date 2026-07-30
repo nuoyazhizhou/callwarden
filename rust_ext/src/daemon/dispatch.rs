@@ -10,9 +10,9 @@
 //! 高级方法（workspace.*/snapshot.*/query.*/gc.*/backup/restore）在 R4-R6 实现，
 //! 本模块提供 trait 钩子供后续扩展。
 
-use std::time::Instant;
-use serde_json::{Map, Value};
 use super::protocol::{make_error_response, make_ok_response};
+use serde_json::{Map, Value};
+use std::time::Instant;
 
 /// peer credential（来自 SO_PEERCRED）
 #[derive(Debug, Clone, Copy)]
@@ -122,10 +122,7 @@ pub trait DaemonStateExt {
         let mut m = Map::new();
         m.insert("status".to_string(), Value::String("ok".to_string()));
         m.insert("pid".to_string(), Value::Number(state.pid.into()));
-        m.insert(
-            "uptime_seconds".to_string(),
-            Value::Number(uptime.into()),
-        );
+        m.insert("uptime_seconds".to_string(), Value::Number(uptime.into()));
         m.insert(
             "schema_version".to_string(),
             Value::Number(state.schema_version.into()),
@@ -190,6 +187,15 @@ pub trait DaemonStateExt {
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params, received_fds);
         Err(DaemonRpcError::method_not_found("workspace.file.refresh"))
+    }
+
+    fn handle_workspace_file_delete(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("workspace.file.delete"))
     }
 
     fn handle_workspace_recover(
@@ -633,6 +639,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "workspace.status" => state.handle_workspace_status(peer, params),
         "workspace.connect" => state.handle_workspace_connect(peer, params),
         "workspace.file.refresh" => state.handle_workspace_file_refresh(peer, params, received_fds),
+        "workspace.file.delete" => state.handle_workspace_file_delete(peer, params),
         "workspace.recover" => state.handle_workspace_recover(peer, params),
 
         // ---- Snapshot 管理（R6 实现）----
@@ -702,19 +709,14 @@ pub fn get_str_param<'a>(params: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 /// 从 params 提取必填字符串字段（缺失返回 invalid_params 错误）
-pub fn require_str_param<'a>(
-    params: &'a Value,
-    key: &str,
-) -> Result<&'a str, DaemonRpcError> {
+pub fn require_str_param<'a>(params: &'a Value, key: &str) -> Result<&'a str, DaemonRpcError> {
     get_str_param(params, key)
         .ok_or_else(|| DaemonRpcError::invalid_params(format!("缺少字段: {}", key)))
 }
 
 /// 从 params 提取可选字符串字段（缺失返回默认值）
 pub fn get_str_param_or(params: &Value, key: &str, default: &str) -> String {
-    get_str_param(params, key)
-        .unwrap_or(default)
-        .to_string()
+    get_str_param(params, key).unwrap_or(default).to_string()
 }
 
 /// 从 params 提取整数字段（缺失或非整数返回 None）
@@ -778,7 +780,10 @@ mod tests {
 
         assert_eq!(response["ok"], true);
         assert_eq!(response["result"]["status"], "ok");
-        assert_eq!(response["result"]["peer_uid"], current_daemon_uid().wrapping_add(1));
+        assert_eq!(
+            response["result"]["peer_uid"],
+            current_daemon_uid().wrapping_add(1)
+        );
         assert_eq!(response["result"]["pid"], state.pid);
     }
 
@@ -809,10 +814,7 @@ mod tests {
         let response = dispatch(&mut state, peer, "schema.version", &params, &[]);
 
         assert_eq!(response["ok"], true);
-        assert_eq!(
-            response["result"]["version"],
-            super::super::SCHEMA_VERSION
-        );
+        assert_eq!(response["result"]["version"], super::super::SCHEMA_VERSION);
     }
 
     // ---- 未知方法测试 ----
@@ -1064,7 +1066,8 @@ mod tests {
             let response = dispatch(&mut state, make_peer(), method, &params, &[]);
             assert_eq!(
                 response["error"]["code"], "permission_denied",
-                "方法 {} 应被 permission_denied 拒绝", method
+                "方法 {} 应被 permission_denied 拒绝",
+                method
             );
         }
     }
@@ -1109,7 +1112,8 @@ mod tests {
             let response = dispatch(&mut state, peer, method, &params, &[]);
             assert_ne!(
                 response["error"]["code"], "permission_denied",
-                "只读方法 {} 不应被 permission_denied 拦截", method
+                "只读方法 {} 不应被 permission_denied 拦截",
+                method
             );
         }
     }
@@ -1152,7 +1156,10 @@ mod tests {
 
         // 验证路由到 handle_ping（而非其他 handler）
         assert_eq!(response["ok"], true);
-        assert_eq!(response["result"]["peer_uid"], current_daemon_uid().wrapping_add(1));
+        assert_eq!(
+            response["result"]["peer_uid"],
+            current_daemon_uid().wrapping_add(1)
+        );
     }
 
     #[test]
@@ -1171,6 +1178,7 @@ mod tests {
             "workspace.status",
             "workspace.connect",
             "workspace.file.refresh",
+            "workspace.file.delete",
             "workspace.recover",
             "snapshot.publish",
             "gc.snapshots",
@@ -1237,6 +1245,9 @@ mod tests {
         // ping 走基础 handler（DaemonState 默认实现）
         let response = dispatch(&mut state, peer, "ping", &params, &[]);
         assert_eq!(response["ok"], true);
-        assert_eq!(response["result"]["peer_uid"], current_daemon_uid().wrapping_add(1));
+        assert_eq!(
+            response["result"]["peer_uid"],
+            current_daemon_uid().wrapping_add(1)
+        );
     }
 }

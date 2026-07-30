@@ -284,6 +284,14 @@ impl DaemonStateExt for SnapshotDaemonState {
             .handle_workspace_file_refresh(peer, params, received_fds)
     }
 
+    fn handle_workspace_file_delete(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_workspace_file_delete(peer, params)
+    }
+
     // ---- 运维方法（backup / restore / gc.cas 委托 base）----
 
     fn handle_backup(
@@ -366,7 +374,12 @@ impl DaemonStateExt for SnapshotDaemonState {
 
         // 构建 + 发布（传入 workspace_id_num 用于 SQL 过滤）
         let (generation, symbol_count, call_count) = mgr
-            .build_and_publish_blocking(&db_path, workspace_id_num, &build_context_hash, snapshot_id)
+            .build_and_publish_blocking(
+                &db_path,
+                workspace_id_num,
+                &build_context_hash,
+                snapshot_id,
+            )
             .map_err(|e| DaemonRpcError::internal_error(format!("build_and_publish: {}", e)))?;
 
         let mut m = Map::new();
@@ -1763,6 +1776,23 @@ mod tests {
             &mut state,
             peer,
             "workspace.file.refresh",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "invalid_params");
+    }
+
+    #[test]
+    fn test_workspace_file_delete_delegated_to_base() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.file.delete",
             &json!({"workspace_instance_id": ws_id}),
             &[],
         );

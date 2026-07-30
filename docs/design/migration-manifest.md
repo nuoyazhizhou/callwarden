@@ -2832,7 +2832,7 @@ Phase 5-2 Slice 6 在 Slice 1-5（cw-client UDS RPC 客户端）基础上，新�
    - 跨平台编译：Windows 上 watcher 循环被 `#[cfg(not(unix))]` 替换为平台提示
    - Unix 路径：ping daemon → `workspace.connect` 握手 → 写 PID 文件 → `DebouncedFileWatcher` 持续循环
    - 创建/修改事件：Rust canonicalization → 小文件内联 hex / 大文件 FD → `workspace.file.refresh`
-   - 删除/重命名事件：发送 workspace-scoped `workspace.file.delete`；daemon 服务端实现由独立 P0 跟踪
+   - 删除/重命名事件：发送 workspace-scoped `workspace.file.delete`；daemon 校验 owner/session/generation 后写 durable staging，并在事务 tombstone 后发布新 snapshot
    - session 失效：收到 `session_not_active` / `stale_session` 后重新 connect 并重试一次
    - SIGTERM/SIGINT：flush 已成熟事件、停止 watcher、清理 PID 文件
 
@@ -2908,8 +2908,8 @@ Built wheel for CPython 3.10 to rust_ext/target/wheels/callwarden_core-0.1.0-cp3
 
 ### 41.5 风险与限制
 
-- **删除事件尚未端到端闭合**：agent 已发送 `workspace.file.delete`，但 Rust daemon 尚无对应 dispatch/handler。由 P0 修复任务 `T-1785427715194-719b1517` 跟踪；该任务完成前不得声称 watcher save/delete-to-query 全链路完成。
-- **真实 daemon E2E 尚待补齐**：本轮验证覆盖 Windows 编译和 WSL/Linux 12 个 binary 单测，尚未替代真实 UDS + inotify + snapshot 可查询验收。
+- **删除状态链已闭合到 snapshot**：P0 修复任务 `T-1785427715194-719b1517` 已补齐 `workspace.file.delete` dispatch、owner/session/generation 校验、durable staging、事务 tombstone、崩溃恢复和 snapshot 发布。handler 测试同时验证删除后 GraphStore 查询不再返回目标符号。
+- **真实部署 E2E 尚待补齐**：当前验证覆盖完整 daemon 回归、handler/恢复/snapshot 状态链和 WSL/Linux watcher 单测，尚未替代 root + 双真实 UID + 真实 UDS/inotify 的部署环境验收。
 - **PyO3 暴露仅 connect/refresh**：`build_agent_ping_params` 无需差分测试（params 为空 Object，跨语言等价无歧义），未在 PyO3 注册。
 - **不修改 Python CLI**：本 Slice 仅扩展 Rust 侧 `cw-agent` binary，不修改 Python `cw agent` 命令。Python 保持真相源。
 - **不涉及 rollback_config 登记**：新增 binary + 跨平台参数构建逻辑，不修改 Python 生产路径。无需 rollback_config。
@@ -2927,7 +2927,8 @@ Built wheel for CPython 3.10 to rust_ext/target/wheels/callwarden_core-0.1.0-cp3
 - [x] migration-manifest.md §41 记录完整
 - [x] 不修改 Python CLI（Python 保持真相源）
 - [x] 不涉及 rollback_config 登记（新增功能 + 扩展 binary）
-- [ ] daemon `workspace.file.delete` handler 与真实 UDS/inotify E2E（独立 P0，不能由本 Slice 的单元测试代替）
+- [x] daemon `workspace.file.delete` handler、崩溃恢复与 snapshot 查询可见性（P0 `T-1785427715194-719b1517`）
+- [ ] root + 双真实 UID + 真实 UDS/inotify E2E（部署环境门禁，不能由 handler 单元测试代替）
 
 ## §42 Phase 5-2 Slice 7：wire-production 路由整合
 

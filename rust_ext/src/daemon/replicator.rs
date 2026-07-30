@@ -988,7 +988,16 @@ impl<'a> Replicator<'a> {
             return result;
         }
 
-        // 2. 合并 delta（简单汇总，对应 Python _merge_deltas）
+        // 2. 重放 durable 操作。delete 在发布 snapshot 前幂等应用，
+        // 覆盖“日志已落盘但 handler 尚未改库”以及“改库后尚未发布”两种崩溃窗口。
+        if let Err(e) = self.apply_durable_operations(&pending, workspace_id_num, db_path) {
+            result.success = false;
+            result.error = Some(format!("apply durable operation failed: {}", e));
+            result.duration_ms = elapsed_ms(&start_time);
+            return result;
+        }
+
+        // 3. 合并 delta（简单汇总，对应 Python _merge_deltas）
         // G11-T2：将 merged 结果提取为摘要写入 ReplicationResult
         let merged = self.merge_deltas(&pending);
         result.merged_summary = MergedDeltaSummary {
@@ -1000,7 +1009,7 @@ impl<'a> Replicator<'a> {
             total_removed_edges: merged.total_removed_edges,
         };
 
-        // 3. 发布新 generation（若 publisher + db_path 均可用）
+        // 4. 发布新 generation（若 publisher + db_path 均可用）
         if let Some(publisher) = self.snapshot_publisher {
             if !db_path.is_empty() {
                 match publisher.publish_snapshot(
@@ -1026,7 +1035,7 @@ impl<'a> Replicator<'a> {
             }
         }
 
-        // 4. 批量标记 entries 为 applied（单次文件重写）
+        // 5. 批量标记 entries 为 applied（单次文件重写）
         result.applied_lsns = pending.iter().map(|e| e.lsn).collect();
         if !result.applied_lsns.is_empty() {
             if let Err(e) = self.staging_log.mark_applied_batch(&result.applied_lsns) {
@@ -1038,13 +1047,51 @@ impl<'a> Replicator<'a> {
         }
         result.applied_count = result.applied_lsns.len();
 
-        // 5. 压缩已应用的 entries（按 status 而非 LSN，避免误删其他 workspace）
+        // 6. 压缩已应用的 entries（按 status 而非 LSN，避免误删其他 workspace）
         if !result.applied_lsns.is_empty() {
             let _ = self.staging_log.compact_applied(Some(workspace_id));
         }
 
         result.duration_ms = elapsed_ms(&start_time);
         result
+    }
+
+    fn apply_durable_operations(
+        &self,
+        pending: &[StagingEntry],
+        workspace_id_num: i64,
+        db_path: &str,
+    ) -> Result<(), String> {
+        let delete_entries: Vec<&StagingEntry> = pending
+            .iter()
+            .filter(|entry| entry.operation == "delete")
+            .collect();
+        if delete_entries.is_empty() {
+            return Ok(());
+        }
+        if workspace_id_num <= 0 {
+            return Err("delete staging 缺少有效 workspace_id_num".to_string());
+        }
+        if db_path.is_empty() {
+            return Err("delete staging 缺少 CodeGraph DB 路径".to_string());
+        }
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("创建 CodeGraph DB 目录失败: {}", e))?;
+        }
+        let conn = rusqlite::Connection::open(db_path)
+            .map_err(|e| format!("打开 CodeGraph DB 失败: {}", e))?;
+        crate::daemon::cas_merge::init_codegraph_schema(&conn)
+            .map_err(|e| format!("初始化 CodeGraph schema 失败: {}", e))?;
+
+        for entry in delete_entries {
+            crate::daemon::cas_merge::delete_workspace_file_from_codegraph(
+                &conn,
+                workspace_id_num,
+                &entry.file_path,
+            )?;
+        }
+        Ok(())
     }
 
     /// 从 crash 恢复：读取所有 pending entries 并重新 replication。
@@ -1503,6 +1550,76 @@ mod tests {
         assert_eq!(result.workspace_id, "ws1");
         assert_eq!(result.pending_count, 0);
         assert_eq!(result.applied_count, 0);
+    }
+
+    #[test]
+    fn test_replicator_recover_replays_delete_before_snapshot_publish() {
+        let tmp = tempfile::tempdir().unwrap();
+        let log_path = tmp.path().join("staging.log");
+        let db_path = tmp.path().join("codegraph.db");
+        let log = StagingLog::new(log_path.to_str().unwrap()).unwrap();
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        crate::daemon::cas_merge::init_codegraph_schema(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO workspaces (id, name, root_path, created_at) \
+             VALUES (1, 'ws1', '/ws1', 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) \
+             VALUES ('content-a', 'rust', 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO symbol_contents \
+             (content_hash, name, kind, content, signature, has_comment, comment_content, qualified_name) \
+             VALUES ('sym-a', 'a', 'function', 'fn a() {}', '', 0, '', 'a')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO file_instances \
+             (id, workspace_id, rel_path, abs_path, current_content_hash, mtime, status) \
+             VALUES (10, 1, 'src/a.rs', '/ws1/src/a.rs', 'content-a', 0, 'ok')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO symbols \
+             (id, file_instance_id, symbol_hash, name, kind, start_line, end_line, qualified_name) \
+             VALUES (100, 10, 'sym-a', 'a', 'function', 1, 1, 'a')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut entry = StagingEntry::new_delete("ws1", "src/a.rs");
+        log.append(&mut entry).unwrap();
+
+        let result = Replicator::new(&log).recover("ws1", 1, db_path.to_str().unwrap());
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.applied_count, 1);
+
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM file_instances WHERE id = 10",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let symbol_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM symbols WHERE file_instance_id = 10",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "deleted");
+        assert_eq!(symbol_count, 0);
+        assert!(log.read_pending().unwrap().is_empty());
     }
 
     #[test]
@@ -2221,8 +2338,8 @@ mod tests {
         let canonical_bytes = canon.canonical_bytes.clone();
 
         // 3. parse 真实文件
-        let config = LangConfig::get(language)
-            .unwrap_or_else(|| panic!("不支持的语言: {}", language));
+        let config =
+            LangConfig::get(language).unwrap_or_else(|| panic!("不支持的语言: {}", language));
         let parser = crate::multi_lang::GenericParser::new(std::sync::Arc::new(config));
         let parse_result = parser.parse_file(abs_path, "test_module");
 
@@ -2241,11 +2358,11 @@ mod tests {
         let cas_key = compute_cas_key_v1(
             &content_hash,
             language,
-            "0.1.0",  // parser_version
-            "0.2.0",  // callwarden_version
-            "v1",     // extraction_config_version
-            "v1",     // abi_version
-            "v1",     // input_abi_version
+            "0.1.0", // parser_version
+            "0.2.0", // callwarden_version
+            "v1",    // extraction_config_version
+            "v1",    // abi_version
+            "v1",    // input_abi_version
         );
         cas_store
             .publish(
@@ -2376,10 +2493,12 @@ fn inner() {
 def inner():
     pass
 "#;
-        let (parse_result, cas_store, cas_key) =
-            parse_and_publish_to_cas(source, "python", "py");
+        let (parse_result, cas_store, cas_key) = parse_and_publish_to_cas(source, "python", "py");
 
-        assert!(!parse_result.symbols.is_empty(), "Python parser 应提取到符号");
+        assert!(
+            !parse_result.symbols.is_empty(),
+            "Python parser 应提取到符号"
+        );
 
         let conn = cas_store.conn().lock().unwrap();
         let mut stmt = conn
@@ -2423,7 +2542,9 @@ fn baz() {}
             .prepare("SELECT local_symbol_id FROM cas_symbols WHERE cas_key = ?1")
             .unwrap();
         let ids: Vec<i64> = stmt
-            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| row.get(0))
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                row.get(0)
+            })
             .unwrap()
             .map(|r: rusqlite::Result<_>| r.unwrap())
             .collect();
@@ -2480,7 +2601,9 @@ fn baz() {}
             .prepare("SELECT local_symbol_id FROM cas_symbols WHERE cas_key = ?1")
             .unwrap();
         let all_ids: std::collections::HashSet<i64> = stmt2
-            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| row.get(0))
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                row.get(0)
+            })
             .unwrap()
             .map(|r: rusqlite::Result<_>| r.unwrap())
             .collect();

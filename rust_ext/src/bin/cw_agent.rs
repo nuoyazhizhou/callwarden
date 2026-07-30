@@ -553,23 +553,39 @@ fn send_large_refresh<C: AgentRpcClient>(
 #[cfg(unix)]
 fn delete_path<C: AgentRpcClient>(
     client: &C,
-    session: &callwarden_core::daemon::client::AgentSession,
+    session: &mut callwarden_core::daemon::client::AgentSession,
     workspace_id: &str,
     root: &str,
     path: &std::path::Path,
 ) -> Result<serde_json::Value, String> {
+    use callwarden_core::daemon::client::ClientError;
+
     let rel_path = relative_path(root, path)?;
-    client
-        .call(
+    let send_once = |client: &C,
+                     session: &mut callwarden_core::daemon::client::AgentSession|
+     -> Result<serde_json::Value, ClientError> {
+        let monotonic_seq = session.next_seq(workspace_id);
+        client.call(
             "workspace.file.delete",
             serde_json::json!({
                 "workspace_instance_id": workspace_id,
                 "rel_path": rel_path,
                 "agent_session_id": session.session_id,
                 "session_epoch": session.get_epoch(workspace_id),
+                "monotonic_seq": monotonic_seq,
             }),
         )
-        .map_err(|e| e.to_string())
+    };
+    match send_once(client, session) {
+        Ok(value) => Ok(value),
+        Err(ClientError::Remote(remote))
+            if remote.code == "session_not_active" || remote.code == "stale_session" =>
+        {
+            reconnect_session(client, session, workspace_id)?;
+            send_once(client, session).map_err(|e| e.to_string())
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[cfg(unix)]
@@ -817,11 +833,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let source = dir.path().join("removed.rs");
         let client = MockRpcClient::default();
-        let session = active_session();
+        let mut session = active_session();
 
         delete_path(
             &client,
-            &session,
+            &mut session,
             "ws-test",
             &dir.path().to_string_lossy(),
             &source,
@@ -834,5 +850,6 @@ mod tests {
         assert_eq!(calls[0].1["workspace_instance_id"], "ws-test");
         assert_eq!(calls[0].1["rel_path"], "removed.rs");
         assert_eq!(calls[0].1["session_epoch"], 3);
+        assert_eq!(calls[0].1["monotonic_seq"], 1);
     }
 }
