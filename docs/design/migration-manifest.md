@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -3784,3 +3784,50 @@ python -m pytest tests/test_rust_cli_diff.py -q
 workspace 隔离、archived 过滤和稳定行号排序。
 
 本任务不声明 `grep/issues/tests` 已完成；它们继续保留在 P0-CLI-B4/B5。
+
+---
+
+## §55 自举复审整改：Rust `cw grep`
+
+**任务**：`T-1785440297054-137adff0`（P0-CLI-B4）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 55.1 已实现
+
+- `cw grep <patterns...> [--fixed] [--limit N] [--path PATH] [--include-all]
+  [--kind KIND]` 已从 clap 空壳切换到真实 Rust 命令；
+- 默认调用 `rg -n --no-heading --color never`，保留首 pattern 快速检索与其余
+  pattern 同行 AND 过滤；子进程 stdout/stderr 并行排空并设 30 秒硬超时；
+- `rg` 不存在时，Rust 内置 fallback 按 Python 的源码扩展名集合递归扫描，跳过
+  `.git/__pycache__/node_modules/target/.venv/venv/dist/build`，UTF-8 非法字节
+  使用替换字符读取；
+- 每个匹配文件只查询一次 SQLite，按 `(end_line - start_line)` 升序选取最内层
+  符号，严格附加 `workspace_id` 与非 archived 过滤；
+- `include-all`、`kind` 与 `limit` 均在符号归属后执行，标题、匹配行、
+  `[in kind qualified_name]`、`[no symbol]` 和汇总文本与 Python 当前输出一致；
+- 搜索路径在访问前 canonicalize 做边界判断，workspace 外路径和 symlink escape
+  fail closed；传给 `rg` 和展示给用户的仍是原始 workspace 路径，避免 Windows
+  `\\?\` canonical path 污染输出。该拒绝规则是对 Python 旧实现的刻意安全收紧；
+- daemon 当前没有 workspace 文件系统 grep RPC。enterprise 模式明确 fail closed，
+  auto 模式沿用统一 runtime，在 daemon 路径不适用时回退 local。
+
+### 55.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::grep::tests --lib --no-default-features
+test result: ok. 5 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 12 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+25 passed
+```
+
+真实 Python/Rust 进程差分新增八种场景：fixed、regex、双 pattern AND、
+include-all、kind、limit、空结果，以及清空 `PATH` 后两端同时走 fallback。
+完整比较 exit code、stdout 和 stderr。单元测试额外覆盖 fallback 忽略目录、
+workspace 路径逃逸、Python repr 标题和“符号过滤后再 limit”的顺序。
+
+本任务不声明 `issues/tests` 已完成；它们继续保留在 P0-CLI-B5。

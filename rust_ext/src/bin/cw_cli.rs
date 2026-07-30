@@ -12,6 +12,7 @@ use callwarden_core::cli::file_query::{
     format_file_symbols_output, format_symbol_location_output, query_local_file_symbols,
     query_local_symbol_location,
 };
+use callwarden_core::cli::grep::{query_local_grep, GrepOptions};
 use callwarden_core::cli::router::DaemonMode;
 use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
 use callwarden_core::cli::search::{
@@ -142,8 +143,27 @@ enum Commands {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
-    /// grep 搜索
-    Grep,
+    /// 带符号上下文的文本搜索
+    Grep {
+        /// 搜索模式；多个模式为同一行 AND 语义
+        #[arg(required = true, num_args = 1..)]
+        patterns: Vec<String>,
+        /// 将所有模式视为固定字符串
+        #[arg(long)]
+        fixed: bool,
+        /// 符号过滤后返回的最大匹配数
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+        /// 搜索路径；默认使用 workspace 根目录
+        #[arg(long)]
+        path: Option<PathBuf>,
+        /// 保留不属于任何符号的匹配
+        #[arg(long)]
+        include_all: bool,
+        /// 仅保留指定符号类型
+        #[arg(long)]
+        kind: Option<String>,
+    },
     /// 符号查询
     Symbol {
         /// 完整限定名
@@ -307,6 +327,26 @@ fn main() {
                 }
                 Commands::Query { name, file } => {
                     emit_result(run_query(&runtime, &name, &file));
+                }
+                Commands::Grep {
+                    patterns,
+                    fixed,
+                    limit,
+                    path,
+                    include_all,
+                    kind,
+                } => {
+                    emit_result(run_grep(
+                        &runtime,
+                        GrepOptions {
+                            patterns,
+                            fixed,
+                            limit,
+                            path,
+                            include_all,
+                            kind,
+                        },
+                    ));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -581,6 +621,45 @@ fn format_query_result(mut result: CommandResult, name: &str) -> CommandResult {
     }
 }
 
+fn run_grep(runtime: &RuntimeOptions, options: GrepOptions) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_grep(&conn, workspace_id, &options)
+        },
+        || Err("enterprise grep is not implemented by the daemon protocol".to_string()),
+    );
+    format_grep_result(result)
+}
+
+fn format_grep_result(mut result: CommandResult) -> CommandResult {
+    if result.exit_code != 0 {
+        return result;
+    }
+    let parsed = match serde_json::from_str::<serde_json::Value>(&result.stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot decode grep result: {error}"),
+                result.route,
+            );
+        }
+    };
+    match parsed.as_str() {
+        Some(stdout) => {
+            result.stdout = stdout.to_string();
+            result
+        }
+        None => CommandResult::failure(
+            1,
+            "grep result must be a JSON string".to_string(),
+            result.route,
+        ),
+    }
+}
+
 fn query_enterprise_status<F>(workspace_id: &str, mut call: F) -> Result<serde_json::Value, String>
 where
     F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
@@ -761,7 +840,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Stats => "stats",
         Status => "status",
         Search { .. } => "search",
-        Grep => "grep",
+        Grep { .. } => "grep",
         Symbol { .. } => "symbol",
         File { .. } => "file",
         Query { .. } => "query",
@@ -837,7 +916,14 @@ mod tests {
                 kind: None,
                 limit: 50,
             },
-            Commands::Grep,
+            Commands::Grep {
+                patterns: vec!["needle".to_string()],
+                fixed: false,
+                limit: 200,
+                path: None,
+                include_all: false,
+                kind: None,
+            },
             Commands::Symbol {
                 name: "a.alpha".to_string(),
             },
@@ -1030,6 +1116,38 @@ mod tests {
             query.command,
             Some(Commands::Query { name, file })
                 if name == "alpha" && file == "src/a.py"
+        ));
+    }
+
+    #[test]
+    fn parses_all_grep_options() {
+        let cli = Cli::try_parse_from([
+            "cw",
+            "grep",
+            "import",
+            "time",
+            "--fixed",
+            "--limit",
+            "7",
+            "--path",
+            "src",
+            "--include-all",
+            "--kind",
+            "fn",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Grep {
+                patterns,
+                fixed: true,
+                limit: 7,
+                path: Some(path),
+                include_all: true,
+                kind: Some(kind),
+            }) if patterns == ["import", "time"]
+                && path == PathBuf::from("src")
+                && kind == "fn"
         ));
     }
 
