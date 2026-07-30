@@ -1,14 +1,16 @@
 {
   "schema_version": "1.0",
-  "generated_at": "2026-07-25T15:03:16.294574+00:00",
+  "generated_at": "2026-07-29T07:54:09.281266+00:00",
   "task_id": "T-1784986236713-5c859568",
   "task_title": "P0-A 建立 16 语言 ParseFact 契约与可信放行门禁",
   "overall_status": "pass",
   "fail_closed": true,
+  "fail_closed_policy": "R1-P0-2: 任一门禁 failed>0 / skipped>0 / total==0 / Rust 扩展不可用 / 测试结果未收集 均判 fail（exit 1）。skipped 等同于未验证，禁止假绿；0 比较项无法构成契约。",
   "rust_extension_available": true,
+  "overall_fail_reasons": null,
   "environment": {
-    "python_version": "3.14.3",
-    "platform": "Windows-11-10.0.26200-SP0",
+    "python_version": "3.10.11",
+    "platform": "Windows-10-10.0.26200-SP0",
     "machine": "AMD64",
     "repo_root": "C:/git_work/callwarden"
   },
@@ -17,33 +19,33 @@
       "status": "pass",
       "description": "Step 2+3: symbol kind / signature / visibility 对齐门禁。验证 Rust 与 Python parser 输出的 kind、signature、visibility 一致（已知差异用 Counter 相减，残余差异必须为零）。",
       "test_file": "tests/test_rust_python_alignment.py",
-      "total": 92,
-      "passed": 92,
+      "total": 125,
+      "passed": 125,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 705.0,
+      "duration_ms": 999.0,
       "failed_tests": []
     },
     "identity_range": {
       "status": "pass",
       "description": "Step 4: symbol/call 身份与范围对齐门禁。验证 lexical parent（range-based 推导）、line range 有效性、Rust symbol_hash 确定性、call ordinal 对齐、ABI 缺口文档化、content 一致性、Rust depth 一致性。",
       "test_file": "tests/parser_contract/test_identity_range.py",
-      "total": 240,
-      "passed": 240,
+      "total": 320,
+      "passed": 320,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 1654.0,
+      "duration_ms": 4434.0,
       "failed_tests": []
     },
     "encoding_error": {
       "status": "pass",
       "description": "Step 5: encoding/error 契约门禁。验证 canonicalize_source 行为（BOM/CRLF/UTF-16/GBK）、空文件、语法错误、partial parse、大文件、no panic、error 语义。",
       "test_file": "tests/parser_contract/test_encoding_error.py",
-      "total": 70,
-      "passed": 70,
+      "total": 72,
+      "passed": 72,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 786.0,
+      "duration_ms": 1604.0,
       "failed_tests": []
     },
     "golden_contract": {
@@ -54,7 +56,7 @@
       "passed": 296,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 1531.0,
+      "duration_ms": 3840.0,
       "failed_tests": []
     },
     "baseline": {
@@ -65,7 +67,7 @@
       "passed": 6,
       "failed": 0,
       "skipped": 0,
-      "duration_ms": 53.0,
+      "duration_ms": 189.0,
       "failed_tests": []
     }
   },
@@ -103,15 +105,9 @@
         ]
       },
       "php": {
-        "reason": "Rust 不提取 PHP property 符号，Phase 1.4 待修复",
-        "count": 1,
-        "items": [
-          [
-            "value",
-            7,
-            7
-          ]
-        ]
+        "reason": "P0-C Step 2: Rust 已提取 PHP property 符号，与 Python 一致",
+        "count": 0,
+        "items": []
       },
       "cpp": {
         "reason": "Rust 额外提取 C++ namespace 符号（投影差异）",
@@ -121,6 +117,33 @@
             "example",
             4,
             31
+          ]
+        ]
+      },
+      "rust": {
+        "reason": "R15-P0-3: Rust 额外提取 impl 块内方法 new/distance（Python 不提取）",
+        "count": 2,
+        "items": [
+          [
+            "new",
+            9,
+            11
+          ],
+          [
+            "distance",
+            13,
+            17
+          ]
+        ]
+      },
+      "csharp": {
+        "reason": "R15-P0-3: Rust 额外提取 C# field value（Python 不提取 field）",
+        "count": 1,
+        "items": [
+          [
+            "value",
+            6,
+            6
           ]
         ]
       }
@@ -141,12 +164,12 @@
         ]
       },
       "scala": {
-        "reason": "Rust 不识别 Scala 对象方法调用，Phase 1.4 待修复",
+        "reason": "Rust 提取 new Calculator 构造调用，Python parser 不提取（Python 限制，P0-C Step 3 修复）",
         "count": 1,
         "items": [
           [
-            "add",
-            17
+            "Calculator",
+            16
           ]
         ]
       },
@@ -159,12 +182,52 @@
             25
           ]
         ]
+      },
+      "typescript": {
+        "reason": "Rust 提取 new User(...) 构造调用，Python parser 不提取（Python 限制，P0-C Step 1 修复）",
+        "count": 1,
+        "items": [
+          [
+            "User",
+            16
+          ]
+        ]
+      },
+      "javascript": {
+        "reason": "Rust 提取 new User(...) 构造调用，Python parser 不提取（Python 限制，P0-C Step 1 修复）",
+        "count": 1,
+        "items": [
+          [
+            "User",
+            16
+          ]
+        ]
+      },
+      "swift": {
+        "reason": "Swift 参数标签调用的 Python/Rust 投影差异",
+        "count": 1,
+        "items": [
+          [
+            "getName",
+            5
+          ]
+        ]
+      },
+      "rust": {
+        "reason": "R15-P0-3: Rust 额外提取 impl 方法内调用 distance（Python 不提取 impl 方法）",
+        "count": 1,
+        "items": [
+          [
+            "distance",
+            23
+          ]
+        ]
       }
     },
     "kind_diffs": {
       "ruby": {
-        "reason": "Rust 把 Ruby 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
-        "count": 6,
+        "reason": "P0-C Step 5: Rust 区分 constructor/method/function，Python 仍用 method",
+        "count": 4,
         "items": [
           [
             "initialize",
@@ -172,61 +235,30 @@
             "method"
           ],
           [
-            "add",
-            6,
-            "method"
-          ],
-          [
-            "main",
-            12,
-            "method"
-          ],
-          [
             "initialize",
             2,
-            "fn"
-          ],
-          [
-            "add",
-            6,
-            "fn"
+            "constructor"
           ],
           [
             "main",
             12,
-            "fn"
+            "method"
+          ],
+          [
+            "main",
+            12,
+            "function"
           ]
         ]
       },
       "scala": {
-        "reason": "Rust 把 Scala 方法标记为 'fn'，Python 标记为 'method'（Phase 2.7 待修复）",
-        "count": 4,
-        "items": [
-          [
-            "add",
-            8,
-            "method"
-          ],
-          [
-            "main",
-            15,
-            "method"
-          ],
-          [
-            "add",
-            8,
-            "fn"
-          ],
-          [
-            "main",
-            15,
-            "fn"
-          ]
-        ]
+        "reason": "P0-C Step 3: Rust Scala 方法 kind='method'，与 Python 一致",
+        "count": 0,
+        "items": []
       },
       "cpp": {
-        "reason": "Rust 把 C++ 构造器/方法标记为 'fn'，Python 标记为 'method'；Rust 额外提取 namespace（投影差异，Phase 2.6/2.7 待修复）",
-        "count": 5,
+        "reason": "P0-C Step 4: Rust kind 对齐 golden（constructor/method/function），Python 仍用 fn/method",
+        "count": 7,
         "items": [
           [
             "Point",
@@ -234,19 +266,29 @@
             "method"
           ],
           [
-            "distance",
-            10,
-            "method"
-          ],
-          [
             "Point",
             8,
+            "constructor"
+          ],
+          [
+            "add",
+            19,
             "fn"
           ],
           [
-            "distance",
-            10,
+            "add",
+            19,
+            "function"
+          ],
+          [
+            "main",
+            23,
             "fn"
+          ],
+          [
+            "main",
+            23,
+            "function"
           ],
           [
             "example",
@@ -256,7 +298,7 @@
         ]
       },
       "swift": {
-        "reason": "Rust 把 Swift 函数标记为 'fn'，Python 标记为 'function'（Phase 2.7 待修复）",
+        "reason": "P0-C Step 5: Rust kind='method'（对齐 golden），Python 仍为 'function'",
         "count": 6,
         "items": [
           [
@@ -265,46 +307,51 @@
             "function"
           ],
           [
-            "getName",
-            7,
-            "function"
-          ],
-          [
-            "draw",
-            13,
-            "function"
-          ],
-          [
             "findUser",
             4,
-            "fn"
+            "method"
           ],
           [
             "getName",
             7,
-            "fn"
+            "function"
+          ],
+          [
+            "getName",
+            7,
+            "method"
           ],
           [
             "draw",
             13,
-            "fn"
+            "function"
+          ],
+          [
+            "draw",
+            13,
+            "method"
           ]
         ]
       },
       "php": {
-        "reason": "Rust 不提取 PHP property 符号，Python 提取为 'property'（Phase 2.2 待修复）",
-        "count": 1,
+        "reason": "P0-C Step 2: Rust __construct kind='constructor'（对齐 golden），Python 仍为 'method'",
+        "count": 2,
         "items": [
           [
-            "value",
-            7,
-            "property"
+            "__construct",
+            9,
+            "method"
+          ],
+          [
+            "__construct",
+            9,
+            "constructor"
           ]
         ]
       },
       "typescript": {
-        "reason": "Python parser 重复提取 TypeScript 符号（每个 2 次），Rust 1 次（Python 限制）",
-        "count": 5,
+        "reason": "P0-C Step 1: Rust kind 对齐 golden（function/constructor），Python 仍用 fn/method 且重复提取",
+        "count": 11,
         "items": [
           [
             "User",
@@ -312,14 +359,19 @@
             "class"
           ],
           [
+            "greet",
+            6,
+            "method"
+          ],
+          [
             "constructor",
             4,
             "method"
           ],
           [
-            "greet",
-            6,
-            "method"
+            "constructor",
+            4,
+            "constructor"
           ],
           [
             "add",
@@ -327,9 +379,82 @@
             "fn"
           ],
           [
+            "add",
+            11,
+            "function"
+          ],
+          [
             "main",
             15,
             "fn"
+          ],
+          [
+            "main",
+            15,
+            "function"
+          ]
+        ]
+      },
+      "javascript": {
+        "reason": "P0-C Step 1: Rust kind 对齐 golden（function/constructor），Python 仍用 fn/method",
+        "count": 6,
+        "items": [
+          [
+            "constructor",
+            2,
+            "method"
+          ],
+          [
+            "constructor",
+            2,
+            "constructor"
+          ],
+          [
+            "add",
+            11,
+            "fn"
+          ],
+          [
+            "add",
+            11,
+            "function"
+          ],
+          [
+            "main",
+            15,
+            "fn"
+          ],
+          [
+            "main",
+            15,
+            "function"
+          ]
+        ]
+      },
+      "rust": {
+        "reason": "R15-P0-3: Rust 额外提取 impl 块内方法 new/distance（Python 不提取）",
+        "count": 2,
+        "items": [
+          [
+            "new",
+            9,
+            "method"
+          ],
+          [
+            "distance",
+            13,
+            "method"
+          ]
+        ]
+      },
+      "csharp": {
+        "reason": "R15-P0-3: Rust 额外提取 C# field value（Python 不提取 field）",
+        "count": 1,
+        "items": [
+          [
+            "value",
+            6,
+            "field"
           ]
         ]
       }
@@ -352,8 +477,8 @@
         ]
       },
       "rust": {
-        "reason": "Python 把 impl 块标记为 private，Rust 标记为 public（投影差异）",
-        "count": 2,
+        "reason": "Python 把 impl 块标记为 private，Rust 标记为 public（投影差异）；R15-P0-3: Rust 额外提取 impl 块内方法 new/distance（Python 不提取）",
+        "count": 4,
         "items": [
           [
             "Point",
@@ -363,6 +488,16 @@
           [
             "Point",
             8,
+            "public"
+          ],
+          [
+            "new",
+            9,
+            "public"
+          ],
+          [
+            "distance",
+            13,
             "public"
           ]
         ]
@@ -487,12 +622,17 @@
         ]
       },
       "php": {
-        "reason": "Rust 不提取 PHP property value，Python 提取为 private（与 KNOWN_SYMBOL_DIFFS 同步）",
+        "reason": "P0-C Step 2: Rust 已提取 PHP property visibility，与 Python 一致",
+        "count": 0,
+        "items": []
+      },
+      "csharp": {
+        "reason": "R15-P0-3: Rust 额外提取 C# field value（visibility=private，Python 不提取 field）",
         "count": 1,
         "items": [
           [
             "value",
-            7,
+            6,
             "private"
           ]
         ]
@@ -536,21 +676,21 @@
     "fail_closed_policy": "任何门禁失败或未知差异导致 exit code 1，CI 必须拦截。已知差异白名单不计入失败，但必须经评审确认并在 known_differences 中显式记录。"
   },
   "languages_covered": [
-    "rust",
-    "typescript",
-    "javascript",
-    "python",
-    "kotlin",
-    "go",
-    "java",
     "c",
     "cpp",
     "csharp",
-    "ruby",
-    "php",
-    "swift",
-    "scala",
+    "elixir",
+    "go",
     "hcl",
-    "elixir"
+    "java",
+    "javascript",
+    "kotlin",
+    "php",
+    "python",
+    "ruby",
+    "rust",
+    "scala",
+    "swift",
+    "typescript"
   ]
 }

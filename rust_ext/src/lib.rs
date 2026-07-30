@@ -53,6 +53,8 @@ mod batch_build_query;
 mod batch_calls_query;
 // Phase 2-4: 批量文件历史版本写入 PyO3 暴露层（batch_save_file_versions）
 mod batch_file_versions_query;
+// Phase 2-6-3: 批量文件注册 PyO3 暴露层（batch_register_files）
+mod batch_register_query;
 // Phase 3-4-1: StagingLog PyO3 暴露层（append/read/read_pending/mark_applied_batch/mark_failed/
 //             truncate/compact_applied/stats/next_lsn）
 mod staging_log_query;
@@ -72,6 +74,23 @@ mod languages;
 pub mod snapshot;
 mod toolchain;
 mod watcher;
+// Phase 6-2: MinHash/LSH clone detection 核心计算（FNV-1a + 128 perm + LSH 分桶）
+// 契约：docs/design/phase6-2-minhash-lsh-clone-detection-contract.md
+mod clone_detection;
+// Phase 6-1 P2/P3: cross_layer_impact + defect_correlation Rust 核心
+mod impact;
+// Phase 6-3 P1: 向量加载 + TopK 排序 + 阈值过滤 Rust 核心
+// 契约：docs/design/phase6-3-vector-cosine-test-association-contract.md
+mod vector_topk;
+// Phase 4-1: UDS framing/SO_PEERCRED/RPC dispatch PyO3 暴露层（protocol_constants/
+//            protocol_encode_payload/protocol_decode_payload/protocol_build_frame/
+//            protocol_parse_header/protocol_validate_message_size/protocol_parse_response/
+//            protocol_make_ok_response/protocol_make_error_response/peercred_is_available/
+//            peercred_info/dispatch_list_methods/dispatch_list_error_codes/dispatch_is_admin_method）
+mod daemon_query;
+// Phase 5-1: CLI 配置加载 + 只读命令识别 PyO3 暴露层
+// 契约：docs/design/phase5-1-cli-config-contract.md
+pub mod cli;
 
 // ============================================
 // P29: 数据结构定义
@@ -1675,6 +1694,20 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<graph::GraphStore>()?;
     m.add_class::<graph::CallersBatch>()?; // P10: get_callers 懒转换批量结果
     m.add_class::<graph::SymbolSearchBatch>()?; // P11: search_symbols 懒转换批量结果
+    m.add_class::<graph::BlastRadiusBatch>()?; // Phase 6-1: blast_radius 懒转换批量结果
+    // Phase 6-2: MinHash/LSH clone detection 核心
+    m.add_function(wrap_pyfunction!(clone_detection::py_minhash_signature, m)?)?;
+    m.add_function(wrap_pyfunction!(clone_detection::py_lsh_buckets, m)?)?;
+    m.add_function(wrap_pyfunction!(clone_detection::py_batch_minhash_signatures, m)?)?;
+    m.add_function(wrap_pyfunction!(clone_detection::py_lsh_candidate_pairs, m)?)?;
+    m.add_function(wrap_pyfunction!(clone_detection::clone_detection_params, m)?)?;
+    m.add_function(wrap_pyfunction!(clone_detection::py_detect_clones_core, m)?)?;
+    // Phase 6-1 P2/P3: cross_layer_impact + defect_correlation Rust 短路
+    m.add_function(wrap_pyfunction!(impact::py_cross_layer_impact, m)?)?;
+    m.add_function(wrap_pyfunction!(impact::py_defect_correlation, m)?)?;
+    // Phase 6-3 P1: 向量加载 + TopK 排序 Rust 短路
+    m.add_function(wrap_pyfunction!(vector_topk::py_load_embeddings_from_blobs, m)?)?;
+    m.add_function(wrap_pyfunction!(vector_topk::py_vector_topk, m)?)?;
                                                 // Phase 4: GraphSnapshot + ArcSwap 原子发布
     m.add_class::<snapshot::PySnapshotManager>()?;
     m.add_class::<snapshot::PySnapshotCache>()?;
@@ -1732,6 +1765,8 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(batch_calls_query::batch_resolve_and_save_calls, m)?)?;
     // Phase 2-4: 批量文件历史版本写入
     m.add_function(wrap_pyfunction!(batch_file_versions_query::batch_save_file_versions, m)?)?;
+    // Phase 2-6-3: 批量文件注册
+    m.add_function(wrap_pyfunction!(batch_register_query::batch_register_files, m)?)?;
     // Phase 3-4-1: StagingLog PyO3 暴露层（9 个 API）
     m.add_function(wrap_pyfunction!(staging_log_query::staging_log_append, m)?)?;
     m.add_function(wrap_pyfunction!(staging_log_query::staging_log_read, m)?)?;
@@ -1755,6 +1790,121 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Phase 2-6-1: 增量构建 PyO3 暴露层（compute_and_apply_symbol_diff + load_file_result_from_db）
     m.add_function(wrap_pyfunction!(incremental_build_query::compute_and_apply_symbol_diff, m)?)?;
     m.add_function(wrap_pyfunction!(incremental_build_query::load_file_result_from_db, m)?)?;
+    // Phase 4-1: UDS framing/SO_PEERCRED/RPC dispatch PyO3 暴露层（14 个 API）
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_constants, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_encode_payload, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_decode_payload, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_build_frame, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_parse_header, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_validate_message_size, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_parse_response, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_make_ok_response, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::protocol_make_error_response, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::peercred_is_available, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::peercred_info, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::dispatch_list_methods, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::dispatch_list_error_codes, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::dispatch_is_admin_method, m)?)?;
+    // Phase 4-2: UID/workspace ACL、路径安全与资源预算（10 个 PyO3 API）
+    m.add_function(wrap_pyfunction!(daemon_query::validate_owned_path, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::check_path_within_workspace, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::is_admin_uid, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::current_daemon_uid_py, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::check_workspace_owner, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::budget_create, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::budget_preset, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::budget_tracker_new, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::budget_tracker_visit_node, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::budget_tracker_truncate_results, m)?)?;
+
+    // Phase 4-3: health_check_all PyO3 暴露（1 个 PyO3 API）
+    // 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.1
+    m.add_function(wrap_pyfunction!(daemon_query::health_check_all, m)?)?;
+
+    // Phase 4-3 P1: metrics 纯计算（2 个 PyO3 API）
+    // 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.2
+    m.add_function(wrap_pyfunction!(daemon_query::metrics_percentile, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::metrics_format_labels, m)?)?;
+
+    // Phase 4-3 P2: audit 纯计算（2 个 PyO3 API）
+    // 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.3
+    m.add_function(wrap_pyfunction!(daemon_query::audit_canonical_json, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::audit_compute_signature, m)?)?;
+
+    // Phase 4-3 P3: backup 纯计算（2 个 PyO3 API）
+    // 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.4
+    m.add_function(wrap_pyfunction!(daemon_query::backup_compute_file_sha256, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon_query::backup_compute_meta_checksum, m)?)?;
+
+    // Phase 5-1: CLI 配置加载 + 只读命令识别 PyO3 暴露（6 个 API）
+    // 契约：docs/design/phase5-1-cli-config-contract.md §3.1 + §3.3
+    m.add_function(wrap_pyfunction!(cli::config::platform_paths_detect, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::config::load_config_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::config::config_explain_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::config::check_role_supported_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::readonly::is_readonly_command_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::readonly::is_readonly_args_py, m)?)?;
+
+    // Phase 5-1 B: 路由决策 PyO3 暴露（5 个 API）
+    // 契约：docs/design/phase5-1b-router-contract.md §3
+    m.add_function(wrap_pyfunction!(cli::router::get_daemon_mode_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::router::is_daemon_required_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::router::is_daemon_available_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::router::daemon_socket_path_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::router::route_command_py, m)?)?;
+
+    // Phase 5-3: 兼容输出层 PyO3 暴露（13 个 API）
+    // 契约：docs/design/phase5-3-output-layer-contract.md §3
+    m.add_function(wrap_pyfunction!(cli::output::should_use_color_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::should_use_color_auto_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::colorize_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::cprint_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::success_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::error_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::warning_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::info_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::dim_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::bold_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::format_duration_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::format_size_py, m)?)?;
+    m.add_function(wrap_pyfunction!(cli::output::json_dumps_pretty_py, m)?)?;
+
+    // Phase 5-1 C: stats 子命令业务逻辑 PyO3 暴露（1 个 API）
+    // 契约：docs/design/phase5-1c-stats-vertical-slice-contract.md §3
+    m.add_function(wrap_pyfunction!(cli::stats::stats_command_run_py, m)?)?;
+
+    // Phase 5-2 Slice 1: Daemon RPC Client PyO3 暴露（2 个跨平台 + 1 个 Unix-only API）
+    // 跨平台：build_request_py / parse_rpc_response_py（Windows 可测）
+    // Unix-only：daemon_client_call_py（UDS 客户端，仅 Linux/macOS）
+    // 契约：docs/design/phase5-2-slice1-daemon-client-contract.md §3
+    m.add_function(wrap_pyfunction!(daemon::client::build_request_py, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon::client::parse_rpc_response_py, m)?)?;
+    #[cfg(unix)]
+    {
+        m.add_function(wrap_pyfunction!(daemon::client::daemon_client_call_py, m)?)?;
+    }
+
+    // Phase 5-2 Slice 2: query RPC 参数构建 PyO3 暴露（1 个跨平台 API）
+    // 对齐 Python cli/daemon_commands.py:run_daemon_command 的 query 分支
+    m.add_function(wrap_pyfunction!(daemon::client::build_query_request_py, m)?)?;
+
+    // Phase 5-2 Slice 3: 简单 RPC 命令参数构建 PyO3 暴露（1 个跨平台 API）
+    // 对齐 Python cli/daemon_commands.py:run_daemon_command 的 list/status/health/schema-version 分支
+    m.add_function(wrap_pyfunction!(daemon::client::build_simple_request_py, m)?)?;
+
+    // Phase 5-2 Slice 5: 剩余 RPC 命令参数构建 PyO3 暴露（1 个跨平台 API）
+    // 对齐 Python cli/daemon_commands.py:run_daemon_command 的 register/backup/restore/gc/snapshot/mount 分支
+    m.add_function(wrap_pyfunction!(daemon::client::build_rpc_request_py, m)?)?;
+
+    // Phase 5-2 Slice 4: snapshot.publish 参数构建 PyO3 暴露（1 个跨平台 API）
+    // 对齐 Python UnixDaemonRpcClient.publish_snapshot 的参数构建部分
+    // FD 打开和 SCM_RIGHTS 传递是 Unix-only 副作用，不暴露给 Python
+    m.add_function(wrap_pyfunction!(daemon::client::build_publish_params_py, m)?)?;
+
+    // Phase 5-2 Slice 6: agent session 参数构建 PyO3 暴露（2 个跨平台 API）
+    // 对齐 Python server/agent_protocol.py 的 connect/refresh 参数构建
+    m.add_function(wrap_pyfunction!(daemon::client::build_connect_params_py, m)?)?;
+    m.add_function(wrap_pyfunction!(daemon::client::build_refresh_params_py, m)?)?;
     Ok(())
 }
 

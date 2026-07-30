@@ -6624,6 +6624,11 @@ def _handle_stats(args, db):
     """处理 stats 子命令（统计信息）
 
     等价 flag: --stats
+
+    Phase 5-1 C wire-production: Rust 短路 + fail-soft 降级
+    默认走 Rust PyO3 API（callwarden_core.stats_command_run_py），
+    rollback_config 中 feature=rust_cli_stats 置为 1 时回退 Python。
+    Rust 失败时 fail-soft 降级到 Python json.dumps 路径。
     """
     parser = argparse.ArgumentParser(
         prog="cw stats",
@@ -6632,6 +6637,21 @@ def _handle_stats(args, db):
     )
     parser.parse_args(args)
     stats = db.get_stats()
+
+    # Phase 5-1 C wire-production: Rust 短路
+    try:
+        from callwarden_core import stats_command_run_py
+        stats_json = json.dumps(stats, ensure_ascii=False)
+        exit_code, stdout, stderr = stats_command_run_py(stats_json)
+        if stdout:
+            print(stdout)
+        if stderr:
+            print(stderr, file=sys.stderr)
+        return exit_code == 0
+    except (ImportError, Exception):
+        pass  # fail-soft → 降级 Python 路径
+
+    # Python 实现（fail-soft 降级路径）
     print(json.dumps(stats, indent=2, ensure_ascii=False))
     return True
 
@@ -11995,10 +12015,22 @@ def run_client_mode(argv: list) -> int:
     平台门禁：非 Linux 直接 return 2，与 cw-daemon / cw-agent 一致
     （UDS + SCM_RIGHTS 是 Linux 特有，Windows/macOS 上 daemon 不可用）。
 
+    Phase 5-2 Slice 7：wire-production 路由整合
+    ------------------------------------------------------------
+    默认走 Python `run_daemon_command`（保持真相源 + 差分基线稳定）。
+    设置 `CW_USE_RUST_CLIENT=1` 时探测 Rust cw-client binary，存在则 exec，
+    不存在或执行失败时降级回 Python（fail-soft）。
+
+    回滚机制：
+    - 清除 `CW_USE_RUST_CLIENT` 环境变量即回滚到 Python（即时生效）
+    - rollback_config 表已登记此功能的回滚入口（见 wire-production 文档）
+    - rollback_flag=1 时强制走 Python（通过 `is_feature_rolled_back` 查询）
+
     实现委托 `run_daemon_command(argv, include_serve=False)`，复用 daemon_commands
     已实现的 31 个 RPC 方法 CLI 调用（ping/register/list/status/publish/query/
     health/schema-version/backup/restore/gc-cas/gc-snapshots/mount/toolchain/mode）。
     """
+    import os as _os
     import sys as _sys
     if _sys.platform != "linux":
         print("ERROR: cw-client is only supported on Linux (UDS + SCM_RIGHTS).",
@@ -12016,8 +12048,97 @@ def run_client_mode(argv: list) -> int:
         print("  Use 'cw-client --help' for details.")
         return 0
 
+    # Phase 5-2 Slice 7: Rust 加速路径（环境变量开关，默认 Python）
+    if _os.environ.get("CW_USE_RUST_CLIENT") == "1":
+        rc = _try_exec_rust_cw_client(argv)
+        if rc is not None:
+            return rc
+        # Rust binary 不可用或执行失败，降级回 Python（fail-soft）
+        print("WARNING: CW_USE_RUST_CLIENT=1 but Rust cw-client unavailable; "
+              "falling back to Python run_daemon_command",
+              file=_sys.stderr)
+
     from callwarden.cli.daemon_commands import run_daemon_command
     return run_daemon_command(argv, include_serve=False)
+
+
+def _try_exec_rust_cw_client(argv: list):
+    """Phase 5-2 Slice 7: 尝试 exec Rust cw-client binary。
+
+    返回值：
+    - int: Rust binary 执行的退出码（成功 exec 时）
+    - None: Rust binary 不可用或 exec 失败（应降级回 Python）
+    """
+    import os as _os
+    import subprocess as _subprocess
+    import sys as _sys
+
+    binary = _find_cw_client_binary()
+    if binary is None:
+        return None
+
+    # 透传环境变量 + 参数
+    env = _os.environ.copy()
+    try:
+        proc = _subprocess.run([str(binary), *argv], env=env)
+        return proc.returncode
+    except OSError as e:
+        print(f"WARNING: failed to exec Rust cw-client binary: {e}",
+              file=_sys.stderr)
+        return None
+
+
+def _find_cw_client_binary():
+    """Phase 5-2 Slice 7: 查找 Rust cw-client 二进制。
+
+    查找顺序（与 `_find_cw_daemon_binary` 对齐）：
+    1. CW_CLIENT_BIN 环境变量（显式覆盖）
+    2. PATH 中的 cw-client（生产安装，连字符命名）
+    3. rust_ext/target/release/cw-client（cargo build --release）
+    4. rust_ext/target/debug/cw-client（cargo build）
+
+    返回 Path 或 None。
+    """
+    import os as _os
+    import shutil as _shutil
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    # 1. 显式环境变量覆盖
+    env_bin = _os.environ.get("CW_CLIENT_BIN")
+    if env_bin and _os.path.isfile(env_bin) and _os.access(env_bin, _os.X_OK):
+        return _Path(env_bin)
+
+    # 2. PATH 查找（生产安装名为 cw-client，连字符命名）
+    found = _shutil.which("cw-client")
+    if found:
+        return _Path(found)
+
+    # PyInstaller 冻结包内的 binary
+    if getattr(_sys, "frozen", False):
+        roots = []
+        meipass = getattr(_sys, "_MEIPASS", None)
+        if meipass:
+            roots.append(_Path(meipass))
+        roots.append(_Path(_sys.executable).resolve().parent)
+        for root in roots:
+            candidate = root / "cw-client"
+            if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
+                return candidate
+
+    # 3./4. 开发构建路径（仓库根目录下的 rust_ext/target/）
+    # cargo 生成的 binary 名遵循 Cargo.toml [[bin]] name（cw-client，连字符）
+    try:
+        root = _Path(__file__).resolve().parent.parent
+        rust_target = root / "rust_ext" / "target"
+        for profile in ("release", "debug"):
+            candidate = rust_target / profile / "cw-client"
+            if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
+                return candidate
+    except Exception:
+        pass
+
+    return None
 
 
 def run_agent_mode(argv: list) -> int:

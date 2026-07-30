@@ -1,10 +1,10 @@
 # Rust-only Parser 切换前后发布物体积报告
 
-> 状态：基线已锁定，待 CI 同 runner 实测填充  
-> 版本：v1  
-> 日期：2026-07-25  
+> 状态：Windows amd64 本地实测已填充，Linux/macOS 待 CI 同 runner 实测填充  
+> 版本：v2  
+> 日期：2026-07-30（Windows 本地实测）  
 > 关联设计：[rust-only-parser-cutover-plan.md](rust-only-parser-cutover-plan.md) §8 Phase 5 步骤 7 + §10 性能与包体门禁  
-> 关联任务：`T-1784986236714-d99b0b76` Step #5 `publish_before_after_size_report`  
+> 关联任务：`T-1785076592821-6b0d7555` Step #5 `collect_r11_release_evidence`  
 > 生成工具：`python release/build.py --pyinstaller` → `release/inspect_pyinstaller_bundle.py`
 
 ## 1. 报告目的
@@ -95,13 +95,26 @@ tree-sitter distribution 实际字节数需以 bundle inspector 报告为准。
 > 基线数据理论上可从该 commit 拉起 CI 收集，但 R5-R10 修复未推送前
 > `after` 数据无法产出。下表待 R5-R10 推送并触发 CI 后由 release manager
 > 填入。
+>
+> **Windows amd64 本地估算基线（2026-07-30）**：Windows 行使用本地 site-packages
+> 实测的 tree-sitter + 16 grammar wheel 体积作为 before 估算（31.11 MB /
+> 29.67 MiB），加上 callwarden.parsers 源码 0.80 MiB，合计 30.47 MiB。
+> 此为 Python 安装目录单文件大小，PyInstaller bundle 中的实际字节数需以
+> CI 真实构建的 bundle inspector 报告为准。
 
 | 平台 | runner | commit | unpacked_bytes | unpacked_mb | tree_sitter bytes | tree_sitter_<lang> bytes | callwarden_parsers bytes | 压缩包 bytes | 压缩包 MiB |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
 | Linux x86_64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
 | Linux aarch64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
-| Windows amd64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
+| Windows amd64 | local-dev | 9409ede (基线估算) | 140,872,764 (估算) | 134.34 | 251,658 | 32,490,045 | 838,860 | _待填充_ | _待填充_ |
 | macOS arm64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
+
+> **Windows 估算说明**：
+> - `unpacked_bytes` = after 实测 107,417,456 + tree-sitter wheel 32,616,448 + callwarden.parsers 838,860 = 140,872,764 bytes ≈ 134.34 MB
+> - tree-sitter bytes: 0.24 MB (核心) × 1,048,576 = 251,658 bytes（5 文件）
+> - tree_sitter_<lang> bytes: 30.97 MB × 1,048,576 = 32,490,045 bytes（141 文件，grammar .pyd）
+> - callwarden_parsers bytes: 0.80 MiB × 1,048,576 = 838,860 bytes（57 文件，源码 .py）
+> - 压缩包待 CI 同 runner 实测
 
 ## 4. 切换后（after）数据
 
@@ -127,12 +140,21 @@ parser/grammar，并由 bundle inspector 的文件级 fail closed 检查兜底�
 > 才能产出真实的 `after` 数据。Windows frozen 三入口 smoke 已验证修复后可启动
 > （R5：移除 db_base.py 顶层 parsers 导入）。本表待 CI 产出后由 release manager
 > 填入。
+>
+> **Windows amd64 本地实测（2026-07-30）**：使用本地 Windows 11 + Python 3.14
+> 执行 `python release/build.py --pyinstaller` 产出真实 `after` 数据。bundle
+> inspector 报告 `bundle-report-local.json` 已生成，所有门禁通过：
+> - `tree_sitter` distribution: 0 文件 / 0 字节
+> - `tree_sitter_<lang>` × 16: 每个 0 文件 / 0 字节
+> - `callwarden_parsers` distribution: 0 文件 / 0 字节
+> - `callwarden_core` distribution: 1 文件 / 35,835,392 字节（保留）
+> - `errors`: []
 
 | 平台 | runner | commit | unpacked_bytes | unpacked_mb | callwarden_core bytes | python_runtime bytes | 压缩包 bytes | 压缩包 MiB |
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | Linux x86_64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
 | Linux aarch64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
-| Windows amd64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
+| Windows amd64 | local-dev | 6b0d7555 (R11 修复后) | 107,417,456 | 102.44 | 35,835,392 | 71,582,064 | 40,850,432 | 38.96 |
 | macOS arm64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
 
 ## 5. 前后差异（gate 验证）
@@ -152,8 +174,15 @@ archived_delta = before_archived_bytes - after_archived_bytes
 |---|---:|:---:|---:|:---:|:---:|:---:|
 | Linux x86_64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
 | Linux aarch64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
-| Windows amd64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
+| Windows amd64 | 31.90 (估算) | ✅ PASS (≥25) | _待填充_ (需 CI 同 runner 压缩 before) | ⏳ 待 CI | ✅ PASS (35.8 MB 保留) | ✅ unpacked+core PASS, archived 待 CI |
 | macOS arm64 | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ | _待填充_ |
+
+> **Windows 门禁验证说明（2026-07-30 本地估算）**：
+> - `unpacked_delta` = before 估算 134.34 MiB − after 实测 102.44 MiB = **31.90 MiB**（≥25 MiB 门禁 ✅）
+>   - 注：before 为本地 site-packages 实测估算，CI 真实构建可能略有差异
+> - `archived_delta`：before 压缩包需 CI 同 runner 实测（本地无法精确复现 CI 压缩参数）
+> - `callwarden_core` 保留：after 实测 35,835,392 字节（35.8 MB），1 文件 ✅
+> - parser distribution 零容忍：tree_sitter / tree_sitter_<lang> × 16 / callwarden_parsers 均为 0 文件 ✅
 
 ### 5.3 理论预期（基于 §3.1 基线）
 

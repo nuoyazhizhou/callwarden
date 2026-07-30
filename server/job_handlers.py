@@ -150,6 +150,20 @@ class _DetectOnlyWrapper:
         bound = CloneDetectionMixin._detect_clone_groups_core.__get__(self, type(self))
         return bound(*args, **kwargs)
 
+    def _detect_clone_groups_via_rust(self, *args, **kwargs):
+        # Phase 6-2：_detect_clone_groups_core 走 Rust 短路时调用此方法。
+        # _DetectOnlyWrapper 不继承 CloneDetectionMixin，需委托到 Mixin 方法。
+        from ..db.db_clone_detection import CloneDetectionMixin
+        bound = CloneDetectionMixin._detect_clone_groups_via_rust.__get__(self, type(self))
+        return bound(*args, **kwargs)
+
+    def is_feature_rolled_back(self, feature_name: str) -> bool:
+        # Phase 6-2：_detect_clone_groups_core 调用此方法判断是否走 Rust 短路。
+        # _DetectOnlyWrapper 不继承 RollbackConfigMixin，需委托查询 rollback_config 表。
+        from ..db.db_rollback_config import RollbackConfigMixin
+        bound = RollbackConfigMixin.is_feature_rolled_back.__get__(self, type(self))
+        return bound(feature_name)
+
     def detect_clones_to_groups(self, *args, **kwargs):
         from ..db.db_clone_detection import CloneDetectionMixin
         bound = CloneDetectionMixin.detect_clones_to_groups.__get__(self, type(self))

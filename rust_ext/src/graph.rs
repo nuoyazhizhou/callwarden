@@ -328,6 +328,23 @@ impl CallGraph {
         let end = self.callee_position_offsets[i + 1] as usize;
         &self.callee_positions[start..end]
     }
+
+    /// 返回指定 callee_id 对应的 forward_edges 位置切片。
+    ///
+    /// Phase 6-1：blast_radius BFS 反向遍历的底层支撑。
+    /// 通过 backward_offsets CSR 索引 O(1) 定位区间，
+    /// backward_positions[start..end] 给出 forward_edges 的位置。
+    /// 调用方通过 `forward_edges[pos].caller_id` 得到调用方 symbol_id。
+    #[inline]
+    pub fn positions_for_callee_id(&self, callee_id: u32) -> &[u32] {
+        let i = callee_id as usize;
+        if i + 1 >= self.backward_offsets.len() {
+            return &[];
+        }
+        let start = self.backward_offsets[i];
+        let end = self.backward_offsets[i + 1];
+        &self.backward_positions[start..end]
+    }
 }
 
 // ============================================
@@ -1565,6 +1582,145 @@ impl GraphStore {
 
         Ok((symbol_count, edge_count))
     }
+
+    /// Phase 6-1: 变更影响半径（BFS 反向遍历调用图）
+    ///
+    /// 从源符号 symbol_id 出发，通过 CallGraph.backward_offsets CSR 索引
+    /// 逐层反向查找所有调用方（who calls this symbol），BFS 到 depth 层。
+    ///
+    /// 与 Python `ImpactMixin.blast_radius` 行为一致：
+    /// - 第 0 层为源符号自身
+    /// - qualified_name + symbol_id 双重去重（对齐 Python 的 qn + hash 去重）
+    /// - 仅 qualified_name 非空的符号进入下一层遍历（对齐 Python `if qn:` 分支）
+    /// - 环路检测：visited_qn + visited_id 保证 BFS 终止
+    ///
+    /// 性能优化：
+    /// - CSR 索引 O(1) 定位 + O(degree) 遍历，零 SQL I/O
+    /// - visited_id 用 Vec<bool> 索引访问，无哈希开销
+    /// - BFS 队列用 SoA 布局（sym_ids + depths 分开存储），缓存友好
+    /// - 仅在 Python 访问时才构造 PyDict（BlastRadiusBatch 懒转换）
+    ///
+    /// 入参：
+    /// - symbol_id: 源符号的 symbol_id（Python 端先 SQL 查 symbol_hash → id）
+    /// - depth: BFS 遍历最大深度（默认 3）
+    ///
+    /// 返回 BlastRadiusBatch（PyClass，懒转换为 List[Dict]）
+    #[pyo3(signature = (symbol_id, depth=3))]
+    fn blast_radius(slf: &Bound<Self>, py: Python<'_>, symbol_id: u32, depth: usize) -> PyResult<BlastRadiusBatch> {
+        let self_ref = slf.borrow();
+        let symbols = self_ref.symbols.as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+        let calls = self_ref.calls.as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
+
+        // 验证源符号存在
+        let source_sym = symbols.by_id.get(symbol_id as usize)
+            .filter(|s| s.id == symbol_id && (s.name_len != 0 || s.qname_len != 0))
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "symbol_id {} not found in store", symbol_id
+            )))?;
+
+        let sym_count = symbols.by_id.len();
+
+        // 双重去重：visited_id 用 Vec<bool> O(1) 索引；
+        // visited_qn 用 HashSet<&str> 引用 qname_pool，零 String 分配
+        // （对齐 Python visited_qn + visited_hash 语义，但 GraphStore 无 symbol_hash 字段，
+        //   用 symbol_id 替代 hash 做唯一标识去重，效果一致）
+        let mut visited_id: Vec<bool> = vec![false; sym_count];
+        let mut visited_qn: HashSet<&str> = HashSet::new();
+
+        // 标记源符号已访问
+        visited_id[symbol_id as usize] = true;
+        let source_qn = symbols.sym_qname(source_sym);
+        if !source_qn.is_empty() {
+            visited_qn.insert(source_qn);
+        }
+
+        // 第 0 层：源符号
+        let mut layers: Vec<Vec<u32>> = Vec::with_capacity(depth + 1);
+        layers.push(vec![symbol_id]);
+
+        // BFS 队列（SoA 布局：sym_ids + depths 分开存储，缓存友好）
+        let mut queue_sym_ids: Vec<u32> = Vec::with_capacity(256);
+        let mut queue_depths: Vec<usize> = Vec::with_capacity(256);
+        let mut queue_head: usize = 0;
+
+        // 当前层符号入队
+        if !source_qn.is_empty() {
+            queue_sym_ids.push(symbol_id);
+            queue_depths.push(0);
+        }
+
+        while queue_head < queue_sym_ids.len() {
+            let cur_id = queue_sym_ids[queue_head];
+            let cur_depth = queue_depths[queue_head];
+            queue_head += 1;
+
+            if cur_depth >= depth {
+                continue;
+            }
+
+            // CSR 反向遍历：cur_id 作为 callee_id，找到所有 caller
+            let positions = calls.positions_for_callee_id(cur_id);
+
+            // 收集本层新发现的 caller（去重）
+            let mut next_layer_ids: Vec<u32> = Vec::new();
+            for &pos in positions {
+                let edge = &calls.forward_edges[pos as usize];
+                let caller_id = edge.caller_id;
+                if caller_id == 0 || (caller_id as usize) >= sym_count {
+                    continue;
+                }
+
+                // 双重去重检查
+                if visited_id[caller_id as usize] {
+                    continue;
+                }
+                let caller_sym = match symbols.by_id.get(caller_id as usize) {
+                    Some(s) if s.id == caller_id => s,
+                    _ => continue,
+                };
+                let caller_qn = symbols.sym_qname(caller_sym);
+                if !caller_qn.is_empty() && visited_qn.contains(caller_qn) {
+                    // qn 已访问，标记 id 已访问避免重复检查
+                    visited_id[caller_id as usize] = true;
+                    continue;
+                }
+
+                // 标记已访问
+                visited_id[caller_id as usize] = true;
+                if !caller_qn.is_empty() {
+                    visited_qn.insert(caller_qn);
+                }
+
+                next_layer_ids.push(caller_id);
+            }
+
+            // 把本层新发现的符号记录到对应深度层
+            if !next_layer_ids.is_empty() {
+                let next_depth = cur_depth + 1;
+
+                // layers 按 depth 索引对齐；若跳过中间深度（不应该发生，但防御性处理），填充空层
+                while layers.len() <= next_depth {
+                    layers.push(Vec::new());
+                }
+                layers[next_depth].extend_from_slice(&next_layer_ids);
+
+                // 仅 qualified_name 非空的符号进入下一层 BFS（对齐 Python `if qn:` 语义）
+                for &new_id in &next_layer_ids {
+                    let sym = &symbols.by_id[new_id as usize];
+                    let qn = symbols.sym_qname(sym);
+                    if !qn.is_empty() {
+                        queue_sym_ids.push(new_id);
+                        queue_depths.push(next_depth);
+                    }
+                }
+            }
+        }
+
+        let py_self = slf.clone().unbind();
+        Ok(BlastRadiusBatch { layers, store: py_self })
+    }
 }
 
 // ============================================
@@ -2581,6 +2737,111 @@ impl SymbolSearchBatch {
     /// 结果数量
     fn count(&self) -> usize {
         self.symbol_ids.len()
+    }
+}
+
+// ============================================
+// Phase 6-1: BlastRadiusBatch — blast_radius 批量结果（PyClass，懒转换）
+// ============================================
+
+/// `blast_radius` 的批量结果，持有纯 Rust symbol_id 列表 + store 引用。
+///
+/// 设计对齐 `CallersBatch` / `SymbolSearchBatch`：
+/// - BFS 阶段只收集 symbol_id，零 String clone、零 PyDict 构造
+/// - 访问时通过 string pool 懒转换为 PyDict，避免大批量结果的转换开销
+///
+/// 返回结构：
+/// - `__len__` / `layer_count()`: 返回层数（depth + 1，含第 0 层源符号）
+/// - `layer_symbols(depth)`: 返回该层所有符号的 List[Dict]（字段对齐 Python）
+/// - `to_list()`: 返回 List[List[Dict]]（外层按 depth 索引，内层为该层符号列表）
+/// - `total_impacted()`: 返回所有层符号总数（含源符号）
+#[pyclass]
+pub struct BlastRadiusBatch {
+    /// 每一层的 symbol_id 列表：layers[d] = [symbol_id, ...]
+    layers: Vec<Vec<u32>>,
+    /// 持有 GraphStore 引用，用于访问 string pool 解析符号元数据
+    store: Py<GraphStore>,
+}
+
+#[pymethods]
+impl BlastRadiusBatch {
+    /// 层数（depth + 1，含第 0 层源符号）
+    fn __len__(&self) -> usize {
+        self.layers.len()
+    }
+
+    /// 层数（显式方法，与 __len__ 一致）
+    fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
+    /// 所有层符号总数（含源符号）
+    fn total_impacted(&self) -> usize {
+        self.layers.iter().map(|l| l.len()).sum()
+    }
+
+    /// 获取指定层的符号列表（懒转换为 List[Dict]）
+    ///
+    /// Args:
+    ///     depth: 层深度（0 = 源符号，1 = 直接 caller，...）
+    ///
+    /// Returns:
+    ///     List[Dict]，每个 dict 包含：
+    ///     - symbol_hash: "" (GraphStore 不持有 hash，留空，Python 端补充)
+    ///     - qualified_name / name / module_path / file_path / kind / visibility
+    ///     - symbol_id: 内部 symbol_id（用于调试）
+    ///
+    /// 越界返回空列表（防御性处理，对齐 Python 在 layers[d] 不存在时返回空）
+    fn layer_symbols<'py>(&self, py: Python<'py>, depth: isize) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        let len = self.layers.len() as isize;
+        let d = if depth < 0 { len + depth } else { depth };
+        if d < 0 || d >= len {
+            return Ok(Vec::new());
+        }
+
+        let store = self.store.borrow(py);
+        let symbols = store.symbols.as_ref()
+            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
+
+        let layer = &self.layers[d as usize];
+        let mut out = Vec::with_capacity(layer.len());
+        for &sym_id in layer {
+            let sym = match symbols.by_id.get(sym_id as usize) {
+                Some(s) if s.id == sym_id => s,
+                _ => continue,
+            };
+            let dict = PyDict::new(py);
+            // GraphStore 不持有 symbol_hash，Python 端 blast_radius 兜底时补充
+            dict.set_item("symbol_hash", "")?;
+            dict.set_item("qualified_name", symbols.sym_qname(sym))?;
+            dict.set_item("name", symbols.sym_name(sym))?;
+            dict.set_item("module_path", symbols.sym_module(sym))?;
+            dict.set_item("file_path", symbols.file_rel_path(sym.file_instance_id))?;
+            dict.set_item("kind", sym.kind.as_str())?;
+            // GraphStore 不持有 visibility 字段，Python 端可补充
+            dict.set_item("visibility", "")?;
+            dict.set_item("symbol_id", sym_id)?;
+            out.push(dict.into_any());
+        }
+        Ok(out)
+    }
+
+    /// 转换为 List[List[Dict]]（外层按 depth 索引，内层为该层符号列表）
+    ///
+    /// 兼容 Python blast_radius 返回的 `layers` 字段格式：
+    /// [{"depth": 0, "symbols": [...]}, {"depth": 1, "symbols": [...]}, ...]
+    /// 调用方可直接用于构造 Python 端的 `layers` 字段。
+    fn to_list<'py>(&self, py: Python<'py>) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        let mut out = Vec::with_capacity(self.layers.len());
+        let len = self.layers.len() as isize;
+        for d in 0..len {
+            let symbols = self.layer_symbols(py, d)?;
+            let wrapper = PyDict::new(py);
+            wrapper.set_item("depth", d)?;
+            wrapper.set_item("symbols", symbols)?;
+            out.push(wrapper.into_any());
+        }
+        Ok(out)
     }
 }
 

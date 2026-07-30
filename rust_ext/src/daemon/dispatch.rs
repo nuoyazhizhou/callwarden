@@ -543,7 +543,7 @@ pub fn dispatch<S: DaemonStateExt>(
 /// 授权规则：`peer.uid == 0`（root）或 `peer.uid == current_uid()`（daemon 进程自己）。
 /// workspace.file.refresh / workspace.register 等已经通过 owned_workspace / validate_owned_path
 /// 做了 per-workspace UID ACL，不重复检查；只读方法（list/get/query/stats）允许任意已连接 peer。
-const ADMIN_ONLY_METHODS: &[&str] = &[
+pub const ADMIN_ONLY_METHODS: &[&str] = &[
     // 数据库备份 / 还原
     "backup",
     "restore",
@@ -589,7 +589,7 @@ pub fn current_daemon_uid() -> u32 {
 }
 
 /// 判断 peer 是否为管理员（root 或 daemon 进程自己）
-fn is_admin(peer: PeerCredential) -> bool {
+pub fn is_admin(peer: PeerCredential) -> bool {
     peer.uid == 0 || peer.uid == current_daemon_uid()
 }
 
@@ -602,6 +602,19 @@ fn dispatch_inner<S: DaemonStateExt>(
     received_fds: &[i32],
 ) -> Result<Value, DaemonRpcError> {
     // 管理员方法授权检查（fail-closed：未授权直接拒绝，不进入 handler）
+    //
+    // Phase 4-2 implement 状态：
+    // - ADMIN_ONLY_METHODS 列表已完整（backup/restore/gc.*/mount.*/toolchain.*/build_context.*）
+    // - is_admin 判定已实现（uid==0 或 uid==current_daemon_uid()）
+    // - workspace owner 校验在 workspace.rs:owned_workspace/owned_workspace_by_id 内
+    // - 路径安全在 workspace.rs:validate_owned_path 内（canonicalize + owner_uid）
+    // - QueryBudget 在 budget.rs 内（max_nodes/timeout_ms）
+    //
+    // TODO(audit): ACL 拒绝事件应记录到 audit_log（迁移自 Python server/audit_log.py）。
+    //   当前仅返回 permission_denied 错误，未持久化审计记录。
+    //   迁移后应在下面 ACL 拒绝分支调用 audit_logger.record(
+    //     event_type="ACL_DENIED", actor_uid=peer.uid, method=method, result="denied")
+    //   admin-only 方法执行成功/失败也应记录（event_type="ADMIN_OP", result=ok/fail）。
     if ADMIN_ONLY_METHODS.contains(&method) && !is_admin(peer) {
         return Err(DaemonRpcError::permission_denied(format!(
             "方法 {} 需要管理员权限（root 或 daemon uid），当前 peer.uid={}",

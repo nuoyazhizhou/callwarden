@@ -34,6 +34,67 @@ import time
 from typing import Any, Dict, List, Optional
 
 
+# ============================================================
+# Phase 4-3 P2 wire-production: Rust 短路（audit 纯计算）
+# ============================================================
+# db_audit_chain.py 的 canonical_json / _compute_signature 默认走 Rust PyO3 API
+# （callwarden_core.audit_canonical_json / audit_compute_signature），
+# rollback_config 中 feature=rust_daemon_audit_compute 置为 1 时回退 Python。
+# Rust 失败时 fail-soft 降级到 Python 纯计算路径。
+#
+# 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.3
+
+_RUST_AUDIT_AVAILABLE = False
+_callwarden_core = None
+try:
+    import callwarden_core as _callwarden_core  # type: ignore
+    if (
+        hasattr(_callwarden_core, "audit_canonical_json")
+        and hasattr(_callwarden_core, "audit_compute_signature")
+    ):
+        _RUST_AUDIT_AVAILABLE = True
+except ImportError:
+    _callwarden_core = None
+
+_AUDIT_ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
+_AUDIT_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _is_rust_audit_rolled_back() -> bool:
+    """检查 rust_daemon_audit_compute feature 是否已回滚（60s 缓存）。
+
+    audit 签名是冷路径（仅在 sign_audit_record / verify_audit_chain 时触发），
+    但 60s 缓存仍可避免频繁 DB 查询，且与 metrics/health 保持一致模式。
+    """
+    now = time.time()
+    if now - _AUDIT_ROLLBACK_CACHE["ts"] < _AUDIT_ROLLBACK_CACHE_TTL:
+        return _AUDIT_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    try:
+        import sqlite3 as _sqlite3
+        from callwarden.config import DB_PATH as _DB_PATH
+        conn = _sqlite3.connect(_DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                ("rust_daemon_audit_compute",),
+            )
+            row = cur.fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _AUDIT_ROLLBACK_CACHE["ts"] = now
+    _AUDIT_ROLLBACK_CACHE["value"] = value
+    return value
+
+
+def _rust_audit_available() -> bool:
+    """Rust audit 短路是否可用（模块加载 + 未回滚）。"""
+    return _RUST_AUDIT_AVAILABLE and not _is_rust_audit_rolled_back()
+
+
 # HMAC 密钥文件路径（按用户主目录展开）
 _AUDIT_KEY_FILE = os.path.expanduser("~/.callwarden/audit.key")
 
@@ -83,7 +144,20 @@ def _compute_signature(
 
     Returns:
         十六进制签名字符串
+
+    Phase 4-3 P2 wire-production：
+        默认走 Rust `callwarden_core.audit_compute_signature`，rollback_config 中
+        feature=rust_daemon_audit_compute 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 纯计算路径。
     """
+    if _rust_audit_available():
+        try:
+            # Rust 端 None 表示 None，bytes 传递为 Option<&[u8]>
+            return _callwarden_core.audit_compute_signature(
+                prev_signature, payload_hash, hmac_key
+            )
+        except Exception:
+            pass  # fail-soft → 降级 Python 路径
     message = f"{prev_signature}|{payload_hash}".encode("utf-8")
     if hmac_key is not None:
         return hmac.new(hmac_key, message, hashlib.sha256).hexdigest()
@@ -120,7 +194,20 @@ class AuditChainMixin:
 
         Returns:
             稳定的 JSON 字符串
+
+        Phase 4-3 P2 wire-production：
+            默认走 Rust `callwarden_core.audit_canonical_json`（接受预序列化的 JSON
+            字符串后重新稳定序列化），rollback_config 中
+            feature=rust_daemon_audit_compute 置为 1 时回退 Python。
+            Rust 失败时 fail-soft 降级到 Python 纯计算路径。
         """
+        if _rust_audit_available():
+            try:
+                # Rust 端接受 JSON 字符串后重新稳定序列化
+                payload_json = json.dumps(payload, ensure_ascii=False)
+                return _callwarden_core.audit_canonical_json(payload_json)
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
         return json.dumps(
             payload,
             sort_keys=True,

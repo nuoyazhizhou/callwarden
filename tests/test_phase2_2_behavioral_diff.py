@@ -248,9 +248,10 @@ def _normalize_symbol(s: Dict[str, Any]) -> Dict[str, Any]:
 # ============================================
 
 def _py_save_symbols(codegraph_db_path, file_instance_id, file_version_id, symbols):
-    """Python 路径：调用 db_build.BuildMixin._save_symbols_for_version（unbound method）
+    """Python 路径：调用 db_build.BuildMixin._save_symbols_for_version_python（unbound method）
 
-    与生产路径一致：直接复用 BuildMixin._save_symbols_for_version 的 SQL 逻辑。
+    直接调用 _python 后缀方法，跳过 Rust 短路调度器（_MinimalDb 无 is_feature_rolled_back）。
+    与生产路径一致：直接复用 BuildMixin._save_symbols_for_version_python 的 SQL 逻辑。
     绕过 CodeGraphDB.__init__ 的 init_schema/register_workspace 副作用，避免
     测试 fixture 的简化 schema 与生产 SCHEMA_TABLES_SQL/SCHEMA_INDEXES_SQL 冲突
     导致 "database disk image is malformed"。
@@ -260,7 +261,7 @@ def _py_save_symbols(codegraph_db_path, file_instance_id, file_version_id, symbo
     from callwarden.db.db_build import BuildMixin
 
     class _MinimalDb:
-        """最小 db-like 对象，仅提供 self.conn 供 BuildMixin._save_symbols_for_version 使用"""
+        """最小 db-like 对象，仅提供 self.conn 供 BuildMixin._save_symbols_for_version_python 使用"""
         def __init__(self, conn):
             self.conn = conn
 
@@ -271,7 +272,7 @@ def _py_save_symbols(codegraph_db_path, file_instance_id, file_version_id, symbo
     normalized = [_normalize_symbol(s) for s in symbols]
     try:
         conn.execute("BEGIN IMMEDIATE;")
-        BuildMixin._save_symbols_for_version(
+        BuildMixin._save_symbols_for_version_python(
             db, file_version_id, file_instance_id, {"symbols": normalized}
         )
         conn.execute("COMMIT;")

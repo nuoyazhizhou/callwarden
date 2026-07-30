@@ -413,6 +413,51 @@ def test_inspector_verify_rust_parse_rejects_duplicate(tmp_path):
     assert any("重复存在" in e or "R10-P1-2-b" in e for e in errors), errors
 
 
+def test_inspector_verify_rust_parse_uses_real_module_name():
+    """R10-P1-2-a: _verify_rust_parse 必须用真实模块名 callwarden_core 加载。
+
+    之前使用 ``callwarden_core_verify`` 会导致 PyO3 在 Python 3.11+ 抛
+    SystemError（module name mismatch），且加载后的模块不会注册到
+    sys.modules['callwarden_core']，后续生产代码 ``import callwarden_core``
+    仍会找不到模块。修复后必须用真实模块名 ``callwarden_core``，与
+    Rust #[pymodule] 声明一致。
+
+    本测试通过检查源码字符串确认 spec_from_file_location 的第一个参数
+    是 "callwarden_core"（而非 "callwarden_core_verify" 或其他变体），
+    避免在测试中真实加载 PyO3 扩展（cross-platform ABI 不兼容）。
+    """
+    source = INSPECTOR.read_text(encoding="utf-8")
+
+    # 定位 _verify_rust_parse 函数体
+    func_start = source.find("def _verify_rust_parse(")
+    assert func_start >= 0, "找不到 _verify_rust_parse 函数"
+    # 截取到下一个 def 之前
+    next_def = source.find("\ndef ", func_start + 10)
+    if next_def < 0:
+        next_def = len(source)
+    func_body = source[func_start:next_def]
+
+    # 必须使用 "callwarden_core" 作为模块名
+    assert '"callwarden_core"' in func_body or "'callwarden_core'" in func_body, (
+        "R10-P1-2-a: _verify_rust_parse 必须用真实模块名 'callwarden_core' 加载"
+    )
+    # 必须不能在 spec_from_file_location 调用中使用 callwarden_core_verify 等自定义名称
+    # 只检查 spec_from_file_location 调用行（避免误判 docstring 中的历史说明）
+    import re as _re
+
+    spec_call = _re.search(
+        r'spec_from_file_location\s*\(\s*["\']([^"\']+)["\']', func_body
+    )
+    assert spec_call is not None, (
+        "R10-P1-2-a: _verify_rust_parse 应调用 spec_from_file_location 加载模块"
+    )
+    module_name = spec_call.group(1)
+    assert module_name == "callwarden_core", (
+        f"R10-P1-2-a: spec_from_file_location 模块名必须为 'callwarden_core'，"
+        f"实际为 '{module_name}'"
+    )
+
+
 def test_inspector_spec_does_not_declare_callwarden_core_in_hiddenimports():
     """R10-P1-2-c: PyInstaller spec 不应在 hiddenimports 中声明 callwarden_core。
 

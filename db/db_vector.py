@@ -392,6 +392,66 @@ class VectorMixin:
                 continue
         return results
 
+    # ------------------------------------------------------------------
+    # Phase 6-3 P2: Rust 短路 — TopK 排序 + 阈值过滤
+    # ------------------------------------------------------------------
+
+    def _vector_topk_via_rust(
+        self,
+        all_vecs: List[Tuple[str, Any]],
+        query_vec: Any,
+        query_norm: float,
+        threshold: float,
+        top_n: int,
+    ) -> Optional[List[Tuple[str, float]]]:
+        """Rust 短路：调用 callwarden_core.py_vector_topk 完成 TopK 排序
+
+        替代 Python 路径：
+            scored = _batch_cosine(all_vecs, q, q_norm, threshold=threshold)
+            scored.sort(key=lambda x: x[1], reverse=True)
+            top = scored[:top_k]
+
+        Python 负责 embedder 加载、向量加载；Rust 负责相似度计算 + 排序 + 截断。
+
+        Args:
+            all_vecs: [(symbol_hash, numpy_vector), ...] 候选向量列表
+            query_vec: 查询向量（numpy array）
+            query_norm: 查询向量范数（保留参数以兼容 Python 接口，Rust 侧内部重算）
+            threshold: 相似度下限过滤
+            top_n: 返回结果数量上限
+
+        Returns:
+            [(symbol_hash, similarity), ...] 长度 ≤ top_n 或 None（fail-soft 降级）
+        """
+        if not all_vecs:
+            return []
+
+        try:
+            import callwarden_core  # type: ignore
+        except ImportError:
+            return None
+
+        import numpy
+
+        # 构造 Rust 输入：hashes 列表 + matrix (N, dim)
+        hashes = [h for h, _ in all_vecs]
+        try:
+            matrix = numpy.stack([v for _, v in all_vecs]).astype(numpy.float32)
+        except Exception:
+            # 向量维度不一致或其他构造错误 → fail-soft
+            return None
+
+        try:
+            query_arr = numpy.array(query_vec, dtype=numpy.float32)
+            result = callwarden_core.py_vector_topk(
+                query_arr, matrix, hashes, threshold, top_n
+            )
+            # Rust 返回 List[Tuple[str, float]]，物化懒批对象（AGENTS.md 规则 17）
+            return [(h, float(s)) for h, s in result]
+        except Exception:
+            # Rust 异常 → fail-soft 降级到 Python
+            return None
+
     def semantic_search(
         self, query: str, top_k: int = 5
     ) -> List[Dict[str, Any]]:
@@ -425,11 +485,22 @@ class VectorMixin:
         if not all_vecs:
             return []
 
-        # 计算余弦相似度（向量化批量运算，替代逐向量 O(N) 循环）
-        scored = _batch_cosine(all_vecs, q, q_norm)
-
-        scored.sort(key=lambda x: x[1], reverse=True)
-        top = scored[:top_k]
+        # Phase 6-3 P2 wire-production: Rust 短路（feature=rust_vector_topk）
+        # 替代 Python 路径：scored = _batch_cosine(...); scored.sort(); top = scored[:top_k]
+        if not self.is_feature_rolled_back("rust_vector_topk"):
+            rust_top = self._vector_topk_via_rust(all_vecs, q, q_norm, 0.0, top_k)
+            if rust_top is not None:
+                top = rust_top
+            else:
+                # fail-soft 降级到 Python
+                scored = _batch_cosine(all_vecs, q, q_norm)
+                scored.sort(key=lambda x: x[1], reverse=True)
+                top = scored[:top_k]
+        else:
+            # Python 全路径 fallback
+            scored = _batch_cosine(all_vecs, q, q_norm)
+            scored.sort(key=lambda x: x[1], reverse=True)
+            top = scored[:top_k]
 
         if not top:
             return []
@@ -530,10 +601,25 @@ class VectorMixin:
         # 与所有其他函数向量比较（向量化批量运算，过滤自身）
         all_vecs = self._load_all_embeddings()
         filtered = [(h, v) for h, v in all_vecs if h != target_hash]
-        scored = _batch_cosine(filtered, target_vec, t_norm, threshold=threshold)
 
-        scored.sort(key=lambda x: x[1], reverse=True)
-        top = scored[:top_k]
+        # Phase 6-3 P2 wire-production: Rust 短路（feature=rust_vector_topk）
+        # 替代 Python 路径：scored = _batch_cosine(..., threshold); scored.sort(); top = scored[:top_k]
+        if not self.is_feature_rolled_back("rust_vector_topk"):
+            rust_top = self._vector_topk_via_rust(
+                filtered, target_vec, t_norm, threshold, top_k
+            )
+            if rust_top is not None:
+                top = rust_top
+            else:
+                # fail-soft 降级到 Python
+                scored = _batch_cosine(filtered, target_vec, t_norm, threshold=threshold)
+                scored.sort(key=lambda x: x[1], reverse=True)
+                top = scored[:top_k]
+        else:
+            # Python 全路径 fallback
+            scored = _batch_cosine(filtered, target_vec, t_norm, threshold=threshold)
+            scored.sort(key=lambda x: x[1], reverse=True)
+            top = scored[:top_k]
 
         if not top:
             return []

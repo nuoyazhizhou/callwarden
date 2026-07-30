@@ -1,0 +1,399 @@
+{
+  "bundle": "C:\\git_work\\callwarden\\dist\\callwarden",
+  "role": "local",
+  "file_count": 808,
+  "unpacked_bytes": 107417456,
+  "unpacked_mb": 102.44,
+  "internal_directories": [
+    "_internal"
+  ],
+  "root_executables": [
+    "cw.exe"
+  ],
+  "module_count": 1764,
+  "module_roots": {
+    "__future__": 1,
+    "_aix_support": 1,
+    "_ast_unparse": 1,
+    "_colorize": 1,
+    "_compat_pickle": 1,
+    "_opcode_metadata": 1,
+    "_py_abc": 1,
+    "_py_warnings": 1,
+    "_pydatetime": 1,
+    "_pydecimal": 1,
+    "_pyrepl": 24,
+    "_sitebuiltins": 1,
+    "_strptime": 1,
+    "_threading_local": 1,
+    "annotated_types": 1,
+    "annotationlib": 1,
+    "anyio": 37,
+    "argparse": 1,
+    "ast": 1,
+    "asyncio": 33,
+    "attr": 13,
+    "attrs": 6,
+    "base64": 1,
+    "bisect": 1,
+    "brotli": 1,
+    "bz2": 1,
+    "calendar": 1,
+    "callwarden": 89,
+    "certifi": 2,
+    "charset_normalizer": 7,
+    "click": 15,
+    "code": 1,
+    "codeop": 1,
+    "colorama": 6,
+    "colorsys": 1,
+    "compression": 5,
+    "concurrent": 9,
+    "config": 1,
+    "configparser": 1,
+    "contextlib": 1,
+    "contextvars": 1,
+    "copy": 1,
+    "csv": 1,
+    "ctypes": 10,
+    "dataclasses": 1,
+    "datetime": 1,
+    "decimal": 1,
+    "difflib": 1,
+    "dis": 1,
+    "dotenv": 5,
+    "email": 20,
+    "exceptiongroup": 6,
+    "fileinput": 1,
+    "fnmatch": 1,
+    "fractions": 1,
+    "getopt": 1,
+    "getpass": 1,
+    "gettext": 1,
+    "glob": 1,
+    "gzip": 1,
+    "h11": 11,
+    "h2": 11,
+    "hashlib": 1,
+    "hmac": 1,
+    "hpack": 8,
+    "html": 2,
+    "http": 4,
+    "httpcore": 31,
+    "httpx": 23,
+    "httpx_sse": 5,
+    "hyperframe": 4,
+    "idna": 6,
+    "importlib": 22,
+    "importlib_metadata": 12,
+    "inspect": 1,
+    "ipaddress": 1,
+    "json": 4,
+    "jsonschema": 10,
+    "jsonschema_specifications": 2,
+    "logging": 3,
+    "lzma": 1,
+    "markdown_it": 62,
+    "mcp": 93,
+    "mdurl": 6,
+    "mimetypes": 1,
+    "multipart": 2,
+    "multiprocessing": 23,
+    "netrc": 1,
+    "numbers": 1,
+    "numpy": 138,
+    "opcode": 1,
+    "pathlib": 2,
+    "pathspec": 31,
+    "pickle": 1,
+    "pkgutil": 1,
+    "platform": 1,
+    "pprint": 1,
+    "psutil": 4,
+    "pty": 1,
+    "py_compile": 1,
+    "pydantic": 105,
+    "pydantic_core": 2,
+    "pydantic_settings": 22,
+    "pygments": 335,
+    "python_multipart": 4,
+    "pywin32_system32": 1,
+    "pywintypes": 1,
+    "queue": 1,
+    "quopri": 1,
+    "random": 1,
+    "referencing": 6,
+    "release": 2,
+    "requests": 17,
+    "rich": 95,
+    "rlcompleter": 1,
+    "rpds": 1,
+    "runpy": 1,
+    "secrets": 1,
+    "selectors": 1,
+    "shlex": 1,
+    "shutil": 1,
+    "signal": 1,
+    "site": 1,
+    "smtplib": 1,
+    "socket": 1,
+    "socketserver": 1,
+    "socksio": 7,
+    "sqlite3": 4,
+    "sse_starlette": 4,
+    "ssl": 1,
+    "starlette": 22,
+    "statistics": 1,
+    "string": 1,
+    "stringprep": 1,
+    "subprocess": 1,
+    "sysconfig": 1,
+    "tarfile": 1,
+    "tempfile": 1,
+    "textwrap": 1,
+    "threading": 1,
+    "threadpoolctl": 1,
+    "token": 1,
+    "tokenize": 1,
+    "toml": 4,
+    "tomllib": 4,
+    "tracemalloc": 1,
+    "tty": 1,
+    "typing": 1,
+    "typing_extensions": 1,
+    "typing_inspection": 3,
+    "tzdata": 22,
+    "urllib": 5,
+    "urllib3": 36,
+    "uuid": 1,
+    "uvicorn": 40,
+    "watchdog": 22,
+    "watchfiles": 5,
+    "webbrowser": 1,
+    "websockets": 48,
+    "win32con": 1,
+    "win32evtlogutil": 1,
+    "winerror": 1,
+    "xml": 14,
+    "yaml": 17,
+    "zipfile": 3,
+    "zipimport": 1,
+    "zipp": 7,
+    "zoneinfo": 4
+  },
+  "forbidden_modules": [],
+  "missing_required_module_roots": [],
+  "top_files": [
+    {
+      "path": "_internal/callwarden_core.pyd",
+      "bytes": 35835392
+    },
+    {
+      "path": "_internal/numpy.libs/libscipy_openblas64_-4bb64bb73b19ae7523581172b5c4a821.dll",
+      "bytes": 20407296
+    },
+    {
+      "path": "cw.exe",
+      "bytes": 13670554
+    },
+    {
+      "path": "_internal/python314.dll",
+      "bytes": 6753112
+    },
+    {
+      "path": "_internal/pydantic_core/_pydantic_core.cp314-win_amd64.pyd",
+      "bytes": 5261824
+    },
+    {
+      "path": "_internal/libcrypto-3.dll",
+      "bytes": 5229424
+    },
+    {
+      "path": "_internal/numpy/_core/_multiarray_umath.cp314-win_amd64.pyd",
+      "bytes": 3724800
+    },
+    {
+      "path": "_internal/sqlite3.dll",
+      "bytes": 1584984
+    },
+    {
+      "path": "_internal/base_library.zip",
+      "bytes": 1388164
+    },
+    {
+      "path": "_internal/ucrtbase.dll",
+      "bytes": 1035728
+    },
+    {
+      "path": "_internal/_brotli.cp314-win_amd64.pyd",
+      "bytes": 856576
+    },
+    {
+      "path": "_internal/libssl-3.dll",
+      "bytes": 794992
+    },
+    {
+      "path": "_internal/unicodedata.pyd",
+      "bytes": 758104
+    },
+    {
+      "path": "_internal/watchfiles/_rust_notify.cp314-win_amd64.pyd",
+      "bytes": 634880
+    },
+    {
+      "path": "_internal/numpy/random/_generator.cp314-win_amd64.pyd",
+      "bytes": 596480
+    },
+    {
+      "path": "_internal/numpy.libs/msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll",
+      "bytes": 575056
+    },
+    {
+      "path": "_internal/rpds/rpds.cp314-win_amd64.pyd",
+      "bytes": 553984
+    },
+    {
+      "path": "_internal/_zstd.pyd",
+      "bytes": 503640
+    },
+    {
+      "path": "_internal/numpy/random/mtrand.cp314-win_amd64.pyd",
+      "bytes": 496128
+    },
+    {
+      "path": "_internal/_decimal.pyd",
+      "bytes": 290648
+    }
+  ],
+  "distributions": {
+    "callwarden_core": {
+      "file_count": 1,
+      "byte_count": 35835392,
+      "byte_ratio": 0.333609,
+      "file_ratio": 0.001238
+    },
+    "callwarden_parsers": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "other": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "python_runtime": {
+      "file_count": 807,
+      "byte_count": 71582064,
+      "byte_ratio": 0.666391,
+      "file_ratio": 0.998762
+    },
+    "tree_sitter": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_c": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_c_sharp": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_cpp": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_elixir": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_go": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_hcl": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_java": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_javascript": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_kotlin": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_php": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_python": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_ruby": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_rust": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_scala": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_swift": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    },
+    "tree_sitter_typescript": {
+      "file_count": 0,
+      "byte_count": 0,
+      "byte_ratio": 0.0,
+      "file_ratio": 0.0
+    }
+  },
+  "distribution_total_bytes": 107417456,
+  "distribution_total_files": 808,
+  "errors": []
+}

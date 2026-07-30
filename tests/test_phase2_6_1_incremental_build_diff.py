@@ -345,9 +345,9 @@ def _insert_call(db_path, file_instance_id, caller_name="fn1",
 # ============================================
 
 def _py_compute_symbol_diff(codegraph_db_path, prev_version_id, curr_version_id):
-    """Python 路径：调用 db_build.BuildMixin._compute_and_apply_symbol_diff（unbound method）
+    """Python 路径：调用 db_build.BuildMixin._compute_and_apply_symbol_diff_python（unbound method）
 
-    使用最小 db-like 对象（仅含 self.conn）+ BEGIN/COMMIT 模拟外层事务。
+    直接调用 _python 后缀方法，跳过 Rust 短路调度器（_MinimalDb 无 is_feature_rolled_back）。
     """
     from callwarden.db.db_build import BuildMixin
 
@@ -360,7 +360,7 @@ def _py_compute_symbol_diff(codegraph_db_path, prev_version_id, curr_version_id)
     db = _MinimalDb(conn)
     try:
         conn.execute("BEGIN IMMEDIATE;")
-        BuildMixin._compute_and_apply_symbol_diff(db, prev_version_id, curr_version_id)
+        BuildMixin._compute_and_apply_symbol_diff_python(db, prev_version_id, curr_version_id)
         conn.execute("COMMIT;")
     except Exception:
         conn.execute("ROLLBACK;")
@@ -383,7 +383,10 @@ def _rust_compute_symbol_diff(codegraph_db_path, prev_version_id, curr_version_i
 
 def _py_load_file_result_from_db(codegraph_db_path, file_instance_id, file_version_id,
                                     rel_path, abs_path, module_path):
-    """Python 路径：调用 db_build.BuildMixin._load_file_result_from_db（unbound method）"""
+    """Python 路径：调用 db_build.BuildMixin._load_file_result_from_db_python（unbound method）
+
+    直接调用 _python 后缀方法，跳过 Rust 短路调度器。
+    """
     from callwarden.db.db_build import BuildMixin
 
     class _MinimalDb:
@@ -394,7 +397,7 @@ def _py_load_file_result_from_db(codegraph_db_path, file_instance_id, file_versi
     conn.row_factory = sqlite3.Row
     db = _MinimalDb(conn)
     try:
-        result = BuildMixin._load_file_result_from_db(
+        result = BuildMixin._load_file_result_from_db_python(
             db, file_instance_id, file_version_id, rel_path, abs_path, module_path
         )
         # 将 sqlite3.Row 转为 dict（递归）

@@ -270,6 +270,152 @@ class ImpactMixin:
                 seen[r["symbol_hash"]] = r
         return list(seen.values())
 
+    # ------------------------------------------------------------------
+    # Phase 6-1: Rust GraphStore 短路（blast_radius）
+    # ------------------------------------------------------------------
+
+    def _blast_radius_via_rust(self, symbol_hash: str, depth: int) -> Optional[Dict[str, Any]]:
+        """Rust 版 blast_radius 短路（CSR 内存索引 BFS）
+
+        通过 `_get_graph_store()` 复用已加载的 GraphStore（Rust CSR 邻接表），
+        执行 BFS 反向遍历。失败时返回 None，由调用方降级到 SQL 路径。
+
+        与 Python `blast_radius` 行为一致性：
+        - 第 0 层为源符号
+        - qualified_name + symbol_id 双重去重（对齐 Python 的 qn + hash 去重）
+        - cross_layer_impact 仍走 Python（涉及正则提取，本阶段未迁移）
+        - symbol_hash + visibility 字段通过单次批量 SQL 补全（Rust 不持有这两列）
+
+        Args:
+            symbol_hash: 源符号 hash
+            depth: BFS 遍历最大深度
+
+        Returns:
+            与 Python blast_radius 相同结构的 dict，或 None（Rust 不可用/失败）
+        """
+        store = self._get_graph_store()
+        if store is None:
+            return None
+        # 等待 calls 加载完成（避免首次查询 fallback 到 SQL）
+        if store.load_state() != "graph_ready":
+            self._wait_for_calls_ready(timeout=2.0)
+            store = self._get_graph_store()
+            if store is None or store.load_state() != "graph_ready":
+                return None
+
+        ws_id = self._get_active_workspace_id()
+
+        # 1. 查源符号 symbol_hash → symbol_id + 完整元数据（单次 SQL）
+        cur = self.conn.execute(
+            """
+            SELECT s.id, s.symbol_hash, s.qualified_name, s.name, s.module_path,
+                   s.visibility, s.kind, fi.rel_path
+            FROM symbols s
+            JOIN file_instances fi ON s.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND s.symbol_hash = ?
+            LIMIT 1
+            """,
+            (ws_id, symbol_hash),
+        )
+        row = cur.fetchone()
+        if not row:
+            # 源符号不存在：返回与 Python 一致的空结构
+            return {
+                "source_symbol": "",
+                "source_hash": symbol_hash,
+                "depth": depth,
+                "layers": [],
+                "total_impacted": 0,
+                "by_layer": {"code": 0, "db": 0, "api": 0, "config": 0},
+            }
+        source_id = row["id"]
+        source_qn = row["qualified_name"] or ""
+        source_info = {
+            "symbol_hash": row["symbol_hash"],
+            "qualified_name": source_qn,
+            "name": row["name"],
+            "module_path": row["module_path"],
+            "file_path": row["rel_path"],
+            "visibility": row["visibility"],
+            "kind": row["kind"],
+        }
+
+        # 2. 调用 Rust blast_radius（CSR 内存 BFS）
+        try:
+            rust_batch = store.blast_radius(source_id, depth)
+        except Exception:
+            # Rust 查询异常 → fail-soft 降级到 SQL
+            return None
+
+        # 3. 转换为 Python layers 格式
+        rust_layers = rust_batch.to_list()
+
+        # 4. 批量补全 symbol_hash + visibility（Rust 不持有这两列）
+        # 单次 SQL 查询所有 layer 中的 symbol_id，构建 lookup dict
+        all_symbol_ids: List[int] = []
+        for layer in rust_layers:
+            for sym in layer["symbols"]:
+                sym_id = sym.get("symbol_id")
+                if sym_id is not None:
+                    all_symbol_ids.append(sym_id)
+
+        # 源符号信息已在 step 1 查到，无需重复
+        id_to_hash_vis: Dict[int, tuple] = {source_id: (row["symbol_hash"], row["visibility"])}
+        if all_symbol_ids:
+            # 排除已查到的源符号，避免重复
+            other_ids = [i for i in all_symbol_ids if i != source_id]
+            if other_ids:
+                placeholders = ",".join("?" * len(other_ids))
+                cur2 = self.conn.execute(
+                    f"""
+                    SELECT s.id, s.symbol_hash, s.visibility
+                    FROM symbols s
+                    WHERE s.id IN ({placeholders})
+                    """,
+                    other_ids,
+                )
+                for r in cur2:
+                    id_to_hash_vis[r["id"]] = (r["symbol_hash"], r["visibility"])
+
+        # 5. 组装最终 layers（与 Python 格式完全一致）
+        py_layers: List[Dict[str, Any]] = []
+        for layer in rust_layers:
+            layer_symbols = []
+            for sym in layer["symbols"]:
+                sym_id = sym.get("symbol_id", 0)
+                hash_vis = id_to_hash_vis.get(sym_id, ("", ""))
+                layer_symbols.append({
+                    "symbol_hash": hash_vis[0],
+                    "qualified_name": sym["qualified_name"],
+                    "name": sym["name"],
+                    "module_path": sym["module_path"],
+                    "file_path": sym["file_path"],
+                    "visibility": hash_vis[1],
+                    "kind": sym["kind"],
+                })
+            if layer_symbols:
+                py_layers.append({"depth": layer["depth"], "symbols": layer_symbols})
+
+        total_impacted = sum(len(layer["symbols"]) for layer in py_layers)
+
+        # 6. cross_layer_impact 仍走 Python（涉及正则提取，本阶段未迁移）
+        cross = self.cross_layer_impact(symbol_hash)
+        by_layer = {
+            "code": len(cross["code"]),
+            "db": len(cross["db"]),
+            "api": len(cross["api"]),
+            "config": len(cross["config"]),
+        }
+
+        return {
+            "source_symbol": source_qn,
+            "source_hash": symbol_hash,
+            "depth": depth,
+            "layers": py_layers,
+            "total_impacted": total_impacted,
+            "by_layer": by_layer,
+        }
+
     def blast_radius(self, symbol_hash: str, depth: int = 3) -> Dict[str, Any]:
         """计算变更影响半径（BFS 反向遍历调用图）
 
@@ -291,6 +437,14 @@ class ImpactMixin:
             - by_layer: {"code": N, "db": M, "api": K, "config": L}，来自 cross_layer_impact
             源符号不存在时返回空结构。
         """
+        # Phase 6-1 wire-production: Rust GraphStore 短路（CSR 内存索引 BFS）
+        # rollback_config 中 feature=rust_blast_radius 置为 1 时回退 Python SQL 路径
+        # Rust 失败时 fail-soft 降级到 SQL BFS
+        if not self.is_feature_rolled_back("rust_blast_radius"):
+            rust_result = self._blast_radius_via_rust(symbol_hash, depth)
+            if rust_result is not None:
+                return rust_result
+
         ws_id = self._get_active_workspace_id()
 
         # 查找源符号
@@ -412,6 +566,10 @@ class ImpactMixin:
         纯只读 API：分析结果直接返回，不再持久化到 change_impacts 表
         （原 _persist_impacts 写入的数据从未被读取，移除以消除 fsync 开销）。
 
+        Phase 6-1 P2 wire-production：Rust 短路（feature=rust_cross_layer_impact）。
+        Rust 负责 db/api/config 三层正则匹配（regex crate），
+        Python 负责 code 层 SQL 查询。Rust 失败时 fail-soft 降级到 Python 全路径。
+
         Args:
             symbol_hash: 源符号 hash
 
@@ -442,7 +600,7 @@ class ImpactMixin:
         source_name = row["name"] or ""
         content = row["content"] or ""
 
-        # ---- 代码层：反向查找调用方 ----
+        # ---- 代码层：反向查找调用方（Python 负责 SQL 查询）----
         code_layer: List[Dict[str, Any]] = []
         cur = self.conn.execute(
             """
@@ -466,6 +624,17 @@ class ImpactMixin:
                 "kind": r["kind"],
                 "file_path": r["rel_path"],
             })
+
+        # Phase 6-1 P2 wire-production: Rust 短路（feature=rust_cross_layer_impact）
+        # Rust 负责 db/api/config 三层正则匹配（regex crate），code 层已由 Python 查出
+        if not self.is_feature_rolled_back("rust_cross_layer_impact"):
+            rust_result = self._cross_layer_impact_via_rust(
+                source_qn, source_name, content, code_layer
+            )
+            if rust_result is not None:
+                return rust_result
+
+        # ---- Python 全路径 fallback ----
 
         # ---- DB 层：从 content 中正则提取 SQL 表名 ----
         db_layer: List[Dict[str, Any]] = []
@@ -541,6 +710,59 @@ class ImpactMixin:
             "api": api_layer,
             "config": config_layer,
         }
+
+    def _cross_layer_impact_via_rust(
+        self,
+        source_qn: str,
+        source_name: str,
+        content: str,
+        code_layer: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Rust 短路：调用 callwarden_core.py_cross_layer_impact
+
+        Python 负责 code 层 SQL 查询，Rust 负责 db/api/config 三层正则匹配。
+
+        Args:
+            source_qn: 源符号限定名
+            source_name: 源符号名称
+            content: 符号源代码内容
+            code_layer: Python 已查到的 code 层调用方列表
+
+        Returns:
+            {"code": [...], "db": [...], "api": [...], "config": [...]} 或 None
+        """
+        try:
+            import callwarden_core  # type: ignore
+        except ImportError:
+            return None
+
+        # 构造 Rust 输入：List[Tuple[str, str, str, str, str, str]]
+        rust_code_layer = [
+            (
+                e.get("qualified_name", ""),
+                e.get("name", ""),
+                e.get("module_path", ""),
+                e.get("visibility", ""),
+                e.get("kind", ""),
+                e.get("file_path", ""),
+            )
+            for e in code_layer
+        ]
+
+        try:
+            result = callwarden_core.py_cross_layer_impact(
+                source_qn, source_name, content, rust_code_layer
+            )
+            # 物化懒批对象为 list（AGENTS.md 规则 17）
+            return {
+                "code": list(result.get("code", [])),
+                "db": list(result.get("db", [])),
+                "api": list(result.get("api", [])),
+                "config": list(result.get("config", [])),
+            }
+        except Exception:
+            # Rust 异常 → fail-soft 降级到 Python
+            return None
 
     def review_readiness_report(self, symbol_hash: str) -> Dict[str, Any]:
         """审查就绪报告

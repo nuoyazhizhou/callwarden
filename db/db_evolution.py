@@ -313,6 +313,10 @@ class EvolutionMixin:
 
         统计符号变更后 window_commits 次提交内引入的缺陷数量。
 
+        Phase 6-1 P3 wire-production：Rust 短路（feature=rust_defect_correlation）。
+        Rust 负责窗口切片 + finding 匹配 + 去重 + 聚合，
+        Python 负责所有 SQL 查询。Rust 失败时 fail-soft 降级到 Python 全路径。
+
         Args:
             symbol_hash: 符号内容 hash（即 symbol_contents.content_hash）
             window_commits: 变更后观察的提交窗口数
@@ -322,6 +326,14 @@ class EvolutionMixin:
             defect_types / findings 字段
         """
         ws_id = self._get_active_workspace_id()
+
+        # Phase 6-1 P3 wire-production: Rust 短路（feature=rust_defect_correlation）
+        if not self.is_feature_rolled_back("rust_defect_correlation"):
+            rust_result = self._defect_correlation_via_rust(symbol_hash, window_commits, ws_id)
+            if rust_result is not None:
+                return rust_result
+
+        # Python 全路径 fallback
 
         # 获取符号的 qualified_name（用于匹配 semgrep_findings.symbol_qualified）
         cur = self.conn.execute(
@@ -445,6 +457,146 @@ class EvolutionMixin:
             "defect_types": dict(defect_types),
             "findings": defect_findings,
         }
+
+    def _defect_correlation_via_rust(
+        self,
+        symbol_hash: str,
+        window_commits: int,
+        ws_id: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Rust 短路：调用 callwarden_core.py_defect_correlation
+
+        Python 负责所有 SQL 查询（changes_by_file / all_versions / findings），
+        Rust 负责窗口切片 + finding 匹配 + 去重 + 聚合。
+
+        Args:
+            symbol_hash: 符号内容 hash
+            window_commits: 变更后观察的提交窗口数
+            ws_id: 工作区 ID
+
+        Returns:
+            缺陷关联统计字典，或 None（Rust 不可用/失败）
+        """
+        try:
+            import callwarden_core  # type: ignore
+        except ImportError:
+            return None
+
+        # 1. 查询 qualified_name
+        cur = self.conn.execute(
+            "SELECT content_hash, qualified_name FROM symbol_contents WHERE content_hash = ?",
+            (symbol_hash,),
+        )
+        sym_row = cur.fetchone()
+        qualified_name = sym_row["qualified_name"] if sym_row else ""
+
+        # 2. 查询变更点（与 Python 全路径一致）
+        cur = self.conn.execute(
+            """
+            SELECT fv.id as fv_id, fv.file_instance_id, fv.version_num,
+                   fv.content_hash, fv.parsed_at
+            FROM file_symbol_versions fsv
+            JOIN file_versions fv ON fsv.file_version_id = fv.id
+            JOIN file_instances fi ON fv.file_instance_id = fi.id
+            WHERE fi.workspace_id = ? AND fsv.symbol_hash = ?
+            ORDER BY fv.file_instance_id, fv.version_num ASC
+            """,
+            (ws_id, symbol_hash),
+        )
+        changes_by_file: Dict[int, List[Any]] = defaultdict(list)
+        for row in cur:
+            changes_by_file[row["file_instance_id"]].append(row)
+
+        # 3. 查询每个文件的所有版本
+        all_versions_by_file: Dict[int, List[Any]] = {}
+        for file_instance_id in changes_by_file.keys():
+            cur = self.conn.execute(
+                """
+                SELECT id, version_num, content_hash, parsed_at
+                FROM file_versions
+                WHERE file_instance_id = ?
+                ORDER BY version_num ASC
+                """,
+                (file_instance_id,),
+            )
+            all_versions_by_file[file_instance_id] = list(cur)
+
+        # 4. 一次性查询每个文件的所有 semgrep_findings
+        findings_by_file: Dict[int, List[Any]] = {}
+        for file_instance_id in changes_by_file.keys():
+            cur = self.conn.execute(
+                """
+                SELECT id, rule_id, rule_name, severity, start_line, end_line,
+                       content_hash, scanned_at, symbol_qualified, message
+                FROM semgrep_findings
+                WHERE file_instance_id = ?
+                """,
+                (file_instance_id,),
+            )
+            findings_by_file[file_instance_id] = list(cur)
+
+        # 5. 查询通过 qualified_name 直接关联的缺陷
+        direct_findings: List[Any] = []
+        if qualified_name:
+            cur = self.conn.execute(
+                """
+                SELECT id, rule_id, rule_name, severity, start_line, end_line,
+                       content_hash, scanned_at, symbol_qualified, message
+                FROM semgrep_findings
+                WHERE symbol_qualified = ?
+                """,
+                (qualified_name,),
+            )
+            direct_findings = list(cur)
+
+        # 6. 构造 Rust 输入
+        rust_changes = [
+            (fid, [c["version_num"] for c in changes])
+            for fid, changes in changes_by_file.items()
+        ]
+        rust_all_versions = [
+            (fid, [(v["version_num"], v["content_hash"] or "") for v in versions])
+            for fid, versions in all_versions_by_file.items()
+        ]
+        # findings_by_file_hash: [(file_id, content_hash, [findings])]
+        # 按 (file_id, content_hash) 分组
+        findings_map: Dict[tuple, List[tuple]] = defaultdict(list)
+        for fid, findings in findings_by_file.items():
+            for f in findings:
+                ch = f["content_hash"] or ""
+                findings_map[(fid, ch)].append((
+                    f["id"], f["rule_id"], f["rule_name"], f["severity"],
+                    f["start_line"], f["end_line"], f["scanned_at"], f["message"]
+                ))
+        rust_findings = [
+            (fid, ch, findings)
+            for (fid, ch), findings in findings_map.items()
+        ]
+        rust_direct = [
+            (f["id"], f["rule_id"], f["rule_name"], f["severity"],
+             f["start_line"], f["end_line"], f["scanned_at"], f["message"])
+            for f in direct_findings
+        ]
+
+        try:
+            result = callwarden_core.py_defect_correlation(
+                rust_changes,
+                rust_all_versions,
+                rust_findings,
+                rust_direct,
+                window_commits,
+            )
+            # 物化懒批对象为 list（AGENTS.md 规则 17）
+            return {
+                "symbol_hash": symbol_hash,
+                "total_changes": result.get("total_changes", 0),
+                "defects_after_change": result.get("defects_after_change", 0),
+                "defect_types": dict(result.get("defect_types", {})),
+                "findings": list(result.get("findings", [])),
+            }
+        except Exception:
+            # Rust 异常 → fail-soft 降级到 Python
+            return None
 
     def get_defect_correlation_by_qn(self, qualified_name: str, window_commits: int = 5) -> Dict[str, Any]:
         """按限定名查询符号的变更-缺陷关联（defect_correlation 的便捷封装）

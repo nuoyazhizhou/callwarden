@@ -11,9 +11,58 @@
 //! 内存使用：Linux 读 `/proc/self/status`，其他平台返回 "unsupported"。
 //!
 //! 返回格式与 Python `check_all()` 一致，客户端无需区分 daemon 实现。
+//!
+//! # Phase 4-3 契约：metrics、health、audit 与 admin operations
+//!
+//! ## 范围
+//! - metrics：daemon 运行指标采集（连接数/请求数/延迟/CAS 命中率/snapshot 发布次数）
+//! - health：/health 端点（db 连通性/cas 完整性/snapshot 一致性/磁盘空间/内存/uptime）
+//! - audit：审计链 + 签名轮换（迁移自 Python db/db_audit_chain.py）
+//! - admin operations：backup/restore/GC/mount/workspace delete（Admin-only RPC 真实实现）
+//!
+//! ## API 契约（Phase 4-3 新增 7 个 PyO3 API，daemon_query.rs L894-1100）
+//! - `health_check_all(registry_db_path, data_root, start_time_secs, memory_max_bytes) -> dict`：聚合健康检查（4 项默认 + 可扩展）
+//! - `metrics_percentile(sorted_values, p) -> f64`：百分位计算（P50/P95/P99）
+//! - `metrics_format_labels(label_key) -> String`：Prometheus 标签格式化
+//! - `audit_canonical_json(payload_json) -> String`：审计载荷规范化 JSON（字段排序 + 紧凑）
+//! - `audit_compute_signature(canonical_json, secret) -> String`：HMAC-SHA256 签名
+//! - `backup_compute_file_sha256(file_path) -> String`：文件 SHA256（备份校验）
+//! - `backup_compute_meta_checksum(meta_json) -> String`：备份元数据聚合校验和
+//!
+//! ## 行为契约
+//! - health_check_all 返回 {status, checks:[{name,status,detail}]}，任一 unhealthy → unhealthy
+//! - metrics_percentile 对空列表返回 0.0，p 超出 [0,100] 截断
+//! - audit_canonical_json 字段按字典序排序，UTF-8 紧凑编码（无空白）
+//! - audit_compute_signature 使用 HMAC-SHA256，返回 hex 编码
+//! - backup_compute_file_sha256 流式读取大文件（避免 OOM）
+//! - admin operations 受 dispatch.rs:ADMIN_ONLY_METHODS ACL 保护（fail-closed）
+//!
+//! ## 事务边界
+//! - health_check_all 每个检查项独立（单项失败不影响其他项）
+//! - audit 签名是纯计算（canonical_json + HMAC），无 I/O
+//! - backup 文件哈希流式读取（ChunkReader），不加载整个文件到内存
+//! - admin operations 在 dispatch_inner 入口做 ACL 检查（4-2 已实现）
+//!
+//! ## Schema
+//! - health 检查结果不持久化（实时查询）
+//! - audit_chain 表（Python db_audit_chain.py）：event_id / payload / signature / prev_hash / timestamp
+//! - backup 元数据：backup_manifest.json（含 file_sha256 + meta_checksum）
+//!
+//! ## 验收标准
+//! - health_check_all 返回 healthy/degraded/unhealthy 状态 ✓（health.rs tests）
+//! - metrics_percentile 正确计算 P50/P95/P99 ✓（daemon_query.rs tests）
+//! - audit_canonical_json 字段排序 + 紧凑编码 ✓（daemon_query.rs tests）
+//! - backup_compute_file_sha256 流式哈希 ✓（daemon_query.rs tests）
+//! - admin operations 受 ACL 保护（4-2 已验证 permission_denied）✓
+//!
+//! ## 风险
+//! - health 磁盘空间检查依赖 fs2，Windows 上 total_space 可能不准确
+//! - 内存使用检查仅 Linux 支持（/proc/self/status），其他平台返回 "unsupported"
+//! - audit 签名密钥管理（secret 轮换）需 Python 端配合
+//! - backup 大文件哈希需流式读取，避免 OOM（已实现 ChunkReader）
 
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -551,6 +600,32 @@ pub fn build_health_config(
         start_time,
         memory_max_bytes,
     }
+}
+
+/// Phase 4-3 PyO3 包装：执行 4 项健康检查，返回 JSON 字符串。
+///
+/// 通过 `Instant::now() - Duration::from_secs_f64(uptime_secs)` 回退 start_time，
+/// 使 `check_uptime` 的 `elapsed()` 返回 Python 传入的 uptime_secs，
+/// 避免 Rust 端无法从 epoch 秒数构造 Instant 的问题。
+///
+/// 对应 Python `server/health_check.py:HealthChecker.check_all()`
+pub fn check_all_py(
+    registry_db_path: &str,
+    data_root: &str,
+    uptime_secs: f64,
+    memory_max_bytes: u64,
+) -> String {
+    let start_time = Instant::now()
+        .checked_sub(Duration::from_secs_f64(uptime_secs))
+        .unwrap_or_else(Instant::now);
+    let config = build_health_config(
+        registry_db_path,
+        data_root,
+        start_time,
+        memory_max_bytes,
+    );
+    let checker = HealthChecker::new(config);
+    checker.check_all().to_string()
 }
 
 // ============================================

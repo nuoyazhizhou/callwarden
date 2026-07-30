@@ -32,6 +32,66 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 
 # ============================================================
+# Phase 4-3 P1 wire-production: Rust 短路（metrics 纯计算）
+# ============================================================
+# metrics.py 的 _percentile / _format_labels 默认走 Rust PyO3 API
+# （callwarden_core.metrics_percentile / metrics_format_labels），
+# rollback_config 中 feature=rust_daemon_metrics_compute 置为 1 时回退 Python。
+# Rust 失败时 fail-soft 降级到 Python 纯计算路径。
+#
+# 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.2
+
+_RUST_METRICS_AVAILABLE = False
+_callwarden_core = None
+try:
+    import callwarden_core as _callwarden_core  # type: ignore
+    if (
+        hasattr(_callwarden_core, "metrics_percentile")
+        and hasattr(_callwarden_core, "metrics_format_labels")
+    ):
+        _RUST_METRICS_AVAILABLE = True
+except ImportError:
+    _callwarden_core = None
+
+_METRICS_ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
+_METRICS_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _is_rust_metrics_rolled_back() -> bool:
+    """检查 rust_daemon_metrics_compute feature 是否已回滚（60s 缓存）。
+
+    metrics 可能被频繁调用（直方图统计、Prometheus 导出），不能每次都打开 DB。
+    """
+    now = time.time()
+    if now - _METRICS_ROLLBACK_CACHE["ts"] < _METRICS_ROLLBACK_CACHE_TTL:
+        return _METRICS_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    try:
+        import sqlite3 as _sqlite3
+        from callwarden.config import DB_PATH as _DB_PATH
+        conn = _sqlite3.connect(_DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                ("rust_daemon_metrics_compute",),
+            )
+            row = cur.fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _METRICS_ROLLBACK_CACHE["ts"] = now
+    _METRICS_ROLLBACK_CACHE["value"] = value
+    return value
+
+
+def _rust_metrics_available() -> bool:
+    """Rust metrics 短路是否可用（模块加载 + 未回滚）。"""
+    return _RUST_METRICS_AVAILABLE and not _is_rust_metrics_rolled_back()
+
+
+# ============================================================
 # 运行时指标采集
 # ============================================================
 
@@ -351,7 +411,17 @@ def _percentile(sorted_values: List[float], p: float) -> float:
 
     Returns:
         分位数值
+
+    Phase 4-3 P1 wire-production：
+        默认走 Rust `callwarden_core.metrics_percentile`，rollback_config 中
+        feature=rust_daemon_metrics_compute 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 纯计算路径。
     """
+    if _rust_metrics_available():
+        try:
+            return float(_callwarden_core.metrics_percentile(sorted_values, p))
+        except Exception:
+            pass  # fail-soft → 降级 Python 路径
     if not sorted_values:
         return 0.0
     n = len(sorted_values)
@@ -734,7 +804,17 @@ def _format_labels(label_key: str) -> str:
 
     "status=ok,method=query" -> '{status="ok",method="query"}'
     "" -> ""
+
+    Phase 4-3 P1 wire-production：
+        默认走 Rust `callwarden_core.metrics_format_labels`，rollback_config 中
+        feature=rust_daemon_metrics_compute 置为 1 时回退 Python。
+        Rust 失败时 fail-soft 降级到 Python 纯计算路径。
     """
+    if _rust_metrics_available():
+        try:
+            return _callwarden_core.metrics_format_labels(label_key)
+        except Exception:
+            pass  # fail-soft → 降级 Python 路径
     if not label_key:
         return ""
     parts = label_key.split(",")

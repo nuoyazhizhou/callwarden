@@ -800,8 +800,14 @@ class BuildMixin:
     def build(self):
         """完整构建知识图谱"""
         print(t("cli.messages.db_build_step1_parse_modules"))
-        self.module_resolver.resolve_all(self.parser)
-        print(t("cli.messages.db_build_modules_found", count=len(self.module_resolver.module_to_file)))
+        # R2: module_resolver 为 None 时（frozen bundle 排除 callwarden.parsers）
+        # 跳过 mod_decls 提取，仅依赖 Rust 解析的 file 路径推断 module_path
+        if self.module_resolver is not None:
+            self.module_resolver.resolve_all(self.parser)
+            module_count = len(self.module_resolver.module_to_file)
+        else:
+            module_count = 0
+        print(t("cli.messages.db_build_modules_found", count=module_count))
 
         crate_name = self._detect_crate_name()
         print(t("cli.messages.db_build_crate_name", name=crate_name))
@@ -1184,45 +1190,65 @@ class BuildMixin:
         project_langs: Set[str] = set()
 
         # P10: 细拆 register 阶段计时（逐文件 SQL: _register_file_db + _get_file_version）
+        # Phase 2-6-3: 默认走 Rust batch_register_files 短路（单事务 + 预处理语句）
+        # rollback_config 中 feature=rust_batch_register_files 置为 1 时回退 Python 逐文件循环
+        # Rust 失败时 fail-soft 降级到 Python 路径
         t_register_start = time.perf_counter()
-        for i, rel_path in enumerate(files, 1):
-            abs_path = os.path.join(self.workspace_root, rel_path)
-            lang = detect_language_from_path(rel_path)
-            # P1-E: 用 RustParserFacade 替代 create_parser 做语言支持检测
-            # 旧实现 create_parser(rel_path) 会实例化 Python parser（携带 tree-sitter grammar），
-            # 新实现只查询 Rust 扩展支持语言集合，不实例化任何 Python parser。
-            if not lang or not RustParserFacade.supports_language(lang):
-                skipped += 1
-                continue
+        rust_registered = False
+        if not self.is_feature_rolled_back("rust_batch_register_files"):
+            # 通过引用修改：file_results（dict）, to_parse（list）, project_langs（set）, failed_files（list）
+            # 返回 None 表示失败；返回 {"skipped": int, "failed": int} 表示成功
+            rust_ret = self._batch_register_files_via_rust(
+                files, force, file_results, to_parse, project_langs, failed_files
+            )
+            if rust_ret is not None:
+                rust_registered = True
+                skipped = rust_ret["skipped"]
+                failed = rust_ret["failed"]
+                # unchanged 从 file_results 推导（file_results 仅含 unchanged 文件）
+                unchanged = len(file_results)
+                t_register = time.perf_counter() - t_register_start
 
-            # P20: 记录项目实际使用的语言
-            if lang:
-                project_langs.add(lang)
+        if not rust_registered:
+            # Python 逐文件路径（rollback 或 Rust fail-soft 降级）
+            for i, rel_path in enumerate(files, 1):
+                abs_path = os.path.join(self.workspace_root, rel_path)
+                lang = detect_language_from_path(rel_path)
+                # P1-E: 用 RustParserFacade 替代 create_parser 做语言支持检测
+                # 旧实现 create_parser(rel_path) 会实例化 Python parser（携带 tree-sitter grammar），
+                # 新实现只查询 Rust 扩展支持语言集合，不实例化任何 Python parser。
+                if not lang or not RustParserFacade.supports_language(lang):
+                    skipped += 1
+                    continue
 
-            # P23.5/P23.6: 捕获文件系统异常（WinError 1920 文件锁 / WinError 3 路径过长）
-            # 跳过不可访问的文件，不中断整个构建
-            try:
-                module_path = self._infer_module_path_generic(rel_path, lang)
-                file_instance_id = self._register_file_db(abs_path, module_path)
+                # P20: 记录项目实际使用的语言
+                if lang:
+                    project_langs.add(lang)
 
-                if not force:
-                    current_mtime = os.path.getmtime(abs_path)
-                    latest_fv = self._get_file_version(file_instance_id)
-                    if latest_fv and abs(latest_fv["mtime"] - current_mtime) < 0.001:
-                        old_result = self._load_file_result_from_db(file_instance_id, latest_fv["id"], rel_path, abs_path, module_path)
-                        if old_result:
-                            file_results[rel_path] = old_result
-                            unchanged += 1
-                            continue
-            except OSError as e:
-                # 文件不可访问：跳过并记录，不中断构建
-                failed += 1
-                failed_files.append((rel_path, f"OSError: {e}"))
-                cprint(f"  ⚠ 跳过不可访问文件: {rel_path} ({e})", "yellow")
-                continue
+                # P23.5/P23.6: 捕获文件系统异常（WinError 1920 文件锁 / WinError 3 路径过长）
+                # 跳过不可访问的文件，不中断整个构建
+                try:
+                    module_path = self._infer_module_path_generic(rel_path, lang)
+                    file_instance_id = self._register_file_db(abs_path, module_path)
 
-            to_parse.append((i, rel_path, abs_path, lang, module_path, file_instance_id))
-        t_register = time.perf_counter() - t_register_start
+                    if not force:
+                        current_mtime = os.path.getmtime(abs_path)
+                        latest_fv = self._get_file_version(file_instance_id)
+                        if latest_fv and abs(latest_fv["mtime"] - current_mtime) < 0.001:
+                            old_result = self._load_file_result_from_db(file_instance_id, latest_fv["id"], rel_path, abs_path, module_path)
+                            if old_result:
+                                file_results[rel_path] = old_result
+                                unchanged += 1
+                                continue
+                except OSError as e:
+                    # 文件不可访问：跳过并记录，不中断构建
+                    failed += 1
+                    failed_files.append((rel_path, f"OSError: {e}"))
+                    cprint(f"  ⚠ 跳过不可访问文件: {rel_path} ({e})", "yellow")
+                    continue
+
+                to_parse.append((i, rel_path, abs_path, lang, module_path, file_instance_id))
+            t_register = time.perf_counter() - t_register_start
 
         if unchanged > 0 and not to_parse:
             cprint(t("cli.messages.db_build_all_unchanged", count=unchanged), "green")
@@ -2751,6 +2777,125 @@ class BuildMixin:
         return "tokenslim"
 
 
+    def _batch_register_files_via_rust(
+        self,
+        files: List[str],
+        force: bool,
+        file_results: Dict,          # 通过引用修改：unchanged 文件的旧结果
+        to_parse: List,               # 通过引用修改：需要解析的文件列表
+        project_langs: Set[str],      # 通过引用修改：项目实际使用的语言集合
+        failed_files: List,           # 通过引用修改：失败文件列表
+    ) -> Optional[Dict[str, int]]:
+        """Rust 短路路径：批量注册文件到 file_instances + 查询 file_versions
+
+        对应 Python 路径的 `_register_file_db` + `_get_file_version` 循环。
+        使用 Rust `batch_register_files` 实现单事务 + 预处理语句批量化，
+        消除 N×3 次 SQLite round-trip。
+
+        通过引用修改的可变对象：
+        - ``file_results`` —— unchanged 文件的旧结果（key=rel_path, value=dict）
+        - ``to_parse`` —— 需要解析的文件列表，元素为 6 元组 ``(idx, rel_path, abs_path, lang, module_path, file_instance_id)``
+        - ``project_langs`` —— 项目实际使用的语言集合
+        - ``failed_files`` —— 失败文件列表，元素为 ``(rel_path, error_msg)``
+
+        返回 ``None`` 表示 Rust 路径失败（调用方应降级到 Python）。
+        成功时返回 ``{"skipped": int, "failed": int}``。
+        ``unchanged`` 计数由调用方从 ``len(file_results)`` 推导。
+
+        设计原则（见 ``docs/design/phase2-6-3-batch-register-contract.md``）：
+        - 语言检测/模块路径推断/mtime 读取在 Python 完成（Rust 不做 IO）
+        - Rust 只负责 DB 写入 + version 查询（单事务 + 预处理语句）
+        - ``_load_file_result_from_db`` 走 Phase 2-6-1 已接入的 Rust 短路
+        """
+        try:
+            from callwarden_core import batch_register_files
+        except ImportError:
+            return None
+
+        # ---- Phase 1: 预过滤 + 预计算（Python 完成，Rust 不做语言检测/IO）----
+        files_to_register: List[Dict] = []
+        # rel_path -> (idx, abs_path, lang, module_path, current_mtime)
+        file_meta: Dict[str, tuple] = {}
+        skipped = 0
+        failed = 0
+
+        for idx, rel_path in enumerate(files, 1):
+            abs_path = os.path.join(self.workspace_root, rel_path)
+            lang = detect_language_from_path(rel_path)
+            # P1-E: 用 RustParserFacade 替代 create_parser 做语言支持检测
+            if not lang or not RustParserFacade.supports_language(lang):
+                skipped += 1
+                continue
+
+            # P20: 记录项目实际使用的语言（通过引用修改 project_langs）
+            project_langs.add(lang)
+
+            # P23.5/P23.6: 捕获文件系统异常（WinError 1920 文件锁 / WinError 3 路径过长）
+            try:
+                module_path = self._infer_module_path_generic(rel_path, lang)
+                current_mtime = os.path.getmtime(abs_path)
+            except OSError as e:
+                failed += 1
+                failed_files.append((rel_path, f"OSError: {e}"))
+                cprint(f"  ⚠ 跳过不可访问文件: {rel_path} ({e})", "yellow")
+                continue
+
+            files_to_register.append({
+                "rel_path": rel_path,
+                "abs_path": norm_path(abs_path),
+                "module_path": module_path,
+                "mtime": current_mtime,
+            })
+            file_meta[rel_path] = (idx, abs_path, lang, module_path, current_mtime)
+
+        # 如果没有需要注册的文件，直接返回
+        if not files_to_register:
+            return {"skipped": skipped, "failed": failed}
+
+        # ---- Phase 2: 调用 Rust batch_register_files（单事务 + 预处理语句）----
+        try:
+            rust_ret = batch_register_files(
+                self.db_path,
+                self._get_active_workspace_id(),
+                files_to_register,
+                skip_version_lookup=force,  # force=True 时跳过 version 查询（对应 force 模式）
+            )
+        except Exception:
+            return None  # Rust 调用异常 → 降级 Python
+
+        if not rust_ret.get("success", False):
+            return None  # Rust 返回失败 → 降级 Python
+
+        # ---- Phase 3: 处理 Rust 返回的结果，分发到 to_parse / file_results ----
+        results = rust_ret.get("results", [])
+        for r in results:
+            rel_path = r["rel_path"]
+            file_instance_id = r["file_instance_id"]
+            version_id = r.get("version_id")
+            version_mtime = r.get("version_mtime")
+
+            idx, abs_path, lang, module_path, current_mtime = file_meta[rel_path]
+
+            # 检查是否可以短路（未变化文件）
+            # 条件：非 force + 有 version + mtime 相近（容差 0.001s）
+            if (not force
+                    and version_id is not None
+                    and version_mtime is not None
+                    and abs(version_mtime - current_mtime) < 0.001):
+                # 尝试加载旧结果（Phase 2-6-1 已接入 Rust 短路）
+                old_result = self._load_file_result_from_db(
+                    file_instance_id, version_id, rel_path, abs_path, module_path
+                )
+                if old_result:
+                    file_results[rel_path] = old_result  # 通过引用修改 file_results
+                    continue
+
+            # 需要解析（通过引用修改 to_parse）
+            to_parse.append((idx, rel_path, abs_path, lang, module_path, file_instance_id))
+
+        return {"skipped": skipped, "failed": failed}
+
+
     def _register_file_db(self, abs_path: str, module_path: str) -> int:
         """注册文件到数据库（使用 file_instances 表）
 
@@ -3884,15 +4029,17 @@ class BuildMixin:
         """Rust 文件刷新逻辑（增量方式）
 
         P1-E: parse 走 RustParserFacade（Rust-only），不再调用 Python RustParser。
-        module_resolver.resolve_all 仍接收 self.parser 用于 mod_decls 提取
-        （Rust 扩展未返回 mod_decls，模块结构发现暂保留 Python reference，
-        将在 Step 5 审计剩余生产调用点时统一处理）。
+        R2: module_resolver 为 None 时（frozen bundle 排除 callwarden.parsers），
+        跳过 mod_decls 提取，module_path 从文件路径推断。
         """
-        if not self.module_resolver.module_to_file:
-            self.module_resolver.resolve_all(self.parser)
-
-        module_path = self.module_resolver.get_file_module(rel_path)
-        if not module_path:
+        if self.module_resolver is not None:
+            if not self.module_resolver.module_to_file:
+                self.module_resolver.resolve_all(self.parser)
+            module_path = self.module_resolver.get_file_module(rel_path)
+            if not module_path:
+                module_path = self._infer_module_path(rel_path)
+        else:
+            # frozen bundle 无 module_resolver 时，从文件路径推断 module_path
             module_path = self._infer_module_path(rel_path)
 
         file_instance_id = self._register_file_db(abs_path, module_path)

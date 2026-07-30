@@ -387,15 +387,17 @@ class TestStep3DaemonHandleRefreshIntegration:
 
         # 需要 mock parse_canonical_bytes_py 以返回预定 cas_key 对应的解析结果
         import callwarden.server.replicator as repl_mod
-        original_parse = None
+        # 保存原模块对象（不是函数对象），finally 中恢复原模块对象
+        # 修复 sys.modules 污染：原实现用 original_parse.__module__（字符串）恢复，
+        # 导致 sys.modules['callwarden_core'] 被替换为字符串，后续 import 失败
+        import sys
+        original_module = sys.modules.get("callwarden_core")
         try:
-            from callwarden_core import parse_canonical_bytes_py as _orig_parse
-            original_parse = _orig_parse
+            from callwarden_core import parse_canonical_bytes_py as _orig_parse  # noqa: F401
         except ImportError:
             pass
 
         # Mock canonicalize_source_py / parse_canonical_bytes_py 返回预定结果
-        import sys
         mock_module = type(sys)("callwarden_core_mock")
         mock_module.canonpath = None
 
@@ -441,10 +443,9 @@ class TestStep3DaemonHandleRefreshIntegration:
                 workspace_root_path=str(tmp_path),
             )
         finally:
-            # 恢复 sys.modules
-            if original_parse is not None:
-                sys.modules["callwarden_core"] = original_parse.__module__ if hasattr(
-                    original_parse, "__module__") else None
+            # 恢复 sys.modules（修复污染：恢复原模块对象，而非字符串或删除）
+            if original_module is not None:
+                sys.modules["callwarden_core"] = original_module
             else:
                 sys.modules.pop("callwarden_core", None)
 
@@ -513,6 +514,8 @@ class TestStep3DaemonHandleRefreshIntegration:
         # CodeGraph DB 路径不存在（构造失败场景）
         # 但 sqlite3.connect 会自动创建空 DB，所以需要 mock merge_cas_to_codegraph 抛异常
         import sys
+        # 保存原模块对象，finally 中恢复（修复 sys.modules 污染）
+        original_module = sys.modules.get("callwarden_core")
         mock_module = type(sys)("callwarden_core_fail")
         canonical_bytes = b"# test\ndef fn():\n    pass\n"
         mock_module.canonicalize_source_py = lambda abs_path: {
@@ -583,7 +586,11 @@ class TestStep3DaemonHandleRefreshIntegration:
             )
         finally:
             db_cas_merge.merge_cas_to_codegraph = original_merge
-            sys.modules.pop("callwarden_core", None)
+            # 恢复原模块对象（修复污染：原实现直接 pop 导致后续测试重新 import 失败）
+            if original_module is not None:
+                sys.modules["callwarden_core"] = original_module
+            else:
+                sys.modules.pop("callwarden_core", None)
             ws_conn.close()
             cas_conn.close()
 
@@ -611,6 +618,8 @@ class TestStep3DaemonHandleRefreshIntegration:
 
         # Mock callwarden_core（canonicalize + parse）
         import sys
+        # 保存原模块对象，finally 中恢复（修复 sys.modules 污染）
+        original_module = sys.modules.get("callwarden_core")
         mock_module = type(sys)("callwarden_core_retry")
         mock_module.canonicalize_source_py = lambda abs_path: {
             "canonical_bytes": canonical_bytes,
@@ -692,7 +701,11 @@ class TestStep3DaemonHandleRefreshIntegration:
             )
         finally:
             db_cas_merge.merge_cas_to_codegraph = original_merge
-            sys.modules.pop("callwarden_core", None)
+            # 恢复原模块对象（修复污染：原实现直接 pop 导致后续测试重新 import 失败）
+            if original_module is not None:
+                sys.modules["callwarden_core"] = original_module
+            else:
+                sys.modules.pop("callwarden_core", None)
             ws_conn.close()
             cas_conn.close()
 
@@ -801,6 +814,8 @@ class TestStep4FullE2E:
 
         # Mock callwarden_core（避免依赖 Rust 扩展）
         import sys
+        # 保存原模块对象，finally 中恢复（修复 sys.modules 污染）
+        original_module = sys.modules.get("callwarden_core")
         mock_module = type(sys)("callwarden_core_e2e")
         mock_module.canonicalize_source_py = lambda abs_path: {
             "canonical_bytes": canonical_bytes,
@@ -833,7 +848,11 @@ class TestStep4FullE2E:
                 "language": "python",
             })
         finally:
-            sys.modules.pop("callwarden_core", None)
+            # 恢复原模块对象（修复污染：原实现直接 pop 导致后续测试重新 import 失败）
+            if original_module is not None:
+                sys.modules["callwarden_core"] = original_module
+            else:
+                sys.modules.pop("callwarden_core", None)
 
         # 验证 refresh 成功
         assert refresh_result["status"] == "committed"

@@ -59,6 +59,174 @@ DEFAULT_SNAPSHOT_GC_INTERVAL_SEC = 6 * 3600.0
 DEFAULT_METRICS_SAMPLE_INTERVAL_SEC = 10.0
 
 
+# ============================================
+# Phase 4-2 wire-production: Rust 短路（ACL/路径安全/UID）
+# ============================================
+# daemon_server.py 默认走 Rust PyO3 API（callwarden_core.validate_owned_path /
+# check_path_within_workspace / is_admin_uid / current_daemon_uid_py /
+# check_workspace_owner），rollback_config 中 feature=rust_daemon_acl_path_budget
+# 置为 1 时回退 Python。Rust 失败时 fail-soft 降级到 Python 路径。
+#
+# 契约：docs/design/phase4-2-acl-path-budget-contract.md §3-5
+# - validate_owned_path: 返回 canonicalize 后路径，错误码 path_not_found/path_forbidden
+# - check_path_within_workspace: 路径逃逸检查，错误码 path_escape
+# - is_admin_uid: 不含 admin_uids 配置扩展（Python 调用方补充第三层）
+# - current_daemon_uid_py: Unix=getuid()，Windows=1000
+# - check_workspace_owner: 纯比较，错误码 workspace_forbidden
+
+_RUST_ACL_AVAILABLE = False
+_callwarden_core = None
+try:
+    import callwarden_core as _callwarden_core  # type: ignore
+    if (
+        hasattr(_callwarden_core, "validate_owned_path")
+        and hasattr(_callwarden_core, "check_path_within_workspace")
+        and hasattr(_callwarden_core, "is_admin_uid")
+        and hasattr(_callwarden_core, "current_daemon_uid_py")
+        and hasattr(_callwarden_core, "check_workspace_owner")
+    ):
+        _RUST_ACL_AVAILABLE = True
+except ImportError:
+    _callwarden_core = None
+
+# rollback_config 查询缓存（60s TTL，避免每次 ACL 调用都打开 DB）
+_ACL_ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
+_ACL_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _is_rust_acl_rolled_back() -> bool:
+    """检查 rust_daemon_acl_path_budget feature 是否已回滚（60s 缓存）
+
+    daemon_server 是独立模块（非 CodeGraphDB Mixin），无法用 self.is_feature_rolled_back。
+    通过短连接查询 rollback_config 表，结果缓存 60s 避免频繁开 DB。
+    """
+    now = time.time()
+    if now - _ACL_ROLLBACK_CACHE["ts"] < _ACL_ROLLBACK_CACHE_TTL:
+        return _ACL_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    try:
+        import sqlite3 as _sqlite3
+        from callwarden.config import DB_PATH as _DB_PATH
+        conn = _sqlite3.connect(_DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                ("rust_daemon_acl_path_budget",),
+            )
+            row = cur.fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _ACL_ROLLBACK_CACHE["ts"] = now
+    _ACL_ROLLBACK_CACHE["value"] = value
+    return value
+
+
+def _rust_acl_available() -> bool:
+    """Rust ACL 短路是否可用（模块加载 + 未回滚）"""
+    return _RUST_ACL_AVAILABLE and not _is_rust_acl_rolled_back()
+
+
+# ============================================
+# Phase 4-3 wire-production: Rust 短路（health_check_all）
+# ============================================
+# daemon_server.py 的 health RPC 默认走 Rust PyO3 API
+# （callwarden_core.health_check_all），rollback_config 中
+# feature=rust_daemon_health_check 置为 1 时回退 Python。
+# Rust 失败时 fail-soft 降级到 Python HealthChecker.check_all() 路径。
+#
+# 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.1
+# - 返回 JSON 字符串（与 Python check_all() 格式一致）
+# - Windows 内存检查返回 "unsupported"（status=healthy），Python 有 psutil fallback
+
+_RUST_HEALTH_AVAILABLE = False
+if _callwarden_core is not None and hasattr(_callwarden_core, "health_check_all"):
+    _RUST_HEALTH_AVAILABLE = True
+
+_HEALTH_ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
+_HEALTH_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _is_rust_health_rolled_back() -> bool:
+    """检查 rust_daemon_health_check feature 是否已回滚（60s 缓存）。"""
+    now = time.time()
+    if now - _HEALTH_ROLLBACK_CACHE["ts"] < _HEALTH_ROLLBACK_CACHE_TTL:
+        return _HEALTH_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    try:
+        import sqlite3 as _sqlite3
+        from callwarden.config import DB_PATH as _DB_PATH
+        conn = _sqlite3.connect(_DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                ("rust_daemon_health_check",),
+            )
+            row = cur.fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _HEALTH_ROLLBACK_CACHE["ts"] = now
+    _HEALTH_ROLLBACK_CACHE["value"] = value
+    return value
+
+
+def _rust_health_available() -> bool:
+    """Rust health 短路是否可用（模块加载 + 未回滚）。"""
+    return _RUST_HEALTH_AVAILABLE and not _is_rust_health_rolled_back()
+
+
+def _convert_rust_acl_error(exc: BaseException) -> DaemonRpcError:
+    """将 Rust 端 PyRuntimeError("code: message") 转换为 DaemonRpcError。
+
+    Rust 端 daemon_err_to_py 输出格式为 "code: message"（见 daemon_query.rs:647），
+    Python 端需要拆分还原为 DaemonRpcError(code, message) 以保持错误码语义一致。
+    """
+    msg = str(exc)
+    # 查找第一个 ": " 分隔符（code 不含冒号）
+    idx = msg.find(": ")
+    if idx > 0:
+        code = msg[:idx]
+        message = msg[idx + 2:]
+    else:
+        code = "daemon_error"
+        message = msg
+    return DaemonRpcError(code, message)
+
+
+# Rust 错误码 → Python 标准消息映射（保持向后兼容）
+# Rust 端消息格式（如 "owner_uid=0，peer_uid=1"）与 Python 原消息不同，
+# 通过此映射在 _owned_workspace 等场景还原 Python 标准消息。
+_RUST_ACL_CODE_TO_PY_MSG = {
+    "workspace_forbidden": "workspace 不属于当前 UID",
+    "path_escape": "abs_path 不在 workspace host_real_root 内",
+}
+
+
+def _convert_rust_acl_error_with_py_msg(exc: BaseException,
+                                         default_code: str,
+                                         default_msg: str) -> DaemonRpcError:
+    """将 Rust ACL 错误转换为 DaemonRpcError，优先使用 Python 标准消息。
+
+    Args:
+        exc: Rust 端抛出的 PyRuntimeError
+        default_code: 默认错误码（若 Rust 消息无法解析）
+        default_msg: 默认消息（若错误码不在 _RUST_ACL_CODE_TO_PY_MSG 中）
+
+    Returns:
+        DaemonRpcError，code 与 Rust 端一致，message 优先使用 Python 标准消息
+    """
+    py_err = _convert_rust_acl_error(exc)
+    py_msg = _RUST_ACL_CODE_TO_PY_MSG.get(py_err.code)
+    if py_msg:
+        return DaemonRpcError(py_err.code, py_msg)
+    return DaemonRpcError(default_code, default_msg)
+
+
 class DaemonRpcError(RuntimeError):
     """可安全返回给客户端的 RPC 错误。"""
 
@@ -69,6 +237,12 @@ class DaemonRpcError(RuntimeError):
 
 
 def _current_uid() -> int:
+    # Phase 4-2 wire-production: Rust 短路（Unix libc::getuid / Windows 1000）
+    if _rust_acl_available():
+        try:
+            return int(_callwarden_core.current_daemon_uid_py())
+        except Exception:
+            pass  # fail-soft → 降级 Python 路径
     return os.getuid() if hasattr(os, "getuid") else 0
 
 
@@ -510,7 +684,15 @@ class EnterpriseDaemonService:
             workspace = get_workspace_status(conn, workspace_id)
         if workspace is None:
             raise DaemonRpcError("workspace_not_found", workspace_id)
-        if int(workspace["owner_uid"]) != peer_uid:
+        # Phase 4-2 wire-production: Rust 短路 owner 校验
+        if _rust_acl_available():
+            try:
+                _callwarden_core.check_workspace_owner(
+                    int(workspace["owner_uid"]), peer_uid)
+            except Exception as exc:
+                raise _convert_rust_acl_error_with_py_msg(
+                    exc, "workspace_forbidden", "workspace 不属于当前 UID") from exc
+        elif int(workspace["owner_uid"]) != peer_uid:
             raise DaemonRpcError("workspace_forbidden", "workspace 不属于当前 UID")
         if workspace.get("status") == "archived":
             raise DaemonRpcError("workspace_archived", workspace_id)
@@ -543,7 +725,15 @@ class EnterpriseDaemonService:
         if row is None:
             raise DaemonRpcError("workspace_not_found", str(workspace_id))
         workspace = dict(row)
-        if int(workspace["owner_uid"]) != peer_uid:
+        # Phase 4-2 wire-production: Rust 短路 owner 校验
+        if _rust_acl_available():
+            try:
+                _callwarden_core.check_workspace_owner(
+                    int(workspace["owner_uid"]), peer_uid)
+            except Exception as exc:
+                raise _convert_rust_acl_error_with_py_msg(
+                    exc, "workspace_forbidden", "workspace 不属于当前 UID") from exc
+        elif int(workspace["owner_uid"]) != peer_uid:
             raise DaemonRpcError("workspace_forbidden", "workspace 不属于当前 UID")
         if workspace.get("status") == "archived":
             raise DaemonRpcError("workspace_archived", str(workspace_id))
@@ -552,6 +742,22 @@ class EnterpriseDaemonService:
     @staticmethod
     def _validate_owned_path(path: str, peer_uid: int,
                              require_file: bool = False) -> str:
+        # Phase 4-2 wire-production: Rust 短路（canonicalize + 类型 + owner 校验）
+        # 契约 §3.1：返回 canonicalize 后路径，错误码 path_not_found/path_forbidden
+        if _rust_acl_available():
+            try:
+                rust_path = _callwarden_core.validate_owned_path(
+                    path, peer_uid, require_file)
+                # Windows: Rust std::fs::canonicalize 返回 \\?\ UNC 前缀，
+                # Python os.path.realpath 不加。剥离 UNC 前缀保持与 Python 一致，
+                # 避免下游 SQLite URI (immutable=1) 无法打开 \\?\ 路径。
+                # 契约 §5.1 预期差异：路径规范化在无 symlink 时行为一致。
+                if os.name == "nt" and rust_path.startswith("\\\\?\\"):
+                    rust_path = rust_path[4:]
+                return rust_path
+            except Exception as exc:
+                raise _convert_rust_acl_error(exc) from exc
+        # Python 降级路径
         real_path = os.path.realpath(os.path.abspath(path))
         if require_file and not os.path.isfile(real_path):
             raise DaemonRpcError("path_not_found", real_path)
@@ -576,14 +782,25 @@ class EnterpriseDaemonService:
         - ``uid == daemon 进程自己的 uid``（与 Rust 端 ``current_daemon_uid()`` 对齐）
         - ``uid in DaemonConfig.admin_uids``（Python 端配置扩展，默认 ``[0]``）
 
+        Phase 4-2 wire-production：前两层判定走 Rust ``is_admin_uid`` 短路，
+        第三层（admin_uids 配置扩展）由 Python 补充检查（契约 §3.2 / §5.2）。
+
         默认 ``admin_uids=[0]`` 时，root 和 daemon（以 root 启动）都是 admin；
         daemon 以非 root 启动（如 callwarden 用户）时，进程自己 uid 也算 admin，
         避免需要把 daemon uid 显式加入 admin_uids。
         """
-        if uid == 0:
-            return True
-        if hasattr(os, "getuid") and uid == os.getuid():
-            return True
+        # Phase 4-2 wire-production: Rust 短路（root + daemon self 判定）
+        if _rust_acl_available():
+            try:
+                if _callwarden_core.is_admin_uid(uid):
+                    return True
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
+        else:
+            if uid == 0:
+                return True
+            if hasattr(os, "getuid") and uid == os.getuid():
+                return True
         return self._config.is_admin(uid)
 
     def dispatch(self, peer: Dict[str, int], method: str,
@@ -668,10 +885,40 @@ class EnterpriseDaemonService:
             - checks: 四项检查的详细结果
             - summary: 各状态计数
             - pid / uptime_seconds / workspace_count / registry_db / data_root: 兼容字段
+
+            Phase 4-3 wire-production: Rust 短路（callwarden_core.health_check_all），
+            rollback_config 中 feature=rust_daemon_health_check 置为 1 时回退 Python。
+            Rust 失败时 fail-soft 降级到 Python HealthChecker.check_all() 路径。
             """
             import time as _time
-            # 执行 HealthChecker.check_all() — G14 实际检查
-            health_result = self._health_checker.check_all()
+            import json as _json
+            uptime_secs = _time.time() - self._start_time
+
+            # Phase 4-3 wire-production: Rust 短路 health_check_all
+            health_result = None
+            if _rust_health_available():
+                try:
+                    # 解析 memory_max 字符串（如 "1G"）为字节数
+                    from callwarden.server.health_check import _parse_size_to_bytes
+                    memory_max_bytes = _parse_size_to_bytes(
+                        getattr(self._config, "memory_max", "1G"))
+                    if memory_max_bytes == 0:
+                        memory_max_bytes = 1024 * 1024 * 1024  # 默认 1GB
+
+                    rust_json = _callwarden_core.health_check_all(
+                        self.registry_db,
+                        self._data_root,
+                        uptime_secs,
+                        memory_max_bytes,
+                    )
+                    health_result = _json.loads(rust_json)
+                except Exception:
+                    health_result = None  # fail-soft → 降级 Python 路径
+
+            # Python 降级路径
+            if health_result is None:
+                health_result = self._health_checker.check_all()
+
             # 兼容原 health RPC 的字段
             with closing(self._registry_conn()) as conn:
                 try:
@@ -682,7 +929,7 @@ class EnterpriseDaemonService:
                     ws_count = 0
             health_result.update({
                 "pid": os.getpid(),
-                "uptime_seconds": int(_time.time() - self._start_time),
+                "uptime_seconds": int(uptime_secs),
                 "workspace_count": ws_count,
                 "registry_db": self.registry_db,
                 "data_root": self._data_root,
@@ -948,12 +1195,23 @@ class EnterpriseDaemonService:
                         abs_path, uid, require_file=True)
                     host_root = str(workspace.get("host_real_root") or "")
                     if host_root:
-                        real_host_root = os.path.realpath(host_root)
-                        if not (real_abs == real_host_root or real_abs.startswith(real_host_root + os.sep)):
-                            raise DaemonRpcError(
-                                "path_escape",
-                                f"abs_path 不在 workspace host_real_root 内：{real_abs}",
-                            )
+                        # Phase 4-2 wire-production: Rust 短路路径逃逸检查
+                        # 契约 §3.1：check_path_within_workspace(real_abs, host_root)
+                        if _rust_acl_available():
+                            try:
+                                _callwarden_core.check_path_within_workspace(
+                                    real_abs, host_root)
+                            except Exception as exc:
+                                raise _convert_rust_acl_error_with_py_msg(
+                                    exc, "path_escape",
+                                    f"abs_path 不在 workspace host_real_root 内：{real_abs}") from exc
+                        else:
+                            real_host_root = os.path.realpath(host_root)
+                            if not (real_abs == real_host_root or real_abs.startswith(real_host_root + os.sep)):
+                                raise DaemonRpcError(
+                                    "path_escape",
+                                    f"abs_path 不在 workspace host_real_root 内：{real_abs}",
+                                )
             # 调用 daemon_handle_refresh
             # P0-1 修复（2026-07-21）：原 int(workspace_id) 把 16 位 hash 字符串转 int
             # 必抛 ValueError，导致 workspace.file.refresh 从未成功执行过。

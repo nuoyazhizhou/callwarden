@@ -211,9 +211,13 @@ def test_schema_version_in_schema_py():
     match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", schema_py)
     assert match, "schema.py 缺少 SCHEMA_VERSION"
     actual_version = int(match.group(1))
-    # 契约文档中 SCHEMA_VERSION = 41
-    assert actual_version == 41, (
-        f"schema.py SCHEMA_VERSION={actual_version}，契约期望 41"
+    # 契约文档中 SCHEMA_VERSION 必须与 schema.py 一致（动态读取，避免硬编码）
+    contract = _read(_CONTRACT_MD)
+    contract_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", contract)
+    assert contract_match, "契约文档未声明 SCHEMA_VERSION"
+    expected_version = int(contract_match.group(1))
+    assert actual_version == expected_version, (
+        f"schema.py SCHEMA_VERSION={actual_version}，契约期望 {expected_version}"
     )
 
 

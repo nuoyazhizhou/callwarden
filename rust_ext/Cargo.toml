@@ -19,6 +19,28 @@ crate-type = ["cdylib", "rlib"]
 name = "cw-daemon"
 path = "src/bin/cw_daemon.rs"
 
+[[bin]]
+# Phase 5-1 A.2: cw CLI binary（clap 命令树骨架，59 子命令对齐 Python cli/main.py）
+# 独立 binary，仅依赖 clap，不依赖 PyO3/callwarden_core lib
+name = "cw"
+path = "src/bin/cw_cli.rs"
+
+[[bin]]
+# Phase 5-2 Slice 1: cw-client binary（daemon RPC client，clap 骨架 + ping 子命令）
+# 依赖 callwarden_core lib（daemon::client::unix::UnixDaemonRpcClient，仅 Unix）
+# 跨平台编译：Windows 上 UDS 分支被 #[cfg(not(unix))] 替换为平台提示
+# 契约：docs/design/phase5-2-slice1-daemon-client-contract.md §3.4
+name = "cw-client"
+path = "src/bin/cw_client.rs"
+
+[[bin]]
+# Phase 5-2 Slice 6: cw-agent binary（文件监控 + session 管理）
+# 依赖 callwarden_core lib（daemon::client::AgentSession + watcher）
+# 跨平台编译：Windows 上 watcher 循环被 #[cfg(not(unix))] 替换为平台提示
+# 对齐 Python cli/main.py:run_agent_mode (L12023+)
+name = "cw-agent"
+path = "src/bin/cw_agent.rs"
+
 [features]
 # 默认开启 extension-module：cdylib 构建时不链接 libpython（由 Python host 提供）
 # 测试时使用 `cargo test --no-default-features` 关闭此 feature，让 PyO3 链接 libpython
@@ -30,6 +52,8 @@ extension-module = ["pyo3/extension-module"]
 # extension-module 通过 [features].default 间接启用，便于测试时 --no-default-features 关闭
 pyo3 = { version = "0.29" }
 numpy = "0.29"
+# Phase 6-3 P1: ndarray 用于 vector_topk 的 ArrayView2 类型（numpy crate 的 as_array() 返回值）
+ndarray = "0.16"
 # P29/P31: tree-sitter parse 热路径下沉（16 语言 grammar）
 tree-sitter = "0.26"
 tree-sitter-c = "0.24"
@@ -64,6 +88,8 @@ notify = "7.0"
 crossbeam-channel = "0.5"
 # Phase 5.2: sha2 用于文件内容 hash diff（排除假阳性 watcher 事件）
 sha2 = "0.10"
+# Phase 4-3 P2: hmac 用于审计链签名（HMAC-SHA256）
+hmac = "0.12"
 # P6 优化：rustc-hash 提供 FxHashMap（比 SipHash 快 5-10x，非加密哈希）
 rustc-hash = "2.0"
 # P11 优化：memchr 提供 SIMD 加速的子串搜索（search_symbols 热路径）
@@ -73,7 +99,9 @@ memmap2 = "0.9"
 # P5 优化:bytemuck 用于 GraphSymbol/CallEdge 的零拷贝字节转换
 bytemuck = { version = "1.21", features = ["derive"] }
 # R1 daemon 协议层：serde_json 用于 JSON-RPC 帧序列化
-serde_json = "1.0"
+# Phase 5-3: 启用 preserve_order feature 保持插入顺序，对齐 Python json.dumps 行为
+# （Python 3.7+ dict 有序，json.dumps 按插入顺序输出；serde_json 默认按字母排序）
+serde_json = { version = "1.0", features = ["preserve_order"] }
 # R5 staging_log：serde 用于 StagingEntry 的 Serialize/Deserialize derive
 serde = { version = "1.0", features = ["derive"] }
 # R1 daemon 协议层：thiserror 用于 ProtocolError 派生 Error trait
@@ -86,10 +114,20 @@ hex = "0.4"
 # 多 daemon 实例并发 GC 时与 BEGIN IMMEDIATE 形成双保险，防跨进程 mark-sweep 数据竞态
 fs2 = "0.4"
 
-# R7 cw_daemon binary：clap（CLI 参数解析）+ signal-hook（SIGTERM/SIGINT 优雅关闭）
+# Phase 6-1 P2/P3: regex 用于 cross_layer_impact 正则提取 + once_cell 缓存编译后正则
+regex = "1.11"
+once_cell = "1.20"
+
+# Phase 5-1 A.1: toml 用于分层配置加载（对齐 release/config_loader.py）
+toml = "0.8"
+
+# R7 cw_daemon binary + Phase 5-1 A.2 cw_cli binary：clap（CLI 参数解析）
+# 跨平台依赖（cw_cli 需在 Windows/macOS/Linux 上运行）
+clap = { version = "4", features = ["derive"] }
+
+# R7 cw_daemon binary：signal-hook（SIGTERM/SIGINT 优雅关闭）
 # Linux-only 依赖，避免 Windows/macOS 编译时引入不必要的包
 [target.'cfg(unix)'.dependencies]
-clap = { version = "4", features = ["derive"] }
 signal-hook = "0.3"
 
 [dev-dependencies]

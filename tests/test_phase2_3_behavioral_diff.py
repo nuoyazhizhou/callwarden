@@ -318,8 +318,9 @@ def _insert_old_call(db_path, caller_symbol_id, caller_name="old_fn",
 
 def _py_resolve_and_save_calls(codegraph_db_path, file_results, all_symbols=None,
                                 external_symbols=None):
-    """Python 路径：调用 db_build.BuildMixin._build_call_graph_multi_lang（unbound method）
+    """Python 路径：调用 db_build.BuildMixin._build_call_graph_multi_lang_python（unbound method）
 
+    直接调用 _python 后缀方法，跳过 Rust 短路调度器（_MinimalDb 无 is_feature_rolled_back）。
     与 Phase 2-2 _py_save_symbols 一致：使用 unbound method + 最小 db-like 对象。
     预填 all_symbols/external_symbols 时构造 file_results 使其 _from_db=False。
 
@@ -361,7 +362,7 @@ def _py_resolve_and_save_calls(codegraph_db_path, file_results, all_symbols=None
     only_files = set(file_results.keys()) if file_results else None
     try:
         conn.execute("BEGIN IMMEDIATE;")
-        BuildMixin._build_call_graph_multi_lang(db, file_results, only_files=only_files)
+        BuildMixin._build_call_graph_multi_lang_python(db, file_results, only_files=only_files)
         conn.execute("COMMIT;")
     except Exception:
         conn.execute("ROLLBACK;")

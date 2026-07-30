@@ -289,7 +289,66 @@ class CloneDetectionMixin:
 
     Phase 7.0 新增：detect_clones_to_groups 把结果写入 clone_groups +
     clone_group_members（不展开成 pairs），适合后台 job 异步执行。
+
+    Phase 6-2 wire-production: _detect_clone_groups_core 接入 Rust 短路
+    （feature=rust_clone_detection）。Rust 负责重计算（MinHash/LSH/Jaccard/
+    分组），Python 负责 DB 查询和 token 归一化。Rust 失败时 fail-soft
+    降级到 Python 全路径。
     """
+
+    def _detect_clone_groups_via_rust(
+        self,
+        symbols: List[Dict[str, Any]],
+        similarity_threshold: float,
+    ) -> Optional[Tuple[List[Dict[str, Any]], Dict[str, int]]]:
+        """Rust 短路：调用 callwarden_core.py_detect_clones_core
+
+        Python 负责 DB 查询 + token 归一化（_normalize_token_sequence），
+        Rust 负责 3-gram 构建 + MinHash 签名 + LSH 分桶 + Jaccard 验证 +
+        Type-1/2/3 分组。
+
+        Args:
+            symbols: DB 查询得到的符号列表（dict row）
+            similarity_threshold: Type-3 相似度阈值
+
+        Returns:
+            (groups, stats) 或 None（Rust 不可用/失败）
+        """
+        try:
+            import callwarden_core  # type: ignore
+        except ImportError:
+            return None
+
+        # 构造 Rust 输入：List[Tuple[int, str, str, List[str]]]
+        rust_input: List[Tuple[int, str, str, List[str]]] = []
+        for s in symbols:
+            content = s.get("content") or ""
+            if not content:
+                continue
+            normalized = _normalize_token_sequence(content)
+            th = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+            tokens = normalized.split()
+            rust_input.append((
+                s["id"],
+                s["symbol_hash"],
+                th,
+                tokens,
+            ))
+
+        try:
+            groups, stats = callwarden_core.py_detect_clones_core(
+                rust_input, similarity_threshold
+            )
+            # 物化懒批对象为 list（AGENTS.md 规则 17）
+            groups_list = list(groups)
+            stats_dict = dict(stats)
+            # 物化 groups 中的 members
+            for g in groups_list:
+                g["members"] = list(g["members"])
+            return groups_list, stats_dict
+        except Exception:
+            # Rust 异常 → fail-soft 降级到 Python
+            return None
 
     def _detect_clone_groups_core(
         self,
@@ -338,6 +397,23 @@ class CloneDetectionMixin:
         symbols = [dict(row) for row in cur]
         scanned = len(symbols)
         skipped = 0
+
+        # Phase 6-2 wire-production: Rust 短路（feature=rust_clone_detection）
+        # rollback_config 中 feature=rust_clone_detection 置为 1 时回退 Python 全路径
+        # Rust 负责重计算（MinHash/LSH/Jaccard/分组），Python 负责 DB 查询和归一化
+        # Rust 失败时 fail-soft 降级到 Python 全路径
+        if not self.is_feature_rolled_back("rust_clone_detection"):
+            rust_result = self._detect_clone_groups_via_rust(symbols, similarity_threshold)
+            if rust_result is not None:
+                groups, group_stats = rust_result
+                # 补全 stats 中 Python 侧统计的 skipped_symbols
+                # Rust 路径下 skipped = 无 content 的符号数
+                skipped = sum(1 for s in symbols if not (s.get("content") or ""))
+                group_stats["skipped_symbols"] = skipped
+                group_stats["scanned_symbols"] = scanned
+                return groups, group_stats
+
+        # Python 全路径（fallback 或 rollback_flag=1 时）
 
         # 预计算每个符号的 token_hash 和 token 集合
         sym_meta: List[Dict[str, Any]] = []

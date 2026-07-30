@@ -2195,4 +2195,351 @@ mod tests {
             .unwrap();
         assert_eq!(pr_a2.generation, 2, "ws_a 第二次 generation 应为 2");
     }
+
+    // ---- P0 CAS local_id ABI 端到端持久化测试（T-1785076611912）----
+    // 验证 ParseFact local_id 从 parser → parse_result_to_cas_input → CasStore.publish 的完整传递
+    // 使用真实文件（file-backed），而非合成 CasPublishInput
+
+    /// 辅助：parse 真实文件 → CAS publish → 返回 (ParseResult, CasStore)
+    fn parse_and_publish_to_cas(
+        source: &str,
+        language: &str,
+        suffix: &str,
+    ) -> (ParseResult, CasStore, String) {
+        use crate::canonicalize::canonicalize_source;
+        use crate::multi_lang::LangConfig;
+
+        // 1. 写入临时文件
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let file_path = tmp_dir.path().join(format!("test.{}", suffix));
+        std::fs::write(&file_path, source).unwrap();
+        let abs_path = file_path.to_str().unwrap();
+
+        // 2. canonicalize（获取 canonical_bytes + content_hash）
+        let canon = canonicalize_source(abs_path).unwrap();
+        let content_hash = canon.content_hash.clone();
+        let canonical_bytes = canon.canonical_bytes.clone();
+
+        // 3. parse 真实文件
+        let config = LangConfig::get(language)
+            .unwrap_or_else(|| panic!("不支持的语言: {}", language));
+        let parser = crate::multi_lang::GenericParser::new(std::sync::Arc::new(config));
+        let parse_result = parser.parse_file(abs_path, "test_module");
+
+        // parse 不应有错误
+        assert!(
+            parse_result.error.is_none(),
+            "parse 失败: {:?}",
+            parse_result.error
+        );
+
+        // 4. 转换 ParseResult → CasPublishInput
+        let cas_input = parse_result_to_cas_input(&parse_result, &canonical_bytes);
+
+        // 5. CAS 发布
+        let cas_store = CasStore::open_in_memory().unwrap();
+        let cas_key = compute_cas_key_v1(
+            &content_hash,
+            language,
+            "0.1.0",  // parser_version
+            "0.2.0",  // callwarden_version
+            "v1",     // extraction_config_version
+            "v1",     // abi_version
+            "v1",     // input_abi_version
+        );
+        cas_store
+            .publish(
+                &cas_key,
+                &content_hash,
+                language,
+                &cas_input,
+                "0.1.0",
+                "0.2.0",
+                "v1",
+                "v1",
+                "v1",
+            )
+            .unwrap();
+
+        // 保持 tmp_dir 不被删除（返回路径供调试）
+        std::mem::forget(tmp_dir);
+
+        (parse_result, cas_store, cas_key)
+    }
+
+    /// P0-1: Rust 文件 file-backed E2E：parser local_id → cas_symbols.local_symbol_id 一致
+    #[test]
+    fn test_cas_local_id_e2e_rust_file() {
+        let source = r#"fn outer() {
+    inner();
+}
+
+fn inner() {
+    println!("hello");
+}
+"#;
+        let (parse_result, cas_store, cas_key) = parse_and_publish_to_cas(source, "rust", "rs");
+
+        // 验证 parser 输出了符号
+        assert!(!parse_result.symbols.is_empty(), "parser 应提取到符号");
+        // 验证 parser 输出了调用
+        assert!(!parse_result.calls.is_empty(), "parser 应提取到调用");
+
+        // 查询 cas_symbols，断言 local_symbol_id 与 parser 输出一致
+        let conn = cas_store.conn().lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, local_symbol_id, lexical_parent_local_id
+                 FROM cas_symbols WHERE cas_key = ?1 ORDER BY local_symbol_id",
+            )
+            .unwrap();
+        let cas_rows: Vec<(String, i64, Option<i64>)> = stmt
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        // 逐符号对比
+        assert_eq!(
+            cas_rows.len(),
+            parse_result.symbols.len(),
+            "cas_symbols 行数应与 parser 符号数一致"
+        );
+        for (i, sym) in parse_result.symbols.iter().enumerate() {
+            let cas_row = &cas_rows[i];
+            assert_eq!(
+                cas_row.0, sym.name,
+                "符号名不一致: cas={} vs parser={}",
+                cas_row.0, sym.name
+            );
+            assert_eq!(
+                cas_row.1, sym.local_id as i64,
+                "local_symbol_id 不一致: cas={} vs parser={} (symbol={})",
+                cas_row.1, sym.local_id, sym.name
+            );
+            assert_eq!(
+                cas_row.2,
+                sym.lexical_parent_local_id.map(|x| x as i64),
+                "lexical_parent_local_id 不一致: cas={:?} vs parser={:?} (symbol={})",
+                cas_row.2,
+                sym.lexical_parent_local_id,
+                sym.name
+            );
+        }
+
+        // 查询 cas_raw_calls，断言 caller_local_id 与 parser 输出一致
+        let mut stmt = conn
+            .prepare(
+                "SELECT callee_name, caller_local_id, call_ordinal
+                 FROM cas_raw_calls WHERE cas_key = ?1 ORDER BY call_ordinal",
+            )
+            .unwrap();
+        let cas_calls: Vec<(String, Option<i64>, i64)> = stmt
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        assert_eq!(
+            cas_calls.len(),
+            parse_result.calls.len(),
+            "cas_raw_calls 行数应与 parser 调用数一致"
+        );
+        for (i, call) in parse_result.calls.iter().enumerate() {
+            let cas_row = &cas_calls[i];
+            assert_eq!(
+                cas_row.1,
+                call.caller_local_id.map(|x| x as i64),
+                "caller_local_id 不一致: cas={:?} vs parser={:?} (callee={})",
+                cas_row.1,
+                call.caller_local_id,
+                call.callee_name
+            );
+            assert_eq!(
+                cas_row.2, call.ordinal as i64,
+                "call_ordinal 不一致: cas={} vs parser={} (callee={})",
+                cas_row.2, call.ordinal, call.callee_name
+            );
+        }
+    }
+
+    /// P0-2: Python 文件 file-backed E2E（验证多语言 local_id 传递）
+    #[test]
+    fn test_cas_local_id_e2e_python_file() {
+        let source = r#"def outer():
+    inner()
+
+def inner():
+    pass
+"#;
+        let (parse_result, cas_store, cas_key) =
+            parse_and_publish_to_cas(source, "python", "py");
+
+        assert!(!parse_result.symbols.is_empty(), "Python parser 应提取到符号");
+
+        let conn = cas_store.conn().lock().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT name, local_symbol_id FROM cas_symbols WHERE cas_key = ?1 ORDER BY local_symbol_id",
+            )
+            .unwrap();
+        let cas_rows: Vec<(String, i64)> = stmt
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        assert_eq!(
+            cas_rows.len(),
+            parse_result.symbols.len(),
+            "Python cas_symbols 行数应与 parser 符号数一致"
+        );
+        for (i, sym) in parse_result.symbols.iter().enumerate() {
+            assert_eq!(
+                cas_rows[i].1, sym.local_id as i64,
+                "Python local_symbol_id 不一致: cas={} vs parser={} (symbol={})",
+                cas_rows[i].1, sym.local_id, sym.name
+            );
+        }
+    }
+
+    /// P0-3: 验证 local_id 全部非零（0 是保留值，表示 synthetic module symbol）
+    #[test]
+    fn test_cas_local_id_all_nonzero_e2e() {
+        let source = r#"fn foo() { bar(); }
+fn bar() { baz(); }
+fn baz() {}
+"#;
+        let (parse_result, cas_store, cas_key) = parse_and_publish_to_cas(source, "rust", "rs");
+
+        let conn = cas_store.conn().lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT local_symbol_id FROM cas_symbols WHERE cas_key = ?1")
+            .unwrap();
+        let ids: Vec<i64> = stmt
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| row.get(0))
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        for id in &ids {
+            assert!(
+                *id >= 1,
+                "local_symbol_id 应 >= 1（0 是保留值），实际: {}",
+                id
+            );
+        }
+
+        // 验证 parser 端也全部非零
+        for sym in &parse_result.symbols {
+            assert!(
+                sym.local_id >= 1,
+                "parser local_id 应 >= 1（0 是保留值），实际: {} (symbol={})",
+                sym.local_id,
+                sym.name
+            );
+        }
+    }
+
+    /// P0-4: 验证 lexical_parent_local_id 指向真实存在的符号
+    #[test]
+    fn test_cas_local_id_parent_references_valid_symbol_e2e() {
+        let source = r#"struct Container {
+    fn method(&self) {
+        self.helper();
+    }
+    fn helper(&self) {}
+}
+"#;
+        let (_parse_result, cas_store, cas_key) = parse_and_publish_to_cas(source, "rust", "rs");
+
+        let conn = cas_store.conn().lock().unwrap();
+        // 查询所有有 parent 的符号
+        let mut stmt = conn
+            .prepare(
+                "SELECT local_symbol_id, lexical_parent_local_id
+                 FROM cas_symbols WHERE cas_key = ?1 AND lexical_parent_local_id IS NOT NULL",
+            )
+            .unwrap();
+        let children: Vec<(i64, i64)> = stmt
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        // 每个子符号的 parent 应存在于 cas_symbols 中
+        let mut stmt2 = conn
+            .prepare("SELECT local_symbol_id FROM cas_symbols WHERE cas_key = ?1")
+            .unwrap();
+        let all_ids: std::collections::HashSet<i64> = stmt2
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| row.get(0))
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        for (child_id, parent_id) in &children {
+            assert!(
+                all_ids.contains(parent_id),
+                "child local_id={} 的 parent local_id={} 不存在于 cas_symbols 中",
+                child_id,
+                parent_id
+            );
+        }
+    }
+
+    /// P0-5: 验证 caller_local_id 指向真实存在的符号（调用关系完整性）
+    #[test]
+    fn test_cas_caller_local_id_references_valid_symbol_e2e() {
+        let source = r#"fn caller_a() {
+    callee();
+}
+fn callee() {}
+"#;
+        let (_parse_result, cas_store, cas_key) = parse_and_publish_to_cas(source, "rust", "rs");
+
+        let conn = cas_store.conn().lock().unwrap();
+        // 查询所有有 caller 的调用
+        let mut stmt = conn
+            .prepare(
+                "SELECT callee_name, caller_local_id
+                 FROM cas_raw_calls WHERE cas_key = ?1 AND caller_local_id IS NOT NULL",
+            )
+            .unwrap();
+        let calls: Vec<(String, i64)> = stmt
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        // 获取所有符号 local_id
+        let mut stmt2 = conn
+            .prepare("SELECT local_symbol_id, name FROM cas_symbols WHERE cas_key = ?1")
+            .unwrap();
+        let id_to_name: std::collections::HashMap<i64, String> = stmt2
+            .query_map(rusqlite::params![cas_key], |row: &rusqlite::Row<'_>| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap()
+            .map(|r: rusqlite::Result<_>| r.unwrap())
+            .collect();
+
+        for (callee_name, caller_id) in &calls {
+            assert!(
+                id_to_name.contains_key(caller_id),
+                "call callee={} 的 caller_local_id={} 不存在于 cas_symbols 中",
+                callee_name,
+                caller_id
+            );
+        }
+    }
 }

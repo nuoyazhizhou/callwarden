@@ -50,6 +50,67 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 # ============================================================
+# Phase 4-3 P3 wire-production: Rust 短路（backup 纯计算）
+# ============================================================
+# backup_restore.py 的 _compute_file_sha256 / _compute_meta_checksum 默认走 Rust
+# PyO3 API（callwarden_core.backup_compute_file_sha256 / backup_compute_meta_checksum），
+# rollback_config 中 feature=rust_daemon_backup_compute 置为 1 时回退 Python。
+# Rust 失败时 fail-soft 降级到 Python 纯计算路径。
+#
+# 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.4
+
+_RUST_BACKUP_AVAILABLE = False
+_callwarden_core = None
+try:
+    import callwarden_core as _callwarden_core  # type: ignore
+    if (
+        hasattr(_callwarden_core, "backup_compute_file_sha256")
+        and hasattr(_callwarden_core, "backup_compute_meta_checksum")
+    ):
+        _RUST_BACKUP_AVAILABLE = True
+except ImportError:
+    _callwarden_core = None
+
+_BACKUP_ROLLBACK_CACHE: Dict[str, Any] = {"ts": 0.0, "value": False}
+_BACKUP_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _is_rust_backup_rolled_back() -> bool:
+    """检查 rust_daemon_backup_compute feature 是否已回滚（60s 缓存）。
+
+    backup/restore 是冷路径（仅在 daemon admin RPC 触发时调用），
+    但 60s 缓存仍可避免频繁 DB 查询，且与 metrics/health/audit 保持一致模式。
+    """
+    now = time.time()
+    if now - _BACKUP_ROLLBACK_CACHE["ts"] < _BACKUP_ROLLBACK_CACHE_TTL:
+        return _BACKUP_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    try:
+        import sqlite3 as _sqlite3
+        from callwarden.config import DB_PATH as _DB_PATH
+        conn = _sqlite3.connect(_DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                ("rust_daemon_backup_compute",),
+            )
+            row = cur.fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _BACKUP_ROLLBACK_CACHE["ts"] = now
+    _BACKUP_ROLLBACK_CACHE["value"] = value
+    return value
+
+
+def _rust_backup_available() -> bool:
+    """Rust backup 短路是否可用（模块加载 + 未回滚）。"""
+    return _RUST_BACKUP_AVAILABLE and not _is_rust_backup_rolled_back()
+
+
+# ============================================================
 # BackupManager
 # ============================================================
 
@@ -302,7 +363,18 @@ class BackupManager:
         }
 
     def _compute_file_sha256(self, file_path: str) -> str:
-        """计算文件的 SHA-256。"""
+        """计算文件的 SHA-256。
+
+        Phase 4-3 P3 wire-production：
+            默认走 Rust `callwarden_core.backup_compute_file_sha256`，rollback_config
+            中 feature=rust_daemon_backup_compute 置为 1 时回退 Python。
+            Rust 失败时 fail-soft 降级到 Python 纯计算路径。
+        """
+        if _rust_backup_available():
+            try:
+                return _callwarden_core.backup_compute_file_sha256(file_path)
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
         h = hashlib.sha256()
         with open(file_path, "rb") as f:
             while True:
@@ -313,7 +385,20 @@ class BackupManager:
         return h.hexdigest()
 
     def _compute_meta_checksum(self, meta: Dict[str, Any]) -> str:
-        """计算元数据的校验和。"""
+        """计算元数据的校验和。
+
+        Phase 4-3 P3 wire-production：
+            默认走 Rust `callwarden_core.backup_compute_meta_checksum`，rollback_config
+            中 feature=rust_daemon_backup_compute 置为 1 时回退 Python。
+            Rust 失败时 fail-soft 降级到 Python 纯计算路径。
+        """
+        if _rust_backup_available():
+            try:
+                # Rust 端负责排除 checksum 字段并重新稳定序列化
+                meta_json = json.dumps(meta, ensure_ascii=False)
+                return _callwarden_core.backup_compute_meta_checksum(meta_json)
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
         # 排除 checksum 自身
         meta_copy = {k: v for k, v in meta.items() if k != "checksum"}
         content = json.dumps(meta_copy, sort_keys=True, ensure_ascii=False)

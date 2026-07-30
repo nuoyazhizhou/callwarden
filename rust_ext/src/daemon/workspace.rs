@@ -12,6 +12,61 @@
 //! `workspace.connect` / `workspace.file.refresh` / `workspace.recover`。
 //! `snapshot.*` / `query.*` / `gc.*` / `backup` / `restore` 在 R6 的
 //! `SnapshotDaemonState` 中实现。
+//!
+//! # Phase 4-2 契约：UID/workspace ACL、路径安全与资源预算
+//!
+//! ## 范围
+//! - SO_PEERCRED 获取对端 UID/GID/PID 后的 ACL 决策（ADMIN_ONLY_METHODS + workspace owner）
+//! - workspace owner 校验（per-workspace UID ACL，跨 UID 越权防护）
+//! - 路径安全：canonicalize 规范化 + owner_uid 一致性 + 越界检测
+//! - QueryBudget 资源预算：max_depth / max_nodes / timeout_ms
+//! - audit 记录：ACL 拒绝事件 + admin 操作审计（迁移自 Python server/audit_log.py）
+//!
+//! ## API 契约
+//! - `peercred::get_peer_cred(stream) -> PeerCred`：跨平台获取对端凭证（Linux SO_PEERCRED / macOS LOCAL_PEERCRED）
+//! - `dispatch::is_admin(peer) -> bool`：root（uid==0）或 daemon uid（current_daemon_uid()）判定
+//! - `dispatch::ADMIN_ONLY_METHODS: &[&str]`：admin-only 方法清单（backup/restore/gc.*/mount.*/toolchain.*/build_context.*）
+//! - `workspace::owned_workspace(registry, peer_uid, ws_instance_id) -> Result<Value, DaemonRpcError>`：workspace owner 校验
+//! - `workspace::owned_workspace_by_id(registry, peer_uid, ws_id) -> Result<Value, DaemonRpcError>`：数字主键 owner 校验
+//! - `workspace::validate_owned_path(path, peer_uid, require_file) -> Result<String, DaemonRpcError>`：路径安全校验
+//! - `budget::QueryBudget` + `BudgetTracker`：资源预算控制（visit_node/is_exceeded/is_partial）
+//!
+//! ## 行为契约
+//! - ACL 决策 fail-closed：admin-only 方法未授权直接拒绝，不进入 handler（dispatch_inner L605-610）
+//! - admin-only 方法需 `peer.uid == 0` 或 `peer.uid == current_daemon_uid()`
+//! - workspace 操作需 `owner_uid == peer_uid`（root 跳过；workspace_forbidden 错误码）
+//! - 路径需 canonicalize 后 `owner_uid == peer_uid`（Unix；Windows 跳过 UID 检查，path_forbidden 错误码）
+//! - QueryBudget 超限（max_nodes 或 timeout_ms）返回部分结果（partial=true），不抛异常
+//! - workspace.status == "archived" 返回 workspace_archived 错误码
+//!
+//! ## 事务边界
+//! - ACL 检查在 dispatch_inner 入口处（handler 之前，fail-closed）
+//! - workspace owner 校验在 owned_workspace / owned_workspace_by_id 内（查询 registry 后）
+//! - 路径校验在 validate_owned_path 内（canonicalize 是 OS 调用，可能失败返回 path_not_found）
+//! - QueryBudget 在 BFS 循环内检查（visit_node 自增计数，is_exceeded 检查超限）
+//! - audit 记录在 ACL 拒绝/admin 操作时写入（待实现）
+//!
+//! ## Schema
+//! - `daemon_workspaces.owner_uid INTEGER NOT NULL`：workspace 所有者 UID
+//! - `daemon_workspaces.status TEXT DEFAULT 'active'`：active/archived
+//! - `daemon_workspaces` 索引：idx_workspaces_owner(owner_uid) / idx_workspaces_snapshot / idx_workspaces_status
+//! - `audit_log` 表（待迁移自 Python server/audit_log.py:166）：event_type / actor_uid / result / timestamp / details
+//!
+//! ## 验收标准
+//! - 非管理员调用 admin-only 方法返回 permission_denied（test_admin_only_method_denied_for_non_admin ✓）
+//! - root 调用 admin-only 方法通过授权检查（test_admin_only_method_allowed_for_root ✓）
+//! - 只读方法不被 admin 检查拦截（test_readonly_methods_not_blocked_by_admin_check ✓）
+//! - 跨 UID 访问 workspace 返回 workspace_forbidden（owned_workspace 内校验 ✓）
+//! - 路径 owner 不匹配返回 path_forbidden（Unix；validate_owned_path ✓）
+//! - BFS 超预算返回部分结果（budget::tests::test_budget_tracker_*_exceeded ✓）
+//! - audit 记录 ACL 拒绝事件 + admin 操作（待实现）
+//!
+//! ## 风险
+//! - Windows 跳过 UID ACL（开发测试用，生产部署 Linux；current_daemon_uid() 返回 1000 与测试对齐）
+//! - macOS LOCAL_PEERCRED 无 pid 字段（PeerCred.pid=0），仅 uid/gid 可用
+//! - QueryBudget 默认 max_nodes=10000，大型代码库（Linux kernel 200k+ 符号）可能不够
+//! - audit 记录未迁移到 Rust daemon，当前仅 Python 端 server/audit_log.py 有实现
+//! - validate_owned_path 的 canonicalize 在路径不存在时返回 path_not_found，需区分不存在与越界
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -970,6 +1025,15 @@ impl DaemonStateExt for WorkspaceDaemonState {
                 "total_pending_retries".to_string(),
                 Value::Number(total_pending_retries.into()),
             );
+            // R9-P1-1: ParserDoctor 接入生产观测点（health/metrics）
+            // 复审 §P1-1：ParserDoctor 原本只在单元测试中调用，
+            // 现接入 health 端点，运维可通过 workspace.health 查看 Rust grammar 自检结果
+            let doctor = super::parser_metrics::ParserDoctor::new();
+            let doctor_report = doctor.run_check();
+            obj.insert(
+                "parser_doctor".to_string(),
+                serde_json::to_value(&doctor_report).unwrap_or(Value::Null),
+            );
         }
 
         Ok(result)
@@ -1233,6 +1297,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let resources = self.get_or_init_resources(workspace_instance_id)?;
 
         // 调用 daemon_handle_refresh（session epoch 校验 + 两阶段 CAS + parse + publish）
+        // R9-P1-1: 计时 parse + publish 耗时，传入 parser_metrics.record_parse
+        let parse_started_at = std::time::Instant::now();
         let result = daemon_handle_refresh(
             workspace_id_num,
             &msg,
@@ -1241,6 +1307,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
             canonical_bytes.as_deref(),
         )
         .map_err(|e| DaemonRpcError::new("refresh_failed", e.message))?;
+        let parse_latency_ms = parse_started_at.elapsed().as_secs_f64() * 1000.0;
 
         // 构造响应：status + generation + cas_result（若有）
         // 注意：此处用 borrow（&result.cas_result）而非 move，因为下方
@@ -1294,7 +1361,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
             .unwrap_or(0);
         resources.parser_metrics.record_parse(
             parse_status_for_metrics,
-            0.0, // latency_ms 留空（daemon_handle_refresh 内部不计时，未来可补）
+            parse_latency_ms, // R9-P1-1: 真实 parse + publish 耗时（毫秒）
             bytes_parsed,
             if protection.blocked {
                 Some(super::parser_metrics::FailureLabel {
@@ -3412,6 +3479,156 @@ mod tests {
         assert_eq!(response["error"]["code"], "invalid_params");
     }
 
+    /// P0-4 R16-P1-1: daemon recovery 成功路径 E2E 测试
+    ///
+    /// 验证完整恢复链：
+    /// 1. 资源初始化（get_or_init_resources）
+    /// 2. CAS publish（_daemon_parse_and_publish）
+    /// 3. staging_log.append
+    /// 4. cas_merge::merge_cas_to_codegraph
+    /// 5. file_generation_committed（持久化 generation CAS）
+    /// 6. Replicator::replicate（发布 snapshot + mark_applied_batch）
+    /// 7. parse_retry_log::mark_applied（清除 durable retry）
+    ///
+    /// 关键断言：retry_snapshot_published >= 1（完整状态机成功的子集）
+    #[test]
+    fn test_recover_success_path_e2e() {
+        use crate::daemon::parse_retry_log::{ParseFailureEntry, ParseRetryLog};
+        use crate::daemon::replicator::SnapshotCachePublisher;
+        use crate::snapshot::SnapshotCache;
+
+        let tmp = tempfile::tempdir().unwrap();
+        // 创建 SnapshotCache + Publisher，启用 snapshot 发布主路径
+        let cache = Arc::new(SnapshotCache::new(4));
+        let publisher = Arc::new(SnapshotCachePublisher::new(cache));
+
+        // codegraph_db_path_template：运行时替换 {workspace_instance_id}
+        let db_dir = tmp.path().join("codegraph");
+        std::fs::create_dir_all(&db_dir).unwrap();
+        let db_template = db_dir
+            .join("{workspace_instance_id}.db")
+            .to_string_lossy()
+            .to_string();
+
+        let mut state = make_state_with_data_root(tmp.path())
+            .with_snapshot_publisher(publisher)
+            .with_codegraph_db_path_template(db_template);
+        let peer = make_owner_peer();
+
+        // 注册 workspace（直接调用 registry 绕过路径 ACL），同时获取 workspace_id
+        let client_view_root = tmp.path().to_str().unwrap().to_string();
+        let reg_response = state
+            .registry
+            .register_workspace(
+                peer.uid,
+                &client_view_root,
+                &client_view_root,
+                "",
+                "",
+                "",
+            )
+            .unwrap();
+        let ws_id = reg_response["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let workspace_id_num: i64 = reg_response["workspace_id"]
+            .as_i64()
+            .expect("workspace_id 应为数字主键");
+        assert!(workspace_id_num > 0, "workspace_id 必须 > 0");
+
+        // 在 ws_dir 下创建真实可解析的 Rust 文件（_daemon_parse_and_publish 会读取）
+        let ws_dir = tmp.path().join(&ws_id);
+        std::fs::create_dir_all(&ws_dir).unwrap();
+        let sample_file = ws_dir.join("sample.rs");
+        std::fs::write(&sample_file, "fn main() { helper(); }\nfn helper() {}\n").unwrap();
+
+        // 初始化 workspace resources
+        let cas_store = crate::daemon::cas::CasStore::open_in_memory().unwrap();
+        let staging_log = crate::daemon::staging_log::StagingLog::new(
+            ws_dir.join("staging.log").to_string_lossy().as_ref(),
+        )
+        .unwrap();
+        let parser_metrics =
+            Arc::new(crate::daemon::parser_metrics::ParserMetrics::new());
+        let parse_retry_log = Arc::new(
+            ParseRetryLog::new(ws_dir.join("parse_retry.log").to_string_lossy().as_ref()).unwrap(),
+        );
+
+        // 预置 file_generations seen 记录（generation = "1:1"）
+        // file_generation_committed 要求 latest_seen_generation == incoming_gen
+        cas_store
+            .file_generation_seen(workspace_id_num, "sample.rs", "session-1", 1, 1)
+            .expect("file_generation_seen 应成功");
+
+        // 写入 1 条 pending retryable entry
+        // generation="1:1" 必须与 seen 一致；abs_path 指向真实文件
+        let mut entry = ParseFailureEntry::new(
+            &ws_id,
+            "sample.rs",
+            sample_file.to_string_lossy().as_ref(),
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "previous parse failed (daemon crash)",
+            true, // allows_retry
+        );
+        parse_retry_log.append(&mut entry).unwrap();
+
+        // 注入 resources 到 state
+        let resources = Arc::new(super::WorkspaceResources {
+            session_store: Arc::new(
+                crate::daemon::replicator::SessionStore::open_in_memory().unwrap(),
+            ),
+            cas_store: Arc::new(cas_store),
+            staging_log: Arc::new(staging_log),
+            parser_metrics,
+            parse_retry_log: parse_retry_log.clone(),
+        });
+        state.resources.insert(ws_id.clone(), resources);
+
+        // 调用 workspace.recover
+        let response = dispatch(
+            &mut state,
+            peer,
+            "workspace.recover",
+            &json!({"workspace_instance_id": ws_id}),
+            &[],
+        );
+
+        // 核心断言：完整恢复链成功
+        assert_eq!(response["ok"], true, "recover 应成功: {:?}", response);
+        assert_eq!(
+            response["result"]["retry_recovered_count"], 1,
+            "retry_recovered_count 应为 1（1 条 entry 成功恢复）: {:?}",
+            response
+        );
+        assert_eq!(
+            response["result"]["retry_snapshot_published"], 1,
+            "retry_snapshot_published 应为 1（snapshot 发布成功）: {:?}",
+            response
+        );
+        assert_eq!(
+            response["result"]["retry_failed_count"], 0,
+            "retry_failed_count 应为 0: {:?}",
+            response
+        );
+        assert_eq!(
+            response["result"]["retry_exhausted_count"], 0,
+            "retry_exhausted_count 应为 0: {:?}",
+            response
+        );
+
+        // 验证 parse_retry.log 中的 entry 已被 mark_applied（不再 pending）
+        let pending = parse_retry_log.read_pending().unwrap();
+        assert_eq!(
+            pending.len(),
+            0,
+            "pending entries 应为 0（成功 mark_applied）"
+        );
+    }
+
     // ---- handle_workspace_connect 测试 ----
 
     /// 注册 workspace 并返回 instance_id（用于 connect/refresh 测试）
@@ -4055,6 +4272,44 @@ mod tests {
 
         // total_pending_retries 应为 1
         assert_eq!(health["result"]["total_pending_retries"], 1);
+
+        // R9-P1-1: parser_doctor 应存在并包含 status / checks / supported_languages
+        let doctor = &health["result"]["parser_doctor"];
+        assert!(
+            !doctor.is_null(),
+            "health 应包含 parser_doctor 字段（R9-P1-1 接入生产观测点）"
+        );
+        assert!(
+            doctor["status"].is_string(),
+            "parser_doctor.status 应为字符串: {:?}",
+            doctor
+        );
+        let doctor_status = doctor["status"].as_str().unwrap_or("");
+        assert!(
+            matches!(doctor_status, "healthy" | "degraded" | "unhealthy"),
+            "parser_doctor.status 应为 healthy/degraded/unhealthy: {}",
+            doctor_status
+        );
+        assert!(
+            doctor["checks"].is_array(),
+            "parser_doctor.checks 应为数组"
+        );
+        assert!(
+            !doctor["checks"].as_array().unwrap().is_empty(),
+            "parser_doctor.checks 应至少有 1 项"
+        );
+        assert!(
+            doctor["supported_languages"].is_array(),
+            "parser_doctor.supported_languages 应为数组"
+        );
+
+        // R9-P1-1: parser_metrics 中 latency 应大于 0（真实计时）
+        let latency_total = first["metrics"]["parse_latency_total_ms"].as_u64();
+        assert!(
+            latency_total.is_some() && latency_total.unwrap() > 0,
+            "R9-P1-1: parse_latency_total_ms 应 > 0（真实计时），实际: {:?}",
+            latency_total
+        );
     }
 
     #[test]
