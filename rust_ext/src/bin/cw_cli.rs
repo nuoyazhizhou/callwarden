@@ -15,6 +15,8 @@ use callwarden_core::cli::search::{
 };
 use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
+use callwarden_core::cli::symbol::format_symbol_output;
+use callwarden_core::symbol_query::query_symbol_detail;
 use clap::{Parser, Subcommand, ValueEnum};
 
 /// Call Warden — 代码知识图谱工具
@@ -139,7 +141,10 @@ enum Commands {
     /// grep 搜索
     Grep,
     /// 符号查询
-    Symbol,
+    Symbol {
+        /// 完整限定名
+        name: String,
+    },
     /// 文件读取
     File,
     /// 查询
@@ -282,6 +287,9 @@ fn main() {
                 Commands::Search { query, kind, limit } => {
                     emit_result(run_search(&runtime, &query, kind.as_deref(), limit));
                 }
+                Commands::Symbol { name } => {
+                    emit_result(run_symbol(&runtime, &name));
+                }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
                     // Phase 5-1 C 扩展阶段将逐命令迁移业务逻辑
@@ -414,6 +422,69 @@ fn format_search_result(
         }
     };
     match format_search_output(&parsed, query, kind, limit) {
+        Ok(stdout) => {
+            result.stdout = stdout;
+            result
+        }
+        Err(error) => CommandResult::failure(1, error, result.route),
+    }
+}
+
+fn run_symbol(runtime: &RuntimeOptions, qualified_name: &str) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_symbol_detail(&conn, workspace_id, qualified_name)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise symbol requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_symbol(workspace_id, qualified_name, |method, params| {
+                runtime.daemon_call(method, params)
+            })
+        },
+    );
+    format_symbol_result(result, qualified_name)
+}
+
+fn query_enterprise_symbol<F>(
+    workspace_id: &str,
+    qualified_name: &str,
+    mut call: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    let (method, params) = callwarden_core::daemon::client::build_query_request(
+        workspace_id,
+        "symbol",
+        qualified_name,
+        None,
+        None,
+        None,
+        None,
+    )
+    .map_err(|error| format!("cannot build symbol RPC: {error}"))?;
+    call(&method, params)
+}
+
+fn format_symbol_result(mut result: CommandResult, qualified_name: &str) -> CommandResult {
+    if result.exit_code != 0 {
+        return result;
+    }
+    let parsed = match serde_json::from_str::<serde_json::Value>(&result.stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot decode symbol result: {error}"),
+                result.route,
+            );
+        }
+    };
+    match format_symbol_output(&parsed, qualified_name) {
         Ok(stdout) => {
             result.stdout = stdout;
             result
@@ -603,7 +674,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Status => "status",
         Search { .. } => "search",
         Grep => "grep",
-        Symbol => "symbol",
+        Symbol { .. } => "symbol",
         File => "file",
         Query => "query",
         Issues => "issues",
@@ -679,7 +750,9 @@ mod tests {
                 limit: 50,
             },
             Commands::Grep,
-            Commands::Symbol,
+            Commands::Symbol {
+                name: "a.alpha".to_string(),
+            },
             Commands::File,
             Commands::Query,
             Commands::Issues,
@@ -812,6 +885,43 @@ mod tests {
         assert_eq!(result[0]["file_path"], "a.py");
         assert_eq!(result[0]["signature"], "");
         assert_eq!(result[0]["has_comment"], false);
+    }
+
+    #[test]
+    fn enterprise_symbol_builds_rpc_and_preserves_full_detail() {
+        let result = query_enterprise_symbol("ws-1", "a.alpha", |method, params| {
+            assert_eq!(method, "query.symbol");
+            assert_eq!(params["workspace_instance_id"], "ws-1");
+            assert_eq!(params["qualified_name"], "a.alpha");
+            Ok(serde_json::json!({
+                "qualified_name": "a.alpha",
+                "kind": "fn",
+                "depth": 0,
+                "file_path": "a.py",
+                "start_line": 1,
+                "end_line": 2,
+                "signature": "alpha()",
+                "has_comment": true,
+                "comment_content": "docs",
+                "calls_out": [{"target_name": "a.beta", "call_line": 2}],
+                "called_by": [],
+                "issues": [],
+                "issues_total": 0
+            }))
+        })
+        .unwrap();
+
+        assert_eq!(result["qualified_name"], "a.alpha");
+        assert_eq!(result["calls_out"][0]["target_name"], "a.beta");
+    }
+
+    #[test]
+    fn parses_symbol_qualified_name() {
+        let cli = Cli::try_parse_from(["cw", "symbol", "a.alpha"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Symbol { name }) if name == "a.alpha"
+        ));
     }
 
     #[test]

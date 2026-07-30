@@ -14,6 +14,7 @@ use arc_swap::{ArcSwap, Guard};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Instant;
@@ -51,6 +52,9 @@ pub struct GraphSnapshot {
     pub generation: Generation,
     pub build_context_hash: Hash,
     pub source_db_path: String,
+    /// 保留源 DB 的只读句柄。Linux FD 发布时，原 SCM_RIGHTS FD 在请求结束后
+    /// 会关闭；此副本保证后续完整详情查询仍能通过 `/proc/self/fd/N` 访问同一快照。
+    source_db_file: Option<File>,
     /// 内部 GraphStore（symbols + calls + CSR 索引）
     pub store: Arc<GraphStore>,
     pub health: SnapshotHealth,
@@ -77,15 +81,29 @@ impl GraphSnapshot {
         store: Arc<GraphStore>,
         health: SnapshotHealth,
     ) -> Self {
+        let source_db_file = File::open(&source_db_path).ok();
         Self {
             workspace_instance_id,
             snapshot_id,
             generation,
             build_context_hash,
             source_db_path,
+            source_db_file,
             store,
             health,
         }
+    }
+
+    /// 返回可用于只读 SQLite 查询的稳定路径。
+    pub fn query_db_path(&self) -> String {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::fd::AsRawFd;
+            if let Some(file) = &self.source_db_file {
+                return format!("/proc/self/fd/{}", file.as_raw_fd());
+            }
+        }
+        self.source_db_path.clone()
     }
 }
 
@@ -325,6 +343,12 @@ impl SnapshotManager {
     pub fn current_meta(&self) -> Option<(Generation, String)> {
         let guard = self.current.load();
         guard.as_ref().as_ref().map(|snap| (snap.generation, snap.source_db_path.clone()))
+    }
+
+    /// 当前 snapshot 的稳定只读 DB 路径。
+    pub fn current_query_db_path(&self) -> Option<String> {
+        let guard = self.current.load();
+        guard.as_ref().as_ref().map(|snap| snap.query_db_path())
     }
 }
 
@@ -920,6 +944,76 @@ mod tests {
                 last_error: None,
             },
         ))
+    }
+
+    #[test]
+    fn current_query_db_path_tracks_published_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("snapshot.db");
+        std::fs::write(&db_path, b"sqlite fixture").unwrap();
+        let mgr = SnapshotManager::new("ws_test".to_string());
+        let snapshot = Arc::new(GraphSnapshot::new(
+            "ws_test".to_string(),
+            None,
+            1,
+            "ctx_hash".to_string(),
+            db_path.to_string_lossy().into_owned(),
+            Arc::new(GraphStore::new()),
+            SnapshotHealth {
+                symbol_count: 0,
+                call_count: 0,
+                file_count: 0,
+                build_duration_ms: 0,
+                last_error: None,
+            },
+        ));
+        mgr.publish(snapshot);
+
+        let query_path = mgr.current_query_db_path().unwrap();
+        assert!(std::fs::metadata(query_path).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn retained_fd_survives_original_fd_close() {
+        use std::os::fd::AsRawFd;
+
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("snapshot.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch("CREATE TABLE marker(value TEXT); INSERT INTO marker VALUES ('ok');")
+            .unwrap();
+        drop(conn);
+
+        let original = File::open(&db_path).unwrap();
+        let proc_path = format!("/proc/self/fd/{}", original.as_raw_fd());
+        let snapshot = GraphSnapshot::new(
+            "ws_test".to_string(),
+            None,
+            1,
+            "ctx_hash".to_string(),
+            proc_path,
+            Arc::new(GraphStore::new()),
+            SnapshotHealth {
+                symbol_count: 0,
+                call_count: 0,
+                file_count: 0,
+                build_duration_ms: 0,
+                last_error: None,
+            },
+        );
+        drop(original);
+
+        let retained_path = snapshot.query_db_path();
+        let retained = rusqlite::Connection::open_with_flags(
+            retained_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        let value: String = retained
+            .query_row("SELECT value FROM marker", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "ok");
     }
 
     #[test]

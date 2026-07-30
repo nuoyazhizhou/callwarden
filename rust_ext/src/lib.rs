@@ -72,6 +72,7 @@ pub(crate) use multi_lang::ParseDiagnostics;
 mod languages;
 // R7: cw_daemon 需要 SnapshotCache 类型（daemon/snapshot_state.rs 中使用）
 pub mod snapshot;
+pub mod symbol_query;
 mod toolchain;
 pub mod watcher;
 // Phase 6-2: MinHash/LSH clone detection 核心计算（FNV-1a + 128 perm + LSH 分桶）

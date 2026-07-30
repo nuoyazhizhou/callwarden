@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -3697,3 +3697,49 @@ python -m pytest tests/test_rust_cli_diff.py -q
 请求的 method/workspace/query/kind/limit，以及 daemon snapshot 字段归一化。
 本任务不声明 `symbol/file/query/grep/issues/tests` 已完成，它们分别保留在
 P0-CLI-B2 至 B5 子任务中。
+
+---
+
+## §53 自举复审整改：Rust `cw symbol`
+
+**任务**：`T-1785440297053-f20d77fb`（P0-CLI-B2）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 53.1 已实现
+
+- `cw symbol <qualified_name>` 已从 clap 空壳切换到真实 Rust 命令；
+- local 模式从只读 SQLite 的当前 `file_symbol_versions` 查询完整详情，严格按
+  `workspace_id`、current version、非 archived 文件和非 deleted occurrence 隔离；
+- 结果包含签名、注释、双向 `call_versions`、前五条 WARNING+ Semgrep/Guardrail
+  issues 与 issues 总数；可选 issue 表缺失时保持 Python 的 fail-soft 语义；
+- enterprise 模式调用 owner ACL 后的 `query.symbol`。daemon 不再把 GraphStore
+  基本字段冒充完整详情，而是从当前已发布 snapshot 的同一 SQLite 文件只读查询；
+- Linux FD 发布场景中，`GraphSnapshot` 保留自己的只读 `File` 句柄，后续通过
+  `/proc/self/fd/<retained_fd>` 查询。原 SCM_RIGHTS 请求 FD 关闭后不会令详情查询失效；
+- 人类可读 stdout 与 Python 当前中文输出逐字对齐；符号不存在时仍打印提示并
+  exit 0，数据库、ACL、snapshot 或 RPC 错误继续 fail closed。
+
+### 53.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml symbol_query::tests --lib --no-default-features
+test result: ok. 2 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml cli::symbol::tests --lib --no-default-features
+test result: ok. 2 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 10 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+11 passed
+```
+
+真实 Python/Rust 进程差分覆盖完整详情和不存在符号；fixture 包含注释、双向调用、
+Semgrep 与 Guardrail 问题。binary 单测验证 enterprise method、workspace 与
+qualified name 参数，daemon 单测验证已发布 snapshot 的完整详情响应；Linux
+保留 FD 的专属测试由 Linux CI 执行。
+
+本任务不声明 `file/query/grep/issues/tests` 已完成，它们继续保留在后续
+P0-CLI-B3 至 B5 子任务中。

@@ -79,10 +79,12 @@ def _seed_stats_fixture(db: CodeGraphDB) -> int:
     ).fetchone()["id"]
     conn.execute(
         "INSERT INTO symbol_contents("
-        "content_hash, name, kind, content, signature, has_comment, qualified_name"
+        "content_hash, name, kind, content, signature, has_comment, "
+        "comment_content, qualified_name"
         ") VALUES "
-        "('sym-a', 'alpha', 'fn', 'def alpha(): pass', 'alpha()', 1, 'a.alpha'),"
-        "('sym-b', 'Thing', 'struct', 'struct Thing {}', '', 0, 'a.Thing')"
+        "('sym-a', 'alpha', 'fn', 'def alpha(): pass', 'alpha()', 1, "
+        "'alpha docs', 'a.alpha'),"
+        "('sym-b', 'Thing', 'struct', 'struct Thing {}', '', 0, '', 'a.Thing')"
     )
     conn.execute(
         "INSERT INTO symbols("
@@ -120,15 +122,42 @@ def _seed_stats_fixture(db: CodeGraphDB) -> int:
     ).fetchone()["id"]
     conn.execute(
         "INSERT INTO file_symbol_versions("
-        "file_version_id, symbol_hash, qualified_name, start_line, end_line"
-        ") VALUES (?, 'sym-a', 'a.alpha', 1, 2)",
-        (current_version,),
+        "file_version_id, symbol_hash, qualified_name, start_line, end_line, "
+        "module_path, depth"
+        ") VALUES "
+        "(?, 'sym-a', 'a.alpha', 1, 2, 'a', 0), "
+        "(?, 'sym-b', 'a.Thing', 4, 5, 'a', -1)",
+        (current_version, current_version),
     )
     conn.execute(
         "INSERT INTO call_versions("
-        "file_version_id, caller_qualified, callee_name, callee_qualified, call_line, is_cross_file"
-        ") VALUES (?, 'a.alpha', 'Thing', 'a.Thing', 2, 1)",
-        (current_version,),
+        "file_version_id, caller_qualified, caller_hash, callee_name, "
+        "callee_module, callee_qualified, callee_file, call_line, is_cross_file"
+        ") VALUES "
+        "(?, 'a.alpha', 'sym-a', 'Thing', 'a', 'a.Thing', 'a.py', 2, 1), "
+        "(?, 'a.Thing', 'sym-b', 'alpha', 'a', 'a.alpha', 'a.py', 5, 0)",
+        (current_version, current_version),
+    )
+    conn.execute(
+        "INSERT INTO semgrep_findings("
+        "file_instance_id, content_hash, rule_id, rule_name, message, severity, "
+        "confidence, start_line, end_line, snippet, fix, symbol_qualified"
+        ") VALUES (?, 'file-a', 'python.eval', 'eval use', 'avoid eval', "
+        "'ERROR', 'HIGH', 2, 2, 'eval(x)', 'use parser', 'a.alpha')",
+        (file_id,),
+    )
+    conn.execute(
+        "INSERT INTO guardrail_rules("
+        "rule_id, category, severity, pattern, action, description, is_builtin, created_at"
+        ") VALUES ('guard.db', 'db_safety', 'warn', 'execute', 'warn', "
+        "'unsafe SQL', 0, ?)",
+        (now,),
+    )
+    conn.execute(
+        "INSERT INTO guardrail_findings("
+        "rule_id, file_path, symbol_hash, severity, status, message, detected_at"
+        ") VALUES ('guard.db', 'a.py', 'sym-a', 'warn', 'open', 'unsafe SQL', ?)",
+        (now,),
     )
     conn.commit()
     return workspace_id
@@ -349,6 +378,73 @@ def test_search_binary_matches_python_process_output(
             str(workspace_id),
             "search",
             *search_args,
+        ],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert rust_result.returncode == python_result.returncode == 0
+    assert rust_result.stderr == python_result.stderr == ""
+    assert rust_result.stdout == python_result.stdout
+
+
+@pytest.mark.parametrize("qualified_name", ["a.alpha", "missing"])
+def test_symbol_binary_matches_python_process_output(
+    tmp_path: Path, qualified_name: str
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    home = tmp_path / "home"
+    db_dir = home / ".callwarden"
+    db_dir.mkdir(parents=True)
+    db_path = db_dir / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = _seed_stats_fixture(db)
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        db.close()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "CALLWARDEN_WORKSPACE": str(workspace_root),
+            "CALLWARDEN_LANG": "zh_CN",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    python_result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "cw.py"), "symbol", qualified_name],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    rust_result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "--workspace-id",
+            str(workspace_id),
+            "symbol",
+            qualified_name,
         ],
         cwd=workspace_root,
         env=env,

@@ -6,7 +6,7 @@
 //!   + 调用 `SnapshotManager::build_and_publish_blocking`
 //! - `gc.snapshots`：遍历所有 workspace，调用 `SnapshotManager::gc_generations(keep_last)`
 //! - `query.stats`：通过 `SnapshotCache` 获取 store + `stats_rust()`
-//! - `query.symbol`：调用 `GraphStore::get_symbol_ref`
+//! - `query.symbol`：从当前 snapshot SQLite 查询完整符号详情
 //! - `query.search`：调用 `GraphStore::search_symbols_rust`
 //! - `query.callers`：调用 `GraphStore::get_caller_ids` + 组装 JSON
 //! - `query.callees`：调用 `GraphStore::get_callee_ids` + 组装 JSON
@@ -22,6 +22,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use rusqlite::{Connection, OpenFlags};
 use serde_json::{Map, Value};
 
 use super::dispatch::{
@@ -34,6 +35,7 @@ use super::workspace::{
 };
 use crate::graph::{CallChainEdgeInfo, GraphStore};
 use crate::snapshot::SnapshotCache;
+use crate::symbol_query::query_symbol_detail;
 
 // ============================================
 // SnapshotDaemonState
@@ -453,19 +455,37 @@ impl DaemonStateExt for SnapshotDaemonState {
     ) -> Result<Value, DaemonRpcError> {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let qualified_name = require_str_param(params, "qualified_name")?;
-        let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
-
-        let store = self.get_store(workspace_instance_id).ok_or_else(|| {
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let workspace_id = workspace
+            .get("workspace_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+        let manager = self.get_snapshot_manager(workspace_instance_id).ok_or_else(|| {
             DaemonRpcError::new(
                 "snapshot_not_ready",
                 format!("workspace {} 未发布 snapshot", workspace_instance_id),
             )
         })?;
-
-        match store.get_symbol_ref(qualified_name) {
-            Some(sym) => Ok(self.symbol_to_json(&store, sym)),
-            None => Ok(Value::Null),
-        }
+        let db_path = manager.current_query_db_path().ok_or_else(|| {
+            DaemonRpcError::new(
+                "snapshot_not_ready",
+                format!("workspace {} 未发布 snapshot", workspace_instance_id),
+            )
+        })?;
+        let conn = Connection::open_with_flags(
+            &db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!(
+                "无法打开 snapshot SQLite {}: {}",
+                db_path, error
+            ))
+        })?;
+        query_symbol_detail(&conn, workspace_id, qualified_name)
+            .map_err(DaemonRpcError::internal_error)
     }
 
     fn handle_query_search(
@@ -1421,6 +1441,124 @@ mod tests {
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
+    }
+
+    #[test]
+    fn test_query_symbol_returns_complete_snapshot_detail() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+        let workspace = owned_workspace(&state.base.registry, 0, &ws_id).unwrap();
+        let workspace_id = workspace["workspace_id"].as_i64().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let db_path = temp.path().join("snapshot.db");
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(&format!(
+            "
+            CREATE TABLE file_instances (
+                id INTEGER PRIMARY KEY,
+                workspace_id INTEGER NOT NULL,
+                rel_path TEXT NOT NULL,
+                abs_path TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
+            CREATE TABLE symbols (
+                id INTEGER PRIMARY KEY,
+                file_instance_id INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                qualified_name TEXT NOT NULL,
+                module_path TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                depth INTEGER NOT NULL
+            );
+            CREATE TABLE calls (
+                caller_id INTEGER NOT NULL,
+                callee_id INTEGER NOT NULL,
+                callee_name TEXT NOT NULL,
+                call_line INTEGER NOT NULL,
+                is_cross_file INTEGER NOT NULL
+            );
+            CREATE TABLE file_versions (
+                id INTEGER PRIMARY KEY,
+                file_instance_id INTEGER NOT NULL,
+                is_current INTEGER NOT NULL
+            );
+            CREATE TABLE symbol_contents (
+                content_hash TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                signature TEXT,
+                has_comment INTEGER,
+                comment_content TEXT
+            );
+            CREATE TABLE file_symbol_versions (
+                file_version_id INTEGER NOT NULL,
+                symbol_hash TEXT NOT NULL,
+                qualified_name TEXT NOT NULL,
+                module_path TEXT,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                depth INTEGER NOT NULL,
+                is_deleted INTEGER NOT NULL
+            );
+            CREATE TABLE call_versions (
+                file_version_id INTEGER NOT NULL,
+                caller_qualified TEXT NOT NULL,
+                caller_hash TEXT,
+                callee_name TEXT NOT NULL,
+                callee_module TEXT,
+                callee_qualified TEXT,
+                callee_file TEXT,
+                call_line INTEGER
+            );
+            INSERT INTO file_instances VALUES
+                (1, {workspace_id}, 'a.py', '/repo/a.py', 'active');
+            INSERT INTO symbols VALUES
+                (1, 1, 'fn', 'alpha', 'a.alpha', 'a', 1, 4, 0),
+                (2, 1, 'fn', 'beta', 'a.beta', 'a', 6, 8, 0);
+            INSERT INTO calls VALUES (1, 2, 'beta', 3, 0);
+            INSERT INTO file_versions VALUES (10, 1, 1);
+            INSERT INTO symbol_contents VALUES
+                ('hash-alpha', 'alpha', 'fn', 'alpha()', 1, 'alpha docs'),
+                ('hash-beta', 'beta', 'fn', 'beta()', 0, '');
+            INSERT INTO file_symbol_versions VALUES
+                (10, 'hash-alpha', 'a.alpha', 'a', 1, 4, 0, 0),
+                (10, 'hash-beta', 'a.beta', 'a', 6, 8, 0, 0);
+            INSERT INTO call_versions VALUES
+                (10, 'a.alpha', 'hash-alpha', 'beta', 'a', 'a.beta', 'a.py', 3);
+            "
+        ))
+        .unwrap();
+        drop(conn);
+
+        state
+            .snapshot_cache
+            .get_or_create(&ws_id)
+            .build_and_publish_blocking(
+                db_path.to_str().unwrap(),
+                workspace_id,
+                "ctx",
+                None,
+            )
+            .unwrap();
+        let response = dispatch(
+            &mut state,
+            peer,
+            "query.symbol",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "qualified_name": "a.alpha"
+            }),
+            &[],
+        );
+
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["signature"], "alpha()");
+        assert_eq!(response["result"]["comment_content"], "alpha docs");
+        assert_eq!(response["result"]["calls_out"][0]["target_name"], "a.beta");
+        assert_eq!(response["result"]["issues_total"], 0);
     }
 
     #[test]
