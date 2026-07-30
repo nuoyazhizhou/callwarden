@@ -457,3 +457,160 @@ def test_symbol_binary_matches_python_process_output(
     assert rust_result.returncode == python_result.returncode == 0
     assert rust_result.stderr == python_result.stderr == ""
     assert rust_result.stdout == python_result.stdout
+
+
+@pytest.mark.parametrize(
+    ("file_name", "use_absolute"),
+    [
+        ("a.py", False),
+        ("a.py", True),
+        ("missing.py", False),
+    ],
+)
+def test_file_binary_matches_python_process_output(
+    tmp_path: Path, file_name: str, use_absolute: bool
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    home = tmp_path / "home"
+    db_dir = home / ".callwarden"
+    db_dir.mkdir(parents=True)
+    db_path = db_dir / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = _seed_stats_fixture(db)
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        db.close()
+
+    file_arg = str(workspace_root / file_name) if use_absolute else file_name
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "CALLWARDEN_WORKSPACE": str(workspace_root),
+            "CALLWARDEN_LANG": "zh_CN",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    python_result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "cw.py"), "file", file_arg],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    rust_result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "--workspace-id",
+            str(workspace_id),
+            "file",
+            file_arg,
+        ],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert rust_result.returncode == python_result.returncode == 0
+    assert rust_result.stderr == python_result.stderr == ""
+    assert rust_result.stdout == python_result.stdout
+
+
+@pytest.mark.parametrize(
+    ("symbol_name", "use_absolute"),
+    [
+        ("alpha", False),
+        ("alpha", True),
+        ("missing", False),
+    ],
+)
+def test_query_binary_matches_python_process_output(
+    tmp_path: Path, symbol_name: str, use_absolute: bool
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    home = tmp_path / "home"
+    db_dir = home / ".callwarden"
+    db_dir.mkdir(parents=True)
+    db_path = db_dir / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = _seed_stats_fixture(db)
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        db.close()
+
+    file_arg = str(workspace_root / "a.py") if use_absolute else "a.py"
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "CALLWARDEN_WORKSPACE": str(workspace_root),
+            "CALLWARDEN_LANG": "zh_CN",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    python_result = subprocess.run(
+        [
+            sys.executable,
+            str(PROJECT_ROOT / "cw.py"),
+            "query",
+            symbol_name,
+            file_arg,
+        ],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    rust_result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "--workspace-id",
+            str(workspace_id),
+            "query",
+            symbol_name,
+            file_arg,
+        ],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert rust_result.returncode == python_result.returncode == 0
+    assert rust_result.stderr == python_result.stderr == ""
+    assert rust_result.stdout == python_result.stdout

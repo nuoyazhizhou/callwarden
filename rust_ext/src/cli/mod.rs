@@ -14,6 +14,7 @@
 //! - docs/design/phase5-1c-stats-vertical-slice-contract.md
 
 pub mod config;
+pub mod file_query;
 pub mod output;
 pub mod readonly;
 pub mod router;

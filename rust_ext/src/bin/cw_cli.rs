@@ -8,6 +8,10 @@
 use std::path::PathBuf;
 
 use callwarden_core::cli::config::{check_role_supported, load_config, ConfigEntry, PlatformPaths};
+use callwarden_core::cli::file_query::{
+    format_file_symbols_output, format_symbol_location_output, query_local_file_symbols,
+    query_local_symbol_location,
+};
 use callwarden_core::cli::router::DaemonMode;
 use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
 use callwarden_core::cli::search::{
@@ -146,9 +150,17 @@ enum Commands {
         name: String,
     },
     /// 文件读取
-    File,
+    File {
+        /// 文件路径
+        path: String,
+    },
     /// 查询
-    Query,
+    Query {
+        /// 符号短名
+        name: String,
+        /// 文件路径
+        file: String,
+    },
     /// 符号问题
     Issues,
     /// 测试用例
@@ -289,6 +301,12 @@ fn main() {
                 }
                 Commands::Symbol { name } => {
                     emit_result(run_symbol(&runtime, &name));
+                }
+                Commands::File { path } => {
+                    emit_result(run_file(&runtime, &path));
+                }
+                Commands::Query { name, file } => {
+                    emit_result(run_query(&runtime, &name, &file));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -493,6 +511,76 @@ fn format_symbol_result(mut result: CommandResult, qualified_name: &str) -> Comm
     }
 }
 
+fn run_file(runtime: &RuntimeOptions, file_path: &str) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_file_symbols(&conn, workspace_id, file_path)
+        },
+        || Err("enterprise file query is not implemented by the daemon protocol".to_string()),
+    );
+    format_file_result(result, file_path)
+}
+
+fn format_file_result(mut result: CommandResult, file_path: &str) -> CommandResult {
+    if result.exit_code != 0 {
+        return result;
+    }
+    let parsed = match serde_json::from_str::<serde_json::Value>(&result.stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot decode file symbol result: {error}"),
+                result.route,
+            );
+        }
+    };
+    match format_file_symbols_output(&parsed, file_path) {
+        Ok(stdout) => {
+            result.stdout = stdout;
+            result
+        }
+        Err(error) => CommandResult::failure(1, error, result.route),
+    }
+}
+
+fn run_query(runtime: &RuntimeOptions, name: &str, file_path: &str) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_symbol_location(&conn, workspace_id, name, file_path)
+        },
+        || Err("enterprise symbol location query is not implemented by the daemon protocol".to_string()),
+    );
+    format_query_result(result, name)
+}
+
+fn format_query_result(mut result: CommandResult, name: &str) -> CommandResult {
+    if result.exit_code != 0 {
+        return result;
+    }
+    let parsed = match serde_json::from_str::<serde_json::Value>(&result.stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot decode symbol location result: {error}"),
+                result.route,
+            );
+        }
+    };
+    match format_symbol_location_output(&parsed, name) {
+        Ok(stdout) => {
+            result.stdout = stdout;
+            result
+        }
+        Err(error) => CommandResult::failure(1, error, result.route),
+    }
+}
+
 fn query_enterprise_status<F>(workspace_id: &str, mut call: F) -> Result<serde_json::Value, String>
 where
     F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
@@ -675,8 +763,8 @@ fn command_name(cmd: &Commands) -> &'static str {
         Search { .. } => "search",
         Grep => "grep",
         Symbol { .. } => "symbol",
-        File => "file",
-        Query => "query",
+        File { .. } => "file",
+        Query { .. } => "query",
         Issues => "issues",
         Tests => "tests",
         Callers => "callers",
@@ -753,8 +841,13 @@ mod tests {
             Commands::Symbol {
                 name: "a.alpha".to_string(),
             },
-            Commands::File,
-            Commands::Query,
+            Commands::File {
+                path: "a.py".to_string(),
+            },
+            Commands::Query {
+                name: "alpha".to_string(),
+                file: "a.py".to_string(),
+            },
             Commands::Issues,
             Commands::Tests,
             Commands::Callers,
@@ -921,6 +1014,22 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Commands::Symbol { name }) if name == "a.alpha"
+        ));
+    }
+
+    #[test]
+    fn parses_file_and_query_arguments() {
+        let file = Cli::try_parse_from(["cw", "file", "src/a.py"]).unwrap();
+        assert!(matches!(
+            file.command,
+            Some(Commands::File { path }) if path == "src/a.py"
+        ));
+
+        let query = Cli::try_parse_from(["cw", "query", "alpha", "src/a.py"]).unwrap();
+        assert!(matches!(
+            query.command,
+            Some(Commands::Query { name, file })
+                if name == "alpha" && file == "src/a.py"
         ));
     }
 

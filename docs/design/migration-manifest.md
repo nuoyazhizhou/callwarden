@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -3743,3 +3743,44 @@ qualified name 参数，daemon 单测验证已发布 snapshot 的完整详情响
 
 本任务不声明 `file/query/grep/issues/tests` 已完成，它们继续保留在后续
 P0-CLI-B3 至 B5 子任务中。
+
+---
+
+## §54 自举复审整改：Rust `cw file/query`
+
+**任务**：`T-1785440297053-af601bd2`（P0-CLI-B3）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 54.1 已实现
+
+- `cw file <path>` 与 `cw query <name> <file>` 已从 clap 空壳切换到真实 Rust
+  命令；
+- local 模式使用只读 SQLite，按 active workspace 过滤 `file_instances` 和
+  `symbols`，归档文件与其他 workspace 的同路径符号不可见；
+- 文件参数同时支持相对路径和 workspace 内绝对路径，进入 SQL 前统一使用
+  `/` 分隔的相对路径；
+- `file` 按 `start_line` 排序并保持 Python 的中文列表格式；
+- `query` 按短名和文件精确定位，命中时保持 Python `s.* + rel_path + abs_path`
+  的 JSON 字段、顺序和类型，未命中时保持成功退出与中文提示；
+- daemon 当前没有 `query.file/query.location` RPC。本任务不虚构 enterprise
+  能力：enterprise 模式 fail closed；auto 模式沿用统一 runtime 回退 local。
+
+### 54.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::file_query::tests --lib --no-default-features
+test result: ok. 3 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 11 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+17 passed
+```
+
+真实 Python/Rust 进程差分新增六种场景：`file` 的相对路径、绝对路径、空结果，
+以及 `query` 的相对路径命中、绝对路径命中、未命中。单元测试额外覆盖
+workspace 隔离、archived 过滤和稳定行号排序。
+
+本任务不声明 `grep/issues/tests` 已完成；它们继续保留在 P0-CLI-B4/B5。
