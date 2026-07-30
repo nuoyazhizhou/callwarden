@@ -1,7 +1,7 @@
 //! cw CLI binary（Phase 5-1 A.2）
 //!
-//! clap 命令树骨架，对齐 Python `cli/main.py:_SUBCOMMANDS` 的 59 个子命令。
-//! 本阶段仅实现骨架（命令解析 + "not implemented" 错误），不实现业务逻辑。
+//! clap 命令树对齐 Python `cli/main.py:_SUBCOMMANDS` 的 59 个子命令。
+//! 命令按迁移清单逐项接入真实 Rust 业务逻辑，未迁移项仍显式失败。
 //!
 //! 契约：docs/design/phase5-1-cli-config-contract.md §3.2
 
@@ -10,6 +10,9 @@ use std::path::PathBuf;
 use callwarden_core::cli::config::{check_role_supported, load_config, ConfigEntry, PlatformPaths};
 use callwarden_core::cli::router::DaemonMode;
 use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
+use callwarden_core::cli::search::{
+    format_search_output, normalize_search_results, query_local_search,
+};
 use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -123,7 +126,16 @@ enum Commands {
     /// 状态信息
     Status,
     /// 搜索符号
-    Search,
+    Search {
+        /// 搜索关键词
+        query: String,
+        /// 符号类型过滤
+        #[arg(long)]
+        kind: Option<String>,
+        /// 最大结果数
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// grep 搜索
     Grep,
     /// 符号查询
@@ -267,6 +279,9 @@ fn main() {
                 Commands::Config { action } => {
                     emit_result(run_config(action));
                 }
+                Commands::Search { query, kind, limit } => {
+                    emit_result(run_search(&runtime, &query, kind.as_deref(), limit));
+                }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
                     // Phase 5-1 C 扩展阶段将逐命令迁移业务逻辑
@@ -328,6 +343,83 @@ fn run_status(runtime: &RuntimeOptions) -> CommandResult {
             })
         },
     )
+}
+
+fn run_search(
+    runtime: &RuntimeOptions,
+    query: &str,
+    kind: Option<&str>,
+    limit: usize,
+) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_search(&conn, workspace_id, query, kind, limit)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise search requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_search(workspace_id, query, kind, limit, |method, params| {
+                runtime.daemon_call(method, params)
+            })
+        },
+    );
+    format_search_result(result, query, kind, limit)
+}
+
+fn query_enterprise_search<F>(
+    workspace_id: &str,
+    query: &str,
+    kind: Option<&str>,
+    limit: usize,
+    mut call: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    let rpc_limit =
+        u32::try_from(limit).map_err(|_| format!("search limit is too large: {limit}"))?;
+    let (method, params) = callwarden_core::daemon::client::build_query_request(
+        workspace_id,
+        "search",
+        query,
+        None,
+        kind,
+        Some(rpc_limit),
+        None,
+    )
+    .map_err(|error| format!("cannot build search RPC: {error}"))?;
+    normalize_search_results(call(&method, params)?)
+}
+
+fn format_search_result(
+    mut result: CommandResult,
+    query: &str,
+    kind: Option<&str>,
+    limit: usize,
+) -> CommandResult {
+    if result.exit_code != 0 {
+        return result;
+    }
+    let parsed = match serde_json::from_str::<serde_json::Value>(&result.stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot decode search result: {error}"),
+                result.route,
+            );
+        }
+    };
+    match format_search_output(&parsed, query, kind, limit) {
+        Ok(stdout) => {
+            result.stdout = stdout;
+            result
+        }
+        Err(error) => CommandResult::failure(1, error, result.route),
+    }
 }
 
 fn query_enterprise_status<F>(workspace_id: &str, mut call: F) -> Result<serde_json::Value, String>
@@ -509,7 +601,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Refresh => "refresh",
         Stats => "stats",
         Status => "status",
-        Search => "search",
+        Search { .. } => "search",
         Grep => "grep",
         Symbol => "symbol",
         File => "file",
@@ -581,7 +673,11 @@ mod tests {
             Commands::Refresh,
             Commands::Stats,
             Commands::Status,
-            Commands::Search,
+            Commands::Search {
+                query: "alpha".to_string(),
+                kind: None,
+                limit: 50,
+            },
             Commands::Grep,
             Commands::Symbol,
             Commands::File,
@@ -647,7 +743,14 @@ mod tests {
         assert_eq!(command_name(&Commands::Guardrail), "guardrail");
         assert_eq!(command_name(&Commands::Task), "task");
         assert_eq!(command_name(&Commands::Gc), "gc");
-        assert_eq!(command_name(&Commands::Search), "search");
+        assert_eq!(
+            command_name(&Commands::Search {
+                query: "alpha".to_string(),
+                kind: None,
+                limit: 50,
+            }),
+            "search"
+        );
         assert_eq!(
             command_name(&Commands::Config {
                 action: ConfigAction::Explain,
@@ -686,6 +789,29 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, "snapshot_not_ready");
+    }
+
+    #[test]
+    fn enterprise_search_builds_rpc_and_normalizes_snapshot_fields() {
+        let result = query_enterprise_search("ws-1", "alpha", Some("fn"), 7, |method, params| {
+            assert_eq!(method, "query.search");
+            assert_eq!(params["workspace_instance_id"], "ws-1");
+            assert_eq!(params["query"], "alpha");
+            assert_eq!(params["kind"], "fn");
+            assert_eq!(params["limit"], 7);
+            Ok(serde_json::json!([{
+                "qualified_name": "a.alpha",
+                "kind": "fn",
+                "depth": 0,
+                "start_line": 1,
+                "file_rel_path": "a.py"
+            }]))
+        })
+        .unwrap();
+
+        assert_eq!(result[0]["file_path"], "a.py");
+        assert_eq!(result[0]["signature"], "");
+        assert_eq!(result[0]["has_comment"], false);
     }
 
     #[test]

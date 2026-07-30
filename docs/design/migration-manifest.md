@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 待迁移（Phase 5） |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -3657,3 +3657,43 @@ python -m pytest tests/test_rust_cli_diff.py -q
 真实进程差分覆盖 `config explain`、`config paths` 和
 `config check-role local`。唯一白名单差异是实现来源标签由 Python 改为 Rust；
 其余 stdout、stderr 和退出码一致。
+
+---
+
+## §52 自举复审整改：Rust `cw search`
+
+**任务**：`T-1785440297048-bce6f6cd`（P0-CLI-B1）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 52.1 已实现
+
+- `cw search <query> [--kind KIND] [--limit N]` 已从 clap 空壳切换到真实 Rust
+  命令；
+- local 模式保持 workspace 隔离和 archived 过滤，优先使用
+  `symbols_fts` trigram 查询，FTS 不可用、查询 token 少于 3 字符或语法不适用时
+  回退参数化 LIKE 查询；
+- local 查询的字段、排序和 limit 与 Python `search_symbols()` 一致；
+- enterprise 模式调用 owner ACL 后的 `query.search`，并把 GraphStore 返回的
+  `file_rel_path` 归一为 CLI 契约的 `file_path`，补齐缺省
+  `signature/has_comment`；
+- auto 模式继续使用统一 runtime 的 daemon 优先和失败回退；
+- 人类可读 stdout 保持 Python 当前中文默认布局，未用 JSON 输出掩盖兼容差异。
+
+### 52.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::search::tests --lib --no-default-features
+test result: ok. 5 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 8 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+9 passed
+```
+
+真实进程差分覆盖普通查询、kind、limit 和空结果。binary 单测验证 enterprise
+请求的 method/workspace/query/kind/limit，以及 daemon snapshot 字段归一化。
+本任务不声明 `symbol/file/query/grep/issues/tests` 已完成，它们分别保留在
+P0-CLI-B2 至 B5 子任务中。

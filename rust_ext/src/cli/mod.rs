@@ -18,5 +18,6 @@ pub mod output;
 pub mod readonly;
 pub mod router;
 pub mod runtime;
+pub mod search;
 pub mod stats;
 pub mod status;
