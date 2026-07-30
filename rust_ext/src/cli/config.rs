@@ -48,12 +48,10 @@ impl PlatformPaths {
         let home = dirs_home();
         match platform {
             "windows" | "win32" => {
-                let program_data = std::env::var("ProgramData")
-                    .unwrap_or_else(|_| r"C:\ProgramData".to_string());
+                let program_data =
+                    std::env::var("ProgramData").unwrap_or_else(|_| r"C:\ProgramData".to_string());
                 let local_app_data = std::env::var("LOCALAPPDATA")
-                    .unwrap_or_else(|_| {
-                        format!("{}\\AppData\\Local", home.display())
-                    });
+                    .unwrap_or_else(|_| format!("{}\\AppData\\Local", home.display()));
                 let program_data = PathBuf::from(program_data);
                 let local_app_data = PathBuf::from(local_app_data);
                 Self {
@@ -154,9 +152,7 @@ impl Config {
             .values
             .iter()
             .map(|(key, cv)| {
-                let is_secret = SECRET_KEYS
-                    .iter()
-                    .any(|s| key.to_lowercase().contains(s));
+                let is_secret = SECRET_KEYS.iter().any(|s| key.to_lowercase().contains(s));
                 let display_value = if is_secret {
                     "***".to_string()
                 } else {
@@ -187,23 +183,21 @@ pub struct ConfigEntry {
 /// 对齐 Python `release/config_loader.py:load_config()` (L109-148)
 ///
 /// 优先级：CLI 参数 > 环境变量 > 用户配置 > 系统配置 > 默认值
-pub fn load_config(
-    cli_overrides: Option<&HashMap<String, String>>,
-    env_prefix: &str,
-) -> Config {
+pub fn load_config(cli_overrides: Option<&HashMap<String, String>>, env_prefix: &str) -> Config {
     let mut config = Config::default();
     let paths = PlatformPaths::detect();
     let is_linux = std::env::consts::OS == "linux";
 
     // 1. 默认值
-    let defaults: HashMap<String, String> = if is_linux {
-        let mut m = HashMap::new();
-        m.insert("daemon_socket".to_string(), "/run/callwarden/callwarden.sock".to_string());
-        m
-    } else {
-        HashMap::new()
-    };
-    let mut defaults = defaults;
+    let mut defaults = HashMap::new();
+    defaults.insert(
+        "daemon_socket".to_string(),
+        if is_linux {
+            "/run/callwarden/callwarden.sock".to_string()
+        } else {
+            String::new()
+        },
+    );
     defaults.insert("log_level".to_string(), "info".to_string());
     defaults.insert("max_workers".to_string(), "16".to_string());
     defaults.insert("watcher_debounce_ms".to_string(), "250".to_string());
@@ -463,4 +457,102 @@ pub fn config_explain_py(py: Python<'_>) -> PyResult<Vec<Bound<'_, PyDict>>> {
 #[pyfunction]
 pub fn check_role_supported_py(role: &str, platform: Option<&str>) -> bool {
     check_role_supported(role, platform)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_always_include_daemon_socket() {
+        let config = load_config(None, "CW_TEST_CONFIG_UNSET_");
+        let daemon_socket = config.values.get("daemon_socket").unwrap();
+        assert_eq!(daemon_socket.source, "default");
+        if std::env::consts::OS == "linux" {
+            assert_eq!(daemon_socket.value, "/run/callwarden/callwarden.sock");
+        } else {
+            assert_eq!(daemon_socket.value, "");
+        }
+    }
+
+    #[test]
+    fn defaults_match_python_key_set_and_sources() {
+        let config = load_config(None, "CW_TEST_CONFIG_UNSET_");
+        let mut keys: Vec<_> = config.values.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "cas_grace_days",
+                "daemon_socket",
+                "log_level",
+                "max_workers",
+                "watcher_debounce_ms",
+            ]
+        );
+        assert!(config
+            .values
+            .values()
+            .all(|config_value| config_value.source == "default"));
+    }
+
+    #[test]
+    fn explain_sorts_keys_and_masks_secrets() {
+        let mut config = Config::default();
+        config.values.insert(
+            "z_api_key".to_string(),
+            ConfigValue {
+                value: "do-not-print".to_string(),
+                source: "env".to_string(),
+            },
+        );
+        config.values.insert(
+            "alpha".to_string(),
+            ConfigValue {
+                value: "visible".to_string(),
+                source: "default".to_string(),
+            },
+        );
+
+        let explained = config.explain();
+        assert_eq!(explained[0].key, "alpha");
+        assert_eq!(explained[0].value, "visible");
+        assert_eq!(explained[1].key, "z_api_key");
+        assert_eq!(explained[1].value, "***");
+    }
+
+    #[test]
+    fn platform_paths_cover_windows_macos_and_linux() {
+        let windows = PlatformPaths::detect_for_platform("win32");
+        assert!(windows.system_config.ends_with("CallWarden/config.toml"));
+        assert!(windows.runtime.is_none());
+
+        let macos = PlatformPaths::detect_for_platform("darwin");
+        assert_eq!(
+            macos.system_config,
+            PathBuf::from("/Library/Application Support/CallWarden/config.toml")
+        );
+        assert!(macos.runtime.is_none());
+
+        let linux = PlatformPaths::detect_for_platform("linux");
+        assert_eq!(
+            linux.system_config,
+            PathBuf::from("/etc/callwarden/config.toml")
+        );
+        assert_eq!(linux.runtime, Some(PathBuf::from("/run/callwarden")));
+    }
+
+    #[test]
+    fn role_matrix_matches_packaging_contract() {
+        for role in ["local", "client", "agent", "daemon", "all"] {
+            assert!(check_role_supported(role, Some("linux")));
+        }
+        for platform in ["win32", "darwin"] {
+            assert!(check_role_supported("local", Some(platform)));
+            assert!(check_role_supported("client", Some(platform)));
+            assert!(!check_role_supported("agent", Some(platform)));
+            assert!(!check_role_supported("daemon", Some(platform)));
+            assert!(!check_role_supported("all", Some(platform)));
+        }
+    }
 }

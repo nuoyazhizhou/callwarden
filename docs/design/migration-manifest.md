@@ -309,7 +309,7 @@ Phase 0 的第 1、2、4 个子任务都是契约/基础设施类，没有 Rust 
 | 4 | UID/workspace ACL、路径安全与资源预算 | ✅ | ✅ | ✅(behavioral) | ✅ | ✅ | ✅ | ⏸️ |
 | 4 | metrics、health、audit 与 admin operations | ✅ | ✅ | ✅(behavioral) | ✅ | ✅ | ✅ | ⏸️ |
 | 4 | systemd、双 UID、容器挂载与真实 Linux E2E | ✅ | ✅ | ✅(behavioral) | ✅(validation-only) | ✅ | ✅ | ⏸️ |
-| 5 | Rust CLI 命令树与配置加载 | ✅ | ✅ | ✅(behavioral) | 🟡(骨架+wired) | ✅ | ✅ | ⏸️ 执行内核与 stats/status 已 wired，其他 57 子命令待迁移 |
+| 5 | Rust CLI 命令树与配置加载 | ✅ | ✅ | ✅(behavioral) | 🟡(骨架+wired) | ✅ | ✅ | ⏸️ 执行内核与 stats/status/config 已 wired，其他 56 子命令待迁移 |
 | 5 | Rust client/agent 与 daemon RPC | ✅ | 🟡(Slice1-5) | ✅(D1,D3,D5,D7,D9) | 🔴 | ✅ | ✅ | 🟡 Slice 1-5 完成（UDS Client + ping + query + 核心子命令 + 11 RPC 命令 + publish SCM_RIGHTS），Slice 6/7 待续 |
 | 5 | local/enterprise/auto 路由与兼容输出 | ✅ | ✅ | ✅(behavioral) | ✅ | ✅ | ✅ | ✅ Phase 5-3 完成（output.rs 38 单元测试 + 6 差分测试），2026-07-30 数据库任务补建 closed |
 | 5 | 安装器、升级、回滚和六平台 smoke | ✅ | ✅ | ✅(D1-D4) | ✅ | ✅ | ✅ | ✅ Phase 5-4 完成（22 rollback features + schema v42 + 六平台 CI smoke + 本地 smoke 全通过），Phase 5 全部收尾 |
@@ -3570,7 +3570,7 @@ test result: ok. 5 passed; 0 failed
 
 ### 49.3 尚未完成
 
-执行内核完成不等于 59 个命令完成。`stats` 已由 `T-1785432329672-8d606ce9` 接入真实 local SQLite 与 enterprise `query.stats`；`status` 已由 `T-1785432329706-58888011` 接入，证据见 §50。`config` 仍由 `T-1785431708349-54f7c367` 的后续子任务实施。其余命令按 P0-CLI B-F 分批迁移，在对应命令通过 local/enterprise/Python 差分前，仍不得从 skeleton 升级为“已完成”。
+执行内核完成不等于 59 个命令完成。`stats` 已由 `T-1785432329672-8d606ce9` 接入真实 local SQLite 与 enterprise `query.stats`；`status` 已由 `T-1785432329706-58888011` 接入，证据见 §50；`config` 已由 `T-1785432329707-7d518b97` 接入，证据见 §51。其余命令按 P0-CLI B-F 分批迁移，在对应命令通过 local/enterprise/Python 差分前，仍不得从 skeleton 升级为“已完成”。
 
 ---
 
@@ -3608,3 +3608,52 @@ python -m pytest tests/test_rust_cli_diff.py -q
 差分 fixture 同时覆盖 synced/new/stale/deleted、默认 ignore、用户 ignore 和 P21
 自动忽略。enterprise binary 单测验证 RPC 顺序及 snapshot_not_ready 的
 fail-closed 行为；真实双 UID UDS ACL 继续复用 daemon 的 Linux 验收门禁。
+
+---
+
+## §51 自举复审整改：Rust `cw config`
+
+**任务**：`T-1785432329707-7d518b97`（P0-CLI-A2-3）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 51.1 已实现
+
+- `cw config explain` 直接调用 Rust `load_config()`，保留
+  CLI > env > user_config > system_config > default 的来源顺序、secret 脱敏和
+  过长值截断；
+- `cw config paths` 直接调用 Rust `PlatformPaths::detect()`，输出当前平台的系统/
+  用户配置、数据目录和 Linux runtime；
+- `cw config check-role` 使用 Rust 平台角色矩阵；支持时 exit 0，不支持时保持
+  Python 的 stdout 提示并 exit 1；
+- 三个 action 均为本地只读配置操作，不访问 SQLite，也不因
+  `--mode enterprise` 探测 daemon；
+- 输出中的来源标签改为真实的 `callwarden_core::cli::config`，不再声称由 Python
+  `release.config_loader` 执行。
+
+### 51.2 审计中发现并修复的缺口
+
+子任务 `T-1785439457206-d1362357` 发现旧 Rust `load_config()` 在非 Linux 平台
+漏掉 Python 默认项 `daemon_socket=""`。旧差分只抽查四个字段，因此错误假绿。
+整改后：
+
+- 所有平台均存在 `daemon_socket`，Linux 为 UDS 路径，Windows/macOS 为空字符串；
+- 差分测试比较完整的 key/value/source 集合，不再抽样；
+- 旧 pyd 对新增断言先失败，新构建 wheel 中的 pyd 对同一断言通过。
+
+### 51.3 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::config::tests --lib --no-default-features
+test result: ok. 5 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 7 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+5 passed
+```
+
+真实进程差分覆盖 `config explain`、`config paths` 和
+`config check-role local`。唯一白名单差异是实现来源标签由 Python 改为 Rust；
+其余 stdout、stderr 和退出码一致。

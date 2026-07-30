@@ -28,6 +28,35 @@ def _rust_cw_binary() -> Path:
     return PROJECT_ROOT / "rust_ext" / "target" / "debug" / f"cw{suffix}"
 
 
+def _run_rust_config(binary: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(binary), "config", *args],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+
+def _run_python_config(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "cw.py"), "config", *args],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+
+def _normalize_config_source(output: str) -> str:
+    lines = output.splitlines()
+    if lines and lines[0].startswith("# N4 ") and "（来源：" in lines[0]:
+        lines[0] = lines[0].split("（来源：", 1)[0] + "（来源：<implementation>）"
+    return "\n".join(lines)
+
+
 def _seed_stats_fixture(db: CodeGraphDB) -> int:
     workspace_id = db._get_active_workspace_id()
     now = time.time()
@@ -228,3 +257,32 @@ def test_status_binary_matches_python_get_status(tmp_path: Path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert json.loads(completed.stdout) == expected
+
+
+@pytest.mark.parametrize("action", ["explain", "paths"])
+def test_config_binary_matches_python_output(action: str) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    rust_result = _run_rust_config(binary, action)
+    python_result = _run_python_config(action)
+
+    assert rust_result.returncode == python_result.returncode == 0
+    assert rust_result.stderr == python_result.stderr == ""
+    assert _normalize_config_source(rust_result.stdout) == _normalize_config_source(
+        python_result.stdout
+    )
+
+
+def test_config_check_role_binary_matches_python_output() -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    rust_result = _run_rust_config(binary, "check-role", "local")
+    python_result = _run_python_config("check-role", "local")
+
+    assert rust_result.returncode == python_result.returncode == 0
+    assert rust_result.stderr == python_result.stderr == ""
+    assert rust_result.stdout == python_result.stdout

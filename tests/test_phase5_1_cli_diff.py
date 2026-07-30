@@ -179,12 +179,22 @@ def test_d2_load_config():
     rs_watcher_debounce = rs_config.get("watcher_debounce_ms", {}).get("value", "")
     rs_cas_grace = rs_config.get("cas_grace_days", {}).get("value", "")
 
-    # 对比默认值
+    # 对比默认值。必须比较完整集合，防止某个平台漏掉 daemon_socket 等字段
+    # 而四个抽样字段仍然假绿。
+    py_all = {
+        key: (str(config_value.value), config_value.source)
+        for key, config_value in py_config.values.items()
+    }
+    rs_all = {
+        key: (str(config_value.get("value", "")), config_value.get("source", ""))
+        for key, config_value in rs_config.items()
+    }
     checks = [
         ("log_level", str(py_log_level), str(rs_log_level)),
         ("max_workers", str(py_max_workers), str(rs_max_workers)),
         ("watcher_debounce_ms", str(py_watcher_debounce), str(rs_watcher_debounce)),
         ("cas_grace_days", str(py_cas_grace), str(rs_cas_grace)),
+        ("all_config_values", py_all, rs_all),
     ]
     all_match = True
     for key, py_val, rs_val in checks:

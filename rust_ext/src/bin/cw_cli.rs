@@ -7,8 +7,9 @@
 
 use std::path::PathBuf;
 
+use callwarden_core::cli::config::{check_role_supported, load_config, ConfigEntry, PlatformPaths};
 use callwarden_core::cli::router::DaemonMode;
-use callwarden_core::cli::runtime::{CommandResult, RuntimeOptions};
+use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
 use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -186,7 +187,10 @@ enum Commands {
     /// 图存储
     Graph,
     /// 配置管理
-    Config,
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
 
     // ===== 驾驶舱 =====
     /// 项目综合状态驾驶舱
@@ -195,6 +199,40 @@ enum Commands {
     // ===== 回滚 =====
     /// 迁移回滚配置
     Rollback,
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// 输出每个配置值及其来源
+    Explain,
+    /// 输出当前平台的配置和数据路径
+    Paths,
+    /// 检查当前平台是否支持指定安装角色
+    CheckRole {
+        #[arg(value_enum)]
+        role: RoleArg,
+    },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum RoleArg {
+    Local,
+    Client,
+    Agent,
+    Daemon,
+    All,
+}
+
+impl RoleArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Client => "client",
+            Self::Agent => "agent",
+            Self::Daemon => "daemon",
+            Self::All => "all",
+        }
+    }
 }
 
 /// 子命令的通用参数（骨架阶段仅接收任意位置参数，不深入解析）
@@ -225,6 +263,9 @@ fn main() {
                 }
                 Commands::Status => {
                     emit_result(run_status(&runtime));
+                }
+                Commands::Config { action } => {
+                    emit_result(run_config(action));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -312,6 +353,121 @@ where
     Ok(combine_enterprise_status(workspace_registry, graph_stats))
 }
 
+fn run_config(action: ConfigAction) -> CommandResult {
+    match action {
+        ConfigAction::Explain => {
+            let entries = load_config(None, "CW_").explain();
+            text_result(0, format_config_explain(&entries))
+        }
+        ConfigAction::Paths => {
+            let paths = PlatformPaths::detect();
+            text_result(0, format_config_paths(&paths, python_platform_name()))
+        }
+        ConfigAction::CheckRole { role } => {
+            let role = role.as_str();
+            let platform = python_platform_name();
+            let supported = check_role_supported(role, Some(platform));
+            text_result(
+                if supported { 0 } else { 1 },
+                format_role_support(role, platform, supported),
+            )
+        }
+    }
+}
+
+fn format_config_explain(entries: &[ConfigEntry]) -> String {
+    let mut lines = vec![
+        "# N4 分层配置（来源：callwarden_core::cli::config）".to_string(),
+        "# 优先级：CLI > env(CW_*) > user_config > system_config > default".to_string(),
+        String::new(),
+        format!("{:<30} {:<40} {}", "Key", "Value", "Source"),
+        format!(
+            "{:<30} {:<40} {}",
+            "-".repeat(30),
+            "-".repeat(40),
+            "-".repeat(20)
+        ),
+    ];
+    for entry in entries {
+        let value = truncate_config_value(&entry.value);
+        lines.push(format!("{:<30} {:<40} {}", entry.key, value, entry.source));
+    }
+    lines.push(String::new());
+    lines.push(format!("共 {} 个配置项", entries.len()));
+    lines.join("\n")
+}
+
+fn format_config_paths(paths: &PlatformPaths, platform: &str) -> String {
+    let mut lines = vec![
+        "# N4 PlatformPaths（来源：callwarden_core::cli::config）".to_string(),
+        format!("# 平台：{platform}"),
+        String::new(),
+        format!("{:<20} {}", "Name", "Path"),
+        format!("{:<20} {}", "-".repeat(20), "-".repeat(60)),
+        format!("{:<20} {}", "system_config", paths.system_config.display()),
+        format!("{:<20} {}", "user_config", paths.user_config.display()),
+        format!("{:<20} {}", "system_data", paths.system_data.display()),
+        format!("{:<20} {}", "user_data", paths.user_data.display()),
+    ];
+    if let Some(runtime) = &paths.runtime {
+        lines.push(format!("{:<20} {}", "runtime", runtime.display()));
+    }
+    lines.extend([
+        String::new(),
+        "提示：".to_string(),
+        format!(
+            "  - 系统配置文件：{}（需 root/admin 写入）",
+            paths.system_config.display()
+        ),
+        format!(
+            "  - 用户配置文件：{}（普通用户写入）",
+            paths.user_config.display()
+        ),
+        format!(
+            "  - 数据目录：{}（数据库等持久化数据）",
+            paths.user_data.display()
+        ),
+    ]);
+    lines.join("\n")
+}
+
+fn format_role_support(role: &str, platform: &str, supported: bool) -> String {
+    if supported {
+        return format!("角色 '{role}' 在当前平台 {platform} 上 ✅ 支持");
+    }
+    [
+        format!("角色 '{role}' 在当前平台 {platform} 上 ❌ 不支持"),
+        "提示：".to_string(),
+        "  - Windows/macOS 仅支持 local/client 角色".to_string(),
+        "  - Linux 才支持 agent/daemon/all 角色（需 SO_PEERCRED + SCM_RIGHTS + UDS）".to_string(),
+    ]
+    .join("\n")
+}
+
+fn truncate_config_value(value: &str) -> String {
+    if value.chars().count() <= 38 {
+        return value.to_string();
+    }
+    value.chars().take(35).collect::<String>() + "..."
+}
+
+fn python_platform_name() -> &'static str {
+    match std::env::consts::OS {
+        "windows" => "win32",
+        "macos" => "darwin",
+        platform => platform,
+    }
+}
+
+fn text_result(exit_code: i32, stdout: String) -> CommandResult {
+    CommandResult {
+        exit_code,
+        stdout,
+        stderr: String::new(),
+        route: RouteUsed::None,
+    }
+}
+
 fn emit_result(result: CommandResult) {
     if !result.stdout.is_empty() {
         println!("{}", result.stdout);
@@ -384,7 +540,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         BuildContext => "build-context",
         Toolchain => "toolchain",
         Graph => "graph",
-        Config => "config",
+        Config { .. } => "config",
         Dashboard => "dashboard",
         Rollback => "rollback",
     }
@@ -456,7 +612,9 @@ mod tests {
             Commands::BuildContext,
             Commands::Toolchain,
             Commands::Graph,
-            Commands::Config,
+            Commands::Config {
+                action: ConfigAction::Explain,
+            },
             Commands::Dashboard,
             Commands::Rollback,
         ];
@@ -490,7 +648,12 @@ mod tests {
         assert_eq!(command_name(&Commands::Task), "task");
         assert_eq!(command_name(&Commands::Gc), "gc");
         assert_eq!(command_name(&Commands::Search), "search");
-        assert_eq!(command_name(&Commands::Config), "config");
+        assert_eq!(
+            command_name(&Commands::Config {
+                action: ConfigAction::Explain,
+            }),
+            "config"
+        );
         assert_eq!(command_name(&Commands::Rollback), "rollback");
     }
 
