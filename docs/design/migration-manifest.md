@@ -4381,3 +4381,71 @@ Rust 单测覆盖层级创建、父链恢复、全树质量修复优先、阻塞
 双连接并发领取。双进程差异测试分别使用 Python/Rust 独立 SQLite，逐命令比较
 create/next/report/reopen 输出，并比较任务、步骤和 active task 的持久化投影；
 随机 ID 和真实时间仅在输出层归一化。
+
+---
+
+## §66 自举复审整改：Rust `cw task` 审核审计闭环
+
+**任务**：`T-1785484889185-b2883eb8`（P0-CLI-E3）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 66.1 已实现
+
+- Rust `cw task` 已接入 `rollback/capture-diff/completion-review/resolve-finding/
+  apply/close/split`。这些命令与 E1/E2 一样固定访问当前 UID 的本地任务数据库，
+  `enterprise` 模式不会把用户编排与审核状态写入共享 daemon；
+- `rollback` 按 change ID 或 step ID 限定回滚证据，在一个 `BEGIN IMMEDIATE`
+  事务中写入反向 `change_audit`、推进任务为 `reverted` 并清除匹配的 active task；
+- `capture-diff` 保留 Git diff/status 的原始顺序与 staged/worktree/untracked 语义。
+  dry-run 零写入；apply 模式原子写入 scan run、文件级 change audit 和
+  task-symbol attribution。非 Git 工作区按现有 `file_instances` 的 canonical hash
+  比较，不把未索引文件猜成可信变更；
+- `completion-review` 按 task/step 范围汇总已有 open findings，未知 severity
+  fail closed；`resolve-finding` 只允许 `fixed/wontfix/false_positive`，通过条件
+  UPDATE 拒绝重复裁决；
+- `apply/close` 强制 reviewer 非空且不得等于 creator，拒绝 open error/block
+  finding，禁止父任务手工 apply/close；子任务审核完成后在同一事务中推进父链，
+  并发 apply 只有一个调用成功；
+- `split --plan` 支持 Markdown 二级标题与列表步骤，忽略代码块；父任务、子任务、
+  步骤、顺序和已完成父链 reopen 在单事务中发布，解析或后半段写入失败不留下半棵树；
+- Python/Rust 进程级差分覆盖七个命令的终端输出与持久化投影，并额外验证 Rust
+  自审拒绝后数据库字节不变。Git porcelain 的前导状态空格和变更顺序均有回归门禁；
+- 本切片不新增 schema。测试同时修正了 Python 父任务拒绝用例只接受英文错误文本的
+  脆弱断言，仍要求拒绝结果及 `review` 状态不变。
+
+### 66.2 明确边界
+
+- E3 的 `completion-review` 只聚合已持久化 findings，尚不执行 Semgrep、Guardrail
+  和扩展 checker；规则执行、finding 生成与完整质量门禁属于 E4；
+- E3 持久化 change/finding 裁决证据，但 `audit_chain` 密码学签名仍属于 E4；
+- 为保持 CLI 兼容，formatter 逐字符遵循当前 Python i18n 输出，包括
+  completion-review 中历史 `total=0` 的展示缺陷；修复该跨端契约需后续同时升级两端；
+- `capture-diff` 的 symbol attribution 当前与 Python 一样是文件级 best-effort，
+  不据此声称完成规则扫描、符号级审计签名或整个质量检查器迁移。
+
+### 66.3 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::task::tests \
+  --lib --no-default-features -q
+test result: ok. 21 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw \
+  --no-default-features -q
+test result: ok. 23 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+63 passed
+
+python -m pytest tests/test_task_close.py tests/test_task_cascade_close.py \
+  tests/test_task_no_steps_fix.py tests/test_task_quality_cli.py \
+  tests/test_cli_task_c9_subcommands.py tests/test_task_reopen.py \
+  tests/test_task_parent_cascade_fix.py -q
+123 passed
+```
+
+Rust 单测覆盖事务回滚、dry-run 零写、finding scope、未知 severity、裁决重放、
+自审拒绝、阻塞 finding、父链级联、父任务手工审核拒绝、split 原子失败以及并发
+apply。完整差分套件使用独立 Python/Rust SQLite，验证输出和数据库状态，而不是仅
+调用内部函数。

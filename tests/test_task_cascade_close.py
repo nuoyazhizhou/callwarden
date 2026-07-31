@@ -177,7 +177,8 @@ def test_parent_task_manual_apply_forbidden():
 
         result = db.task_apply(parent_id, reviewer="reviewer-A")
         assert "error" in result, "父任务手动 apply 应被拒绝"
-        assert "parent" in result["error"].lower() or "manual" in result["error"].lower()
+        error = result["error"].lower()
+        assert any(token in error for token in ("parent", "manual", "父任务", "手动"))
         assert result["status"] == TASK_STATUS_REVIEW  # 状态不变
     finally:
         db.close()

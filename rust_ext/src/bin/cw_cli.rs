@@ -6,7 +6,7 @@
 //! 契约：docs/design/phase5-1-cli-config-contract.md §3.2
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use callwarden_core::cli::build_context::{
@@ -51,9 +51,13 @@ use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use callwarden_core::cli::symbol::format_symbol_output;
 use callwarden_core::cli::task::{
-    claim_next_task_step, create_task, format_task_claim, format_task_create, format_task_findings,
-    format_task_list, format_task_reopen, format_task_report, format_task_show, query_task_detail,
+    apply_task, capture_task_diff, capture_task_diff_auto, claim_next_task_step, close_task,
+    create_task, format_task_apply, format_task_capture, format_task_claim, format_task_close,
+    format_task_completion_review, format_task_create, format_task_finding_resolution,
+    format_task_findings, format_task_list, format_task_reopen, format_task_report,
+    format_task_rollback, format_task_show, format_task_split, query_task_detail,
     query_task_findings, query_task_links, query_task_list, reopen_task, report_task_step,
+    resolve_task_finding, review_task_completion, rollback_task, split_task_from_plan,
     TaskListOptions, TaskStepInput,
 };
 use callwarden_core::cli::workspace::{
@@ -437,6 +441,56 @@ enum TaskAction {
         #[arg(long)]
         fail: bool,
     },
+    /// 记录步骤或 change_audit 范围的回滚意图
+    Rollback { task_id: String, step_id: String },
+    /// 捕获工作区真实 diff 到任务审计证据
+    CaptureDiff {
+        task_id: Option<String>,
+        #[arg(long, default_value = "")]
+        step_id: String,
+        #[arg(long, default_value = "")]
+        base: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        auto: bool,
+        #[arg(long)]
+        skip_quality_review: bool,
+        #[arg(long, default_value = "")]
+        source_commit_hash: String,
+    },
+    /// 汇总任务当前 open findings 并给出完成决策
+    CompletionReview {
+        task_id: String,
+        #[arg(long, default_value = "")]
+        step_id: String,
+    },
+    /// 原子解决或豁免一条任务 finding
+    ResolveFinding {
+        finding_id: i64,
+        #[arg(long, default_value = "fixed")]
+        resolution: String,
+        #[arg(long = "by", default_value = "agent")]
+        resolved_by: String,
+    },
+    /// 独立 reviewer 审核通过叶子任务
+    Apply {
+        task_id: String,
+        #[arg(long, default_value = "reviewer")]
+        reviewer: String,
+    },
+    /// 独立 reviewer 关闭已 applied 叶子任务
+    Close {
+        task_id: String,
+        #[arg(long, default_value = "reviewer")]
+        reviewer: String,
+    },
+    /// 从 Markdown 计划原子拆分父子任务树
+    Split {
+        task_id: String,
+        #[arg(long)]
+        plan: PathBuf,
+    },
     /// 重新打开 review/applied/closed 任务
     Reopen {
         task_id: String,
@@ -756,6 +810,76 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                 let mut conn = runtime.open_local_write_db()?;
                 let report = report_task_step(&mut conn, &task_id, &step_id, &result, !fail)?;
                 Ok(format_task_report(&report, &result, zh_cn))
+            }
+            TaskAction::Rollback { task_id, step_id } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result = rollback_task(&mut conn, &task_id, &step_id, "")?;
+                Ok(format_task_rollback(&result, zh_cn))
+            }
+            TaskAction::CaptureDiff {
+                task_id,
+                step_id,
+                base,
+                dry_run,
+                auto,
+                skip_quality_review,
+                source_commit_hash,
+            } => {
+                let mut conn = runtime.open_local_write_db()?;
+                if auto {
+                    if task_id.is_some() {
+                        return Err("task_id cannot be combined with --auto".to_string());
+                    }
+                    let result = capture_task_diff_auto(&mut conn, Path::new(""));
+                    return Ok(format_task_capture(&result, zh_cn));
+                }
+                let task_id = task_id.ok_or_else(|| {
+                    "task_id is required for capture-diff unless --auto is used".to_string()
+                })?;
+                let result = capture_task_diff(
+                    &mut conn,
+                    &task_id,
+                    &step_id,
+                    Path::new(""),
+                    &base,
+                    dry_run,
+                    &source_commit_hash,
+                    skip_quality_review,
+                )?;
+                Ok(format_task_capture(&result, zh_cn))
+            }
+            TaskAction::CompletionReview { task_id, step_id } => {
+                let conn = runtime.open_local_db()?;
+                let result = review_task_completion(&conn, &task_id, &step_id)?;
+                Ok(format_task_completion_review(&result, zh_cn))
+            }
+            TaskAction::ResolveFinding {
+                finding_id,
+                resolution,
+                resolved_by,
+            } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result =
+                    resolve_task_finding(&mut conn, finding_id, &resolution, &resolved_by)?;
+                Ok(format_task_finding_resolution(&result, zh_cn))
+            }
+            TaskAction::Apply { task_id, reviewer } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result = apply_task(&mut conn, &task_id, &reviewer)?;
+                Ok(format_task_apply(&result, zh_cn))
+            }
+            TaskAction::Close { task_id, reviewer } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result = close_task(&mut conn, &task_id, &reviewer)?;
+                Ok(format_task_close(&result, zh_cn))
+            }
+            TaskAction::Split { task_id, plan } => {
+                let plan_markdown = std::fs::read_to_string(&plan).map_err(|error| {
+                    format!("cannot read task split plan {}: {error}", plan.display())
+                })?;
+                let mut conn = runtime.open_local_write_db()?;
+                let result = split_task_from_plan(&mut conn, &task_id, &plan_markdown)?;
+                Ok(format_task_split(&result, zh_cn))
             }
             TaskAction::Reopen {
                 task_id,

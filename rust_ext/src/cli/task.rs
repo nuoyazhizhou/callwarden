@@ -1,17 +1,21 @@
-//! Rust `cw task` 只读查询。
+//! Rust `cw task` 本地编排与审计状态机。
 //!
 //! 任务编排数据属于当前 UID 的本地数据库，不随代码查询路由切换到 enterprise
 //! daemon。这样同一用户在 local/auto/enterprise 模式下看到的是同一份任务事实。
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::process;
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+use crate::canonicalize::canonicalize_source;
 
 static TASK_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -111,6 +115,115 @@ pub struct TaskReopenResult {
     pub reopened_at: f64,
     pub reviewer: String,
     pub reason: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskRollbackChange {
+    pub original_change_id: String,
+    pub file_path: String,
+    pub hash_before: String,
+    pub hash_after: String,
+    pub restorable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskRollbackResult {
+    pub task_id: String,
+    pub task_status: String,
+    pub rolled_back_changes: Vec<TaskRollbackChange>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChangedFile {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskCaptureResult {
+    pub task_id: String,
+    pub step_id: String,
+    pub base: String,
+    pub dry_run: bool,
+    pub scan_id: i64,
+    pub changed_files: Vec<ChangedFile>,
+    pub linked_symbols: usize,
+    pub quality_findings: Vec<TaskFinding>,
+    pub quality_decision: String,
+    pub next_action: String,
+    pub auto: bool,
+    pub success: bool,
+    pub reason: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TaskFindingCounts {
+    pub info: usize,
+    pub warn: usize,
+    pub error: usize,
+    pub block: usize,
+}
+
+impl TaskFindingCounts {
+    pub fn total(&self) -> usize {
+        self.info + self.warn + self.error + self.block
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskCompletionReviewResult {
+    pub task_id: String,
+    pub step_id: String,
+    pub decision: String,
+    pub findings: Vec<TaskFinding>,
+    pub counts: TaskFindingCounts,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskFindingResolutionResult {
+    pub finding_id: i64,
+    pub status: String,
+    pub resolution: String,
+    pub resolved_at: f64,
+    pub resolved_by: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskApplyResult {
+    pub task_id: String,
+    pub status: String,
+    pub applied_at: f64,
+    pub reviewer: String,
+    pub cascaded_close: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskCloseResult {
+    pub task_id: String,
+    pub status: String,
+    pub closed_at: f64,
+    pub reviewer: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskSplitItem {
+    pub task_id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskSplitResult {
+    pub parent_task_id: String,
+    pub subtasks: Vec<TaskSplitItem>,
+}
+
+#[derive(Debug, Clone)]
+struct TaskSplitDefinition {
+    title: String,
+    description: String,
+    steps: Vec<TaskStepInput>,
 }
 
 #[derive(Debug, Clone)]
@@ -513,6 +626,684 @@ pub fn reopen_task(
         reopened_at: now,
         reviewer: reviewer.to_string(),
         reason: reason.to_string(),
+    })
+}
+
+pub fn rollback_task(
+    conn: &mut Connection,
+    task_id: &str,
+    change_or_step_id: &str,
+    reason: &str,
+) -> Result<TaskRollbackResult, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task rollback transaction: {error}"))?;
+    let task_exists = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?1)",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot inspect rollback task: {error}"))?;
+    if task_exists == 0 {
+        return Err(format!("task not found: {task_id}"));
+    }
+
+    let mut sql = String::from(
+        "SELECT id, COALESCE(step_id, ''), file_path,
+                COALESCE(hash_before, ''), COALESCE(hash_after, '')
+         FROM change_audit WHERE task_id = ?1",
+    );
+    let mut values = vec![task_id.to_string()];
+    if !change_or_step_id.trim().is_empty() {
+        values.push(change_or_step_id.trim().to_string());
+        sql.push_str(" AND (id = ?2 OR step_id = ?2)");
+    }
+    sql.push_str(" ORDER BY timestamp ASC, id ASC");
+    let refs = values
+        .iter()
+        .map(|value| value as &dyn rusqlite::ToSql)
+        .collect::<Vec<_>>();
+    let originals = {
+        let mut stmt = tx
+            .prepare(&sql)
+            .map_err(|error| format!("cannot prepare rollback changes: {error}"))?;
+        let rows = stmt
+            .query_map(refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .map_err(|error| format!("cannot query rollback changes: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("cannot read rollback changes: {error}"))?
+    };
+    if !change_or_step_id.trim().is_empty() && originals.is_empty() {
+        return Err(format!(
+            "no change_audit row for task {task_id} and scope {change_or_step_id}"
+        ));
+    }
+
+    let now = unix_timestamp()?;
+    let mut rolled_back_changes = Vec::with_capacity(originals.len());
+    for (original_id, step_id, file_path, hash_before, hash_after) in originals {
+        let rollback_id = generate_id("C")?;
+        tx.execute(
+            "INSERT INTO change_audit(
+                 id, task_id, step_id, file_path, hash_before, hash_after,
+                 diff, author, timestamp
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'agent', ?8)",
+            params![
+                rollback_id,
+                task_id,
+                step_id,
+                file_path,
+                hash_after,
+                hash_before,
+                format!(
+                    "[ROLLBACK] reason={}",
+                    if reason.trim().is_empty() {
+                        "unspecified"
+                    } else {
+                        reason.trim()
+                    }
+                ),
+                now
+            ],
+        )
+        .map_err(|error| format!("cannot insert rollback audit row: {error}"))?;
+        rolled_back_changes.push(TaskRollbackChange {
+            original_change_id: original_id,
+            file_path,
+            restorable: !hash_before.is_empty(),
+            hash_before,
+            hash_after,
+        });
+    }
+
+    let updated = tx
+        .execute(
+            "UPDATE tasks SET status = 'reverted', updated_at = ?1, closed_at = ?1
+             WHERE id = ?2",
+            params![now, task_id],
+        )
+        .map_err(|error| format!("cannot mark task reverted: {error}"))?;
+    if updated != 1 {
+        return Err(format!("task {task_id} changed concurrently"));
+    }
+    tx.execute(
+        "UPDATE workspaces SET active_task_id = ''
+         WHERE is_active = 1 AND active_task_id = ?1",
+        params![task_id],
+    )
+    .map_err(|error| format!("cannot clear rolled back active task: {error}"))?;
+    tx.commit()
+        .map_err(|error| format!("cannot commit task rollback: {error}"))?;
+    Ok(TaskRollbackResult {
+        task_id: task_id.to_string(),
+        task_status: "reverted".to_string(),
+        rolled_back_changes,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn capture_task_diff(
+    conn: &mut Connection,
+    task_id: &str,
+    step_id: &str,
+    workspace_root: &Path,
+    base: &str,
+    dry_run: bool,
+    source_commit_hash: &str,
+    skip_quality_review: bool,
+) -> Result<TaskCaptureResult, String> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() {
+        return Err("task_id is required".to_string());
+    }
+    let (workspace_id, db_root) = active_workspace(conn)?;
+    let root = if workspace_root.as_os_str().is_empty() {
+        PathBuf::from(db_root)
+    } else {
+        workspace_root.to_path_buf()
+    };
+    validate_task_scope(conn, task_id, step_id)?;
+    let (changed_files, status_text) = collect_workspace_changes(conn, workspace_id, &root, base)?;
+    if dry_run {
+        return Ok(TaskCaptureResult {
+            task_id: task_id.to_string(),
+            step_id: step_id.to_string(),
+            base: base.to_string(),
+            dry_run: true,
+            scan_id: 0,
+            next_action: if changed_files.is_empty() {
+                "noop".to_string()
+            } else {
+                "apply".to_string()
+            },
+            changed_files,
+            linked_symbols: 0,
+            quality_findings: Vec::new(),
+            quality_decision: String::new(),
+            auto: false,
+            success: true,
+            reason: String::new(),
+            error: String::new(),
+        });
+    }
+
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start capture-diff transaction: {error}"))?;
+    validate_task_scope_tx(&tx, task_id, step_id)?;
+    let now = unix_timestamp()?;
+    let git_head = git_stdout(&root, &["rev-parse", "HEAD"]).unwrap_or_default();
+    let status_hash = sha256_hex(status_text.as_bytes());
+    let changed_json = serde_json::to_string(&changed_files)
+        .map_err(|error| format!("cannot serialize changed files: {error}"))?;
+    tx.execute(
+        "INSERT INTO workspace_scan_runs(
+             workspace_id, purpose, task_id, step_id, baseline_type, git_head,
+             git_merge_base, git_status_hash, file_count, changed_files_json,
+             metadata_json, started_at, completed_at, status
+         ) VALUES (?1, 'capture', ?2, ?3, 'git', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, 'completed')",
+        params![
+            workspace_id,
+            task_id,
+            step_id,
+            git_head,
+            base,
+            status_hash,
+            i64::try_from(changed_files.len()).map_err(|_| "too many changed files".to_string())?,
+            changed_json,
+            serde_json::json!({"source_commit_hash": source_commit_hash}).to_string(),
+            now
+        ],
+    )
+    .map_err(|error| format!("cannot record capture scan: {error}"))?;
+    let scan_id = tx.last_insert_rowid();
+
+    let mut linked_symbols = 0_usize;
+    for changed in &changed_files {
+        let hash_before = tx
+            .query_row(
+                "SELECT COALESCE(current_content_hash, '') FROM file_instances
+                 WHERE workspace_id = ?1 AND rel_path = ?2
+                 ORDER BY id DESC LIMIT 1",
+                params![workspace_id, changed.path],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| format!("cannot query prior file hash: {error}"))?
+            .unwrap_or_default();
+        let hash_after = file_content_hash(&root.join(&changed.path)).unwrap_or_default();
+        let change_id = generate_id("C")?;
+        tx.execute(
+            "INSERT INTO change_audit(
+                 id, task_id, step_id, file_path, hash_before, hash_after,
+                 diff, author, timestamp
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', 'capture-diff', ?7)",
+            params![
+                change_id,
+                task_id,
+                step_id,
+                changed.path,
+                hash_before,
+                hash_after,
+                now
+            ],
+        )
+        .map_err(|error| format!("cannot insert capture change audit: {error}"))?;
+
+        if table_exists(&tx, "task_symbol_changes")? {
+            let change_type = match changed.status.as_str() {
+                "A" | "untracked" => "added",
+                "D" => "deleted",
+                _ => "modified",
+            };
+            tx.execute(
+                "INSERT INTO task_symbol_changes(
+                     workspace_id, task_id, step_id, change_audit_id, file_path,
+                     symbol_hash_before, symbol_hash_after, change_type, source,
+                     source_commit_hash, metadata, created_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                           'task_capture_diff', ?9, ?10, ?11)",
+                params![
+                    workspace_id,
+                    task_id,
+                    step_id,
+                    change_id,
+                    changed.path,
+                    hash_before,
+                    hash_after,
+                    change_type,
+                    source_commit_hash,
+                    serde_json::json!({"status": changed.status}).to_string(),
+                    now
+                ],
+            )
+            .map_err(|error| format!("cannot link capture symbol change: {error}"))?;
+            linked_symbols += 1;
+        }
+    }
+
+    let quality_findings = if skip_quality_review {
+        Vec::new()
+    } else {
+        query_open_quality_findings_scoped(&tx, task_id, step_id)?
+    };
+    let quality_decision = if skip_quality_review {
+        String::new()
+    } else {
+        finding_decision(&quality_findings).to_string()
+    };
+    let next_action = if quality_decision == "block" {
+        "fix"
+    } else if changed_files.is_empty() {
+        "noop"
+    } else {
+        "review"
+    };
+    tx.commit()
+        .map_err(|error| format!("cannot commit capture-diff: {error}"))?;
+    Ok(TaskCaptureResult {
+        task_id: task_id.to_string(),
+        step_id: step_id.to_string(),
+        base: base.to_string(),
+        dry_run: false,
+        scan_id,
+        changed_files,
+        linked_symbols,
+        quality_findings,
+        quality_decision,
+        next_action: next_action.to_string(),
+        auto: false,
+        success: true,
+        reason: String::new(),
+        error: String::new(),
+    })
+}
+
+pub fn capture_task_diff_auto(conn: &mut Connection, workspace_root: &Path) -> TaskCaptureResult {
+    let empty = |reason: &str, error: String, task_id: String| TaskCaptureResult {
+        task_id,
+        step_id: String::new(),
+        base: String::new(),
+        dry_run: false,
+        scan_id: 0,
+        changed_files: Vec::new(),
+        linked_symbols: 0,
+        quality_findings: Vec::new(),
+        quality_decision: String::new(),
+        next_action: "noop".to_string(),
+        auto: true,
+        success: false,
+        reason: reason.to_string(),
+        error,
+    };
+    let task_id = match active_task_id(conn) {
+        Ok(Some(task_id)) => task_id,
+        Ok(None) => return empty("no_in_progress_task", String::new(), String::new()),
+        Err(error) => return empty("exception", error, String::new()),
+    };
+    let status = match conn.query_row(
+        "SELECT status FROM tasks WHERE id = ?1",
+        params![task_id],
+        |row| row.get::<_, String>(0),
+    ) {
+        Ok(status) => status,
+        Err(error) => return empty("exception", error.to_string(), task_id),
+    };
+    if status != "in_progress" {
+        return empty("task_not_in_progress", String::new(), task_id);
+    }
+    let root = active_workspace(conn)
+        .map(|(_, root)| {
+            if workspace_root.as_os_str().is_empty() {
+                PathBuf::from(root)
+            } else {
+                workspace_root.to_path_buf()
+            }
+        })
+        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let base = git_stdout(&root, &["rev-parse", "HEAD~1"]).unwrap_or_default();
+    let head = git_stdout(&root, &["rev-parse", "HEAD"]).unwrap_or_default();
+    match capture_task_diff(conn, &task_id, "", &root, &base, false, &head, true) {
+        Ok(mut result) => {
+            result.auto = true;
+            result.base = base;
+            result
+        }
+        Err(error) => empty("exception", error, task_id),
+    }
+}
+
+pub fn review_task_completion(
+    conn: &Connection,
+    task_id: &str,
+    step_id: &str,
+) -> Result<TaskCompletionReviewResult, String> {
+    validate_task_scope(conn, task_id, step_id)?;
+    let findings = query_open_quality_findings_scoped(conn, task_id, step_id)?;
+    let mut counts = TaskFindingCounts::default();
+    for finding in &findings {
+        match finding.severity.as_str() {
+            "info" => counts.info += 1,
+            "warn" => counts.warn += 1,
+            "error" => counts.error += 1,
+            "block" => counts.block += 1,
+            severity => {
+                return Err(format!(
+                    "finding {} has unsupported severity '{severity}'",
+                    finding.id
+                ));
+            }
+        }
+    }
+    let decision = finding_decision(&findings).to_string();
+    let summary = format!(
+        "review: {decision}, {} findings (info={}, warn={}, error={}, block={})",
+        counts.total(),
+        counts.info,
+        counts.warn,
+        counts.error,
+        counts.block
+    );
+    Ok(TaskCompletionReviewResult {
+        task_id: task_id.to_string(),
+        step_id: step_id.to_string(),
+        decision,
+        findings,
+        counts,
+        summary,
+    })
+}
+
+pub fn resolve_task_finding(
+    conn: &mut Connection,
+    finding_id: i64,
+    resolution: &str,
+    resolved_by: &str,
+) -> Result<TaskFindingResolutionResult, String> {
+    let resolution = resolution.trim();
+    let new_status = match resolution {
+        "fixed" => "resolved",
+        "wontfix" | "false_positive" => "wontfix",
+        _ => {
+            return Err(format!(
+                "unsupported finding resolution '{resolution}'; expected fixed/wontfix/false_positive"
+            ));
+        }
+    };
+    let resolved_by = resolved_by.trim();
+    if resolved_by.is_empty() {
+        return Err("resolved_by identity is required".to_string());
+    }
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start finding resolve transaction: {error}"))?;
+    let current = tx
+        .query_row(
+            "SELECT status FROM task_quality_findings WHERE id = ?1",
+            params![finding_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("cannot inspect task finding {finding_id}: {error}"))?
+        .ok_or_else(|| format!("finding not found: {finding_id}"))?;
+    if current != "open" {
+        return Err(format!(
+            "finding {finding_id} is already {current}; only open findings can be resolved"
+        ));
+    }
+    let now = unix_timestamp()?;
+    let updated = tx
+        .execute(
+            "UPDATE task_quality_findings
+             SET status = ?1, resolved_at = ?2, resolved_by = ?3
+             WHERE id = ?4 AND status = 'open'",
+            params![new_status, now, resolved_by, finding_id],
+        )
+        .map_err(|error| format!("cannot resolve task finding {finding_id}: {error}"))?;
+    if updated != 1 {
+        return Err(format!("finding {finding_id} changed concurrently"));
+    }
+    tx.commit()
+        .map_err(|error| format!("cannot commit finding resolution: {error}"))?;
+    Ok(TaskFindingResolutionResult {
+        finding_id,
+        status: new_status.to_string(),
+        resolution: resolution.to_string(),
+        resolved_at: now,
+        resolved_by: resolved_by.to_string(),
+    })
+}
+
+pub fn apply_task(
+    conn: &mut Connection,
+    task_id: &str,
+    reviewer: &str,
+) -> Result<TaskApplyResult, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task apply transaction: {error}"))?;
+    let (status, parent_id, creator) = task_identity(&tx, task_id)?;
+    validate_independent_reviewer(task_id, &creator, reviewer)?;
+    reject_blocking_findings(&tx, task_id)?;
+    let subtask_count = tx
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE parent_id = ?1",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot count task children: {error}"))?;
+    if subtask_count > 0 {
+        return Err(format!(
+            "parent task cannot be applied manually; {subtask_count} subtasks must cascade it"
+        ));
+    }
+    let now = unix_timestamp()?;
+    if status != "review" {
+        let step_count = direct_step_count(&tx, task_id)?;
+        if matches!(status.as_str(), "open" | "in_progress") && step_count == 0 {
+            let updated = tx
+                .execute(
+                    "UPDATE tasks SET status = 'review', updated_at = ?1
+                     WHERE id = ?2 AND status = ?3",
+                    params![now, task_id, status],
+                )
+                .map_err(|error| format!("cannot advance empty task to review: {error}"))?;
+            if updated != 1 {
+                return Err(format!("task {task_id} changed concurrently"));
+            }
+        } else {
+            return Err(format!(
+                "cannot apply task in status '{status}', only 'review' can be applied"
+            ));
+        }
+    }
+    let updated = tx
+        .execute(
+            "UPDATE tasks SET status = 'applied', applied_at = ?1, updated_at = ?1
+             WHERE id = ?2 AND status = 'review'",
+            params![now, task_id],
+        )
+        .map_err(|error| format!("cannot apply task {task_id}: {error}"))?;
+    if updated != 1 {
+        return Err(format!("task {task_id} changed concurrently"));
+    }
+
+    let mut cascaded_close = Vec::new();
+    if !parent_id.is_empty() {
+        update_parent_statuses(&tx, task_id, now)?;
+        cascade_close_if_ready(&tx, &parent_id, reviewer, now, &mut cascaded_close)?;
+    }
+    tx.commit()
+        .map_err(|error| format!("cannot commit task apply: {error}"))?;
+    Ok(TaskApplyResult {
+        task_id: task_id.to_string(),
+        status: "applied".to_string(),
+        applied_at: now,
+        reviewer: reviewer.trim().to_string(),
+        cascaded_close,
+    })
+}
+
+pub fn close_task(
+    conn: &mut Connection,
+    task_id: &str,
+    reviewer: &str,
+) -> Result<TaskCloseResult, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task close transaction: {error}"))?;
+    let (status, _, creator) = task_identity(&tx, task_id)?;
+    validate_independent_reviewer(task_id, &creator, reviewer)?;
+    reject_blocking_findings(&tx, task_id)?;
+    let subtask_count = tx
+        .query_row(
+            "SELECT COUNT(*) FROM tasks WHERE parent_id = ?1",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot count task children: {error}"))?;
+    if subtask_count > 0 {
+        return Err(format!(
+            "parent task cannot be closed manually; {subtask_count} subtasks must cascade it"
+        ));
+    }
+    let now = unix_timestamp()?;
+    if status != "applied" {
+        let step_count = direct_step_count(&tx, task_id)?;
+        if matches!(status.as_str(), "open" | "in_progress" | "review") && step_count == 0 {
+            let updated = tx
+                .execute(
+                    "UPDATE tasks SET status = 'applied', applied_at = ?1, updated_at = ?1
+                     WHERE id = ?2 AND status = ?3",
+                    params![now, task_id, status],
+                )
+                .map_err(|error| format!("cannot advance empty task to applied: {error}"))?;
+            if updated != 1 {
+                return Err(format!("task {task_id} changed concurrently"));
+            }
+        } else {
+            return Err(format!(
+                "cannot close task in status '{status}', only 'applied' can be closed"
+            ));
+        }
+    }
+    let updated = tx
+        .execute(
+            "UPDATE tasks SET status = 'closed', closed_at = ?1, updated_at = ?1
+             WHERE id = ?2 AND status = 'applied'",
+            params![now, task_id],
+        )
+        .map_err(|error| format!("cannot close task {task_id}: {error}"))?;
+    if updated != 1 {
+        return Err(format!("task {task_id} changed concurrently"));
+    }
+    tx.execute(
+        "UPDATE workspaces SET active_task_id = ''
+         WHERE is_active = 1 AND active_task_id = ?1",
+        params![task_id],
+    )
+    .map_err(|error| format!("cannot clear closed active task: {error}"))?;
+    tx.commit()
+        .map_err(|error| format!("cannot commit task close: {error}"))?;
+    Ok(TaskCloseResult {
+        task_id: task_id.to_string(),
+        status: "closed".to_string(),
+        closed_at: now,
+        reviewer: reviewer.trim().to_string(),
+    })
+}
+
+pub fn split_task_from_plan(
+    conn: &mut Connection,
+    task_id: &str,
+    plan_markdown: &str,
+) -> Result<TaskSplitResult, String> {
+    let definitions = parse_split_plan(plan_markdown)?;
+    if definitions.is_empty() {
+        return Err("no subtasks found in plan".to_string());
+    }
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task split transaction: {error}"))?;
+    let (parent_depth, parent_status) = tx
+        .query_row(
+            "SELECT depth, status FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("cannot inspect split parent {task_id}: {error}"))?
+        .ok_or_else(|| format!("task not found: {task_id}"))?;
+    let now = unix_timestamp()?;
+    reopen_parent_chain_if_needed(&tx, task_id, &parent_status, true, now)?;
+    let first_sort_order = tx
+        .query_row(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tasks WHERE parent_id = ?1",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot allocate split child order: {error}"))?;
+
+    let mut subtasks = Vec::with_capacity(definitions.len());
+    for (definition_index, definition) in definitions.into_iter().enumerate() {
+        let child_id = generate_id("T")?;
+        let sort_order = first_sort_order
+            + i64::try_from(definition_index).map_err(|_| "too many split subtasks".to_string())?;
+        tx.execute(
+            "INSERT INTO tasks(
+                 id, title, description, creator, status, created_at, updated_at,
+                 parent_id, depth, sort_order
+             ) VALUES (?1, ?2, ?3, 'agent', 'open', ?4, ?4, ?5, ?6, ?7)",
+            params![
+                child_id,
+                definition.title,
+                definition.description,
+                now,
+                task_id,
+                parent_depth + 1,
+                sort_order
+            ],
+        )
+        .map_err(|error| format!("cannot insert split subtask: {error}"))?;
+        for (step_index, step) in definition.steps.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO task_steps(
+                     id, task_id, step_index, action, target_file, target_symbol,
+                     check_items, status, result, created_at, completed_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', '', ?8, NULL)",
+                params![
+                    generate_id("S")?,
+                    child_id,
+                    i64::try_from(step_index)
+                        .map_err(|_| "split subtask has too many steps".to_string())?,
+                    step.action,
+                    step.target_file,
+                    step.target_symbol,
+                    serialize_check_items(&step.check_items)?,
+                    now
+                ],
+            )
+            .map_err(|error| format!("cannot insert split subtask step: {error}"))?;
+        }
+        subtasks.push(TaskSplitItem {
+            task_id: child_id,
+            title: definition.title,
+        });
+    }
+    tx.commit()
+        .map_err(|error| format!("cannot commit task split: {error}"))?;
+    Ok(TaskSplitResult {
+        parent_task_id: task_id.to_string(),
+        subtasks,
     })
 }
 
@@ -969,6 +1760,374 @@ pub fn format_task_reopen(result: &TaskReopenResult, zh_cn: bool) -> String {
             "  {}: {}",
             if zh_cn { "原因" } else { "Reason" },
             result.reason
+        ));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn format_task_rollback(result: &TaskRollbackResult, zh_cn: bool) -> String {
+    let mut lines = vec![
+        if zh_cn {
+            "=== 任务回滚 ===".to_string()
+        } else {
+            "=== Task Rollback ===".to_string()
+        },
+        format!(
+            "  {}: {}",
+            if zh_cn { "任务 ID" } else { "Task ID" },
+            result.task_id
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn { "任务状态" } else { "Task status" },
+            result.task_status
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn {
+                "回滚变更数"
+            } else {
+                "Rolled back changes"
+            },
+            result.rolled_back_changes.len()
+        ),
+        String::new(),
+    ];
+    if !result.rolled_back_changes.is_empty() {
+        lines.push(if zh_cn {
+            "  【回滚变更详情】:".to_string()
+        } else {
+            "  [Rollback Details]:".to_string()
+        });
+        for (index, change) in result.rolled_back_changes.iter().enumerate() {
+            lines.push(format!(
+                "    {}. {} {}",
+                index + 1,
+                if change.restorable { "[✓]" } else { "[✗]" },
+                change.file_path
+            ));
+            if !change.hash_before.is_empty() {
+                let prefix = change.hash_before.chars().take(12).collect::<String>();
+                lines.push(format!(
+                    "        {}: {}...",
+                    if zh_cn {
+                        "原始 hash"
+                    } else {
+                        "Original hash"
+                    },
+                    prefix
+                ));
+            }
+        }
+        lines.push(String::new());
+    }
+    lines.push(if zh_cn {
+        "  注意: 仅记录回滚意图，未操作文件系统。调用方应根据 rolled_back_changes 中的 hash_before 自行恢复文件内容。".to_string()
+    } else {
+        "  Note: Only rollback intent was recorded; no filesystem changes were made. Callers should restore file content using hash_before from rolled_back_changes.".to_string()
+    });
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn format_task_capture(result: &TaskCaptureResult, zh_cn: bool) -> String {
+    let mut lines = vec!["=== Capture Diff ===".to_string()];
+    if result.auto {
+        lines.push(if zh_cn {
+            "[--auto 模式] 自动检测 in_progress 任务，HEAD~1 作为 base，自动 apply（fail-soft）"
+                .to_string()
+        } else {
+            "[--auto mode] Auto-detect in_progress task, use HEAD~1 as base, auto apply (fail-soft)"
+                .to_string()
+        });
+        lines.push(String::new());
+    }
+    if !result.success {
+        let message = match result.reason.as_str() {
+            "no_in_progress_task" => {
+                if zh_cn {
+                    "  ⚠ 没有 in_progress 状态的任务，capture-diff 闭环未运行。".to_string()
+                } else {
+                    "  ⚠ No in_progress task found; capture-diff loop did not run.".to_string()
+                }
+            }
+            "task_not_in_progress" => format!(
+                "  ⚠ Active task {} is not in_progress; auto-capture skipped.",
+                result.task_id
+            ),
+            _ => format!(
+                "  ✗ {} (reason={}): {}",
+                if zh_cn {
+                    "自动捕获失败"
+                } else {
+                    "Auto-capture failed"
+                },
+                result.reason,
+                result.error
+            ),
+        };
+        lines.push(message);
+        lines.push(String::new());
+        return lines.join("\n");
+    }
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "任务 ID" } else { "Task ID" },
+        result.task_id
+    ));
+    if !result.step_id.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn { "关联步骤" } else { "Step" },
+            result.step_id
+        ));
+    }
+    if !result.base.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn {
+                "基线 commit"
+            } else {
+                "Base commit"
+            },
+            result.base
+        ));
+    }
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "模式" } else { "Mode" },
+        if result.dry_run {
+            if zh_cn {
+                "dry-run（只返回计划，不写库）"
+            } else {
+                "dry-run (return plan only, no DB writes)"
+            }
+        } else if zh_cn {
+            "apply（写入审计并触发质量审查）"
+        } else {
+            "apply (write audit records and trigger quality review)"
+        }
+    ));
+    lines.push(String::new());
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn {
+            "变更文件数"
+        } else {
+            "Changed files"
+        },
+        result.changed_files.len()
+    ));
+    if !result.changed_files.is_empty() {
+        lines.push(String::new());
+        for changed in &result.changed_files {
+            lines.push(format!("    [{}] {}", changed.status, changed.path));
+        }
+        lines.push(String::new());
+    }
+    if result.dry_run {
+        lines.push(format!(
+            "[dry-run] next_action = {}{}",
+            result.next_action,
+            if zh_cn {
+                "（apply 模式才会真正写库）"
+            } else {
+                " (apply mode writes to DB)"
+            }
+        ));
+        lines.push(String::new());
+        return lines.join("\n");
+    }
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn {
+            "扫描基线 ID"
+        } else {
+            "Scan run ID"
+        },
+        result.scan_id
+    ));
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn {
+            "关联符号变更记录数"
+        } else {
+            "Linked symbol change records"
+        },
+        result.linked_symbols
+    ));
+    if !result.quality_decision.is_empty() {
+        lines.push(format!(
+            "  {}: {} (findings: {})",
+            if zh_cn {
+                "质量审查决策"
+            } else {
+                "Quality decision"
+            },
+            result.quality_decision,
+            result.quality_findings.len()
+        ));
+        for finding in &result.quality_findings {
+            lines.push(format!(
+                "    [{}] {}: {}",
+                finding.severity, finding.finding_type, finding.message
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.push(format!(
+        "▶ {}: {}",
+        if zh_cn { "下一步" } else { "Next" },
+        result.next_action
+    ));
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn format_task_completion_review(result: &TaskCompletionReviewResult, zh_cn: bool) -> String {
+    let mut lines = vec![format!(
+        "{}: {}",
+        if zh_cn {
+            "审查结论"
+        } else {
+            "Review decision"
+        },
+        result.decision
+    )];
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "任务 ID" } else { "Task ID" },
+        result.task_id
+    ));
+    if !result.step_id.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn { "步骤 ID" } else { "Step ID" },
+            result.step_id
+        ));
+    }
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "摘要" } else { "Summary" },
+        result.summary
+    ));
+    lines.push(format!(
+        "  Findings: total {} | info {} | warn {} | error {} | block {}",
+        0, result.counts.info, result.counts.warn, result.counts.error, result.counts.block
+    ));
+    if !result.findings.is_empty() {
+        lines.push(String::new());
+        lines.push(if zh_cn {
+            format!("  【发现列表】（{} 条）:", result.findings.len())
+        } else {
+            format!("  [Findings] ({} items):", result.findings.len())
+        });
+        for (index, finding) in result.findings.iter().enumerate() {
+            lines.push(format!(
+                "    {}. [{}] {}",
+                index + 1,
+                finding.severity,
+                finding.message
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn format_task_finding_resolution(result: &TaskFindingResolutionResult, zh_cn: bool) -> String {
+    vec![
+        if zh_cn {
+            "=== 解决质量发现 ===".to_string()
+        } else {
+            "=== Resolve Finding ===".to_string()
+        },
+        if zh_cn {
+            format!(
+                "  ✓ 发现 #{} 已解决 (status={})",
+                result.finding_id, result.status
+            )
+        } else {
+            format!(
+                "  ✓ Finding #{} resolved (status={})",
+                result.finding_id, result.status
+            )
+        },
+        format!(
+            "  {}: {}",
+            if zh_cn { "解决方式" } else { "Resolution" },
+            result.resolution
+        ),
+        String::new(),
+    ]
+    .join("\n")
+}
+
+pub fn format_task_apply(result: &TaskApplyResult, zh_cn: bool) -> String {
+    vec![
+        if zh_cn {
+            format!("✓ 任务已审核通过: {}", result.task_id)
+        } else {
+            format!("✓ Task applied: {}", result.task_id)
+        },
+        format!(
+            "  {}: {}",
+            if zh_cn { "状态" } else { "Status" },
+            result.status
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn { "审核时间" } else { "Applied at" },
+            result.applied_at
+        ),
+        String::new(),
+    ]
+    .join("\n")
+}
+
+pub fn format_task_close(result: &TaskCloseResult, zh_cn: bool) -> String {
+    vec![
+        if zh_cn {
+            format!("✓ 任务已关闭: {}", result.task_id)
+        } else {
+            format!("✓ Task closed: {}", result.task_id)
+        },
+        format!(
+            "  {}: {}",
+            if zh_cn { "状态" } else { "Status" },
+            result.status
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn { "关闭时间" } else { "Closed at" },
+            result.closed_at
+        ),
+        String::new(),
+    ]
+    .join("\n")
+}
+
+pub fn format_task_split(result: &TaskSplitResult, zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        format!(
+            "✓ 任务 {} 已拆分为 {} 个子任务",
+            result.parent_task_id,
+            result.subtasks.len()
+        )
+    } else {
+        format!(
+            "✓ Task {} split into {} subtasks",
+            result.parent_task_id,
+            result.subtasks.len()
+        )
+    }];
+    for (index, subtask) in result.subtasks.iter().enumerate() {
+        lines.push(format!(
+            "  {}. {} - {}",
+            index + 1,
+            subtask.task_id,
+            subtask.title
         ));
     }
     lines.push(String::new());
@@ -2003,6 +3162,515 @@ fn update_parent_statuses(tx: &Transaction<'_>, task_id: &str, now: f64) -> Resu
     }
 }
 
+fn task_identity(conn: &Connection, task_id: &str) -> Result<(String, String, String), String> {
+    conn.query_row(
+        "SELECT status, COALESCE(parent_id, ''), COALESCE(creator, '')
+         FROM tasks WHERE id = ?1",
+        params![task_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        },
+    )
+    .optional()
+    .map_err(|error| format!("cannot inspect task {task_id}: {error}"))?
+    .ok_or_else(|| format!("task not found: {task_id}"))
+}
+
+fn validate_independent_reviewer(
+    task_id: &str,
+    creator: &str,
+    reviewer: &str,
+) -> Result<(), String> {
+    let reviewer = reviewer.trim();
+    if reviewer.is_empty() {
+        return Err("reviewer identity is required".to_string());
+    }
+    if !creator.trim().is_empty() && reviewer.eq_ignore_ascii_case(creator.trim()) {
+        return Err(format!(
+            "reviewer '{reviewer}' is the creator of task {task_id}; self-approval is forbidden"
+        ));
+    }
+    Ok(())
+}
+
+fn reject_blocking_findings(conn: &Connection, task_id: &str) -> Result<(), String> {
+    let blocking = conn
+        .query_row(
+            "SELECT COUNT(*) FROM task_quality_findings
+             WHERE task_id = ?1 AND status = 'open'
+               AND severity IN ('error', 'block')",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot inspect blocking findings: {error}"))?;
+    if blocking > 0 {
+        return Err(format!(
+            "task {task_id} has {blocking} open error/block findings"
+        ));
+    }
+    Ok(())
+}
+
+fn direct_step_count(conn: &Connection, task_id: &str) -> Result<i64, String> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM task_steps WHERE task_id = ?1",
+        params![task_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .map_err(|error| format!("cannot count task steps: {error}"))
+}
+
+fn cascade_close_if_ready(
+    tx: &Transaction<'_>,
+    parent_id: &str,
+    reviewer: &str,
+    now: f64,
+    cascaded: &mut Vec<String>,
+) -> Result<(), String> {
+    let siblings = {
+        let mut stmt = tx
+            .prepare(
+                "SELECT id, status, COALESCE(creator, '')
+                 FROM tasks WHERE parent_id = ?1 ORDER BY sort_order, created_at",
+            )
+            .map_err(|error| format!("cannot prepare cascade siblings: {error}"))?;
+        let rows = stmt
+            .query_map(params![parent_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| format!("cannot query cascade siblings: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("cannot read cascade siblings: {error}"))?
+    };
+    if siblings.is_empty()
+        || siblings
+            .iter()
+            .any(|(_, status, _)| !matches!(status.as_str(), "applied" | "closed"))
+    {
+        return Ok(());
+    }
+    let (parent_status, grandparent_id, parent_creator) = task_identity(tx, parent_id)?;
+    if parent_status != "review" {
+        return Ok(());
+    }
+    validate_independent_reviewer(parent_id, &parent_creator, reviewer)?;
+    reject_blocking_findings(tx, parent_id)?;
+    for (sibling_id, status, creator) in &siblings {
+        if status == "applied" {
+            validate_independent_reviewer(sibling_id, creator, reviewer)?;
+        }
+    }
+    for (sibling_id, status, _) in siblings {
+        if status == "applied" {
+            let updated = tx
+                .execute(
+                    "UPDATE tasks SET status = 'closed', closed_at = ?1, updated_at = ?1
+                     WHERE id = ?2 AND status = 'applied'",
+                    params![now, sibling_id],
+                )
+                .map_err(|error| format!("cannot cascade close task {sibling_id}: {error}"))?;
+            if updated != 1 {
+                return Err(format!("cascade task {sibling_id} changed concurrently"));
+            }
+            cascaded.push(sibling_id);
+        }
+    }
+    let updated = tx
+        .execute(
+            "UPDATE tasks
+             SET status = 'closed', applied_at = COALESCE(applied_at, ?1),
+                 closed_at = ?1, updated_at = ?1
+             WHERE id = ?2 AND status = 'review'",
+            params![now, parent_id],
+        )
+        .map_err(|error| format!("cannot cascade close parent {parent_id}: {error}"))?;
+    if updated != 1 {
+        return Err(format!("cascade parent {parent_id} changed concurrently"));
+    }
+    cascaded.push(parent_id.to_string());
+    if !grandparent_id.is_empty() {
+        cascade_close_if_ready(tx, &grandparent_id, reviewer, now, cascaded)?;
+    }
+    Ok(())
+}
+
+fn parse_split_plan(plan_markdown: &str) -> Result<Vec<TaskSplitDefinition>, String> {
+    let mut definitions = Vec::new();
+    let mut title: Option<String> = None;
+    let mut description = Vec::new();
+    let mut steps = Vec::new();
+    let mut in_code_block = false;
+
+    let finish = |definitions: &mut Vec<TaskSplitDefinition>,
+                  title: &mut Option<String>,
+                  description: &mut Vec<String>,
+                  steps: &mut Vec<TaskStepInput>| {
+        if let Some(title_value) = title.take() {
+            definitions.push(TaskSplitDefinition {
+                title: title_value,
+                description: description.join("\n").trim().to_string(),
+                steps: std::mem::take(steps),
+            });
+            description.clear();
+        }
+    };
+
+    for raw_line in plan_markdown.lines() {
+        let line = raw_line.trim();
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block || line.is_empty() {
+            continue;
+        }
+        if line.starts_with("## ") && !line.starts_with("### ") {
+            finish(&mut definitions, &mut title, &mut description, &mut steps);
+            let parsed = line[3..].trim().trim_end_matches('#').trim();
+            if parsed.is_empty() {
+                return Err("split plan contains an empty subtask title".to_string());
+            }
+            title = Some(parsed.to_string());
+            continue;
+        }
+        let list_content = ["- ", "* ", "+ "]
+            .iter()
+            .find_map(|prefix| line.strip_prefix(prefix));
+        if let Some(content) = list_content {
+            if title.is_none() {
+                continue;
+            }
+            let content = content.trim();
+            let (action, target_file) = if let Some((action, target)) = content.split_once('@') {
+                (action.trim(), target.trim())
+            } else if let Some((action, target)) = content.split_once(':') {
+                (action.trim(), target.trim())
+            } else {
+                (content, "")
+            };
+            if action.is_empty() {
+                return Err("split plan contains an empty step action".to_string());
+            }
+            steps.push(TaskStepInput {
+                action: action.to_string(),
+                target_file: target_file.to_string(),
+                target_symbol: String::new(),
+                check_items: Value::String(String::new()),
+            });
+            continue;
+        }
+        if title.is_some() && !line.starts_with('#') {
+            description.push(line.to_string());
+        }
+    }
+    if in_code_block {
+        return Err("split plan has an unclosed code fence".to_string());
+    }
+    finish(&mut definitions, &mut title, &mut description, &mut steps);
+    Ok(definitions)
+}
+
+fn active_workspace(conn: &Connection) -> Result<(i64, String), String> {
+    conn.query_row(
+        "SELECT id, root_path FROM workspaces WHERE is_active = 1 ORDER BY id LIMIT 1",
+        [],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+    )
+    .map_err(|error| format!("cannot resolve active workspace: {error}"))
+}
+
+fn active_task_id(conn: &Connection) -> Result<Option<String>, String> {
+    let active = conn
+        .query_row(
+            "SELECT COALESCE(active_task_id, '') FROM workspaces
+             WHERE is_active = 1 ORDER BY id LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("cannot query active task: {error}"))?
+        .unwrap_or_default();
+    if !active.is_empty() {
+        return Ok(Some(active));
+    }
+    conn.query_row(
+        "SELECT id FROM tasks WHERE status = 'in_progress'
+         ORDER BY sort_order ASC, created_at DESC LIMIT 1",
+        [],
+        |row| row.get::<_, String>(0),
+    )
+    .optional()
+    .map_err(|error| format!("cannot find in-progress task: {error}"))
+}
+
+fn validate_task_scope(conn: &Connection, task_id: &str, step_id: &str) -> Result<(), String> {
+    let exists = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id = ?1)",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot validate capture task: {error}"))?;
+    if exists == 0 {
+        return Err(format!("task not found: {task_id}"));
+    }
+    if !step_id.trim().is_empty() {
+        let valid = conn
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM task_steps WHERE id = ?1 AND task_id = ?2
+                 )",
+                params![step_id, task_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("cannot validate capture step: {error}"))?;
+        if valid == 0 {
+            return Err(format!(
+                "task step {step_id} does not belong to task {task_id}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_task_scope_tx(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    step_id: &str,
+) -> Result<(), String> {
+    validate_task_scope(tx, task_id, step_id)
+}
+
+fn collect_workspace_changes(
+    conn: &Connection,
+    workspace_id: i64,
+    root: &Path,
+    base: &str,
+) -> Result<(Vec<ChangedFile>, String), String> {
+    if git_stdout(root, &["rev-parse", "--is-inside-work-tree"])
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        let mut changes = Vec::<ChangedFile>::new();
+        let mut seen_paths = HashSet::<String>::new();
+        let mut raw = String::new();
+        if !base.trim().is_empty() {
+            let diff = git_stdout(root, &["diff", "--name-status", base, "--"])?;
+            raw.push_str(&diff);
+            for line in diff.lines() {
+                let parts = line.split('\t').collect::<Vec<_>>();
+                if parts.len() < 2 {
+                    continue;
+                }
+                let code = parts[0];
+                let path = parts.last().copied().unwrap_or_default();
+                if !path.is_empty() {
+                    let path = normalize_rel_path(path);
+                    if seen_paths.insert(path.clone()) {
+                        changes.push(ChangedFile {
+                            path,
+                            status: normalize_git_status(code),
+                        });
+                    }
+                }
+            }
+        }
+        let status = git_stdout(root, &["status", "--porcelain=v1", "--untracked-files=all"])?;
+        raw.push_str(&status);
+        for line in status.lines() {
+            if let Some((path, worktree_status)) = parse_git_porcelain_line(line) {
+                if seen_paths.insert(path.clone()) {
+                    changes.push(ChangedFile {
+                        path,
+                        status: worktree_status,
+                    });
+                }
+            }
+        }
+        return Ok((changes, raw));
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT rel_path, COALESCE(current_content_hash, '')
+             FROM file_instances WHERE workspace_id = ?1 AND status != 'archived'
+             ORDER BY rel_path",
+        )
+        .map_err(|error| format!("cannot prepare non-git change scan: {error}"))?;
+    let rows = stmt
+        .query_map(params![workspace_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("cannot scan indexed files: {error}"))?;
+    let mut changed = Vec::new();
+    for row in rows {
+        let (rel_path, before) =
+            row.map_err(|error| format!("cannot read indexed file: {error}"))?;
+        let path = root.join(&rel_path);
+        let status = if !path.exists() {
+            Some("D".to_string())
+        } else {
+            let after = file_content_hash(&path).unwrap_or_default();
+            (after != before).then(|| "M".to_string())
+        };
+        if let Some(status) = status {
+            changed.push(ChangedFile {
+                path: normalize_rel_path(&rel_path),
+                status,
+            });
+        }
+    }
+    Ok((changed, String::new()))
+}
+
+fn git_stdout(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("cannot run git {}: {error}", args.join(" ")))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .trim_end_matches(['\r', '\n'])
+        .to_string())
+}
+
+fn parse_git_porcelain_line(line: &str) -> Option<(String, String)> {
+    if line.len() < 4 || !line.is_char_boundary(2) || !line.is_char_boundary(3) {
+        return None;
+    }
+    let code = &line[..2];
+    let mut path = line[3..].trim();
+    if let Some((_, renamed)) = path.rsplit_once(" -> ") {
+        path = renamed;
+    }
+    let path = path.trim_matches('"');
+    if path.is_empty() {
+        return None;
+    }
+    let bytes = code.as_bytes();
+    let status = if code == "??" {
+        "untracked".to_string()
+    } else if bytes[0] != b' ' && bytes[1] != b' ' {
+        "staged+worktree".to_string()
+    } else if bytes[0] != b' ' {
+        format!("staged-{}", bytes[0] as char)
+    } else if bytes[1] != b' ' {
+        format!("worktree-{}", bytes[1] as char)
+    } else {
+        "modified".to_string()
+    };
+    Some((normalize_rel_path(path), status))
+}
+
+fn normalize_git_status(code: &str) -> String {
+    let code = code.trim();
+    if code == "??" {
+        return "untracked".to_string();
+    }
+    match code.chars().next().unwrap_or('M') {
+        'A' => "A",
+        'D' => "D",
+        'R' => "R",
+        _ => "M",
+    }
+    .to_string()
+}
+
+fn normalize_rel_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn file_content_hash(path: &Path) -> Result<String, String> {
+    if !path.exists() {
+        return Ok(String::new());
+    }
+    let path = path
+        .to_str()
+        .ok_or_else(|| format!("file path is not UTF-8: {}", path.display()))?;
+    canonicalize_source(path)
+        .map(|result| result.content_hash)
+        .map_err(|error| format!("cannot canonicalize {path}: {error}"))
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn query_open_quality_findings_scoped(
+    conn: &Connection,
+    task_id: &str,
+    step_id: &str,
+) -> Result<Vec<TaskFinding>, String> {
+    let all = query_open_quality_findings_conn(conn, task_id)?;
+    if step_id.is_empty() {
+        return Ok(all);
+    }
+    Ok(all
+        .into_iter()
+        .filter(|finding| finding.step_id.is_empty() || finding.step_id == step_id)
+        .collect())
+}
+
+fn query_open_quality_findings_conn(
+    conn: &Connection,
+    task_id: &str,
+) -> Result<Vec<TaskFinding>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, COALESCE(step_id, ''), finding_type, severity, status,
+                    message, COALESCE(source, '')
+             FROM task_quality_findings
+             WHERE task_id = ?1 AND status = 'open'
+             ORDER BY created_at ASC",
+        )
+        .map_err(|error| format!("cannot prepare task finding decision: {error}"))?;
+    let rows = stmt
+        .query_map(params![task_id], |row| {
+            Ok(TaskFinding {
+                id: row.get(0)?,
+                step_id: row.get(1)?,
+                finding_type: row.get(2)?,
+                severity: row.get(3)?,
+                status: row.get(4)?,
+                message: row.get(5)?,
+                source: row.get(6)?,
+            })
+        })
+        .map_err(|error| format!("cannot query task finding decision: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read task finding decision: {error}"))
+}
+
+fn finding_decision(findings: &[TaskFinding]) -> &'static str {
+    if findings
+        .iter()
+        .any(|finding| matches!(finding.severity.as_str(), "error" | "block"))
+    {
+        "block"
+    } else if findings.is_empty() {
+        "pass"
+    } else {
+        "warn"
+    }
+}
+
 fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
@@ -2039,6 +3707,31 @@ mod tests {
                  finding_type TEXT, severity TEXT, status TEXT, message TEXT,
                  evidence TEXT, source TEXT, created_at REAL, resolved_at REAL,
                  resolved_by TEXT
+             );
+             CREATE TABLE change_audit(
+                 id TEXT PRIMARY KEY, task_id TEXT, step_id TEXT, file_path TEXT,
+                 hash_before TEXT, hash_after TEXT, diff TEXT, author TEXT,
+                 timestamp REAL
+             );
+             CREATE TABLE file_instances(
+                 id INTEGER PRIMARY KEY, workspace_id INTEGER, rel_path TEXT,
+                 current_content_hash TEXT, status TEXT
+             );
+             CREATE TABLE workspace_scan_runs(
+                 id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id INTEGER,
+                 purpose TEXT, task_id TEXT, step_id TEXT, baseline_type TEXT,
+                 git_head TEXT, git_merge_base TEXT, git_status_hash TEXT,
+                 root_mtime REAL DEFAULT 0, file_count INTEGER,
+                 manifest_hash TEXT DEFAULT '', changed_files_json TEXT,
+                 metadata_json TEXT, started_at REAL, completed_at REAL, status TEXT
+             );
+             CREATE TABLE task_symbol_changes(
+                 id INTEGER PRIMARY KEY AUTOINCREMENT, workspace_id INTEGER,
+                 task_id TEXT, step_id TEXT, edit_audit_id INTEGER DEFAULT 0,
+                 change_audit_id TEXT, file_path TEXT, qualified_name TEXT DEFAULT '',
+                 symbol_name TEXT DEFAULT '', symbol_hash_before TEXT,
+                 symbol_hash_after TEXT, change_type TEXT, source TEXT,
+                 source_commit_hash TEXT, metadata TEXT, created_at REAL
              );
              INSERT INTO tasks VALUES
                  ('root','Root','','agent','in_progress',1000,1000,NULL,NULL,'',0,0),
@@ -2345,6 +4038,400 @@ mod tests {
             .filter(|claimed| *claimed)
             .count();
         assert_eq!(claimed, 1);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rollback_scopes_changes_and_clears_matching_active_task() {
+        let mut conn = fixture();
+        conn.execute(
+            "UPDATE workspaces SET active_task_id = 'child' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO change_audit VALUES
+                 ('c1','child','s2','a.py','before-a','after-a','','agent',1),
+                 ('c2','child','other','b.py','before-b','after-b','','agent',2);",
+        )
+        .unwrap();
+        let result = rollback_task(&mut conn, "child", "s2", "bad change").unwrap();
+        assert_eq!(result.task_status, "reverted");
+        assert_eq!(result.rolled_back_changes.len(), 1);
+        assert_eq!(result.rolled_back_changes[0].original_change_id, "c1");
+        assert_eq!(
+            conn.query_row(
+                "SELECT hash_before, hash_after, diff FROM change_audit
+                 WHERE task_id = 'child' AND id NOT IN ('c1','c2')",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .unwrap(),
+            (
+                "after-a".to_string(),
+                "before-a".to_string(),
+                "[ROLLBACK] reason=bad change".to_string()
+            )
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT active_task_id FROM workspaces WHERE id = 1",
+                [],
+                |row| { row.get::<_, String>(0) }
+            )
+            .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn capture_diff_dry_run_is_read_only_and_apply_is_atomic() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(dir.path().join("new.py"), "print('new')\n").unwrap();
+        let mut conn = fixture();
+        conn.execute(
+            "UPDATE workspaces SET root_path = ?1 WHERE id = 1",
+            params![dir.path().to_string_lossy().to_string()],
+        )
+        .unwrap();
+
+        let dry = capture_task_diff(&mut conn, "child", "s2", Path::new(""), "", true, "", false)
+            .unwrap();
+        assert_eq!(dry.changed_files.len(), 1);
+        assert_eq!(dry.next_action, "apply");
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM workspace_scan_runs", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+
+        let applied = capture_task_diff(
+            &mut conn,
+            "child",
+            "s2",
+            Path::new(""),
+            "",
+            false,
+            "deadbeef",
+            true,
+        )
+        .unwrap();
+        assert_eq!(applied.changed_files.len(), 1);
+        assert_eq!(applied.linked_symbols, 1);
+        assert_eq!(applied.next_action, "review");
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM change_audit", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM task_symbol_changes", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            1
+        );
+
+        let before = conn
+            .query_row("SELECT COUNT(*) FROM change_audit", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert!(capture_task_diff(
+            &mut conn,
+            "child",
+            "wrong-step",
+            Path::new(""),
+            "",
+            false,
+            "",
+            true,
+        )
+        .is_err());
+        let after = conn
+            .query_row("SELECT COUNT(*) FROM change_audit", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn porcelain_parser_preserves_leading_status_space_and_path() {
+        assert_eq!(
+            parse_git_porcelain_line(" M tracked.py"),
+            Some(("tracked.py".to_string(), "worktree-M".to_string()))
+        );
+        assert_eq!(
+            parse_git_porcelain_line("?? new.py"),
+            Some(("new.py".to_string(), "untracked".to_string()))
+        );
+        assert_eq!(
+            parse_git_porcelain_line("RM old.py -> renamed.py"),
+            Some(("renamed.py".to_string(), "staged+worktree".to_string()))
+        );
+    }
+
+    #[test]
+    fn completion_review_is_scoped_and_unknown_severity_fails_closed() {
+        let conn = fixture();
+        let review = review_task_completion(&conn, "child", "s2").unwrap();
+        assert_eq!(review.decision, "block");
+        assert_eq!(review.counts.block, 1);
+        assert_eq!(review.counts.total(), 1);
+        assert!(review_task_completion(&conn, "child", "s1").is_err());
+
+        conn.execute(
+            "UPDATE task_quality_findings SET severity = 'critical' WHERE id = 1",
+            [],
+        )
+        .unwrap();
+        assert!(review_task_completion(&conn, "child", "s2").is_err());
+    }
+
+    #[test]
+    fn finding_resolution_is_atomic_and_replay_fails_closed() {
+        let mut conn = fixture();
+        let result = resolve_task_finding(&mut conn, 1, "false_positive", "reviewer").unwrap();
+        assert_eq!(result.status, "wontfix");
+        assert_eq!(result.resolved_by, "reviewer");
+        assert!(resolve_task_finding(&mut conn, 1, "fixed", "reviewer").is_err());
+
+        conn.execute(
+            "INSERT INTO task_quality_findings VALUES
+             (2,1,'child','s2','scope','warn','open','warn','','scope',1003,NULL,'')",
+            [],
+        )
+        .unwrap();
+        assert!(resolve_task_finding(&mut conn, 2, "invented", "reviewer").is_err());
+        assert_eq!(
+            conn.query_row(
+                "SELECT status FROM task_quality_findings WHERE id = 2",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            "open"
+        );
+    }
+
+    #[test]
+    fn apply_rejects_self_review_and_blocking_findings() {
+        let mut conn = fixture();
+        assert!(apply_task(&mut conn, "child", "agent").is_err());
+        assert!(apply_task(&mut conn, "child", "external-reviewer").is_err());
+        assert_eq!(
+            conn.query_row("SELECT status FROM tasks WHERE id = 'child'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            "review"
+        );
+    }
+
+    #[test]
+    fn last_child_apply_cascades_atomically_to_parent() {
+        let mut conn = fixture();
+        resolve_task_finding(&mut conn, 1, "fixed", "fixer").unwrap();
+        let result = apply_task(&mut conn, "child", "external-reviewer").unwrap();
+        assert_eq!(
+            result.cascaded_close,
+            vec!["child".to_string(), "root".to_string()]
+        );
+        let statuses = conn
+            .prepare("SELECT id, status FROM tasks ORDER BY id")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            statuses,
+            vec![
+                ("child".to_string(), "closed".to_string()),
+                ("root".to_string(), "closed".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn close_requires_independent_reviewer_and_clears_active_task() {
+        let mut conn = fixture();
+        conn.execute(
+            "INSERT INTO tasks VALUES
+             ('leaf','Leaf','','builder','applied',2,2,2,NULL,'',0,1)",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE workspaces SET active_task_id = 'leaf'", [])
+            .unwrap();
+        assert!(close_task(&mut conn, "leaf", "builder").is_err());
+        let result = close_task(&mut conn, "leaf", "reviewer").unwrap();
+        assert_eq!(result.status, "closed");
+        assert_eq!(
+            conn.query_row("SELECT active_task_id FROM workspaces", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            ""
+        );
+    }
+
+    #[test]
+    fn split_plan_is_atomic_and_preserves_order() {
+        let mut conn = fixture();
+        let plan = r#"
+## Parser
+Move parser logic.
+- edit @ src/parser.rs
+
+```text
+## ignored
+- ignored
+```
+
+## Tests ##
+- test: tests/test_parser.py
+"#;
+        let result = split_task_from_plan(&mut conn, "root", plan).unwrap();
+        assert_eq!(result.subtasks.len(), 2);
+        assert_eq!(result.subtasks[0].title, "Parser");
+        assert_eq!(result.subtasks[1].title, "Tests");
+        let rows = conn
+            .prepare(
+                "SELECT t.title, t.depth, t.sort_order, s.action, s.target_file
+                 FROM tasks t JOIN task_steps s ON s.task_id = t.id
+                 WHERE t.parent_id = 'root' AND t.id != 'child'
+                 ORDER BY t.sort_order",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "Parser".to_string(),
+                    1,
+                    1,
+                    "edit".to_string(),
+                    "src/parser.rs".to_string()
+                ),
+                (
+                    "Tests".to_string(),
+                    1,
+                    2,
+                    "test".to_string(),
+                    "tests/test_parser.py".to_string()
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn split_rolls_back_all_children_when_step_insert_fails() {
+        let mut conn = fixture();
+        let before = conn
+            .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        conn.execute("DROP TABLE task_steps", []).unwrap();
+        assert!(split_task_from_plan(&mut conn, "root", "## Child\n- edit @ a.py").is_err());
+        let after = conn
+            .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn concurrent_apply_allows_exactly_one_reviewer_commit() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let path =
+            std::env::temp_dir().join(format!("cw-task-apply-{}.db", generate_id("test").unwrap()));
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE workspaces(
+                     id INTEGER PRIMARY KEY, is_active INTEGER, active_task_id TEXT
+                 );
+                 CREATE TABLE tasks(
+                     id TEXT PRIMARY KEY, title TEXT, description TEXT, creator TEXT,
+                     status TEXT, created_at REAL, updated_at REAL, applied_at REAL,
+                     closed_at REAL, parent_id TEXT, depth INTEGER, sort_order INTEGER
+                 );
+                 CREATE TABLE task_steps(
+                     id TEXT PRIMARY KEY, task_id TEXT, step_index INTEGER, action TEXT,
+                     target_file TEXT, target_symbol TEXT, check_items TEXT, status TEXT,
+                     result TEXT, created_at REAL, completed_at REAL
+                 );
+                 CREATE TABLE task_quality_findings(
+                     id INTEGER PRIMARY KEY, task_id TEXT, status TEXT, severity TEXT
+                 );
+                 INSERT INTO workspaces VALUES (1,1,'');
+                 INSERT INTO tasks VALUES
+                     ('leaf','Leaf','','builder','review',1,1,NULL,NULL,'',0,0);",
+            )
+            .unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(3));
+        let handles = (0..2)
+            .map(|index| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let mut conn = Connection::open(path).unwrap();
+                    conn.busy_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    barrier.wait();
+                    apply_task(&mut conn, "leaf", &format!("reviewer-{index}")).is_ok()
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        let applied = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|success| *success)
+            .count();
+        assert_eq!(applied, 1);
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT status FROM tasks WHERE id = 'leaf'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            "applied"
+        );
+        drop(conn);
         std::fs::remove_file(path).unwrap();
     }
 }

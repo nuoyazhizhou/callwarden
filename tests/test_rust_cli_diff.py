@@ -1806,7 +1806,7 @@ def _normalize_task_write_output(output: str) -> str:
     output = re.sub(r"\bT-\d+-[0-9a-f]{8}\b", "T-<id>", output)
     output = re.sub(r"\bS-\d+-[0-9a-f]{8}\b", "S-<id>", output)
     output = re.sub(
-        r"(Reopened at:|重新打开时间:)\s+\d+(?:\.\d+)?",
+        r"(Reopened at:|重新打开时间:|Applied at:|审核时间:|Closed at:|关闭时间:)\s+\d+(?:\.\d+)?",
         r"\1 <timestamp>",
         output,
     )
@@ -2030,4 +2030,179 @@ def test_task_write_commands_match_python_persisted_state_and_fail_closed(
     invalid = run_rust("task", "report", rust_task, "S-missing", "--result", "bad")
     assert invalid.returncode != 0
     assert "task step not found" in invalid.stderr
+    assert db_paths["rust"].read_bytes() == before
+
+
+def _task_audit_snapshot(db_path: Path) -> dict[str, list[tuple]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
+            "tasks": conn.execute(
+                "SELECT t.title, t.status, COALESCE(p.title, ''), t.depth, t.sort_order "
+                "FROM tasks t LEFT JOIN tasks p ON p.id = t.parent_id "
+                "ORDER BY t.depth, t.sort_order, t.title"
+            ).fetchall(),
+            "steps": conn.execute(
+                "SELECT t.title, s.step_index, s.action, s.target_file, s.status "
+                "FROM task_steps s JOIN tasks t ON t.id = s.task_id "
+                "ORDER BY t.title, s.step_index"
+            ).fetchall(),
+            "findings": conn.execute(
+                "SELECT t.title, q.status, q.resolved_by "
+                "FROM task_quality_findings q JOIN tasks t ON t.id = q.task_id "
+                "ORDER BY q.id"
+            ).fetchall(),
+            "changes": conn.execute(
+                "SELECT t.title, c.file_path, c.hash_before, c.hash_after, c.author "
+                "FROM change_audit c JOIN tasks t ON t.id = c.task_id "
+                "ORDER BY c.timestamp, c.file_path"
+            ).fetchall(),
+        }
+    finally:
+        conn.close()
+
+
+def test_task_audit_commands_match_python_and_enforce_rust_reviewer_boundary(
+    tmp_path: Path,
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    db_paths: dict[str, Path] = {}
+    workspace_roots: dict[str, Path] = {}
+    envs: dict[str, dict[str, str]] = {}
+    for implementation in ("python", "rust"):
+        workspace_root = tmp_path / implementation / "workspace"
+        workspace_root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=workspace_root, check=True)
+        subprocess.run(
+            ["git", "config", "user.email", "diff@example.com"],
+            cwd=workspace_root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Diff Test"],
+            cwd=workspace_root,
+            check=True,
+        )
+        tracked = workspace_root / "tracked.py"
+        tracked.write_text("value = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "tracked.py"], cwd=workspace_root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=workspace_root, check=True)
+        tracked.write_text("value = 2\n", encoding="utf-8")
+        plan = workspace_root / "plan.md"
+        plan.write_text(
+            "## Parser\nMove parser.\n- edit @ src/parser.rs\n\n"
+            "## Tests ##\n- test: tests/test_parser.py\n",
+            encoding="utf-8",
+        )
+
+        home = tmp_path / implementation / "home"
+        db_path = home / ".callwarden" / "callwarden.db"
+        db_path.parent.mkdir(parents=True)
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+        workspace_id = db._get_active_workspace_id()
+        db.conn.executemany(
+            "INSERT INTO tasks(id,title,description,creator,status,created_at,updated_at,"
+            "applied_at,closed_at,parent_id,depth,sort_order) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                ("review-task", "Review task", "", "builder", "review", 1, 1, None, None, "", 0, 0),
+                ("finding-task", "Finding task", "", "builder", "in_progress", 2, 2, None, None, "", 0, 1),
+                ("split-parent", "Split parent", "", "builder", "open", 3, 3, None, None, "", 0, 2),
+                ("rollback-task", "Rollback task", "", "builder", "in_progress", 4, 4, None, None, "", 0, 3),
+                ("capture-task", "Capture task", "", "builder", "in_progress", 5, 5, None, None, "", 0, 4),
+            ],
+        )
+        db.conn.execute(
+            "INSERT INTO task_steps(id,task_id,step_index,action,target_file,target_symbol,"
+            "check_items,status,result,created_at,completed_at) "
+            "VALUES('capture-step','capture-task',0,'edit','tracked.py','','','in_progress','',5,NULL)"
+        )
+        db.conn.execute(
+            "INSERT INTO task_quality_findings(workspace_id,task_id,step_id,finding_type,"
+            "severity,status,message,evidence,source,created_at,resolved_at,resolved_by) "
+            "VALUES(?, 'finding-task', '', 'scope', 'warn', 'open', 'review warning', '', 'manual', 6, NULL, '')",
+            (workspace_id,),
+        )
+        db.conn.execute(
+            "INSERT INTO change_audit(id,task_id,step_id,file_path,hash_before,hash_after,diff,author,timestamp) "
+            "VALUES('change-1','rollback-task','rollback-step','old.py','before','after','','agent',7)"
+        )
+        db.conn.execute(
+            "UPDATE workspaces SET active_task_id = 'capture-task' WHERE id = ?",
+            (workspace_id,),
+        )
+        db.conn.commit()
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db.close()
+
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+                "CALLWARDEN_WORKSPACE": str(workspace_root),
+                "CALLWARDEN_LANG": "en_US",
+                "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            }
+        )
+        db_paths[implementation] = db_path
+        workspace_roots[implementation] = workspace_root
+        envs[implementation] = env
+
+    def run_python(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "cw.py"), *args],
+            cwd=workspace_roots["python"],
+            env=envs["python"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def run_rust(*args: str, mode: str = "local") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(binary), "--mode", mode, "--db", str(db_paths["rust"]), *args],
+            cwd=workspace_roots["rust"],
+            env=envs["rust"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def assert_pair(*args: str) -> None:
+        python_result = run_python(*args)
+        rust_result = run_rust(*args, mode="enterprise")
+        assert python_result.returncode == rust_result.returncode == 0
+        assert python_result.stderr == rust_result.stderr == ""
+        assert _normalize_task_write_output(rust_result.stdout) == (
+            _normalize_task_write_output(python_result.stdout)
+        )
+
+    assert_pair("task", "completion-review", "finding-task")
+    assert_pair("task", "resolve-finding", "1", "--resolution", "fixed", "--by", "reviewer")
+    assert_pair("task", "apply", "review-task", "--reviewer", "external-reviewer")
+    assert_pair("task", "close", "review-task", "--reviewer", "external-reviewer")
+    assert_pair("task", "rollback", "rollback-task", "change-1")
+    assert_pair("task", "split", "split-parent", "--plan", str(workspace_roots["python"] / "plan.md"))
+
+    python_capture = run_python("task", "capture-diff", "capture-task", "--step-id", "capture-step", "--dry-run")
+    rust_capture = run_rust("task", "capture-diff", "capture-task", "--step-id", "capture-step", "--dry-run")
+    assert python_capture.returncode == rust_capture.returncode == 0
+    assert _normalize_task_write_output(rust_capture.stdout) == _normalize_task_write_output(
+        python_capture.stdout
+    )
+
+    assert _task_audit_snapshot(db_paths["rust"]) == _task_audit_snapshot(db_paths["python"])
+
+    before = db_paths["rust"].read_bytes()
+    denied = run_rust("task", "apply", "finding-task", "--reviewer", "builder")
+    assert denied.returncode != 0
+    assert "self-approval is forbidden" in denied.stderr
     assert db_paths["rust"].read_bytes() == before
