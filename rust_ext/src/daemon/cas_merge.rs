@@ -39,6 +39,14 @@ pub struct MergeResult {
     pub merge_status: String,
 }
 
+/// 本地增量刷新写入文件版本历史所需的元数据。
+#[derive(Debug, Clone)]
+pub struct MergeHistoryMetadata {
+    pub mtime: f64,
+    pub parsed_at: f64,
+    pub commit_hash: String,
+}
+
 /// workspace 文件 tombstone 的事务结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteFileResult {
@@ -203,26 +211,46 @@ pub fn init_codegraph_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-/// 从 rel_path 推导 module_path（简化版，与 Python `_module_path_from_rel` 一致）。
-///
-/// 完整实现见 `db_build.py:_infer_module_path_generic`（含 src/lib/app/main 前缀
-/// 去除、index/__init__ 处理）。P0-2 整改使用简化版，避免引入 db_build.py 依赖。
-fn module_path_from_rel(rel_path: &str) -> String {
-    // 统一斜杠方向（Windows 路径兼容）
-    let path = rel_path.replace('\\', "/");
-    // 去掉扩展名（仅最后一个 .）
-    let path = match path.rfind('.') {
-        // 仅当 . 出现在 basename 内才去除（避免误伤目录名中的 .）
-        Some(dot_idx) => {
-            let last_sep = path.rfind('/').map(|s| s + 1).unwrap_or(0);
-            if dot_idx > last_sep {
-                &path[..dot_idx]
-            } else {
-                &path[..]
-            }
+/// 从 rel_path 推导 module_path，与 Python 增量刷新契约保持一致。
+pub(crate) fn module_path_from_rel(rel_path: &str, language: &str) -> String {
+    let mut path = rel_path.replace('\\', "/");
+
+    if language == "rust" {
+        if let Some(stripped) = path.strip_prefix("src/") {
+            path = stripped.to_string();
         }
-        None => &path[..],
-    };
+        if let Some(stripped) = path.strip_suffix(".rs") {
+            path = stripped.to_string();
+        }
+        if let Some(stripped) = path.strip_suffix("/mod") {
+            path = stripped.to_string();
+        }
+        if path == "lib" || path == "main" {
+            return path;
+        }
+        return format!("lib::{}", path.replace('/', "::"));
+    }
+
+    if let Some(dot_idx) = path.rfind('.') {
+        let last_sep = path.rfind('/').map(|index| index + 1).unwrap_or(0);
+        if dot_idx > last_sep {
+            path.truncate(dot_idx);
+        }
+    }
+    for prefix in ["src/", "lib/", "app/", "main/"] {
+        if let Some(stripped) = path.strip_prefix(prefix) {
+            path = stripped.to_string();
+            break;
+        }
+    }
+
+    let basename = path.rsplit('/').next().unwrap_or_default();
+    if matches!(basename, "index" | "__init__" | "mod") {
+        path = path
+            .rsplit_once('/')
+            .map(|(parent, _)| parent.to_string())
+            .unwrap_or_else(|| "(root)".to_string());
+    }
     path.replace('/', ".")
 }
 
@@ -260,7 +288,7 @@ fn upsert_file_records(
     total_lines: i64,
 ) -> Result<i64, rusqlite::Error> {
     let now = now_ts();
-    let module_path = module_path_from_rel(rel_path);
+    let module_path = module_path_from_rel(rel_path, language);
 
     // file_contents：INSERT OR REPLACE
     codegraph_conn.execute(
@@ -364,8 +392,9 @@ fn replace_symbols_and_calls(
     cas_symbols: &[CasSymbolRow],
     cas_raw_calls: &[CasRawCallRow],
     rel_path: &str,
+    language: &str,
 ) -> Result<(usize, usize), rusqlite::Error> {
-    let module_path = module_path_from_rel(rel_path);
+    let module_path = module_path_from_rel(rel_path, language);
 
     // 1. 查询旧 symbol_ids
     let mut old_sym_ids: Vec<i64> = Vec::new();
@@ -517,6 +546,131 @@ fn replace_symbols_and_calls(
     }
 
     Ok((sym_count, inserted_calls))
+}
+
+/// 在当前图更新事务中同步维护本地文件与调用版本历史。
+fn save_file_version_history(
+    conn: &Connection,
+    file_instance_id: i64,
+    content_hash: &str,
+    total_lines: i64,
+    rel_path: &str,
+    language: &str,
+    cas_symbols: &[CasSymbolRow],
+    metadata: &MergeHistoryMetadata,
+) -> Result<i64, rusqlite::Error> {
+    let latest: Option<(i64, i64, String)> = conn
+        .query_row(
+            "SELECT id, version_num, content_hash FROM file_versions \
+             WHERE file_instance_id = ?1 AND is_current = 1 \
+             ORDER BY version_num DESC LIMIT 1",
+            params![file_instance_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+
+    if let Some((latest_id, _, latest_hash)) = latest.as_ref() {
+        if latest_hash == content_hash {
+            conn.execute(
+                "UPDATE file_versions SET mtime = ?1, parsed_at = ?2, commit_hash = ?3 \
+                 WHERE id = ?4",
+                params![
+                    metadata.mtime,
+                    metadata.parsed_at,
+                    &metadata.commit_hash,
+                    latest_id
+                ],
+            )?;
+            return Ok(*latest_id);
+        }
+    }
+
+    let previous_version_id = latest.as_ref().map(|(version_id, _, _)| *version_id);
+    let version_num = match latest {
+        Some((latest_id, latest_version_num, _)) => {
+            conn.execute(
+                "UPDATE file_versions SET is_current = 0 WHERE id = ?1",
+                params![latest_id],
+            )?;
+            latest_version_num + 1
+        }
+        None => 1,
+    };
+
+    conn.execute(
+        "INSERT INTO file_versions \
+         (file_instance_id, version_num, content_hash, mtime, total_lines, parsed_at, \
+          is_current, is_deleted, commit_hash) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, 0, ?7)",
+        params![
+            file_instance_id,
+            version_num,
+            content_hash,
+            metadata.mtime,
+            total_lines,
+            metadata.parsed_at,
+            &metadata.commit_hash,
+        ],
+    )?;
+    let file_version_id = conn.last_insert_rowid();
+    let module_path = module_path_from_rel(rel_path, language);
+
+    for symbol in cas_symbols {
+        if symbol.symbol_content_hash.is_empty() {
+            continue;
+        }
+        conn.execute(
+            "INSERT INTO file_symbol_versions \
+             (file_version_id, symbol_hash, qualified_name, start_line, end_line, \
+              module_path, depth, is_deleted) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+            params![
+                file_version_id,
+                &symbol.symbol_content_hash,
+                &symbol.local_qualified_name,
+                symbol.start_line,
+                symbol.end_line,
+                &module_path,
+                symbol.depth,
+            ],
+        )?;
+    }
+
+    if let Some(previous_version_id) = previous_version_id {
+        conn.execute(
+            "INSERT INTO file_symbol_versions \
+             (file_version_id, symbol_hash, qualified_name, start_line, end_line, \
+              module_path, depth, is_deleted) \
+             SELECT ?1, previous.symbol_hash, previous.qualified_name, \
+                    previous.start_line, previous.end_line, previous.module_path, \
+                    previous.depth, 1 \
+             FROM file_symbol_versions previous \
+             WHERE previous.file_version_id = ?2 \
+               AND previous.is_deleted = 0 \
+               AND NOT EXISTS ( \
+                   SELECT 1 FROM file_symbol_versions current \
+                   WHERE current.file_version_id = ?1 \
+                     AND current.qualified_name = previous.qualified_name \
+               )",
+            params![file_version_id, previous_version_id],
+        )?;
+    }
+
+    conn.execute(
+        "INSERT INTO call_versions \
+         (file_version_id, caller_qualified, caller_hash, callee_name, callee_module, \
+          callee_qualified, callee_file, call_line, is_cross_file) \
+         SELECT ?1, caller.qualified_name, caller.symbol_hash, calls.callee_name, \
+                calls.callee_module, COALESCE(callee.qualified_name, ''), \
+                calls.callee_file, calls.call_line, calls.is_cross_file \
+         FROM calls \
+         JOIN symbols caller ON calls.caller_id = caller.id \
+         LEFT JOIN symbols callee ON calls.callee_id = callee.id \
+         WHERE caller.file_instance_id = ?2",
+        params![file_version_id, file_instance_id],
+    )?;
+
+    Ok(file_version_id)
 }
 
 /// P1-2 修复：resolve callee_id —— 按 qualified_name / name 在本文件和跨文件查找符号。
@@ -950,6 +1104,62 @@ pub fn merge_cas_to_codegraph(
     language: &str,
     workspace_root_path: &str,
 ) -> Result<MergeResult, String> {
+    merge_cas_to_codegraph_impl(
+        cas_conn,
+        codegraph_conn,
+        cas_key,
+        workspace_id,
+        rel_path,
+        abs_path,
+        content_hash,
+        language,
+        workspace_root_path,
+        None,
+    )
+}
+
+/// 把 CAS 事实与文件版本历史原子合并到本地 CodeGraph DB。
+///
+/// daemon overlay 路径继续使用 [`merge_cas_to_codegraph`]；本地 `cw refresh`
+/// 使用本入口，在同一个 `BEGIN IMMEDIATE` 中同时更新当前图和历史表。
+pub fn merge_cas_to_codegraph_with_history(
+    cas_conn: &Connection,
+    codegraph_conn: &Connection,
+    cas_key: &str,
+    workspace_id: i64,
+    rel_path: &str,
+    abs_path: &str,
+    content_hash: &str,
+    language: &str,
+    workspace_root_path: &str,
+    history: &MergeHistoryMetadata,
+) -> Result<MergeResult, String> {
+    merge_cas_to_codegraph_impl(
+        cas_conn,
+        codegraph_conn,
+        cas_key,
+        workspace_id,
+        rel_path,
+        abs_path,
+        content_hash,
+        language,
+        workspace_root_path,
+        Some(history),
+    )
+}
+
+fn merge_cas_to_codegraph_impl(
+    cas_conn: &Connection,
+    codegraph_conn: &Connection,
+    cas_key: &str,
+    workspace_id: i64,
+    rel_path: &str,
+    abs_path: &str,
+    content_hash: &str,
+    language: &str,
+    workspace_root_path: &str,
+    history: Option<&MergeHistoryMetadata>,
+) -> Result<MergeResult, String> {
     // 1. 查 CAS file cache（P1-2 v2 修复：同时取 file_size 和 total_lines）
     //    复审报告指出旧实现只取 total_lines，把 total_lines 当 file_size 传给 upsert_manifest，
     //    manifest 中 file_size 字段实际是文件总行数。现分开读取，file_size 用于 manifest，
@@ -1077,6 +1287,7 @@ pub fn merge_cas_to_codegraph(
             &cas_symbols,
             &cas_raw_calls,
             rel_path,
+            language,
         )
         .map_err(|e| format!("replace_symbols_and_calls 失败: {}", e))?;
 
@@ -1091,6 +1302,20 @@ pub fn merge_cas_to_codegraph(
         if !cas_symbols.is_empty() {
             resolve_unresolved_calls_in_workspace(codegraph_conn, workspace_id)
                 .map_err(|e| format!("resolve_unresolved_calls_in_workspace 失败: {}", e))?;
+        }
+
+        if let Some(history) = history {
+            save_file_version_history(
+                codegraph_conn,
+                file_instance_id,
+                content_hash,
+                total_lines,
+                rel_path,
+                language,
+                &cas_symbols,
+                history,
+            )
+            .map_err(|e| format!("save_file_version_history 失败: {}", e))?;
         }
 
         // 7. P1-2 修复：UPSERT workspace_manifests（记录文件 CAS key + content_hash）
@@ -1369,21 +1594,27 @@ mod tests {
     #[test]
     fn test_module_path_from_rel_basic() {
         assert_eq!(
-            module_path_from_rel("src/server/main.py"),
-            "src.server.main"
+            module_path_from_rel("src/server/main.py", "python"),
+            "server.main"
         );
-        assert_eq!(module_path_from_rel("lib/util.rs"), "lib.util");
+        assert_eq!(
+            module_path_from_rel("src/server/main.rs", "rust"),
+            "lib::server::main"
+        );
+        assert_eq!(module_path_from_rel("src/lib.rs", "rust"), "lib");
         // 无扩展名
-        assert_eq!(module_path_from_rel("src/server/main"), "src.server.main");
+        assert_eq!(
+            module_path_from_rel("src/server/main", "python"),
+            "server.main"
+        );
         // Windows 路径
         assert_eq!(
-            module_path_from_rel("src\\server\\main.py"),
-            "src.server.main"
+            module_path_from_rel("src\\server\\main.py", "python"),
+            "server.main"
         );
-        // 仅 basename
-        assert_eq!(module_path_from_rel("main.py"), "main");
-        // basename 中无 .
-        assert_eq!(module_path_from_rel("src/main"), "src.main");
+        assert_eq!(module_path_from_rel("main.py", "python"), "main");
+        assert_eq!(module_path_from_rel("src/main", "python"), "main");
+        assert_eq!(module_path_from_rel("src/pkg/__init__.py", "python"), "pkg");
     }
 
     #[test]

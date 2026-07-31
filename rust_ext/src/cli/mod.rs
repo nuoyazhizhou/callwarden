@@ -22,6 +22,7 @@ pub mod impact;
 pub mod issues_tests;
 pub mod output;
 pub mod readonly;
+pub mod refresh;
 pub mod router;
 pub mod runtime;
 pub mod search;

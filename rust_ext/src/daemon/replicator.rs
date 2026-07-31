@@ -22,6 +22,7 @@ use serde_json::{Map, Value};
 use super::cas::{
     compute_cas_key_v1, CasImportInput, CasPublishInput, CasRawCallInput, CasStore, CasSymbolInput,
 };
+use super::cas_merge::module_path_from_rel;
 use super::staging_log::{StagingEntry, StagingLog};
 use crate::canonicalize::{canonicalize_source, sha256_hex};
 use crate::multi_lang::{GenericParser, LangConfig};
@@ -401,19 +402,6 @@ pub fn detect_language_from_path(file_path: &str) -> String {
     lang.to_string()
 }
 
-/// 构造 module_path（与 Python 一致：去掉扩展名，路径分隔符 → "."）。
-///
-/// Python：`rel_path.rsplit(".", 1)[0].replace("/", ".").replace("\\", ".")`
-fn build_module_path(rel_path: &str) -> String {
-    // 找最后一个 "."，去掉扩展名
-    let without_ext = match rel_path.rfind('.') {
-        Some(idx) => &rel_path[..idx],
-        None => rel_path,
-    };
-    // 替换 / 和 \ 为 .
-    without_ext.replace('/', ".").replace('\\', ".")
-}
-
 /// daemon 侧解析 + CAS publish——消除 TOCTOU。
 ///
 /// 对应 Python `server/replicator.py:_daemon_parse_and_publish`（L268-405）。
@@ -570,7 +558,7 @@ pub fn _daemon_parse_and_publish(
         }
     };
     let parser = GenericParser::new(Arc::new(lang_config));
-    let module_path = build_module_path(rel_path);
+    let module_path = module_path_from_rel(rel_path, &language);
     let parse_result =
         parser.parse_canonical_bytes(canonical_bytes_ref, abs_path, &module_path, &content_hash);
 

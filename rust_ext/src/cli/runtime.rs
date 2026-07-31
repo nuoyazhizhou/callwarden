@@ -50,6 +50,15 @@ impl CommandResult {
             route,
         }
     }
+
+    pub fn success_text(stdout: String, route: RouteUsed) -> Self {
+        Self {
+            exit_code: 0,
+            stdout,
+            stderr: String::new(),
+            route,
+        }
+    }
 }
 
 /// CLI 全局执行选项。
@@ -91,6 +100,25 @@ impl RuntimeOptions {
                 self.db_path.display()
             )
         })
+    }
+
+    /// 打开本地读写数据库，仅供已定义事务边界的写命令使用。
+    pub fn open_local_write_db(&self) -> Result<Connection, String> {
+        let conn = Connection::open_with_flags(
+            &self.db_path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| {
+            format!(
+                "cannot open local Call Warden database {} for writing: {error}",
+                self.db_path.display()
+            )
+        })?;
+        conn.busy_timeout(Duration::from_secs(5))
+            .map_err(|error| format!("cannot configure SQLite busy_timeout: {error}"))?;
+        conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
+            .map_err(|error| format!("cannot configure writable SQLite connection: {error}"))?;
+        Ok(conn)
     }
 
     /// 返回显式 workspace，或从本地库解析唯一 active workspace。
@@ -187,6 +215,47 @@ impl RuntimeOptions {
         }
     }
 
+    /// 执行写命令。auto 只在写入前选择一次路由，写入失败后禁止跨源回退。
+    pub fn execute_write_with<L, E>(&self, local: L, enterprise: E) -> CommandResult
+    where
+        L: FnOnce() -> Result<String, String>,
+        E: FnOnce() -> Result<String, String>,
+    {
+        self.execute_write_with_availability(self.daemon_available(), local, enterprise)
+    }
+
+    fn execute_write_with_availability<L, E>(
+        &self,
+        daemon_available: bool,
+        local: L,
+        enterprise: E,
+    ) -> CommandResult
+    where
+        L: FnOnce() -> Result<String, String>,
+        E: FnOnce() -> Result<String, String>,
+    {
+        match self.mode {
+            DaemonMode::Local => result_text_from_source(local(), RouteUsed::Local),
+            DaemonMode::Enterprise => {
+                if !daemon_available {
+                    return CommandResult::failure(
+                        2,
+                        format!(
+                            "enterprise daemon is unavailable at {}",
+                            self.socket_path.display()
+                        ),
+                        RouteUsed::None,
+                    );
+                }
+                result_text_from_source(enterprise(), RouteUsed::Enterprise)
+            }
+            DaemonMode::Auto if daemon_available => {
+                result_text_from_source(enterprise(), RouteUsed::Enterprise)
+            }
+            DaemonMode::Auto => result_text_from_source(local(), RouteUsed::Local),
+        }
+    }
+
     /// 调用 daemon RPC。非 Unix 平台明确返回不支持。
     pub fn daemon_call(&self, method: &str, params: Value) -> Result<Value, String> {
         #[cfg(unix)]
@@ -210,6 +279,13 @@ impl RuntimeOptions {
 fn result_from_source(result: Result<Value, String>, route: RouteUsed) -> CommandResult {
     match result {
         Ok(value) => CommandResult::success_json(&value, route),
+        Err(error) => CommandResult::failure(1, error, route),
+    }
+}
+
+fn result_text_from_source(result: Result<String, String>, route: RouteUsed) -> CommandResult {
+    match result {
+        Ok(value) => CommandResult::success_text(value, route),
         Err(error) => CommandResult::failure(1, error, route),
     }
 }
@@ -299,6 +375,32 @@ mod tests {
         assert_eq!(result.exit_code, 0);
         assert_eq!(result.route, RouteUsed::Local);
         assert!(result.stderr.contains("stale socket"));
+    }
+
+    #[test]
+    fn auto_write_does_not_fallback_after_enterprise_failure() {
+        let runtime = options(DaemonMode::Auto, PathBuf::from("unused.db"));
+        let result = runtime.execute_write_with_availability(
+            true,
+            || panic!("write route must not cross-fallback after daemon selection"),
+            || Err("generation rejected".to_string()),
+        );
+        assert_eq!(result.exit_code, 1);
+        assert_eq!(result.route, RouteUsed::Enterprise);
+        assert!(result.stderr.contains("generation rejected"));
+    }
+
+    #[test]
+    fn auto_write_uses_local_only_when_daemon_is_absent() {
+        let runtime = options(DaemonMode::Auto, PathBuf::from("unused.db"));
+        let result = runtime.execute_write_with_availability(
+            false,
+            || Ok("local write".to_string()),
+            || panic!("enterprise closure must not run"),
+        );
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.route, RouteUsed::Local);
+        assert_eq!(result.stdout, "local write");
     }
 
     #[test]

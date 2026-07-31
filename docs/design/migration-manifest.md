@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees/call-chain/topo/impact（只读） |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees/call-chain/topo/impact（只读）及显式文件增量 refresh（写） |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -4030,3 +4030,63 @@ code、stdout 与 stderr。Rust 单测用两个 workspace 和 archived caller �
 Windows 的既有 grep fallback 测试不再清空 Python DLL 搜索路径：当前迁移期
 Rust CLI 与 PyO3 仍在同一 crate，测试保留 Python 目录但排除 `rg`，继续真实
 覆盖内置 fallback。最终 Phase 7 去除 PyO3 链接后可再次收紧为完全空 PATH。
+
+---
+
+## §60 自举复审整改：Rust `cw refresh <path...>`
+
+**任务**：`T-1785468161999-4ba39283`（P0-CLI-D1）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 60.1 已实现
+
+- `cw refresh <path...>` 已从 clap 空壳切换为真实 Rust 写路径，支持一次刷新多个
+  显式文件；缺失文件与不支持语言沿用 Python 可见语义，逐文件汇总成功和失败；
+- local 路径使用 canonical bytes 作为唯一解析输入，先发布或命中 per-UID CAS，
+  再在一个 `BEGIN IMMEDIATE` 中原子替换 `file_instances/symbols/calls` 当前图及
+  `file_versions/file_symbol_versions/call_versions` 历史；
+- 新版本会关闭旧 `is_current`，被删除的符号会在当前版本写入
+  `is_deleted=1` tombstone；历史表写失败会回滚当前图，避免二者分叉；
+- CAS parse 与 merge 共用语言感知的 module-path 推断，Rust 的 `src/lib.rs`
+  对齐 Python 为 `lib`，其他语言对齐 `src/lib/app/main` 前缀与
+  `index/__init__/mod` 入口文件规则；
+- 成功刷新后的文件状态明确为 `parsed`。Python 旧路径仍残留 `pending`，差异测试
+  将其作为已识别旧缺陷单独断言，不让 Rust 复制错误状态；
+- enterprise 路径先调用 `workspace.connect` 获取 `session_epoch`，随后逐文件发送
+  canonical bytes、`agent_session_id`、`monotonic_seq` 和可信 hash 到
+  `workspace.file.refresh`；只接受 daemon 返回 `committed`；
+- `auto` 对写命令只选择一次路由：daemon 不可用时可选择 local，但一旦选中
+  enterprise，连接、ACL、generation 或提交失败均 fail closed，不回退本地重写；
+- `cw refresh --all/--force` **尚未迁移并显式 fail closed**。全仓扫描、增量跳过、
+  stale-file 删除和 force 语义已登记为独立任务
+  `T-1785469925481-78a7b9dc`（P0-CLI-D4），不得把 D1 解读为完整 refresh 已迁移。
+
+P0-CLI-D 其余任务：
+
+| 子任务 | 任务 ID | 范围 | 状态 |
+|---|---|---|---|
+| D2 | `T-1785468162023-598bbdfa` | Rust workspace 生命周期 | open |
+| D3 | `T-1785468162025-5c47603b` | Rust build-context/toolchain | open |
+| D4 | `T-1785469925481-78a7b9dc` | Rust refresh `--all/--force` 全仓构建 | open |
+
+### 60.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::refresh::tests --lib --no-default-features
+test result: ok. 4 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 22 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+55 passed
+
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib
+test result: ok. 520 passed; 0 failed
+```
+
+真实 Python/Rust 进程差异测试分别构建独立 workspace 和数据库，比较
+`file_instances`、`symbols`、`calls`、`file_versions` 与
+`file_symbol_versions` 的持久化结果。Rust 单测另覆盖第二版本、删除 tombstone、
+历史表故障整事务回滚、enterprise generation 参数与多文件输出格式。

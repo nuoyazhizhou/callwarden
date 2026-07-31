@@ -6,6 +6,7 @@
 //! 契约：docs/design/phase5-1-cli-config-contract.md §3.2
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use callwarden_core::cli::config::{check_role_supported, load_config, ConfigEntry, PlatformPaths};
 use callwarden_core::cli::file_query::{
@@ -29,6 +30,10 @@ use callwarden_core::cli::issues_tests::{
     format_issues_output, format_test_cases_output, format_test_stability_output,
     format_tested_functions_output, query_local_issues, query_local_test_cases,
     query_local_test_stability, query_local_tested_functions,
+};
+use callwarden_core::cli::refresh::{
+    build_enterprise_refresh_params, connect_params, enterprise_batch_result,
+    format_refresh_output, new_cli_session_id, prepare_enterprise_file, refresh_local_paths,
 };
 use callwarden_core::cli::router::DaemonMode;
 use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
@@ -150,7 +155,16 @@ enum Commands {
     /// workspace 管理
     Workspace,
     /// 刷新数据库
-    Refresh,
+    Refresh {
+        /// 全仓刷新尚未迁移，本阶段显式拒绝
+        #[arg(long)]
+        all: bool,
+        /// 强制全量重建尚未迁移，只能与 --all 一起使用
+        #[arg(long)]
+        force: bool,
+        /// 要增量刷新的文件路径
+        paths: Vec<PathBuf>,
+    },
     /// 统计信息
     Stats,
     /// 状态信息
@@ -471,6 +485,9 @@ fn main() {
                 Commands::Impact { symbol_hash, depth } => {
                     emit_result(run_impact(&runtime, &symbol_hash, depth));
                 }
+                Commands::Refresh { all, force, paths } => {
+                    emit_result(run_refresh(&runtime, all, force, &paths));
+                }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
                     // Phase 5-1 C 扩展阶段将逐命令迁移业务逻辑
@@ -488,6 +505,93 @@ fn main() {
             Cli::parse_from(["cw", "--help"]);
         }
     }
+}
+
+fn run_refresh(
+    runtime: &RuntimeOptions,
+    refresh_all: bool,
+    force: bool,
+    paths: &[PathBuf],
+) -> CommandResult {
+    if force && !refresh_all {
+        return CommandResult::failure(
+            1,
+            "--force is only valid together with --all".to_string(),
+            RouteUsed::None,
+        );
+    }
+    if refresh_all {
+        return CommandResult::failure(
+            1,
+            "cw refresh --all/--force is not migrated yet; use explicit file paths".to_string(),
+            RouteUsed::None,
+        );
+    }
+    if paths.is_empty() {
+        return CommandResult::failure(
+            1,
+            "cw refresh requires at least one file path".to_string(),
+            RouteUsed::None,
+        );
+    }
+
+    runtime.execute_write_with(
+        || {
+            let conn = runtime.open_local_write_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            let result = refresh_local_paths(&conn, &runtime.db_path, workspace_id, paths)?;
+            Ok(format_refresh_output(&result))
+        },
+        || run_enterprise_refresh(runtime, paths),
+    )
+}
+
+fn run_enterprise_refresh(runtime: &RuntimeOptions, paths: &[PathBuf]) -> Result<String, String> {
+    let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+        "enterprise refresh requires --workspace-id <workspace_instance_id>".to_string()
+    })?;
+    let session_id = new_cli_session_id();
+    let connect = runtime.daemon_call(
+        "workspace.connect",
+        connect_params(workspace_id, &session_id),
+    )?;
+    let session_epoch = connect
+        .get("session_epoch")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "workspace.connect response is missing session_epoch".to_string())?;
+    let started = Instant::now();
+    let mut responses = Vec::with_capacity(paths.len());
+
+    for (index, path) in paths.iter().enumerate() {
+        let response = prepare_enterprise_file(path).and_then(|(rel_path, canonical_bytes)| {
+            let params = build_enterprise_refresh_params(
+                workspace_id,
+                &rel_path,
+                &session_id,
+                session_epoch,
+                index as u64 + 1,
+                &canonical_bytes,
+            );
+            let value = runtime.daemon_call("workspace.file.refresh", params)?;
+            let status = value
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
+            if status != "committed" {
+                return Err(format!(
+                    "daemon rejected refresh for {rel_path}: status={status}"
+                ));
+            }
+            Ok(value)
+        });
+        responses.push(response);
+    }
+
+    Ok(format_refresh_output(&enterprise_batch_result(
+        paths,
+        responses,
+        started.elapsed().as_secs_f64(),
+    )))
 }
 
 fn run_stats(runtime: &RuntimeOptions) -> CommandResult {
@@ -1294,7 +1398,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Clone => "clone",
         Fts => "fts",
         Workspace => "workspace",
-        Refresh => "refresh",
+        Refresh { .. } => "refresh",
         Stats => "stats",
         Status => "status",
         Search { .. } => "search",
@@ -1369,7 +1473,11 @@ mod tests {
             Commands::Clone,
             Commands::Fts,
             Commands::Workspace,
-            Commands::Refresh,
+            Commands::Refresh {
+                all: false,
+                force: false,
+                paths: vec!["src/lib.rs".into()],
+            },
             Commands::Stats,
             Commands::Status,
             Commands::Search {
@@ -1697,6 +1805,36 @@ mod tests {
             Some(Commands::Impact { symbol_hash, depth })
                 if symbol_hash == "hash-a" && depth == 4
         ));
+    }
+
+    #[test]
+    fn parses_refresh_paths_and_full_flags() {
+        let paths = Cli::try_parse_from(["cw", "refresh", "src/a.rs", "src/b.rs"]).unwrap();
+        assert!(matches!(
+            paths.command,
+            Some(Commands::Refresh { all: false, force: false, paths })
+                if paths == vec![PathBuf::from("src/a.rs"), PathBuf::from("src/b.rs")]
+        ));
+
+        let full = Cli::try_parse_from(["cw", "refresh", "--all", "--force"]).unwrap();
+        assert!(matches!(
+            full.command,
+            Some(Commands::Refresh { all: true, force: true, paths }) if paths.is_empty()
+        ));
+    }
+
+    #[test]
+    fn refresh_full_mode_stays_fail_closed() {
+        let runtime = RuntimeOptions::from_overrides(
+            Some(DaemonMode::Local),
+            None,
+            Some(PathBuf::from("unused.db")),
+            None,
+            1,
+        );
+        let result = run_refresh(&runtime, true, false, &[]);
+        assert_eq!(result.exit_code, 1);
+        assert!(result.stderr.contains("not migrated yet"));
     }
 
     #[test]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -1062,3 +1063,114 @@ def test_graph_query_binary_matches_python_process_output(
     assert rust_result.returncode == python_result.returncode == 0
     assert rust_result.stderr == python_result.stderr == ""
     assert rust_result.stdout == python_result.stdout
+
+
+def _refresh_db_snapshot(db_path: Path) -> dict[str, list[tuple]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
+        "files": conn.execute(
+            "SELECT rel_path, current_content_hash, total_lines, module_path "
+            "FROM file_instances ORDER BY rel_path"
+        ).fetchall(),
+            "symbols": conn.execute(
+                "SELECT s.name, s.kind, s.start_line, s.end_line, s.qualified_name "
+                "FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id "
+                "ORDER BY fi.rel_path, s.start_line, s.name"
+            ).fetchall(),
+            "calls": conn.execute(
+                "SELECT caller_name, callee_name, call_line, is_cross_file "
+                "FROM calls ORDER BY caller_name, call_line, callee_name"
+            ).fetchall(),
+            "versions": conn.execute(
+                "SELECT version_num, content_hash, total_lines, is_current, is_deleted "
+                "FROM file_versions ORDER BY version_num"
+            ).fetchall(),
+            "version_symbols": conn.execute(
+                "SELECT qualified_name, start_line, end_line, module_path, is_deleted "
+                "FROM file_symbol_versions ORDER BY qualified_name, start_line"
+            ).fetchall(),
+        }
+    finally:
+        conn.close()
+
+
+def test_refresh_binary_matches_python_persisted_graph(tmp_path: Path) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    roots = {}
+    workspace_ids = {}
+    for implementation in ("python", "rust"):
+        home = tmp_path / implementation / "home"
+        workspace = tmp_path / implementation / "workspace"
+        (home / ".callwarden").mkdir(parents=True)
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "src" / "lib.rs").write_text(
+            "pub fn alpha() { beta(); }\nfn beta() {}\n",
+            encoding="utf-8",
+        )
+        db_path = home / ".callwarden" / "callwarden.db"
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace))
+        try:
+            workspace_ids[implementation] = db._get_active_workspace_id()
+            db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            db.close()
+        roots[implementation] = (home, workspace, db_path)
+
+    python_home, python_workspace, python_db = roots["python"]
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(python_home),
+            "USERPROFILE": str(python_home),
+            "CALLWARDEN_WORKSPACE": str(python_workspace),
+            "CALLWARDEN_LANG": "en_US",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    python_result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "cw.py"), "refresh", "src/lib.rs"],
+        cwd=python_workspace,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    _, rust_workspace, rust_db = roots["rust"]
+    rust_result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(rust_db),
+            "--workspace-id",
+            str(workspace_ids["rust"]),
+            "refresh",
+            "src/lib.rs",
+        ],
+        cwd=rust_workspace,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert python_result.returncode == 0, python_result.stderr
+    assert rust_result.returncode == 0, rust_result.stderr
+    assert "Refreshed: src/lib.rs" in python_result.stdout
+    assert "Refreshed: src/lib.rs" in rust_result.stdout
+    assert _refresh_db_snapshot(rust_db) == _refresh_db_snapshot(python_db)
+
+    # Python 旧路径在成功解析后仍保留 pending；Rust 写路径闭合为 parsed。
+    with sqlite3.connect(python_db) as conn:
+        assert conn.execute("SELECT status FROM file_instances").fetchone()[0] == "pending"
+    with sqlite3.connect(rust_db) as conn:
+        assert conn.execute("SELECT status FROM file_instances").fetchone()[0] == "parsed"
