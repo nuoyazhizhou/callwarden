@@ -12,6 +12,10 @@ use callwarden_core::cli::file_query::{
     format_file_symbols_output, format_symbol_location_output, query_local_file_symbols,
     query_local_symbol_location,
 };
+use callwarden_core::cli::graph_query::{
+    format_callees_output, format_callers_output, normalize_callees, normalize_callers,
+    query_local_callees, query_local_callers, resolve_name_filter,
+};
 use callwarden_core::cli::grep::{query_local_grep, GrepOptions};
 use callwarden_core::cli::issues_tests::{
     format_issues_output, format_test_cases_output, format_test_stability_output,
@@ -223,10 +227,22 @@ enum Commands {
         #[arg(long, default_value_t = 50)]
         limit: usize,
     },
-    /// 调用者
-    Callers,
-    /// 被调用者
-    Callees,
+    /// 调用指定符号的函数
+    Callers {
+        /// 符号名称或限定名
+        name: String,
+        /// 完整限定名，精确匹配且不降级
+        #[arg(long)]
+        qualified: Option<String>,
+    },
+    /// 指定符号调用的函数
+    Callees {
+        /// 符号名称或限定名
+        name: String,
+        /// 完整限定名，精确匹配且不降级
+        #[arg(long)]
+        qualified: Option<String>,
+    },
     /// 调用链
     CallChain,
     /// 拓扑排序
@@ -415,6 +431,12 @@ fn main() {
                         &ci_url,
                         limit,
                     ));
+                }
+                Commands::Callers { name, qualified } => {
+                    emit_result(run_callers(&runtime, &name, qualified.as_deref()));
+                }
+                Commands::Callees { name, qualified } => {
+                    emit_result(run_callees(&runtime, &name, qualified.as_deref()));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -661,7 +683,12 @@ fn run_query(runtime: &RuntimeOptions, name: &str, file_path: &str) -> CommandRe
             let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
             query_local_symbol_location(&conn, workspace_id, name, file_path)
         },
-        || Err("enterprise symbol location query is not implemented by the daemon protocol".to_string()),
+        || {
+            Err(
+                "enterprise symbol location query is not implemented by the daemon protocol"
+                    .to_string(),
+            )
+        },
     );
     format_query_result(result, name)
 }
@@ -728,11 +755,7 @@ fn format_grep_result(mut result: CommandResult) -> CommandResult {
     }
 }
 
-fn run_issues(
-    runtime: &RuntimeOptions,
-    qualified_name: &str,
-    include_info: bool,
-) -> CommandResult {
+fn run_issues(runtime: &RuntimeOptions, qualified_name: &str, include_info: bool) -> CommandResult {
     let result = runtime.execute_read_with(
         || {
             let conn = runtime.open_local_db()?;
@@ -788,9 +811,7 @@ fn run_tests(
                 query_local_test_cases(&conn, workspace_id, qualified_name)
             }
         },
-        || {
-            Err("enterprise tests query is not implemented by the daemon protocol".to_string())
-        },
+        || Err("enterprise tests query is not implemented by the daemon protocol".to_string()),
     );
     format_read_result(result, |value| {
         if history {
@@ -801,6 +822,98 @@ fn run_tests(
             format_test_cases_output(value, qualified_name)
         }
     })
+}
+
+fn run_callers(
+    runtime: &RuntimeOptions,
+    requested_name: &str,
+    qualified_name: Option<&str>,
+) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_callers(&conn, workspace_id, requested_name, qualified_name)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise callers requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_graph(
+                workspace_id,
+                "callers",
+                requested_name,
+                qualified_name,
+                |method, params| runtime.daemon_call(method, params),
+            )
+        },
+    );
+    format_read_result(result, |value| format_callers_output(value, requested_name))
+}
+
+fn run_callees(
+    runtime: &RuntimeOptions,
+    requested_name: &str,
+    qualified_name: Option<&str>,
+) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_callees(&conn, workspace_id, requested_name, qualified_name)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise callees requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_graph(
+                workspace_id,
+                "callees",
+                requested_name,
+                qualified_name,
+                |method, params| runtime.daemon_call(method, params),
+            )
+        },
+    );
+    format_read_result(result, |value| format_callees_output(value, requested_name))
+}
+
+fn query_enterprise_graph<F>(
+    workspace_id: &str,
+    query_type: &str,
+    requested_name: &str,
+    qualified_name: Option<&str>,
+    mut call: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    let (short_name, effective_qname, auto_qname) =
+        resolve_name_filter(requested_name, qualified_name);
+    let query_once =
+        |name: &str, qname: Option<&str>, call: &mut F| -> Result<serde_json::Value, String> {
+            let (method, params) = callwarden_core::daemon::client::build_query_request(
+                workspace_id,
+                query_type,
+                name,
+                qname,
+                None,
+                None,
+                None,
+            )
+            .map_err(|error| format!("cannot build {query_type} RPC: {error}"))?;
+            call(&method, params)
+        };
+
+    let mut value = query_once(short_name, effective_qname, &mut call)?;
+    if auto_qname && matches!(value.as_array(), Some(rows) if rows.is_empty()) {
+        value = query_once(short_name, None, &mut call)?;
+    }
+    match query_type {
+        "callers" => normalize_callers(value),
+        "callees" => normalize_callees(value),
+        _ => Err(format!("unsupported graph query type: {query_type}")),
+    }
 }
 
 fn format_read_result<F>(mut result: CommandResult, formatter: F) -> CommandResult
@@ -1015,8 +1128,8 @@ fn command_name(cmd: &Commands) -> &'static str {
         Query { .. } => "query",
         Issues { .. } => "issues",
         Tests { .. } => "tests",
-        Callers => "callers",
-        Callees => "callees",
+        Callers { .. } => "callers",
+        Callees { .. } => "callees",
         CallChain => "call-chain",
         Topo => "topo",
         Metrics => "metrics",
@@ -1118,8 +1231,14 @@ mod tests {
                 ci_url: String::new(),
                 limit: 50,
             },
-            Commands::Callers,
-            Commands::Callees,
+            Commands::Callers {
+                name: "beta".to_string(),
+                qualified: None,
+            },
+            Commands::Callees {
+                name: "alpha".to_string(),
+                qualified: None,
+            },
             Commands::CallChain,
             Commands::Topo,
             Commands::Metrics,
@@ -1277,6 +1396,34 @@ mod tests {
     }
 
     #[test]
+    fn enterprise_callers_auto_qname_falls_back_once() {
+        let mut calls = 0;
+        let result = query_enterprise_graph("ws-1", "callers", "a.beta", None, |method, params| {
+            calls += 1;
+            assert_eq!(method, "query.callers");
+            assert_eq!(params["workspace_instance_id"], "ws-1");
+            assert_eq!(params["callee_name"], "beta");
+            if calls == 1 {
+                assert_eq!(params["qualified_name"], "a.beta");
+                Ok(serde_json::json!([]))
+            } else {
+                assert!(params.get("qualified_name").is_none());
+                Ok(serde_json::json!([{
+                    "caller_name": "alpha",
+                    "caller_file": "a.py",
+                    "call_line": 3,
+                    "is_cross_file": false
+                }]))
+            }
+        })
+        .unwrap();
+
+        assert_eq!(calls, 2);
+        assert_eq!(result[0]["caller_name"], "alpha");
+        assert_eq!(result[0]["call_line"], 3);
+    }
+
+    #[test]
     fn parses_symbol_qualified_name() {
         let cli = Cli::try_parse_from(["cw", "symbol", "a.alpha"]).unwrap();
         assert!(matches!(
@@ -1298,6 +1445,28 @@ mod tests {
             query.command,
             Some(Commands::Query { name, file })
                 if name == "alpha" && file == "src/a.py"
+        ));
+    }
+
+    #[test]
+    fn parses_callers_and_callees_arguments() {
+        let callers =
+            Cli::try_parse_from(["cw", "callers", "beta", "--qualified", "a.beta"]).unwrap();
+        assert!(matches!(
+            callers.command,
+            Some(Commands::Callers {
+                name,
+                qualified: Some(qualified),
+            }) if name == "beta" && qualified == "a.beta"
+        ));
+
+        let callees = Cli::try_parse_from(["cw", "callees", "a.alpha"]).unwrap();
+        assert!(matches!(
+            callees.command,
+            Some(Commands::Callees {
+                name,
+                qualified: None,
+            }) if name == "a.alpha"
         ));
     }
 
@@ -1368,25 +1537,8 @@ mod tests {
 
     #[test]
     fn tests_write_modes_fail_closed() {
-        let runtime = RuntimeOptions::from_overrides(
-            Some(DaemonMode::Local),
-            None,
-            None,
-            None,
-            30,
-        );
-        let result = run_tests(
-            &runtime,
-            None,
-            false,
-            true,
-            false,
-            false,
-            None,
-            "",
-            "",
-            50,
-        );
+        let runtime = RuntimeOptions::from_overrides(Some(DaemonMode::Local), None, None, None, 30);
+        let result = run_tests(&runtime, None, false, true, false, false, None, "", "", 50);
         assert_eq!(result.exit_code, 2);
         assert!(result.stderr.contains("write modes"));
     }

@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests（只读） |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees（只读） |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -3872,3 +3872,51 @@ python -m pytest tests/test_rust_cli_diff.py -q
 以及 tests forward/reverse/history 的命中与空结果、缺失参数。每组完整比较
 exit code、stdout 和 stderr。单元测试额外覆盖问题汇总/详情布局、空测试提示、
 不稳定测试优先排序和写模式拒绝。
+
+---
+
+## §57 自举复审整改：Rust `cw callers/callees`
+
+**任务**：`T-1785461879422-0b37fde7`（P0-CLI-C1）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 57.1 已实现
+
+- `cw callers <name> [--qualified QN]` 与
+  `cw callees <name> [--qualified QN]` 已从 clap 空壳切换到真实 Rust 命令；
+- local 模式使用只读 SQLite，所有查询显式附加 `workspace_id` 与非 archived
+  过滤，修正 Python 短名 SQL 可能跨 workspace 串数据的旧边界；
+- 保留 QN 自动识别语义：名称包含 `.` 或 `::` 时先精确查询，空结果再按短名
+  降级；显式 `--qualified` 空结果不降级；
+- enterprise 模式复用 `query.callers/query.callees` snapshot RPC，并要求
+  `--workspace-id <workspace_instance_id>`；auto 模式在 daemon 查询失败时按统一
+  runtime 规则回退 local；
+- daemon handler 从“符号去重结果”改为逐调用边返回，补齐 `call_line`、
+  `is_cross_file`，并保留 unresolved callee。既有
+  `caller_qualified_name/callee_qualified_name` 字段继续保留；
+- local 与 enterprise 响应经同一归一化和格式化路径输出，标题、调用位置、
+  跨文件与未解析标记和 Python 当前中文输出一致；
+- 本任务只声明 callers/callees 完成；`call-chain/topo/impact` 继续保留在
+  P0-CLI-C 后续子任务。
+
+### 57.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::graph_query::tests --lib --no-default-features
+test result: ok. 4 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 16 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml test_query_symbol_returns_complete_snapshot_detail --lib --no-default-features
+test result: ok. 1 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+43 passed
+```
+
+新增八组真实 Python/Rust 进程差分，覆盖 callers/callees 的短名、自动 QN、
+显式 `--qualified` 与空结果。内存 SQLite 单测使用两个 workspace 的同名符号
+验证隔离；daemon 测试从真实 SQLite 构建并发布 snapshot，验证 resolved 与
+unresolved 边均返回完整字段。

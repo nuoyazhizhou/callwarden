@@ -8,8 +8,8 @@
 //! - `query.stats`：通过 `SnapshotCache` 获取 store + `stats_rust()`
 //! - `query.symbol`：从当前 snapshot SQLite 查询完整符号详情
 //! - `query.search`：调用 `GraphStore::search_symbols_rust`
-//! - `query.callers`：调用 `GraphStore::get_caller_ids` + 组装 JSON
-//! - `query.callees`：调用 `GraphStore::get_callee_ids` + 组装 JSON
+//! - `query.callers`：从 GraphStore 反向索引逐边组装 JSON
+//! - `query.callees`：从 GraphStore 正向索引逐边组装 JSON
 //!
 //! workspace.* 方法（register/list/status/connect/file.refresh/recover）委托给
 //! `WorkspaceDaemonState`（在 base 中实现）。
@@ -19,7 +19,6 @@
 //!
 //! 参考：Python `server/daemon_server.py:EnterpriseDaemonService.dispatch` L441-490
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use rusqlite::{Connection, OpenFlags};
@@ -462,12 +461,14 @@ impl DaemonStateExt for SnapshotDaemonState {
             .ok_or_else(|| {
                 DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
             })?;
-        let manager = self.get_snapshot_manager(workspace_instance_id).ok_or_else(|| {
-            DaemonRpcError::new(
-                "snapshot_not_ready",
-                format!("workspace {} 未发布 snapshot", workspace_instance_id),
-            )
-        })?;
+        let manager = self
+            .get_snapshot_manager(workspace_instance_id)
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!("workspace {} 未发布 snapshot", workspace_instance_id),
+                )
+            })?;
         let db_path = manager.current_query_db_path().ok_or_else(|| {
             DaemonRpcError::new(
                 "snapshot_not_ready",
@@ -540,51 +541,69 @@ impl DaemonStateExt for SnapshotDaemonState {
         let symbols = store
             .symbols_table()
             .ok_or_else(|| DaemonRpcError::internal_error("symbols table not loaded"))?;
+        let calls = store
+            .call_graph()
+            .ok_or_else(|| DaemonRpcError::internal_error("calls not loaded"))?;
 
-        // 解析 callee_ids：若传了 qname 则精确匹配单个，否则用 simple_name 找所有同名
-        let callee_ids: Vec<u32> = if let Some(qname) = qualified_name {
-            store
-                .get_symbol_ref(qname)
-                .map(|s| vec![s.id])
-                .unwrap_or_default()
+        // 精确 QN 按已解析 callee_id 查边；短名路径同时保留 unresolved 边。
+        let edge_positions: Vec<u32> = if let Some(qname) = qualified_name {
+            match store.get_symbol_ref(qname).map(|symbol| symbol.id) {
+                Some(callee_id) => calls.positions_for_callee_id(callee_id).to_vec(),
+                None => Vec::new(),
+            }
         } else {
-            symbols.simple_name_ids(callee_name).to_vec()
+            calls
+                .callee_name_idx(callee_name)
+                .map(|name_idx| calls.positions_for_callee_name(name_idx).to_vec())
+                .unwrap_or_default()
         };
 
         let mut callers = Vec::new();
-        let mut seen = HashSet::new();
-        for cid in callee_ids {
-            for caller_id in store.get_caller_ids(cid) {
-                if !seen.insert(caller_id) {
-                    continue;
-                }
-                if let Some(caller_sym) = store.get_symbol_by_id(caller_id) {
-                    let mut m = Map::new();
-                    m.insert(
-                        "caller_name".into(),
-                        Value::String(symbols.sym_name(caller_sym).to_string()),
-                    );
-                    m.insert(
-                        "caller_qualified_name".into(),
-                        Value::String(symbols.sym_qname(caller_sym).to_string()),
-                    );
-                    m.insert("caller_id".into(), Value::Number(caller_id.into()));
-                    m.insert(
-                        "caller_file".into(),
-                        Value::String(
-                            symbols
-                                .file_rel_path(caller_sym.file_instance_id)
-                                .to_string(),
-                        ),
-                    );
-                    m.insert(
-                        "caller_module".into(),
-                        Value::String(symbols.sym_module(caller_sym).to_string()),
-                    );
-                    callers.push(Value::Object(m));
-                }
+        for position in edge_positions {
+            let Some(edge) = calls.forward_edges.get(position as usize) else {
+                continue;
+            };
+            if let Some(caller_sym) = store.get_symbol_by_id(edge.caller_id) {
+                let mut m = Map::new();
+                m.insert(
+                    "caller_name".into(),
+                    Value::String(symbols.sym_name(caller_sym).to_string()),
+                );
+                m.insert(
+                    "caller_qualified_name".into(),
+                    Value::String(symbols.sym_qname(caller_sym).to_string()),
+                );
+                m.insert("caller_id".into(), Value::Number(edge.caller_id.into()));
+                m.insert("callee_id".into(), Value::Number(edge.callee_id.into()));
+                m.insert(
+                    "caller_file".into(),
+                    Value::String(
+                        symbols
+                            .file_rel_path(caller_sym.file_instance_id)
+                            .to_string(),
+                    ),
+                );
+                m.insert(
+                    "caller_module".into(),
+                    Value::String(symbols.sym_module(caller_sym).to_string()),
+                );
+                m.insert("call_line".into(), Value::Number(edge.call_line().into()));
+                m.insert("is_cross_file".into(), Value::Bool(edge.is_cross_file()));
+                callers.push(Value::Object(m));
             }
         }
+        callers.sort_by(|left, right| {
+            left["caller_file"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(right["caller_file"].as_str().unwrap_or_default())
+                .then_with(|| {
+                    left["call_line"]
+                        .as_u64()
+                        .unwrap_or_default()
+                        .cmp(&right["call_line"].as_u64().unwrap_or_default())
+                })
+        });
         Ok(Value::Array(callers))
     }
 
@@ -608,6 +627,9 @@ impl DaemonStateExt for SnapshotDaemonState {
         let symbols = store
             .symbols_table()
             .ok_or_else(|| DaemonRpcError::internal_error("symbols table not loaded"))?;
+        let calls = store
+            .call_graph()
+            .ok_or_else(|| DaemonRpcError::internal_error("calls not loaded"))?;
 
         let caller_ids: Vec<u32> = if let Some(qname) = qualified_name {
             store
@@ -619,39 +641,50 @@ impl DaemonStateExt for SnapshotDaemonState {
         };
 
         let mut callees = Vec::new();
-        let mut seen = HashSet::new();
         for caller_id in caller_ids {
-            for callee_id in store.get_callee_ids(caller_id) {
-                if !seen.insert(callee_id) {
-                    continue;
-                }
-                if let Some(callee_sym) = store.get_symbol_by_id(callee_id) {
-                    let mut m = Map::new();
-                    m.insert(
-                        "callee_name".into(),
-                        Value::String(symbols.sym_name(callee_sym).to_string()),
-                    );
-                    m.insert(
-                        "callee_qualified_name".into(),
-                        Value::String(symbols.sym_qname(callee_sym).to_string()),
-                    );
-                    m.insert("callee_id".into(), Value::Number(callee_id.into()));
-                    m.insert(
-                        "callee_file".into(),
-                        Value::String(
-                            symbols
-                                .file_rel_path(callee_sym.file_instance_id)
-                                .to_string(),
-                        ),
-                    );
-                    m.insert(
-                        "callee_module".into(),
-                        Value::String(symbols.sym_module(callee_sym).to_string()),
-                    );
-                    callees.push(Value::Object(m));
-                }
+            let start = calls
+                .forward_offsets
+                .get(caller_id as usize)
+                .copied()
+                .unwrap_or(0);
+            let end = calls
+                .forward_offsets
+                .get(caller_id as usize + 1)
+                .copied()
+                .unwrap_or(0);
+            for edge in &calls.forward_edges[start..end] {
+                let (qualified, file, module) = store
+                    .get_symbol_by_id(edge.callee_id)
+                    .map(|symbol| {
+                        (
+                            symbols.sym_qname(symbol),
+                            symbols.file_rel_path(symbol.file_instance_id),
+                            symbols.sym_module(symbol),
+                        )
+                    })
+                    .unwrap_or(("", "", ""));
+                let mut m = Map::new();
+                m.insert(
+                    "callee_name".into(),
+                    Value::String(calls.callee_name(edge.callee_name_idx).to_string()),
+                );
+                m.insert(
+                    "callee_qualified_name".into(),
+                    Value::String(qualified.to_string()),
+                );
+                m.insert(
+                    "callee_qualified".into(),
+                    Value::String(qualified.to_string()),
+                );
+                m.insert("callee_id".into(), Value::Number(edge.callee_id.into()));
+                m.insert("callee_file".into(), Value::String(file.to_string()));
+                m.insert("callee_module".into(), Value::String(module.to_string()));
+                m.insert("call_line".into(), Value::Number(edge.call_line().into()));
+                m.insert("is_cross_file".into(), Value::Bool(edge.is_cross_file()));
+                callees.push(Value::Object(m));
             }
         }
+        callees.sort_by_key(|item| item["call_line"].as_u64().unwrap_or_default());
         Ok(Value::Array(callees))
     }
 
@@ -1518,7 +1551,9 @@ mod tests {
             INSERT INTO symbols VALUES
                 (1, 1, 'fn', 'alpha', 'a.alpha', 'a', 1, 4, 0),
                 (2, 1, 'fn', 'beta', 'a.beta', 'a', 6, 8, 0);
-            INSERT INTO calls VALUES (1, 2, 'beta', 3, 0);
+            INSERT INTO calls VALUES
+                (1, 2, 'beta', 3, 0),
+                (1, 0, 'external_api', 4, 1);
             INSERT INTO file_versions VALUES (10, 1, 1);
             INSERT INTO symbol_contents VALUES
                 ('hash-alpha', 'alpha', 'fn', 'alpha()', 1, 'alpha docs'),
@@ -1536,12 +1571,7 @@ mod tests {
         state
             .snapshot_cache
             .get_or_create(&ws_id)
-            .build_and_publish_blocking(
-                db_path.to_str().unwrap(),
-                workspace_id,
-                "ctx",
-                None,
-            )
+            .build_and_publish_blocking(db_path.to_str().unwrap(), workspace_id, "ctx", None)
             .unwrap();
         let response = dispatch(
             &mut state,
@@ -1559,6 +1589,44 @@ mod tests {
         assert_eq!(response["result"]["comment_content"], "alpha docs");
         assert_eq!(response["result"]["calls_out"][0]["target_name"], "a.beta");
         assert_eq!(response["result"]["issues_total"], 0);
+
+        let callers = dispatch(
+            &mut state,
+            peer,
+            "query.callers",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "callee_name": "beta",
+                "qualified_name": "a.beta"
+            }),
+            &[],
+        );
+        assert_eq!(callers["ok"], true);
+        assert_eq!(callers["result"][0]["caller_name"], "alpha");
+        assert_eq!(callers["result"][0]["caller_file"], "a.py");
+        assert_eq!(callers["result"][0]["call_line"], 3);
+        assert_eq!(callers["result"][0]["is_cross_file"], false);
+
+        let callees = dispatch(
+            &mut state,
+            peer,
+            "query.callees",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "caller_name": "alpha",
+                "qualified_name": "a.alpha"
+            }),
+            &[],
+        );
+        assert_eq!(callees["ok"], true);
+        assert_eq!(callees["result"].as_array().unwrap().len(), 2);
+        assert_eq!(callees["result"][0]["callee_name"], "beta");
+        assert_eq!(callees["result"][0]["callee_file"], "a.py");
+        assert_eq!(callees["result"][0]["call_line"], 3);
+        assert_eq!(callees["result"][1]["callee_name"], "external_api");
+        assert_eq!(callees["result"][1]["callee_file"], "");
+        assert_eq!(callees["result"][1]["call_line"], 4);
+        assert_eq!(callees["result"][1]["is_cross_file"], true);
     }
 
     #[test]
