@@ -47,6 +47,16 @@ use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
 use callwarden_core::cli::search::{
     format_search_output, normalize_search_results, query_local_search,
 };
+use callwarden_core::cli::security::{
+    accept_rule_candidate, applicable_agent_rules, bootstrap_status, cleanup_rule_sync_log,
+    create_rule_candidate, extract_rule_candidates, generate_audit_secret,
+    insert_rule_marker_block, list_agent_rules, list_audit_keys, list_guardrail_rules,
+    list_rule_candidates, reject_rule_candidate, resolve_gate_findings, rotate_audit_key,
+    run_check_gate, scan_guardrails, seed_bootstrap_rules, sync_agent_rules, verify_audit_chain,
+    AgentRule, AuditKeyInfo, AuditRotateResult, AuditVerifyResult, BootstrapStatus,
+    CheckGateResult, GateResolveResult, GuardrailRule, GuardrailScanResult, RuleCandidate,
+    RuleCandidateInput, RuleCleanupResult, RuleSeedResult, RuleSyncResult,
+};
 use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use callwarden_core::cli::symbol::format_symbol_output;
@@ -125,7 +135,10 @@ impl From<ModeArg> for DaemonMode {
 enum Commands {
     // ===== 代码守护者架构（四大支柱）=====
     /// 安全护栏扫描
-    Guardrail,
+    Guardrail {
+        #[command(subcommand)]
+        action: GuardrailAction,
+    },
     /// 变更影响分析
     Impact {
         /// 源符号 hash
@@ -154,7 +167,15 @@ enum Commands {
     /// 符号历史
     SymbolHistory,
     /// 检查门禁
-    CheckGate,
+    CheckGate {
+        task_id: String,
+        #[arg(long)]
+        resolve: bool,
+        #[arg(long, default_value = "")]
+        step_id: String,
+        #[arg(long, default_value_t = 60)]
+        semgrep_timeout: u64,
+    },
     /// 测试影响选择
     TestImpact,
 
@@ -168,11 +189,20 @@ enum Commands {
     /// 安装 Hook
     InstallHook,
     /// 规则管理
-    Rule,
+    Rule {
+        #[command(subcommand)]
+        action: RuleAction,
+    },
     /// 审计链
-    Audit,
+    Audit {
+        #[command(subcommand)]
+        action: AuditAction,
+    },
     /// 引导状态
-    Bootstrap,
+    Bootstrap {
+        #[command(subcommand)]
+        action: BootstrapAction,
+    },
     /// 克隆检测
     Clone,
     /// FTS5 全文搜索
@@ -536,6 +566,150 @@ enum TaskAction {
 }
 
 #[derive(Subcommand)]
+enum AuditAction {
+    /// 验证审计链连续性和签名
+    Verify {
+        #[arg(long = "table", default_value = "")]
+        table_name: String,
+        #[arg(long, default_value_t = 1000)]
+        limit: i64,
+    },
+    /// 轮换 HMAC 签名密钥
+    RotateKey {
+        #[arg(long)]
+        key_id: String,
+        #[arg(long)]
+        secret: Option<String>,
+    },
+    /// 列出密钥元数据（不输出 secret）
+    Keys,
+}
+
+#[derive(Subcommand)]
+enum BootstrapAction {
+    /// 显示自举健康摘要
+    Status,
+}
+
+#[derive(Subcommand)]
+enum GuardrailAction {
+    /// 扫描当前 workspace 的护栏违规
+    Scan {
+        #[arg(long = "file", default_value = "")]
+        file_filter: String,
+        #[arg(long, default_value = "")]
+        category: String,
+    },
+    /// 列出护栏规则
+    Rules {
+        #[arg(long, default_value = "")]
+        category: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RuleAction {
+    /// 候选规则生命周期
+    Candidate {
+        #[command(subcommand)]
+        action: RuleCandidateAction,
+    },
+    /// 列出已生效规则
+    List {
+        #[arg(long, default_value = "active")]
+        status: String,
+        #[arg(long, default_value_t = 100)]
+        limit: i64,
+    },
+    /// 按上下文查询适用规则
+    Applicable {
+        #[arg(long, default_value = "{}")]
+        context: String,
+        #[arg(long, default_value_t = 10)]
+        limit: i64,
+    },
+    /// 同步 active 规则到 AGENTS.md 标记区
+    Sync {
+        #[arg(long, default_value = "AGENTS.md")]
+        target: PathBuf,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long, default_value = "agent")]
+        actor: String,
+    },
+    /// 插入 AGENTS.md 标记区
+    InsertBlock {
+        #[arg(long, default_value = "AGENTS.md")]
+        target: PathBuf,
+        #[arg(long, default_value = "agent")]
+        actor: String,
+    },
+    /// 从重复质量 finding 提取候选规则
+    Extract {
+        #[arg(long, default_value = "")]
+        task_id: String,
+        #[arg(long, default_value_t = 2)]
+        min_occurrences: i64,
+    },
+    /// 写入内置自举规则
+    SeedBootstrap {
+        #[arg(long)]
+        apply: bool,
+    },
+    /// 清理旧同步日志
+    CleanupSyncLog {
+        #[arg(long, default_value_t = 90)]
+        older_than: i64,
+        #[arg(long, default_value_t = 100)]
+        keep_latest: i64,
+        #[arg(long)]
+        apply: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RuleCandidateAction {
+    /// 创建 pending 候选规则
+    Create {
+        #[arg(long)]
+        title: String,
+        #[arg(long = "text")]
+        rule_text: String,
+        #[arg(long, default_value = "{}")]
+        scope: String,
+        #[arg(long, default_value = "info")]
+        severity: String,
+        #[arg(long, default_value = "manual")]
+        source: String,
+        #[arg(long, default_value = "{}")]
+        evidence: String,
+        #[arg(long, default_value_t = 0.0)]
+        confidence: f64,
+    },
+    /// 列出候选规则
+    List {
+        #[arg(long, default_value = "pending")]
+        status: String,
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
+    /// 接受候选规则
+    Accept {
+        candidate_id: String,
+        #[arg(long, default_value = "agent")]
+        reviewer: String,
+    },
+    /// 拒绝候选规则
+    Reject {
+        candidate_id: String,
+        #[arg(long, default_value = "agent")]
+        reviewer: String,
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ToolchainAction {
     /// 注册工具链
     Register {
@@ -646,6 +820,20 @@ struct SubcommandArgs {
 }
 
 fn main() {
+    let worker = std::thread::Builder::new()
+        .name("cw-cli-main".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(cli_main)
+        .unwrap_or_else(|error| {
+            eprintln!("cannot start cw CLI worker: {error}");
+            std::process::exit(1);
+        });
+    if let Err(panic) = worker.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+fn cli_main() {
     let cli = Cli::parse();
     let runtime = RuntimeOptions::from_overrides(
         cli.mode.map(Into::into),
@@ -760,6 +948,32 @@ fn main() {
                 }
                 Commands::Task { action } => {
                     emit_result(run_task(&runtime, action));
+                }
+                Commands::Rule { action } => {
+                    emit_result(run_rule(&runtime, action));
+                }
+                Commands::Guardrail { action } => {
+                    emit_result(run_guardrail(&runtime, action));
+                }
+                Commands::CheckGate {
+                    task_id,
+                    resolve,
+                    step_id,
+                    semgrep_timeout,
+                } => {
+                    emit_result(run_check_gate_command(
+                        &runtime,
+                        &task_id,
+                        resolve,
+                        &step_id,
+                        semgrep_timeout,
+                    ));
+                }
+                Commands::Audit { action } => {
+                    emit_result(run_audit(&runtime, action));
+                }
+                Commands::Bootstrap { action } => {
+                    emit_result(run_bootstrap(&runtime, action));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -940,6 +1154,258 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                 let findings = query_task_findings(&conn, &task_id, &status, &severity)?;
                 Ok(format_task_findings(&task_id, &findings, zh_cn))
             }
+        }
+    })();
+    match result {
+        Ok(output) => CommandResult::success_text(output, RouteUsed::Local),
+        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
+    }
+}
+
+fn run_rule(runtime: &RuntimeOptions, action: RuleAction) -> CommandResult {
+    let result = (|| -> Result<String, String> {
+        // rule 是当前 UID 的安全编排元数据；enterprise 模式也固定走本地数据库。
+        let zh_cn = use_zh_cn();
+        match action {
+            RuleAction::Candidate { action } => match action {
+                RuleCandidateAction::Create {
+                    title,
+                    rule_text,
+                    scope,
+                    severity,
+                    source,
+                    evidence,
+                    confidence,
+                } => {
+                    let scope = parse_json_object_arg(&scope, "scope")?;
+                    let evidence = parse_json_object_arg(&evidence, "evidence")?;
+                    let mut conn = runtime.open_local_write_db()?;
+                    let id = create_rule_candidate(
+                        &mut conn,
+                        &RuleCandidateInput {
+                            title,
+                            rule_text,
+                            scope,
+                            severity,
+                            source,
+                            evidence,
+                            confidence,
+                        },
+                    )?;
+                    Ok(if zh_cn {
+                        format!("已创建候选规则: {id}")
+                    } else {
+                        format!("Created candidate: {id}")
+                    })
+                }
+                RuleCandidateAction::List { status, limit } => {
+                    let conn = runtime.open_local_db()?;
+                    let rows = list_rule_candidates(&conn, &status, limit)?;
+                    Ok(format_rule_candidates(&rows, zh_cn))
+                }
+                RuleCandidateAction::Accept {
+                    candidate_id,
+                    reviewer,
+                } => {
+                    let mut conn = runtime.open_local_write_db()?;
+                    let rule_id = accept_rule_candidate(&mut conn, &candidate_id, &reviewer)?;
+                    Ok(if zh_cn {
+                        format!("已接受: candidate={candidate_id} -> active_rule={rule_id}")
+                    } else {
+                        format!("Accepted: candidate={candidate_id} -> active_rule={rule_id}")
+                    })
+                }
+                RuleCandidateAction::Reject {
+                    candidate_id,
+                    reviewer,
+                    reason,
+                } => {
+                    let mut conn = runtime.open_local_write_db()?;
+                    let rejected =
+                        reject_rule_candidate(&mut conn, &candidate_id, &reviewer, &reason)?;
+                    let rejected = if rejected { "True" } else { "False" };
+                    Ok(if zh_cn {
+                        format!("已拒绝: {candidate_id} ({rejected})")
+                    } else {
+                        format!("Rejected: {candidate_id} ({rejected})")
+                    })
+                }
+            },
+            RuleAction::List { status, limit } => {
+                let conn = runtime.open_local_db()?;
+                let rows = list_agent_rules(&conn, &status, limit)?;
+                Ok(format_agent_rules(&rows, false, zh_cn))
+            }
+            RuleAction::Applicable { context, limit } => {
+                let context = parse_json_object_arg(&context, "context")?;
+                let conn = runtime.open_local_db()?;
+                let rows = applicable_agent_rules(&conn, &context, limit)?;
+                Ok(format_agent_rules(&rows, true, zh_cn))
+            }
+            RuleAction::Sync {
+                target,
+                apply,
+                actor,
+            } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result = sync_agent_rules(&mut conn, &target, !apply, &actor)?;
+                Ok(format_rule_sync(&result, zh_cn))
+            }
+            RuleAction::InsertBlock { target, actor } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let inserted = insert_rule_marker_block(&mut conn, &target, &actor)?;
+                Ok(if inserted {
+                    if zh_cn {
+                        format!("已插入标记区: {}", target.display())
+                    } else {
+                        format!("Inserted marker block: {}", target.display())
+                    }
+                } else if zh_cn {
+                    format!("插入失败: 标记区已存在: {}", target.display())
+                } else {
+                    format!(
+                        "Insert failed: marker block already exists: {}",
+                        target.display()
+                    )
+                })
+            }
+            RuleAction::Extract {
+                task_id,
+                min_occurrences,
+            } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let ids = extract_rule_candidates(&mut conn, &task_id, min_occurrences)?;
+                Ok(format_rule_extract(&ids, &task_id, min_occurrences, zh_cn))
+            }
+            RuleAction::SeedBootstrap { apply } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result = seed_bootstrap_rules(&mut conn, !apply)?;
+                Ok(format_rule_seed(&result, zh_cn))
+            }
+            RuleAction::CleanupSyncLog {
+                older_than,
+                keep_latest,
+                apply,
+            } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result = cleanup_rule_sync_log(&mut conn, older_than, keep_latest, !apply)?;
+                Ok(format_rule_cleanup(&result, zh_cn))
+            }
+        }
+    })();
+    match result {
+        Ok(output) => CommandResult::success_text(output, RouteUsed::Local),
+        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
+    }
+}
+
+fn run_guardrail(runtime: &RuntimeOptions, action: GuardrailAction) -> CommandResult {
+    let result = (|| -> Result<String, String> {
+        let zh_cn = use_zh_cn();
+        // 安全规则和 findings 是当前 UID 的本地事实，enterprise 模式也不远程写。
+        let mut conn = runtime.open_local_write_db()?;
+        match action {
+            GuardrailAction::Scan {
+                file_filter,
+                category,
+            } => {
+                let result = scan_guardrails(&mut conn, &file_filter, &category)?;
+                Ok(format_guardrail_scan(
+                    &result,
+                    &file_filter,
+                    &category,
+                    zh_cn,
+                ))
+            }
+            GuardrailAction::Rules { category } => {
+                let rules = list_guardrail_rules(&mut conn, &category)?;
+                Ok(format_guardrail_rules(&rules, &category, zh_cn))
+            }
+        }
+    })();
+    match result {
+        Ok(output) => CommandResult::success_text(output, RouteUsed::Local),
+        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
+    }
+}
+
+fn run_check_gate_command(
+    runtime: &RuntimeOptions,
+    task_id: &str,
+    resolve: bool,
+    step_id: &str,
+    semgrep_timeout: u64,
+) -> CommandResult {
+    let result = (|| -> Result<(String, bool), String> {
+        let zh_cn = use_zh_cn();
+        let mut conn = runtime.open_local_write_db()?;
+        if resolve {
+            let result = resolve_gate_findings(&mut conn, task_id)?;
+            return Ok((format_gate_resolve(&result, zh_cn), true));
+        }
+        let result = run_check_gate(&mut conn, task_id, step_id, semgrep_timeout)?;
+        let passed = result.passed;
+        Ok((format_check_gate(&result, zh_cn), passed))
+    })();
+    match result {
+        Ok((output, true)) => CommandResult::success_text(output, RouteUsed::Local),
+        Ok((output, false)) => CommandResult {
+            exit_code: 1,
+            stdout: output,
+            stderr: String::new(),
+            route: RouteUsed::Local,
+        },
+        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
+    }
+}
+
+fn run_audit(runtime: &RuntimeOptions, action: AuditAction) -> CommandResult {
+    let result = (|| -> Result<(String, bool), String> {
+        let zh_cn = use_zh_cn();
+        match action {
+            AuditAction::Verify { table_name, limit } => {
+                let conn = runtime.open_local_db()?;
+                let result = verify_audit_chain(&conn, &table_name, limit)?;
+                let passed = result.total_count > 0 && result.broken_count == 0;
+                Ok((format_audit_verify(&result, limit, zh_cn), passed))
+            }
+            AuditAction::RotateKey { key_id, secret } => {
+                let secret = match secret {
+                    Some(secret) if !secret.is_empty() => secret,
+                    Some(_) => return Err("new_key_secret is required".to_string()),
+                    None => generate_audit_secret()?,
+                };
+                let mut conn = runtime.open_local_write_db()?;
+                let result = rotate_audit_key(&mut conn, &key_id, &secret)?;
+                Ok((format_audit_rotate(&result, zh_cn), true))
+            }
+            AuditAction::Keys => {
+                let conn = runtime.open_local_db()?;
+                let rows = list_audit_keys(&conn)?;
+                Ok((format_audit_keys(&rows, zh_cn), true))
+            }
+        }
+    })();
+    match result {
+        Ok((output, true)) => CommandResult::success_text(output, RouteUsed::Local),
+        Ok((output, false)) => CommandResult {
+            exit_code: 1,
+            stdout: output,
+            stderr: String::new(),
+            route: RouteUsed::Local,
+        },
+        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
+    }
+}
+
+fn run_bootstrap(runtime: &RuntimeOptions, action: BootstrapAction) -> CommandResult {
+    let result = (|| -> Result<String, String> {
+        let conn = runtime.open_local_db()?;
+        match action {
+            BootstrapAction::Status => Ok(format_bootstrap_status(
+                &bootstrap_status(&conn)?,
+                use_zh_cn(),
+            )),
         }
     })();
     match result {
@@ -3147,6 +3613,779 @@ fn use_zh_cn() -> bool {
         .unwrap_or(false)
 }
 
+fn parse_json_object_arg(raw: &str, name: &str) -> Result<Value, String> {
+    let value = serde_json::from_str::<Value>(raw)
+        .map_err(|error| format!("invalid {name} JSON: {error}"))?;
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err(format!("{name} must be a JSON object"))
+    }
+}
+
+fn format_rule_candidates(rows: &[RuleCandidate], zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        format!("=== 候选规则（{} 条）===", rows.len())
+    } else {
+        format!("=== Candidates ({}) ===", rows.len())
+    }];
+    if rows.is_empty() {
+        lines.push(if zh_cn { "（空）" } else { "(empty)" }.to_string());
+    }
+    for row in rows {
+        lines.push(format!(
+            "[{}] {} (severity={}, source={}, status={})",
+            row.id, row.title, row.severity, row.source, row.status
+        ));
+        lines.push(format!(
+            "    {}: {}",
+            if zh_cn { "正文" } else { "text" },
+            row.rule_text
+        ));
+        if row.scope.as_object().is_some_and(|scope| !scope.is_empty()) {
+            lines.push(format!(
+                "    {}: {}",
+                if zh_cn { "范围" } else { "scope" },
+                python_json_dumps(&row.scope)
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn format_agent_rules(rows: &[AgentRule], applicable: bool, zh_cn: bool) -> String {
+    let mut lines = vec![if applicable {
+        if zh_cn {
+            format!("=== 适用规则（{} 条）===", rows.len())
+        } else {
+            format!("=== Applicable Rules ({}) ===", rows.len())
+        }
+    } else if zh_cn {
+        format!("=== 生效规则（{} 条）===", rows.len())
+    } else {
+        format!("=== Active Rules ({}) ===", rows.len())
+    }];
+    if rows.is_empty() {
+        lines.push(
+            if applicable {
+                if zh_cn {
+                    "（没有匹配规则）"
+                } else {
+                    "(no rule matched)"
+                }
+            } else if zh_cn {
+                "（空）"
+            } else {
+                "(empty)"
+            }
+            .to_string(),
+        );
+    }
+    for row in rows {
+        if applicable {
+            lines.push(format!(
+                "[{}] {} (severity={})",
+                row.id, row.title, row.severity
+            ));
+        } else {
+            lines.push(format!(
+                "[{}] {} (severity={}, synced={})",
+                row.id,
+                row.title,
+                row.severity,
+                if row.synced_to_agents_md { "yes" } else { "no" }
+            ));
+        }
+        lines.push(format!(
+            "    {}: {}",
+            if zh_cn { "正文" } else { "text" },
+            row.rule_text
+        ));
+        if !applicable && row.scope.as_object().is_some_and(|scope| !scope.is_empty()) {
+            lines.push(format!(
+                "    {}: {}",
+                if zh_cn { "范围" } else { "scope" },
+                python_json_dumps(&row.scope)
+            ));
+        }
+    }
+    lines.join("\n")
+}
+
+fn python_json_dumps(value: &Value) -> String {
+    match value {
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(python_json_dumps)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Object(entries) => format!(
+            "{{{}}}",
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    let key = serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string());
+                    format!("{key}: {}", python_json_dumps(value))
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        _ => serde_json::to_string(value).unwrap_or_else(|_| "null".to_string()),
+    }
+}
+
+fn format_rule_sync(result: &RuleSyncResult, zh_cn: bool) -> String {
+    if !result.success {
+        let error = if zh_cn && !result.suggested_block.is_empty() {
+            format!(
+                "在 {} 中未找到标记块。请先通过 --insert-block 或手动插入标记块。",
+                result.target_path
+            )
+        } else {
+            result.error.clone()
+        };
+        let mut lines = vec![format!(
+            "{}: {}",
+            if zh_cn { "同步失败" } else { "Sync failed" },
+            error
+        )];
+        if !result.suggested_block.is_empty() {
+            lines.push(String::new());
+            lines.push(
+                if zh_cn {
+                    "建议先插入以下标记区："
+                } else {
+                    "Suggested marker block (insert into AGENTS.md first):"
+                }
+                .to_string(),
+            );
+            lines.push(result.suggested_block.clone());
+        }
+        return lines.join("\n");
+    }
+    let mut lines = vec![if result.dry_run {
+        if zh_cn {
+            format!("=== 预演（{} 条规则）===", result.rule_count)
+        } else {
+            format!("=== Dry-run Preview ({} rules) ===", result.rule_count)
+        }
+    } else if zh_cn {
+        format!("=== 已同步（{} 条规则）===", result.rule_count)
+    } else {
+        format!("=== Synced ({} rules) ===", result.rule_count)
+    }];
+    lines.push(format!("target: {}", result.target_path));
+    lines.push(format!(
+        "after_hash: {}",
+        &result.after_hash[..result.after_hash.len().min(16)]
+    ));
+    if result.dry_run {
+        lines.push(String::new());
+        lines.push(result.preview.clone());
+        lines.push(String::new());
+        lines.push(
+            if zh_cn {
+                "使用 --apply 写入文件。"
+            } else {
+                "Use --apply to write to file."
+            }
+            .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn format_rule_extract(ids: &[String], task_id: &str, threshold: i64, zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        format!("=== 已提取候选规则（{} 条）===", ids.len())
+    } else {
+        format!("=== Extracted Candidates ({}) ===", ids.len())
+    }];
+    if !task_id.is_empty() {
+        lines.push(format!("task_id: {task_id}"));
+    }
+    lines.push(format!("min_occurrences: {threshold}"));
+    if ids.is_empty() {
+        lines.push(
+            if zh_cn {
+                "（没有达到阈值的重复发现）"
+            } else {
+                "(no repeated findings above threshold)"
+            }
+            .to_string(),
+        );
+    } else {
+        lines.extend(ids.iter().map(|id| format!("  - {id}")));
+    }
+    lines.join("\n")
+}
+
+fn format_rule_seed(result: &RuleSeedResult, zh_cn: bool) -> String {
+    let mut lines = vec![if result.dry_run {
+        if zh_cn {
+            format!("=== 自举规则预演（{} 条）===", result.total)
+        } else {
+            format!("=== Bootstrap Seed Dry-Run ({} rules) ===", result.total)
+        }
+    } else if zh_cn {
+        format!("=== 自举规则已应用（{} 条）===", result.total)
+    } else {
+        format!("=== Bootstrap Seed Applied ({} rules) ===", result.total)
+    }];
+    lines.push(format!(
+        "created: {} | updated: {} | skipped: {}",
+        result.created, result.updated, result.skipped
+    ));
+    lines.push(String::new());
+    lines.extend(
+        result
+            .rules
+            .iter()
+            .map(|rule| format!("[{}] {}  {}", rule.action, rule.id, rule.title)),
+    );
+    if result.dry_run {
+        lines.push(String::new());
+        lines.push(
+            if zh_cn {
+                "使用 --apply 写入 agent_rules 表。"
+            } else {
+                "Use --apply to write rules to agent_rules table."
+            }
+            .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn format_rule_cleanup(result: &RuleCleanupResult, zh_cn: bool) -> String {
+    let mut lines = vec![if result.dry_run {
+        if zh_cn {
+            format!(
+                "=== 同步日志清理预览（older_than={} 天, keep_latest={}）===",
+                result.older_than_days, result.keep_latest
+            )
+        } else {
+            format!(
+                "=== Sync Log Cleanup Dry-Run (older_than={}d, keep_latest={}) ===",
+                result.older_than_days, result.keep_latest
+            )
+        }
+    } else if zh_cn {
+        format!(
+            "=== 同步日志清理完成（older_than={} 天, keep_latest={}）===",
+            result.older_than_days, result.keep_latest
+        )
+    } else {
+        format!(
+            "=== Sync Log Cleanup Applied (older_than={}d, keep_latest={}) ===",
+            result.older_than_days, result.keep_latest
+        )
+    }];
+    lines.push(format!(
+        "total_before: {} | deleted: {} | remaining: {}",
+        result.total_before, result.deleted_count, result.remaining_count
+    ));
+    if result.dry_run {
+        lines.push(String::new());
+        lines.push(
+            if zh_cn {
+                "使用 --apply 实际删除记录。"
+            } else {
+                "Use --apply to actually delete records."
+            }
+            .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn format_guardrail_scan(
+    result: &GuardrailScanResult,
+    file_filter: &str,
+    category: &str,
+    zh_cn: bool,
+) -> String {
+    let mut lines = vec![if zh_cn {
+        "=== 安全护栏扫描结果 ===".to_string()
+    } else {
+        "=== Guardrail Scan Results ===".to_string()
+    }];
+    let file_info = if file_filter.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "（{}: {}）",
+            if zh_cn {
+                "获取文件内所有符号"
+            } else {
+                "Get all symbols in a file"
+            },
+            file_filter
+        )
+    };
+    let category_info = if category.is_empty() {
+        String::new()
+    } else {
+        format!("（cli.args.category: {category}）")
+    };
+    lines.push(if zh_cn {
+        format!(
+            "发现 {} 个违规{}{}：",
+            result.findings.len(),
+            file_info,
+            category_info
+        )
+    } else {
+        format!(
+            "{} violations found{}{}:",
+            result.findings.len(),
+            file_info,
+            category_info
+        )
+    });
+    lines.push(String::new());
+    if result.findings.is_empty() {
+        lines.push(if zh_cn {
+            "  ✓ 未检测到安全违规".to_string()
+        } else {
+            "  ✓ No security violations detected".to_string()
+        });
+    } else {
+        for (index, finding) in result.findings.iter().enumerate() {
+            let icon = match finding.severity.as_str() {
+                "block" => "[!]",
+                "warn" => "[~]",
+                "info" => "[i]",
+                _ => "[?]",
+            };
+            lines.push(format!(
+                "  #{} {} [{}] {}",
+                index + 1,
+                icon,
+                finding.severity,
+                finding.rule_id
+            ));
+            lines.push(format!(
+                "        {}: {}",
+                if zh_cn { "文件" } else { "File" },
+                finding.file_path
+            ));
+            lines.push(format!(
+                "        {}: {}",
+                if zh_cn { "消息" } else { "Message" },
+                finding.message
+            ));
+            if !finding.symbol_hash.is_empty() {
+                lines.push(format!(
+                    "        {}: {}...",
+                    if zh_cn { "符号" } else { "Symbol" },
+                    &finding.symbol_hash[..finding.symbol_hash.len().min(12)]
+                ));
+            }
+            lines.push(String::new());
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn format_guardrail_rules(rows: &[GuardrailRule], category: &str, zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        "=== 护栏规则列表 ===".to_string()
+    } else {
+        "=== Guardrail Rules ===".to_string()
+    }];
+    let category_info = if category.is_empty() {
+        String::new()
+    } else {
+        format!("（cli.args.category: {category}）")
+    };
+    lines.push(if zh_cn {
+        format!("共 {} 条规则{}：", rows.len(), category_info)
+    } else {
+        format!("{} rules total{}:", rows.len(), category_info)
+    });
+    lines.push(String::new());
+    if rows.is_empty() {
+        lines.push(if zh_cn {
+            "  (无规则)".to_string()
+        } else {
+            "  (no rules)".to_string()
+        });
+    }
+    for (index, rule) in rows.iter().enumerate() {
+        let icon = match rule.severity.as_str() {
+            "block" => "[!]",
+            "warn" => "[~]",
+            "info" => "[i]",
+            _ => "[?]",
+        };
+        let builtin = if rule.is_builtin {
+            if zh_cn {
+                "[内置]"
+            } else {
+                "[built-in]"
+            }
+        } else if zh_cn {
+            "[自定义]"
+        } else {
+            "[custom]"
+        };
+        lines.push(format!(
+            "  #{} {} {}  ({})  {}",
+            index + 1,
+            icon,
+            rule.rule_id,
+            rule.category,
+            builtin
+        ));
+        lines.push(format!(
+            "        {}: {}  {}: {}",
+            if zh_cn { "严重度" } else { "Severity" },
+            rule.severity,
+            if zh_cn { "动作" } else { "Action" },
+            rule.action
+        ));
+        if !rule.description.is_empty() {
+            lines.push(format!(
+                "        {}: {}",
+                if zh_cn { "描述" } else { "Description" },
+                rule.description
+            ));
+        }
+        lines.push(String::new());
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn format_check_gate(result: &CheckGateResult, zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        format!(
+            "=== 检查门禁：{} ===",
+            if result.passed { "通过" } else { "失败" }
+        )
+    } else {
+        format!(
+            "=== Check Gate: {} ===",
+            if result.passed { "PASS" } else { "FAIL" }
+        )
+    }];
+    lines.push(format!("task_id: {}", result.task_id));
+    if !result.step_id.is_empty() {
+        lines.push(format!("step_id: {}", result.step_id));
+    }
+    lines.push(format!("result: {}", result.summary));
+    lines.push(format!("checks: {}", result.checks_run.join(", ")));
+    if !result.findings.is_empty() {
+        lines.push(format!(
+            "{}: {}",
+            if zh_cn { "发现" } else { "findings" },
+            result.findings.len()
+        ));
+        lines.extend(result.findings.iter().enumerate().map(|(index, finding)| {
+            format!(
+                "{}. [{}] {}:{} {}\n   {}",
+                index + 1,
+                finding.severity,
+                finding.file_path,
+                finding.line.unwrap_or(0),
+                finding.check,
+                finding.message
+            )
+        }));
+    }
+    if result.fix_required {
+        lines.push(
+            if zh_cn {
+                "门禁失败，必须修复后再继续。"
+            } else {
+                "Gate failed; fixes are required before continuing."
+            }
+            .to_string(),
+        );
+    }
+    lines.join("\n")
+}
+
+fn format_gate_resolve(result: &GateResolveResult, zh_cn: bool) -> String {
+    let lines = if zh_cn {
+        vec![
+            "=== 门禁发现已标记解决 ===".to_string(),
+            format!("  任务 ID: {}", result.task_id),
+            format!("  已解决发现数: {}", result.resolved_count),
+            String::new(),
+        ]
+    } else {
+        vec![
+            "=== Gate Findings Marked Resolved ===".to_string(),
+            format!("  Task ID: {}", result.task_id),
+            format!("  Resolved findings: {}", result.resolved_count),
+            String::new(),
+        ]
+    };
+    lines.join("\n")
+}
+
+fn format_audit_verify(result: &AuditVerifyResult, limit: i64, zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        "=== 审计链验证 ===".to_string()
+    } else {
+        "=== Audit Chain Verification ===".to_string()
+    }];
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "验证范围" } else { "Scope" },
+        if result.table_name.is_empty() {
+            if zh_cn {
+                "全部表"
+            } else {
+                "all tables"
+            }
+        } else {
+            &result.table_name
+        }
+    ));
+    lines.push(format!(
+        "  {}: {limit}",
+        if zh_cn {
+            "最大验证记录数"
+        } else {
+            "Max records to verify"
+        }
+    ));
+    lines.push(String::new());
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn {
+            "安全级别"
+        } else {
+            "Security level"
+        },
+        result.security_level
+    ));
+    lines.push(if zh_cn {
+        format!(
+            "  总记录: {}，通过: {}，不通过: {}",
+            result.total_count, result.verified_count, result.broken_count
+        )
+    } else {
+        format!(
+            "  Total: {}, Verified: {}, Broken: {}",
+            result.total_count, result.verified_count, result.broken_count
+        )
+    });
+    lines.push(String::new());
+    for (index, record) in result.broken_records.iter().enumerate() {
+        lines.push(format!(
+            "    [{}] id={} table={} record_id={} reasons={}",
+            index + 1,
+            record.id,
+            record.table_name,
+            record.record_id,
+            record.reasons.join(", ")
+        ));
+    }
+    if !result.broken_records.is_empty() {
+        lines.push(String::new());
+    }
+    lines.push(if result.total_count == 0 {
+        if zh_cn {
+            "  无 audit_chain 记录".to_string()
+        } else {
+            "  No audit_chain records".to_string()
+        }
+    } else if result.broken_count == 0 {
+        if zh_cn {
+            "✓ 审计链完整性验证通过".to_string()
+        } else {
+            "✓ Audit chain integrity verified".to_string()
+        }
+    } else if zh_cn {
+        format!("✗ 审计链存在 {} 条不通过记录", result.broken_count)
+    } else {
+        format!("✗ Audit chain has {} broken records", result.broken_count)
+    });
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn format_audit_rotate(result: &AuditRotateResult, zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        "=== 审计签名密钥已轮换 ===".to_string()
+    } else {
+        "=== Audit Signing Key Rotated ===".to_string()
+    }];
+    lines.push(format!("key_id: {}", result.key_id));
+    lines.push(format!("rotated_at: {}", result.rotated_at));
+    if result.previous_key_id.is_empty() {
+        lines.push(
+            if zh_cn {
+                "previous_key: 无"
+            } else {
+                "previous_key: none"
+            }
+            .to_string(),
+        );
+    } else {
+        lines.push(format!("previous_key: {}", result.previous_key_id));
+    }
+    lines.push(
+        if zh_cn {
+            "旧记录保留原签名；验证时按 signing_key_id 选择密钥。"
+        } else {
+            "Old records retain their signatures; verification selects keys by signing_key_id."
+        }
+        .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn format_audit_keys(rows: &[AuditKeyInfo], zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        format!("=== 审计签名密钥（{} 条）===", rows.len())
+    } else {
+        format!("=== Audit Signing Keys ({}) ===", rows.len())
+    }];
+    if rows.is_empty() {
+        lines.push(if zh_cn { "（空）" } else { "(empty)" }.to_string());
+    }
+    for (index, key) in rows.iter().enumerate() {
+        lines.push(format!(
+            "{}. {} rotated_at={} active={}",
+            index + 1,
+            key.key_id,
+            key.rotated_at,
+            if key.is_active { "yes" } else { "no" }
+        ));
+    }
+    lines.join("\n")
+}
+
+fn format_bootstrap_status(result: &BootstrapStatus, zh_cn: bool) -> String {
+    let mut lines = vec![if zh_cn {
+        "自举健康摘要".to_string()
+    } else {
+        "Bootstrap Health Summary".to_string()
+    }];
+    lines.push(String::new());
+    lines.push(if result.db_stale {
+        if zh_cn {
+            "✗ 数据库已过期：扫描基线与当前 HEAD 不一致".to_string()
+        } else {
+            "✗ Database stale: scan baseline does not match current HEAD".to_string()
+        }
+    } else if zh_cn {
+        "✓ 数据库已同步：扫描基线与当前 HEAD 一致".to_string()
+    } else {
+        "✓ Database in sync: scan baseline matches current HEAD".to_string()
+    });
+    if !result.current_head.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn { "当前 HEAD" } else { "Current HEAD" },
+            &result.current_head[..result.current_head.len().min(12)]
+        ));
+    }
+    lines.push(String::new());
+    lines.push(if zh_cn {
+        format!("  生效规则: {}", result.active_rules_count)
+    } else {
+        format!("  Active rules: {}", result.active_rules_count)
+    });
+    lines.push(if zh_cn {
+        format!("  待审核规则候选: {}", result.pending_candidates_count)
+    } else {
+        format!(
+            "  Pending rule candidates: {}",
+            result.pending_candidates_count
+        )
+    });
+    lines.push(String::new());
+    lines.push(if zh_cn {
+        format!("  未解决质量发现: {}", result.open_findings_count)
+    } else {
+        format!("  Open quality findings: {}", result.open_findings_count)
+    });
+    lines.push(if zh_cn {
+        format!("  阻塞发现（block）: {}", result.blocking_findings_count)
+    } else {
+        format!(
+            "  Blocking findings (block): {}",
+            result.blocking_findings_count
+        )
+    });
+    lines.push(String::new());
+    lines.push(if zh_cn {
+        format!(
+            "  审计链: total={}, broken={}, level={}",
+            result.audit_verify.total_count,
+            result.audit_verify.broken_count,
+            result.audit_verify.security_level
+        )
+    } else {
+        format!(
+            "  Audit chain: total={}, broken={}, level={}",
+            result.audit_verify.total_count,
+            result.audit_verify.broken_count,
+            result.audit_verify.security_level
+        )
+    });
+    lines.push(String::new());
+    if let Some(scan) = &result.latest_scan_run {
+        lines.push(if zh_cn {
+            format!(
+                "  最近扫描: id={} head={} status={}",
+                scan.id,
+                &scan.git_head[..scan.git_head.len().min(12)],
+                scan.status
+            )
+        } else {
+            format!(
+                "  Latest scan: id={} head={} status={}",
+                scan.id,
+                &scan.git_head[..scan.git_head.len().min(12)],
+                scan.status
+            )
+        });
+    } else {
+        lines.push(if zh_cn {
+            "  最近扫描: 无记录".to_string()
+        } else {
+            "  Latest scan: no records".to_string()
+        });
+    }
+    lines.push(String::new());
+    lines.push(if zh_cn {
+        format!(
+            "  任务: open={}, in_progress={}, review={}, applied={}",
+            result.tasks.get("open").copied().unwrap_or(0),
+            result.tasks.get("in_progress").copied().unwrap_or(0),
+            result.tasks.get("review").copied().unwrap_or(0),
+            result.tasks.get("applied").copied().unwrap_or(0)
+        )
+    } else {
+        format!(
+            "  Tasks: open={}, in_progress={}, review={}, applied={}",
+            result.tasks.get("open").copied().unwrap_or(0),
+            result.tasks.get("in_progress").copied().unwrap_or(0),
+            result.tasks.get("review").copied().unwrap_or(0),
+            result.tasks.get("applied").copied().unwrap_or(0)
+        )
+    });
+    lines.push(String::new());
+    lines.push(if zh_cn {
+        format!("▶ 建议下一步: {}", result.recommended_next_action)
+    } else {
+        format!("▶ Recommended next: {}", result.recommended_next_action)
+    });
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 fn format_config_explain(entries: &[ConfigEntry]) -> String {
     let mut lines = vec![
         "# N4 分层配置（来源：callwarden_core::cli::config）".to_string(),
@@ -3256,7 +4495,7 @@ fn emit_result(result: CommandResult) {
 fn command_name(cmd: &Commands) -> &'static str {
     use Commands::*;
     match cmd {
-        Guardrail => "guardrail",
+        Guardrail { .. } => "guardrail",
         Impact { .. } => "impact",
         Review => "review",
         Evolution => "evolution",
@@ -3266,15 +4505,15 @@ fn command_name(cmd: &Commands) -> &'static str {
         Task { .. } => "task",
         VulnBlast => "vuln-blast",
         SymbolHistory => "symbol-history",
-        CheckGate => "check-gate",
+        CheckGate { .. } => "check-gate",
         TestImpact => "test-impact",
         Gc => "gc",
         Doctor => "doctor",
         InstallAgent => "install-agent",
         InstallHook => "install-hook",
-        Rule => "rule",
-        Audit => "audit",
-        Bootstrap => "bootstrap",
+        Rule { .. } => "rule",
+        Audit { .. } => "audit",
+        Bootstrap { .. } => "bootstrap",
         Clone => "clone",
         Fts => "fts",
         Workspace { .. } => "workspace",
@@ -3321,6 +4560,7 @@ fn command_name(cmd: &Commands) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn test_command_count() {
@@ -3328,7 +4568,11 @@ mod tests {
         // 通过 command_name 的 match 分支数间接验证
         // 每个 Commands 变体都有对应的 command_name 分支
         let variants: Vec<Commands> = vec![
-            Commands::Guardrail,
+            Commands::Guardrail {
+                action: GuardrailAction::Rules {
+                    category: String::new(),
+                },
+            },
             Commands::Impact {
                 symbol_hash: "sym-a".to_string(),
                 depth: 3,
@@ -3348,15 +4592,32 @@ mod tests {
             },
             Commands::VulnBlast,
             Commands::SymbolHistory,
-            Commands::CheckGate,
+            Commands::CheckGate {
+                task_id: "task-1".to_string(),
+                resolve: false,
+                step_id: String::new(),
+                semgrep_timeout: 60,
+            },
             Commands::TestImpact,
             Commands::Gc,
             Commands::Doctor,
             Commands::InstallAgent,
             Commands::InstallHook,
-            Commands::Rule,
-            Commands::Audit,
-            Commands::Bootstrap,
+            Commands::Rule {
+                action: RuleAction::List {
+                    status: "active".to_string(),
+                    limit: 100,
+                },
+            },
+            Commands::Audit {
+                action: AuditAction::Verify {
+                    table_name: String::new(),
+                    limit: 1000,
+                },
+            },
+            Commands::Bootstrap {
+                action: BootstrapAction::Status,
+            },
             Commands::Clone,
             Commands::Fts,
             Commands::Workspace {
@@ -3458,7 +4719,15 @@ mod tests {
         // 验证 kebab-case 转换
         assert_eq!(command_name(&Commands::VulnBlast), "vuln-blast");
         assert_eq!(command_name(&Commands::SymbolHistory), "symbol-history");
-        assert_eq!(command_name(&Commands::CheckGate), "check-gate");
+        assert_eq!(
+            command_name(&Commands::CheckGate {
+                task_id: "task-1".to_string(),
+                resolve: false,
+                step_id: String::new(),
+                semgrep_timeout: 60,
+            }),
+            "check-gate"
+        );
         assert_eq!(command_name(&Commands::TestImpact), "test-impact");
         assert_eq!(command_name(&Commands::InstallAgent), "install-agent");
         assert_eq!(command_name(&Commands::InstallHook), "install-hook");
@@ -3487,7 +4756,14 @@ mod tests {
     #[test]
     fn test_command_name_simple() {
         // 验证简单名称（无连字符）
-        assert_eq!(command_name(&Commands::Guardrail), "guardrail");
+        assert_eq!(
+            command_name(&Commands::Guardrail {
+                action: GuardrailAction::Rules {
+                    category: String::new(),
+                },
+            }),
+            "guardrail"
+        );
         assert_eq!(
             command_name(&Commands::Task {
                 action: TaskAction::StatusTree {
@@ -3958,5 +5234,88 @@ mod tests {
         assert!(matches!(cli.mode, Some(ModeArg::Enterprise)));
         assert_eq!(cli.socket, Some(PathBuf::from("/tmp/callwarden.sock")));
         assert!(matches!(cli.command, Some(Commands::Stats)));
+    }
+
+    #[test]
+    fn security_commands_stay_local_in_enterprise_mode() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("callwarden.db");
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE workspaces(id INTEGER PRIMARY KEY,root_path TEXT,is_active INTEGER);
+             INSERT INTO workspaces VALUES (1,'',1);
+             CREATE TABLE agent_rules(
+               id TEXT PRIMARY KEY,title TEXT,rule_text TEXT,scope_json TEXT,severity TEXT,
+               status TEXT,source_candidate_id TEXT,evidence_json TEXT,created_at REAL,
+               updated_at REAL,synced_to_agents_md INTEGER,sync_hash TEXT);
+             CREATE TABLE agent_rule_candidates(
+               id TEXT PRIMARY KEY,title TEXT,rule_text TEXT,scope_json TEXT,severity TEXT,
+               source TEXT,evidence_json TEXT,confidence REAL,status TEXT,created_at REAL,
+               reviewed_at REAL,reviewer TEXT,linked_rule_id TEXT);
+             CREATE TABLE guardrail_rules(
+               rule_id TEXT PRIMARY KEY,category TEXT,severity TEXT,pattern TEXT,action TEXT,
+               description TEXT,is_builtin INTEGER,created_at REAL);
+             CREATE TABLE guardrail_findings(
+               id INTEGER PRIMARY KEY,rule_id TEXT,file_path TEXT,symbol_hash TEXT,severity TEXT,
+               status TEXT,message TEXT,detected_at REAL,resolved_at REAL);
+             CREATE TABLE tasks(id TEXT PRIMARY KEY,status TEXT);
+             CREATE TABLE change_audit(id TEXT PRIMARY KEY,task_id TEXT,file_path TEXT);
+             CREATE TABLE task_quality_findings(id TEXT PRIMARY KEY,status TEXT,severity TEXT);
+             CREATE TABLE audit_chain(
+               id INTEGER PRIMARY KEY,table_name TEXT,record_id TEXT,operation TEXT,
+               payload_hash TEXT,prev_signature TEXT,record_signature TEXT,
+               signing_key_id TEXT,signed_at REAL);
+             CREATE TABLE audit_key_rotations(
+               id INTEGER PRIMARY KEY,key_id TEXT UNIQUE,key_secret TEXT,rotated_at REAL,
+               is_active INTEGER);
+             CREATE TABLE workspace_scan_runs(
+               id INTEGER PRIMARY KEY,workspace_id INTEGER,git_head TEXT,started_at REAL,
+               status TEXT);",
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE workspaces SET root_path=?1 WHERE id=1",
+            rusqlite::params![dir.path().to_string_lossy().to_string()],
+        )
+        .unwrap();
+        drop(conn);
+        let runtime = RuntimeOptions::from_overrides(
+            Some(DaemonMode::Enterprise),
+            Some(dir.path().join("missing.sock")),
+            Some(db_path),
+            None,
+            1,
+        );
+
+        let rule = run_rule(
+            &runtime,
+            RuleAction::List {
+                status: "active".to_string(),
+                limit: 10,
+            },
+        );
+        assert_eq!(rule.route, RouteUsed::Local);
+        assert_eq!(rule.exit_code, 0);
+
+        let guardrail = run_guardrail(
+            &runtime,
+            GuardrailAction::Rules {
+                category: String::new(),
+            },
+        );
+        assert_eq!(guardrail.route, RouteUsed::Local);
+        assert_eq!(guardrail.exit_code, 0);
+
+        let gate = run_check_gate_command(&runtime, "missing", false, "", 1);
+        assert_eq!(gate.route, RouteUsed::Local);
+        assert_ne!(gate.exit_code, 0);
+
+        let audit = run_audit(&runtime, AuditAction::Keys);
+        assert_eq!(audit.route, RouteUsed::Local);
+        assert_eq!(audit.exit_code, 0);
+
+        let bootstrap = run_bootstrap(&runtime, BootstrapAction::Status);
+        assert_eq!(bootstrap.route, RouteUsed::Local);
+        assert_eq!(bootstrap.exit_code, 0);
     }
 }

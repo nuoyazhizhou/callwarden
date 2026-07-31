@@ -2206,3 +2206,328 @@ def test_task_audit_commands_match_python_and_enforce_rust_reviewer_boundary(
     assert denied.returncode != 0
     assert "self-approval is forbidden" in denied.stderr
     assert db_paths["rust"].read_bytes() == before
+
+
+def _seed_security_cli_fixture(db: CodeGraphDB, workspace_root: Path) -> None:
+    """构造 E4 rule/guardrail/check-gate/audit/bootstrap 的公共事实。"""
+    workspace_id = db._get_active_workspace_id()
+    danger = workspace_root / "danger.sql"
+    danger.write_text(
+        "ALTER TABLE users ADD COLUMN x INT;\nDROP TABLE audit;\n",
+        encoding="utf-8",
+    )
+    safe = workspace_root / "safe.py"
+    safe.write_text("value = 1\n", encoding="utf-8")
+    now = 1735689600.0
+    db.conn.execute(
+        "INSERT INTO file_contents(content_hash,language,total_lines,first_seen_at) "
+        "VALUES('danger-hash','sql',2,?)",
+        (now,),
+    )
+    db.conn.execute(
+        "INSERT INTO file_instances(workspace_id,rel_path,abs_path,current_content_hash,"
+        "mtime,total_lines,last_parsed,status,module_path) "
+        "VALUES(?,?,?,?,?,?,?,?,?)",
+        (
+            workspace_id,
+            "danger.sql",
+            str(danger),
+            "danger-hash",
+            now,
+            2,
+            now,
+            "active",
+            "danger",
+        ),
+    )
+    candidates = [
+        (
+            "accept-me",
+            "Use transactions",
+            "All writes need transactions",
+            '{"actions":["edit"]}',
+            "critical",
+            "manual",
+            "{}",
+            1.0,
+            "pending",
+            now,
+            None,
+            "",
+            "",
+        ),
+        (
+            "reject-me",
+            "Reject this",
+            "Bad candidate",
+            "{}",
+            "info",
+            "manual",
+            "{}",
+            0.2,
+            "pending",
+            now + 1,
+            None,
+            "",
+            "",
+        ),
+    ]
+    db.conn.executemany(
+        "INSERT INTO agent_rule_candidates(id,title,rule_text,scope_json,severity,source,"
+        "evidence_json,confidence,status,created_at,reviewed_at,reviewer,linked_rule_id) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        candidates,
+    )
+    db.conn.execute(
+        "INSERT INTO tasks(id,title,description,creator,status,created_at,updated_at,depth,sort_order) "
+        "VALUES('gate-task','Gate task','','builder','in_progress',?,?,0,0)",
+        (now, now),
+    )
+    db.conn.execute(
+        "INSERT INTO change_audit(id,task_id,step_id,file_path,hash_before,hash_after,diff,author,timestamp) "
+        "VALUES('gate-change','gate-task','','safe.py','','','','agent',?)",
+        (now,),
+    )
+    db.conn.execute(
+        "INSERT INTO guardrail_rules(rule_id,category,severity,pattern,action,description,is_builtin,created_at) "
+        "VALUES('gate_existing','check_gate','warn','*','require_review','existing',1,?)",
+        (now,),
+    )
+    db.conn.execute(
+        "INSERT INTO guardrail_findings(rule_id,file_path,symbol_hash,severity,status,message,detected_at) "
+        "VALUES('gate_existing','safe.py','','warn','open','existing gate finding',?)",
+        (now,),
+    )
+    payload_hash = __import__("hashlib").sha256(b"audit-event").hexdigest()
+    record_signature = __import__("hashlib").sha256(
+        f"|{payload_hash}".encode("utf-8")
+    ).hexdigest()
+    db.conn.execute(
+        "INSERT INTO audit_chain(table_name,record_id,operation,payload_hash,prev_signature,"
+        "record_signature,signing_key_id,signed_at) "
+        "VALUES('security_events','1','insert',?,'',?,'local',?)",
+        (payload_hash, record_signature, now),
+    )
+    db.conn.execute(
+        "INSERT INTO workspace_scan_runs(workspace_id,purpose,baseline_type,git_head,started_at,status) "
+        "VALUES(?,'bootstrap','manifest','',?,'completed')",
+        (workspace_id, now),
+    )
+    db.conn.commit()
+    db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
+def _security_cli_snapshot(db_path: Path) -> dict[str, list[tuple]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
+            "candidates": conn.execute(
+                "SELECT id,status,reviewer,evidence_json FROM agent_rule_candidates ORDER BY id"
+            ).fetchall(),
+            "rules": conn.execute(
+                "SELECT title,rule_text,scope_json,severity,status,source_candidate_id "
+                "FROM agent_rules ORDER BY title"
+            ).fetchall(),
+            "guardrail_rules": conn.execute(
+                "SELECT rule_id,category,severity,pattern,action,is_builtin "
+                "FROM guardrail_rules WHERE category='db_safety' ORDER BY rule_id"
+            ).fetchall(),
+            "guardrail_findings": conn.execute(
+                "SELECT f.rule_id,f.file_path,f.severity,f.status,f.message "
+                "FROM guardrail_findings f JOIN guardrail_rules r ON r.rule_id=f.rule_id "
+                "WHERE r.category IN ('db_safety','check_gate') ORDER BY f.file_path,f.rule_id,f.message"
+            ).fetchall(),
+            "keys": conn.execute(
+                "SELECT key_id,is_active FROM audit_key_rotations ORDER BY key_id"
+            ).fetchall(),
+            "audit": conn.execute(
+                "SELECT table_name,record_id,payload_hash,prev_signature,record_signature,signing_key_id "
+                "FROM audit_chain ORDER BY id"
+            ).fetchall(),
+        }
+    finally:
+        conn.close()
+
+
+def test_security_commands_match_python_persisted_state_and_enterprise_stays_local(
+    tmp_path: Path,
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    roots: dict[str, Path] = {}
+    db_paths: dict[str, Path] = {}
+    envs: dict[str, dict[str, str]] = {}
+    for implementation in ("python", "rust"):
+        root = tmp_path / implementation / "workspace"
+        root.mkdir(parents=True)
+        home = tmp_path / implementation / "home"
+        db_path = home / ".callwarden" / "callwarden.db"
+        db_path.parent.mkdir(parents=True)
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(root))
+        _seed_security_cli_fixture(db, root)
+        db.close()
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+                "CALLWARDEN_WORKSPACE": str(root),
+                "CALLWARDEN_LANG": "en_US",
+                "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            }
+        )
+        roots[implementation] = root
+        db_paths[implementation] = db_path
+        envs[implementation] = env
+
+    def run_python(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "cw.py"), *args],
+            cwd=roots["python"],
+            env=envs["python"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def run_rust(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                str(binary),
+                "--mode",
+                "enterprise",
+                "--socket",
+                str(tmp_path / "missing.sock"),
+                "--db",
+                str(db_paths["rust"]),
+                *args,
+            ],
+            cwd=roots["rust"],
+            env=envs["rust"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    read_only_contracts = [
+        ("rule", "candidate", "list"),
+        ("rule", "list"),
+        ("rule", "applicable", "--context", '{"action":"edit"}'),
+        ("rule", "sync"),
+        ("rule", "extract", "--task-id", "gate-task"),
+        ("rule", "seed-bootstrap"),
+        ("rule", "cleanup-sync-log"),
+        ("audit", "verify", "--table", "security_events"),
+        ("bootstrap", "status"),
+    ]
+    for args in read_only_contracts:
+        python_result = run_python(*args)
+        rust_result = run_rust(*args)
+        assert python_result.returncode == 0, (args, python_result.stderr)
+        assert rust_result.returncode == 0, (args, rust_result.stderr)
+        assert rust_result.stdout == python_result.stdout, args
+        assert rust_result.stderr == python_result.stderr, args
+
+    command_pairs = [
+        ("rule", "candidate", "accept", "accept-me", "--reviewer", "reviewer"),
+        (
+            "rule",
+            "candidate",
+            "reject",
+            "reject-me",
+            "--reviewer",
+            "reviewer",
+            "--reason",
+            "not applicable",
+        ),
+        ("rule", "list"),
+        ("guardrail", "scan", "--file", "danger.sql", "--category", "db_safety"),
+        ("guardrail", "rules", "--category", "db_safety"),
+        ("check-gate", "gate-task", "--resolve"),
+        ("audit", "verify", "--table", "security_events"),
+        ("audit", "rotate-key", "--key-id", "next-key", "--secret", "fixed-secret"),
+        ("audit", "keys"),
+        ("bootstrap", "status"),
+    ]
+    exact_output_prefixes = {
+        ("rule", "candidate", "reject"),
+        ("guardrail", "scan"),
+        ("guardrail", "rules"),
+        ("check-gate", "gate-task"),
+    }
+    for args in command_pairs:
+        python_result = run_python(*args)
+        rust_result = run_rust(*args)
+        assert python_result.returncode == 0, (args, python_result.stderr)
+        assert rust_result.returncode == 0, (args, rust_result.stderr)
+        if any(args[: len(prefix)] == prefix for prefix in exact_output_prefixes):
+            assert rust_result.stdout == python_result.stdout, args
+            assert rust_result.stderr == python_result.stderr, args
+
+    assert _security_cli_snapshot(db_paths["rust"]) == _security_cli_snapshot(
+        db_paths["python"]
+    )
+
+
+def test_security_commands_fail_closed_without_mutating_evidence(tmp_path: Path) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+    root = tmp_path / "workspace"
+    root.mkdir()
+    home = tmp_path / "home"
+    db_path = home / ".callwarden" / "callwarden.db"
+    db_path.parent.mkdir(parents=True)
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(root))
+    db.conn.execute(
+        "INSERT INTO tasks(id,title,description,creator,status,created_at,updated_at,depth,sort_order) "
+        "VALUES('no-evidence','No evidence','','builder','in_progress',1,1,0,0)"
+    )
+    db.conn.execute(
+        "INSERT INTO agent_rule_candidates(id,title,rule_text,scope_json,severity,source,"
+        "evidence_json,confidence,status,created_at,reviewer,linked_rule_id) "
+        "VALUES('candidate','Rule','Text','{}','info','manual','{}',1,'pending',1,'','')"
+    )
+    db.conn.commit()
+    db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    db.close()
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "CALLWARDEN_WORKSPACE": str(root),
+            "CALLWARDEN_LANG": "en_US",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+        }
+    )
+
+    def run_rust(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(binary), "--db", str(db_path), *args],
+            cwd=root,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    before = _security_cli_snapshot(db_path)
+    rejected_commands = [
+        ("guardrail", "scan", "--file", "../"),
+        ("check-gate", "no-evidence"),
+        ("audit", "verify"),
+        ("audit", "rotate-key", "--key-id", "local", "--secret", "x"),
+        ("rule", "candidate", "accept", "candidate", "--reviewer", ""),
+    ]
+    for args in rejected_commands:
+        result = run_rust(*args)
+        assert result.returncode != 0, (args, result.stdout, result.stderr)
+        assert _security_cli_snapshot(db_path) == before

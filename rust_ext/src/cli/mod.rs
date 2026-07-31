@@ -27,6 +27,7 @@ pub mod refresh;
 pub mod router;
 pub mod runtime;
 pub mod search;
+pub mod security;
 pub mod stats;
 pub mod status;
 pub mod symbol;

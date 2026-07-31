@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees/call-chain/topo/impact（只读）及显式文件增量 refresh（写） |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入基础查询、图查询、workspace/refresh/toolchain/build-context、task E1-E3，以及 E4 rule/guardrail/check-gate/audit/bootstrap；其余命令继续逐切片迁移 |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -33,9 +33,10 @@
 | `db_query.py` | `get_callers`、`get_callees`、`search_symbols` | `graph::GraphStore` 已接入（B-P7b 短路） | Phase 2 |
 | `db_cas.py` / `db_cas_merge.py` | CAS 读写、`cas_file_cache` 表 | `daemon/cas.rs` + `daemon/cas_merge.rs` 已实现 | Phase 1 |
 | `db_workspace_manifest.py` | `workspace_manifest` 表、projection | 部分在 `daemon/workspace.rs` | Phase 1 |
-| `db_tasks.py` | 任务状态机、`task_create`/`next`/`report`/`apply`/`close` | 待迁移 | Phase 6（或独立） |
+| `db_tasks.py` | 任务状态机、`task_create`/`next`/`report`/`apply`/`close` | Rust `cli/task.rs` + `cw_cli.rs` 已完成 E1-E3 CLI 状态机；Python MCP adapter 保留 | Phase 6（或独立） |
 | `db_daemon.py` | daemon 与 Python 侧的状态同步 | `rust_ext/src/bin/cw_daemon.rs` 已实现 | Phase 4 |
-| `db_guardrail.py` | Before-Edit Contract、`guardrail_scan` | 待迁移 | Phase 6 |
+| `db_guardrail.py` | Before-Edit Contract、`guardrail_scan` | Rust `cli/security.rs` 已完成 E4 CLI Guardrail/check-gate；Python MCP adapter 保留 | Phase 6 |
+| `db_agent_rules.py` | 候选规则、适用规则、AGENTS 同步、规则提取与 GC | Rust `cli/security.rs` 已完成 E4 CLI 规则生命周期；Python MCP adapter 保留 | Phase 6 |
 | `db_impact.py` | `blast_radius`、`cross_layer_impact` | Rust CSR/跨层核心与 `cw impact` 已接入；其余 impact 能力待迁移 | Phase 6 |
 | `db_evolution.py` | 变更频率、缺陷关联、热点 | 待迁移 | Phase 6 |
 | `db_vector.py` | 向量嵌入、余弦相似度 | `batch_cosine_similarity` 已实现 | Phase 6 |
@@ -44,7 +45,7 @@
 | `db_git.py` | Git 历史、blame、commit | 待迁移 | Phase 6 |
 | `db_migrate.py` | schema migration | 待迁移 | Phase 1 |
 | `db_gc.py` | GC、归档、单库迁移 | 待迁移 | Phase 1 |
-| `db_audit_chain.py` | 审计链、签名轮换 | 待迁移 | Phase 4 |
+| `db_audit_chain.py` | 审计链、签名轮换 | Rust `cli/security.rs` 已完成 E4 CLI verify/rotate/keys；Python MCP adapter 保留 | Phase 4 |
 | `db_lsp.py` | LSP hover/definition/references | 待迁移 | Phase 6 |
 | 其他 Mixin | 见 `db/db_*.py` | 分批迁移 | Phase 1-6 |
 | `db/rust_parser_facade.py` | **生产解析统一入口**（已切 Rust-only） | `callwarden_core.parse_file_lang` 等 | ✅ 已完成 |
@@ -153,7 +154,7 @@
 | `DaemonService` | UDS framing、RPC dispatch | 🟡 Rust 有 `daemon/server.rs` | Phase 4 |
 | `AclService` | UID/workspace ACL、路径安全 | 🟡 Rust 有 `peercred` + `budget` | Phase 4 |
 | `MetricsService` | metrics、health、audit | 🟡 Rust 有 `health` + `parser_metrics` | Phase 4 |
-| `CliService` | Rust CLI 命令树 | 🔴 未开始 | Phase 5 |
+| `CliService` | Rust CLI 命令树 | 🟡 已进入逐切片生产迁移，E1-E4 已完成并待独立 review | Phase 5 |
 | `ClientService` | client/agent RPC | 🔴 未开始 | Phase 5 |
 | `AnalysisService` | blast radius、演化、clone、向量 | 🟡 部分已实现（cosine） | Phase 6 |
 | `AdapterService` | MCP facade、Semgrep/RAG 边界 | 🔴 Python adapter 保留 | Phase 6 |
@@ -4449,3 +4450,69 @@ Rust 单测覆盖事务回滚、dry-run 零写、finding scope、未知 severity
 自审拒绝、阻塞 finding、父链级联、父任务手工审核拒绝、split 原子失败以及并发
 apply。完整差分套件使用独立 Python/Rust SQLite，验证输出和数据库状态，而不是仅
 调用内部函数。
+
+---
+
+## §67 自举复审整改：Rust `rule/guardrail/check-gate/audit/bootstrap`
+
+**任务**：`T-1785484889187-cf1e9f88`（P0-CLI-E4）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 67.1 已实现
+
+- Rust `cw rule` 已接入 candidate create/list/accept/reject、list、applicable、
+  sync、insert-block、extract、seed-bootstrap 与 cleanup-sync-log。候选审核、规则
+  发布和同步日志使用 `BEGIN IMMEDIATE`；sync dry-run、seed dry-run 和 cleanup
+  dry-run 均零写入，文件写入后的数据库提交失败会恢复原文件；
+- 规则 JSON 按 Python `json.dumps(..., ensure_ascii=False)` 的字段顺序和分隔符
+  持久化。5 条 bootstrap seed 的 ID、正文、scope、severity 和 evidence 与 Python
+  真相源逐字一致；finding 提取按 `(finding_type,severity,source)` 聚合、去重，
+  evidence 不添加 Python 不存在的字段；
+- Rust `cw guardrail scan/rules` 内置 9 条规则。扫描路径必须属于唯一 active
+  workspace，拒绝 `..`、symlink escape、缺失文件和越界绝对路径；规则与 finding
+  在单事务中发布，同一 finding 幂等去重，category 过滤不会误写其他类别；
+- Rust `cw check-gate` 从 `change_audit` 获取可信变更集，缺 task、缺变更证据、
+  越界文件、Rust parser 诊断失败、Semgrep 不存在/超时/非零退出/坏 JSON/errors
+  数组均 fail closed。Semgrep 对全部变更文件只启动一次，finding 持久化与 resolve
+  使用事务且只处理 check-gate 类别；
+- Rust `cw audit verify/rotate-key/keys` 验证每张表独立的 prev-signature 链，兼容
+  local SHA-256、legacy HMAC 和轮换 key；未知 key、首记录 prev 非空、链断裂、签名
+  不匹配和多 active key 均报告损坏。保留 key ID 与空 secret 被拒绝，key 列表不
+  暴露 secret；零审计记录沿用安全强化，显示既有文案但返回非零；
+- Rust `cw bootstrap status` 汇总 scan baseline、规则、候选、finding、审计链和
+  task 状态，数据库/Git/审计查询异常不再被 Python 的 fail-soft 路径伪装为健康；
+  推荐命令与 Python 当前契约一致；
+- 以上安全编排事实属于当前 UID 的本地 SQLite。`local/auto/enterprise` 三种模式
+  均固定走本地数据库，即使 enterprise socket 不存在也不远程读取或写入共享 daemon；
+- Windows 真实进程执行大型 clap + E4 命令树时默认主线程栈会溢出。`cw` 入口现在
+  在显式 8 MiB 的 `cw-cli-main` 线程运行，真实 `cw.exe rule candidate accept`
+  差分用例固定该发布前启动契约；
+- 中英文 formatter 继续把 Python i18n 输出视为 ABI。9 个无随机值的预检命令，
+  以及 reject、guardrail scan/rules、check-gate resolve 的 stdout/stderr 已做逐字符
+  进程差分；随机 ID、真实时间的写命令比较结构化持久化投影。
+
+### 67.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::security::tests \
+  --lib --no-default-features -q
+test result: ok. 10 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw \
+  --no-default-features -q
+test result: ok. 24 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+65 passed
+
+python -m pytest tests/test_agent_rules.py tests/test_task_quality_gate.py \
+  tests/test_audit_chain.py tests/test_audit_chain_mixin.py \
+  tests/test_audit_chain_full_flow.py tests/test_audit_key_rotation.py \
+  tests/test_bootstrap_status.py -q
+388 passed
+```
+
+真实进程差分使用独立 Python/Rust SQLite，覆盖 13 个确定性输出的精确终端契约、
+10 个状态变更命令的持久化投影、enterprise 缺 socket 的本地真相域，以及路径穿越、
+缺 change evidence、空审计链、保留 key ID 和空 reviewer 的拒绝后数据库不变。
