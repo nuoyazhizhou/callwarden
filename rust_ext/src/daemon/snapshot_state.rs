@@ -797,7 +797,10 @@ impl DaemonStateExt for SnapshotDaemonState {
         })?;
 
         let limit = get_int_param_or(params, "limit", 20).max(0) as usize;
-        let detail = params.get("detail").and_then(Value::as_bool).unwrap_or(false);
+        let detail = params
+            .get("detail")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let results = if detail {
             store
                 .topological_details_rust(limit)
@@ -1138,15 +1141,33 @@ impl DaemonStateExt for SnapshotDaemonState {
         })
     }
 
-    fn handle_build_context_register(
+    fn handle_toolchain_list_bound(
         &mut self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let store = self.require_toolchain_store()?;
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let store = self.require_toolchain_store()?;
+        let build_context_hash = get_str_param(params, "build_context_hash");
+        store
+            .get_workspace_toolchains(workspace_id, build_context_hash)
+            .map(Value::Array)
+            .map_err(|e| DaemonRpcError::internal_error(format!("list_bound_toolchains: {}", e)))
+    }
+
+    fn handle_build_context_register(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let store = self.require_toolchain_store()?;
         let name = require_str_param(params, "name")?;
         let compile_flags: Vec<String> = params
             .get("compile_flags")
@@ -1199,15 +1220,33 @@ impl DaemonStateExt for SnapshotDaemonState {
             .map_err(|e| DaemonRpcError::internal_error(format!("list_build_contexts: {}", e)))
     }
 
-    fn handle_build_context_set_active(
+    fn handle_build_context_get(
         &mut self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let store = self.require_toolchain_store()?;
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let store = self.require_toolchain_store()?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        store
+            .get_build_context(workspace_id, build_context_hash)
+            .map(|value| value.unwrap_or(Value::Null))
+            .map_err(|e| DaemonRpcError::internal_error(format!("get_build_context: {}", e)))
+    }
+
+    fn handle_build_context_set_active(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let store = self.require_toolchain_store()?;
         let build_context_hash = require_str_param(params, "build_context_hash")?;
         let ok = store
             .set_active_build_context(workspace_id, build_context_hash)
@@ -1221,13 +1260,14 @@ impl DaemonStateExt for SnapshotDaemonState {
 
     fn handle_build_context_delete(
         &mut self,
-        _peer: PeerCredential,
+        peer: PeerCredential,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        let store = self.require_toolchain_store()?;
         let workspace_id = require_str_param(params, "workspace_id")?
             .parse::<i64>()
             .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let store = self.require_toolchain_store()?;
         let build_context_hash = require_str_param(params, "build_context_hash")?;
         let deleted = store
             .delete_build_context(workspace_id, build_context_hash)
@@ -1254,35 +1294,7 @@ impl DaemonStateExt for SnapshotDaemonState {
             .get("edges")
             .and_then(|v| v.as_array())
             .ok_or_else(|| DaemonRpcError::invalid_params("缺少 edges 数组".to_string()))?;
-        let edges: Vec<super::toolchain::ResolvedEdgeInput> = edges_arr
-            .iter()
-            .map(|e| super::toolchain::ResolvedEdgeInput {
-                caller_symbol_id: e
-                    .get("caller_symbol_id")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0),
-                callee_symbol_id: e
-                    .get("callee_symbol_id")
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0),
-                callee_name: e
-                    .get("callee_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                callee_file: e
-                    .get("callee_file")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                call_line: e.get("call_line").and_then(|v| v.as_i64()).unwrap_or(0),
-                resolution_method: e
-                    .get("resolution_method")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            })
-            .collect();
+        let edges = parse_resolved_edge_inputs(edges_arr)?;
         let inserted = store
             .store_resolved_edges(workspace_id, build_context_hash, &edges)
             .map_err(|e| DaemonRpcError::internal_error(format!("store_resolved_edges: {}", e)))?;
@@ -1333,11 +1345,89 @@ impl DaemonStateExt for SnapshotDaemonState {
         m.insert("count".to_string(), Value::Number(count.into()));
         Ok(Value::Object(m))
     }
+
+    fn handle_resolved_edges_replace(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_id = require_str_param(params, "workspace_id")?
+            .parse::<i64>()
+            .map_err(|_| DaemonRpcError::invalid_params("workspace_id 必须是整数".to_string()))?;
+        let _workspace = owned_workspace_by_id(&self.base.registry, peer.uid, workspace_id)?;
+        let store = self.require_toolchain_store()?;
+        let build_context_hash = require_str_param(params, "build_context_hash")?;
+        let edges_arr = params
+            .get("edges")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少 edges 数组".to_string()))?;
+        let edges = parse_resolved_edge_inputs(edges_arr)?;
+        let (deleted, inserted) = store
+            .replace_resolved_edges(workspace_id, build_context_hash, &edges)
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("replace_resolved_edges: {}", e))
+            })?;
+        let mut result = Map::new();
+        result.insert("deleted".to_string(), Value::Number(deleted.into()));
+        result.insert("inserted".to_string(), Value::Number(inserted.into()));
+        Ok(Value::Object(result))
+    }
 }
 
 // ============================================
 // 辅助函数
 // ============================================
+
+fn parse_resolved_edge_inputs(
+    edges: &[Value],
+) -> Result<Vec<super::toolchain::ResolvedEdgeInput>, DaemonRpcError> {
+    edges
+        .iter()
+        .enumerate()
+        .map(|(index, edge)| {
+            let caller_symbol_id = edge
+                .get("caller_symbol_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    DaemonRpcError::invalid_params(format!(
+                        "edges[{index}].caller_symbol_id 缺失或不是整数"
+                    ))
+                })?;
+            let callee_symbol_id = edge
+                .get("callee_symbol_id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    DaemonRpcError::invalid_params(format!(
+                        "edges[{index}].callee_symbol_id 缺失或不是整数"
+                    ))
+                })?;
+            let callee_name = edge
+                .get("callee_name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    DaemonRpcError::invalid_params(format!(
+                        "edges[{index}].callee_name 缺失或不是字符串"
+                    ))
+                })?;
+            Ok(super::toolchain::ResolvedEdgeInput {
+                caller_symbol_id,
+                callee_symbol_id,
+                callee_name: callee_name.to_string(),
+                callee_file: edge
+                    .get("callee_file")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                call_line: edge.get("call_line").and_then(Value::as_i64).unwrap_or(0),
+                resolution_method: edge
+                    .get("resolution_method")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        })
+        .collect()
+}
 
 /// WAL checkpoint（在 GraphStore 用 immutable=1 打开前必须调用）
 ///
@@ -1754,7 +1844,10 @@ mod tests {
         assert_eq!(impact["ok"], true);
         assert_eq!(impact["result"]["source_symbol"], "a.beta");
         assert_eq!(impact["result"]["total_impacted"], 2);
-        assert_eq!(impact["result"]["layers"][1]["symbols"][0]["qualified_name"], "a.alpha");
+        assert_eq!(
+            impact["result"]["layers"][1]["symbols"][0]["qualified_name"],
+            "a.alpha"
+        );
         assert_eq!(impact["result"]["by_layer"]["code"], 1);
         assert_eq!(impact["result"]["by_layer"]["db"], 1);
         assert_eq!(impact["result"]["by_layer"]["config"], 1);
@@ -1983,6 +2076,52 @@ mod tests {
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_build_context_writes_and_new_reads_use_workspace_owner_acl() {
+        let mut state = make_state();
+        let owner_uid = 0;
+        let (_ws_instance, ws_num_id) = register_workspace_with_numeric_id(&mut state, owner_uid);
+        let other_peer = make_peer(9999);
+        let workspace_id = ws_num_id.to_string();
+        let requests = [
+            (
+                "toolchain.list_bound",
+                json!({"workspace_id": workspace_id}),
+            ),
+            (
+                "build_context.get",
+                json!({"workspace_id": workspace_id, "build_context_hash": "ctx"}),
+            ),
+            (
+                "build_context.register",
+                json!({"workspace_id": workspace_id, "name": "debug"}),
+            ),
+            (
+                "build_context.set_active",
+                json!({"workspace_id": workspace_id, "build_context_hash": "ctx"}),
+            ),
+            (
+                "build_context.delete",
+                json!({"workspace_id": workspace_id, "build_context_hash": "ctx"}),
+            ),
+            (
+                "resolved_edges.replace",
+                json!({
+                    "workspace_id": workspace_id,
+                    "build_context_hash": "ctx",
+                    "edges": []
+                }),
+            ),
+        ];
+        for (method, params) in requests {
+            let response = dispatch(&mut state, other_peer, method, &params, &[]);
+            assert_eq!(
+                response["error"]["code"], "workspace_forbidden",
+                "{method} 必须在访问 toolchain store 之前拒绝非 owner"
+            );
+        }
     }
 
     /// P0-1：resolved_edges.store 跨 UID 调用应返回 workspace_forbidden

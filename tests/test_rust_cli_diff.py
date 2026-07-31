@@ -1360,3 +1360,170 @@ def test_workspace_remove_cleans_full_codegraph_schema(tmp_path: Path) -> None:
         assert conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM file_versions").fetchone()[0] == 0
+
+
+def test_toolchain_and_build_context_binary_match_python_process(
+    tmp_path: Path,
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    include_path = workspace_root / "include"
+    compiler_path = workspace_root / "toolchain" / "bin" / "gcc.exe"
+    include_path.mkdir(parents=True)
+    compiler_path.parent.mkdir(parents=True)
+    compiler_path.write_text("", encoding="utf-8")
+
+    db_paths: dict[str, Path] = {}
+    envs: dict[str, dict[str, str]] = {}
+    workspace_ids: dict[str, int] = {}
+    for implementation in ("python", "rust"):
+        home = tmp_path / implementation / "home"
+        db_path = home / ".callwarden" / "callwarden.db"
+        db_path.parent.mkdir(parents=True)
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+        try:
+            workspace_ids[implementation] = _seed_stats_fixture(db)
+            db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            db.close()
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+                "CALLWARDEN_WORKSPACE": str(workspace_root),
+                "CALLWARDEN_LANG": "zh_CN",
+                "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            }
+        )
+        db_paths[implementation] = db_path
+        envs[implementation] = env
+
+    assert workspace_ids["python"] == workspace_ids["rust"]
+    workspace_id = workspace_ids["python"]
+
+    def run_python(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "cw.py"), *args],
+            cwd=workspace_root,
+            env=envs["python"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def run_rust(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                str(binary),
+                "--mode",
+                "local",
+                "--db",
+                str(db_paths["rust"]),
+                *args,
+            ],
+            cwd=workspace_root,
+            env=envs["rust"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def assert_same(*args: str) -> None:
+        python_result = run_python(*args)
+        rust_result = run_rust(*args)
+        assert python_result.returncode == 0, python_result.stderr
+        assert rust_result.returncode == 0, rust_result.stderr
+        assert rust_result.stderr == python_result.stderr == ""
+        assert rust_result.stdout == python_result.stdout
+
+    assert_same(
+        "toolchain",
+        "register",
+        "fixture-gcc",
+        str(compiler_path),
+        "--no-probe",
+    )
+    assert_same("toolchain", "list")
+    assert_same("toolchain", "show", "fixture-gcc")
+
+    assert_same(
+        "build-context",
+        "register",
+        str(workspace_id),
+        "debug",
+        "--flags=-O2",
+        "--defines",
+        "DEBUG=1",
+        "--includes",
+        str(include_path),
+        "--activate",
+    )
+    with sqlite3.connect(db_paths["python"]) as python_conn:
+        python_hash = python_conn.execute(
+            "SELECT build_context_hash FROM workspace_build_contexts "
+            "WHERE workspace_id = ? AND name = 'debug'",
+            (workspace_id,),
+        ).fetchone()[0]
+    with sqlite3.connect(db_paths["rust"]) as rust_conn:
+        rust_hash = rust_conn.execute(
+            "SELECT build_context_hash FROM workspace_build_contexts "
+            "WHERE workspace_id = ? AND name = 'debug'",
+            (workspace_id,),
+        ).fetchone()[0]
+    assert rust_hash == python_hash
+
+    assert_same("build-context", "list", str(workspace_id))
+    assert_same("build-context", "show", str(workspace_id), python_hash[:16])
+    assert_same(
+        "toolchain",
+        "bind",
+        str(workspace_id),
+        "fixture-gcc",
+        "--build-context-hash",
+        python_hash,
+    )
+    assert_same(
+        "toolchain",
+        "list-bound",
+        str(workspace_id),
+        "--build-context-hash",
+        python_hash,
+    )
+    assert_same("build-context", "resolve", str(workspace_id), python_hash)
+    assert_same("build-context", "edges", str(workspace_id), python_hash)
+
+    compile_commands_path = workspace_root / "compile_commands.json"
+    compile_commands_path.write_text(
+        json.dumps(
+            [
+                {
+                    "directory": str(workspace_root),
+                    "file": "a.c",
+                    "arguments": ["-DIMPORT=1", "-I", "include", "-O2", "a.c"],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert_same(
+        "build-context",
+        "import-compile-commands",
+        str(compile_commands_path),
+        str(workspace_id),
+        "--name",
+        "imported",
+        "--workspace-root",
+        str(workspace_root),
+    )
+    assert_same("build-context", "list", str(workspace_id))
+
+    assert_same("build-context", "delete", str(workspace_id), python_hash)
+    assert_same("toolchain", "delete", "fixture-gcc")

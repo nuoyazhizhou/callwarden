@@ -28,9 +28,7 @@ use pyo3::Bound;
 use serde_json::Value;
 
 use crate::daemon::dispatch::ADMIN_ONLY_METHODS;
-use crate::daemon::protocol::{
-    DEFAULT_MAX_FDS, DEFAULT_MAX_MESSAGE_BYTES, HEADER_SIZE,
-};
+use crate::daemon::protocol::{DEFAULT_MAX_FDS, DEFAULT_MAX_MESSAGE_BYTES, HEADER_SIZE};
 
 // ===========================================================================
 // 协议常量查询
@@ -513,9 +511,14 @@ const METHODS: &[MethodInfo] = &[
         admin_only: false,
     },
     MethodInfo {
+        method: "toolchain.list_bound",
+        description: "列出 workspace 绑定的 toolchain",
+        admin_only: false,
+    },
+    MethodInfo {
         method: "build_context.register",
-        description: "注册 build context（admin-only）",
-        admin_only: true,
+        description: "注册 build context（workspace owner）",
+        admin_only: false,
     },
     MethodInfo {
         method: "build_context.list",
@@ -523,14 +526,19 @@ const METHODS: &[MethodInfo] = &[
         admin_only: false,
     },
     MethodInfo {
+        method: "build_context.get",
+        description: "查询 build context",
+        admin_only: false,
+    },
+    MethodInfo {
         method: "build_context.set_active",
-        description: "切换激活 build context（admin-only）",
-        admin_only: true,
+        description: "切换激活 build context（workspace owner）",
+        admin_only: false,
     },
     MethodInfo {
         method: "build_context.delete",
-        description: "删除 build context（admin-only）",
-        admin_only: true,
+        description: "删除 build context（workspace owner）",
+        admin_only: false,
     },
     MethodInfo {
         method: "resolved_edges.store",
@@ -545,6 +553,11 @@ const METHODS: &[MethodInfo] = &[
     MethodInfo {
         method: "resolved_edges.count",
         description: "resolved edge 计数",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "resolved_edges.replace",
+        description: "原子替换 resolved edge 缓存（workspace owner）",
         admin_only: false,
     },
 ];
@@ -755,15 +768,23 @@ pub fn budget_preset<'py>(py: Python<'py>, name: &str) -> PyResult<Bound<'py, Py
         "default" => (5u32, 1000usize, 5000u64, 100usize, 500usize),
         "deep" => (10u32, 5000usize, 10000u64, 500usize, 500usize),
         "shallow" => (3u32, 100usize, 1000u64, 20usize, 500usize),
-        "unlimited" => (100u32, 1_000_000usize, 300_000u64, 100_000usize, 10_000usize),
-        _ => {
-            return Err(PyRuntimeError::new_err(format!(
-                "unknown_preset: {}",
-                name
-            )))
-        }
+        "unlimited" => (
+            100u32,
+            1_000_000usize,
+            300_000u64,
+            100_000usize,
+            10_000usize,
+        ),
+        _ => return Err(PyRuntimeError::new_err(format!("unknown_preset: {}", name))),
     };
-    budget_create(py, max_depth, max_nodes, timeout_ms, max_results, frontier_limit)
+    budget_create(
+        py,
+        max_depth,
+        max_nodes,
+        timeout_ms,
+        max_results,
+        frontier_limit,
+    )
 }
 
 /// 创建运行时预算跟踪器
@@ -779,13 +800,22 @@ pub fn budget_tracker_new<'py>(
     // 复制 budget 配置到 tracker
     let tracker = PyDict::new(py);
     // 复制 budget 字段
-    for key in ["max_depth", "max_nodes", "timeout_ms", "max_results", "frontier_limit"] {
+    for key in [
+        "max_depth",
+        "max_nodes",
+        "timeout_ms",
+        "max_results",
+        "frontier_limit",
+    ] {
         if let Some(val) = budget.get_item(key)? {
             tracker.set_item(key, val)?;
         }
     }
     // 运行时状态
-    let now: f64 = py.import("time")?.call_method("monotonic", (), None)?.extract()?;
+    let now: f64 = py
+        .import("time")?
+        .call_method("monotonic", (), None)?
+        .extract()?;
     tracker.set_item("start_time", now)?;
     tracker.set_item("visited_count", 0u64)?;
     tracker.set_item("exceeded", false)?;
@@ -837,7 +867,10 @@ pub fn budget_tracker_visit_node(py: Python<'_>, tracker: &Bound<'_, PyDict>) ->
         .get_item("start_time")?
         .map(|v| v.extract().unwrap_or(0.0))
         .unwrap_or(0.0);
-    let now: f64 = py.import("time")?.call_method("monotonic", (), None)?.extract()?;
+    let now: f64 = py
+        .import("time")?
+        .call_method("monotonic", (), None)?
+        .extract()?;
     let elapsed_ms = (now - start_time) * 1000.0;
     if elapsed_ms > timeout_ms as f64 {
         tracker.set_item("exceeded", true)?;
@@ -865,10 +898,7 @@ pub fn budget_tracker_truncate_results<'py>(
     // 调用 Python list() 转换为 list
     let builtins = py.import("builtins")?;
     let full_list = builtins.getattr("list")?.call1((results,))?;
-    let len: usize = builtins
-        .getattr("len")?
-        .call1((&full_list,))?
-        .extract()?;
+    let len: usize = builtins.getattr("len")?.call1((&full_list,))?.extract()?;
 
     if len <= max_results {
         return Ok(full_list);
@@ -1027,9 +1057,7 @@ fn sort_json_keys(value: serde_json::Value) -> serde_json::Value {
             }
             Value::Object(sorted_map)
         }
-        Value::Array(arr) => {
-            Value::Array(arr.into_iter().map(sort_json_keys).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.into_iter().map(sort_json_keys).collect()),
         other => other,
     }
 }
@@ -1149,9 +1177,7 @@ fn pydict_to_json_value(dict: &Bound<'_, PyDict>) -> PyResult<Value> {
     // 这是最可靠的方式，确保与 Python 的 JSON 序列化行为完全一致
     let py = dict.py();
     let json_module = py.import("json")?;
-    let json_str: String = json_module
-        .call_method("dumps", (dict,), None)?
-        .extract()?;
+    let json_str: String = json_module.call_method("dumps", (dict,), None)?.extract()?;
 
     let value: Value = serde_json::from_str(&json_str)
         .map_err(|e| PyRuntimeError::new_err(format!("PyDict JSON 反序列化失败: {}", e)))?;
@@ -1160,10 +1186,7 @@ fn pydict_to_json_value(dict: &Bound<'_, PyDict>) -> PyResult<Value> {
 }
 
 /// 将 serde_json::Value 转换为 PyDict
-fn json_value_to_pydict<'py>(
-    py: Python<'py>,
-    value: &Value,
-) -> PyResult<Bound<'py, PyDict>> {
+fn json_value_to_pydict<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyDict>> {
     let json_str = serde_json::to_string(value)
         .map_err(|e| PyRuntimeError::new_err(format!("JSON 序列化失败: {}", e)))?;
 
@@ -1178,10 +1201,7 @@ fn json_value_to_pydict<'py>(
 }
 
 /// 将 serde_json::Value 转换为 PyAny
-fn json_value_to_pyobject<'py>(
-    py: Python<'py>,
-    value: &Value,
-) -> PyResult<Bound<'py, PyAny>> {
+fn json_value_to_pyobject<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     let json_str = serde_json::to_string(value)
         .map_err(|e| PyRuntimeError::new_err(format!("JSON 序列化失败: {}", e)))?;
 

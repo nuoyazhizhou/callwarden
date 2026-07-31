@@ -8,6 +8,11 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
+use callwarden_core::cli::build_context::{
+    compute_resolved_edges, compute_resolved_edges_for_external_context, import_compile_commands,
+    prepare_toolchain_registration, AggregatedBuildContext, ResolvedEdgesResult,
+    ToolchainRegistration,
+};
 use callwarden_core::cli::config::{check_role_supported, load_config, ConfigEntry, PlatformPaths};
 use callwarden_core::cli::file_query::{
     format_file_symbols_output, format_symbol_location_output, query_local_file_symbols,
@@ -46,8 +51,10 @@ use callwarden_core::cli::workspace::{
     format_remove_result, format_workspace_list, get_local_workspace, list_local_workspaces,
     register_local_workspace, remove_local_workspace, workspace_record_json, WorkspaceRecord,
 };
+use callwarden_core::daemon::toolchain::{ResolvedEdgeInput, ToolchainStore};
 use callwarden_core::symbol_query::query_symbol_detail;
 use clap::{Parser, Subcommand, ValueEnum};
+use serde_json::Value;
 
 /// Call Warden — 代码知识图谱工具
 #[derive(Parser)]
@@ -66,8 +73,8 @@ struct Cli {
     db: Option<PathBuf>,
 
     /// workspace ID；未提供时 local 模式解析唯一 active workspace
-    #[arg(long, global = true)]
-    workspace_id: Option<String>,
+    #[arg(long = "workspace-id", global = true)]
+    enterprise_workspace_id: Option<String>,
 
     /// daemon RPC 超时秒数
     #[arg(long, default_value_t = 30, global = true)]
@@ -328,9 +335,15 @@ enum Commands {
 
     // ===== L5/N4 =====
     /// 构建上下文
-    BuildContext,
+    BuildContext {
+        #[command(subcommand)]
+        action: BuildContextAction,
+    },
     /// 工具链指纹
-    Toolchain,
+    Toolchain {
+        #[command(subcommand)]
+        action: ToolchainAction,
+    },
     /// 图存储
     Graph,
     /// 配置管理
@@ -388,6 +401,87 @@ enum WorkspaceAction {
     Remove { id_or_name: String },
 }
 
+#[derive(Subcommand)]
+enum ToolchainAction {
+    /// 注册工具链
+    Register {
+        name: String,
+        compiler_path: PathBuf,
+        #[arg(long)]
+        sysroot: Option<PathBuf>,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long)]
+        no_probe: bool,
+    },
+    /// 列出全部工具链
+    List,
+    /// 显示工具链详情
+    Show { name_or_id: String },
+    /// 删除工具链
+    Delete { name_or_id: String },
+    /// 绑定工具链到 workspace
+    Bind {
+        workspace_id: i64,
+        toolchain_name: String,
+        #[arg(long, default_value = "")]
+        build_context_hash: String,
+    },
+    /// 列出 workspace 绑定的工具链
+    ListBound {
+        workspace_id: i64,
+        #[arg(long, default_value = "")]
+        build_context_hash: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum BuildContextAction {
+    /// 注册 build context
+    Register {
+        workspace_id: i64,
+        name: String,
+        #[arg(long, num_args = 0..)]
+        flags: Vec<String>,
+        #[arg(long, num_args = 0..)]
+        defines: Vec<String>,
+        #[arg(long, num_args = 0..)]
+        includes: Vec<String>,
+        #[arg(long)]
+        activate: bool,
+    },
+    /// 列出 workspace 的 build context
+    List { workspace_id: i64 },
+    /// 显示 build context
+    Show { workspace_id: i64, hash: String },
+    /// 激活 build context
+    Activate { workspace_id: i64, hash: String },
+    /// 删除 build context
+    Delete { workspace_id: i64, hash: String },
+    /// 从 compile_commands.json 导入
+    ImportCompileCommands {
+        file: PathBuf,
+        workspace_id: i64,
+        #[arg(long, default_value = "imported")]
+        name: String,
+        #[arg(long)]
+        activate: bool,
+        #[arg(long)]
+        workspace_root: Option<PathBuf>,
+    },
+    /// 重新计算 resolved edge 缓存
+    Resolve { workspace_id: i64, hash: String },
+    /// 查询 resolved edge
+    Edges {
+        workspace_id: i64,
+        hash: String,
+        #[arg(long)]
+        caller: Option<i64>,
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum RoleArg {
     Local,
@@ -423,7 +517,7 @@ fn main() {
         cli.mode.map(Into::into),
         cli.socket,
         cli.db,
-        cli.workspace_id,
+        cli.enterprise_workspace_id,
         cli.timeout,
     );
 
@@ -443,6 +537,12 @@ fn main() {
                 }
                 Commands::Workspace { action } => {
                     emit_result(run_workspace(&runtime, action));
+                }
+                Commands::Toolchain { action } => {
+                    emit_result(run_toolchain(&runtime, action));
+                }
+                Commands::BuildContext { action } => {
+                    emit_result(run_build_context(&runtime, action));
                 }
                 Commands::Search { query, kind, limit } => {
                     emit_result(run_search(&runtime, &query, kind.as_deref(), limit));
@@ -1303,6 +1403,1046 @@ fn run_config(action: ConfigAction) -> CommandResult {
     }
 }
 
+fn run_toolchain(runtime: &RuntimeOptions, action: ToolchainAction) -> CommandResult {
+    match action {
+        ToolchainAction::Register {
+            name,
+            compiler_path,
+            sysroot,
+            description,
+            no_probe,
+        } => {
+            let registration = match prepare_toolchain_registration(
+                &name,
+                &compiler_path,
+                sysroot
+                    .as_deref()
+                    .unwrap_or_else(|| std::path::Path::new("")),
+                &description,
+                no_probe,
+            ) {
+                Ok(value) => value,
+                Err(error) => return CommandResult::failure(1, error, RouteUsed::None),
+            };
+            let local_registration = registration.clone();
+            let enterprise_registration = registration.clone();
+            runtime.execute_write_with(
+                || {
+                    let store = open_local_toolchain_store(runtime, true)?;
+                    let value = register_toolchain_in_store(&store, &local_registration)?;
+                    format_toolchain_registered(&value)
+                },
+                || {
+                    let value = runtime.daemon_call(
+                        "toolchain.register",
+                        toolchain_register_params(&enterprise_registration),
+                    )?;
+                    format_toolchain_registered(&value)
+                },
+            )
+        }
+        ToolchainAction::List => execute_workspace_read(
+            runtime,
+            || {
+                let store = open_local_toolchain_store(runtime, false)?;
+                let values = store.list_toolchains().map_err(toolchain_sql_error)?;
+                format_toolchain_list(&Value::Array(values))
+            },
+            || {
+                let value = runtime.daemon_call("toolchain.list", serde_json::json!({}))?;
+                format_toolchain_list(&value)
+            },
+        ),
+        ToolchainAction::Show { name_or_id } => {
+            let local_name = name_or_id.clone();
+            let enterprise_name = name_or_id.clone();
+            execute_workspace_read(
+                runtime,
+                || {
+                    let store = open_local_toolchain_store(runtime, false)?;
+                    let value = store
+                        .get_toolchain(&local_name)
+                        .map_err(toolchain_sql_error)?
+                        .ok_or_else(|| format!("Toolchain not found: {local_name}"))?;
+                    format_toolchain_show(&value)
+                },
+                || {
+                    let value = runtime.daemon_call(
+                        "toolchain.get",
+                        serde_json::json!({"name_or_id": enterprise_name}),
+                    )?;
+                    format_toolchain_show(&value)
+                },
+            )
+        }
+        ToolchainAction::Delete { name_or_id } => {
+            let local_name = name_or_id.clone();
+            let enterprise_name = name_or_id.clone();
+            runtime.execute_write_with(
+                || {
+                    let store = open_local_toolchain_store(runtime, true)?;
+                    let deleted = store
+                        .delete_toolchain(&local_name)
+                        .map_err(toolchain_sql_error)?;
+                    if deleted == 0 {
+                        Err(format!("Toolchain not found: {local_name}"))
+                    } else {
+                        Ok(format!("Toolchain deleted: {local_name}"))
+                    }
+                },
+                || {
+                    let value = runtime.daemon_call(
+                        "toolchain.delete",
+                        serde_json::json!({"name_or_id": enterprise_name}),
+                    )?;
+                    if value.get("deleted").and_then(Value::as_u64).unwrap_or(0) == 0 {
+                        Err(format!("Toolchain not found: {enterprise_name}"))
+                    } else {
+                        Ok(format!("Toolchain deleted: {enterprise_name}"))
+                    }
+                },
+            )
+        }
+        ToolchainAction::Bind {
+            workspace_id,
+            toolchain_name,
+            build_context_hash,
+        } => {
+            let local_name = toolchain_name.clone();
+            let enterprise_name = toolchain_name.clone();
+            let local_hash = build_context_hash.clone();
+            let enterprise_hash = build_context_hash.clone();
+            runtime.execute_write_with(
+                || {
+                    let store = open_local_toolchain_store(runtime, true)?;
+                    let toolchain = store
+                        .get_toolchain(&local_name)
+                        .map_err(toolchain_sql_error)?
+                        .ok_or_else(|| format!("Toolchain not found: {local_name}"))?;
+                    let id = require_json_i64(&toolchain, "id")?;
+                    store
+                        .bind_toolchain_to_workspace(workspace_id, id, &local_hash)
+                        .map_err(toolchain_sql_error)?;
+                    Ok(format!(
+                        "Toolchain '{}' bound to workspace {}",
+                        json_string(&toolchain, "name"),
+                        workspace_id
+                    ))
+                },
+                || {
+                    let toolchain = runtime.daemon_call(
+                        "toolchain.get",
+                        serde_json::json!({"name_or_id": enterprise_name}),
+                    )?;
+                    let toolchain_id = require_json_i64(&toolchain, "id")?;
+                    runtime.daemon_call(
+                        "toolchain.bind",
+                        serde_json::json!({
+                            "workspace_id": workspace_id.to_string(),
+                            "toolchain_id": toolchain_id.to_string(),
+                            "build_context_hash": enterprise_hash,
+                        }),
+                    )?;
+                    Ok(format!(
+                        "Toolchain '{}' bound to workspace {}",
+                        json_string(&toolchain, "name"),
+                        workspace_id
+                    ))
+                },
+            )
+        }
+        ToolchainAction::ListBound {
+            workspace_id,
+            build_context_hash,
+        } => {
+            let local_hash = build_context_hash.clone();
+            let enterprise_hash = build_context_hash.clone();
+            execute_workspace_read(
+                runtime,
+                || {
+                    let store = open_local_toolchain_store(runtime, false)?;
+                    let values = store
+                        .get_workspace_toolchains(workspace_id, Some(&local_hash))
+                        .map_err(toolchain_sql_error)?;
+                    format_bound_toolchains(workspace_id, &Value::Array(values))
+                },
+                || {
+                    let value = runtime.daemon_call(
+                        "toolchain.list_bound",
+                        serde_json::json!({
+                            "workspace_id": workspace_id.to_string(),
+                            "build_context_hash": enterprise_hash,
+                        }),
+                    )?;
+                    format_bound_toolchains(workspace_id, &value)
+                },
+            )
+        }
+    }
+}
+
+fn run_build_context(runtime: &RuntimeOptions, action: BuildContextAction) -> CommandResult {
+    match action {
+        BuildContextAction::Register {
+            workspace_id,
+            name,
+            flags,
+            defines,
+            includes,
+            activate,
+        } => {
+            let defines = match parse_cli_defines(&defines) {
+                Ok(value) => value,
+                Err(error) => return CommandResult::failure(1, error, RouteUsed::None),
+            };
+            execute_build_context_register(
+                runtime,
+                workspace_id,
+                name,
+                flags,
+                defines,
+                includes,
+                activate,
+                None,
+            )
+        }
+        BuildContextAction::List { workspace_id } => execute_workspace_read(
+            runtime,
+            || {
+                let store = open_local_toolchain_store(runtime, false)?;
+                let values = store
+                    .list_build_contexts(workspace_id)
+                    .map_err(toolchain_sql_error)?;
+                format_build_context_list(workspace_id, &Value::Array(values))
+            },
+            || {
+                let value = runtime.daemon_call(
+                    "build_context.list",
+                    serde_json::json!({"workspace_id": workspace_id.to_string()}),
+                )?;
+                format_build_context_list(workspace_id, &value)
+            },
+        ),
+        BuildContextAction::Show { workspace_id, hash } => {
+            let local_hash = hash.clone();
+            let enterprise_hash = hash.clone();
+            execute_workspace_read(
+                runtime,
+                || {
+                    let store = open_local_toolchain_store(runtime, false)?;
+                    let context = store
+                        .get_build_context(workspace_id, &local_hash)
+                        .map_err(toolchain_sql_error)?
+                        .ok_or_else(|| format!("Build context not found: {local_hash}"))?;
+                    let full_hash = json_string(&context, "build_context_hash");
+                    let count = store
+                        .count_resolved_edges(workspace_id, &full_hash)
+                        .map_err(toolchain_sql_error)?;
+                    format_build_context_show(&context, count)
+                },
+                || {
+                    let context = runtime.daemon_call(
+                        "build_context.get",
+                        serde_json::json!({
+                            "workspace_id": workspace_id.to_string(),
+                            "build_context_hash": enterprise_hash,
+                        }),
+                    )?;
+                    if context.is_null() {
+                        return Err(format!("Build context not found: {enterprise_hash}"));
+                    }
+                    let full_hash = json_string(&context, "build_context_hash");
+                    let count = runtime.daemon_call(
+                        "resolved_edges.count",
+                        serde_json::json!({
+                            "workspace_id": workspace_id.to_string(),
+                            "build_context_hash": full_hash,
+                        }),
+                    )?;
+                    format_build_context_show(
+                        &context,
+                        count.get("count").and_then(Value::as_i64).unwrap_or(0),
+                    )
+                },
+            )
+        }
+        BuildContextAction::Activate { workspace_id, hash } => {
+            execute_build_context_mutation(runtime, workspace_id, hash, true)
+        }
+        BuildContextAction::Delete { workspace_id, hash } => {
+            execute_build_context_mutation(runtime, workspace_id, hash, false)
+        }
+        BuildContextAction::ImportCompileCommands {
+            file,
+            workspace_id,
+            name,
+            activate,
+            workspace_root,
+        } => {
+            let root = workspace_root
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let aggregate = match import_compile_commands(&file, &root) {
+                Ok(value) => value,
+                Err(error) => return CommandResult::failure(1, error, RouteUsed::None),
+            };
+            let defines = aggregate
+                .defines
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            execute_build_context_register(
+                runtime,
+                workspace_id,
+                name,
+                aggregate.compile_flags.clone(),
+                defines,
+                aggregate.include_paths.clone(),
+                activate,
+                Some(aggregate),
+            )
+        }
+        BuildContextAction::Resolve { workspace_id, hash } => {
+            let local_hash = hash.clone();
+            let enterprise_hash = hash.clone();
+            runtime.execute_write_with(
+                || resolve_local_build_context(runtime, workspace_id, &local_hash),
+                || resolve_enterprise_build_context(runtime, workspace_id, &enterprise_hash),
+            )
+        }
+        BuildContextAction::Edges {
+            workspace_id,
+            hash,
+            caller,
+            limit,
+        } => {
+            let local_hash = hash.clone();
+            let enterprise_hash = hash.clone();
+            execute_workspace_read(
+                runtime,
+                || {
+                    let store = open_local_toolchain_store(runtime, false)?;
+                    let context = store
+                        .get_build_context(workspace_id, &local_hash)
+                        .map_err(toolchain_sql_error)?
+                        .ok_or_else(|| format!("Build context not found: {local_hash}"))?;
+                    let full_hash = json_string(&context, "build_context_hash");
+                    let edges = store
+                        .get_resolved_edges(workspace_id, &full_hash, caller, Some(limit))
+                        .map_err(toolchain_sql_error)?;
+                    format_resolved_edges(&Value::Array(edges))
+                },
+                || {
+                    let context = runtime.daemon_call(
+                        "build_context.get",
+                        serde_json::json!({
+                            "workspace_id": workspace_id.to_string(),
+                            "build_context_hash": enterprise_hash,
+                        }),
+                    )?;
+                    if context.is_null() {
+                        return Err(format!("Build context not found: {enterprise_hash}"));
+                    }
+                    let value = runtime.daemon_call(
+                        "resolved_edges.get",
+                        serde_json::json!({
+                            "workspace_id": workspace_id.to_string(),
+                            "build_context_hash": json_string(&context, "build_context_hash"),
+                            "caller_symbol_id": caller,
+                            "limit": limit,
+                        }),
+                    )?;
+                    format_resolved_edges(&value)
+                },
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_build_context_register(
+    runtime: &RuntimeOptions,
+    workspace_id: i64,
+    name: String,
+    flags: Vec<String>,
+    defines: Vec<(String, String)>,
+    includes: Vec<String>,
+    activate: bool,
+    imported: Option<AggregatedBuildContext>,
+) -> CommandResult {
+    let local_name = name.clone();
+    let enterprise_name = name.clone();
+    let local_flags = flags.clone();
+    let enterprise_flags = flags;
+    let local_defines = defines.clone();
+    let enterprise_defines = defines;
+    let local_includes = includes.clone();
+    let enterprise_includes = includes;
+    let local_imported = imported.clone();
+    let enterprise_imported = imported;
+    runtime.execute_write_with(
+        || {
+            let store = open_local_toolchain_store(runtime, true)?;
+            let context = store
+                .register_build_context(
+                    workspace_id,
+                    &local_name,
+                    &local_flags,
+                    &local_defines,
+                    &local_includes,
+                    activate,
+                )
+                .map_err(toolchain_sql_error)?;
+            format_build_context_registered(&context, local_imported.as_ref())
+        },
+        || {
+            let context = runtime.daemon_call(
+                "build_context.register",
+                serde_json::json!({
+                    "workspace_id": workspace_id.to_string(),
+                    "name": enterprise_name,
+                    "compile_flags": enterprise_flags,
+                    "defines": pairs_to_json_object(&enterprise_defines),
+                    "include_paths": enterprise_includes,
+                    "set_active": activate,
+                }),
+            )?;
+            format_build_context_registered(&context, enterprise_imported.as_ref())
+        },
+    )
+}
+
+fn execute_build_context_mutation(
+    runtime: &RuntimeOptions,
+    workspace_id: i64,
+    hash: String,
+    activate: bool,
+) -> CommandResult {
+    let local_hash = hash.clone();
+    let enterprise_hash = hash.clone();
+    runtime.execute_write_with(
+        || {
+            let store = open_local_toolchain_store(runtime, true)?;
+            let context = store
+                .get_build_context(workspace_id, &local_hash)
+                .map_err(toolchain_sql_error)?
+                .ok_or_else(|| format!("Build context not found: {local_hash}"))?;
+            let full_hash = json_string(&context, "build_context_hash");
+            let name = json_string(&context, "name");
+            if activate {
+                if !store
+                    .set_active_build_context(workspace_id, &full_hash)
+                    .map_err(toolchain_sql_error)?
+                {
+                    return Err("Failed to activate".to_string());
+                }
+                Ok(format!("Activated: {} ({})", name, short_hash(&full_hash)))
+            } else {
+                if store
+                    .delete_build_context(workspace_id, &full_hash)
+                    .map_err(toolchain_sql_error)?
+                    == 0
+                {
+                    return Err("Failed to delete".to_string());
+                }
+                Ok(format!("Deleted: {} ({})", name, short_hash(&full_hash)))
+            }
+        },
+        || {
+            let context = runtime.daemon_call(
+                "build_context.get",
+                serde_json::json!({
+                    "workspace_id": workspace_id.to_string(),
+                    "build_context_hash": enterprise_hash,
+                }),
+            )?;
+            if context.is_null() {
+                return Err(format!("Build context not found: {enterprise_hash}"));
+            }
+            let full_hash = json_string(&context, "build_context_hash");
+            let name = json_string(&context, "name");
+            let method = if activate {
+                "build_context.set_active"
+            } else {
+                "build_context.delete"
+            };
+            let value = runtime.daemon_call(
+                method,
+                serde_json::json!({
+                    "workspace_id": workspace_id.to_string(),
+                    "build_context_hash": full_hash,
+                }),
+            )?;
+            if activate && !value.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+                return Err("Failed to activate".to_string());
+            }
+            if !activate && value.get("deleted").and_then(Value::as_u64).unwrap_or(0) == 0 {
+                return Err("Failed to delete".to_string());
+            }
+            Ok(if activate {
+                format!("Activated: {} ({})", name, short_hash(&full_hash))
+            } else {
+                format!("Deleted: {} ({})", name, short_hash(&full_hash))
+            })
+        },
+    )
+}
+
+fn resolve_local_build_context(
+    runtime: &RuntimeOptions,
+    workspace_id: i64,
+    hash: &str,
+) -> Result<String, String> {
+    let store = open_local_toolchain_store(runtime, true)?;
+    let context = store
+        .get_build_context(workspace_id, hash)
+        .map_err(toolchain_sql_error)?
+        .ok_or_else(|| format!("Build context not found: {hash}"))?;
+    let full_hash = json_string(&context, "build_context_hash");
+    let result = {
+        let conn = store.conn();
+        compute_resolved_edges(&conn, workspace_id, &full_hash)?
+    };
+    let (deleted, inserted) = store
+        .replace_resolved_edges(workspace_id, &full_hash, &result.edges)
+        .map_err(toolchain_sql_error)?;
+    format_resolve_result(&context, &result, deleted, inserted)
+}
+
+fn resolve_enterprise_build_context(
+    runtime: &RuntimeOptions,
+    workspace_id: i64,
+    hash: &str,
+) -> Result<String, String> {
+    let context = runtime.daemon_call(
+        "build_context.get",
+        serde_json::json!({
+            "workspace_id": workspace_id.to_string(),
+            "build_context_hash": hash,
+        }),
+    )?;
+    if context.is_null() {
+        return Err(format!("Build context not found: {hash}"));
+    }
+    let full_hash = json_string(&context, "build_context_hash");
+    let conn = runtime.open_local_db().map_err(|error| {
+        format!(
+            "enterprise resolve requires the mounted local workspace database for symbol facts: {error}"
+        )
+    })?;
+    let toolchain = runtime.daemon_call(
+        "toolchain.resolve",
+        serde_json::json!({
+            "workspace_id": workspace_id.to_string(),
+            "build_context_hash": full_hash,
+        }),
+    )?;
+    let result = compute_resolved_edges_for_external_context(
+        &conn,
+        workspace_id,
+        &context,
+        (!toolchain.is_null()).then_some(&toolchain),
+    )
+    .map_err(|error| {
+        format!("enterprise resolve requires a matching local symbol snapshot: {error}")
+    })?;
+    let response = runtime.daemon_call(
+        "resolved_edges.replace",
+        serde_json::json!({
+            "workspace_id": workspace_id.to_string(),
+            "build_context_hash": full_hash,
+            "edges": resolved_edges_json(&result.edges),
+        }),
+    )?;
+    format_resolve_result(
+        &context,
+        &result,
+        response.get("deleted").and_then(Value::as_u64).unwrap_or(0),
+        response
+            .get("inserted")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize,
+    )
+}
+
+fn open_local_toolchain_store(
+    runtime: &RuntimeOptions,
+    writable: bool,
+) -> Result<ToolchainStore, String> {
+    let path = runtime.db_path.to_string_lossy();
+    if writable {
+        ToolchainStore::open(&path)
+    } else {
+        ToolchainStore::open_read_only(&path)
+    }
+    .map_err(toolchain_sql_error)
+}
+
+fn register_toolchain_in_store(
+    store: &ToolchainStore,
+    registration: &ToolchainRegistration,
+) -> Result<Value, String> {
+    let mut macros = registration
+        .predefined_macros
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect::<Vec<_>>();
+    macros.sort();
+    store
+        .register_toolchain(
+            &registration.name,
+            &registration.compiler_path,
+            &registration.compiler_type,
+            &registration.version,
+            &registration.target_triple,
+            &registration.sysroot,
+            &registration.include_dirs,
+            &macros,
+            &registration.fingerprint,
+            &registration.description,
+        )
+        .map_err(toolchain_sql_error)
+}
+
+fn toolchain_register_params(registration: &ToolchainRegistration) -> Value {
+    serde_json::json!({
+        "name": registration.name,
+        "compiler_path": registration.compiler_path,
+        "compiler_type": registration.compiler_type,
+        "version": registration.version,
+        "target_triple": registration.target_triple,
+        "sysroot": registration.sysroot,
+        "include_dirs": registration.include_dirs,
+        "predefined_macros": registration.predefined_macros,
+        "fingerprint": registration.fingerprint,
+        "description": registration.description,
+    })
+}
+
+fn parse_cli_defines(values: &[String]) -> Result<Vec<(String, String)>, String> {
+    let mut result = Vec::<(String, String)>::new();
+    let mut positions = std::collections::HashMap::<String, usize>::new();
+    for value in values {
+        let (name, value) = value
+            .split_once('=')
+            .map(|(name, value)| (name, value))
+            .unwrap_or((value.as_str(), ""));
+        if name.is_empty() {
+            return Err("build-context define name must not be empty".to_string());
+        }
+        if let Some(index) = positions.get(name).copied() {
+            result[index].1 = value.to_string();
+        } else {
+            positions.insert(name.to_string(), result.len());
+            result.push((name.to_string(), value.to_string()));
+        }
+    }
+    Ok(result)
+}
+
+fn pairs_to_json_object(values: &[(String, String)]) -> Value {
+    Value::Object(
+        values
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+            .collect(),
+    )
+}
+
+fn resolved_edges_json(edges: &[ResolvedEdgeInput]) -> Vec<Value> {
+    edges
+        .iter()
+        .map(|edge| {
+            serde_json::json!({
+                "caller_symbol_id": edge.caller_symbol_id,
+                "callee_symbol_id": edge.callee_symbol_id,
+                "callee_name": edge.callee_name,
+                "callee_file": edge.callee_file,
+                "call_line": edge.call_line,
+                "resolution_method": edge.resolution_method,
+            })
+        })
+        .collect()
+}
+
+fn format_toolchain_registered(value: &Value) -> Result<String, String> {
+    let includes = json_array_len(value, "include_dirs");
+    let macros = json_object_len(value, "predefined_macros");
+    let mut lines = vec![
+        format!(
+            "Toolchain registered: Toolchain(id={}, name={}, type={}, version={}, target={})",
+            require_json_i64(value, "id")?,
+            json_string(value, "name"),
+            json_string(value, "compiler_type"),
+            json_string(value, "version"),
+            json_string(value, "target_triple")
+        ),
+        format!("  fingerprint: {}", json_string(value, "fingerprint")),
+    ];
+    if includes > 0 {
+        let preview = value["include_dirs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(3)
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(format!("  include_dirs ({includes}): {preview}..."));
+    }
+    if macros > 0 {
+        lines.push(format!("  predefined_macros: {macros} macros"));
+    }
+    Ok(lines.join("\n"))
+}
+
+fn format_toolchain_list(value: &Value) -> Result<String, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "toolchain list returned a non-array result".to_string())?;
+    if rows.is_empty() {
+        return Ok("No toolchains registered.".to_string());
+    }
+    let mut lines = vec![
+        format!(
+            "{:<5} {:<20} {:<20} {:<30} {:<25}",
+            "ID", "Name", "Type", "Version", "Target"
+        ),
+        "-".repeat(100),
+    ];
+    for row in rows {
+        lines.push(format!(
+            "{:<5} {:<20} {:<20} {:<30} {:<25}",
+            row["id"].as_i64().unwrap_or(0),
+            truncate(&json_string(row, "name"), 20),
+            truncate(&json_string(row, "compiler_type"), 20),
+            truncate(&json_string(row, "version"), 30),
+            truncate(&json_string(row, "target_triple"), 25),
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
+fn format_toolchain_show(value: &Value) -> Result<String, String> {
+    let includes = value["include_dirs"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = vec![
+        format!("Toolchain: {}", json_string(value, "name")),
+        format!("  ID: {}", require_json_i64(value, "id")?),
+        format!("  Compiler: {}", json_string(value, "compiler_path")),
+        format!("  Type: {}", json_string(value, "compiler_type")),
+        format!("  Version: {}", json_string(value, "version")),
+        format!("  Target: {}", json_string(value, "target_triple")),
+        format!(
+            "  Sysroot: {}",
+            nonempty_or(&json_string(value, "sysroot"), "(none)")
+        ),
+        format!("  Fingerprint: {}", json_string(value, "fingerprint")),
+        format!("  Include dirs ({}):", includes.len()),
+    ];
+    lines.extend(
+        includes
+            .iter()
+            .take(10)
+            .filter_map(Value::as_str)
+            .map(|path| format!("    {path}")),
+    );
+    if includes.len() > 10 {
+        lines.push(format!("    ... and {} more", includes.len() - 10));
+    }
+    lines.push(format!(
+        "  Predefined macros: {}",
+        json_object_len(value, "predefined_macros")
+    ));
+    lines.push(format!(
+        "  Description: {}",
+        nonempty_or(&json_string(value, "description"), "(none)")
+    ));
+    Ok(lines.join("\n"))
+}
+
+fn format_bound_toolchains(workspace_id: i64, value: &Value) -> Result<String, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "toolchain.list_bound returned a non-array result".to_string())?;
+    if rows.is_empty() {
+        return Ok(format!("No toolchains bound to workspace {workspace_id}"));
+    }
+    Ok(rows
+        .iter()
+        .map(|row| {
+            format!(
+                "  Toolchain(id={}, name={}, type={}, version={}, target={})",
+                row["id"].as_i64().unwrap_or(0),
+                json_string(row, "name"),
+                json_string(row, "compiler_type"),
+                json_string(row, "version"),
+                json_string(row, "target_triple")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n"))
+}
+
+fn format_build_context_registered(
+    context: &Value,
+    imported: Option<&AggregatedBuildContext>,
+) -> Result<String, String> {
+    let mut lines = Vec::new();
+    if let Some(imported) = imported {
+        lines.extend([
+            format!("Imported {} compile entries:", imported.file_count),
+            format!(
+                "  compiler: {}",
+                nonempty_or(&imported.compiler_path, "(not detected)")
+            ),
+            format!("  defines: {}", imported.defines.len()),
+            format!("  include_paths: {}", imported.include_paths.len()),
+            format!("  compile_flags: {}", imported.compile_flags.len()),
+        ]);
+    }
+    lines.extend([
+        format!("Build context registered: {}", json_string(context, "name")),
+        format!("  hash: {}", json_string(context, "build_context_hash")),
+    ]);
+    if imported.is_none() {
+        lines.extend([
+            format!(
+                "  flags: {}",
+                python_string_list_repr(&context["compile_flags"])
+            ),
+            format!("  defines: {} macros", json_object_len(context, "defines")),
+            format!(
+                "  includes: {} paths",
+                json_array_len(context, "include_paths")
+            ),
+        ]);
+    }
+    if context["is_active"].as_bool().unwrap_or(false) {
+        lines.push("  (set as active)".to_string());
+    }
+    if let Some(imported) = imported {
+        if !imported.compiler_path.is_empty() {
+            lines.push(format!(
+                "\n  Hint: Detected compiler '{}'",
+                imported.compiler_path
+            ));
+            lines.push(format!(
+                "  Run: cw toolchain register auto_{} {}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+                imported.compiler_path
+            ));
+        }
+    }
+    Ok(lines.join("\n"))
+}
+
+fn format_build_context_list(workspace_id: i64, value: &Value) -> Result<String, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "build_context.list returned a non-array result".to_string())?;
+    if rows.is_empty() {
+        return Ok(format!("No build contexts for workspace {workspace_id}"));
+    }
+    let mut lines = vec![
+        format!("Build contexts for workspace {workspace_id}:"),
+        format!(
+            "{:<20} {:<8} {:<20} {:<8} {:<8}",
+            "Name", "Active", "Hash", "Defines", "Includes"
+        ),
+        "-".repeat(80),
+    ];
+    for row in rows {
+        lines.push(format!(
+            "{:<20} {:<8} {:<20} {:<8} {:<8}",
+            truncate(&json_string(row, "name"), 20),
+            if row["is_active"].as_bool().unwrap_or(false) {
+                "✓"
+            } else {
+                ""
+            },
+            short_hash(&json_string(row, "build_context_hash")),
+            json_object_len(row, "defines"),
+            json_array_len(row, "include_paths"),
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
+fn format_build_context_show(context: &Value, edge_count: i64) -> Result<String, String> {
+    let flags = context["compile_flags"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let defines = context["defines"].as_object().cloned().unwrap_or_default();
+    let includes = context["include_paths"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = vec![
+        format!("Build Context: {}", json_string(context, "name")),
+        format!("  Hash: {}", json_string(context, "build_context_hash")),
+        format!(
+            "  Active: {}",
+            if context["is_active"].as_bool().unwrap_or(false) {
+                "yes"
+            } else {
+                "no"
+            }
+        ),
+        format!("  Compile flags ({}):", flags.len()),
+    ];
+    lines.extend(
+        flags
+            .iter()
+            .filter_map(Value::as_str)
+            .map(|flag| format!("    {flag}")),
+    );
+    lines.push(format!("  Defines ({}):", defines.len()));
+    lines.extend(
+        defines
+            .iter()
+            .take(20)
+            .map(|(key, value)| format!("    {}={}", key, value.as_str().unwrap_or(""))),
+    );
+    if defines.len() > 20 {
+        lines.push(format!("    ... and {} more", defines.len() - 20));
+    }
+    lines.push(format!("  Include paths ({}):", includes.len()));
+    lines.extend(
+        includes
+            .iter()
+            .take(10)
+            .filter_map(Value::as_str)
+            .map(|path| format!("    {path}")),
+    );
+    if includes.len() > 10 {
+        lines.push(format!("    ... and {} more", includes.len() - 10));
+    }
+    lines.push(format!("  Resolved edges: {edge_count}"));
+    Ok(lines.join("\n"))
+}
+
+fn format_resolved_edges(value: &Value) -> Result<String, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "resolved_edges.get returned a non-array result".to_string())?;
+    if rows.is_empty() {
+        return Ok("No resolved edges found".to_string());
+    }
+    let mut lines = vec![
+        format!("Resolved edges ({} shown):", rows.len()),
+        format!(
+            "{:<10} {:<10} {:<30} {:<20} {:<6} {:<15}",
+            "Caller", "Callee", "Callee Name", "File", "Line", "Method"
+        ),
+        "-".repeat(95),
+    ];
+    for row in rows {
+        lines.push(format!(
+            "{:<10} {:<10} {:<30} {:<20} {:<6} {:<15}",
+            row["caller_symbol_id"].as_i64().unwrap_or(0),
+            row["callee_symbol_id"].as_i64().unwrap_or(0),
+            truncate(&json_string(row, "callee_name"), 30),
+            truncate(&json_string(row, "callee_file"), 20),
+            row["call_line"].as_i64().unwrap_or(0),
+            truncate(&json_string(row, "resolution_method"), 15),
+        ));
+    }
+    Ok(lines.join("\n"))
+}
+
+fn format_resolve_result(
+    context: &Value,
+    result: &ResolvedEdgesResult,
+    deleted: u64,
+    inserted: usize,
+) -> Result<String, String> {
+    let mut lines = vec![
+        format!(
+            "Resolved edges computed for: {}",
+            json_string(context, "name")
+        ),
+        format!("  source: {}", result.source),
+        format!("  computed: {} edges", result.edges.len()),
+    ];
+    if result.skipped > 0 {
+        lines.push(format!("  skipped (caller unmapped): {}", result.skipped));
+    }
+    lines.extend([
+        format!("  deleted old: {deleted}"),
+        format!("  stored: {inserted}"),
+    ]);
+    Ok(lines.join("\n"))
+}
+
+fn require_json_i64(value: &Value, field: &str) -> Result<i64, String> {
+    value
+        .get(field)
+        .and_then(Value::as_i64)
+        .ok_or_else(|| format!("response is missing integer field {field}"))
+}
+
+fn json_string(value: &Value, field: &str) -> String {
+    value
+        .get(field)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn json_array_len(value: &Value, field: &str) -> usize {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+}
+
+fn json_object_len(value: &Value, field: &str) -> usize {
+    value
+        .get(field)
+        .and_then(Value::as_object)
+        .map(serde_json::Map::len)
+        .unwrap_or(0)
+}
+
+fn short_hash(value: &str) -> &str {
+    value.get(..16).unwrap_or(value)
+}
+
+fn nonempty_or<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.is_empty() {
+        fallback
+    } else {
+        value
+    }
+}
+
+fn truncate(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
+}
+
+fn python_string_list_repr(value: &Value) -> String {
+    let Some(values) = value.as_array() else {
+        return "[]".to_string();
+    };
+    let items = values
+        .iter()
+        .filter_map(Value::as_str)
+        .map(|item| format!("'{}'", item.replace('\\', "\\\\").replace('\'', "\\'")))
+        .collect::<Vec<_>>();
+    format!("[{}]", items.join(", "))
+}
+
+fn toolchain_sql_error(error: rusqlite::Error) -> String {
+    format!("toolchain SQLite operation failed: {error}")
+}
+
 fn run_workspace(runtime: &RuntimeOptions, action: WorkspaceAction) -> CommandResult {
     match action {
         WorkspaceAction::List => execute_workspace_read(
@@ -1684,8 +2824,8 @@ fn command_name(cmd: &Commands) -> &'static str {
         Brief => "brief",
         Map => "map",
         HealthReport => "health-report",
-        BuildContext => "build-context",
-        Toolchain => "toolchain",
+        BuildContext { .. } => "build-context",
+        Toolchain { .. } => "toolchain",
         Graph => "graph",
         Config { .. } => "config",
         Dashboard => "dashboard",
@@ -1805,8 +2945,12 @@ mod tests {
             Commands::Brief,
             Commands::Map,
             Commands::HealthReport,
-            Commands::BuildContext,
-            Commands::Toolchain,
+            Commands::BuildContext {
+                action: BuildContextAction::List { workspace_id: 1 },
+            },
+            Commands::Toolchain {
+                action: ToolchainAction::List,
+            },
             Commands::Graph,
             Commands::Config {
                 action: ConfigAction::Explain,
@@ -1840,7 +2984,12 @@ mod tests {
         assert_eq!(command_name(&Commands::FnMetrics), "fn-metrics");
         assert_eq!(command_name(&Commands::OwnershipMap), "ownership-map");
         assert_eq!(command_name(&Commands::HealthReport), "health-report");
-        assert_eq!(command_name(&Commands::BuildContext), "build-context");
+        assert_eq!(
+            command_name(&Commands::BuildContext {
+                action: BuildContextAction::List { workspace_id: 1 },
+            }),
+            "build-context"
+        );
     }
 
     #[test]
@@ -2080,6 +3229,63 @@ mod tests {
     }
 
     #[test]
+    fn parses_toolchain_and_build_context_actions() {
+        let toolchain = Cli::try_parse_from([
+            "cw",
+            "toolchain",
+            "register",
+            "gcc-arm",
+            "/opt/gcc/bin/gcc",
+            "--sysroot",
+            "/opt/gcc/sysroot",
+            "--no-probe",
+        ])
+        .unwrap();
+        assert!(matches!(
+            toolchain.command,
+            Some(Commands::Toolchain {
+                action: ToolchainAction::Register {
+                    name,
+                    no_probe: true,
+                    ..
+                }
+            }) if name == "gcc-arm"
+        ));
+
+        let context = Cli::try_parse_from([
+            "cw",
+            "build-context",
+            "register",
+            "7",
+            "debug",
+            "--flags=-O2",
+            "--defines",
+            "DEBUG=1",
+            "BOARD=A98",
+            "--includes",
+            "include",
+            "--activate",
+        ])
+        .unwrap();
+        assert!(matches!(
+            context.command,
+            Some(Commands::BuildContext {
+                action: BuildContextAction::Register {
+                    workspace_id: 7,
+                    name,
+                    flags,
+                    defines,
+                    includes,
+                    activate: true,
+                }
+            }) if name == "debug"
+                && flags == ["-O2"]
+                && defines == ["DEBUG=1", "BOARD=A98"]
+                && includes == ["include"]
+        ));
+    }
+
+    #[test]
     fn refresh_full_mode_stays_fail_closed() {
         let runtime = RuntimeOptions::from_overrides(
             Some(DaemonMode::Local),
@@ -2230,7 +3436,7 @@ mod tests {
         .unwrap();
         assert!(matches!(cli.mode, Some(ModeArg::Local)));
         assert_eq!(cli.db, Some(PathBuf::from("/tmp/callwarden.db")));
-        assert_eq!(cli.workspace_id.as_deref(), Some("17"));
+        assert_eq!(cli.enterprise_workspace_id.as_deref(), Some("17"));
         assert_eq!(cli.timeout, 9);
         assert!(matches!(cli.command, Some(Commands::Stats)));
     }

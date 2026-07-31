@@ -13,6 +13,7 @@
 //! - docs/design/phase5-3-output-layer-contract.md
 //! - docs/design/phase5-1c-stats-vertical-slice-contract.md
 
+pub mod build_context;
 pub mod config;
 pub mod file_query;
 pub mod graph_query;

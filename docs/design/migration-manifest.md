@@ -4067,7 +4067,7 @@ P0-CLI-D 其余任务：
 | 子任务 | 任务 ID | 范围 | 状态 |
 |---|---|---|---|
 | D2 | `T-1785468162023-598bbdfa` | Rust workspace 生命周期 | review |
-| D3 | `T-1785468162025-5c47603b` | Rust build-context/toolchain | open |
+| D3 | `T-1785468162025-5c47603b` | Rust build-context/toolchain | review |
 | D4 | `T-1785469925481-78a7b9dc` | Rust refresh `--all/--force` 全仓构建 | open |
 
 ### 60.2 验证
@@ -4145,3 +4145,56 @@ stderr 与最终 SQLite workspace 行；另验证 status 不产生数据库写�
 集成测试覆盖同 UID archive/reactivate、跨 UID 双写拒绝，以及 remove 后 registry
 行仍存在，证明企业路径执行的是可恢复归档而非破坏性删除。local 另以完整
 CodeGraphDB Schema 和真实 symbols/calls/versions 数据验证物理删除不会被外键阻断。
+
+---
+
+## §62 自举复审整改：Rust `cw build-context/toolchain`
+
+**任务**：`T-1785468162025-5c47603b`（P0-CLI-D3）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 62.1 已实现
+
+- Rust `cw toolchain` 已接入 `register/list/show/delete/bind/list-bound`，编译器探测
+  有 10 秒超时，`--no-probe` 与 Python 行为一致，fingerprint 复用同一稳定算法；
+- Rust `cw build-context` 已接入
+  `register/list/show/activate/delete/import-compile-commands/resolve/edges`；
+  `compile_commands.json` 同时支持 `arguments` 与 shell command，路径、define、
+  include 和 flag 聚合顺序与 Python 真相源一致；
+- local 模式复用 `ToolchainStore` 的统一 schema，查询使用只读连接；context
+  激活、删除与 resolved edge 替换都使用事务，edge 重建中途失败会恢复旧缓存；
+- enterprise 模式新增 `build_context.get`、`toolchain.list_bound` 和
+  `resolved_edges.replace` RPC。build-context 写入与读取按 workspace owner 鉴权，
+  全局 toolchain 注册/删除仍是 admin-only；
+- enterprise `resolve` 从 daemon 取得 context 和已绑定 toolchain，把
+  include/sysroot 与客户端本地符号快照结合计算，再由 daemon 原子发布。客户端
+  不再要求同一 context 重复存在于本地 SQLite；
+- `auto` 写命令只在执行前选择一次数据源；选中 enterprise 后，RPC、ACL 或发布
+  失败均 fail closed，不回退 local 形成双真相；
+- 顶层 `--workspace-id` 的内部 Clap ID 与 build-context/toolchain 位置参数隔离，
+  避免字符串/整数同名参数在解析时发生 downcast；
+- 当前 enterprise `resolve` 仍要求客户端可读取对应 workspace 的本地符号快照。
+  符号快照完全迁入 daemon 后，应把计算移动到 daemon 内部；本任务不声称已经
+  消除这个迁移期依赖。
+
+### 62.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::build_context::tests --lib --no-default-features
+test result: ok. 5 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 23 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib --no-default-features
+test result: ok. 524 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py::test_toolchain_and_build_context_binary_match_python_process -q
+1 passed
+```
+
+真实 Python/Rust 进程差分依次覆盖 toolchain 注册、列表、详情、绑定、绑定列表和
+删除，以及 build-context 注册、列表、详情、compile commands 导入、resolved
+edge 重建、查询和删除；逐项比较 exit code、stdout、stderr 与 context hash。
+daemon 回归同时覆盖跨 UID owner ACL、全局 admin-only 边界和原子 edge 回滚。

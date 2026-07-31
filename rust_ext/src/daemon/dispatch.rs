@@ -472,6 +472,15 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("toolchain.resolve"))
     }
 
+    fn handle_toolchain_list_bound(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("toolchain.list_bound"))
+    }
+
     // ---- Build Context 管理（G1 Layer 2 实现）----
 
     fn handle_build_context_register(
@@ -490,6 +499,15 @@ pub trait DaemonStateExt {
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
         Err(DaemonRpcError::method_not_found("build_context.list"))
+    }
+
+    fn handle_build_context_get(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("build_context.get"))
     }
 
     fn handle_build_context_set_active(
@@ -537,6 +555,15 @@ pub trait DaemonStateExt {
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
         Err(DaemonRpcError::method_not_found("resolved_edges.count"))
+    }
+
+    fn handle_resolved_edges_replace(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("resolved_edges.replace"))
     }
 }
 
@@ -595,10 +622,7 @@ pub const ADMIN_ONLY_METHODS: &[&str] = &[
     "toolchain.register",
     "toolchain.delete",
     "toolchain.bind",
-    // Build Context 变更（注册 / 切换激活 / 删除）
-    "build_context.register",
-    "build_context.set_active",
-    "build_context.delete",
+    // Build Context 属于 workspace 资源，由 handler 做 owner ACL。
 ];
 
 /// 返回 daemon 进程自己的 uid（Unix: getuid；Windows: 与测试 current_uid() 一致）
@@ -637,7 +661,8 @@ fn dispatch_inner<S: DaemonStateExt>(
     // 管理员方法授权检查（fail-closed：未授权直接拒绝，不进入 handler）
     //
     // Phase 4-2 implement 状态：
-    // - ADMIN_ONLY_METHODS 列表已完整（backup/restore/gc.*/mount.*/toolchain.*/build_context.*）
+    // - ADMIN_ONLY_METHODS 覆盖全局运维与 toolchain 写操作
+    // - build_context/resolved_edges 是 workspace 资源，由 handler 做 owner ACL
     // - is_admin 判定已实现（uid==0 或 uid==current_daemon_uid()）
     // - workspace owner 校验在 workspace.rs:owned_workspace/owned_workspace_by_id 内
     // - 路径安全在 workspace.rs:validate_owned_path 内（canonicalize + owner_uid）
@@ -712,10 +737,12 @@ fn dispatch_inner<S: DaemonStateExt>(
         "toolchain.delete" => state.handle_toolchain_delete(peer, params),
         "toolchain.bind" => state.handle_toolchain_bind(peer, params),
         "toolchain.resolve" => state.handle_toolchain_resolve(peer, params),
+        "toolchain.list_bound" => state.handle_toolchain_list_bound(peer, params),
 
         // ---- Build Context 管理（G1 Layer 2 实现）----
         "build_context.register" => state.handle_build_context_register(peer, params),
         "build_context.list" => state.handle_build_context_list(peer, params),
+        "build_context.get" => state.handle_build_context_get(peer, params),
         "build_context.set_active" => state.handle_build_context_set_active(peer, params),
         "build_context.delete" => state.handle_build_context_delete(peer, params),
 
@@ -723,6 +750,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "resolved_edges.store" => state.handle_resolved_edges_store(peer, params),
         "resolved_edges.get" => state.handle_resolved_edges_get(peer, params),
         "resolved_edges.count" => state.handle_resolved_edges_count(peer, params),
+        "resolved_edges.replace" => state.handle_resolved_edges_replace(peer, params),
 
         // ---- 未知方法 ----
         _ => Err(DaemonRpcError::method_not_found(method)),
@@ -1089,9 +1117,6 @@ mod tests {
             "toolchain.register",
             "toolchain.delete",
             "toolchain.bind",
-            "build_context.register",
-            "build_context.set_active",
-            "build_context.delete",
         ] {
             let response = dispatch(&mut state, make_peer(), method, &params, &[]);
             assert_eq!(
@@ -1132,7 +1157,13 @@ mod tests {
             "workspace.status",
             "toolchain.list",
             "toolchain.get",
+            "toolchain.list_bound",
             "build_context.list",
+            "build_context.get",
+            "build_context.register",
+            "build_context.set_active",
+            "build_context.delete",
+            "resolved_edges.replace",
             "query.stats",
             "query.symbol",
             "snapshot.stats",
