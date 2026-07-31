@@ -29,3 +29,4 @@ pub mod search;
 pub mod stats;
 pub mod status;
 pub mod symbol;
+pub mod workspace;

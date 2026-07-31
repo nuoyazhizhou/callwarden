@@ -4066,7 +4066,7 @@ P0-CLI-D 其余任务：
 
 | 子任务 | 任务 ID | 范围 | 状态 |
 |---|---|---|---|
-| D2 | `T-1785468162023-598bbdfa` | Rust workspace 生命周期 | open |
+| D2 | `T-1785468162023-598bbdfa` | Rust workspace 生命周期 | review |
 | D3 | `T-1785468162025-5c47603b` | Rust build-context/toolchain | open |
 | D4 | `T-1785469925481-78a7b9dc` | Rust refresh `--all/--force` 全仓构建 | open |
 
@@ -4090,3 +4090,58 @@ test result: ok. 520 passed; 0 failed
 `file_instances`、`symbols`、`calls`、`file_versions` 与
 `file_symbol_versions` 的持久化结果。Rust 单测另覆盖第二版本、删除 tombstone、
 历史表故障整事务回滚、enterprise generation 参数与多文件输出格式。
+
+---
+
+## §61 自举复审整改：Rust `cw workspace` 生命周期
+
+**任务**：`T-1785468162023-598bbdfa`（P0-CLI-D2）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 61.1 已实现
+
+- Rust `cw workspace` 已接入 `register/list/status/activate/remove`；为兼容 Python
+  入口，`set` 是 `activate` 的别名，`delete` 是 `remove` 的别名；
+- local register 使用绝对路径、统一正斜杠、去尾斜杠和 Windows 小写盘符，
+  并按 name 或 root_path 幂等；持久化使用规范化路径，成功消息保持 Python
+  的原始参数回显契约；
+- local activate 使用 `BEGIN IMMEDIATE`，一次事务取消旧 active 并激活目标；
+  已是 active 时不产生 UPDATE。list/status 使用只读连接，不借查询隐式激活；
+- local remove 在单事务内根据 SQLite schema 清理所有带 workspace、file、
+  version 或 symbol 关联列的从表，再按 symbols、file_versions、
+  file_instances、workspaces 顺序删除父记录，避免 schema 演进后固定清单留下
+  孤儿边；
+- enterprise register/list/status 复用 daemon 的 `SO_PEERCRED` owner ACL 与
+  路径 canonicalize/UID 校验；新增 `workspace.activate` 和
+  `workspace.remove` RPC，两个写方法均先校验 owner；
+- enterprise remove 只把 registry 状态设置为 `archived`，不物理删除共享
+  snapshot/CAS；activate 可由 owner 将 archived workspace 恢复为 active。
+  跨 UID 的 activate/remove 均返回 `workspace_forbidden`；
+- `auto` 对 register/activate/remove 仍只在写入前选择一次路由，daemon 写入
+  失败后不回退 local，避免同一个生命周期操作写入两个真相源；
+- `workspace scan` 与 `workspace generate-ignore` 属于工作区发现/忽略规则生成，
+  **不在 D2 生命周期范围内，仍保留 Python 实现**，不得据此声称整个
+  workspace 子系统已经 Rust-only。
+
+### 61.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::workspace:: --lib
+test result: ok. 3 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw
+test result: ok. 22 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib
+test result: ok. 522 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+58 passed
+```
+
+真实进程差异测试依次比较 register、list、set、delete 的 exit code、stdout、
+stderr 与最终 SQLite workspace 行；另验证 status 不产生数据库写入。daemon
+集成测试覆盖同 UID archive/reactivate、跨 UID 双写拒绝，以及 remove 后 registry
+行仍存在，证明企业路径执行的是可恢复归档而非破坏性删除。local 另以完整
+CodeGraphDB Schema 和真实 symbols/calls/versions 数据验证物理删除不会被外键阻断。

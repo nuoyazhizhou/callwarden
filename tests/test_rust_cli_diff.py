@@ -1174,3 +1174,189 @@ def test_refresh_binary_matches_python_persisted_graph(tmp_path: Path) -> None:
         assert conn.execute("SELECT status FROM file_instances").fetchone()[0] == "pending"
     with sqlite3.connect(rust_db) as conn:
         assert conn.execute("SELECT status FROM file_instances").fetchone()[0] == "parsed"
+
+
+def test_workspace_lifecycle_binary_matches_python_process(tmp_path: Path) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    registered_root = tmp_path / "registered"
+    workspace_root.mkdir()
+    registered_root.mkdir()
+    db_paths: dict[str, Path] = {}
+    envs: dict[str, dict[str, str]] = {}
+
+    for implementation in ("python", "rust"):
+        home = tmp_path / implementation / "home"
+        db_path = home / ".callwarden" / "callwarden.db"
+        db_path.parent.mkdir(parents=True)
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+        try:
+            db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            db.close()
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+                "CALLWARDEN_WORKSPACE": str(workspace_root),
+                "CALLWARDEN_LANG": "zh_CN",
+                "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            }
+        )
+        db_paths[implementation] = db_path
+        envs[implementation] = env
+
+    def run_python(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "cw.py"), "workspace", *args],
+            cwd=workspace_root,
+            env=envs["python"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def run_rust(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                str(binary),
+                "--mode",
+                "local",
+                "--db",
+                str(db_paths["rust"]),
+                "workspace",
+                *args,
+            ],
+            cwd=workspace_root,
+            env=envs["rust"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    commands = [
+        ("register", "secondary", str(registered_root)),
+        ("list",),
+        ("set", "secondary"),
+        ("list",),
+        ("set", "workspace"),
+        ("delete", "secondary"),
+        ("list",),
+    ]
+    for args in commands:
+        python_result = run_python(*args)
+        rust_result = run_rust(*args)
+        assert python_result.returncode == 0, python_result.stderr
+        assert rust_result.returncode == 0, rust_result.stderr
+        assert rust_result.stderr == python_result.stderr == ""
+        assert rust_result.stdout == python_result.stdout
+
+    with sqlite3.connect(db_paths["python"]) as python_conn:
+        python_rows = python_conn.execute(
+            "SELECT name, root_path, is_active, description "
+            "FROM workspaces ORDER BY id"
+        ).fetchall()
+    with sqlite3.connect(db_paths["rust"]) as rust_conn:
+        rust_rows = rust_conn.execute(
+            "SELECT name, root_path, is_active, description "
+            "FROM workspaces ORDER BY id"
+        ).fetchall()
+    assert rust_rows == python_rows
+
+
+def test_workspace_status_is_read_only_and_uses_active_workspace(tmp_path: Path) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    db_path = tmp_path / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = db._get_active_workspace_id()
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        db.close()
+
+    result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "workspace",
+            "status",
+        ],
+        cwd=workspace_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["id"] == workspace_id
+    assert payload["is_active"] is True
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.total_changes == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM workspaces WHERE is_active = 1"
+        ).fetchone()[0] == 1
+
+
+def test_workspace_remove_cleans_full_codegraph_schema(tmp_path: Path) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    db_path = tmp_path / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = _seed_stats_fixture(db)
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        db.close()
+
+    result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "workspace",
+            "remove",
+            str(workspace_id),
+        ],
+        cwd=workspace_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert result.returncode == 0, result.stderr
+
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM workspaces WHERE id = ?", (workspace_id,)
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM file_instances WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM calls").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM file_versions").fetchone()[0] == 0

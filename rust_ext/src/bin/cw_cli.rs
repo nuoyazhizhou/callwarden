@@ -19,13 +19,11 @@ use callwarden_core::cli::graph_query::{
 };
 use callwarden_core::cli::graph_traversal::{
     format_call_chain_output, format_topological_output, normalize_enterprise_call_chain,
-    normalize_enterprise_topological_order, query_local_call_chain,
-    query_local_topological_order, MAX_CALL_CHAIN_DEPTH,
+    normalize_enterprise_topological_order, query_local_call_chain, query_local_topological_order,
+    MAX_CALL_CHAIN_DEPTH,
 };
 use callwarden_core::cli::grep::{query_local_grep, GrepOptions};
-use callwarden_core::cli::impact::{
-    format_impact_output, query_local_impact, MAX_IMPACT_DEPTH,
-};
+use callwarden_core::cli::impact::{format_impact_output, query_local_impact, MAX_IMPACT_DEPTH};
 use callwarden_core::cli::issues_tests::{
     format_issues_output, format_test_cases_output, format_test_stability_output,
     format_tested_functions_output, query_local_issues, query_local_test_cases,
@@ -43,6 +41,11 @@ use callwarden_core::cli::search::{
 use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use callwarden_core::cli::symbol::format_symbol_output;
+use callwarden_core::cli::workspace::{
+    activate_local_workspace, format_activate_result, format_register_success,
+    format_remove_result, format_workspace_list, get_local_workspace, list_local_workspaces,
+    register_local_workspace, remove_local_workspace, workspace_record_json, WorkspaceRecord,
+};
 use callwarden_core::symbol_query::query_symbol_detail;
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -153,7 +156,10 @@ enum Commands {
 
     // ===== 8 大类 subcommand =====
     /// workspace 管理
-    Workspace,
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceAction,
+    },
     /// 刷新数据库
     Refresh {
         /// 全仓刷新尚未迁移，本阶段显式拒绝
@@ -355,6 +361,33 @@ enum ConfigAction {
     },
 }
 
+#[derive(Subcommand)]
+enum WorkspaceAction {
+    /// 列出当前数据源可见的工作区
+    List,
+    /// 注册工作区
+    Register {
+        name: String,
+        root: PathBuf,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long, default_value = "")]
+        git_remote_url: String,
+        #[arg(long, default_value = "")]
+        git_head_commit_sha: String,
+        #[arg(long, default_value = "")]
+        toolchain_fingerprint: String,
+    },
+    /// 查询工作区状态；省略标识时使用全局 --workspace-id 或本地 active workspace
+    Status { id_or_name: Option<String> },
+    /// 激活工作区（兼容 Python `workspace set`）
+    #[command(alias = "set")]
+    Activate { id_or_name: String },
+    /// 移除工作区（兼容 Python `workspace delete`）
+    #[command(alias = "delete")]
+    Remove { id_or_name: String },
+}
+
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum RoleArg {
     Local,
@@ -407,6 +440,9 @@ fn main() {
                 }
                 Commands::Config { action } => {
                     emit_result(run_config(action));
+                }
+                Commands::Workspace { action } => {
+                    emit_result(run_workspace(&runtime, action));
                 }
                 Commands::Search { query, kind, limit } => {
                     emit_result(run_search(&runtime, &query, kind.as_deref(), limit));
@@ -1267,6 +1303,225 @@ fn run_config(action: ConfigAction) -> CommandResult {
     }
 }
 
+fn run_workspace(runtime: &RuntimeOptions, action: WorkspaceAction) -> CommandResult {
+    match action {
+        WorkspaceAction::List => execute_workspace_read(
+            runtime,
+            || {
+                let conn = runtime.open_local_db()?;
+                let rows = list_local_workspaces(&conn)?;
+                Ok(format_workspace_list(&rows, use_zh_cn()))
+            },
+            || {
+                let value = runtime.daemon_call("workspace.list", serde_json::json!({}))?;
+                format_enterprise_workspace_list(&value)
+            },
+        ),
+        WorkspaceAction::Status { id_or_name } => {
+            let enterprise_id = id_or_name.clone().or_else(|| runtime.workspace_id.clone());
+            execute_workspace_read(
+                runtime,
+                || {
+                    let conn = runtime.open_local_db()?;
+                    let identifier = match id_or_name.as_deref() {
+                        Some(value) => value.to_string(),
+                        None => runtime.resolve_local_workspace_id(&conn)?.to_string(),
+                    };
+                    let workspace = get_local_workspace(&conn, &identifier)?
+                        .ok_or_else(|| format!("workspace {identifier:?} not found"))?;
+                    serde_json::to_string_pretty(&workspace_record_json(&workspace))
+                        .map_err(|error| format!("cannot serialize workspace status: {error}"))
+                },
+                || {
+                    let identifier = enterprise_id.as_deref().ok_or_else(|| {
+                        "enterprise workspace status requires ID or --workspace-id".to_string()
+                    })?;
+                    let value = runtime.daemon_call(
+                        "workspace.status",
+                        serde_json::json!({"workspace_instance_id": identifier}),
+                    )?;
+                    serde_json::to_string_pretty(&value)
+                        .map_err(|error| format!("cannot serialize workspace status: {error}"))
+                },
+            )
+        }
+        WorkspaceAction::Register {
+            name,
+            root,
+            description,
+            git_remote_url,
+            git_head_commit_sha,
+            toolchain_fingerprint,
+        } => runtime.execute_write_with(
+            || {
+                let mut conn = runtime.open_local_write_db()?;
+                let mut workspace =
+                    register_local_workspace(&mut conn, &name, &root, &description)?;
+                // Python 成功消息回显用户参数，数据库内仍保存规范化路径。
+                workspace.root_path = root.to_string_lossy().to_string();
+                Ok(format_register_success(&workspace, use_zh_cn()))
+            },
+            || {
+                let root = root.to_string_lossy().to_string();
+                let value = runtime.daemon_call(
+                    "workspace.register",
+                    serde_json::json!({
+                        "client_view_root": root,
+                        "git_remote_url": git_remote_url,
+                        "git_head_commit_sha": git_head_commit_sha,
+                        "toolchain_fingerprint": toolchain_fingerprint,
+                    }),
+                )?;
+                let id = value
+                    .get("workspace_id")
+                    .and_then(|item| item.as_i64())
+                    .unwrap_or_default();
+                let normalized_root = value
+                    .get("client_view_root")
+                    .and_then(|item| item.as_str())
+                    .unwrap_or(&root);
+                let workspace = WorkspaceRecord {
+                    id,
+                    name: name.clone(),
+                    root_path: normalized_root.to_string(),
+                    is_active: true,
+                    description: description.clone(),
+                };
+                Ok(format_register_success(&workspace, use_zh_cn()))
+            },
+        ),
+        WorkspaceAction::Activate { id_or_name } => runtime.execute_write_with(
+            || {
+                let mut conn = runtime.open_local_write_db()?;
+                let workspace = activate_local_workspace(&mut conn, &id_or_name)?;
+                Ok(format_activate_result(
+                    workspace.as_ref(),
+                    &id_or_name,
+                    use_zh_cn(),
+                ))
+            },
+            || {
+                let value = runtime.daemon_call(
+                    "workspace.activate",
+                    serde_json::json!({"workspace_instance_id": id_or_name}),
+                )?;
+                let root = value
+                    .get("client_view_root")
+                    .and_then(|item| item.as_str())
+                    .unwrap_or("");
+                Ok(if use_zh_cn() {
+                    format!("已激活企业工作区: {} ({})", id_or_name, root)
+                } else {
+                    format!("Enterprise workspace activated: {} ({})", id_or_name, root)
+                })
+            },
+        ),
+        WorkspaceAction::Remove { id_or_name } => runtime.execute_write_with(
+            || {
+                let mut conn = runtime.open_local_write_db()?;
+                let workspace = remove_local_workspace(&mut conn, &id_or_name)?;
+                Ok(format_remove_result(
+                    workspace.as_ref(),
+                    &id_or_name,
+                    use_zh_cn(),
+                ))
+            },
+            || {
+                runtime.daemon_call(
+                    "workspace.remove",
+                    serde_json::json!({"workspace_instance_id": id_or_name}),
+                )?;
+                Ok(if use_zh_cn() {
+                    format!("企业工作区 '{}' 已归档", id_or_name)
+                } else {
+                    format!("Enterprise workspace '{}' archived", id_or_name)
+                })
+            },
+        ),
+    }
+}
+
+fn execute_workspace_read<L, E>(runtime: &RuntimeOptions, local: L, enterprise: E) -> CommandResult
+where
+    L: FnOnce() -> Result<String, String>,
+    E: FnOnce() -> Result<String, String>,
+{
+    match runtime.mode {
+        DaemonMode::Local => workspace_text_result(local(), RouteUsed::Local),
+        DaemonMode::Enterprise => {
+            if !runtime.daemon_available() {
+                return CommandResult::failure(
+                    2,
+                    format!(
+                        "enterprise daemon is unavailable at {}",
+                        runtime.socket_path.display()
+                    ),
+                    RouteUsed::None,
+                );
+            }
+            workspace_text_result(enterprise(), RouteUsed::Enterprise)
+        }
+        DaemonMode::Auto if runtime.daemon_available() => match enterprise() {
+            Ok(stdout) => CommandResult::success_text(stdout, RouteUsed::Enterprise),
+            Err(enterprise_error) => {
+                let mut result = workspace_text_result(local(), RouteUsed::Local);
+                if result.exit_code == 0 {
+                    result.stderr = format!(
+                        "warning: daemon query failed; used local database: {enterprise_error}"
+                    );
+                }
+                result
+            }
+        },
+        DaemonMode::Auto => workspace_text_result(local(), RouteUsed::Local),
+    }
+}
+
+fn workspace_text_result(result: Result<String, String>, route: RouteUsed) -> CommandResult {
+    match result {
+        Ok(stdout) => CommandResult::success_text(stdout, route),
+        Err(error) => CommandResult::failure(1, error, route),
+    }
+}
+
+fn format_enterprise_workspace_list(value: &serde_json::Value) -> Result<String, String> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| "workspace.list returned a non-array result".to_string())?;
+    let mut lines = vec![if use_zh_cn() {
+        format!("企业工作区列表（共 {} 个）:", rows.len())
+    } else {
+        format!("Enterprise workspaces ({} total):", rows.len())
+    }];
+    for row in rows {
+        let id = row
+            .get("workspace_instance_id")
+            .and_then(|item| item.as_str())
+            .unwrap_or("<unknown>");
+        let status = row
+            .get("status")
+            .and_then(|item| item.as_str())
+            .unwrap_or("unknown");
+        let root = row
+            .get("client_view_root")
+            .and_then(|item| item.as_str())
+            .unwrap_or("");
+        lines.push(format!("[{}] {} [{}]", row["workspace_id"], id, status));
+        lines.push(if use_zh_cn() {
+            format!("路径: {root}")
+        } else {
+            format!("Path: {root}")
+        });
+    }
+    Ok(lines.join("\n"))
+}
+
+fn use_zh_cn() -> bool {
+    std::env::var("CALLWARDEN_LANG")
+        .map(|value| value.to_ascii_lowercase().starts_with("zh"))
+        .unwrap_or(false)
+}
+
 fn format_config_explain(entries: &[ConfigEntry]) -> String {
     let mut lines = vec![
         "# N4 分层配置（来源：callwarden_core::cli::config）".to_string(),
@@ -1397,7 +1652,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Bootstrap => "bootstrap",
         Clone => "clone",
         Fts => "fts",
-        Workspace => "workspace",
+        Workspace { .. } => "workspace",
         Refresh { .. } => "refresh",
         Stats => "stats",
         Status => "status",
@@ -1472,7 +1727,9 @@ mod tests {
             Commands::Bootstrap,
             Commands::Clone,
             Commands::Fts,
-            Commands::Workspace,
+            Commands::Workspace {
+                action: WorkspaceAction::List,
+            },
             Commands::Refresh {
                 all: false,
                 force: false,
@@ -1786,8 +2043,7 @@ mod tests {
 
     #[test]
     fn parses_call_chain_and_topo_arguments() {
-        let chain =
-            Cli::try_parse_from(["cw", "call-chain", "a.alpha", "--depth", "3"]).unwrap();
+        let chain = Cli::try_parse_from(["cw", "call-chain", "a.alpha", "--depth", "3"]).unwrap();
         assert!(matches!(
             chain.command,
             Some(Commands::CallChain { name, depth }) if name == "a.alpha" && depth == 3

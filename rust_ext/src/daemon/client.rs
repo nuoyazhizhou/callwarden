@@ -630,6 +630,8 @@ pub fn build_simple_request_py(action: &str, workspace_id: Option<&str>) -> (Str
 /// 对齐 cli/daemon_commands.py 的对应分支
 pub const RPC_ACTIONS: &[&str] = &[
     "register",
+    "activate",
+    "remove",
     "backup",
     "restore",
     "gc-cas",
@@ -651,7 +653,7 @@ pub enum RpcError {
     MissingParam(&'static str),
 }
 
-/// 构建剩余 11 个 RPC 命令的请求参数。
+/// 构建 workspace 生命周期及其余 11 个 RPC 命令的请求参数。
 ///
 /// 对齐 Python `cli/daemon_commands.py:run_daemon_command` 的对应分支：
 /// - `register` → `workspace.register`（4 参数）
@@ -686,6 +688,8 @@ pub fn build_rpc_request(
 
     let method = match action {
         "register" => "workspace.register",
+        "activate" => "workspace.activate",
+        "remove" => "workspace.remove",
         "backup" => "backup",
         "restore" => "restore",
         "gc-cas" => "gc.cas",
@@ -1595,6 +1599,18 @@ mod tests {
     }
 
     #[test]
+    fn test_d8_workspace_lifecycle_write_mappings() {
+        let params = r#"{"workspace_instance_id":"ws-1"}"#;
+        let (activate_method, activate_params) =
+            build_rpc_request("activate", params).unwrap();
+        let (remove_method, remove_params) = build_rpc_request("remove", params).unwrap();
+        assert_eq!(activate_method, "workspace.activate");
+        assert_eq!(remove_method, "workspace.remove");
+        assert_eq!(activate_params["workspace_instance_id"], "ws-1");
+        assert_eq!(remove_params["workspace_instance_id"], "ws-1");
+    }
+
+    #[test]
     fn test_d8_2_backup_method_mapping() {
         let params = r#"{"output_path":"/tmp/backup.db"}"#;
         let (method, p) = build_rpc_request("backup", params).unwrap();
@@ -1684,7 +1700,7 @@ mod tests {
 
     #[test]
     fn test_d8_14_rpc_actions_count() {
-        assert_eq!(RPC_ACTIONS.len(), 11);
+        assert_eq!(RPC_ACTIONS.len(), 13);
     }
 
     #[test]

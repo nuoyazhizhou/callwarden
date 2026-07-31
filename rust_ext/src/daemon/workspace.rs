@@ -700,6 +700,31 @@ pub fn owned_workspace(
     Ok(workspace)
 }
 
+/// 校验 workspace 所有权，但允许读取 archived 行。
+///
+/// lifecycle activate/remove 需要对 archived 行保持幂等，不能复用会拒绝 archived
+/// 的 `owned_workspace`。
+fn owned_workspace_any_status(
+    registry: &WorkspaceRegistry,
+    peer_uid: u32,
+    workspace_instance_id: &str,
+) -> Result<Value, DaemonRpcError> {
+    let workspace = registry
+        .get_workspace_status(workspace_instance_id)
+        .map_err(|e| DaemonRpcError::internal_error(format!("registry 查询失败: {}", e)))?
+        .ok_or_else(|| DaemonRpcError::workspace_not_found(workspace_instance_id))?;
+    let owner_uid = workspace
+        .get("owner_uid")
+        .and_then(|value| value.as_i64())
+        .unwrap_or(-1);
+    if owner_uid != peer_uid as i64 {
+        return Err(DaemonRpcError::workspace_forbidden(
+            "workspace 不属于当前 UID",
+        ));
+    }
+    Ok(workspace)
+}
+
 /// P0-1 整改（2026-07-22）：通过 workspace_id（数字主键）校验所有权
 ///
 /// 对应 Python `daemon_server.py:_owned_workspace_by_id`。用于
@@ -1084,6 +1109,46 @@ impl DaemonStateExt for WorkspaceDaemonState {
         // ACL 检查（owner_uid 匹配 + 非 archived）
         let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
         Ok(workspace)
+    }
+
+    fn handle_workspace_activate(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        owned_workspace_any_status(&self.registry, peer.uid, workspace_instance_id)?;
+        self.registry
+            .update_workspace_status(workspace_instance_id, "active")
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("activate workspace failed: {}", e))
+            })?;
+        self.registry
+            .get_workspace_status(workspace_instance_id)
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("query activated workspace failed: {}", e))
+            })?
+            .ok_or_else(|| DaemonRpcError::workspace_not_found(workspace_instance_id))
+    }
+
+    fn handle_workspace_remove(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        owned_workspace_any_status(&self.registry, peer.uid, workspace_instance_id)?;
+        self.registry
+            .update_workspace_status(workspace_instance_id, "archived")
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("archive workspace failed: {}", e))
+            })?;
+        self.registry
+            .get_workspace_status(workspace_instance_id)
+            .map_err(|e| {
+                DaemonRpcError::internal_error(format!("query archived workspace failed: {}", e))
+            })?
+            .ok_or_else(|| DaemonRpcError::workspace_not_found(workspace_instance_id))
     }
 
     fn handle_workspace_connect(
@@ -3239,6 +3304,44 @@ mod tests {
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "workspace_forbidden");
+    }
+
+    #[test]
+    fn test_dispatch_workspace_remove_and_activate_are_owner_only_and_non_destructive() {
+        let mut state = make_state();
+        let peer_owner = make_owner_peer();
+        let peer_other = make_other_peer();
+        let tmp = tempfile::tempdir().unwrap();
+        let reg_response = dispatch(
+            &mut state,
+            peer_owner,
+            "workspace.register",
+            &json!({"client_view_root": tmp.path().to_str().unwrap()}),
+            &[],
+        );
+        assert_eq!(reg_response["ok"], true);
+        let instance_id = reg_response["result"]["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let params = json!({"workspace_instance_id": instance_id});
+
+        let forbidden_remove = dispatch(&mut state, peer_other, "workspace.remove", &params, &[]);
+        assert_eq!(forbidden_remove["error"]["code"], "workspace_forbidden");
+
+        let removed = dispatch(&mut state, peer_owner, "workspace.remove", &params, &[]);
+        assert_eq!(removed["ok"], true);
+        assert_eq!(removed["result"]["status"], "archived");
+        assert_eq!(state.registry.count_workspaces().unwrap(), 1);
+
+        let forbidden_activate =
+            dispatch(&mut state, peer_other, "workspace.activate", &params, &[]);
+        assert_eq!(forbidden_activate["error"]["code"], "workspace_forbidden");
+
+        let activated = dispatch(&mut state, peer_owner, "workspace.activate", &params, &[]);
+        assert_eq!(activated["ok"], true);
+        assert_eq!(activated["result"]["status"], "active");
+        assert_eq!(state.registry.count_workspaces().unwrap(), 1);
     }
 
     #[test]
