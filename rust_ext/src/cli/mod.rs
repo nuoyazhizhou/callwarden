@@ -16,6 +16,7 @@
 pub mod config;
 pub mod file_query;
 pub mod grep;
+pub mod issues_tests;
 pub mod output;
 pub mod readonly;
 pub mod router;

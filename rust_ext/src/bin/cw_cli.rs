@@ -13,6 +13,11 @@ use callwarden_core::cli::file_query::{
     query_local_symbol_location,
 };
 use callwarden_core::cli::grep::{query_local_grep, GrepOptions};
+use callwarden_core::cli::issues_tests::{
+    format_issues_output, format_test_cases_output, format_test_stability_output,
+    format_tested_functions_output, query_local_issues, query_local_test_cases,
+    query_local_test_stability, query_local_tested_functions,
+};
 use callwarden_core::cli::router::DaemonMode;
 use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
 use callwarden_core::cli::search::{
@@ -181,10 +186,43 @@ enum Commands {
         /// 文件路径
         file: String,
     },
-    /// 符号问题
-    Issues,
-    /// 测试用例
-    Tests,
+    /// 符号级静态检查问题
+    Issues {
+        /// 符号限定名
+        qualified_name: String,
+        /// 包含 INFO 级别问题
+        #[arg(long)]
+        include_info: bool,
+    },
+    /// 测试关联与运行历史
+    Tests {
+        /// 符号限定名
+        qualified_name: Option<String>,
+        /// 反向查询测试函数覆盖的生产函数
+        #[arg(long)]
+        reverse: bool,
+        /// 写模式：重建测试关联，当前 Rust 只读阶段拒绝
+        #[arg(long)]
+        build: bool,
+        /// 与 --build 配合的强制重建参数
+        #[arg(long)]
+        force: bool,
+        /// 查询测试运行稳定性
+        #[arg(long)]
+        history: bool,
+        /// 写模式：导入 JUnit XML，当前 Rust 只读阶段拒绝
+        #[arg(long = "import")]
+        import_file: Option<String>,
+        /// CI 运行 ID
+        #[arg(long, default_value = "")]
+        ci_run_id: String,
+        /// CI 运行 URL
+        #[arg(long, default_value = "")]
+        ci_url: String,
+        /// history 最多读取的运行记录数
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
     /// 调用者
     Callers,
     /// 被调用者
@@ -346,6 +384,36 @@ fn main() {
                             include_all,
                             kind,
                         },
+                    ));
+                }
+                Commands::Issues {
+                    qualified_name,
+                    include_info,
+                } => {
+                    emit_result(run_issues(&runtime, &qualified_name, include_info));
+                }
+                Commands::Tests {
+                    qualified_name,
+                    reverse,
+                    build,
+                    force,
+                    history,
+                    import_file,
+                    ci_run_id,
+                    ci_url,
+                    limit,
+                } => {
+                    emit_result(run_tests(
+                        &runtime,
+                        qualified_name.as_deref(),
+                        reverse,
+                        build,
+                        force,
+                        history,
+                        import_file.as_deref(),
+                        &ci_run_id,
+                        &ci_url,
+                        limit,
                     ));
                 }
                 _ => {
@@ -660,6 +728,107 @@ fn format_grep_result(mut result: CommandResult) -> CommandResult {
     }
 }
 
+fn run_issues(
+    runtime: &RuntimeOptions,
+    qualified_name: &str,
+    include_info: bool,
+) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_issues(&conn, workspace_id, qualified_name, include_info)
+        },
+        || Err("enterprise issues query is not implemented by the daemon protocol".to_string()),
+    );
+    format_read_result(result, |value| {
+        format_issues_output(value, qualified_name, include_info)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_tests(
+    runtime: &RuntimeOptions,
+    qualified_name: Option<&str>,
+    reverse: bool,
+    build: bool,
+    _force: bool,
+    history: bool,
+    import_file: Option<&str>,
+    _ci_run_id: &str,
+    _ci_url: &str,
+    limit: usize,
+) -> CommandResult {
+    if import_file.is_some() || build {
+        return CommandResult::failure(
+            2,
+            "Rust cw tests write modes --build/--import are not migrated; use the Python CLI until the write-command phase"
+                .to_string(),
+            RouteUsed::None,
+        );
+    }
+    let Some(qualified_name) = qualified_name else {
+        let message = if history {
+            "Error: qualified_name required with --history"
+        } else {
+            "Error: qualified_name required (or use --build/--import/--history)"
+        };
+        return text_result(0, message.to_string());
+    };
+
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            if history {
+                query_local_test_stability(&conn, workspace_id, qualified_name, limit)
+            } else if reverse {
+                query_local_tested_functions(&conn, workspace_id, qualified_name)
+            } else {
+                query_local_test_cases(&conn, workspace_id, qualified_name)
+            }
+        },
+        || {
+            Err("enterprise tests query is not implemented by the daemon protocol".to_string())
+        },
+    );
+    format_read_result(result, |value| {
+        if history {
+            format_test_stability_output(value, qualified_name)
+        } else if reverse {
+            format_tested_functions_output(value, qualified_name)
+        } else {
+            format_test_cases_output(value, qualified_name)
+        }
+    })
+}
+
+fn format_read_result<F>(mut result: CommandResult, formatter: F) -> CommandResult
+where
+    F: FnOnce(&serde_json::Value) -> Result<String, String>,
+{
+    if result.exit_code != 0 {
+        return result;
+    }
+    let parsed = match serde_json::from_str::<serde_json::Value>(&result.stdout) {
+        Ok(value) => value,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot decode read query result: {error}"),
+                result.route,
+            );
+        }
+    };
+    match formatter(&parsed) {
+        Ok(stdout) => {
+            result.stdout = stdout;
+            result
+        }
+        Err(error) => CommandResult::failure(1, error, result.route),
+    }
+}
+
 fn query_enterprise_status<F>(workspace_id: &str, mut call: F) -> Result<serde_json::Value, String>
 where
     F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
@@ -844,8 +1013,8 @@ fn command_name(cmd: &Commands) -> &'static str {
         Symbol { .. } => "symbol",
         File { .. } => "file",
         Query { .. } => "query",
-        Issues => "issues",
-        Tests => "tests",
+        Issues { .. } => "issues",
+        Tests { .. } => "tests",
         Callers => "callers",
         Callees => "callees",
         CallChain => "call-chain",
@@ -934,8 +1103,21 @@ mod tests {
                 name: "alpha".to_string(),
                 file: "a.py".to_string(),
             },
-            Commands::Issues,
-            Commands::Tests,
+            Commands::Issues {
+                qualified_name: "a.alpha".to_string(),
+                include_info: false,
+            },
+            Commands::Tests {
+                qualified_name: Some("a.alpha".to_string()),
+                reverse: false,
+                build: false,
+                force: false,
+                history: false,
+                import_file: None,
+                ci_run_id: String::new(),
+                ci_url: String::new(),
+                limit: 50,
+            },
             Commands::Callers,
             Commands::Callees,
             Commands::CallChain,
@@ -1149,6 +1331,64 @@ mod tests {
                 && path == PathBuf::from("src")
                 && kind == "fn"
         ));
+    }
+
+    #[test]
+    fn parses_issues_and_tests_read_options() {
+        let issues = Cli::try_parse_from(["cw", "issues", "a.alpha", "--include-info"]).unwrap();
+        assert!(matches!(
+            issues.command,
+            Some(Commands::Issues {
+                qualified_name,
+                include_info: true,
+            }) if qualified_name == "a.alpha"
+        ));
+
+        let tests = Cli::try_parse_from([
+            "cw",
+            "tests",
+            "a.alpha",
+            "--reverse",
+            "--history",
+            "--limit",
+            "7",
+        ])
+        .unwrap();
+        assert!(matches!(
+            tests.command,
+            Some(Commands::Tests {
+                qualified_name: Some(qualified_name),
+                reverse: true,
+                history: true,
+                limit: 7,
+                ..
+            }) if qualified_name == "a.alpha"
+        ));
+    }
+
+    #[test]
+    fn tests_write_modes_fail_closed() {
+        let runtime = RuntimeOptions::from_overrides(
+            Some(DaemonMode::Local),
+            None,
+            None,
+            None,
+            30,
+        );
+        let result = run_tests(
+            &runtime,
+            None,
+            false,
+            true,
+            false,
+            false,
+            None,
+            "",
+            "",
+            50,
+        );
+        assert_eq!(result.exit_code, 2);
+        assert!(result.stderr.contains("write modes"));
     }
 
     #[test]

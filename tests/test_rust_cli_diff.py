@@ -216,6 +216,112 @@ def _seed_status_files(db: CodeGraphDB, workspace_id: int) -> None:
     db.conn.commit()
 
 
+def _seed_issues_tests_fixture(db: CodeGraphDB, workspace_id: int) -> None:
+    """补充 issues/tests 正向、反向和 history 的真实关系数据。"""
+    conn = db.conn
+    file_id = conn.execute(
+        "SELECT id FROM file_instances WHERE workspace_id = ? AND rel_path = 'a.py'",
+        (workspace_id,),
+    ).fetchone()["id"]
+    alpha_id = conn.execute(
+        "SELECT id FROM symbols WHERE file_instance_id = ? AND qualified_name = 'a.alpha'",
+        (file_id,),
+    ).fetchone()["id"]
+    thing_id = conn.execute(
+        "SELECT id FROM symbols WHERE file_instance_id = ? AND qualified_name = 'a.Thing'",
+        (file_id,),
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO symbol_contents("
+        "content_hash, name, kind, content, signature, has_comment, "
+        "comment_content, qualified_name"
+        ") VALUES ('sym-test-alpha', 'test_alpha', 'test_fn', "
+        "'def test_alpha(): pass', 'test_alpha()', 0, '', 'a.test_alpha')"
+    )
+    conn.execute(
+        "INSERT INTO symbols("
+        "file_instance_id, symbol_hash, name, kind, start_line, end_line, "
+        "has_comment, comment_status, qualified_name, depth"
+        ") VALUES (?, 'sym-test-alpha', 'test_alpha', 'test_fn', 7, 9, "
+        "0, 'pending', 'a.test_alpha', 0)",
+        (file_id,),
+    )
+    test_id = conn.execute(
+        "SELECT id FROM symbols WHERE file_instance_id = ? "
+        "AND qualified_name = 'a.test_alpha'",
+        (file_id,),
+    ).fetchone()["id"]
+    detected_at = 1_735_689_600.0
+    conn.executemany(
+        "INSERT INTO test_case_relations("
+        "workspace_id, test_fn_id, tested_fn_id, match_method, confidence, detected_at"
+        ") VALUES (?, ?, ?, ?, ?, ?)",
+        [
+            (
+                workspace_id,
+                test_id,
+                alpha_id,
+                "direct_call",
+                "high",
+                detected_at,
+            ),
+            (
+                workspace_id,
+                test_id,
+                thing_id,
+                "name_convention",
+                "mid",
+                detected_at,
+            ),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO test_runs("
+        "workspace_id, test_fn_id, test_name, test_class, test_file, status, "
+        "duration_ms, error_message, error_type, ci_run_id, ci_url, run_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                workspace_id,
+                test_id,
+                "test_alpha",
+                "TestAlpha",
+                "a.py",
+                "passed",
+                10.0,
+                "",
+                "",
+                "ci-1",
+                "",
+                1_735_689_600.0,
+            ),
+            (
+                workspace_id,
+                test_id,
+                "test_alpha",
+                "TestAlpha",
+                "a.py",
+                "failed",
+                30.0,
+                "expected 1 but got 2",
+                "AssertionError",
+                "ci-2",
+                "",
+                1_735_776_000.0,
+            ),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO semgrep_findings("
+        "file_instance_id, content_hash, rule_id, rule_name, message, severity, "
+        "confidence, start_line, end_line, snippet, fix, symbol_qualified"
+        ") VALUES (?, 'file-a', 'python.info', 'style note', 'consider rename', "
+        "'INFO', 'MEDIUM', 1, 1, 'alpha()', '', 'a.alpha')",
+        (file_id,),
+    )
+    conn.commit()
+
+
 def test_stats_binary_matches_python_get_stats(tmp_path: Path) -> None:
     binary = _rust_cw_binary()
     if not binary.exists():
@@ -694,6 +800,160 @@ def test_grep_binary_matches_python_process_output(
             str(workspace_id),
             "grep",
             *grep_args,
+        ],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert rust_result.returncode == python_result.returncode == 0
+    assert rust_result.stderr == python_result.stderr == ""
+    assert rust_result.stdout == python_result.stdout
+
+
+@pytest.mark.parametrize(
+    "issues_args",
+    [
+        ("a.alpha",),
+        ("a.alpha", "--include-info"),
+        ("a.missing",),
+    ],
+)
+def test_issues_binary_matches_python_process_output(
+    tmp_path: Path, issues_args: tuple[str, ...]
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    home = tmp_path / "home"
+    db_dir = home / ".callwarden"
+    db_dir.mkdir(parents=True)
+    db_path = db_dir / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = _seed_stats_fixture(db)
+        _seed_issues_tests_fixture(db, workspace_id)
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        db.close()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "CALLWARDEN_WORKSPACE": str(workspace_root),
+            "CALLWARDEN_LANG": "zh_CN",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    python_result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "cw.py"), "issues", *issues_args],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    rust_result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "--workspace-id",
+            str(workspace_id),
+            "issues",
+            *issues_args,
+        ],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert rust_result.returncode == python_result.returncode == 0
+    assert rust_result.stderr == python_result.stderr == ""
+    assert rust_result.stdout == python_result.stdout
+
+
+@pytest.mark.parametrize(
+    "tests_args",
+    [
+        ("a.alpha",),
+        ("a.test_alpha", "--reverse"),
+        ("a.alpha", "--history"),
+        ("a.missing",),
+        ("a.missing", "--reverse"),
+        ("a.missing", "--history"),
+        (),
+    ],
+)
+def test_tests_binary_matches_python_read_process_output(
+    tmp_path: Path, tests_args: tuple[str, ...]
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    home = tmp_path / "home"
+    db_dir = home / ".callwarden"
+    db_dir.mkdir(parents=True)
+    db_path = db_dir / "callwarden.db"
+    db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+    try:
+        workspace_id = _seed_stats_fixture(db)
+        _seed_issues_tests_fixture(db, workspace_id)
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        db.close()
+
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "CALLWARDEN_WORKSPACE": str(workspace_root),
+            "CALLWARDEN_LANG": "zh_CN",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    python_result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "cw.py"), "tests", *tests_args],
+        cwd=workspace_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    rust_result = subprocess.run(
+        [
+            str(binary),
+            "--mode",
+            "local",
+            "--db",
+            str(db_path),
+            "--workspace-id",
+            str(workspace_id),
+            "tests",
+            *tests_args,
         ],
         cwd=workspace_root,
         env=env,

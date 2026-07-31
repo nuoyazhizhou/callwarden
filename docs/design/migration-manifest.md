@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests（只读） |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -3831,3 +3831,44 @@ include-all、kind、limit、空结果，以及清空 `PATH` 后两端同时走 
 workspace 路径逃逸、Python repr 标题和“符号过滤后再 limit”的顺序。
 
 本任务不声明 `issues/tests` 已完成；它们继续保留在 P0-CLI-B5。
+
+---
+
+## §56 自举复审整改：Rust `cw issues/tests`
+
+**任务**：`T-1785440297054-71910a73`（P0-CLI-B5）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 56.1 已实现
+
+- `cw issues <qualified_name> [--include-info]` 已从 clap 空壳切换到真实 Rust
+  查询，按 active workspace 定位当前符号，并聚合 Semgrep 与 Guardrail finding；
+- Semgrep 与 Guardrail 可选表分别 fail soft，默认过滤 INFO，详细输出、snippet
+  截断、来源/严重级别汇总顺序及空结果提示与 Python 当前行为一致；
+- `cw tests <qualified_name>`、`--reverse`、`--history [--limit N]` 三种只读
+  模式已切换到 Rust，覆盖测试关系正向查询、反向查询、稳定性统计与最近失败；
+- 测试关系和运行历史 SQL 均显式附加 `workspace_id`，符号查询同时过滤 archived
+  文件，避免跨 workspace 或历史文件泄漏；
+- `--build` 与 `--import` 会修改测试关系或导入 JUnit，属于后续写命令迁移范围。
+  Rust 入口当前以 exit code 2 fail closed，不回退到 Python，也不声称已经迁移；
+- daemon 协议尚无 issues/tests RPC，enterprise 模式明确 fail closed；auto 模式
+  沿用统一 runtime，在 daemon 路径不可用时回退 local。
+
+### 56.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::issues_tests::tests --lib --no-default-features
+test result: ok. 3 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 14 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+35 passed
+```
+
+新增十组真实 Python/Rust 进程差分：issues 默认过滤、包含 INFO、缺失符号，
+以及 tests forward/reverse/history 的命中与空结果、缺失参数。每组完整比较
+exit code、stdout 和 stderr。单元测试额外覆盖问题汇总/详情布局、空测试提示、
+不稳定测试优先排序和写模式拒绝。
