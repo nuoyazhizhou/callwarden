@@ -979,6 +979,13 @@ def test_tests_binary_matches_python_read_process_output(
         ("callees", ("a.alpha",)),
         ("callees", ("alpha", "--qualified", "a.alpha")),
         ("callees", ("missing",)),
+        ("call-chain", ("a.alpha",)),
+        ("call-chain", ("a.alpha", "--depth", "1")),
+        ("call-chain", ("a.alpha", "--depth", "0")),
+        ("call-chain", ("missing",)),
+        ("topo", ()),
+        ("topo", ("--limit", "1")),
+        ("topo", ("--limit", "0")),
     ],
 )
 def test_graph_query_binary_matches_python_process_output(

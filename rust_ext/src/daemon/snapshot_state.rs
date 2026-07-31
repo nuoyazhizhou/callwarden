@@ -22,7 +22,7 @@
 use std::sync::Arc;
 
 use rusqlite::{Connection, OpenFlags};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use super::dispatch::{
     current_daemon_uid, get_int_param_or, get_str_param, get_str_param_or, require_str_param,
@@ -32,7 +32,7 @@ use super::workspace::{
     owned_workspace, owned_workspace_by_id, validate_owned_path, WorkspaceDaemonState,
     WorkspaceRegistry,
 };
-use crate::graph::{CallChainEdgeInfo, GraphStore};
+use crate::graph::GraphStore;
 use crate::snapshot::SnapshotCache;
 use crate::symbol_query::query_symbol_detail;
 
@@ -701,7 +701,7 @@ impl DaemonStateExt for SnapshotDaemonState {
         let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
         let qualified_name = require_str_param(params, "qualified_name")?;
         // G12 批次8：修复 max_depth 字段错配（同 query.search limit）
-        let max_depth = get_int_param_or(params, "max_depth", 5) as usize;
+        let max_depth = get_int_param_or(params, "max_depth", 5).max(0) as usize;
 
         let _workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
         let store = self.get_store(workspace_instance_id).ok_or_else(|| {
@@ -718,7 +718,9 @@ impl DaemonStateExt for SnapshotDaemonState {
                 let mut m = Map::new();
                 m.insert("depth".into(), Value::Number(e.depth.into()));
                 m.insert("caller_name".into(), Value::String(e.caller_name));
+                m.insert("caller_qualified".into(), Value::String(e.caller_qualified));
                 m.insert("callee_name".into(), Value::String(e.callee_name));
+                m.insert("callee_qualified".into(), Value::String(e.callee_qualified));
                 m.insert("callee_id".into(), Value::Number(e.callee_id.into()));
                 m.insert("call_line".into(), Value::Number(e.call_line.into()));
                 m.insert("is_cross_file".into(), Value::Bool(e.is_cross_file));
@@ -742,8 +744,30 @@ impl DaemonStateExt for SnapshotDaemonState {
             )
         })?;
 
-        let order = store.topological_order_rust();
-        let results: Vec<Value> = order.into_iter().map(Value::String).collect();
+        let limit = get_int_param_or(params, "limit", 20).max(0) as usize;
+        let detail = params.get("detail").and_then(Value::as_bool).unwrap_or(false);
+        let results = if detail {
+            store
+                .topological_details_rust(limit)
+                .into_iter()
+                .map(|symbol| {
+                    json!({
+                        "qualified_name": symbol.qualified_name,
+                        "name": symbol.name,
+                        "path": symbol.path,
+                        "start_line": symbol.start_line,
+                        "depth": symbol.depth,
+                    })
+                })
+                .collect()
+        } else {
+            store
+                .topological_order_rust()
+                .into_iter()
+                .take(limit)
+                .map(Value::String)
+                .collect()
+        };
         Ok(Value::Array(results))
     }
 
@@ -1627,6 +1651,39 @@ mod tests {
         assert_eq!(callees["result"][1]["callee_file"], "");
         assert_eq!(callees["result"][1]["call_line"], 4);
         assert_eq!(callees["result"][1]["is_cross_file"], true);
+
+        let chain = dispatch(
+            &mut state,
+            peer,
+            "query.call_chain_down",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "qualified_name": "a.alpha",
+                "max_depth": 10
+            }),
+            &[],
+        );
+        assert_eq!(chain["ok"], true);
+        assert_eq!(chain["result"][0]["caller_qualified"], "a.alpha");
+        assert_eq!(chain["result"][0]["callee_qualified"], "a.beta");
+        assert_eq!(chain["result"][1]["callee_qualified"], "");
+
+        let topo = dispatch(
+            &mut state,
+            peer,
+            "query.topological_order",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "limit": 1,
+                "detail": true
+            }),
+            &[],
+        );
+        assert_eq!(topo["ok"], true);
+        assert_eq!(topo["result"].as_array().unwrap().len(), 1);
+        assert_eq!(topo["result"][0]["qualified_name"], "a.alpha");
+        assert_eq!(topo["result"][0]["path"], "a.py");
+        assert_eq!(topo["result"][0]["start_line"], 1);
     }
 
     #[test]

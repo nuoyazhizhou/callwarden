@@ -16,6 +16,11 @@ use callwarden_core::cli::graph_query::{
     format_callees_output, format_callers_output, normalize_callees, normalize_callers,
     query_local_callees, query_local_callers, resolve_name_filter,
 };
+use callwarden_core::cli::graph_traversal::{
+    format_call_chain_output, format_topological_output, normalize_enterprise_call_chain,
+    normalize_enterprise_topological_order, query_local_call_chain,
+    query_local_topological_order, MAX_CALL_CHAIN_DEPTH,
+};
 use callwarden_core::cli::grep::{query_local_grep, GrepOptions};
 use callwarden_core::cli::issues_tests::{
     format_issues_output, format_test_cases_output, format_test_stability_output,
@@ -244,9 +249,19 @@ enum Commands {
         qualified: Option<String>,
     },
     /// 调用链
-    CallChain,
+    CallChain {
+        /// 起始符号限定名
+        name: String,
+        /// 最大向下遍历深度
+        #[arg(long, default_value_t = 10)]
+        depth: i64,
+    },
     /// 拓扑排序
-    Topo,
+    Topo {
+        /// 最多返回的函数数；负数表示不限制
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+    },
     /// 指标
     Metrics,
     /// 复杂度
@@ -437,6 +452,12 @@ fn main() {
                 }
                 Commands::Callees { name, qualified } => {
                     emit_result(run_callees(&runtime, &name, qualified.as_deref()));
+                }
+                Commands::CallChain { name, depth } => {
+                    emit_result(run_call_chain(&runtime, &name, depth));
+                }
+                Commands::Topo { limit } => {
+                    emit_result(run_topo(&runtime, limit));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -878,6 +899,104 @@ fn run_callees(
     format_read_result(result, |value| format_callees_output(value, requested_name))
 }
 
+fn run_call_chain(
+    runtime: &RuntimeOptions,
+    qualified_name: &str,
+    requested_depth: i64,
+) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_call_chain(&conn, workspace_id, qualified_name, requested_depth)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise call-chain requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_call_chain(
+                workspace_id,
+                qualified_name,
+                requested_depth,
+                |method, params| runtime.daemon_call(method, params),
+            )
+        },
+    );
+    format_read_result(result, format_call_chain_output)
+}
+
+fn query_enterprise_call_chain<F>(
+    workspace_id: &str,
+    qualified_name: &str,
+    requested_depth: i64,
+    mut call: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    let bounded_depth = requested_depth.max(0).min(MAX_CALL_CHAIN_DEPTH as i64) as u32;
+    let (method, params) = callwarden_core::daemon::client::build_query_request(
+        workspace_id,
+        "call_chain_down",
+        qualified_name,
+        None,
+        None,
+        None,
+        Some(bounded_depth),
+    )
+    .map_err(|error| format!("cannot build call-chain RPC: {error}"))?;
+    normalize_enterprise_call_chain(call(&method, params)?, qualified_name, requested_depth)
+}
+
+fn run_topo(runtime: &RuntimeOptions, limit: i64) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_topological_order(&conn, workspace_id, limit)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise topo requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_topological_order(workspace_id, limit, |method, params| {
+                runtime.daemon_call(method, params)
+            })
+        },
+    );
+    format_read_result(result, format_topological_output)
+}
+
+fn query_enterprise_topological_order<F>(
+    workspace_id: &str,
+    limit: i64,
+    mut call: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    let rpc_limit = if limit < 0 {
+        u32::MAX
+    } else {
+        u32::try_from(limit).map_err(|_| format!("topo limit is too large: {limit}"))?
+    };
+    let (method, mut params) = callwarden_core::daemon::client::build_query_request(
+        workspace_id,
+        "topological_order",
+        "",
+        None,
+        None,
+        Some(rpc_limit),
+        None,
+    )
+    .map_err(|error| format!("cannot build topo RPC: {error}"))?;
+    params
+        .as_object_mut()
+        .ok_or_else(|| "topo RPC params must be a JSON object".to_string())?
+        .insert("detail".to_string(), serde_json::Value::Bool(true));
+    normalize_enterprise_topological_order(call(&method, params)?)
+}
+
 fn query_enterprise_graph<F>(
     workspace_id: &str,
     query_type: &str,
@@ -1130,8 +1249,8 @@ fn command_name(cmd: &Commands) -> &'static str {
         Tests { .. } => "tests",
         Callers { .. } => "callers",
         Callees { .. } => "callees",
-        CallChain => "call-chain",
-        Topo => "topo",
+        CallChain { .. } => "call-chain",
+        Topo { .. } => "topo",
         Metrics => "metrics",
         Complexity => "complexity",
         Coupling => "coupling",
@@ -1239,8 +1358,11 @@ mod tests {
                 name: "alpha".to_string(),
                 qualified: None,
             },
-            Commands::CallChain,
-            Commands::Topo,
+            Commands::CallChain {
+                name: "a.alpha".to_string(),
+                depth: 10,
+            },
+            Commands::Topo { limit: 50 },
             Commands::Metrics,
             Commands::Complexity,
             Commands::Coupling,
@@ -1279,7 +1401,13 @@ mod tests {
         assert_eq!(command_name(&Commands::TestImpact), "test-impact");
         assert_eq!(command_name(&Commands::InstallAgent), "install-agent");
         assert_eq!(command_name(&Commands::InstallHook), "install-hook");
-        assert_eq!(command_name(&Commands::CallChain), "call-chain");
+        assert_eq!(
+            command_name(&Commands::CallChain {
+                name: "a.alpha".to_string(),
+                depth: 10,
+            }),
+            "call-chain"
+        );
         assert_eq!(command_name(&Commands::CommentCoverage), "comment-coverage");
         assert_eq!(command_name(&Commands::FunctionIssues), "function-issues");
         assert_eq!(command_name(&Commands::LargestFns), "largest-fns");
@@ -1421,6 +1549,66 @@ mod tests {
         assert_eq!(calls, 2);
         assert_eq!(result[0]["caller_name"], "alpha");
         assert_eq!(result[0]["call_line"], 3);
+    }
+
+    #[test]
+    fn enterprise_call_chain_builds_bounded_rpc_and_normalizes_levels() {
+        let result = query_enterprise_call_chain("ws-1", "a.alpha", 500, |method, params| {
+            assert_eq!(method, "query.call_chain_down");
+            assert_eq!(params["workspace_instance_id"], "ws-1");
+            assert_eq!(params["qualified_name"], "a.alpha");
+            assert_eq!(params["max_depth"], MAX_CALL_CHAIN_DEPTH);
+            Ok(serde_json::json!([{
+                "depth": 0,
+                "caller_name": "alpha",
+                "caller_qualified": "a.alpha",
+                "callee_name": "beta",
+                "callee_qualified": "a.beta",
+                "callee_id": 2
+            }]))
+        })
+        .unwrap();
+
+        assert_eq!(result["total_downstream"], 1);
+        assert_eq!(result["levels"][0]["depth"], 1);
+        assert_eq!(result["levels"][0]["callees"][0]["callee"], "a.beta");
+    }
+
+    #[test]
+    fn enterprise_topo_requests_details_and_preserves_python_fields() {
+        let result = query_enterprise_topological_order("ws-1", 7, |method, params| {
+            assert_eq!(method, "query.topological_order");
+            assert_eq!(params["workspace_instance_id"], "ws-1");
+            assert_eq!(params["limit"], 7);
+            assert_eq!(params["detail"], true);
+            Ok(serde_json::json!([{
+                "qualified_name": "a.alpha",
+                "name": "alpha",
+                "path": "a.py",
+                "start_line": 1,
+                "depth": 0
+            }]))
+        })
+        .unwrap();
+
+        assert_eq!(result[0]["qualified_name"], "a.alpha");
+        assert_eq!(result[0]["path"], "a.py");
+    }
+
+    #[test]
+    fn parses_call_chain_and_topo_arguments() {
+        let chain =
+            Cli::try_parse_from(["cw", "call-chain", "a.alpha", "--depth", "3"]).unwrap();
+        assert!(matches!(
+            chain.command,
+            Some(Commands::CallChain { name, depth }) if name == "a.alpha" && depth == 3
+        ));
+
+        let topo = Cli::try_parse_from(["cw", "topo", "--limit", "12"]).unwrap();
+        assert!(matches!(
+            topo.command,
+            Some(Commands::Topo { limit }) if limit == 12
+        ));
     }
 
     #[test]

@@ -251,16 +251,27 @@ impl CallEdge {
 
 /// G7-T4: 调用链 BFS 边的结果信息（daemon 序列化为 JSON 返回给客户端）
 ///
-/// 与 PyO3 `get_call_chain_down` 返回的 PyDict 字段对齐：
-/// depth / caller_name / callee_name / callee_id / call_line / is_cross_file
+/// 保留 PyO3 `get_call_chain_down` 的原字段，并补充 daemon CLI 所需限定名。
 #[derive(Clone, Debug)]
 pub struct CallChainEdgeInfo {
     pub depth: usize,
     pub caller_name: String,
+    pub caller_qualified: String,
     pub callee_name: String,
+    pub callee_qualified: String,
     pub callee_id: u32,
     pub call_line: u32,
     pub is_cross_file: bool,
+}
+
+/// 按持久化 depth 顺序返回的符号详情，供 enterprise CLI 对齐 Python `topo`。
+#[derive(Clone, Debug)]
+pub struct TopologicalSymbolInfo {
+    pub qualified_name: String,
+    pub name: String,
+    pub path: String,
+    pub start_line: u32,
+    pub depth: i32,
 }
 
 /// 调用图：CSR 压缩稀疏行邻接表
@@ -1885,15 +1896,31 @@ impl GraphStore {
                 .get(sym_id as usize)
                 .map(|s| symbols.sym_name(s))
                 .unwrap_or("");
+            let caller_qualified = symbols
+                .by_id
+                .get(sym_id as usize)
+                .map(|s| symbols.sym_qname(s))
+                .unwrap_or("");
 
             for i in start..end {
                 let edge = &calls.forward_edges[i];
                 let callee_name = calls.callee_name(edge.callee_name_idx);
+                let callee_qualified = if edge.callee_id != 0 {
+                    symbols
+                        .by_id
+                        .get(edge.callee_id as usize)
+                        .map(|symbol| symbols.sym_qname(symbol))
+                        .unwrap_or("")
+                } else {
+                    ""
+                };
 
                 results.push(CallChainEdgeInfo {
                     depth,
                     caller_name: caller_name.to_string(),
+                    caller_qualified: caller_qualified.to_string(),
                     callee_name: callee_name.to_string(),
+                    callee_qualified: callee_qualified.to_string(),
                     callee_id: edge.callee_id,
                     call_line: edge.call_line(),
                     is_cross_file: edge.is_cross_file(),
@@ -1971,6 +1998,35 @@ impl GraphStore {
         }
 
         order
+    }
+
+    /// 按 SQLite 中持久化的 depth/start_line 顺序返回函数详情。
+    ///
+    /// 该接口不替换 Kahn 拓扑排序，只用于兼容 Python `cw topo` 的既有输出契约。
+    pub fn topological_details_rust(&self, limit: usize) -> Vec<TopologicalSymbolInfo> {
+        let symbols = match self.symbols.as_ref() {
+            Some(symbols) => symbols,
+            None => return Vec::new(),
+        };
+        let mut ordered = symbols
+            .by_id
+            .iter()
+            .filter(|symbol| {
+                !(symbol.id == 0 && symbol.name_len == 0) && symbol.kind == SymbolKind::Fn
+            })
+            .collect::<Vec<_>>();
+        ordered.sort_by_key(|symbol| (symbol.depth, symbol.start_line, symbol.id));
+        ordered
+            .into_iter()
+            .take(limit)
+            .map(|symbol| TopologicalSymbolInfo {
+                qualified_name: symbols.sym_qname(symbol).to_string(),
+                name: symbols.sym_name(symbol).to_string(),
+                path: symbols.file_rel_path(symbol.file_instance_id).to_string(),
+                start_line: symbol.start_line,
+                depth: symbol.depth,
+            })
+            .collect()
     }
 
     /// 检测调用图中的环（native 版本，DFS 三色标记）

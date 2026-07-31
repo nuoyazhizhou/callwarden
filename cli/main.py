@@ -7917,8 +7917,9 @@ def _handle_topo(args, db):
     order = db.get_topological_order(opts.limit)
     print(t("cli.messages.topo_title", count=len(order)))
     for i, sym in enumerate(order):
+        path = sym.get("path", sym.get("rel_path", ""))
         print(t("cli.messages.topo_item",
-                idx=i+1, depth=f"{sym['depth']:2d}", path=sym['path'], line=sym['start_line'], name=sym['name']))
+                idx=i+1, depth=f"{sym['depth']:2d}", path=path, line=sym['start_line'], name=sym['name']))
     return True
 
 

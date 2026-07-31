@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees（只读） |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees/call-chain/topo（只读） |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -3920,3 +3920,58 @@ python -m pytest tests/test_rust_cli_diff.py -q
 显式 `--qualified` 与空结果。内存 SQLite 单测使用两个 workspace 的同名符号
 验证隔离；daemon 测试从真实 SQLite 构建并发布 snapshot，验证 resolved 与
 unresolved 边均返回完整字段。
+
+---
+
+## §58 自举复审整改：Rust `cw call-chain/topo`
+
+**任务**：`T-1785462926966-f4fca10f`（P0-CLI-C2）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 58.1 已实现
+
+- `cw call-chain <qualified_name> [--depth N]` 与 `cw topo [--limit N]`
+  已从 clap 空壳切换到真实 Rust 命令；
+- local `call-chain` 按当前 `call_versions` 做限定名 BFS，显式过滤
+  `workspace_id`、非 current 版本和 archived 文件；循环节点只访问一次，层号、
+  每层计数、最多展示 15 项与 Python 当前输出一致；
+- CLI 对调用链深度增加 100 层硬上限，避免异常参数放大图遍历；负数与零仍按
+  Python 语义返回空下游；
+- local `topo` 保留 Python 的持久化 `depth/start_line` 排序契约，不把
+  GraphStore 的 Kahn 字符串序列错误替代为 CLI 输出；只返回非 archived
+  workspace 中的 `fn`；
+- enterprise `call-chain` 复用 `query.call_chain_down`，daemon 在保留
+  `caller_name/callee_name` 等旧字段的同时新增
+  `caller_qualified/callee_qualified`，因此旧客户端不受影响；
+- enterprise `topo` 使用新增的可选 `detail=true`：新 CLI 获得
+  `qualified_name/name/path/start_line/depth`，未传 detail 的旧客户端继续获得
+  原有字符串列表；`limit` 在两种响应上都生效；
+- 两条命令均经过统一 `RuntimeOptions`，enterprise 要求
+  `--workspace-id`，auto 在 daemon 不可用或查询失败时复用既有 local 回退；
+- 差异测试发现并修复 Python `topo` 的历史字段错误：SQL 返回 `rel_path`，
+  formatter 却读取 `path`。Python 现在优先读取 `path`、兼容回退
+  `rel_path`，不改变 DB API；
+- 本任务只声明 `call-chain/topo` CLI 迁移完成；`impact/blast-radius` 命令入口
+  仍由 P0-CLI-C3 继续迁移，即使其部分计算核心此前已经有 Rust 实现。
+
+### 58.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::graph_traversal::tests --lib --no-default-features
+test result: ok. 4 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw
+test result: ok. 19 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml daemon::snapshot_state::tests --lib
+test result: ok. 37 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+50 passed
+```
+
+新增七组真实 Python/Rust 进程差分：调用链默认深度、深度 1、深度 0、缺失
+符号，以及拓扑默认 limit、limit 1、limit 0。完整比较 exit code、stdout 和
+stderr。SQLite 单测另用两个 workspace、归档文件和循环边验证隔离与深度边界；
+daemon 测试从真实 SQLite 发布 snapshot，验证限定名字段和 detail 响应。

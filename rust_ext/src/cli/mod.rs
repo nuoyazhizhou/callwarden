@@ -16,6 +16,7 @@
 pub mod config;
 pub mod file_query;
 pub mod graph_query;
+pub mod graph_traversal;
 pub mod grep;
 pub mod issues_tests;
 pub mod output;
