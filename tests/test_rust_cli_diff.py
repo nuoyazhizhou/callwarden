@@ -1645,3 +1645,156 @@ def test_toolchain_and_build_context_binary_match_python_process(
 
     assert_same("build-context", "delete", str(workspace_id), python_hash)
     assert_same("toolchain", "delete", "fixture-gcc")
+
+
+def _seed_task_read_fixture(db: CodeGraphDB) -> None:
+    """构造 task 只读命令的树、阻塞 finding 与三角关联。"""
+    workspace_id = db._get_active_workspace_id()
+    conn = db.conn
+    conn.executemany(
+        "INSERT INTO tasks("
+        "id, title, description, creator, status, created_at, updated_at, "
+        "parent_id, depth, sort_order"
+        ") VALUES (?, ?, ?, 'agent', ?, ?, ?, ?, ?, ?)",
+        [
+            ("task-root", "Root task", "root desc", "in_progress", 1735689600.0,
+             1735689600.0, "", 0, 0),
+            ("task-child-a", "Child A", "", "review", 1735689601.0,
+             1735689601.0, "task-root", 1, 0),
+            ("task-child-b", "Child B", "", "open", 1735689602.0,
+             1735689602.0, "task-root", 1, 1),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO task_steps("
+        "id, task_id, step_index, action, target_file, target_symbol, "
+        "check_items, status, result, created_at, completed_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, '[]', ?, '', ?, ?)",
+        [
+            ("step-root", "task-root", 0, "inspect", "", "pkg.root",
+             "done", 1735689600.0, 1735689610.0),
+            ("step-child-a", "task-child-a", 0, "fix", "src/a.py", "",
+             "pending", 1735689601.0, None),
+            ("step-child-b", "task-child-b", 0, "verify", "", "",
+             "skipped", 1735689602.0, 1735689612.0),
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO task_quality_findings("
+        "workspace_id, task_id, step_id, finding_type, severity, status, "
+        "message, evidence, source, created_at"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)",
+        [
+            (workspace_id, "task-child-a", "step-child-a", "scope", "block",
+             "open", "outside task scope", "scope", 1735689620.0),
+            (workspace_id, "task-root", "", "style", "warn",
+             "resolved", "style note", "manual", 1735689621.0),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO git_commits("
+        "commit_hash, message, author, email, timestamp, workspace_id"
+        ") VALUES ('0123456789abcdef', 'Task commit\\nbody', 'Reviewer', "
+        "'reviewer@example.com', ?, ?)",
+        (1735689630.0, workspace_id),
+    )
+    conn.execute(
+        "INSERT INTO task_symbol_changes("
+        "workspace_id, task_id, step_id, file_path, qualified_name, symbol_name, "
+        "change_type, source_commit_hash, created_at"
+        ") VALUES (?, 'task-root', 'step-root', 'src/a.py', 'pkg.alpha', "
+        "'alpha', 'modified', '0123456789abcdef', ?)",
+        (workspace_id, 1735689640.0),
+    )
+    conn.commit()
+
+
+def test_task_read_commands_match_python_and_ignore_daemon_route(
+    tmp_path: Path,
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    db_paths: dict[str, Path] = {}
+    envs: dict[str, dict[str, str]] = {}
+    for implementation in ("python", "rust"):
+        home = tmp_path / implementation / "home"
+        db_path = home / ".callwarden" / "callwarden.db"
+        db_path.parent.mkdir(parents=True)
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+        try:
+            _seed_task_read_fixture(db)
+            db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            db.close()
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+                "CALLWARDEN_WORKSPACE": str(workspace_root),
+                "CALLWARDEN_LANG": "en_US",
+                "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            }
+        )
+        db_paths[implementation] = db_path
+        envs[implementation] = env
+
+    def run_python(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "cw.py"), *args],
+            cwd=workspace_root,
+            env=envs["python"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def run_rust(*args: str, mode: str = "local") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                str(binary),
+                "--mode",
+                mode,
+                "--db",
+                str(db_paths["rust"]),
+                *args,
+            ],
+            cwd=workspace_root,
+            env=envs["rust"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    for args in (
+        ("task", "list", "--limit", "20"),
+        ("task", "list", "--blocked", "--limit", "20"),
+        ("task", "list", "--status", "review", "--flat"),
+        ("task", "show", "task-root"),
+        ("task", "show", "task-root", "--flat"),
+        ("task", "status-tree", "task-root"),
+        ("task", "findings", "task-child-a"),
+        ("task", "findings", "task-root", "--status", "all", "--severity", "warn"),
+    ):
+        python_result = run_python(*args)
+        rust_result = run_rust(*args)
+        assert python_result.returncode == 0, python_result.stderr
+        assert rust_result.returncode == 0, rust_result.stderr
+        assert rust_result.stderr == python_result.stderr == ""
+        assert rust_result.stdout == python_result.stdout
+
+    before = db_paths["rust"].read_bytes()
+    enterprise_result = run_rust("task", "show", "task-root", mode="enterprise")
+    assert enterprise_result.returncode == 0, enterprise_result.stderr
+    assert enterprise_result.stdout == run_python(
+        "task", "show", "task-root"
+    ).stdout
+    assert db_paths["rust"].read_bytes() == before

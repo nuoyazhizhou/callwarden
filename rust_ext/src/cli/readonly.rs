@@ -16,7 +16,7 @@
 /// task list/show/findings 只读；create/next/report/apply/close 等是写
 ///
 /// 对齐 Python `_READONLY_TASK_ACTIONS` (L63)
-pub const READONLY_TASK_ACTIONS: &[&str] = &["list", "show", "findings"];
+pub const READONLY_TASK_ACTIONS: &[&str] = &["list", "show", "status-tree", "findings"];
 
 /// rule list/candidate/applicable/extract 只读；sync/insert-block 是写
 ///
@@ -288,6 +288,14 @@ mod tests {
     #[test]
     fn test_d5_1_task_list_readonly() {
         assert!(is_readonly_command("task", &argv(&["list"])));
+    }
+
+    #[test]
+    fn task_status_tree_is_readonly() {
+        assert!(is_readonly_command(
+            "task",
+            &argv(&["status-tree", "task-1"]),
+        ));
     }
 
     #[test]

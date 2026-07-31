@@ -50,6 +50,10 @@ use callwarden_core::cli::search::{
 use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use callwarden_core::cli::symbol::format_symbol_output;
+use callwarden_core::cli::task::{
+    format_task_findings, format_task_list, format_task_show, query_task_detail,
+    query_task_findings, query_task_links, query_task_list, TaskListOptions,
+};
 use callwarden_core::cli::workspace::{
     activate_local_workspace, format_activate_result, format_register_success,
     format_remove_result, format_workspace_list, get_local_workspace, list_local_workspaces,
@@ -135,7 +139,10 @@ enum Commands {
     /// 缺陷知识库
     Defect,
     /// 任务编排
-    Task,
+    Task {
+        #[command(subcommand)]
+        action: TaskAction,
+    },
     /// 漏洞影响半径
     VulnBlast,
     /// 符号历史
@@ -406,6 +413,44 @@ enum WorkspaceAction {
 }
 
 #[derive(Subcommand)]
+enum TaskAction {
+    /// 列出任务
+    List {
+        /// 只显示自身或后代存在阻塞 finding 的任务
+        #[arg(long)]
+        blocked: bool,
+        /// 最大查询数量
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+        /// 任务状态过滤
+        #[arg(long, default_value = "")]
+        status: String,
+        /// 扁平展示，不按父子层级缩进
+        #[arg(long)]
+        flat: bool,
+    },
+    /// 查看任务详情，默认递归展示子任务
+    Show {
+        task_id: String,
+        /// 只展示当前任务
+        #[arg(long)]
+        flat: bool,
+    },
+    /// 查看任务状态树
+    StatusTree { task_id: String },
+    /// 查看任务质量发现
+    Findings {
+        task_id: String,
+        /// open/resolved/wontfix/all
+        #[arg(long, default_value = "open")]
+        status: String,
+        /// info/warn/error/block
+        #[arg(long, default_value = "")]
+        severity: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum ToolchainAction {
     /// 注册工具链
     Register {
@@ -628,6 +673,9 @@ fn main() {
                 Commands::Refresh { all, force, paths } => {
                     emit_result(run_refresh(&runtime, all, force, &paths));
                 }
+                Commands::Task { action } => {
+                    emit_result(run_task(&runtime, action));
+                }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
                     // Phase 5-1 C 扩展阶段将逐命令迁移业务逻辑
@@ -644,6 +692,66 @@ fn main() {
             // 无子命令时打印 help
             Cli::parse_from(["cw", "--help"]);
         }
+    }
+}
+
+fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
+    let result = (|| -> Result<String, String> {
+        // task 是 per-UID 编排元数据；即使代码查询使用 enterprise，也固定读取本地库。
+        let conn = runtime.open_local_db()?;
+        let zh_cn = use_zh_cn();
+        match action {
+            TaskAction::List {
+                blocked,
+                limit,
+                status,
+                flat,
+            } => {
+                let status = (!status.is_empty()).then_some(status);
+                let options = TaskListOptions {
+                    blocked,
+                    limit,
+                    status: status.clone(),
+                    flat,
+                };
+                let tasks = query_task_list(&conn, status.as_deref(), limit)?;
+                format_task_list(&tasks, &options, zh_cn)
+            }
+            TaskAction::Show { task_id, flat } => {
+                let detail = query_task_detail(&conn, &task_id, !flat)?;
+                let links = query_task_links(&conn, &task_id)?;
+                Ok(format_task_show(
+                    &task_id,
+                    detail.as_ref(),
+                    &links,
+                    flat,
+                    zh_cn,
+                ))
+            }
+            TaskAction::StatusTree { task_id } => {
+                let detail = query_task_detail(&conn, &task_id, true)?;
+                let links = query_task_links(&conn, &task_id)?;
+                Ok(format_task_show(
+                    &task_id,
+                    detail.as_ref(),
+                    &links,
+                    false,
+                    zh_cn,
+                ))
+            }
+            TaskAction::Findings {
+                task_id,
+                status,
+                severity,
+            } => {
+                let findings = query_task_findings(&conn, &task_id, &status, &severity)?;
+                Ok(format_task_findings(&task_id, &findings, zh_cn))
+            }
+        }
+    })();
+    match result {
+        Ok(output) => CommandResult::success_text(output, RouteUsed::Local),
+        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
     }
 }
 
@@ -2962,7 +3070,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Hotspot => "hotspot",
         Churn => "churn",
         Defect => "defect",
-        Task => "task",
+        Task { .. } => "task",
         VulnBlast => "vuln-blast",
         SymbolHistory => "symbol-history",
         CheckGate => "check-gate",
@@ -3037,7 +3145,14 @@ mod tests {
             Commands::Hotspot,
             Commands::Churn,
             Commands::Defect,
-            Commands::Task,
+            Commands::Task {
+                action: TaskAction::List {
+                    blocked: false,
+                    limit: 200,
+                    status: String::new(),
+                    flat: false,
+                },
+            },
             Commands::VulnBlast,
             Commands::SymbolHistory,
             Commands::CheckGate,
@@ -3180,7 +3295,14 @@ mod tests {
     fn test_command_name_simple() {
         // 验证简单名称（无连字符）
         assert_eq!(command_name(&Commands::Guardrail), "guardrail");
-        assert_eq!(command_name(&Commands::Task), "task");
+        assert_eq!(
+            command_name(&Commands::Task {
+                action: TaskAction::StatusTree {
+                    task_id: "task-1".to_string(),
+                },
+            }),
+            "task"
+        );
         assert_eq!(command_name(&Commands::Gc), "gc");
         assert_eq!(
             command_name(&Commands::Search {

@@ -4257,3 +4257,61 @@ python -m pytest tests/test_rust_cli_diff.py -q
 当前图更新且删除文件 tombstone 可见；随后 `--force` 重新解析全部现存文件。
 daemon 测试另覆盖跨 chunk 累积、force 全选、最终删除集、跨 UID ACL 与
 `../` 路径拒绝。
+
+---
+
+## §64 自举复审整改：Rust `cw task` 只读查询
+
+**任务**：`T-1785484889179-db27a376`（P0-CLI-E1）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 64.1 已实现
+
+- Rust `cw task` 已接入 `list/show/status-tree/findings`，保留状态过滤、limit、
+  flat/tree、阻塞 finding 过滤、步骤明细、递归进度及 task/commit/symbol 关联；
+- `tasks` 表当前没有 `workspace_id`，其真相域是 per-UID 单库中的用户级编排数据。
+  因此四个只读命令在 `local/auto/enterprise` 三种模式下均固定读取用户本地
+  SQLite，不把任务清单错误路由到共享代码 daemon；
+- Python/Rust 的只读分类同步补入 `task status-tree`，避免这个查询入口在启动时
+  错误激活 workspace 并产生 SQLite 写锁；
+- `list --blocked` 保留 Python 的祖先路径语义：子任务有 open error/block
+  finding 时会显示无 finding 的祖先，但不会带出无阻塞的兄弟分支；
+- task parent cycle、缺表、损坏 schema 和 SQLite 查询错误均 fail closed。
+  Python 旧实现会把部分查询异常伪装成空任务/空 finding，Rust 不复制这一
+  审计假阴性；
+- `show --flat` 只读取当前任务，默认 show/status-tree 递归读取子任务并计算
+  done/skipped 进度；任务和步骤均通过 subtree 递归 CTE 限定当前树，不扫描整个
+  用户任务库。关联表属于可选增强，旧 schema 没有 attribution 表时不影响任务
+  主体展示；
+- E1 只迁移只读查询。`create/next/report/reopen` 属于 E2，
+  `apply/close/rollback/capture-diff/completion-review/split/resolve-finding`
+  属于 E3，不得据此声称整个 task 状态机已经 Rust-only。
+
+### 64.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::task::tests --lib --no-default-features
+test result: ok. 3 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 23 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+61 passed
+
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib --no-default-features -q
+test result: ok. 526 passed; 0 failed
+
+python -m pytest tests/test_phase5_1_cli_diff.py::test_d5_is_readonly_command \
+  tests/test_phase5_1_cli_diff.py::test_d5_is_readonly_args \
+  tests/test_rust_cli_diff.py::test_task_read_commands_match_python_and_ignore_daemon_route -q
+3 passed
+```
+
+真实 Python/Rust 双进程差异测试使用两份独立 SQLite，覆盖树形/扁平列表、阻塞
+祖先、状态过滤、详情、状态树、finding 过滤和 task/commit/symbol 关联，并验证
+`--mode enterprise` 无 daemon 时仍读取同一 per-UID task DB 且数据库字节不变。
+`tests/test_phase5_1_cli_diff.py` 全文件仍有一个与 E1 无关的既有 D2 基线失败：
+Python 默认配置含空 `daemon_socket`，Rust 配置映射缺该键；D5 只读分类门禁独立
+通过，本任务不顺带修改配置迁移范围。

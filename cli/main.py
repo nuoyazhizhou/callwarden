@@ -61,7 +61,7 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
-_READONLY_TASK_ACTIONS = {"list", "show", "findings"}
+_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 # audit verify/keys 只读（只查询 audit_chain/audit_key_rotations 表，不写数据库）
 # audit rotate-key 是写（INSERT/UPDATE audit_key_rotations）

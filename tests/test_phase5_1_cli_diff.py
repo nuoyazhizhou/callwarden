@@ -29,7 +29,7 @@ from release.config_loader import (
 
 # 从 cli/main.py 提取的只读命令识别逻辑（避免导入 529KB 大文件的副作用）
 # 对齐 cli/main.py L63-103 + L1098-1198
-_READONLY_TASK_ACTIONS = {"list", "show", "findings"}
+_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 _READONLY_AUDIT_ACTIONS = {"verify", "keys"}
 _READONLY_BOOTSTRAP_ACTIONS = {"status"}
