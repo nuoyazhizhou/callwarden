@@ -778,7 +778,13 @@ def test_grep_binary_matches_python_process_output(
     if force_fallback:
         empty_path = tmp_path / "empty-path"
         empty_path.mkdir()
-        env["PATH"] = str(empty_path)
+        # Windows 当前 Rust CLI 与 PyO3 同 crate，进程启动仍需找到 python DLL。
+        # 保留 Python 目录但排除 rg，仍能真实覆盖内置 fallback。
+        env["PATH"] = (
+            os.pathsep.join((str(Path(sys.executable).parent), str(empty_path)))
+            if os.name == "nt"
+            else str(empty_path)
+        )
 
     python_result = subprocess.run(
         [sys.executable, str(PROJECT_ROOT / "cw.py"), "grep", *grep_args],
@@ -986,6 +992,10 @@ def test_tests_binary_matches_python_read_process_output(
         ("topo", ()),
         ("topo", ("--limit", "1")),
         ("topo", ("--limit", "0")),
+        ("impact", ("sym-b",)),
+        ("impact", ("sym-b", "--depth", "0")),
+        ("impact", ("sym-b", "--depth", "-1")),
+        ("impact", ("missing",)),
     ],
 )
 def test_graph_query_binary_matches_python_process_output(

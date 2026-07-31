@@ -467,8 +467,31 @@ impl GraphStore {
         workspace_id: i64,
         include_calls: bool,
     ) -> PyResult<(usize, usize)> {
-        let conn = open_immutable_db(db_path)?;
+        self._load_from_sqlite_mode(db_path, workspace_id, include_calls, true)
+    }
 
+    /// 按需选择 immutable 或普通只读连接加载 GraphStore。
+    fn _load_from_sqlite_mode(
+        &mut self,
+        db_path: &str,
+        workspace_id: i64,
+        include_calls: bool,
+        immutable: bool,
+    ) -> PyResult<(usize, usize)> {
+        let conn = if immutable {
+            open_immutable_db(db_path)?
+        } else {
+            Connection::open_with_flags(
+                db_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(|error| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "open readonly graph database failed: {error}"
+                ))
+            })?
+        };
         // P0-2: 动态构建 WHERE 条件——workspace_id>0 时过滤，=0 时不过滤（兼容）
         let ws_filter = if workspace_id > 0 {
             format!("AND workspace_id = {}", workspace_id)
@@ -1617,117 +1640,11 @@ impl GraphStore {
     ///
     /// 返回 BlastRadiusBatch（PyClass，懒转换为 List[Dict]）
     #[pyo3(signature = (symbol_id, depth=3))]
-    fn blast_radius(slf: &Bound<Self>, py: Python<'_>, symbol_id: u32, depth: usize) -> PyResult<BlastRadiusBatch> {
+    fn blast_radius(slf: &Bound<Self>, _py: Python<'_>, symbol_id: u32, depth: usize) -> PyResult<BlastRadiusBatch> {
         let self_ref = slf.borrow();
-        let symbols = self_ref.symbols.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = self_ref.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
-
-        // 验证源符号存在
-        let source_sym = symbols.by_id.get(symbol_id as usize)
-            .filter(|s| s.id == symbol_id && (s.name_len != 0 || s.qname_len != 0))
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "symbol_id {} not found in store", symbol_id
-            )))?;
-
-        let sym_count = symbols.by_id.len();
-
-        // 双重去重：visited_id 用 Vec<bool> O(1) 索引；
-        // visited_qn 用 HashSet<&str> 引用 qname_pool，零 String 分配
-        // （对齐 Python visited_qn + visited_hash 语义，但 GraphStore 无 symbol_hash 字段，
-        //   用 symbol_id 替代 hash 做唯一标识去重，效果一致）
-        let mut visited_id: Vec<bool> = vec![false; sym_count];
-        let mut visited_qn: HashSet<&str> = HashSet::new();
-
-        // 标记源符号已访问
-        visited_id[symbol_id as usize] = true;
-        let source_qn = symbols.sym_qname(source_sym);
-        if !source_qn.is_empty() {
-            visited_qn.insert(source_qn);
-        }
-
-        // 第 0 层：源符号
-        let mut layers: Vec<Vec<u32>> = Vec::with_capacity(depth + 1);
-        layers.push(vec![symbol_id]);
-
-        // BFS 队列（SoA 布局：sym_ids + depths 分开存储，缓存友好）
-        let mut queue_sym_ids: Vec<u32> = Vec::with_capacity(256);
-        let mut queue_depths: Vec<usize> = Vec::with_capacity(256);
-        let mut queue_head: usize = 0;
-
-        // 当前层符号入队
-        if !source_qn.is_empty() {
-            queue_sym_ids.push(symbol_id);
-            queue_depths.push(0);
-        }
-
-        while queue_head < queue_sym_ids.len() {
-            let cur_id = queue_sym_ids[queue_head];
-            let cur_depth = queue_depths[queue_head];
-            queue_head += 1;
-
-            if cur_depth >= depth {
-                continue;
-            }
-
-            // CSR 反向遍历：cur_id 作为 callee_id，找到所有 caller
-            let positions = calls.positions_for_callee_id(cur_id);
-
-            // 收集本层新发现的 caller（去重）
-            let mut next_layer_ids: Vec<u32> = Vec::new();
-            for &pos in positions {
-                let edge = &calls.forward_edges[pos as usize];
-                let caller_id = edge.caller_id;
-                if caller_id == 0 || (caller_id as usize) >= sym_count {
-                    continue;
-                }
-
-                // 双重去重检查
-                if visited_id[caller_id as usize] {
-                    continue;
-                }
-                let caller_sym = match symbols.by_id.get(caller_id as usize) {
-                    Some(s) if s.id == caller_id => s,
-                    _ => continue,
-                };
-                let caller_qn = symbols.sym_qname(caller_sym);
-                if !caller_qn.is_empty() && visited_qn.contains(caller_qn) {
-                    // qn 已访问，标记 id 已访问避免重复检查
-                    visited_id[caller_id as usize] = true;
-                    continue;
-                }
-
-                // 标记已访问
-                visited_id[caller_id as usize] = true;
-                if !caller_qn.is_empty() {
-                    visited_qn.insert(caller_qn);
-                }
-
-                next_layer_ids.push(caller_id);
-            }
-
-            // 把本层新发现的符号记录到对应深度层
-            if !next_layer_ids.is_empty() {
-                let next_depth = cur_depth + 1;
-
-                // layers 按 depth 索引对齐；若跳过中间深度（不应该发生，但防御性处理），填充空层
-                while layers.len() <= next_depth {
-                    layers.push(Vec::new());
-                }
-                layers[next_depth].extend_from_slice(&next_layer_ids);
-
-                // 仅 qualified_name 非空的符号进入下一层 BFS（对齐 Python `if qn:` 语义）
-                for &new_id in &next_layer_ids {
-                    let sym = &symbols.by_id[new_id as usize];
-                    let qn = symbols.sym_qname(sym);
-                    if !qn.is_empty() {
-                        queue_sym_ids.push(new_id);
-                        queue_depths.push(next_depth);
-                    }
-                }
-            }
-        }
+        let layers = self_ref
+            .blast_radius_ids_rust(symbol_id, depth)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         let py_self = slf.clone().unbind();
         Ok(BlastRadiusBatch { layers, store: py_self })
@@ -1774,6 +1691,109 @@ impl GraphStore {
         workspace_id: i64,
     ) -> PyResult<(usize, usize)> {
         self._load_from_sqlite_stage(db_path, workspace_id, true)
+    }
+
+    /// 用普通只读连接加载完整图，确保 local CLI 能读取 WAL。
+    pub(crate) fn load_from_sqlite_readonly_blocking(
+        &mut self,
+        db_path: &str,
+        workspace_id: i64,
+    ) -> PyResult<(usize, usize)> {
+        self._load_from_sqlite_mode(db_path, workspace_id, true, false)
+    }
+
+    /// 以原生 Rust 结构返回影响半径分层，供 CLI 与 daemon 共享 CSR BFS。
+    pub fn blast_radius_ids_rust(
+        &self,
+        symbol_id: u32,
+        depth: usize,
+    ) -> Result<Vec<Vec<u32>>, String> {
+        let symbols = self
+            .symbols
+            .as_ref()
+            .ok_or_else(|| "store not loaded".to_string())?;
+        let calls = self
+            .calls
+            .as_ref()
+            .ok_or_else(|| "calls not ready".to_string())?;
+        let source_sym = symbols
+            .by_id
+            .get(symbol_id as usize)
+            .filter(|symbol| {
+                symbol.id == symbol_id && (symbol.name_len != 0 || symbol.qname_len != 0)
+            })
+            .ok_or_else(|| format!("symbol_id {symbol_id} not found in store"))?;
+
+        let symbol_count = symbols.by_id.len();
+        let mut visited_id = vec![false; symbol_count];
+        let mut visited_qn: HashSet<&str> = HashSet::new();
+        visited_id[symbol_id as usize] = true;
+        let source_qn = symbols.sym_qname(source_sym);
+        if !source_qn.is_empty() {
+            visited_qn.insert(source_qn);
+        }
+
+        let mut layers = Vec::with_capacity(depth.saturating_add(1));
+        layers.push(vec![symbol_id]);
+        let mut queue_sym_ids = Vec::with_capacity(256);
+        let mut queue_depths = Vec::with_capacity(256);
+        let mut queue_head = 0usize;
+        if !source_qn.is_empty() {
+            queue_sym_ids.push(symbol_id);
+            queue_depths.push(0usize);
+        }
+
+        while queue_head < queue_sym_ids.len() {
+            let current_id = queue_sym_ids[queue_head];
+            let current_depth = queue_depths[queue_head];
+            queue_head += 1;
+            if current_depth >= depth {
+                continue;
+            }
+
+            let mut next_layer_ids = Vec::new();
+            for &position in calls.positions_for_callee_id(current_id) {
+                let caller_id = calls.forward_edges[position as usize].caller_id;
+                if caller_id == 0
+                    || caller_id as usize >= symbol_count
+                    || visited_id[caller_id as usize]
+                {
+                    continue;
+                }
+                let caller_symbol = match symbols.by_id.get(caller_id as usize) {
+                    Some(symbol) if symbol.id == caller_id => symbol,
+                    _ => continue,
+                };
+                let caller_qn = symbols.sym_qname(caller_symbol);
+                if !caller_qn.is_empty() && visited_qn.contains(caller_qn) {
+                    visited_id[caller_id as usize] = true;
+                    continue;
+                }
+                visited_id[caller_id as usize] = true;
+                if !caller_qn.is_empty() {
+                    visited_qn.insert(caller_qn);
+                }
+                next_layer_ids.push(caller_id);
+            }
+
+            if next_layer_ids.is_empty() {
+                continue;
+            }
+            let next_depth = current_depth + 1;
+            while layers.len() <= next_depth {
+                layers.push(Vec::new());
+            }
+            layers[next_depth].extend_from_slice(&next_layer_ids);
+            for new_id in next_layer_ids {
+                let symbol = &symbols.by_id[new_id as usize];
+                if !symbols.sym_qname(symbol).is_empty() {
+                    queue_sym_ids.push(new_id);
+                    queue_depths.push(next_depth);
+                }
+            }
+        }
+
+        Ok(layers)
     }
 
     /// 通过 qualified_name 获取符号引用（内部 Rust 接口，零 Python 开销）

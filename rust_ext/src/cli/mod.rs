@@ -18,6 +18,7 @@ pub mod file_query;
 pub mod graph_query;
 pub mod graph_traversal;
 pub mod grep;
+pub mod impact;
 pub mod issues_tests;
 pub mod output;
 pub mod readonly;

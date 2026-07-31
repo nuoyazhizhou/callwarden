@@ -375,6 +375,7 @@ pub const QUERY_TYPES: &[&str] = &[
     "callers",
     "callees",
     "call_chain_down",
+    "impact",
     "topological_order",
     "detect_cycles",
 ];
@@ -480,6 +481,16 @@ pub fn build_query_request(
             params.insert(
                 "max_depth".to_string(),
                 Value::Number(serde_json::Number::from(max_depth.unwrap_or(10))),
+            );
+        }
+        "impact" => {
+            params.insert(
+                "symbol_hash".to_string(),
+                Value::String(value.to_string()),
+            );
+            params.insert(
+                "depth".to_string(),
+                Value::Number(serde_json::Number::from(max_depth.unwrap_or(3))),
             );
         }
         "topological_order" => {
@@ -1414,6 +1425,15 @@ mod tests {
     }
 
     #[test]
+    fn test_d6_8a_query_impact_default_depth() {
+        let (method, params) =
+            build_query_request("ws-1", "impact", "hash-a", None, None, None, None).unwrap();
+        assert_eq!(method, "query.impact");
+        assert_eq!(params["symbol_hash"], "hash-a");
+        assert_eq!(params["depth"], 3);
+    }
+
+    #[test]
     fn test_d6_9_query_detect_cycles_default_depth() {
         let (method, params) = build_query_request(
             "ws-1",
@@ -1466,8 +1486,8 @@ mod tests {
 
     #[test]
     fn test_d6_13_query_types_count() {
-        // 验证支持 8 种 query 类型
-        assert_eq!(QUERY_TYPES.len(), 8);
+        // 验证支持 9 种 query 类型
+        assert_eq!(QUERY_TYPES.len(), 9);
     }
 
     // ============================================

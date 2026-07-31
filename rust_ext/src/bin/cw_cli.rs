@@ -22,6 +22,9 @@ use callwarden_core::cli::graph_traversal::{
     query_local_topological_order, MAX_CALL_CHAIN_DEPTH,
 };
 use callwarden_core::cli::grep::{query_local_grep, GrepOptions};
+use callwarden_core::cli::impact::{
+    format_impact_output, query_local_impact, MAX_IMPACT_DEPTH,
+};
 use callwarden_core::cli::issues_tests::{
     format_issues_output, format_test_cases_output, format_test_stability_output,
     format_tested_functions_output, query_local_issues, query_local_test_cases,
@@ -95,7 +98,13 @@ enum Commands {
     /// 安全护栏扫描
     Guardrail,
     /// 变更影响分析
-    Impact,
+    Impact {
+        /// 源符号 hash
+        symbol_hash: String,
+        /// 最大反向 BFS 遍历深度
+        #[arg(long, default_value_t = 3, allow_hyphen_values = true)]
+        depth: i64,
+    },
     /// 代码审查就绪度
     Review,
     /// 代码演化智能
@@ -458,6 +467,9 @@ fn main() {
                 }
                 Commands::Topo { limit } => {
                     emit_result(run_topo(&runtime, limit));
+                }
+                Commands::Impact { symbol_hash, depth } => {
+                    emit_result(run_impact(&runtime, &symbol_hash, depth));
                 }
                 _ => {
                     // 骨架阶段：其他子命令返回 "not implemented"
@@ -925,6 +937,51 @@ fn run_call_chain(
     format_read_result(result, format_call_chain_output)
 }
 
+fn run_impact(runtime: &RuntimeOptions, symbol_hash: &str, requested_depth: i64) -> CommandResult {
+    let result = runtime.execute_read_with(
+        || {
+            let conn = runtime.open_local_db()?;
+            let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+            query_local_impact(&conn, workspace_id, symbol_hash, requested_depth)
+        },
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise impact requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            query_enterprise_impact(
+                workspace_id,
+                symbol_hash,
+                requested_depth,
+                |method, params| runtime.daemon_call(method, params),
+            )
+        },
+    );
+    format_read_result(result, format_impact_output)
+}
+
+fn query_enterprise_impact<F>(
+    workspace_id: &str,
+    symbol_hash: &str,
+    requested_depth: i64,
+    mut call: F,
+) -> Result<serde_json::Value, String>
+where
+    F: FnMut(&str, serde_json::Value) -> Result<serde_json::Value, String>,
+{
+    let bounded_depth = requested_depth.max(0).min(MAX_IMPACT_DEPTH as i64) as u32;
+    let (method, params) = callwarden_core::daemon::client::build_query_request(
+        workspace_id,
+        "impact",
+        symbol_hash,
+        None,
+        None,
+        None,
+        Some(bounded_depth),
+    )
+    .map_err(|error| format!("cannot build impact RPC: {error}"))?;
+    call(&method, params)
+}
+
 fn query_enterprise_call_chain<F>(
     workspace_id: &str,
     qualified_name: &str,
@@ -1216,7 +1273,7 @@ fn command_name(cmd: &Commands) -> &'static str {
     use Commands::*;
     match cmd {
         Guardrail => "guardrail",
-        Impact => "impact",
+        Impact { .. } => "impact",
         Review => "review",
         Evolution => "evolution",
         Hotspot => "hotspot",
@@ -1288,7 +1345,10 @@ mod tests {
         // 每个 Commands 变体都有对应的 command_name 分支
         let variants: Vec<Commands> = vec![
             Commands::Guardrail,
-            Commands::Impact,
+            Commands::Impact {
+                symbol_hash: "sym-a".to_string(),
+                depth: 3,
+            },
             Commands::Review,
             Commands::Evolution,
             Commands::Hotspot,
@@ -1575,6 +1635,27 @@ mod tests {
     }
 
     #[test]
+    fn enterprise_impact_builds_bounded_rpc() {
+        let result = query_enterprise_impact("ws-1", "hash-a", 500, |method, params| {
+            assert_eq!(method, "query.impact");
+            assert_eq!(params["workspace_instance_id"], "ws-1");
+            assert_eq!(params["symbol_hash"], "hash-a");
+            assert_eq!(params["depth"], MAX_IMPACT_DEPTH);
+            Ok(serde_json::json!({
+                "source_symbol": "a.alpha",
+                "source_hash": "hash-a",
+                "depth": 500,
+                "layers": [],
+                "total_impacted": 1,
+                "by_layer": {"code": 0, "db": 0, "api": 0, "config": 0}
+            }))
+        })
+        .unwrap();
+        assert_eq!(result["source_symbol"], "a.alpha");
+        assert_eq!(result["depth"], 500);
+    }
+
+    #[test]
     fn enterprise_topo_requests_details_and_preserves_python_fields() {
         let result = query_enterprise_topological_order("ws-1", 7, |method, params| {
             assert_eq!(method, "query.topological_order");
@@ -1608,6 +1689,13 @@ mod tests {
         assert!(matches!(
             topo.command,
             Some(Commands::Topo { limit }) if limit == 12
+        ));
+
+        let impact = Cli::try_parse_from(["cw", "impact", "hash-a", "--depth", "4"]).unwrap();
+        assert!(matches!(
+            impact.command,
+            Some(Commands::Impact { symbol_hash, depth })
+                if symbol_hash == "hash-a" && depth == 4
         ));
     }
 

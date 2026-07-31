@@ -15,7 +15,7 @@
 
 | 模块 | 入口 | 说明 | Rust 对应 |
 |---|---|---|---|
-| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees/call-chain/topo（只读） |
+| `cli/main.py` | `main()` | argparse 子命令分发，所有 `cw` 命令入口 | 迁移中：Rust 已接入 stats/status/config/search/symbol/file/query/grep/issues/tests/callers/callees/call-chain/topo/impact（只读） |
 | `cli/console.py` | `cprint()` | 彩色输出 | 待迁移 |
 | `cli/agent.py` | Agent 命令 | `cw agent` 子命令 | 待迁移（Phase 5） |
 | `cli/client.py` | Client 命令 | `cw client` RPC 客户端 | 待迁移（Phase 5） |
@@ -36,7 +36,7 @@
 | `db_tasks.py` | 任务状态机、`task_create`/`next`/`report`/`apply`/`close` | 待迁移 | Phase 6（或独立） |
 | `db_daemon.py` | daemon 与 Python 侧的状态同步 | `rust_ext/src/bin/cw_daemon.rs` 已实现 | Phase 4 |
 | `db_guardrail.py` | Before-Edit Contract、`guardrail_scan` | 待迁移 | Phase 6 |
-| `db_impact.py` | `blast_radius`、`cross_layer_impact` | 待迁移 | Phase 6 |
+| `db_impact.py` | `blast_radius`、`cross_layer_impact` | Rust CSR/跨层核心与 `cw impact` 已接入；其余 impact 能力待迁移 | Phase 6 |
 | `db_evolution.py` | 变更频率、缺陷关联、热点 | 待迁移 | Phase 6 |
 | `db_vector.py` | 向量嵌入、余弦相似度 | `batch_cosine_similarity` 已实现 | Phase 6 |
 | `db_clone_detection.py` / `db_clone_groups.py` | clone 检测 | 待迁移 | Phase 6 |
@@ -3975,3 +3975,58 @@ python -m pytest tests/test_rust_cli_diff.py -q
 符号，以及拓扑默认 limit、limit 1、limit 0。完整比较 exit code、stdout 和
 stderr。SQLite 单测另用两个 workspace、归档文件和循环边验证隔离与深度边界；
 daemon 测试从真实 SQLite 发布 snapshot，验证限定名字段和 detail 响应。
+
+---
+
+## §59 自举复审整改：Rust `cw impact`
+
+**任务**：`T-1785462926967-5990d337`（P0-CLI-C3）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 59.1 已实现
+
+- `cw impact <symbol_hash> [--depth N]` 已从 clap 空壳切换到真实 Rust 命令；
+  `blast-radius` 保持内部图算法名称，不新增重复 CLI；
+- local 模式从当前 SQLite 定位真实 DB 路径，以普通只读连接加载 GraphStore，
+  因而能读取 WAL；反向 BFS 复用既有 CSR，元数据批量补齐且所有 SQL 显式过滤
+  `workspace_id` 与 archived 文件；
+- GraphStore 的 PyO3 `blast_radius` 与 Rust CLI/daemon 共用
+  `blast_radius_ids_rust`，不维护两套图算法；
+- `code` 风险独立读取直接 caller，不依赖请求的 BFS 深度；因此 `depth=0/-1`
+  仍与 Python 一样报告直接代码层影响。`db/api/config` 复用既有
+  `cross_layer_impact_core`；
+- 实际 BFS 增加 100 层硬上限，避免异常参数放大遍历；响应中的 `depth` 仍保留
+  用户原始请求值。每层文本最多显示 15 个符号，保持 Python 输出契约；
+- enterprise 模式新增 `query.impact`，从一次 `SnapshotManager::load()` guard
+  同时取得 GraphStore 与 SQLite 路径，保证同 generation 查询；handler 先做
+  workspace owner ACL，再检查 snapshot readiness；
+- daemon client 新增 impact 请求类型，传输 `symbol_hash + depth`；auto 模式沿用
+  统一 runtime，在 daemon 不可用或查询失败时回退 local；
+- 本任务只声明 `cw impact`、blast-radius CSR 与其四类计数完成。
+  `cw review`、`cw vuln-blast`、`diff_to_symbol` 等上层影响能力仍未迁移。
+
+### 59.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::impact::tests --lib --no-default-features
+test result: ok. 3 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features
+test result: ok. 20 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib
+test result: ok. 520 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+54 passed
+```
+
+四组新增进程差分覆盖默认深度、深度 0、负深度和缺失符号，逐项比较 exit
+code、stdout 与 stderr。Rust 单测用两个 workspace 和 archived caller 验证
+隔离，并验证 SQL/API/config 四类风险；daemon 真实 snapshot 测试验证
+`hash-beta → a.alpha` 反向影响、ACL 与未发布 snapshot 拒绝。
+
+Windows 的既有 grep fallback 测试不再清空 Python DLL 搜索路径：当前迁移期
+Rust CLI 与 PyO3 仍在同一 crate，测试保留 Python 目录但排除 `rg`，继续真实
+覆盖内置 fallback。最终 Phase 7 去除 PyO3 链接后可再次收紧为完全空 PATH。

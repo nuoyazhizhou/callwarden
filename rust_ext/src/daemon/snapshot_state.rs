@@ -32,6 +32,7 @@ use super::workspace::{
     owned_workspace, owned_workspace_by_id, validate_owned_path, WorkspaceDaemonState,
     WorkspaceRegistry,
 };
+use crate::cli::impact::query_impact_with_store;
 use crate::graph::GraphStore;
 use crate::snapshot::SnapshotCache;
 use crate::symbol_query::query_symbol_detail;
@@ -728,6 +729,57 @@ impl DaemonStateExt for SnapshotDaemonState {
             })
             .collect();
         Ok(Value::Array(results))
+    }
+
+    fn handle_query_impact(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let symbol_hash = require_str_param(params, "symbol_hash")?;
+        let requested_depth = get_int_param_or(params, "depth", 3);
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let workspace_id = workspace
+            .get("workspace_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+        let manager = self
+            .get_snapshot_manager(workspace_instance_id)
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!("workspace {} 未发布 snapshot", workspace_instance_id),
+                )
+            })?;
+        let guard = manager.load();
+        let snapshot = guard.as_ref().as_ref().ok_or_else(|| {
+            DaemonRpcError::new(
+                "snapshot_not_ready",
+                format!("workspace {} 未发布 snapshot", workspace_instance_id),
+            )
+        })?;
+        let db_path = snapshot.query_db_path();
+        let conn = Connection::open_with_flags(
+            &db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!(
+                "无法打开 snapshot SQLite {}: {}",
+                db_path, error
+            ))
+        })?;
+        query_impact_with_store(
+            &conn,
+            snapshot.store.as_ref(),
+            workspace_id,
+            symbol_hash,
+            requested_depth,
+        )
+        .map_err(DaemonRpcError::internal_error)
     }
 
     fn handle_query_topological_order(
@@ -1522,10 +1574,12 @@ mod tests {
             CREATE TABLE symbols (
                 id INTEGER PRIMARY KEY,
                 file_instance_id INTEGER NOT NULL,
+                symbol_hash TEXT NOT NULL,
                 kind TEXT NOT NULL,
                 name TEXT NOT NULL,
                 qualified_name TEXT NOT NULL,
                 module_path TEXT NOT NULL,
+                visibility TEXT NOT NULL,
                 start_line INTEGER NOT NULL,
                 end_line INTEGER NOT NULL,
                 depth INTEGER NOT NULL
@@ -1546,6 +1600,7 @@ mod tests {
                 content_hash TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 kind TEXT NOT NULL,
+                content TEXT NOT NULL,
                 signature TEXT,
                 has_comment INTEGER,
                 comment_content TEXT
@@ -1573,15 +1628,15 @@ mod tests {
             INSERT INTO file_instances VALUES
                 (1, {workspace_id}, 'a.py', '/repo/a.py', 'active');
             INSERT INTO symbols VALUES
-                (1, 1, 'fn', 'alpha', 'a.alpha', 'a', 1, 4, 0),
-                (2, 1, 'fn', 'beta', 'a.beta', 'a', 6, 8, 0);
+                (1, 1, 'hash-alpha', 'fn', 'alpha', 'a.alpha', 'a', 'public', 1, 4, 0),
+                (2, 1, 'hash-beta', 'fn', 'beta', 'a.beta', 'a', 'private', 6, 8, 0);
             INSERT INTO calls VALUES
                 (1, 2, 'beta', 3, 0),
                 (1, 0, 'external_api', 4, 1);
             INSERT INTO file_versions VALUES (10, 1, 1);
             INSERT INTO symbol_contents VALUES
-                ('hash-alpha', 'alpha', 'fn', 'alpha()', 1, 'alpha docs'),
-                ('hash-beta', 'beta', 'fn', 'beta()', 0, '');
+                ('hash-alpha', 'alpha', 'fn', 'def alpha(): beta()', 'alpha()', 1, 'alpha docs'),
+                ('hash-beta', 'beta', 'fn', 'SELECT * FROM orders; config.get(\"DB_URL\")', 'beta()', 0, '');
             INSERT INTO file_symbol_versions VALUES
                 (10, 'hash-alpha', 'a.alpha', 'a', 1, 4, 0, 0),
                 (10, 'hash-beta', 'a.beta', 'a', 6, 8, 0, 0);
@@ -1684,6 +1739,25 @@ mod tests {
         assert_eq!(topo["result"][0]["qualified_name"], "a.alpha");
         assert_eq!(topo["result"][0]["path"], "a.py");
         assert_eq!(topo["result"][0]["start_line"], 1);
+
+        let impact = dispatch(
+            &mut state,
+            peer,
+            "query.impact",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "symbol_hash": "hash-beta",
+                "depth": 3
+            }),
+            &[],
+        );
+        assert_eq!(impact["ok"], true);
+        assert_eq!(impact["result"]["source_symbol"], "a.beta");
+        assert_eq!(impact["result"]["total_impacted"], 2);
+        assert_eq!(impact["result"]["layers"][1]["symbols"][0]["qualified_name"], "a.alpha");
+        assert_eq!(impact["result"]["by_layer"]["code"], 1);
+        assert_eq!(impact["result"]["by_layer"]["db"], 1);
+        assert_eq!(impact["result"]["by_layer"]["config"], 1);
     }
 
     #[test]
@@ -2119,6 +2193,43 @@ mod tests {
         );
         assert_eq!(response["ok"], false);
         assert_eq!(response["error"]["code"], "snapshot_not_ready");
+    }
+
+    #[test]
+    fn test_query_impact_returns_snapshot_not_ready_when_no_snapshot() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+        let response = dispatch(
+            &mut state,
+            peer,
+            "query.impact",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "symbol_hash": "hash-a"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "snapshot_not_ready");
+    }
+
+    #[test]
+    fn test_query_impact_rejects_non_owner() {
+        let mut state = make_state();
+        let ws_id = register_workspace_for_test(&mut state, 0);
+        let response = dispatch(
+            &mut state,
+            make_peer(9999),
+            "query.impact",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "symbol_hash": "hash-a"
+            }),
+            &[],
+        );
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "workspace_forbidden");
     }
 
     #[test]

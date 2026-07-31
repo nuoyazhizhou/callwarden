@@ -292,6 +292,15 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("query.call_chain_down"))
     }
 
+    fn handle_query_impact(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.impact"))
+    }
+
     fn handle_query_topological_order(
         &mut self,
         peer: PeerCredential,
@@ -658,6 +667,7 @@ fn dispatch_inner<S: DaemonStateExt>(
 
         // ---- 高级查询方法（G7-T4 实现）----
         "query.call_chain_down" => state.handle_query_call_chain_down(peer, params),
+        "query.impact" => state.handle_query_impact(peer, params),
         "query.topological_order" => state.handle_query_topological_order(peer, params),
         "query.detect_cycles" => state.handle_query_detect_cycles(peer, params),
 
