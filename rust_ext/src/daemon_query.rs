@@ -381,6 +381,16 @@ const METHODS: &[MethodInfo] = &[
         admin_only: false,
     },
     MethodInfo {
+        method: "workspace.file.delete",
+        description: "删除 workspace 文件当前图",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "workspace.refresh.plan",
+        description: "规划 workspace 全量刷新",
+        admin_only: false,
+    },
+    MethodInfo {
         method: "workspace.recover",
         description: "workspace 崩溃恢复",
         admin_only: false,

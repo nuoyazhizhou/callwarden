@@ -68,12 +68,12 @@
 //! - audit 记录未迁移到 Rust daemon，当前仅 Python 端 server/audit_log.py 有实现
 //! - validate_owned_path 的 canonicalize 在路径不存在时返回 path_not_found，需区分不存在与越界
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OpenFlags, Row};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
@@ -90,6 +90,22 @@ use super::replicator::{
 };
 use super::snapshot_guard::evaluate_generation_protection;
 use super::staging_log::{StagingEntry, StagingLog};
+
+const MAX_REFRESH_MANIFEST_FILES: usize = 500_000;
+const MAX_ACTIVE_REFRESH_PLANS: usize = 32;
+const REFRESH_PLAN_TTL: Duration = Duration::from_secs(10 * 60);
+
+struct RefreshPlanAccumulator {
+    owner_uid: u32,
+    workspace_id: i64,
+    workspace_instance_id: String,
+    force: bool,
+    tracked: HashMap<String, (String, String)>,
+    seen: HashSet<String>,
+    scanned: usize,
+    unchanged: usize,
+    last_touched: Instant,
+}
 
 /// workspace registry schema DDL（与 Python db_daemon.py:WORKSPACE_REGISTRY_DDL 一致）
 const WORKSPACE_REGISTRY_DDL: &str = r#"
@@ -788,6 +804,76 @@ fn parse_generation_fields(generation: &str) -> (i64, i64) {
     (epoch, seq)
 }
 
+fn validate_refresh_rel_path(value: &str) -> Result<String, DaemonRpcError> {
+    let normalized = value.replace('\\', "/");
+    if normalized.is_empty()
+        || normalized.starts_with('/')
+        || normalized.contains('\0')
+        || normalized
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == ".." || part.ends_with(':'))
+    {
+        return Err(DaemonRpcError::invalid_params(format!(
+            "非法 workspace 相对路径: {value}"
+        )));
+    }
+    Ok(normalized)
+}
+
+fn load_refresh_tracked_files(
+    db_path: &str,
+    workspace_id: i64,
+) -> Result<HashMap<String, (String, String)>, DaemonRpcError> {
+    let mut tracked = HashMap::new();
+    if !Path::new(db_path).exists() {
+        return Ok(tracked);
+    }
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| {
+        DaemonRpcError::new(
+            "refresh_plan_failed",
+            format!("打开 CodeGraph DB 失败: {error}"),
+        )
+    })?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT rel_path, COALESCE(current_content_hash, ''), COALESCE(status, '')
+             FROM file_instances WHERE workspace_id = ?1",
+        )
+        .map_err(|error| {
+            DaemonRpcError::new(
+                "refresh_plan_failed",
+                format!("准备 manifest 查询失败: {error}"),
+            )
+        })?;
+    let rows = stmt
+        .query_map(params![workspace_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                (row.get::<_, String>(1)?, row.get::<_, String>(2)?),
+            ))
+        })
+        .map_err(|error| {
+            DaemonRpcError::new(
+                "refresh_plan_failed",
+                format!("查询 manifest 失败: {error}"),
+            )
+        })?;
+    for row in rows {
+        let (path, state) = row.map_err(|error| {
+            DaemonRpcError::new(
+                "refresh_plan_failed",
+                format!("读取 manifest 失败: {error}"),
+            )
+        })?;
+        tracked.insert(path, state);
+    }
+    Ok(tracked)
+}
+
 // ============================================
 // DaemonStateExt 扩展：接入 workspace.* RPC
 // ============================================
@@ -826,6 +912,8 @@ pub struct WorkspaceDaemonState {
     /// 空字符串表示不启用 snapshot publish（保持 R5 行为，db_path 传空）。
     /// 模板来源：`DaemonConfig.codegraph_db_path_template`，daemon 启动时传入。
     pub codegraph_db_path_template: String,
+    /// 分块全仓 refresh 的短生命周期规划状态。
+    refresh_plans: HashMap<String, RefreshPlanAccumulator>,
 }
 
 /// per-workspace 资源（懒初始化，缓存于 WorkspaceDaemonState.resources）
@@ -860,6 +948,7 @@ impl WorkspaceDaemonState {
             resources: HashMap::new(),
             snapshot_publisher: None,
             codegraph_db_path_template: String::new(),
+            refresh_plans: HashMap::new(),
         }
     }
 
@@ -872,6 +961,7 @@ impl WorkspaceDaemonState {
             resources: HashMap::new(),
             snapshot_publisher: None,
             codegraph_db_path_template: String::new(),
+            refresh_plans: HashMap::new(),
         }
     }
 
@@ -2056,6 +2146,195 @@ impl DaemonStateExt for WorkspaceDaemonState {
             Value::String(workspace_instance_id.to_string()),
         );
         Ok(Value::Object(response))
+    }
+
+    fn handle_workspace_refresh_plan(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let workspace = owned_workspace(&self.registry, peer.uid, workspace_instance_id)?;
+        let workspace_id = workspace
+            .get("workspace_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| {
+                DaemonRpcError::internal_error("workspace_id 字段缺失或非数值".to_string())
+            })?;
+        let force = params
+            .get("force")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let plan_id = require_str_param(params, "plan_id")?;
+        if plan_id.is_empty()
+            || plan_id.len() > 128
+            || !plan_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err(DaemonRpcError::invalid_params("非法 refresh plan_id"));
+        }
+        let reset = params
+            .get("reset")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let complete = params
+            .get("complete")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let files = params
+            .get("files")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DaemonRpcError::invalid_params("缺少数组字段: files"))?;
+        if files.len() > MAX_REFRESH_MANIFEST_FILES {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "refresh manifest chunk 文件数 {} 超过上限 {}",
+                files.len(),
+                MAX_REFRESH_MANIFEST_FILES
+            )));
+        }
+
+        let mut manifest = Vec::with_capacity(files.len());
+        let mut chunk_seen = HashSet::with_capacity(files.len());
+        for item in files {
+            let rel_path = item
+                .get("rel_path")
+                .and_then(Value::as_str)
+                .ok_or_else(|| DaemonRpcError::invalid_params("files[].rel_path 必须是字符串"))
+                .and_then(validate_refresh_rel_path)?;
+            let content_hash = item
+                .get("content_hash")
+                .and_then(Value::as_str)
+                .filter(|value| {
+                    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+                })
+                .ok_or_else(|| {
+                    DaemonRpcError::invalid_params(format!(
+                        "files[{rel_path}].content_hash 必须是 64 位十六进制 SHA-256"
+                    ))
+                })?
+                .to_ascii_lowercase();
+            if !chunk_seen.insert(rel_path.clone()) {
+                return Err(DaemonRpcError::invalid_params(format!(
+                    "refresh manifest chunk 包含重复路径: {rel_path}"
+                )));
+            }
+            manifest.push((rel_path, content_hash));
+        }
+
+        if self.codegraph_db_path_template.is_empty() {
+            return Err(DaemonRpcError::new(
+                "refresh_plan_unavailable",
+                "workspace.refresh.plan 需要 CodeGraph DB 路径",
+            ));
+        }
+        let db_path = self
+            .codegraph_db_path_template
+            .replace("{workspace_instance_id}", workspace_instance_id);
+        if reset {
+            self.refresh_plans
+                .retain(|_, plan| plan.last_touched.elapsed() < REFRESH_PLAN_TTL);
+            if self.refresh_plans.len() >= MAX_ACTIVE_REFRESH_PLANS
+                && !self.refresh_plans.contains_key(plan_id)
+            {
+                return Err(DaemonRpcError::new(
+                    "refresh_plan_busy",
+                    format!("活跃 refresh plan 已达到上限 {}", MAX_ACTIVE_REFRESH_PLANS),
+                ));
+            }
+            let tracked = load_refresh_tracked_files(&db_path, workspace_id)?;
+            self.refresh_plans.insert(
+                plan_id.to_string(),
+                RefreshPlanAccumulator {
+                    owner_uid: peer.uid,
+                    workspace_id,
+                    workspace_instance_id: workspace_instance_id.to_string(),
+                    force,
+                    tracked,
+                    seen: HashSet::new(),
+                    scanned: 0,
+                    unchanged: 0,
+                    last_touched: Instant::now(),
+                },
+            );
+        }
+
+        let plan = self.refresh_plans.get_mut(plan_id).ok_or_else(|| {
+            DaemonRpcError::new(
+                "refresh_plan_not_found",
+                "refresh plan 不存在或已完成，请从 reset=true 重新开始",
+            )
+        })?;
+        if plan.owner_uid != peer.uid
+            || plan.workspace_id != workspace_id
+            || plan.workspace_instance_id != workspace_instance_id
+        {
+            return Err(DaemonRpcError::workspace_forbidden(
+                "refresh plan 不属于当前 workspace/UID",
+            ));
+        }
+        if plan.force != force {
+            return Err(DaemonRpcError::invalid_params(
+                "refresh plan 分块的 force 参数不一致",
+            ));
+        }
+        plan.last_touched = Instant::now();
+        if plan.scanned.saturating_add(manifest.len()) > MAX_REFRESH_MANIFEST_FILES {
+            self.refresh_plans.remove(plan_id);
+            return Err(DaemonRpcError::invalid_params(format!(
+                "refresh manifest 总文件数超过上限 {}",
+                MAX_REFRESH_MANIFEST_FILES
+            )));
+        }
+        if let Some((duplicate, _)) = manifest
+            .iter()
+            .find(|(rel_path, _)| plan.seen.contains(rel_path))
+        {
+            return Err(DaemonRpcError::invalid_params(format!(
+                "refresh manifest 跨 chunk 包含重复路径: {duplicate}"
+            )));
+        }
+
+        let mut refresh_paths = Vec::new();
+        for (rel_path, content_hash) in manifest {
+            let current = plan.tracked.get(&rel_path);
+            let is_unchanged = current.is_some_and(|(tracked_hash, status)| {
+                status != "deleted" && tracked_hash.eq_ignore_ascii_case(&content_hash)
+            });
+            if force || !is_unchanged {
+                refresh_paths.push(Value::String(rel_path.clone()));
+            } else {
+                plan.unchanged += 1;
+            }
+            plan.seen.insert(rel_path);
+            plan.scanned += 1;
+        }
+        let scanned = plan.scanned;
+        let unchanged = plan.unchanged;
+        let mut delete_paths = Vec::new();
+        if complete {
+            delete_paths = plan
+                .tracked
+                .iter()
+                .filter_map(|(rel_path, (_, status))| {
+                    (!plan.seen.contains(rel_path) && status != "deleted")
+                        .then_some(rel_path.clone())
+                })
+                .collect();
+            delete_paths.sort();
+            self.refresh_plans.remove(plan_id);
+        }
+
+        Ok(serde_json::json!({
+            "workspace_instance_id": workspace_instance_id,
+            "plan_id": plan_id,
+            "scanned": scanned,
+            "refresh_paths": refresh_paths,
+            "delete_paths": delete_paths,
+            "unchanged": unchanged,
+            "force": force,
+            "complete": complete,
+        }))
     }
 
     fn handle_workspace_file_delete(
@@ -4204,6 +4483,143 @@ mod tests {
             db_path,
             cache,
         )
+    }
+
+    #[test]
+    fn test_workspace_refresh_plan_classifies_incremental_force_and_delete() {
+        let (_tmp, mut state, peer, ws_id, _epoch, db_path, _cache) = setup_delete_workspace();
+        let current_hash = "a".repeat(64);
+        let new_hash = "b".repeat(64);
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute(
+            "INSERT INTO file_contents (content_hash, language, total_lines, first_seen_at) \
+             VALUES (?1, 'rust', 1, 0)",
+            params![current_hash],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE file_instances SET current_content_hash = ?1 \
+                 WHERE rel_path = 'src/removed.rs'",
+            params![current_hash],
+        )
+        .unwrap();
+        drop(conn);
+
+        let first_chunk = dispatch(
+            &mut state,
+            peer,
+            "workspace.refresh.plan",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "plan_id": "incremental-plan",
+                "reset": true,
+                "complete": false,
+                "force": false,
+                "files": [{"rel_path": "src/removed.rs", "content_hash": current_hash}]
+            }),
+            &[],
+        );
+        assert_eq!(first_chunk["ok"], true, "{first_chunk:?}");
+        assert_eq!(first_chunk["result"]["scanned"], 1);
+        assert_eq!(first_chunk["result"]["unchanged"], 1);
+        assert_eq!(first_chunk["result"]["refresh_paths"], json!([]));
+        assert_eq!(first_chunk["result"]["delete_paths"], json!([]));
+
+        let incremental = dispatch(
+            &mut state,
+            peer,
+            "workspace.refresh.plan",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "plan_id": "incremental-plan",
+                "reset": false,
+                "complete": true,
+                "force": false,
+                "files": [{"rel_path": "src/new.rs", "content_hash": new_hash}]
+            }),
+            &[],
+        );
+        assert_eq!(incremental["ok"], true, "{incremental:?}");
+        assert_eq!(incremental["result"]["scanned"], 2);
+        assert_eq!(incremental["result"]["unchanged"], 1);
+        assert_eq!(
+            incremental["result"]["refresh_paths"],
+            json!(["src/new.rs"])
+        );
+        assert_eq!(incremental["result"]["delete_paths"], json!([]));
+
+        let forced = dispatch(
+            &mut state,
+            peer,
+            "workspace.refresh.plan",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "plan_id": "force-plan",
+                "reset": true,
+                "complete": true,
+                "force": true,
+                "files": [
+                    {"rel_path": "src/removed.rs", "content_hash": current_hash},
+                    {"rel_path": "src/new.rs", "content_hash": new_hash},
+                ]
+            }),
+            &[],
+        );
+        assert_eq!(
+            forced["result"]["refresh_paths"],
+            json!(["src/removed.rs", "src/new.rs"])
+        );
+        assert_eq!(forced["result"]["unchanged"], 0);
+
+        let deleted = dispatch(
+            &mut state,
+            peer,
+            "workspace.refresh.plan",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "plan_id": "delete-plan",
+                "reset": true,
+                "complete": true,
+                "files": [{"rel_path": "src/new.rs", "content_hash": new_hash}]
+            }),
+            &[],
+        );
+        assert_eq!(deleted["result"]["delete_paths"], json!(["src/removed.rs"]));
+    }
+
+    #[test]
+    fn test_workspace_refresh_plan_rejects_cross_uid_and_unsafe_manifest() {
+        let (_tmp, mut state, peer, ws_id, _epoch, _db_path, _cache) = setup_delete_workspace();
+        let params = json!({
+            "workspace_instance_id": ws_id,
+            "plan_id": "forbidden-plan",
+            "reset": true,
+            "complete": true,
+            "files": [{"rel_path": "src/new.rs", "content_hash": "b".repeat(64)}]
+        });
+        let forbidden = dispatch(
+            &mut state,
+            make_other_peer(),
+            "workspace.refresh.plan",
+            &params,
+            &[],
+        );
+        assert_eq!(forbidden["error"]["code"], "workspace_forbidden");
+
+        let unsafe_path = dispatch(
+            &mut state,
+            peer,
+            "workspace.refresh.plan",
+            &json!({
+                "workspace_instance_id": ws_id,
+                "plan_id": "unsafe-plan",
+                "reset": true,
+                "complete": true,
+                "files": [{"rel_path": "../escape.rs", "content_hash": "b".repeat(64)}]
+            }),
+            &[],
+        );
+        assert_eq!(unsafe_path["error"]["code"], "invalid_params");
     }
 
     #[test]

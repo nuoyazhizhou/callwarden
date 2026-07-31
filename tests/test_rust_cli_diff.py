@@ -1176,6 +1176,124 @@ def test_refresh_binary_matches_python_persisted_graph(tmp_path: Path) -> None:
         assert conn.execute("SELECT status FROM file_instances").fetchone()[0] == "parsed"
 
 
+def test_refresh_all_binary_matches_python_and_preserves_incremental_contract(
+    tmp_path: Path,
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    roots: dict[str, tuple[Path, Path, Path]] = {}
+    workspace_ids: dict[str, int] = {}
+    for implementation in ("python", "rust"):
+        home = tmp_path / implementation / "home"
+        workspace = tmp_path / implementation / "workspace"
+        (home / ".callwarden").mkdir(parents=True)
+        (workspace / "src").mkdir(parents=True)
+        (workspace / "src" / "first.rs").write_text(
+            "pub fn first() { shared(); }\nfn shared() {}\n",
+            encoding="utf-8",
+        )
+        (workspace / "src" / "second.rs").write_text(
+            "pub fn second() {}\n",
+            encoding="utf-8",
+        )
+        db_path = home / ".callwarden" / "callwarden.db"
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace))
+        try:
+            workspace_ids[implementation] = db._get_active_workspace_id()
+            db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            db.close()
+        roots[implementation] = (home, workspace, db_path)
+
+    python_home, python_workspace, python_db = roots["python"]
+    env = os.environ.copy()
+    env.update(
+        {
+            "HOME": str(python_home),
+            "USERPROFILE": str(python_home),
+            "CALLWARDEN_WORKSPACE": str(python_workspace),
+            "CALLWARDEN_LANG": "en_US",
+            "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        }
+    )
+    python_result = subprocess.run(
+        [sys.executable, str(PROJECT_ROOT / "cw.py"), "refresh", "--all"],
+        cwd=python_workspace,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    _, rust_workspace, rust_db = roots["rust"]
+
+    def run_rust_full(*extra: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                str(binary),
+                "--mode",
+                "local",
+                "--db",
+                str(rust_db),
+                "--workspace-id",
+                str(workspace_ids["rust"]),
+                "refresh",
+                "--all",
+                *extra,
+            ],
+            cwd=rust_workspace,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    first = run_rust_full()
+    assert python_result.returncode == 0, python_result.stderr
+    assert first.returncode == 0, first.stderr
+    assert "refreshed 2 / unchanged 0 / deleted 0 / failed 0" in first.stdout
+    assert _refresh_db_snapshot(rust_db) == _refresh_db_snapshot(python_db)
+
+    with sqlite3.connect(rust_db) as conn:
+        version_count = conn.execute("SELECT COUNT(*) FROM file_versions").fetchone()[0]
+    unchanged = run_rust_full()
+    assert unchanged.returncode == 0, unchanged.stderr
+    assert "refreshed 0 / unchanged 2 / deleted 0 / failed 0" in unchanged.stdout
+    with sqlite3.connect(rust_db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM file_versions").fetchone()[0] == version_count
+
+    (rust_workspace / "src" / "first.rs").write_text(
+        "pub fn first_changed() {}\n",
+        encoding="utf-8",
+    )
+    (rust_workspace / "src" / "second.rs").unlink()
+    changed = run_rust_full()
+    assert changed.returncode == 0, changed.stderr
+    assert "refreshed 1 / unchanged 0 / deleted 1 / failed 0" in changed.stdout
+    with sqlite3.connect(rust_db) as conn:
+        rows = conn.execute(
+            "SELECT rel_path, status FROM file_instances ORDER BY rel_path"
+        ).fetchall()
+        assert rows == [("src/first.rs", "parsed"), ("src/second.rs", "deleted")]
+        names = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM symbols ORDER BY name"
+            ).fetchall()
+        }
+        assert "first_changed" in names
+        assert "second" not in names
+
+    forced = run_rust_full("--force")
+    assert forced.returncode == 0, forced.stderr
+    assert "refreshed 1 / unchanged 0 / deleted 0 / failed 0" in forced.stdout
+
+
 def test_workspace_lifecycle_binary_matches_python_process(tmp_path: Path) -> None:
     binary = _rust_cw_binary()
     if not binary.exists():

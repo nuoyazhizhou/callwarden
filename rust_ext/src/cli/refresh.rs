@@ -1,5 +1,6 @@
 //! Rust `cw refresh <path...>` 增量刷新写链。
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -8,9 +9,14 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Map, Value};
 
 use crate::canonicalize::{canonicalize_source, sha256_hex};
+use crate::cli::status::scan_supported_files;
 use crate::daemon::cas::CasStore;
-use crate::daemon::cas_merge::{merge_cas_to_codegraph_with_history, MergeHistoryMetadata};
-use crate::daemon::replicator::{_daemon_parse_and_publish, detect_language_from_path};
+use crate::daemon::cas_merge::{
+    delete_workspace_file_from_codegraph, merge_cas_to_codegraph_with_history, MergeHistoryMetadata,
+};
+use crate::daemon::replicator::{
+    _daemon_parse_and_publish, daemon_parse_and_publish_with_options, detect_language_from_path,
+};
 
 #[derive(Debug, Clone)]
 pub struct RefreshFileResult {
@@ -24,6 +30,24 @@ pub struct RefreshFileResult {
 pub struct RefreshBatchResult {
     pub files: Vec<RefreshFileResult>,
     pub elapsed_seconds: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct FullRefreshResult {
+    pub scanned: usize,
+    pub refreshed: usize,
+    pub unchanged: usize,
+    pub deleted: usize,
+    pub failed: Vec<RefreshFileResult>,
+    pub elapsed_seconds: f64,
+    pub force: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct EnterpriseManifestEntry {
+    pub rel_path: String,
+    pub content_hash: String,
+    pub absolute_path: PathBuf,
 }
 
 impl RefreshBatchResult {
@@ -71,6 +95,7 @@ pub fn refresh_local_paths(
             &workspace_root,
             path,
             &commit_hash,
+            false,
         );
         files.push(match result {
             Ok(status) => RefreshFileResult {
@@ -97,6 +122,135 @@ pub fn refresh_local_paths(
     })
 }
 
+/// 本地全仓刷新：扫描、hash 增量判定、逐文件原子 merge 与删除 tombstone。
+pub fn refresh_full_workspace(
+    conn: &Connection,
+    db_path: &Path,
+    workspace_id: i64,
+    force: bool,
+) -> Result<FullRefreshResult, String> {
+    let workspace_root: String = conn
+        .query_row(
+            "SELECT root_path FROM workspaces WHERE id = ?1",
+            params![workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("cannot query workspace root: {error}"))?;
+    let workspace_root = std::fs::canonicalize(&workspace_root)
+        .map_err(|error| format!("cannot resolve workspace root {workspace_root}: {error}"))?;
+    let scanned_files = scan_supported_files(&workspace_root);
+    let scanned_set: HashSet<String> = scanned_files.iter().cloned().collect();
+    let tracked = load_tracked_files(conn, workspace_id)?;
+    let cas_path = db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("cas.db");
+    let cas_store = CasStore::open(&cas_path.to_string_lossy())
+        .map_err(|error| format!("cannot open local CAS {}: {error}", cas_path.display()))?;
+    let commit_hash = current_git_commit(&workspace_root);
+    let started = Instant::now();
+    let mut refreshed = 0usize;
+    let mut unchanged = 0usize;
+    let mut deleted = 0usize;
+    let mut failed = Vec::new();
+
+    for rel_path in &scanned_files {
+        let abs_path = workspace_root.join(rel_path);
+        let canonical = match canonicalize_source(&abs_path.to_string_lossy()) {
+            Ok(value) => value,
+            Err(error) => {
+                failed.push(refresh_failure(
+                    rel_path,
+                    format!("canonicalize failed: {error}"),
+                ));
+                continue;
+            }
+        };
+        let is_unchanged = tracked.get(rel_path).is_some_and(|tracked| {
+            tracked.status != "deleted" && tracked.content_hash == canonical.content_hash
+        });
+        if !force && is_unchanged {
+            unchanged += 1;
+            continue;
+        }
+        match refresh_one_local(
+            conn,
+            &cas_store,
+            workspace_id,
+            &workspace_root,
+            &abs_path,
+            &commit_hash,
+            force,
+        ) {
+            Ok(_) => refreshed += 1,
+            Err(error) => failed.push(refresh_failure(rel_path, error)),
+        }
+    }
+
+    for (rel_path, tracked_file) in &tracked {
+        if tracked_file.status == "deleted" || scanned_set.contains(rel_path) {
+            continue;
+        }
+        match delete_workspace_file_from_codegraph(conn, workspace_id, rel_path) {
+            Ok(result) if result.delete_status == "deleted" => deleted += 1,
+            Ok(_) => {}
+            Err(error) => failed.push(refresh_failure(rel_path, error)),
+        }
+    }
+
+    conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")
+        .map_err(|error| format!("WAL checkpoint failed: {error}"))?;
+    Ok(FullRefreshResult {
+        scanned: scanned_files.len(),
+        refreshed,
+        unchanged,
+        deleted,
+        failed,
+        elapsed_seconds: started.elapsed().as_secs_f64(),
+        force,
+    })
+}
+
+#[derive(Debug)]
+struct TrackedFile {
+    content_hash: String,
+    status: String,
+}
+
+fn load_tracked_files(
+    conn: &Connection,
+    workspace_id: i64,
+) -> Result<HashMap<String, TrackedFile>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT rel_path, COALESCE(current_content_hash, ''), COALESCE(status, '')
+             FROM file_instances WHERE workspace_id = ?1",
+        )
+        .map_err(|error| format!("cannot prepare tracked-file query: {error}"))?;
+    let rows = stmt
+        .query_map(params![workspace_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                TrackedFile {
+                    content_hash: row.get(1)?,
+                    status: row.get(2)?,
+                },
+            ))
+        })
+        .map_err(|error| format!("cannot query tracked files: {error}"))?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(|error| format!("cannot read tracked files: {error}"))
+}
+
+fn refresh_failure(path: &str, error: String) -> RefreshFileResult {
+    RefreshFileResult {
+        input_path: path.to_string(),
+        success: false,
+        status: "failed".to_string(),
+        error: Some(error),
+    }
+}
+
 fn refresh_one_local(
     conn: &Connection,
     cas_store: &CasStore,
@@ -104,6 +258,7 @@ fn refresh_one_local(
     workspace_root: &Path,
     input_path: &Path,
     commit_hash: &str,
+    force_reparse: bool,
 ) -> Result<String, String> {
     let candidate = if input_path.is_absolute() {
         input_path.to_path_buf()
@@ -140,13 +295,24 @@ fn refresh_one_local(
         return Ok("skipped_unsupported".to_string());
     }
 
-    let parse_result = _daemon_parse_and_publish(
-        &rel_path,
-        None,
-        &abs_path.to_string_lossy(),
-        Some(cas_store),
-        workspace_id,
-    );
+    let parse_result = if force_reparse {
+        daemon_parse_and_publish_with_options(
+            &rel_path,
+            None,
+            &abs_path.to_string_lossy(),
+            Some(cas_store),
+            workspace_id,
+            true,
+        )
+    } else {
+        _daemon_parse_and_publish(
+            &rel_path,
+            None,
+            &abs_path.to_string_lossy(),
+            Some(cas_store),
+            workspace_id,
+        )
+    };
     let cas_state = require_json_str(&parse_result, "cas_state")?;
     if cas_state != "ready_published" && cas_state != "ready_cache_hit" {
         let detail = parse_result
@@ -243,6 +409,69 @@ pub fn prepare_enterprise_file(path: &Path) -> Result<(String, Vec<u8>), String>
     Ok((rel_path, canonical.canonical_bytes))
 }
 
+/// 扫描当前 workspace 并在发给 daemon 前完成全部规范化。
+///
+/// 任一文件读取失败时整体失败，避免把漏读文件误判为已删除。
+pub fn prepare_enterprise_manifest() -> Result<Vec<EnterpriseManifestEntry>, String> {
+    let root = std::fs::canonicalize(
+        std::env::current_dir()
+            .map_err(|error| format!("cannot read current directory: {error}"))?,
+    )
+    .map_err(|error| format!("cannot resolve current directory: {error}"))?;
+    scan_supported_files(&root)
+        .into_iter()
+        .map(|rel_path| {
+            let absolute_path = root.join(&rel_path);
+            let canonical =
+                canonicalize_source(&absolute_path.to_string_lossy()).map_err(|error| {
+                    format!("cannot canonicalize {}: {error}", absolute_path.display())
+                })?;
+            Ok(EnterpriseManifestEntry {
+                rel_path,
+                content_hash: canonical.content_hash,
+                absolute_path,
+            })
+        })
+        .collect()
+}
+
+pub fn build_enterprise_refresh_plan_params(
+    workspace_instance_id: &str,
+    manifest: &[EnterpriseManifestEntry],
+    force: bool,
+    plan_id: &str,
+    reset: bool,
+    complete: bool,
+) -> Value {
+    json!({
+        "workspace_instance_id": workspace_instance_id,
+        "force": force,
+        "plan_id": plan_id,
+        "reset": reset,
+        "complete": complete,
+        "files": manifest.iter().map(|entry| json!({
+            "rel_path": entry.rel_path,
+            "content_hash": entry.content_hash,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+pub fn build_enterprise_delete_params(
+    workspace_instance_id: &str,
+    rel_path: &str,
+    agent_session_id: &str,
+    session_epoch: u64,
+    monotonic_seq: u64,
+) -> Value {
+    json!({
+        "workspace_instance_id": workspace_instance_id,
+        "rel_path": normalize_rel_path(Path::new(rel_path)),
+        "agent_session_id": agent_session_id,
+        "session_epoch": session_epoch,
+        "monotonic_seq": monotonic_seq,
+    })
+}
+
 pub fn new_cli_session_id() -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -282,6 +511,33 @@ pub fn format_refresh_output(result: &RefreshBatchResult) -> String {
                     item.error.as_deref().unwrap_or("unknown error")
                 ));
             }
+        }
+    }
+    lines.join("\n")
+}
+
+pub fn format_full_refresh_output(result: &FullRefreshResult) -> String {
+    let mode = if result.force { "force" } else { "incremental" };
+    let mut lines = vec![
+        format!("Building code graph ({mode})..."),
+        format!("Scanned {} source files", result.scanned),
+        format!(
+            "Refresh summary: refreshed {} / unchanged {} / deleted {} / failed {} / elapsed {:.2}s",
+            result.refreshed,
+            result.unchanged,
+            result.deleted,
+            result.failed.len(),
+            result.elapsed_seconds
+        ),
+    ];
+    if !result.failed.is_empty() {
+        lines.push("Failed files:".to_string());
+        for item in &result.failed {
+            lines.push(format!(
+                "  - {}: {}",
+                item.input_path,
+                item.error.as_deref().unwrap_or("unknown error")
+            ));
         }
     }
     lines.join("\n")
@@ -535,6 +791,73 @@ mod tests {
         assert_eq!(
             conn.query_row(
                 "SELECT COUNT(*) FROM symbols WHERE name = 'first'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn full_refresh_skips_unchanged_forces_reparse_and_tombstones_deleted_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("workspace");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let first_source = root.join("src/first.rs");
+        let second_source = root.join("src/second.rs");
+        std::fs::write(&first_source, "fn first() {}\n").unwrap();
+        std::fs::write(&second_source, "fn second() {}\n").unwrap();
+        let db_path = temp.path().join("callwarden.db");
+        let conn = setup_db(&root, &db_path);
+
+        let first = refresh_full_workspace(&conn, &db_path, 1, false).unwrap();
+        assert_eq!(first.scanned, 2);
+        assert_eq!(first.refreshed, 2);
+        assert_eq!(first.unchanged, 0);
+
+        let incremental = refresh_full_workspace(&conn, &db_path, 1, false).unwrap();
+        assert_eq!(incremental.refreshed, 0);
+        assert_eq!(incremental.unchanged, 2);
+
+        let forced = refresh_full_workspace(&conn, &db_path, 1, true).unwrap();
+        assert_eq!(forced.refreshed, 2);
+        assert_eq!(forced.unchanged, 0);
+
+        std::fs::write(&first_source, "fn first_changed() {}\n").unwrap();
+        std::fs::remove_file(&second_source).unwrap();
+        let changed = refresh_full_workspace(&conn, &db_path, 1, false).unwrap();
+        assert_eq!(changed.scanned, 1);
+        assert_eq!(changed.refreshed, 1);
+        assert_eq!(changed.deleted, 1);
+        assert!(changed.failed.is_empty());
+
+        let deleted_status: String = conn
+            .query_row(
+                "SELECT status FROM file_instances
+                 WHERE workspace_id = 1 AND rel_path = 'src/second.rs'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(deleted_status, "deleted");
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM symbols s
+                 JOIN file_instances f ON f.id = s.file_instance_id
+                 WHERE f.workspace_id = 1 AND f.rel_path = 'src/second.rs'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM file_versions v
+                 JOIN file_instances f ON f.id = v.file_instance_id
+                 WHERE f.workspace_id = 1 AND f.rel_path = 'src/second.rs'
+                   AND v.is_current = 1 AND v.is_deleted = 1",
                 [],
                 |row| row.get::<_, i64>(0),
             )

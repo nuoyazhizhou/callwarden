@@ -435,6 +435,25 @@ pub fn _daemon_parse_and_publish(
     cas_store: Option<&CasStore>,
     workspace_id: i64,
 ) -> Value {
+    daemon_parse_and_publish_with_options(
+        rel_path,
+        canonical_bytes,
+        abs_path,
+        cas_store,
+        workspace_id,
+        false,
+    )
+}
+
+/// 与 `_daemon_parse_and_publish` 相同，但允许强制跳过 ready CAS 读取短路。
+pub fn daemon_parse_and_publish_with_options(
+    rel_path: &str,
+    canonical_bytes: Option<&[u8]>,
+    abs_path: &str,
+    cas_store: Option<&CasStore>,
+    workspace_id: i64,
+    force_reparse: bool,
+) -> Value {
     // 3a. 检测语言
     let language = detect_language_from_path(rel_path);
     if language.is_empty() {
@@ -521,14 +540,17 @@ pub fn _daemon_parse_and_publish(
     // 3e. 检查 CAS 是否已命中（state='ready'）
     match cas_store.lookup(&cas_key) {
         Ok(Some(_existing)) => {
-            // 缓存命中：pin 后直接返回（pin 失败只警告，不影响主流程）
-            let _ = cas_store.pin(&cas_key, workspace_id, 3600.0);
-            return serde_json::json!({
-                "content_hash": content_hash,
-                "cas_key": cas_key,
-                "cas_state": "ready_cache_hit",
-                "canonicalize_method": canonicalize_method,
-            });
+            if !force_reparse {
+                // 缓存命中：pin 后直接返回（pin 失败只警告，不影响主流程）
+                let _ = cas_store.pin(&cas_key, workspace_id, 3600.0);
+                return serde_json::json!({
+                    "content_hash": content_hash,
+                    "cas_key": cas_key,
+                    "cas_state": "ready_cache_hit",
+                    "canonicalize_method": canonicalize_method,
+                });
+            }
+            // force 模式继续 parse；publish 会原子替换同一 CAS key 的局部事实。
         }
         Ok(None) => {
             // 未命中——继续解析

@@ -4058,9 +4058,9 @@ Rust CLI 与 PyO3 仍在同一 crate，测试保留 Python 目录但排除 `rg`�
   `workspace.file.refresh`；只接受 daemon 返回 `committed`；
 - `auto` 对写命令只选择一次路由：daemon 不可用时可选择 local，但一旦选中
   enterprise，连接、ACL、generation 或提交失败均 fail closed，不回退本地重写；
-- `cw refresh --all/--force` **尚未迁移并显式 fail closed**。全仓扫描、增量跳过、
-  stale-file 删除和 force 语义已登记为独立任务
-  `T-1785469925481-78a7b9dc`（P0-CLI-D4），不得把 D1 解读为完整 refresh 已迁移。
+- `cw refresh --all/--force` 已由后续 D4 任务迁移；全仓扫描、增量跳过、
+  stale-file 删除、force 与 enterprise 分块规划证据见 §63。D1 仍只负责显式
+  文件路径刷新，不能单独作为完整 refresh 的完成证据。
 
 P0-CLI-D 其余任务：
 
@@ -4068,7 +4068,7 @@ P0-CLI-D 其余任务：
 |---|---|---|---|
 | D2 | `T-1785468162023-598bbdfa` | Rust workspace 生命周期 | review |
 | D3 | `T-1785468162025-5c47603b` | Rust build-context/toolchain | review |
-| D4 | `T-1785469925481-78a7b9dc` | Rust refresh `--all/--force` 全仓构建 | open |
+| D4 | `T-1785469925481-78a7b9dc` | Rust refresh `--all/--force` 全仓构建 | review |
 
 ### 60.2 验证
 
@@ -4198,3 +4198,62 @@ python -m pytest tests/test_rust_cli_diff.py::test_toolchain_and_build_context_b
 删除，以及 build-context 注册、列表、详情、compile commands 导入、resolved
 edge 重建、查询和删除；逐项比较 exit code、stdout、stderr 与 context hash。
 daemon 回归同时覆盖跨 UID owner ACL、全局 admin-only 边界和原子 edge 回滚。
+
+---
+
+## §63 自举复审整改：Rust `cw refresh --all/--force`
+
+**任务**：`T-1785469925481-78a7b9dc`（P0-CLI-D4）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 63.1 已实现
+
+- local `cw refresh --all` 复用 status 的受支持文件扫描器与 ignore 规则；扫描后
+  以 canonical content hash 比较当前 `file_instances`，未变化文件不 parse、
+  不写 CAS、也不新增历史版本；
+- 新增和变更文件复用 D1 的单文件原子写链。每个文件独立执行 CAS 发布与
+  `BEGIN IMMEDIATE` 图谱/历史合并，单文件失败不会留下当前图和历史分叉，也不会
+  回滚已经成功提交的其他文件；
+- 扫描结果中缺失、但数据库仍为 active/parsed 的文件，通过统一
+  `delete_workspace_file_from_codegraph` 生成 tombstone：清理当前 symbol/edge，
+  保留共享 content/CAS 和历史，并把当前版本标记为 deleted；
+- `--force` 只允许与 `--all` 同用，并绕过 ready CAS lookup，强制用当前
+  canonical bytes 重新执行可信 Rust parser；CAS key 不变时原子替换解析事实，
+  随后重新发布 workspace 当前图；
+- enterprise 模式新增 owner-scoped `workspace.refresh.plan`。客户端先发送
+  `rel_path + SHA-256` manifest，daemon 与已提交 `file_instances` 比较并返回
+  refresh/delete/unchanged 计划；真正写入继续走
+  `workspace.file.refresh/workspace.file.delete`，复用 active session、epoch、
+  monotonic sequence、durable staging、Replicator 与 SnapshotManager；
+- daemon framing 上限为 8MB，因此 manifest 固定每 5000 文件分块；daemon 按
+  `plan_id` 累积 seen set，最后一块才计算删除集。协议限制最多 32 个并发规划、
+  每个规划 50 万文件，10 分钟无活动后回收，并拒绝重复路径、路径穿越、跨 UID
+  和不一致 force；
+- enterprise manifest 在发送第一块前完成全量 canonicalization；任一文件读取失败
+  时整体终止，避免把“客户端漏读”误判成删除。`auto` 一旦选择 enterprise，
+  规划或写入失败均 fail closed，不回退 local 形成双真相；
+- 本任务迁移的是代码图谱刷新语义。Python 全量入口附带的 AGENTS 同步、repo
+  manifest 注册等独立管理副作用尚未迁入 Rust，不据此声明整个启动流程 Rust-only。
+
+### 63.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::refresh::tests --lib --no-default-features -q
+test result: ok. 5 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features -q
+test result: ok. 23 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib --no-default-features -q
+test result: ok. 526 passed; 0 failed
+
+python -m pytest tests/test_rust_cli_diff.py -q
+60 passed
+```
+
+真实进程差分验证首次 `--all` 的 files/symbols/calls/versions 与 Python 一致；
+第二次运行全部计为 unchanged 且不新增版本；修改一个文件并删除另一个文件时，
+当前图更新且删除文件 tombstone 可见；随后 `--force` 重新解析全部现存文件。
+daemon 测试另覆盖跨 chunk 累积、force 全选、最终删除集、跨 UID ACL 与
+`../` 路径拒绝。

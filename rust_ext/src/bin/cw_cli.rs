@@ -5,6 +5,7 @@
 //!
 //! 契约：docs/design/phase5-1-cli-config-contract.md §3.2
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -35,8 +36,11 @@ use callwarden_core::cli::issues_tests::{
     query_local_test_stability, query_local_tested_functions,
 };
 use callwarden_core::cli::refresh::{
-    build_enterprise_refresh_params, connect_params, enterprise_batch_result,
-    format_refresh_output, new_cli_session_id, prepare_enterprise_file, refresh_local_paths,
+    build_enterprise_delete_params, build_enterprise_refresh_params,
+    build_enterprise_refresh_plan_params, connect_params, enterprise_batch_result,
+    format_full_refresh_output, format_refresh_output, new_cli_session_id, prepare_enterprise_file,
+    prepare_enterprise_manifest, refresh_full_workspace, refresh_local_paths, FullRefreshResult,
+    RefreshFileResult,
 };
 use callwarden_core::cli::router::DaemonMode;
 use callwarden_core::cli::runtime::{CommandResult, RouteUsed, RuntimeOptions};
@@ -169,10 +173,10 @@ enum Commands {
     },
     /// 刷新数据库
     Refresh {
-        /// 全仓刷新尚未迁移，本阶段显式拒绝
+        /// 全仓刷新
         #[arg(long)]
         all: bool,
-        /// 强制全量重建尚未迁移，只能与 --all 一起使用
+        /// 强制重新解析全部扫描文件，只能与 --all 一起使用
         #[arg(long)]
         force: bool,
         /// 要增量刷新的文件路径
@@ -657,10 +661,21 @@ fn run_refresh(
         );
     }
     if refresh_all {
-        return CommandResult::failure(
-            1,
-            "cw refresh --all/--force is not migrated yet; use explicit file paths".to_string(),
-            RouteUsed::None,
+        if !paths.is_empty() {
+            return CommandResult::failure(
+                1,
+                "cw refresh --all does not accept explicit file paths".to_string(),
+                RouteUsed::None,
+            );
+        }
+        return runtime.execute_write_with(
+            || {
+                let conn = runtime.open_local_write_db()?;
+                let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
+                let result = refresh_full_workspace(&conn, &runtime.db_path, workspace_id, force)?;
+                Ok(format_full_refresh_output(&result))
+            },
+            || run_enterprise_full_refresh(runtime, force),
         );
     }
     if paths.is_empty() {
@@ -680,6 +695,175 @@ fn run_refresh(
         },
         || run_enterprise_refresh(runtime, paths),
     )
+}
+
+fn run_enterprise_full_refresh(runtime: &RuntimeOptions, force: bool) -> Result<String, String> {
+    let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+        "enterprise refresh requires --workspace-id <workspace_instance_id>".to_string()
+    })?;
+    let started = Instant::now();
+    let manifest = prepare_enterprise_manifest()?;
+    let manifest_paths = manifest
+        .iter()
+        .map(|entry| (entry.rel_path.clone(), entry.absolute_path.clone()))
+        .collect::<HashMap<_, _>>();
+    let session_id = new_cli_session_id();
+    let connect = runtime.daemon_call(
+        "workspace.connect",
+        connect_params(workspace_id, &session_id),
+    )?;
+    let session_epoch = connect
+        .get("session_epoch")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "workspace.connect response is missing session_epoch".to_string())?;
+    const MANIFEST_CHUNK_FILES: usize = 5_000;
+    let plan_id = format!("{session_id}-plan");
+    let ranges = if manifest.is_empty() {
+        vec![(0usize, 0usize)]
+    } else {
+        (0..manifest.len())
+            .step_by(MANIFEST_CHUNK_FILES)
+            .map(|start| (start, (start + MANIFEST_CHUNK_FILES).min(manifest.len())))
+            .collect::<Vec<_>>()
+    };
+    let mut scanned = 0usize;
+    let mut unchanged = 0usize;
+    let mut refresh_paths = Vec::new();
+    let mut delete_paths = Vec::new();
+    for (chunk_index, (start, end)) in ranges.iter().copied().enumerate() {
+        let complete = chunk_index + 1 == ranges.len();
+        let plan = runtime.daemon_call(
+            "workspace.refresh.plan",
+            build_enterprise_refresh_plan_params(
+                workspace_id,
+                &manifest[start..end],
+                force,
+                &plan_id,
+                chunk_index == 0,
+                complete,
+            ),
+        )?;
+        scanned = plan
+            .get("scanned")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "workspace.refresh.plan response is missing scanned".to_string())?
+            as usize;
+        unchanged = plan
+            .get("unchanged")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "workspace.refresh.plan response is missing unchanged".to_string())?
+            as usize;
+        refresh_paths.extend(
+            plan.get("refresh_paths")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    "workspace.refresh.plan response is missing refresh_paths".to_string()
+                })?
+                .iter()
+                .cloned(),
+        );
+        if complete {
+            delete_paths.extend(
+                plan.get("delete_paths")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| {
+                        "workspace.refresh.plan response is missing delete_paths".to_string()
+                    })?
+                    .iter()
+                    .cloned(),
+            );
+        }
+    }
+
+    let mut refreshed = 0usize;
+    let mut deleted = 0usize;
+    let mut failed = Vec::new();
+    let mut seq = 0u64;
+    for value in &refresh_paths {
+        let rel_path = value.as_str().ok_or_else(|| {
+            "workspace.refresh.plan returned a non-string refresh path".to_string()
+        })?;
+        let absolute_path = manifest_paths.get(rel_path).ok_or_else(|| {
+            format!(
+                "workspace.refresh.plan returned a path outside the submitted manifest: {rel_path}"
+            )
+        })?;
+        seq += 1;
+        let result = prepare_enterprise_file(absolute_path).and_then(
+            |(prepared_rel_path, canonical_bytes)| {
+                if prepared_rel_path != rel_path {
+                    return Err(format!(
+                        "manifest path changed during refresh: planned={rel_path} current={prepared_rel_path}"
+                    ));
+                }
+                let response = runtime.daemon_call(
+                    "workspace.file.refresh",
+                    build_enterprise_refresh_params(
+                        workspace_id,
+                        rel_path,
+                        &session_id,
+                        session_epoch,
+                        seq,
+                        &canonical_bytes,
+                    ),
+                )?;
+                let status = response.get("status").and_then(Value::as_str).unwrap_or("");
+                if status != "committed" {
+                    return Err(format!("daemon rejected refresh: status={status}"));
+                }
+                Ok(())
+            },
+        );
+        match result {
+            Ok(()) => refreshed += 1,
+            Err(error) => failed.push(RefreshFileResult {
+                input_path: rel_path.to_string(),
+                success: false,
+                status: "failed".to_string(),
+                error: Some(error),
+            }),
+        }
+    }
+    for value in &delete_paths {
+        let rel_path = value.as_str().ok_or_else(|| {
+            "workspace.refresh.plan returned a non-string delete path".to_string()
+        })?;
+        seq += 1;
+        let result = runtime.daemon_call(
+            "workspace.file.delete",
+            build_enterprise_delete_params(workspace_id, rel_path, &session_id, session_epoch, seq),
+        );
+        match result {
+            Ok(response) if response.get("status").and_then(Value::as_str) == Some("deleted") => {
+                deleted += 1;
+            }
+            Ok(response) => failed.push(RefreshFileResult {
+                input_path: rel_path.to_string(),
+                success: false,
+                status: "failed".to_string(),
+                error: Some(format!(
+                    "daemon rejected delete: status={}",
+                    response.get("status").and_then(Value::as_str).unwrap_or("")
+                )),
+            }),
+            Err(error) => failed.push(RefreshFileResult {
+                input_path: rel_path.to_string(),
+                success: false,
+                status: "failed".to_string(),
+                error: Some(error),
+            }),
+        }
+    }
+
+    Ok(format_full_refresh_output(&FullRefreshResult {
+        scanned,
+        refreshed,
+        unchanged,
+        deleted,
+        failed,
+        elapsed_seconds: started.elapsed().as_secs_f64(),
+        force,
+    }))
 }
 
 fn run_enterprise_refresh(runtime: &RuntimeOptions, paths: &[PathBuf]) -> Result<String, String> {
@@ -3286,7 +3470,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_full_mode_stays_fail_closed() {
+    fn refresh_full_mode_rejects_conflicting_arguments() {
         let runtime = RuntimeOptions::from_overrides(
             Some(DaemonMode::Local),
             None,
@@ -3294,9 +3478,13 @@ mod tests {
             None,
             1,
         );
-        let result = run_refresh(&runtime, true, false, &[]);
-        assert_eq!(result.exit_code, 1);
-        assert!(result.stderr.contains("not migrated yet"));
+        let explicit_path = run_refresh(&runtime, true, false, &[PathBuf::from("src/lib.rs")]);
+        assert_eq!(explicit_path.exit_code, 1);
+        assert!(explicit_path.stderr.contains("does not accept explicit"));
+
+        let force_without_all = run_refresh(&runtime, false, true, &[PathBuf::from("src/lib.rs")]);
+        assert_eq!(force_without_all.exit_code, 1);
+        assert!(force_without_all.stderr.contains("only valid together"));
     }
 
     #[test]

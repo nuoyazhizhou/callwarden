@@ -239,7 +239,10 @@ pub fn combine_enterprise_status(workspace_registry: Value, graph_stats: Value) 
     })
 }
 
-fn scan_supported_files(workspace_root: &Path) -> Vec<String> {
+/// 扫描 workspace 中受支持且未被 ignore/P21 排除的源文件。
+///
+/// status 与 refresh --all 共用这一实现，避免状态与构建使用不同文件集合。
+pub fn scan_supported_files(workspace_root: &Path) -> Vec<String> {
     let patterns = load_ignore_patterns(workspace_root);
     let mut files = Vec::new();
     scan_directory(workspace_root, workspace_root, &patterns, &mut files);

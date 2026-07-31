@@ -286,6 +286,14 @@ impl DaemonStateExt for SnapshotDaemonState {
             .handle_workspace_file_refresh(peer, params, received_fds)
     }
 
+    fn handle_workspace_refresh_plan(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        self.base.handle_workspace_refresh_plan(peer, params)
+    }
+
     fn handle_workspace_file_delete(
         &mut self,
         peer: PeerCredential,

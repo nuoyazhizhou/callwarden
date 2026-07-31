@@ -207,6 +207,15 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("workspace.file.refresh"))
     }
 
+    fn handle_workspace_refresh_plan(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("workspace.refresh.plan"))
+    }
+
     fn handle_workspace_file_delete(
         &mut self,
         peer: PeerCredential,
@@ -692,6 +701,7 @@ fn dispatch_inner<S: DaemonStateExt>(
         "workspace.activate" => state.handle_workspace_activate(peer, params),
         "workspace.remove" => state.handle_workspace_remove(peer, params),
         "workspace.connect" => state.handle_workspace_connect(peer, params),
+        "workspace.refresh.plan" => state.handle_workspace_refresh_plan(peer, params),
         "workspace.file.refresh" => state.handle_workspace_file_refresh(peer, params, received_fds),
         "workspace.file.delete" => state.handle_workspace_file_delete(peer, params),
         "workspace.recover" => state.handle_workspace_recover(peer, params),
@@ -1240,6 +1250,7 @@ mod tests {
             "workspace.activate",
             "workspace.remove",
             "workspace.connect",
+            "workspace.refresh.plan",
             "workspace.file.refresh",
             "workspace.file.delete",
             "workspace.recover",
