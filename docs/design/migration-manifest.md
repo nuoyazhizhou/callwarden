@@ -4315,3 +4315,69 @@ python -m pytest tests/test_phase5_1_cli_diff.py::test_d5_is_readonly_command \
 `tests/test_phase5_1_cli_diff.py` 全文件仍有一个与 E1 无关的既有 D2 基线失败：
 Python 默认配置含空 `daemon_socket`，Rust 配置映射缺该键；D5 只读分类门禁独立
 通过，本任务不顺带修改配置迁移范围。
+
+---
+
+## §65 自举复审整改：Rust `cw task` 核心写状态机
+
+**任务**：`T-1785484889184-f7d9ec60`（P0-CLI-E2）
+**状态**：实现完成，待独立 review
+**日期**：2026-07-31
+
+### 65.1 已实现
+
+- Rust `cw task` 已接入 `create/next/report/reopen`，四个写命令与 E1
+  只读命令一样，固定访问当前 UID 的本地任务数据库；即使全局模式为
+  `enterprise`，也不会把用户编排状态写入共享代码 daemon；
+- `create_task()` 在一个 `BEGIN IMMEDIATE` 事务内创建任务和全部步骤，
+  ID 保持 `T/S-{timestamp_ms}-{random8hex}` 形态；内部 API 支持
+  `parent_id`，校验父任务存在、计算 `depth/sort_order`，并按既有兄弟状态
+  规则恢复已完成父任务及祖先链。CLI 仍保持 Python 契约，不新增公开
+  `--parent` 参数；
+- `claim_next_task_step()` 在立即事务内执行 DFS 子任务遍历和
+  `UPDATE ... WHERE status='pending'` 条件领取。SQLite 写锁是领取期间的短租约，
+  当前 schema 没有 owner/token/expiry 字段，因此不虚构持久 lease 能力；
+  双连接并发领取同一步骤时恰好一个成功。领取与祖先 `open → in_progress`
+  推进、active task 写入在同一事务提交；任务树中的
+  `fix_quality_gate_failure` 全局优先，普通步骤存在 open error/block finding
+  时原子置为 `blocked`，修复类步骤不被自身待修 finding 锁死；
+- `report_task_step()` 验证 step 存在、属于传入任务树且当前为
+  `in_progress/blocked`，拒绝不存在、跨树和重复回报。失败回报原子插入
+  `fix_defect`；成功回报只有在全部步骤均为 `done/skipped` 且没有 open
+  error/block finding 时才进入 review，并递归推进父任务；
+- `reopen_task()` 仅允许 `review/applied/closed → in_progress`，原子清理
+  `applied_at/closed_at`、恢复已完成祖先链并设置 active task；
+- 写事务任一后半段 SQL 失败都会回滚先前更新。差异测试还固定了 Python
+  当前“错误 step_id 仍返回成功”的缺陷，Rust 对该场景 fail closed 且数据库
+  字节不变；
+- Rust 暂时保留 Python CLI 的既有结构化指令显示契约：i18n 将约束数组退化成
+  repr 字符串后逐字符显示。该显示缺陷应在独立 i18n 切片同时修复两端，
+  E2 不擅自改变终端输出；
+- E2 的 `report` 范围是 CLI 暴露的 result/success 证据。Python 内部
+  `changes` 参数对应的 `change_audit`/symbol attribution、领取时的文件内容
+  Guardrail 扫描、自动 completion-review、审计链签名，以及
+  `apply/close/rollback/capture-diff/resolve-finding/split` 仍属于 E3 或后续
+  专项任务，不据此声明整个 task 编排已 Rust-only。
+
+### 65.2 验证
+
+```text
+cargo test --manifest-path rust_ext/Cargo.toml cli::task::tests \
+  --lib --no-default-features -q
+test result: ok. 10 passed; 0 failed
+
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw \
+  --no-default-features -q
+test result: ok. 23 passed; 0 failed
+
+python -m pytest \
+  tests/test_rust_cli_diff.py::test_task_write_commands_match_python_persisted_state_and_fail_closed \
+  -q
+1 passed
+```
+
+Rust 单测覆盖层级创建、父链恢复、全树质量修复优先、阻塞 finding、原子领取、
+失败补救步骤、重复回报拒绝、父状态传播、reopen、后半段故障事务回滚以及
+双连接并发领取。双进程差异测试分别使用 Python/Rust 独立 SQLite，逐命令比较
+create/next/report/reopen 输出，并比较任务、步骤和 active task 的持久化投影；
+随机 ID 和真实时间仅在输出层归一化。

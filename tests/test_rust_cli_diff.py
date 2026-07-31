@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -1797,4 +1798,236 @@ def test_task_read_commands_match_python_and_ignore_daemon_route(
     assert enterprise_result.stdout == run_python(
         "task", "show", "task-root"
     ).stdout
+    assert db_paths["rust"].read_bytes() == before
+
+
+def _normalize_task_write_output(output: str) -> str:
+    """仅归一化随机 ID 和真实时间，保留命令契约的其余字符。"""
+    output = re.sub(r"\bT-\d+-[0-9a-f]{8}\b", "T-<id>", output)
+    output = re.sub(r"\bS-\d+-[0-9a-f]{8}\b", "S-<id>", output)
+    output = re.sub(
+        r"(Reopened at:|重新打开时间:)\s+\d+(?:\.\d+)?",
+        r"\1 <timestamp>",
+        output,
+    )
+    return output
+
+
+def _task_write_snapshot(db_path: Path) -> dict[str, list[tuple]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return {
+            "tasks": conn.execute(
+                "SELECT t.title, t.description, t.creator, t.status, "
+                "COALESCE(p.title, ''), t.depth, t.sort_order, "
+                "t.applied_at IS NULL, t.closed_at IS NULL "
+                "FROM tasks t LEFT JOIN tasks p ON p.id = t.parent_id "
+                "ORDER BY t.depth, t.sort_order, t.title"
+            ).fetchall(),
+            "steps": conn.execute(
+                "SELECT t.title, s.step_index, s.action, s.target_file, "
+                "s.target_symbol, s.check_items, s.status, s.result, "
+                "s.completed_at IS NOT NULL "
+                "FROM task_steps s JOIN tasks t ON t.id = s.task_id "
+                "ORDER BY t.title, s.step_index"
+            ).fetchall(),
+            "active": conn.execute(
+                "SELECT COALESCE(t.title, '') "
+                "FROM workspaces w LEFT JOIN tasks t ON t.id = w.active_task_id "
+                "WHERE w.is_active = 1"
+            ).fetchall(),
+        }
+    finally:
+        conn.close()
+
+
+def test_task_write_commands_match_python_persisted_state_and_fail_closed(
+    tmp_path: Path,
+) -> None:
+    binary = _rust_cw_binary()
+    if not binary.exists():
+        pytest.skip(f"Rust cw binary not built: {binary}")
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    db_paths: dict[str, Path] = {}
+    envs: dict[str, dict[str, str]] = {}
+    for implementation in ("python", "rust"):
+        home = tmp_path / implementation / "home"
+        db_path = home / ".callwarden" / "callwarden.db"
+        db_path.parent.mkdir(parents=True)
+        db = CodeGraphDB(db_path=str(db_path), workspace_root=str(workspace_root))
+        db.conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        db.close()
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOME": str(home),
+                "USERPROFILE": str(home),
+                "CALLWARDEN_WORKSPACE": str(workspace_root),
+                "CALLWARDEN_LANG": "en_US",
+                "CALLWARDEN_SKIP_AUTO_SETUP": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "PYTHONUTF8": "1",
+            }
+        )
+        db_paths[implementation] = db_path
+        envs[implementation] = env
+
+    def run_python(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(PROJECT_ROOT / "cw.py"), *args],
+            cwd=workspace_root,
+            env=envs["python"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def run_rust(*args: str, mode: str = "local") -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                str(binary),
+                "--mode",
+                mode,
+                "--db",
+                str(db_paths["rust"]),
+                *args,
+            ],
+            cwd=workspace_root,
+            env=envs["rust"],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def ids(implementation: str) -> tuple[str, list[str]]:
+        conn = sqlite3.connect(db_paths[implementation])
+        try:
+            task_id = conn.execute(
+                "SELECT id FROM tasks WHERE title = 'Write task'"
+            ).fetchone()[0]
+            step_ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT id FROM task_steps WHERE task_id = ? ORDER BY step_index",
+                    (task_id,),
+                )
+            ]
+            return task_id, step_ids
+        finally:
+            conn.close()
+
+    def assert_output_pair(
+        python_result: subprocess.CompletedProcess[str],
+        rust_result: subprocess.CompletedProcess[str],
+    ) -> None:
+        assert python_result.returncode == rust_result.returncode == 0
+        assert python_result.stderr == rust_result.stderr == ""
+        assert _normalize_task_write_output(rust_result.stdout) == (
+            _normalize_task_write_output(python_result.stdout)
+        )
+
+    steps_json = json.dumps(
+        [
+            {"action": "inspect", "check_items": ["read", "syntax"]},
+            {"action": "verify", "target_file": "src/lib.rs"},
+        ],
+        ensure_ascii=False,
+    )
+    assert_output_pair(
+        run_python(
+            "task",
+            "create",
+            "--title",
+            "Write task",
+            "--desc",
+            "state machine",
+            "--steps",
+            steps_json,
+        ),
+        run_rust(
+            "task",
+            "create",
+            "--title",
+            "Write task",
+            "--desc",
+            "state machine",
+            "--steps",
+            steps_json,
+            mode="enterprise",
+        ),
+    )
+    python_task, python_steps = ids("python")
+    rust_task, rust_steps = ids("rust")
+
+    assert_output_pair(
+        run_python("task", "next", python_task),
+        run_rust("task", "next", rust_task, mode="enterprise"),
+    )
+    assert_output_pair(
+        run_python(
+            "task", "report", python_task, python_steps[0], "--result", "inspected"
+        ),
+        run_rust(
+            "task", "report", rust_task, rust_steps[0], "--result", "inspected",
+            mode="enterprise",
+        ),
+    )
+    assert_output_pair(
+        run_python("task", "next", python_task),
+        run_rust("task", "next", rust_task),
+    )
+    assert_output_pair(
+        run_python(
+            "task", "report", python_task, python_steps[1], "--result", "broken", "--fail"
+        ),
+        run_rust(
+            "task", "report", rust_task, rust_steps[1], "--result", "broken", "--fail"
+        ),
+    )
+    assert _task_write_snapshot(db_paths["rust"]) == _task_write_snapshot(
+        db_paths["python"]
+    )
+
+    for implementation, task_id in (("python", python_task), ("rust", rust_task)):
+        conn = sqlite3.connect(db_paths[implementation])
+        conn.execute(
+            "UPDATE tasks SET status = 'closed', applied_at = 1, closed_at = 2 "
+            "WHERE id = ?",
+            (task_id,),
+        )
+        conn.commit()
+        conn.close()
+    assert_output_pair(
+        run_python(
+            "task",
+            "reopen",
+            python_task,
+            "--reviewer",
+            "diff-test",
+            "--reason",
+            "regression",
+        ),
+        run_rust(
+            "task",
+            "reopen",
+            rust_task,
+            "--reviewer",
+            "diff-test",
+            "--reason",
+            "regression",
+            mode="enterprise",
+        ),
+    )
+    assert _task_write_snapshot(db_paths["rust"]) == _task_write_snapshot(
+        db_paths["python"]
+    )
+
+    before = db_paths["rust"].read_bytes()
+    invalid = run_rust("task", "report", rust_task, "S-missing", "--result", "bad")
+    assert invalid.returncode != 0
+    assert "task step not found" in invalid.stderr
     assert db_paths["rust"].read_bytes() == before

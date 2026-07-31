@@ -4,8 +4,16 @@
 //! daemon。这样同一用户在 local/auto/enterprise 模式下看到的是同一份任务事实。
 
 use std::collections::{HashMap, HashSet};
+use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use serde::Deserialize;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+
+static TASK_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct TaskListOptions {
@@ -31,6 +39,78 @@ pub struct TaskStep {
     pub target_file: String,
     pub target_symbol: String,
     pub status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TaskStepInput {
+    #[serde(default)]
+    pub action: String,
+    #[serde(default)]
+    pub target_file: String,
+    #[serde(default)]
+    pub target_symbol: String,
+    #[serde(default)]
+    pub check_items: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskCreateResult {
+    pub task_id: String,
+    pub title: String,
+    pub description: String,
+    pub steps: Vec<TaskStepInput>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ClaimedTaskStep {
+    pub step_id: String,
+    pub task_id: String,
+    pub step_index: i64,
+    pub action: String,
+    pub target_file: String,
+    pub target_symbol: String,
+    pub check_items: Value,
+    pub task_title: String,
+    pub status: String,
+    pub parent_task_chain: Vec<TaskChainItem>,
+    pub open_quality_findings: Vec<TaskFinding>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskChainItem {
+    pub task_id: String,
+    pub title: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskReportResult {
+    pub task_id: String,
+    pub step_id: String,
+    pub success: bool,
+    pub next_step: Option<PendingTaskStep>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingTaskStep {
+    pub step_id: String,
+    pub task_id: String,
+    pub step_index: i64,
+    pub action: String,
+    pub target_file: String,
+    pub target_symbol: String,
+    pub check_items: Value,
+    pub task_title: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct TaskReopenResult {
+    pub task_id: String,
+    pub status: String,
+    pub previous_status: String,
+    pub reopened_at: f64,
+    pub reviewer: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +167,353 @@ struct TaskRow {
     creator: String,
     parent_id: String,
     created_display: String,
+}
+
+pub fn create_task(
+    conn: &mut Connection,
+    title: &str,
+    description: &str,
+    steps: Vec<TaskStepInput>,
+    creator: &str,
+    parent_id: Option<&str>,
+) -> Result<TaskCreateResult, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task create transaction: {error}"))?;
+    let now = unix_timestamp()?;
+    let task_id = generate_id("T")?;
+    let parent_id = parent_id.unwrap_or("").trim();
+
+    let (depth, sort_order) = if parent_id.is_empty() {
+        (0_i64, 0_i64)
+    } else {
+        let parent = tx
+            .query_row(
+                "SELECT depth, status FROM tasks WHERE id = ?1",
+                params![parent_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()
+            .map_err(|error| format!("cannot inspect parent task {parent_id}: {error}"))?
+            .ok_or_else(|| format!("parent task not found: {parent_id}"))?;
+        reopen_parent_chain_if_needed(&tx, parent_id, &parent.1, true, now)?;
+        let sort_order = tx
+            .query_row(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1
+                 FROM tasks WHERE parent_id = ?1",
+                params![parent_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| format!("cannot allocate child task order: {error}"))?;
+        (parent.0 + 1, sort_order)
+    };
+
+    tx.execute(
+        "INSERT INTO tasks(
+             id, title, description, creator, status, created_at, updated_at,
+             parent_id, depth, sort_order
+         ) VALUES (?1, ?2, ?3, ?4, 'open', ?5, ?5, ?6, ?7, ?8)",
+        params![
+            task_id,
+            title,
+            description,
+            creator,
+            now,
+            parent_id,
+            depth,
+            sort_order
+        ],
+    )
+    .map_err(|error| format!("cannot insert task: {error}"))?;
+
+    for (index, step) in steps.iter().enumerate() {
+        let step_id = generate_id("S")?;
+        let step_index = i64::try_from(index).map_err(|_| "task has too many steps".to_string())?;
+        tx.execute(
+            "INSERT INTO task_steps(
+                 id, task_id, step_index, action, target_file, target_symbol,
+                 check_items, status, result, created_at, completed_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'pending', '', ?8, NULL)",
+            params![
+                step_id,
+                task_id,
+                step_index,
+                step.action,
+                step.target_file,
+                step.target_symbol,
+                serialize_check_items(&step.check_items)?,
+                now
+            ],
+        )
+        .map_err(|error| format!("cannot insert task step {index}: {error}"))?;
+    }
+    tx.commit()
+        .map_err(|error| format!("cannot commit task create: {error}"))?;
+    Ok(TaskCreateResult {
+        task_id,
+        title: title.to_string(),
+        description: description.to_string(),
+        steps,
+    })
+}
+
+pub fn claim_next_task_step(
+    conn: &mut Connection,
+    task_id: &str,
+) -> Result<Option<ClaimedTaskStep>, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task claim transaction: {error}"))?;
+    let root_status = tx
+        .query_row(
+            "SELECT status FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("cannot inspect task {task_id}: {error}"))?
+        .ok_or_else(|| format!("task not found: {task_id}"))?;
+    if matches!(root_status.as_str(), "applied" | "closed" | "reverted") {
+        return Err(format!(
+            "task {task_id} is {root_status} and cannot claim new work"
+        ));
+    }
+
+    let mut visited = HashSet::new();
+    let pending = find_priority_fix_step(&tx, task_id)?.or(find_next_pending_step_tree(
+        &tx,
+        task_id,
+        &mut visited,
+    )?);
+    let Some(pending) = pending else {
+        tx.commit()
+            .map_err(|error| format!("cannot finish empty task claim: {error}"))?;
+        return Ok(None);
+    };
+    let open_quality_findings = query_open_quality_findings(&tx, &pending.task_id)?;
+    let has_blocking_finding = open_quality_findings
+        .iter()
+        .any(|finding| matches!(finding.severity.as_str(), "error" | "block"));
+    let is_repair_step = matches!(
+        pending.action.as_str(),
+        "fix_quality_gate_failure" | "fix_gate_failure" | "fix_defect"
+    );
+    let claimed_status = if has_blocking_finding && !is_repair_step {
+        "blocked"
+    } else {
+        "in_progress"
+    };
+    let updated = tx
+        .execute(
+            "UPDATE task_steps SET status = ?1
+             WHERE id = ?2 AND task_id = ?3 AND status = 'pending'",
+            params![claimed_status, pending.step_id, pending.task_id],
+        )
+        .map_err(|error| format!("cannot claim task step {}: {error}", pending.step_id))?;
+    if updated != 1 {
+        return Err(format!(
+            "task step {} was concurrently claimed",
+            pending.step_id
+        ));
+    }
+
+    let now = unix_timestamp()?;
+    let chain_to_advance = build_parent_chain(&tx, &pending.task_id)?;
+    for item in &chain_to_advance {
+        tx.execute(
+            "UPDATE tasks SET status = 'in_progress', updated_at = ?1
+             WHERE id = ?2 AND status = 'open'",
+            params![now, item.task_id],
+        )
+        .map_err(|error| format!("cannot advance task {}: {error}", item.task_id))?;
+    }
+    tx.execute(
+        "UPDATE workspaces SET active_task_id = ?1 WHERE is_active = 1",
+        params![task_id],
+    )
+    .map_err(|error| format!("cannot persist active task: {error}"))?;
+    let parent_task_chain = build_parent_chain(&tx, &pending.task_id)?;
+
+    tx.commit()
+        .map_err(|error| format!("cannot commit task claim: {error}"))?;
+    Ok(Some(ClaimedTaskStep {
+        step_id: pending.step_id,
+        task_id: pending.task_id,
+        step_index: pending.step_index,
+        action: pending.action,
+        target_file: pending.target_file,
+        target_symbol: pending.target_symbol,
+        check_items: pending.check_items,
+        task_title: pending.task_title,
+        status: claimed_status.to_string(),
+        parent_task_chain,
+        open_quality_findings,
+    }))
+}
+
+pub fn report_task_step(
+    conn: &mut Connection,
+    task_id: &str,
+    step_id: &str,
+    result: &str,
+    success: bool,
+) -> Result<TaskReportResult, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task report transaction: {error}"))?;
+    let (actual_task_id, current_status) = tx
+        .query_row(
+            "SELECT task_id, status FROM task_steps WHERE id = ?1",
+            params![step_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(|error| format!("cannot inspect task step {step_id}: {error}"))?
+        .ok_or_else(|| format!("task step not found: {step_id}"))?;
+    if !is_ancestor_or_same(&tx, task_id, &actual_task_id)? {
+        return Err(format!(
+            "task step {step_id} does not belong to task tree {task_id}"
+        ));
+    }
+    if !matches!(current_status.as_str(), "in_progress" | "blocked") {
+        return Err(format!(
+            "task step {step_id} is {current_status}; only in_progress/blocked steps can be reported"
+        ));
+    }
+
+    let now = unix_timestamp()?;
+    let new_status = if success { "done" } else { "failed" };
+    let updated = tx
+        .execute(
+            "UPDATE task_steps
+             SET status = ?1, result = ?2, completed_at = ?3
+             WHERE id = ?4 AND task_id = ?5 AND status = ?6",
+            params![
+                new_status,
+                result,
+                now,
+                step_id,
+                actual_task_id,
+                current_status
+            ],
+        )
+        .map_err(|error| format!("cannot report task step {step_id}: {error}"))?;
+    if updated != 1 {
+        return Err(format!("task step {step_id} changed concurrently"));
+    }
+
+    if !success {
+        let next_index = tx
+            .query_row(
+                "SELECT COALESCE(MAX(step_index), -1) + 1
+                 FROM task_steps WHERE task_id = ?1",
+                params![actual_task_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("cannot allocate fix step index: {error}"))?;
+        tx.execute(
+            "INSERT INTO task_steps(
+                 id, task_id, step_index, action, target_file, target_symbol,
+                 check_items, status, result, created_at, completed_at
+             ) VALUES (?1, ?2, ?3, 'fix_defect', '', '', '', 'pending', '', ?4, NULL)",
+            params![generate_id("S")?, actual_task_id, next_index, now],
+        )
+        .map_err(|error| format!("cannot create fix_defect step: {error}"))?;
+    }
+
+    tx.execute(
+        "UPDATE tasks SET updated_at = ?1 WHERE id IN (?2, ?3)",
+        params![now, actual_task_id, task_id],
+    )
+    .map_err(|error| format!("cannot update task timestamps: {error}"))?;
+
+    if success && task_can_enter_review(&tx, &actual_task_id)? {
+        tx.execute(
+            "UPDATE tasks SET status = 'review', updated_at = ?1
+             WHERE id = ?2 AND status IN ('open', 'in_progress')",
+            params![now, actual_task_id],
+        )
+        .map_err(|error| format!("cannot advance task to review: {error}"))?;
+        update_parent_statuses(&tx, &actual_task_id, now)?;
+    }
+
+    let mut visited = HashSet::new();
+    let next_step = find_next_pending_step_tree(&tx, task_id, &mut visited)?;
+    tx.commit()
+        .map_err(|error| format!("cannot commit task report: {error}"))?;
+    Ok(TaskReportResult {
+        task_id: task_id.to_string(),
+        step_id: step_id.to_string(),
+        success,
+        next_step,
+    })
+}
+
+pub fn reopen_task(
+    conn: &mut Connection,
+    task_id: &str,
+    reviewer: &str,
+    reason: &str,
+) -> Result<TaskReopenResult, String> {
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|error| format!("cannot start task reopen transaction: {error}"))?;
+    let previous_status = tx
+        .query_row(
+            "SELECT status FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("cannot inspect task {task_id}: {error}"))?
+        .ok_or_else(|| format!("task not found: {task_id}"))?;
+    if !matches!(previous_status.as_str(), "review" | "applied" | "closed") {
+        return Err(format!(
+            "task is in status '{previous_status}', no need to reopen \
+             (only review/applied/closed can be reopened)"
+        ));
+    }
+    let now = unix_timestamp()?;
+    tx.execute(
+        "UPDATE tasks
+         SET status = 'in_progress', applied_at = NULL, closed_at = NULL, updated_at = ?1
+         WHERE id = ?2 AND status = ?3",
+        params![now, task_id, previous_status],
+    )
+    .map_err(|error| format!("cannot reopen task {task_id}: {error}"))?;
+
+    let parent_id = tx
+        .query_row(
+            "SELECT COALESCE(parent_id, '') FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|error| format!("cannot read task parent: {error}"))?;
+    if !parent_id.is_empty() {
+        let parent_status = tx
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ?1",
+                params![parent_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|error| format!("cannot inspect parent task {parent_id}: {error}"))?;
+        reopen_parent_chain_if_needed(&tx, &parent_id, &parent_status, false, now)?;
+    }
+    tx.execute(
+        "UPDATE workspaces SET active_task_id = ?1 WHERE is_active = 1",
+        params![task_id],
+    )
+    .map_err(|error| format!("cannot persist reopened active task: {error}"))?;
+    tx.commit()
+        .map_err(|error| format!("cannot commit task reopen: {error}"))?;
+    Ok(TaskReopenResult {
+        task_id: task_id.to_string(),
+        status: "in_progress".to_string(),
+        previous_status,
+        reopened_at: now,
+        reviewer: reviewer.to_string(),
+        reason: reason.to_string(),
+    })
 }
 
 pub fn query_task_list(
@@ -304,6 +731,347 @@ pub fn query_task_links(conn: &Connection, task_id: &str) -> Result<TaskLinks, S
         commits,
         symbol_changes,
     })
+}
+
+pub fn format_task_create(result: &TaskCreateResult, zh_cn: bool) -> String {
+    let mut lines = vec![
+        if zh_cn {
+            "=== 任务创建成功 ==="
+        } else {
+            "=== Task Created ==="
+        }
+        .to_string(),
+        format!(
+            "  {}: {}",
+            if zh_cn { "任务 ID" } else { "Task ID" },
+            result.task_id
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn { "标题" } else { "Title" },
+            result.title
+        ),
+    ];
+    if !result.description.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn { "描述" } else { "Description" },
+            result.description
+        ));
+    }
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "步骤数" } else { "Steps" },
+        result.steps.len()
+    ));
+    if !result.steps.is_empty() {
+        lines.push(String::new());
+        lines.push(if zh_cn {
+            "  [步骤列表]:".to_string()
+        } else {
+            "  [Step List]:".to_string()
+        });
+        for (index, step) in result.steps.iter().enumerate() {
+            let target = if step.target_file.is_empty() {
+                &step.target_symbol
+            } else {
+                &step.target_file
+            };
+            lines.push(format!("    {}. [{}] {}", index + 1, step.action, target));
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn format_task_claim(
+    requested_task_id: &str,
+    step: Option<&ClaimedTaskStep>,
+    zh_cn: bool,
+) -> String {
+    let mut lines = vec![
+        if zh_cn {
+            "=== 领取下一步骤 ==="
+        } else {
+            "=== Claim Next Step ==="
+        }
+        .to_string(),
+        format!(
+            "  {}: {}",
+            if zh_cn { "任务 ID" } else { "Task ID" },
+            requested_task_id
+        ),
+    ];
+    let Some(step) = step else {
+        lines.push(
+            if zh_cn {
+                "  (没有待执行的步骤，任务可能已完成)"
+            } else {
+                "  (no pending steps, task may be completed)"
+            }
+            .to_string(),
+        );
+        return lines.join("\n");
+    };
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "步骤 ID" } else { "Step ID" },
+        step.step_id
+    ));
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "步骤序号" } else { "Step index" },
+        step.step_index
+    ));
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "操作" } else { "Action" },
+        step.action
+    ));
+    if !step.target_file.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn { "目标文件" } else { "Target file" },
+            step.target_file
+        ));
+    }
+    if !step.target_symbol.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn {
+                "目标符号"
+            } else {
+                "Target symbol"
+            },
+            step.target_symbol
+        ));
+    }
+    lines.push(format!(
+        "  {}: {}",
+        if zh_cn { "状态" } else { "Status" },
+        step.status
+    ));
+    lines.push(String::new());
+    format_check_items(&step.check_items, zh_cn, &mut lines);
+    format_structured_instruction(&step.action, zh_cn, &mut lines);
+    lines.join("\n")
+}
+
+pub fn format_task_report(result: &TaskReportResult, description: &str, zh_cn: bool) -> String {
+    let mut lines = vec![
+        if zh_cn {
+            "=== 步骤回报完成 ==="
+        } else {
+            "=== Step Report Done ==="
+        }
+        .to_string(),
+        format!(
+            "  {}: {}",
+            if zh_cn { "任务 ID" } else { "Task ID" },
+            result.task_id
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn { "步骤 ID" } else { "Step ID" },
+            result.step_id
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn { "结果" } else { "Result" },
+            if result.success {
+                if zh_cn {
+                    "成功"
+                } else {
+                    "success"
+                }
+            } else if zh_cn {
+                "失败"
+            } else {
+                "failure"
+            }
+        ),
+    ];
+    if !description.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn { "结果描述" } else { "Result desc" },
+            description
+        ));
+    }
+    lines.push(String::new());
+    if let Some(next) = &result.next_step {
+        lines.push(if zh_cn {
+            "  [下一步骤已就绪]".to_string()
+        } else {
+            "  [Next Step Ready]".to_string()
+        });
+        lines.push(format!(
+            "    {}: {}",
+            if zh_cn { "步骤 ID" } else { "Step ID" },
+            next.step_id
+        ));
+        lines.push(format!(
+            "    {}: {}",
+            if zh_cn { "操作" } else { "Action" },
+            next.action
+        ));
+        if !next.target_file.is_empty() {
+            lines.push(format!(
+                "    {}: {}",
+                if zh_cn { "目标文件" } else { "Target file" },
+                next.target_file
+            ));
+        }
+    } else {
+        lines.push(
+            if zh_cn {
+                "  (没有更多待执行步骤，任务进入 review 状态)"
+            } else {
+                "  (no more pending steps, task moved to review)"
+            }
+            .to_string(),
+        );
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+pub fn format_task_reopen(result: &TaskReopenResult, zh_cn: bool) -> String {
+    let mut lines = vec![
+        if zh_cn {
+            format!(
+                "✓ 任务已重新打开: {}（原状态: {}）",
+                result.task_id, result.previous_status
+            )
+        } else {
+            format!(
+                "✓ Task reopened: {} (previous: {})",
+                result.task_id, result.previous_status
+            )
+        },
+        format!(
+            "  {}: {}",
+            if zh_cn { "状态" } else { "Status" },
+            result.status
+        ),
+        format!(
+            "  {}: {}",
+            if zh_cn {
+                "重新打开时间"
+            } else {
+                "Reopened at"
+            },
+            result.reopened_at
+        ),
+    ];
+    if !result.reason.is_empty() {
+        lines.push(format!(
+            "  {}: {}",
+            if zh_cn { "原因" } else { "Reason" },
+            result.reason
+        ));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn format_check_items(value: &Value, zh_cn: bool, lines: &mut Vec<String>) {
+    let is_empty = matches!(value, Value::Null)
+        || matches!(value, Value::String(text) if text.is_empty())
+        || matches!(value, Value::Array(items) if items.is_empty());
+    if is_empty {
+        return;
+    }
+    lines.push(if zh_cn {
+        "  [检查项]:".to_string()
+    } else {
+        "  [Check Items]:".to_string()
+    });
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                let text = item
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| item.to_string());
+                lines.push(format!("    - {text}"));
+            }
+        }
+        Value::String(text) => lines.push(format!("    {text}")),
+        other => lines.push(format!("    {other}")),
+    }
+    lines.push(String::new());
+}
+
+fn format_structured_instruction(action: &str, zh_cn: bool, lines: &mut Vec<String>) {
+    let action = action.to_ascii_lowercase();
+    // Python i18n 当前把 JSON 数组降级成其 repr 字符串，CLI 随后逐字符输出。
+    // E2 保留这一既有终端契约，待独立 i18n 迁移切片统一修复两端。
+    let (constraints_repr, checks): (&str, &[&str]) = match action.as_str() {
+        "annotate_function" | "annotate" | "add_comment" | "comment" => (
+            if zh_cn {
+                "['只添加注释，不修改函数逻辑', '注释语言: 中文', '注释格式遵循目标语言规范（Rust: /// 或 /** */，Python: # 或 docstring）']"
+            } else {
+                "['Only add comments; do not change function logic', 'Comment language: Chinese', \"Use the target language's comment style (Rust: /// or /** */, Python: # or docstring)\"]"
+            },
+            &["syntax", "semgrep_quick"],
+        ),
+        "refactor" | "refactor_function" => (
+            if zh_cn {
+                "['保持函数的外部行为不变（签名、返回值、副作用）', '修改后必须通过语法检查', '如涉及公共 API 变更须同步更新调用方']"
+            } else {
+                "['Keep external behavior unchanged (signature, return value, side effects)', 'Run syntax checks after changes', 'Update callers when public API changes are involved']"
+            },
+            &["syntax", "semgrep"],
+        ),
+        "fix" | "fix_defect" | "fix_gate_failure" => (
+            if zh_cn {
+                "['只修复报告的问题，不做额外修改', '修复后必须通过之前的检查门禁']"
+            } else {
+                "['Fix only the reported issue; avoid unrelated changes', 'The previous check gate must pass after the fix']"
+            },
+            &["syntax", "semgrep"],
+        ),
+        "edit" | "propose_edit" | "write" => (
+            if zh_cn {
+                "['使用 propose_edit 工具执行写入，禁止直接操作文件系统', '写入前先 dry_run 确认 diff', '提供 expected_hash 防止并发冲突']"
+            } else {
+                "['Use propose_edit for writes; do not write directly to the filesystem', 'Run dry_run first to inspect the diff', 'Provide expected_hash to prevent concurrent overwrite']"
+            },
+            &["syntax"],
+        ),
+        _ => (
+            if zh_cn {
+                "['按步骤 check_items 描述执行']"
+            } else {
+                "['Follow the step check_items']"
+            },
+            &["syntax"],
+        ),
+    };
+    lines.push(if zh_cn {
+        "  📐 结构化指令:".to_string()
+    } else {
+        "  📐 Structured Instruction:".to_string()
+    });
+    lines.push(if zh_cn {
+        "    约束:".to_string()
+    } else {
+        "    Constraints:".to_string()
+    });
+    for constraint in constraints_repr.chars() {
+        lines.push(format!("      • {constraint}"));
+    }
+    lines.push(format!(
+        "    {}: {}",
+        if zh_cn {
+            "完成后检查"
+        } else {
+            "Post-checks"
+        },
+        checks.join(", ")
+    ));
+    lines.push(String::new());
 }
 
 pub fn format_task_list(
@@ -846,6 +1614,395 @@ fn format_task_links(links: &TaskLinks, lines: &mut Vec<String>) {
     }
 }
 
+fn unix_timestamp() -> Result<f64, String> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .map_err(|error| format!("system clock is before Unix epoch: {error}"))
+}
+
+fn generate_id(prefix: &str) -> Result<String, String> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before Unix epoch: {error}"))?;
+    let millis = duration.as_millis();
+    let counter = TASK_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut hasher = Sha256::new();
+    hasher.update(prefix.as_bytes());
+    hasher.update(duration.as_nanos().to_le_bytes());
+    hasher.update(process::id().to_le_bytes());
+    hasher.update(counter.to_le_bytes());
+    let digest = hasher.finalize();
+    Ok(format!("{prefix}-{millis}-{}", hex::encode(&digest[..4])))
+}
+
+fn serialize_check_items(value: &Value) -> Result<String, String> {
+    match value {
+        Value::Null => Ok(String::new()),
+        Value::String(text) => Ok(text.clone()),
+        _ => python_style_json(value),
+    }
+}
+
+fn python_style_json(value: &Value) -> Result<String, String> {
+    match value {
+        Value::Null => Ok("null".to_string()),
+        Value::Bool(flag) => Ok(if *flag { "true" } else { "false" }.to_string()),
+        Value::Number(number) => Ok(number.to_string()),
+        Value::String(text) => serde_json::to_string(text)
+            .map_err(|error| format!("cannot serialize task check_items string: {error}")),
+        Value::Array(items) => {
+            let items = items
+                .iter()
+                .map(python_style_json)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(format!("[{}]", items.join(", ")))
+        }
+        Value::Object(items) => {
+            let fields = items
+                .iter()
+                .map(|(key, value)| {
+                    let key = serde_json::to_string(key).map_err(|error| {
+                        format!("cannot serialize task check_items key: {error}")
+                    })?;
+                    Ok(format!("{key}: {}", python_style_json(value)?))
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(format!("{{{}}}", fields.join(", ")))
+        }
+    }
+}
+
+fn deserialize_check_items(raw: &str) -> Value {
+    if raw.is_empty() {
+        return Value::String(String::new());
+    }
+    serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.to_string()))
+}
+
+fn reopen_parent_chain_if_needed(
+    tx: &Transaction<'_>,
+    parent_id: &str,
+    parent_status: &str,
+    check_siblings: bool,
+    now: f64,
+) -> Result<(), String> {
+    let mut current_id = parent_id.to_string();
+    let mut current_status = parent_status.to_string();
+    let mut first = true;
+    let mut visited = HashSet::new();
+    loop {
+        if !visited.insert(current_id.clone()) {
+            return Err(format!("task parent cycle detected at {current_id}"));
+        }
+        if !matches!(current_status.as_str(), "review" | "applied" | "closed") {
+            return Ok(());
+        }
+        if first && check_siblings {
+            let non_closed = tx
+                .query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM tasks
+                         WHERE parent_id = ?1 AND status != 'closed'
+                     )",
+                    params![current_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map_err(|error| format!("cannot inspect sibling task states: {error}"))?;
+            if non_closed != 0 {
+                return Ok(());
+            }
+        }
+        let updated = tx
+            .execute(
+                "UPDATE tasks
+                 SET status = 'in_progress', applied_at = NULL, closed_at = NULL,
+                     updated_at = ?1
+                 WHERE id = ?2 AND status = ?3",
+                params![now, current_id, current_status],
+            )
+            .map_err(|error| format!("cannot reopen parent task {current_id}: {error}"))?;
+        if updated != 1 {
+            return Err(format!("parent task {current_id} changed concurrently"));
+        }
+        let parent = tx
+            .query_row(
+                "SELECT COALESCE(parent_id, '') FROM tasks WHERE id = ?1",
+                params![current_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|error| format!("cannot read parent chain for {current_id}: {error}"))?;
+        if parent.is_empty() {
+            return Ok(());
+        }
+        current_id = parent;
+        current_status = tx
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ?1",
+                params![current_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|error| format!("cannot inspect ancestor task {current_id}: {error}"))?;
+        first = false;
+    }
+}
+
+fn find_priority_fix_step(
+    tx: &Transaction<'_>,
+    task_id: &str,
+) -> Result<Option<PendingTaskStep>, String> {
+    tx.query_row(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT id FROM tasks WHERE id = ?1
+             UNION
+             SELECT t.id FROM tasks t JOIN subtree s ON t.parent_id = s.id
+         )
+         SELECT ts.id, ts.task_id, ts.step_index, ts.action,
+                COALESCE(ts.target_file, ''), COALESCE(ts.target_symbol, ''),
+                COALESCE(ts.check_items, ''), t.title
+         FROM task_steps ts
+         JOIN tasks t ON t.id = ts.task_id
+         JOIN subtree s ON s.id = ts.task_id
+         WHERE ts.status = 'pending'
+           AND ts.action = 'fix_quality_gate_failure'
+         ORDER BY ts.created_at ASC, ts.step_index ASC, ts.id ASC
+         LIMIT 1",
+        params![task_id],
+        |row| {
+            let raw: String = row.get(6)?;
+            Ok(PendingTaskStep {
+                step_id: row.get(0)?,
+                task_id: row.get(1)?,
+                step_index: row.get(2)?,
+                action: row.get(3)?,
+                target_file: row.get(4)?,
+                target_symbol: row.get(5)?,
+                check_items: deserialize_check_items(&raw),
+                task_title: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| format!("cannot find priority quality-fix step: {error}"))
+}
+
+fn find_next_pending_step_tree(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    visited: &mut HashSet<String>,
+) -> Result<Option<PendingTaskStep>, String> {
+    if !visited.insert(task_id.to_string()) {
+        return Err(format!("task child cycle detected at {task_id}"));
+    }
+    let mut stmt = tx
+        .prepare(
+            "SELECT id, status FROM tasks
+             WHERE parent_id = ?1 ORDER BY sort_order ASC, created_at ASC, id ASC",
+        )
+        .map_err(|error| format!("cannot prepare child task query: {error}"))?;
+    let children = stmt
+        .query_map(params![task_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("cannot query child tasks: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read child tasks: {error}"))?;
+    drop(stmt);
+    for (child_id, status) in children {
+        if matches!(status.as_str(), "closed" | "applied" | "reverted") {
+            continue;
+        }
+        if let Some(step) = find_next_pending_step_tree(tx, &child_id, visited)? {
+            return Ok(Some(step));
+        }
+    }
+
+    tx.query_row(
+        "SELECT ts.id, ts.task_id, ts.step_index, ts.action,
+                COALESCE(ts.target_file, ''), COALESCE(ts.target_symbol, ''),
+                COALESCE(ts.check_items, ''), t.title
+         FROM task_steps ts
+         JOIN tasks t ON t.id = ts.task_id
+         WHERE ts.task_id = ?1 AND ts.status = 'pending'
+         ORDER BY CASE WHEN ts.action = 'fix_quality_gate_failure' THEN 0 ELSE 1 END,
+                  ts.step_index ASC, ts.created_at ASC
+         LIMIT 1",
+        params![task_id],
+        |row| {
+            let raw: String = row.get(6)?;
+            Ok(PendingTaskStep {
+                step_id: row.get(0)?,
+                task_id: row.get(1)?,
+                step_index: row.get(2)?,
+                action: row.get(3)?,
+                target_file: row.get(4)?,
+                target_symbol: row.get(5)?,
+                check_items: deserialize_check_items(&raw),
+                task_title: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|error| format!("cannot find pending step for task {task_id}: {error}"))
+}
+
+fn build_parent_chain(tx: &Transaction<'_>, task_id: &str) -> Result<Vec<TaskChainItem>, String> {
+    let mut chain = Vec::new();
+    let mut current_id = task_id.to_string();
+    let mut visited = HashSet::new();
+    loop {
+        if !visited.insert(current_id.clone()) {
+            return Err(format!("task parent cycle detected at {current_id}"));
+        }
+        let row = tx
+            .query_row(
+                "SELECT title, status, COALESCE(parent_id, '')
+                 FROM tasks WHERE id = ?1",
+                params![current_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| format!("cannot read task parent chain: {error}"))?
+            .ok_or_else(|| format!("task not found in parent chain: {current_id}"))?;
+        chain.push(TaskChainItem {
+            task_id: current_id,
+            title: row.0,
+            status: row.1,
+        });
+        if row.2.is_empty() {
+            break;
+        }
+        current_id = row.2;
+    }
+    chain.reverse();
+    Ok(chain)
+}
+
+fn query_open_quality_findings(
+    tx: &Transaction<'_>,
+    task_id: &str,
+) -> Result<Vec<TaskFinding>, String> {
+    let mut stmt = tx
+        .prepare(
+            "SELECT id, COALESCE(step_id, ''), finding_type, severity, status,
+                    message, COALESCE(source, '')
+             FROM task_quality_findings
+             WHERE task_id = ?1 AND status = 'open'
+             ORDER BY created_at ASC LIMIT 10",
+        )
+        .map_err(|error| format!("cannot prepare open finding query: {error}"))?;
+    let rows = stmt
+        .query_map(params![task_id], |row| {
+            Ok(TaskFinding {
+                id: row.get(0)?,
+                step_id: row.get(1)?,
+                finding_type: row.get(2)?,
+                severity: row.get(3)?,
+                status: row.get(4)?,
+                message: row.get(5)?,
+                source: row.get(6)?,
+            })
+        })
+        .map_err(|error| format!("cannot query open task findings: {error}"))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("cannot read open task findings: {error}"))
+}
+
+fn is_ancestor_or_same(
+    tx: &Transaction<'_>,
+    ancestor_id: &str,
+    task_id: &str,
+) -> Result<bool, String> {
+    tx.query_row(
+        "WITH RECURSIVE ancestors(id, parent_id) AS (
+             SELECT id, COALESCE(parent_id, '') FROM tasks WHERE id = ?1
+             UNION
+             SELECT t.id, COALESCE(t.parent_id, '')
+             FROM tasks t JOIN ancestors a ON t.id = a.parent_id
+         )
+         SELECT EXISTS(SELECT 1 FROM ancestors WHERE id = ?2)",
+        params![task_id, ancestor_id],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|value| value != 0)
+    .map_err(|error| format!("cannot validate task ancestry: {error}"))
+}
+
+fn task_can_enter_review(tx: &Transaction<'_>, task_id: &str) -> Result<bool, String> {
+    let incomplete = tx
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM task_steps
+                 WHERE task_id = ?1 AND status NOT IN ('done', 'skipped')
+             )",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot inspect unfinished task steps: {error}"))?;
+    if incomplete != 0 {
+        return Ok(false);
+    }
+    let blocking = tx
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM task_quality_findings
+                 WHERE task_id = ?1 AND status = 'open'
+                   AND severity IN ('error', 'block')
+             )",
+            params![task_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("cannot inspect blocking task findings: {error}"))?;
+    Ok(blocking == 0)
+}
+
+fn update_parent_statuses(tx: &Transaction<'_>, task_id: &str, now: f64) -> Result<(), String> {
+    let mut child_id = task_id.to_string();
+    let mut visited = HashSet::new();
+    loop {
+        if !visited.insert(child_id.clone()) {
+            return Err(format!("task parent cycle detected at {child_id}"));
+        }
+        let parent_id = tx
+            .query_row(
+                "SELECT COALESCE(parent_id, '') FROM tasks WHERE id = ?1",
+                params![child_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|error| format!("cannot read task parent: {error}"))?;
+        if parent_id.is_empty() {
+            return Ok(());
+        }
+        let child_incomplete = tx
+            .query_row(
+                "SELECT EXISTS(
+                     SELECT 1 FROM tasks
+                     WHERE parent_id = ?1
+                       AND status NOT IN ('review', 'applied', 'closed', 'reverted')
+                 )",
+                params![parent_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("cannot inspect child task states: {error}"))?;
+        if child_incomplete != 0 || !task_can_enter_review(tx, &parent_id)? {
+            return Ok(());
+        }
+        tx.execute(
+            "UPDATE tasks SET status = 'review', updated_at = ?1
+             WHERE id = ?2 AND status IN ('open', 'in_progress')",
+            params![now, parent_id],
+        )
+        .map_err(|error| format!("cannot advance parent task {parent_id}: {error}"))?;
+        child_id = parent_id;
+    }
+}
+
 fn table_exists(conn: &Connection, table: &str) -> Result<bool, String> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
@@ -863,7 +2020,11 @@ mod tests {
     fn fixture() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE tasks(
+            "CREATE TABLE workspaces(
+                 id INTEGER PRIMARY KEY, name TEXT, root_path TEXT,
+                 is_active INTEGER, active_task_id TEXT
+             );
+             CREATE TABLE tasks(
                  id TEXT PRIMARY KEY, title TEXT, description TEXT, creator TEXT,
                  status TEXT, created_at REAL, updated_at REAL, applied_at REAL,
                  closed_at REAL, parent_id TEXT, depth INTEGER, sort_order INTEGER
@@ -886,7 +2047,8 @@ mod tests {
                  ('s1','root',0,'inspect','','','[]','done','',1000,1001),
                  ('s2','child',0,'fix','a.py','','[]','pending','',1001,NULL);
              INSERT INTO task_quality_findings VALUES
-                 (1,1,'child','s2','scope','block','open','outside scope','','scope',1002,NULL,'');",
+                 (1,1,'child','s2','scope','block','open','outside scope','','scope',1002,NULL,'');
+             INSERT INTO workspaces VALUES (1, 'fixture', '/fixture', 1, '');",
         )
         .unwrap();
         conn
@@ -930,5 +2092,259 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         assert!(query_task_list(&conn, None, 20).is_err());
         assert!(query_task_findings(&conn, "missing", "open", "").is_err());
+    }
+
+    #[test]
+    fn create_nested_task_reopens_completed_parent_chain() {
+        let mut conn = fixture();
+        conn.execute(
+            "UPDATE tasks SET status = 'closed', applied_at = 10, closed_at = 11",
+            [],
+        )
+        .unwrap();
+        let result = create_task(
+            &mut conn,
+            "New child",
+            "",
+            vec![TaskStepInput {
+                action: "inspect".to_string(),
+                target_file: "src/lib.rs".to_string(),
+                target_symbol: String::new(),
+                check_items: Value::Array(vec![Value::String("syntax".to_string())]),
+            }],
+            "agent",
+            Some("root"),
+        )
+        .unwrap();
+        let row = conn
+            .query_row(
+                "SELECT parent_id, depth, sort_order FROM tasks WHERE id = ?1",
+                params![result.task_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(row, ("root".to_string(), 1, 1));
+        let root = conn
+            .query_row(
+                "SELECT status, applied_at, closed_at FROM tasks WHERE id = 'root'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<f64>>(1)?,
+                        row.get::<_, Option<f64>>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(root, ("in_progress".to_string(), None, None));
+    }
+
+    #[test]
+    fn blocking_finding_blocks_normal_step_claim() {
+        let mut conn = fixture();
+        let claimed = claim_next_task_step(&mut conn, "child").unwrap().unwrap();
+        assert_eq!(claimed.step_id, "s2");
+        assert_eq!(claimed.status, "blocked");
+        assert_eq!(claimed.open_quality_findings.len(), 1);
+        assert_eq!(
+            conn.query_row("SELECT status FROM task_steps WHERE id = 's2'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            "blocked"
+        );
+    }
+
+    #[test]
+    fn quality_fix_step_preempts_deeper_normal_work() {
+        let mut conn = fixture();
+        conn.execute(
+            "INSERT INTO task_steps VALUES(
+                 'quality-fix', 'root', 1, 'fix_quality_gate_failure',
+                 '', '', '', 'pending', '', 2000, NULL
+             )",
+            [],
+        )
+        .unwrap();
+        let claimed = claim_next_task_step(&mut conn, "root").unwrap().unwrap();
+        assert_eq!(claimed.step_id, "quality-fix");
+        assert_eq!(claimed.status, "in_progress");
+    }
+
+    #[test]
+    fn claim_report_and_reopen_preserve_parent_state_machine() {
+        let mut conn = fixture();
+        conn.execute(
+            "UPDATE task_quality_findings SET status = 'resolved' WHERE task_id = 'child'",
+            [],
+        )
+        .unwrap();
+        let claimed = claim_next_task_step(&mut conn, "root").unwrap().unwrap();
+        assert_eq!(claimed.step_id, "s2");
+        assert_eq!(claimed.task_id, "child");
+        assert_eq!(
+            claimed
+                .parent_task_chain
+                .iter()
+                .map(|item| (item.task_id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("root", "in_progress"), ("child", "review")]
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT active_task_id FROM workspaces WHERE is_active = 1",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            "root"
+        );
+
+        let report = report_task_step(&mut conn, "root", "s2", "done", true).unwrap();
+        assert!(report.next_step.is_none());
+        assert_eq!(
+            conn.query_row("SELECT status FROM tasks WHERE id = 'child'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            "review"
+        );
+        assert_eq!(
+            conn.query_row("SELECT status FROM tasks WHERE id = 'root'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            "review"
+        );
+
+        conn.execute(
+            "UPDATE tasks SET status = 'closed', applied_at = 12, closed_at = 13
+             WHERE id IN ('root', 'child')",
+            [],
+        )
+        .unwrap();
+        let reopened = reopen_task(&mut conn, "child", "reviewer", "regression").unwrap();
+        assert_eq!(reopened.previous_status, "closed");
+        assert_eq!(
+            conn.query_row("SELECT status FROM tasks WHERE id = 'root'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            "in_progress"
+        );
+    }
+
+    #[test]
+    fn failed_report_inserts_fix_step_and_rejects_replay() {
+        let mut conn = fixture();
+        let claimed = claim_next_task_step(&mut conn, "child").unwrap().unwrap();
+        report_task_step(&mut conn, "child", &claimed.step_id, "failed", false).unwrap();
+        let fix = conn
+            .query_row(
+                "SELECT action, status FROM task_steps
+                 WHERE task_id = 'child' ORDER BY step_index DESC LIMIT 1",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(fix, ("fix_defect".to_string(), "pending".to_string()));
+        assert!(report_task_step(&mut conn, "child", &claimed.step_id, "again", true).is_err());
+    }
+
+    #[test]
+    fn report_rolls_back_when_a_late_gate_query_fails() {
+        let mut conn = fixture();
+        conn.execute(
+            "UPDATE task_quality_findings SET status = 'resolved' WHERE task_id = 'child'",
+            [],
+        )
+        .unwrap();
+        let claimed = claim_next_task_step(&mut conn, "child").unwrap().unwrap();
+        conn.execute("DROP TABLE task_quality_findings", [])
+            .unwrap();
+        assert!(report_task_step(&mut conn, "child", &claimed.step_id, "done", true).is_err());
+        let state = conn
+            .query_row(
+                "SELECT status, result, completed_at FROM task_steps WHERE id = ?1",
+                params![claimed.step_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<f64>>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(state, ("in_progress".to_string(), String::new(), None));
+    }
+
+    #[test]
+    fn immediate_transaction_allows_only_one_claim() {
+        use std::sync::{Arc, Barrier};
+        use std::thread;
+
+        let path =
+            std::env::temp_dir().join(format!("cw-task-{}.db", generate_id("test").unwrap()));
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE workspaces(
+                     id INTEGER PRIMARY KEY, name TEXT, root_path TEXT,
+                     is_active INTEGER, active_task_id TEXT
+                 );
+                 CREATE TABLE tasks(
+                     id TEXT PRIMARY KEY, title TEXT, description TEXT, creator TEXT,
+                     status TEXT, created_at REAL, updated_at REAL, applied_at REAL,
+                     closed_at REAL, parent_id TEXT, depth INTEGER, sort_order INTEGER
+                 );
+                 CREATE TABLE task_steps(
+                     id TEXT PRIMARY KEY, task_id TEXT, step_index INTEGER, action TEXT,
+                     target_file TEXT, target_symbol TEXT, check_items TEXT, status TEXT,
+                     result TEXT, created_at REAL, completed_at REAL
+                 );
+                 CREATE TABLE task_quality_findings(
+                     id INTEGER PRIMARY KEY, workspace_id INTEGER, task_id TEXT, step_id TEXT,
+                     finding_type TEXT, severity TEXT, status TEXT, message TEXT,
+                     evidence TEXT, source TEXT, created_at REAL, resolved_at REAL,
+                     resolved_by TEXT
+                 );
+                 INSERT INTO workspaces VALUES (1, 'fixture', '/fixture', 1, '');
+                 INSERT INTO tasks VALUES
+                     ('root','Root','','agent','open',1,1,NULL,NULL,'',0,0);
+                 INSERT INTO task_steps VALUES
+                     ('step','root',0,'inspect','','','','pending','',1,NULL);",
+            )
+            .unwrap();
+        }
+        let barrier = Arc::new(Barrier::new(3));
+        let handles = (0..2)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let mut conn = Connection::open(path).unwrap();
+                    conn.busy_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                    barrier.wait();
+                    claim_next_task_step(&mut conn, "root").unwrap().is_some()
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        let claimed = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .filter(|claimed| *claimed)
+            .count();
+        assert_eq!(claimed, 1);
+        std::fs::remove_file(path).unwrap();
     }
 }

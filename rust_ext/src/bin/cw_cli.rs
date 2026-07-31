@@ -51,8 +51,10 @@ use callwarden_core::cli::stats::query_local_stats;
 use callwarden_core::cli::status::{combine_enterprise_status, query_local_status};
 use callwarden_core::cli::symbol::format_symbol_output;
 use callwarden_core::cli::task::{
-    format_task_findings, format_task_list, format_task_show, query_task_detail,
-    query_task_findings, query_task_links, query_task_list, TaskListOptions,
+    claim_next_task_step, create_task, format_task_claim, format_task_create, format_task_findings,
+    format_task_list, format_task_reopen, format_task_report, format_task_show, query_task_detail,
+    query_task_findings, query_task_links, query_task_list, reopen_task, report_task_step,
+    TaskListOptions, TaskStepInput,
 };
 use callwarden_core::cli::workspace::{
     activate_local_workspace, format_activate_result, format_register_success,
@@ -414,6 +416,35 @@ enum WorkspaceAction {
 
 #[derive(Subcommand)]
 enum TaskAction {
+    /// 创建任务和步骤
+    Create {
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "")]
+        desc: String,
+        /// JSON 步骤数组
+        #[arg(long, default_value = "")]
+        steps: String,
+    },
+    /// 原子领取任务树中的下一个步骤
+    Next { task_id: String },
+    /// 回报步骤执行结果
+    Report {
+        task_id: String,
+        step_id: String,
+        #[arg(long, default_value = "")]
+        result: String,
+        #[arg(long)]
+        fail: bool,
+    },
+    /// 重新打开 review/applied/closed 任务
+    Reopen {
+        task_id: String,
+        #[arg(long, default_value = "reviewer")]
+        reviewer: String,
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
     /// 列出任务
     List {
         /// 只显示自身或后代存在阻塞 finding 的任务
@@ -698,15 +729,50 @@ fn main() {
 fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
     let result = (|| -> Result<String, String> {
         // task 是 per-UID 编排元数据；即使代码查询使用 enterprise，也固定读取本地库。
-        let conn = runtime.open_local_db()?;
         let zh_cn = use_zh_cn();
         match action {
+            TaskAction::Create { title, desc, steps } => {
+                let steps = if steps.is_empty() {
+                    Vec::new()
+                } else {
+                    serde_json::from_str::<Vec<TaskStepInput>>(&steps)
+                        .map_err(|error| format!("invalid task steps JSON: {error}"))?
+                };
+                let mut conn = runtime.open_local_write_db()?;
+                let result = create_task(&mut conn, &title, &desc, steps, "agent", None)?;
+                Ok(format_task_create(&result, zh_cn))
+            }
+            TaskAction::Next { task_id } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let step = claim_next_task_step(&mut conn, &task_id)?;
+                Ok(format_task_claim(&task_id, step.as_ref(), zh_cn))
+            }
+            TaskAction::Report {
+                task_id,
+                step_id,
+                result,
+                fail,
+            } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let report = report_task_step(&mut conn, &task_id, &step_id, &result, !fail)?;
+                Ok(format_task_report(&report, &result, zh_cn))
+            }
+            TaskAction::Reopen {
+                task_id,
+                reviewer,
+                reason,
+            } => {
+                let mut conn = runtime.open_local_write_db()?;
+                let result = reopen_task(&mut conn, &task_id, &reviewer, &reason)?;
+                Ok(format_task_reopen(&result, zh_cn))
+            }
             TaskAction::List {
                 blocked,
                 limit,
                 status,
                 flat,
             } => {
+                let conn = runtime.open_local_db()?;
                 let status = (!status.is_empty()).then_some(status);
                 let options = TaskListOptions {
                     blocked,
@@ -718,6 +784,7 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                 format_task_list(&tasks, &options, zh_cn)
             }
             TaskAction::Show { task_id, flat } => {
+                let conn = runtime.open_local_db()?;
                 let detail = query_task_detail(&conn, &task_id, !flat)?;
                 let links = query_task_links(&conn, &task_id)?;
                 Ok(format_task_show(
@@ -729,6 +796,7 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                 ))
             }
             TaskAction::StatusTree { task_id } => {
+                let conn = runtime.open_local_db()?;
                 let detail = query_task_detail(&conn, &task_id, true)?;
                 let links = query_task_links(&conn, &task_id)?;
                 Ok(format_task_show(
@@ -744,6 +812,7 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                 status,
                 severity,
             } => {
+                let conn = runtime.open_local_db()?;
                 let findings = query_task_findings(&conn, &task_id, &status, &severity)?;
                 Ok(format_task_findings(&task_id, &findings, zh_cn))
             }
