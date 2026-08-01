@@ -13,7 +13,7 @@
 //! - C9: pending_refs 未过期的 cas_key 视为 live
 //! - C10: stale manifest commit 被 latest_seen_generation 条件 UPDATE 阻止
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params, Connection};
@@ -236,6 +236,40 @@ pub struct CasStore {
     conn: Mutex<Connection>,
     /// CAS DB 文件路径（None 表示内存模式）
     db_path: Option<String>,
+}
+
+/// Local/Global CAS 选择边界。
+/// Local CAS 可按用户或 workspace 隔离；daemon 生产路径必须通过本 service
+/// 使用共享 Global CAS，避免相同内容在多个 workspace 重复 parse/publish。
+pub trait CasService: Send + Sync {
+    fn global(&self) -> &CasStore;
+    fn local(&self) -> &CasStore;
+    fn global_arc(&self) -> Arc<CasStore>;
+}
+
+pub struct CasServiceFacade {
+    global: Arc<CasStore>,
+    local: Arc<CasStore>,
+}
+
+impl CasServiceFacade {
+    pub fn new(global: Arc<CasStore>, local: Arc<CasStore>) -> Self {
+        Self { global, local }
+    }
+}
+
+impl CasService for CasServiceFacade {
+    fn global(&self) -> &CasStore {
+        self.global.as_ref()
+    }
+
+    fn local(&self) -> &CasStore {
+        self.local.as_ref()
+    }
+
+    fn global_arc(&self) -> Arc<CasStore> {
+        Arc::clone(&self.global)
+    }
 }
 
 impl CasStore {

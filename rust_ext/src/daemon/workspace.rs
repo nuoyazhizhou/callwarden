@@ -77,7 +77,7 @@ use rusqlite::{params, Connection, OpenFlags, Row};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use super::cas::CasStore;
+use super::cas::{CasService, CasServiceFacade, CasStore};
 use super::dispatch::{
     get_str_param, get_str_param_or, require_str_param, DaemonRpcError, DaemonState,
     DaemonStateExt, PeerCredential,
@@ -901,6 +901,8 @@ pub struct WorkspaceDaemonState {
     /// 这里用 HashMap 缓存（daemon 是单 Arc<Mutex<State>> 持有，&mut self 即可访问，
     /// 无需额外锁）。资源一旦创建，后续 RPC 直接复用，避免重复 open/schema 初始化。
     pub resources: HashMap<String, Arc<WorkspaceResources>>,
+    /// 所有 workspace 共享的 daemon Global CAS。
+    pub global_cas_store: Option<Arc<CasStore>>,
     /// G11: Snapshot 发布器（可选，None 时 replicate 跳过 publish_snapshot）。
     ///
     /// 注入路径：`cw_daemon.rs` 启动时创建共享 `Arc<SnapshotCachePublisher>`，
@@ -931,6 +933,8 @@ pub struct WorkspaceResources {
     pub session_store: Arc<SessionStore>,
     /// CAS DB（cas_file_cache + file_generations）
     pub cas_store: Arc<CasStore>,
+    /// Global/Local CAS 选择 facade；daemon refresh 使用 global。
+    pub cas_service: Arc<dyn CasService>,
     /// staging log（追加写入 pending entries，replicate 后标记 applied）
     pub staging_log: Arc<StagingLog>,
     /// P0-4 R3: parser metrics（parse_total / parse_ok / parse_failed / ...）
@@ -946,6 +950,7 @@ impl WorkspaceDaemonState {
             registry,
             data_root: std::path::PathBuf::new(),
             resources: HashMap::new(),
+            global_cas_store: None,
             snapshot_publisher: None,
             codegraph_db_path_template: String::new(),
             refresh_plans: HashMap::new(),
@@ -959,6 +964,7 @@ impl WorkspaceDaemonState {
             registry,
             data_root,
             resources: HashMap::new(),
+            global_cas_store: None,
             snapshot_publisher: None,
             codegraph_db_path_template: String::new(),
             refresh_plans: HashMap::new(),
@@ -1039,6 +1045,23 @@ impl WorkspaceDaemonState {
                 format!("CasStore::open 失败: {}", e),
             )
         })?;
+        let global_cas_store = match &self.global_cas_store {
+            Some(store) => Arc::clone(store),
+            None => {
+                let global_path = self.data_root.join("global-cas.db");
+                let store = Arc::new(
+                    CasStore::open(global_path.to_string_lossy().as_ref()).map_err(|e| {
+                        DaemonRpcError::new(
+                            "resources_init_failed",
+                            format!("Global CasStore::open 失败: {}", e),
+                        )
+                    })?,
+                );
+                self.global_cas_store = Some(Arc::clone(&store));
+                store
+            }
+        };
+        let local_cas_store = Arc::new(cas_store);
 
         // 打开 StagingLog（staging.log）
         let staging_log_path = ws_dir.join("staging.log");
@@ -1066,7 +1089,8 @@ impl WorkspaceDaemonState {
 
         let resources = Arc::new(WorkspaceResources {
             session_store: Arc::new(session_store),
-            cas_store: Arc::new(cas_store),
+            cas_store: Arc::clone(&local_cas_store),
+            cas_service: Arc::new(CasServiceFacade::new(global_cas_store, local_cas_store)),
             staging_log: Arc::new(staging_log),
             parser_metrics,
             parse_retry_log: Arc::new(parse_retry_log),
@@ -1458,7 +1482,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
             workspace_id_num,
             &msg,
             resources.session_store.conn(),
-            Some(&resources.cas_store),
+            Some(resources.cas_service.global()),
             canonical_bytes.as_deref(),
         )
         .map_err(|e| {
@@ -1822,7 +1846,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
                                 if !cas_key.is_empty() {
                                     // CAS DB 连接（只读）
-                                    let cas_conn_guard = resources.cas_store.conn().lock().unwrap();
+                                    let cas_conn_guard =
+                                        resources.cas_service.global().conn().lock().unwrap();
                                     // CodeGraph DB 连接（写）
                                     match rusqlite::Connection::open(&db_path) {
                                         Ok(cg_conn) => {
@@ -1990,12 +2015,13 @@ impl DaemonStateExt for WorkspaceDaemonState {
                         }
 
                         // 尝试 committed（条件 UPDATE：只更新 seen == incoming_gen 的行）
-                        let committed_result = resources.cas_store.file_generation_committed(
-                            workspace_id_num,
-                            &rel_path,
-                            session_epoch,
-                            monotonic_seq,
-                        );
+                        let committed_result =
+                            resources.cas_service.global().file_generation_committed(
+                                workspace_id_num,
+                                &rel_path,
+                                session_epoch,
+                                monotonic_seq,
+                            );
                         match committed_result {
                             Ok(true) => {
                                 // committed 成功，继续 replicate
@@ -2101,7 +2127,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                 // 让同 seq 重试时 stale 检查不会拒绝
                                 // 实现方式：通过 file_generation_uncommit 清除 committed generation
                                 if let Err(uncommit_err) = resources
-                                    .cas_store
+                                    .cas_service
+                                    .global()
                                     .file_generation_uncommit(workspace_id_num, &rel_path)
                                 {
                                     eprintln!(
@@ -2407,7 +2434,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
         }
 
         let seen = resources
-            .cas_store
+            .cas_service
+            .global()
             .file_generation_seen(
                 workspace_id_num,
                 &rel_path,
@@ -2432,7 +2460,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
         })?;
 
         let committed = resources
-            .cas_store
+            .cas_service
+            .global()
             .file_generation_committed(workspace_id_num, &rel_path, session_epoch, monotonic_seq)
             .map_err(|e| {
                 let _ = resources
@@ -2465,7 +2494,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
             replicator.replicate(workspace_instance_id, workspace_id_num, &db_path, "");
         if !replication.success {
             let _ = resources
-                .cas_store
+                .cas_service
+                .global()
                 .file_generation_uncommit(workspace_id_num, &rel_path);
             return Err(DaemonRpcError::new(
                 "delete_failed",
@@ -2586,7 +2616,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
         let mut retry_snapshot_published: u64 = 0;
         {
             let parse_retry_log = &resources.parse_retry_log;
-            let cas_store = &resources.cas_store;
+            let cas_store = resources.cas_service.global();
             let replay_config = ReplayConfig::default();
 
             // R16-P1-1: 获取 workspace_id_num（用于 file_generation_committed 和 merge）
@@ -2608,7 +2638,7 @@ impl DaemonStateExt for WorkspaceDaemonState {
                             &entry.rel_path,
                             None, // 重放时无 canonical_bytes，从 abs_path 读取
                             &entry.abs_path,
-                            Some(cas_store.as_ref()),
+                            Some(cas_store),
                             workspace_id_num, // R16-P1-1: 用真实 workspace_id_num
                         );
                         let cas_state = cas_result
@@ -2658,7 +2688,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
                                     if let Some(parent) = std::path::Path::new(&db_path).parent() {
                                         let _ = std::fs::create_dir_all(parent);
                                     }
-                                    let cas_conn_guard = resources.cas_store.conn().lock().unwrap();
+                                    let cas_conn_guard =
+                                        resources.cas_service.global().conn().lock().unwrap();
                                     match rusqlite::Connection::open(&db_path) {
                                         Ok(cg_conn) => {
                                             if let Err(schema_err) =
@@ -3013,7 +3044,8 @@ impl DaemonStateExt for WorkspaceDaemonState {
 
         // 调用 CasStore::gc_unreferenced
         let deleted = resources
-            .cas_store
+            .cas_service
+            .global()
             .gc_unreferenced(grace_days)
             .map_err(|e| DaemonRpcError::new("gc_failed", format!("{}", e)))?;
 
@@ -3866,7 +3898,8 @@ mod tests {
 
         // 初始化 workspace resources（含 ParseRetryLog + CasStore）
         // R12-P0-4: 使用 crate::daemon::xxx 绝对路径
-        let cas_store = crate::daemon::cas::CasStore::open_in_memory().unwrap();
+        let cas_store =
+            std::sync::Arc::new(crate::daemon::cas::CasStore::open_in_memory().unwrap());
         let staging_log = crate::daemon::staging_log::StagingLog::new(
             ws_dir.join("staging.log").to_string_lossy().as_ref(),
         )
@@ -3895,7 +3928,11 @@ mod tests {
             session_store: std::sync::Arc::new(
                 crate::daemon::replicator::SessionStore::open_in_memory().unwrap(),
             ),
-            cas_store: std::sync::Arc::new(cas_store),
+            cas_store: std::sync::Arc::clone(&cas_store),
+            cas_service: std::sync::Arc::new(crate::daemon::cas::CasServiceFacade::new(
+                std::sync::Arc::clone(&cas_store),
+                std::sync::Arc::clone(&cas_store),
+            )),
             staging_log: std::sync::Arc::new(staging_log),
             parser_metrics,
             parse_retry_log: parse_retry_log.clone(),
@@ -4077,7 +4114,7 @@ mod tests {
         std::fs::write(&sample_file, "fn main() { helper(); }\nfn helper() {}\n").unwrap();
 
         // 初始化 workspace resources
-        let cas_store = crate::daemon::cas::CasStore::open_in_memory().unwrap();
+        let cas_store = Arc::new(crate::daemon::cas::CasStore::open_in_memory().unwrap());
         let staging_log = crate::daemon::staging_log::StagingLog::new(
             ws_dir.join("staging.log").to_string_lossy().as_ref(),
         )
@@ -4113,7 +4150,11 @@ mod tests {
             session_store: Arc::new(
                 crate::daemon::replicator::SessionStore::open_in_memory().unwrap(),
             ),
-            cas_store: Arc::new(cas_store),
+            cas_store: Arc::clone(&cas_store),
+            cas_service: Arc::new(crate::daemon::cas::CasServiceFacade::new(
+                Arc::clone(&cas_store),
+                Arc::clone(&cas_store),
+            )),
             staging_log: Arc::new(staging_log),
             parser_metrics,
             parse_retry_log: parse_retry_log.clone(),
@@ -4176,6 +4217,40 @@ mod tests {
             .as_str()
             .unwrap()
             .to_string()
+    }
+
+    #[test]
+    fn test_workspaces_share_global_cas_but_keep_local_cas_separate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut state = make_state_with_data_root(tmp.path());
+        let peer = make_owner_peer();
+        let ws1 = register_ws(&mut state, peer.uid);
+        let ws2 = register_ws(&mut state, peer.uid);
+
+        for workspace_instance_id in [&ws1, &ws2] {
+            let response = dispatch(
+                &mut state,
+                peer,
+                "workspace.connect",
+                &json!({
+                    "workspace_instance_id": workspace_instance_id,
+                    "agent_session_id": format!("session-{}", workspace_instance_id),
+                }),
+                &[],
+            );
+            assert_eq!(response["ok"], true);
+        }
+
+        let resources1 = state.resources.get(&ws1).unwrap().clone();
+        let resources2 = state.resources.get(&ws2).unwrap().clone();
+        let global1 = resources1.cas_service.global_arc();
+        let global2 = resources2.cas_service.global_arc();
+
+        assert!(Arc::ptr_eq(&global1, &global2));
+        assert!(!Arc::ptr_eq(&resources1.cas_store, &resources2.cas_store));
+        assert!(global1
+            .db_path()
+            .is_some_and(|path| path.ends_with("global-cas.db")));
     }
 
     #[test]
@@ -5913,7 +5988,7 @@ mod tests {
 
         // 直接通过 CasStore 插入测试数据
         let resources = state.resources.get(&ws_id).unwrap().clone();
-        let cas_store = &resources.cas_store;
+        let cas_store = resources.cas_service.global();
         {
             let conn = cas_store.conn().lock().unwrap();
             // 插入 2 条 ready 条目：1 条 parsed_at=0（很久以前）、1 条 parsed_at=now（刚创建）
@@ -5971,7 +6046,7 @@ mod tests {
 
         // 验证：stale_key 被删，fresh_key 保留
         let resources2 = state.resources.get(&ws_id).unwrap().clone();
-        let conn = resources2.cas_store.conn().lock().unwrap();
+        let conn = resources2.cas_service.global().conn().lock().unwrap();
         let remaining: i64 = conn
             .query_row("SELECT COUNT(*) FROM cas_file_cache", [], |row| {
                 row.get::<_, i64>(0)
@@ -6432,7 +6507,7 @@ mod tests {
 
         let resources = state.resources.get(&ws_id).unwrap().clone();
         {
-            let conn = resources.cas_store.conn().lock().unwrap();
+            let conn = resources.cas_service.global().conn().lock().unwrap();
             // 插入 1 条 parsed_at=0 的 ready 条目
             conn.execute(
                 "INSERT OR REPLACE INTO cas_file_cache
@@ -6470,7 +6545,7 @@ mod tests {
 
         // 验证 pending_key 仍在
         let resources2 = state.resources.get(&ws_id).unwrap().clone();
-        let conn = resources2.cas_store.conn().lock().unwrap();
+        let conn = resources2.cas_service.global().conn().lock().unwrap();
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM cas_file_cache WHERE cas_key = 'pending_key'",
