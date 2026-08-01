@@ -343,14 +343,14 @@ CREATE TABLE IF NOT EXISTS workspace_snapshot_map (
 
 ## 9. 风险与注意事项
 
-1. **不切换默认路径**：Python `db_workspace_manifest.get_manifest` 等仍主导。Rust API 仅作为可选短路。
+1. **查询默认路径已接入**：`db_workspace_manifest` 的只读查询优先调用 Rust facade；扩展未安装、查询异常或 `rust_manifest_query` rollback_flag=1 时回退 Python SQL。写入仍由 Python/daemon 事务路径负责。
 2. **表不存在的处理**：Python 端 `sqlite3.OperationalError` 需在调用方 try/except；Rust 端 `manifest_count` 和 `manifest_list` 在表不存在时返回 0 / []，`manifest_get` 抛 PyIOError。**决策**：差分测试中先用 Python `init_manifest_schema` 初始化表，避免依赖表不存在场景。
 3. **字段类型对齐**：
    - `updated_at` 是 REAL（浮点），Rust 用 f64，Python 用 float
    - `is_dirty` 是 INTEGER（0/1），Rust 用 i64，Python 用 int
    - `mtime_ns` 是 INTEGER（纳秒），Rust 用 i64
-4. **`workspace_snapshot_map` 表在 Rust 端不存在**：snapshot_get_files 的 Rust 路径要求 db_path 指向的 SQLite 文件已由 Python `init_manifest_schema` 初始化（含 snapshot_map 表）。差分测试 fixture 必须使用 Python 端初始化。
+4. **`workspace_snapshot_map` schema 已闭合**：Rust daemon merge 的 `ensure_manifest_schema` 与 Python `MANIFEST_SCHEMA_DDL` 都创建该表；已有数据库仍由幂等 `CREATE TABLE IF NOT EXISTS` 补齐。
 5. **WAL checkpoint 时序**：若 Python daemon 正在写 manifest，Rust 只读连接的 `PRAGMA wal_checkpoint(PASSIVE)` 可能读到 checkpoint 前状态。这与 Python 端 `sqlite3.connect` 行为一致，可接受。
-6. **rollback_flag 切换语义**：当前 Rust API 直接暴露，未在 `db_workspace_manifest.py` 中接入。Phase 2 切换默认路径时需在 `db_workspace_manifest.py` 中读取 rollback_flag 决定走 Rust 还是 Python。
+6. **rollback_flag 切换语义已接入**：`db_workspace_manifest.py` 读取 `rust_manifest_query`；值为 1 时强制 Python 查询，值为 0 或缺少配置时优先 Rust。
 7. **不修改 refresh commit 流程**：本子任务只暴露查询 API，不修改 `server/replicator.py:daemon_handle_refresh` 中的写入路径。Rust daemon binary 内部使用的 `cas_merge::upsert_manifest`（私有）继续按现有逻辑运行，不受本子任务影响。
 8. **PyO3 返回类型**：`manifest_get` 返回 `Option<Bound<PyAny>>`（None 或 dict），`manifest_list` 返回 `Vec<Bound<PyAny>>`（list[dict]），`manifest_count` 返回 `i64`，`snapshot_get_files` 返回 `Vec<Bound<PyAny>>`，`manifest_verify_raw_hash` 返回 `bool`。与 [cas_query.rs](../../rust_ext/src/cas_query.rs) 模式一致。

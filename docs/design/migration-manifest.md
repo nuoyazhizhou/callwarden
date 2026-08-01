@@ -143,7 +143,7 @@
 | `ParserService` | canonicalize + parse + diagnostics | ✅ 已实现（`multi_lang`） | Phase 0（已接入） |
 | `StorageService` | SQLite 连接、schema migration、事务 | 🟡 Python 主导，Rust 有 GraphStore | Phase 1 |
 | `CasService` | Global/Local CAS、pending refs | ✅ `daemon/cas.rs` service trait + daemon facade 已接入 | Phase 1 |
-| `ManifestService` | workspace manifest、projection、refresh commit | 🔴 Python 主导 | Phase 1 |
+| `ManifestService` | workspace manifest、projection、refresh commit | 🟡 Rust 查询 facade + daemon merge 已接入，Python 保留事务写入 | Phase 1 |
 | `ReplicatorService` | CAS→DB 复制、snapshot 发布 | 🟡 Rust 有 `daemon/replicator.rs` | Phase 1 |
 | `SnapshotService` | snapshot 发布、GC、加载 | 🟡 Rust 有 `snapshot.rs` | Phase 1 |
 | `GraphQueryService` | callers/callees/search/chain/cycle/topo | 🟡 Rust 有 `GraphStore`，已短路接入 | Phase 2 |

@@ -889,6 +889,13 @@ fn ensure_manifest_schema(conn: &Connection) -> Result<(), rusqlite::Error> {
             updated_at REAL NOT NULL,\
             PRIMARY KEY (workspace_id, rel_path)\
          );\
+         CREATE TABLE IF NOT EXISTS workspace_snapshot_map (\
+            snapshot_id TEXT NOT NULL,\
+            rel_path TEXT NOT NULL,\
+            content_hash TEXT NOT NULL,\
+            cas_key TEXT,\
+            PRIMARY KEY (snapshot_id, rel_path)\
+         );\
          CREATE INDEX IF NOT EXISTS idx_manifests_hash ON workspace_manifests(content_hash);\
          CREATE INDEX IF NOT EXISTS idx_manifests_cas ON workspace_manifests(cas_key);\
          CREATE INDEX IF NOT EXISTS idx_manifests_dirty ON workspace_manifests(workspace_id, is_dirty);",
@@ -1380,6 +1387,20 @@ fn merge_cas_to_codegraph_impl(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ensure_manifest_schema_creates_snapshot_projection_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        ensure_manifest_schema(&conn).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'workspace_snapshot_map'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
 
     /// 创建 CodeGraph DB schema（与 db/schema.py 对齐）
     fn make_codegraph_schema(conn: &Connection) {

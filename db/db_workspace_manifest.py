@@ -10,6 +10,10 @@ import hashlib
 from typing import Optional, List, Dict, Any
 
 
+_RUST_MANIFEST_FEATURE = "rust_manifest_query"
+_RUST_UNAVAILABLE = object()
+
+
 MANIFEST_SCHEMA_DDL = """
 -- workspace manifests 表
 CREATE TABLE IF NOT EXISTS workspace_manifests (
@@ -43,6 +47,57 @@ CREATE INDEX IF NOT EXISTS idx_manifests_dirty ON workspace_manifests(workspace_
 """
 
 
+def _connection_db_path(conn: sqlite3.Connection) -> Optional[str]:
+    """返回 main 数据库文件路径；内存数据库和异常连接返回 None。"""
+    try:
+        row = conn.execute(
+            "PRAGMA database_list"
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    for item in row:
+        if len(item) >= 3 and item[1] == "main" and item[2]:
+            return str(item[2])
+    return None
+
+
+def _rust_manifest_module(conn: sqlite3.Connection):
+    """按 rollback_config 决定是否启用 Rust manifest 查询 facade。"""
+    db_path = _connection_db_path(conn)
+    if not db_path:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT rollback_flag FROM rollback_config "
+            "WHERE feature_name = ? ORDER BY updated_at DESC LIMIT 1",
+            (_RUST_MANIFEST_FEATURE,),
+        ).fetchone()
+        if row and int(row[0]) == 1:
+            return None
+    except sqlite3.Error:
+        # 旧数据库可能还没有 rollback_config，默认允许已安装的 Rust facade。
+        pass
+    try:
+        import callwarden_core
+    except ImportError:
+        return None
+    return callwarden_core, db_path
+
+
+def _rust_manifest_call(conn: sqlite3.Connection, function_name: str, *args):
+    """调用 Rust manifest 查询；扩展未安装或调用失败时返回 sentinel。"""
+    target = _rust_manifest_module(conn)
+    if target is None:
+        return _RUST_UNAVAILABLE
+    module, db_path = target
+    try:
+        function = getattr(module, function_name)
+        return function(db_path, *args)
+    except Exception:
+        # 查询 facade 失败时回退原 SQL，兼容旧 schema 和旧 wheel。
+        return _RUST_UNAVAILABLE
+
+
 def init_manifest_schema(conn: sqlite3.Connection):
     """初始化 manifest schema。"""
     conn.executescript(MANIFEST_SCHEMA_DDL)
@@ -73,6 +128,9 @@ def upsert_manifest(conn: sqlite3.Connection, workspace_id: int,
 def get_manifest(conn: sqlite3.Connection, workspace_id: int,
                  rel_path: str) -> Optional[Dict[str, Any]]:
     """获取单个文件 manifest。"""
+    rust_result = _rust_manifest_call(conn, "manifest_get", workspace_id, rel_path)
+    if rust_result is not _RUST_UNAVAILABLE:
+        return dict(rust_result) if rust_result is not None else None
     row = conn.execute(
         "SELECT * FROM workspace_manifests WHERE workspace_id = ? AND rel_path = ?",
         (workspace_id, rel_path)
@@ -83,6 +141,11 @@ def get_manifest(conn: sqlite3.Connection, workspace_id: int,
 def list_manifests(conn: sqlite3.Connection, workspace_id: int,
                    dirty_only: bool = False) -> List[Dict[str, Any]]:
     """列出 workspace 的所有 manifest。"""
+    rust_result = _rust_manifest_call(
+        conn, "manifest_list", workspace_id, dirty_only
+    )
+    if rust_result is not _RUST_UNAVAILABLE:
+        return [dict(row) for row in rust_result]
     if dirty_only:
         rows = conn.execute(
             "SELECT * FROM workspace_manifests WHERE workspace_id = ? AND is_dirty = 1",
@@ -94,6 +157,28 @@ def list_manifests(conn: sqlite3.Connection, workspace_id: int,
             (workspace_id,)
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_manifests(conn: sqlite3.Connection, workspace_id: int,
+                    dirty_only: bool = False) -> int:
+    """统计 manifest 行数，优先走 Rust COUNT 查询。"""
+    rust_result = _rust_manifest_call(
+        conn, "manifest_count", workspace_id, dirty_only
+    )
+    if rust_result is not _RUST_UNAVAILABLE:
+        return int(rust_result)
+    if dirty_only:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM workspace_manifests "
+            "WHERE workspace_id = ? AND is_dirty = 1",
+            (workspace_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM workspace_manifests WHERE workspace_id = ?",
+            (workspace_id,),
+        ).fetchone()
+    return int(row[0])
 
 
 def link_to_snapshot(conn: sqlite3.Connection, snapshot_id: str,
@@ -108,6 +193,9 @@ def link_to_snapshot(conn: sqlite3.Connection, snapshot_id: str,
 
 def get_snapshot_files(conn: sqlite3.Connection, snapshot_id: str) -> List[Dict[str, Any]]:
     """获取 snapshot 的所有文件。"""
+    rust_result = _rust_manifest_call(conn, "snapshot_get_files", snapshot_id)
+    if rust_result is not _RUST_UNAVAILABLE:
+        return [dict(row) for row in rust_result]
     rows = conn.execute(
         "SELECT * FROM workspace_snapshot_map WHERE snapshot_id = ?",
         (snapshot_id,)
@@ -118,6 +206,11 @@ def get_snapshot_files(conn: sqlite3.Connection, snapshot_id: str) -> List[Dict[
 def verify_raw_hash(conn: sqlite3.Connection, workspace_id: int,
                     rel_path: str, expected_raw_hash: str) -> bool:
     """校验磁盘文件是否与 manifest 中记录的 raw_hash 一致。"""
+    rust_result = _rust_manifest_call(
+        conn, "manifest_verify_raw_hash", workspace_id, rel_path, expected_raw_hash
+    )
+    if rust_result is not _RUST_UNAVAILABLE:
+        return bool(rust_result)
     manifest = get_manifest(conn, workspace_id, rel_path)
     if not manifest:
         return False
