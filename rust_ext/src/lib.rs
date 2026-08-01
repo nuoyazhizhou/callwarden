@@ -89,6 +89,8 @@ mod vector_topk;
 //            protocol_make_ok_response/protocol_make_error_response/peercred_is_available/
 //            peercred_info/dispatch_list_methods/dispatch_list_error_codes/dispatch_is_admin_method）
 mod daemon_query;
+// Phase 8: 完整 backup/restore 核心（DB 一致性快照、CAS/audit/snapshots、校验与恢复）
+mod backup_restore;
 // Phase 5-1: CLI 配置加载 + 只读命令识别 PyO3 暴露层
 // 契约：docs/design/phase5-1-cli-config-contract.md
 pub mod cli;
@@ -1837,6 +1839,16 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.4
     m.add_function(wrap_pyfunction!(daemon_query::backup_compute_file_sha256, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::backup_compute_meta_checksum, m)?)?;
+
+    // Phase 8: 完整 backup/restore（7 个 PyO3 API）
+    // 契约：docs/design/phase8-rust-backup-restore-contract.md
+    m.add_function(wrap_pyfunction!(backup_restore::backup_full, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_restore::backup_db_only, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_restore::restore_backup, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_restore::verify_backup, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_restore::list_backups, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_restore::delete_backup, m)?)?;
+    m.add_function(wrap_pyfunction!(backup_restore::cleanup_backups, m)?)?;
 
     // Phase 5-1: CLI 配置加载 + 只读命令识别 PyO3 暴露（6 个 API）
     // 契约：docs/design/phase5-1-cli-config-contract.md §3.1 + §3.3

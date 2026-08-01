@@ -489,7 +489,31 @@ Phase 0 的第 1、2、4 个子任务都是契约/基础设施类，没有 Rust 
 - **daemon 启动 schema 校验**：daemon 启动时若需 schema 校验，应通过 RPC 调用 Python（Phase 4 任务），不在本子任务范围。
 - **schema_version 表 schema 漂移**：若 Python 端未来修改 schema_version 表结构（如增加字段），Rust 端查询 `SELECT MAX(version)` 仍兼容。但若改名/删除表，需同步更新 Rust 端。
 - **差分测试未覆盖真实 cw 数据库**：当前测试用临时 db，未用 `~/.callwarden/callwarden.db` 真实数据库。Phase 1 后续子任务应增加端到端验证。
-- **rollback_flag 切换语义**：`rollback_flag=1` 时生产入口应走 `rollback_entry`（Python fallback）。当前 Rust API 直接暴露，未在 db_base 中接入，rollback 语义未实际生效。Phase 2 切换默认路径时需在 db_base 中读取 rollback_flag 决定走 Rust 还是 Python。
+- **rollback_flag 切换语义**：**已修复(2026-08-01)**：db_base._get_current_version 已接入 Rust 短路 + rollback_flag 控制(feature=sqlite_query_schema_version),rollback_flag=1 时降级到 Python sqlite3。
+
+### 13.5 2026-08-01 核查与补完记录
+
+**异常状态发现**：任务 T-1785148066852-985bc075 被错误 closed(2026-07-27),但 7 步骤全 pending,进度 0/7。manifest 第 293 行标记 wire-production/verify 为 ✅,但实际未完成。
+
+**核查结果(基于客观证据)**：
+- #0 contract ✅、#1 implement ✅、#2 differential-test ✅(71 passed)、#5 refresh ✅
+- #3 wire-production ❌：生产代码零调用(cw callers 显示 6 个调用者全是测试),_get_current_version 走纯 Python,rollback_flag 语义未生效
+- #4 verify ❌：无性能/安全/恢复测试文件
+- #6 review ❌：manifest 显示 ⏸️,任务被错误 closed 跳过独立审查
+
+**补完内容**：
+1. **wire-production**：db_base.py:2557 _get_current_version 接入 Rust 短路(参考 _get_graph_store 模式)：rollback_flag 控制(feature=sqlite_query_schema_version)→ try import callwarden_core.sqlite_query_schema_version → 异常降级 Python sqlite3
+2. **verify**：新建 tests/test_phase1_sqlite_verify.py 13 个测试：
+   - 性能(2)：Rust P50=0.225ms P95=0.276ms vs Python P50=0.488ms(Rust 快 ~2x)
+   - 安全(4)：只读不写/空路径 PyValueError/不存在路径不创建文件/路径遍历
+   - 恢复(6)：损坏数据库/表不存在/空表/重复调用一致性/并发写入 WAL
+   - 生产接入(2)：_get_current_version Rust 短路返回正确版本 + rollback_flag=1 降级 Python
+3. **验证**：pytest test_phase1_sqlite_verify.py + test_phase1_behavioral_diff.py + test_p0_4_rollback_config.py = 111 passed 不破坏
+
+**待 Review 关键点**：
+1. _get_current_version 在 __init__ 早期调用时走 Rust 短路是否安全(schema_version 表刚 CREATE + commit,WAL checkpoint 后 Rust 可读)？
+2. rollback_flag=1 降级测试只验证功能正确性(返回 SCHEMA_VERSION),未 mock 验证 Rust 路径未被调用——是否需要更严格的隔离测试？
+3. 损坏数据库文件被 rusqlite bundled 当作空库返回 0(非抛异常),与 Python sqlite3 行为可能不同——是否需要额外处理？
 
 ## 14. Phase 1 子任务 2 Review 清单（2026-07-27）
 
@@ -646,16 +670,42 @@ Phase 0 的第 1、2、4 个子任务都是契约/基础设施类，没有 Rust 
 5. **不切换默认路径**：Python `SnapshotManagerService.query_*` 仍主导。Rust API 仅作为可选短路，未在 `snapshot_manager.py` 中接入 rollback_flag。
 6. **GraphStore 内部访问器**：`query_stats` 通过 `pub(crate) symbols_table()` / `call_graph()` 访问 GraphStore 内部字段，与 `graph::GraphStore::stats` PyO3 方法字段集对齐。
 7. **daemon 内部路径不变**：`daemon/replicator.rs::Replicator::replicate` / `recover` / `get_pending_count` 继续按现有逻辑运行，不受本子任务影响。
-8. **backup/restore 不在范围**：本子任务不迁移 `BackupManager` / `RestoreManager`，Phase 4 处理。
+8. **backup/restore 历史边界**：本 Phase 1-4 子任务当时不迁移
+   `BackupManager` / `RestoreManager`；该边界已由后续 Phase 8 修正任务闭合，
+   见本文 §68。不能用本节旧的“未迁移”表述替代 Phase 8 的当前证据。
 
 ### 16.5 风险与注意事项
 
-- **不切换默认路径**：Python `server/replicator.py:Replicator.get_pending_count` / `server/snapshot_manager.py:query_*` 仍主导。Rust API 仅作为可选短路。
+- **不切换默认路径**：**已修复(2026-08-01)**：`server/replicator.py:Replicator.get_pending_count` 已接入 Rust 短路 + rollback_flag 控制(feature=rust_replicator_snapshot_query)。`server/snapshot_manager.py:query_*` 已通过 `_get_rust_graph_store()`→`GraphStore.*` 走 Rust(契约 §2.4 确认业务逻辑已在 Rust)。
 - **真实 staging.log 未验证**：当前测试用临时 log 文件，未用 daemon 真实 staging.log 端到端验证。Phase 5 集成测试应增加。
 - **PySnapshotManager 查询依赖 build_and_publish**：调用前需确保 snapshot 已通过 `build_and_publish` 加载到内存，否则返回空列表 / None。
 - **staging_log 并发安全**：Rust 只读查询读 JSON Lines 文件，与 Python `append` / `compact_applied` 不冲突（最多读到旧数据，最终一致）。
 - **ArcSwap 原子发布**：SnapshotManager 查询走 ArcSwap 保护的 GraphSnapshot，与 `publish_snapshot` 并发安全。
-- **rollback_flag 切换语义未生效**：当前 Rust API 直接暴露，未在 `replicator.py` / `snapshot_manager.py` 中接入。Phase 2 切换默认路径时需读取 rollback_flag 决定走 Rust 还是 Python。
+- **rollback_flag 切换语义**：**已修复(2026-08-01)**：`replicator.py` 已接入 rollback_flag 控制(60s 缓存,与 `staging_log.py` 模式一致)。`snapshot_manager.py` 的 query_* 通过 GraphStore 走 Rust,无需额外 rollback_flag(GraphStore 已有 `rust_graph_query` flag 控制)。
+
+### 16.6 2026-08-01 核查与补完记录
+
+**异常状态发现**：任务 T-1785148066853-ccad23fe 被错误 closed(2026-07-27),但 7 步骤全 pending,进度 0/7。manifest 第 296 行标记 wire-production/verify 为 ✅,但实际未完成。
+
+**核查结果(基于客观证据)**：
+- #0 contract ✅、#1 implement ✅、#2 differential-test ✅(19 passed)、#5 refresh ✅
+- #3 wire-production ❌：`replicator_get_pending_count` 生产代码零调用(cw callers 只有 1 个测试调用者);`Replicator.get_pending_count` 走纯 Python `staging_log.read_pending()`;rollback_flag 未接入
+- #4 verify ❌：无性能/安全/恢复测试文件
+- #6 review ❌：manifest 显示 ⏸️,任务被错误 closed 跳过独立审查
+
+**补完内容**：
+1. **wire-production**：`server/replicator.py:811` `get_pending_count` 接入 Rust 短路(callwarden_core.replicator_get_pending_count) + rollback_flag 控制(feature=rust_replicator_snapshot_query,60s 缓存,与 staging_log.py 模式一致)。追踪脚本验证:无过滤 count=3 rust_called=1 ✅,ws1 过滤 count=2 rust_called=1 ✅。snapshot_manager.py 的 query_* 已通过 `_get_rust_graph_store()`→`GraphStore.*` 走 Rust(契约 §2.4 确认)。
+2. **verify**：新建 `tests/test_phase1_replicator_snapshot_verify.py` 12 个测试：
+   - 性能(2)：Rust P50=0.541ms P95=0.631ms vs Python P50=0.566ms(StagingLog 内部已用 Rust,差异小)
+   - 安全(3)：只读不写/不存在路径返回0/空文件返回0
+   - 恢复(4)：损坏行跳过/重复调用一致/并发写入后读取/不存在workspace返回0
+   - 生产接入(3)：get_pending_count 返回正确值 + monkey-patch 追踪 Rust 被调用2次 + 空 log 返回0
+3. **验证**：pytest test_phase1_replicator_snapshot_verify.py + test_phase1_behavioral_diff.py + test_phase5_replicator.py + test_phase4_snapshot_service.py = 124 passed 不破坏
+
+**待 Review 关键点**：
+1. `snapshot_manager.py` 的 query_* 方法已通过 GraphStore 走 Rust,但未使用 PySnapshotManager 的 4 个 query_* 封装方法——是否需要改用封装方法?(契约 §2.4 说业务逻辑已在 Rust,仅缺少便捷封装)
+2. `replicator.py` 的 rollback_flag 用 60s 缓存短连接查询,与 `staging_log.py` 模式一致——是否需要统一为共享缓存?
+3. PySnapshotManager 的 4 个 query_* 方法是"孤立的 PyO3 API"(未被生产代码直接调用)——是否应在 Phase 2 切换默认路径时移除或改用?
 
 ## 17. Phase 2 子任务 1 Review 清单（2026-07-27）
 
@@ -4516,3 +4566,51 @@ python -m pytest tests/test_agent_rules.py tests/test_task_quality_gate.py \
 真实进程差分使用独立 Python/Rust SQLite，覆盖 13 个确定性输出的精确终端契约、
 10 个状态变更命令的持久化投影、enterprise 缺 socket 的本地真相域，以及路径穿越、
 缺 change evidence、空审计链、保留 key ID 和空 reviewer 的拒绝后数据库不变。
+
+---
+
+## §68 十项 Rust 主线复核：R5 完整 Backup/Restore 修正
+
+**复核任务**：`T-1785587037863-b112a658`
+**修正子任务**：`T-1785587453810-9c784330`
+**日期**：2026-08-01
+
+### 68.1 复核结论
+
+指定的十项迁移任务当前均为“步骤完成、等待独立 review”，不是可以直接
+关闭的状态。首轮代码和生产调用链复核确认：E5、SQLite、CAS、manifest、
+批量 ParseFact/symbol、调用边/CSR、查询、clone、watcher 均存在生产调用点；
+相关 focused 回归通过。
+
+第 5 项标题包含的完整 backup/restore 曾被过度宣称完成：Rust 旧实现只有
+registry DB 单文件 `VACUUM INTO`/恢复，完整 Python `BackupManager` 才负责
+CAS、audit、snapshots、`daemon.json`、metadata 和校验。因此原任务保留在
+待 review，不能因为步骤状态为 done 就关闭。
+
+### 68.2 当前修正
+
+- 新增 `rust_ext/src/backup_restore.rs`：Rust 完整备份、DB-only 备份、恢复、
+  验证、列表、删除和旧备份清理；DB 先 WAL checkpoint 再 `VACUUM INTO`，
+  临时目录完成后原子发布；恢复先全量校验再写目标；backup id 和成员路径
+  fail closed；
+- `server/backup_restore.py` 的 `BackupManager/RestoreManager` 默认调用 Rust
+  核心，保留原有 Python API 和 rollback/fallback 兼容；
+- `tests/test_phase8_rust_backup_restore.py` 覆盖完整资源 round-trip、损坏文件
+  不覆盖目标、路径穿越、重复 ID、DB-only、清理和 Python metadata checksum
+  兼容；
+- 修复 Rust 校验器对带小数 timestamp 的 JSON 浮点重序列化假损坏：验证时
+  直接使用磁盘原始 `backup_meta.json` 文本进行兼容校验。
+
+### 68.3 证据
+
+```text
+cargo check --manifest-path rust_ext/Cargo.toml                 PASS
+maturin build --release --manifest-path rust_ext/Cargo.toml     PASS
+pytest tests/test_phase8_rust_backup_restore.py \
+       tests/test_phase8_backup_restore.py \
+       tests/test_phase8_chaos.py                                PASS
+```
+
+上述三组测试在修复浮点 metadata 校验后全部通过；其余九项的 focused
+回归也已通过，十项父任务仍需独立 reviewer 逐项裁决，不能由实现 agent
+自行 apply/close。

@@ -60,6 +60,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.4
 
 _RUST_BACKUP_AVAILABLE = False
+_RUST_BACKUP_MANAGER_AVAILABLE = False
 _callwarden_core = None
 try:
     import callwarden_core as _callwarden_core  # type: ignore
@@ -68,6 +69,18 @@ try:
         and hasattr(_callwarden_core, "backup_compute_meta_checksum")
     ):
         _RUST_BACKUP_AVAILABLE = True
+    _RUST_BACKUP_MANAGER_AVAILABLE = all(
+        hasattr(_callwarden_core, name)
+        for name in (
+            "backup_full",
+            "backup_db_only",
+            "restore_backup",
+            "verify_backup",
+            "list_backups",
+            "delete_backup",
+            "cleanup_backups",
+        )
+    )
 except ImportError:
     _callwarden_core = None
 
@@ -108,6 +121,19 @@ def _is_rust_backup_rolled_back() -> bool:
 def _rust_backup_available() -> bool:
     """Rust backup 短路是否可用（模块加载 + 未回滚）。"""
     return _RUST_BACKUP_AVAILABLE and not _is_rust_backup_rolled_back()
+
+
+def _rust_backup_manager_available() -> bool:
+    """完整 backup/restore Rust 核心是否可用。"""
+    return _RUST_BACKUP_MANAGER_AVAILABLE and not _is_rust_backup_rolled_back()
+
+
+def _decode_rust_json(value: str) -> Dict[str, Any]:
+    """解码 Rust backup API 返回的 JSON，错误不静默吞掉。"""
+    decoded = json.loads(value)
+    if not isinstance(decoded, dict):
+        raise RuntimeError("Rust backup API returned a non-object result")
+    return decoded
 
 
 # ============================================================
@@ -151,6 +177,17 @@ class BackupManager:
             备份结果摘要
         """
         backup_id = backup_id or self._generate_backup_id()
+        if _rust_backup_manager_available():
+            return _decode_rust_json(
+                _callwarden_core.backup_full(
+                    self._backup_root,
+                    backup_id,
+                    self._config.registry_db_path,
+                    self._config.cas_db_path,
+                    self._config.audit_log_path,
+                    self._config.data_root,
+                )
+            )
         backup_dir = os.path.join(self._backup_root, backup_id)
         os.makedirs(backup_dir, exist_ok=True)
 
@@ -218,6 +255,17 @@ class BackupManager:
             备份结果摘要
         """
         backup_id = backup_id or self._generate_backup_id()
+        if _rust_backup_manager_available():
+            return _decode_rust_json(
+                _callwarden_core.backup_db_only(
+                    self._backup_root,
+                    backup_id,
+                    self._config.registry_db_path,
+                    self._config.cas_db_path,
+                    self._config.audit_log_path,
+                    self._config.data_root,
+                )
+            )
         backup_dir = os.path.join(self._backup_root, backup_id)
         os.makedirs(backup_dir, exist_ok=True)
 
@@ -250,6 +298,11 @@ class BackupManager:
 
     def list_backups(self) -> List[Dict[str, Any]]:
         """列出所有备份。"""
+        if _rust_backup_manager_available():
+            result = json.loads(_callwarden_core.list_backups(self._backup_root))
+            if not isinstance(result, list):
+                raise RuntimeError("Rust backup list API returned a non-list result")
+            return result
         if not os.path.isdir(self._backup_root):
             return []
 
@@ -288,6 +341,8 @@ class BackupManager:
         Returns:
             True 如果删除成功
         """
+        if _rust_backup_manager_available():
+            return bool(_callwarden_core.delete_backup(self._backup_root, backup_id))
         backup_dir = os.path.join(self._backup_root, backup_id)
         if not os.path.isdir(backup_dir):
             return False
@@ -303,6 +358,8 @@ class BackupManager:
         Returns:
             删除的备份数量
         """
+        if _rust_backup_manager_available():
+            return int(_callwarden_core.cleanup_backups(self._backup_root, keep_count))
         backups = self.list_backups()
         if len(backups) <= keep_count:
             return 0
@@ -444,6 +501,17 @@ class RestoreManager:
         Returns:
             恢复结果摘要
         """
+        if _rust_backup_manager_available():
+            return _decode_rust_json(
+                _callwarden_core.restore_backup(
+                    self._backup_root,
+                    backup_id,
+                    self._config.registry_db_path,
+                    self._config.cas_db_path,
+                    self._config.audit_log_path,
+                    self._config.data_root,
+                )
+            )
         backup_dir = os.path.join(self._backup_root, backup_id)
         if not os.path.isdir(backup_dir):
             return {
@@ -562,6 +630,10 @@ class RestoreManager:
         Returns:
             验证结果
         """
+        if _rust_backup_manager_available():
+            return _decode_rust_json(
+                _callwarden_core.verify_backup(self._backup_root, backup_id)
+            )
         backup_dir = os.path.join(self._backup_root, backup_id)
         if not os.path.isdir(backup_dir):
             return {
