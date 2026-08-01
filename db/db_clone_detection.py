@@ -632,6 +632,113 @@ class CloneDetectionMixin:
         stats["min_lines"] = min_lines
         return stats
 
+    def _detect_clone_pairs_via_rust(
+        self,
+        symbols: List[Dict[str, Any]],
+        similarity_threshold: float,
+    ) -> Optional[Tuple[List[Dict[str, Any]], Dict[str, int]]]:
+        """把 Rust 分组结果转换为现有 ``clone_pairs`` 契约。
+
+        ``cw clone detect`` 的公开结果是 pair 表，而 Rust 核心 API 为了
+        大规模场景返回 clone groups。Type-1/2 组需要展开为两两关系；Type-3
+        组由唯一的 token-hash 代表对组成，正常情况下恰好包含两个成员。
+        若 Rust 返回无法保持 pair 语义的 Type-3 超大组，则返回 None，交给
+        原 Python 路径处理，避免静默扩大结果集。
+        """
+        rust_result = self._detect_clone_groups_via_rust(
+            symbols, similarity_threshold
+        )
+        if rust_result is None:
+            return None
+        groups, stats = rust_result
+        by_id = {int(s["id"]): s for s in symbols}
+        pairs: List[Dict[str, Any]] = []
+        seen: Set[Tuple[int, int, int]] = set()
+
+        for group in groups:
+            clone_type = int(group["clone_type"])
+            members = [int(member) for member in group.get("members", [])]
+            if clone_type == CLONE_TYPE_3 and len(members) != 2:
+                return None
+            for left in range(len(members)):
+                for right in range(left + 1, len(members)):
+                    a_id, b_id = members[left], members[right]
+                    a, b = by_id.get(a_id), by_id.get(b_id)
+                    if a is None or b is None:
+                        return None
+                    if clone_type == CLONE_TYPE_2 and a["symbol_hash"] == b["symbol_hash"]:
+                        continue
+                    key = (min(a_id, b_id), max(a_id, b_id), clone_type)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    pairs.append({
+                        "symbol_a_id": a_id,
+                        "symbol_b_id": b_id,
+                        "clone_type": clone_type,
+                        "similarity": float(group["similarity"]),
+                        "token_hash": str(group["token_hash"]),
+                        "lines_a": int(a["end_line"] - a["start_line"] + 1),
+                        "lines_b": int(b["end_line"] - b["start_line"] + 1),
+                    })
+
+        type3_count = sum(1 for p in pairs if p["clone_type"] == CLONE_TYPE_3)
+        stats = dict(stats)
+        stats["scanned_symbols"] = len(symbols)
+        stats["skipped_symbols"] = sum(1 for s in symbols if not (s.get("content") or ""))
+        stats["type3_pairs"] = type3_count
+        return pairs, stats
+
+    def _persist_clone_pairs_result(
+        self,
+        ws_id: int,
+        pairs: List[Dict[str, Any]],
+        scanned: int,
+        skipped: int,
+        type3_count: int,
+        now: float,
+        similarity_threshold: float,
+        min_lines: int,
+    ) -> Dict[str, Any]:
+        """持久化 Rust/ Python 共同使用的 pair 结果。"""
+        upsert_sql = """
+            INSERT INTO clone_pairs
+                (workspace_id, symbol_a_id, symbol_b_id, clone_type,
+                 similarity, token_hash, lines_a, lines_b, detected_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(workspace_id, symbol_a_id, symbol_b_id, clone_type)
+            DO UPDATE SET
+                similarity = excluded.similarity,
+                token_hash = excluded.token_hash,
+                lines_a = excluded.lines_a,
+                lines_b = excluded.lines_b,
+                detected_at = excluded.detected_at
+        """
+        batch_data = []
+        for p in pairs:
+            batch_data.append((
+                ws_id, p["symbol_a_id"], p["symbol_b_id"], p["clone_type"],
+                p["similarity"], p["token_hash"], p["lines_a"], p["lines_b"], now,
+            ))
+            if len(batch_data) >= 50000:
+                self.conn.executemany(upsert_sql, batch_data)
+                batch_data.clear()
+        if batch_data:
+            self.conn.executemany(upsert_sql, batch_data)
+        self.conn.commit()
+        type1_count = sum(1 for p in pairs if p["clone_type"] == CLONE_TYPE_1)
+        type2_count = sum(1 for p in pairs if p["clone_type"] == CLONE_TYPE_2)
+        return {
+            "total_pairs": len(pairs),
+            "type1_pairs": type1_count,
+            "type2_pairs": type2_count,
+            "type3_pairs": type3_count,
+            "scanned_symbols": scanned,
+            "skipped_symbols": skipped,
+            "similarity_threshold": similarity_threshold,
+            "min_lines": min_lines,
+        }
+
     def detect_clones(
         self,
         file_filter: str = "",
@@ -691,6 +798,25 @@ class CloneDetectionMixin:
         symbols = [dict(row) for row in cur]
         scanned = len(symbols)
         skipped = 0
+
+        # 默认 clone detect 也走 Rust MinHash/LSH；rollback flag 或无法保持
+        # clone_pairs 精确语义时回退下面的 Python 实现。
+        if not self.is_feature_rolled_back("rust_clone_detection"):
+            rust_result = self._detect_clone_pairs_via_rust(
+                symbols, similarity_threshold
+            )
+            if rust_result is not None:
+                rust_pairs, rust_stats = rust_result
+                return self._persist_clone_pairs_result(
+                    ws_id,
+                    rust_pairs,
+                    rust_stats["scanned_symbols"],
+                    rust_stats["skipped_symbols"],
+                    rust_stats["type3_pairs"],
+                    now,
+                    similarity_threshold,
+                    min_lines,
+                )
 
         # 预计算每个符号的 token_hash、token 集合和 MinHash 签名
         # P1 修复：按 token_hash 缓存 MinHash 签名，避免重复计算。

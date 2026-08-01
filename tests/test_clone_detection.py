@@ -169,6 +169,37 @@ def test_detect_clones_type2_renamed():
         db.close()
 
 
+def test_detect_clones_uses_rust_groups_for_pair_contract(monkeypatch):
+    """默认 clone detect 应消费 Rust groups 并仍写入 clone_pairs。"""
+    db, _root = _db_with_workspace()
+    try:
+        shared_hash = "shared_hash_rust_route"
+        content = "def foo():\n    return 42\n"
+        first = _seed_symbol(db, "a.py", "foo", content, symbol_hash=shared_hash)
+        second = _seed_symbol(db, "b.py", "foo", content, symbol_hash=shared_hash)
+
+        called = []
+
+        def fake_rust(_symbols, _threshold):
+            called.append(True)
+            return ([{
+                "clone_type": 1,
+                "token_hash": "th",
+                "similarity": 1.0,
+                "members": [first, second],
+            }], {"scanned_symbols": 2, "skipped_symbols": 0})
+
+        monkeypatch.setattr(db, "is_feature_rolled_back", lambda _name: False)
+        monkeypatch.setattr(db, "_detect_clone_groups_via_rust", fake_rust)
+        result = db.detect_clones(min_lines=2)
+        assert called == [True]
+        assert result["total_pairs"] == 1
+        assert result["type1_pairs"] == 1
+        assert db.get_clone_stats()["total"] == 1
+    finally:
+        db.close()
+
+
 def test_detect_clones_type3_modified():
     """Type-3 检测：相似但不完全相同的符号应识别为 Type-3。"""
     db, _root = _db_with_workspace()
