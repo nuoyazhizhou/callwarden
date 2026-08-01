@@ -240,6 +240,25 @@ def test_real_uds_register_publish_and_query(running_daemon, tmp_path):
     })
     assert callers[0]["caller_qualified"] == "app.main"
 
+    chain = client.call("query.call_chain_down", {
+        "workspace_instance_id": workspace_id,
+        "qualified_name": "app.main",
+        "max_depth": 3,
+    })
+    assert chain[0]["callee_name"] == "helper"
+
+    topo = client.call("query.topological_order", {
+        "workspace_instance_id": workspace_id,
+        "limit": 1,
+    })
+    assert len(topo) == 1
+
+    cycles = client.call("query.detect_cycles", {
+        "workspace_instance_id": workspace_id,
+        "max_depth": 3,
+    })
+    assert cycles == []
+
 
 def test_high_level_daemon_client_routes_to_uds(
     running_daemon, tmp_path, monkeypatch

@@ -1394,6 +1394,28 @@ class EnterpriseDaemonService:
                 str(params.get("caller_name") or ""),
                 params.get("qualified_name"),
             )
+        if method == "query.call_chain_down":
+            max_depth = int(params.get("max_depth", 10))
+            if max_depth < 0:
+                raise DaemonRpcError("invalid_params", "max_depth 必须 >= 0")
+            return self.snapshot_service.query_call_chain_down(
+                workspace_id,
+                str(params.get("qualified_name") or ""),
+                max_depth=max_depth,
+            )
+        if method == "query.topological_order":
+            limit = int(params.get("limit", 50))
+            if limit < 0:
+                raise DaemonRpcError("invalid_params", "limit 必须 >= 0")
+            result = self.snapshot_service.query_topological_order(workspace_id)
+            return result[:limit] if limit else result
+        if method == "query.detect_cycles":
+            max_depth = int(params.get("max_depth", 10))
+            if max_depth < 0:
+                raise DaemonRpcError("invalid_params", "max_depth 必须 >= 0")
+            # GraphStore 的循环检测本身返回完整循环集合；max_depth 是协议
+            # 兼容字段，服务层统一用默认 QueryBudget 保护结果数量。
+            return self.snapshot_service.query_detect_cycles(workspace_id)
         raise DaemonRpcError("method_not_found", method)
 
     # ============================================
