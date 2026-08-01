@@ -102,6 +102,8 @@ bytemuck = { version = "1.21", features = ["derive"] }
 # Phase 5-3: 启用 preserve_order feature 保持插入顺序，对齐 Python json.dumps 行为
 # （Python 3.7+ dict 有序，json.dumps 按插入顺序输出；serde_json 默认按字母排序）
 serde_json = { version = "1.0", features = ["preserve_order"] }
+# E5 coverage import：解析 Cobertura XML，保持与 Python db_coverage 语义一致
+quick-xml = "0.37"
 # R5 staging_log：serde 用于 StagingEntry 的 Serialize/Deserialize derive
 serde = { version = "1.0", features = ["derive"] }
 # R1 daemon 协议层：thiserror 用于 ProtocolError 派生 Error trait

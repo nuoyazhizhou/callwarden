@@ -9,13 +9,96 @@
 //! - `gc`: archive / restore / status / purge / db-cleanup
 //! - `doctor`: 环境诊断 / Windows Defender 排除设置
 
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
-use serde_json::{json, Value};
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use rusqlite::params;
+use serde_json::{json, Value};
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use super::runtime::{CommandResult, RouteUsed, RuntimeOptions};
+use super::status::{load_ignore_patterns, should_ignore};
+
+/// 执行外部工具并提供硬超时，避免 Semgrep/Git 进程在 CLI 中永久占用资源。
+/// stdout/stderr 由独立线程消费，避免大输出填满 pipe 后造成子进程死锁。
+fn run_command_with_timeout(mut command: Command, timeout: Duration) -> Result<Output, String> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("failed to spawn external command: {error}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "external command stdout pipe unavailable".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "external command stderr pipe unavailable".to_string())?;
+    let stdout_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = std::io::BufReader::new(stdout).read_to_end(&mut bytes);
+        bytes
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = std::io::BufReader::new(stderr).read_to_end(&mut bytes);
+        bytes
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!(
+                    "external command exceeded timeout of {} seconds",
+                    timeout.as_secs()
+                ));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_reader.join();
+                let _ = stderr_reader.join();
+                return Err(format!(
+                    "failed while waiting for external command: {error}"
+                ));
+            }
+        }
+    };
+
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "external command stdout reader panicked".to_string())?;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "external command stderr reader panicked".to_string())?;
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn external_timeout(runtime: &RuntimeOptions, requested_secs: u64) -> Duration {
+    let requested = if requested_secs == 0 {
+        runtime.timeout.as_secs().max(1)
+    } else {
+        requested_secs
+    };
+    Duration::from_secs(requested.min(3600))
+}
 
 // ===== 1. Semgrep 子命令 =====
 
@@ -24,10 +107,11 @@ pub fn run_semgrep_scan(
     paths: &[PathBuf],
     config: &str,
     languages: &[String],
-    _timeout_secs: u64,
+    timeout_secs: u64,
     save: bool,
 ) -> CommandResult {
-    let semgrep_bin = std::env::var("CALLWARDEN_SEMGREP_BIN").unwrap_or_else(|_| "semgrep".to_string());
+    let semgrep_bin =
+        std::env::var("CALLWARDEN_SEMGREP_BIN").unwrap_or_else(|_| "semgrep".to_string());
 
     let mut cmd = Command::new(&semgrep_bin);
     cmd.arg("scan").arg("--json");
@@ -45,12 +129,12 @@ pub fn run_semgrep_scan(
         }
     }
 
-    let output = match cmd.output() {
+    let output = match run_command_with_timeout(cmd, external_timeout(runtime, timeout_secs)) {
         Ok(out) => out,
         Err(err) => {
             return CommandResult::failure(
                 1,
-                format!("failed to execute semgrep binary ({semgrep_bin}): {err}. Make sure semgrep is installed."),
+                format!("semgrep failed: {err}. Make sure semgrep is installed."),
                 RouteUsed::Local,
             );
         }
@@ -60,12 +144,29 @@ pub fn run_semgrep_scan(
     let parsed_json: Value = match serde_json::from_str(&stdout_str) {
         Ok(val) => val,
         Err(_) => {
-            return CommandResult::success_text(
-                format!("Semgrep scan completed with raw output:\n{stdout_str}"),
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return CommandResult::failure(
+                1,
+                format!(
+                    "semgrep returned invalid JSON (exit={}): {}",
+                    output.status,
+                    stderr.trim()
+                ),
                 RouteUsed::Local,
             );
         }
     };
+
+    // Semgrep returns 1 when findings exist. Other non-zero exits are tool
+    // failures even if a diagnostic JSON document happens to be emitted.
+    if !output.status.success() && output.status.code() != Some(1) {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return CommandResult::failure(
+            1,
+            format!("semgrep exited with {}: {}", output.status, stderr.trim()),
+            RouteUsed::Local,
+        );
+    }
 
     let results = parsed_json.get("results").and_then(|r| r.as_array());
     let findings_count = results.map(|r| r.len()).unwrap_or(0);
@@ -80,36 +181,101 @@ pub fn run_semgrep_scan(
             Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
         };
 
+        if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
+            return CommandResult::failure(
+                1,
+                format!("cannot begin Semgrep import: {error}"),
+                RouteUsed::Local,
+            );
+        }
+
         if let Some(res_list) = results {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs_f64();
             for item in res_list {
-                let rule_id = item.get("check_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let rule_id = item
+                    .get("check_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let path = item.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                let message = item.get("extra")
+                let message = item
+                    .get("extra")
                     .and_then(|e| e.get("message"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let severity = item.get("extra")
+                let severity = item
+                    .get("extra")
                     .and_then(|e| e.get("severity"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("WARNING");
-                let start_line = item.get("start").and_then(|s| s.get("line")).and_then(|v| v.as_i64()).unwrap_or(1);
-                let end_line = item.get("end").and_then(|e| e.get("line")).and_then(|v| v.as_i64()).unwrap_or(1);
+                let start_line = item
+                    .get("start")
+                    .and_then(|s| s.get("line"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
+                let end_line = item
+                    .get("end")
+                    .and_then(|e| e.get("line"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(1);
 
-                let _ = conn.execute(
+                let normalized_path = path.replace('\\', "/").trim_start_matches("./").to_string();
+                let file_row = conn.query_row(
+                    "SELECT id, current_content_hash FROM file_instances
+                     WHERE workspace_id = ?1 AND
+                       (replace(rel_path, '\\', '/') = ?2 OR abs_path = ?3)
+                     LIMIT 1",
+                    params![ws_id, normalized_path, path],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                );
+                let (file_instance_id, content_hash) = match file_row {
+                    Ok(row) => row,
+                    Err(error) => {
+                        let _ = conn.execute_batch("ROLLBACK");
+                        return CommandResult::failure(
+                            1,
+                            format!("Semgrep finding path {path:?} is not indexed: {error}"),
+                            RouteUsed::Local,
+                        );
+                    }
+                };
+
+                if let Err(error) = conn.execute(
                     "INSERT INTO semgrep_findings (
                         file_instance_id, content_hash, rule_id, rule_name, message,
                         severity, confidence, language, start_line, end_line, scanned_at
                     ) VALUES (
-                        (SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = ?2 LIMIT 1),
-                        'hash', ?3, ?3, ?4, ?5, 'HIGH', 'python', ?6, ?7, ?8
+                        ?1, ?2, ?3, ?3, ?4, ?5, 'HIGH', '', ?6, ?7, ?8
                     )",
-                    params![ws_id, path, rule_id, message, severity, start_line, end_line, now],
-                );
+                    params![
+                        file_instance_id,
+                        content_hash,
+                        rule_id,
+                        message,
+                        severity,
+                        start_line,
+                        end_line,
+                        now
+                    ],
+                ) {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return CommandResult::failure(
+                        1,
+                        format!("failed to save Semgrep finding for {path:?}: {error}"),
+                        RouteUsed::Local,
+                    );
+                }
             }
+        }
+        if let Err(error) = conn.execute_batch("COMMIT") {
+            let _ = conn.execute_batch("ROLLBACK");
+            return CommandResult::failure(
+                1,
+                format!("Semgrep import commit failed: {error}"),
+                RouteUsed::Local,
+            );
         }
     }
 
@@ -124,10 +290,7 @@ pub fn run_semgrep_scan(
     )
 }
 
-pub fn run_semgrep_list(
-    runtime: &RuntimeOptions,
-    limit: usize,
-) -> CommandResult {
+pub fn run_semgrep_list(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -146,7 +309,13 @@ pub fn run_semgrep_list(
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(e) => return CommandResult::failure(1, format!("query semgrep_findings error: {e}"), RouteUsed::Local),
+        Err(e) => {
+            return CommandResult::failure(
+                1,
+                format!("query semgrep_findings error: {e}"),
+                RouteUsed::Local,
+            )
+        }
     };
 
     let rows = stmt.query_map(params![ws_id, limit as i64], |row| {
@@ -166,12 +335,13 @@ pub fn run_semgrep_list(
         Err(_) => vec![],
     };
 
-    CommandResult::success_json(&json!({ "total": list.len(), "findings": list }), RouteUsed::Local)
+    CommandResult::success_json(
+        &json!({ "total": list.len(), "findings": list }),
+        RouteUsed::Local,
+    )
 }
 
-pub fn run_semgrep_stats(
-    runtime: &RuntimeOptions,
-) -> CommandResult {
+pub fn run_semgrep_stats(runtime: &RuntimeOptions) -> CommandResult {
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -190,7 +360,9 @@ pub fn run_semgrep_stats(
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return CommandResult::success_json(&json!({"by_severity": {}}), RouteUsed::Local),
+        Err(_) => {
+            return CommandResult::success_json(&json!({"by_severity": {}}), RouteUsed::Local)
+        }
     };
 
     let rows = stmt.query_map(params![ws_id], |row| {
@@ -209,17 +381,155 @@ pub fn run_semgrep_stats(
 
 // ===== 2. Coverage 子命令 =====
 
+fn insert_coverage_lines(
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    report_path: &str,
+    lines: &[(i64, i64)],
+    report_source: &str,
+    imported_at: f64,
+) -> Result<(usize, usize), String> {
+    let normalized = report_path.replace('\\', "/");
+    let file_instance_id: i64 = conn
+        .query_row(
+            "SELECT id FROM file_instances
+             WHERE workspace_id = ?1
+               AND replace(rel_path, '\\\\', '/') = ?2
+             LIMIT 1",
+            params![workspace_id, normalized],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("coverage file {report_path:?} is not indexed: {error}"))?;
+
+    let mut inserted = 0;
+    let mut matched_symbols = 0;
+    for (line_no, hit_count) in lines {
+        let symbol_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM symbols
+                 WHERE file_instance_id = ?1 AND start_line <= ?2 AND end_line >= ?2
+                 ORDER BY (end_line - start_line) ASC, id ASC LIMIT 1",
+                params![file_instance_id, line_no],
+                |row| row.get(0),
+            )
+            .ok();
+        if symbol_id.is_some() {
+            matched_symbols += 1;
+        }
+        conn.execute(
+            "INSERT INTO coverage_data
+                (file_instance_id, symbol_id, line_start, line_end, hit_count, report_source, imported_at)
+             VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6)",
+            params![file_instance_id, symbol_id, line_no, hit_count, report_source, imported_at],
+        )
+        .map_err(|error| format!("failed to insert coverage line {report_path}:{line_no}: {error}"))?;
+        inserted += 1;
+    }
+    Ok((inserted, matched_symbols))
+}
+
+fn parse_cobertura(
+    content: &str,
+    conn: &rusqlite::Connection,
+    workspace_id: i64,
+    imported_at: f64,
+) -> Result<(usize, usize, usize, usize), String> {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+    let mut current_file: Option<String> = None;
+    let mut current_lines: Vec<(i64, i64)> = Vec::new();
+    let mut files_total = 0;
+    let mut files_matched = 0;
+    let mut lines_imported = 0;
+    let mut symbols_matched = 0;
+
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) if event.name().as_ref() == b"class" => {
+                current_file = event
+                    .attributes()
+                    .flatten()
+                    .find(|attr| attr.key.as_ref() == b"filename")
+                    .and_then(|attr| attr.unescape_value().ok().map(|value| value.into_owned()));
+                current_lines.clear();
+            }
+            Ok(Event::Empty(event)) if event.name().as_ref() == b"line" => {
+                let mut number = None;
+                let mut hits = None;
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"number" {
+                        number = attr
+                            .unescape_value()
+                            .ok()
+                            .and_then(|v| v.parse::<i64>().ok());
+                    } else if attr.key.as_ref() == b"hits" {
+                        hits = attr
+                            .unescape_value()
+                            .ok()
+                            .and_then(|v| v.parse::<i64>().ok());
+                    }
+                }
+                if let (Some(number), Some(hits)) = (number, hits) {
+                    current_lines.push((number, hits));
+                }
+            }
+            Ok(Event::End(event)) if event.name().as_ref() == b"class" => {
+                if let Some(path) = current_file.take() {
+                    files_total += 1;
+                    match insert_coverage_lines(
+                        conn,
+                        workspace_id,
+                        &path,
+                        &current_lines,
+                        "cobertura",
+                        imported_at,
+                    ) {
+                        Ok((inserted, matched)) => {
+                            files_matched += 1;
+                            lines_imported += inserted;
+                            symbols_matched += matched;
+                        }
+                        Err(_) => {}
+                    }
+                }
+                current_lines.clear();
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => return Err(format!("invalid Cobertura XML: {error}")),
+            _ => {}
+        }
+    }
+    Ok((files_total, files_matched, lines_imported, symbols_matched))
+}
+
 pub fn run_coverage_import(
     runtime: &RuntimeOptions,
     file_path: &Path,
     format: &str,
 ) -> CommandResult {
+    if format != "lcov" && format != "cobertura" {
+        return CommandResult::failure(
+            2,
+            format!("unsupported coverage format: {format}; use lcov or cobertura"),
+            RouteUsed::Local,
+        );
+    }
     if !file_path.exists() {
-        return CommandResult::failure(1, format!("Coverage file does not exist: {}", file_path.display()), RouteUsed::Local);
+        return CommandResult::failure(
+            1,
+            format!("Coverage file does not exist: {}", file_path.display()),
+            RouteUsed::Local,
+        );
     }
     let content = match fs::read_to_string(file_path) {
         Ok(c) => c,
-        Err(e) => return CommandResult::failure(1, format!("Failed to read coverage file: {e}"), RouteUsed::Local),
+        Err(e) => {
+            return CommandResult::failure(
+                1,
+                format!("Failed to read coverage file: {e}"),
+                RouteUsed::Local,
+            )
+        }
     };
 
     let conn = match runtime.open_local_write_db() {
@@ -231,44 +541,107 @@ pub fn run_coverage_import(
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
     };
 
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS test_coverage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            workspace_id INTEGER NOT NULL,
-            file_path TEXT NOT NULL,
-            symbol_name TEXT,
-            lines_covered INTEGER NOT NULL,
-            lines_total INTEGER NOT NULL,
-            coverage_ratio REAL NOT NULL,
-            updated_at REAL NOT NULL
-        );"
-    );
-
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
 
-    let mut imported_count = 0;
-    if format == "lcov" {
-        for line in content.lines() {
-            if line.starts_with("SF:") {
-                let rel = line.trim_start_matches("SF:");
-                let _ = conn.execute(
-                    "INSERT INTO test_coverage (workspace_id, file_path, symbol_name, lines_covered, lines_total, coverage_ratio, updated_at)
-                     VALUES (?1, ?2, '', 10, 10, 1.0, ?3)",
-                    params![ws_id, rel, now],
-                );
-                imported_count += 1;
+    let source = if format == "cobertura" {
+        "cobertura"
+    } else {
+        "lcov"
+    };
+    if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
+        return CommandResult::failure(
+            1,
+            format!("cannot begin coverage import: {error}"),
+            RouteUsed::Local,
+        );
+    }
+    if let Err(error) = conn.execute(
+        "DELETE FROM coverage_data
+         WHERE report_source = ?1
+           AND file_instance_id IN (SELECT id FROM file_instances WHERE workspace_id = ?2)",
+        params![source, ws_id],
+    ) {
+        let _ = conn.execute_batch("ROLLBACK");
+        return CommandResult::failure(
+            1,
+            format!("cannot clear old coverage data: {error}"),
+            RouteUsed::Local,
+        );
+    }
+
+    let (files_total, files_matched, lines_imported, symbols_matched) = if format == "cobertura" {
+        match parse_cobertura(&content, &conn, ws_id, now) {
+            Ok(stats) => stats,
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return CommandResult::failure(1, error, RouteUsed::Local);
             }
         }
     } else {
-        let _ = conn.execute(
-            "INSERT INTO test_coverage (workspace_id, file_path, symbol_name, lines_covered, lines_total, coverage_ratio, updated_at)
-             VALUES (?1, ?2, '', 50, 100, 0.5, ?3)",
-            params![ws_id, file_path.to_string_lossy().to_string(), now],
+        let mut current_sf = None;
+        let mut current_lines = Vec::new();
+        let mut stats = (0, 0, 0, 0);
+        for raw_line in content.lines() {
+            let line = raw_line.trim();
+            if let Some(path) = line.strip_prefix("SF:") {
+                current_sf = Some(path.to_string());
+                current_lines.clear();
+            } else if let Some(value) = line.strip_prefix("DA:") {
+                let mut parts = value.split(',');
+                if let (Some(line_no), Some(hit_count)) = (parts.next(), parts.next()) {
+                    if let (Ok(line_no), Ok(hit_count)) =
+                        (line_no.parse::<i64>(), hit_count.parse::<i64>())
+                    {
+                        current_lines.push((line_no, hit_count));
+                    }
+                }
+            } else if line == "end_of_record" {
+                if let Some(path) = current_sf.take() {
+                    stats.0 += 1;
+                    let inserted =
+                        insert_coverage_lines(&conn, ws_id, &path, &current_lines, "lcov", now)
+                            .map_err(|error| error);
+                    match inserted {
+                        Ok((count, matched)) => {
+                            stats.1 += 1;
+                            stats.2 += count;
+                            stats.3 += matched;
+                        }
+                        Err(error) => {
+                            let _ = conn.execute_batch("ROLLBACK");
+                            return CommandResult::failure(1, error, RouteUsed::Local);
+                        }
+                    }
+                }
+                current_lines.clear();
+            }
+        }
+        if let Some(path) = current_sf.take() {
+            stats.0 += 1;
+            match insert_coverage_lines(&conn, ws_id, &path, &current_lines, "lcov", now) {
+                Ok((count, matched)) => {
+                    stats.1 += 1;
+                    stats.2 += count;
+                    stats.3 += matched;
+                }
+                Err(error) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return CommandResult::failure(1, error, RouteUsed::Local);
+                }
+            }
+        }
+        stats
+    };
+    if let Err(error) = conn.execute_batch("COMMIT") {
+        let _ = conn.execute_batch("ROLLBACK");
+        return CommandResult::failure(
+            1,
+            format!("coverage commit failed: {error}"),
+            RouteUsed::Local,
         );
-        imported_count += 1;
     }
 
     CommandResult::success_json(
@@ -276,16 +649,16 @@ pub fn run_coverage_import(
             "imported": true,
             "file": file_path.to_string_lossy(),
             "format": format,
-            "records_inserted": imported_count
+            "files_total": files_total,
+            "files_matched": files_matched,
+            "lines_imported": lines_imported,
+            "symbols_matched": symbols_matched
         }),
         RouteUsed::Local,
     )
 }
 
-pub fn run_coverage_fn(
-    runtime: &RuntimeOptions,
-    function_name: &str,
-) -> CommandResult {
+pub fn run_coverage_fn(runtime: &RuntimeOptions, function_name: &str) -> CommandResult {
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -296,18 +669,29 @@ pub fn run_coverage_fn(
     };
 
     let sql = "
-        SELECT file_path, symbol_name, lines_covered, lines_total, coverage_ratio
-        FROM test_coverage
-        WHERE workspace_id = ?1 AND (symbol_name = ?2 OR file_path LIKE ?3)
-        ORDER BY id DESC LIMIT 10";
-
-    let pattern = format!("%{function_name}%");
+        SELECT fi.rel_path, s.name,
+               SUM(CASE WHEN cd.hit_count > 0 THEN 1 ELSE 0 END),
+               COUNT(cd.id),
+               CASE WHEN COUNT(cd.id) = 0 THEN 0.0
+                    ELSE CAST(SUM(CASE WHEN cd.hit_count > 0 THEN 1 ELSE 0 END) AS REAL) / COUNT(cd.id)
+               END
+        FROM symbols s
+        JOIN file_instances fi ON fi.id = s.file_instance_id
+        LEFT JOIN coverage_data cd ON cd.symbol_id = s.id
+        WHERE fi.workspace_id = ?1 AND (s.name = ?2 OR s.qualified_name = ?2)
+        GROUP BY s.id, fi.rel_path, s.name
+        ORDER BY s.id DESC LIMIT 10";
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return CommandResult::success_json(&json!({"function": function_name, "found": false}), RouteUsed::Local),
+        Err(_) => {
+            return CommandResult::success_json(
+                &json!({"function": function_name, "found": false}),
+                RouteUsed::Local,
+            )
+        }
     };
 
-    let rows = stmt.query_map(params![ws_id, function_name, pattern], |row| {
+    let rows = stmt.query_map(params![ws_id, function_name], |row| {
         Ok(json!({
             "file_path": row.get::<_, String>(0)?,
             "symbol_name": row.get::<_, String>(1)?,
@@ -332,9 +716,7 @@ pub fn run_coverage_fn(
     )
 }
 
-pub fn run_coverage_uncovered(
-    runtime: &RuntimeOptions,
-) -> CommandResult {
+pub fn run_coverage_uncovered(runtime: &RuntimeOptions) -> CommandResult {
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -349,12 +731,20 @@ pub fn run_coverage_uncovered(
         FROM symbols s
         JOIN file_instances fi ON s.file_instance_id = fi.id
         WHERE fi.workspace_id = ?1 AND s.kind IN ('fn', 'method', 'function')
-          AND s.name NOT IN (SELECT symbol_name FROM test_coverage WHERE workspace_id = ?1 AND coverage_ratio > 0)
+          AND NOT EXISTS (
+              SELECT 1 FROM coverage_data cd
+              WHERE cd.symbol_id = s.id AND cd.hit_count > 0
+          )
         LIMIT 50";
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return CommandResult::success_json(&json!({"uncovered_functions": []}), RouteUsed::Local),
+        Err(_) => {
+            return CommandResult::success_json(
+                &json!({"uncovered_functions": []}),
+                RouteUsed::Local,
+            )
+        }
     };
 
     let rows = stmt.query_map(params![ws_id], |row| {
@@ -380,22 +770,38 @@ pub fn run_coverage_uncovered(
 
 // ===== 3. Git 子命令 =====
 
-pub fn run_git_import(
-    runtime: &RuntimeOptions,
-    limit: usize,
-) -> CommandResult {
-    let output = match Command::new("git")
-        .args(["log", &format!("-n{limit}"), "--pretty=format:%H|%an|%ae|%at|%s"])
-        .output()
-    {
-        Ok(out) => out,
-        Err(e) => return CommandResult::failure(1, format!("Failed to run git log: {e}"), RouteUsed::Local),
-    };
-
-    if !output.status.success() {
-        return CommandResult::failure(1, "git log exited with non-zero status".to_string(), RouteUsed::Local);
+fn workspace_root(conn: &rusqlite::Connection, workspace_id: i64) -> Result<PathBuf, String> {
+    let root: String = conn
+        .query_row(
+            "SELECT root_path FROM workspaces WHERE id = ?1",
+            params![workspace_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("cannot resolve workspace root: {error}"))?;
+    let path = PathBuf::from(root);
+    if !path.is_dir() {
+        return Err(format!(
+            "workspace root is not a directory: {}",
+            path.display()
+        ));
     }
+    Ok(path)
+}
 
+fn git_failure(output: &Output, operation: &str) -> CommandResult {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    CommandResult::failure(
+        1,
+        format!(
+            "git {operation} failed (exit={}): {}",
+            output.status,
+            stderr.trim()
+        ),
+        RouteUsed::Local,
+    )
+}
+
+pub fn run_git_import(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
     let conn = match runtime.open_local_write_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -404,24 +810,42 @@ pub fn run_git_import(
         Ok(id) => id,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
     };
+    let root = match workspace_root(&conn, ws_id) {
+        Ok(root) => root,
+        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
+    };
+    let mut git = Command::new("git");
+    git.current_dir(&root).args([
+        "log",
+        &format!("-n{limit}"),
+        "--pretty=format:%H%x1f%an%x1f%ae%x1f%at%x1f%s",
+    ]);
+    let output = match run_command_with_timeout(git, runtime.timeout) {
+        Ok(out) => out,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("git import failed: {error}"),
+                RouteUsed::Local,
+            )
+        }
+    };
+    if !output.status.success() {
+        return git_failure(&output, "log");
+    }
 
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS git_commits (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            workspace_id INTEGER NOT NULL,
-            commit_hash TEXT NOT NULL,
-            author_name TEXT,
-            author_email TEXT,
-            committed_at REAL,
-            message TEXT,
-            UNIQUE(workspace_id, commit_hash)
-        );"
-    );
+    if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
+        return CommandResult::failure(
+            1,
+            format!("cannot begin git import: {error}"),
+            RouteUsed::Local,
+        );
+    }
 
     let stdout_str = String::from_utf8_lossy(&output.stdout);
     let mut imported = 0;
     for line in stdout_str.lines() {
-        let parts: Vec<&str> = line.split('|').collect();
+        let parts: Vec<&str> = line.splitn(5, '\u{1f}').collect();
         if parts.len() >= 5 {
             let hash = parts[0];
             let author = parts[1];
@@ -429,13 +853,82 @@ pub fn run_git_import(
             let time_sec: f64 = parts[3].parse().unwrap_or(0.0);
             let msg = parts[4];
 
-            let _ = conn.execute(
-                "INSERT OR REPLACE INTO git_commits (workspace_id, commit_hash, author_name, author_email, committed_at, message)
+            if let Err(error) = conn.execute(
+                "INSERT OR REPLACE INTO git_commits
+                    (commit_hash, message, author, email, timestamp, workspace_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![ws_id, hash, author, email, time_sec, msg],
-            );
+                params![hash, msg, author, email, time_sec, ws_id],
+            ) {
+                let _ = conn.execute_batch("ROLLBACK");
+                return CommandResult::failure(
+                    1,
+                    format!("failed to store git commit {hash}: {error}"),
+                    RouteUsed::Local,
+                );
+            }
             imported += 1;
+
+            // Keep the file-level relation in the formal schema.  Files that are
+            // not indexed in this workspace are intentionally skipped.
+            let mut diff = Command::new("git");
+            diff.current_dir(&root).args([
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "--name-status",
+                "-r",
+                "-z",
+                hash,
+            ]);
+            if let Ok(diff_output) = run_command_with_timeout(diff, runtime.timeout) {
+                if diff_output.status.success() {
+                    let fields: Vec<&[u8]> = diff_output
+                        .stdout
+                        .split(|byte| *byte == 0)
+                        .filter(|field| !field.is_empty())
+                        .collect();
+                    let mut index = 0;
+                    while index + 1 < fields.len() {
+                        let change_type = String::from_utf8_lossy(fields[index]).to_string();
+                        let path = String::from_utf8_lossy(fields[index + 1]).replace('\\', "/");
+                        let file_instance_id: Option<i64> = conn.query_row(
+                            "SELECT id FROM file_instances WHERE workspace_id = ?1 AND rel_path = ?2 LIMIT 1",
+                            params![ws_id, path],
+                            |row| row.get(0),
+                        ).ok();
+                        if let Some(file_instance_id) = file_instance_id {
+                            if let Err(error) = conn.execute(
+                                "INSERT INTO git_file_changes
+                                    (commit_hash, file_instance_id, change_type)
+                                 VALUES (?1, ?2, ?3)",
+                                params![hash, file_instance_id, change_type],
+                            ) {
+                                let _ = conn.execute_batch("ROLLBACK");
+                                return CommandResult::failure(
+                                    1,
+                                    format!("failed to store git file change {path}: {error}"),
+                                    RouteUsed::Local,
+                                );
+                            }
+                        }
+                        index += if change_type.starts_with('R') || change_type.starts_with('C') {
+                            3
+                        } else {
+                            2
+                        };
+                    }
+                }
+            }
         }
+    }
+
+    if let Err(error) = conn.execute_batch("COMMIT") {
+        let _ = conn.execute_batch("ROLLBACK");
+        return CommandResult::failure(
+            1,
+            format!("git import commit failed: {error}"),
+            RouteUsed::Local,
+        );
     }
 
     CommandResult::success_json(
@@ -444,10 +937,7 @@ pub fn run_git_import(
     )
 }
 
-pub fn run_git_log(
-    runtime: &RuntimeOptions,
-    limit: usize,
-) -> CommandResult {
+pub fn run_git_log(runtime: &RuntimeOptions, limit: usize) -> CommandResult {
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -458,14 +948,20 @@ pub fn run_git_log(
     };
 
     let sql = "
-        SELECT commit_hash, author_name, author_email, committed_at, message
+        SELECT commit_hash, author, email, timestamp, message
         FROM git_commits
         WHERE workspace_id = ?1
-        ORDER BY committed_at DESC LIMIT ?2";
+        ORDER BY timestamp DESC LIMIT ?2";
 
     let mut stmt = match conn.prepare(sql) {
         Ok(s) => s,
-        Err(_) => return CommandResult::failure(1, "git_commits table not found, run `cw git import` first".to_string(), RouteUsed::Local),
+        Err(_) => {
+            return CommandResult::failure(
+                1,
+                "git_commits table not found, run `cw git import` first".to_string(),
+                RouteUsed::Local,
+            )
+        }
     };
 
     let rows = stmt.query_map(params![ws_id, limit as i64], |row| {
@@ -483,31 +979,57 @@ pub fn run_git_log(
         Err(_) => vec![],
     };
 
-    CommandResult::success_json(&json!({ "total": commits.len(), "commits": commits }), RouteUsed::Local)
+    CommandResult::success_json(
+        &json!({ "total": commits.len(), "commits": commits }),
+        RouteUsed::Local,
+    )
 }
 
-pub fn run_git_show(
-    _runtime: &RuntimeOptions,
-    commit_sha: &str,
-) -> CommandResult {
-    let output = match Command::new("git")
-        .args(["show", "--stat", commit_sha])
-        .output()
+pub fn run_git_show(runtime: &RuntimeOptions, commit_sha: &str) -> CommandResult {
+    if commit_sha.len() < 7
+        || commit_sha.len() > 64
+        || !commit_sha
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
     {
+        return CommandResult::failure(
+            2,
+            format!("invalid commit SHA: {commit_sha}"),
+            RouteUsed::Local,
+        );
+    }
+    let conn = match runtime.open_local_db() {
+        Ok(c) => c,
+        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
+    };
+    let ws_id = match runtime.resolve_local_workspace_id(&conn) {
+        Ok(id) => id,
+        Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
+    };
+    let root = match workspace_root(&conn, ws_id) {
+        Ok(root) => root,
+        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
+    };
+    let mut git = Command::new("git");
+    git.current_dir(root).args(["show", "--stat", commit_sha]);
+    let output = match run_command_with_timeout(git, runtime.timeout) {
         Ok(out) => out,
-        Err(e) => return CommandResult::failure(1, format!("Failed to run git show: {e}"), RouteUsed::Local),
+        Err(error) => {
+            return CommandResult::failure(1, format!("git show failed: {error}"), RouteUsed::Local)
+        }
     };
 
     if !output.status.success() {
-        return CommandResult::failure(1, format!("Commit '{commit_sha}' not found in git repository"), RouteUsed::Local);
+        return git_failure(&output, "show");
     }
 
-    CommandResult::success_text(String::from_utf8_lossy(&output.stdout).to_string(), RouteUsed::Local)
+    CommandResult::success_text(
+        String::from_utf8_lossy(&output.stdout).to_string(),
+        RouteUsed::Local,
+    )
 }
 
-pub fn run_git_stats(
-    runtime: &RuntimeOptions,
-) -> CommandResult {
+pub fn run_git_stats(runtime: &RuntimeOptions) -> CommandResult {
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -520,11 +1042,21 @@ pub fn run_git_stats(
     let mut total_commits: i64 = 0;
     let mut total_authors: i64 = 0;
 
-    let _ = conn.query_row("SELECT COUNT(*), COUNT(DISTINCT author_email) FROM git_commits WHERE workspace_id = ?1", params![ws_id], |row| {
-        total_commits = row.get(0)?;
-        total_authors = row.get(1)?;
-        Ok(())
-    });
+    if let Err(error) = conn.query_row(
+        "SELECT COUNT(*), COUNT(DISTINCT email) FROM git_commits WHERE workspace_id = ?1",
+        params![ws_id],
+        |row| {
+            total_commits = row.get(0)?;
+            total_authors = row.get(1)?;
+            Ok(())
+        },
+    ) {
+        return CommandResult::failure(
+            1,
+            format!("cannot read git statistics: {error}"),
+            RouteUsed::Local,
+        );
+    }
 
     CommandResult::success_json(
         &json!({
@@ -548,7 +1080,13 @@ pub fn run_install_agent(
     let out_dir = output_dir.unwrap_or_else(|| PathBuf::from(".callwarden/agent-integrations"));
 
     if !out_dir.exists() {
-        let _ = fs::create_dir_all(&out_dir);
+        if let Err(error) = fs::create_dir_all(&out_dir) {
+            return CommandResult::failure(
+                1,
+                format!("failed to create agent output directory: {error}"),
+                RouteUsed::Local,
+            );
+        }
     }
 
     let agents = if target_agent == "all" {
@@ -572,7 +1110,26 @@ pub fn run_install_agent(
                 },
                 "is_global": global
             });
-            let _ = fs::write(&file_path, serde_json::to_string_pretty(&content).unwrap_or_default());
+            let serialized = match serde_json::to_string_pretty(&content) {
+                Ok(value) => value,
+                Err(error) => {
+                    return CommandResult::failure(
+                        1,
+                        format!("failed to serialize agent config: {error}"),
+                        RouteUsed::Local,
+                    )
+                }
+            };
+            if let Err(error) = fs::write(&file_path, serialized) {
+                return CommandResult::failure(
+                    1,
+                    format!(
+                        "failed to write agent config {}: {error}",
+                        file_path.display()
+                    ),
+                    RouteUsed::Local,
+                );
+            }
             generated.push(file_path.to_string_lossy().to_string());
         }
     }
@@ -596,7 +1153,13 @@ pub fn run_install_hook(
     let hook_path = PathBuf::from(".git/hooks").join(hook_name);
     if uninstall {
         if hook_path.exists() {
-            let _ = fs::remove_file(&hook_path);
+            if let Err(error) = fs::remove_file(&hook_path) {
+                return CommandResult::failure(
+                    1,
+                    format!("failed to remove hook {}: {error}", hook_path.display()),
+                    RouteUsed::Local,
+                );
+            }
         }
         return CommandResult::success_json(
             &json!({ "uninstalled": true, "hook": hook_name }),
@@ -604,17 +1167,30 @@ pub fn run_install_hook(
         );
     }
 
-    let task_arg = if task_id.is_empty() { "--auto".to_string() } else { format!("--task-id {task_id}") };
-    let hook_content = format!(
-        "#!/bin/sh\n# Call Warden post-commit hook\ncw task capture-diff {task_arg}\n"
-    );
+    let task_arg = if task_id.is_empty() {
+        "--auto".to_string()
+    } else {
+        format!("--task-id {task_id}")
+    };
+    let hook_content =
+        format!("#!/bin/sh\n# Call Warden post-commit hook\ncw task capture-diff {task_arg}\n");
 
     if let Some(parent) = hook_path.parent() {
-        let _ = fs::create_dir_all(parent);
+        if let Err(error) = fs::create_dir_all(parent) {
+            return CommandResult::failure(
+                1,
+                format!("failed to create hook directory: {error}"),
+                RouteUsed::Local,
+            );
+        }
     }
 
     if let Err(e) = fs::write(&hook_path, hook_content) {
-        return CommandResult::failure(1, format!("Failed to write hook file: {e}"), RouteUsed::Local);
+        return CommandResult::failure(
+            1,
+            format!("Failed to write hook file: {e}"),
+            RouteUsed::Local,
+        );
     }
 
     #[cfg(unix)]
@@ -623,7 +1199,13 @@ pub fn run_install_hook(
         if let Ok(meta) = fs::metadata(&hook_path) {
             let mut perms = meta.permissions();
             perms.set_mode(0o755);
-            let _ = fs::set_permissions(&hook_path, perms);
+            if let Err(error) = fs::set_permissions(&hook_path, perms) {
+                return CommandResult::failure(
+                    1,
+                    format!("failed to make hook executable: {error}"),
+                    RouteUsed::Local,
+                );
+            }
         }
     }
 
@@ -640,11 +1222,28 @@ pub fn run_install_hook(
 
 // ===== 5. GC 子命令 =====
 
-pub fn run_gc_archive(
-    runtime: &RuntimeOptions,
-    force: bool,
-    dry_run: bool,
-) -> CommandResult {
+fn delete_file_graph_data(
+    conn: &rusqlite::Connection,
+    file_instance_id: i64,
+) -> Result<(), String> {
+    for sql in [
+        "DELETE FROM coverage_data WHERE file_instance_id = ?1",
+        "DELETE FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?1)
+             OR callee_id IN (SELECT id FROM symbols WHERE file_instance_id = ?1)",
+        "DELETE FROM file_symbol_versions WHERE file_version_id IN
+             (SELECT id FROM file_versions WHERE file_instance_id = ?1)",
+        "DELETE FROM file_versions WHERE file_instance_id = ?1",
+        "DELETE FROM symbols WHERE file_instance_id = ?1",
+    ] {
+        conn.execute(sql, params![file_instance_id])
+            .map_err(|error| {
+                format!("failed to delete file {file_instance_id} graph data: {error}")
+            })?;
+    }
+    Ok(())
+}
+
+pub fn run_gc_archive(runtime: &RuntimeOptions, force: bool, dry_run: bool) -> CommandResult {
     let conn = match runtime.open_local_write_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -654,45 +1253,155 @@ pub fn run_gc_archive(
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
     };
 
-    let _ = conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS ignored_file_archives (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            workspace_id INTEGER NOT NULL,
-            rel_path TEXT NOT NULL,
-            archived_at REAL NOT NULL
-        );"
-    );
-
+    let root = match workspace_root(&conn, ws_id) {
+        Ok(root) => root,
+        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
+    };
+    let patterns = load_ignore_patterns(&root);
+    let status_filter = if force {
+        "status NOT IN ('archived', 'deleted')"
+    } else {
+        "status = 'pending'"
+    };
+    let sql = format!("SELECT id, rel_path, abs_path, current_content_hash, status FROM file_instances WHERE workspace_id = ?1 AND {status_filter}");
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(stmt) => stmt,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot query GC candidates: {error}"),
+                RouteUsed::Local,
+            )
+        }
+    };
+    let candidates: Vec<(i64, String, String, String, String)> =
+        match stmt.query_map(params![ws_id], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        }) {
+            Ok(rows) => match rows.collect() {
+                Ok(rows) => rows,
+                Err(error) => {
+                    return CommandResult::failure(
+                        1,
+                        format!("cannot read GC candidates: {error}"),
+                        RouteUsed::Local,
+                    )
+                }
+            },
+            Err(error) => {
+                return CommandResult::failure(
+                    1,
+                    format!("cannot read GC candidates: {error}"),
+                    RouteUsed::Local,
+                )
+            }
+        };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64();
-
     if !dry_run {
-        let _ = conn.execute(
-            "INSERT INTO ignored_file_archives (workspace_id, rel_path, archived_at)
-             SELECT workspace_id, rel_path, ?1 FROM file_instances
-             WHERE workspace_id = ?2 AND status = 'archived'",
-            params![now, ws_id],
-        );
+        if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
+            return CommandResult::failure(
+                1,
+                format!("cannot begin GC archive: {error}"),
+                RouteUsed::Local,
+            );
+        }
     }
-
+    let mut archived = 0usize;
+    let mut activated = 0usize;
+    let mut skipped = 0usize;
+    for (file_id, rel_path, abs_path, content_hash, status) in &candidates {
+        if !should_ignore(rel_path, false, &patterns) {
+            if !dry_run && status == "pending" {
+                if let Err(error) = conn.execute(
+                    "UPDATE file_instances SET status = 'active' WHERE id = ?1",
+                    params![file_id],
+                ) {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return CommandResult::failure(
+                        1,
+                        format!("failed to activate {rel_path}: {error}"),
+                        RouteUsed::Local,
+                    );
+                }
+                activated += 1;
+            }
+            continue;
+        }
+        let already_archived: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM archived_files WHERE file_instance_id = ?1)",
+                params![file_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if already_archived {
+            skipped += 1;
+            continue;
+        }
+        archived += 1;
+        if !dry_run {
+            let symbol_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM symbols WHERE file_instance_id = ?1",
+                    params![file_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let call_count: i64 = conn.query_row("SELECT COUNT(*) FROM calls WHERE caller_id IN (SELECT id FROM symbols WHERE file_instance_id = ?1)", params![file_id], |row| row.get(0)).unwrap_or(0);
+            if let Err(error) = conn.execute(
+                "INSERT INTO archived_files (file_instance_id, workspace_id, rel_path, abs_path, content_hash, symbol_count, call_count, archive_reason, archived_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![file_id, ws_id, rel_path, abs_path, content_hash, symbol_count, call_count, "matched ignore rule", now],
+            ) {
+                let _ = conn.execute_batch("ROLLBACK");
+                return CommandResult::failure(1, format!("failed to record archived file {rel_path}: {error}"), RouteUsed::Local);
+            }
+            if let Err(error) = delete_file_graph_data(&conn, *file_id) {
+                let _ = conn.execute_batch("ROLLBACK");
+                return CommandResult::failure(1, error, RouteUsed::Local);
+            }
+            if let Err(error) = conn.execute(
+                "UPDATE file_instances SET status = 'archived' WHERE id = ?1",
+                params![file_id],
+            ) {
+                let _ = conn.execute_batch("ROLLBACK");
+                return CommandResult::failure(
+                    1,
+                    format!("failed to mark {rel_path} archived: {error}"),
+                    RouteUsed::Local,
+                );
+            }
+        }
+    }
+    if !dry_run {
+        if let Err(error) = conn.execute_batch("COMMIT") {
+            let _ = conn.execute_batch("ROLLBACK");
+            return CommandResult::failure(
+                1,
+                format!("GC archive commit failed: {error}"),
+                RouteUsed::Local,
+            );
+        }
+    }
     CommandResult::success_json(
         &json!({
-            "action": "archive",
-            "force": force,
-            "dry_run": dry_run,
-            "workspace_id": ws_id
+            "action": "archive", "force": force, "dry_run": dry_run, "workspace_id": ws_id,
+            "scanned": candidates.len(), "archived": archived, "activated": activated, "skipped": skipped
         }),
         RouteUsed::Local,
     )
 }
 
-pub fn run_gc_restore(
-    runtime: &RuntimeOptions,
-    paths: &[PathBuf],
-    force: bool,
-) -> CommandResult {
+pub fn run_gc_restore(runtime: &RuntimeOptions, paths: &[PathBuf], force: bool) -> CommandResult {
     let conn = match runtime.open_local_write_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -702,29 +1411,107 @@ pub fn run_gc_restore(
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
     };
 
-    let restored_count = if paths.is_empty() {
-        conn.execute("DELETE FROM ignored_file_archives WHERE workspace_id = ?1", params![ws_id]).unwrap_or(0)
-    } else {
-        let mut count = 0;
-        for p in paths {
-            let path_str = p.to_string_lossy();
-            count += conn.execute("DELETE FROM ignored_file_archives WHERE workspace_id = ?1 AND rel_path = ?2", params![ws_id, path_str]).unwrap_or(0);
-        }
-        count
+    let root = match workspace_root(&conn, ws_id) {
+        Ok(root) => root,
+        Err(error) => return CommandResult::failure(1, error, RouteUsed::Local),
     };
+    let patterns = load_ignore_patterns(&root);
+    let mut stmt = match conn.prepare(
+        "SELECT id, file_instance_id, rel_path FROM archived_files WHERE workspace_id = ?1",
+    ) {
+        Ok(stmt) => stmt,
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot query archived files: {error}"),
+                RouteUsed::Local,
+            )
+        }
+    };
+    let rows: Vec<(i64, i64, String)> = match stmt.query_map(params![ws_id], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    }) {
+        Ok(rows) => match rows.collect() {
+            Ok(rows) => rows,
+            Err(error) => {
+                return CommandResult::failure(
+                    1,
+                    format!("cannot read archived files: {error}"),
+                    RouteUsed::Local,
+                )
+            }
+        },
+        Err(error) => {
+            return CommandResult::failure(
+                1,
+                format!("cannot read archived files: {error}"),
+                RouteUsed::Local,
+            )
+        }
+    };
+    let requested: std::collections::HashSet<String> = paths
+        .iter()
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
+        return CommandResult::failure(
+            1,
+            format!("cannot begin GC restore: {error}"),
+            RouteUsed::Local,
+        );
+    }
+    let mut restored_count = 0usize;
+    let mut still_ignored = 0usize;
+    for (archive_id, file_id, rel_path) in &rows {
+        if !requested.is_empty() && !requested.contains(rel_path) {
+            continue;
+        }
+        if !force && should_ignore(rel_path, false, &patterns) {
+            still_ignored += 1;
+            continue;
+        }
+        if let Err(error) = conn
+            .execute(
+                "DELETE FROM archived_files WHERE id = ?1",
+                params![archive_id],
+            )
+            .and_then(|_| {
+                conn.execute(
+                    "UPDATE file_instances SET status = 'pending' WHERE id = ?1",
+                    params![file_id],
+                )
+            })
+        {
+            let _ = conn.execute_batch("ROLLBACK");
+            return CommandResult::failure(
+                1,
+                format!("failed to restore {rel_path}: {error}"),
+                RouteUsed::Local,
+            );
+        }
+        restored_count += 1;
+    }
+    if let Err(error) = conn.execute_batch("COMMIT") {
+        let _ = conn.execute_batch("ROLLBACK");
+        return CommandResult::failure(
+            1,
+            format!("GC restore commit failed: {error}"),
+            RouteUsed::Local,
+        );
+    }
 
     CommandResult::success_json(
         &json!({
+            "scanned": rows.len(),
             "restored_count": restored_count,
+            "still_ignored": still_ignored,
             "force": force
         }),
         RouteUsed::Local,
     )
 }
 
-pub fn run_gc_status(
-    runtime: &RuntimeOptions,
-) -> CommandResult {
+pub fn run_gc_status(runtime: &RuntimeOptions) -> CommandResult {
     let conn = match runtime.open_local_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -734,26 +1521,47 @@ pub fn run_gc_status(
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
     };
 
-    let mut archived_count: i64 = 0;
-    let _ = conn.query_row(
-        "SELECT COUNT(*) FROM ignored_file_archives WHERE workspace_id = ?1",
-        params![ws_id],
-        |row| { archived_count = row.get(0)?; Ok(()) },
-    );
+    let (active_count, archived_count, deleted_count, total_count): (i64, i64, i64, i64) =
+        match conn.query_row(
+            "SELECT COALESCE(SUM(status = 'active'), 0), COALESCE(SUM(status = 'archived'), 0),
+                COALESCE(SUM(status = 'deleted'), 0), COUNT(*)
+         FROM file_instances WHERE workspace_id = ?1",
+            params![ws_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                return CommandResult::failure(
+                    1,
+                    format!("cannot read GC status: {error}"),
+                    RouteUsed::Local,
+                )
+            }
+        };
+    let (archived_symbols, archived_calls): (i64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(symbol_count), 0), COALESCE(SUM(call_count), 0)
+         FROM archived_files WHERE workspace_id = ?1",
+            params![ws_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or((0, 0));
 
     CommandResult::success_json(
         &json!({
             "workspace_id": ws_id,
-            "archived_files_count": archived_count
+            "active_files": active_count,
+            "archived_files_count": archived_count,
+            "deleted_files": deleted_count,
+            "archive_ratio": if total_count == 0 { 0.0 } else { archived_count as f64 / total_count as f64 },
+            "archived_symbols": archived_symbols,
+            "archived_calls": archived_calls
         }),
         RouteUsed::Local,
     )
 }
 
-pub fn run_gc_purge(
-    runtime: &RuntimeOptions,
-    dry_run: bool,
-) -> CommandResult {
+pub fn run_gc_purge(runtime: &RuntimeOptions, dry_run: bool) -> CommandResult {
     let conn = match runtime.open_local_write_db() {
         Ok(c) => c,
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
@@ -763,11 +1571,64 @@ pub fn run_gc_purge(
         Err(e) => return CommandResult::failure(1, e, RouteUsed::Local),
     };
 
-    let purged = if !dry_run {
-        conn.execute("DELETE FROM ignored_file_archives WHERE workspace_id = ?1", params![ws_id]).unwrap_or(0)
-    } else {
-        0
-    };
+    let purged: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM archived_files WHERE workspace_id = ?1",
+            params![ws_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    if !dry_run && purged > 0 {
+        if let Err(error) = conn.execute_batch("BEGIN IMMEDIATE") {
+            return CommandResult::failure(
+                1,
+                format!("cannot begin GC purge: {error}"),
+                RouteUsed::Local,
+            );
+        }
+        let ids: Vec<i64> = match conn
+            .prepare("SELECT file_instance_id FROM archived_files WHERE workspace_id = ?1")
+            .and_then(|mut stmt| {
+                stmt.query_map(params![ws_id], |row| row.get(0))
+                    .and_then(|rows| rows.collect::<Result<Vec<i64>, _>>())
+            }) {
+            Ok(ids) => ids,
+            Err(error) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return CommandResult::failure(
+                    1,
+                    format!("cannot read purge candidates: {error}"),
+                    RouteUsed::Local,
+                );
+            }
+        };
+        for file_id in &ids {
+            if let Err(error) = delete_file_graph_data(&conn, *file_id) {
+                let _ = conn.execute_batch("ROLLBACK");
+                return CommandResult::failure(1, error, RouteUsed::Local);
+            }
+        }
+        if let Err(error) = conn
+            .execute(
+                "DELETE FROM archived_files WHERE workspace_id = ?1",
+                params![ws_id],
+            )
+            .and_then(|_| {
+                conn.execute(
+                    "DELETE FROM file_instances WHERE workspace_id = ?1 AND status = 'archived'",
+                    params![ws_id],
+                )
+            })
+            .and_then(|_| conn.execute_batch("COMMIT"))
+        {
+            let _ = conn.execute_batch("ROLLBACK");
+            return CommandResult::failure(
+                1,
+                format!("GC purge failed: {error}"),
+                RouteUsed::Local,
+            );
+        }
+    }
 
     CommandResult::success_json(
         &json!({
@@ -789,7 +1650,13 @@ pub fn run_gc_db_cleanup(
     };
 
     if !dry_run {
-        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE); VACUUM;");
+        if let Err(error) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE); VACUUM;") {
+            return CommandResult::failure(
+                1,
+                format!("database cleanup failed: {error}"),
+                RouteUsed::Local,
+            );
+        }
     }
 
     CommandResult::success_json(
@@ -804,10 +1671,7 @@ pub fn run_gc_db_cleanup(
 
 // ===== 6. Doctor 子命令 =====
 
-pub fn run_doctor(
-    runtime: &RuntimeOptions,
-    add_defender_exclusion: bool,
-) -> CommandResult {
+pub fn run_doctor(runtime: &RuntimeOptions, add_defender_exclusion: bool) -> CommandResult {
     let db_path = &runtime.db_path;
     let exists = db_path.exists();
     let db_size = if exists {
@@ -816,7 +1680,17 @@ pub fn run_doctor(
         0
     };
 
-    let conn_ok = runtime.open_local_db().is_ok();
+    let conn_ok = runtime
+        .open_local_db()
+        .map(|conn| {
+            conn.query_row(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'workspaces'",
+                [],
+                |_row| Ok(()),
+            )
+            .is_ok()
+        })
+        .unwrap_or(false);
 
     if add_defender_exclusion {
         #[cfg(target_os = "windows")]
@@ -827,36 +1701,45 @@ pub fn run_doctor(
                 .status();
 
             let success = status.map(|s| s.success()).unwrap_or(false);
-            return CommandResult::success_json(
-                &json!({
-                    "defender_exclusion_added": success,
-                    "target_path": db_path.to_string_lossy()
-                }),
-                RouteUsed::Local,
-            );
+            return if success {
+                CommandResult::success_json(
+                    &json!({ "defender_exclusion_added": true, "target_path": db_path.to_string_lossy() }),
+                    RouteUsed::Local,
+                )
+            } else {
+                CommandResult::failure(
+                    1,
+                    "failed to add Windows Defender exclusion".to_string(),
+                    RouteUsed::Local,
+                )
+            };
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            return CommandResult::success_json(
-                &json!({
-                    "defender_exclusion_added": false,
-                    "message": "Windows Defender exclusion is only applicable on Windows OS."
-                }),
+            return CommandResult::failure(
+                2,
+                "Windows Defender exclusion is only applicable on Windows OS.".to_string(),
                 RouteUsed::Local,
             );
         }
     }
 
+    if !exists || !conn_ok {
+        return CommandResult::failure(
+            1,
+            format!(
+                "doctor failed: db_exists={}, db_connection_ok={}, db_path={}",
+                exists,
+                conn_ok,
+                db_path.display()
+            ),
+            RouteUsed::Local,
+        );
+    }
     CommandResult::success_json(
-        &json!({
-            "doctor": "passed",
-            "db_path": db_path.to_string_lossy(),
-            "db_exists": exists,
-            "db_size_bytes": db_size,
-            "db_connection_ok": conn_ok,
-            "platform": std::env::consts::OS
-        }),
+        &json!({ "doctor": "passed", "db_path": db_path.to_string_lossy(), "db_exists": true,
+                 "db_size_bytes": db_size, "db_connection_ok": true, "platform": std::env::consts::OS }),
         RouteUsed::Local,
     )
 }

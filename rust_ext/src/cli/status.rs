@@ -289,7 +289,7 @@ fn scan_directory(root: &Path, current: &Path, patterns: &[String], files: &mut 
     }
 }
 
-fn load_ignore_patterns(workspace_root: &Path) -> Vec<String> {
+pub(crate) fn load_ignore_patterns(workspace_root: &Path) -> Vec<String> {
     let mut patterns: Vec<String> = DEFAULT_IGNORE_PATTERNS
         .iter()
         .map(|pattern| (*pattern).to_string())
@@ -304,7 +304,7 @@ fn load_ignore_patterns(workspace_root: &Path) -> Vec<String> {
     patterns
 }
 
-fn should_ignore(rel_path: &str, is_dir: bool, patterns: &[String]) -> bool {
+pub(crate) fn should_ignore(rel_path: &str, is_dir: bool, patterns: &[String]) -> bool {
     let path_parts: Vec<&str> = rel_path.split('/').collect();
     for pattern in patterns {
         let match_dir_only = pattern.ends_with('/');
