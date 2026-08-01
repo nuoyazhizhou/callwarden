@@ -37,6 +37,7 @@ from callwarden.server.agent_watcher import (
     _AgentChangeHandler,
     run_agent_watcher_loop,
     HAS_WATCHDOG,
+    HAS_RUST_WATCHER,
     _get_canonicalize_fn,
 )
 
@@ -427,6 +428,11 @@ class TestAgentChangeHandlerDebounce:
 class TestAgentWatcherStartStop:
     """AgentWatcher.start / stop 测试（mock Observer）。"""
 
+    @pytest.fixture(autouse=True)
+    def disable_rust_backend(self, monkeypatch):
+        # 这些测试专门验证 watchdog fallback；Rust backend 另有独立测试。
+        monkeypatch.setattr("callwarden.server.agent_watcher.HAS_RUST_WATCHER", False)
+
     def test_start_initializes_observer(self, tmp_path):
         """start 创建并启动 Observer。"""
         watcher, _, _ = _make_watcher(tmp_path)
@@ -490,6 +496,10 @@ class TestAgentWatcherStartStop:
 class TestRunAgentWatcherLoop:
     """run_agent_watcher_loop 主循环测试。"""
 
+    @pytest.fixture(autouse=True)
+    def disable_rust_backend(self, monkeypatch):
+        monkeypatch.setattr("callwarden.server.agent_watcher.HAS_RUST_WATCHER", False)
+
     def test_loop_exits_on_stop_event(self, tmp_path):
         """stop_event 设置后 loop 退出。"""
         session = _make_agent_session_with_epoch()
@@ -524,7 +534,8 @@ class TestRunAgentWatcherLoop:
         rpc = _make_mock_daemon_rpc()
         stop_event = threading.Event()
 
-        with patch("callwarden.server.agent_watcher.HAS_WATCHDOG", False):
+        with patch("callwarden.server.agent_watcher.HAS_WATCHDOG", False), \
+             patch("callwarden.server.agent_watcher.HAS_RUST_WATCHER", False):
             result = run_agent_watcher_loop(
                 agent_session=session,
                 daemon_rpc_client=rpc,
@@ -534,6 +545,50 @@ class TestRunAgentWatcherLoop:
                 stop_event=stop_event,
             )
             assert result == 2
+
+
+class TestRustAgentWatcher:
+    """Rust notify adapter 的 agent 入口回归。"""
+
+    def test_rust_events_use_existing_refresh_delete_chain(self, tmp_path, monkeypatch):
+        watcher, _session, rpc = _make_watcher(tmp_path)
+        monkeypatch.setattr("callwarden.server.agent_watcher.HAS_RUST_WATCHER", True)
+        watcher._process_rust_events([
+            {"kind": "modified", "path": str(tmp_path / "a.py")},
+            {"kind": "removed", "path": str(tmp_path / "b.py")},
+        ])
+        # a.py 不存在，不会误读；删除事件仍必须发送 delete RPC。
+        assert rpc.call.call_count == 1
+        assert rpc.call.call_args.args[0] == "workspace.file.delete"
+
+    def test_rust_start_does_not_require_watchdog(self, tmp_path, monkeypatch):
+        class FakeRustWatcher:
+            def __init__(self, *args, **kwargs):
+                self.stopped = False
+
+            def start(self):
+                return None
+
+            def poll_events(self):
+                return []
+
+            def flush(self):
+                return []
+
+            def stop(self):
+                self.stopped = True
+
+        monkeypatch.setattr("callwarden.server.agent_watcher.HAS_RUST_WATCHER", True)
+        monkeypatch.setattr(
+            "callwarden.server.agent_watcher.PyDebouncedFileWatcher",
+            FakeRustWatcher,
+        )
+        monkeypatch.setattr("callwarden.server.agent_watcher.HAS_WATCHDOG", False)
+        watcher, _session, _rpc = _make_watcher(tmp_path)
+        assert watcher.start() is True
+        assert watcher.is_running is True
+        watcher.stop()
+        assert watcher.is_running is False
 
 
 if __name__ == "__main__":

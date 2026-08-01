@@ -45,6 +45,14 @@ except ImportError:
     Observer = None
     FileSystemEventHandler = object
 
+# Rust notify watcher 是 agent 的首选实现；watchdog 仅作为兼容性降级。
+try:
+    from callwarden_core import PyDebouncedFileWatcher  # type: ignore
+    HAS_RUST_WATCHER = True
+except ImportError:
+    PyDebouncedFileWatcher = None  # type: ignore
+    HAS_RUST_WATCHER = False
+
 # 延迟导入 canonicalize_source_py（Rust 扩展可能未编译）
 def _get_canonicalize_fn():
     try:
@@ -113,6 +121,9 @@ class AgentWatcher:
 
         self._observer: Optional[Any] = None
         self._handler: Optional["_AgentChangeHandler"] = None
+        self._rust_watcher: Optional[Any] = None
+        self._rust_poll_thread: Optional[threading.Thread] = None
+        self._rust_poll_stop = threading.Event()
         self._lock = threading.Lock()
         self._running = False
         # 重连串行化：避免 watchdog 多线程同时触发 reconnect
@@ -140,16 +151,49 @@ class AgentWatcher:
         Raises:
             RuntimeError: watch_dir 不存在
         """
-        if not HAS_WATCHDOG:
-            logger.error("watchdog 未安装，agent watcher 无法启动")
-            return False
-
         if self._running:
             logger.warning("agent watcher 已在运行")
             return True
 
         if not os.path.isdir(self.watch_dir):
             raise RuntimeError(f"watch_dir 不存在：{self.watch_dir}")
+
+        if HAS_RUST_WATCHER:
+            try:
+                rust_exts = [ext.lstrip(".") for ext in self.supported_exts if ext]
+                self._rust_watcher = PyDebouncedFileWatcher(
+                    self.watch_dir,
+                    extensions=rust_exts,
+                    debounce_ms=max(1, int(self.debounce_time * 1000)),
+                )
+                self._rust_watcher.start()
+                self._rust_poll_stop.clear()
+                self._rust_poll_thread = threading.Thread(
+                    target=self._rust_poll_loop,
+                    name="cw-agent-rust-watcher",
+                    daemon=True,
+                )
+                self._rust_poll_thread.start()
+                with self._lock:
+                    self._running = True
+                logger.info(
+                    "agent Rust watcher 启动：dir=%s ws=%s session=%s",
+                    self.watch_dir,
+                    self.workspace_instance_id,
+                    self.agent_session.session_id,
+                )
+                return True
+            except Exception as e:
+                logger.warning("Rust watcher 启动失败，回退 watchdog：%s", e)
+                self._rust_watcher = None
+                self._rust_poll_stop.set()
+                if self._rust_poll_thread is not None:
+                    self._rust_poll_thread.join(timeout=2.0)
+                    self._rust_poll_thread = None
+
+        if not HAS_WATCHDOG:
+            logger.error("watchdog 未安装且 Rust watcher 不可用，agent watcher 无法启动")
+            return False
 
         self._handler = _AgentChangeHandler(
             agent_watcher=self,
@@ -177,6 +221,22 @@ class AgentWatcher:
         if not self._running:
             return
 
+        if self._rust_watcher is not None:
+            # 先取出 debounce 窗口内剩余事件，再停止 notify 后台线程。
+            try:
+                self._process_rust_events(self._rust_watcher.flush())
+            except Exception as e:
+                logger.warning("Rust watcher flush 失败：%s", e)
+            self._rust_poll_stop.set()
+            if self._rust_poll_thread is not None:
+                self._rust_poll_thread.join(timeout=2.0)
+                self._rust_poll_thread = None
+            try:
+                self._rust_watcher.stop()
+            except Exception:
+                pass
+            self._rust_watcher = None
+
         if self._observer:
             self._observer.stop()
             self._observer.join(timeout=5.0)
@@ -189,6 +249,46 @@ class AgentWatcher:
         with self._lock:
             self._running = False
         logger.info("agent watcher 已停止")
+
+    def _rust_poll_loop(self) -> None:
+        """轮询 Rust notify watcher，并把事件送入现有 RPC 处理链。"""
+        while not self._rust_poll_stop.is_set():
+            try:
+                events = self._rust_watcher.poll_events() if self._rust_watcher else []
+                if events:
+                    self._process_rust_events(events)
+                else:
+                    self._rust_poll_stop.wait(timeout=0.05)
+            except Exception as e:
+                logger.error("Rust watcher poll 失败：%s", e)
+                self._rust_poll_stop.wait(timeout=0.5)
+
+    def _process_rust_events(self, events) -> None:
+        """处理 Rust watcher 已防抖/合并的事件。"""
+        for event in events or []:
+            kind = event.get("kind", "")
+            path = event.get("path") or ""
+            from_path = event.get("from_path")
+            to_path = event.get("to_path")
+            try:
+                if kind == "renamed":
+                    if from_path and self._is_supported(from_path):
+                        self.handle_file_delete(from_path)
+                    if to_path and self._is_supported(to_path) and os.path.isfile(to_path):
+                        self.handle_file_change(to_path)
+                elif kind in ("created", "modified"):
+                    if path and os.path.isfile(path):
+                        self.handle_file_change(path)
+                elif kind == "removed" and path:
+                    self.handle_file_delete(path)
+            except Exception as e:
+                logger.error("处理 Rust watcher 事件失败 %s：%s", path, e)
+
+    def _is_supported(self, path: str) -> bool:
+        """判断事件路径是否属于 agent 支持的源码扩展名。"""
+        if not path:
+            return False
+        return os.path.splitext(path)[1].lower() in self.supported_exts
 
     def join(self, timeout: Optional[float] = None) -> None:
         """阻塞等待 watcher 退出（用于 systemd 优雅停止）。"""
@@ -557,8 +657,8 @@ def run_agent_watcher_loop(
     Returns:
         0 成功；非 0 失败
     """
-    if not HAS_WATCHDOG:
-        logger.error("watchdog 未安装，无法启动 agent watcher")
+    if not HAS_RUST_WATCHER and not HAS_WATCHDOG:
+        logger.error("Rust watcher 与 watchdog 均未安装，无法启动 agent watcher")
         return 2
 
     watcher = AgentWatcher(
