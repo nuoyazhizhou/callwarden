@@ -2445,6 +2445,18 @@ class CodeGraphBase:
 
     def _init_schema(self):
         """初始化数据库 Schema，支持版本化自动迁移（保留数据）"""
+        # Rust 生产迁移优先：DDL/关键兼容列/索引在一个 BEGIN IMMEDIATE
+        # 事务内执行；扩展未安装或显式回滚时继续使用 Python 真相源。
+        if self.db_path and not self.is_feature_rolled_back("sqlite_schema_migration"):
+            try:
+                from callwarden_core import sqlite_migrate_schema
+                sqlite_migrate_schema(self.db_path)
+            except ImportError:
+                pass
+            except Exception:
+                # 保持旧安装可启动，但不吞掉 Rust 的错误到业务层；Python
+                # migration 会再次校验并在失败时抛出原始异常。
+                pass
         # 确保 schema_version 表存在
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS schema_version (

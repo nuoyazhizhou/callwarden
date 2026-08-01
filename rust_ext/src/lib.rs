@@ -1740,8 +1740,9 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     // T-1783751519227-18d8: 输入规范化入口（BOM 剥离 + 编码检测 + CRLF→LF）
     m.add_function(wrap_pyfunction!(canonicalize_source_py, m)?)?;
-    // Phase 1-1: SQLite 只读查询 API（schema_version，与 Python _get_current_version 行为一致）
+    // Phase 1-1/2: SQLite schema_version 查询与 Rust schema migration
     m.add_function(wrap_pyfunction!(sqlite_query::sqlite_query_schema_version, m)?)?;
+    m.add_function(wrap_pyfunction!(sqlite_query::sqlite_migrate_schema, m)?)?;
     // Phase 1-2: CAS 只读查询 API（compute_cas_key_v1 纯函数 + lookup/get_state/count_files/get_file_generation 只读查询）
     m.add_function(wrap_pyfunction!(cas_query::compute_cas_key_v1, m)?)?;
     m.add_function(wrap_pyfunction!(cas_query::compute_symbol_content_hash, m)?)?;
