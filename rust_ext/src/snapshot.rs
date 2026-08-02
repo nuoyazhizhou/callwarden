@@ -211,10 +211,7 @@ impl SnapshotManager {
         drop(current_guard);
         // 再查 history
         let history = self.history.lock().unwrap();
-        history
-            .iter()
-            .find(|s| s.generation == generation)
-            .cloned()
+        history.iter().find(|s| s.generation == generation).cloned()
     }
 
     /// 列出所有保留的 generation 号（current + history，最新在前）
@@ -342,7 +339,10 @@ impl SnapshotManager {
     /// 当前 snapshot 的 generation + source_db_path（供 daemon query.stats 附加元信息）
     pub fn current_meta(&self) -> Option<(Generation, String)> {
         let guard = self.current.load();
-        guard.as_ref().as_ref().map(|snap| (snap.generation, snap.source_db_path.clone()))
+        guard
+            .as_ref()
+            .as_ref()
+            .map(|snap| (snap.generation, snap.source_db_path.clone()))
     }
 
     /// 当前 snapshot 的稳定只读 DB 路径。
@@ -495,7 +495,12 @@ impl PySnapshotManager {
         snapshot_id: Option<String>,
         workspace_id: i64,
     ) -> PyResult<(Generation, usize, usize)> {
-        self.inner.build_and_publish_blocking(db_path, workspace_id, build_context_hash, snapshot_id)
+        self.inner.build_and_publish_blocking(
+            db_path,
+            workspace_id,
+            build_context_hash,
+            snapshot_id,
+        )
     }
 
     /// GC 历史 generations，保留最近 `keep_last` 个（不含 current）。
@@ -640,8 +645,14 @@ impl PySnapshotManager {
         if let Some(symbols) = store.symbols_table() {
             dict.set_item("symbol_count", symbols.by_id.len())?;
             dict.set_item("qname_index_size", symbols.by_qname_sorted_ids.len())?;
-            dict.set_item("simple_name_index_size", symbols.by_simple_name_sorted_ids.len())?;
-            dict.set_item("file_index_size", symbols.file_paths_offsets.len().saturating_sub(1))?;
+            dict.set_item(
+                "simple_name_index_size",
+                symbols.by_simple_name_sorted_ids.len(),
+            )?;
+            dict.set_item(
+                "file_index_size",
+                symbols.file_paths_offsets.len().saturating_sub(1),
+            )?;
             dict.set_item("name_pool_size", symbols.name_pool.len())?;
             dict.set_item("qname_pool_size", symbols.qname_pool.len())?;
             dict.set_item("module_pool_size", symbols.module_pool.len())?;
@@ -659,14 +670,24 @@ impl PySnapshotManager {
             dict.set_item("search_entry_count", 0)?;
         }
         if let Some(calls) = store.call_graph() {
-            let resolved = calls.forward_edges.iter().filter(|e| e.callee_id != 0).count();
+            let resolved = calls
+                .forward_edges
+                .iter()
+                .filter(|e| e.callee_id != 0)
+                .count();
             dict.set_item("edge_count", calls.forward_edges.len())?;
             dict.set_item("resolved_edge_count", resolved)?;
             dict.set_item("forward_offsets_size", calls.forward_offsets.len())?;
             dict.set_item("backward_offsets_size", calls.backward_offsets.len())?;
             dict.set_item("callee_name_pool_size", calls.callee_names_pool.len())?;
-            dict.set_item("callee_name_count", calls.callee_names_offsets.len().saturating_sub(1))?;
-            dict.set_item("callee_name_to_idx_size", calls.callee_name_sorted_idxs.len())?;
+            dict.set_item(
+                "callee_name_count",
+                calls.callee_names_offsets.len().saturating_sub(1),
+            )?;
+            dict.set_item(
+                "callee_name_to_idx_size",
+                calls.callee_name_sorted_idxs.len(),
+            )?;
             dict.set_item("root_count", calls.roots.len())?;
         } else {
             dict.set_item("edge_count", 0)?;
@@ -913,7 +934,8 @@ fn wal_checkpoint_passive(db_path: &str) -> std::result::Result<(), String> {
         Err(e) => return Err(format!("open {}: {}", db_path, e)),
     };
     // busy_timeout 防止与其他写连接撞锁
-    if let Err(e) = conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA wal_checkpoint(PASSIVE);") {
+    if let Err(e) = conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA wal_checkpoint(PASSIVE);")
+    {
         return Err(format!("wal_checkpoint {}: {}", db_path, e));
     }
     Ok(())

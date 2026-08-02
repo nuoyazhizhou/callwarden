@@ -1192,7 +1192,7 @@ class BuildMixin:
         # P10: 细拆 register 阶段计时（逐文件 SQL: _register_file_db + _get_file_version）
         # Phase 2-6-3: 默认走 Rust batch_register_files 短路（单事务 + 预处理语句）
         # rollback_config 中 feature=rust_batch_register_files 置为 1 时回退 Python 逐文件循环
-        # Rust 失败时 fail-soft 降级到 Python 路径
+        # Rust 扩展缺失时兼容旧安装回退；Rust 已加载但写事务失败必须 fail-closed。
         t_register_start = time.perf_counter()
         rust_registered = False
         if not self.is_feature_rolled_back("rust_batch_register_files"):
@@ -1210,7 +1210,7 @@ class BuildMixin:
                 t_register = time.perf_counter() - t_register_start
 
         if not rust_registered:
-            # Python 逐文件路径（rollback 或 Rust fail-soft 降级）
+            # Python 逐文件路径（仅 rollback 或 Rust 扩展不可用）
             for i, rel_path in enumerate(files, 1):
                 abs_path = os.path.join(self.workspace_root, rel_path)
                 lang = detect_language_from_path(rel_path)
@@ -1965,7 +1965,7 @@ class BuildMixin:
 
         Phase 2-6-1 wire-production：默认走 Rust ``load_file_result_from_db`` 短路。
         rollback_config 中 feature=rust_load_file_result 置为 1 时回退 Python。
-        Rust 失败时 fail-soft 降级到 Python 路径。
+        仅在 Rust 扩展不可用或显式 rollback 时回退 Python；Rust 写事务失败直接抛错。
         只读查询，WAL 模式下与 Python 写连接并发安全。
         """
         if not self.is_feature_rolled_back("rust_load_file_result"):
@@ -1974,7 +1974,7 @@ class BuildMixin:
             )
             if result is not None:
                 return result
-            # Rust 失败 → 降级 Python 路径（fail-soft）
+            # Rust 扩展可用时写路径已经闭合；异常会在 facade 内直接抛出。
         return self._load_file_result_from_db_python(
             file_instance_id, file_version_id, rel_path, abs_path, module_path
         )
@@ -1983,7 +1983,7 @@ class BuildMixin:
         rel_path: str, abs_path: str, module_path: str) -> Optional[Dict]:
         """Rust 短路路径：调用 load_file_result_from_db 从 DB 加载文件结果
 
-        返回 None 表示 Rust 路径失败（调用方应降级到 Python）。
+        返回 None 仅表示 Rust 扩展不可用；Rust 已加载但写事务失败直接抛出。
         成功时返回结果 dict（与 Python 路径格式一致）。
 
         注意：Rust 端返回 None 也可能表示"版本不存在"（正常业务语义）。
@@ -2143,7 +2143,7 @@ class BuildMixin:
                                              only_files: Optional[Set[str]] = None) -> bool:
         """Rust 短路路径：调用 batch_resolve_and_save_calls 处理调用关系 resolve + 写入
 
-        返回 False 表示 Rust 路径失败（调用方应降级到 Python）。
+        返回 False 仅表示 Rust 扩展不可用；Rust 已加载但事务失败会直接抛出。
         成功时返回 True。
 
         数据准备：
@@ -2255,11 +2255,16 @@ class BuildMixin:
                 external_symbols_list,
                 changed_file_instance_ids,
             )
-        except Exception:
-            return False  # Rust 调用异常 → 降级 Python
+        except Exception as exc:
+            raise RuntimeError(
+                f"Rust batch_resolve_and_save_calls 写事务失败，已拒绝 Python 混合回退: {exc}"
+            ) from exc
 
         if not rust_ret.get("success"):
-            return False  # Rust 返回失败 → 降级 Python
+            raise RuntimeError(
+                "Rust batch_resolve_and_save_calls 返回失败，已拒绝 Python 混合回退: "
+                f"{rust_ret.get('error', 'unknown error')}"
+            )
 
         # 6. 打印摘要（与 Python 路径一致）
         total_calls = rust_ret.get("total_calls", 0)
@@ -2866,11 +2871,16 @@ class BuildMixin:
                 files_to_register,
                 skip_version_lookup=force,  # force=True 时跳过 version 查询（对应 force 模式）
             )
-        except Exception:
-            return None  # Rust 调用异常 → 降级 Python
+        except Exception as exc:
+            raise RuntimeError(
+                f"Rust batch_register_files 写事务失败，已拒绝 Python 混合回退: {exc}"
+            ) from exc
 
         if not rust_ret.get("success", False):
-            return None  # Rust 返回失败 → 降级 Python
+            raise RuntimeError(
+                "Rust batch_register_files 返回失败，已拒绝 Python 混合回退: "
+                f"{rust_ret.get('error', 'unknown error')}"
+            )
 
         # ---- Phase 3: 处理 Rust 返回的结果，分发到 to_parse / file_results ----
         results = rust_ret.get("results", [])
@@ -2978,14 +2988,14 @@ class BuildMixin:
 
         Phase 2-4 wire-production：默认走 Rust ``batch_save_file_versions`` 短路。
         rollback_config 中 feature=rust_batch_save_file_versions 置为 1 时回退 Python。
-        Rust 失败时 fail-soft 降级到 Python 路径。
+        仅在 Rust 扩展不可用或显式 rollback 时回退 Python；Rust 写事务失败直接抛错。
         """
         # Phase 2-4 wire-production: Rust 短路
         if not self.is_feature_rolled_back("rust_batch_save_file_versions"):
             rust_version_id = self._save_file_version_via_rust(file_instance_id, result)
             if rust_version_id is not None:
                 return rust_version_id
-            # Rust 失败 → 降级 Python 路径（fail-soft）
+            # Rust 扩展可用时写路径已经闭合；异常会在 facade 内直接抛出。
 
         # Python 降级路径
         return self._save_file_version_python(file_instance_id, result)
@@ -3048,15 +3058,22 @@ class BuildMixin:
 
         try:
             rust_ret = batch_save_file_versions(self.db_path, [file_result])
-        except Exception:
-            return None  # Rust 调用异常 → 降级 Python
+        except Exception as exc:
+            raise RuntimeError(
+                f"Rust batch_save_file_versions 写事务失败，已拒绝 Python 混合回退: {exc}"
+            ) from exc
 
         if not rust_ret.get("success"):
-            return None  # Rust 返回失败 → 降级 Python
+            raise RuntimeError(
+                "Rust batch_save_file_versions 返回失败，已拒绝 Python 混合回退: "
+                f"{rust_ret.get('error', 'unknown error')}"
+            )
 
         results = rust_ret.get("results") or []
         if not results:
-            return None
+            raise RuntimeError(
+                "Rust batch_save_file_versions 未返回 file_version，已拒绝 Python 混合回退"
+            )
 
         single = results[0]
         file_version_id = single["file_version_id"]
@@ -3384,7 +3401,7 @@ class BuildMixin:
 
         Phase 2-6-1 wire-production：默认走 Rust ``compute_and_apply_symbol_diff`` 短路。
         rollback_config 中 feature=rust_compute_symbol_diff 置为 1 时回退 Python。
-        Rust 失败时（含写锁冲突）fail-soft 降级到 Python 路径。
+        仅在 Rust 扩展不可用或显式 rollback 时回退 Python；Rust 写事务失败直接抛错。
 
         事务边界注意：Rust 路径使用独立短连接 + BEGIN IMMEDIATE。
         若 Python 外层事务持有写锁，Rust BEGIN IMMEDIATE 会等待 5s 后失败，
@@ -3393,13 +3410,13 @@ class BuildMixin:
         if not self.is_feature_rolled_back("rust_compute_symbol_diff"):
             if self._compute_and_apply_symbol_diff_via_rust(prev_version_id, curr_version_id):
                 return
-            # Rust 失败 → 降级 Python 路径（fail-soft）
+            # Rust 扩展可用时写路径已经闭合；异常会在 facade 内直接抛出。
         self._compute_and_apply_symbol_diff_python(prev_version_id, curr_version_id)
 
     def _compute_and_apply_symbol_diff_via_rust(self, prev_version_id: int, curr_version_id: int) -> bool:
         """Rust 短路路径：调用 compute_and_apply_symbol_diff 计算并应用符号 diff
 
-        返回 False 表示 Rust 路径失败（调用方应降级到 Python）。
+        返回 False 仅表示 Rust 扩展不可用；Rust 已加载但事务失败会直接抛出。
         成功时返回 True。
 
         事务边界：Rust 使用独立短连接 + BEGIN IMMEDIATE。
@@ -3416,10 +3433,17 @@ class BuildMixin:
                 prev_version_id,
                 curr_version_id,
             )
-        except Exception:
-            return False
+        except Exception as exc:
+            raise RuntimeError(
+                f"Rust compute_and_apply_symbol_diff 写事务失败，已拒绝 Python 混合回退: {exc}"
+            ) from exc
 
-        return rust_ret.get("success", False)
+        if not rust_ret.get("success", False):
+            raise RuntimeError(
+                "Rust compute_and_apply_symbol_diff 返回失败，已拒绝 Python 混合回退: "
+                f"{rust_ret.get('error', 'unknown error')}"
+            )
+        return True
 
     def _compute_and_apply_symbol_diff_python(self, prev_version_id: int, curr_version_id: int):
         """Python 降级路径：原 _compute_and_apply_symbol_diff 实现"""
@@ -3466,13 +3490,13 @@ class BuildMixin:
 
         Phase 2-6 wire-production：默认走 Rust ``batch_save_symbols`` 短路。
         rollback_config 中 feature=rust_batch_save_symbols 置为 1 时回退 Python。
-        Rust 失败时 fail-soft 降级到 Python 路径。
+        仅在 Rust 扩展不可用或显式 rollback 时回退 Python；Rust 写事务失败直接抛错。
         """
         # Phase 2-6 wire-production: Rust 短路
         if not self.is_feature_rolled_back("rust_batch_save_symbols"):
             if self._save_symbols_for_version_via_rust(file_version_id, file_instance_id, result):
                 return
-            # Rust 失败 → 降级 Python 路径（fail-soft）
+            # Rust 扩展可用时写路径已经闭合；异常会在 facade 内直接抛出。
 
         # Python 降级路径
         self._save_symbols_for_version_python(file_version_id, file_instance_id, result)
@@ -3480,7 +3504,7 @@ class BuildMixin:
     def _save_symbols_for_version_via_rust(self, file_version_id: int, file_instance_id: int, result: Dict[str, Any]) -> bool:
         """Rust 短路路径：调用 batch_save_symbols 处理单文件符号写入
 
-        返回 False 表示 Rust 路径失败（调用方应降级到 Python）。
+        返回 False 仅表示 Rust 扩展不可用；Rust 已加载但事务失败会直接抛出。
         成功时返回 True。
 
         与 Python 路径的差异：
@@ -3520,11 +3544,16 @@ class BuildMixin:
                 file_version_id,
                 all_symbols,
             )
-        except Exception:
-            return False  # Rust 调用异常 → 降级 Python
+        except Exception as exc:
+            raise RuntimeError(
+                f"Rust batch_save_symbols 写事务失败，已拒绝 Python 混合回退: {exc}"
+            ) from exc
 
         if not rust_ret.get("success"):
-            return False  # Rust 返回失败 → 降级 Python
+            raise RuntimeError(
+                "Rust batch_save_symbols 返回失败，已拒绝 Python 混合回退: "
+                f"{rust_ret.get('error', 'unknown error')}"
+            )
 
         return True
 
@@ -4259,5 +4288,3 @@ class BuildMixin:
     # --------------------------------------------------------------------
     # 查询接口
     # --------------------------------------------------------------------
-
-

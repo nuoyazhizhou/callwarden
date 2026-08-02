@@ -13,15 +13,46 @@
 //! - busy_timeout=5000（与 Phase 1-1 / 1-2 一致，AGENTS.md 规则 6）
 //! - 短连接：每次调用新建 + 关闭
 //!
-//! 不暴露（仍走 Python）：
-//! - `init_manifest_schema` / `upsert_manifest` / `link_to_snapshot`（写操作）
-//! - Rust `cas_merge::upsert_manifest`（私有，daemon 内部使用，不通过 PyO3 暴露）
+//! 写操作也通过本模块暴露，作为 Python 兼容入口的 Rust 生产实现：
+//! - `manifest_init_schema`：幂等创建 manifest 表和索引
+//! - `manifest_upsert`：单条 manifest 原子 UPSERT
+//! - `manifest_link_to_snapshot`：单条 snapshot 映射原子 UPSERT
+//!
+//! Rust `cas_merge::upsert_manifest` 仍是 daemon 内部实现，不通过 PyO3 暴露。
 
 use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::types::PyList;
 use rusqlite::OpenFlags;
+
+const MANIFEST_SCHEMA_DDL: &str = "
+CREATE TABLE IF NOT EXISTS workspace_manifests (
+    workspace_id INTEGER NOT NULL,
+    rel_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    cas_key TEXT,
+    raw_hash TEXT,
+    source_encoding TEXT DEFAULT 'utf-8',
+    bom_kind TEXT DEFAULT 'none',
+    newline_style TEXT DEFAULT 'lf',
+    file_size INTEGER DEFAULT 0,
+    mtime_ns INTEGER DEFAULT 0,
+    is_dirty INTEGER DEFAULT 0,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (workspace_id, rel_path)
+);
+CREATE TABLE IF NOT EXISTS workspace_snapshot_map (
+    snapshot_id TEXT NOT NULL,
+    rel_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    cas_key TEXT,
+    PRIMARY KEY (snapshot_id, rel_path)
+);
+CREATE INDEX IF NOT EXISTS idx_manifests_hash ON workspace_manifests(content_hash);
+CREATE INDEX IF NOT EXISTS idx_manifests_cas ON workspace_manifests(cas_key);
+CREATE INDEX IF NOT EXISTS idx_manifests_dirty ON workspace_manifests(workspace_id, is_dirty);
+";
 
 /// 打开只读连接的辅助函数（内部使用）
 ///
@@ -41,27 +72,194 @@ fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
     Ok(conn)
 }
 
+/// 打开用于短写事务的连接。
+fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
+    let conn = rusqlite::Connection::open(db_path)
+        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
+    conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+        .map_err(|e| PyIOError::new_err(format!("设置写入模式失败: {}", e)))?;
+    Ok(conn)
+}
+
+fn sqlite_write_error(operation: &str, error: rusqlite::Error) -> PyErr {
+    PyIOError::new_err(format!("{}失败: {}", operation, error))
+}
+
+/// 幂等创建 manifest 相关 schema。
+#[pyfunction]
+pub fn manifest_init_schema(db_path: &str) -> PyResult<()> {
+    let conn = open_readwrite(db_path)?;
+    conn.execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| sqlite_write_error("开始 manifest schema 事务", e))?;
+    if let Err(error) = conn.execute_batch(MANIFEST_SCHEMA_DDL) {
+        let _ = conn.execute_batch("ROLLBACK;");
+        return Err(sqlite_write_error("初始化 manifest schema", error));
+    }
+    conn.execute_batch("COMMIT;")
+        .map_err(|e| sqlite_write_error("提交 manifest schema 事务", e))?;
+    Ok(())
+}
+
+/// 原子写入 workspace manifest。
+#[pyfunction]
+#[allow(clippy::too_many_arguments)]
+pub fn manifest_upsert(
+    db_path: &str,
+    workspace_id: i64,
+    rel_path: &str,
+    content_hash: &str,
+    cas_key: &str,
+    raw_hash: &str,
+    source_encoding: &str,
+    bom_kind: &str,
+    newline_style: &str,
+    file_size: i64,
+    mtime_ns: i64,
+    is_dirty: bool,
+) -> PyResult<()> {
+    let conn = open_readwrite(db_path)?;
+    conn.execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| sqlite_write_error("开始 manifest 写入事务", e))?;
+    let result = conn.execute(
+        "INSERT OR REPLACE INTO workspace_manifests
+         (workspace_id, rel_path, content_hash, cas_key, raw_hash,
+          source_encoding, bom_kind, newline_style, file_size, mtime_ns,
+          is_dirty, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        rusqlite::params![
+            workspace_id,
+            rel_path,
+            content_hash,
+            cas_key,
+            raw_hash,
+            source_encoding,
+            bom_kind,
+            newline_style,
+            file_size,
+            mtime_ns,
+            i64::from(is_dirty),
+            unix_timestamp(),
+        ],
+    );
+    if let Err(error) = result {
+        let _ = conn.execute_batch("ROLLBACK;");
+        return Err(sqlite_write_error("写入 manifest", error));
+    }
+    conn.execute_batch("COMMIT;")
+        .map_err(|e| sqlite_write_error("提交 manifest 写入事务", e))?;
+    Ok(())
+}
+
+/// 原子写入 snapshot 到文件的映射。
+#[pyfunction]
+pub fn manifest_link_to_snapshot(
+    db_path: &str,
+    snapshot_id: &str,
+    rel_path: &str,
+    content_hash: &str,
+    cas_key: &str,
+) -> PyResult<()> {
+    let conn = open_readwrite(db_path)?;
+    conn.execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| sqlite_write_error("开始 snapshot 映射事务", e))?;
+    let result = conn.execute(
+        "INSERT OR REPLACE INTO workspace_snapshot_map
+         (snapshot_id, rel_path, content_hash, cas_key)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![snapshot_id, rel_path, content_hash, cas_key],
+    );
+    if let Err(error) = result {
+        let _ = conn.execute_batch("ROLLBACK;");
+        return Err(sqlite_write_error("写入 snapshot 映射", error));
+    }
+    conn.execute_batch("COMMIT;")
+        .map_err(|e| sqlite_write_error("提交 snapshot 映射事务", e))?;
+    Ok(())
+}
+
+fn unix_timestamp() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
 /// 从一行结果构建 manifest dict（12 字段，与 Python SELECT * 顺序一致）
 ///
 /// 字段顺序对齐 db_workspace_manifest.py:upsert_manifest 的 INSERT 列序：
 /// workspace_id / rel_path / content_hash / cas_key / raw_hash /
 /// source_encoding / bom_kind / newline_style / file_size / mtime_ns /
 /// is_dirty / updated_at
-fn manifest_row_to_dict<'py>(py: Python<'py>, row: &rusqlite::Row<'_>) -> PyResult<Bound<'py, PyDict>> {
+fn manifest_row_to_dict<'py>(
+    py: Python<'py>,
+    row: &rusqlite::Row<'_>,
+) -> PyResult<Bound<'py, PyDict>> {
     let dict = PyDict::new(py);
-    dict.set_item("workspace_id", row.get::<_, i64>(0).map_err(|e| PyIOError::new_err(format!("字段读取失败 workspace_id: {}", e)))?)?;
-    dict.set_item("rel_path", row.get::<_, String>(1).map_err(|e| PyIOError::new_err(format!("字段读取失败 rel_path: {}", e)))?)?;
-    dict.set_item("content_hash", row.get::<_, String>(2).map_err(|e| PyIOError::new_err(format!("字段读取失败 content_hash: {}", e)))?)?;
+    dict.set_item(
+        "workspace_id",
+        row.get::<_, i64>(0)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 workspace_id: {}", e)))?,
+    )?;
+    dict.set_item(
+        "rel_path",
+        row.get::<_, String>(1)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 rel_path: {}", e)))?,
+    )?;
+    dict.set_item(
+        "content_hash",
+        row.get::<_, String>(2)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 content_hash: {}", e)))?,
+    )?;
     // cas_key / raw_hash 允许 NULL，使用 Option<String>
-    dict.set_item("cas_key", row.get::<_, Option<String>>(3).map_err(|e| PyIOError::new_err(format!("字段读取失败 cas_key: {}", e)))?.unwrap_or_default())?;
-    dict.set_item("raw_hash", row.get::<_, Option<String>>(4).map_err(|e| PyIOError::new_err(format!("字段读取失败 raw_hash: {}", e)))?.unwrap_or_default())?;
-    dict.set_item("source_encoding", row.get::<_, String>(5).map_err(|e| PyIOError::new_err(format!("字段读取失败 source_encoding: {}", e)))?)?;
-    dict.set_item("bom_kind", row.get::<_, String>(6).map_err(|e| PyIOError::new_err(format!("字段读取失败 bom_kind: {}", e)))?)?;
-    dict.set_item("newline_style", row.get::<_, String>(7).map_err(|e| PyIOError::new_err(format!("字段读取失败 newline_style: {}", e)))?)?;
-    dict.set_item("file_size", row.get::<_, i64>(8).map_err(|e| PyIOError::new_err(format!("字段读取失败 file_size: {}", e)))?)?;
-    dict.set_item("mtime_ns", row.get::<_, i64>(9).map_err(|e| PyIOError::new_err(format!("字段读取失败 mtime_ns: {}", e)))?)?;
-    dict.set_item("is_dirty", row.get::<_, i64>(10).map_err(|e| PyIOError::new_err(format!("字段读取失败 is_dirty: {}", e)))?)?;
-    dict.set_item("updated_at", row.get::<_, f64>(11).map_err(|e| PyIOError::new_err(format!("字段读取失败 updated_at: {}", e)))?)?;
+    dict.set_item(
+        "cas_key",
+        row.get::<_, Option<String>>(3)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 cas_key: {}", e)))?
+            .unwrap_or_default(),
+    )?;
+    dict.set_item(
+        "raw_hash",
+        row.get::<_, Option<String>>(4)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 raw_hash: {}", e)))?
+            .unwrap_or_default(),
+    )?;
+    dict.set_item(
+        "source_encoding",
+        row.get::<_, String>(5)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 source_encoding: {}", e)))?,
+    )?;
+    dict.set_item(
+        "bom_kind",
+        row.get::<_, String>(6)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 bom_kind: {}", e)))?,
+    )?;
+    dict.set_item(
+        "newline_style",
+        row.get::<_, String>(7)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 newline_style: {}", e)))?,
+    )?;
+    dict.set_item(
+        "file_size",
+        row.get::<_, i64>(8)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 file_size: {}", e)))?,
+    )?;
+    dict.set_item(
+        "mtime_ns",
+        row.get::<_, i64>(9)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 mtime_ns: {}", e)))?,
+    )?;
+    dict.set_item(
+        "is_dirty",
+        row.get::<_, i64>(10)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 is_dirty: {}", e)))?,
+    )?;
+    dict.set_item(
+        "updated_at",
+        row.get::<_, f64>(11)
+            .map_err(|e| PyIOError::new_err(format!("字段读取失败 updated_at: {}", e)))?,
+    )?;
     Ok(dict)
 }
 
@@ -283,6 +481,9 @@ pub fn manifest_verify_raw_hash(
 
 /// 模块注册入口（供 lib.rs 调用）
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(manifest_init_schema, m)?)?;
+    m.add_function(wrap_pyfunction!(manifest_upsert, m)?)?;
+    m.add_function(wrap_pyfunction!(manifest_link_to_snapshot, m)?)?;
     m.add_function(wrap_pyfunction!(manifest_get, m)?)?;
     m.add_function(wrap_pyfunction!(manifest_list, m)?)?;
     m.add_function(wrap_pyfunction!(manifest_count, m)?)?;
@@ -349,7 +550,14 @@ mod tests {
              source_encoding, bom_kind, newline_style, file_size, mtime_ns, \
              is_dirty, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, 'utf-8', 'none', 'lf', 100, 0, ?6, 1000.0)",
-            params![workspace_id, rel_path, content_hash, cas_key, raw_hash, is_dirty],
+            params![
+                workspace_id,
+                rel_path,
+                content_hash,
+                cas_key,
+                raw_hash,
+                is_dirty
+            ],
         )
         .unwrap();
     }
@@ -493,7 +701,10 @@ mod tests {
                 |row| row.get(0),
             )
             .ok();
-        assert_eq!(count, None, "表不存在时 query_row 返回 Err，应被转为 None → 0");
+        assert_eq!(
+            count, None,
+            "表不存在时 query_row 返回 Err，应被转为 None → 0"
+        );
     }
 
     #[test]
@@ -504,9 +715,7 @@ mod tests {
         let mut stmt = conn
             .prepare("SELECT snapshot_id, rel_path, content_hash, cas_key FROM workspace_snapshot_map WHERE snapshot_id = ?1")
             .unwrap();
-        let rows = stmt
-            .query_map(["nonexistent"], |_| Ok(()))
-            .unwrap();
+        let rows = stmt.query_map(["nonexistent"], |_| Ok(())).unwrap();
         let count = rows.count();
         assert_eq!(count, 0, "snapshot 不存在应返回 0 行");
     }

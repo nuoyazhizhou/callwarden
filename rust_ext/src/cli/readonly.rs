@@ -47,13 +47,8 @@ pub const READONLY_WORKSPACE_ACTIONS: &[&str] = &["list"];
 /// git log/show/stats/check-task/destructive-log 只读；git import/check-push 写
 ///
 /// 对齐 Python `_READONLY_GIT_ACTIONS` (L78-79)
-pub const READONLY_GIT_ACTIONS: &[&str] = &[
-    "log",
-    "show",
-    "stats",
-    "check-task",
-    "destructive-log",
-];
+pub const READONLY_GIT_ACTIONS: &[&str] =
+    &["log", "show", "stats", "check-task", "destructive-log"];
 
 /// semgrep list/stats 只读；semgrep scan 视为写（含 --save 选项）
 ///
@@ -351,14 +346,22 @@ mod tests {
     #[test]
     fn test_always_readonly_analysis_cmds() {
         for cmd in ALWAYS_READONLY_ANALYSIS_CMDS {
-            assert!(is_readonly_command(cmd, &argv(&[])), "{} should be readonly", cmd);
+            assert!(
+                is_readonly_command(cmd, &argv(&[])),
+                "{} should be readonly",
+                cmd
+            );
         }
     }
 
     #[test]
     fn test_always_readonly_query_cmds() {
         for cmd in ALWAYS_READONLY_QUERY_CMDS {
-            assert!(is_readonly_command(cmd, &argv(&[])), "{} should be readonly", cmd);
+            assert!(
+                is_readonly_command(cmd, &argv(&[])),
+                "{} should be readonly",
+                cmd
+            );
         }
     }
 

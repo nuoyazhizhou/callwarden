@@ -451,6 +451,31 @@ const METHODS: &[MethodInfo] = &[
         admin_only: false,
     },
     MethodInfo {
+        method: "query.file",
+        description: "文件符号查询",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "query.symbol_location",
+        description: "文件内符号定位",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "query.grep",
+        description: "带符号上下文的文本搜索",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "query.issues",
+        description: "符号问题查询",
+        admin_only: false,
+    },
+    MethodInfo {
+        method: "query.tests",
+        description: "符号测试关联查询",
+        admin_only: false,
+    },
+    MethodInfo {
         method: "query.call_chain_down",
         description: "向下调用链",
         admin_only: false,
@@ -528,7 +553,7 @@ const METHODS: &[MethodInfo] = &[
     MethodInfo {
         method: "build_context.register",
         description: "注册 build context（workspace owner）",
-        admin_only: false,
+        admin_only: true,
     },
     MethodInfo {
         method: "build_context.list",
@@ -543,12 +568,12 @@ const METHODS: &[MethodInfo] = &[
     MethodInfo {
         method: "build_context.set_active",
         description: "切换激活 build context（workspace owner）",
-        admin_only: false,
+        admin_only: true,
     },
     MethodInfo {
         method: "build_context.delete",
         description: "删除 build context（workspace owner）",
-        admin_only: false,
+        admin_only: true,
     },
     MethodInfo {
         method: "resolved_edges.store",

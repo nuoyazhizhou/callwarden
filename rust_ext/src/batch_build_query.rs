@@ -355,12 +355,8 @@ pub fn batch_save_symbols<'py>(
         conn.execute_batch("BEGIN IMMEDIATE;")
             .map_err(|e| format!("BEGIN IMMEDIATE 失败: {}", e))?;
 
-        let inner_result = batch_save_symbols_inner(
-            &conn,
-            file_instance_id,
-            file_version_id,
-            &symbols_info,
-        );
+        let inner_result =
+            batch_save_symbols_inner(&conn, file_instance_id, file_version_id, &symbols_info);
 
         match inner_result {
             Ok(r) => {
@@ -380,9 +376,15 @@ pub fn batch_save_symbols<'py>(
         Ok(r) => {
             dict.set_item("success", true)?;
             dict.set_item("symbol_contents_inserted", r.symbol_contents_inserted)?;
-            dict.set_item("symbol_contents_comment_updated", r.symbol_contents_comment_updated)?;
+            dict.set_item(
+                "symbol_contents_comment_updated",
+                r.symbol_contents_comment_updated,
+            )?;
             dict.set_item("symbols_inserted", r.symbols_inserted)?;
-            dict.set_item("file_symbol_versions_inserted", r.file_symbol_versions_inserted)?;
+            dict.set_item(
+                "file_symbol_versions_inserted",
+                r.file_symbol_versions_inserted,
+            )?;
             dict.set_item("old_calls_deleted", r.old_calls_deleted)?;
             dict.set_item("old_symbols_deleted", r.old_symbols_deleted)?;
             dict.set_item("error", ())?;

@@ -127,12 +127,8 @@ pub fn hash_coeffs() -> &'static [(u32, u32)] {
                 let a_bytes = &h[..4];
                 let b_bytes = &h[4..8];
                 // int.from_bytes(h[:4], "little") — 小端序
-                let a_raw = u32::from_le_bytes([
-                    a_bytes[0], a_bytes[1], a_bytes[2], a_bytes[3],
-                ]);
-                let b_raw = u32::from_le_bytes([
-                    b_bytes[0], b_bytes[1], b_bytes[2], b_bytes[3],
-                ]);
+                let a_raw = u32::from_le_bytes([a_bytes[0], a_bytes[1], a_bytes[2], a_bytes[3]]);
+                let b_raw = u32::from_le_bytes([b_bytes[0], b_bytes[1], b_bytes[2], b_bytes[3]]);
                 // a 强制奇数（与 2^32 互质），截断 32 位
                 let a = a_raw | 1;
                 let b = b_raw;
@@ -269,7 +265,8 @@ pub fn py_minhash_signature<'py>(
 ) -> PyResult<Bound<'py, PyList>> {
     if num_perm != NUM_PERM {
         return Err(pyo3::exceptions::PyValueError::new_err(format!(
-            "num_perm must be {} (got {})", NUM_PERM, num_perm
+            "num_perm must be {} (got {})",
+            NUM_PERM, num_perm
         )));
     }
 
@@ -339,15 +336,14 @@ pub fn py_batch_minhash_signatures<'py>(
     let signatures: Vec<Vec<u64>> = token_lists
         .par_iter()
         .map(|tokens| {
-            let hashes: Vec<u32> = tokens.iter()
-                .map(|t| stable_token_hash_str(t))
-                .collect();
+            let hashes: Vec<u32> = tokens.iter().map(|t| stable_token_hash_str(t)).collect();
             minhash_signature(&hashes)
         })
         .collect();
 
     // 转为 List[List[int]]
-    let inner_lists: Vec<Bound<'py, PyList>> = signatures.iter()
+    let inner_lists: Vec<Bound<'py, PyList>> = signatures
+        .iter()
         .map(|sig| PyList::new(py, sig.clone()).unwrap())
         .collect();
     PyList::new(py, inner_lists)
@@ -378,10 +374,9 @@ pub fn py_lsh_candidate_pairs<'py>(
             .flat_map(|i| (i + 1..num_symbols).map(move |j| (i, j)))
             .collect();
         // 转为 List[Tuple[int, int]]
-        let py_pairs: Vec<Bound<'py, pyo3::types::PyTuple>> = pairs.iter()
-            .map(|(a, b)| {
-                pyo3::types::PyTuple::new(py, [*a, *b]).unwrap()
-            })
+        let py_pairs: Vec<Bound<'py, pyo3::types::PyTuple>> = pairs
+            .iter()
+            .map(|(a, b)| pyo3::types::PyTuple::new(py, [*a, *b]).unwrap())
             .collect();
         return PyList::new(py, py_pairs);
     }
@@ -415,7 +410,8 @@ pub fn py_lsh_candidate_pairs<'py>(
 
     let pairs: Vec<(usize, usize)> = candidate_pairs.into_iter().collect();
     // 转为 List[Tuple[int, int]]
-    let py_pairs: Vec<Bound<'py, pyo3::types::PyTuple>> = pairs.iter()
+    let py_pairs: Vec<Bound<'py, pyo3::types::PyTuple>> = pairs
+        .iter()
         .map(|(a, b)| pyo3::types::PyTuple::new(py, [*a, *b]).unwrap())
         .collect();
     PyList::new(py, py_pairs)
@@ -490,7 +486,9 @@ fn build_token_set(tokens: &[String]) -> HashSet<String> {
     let mut set = HashSet::with_capacity(tokens.len());
     if tokens.len() >= 3 {
         for i in 0..tokens.len() - 2 {
-            let mut buf = String::with_capacity(tokens[i].len() + 1 + tokens[i + 1].len() + 1 + tokens[i + 2].len());
+            let mut buf = String::with_capacity(
+                tokens[i].len() + 1 + tokens[i + 1].len() + 1 + tokens[i + 2].len(),
+            );
             buf.push_str(&tokens[i]);
             buf.push('\x1f');
             buf.push_str(&tokens[i + 1]);
@@ -514,7 +512,11 @@ pub fn minhash_jaccard_estimate(sig_a: &[u64], sig_b: &[u64]) -> f64 {
     if sig_a.is_empty() || sig_b.is_empty() || sig_a.len() != sig_b.len() {
         return 0.0;
     }
-    let matches = sig_a.iter().zip(sig_b.iter()).filter(|(a, b)| a == b).count();
+    let matches = sig_a
+        .iter()
+        .zip(sig_b.iter())
+        .filter(|(a, b)| a == b)
+        .count();
     matches as f64 / sig_a.len() as f64
 }
 
@@ -549,10 +551,8 @@ pub fn detect_clones_core(
             sig.clone()
         } else {
             // 将 token_set 转为 token hash 列表
-            let token_hashes: Vec<u32> = token_set
-                .iter()
-                .map(|s| stable_token_hash_str(s))
-                .collect();
+            let token_hashes: Vec<u32> =
+                token_set.iter().map(|s| stable_token_hash_str(s)).collect();
             let sig = minhash_signature(&token_hashes);
             minhash_cache.insert(token_hash.clone(), sig.clone());
             sig
@@ -570,8 +570,14 @@ pub fn detect_clones_core(
     let mut by_token_hash: FxHashMap<String, Vec<usize>> = FxHashMap::default();
     let mut by_content_hash: FxHashMap<String, Vec<usize>> = FxHashMap::default();
     for (idx, m) in sym_meta.iter().enumerate() {
-        by_token_hash.entry(m.token_hash.clone()).or_default().push(idx);
-        by_content_hash.entry(m.symbol_hash.clone()).or_default().push(idx);
+        by_token_hash
+            .entry(m.token_hash.clone())
+            .or_default()
+            .push(idx);
+        by_content_hash
+            .entry(m.symbol_hash.clone())
+            .or_default()
+            .push(idx);
     }
 
     let mut groups: Vec<CloneGroupRaw> = Vec::new();
@@ -606,7 +612,10 @@ pub fn detect_clones_core(
             // 检查是否有多个不同 content_hash（Type-2 子组）
             let mut by_ch: FxHashMap<String, Vec<usize>> = FxHashMap::default();
             for &idx in group_indices {
-                by_ch.entry(sym_meta[idx].symbol_hash.clone()).or_default().push(idx);
+                by_ch
+                    .entry(sym_meta[idx].symbol_hash.clone())
+                    .or_default()
+                    .push(idx);
             }
             if by_ch.len() < 2 {
                 continue; // 仅一个 content_hash，无 Type-2
@@ -635,7 +644,9 @@ pub fn detect_clones_core(
     // 5.1 按 token_hash 去重，每组取第一个符号作为代表
     let mut token_hash_to_rep_idx: FxHashMap<String, usize> = FxHashMap::default();
     for (idx, m) in sym_meta.iter().enumerate() {
-        token_hash_to_rep_idx.entry(m.token_hash.clone()).or_insert(idx);
+        token_hash_to_rep_idx
+            .entry(m.token_hash.clone())
+            .or_insert(idx);
     }
     let lsh_rep_indices: Vec<usize> = token_hash_to_rep_idx.values().copied().collect();
     let num_reps = lsh_rep_indices.len();
@@ -681,10 +692,8 @@ pub fn detect_clones_core(
     // 与 Python 对齐：sim_bucket = round(sim, 2)
     // 注意：f64 不实现 Hash/Eq，用 i32 存储 round(sim*100) 作为 key
     let mut type3_clusters: FxHashMap<(String, String, i32), Vec<i64>> = FxHashMap::default();
-    let covered_token_hashes: HashSet<String> = groups
-        .iter()
-        .map(|g| g.token_hash.clone())
-        .collect();
+    let covered_token_hashes: HashSet<String> =
+        groups.iter().map(|g| g.token_hash.clone()).collect();
 
     for (a_idx, b_idx) in &candidate_pairs {
         let a = &sym_meta[*a_idx];
@@ -769,15 +778,21 @@ pub fn py_detect_clones_core<'py>(
     let (groups, stats) = detect_clones_core(symbols, similarity_threshold);
 
     // 转换 groups 为 List[Dict]
-    let groups_list = PyList::new(py, groups.iter().map(|g| -> PyResult<Bound<'py, pyo3::types::PyDict>> {
-        let dict = pyo3::types::PyDict::new(py);
-        dict.set_item("clone_type", g.clone_type)?;
-        dict.set_item("token_hash", &g.token_hash)?;
-        dict.set_item("similarity", g.similarity)?;
-        let members_list = PyList::new(py, &g.members)?;
-        dict.set_item("members", members_list)?;
-        Ok(dict)
-    }).collect::<PyResult<Vec<_>>>()?)?;
+    let groups_list = PyList::new(
+        py,
+        groups
+            .iter()
+            .map(|g| -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("clone_type", g.clone_type)?;
+                dict.set_item("token_hash", &g.token_hash)?;
+                dict.set_item("similarity", g.similarity)?;
+                let members_list = PyList::new(py, &g.members)?;
+                dict.set_item("members", members_list)?;
+                Ok(dict)
+            })
+            .collect::<PyResult<Vec<_>>>()?,
+    )?;
 
     // 转换 stats 为 Dict
     let stats_dict = pyo3::types::PyDict::new(py);
@@ -865,9 +880,17 @@ mod tests {
     #[test]
     fn test_minhash_different_set_different_sig() {
         let tokens1: Vec<u32> = vec!["hello".to_string(), "world".to_string()]
-            .iter().map(|t| stable_token_hash_str(t)).collect();
-        let tokens2: Vec<u32> = vec!["hello".to_string(), "world".to_string(), "extra".to_string()]
-            .iter().map(|t| stable_token_hash_str(t)).collect();
+            .iter()
+            .map(|t| stable_token_hash_str(t))
+            .collect();
+        let tokens2: Vec<u32> = vec![
+            "hello".to_string(),
+            "world".to_string(),
+            "extra".to_string(),
+        ]
+        .iter()
+        .map(|t| stable_token_hash_str(t))
+        .collect();
 
         let sig1 = minhash_signature(&tokens1);
         let sig2 = minhash_signature(&tokens2);
@@ -885,7 +908,10 @@ mod tests {
         assert_eq!(buckets.len(), NUM_BANDS);
         // 验证格式："b{i}:{h0}:{h1}:...:{h15}"
         assert_eq!(buckets[0], "b0:1:2:3:4:5:6:7:8:9:10:11:12:13:14:15:16");
-        assert_eq!(buckets[1], "b1:17:18:19:20:21:22:23:24:25:26:27:28:29:30:31:32");
+        assert_eq!(
+            buckets[1],
+            "b1:17:18:19:20:21:22:23:24:25:26:27:28:29:30:31:32"
+        );
     }
 
     #[test]
@@ -948,7 +974,12 @@ mod tests {
     #[test]
     fn test_build_token_set_3gram() {
         // 3 个以上 token → 3-gram 集合
-        let tokens = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
+        let tokens = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
         let set = build_token_set(&tokens);
         // 4 token → 2 个 3-gram: (a,b,c), (b,c,d)
         assert_eq!(set.len(), 2);
@@ -988,7 +1019,11 @@ mod tests {
 
         // 不相交签名 → 估算 Jaccard 通常 < 0.2（统计性质）
         let est = minhash_jaccard_estimate(&sig_a, &sig_b);
-        assert!(est < 0.3, "disjoint sets estimate should be low, got {}", est);
+        assert!(
+            est < 0.3,
+            "disjoint sets estimate should be low, got {}",
+            est
+        );
     }
 
     #[test]
@@ -1002,10 +1037,25 @@ mod tests {
     #[test]
     fn test_detect_clones_core_type1() {
         // 两个完全相同的符号 → Type-1 组
-        let tokens = vec!["def".to_string(), "foo".to_string(), "(".to_string(), ")".to_string()];
+        let tokens = vec![
+            "def".to_string(),
+            "foo".to_string(),
+            "(".to_string(),
+            ")".to_string(),
+        ];
         let symbols = vec![
-            (1i64, "hash_A".to_string(), "th_A".to_string(), tokens.clone()),
-            (2i64, "hash_A".to_string(), "th_A".to_string(), tokens.clone()),
+            (
+                1i64,
+                "hash_A".to_string(),
+                "th_A".to_string(),
+                tokens.clone(),
+            ),
+            (
+                2i64,
+                "hash_A".to_string(),
+                "th_A".to_string(),
+                tokens.clone(),
+            ),
         ];
         let (groups, stats) = detect_clones_core(symbols, 0.8);
 
@@ -1019,10 +1069,25 @@ mod tests {
     #[test]
     fn test_detect_clones_core_type2() {
         // 两个 token_hash 相同但 symbol_hash 不同的符号 → Type-2 组
-        let tokens = vec!["def".to_string(), "foo".to_string(), "(".to_string(), ")".to_string()];
+        let tokens = vec![
+            "def".to_string(),
+            "foo".to_string(),
+            "(".to_string(),
+            ")".to_string(),
+        ];
         let symbols = vec![
-            (1i64, "hash_A".to_string(), "th_shared".to_string(), tokens.clone()),
-            (2i64, "hash_B".to_string(), "th_shared".to_string(), tokens.clone()),
+            (
+                1i64,
+                "hash_A".to_string(),
+                "th_shared".to_string(),
+                tokens.clone(),
+            ),
+            (
+                2i64,
+                "hash_B".to_string(),
+                "th_shared".to_string(),
+                tokens.clone(),
+            ),
         ];
         let (groups, stats) = detect_clones_core(symbols, 0.8);
 
@@ -1036,12 +1101,24 @@ mod tests {
     fn test_detect_clones_core_no_clones() {
         // 三个完全不同的符号 → 无克隆组
         let symbols = vec![
-            (1i64, "hash_A".to_string(), "th_A".to_string(),
-             vec!["def".to_string(), "foo".to_string(), "(".to_string()]),
-            (2i64, "hash_B".to_string(), "th_B".to_string(),
-             vec!["def".to_string(), "bar".to_string(), "(".to_string()]),
-            (3i64, "hash_C".to_string(), "th_C".to_string(),
-             vec!["class".to_string(), "Baz".to_string(), "{".to_string()]),
+            (
+                1i64,
+                "hash_A".to_string(),
+                "th_A".to_string(),
+                vec!["def".to_string(), "foo".to_string(), "(".to_string()],
+            ),
+            (
+                2i64,
+                "hash_B".to_string(),
+                "th_B".to_string(),
+                vec!["def".to_string(), "bar".to_string(), "(".to_string()],
+            ),
+            (
+                3i64,
+                "hash_C".to_string(),
+                "th_C".to_string(),
+                vec!["class".to_string(), "Baz".to_string(), "{".to_string()],
+            ),
         ];
         let (groups, stats) = detect_clones_core(symbols, 0.8);
 

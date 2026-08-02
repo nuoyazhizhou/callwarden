@@ -148,24 +148,54 @@ enum Commands {
         depth: i64,
     },
     /// 代码审查就绪度
-    Review,
+    Review { symbol_hash: String },
     /// 代码演化智能
-    Evolution,
+    Evolution {
+        qualified_name: String,
+        #[arg(long, default_value = "")]
+        window: String,
+        #[arg(long)]
+        defects: bool,
+    },
     /// 热点排名
-    Hotspot,
+    Hotspot {
+        #[arg(long, default_value = "")]
+        module: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// 变更频率分析
-    Churn,
+    Churn {
+        #[arg(long, default_value = "")]
+        module: String,
+        #[arg(long, default_value = "90d")]
+        window: String,
+    },
     /// 缺陷知识库
-    Defect,
+    Defect {
+        #[command(subcommand)]
+        action: Option<DefectAction>,
+    },
     /// 任务编排
     Task {
         #[command(subcommand)]
         action: TaskAction,
     },
     /// 漏洞影响半径
-    VulnBlast,
+    VulnBlast {
+        #[arg(long, default_value_t = 0)]
+        finding_id: i64,
+        #[arg(long, default_value = "")]
+        severity: String,
+        #[arg(long, default_value_t = 3)]
+        depth: i64,
+    },
     /// 符号历史
-    SymbolHistory,
+    SymbolHistory {
+        symbol_hash: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
     /// 检查门禁
     CheckGate {
         task_id: String,
@@ -177,17 +207,38 @@ enum Commands {
         semgrep_timeout: u64,
     },
     /// 测试影响选择
-    TestImpact,
+    TestImpact { qualified_name: String },
 
     // ===== 运维 =====
     /// 垃圾回收
-    Gc,
+    Gc {
+        #[command(subcommand)]
+        action: Option<GcAction>,
+    },
     /// 健康检查
-    Doctor,
+    Doctor {
+        #[arg(long)]
+        add_defender_exclusion: bool,
+    },
     /// 安装 Agent
-    InstallAgent,
+    InstallAgent {
+        agent: Option<String>,
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        global: bool,
+    },
     /// 安装 Hook
-    InstallHook,
+    InstallHook {
+        #[arg(default_value = "post-commit")]
+        hook: String,
+        #[arg(long, default_value = "")]
+        task_id: String,
+        #[arg(long)]
+        uninstall: bool,
+    },
     /// 规则管理
     Rule {
         #[command(subcommand)]
@@ -204,9 +255,15 @@ enum Commands {
         action: BootstrapAction,
     },
     /// 克隆检测
-    Clone,
+    Clone {
+        #[command(subcommand)]
+        action: Option<CloneAction>,
+    },
     /// FTS5 全文搜索
-    Fts,
+    Fts {
+        #[command(subcommand)]
+        action: Option<FtsAction>,
+    },
 
     // ===== 8 大类 subcommand =====
     /// workspace 管理
@@ -348,9 +405,17 @@ enum Commands {
     /// 指标
     Metrics,
     /// 复杂度
-    Complexity,
+    Complexity {
+        #[arg(default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value = "")]
+        module: String,
+    },
     /// 耦合分析
-    Coupling,
+    Coupling {
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
     /// 注释覆盖率
     CommentCoverage,
     /// 未注释符号
@@ -358,25 +423,45 @@ enum Commands {
     /// 函数问题
     FunctionIssues,
     /// 最大函数
-    LargestFns,
+    LargestFns {
+        #[arg(default_value_t = 20)]
+        limit: usize,
+        #[arg(long, default_value = "")]
+        module: String,
+    },
     /// 耦合函数
-    CoupledFns,
+    CoupledFns {
+        #[arg(default_value_t = 20)]
+        limit: usize,
+    },
     /// 函数指标
-    FnMetrics,
+    FnMetrics { name: String },
     /// Git 集成
-    Git,
+    Git {
+        #[command(subcommand)]
+        action: Option<GitAction>,
+    },
     /// Semgrep 集成
-    Semgrep,
+    Semgrep {
+        #[command(subcommand)]
+        action: Option<SemgrepAction>,
+    },
     /// 覆盖率
-    Coverage,
+    Coverage {
+        #[command(subcommand)]
+        action: Option<CoverageAction>,
+    },
     /// 负责人
-    Who,
+    Who { file: String },
     /// 所有权映射
     OwnershipMap,
     /// 项目简报
     Brief,
     /// 仓库地图
-    Map,
+    Map {
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// 健康报告
     HealthReport,
 
@@ -401,11 +486,194 @@ enum Commands {
 
     // ===== 驾驶舱 =====
     /// 项目综合状态驾驶舱
-    Dashboard,
+    Dashboard {
+        #[arg(long)]
+        full: bool,
+        #[arg(long)]
+        with_cycles: bool,
+        #[arg(long)]
+        with_evolution: bool,
+        #[arg(long)]
+        risks: bool,
+        #[arg(long, default_value_t = 5)]
+        top: usize,
+        #[arg(long)]
+        json: bool,
+    },
 
     // ===== 回滚 =====
     /// 迁移回滚配置
-    Rollback,
+    Rollback {
+        #[command(subcommand)]
+        action: RollbackAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum SemgrepAction {
+    Scan {
+        paths: Vec<PathBuf>,
+        #[arg(long, default_value = "p/default")]
+        config: String,
+        #[arg(long = "lang")]
+        languages: Vec<String>,
+        #[arg(long, default_value_t = 180)]
+        timeout: u64,
+        #[arg(long)]
+        save: bool,
+    },
+    List {
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
+    Stats,
+}
+
+#[derive(Subcommand)]
+enum CoverageAction {
+    Import {
+        file: PathBuf,
+        #[arg(long, default_value = "lcov")]
+        format: String,
+    },
+    Fn {
+        name: String,
+    },
+    Uncovered,
+}
+
+#[derive(Subcommand)]
+enum GitAction {
+    Import {
+        #[arg(default_value_t = 100)]
+        limit: usize,
+    },
+    Log {
+        #[arg(default_value_t = 20)]
+        limit: usize,
+    },
+    Show {
+        commit: String,
+    },
+    Stats,
+}
+
+#[derive(Subcommand)]
+enum GcAction {
+    Archive {
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    Restore {
+        #[arg(long)]
+        paths: Vec<PathBuf>,
+        #[arg(long)]
+        force: bool,
+    },
+    Status,
+    Purge {
+        #[arg(long)]
+        dry_run: bool,
+    },
+    DbCleanup {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        all_but_current: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum DefectAction {
+    Search {
+        #[arg(long, default_value = "")]
+        category: String,
+        #[arg(long, default_value = "")]
+        severity: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    Suggest {
+        symbol_hash: String,
+        #[arg(long, default_value_t = 0)]
+        finding: i64,
+    },
+    Stats,
+    Build,
+    Learn {
+        commit_hash: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CloneAction {
+    List {
+        /// 与 Python CLI 的 --type 保持兼容；--clone-type 是旧 Rust 入口别名。
+        #[arg(long = "type", alias = "clone-type")]
+        clone_type: Option<i64>,
+        #[arg(long, default_value_t = 0.0)]
+        min_similarity: f64,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long, default_value = "")]
+        symbol: String,
+    },
+    Stats,
+    Detect {
+        #[arg(long, default_value = "")]
+        file_filter: String,
+        #[arg(long, default_value_t = 5)]
+        min_lines: usize,
+        #[arg(long, default_value_t = 0.8)]
+        similarity: f64,
+    },
+    Clear,
+}
+
+#[derive(Subcommand)]
+enum FtsAction {
+    Status,
+    Rebuild,
+}
+
+#[derive(Subcommand)]
+enum RollbackAction {
+    Register {
+        #[arg(long)]
+        task_id: String,
+        #[arg(long)]
+        feature: String,
+        #[arg(long)]
+        phase: i64,
+        #[arg(long)]
+        production_entry: String,
+        #[arg(long)]
+        rollback_entry: String,
+        #[arg(long, default_value = "")]
+        window: String,
+        #[arg(long, default_value = "")]
+        config_json: String,
+    },
+    Show {
+        task_id: String,
+    },
+    Config {
+        #[arg(long, default_value_t = 0)]
+        phase: i64,
+        #[arg(long, default_value_t = -1)]
+        flag: i64,
+    },
+    Set {
+        task_id: String,
+        flag: i64,
+        #[arg(long, default_value = "")]
+        reason: String,
+    },
+    IsRolledBack {
+        feature_name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -845,8 +1113,7 @@ fn cli_main() {
 
     match cli.command {
         Some(cmd) => {
-            // Phase 5-1 C: stats 子命令业务逻辑已迁移到 lib
-            // 其他子命令仍返回 "not implemented"（Phase 5-1 C 扩展阶段逐命令迁移）
+            // 每个命令都必须显式选择生产实现或返回命令级 fail-closed 结果。
             match cmd {
                 Commands::Stats => {
                     emit_result(run_stats(&runtime));
@@ -975,15 +1242,446 @@ fn cli_main() {
                 Commands::Bootstrap { action } => {
                     emit_result(run_bootstrap(&runtime, action));
                 }
-                _ => {
-                    // 骨架阶段：其他子命令返回 "not implemented"
-                    // Phase 5-1 C 扩展阶段将逐命令迁移业务逻辑
-                    let cmd_name = command_name(&cmd);
-                    eprintln!(
-                        "cw {}: not implemented (Phase 5-1 skeleton — subcommand parsed successfully)",
-                        cmd_name
-                    );
-                    std::process::exit(1);
+                Commands::Semgrep { action } => {
+                    let act = action.unwrap_or(SemgrepAction::Stats);
+                    match act {
+                        SemgrepAction::Scan {
+                            paths,
+                            config,
+                            languages,
+                            timeout,
+                            save,
+                        } => {
+                            emit_result(callwarden_core::cli::external::run_semgrep_scan(
+                                &runtime, &paths, &config, &languages, timeout, save,
+                            ));
+                        }
+                        SemgrepAction::List { limit } => {
+                            emit_result(callwarden_core::cli::external::run_semgrep_list(
+                                &runtime, limit,
+                            ));
+                        }
+                        SemgrepAction::Stats => {
+                            emit_result(callwarden_core::cli::external::run_semgrep_stats(
+                                &runtime,
+                            ));
+                        }
+                    }
+                }
+                Commands::Coverage { action } => {
+                    let act = action.unwrap_or(CoverageAction::Uncovered);
+                    match act {
+                        CoverageAction::Import { file, format } => {
+                            emit_result(callwarden_core::cli::external::run_coverage_import(
+                                &runtime, &file, &format,
+                            ));
+                        }
+                        CoverageAction::Fn { name } => {
+                            emit_result(callwarden_core::cli::external::run_coverage_fn(
+                                &runtime, &name,
+                            ));
+                        }
+                        CoverageAction::Uncovered => {
+                            emit_result(callwarden_core::cli::external::run_coverage_uncovered(
+                                &runtime,
+                            ));
+                        }
+                    }
+                }
+                Commands::Git { action } => {
+                    let act = action.unwrap_or(GitAction::Stats);
+                    match act {
+                        GitAction::Import { limit } => {
+                            emit_result(callwarden_core::cli::external::run_git_import(
+                                &runtime, limit,
+                            ));
+                        }
+                        GitAction::Log { limit } => {
+                            emit_result(callwarden_core::cli::external::run_git_log(
+                                &runtime, limit,
+                            ));
+                        }
+                        GitAction::Show { commit } => {
+                            emit_result(callwarden_core::cli::external::run_git_show(
+                                &runtime, &commit,
+                            ));
+                        }
+                        GitAction::Stats => {
+                            emit_result(callwarden_core::cli::external::run_git_stats(&runtime));
+                        }
+                    }
+                }
+                Commands::InstallAgent {
+                    agent,
+                    output_dir,
+                    force,
+                    global,
+                } => {
+                    emit_result(callwarden_core::cli::external::run_install_agent(
+                        &runtime, agent, output_dir, force, global,
+                    ));
+                }
+                Commands::InstallHook {
+                    hook,
+                    task_id,
+                    uninstall,
+                } => {
+                    emit_result(callwarden_core::cli::external::run_install_hook(
+                        &runtime, &hook, &task_id, uninstall,
+                    ));
+                }
+                Commands::Gc { action } => {
+                    let act = action.unwrap_or(GcAction::Status);
+                    match act {
+                        GcAction::Archive { force, dry_run } => {
+                            emit_result(callwarden_core::cli::external::run_gc_archive(
+                                &runtime, force, dry_run,
+                            ));
+                        }
+                        GcAction::Restore { paths, force } => {
+                            emit_result(callwarden_core::cli::external::run_gc_restore(
+                                &runtime, &paths, force,
+                            ));
+                        }
+                        GcAction::Status => {
+                            emit_result(callwarden_core::cli::external::run_gc_status(&runtime));
+                        }
+                        GcAction::Purge { dry_run } => {
+                            emit_result(callwarden_core::cli::external::run_gc_purge(
+                                &runtime, dry_run,
+                            ));
+                        }
+                        GcAction::DbCleanup {
+                            dry_run,
+                            all_but_current,
+                        } => {
+                            emit_result(callwarden_core::cli::external::run_gc_db_cleanup(
+                                &runtime,
+                                dry_run,
+                                all_but_current,
+                            ));
+                        }
+                    }
+                }
+                Commands::Doctor {
+                    add_defender_exclusion,
+                } => {
+                    emit_result(callwarden_core::cli::external::run_doctor(
+                        &runtime,
+                        add_defender_exclusion,
+                    ));
+                }
+                Commands::Review { symbol_hash } => emit_result(
+                    callwarden_core::cli::external::run_review_report(&runtime, &symbol_hash),
+                ),
+                Commands::Evolution {
+                    qualified_name,
+                    window,
+                    defects,
+                } => emit_result(callwarden_core::cli::external::run_evolution_report(
+                    &runtime,
+                    &qualified_name,
+                    &window,
+                    defects,
+                )),
+                Commands::Hotspot { module, limit } => emit_result(
+                    callwarden_core::cli::external::run_hotspot_report(&runtime, &module, limit),
+                ),
+                Commands::Churn { module, window } => emit_result(
+                    callwarden_core::cli::external::run_churn_report(&runtime, &module, &window),
+                ),
+                Commands::Defect { action } => {
+                    let (name, category, severity, limit, symbol_hash, finding, commit_hash) =
+                        match action {
+                            Some(DefectAction::Search {
+                                category,
+                                severity,
+                                limit,
+                            }) => (
+                                "search",
+                                category,
+                                severity,
+                                limit,
+                                String::new(),
+                                0,
+                                String::new(),
+                            ),
+                            Some(DefectAction::Suggest {
+                                symbol_hash,
+                                finding,
+                            }) => (
+                                "suggest",
+                                String::new(),
+                                String::new(),
+                                20,
+                                symbol_hash,
+                                finding,
+                                String::new(),
+                            ),
+                            Some(DefectAction::Stats) => (
+                                "stats",
+                                String::new(),
+                                String::new(),
+                                20,
+                                String::new(),
+                                0,
+                                String::new(),
+                            ),
+                            Some(DefectAction::Build) => (
+                                "build",
+                                String::new(),
+                                String::new(),
+                                20,
+                                String::new(),
+                                0,
+                                String::new(),
+                            ),
+                            Some(DefectAction::Learn { commit_hash }) => (
+                                "learn",
+                                String::new(),
+                                String::new(),
+                                20,
+                                String::new(),
+                                0,
+                                commit_hash,
+                            ),
+                            None => (
+                                "stats",
+                                String::new(),
+                                String::new(),
+                                20,
+                                String::new(),
+                                0,
+                                String::new(),
+                            ),
+                        };
+                    emit_result(callwarden_core::cli::external::run_defect(
+                        &runtime,
+                        name,
+                        &category,
+                        &severity,
+                        limit,
+                        &symbol_hash,
+                        finding,
+                        &commit_hash,
+                    ));
+                }
+                Commands::VulnBlast {
+                    finding_id,
+                    severity,
+                    depth,
+                } => emit_result(callwarden_core::cli::external::run_vulnerability_blast(
+                    &runtime, finding_id, &severity, depth,
+                )),
+                Commands::SymbolHistory { symbol_hash, limit } => {
+                    emit_result(callwarden_core::cli::external::run_symbol_history(
+                        &runtime,
+                        &symbol_hash,
+                        limit,
+                    ))
+                }
+                Commands::TestImpact { qualified_name } => emit_result(
+                    callwarden_core::cli::external::run_test_impact(&runtime, &qualified_name),
+                ),
+                Commands::Clone { action } => {
+                    let (
+                        name,
+                        file_filter,
+                        clone_type,
+                        min_similarity,
+                        limit,
+                        min_lines,
+                        similarity,
+                    ) = match action {
+                        Some(CloneAction::List {
+                            clone_type,
+                            min_similarity,
+                            limit,
+                            symbol,
+                        }) => ("list", symbol, clone_type, min_similarity, limit, 5, 0.8),
+                        Some(CloneAction::Stats) => ("stats", String::new(), None, 0.0, 50, 5, 0.8),
+                        Some(CloneAction::Detect {
+                            file_filter,
+                            min_lines,
+                            similarity,
+                        }) => ("detect", file_filter, None, 0.0, 50, min_lines, similarity),
+                        Some(CloneAction::Clear) => ("clear", String::new(), None, 0.0, 50, 5, 0.8),
+                        None => ("stats", String::new(), None, 0.0, 50, 5, 0.8),
+                    };
+                    emit_result(callwarden_core::cli::external::run_clone(
+                        &runtime,
+                        name,
+                        &file_filter,
+                        clone_type,
+                        min_similarity,
+                        limit,
+                        min_lines,
+                        similarity,
+                    ));
+                }
+                Commands::Fts { action } => {
+                    let name = match action {
+                        Some(FtsAction::Rebuild) => "rebuild",
+                        _ => "status",
+                    };
+                    emit_result(callwarden_core::cli::external::run_fts(&runtime, name));
+                }
+                Commands::Metrics => emit_result(
+                    callwarden_core::cli::external::run_metrics_summary(&runtime),
+                ),
+                Commands::Complexity { limit, module } => emit_result(
+                    callwarden_core::cli::external::run_complexity_report(&runtime, limit, &module),
+                ),
+                Commands::Coupling { limit } => emit_result(
+                    callwarden_core::cli::external::run_coupling_report(&runtime, limit),
+                ),
+                Commands::CommentCoverage => emit_result(
+                    callwarden_core::cli::external::run_comment_coverage(&runtime),
+                ),
+                Commands::Uncommented => {
+                    emit_result(callwarden_core::cli::external::run_uncommented(&runtime))
+                }
+                Commands::FunctionIssues => emit_result(
+                    callwarden_core::cli::external::run_function_issues(&runtime),
+                ),
+                Commands::LargestFns { limit, module } => emit_result(
+                    callwarden_core::cli::external::run_largest_functions(&runtime, limit, &module),
+                ),
+                Commands::CoupledFns { limit } => emit_result(
+                    callwarden_core::cli::external::run_coupled_functions(&runtime, limit),
+                ),
+                Commands::FnMetrics { name } => emit_result(
+                    callwarden_core::cli::external::run_function_metrics(&runtime, &name),
+                ),
+                Commands::Who { file } => {
+                    emit_result(callwarden_core::cli::external::run_who(&runtime, &file))
+                }
+                Commands::OwnershipMap => {
+                    emit_result(callwarden_core::cli::external::run_ownership_map(&runtime))
+                }
+                Commands::Brief => emit_result(callwarden_core::cli::external::run_brief(&runtime)),
+                Commands::Map { format } => emit_result(
+                    callwarden_core::cli::external::run_repo_map(&runtime, &format),
+                ),
+                Commands::HealthReport => {
+                    emit_result(callwarden_core::cli::external::run_health_report(&runtime))
+                }
+                Commands::Graph => emit_result(callwarden_core::cli::external::run_graph(&runtime)),
+                Commands::Dashboard {
+                    full,
+                    with_cycles,
+                    with_evolution,
+                    risks,
+                    top,
+                    json,
+                } => emit_result(callwarden_core::cli::external::run_dashboard(
+                    &runtime,
+                    full,
+                    with_cycles,
+                    with_evolution,
+                    risks,
+                    top,
+                    json,
+                )),
+                Commands::Rollback { action } => {
+                    let (
+                        name,
+                        task_id,
+                        feature,
+                        phase,
+                        production_entry,
+                        rollback_entry,
+                        window,
+                        config_json,
+                        flag,
+                        reason,
+                    ) = match action {
+                        RollbackAction::Register {
+                            task_id,
+                            feature,
+                            phase,
+                            production_entry,
+                            rollback_entry,
+                            window,
+                            config_json,
+                        } => (
+                            "register",
+                            task_id,
+                            feature,
+                            phase,
+                            production_entry,
+                            rollback_entry,
+                            window,
+                            config_json,
+                            -1,
+                            String::new(),
+                        ),
+                        RollbackAction::Show { task_id } => (
+                            "show",
+                            task_id,
+                            String::new(),
+                            0,
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            -1,
+                            String::new(),
+                        ),
+                        RollbackAction::Config { phase, flag } => (
+                            "config",
+                            String::new(),
+                            String::new(),
+                            phase,
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            flag,
+                            String::new(),
+                        ),
+                        RollbackAction::Set {
+                            task_id,
+                            flag,
+                            reason,
+                        } => (
+                            "set",
+                            task_id,
+                            String::new(),
+                            0,
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            flag,
+                            reason,
+                        ),
+                        RollbackAction::IsRolledBack { feature_name } => (
+                            "is-rolled-back",
+                            String::new(),
+                            feature_name,
+                            0,
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            String::new(),
+                            -1,
+                            String::new(),
+                        ),
+                    };
+                    emit_result(callwarden_core::cli::external::run_rollback(
+                        &runtime,
+                        name,
+                        &task_id,
+                        &feature,
+                        phase,
+                        &production_entry,
+                        &rollback_entry,
+                        &window,
+                        &config_json,
+                        flag,
+                        &reason,
+                    ))
                 }
             }
         }
@@ -1872,7 +2570,14 @@ fn run_file(runtime: &RuntimeOptions, file_path: &str) -> CommandResult {
             let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
             query_local_file_symbols(&conn, workspace_id, file_path)
         },
-        || Err("enterprise file query is not implemented by the daemon protocol".to_string()),
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise file requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            let (method, params) =
+                callwarden_core::daemon::client::build_file_query_request(workspace_id, file_path);
+            runtime.daemon_call(&method, params)
+        },
     );
     format_file_result(result, file_path)
 }
@@ -1908,10 +2613,16 @@ fn run_query(runtime: &RuntimeOptions, name: &str, file_path: &str) -> CommandRe
             query_local_symbol_location(&conn, workspace_id, name, file_path)
         },
         || {
-            Err(
-                "enterprise symbol location query is not implemented by the daemon protocol"
-                    .to_string(),
-            )
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise query requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            let (method, params) =
+                callwarden_core::daemon::client::build_symbol_location_query_request(
+                    workspace_id,
+                    name,
+                    file_path,
+                );
+            runtime.daemon_call(&method, params)
         },
     );
     format_query_result(result, name)
@@ -1947,7 +2658,21 @@ fn run_grep(runtime: &RuntimeOptions, options: GrepOptions) -> CommandResult {
             let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
             query_local_grep(&conn, workspace_id, &options)
         },
-        || Err("enterprise grep is not implemented by the daemon protocol".to_string()),
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise grep requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            let (method, params) = callwarden_core::daemon::client::build_grep_query_request(
+                workspace_id,
+                &options.patterns,
+                options.fixed,
+                options.limit,
+                options.path.as_deref(),
+                options.include_all,
+                options.kind.as_deref(),
+            );
+            runtime.daemon_call(&method, params)
+        },
     );
     format_grep_result(result)
 }
@@ -1986,7 +2711,17 @@ fn run_issues(runtime: &RuntimeOptions, qualified_name: &str, include_info: bool
             let workspace_id = runtime.resolve_local_workspace_id(&conn)?;
             query_local_issues(&conn, workspace_id, qualified_name, include_info)
         },
-        || Err("enterprise issues query is not implemented by the daemon protocol".to_string()),
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise issues requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            let (method, params) = callwarden_core::daemon::client::build_issues_query_request(
+                workspace_id,
+                qualified_name,
+                include_info,
+            );
+            runtime.daemon_call(&method, params)
+        },
     );
     format_read_result(result, |value| {
         format_issues_output(value, qualified_name, include_info)
@@ -2035,7 +2770,19 @@ fn run_tests(
                 query_local_test_cases(&conn, workspace_id, qualified_name)
             }
         },
-        || Err("enterprise tests query is not implemented by the daemon protocol".to_string()),
+        || {
+            let workspace_id = runtime.workspace_id.as_deref().ok_or_else(|| {
+                "enterprise tests requires --workspace-id <workspace_instance_id>".to_string()
+            })?;
+            let (method, params) = callwarden_core::daemon::client::build_tests_query_request(
+                workspace_id,
+                qualified_name,
+                reverse,
+                history,
+                limit,
+            );
+            runtime.daemon_call(&method, params)
+        },
     );
     format_read_result(result, |value| {
         if history {
@@ -4497,25 +5244,25 @@ fn command_name(cmd: &Commands) -> &'static str {
     match cmd {
         Guardrail { .. } => "guardrail",
         Impact { .. } => "impact",
-        Review => "review",
-        Evolution => "evolution",
-        Hotspot => "hotspot",
-        Churn => "churn",
-        Defect => "defect",
+        Review { .. } => "review",
+        Evolution { .. } => "evolution",
+        Hotspot { .. } => "hotspot",
+        Churn { .. } => "churn",
+        Defect { .. } => "defect",
         Task { .. } => "task",
-        VulnBlast => "vuln-blast",
-        SymbolHistory => "symbol-history",
+        VulnBlast { .. } => "vuln-blast",
+        SymbolHistory { .. } => "symbol-history",
         CheckGate { .. } => "check-gate",
-        TestImpact => "test-impact",
-        Gc => "gc",
-        Doctor => "doctor",
-        InstallAgent => "install-agent",
-        InstallHook => "install-hook",
+        TestImpact { .. } => "test-impact",
+        Gc { .. } => "gc",
+        Doctor { .. } => "doctor",
+        InstallAgent { .. } => "install-agent",
+        InstallHook { .. } => "install-hook",
         Rule { .. } => "rule",
         Audit { .. } => "audit",
         Bootstrap { .. } => "bootstrap",
-        Clone => "clone",
-        Fts => "fts",
+        Clone { .. } => "clone",
+        Fts { .. } => "fts",
         Workspace { .. } => "workspace",
         Refresh { .. } => "refresh",
         Stats => "stats",
@@ -4532,28 +5279,28 @@ fn command_name(cmd: &Commands) -> &'static str {
         CallChain { .. } => "call-chain",
         Topo { .. } => "topo",
         Metrics => "metrics",
-        Complexity => "complexity",
-        Coupling => "coupling",
+        Complexity { .. } => "complexity",
+        Coupling { .. } => "coupling",
         CommentCoverage => "comment-coverage",
         Uncommented => "uncommented",
         FunctionIssues => "function-issues",
-        LargestFns => "largest-fns",
-        CoupledFns => "coupled-fns",
-        FnMetrics => "fn-metrics",
-        Git => "git",
-        Semgrep => "semgrep",
-        Coverage => "coverage",
-        Who => "who",
+        LargestFns { .. } => "largest-fns",
+        CoupledFns { .. } => "coupled-fns",
+        FnMetrics { .. } => "fn-metrics",
+        Git { .. } => "git",
+        Semgrep { .. } => "semgrep",
+        Coverage { .. } => "coverage",
+        Who { .. } => "who",
         OwnershipMap => "ownership-map",
         Brief => "brief",
-        Map => "map",
+        Map { .. } => "map",
         HealthReport => "health-report",
         BuildContext { .. } => "build-context",
         Toolchain { .. } => "toolchain",
         Graph => "graph",
         Config { .. } => "config",
-        Dashboard => "dashboard",
-        Rollback => "rollback",
+        Dashboard { .. } => "dashboard",
+        Rollback { .. } => "rollback",
     }
 }
 
@@ -4577,11 +5324,23 @@ mod tests {
                 symbol_hash: "sym-a".to_string(),
                 depth: 3,
             },
-            Commands::Review,
-            Commands::Evolution,
-            Commands::Hotspot,
-            Commands::Churn,
-            Commands::Defect,
+            Commands::Review {
+                symbol_hash: "sym-a".to_string(),
+            },
+            Commands::Evolution {
+                qualified_name: "a::f".to_string(),
+                window: String::new(),
+                defects: false,
+            },
+            Commands::Hotspot {
+                module: String::new(),
+                limit: 20,
+            },
+            Commands::Churn {
+                module: String::new(),
+                window: "90d".to_string(),
+            },
+            Commands::Defect { action: None },
             Commands::Task {
                 action: TaskAction::List {
                     blocked: false,
@@ -4590,19 +5349,39 @@ mod tests {
                     flat: false,
                 },
             },
-            Commands::VulnBlast,
-            Commands::SymbolHistory,
+            Commands::VulnBlast {
+                finding_id: 0,
+                severity: String::new(),
+                depth: 3,
+            },
+            Commands::SymbolHistory {
+                symbol_hash: "hash".to_string(),
+                limit: 20,
+            },
             Commands::CheckGate {
                 task_id: "task-1".to_string(),
                 resolve: false,
                 step_id: String::new(),
                 semgrep_timeout: 60,
             },
-            Commands::TestImpact,
-            Commands::Gc,
-            Commands::Doctor,
-            Commands::InstallAgent,
-            Commands::InstallHook,
+            Commands::TestImpact {
+                qualified_name: "a::alpha".to_string(),
+            },
+            Commands::Gc { action: None },
+            Commands::Doctor {
+                add_defender_exclusion: false,
+            },
+            Commands::InstallAgent {
+                agent: None,
+                output_dir: None,
+                force: false,
+                global: false,
+            },
+            Commands::InstallHook {
+                hook: "post-commit".to_string(),
+                task_id: String::new(),
+                uninstall: false,
+            },
             Commands::Rule {
                 action: RuleAction::List {
                     status: "active".to_string(),
@@ -4618,8 +5397,8 @@ mod tests {
             Commands::Bootstrap {
                 action: BootstrapAction::Status,
             },
-            Commands::Clone,
-            Commands::Fts,
+            Commands::Clone { action: None },
+            Commands::Fts { action: None },
             Commands::Workspace {
                 action: WorkspaceAction::List,
             },
@@ -4682,21 +5461,33 @@ mod tests {
             },
             Commands::Topo { limit: 50 },
             Commands::Metrics,
-            Commands::Complexity,
-            Commands::Coupling,
+            Commands::Complexity {
+                limit: 20,
+                module: String::new(),
+            },
+            Commands::Coupling { limit: 30 },
             Commands::CommentCoverage,
             Commands::Uncommented,
             Commands::FunctionIssues,
-            Commands::LargestFns,
-            Commands::CoupledFns,
-            Commands::FnMetrics,
-            Commands::Git,
-            Commands::Semgrep,
-            Commands::Coverage,
-            Commands::Who,
+            Commands::LargestFns {
+                limit: 20,
+                module: String::new(),
+            },
+            Commands::CoupledFns { limit: 20 },
+            Commands::FnMetrics {
+                name: "f".to_string(),
+            },
+            Commands::Git { action: None },
+            Commands::Semgrep { action: None },
+            Commands::Coverage { action: None },
+            Commands::Who {
+                file: "src/a.rs".to_string(),
+            },
             Commands::OwnershipMap,
             Commands::Brief,
-            Commands::Map,
+            Commands::Map {
+                format: "text".to_string(),
+            },
             Commands::HealthReport,
             Commands::BuildContext {
                 action: BuildContextAction::List { workspace_id: 1 },
@@ -4708,8 +5499,17 @@ mod tests {
             Commands::Config {
                 action: ConfigAction::Explain,
             },
-            Commands::Dashboard,
-            Commands::Rollback,
+            Commands::Dashboard {
+                full: false,
+                with_cycles: false,
+                with_evolution: false,
+                risks: false,
+                top: 5,
+                json: false,
+            },
+            Commands::Rollback {
+                action: RollbackAction::Config { phase: 0, flag: -1 },
+            },
         ];
         assert_eq!(variants.len(), 59, "应有 59 个子命令");
     }
@@ -4717,8 +5517,21 @@ mod tests {
     #[test]
     fn test_command_name_kebab_case() {
         // 验证 kebab-case 转换
-        assert_eq!(command_name(&Commands::VulnBlast), "vuln-blast");
-        assert_eq!(command_name(&Commands::SymbolHistory), "symbol-history");
+        assert_eq!(
+            command_name(&Commands::VulnBlast {
+                finding_id: 0,
+                severity: String::new(),
+                depth: 3
+            }),
+            "vuln-blast"
+        );
+        assert_eq!(
+            command_name(&Commands::SymbolHistory {
+                symbol_hash: "hash".to_string(),
+                limit: 20
+            }),
+            "symbol-history"
+        );
         assert_eq!(
             command_name(&Commands::CheckGate {
                 task_id: "task-1".to_string(),
@@ -4728,9 +5541,29 @@ mod tests {
             }),
             "check-gate"
         );
-        assert_eq!(command_name(&Commands::TestImpact), "test-impact");
-        assert_eq!(command_name(&Commands::InstallAgent), "install-agent");
-        assert_eq!(command_name(&Commands::InstallHook), "install-hook");
+        assert_eq!(
+            command_name(&Commands::TestImpact {
+                qualified_name: "a::alpha".to_string()
+            }),
+            "test-impact"
+        );
+        assert_eq!(
+            command_name(&Commands::InstallAgent {
+                agent: None,
+                output_dir: None,
+                force: false,
+                global: false,
+            }),
+            "install-agent"
+        );
+        assert_eq!(
+            command_name(&Commands::InstallHook {
+                hook: "post-commit".to_string(),
+                task_id: String::new(),
+                uninstall: false,
+            }),
+            "install-hook"
+        );
         assert_eq!(
             command_name(&Commands::CallChain {
                 name: "a.alpha".to_string(),
@@ -4740,9 +5573,23 @@ mod tests {
         );
         assert_eq!(command_name(&Commands::CommentCoverage), "comment-coverage");
         assert_eq!(command_name(&Commands::FunctionIssues), "function-issues");
-        assert_eq!(command_name(&Commands::LargestFns), "largest-fns");
-        assert_eq!(command_name(&Commands::CoupledFns), "coupled-fns");
-        assert_eq!(command_name(&Commands::FnMetrics), "fn-metrics");
+        assert_eq!(
+            command_name(&Commands::LargestFns {
+                limit: 20,
+                module: String::new(),
+            }),
+            "largest-fns"
+        );
+        assert_eq!(
+            command_name(&Commands::CoupledFns { limit: 20 }),
+            "coupled-fns"
+        );
+        assert_eq!(
+            command_name(&Commands::FnMetrics {
+                name: "f".to_string(),
+            }),
+            "fn-metrics"
+        );
         assert_eq!(command_name(&Commands::OwnershipMap), "ownership-map");
         assert_eq!(command_name(&Commands::HealthReport), "health-report");
         assert_eq!(
@@ -4772,7 +5619,7 @@ mod tests {
             }),
             "task"
         );
-        assert_eq!(command_name(&Commands::Gc), "gc");
+        assert_eq!(command_name(&Commands::Gc { action: None }), "gc");
         assert_eq!(
             command_name(&Commands::Search {
                 query: "alpha".to_string(),
@@ -4787,7 +5634,12 @@ mod tests {
             }),
             "config"
         );
-        assert_eq!(command_name(&Commands::Rollback), "rollback");
+        assert_eq!(
+            command_name(&Commands::Rollback {
+                action: RollbackAction::Config { phase: 0, flag: -1 },
+            }),
+            "rollback"
+        );
     }
 
     #[test]

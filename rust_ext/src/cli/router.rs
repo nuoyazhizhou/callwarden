@@ -162,11 +162,7 @@ pub fn is_daemon_available(socket_path: &Path, platform: &str) -> bool {
 ///
 /// # 返回
 /// `RouteDecision::Local` / `Enterprise` / `Unavailable`
-pub fn route_command(
-    mode: &DaemonMode,
-    socket_path: &Path,
-    platform: &str,
-) -> RouteDecision {
+pub fn route_command(mode: &DaemonMode, socket_path: &Path, platform: &str) -> RouteDecision {
     match mode {
         DaemonMode::Local => {
             // 强制走本地，无论平台和 socket
@@ -262,7 +258,10 @@ mod tests {
 
     #[test]
     fn test_d1_2_mode_enterprise() {
-        assert_eq!(DaemonMode::from_str(Some("enterprise")), DaemonMode::Enterprise);
+        assert_eq!(
+            DaemonMode::from_str(Some("enterprise")),
+            DaemonMode::Enterprise
+        );
     }
 
     #[test]
@@ -429,10 +428,7 @@ mod tests {
         // 不设置环境变量时应返回默认路径
         let orig = env::var(DAEMON_SOCKET_ENV).ok();
         env::remove_var(DAEMON_SOCKET_ENV);
-        assert_eq!(
-            daemon_socket_path(),
-            PathBuf::from(DEFAULT_DAEMON_SOCKET)
-        );
+        assert_eq!(daemon_socket_path(), PathBuf::from(DEFAULT_DAEMON_SOCKET));
         // 恢复
         match orig {
             Some(v) => env::set_var(DAEMON_SOCKET_ENV, v),

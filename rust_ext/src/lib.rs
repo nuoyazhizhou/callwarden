@@ -35,17 +35,20 @@ mod frontier;
 mod graph;
 mod hash_diff;
 // Phase 0 Step 2: 迁移状态程序化基线（数据结构 + trait，不暴露 PyO3）
-mod migration_manifest;
 mod metrics;
+mod migration_manifest;
+pub mod storage;
 // Phase 1-1: SQLite 只读查询 API（schema_version 查询，不写入）
 mod sqlite_query;
 // Phase 1-2: CAS 只读查询 API（lookup/get_state/count_files/get_file_generation + 纯函数）
 mod cas_query;
+// Phase 1-2: CAS Rust 生产写 facade（legacy Python replicator 兼容入口）
+mod cas_write_query;
 // Phase 1-3: workspace manifest 只读查询 API（manifest_get/list/count + snapshot_get_files + verify_raw_hash）
 mod manifest_query;
 // Phase 1-4: Replicator 只读查询 API（replicator_get_pending_count）
 mod replicator_query;
-// Phase 2-1: CAS→CodeGraph Merge PyO3 暴露层（cas_merge_to_codegraph + cas_merge_init_schema）
+// Phase 2-1: CAS->CodeGraph merge PyO3 入口
 mod cas_merge_query;
 // Phase 2-2: 批量 symbols 写入 PyO3 暴露层（batch_save_symbols）
 mod batch_build_query;
@@ -952,7 +955,8 @@ pub(crate) fn parse_result_to_pydict<'py>(
             d.set_item("signature", s.signature.clone()).ok();
             // R1-P0-2: ParseFact ABI 字段
             d.set_item("local_id", s.local_id).ok();
-            d.set_item("lexical_parent_local_id", s.lexical_parent_local_id).ok();
+            d.set_item("lexical_parent_local_id", s.lexical_parent_local_id)
+                .ok();
             d.set_item("byte_start", s.byte_start).ok();
             d.set_item("byte_end", s.byte_end).ok();
             d.into_any().into_bound()
@@ -1009,7 +1013,10 @@ pub(crate) fn parse_result_to_pydict<'py>(
     let diag = PyDict::new(py);
     diag.set_item("status", r.diagnostics.status.clone())?;
     diag.set_item("syntax_error_count", r.diagnostics.syntax_error_count)?;
-    diag.set_item("unsupported_construct_count", r.diagnostics.unsupported_construct_count)?;
+    diag.set_item(
+        "unsupported_construct_count",
+        r.diagnostics.unsupported_construct_count,
+    )?;
     diag.set_item("partial_parse", r.diagnostics.partial_parse)?;
     if let Some(fatal) = &r.diagnostics.fatal_parse_error {
         diag.set_item("fatal_parse_error", fatal.clone())?;
@@ -1159,9 +1166,7 @@ impl ParseResultStream {
     /// 当所有文件 parse 完成、sender 全部 drop 后，channel 关闭，返回 None 终止迭代。
     fn __next__<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         // 释放 GIL 等待 channel，避免阻塞其他 Python 线程
-        let result = py.detach(|| -> Option<ParseResult> {
-            self.receiver.recv().ok()
-        });
+        let result = py.detach(|| -> Option<ParseResult> { self.receiver.recv().ok() });
         match result {
             Some(r) => Ok(Some(parse_result_to_pydict(py, &r)?)),
             None => Ok(None),
@@ -1326,248 +1331,283 @@ fn build_graph_from_c_files<'py>(
     }
 
     // 释放 GIL 做 CPU 密集计算
-    let (store, sym_count, edge_count) = py.detach(|| -> PyResult<(graph::GraphStore, usize, usize)> {
-        // 1. rayon 并行 parse（grammar 共享）
-        let c_parser = Arc::new(CParser::new());
-        let results: Vec<ParseResult> = files
-            .par_iter()
-            .map(|(abs_path, module_path)| {
-                let parser = c_parser.clone();
-                parser.parse_file(abs_path, module_path)
-            })
-            .collect();
+    let (store, sym_count, edge_count) =
+        py.detach(|| -> PyResult<(graph::GraphStore, usize, usize)> {
+            // 1. rayon 并行 parse（grammar 共享）
+            let c_parser = Arc::new(CParser::new());
+            let results: Vec<ParseResult> = files
+                .par_iter()
+                .map(|(abs_path, module_path)| {
+                    let parser = c_parser.clone();
+                    parser.parse_file(abs_path, module_path)
+                })
+                .collect();
 
-        // 2. 构建文件路径表（file_instance_id 用序号代替，不写 DB）
-        // 每个 ParseResult 对应一个 file_instance_id（从 1 开始）
-        let mut file_paths_pool = String::new();
-        let mut file_paths_offsets: Vec<u32> = Vec::with_capacity(results.len() + 1);
-        file_paths_offsets.push(0); // 哨兵：file_instance_id=0 表示无效
-        for r in &results {
-            let rel = if !r.rel_path.is_empty() {
-                &r.rel_path
-            } else {
-                // 从 abs_path 推导 rel_path（去掉 workspace 前缀，简化处理）
-                &r.abs_path
-            };
-            file_paths_offsets.push(file_paths_pool.len() as u32);
-            file_paths_pool.push_str(rel);
-        }
-        // 末尾哨兵
-        file_paths_offsets.push(file_paths_pool.len() as u32);
-
-        // 3. 构建符号表（SymbolTable）
-        // by_id[0] 保留为空槽（对应 sym.id=0，表示无效），与 load_from_sqlite 的语义一致
-        let mut by_id: Vec<graph::GraphSymbol> = vec![graph::GraphSymbol {
-            id: 0, file_instance_id: 0, kind: graph::SymbolKind::Unknown,
-            name_offset: 0, name_len: 0, qname_offset: 0, qname_len: 0,
-            module_offset: 0, module_len: 0, start_line: 0, end_line: 0, depth: -1,
-        }];
-        let mut name_pool = String::new();
-        let mut qname_pool = String::new();
-        let mut module_pool = String::new();
-        // qname → symbol_id 映射（用于 call resolve）
-        let mut qname_to_id: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-        // simple_name → Vec<symbol_id>（用于 call resolve by name）
-        let mut name_to_ids: std::collections::HashMap<String, Vec<u32>> = std::collections::HashMap::new();
-
-        let mut sym_id_counter: u32 = 1; // 0 保留为无效
-        for (file_idx, r) in results.iter().enumerate() {
-            let file_instance_id = (file_idx + 1) as u32;
-            for sym in &r.symbols {
-                let id = sym_id_counter;
-                sym_id_counter += 1;
-
-                let name_offset = name_pool.len() as u32;
-                let name_len = sym.name.len() as u32;
-                name_pool.push_str(&sym.name);
-
-                let qname_offset = qname_pool.len() as u32;
-                let qname_len = sym.qualified_name.len() as u32;
-                qname_pool.push_str(&sym.qualified_name);
-
-                let module_offset = module_pool.len() as u32;
-                let module_len = sym.module_path.len() as u32;
-                module_pool.push_str(&sym.module_path);
-
-                let graph_sym = graph::GraphSymbol {
-                    id,
-                    file_instance_id,
-                    kind: graph::SymbolKind::from_db_str(&sym.kind),
-                    name_offset, name_len,
-                    qname_offset, qname_len,
-                    module_offset, module_len,
-                    start_line: sym.start_line,
-                    end_line: sym.end_line,
-                    depth: -1,
-                };
-                by_id.push(graph_sym);
-                qname_to_id.insert(sym.qualified_name.clone(), id);
-                name_to_ids.entry(sym.name.clone()).or_default().push(id);
-            }
-        }
-
-        let sym_count = by_id.len() - 1; // 减去空槽
-
-        // 4. 构建 CallEdge 列表（解析 callee_name → callee_id）
-        let mut edges: Vec<graph::CallEdge> = Vec::new();
-        let mut callee_names_pool = String::new();
-        let mut callee_names_offsets: Vec<u32> = Vec::new();
-        let mut callee_name_idx_map: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-
-        // 按 caller_qualified 分组调用边（每个 ParseResult 的 calls 用其符号的 qname）
-        for (file_idx, r) in results.iter().enumerate() {
-            // 构建 file 内 qname → symbol_id 映射（用于解析 caller）
-            // caller_qualified 在 parse 时已填充
-            for call in &r.calls {
-                let caller_qname = &call.caller_qualified;
-                let caller_id = qname_to_id.get(caller_qname)
-                    .copied()
-                    .unwrap_or(0);
-
-                // 解析 callee_name → callee_id
-                // 优先按 qualified_name 精确匹配（如果 callee_module 含 ::）
-                let callee_id = if !call.callee_module.is_empty() {
-                    // 跨模块调用：尝试 callee_module + name 拼接
-                    let full_qname = if call.callee_module.contains('.') {
-                        format!("{}.{}", call.callee_module, call.callee_name)
-                    } else {
-                        call.callee_name.clone()
-                    };
-                    qname_to_id.get(&full_qname)
-                        .copied()
-                        .or_else(|| name_to_ids.get(&call.callee_name).and_then(|ids| ids.first().copied()))
-                        .unwrap_or(0)
+            // 2. 构建文件路径表（file_instance_id 用序号代替，不写 DB）
+            // 每个 ParseResult 对应一个 file_instance_id（从 1 开始）
+            let mut file_paths_pool = String::new();
+            let mut file_paths_offsets: Vec<u32> = Vec::with_capacity(results.len() + 1);
+            file_paths_offsets.push(0); // 哨兵：file_instance_id=0 表示无效
+            for r in &results {
+                let rel = if !r.rel_path.is_empty() {
+                    &r.rel_path
                 } else {
-                    // 同模块/同文件：按 simple_name 查找
-                    name_to_ids.get(&call.callee_name)
-                        .and_then(|ids| ids.first().copied())
-                        .unwrap_or(0)
+                    // 从 abs_path 推导 rel_path（去掉 workspace 前缀，简化处理）
+                    &r.abs_path
                 };
+                file_paths_offsets.push(file_paths_pool.len() as u32);
+                file_paths_pool.push_str(rel);
+            }
+            // 末尾哨兵
+            file_paths_offsets.push(file_paths_pool.len() as u32);
 
-                // callee_name_idx（用于 backward by name 查询）
-                let callee_name_idx = match callee_name_idx_map.get(&call.callee_name) {
-                    Some(&idx) => idx,
-                    None => {
-                        let idx = callee_names_offsets.len() as u32;
-                        callee_names_offsets.push(callee_names_pool.len() as u32);
-                        callee_names_pool.push_str(&call.callee_name);
-                        callee_name_idx_map.insert(call.callee_name.clone(), idx);
-                        idx
+            // 3. 构建符号表（SymbolTable）
+            // by_id[0] 保留为空槽（对应 sym.id=0，表示无效），与 load_from_sqlite 的语义一致
+            let mut by_id: Vec<graph::GraphSymbol> = vec![graph::GraphSymbol {
+                id: 0,
+                file_instance_id: 0,
+                kind: graph::SymbolKind::Unknown,
+                name_offset: 0,
+                name_len: 0,
+                qname_offset: 0,
+                qname_len: 0,
+                module_offset: 0,
+                module_len: 0,
+                start_line: 0,
+                end_line: 0,
+                depth: -1,
+            }];
+            let mut name_pool = String::new();
+            let mut qname_pool = String::new();
+            let mut module_pool = String::new();
+            // qname → symbol_id 映射（用于 call resolve）
+            let mut qname_to_id: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
+            // simple_name → Vec<symbol_id>（用于 call resolve by name）
+            let mut name_to_ids: std::collections::HashMap<String, Vec<u32>> =
+                std::collections::HashMap::new();
+
+            let mut sym_id_counter: u32 = 1; // 0 保留为无效
+            for (file_idx, r) in results.iter().enumerate() {
+                let file_instance_id = (file_idx + 1) as u32;
+                for sym in &r.symbols {
+                    let id = sym_id_counter;
+                    sym_id_counter += 1;
+
+                    let name_offset = name_pool.len() as u32;
+                    let name_len = sym.name.len() as u32;
+                    name_pool.push_str(&sym.name);
+
+                    let qname_offset = qname_pool.len() as u32;
+                    let qname_len = sym.qualified_name.len() as u32;
+                    qname_pool.push_str(&sym.qualified_name);
+
+                    let module_offset = module_pool.len() as u32;
+                    let module_len = sym.module_path.len() as u32;
+                    module_pool.push_str(&sym.module_path);
+
+                    let graph_sym = graph::GraphSymbol {
+                        id,
+                        file_instance_id,
+                        kind: graph::SymbolKind::from_db_str(&sym.kind),
+                        name_offset,
+                        name_len,
+                        qname_offset,
+                        qname_len,
+                        module_offset,
+                        module_len,
+                        start_line: sym.start_line,
+                        end_line: sym.end_line,
+                        depth: -1,
+                    };
+                    by_id.push(graph_sym);
+                    qname_to_id.insert(sym.qualified_name.clone(), id);
+                    name_to_ids.entry(sym.name.clone()).or_default().push(id);
+                }
+            }
+
+            let sym_count = by_id.len() - 1; // 减去空槽
+
+            // 4. 构建 CallEdge 列表（解析 callee_name → callee_id）
+            let mut edges: Vec<graph::CallEdge> = Vec::new();
+            let mut callee_names_pool = String::new();
+            let mut callee_names_offsets: Vec<u32> = Vec::new();
+            let mut callee_name_idx_map: std::collections::HashMap<String, u32> =
+                std::collections::HashMap::new();
+
+            // 按 caller_qualified 分组调用边（每个 ParseResult 的 calls 用其符号的 qname）
+            for (file_idx, r) in results.iter().enumerate() {
+                // 构建 file 内 qname → symbol_id 映射（用于解析 caller）
+                // caller_qualified 在 parse 时已填充
+                for call in &r.calls {
+                    let caller_qname = &call.caller_qualified;
+                    let caller_id = qname_to_id.get(caller_qname).copied().unwrap_or(0);
+
+                    // 解析 callee_name → callee_id
+                    // 优先按 qualified_name 精确匹配（如果 callee_module 含 ::）
+                    let callee_id = if !call.callee_module.is_empty() {
+                        // 跨模块调用：尝试 callee_module + name 拼接
+                        let full_qname = if call.callee_module.contains('.') {
+                            format!("{}.{}", call.callee_module, call.callee_name)
+                        } else {
+                            call.callee_name.clone()
+                        };
+                        qname_to_id
+                            .get(&full_qname)
+                            .copied()
+                            .or_else(|| {
+                                name_to_ids
+                                    .get(&call.callee_name)
+                                    .and_then(|ids| ids.first().copied())
+                            })
+                            .unwrap_or(0)
+                    } else {
+                        // 同模块/同文件：按 simple_name 查找
+                        name_to_ids
+                            .get(&call.callee_name)
+                            .and_then(|ids| ids.first().copied())
+                            .unwrap_or(0)
+                    };
+
+                    // callee_name_idx（用于 backward by name 查询）
+                    let callee_name_idx = match callee_name_idx_map.get(&call.callee_name) {
+                        Some(&idx) => idx,
+                        None => {
+                            let idx = callee_names_offsets.len() as u32;
+                            callee_names_offsets.push(callee_names_pool.len() as u32);
+                            callee_names_pool.push_str(&call.callee_name);
+                            callee_name_idx_map.insert(call.callee_name.clone(), idx);
+                            idx
+                        }
+                    };
+
+                    let call_line_packed =
+                        graph::CallEdge::pack_call_line(call.call_line, call.is_cross_file);
+                    edges.push(graph::CallEdge {
+                        caller_id,
+                        callee_id,
+                        call_line_packed,
+                        callee_name_idx,
+                    });
+                }
+            }
+            let edge_count = edges.len();
+
+            // 5. 构建排序索引（by_qname_sorted_ids, by_simple_name_sorted_ids, search_pool）
+            // 注意：by_id 索引从 0 开始，sym.id 从 1 开始，所以 sym_id = idx + 1
+            // by_qname_sorted_ids 存的是 sym.id（与 GraphStore.load_from_sqlite 的语义一致）
+            let mut by_qname_sorted_ids: Vec<u32> =
+                by_id.iter().filter(|s| s.id != 0).map(|s| s.id).collect();
+            by_qname_sorted_ids.sort_unstable_by(|a, b| {
+                // sym.id 从 1 开始，by_id 索引从 0 开始，所以 idx = id - 1
+                let sa = &by_id[*a as usize - 1];
+                let sb = &by_id[*b as usize - 1];
+                let qa = &qname_pool
+                    [sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
+                let qb = &qname_pool
+                    [sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
+                qa.cmp(qb)
+            });
+            let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
+            by_simple_name_sorted_ids.sort_unstable_by(|a, b| {
+                let sa = &by_id[*a as usize - 1];
+                let sb = &by_id[*b as usize - 1];
+                let na =
+                    &name_pool[sa.name_offset as usize..(sa.name_offset + sa.name_len) as usize];
+                let nb =
+                    &name_pool[sb.name_offset as usize..(sb.name_offset + sb.name_len) as usize];
+                na.cmp(nb).then_with(|| a.cmp(b))
+            });
+
+            // P2: 搜索索引（memchr SIMD 加速）
+            let mut search_pool_lower = String::new();
+            let mut search_entry_offsets: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
+            let mut search_entry_sym_ids: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
+            for sym in &by_id {
+                if sym.id == 0 {
+                    continue;
+                }
+                let name =
+                    &name_pool[sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize];
+                if !name.is_empty() {
+                    search_entry_offsets.push(search_pool_lower.len() as u32);
+                    search_entry_sym_ids.push(sym.id);
+                    for c in name.chars() {
+                        search_pool_lower.push(c.to_ascii_lowercase());
                     }
-                };
-
-                let call_line_packed = graph::CallEdge::pack_call_line(call.call_line, call.is_cross_file);
-                edges.push(graph::CallEdge {
-                    caller_id,
-                    callee_id,
-                    call_line_packed,
-                    callee_name_idx,
-                });
-            }
-        }
-        let edge_count = edges.len();
-
-        // 5. 构建排序索引（by_qname_sorted_ids, by_simple_name_sorted_ids, search_pool）
-        // 注意：by_id 索引从 0 开始，sym.id 从 1 开始，所以 sym_id = idx + 1
-        // by_qname_sorted_ids 存的是 sym.id（与 GraphStore.load_from_sqlite 的语义一致）
-        let mut by_qname_sorted_ids: Vec<u32> = by_id.iter()
-            .filter(|s| s.id != 0)
-            .map(|s| s.id)
-            .collect();
-        by_qname_sorted_ids.sort_unstable_by(|a, b| {
-            // sym.id 从 1 开始，by_id 索引从 0 开始，所以 idx = id - 1
-            let sa = &by_id[*a as usize - 1];
-            let sb = &by_id[*b as usize - 1];
-            let qa = &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
-            let qb = &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
-            qa.cmp(qb)
-        });
-        let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
-        by_simple_name_sorted_ids.sort_unstable_by(|a, b| {
-            let sa = &by_id[*a as usize - 1];
-            let sb = &by_id[*b as usize - 1];
-            let na = &name_pool[sa.name_offset as usize..(sa.name_offset + sa.name_len) as usize];
-            let nb = &name_pool[sb.name_offset as usize..(sb.name_offset + sb.name_len) as usize];
-            na.cmp(nb).then_with(|| a.cmp(b))
-        });
-
-        // P2: 搜索索引（memchr SIMD 加速）
-        let mut search_pool_lower = String::new();
-        let mut search_entry_offsets: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
-        let mut search_entry_sym_ids: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
-        for sym in &by_id {
-            if sym.id == 0 { continue; }
-            let name = &name_pool[sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize];
-            if !name.is_empty() {
-                search_entry_offsets.push(search_pool_lower.len() as u32);
-                search_entry_sym_ids.push(sym.id);
-                for c in name.chars() {
-                    search_pool_lower.push(c.to_ascii_lowercase());
+                    search_pool_lower.push('\0');
                 }
-                search_pool_lower.push('\0');
-            }
-            let qname = &qname_pool[sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize];
-            if !qname.is_empty() && qname != name {
-                search_entry_offsets.push(search_pool_lower.len() as u32);
-                search_entry_sym_ids.push(sym.id);
-                for c in qname.chars() {
-                    search_pool_lower.push(c.to_ascii_lowercase());
+                let qname = &qname_pool
+                    [sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize];
+                if !qname.is_empty() && qname != name {
+                    search_entry_offsets.push(search_pool_lower.len() as u32);
+                    search_entry_sym_ids.push(sym.id);
+                    for c in qname.chars() {
+                        search_pool_lower.push(c.to_ascii_lowercase());
+                    }
+                    search_pool_lower.push('\0');
                 }
-                search_pool_lower.push('\0');
             }
-        }
 
-        // 6. 组装 SymbolTable
-        let symbols = Arc::new(graph::SymbolTable {
-            by_id, by_qname_sorted_ids, by_simple_name_sorted_ids,
-            file_paths_pool, file_paths_offsets,
-            name_pool, qname_pool, module_pool,
-            search_pool_lower, search_entry_offsets, search_entry_sym_ids,
-        });
+            // 6. 组装 SymbolTable
+            let symbols = Arc::new(graph::SymbolTable {
+                by_id,
+                by_qname_sorted_ids,
+                by_simple_name_sorted_ids,
+                file_paths_pool,
+                file_paths_offsets,
+                name_pool,
+                qname_pool,
+                module_pool,
+                search_pool_lower,
+                search_entry_offsets,
+                search_entry_sym_ids,
+            });
 
-        // 7. 构建 CallGraph CSR（用 graph::build_csr 公开函数）
-        // callee_names_offsets 末尾需要哨兵
-        callee_names_offsets.push(callee_names_pool.len() as u32);
-        // 使用 graph 模块的 build_csr 函数（max_id = sym_id_counter - 1）
-        let max_id = (sym_id_counter - 1) as usize;
-        let mut calls = graph::build_csr_public(
-            edges,
-            callee_names_pool,
-            callee_names_offsets,
-            max_id,
-        );
+            // 7. 构建 CallGraph CSR（用 graph::build_csr 公开函数）
+            // callee_names_offsets 末尾需要哨兵
+            callee_names_offsets.push(callee_names_pool.len() as u32);
+            // 使用 graph 模块的 build_csr 函数（max_id = sym_id_counter - 1）
+            let max_id = (sym_id_counter - 1) as usize;
+            let mut calls =
+                graph::build_csr_public(edges, callee_names_pool, callee_names_offsets, max_id);
 
-        // 计算 roots（无 caller 的函数）
-        let mut has_caller = vec![false; max_id + 1];
-        for &position in &calls.backward_positions {
-            let e = &calls.forward_edges[position as usize];
-            if e.callee_id != 0 && (e.callee_id as usize) < has_caller.len() {
-                has_caller[e.callee_id as usize] = true;
+            // 计算 roots（无 caller 的函数）
+            let mut has_caller = vec![false; max_id + 1];
+            for &position in &calls.backward_positions {
+                let e = &calls.forward_edges[position as usize];
+                if e.callee_id != 0 && (e.callee_id as usize) < has_caller.len() {
+                    has_caller[e.callee_id as usize] = true;
+                }
             }
-        }
-        // 遍历所有非空槽符号
-        for sym in symbols.by_id.iter() {
-            if sym.id == 0 { continue; }
-            if (sym.id as usize) < has_caller.len() && !has_caller[sym.id as usize] && sym.kind == graph::SymbolKind::Fn {
-                calls.roots.push(sym.id);
+            // 遍历所有非空槽符号
+            for sym in symbols.by_id.iter() {
+                if sym.id == 0 {
+                    continue;
+                }
+                if (sym.id as usize) < has_caller.len()
+                    && !has_caller[sym.id as usize]
+                    && sym.kind == graph::SymbolKind::Fn
+                {
+                    calls.roots.push(sym.id);
+                }
             }
-        }
 
-        // 构建 callee_name_sorted_idxs
-        let (name_sorted, position_offsets, positions) = graph::build_callee_name_index_public(
-            &calls.forward_edges,
-            &calls.callee_names_pool,
-            &calls.callee_names_offsets,
-        );
-        calls.callee_name_sorted_idxs = name_sorted;
-        calls.callee_position_offsets = position_offsets;
-        calls.callee_positions = positions;
+            // 构建 callee_name_sorted_idxs
+            let (name_sorted, position_offsets, positions) = graph::build_callee_name_index_public(
+                &calls.forward_edges,
+                &calls.callee_names_pool,
+                &calls.callee_names_offsets,
+            );
+            calls.callee_name_sorted_idxs = name_sorted;
+            calls.callee_position_offsets = position_offsets;
+            calls.callee_positions = positions;
 
-        // 8. 组装 GraphStore
-        let store = graph::GraphStore::new_with_data(symbols, Arc::new(calls));
+            // 8. 组装 GraphStore
+            let store = graph::GraphStore::new_with_data(symbols, Arc::new(calls));
 
-        Ok((store, sym_count, edge_count))
-    })?;
+            Ok((store, sym_count, edge_count))
+        })?;
 
     // 转为 Python 对象
     let py_store = Bound::new(py, store)?;
@@ -1698,20 +1738,32 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<graph::CallersBatch>()?; // P10: get_callers 懒转换批量结果
     m.add_class::<graph::SymbolSearchBatch>()?; // P11: search_symbols 懒转换批量结果
     m.add_class::<graph::BlastRadiusBatch>()?; // Phase 6-1: blast_radius 懒转换批量结果
-    // Phase 6-2: MinHash/LSH clone detection 核心
+                                               // Phase 6-2: MinHash/LSH clone detection 核心
     m.add_function(wrap_pyfunction!(clone_detection::py_minhash_signature, m)?)?;
     m.add_function(wrap_pyfunction!(clone_detection::py_lsh_buckets, m)?)?;
-    m.add_function(wrap_pyfunction!(clone_detection::py_batch_minhash_signatures, m)?)?;
-    m.add_function(wrap_pyfunction!(clone_detection::py_lsh_candidate_pairs, m)?)?;
-    m.add_function(wrap_pyfunction!(clone_detection::clone_detection_params, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        clone_detection::py_batch_minhash_signatures,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        clone_detection::py_lsh_candidate_pairs,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        clone_detection::clone_detection_params,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(clone_detection::py_detect_clones_core, m)?)?;
     // Phase 6-1 P2/P3: cross_layer_impact + defect_correlation Rust 短路
     m.add_function(wrap_pyfunction!(impact::py_cross_layer_impact, m)?)?;
     m.add_function(wrap_pyfunction!(impact::py_defect_correlation, m)?)?;
     // Phase 6-3 P1: 向量加载 + TopK 排序 Rust 短路
-    m.add_function(wrap_pyfunction!(vector_topk::py_load_embeddings_from_blobs, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        vector_topk::py_load_embeddings_from_blobs,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(vector_topk::py_vector_topk, m)?)?;
-                                                // Phase 4: GraphSnapshot + ArcSwap 原子发布
+    // Phase 4: GraphSnapshot + ArcSwap 原子发布
     m.add_class::<snapshot::PySnapshotManager>()?;
     m.add_class::<snapshot::PySnapshotCache>()?;
     // Phase 5: File Watcher (notify crate)
@@ -1743,83 +1795,206 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // T-1783751519227-18d8: 输入规范化入口（BOM 剥离 + 编码检测 + CRLF→LF）
     m.add_function(wrap_pyfunction!(canonicalize_source_py, m)?)?;
     // Phase 1-1/2: SQLite schema_version 查询与 Rust schema migration
-    m.add_function(wrap_pyfunction!(sqlite_query::sqlite_query_schema_version, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        sqlite_query::sqlite_query_schema_version,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(sqlite_query::sqlite_migrate_schema, m)?)?;
+    // Task C2: Rust StorageService PyO3 暴露层
+    m.add_function(wrap_pyfunction!(storage::storage_schema_version, m)?)?;
+    m.add_function(wrap_pyfunction!(storage::storage_initialize_or_migrate, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_merge_query::cas_merge_to_codegraph, m)?)?;
+    m.add_class::<storage::StorageHandle>()?;
+    m.add_class::<storage::StorageTransaction>()?;
+    m.add_function(wrap_pyfunction!(storage::storage_open, m)?)?;
+    m.add_function(wrap_pyfunction!(storage::storage_begin, m)?)?;
+    m.add_function(wrap_pyfunction!(storage::storage_commit, m)?)?;
+    m.add_function(wrap_pyfunction!(storage::storage_rollback, m)?)?;
+    m.add_function(wrap_pyfunction!(storage::storage_integrity_check, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        storage::storage_backup_before_migration,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(storage::storage_checkpoint_py, m)?)?;
     // Phase 1-2: CAS 只读查询 API（compute_cas_key_v1 纯函数 + lookup/get_state/count_files/get_file_generation 只读查询）
     m.add_function(wrap_pyfunction!(cas_query::compute_cas_key_v1, m)?)?;
     m.add_function(wrap_pyfunction!(cas_query::compute_symbol_content_hash, m)?)?;
     m.add_function(wrap_pyfunction!(cas_query::cas_global_lookup, m)?)?;
     m.add_function(wrap_pyfunction!(cas_query::cas_global_get_state, m)?)?;
     m.add_function(wrap_pyfunction!(cas_query::cas_global_count_files, m)?)?;
-    m.add_function(wrap_pyfunction!(cas_query::cas_local_get_file_generation, m)?)?;
-    // Phase 1-3: workspace manifest 只读查询 API
+    m.add_function(wrap_pyfunction!(
+        cas_query::cas_local_get_file_generation,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        cas_write_query::cas_publish_with_retry,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(cas_write_query::cas_pin, m)?)?;
+    // Phase 1-3: workspace manifest 查询与 Rust 生产写 API
+    m.add_function(wrap_pyfunction!(manifest_query::manifest_init_schema, m)?)?;
+    m.add_function(wrap_pyfunction!(manifest_query::manifest_upsert, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        manifest_query::manifest_link_to_snapshot,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(manifest_query::manifest_get, m)?)?;
     m.add_function(wrap_pyfunction!(manifest_query::manifest_list, m)?)?;
     m.add_function(wrap_pyfunction!(manifest_query::manifest_count, m)?)?;
     m.add_function(wrap_pyfunction!(manifest_query::snapshot_get_files, m)?)?;
-    m.add_function(wrap_pyfunction!(manifest_query::manifest_verify_raw_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        manifest_query::manifest_verify_raw_hash,
+        m
+    )?)?;
     // Phase 1-4: Replicator 只读查询 API
-    m.add_function(wrap_pyfunction!(replicator_query::replicator_get_pending_count, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        replicator_query::replicator_get_pending_count,
+        m
+    )?)?;
     // Phase 2-1: CAS→CodeGraph Merge PyO3 暴露层（cas_merge_to_codegraph + cas_merge_init_schema）
-    m.add_function(wrap_pyfunction!(cas_merge_query::cas_merge_to_codegraph, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        cas_merge_query::cas_merge_to_codegraph,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(cas_merge_query::cas_merge_init_schema, m)?)?;
     // Phase 2-2: 批量 symbols 写入 PyO3 暴露层（batch_save_symbols）
     m.add_function(wrap_pyfunction!(batch_build_query::batch_save_symbols, m)?)?;
     // Phase 2-3: 调用边 resolve + 批量写入 PyO3 暴露层（batch_resolve_and_save_calls）
-    m.add_function(wrap_pyfunction!(batch_calls_query::batch_resolve_and_save_calls, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        batch_calls_query::batch_resolve_and_save_calls,
+        m
+    )?)?;
     // Phase 2-4: 批量文件历史版本写入
-    m.add_function(wrap_pyfunction!(batch_file_versions_query::batch_save_file_versions, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        batch_file_versions_query::batch_save_file_versions,
+        m
+    )?)?;
     // Phase 2-6-3: 批量文件注册
-    m.add_function(wrap_pyfunction!(batch_register_query::batch_register_files, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        batch_register_query::batch_register_files,
+        m
+    )?)?;
     // Phase 3-4-1: StagingLog PyO3 暴露层（9 个 API）
     m.add_function(wrap_pyfunction!(staging_log_query::staging_log_append, m)?)?;
     m.add_function(wrap_pyfunction!(staging_log_query::staging_log_read, m)?)?;
-    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_read_pending, m)?)?;
-    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_mark_applied_batch, m)?)?;
-    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_mark_failed, m)?)?;
-    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_truncate, m)?)?;
-    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_compact_applied, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        staging_log_query::staging_log_read_pending,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        staging_log_query::staging_log_mark_applied_batch,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        staging_log_query::staging_log_mark_failed,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        staging_log_query::staging_log_truncate,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        staging_log_query::staging_log_compact_applied,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(staging_log_query::staging_log_stats, m)?)?;
-    m.add_function(wrap_pyfunction!(staging_log_query::staging_log_next_lsn, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        staging_log_query::staging_log_next_lsn,
+        m
+    )?)?;
     // Phase 3-4-2: ParseRetryLog PyO3 暴露层（9 个 API）
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_append, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_read, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_read_pending, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_read_retryable, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_mark_applied, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_mark_exhausted, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_increment_retry, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_compact, m)?)?;
-    m.add_function(wrap_pyfunction!(parse_retry_log_query::parse_retry_log_next_lsn, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_append,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_read,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_read_pending,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_read_retryable,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_mark_applied,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_mark_exhausted,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_increment_retry,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_compact,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        parse_retry_log_query::parse_retry_log_next_lsn,
+        m
+    )?)?;
     // Phase 2-6-1: 增量构建 PyO3 暴露层（compute_and_apply_symbol_diff + load_file_result_from_db）
-    m.add_function(wrap_pyfunction!(incremental_build_query::compute_and_apply_symbol_diff, m)?)?;
-    m.add_function(wrap_pyfunction!(incremental_build_query::load_file_result_from_db, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        incremental_build_query::compute_and_apply_symbol_diff,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        incremental_build_query::load_file_result_from_db,
+        m
+    )?)?;
     // Phase 4-1: UDS framing/SO_PEERCRED/RPC dispatch PyO3 暴露层（14 个 API）
     m.add_function(wrap_pyfunction!(daemon_query::protocol_constants, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::protocol_encode_payload, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::protocol_decode_payload, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::protocol_build_frame, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::protocol_parse_header, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::protocol_validate_message_size, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::protocol_validate_message_size,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(daemon_query::protocol_parse_response, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::protocol_make_ok_response, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::protocol_make_error_response, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::protocol_make_ok_response,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::protocol_make_error_response,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(daemon_query::peercred_is_available, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::peercred_info, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::dispatch_list_methods, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::dispatch_list_error_codes, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::dispatch_list_error_codes,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(daemon_query::dispatch_is_admin_method, m)?)?;
     // Phase 4-2: UID/workspace ACL、路径安全与资源预算（10 个 PyO3 API）
     m.add_function(wrap_pyfunction!(daemon_query::validate_owned_path, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::check_path_within_workspace, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::check_path_within_workspace,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(daemon_query::is_admin_uid, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::current_daemon_uid_py, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::check_workspace_owner, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::budget_create, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::budget_preset, m)?)?;
     m.add_function(wrap_pyfunction!(daemon_query::budget_tracker_new, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::budget_tracker_visit_node, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::budget_tracker_truncate_results, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::budget_tracker_visit_node,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::budget_tracker_truncate_results,
+        m
+    )?)?;
 
     // Phase 4-3: health_check_all PyO3 暴露（1 个 PyO3 API）
     // 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.1
@@ -1837,8 +2012,14 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Phase 4-3 P3: backup 纯计算（2 个 PyO3 API）
     // 契约：docs/design/phase4-3-metrics-health-audit-contract.md §3.4
-    m.add_function(wrap_pyfunction!(daemon_query::backup_compute_file_sha256, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon_query::backup_compute_meta_checksum, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::backup_compute_file_sha256,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon_query::backup_compute_meta_checksum,
+        m
+    )?)?;
 
     // Phase 8: 完整 backup/restore（7 个 PyO3 API）
     // 契约：docs/design/phase8-rust-backup-restore-contract.md
@@ -1904,7 +2085,10 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Phase 5-2 Slice 3: 简单 RPC 命令参数构建 PyO3 暴露（1 个跨平台 API）
     // 对齐 Python cli/daemon_commands.py:run_daemon_command 的 list/status/health/schema-version 分支
-    m.add_function(wrap_pyfunction!(daemon::client::build_simple_request_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon::client::build_simple_request_py,
+        m
+    )?)?;
 
     // Phase 5-2 Slice 5: 剩余 RPC 命令参数构建 PyO3 暴露（1 个跨平台 API）
     // 对齐 Python cli/daemon_commands.py:run_daemon_command 的 register/backup/restore/gc/snapshot/mount 分支
@@ -1913,12 +2097,21 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Phase 5-2 Slice 4: snapshot.publish 参数构建 PyO3 暴露（1 个跨平台 API）
     // 对齐 Python UnixDaemonRpcClient.publish_snapshot 的参数构建部分
     // FD 打开和 SCM_RIGHTS 传递是 Unix-only 副作用，不暴露给 Python
-    m.add_function(wrap_pyfunction!(daemon::client::build_publish_params_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon::client::build_publish_params_py,
+        m
+    )?)?;
 
     // Phase 5-2 Slice 6: agent session 参数构建 PyO3 暴露（2 个跨平台 API）
     // 对齐 Python server/agent_protocol.py 的 connect/refresh 参数构建
-    m.add_function(wrap_pyfunction!(daemon::client::build_connect_params_py, m)?)?;
-    m.add_function(wrap_pyfunction!(daemon::client::build_refresh_params_py, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon::client::build_connect_params_py,
+        m
+    )?)?;
+    m.add_function(wrap_pyfunction!(
+        daemon::client::build_refresh_params_py,
+        m
+    )?)?;
     Ok(())
 }
 
@@ -1927,12 +2120,7 @@ mod tests {
     use super::*;
 
     /// 辅助函数：构造 SymbolInfo（仅填必要字段，byte range 用于推导父子关系）
-    fn make_symbol(
-        name: &str,
-        qualified: &str,
-        byte_start: u32,
-        byte_end: u32,
-    ) -> SymbolInfo {
+    fn make_symbol(name: &str, qualified: &str, byte_start: u32, byte_end: u32) -> SymbolInfo {
         SymbolInfo {
             name: name.to_string(),
             qualified_name: qualified.to_string(),
@@ -1993,10 +2181,7 @@ mod tests {
         // 构造 2 个调用：
         // call1: caller_qualified="mod.outer" → 解析到 outer，caller_local_id=Some(1)
         // call2: caller_qualified="mod.unknown" → 未解析，caller_local_id=None
-        let mut calls = vec![
-            make_call("mod.outer", 20),
-            make_call("mod.unknown", 70),
-        ];
+        let mut calls = vec![make_call("mod.outer", 20), make_call("mod.unknown", 70)];
 
         assign_local_ids(&mut symbols, &mut calls);
 
@@ -2008,8 +2193,7 @@ mod tests {
 
         // 验证 lexical_parent_local_id（NULL ABI）
         assert_eq!(
-            symbols[0].lexical_parent_local_id,
-            None,
+            symbols[0].lexical_parent_local_id, None,
             "R14-P0-2: outer 是顶层，lexical_parent_local_id 应为 None（NULL），不是 0"
         );
         assert_eq!(
@@ -2054,8 +2238,7 @@ mod tests {
 
         for s in &symbols {
             assert_eq!(
-                s.lexical_parent_local_id,
-                None,
+                s.lexical_parent_local_id, None,
                 "R14-P0-2: 顶层符号 {} 的 lexical_parent_local_id 应为 None",
                 s.name
             );
@@ -2067,17 +2250,13 @@ mod tests {
     fn test_r14_all_unresolved_calls_have_none_caller() {
         let mut symbols = vec![make_symbol("foo", "mod.foo", 0, 10)];
         // caller_qualified 不匹配任何符号
-        let mut calls = vec![
-            make_call("mod.unknown1", 5),
-            make_call("mod.unknown2", 6),
-        ];
+        let mut calls = vec![make_call("mod.unknown1", 5), make_call("mod.unknown2", 6)];
 
         assign_local_ids(&mut symbols, &mut calls);
 
         for c in &calls {
             assert_eq!(
-                c.caller_local_id,
-                None,
+                c.caller_local_id, None,
                 "R14-P0-2: 未解析调用 {} 的 caller_local_id 应为 None",
                 c.caller_qualified
             );

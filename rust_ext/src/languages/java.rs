@@ -1,6 +1,6 @@
 //! Java 语言配置（从 multi_lang.rs 拆分，P0-C Step 0）
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy};
+use crate::multi_lang::{CallRule, LangConfig, NameStrategy, SymbolRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -11,30 +11,43 @@ pub(crate) fn config() -> LangConfig {
             SymbolRule::new(
                 "method_declaration",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "method", Some("block"), true,
+                "method",
+                Some("block"),
+                true,
             ),
             SymbolRule::new(
                 "constructor_declaration",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "constructor", Some("block"), true,
+                "constructor",
+                Some("block"),
+                true,
             ),
             SymbolRule::new(
                 "class_declaration",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "class", Some("class_body"), false,
+                "class",
+                Some("class_body"),
+                false,
             ),
             SymbolRule::new(
                 "interface_declaration",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "interface", Some("interface_body"), false,
+                "interface",
+                Some("interface_body"),
+                false,
             ),
             SymbolRule::new(
                 "enum_declaration",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "enum", Some("enum_body"), false,
+                "enum",
+                Some("enum_body"),
+                false,
             ),
         ],
-        call_rules: vec![CallRule { kind: "method_invocation", callee_field: None }],
+        call_rules: vec![CallRule {
+            kind: "method_invocation",
+            callee_field: None,
+        }],
         import_kinds: vec!["import_declaration"],
         import_directives: vec![],
         reference_rules: vec![],

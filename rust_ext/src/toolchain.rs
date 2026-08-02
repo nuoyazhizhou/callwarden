@@ -167,14 +167,26 @@ mod tests {
     #[test]
     fn test_fingerprint_consistency() {
         let fp1 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
             &["/usr/include".to_string()],
-            &[("__GNUC__".to_string(), "10".to_string())].into_iter().collect(),
+            &[("__GNUC__".to_string(), "10".to_string())]
+                .into_iter()
+                .collect(),
         );
         let fp2 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
             &["/usr/include".to_string()],
-            &[("__GNUC__".to_string(), "10".to_string())].into_iter().collect(),
+            &[("__GNUC__".to_string(), "10".to_string())]
+                .into_iter()
+                .collect(),
         );
         assert_eq!(fp1, fp2);
     }
@@ -182,12 +194,22 @@ mod tests {
     #[test]
     fn test_fingerprint_different_version() {
         let fp1 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
-            &[], &HashMap::new(),
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
+            &[],
+            &HashMap::new(),
         );
         let fp2 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "11.0", "x86_64-linux", "",
-            &[], &HashMap::new(),
+            "/usr/bin/gcc",
+            "gcc",
+            "11.0",
+            "x86_64-linux",
+            "",
+            &[],
+            &HashMap::new(),
         );
         assert_ne!(fp1, fp2);
     }
@@ -195,12 +217,20 @@ mod tests {
     #[test]
     fn test_fingerprint_include_dirs_order_independent() {
         let fp1 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
             &["/usr/include".to_string(), "/usr/local/include".to_string()],
             &HashMap::new(),
         );
         let fp2 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
             &["/usr/local/include".to_string(), "/usr/include".to_string()],
             &HashMap::new(),
         );
@@ -218,12 +248,22 @@ mod tests {
         macros2.insert("A".to_string(), "1".to_string());
 
         let fp1 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
-            &[], &macros1,
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
+            &[],
+            &macros1,
         );
         let fp2 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
-            &[], &macros2,
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
+            &[],
+            &macros2,
         );
         assert_eq!(fp1, fp2); // 排序后相同
     }
@@ -231,12 +271,22 @@ mod tests {
     #[test]
     fn test_fingerprint_different_path() {
         let fp1 = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
-            &[], &HashMap::new(),
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
+            &[],
+            &HashMap::new(),
         );
         let fp2 = compute_toolchain_fingerprint(
-            "/opt/gcc/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
-            &[], &HashMap::new(),
+            "/opt/gcc/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
+            &[],
+            &HashMap::new(),
         );
         assert_ne!(fp1, fp2);
     }
@@ -244,8 +294,13 @@ mod tests {
     #[test]
     fn test_fingerprint_is_hex() {
         let fp = compute_toolchain_fingerprint(
-            "/usr/bin/gcc", "gcc", "10.0", "x86_64-linux", "",
-            &[], &HashMap::new(),
+            "/usr/bin/gcc",
+            "gcc",
+            "10.0",
+            "x86_64-linux",
+            "",
+            &[],
+            &HashMap::new(),
         );
         assert_eq!(fp.len(), 64); // SHA-256 hex = 64 chars
         assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));

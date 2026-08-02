@@ -91,9 +91,7 @@ impl MigrationItem {
 
     /// 判断是否可进入 review（前 6 步 Done，review 待 review）
     pub fn ready_for_review(&self) -> bool {
-        self.steps[..6]
-            .iter()
-            .all(|s| *s == MigrationStatus::Done)
+        self.steps[..6].iter().all(|s| *s == MigrationStatus::Done)
             && self.steps[6] == MigrationStatus::PendingReview
     }
 
@@ -136,10 +134,7 @@ impl MigrationManifest {
 
     /// 返回指定 Phase 下所有功能子任务
     pub fn items_in_phase(&self, phase: u8) -> Vec<&MigrationItem> {
-        self.items
-            .values()
-            .filter(|i| i.phase == phase)
-            .collect()
+        self.items.values().filter(|i| i.phase == phase).collect()
     }
 
     /// 整体完成进度（0-100）
@@ -151,7 +146,12 @@ impl MigrationManifest {
         let done_steps: usize = self
             .items
             .values()
-            .map(|i| i.steps.iter().filter(|s| **s == MigrationStatus::Done).count())
+            .map(|i| {
+                i.steps
+                    .iter()
+                    .filter(|s| **s == MigrationStatus::Done)
+                    .count()
+            })
             .sum();
         (done_steps * 100 / total_steps) as u8
     }

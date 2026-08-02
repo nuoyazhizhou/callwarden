@@ -6,7 +6,7 @@
 //! - namespace 已支持（Step 0）
 //! - macro/template 投影：当前样本无 macro/template，保持现有行为
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy};
+use crate::multi_lang::{CallRule, LangConfig, NameStrategy, SymbolRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -23,7 +23,9 @@ pub(crate) fn config() -> LangConfig {
                     intermediate: "function_declarator",
                     name_kinds: vec!["identifier", "field_identifier", "qualified_identifier"],
                 },
-                "method", Some("compound_statement"), true,
+                "method",
+                Some("compound_statement"),
+                true,
             )
             .with_require_parent_kind("field_declaration_list")
             .with_constructor_detection(),
@@ -36,30 +38,43 @@ pub(crate) fn config() -> LangConfig {
                     intermediate: "function_declarator",
                     name_kinds: vec!["identifier", "field_identifier", "qualified_identifier"],
                 },
-                "function", Some("compound_statement"), true,
+                "function",
+                Some("compound_statement"),
+                true,
             ),
             SymbolRule::new(
                 "class_specifier",
                 NameStrategy::ChildByType(vec!["type_identifier"]),
-                "class", Some("field_declaration_list"), false,
+                "class",
+                Some("field_declaration_list"),
+                false,
             ),
             SymbolRule::new(
                 "struct_specifier",
                 NameStrategy::ChildByType(vec!["type_identifier"]),
-                "struct", Some("field_declaration_list"), false,
+                "struct",
+                Some("field_declaration_list"),
+                false,
             ),
             SymbolRule::new(
                 "enum_specifier",
                 NameStrategy::ChildByType(vec!["type_identifier"]),
-                "enum", None, false,
+                "enum",
+                None,
+                false,
             ),
             SymbolRule::new(
                 "namespace_definition",
                 NameStrategy::ChildByType(vec!["namespace_identifier", "identifier"]),
-                "namespace", Some("declaration_list"), false,
+                "namespace",
+                Some("declaration_list"),
+                false,
             ),
         ],
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: Some("function") }],
+        call_rules: vec![CallRule {
+            kind: "call_expression",
+            callee_field: Some("function"),
+        }],
         import_kinds: vec!["preproc_include"],
         import_directives: vec![],
         reference_rules: vec![],

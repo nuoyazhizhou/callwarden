@@ -313,6 +313,113 @@ class TestRoutingStatsSummary:
         """混合查询后统计正确。"""
         from callwarden.server.daemon_client import DaemonClient
         DaemonClient.reset_instance()
+
+
+class TestDaemonEndpointRouting:
+    """验证 auto/enterprise/local 的真实 daemon endpoint 分流。"""
+
+    def test_local_mode_never_probes_or_starts_daemon(self):
+        from callwarden.server.daemon_client import DaemonClient
+
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="local"):
+            with patch.object(client._rpc, "call") as rpc_call:
+                with patch.object(client, "_sql_fallback_get_stats", return_value={"files": 1}):
+                    assert client.get_stats(db_path="unused.db") == {"files": 1}
+                rpc_call.assert_not_called()
+        DaemonClient.reset_instance()
+
+    def test_auto_mode_autostarts_when_endpoint_is_missing(self):
+        from callwarden.server.daemon_client import DaemonClient, DaemonUnavailableError
+
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+        client._rpc.probe = MagicMock(side_effect=DaemonUnavailableError("stale socket"))
+        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
+            with patch("callwarden.server.daemon_client.ensure_daemon", return_value=None) as start:
+                with patch.object(client, "_sql_fallback_get_stats", return_value={"files": 2}):
+                    assert client.get_stats(db_path="unused.db") == {"files": 2}
+                assert start.call_count == 1
+                assert start.call_args.args[0] == client._rpc.socket_path
+        client._rpc.probe.assert_called_once()
+        DaemonClient.reset_instance()
+
+    def test_auto_mode_retries_original_query_after_autostart(self):
+        from callwarden.server.daemon_client import DaemonClient, DaemonUnavailableError
+
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+        daemon_conn = MagicMock()
+        rpc_call = MagicMock(side_effect=[
+            {"workspace_instance_id": "ws-auto"},
+            {"files": 3},
+        ])
+        client._rpc.call = rpc_call
+        client._rpc.probe = MagicMock(side_effect=DaemonUnavailableError("not ready"))
+        client._rpc.publish_snapshot = MagicMock()
+        client._rpc._probe_connection = MagicMock(return_value=True)
+
+        def fake_ensure(endpoint, **kwargs):
+            assert endpoint == client._rpc.socket_path
+            kwargs["readiness_check"](daemon_conn)
+            return daemon_conn
+
+        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
+            with patch("callwarden.server.daemon_client.ensure_daemon", side_effect=fake_ensure):
+                with patch.object(client, "_sql_fallback_get_stats") as sql:
+                    result = client.get_stats(db_path="unused.db")
+        assert result == {"files": 3}
+        daemon_conn.close.assert_called_once_with()
+        client._rpc._probe_connection.assert_called_once_with(daemon_conn)
+        client._rpc.publish_snapshot.assert_called_once()
+        sql.assert_not_called()
+        assert client.daemon_hits == 1
+        DaemonClient.reset_instance()
+
+    def test_enterprise_mode_does_not_fallback_when_ping_fails(self):
+        from callwarden.server.daemon_client import DaemonClient, DaemonUnavailableError
+
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+        client._rpc.probe = MagicMock(side_effect=DaemonUnavailableError("down"))
+        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="enterprise"):
+            with patch.object(client, "_sql_fallback_get_stats") as sql:
+                with pytest.raises(DaemonUnavailableError, match="enterprise daemon"):
+                    client.get_stats(db_path="unused.db")
+                sql.assert_not_called()
+        DaemonClient.reset_instance()
+
+    def test_public_call_with_autostart_uses_protocol_readiness_probe(self):
+        """公开 RPC 入口不能绕过 auto 的协议级 readiness probe。"""
+        from callwarden.server.daemon_client import DaemonClient, DaemonUnavailableError
+
+        DaemonClient.reset_instance()
+        client = DaemonClient.get_instance()
+        client._rpc.call = MagicMock(side_effect=[
+            DaemonUnavailableError("starting"),
+            {"files": 4},
+        ])
+        client._rpc._probe_connection = MagicMock(return_value=True)
+        daemon_conn = MagicMock()
+
+        def fake_ensure(endpoint, **kwargs):
+            assert endpoint == client._rpc.socket_path
+            kwargs["readiness_check"](daemon_conn)
+            return daemon_conn
+
+        mutex = MagicMock()
+        mutex.try_acquire.return_value = True
+        with patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
+            with patch("callwarden.server.daemon_client.ensure_daemon", side_effect=fake_ensure):
+                with patch("callwarden.server.daemon_client.DaemonMutex", return_value=mutex):
+                    result = client.call_with_autostart("query.stats")
+
+        assert result == {"result": {"files": 4}, "degraded": False}
+        client._rpc._probe_connection.assert_called_once_with(daemon_conn)
+        daemon_conn.close.assert_called_once_with()
+        mutex.release.assert_called_once_with()
+        DaemonClient.reset_instance()
         client = DaemonClient.get_instance()
 
         # 一次 SQL 回退

@@ -5,7 +5,7 @@
 //! - 顶层 method: kind="function"（对齐 golden 期望）
 //! - singleton_method: kind="method"（保持）
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy};
+use crate::multi_lang::{CallRule, LangConfig, NameStrategy, SymbolRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -18,7 +18,9 @@ pub(crate) fn config() -> LangConfig {
             SymbolRule::new(
                 "method",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "method", Some("body_statement"), true,
+                "method",
+                Some("body_statement"),
+                true,
             )
             .with_require_parent_kind("body_statement")
             .with_kind_from_name(vec![("initialize", "constructor")]),
@@ -26,25 +28,36 @@ pub(crate) fn config() -> LangConfig {
             SymbolRule::new(
                 "method",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "function", Some("body_statement"), true,
+                "function",
+                Some("body_statement"),
+                true,
             ),
             SymbolRule::new(
                 "singleton_method",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "method", Some("body_statement"), true,
+                "method",
+                Some("body_statement"),
+                true,
             ),
             SymbolRule::new(
                 "class",
                 NameStrategy::ChildByType(vec!["constant", "scope_resolution"]),
-                "class", Some("body_statement"), false,
+                "class",
+                Some("body_statement"),
+                false,
             ),
             SymbolRule::new(
                 "module",
                 NameStrategy::ChildByType(vec!["constant", "scope_resolution"]),
-                "module", Some("body_statement"), false,
+                "module",
+                Some("body_statement"),
+                false,
             ),
         ],
-        call_rules: vec![CallRule { kind: "call", callee_field: Some("method") }],
+        call_rules: vec![CallRule {
+            kind: "call",
+            callee_field: Some("method"),
+        }],
         // Ruby 的 require 是 call 节点，不走 import 逻辑
         import_kinds: vec![],
         import_directives: vec![],

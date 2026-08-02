@@ -276,16 +276,15 @@ pub struct Regression {
 
 impl Regression {
     /// 检测是否回归
-    pub fn detect(
-        metric: &str,
-        baseline: f64,
-        current: f64,
-        threshold: f64,
-    ) -> Self {
+    pub fn detect(metric: &str, baseline: f64, current: f64, threshold: f64) -> Self {
         let ratio = if baseline > 0.0 {
             current / baseline
         } else {
-            if current > 0.0 { f64::INFINITY } else { 1.0 }
+            if current > 0.0 {
+                f64::INFINITY
+            } else {
+                1.0
+            }
         };
         Self {
             metric: metric.to_string(),
@@ -353,10 +352,10 @@ impl BaselineVerification {
 /// 对应契约 §6.2
 #[derive(Debug, Clone, PartialEq)]
 pub struct KnownDiff {
-    pub parser: String,      // "rust" or "python"
-    pub field: String,       // e.g. "signature"
+    pub parser: String, // "rust" or "python"
+    pub field: String,  // e.g. "signature"
     pub description: String,
-    pub phase: String,      // e.g. "Phase 2.7"
+    pub phase: String, // e.g. "Phase 2.7"
     pub reason: String,
     pub fix_commit: Option<String>,
 }
@@ -481,7 +480,7 @@ mod tests {
     #[test]
     fn test_performance_baseline_verify_targets_fail() {
         let baseline = PerformanceBaseline {
-            parse_p50_ms: 150.0,  // > 100
+            parse_p50_ms: 150.0, // > 100
             parse_p95_ms: 100.0,
             graphstore_load_p50_ms: 3000.0,
             graphstore_load_p95_ms: 8000.0,

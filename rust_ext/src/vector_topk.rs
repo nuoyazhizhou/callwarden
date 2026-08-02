@@ -196,8 +196,7 @@ pub fn vector_topk_core(
     // Python 的 sort 是稳定排序，相同分数保持原序；Rust 侧用 symbol_hash 显式对齐
     scored.sort_by(|a, b| {
         // 先按相似度降序
-        b.1
-            .partial_cmp(&a.1)
+        b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| {
                 // 相同分数按 symbol_hash 升序
@@ -308,7 +307,8 @@ mod tests {
         // row 1 = [0.0, 1.0] → sim 0.0
         // row 2 = [0.707, 0.707] → sim 0.707
         let query = vec![1.0_f32, 0.0];
-        let matrix = Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
+        let matrix =
+            Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
         let hashes = vec!["h0".to_string(), "h1".to_string(), "h2".to_string()];
         let result = vector_topk_core(&query, &matrix.view(), &hashes, 0.0, 3);
         assert_eq!(result.len(), 3);
@@ -323,7 +323,8 @@ mod tests {
     #[test]
     fn test_vector_topk_threshold_filter() {
         let query = vec![1.0_f32, 0.0];
-        let matrix = Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
+        let matrix =
+            Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
         let hashes = vec!["h0".to_string(), "h1".to_string(), "h2".to_string()];
         // threshold=0.5，应过滤掉 h1 (sim=0.0)
         let result = vector_topk_core(&query, &matrix.view(), &hashes, 0.5, 3);
@@ -335,7 +336,8 @@ mod tests {
     #[test]
     fn test_vector_topk_topn_truncation() {
         let query = vec![1.0_f32, 0.0];
-        let matrix = Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
+        let matrix =
+            Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
         let hashes = vec!["h0".to_string(), "h1".to_string(), "h2".to_string()];
         let result = vector_topk_core(&query, &matrix.view(), &hashes, 0.0, 1);
         assert_eq!(result.len(), 1);
@@ -388,7 +390,8 @@ mod tests {
     fn test_vector_topk_hash_count_mismatch() {
         // hashes 长度 ≠ matrix 行数 → 返回空
         let query = vec![1.0_f32, 0.0];
-        let matrix = Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
+        let matrix =
+            Array2::from_shape_vec((3, 2), vec![1.0, 0.0, 0.0, 1.0, 0.707, 0.707]).unwrap();
         let hashes = vec!["h0".to_string(), "h1".to_string()]; // 只 2 个，应有 3 个
         let result = vector_topk_core(&query, &matrix.view(), &hashes, 0.0, 3);
         assert!(result.is_empty());

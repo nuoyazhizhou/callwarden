@@ -952,32 +952,40 @@ impl CasStore {
             params![workspace_id, rel_path],
         )?;
 
-        // P0-1 修复：stale 检查改为检查 latest_committed_generation（而非 latest_seen_generation）
-        // 如果 committed 为空（只 seen 未 committed），允许同 seq 重试（merge 失败恢复）
-        // 修复崩溃窗口：CAS published → merge 失败/崩溃 → 同 seq 重试被 stale 拒绝
+        // 原子查询 latest_seen_generation 与 latest_committed_generation
         let mut stmt = conn.prepare(
-            "SELECT latest_committed_generation FROM file_generations
+            "SELECT latest_seen_generation, latest_committed_generation FROM file_generations
              WHERE workspace_id = ?1 AND rel_path = ?2",
         )?;
         let mut rows = stmt.query(params![workspace_id, rel_path])?;
-        let existing_committed: Option<String> = if let Some(row) = rows.next()? {
-            row.get(0)?
-        } else {
-            None
-        };
+        let (existing_seen, existing_committed): (Option<String>, Option<String>) =
+            if let Some(row) = rows.next()? {
+                (row.get(0)?, row.get(1)?)
+            } else {
+                (None, None)
+            };
 
+        // 1. 检查已提交代际（stale commit 拦截）
         if let Some(committed_gen) = existing_committed {
             if !committed_gen.is_empty() {
-                // 比较 generation：格式 "epoch:seq"
                 if let Some((c_epoch, c_seq)) = parse_generation(&committed_gen) {
                     if epoch < c_epoch || (epoch == c_epoch && seq <= c_seq) {
-                        // stale：incoming_gen <= latest_committed
                         return Ok(false);
                     }
                 }
-                // 格式异常则允许更新
             }
-            // committed 为空（只 seen 未 committed）→ 允许同 seq 重试
+        }
+
+        // 2. 检查已观察代际（防 stale re-seen 竞争：未提交的新代际存在时，更旧的代际不可覆写）
+        if let Some(seen_gen) = existing_seen {
+            if !seen_gen.is_empty() {
+                if let Some((s_epoch, s_seq)) = parse_generation(&seen_gen) {
+                    if epoch < s_epoch || (epoch == s_epoch && seq < s_seq) {
+                        // 严格小于既有 seen 代际 -> 属于更旧的请求，直接拒绝，保护已有 newer uncommitted generation
+                        return Ok(false);
+                    }
+                }
+            }
         }
 
         // 更新 seen generation
@@ -2310,5 +2318,27 @@ mod tests {
             "重新用 ready 发布后，lookup() 应命中"
         );
         assert_eq!(final_lookup.unwrap().state, "ready");
+    }
+
+    #[test]
+    fn test_file_generation_stale_reseen_race_prevented() {
+        let store = make_store();
+        // 场景 1: 先接收到 (epoch 2, seq 5) 成为 latest_seen
+        let seen_newer = store
+            .file_generation_seen(1, "src/lib.rs", "session_1", 2, 5)
+            .unwrap();
+        assert!(seen_newer, "newer generation 应该被接受");
+
+        // 场景 2: 延迟到达的旧请求 (epoch 1, seq 3)，虽然 2:5 未 committed，但也决不允许覆写 2:5
+        let seen_older = store
+            .file_generation_seen(1, "src/lib.rs", "session_1", 1, 3)
+            .unwrap();
+        assert!(!seen_older, "stale older generation 应该被拒绝，不能覆写 2:5");
+
+        // 场景 3: 同 generation (epoch 2, seq 5) 再次重试，应该被允许
+        let seen_retry = store
+            .file_generation_seen(1, "src/lib.rs", "session_1", 2, 5)
+            .unwrap();
+        assert!(seen_retry, "同代际重试应该允许");
     }
 }

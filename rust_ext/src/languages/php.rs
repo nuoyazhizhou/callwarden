@@ -7,7 +7,7 @@
 //! - visibility 从 visibility_modifier 子节点提取（private/protected/public）
 //! - trait/interface 规则已在 Step 0 迁移，本步骤验证
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy};
+use crate::multi_lang::{CallRule, LangConfig, NameStrategy, SymbolRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -25,8 +25,11 @@ pub(crate) fn config() -> LangConfig {
                     terminator: "formal_parameters",
                     name_kind: "name",
                 },
-                "method", Some("compound_statement"), true,
-            ).with_kind_from_name(vec![("__construct", "constructor")]),
+                "method",
+                Some("compound_statement"),
+                true,
+            )
+            .with_kind_from_name(vec![("__construct", "constructor")]),
             // PHP 独立函数 function foo() { ... }
             SymbolRule::new(
                 "function_definition",
@@ -34,7 +37,9 @@ pub(crate) fn config() -> LangConfig {
                     terminator: "formal_parameters",
                     name_kind: "name",
                 },
-                "fn", Some("compound_statement"), true,
+                "fn",
+                Some("compound_statement"),
+                true,
             ),
             // P0-C Step 2: PHP property 声明（private $value; / public $name = ...;）
             // property_declaration → property_element → variable_name → name
@@ -42,22 +47,30 @@ pub(crate) fn config() -> LangConfig {
             SymbolRule::new(
                 "property_declaration",
                 NameStrategy::PhpProperty,
-                "property", None, false,
+                "property",
+                None,
+                false,
             ),
             SymbolRule::new(
                 "class_declaration",
                 NameStrategy::ChildByType(vec!["name"]),
-                "class", Some("declaration_list"), false,
+                "class",
+                Some("declaration_list"),
+                false,
             ),
             SymbolRule::new(
                 "interface_declaration",
                 NameStrategy::ChildByType(vec!["name"]),
-                "interface", Some("declaration_list"), false,
+                "interface",
+                Some("declaration_list"),
+                false,
             ),
             SymbolRule::new(
                 "trait_declaration",
                 NameStrategy::ChildByType(vec!["name"]),
-                "trait", Some("declaration_list"), false,
+                "trait",
+                Some("declaration_list"),
+                false,
             ),
         ],
         call_rules: vec![
@@ -66,10 +79,22 @@ pub(crate) fn config() -> LangConfig {
             //   member_call_expression:     field "name"    → name ($obj->method())
             //   nullsafe_member_call_expression: field "name" → name ($obj?->method())
             //   scoped_call_expression:     field "name"    → name (Class::method())
-            CallRule { kind: "function_call_expression", callee_field: Some("function") },
-            CallRule { kind: "member_call_expression", callee_field: Some("name") },
-            CallRule { kind: "nullsafe_member_call_expression", callee_field: Some("name") },
-            CallRule { kind: "scoped_call_expression", callee_field: Some("name") },
+            CallRule {
+                kind: "function_call_expression",
+                callee_field: Some("function"),
+            },
+            CallRule {
+                kind: "member_call_expression",
+                callee_field: Some("name"),
+            },
+            CallRule {
+                kind: "nullsafe_member_call_expression",
+                callee_field: Some("name"),
+            },
+            CallRule {
+                kind: "scoped_call_expression",
+                callee_field: Some("name"),
+            },
         ],
         import_kinds: vec!["namespace_use_declaration"],
         import_directives: vec![],

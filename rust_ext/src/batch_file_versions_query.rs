@@ -456,23 +456,24 @@ pub fn batch_save_file_versions<'py>(
     };
 
     // 4. BEGIN IMMEDIATE → 处理所有文件 → COMMIT/ROLLBACK
-    let tx_result: Result<BatchSaveVersionsResult, rusqlite::Error> = conn.execute_batch("BEGIN IMMEDIATE").and_then(|_| {
-        let mut result = BatchSaveVersionsResult::default();
+    let tx_result: Result<BatchSaveVersionsResult, rusqlite::Error> =
+        conn.execute_batch("BEGIN IMMEDIATE").and_then(|_| {
+            let mut result = BatchSaveVersionsResult::default();
 
-        for info in &infos {
-            let save_result = save_single_file_version(&conn, info, ast_cache_exists)?;
-            if save_result.is_new_version {
-                result.new_versions += 1;
-            } else {
-                result.short_circuited += 1;
+            for info in &infos {
+                let save_result = save_single_file_version(&conn, info, ast_cache_exists)?;
+                if save_result.is_new_version {
+                    result.new_versions += 1;
+                } else {
+                    result.short_circuited += 1;
+                }
+                result.files_processed += 1;
+                result.results.push(save_result);
             }
-            result.files_processed += 1;
-            result.results.push(save_result);
-        }
 
-        conn.execute_batch("COMMIT")?;
-        Ok(result)
-    });
+            conn.execute_batch("COMMIT")?;
+            Ok(result)
+        });
 
     match tx_result {
         Ok(result) => {

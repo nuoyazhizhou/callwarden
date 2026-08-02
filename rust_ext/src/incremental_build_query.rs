@@ -164,7 +164,8 @@ fn compute_symbol_diff_inner(
             })
             .map_err(|e| to_pyerr(e, "查询 prev 符号 rows 失败"))?;
         for row in rows {
-            let (symbol_hash, qualified_name) = row.map_err(|e| to_pyerr(e, "读取 prev 符号行失败"))?;
+            let (symbol_hash, qualified_name) =
+                row.map_err(|e| to_pyerr(e, "读取 prev 符号行失败"))?;
             prev_symbols.insert(qualified_name, symbol_hash);
         }
     }
@@ -173,9 +174,7 @@ fn compute_symbol_diff_inner(
     let mut curr_names: HashSet<String> = HashSet::new();
     {
         let mut stmt = conn
-            .prepare(
-                "SELECT qualified_name FROM file_symbol_versions WHERE file_version_id = ?",
-            )
+            .prepare("SELECT qualified_name FROM file_symbol_versions WHERE file_version_id = ?")
             .map_err(|e| to_pyerr(e, "查询 curr 符号失败"))?;
         let rows = stmt
             .query_map(params![curr_version_id], |row| row.get::<_, String>(0))
@@ -283,19 +282,19 @@ pub fn load_file_result_from_db<'py>(
         };
         let rows = match stmt.query_map(params![file_version_id], |row| {
             Ok((
-                row.get::<_, i64>(0)?,        // sv.id
-                row.get::<_, String>(1)?,     // sv.symbol_hash
-                row.get::<_, String>(2)?,     // sv.qualified_name
-                row.get::<_, i64>(3)?,        // sv.start_line
-                row.get::<_, i64>(4)?,        // sv.end_line
-                row.get::<_, String>(5)?,     // sv.module_path
-                row.get::<_, i64>(6)?,         // sv.depth
-                row.get::<_, i64>(7)?,         // sv.is_deleted
-                row.get::<_, String>(8)?,      // sc.name
-                row.get::<_, String>(9)?,      // sc.kind
-                row.get::<_, String>(10)?,    // sc.content
-                row.get::<_, String>(11)?,     // sc.signature
-                row.get::<_, i64>(12)?,        // sc.has_comment
+                row.get::<_, i64>(0)?,             // sv.id
+                row.get::<_, String>(1)?,          // sv.symbol_hash
+                row.get::<_, String>(2)?,          // sv.qualified_name
+                row.get::<_, i64>(3)?,             // sv.start_line
+                row.get::<_, i64>(4)?,             // sv.end_line
+                row.get::<_, String>(5)?,          // sv.module_path
+                row.get::<_, i64>(6)?,             // sv.depth
+                row.get::<_, i64>(7)?,             // sv.is_deleted
+                row.get::<_, String>(8)?,          // sc.name
+                row.get::<_, String>(9)?,          // sc.kind
+                row.get::<_, String>(10)?,         // sc.content
+                row.get::<_, String>(11)?,         // sc.signature
+                row.get::<_, i64>(12)?,            // sc.has_comment
                 row.get::<_, Option<String>>(13)?, // doc_comment
             ))
         }) {
@@ -360,15 +359,15 @@ pub fn load_file_result_from_db<'py>(
         };
         let rows = match stmt.query_map(params![file_instance_id], |row| {
             Ok((
-                row.get::<_, String>(0)?,  // caller_name
-                row.get::<_, String>(1)?,  // caller_module
-                row.get::<_, String>(2)?,  // callee_name
-                row.get::<_, String>(3)?,  // callee_module
-                row.get::<_, String>(4)?,  // callee_qualified
-                row.get::<_, String>(5)?,  // callee_file
-                row.get::<_, i64>(6)?,     // callee_id
-                row.get::<_, i64>(7)?,     // call_line
-                row.get::<_, i64>(8)?,     // is_cross_file
+                row.get::<_, String>(0)?, // caller_name
+                row.get::<_, String>(1)?, // caller_module
+                row.get::<_, String>(2)?, // callee_name
+                row.get::<_, String>(3)?, // callee_module
+                row.get::<_, String>(4)?, // callee_qualified
+                row.get::<_, String>(5)?, // callee_file
+                row.get::<_, i64>(6)?,    // callee_id
+                row.get::<_, i64>(7)?,    // call_line
+                row.get::<_, i64>(8)?,    // is_cross_file
             ))
         }) {
             Ok(r) => r,

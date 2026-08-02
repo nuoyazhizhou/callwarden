@@ -11,19 +11,19 @@
 //! 事件流：
 //!   notify crate → raw event → extension filter → channel → Python 消费
 
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::Duration;
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use notify::{
-    Config, Event, EventHandler, RecommendedWatcher, RecursiveMode, Watcher,
     event::{EventKind, ModifyKind, RenameMode},
+    Config, Event, EventHandler, RecommendedWatcher, RecursiveMode, Watcher,
 };
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 // ============================================
 // 支持的文件扩展名（对齐 config.py get_supported_extensions）
@@ -32,8 +32,8 @@ use pyo3::types::{PyDict, PyList};
 /// 默认监听的文件扩展名（16 种语言）
 pub fn default_supported_extensions() -> HashSet<String> {
     [
-        "rs", "ts", "js", "py", "kt", "go", "java", "c", "cpp", "cc", "h", "hpp",
-        "cs", "rb", "php", "swift", "scala", "hcl", "ex", "exs",
+        "rs", "ts", "js", "py", "kt", "go", "java", "c", "cpp", "cc", "h", "hpp", "cs", "rb",
+        "php", "swift", "scala", "hcl", "ex", "exs",
     ]
     .iter()
     .map(|s| s.to_string())
@@ -180,30 +180,24 @@ impl FileWatcher {
                     // from_notify_kind 已将 Modify(Name(_)) 映射为 Renamed，
                     // 这里进一步根据 RenameMode 提取 from_path / to_path。
                     let (kind, from_path, to_path) = match &event.kind {
-                        EventKind::Modify(ModifyKind::Name(mode)) => {
-                            match mode {
-                                RenameMode::From => (
-                                    FileEventKind::Renamed,
-                                    event.paths.get(0).cloned(),
-                                    None,
-                                ),
-                                RenameMode::To => (
-                                    FileEventKind::Renamed,
-                                    None,
-                                    event.paths.get(0).cloned(),
-                                ),
-                                RenameMode::Both => (
-                                    FileEventKind::Renamed,
-                                    event.paths.get(0).cloned(),
-                                    event.paths.get(1).cloned(),
-                                ),
-                                _ => (
-                                    FileEventKind::Renamed,
-                                    event.paths.get(0).cloned(),
-                                    event.paths.get(1).cloned(),
-                                ),
+                        EventKind::Modify(ModifyKind::Name(mode)) => match mode {
+                            RenameMode::From => {
+                                (FileEventKind::Renamed, event.paths.get(0).cloned(), None)
                             }
-                        }
+                            RenameMode::To => {
+                                (FileEventKind::Renamed, None, event.paths.get(0).cloned())
+                            }
+                            RenameMode::Both => (
+                                FileEventKind::Renamed,
+                                event.paths.get(0).cloned(),
+                                event.paths.get(1).cloned(),
+                            ),
+                            _ => (
+                                FileEventKind::Renamed,
+                                event.paths.get(0).cloned(),
+                                event.paths.get(1).cloned(),
+                            ),
+                        },
                         _ => match FileEventKind::from_notify_kind(&event.kind) {
                             Some(k) => (k, None, None),
                             None => return, // 忽略不关心的事件类型
@@ -530,10 +524,7 @@ fn coalesce_events(existing: &FileEvent, new: &FileEvent) -> FileEvent {
 ///
 /// M8（2026-07-20 批次4）：字典包含 from_path / to_path 字段（None 时省略，
 /// 与 Python dict 习惯一致；下游代码可用 `event.get("from_path")` 安全取值）。
-fn file_event_to_pydict<'py>(
-    py: Python<'py>,
-    event: &FileEvent,
-) -> PyResult<Bound<'py, PyDict>> {
+fn file_event_to_pydict<'py>(py: Python<'py>, event: &FileEvent) -> PyResult<Bound<'py, PyDict>> {
     let d = PyDict::new(py);
     d.set_item("kind", event.kind.as_str())?;
     d.set_item("path", event.path.to_string_lossy().to_string())?;

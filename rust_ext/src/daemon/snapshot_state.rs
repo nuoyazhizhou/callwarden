@@ -32,7 +32,13 @@ use super::workspace::{
     owned_workspace, owned_workspace_by_id, validate_owned_path, WorkspaceDaemonState,
     WorkspaceRegistry,
 };
+use crate::cli::file_query::{query_local_file_symbols, query_local_symbol_location};
+use crate::cli::grep::{query_local_grep, GrepOptions};
 use crate::cli::impact::query_impact_with_store;
+use crate::cli::issues_tests::{
+    query_local_issues, query_local_test_cases, query_local_test_stability,
+    query_local_tested_functions,
+};
 use crate::graph::GraphStore;
 use crate::snapshot::SnapshotCache;
 use crate::symbol_query::query_symbol_detail;
@@ -161,6 +167,35 @@ impl SnapshotDaemonState {
         self.snapshot_cache
             .get(workspace_id)
             .and_then(|mgr| mgr.current_store())
+    }
+
+    fn open_query_connection(
+        &self,
+        peer: PeerCredential,
+        workspace_instance_id: &str,
+    ) -> Result<(i64, Connection), DaemonRpcError> {
+        let workspace = owned_workspace(&self.base.registry, peer.uid, workspace_instance_id)?;
+        let workspace_id = workspace
+            .get("workspace_id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| DaemonRpcError::internal_error("workspace_id 字段缺失或非数值"))?;
+        let db_path = self
+            .get_snapshot_manager(workspace_instance_id)
+            .and_then(|manager| manager.current_query_db_path())
+            .ok_or_else(|| {
+                DaemonRpcError::new(
+                    "snapshot_not_ready",
+                    format!("workspace {workspace_instance_id} 未发布 snapshot"),
+                )
+            })?;
+        let conn = Connection::open_with_flags(
+            db_path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| {
+            DaemonRpcError::internal_error(format!("打开 snapshot SQLite: {error}"))
+        })?;
+        Ok((workspace_id, conn))
     }
 
     /// 构造单个符号的 JSON 对象（对应 Python `get_symbol` 返回字段）
@@ -695,6 +730,113 @@ impl DaemonStateExt for SnapshotDaemonState {
         }
         callees.sort_by_key(|item| item["call_line"].as_u64().unwrap_or_default());
         Ok(Value::Array(callees))
+    }
+
+    fn handle_query_file(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let file_path = require_str_param(params, "file_path")?;
+        let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
+        query_local_file_symbols(&conn, workspace_id, file_path)
+            .map_err(DaemonRpcError::internal_error)
+    }
+
+    fn handle_query_symbol_location(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let name = require_str_param(params, "name")?;
+        let file_path = require_str_param(params, "file_path")?;
+        let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
+        query_local_symbol_location(&conn, workspace_id, name, file_path)
+            .map_err(DaemonRpcError::internal_error)
+    }
+
+    fn handle_query_grep(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let patterns = params
+            .get("patterns")
+            .and_then(Value::as_array)
+            .ok_or_else(|| DaemonRpcError::invalid_params("patterns 必须是字符串数组"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| DaemonRpcError::invalid_params("patterns 必须是字符串数组"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if patterns.is_empty() {
+            return Err(DaemonRpcError::invalid_params("grep 至少需要一个 pattern"));
+        }
+        let options = GrepOptions {
+            patterns,
+            fixed: params
+                .get("fixed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            limit: get_int_param_or(params, "limit", 200).max(0) as usize,
+            path: get_str_param(params, "path").map(std::path::PathBuf::from),
+            include_all: params
+                .get("include_all")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            kind: get_str_param(params, "kind").map(ToOwned::to_owned),
+        };
+        let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
+        query_local_grep(&conn, workspace_id, &options).map_err(DaemonRpcError::internal_error)
+    }
+
+    fn handle_query_issues(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let qualified_name = require_str_param(params, "qualified_name")?;
+        let include_info = params
+            .get("include_info")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
+        query_local_issues(&conn, workspace_id, qualified_name, include_info)
+            .map_err(DaemonRpcError::internal_error)
+    }
+
+    fn handle_query_tests(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let workspace_instance_id = require_str_param(params, "workspace_instance_id")?;
+        let qualified_name = require_str_param(params, "qualified_name")?;
+        let reverse = params
+            .get("reverse")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let history = params
+            .get("history")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let limit = get_int_param_or(params, "limit", 50).max(0) as usize;
+        let (workspace_id, conn) = self.open_query_connection(peer, workspace_instance_id)?;
+        if history {
+            query_local_test_stability(&conn, workspace_id, qualified_name, limit)
+        } else if reverse {
+            query_local_tested_functions(&conn, workspace_id, qualified_name)
+        } else {
+            query_local_test_cases(&conn, workspace_id, qualified_name)
+        }
+        .map_err(DaemonRpcError::internal_error)
     }
 
     // ---- G7-T4: 高级查询方法（call_chain_down / topological_order / detect_cycles）----
@@ -1651,6 +1793,47 @@ mod tests {
     }
 
     #[test]
+    fn test_enterprise_query_methods_require_a_published_snapshot() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let ws_id = register_workspace_for_test(&mut state, 0);
+        let requests = [
+            (
+                "query.file",
+                json!({"workspace_instance_id": ws_id, "file_path": "src/main.rs"}),
+            ),
+            (
+                "query.symbol_location",
+                json!({
+                    "workspace_instance_id": ws_id,
+                    "name": "main",
+                    "file_path": "src/main.rs"
+                }),
+            ),
+            (
+                "query.grep",
+                json!({"workspace_instance_id": ws_id, "patterns": ["TODO"]}),
+            ),
+            (
+                "query.issues",
+                json!({"workspace_instance_id": ws_id, "qualified_name": "crate::main"}),
+            ),
+            (
+                "query.tests",
+                json!({"workspace_instance_id": ws_id, "qualified_name": "crate::main"}),
+            ),
+        ];
+        for (method, params) in requests {
+            let response = dispatch(&mut state, peer, method, &params, &[]);
+            assert_eq!(
+                response["ok"], false,
+                "{method} must fail closed before publish"
+            );
+            assert_eq!(response["error"]["code"], "snapshot_not_ready", "{method}");
+        }
+    }
+
+    #[test]
     fn test_query_symbol_returns_complete_snapshot_detail() {
         let mut state = make_state();
         let peer = make_peer(0);
@@ -1859,6 +2042,287 @@ mod tests {
         assert_eq!(impact["result"]["by_layer"]["code"], 1);
         assert_eq!(impact["result"]["by_layer"]["db"], 1);
         assert_eq!(impact["result"]["by_layer"]["config"], 1);
+    }
+
+    #[test]
+    fn test_file_grep_issues_and_tests_use_published_snapshot() {
+        let mut state = make_state();
+        let peer = make_peer(0);
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("a.py");
+        std::fs::write(
+            &source_path,
+            "def alpha():\n    # TODO: validate input\n    return beta()\n\ndef beta():\n    return 1\n",
+        )
+        .unwrap();
+
+        let workspace = dispatch(
+            &mut state,
+            peer,
+            "workspace.register",
+            &json!({"client_view_root": temp.path().to_string_lossy()}),
+            &[],
+        );
+        assert_eq!(workspace["ok"], true);
+        let workspace_instance_id = workspace["result"]["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let workspace_id = workspace["result"]["workspace_id"].as_i64().unwrap();
+        let db_path = temp.path().join("snapshot.db");
+        let source_path_string = source_path.to_string_lossy();
+
+        let conn = Connection::open(&db_path).unwrap();
+        conn.execute_batch(&format!(
+            "
+            CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY,
+                root_path TEXT NOT NULL
+            );
+            INSERT INTO workspaces VALUES ({workspace_id}, '{}');
+            CREATE TABLE file_instances (
+                id INTEGER PRIMARY KEY,
+                workspace_id INTEGER NOT NULL,
+                rel_path TEXT NOT NULL,
+                abs_path TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
+            INSERT INTO file_instances VALUES
+                (1, {workspace_id}, 'a.py', '{}', 'active');
+            CREATE TABLE symbols (
+                id INTEGER PRIMARY KEY,
+                file_instance_id INTEGER NOT NULL,
+                symbol_hash TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                qualified_name TEXT NOT NULL,
+                module_path TEXT NOT NULL,
+                visibility TEXT NOT NULL,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                start_col INTEGER,
+                end_col INTEGER,
+                signature TEXT,
+                has_comment INTEGER,
+                comment_status TEXT,
+                comment_content TEXT,
+                depth INTEGER NOT NULL
+            );
+            INSERT INTO symbols VALUES
+                (1, 1, 'hash-alpha', 'fn', 'alpha', 'a.alpha', 'a',
+                 'public', 1, 3, 1, 12, 'alpha()', 1, 'present',
+                 'alpha docs', 0),
+                (2, 1, 'hash-beta', 'fn', 'beta', 'a.beta', 'a',
+                 'private', 5, 6, 1, 10, 'beta()', 0, 'absent',
+                 '', 0),
+                (3, 1, 'hash-test', 'fn', 'test_alpha', 'a.test_alpha', 'a',
+                 'private', 8, 10, 1, 15, 'test_alpha()', 0, 'absent',
+                 '', 0);
+            CREATE TABLE calls (
+                caller_id INTEGER NOT NULL,
+                callee_id INTEGER NOT NULL,
+                callee_name TEXT NOT NULL,
+                call_line INTEGER NOT NULL,
+                is_cross_file INTEGER NOT NULL
+            );
+            INSERT INTO calls VALUES (1, 2, 'beta', 3, 0);
+            CREATE TABLE file_versions (
+                id INTEGER PRIMARY KEY,
+                file_instance_id INTEGER NOT NULL,
+                is_current INTEGER NOT NULL
+            );
+            INSERT INTO file_versions VALUES (10, 1, 1);
+            CREATE TABLE symbol_contents (
+                content_hash TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                content TEXT NOT NULL,
+                signature TEXT,
+                has_comment INTEGER,
+                comment_content TEXT
+            );
+            INSERT INTO symbol_contents VALUES
+                ('hash-alpha', 'alpha', 'fn', 'def alpha(): TODO', 'alpha()', 1, 'alpha docs'),
+                ('hash-beta', 'beta', 'fn', 'def beta(): return 1', 'beta()', 0, ''),
+                ('hash-test', 'test_alpha', 'fn', 'def test_alpha(): alpha()', 'test_alpha()', 0, '');
+            CREATE TABLE file_symbol_versions (
+                file_version_id INTEGER NOT NULL,
+                symbol_hash TEXT NOT NULL,
+                qualified_name TEXT NOT NULL,
+                module_path TEXT,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                depth INTEGER NOT NULL,
+                is_deleted INTEGER NOT NULL
+            );
+            INSERT INTO file_symbol_versions VALUES
+                (10, 'hash-alpha', 'a.alpha', 'a', 1, 3, 0, 0),
+                (10, 'hash-beta', 'a.beta', 'a', 5, 6, 0, 0),
+                (10, 'hash-test', 'a.test_alpha', 'a', 8, 10, 0, 0);
+            CREATE TABLE call_versions (
+                file_version_id INTEGER NOT NULL,
+                caller_qualified TEXT NOT NULL,
+                caller_hash TEXT,
+                callee_name TEXT NOT NULL,
+                callee_module TEXT,
+                callee_qualified TEXT,
+                callee_file TEXT,
+                call_line INTEGER
+            );
+            INSERT INTO call_versions VALUES
+                (10, 'a.alpha', 'hash-alpha', 'beta', 'a', 'a.beta', 'a.py', 3);
+            CREATE TABLE semgrep_findings (
+                file_instance_id INTEGER NOT NULL,
+                rule_id TEXT NOT NULL,
+                rule_name TEXT DEFAULT '',
+                severity TEXT DEFAULT 'INFO',
+                confidence TEXT DEFAULT 'UNKNOWN',
+                message TEXT DEFAULT '',
+                start_line INTEGER DEFAULT 0,
+                end_line INTEGER DEFAULT 0,
+                snippet TEXT DEFAULT '',
+                fix TEXT DEFAULT '',
+                symbol_qualified TEXT DEFAULT ''
+            );
+            INSERT INTO semgrep_findings VALUES
+                (1, 'python.todo', 'TODO rule', 'WARNING', 'HIGH',
+                 'remove TODO', 2, 2, '# TODO: validate input', '', 'a.alpha');
+            CREATE TABLE guardrail_rules (
+                rule_id TEXT PRIMARY KEY,
+                category TEXT NOT NULL
+            );
+            INSERT INTO guardrail_rules VALUES ('guard.secret', 'security');
+            CREATE TABLE guardrail_findings (
+                rule_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                symbol_hash TEXT DEFAULT '',
+                severity TEXT NOT NULL DEFAULT 'warn',
+                status TEXT NOT NULL DEFAULT 'open',
+                message TEXT DEFAULT '',
+                detected_at REAL NOT NULL
+            );
+            INSERT INTO guardrail_findings VALUES
+                ('guard.secret', 'a.py', 'hash-alpha', 'warn', 'open',
+                 'secret-like value', 1000.0);
+            CREATE TABLE test_case_relations (
+                workspace_id INTEGER NOT NULL,
+                test_fn_id INTEGER NOT NULL,
+                tested_fn_id INTEGER NOT NULL,
+                match_method TEXT NOT NULL,
+                confidence TEXT NOT NULL,
+                detected_at REAL NOT NULL
+            );
+            INSERT INTO test_case_relations VALUES
+                ({workspace_id}, 3, 1, 'direct_call', 'high', 1000.0);
+            CREATE TABLE test_runs (
+                workspace_id INTEGER NOT NULL,
+                test_fn_id INTEGER NOT NULL,
+                test_name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                duration_ms REAL DEFAULT 0,
+                error_message TEXT DEFAULT '',
+                error_type TEXT DEFAULT '',
+                run_at REAL NOT NULL
+            );
+            INSERT INTO test_runs VALUES
+                ({workspace_id}, 3, 'test_alpha', 'passed', 12.5, '', '', 1001.0);
+            ",
+            temp.path().to_string_lossy(),
+            source_path_string,
+        ))
+        .unwrap();
+        drop(conn);
+
+        state
+            .snapshot_cache
+            .get_or_create(&workspace_instance_id)
+            .build_and_publish_blocking(db_path.to_str().unwrap(), workspace_id, "ctx", None)
+            .unwrap();
+
+        let file = dispatch(
+            &mut state,
+            peer,
+            "query.file",
+            &json!({
+                "workspace_instance_id": workspace_instance_id,
+                "file_path": "a.py"
+            }),
+            &[],
+        );
+        assert_eq!(file["ok"], true);
+        assert_eq!(file["result"].as_array().unwrap().len(), 3);
+        assert_eq!(file["result"][0]["qualified_name"], "a.alpha");
+
+        let location = dispatch(
+            &mut state,
+            peer,
+            "query.symbol_location",
+            &json!({
+                "workspace_instance_id": workspace_instance_id,
+                "name": "alpha",
+                "file_path": "a.py"
+            }),
+            &[],
+        );
+        assert_eq!(location["ok"], true);
+        assert_eq!(location["result"]["qualified_name"], "a.alpha");
+
+        let grep = dispatch(
+            &mut state,
+            peer,
+            "query.grep",
+            &json!({
+                "workspace_instance_id": workspace_instance_id,
+                "patterns": ["TODO"],
+                "fixed": true,
+                "limit": 10
+            }),
+            &[],
+        );
+        assert_eq!(grep["ok"], true);
+        assert!(grep["result"].as_str().unwrap().contains("a.py:2"));
+        assert!(grep["result"].as_str().unwrap().contains("a.alpha"));
+
+        let issues = dispatch(
+            &mut state,
+            peer,
+            "query.issues",
+            &json!({
+                "workspace_instance_id": workspace_instance_id,
+                "qualified_name": "a.alpha"
+            }),
+            &[],
+        );
+        assert_eq!(issues["ok"], true);
+        assert_eq!(issues["result"].as_array().unwrap().len(), 2);
+        assert_eq!(issues["result"][0]["source"], "semgrep");
+
+        let tests = dispatch(
+            &mut state,
+            peer,
+            "query.tests",
+            &json!({
+                "workspace_instance_id": workspace_instance_id,
+                "qualified_name": "a.alpha"
+            }),
+            &[],
+        );
+        assert_eq!(tests["ok"], true);
+        assert_eq!(tests["result"].as_array().unwrap().len(), 1);
+        assert_eq!(tests["result"][0]["test_qualified_name"], "a.test_alpha");
+
+        let denied = dispatch(
+            &mut state,
+            make_peer(9999),
+            "query.file",
+            &json!({
+                "workspace_instance_id": workspace_instance_id,
+                "file_path": "a.py"
+            }),
+            &[],
+        );
+        assert_eq!(denied["ok"], false);
+        assert_eq!(denied["error"]["code"], "workspace_forbidden");
     }
 
     #[test]

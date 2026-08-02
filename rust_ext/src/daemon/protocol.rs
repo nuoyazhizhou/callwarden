@@ -457,6 +457,82 @@ pub fn call_with_fd(
 }
 
 // ============================================
+// canonical_bytes_b64 载荷校验（Req 14.10，跨平台）
+// ============================================
+
+/// canonical_bytes_b64 默认最大载荷字节数（64 MB，与 FD 路径 DEFAULT_MAX_FD_READ_BYTES 对齐）
+pub const DEFAULT_MAX_CANONICAL_BYTES: usize = 64 * 1024 * 1024;
+
+/// 校验 base64 编码的 canonical bytes 载荷（Req 14.10）。
+///
+/// Windows 上 SCM_RIGHTS FD 传输不可用，客户端通过 `canonical_bytes_b64` 参数
+/// 直接提交规范化字节。使用前必须校验：
+/// 1. base64 解码成功
+/// 2. 解码后尺寸不超过 `max_bytes` 配置上限
+/// 3. 若请求声明了 `expected_sha256`，实际内容 SHA-256 必须匹配
+///
+/// 任一校验失败返回 Err(DaemonRpcError)（Structured_Reason），不得按"尽力解析"继续。
+///
+/// 参数：
+/// - `b64_payload`: base64 编码的载荷字符串
+/// - `max_bytes`: 解码后允许的最大字节数
+/// - `expected_sha256`: 可选的声明摘要（hex 小写），None 时跳过摘要校验
+///
+/// 返回解码后的原始字节。
+pub fn validate_canonical_bytes_b64(
+    b64_payload: &str,
+    max_bytes: usize,
+    expected_sha256: Option<&str>,
+) -> Result<Vec<u8>, super::dispatch::DaemonRpcError> {
+    use super::dispatch::DaemonRpcError;
+
+    // 1. base64 解码
+    let bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        b64_payload,
+    )
+    .map_err(|e| {
+        DaemonRpcError::new(
+            "invalid_params",
+            format!("canonical_bytes_b64 解码失败: {}", e),
+        )
+    })?;
+
+    // 2. 尺寸校验
+    if bytes.len() > max_bytes {
+        return Err(DaemonRpcError::new(
+            "payload_too_large",
+            format!(
+                "canonical_bytes 载荷超过上限: {} > {} bytes",
+                bytes.len(),
+                max_bytes
+            ),
+        ));
+    }
+
+    // 3. 摘要校验（若声明）
+    if let Some(expected) = expected_sha256 {
+        if !expected.is_empty() {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(&bytes);
+            let actual = format!("{:x}", hasher.finalize());
+            if actual != expected.to_lowercase() {
+                return Err(DaemonRpcError::new(
+                    "digest_mismatch",
+                    format!(
+                        "canonical_bytes 摘要不匹配: expected={}, actual={}",
+                        expected, actual
+                    ),
+                ));
+            }
+        }
+    }
+
+    Ok(bytes)
+}
+
+// ============================================
 // 单元测试（跨平台，纯逻辑）
 // ============================================
 
@@ -729,5 +805,94 @@ mod unix_tests {
             Err(ProtocolError::InvalidFdCount { .. }) => (),
             _ => panic!("期望 InvalidFdCount 错误"),
         }
+    }
+
+    // ---- D0 3.6: validate_canonical_bytes_b64 测试（Req 14.10）----
+
+    #[test]
+    fn test_canonical_bytes_b64_valid_payload() {
+        use base64::Engine;
+        let content = b"pub fn main() {}\n";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(content);
+        let result = validate_canonical_bytes_b64(&b64, 1024, None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), content);
+    }
+
+    #[test]
+    fn test_canonical_bytes_b64_invalid_base64() {
+        let result = validate_canonical_bytes_b64("not-valid-b64!!!", 1024, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "invalid_params");
+    }
+
+    #[test]
+    fn test_canonical_bytes_b64_exceeds_size_limit() {
+        use base64::Engine;
+        let content = vec![0u8; 200];
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&content);
+        // 限制 100 字节，实际 200 字节
+        let result = validate_canonical_bytes_b64(&b64, 100, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "payload_too_large");
+        assert!(err.message.contains("200"));
+        assert!(err.message.contains("100"));
+    }
+
+    #[test]
+    fn test_canonical_bytes_b64_digest_match() {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        let content = b"hello world";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(content);
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        let expected = format!("{:x}", hasher.finalize());
+
+        let result = validate_canonical_bytes_b64(&b64, 1024, Some(&expected));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), content);
+    }
+
+    #[test]
+    fn test_canonical_bytes_b64_digest_mismatch() {
+        use base64::Engine;
+        let content = b"hello world";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(content);
+        let wrong_digest = "0000000000000000000000000000000000000000000000000000000000000000";
+
+        let result = validate_canonical_bytes_b64(&b64, 1024, Some(wrong_digest));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "digest_mismatch");
+        assert!(err.message.contains("expected="));
+        assert!(err.message.contains("actual="));
+    }
+
+    #[test]
+    fn test_canonical_bytes_b64_empty_digest_skips_check() {
+        use base64::Engine;
+        let content = b"test";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(content);
+        // 空字符串 digest 应跳过校验
+        let result = validate_canonical_bytes_b64(&b64, 1024, Some(""));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_canonical_bytes_b64_case_insensitive_digest() {
+        use base64::Engine;
+        use sha2::{Digest, Sha256};
+        let content = b"case test";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(content);
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        let expected_upper = format!("{:X}", hasher.finalize());
+
+        // 大写 digest 也应匹配（内部转小写比较）
+        let result = validate_canonical_bytes_b64(&b64, 1024, Some(&expected_upper));
+        assert!(result.is_ok());
     }
 }

@@ -7,13 +7,19 @@
 > - 上游契约：[phase1-cas-contract.md](phase1-cas-contract.md)（CAS 只读查询）
 > - 真相源：[db/db_workspace_manifest.py](../../db/db_workspace_manifest.py) / [rust_ext/src/daemon/cas_merge.rs](../../rust_ext/src/daemon/cas_merge.rs)
 
+> **当前状态说明（2026-08-01）**：本文前半部分保留 Phase 1 初始契约快照，
+> 当时只规划只读 facade。当前实现已 supersede 该限制：
+> `rust_ext/src/manifest_query.rs` 已提供 schema/upsert/snapshot-link 写 facade，
+> `db/db_workspace_manifest.py` 默认调用 Rust，旧扩展或显式 rollback 才回退
+> Python。当前生产结论以 `docs/design/migration-manifest.md §69` 和源码为准。
+
 ## 1. 范围
 
 | 项 | 说明 |
 |---|---|
-| **目标** | 将 Rust 端 `workspace_manifests` 表的**只读查询方法**通过 PyO3 暴露给 Python，与 Python `db/db_workspace_manifest.py` 路径建立 ✅(behavioral) 差分 |
-| **Rust 端实现** | 部分就绪：`rust_ext/src/daemon/cas_merge.rs` 中已有 `ensure_manifest_schema` + `upsert_manifest`（私有函数，未 PyO3 暴露）；本子任务补 `manifest_query.rs` 模块，新增 5 个只读查询方法 |
-| **不在本子任务** | 任何写操作（`upsert_manifest` / `init_manifest_schema` / `link_to_snapshot`）仍走 Python（AGENTS.md 规则 6：写操作走 CLI/Python），refresh commit 主流程仍由 `server/replicator.py:daemon_handle_refresh` 主导 |
+| **目标** | 将 Rust 端 `workspace_manifests` 表的查询与短事务写方法通过 PyO3 暴露给 Python，并与 Python 路径建立行为差分 |
+| **Rust 端实现** | `manifest_query.rs` 提供 5 个查询 API，以及 `manifest_init_schema`、`manifest_upsert`、`manifest_link_to_snapshot` 三个生产写 API |
+| **兼容边界** | refresh commit 的 Rust daemon 主路径保持不变；Python adapter 仅在旧扩展、内存库或 `rust_manifest_query` rollback 时保留兼容写路径 |
 
 ## 2. 现状盘点（来自调研）
 

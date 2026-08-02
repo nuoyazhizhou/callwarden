@@ -15,6 +15,7 @@
 
 pub mod build_context;
 pub mod config;
+pub mod external;
 pub mod file_query;
 pub mod graph_query;
 pub mod graph_traversal;

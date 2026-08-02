@@ -23,15 +23,14 @@
 //!             mark_applied_batch/mark_failed/truncate/compact_applied/stats）
 
 use crate::daemon::staging_log::{StagingEntry, StagingLog};
-use pyo3::prelude::*;
 use pyo3::exceptions::{PyIOError, PyValueError};
+use pyo3::prelude::*;
 use serde_json;
 
 /// 打开 StagingLog，失败时返回 PyIOError
 fn open_log(log_path: &str) -> PyResult<StagingLog> {
-    StagingLog::new(log_path).map_err(|e| {
-        PyIOError::new_err(format!("open staging log failed: {}", e))
-    })
+    StagingLog::new(log_path)
+        .map_err(|e| PyIOError::new_err(format!("open staging log failed: {}", e)))
 }
 
 /// 追加一条 staging entry，返回分配的 LSN
@@ -49,13 +48,11 @@ fn open_log(log_path: &str) -> PyResult<StagingLog> {
 /// 分配的 LSN（i64）
 #[pyfunction]
 pub fn staging_log_append(log_path: &str, entry_json: &str) -> PyResult<i64> {
-    let mut entry: StagingEntry = serde_json::from_str(entry_json).map_err(|e| {
-        PyValueError::new_err(format!("invalid entry JSON: {}", e))
-    })?;
+    let mut entry: StagingEntry = serde_json::from_str(entry_json)
+        .map_err(|e| PyValueError::new_err(format!("invalid entry JSON: {}", e)))?;
     let log = open_log(log_path)?;
-    log.append(&mut entry).map_err(|e| {
-        PyIOError::new_err(format!("append failed: {}", e))
-    })?;
+    log.append(&mut entry)
+        .map_err(|e| PyIOError::new_err(format!("append failed: {}", e)))?;
     Ok(entry.lsn)
 }
 
@@ -71,12 +68,11 @@ pub fn staging_log_append(log_path: &str, entry_json: &str) -> PyResult<i64> {
 #[pyfunction]
 pub fn staging_log_read(log_path: &str, since_lsn: i64) -> PyResult<String> {
     let log = open_log(log_path)?;
-    let entries = log.read(since_lsn).map_err(|e| {
-        PyIOError::new_err(format!("read failed: {}", e))
-    })?;
-    serde_json::to_string(&entries).map_err(|e| {
-        PyValueError::new_err(format!("serialize entries failed: {}", e))
-    })
+    let entries = log
+        .read(since_lsn)
+        .map_err(|e| PyIOError::new_err(format!("read failed: {}", e)))?;
+    serde_json::to_string(&entries)
+        .map_err(|e| PyValueError::new_err(format!("serialize entries failed: {}", e)))
 }
 
 /// 读取所有 status=pending 的 entries
@@ -88,12 +84,11 @@ pub fn staging_log_read(log_path: &str, since_lsn: i64) -> PyResult<String> {
 #[pyfunction]
 pub fn staging_log_read_pending(log_path: &str) -> PyResult<String> {
     let log = open_log(log_path)?;
-    let entries = log.read_pending().map_err(|e| {
-        PyIOError::new_err(format!("read_pending failed: {}", e))
-    })?;
-    serde_json::to_string(&entries).map_err(|e| {
-        PyValueError::new_err(format!("serialize entries failed: {}", e))
-    })
+    let entries = log
+        .read_pending()
+        .map_err(|e| PyIOError::new_err(format!("read_pending failed: {}", e)))?;
+    serde_json::to_string(&entries)
+        .map_err(|e| PyValueError::new_err(format!("serialize entries failed: {}", e)))
 }
 
 /// 批量标记多个 LSN 为 applied（单次文件重写）
@@ -107,9 +102,8 @@ pub fn staging_log_read_pending(log_path: &str) -> PyResult<String> {
 #[pyfunction]
 pub fn staging_log_mark_applied_batch(log_path: &str, lsns: Vec<i64>) -> PyResult<bool> {
     let log = open_log(log_path)?;
-    log.mark_applied_batch(&lsns).map_err(|e| {
-        PyIOError::new_err(format!("mark_applied_batch failed: {}", e))
-    })?;
+    log.mark_applied_batch(&lsns)
+        .map_err(|e| PyIOError::new_err(format!("mark_applied_batch failed: {}", e)))?;
     Ok(true)
 }
 
@@ -119,9 +113,8 @@ pub fn staging_log_mark_applied_batch(log_path: &str, lsns: Vec<i64>) -> PyResul
 #[pyfunction]
 pub fn staging_log_mark_failed(log_path: &str, lsn: i64, error: &str) -> PyResult<bool> {
     let log = open_log(log_path)?;
-    log.mark_failed(lsn, error).map_err(|e| {
-        PyIOError::new_err(format!("mark_failed failed: {}", e))
-    })?;
+    log.mark_failed(lsn, error)
+        .map_err(|e| PyIOError::new_err(format!("mark_failed failed: {}", e)))?;
     Ok(true)
 }
 
@@ -131,9 +124,8 @@ pub fn staging_log_mark_failed(log_path: &str, lsn: i64, error: &str) -> PyResul
 #[pyfunction]
 pub fn staging_log_truncate(log_path: &str, up_to_lsn: i64) -> PyResult<bool> {
     let log = open_log(log_path)?;
-    log.truncate(up_to_lsn).map_err(|e| {
-        PyIOError::new_err(format!("truncate failed: {}", e))
-    })?;
+    log.truncate(up_to_lsn)
+        .map_err(|e| PyIOError::new_err(format!("truncate failed: {}", e)))?;
     Ok(true)
 }
 
@@ -145,14 +137,10 @@ pub fn staging_log_truncate(log_path: &str, up_to_lsn: i64) -> PyResult<bool> {
 /// - 保留非 applied 和其他 workspace 的 applied
 #[pyfunction]
 #[pyo3(signature = (log_path, workspace_id=None))]
-pub fn staging_log_compact_applied(
-    log_path: &str,
-    workspace_id: Option<String>,
-) -> PyResult<bool> {
+pub fn staging_log_compact_applied(log_path: &str, workspace_id: Option<String>) -> PyResult<bool> {
     let log = open_log(log_path)?;
-    log.compact_applied(workspace_id.as_deref()).map_err(|e| {
-        PyIOError::new_err(format!("compact_applied failed: {}", e))
-    })?;
+    log.compact_applied(workspace_id.as_deref())
+        .map_err(|e| PyIOError::new_err(format!("compact_applied failed: {}", e)))?;
     Ok(true)
 }
 
@@ -166,9 +154,9 @@ pub fn staging_log_compact_applied(
 #[pyfunction]
 pub fn staging_log_stats(log_path: &str) -> PyResult<String> {
     let log = open_log(log_path)?;
-    let stats = log.stats().map_err(|e| {
-        PyIOError::new_err(format!("stats failed: {}", e))
-    })?;
+    let stats = log
+        .stats()
+        .map_err(|e| PyIOError::new_err(format!("stats failed: {}", e)))?;
     // StagingLogStats 未实现 Serialize，手动构造 JSON
     let json = serde_json::json!({
         "total_entries": stats.total_entries,
@@ -178,9 +166,8 @@ pub fn staging_log_stats(log_path: &str) -> PyResult<String> {
         "next_lsn": stats.next_lsn,
         "log_path": stats.log_path,
     });
-    serde_json::to_string(&json).map_err(|e| {
-        PyValueError::new_err(format!("serialize stats failed: {}", e))
-    })
+    serde_json::to_string(&json)
+        .map_err(|e| PyValueError::new_err(format!("serialize stats failed: {}", e)))
 }
 
 /// 获取下一个 LSN（不追加 entry）
@@ -230,7 +217,8 @@ mod tests {
             "metrics_update": {},
             "status": "pending",
             "error": null
-        }).to_string()
+        })
+        .to_string()
     }
 
     #[test]

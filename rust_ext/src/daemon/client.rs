@@ -121,12 +121,11 @@ pub mod unix {
         /// 6. 关闭连接（UnixStream Drop 自动关闭）
         pub fn call(&self, method: &str, params: Value) -> Result<Value, ClientError> {
             // 1. 建立 UDS 连接
-            let mut stream = UnixStream::connect(&self.socket_path).map_err(|e| {
-                ClientError::ConnectFailed {
+            let mut stream =
+                UnixStream::connect(&self.socket_path).map_err(|e| ClientError::ConnectFailed {
                     path: self.socket_path.clone(),
                     source: e,
-                }
-            })?;
+                })?;
 
             // 2. 设置超时
             stream
@@ -142,8 +141,8 @@ pub mod unix {
                 .map_err(ClientError::Protocol)?;
 
             // 4. 接收响应
-            let response = recv_message(&mut stream, self.max_message_bytes)
-                .map_err(ClientError::Protocol)?;
+            let response =
+                recv_message(&mut stream, self.max_message_bytes).map_err(ClientError::Protocol)?;
 
             // 5. 解析响应
             let result = parse_rpc_response(&response).map_err(ClientError::Remote)?;
@@ -178,12 +177,11 @@ pub mod unix {
             use crate::daemon::protocol::send_message_with_fds;
 
             // 1. 建立 UDS 连接
-            let mut stream = UnixStream::connect(&self.socket_path).map_err(|e| {
-                ClientError::ConnectFailed {
+            let mut stream =
+                UnixStream::connect(&self.socket_path).map_err(|e| ClientError::ConnectFailed {
                     path: self.socket_path.clone(),
                     source: e,
-                }
-            })?;
+                })?;
 
             // 2. 设置超时
             stream
@@ -197,10 +195,7 @@ pub mod unix {
             let mut request = Map::new();
             request.insert("method".to_string(), Value::String(method.to_string()));
             request.insert("params".to_string(), params);
-            request.insert(
-                "id".to_string(),
-                Value::Number(serde_json::Number::from(1)),
-            );
+            request.insert("id".to_string(), Value::Number(serde_json::Number::from(1)));
 
             // 4. send_message_with_fds 发送请求 + FD
             send_message_with_fds(
@@ -212,8 +207,8 @@ pub mod unix {
             .map_err(ClientError::Protocol)?;
 
             // 5. 接收响应
-            let response = recv_message(&mut stream, self.max_message_bytes)
-                .map_err(ClientError::Protocol)?;
+            let response =
+                recv_message(&mut stream, self.max_message_bytes).map_err(ClientError::Protocol)?;
 
             // 6. 解析响应
             let result = parse_rpc_response(&response).map_err(ClientError::Remote)?;
@@ -242,7 +237,8 @@ pub mod unix {
 
             // 1. 打开 db_path（O_RDONLY）
             // arm64 Linux 上 c_char 是 u8，x86_64 上是 i8；用 libc::c_char 兼容
-            let fd: RawFd = unsafe { libc::open(db_path.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
+            let fd: RawFd =
+                unsafe { libc::open(db_path.as_ptr() as *const libc::c_char, libc::O_RDONLY) };
             if fd < 0 {
                 return Err(ClientError::ConnectFailed {
                     path: db_path.to_string(),
@@ -307,10 +303,7 @@ pub fn parse_rpc_response_py(response_json: &str) -> (bool, String) {
         }
     };
     match parse_rpc_response(&response) {
-        Ok(result) => (
-            true,
-            serde_json::to_string(&result).unwrap_or_default(),
-        ),
+        Ok(result) => (true, serde_json::to_string(&result).unwrap_or_default()),
         Err(e) => (
             false,
             serde_json::to_string(&serde_json::json!({
@@ -347,8 +340,8 @@ pub fn daemon_client_call_py(
 ) -> (i32, String, String) {
     use std::time::Duration;
 
-    let params: Value = serde_json::from_str(params_json)
-        .unwrap_or_else(|_| Value::Object(Map::new()));
+    let params: Value =
+        serde_json::from_str(params_json).unwrap_or_else(|_| Value::Object(Map::new()));
     let mut client = unix::UnixDaemonRpcClient::new(socket_path);
     if let Some(secs) = timeout_secs {
         client = client.with_timeout(Duration::from_secs(secs));
@@ -446,30 +439,18 @@ pub fn build_query_request(
             );
         }
         "callers" => {
-            params.insert(
-                "callee_name".to_string(),
-                Value::String(value.to_string()),
-            );
+            params.insert("callee_name".to_string(), Value::String(value.to_string()));
             if let Some(qn) = qualified_name {
                 if !qn.is_empty() {
-                    params.insert(
-                        "qualified_name".to_string(),
-                        Value::String(qn.to_string()),
-                    );
+                    params.insert("qualified_name".to_string(), Value::String(qn.to_string()));
                 }
             }
         }
         "callees" => {
-            params.insert(
-                "caller_name".to_string(),
-                Value::String(value.to_string()),
-            );
+            params.insert("caller_name".to_string(), Value::String(value.to_string()));
             if let Some(qn) = qualified_name {
                 if !qn.is_empty() {
-                    params.insert(
-                        "qualified_name".to_string(),
-                        Value::String(qn.to_string()),
-                    );
+                    params.insert("qualified_name".to_string(), Value::String(qn.to_string()));
                 }
             }
         }
@@ -484,10 +465,7 @@ pub fn build_query_request(
             );
         }
         "impact" => {
-            params.insert(
-                "symbol_hash".to_string(),
-                Value::String(value.to_string()),
-            );
+            params.insert("symbol_hash".to_string(), Value::String(value.to_string()));
             params.insert(
                 "depth".to_string(),
                 Value::Number(serde_json::Number::from(max_depth.unwrap_or(3))),
@@ -509,6 +487,105 @@ pub fn build_query_request(
     }
 
     Ok((method, Value::Object(params)))
+}
+
+/// 构造 file/query/issues/tests 扩展查询请求。
+///
+/// 这些查询共享 snapshot ACL，但参数不是原有 GraphStore query 的统一形状，
+/// 因此使用显式 builder，避免 CLI 和 daemon 对字段名各自猜测。
+pub fn build_file_query_request(workspace_id: &str, file_path: &str) -> (String, Value) {
+    (
+        "query.file".to_string(),
+        serde_json::json!({
+            "workspace_instance_id": workspace_id,
+            "file_path": file_path,
+        }),
+    )
+}
+
+pub fn build_symbol_location_query_request(
+    workspace_id: &str,
+    name: &str,
+    file_path: &str,
+) -> (String, Value) {
+    (
+        "query.symbol_location".to_string(),
+        serde_json::json!({
+            "workspace_instance_id": workspace_id,
+            "name": name,
+            "file_path": file_path,
+        }),
+    )
+}
+
+pub fn build_grep_query_request(
+    workspace_id: &str,
+    patterns: &[String],
+    fixed: bool,
+    limit: usize,
+    path: Option<&std::path::Path>,
+    include_all: bool,
+    kind: Option<&str>,
+) -> (String, Value) {
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "workspace_instance_id".to_string(),
+        Value::String(workspace_id.to_string()),
+    );
+    params.insert(
+        "patterns".to_string(),
+        Value::Array(patterns.iter().cloned().map(Value::String).collect()),
+    );
+    params.insert("fixed".to_string(), Value::Bool(fixed));
+    params.insert(
+        "limit".to_string(),
+        Value::Number(serde_json::Number::from(limit)),
+    );
+    params.insert("include_all".to_string(), Value::Bool(include_all));
+    if let Some(path) = path {
+        params.insert(
+            "path".to_string(),
+            Value::String(path.to_string_lossy().into_owned()),
+        );
+    }
+    if let Some(kind) = kind.filter(|value| !value.is_empty()) {
+        params.insert("kind".to_string(), Value::String(kind.to_string()));
+    }
+    ("query.grep".to_string(), Value::Object(params))
+}
+
+pub fn build_issues_query_request(
+    workspace_id: &str,
+    qualified_name: &str,
+    include_info: bool,
+) -> (String, Value) {
+    (
+        "query.issues".to_string(),
+        serde_json::json!({
+            "workspace_instance_id": workspace_id,
+            "qualified_name": qualified_name,
+            "include_info": include_info,
+        }),
+    )
+}
+
+pub fn build_tests_query_request(
+    workspace_id: &str,
+    qualified_name: &str,
+    reverse: bool,
+    history: bool,
+    limit: usize,
+) -> (String, Value) {
+    (
+        "query.tests".to_string(),
+        serde_json::json!({
+            "workspace_instance_id": workspace_id,
+            "qualified_name": qualified_name,
+            "reverse": reverse,
+            "history": history,
+            "limit": limit,
+        }),
+    )
 }
 
 /// Python 暴露的 build_query_request。
@@ -537,10 +614,7 @@ pub fn build_query_request_py(
         limit,
         max_depth,
     ) {
-        Ok((method, params)) => (
-            method,
-            serde_json::to_string(&params).unwrap_or_default(),
-        ),
+        Ok((method, params)) => (method, serde_json::to_string(&params).unwrap_or_default()),
         Err(e) => ("ERROR".to_string(), format!("{}", e)),
     }
 }
@@ -614,10 +688,7 @@ pub fn build_simple_request(
 #[pyfunction]
 pub fn build_simple_request_py(action: &str, workspace_id: Option<&str>) -> (String, String) {
     match build_simple_request(action, workspace_id) {
-        Ok((method, params)) => (
-            method,
-            serde_json::to_string(&params).unwrap_or_default(),
-        ),
+        Ok((method, params)) => (method, serde_json::to_string(&params).unwrap_or_default()),
         Err(e) => ("ERROR".to_string(), format!("{}", e)),
     }
 }
@@ -673,18 +744,14 @@ pub enum RpcError {
 /// - `params`: 已序列化的参数 JSON 字符串（由 CLI 层构建）
 ///
 /// 返回 `(method, params)` 元组。
-pub fn build_rpc_request(
-    action: &str,
-    params_json: &str,
-) -> Result<(String, Value), RpcError> {
+pub fn build_rpc_request(action: &str, params_json: &str) -> Result<(String, Value), RpcError> {
     if !RPC_ACTIONS.contains(&action) {
         return Err(RpcError::UnknownAction(action.to_string()));
     }
 
     // 解析参数 JSON（CLI 层已构建好参数结构）
-    let params: Value = serde_json::from_str(params_json).map_err(|_| {
-        RpcError::MissingParam("params_json 解析失败")
-    })?;
+    let params: Value = serde_json::from_str(params_json)
+        .map_err(|_| RpcError::MissingParam("params_json 解析失败"))?;
 
     let method = match action {
         "register" => "workspace.register",
@@ -712,10 +779,7 @@ pub fn build_rpc_request(
 #[pyfunction]
 pub fn build_rpc_request_py(action: &str, params_json: &str) -> (String, String) {
     match build_rpc_request(action, params_json) {
-        Ok((method, params)) => (
-            method,
-            serde_json::to_string(&params).unwrap_or_default(),
-        ),
+        Ok((method, params)) => (method, serde_json::to_string(&params).unwrap_or_default()),
         Err(e) => ("ERROR".to_string(), format!("{}", e)),
     }
 }
@@ -745,10 +809,7 @@ pub fn build_publish_params(
         "build_context_hash".to_string(),
         Value::String(build_context_hash.to_string()),
     );
-    (
-        "snapshot.publish".to_string(),
-        Value::Object(params),
-    )
+    ("snapshot.publish".to_string(), Value::Object(params))
 }
 
 /// Python 暴露的 build_publish_params。
@@ -760,10 +821,7 @@ pub fn build_publish_params_py(
     build_context_hash: &str,
 ) -> (String, String) {
     let (method, params) = build_publish_params(workspace_instance_id, build_context_hash);
-    (
-        method,
-        serde_json::to_string(&params).unwrap_or_default(),
-    )
+    (method, serde_json::to_string(&params).unwrap_or_default())
 }
 
 // ============================================
@@ -834,10 +892,7 @@ pub fn build_refresh_params(
         "workspace_instance_id".to_string(),
         Value::String(workspace_instance_id.to_string()),
     );
-    params.insert(
-        "rel_path".to_string(),
-        Value::String(rel_path.to_string()),
-    );
+    params.insert("rel_path".to_string(), Value::String(rel_path.to_string()));
     params.insert(
         "agent_session_id".to_string(),
         Value::String(agent_session_id.to_string()),
@@ -850,10 +905,7 @@ pub fn build_refresh_params(
         "monotonic_seq".to_string(),
         Value::Number(serde_json::Number::from(monotonic_seq)),
     );
-    (
-        "workspace.file.refresh".to_string(),
-        Value::Object(params),
-    )
+    ("workspace.file.refresh".to_string(), Value::Object(params))
 }
 
 /// 构建 agent ping RPC 请求参数。
@@ -988,10 +1040,7 @@ pub fn build_connect_params_py(
     agent_session_id: &str,
 ) -> (String, String) {
     let (method, params) = build_connect_params(workspace_instance_id, agent_session_id);
-    (
-        method,
-        serde_json::to_string(&params).unwrap_or_default(),
-    )
+    (method, serde_json::to_string(&params).unwrap_or_default())
 }
 
 /// Python 暴露的 build_refresh_params。
@@ -1010,10 +1059,7 @@ pub fn build_refresh_params_py(
         session_epoch,
         monotonic_seq,
     );
-    (
-        method,
-        serde_json::to_string(&params).unwrap_or_default(),
-    )
+    (method, serde_json::to_string(&params).unwrap_or_default())
 }
 
 /// 将路径转为绝对路径（跨平台，对齐 Python os.path.abspath）。
@@ -1226,10 +1272,7 @@ mod tests {
 
     #[test]
     fn test_d5_1_client_error_display() {
-        let err = ClientError::SetTimeout(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "test",
-        ));
+        let err = ClientError::SetTimeout(std::io::Error::new(std::io::ErrorKind::Other, "test"));
         let msg = format!("{}", err);
         assert!(msg.contains("设置超时失败"));
     }
@@ -1281,8 +1324,7 @@ mod tests {
     #[test]
     fn test_unix_client_with_max_message_bytes() {
         use super::unix::UnixDaemonRpcClient;
-        let client = UnixDaemonRpcClient::new("/tmp/test.sock")
-            .with_max_message_bytes(1024);
+        let client = UnixDaemonRpcClient::new("/tmp/test.sock").with_max_message_bytes(1024);
         assert_eq!(client.max_message_bytes, 1024);
     }
 
@@ -1318,16 +1360,8 @@ mod tests {
 
     #[test]
     fn test_d6_2_query_symbol() {
-        let (method, params) = build_query_request(
-            "ws-1",
-            "symbol",
-            "module::func",
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let (method, params) =
+            build_query_request("ws-1", "symbol", "module::func", None, None, None, None).unwrap();
         assert_eq!(method, "query.symbol");
         assert_eq!(params["qualified_name"], "module::func");
         assert_eq!(params.as_object().unwrap().len(), 2);
@@ -1414,16 +1448,8 @@ mod tests {
 
     #[test]
     fn test_d6_8_query_topological_order_default_limit() {
-        let (method, params) = build_query_request(
-            "ws-1",
-            "topological_order",
-            "",
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let (method, params) =
+            build_query_request("ws-1", "topological_order", "", None, None, None, None).unwrap();
         assert_eq!(method, "query.topological_order");
         assert_eq!(params["limit"], 20); // 默认
     }
@@ -1439,16 +1465,8 @@ mod tests {
 
     #[test]
     fn test_d6_9_query_detect_cycles_default_depth() {
-        let (method, params) = build_query_request(
-            "ws-1",
-            "detect_cycles",
-            "",
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let (method, params) =
+            build_query_request("ws-1", "detect_cycles", "", None, None, None, None).unwrap();
         assert_eq!(method, "query.detect_cycles");
         assert_eq!(params["max_depth"], 10); // 默认
     }
@@ -1464,16 +1482,8 @@ mod tests {
     #[test]
     fn test_d6_11_query_callers_no_qualified_name() {
         // qualified_name=None 不添加到 params
-        let (_, params) = build_query_request(
-            "ws-1",
-            "callers",
-            "callee_func",
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let (_, params) =
+            build_query_request("ws-1", "callers", "callee_func", None, None, None, None).unwrap();
         assert_eq!(params["callee_name"], "callee_func");
         assert!(params.get("qualified_name").is_none());
     }
@@ -1494,6 +1504,39 @@ mod tests {
         assert_eq!(QUERY_TYPES.len(), 9);
     }
 
+    #[test]
+    fn test_enterprise_query_builders_preserve_explicit_parameter_contracts() {
+        let (method, params) = build_file_query_request("ws-1", "src/main.rs");
+        assert_eq!(method, "query.file");
+        assert_eq!(params["workspace_instance_id"], "ws-1");
+        assert_eq!(params["file_path"], "src/main.rs");
+
+        let (method, params) = build_symbol_location_query_request("ws-1", "main", "src/main.rs");
+        assert_eq!(method, "query.symbol_location");
+        assert_eq!(params["name"], "main");
+        assert_eq!(params["file_path"], "src/main.rs");
+
+        let patterns = vec!["TODO".to_string(), "FIXME".to_string()];
+        let (method, params) =
+            build_grep_query_request("ws-1", &patterns, true, 25, None, false, Some("fn"));
+        assert_eq!(method, "query.grep");
+        assert_eq!(params["patterns"], serde_json::json!(["TODO", "FIXME"]));
+        assert_eq!(params["fixed"], true);
+        assert_eq!(params["limit"], 25);
+        assert_eq!(params["kind"], "fn");
+
+        let (method, params) = build_issues_query_request("ws-1", "crate::main", false);
+        assert_eq!(method, "query.issues");
+        assert_eq!(params["qualified_name"], "crate::main");
+        assert_eq!(params["include_info"], false);
+
+        let (method, params) = build_tests_query_request("ws-1", "crate::main", true, false, 7);
+        assert_eq!(method, "query.tests");
+        assert_eq!(params["reverse"], true);
+        assert_eq!(params["history"], false);
+        assert_eq!(params["limit"], 7);
+    }
+
     // ============================================
     // D7: 简单命令参数构建（Slice 3）
     // ============================================
@@ -1507,8 +1550,7 @@ mod tests {
 
     #[test]
     fn test_d7_2_status_action_with_workspace_id() {
-        let (method, params) =
-            build_simple_request("status", Some("ws-abc-123")).unwrap();
+        let (method, params) = build_simple_request("status", Some("ws-abc-123")).unwrap();
         assert_eq!(method, "workspace.status");
         assert_eq!(
             params["workspace_instance_id"],
@@ -1584,7 +1626,10 @@ mod tests {
         // 空字符串 workspace_id 仍发送（Python 也会传递空字符串）
         let (method, params) = build_simple_request("status", Some("")).unwrap();
         assert_eq!(method, "workspace.status");
-        assert_eq!(params["workspace_instance_id"], Value::String("".to_string()));
+        assert_eq!(
+            params["workspace_instance_id"],
+            Value::String("".to_string())
+        );
     }
 
     // ============================================
@@ -1601,8 +1646,7 @@ mod tests {
     #[test]
     fn test_d8_workspace_lifecycle_write_mappings() {
         let params = r#"{"workspace_instance_id":"ws-1"}"#;
-        let (activate_method, activate_params) =
-            build_rpc_request("activate", params).unwrap();
+        let (activate_method, activate_params) = build_rpc_request("activate", params).unwrap();
         let (remove_method, remove_params) = build_rpc_request("remove", params).unwrap();
         assert_eq!(activate_method, "workspace.activate");
         assert_eq!(remove_method, "workspace.remove");
@@ -1720,7 +1764,11 @@ mod tests {
     #[test]
     fn test_d8_17_to_abspath_absolute() {
         // 绝对路径直接返回
-        let path = if cfg!(windows) { "C:\\tmp\\test.db" } else { "/tmp/test.db" };
+        let path = if cfg!(windows) {
+            "C:\\tmp\\test.db"
+        } else {
+            "/tmp/test.db"
+        };
         assert_eq!(to_abspath(path), path);
     }
 
@@ -1803,13 +1851,7 @@ mod tests {
 
     #[test]
     fn test_d10_3_build_refresh_params() {
-        let (method, params) = build_refresh_params(
-            "ws-1",
-            "src/main.rs",
-            "agent-abc",
-            42,
-            7,
-        );
+        let (method, params) = build_refresh_params("ws-1", "src/main.rs", "agent-abc", 42, 7);
         assert_eq!(method, "workspace.file.refresh");
         assert_eq!(params["workspace_instance_id"], "ws-1");
         assert_eq!(params["rel_path"], "src/main.rs");
@@ -1898,8 +1940,7 @@ mod tests {
 
     #[test]
     fn test_d10_12_build_connect_params_py() {
-        let (method, params_json) =
-            build_connect_params_py("ws-1", "agent-abc");
+        let (method, params_json) = build_connect_params_py("ws-1", "agent-abc");
         assert_eq!(method, "workspace.connect");
         assert!(params_json.contains("workspace_instance_id"));
         assert!(params_json.contains("agent_session_id"));

@@ -72,7 +72,11 @@ impl ParseStatus {
 
     /// 根据 syntax_error_count 和 unsupported_construct_count 推导状态
     /// 对应 abi-error-code-contract.md §1.5
-    pub fn from_diagnostics(syntax_error_count: u32, unsupported_construct_count: u32, fatal: bool) -> Self {
+    pub fn from_diagnostics(
+        syntax_error_count: u32,
+        unsupported_construct_count: u32,
+        fatal: bool,
+    ) -> Self {
         if fatal {
             return ParseStatus::Failed;
         }
@@ -231,10 +235,7 @@ mod tests {
     #[test]
     fn test_parse_status_from_diagnostics() {
         // 无错误 → Ok
-        assert_eq!(
-            ParseStatus::from_diagnostics(0, 0, false),
-            ParseStatus::Ok
-        );
+        assert_eq!(ParseStatus::from_diagnostics(0, 0, false), ParseStatus::Ok);
         // 仅语法错误 → Partial
         assert_eq!(
             ParseStatus::from_diagnostics(1, 0, false),

@@ -2175,7 +2175,12 @@ class CodeGraphBase:
         self.conn.execute("PRAGMA temp_store=MEMORY")
         self.conn.execute("PRAGMA mmap_size=268435456")
         self.conn.execute("PRAGMA locking_mode=NORMAL")
-        self.conn.execute("PRAGMA foreign_keys=OFF")
+        # Rust StorageService 与业务连接使用同一套外键策略；显式关闭 Rust
+        # 存储时才保留历史 bulk-build 优化。
+        if os.environ.get("CW_USE_RUST_STORAGE", "1").lower() not in {"0", "false", "no", "off"}:
+            self.conn.execute("PRAGMA foreign_keys=ON")
+        else:
+            self.conn.execute("PRAGMA foreign_keys=OFF")
         # R2-P0-3: parser/resolvers 懒加载 + guarded
         # local wheel 无 parser-reference extra（无 tree_sitter_rust）或
         # frozen bundle 排除 callwarden.parsers 时，降级为 None。
@@ -2203,8 +2208,16 @@ class CodeGraphBase:
         # 活动工作区
         self.active_workspace: Optional[Dict[str, Any]] = None
 
-        self._init_schema()
-        self._init_workspace()
+        try:
+            self._init_schema()
+            self._init_workspace()
+        except Exception:
+            # Rust fail-closed 不能遗留 Python SQLite 连接锁住损坏/不兼容库。
+            try:
+                self.conn.close()
+            finally:
+                self.conn = None
+            raise
 
     def _try_init_rust_parser(self):
         """R2-P0-3: 懒加载 Python RustParser（仅用于 ModuleResolver 模块结构发现）。
@@ -2445,17 +2458,48 @@ class CodeGraphBase:
 
     def _init_schema(self):
         """初始化数据库 Schema，支持版本化自动迁移（保留数据）"""
-        # Rust 生产迁移优先：DDL/关键兼容列/索引在一个 BEGIN IMMEDIATE
-        # 事务内执行；扩展未安装或显式回滚时继续使用 Python 真相源。
-        if self.db_path and not self.is_feature_rolled_back("sqlite_schema_migration"):
+        # Rust StorageService 是 schema/migration 的生产入口。只有扩展未安装
+        # 或显式 rollback 时才允许继续使用旧 Python 路径；Rust 运行时错误
+        # 必须向上抛出，不能把半初始化数据库伪装成可用状态。
+        rust_storage_requested = os.environ.get("CW_USE_RUST_STORAGE", "1").lower() not in {
+            "0", "false", "no", "off"
+        }
+        rust_storage_rolled_back = self.is_feature_rolled_back("rust_storage_service")
+        rust_storage_imported = False
+        if self.db_path and rust_storage_requested and not rust_storage_rolled_back:
+            try:
+                from callwarden_core import storage_initialize_or_migrate
+                rust_storage_imported = True
+                res = storage_initialize_or_migrate(self.db_path, SCHEMA_VERSION)
+                if not res or not res.get("success") or res.get("version") != SCHEMA_VERSION:
+                    raise RuntimeError(
+                        f"Rust StorageService returned invalid migration report: {res!r}"
+                    )
+            except ImportError:
+                # 开发环境/旧 wheel 没有 Rust 扩展时保留 Python 兼容路径。
+                rust_storage_imported = False
+            except Exception:
+                raise
+
+            if rust_storage_imported:
+                # 确保辅助扩展 schema（CREATE IF NOT EXISTS）幂等执行；这些
+                # 模块不属于核心 schema 版本表，但失败不能静默吞掉。
+                from .db_toolchain import init_toolchain_schema
+                from .db_jobs import init_jobs_schema
+                from .db_clone_groups import init_clone_groups_schema
+                init_toolchain_schema(self.conn)
+                init_jobs_schema(self.conn)
+                init_clone_groups_schema(self.conn)
+                return
+
+        # 显式 rollback 或 Rust 扩展不存在时才进入兼容迁移路径。
+        if self.db_path and not rust_storage_requested and not self.is_feature_rolled_back("sqlite_schema_migration"):
             try:
                 from callwarden_core import sqlite_migrate_schema
                 sqlite_migrate_schema(self.db_path)
             except ImportError:
                 pass
             except Exception:
-                # 保持旧安装可启动，但不吞掉 Rust 的错误到业务层；Python
-                # migration 会再次校验并在失败时抛出原始异常。
                 pass
         # 确保 schema_version 表存在
         self.conn.execute("""
@@ -2567,7 +2611,20 @@ class CodeGraphBase:
             print(f"[WARN] _drop_indexes_for_build 失败: {e}，入库可能有写放大")
 
     def _get_current_version(self) -> int:
-        """获取当前数据库 schema 版本"""
+        """获取当前数据库 schema 版本
+
+        Phase 1-1 wire-production: 优先走 Rust 短路(callwarden_core.sqlite_query_schema_version),
+        rollback_config 控制(feature=sqlite_query_schema_version);未安装或 rolled back 时降级到 Python。
+        """
+        # Phase 1-1 wire-production: Rust 短路 + rollback 控制
+        if self.db_path and not self.is_feature_rolled_back("sqlite_query_schema_version"):
+            try:
+                from callwarden_core import sqlite_query_schema_version
+                return sqlite_query_schema_version(self.db_path)
+            except ImportError:
+                pass  # callwarden_core 未安装,降级到 Python
+            except Exception:
+                pass  # Rust 路径异常(锁冲突 / db_path 无效等),降级到 Python
         try:
             cur = self.conn.execute(
                 "SELECT MAX(version) as v FROM schema_version")

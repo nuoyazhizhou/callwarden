@@ -1,48 +1,61 @@
-//! UDS server——Unix Domain Socket 监听 + 多线程 accept + UID ACL。
+//! Daemon server——平台传输监听 + 多线程 accept + 对端 ACL。
 //!
 //! 对应 Python `server/daemon_server.py:EnterpriseDaemonServer`（L517-622）
 //!
+//! ## 跨平台传输（D0 3.2，Req 14.1–14.4）
+//! - Unix: UDS + SO_PEERCRED + SCM_RIGHTS FD 传递（`#[cfg(unix)]` 保留原有路径）
+//! - Windows: 命名管道 + ImpersonateNamedPipeClient（通过 `transport` 模块）
+//! - 跨平台入口：`start_server_transport` 使用 `TransportListener` 抽象
+//!
 //! ## 安全模型（daemon-ipc-security.md §3.1）
-//! - **身份始终取自 SO_PEERCRED**：内核保证不可伪造
+//! - **身份始终取自 OS Peer_Credential**：内核保证不可伪造
 //! - 客户端请求体中的身份字段不参与授权
-//! - 跨 UID 拒绝访问：`workspace.register` / `workspace.list` / `workspace.status`
-//!   等方法都通过 `peer.uid` 做 ACL（参考 R4 owned_workspace / validate_owned_path）
+//! - 跨 UID/SID 拒绝访问
 //!
 //! ## 线程模型
-//! - 主线程：`UnixListener::bind` + `accept` 循环
-//! - 工作线程池：`rayon` 或 `std::thread`（每连接一线程，有界）
-//! - 每个连接处理单个请求（与 Python 一致，连接 = 请求 = 响应）
-//!
-//! ## 条件编译
-//! - `#[cfg(unix)]` 保护整个模块
-//! - Windows 上跳过编译，cw_daemon binary 在 Windows 上不启动
+//! - 主线程：listener accept 循环
+//! - 工作线程池：每连接一线程，有界
+//! - 每个连接处理单个请求（连接 = 请求 = 响应）
 
-#![cfg(unix)]
+// Unix 专用导入（UDS + SO_PEERCRED + SCM_RIGHTS）
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(unix)]
+use std::path::{Path, PathBuf};
 
 use std::io;
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
+#[cfg(unix)]
 use crossbeam_channel::{bounded, Sender};
-use libc::mode_t;
+#[cfg(not(unix))]
+use crossbeam_channel::bounded;
 
 use super::dispatch::{DaemonStateExt, PeerCredential};
+#[cfg(unix)]
+use super::protocol::{make_error_response, send_message, DEFAULT_MAX_MESSAGE_BYTES};
+#[cfg(not(unix))]
+use super::protocol::make_error_response;
+use super::transport::{TransportConnection, TransportListener, TransportPeerIdentity};
+
+#[cfg(unix)]
 use super::peercred::{get_peer_cred, PeerCred};
-use super::protocol::{
-    make_error_response, recv_message_with_fds, send_message, DEFAULT_MAX_FDS,
-    DEFAULT_MAX_MESSAGE_BYTES,
-};
+#[cfg(unix)]
+use super::protocol::{recv_message_with_fds, DEFAULT_MAX_FDS};
+#[cfg(unix)]
+use libc::mode_t;
 
 // ============================================
 // DaemonConfig 扩展（UDS server 专用配置）
 // ============================================
 
 /// UDS server 配置（对应 Python EnterpriseDaemonServer.__init__ 参数）
+#[cfg(unix)]
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     /// UDS socket 路径
@@ -63,6 +76,7 @@ pub struct ServerConfig {
     pub socket_group: Option<String>,
 }
 
+#[cfg(unix)]
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -87,6 +101,7 @@ impl Default for ServerConfig {
 /// UDS server 句柄（用于 shutdown 控制）
 ///
 /// 对应 Python EnterpriseDaemonServer.shutdown
+#[cfg(unix)]
 pub struct ServerHandle {
     stop_flag: Arc<AtomicBool>,
     /// accept 线程 join handle（用于等待 server 退出）
@@ -99,6 +114,7 @@ pub struct ServerHandle {
     listener_fd: std::os::unix::io::RawFd,
 }
 
+#[cfg(unix)]
 impl ServerHandle {
     /// 请求 server 停止（非阻塞）
     ///
@@ -126,6 +142,7 @@ impl ServerHandle {
     }
 }
 
+#[cfg(unix)]
 impl Drop for ServerHandle {
     fn drop(&mut self) {
         self.shutdown();
@@ -140,6 +157,7 @@ impl Drop for ServerHandle {
 /// 准备 socket 路径：创建父目录 + 清理旧 socket 文件
 ///
 /// 对应 Python EnterpriseDaemonServer._prepare_socket_path
+#[cfg(unix)]
 fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
     if let Some(parent) = socket_path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -153,10 +171,7 @@ fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
         if !meta.file_type().is_socket() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!(
-                    "拒绝覆盖非 socket 路径: {}",
-                    socket_path.display()
-                ),
+                format!("拒绝覆盖非 socket 路径: {}", socket_path.display()),
             ));
         }
         std::fs::remove_file(socket_path)?;
@@ -176,6 +191,7 @@ fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
 ///
 /// 注意：state 由 worker 线程共享，要求 `Send + Sync`。如果 state 包含非 Send
 /// 资源（如 `RefCell`），需要在 state_factory 中包装。
+#[cfg(unix)]
 pub fn start_server<F, S>(config: ServerConfig, state_factory: F) -> io::Result<ServerHandle>
 where
     F: Fn() -> io::Result<S> + Send + Sync + 'static,
@@ -249,10 +265,7 @@ where
                 let err = io::Error::last_os_error();
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
-                    format!(
-                        "[P0-3] stat socket 回读校验失败（fail-closed）: {}",
-                        err
-                    ),
+                    format!("[P0-3] stat socket 回读校验失败（fail-closed）: {}", err),
                 ));
             }
             // 校验 GID
@@ -296,6 +309,9 @@ where
     let stop_flag_clone = stop_flag.clone();
     let (worker_tx, worker_rx) = bounded::<UnixStream>(config.max_workers);
 
+    // 唯一串行化点（Req 14.6）：所有 worker 共享同一实例
+    let serialization_point = Arc::new(super::serialization::SerializationPoint::with_default_timeout());
+
     // 启动 worker 线程池
     let state_factory = Arc::new(state_factory);
     let mut worker_handles = Vec::with_capacity(config.max_workers);
@@ -306,6 +322,7 @@ where
         let max_message_bytes = config.max_message_bytes;
         let max_fds = config.max_fds;
         let request_timeout = config.request_timeout;
+        let sp = serialization_point.clone();
 
         let handle = thread::Builder::new()
             .name(format!("cw-daemon-worker-{}", worker_idx))
@@ -317,6 +334,7 @@ where
                     max_message_bytes,
                     max_fds,
                     request_timeout,
+                    &sp,
                 );
             })?;
         worker_handles.push(handle);
@@ -328,12 +346,7 @@ where
     let accept_thread = thread::Builder::new()
         .name("cw-daemon-accept".to_string())
         .spawn(move || {
-            accept_loop(
-                &listener,
-                worker_tx,
-                stop_flag_clone,
-                accept_timeout,
-            );
+            accept_loop(&listener, worker_tx, stop_flag_clone, accept_timeout);
         })?;
 
     Ok(ServerHandle {
@@ -349,6 +362,7 @@ where
 ///
 /// 策略：blocking accept（零延迟），shutdown 时通过 libc::shutdown(fd, SHUT_RDWR)
 /// 打破阻塞。比非阻塞 + sleep 轮询方案延迟低 100x（1ms → 10us）。
+#[cfg(unix)]
 fn accept_loop(
     listener: &UnixListener,
     worker_tx: Sender<UnixStream>,
@@ -389,6 +403,7 @@ fn accept_loop(
 }
 
 /// worker 线程主循环：从 channel 取连接 → 处理 → 回复
+#[cfg(unix)]
 fn worker_loop<F, S>(
     state_factory: &Arc<F>,
     worker_rx: crossbeam_channel::Receiver<UnixStream>,
@@ -396,6 +411,7 @@ fn worker_loop<F, S>(
     max_message_bytes: usize,
     max_fds: usize,
     request_timeout: Duration,
+    serialization_point: &super::serialization::SerializationPoint,
 ) where
     F: Fn() -> io::Result<S> + Send + Sync + 'static,
     S: DaemonStateExt + Send + 'static,
@@ -416,7 +432,7 @@ fn worker_loop<F, S>(
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
 
-        if let Err(e) = handle_connection(&mut stream, &mut state, max_message_bytes, max_fds) {
+        if let Err(e) = handle_connection(&mut stream, &mut state, max_message_bytes, max_fds, serialization_point) {
             eprintln!("[cw_daemon] connection error: {}", e);
         }
     }
@@ -425,11 +441,13 @@ fn worker_loop<F, S>(
 /// 处理单个连接：peercred → recv_message_with_fds → dispatch → send_message
 ///
 /// 对应 Python EnterpriseDaemonServer._handle_connection
+#[cfg(unix)]
 pub fn handle_connection<S>(
     stream: &mut UnixStream,
     state: &mut S,
     max_message_bytes: usize,
     max_fds: usize,
+    serialization_point: &super::serialization::SerializationPoint,
 ) -> io::Result<()>
 where
     S: DaemonStateExt,
@@ -449,11 +467,7 @@ where
 
     // 2. 接收 JSON-RPC 请求（含可选 FD）
     // recv_message_with_fds 需要 &mut UnixStream（内部用 recvmsg/read_exact）
-    let (request, received_fds) = match recv_message_with_fds(
-        stream,
-        max_message_bytes,
-        max_fds,
-    ) {
+    let (request, received_fds) = match recv_message_with_fds(stream, max_message_bytes, max_fds) {
         Ok((msg, fds)) => (msg, fds),
         Err(e) => {
             // 协议错误：尝试回复错误响应（可能客户端已经断开）
@@ -468,16 +482,16 @@ where
     // 3. 解析 method / params / id
     let request_id = request.get("id").cloned();
     let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
-    let params = request.get("params").cloned().unwrap_or_else(|| {
-        serde_json::Value::Object(serde_json::Map::new())
-    });
+    let params = request
+        .get("params")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
-    // 4. dispatch（state.handle_* 内部做 ACL 检查）
+    // 4. dispatch（Protected_Mutation 经串行化点，Req 14.6）
     let response = if method.is_empty() || !params.is_object() {
         make_error_response("invalid_request", "method/params 类型错误")
     } else {
-        // 将 dispatch 结果包装为 JSON-RPC 响应
-        super::dispatch::dispatch(state, peer, method, &params, &received_fds)
+        super::dispatch::dispatch_rpc(state, peer, method, &params, &received_fds, serialization_point)
     };
 
     // 5. 附加 request_id
@@ -504,6 +518,7 @@ where
 }
 
 /// 批量关闭 FD（避免 FD 泄漏）
+#[cfg(unix)]
 fn close_fds(fds: &[i32]) {
     for &fd in fds {
         unsafe {
@@ -519,7 +534,8 @@ fn close_fds(fds: &[i32]) {
 /// 处理单个连接（测试用，不启动 accept 循环）
 ///
 /// 与 `handle_connection` 的区别：直接接受 `UnixStream`，不通过 channel。
-/// 适用于单元测试中模拟客户端连接。
+/// 适用于单元测试中模拟客户端连接（内部创建默认串行化点）。
+#[cfg(unix)]
 pub fn handle_one_connection<S>(
     stream: &mut UnixStream,
     state: &mut S,
@@ -529,10 +545,372 @@ pub fn handle_one_connection<S>(
 where
     S: DaemonStateExt,
 {
-    handle_connection(stream, state, max_message_bytes, max_fds)
+    let sp = super::serialization::SerializationPoint::with_default_timeout();
+    handle_connection(stream, state, max_message_bytes, max_fds, &sp)
 }
 
-#[cfg(test)]
+// ============================================
+// 跨平台传输 server（D0 3.2，Req 14.1–14.4）
+// ============================================
+
+/// Unix 传输监听器包装（将现有 UDS server 逻辑适配到 TransportListener trait）。
+///
+/// 保留原有 SCM_RIGHTS FD 传递能力（Windows 无此路径，使用 base64 载荷）。
+#[cfg(unix)]
+pub struct UnixTransportListener {
+    listener: UnixListener,
+    stop_flag: Arc<AtomicBool>,
+    socket_path: PathBuf,
+    listener_fd: std::os::unix::io::RawFd,
+}
+
+#[cfg(unix)]
+impl UnixTransportListener {
+    /// 绑定 UDS 并设置权限。
+    pub fn bind(config: &ServerConfig) -> io::Result<Self> {
+        prepare_socket_path(&config.socket_path)?;
+        let listener = UnixListener::bind(&config.socket_path)?;
+        std::fs::set_permissions(
+            &config.socket_path,
+            std::fs::Permissions::from_mode(config.socket_mode as u32),
+        )?;
+        use std::os::unix::io::AsRawFd;
+        let listener_fd = listener.as_raw_fd();
+        Ok(Self {
+            listener,
+            stop_flag: Arc::new(AtomicBool::new(false)),
+            socket_path: config.socket_path.clone(),
+            listener_fd,
+        })
+    }
+}
+
+#[cfg(unix)]
+impl TransportListener for UnixTransportListener {
+    fn accept(&mut self) -> io::Result<Box<dyn TransportConnection>> {
+        let _ = self.listener.set_nonblocking(false);
+        loop {
+            if self.stop_flag.load(Ordering::SeqCst) {
+                return Err(io::Error::new(io::ErrorKind::Interrupted, "shutdown"));
+            }
+            match self.listener.accept() {
+                Ok((stream, _)) => return Ok(Box::new(UnixTransportConnection { stream })),
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_micros(100));
+                }
+                Err(e) => {
+                    if self.stop_flag.load(Ordering::SeqCst) {
+                        return Err(io::Error::new(io::ErrorKind::Interrupted, "shutdown"));
+                    }
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    fn shutdown(&self) -> io::Result<()> {
+        self.stop_flag.store(true, Ordering::SeqCst);
+        unsafe { libc::shutdown(self.listener_fd, libc::SHUT_RDWR) };
+        Ok(())
+    }
+
+    fn endpoint_description(&self) -> String {
+        format!("unix:{}", self.socket_path.display())
+    }
+}
+
+/// Unix 传输连接包装。
+#[cfg(unix)]
+struct UnixTransportConnection {
+    stream: UnixStream,
+}
+
+#[cfg(unix)]
+impl TransportConnection for UnixTransportConnection {
+    fn recv_message(&mut self, max_bytes: usize) -> io::Result<Vec<u8>> {
+        use std::io::Read;
+        // 长度前缀协议：4 字节大端长度 + JSON 载荷
+        let mut len_buf = [0u8; 4];
+        self.stream.read_exact(&mut len_buf)?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len > max_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("消息过大: {} > {}", len, max_bytes),
+            ));
+        }
+        let mut buf = vec![0u8; len];
+        self.stream.read_exact(&mut buf)?;
+        Ok(buf)
+    }
+
+    fn send_message(&mut self, data: &[u8]) -> io::Result<()> {
+        use std::io::Write;
+        let len = (data.len() as u32).to_be_bytes();
+        self.stream.write_all(&len)?;
+        self.stream.write_all(data)?;
+        self.stream.flush()
+    }
+
+    fn peer_identity(&self) -> io::Result<TransportPeerIdentity> {
+        let cred = get_peer_cred(&self.stream)?;
+        Ok(TransportPeerIdentity::Unix {
+            uid: cred.uid,
+            gid: cred.gid,
+            pid: cred.pid,
+        })
+    }
+
+    fn set_timeout(&mut self, timeout: Duration) -> io::Result<()> {
+        self.stream.set_read_timeout(Some(timeout))?;
+        self.stream.set_write_timeout(Some(timeout))
+    }
+}
+
+/// 跨平台 daemon server 入口（使用 TransportListener 抽象）。
+///
+/// D0 3.2（Req 14.1–14.4）：
+/// - Unix: 通过 UnixTransportListener 保留原有 UDS + FD 传递
+/// - Windows: 通过 NamedPipeListener 提供命名管道端点
+/// - 三平台暴露等价协同 RPC 方法集
+///
+/// 端点负向约束（Req 14.20, 14.21）：不暴露 TCP/HTTPS/AF_UNIX。
+pub fn start_server_transport<F, S>(
+    mut listener: Box<dyn TransportListener>,
+    config: &super::transport::TransportConfig,
+    state_factory: F,
+) -> io::Result<TransportServerHandle>
+where
+    F: Fn() -> io::Result<S> + Send + Sync + 'static,
+    S: DaemonStateExt + Send + 'static,
+{
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let (worker_tx, worker_rx) = bounded::<Box<dyn TransportConnection>>(config.max_workers);
+
+    // 唯一串行化点（Req 14.6）：所有 worker 共享同一实例
+    let serialization_point = Arc::new(super::serialization::SerializationPoint::with_default_timeout());
+
+    // 启动 worker 线程池
+    let state_factory = Arc::new(state_factory);
+    let mut worker_handles = Vec::with_capacity(config.max_workers);
+    for worker_idx in 0..config.max_workers {
+        let state_factory = state_factory.clone();
+        let worker_rx = worker_rx.clone();
+        let stop_flag = stop_flag.clone();
+        let max_message_bytes = config.max_message_bytes;
+        let request_timeout = config.request_timeout;
+        let sp = serialization_point.clone();
+
+        let handle = thread::Builder::new()
+            .name(format!("cw-daemon-worker-{}", worker_idx))
+            .spawn(move || {
+                transport_worker_loop(
+                    &state_factory,
+                    worker_rx,
+                    stop_flag,
+                    max_message_bytes,
+                    request_timeout,
+                    &sp,
+                );
+            })?;
+        worker_handles.push(handle);
+    }
+
+    // accept 线程
+    let stop_flag_clone = stop_flag.clone();
+    let accept_thread = thread::Builder::new()
+        .name("cw-daemon-accept".to_string())
+        .spawn(move || {
+            while !stop_flag_clone.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok(conn) => {
+                        if worker_tx.try_send(conn).is_err() {
+                            eprintln!("[cw_daemon] worker pool full, rejecting connection");
+                        }
+                    }
+                    Err(ref e) if e.kind() == io::ErrorKind::Interrupted => break,
+                    Err(e) => {
+                        if stop_flag_clone.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        eprintln!("[cw_daemon] accept error: {}", e);
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+        })?;
+
+    Ok(TransportServerHandle {
+        stop_flag,
+        accept_thread: Some(accept_thread),
+        worker_handles,
+        listener_shutdown: None, // listener 已移入 accept 线程
+    })
+}
+
+/// 跨平台 worker 线程主循环。
+fn transport_worker_loop<F, S>(
+    state_factory: &Arc<F>,
+    worker_rx: crossbeam_channel::Receiver<Box<dyn TransportConnection>>,
+    stop_flag: Arc<AtomicBool>,
+    max_message_bytes: usize,
+    request_timeout: Duration,
+    serialization_point: &super::serialization::SerializationPoint,
+) where
+    F: Fn() -> io::Result<S> + Send + Sync + 'static,
+    S: DaemonStateExt + Send + 'static,
+{
+    let mut state = match state_factory() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[cw_daemon] worker state_factory failed: {}", e);
+            return;
+        }
+    };
+
+    while !stop_flag.load(Ordering::SeqCst) {
+        let mut conn = match worker_rx.recv_timeout(request_timeout) {
+            Ok(c) => c,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        };
+
+        if let Err(e) = handle_transport_connection(&mut *conn, &mut state, max_message_bytes, serialization_point) {
+            eprintln!("[cw_daemon] connection error: {}", e);
+        }
+    }
+}
+
+/// 处理单个跨平台连接：peer_identity → recv → dispatch → send。
+///
+/// 与 Unix `handle_connection` 的区别：
+/// - 不使用 SCM_RIGHTS FD 传递（Windows 无此机制）
+/// - 对端身份通过 TransportPeerIdentity 统一表示
+/// - dispatch 层 FD 参数传空切片（base64 载荷路径兜底）
+pub fn handle_transport_connection<S>(
+    conn: &mut dyn TransportConnection,
+    state: &mut S,
+    max_message_bytes: usize,
+    serialization_point: &super::serialization::SerializationPoint,
+) -> io::Result<()>
+where
+    S: DaemonStateExt,
+{
+    conn.set_timeout(Duration::from_secs(30))?;
+
+    // 1. 获取对端身份（OS 内核保证不可伪造）
+    let identity = conn.peer_identity()?;
+    let peer = match &identity {
+        TransportPeerIdentity::Unix { uid, gid, pid } => PeerCredential {
+            uid: *uid,
+            gid: *gid,
+            pid: *pid,
+        },
+        TransportPeerIdentity::Windows { sid: _, pid } => PeerCredential {
+            // Windows SID 映射：dispatch 层通过 owner_key 做 ACL
+            // uid/gid 设为 0（Windows 不使用 Unix UID 模型）
+            uid: 0,
+            gid: 0,
+            pid: *pid as i32,
+        },
+    };
+
+    // 2. 接收 JSON-RPC 请求（无 FD，Windows 使用 base64 载荷）
+    let request_bytes = match conn.recv_message(max_message_bytes) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let response = make_error_response("protocol_error", &e.to_string());
+            if let Ok(json_bytes) = serde_json::to_vec(&response) {
+                let _ = conn.send_message(&json_bytes);
+            }
+            return Ok(());
+        }
+    };
+
+    let request: serde_json::Value = match serde_json::from_slice(&request_bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            let response = make_error_response("parse_error", &e.to_string());
+            if let Ok(json_bytes) = serde_json::to_vec(&response) {
+                let _ = conn.send_message(&json_bytes);
+            }
+            return Ok(());
+        }
+    };
+
+    // 3. 解析 method / params / id
+    let request_id = request.get("id").cloned();
+    let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
+    let params = request
+        .get("params")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+
+    // 4. dispatch（Protected_Mutation 经串行化点，Req 14.6；无 FD，传空切片）
+    let response = if method.is_empty() || !params.is_object() {
+        make_error_response("invalid_request", "method/params 类型错误")
+    } else {
+        super::dispatch::dispatch_rpc(state, peer, method, &params, &[], serialization_point)
+    };
+
+    // 5. 附加 request_id
+    let final_response = if let Some(id) = request_id {
+        let mut m = serde_json::Map::new();
+        if let serde_json::Value::Object(obj) = response {
+            m.extend(obj);
+        }
+        m.insert("id".to_string(), id);
+        serde_json::Value::Object(m)
+    } else {
+        response
+    };
+
+    // 6. 发送响应
+    let json_bytes = serde_json::to_vec(&final_response).map_err(|e| {
+        io::Error::new(io::ErrorKind::InvalidData, format!("序列化响应失败: {}", e))
+    })?;
+    conn.send_message(&json_bytes)?;
+
+    Ok(())
+}
+
+/// 跨平台 server 句柄（用于 shutdown 控制）。
+pub struct TransportServerHandle {
+    stop_flag: Arc<AtomicBool>,
+    accept_thread: Option<thread::JoinHandle<()>>,
+    worker_handles: Vec<thread::JoinHandle<()>>,
+    /// 用于从外部触发 listener shutdown（如果 listener 未移入 accept 线程）
+    listener_shutdown: Option<Box<dyn Fn() -> io::Result<()> + Send>>,
+}
+
+impl TransportServerHandle {
+    /// 请求 server 停止（非阻塞）。
+    pub fn shutdown(&mut self) {
+        self.stop_flag.store(true, Ordering::SeqCst);
+        if let Some(ref f) = self.listener_shutdown {
+            let _ = f();
+        }
+    }
+
+    /// 等待 server 完全退出（阻塞当前线程）。
+    pub fn join(&mut self) {
+        if let Some(handle) = self.accept_thread.take() {
+            let _ = handle.join();
+        }
+        for handle in self.worker_handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for TransportServerHandle {
+    fn drop(&mut self) {
+        self.shutdown();
+        self.join();
+    }
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -575,8 +953,13 @@ mod tests {
         let mut state = make_state();
         // 在另一个作用域处理连接（避免借用冲突）
         {
-            handle_one_connection(&mut server, &mut state, DEFAULT_MAX_MESSAGE_BYTES, DEFAULT_MAX_FDS)
-                .unwrap();
+            handle_one_connection(
+                &mut server,
+                &mut state,
+                DEFAULT_MAX_MESSAGE_BYTES,
+                DEFAULT_MAX_FDS,
+            )
+            .unwrap();
         }
 
         read_response(&mut client)
@@ -596,10 +979,7 @@ mod tests {
         assert_eq!(response["id"], 1);
         assert_eq!(response["result"]["status"], "ok");
         // peer_uid 应该是当前进程的 uid
-        assert_eq!(
-            response["result"]["peer_uid"],
-            current_uid_for_test()
-        );
+        assert_eq!(response["result"]["peer_uid"], current_uid_for_test());
     }
 
     /// 测试辅助：获取当前进程 uid
@@ -637,10 +1017,7 @@ mod tests {
         });
         let response = simulate_request(&request);
         assert_eq!(response["ok"], true);
-        assert_eq!(
-            response["result"]["version"],
-            super::super::SCHEMA_VERSION
-        );
+        assert_eq!(response["result"]["version"], super::super::SCHEMA_VERSION);
     }
 
     // ---- 未知方法测试 ----
@@ -717,7 +1094,10 @@ mod tests {
     fn test_server_config_default_values() {
         let config = ServerConfig::default();
         // R7: 默认 socket_path 统一为 systemd RuntimeDirectory 风格
-        assert_eq!(config.socket_path, PathBuf::from(super::super::config::DEFAULT_SOCKET_PATH));
+        assert_eq!(
+            config.socket_path,
+            PathBuf::from(super::super::config::DEFAULT_SOCKET_PATH)
+        );
         assert_eq!(config.max_message_bytes, DEFAULT_MAX_MESSAGE_BYTES);
         assert_eq!(config.max_fds, DEFAULT_MAX_FDS);
         assert_eq!(config.max_workers, 16);
@@ -739,9 +1119,7 @@ mod tests {
             ..Default::default()
         };
 
-        let state_factory = move || -> io::Result<DaemonState> {
-            Ok(DaemonState::default())
-        };
+        let state_factory = move || -> io::Result<DaemonState> { Ok(DaemonState::default()) };
 
         let mut handle = start_server(config, state_factory).unwrap();
         assert!(socket_path.exists());
@@ -770,9 +1148,7 @@ mod tests {
             ..Default::default()
         };
 
-        let state_factory = move || -> io::Result<DaemonState> {
-            Ok(DaemonState::default())
-        };
+        let state_factory = move || -> io::Result<DaemonState> { Ok(DaemonState::default()) };
 
         let mut handle = start_server(config, state_factory).unwrap();
 
@@ -810,9 +1186,7 @@ mod tests {
             ..Default::default()
         };
 
-        let state_factory = move || -> io::Result<DaemonState> {
-            Ok(DaemonState::default())
-        };
+        let state_factory = move || -> io::Result<DaemonState> { Ok(DaemonState::default()) };
 
         let mut handle = start_server(config, state_factory).unwrap();
 

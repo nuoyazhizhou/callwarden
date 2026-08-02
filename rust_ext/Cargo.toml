@@ -132,6 +132,25 @@ clap = { version = "4", features = ["derive"] }
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
 
+# D0 3.24: Windows 命名管道端点 + SDDL 安全描述符 + 对端令牌 SID
+# 与 cfg(unix) signal-hook 对称：平台依赖只在对应 target 引入，Unix 侧构建不受影响
+# Feature 裁剪到三类模块，不引入整包（Req 14.2, 14.5, 14.18）：
+#   Win32_System_Pipes    — CreateNamedPipe / ConnectNamedPipe / DisconnectNamedPipe
+#   Win32_Security        — SECURITY_DESCRIPTOR / SID / ACL / SDDL 转换
+#   Win32_System_Threading — OpenProcessToken / GetTokenInformation（对端 SID 派生）
+#   Win32_Foundation      — HANDLE / BOOL / ERROR_* 基础类型（上述模块的公共依赖）
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+    "Win32_System_IO",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+    "Wdk_Storage_FileSystem",
+] }
+
 [dev-dependencies]
 tempfile = "3"
 

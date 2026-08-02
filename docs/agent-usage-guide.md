@@ -94,6 +94,44 @@ Call Warden 提供任务/步骤/审计状态机，用于编排复杂工作：
 
 Call Warden 自身就是第一个用户，开发时可以用 `cw` 命令分析本项目代码。
 
+## P0 盲评对照实验
+
+Call Warden 内置 P0 盲评对照实验，用于评估"盲评审查是否值得产品化"。
+实验不修改数据库 schema，复用现有任务状态机，所有记录标记为**非产品 Evidence**。
+
+### 典型工作流
+
+```bash
+# 1. 创建并锁定批次
+cw experiment batch-create --seed 42 --min-valid 30 --min-nontrivial 20
+
+# 2. 对符合条件的任务纳样（自动分组 + 构建 blind view）
+cw experiment admit <task_id> <batch_id> --strata "python,high,large"
+
+# 3. 审查完成后记录指标
+cw experiment record-metrics <task_id> <batch_id> --tp 2 --fp 0 --misses 0 --duration 120
+
+# 4. 记录 verdict 变更（reveal 前后）
+cw experiment record-verdict <task_id> <batch_id> --changed no --reason-code no_change
+
+# 5. 查看 G0 决策
+cw experiment report <batch_id> --json
+```
+
+### 关键语义
+
+- **G0 判定**：`eligible_for_p1=true` 表示可以讨论是否启用 P1，不代表 P1 已实现
+- **灰区**：误报率差 10–20pp 或延迟增 25–50% 时进入灰区观察，不暂停但不授权 P1
+- **暂停**：6 种硬阈值触发器（详见 [CLI 参考](cli_reference.md#暂停与恢复req-12211224)），暂停后保留全部记录，规则变更需新建批次
+- **非产品 Evidence**：实验记录不得用于 P1 hard-gate 声明或替代确定性验证
+
+### 阶段可用性
+
+P1–P4 当前均为 planned / unavailable。在对应阶段正式启用前，
+不得在输出或判定中暗示其已实现（Req 13.1）。
+
+详细命令参数见 [CLI 参考 · cw experiment](cli_reference.md#cw-experimentp0-盲评对照实验)。
+
 ## 工具参考
 
 - [TOOLS.md](../TOOLS.md) — 工具使用指南（CLI/MCP/场景映射）

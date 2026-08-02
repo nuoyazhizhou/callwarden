@@ -382,3 +382,38 @@ CLI 模式的"慢"是 Python 解释器启动 + 模块导入的固定成本，与
   - 用法：`python tests/_bench_cw_vs_grep.py --runs 5`
 - **最新报告**：[tests/_bench_cw_vs_grep_report.md](tests/_bench_cw_vs_grep_report.md)
 - **原始数据**：[tests/_bench_cw_vs_grep_report_raw.json](tests/_bench_cw_vs_grep_report_raw.json)
+
+---
+
+## cw experiment（P0 盲评对照实验）
+
+| 子命令 | 说明 | 读写 |
+|--------|------|------|
+| `experiment batch-create --seed N` | 创建批次 + 默认协议 + 锁定 | 写（JSON 配置） |
+| `experiment batch-lock <id>` | 冻结协议 | 写 |
+| `experiment batch-list` | 列出所有批次 | 只读 |
+| `experiment toggle-set --scope S --value V` | 设置 P0 Stage_Toggle | 写 |
+| `experiment toggle-show` | 显示解析后的 P0 开关 | 只读 |
+| `experiment admit <task> <batch>` | 纳样（分组 + blind view + JSONL） | 写 |
+| `experiment record-metrics <task> <batch>` | 记录 review 指标 | 写（JSONL） |
+| `experiment record-verdict <task> <batch>` | 记录 verdict 变更 | 写（JSONL） |
+| `experiment record-reveal <task> <batch>` | 记录 reveal 事件 | 写（JSONL） |
+| `experiment record-invalid <task> <batch>` | 记录无效样本 | 写（JSONL） |
+| `experiment record-incident <task> <batch>` | 记录披露/完整性事件 | 写（JSONL） |
+| `experiment pause <batch> --trigger T` | 手动暂停批次 | 写 |
+| `experiment report <batch>` | 汇总评估 + G0 决策 | 只读 |
+
+所有子命令支持 `--json` 输出机器可读 JSON。失败路径输出 Structured_Reason，exit code 1。
+所有记录标记 `non_product_evidence=True`（P0 实验，非产品 Evidence）。
+
+## cw collab（多 LLM 契约协同治理写命令）
+
+| 命令 | 说明 | 读写 |
+|------|------|------|
+| `collab publish --workspace PATH` | 发布 Envelope（snapshot.publish） | 写（daemon） |
+| `collab verdict --verdict-id ID --decision D` | 提交 Verdict 并封存（verdict.submit） | 写（daemon） |
+| `collab reveal --event-id ID --task-id ID` | 提交 Reveal_Event（reveal.submit） | 写（daemon） |
+| `collab gate-trigger --gate-id ID --clause C --value V` | 触发 Gate 判定（gate.decide） | 写（daemon） |
+
+所有操作经 Daemon_Endpoint 序列化点，不可绕过。daemon 不可用时 Governance_Write fail closed，
+输出 Structured_Reason（E_GOVERNANCE_WRITE_DEGRADED + 平台恢复指引），exit code 1。

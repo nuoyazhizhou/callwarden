@@ -6,7 +6,7 @@
 //! - call_rules 中已配置 dot 节点提取（extract_callee 支持 dot），
 //!   IO.puts 等 dot 调用会被拆分为 (callee_name="puts", callee_module="IO")
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy, ImportDirective};
+use crate::multi_lang::{CallRule, ImportDirective, LangConfig, NameStrategy, SymbolRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -150,7 +150,10 @@ pub(crate) fn config() -> LangConfig {
         // 其他普通 call（如 IO.puts、Enum.map）会走此调用规则路径
         // P0-D Step 2: extract_callee 已支持 dot 节点（IO.puts），
         // split_callee 会将 "IO.puts" 拆分为 (callee_name="puts", callee_module="IO")
-        call_rules: vec![CallRule { kind: "call", callee_field: None }],
+        call_rules: vec![CallRule {
+            kind: "call",
+            callee_field: None,
+        }],
         // Elixir 的 alias/import/use/require 也是 call 节点，不走 import_kinds 路径
         // （由 import_directives 在 walk_node 中专门处理）
         import_kinds: vec![],

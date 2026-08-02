@@ -14,14 +14,14 @@
 //! P0-C Step 0: 各语言配置函数已拆分到 languages/ 目录下的按语言模块。
 //! 本文件保留通用框架代码（类型定义、walker、PyO3 接口）。
 
-use tree_sitter::{Language, Node, Parser};
-use std::sync::Arc;
+use crate::{
+    blake_hash, find_child, make_qualified, node_text, parse_result_to_pydict, ParseResult,
+    ParseResultPool, RawCall, RawReference, SymbolInfo,
+};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use crate::{
-    ParseResult, SymbolInfo, RawCall, RawReference, ParseResultPool,
-    find_child, node_text, make_qualified, blake_hash, parse_result_to_pydict,
-};
+use std::sync::Arc;
+use tree_sitter::{Language, Node, Parser};
 
 // ============================================
 // 名称提取策略
@@ -74,9 +74,7 @@ pub enum NameStrategy {
     /// - 2+ 标签：name = "labels[0].labels[1]"（resource/data 风格，如 aws_instance.web）
     /// - 1 标签：name = "labels[0]"
     /// - 0 标签：name = fallback（块类型文本）
-    HclLabels {
-        fallback: &'static str,
-    },
+    HclLabels { fallback: &'static str },
 
     /// PHP property 专用：3 层嵌套提取
     /// property_declaration → property_element → variable_name → name
@@ -142,7 +140,11 @@ impl SymbolRule {
         is_fn: bool,
     ) -> Self {
         Self {
-            kind, name, sym_kind, body, is_fn,
+            kind,
+            name,
+            sym_kind,
+            body,
+            is_fn,
             dynamic_kind: vec![],
             call_keyword: None,
             kind_from_child_text: vec![],
@@ -155,7 +157,10 @@ impl SymbolRule {
     /// P0-C Step 1: 链式设置 kind_from_name（用于 TS/JS constructor 区分）
     /// 返回 Self 以便在配置函数中链式调用：
     ///   SymbolRule::new(...).with_kind_from_name(vec![("constructor", "constructor")])
-    pub(crate) fn with_kind_from_name(mut self, mapping: Vec<(&'static str, &'static str)>) -> Self {
+    pub(crate) fn with_kind_from_name(
+        mut self,
+        mapping: Vec<(&'static str, &'static str)>,
+    ) -> Self {
         self.kind_from_name = mapping;
         self
     }
@@ -244,9 +249,19 @@ impl LangConfig {
     /// 不再依赖 Python parser 的 _extract_refs_from_expression。
     pub fn supported_languages() -> Vec<&'static str> {
         vec![
-            "python", "rust", "go", "java", "typescript", "javascript",
-            "ruby", "php", "scala", "csharp", "cpp",
-            "kotlin", "swift",
+            "python",
+            "rust",
+            "go",
+            "java",
+            "typescript",
+            "javascript",
+            "ruby",
+            "php",
+            "scala",
+            "csharp",
+            "cpp",
+            "kotlin",
+            "swift",
             "elixir",
             "hcl",
         ]
@@ -277,8 +292,12 @@ impl GenericParser {
         let canon = match crate::canonicalize::canonicalize_source(abs_path) {
             Ok(c) => c,
             Err(e) => {
-                return error_result(abs_path, module_path, self.config.lang_id,
-                                    &format!("canonicalize error: {}", e));
+                return error_result(
+                    abs_path,
+                    module_path,
+                    self.config.lang_id,
+                    &format!("canonicalize error: {}", e),
+                );
             }
         };
         let source = canon.canonical_bytes;
@@ -286,15 +305,23 @@ impl GenericParser {
 
         let mut parser = Parser::new();
         if parser.set_language(&self.config.language).is_err() {
-            return error_result(abs_path, module_path, self.config.lang_id,
-                                "set_language failed");
+            return error_result(
+                abs_path,
+                module_path,
+                self.config.lang_id,
+                "set_language failed",
+            );
         }
 
         let tree = match parser.parse(&source, None) {
             Some(t) => t,
             None => {
-                return error_result(abs_path, module_path, self.config.lang_id,
-                                    "parse returned None");
+                return error_result(
+                    abs_path,
+                    module_path,
+                    self.config.lang_id,
+                    "parse returned None",
+                );
             }
         };
 
@@ -307,9 +334,17 @@ impl GenericParser {
 
         let root = tree.root_node();
         walk_node(
-            &root, &source, &self.config, module_path, "",
-            "", "",
-            &mut symbols, &mut calls, &mut imports, &mut references,
+            &root,
+            &source,
+            &self.config,
+            module_path,
+            "",
+            "",
+            "",
+            &mut symbols,
+            &mut calls,
+            &mut imports,
+            &mut references,
         );
 
         // R1-P0-2: ParseFact ABI 后处理 + diagnostics
@@ -347,15 +382,23 @@ impl GenericParser {
     ) -> ParseResult {
         let mut parser = Parser::new();
         if parser.set_language(&self.config.language).is_err() {
-            return error_result(abs_path, module_path, self.config.lang_id,
-                                "set_language failed");
+            return error_result(
+                abs_path,
+                module_path,
+                self.config.lang_id,
+                "set_language failed",
+            );
         }
 
         let tree = match parser.parse(canonical_bytes, None) {
             Some(t) => t,
             None => {
-                return error_result(abs_path, module_path, self.config.lang_id,
-                                    "parse returned None");
+                return error_result(
+                    abs_path,
+                    module_path,
+                    self.config.lang_id,
+                    "parse returned None",
+                );
             }
         };
 
@@ -369,9 +412,17 @@ impl GenericParser {
 
         let root = tree.root_node();
         walk_node(
-            &root, canonical_bytes, &self.config, module_path, "",
-            "", "",
-            &mut symbols, &mut calls, &mut imports, &mut references,
+            &root,
+            canonical_bytes,
+            &self.config,
+            module_path,
+            "",
+            "",
+            "",
+            &mut symbols,
+            &mut calls,
+            &mut imports,
+            &mut references,
         );
 
         // R1-P0-2: ParseFact ABI 后处理 + diagnostics
@@ -458,10 +509,14 @@ fn walk_node(
         //    P0-C Step 4: require_parent_kind 用于 C++ 区分类内方法 vs 自由函数
         let parent_kind = node.kind();
         let rule_match = config.symbol_rules.iter().find(|r| {
-            if r.kind != kind { return false; }
+            if r.kind != kind {
+                return false;
+            }
             // P0-C Step 4: 父节点 kind 必须匹配（若配置了 require_parent_kind）
             if let Some(req_pk) = r.require_parent_kind {
-                if parent_kind != req_pk { return false; }
+                if parent_kind != req_pk {
+                    return false;
+                }
             }
             if let Some(kw) = r.call_keyword {
                 // Elixir：要求首个 identifier 子节点文本等于 kw
@@ -477,21 +532,29 @@ fn walk_node(
             let actual_kind_opt: Option<&'static str> = if !rule.kind_from_child_text.is_empty() {
                 find_child(&child, "identifier").and_then(|n| {
                     let text = node_text(&n, source);
-                    rule.kind_from_child_text.iter()
-                        .find_map(|(txt, kind)| if text == *txt { Some(*kind) } else { None })
-                })
-                // 注意：不设 unwrap_or(rule.sym_kind)，匹配失败返回 None
-            } else if !rule.dynamic_kind.is_empty() {
-                // Go：按子节点 kind 映射，匹配失败兜底 sym_kind
-                Some(rule.dynamic_kind.iter()
-                    .find_map(|(child_kind, sym_kind)| {
-                        if find_child(&child, child_kind).is_some() {
-                            Some(*sym_kind)
+                    rule.kind_from_child_text.iter().find_map(|(txt, kind)| {
+                        if text == *txt {
+                            Some(*kind)
                         } else {
                             None
                         }
                     })
-                    .unwrap_or(rule.sym_kind))
+                })
+                // 注意：不设 unwrap_or(rule.sym_kind)，匹配失败返回 None
+            } else if !rule.dynamic_kind.is_empty() {
+                // Go：按子节点 kind 映射，匹配失败兜底 sym_kind
+                Some(
+                    rule.dynamic_kind
+                        .iter()
+                        .find_map(|(child_kind, sym_kind)| {
+                            if find_child(&child, child_kind).is_some() {
+                                Some(*sym_kind)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(rule.sym_kind),
+                )
             } else {
                 Some(rule.sym_kind)
             };
@@ -501,7 +564,8 @@ fn walk_node(
                     // P0-C Step 1: kind_from_name 映射（TS/JS constructor 区分）
                     // 提取到 name 后，若 name 命中 kind_from_name 映射，覆盖 actual_kind
                     let final_kind = if !rule.kind_from_name.is_empty() {
-                        rule.kind_from_name.iter()
+                        rule.kind_from_name
+                            .iter()
                             .find_map(|(n, k)| if *n == name.as_str() { Some(*k) } else { None })
                             .unwrap_or(actual_kind)
                     } else {
@@ -510,9 +574,15 @@ fn walk_node(
                     // P0-C Step 4: constructor_if_name_matches_parent（C++ 构造函数检测）
                     // 当配置了此标志且 name 等于 parent_qualified 的最后一段（类名）时，
                     // 覆盖 kind 为 "constructor"
-                    let final_kind = if rule.constructor_if_name_matches_parent && !parent_qualified.is_empty() {
+                    let final_kind = if rule.constructor_if_name_matches_parent
+                        && !parent_qualified.is_empty()
+                    {
                         let parent_class = parent_qualified.rsplit('.').next().unwrap_or("");
-                        if name.as_str() == parent_class { "constructor" } else { final_kind }
+                        if name.as_str() == parent_class {
+                            "constructor"
+                        } else {
+                            final_kind
+                        }
                     } else {
                         final_kind
                     };
@@ -540,9 +610,17 @@ fn walk_node(
                     if let Some(body_kind) = rule.body {
                         if let Some(body) = find_child(&child, body_kind) {
                             walk_node(
-                                &body, source, config, module_path, &qualified,
-                                new_fn, new_qual,
-                                symbols, calls, imports, references,
+                                &body,
+                                source,
+                                config,
+                                module_path,
+                                &qualified,
+                                new_fn,
+                                new_qual,
+                                symbols,
+                                calls,
+                                imports,
+                                references,
                             );
                         }
                     }
@@ -550,9 +628,17 @@ fn walk_node(
             } else {
                 // kind_from_child_text 未匹配（HCL：未知块类型），仍递归子节点提取嵌套
                 walk_node(
-                    &child, source, config, module_path, parent_qualified,
-                    current_fn, current_qualified,
-                    symbols, calls, imports, references,
+                    &child,
+                    source,
+                    config,
+                    module_path,
+                    parent_qualified,
+                    current_fn,
+                    current_qualified,
+                    symbols,
+                    calls,
+                    imports,
+                    references,
                 );
             }
             continue;
@@ -571,7 +657,7 @@ fn walk_node(
                         imports.push(node_text(&alias_node, source).to_string());
                     }
                 }
-                continue;  // 不作为普通 call 处理，不递归
+                continue; // 不作为普通 call 处理，不递归
             }
         }
 
@@ -599,9 +685,17 @@ fn walk_node(
             }
             // 继续遍历子节点（调用可能嵌套）
             walk_node(
-                &child, source, config, module_path, parent_qualified,
-                current_fn, current_qualified,
-                symbols, calls, imports, references,
+                &child,
+                source,
+                config,
+                module_path,
+                parent_qualified,
+                current_fn,
+                current_qualified,
+                symbols,
+                calls,
+                imports,
+                references,
             );
             continue;
         }
@@ -616,28 +710,53 @@ fn walk_node(
         // 4. P0-D: 检查引用规则（HCL attribute traversal）
         //    attribute 节点内 expression 含 variable_expr + get_attr 链，
         //    提取为 references + raw_calls（向后兼容 Python parser 行为）
-        if let Some(ref_rule) = config.reference_rules.iter().find(|r| r.attribute_kind == kind) {
+        if let Some(ref_rule) = config
+            .reference_rules
+            .iter()
+            .find(|r| r.attribute_kind == kind)
+        {
             if let Some(expr) = find_child(&child, ref_rule.expression_kind) {
                 extract_traversal_references(
-                    &expr, source, ref_rule,
-                    module_path, current_fn, current_qualified,
-                    calls, references,
+                    &expr,
+                    source,
+                    ref_rule,
+                    module_path,
+                    current_fn,
+                    current_qualified,
+                    calls,
+                    references,
                 );
             }
             // 递归子节点（attribute 内可能有嵌套结构）
             walk_node(
-                &child, source, config, module_path, parent_qualified,
-                current_fn, current_qualified,
-                symbols, calls, imports, references,
+                &child,
+                source,
+                config,
+                module_path,
+                parent_qualified,
+                current_fn,
+                current_qualified,
+                symbols,
+                calls,
+                imports,
+                references,
             );
             continue;
         }
 
         // 5. 默认：递归子节点
         walk_node(
-            &child, source, config, module_path, parent_qualified,
-            current_fn, current_qualified,
-            symbols, calls, imports, references,
+            &child,
+            source,
+            config,
+            module_path,
+            parent_qualified,
+            current_fn,
+            current_qualified,
+            symbols,
+            calls,
+            imports,
+            references,
         );
     }
 }
@@ -667,7 +786,7 @@ fn extract_traversal_references(
     references: &mut Vec<RawReference>,
 ) {
     if current_fn.is_empty() {
-        return;  // 不在 block 上下文中，不记录引用
+        return; // 不在 block 上下文中，不记录引用
     }
 
     let call_line = expr.start_position().row as u32 + 1;
@@ -683,7 +802,10 @@ fn extract_traversal_references(
             let var_node = &children[i];
             let var_ident = match find_child(var_node, "identifier") {
                 Some(n) => node_text(&n, source).to_string(),
-                None => { i += 1; continue; }
+                None => {
+                    i += 1;
+                    continue;
+                }
             };
 
             // 收集后续连续的 get_attr
@@ -757,11 +879,13 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
             }
             None
         }
-        NameStrategy::FieldName(field) => {
-            node.child_by_field_name(field)
-                .map(|n| node_text(&n, source).to_string())
-        }
-        NameStrategy::PositionBefore { terminator, name_kind } => {
+        NameStrategy::FieldName(field) => node
+            .child_by_field_name(field)
+            .map(|n| node_text(&n, source).to_string()),
+        NameStrategy::PositionBefore {
+            terminator,
+            name_kind,
+        } => {
             // 在 named_children 中找到 terminator，记录之前的 name_kind 节点
             let mut cursor = node.walk();
             let mut name_node = None;
@@ -775,7 +899,10 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
             }
             name_node.map(|n| node_text(&n, source).to_string())
         }
-        NameStrategy::ChildByTypeNested { intermediate, name_kinds } => {
+        NameStrategy::ChildByTypeNested {
+            intermediate,
+            name_kinds,
+        } => {
             let intermediate_node = find_child(node, intermediate)?;
             for kind in name_kinds {
                 if let Some(child) = find_child(&intermediate_node, kind) {
@@ -784,9 +911,13 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
             }
             None
         }
-        NameStrategy::ImplTraitForType { trait_field, type_field } => {
+        NameStrategy::ImplTraitForType {
+            trait_field,
+            type_field,
+        } => {
             // Rust impl 块：有 trait 字段时 name = "Trait for Type"，否则 "Type"
-            let type_name = node.child_by_field_name(type_field)
+            let type_name = node
+                .child_by_field_name(type_field)
                 .map(|n| node_text(&n, source).to_string())
                 .unwrap_or_default();
             if let Some(trait_node) = node.child_by_field_name(trait_field) {
@@ -796,13 +927,19 @@ fn extract_name(node: &Node, source: &[u8], strategy: &NameStrategy) -> Option<S
                 Some(type_name)
             }
         }
-        NameStrategy::CallArgName { container, child_kind, name_kind } => {
+        NameStrategy::CallArgName {
+            container,
+            child_kind,
+            name_kind,
+        } => {
             // Elixir 专用：在 container（如 "arguments"）内找首个 child_kind 节点，
             // 再提取该节点内（或自身）首个 name_kind 子节点的文本
             let container_node = find_child(node, container)?;
             let mut cursor = container_node.walk();
             for inner in container_node.named_children(&mut cursor) {
-                if inner.kind() != *child_kind { continue; }
+                if inner.kind() != *child_kind {
+                    continue;
+                }
                 if *child_kind == *name_kind {
                     // defmodule：container="arguments", child_kind="alias", name_kind="alias"
                     // alias 节点本身就是名称，直接取其文本
@@ -992,8 +1129,14 @@ fn extract_signature(
     // class_declaration/function_declaration 节点不含 "export" 关键字
     if lang_id == "typescript" || lang_id == "javascript" {
         let prefix_bytes = &source[..node_start];
-        let line_start = prefix_bytes.iter().rposition(|&b| b == b'\n').map(|p| p + 1).unwrap_or(0);
-        let prefix = std::str::from_utf8(&prefix_bytes[line_start..]).unwrap_or("").trim();
+        let line_start = prefix_bytes
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map(|p| p + 1)
+            .unwrap_or(0);
+        let prefix = std::str::from_utf8(&prefix_bytes[line_start..])
+            .unwrap_or("")
+            .trim();
         if prefix == "export" {
             return format!("export {}", base_sig);
         }
@@ -1024,9 +1167,15 @@ fn extract_base_signature(
 
     // 回退：尝试常见 body kind（含 Java constructor_body）
     for bk in &[
-        "block", "declaration_list", "class_body", "statement_block",
-        "function_body", "field_declaration_list", "protocol_body",
-        "constructor_body", "interface_body",
+        "block",
+        "declaration_list",
+        "class_body",
+        "statement_block",
+        "function_body",
+        "field_declaration_list",
+        "protocol_body",
+        "constructor_body",
+        "interface_body",
     ] {
         if let Some(body) = find_child(node, bk) {
             let body_start = body.start_byte();
@@ -1114,13 +1263,7 @@ fn normalize_ws(text: &str) -> String {
 /// - Rust: impl → private；pub → public；无 pub → private（对齐 golden）
 /// - Swift: 默认 internal；public/open → public；private/fileprivate → private（对齐 golden）
 /// - C#/Java/C++/Kotlin/Scala/PHP: 检查 visibility_modifier/modifiers 节点（对齐 golden）
-fn extract_visibility(
-    node: &Node,
-    source: &[u8],
-    lang_id: &str,
-    name: &str,
-    kind: &str,
-) -> String {
+fn extract_visibility(node: &Node, source: &[u8], lang_id: &str, name: &str, kind: &str) -> String {
     match lang_id {
         // R15-P0-3: golden 对这些语言全部标 public（契约简化）
         "python" | "go" | "javascript" | "typescript" | "ruby" | "elixir" | "hcl" => {
@@ -1197,17 +1340,14 @@ fn extract_visibility(
 
 /// 清理 import 文本：去除关键字、引号、分号
 fn clean_import(text: &str) -> String {
-    text
-        .trim_start_matches("import ")
+    text.trim_start_matches("import ")
         .trim_start_matches("use ")
         .trim_start_matches("from ")
         .trim_start_matches("using ")
         .trim_start_matches("require_relative ")
         .trim_start_matches("require ")
         .trim_start_matches("namespace ")
-        .trim_matches(|c: char| {
-            c == '"' || c == '\'' || c == ';' || c == '`' || c.is_whitespace()
-        })
+        .trim_matches(|c: char| c == '"' || c == '\'' || c == ';' || c == '`' || c.is_whitespace())
         .to_string()
 }
 
@@ -1233,10 +1373,13 @@ pub fn parse_file_lang<'py>(
     module_path: &str,
     language: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let config = LangConfig::get(language)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
-            format!("不支持的语言: {}，支持: {:?}", language, LangConfig::supported_languages())
-        ))?;
+    let config = LangConfig::get(language).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "不支持的语言: {}，支持: {:?}",
+            language,
+            LangConfig::supported_languages()
+        ))
+    })?;
     let parser = GenericParser::new(Arc::new(config));
     let result = parser.parse_file(abs_path, module_path);
     parse_result_to_pydict(py, &result)
@@ -1259,15 +1402,17 @@ pub fn parse_canonical_bytes_py<'py>(
     language: &str,
     content_hash: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let config = LangConfig::get(language)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
-            format!("不支持的语言: {}，支持: {:?}", language, LangConfig::supported_languages())
-        ))?;
+    let config = LangConfig::get(language).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "不支持的语言: {}，支持: {:?}",
+            language,
+            LangConfig::supported_languages()
+        ))
+    })?;
     let parser = GenericParser::new(Arc::new(config));
     // abs_path 用 module_path 占位——canonical bytes 已从 daemon 侧验证
-    let result = parser.parse_canonical_bytes(
-        canonical_bytes, module_path, module_path, content_hash,
-    );
+    let result =
+        parser.parse_canonical_bytes(canonical_bytes, module_path, module_path, content_hash);
     parse_result_to_pydict(py, &result)
 }
 
@@ -1284,10 +1429,9 @@ pub fn batch_parse_files_lang<'py>(
     language: &str,
     num_threads: Option<usize>,
 ) -> PyResult<Vec<Bound<'py, PyAny>>> {
-    let config = LangConfig::get(language)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
-            format!("不支持的语言: {}", language)
-        ))?;
+    let config = LangConfig::get(language).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("不支持的语言: {}", language))
+    })?;
 
     if let Some(n) = num_threads {
         rayon::ThreadPoolBuilder::new()
@@ -1326,10 +1470,9 @@ pub fn batch_parse_files_lang_pool(
     language: &str,
     num_threads: Option<usize>,
 ) -> PyResult<ParseResultPool> {
-    let config = LangConfig::get(language)
-        .ok_or_else(|| pyo3::exceptions::PyValueError::new_err(
-            format!("不支持的语言: {}", language)
-        ))?;
+    let config = LangConfig::get(language).ok_or_else(|| {
+        pyo3::exceptions::PyValueError::new_err(format!("不支持的语言: {}", language))
+    })?;
 
     if let Some(n) = num_threads {
         rayon::ThreadPoolBuilder::new()
@@ -1623,7 +1766,11 @@ pub fn parse_diagnostics_from_fields<'py>(
     syntax_error_count: u32,
     unsupported_construct_count: u32,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let status = parse_status_from_fields(error.clone(), syntax_error_count, unsupported_construct_count);
+    let status = parse_status_from_fields(
+        error.clone(),
+        syntax_error_count,
+        unsupported_construct_count,
+    );
     let fatal_parse_error = error.clone();
     let partial_parse = status == ParseStatus::Partial.as_str();
 

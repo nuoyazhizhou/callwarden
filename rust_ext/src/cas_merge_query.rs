@@ -126,34 +126,36 @@ pub fn cas_merge_to_codegraph<'py>(
 
     // 1. 打开 cas_conn（只读）+ codegraph_conn（读写）
     //    释放 GIL 做文件 IO + SQL 操作
-    let result = py.detach(|| -> Result<crate::daemon::cas_merge::MergeResult, String> {
-        let cas_conn = open_readonly(cas_db_path)
-            .map_err(|e| format!("打开 CAS 数据库失败: {}", e))?;
-        let codegraph_conn = open_readwrite(codegraph_db_path)
-            .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?;
+    let result = py.detach(
+        || -> Result<crate::daemon::cas_merge::MergeResult, String> {
+            let cas_conn =
+                open_readonly(cas_db_path).map_err(|e| format!("打开 CAS 数据库失败: {}", e))?;
+            let codegraph_conn = open_readwrite(codegraph_db_path)
+                .map_err(|e| format!("打开 CodeGraph 数据库失败: {}", e))?;
 
-        // 2. fresh DB 场景：先 init_codegraph_schema（幂等，CREATE IF NOT EXISTS）
-        //    与 Python db_base.init_schema 行为一致
-        crate::daemon::cas_merge::init_codegraph_schema(&codegraph_conn)
-            .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
+            // 2. fresh DB 场景：先 init_codegraph_schema（幂等，CREATE IF NOT EXISTS）
+            //    与 Python db_base.init_schema 行为一致
+            crate::daemon::cas_merge::init_codegraph_schema(&codegraph_conn)
+                .map_err(|e| format!("init_codegraph_schema 失败: {}", e))?;
 
-        // 3. 调用 merge_cas_to_codegraph
-        //    内部已完成 BEGIN IMMEDIATE → 全部 SQL → COMMIT
-        //    失败时内部已 ROLLBACK
-        let merge_result = crate::daemon::cas_merge::merge_cas_to_codegraph(
-            &cas_conn,
-            &codegraph_conn,
-            cas_key,
-            workspace_id,
-            rel_path,
-            abs_path,
-            content_hash,
-            language,
-            workspace_root_path,
-        )?;
+            // 3. 调用 merge_cas_to_codegraph
+            //    内部已完成 BEGIN IMMEDIATE → 全部 SQL → COMMIT
+            //    失败时内部已 ROLLBACK
+            let merge_result = crate::daemon::cas_merge::merge_cas_to_codegraph(
+                &cas_conn,
+                &codegraph_conn,
+                cas_key,
+                workspace_id,
+                rel_path,
+                abs_path,
+                content_hash,
+                language,
+                workspace_root_path,
+            )?;
 
-        Ok(merge_result)
-    });
+            Ok(merge_result)
+        },
+    );
 
     match result {
         Ok(merge_result) => {

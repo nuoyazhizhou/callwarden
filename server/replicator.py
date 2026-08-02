@@ -21,6 +21,75 @@ from typing import List, Optional, Dict, Any
 
 from callwarden.server.staging_log import StagingLog, StagingEntry
 
+# Phase 1-4 wire-production: Rust 短路 replicator_get_pending_count
+try:
+    import callwarden_core as _callwarden_core  # type: ignore
+    _RUST_REPLICATOR_QUERY_AVAILABLE = True
+except ImportError:
+    _callwarden_core = None
+    _RUST_REPLICATOR_QUERY_AVAILABLE = False
+
+# rollback_config 查询缓存（60s TTL，与 staging_log.py 一致）
+_REPLICATOR_ROLLBACK_CACHE: Dict[str, float] = {"ts": 0.0, "value": False}
+_REPLICATOR_ROLLBACK_CACHE_TTL = 60.0
+_CAS_WRITE_ROLLBACK_CACHE: Dict[str, float] = {"ts": 0.0, "value": False}
+_CAS_WRITE_ROLLBACK_CACHE_TTL = 60.0
+
+
+def _is_rust_cas_write_rolled_back() -> bool:
+    """检查 Rust CAS 写路径是否被显式回滚。"""
+    now = time.time()
+    if now - _CAS_WRITE_ROLLBACK_CACHE["ts"] < _CAS_WRITE_ROLLBACK_CACHE_TTL:
+        return bool(_CAS_WRITE_ROLLBACK_CACHE["value"])
+    try:
+        from callwarden.config import DB_PATH
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            row = conn.execute(
+                "SELECT rollback_flag FROM rollback_config "
+                "WHERE feature_name = ? ORDER BY updated_at DESC LIMIT 1",
+                ("rust_cas_write",),
+            ).fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _CAS_WRITE_ROLLBACK_CACHE["ts"] = now
+    _CAS_WRITE_ROLLBACK_CACHE["value"] = value
+    return value
+
+
+def _is_rust_replicator_query_rolled_back() -> bool:
+    """检查 rust_replicator_snapshot_query feature 是否已回滚（60s 缓存）
+
+    Replicator 是独立类（非 CodeGraphDB Mixin），无法用 self.is_feature_rolled_back。
+    通过短连接查询 rollback_config 表，结果缓存 60s 避免频繁开 DB。
+    与 staging_log.py:_is_rust_staging_log_rolled_back 模式一致。
+    """
+    now = time.time()
+    if now - _REPLICATOR_ROLLBACK_CACHE["ts"] < _REPLICATOR_ROLLBACK_CACHE_TTL:
+        return _REPLICATOR_ROLLBACK_CACHE["value"]  # type: ignore[return-value]
+    try:
+        import sqlite3 as _sqlite3
+        from callwarden.config import DB_PATH as _DB_PATH
+        conn = _sqlite3.connect(_DB_PATH)
+        try:
+            cur = conn.execute(
+                "SELECT rollback_flag FROM rollback_config WHERE feature_name = ? "
+                "ORDER BY updated_at DESC LIMIT 1",
+                ("rust_replicator_snapshot_query",),
+            )
+            row = cur.fetchone()
+            value = bool(row and row[0] == 1)
+        finally:
+            conn.close()
+    except Exception:
+        value = False
+    _REPLICATOR_ROLLBACK_CACHE["ts"] = now
+    _REPLICATOR_ROLLBACK_CACHE["value"] = value
+    return value
+
 # file_generations DDL 从 db_cas.py 导入（K6 去重，避免两处不一致）
 # 延迟导入避免触发 db 包的完整初始化链
 def _get_file_generations_ddl() -> str:
@@ -272,76 +341,100 @@ def daemon_handle_refresh(peer_uid: int, workspace_id: int, msg: dict,
         cas_key = cas_result.get("cas_key", "")
         content_hash_for_merge = cas_result.get("content_hash", "")
 
-        # 5a. merge 到 CodeGraph DB（断点 B 修复）
+        # 5a. merge 到 CodeGraph DB（Rust 生产写路径优先短路）
         if codegraph_db_path and cas_key:
+            merged_via_rust = False
             try:
-                from callwarden.db.db_cas_merge import merge_cas_to_codegraph
-                # 打开 CodeGraph DB 连接（用户级单库，schema 假设已初始化）
-                # WAL 模式下与 CLI/MCP 并发安全（AGENTS.md 规则 2）
-                cg_conn = sqlite3.connect(codegraph_db_path, timeout=10.0)
-                cg_conn.row_factory = sqlite3.Row
+                from callwarden_core import cas_merge_to_codegraph
+                rust_res = cas_merge_to_codegraph(
+                    cas_db_path=cas_db_path,
+                    codegraph_db_path=codegraph_db_path,
+                    cas_key=cas_key,
+                    workspace_id=workspace_id,
+                    rel_path=rel_path,
+                    abs_path=msg.get("abs_path") or _join_path(workspace_root, rel_path),
+                    content_hash=content_hash_for_merge,
+                    language=detect_language_from_path(rel_path) or "",
+                    workspace_root_path=workspace_root_path,
+                )
+                if rust_res and rust_res.get("success"):
+                    merged_via_rust = True
+                    logger.info(
+                        "P0-1 Rust merge done: cas_key=%s ws=%d symbols=%d calls=%d",
+                        cas_key, workspace_id,
+                        rust_res.get("symbols_inserted", 0),
+                        rust_res.get("calls_inserted", 0),
+                    )
+            except Exception as re:
+                logger.debug("Rust cas_merge_to_codegraph fallback: %s", re)
+
+            if not merged_via_rust:
+                if not _is_rust_cas_write_rolled_back():
+                    raise ProtocolError(
+                        "Rust CAS merge unavailable or failed; "
+                        "set rollback_config.rust_cas_write=1 for an explicit compatibility rollback",
+                        code="rust_cas_merge_unavailable",
+                    )
+
+                # 兼容回滚路径：只有 rollback_config 明确允许时才打开 Python DB 写事务。
+                cg_conn = None
                 try:
-                    # 检测 schema 是否初始化（查 file_instances 表是否存在）
-                    try:
-                        cg_conn.execute(
-                            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_instances'"
-                        ).fetchone()
-                    except sqlite3.OperationalError:
-                        # schema 未初始化——跳过 merge（不打断 refresh 主流程）
-                        logger.warning(
-                            "CodeGraph DB schema 未初始化（file_instances 表不存在），"
-                            "跳过 P0-1 merge：db=%s", codegraph_db_path
-                        )
-                        cg_conn.close()
-                        cg_conn = None
+                    from callwarden.db.db_cas_merge import merge_cas_to_codegraph
 
-                    if cg_conn is not None:
-                        # 推断 abs_path 和 language
-                        abs_path_for_merge = msg.get("abs_path") or _join_path(
-                            workspace_root, rel_path
+                    # 打开 CodeGraph DB 连接（用户级单库，schema 假设已初始化）
+                    # WAL 模式下与 CLI/MCP 并发安全（AGENTS.md 规则 2）
+                    cg_conn = sqlite3.connect(codegraph_db_path, timeout=10.0)
+                    cg_conn.row_factory = sqlite3.Row
+                    schema_row = cg_conn.execute(
+                        "SELECT 1 FROM sqlite_master "
+                        "WHERE type='table' AND name='file_instances'"
+                    ).fetchone()
+                    if schema_row is None:
+                        raise RuntimeError(
+                            f"CodeGraph DB schema 未初始化：缺少 file_instances 表，db={codegraph_db_path}"
                         )
-                        language_for_merge = ""
-                        try:
-                            from config import detect_language_from_path
-                            language_for_merge = detect_language_from_path(rel_path) or ""
-                        except ImportError:
-                            pass
 
-                        merge_result = merge_cas_to_codegraph(
-                            cas_conn=cas_conn,
-                            codegraph_conn=cg_conn,
-                            cas_key=cas_key,
-                            workspace_id=workspace_id,
-                            rel_path=rel_path,
-                            abs_path=abs_path_for_merge,
-                            content_hash=content_hash_for_merge,
-                            language=language_for_merge,
-                            workspace_root_path=workspace_root_path,
-                        )
-                        logger.info(
-                            "P0-1 merge done: cas_key=%s ws=%d file_instance=%d "
-                            "symbols=%d calls=%d status=%s",
-                            cas_key, workspace_id,
-                            merge_result.get("file_instance_id", 0),
-                            merge_result.get("symbols_inserted", 0),
-                            merge_result.get("calls_inserted", 0),
-                            merge_result.get("merge_status", ""),
-                        )
-                finally:
+                    abs_path_for_merge = msg.get("abs_path") or _join_path(
+                        workspace_root, rel_path
+                    )
+                    language_for_merge = ""
                     try:
-                        cg_conn.close()
-                    except Exception:
+                        from config import detect_language_from_path
+                        language_for_merge = detect_language_from_path(rel_path) or ""
+                    except ImportError:
                         pass
-            except Exception as e:
-                # merge 失败——抛异常让上层不追加 staging entry
-                logger.error(
-                    "P0-1 merge failed (cas_key=%s, ws=%d): %s",
-                    cas_key, workspace_id, e,
-                )
-                raise ProtocolError(
-                    f"CAS merge to CodeGraph DB failed: {e}",
-                    code="cas_merge_failed",
-                )
+
+                    merge_result = merge_cas_to_codegraph(
+                        cas_conn=cas_conn,
+                        codegraph_conn=cg_conn,
+                        cas_key=cas_key,
+                        workspace_id=workspace_id,
+                        rel_path=rel_path,
+                        abs_path=abs_path_for_merge,
+                        content_hash=content_hash_for_merge,
+                        language=language_for_merge,
+                        workspace_root_path=workspace_root_path,
+                    )
+                    logger.warning(
+                        "P0-1 Python compatibility merge used after explicit rollback: "
+                        "cas_key=%s ws=%d symbols=%d calls=%d status=%s",
+                        cas_key, workspace_id,
+                        merge_result.get("symbols_inserted", 0),
+                        merge_result.get("calls_inserted", 0),
+                        merge_result.get("merge_status", ""),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "P0-1 compatibility merge failed (cas_key=%s, ws=%d): %s",
+                        cas_key, workspace_id, e,
+                    )
+                    raise ProtocolError(
+                        f"CAS merge to CodeGraph DB failed: {e}",
+                        code="cas_merge_failed",
+                    )
+                finally:
+                    if cg_conn is not None:
+                        cg_conn.close()
 
         # 5b. upsert workspace_manifests（断点 A 修复）
         # ws_conn 已含 workspace_manifests 表（init_session_schema 已初始化）
@@ -419,6 +512,17 @@ def _join_path(workspace_root: str, rel_path: str) -> str:
     if len(root) >= 2 and root[1] == ":" and root[0].isalpha():
         root = root[0].lower() + root[1:]
     return f"{root}/{rel}"
+
+
+def _sqlite_main_db_path(conn: sqlite3.Connection) -> Optional[str]:
+    """返回连接的主数据库路径，供 Rust 短连接复用同一个 CAS 文件。"""
+    try:
+        for _seq, name, path in conn.execute("PRAGMA database_list").fetchall():
+            if name == "main" and path:
+                return str(path)
+    except Exception:
+        logger.debug("无法探测 CAS SQLite 主库路径", exc_info=True)
+    return None
 
 
 def _daemon_parse_and_publish(
@@ -499,11 +603,30 @@ def _daemon_parse_and_publish(
                 "cas_state": "no_cas_conn", "canonicalize_method": canonicalize_method}
 
     try:
-        from callwarden.db.db_cas import compute_cas_key_v1, cas_publish_with_retry, cas_lookup
+        from callwarden.db.db_cas import (
+            compute_cas_key_v1,
+            cas_publish_with_retry as python_cas_publish_with_retry,
+            cas_lookup as python_cas_lookup,
+            cas_pin as python_cas_pin,
+        )
     except ImportError:
         return {"content_hash": content_hash, "cas_key": "",
                 "cas_state": "cas_module_unavailable",
                 "canonicalize_method": canonicalize_method}
+
+    # 企业 daemon 与兼容 server 必须共用 Rust CasStore 的发布协议。
+    # 只有旧 wheel、内存数据库或显式 rollback 时才保留 Python 兼容路径。
+    cas_db_path = _sqlite_main_db_path(cas_conn)
+    rust_cas_lookup = getattr(_callwarden_core, "cas_global_lookup", None)
+    rust_cas_pin = getattr(_callwarden_core, "cas_pin", None)
+    rust_cas_publish = getattr(_callwarden_core, "cas_publish_with_retry", None)
+    use_rust_cas = bool(
+        cas_db_path
+        and not _is_rust_cas_write_rolled_back()
+        and rust_cas_lookup
+        and rust_cas_pin
+        and rust_cas_publish
+    )
 
     # 3d. 计算 CAS key
     parser_version = "0.1.0"
@@ -517,11 +640,16 @@ def _daemon_parse_and_publish(
     )
 
     # 3e. 检查 CAS 是否已命中（state='ready'）
-    existing = cas_lookup(cas_conn, cas_key)
+    if use_rust_cas:
+        existing = rust_cas_lookup(cas_db_path, cas_key)
+    else:
+        existing = python_cas_lookup(cas_conn, cas_key)
     if existing:
         try:
-            from callwarden.db.db_cas import cas_pin
-            cas_pin(cas_conn, cas_key, workspace_id)
+            if use_rust_cas:
+                rust_cas_pin(cas_db_path, cas_key, workspace_id, 3600.0)
+            else:
+                python_cas_pin(cas_conn, cas_key, workspace_id)
         except Exception as e:
             logger.warning("cas_pin failed for cas_key=%s: %s", cas_key, e)
         return {"content_hash": content_hash, "cas_key": cas_key,
@@ -553,13 +681,22 @@ def _daemon_parse_and_publish(
 
     # 3g. CAS 原子发布（带 retry）
     try:
-        cas_publish_with_retry(
-            cas_conn, cas_key, content_hash, language, parse_result,
-            workspace_id=workspace_id, max_retries=3,
-            parser_version=parser_version, callwarden_version=callwarden_version,
-            extraction_config_version=extraction_config_version,
-            abi_version=abi_version, input_abi_version=input_abi_version,
-        )
+        if use_rust_cas:
+            rust_cas_publish(
+                cas_db_path, cas_key, content_hash, language, parse_result,
+                workspace_id=workspace_id, max_retries=3,
+                parser_version=parser_version, callwarden_version=callwarden_version,
+                extraction_config_version=extraction_config_version,
+                abi_version=abi_version, input_abi_version=input_abi_version,
+            )
+        else:
+            python_cas_publish_with_retry(
+                cas_conn, cas_key, content_hash, language, parse_result,
+                workspace_id=workspace_id, max_retries=3,
+                parser_version=parser_version, callwarden_version=callwarden_version,
+                extraction_config_version=extraction_config_version,
+                abi_version=abi_version, input_abi_version=input_abi_version,
+            )
         return {"content_hash": content_hash, "cas_key": cas_key,
                 "cas_state": "ready_published", "canonicalize_method": canonicalize_method}
     except Exception as e:
@@ -773,7 +910,19 @@ class Replicator:
             workspace_id: 如果指定，只返回该 workspace 的 pending 数量
 
         返回：pending 数量
+
+        Phase 1-4 wire-production: 优先走 Rust 短路(callwarden_core.replicator_get_pending_count),
+        rollback_config 控制(feature=rust_replicator_snapshot_query);未安装或 rolled back 时降级到 Python。
+        Rust 路径在 Rust 端完成读取+过滤,只返回 count,避免跨语言数据传输。
         """
+        # Phase 1-4 wire-production: Rust 短路 + rollback 控制
+        if _RUST_REPLICATOR_QUERY_AVAILABLE and not _is_rust_replicator_query_rolled_back():
+            try:
+                return _callwarden_core.replicator_get_pending_count(
+                    self.staging_log.log_path, workspace_id
+                )
+            except Exception:
+                pass  # Rust 路径异常,降级到 Python
         pending = self.staging_log.read_pending()
         if workspace_id:
             return sum(1 for e in pending if e.workspace_id == workspace_id)

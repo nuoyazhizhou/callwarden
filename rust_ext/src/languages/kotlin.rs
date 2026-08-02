@@ -1,6 +1,6 @@
 //! Kotlin 语言配置（从 multi_lang.rs 拆分，P0-C Step 0）
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy};
+use crate::multi_lang::{CallRule, LangConfig, NameStrategy, SymbolRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -12,29 +12,40 @@ pub(crate) fn config() -> LangConfig {
             SymbolRule::new(
                 "function_declaration",
                 NameStrategy::ChildByType(vec!["simple_identifier", "identifier"]),
-                "fn", Some("function_body"), true,
+                "fn",
+                Some("function_body"),
+                true,
             ),
             // Kotlin 类声明
             SymbolRule::new(
                 "class_declaration",
                 NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
-                "class", Some("class_body"), false,
+                "class",
+                Some("class_body"),
+                false,
             ),
             // Kotlin object 声明（单例对象）
             SymbolRule::new(
                 "object_declaration",
                 NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
-                "object", Some("class_body"), false,
+                "object",
+                Some("class_body"),
+                false,
             ),
             // Kotlin 接口声明
             SymbolRule::new(
                 "interface_declaration",
                 NameStrategy::ChildByType(vec!["type_identifier", "identifier"]),
-                "interface", Some("class_body"), false,
+                "interface",
+                Some("class_body"),
+                false,
             ),
         ],
         // Kotlin 调用：call_expression 无 callee field，从 identifier 提取
-        call_rules: vec![CallRule { kind: "call_expression", callee_field: None }],
+        call_rules: vec![CallRule {
+            kind: "call_expression",
+            callee_field: None,
+        }],
         import_kinds: vec!["import"],
         import_directives: vec![],
         reference_rules: vec![],

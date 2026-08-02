@@ -67,9 +67,8 @@ static SQL_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
 ///     re.IGNORECASE,
 /// )
 /// ```
-static HTTP_ANNOTATION: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)#\[(?:get|post|put|delete|patch|head|options)\s*\(").unwrap()
-});
+static HTTP_ANNOTATION: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)#\[(?:get|post|put|delete|patch|head|options)\s*\(").unwrap());
 
 /// API 层路由装饰器正则（IGNORECASE，对齐 Python route_decorator）
 ///
@@ -81,9 +80,8 @@ static HTTP_ANNOTATION: Lazy<Regex> = Lazy::new(|| {
 ///     re.IGNORECASE,
 /// )
 /// ```
-static ROUTE_DECORATOR: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)@\w+\.(?:route|get|post|put|delete|patch)\s*\(").unwrap()
-});
+static ROUTE_DECORATOR: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)@\w+\.(?:route|get|post|put|delete|patch)\s*\(").unwrap());
 
 /// 配置层配置项提取正则（区分大小写，对齐 Python config_patterns）
 ///
@@ -503,14 +501,16 @@ pub fn py_cross_layer_impact<'py>(
     // 转换 code_layer 元组为 CodeLayerEntry
     let code_entries: Vec<CodeLayerEntry> = code_layer
         .into_iter()
-        .map(|(qualified_name, name, module_path, visibility, kind, file_path)| CodeLayerEntry {
-            qualified_name,
-            name,
-            module_path,
-            visibility,
-            kind,
-            file_path,
-        })
+        .map(
+            |(qualified_name, name, module_path, visibility, kind, file_path)| CodeLayerEntry {
+                qualified_name,
+                name,
+                module_path,
+                visibility,
+                kind,
+                file_path,
+            },
+        )
         .collect();
 
     let result = cross_layer_impact_core(source_qn, source_name, content, code_entries);
@@ -618,7 +618,11 @@ pub fn py_defect_correlation<'py>(
     py: Python<'py>,
     changes_by_file: Vec<(i64, Vec<i64>)>,
     all_versions_by_file: Vec<(i64, Vec<(i64, String)>)>,
-    findings_by_file_hash: Vec<(i64, String, Vec<(i64, String, String, String, i64, i64, f64, String)>)>,
+    findings_by_file_hash: Vec<(
+        i64,
+        String,
+        Vec<(i64, String, String, String, i64, i64, f64, String)>,
+    )>,
     direct_findings: Vec<(i64, String, String, String, i64, i64, f64, String)>,
     window_commits: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
@@ -643,8 +647,8 @@ pub fn py_defect_correlation<'py>(
         .map(|(fid, ch, findings)| {
             let fis: Vec<FindingInfo> = findings
                 .into_iter()
-                .map(|(id, rule_id, rule_name, severity, start_line, end_line, scanned_at, message)| {
-                    FindingInfo {
+                .map(
+                    |(
                         id,
                         rule_id,
                         rule_name,
@@ -653,9 +657,20 @@ pub fn py_defect_correlation<'py>(
                         end_line,
                         scanned_at,
                         message,
-                        after_change_at: 0.0,
-                    }
-                })
+                    )| {
+                        FindingInfo {
+                            id,
+                            rule_id,
+                            rule_name,
+                            severity,
+                            start_line,
+                            end_line,
+                            scanned_at,
+                            message,
+                            after_change_at: 0.0,
+                        }
+                    },
+                )
                 .collect();
             (fid, ch, fis)
         })
@@ -664,19 +679,21 @@ pub fn py_defect_correlation<'py>(
     // 转换 direct_findings 元组为 FindingInfo
     let direct: Vec<FindingInfo> = direct_findings
         .into_iter()
-        .map(|(id, rule_id, rule_name, severity, start_line, end_line, scanned_at, message)| {
-            FindingInfo {
-                id,
-                rule_id,
-                rule_name,
-                severity,
-                start_line,
-                end_line,
-                scanned_at,
-                message,
-                after_change_at: 0.0,
-            }
-        })
+        .map(
+            |(id, rule_id, rule_name, severity, start_line, end_line, scanned_at, message)| {
+                FindingInfo {
+                    id,
+                    rule_id,
+                    rule_name,
+                    severity,
+                    start_line,
+                    end_line,
+                    scanned_at,
+                    message,
+                    after_change_at: 0.0,
+                }
+            },
+        )
         .collect();
 
     let result = defect_correlation_core(
@@ -828,7 +845,11 @@ mod tests {
         let result = cross_layer_impact_core("mod.func", "func", content, vec![]);
 
         assert_eq!(result.config.len(), 3);
-        let keys: Vec<&str> = result.config.iter().map(|e| e.config_key.as_str()).collect();
+        let keys: Vec<&str> = result
+            .config
+            .iter()
+            .map(|e| e.config_key.as_str())
+            .collect();
         assert_eq!(keys, vec!["DATABASE_URL", "HOST", "timeout"]);
     }
 
@@ -874,25 +895,60 @@ mod tests {
         let all_versions = vec![(
             1,
             vec![
-                VersionInfo { version_num: 1, content_hash: "hash_v1".to_string() },
-                VersionInfo { version_num: 2, content_hash: "hash_v2".to_string() },
-                VersionInfo { version_num: 3, content_hash: "hash_v3".to_string() },
-                VersionInfo { version_num: 4, content_hash: "hash_v4".to_string() },
-                VersionInfo { version_num: 5, content_hash: "hash_v5".to_string() },
+                VersionInfo {
+                    version_num: 1,
+                    content_hash: "hash_v1".to_string(),
+                },
+                VersionInfo {
+                    version_num: 2,
+                    content_hash: "hash_v2".to_string(),
+                },
+                VersionInfo {
+                    version_num: 3,
+                    content_hash: "hash_v3".to_string(),
+                },
+                VersionInfo {
+                    version_num: 4,
+                    content_hash: "hash_v4".to_string(),
+                },
+                VersionInfo {
+                    version_num: 5,
+                    content_hash: "hash_v5".to_string(),
+                },
             ],
         )];
         // hash_v2 和 hash_v4 有缺陷（在变更版本 1 和 3 的窗口内）
         let findings = vec![
-            (1, "hash_v2".to_string(), vec![FindingInfo {
-                id: 100, rule_id: "rule_a".to_string(), rule_name: "Rule A".to_string(),
-                severity: "high".to_string(), start_line: 10, end_line: 20,
-                scanned_at: 1000.0, message: "test".to_string(), after_change_at: 0.0,
-            }]),
-            (1, "hash_v4".to_string(), vec![FindingInfo {
-                id: 101, rule_id: "rule_b".to_string(), rule_name: "Rule B".to_string(),
-                severity: "low".to_string(), start_line: 30, end_line: 40,
-                scanned_at: 2000.0, message: "test2".to_string(), after_change_at: 0.0,
-            }]),
+            (
+                1,
+                "hash_v2".to_string(),
+                vec![FindingInfo {
+                    id: 100,
+                    rule_id: "rule_a".to_string(),
+                    rule_name: "Rule A".to_string(),
+                    severity: "high".to_string(),
+                    start_line: 10,
+                    end_line: 20,
+                    scanned_at: 1000.0,
+                    message: "test".to_string(),
+                    after_change_at: 0.0,
+                }],
+            ),
+            (
+                1,
+                "hash_v4".to_string(),
+                vec![FindingInfo {
+                    id: 101,
+                    rule_id: "rule_b".to_string(),
+                    rule_name: "Rule B".to_string(),
+                    severity: "low".to_string(),
+                    start_line: 30,
+                    end_line: 40,
+                    scanned_at: 2000.0,
+                    message: "test2".to_string(),
+                    after_change_at: 0.0,
+                }],
+            ),
         ];
 
         let result = defect_correlation_core(&changes_by_file, &all_versions, &findings, vec![], 2);
@@ -913,23 +969,52 @@ mod tests {
         let all_versions = vec![(
             1,
             vec![
-                VersionInfo { version_num: 1, content_hash: "hash_v1".to_string() },
-                VersionInfo { version_num: 2, content_hash: "hash_v2".to_string() },
-                VersionInfo { version_num: 3, content_hash: "hash_v3".to_string() },
+                VersionInfo {
+                    version_num: 1,
+                    content_hash: "hash_v1".to_string(),
+                },
+                VersionInfo {
+                    version_num: 2,
+                    content_hash: "hash_v2".to_string(),
+                },
+                VersionInfo {
+                    version_num: 3,
+                    content_hash: "hash_v3".to_string(),
+                },
             ],
         )];
         // hash_v2 和 hash_v3 都有同一个 finding id（应去重）
         let findings = vec![
-            (1, "hash_v2".to_string(), vec![FindingInfo {
-                id: 200, rule_id: "rule_x".to_string(), rule_name: "X".to_string(),
-                severity: "med".to_string(), start_line: 1, end_line: 5,
-                scanned_at: 100.0, message: "dup".to_string(), after_change_at: 0.0,
-            }]),
-            (1, "hash_v3".to_string(), vec![FindingInfo {
-                id: 200, rule_id: "rule_x".to_string(), rule_name: "X".to_string(),
-                severity: "med".to_string(), start_line: 1, end_line: 5,
-                scanned_at: 100.0, message: "dup".to_string(), after_change_at: 0.0,
-            }]),
+            (
+                1,
+                "hash_v2".to_string(),
+                vec![FindingInfo {
+                    id: 200,
+                    rule_id: "rule_x".to_string(),
+                    rule_name: "X".to_string(),
+                    severity: "med".to_string(),
+                    start_line: 1,
+                    end_line: 5,
+                    scanned_at: 100.0,
+                    message: "dup".to_string(),
+                    after_change_at: 0.0,
+                }],
+            ),
+            (
+                1,
+                "hash_v3".to_string(),
+                vec![FindingInfo {
+                    id: 200,
+                    rule_id: "rule_x".to_string(),
+                    rule_name: "X".to_string(),
+                    severity: "med".to_string(),
+                    start_line: 1,
+                    end_line: 5,
+                    scanned_at: 100.0,
+                    message: "dup".to_string(),
+                    after_change_at: 0.0,
+                }],
+            ),
         ];
 
         let result = defect_correlation_core(&changes_by_file, &all_versions, &findings, vec![], 3);
@@ -945,13 +1030,22 @@ mod tests {
         let changes_by_file = vec![(1, vec![1])];
         let all_versions = vec![(
             1,
-            vec![VersionInfo { version_num: 1, content_hash: "hash_v1".to_string() }],
+            vec![VersionInfo {
+                version_num: 1,
+                content_hash: "hash_v1".to_string(),
+            }],
         )];
         let findings: Vec<(i64, String, Vec<FindingInfo>)> = vec![];
         let direct = vec![FindingInfo {
-            id: 300, rule_id: "direct_rule".to_string(), rule_name: "Direct".to_string(),
-            severity: "high".to_string(), start_line: 1, end_line: 10,
-            scanned_at: 500.0, message: "direct".to_string(), after_change_at: 0.0,
+            id: 300,
+            rule_id: "direct_rule".to_string(),
+            rule_name: "Direct".to_string(),
+            severity: "high".to_string(),
+            start_line: 1,
+            end_line: 10,
+            scanned_at: 500.0,
+            message: "direct".to_string(),
+            after_change_at: 0.0,
         }];
 
         let result = defect_correlation_core(&changes_by_file, &all_versions, &findings, direct, 5);
@@ -977,29 +1071,71 @@ mod tests {
         let all_versions = vec![(
             1,
             vec![
-                VersionInfo { version_num: 1, content_hash: "h1".to_string() },
-                VersionInfo { version_num: 2, content_hash: "h2".to_string() },
-                VersionInfo { version_num: 3, content_hash: "h3".to_string() },
-                VersionInfo { version_num: 4, content_hash: "h4".to_string() }, // 不在窗口内
+                VersionInfo {
+                    version_num: 1,
+                    content_hash: "h1".to_string(),
+                },
+                VersionInfo {
+                    version_num: 2,
+                    content_hash: "h2".to_string(),
+                },
+                VersionInfo {
+                    version_num: 3,
+                    content_hash: "h3".to_string(),
+                },
+                VersionInfo {
+                    version_num: 4,
+                    content_hash: "h4".to_string(),
+                }, // 不在窗口内
             ],
         )];
         // h4 不在窗口内，对应的 finding 不应被收集
         let findings = vec![
-            (1, "h2".to_string(), vec![FindingInfo {
-                id: 1, rule_id: "r1".to_string(), rule_name: "R1".to_string(),
-                severity: "low".to_string(), start_line: 1, end_line: 2,
-                scanned_at: 1.0, message: "in".to_string(), after_change_at: 0.0,
-            }]),
-            (1, "h3".to_string(), vec![FindingInfo {
-                id: 2, rule_id: "r2".to_string(), rule_name: "R2".to_string(),
-                severity: "low".to_string(), start_line: 1, end_line: 2,
-                scanned_at: 2.0, message: "in".to_string(), after_change_at: 0.0,
-            }]),
-            (1, "h4".to_string(), vec![FindingInfo {
-                id: 3, rule_id: "r3".to_string(), rule_name: "R3".to_string(),
-                severity: "low".to_string(), start_line: 1, end_line: 2,
-                scanned_at: 3.0, message: "out".to_string(), after_change_at: 0.0,
-            }]),
+            (
+                1,
+                "h2".to_string(),
+                vec![FindingInfo {
+                    id: 1,
+                    rule_id: "r1".to_string(),
+                    rule_name: "R1".to_string(),
+                    severity: "low".to_string(),
+                    start_line: 1,
+                    end_line: 2,
+                    scanned_at: 1.0,
+                    message: "in".to_string(),
+                    after_change_at: 0.0,
+                }],
+            ),
+            (
+                1,
+                "h3".to_string(),
+                vec![FindingInfo {
+                    id: 2,
+                    rule_id: "r2".to_string(),
+                    rule_name: "R2".to_string(),
+                    severity: "low".to_string(),
+                    start_line: 1,
+                    end_line: 2,
+                    scanned_at: 2.0,
+                    message: "in".to_string(),
+                    after_change_at: 0.0,
+                }],
+            ),
+            (
+                1,
+                "h4".to_string(),
+                vec![FindingInfo {
+                    id: 3,
+                    rule_id: "r3".to_string(),
+                    rule_name: "R3".to_string(),
+                    severity: "low".to_string(),
+                    start_line: 1,
+                    end_line: 2,
+                    scanned_at: 3.0,
+                    message: "out".to_string(),
+                    after_change_at: 0.0,
+                }],
+            ),
         ];
 
         let result = defect_correlation_core(&changes_by_file, &all_versions, &findings, vec![], 2);
@@ -1015,17 +1151,31 @@ mod tests {
         let all_versions = vec![(
             1,
             vec![
-                VersionInfo { version_num: 1, content_hash: "h1".to_string() },
-                VersionInfo { version_num: 2, content_hash: "".to_string() }, // 空 hash
+                VersionInfo {
+                    version_num: 1,
+                    content_hash: "h1".to_string(),
+                },
+                VersionInfo {
+                    version_num: 2,
+                    content_hash: "".to_string(),
+                }, // 空 hash
             ],
         )];
-        let findings = vec![
-            (1, "".to_string(), vec![FindingInfo {
-                id: 1, rule_id: "r1".to_string(), rule_name: "R1".to_string(),
-                severity: "low".to_string(), start_line: 1, end_line: 2,
-                scanned_at: 1.0, message: "should_skip".to_string(), after_change_at: 0.0,
-            }]),
-        ];
+        let findings = vec![(
+            1,
+            "".to_string(),
+            vec![FindingInfo {
+                id: 1,
+                rule_id: "r1".to_string(),
+                rule_name: "R1".to_string(),
+                severity: "low".to_string(),
+                start_line: 1,
+                end_line: 2,
+                scanned_at: 1.0,
+                message: "should_skip".to_string(),
+                after_change_at: 0.0,
+            }],
+        )];
 
         let result = defect_correlation_core(&changes_by_file, &all_versions, &findings, vec![], 5);
         assert_eq!(result.defects_after_change, 0); // 空 hash 的 finding 被跳过

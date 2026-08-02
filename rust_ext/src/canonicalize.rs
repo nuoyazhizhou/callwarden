@@ -294,9 +294,7 @@ fn decode_one_utf8(bytes: &[u8]) -> Option<(char, usize)> {
         if !(0x80..=0xBF).contains(&b1) || !(0x80..=0xBF).contains(&b2) {
             return None;
         }
-        let cp = ((b0 as u32 & 0x0F) << 12)
-            | ((b1 as u32 & 0x3F) << 6)
-            | (b2 as u32 & 0x3F);
+        let cp = ((b0 as u32 & 0x0F) << 12) | ((b1 as u32 & 0x3F) << 6) | (b2 as u32 & 0x3F);
         if let Some(c) = char::from_u32(cp) {
             return Some((c, 3));
         }
@@ -414,13 +412,19 @@ mod tests {
     fn test_sha256_hex_empty() {
         // 空字节的 SHA-256
         let hex = sha256_hex(b"");
-        assert_eq!(hex, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(
+            hex,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
     }
 
     #[test]
     fn test_sha256_hex_abc() {
         let hex = sha256_hex(b"abc");
-        assert_eq!(hex, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            hex,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

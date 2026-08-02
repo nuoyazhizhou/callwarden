@@ -143,11 +143,11 @@
 | `ParserService` | canonicalize + parse + diagnostics | ✅ 已实现（`multi_lang`） | Phase 0（已接入） |
 | `StorageService` | SQLite 连接、schema migration、事务 | 🟡 Python 主导，Rust 有 GraphStore | Phase 1 |
 | `CasService` | Global/Local CAS、pending refs | ✅ `daemon/cas.rs` service trait + daemon facade 已接入 | Phase 1 |
-| `ManifestService` | workspace manifest、projection、refresh commit | 🟡 Rust 查询 facade + daemon merge 已接入，Python 保留事务写入 | Phase 1 |
-| `ReplicatorService` | CAS→DB 复制、snapshot 发布 | 🟡 Rust 有 `daemon/replicator.rs` | Phase 1 |
+| `ManifestService` | workspace manifest、projection、refresh commit | ✅ 默认 Rust 写 facade + daemon merge；Python 仅旧扩展/显式 rollback 兼容 | Phase 1 |
+| `ReplicatorService` | CAS→DB 复制、snapshot 发布 | ✅ daemon 主路径 Rust；Python 兼容 Replicator 的 CAS lookup/pin/publish 默认复用 Rust CasStore | Phase 1 |
 | `SnapshotService` | snapshot 发布、GC、加载 | 🟡 Rust 有 `snapshot.rs` | Phase 1 |
 | `GraphQueryService` | callers/callees/search/chain/cycle/topo | 🟡 Rust 有 `GraphStore`，已短路接入 | Phase 2 |
-| `BuildService` | 批量注册、ParseFact、symbol/call 写入 | 🔴 Python 主导 | Phase 2 |
+| `BuildService` | 批量注册、ParseFact、symbol/call 写入 | ✅ 指定生产写路径默认 Rust；Python 仅旧扩展/显式 rollback 兼容 | Phase 2 |
 | `WatcherService` | 事件接收、debounce、batch merge | 🟡 Rust 有 `watcher.rs` | Phase 3 |
 | `GenerationService` | generation CAS、stale session、dirty overlay | 🟡 Rust 有 `snapshot_guard` | Phase 3 |
 | `RecoveryService` | staging/retry log、crash recovery | 🟡 Rust 有 `staging_log` + `parse_retry_log` | Phase 3 |
@@ -3814,8 +3814,10 @@ P0-CLI-B3 至 B5 子任务中。
 - `file` 按 `start_line` 排序并保持 Python 的中文列表格式；
 - `query` 按短名和文件精确定位，命中时保持 Python `s.* + rel_path + abs_path`
   的 JSON 字段、顺序和类型，未命中时保持成功退出与中文提示；
-- daemon 当前没有 `query.file/query.location` RPC。本任务不虚构 enterprise
-  能力：enterprise 模式 fail closed；auto 模式沿用统一 runtime 回退 local。
+- 本节记录的是 2026-07-31 的历史快照。当时 daemon 尚无
+  `query.file/query.symbol_location` RPC；当前实现已在
+  `daemon/snapshot_state.rs` 接入这两个 RPC，并执行 workspace ACL 与
+  snapshot readiness 校验，详见文末 2026-08-01 当前复审附录。
 
 ### 54.2 验证
 
@@ -3860,8 +3862,9 @@ workspace 隔离、archived 过滤和稳定行号排序。
 - 搜索路径在访问前 canonicalize 做边界判断，workspace 外路径和 symlink escape
   fail closed；传给 `rg` 和展示给用户的仍是原始 workspace 路径，避免 Windows
   `\\?\` canonical path 污染输出。该拒绝规则是对 Python 旧实现的刻意安全收紧；
-- daemon 当前没有 workspace 文件系统 grep RPC。enterprise 模式明确 fail closed，
-  auto 模式沿用统一 runtime，在 daemon 路径不适用时回退 local。
+- 本节记录的是 2026-07-31 的历史快照。当时 daemon 尚无 workspace 文件系统
+  grep RPC；当前实现已接入 `query.grep`，仍复用 Rust `query_local_grep` 的
+  workspace-root canonicalize 与 symlink escape 防护，详见文末当前复审附录。
 
 ### 55.2 验证
 
@@ -3903,8 +3906,9 @@ workspace 路径逃逸、Python repr 标题和“符号过滤后再 limit”的�
   文件，避免跨 workspace 或历史文件泄漏；
 - `--build` 与 `--import` 会修改测试关系或导入 JUnit，属于后续写命令迁移范围。
   Rust 入口当前以 exit code 2 fail closed，不回退到 Python，也不声称已经迁移；
-- daemon 协议尚无 issues/tests RPC，enterprise 模式明确 fail closed；auto 模式
-  沿用统一 runtime，在 daemon 路径不可用时回退 local。
+- 本节记录的是 2026-07-31 的历史快照。当时 daemon 协议尚无 issues/tests
+  RPC；当前实现已接入 `query.issues` 与 `query.tests`，并统一执行 workspace
+  ACL 与 snapshot readiness 校验，详见文末当前复审附录。
 
 ### 56.2 验证
 
@@ -4614,3 +4618,66 @@ pytest tests/test_phase8_rust_backup_restore.py \
 上述三组测试在修复浮点 metadata 校验后全部通过；其余九项的 focused
 回归也已通过，十项父任务仍需独立 reviewer 逐项裁决，不能由实现 agent
 自行 apply/close。
+
+---
+
+## §69 当前复审附录：企业查询 RPC 与 Rust 生产写路径
+
+**复审任务**：`T-1785591186634-544cd83f`
+**日期**：2026-08-01
+**状态**：实现完成，等待独立 reviewer，不得由实现 agent 自行 apply/close
+
+### 69.1 任务 ID 补齐
+
+此前十项主线表遗漏的第 4、5、6 项对应既有任务如下。它们步骤均已完成，
+但父任务尚未完成独立 review，因此不能仅凭 `7/7`、`10/10`、`7/7` 关闭：
+
+| 编号 | 任务 ID | 任务 | 当前核验状态 |
+|---:|---|---|---|
+| 4 | `T-1785148066853-f5d1a162` | workspace manifest、projection 与 refresh commit | 步骤完成，独立 review 待裁决 |
+| 5 | `T-1785148066853-ccad23fe` | Replicator、SnapshotManager 与 backup/restore | 步骤完成，独立 review 待裁决 |
+| 6 | `T-1785148066853-8a8bc897` | 批量文件注册、ParseFact 与 symbol 写入 | 步骤完成，独立 review 待裁决 |
+
+### 69.2 Enterprise `query.*` RPC
+
+当前 Rust daemon 已注册并实现以下方法，不再返回统一 `method_not_found`：
+
+| RPC | 实际处理 | 保护 |
+|---|---|---|
+| `query.file` | 当前 snapshot 的文件符号列表 | peer UID/workspace owner、snapshot ready |
+| `query.symbol_location` | 指定文件中的短名定位 | peer UID/workspace owner、snapshot ready |
+| `query.grep` | Rust `rg`/内置 fallback + 符号归属 | workspace root 边界、symlink escape、snapshot ready |
+| `query.issues` | Semgrep + Guardrail finding 聚合 | workspace owner、snapshot ready |
+| `query.tests` | 正向/反向测试关系与稳定性历史 | workspace owner、snapshot ready |
+
+Rust/Python client builder、daemon dispatch、参数校验和未发布 snapshot 的
+fail-closed 测试已经补齐。Python `DaemonClient` 与 MCP 的 file、symbol location、
+issues、tests 查询已切换为优先 RPC；`query_grep` 提供同一 RPC 入口，现有
+`file_grep` 仍保留其通用本地文件搜索契约。`query.symbol` 与上述新方法共用
+只读 snapshot DB，不重新打开用户工作区路径。
+
+### 69.3 Rust 写路径
+
+- `ManifestService`：`db/db_workspace_manifest.py` 默认通过
+  `callwarden_core.manifest_*` 短连接执行 schema、UPSERT 和 snapshot link；
+  旧扩展/显式 `rust_manifest_query` rollback 才回到 Python。
+- `CasService/Replicator`：Rust `cas_write_query` 暴露统一的四阶段 publish、
+  ready-only lookup 与 pending-ref pin。`server/replicator.py` 在文件型 SQLite
+  且扩展具备新 API 时默认使用它；`rust_cas_write` rollback、旧 wheel 或内存
+  数据库才使用 Python 兼容实现，Rust 事务异常不会静默混合回退。
+- `BuildService`：批量文件注册、调用边 resolve/write、file version、symbol
+  write 和 symbol diff 的默认生产分支均为 Rust facade；真实 Rust 异常或
+  `success=false` 会 fail closed，Python 仅用于旧扩展或对应 rollback。
+
+### 69.4 验收证据
+
+```text
+cargo check --manifest-path rust_ext/Cargo.toml --lib --bin cw --bin cw-daemon  PASS
+cargo test --manifest-path rust_ext/Cargo.toml --test test_external_cli -- --nocapture  5 passed
+cargo test --manifest-path rust_ext/Cargo.toml --bin cw -- --nocapture  24 passed
+cargo test --manifest-path rust_ext/Cargo.toml --lib daemon:: -- --nocapture  530 passed
+python -m py_compile server/replicator.py db/db_build.py db/db_workspace_manifest.py  PASS
+```
+
+旧的 §54-§56 仍保留作为历史审计快照；其中“当时尚未接入 daemon RPC”的文字
+不代表当前实现状态，应以本节和代码为准。

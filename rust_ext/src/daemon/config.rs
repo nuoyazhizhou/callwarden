@@ -61,6 +61,17 @@ pub struct DaemonConfig {
     /// 典型值：`callwarden-clients`（Linux 多用户安装）
     #[serde(default)]
     pub socket_group: String,
+    /// Stage_Toggle 配置存储路径（D0 3.12，Req 13.11）
+    ///
+    /// daemon 拥有的配置存储，持久化 P0–P4 Stage_Toggle 与 Independence_Policy。
+    /// 默认位于 data_root 下。
+    #[serde(default = "default_stage_toggle_db_path")]
+    pub stage_toggle_db_path: PathBuf,
+}
+
+/// 默认 Stage_Toggle 配置存储路径（<data_root>/stage_toggle.db）
+pub fn default_stage_toggle_db_path() -> PathBuf {
+    PathBuf::from(format!("{}/stage_toggle.db", DEFAULT_DATA_ROOT))
 }
 
 impl Default for DaemonConfig {
@@ -80,6 +91,8 @@ impl Default for DaemonConfig {
             ),
             // P0-3 修复：默认 socket 组为 callwarden-clients（多用户 UDS 访问）
             socket_group: String::from("callwarden-clients"),
+            // D0 3.12：Stage_Toggle 配置存储
+            stage_toggle_db_path: default_stage_toggle_db_path(),
         }
     }
 }
@@ -288,6 +301,7 @@ mod tests {
                 "/var/lib/callwarden/{workspace_instance_id}/codegraph.db",
             ),
             socket_group: String::from("callwarden-clients"),
+            stage_toggle_db_path: PathBuf::from("/tmp/stage_toggle.db"),
         };
         let json = serde_json::to_string_pretty(&original).unwrap();
         std::fs::write(&cfg_path, json).unwrap();

@@ -338,12 +338,8 @@ impl ParserDoctor {
         ));
 
         // 推导整体状态
-        let has_unhealthy = checks
-            .iter()
-            .any(|c| c.status == "unhealthy");
-        let has_degraded = checks
-            .iter()
-            .any(|c| c.status == "degraded");
+        let has_unhealthy = checks.iter().any(|c| c.status == "unhealthy");
+        let has_degraded = checks.iter().any(|c| c.status == "degraded");
         let status = if has_unhealthy {
             "unhealthy"
         } else if has_degraded {
@@ -467,15 +463,20 @@ mod tests {
     fn test_metrics_reset() {
         let m = ParserMetrics::new();
         m.record_parse("ok", 10.0, 100, None);
-        m.record_parse("failed", 5.0, 50, Some(FailureLabel {
-            timestamp: 0.0,
-            workspace_id: "ws1".to_string(),
-            rel_path: "a.rs".to_string(),
-            generation: "1:1".to_string(),
-            language: "rust".to_string(),
-            parse_status: "failed".to_string(),
-            reason: "err".to_string(),
-        }));
+        m.record_parse(
+            "failed",
+            5.0,
+            50,
+            Some(FailureLabel {
+                timestamp: 0.0,
+                workspace_id: "ws1".to_string(),
+                rel_path: "a.rs".to_string(),
+                generation: "1:1".to_string(),
+                language: "rust".to_string(),
+                parse_status: "failed".to_string(),
+                reason: "err".to_string(),
+            }),
+        );
         m.reset();
         assert_eq!(m.parse_total.load(Ordering::Relaxed), 0);
         assert_eq!(m.parse_ok.load(Ordering::Relaxed), 0);

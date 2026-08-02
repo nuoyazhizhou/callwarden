@@ -63,6 +63,7 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     query.add_argument("workspace_id")
     query.add_argument("query_type", choices=[
         "stats", "symbol", "search", "callers", "callees",
+        "file", "symbol_location", "grep", "issues", "tests",
         # J8 协议闭合：补齐 Rust daemon 已实现的 3 个高级查询 method
         "call_chain_down", "topological_order", "detect_cycles",
     ])
@@ -72,6 +73,20 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     query.add_argument("--limit", type=int, default=20)
     query.add_argument("--max-depth", type=int, default=10,
                        help="call_chain_down / detect_cycles 的最大深度")
+    query.add_argument("--file-path", default="",
+                       help="file/symbol_location 使用的文件路径")
+    query.add_argument("--fixed", action="store_true",
+                       help="grep 使用字面量匹配")
+    query.add_argument("--path", default="",
+                       help="grep 限定 workspace 内的搜索路径")
+    query.add_argument("--include-all", action="store_true",
+                       help="grep 包含无符号匹配行")
+    query.add_argument("--include-info", action="store_true",
+                       help="issues 包含 INFO finding")
+    query.add_argument("--reverse", action="store_true",
+                       help="tests 反向查询被测函数")
+    query.add_argument("--history", action="store_true",
+                       help="tests 查询运行稳定性历史")
 
     mode = sub.add_parser("mode", help="查看 daemon 模式")
     mode.add_argument("--set", choices=["auto", "enterprise", "local"])
@@ -576,6 +591,28 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         method = f"query.{args.query_type}"
         if args.query_type == "symbol":
             params["qualified_name"] = args.value
+        elif args.query_type == "file":
+            params["file_path"] = args.value
+        elif args.query_type == "symbol_location":
+            params.update(name=args.value, file_path=args.file_path)
+        elif args.query_type == "grep":
+            params.update(
+                patterns=[args.value] if args.value else [],
+                fixed=args.fixed,
+                limit=args.limit,
+                path=args.path or None,
+                include_all=args.include_all,
+                kind=args.kind,
+            )
+        elif args.query_type == "issues":
+            params.update(qualified_name=args.value, include_info=args.include_info)
+        elif args.query_type == "tests":
+            params.update(
+                qualified_name=args.value,
+                reverse=args.reverse,
+                history=args.history,
+                limit=args.limit,
+            )
         elif args.query_type == "search":
             params.update(query=args.value, kind=args.kind, limit=args.limit)
         elif args.query_type == "callers":

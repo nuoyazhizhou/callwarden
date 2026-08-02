@@ -446,7 +446,10 @@ mod tests {
     #[test]
     fn test_d3_1_success_with_color() {
         let result = success("done", true);
-        assert_eq!(result, format!("{}\u{2713} done{}", COLOR_GREEN, COLOR_RESET));
+        assert_eq!(
+            result,
+            format!("{}\u{2713} done{}", COLOR_GREEN, COLOR_RESET)
+        );
     }
 
     #[test]
@@ -458,13 +461,19 @@ mod tests {
     #[test]
     fn test_d3_3_warning_with_color() {
         let result = warning("warn", true);
-        assert_eq!(result, format!("{}\u{26a0} warn{}", COLOR_YELLOW, COLOR_RESET));
+        assert_eq!(
+            result,
+            format!("{}\u{26a0} warn{}", COLOR_YELLOW, COLOR_RESET)
+        );
     }
 
     #[test]
     fn test_d3_4_info_with_color() {
         let result = info("info", true);
-        assert_eq!(result, format!("{}\u{2139} info{}", COLOR_BLUE, COLOR_RESET));
+        assert_eq!(
+            result,
+            format!("{}\u{2139} info{}", COLOR_BLUE, COLOR_RESET)
+        );
     }
 
     #[test]
@@ -570,8 +579,16 @@ mod tests {
         let input = r#"{"name":"中文"}"#;
         let result = json_dumps_pretty(input);
         // 非 ASCII 字符（中文）不应被转义为 \uXXXX
-        assert!(!result.contains("\\u"), "Non-ASCII should not be escaped: {}", result);
-        assert!(result.contains("中文"), "Chinese characters should be preserved: {}", result);
+        assert!(
+            !result.contains("\\u"),
+            "Non-ASCII should not be escaped: {}",
+            result
+        );
+        assert!(
+            result.contains("中文"),
+            "Chinese characters should be preserved: {}",
+            result
+        );
     }
 
     #[test]
@@ -601,12 +618,28 @@ mod tests {
     #[test]
     fn test_color_code_all_known() {
         let colors = [
-            "reset", "bold", "dim", "red", "green", "yellow", "blue",
-            "magenta", "cyan", "white", "bright_red", "bright_green",
-            "bright_yellow", "bright_blue", "bright_cyan",
+            "reset",
+            "bold",
+            "dim",
+            "red",
+            "green",
+            "yellow",
+            "blue",
+            "magenta",
+            "cyan",
+            "white",
+            "bright_red",
+            "bright_green",
+            "bright_yellow",
+            "bright_blue",
+            "bright_cyan",
         ];
         for c in &colors {
-            assert!(color_code(c).is_some(), "color_code({}) should return Some", c);
+            assert!(
+                color_code(c).is_some(),
+                "color_code({}) should return Some",
+                c
+            );
         }
     }
 
@@ -622,7 +655,10 @@ mod tests {
     fn test_cprint_bold_and_color() {
         let result = cprint("text", Some("red"), true, true);
         // bold 先套，再套 red
-        let expected = format!("{}{}text{}{}", COLOR_RED, COLOR_BOLD, COLOR_RESET, COLOR_RESET);
+        let expected = format!(
+            "{}{}text{}{}",
+            COLOR_RED, COLOR_BOLD, COLOR_RESET, COLOR_RESET
+        );
         assert_eq!(result, expected);
     }
 

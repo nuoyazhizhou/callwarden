@@ -377,6 +377,37 @@ class TaskQualityMixin:
     # 这样 run_task_completion_review 的清理逻辑（DELETE WHERE
     # source='check_gate'）能统一去重，避免重复累积。
 
+    def _get_step_changed_files(self, task_id: str, step_id: str) -> List[str]:
+        """返回本 step 记录的变更文件（change_audit.step_id 粒度）。
+
+        scope 检查必须按 step 粒度取变更文件：run_task_completion_review 拿到的
+        changed_files 是任务累计（get_task_changed_files = SELECT DISTINCT
+        file_path FROM change_audit WHERE task_id=?），若直接用它比对单个 step 的
+        target_file，多文件任务（每个 step 负责一个文件）会把其他 step 的合法文件
+        误判为本 step 越界，产生结构性假阳（multi-file false positive）。
+
+        本方法仅返回 change_audit 中 step_id 匹配的记录；当某 step 没有 per-step
+        归因记录时返回空列表，scope 检查据此提前返回（不产生假阳）。
+
+        Args:
+            task_id: 任务 ID
+            step_id: 步骤 ID
+
+        Returns:
+            本 step 记录的变更文件路径列表（去重）；查询失败返回空列表
+        """
+        if not task_id or not step_id:
+            return []
+        try:
+            cur = self.conn.execute(
+                "SELECT DISTINCT file_path FROM change_audit "
+                "WHERE task_id = ? AND step_id = ?",
+                (task_id, step_id),
+            )
+            return [r["file_path"] for r in cur if r["file_path"]]
+        except Exception:
+            return []
+
     def _check_scope_violations(
         self,
         task_id: str,
@@ -972,7 +1003,11 @@ class TaskQualityMixin:
         if changed_files:
             if _checker_applies("scope"):
                 try:
-                    self._check_scope_violations(task_id, step_id, changed_files)
+                    # scope 检查按 step 粒度取变更文件，避免任务累计变更把其他
+                    # step 的合法文件误判为本 step 越界（多文件任务结构性假阳）。
+                    # 其他检查器（file_health/i18n）仍使用任务累计 changed_files。
+                    scope_files = self._get_step_changed_files(task_id, step_id)
+                    self._check_scope_violations(task_id, step_id, scope_files)
                 except Exception:
                     pass
             if _checker_applies("symbol_attribution"):

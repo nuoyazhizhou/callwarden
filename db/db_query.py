@@ -259,6 +259,34 @@ class QueryMixin:
 
     def get_topological_order(self, limit: int = 100) -> List[Dict]:
         """按拓扑深度排序（depth 小的在前 = 底层函数在前）"""
+        # B-P7b: Rust GraphStore 短路（Kahn 拓扑排序）
+        store = self._get_graph_store()
+        if store is not None:
+            if store.load_state() != "graph_ready":
+                self._wait_for_calls_ready(timeout=2.0)
+                store = self._get_graph_store()
+            if store is not None and store.load_state() == "graph_ready":
+                try:
+                    is_rolled_back = getattr(self, "is_feature_rolled_back", None)
+                    if is_rolled_back is None or not is_rolled_back("rust_graph_query"):
+                        rust_order = store.get_topological_order()
+                        if rust_order is not None and len(rust_order) > 0:
+                            qnames = list(rust_order[:limit])
+                            ws_id = self._get_active_workspace_id()
+                            placeholders = ",".join("?" for _ in qnames)
+                            sql = f"""
+                                SELECT s.*, fi.rel_path, fi.abs_path
+                                FROM symbols s JOIN file_instances fi ON s.file_instance_id = fi.id
+                                WHERE fi.workspace_id = ? AND s.qualified_name IN ({placeholders})
+                            """
+                            cur = self.conn.execute(sql, [ws_id] + qnames)
+                            by_qname = {row["qualified_name"]: dict(row) for row in cur}
+                            res = [by_qname[qn] for qn in qnames if qn in by_qname]
+                            if res:
+                                return res
+                except Exception:
+                    pass
+
         ws_id = self._get_active_workspace_id()
         cur = self.conn.execute(
             """SELECT s.*, fi.rel_path, fi.abs_path
@@ -269,6 +297,7 @@ class QueryMixin:
             (ws_id, limit),
         )
         return [dict(row) for row in cur]
+
 
     def get_callers(self, callee_name: str, qualified_name: Optional[str] = None) -> List[Dict]:
         """查询谁调用了这个函数

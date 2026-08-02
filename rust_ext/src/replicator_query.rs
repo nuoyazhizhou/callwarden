@@ -35,10 +35,7 @@ use pyo3::prelude::*;
 /// - `workspace_id`: 可选 workspace_id 过滤（None 时不过滤）
 #[pyfunction]
 #[pyo3(signature = (log_path, workspace_id=None))]
-pub fn replicator_get_pending_count(
-    log_path: &str,
-    workspace_id: Option<String>,
-) -> usize {
+pub fn replicator_get_pending_count(log_path: &str, workspace_id: Option<String>) -> usize {
     // 与 Rust daemon Replicator::get_pending_count 完全一致：
     // 1. StagingLog::new(log_path) —— 若文件不存在，创建空文件 + next_lsn=1
     // 2. read_pending() —— 读所有 status=="pending" 的 entries
@@ -76,12 +73,7 @@ mod tests {
     use tempfile::tempdir;
 
     /// 构造一条 staging entry 的 JSON 行
-    fn make_entry_json(
-        lsn: i64,
-        workspace_id: &str,
-        file_path: &str,
-        status: &str,
-    ) -> String {
+    fn make_entry_json(lsn: i64, workspace_id: &str, file_path: &str, status: &str) -> String {
         format!(
             r#"{{"lsn":{},"timestamp":1.0,"workspace_id":"{}","file_path":"{}","content_hash":"h","language":"rust","parse_delta":{{}},"resolve_delta":{{}},"frontier":{{}},"metrics_update":{{}},"status":"{}","error":null}}"#,
             lsn, workspace_id, file_path, status
@@ -143,10 +135,19 @@ mod tests {
 
         let path_str = log_path.to_str().unwrap();
         // ws1 有 2 个 pending（lsn 1, 2），ws2 有 2 个 pending（lsn 4, 5）
-        assert_eq!(replicator_get_pending_count(path_str, Some("ws1".into())), 2);
-        assert_eq!(replicator_get_pending_count(path_str, Some("ws2".into())), 2);
+        assert_eq!(
+            replicator_get_pending_count(path_str, Some("ws1".into())),
+            2
+        );
+        assert_eq!(
+            replicator_get_pending_count(path_str, Some("ws2".into())),
+            2
+        );
         // ws3 不存在 → 返回 0
-        assert_eq!(replicator_get_pending_count(path_str, Some("ws3".into())), 0);
+        assert_eq!(
+            replicator_get_pending_count(path_str, Some("ws3".into())),
+            0
+        );
     }
 
     #[test]

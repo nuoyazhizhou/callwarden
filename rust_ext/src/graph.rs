@@ -14,11 +14,11 @@
 //! - 不做 MCP 协议层（保留 Python MCP Server）
 //! - 不替换现有 Python 查询（旁路验证，对比性能后再决定）
 
-use std::collections::{HashSet, VecDeque};
-use std::sync::Arc;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rusqlite::Connection;
+use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 // P6 优化：FxHashMap 比 HashMap（SipHash）快 5-10x，非加密哈希无 DoS 防护开销
 use rustc_hash::FxHashMap;
 
@@ -36,7 +36,8 @@ use rustc_hash::FxHashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[repr(u32)]
 pub enum SymbolKind {
-    #[default] Unknown = 0,
+    #[default]
+    Unknown = 0,
     Fn = 1,
     TestFn = 2,
     Method = 3,
@@ -203,12 +204,12 @@ impl SymbolTable {
     /// 返回 simple_name 对应的连续 symbol_id 区间。
     #[inline]
     pub fn simple_name_ids(&self, name: &str) -> &[u32] {
-        let start = self.by_simple_name_sorted_ids.partition_point(|sid| {
-            self.sym_name(&self.by_id[*sid as usize]) < name
-        });
-        let end = self.by_simple_name_sorted_ids.partition_point(|sid| {
-            self.sym_name(&self.by_id[*sid as usize]) <= name
-        });
+        let start = self
+            .by_simple_name_sorted_ids
+            .partition_point(|sid| self.sym_name(&self.by_id[*sid as usize]) < name);
+        let end = self
+            .by_simple_name_sorted_ids
+            .partition_point(|sid| self.sym_name(&self.by_id[*sid as usize]) <= name);
         &self.by_simple_name_sorted_ids[start..end]
     }
 }
@@ -222,7 +223,7 @@ impl SymbolTable {
 #[repr(C)]
 pub struct CallEdge {
     pub caller_id: u32,
-    pub callee_id: u32,         // 0 表示未解析（外部符号）
+    pub callee_id: u32, // 0 表示未解析（外部符号）
     /// P8: call_line 高 1 位存 is_cross_file，低 31 位存实际行号
     pub call_line_packed: u32,
     /// callee_name 在 edges 中的索引（用于反向查询时获取 callee 名）
@@ -388,7 +389,10 @@ impl GraphStore {
     /// 创建空 store
     #[new]
     pub fn new() -> Self {
-        GraphStore { symbols: None, calls: None }
+        GraphStore {
+            symbols: None,
+            calls: None,
+        }
     }
 
     /// 从 SQLite 数据库加载 symbols + calls 到内存
@@ -425,7 +429,9 @@ impl GraphStore {
 
     /// 创建一个共享当前符号层的新 store，供后台仅构建调用图。
     pub fn fork_symbols(&self) -> PyResult<Self> {
-        let symbols = self.symbols.as_ref()
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbols not ready"))?;
         Ok(Self {
             symbols: Some(Arc::clone(symbols)),
@@ -508,15 +514,31 @@ impl GraphStore {
                 "SELECT id, rel_path FROM file_instances WHERE status != 'archived' {} ORDER BY id",
                 ws_filter
             );
-            let mut stmt_files = conn.prepare(&sql_files)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare file_instances query failed: {}", e)))?;
-            let file_iter = stmt_files.query_map([], |row| {
-                Ok((row.get::<_, i64>(0)? as u32, row.get::<_, String>(1)?))
-            }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("query file_instances failed: {}", e)))?;
+            let mut stmt_files = conn.prepare(&sql_files).map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!(
+                    "prepare file_instances query failed: {}",
+                    e
+                ))
+            })?;
+            let file_iter = stmt_files
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)? as u32, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "query file_instances failed: {}",
+                        e
+                    ))
+                })?;
             // 用临时 Vec 收集 (fid, rel_path)，然后构建 pool
             let mut file_list: Vec<(u32, String)> = Vec::new();
             for row in file_iter {
-                let (fid, rel_path) = row.map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("read file_instance row failed: {}", e)))?;
+                let (fid, rel_path) = row.map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "read file_instance row failed: {}",
+                        e
+                    ))
+                })?;
                 file_list.push((fid, rel_path));
             }
             // 找到 max fid 确定 offsets 数组大小
@@ -558,26 +580,39 @@ impl GraphStore {
              WHERE fi.status != 'archived' {}",
             ws_filter
         );
-        let mut stmt = conn.prepare(&sql_symbols)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("prepare symbols query failed: {}", e)))?;
-
-        let symbol_iter = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, i64>(0)? as u32,      // id
-                row.get::<_, i64>(1)? as u32,      // file_instance_id
-                row.get::<_, String>(2)?,          // kind
-                row.get::<_, String>(3)?,          // name
-                row.get::<_, String>(4)?,          // qualified_name
-                row.get::<_, String>(5)?,          // module_path
-                row.get::<_, i64>(6)? as u32,      // start_line
-                row.get::<_, i64>(7)? as u32,      // end_line
-                row.get::<_, i64>(8)? as i32,      // depth
+        let mut stmt = conn.prepare(&sql_symbols).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "prepare symbols query failed: {}",
+                e
             ))
-        }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("query symbols failed: {}", e)))?;
+        })?;
+
+        let symbol_iter = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u32, // id
+                    row.get::<_, i64>(1)? as u32, // file_instance_id
+                    row.get::<_, String>(2)?,     // kind
+                    row.get::<_, String>(3)?,     // name
+                    row.get::<_, String>(4)?,     // qualified_name
+                    row.get::<_, String>(5)?,     // module_path
+                    row.get::<_, i64>(6)? as u32, // start_line
+                    row.get::<_, i64>(7)? as u32, // end_line
+                    row.get::<_, i64>(8)? as i32, // depth
+                ))
+            })
+            .map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("query symbols failed: {}", e))
+            })?;
 
         for row in symbol_iter {
             let (id, fid, kind_str, name, qname, module, start_line, end_line, depth) = row
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("read symbol row failed: {}", e)))?;
+                .map_err(|e| {
+                    pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "read symbol row failed: {}",
+                        e
+                    ))
+                })?;
 
             // P7: 追加到 string pool，记录 offset + len
             let name_offset = name_pool.len() as u32;
@@ -593,17 +628,38 @@ impl GraphStore {
             module_pool.push_str(&module);
 
             let sym = GraphSymbol {
-                id, file_instance_id: fid, kind: SymbolKind::from_db_str(&kind_str),
-                name_offset, name_len, qname_offset, qname_len,
-                module_offset, module_len, start_line, end_line, depth,
+                id,
+                file_instance_id: fid,
+                kind: SymbolKind::from_db_str(&kind_str),
+                name_offset,
+                name_len,
+                qname_offset,
+                qname_len,
+                module_offset,
+                module_len,
+                start_line,
+                end_line,
+                depth,
             };
 
             if id as usize >= by_id.len() {
-                by_id.resize(id as usize + 1, GraphSymbol {
-                    id: 0, file_instance_id: 0, kind: SymbolKind::Unknown,
-                    name_offset: 0, name_len: 0, qname_offset: 0, qname_len: 0,
-                    module_offset: 0, module_len: 0, start_line: 0, end_line: 0, depth: -1,
-                });
+                by_id.resize(
+                    id as usize + 1,
+                    GraphSymbol {
+                        id: 0,
+                        file_instance_id: 0,
+                        kind: SymbolKind::Unknown,
+                        name_offset: 0,
+                        name_len: 0,
+                        qname_offset: 0,
+                        qname_len: 0,
+                        module_offset: 0,
+                        module_len: 0,
+                        start_line: 0,
+                        end_line: 0,
+                        depth: -1,
+                    },
+                );
             }
             by_id[id as usize] = sym;
         }
@@ -611,15 +667,18 @@ impl GraphStore {
         let symbol_count = by_id.len();
 
         // 直接排序 symbol_id 并从 pool 比较，加载期不再复制百万份 String。
-        let mut by_qname_sorted_ids: Vec<u32> = by_id.iter()
+        let mut by_qname_sorted_ids: Vec<u32> = by_id
+            .iter()
             .filter(|sym| sym.id != 0 || sym.name_len != 0)
             .map(|sym| sym.id)
             .collect();
         by_qname_sorted_ids.sort_unstable_by(|a, b| {
             let sa = &by_id[*a as usize];
             let sb = &by_id[*b as usize];
-            let qa = &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
-            let qb = &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
+            let qa =
+                &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
+            let qb =
+                &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
             qa.cmp(qb)
         });
         let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
@@ -637,23 +696,25 @@ impl GraphStore {
         let mut search_entry_offsets: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
         let mut search_entry_sym_ids: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
         for sym in &by_id {
-            if sym.id == 0 && sym.name_len == 0 { continue; }
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
             // name 条目
-            let name = name_pool.get(
-                sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize
-            ).unwrap_or("");
+            let name = name_pool
+                .get(sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize)
+                .unwrap_or("");
             if !name.is_empty() {
                 search_entry_offsets.push(search_pool_lower.len() as u32);
                 search_entry_sym_ids.push(sym.id);
                 for c in name.chars() {
                     search_pool_lower.push(c.to_ascii_lowercase());
                 }
-                search_pool_lower.push('\0');  // \0 分隔符，防止跨条目误匹配
+                search_pool_lower.push('\0'); // \0 分隔符，防止跨条目误匹配
             }
             // qname 条目（可能与 name 相同，但搜索时需要匹配 qualified_name）
-            let qname = qname_pool.get(
-                sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize
-            ).unwrap_or("");
+            let qname = qname_pool
+                .get(sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize)
+                .unwrap_or("");
             if !qname.is_empty() && qname != name {
                 search_entry_offsets.push(search_pool_lower.len() as u32);
                 search_entry_sym_ids.push(sym.id);
@@ -665,10 +726,17 @@ impl GraphStore {
         }
 
         let symbols = Arc::new(SymbolTable {
-            by_id, by_qname_sorted_ids, by_simple_name_sorted_ids,
-            file_paths_pool, file_paths_offsets,
-            name_pool, qname_pool, module_pool,
-            search_pool_lower, search_entry_offsets, search_entry_sym_ids,
+            by_id,
+            by_qname_sorted_ids,
+            by_simple_name_sorted_ids,
+            file_paths_pool,
+            file_paths_offsets,
+            name_pool,
+            qname_pool,
+            module_pool,
+            search_pool_lower,
+            search_entry_offsets,
+            search_entry_sym_ids,
         });
 
         if !include_calls {
@@ -686,7 +754,9 @@ impl GraphStore {
     }
 
     fn _load_calls_from_sqlite(&mut self, db_path: &str, workspace_id: i64) -> PyResult<usize> {
-        let symbols = self.symbols.as_ref()
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbols not ready"))?;
         let conn = open_immutable_db(db_path)?;
         let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
@@ -701,11 +771,20 @@ impl GraphStore {
     /// P10 优化：返回 CallersBatch PyClass（懒转换）
     /// 加载阶段只收集 u32 id（零 String clone，零 PyDict），访问时按需转换
     #[pyo3(signature = (callee_name, qualified_name=None))]
-    fn get_callers(slf: &Bound<Self>, py: Python<'_>, callee_name: &str, qualified_name: Option<&str>) -> PyResult<CallersBatch> {
+    fn get_callers(
+        slf: &Bound<Self>,
+        py: Python<'_>,
+        callee_name: &str,
+        qualified_name: Option<&str>,
+    ) -> PyResult<CallersBatch> {
         let self_ref = slf.borrow();
-        let symbols = self_ref.symbols.as_ref()
+        let symbols = self_ref
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = self_ref.calls.as_ref()
+        let calls = self_ref
+            .calls
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let mut results: Vec<CallerResult> = Vec::new();
@@ -718,7 +797,10 @@ impl GraphStore {
         // 传了 qname 但查不到对应符号 → 空结果（避免短名误匹配）
         if qualified_name.is_some() && qname_filter_id.is_none() {
             let py_self = slf.clone().unbind();
-            return Ok(CallersBatch { results, store: py_self });
+            return Ok(CallersBatch {
+                results,
+                store: py_self,
+            });
         }
 
         // 从排序名称下标二分查找 callee_name_idx。
@@ -726,32 +808,38 @@ impl GraphStore {
             Some(idx) => idx,
             None => {
                 let py_self = slf.clone().unbind();
-                return Ok(CallersBatch { results, store: py_self });
+                return Ok(CallersBatch {
+                    results,
+                    store: py_self,
+                });
             }
         };
 
         // CSR 连续区间返回所有 callee_name 匹配的边。
         for &pos in calls.positions_for_callee_name(callee_name_idx) {
-                let edge = &calls.forward_edges[pos as usize];
-                // P28：传入 qname 时，跳过 callee_id 不匹配的边
-                if let Some(filter_id) = qname_filter_id {
-                    if edge.callee_id != filter_id {
-                        continue;
-                    }
+            let edge = &calls.forward_edges[pos as usize];
+            // P28：传入 qname 时，跳过 callee_id 不匹配的边
+            if let Some(filter_id) = qname_filter_id {
+                if edge.callee_id != filter_id {
+                    continue;
                 }
-                // P10：只收集 id，不构造 PyDict
-                if symbols.by_id.get(edge.caller_id as usize).is_some() {
-                    results.push(CallerResult {
-                        caller_id: edge.caller_id,
-                        callee_id: edge.callee_id,
-                        callee_name_idx: edge.callee_name_idx,
-                        call_line_packed: edge.call_line_packed,
-                    });
-                }
+            }
+            // P10：只收集 id，不构造 PyDict
+            if symbols.by_id.get(edge.caller_id as usize).is_some() {
+                results.push(CallerResult {
+                    caller_id: edge.caller_id,
+                    callee_id: edge.callee_id,
+                    callee_name_idx: edge.callee_name_idx,
+                    call_line_packed: edge.call_line_packed,
+                });
+            }
         }
 
         let py_self = slf.clone().unbind();
-        Ok(CallersBatch { results, store: py_self })
+        Ok(CallersBatch {
+            results,
+            store: py_self,
+        })
     }
 
     /// 查询这个函数调用了谁（对齐 Python db_query.get_callees）
@@ -761,10 +849,19 @@ impl GraphStore {
     /// P28：传入 qualified_name 时，直接 qname→caller_id 走 CSR（O(1) 定位 + O(degree) 遍历），
     ///      跳过简名多候选遍历，避免大规模下多个模块同名函数误匹配
     #[pyo3(signature = (caller_name, qualified_name=None))]
-    fn get_callees<'py>(&self, py: Python<'py>, caller_name: &str, qualified_name: Option<&str>) -> PyResult<Vec<Bound<'py, PyAny>>> {
-        let symbols = self.symbols.as_ref()
+    fn get_callees<'py>(
+        &self,
+        py: Python<'py>,
+        caller_name: &str,
+        qualified_name: Option<&str>,
+    ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = self.calls.as_ref()
+        let calls = self
+            .calls
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let mut results = Vec::new();
@@ -773,29 +870,43 @@ impl GraphStore {
         let caller_ids: Vec<u32> = match qualified_name {
             Some(qname) => match symbols.qname_get(qname) {
                 Some(id) => vec![id],
-                None => return Ok(results),  // qname 查不到 → 空结果
+                None => return Ok(results), // qname 查不到 → 空结果
             },
             None => symbols.simple_name_ids(caller_name).to_vec(),
         };
 
         for caller_id in caller_ids {
             // CSR forward 遍历：caller_id 的所有边
-            let start = calls.forward_offsets.get(caller_id as usize)
-                .copied().unwrap_or(0);
-            let end = calls.forward_offsets.get(caller_id as usize + 1)
-                .copied().unwrap_or(0);
+            let start = calls
+                .forward_offsets
+                .get(caller_id as usize)
+                .copied()
+                .unwrap_or(0);
+            let end = calls
+                .forward_offsets
+                .get(caller_id as usize + 1)
+                .copied()
+                .unwrap_or(0);
 
             for i in start..end {
                 let edge = &calls.forward_edges[i];
                 let callee_name = calls.callee_name(edge.callee_name_idx);
                 // 已解析边：从 callee 符号表取完整信息
                 let (callee_qname, callee_file, callee_module) = if edge.callee_id != 0 {
-                    symbols.by_id.get(edge.callee_id as usize)
-                        .map(|s| (symbols.sym_qname(s),
-                                  symbols.file_rel_path(s.file_instance_id),
-                                  symbols.sym_module(s)))
+                    symbols
+                        .by_id
+                        .get(edge.callee_id as usize)
+                        .map(|s| {
+                            (
+                                symbols.sym_qname(s),
+                                symbols.file_rel_path(s.file_instance_id),
+                                symbols.sym_module(s),
+                            )
+                        })
                         .unwrap_or(("", "", ""))
-                } else { ("", "", "") };
+                } else {
+                    ("", "", "")
+                };
 
                 let dict = PyDict::new(py);
                 dict.set_item("callee_name", callee_name)?;
@@ -813,8 +924,14 @@ impl GraphStore {
     }
 
     /// 通过 qualified_name 获取符号详情
-    fn get_symbol<'py>(&self, py: Python<'py>, qualified_name: &str) -> PyResult<Option<Bound<'py, PyAny>>> {
-        let symbols = self.symbols.as_ref()
+    fn get_symbol<'py>(
+        &self,
+        py: Python<'py>,
+        qualified_name: &str,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
 
         if let Some(id) = symbols.qname_get(qualified_name) {
@@ -842,13 +959,24 @@ impl GraphStore {
     /// ASCII 大小写不敏感子串匹配，省 ~400MB / 200万符号
     /// P11 优化：memchr SIMD 加速 + 返回 SymbolSearchBatch（懒转换）
     #[pyo3(signature = (query, kind=None, limit=None))]
-    fn search_symbols(slf: &Bound<Self>, py: Python<'_>, query: &str, kind: Option<&str>, limit: Option<usize>) -> PyResult<SymbolSearchBatch> {
+    fn search_symbols(
+        slf: &Bound<Self>,
+        py: Python<'_>,
+        query: &str,
+        kind: Option<&str>,
+        limit: Option<usize>,
+    ) -> PyResult<SymbolSearchBatch> {
         let self_ref = slf.borrow();
-        let symbols = self_ref.symbols.as_ref()
+        let symbols = self_ref
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
 
         let limit = limit.unwrap_or(50);
-        let query_lower: Vec<u8> = query.chars().map(|c| c.to_ascii_lowercase() as u8).collect();
+        let query_lower: Vec<u8> = query
+            .chars()
+            .map(|c| c.to_ascii_lowercase() as u8)
+            .collect();
 
         // P2 优化：用预构建的 search_pool_lower + memchr SIMD 一次扫描整个池
         // 替代原来 N 次线性扫描 + contains_ascii_ci 子串匹配
@@ -861,13 +989,18 @@ impl GraphStore {
 
         if query_lower.is_empty() || offsets.is_empty() {
             let py_self = slf.clone().unbind();
-            return Ok(SymbolSearchBatch { symbol_ids, store: py_self });
+            return Ok(SymbolSearchBatch {
+                symbol_ids,
+                store: py_self,
+            });
         }
 
         // memchr::memmem SIMD 加速子串搜索
         let mut search_start = 0;
         loop {
-            if symbol_ids.len() >= limit { break; }
+            if symbol_ids.len() >= limit {
+                break;
+            }
             let remaining = &pool[search_start..];
             let rel_pos = match memchr::memmem::find(remaining, &query_lower) {
                 None => break,
@@ -884,12 +1017,16 @@ impl GraphStore {
             let sym_id = sym_ids[entry_idx];
 
             // 去重
-            if !seen.insert(sym_id) { continue; }
+            if !seen.insert(sym_id) {
+                continue;
+            }
 
             // kind 过滤
             if let Some(k) = kind {
                 if let Some(sym) = symbols.by_id.get(sym_id as usize) {
-                    if sym.kind != SymbolKind::from_db_str(k) { continue; }
+                    if sym.kind != SymbolKind::from_db_str(k) {
+                        continue;
+                    }
                 }
             }
 
@@ -897,7 +1034,10 @@ impl GraphStore {
         }
 
         let py_self = slf.clone().unbind();
-        Ok(SymbolSearchBatch { symbol_ids, store: py_self })
+        Ok(SymbolSearchBatch {
+            symbol_ids,
+            store: py_self,
+        })
     }
 
     /// 向下调用链（BFS，对齐 Python db_query.get_call_chain_down）
@@ -906,16 +1046,25 @@ impl GraphStore {
     /// P3 优化：
     /// 1. visited: HashSet<u32> → Vec<bool>，O(1) 索引访问，消除哈希计算
     /// 2. queue: VecDeque<(u32, usize)> → Vec<u32> + Vec<usize>（SoA 布局，缓存友好）
-    fn get_call_chain_down<'py>(&self, py: Python<'py>, qualified_name: &str, max_depth: usize) -> PyResult<Vec<Bound<'py, PyAny>>> {
-        let symbols = self.symbols.as_ref()
+    fn get_call_chain_down<'py>(
+        &self,
+        py: Python<'py>,
+        qualified_name: &str,
+        max_depth: usize,
+    ) -> PyResult<Vec<Bound<'py, PyAny>>> {
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = self.calls.as_ref()
+        let calls = self
+            .calls
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let mut results = Vec::new();
         let start_id = match symbols.qname_get(qualified_name) {
             Some(id) => id,
-            None => return Ok(results),  // 起点不存在，空结果
+            None => return Ok(results), // 起点不存在，空结果
         };
 
         // P3: Vec<bool> 替代 HashSet，O(1) 索引访问，无哈希开销
@@ -935,15 +1084,25 @@ impl GraphStore {
             let depth = queue_depths[queue_head];
             queue_head += 1;
 
-            if depth >= max_depth { continue; }
+            if depth >= max_depth {
+                continue;
+            }
 
             // CSR forward 遍历 callees
-            let start = calls.forward_offsets.get(sym_id as usize)
-                .copied().unwrap_or(0);
-            let end = calls.forward_offsets.get(sym_id as usize + 1)
-                .copied().unwrap_or(0);
+            let start = calls
+                .forward_offsets
+                .get(sym_id as usize)
+                .copied()
+                .unwrap_or(0);
+            let end = calls
+                .forward_offsets
+                .get(sym_id as usize + 1)
+                .copied()
+                .unwrap_or(0);
 
-            let caller_name = symbols.by_id.get(sym_id as usize)
+            let caller_name = symbols
+                .by_id
+                .get(sym_id as usize)
                 .map(|s| symbols.sym_name(s))
                 .unwrap_or("");
 
@@ -978,9 +1137,13 @@ impl GraphStore {
     /// 拓扑排序（Kahn 算法，对齐 Python CLI --topo）
     /// 返回 qualified_name 列表，按调用深度升序（被调用者在前）
     fn get_topological_order(&self) -> PyResult<Vec<String>> {
-        let symbols = self.symbols.as_ref()
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = self.calls.as_ref()
+        let calls = self
+            .calls
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let n = symbols.by_id.len();
@@ -999,7 +1162,9 @@ impl GraphStore {
         let mut queue: VecDeque<usize> = VecDeque::new();
         for i in 0..n {
             // 跳过空槽位（id 0 或未填充）
-            if symbols.by_id[i].id == 0 && symbols.by_id[i].name_len == 0 { continue; }
+            if symbols.by_id[i].id == 0 && symbols.by_id[i].name_len == 0 {
+                continue;
+            }
             if in_degree[i] == 0 {
                 queue.push_back(i);
             }
@@ -1008,7 +1173,9 @@ impl GraphStore {
         let mut order = Vec::with_capacity(n);
         while let Some(idx) = queue.pop_front() {
             let sym = &symbols.by_id[idx];
-            if sym.id == 0 && sym.name_len == 0 { continue; }
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
             order.push(symbols.sym_qname(sym).to_string());
 
             // 遍历该节点的 callees，减小入度
@@ -1034,9 +1201,13 @@ impl GraphStore {
     /// 检测调用图中的环（DFS 三色标记，对齐 Python CLI --detect-cycles）
     /// 返回环上的 qualified_name 列表
     fn detect_cycles(&self) -> PyResult<Vec<Vec<String>>> {
-        let symbols = self.symbols.as_ref()
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = self.calls.as_ref()
+        let calls = self
+            .calls
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         let n = symbols.by_id.len();
@@ -1053,15 +1224,19 @@ impl GraphStore {
             parent: &mut [i64],
             cycles: &mut Vec<Vec<String>>,
         ) {
-            color[u] = 1;  // gray
+            color[u] = 1; // gray
             let start = calls.forward_offsets.get(u).copied().unwrap_or(0);
             let end = calls.forward_offsets.get(u + 1).copied().unwrap_or(0);
 
             for i in start..end {
                 let edge = &calls.forward_edges[i];
-                if edge.callee_id == 0 { continue; }
+                if edge.callee_id == 0 {
+                    continue;
+                }
                 let v = edge.callee_id as usize;
-                if v >= symbols.by_id.len() { continue; }
+                if v >= symbols.by_id.len() {
+                    continue;
+                }
 
                 if color[v] == 0 {
                     parent[v] = u as i64;
@@ -1085,12 +1260,14 @@ impl GraphStore {
                     }
                 }
             }
-            color[u] = 2;  // black
+            color[u] = 2; // black
         }
 
         for i in 0..n {
             let sym = &symbols.by_id[i];
-            if sym.id == 0 && sym.name_len == 0 { continue; }
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
             if color[i] == 0 {
                 dfs(i, symbols, calls, &mut color, &mut parent, &mut cycles);
             }
@@ -1105,8 +1282,14 @@ impl GraphStore {
         if let Some(symbols) = &self.symbols {
             dict.set_item("symbol_count", symbols.by_id.len())?;
             dict.set_item("qname_index_size", symbols.by_qname_sorted_ids.len())?;
-            dict.set_item("simple_name_index_size", symbols.by_simple_name_sorted_ids.len())?;
-            dict.set_item("file_index_size", symbols.file_paths_offsets.len().saturating_sub(1))?;
+            dict.set_item(
+                "simple_name_index_size",
+                symbols.by_simple_name_sorted_ids.len(),
+            )?;
+            dict.set_item(
+                "file_index_size",
+                symbols.file_paths_offsets.len().saturating_sub(1),
+            )?;
             // P4: 暴露 pool size 用于内存分析
             dict.set_item("name_pool_size", symbols.name_pool.len())?;
             dict.set_item("qname_pool_size", symbols.qname_pool.len())?;
@@ -1125,14 +1308,24 @@ impl GraphStore {
             dict.set_item("search_entry_count", 0)?;
         }
         if let Some(calls) = &self.calls {
-            let resolved = calls.forward_edges.iter().filter(|e| e.callee_id != 0).count();
+            let resolved = calls
+                .forward_edges
+                .iter()
+                .filter(|e| e.callee_id != 0)
+                .count();
             dict.set_item("edge_count", calls.forward_edges.len())?;
             dict.set_item("resolved_edge_count", resolved)?;
             dict.set_item("forward_offsets_size", calls.forward_offsets.len())?;
             dict.set_item("backward_offsets_size", calls.backward_offsets.len())?;
             dict.set_item("callee_name_pool_size", calls.callee_names_pool.len())?;
-            dict.set_item("callee_name_count", calls.callee_names_offsets.len().saturating_sub(1))?;
-            dict.set_item("callee_name_to_idx_size", calls.callee_name_sorted_idxs.len())?;
+            dict.set_item(
+                "callee_name_count",
+                calls.callee_names_offsets.len().saturating_sub(1),
+            )?;
+            dict.set_item(
+                "callee_name_to_idx_size",
+                calls.callee_name_sorted_idxs.len(),
+            )?;
             dict.set_item("root_count", calls.roots.len())?;
         } else {
             dict.set_item("edge_count", 0)?;
@@ -1155,28 +1348,70 @@ impl GraphStore {
         }
 
         if let Some(symbols) = &self.symbols {
-            add_bytes!("symbols_by_id", symbols.by_id.capacity() * size_of::<GraphSymbol>());
-            add_bytes!("qname_sorted_ids", symbols.by_qname_sorted_ids.capacity() * size_of::<u32>());
-            add_bytes!("simple_name_sorted_ids", symbols.by_simple_name_sorted_ids.capacity() * size_of::<u32>());
+            add_bytes!(
+                "symbols_by_id",
+                symbols.by_id.capacity() * size_of::<GraphSymbol>()
+            );
+            add_bytes!(
+                "qname_sorted_ids",
+                symbols.by_qname_sorted_ids.capacity() * size_of::<u32>()
+            );
+            add_bytes!(
+                "simple_name_sorted_ids",
+                symbols.by_simple_name_sorted_ids.capacity() * size_of::<u32>()
+            );
             add_bytes!("file_paths_pool", symbols.file_paths_pool.capacity());
-            add_bytes!("file_paths_offsets", symbols.file_paths_offsets.capacity() * size_of::<u32>());
+            add_bytes!(
+                "file_paths_offsets",
+                symbols.file_paths_offsets.capacity() * size_of::<u32>()
+            );
             add_bytes!("name_pool", symbols.name_pool.capacity());
             add_bytes!("qname_pool", symbols.qname_pool.capacity());
             add_bytes!("module_pool", symbols.module_pool.capacity());
             add_bytes!("search_pool_lower", symbols.search_pool_lower.capacity());
-            add_bytes!("search_entry_offsets", symbols.search_entry_offsets.capacity() * size_of::<u32>());
-            add_bytes!("search_entry_sym_ids", symbols.search_entry_sym_ids.capacity() * size_of::<u32>());
+            add_bytes!(
+                "search_entry_offsets",
+                symbols.search_entry_offsets.capacity() * size_of::<u32>()
+            );
+            add_bytes!(
+                "search_entry_sym_ids",
+                symbols.search_entry_sym_ids.capacity() * size_of::<u32>()
+            );
         }
         if let Some(calls) = &self.calls {
-            add_bytes!("forward_edges", calls.forward_edges.capacity() * size_of::<CallEdge>());
-            add_bytes!("forward_offsets", calls.forward_offsets.capacity() * size_of::<usize>());
-            add_bytes!("backward_positions", calls.backward_positions.capacity() * size_of::<u32>());
-            add_bytes!("backward_offsets", calls.backward_offsets.capacity() * size_of::<usize>());
-            add_bytes!("callee_position_offsets", calls.callee_position_offsets.capacity() * size_of::<u32>());
-            add_bytes!("callee_positions", calls.callee_positions.capacity() * size_of::<u32>());
+            add_bytes!(
+                "forward_edges",
+                calls.forward_edges.capacity() * size_of::<CallEdge>()
+            );
+            add_bytes!(
+                "forward_offsets",
+                calls.forward_offsets.capacity() * size_of::<usize>()
+            );
+            add_bytes!(
+                "backward_positions",
+                calls.backward_positions.capacity() * size_of::<u32>()
+            );
+            add_bytes!(
+                "backward_offsets",
+                calls.backward_offsets.capacity() * size_of::<usize>()
+            );
+            add_bytes!(
+                "callee_position_offsets",
+                calls.callee_position_offsets.capacity() * size_of::<u32>()
+            );
+            add_bytes!(
+                "callee_positions",
+                calls.callee_positions.capacity() * size_of::<u32>()
+            );
             add_bytes!("callee_names_pool", calls.callee_names_pool.capacity());
-            add_bytes!("callee_names_offsets", calls.callee_names_offsets.capacity() * size_of::<u32>());
-            add_bytes!("callee_name_sorted_idxs", calls.callee_name_sorted_idxs.capacity() * size_of::<u32>());
+            add_bytes!(
+                "callee_names_offsets",
+                calls.callee_names_offsets.capacity() * size_of::<u32>()
+            );
+            add_bytes!(
+                "callee_name_sorted_idxs",
+                calls.callee_name_sorted_idxs.capacity() * size_of::<u32>()
+            );
             add_bytes!("roots", calls.roots.capacity() * size_of::<u32>());
         }
         dict.set_item("known_heap_total", total)?;
@@ -1198,14 +1433,16 @@ impl GraphStore {
     fn compute_depth_all(&self) -> PyResult<Vec<(u32, i32)>> {
         use std::collections::VecDeque;
 
-        let symbols = self.symbols.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
-                "symbols not loaded, call load_from_sqlite first"
-            ))?;
-        let calls = self.calls.as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err(
-                "calls not loaded, call load_from_sqlite first"
-            ))?;
+        let symbols = self.symbols.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "symbols not loaded, call load_from_sqlite first",
+            )
+        })?;
+        let calls = self.calls.as_ref().ok_or_else(|| {
+            pyo3::exceptions::PyRuntimeError::new_err(
+                "calls not loaded, call load_from_sqlite first",
+            )
+        })?;
 
         let max_id = symbols.by_id.len();
 
@@ -1242,10 +1479,16 @@ impl GraphStore {
             let fn_depth = depth[fn_id as usize];
 
             // 遍历所有 caller（通过 CSR backward edges）
-            let b_start = calls.backward_offsets.get(fn_id as usize)
-                .copied().unwrap_or(0);
-            let b_end = calls.backward_offsets.get(fn_id as usize + 1)
-                .copied().unwrap_or(0);
+            let b_start = calls
+                .backward_offsets
+                .get(fn_id as usize)
+                .copied()
+                .unwrap_or(0);
+            let b_end = calls
+                .backward_offsets
+                .get(fn_id as usize + 1)
+                .copied()
+                .unwrap_or(0);
 
             for i in b_start..b_end {
                 let caller_id = calls.forward_edges[calls.backward_positions[i] as usize].caller_id;
@@ -1258,10 +1501,16 @@ impl GraphStore {
                 pending_callee_count[caller_id as usize] -= 1;
                 if pending_callee_count[caller_id as usize] == 0 {
                     // 所有 callee 都已处理，计算 depth = max(callee depths) + 1
-                    let f_start = calls.forward_offsets.get(caller_id as usize)
-                        .copied().unwrap_or(0);
-                    let f_end = calls.forward_offsets.get(caller_id as usize + 1)
-                        .copied().unwrap_or(0);
+                    let f_start = calls
+                        .forward_offsets
+                        .get(caller_id as usize)
+                        .copied()
+                        .unwrap_or(0);
+                    let f_end = calls
+                        .forward_offsets
+                        .get(caller_id as usize + 1)
+                        .copied()
+                        .unwrap_or(0);
                     let max_callee_depth = calls.forward_edges[f_start..f_end]
                         .iter()
                         .filter(|e| e.callee_id > 0 && (e.callee_id as usize) < max_id)
@@ -1284,7 +1533,11 @@ impl GraphStore {
             if sym.kind != SymbolKind::Fn && sym.kind != SymbolKind::TestFn {
                 continue;
             }
-            let d = if depth[sym.id as usize] == -1 { 0 } else { depth[sym.id as usize] };
+            let d = if depth[sym.id as usize] == -1 {
+                0
+            } else {
+                depth[sym.id as usize]
+            };
             result.push((sym.id, d));
         }
 
@@ -1305,13 +1558,19 @@ impl GraphStore {
     /// 内部 snapshot 写入实现，公开入口在执行期间释放 GIL。
     fn _dump_to_file(&self, path: &str) -> PyResult<()> {
         use std::io::Write;
-        let symbols = self.symbols.as_ref()
+        let symbols = self
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = self.calls.as_ref()
+        let calls = self
+            .calls
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
         // 计算 symbol_count（排除空槽位）
-        let symbol_count = symbols.by_id.iter()
+        let symbol_count = symbols
+            .by_id
+            .iter()
             .filter(|s| !(s.id == 0 && s.name_len == 0))
             .count() as u32;
         let edge_count = calls.forward_edges.len() as u32;
@@ -1331,7 +1590,8 @@ impl GraphStore {
         let forward_offsets_bytes = bytemuck::cast_slice::<usize, u8>(&calls.forward_offsets);
         let backward_offsets_bytes = bytemuck::cast_slice::<usize, u8>(&calls.backward_offsets);
         let callee_names_pool_bytes = calls.callee_names_pool.as_bytes();
-        let callee_names_offsets_bytes = bytemuck::cast_slice::<u32, u8>(&calls.callee_names_offsets);
+        let callee_names_offsets_bytes =
+            bytemuck::cast_slice::<u32, u8>(&calls.callee_names_offsets);
         // P4: 直接引用 symbols.file_paths_pool / offsets，无需再扁平化
         let file_paths_pool_bytes = symbols.file_paths_pool.as_bytes();
         let file_paths_offsets_bytes = bytemuck::cast_slice::<u32, u8>(&symbols.file_paths_offsets);
@@ -1342,24 +1602,33 @@ impl GraphStore {
         // 起始偏移便非 4 对齐，pod_align_to 的 prefix 会吃掉首个 u32 的前几字节。
         // 修复：dump 时对齐每个 section 起始偏移，并在 buffer 中加入 padding 字节。
         let section_bytes_arr: [&[u8]; SECTION_COUNT] = [
-            by_id_bytes, name_pool_bytes, qname_pool_bytes, module_pool_bytes,
-            forward_edges_bytes, backward_positions_bytes,
-            forward_offsets_bytes, backward_offsets_bytes,
-            callee_names_pool_bytes, callee_names_offsets_bytes,
-            file_paths_pool_bytes, file_paths_offsets_bytes,
+            by_id_bytes,
+            name_pool_bytes,
+            qname_pool_bytes,
+            module_pool_bytes,
+            forward_edges_bytes,
+            backward_positions_bytes,
+            forward_offsets_bytes,
+            backward_offsets_bytes,
+            callee_names_pool_bytes,
+            callee_names_offsets_bytes,
+            file_paths_pool_bytes,
+            file_paths_offsets_bytes,
         ];
         // 每个 section 元素类型的对齐要求（bytes sections = 1）
         let section_aligns: [u64; SECTION_COUNT] = [
-            std::mem::align_of::<GraphSymbol>() as u64,  // SEC_BY_ID
-            1, 1, 1,                                      // 3 个 string pool
-            std::mem::align_of::<CallEdge>() as u64,      // SEC_FORWARD_EDGES
-            std::mem::align_of::<u32>() as u64,          // SEC_BACKWARD_POSITIONS
-            std::mem::align_of::<usize>() as u64,        // SEC_FWD_OFFSETS
-            std::mem::align_of::<usize>() as u64,        // SEC_BWD_OFFSETS
-            1,                                             // SEC_CALLEE_NAMES_POOL
-            std::mem::align_of::<u32>() as u64,          // SEC_CALLEE_NAMES_OFFSETS
-            1,                                             // SEC_FILE_PATHS_POOL
-            std::mem::align_of::<u32>() as u64,          // SEC_FILE_PATHS_OFFSETS
+            std::mem::align_of::<GraphSymbol>() as u64, // SEC_BY_ID
+            1,
+            1,
+            1,                                       // 3 个 string pool
+            std::mem::align_of::<CallEdge>() as u64, // SEC_FORWARD_EDGES
+            std::mem::align_of::<u32>() as u64,      // SEC_BACKWARD_POSITIONS
+            std::mem::align_of::<usize>() as u64,    // SEC_FWD_OFFSETS
+            std::mem::align_of::<usize>() as u64,    // SEC_BWD_OFFSETS
+            1,                                       // SEC_CALLEE_NAMES_POOL
+            std::mem::align_of::<u32>() as u64,      // SEC_CALLEE_NAMES_OFFSETS
+            1,                                       // SEC_FILE_PATHS_POOL
+            std::mem::align_of::<u32>() as u64,      // SEC_FILE_PATHS_OFFSETS
         ];
 
         let mut cur_offset = HEADER_SIZE as u64;
@@ -1403,13 +1672,16 @@ impl GraphStore {
             buffer.extend_from_slice(section_bytes_arr[i]);
         }
 
-        let mut file = std::fs::File::create(path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("create snapshot file failed: {}", e)))?;
-        file.write_all(&buffer)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("write snapshot failed: {}", e)))?;
+        let mut file = std::fs::File::create(path).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("create snapshot file failed: {}", e))
+        })?;
+        file.write_all(&buffer).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("write snapshot failed: {}", e))
+        })?;
         // fsync 确保落盘
-        file.sync_all()
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("fsync failed: {}", e)))?;
+        file.sync_all().map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("fsync failed: {}", e))
+        })?;
 
         Ok(())
     }
@@ -1420,11 +1692,7 @@ impl GraphStore {
     ///
     /// 用法：
     ///   store.load_from_file("/path/to/snapshot.cwsnap")
-    pub fn load_from_file(
-        &mut self,
-        py: Python<'_>,
-        path: &str,
-    ) -> PyResult<(usize, usize)> {
+    pub fn load_from_file(&mut self, py: Python<'_>, path: &str) -> PyResult<(usize, usize)> {
         py.detach(|| self._load_from_file(path))
     }
 
@@ -1432,30 +1700,36 @@ impl GraphStore {
     fn _load_from_file(&mut self, path: &str) -> PyResult<(usize, usize)> {
         use std::fs::OpenOptions;
 
-        let file = OpenOptions::new()
-            .read(true)
-            .open(path)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("open snapshot failed: {}", e)))?;
+        let file = OpenOptions::new().read(true).open(path).map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("open snapshot failed: {}", e))
+        })?;
 
         // mmap 文件（只读）
         let mmap = unsafe {
-            memmap2::Mmap::map(&file)
-                .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("mmap failed: {}", e)))?
+            memmap2::Mmap::map(&file).map_err(|e| {
+                pyo3::exceptions::PyRuntimeError::new_err(format!("mmap failed: {}", e))
+            })?
         };
         let bytes = &mmap[..];
 
         // 解析 header
         if bytes.len() < HEADER_SIZE {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err("snapshot file too small"));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "snapshot file too small",
+            ));
         }
         let header: &SnapshotHeader = bytemuck::from_bytes(&bytes[..HEADER_SIZE]);
         if header.magic != SNAPSHOT_MAGIC {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("invalid snapshot magic: 0x{:X} (expected 0x{:X})", header.magic, SNAPSHOT_MAGIC)));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "invalid snapshot magic: 0x{:X} (expected 0x{:X})",
+                header.magic, SNAPSHOT_MAGIC
+            )));
         }
         if header.version != SNAPSHOT_VERSION {
-            return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                format!("unsupported snapshot version: {} (expected {})", header.version, SNAPSHOT_VERSION)));
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                "unsupported snapshot version: {} (expected {})",
+                header.version, SNAPSHOT_VERSION
+            )));
         }
 
         // 从 mmap 切片重建 Vec（这里必须 copy，因为 mmap 生命周期 < store）
@@ -1467,8 +1741,10 @@ impl GraphStore {
                 let start = sec.offset as usize;
                 let end = start + sec.len as usize;
                 if end > bytes.len() {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                        format!("section {} out of bounds", $idx)));
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "section {} out of bounds",
+                        $idx
+                    )));
                 }
                 // pod_align_to 返回 (prefix, aligned_middle, suffix)
                 // aligned_middle 是对齐后的目标类型切片
@@ -1482,8 +1758,10 @@ impl GraphStore {
                 let start = sec.offset as usize;
                 let end = start + sec.len as usize;
                 if end > bytes.len() {
-                    return Err(pyo3::exceptions::PyRuntimeError::new_err(
-                        format!("section {} out of bounds", $idx)));
+                    return Err(pyo3::exceptions::PyRuntimeError::new_err(format!(
+                        "section {} out of bounds",
+                        $idx
+                    )));
                 }
                 // 从 bytes 直接构造 String（一次 copy）
                 String::from_utf8_lossy(&bytes[start..end]).into_owned()
@@ -1499,7 +1777,9 @@ impl GraphStore {
         let forward_offsets: Vec<usize> = read_section!(SEC_FWD_OFFSETS, usize);
         let backward_offsets: Vec<usize> = read_section!(SEC_BWD_OFFSETS, usize);
         if backward_positions.len() != forward_edges.len()
-            || backward_positions.iter().any(|&position| position as usize >= forward_edges.len())
+            || backward_positions
+                .iter()
+                .any(|&position| position as usize >= forward_edges.len())
         {
             return Err(pyo3::exceptions::PyRuntimeError::new_err(
                 "invalid backward positions section",
@@ -1515,15 +1795,18 @@ impl GraphStore {
         let edge_count = header.edge_count as usize;
 
         // 从字符串池直接重建排序 ID 索引，不复制 String。
-        let mut by_qname_sorted_ids: Vec<u32> = by_id.iter()
+        let mut by_qname_sorted_ids: Vec<u32> = by_id
+            .iter()
             .filter(|sym| sym.id != 0 || sym.name_len != 0)
             .map(|sym| sym.id)
             .collect();
         by_qname_sorted_ids.sort_unstable_by(|a, b| {
             let sa = &by_id[*a as usize];
             let sb = &by_id[*b as usize];
-            let qa = &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
-            let qb = &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
+            let qa =
+                &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
+            let qb =
+                &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
             qa.cmp(qb)
         });
         let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
@@ -1548,7 +1831,9 @@ impl GraphStore {
         }
         let mut roots: Vec<u32> = Vec::new();
         for (idx, sym) in by_id.iter().enumerate() {
-            if sym.id == 0 && sym.name_len == 0 { continue; }
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
             if !has_caller[idx] && sym.kind == SymbolKind::Fn {
                 roots.push(idx as u32);
             }
@@ -1562,10 +1847,12 @@ impl GraphStore {
         let mut search_entry_offsets: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
         let mut search_entry_sym_ids: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
         for sym in &by_id {
-            if sym.id == 0 && sym.name_len == 0 { continue; }
-            let name = name_pool.get(
-                sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize
-            ).unwrap_or("");
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
+            let name = name_pool
+                .get(sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize)
+                .unwrap_or("");
             if !name.is_empty() {
                 search_entry_offsets.push(search_pool_lower.len() as u32);
                 search_entry_sym_ids.push(sym.id);
@@ -1574,9 +1861,9 @@ impl GraphStore {
                 }
                 search_pool_lower.push('\0');
             }
-            let qname = qname_pool.get(
-                sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize
-            ).unwrap_or("");
+            let qname = qname_pool
+                .get(sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize)
+                .unwrap_or("");
             if !qname.is_empty() && qname != name {
                 search_entry_offsets.push(search_pool_lower.len() as u32);
                 search_entry_sym_ids.push(sym.id);
@@ -1640,14 +1927,22 @@ impl GraphStore {
     ///
     /// 返回 BlastRadiusBatch（PyClass，懒转换为 List[Dict]）
     #[pyo3(signature = (symbol_id, depth=3))]
-    fn blast_radius(slf: &Bound<Self>, _py: Python<'_>, symbol_id: u32, depth: usize) -> PyResult<BlastRadiusBatch> {
+    fn blast_radius(
+        slf: &Bound<Self>,
+        _py: Python<'_>,
+        symbol_id: u32,
+        depth: usize,
+    ) -> PyResult<BlastRadiusBatch> {
         let self_ref = slf.borrow();
         let layers = self_ref
             .blast_radius_ids_rust(symbol_id, depth)
             .map_err(pyo3::exceptions::PyRuntimeError::new_err)?;
 
         let py_self = slf.clone().unbind();
-        Ok(BlastRadiusBatch { layers, store: py_self })
+        Ok(BlastRadiusBatch {
+            layers,
+            store: py_self,
+        })
     }
 }
 
@@ -1811,10 +2106,16 @@ impl GraphStore {
             None => return vec![],
         };
         // CSR backward 遍历：callee_id 的所有入边
-        let start = calls.backward_offsets.get(callee_id as usize)
-            .copied().unwrap_or(0);
-        let end = calls.backward_offsets.get(callee_id as usize + 1)
-            .copied().unwrap_or(0);
+        let start = calls
+            .backward_offsets
+            .get(callee_id as usize)
+            .copied()
+            .unwrap_or(0);
+        let end = calls
+            .backward_offsets
+            .get(callee_id as usize + 1)
+            .copied()
+            .unwrap_or(0);
         let mut callers = Vec::new();
         for i in start..end {
             let edge = &calls.forward_edges[calls.backward_positions[i] as usize];
@@ -1833,10 +2134,16 @@ impl GraphStore {
             None => return vec![],
         };
         // CSR forward 遍历：caller_id 的所有出边
-        let start = calls.forward_offsets.get(caller_id as usize)
-            .copied().unwrap_or(0);
-        let end = calls.forward_offsets.get(caller_id as usize + 1)
-            .copied().unwrap_or(0);
+        let start = calls
+            .forward_offsets
+            .get(caller_id as usize)
+            .copied()
+            .unwrap_or(0);
+        let end = calls
+            .forward_offsets
+            .get(caller_id as usize + 1)
+            .copied()
+            .unwrap_or(0);
         let mut callees = Vec::new();
         for i in start..end {
             let edge = &calls.forward_edges[i];
@@ -2259,7 +2566,10 @@ impl GraphStore {
         use serde_json::{Map, Value};
         let mut m = Map::new();
         if let Some(symbols) = &self.symbols {
-            m.insert("symbol_count".into(), Value::Number(symbols.by_id.len().into()));
+            m.insert(
+                "symbol_count".into(),
+                Value::Number(symbols.by_id.len().into()),
+            );
             m.insert(
                 "qname_index_size".into(),
                 Value::Number(symbols.by_qname_sorted_ids.len().into()),
@@ -2272,8 +2582,14 @@ impl GraphStore {
                 "file_index_size".into(),
                 Value::Number(symbols.file_paths_offsets.len().saturating_sub(1).into()),
             );
-            m.insert("name_pool_size".into(), Value::Number(symbols.name_pool.len().into()));
-            m.insert("qname_pool_size".into(), Value::Number(symbols.qname_pool.len().into()));
+            m.insert(
+                "name_pool_size".into(),
+                Value::Number(symbols.name_pool.len().into()),
+            );
+            m.insert(
+                "qname_pool_size".into(),
+                Value::Number(symbols.qname_pool.len().into()),
+            );
             m.insert(
                 "module_pool_size".into(),
                 Value::Number(symbols.module_pool.len().into()),
@@ -2302,8 +2618,15 @@ impl GraphStore {
             }
         }
         if let Some(calls) = &self.calls {
-            let resolved = calls.forward_edges.iter().filter(|e| e.callee_id != 0).count();
-            m.insert("edge_count".into(), Value::Number(calls.forward_edges.len().into()));
+            let resolved = calls
+                .forward_edges
+                .iter()
+                .filter(|e| e.callee_id != 0)
+                .count();
+            m.insert(
+                "edge_count".into(),
+                Value::Number(calls.forward_edges.len().into()),
+            );
             m.insert("resolved_edge_count".into(), Value::Number(resolved.into()));
             m.insert(
                 "forward_offsets_size".into(),
@@ -2347,7 +2670,10 @@ impl GraphStore {
             None => return vec![],
         };
         let limit = if limit == 0 { 50 } else { limit };
-        let query_lower: Vec<u8> = query.chars().map(|c| c.to_ascii_lowercase() as u8).collect();
+        let query_lower: Vec<u8> = query
+            .chars()
+            .map(|c| c.to_ascii_lowercase() as u8)
+            .collect();
         if query_lower.is_empty() || symbols.search_entry_offsets.is_empty() {
             return vec![];
         }
@@ -2468,17 +2794,23 @@ fn open_immutable_db(db_path: &str) -> PyResult<Connection> {
             format!("{}?immutable=1", normalized)
         }
     } else {
-        let prefix = if normalized.starts_with('/') { "file:" } else { "file:///" };
+        let prefix = if normalized.starts_with('/') {
+            "file:"
+        } else {
+            "file:///"
+        };
         format!("{}{}?immutable=1", prefix, normalized)
     };
     Connection::open_with_flags(&uri, flags).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!(
-            "open db failed: {} (uri={})", e, uri
-        ))
+        pyo3::exceptions::PyRuntimeError::new_err(format!("open db failed: {} (uri={})", e, uri))
     })
 }
 
-fn load_call_graph(conn: &Connection, symbols: &SymbolTable, workspace_id: i64) -> PyResult<(CallGraph, usize)> {
+fn load_call_graph(
+    conn: &Connection,
+    symbols: &SymbolTable,
+    workspace_id: i64,
+) -> PyResult<(CallGraph, usize)> {
     let mut edges: Vec<CallEdge> = Vec::new();
     let mut callee_names_pool = String::new();
     let mut callee_names_offsets: Vec<u32> = Vec::new();
@@ -2498,26 +2830,27 @@ fn load_call_graph(conn: &Connection, symbols: &SymbolTable, workspace_id: i64) 
     } else {
         "SELECT caller_id, callee_id, callee_name, call_line, is_cross_file FROM calls".to_string()
     };
-    let mut stmt = conn.prepare(&sql_calls).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-        format!("prepare calls query failed: {}", e)
-    ))?;
-    let call_iter = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, i64>(0)? as u32,
-            row.get::<_, i64>(1)? as u32,
-            row.get::<_, String>(2)?,
-            row.get::<_, i64>(3)? as u32,
-            row.get::<_, i64>(4)? != 0,
-        ))
-    }).map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-        format!("query calls failed: {}", e)
-    ))?;
+    let mut stmt = conn.prepare(&sql_calls).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("prepare calls query failed: {}", e))
+    })?;
+    let call_iter = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as u32,
+                row.get::<_, i64>(1)? as u32,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)? as u32,
+                row.get::<_, i64>(4)? != 0,
+            ))
+        })
+        .map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("query calls failed: {}", e))
+        })?;
 
     for call in call_iter {
-        let (caller_id, callee_id, callee_name, call_line, is_cross_file) = call
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(
-                format!("read call row failed: {}", e)
-            ))?;
+        let (caller_id, callee_id, callee_name, call_line, is_cross_file) = call.map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("read call row failed: {}", e))
+        })?;
         let callee_name_idx = match name_idx_map.get(&callee_name) {
             Some(&idx) => idx,
             None => {
@@ -2585,7 +2918,7 @@ fn build_csr(
     callee_names_offsets: Vec<u32>,
     max_id: usize,
 ) -> CallGraph {
-    let n = max_id + 1;  // id 范围 [0, max_id]
+    let n = max_id + 1; // id 范围 [0, max_id]
 
     // 1. forward: 按 caller_id 排序（edges 移动，不 clone）
     let mut forward_edges = edges;
@@ -2608,9 +2941,7 @@ fn build_csr(
         "call edge count exceeds u32 position range"
     );
     let mut backward_positions: Vec<u32> = (0..forward_edges.len() as u32).collect();
-    backward_positions.sort_unstable_by_key(|&position| {
-        forward_edges[position as usize].callee_id
-    });
+    backward_positions.sort_unstable_by_key(|&position| forward_edges[position as usize].callee_id);
 
     let mut backward_offsets = vec![0usize; n + 1];
     for &position in &backward_positions {
@@ -2648,8 +2979,12 @@ fn build_csr(
 /// 对 "Class" 查 "func_0"：原版 ~13 次比较，新版 ~2 次（SIMD 一次处理 16-32 字节）
 #[inline]
 fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() { return true; }
-    if haystack.len() < needle.len() { return false; }
+    if needle.is_empty() {
+        return true;
+    }
+    if haystack.len() < needle.len() {
+        return false;
+    }
 
     // P11：用 memchr2 SIMD 加速首字符搜索
     // 同时搜索 needle[0] 的大写和小写形式
@@ -2659,14 +2994,21 @@ fn contains_ascii_ci(haystack: &[u8], needle: &[u8]) -> bool {
 
     for pos in memchr::memchr2_iter(first_lower, first_upper, haystack) {
         // 检查剩余位置是否足够
-        if pos + needle.len() > haystack.len() { continue; }
+        if pos + needle.len() > haystack.len() {
+            continue;
+        }
         // 逐字节比较后续字符（大小写不敏感）
         let tail = &haystack[pos + 1..pos + needle.len()];
         let mut found = true;
         for (h, n) in tail.iter().zip(needle_tail.iter()) {
-            if h.to_ascii_lowercase() != *n { found = false; break; }
+            if h.to_ascii_lowercase() != *n {
+                found = false;
+                break;
+            }
         }
-        if found { return true; }
+        if found {
+            return true;
+        }
     }
     false
 }
@@ -2697,32 +3039,51 @@ impl CallersBatch {
         let len = self.results.len() as isize;
         let i = if idx < 0 { len + idx } else { idx };
         if i < 0 || i >= len {
-            return Err(pyo3::exceptions::PyIndexError::new_err("index out of range"));
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "index out of range",
+            ));
         }
         let r = self.results[i as usize];
 
         // 从 GraphStore 的 string pool 解析
         let store = self.store.borrow(py);
-        let symbols = store.symbols.as_ref()
+        let symbols = store
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let calls = store.calls.as_ref()
+        let calls = store
+            .calls
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("calls not ready"))?;
 
-        let caller = symbols.by_id.get(r.caller_id as usize)
+        let caller = symbols
+            .by_id
+            .get(r.caller_id as usize)
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("caller not found"))?;
         let callee_name = calls.callee_name(r.callee_name_idx);
         let (callee_qname, callee_file, callee_module) = if r.callee_id != 0 {
-            symbols.by_id.get(r.callee_id as usize)
-                .map(|s| (symbols.sym_qname(s),
-                          symbols.file_rel_path(s.file_instance_id),
-                          symbols.sym_module(s)))
+            symbols
+                .by_id
+                .get(r.callee_id as usize)
+                .map(|s| {
+                    (
+                        symbols.sym_qname(s),
+                        symbols.file_rel_path(s.file_instance_id),
+                        symbols.sym_module(s),
+                    )
+                })
                 .unwrap_or(("", "", ""))
-        } else { ("", "", "") };
+        } else {
+            ("", "", "")
+        };
 
         let dict = PyDict::new(py);
         dict.set_item("caller_name", symbols.sym_name(caller))?;
         dict.set_item("caller_qualified", symbols.sym_qname(caller))?;
-        dict.set_item("caller_file", symbols.file_rel_path(caller.file_instance_id))?;
+        dict.set_item(
+            "caller_file",
+            symbols.file_rel_path(caller.file_instance_id),
+        )?;
         dict.set_item("caller_module", symbols.sym_module(caller))?;
         dict.set_item("caller_id", r.caller_id)?;
         dict.set_item("call_line", r.call_line_packed & 0x7FFF_FFFF)?;
@@ -2777,14 +3138,20 @@ impl SymbolSearchBatch {
         let len = self.symbol_ids.len() as isize;
         let i = if idx < 0 { len + idx } else { idx };
         if i < 0 || i >= len {
-            return Err(pyo3::exceptions::PyIndexError::new_err("index out of range"));
+            return Err(pyo3::exceptions::PyIndexError::new_err(
+                "index out of range",
+            ));
         }
         let sym_id = self.symbol_ids[i as usize];
 
         let store = self.store.borrow(py);
-        let symbols = store.symbols.as_ref()
+        let symbols = store
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
-        let sym = symbols.by_id.get(sym_id as usize)
+        let sym = symbols
+            .by_id
+            .get(sym_id as usize)
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbol not found"))?;
 
         let dict = PyDict::new(py);
@@ -2868,7 +3235,11 @@ impl BlastRadiusBatch {
     ///     - symbol_id: 内部 symbol_id（用于调试）
     ///
     /// 越界返回空列表（防御性处理，对齐 Python 在 layers[d] 不存在时返回空）
-    fn layer_symbols<'py>(&self, py: Python<'py>, depth: isize) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    fn layer_symbols<'py>(
+        &self,
+        py: Python<'py>,
+        depth: isize,
+    ) -> PyResult<Vec<Bound<'py, PyAny>>> {
         let len = self.layers.len() as isize;
         let d = if depth < 0 { len + depth } else { depth };
         if d < 0 || d >= len {
@@ -2876,7 +3247,9 @@ impl BlastRadiusBatch {
         }
 
         let store = self.store.borrow(py);
-        let symbols = store.symbols.as_ref()
+        let symbols = store
+            .symbols
+            .as_ref()
             .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("store not loaded"))?;
 
         let layer = &self.layers[d as usize];
@@ -2933,18 +3306,18 @@ const SNAPSHOT_VERSION: u32 = 2;
 const SECTION_COUNT: usize = 12;
 
 /// Section 索引
-const SEC_BY_ID: usize = 0;                   // Vec<GraphSymbol>
-const SEC_NAME_POOL: usize = 1;               // String bytes (name_pool)
-const SEC_QNAME_POOL: usize = 2;              // String bytes (qname_pool)
-const SEC_MODULE_POOL: usize = 3;             // String bytes (module_pool)
-const SEC_FORWARD_EDGES: usize = 4;           // Vec<CallEdge>
-const SEC_BACKWARD_POSITIONS: usize = 5;     // Vec<u32>
-const SEC_FWD_OFFSETS: usize = 6;             // Vec<usize>
-const SEC_BWD_OFFSETS: usize = 7;             // Vec<usize>
-const SEC_CALLEE_NAMES_POOL: usize = 8;       // String bytes (callee_names_pool)
-const SEC_CALLEE_NAMES_OFFSETS: usize = 9;    // Vec<u32>
-const SEC_FILE_PATHS_POOL: usize = 10;        // String bytes (扁平化 file_paths)
-const SEC_FILE_PATHS_OFFSETS: usize = 11;     // Vec<u32>
+const SEC_BY_ID: usize = 0; // Vec<GraphSymbol>
+const SEC_NAME_POOL: usize = 1; // String bytes (name_pool)
+const SEC_QNAME_POOL: usize = 2; // String bytes (qname_pool)
+const SEC_MODULE_POOL: usize = 3; // String bytes (module_pool)
+const SEC_FORWARD_EDGES: usize = 4; // Vec<CallEdge>
+const SEC_BACKWARD_POSITIONS: usize = 5; // Vec<u32>
+const SEC_FWD_OFFSETS: usize = 6; // Vec<usize>
+const SEC_BWD_OFFSETS: usize = 7; // Vec<usize>
+const SEC_CALLEE_NAMES_POOL: usize = 8; // String bytes (callee_names_pool)
+const SEC_CALLEE_NAMES_OFFSETS: usize = 9; // Vec<u32>
+const SEC_FILE_PATHS_POOL: usize = 10; // String bytes (扁平化 file_paths)
+const SEC_FILE_PATHS_OFFSETS: usize = 11; // Vec<u32>
 
 /// Section 描述：offset + len
 #[repr(C)]
@@ -2965,7 +3338,7 @@ struct SnapshotHeader {
     edge_count: u32,
     callee_name_count: u32,
     file_path_count: u32,
-    reserved: [u8; 32],  // 填充字段，预留未来扩展
+    reserved: [u8; 32], // 填充字段，预留未来扩展
     sections: [SectionEntry; SECTION_COUNT],
 }
 

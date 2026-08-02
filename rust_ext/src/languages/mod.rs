@@ -13,21 +13,21 @@
 
 use crate::multi_lang::LangConfig;
 
-mod python;
-mod rust;
-mod go;
-mod java;
-mod typescript;
-mod javascript;
-mod ruby;
-mod php;
-mod scala;
-mod csharp;
 mod cpp;
-mod kotlin;
-mod swift;
+mod csharp;
 mod elixir;
+mod go;
 mod hcl;
+mod java;
+mod javascript;
+mod kotlin;
+mod php;
+mod python;
+mod ruby;
+mod rust;
+mod scala;
+mod swift;
+mod typescript;
 
 /// 按 language_id 获取配置
 ///

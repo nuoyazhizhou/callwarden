@@ -352,14 +352,17 @@ fn build_symbol_indexes(symbols: &[SymbolInfo]) -> SymbolIndexes {
             continue;
         }
 
-        all_symbols_map.insert(qname.clone(), SymbolInfo {
-            id: s.id,
-            name: s.name.clone(),
-            qualified_name: s.qualified_name.clone(),
-            kind: s.kind.clone(),
-            file_instance_id: s.file_instance_id,
-            rel_path: s.rel_path.clone(),
-        });
+        all_symbols_map.insert(
+            qname.clone(),
+            SymbolInfo {
+                id: s.id,
+                name: s.name.clone(),
+                qualified_name: s.qualified_name.clone(),
+                kind: s.kind.clone(),
+                file_instance_id: s.file_instance_id,
+                rel_path: s.rel_path.clone(),
+            },
+        );
 
         // simple_name = qualified_name 最后一段（:: → . 后 rsplit）
         let norm_qname = qname.replace("::", ".");
@@ -368,8 +371,14 @@ fn build_symbol_indexes(symbols: &[SymbolInfo]) -> SymbolIndexes {
             None => norm_qname.clone(),
         };
 
-        name_index.entry(simple_name.clone()).or_default().push(qname.clone());
-        name_to_qname.entry(s.name.clone()).or_default().push(qname.clone());
+        name_index
+            .entry(simple_name.clone())
+            .or_default()
+            .push(qname.clone());
+        name_to_qname
+            .entry(s.name.clone())
+            .or_default()
+            .push(qname.clone());
 
         let file_set = file_symbols.entry(s.rel_path.clone()).or_default();
         file_set.insert(simple_name.clone());
@@ -403,19 +412,25 @@ fn build_ext_indexes(symbols: &[ExtSymbolInfo]) -> ExtIndexes {
 
     for s in symbols {
         if !s.qualified_name.is_empty() {
-            ext_by_qname.insert(s.qualified_name.clone(), ExtSymbolInfo {
+            ext_by_qname.insert(
+                s.qualified_name.clone(),
+                ExtSymbolInfo {
+                    id: s.id,
+                    symbol_name: s.symbol_name.clone(),
+                    qualified_name: s.qualified_name.clone(),
+                    package_name: s.package_name.clone(),
+                },
+            );
+        }
+        ext_by_name
+            .entry(s.symbol_name.clone())
+            .or_default()
+            .push(ExtSymbolInfo {
                 id: s.id,
                 symbol_name: s.symbol_name.clone(),
                 qualified_name: s.qualified_name.clone(),
                 package_name: s.package_name.clone(),
             });
-        }
-        ext_by_name.entry(s.symbol_name.clone()).or_default().push(ExtSymbolInfo {
-            id: s.id,
-            symbol_name: s.symbol_name.clone(),
-            qualified_name: s.qualified_name.clone(),
-            package_name: s.package_name.clone(),
-        });
     }
 
     ExtIndexes {
@@ -437,9 +452,8 @@ fn build_id_maps_from_db(conn: &rusqlite::Connection) -> Result<IdMaps, rusqlite
     // 1. 外部符号（负 id）
     //    注意：外部符号信息由调用方传入，这里只查 DB 构建 qname_id_map
     //    但 Python 是从 DB 一次性读 external_symbols 表 → 这里也走 DB
-    let ext_result = conn.prepare(
-        "SELECT id, qualified_name FROM external_symbols WHERE qualified_name != ''"
-    );
+    let ext_result =
+        conn.prepare("SELECT id, qualified_name FROM external_symbols WHERE qualified_name != ''");
     if let Ok(mut stmt) = ext_result {
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
@@ -452,9 +466,8 @@ fn build_id_maps_from_db(conn: &rusqlite::Connection) -> Result<IdMaps, rusqlite
     // 表不存在时静默跳过（与 Python try/except 一致）
 
     // 2. 项目符号（正 id，覆盖外部同名）
-    let mut stmt = conn.prepare(
-        "SELECT id, name, qualified_name, file_instance_id FROM symbols"
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT id, name, qualified_name, file_instance_id FROM symbols")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, i64>(0)?,
@@ -628,10 +641,15 @@ fn resolve_call(
                 }
             } else if candidates.len() > 1 {
                 // 多候选：优先同文件
-                let same_file_qnames: Vec<&String> = candidates.iter()
-                    .filter(|q| sym_idx.all_symbols_map.get(*q)
-                        .map(|s| s.rel_path == rel_path)
-                        .unwrap_or(false))
+                let same_file_qnames: Vec<&String> = candidates
+                    .iter()
+                    .filter(|q| {
+                        sym_idx
+                            .all_symbols_map
+                            .get(*q)
+                            .map(|s| s.rel_path == rel_path)
+                            .unwrap_or(false)
+                    })
                     .collect();
                 if !same_file_qnames.is_empty() {
                     let qname = same_file_qnames[0];
@@ -726,27 +744,27 @@ fn batch_resolve_and_save_calls_inner(
 
     // 2. 收集 calls_to_insert + call_versions_to_insert
     let mut calls_to_insert: Vec<(
-        i64,           // caller_id
-        String,        // caller_name
-        String,        // caller_module
-        String,        // callee_name
-        String,        // callee_module
-        String,        // callee_qualified
-        String,        // callee_file
-        i64,           // callee_id (resolved)
-        i64,           // call_line
-        i64,           // is_cross_file
+        i64,    // caller_id
+        String, // caller_name
+        String, // caller_module
+        String, // callee_name
+        String, // callee_module
+        String, // callee_qualified
+        String, // callee_file
+        i64,    // callee_id (resolved)
+        i64,    // call_line
+        i64,    // is_cross_file
     )> = Vec::new();
     let mut call_versions_to_insert: Vec<(
-        i64,           // file_version_id
-        String,        // caller_qualified
-        String,        // caller_hash
-        String,        // callee_name
-        String,        // callee_module
-        String,        // callee_qualified
-        String,        // callee_file
-        i64,           // call_line
-        i64,           // is_cross_file
+        i64,    // file_version_id
+        String, // caller_qualified
+        String, // caller_hash
+        String, // callee_name
+        String, // callee_module
+        String, // callee_qualified
+        String, // callee_file
+        i64,    // call_line
+        i64,    // is_cross_file
     )> = Vec::new();
 
     for file_info in file_results {
@@ -778,7 +796,14 @@ fn batch_resolve_and_save_calls_inner(
                     is_cross_file: 0,
                 }
             } else {
-                resolve_call(callee_name, callee_module, rel_path, sym_idx, ext_idx, imports)
+                resolve_call(
+                    callee_name,
+                    callee_module,
+                    rel_path,
+                    sym_idx,
+                    ext_idx,
+                    imports,
+                )
             };
 
             if !resolved.callee_qname.is_empty() {
@@ -815,7 +840,10 @@ fn batch_resolve_and_save_calls_inner(
             } else {
                 String::new()
             };
-            let caller_hash = fn_hash_map.get(&caller_qualified_final).cloned().unwrap_or_default();
+            let caller_hash = fn_hash_map
+                .get(&caller_qualified_final)
+                .cloned()
+                .unwrap_or_default();
 
             // caller_id == 0 → 跳过 calls 表插入（与 Python 一致）
             if caller_id != 0 {
@@ -868,10 +896,8 @@ fn batch_resolve_and_save_calls_inner(
                  (SELECT id FROM symbols WHERE file_instance_id IN ({}))",
                 placeholders
             );
-            let params_iter: Vec<&dyn rusqlite::ToSql> = chunk
-                .iter()
-                .map(|x| x as &dyn rusqlite::ToSql)
-                .collect();
+            let params_iter: Vec<&dyn rusqlite::ToSql> =
+                chunk.iter().map(|x| x as &dyn rusqlite::ToSql).collect();
             let deleted = conn.execute(&sql, params_iter.as_slice())?;
             deleted_total += deleted;
         }
@@ -886,10 +912,13 @@ fn batch_resolve_and_save_calls_inner(
                     call_line, is_cross_file) \
                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)";
         for call in &calls_to_insert {
-            conn.execute(sql, params![
-                call.0, &call.1, &call.2, &call.3, &call.4,
-                &call.5, &call.6, call.7, call.8, call.9,
-            ])?;
+            conn.execute(
+                sql,
+                params![
+                    call.0, &call.1, &call.2, &call.3, &call.4, &call.5, &call.6, call.7, call.8,
+                    call.9,
+                ],
+            )?;
         }
         result.calls_inserted = calls_to_insert.len();
     }
@@ -901,10 +930,10 @@ fn batch_resolve_and_save_calls_inner(
                     callee_module, callee_qualified, callee_file, call_line, is_cross_file) \
                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
         for cv in &call_versions_to_insert {
-            conn.execute(sql, params![
-                cv.0, &cv.1, &cv.2, &cv.3, &cv.4,
-                &cv.5, &cv.6, cv.7, cv.8,
-            ])?;
+            conn.execute(
+                sql,
+                params![cv.0, &cv.1, &cv.2, &cv.3, &cv.4, &cv.5, &cv.6, cv.7, cv.8,],
+            )?;
         }
         result.call_versions_inserted = call_versions_to_insert.len();
     }

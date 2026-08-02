@@ -5,7 +5,7 @@
 //! - method_definition + name="constructor": kind → "constructor"（通过 kind_from_name）
 //! - 新增 new_expression 调用规则：提取 `new User(...)` 构造调用（callee=User）
 
-use crate::multi_lang::{LangConfig, SymbolRule, CallRule, NameStrategy};
+use crate::multi_lang::{CallRule, LangConfig, NameStrategy, SymbolRule};
 use tree_sitter::Language;
 
 pub(crate) fn config() -> LangConfig {
@@ -18,24 +18,37 @@ pub(crate) fn config() -> LangConfig {
             SymbolRule::new(
                 "function_declaration",
                 NameStrategy::ChildByType(vec!["identifier"]),
-                "function", Some("statement_block"), true,
+                "function",
+                Some("statement_block"),
+                true,
             ),
             // P0-C Step 1: method_definition + name="constructor" → kind="constructor"
             SymbolRule::new(
                 "method_definition",
                 NameStrategy::ChildByType(vec!["property_identifier"]),
-                "method", Some("statement_block"), true,
-            ).with_kind_from_name(vec![("constructor", "constructor")]),
+                "method",
+                Some("statement_block"),
+                true,
+            )
+            .with_kind_from_name(vec![("constructor", "constructor")]),
             SymbolRule::new(
                 "class_declaration",
                 NameStrategy::ChildByType(vec!["type_identifier"]),
-                "class", Some("class_body"), false,
+                "class",
+                Some("class_body"),
+                false,
             ),
         ],
         call_rules: vec![
-            CallRule { kind: "call_expression", callee_field: Some("function") },
+            CallRule {
+                kind: "call_expression",
+                callee_field: Some("function"),
+            },
             // P0-C Step 1: new_expression 提取构造调用（new User('Bob') → callee=User）
-            CallRule { kind: "new_expression", callee_field: Some("constructor") },
+            CallRule {
+                kind: "new_expression",
+                callee_field: Some("constructor"),
+            },
         ],
         import_kinds: vec!["import_statement"],
         import_directives: vec![],

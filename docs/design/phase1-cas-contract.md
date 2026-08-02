@@ -2,13 +2,19 @@
 
 > 本文件是全量 Rust 迁移自举计划 Phase 1 第二个功能子任务的 contract 交付物。
 
+> **当前状态说明（2026-08-01）**：本文范围表保留 Phase 1 初始“只读 facade”
+> 快照。当前 `rust_ext/src/cas_write_query.rs` 已提供 Rust 四阶段 publish、
+> `cas_pin` 和 retry，`server/replicator.py` 在新扩展和文件型 SQLite 下默认复用
+> 这些 API；旧扩展、内存库或 `rust_cas_write` rollback 才保留 Python 兼容路径。
+> 当前生产结论以 `docs/design/migration-manifest.md §69` 和源码为准。
+
 ## 1. 范围
 
 | 项 | 说明 |
 |---|---|
-| **目标** | 将 Rust `CasStore` 的**只读查询方法**和 `compute_cas_key_v1` 纯函数通过 PyO3 暴露给 Python，与 Python `db/db_cas.py` 路径建立 ✅(behavioral) 差分 |
-| **Rust 端实现** | 已就绪（`rust_ext/src/daemon/cas.rs`，2280 行，schema 与 Python 100% 对齐），本子任务只补 PyO3 暴露层 |
-| **不在本子任务** | 任何写操作（`publish` / `pin` / `gc` / `file_generation_*` / `merge_cas_to_codegraph`）仍走 Python（AGENTS.md 规则 6：写操作走 CLI/Python） |
+| **目标** | 将 Rust `CasStore` 的查询、纯函数和 CAS publish/pin facade 通过 PyO3 暴露给 Python，并建立行为差分 |
+| **Rust 端实现** | `cas_query.rs` 提供查询 facade，`cas_write_query.rs` 提供 publish/pin/retry facade，底层复用 `daemon/cas.rs` |
+| **兼容边界** | GC、generation 和 merge 的兼容边界仍按各自迁移任务管理；Replicator CAS publish 不再默认使用 Python 事务 |
 
 ## 2. 现状盘点（来自调研）
 

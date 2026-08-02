@@ -2384,6 +2384,106 @@ def test_run_task_completion_review_scope_violation_blocks():
         db.close()
 
 
+def test_scope_check_uses_per_step_files_no_false_positive():
+    """G1 回归：多文件任务（每 step 负责一个文件）不再产生结构性假阳。
+
+    修复前 run_task_completion_review 把任务累计变更（get_task_changed_files）
+    传给 _check_scope_violations，导致审查 step1 时把 step2 的合法文件 b.py
+    误判为 step1（target=a.py）越界 → 错误 block。修复后 scope 检查按 step
+    粒度（change_audit.step_id）取变更文件，step1 只看到自己的 a.py，无假阳。
+    """
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("multi-file-scope", steps=[
+            {"action": "edit", "target_file": "a.py"},
+            {"action": "edit", "target_file": "b.py"},
+        ])
+        # 直接按 step_index 取两个 step id（不通过 task_next_step，避免触发门禁）
+        cur = db.conn.execute(
+            "SELECT id, target_file FROM task_steps "
+            "WHERE task_id = ? ORDER BY step_index",
+            (task_id,),
+        )
+        rows = cur.fetchall()
+        s1_id, s2_id = rows[0]["id"], rows[1]["id"]
+
+        # 每个 step 各自注入与自己 target_file 一致的变更文件（合法操作）
+        # 内联插入并使用显式不同 id，避免 _inject_change_audit 毫秒时间戳撞 id
+        _now = time.time()
+        for cid, sid, fp in (("C-g1fp-1", s1_id, "a.py"), ("C-g1fp-2", s2_id, "b.py")):
+            db.conn.execute(
+                "INSERT INTO change_audit (id, task_id, step_id, file_path, "
+                "hash_before, hash_after, diff, author, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (cid, task_id, sid, fp, "old", "new", "diff", "agent", _now),
+            )
+        db.conn.commit()
+
+        # 任务累计变更包含两个文件（这正是修复前造成假阳的输入）
+        cumulative = set(db.get_task_changed_files(task_id))
+        assert cumulative == {"a.py", "b.py"}
+
+        restore_cg = _mock_run_check_gate(db, findings=[])
+        try:
+            # 审查 step1：scope 只应看到 a.py（== target），不应把 b.py 当越界
+            review = db.run_task_completion_review(task_id, s1_id)
+        finally:
+            restore_cg()
+
+        # 不再产生 scope error → 不 block
+        assert review["counts"]["error"] == 0
+        assert review["decision"] != "block"
+        assert db.task_has_blocking_findings(task_id) is False
+    finally:
+        db.close()
+
+
+def test_scope_check_per_step_genuine_violation_still_blocks():
+    """G1 回归：按 step 粒度收窄后，单 step 的真实越界仍被拦截。
+
+    step1 target=a.py，但 step1 自己的变更文件是 b.py（越界）；step2 target=b.py
+    变更 b.py（合法）。审查 step1 时，scope 检查必须仍能发现 step1 自身的越界
+    （b.py 不在 a.py 范围内）→ error → block。证明修复没有过度收窄而漏掉真阳。
+    """
+    db, _root = _db_with_workspace()
+    try:
+        task_id = db.task_create("per-step-genuine", steps=[
+            {"action": "edit", "target_file": "a.py"},
+            {"action": "edit", "target_file": "b.py"},
+        ])
+        cur = db.conn.execute(
+            "SELECT id FROM task_steps WHERE task_id = ? ORDER BY step_index",
+            (task_id,),
+        )
+        rows = cur.fetchall()
+        s1_id, s2_id = rows[0]["id"], rows[1]["id"]
+
+        # step1 越界：target=a.py 但改了 b.py；step2 合法：target=b.py 改 b.py
+        # 内联插入并使用显式不同 id，避免 _inject_change_audit 毫秒时间戳撞 id
+        _now = time.time()
+        for cid, sid, fp in (("C-g1gv-1", s1_id, "b.py"), ("C-g1gv-2", s2_id, "b.py")):
+            db.conn.execute(
+                "INSERT INTO change_audit (id, task_id, step_id, file_path, "
+                "hash_before, hash_after, diff, author, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (cid, task_id, sid, fp, "old", "new", "diff", "agent", _now),
+            )
+        db.conn.commit()
+
+        restore_cg = _mock_run_check_gate(db, findings=[])
+        try:
+            review = db.run_task_completion_review(task_id, s1_id)
+        finally:
+            restore_cg()
+
+        # step1 自身越界仍是 error → block
+        assert review["counts"]["error"] >= 1
+        assert review["decision"] == "block"
+        assert db.task_has_blocking_findings(task_id) is True
+    finally:
+        db.close()
+
+
 def test_run_task_completion_review_i18n_hardcoded_warns():
     """i18n 硬编码（warn）→ decision=warn（不阻塞）"""
     db, root = _db_with_workspace()

@@ -307,6 +307,51 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("query.callees"))
     }
 
+    fn handle_query_file(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.file"))
+    }
+
+    fn handle_query_symbol_location(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.symbol_location"))
+    }
+
+    fn handle_query_grep(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.grep"))
+    }
+
+    fn handle_query_issues(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.issues"))
+    }
+
+    fn handle_query_tests(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.tests"))
+    }
+
     // ---- 高级查询方法（G7-T4：Python snapshot_manager.py:305-373 对应）----
     // 默认实现返回 method_not_found，由 SnapshotDaemonState 覆盖
 
@@ -631,8 +676,81 @@ pub const ADMIN_ONLY_METHODS: &[&str] = &[
     "toolchain.register",
     "toolchain.delete",
     "toolchain.bind",
-    // Build Context 属于 workspace 资源，由 handler 做 owner ACL。
 ];
+
+/// Protected_Mutation 方法列表（Req 14.6）。
+///
+/// 所有 Protected_Mutation 必须经由 daemon 进程内唯一串行化点（SerializationPoint）应用，
+/// 系统不暴露第二个串行化点。SQLite 写锁仅为事务互斥（Req 14.7），
+/// 授权/ownership/Lease/Independent_Review 判定不依赖 SQLite 锁。
+///
+/// 当前已实现的方法标记为 active；尚未实现的方法（D0 后续任务）预留占位，
+/// dispatch_inner 会返回 method_not_found 直到对应 handler 落地。
+pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
+    // ---- 已实现 ----
+    // Envelope 发布（Snapshot publish = Envelope 物化）
+    "snapshot.publish",
+    // Workspace 文件刷新（写符号图谱）
+    "workspace.file.refresh",
+    // Workspace 恢复（写操作：重建状态）
+    "workspace.recover",
+    // 数据库备份/还原（改变持久化状态）
+    "backup",
+    "restore",
+    // ---- D0 后续任务预留（Req 14.6 列举的 Protected_Mutation 类型）----
+    // verdict 封存
+    "verdict.submit",
+    // Reveal_Event
+    "reveal.submit",
+    // Evidence 追加
+    "evidence.append",
+    // Gate decision
+    "gate.decide",
+    // task_apply / task_close
+    "task.apply",
+    "task.close",
+    // Lease 操作
+    "lease.acquire",
+    "lease.release",
+    "lease.extend",
+];
+
+/// 判断方法是否为 Protected_Mutation（须经串行化点）。
+#[inline]
+pub fn is_protected_mutation(method: &str) -> bool {
+    PROTECTED_MUTATION_METHODS.contains(&method)
+}
+
+/// 生产入口：带串行化点的 dispatch（Req 14.6, 14.14）。
+///
+/// 对 Protected_Mutation 方法，通过 `serialization_point.execute()` 串行执行；
+/// 只读方法和其他非 Protected 写方法直接执行（不经串行化点）。
+///
+/// 超时语义：等待串行化点超时返回 `request_timeout` Structured_Reason，
+/// 不改变任何任务状态（Req 14.14）。
+///
+/// server.rs 的 handle_client_message / handle_windows_client 应调用本函数。
+/// 单元测试可直接调用 `dispatch`（跳过串行化点）。
+pub fn dispatch_rpc<S: DaemonStateExt>(
+    state: &mut S,
+    peer: PeerCredential,
+    method: &str,
+    params: &Value,
+    received_fds: &[i32],
+    serialization_point: &super::serialization::SerializationPoint,
+) -> Value {
+    if is_protected_mutation(method) {
+        // Protected_Mutation 经唯一串行化点（Req 14.6）
+        match serialization_point.execute(|| dispatch_inner(state, peer, method, params, received_fds))
+        {
+            Ok(value) => make_ok_response(value),
+            Err(err) => make_error_response(&err.code, &err.message),
+        }
+    } else {
+        // 非 Protected_Mutation 直接执行
+        dispatch(state, peer, method, params, received_fds)
+    }
+}
 
 /// 返回 daemon 进程自己的 uid（Unix: getuid；Windows: 与测试 current_uid() 一致）
 ///
@@ -719,6 +837,11 @@ fn dispatch_inner<S: DaemonStateExt>(
         "query.search" => state.handle_query_search(peer, params),
         "query.callers" => state.handle_query_callers(peer, params),
         "query.callees" => state.handle_query_callees(peer, params),
+        "query.file" => state.handle_query_file(peer, params),
+        "query.symbol_location" => state.handle_query_symbol_location(peer, params),
+        "query.grep" => state.handle_query_grep(peer, params),
+        "query.issues" => state.handle_query_issues(peer, params),
+        "query.tests" => state.handle_query_tests(peer, params),
 
         // ---- 高级查询方法（G7-T4 实现）----
         "query.call_chain_down" => state.handle_query_call_chain_down(peer, params),
@@ -1160,8 +1283,9 @@ mod tests {
         let peer = make_peer(); // 非管理员
 
         // 只读方法应正常路由（不会被 permission_denied 拦截）
-        // 注意：mount.list 自 P0-2 整改起改为 admin-only（暴露全局 host_path），
-        // 不再属于只读方法集，已从此列表移除。
+        // 注意：mount.list 是 admin-only，因为它会暴露全局路径；
+        // build_context.* 属于 workspace 资源，由 handler 做 owner ACL，
+        // 不能把 workspace 权限误化成全局管理员权限。
         for method in &[
             "workspace.list",
             "workspace.status",
@@ -1170,9 +1294,6 @@ mod tests {
             "toolchain.list_bound",
             "build_context.list",
             "build_context.get",
-            "build_context.register",
-            "build_context.set_active",
-            "build_context.delete",
             "resolved_edges.replace",
             "query.stats",
             "query.symbol",
@@ -1262,6 +1383,11 @@ mod tests {
             "query.search",
             "query.callers",
             "query.callees",
+            "query.file",
+            "query.symbol_location",
+            "query.grep",
+            "query.issues",
+            "query.tests",
             "backup",
             "restore",
         ];
@@ -1323,5 +1449,97 @@ mod tests {
             response["result"]["peer_uid"],
             current_daemon_uid().wrapping_add(1)
         );
+    }
+
+    // ---- Protected_Mutation 串行化路由测试（Req 14.6, 14.14）----
+
+    #[test]
+    fn test_is_protected_mutation_classification() {
+        // Protected_Mutation 方法
+        assert!(is_protected_mutation("snapshot.publish"));
+        assert!(is_protected_mutation("workspace.file.refresh"));
+        assert!(is_protected_mutation("workspace.recover"));
+        assert!(is_protected_mutation("backup"));
+        assert!(is_protected_mutation("restore"));
+        assert!(is_protected_mutation("verdict.submit"));
+        assert!(is_protected_mutation("task.apply"));
+        assert!(is_protected_mutation("lease.acquire"));
+
+        // 非 Protected_Mutation 方法
+        assert!(!is_protected_mutation("ping"));
+        assert!(!is_protected_mutation("health"));
+        assert!(!is_protected_mutation("workspace.list"));
+        assert!(!is_protected_mutation("workspace.register"));
+        assert!(!is_protected_mutation("query.stats"));
+        assert!(!is_protected_mutation("query.callers"));
+        assert!(!is_protected_mutation("snapshot.stats"));
+        assert!(!is_protected_mutation("nonexistent.method"));
+    }
+
+    #[test]
+    fn test_dispatch_rpc_protected_mutation_through_serialization() {
+        use crate::daemon::serialization::SerializationPoint;
+
+        let mut state = DaemonState::default();
+        let peer = make_peer();
+        let sp = SerializationPoint::with_default_timeout();
+
+        // snapshot.publish 是 Protected_Mutation，经串行化点执行
+        // 默认 DaemonState 返回 method_not_found（handler 未实现），但路由正确
+        let params = json!({"workspace_id": "ws-test"});
+        let response = dispatch_rpc(&mut state, peer, "snapshot.publish", &params, &[], &sp);
+        // 应该得到响应（ok=false + method_not_found 或 ok=true，取决于 handler）
+        assert!(response.get("ok").is_some());
+
+        // 串行化点应已释放（try_acquire 成功）
+        assert!(sp.try_acquire());
+        sp.release();
+    }
+
+    #[test]
+    fn test_dispatch_rpc_non_protected_bypasses_serialization() {
+        use crate::daemon::serialization::SerializationPoint;
+
+        let mut state = DaemonState::default();
+        let peer = make_peer();
+        let sp = SerializationPoint::with_default_timeout();
+
+        // ping 不是 Protected_Mutation，直接执行
+        let params = json!({});
+        let response = dispatch_rpc(&mut state, peer, "ping", &params, &[], &sp);
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["status"], "ok");
+    }
+
+    #[test]
+    fn test_dispatch_rpc_timeout_returns_structured_reason() {
+        use crate::daemon::serialization::SerializationPoint;
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        let sp = Arc::new(SerializationPoint::new(Duration::from_millis(50)));
+
+        // 占住串行化点
+        sp.try_acquire();
+
+        // 在另一个线程通过 dispatch_rpc 调用 Protected_Mutation
+        let sp2 = Arc::clone(&sp);
+        let handle = std::thread::spawn(move || {
+            let mut state = DaemonState::default();
+            let peer = PeerCredential {
+                uid: 1000,
+                gid: 1000,
+                pid: 1,
+            };
+            let params = json!({});
+            dispatch_rpc(&mut state, peer, "backup", &params, &[], &sp2)
+        });
+
+        let response = handle.join().unwrap();
+        // 超时应返回 request_timeout 错误
+        assert_eq!(response["ok"], false);
+        assert_eq!(response["error"]["code"], "request_timeout");
+
+        sp.release();
     }
 }

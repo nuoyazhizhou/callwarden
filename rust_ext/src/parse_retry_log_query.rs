@@ -27,15 +27,14 @@
 //! 设计参考：docs/design/migration-manifest.md §2.2（daemon/parse_retry_log.rs 已实现未暴露）
 
 use crate::daemon::parse_retry_log::{ParseFailureEntry, ParseRetryLog};
-use pyo3::prelude::*;
 use pyo3::exceptions::{PyIOError, PyValueError};
+use pyo3::prelude::*;
 use serde_json;
 
 /// 打开 ParseRetryLog，失败时返回 PyIOError
 fn open_log(log_path: &str) -> PyResult<ParseRetryLog> {
-    ParseRetryLog::new(log_path).map_err(|e| {
-        PyIOError::new_err(format!("open parse retry log failed: {}", e))
-    })
+    ParseRetryLog::new(log_path)
+        .map_err(|e| PyIOError::new_err(format!("open parse retry log failed: {}", e)))
 }
 
 /// 追加一条 parse 失败 entry，返回分配的 LSN
@@ -54,13 +53,11 @@ fn open_log(log_path: &str) -> PyResult<ParseRetryLog> {
 /// 分配的 LSN（i64）
 #[pyfunction]
 pub fn parse_retry_log_append(log_path: &str, entry_json: &str) -> PyResult<i64> {
-    let mut entry: ParseFailureEntry = serde_json::from_str(entry_json).map_err(|e| {
-        PyValueError::new_err(format!("invalid entry JSON: {}", e))
-    })?;
+    let mut entry: ParseFailureEntry = serde_json::from_str(entry_json)
+        .map_err(|e| PyValueError::new_err(format!("invalid entry JSON: {}", e)))?;
     let log = open_log(log_path)?;
-    log.append(&mut entry).map_err(|e| {
-        PyIOError::new_err(format!("append failed: {}", e))
-    })?;
+    log.append(&mut entry)
+        .map_err(|e| PyIOError::new_err(format!("append failed: {}", e)))?;
     Ok(entry.lsn)
 }
 
@@ -76,12 +73,11 @@ pub fn parse_retry_log_append(log_path: &str, entry_json: &str) -> PyResult<i64>
 #[pyfunction]
 pub fn parse_retry_log_read(log_path: &str, since_lsn: i64) -> PyResult<String> {
     let log = open_log(log_path)?;
-    let entries = log.read(since_lsn).map_err(|e| {
-        PyIOError::new_err(format!("read failed: {}", e))
-    })?;
-    serde_json::to_string(&entries).map_err(|e| {
-        PyValueError::new_err(format!("serialize entries failed: {}", e))
-    })
+    let entries = log
+        .read(since_lsn)
+        .map_err(|e| PyIOError::new_err(format!("read failed: {}", e)))?;
+    serde_json::to_string(&entries)
+        .map_err(|e| PyValueError::new_err(format!("serialize entries failed: {}", e)))
 }
 
 /// 读取所有 status=pending 的 entries（供 daemon 重启重放）
@@ -93,12 +89,11 @@ pub fn parse_retry_log_read(log_path: &str, since_lsn: i64) -> PyResult<String> 
 #[pyfunction]
 pub fn parse_retry_log_read_pending(log_path: &str) -> PyResult<String> {
     let log = open_log(log_path)?;
-    let entries = log.read_pending().map_err(|e| {
-        PyIOError::new_err(format!("read_pending failed: {}", e))
-    })?;
-    serde_json::to_string(&entries).map_err(|e| {
-        PyValueError::new_err(format!("serialize entries failed: {}", e))
-    })
+    let entries = log
+        .read_pending()
+        .map_err(|e| PyIOError::new_err(format!("read_pending failed: {}", e)))?;
+    serde_json::to_string(&entries)
+        .map_err(|e| PyValueError::new_err(format!("serialize entries failed: {}", e)))
 }
 
 /// 读取所有可重试 entries（pending + allows_retry + retry_count < max_retry）
@@ -115,12 +110,11 @@ pub fn parse_retry_log_read_pending(log_path: &str) -> PyResult<String> {
 #[pyfunction]
 pub fn parse_retry_log_read_retryable(log_path: &str, max_retry: u32) -> PyResult<String> {
     let log = open_log(log_path)?;
-    let entries = log.read_retryable(max_retry).map_err(|e| {
-        PyIOError::new_err(format!("read_retryable failed: {}", e))
-    })?;
-    serde_json::to_string(&entries).map_err(|e| {
-        PyValueError::new_err(format!("serialize entries failed: {}", e))
-    })
+    let entries = log
+        .read_retryable(max_retry)
+        .map_err(|e| PyIOError::new_err(format!("read_retryable failed: {}", e)))?;
+    serde_json::to_string(&entries)
+        .map_err(|e| PyValueError::new_err(format!("serialize entries failed: {}", e)))
 }
 
 /// 标记指定 LSN 的 entry 为 applied（重试成功）
@@ -131,9 +125,8 @@ pub fn parse_retry_log_read_retryable(log_path: &str, max_retry: u32) -> PyResul
 #[pyfunction]
 pub fn parse_retry_log_mark_applied(log_path: &str, lsn: i64) -> PyResult<bool> {
     let log = open_log(log_path)?;
-    log.mark_applied(lsn).map_err(|e| {
-        PyIOError::new_err(format!("mark_applied failed: {}", e))
-    })?;
+    log.mark_applied(lsn)
+        .map_err(|e| PyIOError::new_err(format!("mark_applied failed: {}", e)))?;
     Ok(true)
 }
 
@@ -143,9 +136,8 @@ pub fn parse_retry_log_mark_applied(log_path: &str, lsn: i64) -> PyResult<bool> 
 #[pyfunction]
 pub fn parse_retry_log_mark_exhausted(log_path: &str, lsn: i64) -> PyResult<bool> {
     let log = open_log(log_path)?;
-    log.mark_exhausted(lsn).map_err(|e| {
-        PyIOError::new_err(format!("mark_exhausted failed: {}", e))
-    })?;
+    log.mark_exhausted(lsn)
+        .map_err(|e| PyIOError::new_err(format!("mark_exhausted failed: {}", e)))?;
     Ok(true)
 }
 
@@ -158,9 +150,8 @@ pub fn parse_retry_log_mark_exhausted(log_path: &str, lsn: i64) -> PyResult<bool
 #[pyfunction]
 pub fn parse_retry_log_increment_retry(log_path: &str, lsn: i64) -> PyResult<bool> {
     let log = open_log(log_path)?;
-    log.increment_retry(lsn).map_err(|e| {
-        PyIOError::new_err(format!("increment_retry failed: {}", e))
-    })?;
+    log.increment_retry(lsn)
+        .map_err(|e| PyIOError::new_err(format!("increment_retry failed: {}", e)))?;
     Ok(true)
 }
 
@@ -175,9 +166,8 @@ pub fn parse_retry_log_increment_retry(log_path: &str, lsn: i64) -> PyResult<boo
 #[pyfunction]
 pub fn parse_retry_log_compact(log_path: &str) -> PyResult<usize> {
     let log = open_log(log_path)?;
-    log.compact().map_err(|e| {
-        PyIOError::new_err(format!("compact failed: {}", e))
-    })
+    log.compact()
+        .map_err(|e| PyIOError::new_err(format!("compact failed: {}", e)))
 }
 
 /// 获取下一个 LSN（不追加 entry）
@@ -231,7 +221,8 @@ mod tests {
             "retry_count": 0,
             "last_retry_at": null,
             "status": if allows_retry { "pending" } else { "permanent" }
-        }).to_string()
+        })
+        .to_string()
     }
 
     #[test]
@@ -318,7 +309,8 @@ mod tests {
         let path_str = log_path.to_str().unwrap();
 
         let lsn1 = parse_retry_log_append(path_str, &make_entry_json("ws1", "a.rs", true)).unwrap();
-        let _lsn2 = parse_retry_log_append(path_str, &make_entry_json("ws1", "b.rs", true)).unwrap();
+        let _lsn2 =
+            parse_retry_log_append(path_str, &make_entry_json("ws1", "b.rs", true)).unwrap();
 
         // 标记 lsn1 为 applied
         parse_retry_log_mark_applied(path_str, lsn1).unwrap();
@@ -378,9 +370,11 @@ mod tests {
         let path_str = log_path.to_str().unwrap();
 
         let lsn1 = parse_retry_log_append(path_str, &make_entry_json("ws1", "a.rs", true)).unwrap();
-        let _lsn2 = parse_retry_log_append(path_str, &make_entry_json("ws1", "b.rs", true)).unwrap();
+        let _lsn2 =
+            parse_retry_log_append(path_str, &make_entry_json("ws1", "b.rs", true)).unwrap();
         // allows_retry=false → status=permanent
-        let _lsn3 = parse_retry_log_append(path_str, &make_entry_json("ws1", "c.rs", false)).unwrap();
+        let _lsn3 =
+            parse_retry_log_append(path_str, &make_entry_json("ws1", "c.rs", false)).unwrap();
 
         // 标记 lsn1 为 applied
         parse_retry_log_mark_applied(path_str, lsn1).unwrap();

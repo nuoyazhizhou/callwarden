@@ -207,39 +207,37 @@ impl HealthChecker {
         }
 
         match Connection::open(db_path) {
-            Ok(conn) => {
-                match conn.prepare("SELECT name FROM sqlite_master WHERE type='table'") {
-                    Ok(mut stmt) => {
-                        let tables: Vec<String> = stmt
-                            .query_map([], |row| row.get::<_, String>(0))
-                            .ok()
-                            .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                            .unwrap_or_default();
+            Ok(conn) => match conn.prepare("SELECT name FROM sqlite_master WHERE type='table'") {
+                Ok(mut stmt) => {
+                    let tables: Vec<String> = stmt
+                        .query_map([], |row| row.get::<_, String>(0))
+                        .ok()
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                        .unwrap_or_default();
 
-                        if !tables.iter().any(|t| t == "daemon_workspaces") {
-                            return json!({
-                                "name": "db_registry",
-                                "status": "degraded",
-                                "message": "daemon_workspaces table missing",
-                                "details": {"tables": tables},
-                            });
-                        }
-
-                        json!({
+                    if !tables.iter().any(|t| t == "daemon_workspaces") {
+                        return json!({
                             "name": "db_registry",
-                            "status": "healthy",
-                            "message": format!("OK ({} tables)", tables.len()),
+                            "status": "degraded",
+                            "message": "daemon_workspaces table missing",
                             "details": {"tables": tables},
-                        })
+                        });
                     }
-                    Err(e) => json!({
+
+                    json!({
                         "name": "db_registry",
-                        "status": "unhealthy",
-                        "message": format!("DB query error: {}", e),
-                        "details": {},
-                    }),
+                        "status": "healthy",
+                        "message": format!("OK ({} tables)", tables.len()),
+                        "details": {"tables": tables},
+                    })
                 }
-            }
+                Err(e) => json!({
+                    "name": "db_registry",
+                    "status": "unhealthy",
+                    "message": format!("DB query error: {}", e),
+                    "details": {},
+                }),
+            },
             Err(e) => json!({
                 "name": "db_registry",
                 "status": "unhealthy",
@@ -282,7 +280,11 @@ impl HealthChecker {
         } else {
             (
                 "healthy",
-                format!("{} MB free ({:.1}% used)", free / (1024 * 1024), used_percent),
+                format!(
+                    "{} MB free ({:.1}% used)",
+                    free / (1024 * 1024),
+                    used_percent
+                ),
             )
         };
 
@@ -618,12 +620,7 @@ pub fn check_all_py(
     let start_time = Instant::now()
         .checked_sub(Duration::from_secs_f64(uptime_secs))
         .unwrap_or_else(Instant::now);
-    let config = build_health_config(
-        registry_db_path,
-        data_root,
-        start_time,
-        memory_max_bytes,
-    );
+    let config = build_health_config(registry_db_path, data_root, start_time, memory_max_bytes);
     let checker = HealthChecker::new(config);
     checker.check_all().to_string()
 }
@@ -677,16 +674,10 @@ mod tests {
         let checks = vec![json!({"status": "healthy"})];
         assert_eq!(HealthStatus::from_checks(&checks), HealthStatus::Healthy);
 
-        let checks = vec![
-            json!({"status": "healthy"}),
-            json!({"status": "degraded"}),
-        ];
+        let checks = vec![json!({"status": "healthy"}), json!({"status": "degraded"})];
         assert_eq!(HealthStatus::from_checks(&checks), HealthStatus::Degraded);
 
-        let checks = vec![
-            json!({"status": "healthy"}),
-            json!({"status": "unhealthy"}),
-        ];
+        let checks = vec![json!({"status": "healthy"}), json!({"status": "unhealthy"})];
         assert_eq!(HealthStatus::from_checks(&checks), HealthStatus::Unhealthy);
 
         let checks: Vec<Value> = vec![];
@@ -720,7 +711,10 @@ mod tests {
             .iter()
             .map(|c| c["name"].as_str().unwrap())
             .collect();
-        assert_eq!(check_names, vec!["db_registry", "disk_space", "memory_usage", "uptime"]);
+        assert_eq!(
+            check_names,
+            vec!["db_registry", "disk_space", "memory_usage", "uptime"]
+        );
     }
 
     #[test]
@@ -776,7 +770,10 @@ mod tests {
         let checker = HealthChecker::new(config);
         let result = checker.check_db_registry();
         assert_eq!(result["status"], "degraded");
-        assert!(result["message"].as_str().unwrap().contains("daemon_workspaces"));
+        assert!(result["message"]
+            .as_str()
+            .unwrap()
+            .contains("daemon_workspaces"));
     }
 
     #[test]

@@ -401,7 +401,10 @@ impl Default for ReplayConfig {
 /// # 参数
 /// - `log`：parse retry log
 /// - `config`：重放策略
-pub fn replay_pending(log: &ParseRetryLog, config: &ReplayConfig) -> std::io::Result<Vec<ParseFailureEntry>> {
+pub fn replay_pending(
+    log: &ParseRetryLog,
+    config: &ReplayConfig,
+) -> std::io::Result<Vec<ParseFailureEntry>> {
     log.read_retryable(config.max_retry)
 }
 
@@ -428,16 +431,30 @@ mod tests {
         let path = temp_log_path("append_read");
         let log = ParseRetryLog::new(&path).unwrap();
         let mut e1 = ParseFailureEntry::new(
-            "ws1", "src/main.rs", "/repo/src/main.rs", "1:5", "rust",
-            "failed", "parse_failed", "test error", true,
+            "ws1",
+            "src/main.rs",
+            "/repo/src/main.rs",
+            "1:5",
+            "rust",
+            "failed",
+            "parse_failed",
+            "test error",
+            true,
         );
         let lsn1 = log.append(&mut e1).unwrap();
         assert_eq!(lsn1, 1);
         assert!(e1.timestamp > 0.0);
 
         let mut e2 = ParseFailureEntry::new(
-            "ws1", "src/lib.rs", "/repo/src/lib.rs", "1:6", "rust",
-            "failed", "parse_failed", "test error 2", true,
+            "ws1",
+            "src/lib.rs",
+            "/repo/src/lib.rs",
+            "1:6",
+            "rust",
+            "failed",
+            "parse_failed",
+            "test error 2",
+            true,
         );
         let lsn2 = log.append(&mut e2).unwrap();
         assert_eq!(lsn2, 2);
@@ -455,14 +472,28 @@ mod tests {
         let path = temp_log_log("pending");
         let log = ParseRetryLog::new(&path).unwrap();
         let mut e1 = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         log.append(&mut e1).unwrap();
 
         let mut e2 = ParseFailureEntry::new(
-            "ws1", "b.rs", "/b.rs", "1:2", "rust",
-            "unsupported", "unsupported_language", "no lang", false,
+            "ws1",
+            "b.rs",
+            "/b.rs",
+            "1:2",
+            "rust",
+            "unsupported",
+            "unsupported_language",
+            "no lang",
+            false,
         );
         log.append(&mut e2).unwrap();
 
@@ -486,9 +517,15 @@ mod tests {
         // 3 个 pending + allows_retry entries
         for i in 0..3 {
             let mut e = ParseFailureEntry::new(
-                "ws1", &format!("f{}.rs", i), &format!("/f{}.rs", i),
-                &format!("1:{}", i), "rust",
-                "failed", "parse_failed", "err", true,
+                "ws1",
+                &format!("f{}.rs", i),
+                &format!("/f{}.rs", i),
+                &format!("1:{}", i),
+                "rust",
+                "failed",
+                "parse_failed",
+                "err",
+                true,
             );
             log.append(&mut e).unwrap();
         }
@@ -511,8 +548,15 @@ mod tests {
         let path = temp_log_path("applied");
         let log = ParseRetryLog::new(&path).unwrap();
         let mut e = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let lsn = log.append(&mut e).unwrap();
 
@@ -528,8 +572,15 @@ mod tests {
         let path = temp_log_path("exhausted");
         let log = ParseRetryLog::new(&path).unwrap();
         let mut e = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let lsn = log.append(&mut e).unwrap();
 
@@ -545,8 +596,15 @@ mod tests {
         let path = temp_log_path("increment");
         let log = ParseRetryLog::new(&path).unwrap();
         let mut e = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let lsn = log.append(&mut e).unwrap();
         assert_eq!(e.retry_count, 0);
@@ -566,20 +624,41 @@ mod tests {
 
         // 添加 3 个 entries
         let mut e1 = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let lsn1 = log.append(&mut e1).unwrap();
 
         let mut e2 = ParseFailureEntry::new(
-            "ws1", "b.rs", "/b.rs", "1:2", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "b.rs",
+            "/b.rs",
+            "1:2",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let lsn2 = log.append(&mut e2).unwrap();
 
         let mut e3 = ParseFailureEntry::new(
-            "ws1", "c.rs", "/c.rs", "1:3", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "c.rs",
+            "/c.rs",
+            "1:3",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let _lsn3 = log.append(&mut e3).unwrap();
 
@@ -602,8 +681,15 @@ mod tests {
         let path = temp_log_path("recover");
         let log1 = ParseRetryLog::new(&path).unwrap();
         let mut e = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let lsn = log1.append(&mut e).unwrap();
         assert_eq!(lsn, 1);
@@ -611,8 +697,15 @@ mod tests {
         // 重新打开，next_lsn 应该恢复为 2
         let log2 = ParseRetryLog::new(&path).unwrap();
         let mut e2 = ParseFailureEntry::new(
-            "ws1", "b.rs", "/b.rs", "1:2", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "b.rs",
+            "/b.rs",
+            "1:2",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         let lsn2 = log2.append(&mut e2).unwrap();
         assert_eq!(lsn2, 2);
@@ -627,14 +720,28 @@ mod tests {
 
         // 添加 1 个可重试 + 1 个不可重试
         let mut e1 = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         log.append(&mut e1).unwrap();
 
         let mut e2 = ParseFailureEntry::new(
-            "ws1", "b.rs", "/b.rs", "1:2", "rust",
-            "unsupported", "unsupported_language", "no lang", false,
+            "ws1",
+            "b.rs",
+            "/b.rs",
+            "1:2",
+            "rust",
+            "unsupported",
+            "unsupported_language",
+            "no lang",
+            false,
         );
         log.append(&mut e2).unwrap();
 
@@ -649,8 +756,15 @@ mod tests {
     #[test]
     fn test_is_retryable() {
         let mut e = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "failed", "parse_failed", "err", true,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "failed",
+            "parse_failed",
+            "err",
+            true,
         );
         assert!(e.is_retryable(3));
 
@@ -669,9 +783,19 @@ mod tests {
     #[test]
     fn test_permanent_status_for_non_retryable() {
         let e = ParseFailureEntry::new(
-            "ws1", "a.rs", "/a.rs", "1:1", "rust",
-            "unsupported", "unsupported_language", "no lang", false,
+            "ws1",
+            "a.rs",
+            "/a.rs",
+            "1:1",
+            "rust",
+            "unsupported",
+            "unsupported_language",
+            "no lang",
+            false,
         );
-        assert_eq!(e.status, "permanent", "allows_retry=false 时初始 status 应为 permanent");
+        assert_eq!(
+            e.status, "permanent",
+            "allows_retry=false 时初始 status 应为 permanent"
+        );
     }
 }

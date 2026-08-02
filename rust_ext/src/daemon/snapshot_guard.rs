@@ -243,10 +243,7 @@ pub fn evaluate_generation_protection(
     if is_dirty_overlay(abs_path, rel_path) {
         return FailureProtectionResult {
             blocked: true,
-            reason: format!(
-                "dirty overlay rejected (设计 §9.3): rel_path={}",
-                rel_path
-            ),
+            reason: format!("dirty overlay rejected (设计 §9.3): rel_path={}", rel_path),
             cas_state: cas_state.to_string(),
             parse_status: ParseStatus::Stale.as_str().to_string(),
             dirty_overlay: true,
@@ -259,10 +256,7 @@ pub fn evaluate_generation_protection(
         return FailureProtectionResult::blocked(
             cas_state,
             ParseStatus::Failed,
-            format!(
-                "parse failure (设计 §5.3 failed): cas_state={}",
-                cas_state
-            ),
+            format!("parse failure (设计 §5.3 failed): cas_state={}", cas_state),
         );
     }
 
@@ -428,10 +422,7 @@ mod tests {
     #[test]
     fn test_is_dirty_overlay_clean_paths() {
         assert!(!is_dirty_overlay("/repo/src/main.rs", "src/main.rs"));
-        assert!(!is_dirty_overlay(
-            "C:\\repo\\lib\\foo.py",
-            "lib/foo.py"
-        ));
+        assert!(!is_dirty_overlay("C:\\repo\\lib\\foo.py", "lib/foo.py"));
         assert!(!is_dirty_overlay("/repo/README.md", "README.md"));
     }
 
@@ -439,7 +430,8 @@ mod tests {
 
     #[test]
     fn test_evaluate_protection_success() {
-        let r = evaluate_generation_protection("ready_published", "/repo/src/main.rs", "src/main.rs");
+        let r =
+            evaluate_generation_protection("ready_published", "/repo/src/main.rs", "src/main.rs");
         assert!(!r.blocked);
         assert_eq!(r.parse_status, "ok");
         assert!(!r.dirty_overlay);
@@ -468,11 +460,8 @@ mod tests {
 
     #[test]
     fn test_evaluate_protection_stale() {
-        let r = evaluate_generation_protection(
-            "stale_seq_dropped",
-            "/repo/src/main.rs",
-            "src/main.rs",
-        );
+        let r =
+            evaluate_generation_protection("stale_seq_dropped", "/repo/src/main.rs", "src/main.rs");
         assert!(r.blocked);
         assert_eq!(r.parse_status, "stale");
         assert!(!r.allows_retry, "stale 状态不应允许重试");
@@ -480,11 +469,8 @@ mod tests {
 
     #[test]
     fn test_evaluate_protection_dirty_overlay() {
-        let r = evaluate_generation_protection(
-            "ready_published",
-            "/repo/.git/config",
-            ".git/config",
-        );
+        let r =
+            evaluate_generation_protection("ready_published", "/repo/.git/config", ".git/config");
         assert!(r.blocked);
         assert_eq!(r.parse_status, "stale");
         assert!(r.dirty_overlay);
@@ -531,11 +517,8 @@ mod tests {
 
     #[test]
     fn test_evaluate_protection_partial_published() {
-        let r = evaluate_generation_protection(
-            "partial_published",
-            "/repo/src/main.rs",
-            "src/main.rs",
-        );
+        let r =
+            evaluate_generation_protection("partial_published", "/repo/src/main.rs", "src/main.rs");
         assert!(r.blocked, "partial 应阻止替换 snapshot");
         assert_eq!(r.parse_status, "partial");
         assert!(!r.allows_retry, "partial 不重试（等下次文件变化）");

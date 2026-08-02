@@ -66,8 +66,7 @@ const F_SEAL_WRITE: libc::c_int = 0x0008;
 
 /// memfd 必须包含的 seals 集合（与 Python validate_memfd_fd 一致）
 #[cfg(target_os = "linux")]
-const REQUIRED_SEALS: libc::c_int =
-    F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE;
+const REQUIRED_SEALS: libc::c_int = F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE;
 
 /// FD 读取错误
 #[derive(Debug)]
@@ -78,10 +77,7 @@ pub enum FdReadError {
     NotRegularFile(u32),
     /// owner UID 不匹配（P1-3 新增）
     /// peer 传递不属于自己 UID 的 FD，绕过文件系统 ACL
-    OwnerMismatch {
-        fd_uid: u32,
-        peer_uid: u32,
-    },
+    OwnerMismatch { fd_uid: u32, peer_uid: u32 },
     /// memfd seals 校验失败（P1-3 新增，仅 Linux）
     /// seals 缺失或不足，daemon 可能被 lseek+write 篡改内容
     SealsInsufficient {
@@ -182,9 +178,7 @@ fn verify_memfd_seals(fd: RawFd) -> Result<bool, FdReadError> {
         let err = io::Error::last_os_error();
         // EINVAL/ENOTTY: 非 memfd（普通文件），跳过 seals 校验
         // EINVAL 在 Linux 上表示 FD 不支持 seals（普通文件）
-        if err.raw_os_error() == Some(libc::EINVAL)
-            || err.raw_os_error() == Some(libc::ENOTTY)
-        {
+        if err.raw_os_error() == Some(libc::EINVAL) || err.raw_os_error() == Some(libc::ENOTTY) {
             return Ok(false);
         }
         // 其他错误（EBADF 等）视为校验失败
@@ -366,12 +360,8 @@ mod tests {
         // 用 dup 复制 FD（避免 from_raw_fd 关闭原 FD）
         let cloned_fd = dup_tempfile_fd(&tmp);
 
-        let result = read_from_fd_with_validation(
-            cloned_fd,
-            DEFAULT_MAX_FD_READ_BYTES,
-            None,
-            current_uid(),
-        );
+        let result =
+            read_from_fd_with_validation(cloned_fd, DEFAULT_MAX_FD_READ_BYTES, None, current_uid());
         assert!(result.is_ok(), "read failed: {:?}", result.err());
         let buf = result.unwrap();
         assert_eq!(buf, b"hello world");
@@ -460,12 +450,8 @@ mod tests {
         // 关闭写端（避免读端阻塞）
         unsafe { libc::close(write_fd) };
 
-        let result = read_from_fd_with_validation(
-            read_fd,
-            DEFAULT_MAX_FD_READ_BYTES,
-            None,
-            current_uid(),
-        );
+        let result =
+            read_from_fd_with_validation(read_fd, DEFAULT_MAX_FD_READ_BYTES, None, current_uid());
         match result {
             Err(FdReadError::NotRegularFile(_)) => {}
             other => {
@@ -481,12 +467,8 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let cloned_fd = dup_tempfile_fd(&tmp);
 
-        let result = read_from_fd_with_validation(
-            cloned_fd,
-            DEFAULT_MAX_FD_READ_BYTES,
-            None,
-            current_uid(),
-        );
+        let result =
+            read_from_fd_with_validation(cloned_fd, DEFAULT_MAX_FD_READ_BYTES, None, current_uid());
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 0);
     }
@@ -511,12 +493,8 @@ mod tests {
             current_uid() + 1
         };
 
-        let result = read_from_fd_with_validation(
-            cloned_fd,
-            DEFAULT_MAX_FD_READ_BYTES,
-            None,
-            fake_peer_uid,
-        );
+        let result =
+            read_from_fd_with_validation(cloned_fd, DEFAULT_MAX_FD_READ_BYTES, None, fake_peer_uid);
         match result {
             Err(FdReadError::OwnerMismatch { fd_uid, peer_uid }) => {
                 assert_eq!(peer_uid, fake_peer_uid);
@@ -537,7 +515,11 @@ mod tests {
 
         // peer_uid=0 表示 root，应跳过 owner 校验
         let result = read_from_fd_with_validation(cloned_fd, DEFAULT_MAX_FD_READ_BYTES, None, 0);
-        assert!(result.is_ok(), "root peer should bypass owner check: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "root peer should bypass owner check: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), b"root readable");
     }
 
@@ -575,7 +557,11 @@ mod tests {
                     F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE,
                 )
             };
-            assert!(ret >= 0, "F_ADD_SEALS failed: {}", io::Error::last_os_error());
+            assert!(
+                ret >= 0,
+                "F_ADD_SEALS failed: {}",
+                io::Error::last_os_error()
+            );
             std::mem::forget(file); // 不让 file drop 关闭 fd
         }
 
@@ -585,12 +571,8 @@ mod tests {
         assert_eq!(result.unwrap(), true); // 是 memfd 且 seals 通过
 
         // 用 read_from_fd_with_validation 完整校验
-        let result = read_from_fd_with_validation(
-            fd,
-            DEFAULT_MAX_FD_READ_BYTES,
-            None,
-            current_uid(),
-        );
+        let result =
+            read_from_fd_with_validation(fd, DEFAULT_MAX_FD_READ_BYTES, None, current_uid());
         assert!(result.is_ok(), "read memfd failed: {:?}", result.err());
         assert_eq!(result.unwrap(), b"test memfd content");
 
@@ -609,7 +591,11 @@ mod tests {
 
         // 普通文件 F_GET_SEALS 返回 EINVAL，verify_memfd_seals 应返回 Ok(false)
         let result = verify_memfd_seals(cloned_fd);
-        assert!(result.is_ok(), "regular file should skip seals: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "regular file should skip seals: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), false);
 
         // 关闭 cloned_fd

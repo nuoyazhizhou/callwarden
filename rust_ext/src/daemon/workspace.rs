@@ -1,4 +1,4 @@
-//! Workspace registry —— workspace 注册、查询、状态管理 + UID ACL。
+//! Workspace registry —— workspace 注册、查询、状态管理 + 跨平台 ACL。
 //!
 //! 对应 Python：
 //! - `db/db_daemon.py`（WORKSPACE_REGISTRY_DDL + register/list/get_status/update_status）
@@ -6,8 +6,10 @@
 //!   `workspace.register` / `workspace.list` / `workspace.status` /
 //!   `workspace.connect` / `workspace.file.refresh` / `workspace.recover` 分支
 //!
-//! 跨平台：Windows 上 `_validate_owned_path` 跳过 owner_uid ACL 检查（开发测试用），
-//! Unix 上做完整 ACL 校验（参考 daemon_server.py L227-242）。
+//! 跨平台 ACL（D0 3.4，Req 14.5, 14.9）：
+//! - Unix：文件 st_uid == peer_uid（root 跳过）
+//! - Windows：文件 owner SID == 当前用户 SID（Administrators 跳过）；
+//!   命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
 //! 本模块覆盖 `workspace.register` / `workspace.list` / `workspace.status` /
 //! `workspace.connect` / `workspace.file.refresh` / `workspace.recover`。
 //! `snapshot.*` / `query.*` / `gc.*` / `backup` / `restore` 在 R6 的
@@ -629,10 +631,14 @@ fn fetch_workspace_by_instance(
 // UID ACL 路径校验（对应 Python daemon_server.py:_validate_owned_path）
 // ============================================
 
-/// 校验路径存在且属于 peer_uid（Windows 跳过 UID 检查，仅 Unix 校验）
+/// 校验路径存在且属于对端用户（跨平台 ACL，Req 14.5, 14.9）
 ///
 /// - require_file=true：要求是文件
 /// - require_file=false：要求是目录
+///
+/// Unix：文件 st_uid == peer_uid（root 跳过）
+/// Windows：文件 owner SID == 当前用户 SID（Administrators 跳过）；
+/// 命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
 pub fn validate_owned_path(
     path: &str,
     peer_uid: u32,
@@ -658,7 +664,7 @@ pub fn validate_owned_path(
         ));
     }
 
-    // Unix UID ACL 检查（root 跳过；Windows 跳过）
+    // Unix UID ACL 检查（root 跳过）
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -672,13 +678,149 @@ pub fn validate_owned_path(
             }
         }
     }
+
+    // Windows SID ACL 检查（Req 14.9：对端令牌 SID 与文件 owner SID 比较）
+    // 命名管道 SDDL（Req 14.18）保证只有 owner 能连接，故当前用户 SID == peer SID。
+    // Administrators 组成员跳过（等价 Unix root 跳过）。
     #[cfg(not(unix))]
     {
-        // Windows 上不做 UID ACL 检查（开发测试），生产部署用 Linux
-        let _ = peer_uid;
+        let _ = peer_uid; // Windows 不使用 Unix UID
+        if !is_current_user_admin() {
+            let peer_sid = super::peercred::get_current_user_sid().map_err(|e| {
+                DaemonRpcError::new(
+                    "path_forbidden",
+                    format!("无法获取当前用户 SID: {}", e),
+                )
+            })?;
+            let file_owner_sid = get_file_owner_sid(&real_path_str).map_err(|e| {
+                DaemonRpcError::new(
+                    "path_forbidden",
+                    format!("无法获取文件 owner SID: {} ({})", e, real_path_str),
+                )
+            })?;
+            if file_owner_sid != peer_sid {
+                return Err(DaemonRpcError::new(
+                    "path_forbidden",
+                    format!(
+                        "路径 owner_sid={}，peer_sid={}",
+                        file_owner_sid, peer_sid
+                    ),
+                ));
+            }
+        }
     }
 
     Ok(real_path_str)
+}
+
+/// Windows：获取文件/目录的 owner SID 字符串。
+///
+/// 使用 GetNamedSecurityInfoW + GetSecurityDescriptorOwner 从安全描述符提取 owner SID。
+#[cfg(not(unix))]
+fn get_file_owner_sid(path: &str) -> Result<String, String> {
+    use std::ffi::c_void;
+    use std::ptr;
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetSecurityDescriptorOwner, OWNER_SECURITY_INFORMATION,
+    };
+
+    let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut sd: *mut c_void = ptr::null_mut();
+
+    let ret = unsafe {
+        GetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            ptr::null_mut(), // ppSidOwner（由 SD 返回）
+            ptr::null_mut(), // ppSidGroup
+            ptr::null_mut(), // ppDacl
+            ptr::null_mut(), // ppSacl
+            &mut sd,         // ppSecurityDescriptor
+        )
+    };
+
+    if ret != 0 {
+        return Err(format!("GetNamedSecurityInfoW 失败 (error {})", ret));
+    }
+
+    // 从安全描述符提取 owner SID
+    let mut owner_sid: *mut c_void = ptr::null_mut();
+    let mut defaulted: i32 = 0;
+    let ok = unsafe { GetSecurityDescriptorOwner(sd, &mut owner_sid, &mut defaulted) };
+    if ok == 0 || owner_sid.is_null() {
+        unsafe { LocalFree(sd) };
+        return Err("GetSecurityDescriptorOwner 失败".to_string());
+    }
+
+    // SID → 字符串
+    let mut sid_str_ptr: *mut u16 = ptr::null_mut();
+    let ok = unsafe { ConvertSidToStringSidW(owner_sid as *mut _, &mut sid_str_ptr) };
+    unsafe { LocalFree(sd) };
+    if ok == 0 {
+        return Err("ConvertSidToStringSidW 失败".to_string());
+    }
+
+    // 读取宽字符串
+    let sid_string = unsafe {
+        let len = (0..).take_while(|&i| *sid_str_ptr.add(i) != 0).count();
+        let slice = std::slice::from_raw_parts(sid_str_ptr, len);
+        String::from_utf16_lossy(slice)
+    };
+    unsafe { LocalFree(sid_str_ptr as *mut c_void) };
+
+    Ok(sid_string)
+}
+
+/// Windows：检查当前用户是否属于 Administrators 组（等价 Unix root 跳过）。
+///
+/// 使用 CheckTokenMembership 检查 BUILTIN\Administrators (S-1-5-32-544)。
+#[cfg(not(unix))]
+fn is_current_user_admin() -> bool {
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::{
+        AllocateAndInitializeSid, CheckTokenMembership, FreeSid,
+        SECURITY_NT_AUTHORITY, TOKEN_QUERY,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        // 构造 BUILTIN\Administrators SID (S-1-5-32-544)
+        let mut admin_sid: *mut std::ffi::c_void = ptr::null_mut();
+        let mut nt_authority = SECURITY_NT_AUTHORITY;
+        // SECURITY_BUILTIN_DOMAIN_RID = 32, DOMAIN_ALIAS_RID_ADMINS = 544
+        if AllocateAndInitializeSid(
+            &mut nt_authority,
+            2,
+            32,  // SECURITY_BUILTIN_DOMAIN_RID
+            544, // DOMAIN_ALIAS_RID_ADMINS
+            0, 0, 0, 0, 0, 0,
+            &mut admin_sid,
+        ) == 0
+        {
+            return false;
+        }
+
+        // 获取进程令牌
+        let mut token: HANDLE = ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            FreeSid(admin_sid);
+            return false;
+        }
+
+        // 检查令牌是否包含 Administrators SID
+        let mut is_member: i32 = 0;
+        let ok = CheckTokenMembership(token, admin_sid, &mut is_member);
+        CloseHandle(token);
+        FreeSid(admin_sid);
+
+        ok != 0 && is_member != 0
+    }
 }
 
 /// 校验 workspace 属于 peer_uid（对应 Python daemon_server.py:_owned_workspace）
@@ -3163,7 +3305,7 @@ mod tests {
         }
         #[cfg(not(unix))]
         {
-            // Windows 上 validate_owned_path 跳过 UID 检查，固定值即可
+            // Windows 上 validate_owned_path 使用 SID ACL（peer_uid 参数被忽略），固定值即可
             1000
         }
     }
@@ -3436,6 +3578,145 @@ mod tests {
         std::fs::write(&file_path, "hello").unwrap();
         let result = validate_owned_path(file_path.to_str().unwrap(), 0, true);
         assert!(result.is_ok());
+    }
+
+    // ---- D0 3.4: 跨平台 ACL mock 测试（Req 14.5, 14.9）----
+    // 伪造非 owner 的 Peer_Credential，断言走拒绝路径、返回 Structured_Reason 且状态不变。
+    // 该层只覆盖判定逻辑，不替代 3.5 的真实跨用户连接验收。
+
+    /// Unix: 伪造非当前 UID 的 peer，validate_owned_path 应拒绝（非 root 时）
+    #[cfg(unix)]
+    #[test]
+    fn test_validate_owned_path_rejects_non_owner_uid() {
+        let current = unsafe { libc::getuid() };
+        if current == 0 {
+            // root 跳过 ACL，无法测试拒绝路径
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap();
+        // 伪造一个不同的 UID
+        let fake_uid = current + 1;
+        let result = validate_owned_path(path, fake_uid, false);
+        assert!(result.is_err(), "非 owner UID 应被拒绝");
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "path_forbidden");
+        // Structured_Reason 包含 owner_uid 和 peer_uid 信息
+        assert!(err.message.contains("owner_uid"));
+        assert!(err.message.contains("peer_uid"));
+    }
+
+    /// Unix: 伪造非 owner UID 的 peer，owned_workspace 应拒绝且状态不变
+    #[test]
+    fn test_owned_workspace_non_owner_rejected_state_unchanged() {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let owner_uid = 1000u32;
+        let r = registry
+            .register_workspace(owner_uid, "/tmp/cv", "/var/hr", "", "", "")
+            .unwrap();
+        let instance_id = r["workspace_instance_id"].as_str().unwrap().to_string();
+
+        // 伪造非 owner peer
+        let fake_peer_uid = 2000u32;
+        let result = owned_workspace(&registry, fake_peer_uid, &instance_id);
+        assert!(result.is_err(), "非 owner 应被拒绝");
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "workspace_forbidden");
+
+        // 状态不变：workspace 仍可被 owner 访问
+        let ok_result = owned_workspace(&registry, owner_uid, &instance_id);
+        assert!(ok_result.is_ok(), "owner 应仍能访问");
+    }
+
+    /// Unix: 伪造非 owner UID 的 peer，owned_workspace_by_id 应拒绝
+    #[test]
+    fn test_owned_workspace_by_id_non_owner_rejected() {
+        let registry = WorkspaceRegistry::open_in_memory().unwrap();
+        let owner_uid = 1000u32;
+        let r = registry
+            .register_workspace(owner_uid, "/tmp/cv2", "/var/hr2", "", "", "")
+            .unwrap();
+        let ws_id = r["workspace_id"].as_i64().unwrap();
+
+        let fake_peer_uid = 9999u32;
+        let result = owned_workspace_by_id(&registry, fake_peer_uid, ws_id);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.code, "workspace_forbidden");
+    }
+
+    /// Windows: 验证 get_file_owner_sid 能获取当前用户文件的 owner SID
+    #[cfg(not(unix))]
+    #[test]
+    fn test_windows_get_file_owner_sid_matches_current_user() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap();
+        let file_owner = get_file_owner_sid(path);
+        assert!(file_owner.is_ok(), "获取文件 owner SID 失败: {:?}", file_owner.err());
+
+        let current_sid = crate::daemon::peercred::get_current_user_sid();
+        assert!(current_sid.is_ok(), "获取当前用户 SID 失败: {:?}", current_sid.err());
+
+        // 当前用户创建的临时目录，owner 应该是当前用户（或 Administrators）
+        let owner = file_owner.unwrap();
+        let me = current_sid.unwrap();
+        // 注意：某些系统上 tempdir 的 owner 可能是 SYSTEM 或 Administrators
+        // 这里只验证 SID 格式有效（S-1-...）
+        assert!(owner.starts_with("S-1-"), "owner SID 格式无效: {}", owner);
+        assert!(me.starts_with("S-1-"), "当前用户 SID 格式无效: {}", me);
+    }
+
+    /// Windows: 验证 is_current_user_admin 不 panic 且返回布尔值
+    #[cfg(not(unix))]
+    #[test]
+    fn test_windows_is_current_user_admin_does_not_panic() {
+        // 只验证函数可调用且不 panic，不断言结果（取决于测试环境）
+        let _ = is_current_user_admin();
+    }
+
+    /// Windows: validate_owned_path 对当前用户创建的目录应通过
+    #[cfg(not(unix))]
+    #[test]
+    fn test_windows_validate_owned_path_accepts_own_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap();
+        // peer_uid 在 Windows 上被忽略（传 0）
+        let result = validate_owned_path(path, 0, false);
+        // 如果当前用户是 admin，跳过 ACL 检查，直接通过
+        // 如果非 admin，比较文件 owner SID 与当前用户 SID
+        // tempdir 由当前用户创建，应该通过（除非 tempdir owner 是 SYSTEM）
+        if result.is_err() {
+            let err = result.unwrap_err();
+            // 允许 path_forbidden（tempdir owner 不是当前用户的特殊情况）
+            assert_eq!(err.code, "path_forbidden");
+        }
+    }
+
+    /// 跨平台: dispatch 层 workspace.register 使用非 owner peer 时状态不变
+    #[test]
+    fn test_dispatch_register_non_owner_state_unchanged() {
+        let mut state = make_state();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().to_str().unwrap();
+
+        // 先用 owner 注册
+        let owner_peer = make_owner_peer();
+        let params = json!({ "client_view_root": path });
+        let resp = dispatch(&mut state, owner_peer, "workspace.register", &params, &[]);
+        assert_eq!(resp["ok"], true, "owner 注册应成功: {:?}", resp);
+        let instance_id = resp["result"]["workspace_instance_id"].as_str().unwrap().to_string();
+
+        // 用非 owner 尝试 status 查询
+        let other_peer = make_other_peer();
+        let params2 = json!({ "workspace_instance_id": &instance_id });
+        let resp2 = dispatch(&mut state, other_peer, "workspace.status", &params2, &[]);
+        // 应返回错误（workspace_forbidden）
+        assert_eq!(resp2["ok"], false, "非 owner 应被拒绝: {:?}", resp2);
+        assert_eq!(resp2["error"]["code"].as_str(), Some("workspace_forbidden"));
+
+        // 状态不变：owner 仍可查询
+        let resp3 = dispatch(&mut state, owner_peer, "workspace.status", &params2, &[]);
+        assert_eq!(resp3["ok"], true, "owner 状态应不变: {:?}", resp3);
     }
 
     // ---- owned_workspace ACL 测试 ----

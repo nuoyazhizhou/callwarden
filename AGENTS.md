@@ -11,17 +11,17 @@
 1. **提交前必须全量刷新数据库**：每次 `git commit` 之前，必须运行 `cw --refresh-all` 或批量刷新所有修改文件，确保数据库中的符号/调用关系与代码同步。禁止提交后数据库滞后。
 2. **代码读取工具按场景分工**（避免 SQLite 跨进程锁冲突）：
 
-   | 操作类型 | 当前（MCP 未激活/开发期）| MCP 激活后 |
-   |---------|------------------------|-----------|
-   | 任务编排（task create/next/report/rollback）| **CLI** `cw task ...` | **CLI**（保持，写操作避免与 MCP 长连接撞锁）|
-   | 刷新数据库（refresh/refresh-all）| **CLI** `cw --refresh ...` | **CLI**（保持，写操作）|
-   | 读文件内容 / 搜索代码 / 浏览目录 | **CLI** `cw --file <PATH>` / `cw --search <Q>` / `cw --query <NAME> <FILE>`；IDE 内置 Read/Grep/Glob 作为降级 | **MCP** `file_read` / `file_grep` / `file_list`（只读，WAL 模式下与 CLI 写并发安全）|
-   | 符号内容 / 符号查询 | **CLI** `cw symbol <QN>` / `cw callers` / `cw callees` | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）|
-   | 符号静态检查 | **CLI** `cw issues <QN>`（整合 Semgrep + Guardrail findings，按符号聚合）| **MCP** `get_symbol_issues`（只读）|
-   | 符号测试 case | **CLI** `cw tests <QN>`（`--build` 重建关联 / `--import` 导入 JUnit XML 为写操作走 CLI）；`--history` 查稳定性 | **MCP** `get_test_cases` / `get_tested_functions` / `get_test_coverage_summary` / `get_test_stability`（只读，WAL 安全）|
-   | 变更-缺陷关联 | **CLI** `cw evolution <QN> --defects` | **MCP** `get_defect_correlation`（只读）|
-   | 带符号上下文的文本搜索 | **CLI** `cw grep <pattern...> [--fixed] [--limit N] [--include-all]`（默认过滤无符号行，多关键词空格分隔为 AND）| **CLI 保持**（依赖 rg 二进制 + `find_symbols_at_lines` 组合，非纯 db 查询；通用文本搜索用 MCP `file_grep`）|
-   | 规则匹配查询（get_applicable_rules）| **CLI** `cw rule applicable` | **MCP** `get_applicable_rules`（只读）|
+   | 操作类型                                     | 当前（MCP 未激活/开发期）                                                                                        | MCP 激活后                                                                                                               |
+   | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+   | 任务编排（task create/next/report/rollback） | **CLI** `cw task ...`                                                                                            | **CLI**（保持，写操作避免与 MCP 长连接撞锁）                                                                             |
+   | 刷新数据库（refresh/refresh-all）            | **CLI** `cw --refresh ...`                                                                                       | **CLI**（保持，写操作）                                                                                                  |
+   | 读文件内容 / 搜索代码 / 浏览目录             | **CLI** `cw --file <PATH>` / `cw --search <Q>` / `cw --query <NAME> <FILE>`；IDE 内置 Read/Grep/Glob 作为降级    | **MCP** `file_read` / `file_grep` / `file_list`（只读，WAL 模式下与 CLI 写并发安全）                                     |
+   | 符号内容 / 符号查询                          | **CLI** `cw symbol <QN>` / `cw callers` / `cw callees`                                                           | **MCP** `file_symbol_content` / `get_symbol` / `get_callers` / `get_callees`（只读）                                     |
+   | 符号静态检查                                 | **CLI** `cw issues <QN>`（整合 Semgrep + Guardrail findings，按符号聚合）                                        | **MCP** `get_symbol_issues`（只读）                                                                                      |
+   | 符号测试 case                                | **CLI** `cw tests <QN>`（`--build` 重建关联 / `--import` 导入 JUnit XML 为写操作走 CLI）；`--history` 查稳定性   | **MCP** `get_test_cases` / `get_tested_functions` / `get_test_coverage_summary` / `get_test_stability`（只读，WAL 安全） |
+   | 变更-缺陷关联                                | **CLI** `cw evolution <QN> --defects`                                                                            | **MCP** `get_defect_correlation`（只读）                                                                                 |
+   | 带符号上下文的文本搜索                       | **CLI** `cw grep <pattern...> [--fixed] [--limit N] [--include-all]`（默认过滤无符号行，多关键词空格分隔为 AND） | **CLI 保持**（依赖 rg 二进制 + `find_symbols_at_lines` 组合，非纯 db 查询；通用文本搜索用 MCP `file_grep`）              |
+   | 规则匹配查询（get_applicable_rules）         | **CLI** `cw rule applicable`                                                                                     | **MCP** `get_applicable_rules`（只读）                                                                                   |
 
    **背景**：MCP Server 是 stdio 长连接，与 CLI 新进程并发时会触发 SQLite `database is locked`。已通过 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` 缓解，但**写操作仍有 5% 撞锁概率**，故写操作永久走 CLI；只读操作在 MCP 激活后走 MCP（吃狗粮），未激活时走 CLI。
 
@@ -42,6 +42,20 @@
    - **set_active_workspace 内部短路**：即使写命令进入此方法，若目标 workspace 已是 active，直接返回不写（`is_active == 1` 短路）。
    - **busy_timeout=5000**：写命令遇到锁时最多等 5 秒（非 30 秒），超时后抛 `sqlite3.OperationalError`，由上层捕获并打印 `errors.db_locked` 友好提示（"数据库正忙，请几秒后重试"），exit code 2。
    - **只读/写命令分类**：详见 [TOOLS.md](TOOLS.md) 的"只读/写命令分类"小节。
+
+7. **任务关闭必须基于实际核实**（强制）：关闭任务前必须核实实际完成情况，禁止仅凭标题/描述或批量操作关闭任务。核实依据按优先级：
+
+   - **步骤状态核实**（首要依据）：查询 `task_steps` 表，所有步骤必须为 `done`/`skipped`；存在 `failed` 或 `pending` 步骤的任务**禁止关闭**（除非步骤 `result` 明确记录该失败为预期且已通过其他方式解决）。
+   - **客观证据核实**：对于无步骤记录的任务，必须基于客观证据关闭——代码实现（对照 `migration-manifest.md` 状态表、测试通过记录、CI 结果、`result` 字段中的提交 hash 等），不得仅凭"看起来完成了"的主观判断。
+   - **父任务核实**：关闭父任务前必须确认所有子任务均已 `closed`；若仍有 `open`/`in_progress`/`review`/`applied` 状态的子任务，父任务**禁止关闭**。
+   - **禁止批量关闭**：禁止通过脚本/SQL 批量 UPDATE 任务状态为 closed 而不逐个核实。批量关闭必须伴随逐个任务的核实证据清单。
+
+   **反模式**（已发生过的错误）：
+   - 仅因"迁移 Phase 大部分完成"就批量关闭全部 Phase 任务，未检查 manifest 状态表中仍标记为 🔴/🟡 的项。
+   - 仅因"发布流程跑过一遍"就关闭发布任务，未检查 CI verify 步骤为 `failed` 且 `fix_defect` 步骤为 `pending`。
+   - 父任务有未完成子任务却关闭父任务。
+
+   **正确做法**：先查 `task_steps.status` + `result`，再对照 manifest/测试/CI 等客观证据，逐个确认后才关闭；存疑时保持 open 并向用户说明。
 
 ## 真相源优先级
 
@@ -205,6 +219,11 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 ## 重要注意事项
 
+> 本节按主题分簇组织（2026-08-01 整理）。**每条规则保留原始编号**（1-36），便于规则 6 等章节的交叉引用（如"见第 5 条"）。新增规则按主题归入对应子小节，继续递增编号。
+> 规则合并/归档触发条件见下方 §6.2「工具调用错误日志与 AGENTS.md 持续改进」。
+
+### 6.1 项目基础
+
 1. **`prompts/` 目录不是本项目指令**：`prompts/` 目录下的 AGENTS.md / AUDIT.md / GOVERNANCE.md / TOOLS.md 是 TokenSlim 审计体系（独立产品）的样例指令，不属于 Call Warden 项目自身的指令体系。本项目 AI Agent 入口是根目录的 **AGENTS.md**（本文件）。
 
 2. **数据库路径**：`$HOME/.callwarden/callwarden.db`（用户级单库架构）。一个用户一个数据库，所有项目共用，通过 `workspaces` 表的 `workspace_id` 字段在所有业务表中逻辑隔离（所有查询自动带 `WHERE workspace_id = ?` 过滤）。相同文件跨项目只解析一次（Global CAS 共享）。**禁止删除 `~/.callwarden/callwarden.db` 及其 `-shm`、`-wal` 文件**，其中包含任务编排数据、符号图谱、调用链等不可恢复的工作成果。如遇 DB 锁定或 WAL 状态异常，应排查进程持有锁或 WAL checkpoint 时序问题，不得通过删除 DB 文件解决。
@@ -215,7 +234,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 4. **自举使用**：本项目自身就是 Call Warden 的第一个用户，开发时可以用 `cw` 命令分析本项目代码。
 
-5. **PowerShell Heredoc 不可用**：在 Windows PowerShell 环境中，`git commit -m "$(cat <<'EOF' ... EOF)"` 等 heredoc 语法不工作（报 "Missing file specification after redirection operator"）。多行 commit message 应使用多个 `-m` 参数：`git commit -m "标题" -m "正文行1" -m "正文行2"`。或用 `git commit -F 文件路径` 从文件读取。
+### 6.2 错误日志与 AGENTS.md 持续改进
 
 6. **工具调用错误日志与 AGENTS.md 持续改进（强制执行）**：
 
@@ -234,6 +253,41 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
    - PowerShell 中复杂 `rg` alternation/括号转义易产生 `regex parse error: unclosed group` → 拆成多个简单 `-e` 模式或改用 `Select-String`（见第 10 条）
    - `rg` 无匹配会返回 exit code 1，直接放入 `Promise.all` 会让整组检索失败 → 在每个并行分支捕获非零返回，或在 PowerShell 命令末尾把无匹配转换为成功（见第 11 条）
 
+   **定时整理触发条件**（2026-08-01 新增）：当满足以下任一条件时，必须执行一次 AGENTS.md 整理：
+   - AGENTS.md 总体积 > **50 KB** 或「重要注意事项」规则数 > **40 条**
+   - 距上次整理 > **3 个月**
+   - `tool_errors.log` 体积 > **100 KB** 或行数 > **500**
+
+   **整理动作**：
+   1. **合并雷同规则**：将同一根因的多条规则合并为一条带子项（如 PowerShell 引号/通配符/正则合并为「PowerShell 调用约定」），保留每条原始编号便于交叉引用追溯
+   2. **归档老日志**：将已沉淀为 AGENTS.md 规则的 `tool_errors.log` 条目（`已记录=yes`）移入 `tool_errors.archive.md`，主日志只保留最近 30 天和未沉淀条目
+   3. **规范化字段**：将「是否已记录到 AGENTS.md」字段统一为 `yes`/`no`，移除自由文本变体
+   4. **更新交叉引用**：合并后更新规则 6「已沉淀的常见错误」列表中的「见第 X 条」引用
+
+### 6.3 Windows / WSL / PowerShell 命令行约定
+
+5. **PowerShell Heredoc 不可用**：在 Windows PowerShell 环境中，`git commit -m "$(cat <<'EOF' ... EOF)"` 等 heredoc 语法不工作（报 "Missing file specification after redirection operator"）。多行 commit message 应使用多个 `-m` 参数：`git commit -m "标题" -m "正文行1" -m "正文行2"`。或用 `git commit -F 文件路径` 从文件读取。
+
+9. **PowerShell 下避免单条复杂 `rg` 正则**：PowerShell 双引号、反斜杠和括号混用时，复杂 alternation 容易在传给 `rg` 前破坏转义，报 `regex parse error: unclosed group`。多个关键词应使用独立的简单模式，例如 `rg -n -e "parse_file_lang" -e "MP_THRESHOLD" db tests`；包含大量括号或引号时改用 `Get-Content ... | Select-String -Pattern 'pattern1|pattern2'`，不要把代码片段转义塞进一个巨大正则。
+
+14. **PowerShell 不展开传给 `rg` 的路径通配符**：在 Windows PowerShell 中，`rg pattern tests/test_*.py` 或 `rg pattern *.ps1` 会把通配符原样交给 `rg`，随后报 `os error 123`。文件类型筛选必须使用 `rg -g`，例如 `rg -n -g "test_*.py" pattern tests`；多个后缀使用多个 `-g`。不要把 `*` 放在传给 `rg` 的路径参数中。
+
+19. **WSL 验收先检查隔离测试依赖**：精简 Ubuntu/WSL 镜像可能同时缺少 `pytest` 和 `python3-venv`，直接创建 venv 会因无 `ensurepip` 失败。运行 Linux 专属验收前先检查 `python3 -m pip --version`、`python3 -m venv --help` 和 `import pytest`；缺少 venv 支持时先安装匹配版本的 `python3-venv`，再在 `/tmp` 创建临时环境，禁止把 Linux wheel 或测试依赖装进 Windows Python 环境。
+
+20. **PowerShell 调 WSL 时避免嵌套代码字符串**：`PowerShell -> wsl -> bash -lc -> python -c/cargo --config` 的三层引号很容易被提前展开或截断。WSL 验收应把构建、文件准备和 Python 测试拆成独立的简单命令；复杂 Python 逻辑放入仓库已有测试文件，由 `python3 -m pytest` 调用，不要在 `bash -lc` 尾部拼接带引号和括号的 `python -c`。
+
+21. **跨平台路径断言先输出模块来源和实际值**：Windows 对 Linux 风格绝对路径的 `os.path.abspath/join/normpath` 行为可能加入盘符或反斜杠，且 `PYTHONPATH` 可能命中不同安装副本。配置探测连续失败时，先输出 `module.__file__`、原始环境变量和实际配置值，再基于目标平台语义断言；不要连续猜测字符串规范化结果。
+
+25. **`functions.exec` 中避免嵌套 PowerShell 复杂引号**：JavaScript 字符串内再嵌入同时含单双引号的 PowerShell 正则时，可能在命令执行前触发 `JavaScriptSyntaxError`。复杂检索应拆成独立 `shell_command`，每条使用简单 `rg -e` 模式；确需通过 `functions.exec` 并行时，优先使用不含内嵌引号的命令字符串，不要把 PowerShell、正则和 JavaScript 三层转义揉在一起。
+
+26. **Windows 提交前显式启用 UTF-8 子进程输出**：pre-commit 的 auto capture-diff 会读取包含中文或 Unicode 符号的子进程输出，使用系统 GBK 默认编码时可能触发 `UnicodeEncodeError` / `UnicodeDecodeError`，继而让 fail-soft 捕获逻辑拿到 `None`。在 PowerShell 执行提交前设置 `$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'`，再运行 `git commit ...`；其他会解析 `cw` 输出的 Windows Python 命令也使用相同环境变量。
+
+28. **执行策略下的文件清理必须单 shell、单文件、绝对字面路径**：把 WSL/其他 shell 的枚举与 PowerShell 删除放在同一命令，或通过变量保存 `Resolve-Path` 后再删除，会被策略判定为动态跨 shell 删除；部分会话甚至会拒绝绝对字面路径的 `Remove-Item`。清理本轮创建的临时文件时先用独立只读调用确认目标，再在创建该文件的同一 shell 中按精确绝对路径删除单文件，例如 WSL 创建 `/mnt/c/git_work/callwarden/callwarden_core.so` 后使用独立的 `wsl ... rm -f -- /mnt/c/git_work/callwarden/callwarden_core.so`。禁止通配符、变量、管道、递归删除和跨 shell 枚举后删除；无法满足时保留文件并在结果中说明。
+
+31. **Windows/WSL 不得共用 Cargo target 目录**：从 WSL 在 `/mnt/c/...` 仓库运行 `cargo check/test` 时，共用 Windows 生成的 `target/` 会出现文件锁等待、跨文件系统极慢和工具超时后 `cargo` 子进程继续存活。Linux 验收必须设置 WSL 本地目标目录，例如 `CARGO_TARGET_DIR=/tmp/callwarden-target cargo check --manifest-path rust_ext/Cargo.toml --bin cw-agent`；工具超时后先用 `ps -ef | grep cargo` 检查并终止本轮遗留的精确 PID，再重试，禁止留下后台编译进程。
+
+### 6.4 SQLite 锁与数据库并发
+
 7. **SQLite WAL 模式与只读连接**：GraphStore 用 `immutable=1` URI 打开 SQLite（跳过 WAL），因此新建数据库的 schema 和数据可能还在 WAL 中未被 checkpoint。`_get_graph_store()` 加载前必须先执行 `PRAGMA wal_checkpoint(PASSIVE)`，否则会读到旧数据（报 "no such table"）。同理，任何用 `immutable=1` 或只读模式打开 SQLite 的场景，都需确保写入方已 checkpoint。
 
 8. **Python vs Rust SQL 驱动效率**：Python sqlite3 和 Rust rusqlite 底层都是同一个 C SQLite 库，纯 SQL 执行效率几乎相同。差异来自数据转换层：
@@ -243,7 +297,56 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
    B-P7b 设计原则：单值查询（get_stats）保持 Python SQL；多行查询（get_callers/get_callees/search_symbols）走 Rust 短路。
 
-9. **PowerShell 下避免单条复杂 `rg` 正则**：PowerShell 双引号、反斜杠和括号混用时，复杂 alternation 容易在传给 `rg` 前破坏转义，报 `regex parse error: unclosed group`。多个关键词应使用独立的简单模式，例如 `rg -n -e "parse_file_lang" -e "MP_THRESHOLD" db tests`；包含大量括号或引号时改用 `Get-Content ... | Select-String -Pattern 'pattern1|pattern2'`，不要把代码片段转义塞进一个巨大正则。
+23. **TRAE IDE 沙箱拦截 sh.exe 子进程对 `~/.callwarden/` 的写操作（SQLITE_CANTOPEN）**：在 TRAE IDE 中通过 `git commit` 触发 Git Bash `sh.exe` 执行 pre-commit hook 时，`cw --refresh-all` 调用 `sqlite3.connect()` + `PRAGMA journal_mode=WAL` 会因沙箱拦截文件创建/写操作而抛 `sqlite3.OperationalError: unable to open database file`（SQLITE_CANTOPEN, code 14），导致 hook 退出非零，commit 被取消，迫使用户 `--no-verify` 绕过。
+
+    **根因**：TRAE IDE 沙箱是**进程树型**拦截，基于父进程链判断，无法通过 `powershell.exe` / `cmd.exe` 中转绕过；同一命令在 PowerShell 终端中直接执行不会触发沙箱（PowerShell 进程不在 sh.exe 进程树下）。
+
+    **症状区分**：
+    - **间歇性 SQLITE_CANTOPEN**：MCP Server 或其他 cw 进程持有 `-shm` 文件锁 → 重试可恢复（hook 已内置 3 次重试，间隔 2 秒）
+    - **持续性 SQLITE_CANTOPEN**：TRAE 沙箱拦截 → 重试无效，必须改用 PowerShell 终端执行 `cw refresh --all` 后用 `git commit --no-verify` 跳过 hook
+
+    **规避方法**（按优先级）：
+    1. **首选**：在 TRAE IDE 的 PowerShell 终端中手动运行 `python cw.py --refresh-all`，然后运行 `git commit --no-verify` 跳过 hook（DB 已刷新，满足规则 1）
+    2. **配置沙箱白名单**：Settings → Conversation → Custom Sandbox Configuration，添加允许规则：`C:\Users\<user>\.callwarden\`（写权限）
+    3. **停 MCP Server**：若间歇性失败，`cw server --stop` 释放 `-shm` 锁后再 commit
+    4. **用 `python cw.py` 替代 `cw.exe`**：entry_point 启动时 sqlite3 偶发失败，`python cw.py` 更稳定
+
+    **已沉淀修复**（见 [install.py](install.py) `_pre_commit_hook()`）：
+    - pre-commit hook 重试 3 次（间隔 2 秒）覆盖间歇性锁场景
+    - 重试耗尽后打印 TRAE 沙箱排查建议 + PowerShell + `--no-verify` 绕过指引
+    - 保持 `exit 1` 硬门禁（AGENTS.md 规则 1：提交前必须全量刷新数据库）
+
+32. **pre-commit 全库刷新卡死时改用显式文件刷新**：Windows 上 `git commit` 的 pre-commit `cw --refresh-all` 偶尔会在启动后进入无 CPU、无 DB/WAL 进展的等待状态，父提交超时后还会留下孤立 Python 进程。先确认目标 PID 的命令行确为本轮 `cw.py --refresh-all` 且数据库时间戳持续不变，再终止该精确 PID；随后运行 `python cw.py refresh <全部修改文件...>`，确认 summary 为全成功，最后使用 `git commit --no-verify`。只有显式刷新覆盖全部修改文件时才允许跳过 hook，禁止未经刷新直接绕过。
+
+33. **`cw task report` 工具超时后先核对状态，禁止盲目重报**：`task_report_step` 会自动运行 check gate 和 completion review；在大型工作区中，CLI 可能尚未返回就超过桌面工具超时，但步骤状态随后仍会成功写入。遇到 `python cw.py task report ...` 超时时，先运行只读命令 `python cw.py task show <task_id>`，确认对应 step 是否已为 `done`/`blocked`；已落库则继续下一步，未落库且确认没有残留进程后才允许重试。不要因无输出直接重复 report，否则可能重复触发质量扫描、修复步骤或审计记录。
+
+### 6.5 Rust 开发规范
+
+38. **Python 生产路径提交前必须做语法编译检查**：修改 `server/replicator.py` 等含多层 `try/except/finally` 的生产模块后，先运行 `python -m py_compile <修改文件>`，再运行针对性 pytest。不要仅依赖静态 `rg` 或任务步骤状态；一处缩进错误会让整个 daemon/recovery 测试在 collection 阶段失败。
+
+16. **`cargo fmt` 不能限定单文件范围**：`cargo fmt --check -- src/graph.rs` 仍会扫描整个 crate，可能被任务之外的既有未格式化文件阻断。只格式化当前修改文件时使用 `rustfmt --edition 2021 rust_ext/src/graph.rs`，随后用 `cargo check --manifest-path rust_ext/Cargo.toml` 验证；不要运行会机械改写整个 crate 的 `cargo fmt`。
+
+17. **Rust 懒批对象必须在服务边界物化**：`CallersBatch` / `SymbolSearchBatch` 等 PyO3 懒批对象用于降低 Rust→Python 转换开销，但 MCP、daemon service 和公开 Python API 若声明返回 `List[...]`，必须在边界执行 `list(result)`。不要把自定义懒批对象直接交给 JSON 序列化或依赖 list 契约的调用方；内部 db 查询短路可继续保留懒批。
+
+24. **Rust daemon ACL 变更必须跑完整 daemon 测试集**：扩展 `ADMIN_ONLY_METHODS` 或 workspace owner 校验后，只跑新增 ACL 用例会漏掉旧测试契约失配。必须运行 `cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib`，并逐项处理失败；backup/restore/GC/mount 等 admin-only handler 的测试必须使用 admin peer，readonly 方法清单也必须同步更新。不得用局部模块测试通过替代完整 daemon 回归结果。
+
+34. **Rust CLI 迁移把 Python i18n 输出视为兼容 ABI**：语义等价的手写标题、缩进、标点和状态表达仍会破坏脚本及差分测试。迁移命令 formatter 前先读取 `i18n/zh_CN.json` 与 `i18n/en_US.json` 的现有键值，逐字符复现当前输出；通过 Python/Rust 进程级差分验证后再提交。不得用“含义相同”的新文案替代既有 CLI 契约。
+
+36. **rusqlite `query_map` 结果不得作为块尾临时值直接返回**：`MappedRows` 借用 `Statement`，若在函数或代码块尾直接写 `statement.query_map(...)? .collect(...)`，临时值的析构顺序可能晚于 `Statement`，触发 `E0597`。必须先绑定收集结果再返回，例如 `let rows = statement.query_map(...)?.collect::<rusqlite::Result<Vec<_>>>()?; Ok(rows)`；同一函数有多个查询分支时每个分支都显式结束 `MappedRows` 生命周期。
+
+37. **`windows-sys 0.59` 命名管道 API 必须按模块和 feature 对齐**：`ConnectNamedPipe` 需要 `Win32_System_IO` 的 `OVERLAPPED`，`CreateNamedPipeW` 需要 `Win32_Storage_FileSystem` 的 `PIPE_ACCESS_DUPLEX`/文件标志，SDDL 转换位于 `Win32_Security_Authorization`，`RevertToSelf` 位于 `Win32_Security`；HANDLE 使用空指针而不是整数 `0`。新增 Windows named-pipe 代码后，先检查对应 crate 源码的 feature gate，再运行 `cargo check --manifest-path rust_ext/Cargo.toml --bin cw --no-default-features`，不要凭旧 windows-sys 版本的导入路径猜测。
+
+37. **Cargo test 只接受一个测试过滤器**：`cargo test --lib` 的位置参数只能有一个 `TESTNAME`，例如同时传 `daemon::dispatch::tests daemon::snapshot_state::tests` 会直接报 `unexpected argument`，测试不会运行。需要验证多个模块时分别执行多个命令，或使用一个共同的上层过滤器（如 `daemon::`），并记录每次结果。
+
+### 6.6 PyInstaller 与发布验收
+
+27. **GitHub Release 大资产先探测再下载**：当前网络到 `release-assets.githubusercontent.com` 可能出现 HEAD 正常、GET 长时间近零速的情况。下载几十 MB 以上资产前先用 `curl.exe -I -L --max-time 30 <URL>` 验证重定向和长度，再用短时 GET 观察实际吞吐；连续低速时立即停止残留 `curl.exe`，改用 BITS、GitHub API 或 CI 生成的内容清单，不要让多个大文件并行占满工具超时窗口。
+
+29. **PyInstaller 发布验收必须实例化 MCP Server**：`cw --version` / `cw --help` 只覆盖 CLI 启动，不能发现 FastMCP 间接导入缺失。修改 hidden imports 或 excludes 后，必须对冻结产物运行 `cw server --check-imports`；该命令会注册全部 MCP 工具但不写数据库、不下载 Semgrep 规则。遇到缺失模块时输出原始 `ImportError`，只恢复真实依赖并重建验证，禁止为了省事恢复 `collect_submodules('fastmcp')` 或全量云 SDK。标准库也可能是框架间接依赖，例如 `mimetypes` 被 FastMCP 资源层使用，不得仅凭 Call Warden 源码无直接 import 就排除。
+
+30. **PyInstaller 排除包前必须审计生产顶层导入**：`Analysis.excludes` 只阻止模块进入冻结产物，不会自动消除生产代码中的 `from package import ...`。若仍有顶层导入，被排除的包会在最早入口直接触发 `ModuleNotFoundError`，即使 PyInstaller 构建和静态 inspector 都通过。删除或外置依赖时，先用 `rg` 追踪所有生产 import，把可选依赖改为使用点懒加载或拆到不参与冻结入口的模块；构建后必须实际运行 `cw --version`、`cw --help`、`cw server --check-imports`，三者任一失败都不得发布。静态模块清单和单元测试不能替代冻结可执行文件 smoke。
+
+### 6.7 任务编排与工具调用
 
 10. **并行调用必须容忍预期的非零退出**：`rg` 未找到内容、探测可选模块不存在等预期情况会返回非零，这不是执行故障；若把这类命令直接放进 `Promise.all`，一个分支会中止整组调用并丢失其他结果。并行脚本应在每个分支捕获结果，或在 PowerShell 中把预期的非零状态显式转换为成功，例如 `rg -n -e "pattern" path; if ($LASTEXITCODE -eq 1) { exit 0 }`。无法方便转换时单独执行该探测；只有非预期的非零状态才按真正错误处理。
 
@@ -251,23 +354,13 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 12. **`cw task create` 不支持 `--parent` 参数**：CLI 的 `cw task create` 只有 `--title`/`--desc`/`--steps` 三个参数。挂载子任务必须用 Python API `db.task_create(title=..., description=..., parent_id=..., steps=[])`，模板见 [docs/task_create_subtask.py](docs/task_create_subtask.py)。参数清单见 [TOOLS.md](TOOLS.md)，不确定时先 `cw task <subcommand> --help`。
 
-13. **合成数据压测 ≠ 真实 E2E**（方法论教训）：用 `generate_data()` 一次性生成全部合成数据到内存再批量入库，会挤压系统页缓存、未覆盖解析/CAS/watcher/daemon、多规模并行互相干扰。正确做法：流式生成、串行运行取中位数、分开报告 storage_build_time 和 end_to_end_time、记录硬件型号。不要发展"内存主表+SQLite 从表"架构，Call Warden 走混合架构：SQLite/CAS 持久化真相，Rust GraphStore/CSR 内存查询，daemon 共享发布。
-
-14. **PowerShell 不展开传给 `rg` 的路径通配符**：在 Windows PowerShell 中，`rg pattern tests/test_*.py` 或 `rg pattern *.ps1` 会把通配符原样交给 `rg`，随后报 `os error 123`。文件类型筛选必须使用 `rg -g`，例如 `rg -n -g "test_*.py" pattern tests`；多个后缀使用多个 `-g`。不要把 `*` 放在传给 `rg` 的路径参数中。
-
 15. **读取测试文件前先确认真实路径**：不要根据功能名连续猜测 `tests/test_xxx.py`。先运行 `rg --files tests | rg "关键词"` 或 `rg -l -g "test_*.py" "符号名" tests`，再对实际返回的路径使用 `Get-Content` / `cw file`。缺失的候选文件不是检索失败，不应让并行读取整组中止。
-
-16. **`cargo fmt` 不能限定单文件范围**：`cargo fmt --check -- src/graph.rs` 仍会扫描整个 crate，可能被任务之外的既有未格式化文件阻断。只格式化当前修改文件时使用 `rustfmt --edition 2021 rust_ext/src/graph.rs`，随后用 `cargo check --manifest-path rust_ext/Cargo.toml` 验证；不要运行会机械改写整个 crate 的 `cargo fmt`。
-
-17. **Rust 懒批对象必须在服务边界物化**：`CallersBatch` / `SymbolSearchBatch` 等 PyO3 懒批对象用于降低 Rust→Python 转换开销，但 MCP、daemon service 和公开 Python API 若声明返回 `List[...]`，必须在边界执行 `list(result)`。不要把自定义懒批对象直接交给 JSON 序列化或依赖 list 契约的调用方；内部 db 查询短路可继续保留懒批。
 
 18. **连续修改同一文件前刷新补丁上下文**：前一个 `apply_patch` 可能已删除、移动或格式化后续补丁依赖的锚点，继续使用旧上下文会触发 `PatchContextMismatch`。对同一文件分阶段修改时，先用 `rg -n` 或读取目标局部确认当前内容，再生成小范围补丁；不要复用前一轮读取到的 import 或函数上下文。
 
-19. **WSL 验收先检查隔离测试依赖**：精简 Ubuntu/WSL 镜像可能同时缺少 `pytest` 和 `python3-venv`，直接创建 venv 会因无 `ensurepip` 失败。运行 Linux 专属验收前先检查 `python3 -m pip --version`、`python3 -m venv --help` 和 `import pytest`；缺少 venv 支持时先安装匹配版本的 `python3-venv`，再在 `/tmp` 创建临时环境，禁止把 Linux wheel 或测试依赖装进 Windows Python 环境。
+### 6.8 代码质量与测试规范
 
-20. **PowerShell 调 WSL 时避免嵌套代码字符串**：`PowerShell -> wsl -> bash -lc -> python -c/cargo --config` 的三层引号很容易被提前展开或截断。WSL 验收应把构建、文件准备和 Python 测试拆成独立的简单命令；复杂 Python 逻辑放入仓库已有测试文件，由 `python3 -m pytest` 调用，不要在 `bash -lc` 尾部拼接带引号和括号的 `python -c`。
-
-21. **跨平台路径断言先输出模块来源和实际值**：Windows 对 Linux 风格绝对路径的 `os.path.abspath/join/normpath` 行为可能加入盘符或反斜杠，且 `PYTHONPATH` 可能命中不同安装副本。配置探测连续失败时，先输出 `module.__file__`、原始环境变量和实际配置值，再基于目标平台语义断言；不要连续猜测字符串规范化结果。
+13. **合成数据压测 ≠ 真实 E2E**（方法论教训）：用 `generate_data()` 一次性生成全部合成数据到内存再批量入库，会挤压系统页缓存、未覆盖解析/CAS/watcher/daemon、多规模并行互相干扰。正确做法：流式生成、串行运行取中位数、分开报告 storage_build_time 和 end_to_end_time、记录硬件型号。不要发展"内存主表+SQLite 从表"架构，Call Warden 走混合架构：SQLite/CAS 持久化真相，Rust GraphStore/CSR 内存查询，daemon 共享发布。
 
 22. **代码变更必须同步更新文档（文档同步规则）**：当代码变更涉及以下"关键指标"时，**必须在同一次 commit 中同步更新相关文档**，禁止"代码改了文档没改"：
 
@@ -291,58 +384,23 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
     **违反示例**：新增了 3 个 MCP 工具但未更新 `docs/mcp_tools.md`，导致文档说 226 个实际 229 个 → 禁止。
     **正确示例**：新增 MCP 工具时，同一次 commit 更新 `docs/mcp_tools.md` 头部数字 + 工具列表 + `README.md` 中的数字。
 
-23. **TRAE IDE 沙箱拦截 sh.exe 子进程对 `~/.callwarden/` 的写操作（SQLITE_CANTOPEN）**：在 TRAE IDE 中通过 `git commit` 触发 Git Bash `sh.exe` 执行 pre-commit hook 时，`cw --refresh-all` 调用 `sqlite3.connect()` + `PRAGMA journal_mode=WAL` 会因沙箱拦截文件创建/写操作而抛 `sqlite3.OperationalError: unable to open database file`（SQLITE_CANTOPEN, code 14），导致 hook 退出非零，commit 被取消，迫使用户 `--no-verify` 绕过。
-
-    **根因**：TRAE IDE 沙箱是**进程树型**拦截，基于父进程链判断，无法通过 `powershell.exe` / `cmd.exe` 中转绕过；同一命令在 PowerShell 终端中直接执行不会触发沙箱（PowerShell 进程不在 sh.exe 进程树下）。
-
-    **症状区分**：
-    - **间歇性 SQLITE_CANTOPEN**：MCP Server 或其他 cw 进程持有 `-shm` 文件锁 → 重试可恢复（hook 已内置 3 次重试，间隔 2 秒）
-    - **持续性 SQLITE_CANTOPEN**：TRAE 沙箱拦截 → 重试无效，必须改用 PowerShell 终端执行 `cw refresh --all` 后用 `git commit --no-verify` 跳过 hook
-
-    **规避方法**（按优先级）：
-    1. **首选**：在 TRAE IDE 的 PowerShell 终端中手动运行 `python cw.py --refresh-all`，然后运行 `git commit --no-verify` 跳过 hook（DB 已刷新，满足规则 1）
-    2. **配置沙箱白名单**：Settings → Conversation → Custom Sandbox Configuration，添加允许规则：`C:\Users\<user>\.callwarden\`（写权限）
-    3. **停 MCP Server**：若间歇性失败，`cw server --stop` 释放 `-shm` 锁后再 commit
-    4. **用 `python cw.py` 替代 `cw.exe`**：entry_point 启动时 sqlite3 偶发失败，`python cw.py` 更稳定
-
-    **已沉淀修复**（见 [install.py](install.py) `_pre_commit_hook()`）：
-    - pre-commit hook 重试 3 次（间隔 2 秒）覆盖间歇性锁场景
-    - 重试耗尽后打印 TRAE 沙箱排查建议 + PowerShell + `--no-verify` 绕过指引
-    - 保持 `exit 1` 硬门禁（AGENTS.md 规则 1：提交前必须全量刷新数据库）
-
-24. **Rust daemon ACL 变更必须跑完整 daemon 测试集**：扩展 `ADMIN_ONLY_METHODS` 或 workspace owner 校验后，只跑新增 ACL 用例会漏掉旧测试契约失配。必须运行 `cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib`，并逐项处理失败；backup/restore/GC/mount 等 admin-only handler 的测试必须使用 admin peer，readonly 方法清单也必须同步更新。不得用局部模块测试通过替代完整 daemon 回归结果。
-
-25. **`functions.exec` 中避免嵌套 PowerShell 复杂引号**：JavaScript 字符串内再嵌入同时含单双引号的 PowerShell 正则时，可能在命令执行前触发 `JavaScriptSyntaxError`。复杂检索应拆成独立 `shell_command`，每条使用简单 `rg -e` 模式；确需通过 `functions.exec` 并行时，优先使用不含内嵌引号的命令字符串，不要把 PowerShell、正则和 JavaScript 三层转义揉在一起。
-
-26. **Windows 提交前显式启用 UTF-8 子进程输出**：pre-commit 的 auto capture-diff 会读取包含中文或 Unicode 符号的子进程输出，使用系统 GBK 默认编码时可能触发 `UnicodeEncodeError` / `UnicodeDecodeError`，继而让 fail-soft 捕获逻辑拿到 `None`。在 PowerShell 执行提交前设置 `$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'`，再运行 `git commit ...`；其他会解析 `cw` 输出的 Windows Python 命令也使用相同环境变量。
-
-27. **GitHub Release 大资产先探测再下载**：当前网络到 `release-assets.githubusercontent.com` 可能出现 HEAD 正常、GET 长时间近零速的情况。下载几十 MB 以上资产前先用 `curl.exe -I -L --max-time 30 <URL>` 验证重定向和长度，再用短时 GET 观察实际吞吐；连续低速时立即停止残留 `curl.exe`，改用 BITS、GitHub API 或 CI 生成的内容清单，不要让多个大文件并行占满工具超时窗口。
-
-28. **执行策略下的文件清理必须单 shell、单文件、绝对字面路径**：把 WSL/其他 shell 的枚举与 PowerShell 删除放在同一命令，或通过变量保存 `Resolve-Path` 后再删除，会被策略判定为动态跨 shell 删除；部分会话甚至会拒绝绝对字面路径的 `Remove-Item`。清理本轮创建的临时文件时先用独立只读调用确认目标，再在创建该文件的同一 shell 中按精确绝对路径删除单文件，例如 WSL 创建 `/mnt/c/git_work/callwarden/callwarden_core.so` 后使用独立的 `wsl ... rm -f -- /mnt/c/git_work/callwarden/callwarden_core.so`。禁止通配符、变量、管道、递归删除和跨 shell 枚举后删除；无法满足时保留文件并在结果中说明。
-
-29. **PyInstaller 发布验收必须实例化 MCP Server**：`cw --version` / `cw --help` 只覆盖 CLI 启动，不能发现 FastMCP 间接导入缺失。修改 hidden imports 或 excludes 后，必须对冻结产物运行 `cw server --check-imports`；该命令会注册全部 MCP 工具但不写数据库、不下载 Semgrep 规则。遇到缺失模块时输出原始 `ImportError`，只恢复真实依赖并重建验证，禁止为了省事恢复 `collect_submodules('fastmcp')` 或全量云 SDK。标准库也可能是框架间接依赖，例如 `mimetypes` 被 FastMCP 资源层使用，不得仅凭 Call Warden 源码无直接 import 就排除。
-
-30. **PyInstaller 排除包前必须审计生产顶层导入**：`Analysis.excludes` 只阻止模块进入冻结产物，不会自动消除生产代码中的 `from package import ...`。若仍有顶层导入，被排除的包会在最早入口直接触发 `ModuleNotFoundError`，即使 PyInstaller 构建和静态 inspector 都通过。删除或外置依赖时，先用 `rg` 追踪所有生产 import，把可选依赖改为使用点懒加载或拆到不参与冻结入口的模块；构建后必须实际运行 `cw --version`、`cw --help`、`cw server --check-imports`，三者任一失败都不得发布。静态模块清单和单元测试不能替代冻结可执行文件 smoke。
-
-31. **Windows/WSL 不得共用 Cargo target 目录**：从 WSL 在 `/mnt/c/...` 仓库运行 `cargo check/test` 时，共用 Windows 生成的 `target/` 会出现文件锁等待、跨文件系统极慢和工具超时后 `cargo` 子进程继续存活。Linux 验收必须设置 WSL 本地目标目录，例如 `CARGO_TARGET_DIR=/tmp/callwarden-target cargo check --manifest-path rust_ext/Cargo.toml --bin cw-agent`；工具超时后先用 `ps -ef | grep cargo` 检查并终止本轮遗留的精确 PID，再重试，禁止留下后台编译进程。
-
-32. **pre-commit 全库刷新卡死时改用显式文件刷新**：Windows 上 `git commit` 的 pre-commit `cw --refresh-all` 偶尔会在启动后进入无 CPU、无 DB/WAL 进展的等待状态，父提交超时后还会留下孤立 Python 进程。先确认目标 PID 的命令行确为本轮 `cw.py --refresh-all` 且数据库时间戳持续不变，再终止该精确 PID；随后运行 `python cw.py refresh <全部修改文件...>`，确认 summary 为全成功，最后使用 `git commit --no-verify`。只有显式刷新覆盖全部修改文件时才允许跳过 hook，禁止未经刷新直接绕过。
+35. **业务测试不得只断言单一自然语言错误文本**：DB 层部分历史错误仍是硬编码中文，`CALLWARDEN_LANG=en_US` 只影响 i18n 层，无法切换这些字符串。测试拒绝路径时应优先断言结构化状态、错误码和数据库不变；确需检查文本时使用中英文语义关键词集合，不得仅靠 `parent`/`manual` 等英文子串判定业务是否正确。
 
 ## 文档索引
 
-| 文档 | 说明 |
-| ---- | ---- |
-| [TOOLS.md](TOOLS.md) | 工具使用指南（CLI/MCP/场景映射） |
-| [README.md](README.md) | 项目首页 |
-| [docs/quickstart.md](docs/quickstart.md) | 快速开始 |
-| [docs/cli_reference.md](docs/cli_reference.md) | CLI 命令参考 |
-| [docs/mcp_tools.md](docs/mcp_tools.md) | MCP 工具参考 |
-| [docs/architecture.md](docs/architecture.md) | 架构设计 |
-| [docs/deployment.md](docs/deployment.md) | 部署指南 |
-| [docs/agent-usage-guide.md](docs/agent-usage-guide.md) | 面向 AI Agent 的使用指南（从本文件抽取） |
-| [docs/task_create_subtask.py](docs/task_create_subtask.py) | 挂载子任务的标准脚本模板 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
-| [CHANGELOG.md](CHANGELOG.md) | 版本变更 |
+| 文档                                                       | 说明                                     |
+| ---------------------------------------------------------- | ---------------------------------------- |
+| [TOOLS.md](TOOLS.md)                                       | 工具使用指南（CLI/MCP/场景映射）         |
+| [README.md](README.md)                                     | 项目首页                                 |
+| [docs/quickstart.md](docs/quickstart.md)                   | 快速开始                                 |
+| [docs/cli_reference.md](docs/cli_reference.md)             | CLI 命令参考                             |
+| [docs/mcp_tools.md](docs/mcp_tools.md)                     | MCP 工具参考                             |
+| [docs/architecture.md](docs/architecture.md)               | 架构设计                                 |
+| [docs/deployment.md](docs/deployment.md)                   | 部署指南                                 |
+| [docs/agent-usage-guide.md](docs/agent-usage-guide.md)     | 面向 AI Agent 的使用指南（从本文件抽取） |
+| [docs/task_create_subtask.py](docs/task_create_subtask.py) | 挂载子任务的标准脚本模板                 |
+| [CONTRIBUTING.md](CONTRIBUTING.md)                         | 贡献指南                                 |
+| [CHANGELOG.md](CHANGELOG.md)                               | 版本变更                                 |
 
 
 ## Call Warden 自动沉淀规则

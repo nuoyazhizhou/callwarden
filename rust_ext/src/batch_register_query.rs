@@ -262,7 +262,8 @@ pub fn batch_register_files<'py>(
                     d.set_item("version_mtime", r.version_mtime).unwrap();
                     d.set_item("version_content_hash", r.version_content_hash.clone())
                         .unwrap();
-                    d.set_item("version_total_lines", r.version_total_lines).unwrap();
+                    d.set_item("version_total_lines", r.version_total_lines)
+                        .unwrap();
                     d
                 })
                 .collect();

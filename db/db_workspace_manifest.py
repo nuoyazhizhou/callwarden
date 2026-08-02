@@ -98,8 +98,29 @@ def _rust_manifest_call(conn: sqlite3.Connection, function_name: str, *args):
         return _RUST_UNAVAILABLE
 
 
+def _rust_manifest_write_call(conn: sqlite3.Connection, function_name: str, *args):
+    """调用 Rust manifest 写 facade。
+
+    只有扩展未安装、旧扩展没有该符号或 rollback 开关开启时才返回
+    ``_RUST_UNAVAILABLE``。Rust 已被选为生产写路径后，真实 SQL/事务错误必须
+    直接抛出，不能静默回退到 Python 造成双写语义和可观测性缺失。
+    """
+    target = _rust_manifest_module(conn)
+    if target is None:
+        return _RUST_UNAVAILABLE
+    module, db_path = target
+    function = getattr(module, function_name, None)
+    if function is None:
+        # 兼容尚未带写 facade 的旧 wheel；下一次安装新扩展后自动切换。
+        return _RUST_UNAVAILABLE
+    return function(db_path, *args)
+
+
 def init_manifest_schema(conn: sqlite3.Connection):
     """初始化 manifest schema。"""
+    rust_result = _rust_manifest_write_call(conn, "manifest_init_schema")
+    if rust_result is not _RUST_UNAVAILABLE:
+        return
     conn.executescript(MANIFEST_SCHEMA_DDL)
     conn.commit()
 
@@ -111,6 +132,23 @@ def upsert_manifest(conn: sqlite3.Connection, workspace_id: int,
                     file_size: int = 0, mtime_ns: int = 0,
                     is_dirty: bool = False):
     """更新或插入 manifest 记录。"""
+    rust_result = _rust_manifest_write_call(
+        conn,
+        "manifest_upsert",
+        workspace_id,
+        rel_path,
+        content_hash,
+        cas_key,
+        raw_hash,
+        source_encoding,
+        bom_kind,
+        newline_style,
+        file_size,
+        mtime_ns,
+        bool(is_dirty),
+    )
+    if rust_result is not _RUST_UNAVAILABLE:
+        return
     now = time.time()
     conn.execute(
         """INSERT OR REPLACE INTO workspace_manifests
@@ -184,6 +222,16 @@ def count_manifests(conn: sqlite3.Connection, workspace_id: int,
 def link_to_snapshot(conn: sqlite3.Connection, snapshot_id: str,
                     rel_path: str, content_hash: str, cas_key: str = ""):
     """将文件链接到 snapshot（clean workspace 复用）。"""
+    rust_result = _rust_manifest_write_call(
+        conn,
+        "manifest_link_to_snapshot",
+        snapshot_id,
+        rel_path,
+        content_hash,
+        cas_key,
+    )
+    if rust_result is not _RUST_UNAVAILABLE:
+        return
     conn.execute(
         "INSERT OR REPLACE INTO workspace_snapshot_map (snapshot_id, rel_path, content_hash, cas_key) VALUES (?, ?, ?, ?)",
         (snapshot_id, rel_path, content_hash, cas_key)

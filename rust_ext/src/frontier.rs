@@ -595,7 +595,8 @@ pub fn compute_frontier_with_budget<'py>(
 
     let store = store_ref.as_ref().map(|s| s.as_ref());
     let budget = crate::daemon::budget::QueryBudget::new(max_depth, max_nodes, timeout_ms);
-    let frontier = FrontierComputer::compute_frontier_with_budget(&parse_delta.inner, store, budget);
+    let frontier =
+        FrontierComputer::compute_frontier_with_budget(&parse_delta.inner, store, budget);
 
     Py::new(py, PyAffectedFrontier { inner: frontier })
 }
