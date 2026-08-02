@@ -57,7 +57,11 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 # 项目综合状态驾驶舱（7 个 section + 风险预警）
                 "dashboard",
                 # Phase 0 子任务 4：迁移回滚配置
-                "rollback"}
+                "rollback",
+                # P0 盲评对照实验命令组（Requirement 12）
+                "experiment",
+                # D0 多 LLM 契约协同：经 daemon 的治理写命令面（Req 14）
+                "collab"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -1351,6 +1355,10 @@ def _dispatch_subcommand(argv, db):
             return _handle_config(argv, db)
         elif cmd == "rollback":
             return _handle_rollback(argv, db)
+        elif cmd == "experiment":
+            return _handle_experiment(argv, db)
+        elif cmd == "collab":
+            return _handle_collab(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -6156,8 +6164,16 @@ def _doctor_check(db):
     }
     print(t("cli.messages.doctor_pragma_config", default="  PRAGMA config:"))
     all_pragma_ok = True
+    # PRAGMA 不支持绑定参数，用静态 SQL 分派避免字符串拼接（semgrep: sqlalchemy-execute-raw-query / formatted-sql-query）
+    _PRAGMA_QUERIES = {
+        "journal_mode": "PRAGMA journal_mode",
+        "synchronous": "PRAGMA synchronous",
+        "busy_timeout": "PRAGMA busy_timeout",
+        "cache_size": "PRAGMA cache_size",
+        "mmap_size": "PRAGMA mmap_size",
+    }
     for key, expected in pragmas.items():
-        actual = db.conn.execute(f"PRAGMA {key}").fetchone()[0]
+        actual = db.conn.execute(_PRAGMA_QUERIES[key]).fetchone()[0]
         actual_str = str(actual)
         # 应用别名映射
         aliases = pragma_aliases.get(key, {})
@@ -12563,6 +12579,848 @@ def _find_cw_daemon_binary():
         pass
 
     return None
+
+
+# --------------------------------------------------------------------
+# experiment：P0 盲评对照实验命令组（Requirement 12）
+# --------------------------------------------------------------------
+
+
+def _handle_experiment(args, db):
+    """处理 experiment 子命令（P0 盲评对照实验全生命周期操作）
+
+    子命令：
+        batch-create     创建批次 + 默认协议 + 锁定
+        batch-lock       冻结协议（手动补锁）
+        batch-list       列出所有已登记批次
+        toggle-set       设置 P0 Stage_Toggle
+        toggle-show      显示解析后的 P0 开关
+        admit            纳样（资格检查→分组→blind view→JSONL）
+        record-metrics   记录 review 原始指标
+        record-verdict   记录 reveal 前后 verdict 变更
+        record-reveal    记录 Implementer_Notes 揭示事件
+        record-invalid   记录无效样本
+        record-incident  记录披露/完整性事件
+        pause            手动暂停批次
+        report           汇总评估 + 机器可读 G0 决策
+    """
+    # 延迟导入 experiments 包（避免非 experiment 命令的导入开销）
+    from datetime import datetime, timezone
+    from ..experiments.blind_review_protocol import (
+        Experiment_Batch_Config, ExperimentBatch, build_default_protocol,
+        ExperimentProtocolError, ToggleScope, ToggleValue, PauseTrigger,
+        SuccessThresholds, GroupAssignment,
+    )
+    from ..experiments.blind_review_views import (
+        ViewDisclosureError, build_minimal_blind_view, build_verdict_change_record,
+        BlindViewGroup, BlindViewPhase, collect_source_facts_from_db,
+    )
+    from ..experiments.blind_review_jsonl import (
+        ExperimentJsonlWriter, build_blind_view_record,
+        build_review_metrics_record,
+        build_reveal_event_record, build_invalid_sample_record,
+        build_incident_record,
+    )
+    from ..experiments.blind_review_evaluator import (
+        EvaluatorError, compute_group_metrics, evaluate_success,
+        evaluate_gray_zone, evaluate_pause_conditions,
+        build_evaluation_report, SampleRecord,
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="cw experiment",
+        description=t("cli_experiment_desc",
+                      default="P0 blind-review controlled experiment management"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # --- batch-create ---
+    bc_p = sub.add_parser("batch-create", help=t(
+        "cli_experiment_batch_create_desc",
+        default="Create a new experiment batch with default protocol and lock it"))
+    bc_p.add_argument("--seed", type=int, required=True,
+                      help="Random seed for deterministic group assignment")
+    bc_p.add_argument("--min-valid", type=int, default=30,
+                      help="Minimum valid tasks for success evaluation (default 30)")
+    bc_p.add_argument("--min-nontrivial", type=int, default=20,
+                      help="Minimum non-trivial code changes (default 20)")
+    bc_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- batch-lock ---
+    bl_p = sub.add_parser("batch-lock", help=t(
+        "cli_experiment_batch_lock_desc",
+        default="Freeze/lock the protocol of an existing batch"))
+    bl_p.add_argument("batch_id", help="Batch ID to lock")
+    bl_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- batch-list ---
+    blist_p = sub.add_parser("batch-list", help=t(
+        "cli_experiment_batch_list_desc",
+        default="List all registered experiment batches"))
+    blist_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- toggle-set ---
+    ts_p = sub.add_parser("toggle-set", help=t(
+        "cli_experiment_toggle_set_desc",
+        default="Set P0 Stage_Toggle value for a scope"))
+    ts_p.add_argument("--scope", required=True, choices=["global", "workspace", "task"],
+                      help="Toggle scope")
+    ts_p.add_argument("--value", required=True, choices=["on", "off"],
+                      help="Toggle value")
+    ts_p.add_argument("--scope-key", default=None,
+                      help="Scope key (workspace_id or task_id; required for workspace/task)")
+    ts_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- toggle-show ---
+    tshow_p = sub.add_parser("toggle-show", help=t(
+        "cli_experiment_toggle_show_desc",
+        default="Show resolved P0 toggle (task > workspace > global inheritance)"))
+    tshow_p.add_argument("--task-id", default=None, help="Task ID for task-level lookup")
+    tshow_p.add_argument("--workspace-id", default=None, help="Workspace ID for workspace-level lookup")
+    tshow_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- admit ---
+    adm_p = sub.add_parser("admit", help=t(
+        "cli_experiment_admit_desc",
+        default="Admit a task into the experiment (eligibility check, group assignment, blind view, JSONL)"))
+    adm_p.add_argument("task_id", help="Task ID to admit")
+    adm_p.add_argument("batch_id", help="Batch ID to admit into")
+    adm_p.add_argument("--strata", default="", help="Stratification key for group assignment")
+    adm_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- record-metrics ---
+    rm_p = sub.add_parser("record-metrics", help=t(
+        "cli_experiment_record_metrics_desc",
+        default="Record review metrics (TP/FP/misses/duration/tokens/reopen/defects)"))
+    rm_p.add_argument("task_id", help="Task ID")
+    rm_p.add_argument("batch_id", help="Batch ID")
+    rm_p.add_argument("--tp", type=int, required=True, help="Verified true positives")
+    rm_p.add_argument("--fp", type=int, required=True, help="Verified false positives")
+    rm_p.add_argument("--misses", type=int, required=True, help="Verified misses")
+    rm_p.add_argument("--duration", type=float, required=True, help="Review duration (seconds)")
+    rm_p.add_argument("--tokens", type=int, default=0, help="Token usage")
+    rm_p.add_argument("--reopen", type=int, default=0, help="Reopen events count")
+    rm_p.add_argument("--defects", type=int, default=0, help="Post-apply defects")
+    rm_p.add_argument("--rollbacks", type=int, default=0, help="Post-apply rollbacks")
+    rm_p.add_argument("--obs-window", default="", help="Observation window ID")
+    rm_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- record-verdict ---
+    rv_p = sub.add_parser("record-verdict", help=t(
+        "cli_experiment_record_verdict_desc",
+        default="Record verdict change before/after reveal (Req 12.7)"))
+    rv_p.add_argument("task_id", help="Task ID")
+    rv_p.add_argument("batch_id", help="Batch ID")
+    rv_p.add_argument("--changed", required=True, choices=["yes", "no"],
+                      help="Whether verdict changed after reveal")
+    rv_p.add_argument("--reason-code", default="no_change",
+                      help="Verdict change reason (no_change/new_fact/corrected_misunderstanding)")
+    rv_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- record-reveal ---
+    rr_p = sub.add_parser("record-reveal", help=t(
+        "cli_experiment_record_reveal_desc",
+        default="Record Implementer_Notes reveal event (Req 12.7)"))
+    rr_p.add_argument("task_id", help="Task ID")
+    rr_p.add_argument("batch_id", help="Batch ID")
+    rr_p.add_argument("--sealed", action="store_true",
+                      help="First verdict already sealed before reveal")
+    rr_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- record-invalid ---
+    ri_p = sub.add_parser("record-invalid", help=t(
+        "cli_experiment_record_invalid_desc",
+        default="Record an invalid sample (Req 12.8)"))
+    ri_p.add_argument("task_id", help="Task ID")
+    ri_p.add_argument("batch_id", help="Batch ID")
+    ri_p.add_argument("--reason-code", required=True, help="Invalid sample reason code")
+    ri_p.add_argument("--detail", default="", help="Additional detail")
+    ri_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- record-incident ---
+    rinc_p = sub.add_parser("record-incident", help=t(
+        "cli_experiment_record_incident_desc",
+        default="Record a disclosure or integrity incident (Req 12.18/12.20)"))
+    rinc_p.add_argument("task_id", help="Task ID")
+    rinc_p.add_argument("batch_id", help="Batch ID")
+    rinc_p.add_argument("--type", required=True, choices=["disclosure", "integrity"],
+                        help="Incident type")
+    rinc_p.add_argument("--reason-code", required=True, help="Incident reason code")
+    rinc_p.add_argument("--detail", default="", help="Additional detail")
+    rinc_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- pause ---
+    pa_p = sub.add_parser("pause", help=t(
+        "cli_experiment_pause_desc",
+        default="Manually pause an experiment batch (Req 12.15-12.21)"))
+    pa_p.add_argument("batch_id", help="Batch ID to pause")
+    pa_p.add_argument("--trigger", required=True, help="Pause trigger identifier")
+    pa_p.add_argument("--reason", default="", help="Pause reason text")
+    pa_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    # --- report ---
+    rep_p = sub.add_parser("report", help=t(
+        "cli_experiment_report_desc",
+        default="Generate evaluation report with machine-readable G0 decision"))
+    rep_p.add_argument("batch_id", help="Batch ID to evaluate")
+    rep_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
+
+    opts = parser.parse_args(args)
+
+    # 公共辅助：JSONL 文件路径
+    def _jsonl_path(batch_id: str) -> str:
+        exp_dir = os.path.join(os.path.expanduser("~"), ".callwarden", "experiments")
+        os.makedirs(exp_dir, exist_ok=True)
+        return os.path.join(exp_dir, f"{batch_id}.jsonl")
+
+    # 公共辅助：输出结果（--json 纯 JSON / 否则人类可读）
+    def _output(data: dict, human_lines: list, use_json: bool) -> None:
+        if use_json:
+            print(json.dumps(data, indent=2, ensure_ascii=False, default=str))
+        else:
+            for line in human_lines:
+                cprint(line)
+
+    # 公共辅助：错误输出（Structured_Reason → JSON / 人类可读）
+    def _output_error(reason_obj, use_json: bool) -> None:
+        d = reason_obj.to_dict() if hasattr(reason_obj, "to_dict") else {"error": str(reason_obj)}
+        if use_json:
+            print(json.dumps(d, indent=2, ensure_ascii=False, default=str))
+        else:
+            msg = reason_obj.message() if hasattr(reason_obj, "message") else str(reason_obj)
+            cprint(f"[ERROR] {msg}", "red")
+            code = getattr(reason_obj, "code", None)
+            if code:
+                cprint(f"  code: {code}", "red")
+
+    try:
+        # ============================================================
+        # batch-create：创建批次 + 默认协议 + 锁定
+        # ============================================================
+        if opts.action == "batch-create":
+            config = Experiment_Batch_Config()
+            config.load()
+            batch_id = f"B-{int(time.time() * 1000)}-{os.urandom(4).hex()}"
+            protocol = build_default_protocol(opts.seed)
+            # 若用户自定义了阈值，替换协议中的 success_thresholds
+            if opts.min_valid != 30 or opts.min_nontrivial != 20:
+                protocol.success_thresholds = SuccessThresholds(
+                    min_valid_tasks=opts.min_valid,
+                    min_nontrivial_code_change_tasks=opts.min_nontrivial,
+                )
+            now_iso = datetime.now(timezone.utc).isoformat()
+            batch = ExperimentBatch(
+                batch_id=batch_id,
+                created_at=now_iso,
+                protocol=protocol,
+            )
+            batch.lock_protocol()
+            config.put_batch(batch)
+            config.save()
+            result = {"batch_id": batch_id, "status": "locked",
+                      "seed": opts.seed, "non_product_evidence": True}
+            _output(result,
+                    [f"批次已创建并锁定: {batch_id}",
+                     f"  seed={opts.seed}, min_valid={opts.min_valid}, min_nontrivial={opts.min_nontrivial}",
+                     "  non_product_evidence=True（P0 实验记录，非产品 Evidence）"],
+                    opts.json)
+
+        # ============================================================
+        # batch-lock：冻结协议（手动补锁）
+        # ============================================================
+        elif opts.action == "batch-lock":
+            config = Experiment_Batch_Config()
+            config.load()
+            batch = config.get_batch(opts.batch_id)
+            batch.lock_protocol()
+            config.put_batch(batch)
+            config.save()
+            result = {"batch_id": opts.batch_id, "status": "locked",
+                      "non_product_evidence": True}
+            _output(result,
+                    [f"批次 {opts.batch_id} 协议已锁定。"],
+                    opts.json)
+
+        # ============================================================
+        # batch-list：列出所有已登记批次
+        # ============================================================
+        elif opts.action == "batch-list":
+            config = Experiment_Batch_Config()
+            config.load()
+            batches = config.list_batches()
+            summaries = []
+            for b in batches:
+                is_paused = b.paused_at is not None
+                summaries.append({
+                    "batch_id": b.batch_id,
+                    "paused": is_paused,
+                    "pause_trigger": b.pause_trigger.value if (is_paused and b.pause_trigger) else None,
+                    "first_sample_admitted_at": b.first_sample_admitted_at,
+                    "non_product_evidence": True,
+                })
+            if opts.json:
+                print(json.dumps(summaries, indent=2, ensure_ascii=False, default=str))
+            else:
+                if not summaries:
+                    cprint("暂无已登记批次。")
+                for s in summaries:
+                    status = "PAUSED" if s["paused"] else "active"
+                    cprint(f"  {s['batch_id']}  [{status}]")
+
+        # ============================================================
+        # toggle-set：设置 P0 Stage_Toggle
+        # ============================================================
+        elif opts.action == "toggle-set":
+            config = Experiment_Batch_Config()
+            config.load()
+            scope = ToggleScope(opts.scope)
+            value = ToggleValue.ENABLED if opts.value == "on" else ToggleValue.DISABLED
+            session_marker = f"cli-{int(time.time())}"
+            now_iso = datetime.now(timezone.utc).isoformat()
+            change = config.set_p0_toggle(
+                scope, value, session_marker,
+                client_clock_time=now_iso,
+                scope_key=opts.scope_key,
+            )
+            config.save()
+            result = {"scope": opts.scope, "value": opts.value,
+                      "scope_key": opts.scope_key, "non_product_evidence": True}
+            _output(result,
+                    [f"P0 开关已设置: {opts.scope}={opts.value}"
+                     + (f" (key={opts.scope_key})" if opts.scope_key else "")],
+                    opts.json)
+
+        # ============================================================
+        # toggle-show：显示解析后的 P0 开关
+        # ============================================================
+        elif opts.action == "toggle-show":
+            config = Experiment_Batch_Config()
+            config.load()
+            resolved = config.resolve_p0_toggle(
+                task_id=opts.task_id, workspace_id=opts.workspace_id)
+            resolved_str = resolved.value if hasattr(resolved, "value") else str(resolved)
+            result = {"resolved_value": resolved_str,
+                      "task_id": opts.task_id, "workspace_id": opts.workspace_id,
+                      "non_product_evidence": True}
+            _output(result,
+                    [f"P0 开关解析结果: {result['resolved_value']}"
+                     + (f" (task={opts.task_id})" if opts.task_id else "")
+                     + (f" (workspace={opts.workspace_id})" if opts.workspace_id else "")],
+                    opts.json)
+
+        # ============================================================
+        # admit：纳样（资格检查→分组→blind view→JSONL）
+        # ============================================================
+        elif opts.action == "admit":
+            config = Experiment_Batch_Config()
+            config.load()
+            batch = config.get_batch(opts.batch_id)
+            # 检查纳样资格（冻结 + 未暂停）
+            batch.ensure_admission_allowed()
+            # 首次纳样标记
+            if batch.first_sample_admitted_at is None:
+                batch.mark_first_admission(datetime.now(timezone.utc).isoformat())
+                config.put_batch(batch)
+                config.save()
+            # 确定性分组
+            strata_key = opts.strata or opts.task_id
+            assignment = batch.protocol.assign_group(strata_key)
+            group = BlindViewGroup.CONTROL if assignment == GroupAssignment.CONTROL else BlindViewGroup.TREATMENT
+            # 构建最小盲视图（从 db 收集来源事实）
+            source_facts = collect_source_facts_from_db(db, opts.task_id)
+            view = build_minimal_blind_view(
+                task_id=opts.task_id,
+                source=source_facts,
+                group=group,
+                phase=BlindViewPhase.PRE_VERDICT,
+            )
+            # 写 JSONL
+            writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
+            record = build_blind_view_record(
+                view=view,
+                batch_id=opts.batch_id,
+            )
+            writer.append(record)
+            result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
+                      "group": assignment.value, "strata_key": strata_key,
+                      "disclosed_fields": view.disclosed_fields,
+                      "non_product_evidence": True}
+            _output(result,
+                    [f"任务 {opts.task_id} 已纳入批次 {opts.batch_id}",
+                     f"  分组: {assignment.value} (strata={strata_key})",
+                     f"  披露字段: {', '.join(view.disclosed_fields)}"],
+                    opts.json)
+
+        # ============================================================
+        # record-metrics：记录 review 原始指标
+        # ============================================================
+        elif opts.action == "record-metrics":
+            writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
+            record = build_review_metrics_record(
+                task_id=opts.task_id,
+                batch_id=opts.batch_id,
+                group="",  # 由 JSONL 中 blind_view 记录关联
+                first_pass_findings=opts.tp + opts.fp,
+                final_findings=opts.tp + opts.fp + opts.misses,
+                verified_true_positives=opts.tp,
+                verified_false_positives=opts.fp,
+                verified_misses=opts.misses,
+                review_duration_seconds=opts.duration,
+                token_usage=opts.tokens,
+                reopen_events=opts.reopen,
+                post_apply_defects=opts.defects,
+                post_apply_rollbacks=opts.rollbacks,
+                observation_window_id=opts.obs_window,
+            )
+            writer.append(record)
+            result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
+                      "tp": opts.tp, "fp": opts.fp, "misses": opts.misses,
+                      "duration_s": opts.duration, "non_product_evidence": True}
+            _output(result,
+                    [f"已记录 review 指标: task={opts.task_id}",
+                     f"  TP={opts.tp} FP={opts.fp} Misses={opts.misses} Duration={opts.duration}s"],
+                    opts.json)
+
+        # ============================================================
+        # record-verdict：记录 reveal 前后 verdict 变更
+        # ============================================================
+        elif opts.action == "record-verdict":
+            writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
+            changed = opts.changed == "yes"
+            record = build_verdict_change_record(
+                task_id=opts.task_id,
+                batch_id=opts.batch_id,
+                verdict_changed=changed,
+                change_reason_code=opts.reason_code,
+            )
+            writer.append(record)
+            result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
+                      "verdict_changed": changed, "reason_code": opts.reason_code,
+                      "non_product_evidence": True}
+            _output(result,
+                    [f"已记录 verdict 变更: task={opts.task_id}, changed={changed}"],
+                    opts.json)
+
+        # ============================================================
+        # record-reveal：记录 Implementer_Notes 揭示事件
+        # ============================================================
+        elif opts.action == "record-reveal":
+            writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
+            record = build_reveal_event_record(
+                task_id=opts.task_id,
+                batch_id=opts.batch_id,
+                first_verdict_sealed=opts.sealed,
+            )
+            writer.append(record)
+            result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
+                      "first_verdict_sealed": opts.sealed, "non_product_evidence": True}
+            _output(result,
+                    [f"已记录 reveal 事件: task={opts.task_id}, sealed={opts.sealed}"],
+                    opts.json)
+
+        # ============================================================
+        # record-invalid：记录无效样本
+        # ============================================================
+        elif opts.action == "record-invalid":
+            writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
+            record = build_invalid_sample_record(
+                task_id=opts.task_id,
+                batch_id=opts.batch_id,
+                reason_code=opts.reason_code,
+                reason_detail=opts.detail,
+            )
+            writer.append(record)
+            result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
+                      "reason_code": opts.reason_code, "non_product_evidence": True}
+            _output(result,
+                    [f"已记录无效样本: task={opts.task_id}, reason={opts.reason_code}"],
+                    opts.json)
+
+        # ============================================================
+        # record-incident：记录披露/完整性事件
+        # ============================================================
+        elif opts.action == "record-incident":
+            writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
+            record = build_incident_record(
+                task_id=opts.task_id,
+                batch_id=opts.batch_id,
+                incident_type=opts.type,
+                reason_code=opts.reason_code,
+                reason_detail=opts.detail,
+            )
+            writer.append(record)
+            result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
+                      "incident_type": opts.type, "reason_code": opts.reason_code,
+                      "non_product_evidence": True}
+            _output(result,
+                    [f"已记录{opts.type}事件: task={opts.task_id}, reason={opts.reason_code}"],
+                    opts.json)
+
+        # ============================================================
+        # pause：手动暂停批次
+        # ============================================================
+        elif opts.action == "pause":
+            config = Experiment_Batch_Config()
+            config.load()
+            batch = config.get_batch(opts.batch_id)
+            # 将字符串 trigger 转换为 PauseTrigger 枚举
+            trigger = PauseTrigger(opts.trigger)
+            now_iso = datetime.now(timezone.utc).isoformat()
+            batch.pause(trigger, opts.reason, now_iso)
+            config.put_batch(batch)
+            config.save()
+            result = {"batch_id": opts.batch_id, "paused": True,
+                      "trigger": opts.trigger, "non_product_evidence": True}
+            _output(result,
+                    [f"批次 {opts.batch_id} 已暂停 (trigger={opts.trigger})",
+                     "  fail-safe: 新纳样将被拒绝，现有 review 流程恢复。"],
+                    opts.json)
+
+        # ============================================================
+        # report：汇总评估 + 机器可读 G0 决策
+        # ============================================================
+        elif opts.action == "report":
+            config = Experiment_Batch_Config()
+            config.load()
+            batch = config.get_batch(opts.batch_id)
+            # 从 JSONL 恢复样本记录
+            jsonl_path = _jsonl_path(opts.batch_id)
+            writer = ExperimentJsonlWriter(jsonl_path)
+            records = writer.read_records()
+            # 按组构建 SampleRecord 列表
+            control_samples = []
+            treatment_samples = []
+            invalid_reason_codes = []
+            for rec in records:
+                rec_type = rec.get("record_type", "")
+                if rec_type == "invalid_sample":
+                    invalid_reason_codes.append(rec.get("reason_code", "unknown"))
+                    continue
+                if rec_type != "review_metrics":
+                    continue
+                try:
+                    sample = SampleRecord.from_review_metrics_record(rec)
+                except (EvaluatorError, Exception):
+                    continue
+                if sample.group == "control":
+                    control_samples.append(sample)
+                elif sample.group == "treatment":
+                    treatment_samples.append(sample)
+            # 计算组指标
+            control_metrics = compute_group_metrics("control", control_samples)
+            treatment_metrics = compute_group_metrics("treatment", treatment_samples)
+            # 成功判定 / 灰区 / 暂停
+            thresholds = batch.protocol.success_thresholds if hasattr(batch.protocol, "success_thresholds") else None
+            pause_thresholds = batch.protocol.pause_thresholds if hasattr(batch.protocol, "pause_thresholds") else None
+            valid_task_count = control_metrics.valid_n + treatment_metrics.valid_n
+            nontrivial_count = control_metrics.nontrivial_code_change_count + treatment_metrics.nontrivial_code_change_count
+
+            success_eval = evaluate_success(
+                control_metrics, treatment_metrics, thresholds,
+                valid_task_count=valid_task_count,
+                nontrivial_code_change_count=nontrivial_count,
+                batch_id=opts.batch_id,
+            ) if thresholds else None
+            gray_eval = evaluate_gray_zone(
+                control_metrics, treatment_metrics, thresholds, pause_thresholds,
+                batch_id=opts.batch_id,
+            ) if (thresholds and pause_thresholds) else None
+            pause_eval = evaluate_pause_conditions(
+                control_metrics, treatment_metrics, pause_thresholds,
+                batch_id=opts.batch_id,
+            ) if pause_thresholds else None
+
+            # 无效样本统计
+            from ..experiments.blind_review_evaluator import compute_invalid_sample_stats
+            invalid_rate, invalid_counts = compute_invalid_sample_stats(
+                invalid_reason_codes, valid_task_count)
+
+            # 构建评估报告
+            report_data = build_evaluation_report(
+                batch_id=opts.batch_id,
+                control=control_metrics,
+                treatment=treatment_metrics,
+                success=success_eval,
+                gray_zone=gray_eval,
+                pause=pause_eval,
+                invalid_reason_counts=invalid_counts,
+                invalid_sample_rate=invalid_rate,
+                metric_definitions=[],
+                observation_windows=[],
+                valid_task_count=valid_task_count,
+                nontrivial_code_change_count=nontrivial_count,
+            )
+            # G0 决策摘要
+            eligible = (success_eval.eligible_for_p1 if success_eval else False)
+            has_gray = bool(gray_eval and gray_eval.gray_zone)
+            has_pause = bool(pause_eval and pause_eval.should_pause)
+            gray_zones_list = []
+            if gray_eval and gray_eval.gray_zone:
+                if gray_eval.fp_gray_zone:
+                    gray_zones_list.append("fp")
+                if gray_eval.latency_gray_zone:
+                    gray_zones_list.append("latency")
+            g0_decision = {
+                "eligible_for_p1": eligible and not has_gray and not has_pause,
+                "gray_zones": gray_zones_list,
+                "pause": pause_eval.trigger.value if (pause_eval and pause_eval.should_pause and pause_eval.trigger) else None,
+                "insufficient_sample": not success_eval.min_sample_satisfied if success_eval else True,
+                "non_product_evidence": True,
+            }
+            report_data["g0_decision"] = g0_decision
+
+            if opts.json:
+                print(json.dumps(report_data, indent=2, ensure_ascii=False, default=str))
+            else:
+                cprint(f"=== 实验批次评估报告: {opts.batch_id} ===")
+                cprint(f"  Control: n={control_metrics.valid_n}, "
+                       f"recall={control_metrics.recall:.3f}, fp_rate={control_metrics.false_positive_rate:.3f}")
+                cprint(f"  Treatment: n={treatment_metrics.valid_n}, "
+                       f"recall={treatment_metrics.recall:.3f}, fp_rate={treatment_metrics.false_positive_rate:.3f}")
+                cprint(f"  无效样本率: {invalid_rate:.3f}")
+                if success_eval:
+                    cprint(f"  样本充分: {success_eval.min_sample_satisfied}")
+                    cprint(f"  P1 资格: {success_eval.eligible_for_p1}")
+                if gray_eval and gray_eval.gray_zone:
+                    cprint(f"  灰区: {', '.join(gray_zones_list)}", "yellow")
+                if pause_eval and pause_eval.should_pause:
+                    cprint(f"  暂停触发: {pause_eval.trigger.value}", "red")
+                cprint(f"  G0 决策: eligible_for_p1={g0_decision['eligible_for_p1']}")
+                cprint("  (non_product_evidence=True，P0 实验记录非产品 Evidence)")
+
+    except (ExperimentProtocolError, ViewDisclosureError, EvaluatorError) as e:
+        reason = getattr(e, "reason", None)
+        if reason:
+            _output_error(reason, getattr(opts, "json", False))
+        else:
+            cprint(f"[ERROR] {e}", "red")
+        sys.exit(1)
+
+    return True
+
+
+# --------------------------------------------------------------------
+# collab：多 LLM 契约协同——经 daemon 的治理写命令面（Req 14, D0 任务 3.14）
+# --------------------------------------------------------------------
+
+
+def _handle_collab(args, db):
+    """处理 collab 子命令（多 LLM 契约协同治理写操作）
+
+    所有治理写操作必须经 Daemon_Endpoint 序列化点，不可绕过 daemon。
+    连接失败时：auto-start（3.25）→ Degraded_Mode（3.27/3.28）→
+    Governance_Write fail closed + 平台相关恢复指引。
+
+    子命令：
+        publish       发布 Envelope（snapshot.publish）
+        verdict       提交 Verdict 并封存（verdict.submit）
+        reveal        提交 Reveal_Event（reveal.submit）
+        gate-trigger  触发 Gate 判定（gate.decide）
+    """
+    # 公共选项父解析器（--json 可在子命令前后使用）
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true",
+                        help="以 JSON 格式输出结果")
+
+    parser = argparse.ArgumentParser(
+        prog="cw collab",
+        description="多 LLM 契约协同：经 daemon 的治理写命令面（Req 14）",
+        parents=[common],
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # --- publish: 发布 Envelope ---
+    pub_p = sub.add_parser("publish", parents=[common],
+                           help="发布 Envelope（snapshot.publish）")
+    pub_p.add_argument("--workspace", metavar="PATH", required=True,
+                       help="workspace 根目录路径")
+    pub_p.add_argument("--envelope", metavar="FILE",
+                       help="Envelope JSON 文件路径（可选，缺省由 daemon 生成）")
+
+    # --- verdict: 提交 Verdict ---
+    ver_p = sub.add_parser("verdict", parents=[common],
+                           help="提交 Verdict 并封存（verdict.submit）")
+    ver_p.add_argument("--verdict-id", metavar="ID", required=True,
+                       help="Verdict 记录 ID")
+    ver_p.add_argument("--decision", choices=["approve", "reject", "abstain"],
+                       required=True, help="判定结论")
+    ver_p.add_argument("--reason", metavar="TEXT", default="",
+                       help="判定理由（可选）")
+    ver_p.add_argument("--seal", action="store_true", default=True,
+                       help="提交后封存（默认开启）")
+    ver_p.add_argument("--no-seal", action="store_true",
+                       help="提交但不封存")
+
+    # --- reveal: 提交 Reveal_Event ---
+    rev_p = sub.add_parser("reveal", parents=[common],
+                           help="提交 Reveal_Event（reveal.submit）")
+    rev_p.add_argument("--event-id", metavar="ID", required=True,
+                       help="Reveal 事件 ID")
+    rev_p.add_argument("--task-id", metavar="ID", required=True,
+                       help="关联任务 ID")
+    rev_p.add_argument("--notes", metavar="FILE",
+                       help="Implementer_Notes 文件路径（可选）")
+
+    # --- gate-trigger: 触发 Gate 判定 ---
+    gate_p = sub.add_parser("gate-trigger", parents=[common],
+                            help="触发 Gate 判定（gate.decide）")
+    gate_p.add_argument("--gate-id", metavar="ID", required=True,
+                        help="Gate 会话 ID")
+    gate_p.add_argument("--clause", metavar="NAME", required=True,
+                        help="判定子句名称")
+    gate_p.add_argument("--value", choices=["true", "false"], required=True,
+                        help="子句判定值")
+
+    opts = parser.parse_args(args)
+    use_json = getattr(opts, "json", False)
+
+    # 构造 RPC 参数并确定方法名
+    method = None
+    params = {}
+
+    if opts.action == "publish":
+        method = "snapshot.publish"
+        params["workspace_root"] = os.path.abspath(opts.workspace)
+        if opts.envelope:
+            envelope_path = os.path.abspath(opts.envelope)
+            if not os.path.isfile(envelope_path):
+                _collab_error("E_FILE_NOT_FOUND", "cli.collab.file_not_found",
+                              f"Envelope 文件不存在: {envelope_path}", use_json)
+                return True
+            with open(envelope_path, "r", encoding="utf-8") as f:
+                params["envelope"] = json.load(f)
+
+    elif opts.action == "verdict":
+        method = "verdict.submit"
+        params["verdict_id"] = opts.verdict_id
+        params["decision"] = opts.decision
+        params["reason"] = opts.reason
+        params["seal"] = not opts.no_seal
+
+    elif opts.action == "reveal":
+        method = "reveal.submit"
+        params["event_id"] = opts.event_id
+        params["task_id"] = opts.task_id
+        if opts.notes:
+            notes_path = os.path.abspath(opts.notes)
+            if not os.path.isfile(notes_path):
+                _collab_error("E_FILE_NOT_FOUND", "cli.collab.file_not_found",
+                              f"Notes 文件不存在: {notes_path}", use_json)
+                return True
+            with open(notes_path, "r", encoding="utf-8") as f:
+                params["implementer_notes"] = f.read()
+
+    elif opts.action == "gate-trigger":
+        method = "gate.decide"
+        params["gate_id"] = opts.gate_id
+        params["clause"] = opts.clause
+        params["value"] = opts.value == "true"
+
+    # 通过 daemon 执行治理写操作（不可绕过）
+    try:
+        from ..server.daemon_client import DaemonClient, DaemonUnavailableError
+        client = DaemonClient.get_instance()
+        response = client.call_with_autostart(method, params)
+    except DaemonUnavailableError as e:
+        # Governance_Write fail closed：输出 Structured_Reason + 平台恢复指引
+        _collab_governance_rejection(method, str(e), use_json)
+        return True
+    except Exception as e:
+        _collab_error("E_RPC_FAILED", "cli.collab.rpc_failed",
+                      f"RPC 调用失败 ({method}): {e}", use_json)
+        return True
+
+    # 处理降级响应（Governance_Write 不应降级，但防御性检查）
+    if response.get("degraded"):
+        reason = response.get("reason")
+        if reason:
+            _collab_output_structured_reason(reason, use_json)
+        else:
+            _collab_governance_rejection(method, "降级模式", use_json)
+        return True
+
+    # 成功路径
+    result = response.get("result")
+    if use_json:
+        print(json.dumps({"ok": True, "method": method, "result": result},
+                         ensure_ascii=False, indent=2))
+    else:
+        cprint(f"[OK] {method} 执行成功", "green")
+        if result and isinstance(result, dict):
+            for k, v in result.items():
+                cprint(f"  {k}: {v}")
+
+    return True
+
+
+def _collab_governance_rejection(method: str, detail: str, use_json: bool):
+    """输出 Governance_Write fail closed 的 Structured_Reason [Req 14.30]。"""
+    import sys as _sys
+    platform = "windows" if _sys.platform == "win32" else (
+        "macos" if _sys.platform == "darwin" else "linux"
+    )
+    try:
+        from ..server.daemon_autostart import get_default_endpoint
+        endpoint = get_default_endpoint()
+    except Exception:
+        endpoint = "(unknown)"
+
+    # 平台相关恢复指引
+    if platform == "windows":
+        recovery = (f"daemon 未运行。请执行: cw daemon start "
+                    f"或确认 Windows 服务 CallWarden Daemon 已启动。端点: {endpoint}")
+    elif platform == "macos":
+        recovery = (f"daemon 未运行。请执行: cw daemon start "
+                    f"或 launchctl load ~/Library/LaunchAgents/com.callwarden.daemon.plist。"
+                    f"端点: {endpoint}")
+    else:
+        recovery = (f"daemon 未运行。请执行: cw daemon start "
+                    f"或 systemctl --user start callwarden-daemon。端点: {endpoint}")
+
+    reason = {
+        "code": "E_GOVERNANCE_WRITE_DEGRADED",
+        "message_key": "error.governance_write_degraded",
+        "recovery_guidance": recovery,
+        "executed_components": [],
+        "rejected_components": [method],
+        "context": {"method": method, "endpoint": endpoint, "platform": platform,
+                    "detail": detail},
+    }
+    _collab_output_structured_reason(reason, use_json)
+
+
+def _collab_output_structured_reason(reason: dict, use_json: bool):
+    """输出 Structured_Reason（JSON 或人类可读格式）。"""
+    if use_json:
+        print(json.dumps({"ok": False, "reason": reason},
+                         ensure_ascii=False, indent=2))
+    else:
+        code = reason.get("code", "E_UNKNOWN")
+        msg_key = reason.get("message_key", "")
+        recovery = reason.get("recovery_guidance", "")
+        # 尝试 i18n 翻译 message_key（flat key 可能无法嵌套解析，给有意义默认值）
+        _DEFAULTS = {
+            "error.governance_write_degraded": "daemon 不可用，治理写操作被拒绝（Degraded_Mode fail closed）。状态保持不变。",
+            "error.cross_class_partial_rejection": "跨类操作部分执行：索引部分完成，治理部分因 daemon 不可用被拒绝。",
+        }
+        fallback = _DEFAULTS.get(msg_key, msg_key or "操作被拒绝")
+        msg = t(msg_key, default=fallback) if msg_key else "操作被拒绝"
+        cprint(f"[REJECTED] {code}", "red")
+        cprint(f"  {msg}", "red")
+        if recovery:
+            cprint(f"  恢复指引: {recovery}", "yellow")
+        rejected = reason.get("rejected_components", [])
+        if rejected:
+            cprint(f"  被拒组成部分: {', '.join(rejected)}", "yellow")
+
+
+def _collab_error(code: str, message_key: str, detail: str, use_json: bool):
+    """输出一般性错误。"""
+    if use_json:
+        print(json.dumps({"ok": False, "error": {"code": code, "detail": detail}},
+                         ensure_ascii=False, indent=2))
+    else:
+        cprint(f"[ERROR] {code}: {detail}", "red")
 
 
 if __name__ == "__main__":

@@ -116,12 +116,15 @@ jobs:
           echo "Artifact size: $(stat -f%z "$ARTIFACT") bytes"
 
       - name: Run E2E verification (8 steps)
+        env:
+          SKIP_STEP5: ${{ inputs.skip_step5 }}
+          SKIP_STEP7: ${{ inputs.skip_step7 }}
         run: |
           EXTRA_ARGS=()
-          if [ "${{ inputs.skip_step5 }}" = "true" ]; then
+          if [ "$SKIP_STEP5" = "true" ]; then
             EXTRA_ARGS+=("--skip-step5")
           fi
-          if [ "${{ inputs.skip_step7 }}" = "true" ]; then
+          if [ "$SKIP_STEP7" = "true" ]; then
             EXTRA_ARGS+=("--skip-step7")
           fi
 
@@ -165,3 +168,67 @@ jobs:
               echo "P2-H macOS arm64 E2E 报告未生成"
             fi
           } >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
+
+  # Daemon 协同 E2E（Req 14.1, 14.3, 14.8, 14.22–14.26）
+  daemon-collab-e2e:
+    name: macOS arm64 Daemon Collab E2E
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust extension
+        run: cd rust_ext && cargo build --release
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip --quiet
+          pip install -r requirements.txt --quiet
+
+      - name: Install LaunchAgent plist (Req 14.25)
+        run: |
+          mkdir -p ~/Library/LaunchAgents
+          cat > ~/Library/LaunchAgents/com.callwarden.daemon.plist << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>Label</key>
+            <string>com.callwarden.daemon</string>
+            <key>ProgramArguments</key>
+            <array>
+              <string>/usr/bin/python3</string>
+              <string>${{ github.workspace }}/cw.py</string>
+              <string>daemon</string>
+              <string>serve</string>
+            </array>
+            <key>KeepAlive</key>
+            <false/>
+            <key>RunAtLoad</key>
+            <false/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Run daemon collaboration E2E
+        run: |
+          python .github/workflows/e2e/run_platform_e2e.py \
+            --platform macos-arm64 \
+            --report e2e-daemon-collab-macos-arm64.json \
+            --daemon-collab
+
+      - name: Upload daemon collab report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-daemon-collab-macos-arm64
+          path: e2e-daemon-collab-macos-arm64.json
+          retention-days: 14

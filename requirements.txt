@@ -1,5 +1,11 @@
 # Call Warden 核心依赖
-tree-sitter>=0.21
+#
+# tree-sitter 版本下限由代码实际使用的 API 决定：parsers/base.py 用
+# `Language(module.language())` + `Parser(language)` 构造式，该形式自 0.22 引入；
+# 0.21.x 的 `Parser()` 不接受 language 参数，会在实例化 parser 时直接 TypeError。
+# 上限取当前已验证版本（0.26.0）之上的下一个 minor；升级上限前必须重新验证
+# grammar wheel 的 ABI 兼容性（见下方 grammar 段注释）。
+tree-sitter>=0.22,<0.27
 # A15 (2026-07-20): pathspec 提供完整 gitignore 语义支持（字符类/尾随空格/negation）
 # pathspec 不可用时降级到自研实现（不完整）
 pathspec>=0.10
@@ -8,8 +14,20 @@ watchdog>=6.0.0
 numpy>=1.24
 semgrep>=1.50
 tomli>=2.0.0; python_version < '3.11'
+# 防 XXE 的 XML 解析库（release/_check_artifacts.py 解析 WiX wxs 文件用）
+defusedxml>=0.7
 
 # 各语言 tree-sitter grammar（按需安装，install.py 会自动处理）
+#
+# ABI 约束：grammar wheel 的 `language()` 入口必须返回 PyCapsule（0.22+ 代）才能被
+# 上面的 `Language(module.language())` 接受；返回旧式整数指针的老 wheel 会在构造
+# Language 时失败。因此升级 tree-sitter 上限时必须连带验证这些 grammar 的版本。
+#
+# 注意：pyproject.toml 已把 Python tree-sitter 与 grammar 移入 `parser-reference`
+# extra（P1-G，2026-07-25），生产解析统一由 Rust callwarden_core 完成，Python parser
+# 仅作开发 reference。本文件与 install.py 的 CORE_PACKAGES 仍将其列为核心依赖，
+# 三处口径尚未统一，属待决项。
+#
 # 已支持语言（9 种）
 tree-sitter-rust>=0.21
 tree-sitter-typescript>=0.21
@@ -37,6 +55,11 @@ tree-sitter-hcl>=0.21
 # P3 扩展语言（Semgrep Beta）
 tree-sitter-elixir>=0.3
 
-# 可选依赖（AI 向量嵌入/语义搜索，按需安装 `pip install callwarden[vector]`）
-sentence-transformers>=2.2 # 向量嵌入（语义搜索，依赖 PyTorch）
-sqlite-vec>=0.1            # 向量索引扩展
+# 可选依赖（AI 向量嵌入/语义搜索）故意不在本文件声明
+#
+# `sentence-transformers` 会拉取 PyTorch/CUDA 运行时（数 GB），若列在此处则
+# `pip install -r requirements.txt` 会强制安装，与既有设计意图矛盾：
+#   - pyproject.toml 的 `[project.optional-dependencies]` 已有 `vector` extra 承载；
+#   - install.py 的 OPTIONAL_PACKAGES 仅在 `cw install --all` 时安装（默认跳过）；
+#   - CHANGELOG 明确 sentence-transformers 与 sqlite-vec 保持外置/可选。
+# 需要向量能力时安装：`pip install callwarden[vector]` 或 `cw install --all`。

@@ -38,7 +38,8 @@ def check_wxs():
         return False
 
     try:
-        import xml.etree.ElementTree as ET
+        # 使用 defusedxml 防 XXE（semgrep: use-defused-xml-parse）
+        from defusedxml import ElementTree as ET
         tree = ET.parse(wxs_path)
         root = tree.getroot()
         # WiX 命名空间
@@ -416,7 +417,7 @@ def check_light_bundle_unpacked_diff():
 
     if not local_exists and not client_exists:
         print(f"  [SKIP] 未找到 PyInstaller 产物（{LOCAL_BUNDLE_DIR} 不存在）")
-        print("         请先运行: pyinstaller release/pyinstaller/callwarden.spec --noconfirm --clean")
+        print("         请先运行: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean")
         return True
 
     if not local_exists:
