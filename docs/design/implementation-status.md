@@ -368,3 +368,96 @@ Python `server/daemon_server.py` 确实接入 metrics、health、migration；Lin
 4. **G11 剩余缺口**：Rust daemon 路径未接入 CAS→Manifest→Snapshot merge（依赖 P1-6 文档明确后由 Rust 端补齐）
 5. **未来 Rust daemon 补齐工作**：metrics 埋点 + health check 四项检查 + 版本化迁移 + CAS merge + snapshot GC 后台线程 + refresh scheduler 后台线程 + job executor
 
+## 七、多 LLM 契约协作分阶段状态（P0–P4）
+
+> 规格冻结文档：[requirements.md](requirements.md) · [multi-llm-contract-driven-collaboration-design.md](multi-llm-contract-driven-collaboration-design.md) · [tasks.md](tasks.md)
+> 最后更新：2026-08-02
+
+| 阶段 | 名称 | 状态 | 关键产出 |
+|------|------|------|---------|
+| 设计冻结 | 规格冻结 | ✅ 已冻结 | requirements.md（29×5 条验收标准）、design doc、tasks.md |
+| P0 | 盲评对照实验 | ✅ 已实现 | `experiments/` 模块 + `cw experiment` CLI（13 子命令）+ JSONL 记录 + 评估器 |
+| D0 | 跨平台 daemon 化 | ✅ 已实现 | 三平台端点（UDS/命名管道）、Peer_Credential、串行化点、Authoritative_Clock、Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、Degraded_Mode 分流、4 个只读 MCP 工具 |
+| P1 | 契约驱动协作 | 🔲 planned / unavailable | 需 G0 通过 + GD 通过 → schema 变更 + 迁移 + Envelope/Verdict/Evidence/Gate 实现 |
+| P2 | DAG 依赖调度 | 🔲 planned / unavailable | 需 P1 启用（Req 13.13） |
+| P3 | Agent 身份审计 | 🔲 planned / unavailable | 需 P1 启用（Req 13.13） |
+| P4 | 安全租约与分派 | 🔲 planned / unavailable | 需 P1 + P3 启用（Req 13.13） |
+
+**约束（Req 13.1）**：P1–P4 在启用前，其所有能力均表示为 planned 且 unavailable。
+文档、CLI 输出、MCP 工具描述中不得暗示这些阶段已实现。
+
+### P0 已实现能力清单
+
+| 能力 | 关键文件 | 需求覆盖 |
+|------|---------|---------|
+| 分层随机分组（5 维度） | `experiments/blind_review_protocol.py` | Req 12.3 |
+| 协议冻结 + 指纹 | 同上 | Req 12.3, 12.5 |
+| Minimal_Blind_View 构建 | `experiments/blind_review_views.py` | Req 12.24, 12.25 |
+| 盲法披露检测 + 无效样本 | 同上 | Req 12.8, 12.18 |
+| JSONL 追加写入 + 截断恢复 | `experiments/blind_review_jsonl.py` | Req 12.22, 12.23 |
+| 成功/灰区/暂停评估 | `experiments/blind_review_evaluator.py` | Req 12.10–12.17, 12.27–12.29 |
+| G0 决策输出 | `cli/main.py` `_handle_experiment` | Req 12.14 |
+| P0 Stage_Toggle（3 级作用域） | `experiments/blind_review_protocol.py` | Req 13.17, 13.18 |
+| 暂停 6 触发器 + fail-safe | 同上 + evaluator | Req 12.15–12.21, 12.24 |
+| 非产品 Evidence 标记 | 全部 JSONL 记录 | Req 12.23 |
+
+### D0 已实现能力清单
+
+> D0 是 P1 的前置阶段，与 P0 相互独立（Requirement 13.17）。D0 已交付跨平台 daemon
+> 基座，但 P1–P4 仍标记 planned/unavailable，不得声明 P1 门禁可用（Requirement 13.1）。
+
+| 能力 | 关键文件 | 需求覆盖 |
+|------|---------|---------|
+| 跨平台传输抽象（UDS + 命名管道） | `rust_ext/src/daemon/transport/` | Req 14.2, 14.3 |
+| 三平台 Peer_Credential → Peer_Identity | `rust_ext/src/daemon/peercred.rs` | Req 14.4, 14.5 |
+| Windows SID 等强度 ACL（SDDL） | `rust_ext/src/daemon/transport/named_pipe.rs` | Req 14.18, 14.19 |
+| 端点排除（AF_UNIX/TCP/HTTPS 不提供 Peer_Credential） | 设计文档决策记录 | Req 14.20, 14.21 |
+| 进程内唯一串行化点 + 请求队列 | `rust_ext/src/daemon/server.rs` | Req 14.6 |
+| Authoritative_Clock API | `rust_ext/src/daemon/clock.rs` | Req 14.11 |
+| daemon 侧 Attestation 签发 | `rust_ext/src/daemon/attestation.rs` | Req 14.13 |
+| 并发 gate 判定隔离 | `rust_ext/src/daemon/gate.rs` | Req 14.14 |
+| 昂贵 verifier 执行移出 SQLite 写事务 | `rust_ext/src/daemon/verifier.rs` | Req 14.16 |
+| Stage_Toggle 存储 + 作用域解析 + 前置校验 | `rust_ext/src/daemon/stage_toggle.rs` | Req 13.11, 13.18–13.21 |
+| Independence_Policy 存储 + 变更审计 | `rust_ext/src/daemon/independence_policy.rs` | Req 5.13 |
+| 稳定错误码 + 双语 message key + 恢复指引 | `server/degraded_mode.py` + `rust_ext/src/daemon/error_codes.rs` + `i18n/*.json` | Req 1.12, 14.15 |
+| 经 daemon 的 CLI 写命令面 | `cli/main.py` + `server/daemon_client.py` | Req 14.17 |
+| 只读 MCP 查询工具面（4 工具） | `server/mcp_server.py` | Req 14.17 |
+| macOS launchd 打包 | `rust_ext/packaging/launchd/` | Req 14.25 |
+| daemon 自动唤起 + 有界等待窗口（10s） | `server/daemon_client.py` `call_with_autostart` | Req 14.22 |
+| 唤起单实例跨进程互斥 | `server/daemon_client.py` + `rust_ext/src/daemon/mutex.rs` | Req 14.23 |
+| 三平台唤起方式（systemd/launchd/detached） | `server/daemon_client.py` | Req 14.24–14.26 |
+| Degraded_Mode 操作分类 + 分流策略 | `server/degraded_mode.py` | Req 14.27–14.30 |
+| daemon 客户端接线降级分流 + Degraded_Mode 标记 | `server/daemon_client.py` | Req 14.33 |
+| 无有效 Attestation 记录判 invalid（不设物理写屏障） | `rust_ext/src/daemon/attestation.rs` | Req 14.31 |
+| 混合类操作按组成部分分级 | `server/degraded_mode.py` + `cli/main.py` | Req 14.34–14.39 |
+| P4 Lease 边界正面陈述（代码注释/CLI/文档） | 全部 D0 产出 | Req 14.32, 11.13 |
+
+### G0 检查点
+
+G0 是 P0 → P1 的门禁。`cw experiment report <batch_id> --json` 输出
+`g0_decision.eligible_for_p1=true` 当且仅当所有成功阈值满足且无未解决灰区/暂停。
+G0 通过**仅表示可以讨论是否启用 P1**，不自动触发任何 schema 变更或能力解锁。
+
+### GD 检查点
+
+GD 是 D0 → P1 的门禁，与 G0 相互独立（Requirement 13.17）。GD 通过条件：
+
+- 命名管道 SDDL 与实例保活（Req 14.18, 14.19）
+- 端点负向约束（排除 AF_UNIX/TCP/HTTPS，Req 14.20, 14.21）
+- 三平台自动唤起 + 单实例互斥（Req 14.22–14.26）
+- Degraded_Mode 分级 + 恢复指引（Req 14.27–14.30）
+- 混合类操作按组成部分分级：Index_Write 执行、Governance_Write fail closed、
+  无状态推进、无 Evidence 或 gate decision（Req 14.34–14.39）
+- Stage_Toggle 存储迁移保值（Req 13.19）
+- daemon 配置存储同时承载 Stage_Toggle 与 Independence_Policy，变更可审计
+  （Independence_Policy 语义在 P1 由 4.5 落地，Req 5.13）
+- 无有效 Attestation 记录判 invalid（Req 14.31）
+
+GD 通过**仅表示 D0 基座已就绪**，P1 仍需 G0 同时通过才能启动（Req 13.13）。
+
+### 非目标（Req 13.6）
+
+本特性范围限于契约驱动任务协作，明确排除：通用项目管理、实时 Agent 聊天、
+共享隐藏推理历史、中央多 Agent 调度器、任意自然语言证明、以 LLM verdict
+替代确定性验证。
+

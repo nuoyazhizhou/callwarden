@@ -12,7 +12,7 @@
                ▼                               ▼
 ┌──────────────────────────┐     ┌──────────────────────────────┐
 │      CLI (cli/main.py)   │     │   MCP Server (FastMCP)       │
-│  子命令 + --flag 双风格  │     │   206 个 @mcp.tool() 工具    │
+│  子命令 + --flag 双风格  │     │   210 个 @mcp.tool() 工具    │
 │  145+ 命令               │     │   stdio / SSE 传输           │
 └────────────┬─────────────┘     └──────────────┬───────────────┘
              │                                  │
@@ -944,7 +944,7 @@ Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprec
 
 ### 12 主分类设计
 
-Call Warden 把 145+ 个 CLI 命令和 206 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
+Call Warden 把 145+ 个 CLI 命令和 210 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
 
 | # | 主分类 | CLI 涵盖范围 | MCP 工具数 |
 |---|--------|-------------|-----------|
@@ -982,7 +982,7 @@ Call Warden 把 145+ 个 CLI 命令和 206 个 MCP 工具按功能聚合为 12 �
 
 | 工作项 | 状态 | 说明 |
 |--------|------|------|
-| MCP 工具命名审计 | ✅ | 206 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
+| MCP 工具命名审计 | ✅ | 210 个 `@mcp.tool()` 全量审计，结论：无严重不一致（详见 `.mcp_audit.md` §3） |
 | 12 大类分组注释 | ✅ | `server/mcp_server.py` 中用统一注释格式标注每个分类起点 |
 | CLI↔MCP 映射对照表 | ✅ | `docs/mcp_tools.md` 末尾添加 171 条 CLI↔MCP 命名映射 |
 | CLI 命令参考 12 大类重构 | ✅ | `docs/cli_reference.md` 开头概览表替换为 12 大功能分类 |
@@ -1013,7 +1013,7 @@ Call Warden 把 145+ 个 CLI 命令和 206 个 MCP 工具按功能聚合为 12 �
 
 #### 2. 不重命名 MCP 工具
 
-**决策**：206 个 MCP 工具的命名保持不变，仅审计和归档。
+**决策**：210 个 MCP 工具的命名保持不变，仅审计和归档。
 
 **理由**：
 - MCP 工具名是 Agent 集成的稳定接口，重命名会破坏已部署的 Agent workflow
@@ -1042,8 +1042,190 @@ Call Warden 把 145+ 个 CLI 命令和 206 个 MCP 工具按功能聚合为 12 �
 
 > 数据库锁策略详见 [AGENTS.md - 代码读取工具按场景分工](../AGENTS.md)。
 
+## Daemon 架构（D0 跨平台 daemon 化）
+
+> **阶段状态**：D0 已交付跨平台传输、Peer_Credential、串行化点、Authoritative_Clock、
+> Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、Degraded_Mode 分流。
+> P1–P4 仍标记 **planned/unavailable**（Requirement 13.1），不得声明 P1 门禁可用。
+> 本节描述的是 D0 已交付的 daemon 能力，P1 产品化后的契约驱动协作能力以
+> `docs/design/multi-llm-contract-driven-collaboration-design.md` 为准。
+
+### 设计目标
+
+D0 daemon 化是 P1 契约驱动协作的前置阶段，与 P0 盲评对照实验相互独立（Requirement 13.17）。
+daemon 提供四个不可替代的能力，这些能力是 P1 Protected_Mutation 串行化与 Evidence_Freshness
+判定的前提：
+
+1. **唯一串行化点**（Requirement 14.6）：daemon 进程内单一请求队列，保证 Protected_Mutation
+   全局串行，避免多客户端并发写引发的状态紊乱。
+2. **Peer_Credential → Peer_Identity 派生**（Requirements 14.4–14.5）：内核保证的对端凭据
+   （Linux `SO_PEERCRED` / macOS `LOCAL_PEERCRED` / Windows 命名管道 SID）不可伪造，
+   是 Identity 校验与授权决策的可信输入。
+3. **Authoritative_Clock**（Requirement 14.11）：daemon 单调时钟为 Lease、gate decision、
+   Evidence 时间戳提供统一时序基准，客户端时钟不可信。
+4. **Attestation 签发**（Requirement 14.13）：daemon 对 verdict/Evidence 签发 Attestation，
+   降级路径产物因缺有效 Attestation 判 `invalid`（Requirement 14.31），因此系统**不设物理写屏障**。
+
+### 跨平台端点设计
+
+| 平台 | 端点类型 | 传输协议 | Peer_Credential 来源 | 自动唤起方式 |
+|------|----------|----------|----------------------|-------------|
+| Linux | Unix 域套接字 | UDS (`SO_PEERCRED`) | UID + GID + PID | systemd user service |
+| macOS | Unix 域套接字 | UDS (`LOCAL_PEERCRED`) | UID + GID（无 PID） | launchd user agent |
+| Windows | 命名管道 | `\\.\pipe\callwarden-<user-sid>` | 对端 SID (`GetNamedPipeClientProcessId`) | detached process |
+
+**Windows 端点决策**（Requirements 14.2, 14.18–14.21）：
+
+- 选用命名管道，排除 AF_UNIX / 监听 TCP / 本机 HTTPS —— 后三者 OS 不提供 Peer_Credential，
+  无法满足 Requirement 14.5 的对端身份派生
+- 管道名按 owner SID 派生，每用户独立端点
+- SDDL 仅授权 owner SID，等强度于 Unix socket owner + mode 0660（Requirement 14.3）
+- 预创建 spare pipe instance 消除 accept 竞态（Requirement 14.19）
+- 多实例保活：daemon 退出时由 watcher 重启，单实例互斥防止重复启动
+
+**实现**：传输抽象位于 [rust_ext/src/daemon/transport/](../rust_ext/src/daemon/transport/)，
+平台无关的 listen/accept/request 循环由 `Transport` trait 抽象，各平台实现 `UnixTransport`
+与 `NamedPipeTransport`。daemon 主循环见 [rust_ext/src/daemon/server.rs](../rust_ext/src/daemon/server.rs)。
+
+### 串行化点与请求队列
+
+daemon 进程内维护单一请求队列（FIFO），所有 Protected_Mutation 操作在此排队执行：
+- 请求超时由 `request_timeout` 配置项控制，超时返回 `E_DAEMON_REQUEST_TIMEOUT`
+- 串行化点仅覆盖 Protected_Mutation（Requirements 14.6, 14.30）；Read_Only 查询与
+  Index_Write 可并发执行，不进入串行队列
+- 混合类操作（`Mixed_Class_Operation`，Requirement 14.34）按组成部分分级：
+  Index_Write 部分直连执行，Governance_Write 部分 fail closed（Requirements 14.35–14.39）
+
+**已知混合类操作**：`task_report_step` 同时刷新文件状态（Index_Write）与运行 Completion_Gate
+（Governance_Write），daemon 不可用时 Index_Write 部分执行、Governance_Write 部分被拒，
+任务与步骤状态保持请求前状态并返回标识已执行与被拒组成部分的 Structured_Reason（Requirement 14.36）。
+
+### Authoritative_Clock 与 Attestation
+
+**Authoritative_Clock**（Requirement 14.11）：daemon 启动时建立单调时钟基准，所有 Lease、
+gate decision、Evidence 时间戳、Stage_Toggle 变更、Independence_Policy 变更均以此时钟为准。
+客户端时钟仅用于本地显示，不参与授权决策。
+
+**Attestation 签发**（Requirement 14.13）：daemon 对每条 verdict/Evidence 签发 Attestation，
+绑定 Peer_Identity + Authoritative_Clock 时间戳 + payload hash。Attestation 校验规则见
+Requirements 10.8–10.9：
+
+- 自签、issuer 不符、绑定或签名失败、越出有效窗口 → 判 `invalid`
+- issuer/签名密钥撤销：按 Revocation_Mode 派生（Requirements 10.10–10.18），不逐条写失效事件
+
+**降级产物判 invalid**（Requirement 14.31）：daemon 不可用时直连 SQLite 写入的记录无有效
+Attestation，按 Requirements 10.8、10.9、14.13 的校验规则判 `invalid`，因此系统**不设物理写屏障**。
+Degraded_Mode 标记（Requirement 14.33）使 daemon 路径与降级路径产物可区分，便于审计。
+
+### Stage_Toggle 存储
+
+Stage_Toggle（Requirements 13.11, 13.18–13.21）控制 P0–P4 阶段启用状态，优先级
+`task > workspace > global`，全局默认关闭：
+
+- **daemon 可用时**：Stage_Toggle 存储在 daemon 拥有的配置存储中，变更记录发起者 Peer_Identity
+  与 Authoritative_Clock 时间（Requirement 13.11）
+- **daemon 不可用时（D0 交付前的 P0 独占期）**：P0 Stage_Toggle 由 Experiment_Batch_Config
+  承载，不触发 schema 变更（Requirements 13.18, 12.1）
+- **迁移保值**：daemon 配置存储确立后，迁移必须保留既有取值而非重置为默认关闭（Requirement 13.19）
+- **P0 与 P1–P4 隔离**：两种存储下的 P0 解析都不读取 P1–P4 开关（Requirement 13.21），
+  与 P0 独立于 P1–P4 的原则（Requirement 13.17）一致
+
+**实现**：Stage_Toggle 存储与解析位于 [rust_ext/src/daemon/stage_toggle.rs](../rust_ext/src/daemon/stage_toggle.rs)。
+
+### Independence_Policy 存储
+
+Independence_Policy（Requirements 5.12–5.17）与 Stage_Toggle 同源，存储在 daemon 拥有的配置存储中：
+
+- 默认 `required`，非默认 `solo`；禁止由单次请求参数或客户端自报字段设置（Requirement 5.13）
+- 变更记录发起者 Peer_Identity 与 Authoritative_Clock 时间，使开启豁免本身成为可审计动作
+- `high_risk` profile 禁用 `solo`（Requirement 5.14）
+- `solo` 不放宽任何其他门禁（Requirement 5.16），`solo` 期间产生的 gate decision 在政策改回
+  `required` 后不可复用（Requirement 5.17）
+
+### 自动唤起与 Degraded_Mode
+
+**自动唤起**（Requirement 14.22）：客户端无法连接端点时，尝试启动 daemon，在有界等待窗口内
+以指数退避重试。窗口默认 10 秒（客户端时钟测量），可通过配置调整。窗口内重试成功则在已建立的
+连接上继续原请求。
+
+**单实例互斥**（Requirement 14.23）：每用户端点仅允许一个 daemon 实例，通过跨进程互斥
+（Windows named mutex / Linux/macOS file lock）保证。互斥确保 Requirement 14.6 的串行化点
+唯一性。
+
+**三平台唤起方式**（Requirements 14.24–14.26）：
+
+| 平台 | 唤起方式 |
+|------|---------|
+| Linux | systemd user service（`systemctl --user start callwarden`） |
+| macOS | launchd user agent（`launchctl start <label>`） |
+| Windows | detached process（`Start-Process -WindowStyle Hidden`） |
+
+**Degraded_Mode 分流**（Requirements 14.27–14.30）：有界等待窗口耗尽后，按操作类型分级处理：
+
+| 操作类型 | Degraded_Mode 行为 | 理由 |
+|----------|-------------------|------|
+| Read_Only 查询 | 直连只读 SQLite 连接执行并返回结果（Requirement 14.28） | 只读不改变状态，安全降级 |
+| Index_Write | 直连 SQLite 执行（Requirement 14.29） | 派生事实不含授权语义，可从当前 workspace 重算 |
+| Governance_Write | **fail closed**，返回 Structured_Reason + 可执行恢复指引（Requirement 14.30） | 授权/门禁决策必须经 daemon 串行化点 |
+
+**Governance_Write 恢复指引**包含平台具体拉起命令（如 `systemctl --user start callwarden` /
+`launchctl start <label>` / `Start-Process ...`），便于用户快速恢复 daemon。
+
+**Degraded_Mode 标记审计**（Requirement 14.33）：降级路径产出的记录携带 Degraded_Mode 标记与
+原因，daemon 路径与降级路径产物可区分，用于审计与合规分析。
+
+### 稳定错误码与 Structured_Reason
+
+所有失败路径返回 Structured_Reason（Requirement 1.12），包含：
+
+- **稳定错误码**：如 `E_DAEMON_UNAVAILABLE`、`E_GOVERNANCE_WRITE_DEGRADED`、
+  `E_DAEMON_REQUEST_TIMEOUT`、`E_COLLAB_QUERY_FAILED` 等，错误码不随文案变化而改变
+- **i18n message key**：可在 `zh_CN` 与 `en_US` 两个 catalog 解析（[i18n/zh_CN.json](../i18n/zh_CN.json)、
+  [i18n/en_US.json](../i18n/en_US.json)）
+- **可执行恢复指引**：针对 Governance_Write fail closed 场景，返回平台具体拉起命令
+
+错误码目录与双语 message key 见 [server/degraded_mode.py](../server/degraded_mode.py) 与
+[rust_ext/src/daemon/error_codes.rs](../rust_ext/src/daemon/error_codes.rs)。
+
+### P4 Lease 边界（正面陈述）
+
+> 按 Requirements 14.32、11.13 正面陈述，禁止描述为"Lease 不可绕过"或"Lease 能防止离线改库"。
+
+**Lease 的作用域**（Requirement 14.32）：Lease 是 daemon **在线期间**的并发正确性保证，
+确保同一 task + role 的 Protected_Mutation 在串行化点内有序执行，避免并发写冲突。
+
+**防篡改归属**：防篡改能力归属 Attestation 校验（Requirements 10.8–10.9, 14.13, 14.31）与
+追加式 Evidence_Ledger（Requirement 1.7），**不归属 Lease**。离线直接修改 SQLite 的产物因
+缺有效 Attestation 判 `invalid`，这是 Attestation 校验的结果，不是 Lease 的能力。
+
+**用户面陈述约束**（Requirement 11.13）：任何向用户陈述 Lease 作用时（如 CLI 输出、文档、
+代码注释），必须按上述边界表述，不得声称 Lease 能防止离线直接改库。
+
+### 只读 MCP 工具面
+
+D0 已交付 4 个只读协同查询 MCP 工具（Requirement 14.17），通过 daemon `call_with_autostart`
+路由，不触发写操作（含 workspace 激活一类隐式 UPDATE）：
+
+| 工具 | 用途 | P1 启用后返回 | P1 未启用返回 |
+|------|------|---------------|---------------|
+| `get_role_view` | 获取 Role_View 投影 | Role_View dict | `{"status": "planned", ...}` |
+| `find_evidence` | 查询 Evidence 记录 | `{"items": [...], "count": N}` | `{"status": "planned", ...}` |
+| `get_freshness_status` | 查询 Evidence Freshness_Status | `{"items": [...]}` | `{"status": "planned", ...}` |
+| `get_gate_decision` | 查询 gate decision 历史 | `{"items": [...], "count": N}` | `{"status": "planned", ...}` |
+
+P1 未启用时返回 `planned/unavailable` 结构化响应（Requirement 13.1），不视为错误。
+实现见 [server/mcp_server.py](../server/mcp_server.py) `_collab_rpc_call`。
+
+### 相关文档
+
+- [部署指南 - Daemon 跨平台部署](deployment.md#daemon-跨平台部署)：平台支持矩阵、launchd/systemd/Windows 服务托管
+- [CLI 命令参考 - 阶段可用性](cli_reference.md#阶段可用性req-131)：D0 已实现、P1 planned/unavailable
+- [MCP 工具参考 - 只读协同查询工具](mcp_tools.md#只读协同查询工具multi-llm-contract-collaboration-req-1417)：4 个只读工具详情
+- [设计文档](design/multi-llm-contract-driven-collaboration-design.md)：Property 13–28 的形式化定义
+- [实施状态](design/implementation-status.md)：D0 各子任务交付状态
+
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：206 个工具详情
+- [MCP 工具参考](mcp_tools.md)：210 个工具详情
 - [CLI 命令参考](cli_reference.md)：145+ 命令详情
 - [部署指南](deployment.md)：Docker 部署与升级

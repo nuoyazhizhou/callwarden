@@ -2412,9 +2412,9 @@ Call Warden 提供三个角色化入口，分离 daemon 管理、client 调用�
 
 | 入口 | 角色 | 平台 | 说明 |
 |------|------|------|------|
-| `cw-daemon` | Enterprise Daemon | 仅 Linux | 启动 daemon server，管理 UDS socket、registry DB、snapshot |
-| `cw-client` | RPC Proxy | 仅 Linux | 纯 client 视角，调用 daemon RPC（不含 `serve` 启动 daemon） |
-| `cw-agent` | Watcher Agent | 仅 Linux | per-UID 文件监控 agent，启动/停止/状态查询 |
+| `cw-daemon` | Enterprise Daemon | Linux / macOS / Windows | 启动 daemon server，管理端点（UDS / 命名管道）、registry DB、snapshot |
+| `cw-client` | RPC Proxy | Linux / macOS / Windows | 纯 client 视角，调用 daemon RPC（不含 `serve` 启动 daemon） |
+| `cw-agent` | Watcher Agent | Linux / macOS / Windows | per-UID 文件监控 agent，启动/停止/状态查询 |
 
 ### cw-client 子命令
 
@@ -2500,14 +2500,213 @@ cw daemon metrics --local --reset
 
 ### 平台门禁
 
-`cw-client`、`cw-daemon`、`cw-agent` 三个入口仅 Linux 可用，非 Linux 直接返回 exit code 2：
+`cw-client`、`cw-daemon`、`cw-agent` 三个入口在 D0 后支持三平台（Linux / macOS / Windows）：
+
+- **Linux**：UDS (SO_PEERCRED) + SCM_RIGHTS FD 传递
+- **macOS**：UDS (LOCAL_PEERCRED，无 PID) + SCM_RIGHTS FD 传递
+- **Windows**：命名管道 (`\\.\pipe\callwarden-<user-sid>`) + `canonical_bytes_b64` 载荷路径
 
 ```
 $ cw-client ping
-ERROR: cw-client is only supported on Linux (UDS + SCM_RIGHTS).
+{"status": "ok", "platform": "windows", "endpoint": "\\\\.\pipe\\callwarden-S-1-5-21-..."}
 ```
 
-理由：UDS（Unix Domain Socket）+ SCM_RIGHTS FD 传递是 Linux/Unix 特有，Windows/macOS 上 daemon 不可用。Windows/macOS 用户应使用标准 `cw` 命令（基于本地 SQLite，无 daemon）。
+端点排除（Req 14.20–14.21）：不使用监听 TCP 端口、不使用本机 HTTPS 端点、Windows 不使用 AF_UNIX——因为它们都不提供 Peer_Credential，无法满足 Req 14.5。
+
+---
+
+## cw experiment（P0 盲评对照实验）
+
+P0 阶段盲评对照实验全生命周期管理命令。所有输出标记 `non_product_evidence=True`，
+不构成产品 Evidence，不开放 P1 hard gate。
+
+```bash
+# 创建批次（自动生成默认协议并锁定）
+cw experiment batch-create --seed 42 [--min-valid 30] [--min-nontrivial 20] [--json]
+
+# 手动冻结协议
+cw experiment batch-lock <batch_id> [--json]
+
+# 列出所有批次
+cw experiment batch-list [--json]
+
+# 设置 P0 Stage_Toggle（Req 13.12/13.21）
+cw experiment toggle-set --scope {global,workspace,task} --value {on,off} [--scope-key K] [--json]
+
+# 显示解析后的 P0 开关（task > workspace > global 继承）
+cw experiment toggle-show [--task-id T] [--workspace-id W] [--json]
+
+# 纳样（资格检查→确定性分组→构建 blind view→写 JSONL）
+cw experiment admit <task_id> <batch_id> [--strata K] [--json]
+
+# 记录 review 原始指标（Req 12.6）
+cw experiment record-metrics <task_id> <batch_id> --tp N --fp N --misses N --duration SEC \
+    [--tokens N] [--reopen N] [--defects N] [--rollbacks N] [--obs-window W] [--json]
+
+# 记录 reveal 前后 verdict 变更（Req 12.7）
+cw experiment record-verdict <task_id> <batch_id> --changed {yes,no} \
+    [--reason-code {no_change,new_fact,corrected_misunderstanding}] [--json]
+
+# 记录 Implementer_Notes 揭示事件（Req 12.7）
+cw experiment record-reveal <task_id> <batch_id> [--sealed] [--json]
+
+# 记录无效样本（Req 12.8）
+cw experiment record-invalid <task_id> <batch_id> --reason-code CODE [--detail TEXT] [--json]
+
+# 记录披露/完整性事件（Req 12.18/12.20）
+cw experiment record-incident <task_id> <batch_id> --type {disclosure,integrity} \
+    --reason-code CODE [--detail TEXT] [--json]
+
+# 手动暂停批次（Req 12.15-12.21）
+cw experiment pause <batch_id> --trigger TRIGGER [--reason TEXT] [--json]
+
+# 汇总评估 + 机器可读 G0 决策
+cw experiment report <batch_id> [--json]
+```
+
+`report --json` 输出包含 `g0_decision` 字段：
+
+```json
+{
+  "eligible_for_p1": false,
+  "gray_zones": [],
+  "pause": null,
+  "insufficient_sample": true,
+  "non_product_evidence": true
+}
+```
+
+### 实验记录位置
+
+所有实验记录以 JSONL 追加写入 `~/.callwarden/experiments/<batch_id>/` 目录：
+
+| 文件 | 内容 |
+|------|------|
+| `blind_views.jsonl` | 纳样时的 Minimal_Blind_View 快照（Req 12.24/12.25） |
+| `metrics.jsonl` | review 原始指标 + verdict 变更 + reveal 事件 |
+| `invalid_samples.jsonl` | 无效样本及原因码 |
+| `incidents.jsonl` | 披露/完整性事件 |
+| `evaluation_report.json` | `report` 命令输出的完整评估（含 g0_decision） |
+
+每条记录均携带 `non_product_evidence: true` 标记。
+
+### G0 判定语义（Req 12.14）
+
+`report` 输出的 `g0_decision.eligible_for_p1` 为 `true` 当且仅当：
+
+1. 有效样本数 ≥ `min_valid_tasks`（默认 30）
+2. 非平凡代码变更样本 ≥ `min_nontrivial_code_changes`（默认 20）
+3. 缺陷检出率 Treatment ≥ Control（方向性）
+4. 误报率 Treatment 不超过 Control + 10pp
+5. 中位审查延迟 Treatment 不超过 Control × 1.25
+6. 无未解决的安全/盲法事件
+
+满足以上全部条件时 `eligible_for_p1=true`，表示"可以进入 P1 决策讨论"，
+**不代表 P1 已实现或已启用**（Req 13.1）。
+
+### 灰区语义（Req 12.27–12.29）
+
+| 指标 | 灰区范围 | 效果 |
+|------|---------|------|
+| 误报率差值 | Control + 10pp < Treatment ≤ Control + 20pp | 不授权 P1，继续纳样，记录灰区观察 |
+| 中位延迟增幅 | 25% < 增幅 ≤ 50% | 同上 |
+
+灰区观察期间：批次**不暂停**（暂停条件仍为 Req 12.15–12.20 的硬阈值），
+但 `eligible_for_p1` 保持 `false`，直到灰区观察解除。
+
+### 暂停与恢复（Req 12.21–12.24）
+
+触发暂停的 6 种条件（`PauseTrigger`）：
+
+| 触发器 | 条件 |
+|--------|------|
+| `critical_miss` | Treatment 出现 Control 没有的关键遗漏，且原因是 blind view 缺少必要事实 |
+| `fp_rate_divergence` | Treatment 误报率超 Control > 20pp，连续 10 个 Treatment 样本 |
+| `latency_divergence` | 中位延迟增幅 > 50% 持续 2 周，或无效率 > 30% |
+| `disclosure_violation` | Treatment blind view 泄露 Implementer_Notes/先前 verdict/敏感推理 |
+| `snapshot_drift` | Workspace_Snapshot 漂移导致 > 20% 样本不可归因 |
+| `integrity_violation` | 实验诱导伪造独立性或伪造 Evidence |
+
+暂停后：
+
+- 批次记录、锁定的指标定义、分母、观察窗口和阈值**全部保留**
+- 停止新样本纳样
+- 若投影/抽样/指标/窗口规则需变更，**必须创建新批次**（`predecessor_batch_id` 指向旧批次）
+- 若暂停机制本身无法记录/执行，fail-safe 停止纳样直到恢复（Req 12.24）
+
+## cw collab（多 LLM 契约协同治理写命令）
+
+经 Daemon_Endpoint 序列化点的治理写操作入口（Req 14）。所有操作不可绕过 daemon；
+连接失败时 auto-start → Degraded_Mode → Governance_Write fail closed + 平台恢复指引。
+
+```bash
+# 发布 Envelope（snapshot.publish）
+cw collab publish --workspace PATH [--envelope FILE] [--json]
+
+# 提交 Verdict 并封存（verdict.submit）
+cw collab verdict --verdict-id ID --decision {approve,reject,abstain} [--reason TEXT] [--no-seal] [--json]
+
+# 提交 Reveal_Event（reveal.submit）
+cw collab reveal --event-id ID --task-id ID [--notes FILE] [--json]
+
+# 触发 Gate 判定（gate.decide）
+cw collab gate-trigger --gate-id ID --clause NAME --value {true,false} [--json]
+```
+
+所有子命令支持 `--json` 输出机器可读 JSON。失败路径输出 Structured_Reason（稳定错误码
+`E_GOVERNANCE_WRITE_DEGRADED` + i18n key `error.governance_write_degraded` + 平台恢复指引），
+exit code 1。
+
+### 降级行为（Req 14.27–14.30）
+
+| 操作类别 | daemon 不可用时行为 |
+|----------|-------------------|
+| Governance_Write（publish/verdict/reveal/gate-trigger） | fail closed，输出 Structured_Reason，状态不变 |
+| Index_Write | 直连写入（collab 命令不涉及） |
+| read_only | 直连只读（collab 命令不涉及） |
+
+### 自动唤起与有界等待窗口（Req 14.22–14.26）
+
+客户端无法连接 daemon 端点时，按以下流程处理：
+
+1. **尝试自动唤起**：获取跨进程互斥（Windows named mutex / Linux/macOS file lock），启动 daemon 进程
+2. **有界等待窗口**：默认 10 秒（客户端时钟），窗口内以指数退避重试连接
+3. **窗口内成功**：在已建立的连接上继续原请求
+4. **窗口耗尽**：进入 Degraded_Mode，按操作类型分级处理（见上表）
+
+**三平台唤起方式**：
+- Windows：detached process（存活到客户端进程退出之后）
+- macOS：launchd user agent 激活
+- Linux：systemd user service 激活
+
+**单实例互斥**（Req 14.23）：多个会话并发触发唤起时，互斥原语确保每用户端点至多一个运行中的 daemon 进程，不创建第二个 Protected_Mutation 串行化点。
+
+**降级产物审计**（Req 14.31, 14.33）：Degraded_Mode 产出的记录标记降级原因；降级路径直连 SQLite 写入的记录因缺有效 daemon 签发 Attestation，被 Evidence_Gate 判为 invalid，不满足任何 Blocking_Clause——因此系统**不设物理写屏障**。
+
+### "非产品 Evidence" 限制（Req 12.23）
+
+P0 实验记录**标记为 non-product Evidence**，具体限制：
+
+- 不得用于 P1 hard-gate 声明
+- 不得作为产品能力已实现的证据
+- 不得替代确定性验证（测试通过、CI 绿灯等）
+- 仅用于评估"盲评是否值得产品化"的决策输入
+
+### 阶段可用性（Req 13.1）
+
+| 阶段 | 当前状态 | 说明 |
+|------|---------|------|
+| P0（盲评对照实验） | ✅ 已实现 | 本章节所述命令 |
+| D0（跨平台 daemon 化） | ✅ 已实现 | 三平台端点、Peer_Credential、串行化点、Authoritative_Clock、Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、Degraded_Mode 分流 |
+| P1（契约驱动协作） | 🔲 planned / unavailable | 需 G0 通过 + GD 通过 + schema 变更 + 迁移 + 测试 + 文档 |
+| P2（DAG 依赖调度） | 🔲 planned / unavailable | 需 P1 启用 |
+| P3（Agent 身份审计） | 🔲 planned / unavailable | 需 P1 启用 |
+| P4（安全租约与分派） | 🔲 planned / unavailable | 需 P1 + P3 启用 |
+
+在对应阶段启用前，其所有能力均表示为 planned 且 unavailable，
+不得在文档、输出或判定中暗示已实现。
+
+失败路径输出 Structured_Reason（稳定错误码 + i18n key），exit code 1。
 
 ---
 

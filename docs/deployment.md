@@ -387,6 +387,96 @@ docker run --rm \
   call-warden:latest --status
 ```
 
+## Daemon 跨平台部署
+
+> **阶段状态**：D0（daemon 化）已交付跨平台传输、Peer_Credential、串行化点、
+> Authoritative_Clock、Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、
+> Degraded_Mode 分流。P1–P4 仍标记 **planned/unavailable**，不得声明 P1 门禁可用
+> （Requirement 13.1）。以下描述的是 D0 已交付能力。
+
+### 平台支持矩阵
+
+| 平台 | 端点类型 | 传输协议 | Peer_Credential 来源 | 自动唤起方式 |
+|------|----------|----------|----------------------|-------------|
+| Linux | Unix 域套接字 | UDS (SO_PEERCRED) | UID + GID + PID | systemd user service |
+| macOS | Unix 域套接字 | UDS (LOCAL_PEERCRED) | UID + GID（无 PID） | launchd user agent |
+| Windows | 命名管道 | `\\.\pipe\callwarden-<user-sid>` | 对端 SID (GetNamedPipeClientProcessId) | detached process |
+
+**端点排除决策**（Requirement 14.20–14.21）：
+- **不使用监听 TCP 端口**：操作系统对 TCP 连接不提供 Peer_Credential，无法满足 Requirement 14.5（Peer_Identity 仅从 OS 凭据派生）。
+- **不使用本机 HTTPS 端点**：同理，TLS 不提供 OS 级 Peer_Credential。
+- **Windows 不使用 AF_UNIX**：Windows AF_UNIX 实现不提供 Peer_Credential，无法满足 Requirement 14.5。
+
+### Windows 命名管道端点
+
+**管道命名**（Requirement 14.18）：管道名从 owner 用户 SID 派生，格式为 `\\.\pipe\callwarden-<user-sid>`，确保每用户唯一端点。
+
+**安全描述符（SDDL）**（Requirement 14.18）：仅授权 owner SID 的 connect + read/write 权限，可选授权 local administrators 组，不授权任何其他 SID——等价于 Unix 域套接字的 owner + mode 0660 语义（Requirement 14.3）。
+
+**多实例保活**（Requirement 14.19）：daemon 维持至少两个命名管道实例；每接受一个连接后立即创建替换实例，确保两次 accept 之间的连接请求不返回 pipe-busy 或 endpoint-absent 错误。
+
+### macOS launchd 部署
+
+```bash
+# 安装 launchd user agent（Requirement 14.25）
+cw daemon install --platform macos
+# 生成的 plist 位于 ~/Library/LaunchAgents/com.callwarden.daemon.plist
+# launchd 负责按需激活（on-demand activation）
+```
+
+### Windows 服务托管
+
+```powershell
+# daemon 自动唤起为 detached process（Requirement 14.24）
+# 不需要手动安装服务；客户端连接失败时自动拉起
+# detached process 存活到客户端进程退出之后
+```
+
+### Linux systemd 部署
+
+```bash
+# 安装 systemd user service（Requirement 14.26）
+cw daemon install --platform linux
+# 生成的 unit 位于 ~/.config/systemd/user/callwarden-daemon.service
+# systemd 负责按需激活
+```
+
+### Daemon 不可用时的行为
+
+**自动唤起**（Requirement 14.22）：客户端无法连接端点时，尝试启动 daemon，在有界等待窗口内以指数退避重试。窗口默认 **10 秒**（客户端时钟测量），可通过配置调整。窗口内重试成功则在已建立的连接上继续原请求。
+
+**单实例互斥**（Requirement 14.23）：多个会话并发触发自动唤起时，通过跨进程互斥原语确保每用户端点至多一个运行中的 daemon 进程——Windows 使用 named mutex，Linux/macOS 使用 file lock。不创建第二个 Protected_Mutation 串行化点（Requirement 14.6）。
+
+**Degraded_Mode 分流**（Requirements 14.27–14.30）：有界等待窗口耗尽后，按操作类型分级处理：
+
+| 操作类型 | Degraded_Mode 行为 | 理由 |
+|----------|-------------------|------|
+| Read_Only 查询 | 直连只读 SQLite 连接执行并返回结果 | 只读不改变状态，安全降级 |
+| Index_Write | 直连 SQLite 执行 | 派生事实不含授权语义，可从当前 workspace 重算 |
+| Governance_Write | **fail closed**，返回 Structured_Reason + 可执行恢复指引 | 授权/门禁决策必须经 daemon 串行化点 |
+
+**Governance_Write 恢复指引**包含该平台的具体 daemon 拉起命令与端点位置，不是泛化的"数据库正忙"。
+
+**降级产物审计**（Requirements 14.31, 14.33）：
+- Degraded_Mode 产出的记录标记降级原因，审计可区分 daemon 路径与降级路径的记录。
+- 降级路径直连 SQLite 写入的记录因缺有效 daemon 签发 Attestation，被 Evidence_Gate 判为 **invalid**，不满足任何 Blocking_Clause——因此系统**不设物理写屏障**，通过 Attestation 有效性规则保证降级产物不能过门禁。
+
+### P4 Lease 边界（Requirements 14.32, 11.13）
+
+> **阶段状态**：P4 未启用，以下为正向陈述的目标边界。
+
+- Lease 保证的是 **daemon 在线期间的并发正确性**：同一 task + role 的 Protected_Mutation 经 daemon 串行化点排序，fencing counter 防止旧持有者在新租约生效后继续写入。
+- **防篡改归属 Attestation 与追加式 Evidence_Ledger**，而非归属 Lease 本身。
+- **不得描述为能防止离线直接改库**：离线直接修改 SQLite 不经 daemon，但产出的记录缺有效 Attestation，被 Evidence_Gate 判为 invalid，不满足任何 Blocking_Clause（Requirement 14.31）。
+
+### 环境变量
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CALLWARDEN_DAEMON_MODE` | daemon 模式：`local` / `auto` / `enterprise` | `auto` |
+| `CALLWARDEN_DAEMON_TIMEOUT` | 自动唤起有界等待窗口（秒） | `10` |
+| `CALLWARDEN_DAEMON_ENDPOINT` | 自定义 daemon 端点路径 | 平台默认派生 |
+
 ## 故障排查
 
 ### 数据库锁定
