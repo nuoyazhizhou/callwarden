@@ -291,13 +291,17 @@ def test_protected_report_step_requires_valid_lease(db):
     )
     assert ret is not None and "E_LEASE_FENCING_STALE" in ret["error"]
 
-    # 正确 lease → 成功
+    # 正确 lease → lease 层校验通过（P1 Evidence Gate 接入后，报告可能进一步
+    # 因缺 contract/verdict/evidence 记录被 gate 层 block——那属于 P1 流程层，
+    # 不属于 P4 lease 层，见 db_task_gate.py；本测试只断言 lease 层不拒绝）
     ret = db.task_report_step(task_id, step_id, "ok", lease_token=raw, fencing_counter=counter)
-    assert ret is None or ret.get("status") in ("done", "review")
+    assert ret is None or "E_LEASE" not in str(ret), \
+        "正确 lease 不得被 lease 层拒绝（P1 gate 层独立判定）"
     st = db.conn.execute(
         "SELECT status FROM task_steps WHERE id = ?", (step_id,)
     ).fetchone()["status"]
-    assert st == "done"
+    assert st in ("done", "blocked"), \
+        "正确 lease 后 step 应至少进入 gate 阶段（done 或 P1 gate block）"
 
 
 def test_protected_report_step_without_lease_rejected(db):
@@ -312,8 +316,11 @@ def test_report_step_backward_compatible_without_lease(db):
     """不带 lease 参数时保持向后兼容（P4 不破坏既有调用）"""
     task_id, step_id = _mk_task_with_step(db)
     ret = db.task_report_step(task_id, step_id, "ok")
+    # lease 层不得拒绝无 lease 的调用（P1 Evidence Gate 层可能独立 block）
+    assert ret is None or "E_LEASE" not in str(ret), \
+        "不带 lease 参数不得被 P4 lease 层拒绝（向后兼容）"
     st = db.conn.execute("SELECT status FROM task_steps WHERE id = ?", (step_id,)).fetchone()["status"]
-    assert st == "done"
+    assert st in ("done", "blocked")
 
 
 # ---------------------------------------------------------------
