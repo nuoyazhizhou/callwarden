@@ -13,7 +13,10 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple, Set
+
+from i18n import t
 
 
 # Profile 策略查表矩阵 (Profile_Policy_Matrix)
@@ -53,6 +56,101 @@ def _canonical_json(data: Any) -> str:
 def _compute_hash(data: Any) -> str:
     content = _canonical_json(data)
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+# ============================================================
+# Gate 组装层 fail-closed 稳定错误码（Req 1.12）
+# ============================================================
+# 稳定错误码：跨文案变化保持稳定（Req 1.12）。组装层
+# （evaluate_evidence_gate_for_task）在契约/快照/verdict/evidence 缺失时
+# 只产出 block/unknown 语义的阻断原因，禁止伪造占位或身份换取 pass
+# （Req 1.1/1.8/5.5/6.10/8.3/10.5）。
+
+GATE_CONTRACT_ENVELOPE_MISSING = "GATE_CONTRACT_ENVELOPE_MISSING"
+GATE_SNAPSHOT_UNAVAILABLE = "GATE_SNAPSHOT_UNAVAILABLE"
+GATE_VERDICT_ABSENT = "GATE_VERDICT_ABSENT"
+GATE_EVIDENCE_ABSENT = "GATE_EVIDENCE_ABSENT"
+GATE_IDENTITY_FREE_TEXT_EXCLUDED = "GATE_IDENTITY_FREE_TEXT_EXCLUDED"
+
+# 错误码 → i18n message key（Req 1.12）。
+# error.identity_incomplete 已登记于 zh_CN/en_US catalog（daemon_errors），
+# 其余 key 未登记时由 _GATE_BUNDLED_DEFAULTS 提供双语文案兜底。
+GATE_I18N_KEYS: Dict[str, str] = {
+    GATE_CONTRACT_ENVELOPE_MISSING: "errors.gate_contract_envelope_missing",
+    GATE_SNAPSHOT_UNAVAILABLE: "errors.gate_snapshot_unavailable",
+    GATE_VERDICT_ABSENT: "errors.gate_verdict_absent",
+    GATE_EVIDENCE_ABSENT: "errors.gate_evidence_absent",
+    GATE_IDENTITY_FREE_TEXT_EXCLUDED: "error.identity_incomplete",
+}
+
+# 双语默认文案（i18n catalog 尚未收录时使用，与 db_task_evidence.py 同模式）
+_GATE_BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
+    "errors.gate_contract_envelope_missing": {
+        "zh_CN": "任务 {task_id} 无契约 Envelope（缺 Current_Envelope 绑定）；Evidence Gate fail-closed 阻断（Requirement 1.1, 8.3）。",
+        "en_US": "Task {task_id} has no contract Envelope (Current_Envelope binding missing); Evidence Gate fails closed (Requirement 1.1, 8.3).",
+    },
+    "errors.gate_snapshot_unavailable": {
+        "zh_CN": "任务 {task_id} 无可捕获的 Workspace_Snapshot（S0 缺失）；返回 unknown 并 fail-closed 阻断（Requirement 6.9–6.10）。",
+        "en_US": "Task {task_id} has no capturable Workspace_Snapshot (S0 unavailable); returned unknown and failed closed (Requirement 6.9–6.10).",
+    },
+    "errors.gate_verdict_absent": {
+        "zh_CN": "任务 {task_id} 无任何已封存 Verdict 记录；Evidence Gate fail-closed 阻断（Requirement 5.5, 8.3）。",
+        "en_US": "Task {task_id} has no sealed Verdict record; Evidence Gate fails closed (Requirement 5.5, 8.3).",
+    },
+    "errors.gate_evidence_absent": {
+        "zh_CN": "任务 {task_id} 无任何绑定契约的 Evidence 记录；Evidence Gate fail-closed 阻断（Requirement 1.8, 8.3）。",
+        "en_US": "Task {task_id} has no contract-bound Evidence record; Evidence Gate fails closed (Requirement 1.8, 8.3).",
+    },
+    # error.identity_incomplete 已登记 catalog，catalog 文案优先；此处仅作兜底。
+    "error.identity_incomplete": {
+        "zh_CN": "Identity 字段不完整：agent_id、session_id、model_id、role 均为必填，不得由自由文本或 ownership 补齐。",
+        "en_US": "Identity fields incomplete: agent_id, session_id, model_id and role are all required and must not be filled by free text or ownership.",
+    },
+}
+
+
+def _resolve_gate_message(message_key: str, context: Dict[str, Any]) -> str:
+    """解析 gate i18n 消息（与 db_task_evidence.py 同模式）。"""
+    try:
+        msg = t(message_key, **context)
+        if msg and msg != message_key:
+            return msg
+    except Exception:
+        pass
+    lang = t("current_locale", default="zh_CN") or "zh_CN"
+    defaults = _GATE_BUNDLED_DEFAULTS.get(message_key, {})
+    template = defaults.get(lang) or defaults.get("zh_CN") or message_key
+    try:
+        return template.format(**context)
+    except (KeyError, IndexError):
+        return template
+
+
+def _gate_reason(
+    code: str,
+    task_id: str,
+    status: str = "unsatisfied",
+    **extra: Any,
+) -> Dict[str, Any]:
+    """构造组装层 Structured_Reason（稳定错误码 + 双语可解析 message_key，Req 1.12）
+
+    Args:
+        code: GATE_* 稳定错误码
+        task_id: 关联任务 ID
+        status: 语义状态（unknown/invalid/unsatisfied 等，Req 1.8）
+        **extra: 附加上下文字段（如 verdict_id）
+    """
+    message_key = GATE_I18N_KEYS[code]
+    context: Dict[str, Any] = {"task_id": task_id}
+    context.update(extra)
+    reason: Dict[str, Any] = {
+        "code": code,
+        "message_key": message_key,
+        "message": _resolve_gate_message(message_key, context),
+        "status": status,
+    }
+    reason.update({k: v for k, v in extra.items()})
+    return reason
 
 
 class TaskGateMixin:
@@ -365,3 +463,228 @@ class TaskGateMixin:
                 })
 
         return issues
+
+    def evaluate_evidence_gate_for_task(
+        self,
+        task_id: str,
+        profile: str = "default",
+        identity: Optional[Dict[str, Any]] = None,
+        authoritative_time: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """为特定 task_id 从 DB 智能组装契约、Verdict、Evidence 与 Findings，物理评估 Evidence Gate
+
+        Fail-closed 语义（Req 1.1/1.8/5.5/6.10/8.3/10.5）：
+        - 契约 Envelope 缺失时禁止伪造 HASH-{task_id}/C-{task_id} 占位，直接 block
+        - Workspace_Snapshot 缺失时禁止伪造 SNAP-{task_id} 占位，按 unknown 语义 block
+        - 自由文本 reviewer_identity 不构成身份证明，禁止据此伪造结构化 Identity，
+          按 Identity 缺失 fail-closed（Req 10.5）
+        - 调用方声明的 identity 参数不得用于补齐封存 Verdict 的身份（Req 10.5/14.5）
+
+        Args:
+            identity: 调用方声明的身份（保留参数，仅作审计元数据用途）；
+                不参与 Verdict 身份证明，不用于补齐缺失 Identity 字段。
+        """
+        dec_time = authoritative_time if authoritative_time is not None else time.time()
+        assembly_reasons: List[Dict[str, Any]] = []
+
+        # 1. 查找契约 Envelope（缺失时不得伪造占位，Req 1.1）
+        c_row = None
+        if self._has_table("task_contract_revisions"):
+            cur = self.conn.execute(
+                "SELECT envelope_payload, contract_hash FROM task_contract_revisions WHERE task_id = ? ORDER BY revision DESC LIMIT 1",
+                (task_id,),
+            )
+            c_row = cur.fetchone()
+        elif self._has_table("contract_envelopes"):
+            cur = self.conn.execute(
+                "SELECT payload as envelope_payload, hash as contract_hash FROM contract_envelopes WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+                (task_id,),
+            )
+            c_row = cur.fetchone()
+
+        contract_data: Dict[str, Any] = {}
+        if c_row and c_row["envelope_payload"]:
+            try:
+                parsed = json.loads(c_row["envelope_payload"])
+                if isinstance(parsed, dict):
+                    contract_data = parsed
+            except Exception:
+                pass
+        if c_row and c_row["contract_hash"]:
+            # 仅采用 DB 中真实存储的 contract_hash，禁止伪造 HASH-{task_id} 占位
+            contract_data["contract_hash"] = c_row["contract_hash"]
+        if not c_row:
+            # 缺 Current_Envelope 绑定 → fail-closed（Req 1.1, 8.3）
+            assembly_reasons.append(
+                _gate_reason(GATE_CONTRACT_ENVELOPE_MISSING, task_id, status="unknown")
+            )
+
+        # 2. 查找快照 S0（缺失时不得伪造占位，Req 6.9-6.10）
+        s0_data: Dict[str, Any] = {"snapshot_id": ""}
+        if self._has_table("task_evidence_events"):
+            cur = self.conn.execute(
+                "SELECT workspace_snapshot_id FROM task_evidence_events WHERE task_id = ? AND workspace_snapshot_id != '' ORDER BY id DESC LIMIT 1",
+                (task_id,),
+            )
+            s_row = cur.fetchone()
+            if s_row and s_row["workspace_snapshot_id"]:
+                s0_data["snapshot_id"] = s_row["workspace_snapshot_id"]
+        if not s0_data["snapshot_id"]:
+            # S0 无法捕获 → unknown + fail-closed（Req 6.10）
+            assembly_reasons.append(
+                _gate_reason(GATE_SNAPSHOT_UNAVAILABLE, task_id, status="unknown")
+            )
+
+        # 3. 查找 verdicts（自由文本 identity 不构成身份证明，Req 10.5）
+        verdicts: List[Dict[str, Any]] = []
+        if self._has_table("task_verdict_events"):
+            cur = self.conn.execute(
+                "SELECT verdict_id, phase, clause_results, findings, overall, reviewer_identity FROM task_verdict_events WHERE task_id = ?",
+                (task_id,),
+            )
+            for vr in cur.fetchall():
+                v_dict: Dict[str, Any] = {
+                    "id": vr["verdict_id"],
+                    "phase": vr["phase"],
+                    "overall": vr["overall"],
+                }
+                if vr["clause_results"]:
+                    try:
+                        v_dict["clause_results"] = json.loads(vr["clause_results"])
+                    except Exception:
+                        pass
+                if vr["findings"]:
+                    try:
+                        v_dict["findings"] = json.loads(vr["findings"])
+                    except Exception:
+                        pass
+                raw_identity = vr["reviewer_identity"]
+                if raw_identity:
+                    parsed_identity = None
+                    try:
+                        candidate = json.loads(raw_identity)
+                        if isinstance(candidate, dict):
+                            parsed_identity = candidate
+                    except Exception:
+                        parsed_identity = None
+                    if parsed_identity is not None:
+                        v_dict["reviewer_identity"] = parsed_identity
+                        # 顶层字段投影：判定内核按顶层读取 role/session_id/verdict
+                        # （L219 role=="reviewer" 或顶层 verdict 计入 reviewer_verdicts；
+                        #  L235 session_id/reviewer_id 计入独立性 session 集合）。
+                        # 仅当 reviewer_identity 为结构化 dict（P3 四字段齐全）时，
+                        # 才将其 role/session_id 投影到 verdict 顶层，禁止把自由文本
+                        # 伪造成结构化身份（Req 10.5）。
+                        if parsed_identity.get("role"):
+                            v_dict["role"] = parsed_identity["role"]
+                        if parsed_identity.get("session_id"):
+                            v_dict["session_id"] = parsed_identity["session_id"]
+                    else:
+                        # 自由文本 reviewer：排除出身份证明（Req 10.5），
+                        # 不伪造结构化 Identity；该 verdict 按 Identity 缺失
+                        # 由判定内核 fail-closed（ERR_IDENTITY_MISSING）
+                        assembly_reasons.append(
+                            _gate_reason(
+                                GATE_IDENTITY_FREE_TEXT_EXCLUDED,
+                                task_id,
+                                status="invalid",
+                                verdict_id=vr["verdict_id"],
+                            )
+                        )
+                if vr["overall"]:
+                    # 顶层 verdict：该记录确为一条 verdict 事件（存在性判定，
+                    # 判定内核按顶层 verdict 字段计入 reviewer_verdicts）。
+                    # 取值来自 DB 真实存储的 overall（approved/rejected/needs_changes/
+                    # unclear 或 pass/request_changes/block/abstain），不伪造占位。
+                    v_dict["verdict"] = vr["overall"]
+                # 注意：调用方声明的 identity 参数不用于补齐 Verdict 身份
+                # （Req 10.5：自由文本与客户端声明字段不得作为身份证明）
+                verdicts.append(v_dict)
+        if not verdicts:
+            assembly_reasons.append(
+                _gate_reason(GATE_VERDICT_ABSENT, task_id, status="unknown")
+            )
+
+        # 4. 查找 evidences
+        evidences: List[Dict[str, Any]] = []
+        if self._has_table("task_evidence_events"):
+            cur = self.conn.execute(
+                "SELECT evidence_id as id, verifier_name, verifier_version, verifier_config_hash as config_hash FROM task_evidence_events WHERE task_id = ? AND event_type != 'evidence_invalidated'",
+                (task_id,),
+            )
+            evidences = [dict(r) for r in cur.fetchall()]
+        if not evidences:
+            assembly_reasons.append(
+                _gate_reason(GATE_EVIDENCE_ABSENT, task_id, status="unknown")
+            )
+
+        # 5. 查找 quality findings
+        quality_findings: List[Dict[str, Any]] = []
+        if self._has_table("task_quality_findings"):
+            cur = self.conn.execute(
+                "SELECT id, status FROM task_quality_findings WHERE task_id = ?",
+                (task_id,),
+            )
+            quality_findings = [dict(r) for r in cur.fetchall()]
+
+        # implementer Identity 查询（Req 10.5）：action_identities 表缺失
+        # （schema 降级/迁移中）时不得抛裸异常，按 Identity 缺失处理，
+        # 由判定内核 fail-closed（ERR_IDENTITY_MISSING）
+        impl_identity = None
+        if hasattr(self, "get_task_identity_by_role") and self._has_table("action_identities"):
+            impl_identity = self.get_task_identity_by_role(task_id, "implementer")
+
+        res = self.evaluate_evidence_gate(
+            task_id=task_id,
+            profile=profile,
+            current_contract=contract_data,
+            snapshot_s0=s0_data,
+            verdicts=verdicts,
+            evidences=evidences,
+            quality_findings=quality_findings,
+            authoritative_time=authoritative_time,
+            implementer_identity=impl_identity,
+        )
+
+        # 合并组装层 fail-closed 原因：任一数据缺失原因都强制 block（Req 1.8）
+        if assembly_reasons:
+            res["reasons"] = assembly_reasons + list(res.get("reasons") or [])
+            res["decision"] = "block"
+
+        # 保存判定到 task_gate_decisions（缺失绑定时以空串/0 诚实落盘，
+        # 禁止伪造 C-{task_id} 占位或虚构 revision）
+        if self._has_table("task_gate_decisions"):
+            contract_id = str(contract_data.get("contract_id") or "")
+            try:
+                rev = int(contract_data.get("revision", 0))
+            except (TypeError, ValueError):
+                rev = 0
+            dec_id = f"GDEC-{task_id}-{int(dec_time * 1000)}-{uuid.uuid4().hex[:8]}"
+            self.conn.execute(
+                """
+                INSERT INTO task_gate_decisions
+                    (decision_id, task_id, contract_id, contract_revision, contract_hash, decision, reason, decision_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    dec_id,
+                    task_id,
+                    contract_id,
+                    rev,
+                    contract_data.get("contract_hash", ""),
+                    res["decision"],
+                    json.dumps(res, ensure_ascii=False),
+                    dec_time,
+                ),
+            )
+            self.conn.commit()
+
+        return res
+
+    def _has_table(self, table_name: str) -> bool:
+        cur = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        )
+        return cur.fetchone() is not None
+
