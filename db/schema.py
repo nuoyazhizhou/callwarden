@@ -1039,6 +1039,228 @@ CREATE TABLE IF NOT EXISTS rollback_config (
 CREATE INDEX IF NOT EXISTS idx_rollback_config_task ON rollback_config(task_id);
 CREATE INDEX IF NOT EXISTS idx_rollback_config_feature ON rollback_config(feature_name);
 CREATE INDEX IF NOT EXISTS idx_rollback_config_flag ON rollback_config(rollback_flag);
+
+-- ============================================================
+-- P1: multi-llm-contract-collaboration schema (v43)
+-- ============================================================
+-- 5 张不可变事件表 + Verifier_Registry + Verifier_Revocation_Record + 保留窗口配置
+-- 所有事件表 append-only（Req 1.7），不可原地修改或删除，payload 逐字节保留。
+-- 时间字段一律来自 Authoritative_Clock（Req 14.11），P1 阶段 daemon 不可用时退化为客户端时钟。
+-- 物理表可合并但语义不可丢失（设计文档 §14 P1 落地）。
+
+-- 1. task_contract_revisions：契约 Envelope 的不可变 revision 记录（Req 2.6-2.9, 1.7）
+--    同一 contract_id 的 revision 单调递增；Contract_Hash 排除自身和纯展示字段（Req 2.8）。
+--    objective/interfaces/allowed_edit_scope/acceptance_clauses/risks/rollback/dependencies 任一
+--    变化必须发布更高 revision 并重算 hash（Req 2.6）。
+CREATE TABLE IF NOT EXISTS task_contract_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contract_id TEXT NOT NULL,              -- 契约 ID（同一 contract_id 的 revision 单调递增）
+    revision INTEGER NOT NULL,              -- 版本号，单调递增（Req 2.7）
+    contract_hash TEXT NOT NULL,            -- sha256 规范化 Envelope 摘要（排除自身和纯展示字段）
+    profile TEXT NOT NULL,                  -- research/design/code_change/high_risk/review
+    task_id TEXT NOT NULL,                  -- 关联任务 ID
+    workspace_id INTEGER,                   -- 工作区 ID
+    -- Envelope payload（JSON）：objective/non_goals/interfaces/allowed_edit_scope/
+    -- acceptance_clauses/risks/rollback/dependencies
+    envelope_payload TEXT NOT NULL,         -- 规范化 JSON（UTF-8，确定性字段排序）
+    created_at REAL NOT NULL,               -- 发布时间（Authoritative_Clock）
+    created_by TEXT DEFAULT '',             -- 创建者 session marker
+    UNIQUE(contract_id, revision)           -- 同一 contract_id 的 revision 唯一
+);
+
+-- 2. task_role_view_events：角色 view 生成/reveal/amendment 事件（Req 4.3-4.6, 3.9-3.11）
+--    append-only：reveal_event 必须引用已封存的 blind verdict（Req 4.4）；
+--    post_reveal_amendment 追加而不修改 sealed verdict（Req 4.5）。
+CREATE TABLE IF NOT EXISTS task_role_view_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,          -- 事件唯一标识（S-xxx 格式）
+    task_id TEXT NOT NULL,                  -- 关联任务 ID
+    contract_id TEXT NOT NULL,              -- 契约 ID
+    contract_revision INTEGER NOT NULL,     -- 契约 revision
+    contract_hash TEXT NOT NULL,            -- 契约 hash（所基于的 Envelope）
+    event_type TEXT NOT NULL,               -- role_view_generated/reveal_event/post_reveal_amendment
+    view_type TEXT DEFAULT '',              -- Planner/Implementer/Reviewer/Tester
+    view_version TEXT DEFAULT '',           -- allowlist 版本号（Req 3.9-3.11）
+    disclosure_phase TEXT DEFAULT '',       -- pre_reveal/post_reveal
+    view_manifest_hash TEXT DEFAULT '',     -- View_Manifest 摘要
+    allowlist_definition_hash TEXT DEFAULT '', -- allowlist 定义 hash
+    -- 事件 payload（JSON）：view 内容 / reveal 引用 / amendment 差异
+    event_payload TEXT DEFAULT '',           -- 结构化 JSON
+    referenced_verdict_id TEXT DEFAULT '',  -- reveal/amendment 引用的已封存 verdict_id
+    authored_by TEXT DEFAULT '',            -- 发起者 session marker
+    authored_at REAL NOT NULL,              -- 事件时间（Authoritative_Clock）
+    workspace_id INTEGER                    -- 工作区 ID
+);
+
+-- 3. task_verdict_events：blind verdict 与 amendment 事件（Req 4.2-4.8, 1.4, 1.7）
+--    append-only：blind_first_pass 封存后才能追加 reveal（Req 4.3）；
+--    post_reveal_amendment 追加而不修改 sealed verdict（Req 4.5）。
+CREATE TABLE IF NOT EXISTS task_verdict_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    verdict_id TEXT NOT NULL UNIQUE,        -- verdict 唯一标识
+    task_id TEXT NOT NULL,                  -- 关联任务 ID
+    contract_id TEXT NOT NULL,              -- 契约 ID
+    contract_revision INTEGER NOT NULL,     -- 契约 revision
+    contract_hash TEXT NOT NULL,            -- 契约 hash
+    phase TEXT NOT NULL,                    -- blind_first_pass/post_reveal_amendment
+    view_manifest_hash TEXT DEFAULT '',     -- View_Manifest hash
+    snapshot_id TEXT DEFAULT '',            -- Workspace_Snapshot identity
+    reviewer_identity TEXT DEFAULT '',      -- P1: session marker; P3: agent_id/session_id/model_id
+    -- clause_results（JSON）：[{clause_id, decision, evidence_ids}]
+    clause_results TEXT DEFAULT '',         -- 结构化 JSON
+    -- findings（JSON）：[{severity, subject, fact}]
+    findings TEXT DEFAULT '',               -- 结构化 JSON
+    overall TEXT DEFAULT '',                -- pass/request_changes/block/abstain
+    attestation TEXT DEFAULT '',            -- P1: 可用标识; P3: daemon 签发的 Attestation
+    amendment_ref TEXT DEFAULT '',          -- post_reveal_amendment 引用的 sealed verdict_id
+    submitted_at REAL NOT NULL,             -- 提交时间（Authoritative_Clock）
+    workspace_id INTEGER                    -- 工作区 ID
+);
+
+-- 4. task_evidence_events：append-only Evidence 与 invalidation 事件（Req 6.1-6.23, 1.7）
+--    重跑 verifier 追加新记录，不替换（Req 6.3）；个体失效追加 invalidation event（Req 6.6）；
+--    撤销导致的 invalid 由查询层按三元组派生，不在此表批量写入（tasks.md 4.1）。
+CREATE TABLE IF NOT EXISTS task_evidence_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    evidence_id TEXT NOT NULL UNIQUE,       -- evidence 唯一标识
+    task_id TEXT NOT NULL,                  -- 关联任务 ID
+    contract_id TEXT NOT NULL,              -- 契约 ID
+    contract_revision INTEGER NOT NULL,     -- 契约 revision
+    contract_hash TEXT NOT NULL,            -- 契约 hash
+    evidence_type TEXT NOT NULL,            -- test_run/static_check/diff_manifest/symbol_change/reviewer_verdict
+    event_type TEXT NOT NULL DEFAULT 'evidence_appended', -- evidence_appended/evidence_invalidated
+    -- Workspace_Snapshot 绑定
+    commit_hash TEXT DEFAULT '',            -- HEAD commit（未出生仓库为空）
+    workspace_snapshot_id TEXT DEFAULT '',  -- 规范化工作区快照摘要
+    file_hashes TEXT DEFAULT '',            -- JSON: {rel_path: sha256:...}
+    symbol_hashes TEXT DEFAULT '',          -- JSON: {symbol_qname: sha256:...}
+    graph_refresh_version TEXT DEFAULT '',  -- 图刷新版本
+    -- Verifier 三元组（Req 6.22：gate decision 记录此三元组用于事后重算撤销状态）
+    verifier_name TEXT DEFAULT '',
+    verifier_version TEXT DEFAULT '',
+    verifier_config_hash TEXT DEFAULT '',
+    -- 生产者与时间
+    producer_identity TEXT DEFAULT '',      -- agent/session/tool
+    produced_at REAL NOT NULL,              -- 生产时间（Authoritative_Clock）
+    payload_hash TEXT DEFAULT '',           -- payload 摘要
+    -- 个体失效（Req 6.6）
+    invalidation_reason TEXT DEFAULT '',    -- 失效原因（仅 evidence_invalidated 事件）
+    original_evidence_ref TEXT DEFAULT '',  -- 失效事件引用的原始 Evidence ID
+    workspace_id INTEGER                    -- 工作区 ID
+);
+
+-- 5. task_gate_decisions：gate 判定记录（Req 7.2-7.3, 8.4-8.5, 6.22）
+--    append-only：记录每次 gate 评估的 snapshot/decision/reason；
+--    TOCTOU 防护：S0==S1 才提交，否则追加 snapshot_changed_during_gate（设计 §9.4）。
+CREATE TABLE IF NOT EXISTS task_gate_decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id TEXT NOT NULL UNIQUE,       -- gate decision 唯一标识
+    task_id TEXT NOT NULL,                  -- 关联任务 ID
+    contract_id TEXT NOT NULL,              -- 契约 ID
+    contract_revision INTEGER NOT NULL,     -- 契约 revision
+    contract_hash TEXT NOT NULL,            -- 契约 hash
+    -- Gate 评估快照（S0/S1）
+    gate_snapshot_s0 TEXT DEFAULT '',       -- verifier 执行前捕获的 Workspace_Snapshot
+    gate_snapshot_s1 TEXT DEFAULT '',       -- 状态转换前再捕获的快照（必须与 S0 相同）
+    requested_transition TEXT DEFAULT '',   -- 请求的状态转换（如 review → applied）
+    decision TEXT NOT NULL,                 -- pass/block/stale/unknown
+    -- Structured_Reason（JSON）：稳定错误码 + i18n message key（Req 1.12）
+    reason TEXT DEFAULT '',                 -- 结构化 JSON
+    -- clause_decisions（JSON）：[{clause_id, decision, freshness_status}]
+    clause_decisions TEXT DEFAULT '',       -- 结构化 JSON
+    -- Verifier 三元组集合（JSON）：[{name, version, config_hash}]
+    -- Req 6.22：比较三元组与判定时间 vs 撤销时间，事后可重算撤销状态
+    verifier_triples TEXT DEFAULT '',       -- 结构化 JSON
+    -- 上下文快照（Req 13.15, 5.15, 5.17）
+    resolved_stage_toggle_set TEXT DEFAULT '', -- 当时解析的 Stage_Toggle 集合
+    independence_policy_value TEXT DEFAULT '', -- 当时的 Independence_Policy 取值
+    independence_waiver_marker TEXT DEFAULT '', -- solo 豁免标记（不得表述为"独立性已证明"）
+    event_type TEXT NOT NULL DEFAULT 'gate_decision', -- gate_decision/snapshot_changed_during_gate
+    decision_time REAL NOT NULL,            -- 判定时间（Authoritative_Clock）
+    workspace_id INTEGER                    -- 工作区 ID
+);
+
+-- 6. verifier_registry：可信 Verifier 注册表（Req 6.11-6.13）
+--    Verifier 被可执行条款引用或产出 Evidence 时必须存在对应条目。
+--    无条目或 trust_status ≠ trusted → Evidence 判为 invalid（不是 stale，Req 6.12）。
+CREATE TABLE IF NOT EXISTS verifier_registry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                     -- Verifier 名称
+    version TEXT NOT NULL,                  -- Verifier 版本
+    config_hash TEXT NOT NULL,              -- Verifier 配置摘要（sha256:...）
+    trust_status TEXT NOT NULL DEFAULT 'trusted', -- trusted/revoked（其他非 trusted 均视为不可信）
+    registration_time REAL NOT NULL,        -- 注册时间（Authoritative_Clock）
+    -- 注册元数据
+    registered_by TEXT DEFAULT '',          -- 注册者 session marker
+    description TEXT DEFAULT '',            -- Verifier 描述
+    UNIQUE(name, version, config_hash)      -- 三元组唯一
+);
+
+-- 7. verifier_revocation_records：Verifier 撤销记录（Req 6.13, 6.20, 6.23, 1.7）
+--    append-only + 不可变：同一三元组的一次撤销只对应一条记录（Req 6.13）。
+--    撤销不修改任何既有 Evidence payload（Req 6.23）；invalid 由查询层按三元组匹配派生。
+CREATE TABLE IF NOT EXISTS verifier_revocation_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    verifier_name TEXT NOT NULL,            -- Verifier 名称
+    verifier_version TEXT NOT NULL,         -- Verifier 版本
+    verifier_config_hash TEXT NOT NULL,     -- Verifier 配置摘要
+    revocation_reason TEXT NOT NULL,        -- 撤销原因
+    initiating_actor_identity TEXT DEFAULT '', -- 发起者身份（Peer_Identity）
+    revocation_time REAL NOT NULL,          -- 撤销时间（Authoritative_Clock）
+    -- 防止同一三元组重复撤销（Req 6.13：一次撤销只对应一条记录）
+    UNIQUE(verifier_name, verifier_version, verifier_config_hash)
+);
+
+-- 8. evidence_retention_config：保留窗口与归档元数据（Req 6.16-6.17, 6.20, 6.23）
+--    默认保留窗口 365 天，按 Authoritative_Clock 计量（不按客户端时间）。
+--    超窗归档逐字节保留原始 payload，保持按标识符可解析，记录归档位置（Req 6.17）。
+CREATE TABLE IF NOT EXISTS evidence_retention_config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL DEFAULT 'global',   -- global/workspace
+    workspace_id INTEGER,                   -- 工作区 ID（scope=workspace 时有效）
+    retention_window_days INTEGER NOT NULL DEFAULT 365, -- 保留窗口天数（默认 365）
+    archive_location TEXT DEFAULT '',       -- 归档位置（路径或 URI）
+    archive_format TEXT DEFAULT 'jsonl',    -- 归档格式
+    -- 归档策略：超窗记录搬迁而非改写，任何路径不允许原地修改或删除既有 payload
+    auto_archive INTEGER NOT NULL DEFAULT 0, -- 是否自动归档（0=手动, 1=自动）
+    created_at REAL NOT NULL,               -- 配置创建时间
+    updated_at REAL NOT NULL,               -- 配置更新时间
+    UNIQUE(scope, workspace_id)             -- 同一作用域唯一配置
+);
+
+-- P1 索引
+CREATE INDEX IF NOT EXISTS idx_contract_revisions_contract ON task_contract_revisions(contract_id, revision);
+CREATE INDEX IF NOT EXISTS idx_contract_revisions_task ON task_contract_revisions(task_id);
+CREATE INDEX IF NOT EXISTS idx_contract_revisions_hash ON task_contract_revisions(contract_hash);
+
+CREATE INDEX IF NOT EXISTS idx_role_view_events_task ON task_role_view_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_role_view_events_contract ON task_role_view_events(contract_id, contract_revision);
+CREATE INDEX IF NOT EXISTS idx_role_view_events_type ON task_role_view_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_role_view_events_verdict ON task_role_view_events(referenced_verdict_id);
+
+CREATE INDEX IF NOT EXISTS idx_verdict_events_task ON task_verdict_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_verdict_events_contract ON task_verdict_events(contract_id, contract_revision);
+CREATE INDEX IF NOT EXISTS idx_verdict_events_phase ON task_verdict_events(phase);
+CREATE INDEX IF NOT EXISTS idx_verdict_events_amendment ON task_verdict_events(amendment_ref) WHERE amendment_ref != '';
+
+CREATE INDEX IF NOT EXISTS idx_evidence_events_task ON task_evidence_events(task_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_events_contract ON task_evidence_events(contract_id, contract_revision);
+CREATE INDEX IF NOT EXISTS idx_evidence_events_type ON task_evidence_events(evidence_type);
+CREATE INDEX IF NOT EXISTS idx_evidence_events_event_type ON task_evidence_events(event_type);
+CREATE INDEX IF NOT EXISTS idx_evidence_events_verifier ON task_evidence_events(verifier_name, verifier_version);
+CREATE INDEX IF NOT EXISTS idx_evidence_events_original ON task_evidence_events(original_evidence_ref) WHERE original_evidence_ref != '';
+
+CREATE INDEX IF NOT EXISTS idx_gate_decisions_task ON task_gate_decisions(task_id);
+CREATE INDEX IF NOT EXISTS idx_gate_decisions_contract ON task_gate_decisions(contract_id, contract_revision);
+CREATE INDEX IF NOT EXISTS idx_gate_decisions_decision ON task_gate_decisions(decision);
+CREATE INDEX IF NOT EXISTS idx_gate_decisions_transition ON task_gate_decisions(requested_transition);
+CREATE INDEX IF NOT EXISTS idx_gate_decisions_event_type ON task_gate_decisions(event_type);
+
+CREATE INDEX IF NOT EXISTS idx_verifier_registry_triple ON verifier_registry(name, version, config_hash);
+CREATE INDEX IF NOT EXISTS idx_verifier_registry_status ON verifier_registry(trust_status);
+
+CREATE INDEX IF NOT EXISTS idx_verifier_revocation_triple ON verifier_revocation_records(verifier_name, verifier_version, verifier_config_hash);
+CREATE INDEX IF NOT EXISTS idx_verifier_revocation_time ON verifier_revocation_records(revocation_time);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -1096,7 +1318,13 @@ CREATE INDEX IF NOT EXISTS idx_rollback_config_flag ON rollback_config(rollback_
 # v42: 迁移回滚配置表（rollback_config）— 全量 Rust 迁移自举计划使用，
 #      每个功能子任务登记生产入口、回滚入口和回滚窗口，支持紧急回滚开关。
 #      详见 docs/design/migration-quality-gate-contract.md
-SCHEMA_VERSION = 42
+# v43: P1 multi-llm-contract-collaboration schema — 5 张不可变事件表
+#      (task_contract_revisions/task_role_view_events/task_verdict_events/
+#       task_evidence_events/task_gate_decisions) + verifier_registry +
+#      verifier_revocation_records + evidence_retention_config。
+#      覆盖 Req 1.7/2.6-2.9/4.3-4.6/6.1/6.3/6.6/6.11-6.13/6.16-6.17/6.20/6.23/7.2-7.3/8.4-8.5/13.10。
+#      所有事件表 append-only（Req 1.7），撤销采用单条记录+查询时派生（Req 6.13/6.20）。
+SCHEMA_VERSION = 43
 
 
 # ============================================

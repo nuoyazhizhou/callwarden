@@ -2087,6 +2087,245 @@ def _migrate_v41_to_v42(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v42_to_v43(conn: sqlite3.Connection):
+    """v42 -> v43: P1 multi-llm-contract-collaboration schema
+
+    新增 8 张表（5 张不可变事件表 + Verifier_Registry + Verifier_Revocation_Record +
+    保留窗口配置），覆盖 Requirements 1.7/2.6-2.9/4.3-4.6/6.1/6.3/6.6/6.11-6.13/
+    6.16-6.17/6.20/6.23/7.2-7.3/8.4-8.5/13.10。
+
+    幂等性：CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS 自动跳过已存在对象。
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v42 库。
+
+    不回填猜测的历史绑定（tasks.md 4.1）：旧 test_runs 保持原数据，
+    由查询层派生 historical_unbound。
+    """
+    # 1. task_contract_revisions
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_contract_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contract_id TEXT NOT NULL,
+            revision INTEGER NOT NULL,
+            contract_hash TEXT NOT NULL,
+            profile TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            workspace_id INTEGER,
+            envelope_payload TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            created_by TEXT DEFAULT '',
+            UNIQUE(contract_id, revision)
+        )
+        """
+    )
+    # 2. task_role_view_events
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_role_view_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            contract_hash TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            view_type TEXT DEFAULT '',
+            view_version TEXT DEFAULT '',
+            disclosure_phase TEXT DEFAULT '',
+            view_manifest_hash TEXT DEFAULT '',
+            allowlist_definition_hash TEXT DEFAULT '',
+            event_payload TEXT DEFAULT '',
+            referenced_verdict_id TEXT DEFAULT '',
+            authored_by TEXT DEFAULT '',
+            authored_at REAL NOT NULL,
+            workspace_id INTEGER
+        )
+        """
+    )
+    # 3. task_verdict_events
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_verdict_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            verdict_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            contract_hash TEXT NOT NULL,
+            phase TEXT NOT NULL,
+            view_manifest_hash TEXT DEFAULT '',
+            snapshot_id TEXT DEFAULT '',
+            reviewer_identity TEXT DEFAULT '',
+            clause_results TEXT DEFAULT '',
+            findings TEXT DEFAULT '',
+            overall TEXT DEFAULT '',
+            attestation TEXT DEFAULT '',
+            amendment_ref TEXT DEFAULT '',
+            submitted_at REAL NOT NULL,
+            workspace_id INTEGER
+        )
+        """
+    )
+    # 4. task_evidence_events
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_evidence_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evidence_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            contract_hash TEXT NOT NULL,
+            evidence_type TEXT NOT NULL,
+            event_type TEXT NOT NULL DEFAULT 'evidence_appended',
+            commit_hash TEXT DEFAULT '',
+            workspace_snapshot_id TEXT DEFAULT '',
+            file_hashes TEXT DEFAULT '',
+            symbol_hashes TEXT DEFAULT '',
+            graph_refresh_version TEXT DEFAULT '',
+            verifier_name TEXT DEFAULT '',
+            verifier_version TEXT DEFAULT '',
+            verifier_config_hash TEXT DEFAULT '',
+            producer_identity TEXT DEFAULT '',
+            produced_at REAL NOT NULL,
+            payload_hash TEXT DEFAULT '',
+            invalidation_reason TEXT DEFAULT '',
+            original_evidence_ref TEXT DEFAULT '',
+            workspace_id INTEGER
+        )
+        """
+    )
+    # 5. task_gate_decisions
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_gate_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            decision_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            contract_hash TEXT NOT NULL,
+            gate_snapshot_s0 TEXT DEFAULT '',
+            gate_snapshot_s1 TEXT DEFAULT '',
+            requested_transition TEXT DEFAULT '',
+            decision TEXT NOT NULL,
+            reason TEXT DEFAULT '',
+            clause_decisions TEXT DEFAULT '',
+            verifier_triples TEXT DEFAULT '',
+            resolved_stage_toggle_set TEXT DEFAULT '',
+            independence_policy_value TEXT DEFAULT '',
+            independence_waiver_marker TEXT DEFAULT '',
+            event_type TEXT NOT NULL DEFAULT 'gate_decision',
+            decision_time REAL NOT NULL,
+            workspace_id INTEGER
+        )
+        """
+    )
+    # 6. verifier_registry
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verifier_registry (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            config_hash TEXT NOT NULL,
+            trust_status TEXT NOT NULL DEFAULT 'trusted',
+            registration_time REAL NOT NULL,
+            registered_by TEXT DEFAULT '',
+            description TEXT DEFAULT '',
+            UNIQUE(name, version, config_hash)
+        )
+        """
+    )
+    # 7. verifier_revocation_records
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS verifier_revocation_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            verifier_name TEXT NOT NULL,
+            verifier_version TEXT NOT NULL,
+            verifier_config_hash TEXT NOT NULL,
+            revocation_reason TEXT NOT NULL,
+            initiating_actor_identity TEXT DEFAULT '',
+            revocation_time REAL NOT NULL,
+            UNIQUE(verifier_name, verifier_version, verifier_config_hash)
+        )
+        """
+    )
+    # 8. evidence_retention_config
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS evidence_retention_config (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL DEFAULT 'global',
+            workspace_id INTEGER,
+            retention_window_days INTEGER NOT NULL DEFAULT 365,
+            archive_location TEXT DEFAULT '',
+            archive_format TEXT DEFAULT 'jsonl',
+            auto_archive INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            UNIQUE(scope, workspace_id)
+        )
+        """
+    )
+
+    # P1 索引（幂等）
+    _p1_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_contract_revisions_contract ON task_contract_revisions(contract_id, revision)",
+        "CREATE INDEX IF NOT EXISTS idx_contract_revisions_task ON task_contract_revisions(task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_contract_revisions_hash ON task_contract_revisions(contract_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_role_view_events_task ON task_role_view_events(task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_role_view_events_contract ON task_role_view_events(contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_role_view_events_type ON task_role_view_events(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_role_view_events_verdict ON task_role_view_events(referenced_verdict_id)",
+        "CREATE INDEX IF NOT EXISTS idx_verdict_events_task ON task_verdict_events(task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_verdict_events_contract ON task_verdict_events(contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_verdict_events_phase ON task_verdict_events(phase)",
+        "CREATE INDEX IF NOT EXISTS idx_verdict_events_amendment ON task_verdict_events(amendment_ref) WHERE amendment_ref != ''",
+        "CREATE INDEX IF NOT EXISTS idx_evidence_events_task ON task_evidence_events(task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_evidence_events_contract ON task_evidence_events(contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_evidence_events_type ON task_evidence_events(evidence_type)",
+        "CREATE INDEX IF NOT EXISTS idx_evidence_events_event_type ON task_evidence_events(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_evidence_events_verifier ON task_evidence_events(verifier_name, verifier_version)",
+        "CREATE INDEX IF NOT EXISTS idx_evidence_events_original ON task_evidence_events(original_evidence_ref) WHERE original_evidence_ref != ''",
+        "CREATE INDEX IF NOT EXISTS idx_gate_decisions_task ON task_gate_decisions(task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_gate_decisions_contract ON task_gate_decisions(contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_gate_decisions_decision ON task_gate_decisions(decision)",
+        "CREATE INDEX IF NOT EXISTS idx_gate_decisions_transition ON task_gate_decisions(requested_transition)",
+        "CREATE INDEX IF NOT EXISTS idx_gate_decisions_event_type ON task_gate_decisions(event_type)",
+        "CREATE INDEX IF NOT EXISTS idx_verifier_registry_triple ON verifier_registry(name, version, config_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_verifier_registry_status ON verifier_registry(trust_status)",
+        "CREATE INDEX IF NOT EXISTS idx_verifier_revocation_triple ON verifier_revocation_records(verifier_name, verifier_version, verifier_config_hash)",
+        "CREATE INDEX IF NOT EXISTS idx_verifier_revocation_time ON verifier_revocation_records(revocation_time)",
+    ]
+    for sql in _p1_indexes:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    # 插入默认全局保留窗口配置（如果不存在）
+    now = time.time()
+    try:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO evidence_retention_config
+                (scope, workspace_id, retention_window_days, archive_location,
+                 archive_format, auto_archive, created_at, updated_at)
+            VALUES ('global', NULL, 365, '', 'jsonl', 0, ?, ?)
+            """,
+            (now, now),
+        )
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -2836,6 +3075,10 @@ class CodeGraphBase:
             42: {
                 "description": t("cli.messages.migration_v42", default="Migration rollback config: create rollback_config table for Rust migration self-bootstrap (idempotent)"),
                 "func": _migrate_v41_to_v42,
+            },
+            43: {
+                "description": t("cli.messages.migration_v43", default="P1 multi-llm-contract-collaboration schema: 5 immutable event tables (task_contract_revisions/task_role_view_events/task_verdict_events/task_evidence_events/task_gate_decisions) + verifier_registry + verifier_revocation_records + evidence_retention_config (idempotent)"),
+                "func": _migrate_v42_to_v43,
             },
         }
 
