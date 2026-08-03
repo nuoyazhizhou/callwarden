@@ -33,6 +33,7 @@ db.py
 - AuditChainMixin: 审计签名链（为关键审计表生成可验证的 hash/HMAC 链，防篡改）
 - AgentRulesMixin: Agent 规则记忆（候选-审核-生效-同步全链路，注入到任务和函数上下文）
 - BootstrapMixin: 自举扫描基线与变化检测（workspace_scan_runs 记录 git_head/status_hash/mtime，支持 task capture-diff 闭环）
+- TaskContractsMixin: P1 版本化 Canonical Envelope（Envelope 解析/规范化/hash/profile 校验/clause 分类/revision 发布/空 scope 三分支）
 """
 
 from __future__ import annotations
@@ -74,6 +75,7 @@ from .db_clone_groups import CloneGroupMixin
 from .db_tests import TestRelationMixin
 from .db_dashboard import DashboardMixin
 from .db_rollback_config import RollbackConfigMixin
+from .db_task_contracts import TaskContractsMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -115,6 +117,7 @@ class CodeGraphDB(
     TestRelationMixin,
     DashboardMixin,
     RollbackConfigMixin,
+    TaskContractsMixin,
 ):
     """代码知识图谱数据库
 
