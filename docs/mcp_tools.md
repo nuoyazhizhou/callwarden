@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 210 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 235 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -20,7 +20,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 12 大功能分类
 
-Call Warden 通过 MCP Server 暴露 210 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 235 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
 
 ### 概览表
 
@@ -40,7 +40,7 @@ Call Warden 通过 MCP Server 暴露 210 个工具，按功能聚合为 12 个�
 | 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
 | **合计** | **179** | | |
 
-> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 210（含若干跨分类工具 + 8 个 L5 构建上下文感知工具 + 1 个 get_metrics 监控工具 + 4 个只读协同查询工具）。本表只统计每个分类独有的工具。
+> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 235（含若干跨分类工具、L5 构建上下文感知工具、协同/身份/依赖查询与写工具）。本表只统计每个分类独有的工具。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 
@@ -1771,6 +1771,97 @@ G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时�
 
 ---
 
+## 依赖图与环检测工具（P2, Req 9.1-9.10）
+
+> **边界声明**：P2 只做无环校验和诊断，**不提供**自动排程、资源优化、自动 assignment 或复杂 DAG scheduler（Req 9.10）。这些工具是 DB 层方法的薄包装器，复用 `publish_envelope_revision` 的原子发布校验。
+
+### 依赖声明与 Artifact 管理
+
+| 工具名 | 参数 | 返回值 | 说明 |
+|--------|------|--------|------|
+| `import_envelope_dependencies` | `workspace_id, task_id, contract_id, contract_revision, dependencies` | `{"imported": int, "skipped": int, "errors": list}` | 从 Envelope 导入四类依赖声明（Req 9.1） |
+| `record_artifact_identity` | `workspace_id, task_id, contract_id, contract_revision, artifact_type, artifact_ref, artifact_hash?, workspace_snapshot_id?` | `artifact_id`（ART-<uuid>） | 记录 artifact identity（Req 9.3） |
+| `get_artifact_freshness` | `workspace_id, task_id, artifact_ref?` | `{"artifact_id", "freshness_status", "artifact_hash", "produced_at"}` 或 `None` | 查询 artifact freshness（Req 9.3，Gate 判定用） |
+
+### Interface 身份与 Provider 选择
+
+| 工具名 | 参数 | 返回值 | 说明 |
+|--------|------|--------|------|
+| `publish_interface` | `workspace_id, task_id, contract_id, contract_revision, interface_name, version, interface_hash?` | `interface_id`（IF-<uuid>） | 发布 interface identity（Req 9.4） |
+| `get_interface_providers` | `workspace_id, interface_name, version?` | provider 列表 | 查询匹配的 interface provider（Req 9.5, 9.9） |
+| `select_interface_provider` | `workspace_id, consumer_task_id, contract_id, contract_revision, interface_name, selected_provider_task_id` | `{"success": bool, "error": str}` | 记录显式 provider 选择（Req 9.9） |
+
+### 硬依赖图与环检测
+
+| 工具名 | 参数 | 返回值 | 说明 |
+|--------|------|--------|------|
+| `build_hard_dependency_edges` | `workspace_id, contract_id, contract_revision` | `{"edges_built": int, "edges_skipped": int}` | 构建硬依赖图边（Req 9.6） |
+| `detect_cycle` | `workspace_id` | `{"has_cycle": bool, "cycle_path": list}` | 检测环，返回最小 cycle path（Req 9.7） |
+| `validate_revision_dependencies` | `workspace_id, contract_id, contract_revision` | `{"valid": bool, "errors": list, "cycle_path": list}` | 验证 revision 依赖完整性（Req 9.7, 9.9） |
+| `get_dependency_edges` | `workspace_id, task_id?` | 依赖边列表 | 查询硬依赖图边（Req 9.6，诊断用） |
+
+**环检测语义**：`publish_envelope_revision` 在写入 revision 后自动调用 `build_hard_dependency_edges` + `detect_cycle`，有环则原子回滚（删除刚写入的 revision/dependencies/edges）并抛 `HARD_CYCLE_DETECTED`（Req 9.7）。
+
+**Gate 集成**：`evaluate_evidence_gate` 在判定前自动检查 `requires_artifact` 的 artifact freshness 和 `requires_interface` 的 provider 匹配（Req 9.3-9.5）。
+
+---
+
+## Assignment 与 Lease 工具（P4, Req 11.1-11.13, 13.4-13.10）
+
+> **阶段状态**：P4 已交付。Assignment 绑定 task+role+holder Identity，**不把** workspace `active_task_id` 当作 assignment authority（Req 13.4）。Lease 是 daemon 在线期间的并发正确性保证：同一 task/role 任一时刻只有一个有效持有者，旧持有者在新 lease 生效后无法再写入（fencing）。防篡改保证归属 Attestation 校验与追加式 Evidence_Ledger，**不**防止离线直接改库（Req 11.13, 14.32）。
+
+### Lease 生命周期
+
+| 工具名 | 参数 | 返回值 | 说明 |
+|--------|------|--------|------|
+| `lease_acquire` | `task_id, role?, agent_id, session_id, model_id, ttl_seconds?` | `{ok: True, lease_id, token, fencing_counter, acquired_at, expires_at}` 或结构化拒绝 | 原子比较当前 Lease 状态后获取（Req 11.2-11.3）。已有未过期 active lease 拒绝（`E_LEASE_ACTIVE_EXISTS`）；已过期则覆盖。fencing counter 单调递增。**raw token 仅本次响应返回一次**，数据库只存 sha256 hash（Req 11.2） |
+| `lease_renew` | `task_id, role, token, agent_id?, session_id?, model_id?, ttl_seconds?` | `{ok: True, lease_id, fencing_counter, renewed_at, expires_at}` 或拒绝 | 要求当前 token hash/holder 且未过期；从权威时钟设置更晚 expires_at（Req 11.4）。幂等：重复 renew 返回同一 lease 状态，不递增 counter 不创建新 lease（Req 11.5） |
+| `lease_release` | `task_id, role, token, agent_id?, session_id?, model_id?` | `{ok: True, lease_id, fencing_counter, released_at, status: released}` 或拒绝 | 当前 token 匹配时原子追加 release 审计事件并置 released（Req 11.6）。幂等：重复 release 返回同一 released 状态（Req 11.7） |
+| `lease_status` | `task_id, role?` | `{status, lease_id, task_id, role, agent_id, session_id, model_id, token_hash, fencing_counter, acquired_at, expires_at, renewed_at, released_at}` | 只读查询当前/最近 Lease 状态；不含 raw token |
+| `lease_list_events` | `task_id?, role?` | `[{event_id, lease_id, task_id, role, event_type, fencing_counter, event_at, actor_*}]` | 只读查询 append-only 审计事件账本（acquire/renew/release），不含 raw token |
+
+### Assignment 绑定
+
+| 工具名 | 参数 | 返回值 | 说明 |
+|--------|------|--------|------|
+| `assignment_create` | `task_id, role?, agent_id, session_id, model_id` | `{ok: True, assignment_id, task_id, role, ...}` | 创建 task+role+holder Identity 绑定（Req 11.1）。assignment 可以没有 lease（Req 11.12） |
+| `assignment_show` | `task_id, role?` | `{assignment_id, task_id, role, agent_id, session_id, model_id, status, created_at}` 或 `{status: "none"}` | 只读查询当前 active assignment |
+| `assignment_revoke` | `assignment_id` | `{ok: True, assignment_id, revoked_at}` | 撤销 assignment（append 语义，不删除记录） |
+
+**protected mutation 的 Lease 参数**：`task_report_step` / `task_apply` / `task_close` / `task_reopen` 均接受可选 `lease_token` / `fencing_counter`；`submit_blind_verdict` / `trigger_reveal_event` 亦支持。提供 lease 凭证时启用受保护写路径（Req 11.8-11.9）：过期（`E_LEASE_EXPIRED`）、token hash 不匹配（`E_LEASE_TOKEN_MISMATCH`）、旧 counter（`E_LEASE_FENCING_STALE`）、无 active lease（`E_LEASE_NOT_FOUND`）均在写入前拒绝且不改变 task data。**Lease 校验通过不代表 mutation 被授权**：角色权限、Independent Review 与 Evidence Gate 仍然适用（Req 11.11）；SQLite 写锁只做事务互斥（Req 11.10）。
+
+## Identity 与 Attestation 工具（P3, Req 10.1-10.18）
+
+> **阶段状态**：P3 已交付。Identity 仅作 actor attribution，**不等于** assignment/lease/ownership/SQLite lock（Req 10.5, 10.7）。Attestation 只能由 daemon 签发（Req 14.13）；客户端自签不作为授权证明。
+
+### Action Identity 记录与查询
+
+| 工具名 | 参数 | 返回值 | 说明 |
+|--------|------|--------|------|
+| `record_action_identity` | `action_id, action_type, task_id, identity, contract_id?, contract_revision?, workspace_id?` | `{"code": "OK", "action_id", "recorded_at"}` | 为 contract/view/verdict/evidence/gate/state_transition 动作记录 agent_id/session_id/model_id/role（Req 10.1）。Identity 缺失必要字段时以 Structured_Reason 拒绝，不由自由文本或 ownership 补齐 |
+| `get_action_identity` | `action_id, workspace_id?` | `{"agent_id", "session_id", "model_id", "role", ...}` 或 `None` | 查询单条 action 身份记录 |
+| `check_action_identity` | `identity, require_role?` | `{"valid": bool, "reason": {...}}` | 校验 Identity 完整性（agent_id/session_id/model_id/role 必填）与角色约束（Req 10.1-10.4） |
+| `check_session_separation` | `reviewer_identity, implementer_identity` | `{"valid": bool, "reason": {...}}` | 校验 Reviewer Session 与 Implementer Session 不同（Req 1.5, 10.2）；同 session 返回 `E_IDENTITY_SESSION_NOT_SEPARATED` |
+
+**task mutation 的 Identity 参数**：`task_report_step` / `task_apply` / `task_close` / `task_reopen` 均接受 `identity`（JSON 字符串 `{agent_id, session_id, model_id, role}`）。`task_apply` 强制 Reviewer Session 与 Implementer Session 不同（Req 1.5, 10.2），同 session 时以 `E_IDENTITY_SESSION_NOT_SEPARATED` 拒绝；`task_close`/`task_reopen` 仅记录身份、仍只收尾。包装层不伪造缺省身份，自由文本 reviewer 不充当身份证明。
+
+### Attestation 签发校验与撤销
+
+| 工具名 | 参数 | 返回值 | 说明 |
+|--------|------|--------|------|
+| `get_attestation_validity` | `issuer, signing_key_id, issuance_time, workspace_id?` | `{"validity": "valid" \| "invalid"}` | 按撤销账本查询时派生有效性（Req 10.9）。`compromised` 命中匹配 issuer/签名密钥的全部记录（与签发时间无关）；`rotated` 仅命中签发时间晚于撤销时间的记录 |
+| `list_attestation_revocations` | `issuer?, signing_key_id?, workspace_id?` | `{"items": [...], "count": N}` | 查询不可变、只追加的撤销账本（Req 10.11）。每条对应一次撤销，**不写入**任何逐条失效事件 |
+| `register_attestation_revocation` | `issuer, signing_key_id, revocation_mode, revocation_reason?, initiating_actor?, workspace_id?` | `{"code": "OK", "revocation_id", ...}` | 追加一条撤销记录（Req 10.10-10.12）。**Revocation_Mode 必填且无默认值**（compromised/rotated）：未携带或取值非法时以 `E_REVOCATION_MODE_REQUIRED` 拒绝且**不追加任何记录** |
+
+**撤销语义**（Req 10.10-10.18）：
+- 每次撤销只追加**一条** `Attestation_Revocation_Record`，不产生 N 条逐条失效事件；`invalid` 由查询时派生
+- `compromised`：忽略签发时间，命中匹配 issuer/签名密钥的全部记录
+- `rotated`：仅签发时间晚于撤销时间的记录判 `invalid`，例行密钥轮换不判死轮换前历史账本
+- 撤销**不修改**任何既有 verdict/Evidence payload（逐字节保留）；个体失效仍按 Req 6.6 追加事件
+- 时点可重算性：gate decision 记录的 issuer 标识、签名密钥标识、Attestation 签发时间与权威时钟判定时间，可事后重算「该记录在那次判定时刻是否已被撤销」
+
+---
+
 ## MCP Server 配置方法
 
 ### stdio 模式（推荐，默认）
@@ -2119,10 +2210,10 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ### L10. MCP 工具优化方向：优化组合查询路径而非扩面
 
-**讨论结论**：210 个工具已够用，应优化组合查询路径而非继续扩功能面。
+**讨论结论**：235 个工具已够用，应优化组合查询路径而非继续扩功能面。
 
 1. **当前状态盘点**：
-   - 工具数：210（含 8 个 L5 构建上下文感知工具 + 1 个 metrics 监控工具 + 4 个只读协同查询工具 + 若干跨分类工具）
+   - 工具数：235（含 L5 构建上下文感知、metrics 监控、协同/身份/依赖查询与写工具 + 若干跨分类工具）
    - 12 主分类已覆盖所有 Agent 常见任务场景
    - 已实现的"组合工具"：`compare_snapshots` / `diff_callers` / `diff_callees` / `get_clone_aware_impact` / `get_defect_correlation` / `get_symbol_issues`（聚合 Semgrep + Guardrail findings）
 

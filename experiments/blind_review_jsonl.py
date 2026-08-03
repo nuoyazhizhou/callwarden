@@ -17,6 +17,7 @@ verified true/false positive、verified misses、review 时长/token、reopen、
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import tempfile
@@ -241,6 +242,9 @@ def build_blind_view_record(
         "phase": view_dict["phase"],
         "disclosed_fields": view_dict["disclosed_fields"],
         "excluded_fields": view_dict["excluded_fields"],
+        # 记录实际投影内容，而不仅是字段清单；否则 JSONL 无法重放 Reviewer
+        # 在首轮 verdict 时看到的事实。Treatment 的 notes 只会在 post-reveal 视图中出现。
+        "payload": copy.deepcopy(view_dict["payload"]),
         "implementer_notes_included": view_dict["implementer_notes_included"],
         "disclosure_label": view_dict["disclosure_label"],
         "is_view_manifest": False,
@@ -361,15 +365,21 @@ def build_reveal_event_record(
     batch_id: str,
     first_verdict_sealed: bool,
     client_clock_time: Optional[float] = None,
+    verdict_changed: Optional[bool] = None,
+    change_reason_code: str = "no_change",
+    structured_reason: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """构造 reveal 事件记录（Req 12.7 / 12.4：封存首轮 verdict 后揭示 Implementer_Notes）。
+    """构造 reveal 事件及可选的 verdict 变更事实（Req 12.7 / 12.4）。
 
-    记录揭示发生时首轮 verdict 是否已封存（盲评顺序证据：verdict-before-reveal）。
+    Reveal 事件本身只记录顺序事实，不保存 Implementer_Notes 或隐藏推理历史。
+    当调用方同时提供 verdict 结果时，把结构化变更原因写入同一条追加记录，便于
+    从 JSONL 单条记录重放 ``sealed -> reveal -> changed/reason`` 关系；旧调用方
+    只传前三个参数时仍得到兼容的顺序记录。
 
-    Returns:
-        记录 dict。
+    ``first_verdict_sealed`` 故意不在此处自动改成 True：若调用方违反顺序，记录
+    必须保留 false 事实，交由评估器标记为无效/披露事件，而不能伪造通过。
     """
-    return {
+    record: Dict[str, Any] = {
         "record_type": ExperimentRecordType.REVEAL_EVENT,
         "task_id": task_id,
         "batch_id": batch_id,
@@ -378,3 +388,21 @@ def build_reveal_event_record(
         "non_product_evidence": True,
         NON_PRODUCT_EVIDENCE: True,
     }
+    if verdict_changed is not None:
+        # 复用视图层的结构化原因校验，尤其是禁止嵌套 hidden reasoning。
+        from .blind_review_views import build_verdict_change_record
+
+        change = build_verdict_change_record(
+            task_id=task_id,
+            batch_id=batch_id,
+            verdict_changed=verdict_changed,
+            change_reason_code=change_reason_code,
+            structured_reason=structured_reason,
+            client_clock_time=record["client_clock_time"],
+        )
+        record.update({
+            "verdict_changed": change["verdict_changed"],
+            "change_reason_code": change["change_reason_code"],
+            "structured_reason": change["structured_reason"],
+        })
+    return record

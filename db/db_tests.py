@@ -11,10 +11,19 @@
 - db.build_test_relations()        # 全量扫描，重建关联表
 - db.get_test_cases(qn)            # 查 foo() 的测试列表
 - db.get_tested_functions(test_qn) # 查 test_foo() 测了哪些函数（反向）
+
+P1 扩展（Req 1.3, 6.4–6.5, 6.11–6.12, 7.1–7.3）：
+- record_bound_test_run：新测试运行绑定 contract/snapshot/verifier 并追加 Evidence
+- import_test_results 扩展 binding_context 参数：提供时追加 Evidence
+- get_test_run_evidence_status：通过 derive_freshness 派生状态
+- list_historical_unbound_runs：查询无 Evidence 绑定的历史记录（Req 7.2）
 """
 import re
 import time
-from typing import Dict, List, Optional, Any
+import uuid
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from .task_snapshot import WorkspaceSnapshot
 
 
 class TestRelationMixin:
@@ -298,8 +307,13 @@ class TestRelationMixin:
     # 测试运行结果（test_runs）
     # ============================================
 
-    def import_test_results(self, junit_xml: str, ci_run_id: str = "",
-                            ci_url: str = "") -> Dict[str, int]:
+    def import_test_results(
+        self,
+        junit_xml: str,
+        ci_run_id: str = "",
+        ci_url: str = "",
+        binding_context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """从 JUnit XML 导入测试运行结果
 
         解析 JUnit XML（pytest --junitxml 生成），将每个 test case 的执行结果
@@ -309,9 +323,24 @@ class TestRelationMixin:
             junit_xml: JUnit XML 文件内容或文件路径
             ci_run_id: CI 运行 ID（可选，用于关联同一次运行）
             ci_url: CI 运行 URL（可选）
+            binding_context: P1 契约/快照/验证器绑定上下文（Req 7.1, 7.3）。
+                提供时为本次导入生成唯一 run_id 并追加一条 Evidence；不提供时
+                按历史记录导入（Req 7.2: historical_unbound）。字段：
+                - task_id: 任务 ID（必填）
+                - contract_id: 契约 ID（必填）
+                - contract_revision: 契约 revision（必填）
+                - contract_hash: 契约 hash（必填）
+                - snapshot: WorkspaceSnapshot 对象（必填）
+                - verifier_name: Verifier 名称（必填）
+                - verifier_version: Verifier 版本（必填）
+                - verifier_config_hash: Verifier 配置摘要（必填）
+                - selectors: 选择器列表（可选，默认空）
+                - producer_identity: 生产者身份（可选，默认 "system"）
 
         Returns:
-            {"total": N, "passed": N, "failed": N, "skipped": N, "error": N, "matched": N}
+            无 binding_context: {"total": N, "passed": N, "failed": N, ...}
+            有 binding_context: {..., "run_id": "...", "evidence_id": "...",
+                              "evidence_appended": bool, "binding": "fresh"/"historical_unbound"}
         """
         import os
         import xml.etree.ElementTree as ET
@@ -326,12 +355,22 @@ class TestRelationMixin:
         else:
             xml_content = junit_xml
 
-        stats = {"total": 0, "passed": 0, "failed": 0, "skipped": 0, "error": 0, "matched": 0}
+        stats: Dict[str, Any] = {
+            "total": 0, "passed": 0, "failed": 0,
+            "skipped": 0, "error": 0, "matched": 0,
+        }
 
         try:
             root = ET.fromstring(xml_content)
         except ET.ParseError as e:
             return {"parse_error": f"XML parse error: {e}"}
+
+        # P1: 有 binding_context 时生成唯一 run_id（Req 7.1: unique test run ID）
+        bound_run_id = ""
+        if binding_context:
+            bound_run_id = f"TRUN-{int(now * 1000)}-{uuid.uuid4().hex[:8]}"
+            stats["run_id"] = bound_run_id
+            stats["binding"] = "fresh"
 
         # 构建 test_name → symbol_id 映射（一次性查询）
         cur = self.conn.execute(
@@ -349,7 +388,9 @@ class TestRelationMixin:
             short_name = r["name"].split(".")[-1] if "." in r["name"] else r["name"]
             name_to_id.setdefault(short_name, r["id"])
 
-        # 遍历 JUnit XML 的 testcase 节点
+        # 遍历 JUnit XML 的 testcase 节点，收集结果用于 Evidence payload
+        test_results_for_evidence: List[Dict[str, Any]] = []
+
         for tc in root.iter("testcase"):
             test_name = tc.get("name", "")
             test_class = tc.get("classname", "")
@@ -394,6 +435,9 @@ class TestRelationMixin:
                     test_fn_id = name_to_id[short]
                     stats["matched"] += 1
 
+            # P1: 有 binding 时用 bound_run_id 关联，否则用调用方传入的 ci_run_id
+            effective_ci_run_id = bound_run_id if bound_run_id else ci_run_id
+
             self.conn.execute(
                 """INSERT INTO test_runs
                    (workspace_id, test_fn_id, test_name, test_class, test_file,
@@ -402,11 +446,107 @@ class TestRelationMixin:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (ws_id, test_fn_id, test_name, test_class, test_file,
                  status, duration_ms, error_msg, error_type,
-                 ci_run_id, ci_url, now),
+                 effective_ci_run_id, ci_url, now),
             )
+
+            test_results_for_evidence.append({
+                "test_name": full_name,
+                "status": status,
+                "duration_ms": duration_ms,
+                "error_type": error_type,
+                "test_fn_id": test_fn_id,
+            })
+
+        # P1: 追加 Evidence（Req 7.1, 7.3: 新 run 绑定 contract/snapshot/verifier）
+        if binding_context and bound_run_id:
+            evidence_result = self._append_test_run_evidence(
+                run_id=bound_run_id,
+                test_results=test_results_for_evidence,
+                binding_context=binding_context,
+                workspace_id=ws_id,
+                run_at=now,
+            )
+            stats["evidence_id"] = evidence_result.get("evidence_id", "")
+            stats["evidence_appended"] = bool(evidence_result.get("success"))
+            if not evidence_result.get("success"):
+                stats["evidence_error"] = evidence_result.get("error", "")
+                stats["binding"] = "historical_unbound"
+            else:
+                # 将 evidence_id 写回本次导入的所有 test_runs 记录的 ci_url 字段，
+                # 便于后续通过 run_id 反查 evidence_id（Req 7.3 关联）
+                evidence_id = evidence_result.get("evidence_id", "")
+                if evidence_id:
+                    self.conn.execute(
+                        """UPDATE test_runs SET ci_url = ?
+                           WHERE workspace_id = ? AND ci_run_id = ?""",
+                        (evidence_id, ws_id, bound_run_id),
+                    )
 
         self.conn.commit()
         return stats
+
+    def _append_test_run_evidence(
+        self,
+        run_id: str,
+        test_results: List[Dict[str, Any]],
+        binding_context: Dict[str, Any],
+        workspace_id: int,
+        run_at: float,
+    ) -> Dict[str, Any]:
+        """为测试运行追加 Evidence（内部方法，Req 7.1, 7.3）。
+
+        调用 TaskEvidenceMixin.append_evidence 使用正确的参数签名。
+        """
+        if not hasattr(self, "append_evidence"):
+            return {"success": False, "error": "append_evidence not available"}
+
+        # 必填字段校验
+        required = ("task_id", "contract_id", "contract_revision",
+                    "contract_hash", "snapshot", "verifier_name",
+                    "verifier_version", "verifier_config_hash")
+        missing = [k for k in required if not binding_context.get(k)]
+        if missing:
+            return {
+                "success": False,
+                "error": f"binding_context missing required fields: {missing}",
+            }
+
+        snapshot = binding_context["snapshot"]
+        if not isinstance(snapshot, WorkspaceSnapshot):
+            return {
+                "success": False,
+                "error": "binding_context.snapshot must be WorkspaceSnapshot",
+            }
+
+        selectors = binding_context.get("selectors") or []
+        producer_identity = binding_context.get("producer_identity", "system")
+
+        payload = {
+            "run_id": run_id,
+            "test_results": test_results,
+            "selectors": selectors,
+            "passed_count": sum(1 for r in test_results if r.get("status") == "passed"),
+            "failed_count": sum(1 for r in test_results if r.get("status") in ("failed", "error")),
+            "skipped_count": sum(1 for r in test_results if r.get("status") == "skipped"),
+        }
+
+        # 调用 TaskEvidenceMixin.append_evidence（使用正确的参数签名）
+        from .db_task_evidence import EVIDENCE_TYPE_TEST_RUN
+        return self.append_evidence(
+            task_id=binding_context["task_id"],
+            contract_id=binding_context["contract_id"],
+            contract_revision=int(binding_context["contract_revision"]),
+            contract_hash=binding_context["contract_hash"],
+            evidence_type=EVIDENCE_TYPE_TEST_RUN,
+            snapshot=snapshot,
+            verifier_name=binding_context["verifier_name"],
+            verifier_version=binding_context["verifier_version"],
+            verifier_config_hash=binding_context["verifier_config_hash"],
+            producer_identity=producer_identity,
+            payload=payload,
+            test_run_id=run_id,
+            workspace_id=workspace_id,
+        )
 
     def get_test_stability(self, qualified_name: str, limit: int = 50) -> Dict[str, Any]:
         """查询符号关联测试的稳定性
@@ -488,4 +628,245 @@ class TestRelationMixin:
             "recent_failures": recent_failures,
             "by_test": by_test,
         }
+
+    def record_bound_test_run(
+        self,
+        task_id: str,
+        contract_id: str,
+        contract_revision: int,
+        contract_hash: str,
+        snapshot: WorkspaceSnapshot,
+        verifier_name: str,
+        verifier_version: str,
+        verifier_config_hash: str,
+        test_results: List[Dict[str, Any]],
+        selectors: Optional[List[str]] = None,
+        producer_identity: str = "system",
+        workspace_id: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """记录带契约/快照/验证器绑定的新测试运行并追加 Evidence（Req 1.3, 7.1–7.3）。
+
+        新 run 具有唯一 run_id、selectors、contract/snapshot/verifier 绑定，
+        并通过 TaskEvidenceMixin.append_evidence 追加一条不可变 Evidence。
+        旧 test_runs 记录无契约/快照绑定，按 Req 7.2 标记为 historical_unbound，
+        本方法不修改旧记录，也不反向推断绑定（Req 7.3）。
+
+        Args:
+            task_id: 任务 ID
+            contract_id: 契约 ID
+            contract_revision: 契约 Revision
+            contract_hash: 契约 Hash
+            snapshot: WorkspaceSnapshot 对象（绑定工作区状态）
+            verifier_name: Verifier 名称
+            verifier_version: Verifier 版本
+            verifier_config_hash: Verifier 配置摘要
+            test_results: 测试结果项列表 [{"test_name": ..., "status": ...}]
+            selectors: 选择器列表（可选）
+            producer_identity: 生产者身份（默认 "system"）
+            workspace_id: 工作区 ID（可选，默认使用 active workspace）
+
+        Returns:
+            {run_id, evidence_id, evidence_appended, binding, run_at}
+            binding 为 "fresh"（追加成功）或 "historical_unbound"（追加失败）
+        """
+        if workspace_id is None:
+            workspace_id = self._get_active_workspace_id()
+        run_at = time.time()
+        # 唯一 run_id（Req 7.1: unique test run ID）
+        run_id = f"TRUN-{int(run_at * 1000)}-{uuid.uuid4().hex[:8]}"
+
+        if not isinstance(snapshot, WorkspaceSnapshot):
+            return {
+                "run_id": run_id,
+                "evidence_id": None,
+                "evidence_appended": False,
+                "binding": "historical_unbound",
+                "error": "snapshot must be WorkspaceSnapshot",
+                "run_at": run_at,
+            }
+
+        binding_context = {
+            "task_id": task_id,
+            "contract_id": contract_id,
+            "contract_revision": contract_revision,
+            "contract_hash": contract_hash,
+            "snapshot": snapshot,
+            "verifier_name": verifier_name,
+            "verifier_version": verifier_version,
+            "verifier_config_hash": verifier_config_hash,
+            "selectors": selectors or [],
+            "producer_identity": producer_identity,
+        }
+
+        evidence_result = self._append_test_run_evidence(
+            run_id=run_id,
+            test_results=test_results,
+            binding_context=binding_context,
+            workspace_id=workspace_id,
+            run_at=run_at,
+        )
+
+        evidence_id = evidence_result.get("evidence_id") if evidence_result.get("success") else None
+        return {
+            "run_id": run_id,
+            "evidence_id": evidence_id,
+            "evidence_appended": bool(evidence_result.get("success")),
+            "binding": "fresh" if evidence_id else "historical_unbound",
+            "error": evidence_result.get("error", "") if not evidence_result.get("success") else "",
+            "run_at": run_at,
+        }
+
+    def get_test_run_evidence_status(
+        self,
+        evidence_id: str,
+        current_contract_revision: int,
+        current_snapshot: Optional[WorkspaceSnapshot] = None,
+        current_file_hashes: Optional[Dict[str, str]] = None,
+        current_symbol_hashes: Optional[Dict[str, str]] = None,
+        current_graph_version: str = "",
+    ) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """获取测试运行 Evidence 的 Freshness_Status（Req 6.4–6.5, 6.11–6.12）。
+
+        通过 TaskEvidenceMixin.derive_freshness 派生状态，全序优先级
+        invalid > superseded > stale > fresh（Req 6.15）。
+
+        无 evidence_id 或 evidence 不存在时返回 historical_unbound（Req 7.2），
+        严禁反向推断旧记录的绑定。
+
+        Args:
+            evidence_id: Evidence ID（来自 record_bound_test_run 返回值）
+            current_contract_revision: 当前契约 revision
+            current_snapshot: 当前 Workspace_Snapshot（可选，用于比较 stale）
+            current_file_hashes: 当前文件 hash（可选）
+            current_symbol_hashes: 当前符号 hash（可选）
+            current_graph_version: 当前图刷新版本（可选）
+
+        Returns:
+            (status, reason_dict) 其中 status ∈
+            {fresh, stale, invalid, superseded, historical_unbound, unknown}
+            reason_dict 为 None 时表示 fresh 无错误；historical_unbound 时也为 None
+        """
+        if not evidence_id:
+            return "historical_unbound", None
+
+        if not hasattr(self, "derive_freshness"):
+            return "historical_unbound", None
+
+        try:
+            status, reason = self.derive_freshness(
+                evidence_id=evidence_id,
+                current_contract_revision=current_contract_revision,
+                current_snapshot=current_snapshot,
+                current_file_hashes=current_file_hashes,
+                current_symbol_hashes=current_symbol_hashes,
+                current_graph_version=current_graph_version,
+            )
+        except Exception as e:
+            return "unknown", {
+                "code": "EVIDENCE_DERIVE_FAILED",
+                "message": str(e),
+                "severity": "error",
+            }
+
+        reason_dict = reason.to_dict() if reason is not None else None
+        return status, reason_dict
+
+    def list_historical_unbound_runs(
+        self, limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """查询所有无 Evidence 绑定的历史 test_runs 记录（Req 7.2）。
+
+        识别方式：ci_run_id 不以 "TRUN-" 开头（旧记录无 binding_context）。
+        这些记录固定标记为 historical_unbound，不参与 test_pass 满足判定。
+
+        Args:
+            limit: 最多返回多少条
+
+        Returns:
+            历史记录列表，每条含 freshness_status="historical_unbound"
+        """
+        ws_id = self._get_active_workspace_id()
+        try:
+            cur = self.conn.execute(
+                """SELECT id, test_fn_id, test_name, test_class, test_file,
+                          status, duration_ms, error_message, error_type,
+                          ci_run_id, ci_url, run_at
+                   FROM test_runs
+                   WHERE workspace_id = ?
+                     AND (ci_run_id = '' OR ci_run_id NOT LIKE 'TRUN-%')
+                   ORDER BY run_at DESC
+                   LIMIT ?""",
+                (ws_id, limit),
+            )
+            results = []
+            for row in cur.fetchall():
+                item = dict(row)
+                item["freshness_status"] = "historical_unbound"
+                results.append(item)
+            return results
+        except Exception:
+            return []
+
+    def get_run_evidence_binding(self, run_id: str) -> Dict[str, Any]:
+        """查询 run_id 关联的 Evidence 绑定（Req 7.1, 7.3）。
+
+        新 run（TRUN- 前缀）通过 test_runs.ci_run_id 关联到 evidence_id
+        （存在 ci_url 字段）；旧记录或无绑定返回 historical_unbound，不反向推断。
+
+        Args:
+            run_id: 测试运行 ID（TRUN-... 或 ci_run_id）
+
+        Returns:
+            {run_id, binding_status, evidence_id?}
+            binding_status ∈ {fresh, historical_unbound}
+        """
+        if not run_id or not run_id.startswith("TRUN-"):
+            return {"run_id": run_id, "binding_status": "historical_unbound"}
+
+        ws_id = self._get_active_workspace_id()
+        try:
+            # 通过 test_runs.ci_run_id 查询，ci_url 字段存放 evidence_id
+            cur = self.conn.execute(
+                """SELECT DISTINCT ci_url FROM test_runs
+                   WHERE workspace_id = ? AND ci_run_id = ?
+                     AND ci_url != ''
+                   LIMIT 1""",
+                (ws_id, run_id),
+            )
+            row = cur.fetchone()
+            if not row or not row["ci_url"]:
+                return {"run_id": run_id, "binding_status": "historical_unbound"}
+            evidence_id = row["ci_url"]
+            # 通过 evidence_id 查询 task_evidence_events 获取绑定详情
+            cur = self.conn.execute(
+                """SELECT contract_id, contract_revision, contract_hash,
+                          verifier_name, verifier_version, verifier_config_hash,
+                          produced_at
+                   FROM task_evidence_events
+                   WHERE evidence_id = ? AND event_type = 'evidence_appended'
+                   LIMIT 1""",
+                (evidence_id,),
+            )
+            ev_row = cur.fetchone()
+            if not ev_row:
+                return {
+                    "run_id": run_id,
+                    "binding_status": "fresh",
+                    "evidence_id": evidence_id,
+                }
+            return {
+                "run_id": run_id,
+                "binding_status": "fresh",
+                "evidence_id": evidence_id,
+                "contract_id": ev_row["contract_id"],
+                "contract_revision": ev_row["contract_revision"],
+                "contract_hash": ev_row["contract_hash"],
+                "verifier_name": ev_row["verifier_name"],
+                "verifier_version": ev_row["verifier_version"],
+                "verifier_config_hash": ev_row["verifier_config_hash"],
+                "produced_at": ev_row["produced_at"],
+            }
+        except Exception:
+            return {"run_id": run_id, "binding_status": "historical_unbound"}
+
 

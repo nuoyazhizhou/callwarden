@@ -2326,6 +2326,363 @@ def _migrate_v42_to_v43(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v43_to_v44(conn: sqlite3.Connection):
+    """v43 -> v44: P2 artifact/interface 依赖与环检测 schema
+
+    新增 5 张表（task_dependencies/artifact_identities/interface_identities/
+    interface_provider_selections/dependency_edges）+ 索引，覆盖
+    Requirements 9.1-9.9, 13.7, 13.10。
+
+    幂等性：CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS 自动跳过已存在对象。
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v43 库。
+
+    表语义：
+    - task_dependencies：四类依赖声明（requires_existing/requires_artifact/
+      provides_interface/requires_interface），is_informational=true 不阻断（Req 9.8）。
+    - artifact_identities：provider 产出的 artifact identity/hash/freshness（Req 9.3）。
+    - interface_identities：interface identity/version/hash（Req 9.4-9.5）。
+    - interface_provider_selections：多 provider 匹配时显式选择（Req 9.9）。
+    - dependency_edges：硬依赖图边（provider→consumer），环检测输入（Req 9.6）。
+    """
+    # 1. task_dependencies
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_dependencies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            dependency_type TEXT NOT NULL,
+            target_ref TEXT NOT NULL,
+            target_task_id TEXT DEFAULT '',
+            is_informational INTEGER NOT NULL DEFAULT 0,
+            declared_at REAL NOT NULL,
+            UNIQUE(workspace_id, task_id, contract_id, contract_revision, dependency_type, target_ref)
+        )
+        """
+    )
+    # 2. artifact_identities
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS artifact_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            artifact_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            artifact_type TEXT NOT NULL,
+            artifact_ref TEXT NOT NULL,
+            artifact_hash TEXT DEFAULT '',
+            freshness_status TEXT NOT NULL DEFAULT 'producing',
+            produced_at REAL,
+            workspace_snapshot_id TEXT DEFAULT '',
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+        """
+    )
+    # 3. interface_identities
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS interface_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            interface_id TEXT NOT NULL UNIQUE,
+            interface_name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            interface_hash TEXT DEFAULT '',
+            provider_task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            published_at REAL NOT NULL,
+            UNIQUE(workspace_id, interface_name, version)
+        )
+        """
+    )
+    # 4. interface_provider_selections
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS interface_provider_selections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            consumer_task_id TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            interface_name TEXT NOT NULL,
+            selected_provider_task_id TEXT NOT NULL,
+            selected_at REAL NOT NULL,
+            UNIQUE(workspace_id, consumer_task_id, contract_id, contract_revision, interface_name)
+        )
+        """
+    )
+    # 5. dependency_edges
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dependency_edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            provider_task_id TEXT NOT NULL,
+            consumer_task_id TEXT NOT NULL,
+            edge_type TEXT NOT NULL,
+            source_type TEXT NOT NULL,
+            contract_id TEXT NOT NULL,
+            contract_revision INTEGER NOT NULL,
+            is_hard INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL,
+            UNIQUE(workspace_id, provider_task_id, consumer_task_id, contract_id, contract_revision, source_type)
+        )
+        """
+    )
+
+    # P2 索引（幂等）
+    _p2_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_task_dependencies_task ON task_dependencies(workspace_id, task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_task_dependencies_contract ON task_dependencies(workspace_id, contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_task_dependencies_type ON task_dependencies(workspace_id, dependency_type)",
+        "CREATE INDEX IF NOT EXISTS idx_task_dependencies_target ON task_dependencies(workspace_id, target_ref)",
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identities_task ON artifact_identities(workspace_id, task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identities_contract ON artifact_identities(workspace_id, contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_artifact_identities_freshness ON artifact_identities(workspace_id, freshness_status)",
+        "CREATE INDEX IF NOT EXISTS idx_interface_identities_name ON interface_identities(workspace_id, interface_name)",
+        "CREATE INDEX IF NOT EXISTS idx_interface_identities_provider ON interface_identities(workspace_id, provider_task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_interface_identities_contract ON interface_identities(workspace_id, contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_interface_provider_selections_consumer ON interface_provider_selections(workspace_id, consumer_task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_interface_provider_selections_interface ON interface_provider_selections(workspace_id, interface_name)",
+        "CREATE INDEX IF NOT EXISTS idx_dependency_edges_provider ON dependency_edges(workspace_id, provider_task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dependency_edges_consumer ON dependency_edges(workspace_id, consumer_task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_dependency_edges_contract ON dependency_edges(workspace_id, contract_id, contract_revision)",
+        "CREATE INDEX IF NOT EXISTS idx_dependency_edges_hard ON dependency_edges(workspace_id, is_hard) WHERE is_hard = 1",
+    ]
+    for sql in _p2_indexes:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _migrate_v44_to_v45(conn: sqlite3.Connection):
+    """v44 -> v45: P3 Identity/attestation schema
+
+    新增 3 张表（action_identities/attestation_records/
+    attestation_revocation_records）+ 12 索引，覆盖
+    Requirements 10.1-10.18, 13.10。
+
+    幂等性：CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS 自动跳过已存在对象。
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v44 库。
+
+    表语义：
+    - action_identities：每个 contract/view/verdict/evidence/gate/state_transition
+      action 的 Identity 记录（agent_id/session_id/model_id/role），Req 10.1-10.4。
+    - attestation_records：Daemon 签发的 Attestation，绑定 action_id、Peer_Identity、
+      View_Manifest hash、Contract_Hash 与有效期窗口（valid_from/valid_until），
+      Req 10.8-10.9, 14.13。issuer 必须为 daemon。
+    - attestation_revocation_records：Attestation issuer 或签名密钥撤销的不可变只追加
+      记录，Revocation_Mode 必填（compromised/rotated，无默认值），Req 10.10-10.17。
+      撤销导致的 invalid 由查询时派生：
+      - compromised：忽略 issued_at，该 issuer/key 签发的全部记录判为 invalid；
+      - rotated：仅 issued_at > revoked_at 的记录判为 invalid。
+    """
+    # 1. action_identities（Req 10.1-10.4）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS action_identities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            action_id TEXT NOT NULL UNIQUE,
+            action_type TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            contract_id TEXT DEFAULT '',
+            contract_revision INTEGER DEFAULT 0,
+            agent_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            recorded_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+        """
+    )
+    # 2. attestation_records（Req 10.8-10.9, 14.13）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attestation_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            attestation_id TEXT NOT NULL UNIQUE,
+            action_id TEXT NOT NULL,
+            issuer TEXT NOT NULL,
+            signing_key_id TEXT NOT NULL,
+            peer_identity TEXT NOT NULL,
+            bound_verdict_id TEXT DEFAULT '',
+            bound_evidence_id TEXT DEFAULT '',
+            view_manifest_hash TEXT DEFAULT '',
+            contract_hash TEXT NOT NULL,
+            issued_at REAL NOT NULL,
+            valid_from REAL NOT NULL,
+            valid_until REAL NOT NULL,
+            signature TEXT NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            FOREIGN KEY (action_id) REFERENCES action_identities(action_id)
+        )
+        """
+    )
+    # 3. attestation_revocation_records（Req 10.10-10.17）
+    #    Revocation_Mode 必填（无默认值），CHECK 约束限制为 compromised/rotated。
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS attestation_revocation_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            revocation_id TEXT NOT NULL UNIQUE,
+            issuer TEXT NOT NULL,
+            signing_key_id TEXT NOT NULL,
+            revocation_mode TEXT NOT NULL,
+            revocation_reason TEXT NOT NULL,
+            initiating_actor TEXT NOT NULL,
+            revoked_at REAL NOT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+            CHECK (revocation_mode IN ('compromised', 'rotated'))
+        )
+        """
+    )
+
+    # P3 索引（幂等）
+    _p3_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_action_identities_task ON action_identities(workspace_id, task_id)",
+        "CREATE INDEX IF NOT EXISTS idx_action_identities_session ON action_identities(workspace_id, session_id)",
+        "CREATE INDEX IF NOT EXISTS idx_action_identities_agent ON action_identities(workspace_id, agent_id)",
+        "CREATE INDEX IF NOT EXISTS idx_action_identities_role ON action_identities(workspace_id, role)",
+        "CREATE INDEX IF NOT EXISTS idx_action_identities_action_type ON action_identities(workspace_id, action_type)",
+        "CREATE INDEX IF NOT EXISTS idx_attestation_records_action ON attestation_records(workspace_id, action_id)",
+        "CREATE INDEX IF NOT EXISTS idx_attestation_records_issuer ON attestation_records(workspace_id, issuer)",
+        "CREATE INDEX IF NOT EXISTS idx_attestation_records_signing_key ON attestation_records(workspace_id, signing_key_id)",
+        "CREATE INDEX IF NOT EXISTS idx_attestation_records_issued_at ON attestation_records(workspace_id, issued_at)",
+        "CREATE INDEX IF NOT EXISTS idx_attestation_revocation_issuer ON attestation_revocation_records(workspace_id, issuer)",
+        "CREATE INDEX IF NOT EXISTS idx_attestation_revocation_signing_key ON attestation_revocation_records(workspace_id, signing_key_id)",
+        "CREATE INDEX IF NOT EXISTS idx_attestation_revocation_mode ON attestation_revocation_records(workspace_id, revocation_mode)",
+    ]
+    for sql in _p3_indexes:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _migrate_v45_to_v46(conn: sqlite3.Connection):
+    """v45 -> v46: P4 assignment/安全 lease schema
+
+    新增 3 张表（task_assignments/task_leases/task_lease_events）+ 部分唯一索引，
+    覆盖 Requirements 11.1-11.13, 13.4-13.10, 14.6, 14.11-14.12, 14.30-14.32。
+
+    幂等性：CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS 自动跳过已存在对象。
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v45 库。
+
+    表语义：
+    - task_assignments：task+role+holder Identity 绑定（Req 11.1），不把
+      workspace active_task_id 当作 assignment authority（Req 11.1, 13.4）。
+    - task_leases：当前与历史 Lease。只存 token hash（sha256），永不存 raw token
+      （Req 11.2）；acquired/expires/renewed/released 一律由权威时钟写入（Req 14.11），
+      客户端时间戳只作参考元数据（Req 14.12）；fencing counter 单调递增（Req 11.3）；
+      partial UNIQUE 索引（WHERE status='active'）保证同 task+role 只有一个当前 lease。
+    - task_lease_events：append-only 审计事件（acquire/renew/release），raw token
+      永不落库（Req 11.6, 11.12）。
+    """
+    # 1. task_assignments（Req 11.1）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            assignment_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            created_at REAL NOT NULL,
+            revoked_at REAL DEFAULT NULL,
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+        """
+    )
+    # 2. task_leases（Req 11.2-11.9）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_leases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            lease_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            agent_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            token_hash TEXT NOT NULL,
+            fencing_counter INTEGER NOT NULL,
+            acquired_at REAL NOT NULL,
+            expires_at REAL NOT NULL,
+            renewed_at REAL DEFAULT NULL,
+            released_at REAL DEFAULT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+        """
+    )
+    # 3. task_lease_events（Req 11.6, 11.12）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_lease_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace_id INTEGER NOT NULL,
+            event_id TEXT NOT NULL UNIQUE,
+            lease_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            fencing_counter INTEGER NOT NULL,
+            event_at REAL NOT NULL,
+            actor_agent_id TEXT NOT NULL,
+            actor_session_id TEXT NOT NULL,
+            actor_model_id TEXT NOT NULL,
+            detail TEXT DEFAULT '',
+            FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+        )
+        """
+    )
+
+    # P4 索引：同 task+role 只有一个当前 lease（Req 11.2）
+    _p4_indexes = [
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_task_leases_active_unique "
+        "ON task_leases(workspace_id, task_id, role) WHERE status = 'active'",
+        "CREATE INDEX IF NOT EXISTS idx_task_assignments_task ON task_assignments(workspace_id, task_id, role)",
+        "CREATE INDEX IF NOT EXISTS idx_task_leases_task ON task_leases(workspace_id, task_id, role)",
+        "CREATE INDEX IF NOT EXISTS idx_task_lease_events_lease ON task_lease_events(workspace_id, lease_id)",
+        "CREATE INDEX IF NOT EXISTS idx_task_lease_events_task ON task_lease_events(workspace_id, task_id, role)",
+    ]
+    for sql in _p4_indexes:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -3079,6 +3436,18 @@ class CodeGraphBase:
             43: {
                 "description": t("cli.messages.migration_v43", default="P1 multi-llm-contract-collaboration schema: 5 immutable event tables (task_contract_revisions/task_role_view_events/task_verdict_events/task_evidence_events/task_gate_decisions) + verifier_registry + verifier_revocation_records + evidence_retention_config (idempotent)"),
                 "func": _migrate_v42_to_v43,
+            },
+            44: {
+                "description": t("cli.messages.migration_v44", default="P2 artifact/interface dependency schema: 5 tables (task_dependencies/artifact_identities/interface_identities/interface_provider_selections/dependency_edges) + indexes (idempotent)"),
+                "func": _migrate_v43_to_v44,
+            },
+            45: {
+                "description": t("cli.messages.migration_v45", default="P3 Identity/attestation schema: 3 tables (action_identities/attestation_records/attestation_revocation_records) + 12 indexes (idempotent, Revocation_Mode CHECK compromised/rotated)"),
+                "func": _migrate_v44_to_v45,
+            },
+            46: {
+                "description": t("cli.messages.migration_v46", default="P4 assignment/lease schema: 3 tables (task_assignments/task_leases/task_lease_events) + partial UNIQUE index for single active lease per task+role (idempotent)"),
+                "func": _migrate_v45_to_v46,
             },
         }
 

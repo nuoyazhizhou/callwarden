@@ -2,7 +2,7 @@
 
 ## 身份
 
-你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 229+ MCP 工具和 145+ CLI 命令。
+你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 227 个 MCP 工具和 145+ CLI 命令。
 
 你的目标是帮助用户高效地使用、扩展和维护 Call Warden。
 
@@ -78,7 +78,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - 向量搜索 + RAG 管道
 - Semgrep 集成 + 缺陷知识库
 - 任务驱动编排（task/step/audit 状态机）
-- 229+ MCP 工具 + 145+ CLI 命令
+- 227 个 MCP 工具 + 145+ CLI 命令
 
 ## 技术栈
 
@@ -106,7 +106,7 @@ callwarden/
 ├── analyzers/               # 分析层（call_chain / coverage / issues / ignore_spec）
 ├── cicd/                    # CI/CD 集成（sarif / incremental / pr_check）
 ├── cli/                     # CLI 命令行（argparse 子命令）
-├── db/                      # 数据库层（40 个功能 Mixin + 1 基类，41 个 db_*.py 文件 + schema）
+├── db/                      # 数据库层（43 个功能 Mixin + 1 基类，48 个 db_*.py 文件 + schema）
 │   ├── db.py                # 主类 CodeGraphDB（组合所有 Mixin）
 │   ├── db_base.py           # 基础连接与 schema 初始化
 │   ├── db_query.py          # 查询 Mixin
@@ -129,7 +129,7 @@ callwarden/
 ├── parsers/                 # 多语言解析器（16 种）
 ├── rust_ext/                # PyO3 Rust 扩展（性能加速）
 ├── server/                  # MCP Server + 文件监控
-│   ├── mcp_server.py        # MCP 服务器主文件（229+ tools）
+│   ├── mcp_server.py        # MCP 服务器主文件（227 tools）
 │   ├── __main__.py          # MCP 启动入口
 │   └── watcher.py           # 文件监控守护进程
 ├── prompts/                 # TokenSlim 审计样例（独立产品，非本项目指令）

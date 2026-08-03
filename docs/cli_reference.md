@@ -835,6 +835,10 @@ cw task report <task_id> <step_id> --result "文件不存在" --fail
 
 失败时系统自动插入"修复缺陷"步骤。
 
+**P3 Identity（Req 10.1-10.7）**：可携带 `--agent-id/--session-id/--model-id/--role`
+四参数（全部必填，缺失拒绝）记录执行者 Identity，仅作 actor attribution，
+不等于 assignment/lease/ownership。
+
 ### `task rollback`：回滚变更
 
 ```bash
@@ -844,7 +848,7 @@ cw task rollback <task_id> <step_id>
 ### `task apply`：审核通过任务
 
 ```bash
-cw task apply <task_id> [--reviewer <identity>]
+cw task apply <task_id> [--reviewer <identity>] [--agent-id <A> --session-id <S> --model-id <M> --role <R>]
 ```
 
 将任务状态从 `review` 推进到 `applied`，记录审核通过时间戳 `applied_at`。
@@ -855,6 +859,11 @@ cw task apply <task_id> [--reviewer <identity>]
 - 仅 `review` 状态的任务可 `apply`，其他状态返回错误
 - 成功后 `applied_at` 字段写入当前时间戳
 - `--reviewer` 参数标识审核人（默认 `reviewer`）
+
+**P3 Identity（Req 10.1-10.7）**：`--agent-id/--session-id/--model-id/--role` 四参数
+共同构成结构化 Identity（全部必填，缺失拒绝）。`task apply` **强制 Reviewer Session
+与 Implementer Session 不同**（同 session 返回 `ERR_IDENTITY_SESSION_NOT_SEPARATED`，
+保持 `review` 状态）。Identity 仅作 actor attribution，不等于 assignment/lease/ownership。
 
 **父任务禁止手动 apply**：若任务有子任务（即父任务），返回错误
 `reason=parent_task_must_cascade`，提示由级联触发。父任务的状态推进由系统在
@@ -871,7 +880,7 @@ close 的 task_id。
 ### `task close`：关闭任务
 
 ```bash
-cw task close <task_id> [--reviewer <identity>]
+cw task close <task_id> [--reviewer <identity>] [--agent-id <A> --session-id <S> --model-id <M> --role <R>]
 ```
 
 将任务状态从 `applied` 推进到 `closed`，记录关闭时间戳 `closed_at`。
@@ -882,6 +891,9 @@ cw task close <task_id> [--reviewer <identity>]
 - 仅 `applied` 状态的任务可 `close`，其他状态返回错误
 - 成功后 `closed_at` 字段写入当前时间戳
 - `--reviewer` 参数标识关闭人（默认 `reviewer`）
+
+**P3 Identity（Req 10.1-10.7）**：接受 `--agent-id/--session-id/--model-id/--role`
+四参数记录关闭者 Identity；close 仍只收尾，**不强制** session 分离。
 
 **父任务禁止手动 close**：若任务有子任务（即父任务），返回错误
 `reason=parent_task_must_cascade` 和 `subtask_count` 字段，提示由级联触发。
@@ -894,12 +906,15 @@ cw task close <task_id> [--reviewer <identity>]
 ### `task reopen`：重新打开任务
 
 ```bash
-cw task reopen <task_id> [--reviewer <identity>] [--reason "<原因>"]
+cw task reopen <task_id> [--reviewer <identity>] [--reason "<原因>"] [--agent-id <A> --session-id <S> --model-id <M> --role <R>]
 ```
 
 将任务状态从 `review`/`applied`/`closed` 回退到 `in_progress`，清理
 `applied_at`/`closed_at` 时间戳。用于 code review 发现已 applied/closed 的任务
 有问题需要修复，或向已 closed 的父任务挂入新子任务。
+
+**P3 Identity（Req 10.1-10.7）**：接受 `--agent-id/--session-id/--model-id/--role`
+四参数记录发起者 Identity；reopen **不强制** session 分离（reopen 不是 apply）。
 
 **active_task 设置**（v30 新增）：`task reopen` 成功后自动将 `task_id` 写入
 `active_task_id`（用户显式 reopen 表示要重新开始干这个任务）。
@@ -2698,9 +2713,9 @@ P0 实验记录**标记为 non-product Evidence**，具体限制：
 |------|---------|------|
 | P0（盲评对照实验） | ✅ 已实现 | 本章节所述命令 |
 | D0（跨平台 daemon 化） | ✅ 已实现 | 三平台端点、Peer_Credential、串行化点、Authoritative_Clock、Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、Degraded_Mode 分流 |
-| P1（契约驱动协作） | 🔲 planned / unavailable | 需 G0 通过 + GD 通过 + schema 变更 + 迁移 + 测试 + 文档 |
-| P2（DAG 依赖调度） | 🔲 planned / unavailable | 需 P1 启用 |
-| P3（Agent 身份审计） | 🔲 planned / unavailable | 需 P1 启用 |
+| P1（契约驱动协作） | ✅ 已实现 | Canonical Envelope + Role View allowlist + Blind Verdict/Reveal/Amendment + Evidence Ledger + Evidence Gate + CLI/MCP 工具 |
+| P2（DAG 依赖调度） | ✅ 已实现 | 四类依赖 + artifact freshness + interface identity + 硬依赖图 + 环检测 + provider 选择（`cw dependency` 命令） |
+| P3（Agent 身份审计） | ✅ 已实现 | `cw task report/apply/close/reopen --agent-id/--session-id/--model-id/--role` + `cw identity revoke`（强制 `--revocation-mode`）+ Attestation 校验与撤销 + Identity fail-closed 接入 Evidence Gate |
 | P4（安全租约与分派） | 🔲 planned / unavailable | 需 P1 + P3 启用 |
 
 在对应阶段启用前，其所有能力均表示为 planned 且 unavailable，
@@ -2710,8 +2725,186 @@ P0 实验记录**标记为 non-product Evidence**，具体限制：
 
 ---
 
+## cw dependency（P2 依赖图与环检测诊断）
+
+> **边界声明**：P2 只做无环校验和诊断，**不提供**自动排程、资源优化、自动 assignment 或复杂 DAG scheduler（Req 9.10）。
+
+### cw dependency inspect
+
+查看任务或契约的依赖声明与 artifact/interface freshness。
+
+```bash
+# 按任务查看
+cw dependency inspect --task-id T-1785574343893-60e782d3
+
+# 按契约查看
+cw dependency inspect --contract-id C-test --revision 1
+
+# JSON 输出
+cw dependency inspect --task-id T-xxx --json
+```
+
+### cw dependency list
+
+列出硬依赖图边。
+
+```bash
+cw dependency list                     # 全部
+cw dependency list --contract-id C-test  # 按契约过滤
+```
+
+### cw dependency cycle
+
+检测硬依赖图中的环。
+
+```bash
+cw dependency cycle           # 文本输出
+cw dependency cycle --json    # JSON 输出
+```
+
+### cw dependency explain
+
+解释指定 revision 的依赖验证结果。
+
+```bash
+cw dependency explain --contract-id C-test --revision 1
+```
+
+输出包含：验证状态（通过/拒绝）、错误列表、cycle path（如有）、无自动排程声明（Req 9.10）。
+
+### cw dependency provider-select
+
+记录显式 interface provider 选择（Req 9.9，写操作）。
+
+```bash
+cw dependency provider-select \
+  --consumer-task-id T-consumer \
+  --contract-id C-test \
+  --revision 1 \
+  --interface-name auth.verify \
+  --provider-task-id T-provider
+```
+
+---
+
+## cw identity（P3 Agent 身份审计）
+
+> **边界声明**：Identity（agent_id/session_id/model_id/role）仅作 actor attribution，
+> **不等于** assignment/lease/ownership/SQLite lock（Req 10.5, 10.7）。
+> Attestation 只能由 daemon 签发（Req 14.13）；`cw identity revoke` 只追加撤销账本，
+> 不修改任何既有 verdict/Evidence payload。
+
+### cw identity revoke
+
+追加一条 Attestation 撤销记录（Req 10.10-10.12，写操作）。
+
+```bash
+cw identity revoke \
+  --issuer daemon \
+  --signing-key-id <key-id> \
+  --revocation-mode compromised \
+  --reason "密钥泄露，紧急撤销" \
+  --agent-id admin-agent --session-id sess-admin --model-id glm-5.2 --role reviewer
+```
+
+- **`--revocation-mode` 必填且无默认值**（`compromised` / `rotated`）：
+  缺失或取值非法时以 `ERR_REVOCATION_MODE_REQUIRED` 拒绝，且**不追加任何记录**
+- `compromised`：匹配 issuer+签名密钥的全部记录判 invalid（与签发时间无关）
+- `rotated`：仅签发时间晚于撤销时间的记录判 invalid（例行轮换不判死历史账本）
+- 每次撤销只追加**一条** `Attestation_Revocation_Record`，不产生 N 条逐条失效事件；
+  `invalid` 由查询时派生（MCP `get_attestation_validity` / `list_attestation_revocations`）
+- `--agent-id/--session-id/--model-id/--role` 记录发起者 Identity（P3，Req 10.1）
+
+---
+
+## cw lease / cw assignment（P4 Assignment 与安全 Lease）
+
+> **边界声明（正面陈述，Req 11.13, 14.32）**：Lease 保证的是 **daemon 在线期间**的并发
+> 正确性——同一 task/role 任一时刻只有一个有效持有者，旧持有者在新 lease 生效后无法再
+> 写入（fencing，Property 11）。**不**提供自动 dispatch、抢占或中央调度；防篡改保证归属
+> Attestation 校验与追加式 Evidence_Ledger，**不**防止离线直接改库。SQLite 写锁只负责
+> 短事务互斥，不提供业务 ownership（Req 11.10）。Degraded_Mode 下 Lease
+> 获取/续租/释放属 Governance_Write，一律 fail closed（Req 14.31）。
+
+### cw lease acquire（写，Req 11.2-11.3）
+
+原子比较当前 Lease 状态后获取；fencing counter 单调递增（Req 11.3）。
+
+```bash
+cw lease acquire <task-id> \
+  --role implementer \
+  --agent-id <agent-id> --session-id <session-id> --model-id <model-id> \
+  --ttl 3600
+```
+
+- holder Identity（`--agent-id/--session-id/--model-id`）**必填**；缺失以 `E_ASSIGNMENT_INCOMPLETE` 拒绝
+- 已有未过期 active lease → `E_LEASE_ACTIVE_EXISTS` 拒绝；已过期 → 覆盖
+- **raw token 仅在成功响应输出一次**（Req 11.2）：数据库只存 sha256 hash，日志/审计事件不存储
+
+### cw lease renew（写，Req 11.4-11.5）
+
+```bash
+cw lease renew <task-id> --role implementer --token <raw-token> \
+  --agent-id <agent-id> --session-id <session-id> --model-id <model-id> --ttl 7200
+```
+
+- 要求当前 token hash / holder Identity / 未过期；错误 token → `E_LEASE_TOKEN_MISMATCH`，
+  过期 → `E_LEASE_EXPIRED`，holder 不符 → `E_LEASE_HOLDER_MISMATCH`
+- **幂等**（Req 11.5）：重复有效 renew 返回同一 lease 状态，不递增 counter，不创建新 lease
+
+### cw lease release（写，Req 11.6-11.7）
+
+```bash
+cw lease release <task-id> --role implementer --token <raw-token> \
+  --agent-id <agent-id> --session-id <session-id> --model-id <model-id>
+```
+
+- 当前 token 匹配时原子追加 release 审计事件并置 released
+- **幂等**（Req 11.7）：重复 release 返回同一 released 状态，不改变 counter，不创建第二个 active lease
+
+### cw lease status / list（只读）
+
+```bash
+cw lease status <task-id> [--role <role>] [--json]
+cw lease list [--task-id <id>] [--role <role>] [--json]
+```
+
+- `status`：当前 active lease（含 token_hash 供校验，不含 raw token）；无 active 时返回最近历史
+- `list`：append-only 审计事件账本（acquire/renew/release），不含 raw token
+
+### cw assignment create / show / revoke（Req 11.1）
+
+```bash
+cw assignment create <task-id> --role implementer \
+  --agent-id <agent-id> --session-id <session-id> --model-id <model-id>
+cw assignment show <task-id> [--role <role>]
+cw assignment revoke <assignment-id>
+```
+
+- assignment 绑定 task+role+holder Identity，**不把** workspace `active_task_id` 当作
+  assignment authority（Req 13.4）；assignment 可以没有 lease（Req 11.12）
+- `show` 只读；`create`/`revoke` 写操作（读/写分类见 [TOOLS.md](TOOLS.md)）
+
+### task report/apply/close/reopen 的 Lease 凭证（P4，Req 11.8-11.9）
+
+```bash
+cw task report <task-id> <step-id> --success \
+  --agent-id <id> --session-id <id> --model-id <id> --role implementer \
+  --lease-token <raw-token> --fencing-counter <n>
+```
+
+- 提供 `--lease-token` + `--fencing-counter` 时启用受保护写路径：
+  过期（`E_LEASE_EXPIRED`）、token 不匹配（`E_LEASE_TOKEN_MISMATCH`）、旧 counter
+  （`E_LEASE_FENCING_STALE`）、无 active lease（`E_LEASE_NOT_FOUND`）均在写入前拒绝，
+  **不改变 task data**；只提供其一 → 凭证不完整拒绝（fail closed）
+- 不提供 Lease 凭证时保持向后兼容（不启用受保护写）
+- **Lease 校验通过不代表 mutation 被授权**：角色权限、Independent Review 与 Evidence
+  Gate 仍然适用（Req 11.11）；task_close 仍只在 applied 后收尾
+
+---
+
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 229 个工具
+- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 235 个工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署与多容器共享

@@ -37,7 +37,7 @@ from .agent_registry import get_merged_specs
 _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn", "defect",
                 "task", "vuln-blast", "symbol-history", "check-gate", "test-impact",
                 "gc", "doctor", "install-agent", "install-hook", "rule", "audit", "bootstrap",
-                "clone", "fts",
+                "clone", "fts", "identity", "lease", "assignment",
                 # C8 Step #1: 新增 8 大类 subcommand 入口（保留旧 flag 兼容）
                 "workspace", "refresh", "stats", "status",
                 "search", "grep", "symbol", "file", "query", "issues", "tests",
@@ -61,7 +61,11 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
                 # P0 盲评对照实验命令组（Requirement 12）
                 "experiment",
                 # D0 多 LLM 契约协同：经 daemon 的治理写命令面（Req 14）
-                "collab"}
+                "collab",
+                # P2 依赖图与环检测诊断（Req 9.1-9.10）
+                "dependency",
+                # P3 Identity/Attestation（Req 10.1-10.18）
+                "identity"}
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
@@ -1178,6 +1182,18 @@ def _is_readonly_command(cmd: str, sub_argv: list) -> bool:
     if cmd == "rollback":
         # Phase 0 子任务 4：rollback config/show/is-rolled-back 只读；register/set 写
         return action in _READONLY_ROLLBACK_ACTIONS
+    if cmd == "dependency":
+        # P2：dependency inspect/list/cycle/explain 只读；provider-select 写
+        return action in {"inspect", "list", "cycle", "explain"}
+    if cmd == "identity":
+        # P3：identity revoke 追加 Attestation 撤销记录（写操作，Req 10.10-10.12）
+        return False
+    if cmd == "lease":
+        # P4：lease status 只读；acquire/renew/release 写（Req 11.2-11.7）
+        return action in {"status", "list"}
+    if cmd == "assignment":
+        # P4：assignment show/list 只读；create/revoke 写（Req 11.1）
+        return action in {"show", "list"}
     if cmd == "refresh":
         # refresh 始终是写操作（build_full_graph / refresh_file）
         return False
@@ -1359,6 +1375,14 @@ def _dispatch_subcommand(argv, db):
             return _handle_experiment(argv, db)
         elif cmd == "collab":
             return _handle_collab(argv, db)
+        elif cmd == "dependency":
+            return _handle_dependency(argv, db)
+        elif cmd == "identity":
+            return _handle_identity(argv, db)
+        elif cmd == "lease":
+            return _handle_lease(argv, db)
+        elif cmd == "assignment":
+            return _handle_assignment(argv, db)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -3336,6 +3360,36 @@ def _handle_task(args, db):
                default="Reason for reopening (optional)")
     )
 
+    # P3：task report/apply/close/reopen 接收结构化身份（Req 10.1-10.7）。
+    # --reviewer 自由文本不是身份证明（Req 10.5）；身份证明只能来自结构化
+    # Identity 与 daemon 签发的 Attestation（Req 10.8, 14.13）。
+    for _identity_parser in (report_p, apply_p, close_p, reopen_p):
+        _identity_parser.add_argument(
+            "--agent-id", default="", metavar="ID",
+            help=t("cli_task_arg_agent_id", default="Agent ID (P3 Identity)"))
+        _identity_parser.add_argument(
+            "--session-id", default="", metavar="ID",
+            help=t("cli_task_arg_session_id", default="Session ID (P3 Identity)"))
+        _identity_parser.add_argument(
+            "--model-id", default="", metavar="ID",
+            help=t("cli_task_arg_model_id", default="Model ID (P3 Identity)"))
+        _identity_parser.add_argument(
+            "--role", default="", metavar="ROLE",
+            help=t("cli_task_arg_role",
+                   default="Role (planner/implementer/reviewer/tester)"))
+
+    # P4：task report/apply/close/reopen 支持受保护写 Lease 凭证（Req 11.8-11.9）。
+    # 提供 --lease-token 时启用受保护写路径：过期/token 不匹配/旧 counter 在写入前拒绝。
+    for _lease_parser in (report_p, apply_p, close_p, reopen_p):
+        _lease_parser.add_argument(
+            "--lease-token", default="", metavar="TOKEN",
+            help=t("cli_task_arg_lease_token",
+                   default="Lease raw token (P4 protected mutation)"))
+        _lease_parser.add_argument(
+            "--fencing-counter", type=int, default=-1, metavar="N",
+            help=t("cli_task_arg_fencing_counter",
+                   default="Current fencing counter (P4 protected mutation)"))
+
     # capture-diff：捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
     capture_p = sub.add_parser(
         "capture-diff",
@@ -3628,8 +3682,32 @@ def _handle_task(args, db):
 
     elif opts.action == "report":
         success = not opts.fail
+        # P3：收集并校验结构化身份（可选；提供后必须完整，否则 fail closed）
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, False)
+            return True
+        if identity:
+            ok, vreason = _validate_identity(db, identity)
+            if not ok:
+                _identity_reason_output(vreason, False)
+                return True
+            if not _method_accepts_identity(db, "task_report_step"):
+                _identity_reason_output({
+                    "code": "E_IDENTITY_NOT_WIRED",
+                    "message_key": "daemon_errors.error.identity_not_wired",
+                    "detail": "task_report_step 尚不支持 identity 参数（8.6 接线后可用）",
+                }, False)
+                return True
+        # P4：受保护写 Lease 凭证（可选；凭证不完整时 fail closed）
+        lease_kwargs = _collect_lease_creds(opts)
+        if "error" in lease_kwargs:
+            _lease_reason_output(lease_kwargs["error"], False)
+            return True
         result = db.task_report_step(
-            opts.task_id, opts.step_id, opts.result, success, None
+            opts.task_id, opts.step_id, opts.result, success, None,
+            **( {"identity": identity} if identity else {} ),
+            **lease_kwargs,
         )
 
         cprint(t("cli.messages.task_report_title"), "cyan", bold=True)
@@ -3691,7 +3769,34 @@ def _handle_task(args, db):
 
     elif opts.action == "apply":
         # 审核通过：review -> applied（由其他会话的 LLM 调用）
-        result = db.task_apply(opts.task_id, reviewer=opts.reviewer)
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, False)
+            return True
+        apply_kwargs = {"reviewer": opts.reviewer}
+        if identity:
+            ok, vreason = _validate_identity(db, identity)
+            if not ok:
+                _identity_reason_output(vreason, False)
+                return True
+            if not _method_accepts_identity(db, "task_apply"):
+                _identity_reason_output({
+                    "code": "E_IDENTITY_NOT_WIRED",
+                    "message_key": "daemon_errors.error.identity_not_wired",
+                    "detail": "task_apply 尚不支持 identity 参数（8.6 接线后可用）",
+                }, False)
+                return True
+            apply_kwargs["identity"] = identity
+        else:
+            # --reviewer 自由文本不是身份证明（Req 10.5）；P3 门禁在 db 层 fail closed
+            cprint(t("cli.messages.identity_reviewer_free_text_warning"), "yellow")
+        # P4：受保护写 Lease 凭证（可选；凭证不完整时 fail closed）
+        lease_kwargs = _collect_lease_creds(opts)
+        if "error" in lease_kwargs:
+            _lease_reason_output(lease_kwargs["error"], False)
+            return True
+        apply_kwargs.update(lease_kwargs)
+        result = db.task_apply(opts.task_id, **apply_kwargs)
         if "error" in result:
             cprint(t("cli.messages.task_apply_failed",
                    error=result["error"]), "red")
@@ -3702,12 +3807,40 @@ def _handle_task(args, db):
         print(t("cli.messages.task_status_label", status=result["status"]))
         if result.get("applied_at"):
             print(t("cli.messages.task_applied_at", ts=result["applied_at"]))
+        if identity:
+            cprint(t("cli.messages.identity_recorded"), "green")
         print()
         return True
 
     elif opts.action == "close":
         # 关闭任务：applied -> closed（由其他会话的 LLM 调用）
-        result = db.task_close(opts.task_id, reviewer=opts.reviewer)
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, False)
+            return True
+        close_kwargs = {"reviewer": opts.reviewer}
+        if identity:
+            ok, vreason = _validate_identity(db, identity)
+            if not ok:
+                _identity_reason_output(vreason, False)
+                return True
+            if not _method_accepts_identity(db, "task_close"):
+                _identity_reason_output({
+                    "code": "E_IDENTITY_NOT_WIRED",
+                    "message_key": "daemon_errors.error.identity_not_wired",
+                    "detail": "task_close 尚不支持 identity 参数（8.6 接线后可用）",
+                }, False)
+                return True
+            close_kwargs["identity"] = identity
+        else:
+            cprint(t("cli.messages.identity_reviewer_free_text_warning"), "yellow")
+        # P4：受保护写 Lease 凭证（可选；凭证不完整时 fail closed）
+        lease_kwargs = _collect_lease_creds(opts)
+        if "error" in lease_kwargs:
+            _lease_reason_output(lease_kwargs["error"], False)
+            return True
+        close_kwargs.update(lease_kwargs)
+        result = db.task_close(opts.task_id, **close_kwargs)
         if "error" in result:
             cprint(t("cli.messages.task_close_failed",
                    error=result["error"]), "red")
@@ -3718,15 +3851,41 @@ def _handle_task(args, db):
         print(t("cli.messages.task_status_label", status=result["status"]))
         if result.get("closed_at"):
             print(t("cli.messages.task_closed_at", ts=result["closed_at"]))
+        if identity:
+            cprint(t("cli.messages.identity_recorded"), "green")
         print()
         return True
 
     elif opts.action == "reopen":
         # 重新打开任务：review/applied/closed -> in_progress
         # 用于 code review 发现已 applied/closed 的任务有问题，需要修复
-        result = db.task_reopen(
-            opts.task_id, reviewer=opts.reviewer, reason=opts.reason
-        )
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, False)
+            return True
+        reopen_kwargs = {"reviewer": opts.reviewer, "reason": opts.reason}
+        if identity:
+            ok, vreason = _validate_identity(db, identity)
+            if not ok:
+                _identity_reason_output(vreason, False)
+                return True
+            if not _method_accepts_identity(db, "task_reopen"):
+                _identity_reason_output({
+                    "code": "E_IDENTITY_NOT_WIRED",
+                    "message_key": "daemon_errors.error.identity_not_wired",
+                    "detail": "task_reopen 尚不支持 identity 参数（8.6 接线后可用）",
+                }, False)
+                return True
+            reopen_kwargs["identity"] = identity
+        else:
+            cprint(t("cli.messages.identity_reviewer_free_text_warning"), "yellow")
+        # P4：受保护写 Lease 凭证（可选；凭证不完整时 fail closed）
+        lease_kwargs = _collect_lease_creds(opts)
+        if "error" in lease_kwargs:
+            _lease_reason_output(lease_kwargs["error"], False)
+            return True
+        reopen_kwargs.update(lease_kwargs)
+        result = db.task_reopen(opts.task_id, **reopen_kwargs)
         if "error" in result:
             cprint(t("cli.messages.task_reopen_failed",
                    error=result["error"]), "red")
@@ -3743,6 +3902,8 @@ def _handle_task(args, db):
             print(t("cli.messages.task_reopened_at", ts=result["reopened_at"]))
         if opts.reason:
             print(t("cli.messages.task_reopen_reason_label", reason=opts.reason))
+        if identity:
+            cprint(t("cli.messages.identity_recorded"), "green")
         print()
         return True
 
@@ -12608,7 +12769,7 @@ def _handle_experiment(args, db):
     from datetime import datetime, timezone
     from ..experiments.blind_review_protocol import (
         Experiment_Batch_Config, ExperimentBatch, build_default_protocol,
-        ExperimentProtocolError, ToggleScope, ToggleValue, PauseTrigger,
+        ExperimentProtocolError, BatchStatus, ToggleScope, ToggleValue, PauseTrigger,
         SuccessThresholds, GroupAssignment,
     )
     from ..experiments.blind_review_views import (
@@ -12642,8 +12803,8 @@ def _handle_experiment(args, db):
                       help="Random seed for deterministic group assignment")
     bc_p.add_argument("--min-valid", type=int, default=30,
                       help="Minimum valid tasks for success evaluation (default 30)")
-    bc_p.add_argument("--min-nontrivial", type=int, default=20,
-                      help="Minimum non-trivial code changes (default 20)")
+    bc_p.add_argument("--min-nontrivial", type=int, default=10,
+                      help="Minimum non-trivial code changes (default 10)")
     bc_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     # --- batch-lock ---
@@ -12703,6 +12864,10 @@ def _handle_experiment(args, db):
     rm_p.add_argument("--defects", type=int, default=0, help="Post-apply defects")
     rm_p.add_argument("--rollbacks", type=int, default=0, help="Post-apply rollbacks")
     rm_p.add_argument("--obs-window", default="", help="Observation window ID")
+    rm_p.add_argument("--group", choices=["control", "treatment"], default=None,
+                      help="Review group; inferred from the admitted blind view when omitted")
+    rm_p.add_argument("--nontrivial", action="store_true",
+                      help="Mark this sample as a non-trivial code_change for the G0 threshold")
     rm_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     # --- record-verdict ---
@@ -12754,7 +12919,9 @@ def _handle_experiment(args, db):
         "cli_experiment_pause_desc",
         default="Manually pause an experiment batch (Req 12.15-12.21)"))
     pa_p.add_argument("batch_id", help="Batch ID to pause")
-    pa_p.add_argument("--trigger", required=True, help="Pause trigger identifier")
+    pa_p.add_argument("--trigger", required=True,
+                      choices=[trigger.value for trigger in PauseTrigger],
+                      help="Pause trigger identifier")
     pa_p.add_argument("--reason", default="", help="Pause reason text")
     pa_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
@@ -12793,6 +12960,35 @@ def _handle_experiment(args, db):
             if code:
                 cprint(f"  code: {code}", "red")
 
+    def _read_records(batch_id: str):
+        """读取一个批次的可恢复 JSONL 记录，不创建任何产品数据库记录。"""
+        return ExperimentJsonlWriter(_jsonl_path(batch_id)).read_records()
+
+    def _resolve_sample_group(batch_id: str, task_id: str, explicit_group=None):
+        """从纳样时的 blind_view 解析分组，避免指标记录丢失 Control/Treatment 归属。"""
+        if explicit_group:
+            return explicit_group
+        for record in reversed(_read_records(batch_id)):
+            if (record.get("record_type") == "blind_view"
+                    and record.get("task_id") == task_id):
+                group = record.get("group")
+                if group in ("control", "treatment"):
+                    return group
+        from ..experiments.blind_review_evaluator import make_evaluator_reason, EvaluatorErrorCode
+        raise EvaluatorError(make_evaluator_reason(
+            EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+            detail=f"task {task_id} has no admitted blind_view; admit it before recording metrics"))
+
+    def _msg(key: str, default: str, **kwargs) -> str:
+        """统一通过双语 catalog 输出 CLI 人类可读消息；JSON 字段保持稳定英文。"""
+        return t(key, default=default, **kwargs)
+
+    def _require_batch(batch_id: str):
+        """所有记录命令都必须绑定已登记批次，避免孤立 JSONL 伪造实验样本。"""
+        config = Experiment_Batch_Config()
+        config.load()
+        return config, config.get_batch(batch_id)
+
     try:
         # ============================================================
         # batch-create：创建批次 + 默认协议 + 锁定
@@ -12803,7 +12999,7 @@ def _handle_experiment(args, db):
             batch_id = f"B-{int(time.time() * 1000)}-{os.urandom(4).hex()}"
             protocol = build_default_protocol(opts.seed)
             # 若用户自定义了阈值，替换协议中的 success_thresholds
-            if opts.min_valid != 30 or opts.min_nontrivial != 20:
+            if opts.min_valid != 30 or opts.min_nontrivial != 10:
                 protocol.success_thresholds = SuccessThresholds(
                     min_valid_tasks=opts.min_valid,
                     min_nontrivial_code_change_tasks=opts.min_nontrivial,
@@ -12820,9 +13016,14 @@ def _handle_experiment(args, db):
             result = {"batch_id": batch_id, "status": "locked",
                       "seed": opts.seed, "non_product_evidence": True}
             _output(result,
-                    [f"批次已创建并锁定: {batch_id}",
-                     f"  seed={opts.seed}, min_valid={opts.min_valid}, min_nontrivial={opts.min_nontrivial}",
-                     "  non_product_evidence=True（P0 实验记录，非产品 Evidence）"],
+                    [_msg("cli_experiment_batch_created",
+                          "Experiment batch created and locked: {batch_id}", batch_id=batch_id),
+                     _msg("cli_experiment_batch_thresholds",
+                          "  seed={seed}, min_valid={min_valid}, min_nontrivial={min_nontrivial}",
+                          seed=opts.seed, min_valid=opts.min_valid,
+                          min_nontrivial=opts.min_nontrivial),
+                     _msg("cli_experiment_non_product_notice",
+                          "  non_product_evidence=True; P0 records are not product Evidence." )],
                     opts.json)
 
         # ============================================================
@@ -12832,13 +13033,17 @@ def _handle_experiment(args, db):
             config = Experiment_Batch_Config()
             config.load()
             batch = config.get_batch(opts.batch_id)
-            batch.lock_protocol()
+            # 已锁定批次重复执行 freeze 是幂等成功；纳样后/暂停后仍禁止改协议。
+            if batch.status != BatchStatus.LOCKED:
+                batch.lock_protocol()
             config.put_batch(batch)
             config.save()
             result = {"batch_id": opts.batch_id, "status": "locked",
                       "non_product_evidence": True}
             _output(result,
-                    [f"批次 {opts.batch_id} 协议已锁定。"],
+                    [_msg("cli_experiment_batch_locked",
+                          "Experiment batch {batch_id} protocol is locked.",
+                          batch_id=opts.batch_id)],
                     opts.json)
 
         # ============================================================
@@ -12862,10 +13067,12 @@ def _handle_experiment(args, db):
                 print(json.dumps(summaries, indent=2, ensure_ascii=False, default=str))
             else:
                 if not summaries:
-                    cprint("暂无已登记批次。")
+                    cprint(_msg("cli_experiment_batch_list_empty", "No experiment batches registered."))
                 for s in summaries:
                     status = "PAUSED" if s["paused"] else "active"
-                    cprint(f"  {s['batch_id']}  [{status}]")
+                    cprint(_msg("cli_experiment_batch_list_item",
+                                "  {batch_id} [{status}]",
+                                batch_id=s["batch_id"], status=status))
 
         # ============================================================
         # toggle-set：设置 P0 Stage_Toggle
@@ -12886,8 +13093,10 @@ def _handle_experiment(args, db):
             result = {"scope": opts.scope, "value": opts.value,
                       "scope_key": opts.scope_key, "non_product_evidence": True}
             _output(result,
-                    [f"P0 开关已设置: {opts.scope}={opts.value}"
-                     + (f" (key={opts.scope_key})" if opts.scope_key else "")],
+                    [_msg("cli_experiment_toggle_set",
+                          "P0 toggle set: {scope}={value}{suffix}",
+                          scope=opts.scope, value=opts.value,
+                          suffix=(f" (key={opts.scope_key})" if opts.scope_key else ""))],
                     opts.json)
 
         # ============================================================
@@ -12903,9 +13112,11 @@ def _handle_experiment(args, db):
                       "task_id": opts.task_id, "workspace_id": opts.workspace_id,
                       "non_product_evidence": True}
             _output(result,
-                    [f"P0 开关解析结果: {result['resolved_value']}"
-                     + (f" (task={opts.task_id})" if opts.task_id else "")
-                     + (f" (workspace={opts.workspace_id})" if opts.workspace_id else "")],
+                    [_msg("cli_experiment_toggle_show",
+                          "Resolved P0 toggle: {value}{suffix}",
+                          value=result["resolved_value"],
+                          suffix=((f" (task={opts.task_id})" if opts.task_id else "")
+                                  + (f" (workspace={opts.workspace_id})" if opts.workspace_id else "")))],
                     opts.json)
 
         # ============================================================
@@ -12915,18 +13126,11 @@ def _handle_experiment(args, db):
             config = Experiment_Batch_Config()
             config.load()
             batch = config.get_batch(opts.batch_id)
-            # 检查纳样资格（冻结 + 未暂停）
+            # 先构造/验证盲视图，再提交首次纳样状态；来源缺失时不得提前冻结批次。
             batch.ensure_admission_allowed()
-            # 首次纳样标记
-            if batch.first_sample_admitted_at is None:
-                batch.mark_first_admission(datetime.now(timezone.utc).isoformat())
-                config.put_batch(batch)
-                config.save()
-            # 确定性分组
             strata_key = opts.strata or opts.task_id
             assignment = batch.protocol.assign_group(strata_key)
             group = BlindViewGroup.CONTROL if assignment == GroupAssignment.CONTROL else BlindViewGroup.TREATMENT
-            # 构建最小盲视图（从 db 收集来源事实）
             source_facts = collect_source_facts_from_db(db, opts.task_id)
             view = build_minimal_blind_view(
                 task_id=opts.task_id,
@@ -12934,32 +13138,40 @@ def _handle_experiment(args, db):
                 group=group,
                 phase=BlindViewPhase.PRE_VERDICT,
             )
-            # 写 JSONL
+            if batch.first_sample_admitted_at is None:
+                batch.mark_first_admission(datetime.now(timezone.utc).isoformat())
+                config.put_batch(batch)
+                config.save()
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
-            record = build_blind_view_record(
-                view=view,
-                batch_id=opts.batch_id,
-            )
+            record = build_blind_view_record(view=view, batch_id=opts.batch_id)
             writer.append(record)
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
                       "group": assignment.value, "strata_key": strata_key,
                       "disclosed_fields": view.disclosed_fields,
                       "non_product_evidence": True}
             _output(result,
-                    [f"任务 {opts.task_id} 已纳入批次 {opts.batch_id}",
-                     f"  分组: {assignment.value} (strata={strata_key})",
-                     f"  披露字段: {', '.join(view.disclosed_fields)}"],
+                    [_msg("cli_experiment_admitted",
+                          "Task {task_id} admitted to experiment batch {batch_id}",
+                          task_id=opts.task_id, batch_id=opts.batch_id),
+                     _msg("cli_experiment_group",
+                          "  group: {group} (strata={strata})",
+                          group=assignment.value, strata=strata_key),
+                     _msg("cli_experiment_disclosed_fields",
+                          "  disclosed fields: {fields}",
+                          fields=", ".join(view.disclosed_fields))],
                     opts.json)
 
         # ============================================================
         # record-metrics：记录 review 原始指标
         # ============================================================
         elif opts.action == "record-metrics":
+            _require_batch(opts.batch_id)
+            group = _resolve_sample_group(opts.batch_id, opts.task_id, opts.group)
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
             record = build_review_metrics_record(
                 task_id=opts.task_id,
                 batch_id=opts.batch_id,
-                group="",  # 由 JSONL 中 blind_view 记录关联
+                group=group,
                 first_pass_findings=opts.tp + opts.fp,
                 final_findings=opts.tp + opts.fp + opts.misses,
                 verified_true_positives=opts.tp,
@@ -12972,19 +13184,26 @@ def _handle_experiment(args, db):
                 post_apply_rollbacks=opts.rollbacks,
                 observation_window_id=opts.obs_window,
             )
+            record["is_nontrivial_code_change"] = bool(opts.nontrivial)
             writer.append(record)
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
-                      "tp": opts.tp, "fp": opts.fp, "misses": opts.misses,
-                      "duration_s": opts.duration, "non_product_evidence": True}
+                      "group": group, "tp": opts.tp, "fp": opts.fp, "misses": opts.misses,
+                      "duration_s": opts.duration, "is_nontrivial_code_change": bool(opts.nontrivial),
+                      "non_product_evidence": True}
             _output(result,
-                    [f"已记录 review 指标: task={opts.task_id}",
-                     f"  TP={opts.tp} FP={opts.fp} Misses={opts.misses} Duration={opts.duration}s"],
+                    [_msg("cli_experiment_metrics_recorded",
+                          "Review metrics recorded for task {task_id} (group={group})",
+                          task_id=opts.task_id, group=group),
+                     _msg("cli_experiment_metrics_values",
+                          "  TP={tp} FP={fp} misses={misses} duration={duration}s",
+                          tp=opts.tp, fp=opts.fp, misses=opts.misses, duration=opts.duration)],
                     opts.json)
 
         # ============================================================
         # record-verdict：记录 reveal 前后 verdict 变更
         # ============================================================
         elif opts.action == "record-verdict":
+            _require_batch(opts.batch_id)
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
             changed = opts.changed == "yes"
             record = build_verdict_change_record(
@@ -12998,13 +13217,16 @@ def _handle_experiment(args, db):
                       "verdict_changed": changed, "reason_code": opts.reason_code,
                       "non_product_evidence": True}
             _output(result,
-                    [f"已记录 verdict 变更: task={opts.task_id}, changed={changed}"],
+                    [_msg("cli_experiment_verdict_recorded",
+                          "Verdict change recorded for task {task_id}: changed={changed}",
+                          task_id=opts.task_id, changed=changed)],
                     opts.json)
 
         # ============================================================
         # record-reveal：记录 Implementer_Notes 揭示事件
         # ============================================================
         elif opts.action == "record-reveal":
+            _require_batch(opts.batch_id)
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
             record = build_reveal_event_record(
                 task_id=opts.task_id,
@@ -13015,13 +13237,16 @@ def _handle_experiment(args, db):
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
                       "first_verdict_sealed": opts.sealed, "non_product_evidence": True}
             _output(result,
-                    [f"已记录 reveal 事件: task={opts.task_id}, sealed={opts.sealed}"],
+                    [_msg("cli_experiment_reveal_recorded",
+                          "Reveal event recorded for task {task_id}: sealed={sealed}",
+                          task_id=opts.task_id, sealed=opts.sealed)],
                     opts.json)
 
         # ============================================================
         # record-invalid：记录无效样本
         # ============================================================
         elif opts.action == "record-invalid":
+            _require_batch(opts.batch_id)
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
             record = build_invalid_sample_record(
                 task_id=opts.task_id,
@@ -13033,13 +13258,16 @@ def _handle_experiment(args, db):
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
                       "reason_code": opts.reason_code, "non_product_evidence": True}
             _output(result,
-                    [f"已记录无效样本: task={opts.task_id}, reason={opts.reason_code}"],
+                    [_msg("cli_experiment_invalid_recorded",
+                          "Invalid sample recorded for task {task_id}: reason={reason}",
+                          task_id=opts.task_id, reason=opts.reason_code)],
                     opts.json)
 
         # ============================================================
         # record-incident：记录披露/完整性事件
         # ============================================================
         elif opts.action == "record-incident":
+            config, batch = _require_batch(opts.batch_id)
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
             record = build_incident_record(
                 task_id=opts.task_id,
@@ -13049,11 +13277,22 @@ def _handle_experiment(args, db):
                 reason_detail=opts.detail,
             )
             writer.append(record)
+            # 披露/完整性事件属于明确暂停触发器；记录成功后立即停止新纳样。
+            incident_trigger = (PauseTrigger.DISCLOSURE_INCIDENT
+                                if opts.type == "disclosure"
+                                else PauseTrigger.FABRICATED_INDEPENDENCE_OR_EVIDENCE)
+            batch.pause(incident_trigger, opts.reason_code,
+                        datetime.now(timezone.utc).isoformat())
+            config.put_batch(batch)
+            config.save()
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
                       "incident_type": opts.type, "reason_code": opts.reason_code,
-                      "non_product_evidence": True}
+                      "paused": True, "non_product_evidence": True}
             _output(result,
-                    [f"已记录{opts.type}事件: task={opts.task_id}, reason={opts.reason_code}"],
+                    [_msg("cli_experiment_incident_recorded",
+                          "{incident_type} incident recorded for task {task_id}: reason={reason}",
+                          incident_type=opts.type, task_id=opts.task_id,
+                          reason=opts.reason_code)],
                     opts.json)
 
         # ============================================================
@@ -13072,8 +13311,11 @@ def _handle_experiment(args, db):
             result = {"batch_id": opts.batch_id, "paused": True,
                       "trigger": opts.trigger, "non_product_evidence": True}
             _output(result,
-                    [f"批次 {opts.batch_id} 已暂停 (trigger={opts.trigger})",
-                     "  fail-safe: 新纳样将被拒绝，现有 review 流程恢复。"],
+                    [_msg("cli_experiment_paused",
+                          "Experiment batch {batch_id} paused (trigger={trigger})",
+                          batch_id=opts.batch_id, trigger=opts.trigger),
+                     _msg("cli_experiment_pause_notice",
+                          "  fail-safe: new admissions are rejected and the existing review flow is restored.")],
                     opts.json)
 
         # ============================================================
@@ -13091,16 +13333,35 @@ def _handle_experiment(args, db):
             control_samples = []
             treatment_samples = []
             invalid_reason_codes = []
+            invalid_task_ids = set()
+            reveal_by_task = {}
+            incident_types = set()
+            # 先扫描控制记录，再解析指标，保证追加顺序不会让 invalid/reveal 影响结果。
             for rec in records:
                 rec_type = rec.get("record_type", "")
+                task_id = rec.get("task_id")
                 if rec_type == "invalid_sample":
-                    invalid_reason_codes.append(rec.get("reason_code", "unknown"))
+                    invalid_reason_codes.append(rec.get("invalid_reason_code", "unknown"))
+                    if task_id:
+                        invalid_task_ids.add(task_id)
+                elif rec_type == "reveal_event" and task_id:
+                    reveal_by_task[task_id] = bool(
+                        rec.get("first_verdict_sealed_before_reveal", False))
+                elif rec_type in ("disclosure_incident", "integrity_incident"):
+                    incident_types.add(rec_type)
+            for rec in records:
+                if rec.get("record_type") != "review_metrics":
                     continue
-                if rec_type != "review_metrics":
+                task_id = rec.get("task_id")
+                if task_id in invalid_task_ids:
                     continue
                 try:
-                    sample = SampleRecord.from_review_metrics_record(rec)
-                except (EvaluatorError, Exception):
+                    sample = SampleRecord.from_review_metrics_record(
+                        rec,
+                        is_nontrivial_code_change=bool(rec.get("is_nontrivial_code_change", False)),
+                        verdict_before_reveal=bool(reveal_by_task.get(task_id, False)),
+                    )
+                except EvaluatorError:
                     continue
                 if sample.group == "control":
                     control_samples.append(sample)
@@ -13109,12 +13370,17 @@ def _handle_experiment(args, db):
             # 计算组指标
             control_metrics = compute_group_metrics("control", control_samples)
             treatment_metrics = compute_group_metrics("treatment", treatment_samples)
-            # 成功判定 / 灰区 / 暂停
-            thresholds = batch.protocol.success_thresholds if hasattr(batch.protocol, "success_thresholds") else None
-            pause_thresholds = batch.protocol.pause_thresholds if hasattr(batch.protocol, "pause_thresholds") else None
+            thresholds = batch.protocol.success_thresholds
+            pause_thresholds = batch.protocol.pause_thresholds
             valid_task_count = control_metrics.valid_n + treatment_metrics.valid_n
-            nontrivial_count = control_metrics.nontrivial_code_change_count + treatment_metrics.nontrivial_code_change_count
+            nontrivial_count = (control_metrics.nontrivial_code_change_count
+                                + treatment_metrics.nontrivial_code_change_count)
+            # 无效样本统计必须先于暂停判定；invalid 率是 12.17 的暂停输入。
+            from ..experiments.blind_review_evaluator import compute_invalid_sample_stats
+            invalid_rate, invalid_counts = compute_invalid_sample_stats(
+                invalid_reason_codes, valid_task_count)
 
+            # 计算成功条件 / 灰区 / 暂停。灰区是观察状态，不单独触发暂停。
             success_eval = evaluate_success(
                 control_metrics, treatment_metrics, thresholds,
                 valid_task_count=valid_task_count,
@@ -13127,15 +13393,13 @@ def _handle_experiment(args, db):
             ) if (thresholds and pause_thresholds) else None
             pause_eval = evaluate_pause_conditions(
                 control_metrics, treatment_metrics, pause_thresholds,
+                invalid_sample_rate=invalid_rate,
+                disclosure_incident=("disclosure_incident" in incident_types),
+                integrity_incident=("integrity_incident" in incident_types),
                 batch_id=opts.batch_id,
             ) if pause_thresholds else None
 
-            # 无效样本统计
-            from ..experiments.blind_review_evaluator import compute_invalid_sample_stats
-            invalid_rate, invalid_counts = compute_invalid_sample_stats(
-                invalid_reason_codes, valid_task_count)
-
-            # 构建评估报告
+            # 构建评估报告；指标定义与观察窗口来自冻结协议，不能由旧报告移动目标线。
             report_data = build_evaluation_report(
                 batch_id=opts.batch_id,
                 control=control_metrics,
@@ -13145,26 +13409,55 @@ def _handle_experiment(args, db):
                 pause=pause_eval,
                 invalid_reason_counts=invalid_counts,
                 invalid_sample_rate=invalid_rate,
-                metric_definitions=[],
-                observation_windows=[],
+                metric_definitions=batch.protocol.metric_definitions,
+                observation_windows=batch.protocol.observation_windows,
                 valid_task_count=valid_task_count,
                 nontrivial_code_change_count=nontrivial_count,
             )
-            # G0 决策摘要
-            eligible = (success_eval.eligible_for_p1 if success_eval else False)
-            has_gray = bool(gray_eval and gray_eval.gray_zone)
+            # G0 是 P0 实验的机器可读决策摘要，不是产品 Evidence，也不开放 P1 hard gate。
+            eligible = bool(success_eval and success_eval.eligible_for_p1)
+            has_gray = bool(gray_eval and gray_eval.gray_zone_unresolved)
             has_pause = bool(pause_eval and pause_eval.should_pause)
             gray_zones_list = []
-            if gray_eval and gray_eval.gray_zone:
+            if gray_eval:
                 if gray_eval.fp_gray_zone:
-                    gray_zones_list.append("fp")
+                    gray_zones_list.append("false_positive")
                 if gray_eval.latency_gray_zone:
                     gray_zones_list.append("latency")
+            failure_reasons = []
+            if success_eval:
+                failure_reasons.extend(
+                    reason for reason in success_eval.reasons
+                    if reason.get("satisfied") is False)
+                if success_eval.insufficient_reason:
+                    failure_reasons.append(success_eval.insufficient_reason)
+            if gray_eval and gray_eval.gray_zone_unresolved:
+                failure_reasons.extend(gray_eval.observations)
+            if pause_eval and pause_eval.should_pause and pause_eval.reason:
+                failure_reasons.append(pause_eval.reason)
+            if not failure_reasons and not eligible:
+                failure_reasons.append({"condition": "g0_not_eligible", "reason": "unspecified"})
+            if has_pause:
+                g0_status = "paused"
+            elif has_gray:
+                g0_status = "gray_zone_observed"
+            elif success_eval and success_eval.directional_only:
+                g0_status = "directional_only"
+            elif eligible:
+                g0_status = "eligible_for_p1"
+            else:
+                g0_status = "not_eligible"
             g0_decision = {
-                "eligible_for_p1": eligible and not has_gray and not has_pause,
+                "decision": "g0",
+                "status": g0_status,
+                "eligible_for_p1": bool(eligible and not has_gray and not has_pause),
+                "failure_reasons": failure_reasons,
+                "gray_zone_observed": bool(gray_zones_list),
                 "gray_zones": gray_zones_list,
                 "pause": pause_eval.trigger.value if (pause_eval and pause_eval.should_pause and pause_eval.trigger) else None,
                 "insufficient_sample": not success_eval.min_sample_satisfied if success_eval else True,
+                "p1_hard_gate_open": False,
+                "decision_scope": "p0_experiment_only",
                 "non_product_evidence": True,
             }
             report_data["g0_decision"] = g0_decision
@@ -13172,21 +13465,38 @@ def _handle_experiment(args, db):
             if opts.json:
                 print(json.dumps(report_data, indent=2, ensure_ascii=False, default=str))
             else:
-                cprint(f"=== 实验批次评估报告: {opts.batch_id} ===")
-                cprint(f"  Control: n={control_metrics.valid_n}, "
-                       f"recall={control_metrics.recall:.3f}, fp_rate={control_metrics.false_positive_rate:.3f}")
-                cprint(f"  Treatment: n={treatment_metrics.valid_n}, "
-                       f"recall={treatment_metrics.recall:.3f}, fp_rate={treatment_metrics.false_positive_rate:.3f}")
-                cprint(f"  无效样本率: {invalid_rate:.3f}")
+                cprint(_msg("cli_experiment_report_title",
+                            "=== Experiment evaluation report: {batch_id} ===",
+                            batch_id=opts.batch_id))
+                cprint(_msg("cli_experiment_group_summary",
+                            "  {group}: n={count}, recall={recall:.3f}, fp_rate={fp_rate:.3f}",
+                            group="Control", count=control_metrics.valid_n,
+                            recall=control_metrics.recall,
+                            fp_rate=control_metrics.false_positive_rate))
+                cprint(_msg("cli_experiment_group_summary",
+                            "  {group}: n={count}, recall={recall:.3f}, fp_rate={fp_rate:.3f}",
+                            group="Treatment", count=treatment_metrics.valid_n,
+                            recall=treatment_metrics.recall,
+                            fp_rate=treatment_metrics.false_positive_rate))
+                cprint(_msg("cli_experiment_invalid_rate",
+                            "  invalid sample rate: {rate:.3f}", rate=invalid_rate))
                 if success_eval:
-                    cprint(f"  样本充分: {success_eval.min_sample_satisfied}")
-                    cprint(f"  P1 资格: {success_eval.eligible_for_p1}")
-                if gray_eval and gray_eval.gray_zone:
-                    cprint(f"  灰区: {', '.join(gray_zones_list)}", "yellow")
+                    cprint(_msg("cli_experiment_sample_sufficient",
+                                "  sample sufficient: {value}",
+                                value=success_eval.min_sample_satisfied))
+                if gray_zones_list:
+                    cprint(_msg("cli_experiment_gray_zone",
+                                "  gray-zone observation: {zones}",
+                                zones=", ".join(gray_zones_list)), "yellow")
                 if pause_eval and pause_eval.should_pause:
-                    cprint(f"  暂停触发: {pause_eval.trigger.value}", "red")
-                cprint(f"  G0 决策: eligible_for_p1={g0_decision['eligible_for_p1']}")
-                cprint("  (non_product_evidence=True，P0 实验记录非产品 Evidence)")
+                    cprint(_msg("cli_experiment_pause_triggered",
+                                "  pause triggered: {trigger}",
+                                trigger=pause_eval.trigger.value), "red")
+                cprint(_msg("cli_experiment_g0_decision",
+                            "  G0 decision: eligible_for_p1={eligible}",
+                            eligible=g0_decision["eligible_for_p1"]))
+                cprint(_msg("cli_experiment_non_product_notice",
+                            "  P0 records are non-product Evidence; P1 hard gate remains unavailable."))
 
     except (ExperimentProtocolError, ViewDisclosureError, EvaluatorError) as e:
         reason = getattr(e, "reason", None)
@@ -13421,6 +13731,889 @@ def _collab_error(code: str, message_key: str, detail: str, use_json: bool):
                          ensure_ascii=False, indent=2))
     else:
         cprint(f"[ERROR] {code}: {detail}", "red")
+
+
+# ============================================
+# dependency：P2 依赖图与环检测诊断（Req 9.1-9.10, 6.5 任务）
+# ============================================
+
+
+def _handle_dependency(args, db):
+    """处理 dependency 子命令（P2 依赖图与环检测诊断）
+
+    子命令：
+    - inspect：查看任务/契约的依赖声明与 artifact/interface 状态
+    - list：列出所有依赖边
+    - cycle：检测硬依赖图中的环
+    - explain：解释指定 revision 的依赖验证结果
+    - provider-select：记录显式 provider 选择（Req 9.9）
+
+    明确不提供：自动排程、assignment、抢占（Req 9.10）。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw dependency",
+        description="P2 依赖图与环检测诊断（Req 9.1-9.10）；不提供自动排程/assignment/抢占",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # --- inspect：查看依赖声明与 freshness ---
+    inspect_p = sub.add_parser("inspect", help="查看任务或契约的依赖声明与 freshness")
+    inspect_p.add_argument("--task-id", metavar="ID", help="任务 ID")
+    inspect_p.add_argument("--contract-id", metavar="ID", help="契约 ID")
+    inspect_p.add_argument("--revision", type=int, default=0, help="契约 revision")
+    inspect_p.add_argument("--json", action="store_true", help="JSON 输出")
+
+    # --- list：列出依赖边 ---
+    list_p = sub.add_parser("list", help="列出硬依赖图边")
+    list_p.add_argument("--contract-id", metavar="ID", help="按契约 ID 过滤")
+    list_p.add_argument("--json", action="store_true", help="JSON 输出")
+
+    # --- cycle：检测环 ---
+    cycle_p = sub.add_parser("cycle", help="检测硬依赖图中的环")
+    cycle_p.add_argument("--json", action="store_true", help="JSON 输出")
+
+    # --- explain：解释 revision 依赖验证 ---
+    explain_p = sub.add_parser("explain", help="解释指定 revision 的依赖验证结果")
+    explain_p.add_argument("--contract-id", metavar="ID", required=True, help="契约 ID")
+    explain_p.add_argument("--revision", type=int, required=True, help="契约 revision")
+    explain_p.add_argument("--json", action="store_true", help="JSON 输出")
+
+    # --- provider-select：记录显式 provider 选择（Req 9.9，写操作）---
+    select_p = sub.add_parser("provider-select", help="记录显式 interface provider 选择")
+    select_p.add_argument("--consumer-task-id", metavar="ID", required=True, help="消费者任务 ID")
+    select_p.add_argument("--contract-id", metavar="ID", required=True, help="消费者契约 ID")
+    select_p.add_argument("--revision", type=int, required=True, help="消费者契约 revision")
+    select_p.add_argument("--interface-name", metavar="NAME", required=True, help="接口名")
+    select_p.add_argument("--provider-task-id", metavar="ID", required=True, help="选择的 provider 任务 ID")
+    select_p.add_argument("--json", action="store_true", help="JSON 输出")
+
+    opts = parser.parse_args(args)
+    use_json = getattr(opts, "json", False)
+
+    # 获取当前 workspace_id
+    active_ws = db.get_active_workspace()
+    if not active_ws:
+        cprint(t("cli.messages.no_active_workspace", default="未激活工作区"), "red")
+        return True
+    workspace_id = active_ws["id"]
+
+    if opts.action == "inspect":
+        return _dependency_inspect(db, workspace_id, opts, use_json)
+    elif opts.action == "list":
+        return _dependency_list(db, workspace_id, opts, use_json)
+    elif opts.action == "cycle":
+        return _dependency_cycle(db, workspace_id, opts, use_json)
+    elif opts.action == "explain":
+        return _dependency_explain(db, workspace_id, opts, use_json)
+    elif opts.action == "provider-select":
+        return _dependency_provider_select(db, workspace_id, opts, use_json)
+
+    return False
+
+
+def _dependency_inspect(db, workspace_id, opts, use_json):
+    """查看任务或契约的依赖声明与 freshness。"""
+    result = {"dependencies": [], "artifacts": [], "interfaces": []}
+
+    if opts.task_id:
+        # 查询任务的依赖声明
+        cur = db.conn.execute(
+            "SELECT dependency_type, target_ref, target_task_id, is_informational, "
+            "contract_id, contract_revision, declared_at "
+            "FROM task_dependencies WHERE workspace_id = ? AND task_id = ?",
+            (workspace_id, opts.task_id),
+        )
+        for row in cur.fetchall():
+            result["dependencies"].append(dict(row))
+
+        # 查询任务产出的 artifact
+        cur = db.conn.execute(
+            "SELECT artifact_id, artifact_type, artifact_ref, artifact_hash, "
+            "freshness_status, produced_at "
+            "FROM artifact_identities WHERE workspace_id = ? AND task_id = ?",
+            (workspace_id, opts.task_id),
+        )
+        for row in cur.fetchall():
+            result["artifacts"].append(dict(row))
+
+        # 查询任务发布的 interface
+        cur = db.conn.execute(
+            "SELECT interface_id, interface_name, version, interface_hash "
+            "FROM interface_identities WHERE workspace_id = ? AND provider_task_id = ?",
+            (workspace_id, opts.task_id),
+        )
+        for row in cur.fetchall():
+            result["interfaces"].append(dict(row))
+
+    elif opts.contract_id:
+        # 按契约查询依赖
+        if opts.revision > 0:
+            cur = db.conn.execute(
+                "SELECT dependency_type, target_ref, target_task_id, is_informational, "
+                "task_id, declared_at FROM task_dependencies "
+                "WHERE workspace_id = ? AND contract_id = ? AND contract_revision = ?",
+                (workspace_id, opts.contract_id, opts.revision),
+            )
+        else:
+            cur = db.conn.execute(
+                "SELECT dependency_type, target_ref, target_task_id, is_informational, "
+                "task_id, contract_revision, declared_at FROM task_dependencies "
+                "WHERE workspace_id = ? AND contract_id = ?",
+                (workspace_id, opts.contract_id),
+            )
+        for row in cur.fetchall():
+            result["dependencies"].append(dict(row))
+
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    else:
+        dep_count = len(result["dependencies"])
+        art_count = len(result["artifacts"])
+        ifc_count = len(result["interfaces"])
+        print(f"依赖声明: {dep_count} 条")
+        for d in result["dependencies"]:
+            info = " [informational]" if d.get("is_informational") else ""
+            print(f"  {d['dependency_type']} → {d['target_ref']}{info}")
+        print(f"Artifact: {art_count} 个")
+        for a in result["artifacts"]:
+            print(f"  {a['artifact_id']} ({a['freshness_status']}) {a['artifact_ref']}")
+        print(f"Interface: {ifc_count} 个")
+        for i in result["interfaces"]:
+            print(f"  {i['interface_name']} v{i['version']} ({i['interface_hash'][:16]})")
+
+    return True
+
+
+def _dependency_list(db, workspace_id, opts, use_json):
+    """列出硬依赖图边。"""
+    edges = db.get_dependency_edges(workspace_id)
+
+    if opts.contract_id:
+        edges = [e for e in edges if e.get("contract_id") == opts.contract_id]
+
+    if use_json:
+        print(json.dumps(edges, ensure_ascii=False, indent=2, default=str))
+    else:
+        print(f"硬依赖图边: {len(edges)} 条")
+        for e in edges:
+            hard = "[hard]" if e.get("is_hard") else "[info]"
+            print(f"  {e['provider_task_id']} → {e['consumer_task_id']} "
+                  f"({e['edge_type']}, {e['source_type']}) {hard}")
+
+    return True
+
+
+def _dependency_cycle(db, workspace_id, opts, use_json):
+    """检测硬依赖图中的环。"""
+    result = db.detect_cycle(workspace_id)
+
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    else:
+        if result.get("has_cycle"):
+            print(t("cli.messages.dependency_cycle_detected"))
+            path = result.get("cycle_path", [])
+            print(t("cli.messages.dependency_cycle_path", path=" → ".join(path)))
+        else:
+            print(t("cli.messages.dependency_cycle_none"))
+
+    return True
+
+
+def _dependency_explain(db, workspace_id, opts, use_json):
+    """解释指定 revision 的依赖验证结果。"""
+    result = db.validate_revision_dependencies(
+        workspace_id, opts.contract_id, opts.revision,
+    )
+
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    else:
+        status = t("cli.messages.dependency_explain_valid") if result.get("valid") else t("cli.messages.dependency_explain_invalid")
+        print(f"Revision {opts.contract_id}@{opts.revision}: {status}")
+        if result.get("errors"):
+            print(t("cli.messages.dependency_explain_errors"))
+            for e in result["errors"]:
+                print(f"  - {e}")
+        if result.get("cycle_path"):
+            print(t("cli.messages.dependency_cycle_path", path=" → ".join(result["cycle_path"])))
+        # 明确说明无自动排程
+        print(f"\n{t('cli.messages.dependency_no_scheduling')}")
+
+    return True
+
+
+def _dependency_provider_select(db, workspace_id, opts, use_json):
+    """记录显式 interface provider 选择（Req 9.9，写操作）。"""
+    result = db.select_interface_provider(
+        workspace_id=workspace_id,
+        consumer_task_id=opts.consumer_task_id,
+        contract_id=opts.contract_id,
+        contract_revision=opts.revision,
+        interface_name=opts.interface_name,
+        selected_provider_task_id=opts.provider_task_id,
+    )
+
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        if result.get("success"):
+            print(t("cli.messages.dependency_provider_select_done",
+                    interface=opts.interface_name, provider=opts.provider_task_id))
+        else:
+            print(t("cli.messages.dependency_provider_select_fail",
+                    error=result.get("error", "unknown")))
+
+    return True
+
+
+# ============================================
+# identity：P3 Identity/Attestation 命令（Req 10.1-10.18, 8.7 任务）
+# ============================================
+
+# 身份/撤销 Structured_Reason 的默认文案（i18n key 在两个 catalog 的
+# daemon_errors 扁平结构中均可解析；这里的 default 只作为解析失败的兜底，
+# 不应改变错误码语义）
+_IDENTITY_REASON_DEFAULTS = {
+    "daemon_errors.error.identity_incomplete": "身份信息不完整：必须同时提供 agent_id/session_id/model_id/role（Req 10.1），不得由自由文本补齐。",
+    "daemon_errors.error.identity_role_mismatch": "角色不匹配：动作要求的角色与所提供身份不一致（Req 10.5）。",
+    "daemon_errors.error.identity_not_wired": "数据库层尚未支持身份参数，动作 fail closed，不回退为自由文本身份（Req 10.5）。",
+}
+
+
+def _t_structured(message_key: str, default: str) -> str:
+    """解析 Structured_Reason 的 i18n message_key（Requirement 1.12）。
+
+    t() 按点拆分逐层解析嵌套 dict，无法处理 ``daemon_errors`` 下含点的
+    扁平键（如 ``daemon_errors.error.identity_incomplete``）；本函数先尝试
+    t()，失败后回退到当前语言 catalog 的 daemon_errors 扁平查找。
+    """
+    try:
+        resolved = t(message_key, default=None)
+        if resolved is not None and resolved != message_key:
+            return resolved
+    except Exception:
+        pass
+    try:
+        import json as _json
+        from ..i18n import DEFAULT_LANG, get_language
+        lang = get_language() or DEFAULT_LANG
+        _i18n_dir = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "i18n")
+        with open(os.path.join(_i18n_dir, f"{lang}.json"),
+                  encoding="utf-8") as _f:
+            _data = _json.load(_f)
+        if message_key.startswith("daemon_errors."):
+            _flat = message_key[len("daemon_errors."):]
+            _val = _data.get("daemon_errors", {}).get(_flat)
+            if isinstance(_val, str):
+                return _val
+    except Exception:
+        pass
+    return default
+
+
+def _collect_identity(opts):
+    """从 CLI 选项收集结构化身份（Req 10.1）。
+
+    Returns:
+        (identity_dict, None)：四个字段齐备时的结构化身份；
+        (None, reason_dict)：任一字段出现但四者不全时的 Structured_Reason；
+        (None, None)：未提供任何身份字段（沿用既有行为）。
+    """
+    parts = {
+        "agent_id": getattr(opts, "agent_id", ""),
+        "session_id": getattr(opts, "session_id", ""),
+        "model_id": getattr(opts, "model_id", ""),
+        "role": getattr(opts, "role", ""),
+    }
+    provided = {k: v for k, v in parts.items() if v}
+    if not provided:
+        return None, None
+    if len(provided) != 4:
+        return None, {
+            "code": "E_IDENTITY_INCOMPLETE",
+            "message_key": "daemon_errors.error.identity_incomplete",
+            "detail": "必须同时提供 agent_id/session_id/model_id/role 四个字段",
+        }
+    return parts, None
+
+
+def _validate_identity(db, identity):
+    """调用 db 层校验身份完整性与角色约束（Req 10.2, 10.5）。
+
+    Returns:
+        (True, reason)：校验通过；
+        (False, reason)：校验失败或 db 层未接线（fail closed）。
+    """
+    validator = getattr(db, "validate_action_identity", None)
+    if validator is None:
+        return False, {
+            "code": "E_IDENTITY_NOT_WIRED",
+            "message_key": "daemon_errors.error.identity_not_wired",
+            "detail": "数据库层未提供 validate_action_identity",
+        }
+    try:
+        ok, reason = validator(identity)
+    except Exception as exc:
+        # 禁止静默吞异常：封装为显式 Structured_Reason
+        return False, {
+            "code": "E_IDENTITY_VALIDATION_FAILED",
+            "message_key": "daemon_errors.error.identity_not_wired",
+            "detail": f"身份校验异常: {exc}",
+        }
+    return bool(ok), (reason or {})
+
+
+def _method_accepts_identity(db, method_name: str) -> bool:
+    """检查 db 方法是否接受 identity 关键字参数（8.6 接线后为 True）。
+
+    未接线的 db 层若收到 identity 参数会 TypeError；此处显式探测签名，
+    探测失败按未接线处理（fail closed，不静默降级）。
+    """
+    fn = getattr(db, method_name, None)
+    if fn is None:
+        return False
+    try:
+        import inspect
+        params = inspect.signature(fn).parameters
+        return "identity" in params or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in params.values()
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _identity_reason_output(reason: dict, use_json: bool):
+    """输出身份/撤销 Structured_Reason（Requirement 1.12）。
+
+    必须携带稳定错误码 + 可在 zh_CN/en_US 两个 catalog 解析的 i18n message key；
+    文案变化不得改变错误码。
+    """
+    code = reason.get("code", "E_IDENTITY_VALIDATION_FAILED")
+    msg_key = reason.get("message_key", "")
+    # db 层（8.2）返回的 message_key 形如 error.identity_incomplete，
+    # 统一规范为 daemon_errors 命名空间的完整路径，保证 catalog 可解析
+    if msg_key.startswith("error."):
+        msg_key = "daemon_errors." + msg_key
+    detail = reason.get("detail", "")
+    if use_json:
+        print(json.dumps({"ok": False, "reason": {
+            "code": code, "message_key": msg_key, "detail": detail}},
+                         ensure_ascii=False, indent=2))
+        return
+    fallback = _IDENTITY_REASON_DEFAULTS.get(
+        msg_key, msg_key or "身份校验失败")
+    msg = _t_structured(msg_key, fallback)
+    cprint(f"[REJECTED] {code}", "red")
+    cprint(f"  {msg}", "red")
+    if detail:
+        cprint(f"  {detail}", "red")
+
+
+def _handle_identity(args, db):
+    """处理 identity 子命令（P3 Identity/Attestation，Req 10.1-10.18）
+
+    子命令：
+    - revoke：撤销 Attestation issuer/签名密钥。Revocation_Mode 必填且无默认值
+      （compromised/rotated，Req 10.12）；未携带时以 Structured_Reason 拒绝并
+      不追加任何撤销记录。Attestation 只能由 daemon 签发（Req 14.13），
+      撤销针对的是 daemon 签发链路中的 issuer/签名密钥。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw identity",
+        description=t(
+            "cli_identity_desc",
+            default="P3 Identity/Attestation 命令（Revocation_Mode 必填，无默认值）"),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    # --- revoke：撤销 Attestation issuer/签名密钥 ---
+    revoke_p = sub.add_parser(
+        "revoke",
+        help=t("cli_identity_revoke_desc",
+               default="撤销 Attestation issuer/签名密钥（Revocation_Mode 必填）"))
+    revoke_p.add_argument(
+        "--issuer", metavar="S", required=True,
+        help=t("cli_identity_arg_issuer", default="Attestation issuer 标识"))
+    revoke_p.add_argument(
+        "--signing-key-id", metavar="S", required=True,
+        help=t("cli_identity_arg_signing_key_id", default="签名密钥标识"))
+    # Revocation_Mode 必填但不在 argparse 层强制：缺省时走 Structured_Reason
+    # 拒绝路径（Req 10.12），而不是 argparse usage 错误
+    revoke_p.add_argument(
+        "--revocation-mode", metavar="MODE",
+        choices=("compromised", "rotated"), default=None,
+        help=t("cli_identity_arg_revocation_mode",
+               default="Revocation_Mode：compromised/rotated（必填，无默认值）"))
+    revoke_p.add_argument(
+        "--reason", metavar="TEXT", default="",
+        help=t("cli_identity_arg_reason", default="撤销原因（可选）"))
+    # 发起者身份（可选；提供后必须完整）
+    revoke_p.add_argument(
+        "--agent-id", default="", metavar="ID",
+        help=t("cli_task_arg_agent_id", default="发起者 Agent ID"))
+    revoke_p.add_argument(
+        "--session-id", default="", metavar="ID",
+        help=t("cli_task_arg_session_id", default="发起者 Session ID"))
+    revoke_p.add_argument(
+        "--model-id", default="", metavar="ID",
+        help=t("cli_task_arg_model_id", default="发起者 Model ID"))
+    revoke_p.add_argument(
+        "--role", default="", metavar="ROLE",
+        help=t("cli_task_arg_role", default="发起者 Role"))
+    revoke_p.add_argument(
+        "--json", action="store_true",
+        help=t("cli_identity_arg_json", default="JSON 输出"))
+
+    opts = parser.parse_args(args)
+    use_json = getattr(opts, "json", False)
+
+    if opts.action == "revoke":
+        return _identity_revoke(db, opts, use_json)
+    return False
+
+
+def _identity_revoke(db, opts, use_json):
+    """执行 Attestation issuer/签名密钥撤销（Req 10.10-10.18）。
+
+    Revocation_Mode 缺失时以 Structured_Reason 拒绝，不调用 db 层、
+    不追加任何撤销记录（Req 10.12）。
+    """
+    if not opts.revocation_mode:
+        _identity_reason_output({
+            "code": "E_REVOCATION_MODE_REQUIRED",
+            "message_key": "daemon_errors.error.revocation_mode_missing",
+            "detail": ("撤销请求必须显式指定 --revocation-mode "
+                       "（compromised 或 rotated）；未提供时不追加任何撤销记录"),
+        }, use_json)
+        return True
+
+    # 发起者身份（可选；提供则必须完整，否则 fail closed）
+    initiator_identity = None
+    if opts.agent_id or opts.session_id or opts.model_id or opts.role:
+        if not all((opts.agent_id, opts.session_id, opts.model_id, opts.role)):
+            _identity_reason_output({
+                "code": "E_IDENTITY_INCOMPLETE",
+                "message_key": "daemon_errors.error.identity_incomplete",
+                "detail": "发起者身份必须同时提供 --agent-id/--session-id/--model-id/--role",
+            }, use_json)
+            return True
+        initiator_identity = {
+            "agent_id": opts.agent_id,
+            "session_id": opts.session_id,
+            "model_id": opts.model_id,
+            "role": opts.role,
+        }
+
+    register = getattr(db, "register_attestation_revocation", None)
+    if register is None:
+        _identity_reason_output({
+            "code": "E_IDENTITY_NOT_WIRED",
+            "message_key": "daemon_errors.error.identity_not_wired",
+            "detail": "数据库层未提供 register_attestation_revocation",
+        }, use_json)
+        return True
+
+    # 工作区 ID：写命令启动时已激活工作区；取不到时交由 db 层解析
+    ws_id = None
+    try:
+        active_ws = db.get_active_workspace()
+        if active_ws:
+            ws_id = active_ws["id"]
+    except Exception:
+        ws_id = None
+
+    try:
+        ok, result = register(
+            issuer=opts.issuer,
+            signing_key_id=opts.signing_key_id,
+            revocation_mode=opts.revocation_mode,
+            revocation_reason=opts.reason,
+            initiating_actor=(
+                json.dumps(initiator_identity, ensure_ascii=False)
+                if initiator_identity else ""
+            ),
+            workspace_id=ws_id,
+        )
+    except Exception as exc:
+        # 禁止静默吞异常：封装为显式 Structured_Reason
+        _identity_reason_output({
+            "code": "E_REVOCATION_FAILED",
+            "message_key": "daemon_errors.error.attestation_invalid",
+            "detail": f"撤销记录写入失败: {exc}",
+        }, use_json)
+        return True
+
+    if not ok:
+        _identity_reason_output(result or {}, use_json)
+        return True
+
+    if use_json:
+        print(json.dumps({"ok": True, "revocation": result},
+                         ensure_ascii=False, indent=2))
+    else:
+        cprint(t("cli.messages.identity_revoke_success"), "green", bold=True)
+        print(t("cli.messages.identity_revocation_id",
+                id=result.get("revocation_id", "")))
+        print(t("cli.messages.identity_revocation_issuer",
+                issuer=opts.issuer))
+        print(t("cli.messages.identity_revocation_signing_key",
+                signing_key=opts.signing_key_id))
+        print(t("cli.messages.identity_revocation_mode",
+                mode=opts.revocation_mode))
+        if result.get("revoked_at") or result.get("revocation_time"):
+            print(t("cli.messages.identity_revocation_time",
+                    ts=result.get("revoked_at") or result.get("revocation_time")))
+        # 说明 Attestation 只能由 daemon 签发（Req 14.13），客户端自签不作为授权证明
+        cprint(t("cli.messages.identity_attestation_daemon_only"), "yellow")
+    return True
+
+
+# ============================================================
+# lease / assignment：P4 Assignment 与安全 Lease 命令（Req 11.1-11.13, 10.5 任务）
+# ============================================================
+
+def _collect_lease_identity(opts):
+    """收集 Lease 命令的 holder Identity（agent_id/session_id/model_id 必填）
+
+    Returns:
+        (identity_dict, reason)：齐备时 identity_dict 非空、reason 为 None；
+        缺失时 identity_dict 为 None、reason 为 Structured_Reason
+    """
+    agent_id = getattr(opts, "agent_id", "")
+    session_id = getattr(opts, "session_id", "")
+    model_id = getattr(opts, "model_id", "")
+    if not all([agent_id, session_id, model_id]):
+        return None, {
+            "code": "E_ASSIGNMENT_INCOMPLETE",
+            "message_key": "daemon_errors.error.identity_incomplete",
+            "detail": "Lease/Assignment 需要同时提供 --agent-id/--session-id/--model-id（Req 11.2）",
+        }
+    return {
+        "agent_id": agent_id,
+        "session_id": session_id,
+        "model_id": model_id,
+    }, None
+
+
+def _collect_lease_creds(opts):
+    """收集 P4 受保护写 Lease 凭证（--lease-token/--fencing-counter）
+
+    - 两者都未提供 → 返回 {}（向后兼容路径，不启用受保护写）
+    - 只提供其一 → 返回 {"error": reason}（fail closed，Requirement 11.9）
+    - 两者都提供 → 返回 {"lease_token": ..., "fencing_counter": ...}
+
+    Returns:
+        dict：含 "error" 键表示凭证不完整；否则为透传给 db 方法的关键字参数
+    """
+    token = getattr(opts, "lease_token", "") or ""
+    counter = getattr(opts, "fencing_counter", -1) or -1
+    if not token and counter < 0:
+        return {}
+    if not token:
+        return {"error": {
+            "code": "E_LEASE_CRED_INCOMPLETE",
+            "message_key": "daemon_errors.error.identity_not_wired",
+            "detail": "提供 --fencing-counter 时必须同时提供 --lease-token（Req 11.9）",
+        }}
+    if counter < 0:
+        return {"error": {
+            "code": "E_LEASE_CRED_INCOMPLETE",
+            "message_key": "daemon_errors.error.identity_not_wired",
+            "detail": "提供 --lease-token 时必须同时提供 --fencing-counter（Req 11.9）",
+        }}
+    return {"lease_token": token, "fencing_counter": counter}
+
+
+def _lease_reason_output(reason: dict, use_json: bool):
+    """输出 Lease/Assignment 的结构化拒绝原因（与 _identity_reason_output 同风格）"""
+    if use_json:
+        print(json.dumps(reason, ensure_ascii=False, indent=2))
+        return
+    detail = reason.get("detail", "")
+    cprint(t("cli.messages.lease_denied", default="Lease 校验未通过"), "red")
+    if detail:
+        print(detail)
+
+
+def _handle_lease(args, db):
+    """处理 lease 子命令（P4 安全 Lease，Req 11.2-11.7）
+
+    raw token 仅在 acquire 成功响应返回一次（Req 11.2）；日志/数据库只存 hash。
+    Degraded_Mode 下 Lease 获取/续租/释放属 Governance_Write，一律 fail closed（Req 14.31）。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw lease",
+        description=t("cli_lease_desc",
+                      default="P4 Lease: acquire/renew/release/status (Req 11.2-11.7)"),
+    )
+    sub = parser.add_subparsers(dest="action")
+
+    acquire_p = sub.add_parser(
+        "acquire",
+        help=t("cli_lease_acquire_desc",
+               default="Acquire a lease (returns raw token once)"))
+    acquire_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    acquire_p.add_argument("--role", default="implementer",
+                           help=t("cli_lease_arg_role", default="Role"))
+    acquire_p.add_argument("--agent-id", default="", metavar="ID",
+                           help=t("cli_task_arg_agent_id", default="Agent ID"))
+    acquire_p.add_argument("--session-id", default="", metavar="ID",
+                           help=t("cli_task_arg_session_id", default="Session ID"))
+    acquire_p.add_argument("--model-id", default="", metavar="ID",
+                           help=t("cli_task_arg_model_id", default="Model ID"))
+    acquire_p.add_argument("--ttl", type=float, default=3600.0,
+                           help=t("cli_lease_arg_ttl",
+                                  default="TTL seconds (default 3600)"))
+    acquire_p.add_argument("--json", action="store_true",
+                           help=t("cli_identity_arg_json", default="JSON output"))
+
+    renew_p = sub.add_parser(
+        "renew",
+        help=t("cli_lease_renew_desc",
+               default="Renew an active lease (idempotent, counter unchanged)"))
+    renew_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    renew_p.add_argument("--role", default="implementer",
+                         help=t("cli_lease_arg_role", default="Role"))
+    renew_p.add_argument("--token", default="", required=True,
+                         help=t("cli_lease_arg_token", default="Lease raw token"))
+    renew_p.add_argument("--agent-id", default="", metavar="ID",
+                         help=t("cli_task_arg_agent_id", default="Agent ID"))
+    renew_p.add_argument("--session-id", default="", metavar="ID",
+                         help=t("cli_task_arg_session_id", default="Session ID"))
+    renew_p.add_argument("--model-id", default="", metavar="ID",
+                         help=t("cli_task_arg_model_id", default="Model ID"))
+    renew_p.add_argument("--ttl", type=float, default=3600.0,
+                         help=t("cli_lease_arg_ttl", default="TTL seconds"))
+    renew_p.add_argument("--json", action="store_true",
+                         help=t("cli_identity_arg_json", default="JSON output"))
+
+    release_p = sub.add_parser(
+        "release",
+        help=t("cli_lease_release_desc",
+               default="Release an active lease (idempotent)"))
+    release_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    release_p.add_argument("--role", default="implementer",
+                           help=t("cli_lease_arg_role", default="Role"))
+    release_p.add_argument("--token", default="", required=True,
+                           help=t("cli_lease_arg_token", default="Lease raw token"))
+    release_p.add_argument("--agent-id", default="", metavar="ID",
+                           help=t("cli_task_arg_agent_id", default="Agent ID"))
+    release_p.add_argument("--session-id", default="", metavar="ID",
+                           help=t("cli_task_arg_session_id", default="Session ID"))
+    release_p.add_argument("--model-id", default="", metavar="ID",
+                           help=t("cli_task_arg_model_id", default="Model ID"))
+    release_p.add_argument("--json", action="store_true",
+                           help=t("cli_identity_arg_json", default="JSON output"))
+
+    status_p = sub.add_parser(
+        "status",
+        help=t("cli_lease_status_desc",
+               default="Show lease status (read-only)"))
+    status_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    status_p.add_argument("--role", default="",
+                          help=t("cli_lease_arg_role", default="Role (empty = latest)"))
+    status_p.add_argument("--json", action="store_true",
+                          help=t("cli_identity_arg_json", default="JSON output"))
+
+    list_p = sub.add_parser(
+        "list",
+        help=t("cli_lease_list_desc",
+               default="List lease audit events (read-only)"))
+    list_p.add_argument("--task-id", default="",
+                        help=t("cli_task_arg_task_id", default="Task ID (optional)"))
+    list_p.add_argument("--role", default="",
+                        help=t("cli_lease_arg_role", default="Role (optional)"))
+    list_p.add_argument("--json", action="store_true",
+                        help=t("cli_identity_arg_json", default="JSON output"))
+
+    opts = parser.parse_args(args)
+    if not getattr(opts, "action", None):
+        parser.print_help()
+        return True
+    use_json = getattr(opts, "json", False)
+
+    # lease status/list 是只读命令，其余为写命令（写命令已在 _is_readonly_command 归类）
+    if opts.action == "status":
+        result = db.get_lease_status(opts.task_id, opts.role)
+        if use_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(t("cli.messages.lease_status_title", default="Lease Status"))
+            for k, v in result.items():
+                print(f"  {k}: {v}")
+        return True
+
+    if opts.action == "list":
+        events = db.list_lease_events(opts.task_id, opts.role)
+        if use_json:
+            print(json.dumps(events, ensure_ascii=False, indent=2))
+        else:
+            print(t("cli.messages.lease_events_title", default="Lease Audit Events"))
+            for e in events:
+                print(f"  {e['event_at']:.1f} [{e['event_type']}] "
+                      f"lease={e['lease_id']} counter={e['fencing_counter']} "
+                      f"role={e['role']}")
+        return True
+
+    identity, ireason = _collect_lease_identity(opts)
+    if ireason is not None:
+        _lease_reason_output(ireason, use_json)
+        return True
+
+    if opts.action == "acquire":
+        ok, result = db.acquire_lease(
+            opts.task_id, opts.role, identity, ttl_seconds=opts.ttl)
+        if not ok:
+            _lease_reason_output(result, use_json)
+            return True
+        if use_json:
+            print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+        else:
+            cprint(t("cli.messages.lease_acquired", default="Lease acquired"), "green", bold=True)
+            # raw token 仅此一次返回（Req 11.2）
+            print(t("cli.messages.lease_token_once",
+                    default="Lease token (仅此一次返回，请妥善保存，日志/数据库不存储):"))
+            print(f"  {result['token']}")
+            print(t("cli.messages.lease_id_label", default="Lease ID"), ":", result["lease_id"])
+            print(t("cli.messages.lease_fencing_label", default="Fencing Counter"), ":", result["fencing_counter"])
+            print(t("cli.messages.lease_expires_label", default="Expires At"), ":", f"{result['expires_at']:.1f}")
+        return True
+
+    if opts.action == "renew":
+        ok, result = db.renew_lease(
+            opts.task_id, opts.role, opts.token, identity=identity, ttl_seconds=opts.ttl)
+        if not ok:
+            _lease_reason_output(result, use_json)
+            return True
+        if use_json:
+            print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+        else:
+            cprint(t("cli.messages.lease_renewed", default="Lease renewed"), "green", bold=True)
+            print(t("cli.messages.lease_id_label", default="Lease ID"), ":", result["lease_id"])
+            print(t("cli.messages.lease_fencing_label", default="Fencing Counter"), ":", result["fencing_counter"])
+            print(t("cli.messages.lease_expires_label", default="Expires At"), ":", f"{result['expires_at']:.1f}")
+        return True
+
+    if opts.action == "release":
+        ok, result = db.release_lease(
+            opts.task_id, opts.role, opts.token, identity=identity)
+        if not ok:
+            _lease_reason_output(result, use_json)
+            return True
+        if use_json:
+            print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+        else:
+            cprint(t("cli.messages.lease_released", default="Lease released"), "green", bold=True)
+            print(t("cli.messages.lease_id_label", default="Lease ID"), ":", result["lease_id"])
+            print(t("cli.messages.lease_fencing_label", default="Fencing Counter"), ":", result["fencing_counter"])
+            if result.get("released_at"):
+                print(t("cli.messages.lease_released_label", default="Released At"),
+                      ":", f"{result['released_at']:.1f}")
+        return True
+
+    parser.print_help()
+    return True
+
+
+def _handle_assignment(args, db):
+    """处理 assignment 子命令（P4 Assignment 绑定，Req 11.1）
+
+    assignment 只绑定 task+role+holder Identity，不把 workspace active_task_id
+    当作 assignment authority（Req 13.4）；assignment 可以没有 lease（Req 11.12）。
+    """
+    parser = argparse.ArgumentParser(
+        prog="cw assignment",
+        description=t("cli_assignment_desc",
+                      default="P4 Assignment: bind task+role+holder Identity (Req 11.1)"),
+    )
+    sub = parser.add_subparsers(dest="action")
+
+    create_p = sub.add_parser(
+        "create",
+        help=t("cli_assignment_create_desc", default="Create an assignment"))
+    create_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    create_p.add_argument("--role", default="implementer",
+                          help=t("cli_lease_arg_role", default="Role"))
+    create_p.add_argument("--agent-id", default="", metavar="ID",
+                          help=t("cli_task_arg_agent_id", default="Agent ID"))
+    create_p.add_argument("--session-id", default="", metavar="ID",
+                          help=t("cli_task_arg_session_id", default="Session ID"))
+    create_p.add_argument("--model-id", default="", metavar="ID",
+                          help=t("cli_task_arg_model_id", default="Model ID"))
+    create_p.add_argument("--json", action="store_true",
+                          help=t("cli_identity_arg_json", default="JSON output"))
+
+    show_p = sub.add_parser(
+        "show",
+        help=t("cli_assignment_show_desc",
+               default="Show current active assignment (read-only)"))
+    show_p.add_argument("task_id", help=t("cli_task_arg_task_id", default="Task ID"))
+    show_p.add_argument("--role", default="",
+                        help=t("cli_lease_arg_role", default="Role (empty = latest)"))
+    show_p.add_argument("--json", action="store_true",
+                        help=t("cli_identity_arg_json", default="JSON output"))
+
+    revoke_p = sub.add_parser(
+        "revoke",
+        help=t("cli_assignment_revoke_desc", default="Revoke an assignment"))
+    revoke_p.add_argument("assignment_id", help=t(
+        "cli_assignment_arg_assignment_id", default="Assignment ID (ASG-xxx)"))
+    revoke_p.add_argument("--json", action="store_true",
+                          help=t("cli_identity_arg_json", default="JSON output"))
+
+    opts = parser.parse_args(args)
+    if not getattr(opts, "action", None):
+        parser.print_help()
+        return True
+    use_json = getattr(opts, "json", False)
+
+    if opts.action == "show":
+        result = db.get_assignment(opts.task_id, opts.role)
+        if result is None:
+            print(t("cli.messages.assignment_not_found",
+                    default="No active assignment found"))
+            return True
+        if use_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            print(t("cli.messages.assignment_title", default="Active Assignment"))
+            for k in ("assignment_id", "task_id", "role", "agent_id", "session_id", "model_id", "created_at"):
+                print(f"  {k}: {result.get(k)}")
+        return True
+
+    if opts.action == "revoke":
+        ok, result = db.revoke_assignment(opts.assignment_id)
+        if not ok:
+            _lease_reason_output(result, use_json)
+            return True
+        if use_json:
+            print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+        else:
+            cprint(t("cli.messages.assignment_revoked",
+                     default="Assignment revoked"), "green", bold=True)
+        return True
+
+    # create：需要完整 holder Identity（Req 11.1）
+    identity, ireason = _collect_lease_identity(opts)
+    if ireason is not None:
+        _lease_reason_output(ireason, use_json)
+        return True
+
+    ok, result = db.create_assignment(opts.task_id, opts.role, identity)
+    if not ok:
+        _lease_reason_output(result, use_json)
+        return True
+    if use_json:
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False, indent=2))
+    else:
+        cprint(t("cli.messages.assignment_created",
+                 default="Assignment created"), "green", bold=True)
+        print(t("cli.messages.assignment_id_label", default="Assignment ID"),
+              ":", result["assignment_id"])
+    return True
 
 
 if __name__ == "__main__":

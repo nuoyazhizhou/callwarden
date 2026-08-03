@@ -86,7 +86,7 @@ class TestHeaderBaselineAligned:
         is_path = ROOT / "docs" / "design" / "implementation-status.md"
         header = is_path.read_text(encoding="utf-8")[:500]
         assert "40 Mixin" not in header, "implementation-status.md 头部不能再写 40 Mixin"
-        assert "35" in header, "implementation-status.md 头部应写 35 Mixin 类"
+        assert "43" in header, "implementation-status.md 头部应写 43 Mixin 类"
 
     def test_feature_matrix_baseline_table(self):
         """_feature_matrix.md 基线表应反映实际值。"""

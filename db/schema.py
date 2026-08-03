@@ -1261,6 +1261,277 @@ CREATE INDEX IF NOT EXISTS idx_verifier_registry_status ON verifier_registry(tru
 
 CREATE INDEX IF NOT EXISTS idx_verifier_revocation_triple ON verifier_revocation_records(verifier_name, verifier_version, verifier_config_hash);
 CREATE INDEX IF NOT EXISTS idx_verifier_revocation_time ON verifier_revocation_records(revocation_time);
+
+-- ============================================
+-- P2: artifact/interface 依赖与环检测 schema（Req 9.1-9.9, 13.7, 13.10）
+-- ============================================
+
+-- 9. task_dependencies：四类依赖声明（Req 9.1）
+--    持久化 Envelope 中声明的 requires_existing/requires_artifact/provides_interface/requires_interface。
+--    is_informational=true 的关系不参与阻断和排序保证（Req 9.8）。
+CREATE TABLE IF NOT EXISTS task_dependencies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    task_id TEXT NOT NULL,                     -- 声明依赖的任务 ID（consumer 或 provider）
+    contract_id TEXT NOT NULL,                 -- 声明依赖的契约 ID
+    contract_revision INTEGER NOT NULL,        -- 契约 revision
+    dependency_type TEXT NOT NULL,             -- requires_existing/requires_artifact/provides_interface/requires_interface
+    target_ref TEXT NOT NULL,                  -- 引用的符号名/artifact ID/interface identity
+    target_task_id TEXT DEFAULT '',            -- requires_artifact 时的 provider 任务 ID
+    is_informational INTEGER NOT NULL DEFAULT 0, -- 信息性关系（不阻断，Req 9.8）
+    declared_at REAL NOT NULL,                 -- 声明时间
+    -- 同一契约 revision 内同类型同 target 唯一（幂等导入）
+    UNIQUE(workspace_id, task_id, contract_id, contract_revision, dependency_type, target_ref)
+);
+
+-- 10. artifact_identities：artifact identity 与 freshness（Req 9.3）
+--     provider task 产出的 artifact 记录其 identity/hash/freshness；
+--     consumer 的 requires_artifact 条款仅在 provider artifact fresh 时满足。
+CREATE TABLE IF NOT EXISTS artifact_identities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    artifact_id TEXT NOT NULL UNIQUE,          -- artifact 唯一标识（ART-<uuid>）
+    task_id TEXT NOT NULL,                     -- 产出 artifact 的任务 ID（provider）
+    contract_id TEXT NOT NULL,                 -- 契约 ID
+    contract_revision INTEGER NOT NULL,        -- 契约 revision
+    artifact_type TEXT NOT NULL,               -- file/symbol/resource
+    artifact_ref TEXT NOT NULL,                -- 文件路径或符号限定名
+    artifact_hash TEXT DEFAULT '',             -- artifact 内容摘要（sha256:...）
+    freshness_status TEXT NOT NULL DEFAULT 'producing', -- producing/fresh/stale
+    produced_at REAL,                          -- 产出时间（freshness_status=fresh 时有效）
+    workspace_snapshot_id TEXT DEFAULT '',     -- 产出时绑定的工作区快照
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+-- 11. interface_identities：interface identity/version/hash（Req 9.4-9.5）
+--     provides_interface 发布时记录 interface identity、version 和 hash；
+--     requires_interface 解析时必须匹配 existing/provided interface identity/version/hash。
+CREATE TABLE IF NOT EXISTS interface_identities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    interface_id TEXT NOT NULL UNIQUE,         -- interface 唯一标识（IF-<uuid>）
+    interface_name TEXT NOT NULL,              -- 接口名（如 auth.service.authenticate）
+    version TEXT NOT NULL,                     -- 接口版本（semver 或整数）
+    interface_hash TEXT DEFAULT '',            -- 接口内容摘要（sha256:...）
+    provider_task_id TEXT NOT NULL,            -- 提供此接口的任务 ID
+    contract_id TEXT NOT NULL,                 -- 契约 ID
+    contract_revision INTEGER NOT NULL,        -- 契约 revision
+    published_at REAL NOT NULL,                -- 发布时间
+    -- 同一接口名+版本唯一（同一接口名可有多个版本）
+    UNIQUE(workspace_id, interface_name, version)
+);
+
+-- 12. interface_provider_selections：显式 provider 选择（Req 9.9）
+--     多 provider 匹配同一 requires_interface 时，Planner 必须显式选择；
+--     无显式选择时立即拒绝 Envelope Revision，不隐式选择 provider。
+CREATE TABLE IF NOT EXISTS interface_provider_selections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    consumer_task_id TEXT NOT NULL,            -- 消费者任务 ID
+    contract_id TEXT NOT NULL,                 -- 消费者契约 ID
+    contract_revision INTEGER NOT NULL,        -- 消费者契约 revision
+    interface_name TEXT NOT NULL,              -- 接口名
+    selected_provider_task_id TEXT NOT NULL,   -- 选择的 provider 任务 ID
+    selected_at REAL NOT NULL,                 -- 选择时间
+    -- 同一消费者契约 revision 内同一接口名只能有一个选择
+    UNIQUE(workspace_id, consumer_task_id, contract_id, contract_revision, interface_name)
+);
+
+-- 13. dependency_edges：硬依赖图边（Req 9.6）
+--     仅显式 requires_artifact 和已解析 requires_interface→provides_interface 建边；
+--     边方向为 provider→consumer；去重后检测环（Req 9.6: collapse duplicate edges）。
+CREATE TABLE IF NOT EXISTS dependency_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    provider_task_id TEXT NOT NULL,            -- provider 任务 ID（边的起点）
+    consumer_task_id TEXT NOT NULL,            -- consumer 任务 ID（边的终点）
+    edge_type TEXT NOT NULL,                   -- artifact/interface
+    source_type TEXT NOT NULL,                 -- requires_artifact/requires_interface
+    contract_id TEXT NOT NULL,                 -- consumer 契约 ID
+    contract_revision INTEGER NOT NULL,        -- consumer 契约 revision
+    is_hard INTEGER NOT NULL DEFAULT 1,        -- 1=阻断性硬边，0=信息性边（不参与环检测）
+    created_at REAL NOT NULL,                  -- 建边时间
+    -- 同一 provider→consumer 同一 contract revision 同一 source_type 唯一（去重，Req 9.6）
+    UNIQUE(workspace_id, provider_task_id, consumer_task_id, contract_id, contract_revision, source_type)
+);
+
+-- P2 索引
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_task ON task_dependencies(workspace_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_contract ON task_dependencies(workspace_id, contract_id, contract_revision);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_type ON task_dependencies(workspace_id, dependency_type);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_target ON task_dependencies(workspace_id, target_ref);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_identities_task ON artifact_identities(workspace_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_artifact_identities_contract ON artifact_identities(workspace_id, contract_id, contract_revision);
+CREATE INDEX IF NOT EXISTS idx_artifact_identities_freshness ON artifact_identities(workspace_id, freshness_status);
+
+CREATE INDEX IF NOT EXISTS idx_interface_identities_name ON interface_identities(workspace_id, interface_name);
+CREATE INDEX IF NOT EXISTS idx_interface_identities_provider ON interface_identities(workspace_id, provider_task_id);
+CREATE INDEX IF NOT EXISTS idx_interface_identities_contract ON interface_identities(workspace_id, contract_id, contract_revision);
+
+CREATE INDEX IF NOT EXISTS idx_interface_provider_selections_consumer ON interface_provider_selections(workspace_id, consumer_task_id);
+CREATE INDEX IF NOT EXISTS idx_interface_provider_selections_interface ON interface_provider_selections(workspace_id, interface_name);
+
+CREATE INDEX IF NOT EXISTS idx_dependency_edges_provider ON dependency_edges(workspace_id, provider_task_id);
+CREATE INDEX IF NOT EXISTS idx_dependency_edges_consumer ON dependency_edges(workspace_id, consumer_task_id);
+CREATE INDEX IF NOT EXISTS idx_dependency_edges_contract ON dependency_edges(workspace_id, contract_id, contract_revision);
+CREATE INDEX IF NOT EXISTS idx_dependency_edges_hard ON dependency_edges(workspace_id, is_hard) WHERE is_hard = 1;
+
+-- ============================================
+-- P3: Identity/attestation schema（Req 10.1-10.18, 13.10）
+-- ============================================
+
+-- 14. action_identities：action 身份记录（Req 10.1）
+--     为 contract/view/verdict/evidence/gate/state action 记录 agent_id/session_id/model_id/role。
+--     缺失身份不得由 reviewer 自由文本或 ownership 补齐（Req 10.5）。
+CREATE TABLE IF NOT EXISTS action_identities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    action_id TEXT NOT NULL UNIQUE,            -- action 唯一标识（ACT-<uuid>）
+    action_type TEXT NOT NULL,                 -- contract/view/verdict/evidence/gate/state_transition
+    task_id TEXT NOT NULL,                     -- 关联任务 ID
+    contract_id TEXT DEFAULT '',               -- 关联契约 ID（如适用）
+    contract_revision INTEGER DEFAULT 0,       -- 关联契约 revision（如适用）
+    agent_id TEXT NOT NULL,                    -- Agent 标识（Req 10.1）
+    session_id TEXT NOT NULL,                  -- Session 标识（Req 10.1, 10.2）
+    model_id TEXT NOT NULL,                    -- Model 标识（Req 10.1, 10.4）
+    role TEXT NOT NULL,                        -- 角色：implementer/reviewer/tester/planner（Req 10.1）
+    recorded_at REAL NOT NULL,                 -- 记录时间（按 Authoritative_Clock，Req 14.11）
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+-- 15. attestation_records：daemon 签发的 Attestation 记录（Req 10.8-10.9, 14.13）
+--     Attestation 必须由 daemon 签发，绑定 Peer_Identity 派生的 Identity、
+--     verdict_id/evidence_id、View_Manifest hash、Contract_Hash，且签发时间在有效窗口内。
+CREATE TABLE IF NOT EXISTS attestation_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    attestation_id TEXT NOT NULL UNIQUE,       -- Attestation 唯一标识（ATT-<uuid>）
+    action_id TEXT NOT NULL,                   -- 绑定的 action_identities.action_id
+    issuer TEXT NOT NULL,                      -- 签发者标识（必须为 daemon，Req 10.8）
+    signing_key_id TEXT NOT NULL,              -- 签名密钥标识（Req 10.10-10.11）
+    peer_identity TEXT NOT NULL,               -- Peer_Identity 派生的 Identity（Req 10.8）
+    bound_verdict_id TEXT DEFAULT '',          -- 绑定的 verdict_id（如适用）
+    bound_evidence_id TEXT DEFAULT '',         -- 绑定的 evidence_id（如适用）
+    view_manifest_hash TEXT DEFAULT '',        -- View_Manifest hash（Req 10.8）
+    contract_hash TEXT NOT NULL,               -- Contract_Hash（Req 10.8）
+    issued_at REAL NOT NULL,                   -- 签发时间（Authoritative_Clock，Req 14.11）
+    valid_from REAL NOT NULL,                  -- 有效窗口开始
+    valid_until REAL NOT NULL,                 -- 有效窗口结束
+    signature TEXT NOT NULL,                   -- 签名值
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    FOREIGN KEY (action_id) REFERENCES action_identities(action_id)
+);
+
+-- 16. attestation_revocation_records：Attestation 撤销记录（Req 10.10-10.17）
+--     不可变、只追加；同一 issuer/签名密钥的一次撤销只对应一条记录。
+--     Revocation_Mode 必填且无默认值（compromised/rotated，Req 10.12）。
+--     撤销导致的 invalid 由查询时派生，不写入逐条失效事件（Req 10.10, 10.15）。
+CREATE TABLE IF NOT EXISTS attestation_revocation_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    revocation_id TEXT NOT NULL UNIQUE,        -- 撤销记录唯一标识（REV-<uuid>）
+    issuer TEXT NOT NULL,                      -- 被撤销的 Attestation issuer 标识
+    signing_key_id TEXT NOT NULL,              -- 被撤销的签名密钥标识
+    revocation_mode TEXT NOT NULL,             -- compromised/rotated（必填，无默认值，Req 10.12）
+    revocation_reason TEXT NOT NULL,           -- 撤销原因
+    initiating_actor TEXT NOT NULL,            -- 发起者身份
+    revoked_at REAL NOT NULL,                  -- 撤销时间（Authoritative_Clock，Req 14.11）
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
+    CHECK (revocation_mode IN ('compromised', 'rotated'))
+);
+
+-- P3 索引
+CREATE INDEX IF NOT EXISTS idx_action_identities_task ON action_identities(workspace_id, task_id);
+CREATE INDEX IF NOT EXISTS idx_action_identities_session ON action_identities(workspace_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_action_identities_agent ON action_identities(workspace_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_action_identities_role ON action_identities(workspace_id, role);
+CREATE INDEX IF NOT EXISTS idx_action_identities_action_type ON action_identities(workspace_id, action_type);
+
+CREATE INDEX IF NOT EXISTS idx_attestation_records_action ON attestation_records(workspace_id, action_id);
+CREATE INDEX IF NOT EXISTS idx_attestation_records_issuer ON attestation_records(workspace_id, issuer);
+CREATE INDEX IF NOT EXISTS idx_attestation_records_signing_key ON attestation_records(workspace_id, signing_key_id);
+CREATE INDEX IF NOT EXISTS idx_attestation_records_issued_at ON attestation_records(workspace_id, issued_at);
+
+CREATE INDEX IF NOT EXISTS idx_attestation_revocation_issuer ON attestation_revocation_records(workspace_id, issuer);
+CREATE INDEX IF NOT EXISTS idx_attestation_revocation_signing_key ON attestation_revocation_records(workspace_id, signing_key_id);
+CREATE INDEX IF NOT EXISTS idx_attestation_revocation_mode ON attestation_revocation_records(workspace_id, revocation_mode);
+
+-- ============================================
+-- P4: Assignment 与安全 Lease schema（Req 11.1-11.13, 13.4-13.10, 14.6, 14.11-14.12, 14.30-14.32）
+-- ============================================
+
+-- 17. task_assignments：task+role+holder Identity 绑定（Req 11.1）
+--     身份绑定不把 workspace active_task_id 当作 assignment authority（Req 11.1, 13.4）。
+--     assignment 可以没有 lease（Req 11.12：P4 未启用时 claimed 字段只作非 lease 元数据）。
+CREATE TABLE IF NOT EXISTS task_assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    assignment_id TEXT NOT NULL UNIQUE,        -- assignment 唯一标识（ASG-<uuid>）
+    task_id TEXT NOT NULL,                     -- 关联任务 ID
+    role TEXT NOT NULL,                        -- 角色：implementer/reviewer/tester/planner
+    agent_id TEXT NOT NULL,                    -- holder Agent 标识（Req 11.1）
+    session_id TEXT NOT NULL,                  -- holder Session 标识
+    model_id TEXT NOT NULL,                    -- holder Model 标识
+    status TEXT NOT NULL DEFAULT 'active',     -- active/revoked（assignment 生命周期）
+    created_at REAL NOT NULL,                  -- 创建时间（Authoritative_Clock，Req 14.11）
+    revoked_at REAL DEFAULT NULL,              -- 撤销时间（如适用）
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+-- 18. task_leases：当前 Lease 与历史 Lease（Req 11.2-11.9）
+--     同一 task+role 任一时刻只有一个当前 lease（部分唯一索引，Req 11.2）；
+--     历史 lease 保留可审计（11.6 release 追加事件 + 本表状态置 released）。
+--     只存 token hash（sha256），永不存 raw token（Req 11.2）。
+--     acquired/expires/renewed/released 一律由权威时钟写入（Req 11.2, 14.11）；
+--     客户端时间戳只作参考元数据，不参与过期判定（Req 14.12）。
+CREATE TABLE IF NOT EXISTS task_leases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    lease_id TEXT NOT NULL UNIQUE,             -- Lease 唯一标识（L-<uuid>）
+    task_id TEXT NOT NULL,                     -- 关联任务 ID
+    role TEXT NOT NULL,                        -- 角色：implementer/reviewer/tester/planner
+    agent_id TEXT NOT NULL,                    -- holder Agent 标识（Req 11.2）
+    session_id TEXT NOT NULL,                  -- holder Session 标识
+    model_id TEXT NOT NULL,                    -- holder Model 标识
+    token_hash TEXT NOT NULL,                  -- sha256(raw token)，永不存 raw token（Req 11.2）
+    fencing_counter INTEGER NOT NULL,          -- 单调递增 fencing counter（Req 11.3）
+    acquired_at REAL NOT NULL,                 -- 获取时间（Authoritative_Clock，Req 14.11）
+    expires_at REAL NOT NULL,                  -- 过期时间（Authoritative_Clock，Req 14.11）
+    renewed_at REAL DEFAULT NULL,              -- 最近续租时间（Authoritative_Clock）
+    released_at REAL DEFAULT NULL,             -- 释放时间（Authoritative_Clock，11.6）
+    status TEXT NOT NULL DEFAULT 'active',     -- active/released/expired
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+-- 19. task_lease_events：Lease 审计事件（append-only，Req 11.6, 11.12）
+--     每次 acquire/renew/release 追加一条事件；raw token 不得写入。
+CREATE TABLE IF NOT EXISTS task_lease_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,             -- 工作区 ID
+    event_id TEXT NOT NULL UNIQUE,             -- 事件唯一标识（EVT-<uuid>）
+    lease_id TEXT NOT NULL,                    -- 关联 Lease ID
+    task_id TEXT NOT NULL,                     -- 关联任务 ID
+    role TEXT NOT NULL,                        -- 角色
+    event_type TEXT NOT NULL,                  -- acquire/renew/release
+    fencing_counter INTEGER NOT NULL,          -- 事件发生时 lease 的 counter
+    event_at REAL NOT NULL,                    -- 事件时间（Authoritative_Clock，Req 14.11）
+    actor_agent_id TEXT NOT NULL,              -- 发起者 Agent 标识
+    actor_session_id TEXT NOT NULL,            -- 发起者 Session 标识
+    actor_model_id TEXT NOT NULL,              -- 发起者 Model 标识
+    detail TEXT DEFAULT '',                    -- 事件详情（不得包含 raw token）
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+-- P4 索引：同 task+role 只有一个当前 lease（Req 11.2）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_leases_active_unique
+    ON task_leases(workspace_id, task_id, role)
+    WHERE status = 'active';
+
+CREATE INDEX IF NOT EXISTS idx_task_assignments_task ON task_assignments(workspace_id, task_id, role);
+CREATE INDEX IF NOT EXISTS idx_task_leases_task ON task_leases(workspace_id, task_id, role);
+CREATE INDEX IF NOT EXISTS idx_task_lease_events_lease ON task_lease_events(workspace_id, lease_id);
+CREATE INDEX IF NOT EXISTS idx_task_lease_events_task ON task_lease_events(workspace_id, task_id, role);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -1324,7 +1595,27 @@ CREATE INDEX IF NOT EXISTS idx_verifier_revocation_time ON verifier_revocation_r
 #      verifier_revocation_records + evidence_retention_config。
 #      覆盖 Req 1.7/2.6-2.9/4.3-4.6/6.1/6.3/6.6/6.11-6.13/6.16-6.17/6.20/6.23/7.2-7.3/8.4-8.5/13.10。
 #      所有事件表 append-only（Req 1.7），撤销采用单条记录+查询时派生（Req 6.13/6.20）。
-SCHEMA_VERSION = 43
+# v44: P2 artifact/interface 依赖与环检测 schema — 5 张表
+#      (task_dependencies/artifact_identities/interface_identities/
+#       interface_provider_selections/dependency_edges) + 索引。
+#      覆盖 Req 9.1-9.9, 13.7, 13.10。CREATE IF NOT EXISTS 幂等迁移。
+#      四类依赖声明持久化 + artifact freshness + interface identity/version/hash +
+#      显式 provider 选择 + 硬依赖图边（环检测输入）。
+# v45: P3 Identity/attestation schema — 3 张表
+#      (action_identities/attestation_records/attestation_revocation_records) + 索引。
+#      覆盖 Req 10.1-10.18, 13.10。CREATE IF NOT EXISTS 幂等迁移。
+#      action_identities 记录 agent_id/session_id/model_id/role；
+#      attestation_records 绑定 issuer/签名密钥/View_Manifest hash/Contract_Hash/有效期窗口；
+#      attestation_revocation_records 不可变只追加，Revocation_Mode 必填（compromised/rotated），
+#      撤销导致的 invalid 由查询时派生，不写入逐条失效事件（Req 10.10-10.17）。
+# v46: P4 assignment/安全 lease schema — 3 张表
+#      (task_assignments/task_leases/task_lease_events) + 部分唯一索引。
+#      覆盖 Req 11.1-11.13, 13.4-13.10, 14.6, 14.11-14.12, 14.30-14.32。
+#      task_assignments 绑定 task+role+holder Identity（不把 active_task_id 当授权）；
+#      task_leases 只存 token hash（sha256），时间一律权威时钟，fencing counter 单调递增，
+#      partial UNIQUE 索引保证同 task+role 只有一个当前 lease；
+#      task_lease_events append-only 审计，raw token 永不落库。
+SCHEMA_VERSION = 46
 
 
 # ============================================

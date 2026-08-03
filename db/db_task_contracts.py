@@ -106,6 +106,10 @@ class ContractErrorCode:
     FRESHNESS_RULE_INVALID = "CONTRACT_FRESHNESS_RULE_INVALID"
     # 数据库写入失败
     PERSISTENCE_FAILED = "CONTRACT_PERSISTENCE_FAILED"
+    # 硬依赖图存在环，revision 被原子拒绝（Req 9.7）
+    HARD_CYCLE_DETECTED = "CONTRACT_HARD_CYCLE_DETECTED"
+    # P4: Lease 校验失败（token/expiry/fencing/holder 任一不满足，Req 11.8-11.9）
+    LEASE_DENIED = "CONTRACT_LEASE_DENIED"
 
 
 # 警告码（与错误码同目录，但语义为非阻断）
@@ -127,6 +131,8 @@ CONTRACT_I18N_KEYS: Dict[str, str] = {
     ContractErrorCode.VERIFIER_NOT_TRUSTED: "errors.contract_verifier_not_trusted",
     ContractErrorCode.FRESHNESS_RULE_INVALID: "errors.contract_freshness_rule_invalid",
     ContractErrorCode.PERSISTENCE_FAILED: "errors.contract_persistence_failed",
+    ContractErrorCode.HARD_CYCLE_DETECTED: "errors.contract_hard_cycle_detected",
+    ContractErrorCode.LEASE_DENIED: "errors.contract_lease_denied",
 }
 
 # 警告码 → i18n key（位于 warnings.* 命名空间）
@@ -172,6 +178,10 @@ _CONTRACT_BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
     "errors.contract_persistence_failed": {
         "zh_CN": "Envelope 持久化失败（contract_id={contract_id}, revision={revision}）：{detail}。",
         "en_US": "Envelope persistence failed (contract_id={contract_id}, revision={revision}): {detail}.",
+    },
+    "errors.contract_hard_cycle_detected": {
+        "zh_CN": "硬依赖图存在环（contract_id={contract_id}, revision={revision}）；revision 被原子拒绝，cycle_path={cycle_path}（Requirement 9.7）。",
+        "en_US": "Hard dependency graph has a cycle (contract_id={contract_id}, revision={revision}); revision atomically rejected, cycle_path={cycle_path} (Requirement 9.7).",
     },
     "warnings.contract_unscoped_publication": {
         "zh_CN": "Envelope scope 为 unscoped（profile={profile}）；任何磁盘文件改动都会让 Completion_Gate 与 Apply_Gate 按 Requirements 1.6 与 7.12 阻断该任务。在 task step 上声明 target_file 或 target_symbol 即可建立显式 scope。",
@@ -865,6 +875,9 @@ class TaskContractsMixin:
         task_id: str,
         workspace_id: Optional[int] = None,
         created_by: str = "",
+        lease_token: Optional[str] = None,
+        fencing_counter: Optional[int] = None,
+        lease_role: str = "implementer",
     ) -> Tuple[Envelope, List[ContractStructuredReason]]:
         """发布 Envelope Revision（Requirements 2.6–2.9, 7.11–7.17）。
 
@@ -876,6 +889,10 @@ class TaskContractsMixin:
         5. 计算 contract_hash
         6. 写入 task_contract_revisions 表（不可变，append-only）
 
+        P4 强化（Req 11.8-11.9）：
+        - 提供 lease_token/fencing_counter 时启用受保护写路径（默认 role=implementer）
+        - 过期 / token hash 不匹配 / 旧 counter 均在写入前拒绝（fail closed）
+
         返回 (envelope_with_hash, warnings)：
         - envelope_with_hash：已设置 contract_hash 的 Envelope
         - warnings：非阻断警告列表（如 unscoped 警告）
@@ -883,6 +900,20 @@ class TaskContractsMixin:
         失败时抛出 ContractPublicationError（fail closed）。
         """
         conn = self.conn  # CodeGraphDB 的连接
+
+        # 0. P4: protected mutation Lease 校验（Req 11.8-11.9）
+        # contract 发布是受保护写；校验失败在写入前拒绝（fail closed）。
+        if lease_token is not None and fencing_counter is not None:
+            ok_l, lease_reason = self.validate_lease_for_mutation(
+                task_id, lease_role, lease_token, fencing_counter
+            )
+            if not ok_l:
+                raise ContractPublicationError(make_contract_reason(
+                    ContractErrorCode.LEASE_DENIED,
+                    lease_code=lease_reason.get("code", ""),
+                    lease_detail=lease_reason.get("detail", ""),
+                    task_id=task_id,
+                ))
 
         # 1. profile 校验
         profile_reason = validate_profile(envelope)
@@ -968,6 +999,74 @@ class TaskContractsMixin:
                 revision=envelope.revision,
                 detail=str(e),
             )) from e
+
+        # 7. 导入依赖声明到 task_dependencies（Req 9.1，复用 Envelope 发布路径）
+        #    把 Envelope.dependencies（dict 格式）转换为 import_envelope_dependencies
+        #    期望的 list 格式；跳过内部使用的下划线前缀 key（_scope_label/_clause_downgrades）
+        if workspace_id is not None:
+            deps_dict = dict(envelope.dependencies or {})
+            deps_list: List[Dict[str, Any]] = []
+            for dtype, refs in deps_dict.items():
+                if dtype.startswith("_"):
+                    continue  # 跳过内部 key
+                if not isinstance(refs, list):
+                    continue
+                for ref in refs:
+                    if isinstance(ref, str):
+                        deps_list.append({"dependency_type": dtype, "target_ref": ref})
+                    elif isinstance(ref, dict):
+                        target_ref = (
+                            ref.get("ref") or ref.get("target_ref")
+                            or ref.get("name") or ref.get("artifact_id") or ""
+                        )
+                        if not target_ref:
+                            continue
+                        item: Dict[str, Any] = {"dependency_type": dtype, "target_ref": target_ref}
+                        if "task_id" in ref:
+                            item["target_task_id"] = ref["task_id"]
+                        if "is_informational" in ref:
+                            item["is_informational"] = ref["is_informational"]
+                        deps_list.append(item)
+            if deps_list:
+                self.import_envelope_dependencies(
+                    workspace_id=workspace_id,
+                    task_id=task_id,
+                    contract_id=envelope.contract_id,
+                    contract_revision=envelope.revision,
+                    dependencies=deps_list,
+                )
+
+        # 8. 原子构图并拒绝 hard cycle（Req 9.6-9.7）
+        #    构建硬依赖图边 → 检测环 → 有环则回滚 revision 发布
+        if workspace_id is not None:
+            self.build_hard_dependency_edges(
+                workspace_id, envelope.contract_id, envelope.revision,
+            )
+            cycle_result = self.detect_cycle(workspace_id)
+            if cycle_result.get("has_cycle"):
+                # 有环：原子回滚 revision 发布（删除刚写入的记录）
+                conn.execute(
+                    "DELETE FROM task_contract_revisions "
+                    "WHERE contract_id = ? AND revision = ?",
+                    (envelope.contract_id, envelope.revision),
+                )
+                conn.execute(
+                    "DELETE FROM task_dependencies "
+                    "WHERE contract_id = ? AND contract_revision = ?",
+                    (envelope.contract_id, envelope.revision),
+                )
+                conn.execute(
+                    "DELETE FROM dependency_edges "
+                    "WHERE contract_id = ? AND contract_revision = ?",
+                    (envelope.contract_id, envelope.revision),
+                )
+                conn.commit()
+                raise ContractPublicationError(make_contract_reason(
+                    ContractErrorCode.HARD_CYCLE_DETECTED,
+                    contract_id=envelope.contract_id,
+                    revision=envelope.revision,
+                    cycle_path=cycle_result.get("cycle_path", []),
+                ))
 
         return envelope, warnings
 

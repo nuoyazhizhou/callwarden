@@ -1256,6 +1256,9 @@ class TaskMixin:
         result: str = "",
         success: bool = True,
         changes: Optional[List[Dict[str, Any]]] = None,
+        identity: Optional[Dict[str, Any]] = None,
+        lease_token: Optional[str] = None,
+        fencing_counter: Optional[int] = None,
     ) -> Optional[Dict[str, Any]]:
         """回报步骤执行结果
 
@@ -1267,6 +1270,16 @@ class TaskMixin:
         - 父子任务支持：子任务完成后递归向上检查，所有子任务完成则父任务进入 review
         - task_id 可以是根任务 ID 或任意子任务 ID，通过 step_id 反查真实所属任务
 
+        P3 强化（Req 10.1, 10.5-10.7, 13.3-13.5）：
+        - 接收已验证的 identity（agent_id/session_id/model_id/role）
+        - Identity 仅作 actor attribution，不等于 assignment/lease/ownership
+        - 缺失 identity 时仍可执行（向后兼容），但不会记录身份审计
+
+        P4 强化（Req 11.8-11.9）：
+        - 提供 lease_token/fencing_counter 时启用受保护写路径（role=implementer）
+        - 过期 / token hash 不匹配 / 旧 counter 均在写入前拒绝，不改变 task data
+        - Lease 不授予写入权——角色权限、Independent Review 与 Evidence Gate 仍然适用（Req 11.11）
+
         Args:
             task_id: 任务 ID（根任务或子任务均可）
             step_id: 步骤 ID
@@ -1274,6 +1287,9 @@ class TaskMixin:
             success: 是否成功
             changes: 变更列表，每个元素为 dict：
                      {file_path, hash_before, hash_after, diff, author}
+            identity: P3 可选的执行者 Identity（CLI 传入关键字为 identity）
+            lease_token: P4 可选的 Lease raw token（提供时启用受保护写校验）
+            fencing_counter: P4 可选的当前 fencing counter
 
         Returns:
             下一步步骤信息（如果有，状态仍为 pending，留给 task_next_step 领取）；
@@ -1289,6 +1305,40 @@ class TaskMixin:
         )
         step_row = cur.fetchone()
         actual_task_id = step_row["task_id"] if step_row else task_id
+
+        # P3: 记录执行者 Identity（Req 10.1, 10.5-10.7）
+        # Identity 仅作 actor attribution，不引入 assignment/lease 权限
+        if identity is not None:
+            ok, id_reason = self.validate_action_identity(identity)
+            if not ok:
+                return {
+                    "error": "ERR_IDENTITY_INCOMPLETE",
+                    "reason": id_reason,
+                    "task_id": task_id,
+                    "step_id": step_id,
+                }
+            # 记录身份到 action_identities（action_type=state_transition）
+            action_id = f"ACT-report-{step_id}-{int(now * 1000)}"
+            self.record_action_identity(
+                action_id=action_id,
+                action_type="state_transition",
+                task_id=actual_task_id,
+                identity=identity,
+            )
+
+        # P4: protected mutation Lease 校验（Req 11.8-11.9）
+        # 提供 lease_token/fencing_counter 时启用受保护写路径；校验失败在写入前拒绝。
+        if lease_token is not None and fencing_counter is not None:
+            ok_l, lease_reason = self.validate_lease_for_mutation(
+                actual_task_id, "implementer", lease_token, fencing_counter, identity
+            )
+            if not ok_l:
+                return {
+                    "error": lease_reason["code"],
+                    "reason": lease_reason,
+                    "task_id": task_id,
+                    "step_id": step_id,
+                }
 
         # 更新步骤状态、结果和完成时间
         self.conn.execute(
@@ -1688,6 +1738,9 @@ class TaskMixin:
         self,
         task_id: str,
         reviewer: str = "reviewer",
+        identity: Optional[Dict[str, Any]] = None,
+        lease_token: Optional[str] = None,
+        fencing_counter: Optional[int] = None,
     ) -> Dict[str, Any]:
         """审核通过：将任务状态从 review 改为 applied
 
@@ -1702,15 +1755,83 @@ class TaskMixin:
         - 若全部 applied/closed → 原子级联 close：所有 applied 兄弟 + 自己 + 父任务
         - 否则保持 applied，等待其他兄弟任务被 apply
 
+        P3 强化（Req 10.1, 10.5-10.7, 13.3-13.5）：
+        - 接收已验证的 identity 并记录审计
+        - apply 强制 actor session 不同于 implementer session（Req 1.5, 10.2）
+        - Identity 仅作 actor attribution，不引入 assignment/lease 权限
+        - 缺失 identity 时仍可执行（向后兼容），但不会记录身份审计
+
+        P4 强化（Req 11.8-11.9）：
+        - 提供 lease_token/fencing_counter 时启用受保护写路径（role=reviewer）
+        - 过期 / token hash 不匹配 / 旧 counter 均在写入前拒绝，不改变 task data
+
         Args:
             task_id: 任务 ID
             reviewer: 审核人标识
+            identity: P3 可选的审核者 Identity（CLI 传入关键字为 identity）
+            lease_token: P4 可选的 Lease raw token（提供时启用受保护写校验）
+            fencing_counter: P4 可选的当前 fencing counter
 
         Returns:
             包含 task_id、status、applied_at 的字典；失败时包含 error 字段。
             若触发级联，额外返回 cascaded_close 字段（自动 close 的 task_id 列表）。
         """
         now = time.time()
+
+        # P3: 校验并记录审核者 Identity（Req 10.1, 10.5-10.7）
+        # Identity 仅作 actor attribution，不等于 assignment/lease/ownership
+        if identity is not None:
+            ok, id_reason = self.validate_action_identity(identity)
+            if not ok:
+                return {
+                    "error": "ERR_IDENTITY_INCOMPLETE",
+                    "reason": id_reason,
+                    "task_id": task_id,
+                }
+
+            # P3: apply 强制 session 分离（Req 1.5, 10.2）
+            # 查找 implementer 的 Identity，校验 reviewer session != implementer session
+            impl_identity = self.get_task_identity_by_role(task_id, "implementer")
+            if impl_identity:
+                impl_id_dict = {
+                    "agent_id": impl_identity.get("agent_id", ""),
+                    "session_id": impl_identity.get("session_id", ""),
+                    "model_id": impl_identity.get("model_id", ""),
+                    "role": impl_identity.get("role", ""),
+                }
+                sep_ok, sep_reason = self.validate_session_separation(
+                    identity, impl_id_dict
+                )
+                if not sep_ok:
+                    return {
+                        "error": "ERR_IDENTITY_SESSION_NOT_SEPARATED",
+                        "reason": sep_reason,
+                        "task_id": task_id,
+                        "status": "review",
+                    }
+
+            # 记录身份到 action_identities
+            action_id = f"ACT-apply-{task_id}-{int(now * 1000)}"
+            self.record_action_identity(
+                action_id=action_id,
+                action_type="state_transition",
+                task_id=task_id,
+                identity=identity,
+            )
+
+        # P4: protected mutation Lease 校验（Req 11.8-11.9）
+        if lease_token is not None and fencing_counter is not None:
+            ok_l, lease_reason = self.validate_lease_for_mutation(
+                task_id, "reviewer", lease_token, fencing_counter, identity
+            )
+            if not ok_l:
+                return {
+                    "error": lease_reason["code"],
+                    "reason": lease_reason,
+                    "task_id": task_id,
+                    "status": "review",
+                }
+
         cur = self.conn.execute(
             "SELECT status, parent_id FROM tasks WHERE id = ?",
             (task_id,),
@@ -1897,6 +2018,9 @@ class TaskMixin:
         self,
         task_id: str,
         reviewer: str = "reviewer",
+        identity: Optional[Dict[str, Any]] = None,
+        lease_token: Optional[str] = None,
+        fencing_counter: Optional[int] = None,
     ) -> Dict[str, Any]:
         """关闭任务：将任务状态从 applied 改为 closed
 
@@ -1907,14 +2031,57 @@ class TaskMixin:
         （_cascade_close_if_ready 在最后一个子任务 apply 时原子完成）。
         若手动 close 父任务，返回 error 提示由级联触发。
 
+        P3 强化（Req 10.1, 10.5-10.7, 13.3-13.5）：
+        - 接收已验证的 identity 并记录审计
+        - close 仍只收尾，不强制 session 分离（close 不是 apply）
+        - Identity 仅作 actor attribution，不引入 assignment/lease 权限
+
+        P4 强化（Req 11.8-11.9）：
+        - 提供 lease_token/fencing_counter 时启用受保护写路径（role=reviewer）
+        - 过期 / token hash 不匹配 / 旧 counter 均在写入前拒绝，不改变 task data
+
         Args:
             task_id: 任务 ID
             reviewer: 审核人标识
+            identity: P3 可选的关闭者 Identity（CLI 传入关键字为 identity）
+            lease_token: P4 可选的 Lease raw token（提供时启用受保护写校验）
+            fencing_counter: P4 可选的当前 fencing counter
 
         Returns:
             包含 task_id、status、closed_at 的字典；失败时包含 error 字段和 reason 字段
         """
         now = time.time()
+
+        # P3: 记录关闭者 Identity（close 仍只收尾，不强制 session 分离）
+        if identity is not None:
+            ok, id_reason = self.validate_action_identity(identity)
+            if not ok:
+                return {
+                    "error": "ERR_IDENTITY_INCOMPLETE",
+                    "reason": id_reason,
+                    "task_id": task_id,
+                }
+            action_id = f"ACT-close-{task_id}-{int(now * 1000)}"
+            self.record_action_identity(
+                action_id=action_id,
+                action_type="state_transition",
+                task_id=task_id,
+                identity=identity,
+            )
+
+        # P4: protected mutation Lease 校验（Req 11.8-11.9）
+        if lease_token is not None and fencing_counter is not None:
+            ok_l, lease_reason = self.validate_lease_for_mutation(
+                task_id, "reviewer", lease_token, fencing_counter, identity
+            )
+            if not ok_l:
+                return {
+                    "error": lease_reason["code"],
+                    "reason": lease_reason,
+                    "task_id": task_id,
+                    "status": "applied",
+                }
+
         cur = self.conn.execute(
             "SELECT status FROM tasks WHERE id = ?",
             (task_id,),
@@ -2006,6 +2173,9 @@ class TaskMixin:
         task_id: str,
         reviewer: str = "reviewer",
         reason: str = "",
+        identity: Optional[Dict[str, Any]] = None,
+        lease_token: Optional[str] = None,
+        fencing_counter: Optional[int] = None,
     ) -> Dict[str, Any]:
         """显式 reopen 任务：将任务从 review/applied/closed 状态回到 in_progress
 
@@ -2019,16 +2189,58 @@ class TaskMixin:
         - open/in_progress：无需 reopen，返回提示
         - 父任务 reopen 时递归向上 reopen 祖父任务链
 
+        P3 强化（Req 10.1, 10.5-10.7, 13.3-13.5）：
+        - 接收已验证的 identity 并记录审计
+        - reopen 不强制 session 分离（reopen 不是 apply）
+        - Identity 仅作 actor attribution，不引入 assignment/lease 权限
+
+        P4 强化（Req 11.8-11.9）：
+        - 提供 lease_token/fencing_counter 时启用受保护写路径（role=reviewer）
+        - 过期 / token hash 不匹配 / 旧 counter 均在写入前拒绝，不改变 task data
+
         Args:
             task_id: 任务 ID
             reviewer: 审核人标识
             reason: reopen 原因（可选）
+            identity: P3 可选的发起者 Identity（CLI 传入关键字为 identity）
+            lease_token: P4 可选的 Lease raw token（提供时启用受保护写校验）
+            fencing_counter: P4 可选的当前 fencing counter
 
         Returns:
             包含 task_id、status、previous_status、reopened_at 的字典；
             失败时包含 error 字段
         """
         now = time.time()
+
+        # P3: 记录 reopen 发起者 Identity（reopen 不强制 session 分离）
+        if identity is not None:
+            ok, id_reason = self.validate_action_identity(identity)
+            if not ok:
+                return {
+                    "error": "ERR_IDENTITY_INCOMPLETE",
+                    "reason": id_reason,
+                    "task_id": task_id,
+                }
+            action_id = f"ACT-reopen-{task_id}-{int(now * 1000)}"
+            self.record_action_identity(
+                action_id=action_id,
+                action_type="state_transition",
+                task_id=task_id,
+                identity=identity,
+            )
+
+        # P4: protected mutation Lease 校验（Req 11.8-11.9）
+        if lease_token is not None and fencing_counter is not None:
+            ok_l, lease_reason = self.validate_lease_for_mutation(
+                task_id, "reviewer", lease_token, fencing_counter, identity
+            )
+            if not ok_l:
+                return {
+                    "error": lease_reason["code"],
+                    "reason": lease_reason,
+                    "task_id": task_id,
+                }
+
         cur = self.conn.execute(
             "SELECT status FROM tasks WHERE id = ?",
             (task_id,),

@@ -26,7 +26,7 @@ pub const EXTRACTION_CONFIG_VERSION: &str = "v1";
 
 /// Schema 版本（与 db/schema.py SCHEMA_VERSION 对应）
 /// 注意：这是 Rust 侧的镜像常量，真相源在 db/schema.py
-pub const SCHEMA_VERSION: u32 = 43;
+pub const SCHEMA_VERSION: u32 = 44;
 
 /// CAS 状态：building（正在写入 payload）
 pub const CAS_STATE_BUILDING: &str = "building";

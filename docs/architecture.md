@@ -20,7 +20,7 @@
                             ▼
 ┌───────────────────────────────────────────────────────────────┐
 │                  CodeGraphDB (db.py)                          │
-│         35 个功能 Mixin + 1 基类多继承组装的统一数据库类      │
+│         43 个功能 Mixin + 1 基类多继承组装的统一数据库类      │
 │  CodeGraphBase + BuildMixin + QueryMixin + ... + CheckGateMixin│
 └────────────────────────────┬──────────────────────────────────┘
                              │
@@ -36,7 +36,7 @@
 ┌───────────────────────────────────────────────────────────────┐
 │              SQLite 数据库（用户级单库）                       │
 │   $HOME/.callwarden/callwarden.db                              │
-│   Schema v42 / WAL 模式 / 40+ 表 / 40 个功能 Mixin + 1 基类    │
+│   Schema v46 / WAL 模式 / 40+ 表 / 43 个功能 Mixin + 1 基类    │
 │   多 workspace 通过 workspace_id 逻辑隔离                      │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -46,7 +46,7 @@
 | 层 | 职责 | 关键文件 |
 |----|------|----------|
 | 接入层 | CLI 命令解析、MCP 协议处理 | `cli/main.py`、`server/mcp_server.py` |
-| 业务层 | 35 个功能 Mixin + 1 基类（含 analyzers 3 个） | `db.py` + `db_*.py`（40 个文件） |
+| 业务层 | 43 个功能 Mixin + 1 基类（含 analyzers 3 个） | `db.py` + `db_*.py`（48 个文件） |
 | 解析层 | tree-sitter 多语言解析、调用关系提取 | `parsers/`（18 个文件） |
 | 分析层 | 调用链、覆盖率、缺陷检测 | `analyzers/`（6 个文件） |
 | 加速层 | PyO3 Rust 扩展（可选） | `rust_ext/` |
@@ -71,7 +71,7 @@ $HOME/.callwarden/callwarden.db
 
 ### Schema 版本
 
-当前 Schema 版本：**v41**
+当前 Schema 版本：**v46**
 
 ```
 v4  Git 集成表（git_commits / git_file_changes / git_symbol_changes）
@@ -110,6 +110,10 @@ v39 call_chain_up/down 加速索引 idx_call_versions_callee_current（BFS 按 c
 v40 A14 增量扫描 — semgrep_findings 加 scan_id 字段 + 索引（关联 finding 到 scan，支持增量清理）
 v41 P1-2 修复 — 跨仓库依赖去重 UNIQUE 索引（detect_cross_repo_deps 五元组幂等）
 v42 迁移回滚配置表（rollback_config，全量 Rust 迁移自举计划用：每个功能子任务 wire-production step 登记生产入口/回滚入口/回滚窗口）
+v43 P1 契约驱动事件表（task_contract_revisions / task_role_view_events / task_verdict_events / task_evidence_events / task_gate_decisions + verifier_registry / verifier_revocation_records / evidence_retention_config，append-only）
+v44 P2 依赖图与环检测表（task_dependencies / artifact_identities / interface_identities / interface_provider_selections / dependency_edges + 索引，artifact/interface identity 与 freshness）
+v45 P3 Identity/Attestation 表（action_identities / attestation_records / attestation_revocation_records，Agent 身份审计：agent_id/session_id/model_id/role + 撤销账本 Revocation_Mode CHECK 约束）
+v46 P4 assignment/lease 表（task_assignments / task_leases / task_lease_events，token 只存 hash，同 task+role 单一当前 lease 部分唯一索引）
 ```
 
 Schema 迁移在 `db_base.py` 中自动执行（启动时检测版本并增量 ALTER TABLE）。每个版本迁移函数命名为 `_migrate_v<N>_to_v<N+1>`，使用 `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN` 保证幂等性。
@@ -324,7 +328,7 @@ CodeGraphDB 通过 **35 个功能 Mixin 多继承**组装（不含 db_base.py �
 - **易于扩展**：新增功能只需添加新 Mixin
 - **避免上帝类**：`db.py` 仅 92 行，职责在 40 个文件中分散
 
-### Mixin 列表（35 个功能 Mixin + 1 基类 = 36 项）
+### Mixin 列表（43 个功能 Mixin + 1 基类 = 44 项）
 
 | # | Mixin | 文件 | 职责 |
 |---|-------|------|------|
@@ -369,6 +373,13 @@ CodeGraphDB 通过 **35 个功能 Mixin 多继承**组装（不含 db_base.py �
 | 39 | ToolchainMixin | db_toolchain.py | Toolchain CAS：工具链注册与存储 |
 | 40 | WorkspaceManifestMixin | db_workspace_manifest.py | Workspace manifest：clean snapshot 和 dirty overlay |
 | 41 | RollbackConfigMixin | db_rollback_config.py | 迁移回滚配置：rollback_config 表注册/查询/紧急回滚开关（schema v42，全量 Rust 迁移自举计划用） |
+| 42 | TaskContractsMixin | db_task_contracts.py | P1 契约驱动协作：Canonical Envelope、revision 发布、Contract_Hash（schema v43） |
+| 43 | TaskReviewsMixin | db_task_reviews.py | P3 独立审核证明：blind verdict/reveal/amendment、reviewer/implementer Identity（Req 10.1-10.5） |
+| 44 | TaskEvidenceMixin | db_task_evidence.py | P1 Evidence 账本：快照绑定、追加式 Evidence 与 freshness（schema v43） |
+| 45 | TaskGateMixin | db_task_gate.py | Evidence Gate 判定内核：Blocking Clause、Profile_Policy_Matrix、Identity fail-closed（P1+P3） |
+| 46 | TaskDependenciesMixin | db_task_dependencies.py | P2 依赖模型：四类依赖、artifact/interface identity、环检测（schema v44） |
+| 47 | TaskIdentityMixin | db_task_identity.py | P3 Identity/Attestation：action 身份记录、会话/家族分离、daemon Attestation 校验、撤销派生（schema v45） |
+| 48 | LeaseMixin | db_task_leases.py | P4 安全 Lease：assignment、token hash、fencing counter、append-only 事件（schema v46） |
 
 ### 组装方式
 
@@ -380,9 +391,10 @@ class CodeGraphDB(
     BuildMixin,
     QueryMixin,
     CommentMixin,
-    # ... 共 35 个功能 Mixin（不含 CodeGraphBase）
+    # ... 共 43 个功能 Mixin（不含 CodeGraphBase）
     CheckGateMixin,
     AgentRulesMixin,
+    TaskIdentityMixin,
 ):
     """代码知识图谱数据库 - 整合所有功能模块的主类"""
 
@@ -391,6 +403,33 @@ class CodeGraphDB(
 ```
 
 所有 Mixin 共享同一个 SQLite 连接和游标（由 CodeGraphBase 提供），通过 `self.conn` 和 `self.cursor` 访问数据库。
+
+## P3 Identity 与 Attestation 架构（Req 10.1-10.18, 13.4）
+
+P3 把「谁以哪个 agent/session/model 执行动作」与任务授权解耦：
+
+- **Identity**：`action_identities` 表记录每次 contract/view/verdict/evidence/gate/
+  state_transition 动作的 `agent_id/session_id/model_id/role`（Req 10.1），四字段
+  必填、缺失即 fail closed，**不得**由 reviewer 自由文本或 ownership 补齐（Req 10.5）。
+- **分离校验**：`validate_session_separation`（Reviewer ≠ Implementer session，
+  Req 10.2）、`validate_agent_family_separation` / `validate_model_family_separation`
+  （high_risk 策略，Req 10.4）。
+- **Attestation**：`attestation_records` 表保存 daemon 签发的 Attestation（Req 10.8,
+  14.13），绑定 Peer_Identity 派生的 Identity、记录标识、View_Manifest hash 与
+  Contract_Hash；客户端自签、issuer 非 daemon、绑定失败或越窗一律判 `invalid`（Req 10.9）。
+- **撤销**：`attestation_revocation_records` 是不可变、只追加的账本；每次撤销只追加
+  **一条**记录（issuer + 签名密钥键控），`Revocation_Mode` 必填且无默认值
+  （`compromised` / `rotated`，Req 10.12）。`invalid` 由查询层按模式语义派生
+  （`compromised` 忽略签发时间全量失效；`rotated` 仅晚于撤销时间的记录失效，
+  Req 10.13-10.15），**不写入**逐条失效事件（Req 10.10），既有 payload 逐字节不变
+  （Req 10.17）；个体失效仍按 Req 6.6 追加事件（Req 10.18）。
+- **边界**：Identity 只作 actor attribution，**不等于** assignment、lease、
+  ownership 或 SQLite 写锁（Req 10.7, 13.4）；workspace `active_task_id` 仅作 UX 光标，
+  不转移身份或授权。
+- **调用面**：写操作（任务状态转换、撤销）走 CLI / MCP 写工具；只读查询
+  （`get_action_identity` / `check_action_identity` / `check_session_separation` /
+  `get_attestation_validity` / `list_attestation_revocations`）返回查询时刻的派生值，
+  不持久化派生状态。
 
 ## Agent Rule Memory 架构
 
@@ -927,7 +966,7 @@ def new_tool(param: str) -> dict:
 Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprecated 为辅"** 的长期命令风格方向。本节说明总体方向、12 主分类设计、迁移时间线与设计决策。
 
 > 相关审计文档：`.cli_audit.md`（CLI/MCP 参数一致性审计）、`.mcp_audit.md`（MCP 工具命名审计）。
-> 相关用户文档：[CLI 命令参考 - 命令概览（按 12 大功能分类）](cli_reference.md#命令概览按-12-大功能分类)、[MCP 工具参考 - 按 12 大功能分类](mcp_tools.md#按-12-大功能分类)。
+> 相关用户文档：[CLI 命令参考 - 命令概览（按 13 大功能分类）](cli_reference.md#命令概览按-13-大功能分类)、[MCP 工具参考 - 按 12 大功能分类](mcp_tools.md#按-12-大功能分类)。
 
 ### 总体方向
 
@@ -944,7 +983,7 @@ Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprec
 
 ### 12 主分类设计
 
-Call Warden 把 145+ 个 CLI 命令和 210 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
+Call Warden 把 145+ 个 CLI 命令和 235 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
 
 | # | 主分类 | CLI 涵盖范围 | MCP 工具数 |
 |---|--------|-------------|-----------|
@@ -1224,8 +1263,189 @@ P1 未启用时返回 `planned/unavailable` 结构化响应（Requirement 13.1�
 - [设计文档](design/multi-llm-contract-driven-collaboration-design.md)：Property 13–28 的形式化定义
 - [实施状态](design/implementation-status.md)：D0 各子任务交付状态
 
+## P2 依赖图与环检测架构
+
+P2 阶段实现了 artifact/interface 依赖关系校验与环检测，覆盖 Requirements 9.1-9.10。
+
+### 核心表结构（Schema v44 新增）
+
+| 表 | 用途 | Req |
+|----|------|-----|
+| `task_dependencies` | 四类依赖声明（requires_existing/artifact/provides_interface/requires_interface） | 9.1 |
+| `artifact_identities` | artifact identity/hash/freshness（producing/fresh/stale） | 9.3 |
+| `interface_identities` | interface identity/version/hash | 9.4-9.5 |
+| `interface_provider_selections` | 多 provider 时的显式选择 | 9.9 |
+| `dependency_edges` | 去重后的硬依赖图边（provider→consumer） | 9.6 |
+
+### 依赖类型与边归一化
+
+```
+requires_existing      → 只验证存在性，不建边（Req 9.2）
+requires_artifact      → 硬边 provider→consumer，阻断直到 artifact fresh（Req 9.3）
+provides_interface     → 记录 interface identity，不建边（Req 9.4）
+requires_interface     → 硬边 provider→consumer，必须有匹配的 provider（Req 9.5）
+is_informational=true  → 不阻断、不参与排序（Req 9.8）
+```
+
+### 环检测与原子拒绝
+
+`publish_envelope_revision` 在写入 revision 后自动：
+1. 导入 `Envelope.dependencies` 到 `task_dependencies` 表
+2. 调用 `build_hard_dependency_edges` 构建硬依赖图边
+3. 调用 `detect_cycle` 检测环
+4. 有环则原子回滚（删除刚写入的 revision/dependencies/edges）并抛 `HARD_CYCLE_DETECTED`
+
+### Gate 集成
+
+`evaluate_evidence_gate` 在判定前自动检查：
+- `requires_artifact` 依赖：provider artifact 必须 fresh（Req 9.3）
+- `requires_interface` 依赖：必须有匹配的 provider（Req 9.5）
+
+### 边界声明（Req 9.10）
+
+P2 **只做**无环校验和诊断，**不提供**：
+- 自动排程或 DAG scheduler
+- 资源优化或负载均衡
+- 自动 assignment 或任务分派
+- 抢占或优先级调度
+
+### 相关文档
+
+- [CLI 命令参考 - cw dependency](cli_reference.md#cw-dependencyp2-依赖图与环检测诊断)：5 个子命令详情
+- [MCP 工具参考 - 依赖图与环检测工具](mcp_tools.md#依赖图与环检测工具p2-req-91-910)：10 个 MCP 工具详情
+- [实施状态 - P2 已实现能力清单](design/implementation-status.md#p2-已实现能力清单)：15 项能力清单
+
+## P3 Agent 身份审计（Schema v45）
+
+P3 阶段实现 Agent 身份审计（Requirements 10.1-10.18），为 contract/view/verdict/evidence/gate/state_transition
+动作记录 agent_id/session_id/model_id/role，并引入 daemon 签发的 Attestation 与撤销账本。
+
+### 核心表结构（Schema v45 新增）
+
+| 表 | 用途 | Req |
+|----|------|-----|
+| `action_identities` | contract/view/verdict/evidence/gate/state_transition 动作的 actor Identity（agent_id/session_id/model_id/role） | 10.1 |
+| `attestation_records` | daemon 签发的 Attestation（issuer/signing_key_id/peer_identity/contract_hash/有效期窗口） | 10.8 |
+| `attestation_revocation_records` | 撤销账本（单条记录对应一次撤销，Revocation_Mode CHECK 约束：compromised/rotated） | 10.10-10.12 |
+
+### Identity 校验与分离策略
+
+```
+validate_action_identity     → 四字段（agent_id/session_id/model_id/role）必填，缺失拒绝（Req 10.1）
+validate_session_separation  → Reviewer Session != Implementer Session（Req 1.5, 10.2）
+validate_agent_family_separation → high_risk：Implementer/Reviewer/Tester 必须来自不同 agent 家族（Req 10.3）
+validate_model_family_separation → high_risk：Implementer/Reviewer 必须来自不同 model 家族（Req 10.4）
+```
+
+### Attestation 校验与撤销语义
+
+```
+issuer 必须为 daemon（Req 14.13）；peer_identity == issuer 判自签 invalid（Req 10.8）
+contract_hash / view_manifest_hash 绑定不一致 → invalid
+valid_from <= 判定时间 <= valid_until，越窗 → invalid
+撤销：compromised → 匹配 issuer+签名密钥的全部记录 invalid；
+      rotated → 仅签发时间晚于撤销时间的记录 invalid（例行轮换不判死历史账本）
+invalid 由查询时派生（derive_attestation_validity），不写入逐条失效事件
+```
+
+### Identity fail-closed 接入 Evidence Gate
+
+`evaluate_evidence_gate` 的 P3 强化（Req 1.5, 10.2, 10.8-10.18）：
+- 缺失/不完整的 reviewer_identity → 排除 verdict clause satisfaction（`ERR_IDENTITY_MISSING` / `ERR_IDENTITY_INCOMPLETE`）
+- apply session 必须不同于 implementer session（`ERR_IDENTITY_SESSION_NOT_SEPARATED`）
+- attestation 越窗/自签/issuer 不符/被撤销 → verdict/Evidence 判 invalid（`ERR_ATTESTATION_INVALID`）
+- gate decision 记录 issuer/signing_key_id/issued_at（Req 6.22 对称），保证撤销状态时点可重算
+
+### task mutation 身份审计
+
+`task_report_step` / `task_apply` / `task_close` / `task_reopen` 接受 `identity` 参数（CLI `--agent-id/--session-id/--model-id/--role`，MCP JSON 字符串）。
+- `task_apply` 强制 session 分离（同 session 拒绝）
+- `task_close`/`task_reopen` 仅记录身份、仍只收尾（close/reopen 不是 apply）
+- 缺失 identity 时向后兼容，但不会记录身份审计
+
+## P4 Assignment 与安全 Lease 架构（Req 11.1-11.13, 13.4-13.10, 14.6, 14.11-14.12, 14.30-14.32）
+
+### 核心表结构（Schema v46 新增）
+
+```sql
+-- task_assignments：task+role+holder Identity 绑定（Req 11.1）
+--   不把 workspace active_task_id 当作 assignment authority（Req 13.4）
+CREATE TABLE task_assignments (
+    workspace_id INTEGER NOT NULL, assignment_id TEXT UNIQUE, task_id TEXT NOT NULL,
+    role TEXT NOT NULL, agent_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    model_id TEXT NOT NULL, status TEXT DEFAULT 'active', created_at REAL NOT NULL,
+    revoked_at REAL DEFAULT NULL
+);
+
+-- task_leases：当前与历史 Lease（Req 11.2-11.9）
+--   只存 token_hash（sha256），永不存 raw token；时间一律权威时钟（Req 14.11）；
+--   partial UNIQUE 索引保证同 task+role 只有一个当前 lease
+CREATE TABLE task_leases (
+    workspace_id INTEGER NOT NULL, lease_id TEXT UNIQUE, task_id TEXT NOT NULL,
+    role TEXT NOT NULL, agent_id TEXT NOT NULL, session_id TEXT NOT NULL,
+    model_id TEXT NOT NULL, token_hash TEXT NOT NULL, fencing_counter INTEGER NOT NULL,
+    acquired_at REAL NOT NULL, expires_at REAL NOT NULL, renewed_at REAL DEFAULT NULL,
+    released_at REAL DEFAULT NULL, status TEXT DEFAULT 'active'
+);
+CREATE UNIQUE INDEX idx_task_leases_active_unique
+    ON task_leases(workspace_id, task_id, role) WHERE status = 'active';
+
+-- task_lease_events：append-only 审计事件（Req 11.6, 11.12），raw token 永不落库
+CREATE TABLE task_lease_events (
+    workspace_id INTEGER NOT NULL, event_id TEXT UNIQUE, lease_id TEXT NOT NULL,
+    task_id TEXT NOT NULL, role TEXT NOT NULL, event_type TEXT NOT NULL,
+    fencing_counter INTEGER NOT NULL, event_at REAL NOT NULL,
+    actor_agent_id TEXT NOT NULL, actor_session_id TEXT NOT NULL,
+    actor_model_id TEXT NOT NULL, detail TEXT DEFAULT ''
+);
+```
+
+### Lease 生命周期语义
+
+- **acquire（Req 11.2-11.3）**：`BEGIN IMMEDIATE` 原子比较当前状态——未过期 active lease
+  拒绝（`E_LEASE_ACTIVE_EXISTS`），已过期则置 expired 后覆盖；fencing counter 取该
+  task+role 全部历史最大 counter + 1（单调递增）。raw token 仅本次响应返回一次。
+- **renew（Req 11.4-11.5）**：要求当前 token hash / holder Identity / 未过期；从权威时钟
+  设置更晚 expires_at。幂等：重复有效 renew 不递增 counter、不创建新 lease。
+- **release（Req 11.6-11.7）**：当前 token 匹配时原子追加 release 事件并置 released。
+  幂等：重复 release 返回同一 released 状态（不改变 counter，不创建第二个 active lease）。
+- **过期判定**：一律以权威时钟（Authoritative_Clock，Req 14.11）判定；客户端时间戳只作
+  参考元数据（Req 14.12）。
+
+### protected mutation 与 fencing（Req 11.8-11.11）
+
+`task_report_step`（implementer）/ `task_apply`/`task_close`/`task_reopen`（reviewer）/
+`submit_blind_verdict`（reviewer）/ `trigger_reveal_event`（implementer）/
+`append_evidence` / `publish_envelope_revision` 接受可选 `lease_token` + `fencing_counter`：
+- 校验项：active lease 存在、token hash 匹配、未过期、fencing counter 等于当前 counter、
+  holder Identity 匹配（可选）
+- 任一失败在**写入前**拒绝且不改变 task data（`E_LEASE_*` 结构化拒绝，Req 1.12）
+- 旧 counter 即使 token 正确也拒绝——旧持有者在新 lease 生效后无法写入（Property 11）
+- **Lease 校验通过不代表 mutation 被授权**：角色权限、Independent Review、Evidence Gate
+  仍然适用（Req 11.11）；SQLite 写锁只做短事务互斥，不提供业务 ownership（Req 11.10）；
+  Protected_Mutation 的全序由 daemon 串行化点应用（daemon 不可用时 Governance_Write fail closed）
+
+### Lease 边界（正面陈述，Req 11.13, 14.32）
+
+- Lease 保证 **daemon 在线期间**的并发正确性（单一持有者 + fencing），
+  **不**提供自动 dispatch、抢占或中央调度
+- 防篡改保证归属 Attestation 校验与追加式 Evidence_Ledger，**不**防止离线直接改库
+- `claimed_by`/`claimed_at` 类字段（若存在）只作非 lease 元数据，不参与安全授权（Req 11.12）
+
+### 相关文档
+
+- [MCP 工具参考 - Assignment 与 Lease 工具](mcp_tools.md#assignment-与-lease-工具p4-req-111-1113-134-1310)：8 个 MCP 工具详情
+- [实施状态 - P4 已实现能力清单](design/implementation-status.md#p4-已实现能力清单)：P4 能力清单
+- [requirements.md - Requirement 11 Assignment 与 Lease](design/requirements.md)
+
+### 相关文档
+
+- [MCP 工具参考 - Identity 与 Attestation 工具](mcp_tools.md#identity-与-attestation-工具p3-req-101-1018)：6 个 MCP 工具详情
+- [实施状态 - P3 已实现能力清单](design/implementation-status.md#p3-已实现能力清单)：11 项能力清单
+- [requirements.md - Requirement 10 Identity 与 Attestation](design/requirements.md)
+
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：210 个工具详情
+- [MCP 工具参考](mcp_tools.md)：235 个工具详情
 - [CLI 命令参考](cli_reference.md)：145+ 命令详情
 - [部署指南](deployment.md)：Docker 部署与升级

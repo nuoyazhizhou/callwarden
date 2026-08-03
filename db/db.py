@@ -76,6 +76,12 @@ from .db_tests import TestRelationMixin
 from .db_dashboard import DashboardMixin
 from .db_rollback_config import RollbackConfigMixin
 from .db_task_contracts import TaskContractsMixin
+from .db_task_reviews import TaskReviewsMixin
+from .db_task_evidence import TaskEvidenceMixin
+from .db_task_gate import TaskGateMixin
+from .db_task_dependencies import TaskDependenciesMixin
+from .db_task_identity import TaskIdentityMixin
+from .db_task_leases import LeaseMixin
 from ..analyzers import CallChainMixin, IssueAnalyzerMixin
 
 
@@ -118,6 +124,12 @@ class CodeGraphDB(
     DashboardMixin,
     RollbackConfigMixin,
     TaskContractsMixin,
+    TaskReviewsMixin,
+    TaskEvidenceMixin,
+    TaskGateMixin,
+    TaskDependenciesMixin,
+    TaskIdentityMixin,
+    LeaseMixin,
 ):
     """代码知识图谱数据库
 

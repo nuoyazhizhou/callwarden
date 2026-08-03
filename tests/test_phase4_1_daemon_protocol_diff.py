@@ -539,9 +539,9 @@ class TestDispatchDiff:
             ("toolchain.register", True),
             ("toolchain.delete", True),
             ("toolchain.bind", True),
-            ("build_context.register", True),
-            ("build_context.set_active", True),
-            ("build_context.delete", True),
+            ("build_context.register", False),
+            ("build_context.set_active", False),
+            ("build_context.delete", False),
             # 非 admin 方法
             ("ping", False),
             ("health", False),

@@ -127,4 +127,4 @@ pub mod parser_metrics;
 /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
 /// 更新 schema 时记得同步修改。
-pub const SCHEMA_VERSION: u32 = 43;
+pub const SCHEMA_VERSION: u32 = 44;

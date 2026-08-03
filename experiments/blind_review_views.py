@@ -305,6 +305,37 @@ def _has_notes(notes: Any) -> bool:
     return True
 
 
+def _find_prohibited_field(value: Any) -> Optional[str]:
+    """递归查找禁止披露字段，防止嵌套对象绕过盲视图 allowlist。
+
+    来源事实通常来自固定 SQL 列，但实验 API 也接受结构化测试数据和实现者说明。
+    这些输入若携带隐藏推理或既有 verdict，必须 fail-closed，而不是把整个对象写入
+    JSONL 后再依赖调用方自觉清理。
+    """
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in PROHIBITED_FIELDS or key == "hidden_reasoning":
+                return key
+            found = _find_prohibited_field(nested)
+            if found:
+                return found
+    elif isinstance(value, (list, tuple, set)):
+        for nested in value:
+            found = _find_prohibited_field(nested)
+            if found:
+                return found
+    return None
+
+
+def _assert_no_prohibited_fields(task_id: str, value: Any) -> None:
+    """断言值及其嵌套对象不含任何禁止披露字段。"""
+    field_name = _find_prohibited_field(value)
+    if field_name:
+        raise ViewDisclosureError(make_view_reason(
+            ViewErrorCode.DISCLOSURE_VIOLATION,
+            task_id=task_id, field=field_name))
+
+
 def build_minimal_blind_view(
     task_id: str,
     source: BlindViewSourceFacts,
@@ -359,10 +390,13 @@ def build_minimal_blind_view(
             raise ViewDisclosureError(make_view_reason(
                 ViewErrorCode.VIEW_SOURCE_MISSING, task_id=task_id, field=required))
 
-    # 由现有字段构成 payload（Req 12.25 的 allowlist 字段）。
+    # 由现有字段构成 payload（Req 12.25 的 allowlist 字段）。先做递归禁止字段
+    # 检查，再复制值，避免调用方在记录写入前修改嵌套对象造成披露边界漂移。
     payload: Dict[str, Any] = {}
     for fname in MINIMAL_BLIND_VIEW_FIELDS:
-        payload[fname] = source.source_field(fname)
+        value = source.source_field(fname)
+        _assert_no_prohibited_fields(task_id, value)
+        payload[fname] = value
     disclosed_fields: List[str] = list(MINIMAL_BLIND_VIEW_FIELDS)
 
     # Implementer_Notes 条件披露：
@@ -374,12 +408,14 @@ def build_minimal_blind_view(
     excluded_fields: List[str] = list(PROHIBITED_FIELDS)  # 禁止字段恒排除
     if group == BlindViewGroup.CONTROL:
         if _has_notes(implementer_notes):
+            _assert_no_prohibited_fields(task_id, implementer_notes)
             payload[IMPLEMENTER_NOTES_FIELD] = implementer_notes
             notes_included = True
         disclosed_fields.append(IMPLEMENTER_NOTES_FIELD)  # Control 披露清单含 notes 槽位
     else:  # TREATMENT
         if phase == BlindViewPhase.POST_REVEAL and first_verdict_sealed:
             if _has_notes(implementer_notes):
+                _assert_no_prohibited_fields(task_id, implementer_notes)
                 payload[IMPLEMENTER_NOTES_FIELD] = implementer_notes
                 notes_included = True
             disclosed_fields.append(IMPLEMENTER_NOTES_FIELD)
@@ -479,11 +515,8 @@ def build_verdict_change_record(
         raise ViewDisclosureError(make_view_reason(
             ViewErrorCode.INVALID_SAMPLE,
             task_id=task_id, reason=f"unknown_verdict_change_reason:{change_reason_code}"))
-    # structured_reason 内也不得携带隐藏推理键（防御性）。
-    if isinstance(structured_reason, dict) and _has_notes(structured_reason.get("hidden_reasoning")):
-        raise ViewDisclosureError(make_view_reason(
-            ViewErrorCode.DISCLOSURE_VIOLATION,
-            task_id=task_id, field="hidden_reasoning_history"))
+    # structured_reason 内也不得携带隐藏推理键（防御性），包括嵌套对象。
+    _assert_no_prohibited_fields(task_id, structured_reason)
 
     return {
         "record_type": "verdict_change",

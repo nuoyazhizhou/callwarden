@@ -292,10 +292,10 @@ db.conn.commit()
 
 ### 写命令（需激活 workspace，可能撞锁）
 
-- **子命令**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`、`setup`
+- **子命令**：`task create/next/report/apply/close/rollback/reopen/capture-diff/resolve-finding/completion-review/split`、`rule sync/insert-block`、`defect import/add`、`gc archive/import`、`identity revoke`、`setup`
 - **flag**：`--refresh-all`、`--refresh`、`--watch`、`--register-workspace`、`--set-workspace`、`--delete-workspace`、`--restore-comment`、`--restore-all-comments`、`--coverage-import`
 
-## MCP 工具分组（229 个）
+## MCP 工具分组（235 个）
 
 **查询类**：get_stats、search_symbols、get_symbol、get_callers、get_callees、get_symbol_history、get_file_history、get_recent_changes、get_topological_order
 
@@ -318,6 +318,8 @@ db.conn.commit()
 **缺陷知识库**：defect_search、defect_suggest_fix、defect_learn
 
 **任务编排**：task_create、task_next_step、task_report_step、task_rollback、task_list、task_status
+
+**Identity / Attestation（P3）**：record_action_identity、check_action_identity、get_action_identity、get_attestation_validity、list_attestation_revocations、register_attestation_revocation
 
 **Git 集成**：import_git_history、get_git_commits、get_commit_changes、get_git_stats
 

@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-07-21 · Schema v41 · 35 功能 Mixin（+ CodeGraphBase，40 个 db_*.py 文件）· 206 MCP 工具 · 16 语言
+> 最后更新：2026-08-03 · Schema v46 · 43 个功能 Mixin（+ CodeGraphBase，48 个 db_*.py 文件）· 235 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -10,9 +10,9 @@
 | ----------- | ---- | ----------------------------------------------------------------------------------------- |
 | 支持语言    | 16   | Rust/TypeScript/JavaScript/Python/Kotlin/Go/Java/C/C++/C#/Ruby/PHP/Swift/Scala/HCL/Elixir |
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
-| Schema 版本 | v41  | v3→v41 版本化迁移，事务化执行（v41: P1-2 cross_repo_deps 五元组 UNIQUE 索引）            |
-| Mixin 模块  | 35   | CodeGraphBase + 35 个功能 Mixin（40 个 db_*.py 文件）                                     |
-| MCP 工具    | 206  | FastMCP @mcp.tool() 注册                                                                  |
+| Schema 版本 | v46  | v3→v46 版本化迁移，事务化执行（v44: P2 artifact/interface 依赖与环检测 schema；v45: P3 Identity/Attestation schema：action_identities / attestation_records / attestation_revocation_records；v46: P4 assignment/lease schema） |
+| Mixin 模块  | 43   | CodeGraphBase + 43 个功能 Mixin（48 个 db_*.py 文件）                                     |
+| MCP 工具    | 235  | FastMCP @mcp.tool() 注册（含 10 个 P2 依赖图工具 + 7 个 P3 Identity/Attestation 工具 + 8 个 P4 assignment/lease 工具）    |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
 | 解析器文件  | 18   | tree-sitter 多语言（含 base/call_filter/call_resolver 等辅助模块）                        |
 | 测试套件    | 8    | P0/P1/P2/P3/csharp_ruby/p1_p3/stress/fuzz/gc                                              |
@@ -293,7 +293,7 @@
 | `FrontierComputer::compute_frontier_with_budget` | `rust_ext/src/frontier.rs:182-278` | Rust 唯一真正接入预算的执行点 | ✅ 完整使用 max_depth/max_nodes/timeout_ms + partial 标记 |
 | `bfs_upstream_with_budget` / `bfs_downstream_with_budget` | `rust_ext/src/frontier.rs:367, 415` | frontier 计算内部 BFS | ✅ 由 tracker.is_exceeded() 检查 |
 | Python `SnapshotManagerService` 6 个查询方法 | `server/snapshot_manager.py:232, 253, 275, 310, 336, 355` | 接受可选 `budget` 参数 | ⚠️ 残缺：仅调用 `b.truncate_results()` 后置截断，未调用 `b.visit_node()` |
-| `workspace.file.refresh` 流程 | `rust_ext/src/daemon/workspace.rs:1154, 1222-1227` | daemon save 时构造 frontier | ⚠️ 硬编码 `QueryBudget::default()` + `store=None` 退化模式 |
+| `workspace.file.refresh` 流程 | `rust_ext/src/daemon/workspace.rs:1154, 1222-1235` | daemon save 时构造 frontier | ⚠️ 硬编码 `QueryBudget::default()` + `store=None` 退化模式 |
 
 #### 6.3 Daemon 查询 RPC 的 budget 接入状态
 
@@ -312,7 +312,7 @@
 
 | 方法 | 文件:行 | budget 用法 | 残缺 |
 | ---- | ------- | ----------- | ---- |
-| `query_callers` | snapshot_manager.py:227-246 | `b.truncate_results(result)` 后置截断 | ⚠️ 未传播到 Rust，max_nodes/timeout_ms 不生效 |
+| `query_callers` | snapshot_manager.py:235-246 | `b.truncate_results(result)` 后置截断 | ⚠️ 未传播到 Rust，max_nodes/timeout_ms 不生效 |
 | `query_callees` | snapshot_manager.py:248-267 | 同上 | ⚠️ 同上 |
 | `search_symbols` | snapshot_manager.py:269-292 | 用 `b.max_results` 作 limit | ⚠️ 不调用 `truncate_results()` |
 | `query_symbol` | snapshot_manager.py:294-303 | 不接 budget 参数 | ❌ 无 budget |
@@ -378,13 +378,13 @@ Python `server/daemon_server.py` 确实接入 metrics、health、migration；Lin
 | 设计冻结 | 规格冻结 | ✅ 已冻结 | requirements.md（29×5 条验收标准）、design doc、tasks.md |
 | P0 | 盲评对照实验 | ✅ 已实现 | `experiments/` 模块 + `cw experiment` CLI（13 子命令）+ JSONL 记录 + 评估器 |
 | D0 | 跨平台 daemon 化 | ✅ 已实现 | 三平台端点（UDS/命名管道）、Peer_Credential、串行化点、Authoritative_Clock、Attestation、Stage_Toggle、稳定错误码、自动唤起与互斥、Degraded_Mode 分流、4 个只读 MCP 工具 |
-| P1 | 契约驱动协作 | 🔲 planned / unavailable | 需 G0 通过 + GD 通过 → schema 变更 + 迁移 + Envelope/Verdict/Evidence/Gate 实现 |
-| P2 | DAG 依赖调度 | 🔲 planned / unavailable | 需 P1 启用（Req 13.13） |
-| P3 | Agent 身份审计 | 🔲 planned / unavailable | 需 P1 启用（Req 13.13） |
+| P1 | 契约驱动协作 | ✅ 已实现 | Canonical Envelope + Role View allowlist + Blind_First_Pass_Verdict / Reveal_Event / Post_Reveal_Amendment + Evidence_Ledger + Evidence_Gate + CLI/MCP 工具（Req 1.1-1.12, 2.x, 6.x） |
+| P2 | DAG 依赖调度 | ✅ 已实现 | 四类依赖（requires_existing/artifact/provides_interface/requires_interface）+ artifact freshness + interface identity/version/hash + 硬依赖图 + 环检测 + provider 选择 + CLI/MCP 工具（Req 9.1-9.10, 13.13） |
+| P3 | Agent 身份审计 | ✅ 已实现 | action_identities / attestation_records / attestation_revocation_records + Identity 完整性校验与 session/agent/model 家族分离 + Attestation 签发校验与撤销（compromised/rotated）+ blind verdict 独立审核证明 + Identity fail-closed 接入 Evidence Gate + task mutation Identity 审计 + CLI/MCP 工具（Req 10.1-10.18, 1.4-1.5, 6.22） |
 | P4 | 安全租约与分派 | 🔲 planned / unavailable | 需 P1 + P3 启用（Req 13.13） |
 
-**约束（Req 13.1）**：P1–P4 在启用前，其所有能力均表示为 planned 且 unavailable。
-文档、CLI 输出、MCP 工具描述中不得暗示这些阶段已实现。
+**约束（Req 13.1）**：P4 在启用前，其所有能力均表示为 planned 且 unavailable。
+文档、CLI 输出、MCP 工具描述中不得暗示该阶段已实现。
 
 ### P0 已实现能力清单
 
@@ -404,7 +404,7 @@ Python `server/daemon_server.py` 确实接入 metrics、health、migration；Lin
 ### D0 已实现能力清单
 
 > D0 是 P1 的前置阶段，与 P0 相互独立（Requirement 13.17）。D0 已交付跨平台 daemon
-> 基座，但 P1–P4 仍标记 planned/unavailable，不得声明 P1 门禁可用（Requirement 13.1）。
+> 基座；P1/P2/P3 已在 D0 之上产品化（见下方各阶段能力清单），P4 仍标记 planned/unavailable（Requirement 13.1）。
 
 | 能力 | 关键文件 | 需求覆盖 |
 |------|---------|---------|
@@ -431,6 +431,69 @@ Python `server/daemon_server.py` 确实接入 metrics、health、migration；Lin
 | 无有效 Attestation 记录判 invalid（不设物理写屏障） | `rust_ext/src/daemon/attestation.rs` | Req 14.31 |
 | 混合类操作按组成部分分级 | `server/degraded_mode.py` + `cli/main.py` | Req 14.34–14.39 |
 | P4 Lease 边界正面陈述（代码注释/CLI/文档） | 全部 D0 产出 | Req 14.32, 11.13 |
+
+### P2 已实现能力清单
+
+> **注意**：P2 的"DAG 依赖调度"仅指**依赖关系校验与环检测**，不包含自动排程、资源优化、自动 assignment 或复杂 DAG scheduler（Req 9.10）。
+
+| 能力 | 关键文件 | 需求覆盖 |
+|------|---------|---------|
+| 四类依赖区分导入（requires_existing/artifact/provides_interface/requires_interface） | `db/db_task_dependencies.py` | Req 9.1 |
+| requires_existing 存在性验证（不建边） | `db/db_task_dependencies.py` `resolve_requires_existing` | Req 9.2 |
+| artifact identity 与 freshness（producing/fresh/stale） | `db/db_task_dependencies.py` `record_artifact_identity`/`get_artifact_freshness` | Req 9.3 |
+| interface identity/version/hash 发布与查询 | `db/db_task_dependencies.py` `publish_interface`/`get_interface_providers` | Req 9.4-9.5 |
+| 硬依赖图边构建（provider→consumer，去重） | `db/db_task_dependencies.py` `build_hard_dependency_edges` | Req 9.6 |
+| 环检测与最小 cycle path（原子拒绝 revision） | `db/db_task_dependencies.py` `detect_cycle` + `db/db_task_contracts.py` `publish_envelope_revision` | Req 9.7, 13.6-13.8 |
+| informational 关系不阻断、不参与排序 | `db/db_task_dependencies.py` `is_informational` 字段 | Req 9.8 |
+| 多 provider 显式选择（无 Planner 选择立即拒绝） | `db/db_task_dependencies.py` `select_interface_provider`/`get_provider_selection` | Req 9.9 |
+| 只做无环校验和诊断，不做资源优化/自动 assignment/DAG 调度 | 全部 P2 产出 | Req 9.10 |
+| Envelope 发布路径复用（依赖导入 + 原子构图 + cycle 拒绝） | `db/db_task_contracts.py` `publish_envelope_revision` | Req 9.1, 9.7 |
+| Gate 依赖 freshness 判定（artifact fresh + interface provider 匹配） | `db/db_task_gate.py` `_check_dependency_freshness` | Req 9.3-9.5 |
+| P2 CLI 诊断（inspect/list/cycle/explain/provider-select） | `cli/main.py` `_handle_dependency` | Req 9.1-9.10 |
+| P2 MCP 工具（10 个薄包装器） | `server/mcp_server.py` | Req 9.1-9.10, 13.10 |
+| P2 schema 迁移（5 张表 + 16 索引，幂等） | `db/schema.py` + `db/db_base.py` `_migrate_v43_to_v44` | Req 9.1-9.9, 13.10 |
+| i18n 本地化诊断文案（zh_CN/en_US） | `i18n/zh_CN.json` + `i18n/en_US.json` | Req 1.12 |
+
+### P3 已实现能力清单
+
+> **身份不等同 ownership**：Identity（agent_id/session_id/model_id/role）仅作 actor attribution，
+> 不等于 assignment/lease/ownership/SQLite lock（Req 10.5, 10.7）。Attestation 只能由 daemon 签发（Req 14.13）。
+
+| 能力 | 关键文件 | 需求覆盖 |
+|------|---------|---------|
+| action_identities / attestation_records / attestation_revocation_records 三表（含约束） | `db/schema.py`（SCHEMA_VERSION=45） | Req 10.1-10.4, 10.8 |
+| v44→v45 幂等迁移 | `db/db_base.py` `_migrate_v44_to_v45` | Req 10.1-10.18, 13.10 |
+| Identity 完整性校验 + session/agent/model 家族分离 | `db/db_task_identity.py` `validate_action_identity`/`validate_session_separation`/`validate_agent_family_separation`/`validate_model_family_separation` | Req 10.1-10.4 |
+| Attestation 签发与校验（issuer=daemon、禁自签、绑定 hash、有效期窗口） | `db/db_task_identity.py` `issue_attestation`/`validate_attestation` | Req 10.8-10.9, 14.13 |
+| Attestation 撤销（单条 Revocation_Record，compromised/rotated，invalid 查询时派生） | `db/db_task_identity.py` `register_attestation_revocation`/`derive_attestation_validity` | Req 10.10-10.18 |
+| blind verdict 独立审核证明（allowlisted manifest、verdict-before-reveal、daemon attestation、session 分离、high_risk 家族分离 + 独立 Tester） | `db/db_task_reviews.py` `verify_blind_verdict_proofs` | Req 1.4-1.5, 10.2-10.4 |
+| Identity fail-closed 接入 Evidence Gate（缺失/不完整排除 verdict、apply session 分离、attestation 越窗/自签/issuer 不符/被撤销判 invalid、gate decision 记录 issuer/signing_key_id/issued_at） | `db/db_task_gate.py` `evaluate_evidence_gate` | Req 1.5, 10.2, 10.8-10.18, 6.22 |
+| task mutation 身份审计（report/apply/close/reopen 记录 Identity；apply 强制 session 分离） | `db/db_tasks.py` `task_report_step`/`task_apply`/`task_close`/`task_reopen` | Req 10.1, 10.5-10.7, 13.3-13.5 |
+| P3 CLI（`--agent-id/--session-id/--model-id/--role` 输入 + `identity revoke` 强制 `--revocation-mode` + 拒绝自由文本 reviewer） | `cli/main.py` | Req 10.1-10.18, 1.12 |
+| P3 MCP 工具（7 个薄包装器：record/get/check_action_identity、check_session_separation、get_attestation_validity、list/register_attestation_revocations） | `server/mcp_server.py` | Req 10.1-10.18, 13.10 |
+| i18n 本地化 identity/attestation reason（zh_CN/en_US） | `i18n/zh_CN.json` + `i18n/en_US.json` | Req 1.12 |
+
+### P4 已实现能力清单
+
+> **Lease 边界（正面陈述，Req 14.32/11.13）**：Lease 保证的是 daemon 在线期间的并发正确性——
+> 同一 task/role 任一时刻只有一个有效持有者，旧持有者在新 lease 生效后无法再写入（fencing）。
+> 防篡改保证归属于 Attestation 校验与追加式 Evidence_Ledger；本模块不把 Lease 描述为能防止
+> 离线直接改库。Lease 校验通过不代表 mutation 被授权——角色权限、Independent Review 与
+> Evidence Gate 仍适用（Req 11.11）。不提供自动 dispatch、抢占或中央调度（Req 14.32）。
+
+| 能力 | 关键文件 | 需求覆盖 |
+|------|---------|---------|
+| task_assignments / task_leases / task_lease_events 三表 + 单 active 部分唯一索引（永不存 raw token，只存 sha256 hash） | `db/schema.py`（SCHEMA_VERSION=46） | Req 11.1-11.3, 11.6, 13.10 |
+| v45→v46 幂等迁移 | `db/db_base.py` `_migrate_v45_to_v46` | Req 11.1-11.13, 13.4-13.10 |
+| Assignment 绑定（task+role+holder Identity，不依赖 workspace active_task_id；assignment 可无 lease） | `db/db_task_leases.py` `create_assignment`/`get_assignment`/`revoke_assignment` | Req 11.1, 11.12, 13.4 |
+| Lease 生命周期（acquire 原子比较 + 单调递增 fencing counter；renew 要求 token/holder/counter 且未过期、幂等不递增；release 追加事件且幂等） | `db/db_task_leases.py` `acquire_lease`/`renew_lease`/`release_lease` | Req 11.2-11.7 |
+| protected mutation 校验（token hash/expiry/role/Identity/当前 fencing，失败不改变 task data） | `db/db_task_leases.py` `validate_lease_for_mutation` | Req 11.8-11.9, 11.11 |
+| 权威时钟（时间字段与过期判定一律读取 daemon Authoritative_Clock；客户端时间戳只作参考元数据） | `db/db_task_leases.py` `_clock` | Req 14.11, 14.12 |
+| Lease 审计事件账本（append-only，不写 raw token） | `db/db_task_leases.py` `_append_lease_event`/`list_lease_events` | Req 11.6, 11.12 |
+| protected task mutation 接入 lease/fencing（report/apply/close/reopen + blind verdict/reveal + evidence + contract publish；提供 lease 凭证时启用受保护路径，fail-closed；不带则向后兼容） | `db/db_tasks.py`、`db/db_task_reviews.py`、`db/db_task_evidence.py`、`db/db_task_contracts.py` | Req 11.8-11.12, 13.2-13.5 |
+| P4 CLI（`cw lease`/`cw assignment` 子命令 + protected mutation `--lease-token/--fencing-counter`；raw token 仅 acquire 成功响应返回一次） | `cli/main.py` | Req 11.1-11.13, 1.12 |
+| P4 MCP 工具（8 个：lease_acquire/renew/release/status/list_events + assignment_create/show/revoke） | `server/mcp_server.py` | Req 11.1-11.12, 13.10 |
+| i18n 本地化 lease/assignment reason + contract_lease_denied（zh_CN/en_US） | `i18n/zh_CN.json` + `i18n/en_US.json` | Req 1.12 |
 
 ### G0 检查点
 
@@ -460,4 +523,3 @@ GD 通过**仅表示 D0 基座已就绪**，P1 仍需 G0 同时通过才能启�
 本特性范围限于契约驱动任务协作，明确排除：通用项目管理、实时 Agent 聊天、
 共享隐藏推理历史、中央多 Agent 调度器、任意自然语言证明、以 LLM verdict
 替代确定性验证。
-

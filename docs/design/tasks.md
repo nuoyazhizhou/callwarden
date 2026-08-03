@@ -40,7 +40,7 @@
 ## Tasks
 
 - [ ] 1. P0：在不改 schema 的前提下完成 blind-first review 对照实验工具链
-  - [ ] 1.1 实现实验批次与冻结协议模型
+  - [x] 1.1 实现实验批次与冻结协议模型
     - 新增批次配置、纳入/排除规则、分层维度、随机种子、指标分子/分母、观察窗口、成功/暂停阈值和 invalid 原因；首次纳样后禁止原地改协议，规则变化必须产生新批次。
     - 仅使用文件/JSONL 记录并明确标记 `non_product_evidence`；不得修改 `db/schema.py`、`db/db_base.py` 或创建产品 Evidence 表。
     - `Experiment_Batch_Config` 在 daemon 配置存储不可用期间承载 P0 的 Stage_Toggle：支持 global/workspace/task 三级作用域，每次变更记录发起者 session marker 与**客户端时钟**时间（该窗口内 daemon 尚未交付，Authoritative_Clock 不存在），且不引入任何 schema 变更；P0 开关解析不读取 P1–P4 的任何开关取值。
@@ -48,7 +48,7 @@
     - **依赖门禁**：无；这是第一项实施任务。
     - _Requirements: 12.1–12.3, 12.8–12.9, 12.21, 12.23–12.24, 13.1, 13.6–13.8, 13.18, 13.21_
 
-  - [ ] 1.2 实现 Control/Treatment 最小披露投影与追加式 JSONL 采集
+  - [x] 1.2 实现 Control/Treatment 最小披露投影与追加式 JSONL 采集
     - Control 在首轮 verdict 前包含契约事实、代码事实和 Implementer Notes；Treatment 使用 allowlist，仅包含契约、actual changes、符号变化、测试/静态事实，并在首轮 verdict 后记录 reveal 与结构化变更原因。
     - Minimal_Blind_View 只由现有字段构成（任务标题/描述、`task_steps` 的 target_file/target_symbol、`change_audit` diff、`task_symbol_changes`、既有 `test_runs` 状态、open `task_quality_findings`）；同时记录披露字段清单与排除字段清单，并标注为实验披露清单而非 View_Manifest。
     - 复用现有任务状态、`change_audit`、`task_symbol_changes`、quality findings、跨会话 apply/reopen 的只读导出；禁止存储隐藏推理历史。
@@ -56,7 +56,7 @@
     - **依赖门禁**：完成 1.1。
     - _Requirements: 12.1, 12.4–12.8, 12.18, 12.20, 12.23, 12.25, 13.2–13.6_
 
-  - [ ] 1.3 实现实验评估、成功判定、灰区标记与 fail-safe 暂停状态机
+  - [x] 1.3 实现实验评估、成功判定、灰区标记与 fail-safe 暂停状态机
     - 计算绝对计数、比例、置信区间、recall/false-positive/latency/reopen/rollback/blinding 指标；有效样本不足时只能输出 directional result。
     - 非平凡 `code_change` 最小样本判定要求至少一个 tracked 源文件改动 10 行以上非注释代码且 `task_symbol_changes` 至少一条符号变化，排除纯格式化与生成文件改动。
     - false-positive 高出 Control 10–20 个百分点、median latency 增幅 25%–50% 判为灰区：标记批次未授权 P1、继续纳样并记录为灰区观察；灰区未解决前不授权 P1，但灰区本身不触发暂停，暂停触发器仍只有 Requirements 12.15–12.20。
@@ -65,7 +65,7 @@
     - **依赖门禁**：完成 1.1、1.2。
     - _Requirements: 12.6, 12.8–12.24, 12.26–12.29_
 
-  - [ ] 1.4 接入 P0 CLI，提供批次冻结、纳样、verdict/reveal 记录、暂停与报告命令
+  - [x] 1.4 接入 P0 CLI，提供批次冻结、纳样、verdict/reveal 记录、暂停与报告命令
     - 在 `cw` 下提供明确的 experiment 命令，输出机器可读 G0 决策及失败原因（含灰区观察状态）；不得把 P0 记录称为产品 Evidence 或开放 P1 hard gate。
     - 为中英文输出补齐消息键，并保持既有 task apply/reopen 接口行为不变。
     - **所有权**：`cli/main.py`、`i18n/zh_CN.json`、`i18n/en_US.json`。
@@ -90,13 +90,13 @@
     - **依赖门禁**：完成 1.2、1.3。
     - _Requirements: 12.21–12.24, 12.27–12.29_
 
-  - [ ] 1.8 同步 P0 CLI 与阶段能力文档
+  - [~] 1.8 同步 P0 CLI 与阶段能力文档
     - 记录 P0 命令、实验记录位置、G0 判定、灰区语义、暂停恢复和“非产品 Evidence”限制；D0 与 P1–P4 均标记为 planned/unavailable。
     - **所有权**：`docs/cli_reference.md`、`docs/design/implementation-status.md`、`docs/agent-usage-guide.md`。
     - **依赖门禁**：完成 1.4。
     - _Requirements: 12.14, 12.21–12.24, 13.1, 13.6–13.10_
 
-- [ ] 2. G0 检查点：确认 P0 自动化测试通过，并仅在真实批次输出 `eligible_for_p1=true` 时继续
+- [~] 2. G0 检查点：确认 P0 自动化测试通过，并仅在真实批次输出 `eligible_for_p1=true` 时继续
   - Ensure all tests pass, ask the user if questions arise.
   - 若样本不足、任一成功条件未满足、存在未解决灰区或任一暂停条件触发，停止在此处；保留记录并通过新批次复验，禁止开始任务 4（P1）。
   - 任务 3（D0）与 P0 相互独立（Requirement 13.17），不受 G0 阻塞，可与 P0 并行推进。
@@ -105,7 +105,7 @@
   - **已决策事项**：Windows 传输为命名管道（14.2、14.18–14.21）；daemon 不可用时先自动唤起、唤起失败后按操作类别分级（14.22–14.33）。本阶段实现自动唤起与 Degraded_Mode 分级，不实现任何物理写屏障——降级产物由 Attestation 校验判 invalid 兜底。
   - **P4 Lease 的正面边界表述要求**：本阶段产出的代码注释、CLI 输出与文档一律按 Requirements 14.32、11.13 正面陈述——Lease 是 daemon 在线期间的并发正确性保证，防篡改归属 Attestation 与追加式 Evidence_Ledger；禁止出现"Lease 不可绕过"或"Lease 能防止离线改库"这类表述。
   - **GD 检查点**：3.1–3.34 全部完成后，确认 GD 的每一项都通过自动化验收再进入任务 4。Ensure all tests pass, ask the user if questions arise.
-  - [ ] 3.1 抽象平台无关的 daemon 监听/接受/请求循环并实现 Windows 命名管道端点
+  - [~] 3.1 抽象平台无关的 daemon 监听/接受/请求循环并实现 Windows 命名管道端点
     - 把当前只在 Unix 编译的监听、接受连接与请求循环抽象为平台无关的 listener/acceptor/connection 抽象，Unix 侧绑定 Unix domain socket，Windows 侧绑定命名管道 Daemon_Endpoint。
     - 三平台暴露等价的协同 RPC 方法集（Envelope 发布、verdict 提交、Reveal、Evidence 追加、gate 评估、Protected_Mutation 路由）；缺方法即视为该平台不支持协同能力，不实现“只支持只读”的中间态。
     - **管道命名与 SDDL**：管道名由 owner user SID 派生（`\\.\pipe\callwarden-<user-sid>`），安全描述符只授权 owner SID 的 connect 与读写（可选附加 local administrators），其他 SID 一律不授权，使访问范围等价 Unix socket 的 owner + 0660。
@@ -115,21 +115,21 @@
     - **依赖门禁**：完成 3.24（Windows 平台依赖已就位）；不依赖 G0。
     - _Requirements: 14.1, 14.2, 14.3, 14.4, 14.18, 14.19, 14.20, 14.21_
 
-  - [ ] 3.2 改造 daemon server 去掉 Unix-only 编译门并接入传输抽象
+  - [~] 3.2 改造 daemon server 去掉 Unix-only 编译门并接入传输抽象
     - 移除 `server.rs` 顶部的 `#![cfg(unix)]`，把监听、接受与请求循环改为调用 3.1 的传输抽象；Windows 上 daemon 可启动、可托管、可自恢复。
     - 在 `mod.rs` 中按平台导出传输模块，保持 Unix 行为不回归。
     - **所有权**：`rust_ext/src/daemon/server.rs`、`rust_ext/src/daemon/mod.rs`。
     - **依赖门禁**：完成 3.1。
     - _Requirements: 14.1, 14.2, 14.3, 14.4_
 
-  - [ ] 3.3 实现三平台 Peer_Credential → Peer_Identity 派生
+  - [~] 3.3 实现三平台 Peer_Credential → Peer_Identity 派生
     - Windows 从命名管道对端访问令牌取 SID 作为 Peer_Identity；Linux 用 `SO_PEERCRED` 的 UID/GID（pid 仅审计）；macOS 用 `LOCAL_PEERCRED` 的 UID/GID 并显式排除 pid，缺 pid 不得退化为无身份或拒绝全部请求。
     - 客户端自报的 agent 名、session 名与请求体身份字段一律不参与授权判定，只作审计元数据。
     - **所有权**：`rust_ext/src/daemon/peercred.rs`。
     - **依赖门禁**：完成 3.1。
     - _Requirements: 14.5, 14.8, 14.9_
 
-  - [ ] 3.4 实现 Windows SID 等强度路径 ACL，替换非 Unix 分支的跳过行为
+  - [~] 3.4 实现 Windows SID 等强度路径 ACL，替换非 Unix 分支的跳过行为
     - 枚举 Unix build 中所有由 UID ACL 保护的路径校验点（重点是 `_validate_owned_path` 当前 `#[cfg(not(unix))]` 分支直接跳过 UID 检查），逐点补上对端令牌 SID 与注册 workspace owner SID 的等价比较。
     - SID 不匹配时返回 Structured_Reason 并拒绝路径访问，不得回退到跳过 ACL 或按“尽力校验”处理。
     - 在本文件的 `#[cfg(test)]` 模块内实现 3.5 所需的**单元层 mock 用例**：伪造非当前 UID/GID（Unix）或非 owner SID（Windows）的 Peer_Credential，断言 owner 比较不匹配时走拒绝路径、返回 Structured_Reason 且状态不变。该层只覆盖判定逻辑，不替代 3.5 的真实跨用户连接验收。
@@ -137,7 +137,7 @@
     - **依赖门禁**：完成 3.3。
     - _Requirements: 14.5, 14.9_
 
-  - [ ] 3.5 补齐 macOS launchd 打包与三平台端到端验收
+  - [~] 3.5 补齐 macOS launchd 打包与三平台端到端验收
     - 增加 macOS launchd 打包/启动配置与验收脚本；验收覆盖 daemon 启动、无 pid 身份派生、ACL 拒绝路径与协同 RPC 方法集等价性。
     - Windows 验收覆盖命名管道启动、服务化托管与 SID ACL 拒绝路径；任一平台未通过即视为该平台不支持本文协同能力。
     - 验收同时覆盖三平台自动唤起：Windows 分离进程在客户端退出后仍存活、macOS 经 launchd 激活已注册 user agent、Linux 经 systemd 用户级服务激活；并断言停掉 daemon 后并发发起多会话请求只产生一个 daemon 进程、一个串行化点，且所有请求在同一端点完成。
@@ -149,49 +149,49 @@
     - **依赖门禁**：完成 3.2、3.3、3.4、3.6、3.25、3.26。
     - _Requirements: 14.1, 14.3, 14.8, 14.22, 14.23, 14.24, 14.25, 14.26_
 
-  - [ ] 3.6 实现 Windows `canonical_bytes_b64` 载荷路径校验
+  - [~] 3.6 实现 Windows `canonical_bytes_b64` 载荷路径校验
     - SCM_RIGHTS FD 传输仅 Unix 可用，Windows 客户端通过既有 `canonical_bytes_b64` 参数直接提交规范化字节；使用前必须校验载荷尺寸不超过配置上限且实际内容摘要等于请求声明的摘要。
     - 任一校验失败返回 Structured_Reason 并拒绝请求，不得按“尽力解析”继续。
     - **所有权**：`rust_ext/src/daemon/protocol.rs`。
     - **依赖门禁**：完成 3.1。
     - _Requirements: 14.10_
 
-  - [ ] 3.7 实现 daemon 进程内唯一串行化点、请求队列与请求超时
+  - [~] 3.7 实现 daemon 进程内唯一串行化点、请求队列与请求超时
     - Protected_Mutation 全部经由 daemon 进程内单一串行化点应用，写请求在该点排队；系统不得暴露第二个串行化点。
     - 格式正确的并发读写请求在配置的请求超时内完成，超时返回结构化超时原因且不改变任务状态；SQLite 写锁在 P0–P4 全阶段降为纯事务互斥，不参与授权、ownership、lease 与 Independent_Review 判定。
     - **所有权**：新增 `rust_ext/src/daemon/serialization.rs`；`rust_ext/src/daemon/dispatch.rs`（仅 Protected_Mutation 路由与队列接线）。
     - **依赖门禁**：完成 3.2、3.8。
     - _Requirements: 14.6, 14.7, 14.14_
 
-  - [ ] 3.8 实现 Authoritative_Clock API
+  - [~] 3.8 实现 Authoritative_Clock API
     - 以 daemon 进程时钟作为唯一权威时间源，供 Lease 获取/过期、verdict 与 Reveal_Event 顺序、Evidence 产生时间、Attestation 签发时间与有效期窗口、gate decision 时间使用，并保证同一 daemon 生命周期内对已提交事件单调不回退。
     - 客户端提供的时间戳只作为参考元数据记录，不参与 lease 过期与 verdict-before-reveal 判定；Evidence 保留窗口同样按该时钟计量。
     - **所有权**：新增 `rust_ext/src/daemon/clock.rs`。
     - **依赖门禁**：无；与 3.1 并行。
     - _Requirements: 14.11, 14.12_
 
-  - [ ] 3.9 实现 daemon 侧 Attestation 签发
+  - [~] 3.9 实现 daemon 侧 Attestation 签发
     - 基于连接 Peer_Credential 派生的 Identity 与 Authoritative_Clock 签发 Attestation，绑定 Identity、记录标识（verdict_id 或 evidence_id）、View_Manifest hash、Contract_Hash 与有效期窗口。
     - 拒绝客户端自签 Attestation 作为授权输入；签发失败时返回 unknown/block，不接受客户端自签替代。
     - **所有权**：新增 `rust_ext/src/daemon/attestation.rs`。
     - **依赖门禁**：完成 3.3、3.8。
     - _Requirements: 14.13_
 
-  - [ ] 3.10 实现并发 gate 判定隔离
+  - [~] 3.10 实现并发 gate 判定隔离
     - 每次 gate 判定各自绑定独立的 Gate_Snapshot、Current_Envelope 绑定与 Evidence 集合；任一方未提交的中间态不进入另一方的快照与结论。
     - 快照冲突（S1 ≠ S0）只影响冲突的那次判定，另一并发 gate 结论不受影响。
     - **所有权**：新增 `rust_ext/src/daemon/gate_session.rs`。
     - **依赖门禁**：完成 3.7。
     - _Requirements: 14.15_
 
-  - [ ] 3.11 将昂贵 verifier 执行移出 SQLite 写事务
+  - [~] 3.11 将昂贵 verifier 执行移出 SQLite 写事务
     - verifier 在 daemon 进程内、SQLite 写事务之外执行；事务内只提交不可变记录与状态转换，使长耗时验证不占用写锁。
     - 快照内容 hash 只覆盖 Envelope relevant scope、Actual_Changes 与声明的 verifier 依赖，全仓库 hash 只作为非默认显式请求。
     - **所有权**：新增 `rust_ext/src/daemon/verifier_exec.rs`。
     - **依赖门禁**：完成 3.7。
     - _Requirements: 14.16, 6.18_
 
-  - [ ] 3.12 实现 Stage_Toggle 存储、作用域解析与前置阶段校验
+  - [~] 3.12 实现 Stage_Toggle 存储、作用域解析与前置阶段校验
     - 在 daemon 拥有的配置存储中持久化 P0–P4 各自的 Stage_Toggle，支持 global/workspace/task 三级作用域，并记录每次变更的 Peer_Identity 与 Authoritative_Clock 时间。
     - 同一配置存储还需承载 **Independence_Policy** 的取值（默认 `required`，非默认 `solo`）：同样记录每次变更的发起者 Peer_Identity 与 Authoritative_Clock 时间，同样禁止由单次请求参数或客户端自报字段设置。
     - **职责边界**：D0 只提供 Independence_Policy 的存储与变更审计，**不实现 P1 的政策语义**——「该 profile 是否要求 Independent_Review」的解析属于 P1 的 4.5，D0 不做任何 gate 判定。
@@ -203,7 +203,7 @@
     - **依赖门禁**：完成 3.7、3.8；迁移源 `Experiment_Batch_Config` 的格式由 1.1 定义（wave 0，先于本 wave），本任务不因此依赖 G0。
     - _Requirements: 5.13, 13.11–13.21_
 
-  - [ ] 3.13 建立稳定错误码目录、双语 message key 与降级恢复指引
+  - [~] 3.13 建立稳定错误码目录、双语 message key 与降级恢复指引
     - 建立已发布的错误码目录，使每个 Structured_Reason 携带一个稳定错误码和一个可在 `zh_CN` 与 `en_US` 两个 catalog 中解析的 i18n message key；文案变化不改变错误码。
     - 覆盖 D0 已知拒绝路径：SID 不匹配、Peer_Credential 不可获取、载荷尺寸/摘要不符、请求超时、Attestation 签发失败或越窗、Stage_Toggle 前置缺失、Degraded_Mode 下 Governance_Write 被拒。
     - Degraded_Mode 下 Governance_Write 被拒的 Structured_Reason 必须给出**该平台的具体 daemon 拉起命令与端点位置**作为可执行恢复指引，而不是泛化的"数据库正忙"。
@@ -215,14 +215,14 @@
     - **依赖门禁**：完成 3.4、3.6、3.7、3.27。
     - _Requirements: 1.12, 5.14–5.15, 7.16, 10.12, 14.30, 14.36_
 
-  - [ ] 3.14 实现经 daemon 的 CLI 写命令面
+  - [~] 3.14 实现经 daemon 的 CLI 写命令面
     - Envelope 发布、verdict 提交（含封存）、Reveal、gate 触发均作为 CLI 写命令，经 Daemon_Endpoint 路由到串行化点执行；输出携带稳定错误码与本地化 message key。
     - 写命令不得绕过 daemon 直接开库；连不上端点时先走 3.25 的自动唤起，唤起失败后按 3.27/3.28 的 Degraded_Mode 分级——这些命令全部属于 Governance_Write，一律 fail closed 并输出含平台具体拉起命令的恢复指引，任务与步骤状态保持不变。
     - **所有权**：`cli/main.py`。
     - **依赖门禁**：完成 3.7、3.12、3.13、3.25、3.28。
     - _Requirements: 14.4, 14.17, 14.22, 14.30_
 
-  - [ ] 3.15 实现只读 MCP 查询工具面
+  - [~] 3.15 实现只读 MCP 查询工具面
     - Role_View 获取、Evidence 查询、Freshness_Status 查询与 gate decision 查询注册为只读 MCP 工具；只读工具不得触发任何写操作（含 workspace 激活一类隐式 UPDATE）。
     - 只读返回的 Freshness_Status 是查询时刻派生值，不构成 gate 结论。
     - **所有权**：`server/mcp_server.py`。
@@ -279,7 +279,7 @@
     - **依赖门禁**：完成 3.1、3.6、3.13。
     - _Requirements: 14.1–14.4, 14.10, 14.18, 14.20, 14.21, 1.12_
 
-  - [ ] 3.23 同步 D0 平台、部署与阶段能力文档
+  - [~] 3.23 同步 D0 平台、部署与阶段能力文档
     - 更新 daemon 平台支持矩阵（Linux/macOS/Windows 端点与传输能力）、CLI 写命令参考、只读 MCP 工具清单、部署与服务化指南（含 macOS launchd 与 Windows 服务托管）以及实施状态。
     - 记录 Windows 端点决策：命名管道、按 owner SID 派生的管道名与仅授权 owner SID 的 SDDL、多实例保活与 accept 竞态消除，以及排除 AF_UNIX / 监听 TCP / 本机 HTTPS 的理由（OS 不提供 Peer_Credential）。
     - 记录 daemon 不可用时的行为：自动唤起机制与有界等待窗口（默认 10 秒、可配置）、三平台唤起方式、单实例互斥，以及 Degraded_Mode 三类分流（只读与 Index_Write 直连、Governance_Write fail closed 并给出平台具体拉起命令）与 Degraded_Mode 标记的审计用途；说明降级产物因缺有效 Attestation 判 invalid，因此系统不设物理写屏障。
@@ -289,14 +289,14 @@
     - **依赖门禁**：完成 3.1–3.15、3.24–3.29。
     - _Requirements: 13.1, 13.10, 11.13, 14.18–14.33_
 
-  - [ ] 3.24 新增 Windows 平台依赖并按 feature 裁剪
+  - [~] 3.24 新增 Windows 平台依赖并按 feature 裁剪
     - `rust_ext/Cargo.toml` 当前没有 `windows` / `windows-sys` 依赖，命名管道端点、对端令牌与安全描述符都需要平台 API；新增 `[target.'cfg(windows)'.dependencies]`，并按 feature 裁剪到 NamedPipe、Token、SecurityDescriptor 三类模块，不引入整包。
     - 写法与现有 `[target.'cfg(unix)'.dependencies] signal-hook` 对称：平台依赖只在对应 target 引入，Unix 侧构建不受影响。
     - **所有权**：`rust_ext/Cargo.toml`。
     - **依赖门禁**：无；这是 D0 的第一项实施任务，不依赖 G0。
     - _Requirements: 14.2, 14.5, 14.18_
 
-  - [ ] 3.25 实现 daemon 自动唤起与有界等待窗口
+  - [~] 3.25 实现 daemon 自动唤起与有界等待窗口
     - 客户端连不上 Daemon_Endpoint 时先尝试启动 daemon，并在有界等待窗口内以指数退避重试连接；窗口内任一次重试成功即在该连接上继续执行原请求，调用方不感知中断。窗口默认 10 秒、可配置，按**客户端时钟**计量——此时 daemon 尚未就绪，Authoritative_Clock 不存在。
     - 三平台唤起方式：Windows 启动分离进程（客户端进程退出后 daemon 仍存活）、macOS 经 launchd 激活已注册 user agent、Linux 经 systemd 用户级服务激活已注册单元。
     - 现状对照：当前**没有任何自动唤起逻辑**（`cli/main.py` 的 `run_agent_mode` → `_agent_start` 是前台 watcher 主循环，由外部管理器托管），因此这是新增能力，不是既有行为的重构。
@@ -304,14 +304,14 @@
     - **依赖门禁**：完成 3.2。
     - _Requirements: 14.22, 14.24, 14.25, 14.26_
 
-  - [ ] 3.26 实现唤起单实例跨进程互斥
+  - [~] 3.26 实现唤起单实例跨进程互斥
     - 启动 daemon 前必须先取得跨进程互斥（Windows 命名互斥体、Linux/macOS 文件锁），保证同一用户 Daemon_Endpoint 上最多一个 daemon 进程；未取得互斥的会话不启动进程，只在有界等待窗口内继续退避重试。
     - 缺这道互斥时 N 个会话并发唤起会产生 N 个 daemon 进程，也就是 N 个串行化点，直接违反 Requirement 14.6；因此这是本级唯一的安全性要求，不得降级为"尽力去重"。
     - **所有权**：新增 `server/daemon_mutex.py`。
     - **依赖门禁**：完成 3.25。
     - _Requirements: 14.23, 14.6_
 
-  - [ ] 3.27 实现 Degraded_Mode 操作分类与分流策略
+  - [~] 3.27 实现 Degraded_Mode 操作分类与分流策略
     - 实现 `class(op)` 分类：read_only（Role_View 获取、Evidence 查询、Freshness_Status 查询、gate decision 查询等）、Index_Write（文件刷新、解析结果、符号图更新、图刷新版本记录）、Governance_Write（等同 Protected_Mutation 全集：Envelope 发布、verdict 封存、Reveal_Event 追加、Evidence 追加、gate decision 提交、`task_apply`、`task_close`、Lease 获取/续租/释放）。
     - 定义分流策略：等待窗口耗尽仍未建连即进入 Degraded_Mode，read_only 直连只读连接执行、Index_Write 直连写入、Governance_Write fail closed 并返回带稳定错误码、i18n key 与恢复指引的 Structured_Reason，任务与步骤状态保持请求前状态。
     - `class(op)` 对同一操作恒定，不随 `degraded` 取值、重试次数或调用方变化，使分流结论可判定、可重放。
@@ -322,14 +322,14 @@
     - **依赖门禁**：无；与 3.25 并行。
     - _Requirements: 14.27, 14.28, 14.29, 14.30, 14.34, 14.35, 14.36, 14.37_
 
-  - [ ] 3.28 在 daemon 客户端接线降级分流与 Degraded_Mode 标记
+  - [~] 3.28 在 daemon 客户端接线降级分流与 Degraded_Mode 标记
     - 把 3.25 的自动唤起与 3.27 的分流策略接入 `server/daemon_client.py`：连接失败先唤起，唤起失败按 `class(op)` 分流；只读降级在现有 `_sql_fallback_*` 方法与 `sql_fallbacks` 计数基线上扩展，不另建第二条回退路径。
     - Degraded_Mode 下执行的任何操作，都随产出记录或查询结果记录 Degraded_Mode 标记与降级原因，使审计能区分"经 daemon 路径产生"与"经降级直连路径产生"的记录。
     - **所有权**：`server/daemon_client.py`。
     - **依赖门禁**：完成 3.26、3.27。
     - _Requirements: 14.28, 14.29, 14.30, 14.33_
 
-  - [ ] 3.29 实现无有效 Attestation 记录的 invalid 判定，不设物理写屏障
+  - [~] 3.29 实现无有效 Attestation 记录的 invalid 判定，不设物理写屏障
     - 在 attestation 模块暴露可判定的有效性校验：无 daemon 签发 Attestation、issuer 非 daemon、绑定/签名校验失败或签发时间越窗的 verdict/Evidence 一律判为 invalid；Degraded_Mode 下直连 SQLite 写入的记录与绕过 CLI 直接开库写入的记录都落在这一类。
     - 判定结果由 3.28 的降级写入路径与 P1 Gate（4.4、4.5）消费，使这类记录不满足任何 Blocking_Clause；**不实现任何物理写屏障**——安全性由 Attestation 校验承担，而不是靠阻止别人开库。
     - **所有权**：`rust_ext/src/daemon/attestation.rs`。
@@ -374,7 +374,7 @@
     - **依赖门禁**：完成 3.12；迁移源格式由 1.1 定义（wave 0）。
 
 - [ ] 4. P1：实现版本化 Envelope、角色投影、blind verdict、snapshot Evidence 与双门禁
-  - [ ] 4.1 新增 P1 schema 与幂等迁移
+  - [~] 4.1 新增 P1 schema 与幂等迁移
     - 新增不可变 `task_contract_revisions`、`task_role_view_events`、`task_verdict_events`、`task_evidence_events`、`task_gate_decisions` 及必要索引/约束；为旧库提供顺序、事务化、可重复迁移。
     - 新增 Verifier_Registry 结构（name、version、config_hash、trust_status、注册时间）与保留窗口/归档元数据（默认 365 天、归档位置、按标识符可解析）；归档只搬迁不改写 payload。
     - 新增 `Verifier_Revocation_Record` 存储结构：字段含 Verifier 三元组 `(name, version, config_hash)`、撤销原因、发起者身份，以及按 Authoritative_Clock 记录的撤销时间；该记录不可变、只追加，同一三元组的一次撤销只对应一条记录。
@@ -384,7 +384,7 @@
     - **依赖门禁**：G0 与 GD 均通过。
     - _Requirements: 1.7, 2.6–2.9, 4.3–4.6, 6.1, 6.3, 6.6, 6.11–6.13, 6.16–6.17, 6.20, 6.23, 7.2–7.3, 8.4–8.5, 13.10_
 
-  - [ ] 4.2 实现 Canonical Envelope、profile 校验、revision 发布与 hash
+  - [~] 4.2 实现 Canonical Envelope、profile 校验、revision 发布与 hash
     - 实现 parser/printer、UTF-8 稳定序列化、路径与数组规范化、纯展示字段排除、单调 revision、语义变更升版及 declarative/executable clause 分类。
     - 实现空 Allowed_Edit_Scope 三分支：`code_change`/`high_risk` 空 scope 拒绝发布并保留上一已接受 revision；`research`/`design`/`review` 记为 `unscoped`；无 target 的存量任务记为 `scope_migration_pending` 并要求先发布带显式 file 或 symbol scope 的迁移 revision。
     - **空 scope 发布期防呆**：`research`/`design`/`review` 发布时若派生 scope 为空集，**发布照样成功**（7.12 的接受语义不变，Envelope 仍记为 `unscoped`），同时返回一条**非阻断** Structured_Warning，说明 scope 为 `unscoped`、任何磁盘文件改动都会让后续 Completion_Gate 与 Apply_Gate 阻断该任务，并提示在 task step 上声明 `target_file` 或 `target_symbol` 以建立显式 scope。
@@ -394,7 +394,7 @@
     - **依赖门禁**：完成 4.1。
     - _Requirements: 1.1, 2.1–2.11, 5.4, 7.4, 7.9, 7.11–7.16_
 
-  - [ ] 4.3 实现 Role View allowlist、blind verdict、reveal 与 amendment
+  - [~] 4.3 实现 Role View allowlist、blind verdict、reveal 与 amendment
     - 从同一 Contract Hash 投影 Planner/Implementer/Reviewer/Tester view，递归拒绝未 allowlist 的嵌套值，并生成 view manifest hash。
     - allowlist 由 `(view_type, view_version, 披露阶段)` 版本化定义唯一标识，是递归披露判定的唯一真相源；条目增删改必须升 view_version，View_Manifest 记录 allowlist 定义 hash；引用未注册 view_version 时拒绝生成 Role View 并把绑定该 view 的 verdict 判为 invalid。
     - 首轮 verdict 封存前禁止 Implementer Notes、既有 verdict/draft/confidence/review focus；封存后追加 reveal，修订只能追加 amendment，保存结构化决定而非思维链。
@@ -402,7 +402,7 @@
     - **依赖门禁**：完成 4.2。
     - _Requirements: 1.4–1.5, 3.1–3.11, 4.1–4.8, 5.1–5.5, 13.9_
 
-  - [ ] 4.4 实现规范化 Workspace Snapshot、append-only Evidence 与 freshness
+  - [~] 4.4 实现规范化 Workspace Snapshot、append-only Evidence 与 freshness
     - 快照覆盖 HEAD、规范化 dirty diff、相关 tracked/untracked 内容 hash，且只覆盖 relevant scope、Actual_Changes 与声明的 verifier 依赖；Evidence 绑定契约、快照、file/symbol/graph/test/verifier/producer/payload。
     - 实现 fresh/stale/invalid/superseded/historical_unbound 派生与全序优先级 `invalid > superseded > stale > fresh`，Structured_Reason 同时报告所选状态与生效优先级；契约 revision 前进使旧绑定 evidence 至少为 `superseded`。
     - 接入 Verifier_Registry：无条目或 `trust_status ≠ trusted` 使相关 evidence 判为 invalid。
@@ -414,7 +414,7 @@
     - **依赖门禁**：完成 4.2。
     - _Requirements: 1.2, 1.7, 6.1–6.24, 7.6–7.8_
 
-  - [ ] 4.5 实现统一 Evidence Gate 判定内核与 Profile_Policy_Matrix 查表
+  - [~] 4.5 实现统一 Evidence Gate 判定内核与 Profile_Policy_Matrix 查表
     - 统一评估契约绑定、blocking clauses、verdict、scope、finding、test/static evidence、freshness 与 profile；`unsatisfied/unknown/stale/invalid` 一律阻断。
     - 实现 Profile_Policy_Matrix：profile 必需的 sealed Reviewer blind verdict、独立 Tester verdict 与当前快照 Evidence 一律查表解析，不由 gate 自行推断；`high_risk` 要求 Reviewer、Tester、Implementer 为三个不同 Session；profile 不在表中时返回 Structured_Reason 并拒绝评估。
     - **"是否要求 Independent_Review"由 Profile_Policy_Matrix 与生效 Independence_Policy 共同解析**：`solo` 生效时该 profile **不要求** Independent_Review，因此 Requirement 1.5 的前件为假；`high_risk` 在任何情况下拒绝 `solo` 并保留原政策取值。政策取值只从 daemon 配置存储读取（3.12 提供存储与变更审计），无记录时默认 `required`；请求参数与客户端自报字段不参与解析。
@@ -427,19 +427,19 @@
     - **依赖门禁**：完成 4.3、4.4。
     - _Requirements: 1.1–1.9, 4.6–4.7, 5.2–5.12, 5.14–5.17, 6.9–6.10, 6.14–6.15, 6.19, 6.22, 8.3–8.5, 8.11_
 
-  - [ ] 4.6 将 P1 Mixin 接入 CodeGraphDB
+  - [~] 4.6 将 P1 Mixin 接入 CodeGraphDB
     - 注册 contract/review/evidence/gate Mixin，明确调用方向，避免新建平行状态机；保证旧数据库在未启用 P1 时行为兼容。
     - **所有权**：`db/db.py`。
     - **依赖门禁**：完成 4.2–4.5。
     - _Requirements: 13.1–13.5_
 
-  - [ ] 4.7 将新测试运行绑定到 Evidence，并隔离历史 PASS
+  - [~] 4.7 将新测试运行绑定到 Evidence，并隔离历史 PASS
     - 扩展 JUnit 导入/适配接口，使新 run 具有唯一 run ID、selectors、contract/snapshot/verifier 绑定并追加 Evidence；旧记录只返回 `historical_unbound`，不得反向推断。
     - **所有权**：`db/db_tests.py`。
     - **依赖门禁**：完成 4.4。
     - _Requirements: 1.3, 6.4–6.5, 6.11–6.12, 7.1–7.3_
 
-  - [ ] 4.8 接入 `task_report_step` Completion Gate 并复用现有 completion review
+  - [~] 4.8 接入 `task_report_step` Completion Gate 并复用现有 completion review
     - 从 step target 聚合 Envelope scope，以磁盘 diff/hash 为权威，复用 change audit、`task_symbol_changes`、`_check_scope_violations`、check gate 与 `run_task_completion_review`。
     - `unscoped` 任务的 scope 比较判为 `not_applicable`，仅当 Actual_Changes 为空才算在 scope 内；`scope_migration_pending` 任务在迁移 revision 之前的改动不参与越界判定。
     - 对 provided interface 的 scope 外 callers，将验证责任写入显式集成任务；仅当 caller 已在当前 scope、`high_risk` 政策要求或兼容性无法维持时留在当前任务，禁止隐式扩大局部修改范围。
@@ -451,14 +451,14 @@
     - **依赖门禁**：完成 4.5–4.7；Degraded_Mode 分流策略来自 3.27、3.28（D0，更早 wave）。
     - _Requirements: 1.2, 1.6, 6.8–6.10, 7.4–7.14, 8.1–8.2, 8.11, 13.2–13.5, 14.34–14.39_
 
-  - [ ] 4.9 接入 `task_apply` 主门禁、Reopen 与父级聚合，保持 `task_close` 仅收尾
+  - [~] 4.9 接入 `task_apply` 主门禁、Reopen 与父级聚合，保持 `task_close` 仅收尾
     - 叶子 apply 必须处于 review、绑定当前 Envelope、具有 sealed blind verdict/profile verdict、fresh satisfied evidence、无 open blocker、manifest 一致且 S0=S1；失败保留原状态并返回逐条原因。
     - `scope_migration_pending` 期间 `task_apply` 一律以 Structured_Reason 拒绝并保持请求前状态。
     - 父级联必须检查子任务仍有效 gate decision 和父级 clauses；缺陷或 stale 只经现有 Reopen 返回 `in_progress`。`task_close` 只允许 applied→closed/现有级联，不添加替代正确性 gate。
     - **所有权**：`db/db_tasks.py`（仅 apply/reopen/parent cascade/close 路径）。
     - **依赖门禁**：完成 4.8。
     - _Requirements: 1.5, 1.8–1.9, 7.13–7.14, 8.3–8.11, 13.2–13.5_
-  - [ ] 4.10 暴露 P1 CLI 与本地化结构化输出
+  - [~] 4.10 暴露 P1 CLI 与本地化结构化输出
     - 增加 contract publish/show、role view、blind verdict、reveal/amend、evidence status、gate explain 命令；扩展 task report/apply 参数但保持 close 只收尾。
     - 写命令（发布、verdict、reveal、gate 触发）经 daemon 串行化点执行；所有失败输出 contract/snapshot/clause/scope/independence reason code 与可解析 message key，禁止输出隐藏推理历史。
     - 4.2 的空 scope 发布 Structured_Warning 必须同时出现在**发布返回值与 CLI 输出**两处，使 Agent 调用方拿到结构化字段、人类操作者在终端可见；警告码稳定、i18n message key 在 `zh_CN` 与 `en_US` 均可解析，且警告不改变命令的成功退出语义。
@@ -468,7 +468,7 @@
     - **依赖门禁**：完成 4.6–4.9。
     - _Requirements: 1.12, 2.1–2.11, 3.1–3.11, 4.1–4.8, 5.13–5.15, 6.1–6.19, 7.15–7.17, 8.1–8.11, 13.9–13.10, 14.17_
 
-  - [ ] 4.11 暴露 P1 MCP 工具
+  - [~] 4.11 暴露 P1 MCP 工具
     - 为 P1 contract/view/verdict/reveal/evidence/gate 查询注册只读薄包装器；Role_View、Evidence、Freshness_Status 与 gate decision 查询不触发任何写操作。
     - 更新现有 task_report_step/task_apply 工具参数，mutation 复用 DB 层校验并经 daemon 路径，task_close 不接主门禁。
     - **所有权**：`server/mcp_server.py`。
@@ -581,7 +581,7 @@
     - **所有权**：新增 `tests/test_property_reopen_recovery.py`。
     - **依赖门禁**：完成 4.4、4.9。
 
-  - [ ] 4.27 同步 P1 CLI/MCP/架构/状态文档
+  - [~] 4.27 同步 P1 CLI/MCP/架构/状态文档
     - 记录命令与工具参数、schema 版本与迁移、Envelope/View/Verdict/Evidence/Gate 语义、Verifier_Registry 与撤销传播、`superseded` 优先级、allowlist 版本化、保留与归档、历史 PASS 限制、Reopen、父级聚合及 `task_close` 仅收尾；P2–P4 仍标记 unavailable。
     - 记录 P1 写路径经 daemon 串行化点与 Authoritative_Clock（Requirement 14.17），并同步因新增 MCP/Mixin/schema 引起的项目指标与实施状态，避免能力超前声明。
     - **所有权**：`docs/cli_reference.md`、`docs/mcp_tools.md`、`docs/architecture.md`、`docs/design/implementation-status.md`、`README.md`、`AGENTS.md`、`CONTRIBUTING.md`。
@@ -625,42 +625,42 @@
     - **依赖门禁**：完成 4.9、4.10。
     - _Requirements: 5.12–5.17_
 
-- [ ] 5. G1 检查点：P1 全部自动化验证通过后才进入 P2
+- [~] 5. G1 检查点：P1 全部自动化验证通过后才进入 P2
   - Ensure all tests pass, ask the user if questions arise.
   - 核对 `task_report_step` 和 `task_apply` 使用同一 freshness/gate 语义，`task_close` 未新增正确性判断，且 assignment/lease 仍不可用。
 - [ ] 6. P2：实现 artifact/interface 依赖、provider 解析与环检测
-  - [ ] 6.1 新增 P2 依赖与 interface schema 及幂等迁移
+  - [~] 6.1 新增 P2 依赖与 interface schema 及幂等迁移
     - 持久化四类依赖、artifact identity/freshness、interface identity/version/hash 与显式 provider 选择；迁移失败原子保留旧 revision/graph。
     - **所有权**：`db/schema.py`、`db/db_base.py`。
     - **依赖门禁**：G1 通过。
     - _Requirements: 9.1–9.9, 13.7, 13.10_
 
-  - [ ] 6.2 实现依赖解析、边归一化与最小 cycle path
+  - [~] 6.2 实现依赖解析、边归一化与最小 cycle path
     - `requires_existing` 只验证存在性；仅显式 artifact 和已解析 interface 形成 provider→consumer hard edge，去重后检测环；多 provider 无 Planner 选择立即拒绝。
     - informational relationship 不阻断；只实现无环校验和诊断，不实现资源优化、自动 assignment 或复杂 DAG 调度。
     - **所有权**：新增 `db/db_task_dependencies.py`。
     - **依赖门禁**：完成 6.1。
     - _Requirements: 1.10, 9.1–9.10, 13.6–13.8_
 
-  - [ ] 6.3 将 P2 Dependency Mixin 接入 CodeGraphDB
+  - [~] 6.3 将 P2 Dependency Mixin 接入 CodeGraphDB
     - 注册依赖模块并复用 P1 Envelope 发布路径，不创建独立调度状态机。
     - **所有权**：`db/db.py`。
     - **依赖门禁**：完成 6.2。
     - _Requirements: 9.1–9.10, 13.5_
 
-  - [ ] 6.4 将 artifact/interface freshness 与环检测接入发布和 Gate
+  - [~] 6.4 将 artifact/interface freshness 与环检测接入发布和 Gate
     - 发布 revision 前原子构图并拒绝 hard cycle；consumer 条款仅在 provider artifact fresh、interface identity/version/hash 匹配时满足；caller 验证默认转交显式集成任务。
     - **所有权**：`db/db_task_contracts.py`（依赖字段发布校验）、`db/db_task_gate.py`（依赖 freshness 判定）。
     - **依赖门禁**：完成 6.2、6.3。
     - _Requirements: 1.10, 7.10, 9.2–9.9_
 
-  - [ ] 6.5 暴露 P2 CLI 与本地化诊断
+  - [~] 6.5 暴露 P2 CLI 与本地化诊断
     - 提供 dependency/interface inspect、provider select、cycle explain 命令；明确没有自动排程、assignment 或抢占。
     - **所有权**：`cli/main.py`、`i18n/zh_CN.json`、`i18n/en_US.json`。
     - **依赖门禁**：完成 6.3、6.4。
     - _Requirements: 1.12, 9.1–9.10, 13.7–13.8_
 
-  - [ ] 6.6 暴露 P2 MCP 工具
+  - [~] 6.6 暴露 P2 MCP 工具
     - 注册依赖查询、provider 选择、cycle diagnostics 薄包装器，并复用 DB 层原子发布校验。
     - **所有权**：`server/mcp_server.py`。
     - **依赖门禁**：完成 6.3、6.4。
@@ -685,18 +685,18 @@
     - **所有权**：新增 `tests/test_property_dependency_acyclicity.py`。
     - **依赖门禁**：完成 6.2、6.4。
 
-  - [ ] 6.10 同步 P2 CLI/MCP/架构/状态文档
+  - [~] 6.10 同步 P2 CLI/MCP/架构/状态文档
     - 记录四类依赖、provider 选择、freshness、cycle diagnostics 与 caller 集成任务边界；明确不含复杂 DAG 调度、自动 assignment 和中央调度器。
     - **所有权**：`docs/cli_reference.md`、`docs/mcp_tools.md`、`docs/architecture.md`、`docs/design/implementation-status.md`、`README.md`。
     - **依赖门禁**：完成 6.1–6.6。
     - _Requirements: 9.1–9.10, 13.6–13.10_
 
-- [ ] 7. G2 检查点：P2 全部自动化验证通过后才进入 P3
+- [~] 7. G2 检查点：P2 全部自动化验证通过后才进入 P3
   - Ensure all tests pass, ask the user if questions arise.
   - 确认 hard graph 无环且只提供校验/诊断，没有 assignment、自动 dispatch、资源优化或复杂 DAG scheduler。
 
 - [ ] 8. P3：实现 agent/session/model Identity 与独立审核证明
-  - [ ] 8.1 新增 P3 Identity/attestation schema 与幂等迁移
+  - [x] 8.1 新增 P3 Identity/attestation schema 与幂等迁移
     - 为 contract/view/verdict/evidence/gate/state action 记录 agent_id/session_id/model_id/role 与 attestation 元数据（含 issuer 标识、签名密钥标识、绑定字段、按 Authoritative_Clock 记录的 Attestation 签发时间、有效期窗口与撤销状态）；缺失身份不得由 reviewer 自由文本或 ownership 补齐。
     - 新增 `Attestation_Revocation_Record` 存储结构：字段含 Attestation issuer 标识、签名密钥标识、`Revocation_Mode`、撤销原因、发起者身份，以及按 Authoritative_Clock 记录的撤销时间；该记录不可变、只追加，同一 issuer/签名密钥的一次撤销只对应一条记录。
     - 明确**不**为 issuer/签名密钥撤销建立"逐条失效事件"的批量写入路径：schema 与迁移层不提供按历史 verdict/Evidence 批量写入失效事件的通道，撤销导致的 `invalid` 由查询层按 issuer 标识与签名密钥标识匹配、并结合 `Revocation_Mode` 与 Attestation 签发时间派生（见 8.2）。个体失效事件表仍保留，供 Requirement 6.6 的单条记录失效使用。
@@ -704,7 +704,7 @@
     - **依赖门禁**：G2 通过。
     - _Requirements: 10.1–10.18, 13.10_
 
-  - [ ] 8.2 实现 Identity 验证、策略与 Attestation 校验
+  - [x] 8.2 实现 Identity 验证、策略与 Attestation 校验
     - 校验 action identity 完整性/唯一性、session 分离、可配置 agent/model-family 分离；返回结构化 identity reason，身份仅作 actor attribution。
     - Attestation 必须由 daemon 签发（Requirement 14.13）、绑定 Peer_Identity 派生的 Identity、记录标识、View_Manifest hash 与 Contract_Hash，且签发时间落在有效期窗口内；客户端自签、issuer 非 daemon、绑定/签名失败或越窗一律 fail closed 并把关联 verdict/Evidence 判为 invalid。
     - **issuer/签名密钥撤销采用单条记录 + 查询时派生**：撤销只向账本追加**一条** `Attestation_Revocation_Record`，不对历史 verdict/Evidence 逐条写入失效事件；以该 issuer 标识 + 签名密钥标识为唯一 Attestation 的记录，其 `invalid` 在**查询时**按匹配派生。
@@ -717,19 +717,19 @@
     - **依赖门禁**：完成 8.1。
     - _Requirements: 1.5, 10.1–10.18_
 
-  - [ ] 8.3 将 P3 Identity Mixin 接入 CodeGraphDB
+  - [x] 8.3 将 P3 Identity Mixin 接入 CodeGraphDB
     - 注册身份模块，不把 `active_task_id`、assignment metadata 或 SQLite lock 当成身份/授权证明。
     - **所有权**：`db/db.py`。
     - **依赖门禁**：完成 8.2。
     - _Requirements: 10.5, 10.7, 13.4–13.5_
 
-  - [ ] 8.4 强化 blind view/verdict/reveal 的独立审核证明
+  - [x] 8.4 强化 blind view/verdict/reveal 的独立审核证明
     - 证明 allowlisted manifest、verdict-before-reveal（按 Authoritative_Clock 定序）、有效 daemon 签发 attestation 与 Reviewer/Implementer session 不同；high_risk 按政策验证独立 Tester、不同 agent/model family。
     - **所有权**：`db/db_task_reviews.py`。
     - **依赖门禁**：完成 8.2、8.3。
     - _Requirements: 1.4–1.5, 10.1–10.5, 10.8_
 
-  - [ ] 8.5 将 Identity fail-closed 规则接入 Evidence Gate
+  - [x] 8.5 将 Identity fail-closed 规则接入 Evidence Gate
     - 缺失/不完整/不唯一/attestation 失败时排除 actor attribution 与 verdict clause satisfaction；apply session 必须不同于 Implementer session。
     - Attestation 越窗、自签、issuer 不符或被撤销时把关联 verdict/Evidence 判为 invalid 并保持请求前状态；撤销派生按 `Revocation_Mode` 的模式语义执行——`compromised` 命中匹配 issuer/签名密钥的全部记录且与签发时间无关，`rotated` 仅命中签发时间晚于撤销时间的记录。
     - **gate decision 记录 issuer 标识、签名密钥标识与 Attestation 签发时间**：每次 decision 必须记录其所用每条 verdict/Evidence 的 issuer 标识、签名密钥标识与 Attestation 签发时间，以及按 Authoritative_Clock 记录的判定时间，使「该记录在那次判定时刻是否已被撤销」可通过与匹配撤销记录的撤销时间和 `Revocation_Mode` 比较事后重算，不依赖历史失效事件；此处与 4.5 已要求的 Verifier 三元组记录对称（Requirement 6.22）。
@@ -737,20 +737,20 @@
     - **依赖门禁**：完成 8.4。
     - _Requirements: 1.5, 10.2–10.18_
 
-  - [ ] 8.6 将身份上下文接入 task mutation 与审计
+  - [x] 8.6 将身份上下文接入 task mutation 与审计
     - task report/apply/reopen/close 接收已验证 Identity；apply 强制不同 session，close 仍只收尾；不引入 assignment/lease 权限。
     - **所有权**：`db/db_tasks.py`。
     - **依赖门禁**：完成 8.5。
     - _Requirements: 10.1, 10.5–10.7, 13.3–13.5_
 
-  - [ ] 8.7 暴露 P3 CLI 与本地化 identity reason
+  - [x] 8.7 暴露 P3 CLI 与本地化 identity reason
     - 扩展相关命令输入/输出 agent/session/model/role/attestation，拒绝自由文本 reviewer 冒充证明，并说明 Attestation 只能由 daemon 签发。
     - issuer/签名密钥撤销命令必须**显式**接收 `Revocation_Mode`（`compromised` 或 `rotated`），CLI 侧不施加任何默认值；未携带该值的请求以带稳定错误码与可在 `zh_CN`、`en_US` 两个 catalog 中解析的 i18n message key 的 Structured_Reason 拒绝，且不追加任何撤销记录。
     - **所有权**：`cli/main.py`、`i18n/zh_CN.json`、`i18n/en_US.json`。
     - **依赖门禁**：完成 8.3–8.6。
     - _Requirements: 1.12, 10.1–10.18_
 
-  - [ ] 8.8 暴露 P3 MCP Identity 接口
+  - [x] 8.8 暴露 P3 MCP Identity 接口
     - 扩展 contract/view/verdict/evidence/gate/task 工具传递可验证调用身份，包装层不得伪造缺省身份或代客户端签发 Attestation。
     - 撤销相关接口必须透传 `Revocation_Mode` 且不补默认值，缺该值时按 8.2 的 Structured_Reason 拒绝；只读查询返回的撤销派生 `invalid` 是查询时刻按模式语义计算的派生值，包装层不得缓存为持久状态或代为写入逐条失效事件。
     - **所有权**：`server/mcp_server.py`。
@@ -772,7 +772,7 @@
     - **依赖门禁**：完成 8.2–8.8。
     - _Requirements: 1.4–1.5, 10.1–10.18, 13.4_
 
-  - [ ] 8.11 同步 P3 CLI/MCP/架构/状态文档
+  - [x] 8.11 同步 P3 CLI/MCP/架构/状态文档
     - 记录 Identity、daemon 签发 Attestation 校验、撤销传播、独立审核政策与 fail-closed reason；明确 Identity 不等于 assignment、lease、ownership 或 SQLite lock，P4 仍 unavailable。
     - 记录 Attestation 撤销的两种模式：`compromised` 忽略签发时间、命中匹配 issuer/签名密钥的全部记录；`rotated` 仅命中签发时间晚于撤销时间的记录，因此例行密钥轮换不会把轮换前的历史账本判死。同时明确 `Revocation_Mode` 必填且无默认值，缺该值的请求被拒。
     - 明确说明撤销**不写入逐条失效事件**：账本只增加一条 `Attestation_Revocation_Record`，`invalid` 由查询时派生；时点可重算性由 gate decision 记录的 issuer 标识、签名密钥标识、Attestation 签发时间与权威时钟判定时间保证；既有 payload 逐字节不变，个体失效仍按 Requirement 6.6 追加事件。
@@ -801,19 +801,19 @@
     - **依赖门禁**：完成 8.2–8.8。
     - _Requirements: 10.10–10.18_
 
-- [ ] 9. G3 检查点：P3 全部自动化验证通过后才进入 P4
+- [~] 9. G3 检查点：P3 全部自动化验证通过后才进入 P4
   - Ensure all tests pass, ask the user if questions arise.
   - 确认所有要求独立审核的路径都能证明 session/attestation，Attestation 均由 daemon 签发，且尚未把 identity 或 active_task_id 当作 assignment/lease。
   - 确认 Attestation 撤销采用**单条记录 + 查询时派生**且派生随 `Revocation_Mode` 分模式：`Revocation_Mode` 必填无默认值、缺该值的请求被拒且不追加记录；`compromised` 忽略签发时间、`rotated` 只命中签发时间晚于撤销时间的记录，因此例行密钥轮换不会把轮换前的历史账本判为 `invalid`；账本未出现逐条失效事件，既有 payload 逐字节不变，且时点撤销状态可由 gate decision 记录的 issuer 标识、签名密钥标识、Attestation 签发时间与权威时钟判定时间重算。
-- [ ] 10. P4：实现 assignment 与 token/expiry/renew/release/fencing 安全 lease
-  - [ ] 10.1 新增 P4 assignment/lease/event schema 与幂等迁移
+- [x] 10. P4：实现 assignment 与 token/expiry/renew/release/fencing 安全 lease
+  - [x] 10.1 新增 P4 assignment/lease/event schema 与幂等迁移
     - 记录 task+role+holder assignment，以及 lease_id、token hash、由权威时钟写入的 acquired/expires/renewed/released 时间、单调 fencing counter 和追加审计事件；永不存 raw token。
     - 唯一性/事务约束保证同 task+role 只有一个当前 lease，历史 lease 与 release event 可审计；claimed_by/claimed_at 不迁移成安全授权。
     - **所有权**：`db/schema.py`、`db/db_base.py`。
     - **依赖门禁**：G3 通过。
     - _Requirements: 1.11, 11.1–11.12, 13.4, 13.8, 13.10_
 
-  - [ ] 10.2 实现 assignment、lease 生命周期与 fencing 验证
+  - [~] 10.2 实现 assignment、lease 生命周期与 fencing 验证
     - acquire 原子比较当前状态并递增 counter；renew 要求当前 token/holder/counter 且未过期；release 追加事件并幂等。
     - `acquired_at`/`expires_at`/`renewed_at`/`released_at` 与过期判定一律读取 daemon Authoritative_Clock（Requirements 11.2、11.4、11.9 引用 14.11），客户端时间戳只作参考元数据（14.12），不参与过期判定。
     - protected mutation 验证 token hash、expiry、role、Identity 与当前 fencing，并在 daemon 唯一串行化点应用（Requirements 11.10、14.6）；旧 token/counter 即使旧进程复活也拒绝。
@@ -821,20 +821,20 @@
     - **依赖门禁**：完成 10.1。
     - _Requirements: 1.11, 11.1–11.10, 14.6, 14.11, 14.12_
 
-  - [ ] 10.3 将 P4 Lease Mixin 接入 CodeGraphDB
+  - [x] 10.3 将 P4 Lease Mixin 接入 CodeGraphDB
     - 注册 assignment/lease 模块，明确 SQLite 写锁只负责短事务互斥，不提供业务 ownership；Protected_Mutation 的全序由 daemon 串行化点保证。
     - **所有权**：`db/db.py`。
     - **依赖门禁**：完成 10.2。
     - _Requirements: 11.10, 13.5, 14.6, 14.7_
 
-  - [ ] 10.4 将 lease/fencing 接入 protected task mutation
+  - [~] 10.4 将 lease/fencing 接入 protected task mutation
     - 为受保护的 contract/view/verdict/evidence/gate/task 写操作要求 task+role 对应 token 与当前 fencing；过期、token 不匹配、旧 counter 均在写入前拒绝且不改变 task data。
     - 全部 Protected_Mutation 经 daemon 串行化点应用，不暴露第二个串行化点；assignment/lease 不得绕过角色权限、Independent Review 或 Evidence Gate；`task_close` 仍只在 applied 后收尾。
     - **所有权**：`db/db_tasks.py`、`db/db_task_contracts.py`、`db/db_task_reviews.py`、`db/db_task_evidence.py`。
     - **依赖门禁**：完成 10.2、10.3。
     - _Requirements: 1.11, 11.1, 11.8–11.12, 13.2–13.5, 14.6, 14.7_
 
-  - [ ] 10.5 暴露 P4 CLI 与本地化 lease reason
+  - [~] 10.5 暴露 P4 CLI 与本地化 lease reason
     - 提供 assignment create/show 与 lease acquire/renew/release/status 命令；raw token 仅在 acquire 成功响应安全返回一次，日志/数据库/错误不得泄露。
     - protected mutation 接受 token/fencing，输出 expiry/token/fencing/role/gate 的结构化拒绝原因；不实现自动 dispatch、抢占或中央调度。
     - 面向用户的 lease 文案按 Requirements 14.32、11.13 正面陈述边界：Lease 保证 daemon 在线期间的并发正确性，防篡改归属 Attestation 校验与追加式 Evidence_Ledger，且不得描述为能防止离线直接改库。
@@ -842,13 +842,13 @@
     - **依赖门禁**：完成 10.3、10.4。
     - _Requirements: 1.12, 11.1–11.13, 13.6, 13.8, 14.31, 14.32_
 
-  - [ ] 10.6 暴露 P4 MCP assignment/lease 工具
+  - [x] 10.6 暴露 P4 MCP assignment/lease 工具
     - 注册 acquire/renew/release/status 与 assignment 工具，并为 protected mutation 透传 token/fencing；包装层不得记录 raw token 或放宽 DB 校验。
     - **所有权**：`server/mcp_server.py`。
     - **依赖门禁**：完成 10.3、10.4。
     - _Requirements: 11.1–11.12, 13.10_
 
-  - [ ]* 10.7 编写 P4 schema 与迁移测试
+  - [x] 10.7 编写 P4 schema 与迁移测试
     - 覆盖旧库升级、重复迁移、token hash/raw token 禁止、单调 counter、唯一当前 lease、事件追加和 claimed metadata 不获授权。
     - **所有权**：新增 `tests/test_multi_llm_contract_p4_migration.py`。
     - **依赖门禁**：完成 10.1。
@@ -860,7 +860,7 @@
     - **依赖门禁**：完成 10.2。
     - _Requirements: 11.2–11.9, 14.11, 14.12_
 
-  - [ ]* 10.9 编写 P4 protected mutation 与 Gate 组合集成测试
+  - [x] 10.9 编写 P4 protected mutation 与 Gate 组合集成测试
     - 模拟旧持有者复活、并发 acquire、过期 lease、角色越权、有效 lease 但 Evidence Gate 失败，以及 SQLite 获锁但 lease 无效；全部必须无 task data 变更。
     - **所有权**：新增 `tests/test_multi_llm_contract_p4_protected_mutation.py`。
     - **依赖门禁**：完成 10.2–10.6。
@@ -873,7 +873,7 @@
     - **所有权**：新增 `tests/test_property_lease_fencing.py`。
     - **依赖门禁**：完成 10.2、10.4。
 
-  - [ ] 10.11 同步 P4 CLI/MCP/架构/状态文档
+  - [x] 10.11 同步 P4 CLI/MCP/架构/状态文档
     - 记录 assignment 与 lease 分层、token 安全、expiry/renew/release/fencing、protected mutation、daemon 串行化点与 SQLite lock 边界，以及 Evidence Gate 不可绕过。
     - 按 Requirements 14.32、11.13 正面陈述 P4 Lease 边界：Lease 是 daemon 在线期间的并发正确性保证；防篡改归属 Attestation 校验（14.31）与追加式 Evidence_Ledger；不得描述为能防止离线直接改库。同时记录 Degraded_Mode 下 Lease 获取/续租/释放属 Governance_Write，一律 fail closed。
     - 明确不提供复杂中央调度、自动 assignment、抢占、通用 Jira、实时聊天或共享推理历史，并同步 MCP/Mixin/schema 指标。
@@ -881,7 +881,7 @@
     - **依赖门禁**：完成 10.1–10.6。
     - _Requirements: 11.1–11.13, 13.4–13.10, 14.30, 14.31, 14.32_
 
-- [ ] 11. G4 最终检查点：完成全阶段回归与范围核对
+- [x] 11. G4 最终检查点：完成全阶段回归与范围核对
   - Ensure all tests pass, ask the user if questions arise.
   - 运行迁移、属性、单元、CLI/MCP 与跨阶段集成测试，并运行完整 daemon 回归 `cargo test --manifest-path rust_ext/Cargo.toml daemon:: --lib`；确认 P0 记录未被当作 P1 Evidence，`task_close` 仍仅收尾，lease 未绕过 Identity/role/Gate，且代码、CLI 输出与文档均按 Requirements 14.32、11.13 正面陈述 Lease 边界（在线并发正确性 + 防篡改归 Attestation 与账本追加性），无"防离线改库"类表述。
 

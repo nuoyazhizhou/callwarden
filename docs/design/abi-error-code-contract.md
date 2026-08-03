@@ -174,7 +174,7 @@ symbols_ready → fork_symbols → empty (with shared symbols)
 
 ### 3.2 Schema 版本契约
 
-- **当前版本**：`SCHEMA_VERSION = 43`（`db/schema.py`）
+- **当前版本**：`SCHEMA_VERSION = 44`（`db/schema.py`）
 - **迁移机制**：`db_migrate.py` 启动时根据 `schema_version` 表升级
 - **CAS schema**：独立 DDL（`db/db_cas.py:CAS_SCHEMA_DDL`），由 `init_cas_schema()` 初始化
 - **不变量**：schema 变更必须同步更新 `SCHEMA_VERSION` + `migration-manifest.md` 第 4 节 + `docs/architecture.md`

@@ -60,10 +60,10 @@ class TestCliReferenceDoc:
         assert os.path.isfile(CLI_REF), f"缺少文件: {CLI_REF}"
 
     def test_has_12_categories_overview_section(self):
-        """[1] 文档开头包含 '命令概览（按 12 大功能分类）' 章节"""
+        """[1] 文档开头包含 '命令概览（按 13 大功能分类）' 章节"""
         content = _read_file(CLI_REF)
-        assert "命令概览（按 12 大功能分类）" in content, \
-            "cli_reference.md 缺少 12 大类概览章节"
+        assert "命令概览（按 13 大功能分类）" in content, \
+            "cli_reference.md 缺少 13 大类概览章节"
 
     def test_overview_table_contains_all_12_categories(self):
         """[1] 概览表包含全部 12 个主分类名称"""

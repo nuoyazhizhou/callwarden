@@ -21,7 +21,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavio
 use sha2::{Digest, Sha256};
 
 /// Schema 版本号（真相源对齐 db/schema.py）
-pub const SCHEMA_VERSION: u32 = 43;
+pub const SCHEMA_VERSION: u32 = 44;
 
 // db/schema.py is the repository schema authority.  Embedding its SQL at
 // compile time keeps frozen Rust artifacts independent of a Python checkout

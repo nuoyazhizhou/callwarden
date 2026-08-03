@@ -1673,12 +1673,36 @@ def create_mcp_server():
             result: 执行结果描述
             success: 是否成功
             changes: 变更记录列表
+            identity: P3 结构化身份 JSON（{agent_id, session_id, model_id, role}，
+                      可选；提供后由包装层校验并透传给 db 层，不得伪造缺省身份）
 
         Returns:
             下一步步骤信息（如果有）
         """
         db = get_db()
-        return db.task_report_step(task_id=task_id, step_id=step_id, result=result, success=success, changes=changes)
+        try:
+            identity_dict, id_reason = _resolve_identity_arg(db, identity)
+            if id_reason:
+                return _identity_mcp_reason(
+                    id_reason.get("code", "E_IDENTITY_INVALID"),
+                    id_reason.get("message_key", "error.identity_incomplete"),
+                    id_reason.get("detail", "身份校验失败"),
+                )
+            kwargs: Dict[str, Any] = {
+                "task_id": task_id, "step_id": step_id,
+                "result": result, "success": success, "changes": changes,
+            }
+            if identity_dict:
+                if not _db_method_accepts_identity("task_report_step"):
+                    return _identity_mcp_reason(
+                        "E_IDENTITY_NOT_WIRED",
+                        "error.identity_not_wired",
+                        "task_report_step 尚不支持 identity 参数（8.6 接线后可用）",
+                    )
+                kwargs["identity"] = identity_dict
+            return db.task_report_step(**kwargs)
+        except Exception as e:
+            return {"error": str(e)}
 
     @mcp.tool()
     def record_task_symbol_change(task_id: str, file_path: str, step_id: str = "",
@@ -1797,7 +1821,8 @@ def create_mcp_server():
         return db.task_rollback(task_id=task_id, change_id=change_id, reason=reason)
 
     @mcp.tool()
-    def task_apply(task_id: str, reviewer: str = "reviewer") -> dict:
+    def task_apply(task_id: str, reviewer: str = "reviewer",
+                   identity: str = "") -> dict:
         """审核通过：将任务状态从 review 改为 applied
 
         设计原则：写代码的 Agent 不能自己 applied，必须由其他会话的
@@ -1806,18 +1831,37 @@ def create_mcp_server():
         Args:
             task_id: 任务 ID
             reviewer: 审核人标识
+            identity: P3 结构化身份 JSON（{agent_id, session_id, model_id, role}，
+                      可选；自由文本 reviewer 不是身份证明，Req 10.5）
 
         Returns:
             包含 task_id、status、applied_at 的字典；失败时包含 error 字段
         """
         db = get_db()
         try:
-            return db.task_apply(task_id=task_id, reviewer=reviewer)
+            identity_dict, id_reason = _resolve_identity_arg(db, identity)
+            if id_reason:
+                return _identity_mcp_reason(
+                    id_reason.get("code", "E_IDENTITY_INVALID"),
+                    id_reason.get("message_key", "error.identity_incomplete"),
+                    id_reason.get("detail", "身份校验失败"),
+                )
+            kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
+            if identity_dict:
+                if not _db_method_accepts_identity("task_apply"):
+                    return _identity_mcp_reason(
+                        "E_IDENTITY_NOT_WIRED",
+                        "error.identity_not_wired",
+                        "task_apply 尚不支持 identity 参数（8.6 接线后可用）",
+                    )
+                kwargs["identity"] = identity_dict
+            return db.task_apply(**kwargs)
         except Exception as e:
             return {"error": str(e)}
 
     @mcp.tool()
-    def task_close(task_id: str, reviewer: str = "reviewer") -> dict:
+    def task_close(task_id: str, reviewer: str = "reviewer",
+                   identity: str = "") -> dict:
         """关闭任务：将任务状态从 applied 改为 closed
 
         设计原则：写代码的 Agent 不能自己 closed，必须由其他会话的
@@ -1826,13 +1870,30 @@ def create_mcp_server():
         Args:
             task_id: 任务 ID
             reviewer: 审核人标识
+            identity: P3 结构化身份 JSON（可选；不得伪造缺省身份）
 
         Returns:
             包含 task_id、status、closed_at 的字典；失败时包含 error 字段
         """
         db = get_db()
         try:
-            return db.task_close(task_id=task_id, reviewer=reviewer)
+            identity_dict, id_reason = _resolve_identity_arg(db, identity)
+            if id_reason:
+                return _identity_mcp_reason(
+                    id_reason.get("code", "E_IDENTITY_INVALID"),
+                    id_reason.get("message_key", "error.identity_incomplete"),
+                    id_reason.get("detail", "身份校验失败"),
+                )
+            kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
+            if identity_dict:
+                if not _db_method_accepts_identity("task_close"):
+                    return _identity_mcp_reason(
+                        "E_IDENTITY_NOT_WIRED",
+                        "error.identity_not_wired",
+                        "task_close 尚不支持 identity 参数（8.6 接线后可用）",
+                    )
+                kwargs["identity"] = identity_dict
+            return db.task_close(**kwargs)
         except Exception as e:
             return {"error": str(e)}
 
@@ -5022,6 +5083,528 @@ def create_mcp_server():
             params["gate_id"] = gate_id
         return _collab_rpc_call("get_gate_decision", "gate.decision.query", params)
 
+    # ============================================
+    # P2: 依赖图与环检测工具（Req 9.1-9.10, 13.7-13.8）
+    # 薄包装器，复用 DB 层原子发布校验；不提供自动排程/assignment/抢占（Req 9.10）
+    # ============================================
+
+    @mcp.tool()
+    def import_envelope_dependencies(
+        workspace_id: int,
+        task_id: str,
+        contract_id: str,
+        contract_revision: int,
+        dependencies: list,
+    ) -> dict:
+        """从 Envelope 导入四类依赖声明（Req 9.1）。
+
+        依赖类型：requires_existing / requires_artifact /
+        provides_interface / requires_interface。
+
+        Args:
+            workspace_id: 工作区 ID
+            task_id: 声明依赖的任务 ID
+            contract_id: 契约 ID
+            contract_revision: 契约 revision
+            dependencies: 依赖列表，每项含 dependency_type/target_ref/target_task_id/is_informational
+
+        Returns:
+            {"imported": int, "skipped": int, "errors": list}
+        """
+        db = get_db()
+        return db.import_envelope_dependencies(
+            workspace_id, task_id, contract_id, contract_revision, dependencies,
+        )
+
+    @mcp.tool()
+    def record_artifact_identity(
+        workspace_id: int,
+        task_id: str,
+        contract_id: str,
+        contract_revision: int,
+        artifact_type: str,
+        artifact_ref: str,
+        artifact_hash: str = "",
+        workspace_snapshot_id: str = "",
+    ) -> str:
+        """记录 artifact identity（provider 产出 artifact 时调用，Req 9.3）。
+
+        Args:
+            artifact_type: file/symbol/resource
+            artifact_ref: 文件路径或符号限定名
+            artifact_hash: artifact 内容摘要（sha256:...），非空时 freshness=fresh
+            workspace_snapshot_id: 产出时绑定的工作区快照
+
+        Returns:
+            artifact_id（ART-<uuid>）
+        """
+        db = get_db()
+        return db.record_artifact_identity(
+            workspace_id, task_id, contract_id, contract_revision,
+            artifact_type, artifact_ref, artifact_hash, workspace_snapshot_id,
+        )
+
+    @mcp.tool()
+    def get_artifact_freshness(
+        workspace_id: int,
+        task_id: str,
+        artifact_ref: str = "",
+    ) -> Optional[dict]:
+        """查询 artifact freshness 状态（Req 9.3，Gate 判定用）。
+
+        Returns:
+            {"artifact_id", "freshness_status", "artifact_hash", "produced_at"} 或 None
+        """
+        db = get_db()
+        return db.get_artifact_freshness(workspace_id, task_id, artifact_ref)
+
+    @mcp.tool()
+    def publish_interface(
+        workspace_id: int,
+        task_id: str,
+        contract_id: str,
+        contract_revision: int,
+        interface_name: str,
+        version: str,
+        interface_hash: str = "",
+    ) -> str:
+        """发布 interface identity（provider 声明 provides_interface，Req 9.4）。
+
+        Returns:
+            interface_id（IF-<uuid>）
+        """
+        db = get_db()
+        return db.publish_interface(
+            workspace_id, task_id, contract_id, contract_revision,
+            interface_name, version, interface_hash,
+        )
+
+    @mcp.tool()
+    def get_interface_providers(
+        workspace_id: int,
+        interface_name: str,
+        version: str = "",
+    ) -> list:
+        """查询匹配的 interface provider 列表（Req 9.5, 9.9）。
+
+        Returns:
+            provider 列表，每项含 interface_id/provider_task_id/version/hash
+        """
+        db = get_db()
+        return db.get_interface_providers(workspace_id, interface_name, version)
+
+    @mcp.tool()
+    def select_interface_provider(
+        workspace_id: int,
+        consumer_task_id: str,
+        contract_id: str,
+        contract_revision: int,
+        interface_name: str,
+        selected_provider_task_id: str,
+    ) -> dict:
+        """记录 Planner 的显式 provider 选择（Req 9.9）。
+
+        Returns:
+            {"success": bool, "error": str}
+        """
+        db = get_db()
+        return db.select_interface_provider(
+            workspace_id, consumer_task_id, contract_id, contract_revision,
+            interface_name, selected_provider_task_id,
+        )
+
+    @mcp.tool()
+    def build_hard_dependency_edges(
+        workspace_id: int,
+        contract_id: str,
+        contract_revision: int,
+    ) -> dict:
+        """为指定契约 revision 构建硬依赖图边（Req 9.6）。
+
+        边方向 provider→consumer，去重后用于环检测。
+
+        Returns:
+            {"edges_built": int, "edges_skipped": int}
+        """
+        db = get_db()
+        return db.build_hard_dependency_edges(workspace_id, contract_id, contract_revision)
+
+    @mcp.tool()
+    def detect_cycle(workspace_id: int) -> dict:
+        """检测硬依赖图中的环，返回最小 cycle path（Req 9.7）。
+
+        只做无环校验和诊断，不提供自动排程/assignment/抢占（Req 9.10）。
+
+        Returns:
+            {"has_cycle": bool, "cycle_path": list}
+        """
+        db = get_db()
+        return db.detect_cycle(workspace_id)
+
+    @mcp.tool()
+    def validate_revision_dependencies(
+        workspace_id: int,
+        contract_id: str,
+        contract_revision: int,
+    ) -> dict:
+        """验证指定 Revision 的依赖完整性（Req 9.7, 9.9）。
+
+        验证内容：硬依赖图无环 + 多 provider 有显式选择。
+        revision 有环时原子拒绝。
+
+        Returns:
+            {"valid": bool, "errors": list, "cycle_path": list}
+        """
+        db = get_db()
+        return db.validate_revision_dependencies(workspace_id, contract_id, contract_revision)
+
+    @mcp.tool()
+    def get_dependency_edges(
+        workspace_id: int,
+        task_id: str = "",
+    ) -> list:
+        """查询硬依赖图边（Req 9.6，诊断用）。
+
+        Args:
+            task_id: 可选，按任务 ID 过滤（provider 或 consumer 匹配）
+
+        Returns:
+            依赖边列表，每项含 provider_task_id/consumer_task_id/edge_type/source_type/is_hard
+        """
+        db = get_db()
+        return db.get_dependency_edges(workspace_id, task_id)
+
+    # ============================================================
+    # P3 Identity / Attestation 工具（Req 10.1-10.18, 8.8 任务）
+    # ============================================================
+
+    def _identity_mcp_reason(code: str, message_key: str,
+                             detail: str) -> dict:
+        """构造 P3 失败路径的 Structured_Reason（Requirement 1.12）。
+
+        稳定错误码 + 可在 zh_CN/en_US 两个 catalog 解析的 i18n message key；
+        文案变化不得改变错误码值。
+        """
+        return {
+            "status": "error",
+            "reason": {
+                "code": code,
+                "message_key": message_key,
+                "detail": detail,
+            },
+        }
+
+    def _resolve_identity_arg(db, identity: str):
+        """解析并校验 MCP 传入的结构化身份（JSON 字符串，Req 10.5）。
+
+        包装层不伪造缺省身份：未提供时返回 (None, None)；解析失败或
+        校验失败返回 (None, structured_reason)。自由文本 reviewer 不能
+        充当身份证明（Req 10.5）。
+        """
+        if not identity:
+            return None, None
+        try:
+            import json as _json
+            identity_dict = _json.loads(identity)
+        except Exception:
+            return None, {
+                "code": "E_IDENTITY_INCOMPLETE",
+                "message_key": "error.identity_incomplete",
+                "detail": "identity 必须是 JSON 对象 {agent_id, session_id, model_id, role}",
+            }
+        if not isinstance(identity_dict, dict):
+            return None, {
+                "code": "E_IDENTITY_INCOMPLETE",
+                "message_key": "error.identity_incomplete",
+                "detail": "identity 必须是 JSON 对象",
+            }
+        ok, reason = db.validate_action_identity(identity_dict)
+        if not ok:
+            return None, reason
+        return identity_dict, None
+
+    def _db_method_accepts_identity(method_name: str) -> bool:
+        """检查 db 方法是否接受 identity 关键字参数（8.6 接线后为 True）。"""
+        db = get_db()
+        fn = getattr(db, method_name, None)
+        if fn is None:
+            return False
+        try:
+            import inspect
+            params = inspect.signature(fn).parameters
+            return "identity" in params or any(
+                p.kind == inspect.Parameter.VAR_KEYWORD
+                for p in params.values())
+        except (TypeError, ValueError):
+            return False
+
+    @mcp.tool()
+    def record_action_identity(
+        action_id: str,
+        action_type: str,
+        task_id: str,
+        identity: str,
+        contract_id: str = "",
+        contract_revision: int = 0,
+        workspace_id: Optional[int] = None,
+    ) -> dict:
+        """记录 action 身份（写操作，Req 10.1）
+
+        为 contract/view/verdict/evidence/gate/state_transition 动作记录
+        agent_id/session_id/model_id/role。身份仅作 actor attribution，
+        不等于 assignment、lease、ownership 或 SQLite lock（Req 10.7）。
+
+        Args:
+            action_id: 动作唯一标识
+            action_type: 动作类型（contract/view/verdict/evidence/gate/state_transition）
+            task_id: 任务 ID
+            identity: JSON 字符串 {agent_id, session_id, model_id, role}
+            contract_id: 关联契约 ID（可选）
+            contract_revision: 契约 revision（可选）
+            workspace_id: 工作区 ID（可选，缺省取当前工作区）
+
+        Returns:
+            {"code": "OK", "action_id": ..., "recorded_at": ...}；失败返回
+            {"status": "error", "reason": {...}}（Structured_Reason）
+        """
+        db = get_db()
+        try:
+            identity_dict, id_reason = _resolve_identity_arg(db, identity)
+            if id_reason:
+                return _identity_mcp_reason(
+                    id_reason.get("code", "E_IDENTITY_INVALID"),
+                    id_reason.get("message_key", "error.identity_incomplete"),
+                    id_reason.get("detail", "身份校验失败"),
+                )
+            ok, result = db.record_action_identity(
+                action_id=action_id,
+                action_type=action_type,
+                task_id=task_id,
+                identity=identity_dict,
+                contract_id=contract_id,
+                contract_revision=contract_revision,
+                workspace_id=workspace_id,
+            )
+            if not ok:
+                return {"status": "error", "reason": result}
+            return result
+        except Exception as e:
+            return _identity_mcp_reason(
+                "E_IDENTITY_RECORD_FAILED",
+                "error.identity_not_wired",
+                f"身份记录失败: {e}",
+            )
+
+    @mcp.tool()
+    def get_action_identity(
+        action_id: str,
+        workspace_id: Optional[int] = None,
+    ) -> dict:
+        """查询 action 身份记录（只读，Req 10.1）
+
+        Args:
+            action_id: 动作唯一标识
+            workspace_id: 工作区 ID（可选）
+
+        Returns:
+            身份记录 dict 或 None
+        """
+        db = get_db()
+        try:
+            return db.get_action_identity(action_id, workspace_id)
+        except Exception as e:
+            return _identity_mcp_reason(
+                "E_IDENTITY_QUERY_FAILED",
+                "error.identity_not_wired",
+                f"身份查询失败: {e}",
+            )
+
+    @mcp.tool()
+    def check_action_identity(
+        identity: str,
+        require_role: str = "",
+    ) -> dict:
+        """校验结构化身份（只读，Req 10.2/10.5）
+
+        Args:
+            identity: JSON 字符串 {agent_id, session_id, model_id, role}
+            require_role: 要求的角色（planner/implementer/reviewer/tester，可选）
+
+        Returns:
+            {"valid": bool, "reason": {...}}；reason 为 Structured_Reason
+        """
+        db = get_db()
+        try:
+            identity_dict, id_reason = _resolve_identity_arg(db, identity)
+            if id_reason:
+                return {"valid": False, "reason": id_reason}
+            ok, reason = db.validate_action_identity(
+                identity_dict, require_role=require_role)
+            return {"valid": bool(ok), "reason": reason}
+        except Exception as e:
+            return {"valid": False, "reason": {
+                "code": "E_IDENTITY_VALIDATION_FAILED",
+                "message_key": "error.identity_not_wired",
+                "detail": str(e),
+            }}
+
+    @mcp.tool()
+    def check_session_separation(
+        reviewer_identity: str,
+        implementer_identity: str,
+    ) -> dict:
+        """校验 Reviewer/Implementer 会话分离（只读，Req 1.5, 10.2）
+
+        Args:
+            reviewer_identity: Reviewer 身份 JSON 字符串
+            implementer_identity: Implementer 身份 JSON 字符串
+
+        Returns:
+            {"valid": bool, "reason": {...}}
+        """
+        db = get_db()
+        try:
+            import json as _json
+            reviewer = _json.loads(reviewer_identity)
+            implementer = _json.loads(implementer_identity)
+            if not isinstance(reviewer, dict) or not isinstance(implementer, dict):
+                return {"valid": False, "reason": {
+                    "code": "E_IDENTITY_INCOMPLETE",
+                    "message_key": "error.identity_incomplete",
+                    "detail": "reviewer/implementer_identity 必须是 JSON 对象",
+                }}
+            ok, reason = db.validate_session_separation(reviewer, implementer)
+            return {"valid": bool(ok), "reason": reason}
+        except Exception as e:
+            return {"valid": False, "reason": {
+                "code": "E_IDENTITY_VALIDATION_FAILED",
+                "message_key": "error.identity_not_wired",
+                "detail": str(e),
+            }}
+
+    @mcp.tool()
+    def get_attestation_validity(
+        issuer: str,
+        signing_key_id: str,
+        issuance_time: float,
+        workspace_id: Optional[int] = None,
+    ) -> dict:
+        """派生 Attestation 有效性（只读，Req 10.13-10.15）
+
+        撤销导致的 invalid 是**查询时刻**按 Revocation_Mode 语义计算的派生值：
+        compromised 命中匹配 issuer/签名密钥的全部记录（与签发时间无关）；
+        rotated 仅命中签发时间晚于撤销时间的记录。本工具不持久化派生状态，
+        也不代为写入逐条失效事件（Req 10.10）。
+
+        Args:
+            issuer: Attestation issuer 标识
+            signing_key_id: 签名密钥标识
+            issuance_time: Attestation 签发时间（Authoritative_Clock 时间戳）
+            workspace_id: 工作区 ID（可选）
+
+        Returns:
+            {"validity": "valid" | "invalid"}
+        """
+        db = get_db()
+        try:
+            validity = db.derive_attestation_validity(
+                issuer, signing_key_id, issuance_time, workspace_id)
+            return {"validity": validity}
+        except Exception as e:
+            return _identity_mcp_reason(
+                "E_ATTESTATION_INVALID",
+                "error.attestation_invalid",
+                f"Attestation 有效性派生失败: {e}",
+            )
+
+    @mcp.tool()
+    def list_attestation_revocations(
+        issuer: str = "",
+        signing_key_id: str = "",
+        workspace_id: Optional[int] = None,
+    ) -> dict:
+        """查询 Attestation 撤销账本（只读，Req 10.11）
+
+        返回不可变、只追加的 Attestation_Revocation_Record 列表；每条对应
+        一次撤销（issuer 标识 + 签名密钥标识），撤销导致的 invalid 由
+        get_attestation_validity 在查询时派生，本工具不写入任何失效事件。
+
+        Args:
+            issuer: 按 issuer 过滤（可选）
+            signing_key_id: 按签名密钥过滤（可选）
+            workspace_id: 工作区 ID（可选）
+
+        Returns:
+            {"items": [...], "count": N}
+        """
+        db = get_db()
+        try:
+            items = db.list_attestation_revocations(
+                issuer=issuer, signing_key_id=signing_key_id,
+                workspace_id=workspace_id)
+            return {"items": items, "count": len(items)}
+        except Exception as e:
+            return _identity_mcp_reason(
+                "E_IDENTITY_QUERY_FAILED",
+                "error.identity_not_wired",
+                f"撤销账本查询失败: {e}",
+            )
+
+    @mcp.tool()
+    def register_attestation_revocation(
+        issuer: str,
+        signing_key_id: str,
+        revocation_mode: str = "",
+        revocation_reason: str = "",
+        initiating_actor: str = "",
+        workspace_id: Optional[int] = None,
+    ) -> dict:
+        """追加 Attestation 撤销记录（写操作，Req 10.10-10.12）
+
+        Revocation_Mode 必填且无默认值（compromised/rotated）：未携带或取值
+        非法时以 Structured_Reason 拒绝，**不追加任何撤销记录**。每次撤销
+        只追加一条不可变记录，不写入逐条失效事件；撤销导致的 invalid 由
+        get_attestation_validity 在查询时派生（Req 10.10, 10.15）。
+
+        Args:
+            issuer: 被撤销的 Attestation issuer 标识
+            signing_key_id: 被撤销的签名密钥标识
+            revocation_mode: Revocation_Mode（必填，无默认值：compromised/rotated）
+            revocation_reason: 撤销原因（可选）
+            initiating_actor: 发起者身份（可选）
+            workspace_id: 工作区 ID（可选）
+
+        Returns:
+            {"code": "OK", "revocation_id": ..., ...}；Revocation_Mode 缺失时
+            返回 {"status": "error", "reason": {...}} 且不追加记录
+        """
+        if revocation_mode not in ("compromised", "rotated"):
+            return _identity_mcp_reason(
+                "E_REVOCATION_MODE_REQUIRED",
+                "error.revocation_mode_missing",
+                "撤销请求必须显式指定 Revocation_Mode（compromised/rotated），"
+                "未提供时不追加任何撤销记录",
+            )
+        db = get_db()
+        try:
+            ok, result = db.register_attestation_revocation(
+                issuer=issuer,
+                signing_key_id=signing_key_id,
+                revocation_mode=revocation_mode,
+                revocation_reason=revocation_reason,
+                initiating_actor=initiating_actor,
+                workspace_id=workspace_id,
+            )
+            if not ok:
+                return {"status": "error", "reason": result}
+            return result
+        except Exception as e:
+            return _identity_mcp_reason(
+                "E_REVOCATION_FAILED",
+                "error.attestation_invalid",
+                f"撤销记录写入失败: {e}",
+            )
+
     return mcp
 
 
@@ -5326,6 +5909,261 @@ def _print_auto_sync_summary(result: Dict[str, Any]) -> None:
                 ),
                 file=sys.stderr,
             )
+
+
+    # ============================================================
+    # P4: Assignment 与安全 Lease 工具（Req 11.1-11.13, 13.4-13.10）
+    # ============================================================
+    # 设计约束：
+    # - raw token 仅在 lease_acquire 成功响应返回一次（Req 11.2），
+    #   包装层不得记录 raw token 到日志，也不得放宽 db 层校验（Req 11.9）。
+    # - Lease 校验通过不代表 mutation 被授权：角色权限、Independent Review
+    #   与 Evidence Gate 仍然适用（Req 11.11）；SQLite 写锁只做事务互斥（Req 11.10）。
+    # - Degraded_Mode 下 Lease 获取/续租/释放属 Governance_Write，fail closed（Req 14.31）。
+
+    @mcp.tool()
+    def lease_acquire(
+        task_id: str,
+        role: str = "implementer",
+        agent_id: str = "",
+        session_id: str = "",
+        model_id: str = "",
+        ttl_seconds: float = 3600.0,
+    ) -> dict:
+        """获取安全 Lease（P4，Req 11.2-11.3）
+
+        原子比较当前 Lease 状态：已有未过期 active lease 则拒绝；已过期则覆盖。
+        fencing counter 单调递增（Req 11.3）。raw token 仅本次响应返回一次，
+        数据库只存 sha256 hash（Req 11.2），调用方须妥善保存用于 renew/release
+        与受保护写操作。
+
+        Lease 保证的是 daemon 在线期间的并发正确性；防篡改归属 Attestation 校验
+        与追加式 Evidence_Ledger，不防止离线直接改库（Req 11.13, 14.32）。
+
+        Args:
+            task_id: 关联任务 ID
+            role: 角色（implementer/reviewer/tester/planner）
+            agent_id: holder Agent 标识（必填，Req 11.2）
+            session_id: holder Session 标识（必填）
+            model_id: holder Model 标识（必填）
+            ttl_seconds: 有效期（秒），expires_at = 权威时钟 + ttl
+
+        Returns:
+            成功：{ok: True, lease_id, token, fencing_counter, acquired_at, expires_at}
+            失败：{ok: False, code, message_key, detail, ...}（结构化拒绝，Req 1.12）
+        """
+        db = get_db()
+        identity = {
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "model_id": model_id,
+        }
+        ok, result = db.acquire_lease(task_id, role, identity, ttl_seconds=ttl_seconds)
+        if not ok:
+            return result
+        result["ok"] = True
+        return result
+
+    @mcp.tool()
+    def lease_renew(
+        task_id: str,
+        role: str,
+        token: str,
+        agent_id: str = "",
+        session_id: str = "",
+        model_id: str = "",
+        ttl_seconds: float = 3600.0,
+    ) -> dict:
+        """续租 Lease（P4，Req 11.4-11.5）
+
+        要求当前 token hash、holder Identity 与未过期；校验通过后从权威时钟
+        设置更晚的 expires_at 并更新 renewed_at。幂等：重复有效 renew 返回同一
+        lease 状态，不递增 fencing counter，不创建新 lease（Req 11.5）。
+
+        Args:
+            task_id: 任务 ID
+            role: 角色
+            token: Lease raw token（acquire 返回）
+            agent_id: holder Agent 标识
+            session_id: holder Session 标识
+            model_id: holder Model 标识
+            ttl_seconds: 续租后有效期（秒）
+
+        Returns:
+            成功：{ok: True, lease_id, fencing_counter, renewed_at, expires_at}
+            失败：{ok: False, code, message_key, detail, ...}
+        """
+        db = get_db()
+        identity = {
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "model_id": model_id,
+        }
+        ok, result = db.renew_lease(
+            task_id, role, token, identity=identity, ttl_seconds=ttl_seconds)
+        if not ok:
+            return result
+        result["ok"] = True
+        return result
+
+    @mcp.tool()
+    def lease_release(
+        task_id: str,
+        role: str,
+        token: str,
+        agent_id: str = "",
+        session_id: str = "",
+        model_id: str = "",
+    ) -> dict:
+        """释放 Lease（P4，Req 11.6-11.7）
+
+        当前 token 匹配时原子追加 release 审计事件并将 lease 置 released。
+        幂等：重复 release 返回同一 released 状态，不改变 fencing counter，
+        不创建第二个 active lease（Req 11.7）。
+
+        Args:
+            task_id: 任务 ID
+            role: 角色
+            token: Lease raw token
+            agent_id: 发起者 Agent 标识
+            session_id: 发起者 Session 标识
+            model_id: 发起者 Model 标识
+
+        Returns:
+            成功：{ok: True, lease_id, fencing_counter, released_at, status}
+            失败：{ok: False, code, message_key, detail, ...}
+        """
+        db = get_db()
+        identity = {
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "model_id": model_id,
+        }
+        ok, result = db.release_lease(task_id, role, token, identity=identity)
+        if not ok:
+            return result
+        result["ok"] = True
+        return result
+
+    @mcp.tool()
+    def lease_status(task_id: str, role: str = "") -> dict:
+        """查询 Lease 状态（P4，只读，Req 11.2）
+
+        返回当前 active lease（含 token_hash 供校验，不含 raw token）；无 active
+        lease 时返回最近一条历史 lease 的状态摘要。
+
+        Args:
+            task_id: 任务 ID
+            role: 角色（空 = 最近一条）
+
+        Returns:
+            {status: active/released/expired/none, lease_id, task_id, role,
+             agent_id, session_id, model_id, token_hash, fencing_counter,
+             acquired_at, expires_at, renewed_at, released_at}
+        """
+        db = get_db()
+        try:
+            return db.get_lease_status(task_id, role)
+        except Exception as e:
+            return {"status": "none", "error": str(e)}
+
+    @mcp.tool()
+    def lease_list_events(task_id: str = "", role: str = "") -> list:
+        """查询 Lease 审计事件（P4，只读，append-only 账本，Req 11.6）
+
+        按事件顺序返回 acquire/renew/release 事件；不包含 raw token。
+
+        Args:
+            task_id: 任务 ID（可选过滤）
+            role: 角色（可选过滤）
+
+        Returns:
+            [{event_id, lease_id, task_id, role, event_type, fencing_counter,
+              event_at, actor_agent_id, actor_session_id, actor_model_id, detail}]
+        """
+        db = get_db()
+        try:
+            return db.list_lease_events(task_id, role)
+        except Exception as e:
+            return [{"error": str(e)}]
+
+    @mcp.tool()
+    def assignment_create(
+        task_id: str,
+        role: str = "implementer",
+        agent_id: str = "",
+        session_id: str = "",
+        model_id: str = "",
+    ) -> dict:
+        """创建 Assignment（P4，Req 11.1）
+
+        assignment 绑定 task+role+holder Identity，不把 workspace active_task_id
+        当作 assignment authority（Req 13.4）；assignment 可以没有 lease（Req 11.12）。
+
+        Args:
+            task_id: 任务 ID
+            role: 角色
+            agent_id: holder Agent 标识（必填）
+            session_id: holder Session 标识（必填）
+            model_id: holder Model 标识（必填）
+
+        Returns:
+            成功：{ok: True, assignment_id, task_id, role, agent_id, session_id,
+                   model_id, created_at}
+            失败：{ok: False, code, message_key, detail, ...}
+        """
+        db = get_db()
+        identity = {
+            "agent_id": agent_id,
+            "session_id": session_id,
+            "model_id": model_id,
+        }
+        ok, result = db.create_assignment(task_id, role, identity)
+        if not ok:
+            return result
+        result["ok"] = True
+        return result
+
+    @mcp.tool()
+    def assignment_show(task_id: str, role: str = "") -> dict:
+        """查询任务当前 active Assignment（P4，只读，Req 11.1）
+
+        Args:
+            task_id: 任务 ID
+            role: 角色（空 = 最近一条）
+
+        Returns:
+            {assignment_id, task_id, role, agent_id, session_id, model_id,
+             status, created_at, revoked_at} 或 {status: "none"}
+        """
+        db = get_db()
+        try:
+            result = db.get_assignment(task_id, role)
+            if result is None:
+                return {"status": "none", "task_id": task_id, "role": role}
+            return result
+        except Exception as e:
+            return {"status": "none", "error": str(e)}
+
+    @mcp.tool()
+    def assignment_revoke(assignment_id: str) -> dict:
+        """撤销 Assignment（P4，Req 11.1）
+
+        追加 revoked_at 并置 status=revoked，不删除记录（append 语义）。
+
+        Args:
+            assignment_id: Assignment ID（ASG-xxx）
+
+        Returns:
+            成功：{ok: True, assignment_id, revoked_at}
+            失败：{ok: False, code, message_key, detail, ...}
+        """
+        db = get_db()
+        ok, result = db.revoke_assignment(assignment_id)
+        if not ok:
+            return result
+        result["ok"] = True
+        return result
 
 
 def main():

@@ -50,6 +50,7 @@ from .blind_review_protocol import (
     Structured_Reason,
     make_reason,
     ExperimentErrorCode,
+    ExperimentProtocolError,
 )
 
 
@@ -237,16 +238,50 @@ def is_nontrivial_code_change(
     has_symbol_change: bool,
     is_formatting_only: bool = False,
     is_generated: bool = False,
+    *,
+    tracked_source_file: bool = True,
 ) -> bool:
-    """非平凡 code_change 最小样本门槛（Requirement 12.26）。
+    """非平凡 ``code_change`` 最小样本门槛（Requirement 12.26）。
 
-    计入“非平凡 code_change”的样本必须：至少一个 tracked 源文件改动 >=10 行非注释代码
-    （changed_source_lines>=10），且 task_symbol_changes 至少一条符号变化（has_symbol_change）。
-    纯格式化改动（is_formatting_only）与生成文件改动（is_generated）从门槛判定中排除。
+    ``changed_source_lines`` 必须来自至少一个 tracked 源文件的非注释行变更，且
+    ``task_symbol_changes`` 至少有一条符号变化。调用方无法证明文件 tracked 或为源文件
+    时传 ``tracked_source_file=False``；纯格式化和生成文件始终排除。阈值是“至少 10 行”，
+    因而恰好 10 行也满足要求。
     """
-    if is_formatting_only or is_generated:
+    if is_formatting_only or is_generated or not tracked_source_file:
         return False
-    return changed_source_lines >= 10 and bool(has_symbol_change)
+    try:
+        lines = int(changed_source_lines)
+    except (TypeError, ValueError):
+        return False
+    return lines >= 10 and bool(has_symbol_change)
+
+
+def nontrivial_code_change_from_facts(
+    changed_files: Sequence[Dict[str, Any]],
+    symbol_changes: Sequence[Dict[str, Any]],
+) -> bool:
+    """从现有 diff/symbol facts 判定 12.26 的非平凡样本门槛。
+
+    ``changed_files`` 中每项可提供 ``non_comment_lines``（或 ``changed_source_lines``）、
+    ``tracked``、``is_source_file``、``is_formatting_only`` 和 ``is_generated``。只要有一个
+    tracked 源文件满足 10 行非注释改动，并且存在至少一条符号变化即返回 True。未知字段不
+    被乐观解释为通过，避免把生成文件或未跟踪文件误计入 G0 分母。
+    """
+    has_symbol_change = bool(symbol_changes)
+    for fact in changed_files:
+        if not isinstance(fact, dict):
+            continue
+        lines = fact.get("non_comment_lines", fact.get("changed_source_lines", 0))
+        if is_nontrivial_code_change(
+            lines,
+            has_symbol_change,
+            bool(fact.get("is_formatting_only", False)),
+            bool(fact.get("is_generated", False)),
+            tracked_source_file=bool(fact.get("tracked", False) and fact.get("is_source_file", True)),
+        ):
+            return True
+    return False
 
 
 @dataclass
@@ -275,6 +310,9 @@ class SampleRecord:
     confirmed_high_risk_defects: int = 0
     # 12.15 critical miss 是否因最小视图遗漏必要事实（事件型暂停触发输入）。
     has_critical_miss_missing_facts: bool = False
+    # 12.6：保留首轮/最终 finding 原始事实，报告不能只输出派生比例。
+    first_pass_findings: int = 0
+    final_findings: int = 0
 
     @property
     def recall_denominator(self) -> int:
@@ -283,8 +321,10 @@ class SampleRecord:
 
     @property
     def fp_denominator(self) -> int:
-        """误报率分母：verified false positives + verified true positives。"""
-        return self.verified_false_positives + self.verified_true_positives
+        """误报率分母：首轮 finding 数；旧记录缺该字段时回退到 TP+FP。"""
+        return self.first_pass_findings if self.first_pass_findings > 0 else (
+            self.verified_false_positives + self.verified_true_positives
+        )
 
     @property
     def reopened_or_rolled_back(self) -> bool:
@@ -324,17 +364,50 @@ class SampleRecord:
                     detail=f"非法 group 取值: {group!r}",
                 )
             )
+        def _nonnegative_int(name: str, default: int = 0) -> int:
+            try:
+                value = int(record.get(name, default))
+            except (TypeError, ValueError) as exc:
+                raise EvaluatorError(make_evaluator_reason(
+                    EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                    detail=f"{name} 不是整数: {exc}"))
+            if value < 0:
+                raise EvaluatorError(make_evaluator_reason(
+                    EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                    detail=f"{name} 不能为负数: {value}"))
+            return value
+
+        def _nonnegative_float(name: str, default: float = 0.0) -> float:
+            try:
+                value = float(record.get(name, default))
+            except (TypeError, ValueError) as exc:
+                raise EvaluatorError(make_evaluator_reason(
+                    EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                    detail=f"{name} 不是数字: {exc}"))
+            if not math.isfinite(value) or value < 0:
+                raise EvaluatorError(make_evaluator_reason(
+                    EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                    detail=f"{name} 必须是有限非负数: {value}"))
+            return value
+
+        if confirmed_high_risk_defects < 0:
+            raise EvaluatorError(make_evaluator_reason(
+                EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                detail=f"confirmed_high_risk_defects 不能为负数: {confirmed_high_risk_defects}"))
+
         return cls(
             task_id=task_id,
             group=group,
-            verified_true_positives=int(record.get("verified_true_positives", 0)),
-            verified_false_positives=int(record.get("verified_false_positives", 0)),
-            verified_misses=int(record.get("verified_misses", 0)),
-            review_duration_seconds=float(record.get("review_duration_seconds", 0.0)),
-            token_usage=int(record.get("token_usage", 0)),
-            reopen_events=int(record.get("reopen_events", 0)),
-            post_apply_defects=int(record.get("post_apply_defects", 0)),
-            post_apply_rollbacks=int(record.get("post_apply_rollbacks", 0)),
+            first_pass_findings=_nonnegative_int("first_pass_findings"),
+            final_findings=_nonnegative_int("final_findings"),
+            verified_true_positives=_nonnegative_int("verified_true_positives"),
+            verified_false_positives=_nonnegative_int("verified_false_positives"),
+            verified_misses=_nonnegative_int("verified_misses"),
+            review_duration_seconds=_nonnegative_float("review_duration_seconds"),
+            token_usage=_nonnegative_int("token_usage"),
+            reopen_events=_nonnegative_int("reopen_events"),
+            post_apply_defects=_nonnegative_int("post_apply_defects"),
+            post_apply_rollbacks=_nonnegative_int("post_apply_rollbacks"),
             is_nontrivial_code_change=bool(is_nontrivial_code_change),
             verdict_before_reveal=bool(verdict_before_reveal),
             confirmed_high_risk_defects=int(confirmed_high_risk_defects),
@@ -377,6 +450,10 @@ class GroupMetrics:
     # apply 后缺陷/回滚原始计数（12.6）。
     post_apply_defects: int = 0
     post_apply_rollbacks: int = 0
+    # 12.6 原始事实置于末尾，保持旧 positional API。
+    first_pass_findings: int = 0
+    final_findings: int = 0
+    token_usage: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -426,6 +503,9 @@ def compute_group_metrics(group: str, samples: Sequence[SampleRecord]) -> GroupM
     tp = sum(s.verified_true_positives for s in own)
     misses = sum(s.verified_misses for s in own)
     fp = sum(s.verified_false_positives for s in own)
+    m.first_pass_findings = sum(s.first_pass_findings for s in own)
+    m.final_findings = sum(s.final_findings for s in own)
+    m.token_usage = sum(s.token_usage for s in own)
     m.true_positives = tp
     m.verified_misses = misses
     m.false_positives = fp
@@ -436,8 +516,9 @@ def compute_group_metrics(group: str, samples: Sequence[SampleRecord]) -> GroupM
     m.recall = _safe_rate(tp, recall_denom)
     m.recall_ci = wilson_confidence_interval(tp, recall_denom)
 
-    # false_positive_rate = fp / (fp + tp)。
-    fp_denom = fp + tp
+    # 误报分母按 Requirement 12.6 使用首轮 finding 数；旧 JSONL 未保存该字段时，
+    # 回退到 verified TP+FP，保持既有 P0 记录可重放。
+    fp_denom = m.first_pass_findings if m.first_pass_findings > 0 else fp + tp
     m.false_positive_rate = _safe_rate(fp, fp_denom)
     m.fp_rate_ci = wilson_confidence_interval(fp, fp_denom)
 
@@ -524,6 +605,8 @@ def evaluate_success(
     valid_task_count: int,
     nontrivial_code_change_count: int,
     batch_id: str = "",
+    *,
+    gray_zone: Optional["GrayZoneEvaluation"] = None,
 ) -> SuccessEvaluation:
     """评估全部成功条件（Requirement 12.9–12.14）。
 
@@ -616,14 +699,27 @@ def evaluate_success(
         "blinding_verdict_before_reveal_min": thresholds.blinding_verdict_before_reveal_min,
     })
 
-    # 12.14 资格：最小样本 + 全部成功条件。directional_only 时恒 False。
+    # 12.14 资格：最小样本 + 全部成功条件；灰区未解决或暂停时不得授权 P1。
     result.eligible_for_p1 = (
         min_ok
         and result.defect_detection_satisfied
         and result.false_positive_satisfied
         and result.latency_satisfied
         and result.safety_blinding_satisfied
+        and (gray_zone is None or gray_zone.authorized_for_p1)
     )
+    if gray_zone is not None and not gray_zone.authorized_for_p1:
+        result.reasons.append(make_evaluator_reason(
+            EvaluatorErrorCode.GRAY_ZONE_UNRESOLVED,
+            severity="warning",
+            batch_id=batch_id,
+            zones=", ".join(
+                name for name, active in (
+                    ("false_positive", gray_zone.fp_gray_zone),
+                    ("latency", gray_zone.latency_gray_zone),
+                ) if active
+            ) or "unresolved",
+        ).to_dict())
     return result
 
 
@@ -643,6 +739,7 @@ class GrayZoneEvaluation:
     gray_zone: bool = False
     fp_gray_zone: bool = False
     latency_gray_zone: bool = False
+    gray_zone_unresolved: bool = False
     authorized_for_p1: bool = True
     # 灰区观察的结构化原因（warning，非阻断）。
     observations: List[Dict[str, Any]] = field(default_factory=list)
@@ -652,6 +749,7 @@ class GrayZoneEvaluation:
             "gray_zone": self.gray_zone,
             "fp_gray_zone": self.fp_gray_zone,
             "latency_gray_zone": self.latency_gray_zone,
+            "gray_zone_unresolved": self.gray_zone_unresolved,
             "authorized_for_p1": self.authorized_for_p1,
             "observations": list(self.observations),
         }
@@ -663,6 +761,8 @@ def evaluate_gray_zone(
     thresholds: SuccessThresholds,
     pause_thresholds: PauseThresholds,
     batch_id: str = "",
+    *,
+    resolved: bool = False,
 ) -> GrayZoneEvaluation:
     """评估灰区（Requirement 12.27–12.29）。
 
@@ -699,8 +799,9 @@ def evaluate_gray_zone(
         )
 
     result.gray_zone = result.fp_gray_zone or result.latency_gray_zone
-    # 12.29：灰区未解决 → 排除 P1 授权。
-    result.authorized_for_p1 = not result.gray_zone
+    # 新观察默认未解决；只有调用方明确提供后续解决事实才可恢复 P1 资格。
+    result.gray_zone_unresolved = result.gray_zone and not resolved
+    result.authorized_for_p1 = not result.gray_zone_unresolved
     return result
 
 
@@ -859,6 +960,39 @@ def evaluate_pause_conditions(
     return result
 
 
+def admit_sample(
+    batch: ExperimentBatch,
+    *,
+    client_clock_time: str,
+    sample_eligible: bool = True,
+    persist_batch: Optional[Any] = None,
+) -> ExperimentBatch:
+    """以 fail-safe 方式执行一次纳样状态转换（Requirements 12.3/12.21/12.24）。
+
+    先检查批次是否允许纳样，再执行首次纳样；若调用方提供的持久化回调失败，立即
+    设置 ``admission_halted`` 并抛出稳定的 ``PAUSE_RECORD_FAILED``，拒绝后续纳样。
+    ``persist_batch`` 只负责把已变更的文件配置持久化，评估器不触碰数据库/schema。
+    """
+    if not sample_eligible:
+        raise ExperimentProtocolError(make_reason(
+            ExperimentErrorCode.INELIGIBLE_SAMPLE,
+            task_id="",
+            reason="sample_failed_inclusion_rules",
+        ))
+    batch.ensure_admission_allowed()
+    try:
+        batch.mark_first_admission(client_clock_time)
+        if persist_batch is not None:
+            persist_batch(batch)
+    except Exception as exc:
+        # 任何状态落盘失败都不能继续纳样；这是 12.24 的 fail-safe 默认拒绝。
+        batch.halt_admission_fail_safe()
+        if isinstance(exc, ExperimentProtocolError) and exc.reason.code == ExperimentErrorCode.PAUSE_RECORD_FAILED:
+            raise
+        raise _pause_record_failed(batch.batch_id) from exc
+    return batch
+
+
 def apply_pause_to_batch(
     batch: ExperimentBatch,
     pause: PauseEvaluation,
@@ -880,7 +1014,12 @@ def apply_pause_to_batch(
     if not persist_pause:
         batch.halt_admission_fail_safe()
         raise _pause_record_failed(batch.batch_id)
-    batch.pause(pause.trigger, reason_text, client_clock_time)
+    try:
+        batch.pause(pause.trigger, reason_text, client_clock_time)
+    except Exception as exc:
+        # 暂停状态无法写入时仍必须停止新纳样，不能让记录失败变成继续运行。
+        batch.halt_admission_fail_safe()
+        raise _pause_record_failed(batch.batch_id) from exc
 
 
 def _pause_record_failed(batch_id: str):
@@ -906,6 +1045,14 @@ def compute_invalid_sample_stats(
     invalid 样本率 = invalid 数 / (invalid 数 + valid 数)。invalid 样本排除出效果估计与
     全部成功/暂停指标的分子分母，仅计入本比率（12.8）。每个 invalid 原因都可见（12.22）。
     """
+    if valid_sample_count < 0:
+        raise EvaluatorError(make_evaluator_reason(
+            EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+            detail=f"valid_sample_count 不能为负数: {valid_sample_count}"))
+    if any(not isinstance(code, str) or not code for code in invalid_reason_codes):
+        raise EvaluatorError(make_evaluator_reason(
+            EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+            detail="invalid 样本必须携带非空 reason code"))
     counts: Dict[str, int] = {}
     for code in invalid_reason_codes:
         counts[code] = counts.get(code, 0) + 1
@@ -945,6 +1092,14 @@ def build_evaluation_report(
     """
     import time as _time
 
+    # 灰区未解决、暂停或 directional-only 任一存在时均不得输出可授权的 P1 资格。
+    report_eligible_for_p1 = bool(
+        success.eligible_for_p1
+        and gray_zone.authorized_for_p1
+        and not pause.should_pause
+        and not success.directional_only
+    )
+
     return {
         "record_type": "evaluation_report",
         "batch_id": batch_id,
@@ -967,7 +1122,12 @@ def build_evaluation_report(
         "gray_zone": gray_zone.to_dict(),
         "pause": pause.to_dict(),
         "directional_only": success.directional_only,
-        "eligible_for_p1": success.eligible_for_p1,
+        "eligible_for_p1": report_eligible_for_p1,
+        "authorization_blockers": {
+            "gray_zone_unresolved": gray_zone.gray_zone_unresolved,
+            "pause_triggered": pause.should_pause,
+            "insufficient_sample": success.directional_only,
+        },
         # 12.23：实验记录非产品 Evidence，不支撑 P1 hard gate。
         "is_product_evidence": False,
         "non_product_evidence": True,

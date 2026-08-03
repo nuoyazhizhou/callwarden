@@ -127,8 +127,16 @@ cw experiment report <batch_id> --json
 
 ### 阶段可用性
 
-P1–P4 当前均为 planned / unavailable。在对应阶段正式启用前，
-不得在输出或判定中暗示其已实现（Req 13.1）。
+P0/D0/P1/P2/P3 均已实现并可用（详见 [CLI 参考 · 阶段可用性](cli_reference.md#阶段可用性req-131)）。
+P4（安全租约与分派）当前为 planned / unavailable，正式启用前不得在输出或判定中
+暗示其已实现（Req 13.1）。
+
+**P3 身份审计要点**：
+- `cw task report/apply/close/reopen` 支持 `--agent-id/--session-id/--model-id/--role`
+  结构化 Identity 输入；`task apply` 强制 Reviewer Session 与 Implementer Session 分离
+- Identity 仅作 actor attribution，不等于 assignment/lease/ownership（Req 10.5, 10.7）
+- `cw identity revoke --revocation-mode compromised|rotated` 追加撤销账本；
+  Attestation 只能由 daemon 签发，客户端自签不作为授权证明（Req 14.13）
 
 详细命令参数见 [CLI 参考 · cw experiment](cli_reference.md#cw-experimentp0-盲评对照实验)。
 
