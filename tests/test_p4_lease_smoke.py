@@ -41,6 +41,10 @@ def db(tmp_path):
     d = CodeGraphDB(str(tmp_path / "p4.db"))
     d.register_workspace("p4-ws", str(tmp_path))
     d.set_active_workspace("p4-ws")
+    # 测试注入 Authoritative_Clock 模拟（真实环境由 daemon ping 提供，见
+    # db/db_task_leases.py::LeaseMixin._clock；daemon 不可用时 Lease 写操作
+    # fail closed，单元测试不依赖 daemon，故在此替换时钟源）
+    d._clock = lambda: time.time()
     yield d
     try:
         d.conn.close()
@@ -183,15 +187,20 @@ def test_fencing_counter_monotonic(db):
     assert not valid and res["code"] == ERR_LEASE_TOKEN_MISMATCH
 
 
-def test_expired_lease_rejected_and_overwritten(db):
+def test_expired_lease_rejected_and_overwritten(db, monkeypatch):
+    """过期判定由 Authoritative_Clock 驱动：时钟前进到 expires_at 之后即拒绝，
+    随后可重新 acquire（counter 递增）。"""
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(db, "_clock", lambda: clock["now"])
     ok, r = db.acquire_lease("T-1", "implementer", _identity(), ttl_seconds=1)
     assert ok
     raw = r["token"]
-    time.sleep(1.05)
+    clock["now"] = 1001.5
     # 过期 lease 校验拒绝（Authoritative_Clock，Req 11.9）
     valid, res = db.validate_lease_for_mutation("T-1", "implementer", raw, r["fencing_counter"])
     assert not valid and res["code"] == ERR_LEASE_EXPIRED
     # 过期后新 acquire 覆盖
+    clock["now"] = 1002.0
     ok, r2 = db.acquire_lease("T-1", "implementer", _identity())
     assert ok
     assert r2["fencing_counter"] == r["fencing_counter"] + 1

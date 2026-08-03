@@ -535,6 +535,19 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("toolchain.list_bound"))
     }
 
+    fn handle_collab_rpc(
+        &mut self,
+        peer: PeerCredential,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        // S5：P1 collab RPC 的真相源在 Python DB 层（库层已实现，39+ 测试）。
+        // daemon 不持有这些方法的业务状态，诚实返回 method_not_found，
+        // 由 MCP client 的 _collab_rpc_call 兜底走 direct_read 直查 SQLite。
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found(method))
+    }
+
     // ---- Build Context 管理（G1 Layer 2 实现）----
 
     fn handle_build_context_register(
@@ -884,6 +897,15 @@ fn dispatch_inner<S: DaemonStateExt>(
         "resolved_edges.get" => state.handle_resolved_edges_get(peer, params),
         "resolved_edges.count" => state.handle_resolved_edges_count(peer, params),
         "resolved_edges.replace" => state.handle_resolved_edges_replace(peer, params),
+
+        // ---- Collab P1/P3 方法 ----
+        "verdict.submit"
+        | "reveal.submit"
+        | "gate.decide"
+        | "role_view.get"
+        | "evidence.query"
+        | "freshness.status"
+        | "gate.decision.query" => state.handle_collab_rpc(peer, method, params),
 
         // ---- 未知方法 ----
         _ => Err(DaemonRpcError::method_not_found(method)),
@@ -1398,6 +1420,58 @@ mod tests {
             assert!(
                 response.get("ok").is_some(),
                 "方法 {} 的响应缺少 ok 字段",
+                method
+            );
+        }
+    }
+
+    // ---- Collab P1/P3 方法路由测试（S5：daemon 显式路由 + MCP 兜底 direct_read）----
+
+    #[test]
+    fn test_collab_methods_route_to_collab_handler() {
+        // 7 个 collab 方法必须显式匹配（不能落入通配 `_` 分支），
+        // 路由到 handle_collab_rpc：返回结构化 method_not_found 且不 panic。
+        // 真相源在 Python DB 层（库层 39+ 测试），MCP 的 _collab_rpc_call
+        // 收到 method_not_found 后兜底 direct_read 直查 SQLite 真实表。
+        let collab_methods = vec![
+            "verdict.submit",
+            "reveal.submit",
+            "gate.decide",
+            "role_view.get",
+            "evidence.query",
+            "freshness.status",
+            "gate.decision.query",
+        ];
+        let mut state = make_state();
+        let peer = make_peer();
+        let params = json!({});
+
+        for method in collab_methods {
+            let response = dispatch(&mut state, peer, method, &params, &[]);
+            // 返回有效 JSON-RPC 响应（不 panic）
+            assert!(
+                response.get("ok").is_some(),
+                "方法 {} 的响应缺少 ok 字段",
+                method
+            );
+            // 显式路由：ok=false 且错误码为 method_not_found（结构化拒绝，非静默）
+            assert_eq!(
+                response["ok"], false,
+                "方法 {} 应经 handle_collab_rpc 返回不可用",
+                method
+            );
+            assert_eq!(
+                response["error"]["code"], "method_not_found",
+                "方法 {} 应返回 method_not_found",
+                method
+            );
+            // 错误 message 携带方法名，供 MCP client 判断降级走 direct_read
+            assert!(
+                response["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(method),
+                "方法 {} 的错误信息应包含方法名",
                 method
             );
         }

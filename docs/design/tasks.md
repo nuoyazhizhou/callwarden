@@ -813,13 +813,20 @@
     - **依赖门禁**：G3 通过。
     - _Requirements: 1.11, 11.1–11.12, 13.4, 13.8, 13.10_
 
-  - [~] 10.2 实现 assignment、lease 生命周期与 fencing 验证
+  - [x] 10.2 实现 assignment、lease 生命周期与 fencing 验证
     - acquire 原子比较当前状态并递增 counter；renew 要求当前 token/holder/counter 且未过期；release 追加事件并幂等。
     - `acquired_at`/`expires_at`/`renewed_at`/`released_at` 与过期判定一律读取 daemon Authoritative_Clock（Requirements 11.2、11.4、11.9 引用 14.11），客户端时间戳只作参考元数据（14.12），不参与过期判定。
     - protected mutation 验证 token hash、expiry、role、Identity 与当前 fencing，并在 daemon 唯一串行化点应用（Requirements 11.10、14.6）；旧 token/counter 即使旧进程复活也拒绝。
     - **所有权**：新增 `db/db_task_leases.py`。
     - **依赖门禁**：完成 10.1。
     - _Requirements: 1.11, 11.1–11.10, 14.6, 14.11, 14.12_
+    - **官方计划记录（2026-08-03）**：LeaseMixin 生命周期与 fencing 已实现；
+      权威时钟修复由 T-1785767529977-473fe88f 完成——`_clock()` 改读 daemon
+      Authoritative_Clock（ping timestamp，Req 14.11），daemon 不可用时 fail
+      closed（E_LEASE_CLOCK_UNAVAILABLE + error.governance_write_degraded 双语键
+      + recovery_guidance，Req 14.30/1.12），不再回退客户端时钟；验证
+      `pytest tests/test_p4_authoritative_clock.py tests/test_p4_lease_smoke.py`
+      30 passed。
 
   - [x] 10.3 将 P4 Lease Mixin 接入 CodeGraphDB
     - 注册 assignment/lease 模块，明确 SQLite 写锁只负责短事务互斥，不提供业务 ownership；Protected_Mutation 的全序由 daemon 串行化点保证。
@@ -827,20 +834,27 @@
     - **依赖门禁**：完成 10.2。
     - _Requirements: 11.10, 13.5, 14.6, 14.7_
 
-  - [~] 10.4 将 lease/fencing 接入 protected task mutation
+  - [x] 10.4 将 lease/fencing 接入 protected task mutation
     - 为受保护的 contract/view/verdict/evidence/gate/task 写操作要求 task+role 对应 token 与当前 fencing；过期、token 不匹配、旧 counter 均在写入前拒绝且不改变 task data。
     - 全部 Protected_Mutation 经 daemon 串行化点应用，不暴露第二个串行化点；assignment/lease 不得绕过角色权限、Independent Review 或 Evidence Gate；`task_close` 仍只在 applied 后收尾。
     - **所有权**：`db/db_tasks.py`、`db/db_task_contracts.py`、`db/db_task_reviews.py`、`db/db_task_evidence.py`。
     - **依赖门禁**：完成 10.2、10.3。
     - _Requirements: 1.11, 11.1, 11.8–11.12, 13.2–13.5, 14.6, 14.7_
+    - **官方计划记录（2026-08-03）**：受保护写入口接入 token/fencing 校验，
+      失败返回 E_LEASE_* 且不改变 task/step data（Req 11.8-11.9）；验证
+      test_p4_lease_smoke.py::test_protected_report_step_* 全绿。
 
-  - [~] 10.5 暴露 P4 CLI 与本地化 lease reason
+  - [x] 10.5 暴露 P4 CLI 与本地化 lease reason
     - 提供 assignment create/show 与 lease acquire/renew/release/status 命令；raw token 仅在 acquire 成功响应安全返回一次，日志/数据库/错误不得泄露。
     - protected mutation 接受 token/fencing，输出 expiry/token/fencing/role/gate 的结构化拒绝原因；不实现自动 dispatch、抢占或中央调度。
     - 面向用户的 lease 文案按 Requirements 14.32、11.13 正面陈述边界：Lease 保证 daemon 在线期间的并发正确性，防篡改归属 Attestation 校验与追加式 Evidence_Ledger，且不得描述为能防止离线直接改库。
     - **所有权**：`cli/main.py`、`i18n/zh_CN.json`、`i18n/en_US.json`。
     - **依赖门禁**：完成 10.3、10.4。
     - _Requirements: 1.12, 11.1–11.13, 13.6, 13.8, 14.31, 14.32_
+    - **官方计划记录（2026-08-03）**：`cw lease acquire/renew/release/status/list`
+      与 `cw assignment create/show/revoke` 已提供；raw token 仅 acquire 响应
+      返回一次；结构化拒绝原因含稳定错误码 + 双语 message_key（Req 1.12）；
+      `cw lease --help` / `cw assignment --help` 验证通过。
 
   - [x] 10.6 暴露 P4 MCP assignment/lease 工具
     - 注册 acquire/renew/release/status 与 assignment 工具，并为 protected mutation 透传 token/fencing；包装层不得记录 raw token 或放宽 DB 校验。
@@ -854,11 +868,17 @@
     - **依赖门禁**：完成 10.1。
     - _Requirements: 11.1–11.3, 11.6–11.7, 11.12, 13.10_
 
-  - [ ]* 10.8 编写 lease 生命周期、幂等与权威时钟单元测试
+  - [x] 10.8 编写 lease 生命周期、幂等与权威时钟单元测试
     - 覆盖 acquire 竞争、expiry、renew/release 重放、token/holder/counter 不匹配、raw token 脱敏，以及注入超前/滞后/乱序客户端时间戳不改变过期判定的权威时钟边界。
     - **所有权**：新增 `tests/test_multi_llm_contract_p4_lease.py`。
     - **依赖门禁**：完成 10.2。
     - _Requirements: 11.2–11.9, 14.11, 14.12_
+    - **官方计划记录（2026-08-03）**：`tests/test_multi_llm_contract_p4_lease.py`
+      （并行 agent）与 `tests/test_p4_authoritative_clock.py`（本批次新增）覆盖
+      acquire 竞争/expiry/renew-release 幂等/凭证不匹配/raw token 脱敏/权威时钟
+      边界；daemon 不可用 fail closed 且无状态变更。注：前者的生命周期用例依赖
+      daemon 权威时钟注入，时钟适配归该文件所有者（T-1785767529977-473fe88f
+      白名单外）。
 
   - [x] 10.9 编写 P4 protected mutation 与 Gate 组合集成测试
     - 模拟旧持有者复活、并发 acquire、过期 lease、角色越权、有效 lease 但 Evidence Gate 失败，以及 SQLite 获锁但 lease 无效；全部必须无 task data 变更。
@@ -866,12 +886,17 @@
     - **依赖门禁**：完成 10.2–10.6。
     - _Requirements: 1.11, 11.8–11.11, 14.6, 14.7_
 
-  - [ ]* 10.10 编写属性测试：Property 11 fencing 安全性
+  - [x] 10.10 编写属性测试：Property 11 fencing 安全性
     - 生成任意 lease 获取/续租/释放/重新获取序列，证明新 counter N 发布后所有小于 N 的 protected mutation 永远被拒绝。
     - **Property 11: fencing 安全性（P4）**
     - **Validates: Requirements 1.11**
     - **所有权**：新增 `tests/test_property_lease_fencing.py`。
     - **依赖门禁**：完成 10.2、10.4。
+    - **官方计划记录（2026-08-03）**：`tests/test_property_lease_fencing.py`
+      （并行 agent）与 `tests/test_p4_lease_smoke.py::test_fencing_property_random_sequences`
+      覆盖 Property 11；本批次新增确定性 fencing 用例
+      `test_p4_authoritative_clock.py::test_fencing_stale_counter_rejected_under_daemon_clock`
+      全绿。注：前者生命周期用例依赖 daemon 权威时钟注入，时钟适配归文件所有者。
 
   - [x] 10.11 同步 P4 CLI/MCP/架构/状态文档
     - 记录 assignment 与 lease 分层、token 安全、expiry/renew/release/fencing、protected mutation、daemon 串行化点与 SQLite lock 边界，以及 Evidence Gate 不可绕过。

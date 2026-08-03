@@ -13,7 +13,8 @@ P4 Assignment 与安全 Lease Mixin。
   release 追加审计事件且幂等（Req 11.6-11.7）
 - protected mutation 验证 token hash、expiry、role、Identity 与当前 fencing（Req 11.8-11.9）
 - 时间字段一律读取 daemon Authoritative_Clock（Req 11.2/11.4/11.9 → 14.11），
-  客户端时间戳只作参考元数据（Req 14.12）；此处以 time.time() 近似，daemon 时钟接入点见 _clock()
+  客户端时间戳只作参考元数据（Req 14.12）；daemon 不可用时 Lease 写操作
+  fail closed（Structured_Reason，Req 14.30），不回退客户端时钟（见 _clock()）
 
 **Lease 边界（正面陈述，Req 14.32/11.13）**：Lease 保证的是 daemon 在线期间的并发
 正确性——同一 task/role 任一时刻只有一个有效持有者，旧持有者在新 lease 生效后无法再写入
@@ -30,7 +31,6 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -51,6 +51,7 @@ ERR_LEASE_FENCING_STALE = "E_LEASE_FENCING_STALE"
 ERR_LEASE_HOLDER_MISMATCH = "E_LEASE_HOLDER_MISMATCH"
 ERR_LEASE_ALREADY_RELEASED = "E_LEASE_ALREADY_RELEASED"
 ERR_LEASE_INVALID = "E_LEASE_INVALID"
+ERR_LEASE_CLOCK_UNAVAILABLE = "E_LEASE_CLOCK_UNAVAILABLE"
 
 
 def _reason(code: str, message_key: str, detail: str = "", **extra: Any) -> Dict[str, Any]:
@@ -71,6 +72,66 @@ def _ok(**extra: Any) -> Dict[str, Any]:
     if extra:
         result.update(extra)
     return result
+
+
+class LeaseClockUnavailableError(Exception):
+    """daemon 权威时钟不可用（Degraded_Mode，Governance_Write fail closed）。
+
+    携带结构化拒绝原因（Req 1.12/14.30）：
+    - code: E_LEASE_CLOCK_UNAVAILABLE（稳定错误码）
+    - message_key: error.governance_write_degraded（zh_CN/en_US 两个 catalog
+      均可解析，与 degraded_mode.py 的 Governance_Write 拒绝同键）
+
+    由 `_clock()` 在无法读取 daemon Authoritative_Clock 时抛出；各公开方法
+    捕获后返回 (False, reason)，**不改变**任务/步骤/lease 状态（fail closed）。
+    """
+
+    def __init__(self, reason: Dict[str, Any]):
+        super().__init__(reason.get("detail", "daemon 权威时钟不可用"))
+        self.reason = reason
+
+
+def _clock_unavailable_reason(detail: str) -> Dict[str, Any]:
+    """构造 daemon 权威时钟不可用的 Structured_Reason（Req 1.12, 14.30）。
+
+    Lease 获取/续租/释放是 Governance_Write（degraded_mode.GOVERNANCE_WRITE_OPS
+    中的 lease.acquire/lease.release/lease.extend，Req 14.30 的 fail closed 表），
+    daemon 不可用时不得回退客户端时钟（违反 Req 11.2/14.11/14.12），必须拒绝
+    并给出可执行恢复指引。
+    """
+    reason = _reason(
+        ERR_LEASE_CLOCK_UNAVAILABLE,
+        "error.governance_write_degraded",
+        detail=detail,
+    )
+    try:
+        from callwarden.server.daemon_autostart import get_default_endpoint
+        endpoint = get_default_endpoint()
+    except Exception:
+        endpoint = ""
+    import sys as _sys
+    platform = ("windows" if _sys.platform == "win32"
+                else ("macos" if _sys.platform == "darwin" else "linux"))
+    if platform == "windows":
+        recovery = (
+            f"daemon 未运行。请执行: cw_daemon.exe --socket \"{endpoint}\" "
+            f"或确认 Windows 服务 CallWarden Daemon 已启动。端点: {endpoint}"
+        )
+    elif platform == "macos":
+        recovery = (
+            f"daemon 未运行。请执行: launchctl start com.callwarden.daemon "
+            f"或手动运行: cw_daemon --socket \"{endpoint}\"。端点: {endpoint}"
+        )
+    else:
+        recovery = (
+            f"daemon 未运行。请执行: systemctl --user start callwarden-daemon.service "
+            f"或手动运行: cw_daemon --socket \"{endpoint}\"。端点: {endpoint}"
+        )
+    reason["recovery_guidance"] = recovery
+    reason["method"] = "lease"
+    reason["endpoint"] = endpoint
+    reason["platform"] = platform
+    return reason
 
 
 def _hash_token(raw_token: str) -> str:
@@ -101,11 +162,33 @@ class LeaseMixin:
     def _clock(self) -> float:
         """读取 Authoritative_Clock（Req 14.11）
 
-        当前以 daemon 进程时钟（time.time()）近似；daemon 串行化点接入后，
-        此方法改为读取 daemon 权威时钟，客户端时间戳只作参考元数据（Req 14.12），
+        通过 Daemon RPC 的 ping 响应获取单点 Authoritative_Clock 权威时间
+        （Req 14.11）；Lease 获取/续租/释放与受保护写校验全部使用该时钟
+        （Req 11.2/11.4/11.9）。客户端时间戳只作参考元数据（Req 14.12），
         不参与 Lease 过期判定与 protected mutation 校验。
+
+        daemon 不可用时**禁止回退客户端时钟**（违反 Req 11.2/14.11/14.12）：
+        按 Req 14.30 fail closed，抛出 LeaseClockUnavailableError，调用方返回
+        Structured_Reason 且不改变任务/步骤/lease 状态。
+
+        Raises:
+            LeaseClockUnavailableError: 无法从 daemon 读取权威时钟
         """
-        return time.time()
+        try:
+            from callwarden.server.daemon_client import UnixDaemonRpcClient
+            client = UnixDaemonRpcClient()
+            res = client.call("ping")
+            if isinstance(res, dict) and "timestamp" in res:
+                return float(res["timestamp"])
+            raise LeaseClockUnavailableError(
+                _clock_unavailable_reason("daemon ping 响应缺少 timestamp 字段")
+            )
+        except LeaseClockUnavailableError:
+            raise
+        except Exception as exc:
+            raise LeaseClockUnavailableError(
+                _clock_unavailable_reason(f"无法读取 daemon 权威时钟: {exc}")
+            ) from exc
 
     # ------------------------------------------------------------------
     # 1. Assignment（Req 11.1, 13.4）
@@ -146,7 +229,10 @@ class LeaseMixin:
         if workspace_id is None:
             workspace_id = self._get_active_workspace_id()
 
-        now = self._clock()
+        try:
+            now = self._clock()
+        except LeaseClockUnavailableError as exc:
+            return False, exc.reason
         assignment_id = f"ASG-{uuid.uuid4().hex[:16]}"
         try:
             self.conn.execute(
@@ -216,7 +302,10 @@ class LeaseMixin:
         """撤销 assignment（追加 revoked_at，不删除记录）"""
         if workspace_id is None:
             workspace_id = self._get_active_workspace_id()
-        now = self._clock()
+        try:
+            now = self._clock()
+        except LeaseClockUnavailableError as exc:
+            return False, exc.reason
         cur = self.conn.execute(
             "UPDATE task_assignments SET status = 'revoked', revoked_at = ? "
             "WHERE workspace_id = ? AND assignment_id = ? AND status = 'active'",
@@ -278,7 +367,10 @@ class LeaseMixin:
         if workspace_id is None:
             workspace_id = self._get_active_workspace_id()
 
-        now = self._clock()
+        try:
+            now = self._clock()
+        except LeaseClockUnavailableError as exc:
+            return False, exc.reason
         token = secrets.token_urlsafe(32)
         token_hash = _hash_token(token)
         lease_id = f"L-{uuid.uuid4().hex[:16]}"
@@ -393,7 +485,10 @@ class LeaseMixin:
         if workspace_id is None:
             workspace_id = self._get_active_workspace_id()
 
-        now = self._clock()
+        try:
+            now = self._clock()
+        except LeaseClockUnavailableError as exc:
+            return False, exc.reason
         cur = self.conn.execute(
             "SELECT * FROM task_leases "
             "WHERE workspace_id = ? AND task_id = ? AND role = ? AND status = 'active'",
@@ -497,7 +592,10 @@ class LeaseMixin:
         if workspace_id is None:
             workspace_id = self._get_active_workspace_id()
 
-        now = self._clock()
+        try:
+            now = self._clock()
+        except LeaseClockUnavailableError as exc:
+            return False, exc.reason
         cur = self.conn.execute(
             "SELECT * FROM task_leases "
             "WHERE workspace_id = ? AND task_id = ? AND role = ? AND status = 'active'",
@@ -651,7 +749,10 @@ class LeaseMixin:
         if workspace_id is None:
             workspace_id = self._get_active_workspace_id()
 
-        now = self._clock()
+        try:
+            now = self._clock()
+        except LeaseClockUnavailableError as exc:
+            return False, exc.reason
         cur = self.conn.execute(
             "SELECT * FROM task_leases "
             "WHERE workspace_id = ? AND task_id = ? AND role = ? AND status = 'active'",
