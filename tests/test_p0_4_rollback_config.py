@@ -37,10 +37,17 @@ from callwarden.db.schema import SCHEMA_VERSION
 
 @pytest.fixture
 def db_with_rollback(tmp_path):
-    """创建一个带 rollback_config 表的临时数据库。"""
+    """创建一个带 rollback_config 表的临时数据库。
+
+    关闭外键检查：rollback_config.task_id REFERENCES tasks.id，但本测试套件
+    验证 RollbackConfigMixin 的方法行为，不是外键约束语义；测试 task_id 不
+    对应真实 tasks 记录。CW_USE_RUST_STORAGE=1（默认）时 PRAGMA foreign_keys=ON，
+    需显式关闭以避免 FOREIGN KEY constraint failed。
+    """
     db_path = str(tmp_path / "test_rollback.db")
     db = CodeGraphDB(db_path, workspace_root=str(tmp_path))
     db.register_workspace("test", str(tmp_path), "测试")
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     yield db
     db.close()
 
@@ -52,9 +59,9 @@ def db_with_rollback(tmp_path):
 class TestRollbackConfigSchema:
     """验证 rollback_config 表 schema 和 migration。"""
 
-    def test_schema_version_is_42(self):
-        """SCHEMA_VERSION 必须为 42（v42 新增 rollback_config）。"""
-        assert SCHEMA_VERSION == 42
+    def test_schema_version_is_43(self):
+        """SCHEMA_VERSION 必须为 43（v43 新增 P1 contract schema，含 rollback_config v42 基线）。"""
+        assert SCHEMA_VERSION == 43
 
     def test_table_exists(self, db_with_rollback):
         """rollback_config 表必须存在。"""

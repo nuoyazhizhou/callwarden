@@ -174,7 +174,7 @@ symbols_ready → fork_symbols → empty (with shared symbols)
 
 ### 3.2 Schema 版本契约
 
-- **当前版本**：`SCHEMA_VERSION = 42`（`db/schema.py`）
+- **当前版本**：`SCHEMA_VERSION = 43`（`db/schema.py`）
 - **迁移机制**：`db_migrate.py` 启动时根据 `schema_version` 表升级
 - **CAS schema**：独立 DDL（`db/db_cas.py:CAS_SCHEMA_DDL`），由 `init_cas_schema()` 初始化
 - **不变量**：schema 变更必须同步更新 `SCHEMA_VERSION` + `migration-manifest.md` 第 4 节 + `docs/architecture.md`
@@ -428,7 +428,7 @@ except sqlite3.OperationalError as e:
 5. **生产接入点**：第 6 节是否遗漏关键入口？已接入 vs 待迁移划分是否准确？
 6. **不变量**：第 8 节 8 个不变量是否充分？是否需要补充？
 7. **跨语言一致性**：Rust `abi_contract.rs` 和 Python `abi_contract_service.py` 镜像是否完整？后续是否应通过 PyO3 直接共享？
-8. **SCHEMA_VERSION 同步**：Rust 镜像常量 42 与 `db/schema.py` 一致，但 schema 变更时如何保证同步更新？
+8. **SCHEMA_VERSION 同步**：Rust 镜像常量 43 与 `db/schema.py` 一致，但 schema 变更时如何保证同步更新？
 
 ### 10.4 风险与注意事项
 

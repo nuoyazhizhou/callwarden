@@ -5,7 +5,7 @@
 //!
 //! 职责：
 //! 1. 成为 SQLite registry 数据库连接、WAL 模式设置、外键与超时预置的唯一真相源。
-//! 2. 全量内嵌 SCHEMA_VERSION = 42 的 Schema SQL 与版本升级 Migration 路径。
+//! 2. 全量内嵌 SCHEMA_VERSION = 43 的 Schema SQL 与版本升级 Migration 路径。
 //! 3. 提供完整性检查 (integrity_check)、迁移灾备备份 (backup_before_migration)、
 //!    WAL checkpoint 和事务 (BEGIN IMMEDIATE / COMMIT / ROLLBACK) 句柄管理。
 //! 4. 暴露 PyO3 接口供 Python db_base.py 的 Facade 安全调用。
@@ -21,7 +21,7 @@ use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavio
 use sha2::{Digest, Sha256};
 
 /// Schema 版本号（真相源对齐 db/schema.py）
-pub const SCHEMA_VERSION: u32 = 42;
+pub const SCHEMA_VERSION: u32 = 43;
 
 // db/schema.py is the repository schema authority.  Embedding its SQL at
 // compile time keeps frozen Rust artifacts independent of a Python checkout
