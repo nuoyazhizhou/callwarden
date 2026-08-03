@@ -1503,6 +1503,69 @@ class TaskMixin:
             except Exception:
                 pass
 
+        # ---- Evidence Gate（P1 契约硬门禁，Req 1.4-1.5, 6.22, 10.2-10.18）----
+        # 与 task_apply 的接入保持一致（db_tasks.py task_apply 段）：
+        # decision=block 时拒绝完成，step 标记为 blocked 并插入修复步骤
+        evidence_gate: Dict[str, Any] = {"decision": "pass", "note": ""}
+        if success and not gate_failed and hasattr(self, "evaluate_evidence_gate_for_task"):
+            try:
+                evidence_gate = self.evaluate_evidence_gate_for_task(
+                    task_id=actual_task_id,
+                    identity=identity,
+                    authoritative_time=now,
+                )
+                if evidence_gate.get("decision") == "block":
+                    gate_failed = True
+                    # 把已标记为 done 的 step 改为 blocked（复用质量门禁语义）
+                    self.conn.execute(
+                        "UPDATE task_steps SET status = ? WHERE id = ?",
+                        (STEP_STATUS_BLOCKED, step_id),
+                    )
+                    # 插入修复步骤（fix_gate_failure），check_items 记录 Evidence Gate 判定
+                    cur = self.conn.execute(
+                        "SELECT MAX(step_index) as max_idx FROM task_steps WHERE task_id = ?",
+                        (actual_task_id,),
+                    )
+                    max_idx = cur.fetchone()["max_idx"] or 0
+                    fix_step_id = _gen_step_id()
+                    gate_reasons = evidence_gate.get("reasons") or []
+                    gate_reason = (
+                        "; ".join(
+                            r.get("code", "") for r in gate_reasons if r.get("code")
+                        )
+                        or evidence_gate.get("note", "")
+                    )
+                    check_items_json = _serialize_check_items(
+                        {
+                            "gate_decision": evidence_gate.get("decision"),
+                            "gate_reason": gate_reason,
+                            "gate_note": evidence_gate.get("note"),
+                        }
+                    )
+                    self.conn.execute(
+                        """
+                        INSERT INTO task_steps
+                            (id, task_id, step_index, action, target_file, target_symbol,
+                             check_items, status, result, created_at, completed_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            fix_step_id,
+                            actual_task_id,
+                            max_idx + 1,
+                            "fix_gate_failure",
+                            "",
+                            "",
+                            check_items_json,
+                            STEP_STATUS_PENDING,
+                            "",
+                            now,
+                            None,
+                        ),
+                    )
+            except Exception:
+                pass
+
         # 成功且没有更多 pending 步骤时，将任务状态改为 review
         if success and not gate_failed:
             cur = self.conn.execute(
@@ -1601,9 +1664,12 @@ class TaskMixin:
         # 返回任务树中的下一步步骤信息（深度优先）
         next_row = self._find_next_pending_step_tree(task_id)
         if not next_row:
-            # 即使没有下一步，若质量门禁阻断也返回 quality_gate 信息
-            if quality_gate.get("blocked"):
-                return {"quality_gate": quality_gate}
+            # 即使没有下一步，若质量门禁或 Evidence Gate 阻断也返回对应信息
+            if quality_gate.get("blocked") or evidence_gate.get("decision") == "block":
+                return {
+                    "quality_gate": quality_gate,
+                    "evidence_gate": evidence_gate,
+                }
             return None
 
         return {
@@ -1616,6 +1682,7 @@ class TaskMixin:
             "check_items": _deserialize_check_items(next_row["check_items"]),
             "task_title": next_row["task_title"],
             "quality_gate": quality_gate,
+            "evidence_gate": evidence_gate,
         }
 
     def task_rollback(
@@ -1902,6 +1969,21 @@ class TaskMixin:
                     ),
                     "task_id": task_id,
                     "status": current_status,
+                }
+
+        # P1/P3/P4 核心物理硬门禁：调用 evaluate_evidence_gate_for_task (Req 1.4-1.5, 6.22, 10.2-10.18)
+        if hasattr(self, "evaluate_evidence_gate_for_task"):
+            gate_res = self.evaluate_evidence_gate_for_task(
+                task_id=task_id,
+                identity=identity,
+                authoritative_time=now,
+            )
+            if gate_res.get("decision") == "block":
+                return {
+                    "error": "ERR_EVIDENCE_GATE_BLOCKED",
+                    "reason": gate_res,
+                    "task_id": task_id,
+                    "status": "review",
                 }
 
         # 将当前任务 review → applied

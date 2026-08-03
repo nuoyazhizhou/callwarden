@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import sqlite3
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 
 from i18n import t
@@ -72,6 +75,12 @@ GATE_VERDICT_ABSENT = "GATE_VERDICT_ABSENT"
 GATE_EVIDENCE_ABSENT = "GATE_EVIDENCE_ABSENT"
 GATE_IDENTITY_FREE_TEXT_EXCLUDED = "GATE_IDENTITY_FREE_TEXT_EXCLUDED"
 
+# Stage_Toggle 门控（Req 13.1/13.12/13.15）：阶段未启用时不评估其条款，
+# 记录 P1/P3_NOT_ENABLED 且判定为 pass（可审计、不伪造产物）；
+# 阶段启用时保持严格 fail-closed。
+P1_NOT_ENABLED = "P1_NOT_ENABLED"
+P3_NOT_ENABLED = "P3_NOT_ENABLED"
+
 # 错误码 → i18n message key（Req 1.12）。
 # error.identity_incomplete 已登记于 zh_CN/en_US catalog（daemon_errors），
 # 其余 key 未登记时由 _GATE_BUNDLED_DEFAULTS 提供双语文案兜底。
@@ -81,6 +90,8 @@ GATE_I18N_KEYS: Dict[str, str] = {
     GATE_VERDICT_ABSENT: "errors.gate_verdict_absent",
     GATE_EVIDENCE_ABSENT: "errors.gate_evidence_absent",
     GATE_IDENTITY_FREE_TEXT_EXCLUDED: "error.identity_incomplete",
+    P1_NOT_ENABLED: "errors.gate_stage_not_enabled",
+    P3_NOT_ENABLED: "errors.gate_stage_not_enabled",
 }
 
 # 双语默认文案（i18n catalog 尚未收录时使用，与 db_task_evidence.py 同模式）
@@ -100,6 +111,10 @@ _GATE_BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
     "errors.gate_evidence_absent": {
         "zh_CN": "任务 {task_id} 无任何绑定契约的 Evidence 记录；Evidence Gate fail-closed 阻断（Requirement 1.8, 8.3）。",
         "en_US": "Task {task_id} has no contract-bound Evidence record; Evidence Gate fails closed (Requirement 1.8, 8.3).",
+    },
+    "errors.gate_stage_not_enabled": {
+        "zh_CN": "阶段 {stage} 的 Stage_Toggle 未启用（disabled），按 Requirement 13.15 不评估该阶段验收条款；记录 NOT_ENABLED 且判定为 pass（不伪造产物证据）。",
+        "en_US": "Stage {stage} Stage_Toggle is not enabled (disabled); per Requirement 13.15 its acceptance clauses are not evaluated; NOT_ENABLED recorded and decision is pass (no fabricated artifact evidence).",
     },
     # error.identity_incomplete 已登记 catalog，catalog 文案优先；此处仅作兜底。
     "error.identity_incomplete": {
@@ -156,6 +171,93 @@ def _gate_reason(
 class TaskGateMixin:
     """Evidence Gate 判定内核与 Profile_Policy_Matrix Mixin 类"""
 
+    def _stage_toggle_store_path(self) -> str:
+        """daemon 配置存储路径（Req 13.20 唯一真相源）。
+
+        与 server/stage_toggle_migration.py 的 daemon 配置存储保持一致；
+        测试可通过环境变量 CW_DAEMON_CONFIG_DB 覆盖指向临时文件。
+        """
+        override = os.environ.get("CW_DAEMON_CONFIG_DB", "")
+        if override:
+            return override
+        return os.path.join(os.path.expanduser("~"), ".callwarden", "daemon_config.db")
+
+    def _resolve_stage_toggle(
+        self,
+        stage: str,
+        task_id: str,
+        workspace_id: Optional[int] = None,
+    ) -> bool:
+        """解析 Stage_Toggle（Req 13.12）：task > workspace > global，缺值继承，全局默认 disabled。
+
+        存储不可用（文件缺失/打开失败）/stage_toggles 表不存在 → 默认 disabled
+        （Req 13.1：未启用阶段能力为 planned/unavailable）。
+        workspace_id 未提供时经 workspaces.active_task_id 关联任务归属。
+
+        Args:
+            stage: 阶段名（如 "P1"/"P3"）
+            task_id: 关联任务 ID
+            workspace_id: 可选；缺省时按任务归属自动解析
+        """
+        if workspace_id is None and task_id:
+            row = self.conn.execute(
+                "SELECT id FROM workspaces WHERE active_task_id = ? LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if row:
+                workspace_id = row["id"]
+
+        path = self._stage_toggle_store_path()
+        if not path or not os.path.exists(path):
+            return False
+
+        values: Dict[str, bool] = {}
+        try:
+            # Windows 绝对路径需规范化为 URI（反斜杠会被 sqlite3 拒绝/误转义）
+            store_uri = f"{Path(path).as_uri()}?mode=ro"
+            store = sqlite3.connect(store_uri, uri=True, timeout=1)
+            store.row_factory = sqlite3.Row
+            try:
+                has_table = store.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='stage_toggles'"
+                ).fetchone()
+                if not has_table:
+                    return False
+                if task_id:
+                    row = store.execute(
+                        "SELECT enabled FROM stage_toggles WHERE stage=? AND scope_key=?",
+                        (stage, f"task:{task_id}"),
+                    ).fetchone()
+                    if row:
+                        values["task"] = bool(row["enabled"])
+                if workspace_id is not None:
+                    row = store.execute(
+                        "SELECT enabled FROM stage_toggles WHERE stage=? AND scope_key=?",
+                        (stage, f"workspace:{workspace_id}"),
+                    ).fetchone()
+                    if row:
+                        values["workspace"] = bool(row["enabled"])
+                row = store.execute(
+                    "SELECT enabled FROM stage_toggles WHERE stage=? AND scope_key='global'",
+                    (stage,),
+                ).fetchone()
+                if row:
+                    values["global"] = bool(row["enabled"])
+            finally:
+                store.close()
+        except Exception:
+            # 存储不可用 → 默认 disabled（Req 13.1）
+            return False
+
+        # task > workspace > global；缺值继承更宽作用域；全局默认 disabled
+        if "task" in values:
+            return values["task"]
+        if "workspace" in values:
+            return values["workspace"]
+        if "global" in values:
+            return values["global"]
+        return False
+
     def evaluate_evidence_gate(
         self,
         task_id: str,
@@ -170,6 +272,7 @@ class TaskGateMixin:
         workspace_id: Optional[int] = None,
         implementer_identity: Optional[Dict[str, Any]] = None,
         attestation: Optional[Dict[str, Any]] = None,
+        enabled_stages: Optional[Set[str]] = None,
     ) -> Dict[str, Any]:
         """评估 Evidence Gate 并产出 gate decision
 
@@ -178,6 +281,10 @@ class TaskGateMixin:
         - apply session 分离：reviewer session != implementer session
         - attestation 校验：越窗/自签/issuer 不符/被撤销时 verdict/Evidence 判 invalid
         - gate decision 记录 issuer/signing_key_id/issued_at（Req 6.22 对称）
+
+        enabled_stages（Req 13.15）：当前已启用的阶段集合。仅评估
+        `WHERE <stage> is enabled` 为 enabled 的验收条款；None 表示全启用
+        （向后兼容，直接调用方行为不变）。
 
         Returns:
             Gate Decision 字典包含 decision ("pass" / "block"), findings, verifiers_used, timestamp 等
@@ -243,68 +350,70 @@ class TaskGateMixin:
         # 缺失/不完整的 reviewer_identity 排除 verdict clause satisfaction
         # apply session 必须不同于 Implementer session
         # attestation 越窗/自签/issuer 不符/被撤销时 verdict/Evidence 判 invalid
+        # 仅当 P3 启用时评估（Req 13.15）；未启用时跳过 P3 条款（不评估）
         attestation_meta: List[Dict[str, str]] = []
-        for v in verdicts:
-            v_identity = v.get("reviewer_identity") or v.get("identity")
-            if not v_identity:
-                # Identity 缺失：fail-closed，排除该 verdict
-                reasons.append({
-                    "code": "ERR_IDENTITY_MISSING",
-                    "message": f"Verdict '{v.get('id', '?')}' 缺失 Identity，fail-closed 排除",
-                    "verdict_id": v.get("id", ""),
-                })
-                continue
-
-            # Identity 完整性校验
-            agent_id = v_identity.get("agent_id", "")
-            session_id = v_identity.get("session_id", "")
-            model_id = v_identity.get("model_id", "")
-            role = v_identity.get("role", "")
-            if not all([agent_id, session_id, model_id, role]):
-                reasons.append({
-                    "code": "ERR_IDENTITY_INCOMPLETE",
-                    "message": f"Verdict '{v.get('id', '?')}' Identity 不完整",
-                    "verdict_id": v.get("id", ""),
-                })
-                continue
-
-            # P3: apply session 分离（Req 1.5, 10.2）
-            # reviewer session 必须不同于 implementer session
-            if implementer_identity:
-                impl_session = implementer_identity.get("session_id", "")
-                if session_id and impl_session and session_id == impl_session:
+        if enabled_stages is None or "P3" in enabled_stages:
+            for v in verdicts:
+                v_identity = v.get("reviewer_identity") or v.get("identity")
+                if not v_identity:
+                    # Identity 缺失：fail-closed，排除该 verdict
                     reasons.append({
-                        "code": "ERR_IDENTITY_SESSION_NOT_SEPARATED",
-                        "message": f"Reviewer Session ({session_id}) 等于 Implementer Session",
+                        "code": "ERR_IDENTITY_MISSING",
+                        "message": f"Verdict '{v.get('id', '?')}' 缺失 Identity，fail-closed 排除",
                         "verdict_id": v.get("id", ""),
                     })
+                    continue
 
-        # P3: attestation 校验（Req 10.8-10.18）
-        if attestation is not None:
-            try:
-                att_ok, att_status, att_reason = self.validate_attestation(
-                    attestation,
-                    expected_contract_hash=contract_hash,
-                    check_time=eval_time,
-                )
-                if not att_ok:
+                # Identity 完整性校验
+                agent_id = v_identity.get("agent_id", "")
+                session_id = v_identity.get("session_id", "")
+                model_id = v_identity.get("model_id", "")
+                role = v_identity.get("role", "")
+                if not all([agent_id, session_id, model_id, role]):
                     reasons.append({
-                        "code": "ERR_ATTESTATION_INVALID",
-                        "message": f"Attestation {att_status}: {att_reason}",
-                        "attestation_status": att_status,
+                        "code": "ERR_IDENTITY_INCOMPLETE",
+                        "message": f"Verdict '{v.get('id', '?')}' Identity 不完整",
+                        "verdict_id": v.get("id", ""),
                     })
-                # 记录 attestation 元数据（Req 6.22 对称：issuer/signing_key_id/issued_at）
-                attestation_meta.append({
-                    "issuer": attestation.get("issuer", ""),
-                    "signing_key_id": attestation.get("signing_key_id", ""),
-                    "issued_at": str(attestation.get("issued_at", "")),
-                    "valid": att_ok,
-                })
-            except Exception as e:
-                reasons.append({
-                    "code": "ERR_ATTESTATION_CHECK_FAILED",
-                    "message": str(e),
-                })
+                    continue
+
+                # P3: apply session 分离（Req 1.5, 10.2）
+                # reviewer session 必须不同于 implementer session
+                if implementer_identity:
+                    impl_session = implementer_identity.get("session_id", "")
+                    if session_id and impl_session and session_id == impl_session:
+                        reasons.append({
+                            "code": "ERR_IDENTITY_SESSION_NOT_SEPARATED",
+                            "message": f"Reviewer Session ({session_id}) 等于 Implementer Session",
+                            "verdict_id": v.get("id", ""),
+                        })
+
+            # P3: attestation 校验（Req 10.8-10.18）
+            if attestation is not None:
+                try:
+                    att_ok, att_status, att_reason = self.validate_attestation(
+                        attestation,
+                        expected_contract_hash=contract_hash,
+                        check_time=eval_time,
+                    )
+                    if not att_ok:
+                        reasons.append({
+                            "code": "ERR_ATTESTATION_INVALID",
+                            "message": f"Attestation {att_status}: {att_reason}",
+                            "attestation_status": att_status,
+                        })
+                    # 记录 attestation 元数据（Req 6.22 对称：issuer/signing_key_id/issued_at）
+                    attestation_meta.append({
+                        "issuer": attestation.get("issuer", ""),
+                        "signing_key_id": attestation.get("signing_key_id", ""),
+                        "issued_at": str(attestation.get("issued_at", "")),
+                        "valid": att_ok,
+                    })
+                except Exception as e:
+                    reasons.append({
+                        "code": "ERR_ATTESTATION_CHECK_FAILED",
+                        "message": str(e),
+                    })
 
         # 6. Evidence Freshness 与 Verifier 三元组记录
         verifiers_used: List[Dict[str, str]] = []
@@ -487,6 +596,54 @@ class TaskGateMixin:
         dec_time = authoritative_time if authoritative_time is not None else time.time()
         assembly_reasons: List[Dict[str, Any]] = []
 
+        # 0. Stage_Toggle 门控（Req 13.1/13.12/13.15）：
+        #    P1 未启用 → 不评估 P1 条款，记录 P1_NOT_ENABLED 且判定 pass
+        #    （可审计、不伪造产物）；P1 启用而 P3 未启用 → 跳过 P3 条款，
+        #    记录 P3_NOT_ENABLED；启用时保持严格 fail-closed。
+        p1_enabled = self._resolve_stage_toggle("P1", task_id)
+        p3_enabled = bool(p1_enabled) and self._resolve_stage_toggle("P3", task_id)
+        resolved_toggles: Dict[str, bool] = {
+            "P1": bool(p1_enabled),
+            "P3": bool(p3_enabled),
+        }
+
+        if not p1_enabled:
+            res: Dict[str, Any] = {
+                "task_id": task_id,
+                "decision": "pass",
+                "stage_toggle": resolved_toggles,
+                "evaluated_at": dec_time,
+                "verifiers_used": [],
+                "reasons": [{
+                    "code": P1_NOT_ENABLED,
+                    "message_key": GATE_I18N_KEYS[P1_NOT_ENABLED],
+                    "message": _resolve_gate_message(
+                        GATE_I18N_KEYS[P1_NOT_ENABLED],
+                        {"task_id": task_id, "stage": "P1"},
+                    ),
+                    "status": "skipped",
+                }],
+                "note": "Evidence Gate 未评估：P1 Stage_Toggle disabled（Req 13.1/13.15）",
+            }
+            self._persist_gate_decision(task_id, "", 0, "", res, dec_time, resolved_toggles)
+            return res
+
+        # P1 启用：P3 未启用时记录 P3_NOT_ENABLED（skipped，不阻断）
+        enabled_stages: Set[str] = {"P1"}
+        skipped_reasons: List[Dict[str, Any]] = []
+        if not p3_enabled:
+            skipped_reasons.append({
+                "code": P3_NOT_ENABLED,
+                "message_key": GATE_I18N_KEYS[P3_NOT_ENABLED],
+                "message": _resolve_gate_message(
+                    GATE_I18N_KEYS[P3_NOT_ENABLED],
+                    {"task_id": task_id, "stage": "P3"},
+                ),
+                "status": "skipped",
+            })
+        else:
+            enabled_stages.add("P3")
+
         # 1. 查找契约 Envelope（缺失时不得伪造占位，Req 1.1）
         c_row = None
         if self._has_table("task_contract_revisions"):
@@ -644,12 +801,20 @@ class TaskGateMixin:
             quality_findings=quality_findings,
             authoritative_time=authoritative_time,
             implementer_identity=impl_identity,
+            enabled_stages=enabled_stages,
         )
 
         # 合并组装层 fail-closed 原因：任一数据缺失原因都强制 block（Req 1.8）
         if assembly_reasons:
             res["reasons"] = assembly_reasons + list(res.get("reasons") or [])
             res["decision"] = "block"
+
+        # P3 未启用记录（skipped，不阻断）：置于 reasons 头部，保留审计可追溯
+        if skipped_reasons:
+            res["reasons"] = skipped_reasons + list(res.get("reasons") or [])
+
+        # 记录本次解析的 Stage_Toggle 集合（Req 13.15）
+        res["stage_toggle"] = resolved_toggles
 
         # 保存判定到 task_gate_decisions（缺失绑定时以空串/0 诚实落盘，
         # 禁止伪造 C-{task_id} 占位或虚构 revision）
@@ -659,27 +824,56 @@ class TaskGateMixin:
                 rev = int(contract_data.get("revision", 0))
             except (TypeError, ValueError):
                 rev = 0
-            dec_id = f"GDEC-{task_id}-{int(dec_time * 1000)}-{uuid.uuid4().hex[:8]}"
-            self.conn.execute(
-                """
-                INSERT INTO task_gate_decisions
-                    (decision_id, task_id, contract_id, contract_revision, contract_hash, decision, reason, decision_time)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    dec_id,
-                    task_id,
-                    contract_id,
-                    rev,
-                    contract_data.get("contract_hash", ""),
-                    res["decision"],
-                    json.dumps(res, ensure_ascii=False),
-                    dec_time,
-                ),
+            self._persist_gate_decision(
+                task_id,
+                contract_id,
+                rev,
+                contract_data.get("contract_hash", ""),
+                res,
+                dec_time,
+                resolved_toggles,
             )
-            self.conn.commit()
 
         return res
+
+    def _persist_gate_decision(
+        self,
+        task_id: str,
+        contract_id: str,
+        contract_revision: int,
+        contract_hash: str,
+        decision: Dict[str, Any],
+        decision_time: float,
+        resolved_toggles: Optional[Dict[str, bool]] = None,
+    ) -> None:
+        """将 gate decision 落盘到 task_gate_decisions（含 resolved Stage_Toggle 集合）。
+
+        表不存在时静默跳过（schema 降级场景），不抛异常。
+        """
+        if not self._has_table("task_gate_decisions"):
+            return
+        dec_id = f"GDEC-{task_id}-{int(decision_time * 1000)}-{uuid.uuid4().hex[:8]}"
+        toggle_json = json.dumps(resolved_toggles, ensure_ascii=False) if resolved_toggles else ""
+        self.conn.execute(
+            """
+            INSERT INTO task_gate_decisions
+                (decision_id, task_id, contract_id, contract_revision, contract_hash,
+                 decision, reason, decision_time, resolved_stage_toggle_set)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dec_id,
+                task_id,
+                contract_id,
+                contract_revision,
+                contract_hash,
+                decision["decision"],
+                json.dumps(decision, ensure_ascii=False),
+                decision_time,
+                toggle_json,
+            ),
+        )
+        self.conn.commit()
 
     def _has_table(self, table_name: str) -> bool:
         cur = self.conn.execute(
