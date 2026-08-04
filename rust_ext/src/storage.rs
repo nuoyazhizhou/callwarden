@@ -414,6 +414,64 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, rusqlite::Error> 
     )
 }
 
+/// canonical db/schema.py SCHEMA_SQL 中定义的预期表名集合。
+///
+/// 与 Rust `canonical_schema_sql()` 提取的 SCHEMA_SQL 块一致（同一来源），
+/// 用于策略 A 的"表结构完整性校验"：当 `current_version == expected_version`
+/// 但 `schema_migrations` 的 stored checksum 与当前二进制不一致时，用该集合
+/// 判断 DB 实际表结构是否与 canonical schema 一致，而非仅凭 checksum 判定。
+fn expected_canonical_table_names() -> Vec<&'static str> {
+    // canonical_schema_sql() 返回 &'static str，lines()/split 产生的子串
+    // 生命周期同样为 'static，无需任何堆分配。
+    canonical_schema_sql()
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let rest = trimmed.strip_prefix("CREATE TABLE ")?;
+            let rest = rest.strip_prefix("IF NOT EXISTS ").unwrap_or(rest);
+            rest.split([' ', '(', '\t', '\n']).next().filter(|name| !name.is_empty())
+        })
+        .collect()
+}
+
+/// 校验 DB 实际表结构是否与 canonical schema 一致（策略 A）。
+///
+/// 返回 Ok(true) 表示所有 canonical 表均存在（DB schema 完整）；
+/// Ok(false) 表示存在缺失表（真正的 schema 漂移，应 fail-closed）；
+/// Err(e) 表示校验本身失败。
+fn schema_shape_matches_canonical(conn: &Connection) -> Result<bool, rusqlite::Error> {
+    let expected = expected_canonical_table_names();
+    for table in expected {
+        if !table_exists(conn, table)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// 将 schema_migrations 表中指定版本的 checksum 更新为当前 canonical。
+///
+/// 仅在表结构完整性校验通过（DB 实际 schema 与 canonical 一致）时调用，
+/// 用于修正 8/1 旧 pyd 写入的过期 checksum，使新编译扩展能正常打开 DB。
+fn update_stored_checksum_to_canonical(
+    conn: &mut Connection,
+    version: u32,
+) -> Result<(), String> {
+    let checksum = canonical_schema_checksum()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs_f64())
+        .unwrap_or(0.0);
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_migrations (version, checksum, description, applied_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![version, checksum, "canonical db/schema.py (checksum reconciled)", now],
+    )
+    .map_err(|e| format!("{}", e))?;
+    Ok(())
+}
+
 fn schema_version_from_connection(conn: &Connection) -> Result<u32, rusqlite::Error> {
     if table_exists(conn, "schema_version")? {
         conn.query_row(
@@ -1059,10 +1117,37 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
     if current_version == expected_version {
         match metadata_current.as_deref() {
             Some(value) if value == checksum => return Ok(current_version),
-            Some(value) => {
+            Some(_value) => {
+                // 策略 A（T-1785831377544-d99b57de）：stored checksum 过期
+                // （例如 8/1 旧 pyd 在 a8580e9 前写入的 v46 记录），但 DB 实际
+                // 表结构可能已与 canonical schema 一致（Python 侧 v43-v46 迁移
+                // 已应用）。此时不再仅凭 checksum fail-closed，而是校验表结构
+                // 完整性：全部 canonical 表存在即视为 schema 一致，接受并重写
+                // stored checksum 为当前 canonical；存在缺失表（真正的 schema
+                // 漂移）才 fail-closed 阻断。
+                let shape_ok = schema_shape_matches_canonical(&conn).map_err(|e| {
+                    format!(
+                        "MIGRATION_FAILED: Failed to inspect schema shape for v{}: {}",
+                        expected_version, e
+                    )
+                })?;
+                if shape_ok {
+                    update_stored_checksum_to_canonical(&mut conn, expected_version).map_err(
+                        |e| {
+                            format!(
+                                "MIGRATION_FAILED: Failed to reconcile schema checksum for v{}: {}",
+                                expected_version, e
+                            )
+                        },
+                    )?;
+                    return Ok(current_version);
+                }
                 return Err(format!(
-                    "MIGRATION_FAILED: schema checksum mismatch for v{}: stored={}, binary={}",
-                    expected_version, value, checksum
+                    "MIGRATION_FAILED: schema checksum mismatch for v{}: stored={}, binary={}, \
+                     and DB schema shape differs from canonical (missing tables)",
+                    expected_version,
+                    metadata_current.unwrap_or_default(),
+                    checksum
                 ));
             }
             None => {}
@@ -1509,7 +1594,9 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_checksum_mismatch_fails_closed() {
+    fn test_schema_checksum_mismatch_accepts_when_shape_complete() {
+        // 策略 A（T-1785831377544-d99b57de）：stored checksum 过期但 DB 表结构
+        // 完整（所有 canonical 表存在）时，应接受并重写 checksum，不再 fail-closed。
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("checksum.db");
         initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
@@ -1521,8 +1608,43 @@ mod tests {
         .unwrap();
         drop(conn);
 
+        // 表结构完整 + checksum 过期 → 应成功，且 checksum 被重写为当前 canonical
+        let ver = initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+        assert_eq!(ver, SCHEMA_VERSION);
+        let conn = open_connection(&db_path).unwrap();
+        let stored: String = conn
+            .query_row(
+                "SELECT checksum FROM schema_migrations WHERE version=?1",
+                [SCHEMA_VERSION],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, canonical_schema_checksum().unwrap());
+    }
+
+    #[test]
+    fn test_schema_checksum_mismatch_fails_when_table_missing() {
+        // 表结构不完整（删掉 canonical 表）→ 即使版本号一致也应 fail-closed，
+        // 保留对真正 schema 漂移的阻断。
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("checksum_missing.db");
+        initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+        let conn = open_connection(&db_path).unwrap();
+        // 删掉一个 canonical 表模拟真正的 schema 漂移
+        conn.execute_batch("DROP TABLE IF EXISTS task_dependencies;").unwrap();
+        conn.execute(
+            "UPDATE schema_migrations SET checksum='tampered' WHERE version=?1",
+            [SCHEMA_VERSION],
+        )
+        .unwrap();
+        drop(conn);
+
         let err = initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap_err();
-        assert!(err.contains("schema checksum mismatch"));
+        assert!(
+            err.contains("schema checksum mismatch") || err.contains("missing tables"),
+            "expected fail-closed on shape mismatch, got: {}",
+            err
+        );
     }
 
     #[test]
