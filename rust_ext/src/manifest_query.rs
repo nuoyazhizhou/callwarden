@@ -9,8 +9,11 @@
 //!
 //! 设计原则（见 docs/design/phase1-manifest-contract.md §5）：
 //! - 只读连接（`SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_URI`，非 `immutable=1`）
-//! - WAL checkpoint(PASSIVE) 后读取（AGENTS.md 规则 7）
+//! - **不执行 WAL checkpoint(PASSIVE)**（T-1785831377543-8d626745）：只读连接经
+//!   WAL + -shm 总能读到最新已提交数据，checkpoint 冗余且 Windows + WAL 下
+//!   register 写事务后会无限阻塞（SQLite 内部 sleep 循环不受 busy_timeout 控制）
 //! - busy_timeout=5000（与 Phase 1-1 / 1-2 一致，AGENTS.md 规则 6）
+//! - open 有界超时 8s + 全局降级标记：超时后本次进程后续只读短连接快速失败
 //! - 短连接：每次调用新建 + 关闭
 //!
 //! 写操作也通过本模块暴露，作为 Python 兼容入口的 Rust 生产实现：
@@ -24,7 +27,6 @@ use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use pyo3::types::PyList;
-use rusqlite::OpenFlags;
 
 const MANIFEST_SCHEMA_DDL: &str = "
 CREATE TABLE IF NOT EXISTS workspace_manifests (
@@ -56,20 +58,16 @@ CREATE INDEX IF NOT EXISTS idx_manifests_dirty ON workspace_manifests(workspace_
 
 /// 打开只读连接的辅助函数（内部使用）
 ///
-/// 与 sqlite_query.rs / cas_query.rs 完全相同策略：
+/// 与 cas_query.rs::open_readonly 一致，并共享其有界超时 + 全局降级保护
+/// （T-1785831377543-8d626745）：
 /// - SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_URI（非 immutable=1，避免读到旧数据）
 /// - busy_timeout=5000
-/// - PRAGMA wal_checkpoint(PASSIVE) 确保 WAL 已 flush
+/// - **不执行 PRAGMA wal_checkpoint(PASSIVE)**：只读连接经 WAL/-shm 总能读到
+///   最新已提交数据；Windows + WAL 下 register 写事务后 checkpoint 会进入
+///   SQLite 内部 sleep 循环不受 busy_timeout 控制，导致无限阻塞。
+/// - 8s 有界超时，超时置位全局降级标记，本次进程后续只读连接快速失败。
 fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open_with_flags(
-        db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    Ok(conn)
+    crate::cas_query::open_readonly_bounded(db_path)
 }
 
 /// 打开用于短写事务的连接。

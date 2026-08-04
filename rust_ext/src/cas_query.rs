@@ -9,8 +9,12 @@
 //!
 //! 设计原则（见 docs/design/phase1-cas-contract.md §5）：
 //! - 只读连接（`SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_URI`，非 `immutable=1`）
-//! - WAL checkpoint(PASSIVE) 后读取（AGENTS.md 规则 7）
+//! - **不执行 WAL checkpoint(PASSIVE)**（T-1785831377543-8d626745）：只读连接经
+//!   WAL + -shm 总能读到最新已提交数据，checkpoint 冗余且 Windows + WAL 下
+//!   register 写事务后会无限阻塞（SQLite 内部 sleep 循环不受 busy_timeout 控制）
 //! - busy_timeout=5000（与 Phase 1-1 一致）
+//! - open 有界超时 8s + 全局降级标记：超时后本次进程后续只读短连接快速失败，
+//!   由 Python 侧降级到主连接查询，不挂死
 //! - 短连接：每次调用新建 + 关闭
 //! - 纯函数不访问数据库
 //!
@@ -22,6 +26,17 @@ use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rusqlite::OpenFlags;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 只读连接全局降级标记（T-1785831377543-8d626745）
+///
+/// `open_readonly_bounded` 有界超时（8s）触发后置位：本次进程后续所有
+/// 只读短连接直接快速失败，由 Python 侧降级到主连接查询，避免反复卡死。
+/// 一次性闩锁（不自动复位）：修复后正常路径不会触发，触发即视为环境异常。
+pub(crate) static READONLY_DEGRADED: AtomicBool = AtomicBool::new(false);
+
+/// 只读连接打开超时阈值（秒）
+const READONLY_OPEN_TIMEOUT_SECS: u64 = 8;
 
 // 注意：函数返回类型用 Option<Bound<'py, PyAny>> 而非 Option<PyObject>，
 // 与 graph.rs 的 get_symbol 一致（pyo3 0.29 推荐用法）
@@ -62,17 +77,58 @@ pub fn compute_symbol_content_hash(content: &str) -> String {
 /// 与 sqlite_query.rs 相同的策略：
 /// - SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_URI（非 immutable=1，避免读到旧数据）
 /// - busy_timeout=5000
-/// - PRAGMA wal_checkpoint(PASSIVE) 确保 WAL 已 flush
+/// - **不执行 PRAGMA wal_checkpoint(PASSIVE)**（T-1785831377543-8d626745）：
+///   只读连接经 WAL + -shm 总能读到最新已提交数据，checkpoint 冗余；
+///   且 Windows + WAL 模式下 register 写事务后 checkpoint 会进入
+///   SQLite 内部 walIndexLock/recovery 的 sleep 循环，不受 busy_timeout 控制，
+///   导致 refresh-all 无限阻塞（规则 32 hook 看门狗兜底）。
+/// - **8s 有界超时**：open 在后台线程执行，超时则返回错误并置位全局降级标记
+///   `READONLY_DEGRADED`，本次进程后续只读短连接快速失败，由 Python 侧降级
+///   到主连接查询，不再挂死。
+pub(crate) fn open_readonly_bounded(
+    db_path: &str,
+) -> PyResult<rusqlite::Connection> {
+    // 全局降级标记已置位：快速失败，避免反复卡死
+    if READONLY_DEGRADED.load(Ordering::Relaxed) {
+        return Err(PyIOError::new_err(
+            "只读连接已进入全局降级模式（此前 open 超时），请由 Python 主连接查询",
+        ));
+    }
+
+    // 后台线程执行 open + busy_timeout，避免 SQLite 内部 sleep 循环阻塞主线程
+    let db_path_owned = db_path.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let result = (|| -> rusqlite::Result<rusqlite::Connection> {
+            let conn = rusqlite::Connection::open_with_flags(
+                &db_path_owned,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
+            )?;
+            conn.busy_timeout(std::time::Duration::from_secs(5))?;
+            Ok(conn)
+        })();
+        let _ = tx.send(result);
+    });
+
+    match rx.recv_timeout(std::time::Duration::from_secs(READONLY_OPEN_TIMEOUT_SECS)) {
+        Ok(Ok(conn)) => Ok(conn),
+        Ok(Err(e)) => {
+            Err(PyIOError::new_err(format!("打开数据库失败: {}", e)))
+        }
+        Err(_) => {
+            // recv_timeout 超时：open 可能卡在 SQLite 内部锁循环
+            READONLY_DEGRADED.store(true, Ordering::Relaxed);
+            Err(PyIOError::new_err(format!(
+                "打开只读数据库超时（>{}s），已进入全局降级模式",
+                READONLY_OPEN_TIMEOUT_SECS
+            )))
+        }
+    }
+}
+
+/// 打开只读连接的辅助函数（内部使用，兼容旧调用签名）
 fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open_with_flags(
-        db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    Ok(conn)
+    open_readonly_bounded(db_path)
 }
 
 /// 查询 cas_file_cache 表（只命中 state='ready'）

@@ -6,7 +6,11 @@
 //!
 //! 设计原则（见 docs/design/phase2-6-1-incremental-build-contract.md）：
 //! - `compute_and_apply_symbol_diff`：读写连接 + BEGIN IMMEDIATE 事务 + busy_timeout=5000
-//! - `load_file_result_from_db`：只读连接 + WAL checkpoint(PASSIVE)（与 Phase 1 一致）
+//! - `load_file_result_from_db`：只读连接，**不执行 WAL checkpoint(PASSIVE)**
+//!   （T-1785831377543-8d626745：Windows + WAL 下 register 写事务后 checkpoint 会
+//!   无限阻塞；只读连接经 WAL/-shm 总能读到最新已提交数据，checkpoint 冗余）+
+//!   8s 有界超时 + 全局降级标记（超时后本次进程后续只读连接快速失败，Python 侧
+//!   `_load_file_result_from_db_python` 用主连接降级查询，不挂死）
 //! - 短连接：每次调用新建 + 关闭
 //! - 失败不抛异常，返回 dict {"success": false, "error": str(e)}（与 Phase 2-2 一致）
 //!
@@ -18,7 +22,7 @@ use pyo3::exceptions::PyIOError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyList};
 use pyo3::Bound;
-use rusqlite::{params, OpenFlags};
+use rusqlite::params;
 
 /// 打开读写连接（CodeGraph DB 用，写操作）
 ///
@@ -46,20 +50,17 @@ fn open_readwrite(db_path: &str) -> PyResult<rusqlite::Connection> {
 
 /// 打开只读连接（CodeGraph DB 用，只读查询）
 ///
-/// 与 cas_query.rs 一致：
+/// 与 cas_query.rs 一致，并共享其有界超时 + 全局降级保护
+/// （T-1785831377543-8d626745）：
 /// - SQLITE_OPEN_READ_ONLY | SQLITE_OPEN_URI（非 immutable=1，避免读到旧数据）
 /// - busy_timeout=5000
-/// - WAL checkpoint(PASSIVE) 确保 WAL 已 flush
+/// - **不执行 PRAGMA wal_checkpoint(PASSIVE)**：只读连接经 WAL/-shm 总能读到
+///   最新已提交数据；Windows + WAL 下 register 写事务后 checkpoint 会进入
+///   SQLite 内部 sleep 循环不受 busy_timeout 控制，导致 refresh-all 无限阻塞。
+/// - 8s 有界超时，超时置位全局降级标记，本次进程后续只读连接快速失败；
+///   Python 侧 `_load_file_result_from_db_python` 用主连接降级查询，不挂死。
 fn open_readonly(db_path: &str) -> PyResult<rusqlite::Connection> {
-    let conn = rusqlite::Connection::open_with_flags(
-        db_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
-    )
-    .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))
-        .map_err(|e| PyIOError::new_err(format!("设置 busy_timeout 失败: {}", e)))?;
-    let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
-    Ok(conn)
+    crate::cas_query::open_readonly_bounded(db_path)
 }
 
 /// 将 rusqlite::Error 转换为 PyIOError（辅助函数）

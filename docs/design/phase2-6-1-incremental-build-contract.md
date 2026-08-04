@@ -124,7 +124,7 @@ fn compute_and_apply_symbol_diff(
 **特性**：
 - 写操作：BEGIN IMMEDIATE 事务，失败 ROLLBACK
 - 复用 `open_readwrite` helper（与 `batch_save_symbols` / `batch_save_file_versions` 一致）
-- `busy_timeout=5000`，WAL checkpoint 前置
+- `busy_timeout=5000`
 
 ### 2.2 load_file_result_from_db
 
@@ -161,7 +161,13 @@ fn load_file_result_from_db(
 ```
 
 **特性**：
-- 只读查询：`open_readonly` helper + WAL checkpoint（与 `cas_query` / `manifest_query` 一致）
+- 只读查询：`open_readonly` helper（与 `cas_query` / `manifest_query` 一致）
+- **不执行 WAL checkpoint(PASSIVE)**（T-1785831377543-8d626745）：只读连接经
+  WAL + `-shm` 总能读到最新已提交数据，checkpoint 冗余；且 Windows + WAL 下
+  register 写事务后 checkpoint 会进入 SQLite 内部 sleep 循环不受 busy_timeout
+  控制，导致 refresh-all 无限阻塞。open 加 8s 有界超时 + 全局降级标记：超时后
+  本次进程后续只读连接快速失败，Python 侧 `_load_file_result_from_db_python`
+  用主连接降级查询，不挂死。
 - 返回 Python dict（通过 `PyDict`），与 Python 路径结构完全一致
 
 ## 3. 行为契约
@@ -292,8 +298,8 @@ CREATE TABLE symbols (
 //    - return {"success": true, "removed_count": n, "removed_names": [...]}
 
 // 2. load_file_result_from_db
-//    - open_readonly(codegraph_db_path)
-//    - PRAGMA wal_checkpoint(PASSIVE)
+//    - open_readonly(codegraph_db_path)（8s 有界超时 + 全局降级标记；
+//      不执行 wal_checkpoint(PASSIVE)，T-1785831377543-8d626745）
 //    - SELECT content_hash, total_lines FROM file_versions WHERE id = file_version_id
 //    - SELECT sv.*, sc.* FROM file_symbol_versions sv JOIN symbol_contents sc
 //        WHERE sv.file_version_id = ? AND sv.is_deleted = 0
@@ -376,6 +382,9 @@ cw rollback register --task-id T-1785204662320-4df57f0c \
 
 ### 8.4 WAL 模式与只读连接
 
-- `compute_and_apply_symbol_diff`：READWRITE 连接，WAL checkpoint 前置
-- `load_file_result_from_db`：READONLY 连接，WAL checkpoint 前置（与 Phase 1 一致）
+- `compute_and_apply_symbol_diff`：READWRITE 连接，busy_timeout=5000
+- `load_file_result_from_db`：READONLY 连接，**不执行 WAL checkpoint(PASSIVE)**
+  （T-1785831377543-8d626745：Windows + WAL 下 register 写事务后 checkpoint 会
+  无限阻塞；只读连接经 WAL/-shm 总能读到最新已提交数据）+ 8s 有界超时 + 全局
+  降级标记（超时后本次进程后续只读连接快速失败，Python 主连接降级查询）
 - `busy_timeout=5000`，写锁冲突时最多等 5 秒
