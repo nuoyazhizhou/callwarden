@@ -135,6 +135,14 @@ callwarden = [
     "i18n/*.json",
 ]
 
+[tool.pyrefly]
+# mcp/watchdog 等运行时依赖通过 pip install --user 安装到用户级 site-packages
+# （C:\Users\wanpi\AppData\Roaming\Python\Python314\site-packages），
+# Pyrefly 环境自动探测的解释器（系统 Python + .venv_test）不包含 user scheme，
+# 静态检查时无法解析 mcp.server.fastmcp 等 import，需手动补充 site-package-path。
+# 若迁移到 venv 安装依赖，可删除此项让 autoconfiguration 自动探测。
+site-package-path = ["C:/Users/wanpi/AppData/Roaming/Python/Python314/site-packages"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 norecursedirs = ["testcode", "build", "dist", "rust_ext", ".git"]

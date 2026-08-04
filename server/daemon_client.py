@@ -91,6 +91,16 @@ class UnixDaemonRpcClient:
             raise DaemonUnavailableError("daemon 响应 request id 不匹配")
         return parse_response(response)
 
+    def get_authoritative_clock(self) -> float:
+        """获取 Daemon 权威时钟时间 (Authoritative_Clock, Req 14.11)"""
+        try:
+            res = self.call("ping")
+            if isinstance(res, dict) and "timestamp" in res:
+                return float(res["timestamp"])
+        except Exception:
+            pass
+        return time.time()
+
     def _probe_connection(self, conn: object) -> bool:
         """在 autostart 的现有连接上完成一次协议级 ping。"""
         request_id = next(self._ids)

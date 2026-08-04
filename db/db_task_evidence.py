@@ -542,6 +542,119 @@ class TaskEvidenceMixin:
             return {"success": False, "error": str(e)}
 
     # ============================================
+    # Verdict 提交（P1 write-path，Req 6.7-6.10）
+    # ============================================
+
+    def submit_verdict(
+        self,
+        task_id: str,
+        contract_id: str,
+        contract_revision: int,
+        contract_hash: str,
+        phase: str = "PRE_VERDICT",
+        clause_results: Optional[Dict[str, Any]] = None,
+        findings: Optional[List[Dict[str, Any]]] = None,
+        overall: str = "",
+        reviewer_identity: str = "",
+        view_manifest_hash: str = "",
+        snapshot_id: str = "",
+        attestation: str = "",
+        amendment_ref: str = "",
+        verdict_id: str = "",
+        workspace_id: Optional[int] = None,
+        lease_token: Optional[str] = None,
+        fencing_counter: Optional[int] = None,
+        lease_role: str = "reviewer",
+    ) -> Dict[str, Any]:
+        """提交一条 Reviewer Verdict（P1 write-path）。
+
+        写入 task_verdict_events，供 evaluate_evidence_gate_for_task 消费。
+        追加式记录，不修改既有 payload（Req 1.7, 6.23）。
+
+        P4 强化（Req 11.8-11.9）：
+        - 提供 lease_token/fencing_counter 时启用受保护写路径（默认 role=reviewer）
+        - 过期 / token hash 不匹配 / 旧 counter 均在写入前拒绝，不改变 task data
+
+        Args:
+            task_id: 关联任务 ID
+            contract_id: 契约 ID
+            contract_revision: 契约 revision
+            contract_hash: 契约 hash
+            phase: Verdict 阶段（PRE_VERDICT/POST_VERDICT 等）
+            clause_results: 条款级评审结果 dict（JSON 存储）
+            findings: 发现列表（JSON 存储）
+            overall: 总体结论（approved/rejected/needs_changes/unclear）
+            reviewer_identity: 评审者身份（agent/session marker）
+            view_manifest_hash: 盲视 manifest hash（可空）
+            snapshot_id: 绑定的 workspace snapshot id（可空）
+            attestation: 评审者声明（可空）
+            amendment_ref: 修订引用（可空）
+            verdict_id: 显式 verdict id（可空，默认生成）
+            workspace_id: 工作区 ID
+            lease_token: P4 可选的 Lease raw token（提供时启用受保护写校验）
+            fencing_counter: P4 可选的当前 fencing counter
+            lease_role: P4 受保护写角色（默认 reviewer）
+
+        Returns:
+            {success, verdict_id, event_id} 或 {success: False, error: ...}
+        """
+        if not task_id or not contract_id:
+            return {"success": False, "error": "task_id and contract_id are required"}
+        if contract_revision <= 0:
+            return {"success": False, "error": "contract_revision must be positive"}
+        if not contract_hash:
+            return {"success": False, "error": "contract_hash is required"}
+
+        # P4: protected mutation Lease 校验（Req 11.8-11.9）
+        # Verdict 提交是受保护写；校验失败在写入前拒绝，不改变 task data。
+        if lease_token is not None and fencing_counter is not None:
+            ok_l, lease_reason = self.validate_lease_for_mutation(
+                task_id, lease_role, lease_token, fencing_counter
+            )
+            if not ok_l:
+                return {
+                    "success": False,
+                    "error": lease_reason["code"],
+                    "reason": lease_reason,
+                }
+
+        vid = verdict_id or f"V-{uuid.uuid4().hex[:16]}"
+        now = time.time()  # P1 阶段 daemon 不可用时退化为客户端时钟（Req 6.19）
+
+        clause_json = json.dumps(
+            clause_results, sort_keys=True, ensure_ascii=False
+        ) if clause_results else ""
+        findings_json = json.dumps(
+            findings, sort_keys=True, ensure_ascii=False
+        ) if findings else ""
+
+        try:
+            cur = self.conn.execute(
+                """
+                INSERT INTO task_verdict_events
+                    (verdict_id, task_id, contract_id, contract_revision, contract_hash,
+                     phase, view_manifest_hash, snapshot_id, reviewer_identity,
+                     clause_results, findings, overall, attestation, amendment_ref,
+                     submitted_at, workspace_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    vid, task_id, contract_id, contract_revision, contract_hash,
+                    phase, view_manifest_hash, snapshot_id, reviewer_identity,
+                    clause_json, findings_json, overall, attestation, amendment_ref,
+                    now, workspace_id,
+                ),
+            )
+            self.conn.commit()
+            return {
+                "success": True,
+                "verdict_id": vid,
+                "event_id": cur.lastrowid,
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ============================================
     # Verifier_Registry（Req 6.11–6.12）
     # ============================================
 

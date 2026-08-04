@@ -250,15 +250,15 @@ AGENT_REGISTRY: Dict[str, AgentSpec] = {
         reads_agents_md=False,
         project_mcp_relpath=".antigravity/mcp_config.json",
         project_mcp_format="mcpServers",
-        # 用户清单指定：~/.gemini/config/mcp_config.json（与 Gemini CLI 共用 .gemini 目录但文件不同）
-        global_mcp_relpath="~/.gemini/config/mcp_config.json",
+        global_mcp_relpath="~/.gemini/antigravity-ide/mcp_config.json",
+        global_mcp_relpath_win="~/.gemini/antigravity-ide/mcp_config.json",
         global_mcp_format="merge_mcpServers",
         rules_relpath=".antigravity/rules/callwarden.md",
         rules_type="generic_md",
         hooks_type="none",
         cli_commands=("antigravity",),
-        # 仅靠 .antigravity 目录检测，避免与 gemini-cli 的 .gemini 目录冲突
-        config_dirs=(".antigravity",),
+        config_dirs=(".antigravity", ".gemini/antigravity-ide"),
+        win_config_dirs=("Antigravity", ".gemini/antigravity-ide"),
     ),
 
     # ── OpenAI ─────────────────────────────────────────────────────────────
