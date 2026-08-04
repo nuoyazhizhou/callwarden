@@ -13184,19 +13184,46 @@ def _handle_experiment(args, db):
                 post_apply_rollbacks=opts.rollbacks,
                 observation_window_id=opts.obs_window,
             )
-            record["is_nontrivial_code_change"] = bool(opts.nontrivial)
+            # G0 补实验：nontrivial 自动判定（Req 12.26）——从 change_audit.diff +
+            # task_symbol_changes 计算，替代手填 --nontrivial（12.20 禁止人工打标伪造）。
+            # 自动判定在 DB 有 diff 数据时为准；仅当 change_audit 无 diff 记录
+            # （无法自动判定）时才回退到显式 --nontrivial。
+            auto_nontrivial: Optional[bool] = None
+            try:
+                from ..experiments.blind_review_views import collect_source_facts_from_db
+                from ..experiments.blind_review_evaluator import (
+                    nontrivial_code_change_from_change_audit,
+                )
+                facts = collect_source_facts_from_db(db, opts.task_id)
+                if facts.change_audit_diffs:
+                    auto_nontrivial = nontrivial_code_change_from_change_audit(
+                        facts.change_audit_diffs,
+                        facts.symbol_changes,
+                    )
+            except Exception:
+                auto_nontrivial = None
+            is_nontrivial = (
+                auto_nontrivial
+                if auto_nontrivial is not None
+                else bool(opts.nontrivial)
+            )
+            record["is_nontrivial_code_change"] = bool(is_nontrivial)
             writer.append(record)
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
                       "group": group, "tp": opts.tp, "fp": opts.fp, "misses": opts.misses,
-                      "duration_s": opts.duration, "is_nontrivial_code_change": bool(opts.nontrivial),
-                      "non_product_evidence": True}
+                      "duration_s": opts.duration, "is_nontrivial_code_change": bool(is_nontrivial),
+                      "non_product_evidence": True,
+                      "nontrivial_auto_detected": auto_nontrivial is not None}
             _output(result,
                     [_msg("cli_experiment_metrics_recorded",
                           "Review metrics recorded for task {task_id} (group={group})",
                           task_id=opts.task_id, group=group),
                      _msg("cli_experiment_metrics_values",
                           "  TP={tp} FP={fp} misses={misses} duration={duration}s",
-                          tp=opts.tp, fp=opts.fp, misses=opts.misses, duration=opts.duration)],
+                          tp=opts.tp, fp=opts.fp, misses=opts.misses, duration=opts.duration),
+                     (f"  nontrivial={is_nontrivial} (auto-detect)"
+                      if auto_nontrivial is not None
+                      else f"  nontrivial={is_nontrivial} (manual)")],
                     opts.json)
 
         # ============================================================

@@ -257,6 +257,86 @@ def is_nontrivial_code_change(
     return lines >= 10 and bool(has_symbol_change)
 
 
+# 典型生成文件/构建产物后缀（Req 12.26 排除项）。源文件判定：不在该集合即视为源码。
+_GENERATED_FILE_SUFFIXES = {
+    ".lock", ".min.js", ".min.css", ".map", ".pyc", ".pyo", ".o", ".so",
+    ".dll", ".pyd", ".exe", ".class", ".jar", ".war", ".pdf", ".png",
+    ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".woff", ".woff2", ".ttf",
+    ".eot", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".whl", ".egg",
+    ".cwsnap", ".csw", ".snap", ".jsonl", ".log", ".tmp", ".bak", ".orig",
+}
+_GENERATED_FILE_NAMES = {
+    "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "poetry.lock",
+    "pipfile.lock", "go.sum", "cargo.lock", "composer.lock", "gemfile.lock",
+    "lock.json",
+}
+
+
+def count_non_comment_added_lines(diff_text: str) -> int:
+    """从统一 diff 文本统计“非注释新增行”数量（Req 12.26 的 changed_source_lines）。
+
+    只统计 ``+`` 前缀的 hunk 内容行（排除 ``+++`` 文件头与空 ``+`` 行），并跳过
+    常见注释行：``//``、``#``、``/*``、``*``、``<!--``、``--``、``\"\"\"``、``'''``。
+    行首空白后判定注释。失败/非 diff 输入返回 0（不乐观解释）。
+    """
+    if not diff_text:
+        return 0
+    count = 0
+    for line in diff_text.splitlines():
+        if line.startswith("+++") or not line.startswith("+"):
+            continue
+        added = line[1:]
+        stripped = added.strip()
+        if not stripped:
+            continue
+        if stripped.startswith(("//", "#", "/*", "*", "<!--", "--", "\"\"\"", "'''")):
+            continue
+        # 行尾行内注释（如 code // comment）不排除：仍算源码行。
+        count += 1
+    return count
+
+
+def is_generated_path(rel_path: str) -> bool:
+    """按 Req 12.26 判定文件是否属于生成文件/构建产物（应排除）。"""
+    name = (rel_path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name in _GENERATED_FILE_NAMES:
+        return True
+    for suffix in _GENERATED_FILE_SUFFIXES:
+        if name.endswith(suffix):
+            return True
+    return False
+
+
+def nontrivial_code_change_from_change_audit(
+    change_audit_diffs: Sequence[Dict[str, Any]],
+    symbol_changes: Sequence[Dict[str, Any]],
+) -> bool:
+    """从 change_audit.diff + task_symbol_changes 自动判定 12.26 非平凡门槛。
+
+    替代 CLI ``--nontrivial`` 手填（G0 清单：行数 + 符号数必须自动判定，不得手填）。
+    ``change_audit_diffs`` 每项含 ``file_path`` 与 ``diff``；``symbol_changes`` 为
+    ``task_symbol_changes`` 记录（非空即证明符号级变更，对应“至少一条符号变化”）。
+    """
+    has_symbol_change = bool(symbol_changes)
+    if not has_symbol_change:
+        return False
+    for audit in change_audit_diffs:
+        if not isinstance(audit, dict):
+            continue
+        rel_path = audit.get("file_path") or ""
+        if is_generated_path(rel_path):
+            continue
+        diff_text = audit.get("diff") or ""
+        lines = count_non_comment_added_lines(diff_text)
+        if is_nontrivial_code_change(
+            lines,
+            has_symbol_change,
+            tracked_source_file=True,  # change_audit 仅记录已跟踪文件的变更
+        ):
+            return True
+    return False
+
+
 def nontrivial_code_change_from_facts(
     changed_files: Sequence[Dict[str, Any]],
     symbol_changes: Sequence[Dict[str, Any]],

@@ -498,6 +498,72 @@ class BootstrapMixin:
             "is_dirty": is_dirty,
         }
 
+    def _compute_file_diff(
+        self,
+        rel_path: str,
+        status_code: str,
+        base_commit: str,
+        max_diff_chars: int = 200_000,
+    ) -> str:
+        """计算单个变更文件的 diff 文本（T-1785574343867 G0 补实验用）。
+
+        背景：`task_capture_diff` 此前只写 hash_before/hash_after，diff 字段恒为空，
+        导致 `nontrivial_code_change_from_facts()` 计算 `changed_source_lines=0`，
+        G0 门禁的"≥10 非平凡 code_change"永远无法自动判定。
+
+        策略（按状态分派，均 fail-soft 返回空串）：
+        - 已跟踪文件（A/M/R）：
+            1) 有 base_commit 时 `git diff <base>..HEAD -- <path>` 取已提交变更
+            2) 无 base_commit 时 `git diff HEAD -- <path>` 取未提交变更
+            3) 若仍为空，`git diff --no-index /dev/null <path>` 兜底（新文件场景）
+        - 删除文件（D）：`git diff <base>..HEAD -- <path>` 通常已覆盖
+        - untracked 文件：`git diff --no-index /dev/null <path>`（视为全新增）
+        纯格式/生成文件由上游判定，本函数不预判；超长 diff 截断避免 JSONL/审计膨胀。
+        """
+        if not self._is_git_repo():
+            return ""
+        root = getattr(self, "workspace_root", "")
+        abs_path = os.path.join(root, rel_path) if root else rel_path
+        diff_text = ""
+        try:
+            if status_code in ("A", "M", "R"):
+                if base_commit:
+                    try:
+                        diff_text = self._run_git(
+                            ["diff", f"{base_commit}..HEAD", "--", rel_path]
+                        )
+                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                        diff_text = ""
+                if not diff_text:
+                    try:
+                        diff_text = self._run_git(
+                            ["diff", "HEAD", "--", rel_path]
+                        )
+                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                        diff_text = ""
+            elif status_code == "D":
+                if base_commit:
+                    try:
+                        diff_text = self._run_git(
+                            ["diff", f"{base_commit}..HEAD", "--", rel_path]
+                        )
+                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                        diff_text = ""
+            else:  # untracked / 未知：按新增文件 diff
+                if os.path.exists(abs_path):
+                    try:
+                        diff_text = self._run_git(
+                            ["diff", "--no-index", "/dev/null", abs_path]
+                        )
+                    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                        diff_text = ""
+        except Exception:
+            return ""
+        # 截断超长 diff（上限默认 200KB），避免审计链/JSONL 膨胀
+        if len(diff_text) > max_diff_chars:
+            diff_text = diff_text[:max_diff_chars]
+        return diff_text
+
     # ============================================
     # task_capture_diff 闭环入口
     # ============================================
@@ -626,6 +692,12 @@ class BootstrapMixin:
                 except Exception:
                     hash_after = ""
 
+            # 计算实际 diff（G0 补实验：nontrivial 自动判定依赖非注释代码行数）。
+            # 此前恒为空串，导致 change_audit 无 diff 数据、nontrivial 恒 False。
+            diff_text = self._compute_file_diff(
+                rel_path, status_code, changes.get("base_commit", "")
+            )
+
             # 生成 change_id 并写入 change_audit
             # 后缀 8 位 hex（32 bit）而非 4 位 hex：降低快速循环内碰撞概率（生日悖论）
             ts_ms = int(time.time() * 1000)
@@ -638,7 +710,7 @@ class BootstrapMixin:
                     " diff, author, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         change_id, task_id, step_id, rel_path,
-                        hash_before, hash_after, "",
+                        hash_before, hash_after, diff_text,
                         "capture-diff", time.time(),
                     ),
                 )
@@ -647,6 +719,7 @@ class BootstrapMixin:
                     "file_path": rel_path,
                     "hash_before": hash_before,
                     "hash_after": hash_after,
+                    "diff_length": len(diff_text),
                     "status": status_code,
                 })
             except Exception:
