@@ -3231,9 +3231,8 @@ class CodeGraphBase:
                 idx_name = row["name"]
                 # 索引名来自 sqlite_master 系统表（非用户输入）；DROP INDEX 是 DDL，
                 # 不支持绑定参数。按 SQLite 标识符规则转义双引号后以引号引用，避免拼接注入。
-                # nosemgrep: sqlalchemy-execute-raw-query
                 quoted = idx_name.replace('"', '""')
-                self.conn.execute(f'DROP INDEX IF EXISTS "{quoted}"')
+                self.conn.execute(f'DROP INDEX IF EXISTS "{quoted}"')  # nosemgrep
             self.conn.commit()
         except Exception as e:
             print(f"[WARN] _drop_indexes_for_build 失败: {e}，入库可能有写放大")
