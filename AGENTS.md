@@ -280,7 +280,7 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 25. **`functions.exec` 中避免嵌套 PowerShell 复杂引号**：JavaScript 字符串内再嵌入同时含单双引号的 PowerShell 正则时，可能在命令执行前触发 `JavaScriptSyntaxError`。复杂检索应拆成独立 `shell_command`，每条使用简单 `rg -e` 模式；确需通过 `functions.exec` 并行时，优先使用不含内嵌引号的命令字符串，不要把 PowerShell、正则和 JavaScript 三层转义揉在一起。
 
-26. **Windows 提交前显式启用 UTF-8 子进程输出**：pre-commit 的 auto capture-diff 会读取包含中文或 Unicode 符号的子进程输出，使用系统 GBK 默认编码时可能触发 `UnicodeEncodeError` / `UnicodeDecodeError`，继而让 fail-soft 捕获逻辑拿到 `None`。在 PowerShell 执行提交前设置 `$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'`，再运行 `git commit ...`；其他会解析 `cw` 输出的 Windows Python 命令也使用相同环境变量。
+26. **subprocess text 调用必须显式指定 UTF-8 编码（Windows GBK 解码报错）**：pre-commit 的 auto capture-diff 等会读取包含中文/Unicode 符号的子进程输出，若 `subprocess.run/Popen(..., text=True)` 未指定 `encoding`，Windows 系统 GBK 默认编码会抛 `UnicodeDecodeError`（fail-soft 捕获拿到 `None`）。**已修复根因**（commit `19ad529`）：31 个源码文件中所有 `text=True` 的 subprocess 调用统一补了 `encoding="utf-8", errors="replace"`。**新增代码必须沿用该约定**：凡以 `text=True`/`universal_newlines=True` 读取子进程输出的调用，一律显式写 `encoding="utf-8", errors="replace"`，禁止依赖系统默认编码。环境变量 `$env:PYTHONUTF8='1'; $env:PYTHONIOENCODING='utf-8'` 保留为兜底（覆盖遗漏调用或第三方库输出），提交前设置后再运行 `git commit ...`。
 
 28. **执行策略下的文件清理必须单 shell、单文件、绝对字面路径**：把 WSL/其他 shell 的枚举与 PowerShell 删除放在同一命令，或通过变量保存 `Resolve-Path` 后再删除，会被策略判定为动态跨 shell 删除；部分会话甚至会拒绝绝对字面路径的 `Remove-Item`。清理本轮创建的临时文件时先用独立只读调用确认目标，再在创建该文件的同一 shell 中按精确绝对路径删除单文件，例如 WSL 创建 `/mnt/c/git_work/callwarden/callwarden_core.so` 后使用独立的 `wsl ... rm -f -- /mnt/c/git_work/callwarden/callwarden_core.so`。禁止通配符、变量、管道、递归删除和跨 shell 枚举后删除；无法满足时保留文件并在结果中说明。
 
