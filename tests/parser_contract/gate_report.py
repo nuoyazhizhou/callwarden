@@ -179,7 +179,7 @@ def _run_pytest_contract_suite(repo_root: str) -> tuple[dict[str, dict], str]:
             cmd,
             cwd=repo_root,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=300,
             check=False,
         )

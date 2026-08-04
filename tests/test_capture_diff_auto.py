@@ -49,7 +49,7 @@ def _init_git_repo(root):
     subprocess.run(["git", "add", "committed.py"], cwd=root, capture_output=True, check=True, env=env)
     subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=True, env=env)
     r = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True, env=env
+        ["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, env=env
     )
     return r.stdout.strip()
 
@@ -68,7 +68,7 @@ def _make_second_commit(root):
     # HEAD~1 现在指向第一次提交
     r = subprocess.run(
         ["git", "rev-parse", "HEAD~1"],
-        cwd=root, capture_output=True, text=True, check=True, env=env,
+        cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, env=env,
     )
     return r.stdout.strip()
 

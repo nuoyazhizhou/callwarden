@@ -6383,7 +6383,7 @@ def _doctor_check(db):
             result = subprocess.run(
                 ["powershell", "-Command",
                  f"Get-MpPreference | Select-Object -ExpandProperty ExclusionPath"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             exclusions = result.stdout.strip()
             if callwarden_dir.lower() in exclusions.lower():
@@ -6505,7 +6505,7 @@ def _doctor_add_defender_exclusion(db):
         subprocess.run(
             ["powershell", "-Command",
              f"Add-MpPreference -ExclusionPath '{parent_dir}'"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         cprint(t("cli.messages.doctor_add_defender_success",
                default="✓ Defender exclusion added: {path}", path=parent_dir), "green")
@@ -7438,7 +7438,7 @@ def _handle_grep(args, db):
         cmd.extend([primary_pattern, search_root])
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=30, shell=False,
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, shell=False,
             )
             # rg exit code 1 = 无匹配（不是错误）
             if result.returncode == 0:

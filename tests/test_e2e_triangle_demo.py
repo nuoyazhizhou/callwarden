@@ -59,7 +59,7 @@ def _git_commit(root, message, add_files=None):
     )
     r = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=root, capture_output=True, text=True, check=True, env=env,
+        cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, env=env,
     )
     return r.stdout.strip()
 

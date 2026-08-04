@@ -472,7 +472,7 @@ def _init_git_repo(root):
     subprocess.run(["git", "add", "committed.py"], cwd=root, capture_output=True, check=True, env=env)
     subprocess.run(["git", "commit", "-m", "init"], cwd=root, capture_output=True, check=True, env=env)
     # 获取 HEAD
-    r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True, env=env)
+    r = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, env=env)
     return r.stdout.strip()
 
 

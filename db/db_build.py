@@ -2970,7 +2970,7 @@ class BuildMixin:
             cwd = getattr(self, "workspace_root", "") or None
             r = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
-                capture_output=True, text=True, cwd=cwd,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=cwd,
             )
             if r.returncode == 0:
                 self._cached_head_commit = r.stdout.strip()

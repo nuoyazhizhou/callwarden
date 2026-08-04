@@ -189,14 +189,14 @@ def ensure_workspace_activated():
     # 先看 status
     result = subprocess.run(
         [PYTHON, CW_PY, "status"],
-        capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(PROJECT_ROOT),
         timeout=60,
     )
     # status 返回非 0 表示 workspace 未激活，尝试激活
     if result.returncode != 0:
         subprocess.run(
             [PYTHON, CW_PY, "refresh", "--all"],
-            capture_output=True, text=True, cwd=str(PROJECT_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(PROJECT_ROOT),
             timeout=600,
         )
     return result.stdout
@@ -218,7 +218,7 @@ class TestCLISmokeHelp:
         """每个子命令 --help 应该 exit 0"""
         result = subprocess.run(
             [PYTHON, CW_PY, subcmd, "--help"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(PROJECT_ROOT),
             timeout=30,
         )
@@ -314,7 +314,7 @@ class TestCLISmokeRun:
         cmd = [PYTHON, CW_PY, subcmd] + args
         result = subprocess.run(
             cmd,
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(PROJECT_ROOT),
             timeout=120,
         )

@@ -97,7 +97,7 @@ def _run(cmd: list[str], *, cwd: Path | None = None, env: dict | None = None, ti
     if env:
         merged_env.update(env)
     try:
-        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=merged_env)
+        proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, env=merged_env)
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"

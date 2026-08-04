@@ -74,7 +74,7 @@ class BootstrapMixin:
             ["git"] + args,
             cwd=root,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             check=True,
             timeout=timeout,
         )
@@ -846,7 +846,7 @@ class BootstrapMixin:
                 result = subprocess.run(
                     ["git", "rev-parse", "HEAD~1"],
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     cwd=cwd,
                 )
                 if result.returncode == 0:
@@ -860,7 +860,7 @@ class BootstrapMixin:
                 result = subprocess.run(
                     ["git", "rev-parse", "HEAD"],
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     cwd=cwd,
                 )
                 if result.returncode == 0:

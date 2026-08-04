@@ -361,7 +361,7 @@ def _start_daemon_macos(endpoint: str) -> bool:
         result = subprocess.run(
             ["launchctl", "start", MACOS_LAUNCHD_LABEL],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
         if result.returncode == 0:
@@ -384,7 +384,7 @@ def _start_daemon_linux(endpoint: str) -> bool:
         result = subprocess.run(
             ["systemctl", "--user", "start", LINUX_SYSTEMD_UNIT],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
         if result.returncode == 0:

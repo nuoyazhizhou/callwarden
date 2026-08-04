@@ -97,7 +97,7 @@ def run_cmd(cmd: List[str], cwd: str = PROJECT_ROOT, timeout: int = 30) -> Tuple
             cmd,
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             shell=False,
         )

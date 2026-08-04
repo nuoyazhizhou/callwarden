@@ -315,7 +315,7 @@ class OwnershipMixin:
                     ["git", "log", "-1", "--format=%H|%an|%ae|%ct", "--", rel_path],
                     cwd=workspace_root,
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     check=False,
                 )
             except (subprocess.CalledProcessError, FileNotFoundError):

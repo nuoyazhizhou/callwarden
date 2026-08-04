@@ -69,7 +69,7 @@ class IncrementalAnalyzer:
         result = subprocess.run(
             ["git", "diff", "--name-only", f"{base_branch}...{head}"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
             shell=False,
         )
@@ -151,7 +151,7 @@ class IncrementalAnalyzer:
         result = subprocess.run(
             ["git", "diff", "--stat", f"{base_branch}...{head}"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
             shell=False,
         )

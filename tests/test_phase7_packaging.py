@@ -28,7 +28,7 @@ class TestVersionConsistency:
         import subprocess
         result = subprocess.run(
             [sys.executable, "release/version_sync.py"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(Path(__file__).parent.parent),
             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )

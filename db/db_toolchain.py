@@ -349,7 +349,7 @@ def _probe_version(compiler_path: str) -> str:
     try:
         result = subprocess.run(
             [compiler_path, "--version"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
             # 取第一行
@@ -364,7 +364,7 @@ def _probe_target_triple(compiler_path: str) -> str:
     try:
         result = subprocess.run(
             [compiler_path, "-dumpmachine"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -378,7 +378,7 @@ def _probe_include_dirs(compiler_path: str) -> List[str]:
     try:
         result = subprocess.run(
             [compiler_path, "-E", "-x", "c", "-v", "-"],
-            input="", capture_output=True, text=True, timeout=10,
+            input="", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
             return _parse_include_dirs(result.stderr)
@@ -409,7 +409,7 @@ def _probe_predefined_macros(compiler_path: str) -> Dict[str, str]:
     try:
         result = subprocess.run(
             [compiler_path, "-E", "-dM", "-x", "c", "-"],
-            input="", capture_output=True, text=True, timeout=10,
+            input="", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
             return _parse_predefined_macros(result.stdout)

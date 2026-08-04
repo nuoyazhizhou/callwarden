@@ -116,7 +116,7 @@ def _git_env():
 def _run_git(cwd, args, env=None):
     """运行 git 命令并返回 CompletedProcess。"""
     return subprocess.run(
-        ["git"] + args, cwd=cwd, capture_output=True, text=True, check=True, env=env
+        ["git"] + args, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=True, env=env
     )
 
 

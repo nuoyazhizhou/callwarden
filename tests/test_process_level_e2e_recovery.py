@@ -105,7 +105,7 @@ class TestProcessLevelE2ERecovery:
     def _run_as_uid(uid: int, source: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, "-c", source],
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             capture_output=True,
             timeout=30,
             check=False,
@@ -132,10 +132,10 @@ class TestProcessLevelE2ERecovery:
             encoding="utf-8",
         )
         assert not subprocess.run(
-            ["git", "status", "--porcelain"], cwd=ws_a, capture_output=True, text=True
+            ["git", "status", "--porcelain"], cwd=ws_a, capture_output=True, text=True, encoding="utf-8", errors="replace"
         ).stdout.strip()
         assert subprocess.run(
-            ["git", "status", "--porcelain"], cwd=ws_b, capture_output=True, text=True
+            ["git", "status", "--porcelain"], cwd=ws_b, capture_output=True, text=True, encoding="utf-8", errors="replace"
         ).stdout.strip()
         self._chown_tree(ws_a, uid_a)
         self._chown_tree(ws_b, uid_b)

@@ -89,7 +89,7 @@ def _run_cw(args: list[str], *, cwd: Path | None = None, env: dict | None = None
             cmd,
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=timeout,
             env=merged_env,
         )
@@ -134,7 +134,7 @@ def test_ubuntu_container_matrix_glibc_compatibility(ubuntu_version: str) -> Non
         docker_check = subprocess.run(
             ["docker", "--version"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
         if docker_check.returncode != 0:
@@ -164,7 +164,7 @@ def test_ubuntu_container_matrix_glibc_compatibility(ubuntu_version: str) -> Non
         result = subprocess.run(
             container_cmd,
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
         )
     except subprocess.TimeoutExpired:
@@ -229,7 +229,7 @@ def _check_bash_script_syntax(script_path: Path) -> tuple[bool, str]:
             result = subprocess.run(
                 ["wsl", "bash", "-n", wsl_path],
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 timeout=10,
             )
             return result.returncode == 0, result.stderr

@@ -47,7 +47,7 @@ class GitMixin:
                  "--format=%H|%s|%an|%ae|%ct"],
                 cwd=workspace_root,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=True,
             )
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -115,7 +115,7 @@ class GitMixin:
                     ["git", "show", "--name-status", "--format=", commit_hash],
                     cwd=repo_root,
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     check=True,
                 )
             except subprocess.CalledProcessError:
@@ -127,7 +127,7 @@ class GitMixin:
                     ["git", "show", "--numstat", "--format=", commit_hash],
                     cwd=repo_root,
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     check=True,
                 )
             except subprocess.CalledProcessError:
@@ -218,7 +218,7 @@ class GitMixin:
                 ["git", "show", commit_hash, "--", file_path],
                 cwd=repo_root,
                 capture_output=True,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 check=True,
             )
         except subprocess.CalledProcessError:

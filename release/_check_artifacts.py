@@ -100,7 +100,7 @@ def check_bash_script(script_path: Path, label: str) -> bool:
     try:
         result = subprocess.run(
             ["wsl", "bash", "-n", wsl_path],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode == 0:
             print(f"  [OK] bash -n 语法检查通过 (WSL)")

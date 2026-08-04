@@ -1126,7 +1126,7 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "--version"],
-                capture_output=True, text=True, timeout=10, shell=False,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, shell=False,
             )
             return result.returncode == 0
         except Exception:
@@ -1164,7 +1164,7 @@ echo "[Call Warden] auto-capturing diff for in-progress task..."
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=300, shell=False,
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, shell=False,
             )
             if result.returncode == 0:
                 self.result.installed += 1

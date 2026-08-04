@@ -223,7 +223,7 @@ class TestP03Issue6CwVersion(unittest.TestCase):
         cw_path = os.path.join(_PKG_PARENT, "cw.py")
         result = subprocess.run(
             [sys.executable, cw_path, "--version"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 0,
                          f"`cw --version` 退出码非 0: {result.stderr}")
@@ -235,7 +235,7 @@ class TestP03Issue6CwVersion(unittest.TestCase):
         cw_path = os.path.join(_PKG_PARENT, "cw.py")
         result = subprocess.run(
             [sys.executable, cw_path, "-V"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
         self.assertEqual(result.returncode, 0,
                          f"`cw -V` 退出码非 0: {result.stderr}")

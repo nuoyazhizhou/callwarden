@@ -454,7 +454,7 @@ class LspMixin:
                 result = subprocess.run(
                     ["where" if os.name == "nt" else "which", config["command"]],
                     capture_output=True,
-                    text=True,
+                    text=True, encoding="utf-8", errors="replace",
                     timeout=5,
                 )
                 available[lang] = result.returncode == 0
@@ -553,7 +553,7 @@ class LspMixin:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                text=True, encoding="utf-8", errors="replace",
                 bufsize=1,
                 shell=False,  # SEC-002: 显式声明，防止 shell 注入
                 preexec_fn=preexec_fn,  # SEC-002: 资源限制（仅 Linux）

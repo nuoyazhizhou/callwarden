@@ -43,7 +43,7 @@ def run_cw(args, timeout=TIMEOUT_SEC, cwd=None):
     start = time.time()
     work_dir = cwd if cwd else str(REPO_ROOT)
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout, cwd=work_dir)
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout, cwd=work_dir)
         elapsed = round(time.time() - start, 1)
         return r.returncode, r.stdout, r.stderr, elapsed
     except subprocess.TimeoutExpired:
