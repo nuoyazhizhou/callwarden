@@ -2893,6 +2893,8 @@ class CodeGraphBase:
                 token = self._graph_store_generation
                 db_mtime_ns = os.stat(self.db_path).st_mtime_ns
                 snap_path = self.db_path + ".cwsnap"
+                # 清理被中断/被杀进程遗留的陈旧 .cwsnap.*.tmp（T-1785824926483）
+                self._sweep_stale_snapshot_tmp(snap_path)
                 store = GraphStore()
 
                 snap_valid = (
@@ -2977,6 +2979,32 @@ class CodeGraphBase:
                     os.remove(temp_path)
                 except OSError:
                     pass
+
+    def _sweep_stale_snapshot_tmp(self, snap_path: str,
+                                  max_age_seconds: int = 3600) -> None:
+        """清理被终止进程遗留的陈旧 .cwsnap.*.tmp 快照临时文件。
+
+        快照发布先写 ``{snap_path}.{pid}.{id}.{token}.tmp`` 再原子
+        ``os.replace`` 到最终路径；进程被 kill 时 finally 清理可能来不及执行，
+        残留 .tmp 文件（曾累计 40+ 个）。陈旧 .tmp 不参与加载，但会污染目录
+        并可能与快照发布的文件操作产生竞态，启动加载前统一清扫。
+
+        Args:
+            snap_path: 最终快照路径（db_path + ".cwsnap"）
+            max_age_seconds: 超过该年龄的 .tmp 视为陈旧，默认 1 小时
+        """
+        try:
+            import glob
+            now = time.time()
+            for p in glob.glob(f"{snap_path}.*.tmp"):
+                try:
+                    if now - os.path.getmtime(p) > max_age_seconds:
+                        os.remove(p)
+                except OSError:
+                    pass
+        except Exception:
+            # 清扫失败不阻断加载（fail-soft）
+            pass
 
     def _graph_store_status(self) -> Dict[str, Any]:
         """返回 GraphStore 分级加载状态，供 daemon 健康检查和测试使用。"""

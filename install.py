@@ -901,6 +901,12 @@ class CallWardenInstaller:
           重试仍失败时打印明确错误信息 + 解决建议（停 MCP Server /
           手动 `cw refresh --all` / 配置 TRAE 沙箱规则），并退出非零保持
           AGENTS.md 规则 1 的硬性要求（提交前必须全量刷新数据库）。
+        - 卡死防护（规则 32 自动化，T-1785824926483）：`cw --refresh-all`
+          偶尔会进入"无 CPU、无 DB/WAL 进展"的等待状态（不是退出非零，重试
+          逻辑无法覆盖）。hook 加看门狗：后台运行 refresh-all，每 10s 检查
+          DB/WAL mtime；连续 9 次（90s）无进展即终止该进程并降级为显式刷新
+          本次提交的变更文件（`cw refresh <staged files>`），不再让 git commit
+          无限挂起。
         - check-task 保持软门禁（`|| true`），不阻止 commit。
         """
         cmd = self._python_cw_command()
@@ -912,13 +918,45 @@ export PYTHONIOENCODING="${{PYTHONIOENCODING:-utf-8}}"
 # L3: 检查 active_task（软门禁，警告不阻止 commit）
 {cmd} git check-task || true
 echo "[Call Warden] refreshing code graph before commit..."
-# 容错重试：refresh-all 偶尔因 SQLite WAL 锁冲突失败（SQLITE_CANTOPEN），
-# 重试 3 次（间隔 2 秒）以覆盖临时锁场景；仍失败时打印建议并退出非零
-# （保持 AGENTS.md 规则 1：提交前必须全量刷新数据库）
+# 卡死防护（规则 32 自动化）：后台运行 refresh-all，看门狗监控 DB/WAL mtime，
+# 连续 9×10s 无进展即终止并降级显式刷新本次提交的变更文件。
+_db_path="$HOME/.callwarden/callwarden.db"
+_refresh_stall_max=9
+
+_stat_mtime() {{
+  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
+}}
+
 _refresh_attempt=0
 _refresh_max=3
 while [ "$_refresh_attempt" -lt "$_refresh_max" ]; do
-  if {cmd} --refresh-all; then
+  _refresh_ok=0
+  _watchdog_killed=0
+  _stall=0
+  _prev_db=$(_stat_mtime "$_db_path")
+  _prev_wal=$(_stat_mtime "$_db_path-wal")
+  {cmd} --refresh-all &
+  _refresh_pid=$!
+  while kill -0 "$_refresh_pid" 2>/dev/null; do
+    sleep 10
+    _cur_db=$(_stat_mtime "$_db_path")
+    _cur_wal=$(_stat_mtime "$_db_path-wal")
+    if [ "$_cur_db" != "$_prev_db" ] || [ "$_cur_wal" != "$_prev_wal" ]; then
+      _stall=0
+    else
+      _stall=$((_stall + 1))
+    fi
+    _prev_db=$_cur_db
+    _prev_wal=$_cur_wal
+    if [ "$_stall" -ge "$_refresh_stall_max" ]; then
+      echo "[Call Warden] refresh-all 在 90s 内无 DB/WAL 进展（疑似卡死，规则 32），终止并降级..."
+      kill -9 "$_refresh_pid" 2>/dev/null || true
+      _watchdog_killed=1
+      break
+    fi
+  done
+  wait "$_refresh_pid" 2>/dev/null && _refresh_ok=1
+  if [ "$_refresh_ok" -eq 1 ] || [ "$_watchdog_killed" -eq 1 ]; then
     break
   fi
   _refresh_attempt=$((_refresh_attempt + 1))
@@ -927,7 +965,18 @@ while [ "$_refresh_attempt" -lt "$_refresh_max" ]; do
     sleep 2
   fi
 done
-if [ "$_refresh_attempt" -ge "$_refresh_max" ]; then
+
+# 看门狗终止（或重试耗尽）后降级：显式刷新本次提交的变更文件（规则 32）
+if [ "$_refresh_ok" -ne 1 ]; then
+  echo "[Call Warden] 降级：显式刷新本次提交的变更文件（规则 32 自动化）..."
+  _changed_files=$(git diff --cached --name-only)
+  if [ -n "$_changed_files" ]; then
+    # shellcheck disable=SC2086：路径含空格属罕见，按规则 32 降级处理
+    {cmd} refresh $_changed_files && _refresh_ok=1
+  fi
+fi
+
+if [ "$_refresh_ok" -ne 1 ]; then
   echo "[Call Warden] ERROR: cw --refresh-all 重试 $_refresh_max 次后仍失败。"
   echo "[Call Warden] commit 已被阻止（AGENTS.md 规则 1：提交前必须全量刷新数据库）。"
   echo "[Call Warden] 排查建议："
