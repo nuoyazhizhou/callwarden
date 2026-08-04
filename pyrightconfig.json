@@ -1,0 +1,15 @@
+{
+    "exclude": [
+        "**/node_modules",
+        "**/__pycache__",
+        "**/*.pyc",
+        "archives/**",
+        "review_workspace/**",
+        "**/.git"
+    ],
+    "ignore": [
+        "**/__pycache__",
+        "**/venv",
+        ".trae-cn/**"
+    ]
+}
