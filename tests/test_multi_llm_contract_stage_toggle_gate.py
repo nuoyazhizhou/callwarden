@@ -41,6 +41,12 @@ from callwarden.db.db_task_gate import (
 from callwarden.server.stage_toggle_migration import ensure_stage_toggle_schema
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daemon_config(tmp_path, monkeypatch):
+    """隔离 daemon config store，避免 _resolve_stage_toggle 读真实 ~/.callwarden/daemon_config.db。"""
+    monkeypatch.setenv("CW_DAEMON_CONFIG_DB", str(tmp_path / "daemon_config.db"))
+
+
 def _fresh_db(tmp_path):
     db = CodeGraphDB(
         str(tmp_path / "stage_toggle_gate.db"),
