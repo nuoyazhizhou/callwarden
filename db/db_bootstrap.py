@@ -564,6 +564,75 @@ class BootstrapMixin:
             diff_text = diff_text[:max_diff_chars]
         return diff_text
 
+    # 显式排除的临时/非源码文件模式（G0 归因治理：Req 12.26 排除临时/生成文件）。
+    # 这些文件即使被 git 捕获也不应进入 change_audit——它们不代表任务的可审代码变更。
+    _TEMP_FILE_PATTERNS = (
+        "_tmp_", "_temp_", "_semgrep_", "需求讨论", "讨论.md",
+        ".tmp", ".bak", ".orig", ".log", ".pyc", ".pyo",
+    )
+
+    def _is_attribution_polluted_file(self, rel_path: str) -> bool:
+        """判断文件是否属于归因污染源（临时/用户工作区/诊断产物），应排除。
+
+        G0 归因治理（T-1785854667954-66d5b84e）：change_audit 混入
+        `需求讨论.md`（用户 untracked 工作区文件）、`_tmp_hook_check.sh`、
+        `_semgrep_out.json`、`_tmp_query.py` 等诊断临时文件，导致：
+        1. 盲视图含污染内容，reviewer 无法区分任务真实变更
+        2. nontrivial 自动判定基于错误归因的 diff（违反 Req 12.26 排除临时文件）
+        3. 文档任务捕获另一任务的代码 diff（跨任务归因错乱）
+
+        排除规则：文件名含 `_tmp_`/`_temp_`/`_semgrep_`/`需求讨论` 等模式，
+        或扩展名属于 .tmp/.bak/.orig/.log/.pyc/.pyo。
+        """
+        name = (rel_path or "").replace("\\", "/").rsplit("/", 1)[-1]
+        lower = name.lower()
+        for pattern in self._TEMP_FILE_PATTERNS:
+            if pattern.lower() in lower:
+                return True
+        return False
+
+    def _is_already_recorded(
+        self, task_id: str, rel_path: str, hash_before: str, hash_after: str
+    ) -> bool:
+        """去重：同一任务对同一文件（相同 hash_before/hash_after）是否已记录。
+
+        G0 归因治理（T-1785854667954-66d5b84e）：post-commit hook 多次触发时，
+        `task_capture_diff` 会对同一文件重复写 change_audit（如 `__init__.py`
+        同任务 13 次），导致盲视图冗余、样本数据膨胀。
+        """
+        try:
+            row = self.conn.execute(
+                "SELECT 1 FROM change_audit WHERE task_id=? AND file_path=? "
+                "AND hash_before=? AND hash_after=? LIMIT 1",
+                (task_id, rel_path, hash_before, hash_after),
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def _task_is_design_review_profile(self, task_id: str) -> bool:
+        """判断任务是否为 design/review 类（只做文档/规格，不应捕获代码 diff）。
+
+        G0 归因治理（T-1785854667954-66d5b84e）：文档任务（如"重构多 LLM 契约协同规格"）
+        捕获了另一任务的 Rust 代码 diff（9/9 文件内容相同），被误判 nontrivial。
+        design/review profile 的任务只记录文档/规格变更，代码文件变更应归到实际
+        实现任务。此处按标题/描述关键词启发式判定（tasks 表无 profile 字段）。
+        """
+        try:
+            row = self.conn.execute(
+                "SELECT title, description FROM tasks WHERE id=?", (task_id,)
+            ).fetchone()
+            if not row:
+                return False
+            text = f"{row[0] or ''} {row[1] or ''}".lower()
+            design_hints = (
+                "设计", "规格", "spec", "design", "重构规格", "方案",
+                "文档", "契约", "contract", "architecture", "计划",
+            )
+            return any(h in text for h in design_hints)
+        except Exception:
+            return False
+
     # ============================================
     # task_capture_diff 闭环入口
     # ============================================
@@ -676,10 +745,24 @@ class BootstrapMixin:
             except Exception:
                 pass  # 表不存在或查询失败时回退为空 hash
 
+        # G0 归因治理（T-1785854667954-66d5b84e）：design/review 任务不捕获代码 diff，
+        # 避免文档任务捕获另一实现任务的代码 diff 导致归因错乱。
+        is_design_review_task = self._task_is_design_review_profile(task_id)
+
         for f in changed_files:
             rel_path = f["path"]
             status_code = f.get("status", "M")
             abs_path = os.path.join(root, rel_path) if root else rel_path
+
+            # G0 归因治理：排除 untracked/临时/诊断产物文件（需求讨论.md、_tmp_* 等）
+            if self._is_attribution_polluted_file(rel_path):
+                continue
+
+            # G0 归因治理：design/review 任务跳过代码文件（非文档）的 diff 捕获
+            if is_design_review_task and not rel_path.lower().endswith(
+                (".md", ".rst", ".txt", ".json", ".toml", ".yaml", ".yml")
+            ):
+                continue
 
             # 从批量查询结果取 hash_before
             hash_before = hash_before_map.get(rel_path, "")
@@ -691,6 +774,11 @@ class BootstrapMixin:
                     _content, hash_after = read_file_normalized(abs_path)
                 except Exception:
                     hash_after = ""
+
+            # G0 归因治理：去重——同一任务同一文件（相同 hash_before/hash_after）已记录则跳过，
+            # 避免 post-commit 多次触发导致重复 change_audit（如 __init__.py 同任务 13 次）。
+            if self._is_already_recorded(task_id, rel_path, hash_before, hash_after):
+                continue
 
             # 计算实际 diff（G0 补实验：nontrivial 自动判定依赖非注释代码行数）。
             # 此前恒为空串，导致 change_audit 无 diff 数据、nontrivial 恒 False。
@@ -843,6 +931,39 @@ class BootstrapMixin:
         try:
             # 1. 优先从 active_task 持久化字段读取（P1：替代 CALLWARDEN_TASK_ID 环境变量）
             task_id = self.get_active_task() or ""
+
+            # G0 归因治理（T-1785854667954-66d5b84e）：多 agent 并发提交时，
+            # active_task/最近 in_progress 可能不是本次 commit 的实际归属任务，
+            # 导致 diff 归到错误任务（文档任务捕获代码 diff）。优先用
+            # task_symbol_changes 的 source_commit_hash 反查当前 HEAD commit 归属任务。
+            try:
+                cwd = getattr(self, "workspace_root", "") or None
+                head_result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True, encoding="utf-8", errors="replace",
+                    cwd=cwd,
+                )
+                head_commit_now = head_result.stdout.strip() if head_result.returncode == 0 else ""
+                if head_commit_now:
+                    linked = self.conn.execute(
+                        "SELECT task_id FROM task_symbol_changes "
+                        "WHERE source_commit_hash = ? AND task_id != '' "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        (head_commit_now,),
+                    ).fetchone()
+                    if linked:
+                        # 仅当 linked 任务处于 in_progress 时采用（否则回退原逻辑）
+                        linked_task = linked["task_id"] if not isinstance(linked, dict) else linked.get("task_id", "")
+                        st = self.conn.execute(
+                            "SELECT status FROM tasks WHERE id = ?", (linked_task,)
+                        ).fetchone()
+                        linked_status = st["status"] if st and not isinstance(st, dict) else (st.get("status", "") if st else "")
+                        if linked_status == "in_progress":
+                            task_id = linked_task
+            except Exception:
+                pass  # 反查失败不阻塞，回退原逻辑
+
             # fallback：active_task 为空时，退回 task_list 找最近一个 in_progress
             # （向后兼容旧数据库 schema < v30，以及容错 active_task 与实际状态不一致）
             if not task_id:
