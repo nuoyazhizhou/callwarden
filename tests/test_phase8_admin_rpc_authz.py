@@ -428,10 +428,22 @@ class TestBatch11RustPythonAlignment:
         # 提取所有 "method.name" 字符串
         rust_methods = set(re.findall(r'"([a-z_.]+)"', block))
 
-        assert rust_methods == set(ADMIN_ONLY_METHODS), \
-            f"Python/Rust ADMIN_ONLY_METHODS 不一致:\n" \
-            f"  Rust only: {rust_methods - set(ADMIN_ONLY_METHODS)}\n" \
-            f"  Python only: {set(ADMIN_ONLY_METHODS) - rust_methods}"
+        # 安全不变量（结构化集合断言）：Rust 端已列入的 admin 方法必须全部
+        # 在 Python 端门禁内（Rust 不得放行 Python 不放行的方法）。
+        assert rust_methods <= set(ADMIN_ONLY_METHODS), (
+            f"Rust 端存在 Python 未门禁的 admin 方法: "
+            f"{rust_methods - set(ADMIN_ONLY_METHODS)}"
+        )
+        # Python 端在 P3/P4 批新增 3 个 build_context 写方法（register /
+        # set_active / delete）；Rust daemon 对应 handler 仅为 method_not_found
+        # stub，未列入 ADMIN_ONLY_METHODS。Python 允许更严格（fail-closed），
+        # 已知差集必须精确等于该集合；两端同步时必须同时更新此断言。
+        python_only = set(ADMIN_ONLY_METHODS) - rust_methods
+        assert python_only == {
+            "build_context.register",
+            "build_context.set_active",
+            "build_context.delete",
+        }, f"Python/Rust ADMIN_ONLY_METHODS 出现未知差集: {python_only}"
 
     def test_rust_dispatch_has_fail_closed_check(self):
         """验证 Rust 端 dispatch_inner 顶部有 fail-closed admin 校验。"""

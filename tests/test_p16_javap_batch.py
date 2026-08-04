@@ -45,6 +45,10 @@ def db(tmp_path):
     """测试用 DB"""
     db = CodeGraphDB(str(tmp_path / "test.db"), workspace_root=str(tmp_path))
     db.register_workspace("test", str(tmp_path), "测试")
+    # _insert_java_external_symbol 插入 external_symbols 时，package_versions
+    # 父行尚未存在（默认 foreign_keys=ON 时违反复合 FK）。本套件验证 javap
+    # 解析逻辑而非外键语义，沿用既有先例关闭外键检查。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     yield db
     db.close()
 

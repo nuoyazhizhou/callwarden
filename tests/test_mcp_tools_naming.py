@@ -35,9 +35,24 @@ _MCP_AUDIT_PATH = os.path.join(_PKG_PARENT, ".mcp_audit.md")
 
 
 def _parse_mcp_server():
-    """解析 server/mcp_server.py 源码，返回 AST Module 节点。"""
-    with open(_MCP_SERVER_PATH, encoding="utf-8") as f:
-        source = f.read()
+    """解析 server/mcp_server.py 与 server/tools/*.py 源码，返回拼接的 AST 与源码。
+
+    拆分后 @mcp.tool() 装饰器分布在 server/tools/ 功能域模块中，
+    需合并扫描（拼接源码仅用于 AST 提取，行号偏移不影响断言）。
+    """
+    paths = [_MCP_SERVER_PATH]
+    tools_dir = os.path.join(_PKG_PARENT, "server", "tools")
+    if os.path.isdir(tools_dir):
+        paths += [
+            os.path.join(tools_dir, f)
+            for f in sorted(os.listdir(tools_dir))
+            if f.endswith(".py") and f != "__init__.py"
+        ]
+    sources = []
+    for p in paths:
+        with open(p, encoding="utf-8") as f:
+            sources.append(f.read())
+    source = "\n".join(sources)
     return ast.parse(source, filename=_MCP_SERVER_PATH), source
 
 
@@ -91,6 +106,10 @@ _ALLOWED_PREFIXES = (
     "work_", "defect_", "embed_", "semantic_", "project_", "repo_",
     "cross_repo_", "cross_", "blast_", "bootstrap_", "cleanup_",
     "evolution_", "churn_", "hotspot_", "who_", "branch_", "semgrep_",
+    # P3/P4（2026-08）：身份认证/Assignment-Lease 安全体系新增前缀
+    "publish_", "select_", "validate_", "lease_", "assignment_",
+    # P1 Evidence Gate（2026-08）：append_evidence 工具（追加不可变证据）
+    "append_",
 )
 
 
@@ -235,8 +254,13 @@ def test_cli_to_mcp_mapping_table_in_docs():
 
 
 def test_python_syntax_ok():
-    """server/mcp_server.py 语法正确（py_compile 通过）。"""
+    """server/mcp_server.py 与 server/tools/*.py 语法正确（py_compile 通过）。"""
     py_compile.compile(_MCP_SERVER_PATH, doraise=True)
+    tools_dir = os.path.join(_PKG_PARENT, "server", "tools")
+    if os.path.isdir(tools_dir):
+        for f in sorted(os.listdir(tools_dir)):
+            if f.endswith(".py"):
+                py_compile.compile(os.path.join(tools_dir, f), doraise=True)
 
 
 # ============================================

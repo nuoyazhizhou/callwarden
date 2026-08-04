@@ -28,6 +28,11 @@ def setup_test_workspace():
     db = CodeGraphDB(db_path=os.path.join(tmpdir, "test.db"))
     ws_id = db.register_workspace("gc-test", tmpdir)
     db.set_active_workspace(ws_id)
+    # CW_USE_RUST_STORAGE 默认 1 时 PRAGMA foreign_keys=ON；本套件直接调用
+    # _register_file_db 注册占位内容（current_content_hash=''），与 schema 的
+    # file_contents FK 冲突（生产库因历史 '' 行存在而兼容）。本测试验证 GC
+    # 行为而非外键语义，沿用 test_p0_4_rollback_config 先例关闭外键检查。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     return db, tmpdir
 
 

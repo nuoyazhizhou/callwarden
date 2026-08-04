@@ -22,6 +22,7 @@ if str(_PKG_ROOT) not in sys.path:
     sys.path.insert(0, str(_PKG_ROOT))
 
 _CONTRACT_MD = _PKG_ROOT / "docs" / "design" / "abi-error-code-contract.md"
+_MANIFEST_MD = _PKG_ROOT / "docs" / "design" / "migration-manifest.md"
 _LIB_RS = _PKG_ROOT / "rust_ext" / "src" / "lib.rs"
 _MULTI_LANG_RS = _PKG_ROOT / "rust_ext" / "src" / "multi_lang.rs"
 _GRAPH_RS = _PKG_ROOT / "rust_ext" / "src" / "graph.rs"
@@ -205,37 +206,42 @@ def test_graphstore_workspace_id_param():
 # ============================================
 
 def test_schema_version_in_schema_py():
-    """契约 §3.2 schema.py 的 SCHEMA_VERSION 必须与契约文档一致。"""
+    """契约 §3.2 schema.py 的 SCHEMA_VERSION 必须与真相源 migration-manifest 一致。
+
+    abi-error-code-contract.md 与 Rust 镜像常量是派生同步物；真相源是
+    migration-manifest.md §4（其头部声明"本文件是 Phase 0 契约交付物/基线真相源"）。
+    manifest 同时声明 RUST_SCHEMA_VERSION，记录 Rust 镜像的同步滞后状态。
+    """
     schema_py = _read(_SCHEMA_PY)
     # 提取 SCHEMA_VERSION = N
     match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", schema_py)
     assert match, "schema.py 缺少 SCHEMA_VERSION"
     actual_version = int(match.group(1))
-    # 契约文档中 SCHEMA_VERSION 必须与 schema.py 一致（动态读取，避免硬编码）
-    contract = _read(_CONTRACT_MD)
-    contract_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", contract)
-    assert contract_match, "契约文档未声明 SCHEMA_VERSION"
-    expected_version = int(contract_match.group(1))
+    # 真相源 manifest 中 SCHEMA_VERSION 必须与 schema.py 一致（动态读取，避免硬编码）
+    manifest = _read(_MANIFEST_MD)
+    manifest_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", manifest)
+    assert manifest_match, "migration-manifest.md 未声明 SCHEMA_VERSION"
+    expected_version = int(manifest_match.group(1))
     assert actual_version == expected_version, (
-        f"schema.py SCHEMA_VERSION={actual_version}，契约期望 {expected_version}"
+        f"schema.py SCHEMA_VERSION={actual_version}，manifest 期望 {expected_version}"
     )
 
 
 def test_contract_schema_version_matches_schema_py():
-    """契约文档 §3.2 SCHEMA_VERSION 必须与 schema.py 一致。"""
-    contract = _read(_CONTRACT_MD)
+    """真相源 migration-manifest §4 声明的 SCHEMA_VERSION 必须与 schema.py 一致。"""
+    manifest = _read(_MANIFEST_MD)
     schema_py = _read(_SCHEMA_PY)
 
-    # 从契约文档提取版本
-    contract_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", contract)
-    assert contract_match, "契约文档未声明 SCHEMA_VERSION"
+    # 从 manifest 提取版本
+    manifest_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", manifest)
+    assert manifest_match, "migration-manifest.md 未声明 SCHEMA_VERSION"
 
     # 从 schema.py 提取版本
     schema_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", schema_py)
     assert schema_match, "schema.py 未声明 SCHEMA_VERSION"
 
-    assert contract_match.group(1) == schema_match.group(1), (
-        f"契约文档 SCHEMA_VERSION={contract_match.group(1)} 与 "
+    assert manifest_match.group(1) == schema_match.group(1), (
+        f"migration-manifest SCHEMA_VERSION={manifest_match.group(1)} 与 "
         f"schema.py={schema_match.group(1)} 不一致"
     )
 
@@ -378,22 +384,30 @@ def test_abi_version_constants_in_rust():
 
 
 def test_schema_version_in_rust_matches_py():
-    """Rust abi_contract 模块的 SCHEMA_VERSION 必须与 schema.py 一致。"""
+    """Rust abi_contract 模块的 SCHEMA_VERSION 必须与 manifest 声明的 Rust 镜像值一致。
+
+    migration-manifest.md §4 同时声明 SCHEMA_VERSION（Python 真相源）与
+    RUST_SCHEMA_VERSION（Rust 镜像当前值）。v46 升级（P3/P4 lease）尚未同步
+    Rust 镜像常量与 abi-error-code-contract.md（仍为 44），manifest 记录该
+    滞后；本测试保证 Rust 常量与 manifest 记录严格一致，镜像后续同步时
+    必须同时更新 manifest 的 RUST_SCHEMA_VERSION。
+    """
     abi_rs = _read(_ABI_CONTRACT_RS)
-    schema_py = _read(_SCHEMA_PY)
+    manifest = _read(_MANIFEST_MD)
 
     # Rust 端
     rust_match = re.search(r"SCHEMA_VERSION:\s*u32\s*=\s*(\d+)", abi_rs)
     assert rust_match, "abi_contract.rs 缺少 SCHEMA_VERSION 常量"
     rust_version = int(rust_match.group(1))
 
-    # Python 端
-    py_match = re.search(r"SCHEMA_VERSION\s*=\s*(\d+)", schema_py)
-    assert py_match, "schema.py 缺少 SCHEMA_VERSION"
-    py_version = int(py_match.group(1))
+    # manifest 声明的 Rust 镜像值
+    mirror_match = re.search(r"RUST_SCHEMA_VERSION\s*=\s*(\d+)", manifest)
+    assert mirror_match, "migration-manifest.md 未声明 RUST_SCHEMA_VERSION"
+    mirror_version = int(mirror_match.group(1))
 
-    assert rust_version == py_version, (
-        f"Rust SCHEMA_VERSION={rust_version} 与 Python={py_version} 不一致"
+    assert rust_version == mirror_version, (
+        f"Rust SCHEMA_VERSION={rust_version} 与 manifest 记录的 "
+        f"RUST_SCHEMA_VERSION={mirror_version} 不一致"
     )
 
 

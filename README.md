@@ -26,7 +26,7 @@ Call Warden 通过 tree-sitter 解析多语言代码库，将符号、调用关�
 - **P2 依赖图与环检测**：四类依赖（requires_existing/artifact/provides_interface/requires_interface）+ artifact freshness + interface identity + 硬依赖图环检测 + provider 选择
 - **P3 Agent 身份审计**：action 身份记录（agent/session/model/role）+ daemon 签发 Attestation 校验 + 撤销账本（Revocation_Mode 必填：compromised/rotated，invalid 查询时派生）+ 独立审核证明与 apply session 分离 + CLI/MCP 工具
 - **P4 Assignment 与安全 Lease**：assignment 绑定 task+role+holder Identity + Lease（token hash 落库、权威时钟有效期、单调 fencing counter）+ acquire/renew/release 幂等 + protected mutation 校验（过期/token 不匹配/旧 counter 写入前拒绝）+ 审计事件账本 + CLI/MCP 工具
-- **235 MCP 工具 + 145+ CLI 命令**
+- **237 MCP 工具 + 145+ CLI 命令**
 
 ## 快速开始
 
@@ -105,7 +105,7 @@ sym = mcp.file_symbol_content("db_tasks.py", "task_next_step")
 | [docs/README.md](docs/README.md)                                                       | 用户文档总入口                          |
 | [docs/quickstart.md](docs/quickstart.md)                                               | 安装、初始化、基本查询、MCP Server 启动 |
 | [docs/cli_reference.md](docs/cli_reference.md)                                         | 全部 CLI 子命令与 --flag 用法           |
-| [docs/mcp_tools.md](docs/mcp_tools.md)                                                 | 235 MCP 工具按功能分组                  |
+| [docs/mcp_tools.md](docs/mcp_tools.md)                                                 | 237 MCP 工具按功能分组                  |
 | [docs/architecture.md](docs/architecture.md)                                           | 整体架构、Schema、Mixin 设计、扩展指南  |
 | [docs/deployment.md](docs/deployment.md)                                               | 本地/Docker 部署、MCP 配置、备份恢复    |
 | [docs/design/implementation-status.md](docs/design/implementation-status.md)           | 当前实现状态权威盘点（v15）             |

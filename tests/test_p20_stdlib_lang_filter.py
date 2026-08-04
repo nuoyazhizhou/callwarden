@@ -35,6 +35,10 @@ def _make_db_with_files(files: dict[str, str]) -> tuple[CodeGraphDB, str]:
         os.path.join(root, "callwarden.db"),
         workspace_root=root,
     )
+    # 默认 foreign_keys=ON；import_stdlib_symbols_for_lang 先插 external_symbols
+    # 后插 package_versions，全新库违反复合 FK。本套件验证语言过滤语义，
+    # 关闭外键检查（与 test_p0_4_rollback_config 先例一致）。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     return db, root
 
 

@@ -12,6 +12,11 @@ from callwarden.db.db import CodeGraphDB
 def _db_with_workspace():
     root = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(root, "callwarden.db"), workspace_root=root)
+    # 默认 CW_USE_RUST_STORAGE=1 启用 foreign_keys=ON；本套件直接构造
+    # file_instances/file_versions 旧式夹具（占位 content_hash=''），与
+    # file_contents FK 不匹配（生产库因历史 '' 行存在而兼容）。测试验证 GC
+    # 保留/审计行为而非外键语义，沿用既有先例关闭外键检查。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     return db, root
 
 

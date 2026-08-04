@@ -374,12 +374,28 @@ class TestDbToolchain:
 class TestMcpToolsRegistration:
     """验证 L5 MCP 工具已注册"""
 
+    @staticmethod
+    def _combined_mcp_sources() -> str:
+        """读取 mcp_server.py 与 server/tools/*.py 合并源码。
+
+        MCP 重构后 @mcp.tool() 装饰器分布在 server/tools 功能域模块，
+        只读 mcp_server.py 会漏扫全部工具，因此合并扫描。
+        """
+        import callwarden.server.mcp_server as ms
+        server_dir = os.path.dirname(ms.__file__)
+        sources = [open(ms.__file__, encoding="utf-8").read()]
+        tools_dir = os.path.join(server_dir, "tools")
+        if os.path.isdir(tools_dir):
+            for fname in sorted(os.listdir(tools_dir)):
+                if fname.endswith(".py") and fname != "__init__.py":
+                    with open(os.path.join(tools_dir, fname), encoding="utf-8") as fh:
+                        sources.append(fh.read())
+        return "\n".join(sources)
+
     def test_l5_tools_exist(self):
         """L5 相关 MCP 工具应该已注册"""
-        # 由于 MCP 工具在 create_mcp_server() 内部定义，
-        # 我们通过检查源码来验证工具存在
-        import callwarden.server.mcp_server as ms
-        source = open(ms.__file__, encoding='utf-8').read()
+        # MCP 工具注册在 server/tools 功能域模块，合并扫描源码验证存在
+        source = self._combined_mcp_sources()
 
         l5_tools = [
             "list_toolchains",
@@ -392,15 +408,16 @@ class TestMcpToolsRegistration:
             "count_resolved_edges",
         ]
         for tool_name in l5_tools:
-            assert f"def {tool_name}(" in source, f"MCP tool {tool_name} not found in mcp_server.py"
+            assert f"def {tool_name}(" in source, (
+                f"MCP tool {tool_name} not found in mcp_server.py/server/tools"
+            )
 
     def test_l5_tools_count(self):
         """L5 新增 8 个 MCP 工具"""
-        import callwarden.server.mcp_server as ms
-        source = open(ms.__file__, encoding='utf-8').read()
+        source = self._combined_mcp_sources()
         # 统计 @mcp.tool() 装饰器
         count = source.count("@mcp.tool()")
-        # 原来是 196，新增 8 个 L5 + 1 个 get_metrics = 205+
+        # 当前 237 个（含 L5 8 个 + P2/P3/P4 新增），下限 205 保留冗余
         assert count >= 205, f"Expected >=205 MCP tools, got {count}"
 
 

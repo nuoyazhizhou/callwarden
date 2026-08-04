@@ -280,6 +280,10 @@ def test_db_ast_cache_metadata_written():
     """_save_file_version 后 ast_cache 元数据被写入。"""
     root = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(root, "callwarden.db"), workspace_root=root)
+    # 默认 foreign_keys=ON；全新库缺少 file_contents('') 占位行，refresh 首个
+    # 文件时 _register_file_db 插入 '' hash 会违反 FK（生产旧库因历史 '' 行
+    # 存在而兼容）。本测试验证 ast_cache 元数据写入，关闭外键检查以匹配夹具。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     # 创建临时 Python 文件
     py_path = _write_file(root, "sample.py", SAMPLE_PY_V1)
     # 刷新文件（触发解析 + ast_cache 写入）
@@ -307,6 +311,9 @@ def test_db_read_ast_cache():
     """_read_ast_cache 方法正确读取元数据。"""
     root = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(root, "callwarden.db"), workspace_root=root)
+    # 同 test_db_ast_cache_metadata_written：全新库缺 '' 占位行，刷新路径
+    # 违反 file_contents FK；本测试验证 ast_cache 读取，关闭外键检查。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     py_path = _write_file(root, "sample.py", SAMPLE_PY_V1)
     db.refresh_file(py_path)
     # 查询 file_instance_id
@@ -333,6 +340,9 @@ def test_db_ast_cache_updated_on_refresh():
     root = tempfile.mkdtemp()
     py_path = _write_file(root, "sample.py", SAMPLE_PY_V1)
     db = CodeGraphDB(os.path.join(root, "callwarden.db"), workspace_root=root)
+    # 同 test_db_ast_cache_metadata_written：全新库缺 '' 占位行，刷新路径
+    # 违反 file_contents FK；本测试验证增量刷新，关闭外键检查。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     db.refresh_file(py_path)
     # 修改文件并再次刷新
     _write_file(root, "sample.py", SAMPLE_PY_V2)

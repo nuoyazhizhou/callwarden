@@ -155,15 +155,33 @@ def test_metrics_cli_reset_without_local_returns_error(capsys):
 # MCP 工具：get_metrics
 # ----------------------------------------------------------------------
 
+def _mcp_sources_combined():
+    """mcp_server.py 与 server/tools/*.py 合并源码。
+
+    拆分后 @mcp.tool() 工具分布在 server/tools/ 功能域模块中，静态断言需合并扫描。
+    """
+    paths = [os.path.join(PROJECT_ROOT, "server", "mcp_server.py")]
+    tools_dir = os.path.join(PROJECT_ROOT, "server", "tools")
+    if os.path.isdir(tools_dir):
+        paths += [
+            os.path.join(tools_dir, f)
+            for f in sorted(os.listdir(tools_dir))
+            if f.endswith(".py") and f != "__init__.py"
+        ]
+    chunks = []
+    for p in paths:
+        with open(p, encoding="utf-8") as f:
+            chunks.append(f.read())
+    return "\n".join(chunks)
+
+
 def test_get_metrics_mcp_tool_registered():
     """MCP get_metrics 工具已注册到 mcp_server。
 
     验证 @mcp.tool() 装饰器已生效，不依赖 fastmcp 内部 API。
     """
     import re
-    mcp_server_path = os.path.join(PROJECT_ROOT, "server", "mcp_server.py")
-    with open(mcp_server_path, encoding="utf-8") as f:
-        content = f.read()
+    content = _mcp_sources_combined()
     # 找到 get_metrics 函数定义
     match = re.search(
         r'@mcp\.tool\(\)\s*\n\s*def get_metrics\(', content
@@ -177,14 +195,12 @@ def test_get_metrics_mcp_tool_registered():
 
 
 def test_get_metrics_mcp_tool_count_increased():
-    """MCP 工具总数 206（get_metrics + scan_semgrep_incremental A14 新增）。"""
+    """MCP 工具总数 237（拆分后注册在 server/tools 功能域模块）。"""
     import re
-    mcp_server_path = os.path.join(PROJECT_ROOT, "server", "mcp_server.py")
-    with open(mcp_server_path, encoding="utf-8") as f:
-        content = f.read()
-    matches = re.findall(r'@mcp\.tool\(\)', content)
-    # 205（含 get_metrics）+ 1（A14 新增 scan_semgrep_incremental）= 206
-    assert len(matches) == 206, f"MCP 工具数应为 206，实际 {len(matches)}"
+    content = _mcp_sources_combined()
+    matches = re.findall(r'(?m)^    @mcp\.tool\(\)$', content)
+    # P4 assignment/lease 新增 8 工具（227→235），P3/P4 后合计 237
+    assert len(matches) == 237, f"MCP 工具数应为 237，实际 {len(matches)}"
 
 
 def test_get_metrics_mcp_function_callable():

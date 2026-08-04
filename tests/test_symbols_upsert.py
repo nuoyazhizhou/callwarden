@@ -21,6 +21,7 @@ from callwarden.db.db_base import (
     CodeGraphBase,
     _migrate_v25_to_v26,
 )
+from callwarden.db.db import CodeGraphDB
 
 
 def _make_v25_db(db_path: str):
@@ -215,7 +216,10 @@ def test_full_db_init_creates_unique_index():
         root = os.path.join(tmpdir, "project")
         os.makedirs(root)
         db_path = os.path.join(tmpdir, "test.db")
-        db = CodeGraphBase(db_path=db_path, workspace_root=root)
+        # 用完整 CodeGraphDB（而非 CodeGraphBase）：_init_schema 会调用
+        # is_feature_rolled_back("rust_storage_service")（RollbackConfigMixin），
+        # 该 Mixin 只组合进 CodeGraphDB，基类没有此方法。
+        db = CodeGraphDB(db_path=db_path, workspace_root=root)
         try:
             rows = db.conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_symbols_unique'"

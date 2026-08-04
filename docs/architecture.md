@@ -983,7 +983,7 @@ Call Warden 在 C8 系列改造中确立了 **"subcommand 为主，--flag deprec
 
 ### 12 主分类设计
 
-Call Warden 把 145+ 个 CLI 命令和 235 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
+Call Warden 把 145+ 个 CLI 命令和 237 个 MCP 工具按功能聚合为 12 个主分类，CLI 与 MCP 共用同一套分类体系。
 
 | # | 主分类 | CLI 涵盖范围 | MCP 工具数 |
 |---|--------|-------------|-----------|
@@ -1446,6 +1446,6 @@ CREATE TABLE task_lease_events (
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：235 个工具详情
+- [MCP 工具参考](mcp_tools.md)：237 个工具详情
 - [CLI 命令参考](cli_reference.md)：145+ 命令详情
 - [部署指南](deployment.md)：Docker 部署与升级

@@ -2905,6 +2905,6 @@ cw task report <task-id> <step-id> --success \
 
 ## 下一步
 
-- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 235 个工具
+- [MCP 工具参考](mcp_tools.md)：通过 MCP 协议调用 237 个工具
 - [架构设计](architecture.md)：理解数据库 Schema 和 Mixin 架构
 - [部署指南](deployment.md)：Docker 部署与多容器共享

@@ -24,7 +24,7 @@
 
 ### 1.2 数据库层（`db/`）
 
-`db/db.py` 的 `CodeGraphDB` 主类组合 35 个 Mixin。生产入口按 Mixin 分组：
+`db/db.py` 的 `CodeGraphDB` 主类组合 43 个 Mixin。生产入口按 Mixin 分组：
 
 | Mixin | 主要入口 | Rust 对应 | 迁移阶段 |
 |---|---|---|---|
@@ -55,7 +55,7 @@
 
 | 模块 | 入口 | Rust 对应 | 迁移阶段 |
 |---|---|---|---|
-| `server/mcp_server.py` | 229+ `@mcp.tool()` | Python adapter 保留 | Phase 6（adapter） |
+| `server/mcp_server.py` + `server/tools/*.py` | 237 `@mcp.tool()`（注册收敛到 server/tools 功能域模块） | Python adapter 保留 | Phase 6（adapter） |
 | `server/watcher.py` | `FileWatcher` 类、事件合并 | `rust_ext/src/watcher.rs` 已实现 | Phase 3 |
 | `server/daemon_server.py` | Python 侧 daemon（legacy） | `rust_ext/src/bin/cw_daemon.rs` 已实现 | Phase 4 |
 | `server/daemon_client.py` | UDS RPC 客户端 | 待迁移 | Phase 4/5 |
@@ -228,6 +228,15 @@ pub struct ParseDiagnostics {
 - daemon 启动：重放 `staging.log` + `parse_retry.log`（best-effort CAS 恢复）
 - RPC `workspace.recover`：staging append → merge CAS → `file_generation_committed` → `Replicator::replicate` → 失败回滚 `file_generation_uncommit`
 
+### 4.4 Schema 版本同步状态
+
+SCHEMA_VERSION = 46
+RUST_SCHEMA_VERSION = 44
+
+- `SCHEMA_VERSION`（Python 真相源，`db/schema.py`）：v46 = P4 assignment/lease 三表（task_assignments / task_leases / task_lease_events）+ partial UNIQUE 索引。
+- `RUST_SCHEMA_VERSION`（Rust 镜像当前值，`rust_ext/src/abi_contract.rs` 等）：v46 升级（2026-08-03 P3/P4 lease，commit a8580e9）**尚未同步** Rust 镜像常量与 `docs/design/abi-error-code-contract.md`（仍为 44），属已知滞后。Rust 镜像后续同步时必须同时更新本声明与 `docs/design/abi-error-code-contract.md` §3.2/§10.3。
+- 一致性测试 `tests/test_abi_contract.py` 以本声明为真相源：`SCHEMA_VERSION` 与 `schema.py` 严格相等；`RUST_SCHEMA_VERSION` 与 `abi_contract.rs` 严格相等（记录镜像滞后，而非允许任意漂移）。
+
 ## 5. 错误码枚举
 
 | 错误码 | 含义 | 处理策略 |
@@ -322,6 +331,7 @@ Phase 0 的第 1、2、4 个子任务都是契约/基础设施类，没有 Rust 
 | 7 | 删除 Python 生产 fallback 与死代码 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
 | 7 | SBOM、签名、包体和跨平台 Release 证据 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
 | 7 | 最终 parity、灾备、升级和独立复审 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 | 🔴 |
+| 8 | multi-llm 契约驱动协同（P1 Envelope/Evidence + P2 依赖环 + P3 Identity/Attestation + P4 Assignment/Lease） | ✅ | ✅ | ✅(behavioral) | ✅ | ✅ | ✅ | ⏸️ |
 
 ## 8. 性能基线（待 Phase 0 第3个子任务固化）
 

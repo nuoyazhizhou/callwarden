@@ -12,12 +12,25 @@ class TestMcpDiffExpose(unittest.TestCase):
     """验证 mcp_server.py 中 diff_callers/diff_callees/compare_snapshots MCP 工具已注册"""
 
     def setUp(self):
-        self.mcp_path = os.path.join(
+        server_dir = os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "server", "mcp_server.py"
+            "server",
         )
-        with open(self.mcp_path, "r", encoding="utf-8") as f:
-            self.content = f.read()
+        # MCP 重构后 @mcp.tool() 装饰器分布在 server/tools 功能域模块，
+        # 合并扫描 mcp_server.py + server/tools/*.py，避免漏检迁移后的工具。
+        paths = [os.path.join(server_dir, "mcp_server.py")]
+        tools_dir = os.path.join(server_dir, "tools")
+        if os.path.isdir(tools_dir):
+            paths += [
+                os.path.join(tools_dir, fname)
+                for fname in sorted(os.listdir(tools_dir))
+                if fname.endswith(".py") and fname != "__init__.py"
+            ]
+        chunks = []
+        for path in paths:
+            with open(path, "r", encoding="utf-8") as f:
+                chunks.append(f.read())
+        self.content = "\n".join(chunks)
 
     def test_diff_callers_mcp_tool_exists(self):
         """mcp_server.py 应包含 diff_callers MCP 工具"""

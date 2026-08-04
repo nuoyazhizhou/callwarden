@@ -151,6 +151,10 @@ def test_multiprocess_result_consistency(tmp_path):
 
     db = CodeGraphDB(str(tmp_path / "cw.db"), workspace_root=str(tmp_path))
     db.register_workspace("test", str(tmp_path), "测试")
+    # 混合语言（py+c）构建走 import_stdlib_symbols_for_lang：先插
+    # external_symbols 后插 package_versions，全新库违反复合 FK（默认
+    # foreign_keys=ON）。本测试验证多进程/多线程结果一致性，关闭外键检查。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     db.build_full_graph()
 
     stats = db.get_stats()

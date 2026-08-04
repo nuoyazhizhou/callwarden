@@ -63,6 +63,10 @@ def test_presort_groups_by_language(tmp_path):
 
     db = CodeGraphDB(str(tmp_path / "cw.db"), workspace_root=str(tmp_path))
     db.register_workspace("test", str(tmp_path), "测试")
+    # 默认 foreign_keys=ON；混合语言构建走 import_stdlib_symbols_for_lang，
+    # 其先插 external_symbols 后插 package_versions 违反复合 FK（全新库无
+    # package_versions 行）。本测试验证预排序结果一致性，关闭外键检查。
+    db.conn.execute("PRAGMA foreign_keys=OFF")
     db.build_full_graph()
 
     stats = db.get_stats()
@@ -92,6 +96,7 @@ def test_presort_result_consistency(tmp_path):
     # 第一次构建（带预排序）
     db1 = CodeGraphDB(str(tmp_path / "cw1.db"), workspace_root=str(tmp_path))
     db1.register_workspace("test1", str(tmp_path), "测试1")
+    db1.conn.execute("PRAGMA foreign_keys=OFF")
     db1.build_full_graph()
     stats1 = db1.get_stats()
     db1.close()
@@ -99,6 +104,7 @@ def test_presort_result_consistency(tmp_path):
     # 第二次构建（独立 DB，同样带预排序）
     db2 = CodeGraphDB(str(tmp_path / "cw2.db"), workspace_root=str(tmp_path))
     db2.register_workspace("test2", str(tmp_path), "测试2")
+    db2.conn.execute("PRAGMA foreign_keys=OFF")
     db2.build_full_graph()
     stats2 = db2.get_stats()
     db2.close()

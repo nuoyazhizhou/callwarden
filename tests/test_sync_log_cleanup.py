@@ -396,27 +396,43 @@ def test_cli_cleanup_end_to_end_dry_run(capsys):
 # MCP 层
 # ----------------------------------------------------------------------
 
+def _combined_mcp_sources() -> str:
+    """读取 mcp_server.py 与 server/tools/*.py 合并源码。
+
+    MCP 重构后 @mcp.tool() 装饰器分布在 server/tools 功能域模块，
+    cleanup_agent_rule_sync_log 定义在 server/tools/tools_task.py，
+    只读 mcp_server.py 会漏检，因此合并扫描。
+    """
+    server_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "server",
+    )
+    paths = [os.path.join(server_dir, "mcp_server.py")]
+    tools_dir = os.path.join(server_dir, "tools")
+    if os.path.isdir(tools_dir):
+        paths += [
+            os.path.join(tools_dir, fname)
+            for fname in sorted(os.listdir(tools_dir))
+            if fname.endswith(".py") and fname != "__init__.py"
+        ]
+    chunks = []
+    for path in paths:
+        with open(path, encoding="utf-8") as fh:
+            chunks.append(fh.read())
+    return "\n".join(chunks)
+
+
 def test_mcp_tool_cleanup_agent_rule_sync_log_registered():
     """MCP 工具 cleanup_agent_rule_sync_log 已注册到 server。"""
     # 通过源码扫描确认注册（避免启动完整 MCP server）
-    server_src = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "server", "mcp_server.py",
-    )
-    with open(server_src, encoding="utf-8") as fh:
-        content = fh.read()
+    content = _combined_mcp_sources()
     assert "def cleanup_agent_rule_sync_log(" in content
     assert "@mcp.tool()" in content
 
 
 def test_mcp_tool_calls_db_method():
     """MCP 工具内部调用 db.cleanup_sync_log 并透传参数。"""
-    server_src = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "server", "mcp_server.py",
-    )
-    with open(server_src, encoding="utf-8") as fh:
-        content = fh.read()
+    content = _combined_mcp_sources()
     # 确认工具调用 db.cleanup_sync_log 并传 dry_run 参数
     assert "db.cleanup_sync_log(" in content
     assert "dry_run=dry_run" in content

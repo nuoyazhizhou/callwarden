@@ -1,6 +1,6 @@
 # MCP 工具参考
 
-Call Warden 通过 MCP（Model Context Protocol）Server 暴露 235 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
+Call Warden 通过 MCP（Model Context Protocol）Server 暴露 237 个工具，供 AI Agent 通过标准协议调用。本文档按功能分组列出全部工具、关键参数和返回值格式。
 
 ## MCP 协议简介
 
@@ -20,7 +20,7 @@ cw server --transport sse    # SSE 模式
 
 ## 按 12 大功能分类
 
-Call Warden 通过 MCP Server 暴露 235 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
+Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个主分类（与 CLI 的 12 主分类对齐，详见 `.cli_audit.md` §2 和 `.mcp_audit.md` §4）。各分类的详细工具说明见下方按功能分组的章节；CLI↔MCP 命名映射见 [CLI↔MCP 命名映射对照表](#climcp-命名映射对照表c8-step-6)。
 
 ### 概览表
 
@@ -40,7 +40,7 @@ Call Warden 通过 MCP Server 暴露 235 个工具，按功能聚合为 12 个�
 | 12 | **Diagnostics** | 21 | clone 检测 / LSP / 安全编辑 / 跨仓库分析 | 12. Diagnostics |
 | **合计** | **179** | | |
 
-> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 235（含若干跨分类工具、L5 构建上下文感知工具、协同/身份/依赖查询与写工具）。本表只统计每个分类独有的工具。
+> **注**：合计 179 是 12 主分类工具数之和。实际注册的 MCP 工具数为 237（含若干跨分类工具、L5 构建上下文感知工具、协同/身份/依赖查询与写工具）。本表只统计每个分类独有的工具。
 
 ## 场景 → MCP 工具索引（按 8 类能力维度）
 
@@ -1749,21 +1749,27 @@ G13（2026-07-20）：默认通过 daemon RPC 拉取 daemon 进程的运行时�
 
 ## 只读协同查询工具（multi-llm-contract-collaboration, Req 14.17）
 
-> **阶段状态**：D0 已交付 daemon 基础设施；P1 未启用，以下工具返回 `planned/unavailable` 结构化响应（Req 13.1）。P1 产品化后通过 daemon RPC 获取真实数据。
+> **阶段状态**：D0 已交付 daemon 基础设施；P1 集成（S5）后这 4 个只读工具已接线：优先走 daemon RPC（collab RPC 在 daemon 层为 method_not_found），降级 `direct_read` 直查 SQLite 真实表（task_contract_revisions / task_evidence_events / task_gate_decisions）。写方法（`submit_verdict` / `append_evidence`）已接入库层受保护写路径（P4 Lease 校验），走 CLI/库层。
 
-4 个只读 MCP 工具，路由通过 daemon `call_with_autostart`（不触发写操作，含 workspace 激活）。
+4 个只读 MCP 工具 + 2 个写工具（submit_verdict / append_evidence），路由通过 daemon `call_with_autostart`（不触发写操作，含 workspace 激活）。
 
-| 工具 | 参数 | 返回（P1 启用后） | 返回（P1 未启用） |
-|------|------|-------------------|-------------------|
-| `get_role_view` | `task_id`, `role`(可选) | Role_View dict（含 view_type/view_version/Contract_Hash） | `{"status": "planned", "stage": "P1", ...}` |
-| `find_evidence` | `task_id`(可选), `contract_id`(可选), `verifier`(可选), `limit` | `{"items": [...], "count": N}` | `{"status": "planned", "stage": "P1", ...}` |
-| `get_freshness_status` | `evidence_id`(可选), `task_id`(可选) | `{"items": [{"evidence_id": ..., "status": ...}]}` | `{"status": "planned", "stage": "P1", ...}` |
-| `get_gate_decision` | `task_id`(可选), `gate_id`(可选), `limit` | `{"items": [...], "count": N}` | `{"status": "planned", "stage": "P1", ...}` |
+| 工具 | 参数 | 返回 |
+|------|------|------|
+| `get_role_view` | `task_id`, `role`(可选) | Role_View dict（含 view_type/view_version/Contract_Hash），envelope 取自最新契约 revision |
+| `find_evidence` | `task_id`(可选), `contract_id`(可选), `verifier`(可选), `limit` | `{"items": [...], "count": N}`（task_evidence_events 真实记录） |
+| `get_freshness_status` | `evidence_id`(可选), `task_id`(可选) | `{"items": [{"evidence_id": ..., "status": ...}]}`（derive_freshness 派生） |
+| `get_gate_decision` | `task_id`(可选), `gate_id`(可选), `limit` | `{"items": [...], "count": N}`（task_gate_decisions 真实记录） |
+| `submit_verdict` | `task_id`, `contract_id`, `contract_revision`, `contract_hash`, `phase`, `overall`, `clause_results`(JSON), `findings`(JSON), `reviewer_identity`, `view_manifest_hash`, `snapshot_id`, `attestation`, `amendment_ref`, `verdict_id`(可选), `lease_token`(可选), `fencing_counter` | `{"success": true, "verdict_id": ..., "event_id": ...}`（写入 task_verdict_events；提供 lease_token+fencing_counter 时走 P4 受保护写） |
+| `append_evidence` | `task_id`, `contract_id`, `contract_revision`, `contract_hash`, `evidence_type`, `snapshot_id`, `verifier_name`, `verifier_version`, `verifier_config_hash`, `producer_identity`, `payload`(JSON), `payload_hash`, `test_run_id`, `lease_token`(可选), `fencing_counter` | `{"success": true, "evidence_id": ..., "event_id": ...}`（写入 task_evidence_events；提供 lease_token+fencing_counter 时走 P4 受保护写） |
 
 **只读约束**：
 - 不调用 `get_db(workspace)`，避免 workspace 激活一类隐式 UPDATE
-- 通过 `_get_daemon_client().call_with_autostart` 走 daemon RPC
-- daemon 不可用时降级为 `direct_read`（READ_ONLY 允许降级），P1 schema 不存在则返回 `planned/unavailable`
+- 通过 `_get_daemon_client().call_with_autostart` 走 daemon RPC；collab RPC 未在 daemon 注册（method_not_found），由 `_collab_rpc_call` 兜底 `direct_read` 直查 SQLite 真实表
+- daemon 不可用时同样降级 `direct_read`（READ_ONLY 允许降级）
+
+**写路径约束**：
+- `submit_verdict` / `append_evidence` 为受保护写：提供 `lease_token` + `fencing_counter` 时校验 Lease（token hash 匹配 + counter 非旧），校验失败在写入前拒绝（P4 Req 11.8-11.9）；不提供时直写（向后兼容）
+- 追加式记录：重跑 verifier / 重复提交追加新记录，不替换既有 payload（Req 1.7, 6.23）
 
 **Freshness_Status 语义**：只读返回的 Freshness_Status 是查询时刻派生值（fresh/stale/invalid/superseded/historical_unbound），**不构成 gate 结论**——gate 结论只由 CLI 写路径在串行化点产生并记录。
 
@@ -2210,10 +2216,10 @@ pip install tree-sitter tree-sitter-languages fastmcp
 
 ### L10. MCP 工具优化方向：优化组合查询路径而非扩面
 
-**讨论结论**：235 个工具已够用，应优化组合查询路径而非继续扩功能面。
+**讨论结论**：237 个工具已够用，应优化组合查询路径而非继续扩功能面。
 
 1. **当前状态盘点**：
-   - 工具数：235（含 L5 构建上下文感知、metrics 监控、协同/身份/依赖查询与写工具 + 若干跨分类工具）
+   - 工具数：237（含 L5 构建上下文感知、metrics 监控、协同/身份/依赖查询与写工具 + 若干跨分类工具）
    - 12 主分类已覆盖所有 Agent 常见任务场景
    - 已实现的"组合工具"：`compare_snapshots` / `diff_callers` / `diff_callees` / `get_clone_aware_impact` / `get_defect_correlation` / `get_symbol_issues`（聚合 Semgrep + Guardrail findings）
 

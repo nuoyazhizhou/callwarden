@@ -1,6 +1,6 @@
 # 实现状态总览
 
-> 最后更新：2026-08-03 · Schema v46 · 43 个功能 Mixin（+ CodeGraphBase，48 个 db_*.py 文件）· 235 MCP 工具 · 16 语言
+> 最后更新：2026-08-03 · Schema v46 · 43 个功能 Mixin（+ CodeGraphBase，48 个 db_*.py 文件）· 237 MCP 工具 · 16 语言
 
 本文档是 callwarden 当前能力的权威盘点，对照 [Guardian 规格](evolve-guardian-architecture/spec.md) + [战略分析](competition-analysis.md) + 实际代码逐项核查。历史盘点请参阅 [history/implementation-snapshot-v13.md](../history/implementation-snapshot-v13.md)。
 
@@ -12,7 +12,7 @@
 | 数据库表    | 30+  | 含 5 张 Guardian 表 + 1 张 archived_files 归档表                                          |
 | Schema 版本 | v46  | v3→v46 版本化迁移，事务化执行（v44: P2 artifact/interface 依赖与环检测 schema；v45: P3 Identity/Attestation schema：action_identities / attestation_records / attestation_revocation_records；v46: P4 assignment/lease schema） |
 | Mixin 模块  | 43   | CodeGraphBase + 43 个功能 Mixin（48 个 db_*.py 文件）                                     |
-| MCP 工具    | 235  | FastMCP @mcp.tool() 注册（含 10 个 P2 依赖图工具 + 7 个 P3 Identity/Attestation 工具 + 8 个 P4 assignment/lease 工具）    |
+| MCP 工具    | 237  | FastMCP @mcp.tool() 注册（含 10 个 P2 依赖图工具 + 7 个 P3 Identity/Attestation 工具 + 8 个 P4 assignment/lease 工具）    |
 | CLI 命令    | 145+ | 子命令 + --flag 双风格                                                                    |
 | 解析器文件  | 18   | tree-sitter 多语言（含 base/call_filter/call_resolver 等辅助模块）                        |
 | 测试套件    | 8    | P0/P1/P2/P3/csharp_ruby/p1_p3/stress/fuzz/gc                                              |

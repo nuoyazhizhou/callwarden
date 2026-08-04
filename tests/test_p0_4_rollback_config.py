@@ -59,9 +59,9 @@ def db_with_rollback(tmp_path):
 class TestRollbackConfigSchema:
     """验证 rollback_config 表 schema 和 migration。"""
 
-    def test_schema_version_is_44(self):
-        """SCHEMA_VERSION 必须为 44（v44 新增 P2 dependency schema，含 rollback_config v42 基线）。"""
-        assert SCHEMA_VERSION == 44
+    def test_schema_version_is_46(self):
+        """SCHEMA_VERSION 必须为 46（v46 为 P4 assignment/lease 后当前版本）。"""
+        assert SCHEMA_VERSION == 46
 
     def test_table_exists(self, db_with_rollback):
         """rollback_config 表必须存在。"""
