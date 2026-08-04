@@ -218,23 +218,40 @@ def test_subcommand_help_end_to_end(sub):
 # ============================================
 
 
+def _mcp_source_files():
+    """返回 mcp_server.py 与 server/tools/*.py 的全部源码文件路径。
+
+    拆分后 @mcp.tool() 装饰器分布在 server/tools/ 功能域模块中，需合并扫描。
+    """
+    files = [MCP_SERVER]
+    tools_dir = os.path.join(os.path.dirname(MCP_SERVER), "tools")
+    if os.path.isdir(tools_dir):
+        files += [
+            os.path.join(tools_dir, f)
+            for f in sorted(os.listdir(tools_dir))
+            if f.endswith(".py") and f != "__init__.py"
+        ]
+    return files
+
+
 def _extract_mcp_tool_names():
-    """从 server/mcp_server.py AST 中提取所有 @mcp.tool() 工具名"""
-    with open(MCP_SERVER, encoding="utf-8") as f:
-        source = f.read()
-    tree = ast.parse(source, filename=MCP_SERVER)
+    """从 mcp_server.py 与 server/tools/*.py AST 中提取所有 @mcp.tool() 工具名"""
     names = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        for dec in node.decorator_list:
-            if isinstance(dec, ast.Call):
-                func = dec.func
-                if (isinstance(func, ast.Attribute)
-                        and func.attr == "tool"
-                        and isinstance(func.value, ast.Name)
-                        and func.value.id == "mcp"):
-                    names.append(node.name)
+    for path in _mcp_source_files():
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+        tree = ast.parse(source, filename=path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Call):
+                    func = dec.func
+                    if (isinstance(func, ast.Attribute)
+                            and func.attr == "tool"
+                            and isinstance(func.value, ast.Name)
+                            and func.value.id == "mcp"):
+                        names.append(node.name)
     return names
 
 
@@ -257,27 +274,28 @@ def test_mcp_tools_no_duplicates():
 
 def test_mcp_tools_all_have_docstring():
     """[5] 所有 @mcp.tool() 都有 docstring"""
-    with open(MCP_SERVER, encoding="utf-8") as f:
-        source = f.read()
-    tree = ast.parse(source, filename=MCP_SERVER)
     missing = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        has_mcp_tool = False
-        for dec in node.decorator_list:
-            if isinstance(dec, ast.Call):
-                func = dec.func
-                if (isinstance(func, ast.Attribute)
-                        and func.attr == "tool"
-                        and isinstance(func.value, ast.Name)
-                        and func.value.id == "mcp"):
-                    has_mcp_tool = True
-                    break
-        if has_mcp_tool and not (node.body and isinstance(node.body[0], ast.Expr)
-                                  and isinstance(node.body[0].value, ast.Constant)
-                                  and isinstance(node.body[0].value.value, str)):
-            missing.append(node.name)
+    for path in _mcp_source_files():
+        with open(path, encoding="utf-8") as f:
+            source = f.read()
+        tree = ast.parse(source, filename=path)
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            has_mcp_tool = False
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Call):
+                    func = dec.func
+                    if (isinstance(func, ast.Attribute)
+                            and func.attr == "tool"
+                            and isinstance(func.value, ast.Name)
+                            and func.value.id == "mcp"):
+                        has_mcp_tool = True
+                        break
+            if has_mcp_tool and not (node.body and isinstance(node.body[0], ast.Expr)
+                                      and isinstance(node.body[0].value, ast.Constant)
+                                      and isinstance(node.body[0].value.value, str)):
+                missing.append(node.name)
     assert not missing, f"MCP 工具缺少 docstring: {missing[:10]}"
 
 

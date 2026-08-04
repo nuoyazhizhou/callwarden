@@ -179,7 +179,7 @@ def test_task_quality_gate_mcp_tools_registered():
 def test_task_quality_findings_mcp_end_to_end():
     """task_quality_findings / task_resolve_quality_finding 端到端"""
     import asyncio
-    import callwarden.server.mcp_server as mcp_mod
+    import callwarden.server._mcp_common as mcp_common_mod
 
     tmpdir = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
@@ -194,9 +194,11 @@ def test_task_quality_findings_mcp_end_to_end():
         )
 
         mcp = create_mcp_server()
-        # monkey-patch get_db 让 MCP 工具使用我们的临时 db
-        orig_get_db = mcp_mod.get_db
-        mcp_mod.get_db = lambda workspace=None: db
+        # monkey-patch _db_instance 让 MCP 工具使用我们的临时 db
+        # 注意：拆分后工具函数从 _mcp_common 导入 get_db，patch mcp_server.get_db 不再生效，
+        # 必须 patch _mcp_common._db_instance（get_db 函数体内读取该全局）。
+        orig_db_instance = mcp_common_mod._db_instance
+        mcp_common_mod._db_instance = db
         try:
             # 调用 task_quality_findings 工具（返回 list[dict]）
             open_result = asyncio.run(
@@ -242,7 +244,7 @@ def test_task_quality_findings_mcp_end_to_end():
             ))
             assert len(open_after) == 1
         finally:
-            mcp_mod.get_db = orig_get_db
+            mcp_common_mod._db_instance = orig_db_instance
     finally:
         db.close()
 
@@ -250,7 +252,7 @@ def test_task_quality_findings_mcp_end_to_end():
 def test_task_completion_review_mcp_end_to_end():
     """task_completion_review MCP 工具端到端（空数据库 pass）"""
     import asyncio
-    import callwarden.server.mcp_server as mcp_mod
+    import callwarden.server._mcp_common as mcp_common_mod
 
     tmpdir = tempfile.mkdtemp()
     db = CodeGraphDB(os.path.join(tmpdir, "test.db"), workspace_root=tmpdir)
@@ -258,8 +260,8 @@ def test_task_completion_review_mcp_end_to_end():
         task_id = db.task_create("review-test", steps=[{"action": "edit"}])
 
         mcp = create_mcp_server()
-        orig_get_db = mcp_mod.get_db
-        mcp_mod.get_db = lambda workspace=None: db
+        orig_db_instance = mcp_common_mod._db_instance
+        mcp_common_mod._db_instance = db
         try:
             result = _extract_tool_payload(asyncio.run(
                 mcp.call_tool("task_completion_review",
@@ -272,7 +274,7 @@ def test_task_completion_review_mcp_end_to_end():
             assert "counts" in result
             assert result["counts"]["error"] == 0
         finally:
-            mcp_mod.get_db = orig_get_db
+            mcp_common_mod._db_instance = orig_db_instance
     finally:
         db.close()
 

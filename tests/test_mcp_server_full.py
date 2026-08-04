@@ -30,7 +30,7 @@ _PKG_PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PKG_PARENT not in sys.path:
     sys.path.insert(0, _PKG_PARENT)
 
-from callwarden.server import mcp_server as _mcp_server_module
+from callwarden.server import _mcp_common as _mcp_common_module
 from callwarden.server.mcp_server import HAS_FASTMCP, create_mcp_server, get_db
 
 
@@ -52,21 +52,21 @@ def reset_mcp_db_singleton():
     MCP Server 在生产中是长连接，_db_instance 跨请求复用；但测试中
     每个用例需要干净的 db 状态，故显式重置。
     """
-    original = _mcp_server_module._db_instance
-    _mcp_server_module._db_instance = None
+    original = _mcp_common_module._db_instance
+    _mcp_common_module._db_instance = None
     try:
         yield
     finally:
         # 关闭测试中创建的 db，恢复原值（None）
         if (
-            _mcp_server_module._db_instance is not None
-            and _mcp_server_module._db_instance is not original
+            _mcp_common_module._db_instance is not None
+            and _mcp_common_module._db_instance is not original
         ):
             try:
-                _mcp_server_module._db_instance.close()
+                _mcp_common_module._db_instance.close()
             except Exception:
                 pass
-        _mcp_server_module._db_instance = original
+        _mcp_common_module._db_instance = original
 
 
 def _list_tools_sync(mcp_server):
@@ -537,13 +537,13 @@ def test_mcp_singleton_workspace_switch_recreates_db(reset_mcp_db_singleton, tmp
     os.makedirs(ws_b, exist_ok=True)
 
     db_a = get_db(workspace=ws_a)
-    assert db_a is _mcp_server_module._db_instance, (
+    assert db_a is _mcp_common_module._db_instance, (
         "首次 get_db(workspace=...) 应将 _db_instance 设为新实例"
     )
 
     db_b = get_db(workspace=ws_b)
     assert db_b is not db_a, "切换 workspace 后应创建新 _db_instance"
-    assert db_b is _mcp_server_module._db_instance, (
+    assert db_b is _mcp_common_module._db_instance, (
         "切换后 _db_instance 应指向新实例"
     )
 

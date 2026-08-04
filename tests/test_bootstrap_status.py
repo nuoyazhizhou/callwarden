@@ -416,12 +416,32 @@ def test_cli_bootstrap_dispatched():
 # ============================================
 
 
+def _mcp_sources_combined():
+    """mcp_server.py 与 server/tools/*.py 合并源码。
+
+    拆分后 @mcp.tool() 工具分布在 server/tools/ 功能域模块中，静态断言需合并扫描。
+    """
+    import os as _os
+
+    base = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    paths = [_os.path.join(base, "server", "mcp_server.py")]
+    tools_dir = _os.path.join(base, "server", "tools")
+    if _os.path.isdir(tools_dir):
+        paths += [
+            _os.path.join(tools_dir, f)
+            for f in sorted(_os.listdir(tools_dir))
+            if f.endswith(".py") and f != "__init__.py"
+        ]
+    chunks = []
+    for p in paths:
+        with open(p, encoding="utf-8") as f:
+            chunks.append(f.read())
+    return "\n".join(chunks)
+
+
 def test_mcp_bootstrap_status_registered():
     """MCP server 注册了 bootstrap_status 工具。"""
-    import inspect
-    from callwarden.server import mcp_server
-
-    src = inspect.getsource(mcp_server.create_mcp_server)
+    src = _mcp_sources_combined()
     assert "def bootstrap_status(" in src, "MCP 源码缺少 bootstrap_status 工具定义"
     assert "@mcp.tool()" in src, "MCP 源码缺少 @mcp.tool() 装饰器"
 
@@ -429,14 +449,8 @@ def test_mcp_bootstrap_status_registered():
 def test_mcp_bootstrap_status_no_params():
     """bootstrap_status MCP 工具应无参数。"""
     import ast
-    import os as _os
 
-    src_path = _os.path.join(
-        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
-        "server", "mcp_server.py",
-    )
-    with open(src_path, "r", encoding="utf-8") as f:
-        tree = ast.parse(f.read())
+    tree = ast.parse(_mcp_sources_combined())
 
     func_def = None
     for node in ast.walk(tree):

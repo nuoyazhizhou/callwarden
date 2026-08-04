@@ -76,14 +76,17 @@ def test_get_or_create_parser_unknown_lang():
 
 
 def test_parse_one_uses_get_or_create_parser():
-    """多线程路径 _parse_one 应复用 _get_or_create_parser（统一懒加载入口）。
+    """多线程构建路径 _build_multi_lang 应使用 RustParserFacade（Rust-only 解析）。
 
-    不应在 _parse_one 内重复写 `from ..parsers import (...)` 聚合 import。
+    P1-E 后解析统一走 RustParserFacade（parse_file_lang），不再实例化 Python
+    parser，因此原断言 `_get_or_create_parser` 已过时；同时不应出现 Python
+    parser 的聚合 import。
     """
     import callwarden.db.db_build as db_build_mod
     src = inspect.getsource(db_build_mod.BuildMixin._build_multi_lang)
-    # 应该调用 _get_or_create_parser
-    assert "_get_or_create_parser" in src
+    # 应该使用 RustParserFacade 统一解析入口
+    assert "RustParserFacade" in src
+    assert "parse_file_lang" in src
     # 不应再有内联的聚合 import
     assert "from ..parsers import (\n                            RustParser" not in src
 
