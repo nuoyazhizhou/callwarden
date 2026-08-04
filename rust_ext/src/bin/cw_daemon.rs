@@ -3,8 +3,10 @@
 //! R7 实现：CLI 参数解析（clap）→ 配置加载 → schema 初始化 → 启动 UDS server →
 //! 信号处理（SIGTERM/SIGINT 优雅关闭 + SIGHUP reload config + SIGUSR1 drain staging logs）。
 //!
-//! ## Linux-only
-//! UDS + SO_PEERCRED 是 Linux 特有。Windows 上编译为 stub，运行时 exit 1。
+//! ## 平台支持
+//! - Linux/macOS：UDS + SO_PEERCRED（`#[cfg(unix)]` 保留原有路径）
+//! - Windows：命名管道 `\\.\pipe\callwarden-<user-sid>`（SDDL 仅授权 owner SID），
+//!   对端身份经 ImpersonateNamedPipeClient + TokenUser SID 派生
 //! macOS 不支持 SO_PEERCRED（peercred.rs 用 #[cfg(unix)] 但实际只在 Linux 测试通过）。
 //!
 //! ## systemd 集成
@@ -27,9 +29,17 @@ fn main() {
         let exit_code = unix::main();
         std::process::exit(exit_code);
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
-        eprintln!("[cw_daemon] UDS server is only available on Linux/Unix");
+        let exit_code = windows::main();
+        std::process::exit(exit_code);
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        eprintln!(
+            "[cw_daemon] unsupported platform (daemon transport requires \
+             Linux/Unix UDS or Windows named pipe)"
+        );
         std::process::exit(1);
     }
 }
@@ -1825,5 +1835,668 @@ mod unix {
                 "abstract socket 应能解析并尝试发送"
             );
         }
+    }
+}
+
+#[cfg(windows)]
+mod windows {
+    use std::io;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use clap::{Parser, Subcommand};
+
+    use callwarden_core::daemon::config::DaemonConfig;
+    use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
+    use callwarden_core::daemon::server::{start_server, ServerConfig, ServerHandle};
+    use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
+    use callwarden_core::daemon::workspace::WorkspaceRegistry;
+    use callwarden_core::daemon::SCHEMA_VERSION;
+    use callwarden_core::snapshot::SnapshotCache;
+    use serde_json::json;
+
+    // Windows 控制台信号：signal-hook 是 cfg(unix) 专用依赖，Windows 分支用
+    // kernel32 SetConsoleCtrlHandler 原生 FFI 实现 Ctrl+C / Ctrl+Break 优雅关闭。
+    // 注意：daemon_autostart 以 DETACHED_PROCESS 启动时无控制台，handler 不会触发，
+    // daemon 一直运行直到外部终止（与 Unix systemd 生命周期语义一致）。
+    type HandlerRoutine = unsafe extern "system" fn(u32) -> i32;
+
+    /// Ctrl+C / Ctrl+Break 处理器：设置 stop_flag，主循环随后优雅关闭。
+    unsafe extern "system" fn console_ctrl_handler(_ctrl_type: u32) -> i32 {
+        STOP_FLAG.store(true, Ordering::SeqCst);
+        1 // 已处理，阻止默认终止行为
+    }
+
+    static STOP_FLAG: AtomicBool = AtomicBool::new(false);
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        /// BOOL WINAPI SetConsoleCtrlHandler(PHANDLER_ROUTINE, BOOL);
+        fn SetConsoleCtrlHandler(handler: Option<HandlerRoutine>, add: i32) -> i32;
+    }
+
+    /// 注册控制台 Ctrl+C / Ctrl+Break 处理器（无控制台时静默返回）。
+    fn register_console_ctrl_handler() {
+        unsafe {
+            SetConsoleCtrlHandler(Some(console_ctrl_handler), 1);
+        }
+    }
+
+    /// cw_daemon Windows CLI 参数（与 Unix 侧对齐，缺失平台无关字段）。
+    #[derive(Parser, Debug)]
+    #[command(
+        name = "cw_daemon",
+        version,
+        about = "Call Warden Enterprise Daemon (Windows, named pipe endpoint)"
+    )]
+    struct Cli {
+        /// 配置文件路径（JSON 格式，字段优先级：CLI > env > 文件 > 默认）
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// 前台运行（Rust 实现天然前台，flag 仅为 CLI 兼容）
+        #[arg(long, default_value_t = true)]
+        foreground: bool,
+
+        /// 命名管道端点 `\\.\pipe\callwarden-<sid>`。
+        ///
+        /// Windows 上管道名始终由当前用户 SID 派生（NamedPipeListener::bind），
+        /// 该参数仅作 CLI 兼容（daemon_autostart 以 `--socket <pipe>` 唤起）。
+        #[arg(long)]
+        socket: Option<PathBuf>,
+
+        /// 工作线程数（覆盖配置文件）
+        #[arg(long)]
+        workers: Option<usize>,
+
+        /// registry DB 路径（覆盖配置文件）
+        #[arg(long)]
+        registry: Option<PathBuf>,
+
+        /// snapshot cache 容量（覆盖配置文件）
+        #[arg(long)]
+        cache_capacity: Option<usize>,
+
+        /// 兼容 Unix CLI（Windows 无 sd_notify，忽略）
+        #[arg(long, default_value_t = false)]
+        no_sd_notify: bool,
+
+        /// 子命令（缺省 = serve）
+        #[command(subcommand)]
+        command: Option<Command>,
+    }
+
+    #[derive(Subcommand, Debug)]
+    enum Command {
+        /// 启动命名管道 server（默认动作）
+        Serve,
+        /// schema 兼容性检查（与 Unix 一致，纯 DB 只读检查）
+        SchemaCheck {
+            /// 严格模式：schema_version 必须 == SCHEMA_VERSION，否则 exit 1
+            #[arg(long)]
+            strict: bool,
+        },
+        /// 健康检查（连接命名管道，发送 ping，等待响应）
+        HealthCheck {
+            /// 超时秒数
+            #[arg(long, default_value_t = 15)]
+            timeout: u64,
+        },
+    }
+
+    /// 入口：返回进程退出码
+    pub fn main() -> i32 {
+        let cli = Cli::parse();
+
+        match &cli.command {
+            Some(Command::SchemaCheck { strict }) => schema_check(*strict, &cli),
+            Some(Command::HealthCheck { timeout }) => health_check(*timeout, &cli),
+            Some(Command::Serve) | None => serve(&cli),
+        }
+    }
+
+    // ============================================
+    // serve 子命令（默认动作）
+    // ============================================
+
+    fn serve(cli: &Cli) -> i32 {
+        // 1. 加载配置（config file → env → CLI overrides）
+        let mut config = load_config(cli);
+        if let Err(e) = config.as_mut().map(|c| c.apply_env_overrides()) {
+            eprintln!("[cw_daemon] [ERROR] 环境变量解析失败: {}", e);
+            return 1;
+        }
+        let mut config = match config {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] 配置加载失败: {}", e);
+                return 1;
+            }
+        };
+
+        // 应用 CLI 参数覆盖（最高优先级）
+        apply_cli_overrides(&mut config, cli);
+
+        // Windows 管道名由当前用户 SID 派生，--socket 仅作兼容校验
+        if let Some(ref socket) = cli.socket {
+            let socket_str = socket.to_string_lossy();
+            if !socket_str.starts_with(r"\\.\pipe\callwarden-") {
+                eprintln!(
+                    "[cw_daemon] [WARN] --socket 不是命名管道端点（期望 \\\\.\\pipe\\callwarden-<sid>）: {}",
+                    socket_str
+                );
+            }
+        }
+
+        // 2. 确保目录存在
+        if let Err(e) = config.ensure_directories() {
+            eprintln!("[cw_daemon] [ERROR] 创建数据目录失败: {}", e);
+            return 1;
+        }
+
+        eprintln!(
+            "[cw_daemon] [INFO] starting with config: workers={}, registry={}",
+            config.max_workers,
+            config.registry_db_path.display()
+        );
+
+        // 3. schema 初始化（WorkspaceRegistry::open 会自动 init_conn + 写入 schema_version）
+        let registry = match WorkspaceRegistry::open(&config.registry_db_path.to_string_lossy()) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [ERROR] schema 初始化失败: {}: {}",
+                    config.registry_db_path.display(),
+                    e
+                );
+                return 1;
+            }
+        };
+        eprintln!(
+            "[cw_daemon] [INFO] schema initialized: version={}, registry={}",
+            SCHEMA_VERSION,
+            config.registry_db_path.display()
+        );
+
+        // 4. G14: RecoveryHandler 执行基础健康检查
+        let recovery_config = callwarden_core::daemon::health::HealthConfig {
+            registry_db_path: config.registry_db_path.to_string_lossy().to_string(),
+            data_root: config.data_root.to_string_lossy().to_string(),
+            start_time: Instant::now(),
+            memory_max_bytes: 1024 * 1024 * 1024,
+        };
+        let recovery_handler =
+            callwarden_core::daemon::health::RecoveryHandler::new(recovery_config);
+        let recovery_result = recovery_handler.recover();
+        eprintln!(
+            "[cw_daemon] [INFO] recovery status: {} (healthy={}, degraded={}, unhealthy={})",
+            recovery_result["status"],
+            recovery_result["summary"]["healthy"],
+            recovery_result["summary"]["degraded"],
+            recovery_result["summary"]["unhealthy"],
+        );
+        if recovery_result["status"] == "unhealthy" {
+            eprintln!("[cw_daemon] [WARN] recovery completed with unhealthy status, check logs");
+        }
+        let workspace_count = registry.count_workspaces().unwrap_or(0);
+
+        // 5. 构造 state_factory 闭包（每个 worker 线程调用一次，独立 WorkspaceRegistry 连接）
+        let registry_db_path = config.registry_db_path.to_string_lossy().to_string();
+        let cache_capacity = config.snapshot_cache_capacity;
+        let data_root = config.data_root.clone();
+        let codegraph_db_path_template = config.codegraph_db_path_template.clone();
+        // 共享 SnapshotCache：所有 worker 复用同一个 cache 实例
+        let shared_snapshot_cache = Arc::new(SnapshotCache::new(cache_capacity));
+        // 共享 SnapshotCachePublisher（基于共享 cache）
+        let shared_publisher = Arc::new(
+            callwarden_core::daemon::replicator::SnapshotCachePublisher::new(Arc::clone(
+                &shared_snapshot_cache,
+            )),
+        );
+        let recovered_count = recover_all_workspaces_with_snapshot(
+            &config.registry_db_path,
+            &config.data_root,
+            Arc::clone(&shared_snapshot_cache),
+            Arc::clone(&shared_publisher),
+            config.codegraph_db_path_template.clone(),
+        );
+        eprintln!(
+            "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
+            recovered_count
+        );
+        let state_factory = move || -> io::Result<SnapshotDaemonState> {
+            let registry = WorkspaceRegistry::open(&registry_db_path)
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            let state = SnapshotDaemonState::with_registry_and_data_root(
+                registry,
+                Arc::clone(&shared_snapshot_cache),
+                data_root.clone(),
+            )
+            .with_snapshot_publisher(Arc::clone(&shared_publisher))
+            .with_codegraph_db_path_template(codegraph_db_path_template.clone());
+            Ok(state)
+        };
+
+        // 6. 构造 Windows ServerConfig（管道名/ACL 由 transport_windows 内部派生）
+        let server_config = ServerConfig {
+            max_message_bytes: callwarden_core::daemon::protocol::DEFAULT_MAX_MESSAGE_BYTES,
+            max_workers: config.max_workers,
+            request_timeout: config.request_timeout(),
+            accept_timeout: Duration::from_millis(200),
+        };
+
+        // 7. 启动 server（绑定 \\.\pipe\callwarden-<sid>，SDDL 仅授权 owner）
+        let mut handle: ServerHandle = match start_server(server_config, state_factory) {
+            Ok(h) => h,
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] server 启动失败: {}", e);
+                return 1;
+            }
+        };
+        eprintln!("[cw_daemon] [INFO] named pipe server listening");
+
+        // 8. 注册控制台 Ctrl+C / Ctrl+Break 优雅关闭
+        register_console_ctrl_handler();
+        eprintln!("[cw_daemon] [INFO] console ctrl handler registered (Ctrl+C/Ctrl+Break)");
+        eprintln!(
+            "[cw_daemon] [INFO] ready (workspaces={}), waiting for connections",
+            workspace_count
+        );
+
+        // 9. 主循环：等待停止信号
+        loop {
+            if STOP_FLAG.load(Ordering::SeqCst) {
+                eprintln!("[cw_daemon] [INFO] received stop signal, shutting down...");
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+
+        // 10. 优雅关闭（打断 accept → join worker 线程）
+        eprintln!("[cw_daemon] [INFO] shutting down server...");
+        handle.shutdown();
+        handle.join();
+        eprintln!("[cw_daemon] [INFO] server exited cleanly");
+        0
+    }
+
+    // ============================================
+    // schema-check 子命令
+    // ============================================
+
+    fn schema_check(strict: bool, cli: &Cli) -> i32 {
+        let mut config = match load_config(cli) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] 配置加载失败: {}", e);
+                return 1;
+            }
+        };
+        let _ = config.apply_env_overrides();
+        apply_cli_overrides(&mut config, cli);
+
+        // strict 模式：先读取 DB 实际 schema_version（不修改 DB）
+        if strict {
+            let db_path = config.registry_db_path.to_string_lossy().to_string();
+            match read_registry_schema_version(&db_path) {
+                Ok(Some(actual_version)) => {
+                    if actual_version != SCHEMA_VERSION {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] schema-check strict: version mismatch: db={}, expected={}",
+                            actual_version, SCHEMA_VERSION
+                        );
+                        return 1;
+                    }
+                    eprintln!(
+                        "[cw_daemon] [INFO] schema-check strict: version={} matches",
+                        actual_version
+                    );
+                }
+                Ok(None) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] schema-check strict: registry DB 未初始化: {}",
+                        config.registry_db_path.display()
+                    );
+                    return 1;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[cw_daemon] [ERROR] schema-check strict: 读取 schema_version 失败: {}: {}",
+                        config.registry_db_path.display(),
+                        e
+                    );
+                    return 1;
+                }
+            }
+        }
+
+        match WorkspaceRegistry::open(&config.registry_db_path.to_string_lossy()) {
+            Ok(registry) => {
+                let count = registry.count_workspaces().unwrap_or(0);
+                eprintln!(
+                    "[cw_daemon] [INFO] schema-check OK: version={}, workspaces={}, registry={}",
+                    SCHEMA_VERSION,
+                    count,
+                    config.registry_db_path.display()
+                );
+                0
+            }
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [ERROR] schema-check failed: {}: {}",
+                    config.registry_db_path.display(),
+                    e
+                );
+                1
+            }
+        }
+    }
+
+    // ============================================
+    // health-check 子命令（命名管道 ping）
+    // ============================================
+
+    fn health_check(timeout: u64, cli: &Cli) -> i32 {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, ReadFile, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+        use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+
+        let config = match load_config(cli) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] 配置加载失败: {}", e);
+                return 1;
+            }
+        };
+        let endpoint = cli
+            .socket
+            .clone()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(default_windows_endpoint);
+
+        if !endpoint.starts_with(r"\\.\pipe\callwarden-") {
+            eprintln!(
+                "[cw_daemon] [ERROR] health-check: 端点不是命名管道（期望 \\\\.\\pipe\\callwarden-<sid>）: {}",
+                endpoint
+            );
+            return 1;
+        }
+        let _ = config;
+
+        // 宽字符管道名（CreateFileW / WaitNamedPipeW 需要 PCWSTR）
+        let wide: Vec<u16> = std::path::Path::new(&endpoint)
+            .as_os_str()
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+
+        let deadline = Instant::now() + Duration::from_secs(timeout);
+        loop {
+            // WaitNamedPipeW 等待管道实例可用（daemon 未启动时管道不存在）
+            if unsafe { WaitNamedPipeW(wide.as_ptr(), 5000) } != 0 {
+                break;
+            }
+            if Instant::now() >= deadline {
+                eprintln!(
+                    "[cw_daemon] [ERROR] health-check timeout: daemon not responding at {}",
+                    endpoint
+                );
+                return 1;
+            }
+            thread::sleep(Duration::from_millis(200));
+        }
+
+        // 打开管道（阻塞模式；服务端协议：4 字节大端长度 + JSON）
+        let handle: HANDLE = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            eprintln!(
+                "[cw_daemon] [ERROR] health-check: CreateFileW 失败: {}",
+                endpoint
+            );
+            return 1;
+        }
+
+        // 发送 ping（与服务端 recv_message 一致：4 字节大端长度 + JSON）
+        let body = br#"{"id":1,"method":"ping","params":{}}"#;
+        let len = (body.len() as u32).to_be_bytes();
+        let mut frame = Vec::with_capacity(4 + body.len());
+        frame.extend_from_slice(&len);
+        frame.extend_from_slice(body);
+
+        let mut written: u32 = 0;
+        let ok_write = unsafe {
+            WriteFile(
+                handle,
+                frame.as_ptr(),
+                frame.len() as u32,
+                &mut written,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok_write == 0 {
+            unsafe { CloseHandle(handle) };
+            eprintln!(
+                "[cw_daemon] [ERROR] health-check: WriteFile 失败: {}",
+                endpoint
+            );
+            return 1;
+        }
+
+        // 读取 4 字节长度前缀（ReadFile 可能短读，循环补足）
+        let mut header = [0u8; 4];
+        let mut header_read: u32 = 0;
+        while header_read < 4 {
+            let mut n: u32 = 0;
+            let ptr = unsafe { header.as_mut_ptr().add(header_read as usize) };
+            let ok =
+                unsafe { ReadFile(handle, ptr, 4 - header_read, &mut n, std::ptr::null_mut()) };
+            if ok == 0 || n == 0 {
+                unsafe { CloseHandle(handle) };
+                eprintln!(
+                    "[cw_daemon] [ERROR] health-check: 读取响应长度失败: {}",
+                    endpoint
+                );
+                return 1;
+            }
+            header_read += n;
+        }
+        let resp_len = u32::from_be_bytes(header) as usize;
+        let mut resp = vec![0u8; resp_len];
+        let mut resp_read: u32 = 0;
+        while resp_read < resp_len as u32 {
+            let mut n: u32 = 0;
+            let ptr = unsafe { resp.as_mut_ptr().add(resp_read as usize) };
+            let ok = unsafe {
+                ReadFile(
+                    handle,
+                    ptr,
+                    (resp_len as u32) - resp_read,
+                    &mut n,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok == 0 || n == 0 {
+                unsafe { CloseHandle(handle) };
+                eprintln!(
+                    "[cw_daemon] [ERROR] health-check: 读取响应体失败: {}",
+                    endpoint
+                );
+                return 1;
+            }
+            resp_read += n;
+        }
+        unsafe { CloseHandle(handle) };
+
+        let parsed: serde_json::Value = match serde_json::from_slice(&resp) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [ERROR] health-check: 响应 JSON 解析失败: {}: {}",
+                    e, endpoint
+                );
+                return 1;
+            }
+        };
+        if parsed.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            eprintln!(
+                "[cw_daemon] [ERROR] health-check: daemon 返回异常响应: {}",
+                parsed
+            );
+            return 1;
+        }
+        eprintln!(
+            "[cw_daemon] [INFO] health-check OK: daemon responding at {}",
+            endpoint
+        );
+        0
+    }
+
+    // ============================================
+    // 辅助函数
+    // ============================================
+
+    /// 当前用户的默认命名管道端点：`\\.\pipe\callwarden-<sid>`。
+    fn default_windows_endpoint() -> String {
+        match callwarden_core::daemon::transport_windows::get_current_user_sid() {
+            Ok(sid) => format!(r"\\.\pipe\callwarden-{}", sid),
+            Err(e) => {
+                eprintln!("[cw_daemon] [ERROR] 获取当前用户 SID 失败: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    /// 加载配置：默认值 → 文件覆盖（如果 --config 指定）
+    fn load_config(
+        cli: &Cli,
+    ) -> Result<DaemonConfig, callwarden_core::daemon::config::ConfigError> {
+        if let Some(cfg_path) = &cli.config {
+            DaemonConfig::load_from_file(cfg_path)
+        } else {
+            Ok(DaemonConfig::default())
+        }
+    }
+
+    /// 应用 CLI 参数覆盖（最高优先级）
+    fn apply_cli_overrides(config: &mut DaemonConfig, cli: &Cli) {
+        if let Some(socket) = &cli.socket {
+            config.socket_path = socket.clone();
+        }
+        if let Some(workers) = cli.workers {
+            config.max_workers = workers;
+        }
+        if let Some(registry) = &cli.registry {
+            config.registry_db_path = registry.clone();
+        }
+        if let Some(capacity) = cli.cache_capacity {
+            config.snapshot_cache_capacity = capacity;
+        }
+    }
+
+    /// 读取 registry DB 中的 schema_version（只读，不修改 DB）。
+    fn read_registry_schema_version(db_path: &str) -> Result<Option<u32>, rusqlite::Error> {
+        use rusqlite::Connection;
+        let conn = Connection::open(db_path)?;
+        let version_str: Option<String> = conn
+            .query_row(
+                "SELECT value FROM daemon_state WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        Ok(version_str.and_then(|s| s.parse::<u32>().ok()))
+    }
+
+    /// 在完整 daemon state 已构造后恢复所有 workspace（与 Unix 分支同一生产路径）。
+    fn recover_all_workspaces_with_snapshot(
+        registry_db_path: &std::path::Path,
+        data_root: &std::path::Path,
+        snapshot_cache: Arc<SnapshotCache>,
+        snapshot_publisher: Arc<callwarden_core::daemon::replicator::SnapshotCachePublisher>,
+        codegraph_db_path_template: String,
+    ) -> usize {
+        let registry = match WorkspaceRegistry::open(&registry_db_path.to_string_lossy()) {
+            Ok(registry) => registry,
+            Err(e) => {
+                eprintln!("[cw_daemon] [WARN] recovery registry open failed: {}", e);
+                return 0;
+            }
+        };
+        let workspaces = match registry.list_workspaces(None) {
+            Ok(workspaces) => workspaces,
+            Err(e) => {
+                eprintln!("[cw_daemon] [WARN] recovery list_workspaces failed: {}", e);
+                return 0;
+            }
+        };
+        let mut state = SnapshotDaemonState::with_registry_and_data_root(
+            registry,
+            snapshot_cache,
+            data_root.to_path_buf(),
+        )
+        .with_snapshot_publisher(snapshot_publisher)
+        .with_codegraph_db_path_template(codegraph_db_path_template);
+
+        let mut recovered = 0usize;
+        for workspace in workspaces {
+            let Some(workspace_id) = workspace
+                .get("workspace_instance_id")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let owner_uid = workspace
+                .get("owner_uid")
+                .and_then(|value| value.as_u64())
+                .unwrap_or(0) as u32;
+            let response = dispatch(
+                &mut state,
+                PeerCredential {
+                    uid: owner_uid,
+                    gid: 0,
+                    pid: 0,
+                },
+                "workspace.recover",
+                &json!({ "workspace_instance_id": workspace_id }),
+                &[],
+            );
+            if response.get("ok").and_then(|value| value.as_bool()) == Some(true) {
+                let result = response.get("result").unwrap_or(&serde_json::Value::Null);
+                let applied = result
+                    .get("applied_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                let retry_recovered = result
+                    .get("retry_recovered_count")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0);
+                recovered += (applied + retry_recovered) as usize;
+            } else {
+                eprintln!(
+                    "[cw_daemon] [WARN] durable recovery deferred for ws={}: {}",
+                    workspace_id, response
+                );
+            }
+        }
+        recovered
     }
 }

@@ -21,14 +21,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, GetLastError, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, HANDLE,
-    INVALID_HANDLE_VALUE, TRUE, WAIT_OBJECT_0,
+    CloseHandle, GetLastError, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, FALSE,
+    HANDLE, INVALID_HANDLE_VALUE, TRUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows_sys::Win32::Security::{
-    GetTokenInformation, RevertToSelf, TokenUser, TOKEN_QUERY, SECURITY_ATTRIBUTES,
+    GetTokenInformation, RevertToSelf, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY,
 };
 use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
 use windows_sys::Win32::System::Pipes::{
@@ -37,9 +37,10 @@ use windows_sys::Win32::System::Pipes::{
     PIPE_WAIT,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateEventW, GetCurrentProcess, OpenProcessToken, SetEvent, WaitForSingleObject,
+    CreateEventW, GetCurrentProcess, OpenProcessToken, ResetEvent, SetEvent, WaitForMultipleObjects,
 };
-use windows_sys::Win32::System::IO::{OVERLAPPED, OVERLAPPED_0, OVERLAPPED_0_0};
+use windows_sys::Win32::System::IO::GetOverlappedResult;
+use windows_sys::Win32::System::IO::OVERLAPPED;
 
 use super::transport::{
     TransportConfig, TransportConnection, TransportListener, TransportPeerIdentity,
@@ -239,12 +240,93 @@ unsafe fn create_pipe_instance(
 // NamedPipeListener
 // ============================================
 
+/// 单个命名管道实例及其挂起中的 ConnectNamedPipe 状态。
+///
+/// 实例存放在 `Box` 中：OVERLAPPED 由内核持指针，实例移动会悬垂，
+/// Box 保证堆上地址稳定（Vec<Box<...>> 重分配只移动 Box 指针本身）。
+struct PipeInstance {
+    /// 管道实例句柄
+    handle: HANDLE,
+    /// 该实例专用的连接完成事件（手动重置；与 shutdown_event 分离，避免误判）
+    event: HANDLE,
+    /// ConnectNamedPipe 的 OVERLAPPED（hEvent = event，跨多次超时轮询保持存活）
+    overlapped: OVERLAPPED,
+    /// true = ConnectNamedPipe 已调用（挂起或已连接）；false = 尚未 arm
+    armed: bool,
+    /// true = 客户端已连接（ConnectNamedPipe 返回非零或 ERROR_PIPE_CONNECTED）
+    connected: bool,
+}
+
+impl PipeInstance {
+    fn new(pipe_name: &str, sa: &SecurityAttributesGuard) -> io::Result<Self> {
+        let handle = unsafe { create_pipe_instance(pipe_name, sa)? };
+        let event = unsafe { CreateEventW(ptr::null(), TRUE, 0, ptr::null()) };
+        if event.is_null() {
+            unsafe { CloseHandle(handle) };
+            return Err(io::Error::last_os_error());
+        }
+        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+        overlapped.hEvent = event;
+        Ok(Self {
+            handle,
+            event,
+            overlapped,
+            armed: false,
+            connected: false,
+        })
+    }
+
+    /// 调用 ConnectNamedPipe 使实例进入监听状态（可能立即检测到已连接客户端）。
+    fn arm(&mut self) -> io::Result<()> {
+        unsafe { ResetEvent(self.event) };
+        self.overlapped.hEvent = self.event;
+        let result = unsafe { ConnectNamedPipe(self.handle, &mut self.overlapped) };
+        if result == 0 {
+            let err = unsafe { GetLastError() };
+            if err == ERROR_PIPE_CONNECTED {
+                // 客户端在 arm 前已连接（CreateFileW 无需等待 ConnectNamedPipe）
+                self.armed = true;
+                self.connected = true;
+                return Ok(());
+            }
+            if err == ERROR_IO_PENDING {
+                self.armed = true;
+                self.connected = false;
+                return Ok(());
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("ConnectNamedPipe 失败 (error {})", err),
+            ));
+        }
+        // 返回非零：客户端已连接
+        self.armed = true;
+        self.connected = true;
+        Ok(())
+    }
+
+    /// 关闭实例句柄与完成事件。
+    fn close(&mut self) {
+        unsafe {
+            DisconnectNamedPipe(self.handle);
+            CloseHandle(self.handle);
+            CloseHandle(self.event);
+        }
+    }
+}
+
 /// Windows 命名管道监听器。
 ///
 /// Req 14.19（实例保活，硬要求）：
-/// 预创建 ≥2 个管道实例，并在服务每个已接受连接之前补建替换实例，
+/// 预创建 ≥2 个管道实例，且**每个实例都挂起 ConnectNamedPipe（监听中）**；
+/// 服务每个已接受连接之前补建替换实例并立即 arm（先补建、后服务），
 /// 消除两次 accept 之间的 pipe-busy / 端点缺失竞态窗口。
-/// 先补建、后服务——顺序颠倒即重新引入竞态。
+///
+/// ## 为什么必须全实例挂起
+/// 客户端 CreateFileW 不需要服务端已调用 ConnectNamedPipe 即可连接（连接先建立，
+/// 服务端随后 ConnectNamedPipe 返回 ERROR_PIPE_CONNECTED）。若存在"空闲但未监听"
+/// 的实例，客户端连上后无人服务会永久挂起。因此所有实例必须同时处于监听状态，
+/// accept 用 WaitForMultipleObjects 等待任意一个完成事件。
 pub struct NamedPipeListener {
     /// 管道名（`\\.\pipe\callwarden-<user-sid>`）
     pipe_name: String,
@@ -253,11 +335,11 @@ pub struct NamedPipeListener {
     sddl: String,
     /// SECURITY_ATTRIBUTES guard（生命周期与 listener 绑定）
     sa: SecurityAttributesGuard,
-    /// 空闲管道实例句柄池（始终保持 ≥1 个空闲实例）
-    free_instances: Vec<HANDLE>,
+    /// 全部监听中的管道实例（始终保持 ≥ MIN_PIPE_INSTANCES 个；Box 保证 OVERLAPPED 地址稳定）
+    instances: Vec<Box<PipeInstance>>,
     /// 停止标志
     stop_flag: Arc<AtomicBool>,
-    /// 用于打断 ConnectNamedPipe 阻塞的事件
+    /// 用于打断 WaitForMultipleObjects 阻塞的事件（等待数组第 0 个）
     shutdown_event: HANDLE,
     /// 传输配置
     config: TransportConfig,
@@ -270,9 +352,8 @@ impl NamedPipeListener {
     /// 绑定命名管道端点。
     ///
     /// 1. 获取当前用户 SID
-    /// 2. 派生管道名 `\\.\pipe\callwarden-<user-sid>`
-    /// 3. 构建 SDDL（owner + 可选 admins）
-    /// 4. 预创建 ≥2 个管道实例
+    /// 2. 派生管道名 `\\.\pipe\callwarden-<user-sid>` 与 SDDL（仅授权 owner SID）
+    /// 3. 预创建 ≥2 个管道实例并全部 arm（挂起 ConnectNamedPipe，Req 14.19）
     pub fn bind(config: &TransportConfig) -> io::Result<Self> {
         let owner_sid = get_current_user_sid()?;
         let pipe_name = format!(r"\\.\pipe\callwarden-{}", owner_sid);
@@ -285,40 +366,75 @@ impl NamedPipeListener {
             return Err(io::Error::last_os_error());
         }
 
-        // 预创建 ≥2 个管道实例（Req 14.19）
-        let mut free_instances = Vec::with_capacity(MIN_PIPE_INSTANCES);
+        // 预创建 ≥2 个管道实例并全部 arm（Req 14.19：全实例监听）
+        let mut instances = Vec::<Box<PipeInstance>>::with_capacity(MIN_PIPE_INSTANCES);
         for _ in 0..MIN_PIPE_INSTANCES {
-            let handle = unsafe { create_pipe_instance(&pipe_name, &sa)? };
-            free_instances.push(handle);
+            let mut instance = Box::new(PipeInstance::new(&pipe_name, &sa)?);
+            if let Err(e) = instance.arm() {
+                instance.close();
+                for inst in instances.iter_mut() {
+                    inst.close();
+                }
+                if !shutdown_event.is_null() {
+                    unsafe { CloseHandle(shutdown_event) };
+                }
+                return Err(e);
+            }
+            instances.push(instance);
         }
 
         Ok(Self {
             pipe_name,
             sddl,
             sa,
-            free_instances,
+            instances,
             stop_flag: Arc::new(AtomicBool::new(false)),
             shutdown_event,
             config: config.clone(),
         })
     }
 
-    /// 补建一个替换管道实例（Req 14.19：先补建、后服务）。
+    /// 补建一个替换管道实例并立即 arm（Req 14.19：先补建、后服务）。
+    ///
+    /// 必须在返回已接受连接**之前**调用，保证任意时刻都有 ≥ MIN_PIPE_INSTANCES
+    /// 个实例处于监听状态。
     fn replenish_instance(&mut self) -> io::Result<()> {
-        let handle = unsafe { create_pipe_instance(&self.pipe_name, &self.sa)? };
-        self.free_instances.push(handle);
+        let mut instance = Box::new(PipeInstance::new(&self.pipe_name, &self.sa)?);
+        if let Err(e) = instance.arm() {
+            instance.close();
+            return Err(e);
+        }
+        self.instances.push(instance);
         Ok(())
+    }
+
+    /// 接受一个已连接/已就绪的实例（Req 14.19：先补建替换实例，再返回连接）。
+    fn take_connected(&mut self, index: usize) -> io::Result<Box<dyn TransportConnection>> {
+        let mut instance = self.instances.swap_remove(index);
+        // 先补建替换实例并 arm（先补建、后服务——顺序颠倒即重新引入竞态）
+        if let Err(e) = self.replenish_instance() {
+            instance.close();
+            return Err(e);
+        }
+        let pipe_handle = instance.handle;
+        // 连接已建立，完成事件不再需要
+        unsafe { CloseHandle(instance.event) };
+        let peer_pid = get_pipe_client_pid(pipe_handle);
+        Ok(Box::new(NamedPipeConnection::new(
+            pipe_handle,
+            self.config.max_message_bytes,
+            peer_pid,
+        )))
     }
 }
 
 impl TransportListener for NamedPipeListener {
     /// 接受一个连接。
     ///
-    /// 流程（Req 14.19 先补建、后服务）：
-    /// 1. 从空闲池取一个管道实例
-    /// 2. ConnectNamedPipe 等待客户端连接（带超时以响应 shutdown）
-    /// 3. 连接建立后，**立即补建替换实例**
-    /// 4. 返回已连接的 NamedPipeConnection
+    /// 流程：
+    /// 1. 所有实例均挂起 ConnectNamedPipe（监听中），不存在"可连但无人服务"的实例
+    /// 2. WaitForMultipleObjects 等待 shutdown 事件或任意实例的完成事件
+    /// 3. 完成后先补建替换实例并 arm（Req 14.19），再返回已连接的 NamedPipeConnection
     fn accept(&mut self) -> io::Result<Box<dyn TransportConnection>> {
         loop {
             if self.stop_flag.load(Ordering::SeqCst) {
@@ -328,81 +444,88 @@ impl TransportListener for NamedPipeListener {
                 ));
             }
 
-            // 取一个空闲实例
-            let pipe_handle = self.free_instances.pop().ok_or_else(|| {
-                io::Error::new(io::ErrorKind::Other, "无空闲管道实例（不应发生）")
-            })?;
-
-            // 使用 OVERLAPPED + 事件实现带超时的 ConnectNamedPipe
-            let mut ov = OVERLAPPED {
-                Internal: 0,
-                InternalHigh: 0,
-                Anonymous: OVERLAPPED_0 {
-                    Anonymous: OVERLAPPED_0_0 {
-                        Offset: 0,
-                        OffsetHigh: 0,
-                    },
-                },
-                hEvent: self.shutdown_event,
-            };
-
-            let result = unsafe { ConnectNamedPipe(pipe_handle, &mut ov) };
-
-            if result == 0 {
-                let err = unsafe { GetLastError() };
-                if err == ERROR_PIPE_CONNECTED {
-                    // 客户端在 CreateNamedPipe 和 ConnectNamedPipe 之间已连接
-                    // 先补建替换实例（Req 14.19：先补建、后服务）
-                    self.replenish_instance()?;
-                    let peer_pid = get_pipe_client_pid(pipe_handle);
-                    return Ok(Box::new(NamedPipeConnection::new(
-                        pipe_handle,
-                        self.config.max_message_bytes,
-                        peer_pid,
-                    )));
-                }
-                if err == ERROR_IO_PENDING {
-                    // 等待连接或 shutdown 信号
-                    let wait =
-                        unsafe { WaitForSingleObject(self.shutdown_event, ACCEPT_TIMEOUT_MS) };
-                    if wait == WAIT_OBJECT_0 {
-                        // shutdown 信号
-                        unsafe { DisconnectNamedPipe(pipe_handle) };
-                        self.free_instances.push(pipe_handle);
-                        return Err(io::Error::new(
-                            io::ErrorKind::Interrupted,
-                            "listener shutdown",
-                        ));
-                    }
-                    // 超时：检查是否有连接到达
-                    // 取消 overlapped 操作并重试
-                    unsafe { DisconnectNamedPipe(pipe_handle) };
-                    self.free_instances.push(pipe_handle);
-                    continue;
-                }
-                // 其他错误
-                self.free_instances.push(pipe_handle);
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("ConnectNamedPipe 失败 (error {})", err),
-                ));
+            // 若有实例在 arm 时已检测到连接（ERROR_PIPE_CONNECTED / 非零返回），直接接受
+            if let Some(index) = self
+                .instances
+                .iter()
+                .position(|instance| instance.connected)
+            {
+                return self.take_connected(index);
             }
 
-            // ConnectNamedPipe 返回非零：连接成功
-            // 先补建替换实例（Req 14.19：先补建、后服务）
-            self.replenish_instance()?;
-            let peer_pid = get_pipe_client_pid(pipe_handle);
-            return Ok(Box::new(NamedPipeConnection::new(
-                pipe_handle,
-                self.config.max_message_bytes,
-                peer_pid,
-            )));
+            // 等待 shutdown 或任意实例的连接完成事件
+            // handles[0] = shutdown_event；handles[1..] = 各实例 event
+            let mut handles: Vec<HANDLE> = Vec::with_capacity(self.instances.len() + 1);
+            handles.push(self.shutdown_event);
+            for instance in self.instances.iter() {
+                handles.push(instance.event);
+            }
+            let wait = unsafe {
+                WaitForMultipleObjects(
+                    handles.len() as u32,
+                    handles.as_ptr(),
+                    FALSE,
+                    ACCEPT_TIMEOUT_MS,
+                )
+            };
+            if wait == WAIT_TIMEOUT {
+                continue;
+            }
+            if wait == WAIT_FAILED {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("WaitForMultipleObjects 失败 (error {})", unsafe {
+                        GetLastError()
+                    }),
+                ));
+            }
+            let signal_index = (wait - WAIT_OBJECT_0) as usize;
+            if signal_index == 0 {
+                // shutdown 信号
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "listener shutdown",
+                ));
+            }
+            let instance_index = signal_index - 1;
+            let Some(instance) = self.instances.get_mut(instance_index) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "实例索引越界（不应发生）",
+                ));
+            };
+
+            // 对应实例事件已触发：确认连接是否真正建立
+            let mut transferred: u32 = 0;
+            let completed = unsafe {
+                GetOverlappedResult(
+                    instance.handle,
+                    &instance.overlapped,
+                    &mut transferred,
+                    FALSE,
+                )
+            };
+            if completed != 0 {
+                return self.take_connected(instance_index);
+            }
+            let err = unsafe { GetLastError() };
+            if err == ERROR_IO_INCOMPLETE {
+                // 事件误触发（理论上不应发生）：忽略并继续等待
+                continue;
+            }
+            // 连接异常终止（如客户端在完成前断开）：丢弃该实例并补建替换
+            let mut instance = self.instances.swap_remove(instance_index);
+            instance.close();
+            if let Err(e) = self.replenish_instance() {
+                return Err(e);
+            }
+            continue;
         }
     }
 
     fn shutdown(&self) -> io::Result<()> {
         self.stop_flag.store(true, Ordering::SeqCst);
-        // 触发事件，打断 WaitForSingleObject
+        // 触发事件，打断 WaitForMultipleObjects
         unsafe { SetEvent(self.shutdown_event) };
         Ok(())
     }
@@ -414,12 +537,9 @@ impl TransportListener for NamedPipeListener {
 
 impl Drop for NamedPipeListener {
     fn drop(&mut self) {
-        // 关闭所有空闲管道实例
-        for handle in self.free_instances.drain(..) {
-            unsafe {
-                DisconnectNamedPipe(handle);
-                CloseHandle(handle);
-            }
+        // 关闭所有管道实例与完成事件
+        for instance in self.instances.iter_mut() {
+            instance.close();
         }
         if !self.shutdown_event.is_null() {
             unsafe { CloseHandle(self.shutdown_event) };
@@ -524,49 +644,92 @@ impl NamedPipeConnection {
 impl TransportConnection for NamedPipeConnection {
     fn recv_message(&mut self, max_bytes: usize) -> io::Result<Vec<u8>> {
         let limit = max_bytes.min(self.max_message_bytes);
-        let mut buf = vec![0u8; limit];
-        let mut bytes_read: u32 = 0;
-
-        // 消息模式管道：一次 ReadFile 读取一个完整消息
-        let ok = unsafe {
-            windows_sys::Win32::Storage::FileSystem::ReadFile(
-                self.handle,
-                buf.as_mut_ptr(),
-                limit as u32,
-                &mut bytes_read,
-                ptr::null_mut(),
-            )
-        };
-
-        if ok == 0 {
-            return Err(io::Error::last_os_error());
+        // 与 UnixTransportConnection 对齐的线协议：4 字节大端长度前缀 + JSON 载荷。
+        //
+        // 消息模式管道的读取约束：
+        // - ReadFile 一次返回一条完整消息；请求长度小于消息长度时返回
+        //   ERROR_MORE_DATA(234)（因此不能按 4 字节读前缀）。
+        // - 每次请求 limit 字节（完整缓冲），若客户端一次 WriteFile 写入整帧则一条消息
+        //   即可取回；若客户端 sendall 拆成多次 WriteFile（多条消息），循环累积直到
+        //   凑齐 4 + len 字节。
+        let mut frame: Vec<u8> = Vec::new();
+        loop {
+            let mut buf = vec![0u8; limit];
+            let mut n: u32 = 0;
+            let ok = unsafe {
+                windows_sys::Win32::Storage::FileSystem::ReadFile(
+                    self.handle,
+                    buf.as_mut_ptr(),
+                    limit as u32,
+                    &mut n,
+                    ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(234) {
+                    // ERROR_MORE_DATA：单条消息超过 limit，按协议拒绝
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("消息过大: > {} 字节", limit),
+                    ));
+                }
+                return Err(err);
+            }
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "管道连接关闭（读取消息时）",
+                ));
+            }
+            frame.extend_from_slice(&buf[..n as usize]);
+            if frame.len() >= 4 {
+                let len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
+                if len > limit {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("消息过大: {} > {}", len, limit),
+                    ));
+                }
+                if frame.len() >= 4 + len {
+                    return Ok(frame[4..4 + len].to_vec());
+                }
+            }
         }
-
-        buf.truncate(bytes_read as usize);
-        Ok(buf)
     }
 
     fn send_message(&mut self, data: &[u8]) -> io::Result<()> {
+        // 与 recv_message 对称：4 字节大端长度前缀 + JSON 载荷，一次 WriteFile 一条消息。
+        // （若 WriteFile 短写，剩余字节继续写，客户端字节流语义可正确重组）
+        let len = (data.len() as u32).to_be_bytes();
+        let mut frame = Vec::with_capacity(4 + data.len());
+        frame.extend_from_slice(&len);
+        frame.extend_from_slice(data);
+
         let mut bytes_written: u32 = 0;
-        let ok = unsafe {
-            windows_sys::Win32::Storage::FileSystem::WriteFile(
-                self.handle,
-                data.as_ptr(),
-                data.len() as u32,
-                &mut bytes_written,
-                ptr::null_mut(),
-            )
-        };
-
-        if ok == 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        if bytes_written as usize != data.len() {
-            return Err(io::Error::new(io::ErrorKind::WriteZero, "管道写入不完整"));
+        while (bytes_written as usize) < frame.len() {
+            let mut n: u32 = 0;
+            let ok = unsafe {
+                windows_sys::Win32::Storage::FileSystem::WriteFile(
+                    self.handle,
+                    frame.as_ptr().add(bytes_written as usize),
+                    (frame.len() - bytes_written as usize) as u32,
+                    &mut n,
+                    ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "管道写入零字节"));
+            }
+            bytes_written += n;
         }
 
         // 刷新管道缓冲区
+        // 注意：FlushFileBuffers 在命名管道上会等待客户端读走数据，客户端等待响应时
+        // 双方互不阻塞（客户端 recv 正在进行）；失败不致命，忽略返回值。
         unsafe {
             windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(self.handle);
         }

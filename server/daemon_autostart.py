@@ -183,27 +183,46 @@ def _try_connect_windows(endpoint: str) -> Optional[socket.socket]:
         from ctypes import wintypes
 
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        from ctypes import wintypes
+
+        # 64 位进程必须显式声明 restype/argtypes，否则 HANDLE 返回被截断为 32 位，
+        # 失败的 CreateFileW 会被误判为成功（低 32 位 -1 != 64 位 -1）。
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
 
         GENERIC_READ = 0x80000000
         GENERIC_WRITE = 0x40000000
         OPEN_EXISTING = 3
-        FILE_FLAG_OVERLAPPED = 0x40000000
+        ERROR_PIPE_BUSY = 231
 
-        handle = kernel32.CreateFileW(
-            endpoint,
-            GENERIC_READ | GENERIC_WRITE,
-            0,       # 不共享
-            None,    # 默认安全属性
-            OPEN_EXISTING,
-            0,       # 同步 I/O
-            None,    # 无模板文件
-        )
-
-        INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
-        if handle == INVALID_HANDLE_VALUE or handle is None:
-            return None
-
-        return _WindowsPipeSocket(handle)
+        INVALID_HANDLE_VALUE = wintypes.HANDLE(-1).value
+        # 标准命名管道客户端模式：所有实例瞬时繁忙时 CreateFileW 返回
+        # ERROR_PIPE_BUSY(231)，按惯例退避重试几次再放弃（服务端 accept 之间
+        # 会补建替换实例，重试窗口内必然恢复）。
+        for _ in range(5):
+            handle = kernel32.CreateFileW(
+                endpoint,
+                GENERIC_READ | GENERIC_WRITE,
+                0,       # 不共享
+                None,    # 默认安全属性
+                OPEN_EXISTING,
+                0,       # 同步 I/O
+                None,    # 无模板文件
+            )
+            if handle != INVALID_HANDLE_VALUE and handle is not None:
+                return _WindowsPipeSocket(handle)
+            if ctypes.windll.kernel32.GetLastError() != ERROR_PIPE_BUSY:
+                return None
+            time.sleep(0.05)
+        return None
     except Exception:
         return None
 
@@ -420,20 +439,32 @@ def _find_daemon_binary() -> Optional[str]:
     if env_bin and os.path.isfile(env_bin):
         return env_bin
 
-    # PATH 搜索
-    name = "cw_daemon.exe" if sys.platform == "win32" else "cw_daemon"
-    found = shutil.which(name)
-    if found:
-        return found
+    # PATH 搜索（cargo bin target 名为 cw-daemon，产物为 cw-daemon.exe；兼容旧命名 cw_daemon）
+    names = (
+        ["cw_daemon.exe", "cw-daemon.exe"]
+        if sys.platform == "win32"
+        else ["cw_daemon", "cw-daemon"]
+    )
+    for name in names:
+        found = shutil.which(name)
+        if found:
+            return found
 
     # 项目构建产物（开发环境）
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if sys.platform == "win32":
-        candidate = os.path.join(project_root, "rust_ext", "target", "release", "cw_daemon.exe")
+        candidates = [
+            os.path.join(project_root, "rust_ext", "target", "release", "cw-daemon.exe"),
+            os.path.join(project_root, "rust_ext", "target", "release", "cw_daemon.exe"),
+        ]
     else:
-        candidate = os.path.join(project_root, "rust_ext", "target", "release", "cw_daemon")
-    if os.path.isfile(candidate):
-        return candidate
+        candidates = [
+            os.path.join(project_root, "rust_ext", "target", "release", "cw-daemon"),
+            os.path.join(project_root, "rust_ext", "target", "release", "cw_daemon"),
+        ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
 
     return None
 
@@ -459,9 +490,35 @@ def _get_windows_user_sid() -> str:
 
         advapi32 = ctypes.windll.advapi32  # type: ignore[attr-defined]
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        from ctypes import wintypes
+
+        # 64 位进程必须显式声明 argtypes/restype，否则 HANDLE 在指针截断后
+        # OpenProcessToken 失败，SID 退化为 "unknown"。
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.ConvertSidToStringSidW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_wchar_p),
+        ]
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.LocalFree.argtypes = [wintypes.HANDLE]
 
         # 获取当前进程 token
-        token = ctypes.c_void_p()
+        token = wintypes.HANDLE()
         TOKEN_QUERY = 0x0008
         ok = advapi32.OpenProcessToken(
             kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)

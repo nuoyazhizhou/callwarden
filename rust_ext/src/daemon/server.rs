@@ -34,13 +34,13 @@ use std::time::Duration;
 #[cfg(unix)]
 use crossbeam_channel::{bounded, Sender};
 #[cfg(not(unix))]
-use crossbeam_channel::bounded;
+use crossbeam_channel::{bounded, Sender};
 
 use super::dispatch::{DaemonStateExt, PeerCredential};
 #[cfg(unix)]
 use super::protocol::{make_error_response, send_message, DEFAULT_MAX_MESSAGE_BYTES};
 #[cfg(not(unix))]
-use super::protocol::make_error_response;
+use super::protocol::{make_error_response, DEFAULT_MAX_MESSAGE_BYTES};
 use super::transport::{TransportConnection, TransportListener, TransportPeerIdentity};
 
 #[cfg(unix)]
@@ -90,6 +90,43 @@ impl Default for ServerConfig {
             socket_mode: 0o660,
             accept_timeout: Duration::from_millis(200),
             socket_group: None,
+        }
+    }
+}
+
+// ============================================
+// Windows 命名管道 server 配置（D0 3.2，Req 14.1–14.4）
+// ============================================
+
+/// Windows 命名管道 server 配置。
+///
+/// 与 Unix `ServerConfig` 的差异：
+/// - 无 `socket_path` / `socket_mode` / `socket_group`：管道名由当前用户 SID 派生
+///   （`\\.\pipe\callwarden-<user-sid>`），SDDL 由 `transport_windows` 构建，
+///   只授权 owner SID（可选附加 local administrators），不暴露其他端点（Req 14.18、14.20）。
+/// - 无 `max_fds`：Windows 命名管道无 SCM_RIGHTS，客户端走 `canonical_bytes_b64` 参数路径。
+/// - 字段直接映射到 `TransportConfig`，由 `create_listener(config)` 绑定 NamedPipeListener。
+#[cfg(windows)]
+#[derive(Debug, Clone)]
+pub struct ServerConfig {
+    /// 最大消息字节数（默认 8 MB）
+    pub max_message_bytes: usize,
+    /// 工作线程数（默认 16）
+    pub max_workers: usize,
+    /// 单请求超时（默认 30 秒）
+    pub request_timeout: Duration,
+    /// accept 循环的超时（用于响应 shutdown 信号）
+    pub accept_timeout: Duration,
+}
+
+#[cfg(windows)]
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
+            max_workers: 16,
+            request_timeout: Duration::from_secs(30),
+            accept_timeout: Duration::from_millis(200),
         }
     }
 }
@@ -310,7 +347,8 @@ where
     let (worker_tx, worker_rx) = bounded::<UnixStream>(config.max_workers);
 
     // 唯一串行化点（Req 14.6）：所有 worker 共享同一实例
-    let serialization_point = Arc::new(super::serialization::SerializationPoint::with_default_timeout());
+    let serialization_point =
+        Arc::new(super::serialization::SerializationPoint::with_default_timeout());
 
     // 启动 worker 线程池
     let state_factory = Arc::new(state_factory);
@@ -432,7 +470,13 @@ fn worker_loop<F, S>(
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
 
-        if let Err(e) = handle_connection(&mut stream, &mut state, max_message_bytes, max_fds, serialization_point) {
+        if let Err(e) = handle_connection(
+            &mut stream,
+            &mut state,
+            max_message_bytes,
+            max_fds,
+            serialization_point,
+        ) {
             eprintln!("[cw_daemon] connection error: {}", e);
         }
     }
@@ -491,7 +535,14 @@ where
     let response = if method.is_empty() || !params.is_object() {
         make_error_response("invalid_request", "method/params 类型错误")
     } else {
-        super::dispatch::dispatch_rpc(state, peer, method, &params, &received_fds, serialization_point)
+        super::dispatch::dispatch_rpc(
+            state,
+            peer,
+            method,
+            &params,
+            &received_fds,
+            serialization_point,
+        )
     };
 
     // 5. 附加 request_id
@@ -547,6 +598,185 @@ where
 {
     let sp = super::serialization::SerializationPoint::with_default_timeout();
     handle_connection(stream, state, max_message_bytes, max_fds, &sp)
+}
+
+// ============================================
+// Windows 命名管道 server（D0 3.2，Req 14.1–14.4，Req 14.18–14.21）
+// ============================================
+
+/// Windows 命名管道 server 句柄（用于 shutdown 控制）。
+///
+/// 与 Unix `ServerHandle` 的差异：
+/// - 无 socket 文件需要清理（命名管道由 OS 管理，句柄关闭即释放）。
+/// - 持有 `Arc<Mutex<Box<dyn TransportListener>>>`：shutdown 时调用
+///   `NamedPipeListener::shutdown()`（SetEvent 打断 ConnectNamedPipe 阻塞），
+///   否则 blocking accept 无法退出。
+#[cfg(windows)]
+pub struct ServerHandle {
+    stop_flag: Arc<AtomicBool>,
+    /// accept 线程 join handle（用于等待 server 退出）
+    accept_thread: Option<thread::JoinHandle<()>>,
+    /// worker 线程 join handles
+    worker_handles: Vec<thread::JoinHandle<()>>,
+    /// 监听器（accept 线程独占；handle 保留引用以在 shutdown 时打断 accept 阻塞）
+    listener: Option<Arc<std::sync::Mutex<Box<dyn TransportListener>>>>,
+}
+
+#[cfg(windows)]
+impl ServerHandle {
+    /// 请求 server 停止（非阻塞）。
+    ///
+    /// 设置 stop_flag 后调用 `NamedPipeListener::shutdown()`（设置内部 stop_flag
+    /// + SetEvent 打断 WaitForSingleObject），使 accept 线程在下一次轮询时以
+    /// `io::ErrorKind::Interrupted` 退出。
+    pub fn shutdown(&mut self) {
+        self.stop_flag.store(true, Ordering::SeqCst);
+        if let Some(ref listener) = self.listener {
+            if let Ok(guard) = listener.lock() {
+                let _ = guard.shutdown();
+            }
+        }
+    }
+
+    /// 等待 server 完全退出（阻塞当前线程）。
+    pub fn join(&mut self) {
+        if let Some(handle) = self.accept_thread.take() {
+            let _ = handle.join();
+        }
+        for handle in self.worker_handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for ServerHandle {
+    fn drop(&mut self) {
+        self.shutdown();
+        self.join();
+    }
+}
+
+/// 启动 Windows 命名管道 server，返回 ServerHandle 用于 shutdown 控制。
+///
+/// 流程（Req 14.19 先补建、后服务由 NamedPipeListener 内部保证）：
+/// 1. `create_listener(config)` 绑定 `\\.\pipe\callwarden-<user-sid>`（SDDL 仅授权
+///    owner SID，Req 14.18），预创建 ≥2 个管道实例。
+/// 2. accept 线程阻塞在 `TransportListener::accept()`，接受连接后投递到有界
+///    worker 通道（背压拒绝）。
+/// 3. worker 线程复用跨平台 `transport_worker_loop`：对端身份经 peercred Windows
+///    分支（ImpersonateNamedPipeClient + TokenUser SID，Req 14.5）派生，Protected_Mutation
+///    经唯一串行化点 `SerializationPoint`（Req 14.6）执行。
+///
+/// 不暴露 TCP/HTTPS/AF_UNIX 端点（Req 14.20、14.21）——Windows 仅绑定命名管道。
+#[cfg(windows)]
+pub fn start_server<F, S>(config: ServerConfig, state_factory: F) -> io::Result<ServerHandle>
+where
+    F: Fn() -> io::Result<S> + Send + Sync + 'static,
+    S: DaemonStateExt + Send + 'static,
+{
+    let transport_config = super::transport::TransportConfig {
+        max_message_bytes: config.max_message_bytes,
+        max_workers: config.max_workers,
+        request_timeout: config.request_timeout,
+        accept_timeout: config.accept_timeout,
+    };
+    let listener = super::transport::create_listener(&transport_config)?;
+    eprintln!(
+        "[cw_daemon] [INFO] named pipe endpoint: {}",
+        listener.endpoint_description()
+    );
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let (worker_tx, worker_rx) = bounded::<Box<dyn TransportConnection>>(config.max_workers);
+
+    // 唯一串行化点（Req 14.6）：所有 worker 共享同一实例
+    let serialization_point =
+        Arc::new(super::serialization::SerializationPoint::with_default_timeout());
+
+    // 启动 worker 线程池（复用跨平台 worker 循环，与 start_server_transport 一致）
+    let state_factory = Arc::new(state_factory);
+    let mut worker_handles = Vec::with_capacity(config.max_workers);
+    for worker_idx in 0..config.max_workers {
+        let state_factory = state_factory.clone();
+        let worker_rx = worker_rx.clone();
+        let stop_flag = stop_flag.clone();
+        let max_message_bytes = config.max_message_bytes;
+        let request_timeout = config.request_timeout;
+        let sp = serialization_point.clone();
+
+        let handle = thread::Builder::new()
+            .name(format!("cw-daemon-worker-{}", worker_idx))
+            .spawn(move || {
+                transport_worker_loop(
+                    &state_factory,
+                    worker_rx,
+                    stop_flag,
+                    max_message_bytes,
+                    request_timeout,
+                    &sp,
+                );
+            })?;
+        worker_handles.push(handle);
+    }
+
+    // accept 线程：listener 由 accept 线程独占；handle 保留 Arc<Mutex> 引用以便
+    // shutdown 时调用 listener.shutdown() 打断 ConnectNamedPipe 阻塞。
+    // NamedPipeListener::accept 内部每 200ms 轮询自身 stop_flag，因此锁等待有界。
+    let listener = Arc::new(std::sync::Mutex::new(listener));
+    let accept_listener = Arc::clone(&listener);
+    let stop_flag_clone = stop_flag.clone();
+    let accept_thread = thread::Builder::new()
+        .name("cw-daemon-accept".to_string())
+        .spawn(move || {
+            windows_accept_loop(&accept_listener, worker_tx, stop_flag_clone);
+        })?;
+
+    Ok(ServerHandle {
+        stop_flag,
+        accept_thread: Some(accept_thread),
+        worker_handles,
+        listener: Some(listener),
+    })
+}
+
+/// Windows accept 线程主循环：等待连接 → 分发到 worker 线程池。
+///
+/// `TransportListener::accept()`（NamedPipeListener）阻塞等待连接，带内部 200ms
+/// 超时轮询自身 stop_flag；shutdown 时 ServerHandle 调用 `listener.shutdown()`
+/// 使其返回 `io::ErrorKind::Interrupted`，循环退出。
+#[cfg(windows)]
+fn windows_accept_loop(
+    listener: &Arc<std::sync::Mutex<Box<dyn TransportListener>>>,
+    worker_tx: Sender<Box<dyn TransportConnection>>,
+    stop_flag: Arc<AtomicBool>,
+) {
+    while !stop_flag.load(Ordering::SeqCst) {
+        let mut guard = match listener.lock() {
+            Ok(guard) => guard,
+            Err(_) => break,
+        };
+        match guard.accept() {
+            Ok(conn) => {
+                // 发送到 worker channel，如果 channel 满了直接拒绝（背压）
+                drop(guard);
+                if worker_tx.try_send(conn).is_err() {
+                    // worker 池已满，拒绝连接（客户端会收到连接重置）
+                    eprintln!("[cw_daemon] worker pool full, rejecting connection");
+                }
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => break,
+            Err(e) => {
+                if stop_flag.load(Ordering::SeqCst) {
+                    // shutdown 触发的 accept 错误，正常退出
+                    break;
+                }
+                eprintln!("[cw_daemon] accept error: {}", e);
+                // 短暂 sleep 避免忙等
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
 }
 
 // ============================================
@@ -688,7 +918,8 @@ where
     let (worker_tx, worker_rx) = bounded::<Box<dyn TransportConnection>>(config.max_workers);
 
     // 唯一串行化点（Req 14.6）：所有 worker 共享同一实例
-    let serialization_point = Arc::new(super::serialization::SerializationPoint::with_default_timeout());
+    let serialization_point =
+        Arc::new(super::serialization::SerializationPoint::with_default_timeout());
 
     // 启动 worker 线程池
     let state_factory = Arc::new(state_factory);
@@ -767,7 +998,6 @@ fn transport_worker_loop<F, S>(
             return;
         }
     };
-
     while !stop_flag.load(Ordering::SeqCst) {
         let mut conn = match worker_rx.recv_timeout(request_timeout) {
             Ok(c) => c,
@@ -775,7 +1005,12 @@ fn transport_worker_loop<F, S>(
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
 
-        if let Err(e) = handle_transport_connection(&mut *conn, &mut state, max_message_bytes, serialization_point) {
+        if let Err(e) = handle_transport_connection(
+            &mut *conn,
+            &mut state,
+            max_message_bytes,
+            serialization_point,
+        ) {
             eprintln!("[cw_daemon] connection error: {}", e);
         }
     }
@@ -798,7 +1033,23 @@ where
 {
     conn.set_timeout(Duration::from_secs(30))?;
 
-    // 1. 获取对端身份（OS 内核保证不可伪造）
+    // 1. 接收 JSON-RPC 请求（无 FD，Windows 使用 base64 载荷）
+    //
+    // 顺序约束：必须先读后取对端身份——Windows 命名管道的
+    // ImpersonateNamedPipeClient 在服务端尚未读取任何数据时返回
+    // ERROR_CANNOT_IMPERSONATE (1368)，因此 peer_identity 必须在 recv 之后。
+    let request_bytes = match conn.recv_message(max_message_bytes) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            let response = make_error_response("protocol_error", &e.to_string());
+            if let Ok(json_bytes) = serde_json::to_vec(&response) {
+                let _ = conn.send_message(&json_bytes);
+            }
+            return Ok(());
+        }
+    };
+
+    // 2. 获取对端身份（OS 内核保证不可伪造）
     let identity = conn.peer_identity()?;
     let peer = match &identity {
         TransportPeerIdentity::Unix { uid, gid, pid } => PeerCredential {
@@ -815,18 +1066,7 @@ where
         },
     };
 
-    // 2. 接收 JSON-RPC 请求（无 FD，Windows 使用 base64 载荷）
-    let request_bytes = match conn.recv_message(max_message_bytes) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            let response = make_error_response("protocol_error", &e.to_string());
-            if let Ok(json_bytes) = serde_json::to_vec(&response) {
-                let _ = conn.send_message(&json_bytes);
-            }
-            return Ok(());
-        }
-    };
-
+    // 3. 解析 method / params / id
     let request: serde_json::Value = match serde_json::from_slice(&request_bytes) {
         Ok(v) => v,
         Err(e) => {
@@ -838,7 +1078,7 @@ where
         }
     };
 
-    // 3. 解析 method / params / id
+    // 4. 解析 method / params / id
     let request_id = request.get("id").cloned();
     let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = request
@@ -846,14 +1086,14 @@ where
         .cloned()
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
-    // 4. dispatch（Protected_Mutation 经串行化点，Req 14.6；无 FD，传空切片）
+    // 5. dispatch（Protected_Mutation 经串行化点，Req 14.6；无 FD，传空切片）
     let response = if method.is_empty() || !params.is_object() {
         make_error_response("invalid_request", "method/params 类型错误")
     } else {
         super::dispatch::dispatch_rpc(state, peer, method, &params, &[], serialization_point)
     };
 
-    // 5. 附加 request_id
+    // 6. 附加 request_id
     let final_response = if let Some(id) = request_id {
         let mut m = serde_json::Map::new();
         if let serde_json::Value::Object(obj) = response {
@@ -865,7 +1105,7 @@ where
         response
     };
 
-    // 6. 发送响应
+    // 7. 发送响应
     let json_bytes = serde_json::to_vec(&final_response).map_err(|e| {
         io::Error::new(io::ErrorKind::InvalidData, format!("序列化响应失败: {}", e))
     })?;
