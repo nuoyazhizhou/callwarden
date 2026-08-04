@@ -393,14 +393,31 @@ def test_pre_commit_hook_preserves_check_task_soft_gate():
 
 
 def test_pre_commit_hook_exits_nonzero_on_final_failure():
-    """pre-commit hook 重试耗尽后必须 exit 1（保持 AGENTS.md 规则 1 硬门禁）。"""
+    """pre-commit hook 重试耗尽（且看门狗降级也失败）后必须 exit 1（保持 AGENTS.md 规则 1 硬门禁）。"""
     installer = CallWardenInstaller()
     content = installer._pre_commit_hook()
     # 最终失败分支必须 exit 1
     assert "exit 1" in content, "hook 重试耗尽后必须 exit 1 阻止 commit"
-    # 必须有最终失败判断
-    assert "if [ \"$_refresh_attempt\" -ge \"$_refresh_max\" ]" in content, \
-        "hook 必须有最终失败判断分支"
+    # 必须有最终失败判断（refresh 成功标志 / 看门狗降级均失败时进入）
+    assert "if [ \"$_refresh_ok\" -ne 1 ]" in content, \
+        "hook 必须以 _refresh_ok 作为最终失败判断（含看门狗降级结果）"
+    # 重试计数变量为旧契约，仍须保留
+    assert "_refresh_attempt" in content and "_refresh_max=3" in content
+
+
+def test_pre_commit_hook_has_watchdog_degradation():
+    """pre-commit hook 内置卡死看门狗与降级刷新（T-1785824926483）。"""
+    installer = CallWardenInstaller()
+    content = installer._pre_commit_hook()
+    # 看门狗：mtime 采样函数 + 停滞计数 + 强制终止
+    assert "_stat_mtime" in content, "hook 必须提供 DB/WAL mtime 采样函数"
+    assert "_stall" in content, "hook 必须有停滞计数变量"
+    assert "kill -9" in content, "hook 看门狗必须能终止卡死的 refresh-all 进程"
+    # 降级：显式刷新本次提交的变更文件（规则 32 自动化）
+    assert "git diff --cached --name-only" in content, \
+        "hook 降级必须基于本次提交的变更文件清单"
+    assert "refresh $_changed_files" in content, \
+        "hook 降级必须调用 cw refresh <staged files>"
 
 
 def test_pre_commit_hook_refresh_all_present():
