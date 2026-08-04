@@ -470,14 +470,24 @@ fn worker_loop<F, S>(
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
 
-        if let Err(e) = handle_connection(
-            &mut stream,
-            &mut state,
-            max_message_bytes,
-            max_fds,
-            serialization_point,
-        ) {
-            eprintln!("[cw_daemon] connection error: {}", e);
+        // P1 修复（T-1785854423993）：与 transport_worker_loop 一致的 panic 隔离。
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handle_connection(
+                &mut stream,
+                &mut state,
+                max_message_bytes,
+                max_fds,
+                serialization_point,
+            )
+        }));
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                eprintln!("[cw_daemon] connection error: {}", e);
+            }
+            Err(_) => {
+                eprintln!("[cw_daemon] worker panic caught (UDS): handler 崩溃已被隔离");
+            }
         }
     }
 }
@@ -1005,13 +1015,36 @@ fn transport_worker_loop<F, S>(
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         };
 
-        if let Err(e) = handle_transport_connection(
-            &mut *conn,
-            &mut state,
-            max_message_bytes,
-            serialization_point,
-        ) {
-            eprintln!("[cw_daemon] connection error: {}", e);
+        // P1 修复（T-1785854423993）：handler 内 panic（如未嵌入 Python 的 daemon
+        // 调用 pyo3 依赖方法）不能杀死 worker 线程，也不能让客户端等不到响应。
+        // catch_unwind 把 panic 隔离在本连接内，worker 继续服务后续连接。
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handle_transport_connection(
+                &mut *conn,
+                &mut state,
+                max_message_bytes,
+                serialization_point,
+            )
+        }));
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                eprintln!("[cw_daemon] connection error: {}", e);
+            }
+            Err(_) => {
+                eprintln!(
+                    "[cw_daemon] worker panic caught: handler 崩溃已被隔离 \
+                     （请求未完成，worker 继续存活）"
+                );
+                // 尝试向客户端返回结构化错误（可能已断开，失败忽略）
+                let response = make_error_response(
+                    "internal_error",
+                    "daemon handler panic（请求未执行；Python 依赖方法需嵌入解释器）",
+                );
+                if let Ok(json_bytes) = serde_json::to_vec(&response) {
+                    let _ = conn.send_message(&json_bytes);
+                }
+            }
         }
     }
 }

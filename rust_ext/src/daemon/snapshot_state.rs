@@ -418,14 +418,36 @@ impl DaemonStateExt for SnapshotDaemonState {
         let mgr = self.snapshot_cache.get_or_create(workspace_instance_id);
 
         // 构建 + 发布（传入 workspace_id_num 用于 SQL 过滤）
-        let (generation, symbol_count, call_count) = mgr
-            .build_and_publish_blocking(
+        //
+        // T-1785854423993：cw-daemon 未嵌入 Python 解释器，build_and_publish_blocking
+        // 的 PyResult 错误路径（构造 PyErr）会 panic。此处 catch_unwind 把 panic 转为
+        // 结构化错误返回（带 request id），避免落到 worker 层变成无 id 的错误响应。
+        let publish_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mgr.build_and_publish_blocking(
                 &db_path,
                 workspace_id_num,
                 &build_context_hash,
                 snapshot_id,
             )
-            .map_err(|e| DaemonRpcError::internal_error(format!("build_and_publish: {}", e)))?;
+        }));
+        let (generation, symbol_count, call_count) = match publish_outcome {
+            Ok(Ok(v)) => v,
+            Ok(Err(_)) => {
+                // pyo3 0.29 的 PyErr Debug/Display 都会 `Python::attach`（需要解释器），
+                // daemon 未嵌入 Python 时格式化会再次 panic；直接丢弃 PyErr 返回通用错误。
+                return Err(DaemonRpcError::internal_error(
+                    "build_and_publish 失败（daemon 未嵌入 Python 解释器，无法输出 PyErr 详情）"
+                        .to_string(),
+                ));
+            }
+            Err(_) => {
+                return Err(DaemonRpcError::internal_error(
+                    "snapshot.publish panic: daemon 未嵌入 Python 解释器，Python 依赖的 \
+                     publish 路径不可用（请求已隔离）"
+                        .to_string(),
+                ));
+            }
+        };
 
         let mut m = Map::new();
         m.insert("generation".into(), Value::Number(generation.into()));

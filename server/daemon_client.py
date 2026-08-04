@@ -54,7 +54,7 @@ _NO_REMOTE = object()
 
 
 class DaemonUnavailableError(RuntimeError):
-    """enterprise 模式要求 daemon，但 socket 不可用。"""
+    """enterprise 模式要求 enterprise daemon，但 endpoint 不可用。"""
 
 
 class UnixDaemonRpcClient:
@@ -388,7 +388,7 @@ class DaemonClient:
         except Exception as exc:
             if mode == "enterprise":
                 raise DaemonUnavailableError(
-                    f"enterprise 模式要求 daemon，但 endpoint {endpoint} 不可用: {exc}"
+                    f"enterprise 模式要求 enterprise daemon，但 endpoint {endpoint} 不可用: {exc}"
                 ) from exc
 
         conn = ensure_daemon(endpoint, readiness_check=self._rpc._probe_connection)

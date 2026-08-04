@@ -869,20 +869,38 @@ impl SnapshotPublisher for SnapshotCachePublisher {
         // 获取或创建 SnapshotManager（per-workspace）
         let mgr = self.cache.get_or_create(workspace_instance_id);
 
-        // 调用 build_and_publish_blocking（返回 PyResult，但内部不持 GIL）
+        // 调用 build_and_publish_blocking（返回 PyResult，但内部不持 GIL）。
         // 成功路径：直接返回 (generation, symbol_count, call_count)
         // 失败路径：用 Debug 格式化（不需要 GIL）将 PyErr 转为 String
-        match mgr.build_and_publish_blocking(db_path, workspace_id, build_context_hash, None) {
-            Ok((generation, symbol_count, call_count)) => Ok(PublishResult {
+        //
+        // P1 修复（T-1785854423993）：cw-daemon 未嵌入 Python 解释器，pyo3 依赖的
+        // 错误路径（构造 PyErr）会 panic。这里用 catch_unwind 把 panic 转为结构化
+        // 错误返回，避免 panic 展开到 worker/serialization 层。成功路径是纯 Rust，
+        // 不受影响。
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            mgr.build_and_publish_blocking(db_path, workspace_id, build_context_hash, None)
+        }));
+        match outcome {
+            Ok(Ok((generation, symbol_count, call_count))) => Ok(PublishResult {
                 generation: generation as i64,
                 symbol_count,
                 call_count,
             }),
-            Err(py_err) => {
-                // PyErr → String：使用 Debug 格式化（不需要 GIL）
-                // 避免 Python::attach（需要初始化解释器，daemon 可能未初始化）
-                Err(format!("build_and_publish_blocking failed: {:?}", py_err))
+            Ok(Err(_)) => {
+                // 注意：pyo3 0.29 的 PyErr Debug/Display 都会 `Python::attach`（需要
+                // 解释器），daemon 未嵌入 Python 时格式化会再次 panic。只能丢弃 PyErr
+                // 并返回通用错误（原"Debug 不需要 GIL"注释在此版本不成立）。
+                Err(
+                    "build_and_publish_blocking failed (daemon 未嵌入 Python 解释器，\
+                     无法输出 PyErr 详情)"
+                        .to_string(),
+                )
             }
+            Err(_) => Err(
+                "snapshot publish panic: daemon 未嵌入 Python 解释器，Python 依赖的 \
+                 publish 路径不可用（请求已隔离，不影响其他请求）"
+                    .to_string(),
+            ),
         }
     }
 }

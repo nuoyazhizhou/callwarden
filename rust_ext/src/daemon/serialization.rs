@@ -30,6 +30,22 @@ struct Inner {
     busy: bool,
 }
 
+/// 串行化点占用 guard：Drop 时无条件释放 `busy`。
+///
+/// 必须用 RAII 而非"执行后手动复位"：handler 内若 panic（如未嵌入 Python 的
+/// daemon 调用 pyo3 依赖方法），panic 展开会触发 Drop，busy 必然复位，
+/// 后续 Protected_Mutation 不会因前一个请求崩溃而永久超时。
+struct BusyGuard<'a> {
+    inner: &'a Mutex<Inner>,
+}
+
+impl Drop for BusyGuard<'_> {
+    fn drop(&mut self) {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        inner.busy = false;
+    }
+}
+
 /// Protected_Mutation 唯一串行化点（Req 14.6）。
 ///
 /// 线程安全：内部 Mutex + 自旋等待实现带超时的互斥。
@@ -75,11 +91,7 @@ impl SerializationPoint {
     }
 
     /// 在串行化点执行 Protected_Mutation（自定义超时）。
-    pub fn execute_with_timeout<F, T>(
-        &self,
-        f: F,
-        timeout: Duration,
-    ) -> Result<T, DaemonRpcError>
+    pub fn execute_with_timeout<F, T>(&self, f: F, timeout: Duration) -> Result<T, DaemonRpcError>
     where
         F: FnOnce() -> Result<T, DaemonRpcError>,
     {
@@ -110,16 +122,9 @@ impl SerializationPoint {
             std::thread::sleep(Duration::from_millis(1));
         }
 
-        // 执行闭包（持有串行化点）
-        let result = f();
-
-        // 释放串行化点
-        {
-            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
-            inner.busy = false;
-        }
-
-        result
+        // 执行闭包（持有串行化点；guard 在正常返回与 panic 展开时都会释放 busy）
+        let _guard = BusyGuard { inner: &self.inner };
+        f()
     }
 
     /// 尝试立即获取串行化点（非阻塞）。
@@ -172,9 +177,8 @@ mod tests {
     #[test]
     fn test_execute_propagates_error() {
         let sp = SerializationPoint::with_default_timeout();
-        let result: Result<u32, _> = sp.execute(|| {
-            Err(DaemonRpcError::new("test_error", "模拟失败"))
-        });
+        let result: Result<u32, _> =
+            sp.execute(|| Err(DaemonRpcError::new("test_error", "模拟失败")));
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().code, "test_error");
     }
@@ -232,9 +236,7 @@ mod tests {
 
         // 在另一个线程尝试执行，应超时
         let sp2 = Arc::clone(&sp);
-        let handle = thread::spawn(move || {
-            sp2.execute(|| Ok(()))
-        });
+        let handle = thread::spawn(move || sp2.execute(|| Ok(())));
 
         let result = handle.join().unwrap();
         assert!(result.is_err());
@@ -289,5 +291,27 @@ mod tests {
     fn test_default_timeout_value() {
         let sp = SerializationPoint::with_default_timeout();
         assert_eq!(sp.timeout(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn test_handler_panic_releases_busy_flag() {
+        // T-1785854423993 回归：handler panic（如未嵌入 Python 的 daemon 调用
+        // pyo3 依赖方法）后，串行化点 busy 必须释放，后续 Protected_Mutation
+        // 不得因前一个请求崩溃而永久超时。
+        let sp = Arc::new(SerializationPoint::with_default_timeout());
+        let sp2 = Arc::clone(&sp);
+        let handle = std::thread::spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sp2.execute(|| -> Result<(), DaemonRpcError> {
+                    panic!("模拟 handler panic");
+                })
+            }));
+            assert!(outcome.is_err(), "execute 内的 panic 应传播到调用方");
+        });
+        handle.join().unwrap();
+
+        // panic 后串行化点必须可用（busy 已被 guard 复位）
+        assert!(sp.try_acquire(), "handler panic 后 busy 标志未被释放");
+        sp.release();
     }
 }
