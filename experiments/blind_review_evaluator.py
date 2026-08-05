@@ -270,6 +270,13 @@ _GENERATED_FILE_NAMES = {
     "pipfile.lock", "go.sum", "cargo.lock", "composer.lock", "gemfile.lock",
     "lock.json",
 }
+# 文档/规格类后缀（T-1785854667954 G0 归因治理）：非源码文件，不计入
+# 12.26 的“非注释源码行”。markdown/restructuredtext 的正文行会被
+# count_non_comment_added_lines 误算为源码行（如 migration-manifest.md 36 行），
+# 文档任务（design/review profile）的文档 diff 不应判定为 nontrivial code_change。
+_DOC_FILE_SUFFIXES = {
+    ".md", ".rst", ".txt", ".markdown", ".adoc", ".mdown", ".rdoc",
+}
 
 
 def count_non_comment_added_lines(diff_text: str) -> int:
@@ -297,11 +304,14 @@ def count_non_comment_added_lines(diff_text: str) -> int:
 
 
 def is_generated_path(rel_path: str) -> bool:
-    """按 Req 12.26 判定文件是否属于生成文件/构建产物（应排除）。"""
+    """按 Req 12.26 判定文件是否属于生成文件/构建产物/文档（应排除）。"""
     name = (rel_path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
     if name in _GENERATED_FILE_NAMES:
         return True
     for suffix in _GENERATED_FILE_SUFFIXES:
+        if name.endswith(suffix):
+            return True
+    for suffix in _DOC_FILE_SUFFIXES:
         if name.endswith(suffix):
             return True
     return False
