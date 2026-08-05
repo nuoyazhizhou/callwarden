@@ -26,6 +26,7 @@ from server.daemon_autostart import (  # noqa: E402
     try_connect,
 )
 from server.daemon_client import UnixDaemonRpcClient  # noqa: E402
+from callwarden.db.schema import SCHEMA_VERSION  # noqa: E402
 
 
 def _daemon_binary() -> str:
@@ -145,7 +146,9 @@ def test_rpc_ping_health_schema_version(daemon):
     health = client.call("health", {})
     assert health["status"] == "ok"
     schema = client.call("schema.version", {})
-    assert schema["version"] == 44
+    # 与 db/schema.py 动态对齐：若 Rust daemon SCHEMA_VERSION 与 Python 漂移，
+    # 本断言自动失败（T-1785919930949-f5feb98c 回归守卫）
+    assert schema["version"] == SCHEMA_VERSION
 
 
 def test_ensure_daemon_autostart(tmp_path):
