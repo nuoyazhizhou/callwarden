@@ -352,6 +352,96 @@ def test_schema_migration_v46_upgrade_via_named_pipe():
 
 
 @requires_binaries
+def test_task_db_shared_with_real_cw_cli():
+    """P2：daemon 与真实 `cw task` CLI 子进程共享同一权威库（默认路径推导）。
+
+    与 test_task_db_shared_with_python_cli（进程内 CodeGraphDB）不同，本测试启动真实
+    `cw.py task show/create` 子进程，并通过 USERPROFILE 让 CLI 走**默认路径推导**
+    （config.py:DB_PATH = ~/.callwarden/callwarden.db），验证：
+    1. daemon RPC 创建的任务能被真实 CLI `cw task show` 读取；
+    2. 真实 CLI `cw task create` 创建的任务能被 daemon RPC 读取；
+    3. 两者打开的是同一 DB 文件（fake_home/.callwarden/callwarden.db）。
+    必须位于 v46 测试之后、模块 daemon fixture 之前（独占默认管道）。
+    """
+    import re
+
+    from callwarden.config import _get_windows_user_sid
+
+    tmp = tempfile.mkdtemp(prefix="cw_e2e_cli_")
+    procs = []
+    try:
+        # fake home：daemon 的 task_db_path 与 CLI 默认推导（~/.callwarden/callwarden.db）指向同一文件
+        fake_home = os.path.join(tmp, "home")
+        task_db = os.path.join(fake_home, ".callwarden", "callwarden.db")
+
+        config = _daemon_config(tmp)
+        config["task_db_path"] = task_db
+        config_path = os.path.join(tmp, "daemon.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+
+        pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
+        proc = _spawn_daemon(config_path, tmp, "cli")
+        procs.append(proc)
+        assert _wait_daemon(pipe, proc), "daemon 未响应"
+
+        # CLI 子进程环境：USERPROFILE 指向 fake_home，使 config.py:DB_PATH 落到 task_db
+        cli_env = dict(os.environ)
+        cli_env["USERPROFILE"] = fake_home
+        cli_env["PYTHONPATH"] = _REPO_ROOT
+
+        def _cw_cli(args: list) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [sys.executable, os.path.join(_REPO_ROOT, "cw.py")] + args,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=cli_env,
+                timeout=60,
+            )
+
+        # 1. daemon RPC 创建任务
+        r = _client(
+            pipe,
+            ["rpc", "task.create", json.dumps({"title": "P2 CLI 共享 daemon 侧", "workspace_id": "ws-cli"})],
+        )
+        assert r["code"] == 0, r
+        task_id_d = r["json"].get("task_id")
+        assert task_id_d, r
+
+        # 2. 真实 CLI `cw task show` 读取 daemon 创建的任务（CLI 默认路径推导命中同一库）
+        p = _cw_cli(["task", "show", task_id_d])
+        assert p.returncode == 0, f"cw task show 失败: stdout={p.stdout[-800:]!r} stderr={p.stderr[-800:]!r}"
+        assert "P2 CLI 共享 daemon 侧" in p.stdout, p.stdout[-800:]
+
+        # 3. 真实 CLI `cw task create` 创建任务（输出语言跟随 CALLWARDEN_LANG，兼容中英）
+        p = _cw_cli(["task", "create", "--title", "P2 CLI 共享 cli 侧"])
+        assert p.returncode == 0, f"cw task create 失败: stdout={p.stdout[-800:]!r} stderr={p.stderr[-800:]!r}"
+        m = re.search(r"(?:任务 ID|Task ID):\s*(\S+)", p.stdout)
+        assert m, f"无法从 CLI 输出解析 task_id: {p.stdout[-800:]!r}"
+        task_id_p = m.group(1)
+
+        # 4. daemon RPC 读取 CLI 创建的任务
+        r = _client(pipe, ["rpc", "task.status", json.dumps({"task_id": task_id_p})])
+        assert r["code"] == 0, r
+        assert r["json"].get("status") == "open", r
+
+        # 5. 同一 DB 文件：CLI 默认推导路径（fake_home/.callwarden/callwarden.db）确实落盘且被写入
+        assert os.path.isfile(task_db), f"CLI 未在默认推导路径落盘: {task_db}"
+        assert os.path.realpath(task_db) == os.path.realpath(config["task_db_path"])
+    finally:
+        for p in procs:
+            if p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@requires_binaries
 def test_schema_version_via_named_pipe(daemon):
     """真实 Named Pipe：schema.version RPC 返回当前 SCHEMA_VERSION（47）。"""
     from callwarden.db.schema import SCHEMA_VERSION

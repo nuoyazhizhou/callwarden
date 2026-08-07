@@ -248,8 +248,17 @@ mod unix {
             "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
             recovered_count
         );
-        // P0 修复：任务库显式注入（config.task_db_path，权威 ~/.callwarden/callwarden.db）
+        // P0 修复：任务库路径解析（默认权威 ~/.callwarden/callwarden.db，可注入覆盖）
         let callwarden_db_path = config.resolve_task_db_path();
+        if callwarden_db_path.as_os_str().is_empty() {
+            // fail-closed：未注入 CW_DAEMON_TASK_DB 且缺少 HOME/USERPROFILE 时明确报配置错误
+            eprintln!(
+                "[cw_daemon] [ERROR] 配置错误：无法解析权威任务库路径 \
+                 （未注入 CW_DAEMON_TASK_DB 且缺少 HOME/USERPROFILE）。\
+                 请通过环境变量 CW_DAEMON_TASK_DB 显式指定任务库路径。"
+            );
+            return 1;
+        }
         // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
         let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
             &callwarden_db_path,
@@ -2080,8 +2089,17 @@ mod windows {
             "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
             recovered_count
         );
-        // P0 修复：任务库显式注入（config.task_db_path，权威 ~/.callwarden/callwarden.db）
+        // P0 修复：任务库路径解析（默认权威 ~/.callwarden/callwarden.db，可注入覆盖）
         let callwarden_db_path = config.resolve_task_db_path();
+        if callwarden_db_path.as_os_str().is_empty() {
+            // fail-closed：未注入 CW_DAEMON_TASK_DB 且缺少 HOME/USERPROFILE 时明确报配置错误
+            eprintln!(
+                "[cw_daemon] [ERROR] 配置错误：无法解析权威任务库路径 \
+                 （未注入 CW_DAEMON_TASK_DB 且缺少 HOME/USERPROFILE）。\
+                 请通过环境变量 CW_DAEMON_TASK_DB 显式指定任务库路径。"
+            );
+            return 1;
+        }
         // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
         let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
             &callwarden_db_path,

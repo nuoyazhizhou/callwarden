@@ -69,17 +69,36 @@ pub struct DaemonConfig {
     pub stage_toggle_db_path: PathBuf,
     /// Task 协同存储路径（TaskCollabStore 打开的任务库）
     ///
-    /// 必须显式指向 Call Warden 权威任务库 `~/.callwarden/callwarden.db`
+    /// 必须指向 Call Warden 权威任务库 `~/.callwarden/callwarden.db`
     /// （Python `config.py:DB_PATH`），daemon 与 Python `cw task` CLI 才能
-    /// 共享同一套任务状态。空字符串表示未注入，由 `resolve_task_db_path()`
-    /// 回退为 `registry_db_path.parent()/callwarden.db`（旧行为，仅兼容测试）。
-    #[serde(default)]
+    /// 共享同一套任务状态。
+    /// 默认值即权威路径（`default_authority_task_db_path()`）：旧配置 JSON 缺
+    /// 少该字段时由 `#[serde(default)]` 落到权威路径，直接启动（不注入、不设
+    /// 环境变量）也走权威路径；`CW_DAEMON_TASK_DB` 环境变量仍可显式覆盖。
+    /// 不再回退 `registry_db_path.parent()/callwarden.db`（旧行为会退到
+    /// `~/.callwarden/daemon/callwarden.db`，与 Python 权威库分裂，已废弃）。
+    #[serde(default = "default_authority_task_db_path")]
     pub task_db_path: PathBuf,
 }
 
 /// 默认 Stage_Toggle 配置存储路径（<data_root>/stage_toggle.db）
 pub fn default_stage_toggle_db_path() -> PathBuf {
     PathBuf::from(format!("{}/stage_toggle.db", DEFAULT_DATA_ROOT))
+}
+
+/// Call Warden 权威任务库路径（对齐 Python `config.py:DB_PATH`）
+///
+/// 解析 `~/.callwarden/callwarden.db`：Windows 用 `USERPROFILE`，其余用 `HOME`。
+/// 两者都缺失时返回空 `PathBuf`，由 `resolve_task_db_path()` 做 fail-closed 兜底。
+pub fn default_authority_task_db_path() -> PathBuf {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .unwrap_or_default();
+    if home.is_empty() {
+        // fail-closed：主目录未知时返回空路径，由调用方报配置错误
+        return PathBuf::new();
+    }
+    PathBuf::from(home).join(".callwarden").join("callwarden.db")
 }
 
 impl Default for DaemonConfig {
@@ -101,8 +120,8 @@ impl Default for DaemonConfig {
             socket_group: String::from("callwarden-clients"),
             // D0 3.12：Stage_Toggle 配置存储
             stage_toggle_db_path: default_stage_toggle_db_path(),
-            // P0 修复：task_db_path 默认空，由 resolve_task_db_path() 回退推导
-            task_db_path: PathBuf::new(),
+            // P0 修复：默认即 Python 权威任务库 ~/.callwarden/callwarden.db
+            task_db_path: default_authority_task_db_path(),
         }
     }
 }
@@ -228,22 +247,26 @@ impl DaemonConfig {
                 std::fs::create_dir_all(parent)?;
             }
         }
+        // P0 修复：确保任务库父目录存在（直接启动时 ~/.callwarden 可能尚未创建）
+        if let Some(parent) = self.task_db_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
         Ok(())
     }
 
     /// 解析 Task 协同存储路径（TaskCollabStore 使用的任务库）
     ///
-    /// 优先使用显式注入的 `task_db_path`（P0 修复：生产与 E2E 必须显式指向
-    /// Python 权威 `~/.callwarden/callwarden.db`）；为空时回退为
-    /// `registry_db_path.parent()/callwarden.db`（旧行为，仅保留兼容）。
+    /// 优先使用显式注入的 `task_db_path`（`CW_DAEMON_TASK_DB` 或配置 JSON）；
+    /// 为空时兜底到 Python 权威路径 `~/.callwarden/callwarden.db`
+    /// （`default_authority_task_db_path()`）。HOME/USERPROFILE 均缺失时
+    /// fail-closed：返回空路径，由调用方报配置错误，绝不回退 registry 父目录。
     pub fn resolve_task_db_path(&self) -> PathBuf {
         if !self.task_db_path.as_os_str().is_empty() {
             self.task_db_path.clone()
         } else {
-            self.registry_db_path
-                .parent()
-                .unwrap_or(&self.registry_db_path)
-                .join("callwarden.db")
+            default_authority_task_db_path()
         }
     }
 
@@ -267,6 +290,8 @@ mod tests {
         "CW_DAEMON_CODEGRAPH_DB_TEMPLATE",
         "CW_DAEMON_TASK_DB",
     ];
+    /// 权威任务库路径依赖的主目录环境变量（测试中一并隔离）
+    const HOME_ENV_KEYS: [&str; 2] = ["USERPROFILE", "HOME"];
     static DAEMON_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct IsolatedDaemonEnv {
@@ -279,11 +304,11 @@ mod tests {
             let lock = DAEMON_ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let saved = DAEMON_ENV_KEYS
-                .iter()
+            let keys = DAEMON_ENV_KEYS.iter().chain(HOME_ENV_KEYS.iter());
+            let saved = keys
                 .map(|key| (*key, std::env::var_os(key)))
                 .collect();
-            for key in DAEMON_ENV_KEYS {
+            for key in DAEMON_ENV_KEYS.iter().chain(HOME_ENV_KEYS.iter()) {
                 std::env::remove_var(key);
             }
             Self { saved, _lock: lock }
@@ -291,6 +316,12 @@ mod tests {
 
         fn set(&self, key: &'static str, value: &str) {
             std::env::set_var(key, value);
+        }
+
+        /// 将主目录统一指向指定路径（同时设置 USERPROFILE 与 HOME）
+        fn set_home(&self, path: &str) {
+            self.set("USERPROFILE", path);
+            self.set("HOME", path);
         }
     }
 
@@ -352,7 +383,9 @@ mod tests {
 
     #[test]
     fn test_old_config_without_task_db_path_still_loads() {
-        // P0 修复：旧配置 JSON 没有 task_db_path 字段，必须能反序列化（serde default）
+        // P0 修复：旧配置 JSON 没有 task_db_path 字段，serde default 落到权威路径
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/e2e");
         let tmp = tempfile::tempdir().unwrap();
         let cfg_path = tmp.path().join("old_daemon.json");
         std::fs::write(
@@ -361,26 +394,61 @@ mod tests {
         )
         .unwrap();
         let loaded = DaemonConfig::load_from_file(&cfg_path).unwrap();
-        assert!(loaded.task_db_path.as_os_str().is_empty());
-        // 空 task_db_path 时回退为 registry_db_path 父目录下的 callwarden.db
+        // 旧配置反序列化后 task_db_path 直接就是权威路径（不再是空 / registry 父目录回退）
+        assert_eq!(
+            loaded.task_db_path,
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
+        );
         assert_eq!(
             loaded.resolve_task_db_path(),
-            PathBuf::from("/tmp/callwarden.db")
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
         );
     }
 
     #[test]
     fn test_resolve_task_db_path_prefers_explicit() {
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/e2e");
         let mut cfg = DaemonConfig::default();
         cfg.registry_db_path = PathBuf::from("/tmp/reg/registry.db");
-        // 未注入 → 回退推导
-        assert_eq!(cfg.resolve_task_db_path(), PathBuf::from("/tmp/reg/callwarden.db"));
+        // 未注入 → 权威路径（不再回退 registry 父目录 /tmp/reg/callwarden.db）
+        assert_eq!(
+            cfg.resolve_task_db_path(),
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
+        );
         // 显式注入 → 优先使用
         cfg.task_db_path = PathBuf::from("/home/user/.callwarden/callwarden.db");
         assert_eq!(
             cfg.resolve_task_db_path(),
             PathBuf::from("/home/user/.callwarden/callwarden.db")
         );
+    }
+
+    #[test]
+    fn test_default_task_db_path_is_authority() {
+        // 直接启动（无配置注入、无环境变量）时默认值即权威路径
+        let env = IsolatedDaemonEnv::new();
+        env.set_home("/home/e2e");
+        let cfg = DaemonConfig::default();
+        assert_eq!(
+            cfg.task_db_path,
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
+        );
+        assert_eq!(
+            cfg.resolve_task_db_path(),
+            PathBuf::from("/home/e2e/.callwarden/callwarden.db")
+        );
+    }
+
+    #[test]
+    fn test_resolve_task_db_path_fail_closed_without_home() {
+        // HOME/USERPROFILE 均缺失且未注入 → resolve 返回空路径（fail-closed），
+        // 绝不回退 registry 父目录的旧错误路径
+        let env = IsolatedDaemonEnv::new(); // 已清理 USERPROFILE/HOME
+        let mut cfg = DaemonConfig::default();
+        cfg.task_db_path = PathBuf::new();
+        cfg.registry_db_path = PathBuf::from("/tmp/reg/registry.db");
+        assert!(cfg.resolve_task_db_path().as_os_str().is_empty());
     }
 
     #[test]
