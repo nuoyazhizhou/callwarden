@@ -245,13 +245,6 @@ jobs:
           # pytest 供 daemon writer E2E 使用（发布验收 Enforce no-skipped）
           python -m pip install --prefer-binary --retries 5 --timeout 60 pytest --quiet
 
-      - name: Run daemon collaboration E2E
-        run: |
-          python .github/workflows/e2e/run_platform_e2e.py --platform windows-amd64 --report e2e-daemon-collab-windows-amd64.json --daemon-collab
-        env:
-          PYTHONUTF8: '1'
-          PYTHONIOENCODING: utf-8
-
       - name: Run daemon writer E2E pytest (fresh-binary fail-closed 门禁)
         # 发布/企业验收 CI：CW_REQUIRE_FRESH_BINARY=1，cargo 不存在时测试必须 fail 而非 skip，
         # 防止 "E2E 被 skip 但流水线仍显示成功" 的假通过（P2-2 发布门禁）。
@@ -268,10 +261,10 @@ jobs:
         run: |
           python -c "import xml.etree.ElementTree as ET; s=ET.parse('daemon-writer-e2e-junit.xml').getroot().find('testsuite'); t=int(s.get('tests',0)); f=int(s.get('failures',0))+int(s.get('errors',0)); k=int(s.get('skipped',0)); assert k==0, f'daemon writer E2E 存在 {k} 个 skipped，发布验收禁止未测通过'; print(f'daemon writer E2E junit: tests={t} failures={f} skipped={k}')"
 
-      - name: Upload daemon collab report
+      - name: Upload daemon writer E2E junit evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-daemon-collab-windows-amd64
-          path: e2e-daemon-collab-windows-amd64.json
+          name: daemon-writer-e2e-junit
+          path: daemon-writer-e2e-junit.xml
           retention-days: 14

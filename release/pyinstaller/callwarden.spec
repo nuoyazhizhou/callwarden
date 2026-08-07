@@ -183,6 +183,21 @@ _local_hiddenimports = [
     'callwarden.install',
     'callwarden.server.mcp_server',
     'callwarden.cli.main',
+    # server/tools/* 由 tools/__init__.py 用 __import__ 动态注册（bca18c1 重构），
+    # PyInstaller 静态分析不可见，需显式收集，否则冻结 cw server --check-imports
+    # 报 ModuleNotFoundError: No module named 'callwarden.server.tools.tools_query'。
+    'callwarden.server.tools',
+    'callwarden.server.tools.tools_query',
+    'callwarden.server.tools.tools_workspace',
+    'callwarden.server.tools.tools_semantic',
+    'callwarden.server.tools.tools_task',
+    'callwarden.server.tools.tools_summary',
+    'callwarden.server.tools.tools_security',
+    'callwarden.server.tools.tools_rules',
+    'callwarden.server.tools.tools_collab',
+    'callwarden.server.tools.tools_p2_graph',
+    'callwarden.server.tools.tools_p3_identity',
+    'callwarden.server.tools.tools_p4_lease',
     # 注：cw.py 还动态加载 callwarden.tests.{test_name}（cw test 命令），
     # 但 tests 是开发期工具，打包产物中不收集。cw test 在打包后会 ImportError，
     # 这是预期行为——生产环境用户不应运行测试。
