@@ -340,16 +340,18 @@ class TestGetDefaultEndpoint:
             assert get_default_endpoint() == "/custom/path.sock"
 
     @mock.patch("sys.platform", "win32")
-    @mock.patch("server.daemon_autostart._get_windows_user_sid", return_value="S-1-5-21-123")
-    def test_windows_uses_named_pipe(self, mock_sid):
+    @mock.patch("callwarden.config._get_windows_user_sid", return_value="S-1-5-21-123")
+    @mock.patch("config._get_windows_user_sid", return_value="S-1-5-21-123")
+    def test_windows_uses_named_pipe(self, mock_sid1, mock_sid2):
         """Windows 使用命名管道路径。"""
         endpoint = get_default_endpoint()
         assert endpoint.startswith(r"\\.\pipe\callwarden-")
         assert "S-1-5-21-123" in endpoint
 
-    @mock.patch("callwarden.server.daemon_autostart._get_windows_user_sid", return_value="S-1-5-21-456")
+    @mock.patch("callwarden.config._get_windows_user_sid", return_value="S-1-5-21-456")
+    @mock.patch("config._get_windows_user_sid", return_value="S-1-5-21-456")
     @mock.patch("callwarden.server.daemon_autostart.sys.platform", "win32")
-    def test_rpc_client_uses_windows_endpoint(self, mock_sid):
+    def test_rpc_client_uses_windows_endpoint(self, mock_sid1, mock_sid2):
         """RPC client 默认 endpoint 必须与 autostart 使用同一命名管道。"""
         from server.daemon_client import DaemonClient, UnixDaemonRpcClient
 

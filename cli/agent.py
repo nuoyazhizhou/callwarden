@@ -14,11 +14,10 @@ import sys
 
 def main():
     """cw-agent 主入口。"""
-    if sys.platform != "linux":
+    if sys.platform not in ("linux", "win32"):
         print(
-            "ERROR: cw-agent is only supported on Linux.\n"
-            "Enterprise agent requires SO_PEERCRED, SCM_RIGHTS, and UDS.\n"
-            "On Windows/macOS, use 'cw' in local mode.",
+            "ERROR: cw-agent is supported on Linux and Windows.\n"
+            "On macOS, use 'cw' in local mode.",
             file=sys.stderr,
         )
         sys.exit(2)

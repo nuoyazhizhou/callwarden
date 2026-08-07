@@ -357,7 +357,7 @@ impl NamedPipeListener {
     pub fn bind(config: &TransportConfig) -> io::Result<Self> {
         let owner_sid = get_current_user_sid()?;
         let pipe_name = format!(r"\\.\pipe\callwarden-{}", owner_sid);
-        let sddl = build_pipe_sddl(&owner_sid, true);
+        let sddl = build_pipe_sddl(&owner_sid, false);
         let sa = unsafe { create_security_attributes(&sddl)? };
 
         // 创建 shutdown 事件（手动重置，初始无信号）
@@ -563,6 +563,8 @@ pub struct NamedPipeConnection {
     peer_pid: u32,
     /// 缓存的对端 SID（首次 peer_identity() 调用时获取）
     cached_sid: Option<String>,
+    /// I/O 超时时间
+    timeout: Option<Duration>,
 }
 
 // SAFETY: HANDLE 在 Windows 上是线程安全的
@@ -575,20 +577,17 @@ impl NamedPipeConnection {
             max_message_bytes,
             peer_pid,
             cached_sid: None,
+            timeout: None,
         }
     }
 
     /// 通过 ImpersonateNamedPipeClient 获取对端令牌 SID。
-    ///
-    /// 这是 SO_PEERCRED 的直接对等物：身份由内核在连接上下文里给出，
-    /// 客户端无法覆写（Req 14.5）。
     fn get_peer_sid(&mut self) -> io::Result<String> {
         if let Some(ref sid) = self.cached_sid {
             return Ok(sid.clone());
         }
 
         unsafe {
-            // 模拟客户端安全上下文
             if ImpersonateNamedPipeClient(self.handle) == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
@@ -596,17 +595,12 @@ impl NamedPipeConnection {
                 ));
             }
 
-            // 获取当前线程令牌（即对端令牌）
             let mut token: HANDLE = ptr::null_mut();
-            // OpenThreadToken 不在我们的 feature 中，使用 GetCurrentThread 等价
-            // 实际上 ImpersonateNamedPipeClient 后，OpenProcessToken 拿到的是模拟令牌
-            // 正确做法：使用 OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &token)
-            // 但 Win32_System_Threading feature 包含 OpenThreadToken
             let thread = windows_sys::Win32::System::Threading::GetCurrentThread();
             if windows_sys::Win32::System::Threading::OpenThreadToken(
                 thread,
                 TOKEN_QUERY,
-                0, // FALSE: 不模拟
+                0,
                 &mut token,
             ) == 0
             {
@@ -614,7 +608,6 @@ impl NamedPipeConnection {
                 return Err(io::Error::last_os_error());
             }
 
-            // 获取令牌用户 SID
             let mut needed: u32 = 0;
             GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut needed);
             let mut buf = vec![0u8; needed as usize];
@@ -644,38 +637,70 @@ impl NamedPipeConnection {
 impl TransportConnection for NamedPipeConnection {
     fn recv_message(&mut self, max_bytes: usize) -> io::Result<Vec<u8>> {
         let limit = max_bytes.min(self.max_message_bytes);
-        // 与 UnixTransportConnection 对齐的线协议：4 字节大端长度前缀 + JSON 载荷。
-        //
-        // 消息模式管道的读取约束：
-        // - ReadFile 一次返回一条完整消息；请求长度小于消息长度时返回
-        //   ERROR_MORE_DATA(234)（因此不能按 4 字节读前缀）。
-        // - 每次请求 limit 字节（完整缓冲），若客户端一次 WriteFile 写入整帧则一条消息
-        //   即可取回；若客户端 sendall 拆成多次 WriteFile（多条消息），循环累积直到
-        //   凑齐 4 + len 字节。
         let mut frame: Vec<u8> = Vec::new();
         loop {
             let mut buf = vec![0u8; limit];
             let mut n: u32 = 0;
+
+            let event = unsafe { CreateEventW(ptr::null(), TRUE, 0, ptr::null()) };
+            if event.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+            overlapped.hEvent = event;
+
             let ok = unsafe {
                 windows_sys::Win32::Storage::FileSystem::ReadFile(
                     self.handle,
-                    buf.as_mut_ptr(),
+                    buf.as_mut_ptr() as *mut _,
                     limit as u32,
                     &mut n,
-                    ptr::null_mut(),
+                    &mut overlapped,
                 )
             };
             if ok == 0 {
-                let err = io::Error::last_os_error();
-                if err.raw_os_error() == Some(234) {
-                    // ERROR_MORE_DATA：单条消息超过 limit，按协议拒绝
+                let err = unsafe { GetLastError() };
+                if err == ERROR_IO_PENDING {
+                    let ms = self
+                        .timeout
+                        .map(|t| t.as_millis() as u32)
+                        .unwrap_or(windows_sys::Win32::System::Threading::INFINITE);
+                    let wait = unsafe {
+                        windows_sys::Win32::System::Threading::WaitForSingleObject(event, ms)
+                    };
+                    if wait == WAIT_TIMEOUT {
+                        unsafe {
+                            windows_sys::Win32::System::IO::CancelIoEx(
+                                self.handle,
+                                &overlapped,
+                            );
+                            CloseHandle(event);
+                        }
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Windows named pipe ReadFile 超时",
+                        ));
+                    }
+                    if unsafe {
+                        GetOverlappedResult(self.handle, &overlapped, &mut n, TRUE)
+                    } == 0
+                    {
+                        unsafe { CloseHandle(event) };
+                        return Err(io::Error::last_os_error());
+                    }
+                } else if err == 234 {
+                    unsafe { CloseHandle(event) };
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("消息过大: > {} 字节", limit),
                     ));
+                } else {
+                    unsafe { CloseHandle(event) };
+                    return Err(io::Error::last_os_error());
                 }
-                return Err(err);
             }
+            unsafe { CloseHandle(event) };
+
             if n == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
@@ -699,8 +724,6 @@ impl TransportConnection for NamedPipeConnection {
     }
 
     fn send_message(&mut self, data: &[u8]) -> io::Result<()> {
-        // 与 recv_message 对称：4 字节大端长度前缀 + JSON 载荷，一次 WriteFile 一条消息。
-        // （若 WriteFile 短写，剩余字节继续写，客户端字节流语义可正确重组）
         let len = (data.len() as u32).to_be_bytes();
         let mut frame = Vec::with_capacity(4 + data.len());
         frame.extend_from_slice(&len);
@@ -709,27 +732,66 @@ impl TransportConnection for NamedPipeConnection {
         let mut bytes_written: u32 = 0;
         while (bytes_written as usize) < frame.len() {
             let mut n: u32 = 0;
+            let event = unsafe { CreateEventW(ptr::null(), TRUE, 0, ptr::null()) };
+            if event.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+            overlapped.hEvent = event;
+
+            let to_write = (frame.len() - bytes_written as usize) as u32;
             let ok = unsafe {
                 windows_sys::Win32::Storage::FileSystem::WriteFile(
                     self.handle,
-                    frame.as_ptr().add(bytes_written as usize),
-                    (frame.len() - bytes_written as usize) as u32,
+                    frame.as_ptr().add(bytes_written as usize) as *const _,
+                    to_write,
                     &mut n,
-                    ptr::null_mut(),
+                    &mut overlapped,
                 )
             };
             if ok == 0 {
-                return Err(io::Error::last_os_error());
+                let err = unsafe { GetLastError() };
+                if err == ERROR_IO_PENDING {
+                    let ms = self
+                        .timeout
+                        .map(|t| t.as_millis() as u32)
+                        .unwrap_or(windows_sys::Win32::System::Threading::INFINITE);
+                    let wait = unsafe {
+                        windows_sys::Win32::System::Threading::WaitForSingleObject(event, ms)
+                    };
+                    if wait == WAIT_TIMEOUT {
+                        unsafe {
+                            windows_sys::Win32::System::IO::CancelIoEx(
+                                self.handle,
+                                &overlapped,
+                            );
+                            CloseHandle(event);
+                        }
+                        return Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Windows named pipe WriteFile 超时",
+                        ));
+                    }
+                    if unsafe {
+                        GetOverlappedResult(self.handle, &overlapped, &mut n, TRUE)
+                    } == 0
+                    {
+                        unsafe { CloseHandle(event) };
+                        return Err(io::Error::last_os_error());
+                    }
+                } else {
+                    unsafe { CloseHandle(event) };
+                    return Err(io::Error::last_os_error());
+                }
             }
+            unsafe { CloseHandle(event) };
+
             if n == 0 {
                 return Err(io::Error::new(io::ErrorKind::WriteZero, "管道写入零字节"));
             }
             bytes_written += n;
         }
 
-        // 刷新管道缓冲区
-        // 注意：FlushFileBuffers 在命名管道上会等待客户端读走数据，客户端等待响应时
-        // 双方互不阻塞（客户端 recv 正在进行）；失败不致命，忽略返回值。
         unsafe {
             windows_sys::Win32::Storage::FileSystem::FlushFileBuffers(self.handle);
         }
@@ -738,9 +800,6 @@ impl TransportConnection for NamedPipeConnection {
     }
 
     fn peer_identity(&self) -> io::Result<TransportPeerIdentity> {
-        // 使用 unsafe 内部可变性获取 SID（缓存结果）
-        // 这里需要 &mut self，但 trait 签名是 &self
-        // 通过 unsafe 绕过（cached_sid 只在首次调用时写入，之后只读）
         let this = self as *const Self as *mut Self;
         let sid = unsafe { (*this).get_peer_sid()? };
         Ok(TransportPeerIdentity::Windows {
@@ -749,10 +808,8 @@ impl TransportConnection for NamedPipeConnection {
         })
     }
 
-    fn set_timeout(&mut self, _timeout: Duration) -> io::Result<()> {
-        // 命名管道消息模式下，超时由 ConnectNamedPipe 的 overlapped 控制
-        // 读写操作本身是同步的（消息模式保证一次读取一个完整消息）
-        // 如需读写超时，需改为 overlapped IO（当前设计不需要）
+    fn set_timeout(&mut self, timeout: Duration) -> io::Result<()> {
+        self.timeout = Some(timeout);
         Ok(())
     }
 }

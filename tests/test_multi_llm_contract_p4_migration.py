@@ -252,5 +252,5 @@ def test_assignment_does_not_authorize_write(db):
 
 
 def test_schema_version_is_46(db):
-    assert SCHEMA_VERSION == 46
+    assert SCHEMA_VERSION == 47
     assert issubclass(CodeGraphDB, LeaseMixin)

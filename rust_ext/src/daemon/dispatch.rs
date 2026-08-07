@@ -14,13 +14,71 @@ use super::protocol::{make_error_response, make_ok_response};
 use serde_json::{Map, Value};
 use std::time::Instant;
 
-/// peer credential（来自 SO_PEERCRED）
-#[derive(Debug, Clone, Copy)]
+/// peer credential（来自 SO_PEERCRED 或 Windows Named Pipe）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PeerCredential {
     pub uid: u32,
     pub gid: u32,
     pub pid: i32,
+    pub sid_len: u8,
+    pub sid_bytes: [u8; 128],
 }
+
+impl PeerCredential {
+    pub fn new_unix(uid: u32, gid: u32, pid: i32) -> Self {
+        Self {
+            uid,
+            gid,
+            pid,
+            sid_len: 0,
+            sid_bytes: [0u8; 128],
+        }
+    }
+
+    pub fn new_windows(sid: String, pid: u32) -> Self {
+        let bytes = sid.as_bytes();
+        let len = bytes.len().min(128);
+        let mut sid_bytes = [0u8; 128];
+        sid_bytes[..len].copy_from_slice(&bytes[..len]);
+        Self {
+            uid: u32::MAX,
+            gid: u32::MAX,
+            pid: pid as i32,
+            sid_len: len as u8,
+            sid_bytes,
+        }
+    }
+
+    pub fn sid(&self) -> Option<String> {
+        if self.sid_len > 0 {
+            std::str::from_utf8(&self.sid_bytes[..self.sid_len as usize])
+                .ok()
+                .map(|s| s.to_string())
+        } else {
+            None
+        }
+    }
+
+    pub fn owner_key(&self) -> String {
+        if let Some(s) = self.sid() {
+            return s;
+        }
+        #[cfg(unix)]
+        {
+            self.uid.to_string()
+        }
+        #[cfg(not(unix))]
+        {
+            if self.uid == u32::MAX {
+                crate::daemon::transport_windows::get_current_user_sid().unwrap_or_else(|_| "unknown".to_string())
+            } else {
+                self.uid.to_string()
+            }
+        }
+    }
+}
+
+
 
 /// daemon 运行状态（基础方法用，高级方法由 DaemonStateExt trait 扩展）
 pub struct DaemonState {
@@ -30,6 +88,8 @@ pub struct DaemonState {
     pub schema_version: u32,
     /// daemon 进程 PID
     pub pid: u32,
+    /// Task 协同存储
+    pub task_collab_store: Option<std::sync::Arc<super::task_collab::TaskCollabStore>>,
 }
 
 impl Default for DaemonState {
@@ -38,6 +98,7 @@ impl Default for DaemonState {
             start_time: Instant::now(),
             schema_version: super::SCHEMA_VERSION,
             pid: std::process::id(),
+            task_collab_store: None,
         }
     }
 }
@@ -535,6 +596,79 @@ pub trait DaemonStateExt {
         Err(DaemonRpcError::method_not_found("toolchain.list_bound"))
     }
 
+    // ---- Agent & Task 协同 RPC ----
+
+    fn handle_agent_register(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_agent_register(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("agent.register"))
+        }
+    }
+    fn handle_agent_heartbeat(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_agent_heartbeat(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("agent.heartbeat"))
+        }
+    }
+    fn handle_task_create(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_create(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.create"))
+        }
+    }
+    fn handle_task_claim(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_claim(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.claim"))
+        }
+    }
+    fn handle_task_work_next(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_work_next(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.work_next"))
+        }
+    }
+    fn handle_task_report(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_report(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.report"))
+        }
+    }
+    fn handle_task_handoff(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_handoff(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.handoff"))
+        }
+    }
+    fn handle_task_status(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_status(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.status"))
+        }
+    }
+    fn handle_task_events(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_events(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.events"))
+        }
+    }
+    fn handle_task_wait(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_wait(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.wait"))
+        }
+    }
+
     fn handle_collab_rpc(
         &mut self,
         peer: PeerCredential,
@@ -710,6 +844,12 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     // 数据库备份/还原（改变持久化状态）
     "backup",
     "restore",
+    // Task 协同写操作（multi-llm-contract-collaboration）
+    "agent.register",
+    "task.create",
+    "task.claim",
+    "task.report",
+    "task.handoff",
     // ---- D0 后续任务预留（Req 14.6 列举的 Protected_Mutation 类型）----
     // verdict 封存
     "verdict.submit",
@@ -754,7 +894,7 @@ pub fn dispatch_rpc<S: DaemonStateExt>(
 ) -> Value {
     if is_protected_mutation(method) {
         // Protected_Mutation 经唯一串行化点（Req 14.6）
-        match serialization_point.execute(|| dispatch_inner(state, peer, method, params, received_fds))
+        match serialization_point.execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds))
         {
             Ok(value) => make_ok_response(value),
             Err(err) => make_error_response(&err.code, &err.message),
@@ -772,23 +912,37 @@ pub fn dispatch_rpc<S: DaemonStateExt>(
 /// 方法（backup/restore/gc.cas/mount.*）的测试 peer 在 Windows 上永远不是 admin。
 /// 改为返回 1000，与测试 `current_uid()` 对齐，使 `make_owner_peer()` 在 Windows
 /// 上也通过 `is_admin` 检查（`peer.uid == current_daemon_uid()`）。
+pub fn current_daemon_owner_key() -> String {
+    #[cfg(unix)]
+    {
+        unsafe { libc::getuid() }.to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        crate::daemon::transport_windows::get_current_user_sid().unwrap_or_else(|_| "unknown".to_string())
+    }
+}
+
 pub fn current_daemon_uid() -> u32 {
     #[cfg(unix)]
     {
-        // SAFETY: getuid() 是无副作用 syscall，永远安全
         unsafe { libc::getuid() }
     }
     #[cfg(not(unix))]
     {
-        // Windows：与 workspace.rs tests::current_uid() 保持一致（1000）
         1000
     }
 }
 
-/// 判断 peer 是否为管理员（root 或 daemon 进程自己）
-pub fn is_admin(peer: PeerCredential) -> bool {
-    peer.uid == 0 || peer.uid == current_daemon_uid()
+/// 判断 peer 是否为管理员（root 或 daemon 进程自己，基于 owner_key）
+pub fn is_admin(peer: &PeerCredential) -> bool {
+    let key = peer.owner_key();
+    if !key.is_empty() && key == current_daemon_owner_key() {
+        return true;
+    }
+    peer.uid == 0 || key == "root" || key == "0"
 }
+
 
 /// dispatch 内部实现（返回 Result<Value, DaemonRpcError>）
 fn dispatch_inner<S: DaemonStateExt>(
@@ -813,7 +967,7 @@ fn dispatch_inner<S: DaemonStateExt>(
     //   迁移后应在下面 ACL 拒绝分支调用 audit_logger.record(
     //     event_type="ACL_DENIED", actor_uid=peer.uid, method=method, result="denied")
     //   admin-only 方法执行成功/失败也应记录（event_type="ADMIN_OP", result=ok/fail）。
-    if ADMIN_ONLY_METHODS.contains(&method) && !is_admin(peer) {
+    if ADMIN_ONLY_METHODS.contains(&method) && !is_admin(&peer) {
         return Err(DaemonRpcError::permission_denied(format!(
             "方法 {} 需要管理员权限（root 或 daemon uid），当前 peer.uid={}",
             method, peer.uid
@@ -898,6 +1052,18 @@ fn dispatch_inner<S: DaemonStateExt>(
         "resolved_edges.count" => state.handle_resolved_edges_count(peer, params),
         "resolved_edges.replace" => state.handle_resolved_edges_replace(peer, params),
 
+        // ---- Agent & Task 协同 RPC ----
+        "agent.register" => state.handle_agent_register(peer, params),
+        "agent.heartbeat" => state.handle_agent_heartbeat(peer, params),
+        "task.create" => state.handle_task_create(peer, params),
+        "task.claim" => state.handle_task_claim(peer, params),
+        "task.work_next" => state.handle_task_work_next(peer, params),
+        "task.report" => state.handle_task_report(peer, params),
+        "task.handoff" => state.handle_task_handoff(peer, params),
+        "task.status" => state.handle_task_status(peer, params),
+        "task.events" => state.handle_task_events(peer, params),
+        "task.wait" => state.handle_task_wait(peer, params),
+
         // ---- Collab P1/P3 方法 ----
         "verdict.submit"
         | "reveal.submit"
@@ -968,14 +1134,8 @@ mod tests {
     use serde_json::json;
 
     fn make_peer() -> PeerCredential {
-        // P1-1 修复：返回明确非 admin 的 uid（既非 0 也非 current_daemon_uid()）
-        // 避免与 current_daemon_uid() 碰撞（Windows 上两者都是 1000）
         let non_admin_uid = current_daemon_uid().wrapping_add(1);
-        PeerCredential {
-            uid: non_admin_uid,
-            gid: 1000,
-            pid: 12345,
-        }
+        PeerCredential::new_unix(non_admin_uid, 1000, 12345)
     }
 
     fn make_state() -> DaemonState {
@@ -1242,11 +1402,7 @@ mod tests {
     // ---- PeerCredential 测试 ----
 
     fn make_root_peer() -> PeerCredential {
-        PeerCredential {
-            uid: 0,
-            gid: 0,
-            pid: 1,
-        }
+        PeerCredential::new_unix(0, 0, 1)
     }
 
     /// 非管理员 peer 调用 admin-only 方法应返回 permission_denied
@@ -1334,15 +1490,12 @@ mod tests {
 
     #[test]
     fn test_peer_credential_clone_copy() {
-        let peer1 = PeerCredential {
-            uid: 100,
-            gid: 200,
-            pid: 300,
-        };
-        let peer2 = peer1; // Copy
+        let peer1 = PeerCredential::new_unix(100, 200, 300);
+        let peer2 = peer1.clone();
         assert_eq!(peer1.uid, peer2.uid);
         assert_eq!(peer1.gid, peer2.gid);
         assert_eq!(peer1.pid, peer2.pid);
+        assert_eq!(peer1.owner_key(), peer2.owner_key());
     }
 
     // ---- DaemonState 默认值测试 ----
@@ -1600,11 +1753,7 @@ mod tests {
         let sp2 = Arc::clone(&sp);
         let handle = std::thread::spawn(move || {
             let mut state = DaemonState::default();
-            let peer = PeerCredential {
-                uid: 1000,
-                gid: 1000,
-                pid: 1,
-            };
+            let peer = PeerCredential::new_unix(1000, 1000, 1);
             let params = json!({});
             dispatch_rpc(&mut state, peer, "backup", &params, &[], &sp2)
         });

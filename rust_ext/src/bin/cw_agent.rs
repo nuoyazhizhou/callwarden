@@ -139,9 +139,14 @@ fn run_start(
     }
     #[cfg(not(unix))]
     {
-        let _ = (socket, timeout_secs);
-        eprintln!("cw-agent: watcher not available on this platform (Linux/macOS only)");
-        std::process::exit(2);
+        run_start_windows(
+            socket,
+            timeout_secs,
+            root,
+            workspace_id,
+            &mut session,
+            debounce_ms,
+        )
     }
 }
 
@@ -159,8 +164,7 @@ fn run_stop() {
                 }
                 #[cfg(not(unix))]
                 {
-                    eprintln!("cw-agent: signal sending not available on Windows");
-                    std::process::exit(2);
+                    stop_windows(pid)
                 }
             } else {
                 eprintln!("cw-agent: invalid PID in {}", pid_file.display());
@@ -192,7 +196,8 @@ fn run_status() {
                 }
                 #[cfg(not(unix))]
                 {
-                    println!("Process alive: unknown (Windows)");
+                    let alive = is_process_alive_windows(pid);
+                    println!("Process alive: {}", alive);
                 }
             } else {
                 println!("Agent not running (invalid PID)");
@@ -224,10 +229,9 @@ fn run_start_unix(
     debounce_ms: u64,
 ) {
     use callwarden_core::daemon::client::unix::UnixDaemonRpcClient;
-    use callwarden_core::watcher::{DebouncedFileWatcher, FileEventKind};
     use signal_hook::consts::{SIGINT, SIGTERM};
     use signal_hook::flag as signal_flag;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -244,6 +248,72 @@ fn run_start_unix(
     }
 
     // 2. 握手 workspace.connect
+    connect_session(&client, workspace_id, session);
+
+    // 3. 写 PID 文件
+    write_pid_file();
+
+    // 4. 注册 SIGTERM/SIGINT，启动 watcher 循环
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    if let Err(e) = signal_flag::register(SIGTERM, Arc::clone(&stop_flag)) {
+        eprintln!("cw-agent: failed to register SIGTERM handler: {}", e);
+        std::process::exit(1);
+    }
+    if let Err(e) = signal_flag::register(SIGINT, Arc::clone(&stop_flag)) {
+        eprintln!("cw-agent: failed to register SIGINT handler: {}", e);
+        std::process::exit(1);
+    }
+
+    run_start_loop(&client, root, workspace_id, session, debounce_ms, &stop_flag);
+}
+
+/// Windows agent 入口：Named Pipe client + 握手 + watcher 循环。
+///
+/// Windows 无 POSIX 信号，agent 进程由 `cw-agent stop`（taskkill）终止，
+/// 故 stop_flag 永不置位，循环持续运行。
+#[cfg(not(unix))]
+fn run_start_windows(
+    socket: &str,
+    timeout_secs: u64,
+    root: &str,
+    workspace_id: &str,
+    session: &mut callwarden_core::daemon::client::AgentSession,
+    debounce_ms: u64,
+) {
+    use callwarden_core::daemon::client::windows::WindowsDaemonRpcClient;
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    let client =
+        WindowsDaemonRpcClient::new(socket).with_timeout(Duration::from_secs(timeout_secs));
+
+    // 1. ping daemon
+    eprintln!("cw-agent: pinging daemon...");
+    match client.ping() {
+        Ok(_) => eprintln!("cw-agent: daemon reachable"),
+        Err(e) => {
+            eprintln!("cw-agent: daemon unreachable: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    // 2. 握手 workspace.connect
+    connect_session(&client, workspace_id, session);
+
+    // 3. 写 PID 文件
+    write_pid_file();
+
+    // 4. 启动 watcher 循环（stop_flag 永不置位，靠 cw-agent stop 终止进程）
+    let stop_flag = AtomicBool::new(false);
+    run_start_loop(&client, root, workspace_id, session, debounce_ms, &stop_flag);
+}
+
+/// 握手 workspace.connect（跨平台通用）。
+fn connect_session<C: AgentRpcClient>(
+    client: &C,
+    workspace_id: &str,
+    session: &mut callwarden_core::daemon::client::AgentSession,
+) {
     eprintln!("cw-agent: connecting to workspace {}...", workspace_id);
     let (method, params) =
         callwarden_core::daemon::client::build_connect_params(workspace_id, &session.session_id);
@@ -265,8 +335,10 @@ fn run_start_unix(
             std::process::exit(1);
         }
     }
+}
 
-    // 3. 写 PID 文件
+/// 写 PID 文件（跨平台通用）。
+fn write_pid_file() {
     let pid = std::process::id();
     let pid_file = agent_pid_file();
     if let Some(parent) = pid_file.parent() {
@@ -275,8 +347,25 @@ fn run_start_unix(
     if let Err(e) = std::fs::write(&pid_file, pid.to_string()) {
         eprintln!("cw-agent: failed to write PID file: {}", e);
     }
+}
 
-    // 4. 启动 watcher 循环
+/// 通用 watcher 主循环（跨平台）。
+///
+/// 参数 `stop_flag` 置位时优雅退出（Unix 由信号处理置位；Windows 进程被
+/// `cw-agent stop` 终止，无优雅退出路径）。
+fn run_start_loop<C: AgentRpcClient>(
+    client: &C,
+    root: &str,
+    workspace_id: &str,
+    session: &mut callwarden_core::daemon::client::AgentSession,
+    debounce_ms: u64,
+    stop_flag: &std::sync::atomic::AtomicBool,
+) {
+    use callwarden_core::watcher::{DebouncedFileWatcher, FileEventKind};
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    // 启动 watcher 循环
     eprintln!(
         "cw-agent: starting watcher on {} (debounce={}ms)",
         root, debounce_ms
@@ -288,21 +377,7 @@ fn run_start_unix(
     );
     if let Err(e) = watcher.start() {
         eprintln!("cw-agent: failed to start watcher: {}", e);
-        let _ = std::fs::remove_file(&pid_file);
-        std::process::exit(1);
-    }
-
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    if let Err(e) = signal_flag::register(SIGTERM, Arc::clone(&stop_flag)) {
-        eprintln!("cw-agent: failed to register SIGTERM handler: {}", e);
-        watcher.stop();
-        let _ = std::fs::remove_file(&pid_file);
-        std::process::exit(1);
-    }
-    if let Err(e) = signal_flag::register(SIGINT, Arc::clone(&stop_flag)) {
-        eprintln!("cw-agent: failed to register SIGINT handler: {}", e);
-        watcher.stop();
-        let _ = std::fs::remove_file(&pid_file);
+        let _ = std::fs::remove_file(&agent_pid_file());
         std::process::exit(1);
     }
 
@@ -310,19 +385,19 @@ fn run_start_unix(
         for event in watcher.poll_events() {
             match event.kind {
                 FileEventKind::Created | FileEventKind::Modified => {
-                    if let Err(e) = refresh_path(&client, session, workspace_id, root, &event.path)
+                    if let Err(e) = refresh_path(client, session, workspace_id, root, &event.path)
                     {
                         eprintln!("cw-agent: refresh failed {}: {}", event.path.display(), e);
                     }
                 }
                 FileEventKind::Removed => {
-                    if let Err(e) = delete_path(&client, session, workspace_id, root, &event.path) {
+                    if let Err(e) = delete_path(client, session, workspace_id, root, &event.path) {
                         eprintln!("cw-agent: delete failed {}: {}", event.path.display(), e);
                     }
                 }
                 FileEventKind::Renamed => {
                     if let Some(from_path) = event.from_path.as_ref() {
-                        if let Err(e) = delete_path(&client, session, workspace_id, root, from_path)
+                        if let Err(e) = delete_path(client, session, workspace_id, root, from_path)
                         {
                             eprintln!(
                                 "cw-agent: rename delete failed {}: {}",
@@ -334,7 +409,7 @@ fn run_start_unix(
                     if let Some(to_path) = event.to_path.as_ref() {
                         if to_path.is_file() {
                             if let Err(e) =
-                                refresh_path(&client, session, workspace_id, root, to_path)
+                                refresh_path(client, session, workspace_id, root, to_path)
                             {
                                 eprintln!(
                                     "cw-agent: rename refresh failed {}: {}",
@@ -355,7 +430,7 @@ fn run_start_unix(
         if matches!(event.kind, FileEventKind::Created | FileEventKind::Modified)
             && event.path.is_file()
         {
-            if let Err(e) = refresh_path(&client, session, workspace_id, root, &event.path) {
+            if let Err(e) = refresh_path(client, session, workspace_id, root, &event.path) {
                 eprintln!(
                     "cw-agent: final refresh failed {}: {}",
                     event.path.display(),
@@ -367,11 +442,14 @@ fn run_start_unix(
     watcher.stop();
 
     // 清理 PID 文件
-    let _ = std::fs::remove_file(&pid_file);
+    let _ = std::fs::remove_file(&agent_pid_file());
     eprintln!("cw-agent: stopped");
 }
 
-#[cfg(unix)]
+/// Agent RPC client 抽象（跨平台）。
+///
+/// - Unix：`UnixDaemonRpcClient`（UDS + SCM_RIGHTS FD）
+/// - Windows：`WindowsDaemonRpcClient`（Named Pipe + b64 大文件通道）
 trait AgentRpcClient {
     fn call(
         &self,
@@ -379,6 +457,8 @@ trait AgentRpcClient {
         params: serde_json::Value,
     ) -> Result<serde_json::Value, callwarden_core::daemon::client::ClientError>;
 
+    /// 带 FD 传递的 RPC 调用（仅 Unix 有 SCM_RIGHTS）。
+    #[cfg(unix)]
     fn call_with_fd(
         &self,
         method: &str,
@@ -409,7 +489,18 @@ impl AgentRpcClient for callwarden_core::daemon::client::unix::UnixDaemonRpcClie
     }
 }
 
-#[cfg(unix)]
+#[cfg(not(unix))]
+impl AgentRpcClient for callwarden_core::daemon::client::windows::WindowsDaemonRpcClient {
+    fn call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, callwarden_core::daemon::client::ClientError> {
+        callwarden_core::daemon::client::windows::WindowsDaemonRpcClient::call(self, method, params)
+    }
+}
+
+/// 计算 path 相对 root 的相对路径（跨平台，反斜杠归一化为正斜杠）。
 fn relative_path(root: &str, path: &std::path::Path) -> Result<String, String> {
     let root_path = std::path::Path::new(root);
     let rel = path
@@ -418,7 +509,6 @@ fn relative_path(root: &str, path: &std::path::Path) -> Result<String, String> {
     Ok(rel.to_string_lossy().replace('\\', "/"))
 }
 
-#[cfg(unix)]
 fn reconnect_session<C: AgentRpcClient>(
     client: &C,
     session: &mut callwarden_core::daemon::client::AgentSession,
@@ -441,7 +531,6 @@ fn reconnect_session<C: AgentRpcClient>(
     Ok(())
 }
 
-#[cfg(unix)]
 fn refresh_path<C: AgentRpcClient>(
     client: &C,
     session: &mut callwarden_core::daemon::client::AgentSession,
@@ -479,15 +568,32 @@ fn refresh_path<C: AgentRpcClient>(
             serde_json::Value::String(canonical.content_hash.clone()),
         );
 
-        // JSON payload 默认上限 8MB；hex 会放大为 2 倍，3MB 阈值留出协议余量。
-        if canonical.canonical_bytes.len() <= 3 * 1024 * 1024 {
+        #[cfg(unix)]
+        {
+            // Unix：小文件 hex 内联，大文件走 SCM_RIGHTS FD 通道。
+            // JSON payload 默认上限 8MB；hex 会放大为 2 倍，3MB 阈值留出协议余量。
+            if canonical.canonical_bytes.len() <= 3 * 1024 * 1024 {
+                map.insert(
+                    "canonical_bytes_hex".to_string(),
+                    serde_json::Value::String(hex::encode(&canonical.canonical_bytes)),
+                );
+                client.call(&method, params)
+            } else {
+                send_large_refresh(client, &method, params, &canonical.canonical_bytes, seq)
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows：无 SCM_RIGHTS FD 通道，统一 base64 内联传输
+            // （服务端 workspace.file.refresh 支持 canonical_bytes_b64 解码）。
+            use base64::Engine;
             map.insert(
-                "canonical_bytes_hex".to_string(),
-                serde_json::Value::String(hex::encode(&canonical.canonical_bytes)),
+                "canonical_bytes_b64".to_string(),
+                serde_json::Value::String(
+                    base64::engine::general_purpose::STANDARD.encode(&canonical.canonical_bytes),
+                ),
             );
             client.call(&method, params)
-        } else {
-            send_large_refresh(client, &method, params, &canonical.canonical_bytes, seq)
         }
     };
 
@@ -550,7 +656,6 @@ fn send_large_refresh<C: AgentRpcClient>(
     result
 }
 
-#[cfg(unix)]
 fn delete_path<C: AgentRpcClient>(
     client: &C,
     session: &mut callwarden_core::daemon::client::AgentSession,
@@ -603,6 +708,47 @@ fn stop_unix(pid: u32) {
         );
         std::process::exit(1);
     }
+}
+
+/// Windows 终止 agent 进程（taskkill /PID /T /F，无 POSIX 信号）。
+#[cfg(not(unix))]
+fn stop_windows(pid: u32) {
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            println!("Sent terminate to PID {}", pid);
+            let pid_file = agent_pid_file();
+            let _ = std::fs::remove_file(&pid_file);
+        }
+        Ok(s) => {
+            eprintln!("taskkill failed for PID {}: {}", pid, s);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("failed to run taskkill: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Windows 进程存活检查（OpenProcess + GetExitCodeProcess == STILL_ACTIVE）。
+#[cfg(not(unix))]
+fn is_process_alive_windows(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return false;
+    }
+    let mut code: u32 = 0;
+    let ok = unsafe { GetExitCodeProcess(handle, &mut code) };
+    unsafe { CloseHandle(handle) };
+    ok != 0 && code == 259 // STILL_ACTIVE
 }
 
 #[cfg(test)]

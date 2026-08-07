@@ -58,7 +58,7 @@ class DaemonUnavailableError(RuntimeError):
 
 
 class UnixDaemonRpcClient:
-    """每次请求建立一个 UDS 连接的轻量 RPC client。"""
+    """每次请求建立一个 IPC 连接（UDS 或 Windows Named Pipe）的轻量 RPC client。"""
 
     def __init__(self, socket_path: Optional[str] = None,
                  timeout: float = 30.0,
@@ -67,6 +67,10 @@ class UnixDaemonRpcClient:
         self.timeout = timeout
         self.max_message_bytes = max_message_bytes
         self._ids = itertools.count(1)
+
+    def close(self) -> None:
+        """关闭客户端（单次连接模式无持久连接，为空操作）。"""
+        pass
 
     def call(self, method: str, params: Optional[Dict[str, Any]] = None) -> Any:
         request_id = next(self._ids)
@@ -179,6 +183,9 @@ class UnixDaemonRpcClient:
             }, fd)
         finally:
             os.close(fd)
+
+
+DaemonRpcClient = UnixDaemonRpcClient
 
 
 # ----------------------------------------------------------------------

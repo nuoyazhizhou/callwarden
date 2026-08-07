@@ -128,6 +128,15 @@ impl SnapshotDaemonState {
         self
     }
 
+    /// 注入 TaskCollabStore 协同存储（用于 task.create / task.claim 等协同 RPC）
+    pub fn with_task_collab_store(
+        mut self,
+        store: Arc<super::task_collab::TaskCollabStore>,
+    ) -> Self {
+        self.base = self.base.with_task_collab_store(store);
+        self
+    }
+
     /// G1 Layer 2：获取 ToolchainStore（若未注入返回 None）
     pub fn toolchain_store(&self) -> Option<&Arc<super::toolchain::ToolchainStore>> {
         self.toolchain_store.as_ref()
@@ -1701,11 +1710,7 @@ mod tests {
     }
 
     fn make_peer(uid: u32) -> PeerCredential {
-        PeerCredential {
-            uid,
-            gid: 1000,
-            pid: 12345,
-        }
+        PeerCredential::new_unix(uid, 1000, 12345)
     }
 
     /// 注册一个 workspace（用当前进程 uid 作为 owner，避免 Unix ACL 失败）
@@ -1846,7 +1851,7 @@ mod tests {
             ),
         ];
         for (method, params) in requests {
-            let response = dispatch(&mut state, peer, method, &params, &[]);
+            let response = dispatch(&mut state, peer.clone(), method, &params, &[]);
             assert_eq!(
                 response["ok"], false,
                 "{method} must fail closed before publish"
@@ -1957,7 +1962,7 @@ mod tests {
             .unwrap();
         let response = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.symbol",
             &json!({
                 "workspace_instance_id": ws_id,
@@ -1974,7 +1979,7 @@ mod tests {
 
         let callers = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.callers",
             &json!({
                 "workspace_instance_id": ws_id,
@@ -1991,7 +1996,7 @@ mod tests {
 
         let callees = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.callees",
             &json!({
                 "workspace_instance_id": ws_id,
@@ -2012,7 +2017,7 @@ mod tests {
 
         let chain = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.call_chain_down",
             &json!({
                 "workspace_instance_id": ws_id,
@@ -2028,7 +2033,7 @@ mod tests {
 
         let topo = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.topological_order",
             &json!({
                 "workspace_instance_id": ws_id,
@@ -2045,7 +2050,7 @@ mod tests {
 
         let impact = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.impact",
             &json!({
                 "workspace_instance_id": ws_id,
@@ -2080,7 +2085,7 @@ mod tests {
 
         let workspace = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "workspace.register",
             &json!({"client_view_root": temp.path().to_string_lossy()}),
             &[],
@@ -2263,7 +2268,7 @@ mod tests {
 
         let file = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.file",
             &json!({
                 "workspace_instance_id": workspace_instance_id,
@@ -2277,7 +2282,7 @@ mod tests {
 
         let location = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.symbol_location",
             &json!({
                 "workspace_instance_id": workspace_instance_id,
@@ -2291,7 +2296,7 @@ mod tests {
 
         let grep = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.grep",
             &json!({
                 "workspace_instance_id": workspace_instance_id,
@@ -2307,7 +2312,7 @@ mod tests {
 
         let issues = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.issues",
             &json!({
                 "workspace_instance_id": workspace_instance_id,
@@ -2321,7 +2326,7 @@ mod tests {
 
         let tests = dispatch(
             &mut state,
-            peer,
+            peer.clone(),
             "query.tests",
             &json!({
                 "workspace_instance_id": workspace_instance_id,
@@ -2610,7 +2615,7 @@ mod tests {
             ),
         ];
         for (method, params) in requests {
-            let response = dispatch(&mut state, other_peer, method, &params, &[]);
+            let response = dispatch(&mut state, other_peer.clone(), method, &params, &[]);
             assert_eq!(
                 response["error"]["code"], "workspace_forbidden",
                 "{method} 必须在访问 toolchain store 之前拒绝非 owner"

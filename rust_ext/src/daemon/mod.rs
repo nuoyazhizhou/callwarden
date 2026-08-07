@@ -7,6 +7,10 @@ pub mod protocol;
 /// JSON-RPC dispatch 路由表 + 基础方法（跨平台，纯逻辑）
 pub mod dispatch;
 
+/// Task 协同 RPC 模块（multi-llm-contract-collaboration D0/P1）
+pub mod task_collab;
+
+
 /// 平台无关传输抽象（D0 3.1：TransportListener / TransportConnection trait）
 /// Unix: UDS + SO_PEERCRED；Windows: 命名管道 + ImpersonateNamedPipeClient
 pub mod transport;
@@ -127,4 +131,4 @@ pub mod parser_metrics;
 /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
 /// 更新 schema 时记得同步修改。
-pub const SCHEMA_VERSION: u32 = 46;
+pub const SCHEMA_VERSION: u32 = 47;

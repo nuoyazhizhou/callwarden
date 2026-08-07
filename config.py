@@ -1312,16 +1312,85 @@ def safe_walk(root_dir: str, max_depth: int = -1, **kwargs):
 
 # ── Enterprise daemon 配置 ──
 
-# daemon socket 路径（Linux）
-# R7: 统一为 systemd RuntimeDirectory 风格（/var/run 在现代 Linux 是 /run 的符号链接，
-# 但显式使用 /run 与 release/linux/deb/systemd/callwarden-daemon.service 的
-# RuntimeDirectory=callwarden 保持一致）
-DAEMON_SOCKET_PATH = os.environ.get(
-    "CW_DAEMON_SOCKET", "/run/callwarden/callwarden.sock"
-)
+def _get_windows_user_sid() -> str:
+    """获取当前 Windows 用户的 SID 字符串（SDDL 格式）。"""
+    if sys.platform != "win32":
+        return "unknown"
+    try:
+        import ctypes
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+        from ctypes import wintypes
+
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)
+        ]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)
+        ]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.ConvertSidToStringSidW.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_wchar_p)
+        ]
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.LocalFree.argtypes = [wintypes.HANDLE]
+
+        token = wintypes.HANDLE()
+        TOKEN_QUERY = 0x0008
+        ok = advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token))
+        if not ok:
+            return "unknown"
+
+        TOKEN_USER = 1
+        size = ctypes.c_ulong(0)
+        advapi32.GetTokenInformation(token, TOKEN_USER, None, 0, ctypes.byref(size))
+
+        buf = ctypes.create_string_buffer(size.value)
+        ok = advapi32.GetTokenInformation(token, TOKEN_USER, buf, size.value, ctypes.byref(size))
+        kernel32.CloseHandle(token)
+
+        if not ok:
+            return "unknown"
+
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+        sid_str = ctypes.c_wchar_p()
+        ok = advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(sid_str))
+        if not ok:
+            return "unknown"
+
+        result = sid_str.value
+        kernel32.LocalFree(sid_str)
+        return result or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def get_default_daemon_endpoint() -> str:
+    """获取当前平台的默认 Daemon_Endpoint。
+
+    Unix: CW_DAEMON_SOCKET 环境变量或 /run/callwarden/callwarden.sock
+    Windows: \\\\.\\pipe\\callwarden-<当前用户 SID>
+    """
+    if sys.platform == "win32":
+        sid = _get_windows_user_sid()
+        return f"\\\\.\\pipe\\callwarden-{sid}"
+    else:
+        return os.environ.get("CW_DAEMON_SOCKET", "/run/callwarden/callwarden.sock")
+
+
+# daemon socket / endpoint 路径
+DAEMON_SOCKET_PATH = get_default_daemon_endpoint()
 
 # daemon 数据根目录
-DAEMON_DATA_ROOT = os.environ.get("CW_DAEMON_DATA_ROOT", "/var/lib/callwarden")
+if "CW_DAEMON_DATA_ROOT" in os.environ:
+    DAEMON_DATA_ROOT = os.environ["CW_DAEMON_DATA_ROOT"]
+elif sys.platform == "win32":
+    DAEMON_DATA_ROOT = os.path.join(CALLWARDEN_DIR, "daemon")
+else:
+    DAEMON_DATA_ROOT = "/var/lib/callwarden"
 
 # workspace registry DB 路径
 DAEMON_REGISTRY_DB = os.path.join(DAEMON_DATA_ROOT, "registry.db")
@@ -1333,26 +1402,14 @@ DAEMON_CAS_DB = os.path.join(DAEMON_DATA_ROOT, "cas.db")
 DAEMON_TOOLCHAIN_DB = os.path.join(DAEMON_DATA_ROOT, "toolchain.db")
 
 # container mount mapping 默认配置
-# 格式: {container_id: {container_path: host_path}}
 CONTAINER_MOUNT_MAPPINGS = {}
 
 # daemon 运行模式
-# auto: 自动检测（有 daemon 用 daemon，没有用 local）
-# enterprise: 强制走 daemon
-# local: 强制走本地 SQLite
 DAEMON_MODE = os.environ.get("CW_DAEMON_MODE", "auto")
 
 
 def resolve_container_path(path: str, container_mappings: dict = None) -> str:
-    """将容器内路径解析为宿主机路径。
-
-    Args:
-        path: 容器内路径（如 /home/user1/work/firmware）
-        container_mappings: {container_path_prefix: host_path_prefix}
-
-    Returns:
-        宿主机路径
-    """
+    """将容器内路径解析为宿主机路径。"""
     if container_mappings is None:
         container_mappings = CONTAINER_MOUNT_MAPPINGS
 
@@ -1374,10 +1431,17 @@ def is_daemon_required() -> bool:
 
 
 def is_daemon_available() -> bool:
-    """检测 daemon 是否可用（socket 是否存在且可连接）。
-
-    Windows 上永远返回 False。
-    """
-    if os.name == "nt":
+    """检测 daemon 是否可用（endpoint 是否存在且可连接）。"""
+    endpoint = get_default_daemon_endpoint()
+    if sys.platform == "win32":
+        from callwarden.server.daemon_autostart import try_connect
+        conn = try_connect(endpoint)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            return True
         return False
-    return os.path.exists(DAEMON_SOCKET_PATH)
+    return os.path.exists(endpoint)
+

@@ -394,6 +394,38 @@ CREATE TABLE IF NOT EXISTS change_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_task ON change_audit(task_id);
 
+-- 任务状态事件流表：协同事件追溯与状态变迁 log
+CREATE TABLE IF NOT EXISTS task_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id TEXT NOT NULL,
+    workspace_id TEXT DEFAULT '',
+    from_status TEXT NOT NULL,
+    to_status TEXT NOT NULL,
+    reason_code TEXT DEFAULT '',
+    reason TEXT DEFAULT '',
+    actor_identity TEXT NOT NULL,
+    agent_session_id TEXT DEFAULT '',
+    role TEXT DEFAULT '',
+    contract_hash TEXT DEFAULT '',
+    snapshot_id TEXT DEFAULT '',
+    monotonic_seq INTEGER NOT NULL,
+    authoritative_timestamp REAL NOT NULL,
+    evidence_path TEXT DEFAULT '',
+    evidence_hash TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
+
+-- Agent 协同注册表：多 LLM Agent 协同元数据
+CREATE TABLE IF NOT EXISTS agent_registrations (
+    agent_id TEXT PRIMARY KEY,
+    agent_name TEXT NOT NULL,
+    owner_key TEXT NOT NULL,
+    capabilities TEXT DEFAULT '[]',
+    registered_at REAL NOT NULL,
+    last_heartbeat REAL NOT NULL,
+    status TEXT DEFAULT 'active'
+);
+
 -- ============================================
 -- v8: 文件所有权表
 -- ============================================
@@ -1615,7 +1647,7 @@ CREATE INDEX IF NOT EXISTS idx_task_lease_events_task ON task_lease_events(works
 #      task_leases 只存 token hash（sha256），时间一律权威时钟，fencing counter 单调递增，
 #      partial UNIQUE 索引保证同 task+role 只有一个当前 lease；
 #      task_lease_events append-only 审计，raw token 永不落库。
-SCHEMA_VERSION = 46
+SCHEMA_VERSION = 47
 
 
 # ============================================

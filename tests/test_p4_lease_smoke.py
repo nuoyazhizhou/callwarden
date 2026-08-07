@@ -57,7 +57,7 @@ def db(tmp_path):
 # ---------------------------------------------------------------
 
 def test_schema_v46_tables_and_index(db):
-    assert SCHEMA_VERSION == 46
+    assert SCHEMA_VERSION == 47
     assert issubclass(CodeGraphDB, LeaseMixin)
     tabs = sorted(
         r["name"]

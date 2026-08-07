@@ -2683,6 +2683,73 @@ def _migrate_v45_to_v46(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v46_to_v47(conn: sqlite3.Connection):
+    """v46 -> v47: Windows daemon 协同 TaskCollabStore 权威表
+
+    新增 2 张表（task_events / agent_registrations）+ 索引，供 Rust daemon
+    TaskCollabStore 直接复用 Call Warden 权威 schema，不再由 Rust 内嵌 DDL 旁路建表。
+
+    幂等性：CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS 自动跳过已存在对象。
+    全新数据库已通过 SCHEMA_SQL 创建，本迁移只补齐既有 v46 库。
+
+    表语义：
+    - task_events：任务状态事件流表（协同事件追溯与状态变迁 log），
+      claim/report/handoff 的所有权校验以 task_events 中最新 in_progress 记录为准。
+    - agent_registrations：多 LLM Agent 协同注册表（agent 名称/能力/心跳）。
+    """
+    # 1. task_events（任务状态事件流表）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS task_events (
+            event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            workspace_id TEXT DEFAULT '',
+            from_status TEXT NOT NULL,
+            to_status TEXT NOT NULL,
+            reason_code TEXT DEFAULT '',
+            reason TEXT DEFAULT '',
+            actor_identity TEXT NOT NULL,
+            agent_session_id TEXT DEFAULT '',
+            role TEXT DEFAULT '',
+            contract_hash TEXT DEFAULT '',
+            snapshot_id TEXT DEFAULT '',
+            monotonic_seq INTEGER NOT NULL,
+            authoritative_timestamp REAL NOT NULL,
+            evidence_path TEXT DEFAULT '',
+            evidence_hash TEXT DEFAULT ''
+        )
+        """
+    )
+    # 2. agent_registrations（Agent 协同注册表）
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agent_registrations (
+            agent_id TEXT PRIMARY KEY,
+            agent_name TEXT NOT NULL,
+            owner_key TEXT NOT NULL,
+            capabilities TEXT DEFAULT '[]',
+            registered_at REAL NOT NULL,
+            last_heartbeat REAL NOT NULL,
+            status TEXT DEFAULT 'active'
+        )
+        """
+    )
+    # 3. 索引
+    _v47_indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id)",
+    ]
+    for sql in _v47_indexes:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError:
+            pass
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -3479,6 +3546,10 @@ class CodeGraphBase:
             46: {
                 "description": t("cli.messages.migration_v46", default="P4 assignment/lease schema: 3 tables (task_assignments/task_leases/task_lease_events) + partial UNIQUE index for single active lease per task+role (idempotent)"),
                 "func": _migrate_v45_to_v46,
+            },
+            47: {
+                "description": t("cli.messages.migration_v47", default="Windows daemon TaskCollabStore authoritative tables: task_events + agent_registrations + indexes (idempotent)"),
+                "func": _migrate_v46_to_v47,
             },
         }
 

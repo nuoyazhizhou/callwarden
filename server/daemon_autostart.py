@@ -475,15 +475,15 @@ def get_default_endpoint() -> str:
     Unix: CW_DAEMON_SOCKET 环境变量或 /run/callwarden/callwarden.sock
     Windows: \\\\.\\pipe\\callwarden-<当前用户 SID>
     """
-    if sys.platform == "win32":
-        # Windows 命名管道需要当前用户 SID
-        sid = _get_windows_user_sid()
-        return f"{WINDOWS_PIPE_PREFIX}{sid}"
-    else:
-        return os.environ.get("CW_DAEMON_SOCKET", "/run/callwarden/callwarden.sock")
+    from callwarden.config import get_default_daemon_endpoint
+    return get_default_daemon_endpoint()
 
 
 def _get_windows_user_sid() -> str:
+    """获取当前 Windows 用户的 SID 字符串。"""
+    from callwarden.config import _get_windows_user_sid as _cfg_sid
+    return _cfg_sid()
+
     """获取当前 Windows 用户的 SID 字符串。"""
     try:
         import ctypes

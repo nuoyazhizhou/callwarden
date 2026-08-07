@@ -513,11 +513,7 @@ where
 
     // 1. 获取 peer credential（SO_PEERCRED，内核保证不可伪造）
     let cred = get_peer_cred(stream)?;
-    let peer = PeerCredential {
-        uid: cred.uid,
-        gid: cred.gid,
-        pid: cred.pid,
-    };
+    let peer = PeerCredential::new_unix(cred.uid, cred.gid, cred.pid);
 
     // 2. 接收 JSON-RPC 请求（含可选 FD）
     // recv_message_with_fds 需要 &mut UnixStream（内部用 recvmsg/read_exact）
@@ -1085,19 +1081,10 @@ where
     // 2. 获取对端身份（OS 内核保证不可伪造）
     let identity = conn.peer_identity()?;
     let peer = match &identity {
-        TransportPeerIdentity::Unix { uid, gid, pid } => PeerCredential {
-            uid: *uid,
-            gid: *gid,
-            pid: *pid,
-        },
-        TransportPeerIdentity::Windows { sid: _, pid } => PeerCredential {
-            // Windows SID 映射：dispatch 层通过 owner_key 做 ACL
-            // uid/gid 设为 0（Windows 不使用 Unix UID 模型）
-            uid: 0,
-            gid: 0,
-            pid: *pid as i32,
-        },
+        TransportPeerIdentity::Unix { uid, gid, pid } => PeerCredential::new_unix(*uid, *gid, *pid),
+        TransportPeerIdentity::Windows { sid, pid } => PeerCredential::new_windows(sid.clone(), *pid),
     };
+
 
     // 3. 解析 method / params / id
     let request: serde_json::Value = match serde_json::from_slice(&request_bytes) {

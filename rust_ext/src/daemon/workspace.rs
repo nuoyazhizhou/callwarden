@@ -1137,6 +1137,15 @@ impl WorkspaceDaemonState {
         self
     }
 
+    /// 注入 TaskCollabStore 协同存储（用于 task.create / task.claim 等协同 RPC）
+    pub fn with_task_collab_store(
+        mut self,
+        store: Arc<super::task_collab::TaskCollabStore>,
+    ) -> Self {
+        self.base.task_collab_store = Some(store);
+        self
+    }
+
     /// 懒初始化 per-workspace 资源（SessionStore + CasStore + StagingLog）
     ///
     /// 对应 Python EnterpriseDaemonService._get_workspace_resources。
@@ -3281,11 +3290,7 @@ mod tests {
     use serde_json::json;
 
     fn make_peer(uid: u32) -> PeerCredential {
-        PeerCredential {
-            uid,
-            gid: 1000,
-            pid: 12345,
-        }
+        PeerCredential::new_unix(uid, 1000, 12345)
     }
 
     fn make_state() -> WorkspaceDaemonState {
@@ -6722,7 +6727,7 @@ mod tests {
             "host_path": "/h_v2",
             "mapping_type": "volume"
         });
-        let resp_v2 = dispatch(&mut state, peer, "mount.register", &params_v2, &[]);
+        let resp_v2 = dispatch(&mut state, peer.clone(), "mount.register", &params_v2, &[]);
         assert!(resp_v2["ok"].as_bool().unwrap_or(false));
         assert_eq!(resp_v2["result"]["host_path"], "/h_v2");
         assert_eq!(resp_v2["result"]["mapping_type"], "volume");

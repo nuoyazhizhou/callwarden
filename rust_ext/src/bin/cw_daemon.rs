@@ -248,17 +248,37 @@ mod unix {
             "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
             recovered_count
         );
+        let callwarden_db_path = config
+            .registry_db_path
+            .parent()
+            .unwrap_or(&config.registry_db_path)
+            .join("callwarden.db");
+        // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
+        let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
+            &callwarden_db_path,
+        ) {
+            Ok(store) => Arc::new(store),
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [ERROR] TaskCollabStore 打开失败: {}: {}",
+                    callwarden_db_path.display(),
+                    e
+                );
+                return 1;
+            }
+        };
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-            // 每个 worker 共享同一个 snapshot_cache + publisher（Arc clone，无锁共享）
+            // 每个 worker 共享同一个 snapshot_cache + publisher + task_collab_store（Arc clone，无锁共享）
             let state = SnapshotDaemonState::with_registry_and_data_root(
                 registry,
                 Arc::clone(&shared_snapshot_cache),
                 data_root.clone(),
             )
             .with_snapshot_publisher(Arc::clone(&shared_publisher))
-            .with_codegraph_db_path_template(codegraph_db_path_template.clone());
+            .with_codegraph_db_path_template(codegraph_db_path_template.clone())
+            .with_task_collab_store(Arc::clone(&shared_collab_store));
             Ok(state)
         };
 
@@ -898,11 +918,7 @@ mod unix {
                 .unwrap_or(0) as u32;
             let response = dispatch(
                 &mut state,
-                PeerCredential {
-                    uid: owner_uid,
-                    gid: 0,
-                    pid: 0,
-                },
+                PeerCredential::new_unix(owner_uid, 0, 0),
                 "workspace.recover",
                 &json!({ "workspace_instance_id": workspace_id }),
                 &[],
@@ -2067,6 +2083,25 @@ mod windows {
             "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
             recovered_count
         );
+        let callwarden_db_path = config
+            .registry_db_path
+            .parent()
+            .unwrap_or(&config.registry_db_path)
+            .join("callwarden.db");
+        // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
+        let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
+            &callwarden_db_path,
+        ) {
+            Ok(store) => Arc::new(store),
+            Err(e) => {
+                eprintln!(
+                    "[cw_daemon] [ERROR] TaskCollabStore 打开失败: {}: {}",
+                    callwarden_db_path.display(),
+                    e
+                );
+                return 1;
+            }
+        };
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -2076,7 +2111,8 @@ mod windows {
                 data_root.clone(),
             )
             .with_snapshot_publisher(Arc::clone(&shared_publisher))
-            .with_codegraph_db_path_template(codegraph_db_path_template.clone());
+            .with_codegraph_db_path_template(codegraph_db_path_template.clone())
+            .with_task_collab_store(Arc::clone(&shared_collab_store));
             Ok(state)
         };
 
@@ -2470,11 +2506,7 @@ mod windows {
                 .unwrap_or(0) as u32;
             let response = dispatch(
                 &mut state,
-                PeerCredential {
-                    uid: owner_uid,
-                    gid: 0,
-                    pid: 0,
-                },
+                PeerCredential::new_unix(owner_uid, 0, 0),
                 "workspace.recover",
                 &json!({ "workspace_instance_id": workspace_id }),
                 &[],

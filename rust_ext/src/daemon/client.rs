@@ -269,8 +269,227 @@ pub mod unix {
 }
 
 // ============================================
-// PyO3 暴露
+// Windows Named Pipe Client（仅 Windows 编译）
 // ============================================
+
+/// Windows Named Pipe RPC Client。
+///
+/// 对齐 Python `server/daemon_client.py` 的 Windows Named Pipe 通道与
+/// `UnixDaemonRpcClient` 的接口（new / with_timeout / call / ping）。
+///
+/// 每次调用建立新的 Named Pipe 连接（无状态），请求完成后关闭。
+///
+/// 帧格式（与 daemon 端一致）：
+/// - 请求：`[4 字节大端长度][JSON 请求体]`（JSON 为 `{"method": ..., "params": ...}`）
+/// - 响应：`[4 字节大端长度][JSON 响应体]`
+#[cfg(windows)]
+pub mod windows {
+    use super::*;
+    use crate::daemon::protocol::DEFAULT_MAX_MESSAGE_BYTES;
+    use std::os::windows::ffi::OsStrExt;
+    use std::time::Duration;
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+    };
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateFileW, ReadFile, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+
+    /// Windows Named Pipe RPC Client。
+    #[derive(Debug, Clone)]
+    pub struct WindowsDaemonRpcClient {
+        pub pipe_name: String,
+        pub timeout: Duration,
+        pub max_message_bytes: usize,
+    }
+
+    impl WindowsDaemonRpcClient {
+        /// 创建新 client，默认超时 30 秒，最大消息 8MB。
+        pub fn new(pipe_name: &str) -> Self {
+            Self {
+                pipe_name: pipe_name.to_string(),
+                timeout: Duration::from_secs(30),
+                max_message_bytes: DEFAULT_MAX_MESSAGE_BYTES,
+            }
+        }
+
+        /// 设置超时（builder 模式）。
+        pub fn with_timeout(mut self, timeout: Duration) -> Self {
+            self.timeout = timeout;
+            self
+        }
+
+        /// 设置最大消息字节数（builder 模式）。
+        pub fn with_max_message_bytes(mut self, max_bytes: usize) -> Self {
+            self.max_message_bytes = max_bytes;
+            self
+        }
+
+        /// 调用 RPC 方法。
+        ///
+        /// 流程：
+        /// 1. `WaitNamedPipeW` 等待 daemon 管道实例可用
+        /// 2. `CreateFileW` 打开 `\\.\pipe\...`
+        /// 3. 发送 `[4 字节大端长度][JSON 请求]` 帧
+        /// 4. 读取 `[4 字节大端长度][JSON 响应]` 帧
+        /// 5. `parse_rpc_response` 解析响应
+        pub fn call(&self, method: &str, params: Value) -> Result<Value, ClientError> {
+            // 1. 构建请求帧：{method, params} → [4 字节大端长度][JSON]
+            let request = build_request(method, params);
+            let body = serde_json::to_vec(&request)
+                .map_err(|e| ClientError::Protocol(super::super::protocol::ProtocolError::Other(
+                    format!("请求序列化失败: {}", e),
+                )))?;
+            if body.len() > self.max_message_bytes {
+                return Err(ClientError::Protocol(
+                    super::super::protocol::ProtocolError::MessageTooLarge {
+                        actual: body.len(),
+                        limit: self.max_message_bytes,
+                    },
+                ));
+            }
+            let mut frame = Vec::with_capacity(4 + body.len());
+            frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
+            frame.extend_from_slice(&body);
+
+            // 2. 宽字符管道名
+            let wide: Vec<u16> = std::path::Path::new(&self.pipe_name)
+                .as_os_str()
+                .encode_wide()
+                .chain(Some(0))
+                .collect();
+
+            // 3. WaitNamedPipeW 等待管道实例可用（daemon 未启动时管道不存在）
+            let deadline = std::time::Instant::now() + self.timeout;
+            loop {
+                if unsafe { WaitNamedPipeW(wide.as_ptr(), 5000) } != 0 {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(ClientError::ConnectFailed {
+                        path: self.pipe_name.clone(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            format!("等待 Named Pipe 超时 ({}s)", self.timeout.as_secs()),
+                        ),
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+
+            // 4. CreateFileW 打开管道
+            let handle: HANDLE = unsafe {
+                CreateFileW(
+                    wide.as_ptr(),
+                    GENERIC_READ | GENERIC_WRITE,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    std::ptr::null(),
+                    OPEN_EXISTING,
+                    0,
+                    std::ptr::null_mut(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(ClientError::ConnectFailed {
+                    path: self.pipe_name.clone(),
+                    source: std::io::Error::last_os_error(),
+                });
+            }
+
+            // 5. 发送请求帧
+            let mut written: u32 = 0;
+            let ok_write = unsafe {
+                WriteFile(
+                    handle,
+                    frame.as_ptr(),
+                    frame.len() as u32,
+                    &mut written,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok_write == 0 {
+                unsafe { CloseHandle(handle) };
+                return Err(ClientError::ConnectFailed {
+                    path: self.pipe_name.clone(),
+                    source: std::io::Error::last_os_error(),
+                });
+            }
+
+            // 6. 读取 4 字节长度前缀（ReadFile 可能短读，循环补足）
+            let mut header = [0u8; 4];
+            let mut header_read: u32 = 0;
+            while header_read < 4 {
+                let mut n: u32 = 0;
+                let ptr = unsafe { header.as_mut_ptr().add(header_read as usize) };
+                let ok = unsafe {
+                    ReadFile(handle, ptr, 4 - header_read, &mut n, std::ptr::null_mut())
+                };
+                if ok == 0 || n == 0 {
+                    unsafe { CloseHandle(handle) };
+                    return Err(ClientError::ConnectFailed {
+                        path: self.pipe_name.clone(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "读取响应长度失败",
+                        ),
+                    });
+                }
+                header_read += n;
+            }
+            let resp_len = u32::from_be_bytes(header) as usize;
+            if resp_len > self.max_message_bytes {
+                unsafe { CloseHandle(handle) };
+                return Err(ClientError::Protocol(
+                    super::super::protocol::ProtocolError::MessageTooLarge {
+                        actual: resp_len,
+                        limit: self.max_message_bytes,
+                    },
+                ));
+            }
+            let mut resp = vec![0u8; resp_len];
+            let mut resp_read: u32 = 0;
+            while resp_read < resp_len as u32 {
+                let mut n: u32 = 0;
+                let ptr = unsafe { resp.as_mut_ptr().add(resp_read as usize) };
+                let ok = unsafe {
+                    ReadFile(
+                        handle,
+                        ptr,
+                        (resp_len as u32) - resp_read,
+                        &mut n,
+                        std::ptr::null_mut(),
+                    )
+                };
+                if ok == 0 || n == 0 {
+                    unsafe { CloseHandle(handle) };
+                    return Err(ClientError::ConnectFailed {
+                        path: self.pipe_name.clone(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::UnexpectedEof,
+                            "读取响应体失败",
+                        ),
+                    });
+                }
+                resp_read += n;
+            }
+            unsafe { CloseHandle(handle) };
+
+            // 7. 解析响应
+            let parsed: Value = serde_json::from_slice(&resp)
+                .map_err(|e| ClientError::Protocol(super::super::protocol::ProtocolError::Other(
+                    format!("响应 JSON 解析失败: {}", e),
+                )))?;
+            parse_rpc_response(&parsed).map_err(ClientError::Remote)
+        }
+
+        /// 便捷方法：ping daemon。
+        pub fn ping(&self) -> Result<Value, ClientError> {
+            self.call("ping", Value::Object(Map::new()))
+        }
+    }
+}
+
 
 /// Python 暴露的 build_request。
 ///

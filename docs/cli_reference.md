@@ -2465,6 +2465,10 @@ cw-client mount register <container_id> <container_path> <host_path> --type bind
 cw-client mount list --container-id <id>
 cw-client mount delete <container_id> <container_path>
 
+# 通用 RPC 调用（method + JSON params，可调用 task.* 等任意 daemon 方法）
+cw-client rpc task.create '{"title":"示例任务"}'
+cw-client rpc task.status '{"task_id":"T-xxx"}'
+
 # 工具链 / build context / resolved edges（与 cw daemon toolchain 子命令一致）
 cw-client toolchain register <name> <compiler_path> --version <v>
 cw-client toolchain list
@@ -2484,6 +2488,7 @@ cw-client mode --set auto     # 提示如何修改（不会真正设置）
 |--------|-------------|-------------|
 | `serve` | ✓ 启动 daemon | ✗ 禁止（argparse 拒绝） |
 | 其他 15 个子命令 | ✓ 全部可用 | ✓ 全部可用 |
+| `rpc <method> <json>` | ✓ 通用 RPC | ✓ 通用 RPC（可调用 `task.*` 等任意 daemon 方法） |
 
 ### `daemon metrics`：查询 daemon 运行时指标（G13 二轮评审补全）
 
@@ -2539,6 +2544,9 @@ P0 阶段盲评对照实验全生命周期管理命令。所有输出标记 `non
 # 创建批次（自动生成默认协议并锁定）
 cw experiment batch-create --seed 42 [--min-valid 30] [--min-nontrivial 20] [--json]
 
+# v2 分层配对批次：同一 strata 使用 pair-slot 0/1，协议保证一控一治
+cw experiment batch-create --seed 42 --assignment-mode paired_v2 [--json]
+
 # 手动冻结协议
 cw experiment batch-lock <batch_id> [--json]
 
@@ -2552,15 +2560,26 @@ cw experiment toggle-set --scope {global,workspace,task} --value {on,off} [--sco
 cw experiment toggle-show [--task-id T] [--workspace-id W] [--json]
 
 # 纳样（资格检查→确定性分组→构建 blind view→写 JSONL）
-cw experiment admit <task_id> <batch_id> [--strata K] [--json]
+cw experiment admit <task_id> <batch_id> [--strata K] \
+    [--pair-id PAIR_ID] [--pair-slot {0,1}] \
+    [--notes-file IMPLEMENTER_NOTES_UTF8_FILE] [--json]
+
+# Control 必须提供 notes；Treatment 首轮不得提供 notes。缺失或泄露均 fail-closed。
 
 # 记录 review 原始指标（Req 12.6）
 cw experiment record-metrics <task_id> <batch_id> --tp N --fp N --misses N --duration SEC \
-    [--tokens N] [--reopen N] [--defects N] [--rollbacks N] [--obs-window W] [--json]
+    --tokens-source {real,unavailable} [--tokens N] [--tokens-unavailable-reason TEXT] \
+    [--reopen N] [--defects N] [--rollbacks N] [--obs-window W] [--json]
+
+# v2：tokens-source=real 必须提供真实 provider token 计数；无法采集时使用
+# tokens-source=unavailable + 非空 reason，禁止用字符数估算。
 
 # 记录 reveal 前后 verdict 变更（Req 12.7）
 cw experiment record-verdict <task_id> <batch_id> --changed {yes,no} \
     [--reason-code {no_change,new_fact,corrected_misunderstanding}] [--json]
+
+# 在 JSONL 同一父目录生成 report_<batch_id>.json 和 evidence_manifest_<batch_id>.json
+cw experiment report <batch_id> --artifacts-dir <JSONL_PARENT_DIR> [--json]
 
 # 记录 Implementer_Notes 揭示事件（Req 12.7）
 cw experiment record-reveal <task_id> <batch_id> [--sealed] [--json]
@@ -2610,11 +2629,12 @@ cw experiment report <batch_id> [--json]
 `report` 输出的 `g0_decision.eligible_for_p1` 为 `true` 当且仅当：
 
 1. 有效样本数 ≥ `min_valid_tasks`（默认 30）
-2. 非平凡代码变更样本 ≥ `min_nontrivial_code_changes`（默认 20）
-3. 缺陷检出率 Treatment ≥ Control（方向性）
-4. 误报率 Treatment 不超过 Control + 10pp
-5. 中位审查延迟 Treatment 不超过 Control × 1.25
-6. 无未解决的安全/盲法事件
+2. 非平凡代码变更样本 ≥ `min_nontrivial_code_changes`（默认 10）
+3. 两组 Recall 分母均大于 0；`TP=0 且 misses=0` 是不可估计，不按 Recall=0 计算
+4. 缺陷检出率 Treatment ≥ Control（方向性）
+5. 误报率 Treatment 不超过 Control + 10pp
+6. 中位审查延迟 Treatment 不超过 Control × 1.25
+7. Control/Treatment 首轮视图披露差异通过完整性校验，且无未解决的安全/盲法事件
 
 满足以上全部条件时 `eligible_for_p1=true`，表示"可以进入 P1 决策讨论"，
 **不代表 P1 已实现或已启用**（Req 13.1）。

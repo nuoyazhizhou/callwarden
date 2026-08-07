@@ -14,11 +14,10 @@ import sys
 
 def main():
     """cw-daemon 主入口。"""
-    if sys.platform != "linux":
+    if sys.platform not in ("linux", "win32"):
         print(
-            "ERROR: cw-daemon is only supported on Linux.\n"
-            "Enterprise daemon requires SO_PEERCRED, SCM_RIGHTS, UDS, and systemd.\n"
-            "On Windows/macOS, use 'cw server' for MCP stdio/SSE mode.",
+            "ERROR: cw-daemon is supported on Linux and Windows.\n"
+            "On macOS, use 'cw server' for MCP stdio/SSE mode.",
             file=sys.stderr,
         )
         sys.exit(2)
