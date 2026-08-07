@@ -254,7 +254,9 @@ jobs:
           CW_REQUIRE_FRESH_BINARY: '1'
           PYTHONUTF8: '1'
           PYTHONIOENCODING: utf-8
-          PYTHONPATH: ${{ github.workspace }}
+          # callwarden 包即仓库根目录本身，需父目录在 sys.path 才能 import callwarden
+          # （tests/conftest.py 第 4 行 from callwarden import config）
+          PYTHONPATH: ${{ github.workspace }}/..
 
       - name: Enforce no-skipped in daemon writer E2E
         # 解析 junit XML，skipped>0 即失败：发布验收不允许任何 E2E 用例被跳过而未执行
