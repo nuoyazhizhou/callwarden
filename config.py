@@ -1422,12 +1422,15 @@ def resolve_container_path(path: str, container_mappings: dict = None) -> str:
 
 def get_daemon_mode() -> str:
     """获取当前 daemon 模式。"""
+    env_mode = os.environ.get("CW_DAEMON_MODE", "").lower()
+    if env_mode in ("local", "enterprise", "auto"):
+        return env_mode
     return DAEMON_MODE
 
 
 def is_daemon_required() -> bool:
     """是否强制要求 daemon。"""
-    return DAEMON_MODE == "enterprise"
+    return get_daemon_mode() == "enterprise"
 
 
 def is_daemon_available() -> bool:

@@ -717,6 +717,7 @@ enum WorkspaceAction {
 }
 
 #[derive(Subcommand)]
+#[derive(Clone)]
 enum TaskAction {
     /// 创建任务和步骤
     Create {
@@ -1693,10 +1694,23 @@ fn cli_main() {
 }
 
 fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
-    let result = (|| -> Result<String, String> {
-        // task 是 per-UID 编排元数据；即使代码查询使用 enterprise，也固定读取本地库。
-        let zh_cn = use_zh_cn();
-        match action {
+    let zh_cn = use_zh_cn();
+    let is_write = matches!(
+        action,
+        TaskAction::Create { .. }
+            | TaskAction::Next { .. }
+            | TaskAction::Report { .. }
+            | TaskAction::Rollback { .. }
+            | TaskAction::CaptureDiff { .. }
+            | TaskAction::ResolveFinding { .. }
+            | TaskAction::Apply { .. }
+            | TaskAction::Close { .. }
+            | TaskAction::Split { .. }
+            | TaskAction::Reopen { .. }
+    );
+
+    let local_fn = || -> Result<String, String> {
+        match action.clone() {
             TaskAction::Create { title, desc, steps } => {
                 let steps = if steps.is_empty() {
                     Vec::new()
@@ -1853,10 +1867,73 @@ fn run_task(runtime: &RuntimeOptions, action: TaskAction) -> CommandResult {
                 Ok(format_task_findings(&task_id, &findings, zh_cn))
             }
         }
-    })();
-    match result {
-        Ok(output) => CommandResult::success_text(output, RouteUsed::Local),
-        Err(error) => CommandResult::failure(1, error, RouteUsed::Local),
+    };
+
+    let enterprise_fn = || -> Result<String, String> {
+        let (rpc_method, rpc_params) = match action.clone() {
+            TaskAction::Create { title, desc, steps } => {
+                let steps_val = if steps.is_empty() {
+                    serde_json::json!([])
+                } else {
+                    serde_json::from_str::<Value>(&steps).unwrap_or(serde_json::json!([]))
+                };
+                ("task.create", serde_json::json!({"title": title, "description": desc, "steps": steps_val}))
+            }
+            TaskAction::Next { task_id } => {
+                ("task.claim", serde_json::json!({"task_id": task_id}))
+            }
+            TaskAction::Report { task_id, step_id, result, fail } => {
+                ("task.report", serde_json::json!({"task_id": task_id, "step_id": step_id, "summary": result, "success": !fail}))
+            }
+            TaskAction::Rollback { task_id, step_id } => {
+                ("task.rollback", serde_json::json!({"task_id": task_id, "step_id": step_id}))
+            }
+            TaskAction::CaptureDiff { task_id, step_id, base, .. } => {
+                ("task.capture_diff", serde_json::json!({"task_id": task_id.unwrap_or_default(), "step_id": step_id, "base": base}))
+            }
+            TaskAction::Apply { task_id, reviewer } => {
+                ("task.apply", serde_json::json!({"task_id": task_id, "reviewer": reviewer}))
+            }
+            TaskAction::Close { task_id, reviewer } => {
+                ("task.close", serde_json::json!({"task_id": task_id, "reviewer": reviewer}))
+            }
+            TaskAction::Reopen { task_id, reviewer, reason } => {
+                ("task.reopen", serde_json::json!({"task_id": task_id, "reviewer": reviewer, "reason": reason}))
+            }
+            TaskAction::Split { task_id, plan } => {
+                let plan_path = plan.to_string_lossy().to_string();
+                let plan_text = std::fs::read_to_string(&plan).unwrap_or_default();
+                ("task.split", serde_json::json!({"task_id": task_id, "plan_file": plan_path, "plan_content": plan_text}))
+            }
+            TaskAction::CompletionReview { task_id, step_id } => {
+                ("task.completion_review", serde_json::json!({"task_id": task_id, "step_id": step_id}))
+            }
+            TaskAction::ResolveFinding { finding_id, resolution, resolved_by } => {
+                ("task.resolve_quality_finding", serde_json::json!({"finding_id": finding_id, "resolution": resolution, "resolved_by": resolved_by}))
+            }
+            TaskAction::List { status, limit, .. } => {
+                ("task.list", serde_json::json!({"status": status, "limit": limit}))
+            }
+            TaskAction::Show { task_id, .. } | TaskAction::StatusTree { task_id } => {
+                ("task.status", serde_json::json!({"task_id": task_id}))
+            }
+            TaskAction::Findings { task_id, .. } => {
+                ("task.events", serde_json::json!({"task_id": task_id}))
+            }
+            _ => ("task.status", serde_json::json!({})),
+        };
+
+        let val = runtime.daemon_call(rpc_method, rpc_params)?;
+        serde_json::to_string_pretty(&val).map_err(|e| e.to_string())
+    };
+
+    if is_write {
+        runtime.execute_write_with(local_fn, enterprise_fn)
+    } else {
+        runtime.execute_read_with(
+            || local_fn().map(|s| serde_json::json!({"output": s})),
+            || enterprise_fn().map(|s| serde_json::json!({"output": s})),
+        )
     }
 }
 

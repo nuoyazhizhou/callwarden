@@ -63,10 +63,64 @@ class UnixDaemonRpcClient:
     def __init__(self, socket_path: Optional[str] = None,
                  timeout: float = 30.0,
                  max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES):
-        self.socket_path = socket_path or get_default_endpoint()
+        self.socket_path = socket_path or os.environ.get("CW_DAEMON_ENDPOINT") or get_default_endpoint()
         self.timeout = timeout
         self.max_message_bytes = max_message_bytes
         self._ids = itertools.count(1)
+
+    # ------------------------------------------------------------------
+    # Task 协同 RPC 便利包装
+    # ------------------------------------------------------------------
+
+    def task_create(self, title: str, description: str = "", steps: list = None, creator: str = "agent", parent_id: str = "", workspace_id: str = "") -> dict:
+        params = {
+            "title": title,
+            "description": description,
+            "steps": steps or [],
+            "creator": creator,
+            "parent_id": parent_id,
+            "workspace_id": workspace_id,
+        }
+        return self.call("task.create", params)
+
+    def task_claim(self, task_id: str, agent_session_id: str = "") -> dict:
+        return self.call("task.claim", {"task_id": task_id, "agent_session_id": agent_session_id})
+
+    def task_work_next(self, task_id: str) -> dict:
+        return self.call("task.work_next", {"task_id": task_id})
+
+    def task_report(self, task_id: str, summary: str = "", evidence_path: str = "", evidence_hash: str = "", agent_session_id: str = "") -> dict:
+        return self.call("task.report", {
+            "task_id": task_id,
+            "summary": summary,
+            "evidence_path": evidence_path,
+            "evidence_hash": evidence_hash,
+            "agent_session_id": agent_session_id,
+        })
+
+    def task_status(self, task_id: str) -> dict:
+        return self.call("task.status", {"task_id": task_id})
+
+    def task_events(self, task_id: str) -> dict:
+        return self.call("task.events", {"task_id": task_id})
+
+    def task_list(self, status: str = "", limit: int = 100, parent_id: str = "") -> dict:
+        return self.call("task.list", {"status": status, "limit": limit, "parent_id": parent_id})
+
+    def task_rollback(self, task_id: str, reason: str = "") -> dict:
+        return self.call("task.rollback", {"task_id": task_id, "reason": reason})
+
+    def task_reopen(self, task_id: str, reason: str = "", reviewer: str = "") -> dict:
+        return self.call("task.reopen", {"task_id": task_id, "reason": reason, "reviewer": reviewer})
+
+    def task_apply(self, task_id: str, reviewer: str = "") -> dict:
+        return self.call("task.apply", {"task_id": task_id, "reviewer": reviewer})
+
+    def task_close(self, task_id: str, reviewer: str = "") -> dict:
+        return self.call("task.close", {"task_id": task_id, "reviewer": reviewer})
+
+    def task_capture_diff(self, task_id: str, step_id: str = "", base: str = "HEAD") -> dict:
+        return self.call("task.capture_diff", {"task_id": task_id, "step_id": step_id, "base": base})
 
     def close(self) -> None:
         """关闭客户端（单次连接模式无持久连接，为空操作）。"""
@@ -149,7 +203,7 @@ class UnixDaemonRpcClient:
                 send_message_with_fds(conn, {
                     "id": request_id,
                     "method": method,
-                    "params": params,
+                    "params": params or {},
                 }, [fd], self.max_message_bytes)
                 response = recv_message(conn, self.max_message_bytes)
         except (OSError, socket.timeout) as exc:
@@ -978,3 +1032,49 @@ class DaemonClient:
 def get_daemon_client() -> DaemonClient:
     """获取 DaemonClient 单例。"""
     return DaemonClient.get_instance()
+
+
+# ----------------------------------------------------------------------
+# 统一 Task 写/读 路由规则函数
+# ----------------------------------------------------------------------
+
+def route_task_write(rpc_method: str, params: dict, fallback_func):
+    """统一任务写操作路由规则：
+    1. local 模式 -> 直接执行 fallback_func（本地 SQLite）
+    2. enterprise / auto 模式 -> 通过 daemon RPC 执行
+    3. enterprise / auto 模式下若 daemon 不可用，禁止 fallback 本地 SQLite，抛出 DaemonUnavailableError (fail-closed)
+    """
+    mode = get_daemon_mode()
+    if mode == "local":
+        return fallback_func()
+
+    if isinstance(params, dict) and "request_id" not in params:
+        import uuid
+        params["request_id"] = f"req-{uuid.uuid4().hex[:12]}"
+
+    rpc_client = UnixDaemonRpcClient()
+    try:
+        return rpc_client.call(rpc_method, params)
+    except Exception as exc:
+        if is_daemon_required() or mode == "auto":
+            raise DaemonUnavailableError(f"enterprise/auto 模式下任务写操作 daemon 连接失败: {exc}") from exc
+        raise
+
+
+def route_task_read(rpc_method: str, params: dict, fallback_func):
+    """统一任务读操作路由规则：
+    1. local 模式 -> 直接执行 fallback_func
+    2. enterprise 模式 -> 走 daemon RPC，不可用时 fail-closed
+    3. auto 模式 -> 优先走 daemon RPC，不可用时降级执行 fallback_func
+    """
+    mode = get_daemon_mode()
+    if mode == "local":
+        return fallback_func()
+
+    rpc_client = UnixDaemonRpcClient()
+    try:
+        return rpc_client.call(rpc_method, params)
+    except Exception as exc:
+        if is_daemon_required():
+            raise DaemonUnavailableError(f"enterprise 模式下任务读操作 daemon 连接失败: {exc}") from exc
+        return fallback_func()

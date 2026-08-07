@@ -24,6 +24,7 @@ import time
 from ..db import CodeGraphDB
 from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER
 from ..server.watcher import FileWatcher
+from ..server.daemon_client import route_task_write, route_task_read, DaemonUnavailableError
 from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
 from .console import cprint
 from .agent_registry import get_merged_specs
@@ -3575,7 +3576,13 @@ def _handle_task(args, db):
                     "yellow",
                 )
 
-        task_id = db.task_create(opts.title, opts.desc, steps, creator="agent")
+        def _local_create():
+            return db.task_create(opts.title, opts.desc, steps, creator="agent")
+
+        create_res = route_task_write("task.create", {
+            "title": opts.title, "description": opts.desc, "steps": steps, "creator": "agent",
+        }, _local_create)
+        task_id = create_res["task_id"] if isinstance(create_res, dict) and "task_id" in create_res else create_res
 
         cprint(t("cli.messages.task_create_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=task_id))
@@ -3595,7 +3602,10 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "next":
-        result = db.task_next_step(opts.task_id)
+        def _local_next():
+            return db.task_next_step(opts.task_id)
+
+        result = route_task_write("task.claim", {"task_id": opts.task_id}, _local_next)
 
         cprint(t("cli.messages.task_next_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -3704,11 +3714,15 @@ def _handle_task(args, db):
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], False)
             return True
-        result = db.task_report_step(
-            opts.task_id, opts.step_id, opts.result, success, None,
-            **( {"identity": identity} if identity else {} ),
-            **lease_kwargs,
-        )
+        def _local_report():
+            return db.task_report_step(
+                opts.task_id, opts.step_id, opts.result, success, None,
+                **( {"identity": identity} if identity else {} ),
+                **lease_kwargs,
+            )
+        result = route_task_write("task.report", {
+            "task_id": opts.task_id, "step_id": opts.step_id, "summary": opts.result, "success": success,
+        }, _local_report)
 
         cprint(t("cli.messages.task_report_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -3734,11 +3748,14 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "rollback":
-        # 优先调用 task_rollback_step；方法不存在则回退到 task_rollback
-        if hasattr(db, "task_rollback_step"):
-            result = db.task_rollback_step(opts.task_id, opts.step_id)
-        else:
-            result = db.task_rollback(opts.task_id, opts.step_id)
+        def _local_rollback():
+            if hasattr(db, "task_rollback_step"):
+                return db.task_rollback_step(opts.task_id, opts.step_id)
+            return db.task_rollback(opts.task_id, opts.step_id)
+
+        result = route_task_write("task.rollback", {
+            "task_id": opts.task_id, "step_id": opts.step_id,
+        }, _local_rollback)
 
         cprint(t("cli.messages.task_rollback_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -3796,7 +3813,14 @@ def _handle_task(args, db):
             _lease_reason_output(lease_kwargs["error"], False)
             return True
         apply_kwargs.update(lease_kwargs)
-        result = db.task_apply(opts.task_id, **apply_kwargs)
+        
+        def _local_apply():
+            return db.task_apply(opts.task_id, **apply_kwargs)
+
+        result = route_task_write("task.apply", {
+            "task_id": opts.task_id, "reviewer": opts.reviewer,
+        }, _local_apply)
+
         if "error" in result:
             cprint(t("cli.messages.task_apply_failed",
                    error=result["error"]), "red")
@@ -3840,7 +3864,14 @@ def _handle_task(args, db):
             _lease_reason_output(lease_kwargs["error"], False)
             return True
         close_kwargs.update(lease_kwargs)
-        result = db.task_close(opts.task_id, **close_kwargs)
+
+        def _local_close():
+            return db.task_close(opts.task_id, **close_kwargs)
+
+        result = route_task_write("task.close", {
+            "task_id": opts.task_id, "reviewer": opts.reviewer,
+        }, _local_close)
+
         if "error" in result:
             cprint(t("cli.messages.task_close_failed",
                    error=result["error"]), "red")
@@ -3858,7 +3889,6 @@ def _handle_task(args, db):
 
     elif opts.action == "reopen":
         # 重新打开任务：review/applied/closed -> in_progress
-        # 用于 code review 发现已 applied/closed 的任务有问题，需要修复
         identity, ireason = _collect_identity(opts)
         if ireason:
             _identity_reason_output(ireason, False)
@@ -3885,7 +3915,13 @@ def _handle_task(args, db):
             _lease_reason_output(lease_kwargs["error"], False)
             return True
         reopen_kwargs.update(lease_kwargs)
-        result = db.task_reopen(opts.task_id, **reopen_kwargs)
+
+        def _local_reopen():
+            return db.task_reopen(opts.task_id, **reopen_kwargs)
+
+        result = route_task_write("task.reopen", {
+            "task_id": opts.task_id, "reviewer": opts.reviewer, "reason": opts.reason,
+        }, _local_reopen)
         if "error" in result:
             cprint(t("cli.messages.task_reopen_failed",
                    error=result["error"]), "red")
@@ -3911,10 +3947,11 @@ def _handle_task(args, db):
         # 捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
         # --auto 模式：自动检测 in_progress 任务 + HEAD~1 base + 自动 apply（fail-soft）
         if opts.auto:
-            # 自动模式：调用 db.task_capture_diff_auto()，fail-soft
-            # 双层 fail-soft：db 层吞异常 + CLI 层兜底，确保不影响 git commit
+            # 自动模式：调用 route_task_write("task.capture_diff")，fail-soft
             try:
-                result = db.task_capture_diff_auto()
+                def _local_capture_auto():
+                    return db.task_capture_diff_auto()
+                result = route_task_write("task.capture_diff", {"auto": True}, _local_capture_auto)
             except Exception as exc:
                 # 兜底：db 层未捕获的异常也封装为 fail-soft 结果
                 result = {
@@ -4012,14 +4049,24 @@ def _handle_task(args, db):
             capture_p.error(t("cli.messages.task_capture_diff_missing_task_id",
                               default="task_id is required (or use --auto)"))
 
-        result = db.task_capture_diff(
-            task_id=opts.task_id,
-            step_id=opts.step_id,
-            base=opts.base,
-            dry_run=opts.dry_run,
-            source_commit_hash=getattr(opts, "source_commit_hash", "") or "",
-            skip_quality_review=getattr(opts, "skip_quality_review", False),
-        )
+        def _local_capture_manual():
+            return db.task_capture_diff(
+                task_id=opts.task_id,
+                step_id=opts.step_id,
+                base=opts.base,
+                dry_run=opts.dry_run,
+                source_commit_hash=getattr(opts, "source_commit_hash", "") or "",
+                skip_quality_review=getattr(opts, "skip_quality_review", False),
+            )
+
+        result = route_task_write("task.capture_diff", {
+            "task_id": opts.task_id,
+            "step_id": opts.step_id,
+            "base": opts.base,
+            "dry_run": opts.dry_run,
+            "source_commit_hash": getattr(opts, "source_commit_hash", "") or "",
+            "skip_quality_review": getattr(opts, "skip_quality_review", False),
+        }, _local_capture_manual)
 
         cprint(t("cli.messages.task_capture_diff_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -4317,7 +4364,14 @@ def _handle_task(args, db):
                      default="No subtasks found in plan"), "yellow")
             print()
             return True
-        sub_ids = db.task_split(opts.task_id, subtasks)
+        def _local_split():
+            return db.task_split(opts.task_id, subtasks)
+
+        sub_ids = route_task_write("task.split", {
+            "task_id": opts.task_id,
+            "subtasks": subtasks,
+            "plan_file": str(opts.plan),
+        }, _local_split)
         cprint(t("cli.messages.task_split_success",
                  task_id=opts.task_id, count=len(sub_ids)), "green", bold=True)
         for i, sid in enumerate(sub_ids):
@@ -12210,15 +12264,15 @@ def run_client_mode(argv: list) -> int:
     """
     import os as _os
     import sys as _sys
-    if _sys.platform != "linux":
-        print("ERROR: cw-client is only supported on Linux (UDS + SCM_RIGHTS).",
+    if _sys.platform not in ("linux", "win32", "darwin"):
+        print("ERROR: cw-client is only supported on Linux/Windows/macOS.",
               file=_sys.stderr)
         return 2
 
     # 无参数时打印简介 + 帮助提示
     if not argv:
         print("Call Warden Client Mode")
-        print("  Connects to Enterprise Daemon via UDS")
+        print("  Connects to Enterprise Daemon via UDS/NamedPipe")
         print("  No local parser or CAS write capability")
         print("  Subcommands: ping, register, list, status, publish, query,")
         print("               health, schema-version, backup, restore,")
@@ -12282,15 +12336,18 @@ def _find_cw_client_binary():
     import sys as _sys
     from pathlib import Path as _Path
 
+    names = ["cw-client.exe", "cw_client.exe"] if _sys.platform == "win32" else ["cw-client", "cw_client"]
+
     # 1. 显式环境变量覆盖
     env_bin = _os.environ.get("CW_CLIENT_BIN")
-    if env_bin and _os.path.isfile(env_bin) and _os.access(env_bin, _os.X_OK):
+    if env_bin and _os.path.isfile(env_bin):
         return _Path(env_bin)
 
-    # 2. PATH 查找（生产安装名为 cw-client，连字符命名）
-    found = _shutil.which("cw-client")
-    if found:
-        return _Path(found)
+    # 2. PATH 查找
+    for name in names:
+        found = _shutil.which(name)
+        if found:
+            return _Path(found)
 
     # PyInstaller 冻结包内的 binary
     if getattr(_sys, "frozen", False):
@@ -12300,19 +12357,20 @@ def _find_cw_client_binary():
             roots.append(_Path(meipass))
         roots.append(_Path(_sys.executable).resolve().parent)
         for root in roots:
-            candidate = root / "cw-client"
-            if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
-                return candidate
+            for name in names:
+                candidate = root / name
+                if candidate.is_file():
+                    return candidate
 
     # 3./4. 开发构建路径（仓库根目录下的 rust_ext/target/）
-    # cargo 生成的 binary 名遵循 Cargo.toml [[bin]] name（cw-client，连字符）
     try:
         root = _Path(__file__).resolve().parent.parent
         rust_target = root / "rust_ext" / "target"
         for profile in ("release", "debug"):
-            candidate = rust_target / profile / "cw-client"
-            if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
-                return candidate
+            for name in names:
+                candidate = rust_target / profile / name
+                if candidate.is_file():
+                    return candidate
     except Exception:
         pass
 
@@ -12320,17 +12378,17 @@ def _find_cw_client_binary():
 
 
 def run_agent_mode(argv: list) -> int:
-    """cw-agent 入口：Linux per-UID watcher agent。仅 Linux 可用。
+    """cw-agent 入口：per-UID watcher agent。
 
     子命令：
-    - start [--watch-dir DIR] [--workspace-id ID]：启动 watcher（前台运行，systemd --user 调用）
+    - start [--watch-dir DIR] [--workspace-id ID]：启动 watcher（前台运行）
     - stop：发送 SIGTERM 停止运行中的 agent
     - status：查询 agent 运行状态
     """
     import os as _os
     import sys as _sys
-    if _sys.platform != "linux":
-        print("ERROR: cw-agent is only supported on Linux.", file=_sys.stderr)
+    if _sys.platform not in ("linux", "win32", "darwin"):
+        print("ERROR: cw-agent is only supported on Linux/Windows/macOS.", file=_sys.stderr)
         return 2
 
     if not argv:
@@ -12356,14 +12414,14 @@ def run_agent_mode(argv: list) -> int:
 
 def _print_agent_usage() -> None:
     """打印 cw-agent 用法。"""
-    print("Call Warden Agent Mode (Linux only)")
-    print("  Per-UID file watcher → UDS → Enterprise Daemon")
+    print("Call Warden Agent Mode")
+    print("  Per-UID file watcher → IPC → Enterprise Daemon")
     print()
     print("Usage: cw-agent <command> [options]")
     print()
     print("Commands:")
     print("  start [--watch-dir DIR] [--workspace-id ID]")
-    print("          启动 watcher（前台运行，systemd --user 调用）")
+    print("          启动 watcher")
     print("  stop    停止运行中的 agent（读取 PID 文件，发送 SIGTERM）")
     print("  status  查询 agent 运行状态")
 
@@ -12441,7 +12499,6 @@ def _agent_start(argv: list) -> int:
         level=_logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    # 同时输出到 stderr（systemd 会重定向到 journal）
     console = _logging.StreamHandler()
     console.setLevel(_logging.INFO)
     console.setFormatter(_logging.Formatter("%(levelname)s: %(message)s"))
@@ -12471,8 +12528,8 @@ def _agent_start(argv: list) -> int:
     from callwarden.server.agent_protocol import (
         user_agent_connect, user_agent_ping, AgentProtocolError,
     )
-    from callwarden.config import DAEMON_SOCKET_PATH
-    rpc_client = UnixDaemonRpcClient(socket_path=DAEMON_SOCKET_PATH)
+    from callwarden.config import get_default_daemon_endpoint
+    rpc_client = UnixDaemonRpcClient(socket_path=get_default_daemon_endpoint())
 
     try:
         ping_resp = user_agent_ping(rpc_client)
@@ -12530,7 +12587,8 @@ def _agent_start(argv: list) -> int:
         _logging.info("收到信号 %d，准备退出", signum)
         stop_event.set()
 
-    _signal.signal(_signal.SIGTERM, _signal_handler)
+    if hasattr(_signal, "SIGTERM"):
+        _signal.signal(_signal.SIGTERM, _signal_handler)
     _signal.signal(_signal.SIGINT, _signal_handler)
 
     try:
@@ -12566,16 +12624,16 @@ def _agent_stop(argv: list) -> int:
         return 1
     try:
         import signal as _signal
-        _os.kill(pid, _signal.SIGTERM)
-        print(f"已发送 SIGTERM 到 PID {pid}")
-        # 等待 PID 文件被清理（最多 5 秒）
+        sig = getattr(_signal, "SIGTERM", _signal.SIGINT)
+        _os.kill(pid, sig)
+        print(f"已发送 停止信号 到 PID {pid}")
         import time as _time
         for _ in range(50):
             if not _os.path.isfile(pid_file):
                 print("agent 已停止")
                 return 0
             _time.sleep(0.1)
-        print("WARNING: agent 5 秒内未退出，可能需要 SIGKILL", file=_sys.stderr)
+        print("WARNING: agent 5 秒内未退出", file=_sys.stderr)
         return 1
     except ProcessLookupError:
         print(f"PID {pid} 不存在，清理 PID 文件")
@@ -12603,9 +12661,8 @@ def _agent_status(argv: list) -> int:
             with open(pid_file, "r") as f:
                 pid = int(f.read().strip())
             print(f"PID: {pid}")
-            # 检查进程是否存在
             try:
-                _os.kill(pid, 0)  # signal 0 = 不发信号，仅检查
+                _os.kill(pid, 0)
                 print("状态: 运行中")
             except ProcessLookupError:
                 print("状态: PID 不存在（PID 文件过期）")
@@ -12614,7 +12671,6 @@ def _agent_status(argv: list) -> int:
         except (ValueError, OSError) as e:
             print(f"状态: PID 文件损坏（{e}）")
 
-    # 显示 session 状态
     from callwarden.server.agent_session import (
         AgentSession, DEFAULT_AGENT_SESSION_FILE,
     )
@@ -12633,12 +12689,11 @@ def _agent_status(argv: list) -> int:
     else:
         print("  （无 session 文件）")
 
-    # ping daemon
     print("\n=== Daemon 连接 ===")
     try:
         from callwarden.server.daemon_client import UnixDaemonRpcClient
-        from callwarden.config import DAEMON_SOCKET_PATH
-        rpc = UnixDaemonRpcClient(socket_path=DAEMON_SOCKET_PATH)
+        from callwarden.config import get_default_daemon_endpoint
+        rpc = UnixDaemonRpcClient(socket_path=get_default_daemon_endpoint())
         resp = rpc.call("ping")
         print(f"daemon 状态: {resp.get('status', 'unknown')}")
         print(f"  peer_uid: {resp.get('peer_uid')}")
@@ -12649,7 +12704,7 @@ def _agent_status(argv: list) -> int:
 
 
 def run_daemon_mode(argv: list) -> int:
-    """cw-daemon 入口：Linux system daemon。仅 Linux 可用。
+    """cw-daemon 入口：system daemon。
 
     R7: 优先调度已安装的 Rust cw_daemon 二进制（生产路径），找不到时回退到
     rust_ext/target/{release,debug}/cw_daemon（开发路径）。两者都不可用时
@@ -12659,15 +12714,15 @@ def run_daemon_mode(argv: list) -> int:
     import shutil as _shutil
     import sys as _sys
     import subprocess as _subprocess
-    if _sys.platform != "linux":
-        print("ERROR: cw-daemon is only supported on Linux.", file=_sys.stderr)
+    if _sys.platform not in ("linux", "win32", "darwin"):
+        print("ERROR: cw-daemon is only supported on Linux/Windows/macOS.", file=_sys.stderr)
         return 2
 
     binary = _find_cw_daemon_binary()
     if binary is None:
         print(
             "ERROR: cw_daemon binary not found.\n"
-            "  Production: install callwarden-daemon package (provides /usr/bin/cw-daemon).\n"
+            "  Production: install callwarden-daemon package (provides cw-daemon).\n"
             "  Development: run `cargo build --no-default-features --bin cw_daemon` "
             "in rust_ext/ first.\n"
             "  Or set CW_DAEMON_BIN env var to the binary path.",
@@ -12691,9 +12746,9 @@ def _find_cw_daemon_binary():
 
     查找顺序：
     1. CW_DAEMON_BIN 环境变量（显式覆盖）
-    2. PATH 中的 cw-daemon（生产安装）或 cw_daemon（开发构建）
-    3. rust_ext/target/release/cw_daemon（cargo build --release）
-    4. rust_ext/target/debug/cw_daemon（cargo build）
+    2. PATH 中的 cw-daemon / cw_daemon
+    3. rust_ext/target/release/cw_daemon
+    4. rust_ext/target/debug/cw_daemon
 
     返回 Path 或 None。
     """
@@ -12702,19 +12757,20 @@ def _find_cw_daemon_binary():
     import sys as _sys
     from pathlib import Path as _Path
 
+    names = ("cw-daemon.exe", "cw_daemon.exe") if _sys.platform == "win32" else ("cw-daemon", "cw_daemon")
+
     # 1. 显式环境变量覆盖
     env_bin = _os.environ.get("CW_DAEMON_BIN")
-    if env_bin and _os.path.isfile(env_bin) and _os.access(env_bin, _os.X_OK):
+    if env_bin and _os.path.isfile(env_bin):
         return _Path(env_bin)
 
-    # 2. PATH 查找（生产安装名为 cw-daemon，开发构建名为 cw_daemon）
-    for name in ("cw-daemon", "cw_daemon"):
+    # 2. PATH 查找
+    for name in names:
         found = _shutil.which(name)
         if found:
             return _Path(found)
 
-    # 冻结 one-dir 包内的 daemon 二进制。PyInstaller 将 binaries 放到
-    # _MEIPASS；保留可执行文件目录回退，兼容手工解压布局。
+    # 冻结 one-dir 包内的 daemon 二进制。
     if getattr(_sys, "frozen", False):
         roots = []
         meipass = getattr(_sys, "_MEIPASS", None)
@@ -12722,20 +12778,20 @@ def _find_cw_daemon_binary():
             roots.append(_Path(meipass))
         roots.append(_Path(_sys.executable).resolve().parent)
         for root in roots:
-            for name in ("cw-daemon", "cw_daemon"):
+            for name in names:
                 candidate = root / name
-                if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
+                if candidate.is_file():
                     return candidate
 
     # 3./4. 开发构建路径（仓库根目录下的 rust_ext/target/）
     try:
-        # cli/main.py 位于 <root>/cli/main.py，根目录是父目录
         root = _Path(__file__).resolve().parent.parent
         rust_target = root / "rust_ext" / "target"
         for profile in ("release", "debug"):
-            candidate = rust_target / profile / "cw_daemon"
-            if candidate.is_file() and _os.access(str(candidate), _os.X_OK):
-                return candidate
+            for name in names:
+                candidate = rust_target / profile / name
+                if candidate.is_file():
+                    return candidate
     except Exception:
         pass
 
@@ -12775,17 +12831,19 @@ def _handle_experiment(args, db):
     from ..experiments.blind_review_views import (
         ViewDisclosureError, build_minimal_blind_view, build_verdict_change_record,
         BlindViewGroup, BlindViewPhase, collect_source_facts_from_db,
+        ViewErrorCode, make_view_reason,
     )
     from ..experiments.blind_review_jsonl import (
         ExperimentJsonlWriter, build_blind_view_record,
         build_review_metrics_record,
         build_reveal_event_record, build_invalid_sample_record,
-        build_incident_record,
+        build_incident_record, canonical_incident_record_type, write_evidence_bundle,
     )
     from ..experiments.blind_review_evaluator import (
         EvaluatorError, compute_group_metrics, evaluate_success,
         evaluate_gray_zone, evaluate_pause_conditions,
-        build_evaluation_report, SampleRecord,
+        build_evaluation_report, SampleRecord, validate_blind_view_records,
+        make_evaluator_reason, EvaluatorErrorCode,
     )
 
     parser = argparse.ArgumentParser(
@@ -12805,6 +12863,8 @@ def _handle_experiment(args, db):
                       help="Minimum valid tasks for success evaluation (default 30)")
     bc_p.add_argument("--min-nontrivial", type=int, default=10,
                       help="Minimum non-trivial code changes (default 10)")
+    bc_p.add_argument("--assignment-mode", choices=["hash", "paired", "paired_v2"], default="hash",
+                      help="Group assignment mode; paired_v2 requires pair-id and pair-slot")
     bc_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     # --- batch-lock ---
@@ -12847,6 +12907,14 @@ def _handle_experiment(args, db):
     adm_p.add_argument("task_id", help="Task ID to admit")
     adm_p.add_argument("batch_id", help="Batch ID to admit into")
     adm_p.add_argument("--strata", default="", help="Stratification key for group assignment")
+    adm_p.add_argument("--pair-slot", type=int, choices=[0, 1], default=None,
+                      help="Paired mode slot; same strata must use one 0 and one 1")
+    adm_p.add_argument("--pair-id", default=None,
+                      help="Paired mode unique pair identifier shared by exactly two tasks")
+    adm_p.add_argument("--notes-file", default=None,
+                      help="Control 组 Implementer_Notes UTF-8 文件；Treatment 不得提供")
+    adm_p.add_argument("--scope-contract", default=None,
+                      help="新批次纳样必填范围契约 JSON；声明 profile/required_paths/allowed_paths")
     adm_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     # --- record-metrics ---
@@ -12859,7 +12927,12 @@ def _handle_experiment(args, db):
     rm_p.add_argument("--fp", type=int, required=True, help="Verified false positives")
     rm_p.add_argument("--misses", type=int, required=True, help="Verified misses")
     rm_p.add_argument("--duration", type=float, required=True, help="Review duration (seconds)")
-    rm_p.add_argument("--tokens", type=int, default=0, help="Token usage")
+    rm_p.add_argument("--tokens", type=int, default=None,
+                      help="真实 token usage；必须与 --tokens-source real 一起使用")
+    rm_p.add_argument("--tokens-source", choices=["real", "unavailable"], required=True,
+                      help="token 来源：real 为实际 provider 计数，unavailable 为无法采集")
+    rm_p.add_argument("--tokens-unavailable-reason", default=None,
+                      help="tokens-source=unavailable 时的非空原因")
     rm_p.add_argument("--reopen", type=int, default=0, help="Reopen events count")
     rm_p.add_argument("--defects", type=int, default=0, help="Post-apply defects")
     rm_p.add_argument("--rollbacks", type=int, default=0, help="Post-apply rollbacks")
@@ -12890,6 +12963,8 @@ def _handle_experiment(args, db):
     rr_p.add_argument("batch_id", help="Batch ID")
     rr_p.add_argument("--sealed", action="store_true",
                       help="First verdict already sealed before reveal")
+    rr_p.add_argument("--notes-file", default=None,
+                      help="Treatment post-reveal Implementer_Notes UTF-8 文件（可审计揭示来源，Req 12.7）")
     rr_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     # --- record-invalid ---
@@ -12930,6 +13005,8 @@ def _handle_experiment(args, db):
         "cli_experiment_report_desc",
         default="Generate evaluation report with machine-readable G0 decision"))
     rep_p.add_argument("batch_id", help="Batch ID to evaluate")
+    rep_p.add_argument("--artifacts-dir", default=None,
+                       help="将 report 与 evidence manifest 原子写入 JSONL 同一目录")
     rep_p.add_argument("--json", action="store_true", help="Machine-readable JSON output")
 
     opts = parser.parse_args(args)
@@ -12997,7 +13074,7 @@ def _handle_experiment(args, db):
             config = Experiment_Batch_Config()
             config.load()
             batch_id = f"B-{int(time.time() * 1000)}-{os.urandom(4).hex()}"
-            protocol = build_default_protocol(opts.seed)
+            protocol = build_default_protocol(opts.seed, assignment_mode=opts.assignment_mode)
             # 若用户自定义了阈值，替换协议中的 success_thresholds
             if opts.min_valid != 30 or opts.min_nontrivial != 10:
                 protocol.success_thresholds = SuccessThresholds(
@@ -13014,7 +13091,9 @@ def _handle_experiment(args, db):
             config.put_batch(batch)
             config.save()
             result = {"batch_id": batch_id, "status": "locked",
-                      "seed": opts.seed, "non_product_evidence": True}
+                      "seed": opts.seed, "assignment_mode": opts.assignment_mode,
+                      "protocol_fingerprint": batch.frozen_protocol_fingerprint,
+                      "non_product_evidence": True}
             _output(result,
                     [_msg("cli_experiment_batch_created",
                           "Experiment batch created and locked: {batch_id}", batch_id=batch_id),
@@ -13022,6 +13101,7 @@ def _handle_experiment(args, db):
                           "  seed={seed}, min_valid={min_valid}, min_nontrivial={min_nontrivial}",
                           seed=opts.seed, min_valid=opts.min_valid,
                           min_nontrivial=opts.min_nontrivial),
+                     f"  assignment_mode={opts.assignment_mode}, fingerprint={batch.frozen_protocol_fingerprint}",
                      _msg("cli_experiment_non_product_notice",
                           "  non_product_evidence=True; P0 records are not product Evidence." )],
                     opts.json)
@@ -13129,14 +13209,81 @@ def _handle_experiment(args, db):
             # 先构造/验证盲视图，再提交首次纳样状态；来源缺失时不得提前冻结批次。
             batch.ensure_admission_allowed()
             strata_key = opts.strata or opts.task_id
-            assignment = batch.protocol.assign_group(strata_key)
+            assignment = batch.protocol.assign_group(
+                strata_key, pair_slot=opts.pair_slot, pair_id=opts.pair_id)
             group = BlindViewGroup.CONTROL if assignment == GroupAssignment.CONTROL else BlindViewGroup.TREATMENT
+            implementer_notes = None
+            if opts.notes_file:
+                notes_path = os.path.abspath(opts.notes_file)
+                if not os.path.isfile(notes_path):
+                    raise ViewDisclosureError(make_view_reason(
+                        ViewErrorCode.VIEW_SOURCE_MISSING,
+                        task_id=opts.task_id,
+                        field=f"implementer_notes:{notes_path}"))
+                with open(notes_path, "r", encoding="utf-8") as notes_handle:
+                    implementer_notes = notes_handle.read()
+            if (assignment == GroupAssignment.CONTROL
+                    and (not isinstance(implementer_notes, str)
+                         or not implementer_notes.strip())):
+                raise ViewDisclosureError(make_view_reason(
+                    ViewErrorCode.CONTROL_NOTES_MISSING, task_id=opts.task_id))
+            if assignment == GroupAssignment.TREATMENT and implementer_notes:
+                raise ViewDisclosureError(make_view_reason(
+                    ViewErrorCode.DISCLOSURE_VIOLATION,
+                    task_id=opts.task_id,
+                    field="implementer_notes"))
             source_facts = collect_source_facts_from_db(db, opts.task_id)
+            if not opts.scope_contract:
+                raise ViewDisclosureError(make_view_reason(
+                    ViewErrorCode.VIEW_SOURCE_MISSING,
+                    task_id=opts.task_id,
+                    field="scope_contract:EXP_SCOPE_CONTRACT_REQUIRED"))
+            from ..experiments.admission_scope import ScopeContractError, validate_scope_contract
+            contract_path = os.path.abspath(opts.scope_contract)
+            if not os.path.isfile(contract_path):
+                raise ViewDisclosureError(make_view_reason(
+                    ViewErrorCode.VIEW_SOURCE_MISSING,
+                    task_id=opts.task_id,
+                    field=f"scope_contract:{contract_path}"))
+            try:
+                with open(contract_path, "r", encoding="utf-8") as contract_handle:
+                    scope_contract = json.load(contract_handle)
+                audited_paths = [
+                    str(row.get("file_path") or "")
+                    for row in (source_facts.change_audit_diffs or [])
+                    if isinstance(row, dict) and row.get("file_path")
+                ]
+                import subprocess
+                tracked_result = subprocess.run(
+                    ["git", "ls-files", "--", *audited_paths],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                    check=False,
+                )
+                if tracked_result.returncode != 0:
+                    raise ScopeContractError(
+                        "EXP_SCOPE_TRACKED_PATHS_UNAVAILABLE",
+                        tracked_result.stderr.strip() or "git ls-files failed",
+                    )
+                validated_scope_contract = validate_scope_contract(
+                    source_facts, scope_contract,
+                    tracked_paths=tracked_result.stdout.splitlines(),
+                )
+            except ScopeContractError as exc:
+                raise ViewDisclosureError(make_view_reason(
+                    ViewErrorCode.VIEW_SOURCE_MISSING,
+                    task_id=opts.task_id,
+                    field=f"scope_contract:{exc.code}:{exc.detail}")) from exc
+            except (OSError, ValueError, TypeError) as exc:
+                raise ViewDisclosureError(make_view_reason(
+                    ViewErrorCode.VIEW_SOURCE_MISSING,
+                    task_id=opts.task_id,
+                    field=f"scope_contract:{exc}")) from exc
             view = build_minimal_blind_view(
                 task_id=opts.task_id,
                 source=source_facts,
                 group=group,
                 phase=BlindViewPhase.PRE_VERDICT,
+                implementer_notes=implementer_notes,
             )
             if batch.first_sample_admitted_at is None:
                 batch.mark_first_admission(datetime.now(timezone.utc).isoformat())
@@ -13144,10 +13291,16 @@ def _handle_experiment(args, db):
                 config.save()
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
             record = build_blind_view_record(view=view, batch_id=opts.batch_id)
+            record["assignment_mode"] = batch.protocol.assignment_mode
+            record["pair_slot"] = opts.pair_slot
+            record["pair_id"] = opts.pair_id
+            record["scope_contract"] = validated_scope_contract
             writer.append(record)
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
                       "group": assignment.value, "strata_key": strata_key,
+                      "pair_slot": opts.pair_slot, "pair_id": opts.pair_id,
                       "disclosed_fields": view.disclosed_fields,
+                      "scope_contract": validated_scope_contract,
                       "non_product_evidence": True}
             _output(result,
                     [_msg("cli_experiment_admitted",
@@ -13166,6 +13319,23 @@ def _handle_experiment(args, db):
         # ============================================================
         elif opts.action == "record-metrics":
             _require_batch(opts.batch_id)
+            if opts.tokens_source == "real":
+                if opts.tokens is None or opts.tokens < 0:
+                    raise EvaluatorError(make_evaluator_reason(
+                        EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                        detail="tokens-source=real requires a non-negative integer"))
+                if opts.tokens_unavailable_reason:
+                    raise EvaluatorError(make_evaluator_reason(
+                        EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                        detail="tokens-unavailable-reason is invalid for real tokens"))
+            elif opts.tokens is not None:
+                raise EvaluatorError(make_evaluator_reason(
+                    EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                    detail="tokens must be omitted when source is unavailable"))
+            elif not opts.tokens_unavailable_reason or not opts.tokens_unavailable_reason.strip():
+                raise EvaluatorError(make_evaluator_reason(
+                    EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                    detail="tokens-source=unavailable requires a non-empty reason"))
             group = _resolve_sample_group(opts.batch_id, opts.task_id, opts.group)
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
             record = build_review_metrics_record(
@@ -13179,6 +13349,8 @@ def _handle_experiment(args, db):
                 verified_misses=opts.misses,
                 review_duration_seconds=opts.duration,
                 token_usage=opts.tokens,
+                token_usage_source=opts.tokens_source,
+                token_usage_unavailable_reason=opts.tokens_unavailable_reason,
                 reopen_events=opts.reopen,
                 post_apply_defects=opts.defects,
                 post_apply_rollbacks=opts.rollbacks,
@@ -13211,7 +13383,8 @@ def _handle_experiment(args, db):
             writer.append(record)
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
                       "group": group, "tp": opts.tp, "fp": opts.fp, "misses": opts.misses,
-                      "duration_s": opts.duration, "is_nontrivial_code_change": bool(is_nontrivial),
+                      "duration_s": opts.duration, "token_usage_source": opts.tokens_source,
+                      "is_nontrivial_code_change": bool(is_nontrivial),
                       "non_product_evidence": True,
                       "nontrivial_auto_detected": auto_nontrivial is not None}
             _output(result,
@@ -13255,14 +13428,28 @@ def _handle_experiment(args, db):
         elif opts.action == "record-reveal":
             _require_batch(opts.batch_id)
             writer = ExperimentJsonlWriter(_jsonl_path(opts.batch_id))
+            implementer_notes = None
+            if opts.notes_file:
+                notes_path = os.path.abspath(opts.notes_file)
+                if not os.path.isfile(notes_path):
+                    raise ViewDisclosureError(make_view_reason(
+                        ViewErrorCode.VIEW_SOURCE_MISSING,
+                        task_id=opts.task_id,
+                        field=f"implementer_notes:{notes_path}"))
+                with open(notes_path, "r", encoding="utf-8") as notes_handle:
+                    implementer_notes = notes_handle.read()
             record = build_reveal_event_record(
                 task_id=opts.task_id,
                 batch_id=opts.batch_id,
                 first_verdict_sealed=opts.sealed,
+                implementer_notes=implementer_notes,
             )
             writer.append(record)
             result = {"task_id": opts.task_id, "batch_id": opts.batch_id,
-                      "first_verdict_sealed": opts.sealed, "non_product_evidence": True}
+                      "first_verdict_sealed": opts.sealed,
+                      "implementer_notes_included": bool(
+                          implementer_notes and implementer_notes.strip()),
+                      "non_product_evidence": True}
             _output(result,
                     [_msg("cli_experiment_reveal_recorded",
                           "Reveal event recorded for task {task_id}: sealed={sealed}",
@@ -13361,6 +13548,7 @@ def _handle_experiment(args, db):
             treatment_samples = []
             invalid_reason_codes = []
             invalid_task_ids = set()
+            metric_parse_failures = []
             reveal_by_task = {}
             incident_types = set()
             # 先扫描控制记录，再解析指标，保证追加顺序不会让 invalid/reveal 影响结果。
@@ -13374,8 +13562,10 @@ def _handle_experiment(args, db):
                 elif rec_type == "reveal_event" and task_id:
                     reveal_by_task[task_id] = bool(
                         rec.get("first_verdict_sealed_before_reveal", False))
-                elif rec_type in ("disclosure_incident", "integrity_incident"):
-                    incident_types.add(rec_type)
+                else:
+                    canonical_type = canonical_incident_record_type(rec_type)
+                    if canonical_type in ("disclosure_incident", "integrity_incident"):
+                        incident_types.add(canonical_type)
             for rec in records:
                 if rec.get("record_type") != "review_metrics":
                     continue
@@ -13389,6 +13579,11 @@ def _handle_experiment(args, db):
                         verdict_before_reveal=bool(reveal_by_task.get(task_id, False)),
                     )
                 except EvaluatorError:
+                    invalid_reason_codes.append("EXP_EVALUATION_INPUT_INVALID")
+                    metric_parse_failures.append({
+                        "task_id": task_id,
+                        "detail": "review_metrics record failed validation",
+                    })
                     continue
                 if sample.group == "control":
                     control_samples.append(sample)
@@ -13426,6 +13621,21 @@ def _handle_experiment(args, db):
                 batch_id=opts.batch_id,
             ) if pause_thresholds else None
 
+            metric_groups = [
+                (sample.task_id, sample.group)
+                for sample in control_samples + treatment_samples
+            ]
+            view_integrity = validate_blind_view_records(
+                records, metric_groups, expected_batch_id=opts.batch_id)
+            if metric_parse_failures:
+                view_integrity["passed"] = False
+                view_integrity["metric_parse_failures"] = metric_parse_failures
+                view_integrity["reasons"].append({
+                    "condition": "malformed_review_metrics",
+                    "count": len(metric_parse_failures),
+                    "samples": metric_parse_failures,
+                })
+
             # 构建评估报告；指标定义与观察窗口来自冻结协议，不能由旧报告移动目标线。
             report_data = build_evaluation_report(
                 batch_id=opts.batch_id,
@@ -13441,8 +13651,38 @@ def _handle_experiment(args, db):
                 valid_task_count=valid_task_count,
                 nontrivial_code_change_count=nontrivial_count,
             )
+            report_data["view_integrity"] = view_integrity
+            token_records = [
+                rec for rec in records if rec.get("record_type") == "review_metrics"
+            ]
+            token_source_counts = {}
+            for rec in token_records:
+                source = rec.get("token_usage_source", "legacy_unspecified")
+                token_source_counts[source] = token_source_counts.get(source, 0) + 1
+            report_data["token_usage_quality"] = {
+                "record_count": len(token_records),
+                "source_counts": token_source_counts,
+                "all_real": bool(token_records)
+                and all(rec.get("token_usage_source") == "real" for rec in token_records),
+                "unavailable_records": sum(
+                    1 for rec in token_records
+                    if rec.get("token_usage_source") == "unavailable"
+                ),
+                "legacy_or_estimated_records": sum(
+                    1 for rec in token_records
+                    if rec.get("token_usage_source", "legacy_unspecified")
+                    in {"legacy_unspecified", "estimated"}
+                ),
+            }
+            report_data["evidence"] = ExperimentJsonlWriter(jsonl_path).evidence_summary()
             # G0 是 P0 实验的机器可读决策摘要，不是产品 Evidence，也不开放 P1 hard gate。
             eligible = bool(success_eval and success_eval.eligible_for_p1)
+            if not view_integrity["passed"]:
+                eligible = False
+                report_data["eligible_for_p1"] = False
+                report_data.setdefault("authorization_blockers", {})[
+                    "view_integrity_failed"
+                ] = True
             has_gray = bool(gray_eval and gray_eval.gray_zone_unresolved)
             has_pause = bool(pause_eval and pause_eval.should_pause)
             gray_zones_list = []
@@ -13462,6 +13702,12 @@ def _handle_experiment(args, db):
                 failure_reasons.extend(gray_eval.observations)
             if pause_eval and pause_eval.should_pause and pause_eval.reason:
                 failure_reasons.append(pause_eval.reason)
+            if not view_integrity["passed"]:
+                failure_reasons.append({
+                    "condition": "view_integrity",
+                    "satisfied": False,
+                    "reasons": view_integrity["reasons"],
+                })
             if not failure_reasons and not eligible:
                 failure_reasons.append({"condition": "g0_not_eligible", "reason": "unspecified"})
             if has_pause:
@@ -13488,6 +13734,22 @@ def _handle_experiment(args, db):
                 "non_product_evidence": True,
             }
             report_data["g0_decision"] = g0_decision
+
+            if opts.artifacts_dir:
+                try:
+                    bundle = write_evidence_bundle(
+                        jsonl_path=jsonl_path,
+                        artifacts_dir=opts.artifacts_dir,
+                        batch_id=opts.batch_id,
+                        report=report_data,
+                        reviewer_home=os.path.expanduser("~"),
+                        reviewer_phase="final",
+                    )
+                except (OSError, ValueError) as exc:
+                    raise EvaluatorError(make_evaluator_reason(
+                        EvaluatorErrorCode.EVALUATION_INPUT_INVALID,
+                        detail=f"evidence_bundle: {exc}"))
+                report_data["evidence_bundle"] = bundle
 
             if opts.json:
                 print(json.dumps(report_data, indent=2, ensure_ascii=False, default=str))

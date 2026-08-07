@@ -3963,11 +3963,12 @@ class BuildMixin:
         depth_cache = {}
 
         pending_callee_count = {}
-        for fn_id in all_fns:
+        all_graph_nodes = set(all_fns) | set(call_graph.keys()) | set(reverse_graph.keys())
+        for fn_id in all_graph_nodes:
             pending_callee_count[fn_id] = len(call_graph.get(fn_id, []))
 
         queue = deque()
-        for fn_id in all_fns:
+        for fn_id in all_graph_nodes:
             if pending_callee_count[fn_id] == 0:
                 depth_cache[fn_id] = 0
                 queue.append(fn_id)
@@ -3977,15 +3978,16 @@ class BuildMixin:
             for caller_id in reverse_graph.get(fn_id, []):
                 if caller_id in depth_cache:
                     continue
-                pending_callee_count[caller_id] -= 1
-                if pending_callee_count[caller_id] == 0:
-                    callees = call_graph.get(caller_id, [])
-                    max_callee_depth = max(
-                        (depth_cache.get(c, 0) for c in callees),
-                        default=0
-                    )
-                    depth_cache[caller_id] = max_callee_depth + 1
-                    queue.append(caller_id)
+                if caller_id in pending_callee_count:
+                    pending_callee_count[caller_id] -= 1
+                    if pending_callee_count[caller_id] == 0:
+                        callees = call_graph.get(caller_id, [])
+                        max_callee_depth = max(
+                            (depth_cache.get(c, 0) for c in callees),
+                            default=0
+                        )
+                        depth_cache[caller_id] = max_callee_depth + 1
+                        queue.append(caller_id)
 
         for fn_id in all_fns:
             if fn_id not in depth_cache:

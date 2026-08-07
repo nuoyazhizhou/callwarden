@@ -29,7 +29,7 @@ pub const SCHEMA_VERSION: u32 = 44;
 const EMBEDDED_SCHEMA_SOURCE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../db/schema.py"));
 
-fn canonical_schema_sql() -> Result<&'static str, String> {
+fn canonical_schema_sql() -> Result<String, String> {
     let marker = "SCHEMA_SQL = \"\"\"";
     let start = EMBEDDED_SCHEMA_SOURCE
         .find(marker)
@@ -39,10 +39,11 @@ fn canonical_schema_sql() -> Result<&'static str, String> {
         .find("\n\"\"\"")
         .ok_or_else(|| "MIGRATION_FAILED: SCHEMA_SQL block unterminated".to_string())?
         + start;
-    Ok(&EMBEDDED_SCHEMA_SOURCE[start..end])
+    let sql = &EMBEDDED_SCHEMA_SOURCE[start..end];
+    Ok(sql.replace("\r\n", "\n"))
 }
 
-fn canonical_schema_checksum() -> Result<String, String> {
+pub(crate) fn canonical_schema_checksum() -> Result<String, String> {
     let mut digest = Sha256::new();
     digest.update(canonical_schema_sql()?.as_bytes());
     Ok(format!("{:x}", digest.finalize()))
@@ -420,19 +421,21 @@ fn table_exists(conn: &Connection, name: &str) -> Result<bool, rusqlite::Error> 
 /// 用于策略 A 的"表结构完整性校验"：当 `current_version == expected_version`
 /// 但 `schema_migrations` 的 stored checksum 与当前二进制不一致时，用该集合
 /// 判断 DB 实际表结构是否与 canonical schema 一致，而非仅凭 checksum 判定。
-fn expected_canonical_table_names() -> Vec<&'static str> {
-    // canonical_schema_sql() 返回 &'static str，lines()/split 产生的子串
-    // 生命周期同样为 'static，无需任何堆分配。
-    canonical_schema_sql()
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim_start();
-            let rest = trimmed.strip_prefix("CREATE TABLE ")?;
+fn expected_canonical_table_names() -> Vec<String> {
+    let sql = canonical_schema_sql().unwrap_or_default();
+    let mut names = Vec::new();
+    for line in sql.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("CREATE TABLE ") {
             let rest = rest.strip_prefix("IF NOT EXISTS ").unwrap_or(rest);
-            rest.split([' ', '(', '\t', '\n']).next().filter(|name| !name.is_empty())
-        })
-        .collect()
+            if let Some(name) = rest.split([' ', '(', '\t', '\n']).next() {
+                if !name.is_empty() {
+                    names.push(name.to_string());
+                }
+            }
+        }
+    }
+    names
 }
 
 /// 校验 DB 实际表结构是否与 canonical schema 一致（策略 A）。
@@ -443,7 +446,7 @@ fn expected_canonical_table_names() -> Vec<&'static str> {
 fn schema_shape_matches_canonical(conn: &Connection) -> Result<bool, rusqlite::Error> {
     let expected = expected_canonical_table_names();
     for table in expected {
-        if !table_exists(conn, table)? {
+        if !table_exists(conn, &table)? {
             return Ok(false);
         }
     }
@@ -1174,8 +1177,8 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
 
     tx.execute_batch(STORAGE_METADATA_SQL)
         .map_err(|e| format!("MIGRATION_FAILED: Failed to create storage metadata: {}", e))?;
-    tx.execute_batch(canonical_schema_sql()?)
-        .map_err(|e| format!("MIGRATION_FAILED: Failed to apply canonical schema: {}", e))?;
+    tx.execute_batch(&canonical_schema_sql()?)
+        .map_err(|e| format!("SCHEMA_CREATE_FAILED: Failed to execute SCHEMA_SQL: {}", e))?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_secs_f64())

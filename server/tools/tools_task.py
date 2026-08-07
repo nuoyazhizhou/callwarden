@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
+from callwarden.server.daemon_client import route_task_write, route_task_read, DaemonUnavailableError
 
 
 def register(mcp: FastMCP) -> None:
@@ -28,8 +29,23 @@ def register(mcp: FastMCP) -> None:
         Returns:
             task_id
         """
-        db = get_db()
-        return db.task_create(title=title, description=description, steps=steps, creator=creator)
+        def _local():
+            db = get_db()
+            return db.task_create(title=title, description=description, steps=steps, creator=creator)
+
+        res = route_task_write(
+            "task.create",
+            {
+                "title": title,
+                "description": description,
+                "steps": steps or [],
+                "creator": creator,
+            },
+            _local,
+        )
+        if isinstance(res, dict) and "task_id" in res:
+            return res["task_id"]
+        return res
 
     @mcp.tool()
     def task_next_step(task_id: str) -> Optional[dict]:
@@ -50,8 +66,15 @@ def register(mcp: FastMCP) -> None:
         Returns:
             步骤详情，如果没有待执行步骤则返回 None
         """
-        db = get_db()
-        return db.task_next_step(task_id=task_id)
+        def _local():
+            db = get_db()
+            return db.task_next_step(task_id=task_id)
+
+        return route_task_write(
+            "task.claim",
+            {"task_id": task_id},
+            _local,
+        )
 
     @mcp.tool()
     def work_next_job(task_id: str) -> Optional[dict]:
@@ -61,8 +84,15 @@ def register(mcp: FastMCP) -> None:
         符号源码、调用上下文、文件健康、允许编辑范围、推荐 patch 工具
         和完成后汇报方式。
         """
-        db = get_db()
-        return db.work_next_job(task_id=task_id)
+        def _local():
+            db = get_db()
+            return db.work_next_job(task_id=task_id)
+
+        return route_task_read(
+            "task.work_next",
+            {"task_id": task_id},
+            _local,
+        )
 
     @mcp.tool()
     def task_resolve_block(task_id: str, step_id: str, resolution: str = "ack") -> Optional[dict]:
@@ -79,8 +109,15 @@ def register(mcp: FastMCP) -> None:
         Returns:
             更新后的步骤详情，若步骤不存在或非 blocked 状态则返回 None
         """
-        db = get_db()
-        return db.task_resolve_block(task_id=task_id, step_id=step_id, resolution=resolution)
+        def _local():
+            db = get_db()
+            return db.task_resolve_block(task_id=task_id, step_id=step_id, resolution=resolution)
+
+        return route_task_write(
+            "task.reopen",
+            {"task_id": task_id, "step_id": step_id, "reason": resolution},
+            _local,
+        )
 
     @mcp.tool()
     def task_report_step(task_id: str, step_id: str, result: str = "", success: bool = True, changes: list = None) -> Optional[dict]:
@@ -101,30 +138,43 @@ def register(mcp: FastMCP) -> None:
         Returns:
             下一步步骤信息（如果有）
         """
-        db = get_db()
-        try:
-            identity_dict, id_reason = _resolve_identity_arg(db, identity)
-            if id_reason:
-                return _identity_mcp_reason(
-                    id_reason.get("code", "E_IDENTITY_INVALID"),
-                    id_reason.get("message_key", "error.identity_incomplete"),
-                    id_reason.get("detail", "身份校验失败"),
-                )
-            kwargs: Dict[str, Any] = {
-                "task_id": task_id, "step_id": step_id,
-                "result": result, "success": success, "changes": changes,
-            }
-            if identity_dict:
-                if not _db_method_accepts_identity("task_report_step"):
+        def _local():
+            db = get_db()
+            try:
+                identity_dict, id_reason = _resolve_identity_arg(db, identity)
+                if id_reason:
                     return _identity_mcp_reason(
-                        "E_IDENTITY_NOT_WIRED",
-                        "error.identity_not_wired",
-                        "task_report_step 尚不支持 identity 参数（8.6 接线后可用）",
+                        id_reason.get("code", "E_IDENTITY_INVALID"),
+                        id_reason.get("message_key", "error.identity_incomplete"),
+                        id_reason.get("detail", "身份校验失败"),
                     )
-                kwargs["identity"] = identity_dict
-            return db.task_report_step(**kwargs)
-        except Exception as e:
-            return {"error": str(e)}
+                kwargs: Dict[str, Any] = {
+                    "task_id": task_id, "step_id": step_id,
+                    "result": result, "success": success, "changes": changes,
+                }
+                if identity_dict:
+                    if not _db_method_accepts_identity("task_report_step"):
+                        return _identity_mcp_reason(
+                            "E_IDENTITY_NOT_WIRED",
+                            "error.identity_not_wired",
+                            "task_report_step 尚不支持 identity 参数（8.6 接线后可用）",
+                        )
+                    kwargs["identity"] = identity_dict
+                return db.task_report_step(**kwargs)
+            except Exception as e:
+                return {"error": str(e)}
+
+        return route_task_write(
+            "task.report",
+            {
+                "task_id": task_id,
+                "step_id": step_id,
+                "summary": result,
+                "success": success,
+                "changes": changes,
+            },
+            _local,
+        )
 
     @mcp.tool()
     def record_task_symbol_change(task_id: str, file_path: str, step_id: str = "",
@@ -134,190 +184,144 @@ def register(mcp: FastMCP) -> None:
                                   change_type: str = "modified", source: str = "manual",
                                   metadata: dict = None) -> dict:
         """记录任务/步骤到文件或符号版本变化的归因"""
-        try:
+        def _local():
             db = get_db()
             return db.record_task_symbol_change(
-                task_id=task_id,
-                file_path=file_path,
-                step_id=step_id,
-                edit_audit_id=edit_audit_id,
-                change_audit_id=change_audit_id,
-                qualified_name=qualified_name,
-                symbol_name=symbol_name,
-                symbol_hash_before=symbol_hash_before,
-                symbol_hash_after=symbol_hash_after,
-                change_type=change_type,
-                source=source,
-                metadata=metadata or {},
+                task_id=task_id, file_path=file_path, step_id=step_id,
+                edit_audit_id=edit_audit_id, change_audit_id=change_audit_id,
+                qualified_name=qualified_name, symbol_name=symbol_name,
+                symbol_hash_before=symbol_hash_before, symbol_hash_after=symbol_hash_after,
+                change_type=change_type, source=source, metadata=metadata or {},
             )
-        except Exception as e:
-            return {"error": str(e)}
+        return route_task_write("task.record_symbol_change", {
+            "task_id": task_id, "file_path": file_path, "step_id": step_id,
+            "edit_audit_id": edit_audit_id, "change_audit_id": change_audit_id,
+            "qualified_name": qualified_name, "symbol_name": symbol_name,
+            "symbol_hash_before": symbol_hash_before, "symbol_hash_after": symbol_hash_after,
+            "change_type": change_type, "source": source, "metadata": metadata or {},
+        }, _local)
 
     @mcp.tool()
     def link_edit_audit_symbols(audit_id: int, step_id: str = "") -> dict:
         """刷新图谱后，将某次 edit_audit 的 before/after 文件版本映射到符号变化"""
-        try:
+        def _local():
             db = get_db()
             return db.link_edit_audit_symbols(audit_id=audit_id, step_id=step_id)
-        except Exception as e:
-            return {"error": str(e)}
+        return route_task_write("task.link_edit_audit_symbols", {
+            "audit_id": audit_id, "step_id": step_id,
+        }, _local)
 
     @mcp.tool()
     def get_task_symbol_changes(task_id: str, step_id: str = "", file_path: str = "", limit: int = 100) -> list:
         """查询任务或步骤归因到的文件/符号变化"""
-        try:
+        def _local():
             db = get_db()
             return db.get_task_symbol_changes(task_id=task_id, step_id=step_id, file_path=file_path, limit=limit)
-        except Exception as e:
-            return [{"error": str(e)}]
+        return route_task_read("task.get_symbol_changes", {
+            "task_id": task_id, "step_id": step_id, "file_path": file_path, "limit": limit,
+        }, _local)
 
     @mcp.tool()
     def get_symbol_change_tasks(symbol_hash: str = "", qualified_name: str = "", limit: int = 50) -> list:
         """反查某个符号版本或符号名由哪些任务改变过"""
-        try:
+        def _local():
             db = get_db()
             return db.get_symbol_change_tasks(symbol_hash=symbol_hash, qualified_name=qualified_name, limit=limit)
-        except Exception as e:
-            return [{"error": str(e)}]
+        return route_task_read("task.get_change_tasks", {
+            "symbol_hash": symbol_hash, "qualified_name": qualified_name, "limit": limit,
+        }, _local)
 
     @mcp.tool()
     def get_task_commits(task_id: str, include_commit_details: bool = True) -> list:
-        """查询任务关联的所有 commit（task → commit 正向查询，三角关联）
-
-        通过 task_symbol_changes.source_commit_hash JOIN git_commits 拿 commit 详情。
-
-        Args:
-            task_id: 任务 ID
-            include_commit_details: 是否 JOIN git_commits 返回 commit 详情（author/message/timestamp）
-
-        Returns:
-            按 source_commit_hash 去重的列表，每条含：
-            source_commit_hash / change_count / first_change_at / last_change_at，
-            include_commit_details=True 时额外返回 commit_author / commit_message /
-            commit_timestamp / commit_subject。
-        """
-        try:
+        """查询任务关联的所有 commit"""
+        def _local():
             db = get_db()
             if not hasattr(db, "get_task_commits"):
-                return [{"error": "get_task_commits not available (need schema v35+)"}]
+                return [{"error": "get_task_commits not available"}]
             return db.get_task_commits(task_id=task_id, include_commit_details=include_commit_details)
-        except Exception as e:
-            return [{"error": str(e)}]
+        return route_task_read("task.get_commits", {
+            "task_id": task_id, "include_commit_details": include_commit_details,
+        }, _local)
 
     @mcp.tool()
     def get_commit_tasks(commit_hash: str, include_task_details: bool = True) -> list:
-        """查询 commit 关联的所有 task（commit → task 反向查询，三角关联）
-
-        通过 task_symbol_changes.source_commit_hash 反查关联的任务。
-
-        Args:
-            commit_hash: Git commit hash
-            include_task_details: 是否 JOIN tasks 表返回 task 详情（title/status/parent_id）
-
-        Returns:
-            按 task_id 去重的列表，每条含：
-            task_id / change_count / first_change_at / last_change_at，
-            include_task_details=True 时额外返回 task_title / task_status / task_parent_id。
-        """
-        try:
+        """查询 commit 关联的所有 task"""
+        def _local():
             db = get_db()
             if not hasattr(db, "get_commit_tasks"):
-                return [{"error": "get_commit_tasks not available (need schema v35+)"}]
+                return [{"error": "get_commit_tasks not available"}]
             return db.get_commit_tasks(commit_hash=commit_hash, include_task_details=include_task_details)
-        except Exception as e:
-            return [{"error": str(e)}]
+        return route_task_read("task.get_commit_tasks", {
+            "commit_hash": commit_hash, "include_task_details": include_task_details,
+        }, _local)
 
     @mcp.tool()
     def task_rollback(task_id: str, change_id: str = None, reason: str = "") -> dict:
-        """回滚任务中的变更
-
-        Args:
-            task_id: 任务 ID
-            change_id: 变更 ID（可选，不指定则回滚最后一个变更）
-            reason: 回滚原因
-
-        Returns:
-            回滚结果
-        """
-        db = get_db()
-        return db.task_rollback(task_id=task_id, change_id=change_id, reason=reason)
+        """回滚任务中的变更"""
+        def _local():
+            db = get_db()
+            return db.task_rollback(task_id=task_id, change_id=change_id, reason=reason)
+        return route_task_write("task.rollback", {
+            "task_id": task_id, "change_id": change_id, "reason": reason,
+        }, _local)
 
     @mcp.tool()
-    def task_apply(task_id: str, reviewer: str = "reviewer",
-                   identity: str = "") -> dict:
-        """审核通过：将任务状态从 review 改为 applied
-
-        设计原则：写代码的 Agent 不能自己 applied，必须由其他会话的
-        LLM 审核通过后调用此工具。只有 status=review 的任务才能 apply。
-
-        Args:
-            task_id: 任务 ID
-            reviewer: 审核人标识
-            identity: P3 结构化身份 JSON（{agent_id, session_id, model_id, role}，
-                      可选；自由文本 reviewer 不是身份证明，Req 10.5）
-
-        Returns:
-            包含 task_id、status、applied_at 的字典；失败时包含 error 字段
-        """
-        db = get_db()
-        try:
-            identity_dict, id_reason = _resolve_identity_arg(db, identity)
-            if id_reason:
-                return _identity_mcp_reason(
-                    id_reason.get("code", "E_IDENTITY_INVALID"),
-                    id_reason.get("message_key", "error.identity_incomplete"),
-                    id_reason.get("detail", "身份校验失败"),
-                )
-            kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
-            if identity_dict:
-                if not _db_method_accepts_identity("task_apply"):
+    def task_apply(task_id: str, reviewer: str = "reviewer", identity: str = "") -> dict:
+        """审核通过：将任务状态从 review 改为 applied"""
+        def _local():
+            db = get_db()
+            try:
+                identity_dict, id_reason = _resolve_identity_arg(db, identity)
+                if id_reason:
                     return _identity_mcp_reason(
-                        "E_IDENTITY_NOT_WIRED",
-                        "error.identity_not_wired",
-                        "task_apply 尚不支持 identity 参数（8.6 接线后可用）",
+                        id_reason.get("code", "E_IDENTITY_INVALID"),
+                        id_reason.get("message_key", "error.identity_incomplete"),
+                        id_reason.get("detail", "身份校验失败"),
                     )
-                kwargs["identity"] = identity_dict
-            return db.task_apply(**kwargs)
-        except Exception as e:
-            return {"error": str(e)}
+                kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
+                if identity_dict:
+                    if not _db_method_accepts_identity("task_apply"):
+                        return _identity_mcp_reason(
+                            "E_IDENTITY_NOT_WIRED",
+                            "error.identity_not_wired",
+                            "task_apply 尚不支持 identity 参数",
+                        )
+                    kwargs["identity"] = identity_dict
+                return db.task_apply(**kwargs)
+            except Exception as e:
+                return {"error": str(e)}
+        return route_task_write("task.apply", {
+            "task_id": task_id, "reviewer": reviewer, "identity": identity,
+        }, _local)
 
     @mcp.tool()
-    def task_close(task_id: str, reviewer: str = "reviewer",
-                   identity: str = "") -> dict:
-        """关闭任务：将任务状态从 applied 改为 closed
-
-        设计原则：写代码的 Agent 不能自己 closed，必须由其他会话的
-        LLM 审核关闭后调用此工具。只有 status=applied 的任务才能 close。
-
-        Args:
-            task_id: 任务 ID
-            reviewer: 审核人标识
-            identity: P3 结构化身份 JSON（可选；不得伪造缺省身份）
-
-        Returns:
-            包含 task_id、status、closed_at 的字典；失败时包含 error 字段
-        """
-        db = get_db()
-        try:
-            identity_dict, id_reason = _resolve_identity_arg(db, identity)
-            if id_reason:
-                return _identity_mcp_reason(
-                    id_reason.get("code", "E_IDENTITY_INVALID"),
-                    id_reason.get("message_key", "error.identity_incomplete"),
-                    id_reason.get("detail", "身份校验失败"),
-                )
-            kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
-            if identity_dict:
-                if not _db_method_accepts_identity("task_close"):
+    def task_close(task_id: str, reviewer: str = "reviewer", identity: str = "") -> dict:
+        """关闭任务：将任务状态从 applied 改为 closed"""
+        def _local():
+            db = get_db()
+            try:
+                identity_dict, id_reason = _resolve_identity_arg(db, identity)
+                if id_reason:
                     return _identity_mcp_reason(
-                        "E_IDENTITY_NOT_WIRED",
-                        "error.identity_not_wired",
-                        "task_close 尚不支持 identity 参数（8.6 接线后可用）",
+                        id_reason.get("code", "E_IDENTITY_INVALID"),
+                        id_reason.get("message_key", "error.identity_incomplete"),
+                        id_reason.get("detail", "身份校验失败"),
                     )
-                kwargs["identity"] = identity_dict
-            return db.task_close(**kwargs)
-        except Exception as e:
-            return {"error": str(e)}
+                kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
+                if identity_dict:
+                    if not _db_method_accepts_identity("task_close"):
+                        return _identity_mcp_reason(
+                            "E_IDENTITY_NOT_WIRED",
+                            "error.identity_not_wired",
+                            "task_close 尚不支持 identity 参数",
+                        )
+                    kwargs["identity"] = identity_dict
+                return db.task_close(**kwargs)
+            except Exception as e:
+                return {"error": str(e)}
+        return route_task_write("task.close", {
+            "task_id": task_id, "reviewer": reviewer, "identity": identity,
+        }, _local)
 
     @mcp.tool()
     def task_capture_diff(
@@ -328,62 +332,28 @@ def register(mcp: FastMCP) -> None:
         source_commit_hash: str = "",
         skip_quality_review: bool = False,
     ) -> dict:
-        """捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环
-
-        Args:
-            source_commit_hash: 引入此次变更的 git commit hash（可选）。
-                填写后会写入 task_symbol_changes.source_commit_hash 字段，
-                支持后续通过 get_task_commits / get_commit_tasks 查询三角关联。
-                post-commit hook 自动调用时取当前 HEAD commit hash。
-            skip_quality_review: True 时跳过 run_task_completion_review
-                （Semgrep + 5 个扩展检查器），用于快速捕获场景。
-                post-commit hook 自动模式默认 True；显式调用建议保持 False。
-
-        用于把外部 Agent（非 Call Warden MCP）在文件系统中留下的真实改动
-        归因到指定 task/step，并触发质量审查。这是自举闭环的核心入口。
-
-        流程：
-        1. 调用 get_workspace_changes_since 检测变更文件
-        2. dry-run=True：只返回计划不写库
-        3. dry-run=False（apply 模式）：
-           - 写 workspace_scan_runs（status=running -> completed）
-           - 每个变更文件写 change_audit（含 hash_before/hash_after）
-           - 签名审计记录 sign_audit_record（best-effort，失败不阻塞）
-           - 关联 task_symbol_changes（best-effort，失败不阻塞）
-           - 调用 run_task_completion_review 收集 quality findings（skip_quality_review=True 时跳过）
-           - 根据 quality_decision 决定 next_action
-
-        Args:
-            task_id: 关联任务 ID
-            step_id: 关联步骤 ID（可选）
-            base: 基线 commit（空串自动取最近一次 scan baseline 的 git_head）
-            dry_run: True 只返回计划不写库，默认 True
-
-        Returns:
-            {
-                "task_id": str,
-                "step_id": str,
-                "dry_run": bool,
-                "scan_id": int,        # apply 模式才有
-                "changed_files": [...],
-                "linked_symbols": [...],
-                "quality_findings": [...],
-                "quality_decision": "pass" | "warn" | "block" | "",
-                "next_action": "review" | "fix" | "commit" | "noop" | "",
-            }
-        """
-        db = get_db()
-        try:
-            return db.task_capture_diff(
-                task_id=task_id,
-                step_id=step_id,
-                base=base,
-                dry_run=dry_run,
-                source_commit_hash=source_commit_hash,
-                skip_quality_review=skip_quality_review,
-            )
-        except Exception as e:
-            return {"error": str(e)}
+        """捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环"""
+        def _local():
+            db = get_db()
+            try:
+                return db.task_capture_diff(
+                    task_id=task_id,
+                    step_id=step_id,
+                    base=base,
+                    dry_run=dry_run,
+                    source_commit_hash=source_commit_hash,
+                    skip_quality_review=skip_quality_review,
+                )
+            except Exception as e:
+                return {"error": str(e)}
+        return route_task_write("task.capture_diff", {
+            "task_id": task_id,
+            "step_id": step_id,
+            "base": base,
+            "dry_run": dry_run,
+            "source_commit_hash": source_commit_hash,
+            "skip_quality_review": skip_quality_review,
+        }, _local)
 
     @mcp.tool()
     def audit_verify_chain(table_name: str = "", limit: int = 1000) -> dict:
@@ -1260,200 +1230,89 @@ def register(mcp: FastMCP) -> None:
         Returns:
             新建子任务的 task_id
         """
-        db = get_db()
-        return db.task_create_subtask(
-            parent_task_id=parent_task_id,
-            title=title,
-            description=description,
-            steps=steps,
-            creator=creator,
-        )
+        def _local():
+            db = get_db()
+            return db.task_create_subtask(
+                parent_task_id=parent_task_id, title=title, description=description, steps=steps, creator=creator,
+            )
+        return route_task_write("task.create_subtask", {
+            "parent_task_id": parent_task_id, "title": title, "description": description, "steps": steps or [], "creator": creator,
+        }, _local)
 
     @mcp.tool()
     def task_split(task_id: str, subtasks: list) -> list:
-        """将大任务拆分为多个子任务
-
-        当任务步骤过多或单个步骤描述过长时，使用此工具自动拆分。
-        原任务的自身步骤保留为汇总/验证步骤，具体工作由子任务完成。
-        task_next_step 会自动深度优先下钻到最底层子任务执行，
-        确保 Agent 永远聚焦在具体可执行的小任务上，不会遗漏。
-
-        Args:
-            task_id: 要拆分的父任务 ID
-            subtasks: 子任务定义列表，每个元素含 title/description/steps
-
-        Returns:
-            新建子任务的 ID 列表
-        """
-        db = get_db()
-        return db.task_split(task_id=task_id, subtasks=subtasks)
+        """将大任务拆分为多个子任务"""
+        def _local():
+            db = get_db()
+            return db.task_split(task_id=task_id, subtasks=subtasks)
+        return route_task_write("task.split", {"task_id": task_id, "subtasks": subtasks}, _local)
 
     @mcp.tool()
     def task_status_tree(task_id: str) -> Optional[dict]:
-        """获取任务树详情（含子任务树和进度）
-
-        返回完整的任务树结构，包括每层的进度百分比、
-        子任务列表、自身步骤状态。用于 Agent 了解整体进展，
-        避免因子任务过多而迷失方向。
-
-        Args:
-            task_id: 根任务 ID
-
-        Returns:
-            任务树 dict（含 progress、steps、subtasks 递归结构）
-        """
-        db = get_db()
-        return db.task_status_tree(task_id=task_id)
+        """获取任务树详情（含子任务树和进度）"""
+        def _local():
+            db = get_db()
+            return db.task_status_tree(task_id=task_id)
+        return route_task_read("task.status_tree", {"task_id": task_id}, _local)
 
     @mcp.tool()
     def task_create_from_plan(title: str, plan_md: str, description: str = "") -> str:
-        """从 Markdown 任务计划自动创建父子任务树
-
-        Agent 只需传入任务标题和 Markdown 格式的计划，系统会自动：
-        - 解析 # / ## / ### 标题层级为任务层级
-        - 解析 - [ ] 列表项为任务步骤
-        - 自动生成完整的父子任务树并入库
-        - task_next_step 会自动深度优先下钻执行
-
-        推荐格式：
-        ```
-        # 一级标题 = 根任务说明
-        ## 子任务1标题
-        - 步骤1描述
-        - 步骤2描述
-        ## 子任务2标题
-        - 步骤1描述
-        ```
-
-        Args:
-            title: 根任务标题
-            plan_md: Markdown 格式的任务计划
-            description: 根任务补充描述（可选）
-
-        Returns:
-            根任务 ID
-        """
-        db = get_db()
-        return db.task_create_from_plan(
-            title=title,
-            plan_md=plan_md,
-            description=description,
-        )
+        """从 Markdown 任务计划自动创建父子任务树"""
+        def _local():
+            db = get_db()
+            return db.task_create_from_plan(title=title, plan_md=plan_md, description=description)
+        return route_task_write("task.create_from_plan", {
+            "title": title, "plan_md": plan_md, "description": description,
+        }, _local)
 
     @mcp.tool()
     def task_plan_template() -> str:
-        """获取 task_create_from_plan 的标准格式模板
-
-        Agent 在调用 task_create_from_plan 之前，先获取此模板，
-        按模板格式填写任务计划，确保解析器正确识别。
-
-        Returns:
-            Markdown 格式的模板字符串（含格式说明）
-        """
-        db = get_db()
-        return db.task_plan_template()
+        """获取 task_create_from_plan 的标准格式模板"""
+        def _local():
+            db = get_db()
+            return db.task_plan_template()
+        return route_task_read("task.plan_template", {}, _local)
 
     @mcp.tool()
     def task_list(status_filter: str = None, limit: int = 20) -> list:
-        """列出任务
-
-        Args:
-            status_filter: 状态过滤（open/in_progress/review/applied/closed/reverted）
-            limit: 返回数量限制
-
-        Returns:
-            任务列表
-        """
-        db = get_db()
-        return db.task_list(status_filter=status_filter, limit=limit)
+        """列出任务"""
+        def _local():
+            db = get_db()
+            return db.task_list(status_filter=status_filter, limit=limit)
+        return route_task_read("task.list", {"status": status_filter or "", "limit": limit}, _local)
 
     @mcp.tool()
     def task_status(task_id: str) -> Optional[dict]:
-        """获取任务详情和所有步骤
-
-        Args:
-            task_id: 任务 ID
-
-        Returns:
-            任务详情和步骤列表
-        """
-        db = get_db()
-        return db.task_status(task_id=task_id)
+        """获取任务详情和所有步骤"""
+        def _local():
+            db = get_db()
+            return db.task_status(task_id=task_id)
+        return route_task_read("task.status", {"task_id": task_id}, _local)
 
     @mcp.tool()
     def task_completion_review(task_id: str, step_id: str = "") -> dict:
-        """运行任务完成质量审查
-
-        触发任务质量门禁：自动清理该 step 旧的 check_gate 发现，
-        调用 run_check_gate（语法/Semgrep），并运行 5 个扩展检查器：
-        scope/symbol_attribution/file_health/i18n_hardcoded/signature_mismatch。
-
-        根据 open 状态的发现严重度给出决策：
-        - pass: 无发现
-        - warn: 仅有 info/warn（允许完成但记录）
-        - block: 存在 error/block（阻塞完成，需修复后重审）
-
-        Agent 在 task_report_step 之前或之后均可调用此工具主动复查。
-
-        Args:
-            task_id: 任务 ID
-            step_id: 步骤 ID（可选，任务级审查留空）
-
-        Returns:
-            {decision, findings, summary, counts, check_gate_result}
-            decision ∈ {"pass", "warn", "block"}
-        """
-        db = get_db()
-        return db.run_task_completion_review(task_id=task_id, step_id=step_id)
+        """运行任务完成质量审查"""
+        def _local():
+            db = get_db()
+            return db.run_task_completion_review(task_id=task_id, step_id=step_id)
+        return route_task_write("task.completion_review", {"task_id": task_id, "step_id": step_id}, _local)
 
     @mcp.tool()
     def task_quality_findings(task_id: str, status: str = "open", severity: str = "") -> list:
-        """查询任务质量门禁发现
-
-        返回 task_quality_findings 表中匹配过滤条件的记录，
-        按 created_at 升序（旧的先处理）。
-
-        Args:
-            task_id: 任务 ID
-            status: 状态过滤（open/resolved/wontfix/all），默认 open
-            severity: 严重度过滤（info/warn/error/block），默认不过滤
-
-        Returns:
-            finding 列表，每项含 id/task_id/step_id/finding_type/severity/
-            status/message/evidence/source/created_at/resolved_at/resolved_by
-        """
-        db = get_db()
-        return db.get_task_quality_findings(
-            task_id=task_id, status=status, severity=severity
-        )
+        """查询任务质量门禁发现"""
+        def _local():
+            db = get_db()
+            return db.get_task_quality_findings(task_id=task_id, status=status, severity=severity)
+        return route_task_read("task.quality_findings", {
+            "task_id": task_id, "status": status, "severity": severity,
+        }, _local)
 
     @mcp.tool()
-    def task_resolve_quality_finding(
-        finding_id: int,
-        resolution: str = "fixed",
-        resolved_by: str = "agent",
-    ) -> dict:
-        """解决或豁免单条任务质量门禁发现
-
-        将 finding 状态从 open 推进到 resolved 或 wontfix，
-        记录解决者和解决时间。error/block 级别的发现被解决后，
-        该 step 的阻塞状态才会解除（task_completion_review 会重新评估）。
-
-        Args:
-            finding_id: finding ID
-            resolution: 解决方式
-                - fixed: 已修复
-                - wontfix: 暂不修复（接受风险）
-                - false_positive: 误报
-            resolved_by: 解决者标识（agent/human/system）
-
-        Returns:
-            {success, finding_id, status, resolution, resolved_at}
-            失败时返回 {success: False, error: ...}
-        """
-        db = get_db()
-        return db.resolve_task_quality_finding(
-            finding_id=finding_id,
-            resolution=resolution,
-            resolved_by=resolved_by,
-        )
+    def task_resolve_quality_finding(finding_id: int, resolution: str = "fixed", resolved_by: str = "agent") -> dict:
+        """解决或豁免单条任务质量门禁发现"""
+        def _local():
+            db = get_db()
+            return db.resolve_task_quality_finding(finding_id=finding_id, resolution=resolution, resolved_by=resolved_by)
+        return route_task_write("task.resolve_quality_finding", {
+            "finding_id": finding_id, "resolution": resolution, "resolved_by": resolved_by,
+        }, _local)

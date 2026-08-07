@@ -668,6 +668,75 @@ pub trait DaemonStateExt {
             Err(DaemonRpcError::method_not_found("task.wait"))
         }
     }
+    fn handle_task_list(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_list(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.list"))
+        }
+    }
+    fn handle_task_rollback(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_rollback(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.rollback"))
+        }
+    }
+    fn handle_task_reopen(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_reopen(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.reopen"))
+        }
+    }
+    fn handle_task_apply(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_apply(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.apply"))
+        }
+    }
+    fn handle_task_close(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_close(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.close"))
+        }
+    }
+    fn handle_task_capture_diff(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_capture_diff(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.capture_diff"))
+        }
+    }
+    fn handle_task_split(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_split(peer, params) } else { Err(DaemonRpcError::method_not_found("task.split")) }
+    }
+    fn handle_task_create_from_plan(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_create_from_plan(peer, params) } else { Err(DaemonRpcError::method_not_found("task.create_from_plan")) }
+    }
+    fn handle_task_completion_review(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_completion_review(peer, params) } else { Err(DaemonRpcError::method_not_found("task.completion_review")) }
+    }
+    fn handle_task_resolve_quality_finding(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_resolve_quality_finding(peer, params) } else { Err(DaemonRpcError::method_not_found("task.resolve_quality_finding")) }
+    }
+    fn handle_task_create_subtask(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_create_subtask(peer, params) } else { Err(DaemonRpcError::method_not_found("task.create_subtask")) }
+    }
+    fn handle_task_status_tree(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_status_tree(peer, params) } else { Err(DaemonRpcError::method_not_found("task.status_tree")) }
+    }
+    fn handle_task_record_symbol_change(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_record_symbol_change(peer, params) } else { Err(DaemonRpcError::method_not_found("task.record_symbol_change")) }
+    }
+    fn handle_task_link_edit_audit_symbols(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_link_edit_audit_symbols(peer, params) } else { Err(DaemonRpcError::method_not_found("task.link_edit_audit_symbols")) }
+    }
+    fn handle_task_get_symbol_changes(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_get_symbol_changes(peer, params) } else { Err(DaemonRpcError::method_not_found("task.get_symbol_changes")) }
+    }
 
     fn handle_collab_rpc(
         &mut self,
@@ -850,6 +919,17 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.claim",
     "task.report",
     "task.handoff",
+    "task.rollback",
+    "task.reopen",
+    "task.apply",
+    "task.close",
+    "task.capture_diff",
+    "task.split",
+    "task.create_from_plan",
+    "task.resolve_quality_finding",
+    "task.create_subtask",
+    "task.record_symbol_change",
+    "task.link_edit_audit_symbols",
     // ---- D0 后续任务预留（Req 14.6 列举的 Protected_Mutation 类型）----
     // verdict 封存
     "verdict.submit",
@@ -859,9 +939,6 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "evidence.append",
     // Gate decision
     "gate.decide",
-    // task_apply / task_close
-    "task.apply",
-    "task.close",
     // Lease 操作
     "lease.acquire",
     "lease.release",
@@ -1063,6 +1140,21 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.status" => state.handle_task_status(peer, params),
         "task.events" => state.handle_task_events(peer, params),
         "task.wait" => state.handle_task_wait(peer, params),
+        "task.list" => state.handle_task_list(peer, params),
+        "task.rollback" => state.handle_task_rollback(peer, params),
+        "task.reopen" => state.handle_task_reopen(peer, params),
+        "task.apply" => state.handle_task_apply(peer, params),
+        "task.close" => state.handle_task_close(peer, params),
+        "task.capture_diff" => state.handle_task_capture_diff(peer, params),
+        "task.split" => state.handle_task_split(peer, params),
+        "task.create_from_plan" => state.handle_task_create_from_plan(peer, params),
+        "task.completion_review" => state.handle_task_completion_review(peer, params),
+        "task.resolve_quality_finding" => state.handle_task_resolve_quality_finding(peer, params),
+        "task.create_subtask" => state.handle_task_create_subtask(peer, params),
+        "task.status_tree" => state.handle_task_status_tree(peer, params),
+        "task.record_symbol_change" => state.handle_task_record_symbol_change(peer, params),
+        "task.link_edit_audit_symbols" => state.handle_task_link_edit_audit_symbols(peer, params),
+        "task.get_symbol_changes" => state.handle_task_get_symbol_changes(peer, params),
 
         // ---- Collab P1/P3 方法 ----
         "verdict.submit"

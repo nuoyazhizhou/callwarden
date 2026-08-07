@@ -53,14 +53,7 @@ _SCHEMA_PY = _PKG_ROOT / "db" / "schema.py"
 
 
 def _extract_schema_sql_rust_logic() -> str:
-    """按 Rust storage.rs::canonical_schema_sql() 的提取逻辑取 SCHEMA_SQL 块。
-
-    Rust 逻辑：
-      marker = "SCHEMA_SQL = \"\"\""
-      start = index(marker) + marker.len()
-      end = index("\n\"\"\"", start)   // 换行 + 三个引号
-      sql = source[start..end]
-    """
+    """按 Rust storage.rs::canonical_schema_sql() 的提取逻辑取 SCHEMA_SQL 块。"""
     src = _SCHEMA_PY.read_text(encoding="utf-8")
     marker = 'SCHEMA_SQL = """'
     start = src.index(marker) + len(marker)
@@ -81,8 +74,10 @@ def _extract_schema_sql_python_native() -> str:
 
 
 def _canonical_checksum() -> str:
-    """Rust canonical_schema_checksum() 等价：SHA256(Rust 提取逻辑的 SCHEMA_SQL)。"""
-    return hashlib.sha256(_extract_schema_sql_rust_logic().encode("utf-8")).hexdigest()
+    """Rust canonical_schema_checksum() 等价：SHA256(Rust 提取逻辑的 SCHEMA_SQL 规范化换行)。"""
+    raw_sql = _extract_schema_sql_rust_logic()
+    normalized = raw_sql.replace("\r\n", "\n")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def _expected_table_names() -> set:
@@ -215,7 +210,7 @@ class TestChecksumReconcile:
 
         # 删掉一个 canonical 表模拟真正的 schema 漂移
         conn = sqlite3.connect(str(db_path))
-        conn.execute("DROP TABLE IF EXISTS task_dependencies")
+        conn.execute("DROP TABLE IF EXISTS tasks")
         conn.commit()
         conn.close()
 

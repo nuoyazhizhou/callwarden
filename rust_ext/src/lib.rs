@@ -1702,8 +1702,14 @@ fn canonicalize_source_py<'py>(py: Python<'py>, abs_path: &str) -> PyResult<Boun
 // 模块注册
 // ============================================
 
+#[pyfunction]
+fn canonical_schema_checksum() -> PyResult<String> {
+    storage::canonical_schema_checksum().map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+}
+
 #[pymodule]
 fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(canonical_schema_checksum, m)?)?;
     // P29: parse 热路径
     m.add_function(wrap_pyfunction!(batch_parse_c_files, m)?)?;
     m.add_function(wrap_pyfunction!(parse_c_file, m)?)?;
