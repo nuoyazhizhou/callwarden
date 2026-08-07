@@ -358,6 +358,13 @@ def _start_daemon_windows(endpoint: str) -> bool:
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     CREATE_NO_WINDOW = 0x08000000
 
+    # P0 修复：显式注入权威任务库路径（~/.callwarden/callwarden.db），
+    # 确保 daemon 与 Python `cw task` CLI 共享同一套任务状态。
+    # daemon 通过环境变量 CW_DAEMON_TASK_DB 覆盖默认推导路径。
+    from callwarden.config import DB_PATH as _AUTHORITY_TASK_DB
+    child_env = dict(os.environ)
+    child_env["CW_DAEMON_TASK_DB"] = _AUTHORITY_TASK_DB
+
     try:
         subprocess.Popen(
             [daemon_bin, "--socket", endpoint],
@@ -366,6 +373,7 @@ def _start_daemon_windows(endpoint: str) -> bool:
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             close_fds=True,
+            env=child_env,
         )
         logger.info("Windows 分离进程已启动: %s --socket %s", daemon_bin, endpoint)
         return True

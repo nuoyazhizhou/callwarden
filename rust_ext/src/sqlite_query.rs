@@ -3,7 +3,7 @@
 //! The authoritative DDL remains `db/schema.py`.  It is embedded at compile
 //! time so the released Rust binary does not need a Python runtime or a source
 //! checkout.  The migration runner deliberately fails closed: it never writes
-//! schema version 42 unless all DDL, compatibility columns, and indexes have
+//! schema version 47 unless all DDL, compatibility columns, and indexes have
 //! committed in one SQLite transaction.
 
 use std::path::Path;
@@ -13,7 +13,7 @@ use pyo3::exceptions::{PyIOError, PyValueError};
 use pyo3::prelude::*;
 use rusqlite::{Connection, OpenFlags};
 
-pub const RUST_SCHEMA_VERSION: i64 = 44;
+pub const RUST_SCHEMA_VERSION: i64 = 47;
 
 const EMBEDDED_SCHEMA_SOURCE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../db/schema.py"));
@@ -121,7 +121,10 @@ fn execute_existing_schema(conn: &Connection, schema: &str) -> Result<(), String
     Ok(())
 }
 
-fn current_schema_version(conn: &Connection) -> Result<i64, rusqlite::Error> {
+/// 读取当前 schema 版本（只读，无写锁）。
+///
+/// pub(crate)：供 TaskCollabStore 迁移后校验实际版本。
+pub(crate) fn current_schema_version(conn: &Connection) -> Result<i64, rusqlite::Error> {
     conn.query_row(
         "SELECT COALESCE(MAX(version), 0) FROM schema_version",
         [],
@@ -129,7 +132,11 @@ fn current_schema_version(conn: &Connection) -> Result<i64, rusqlite::Error> {
     )
 }
 
-fn migrate_connection(conn: &Connection) -> Result<i64, String> {
+/// 事务化官方 schema 迁移（与 Python `_migrate_schema` 等价，幂等）。
+///
+/// pub(crate)：供 daemon TaskCollabStore 等组件在打开权威库后调用，
+/// 确保任务表与 schema_version 审计由同一条正式迁移路径管理。
+pub(crate) fn migrate_connection(conn: &Connection) -> Result<i64, String> {
     conn.busy_timeout(Duration::from_secs(5))
         .map_err(|error| format!("cannot set SQLite busy_timeout: {error}"))?;
     conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL;")
@@ -166,9 +173,9 @@ fn migrate_connection(conn: &Connection) -> Result<i64, String> {
         conn.execute(
             "INSERT OR REPLACE INTO schema_version (version, applied_at, description)
              VALUES (?1, ?2, ?3)",
-            rusqlite::params![RUST_SCHEMA_VERSION, now, "Rust schema migration to v44"],
+            rusqlite::params![RUST_SCHEMA_VERSION, now, "Rust schema migration to v47"],
         )
-        .map_err(|error| format!("cannot publish schema version 44: {error}"))?;
+        .map_err(|error| format!("cannot publish schema version 47: {error}"))?;
         Ok::<(), String>(())
     })();
 
@@ -236,7 +243,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_database_is_created_at_v42() {
+    fn fresh_database_is_created_at_v47() {
         let conn = Connection::open_in_memory().unwrap();
         assert_eq!(migrate_connection(&conn).unwrap(), RUST_SCHEMA_VERSION);
         assert_eq!(current_schema_version(&conn).unwrap(), RUST_SCHEMA_VERSION);
@@ -259,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_is_idempotent_after_v42() {
+    fn migration_is_idempotent_after_v47() {
         let conn = Connection::open_in_memory().unwrap();
         assert_eq!(migrate_connection(&conn).unwrap(), RUST_SCHEMA_VERSION);
         assert_eq!(migrate_connection(&conn).unwrap(), RUST_SCHEMA_VERSION);

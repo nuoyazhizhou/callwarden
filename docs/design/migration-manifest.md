@@ -230,11 +230,11 @@ pub struct ParseDiagnostics {
 
 ### 4.4 Schema 版本同步状态
 
-SCHEMA_VERSION = 46
-RUST_SCHEMA_VERSION = 44
+SCHEMA_VERSION = 47
+RUST_SCHEMA_VERSION = 47
 
-- `SCHEMA_VERSION`（Python 真相源，`db/schema.py`）：v46 = P4 assignment/lease 三表（task_assignments / task_leases / task_lease_events）+ partial UNIQUE 索引。
-- `RUST_SCHEMA_VERSION`（Rust 镜像当前值，`rust_ext/src/abi_contract.rs` 等）：v46 升级（2026-08-03 P3/P4 lease，commit a8580e9）**尚未同步** Rust 镜像常量与 `docs/design/abi-error-code-contract.md`（仍为 44），属已知滞后。Rust 镜像后续同步时必须同时更新本声明与 `docs/design/abi-error-code-contract.md` §3.2/§10.3。
+- `SCHEMA_VERSION`（Python 真相源，`db/schema.py`）：v47 = task_events / agent_registrations（`_migrate_v46_to_v47`）+ v46 P4 assignment/lease 三表（task_assignments / task_leases / task_lease_events）+ partial UNIQUE 索引。
+- `RUST_SCHEMA_VERSION`（Rust 官方迁移常量，`rust_ext/src/sqlite_query.rs`）：**v47 已同步**。daemon TaskCollabStore 打开权威任务库（`~/.callwarden/callwarden.db`）时执行 `migrate_connection` 正式迁移并校验实际 schema version，与 Python `_migrate_v46_to_v47` 幂等等价（同一 SCHEMA_SQL 全量建表 + schema_version 落 47）。镜像常量 `abi_contract.rs:SCHEMA_VERSION` 已同步为 47。
 - 一致性测试 `tests/test_abi_contract.py` 以本声明为真相源：`SCHEMA_VERSION` 与 `schema.py` 严格相等；`RUST_SCHEMA_VERSION` 与 `abi_contract.rs` 严格相等（记录镜像滞后，而非允许任意漂移）。
 
 ## 5. 错误码枚举

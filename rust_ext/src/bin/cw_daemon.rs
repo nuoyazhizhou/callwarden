@@ -248,11 +248,8 @@ mod unix {
             "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
             recovered_count
         );
-        let callwarden_db_path = config
-            .registry_db_path
-            .parent()
-            .unwrap_or(&config.registry_db_path)
-            .join("callwarden.db");
+        // P0 修复：任务库显式注入（config.task_db_path，权威 ~/.callwarden/callwarden.db）
+        let callwarden_db_path = config.resolve_task_db_path();
         // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
         let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
             &callwarden_db_path,
@@ -2083,11 +2080,8 @@ mod windows {
             "[cw_daemon] [INFO] recovered {} durable entries through snapshot pipeline",
             recovered_count
         );
-        let callwarden_db_path = config
-            .registry_db_path
-            .parent()
-            .unwrap_or(&config.registry_db_path)
-            .join("callwarden.db");
+        // P0 修复：任务库显式注入（config.task_db_path，权威 ~/.callwarden/callwarden.db）
+        let callwarden_db_path = config.resolve_task_db_path();
         // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
         let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
             &callwarden_db_path,

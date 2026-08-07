@@ -428,7 +428,7 @@ except sqlite3.OperationalError as e:
 5. **生产接入点**：第 6 节是否遗漏关键入口？已接入 vs 待迁移划分是否准确？
 6. **不变量**：第 8 节 8 个不变量是否充分？是否需要补充？
 7. **跨语言一致性**：Rust `abi_contract.rs` 和 Python `abi_contract_service.py` 镜像是否完整？后续是否应通过 PyO3 直接共享？
-8. **SCHEMA_VERSION 同步**：Rust 镜像常量 43 与 `db/schema.py` 一致，但 schema 变更时如何保证同步更新？
+8. **SCHEMA_VERSION 同步**：Rust 镜像常量 47 与 `db/schema.py` 一致（v47 = task_events/agent_registrations，daemon TaskCollabStore 打开权威任务库时由 `sqlite_query::migrate_connection` 官方迁移落 47），但 schema 变更时如何保证同步更新？
 
 ### 10.4 风险与注意事项
 

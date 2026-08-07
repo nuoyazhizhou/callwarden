@@ -642,12 +642,15 @@ fn run_rpc_windows(
     use std::os::windows::ffi::OsStrExt;
     use std::time::Duration;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
+        CloseHandle, GetLastError, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
     };
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
+
+    // ERROR_ACCESS_DENIED（Named Pipe SDDL 拒绝其他用户）
+    const ERROR_ACCESS_DENIED: u32 = 5;
 
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
 
@@ -673,10 +676,19 @@ fn run_rpc_windows(
         if unsafe { WaitNamedPipeW(wide.as_ptr(), 5000) } != 0 {
             break;
         }
+        let last_error = unsafe { GetLastError() };
+        // P1 ACL：SDDL 拒绝其他用户时立即上报真实 Win32 错误码（ERROR_ACCESS_DENIED=5）
+        if last_error == ERROR_ACCESS_DENIED {
+            eprintln!(
+                "cw-client {}: Named Pipe 访问被拒绝 (Win32 error {}) 用户无权限连接管道: {}",
+                action, last_error, socket
+            );
+            std::process::exit(1);
+        }
         if std::time::Instant::now() >= deadline {
             eprintln!(
-                "cw-client {}: daemon 未响应 (timeout {}s): {}",
-                action, timeout_secs, socket
+                "cw-client {}: daemon 未响应 (timeout {}s, last Win32 error {}): {}",
+                action, timeout_secs, last_error, socket
             );
             std::process::exit(1);
         }
@@ -696,7 +708,11 @@ fn run_rpc_windows(
         )
     };
     if handle == INVALID_HANDLE_VALUE {
-        eprintln!("cw-client {}: CreateFileW 失败: {}", action, socket);
+        let last_error = unsafe { GetLastError() };
+        eprintln!(
+            "cw-client {}: CreateFileW 失败 (Win32 error {}): {}",
+            action, last_error, socket
+        );
         std::process::exit(1);
     }
 

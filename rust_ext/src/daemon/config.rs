@@ -67,6 +67,14 @@ pub struct DaemonConfig {
     /// 默认位于 data_root 下。
     #[serde(default = "default_stage_toggle_db_path")]
     pub stage_toggle_db_path: PathBuf,
+    /// Task 协同存储路径（TaskCollabStore 打开的任务库）
+    ///
+    /// 必须显式指向 Call Warden 权威任务库 `~/.callwarden/callwarden.db`
+    /// （Python `config.py:DB_PATH`），daemon 与 Python `cw task` CLI 才能
+    /// 共享同一套任务状态。空字符串表示未注入，由 `resolve_task_db_path()`
+    /// 回退为 `registry_db_path.parent()/callwarden.db`（旧行为，仅兼容测试）。
+    #[serde(default)]
+    pub task_db_path: PathBuf,
 }
 
 /// 默认 Stage_Toggle 配置存储路径（<data_root>/stage_toggle.db）
@@ -93,6 +101,8 @@ impl Default for DaemonConfig {
             socket_group: String::from("callwarden-clients"),
             // D0 3.12：Stage_Toggle 配置存储
             stage_toggle_db_path: default_stage_toggle_db_path(),
+            // P0 修复：task_db_path 默认空，由 resolve_task_db_path() 回退推导
+            task_db_path: PathBuf::new(),
         }
     }
 }
@@ -184,6 +194,12 @@ impl DaemonConfig {
                 self.codegraph_db_path_template = v;
             }
         }
+        // P0 修复：Task 协同存储路径（显式注入权威任务库 ~/.callwarden/callwarden.db）
+        if let Ok(v) = std::env::var("CW_DAEMON_TASK_DB") {
+            if !v.is_empty() {
+                self.task_db_path = PathBuf::from(v);
+            }
+        }
         Ok(())
     }
 
@@ -215,6 +231,22 @@ impl DaemonConfig {
         Ok(())
     }
 
+    /// 解析 Task 协同存储路径（TaskCollabStore 使用的任务库）
+    ///
+    /// 优先使用显式注入的 `task_db_path`（P0 修复：生产与 E2E 必须显式指向
+    /// Python 权威 `~/.callwarden/callwarden.db`）；为空时回退为
+    /// `registry_db_path.parent()/callwarden.db`（旧行为，仅保留兼容）。
+    pub fn resolve_task_db_path(&self) -> PathBuf {
+        if !self.task_db_path.as_os_str().is_empty() {
+            self.task_db_path.clone()
+        } else {
+            self.registry_db_path
+                .parent()
+                .unwrap_or(&self.registry_db_path)
+                .join("callwarden.db")
+        }
+    }
+
     /// request_timeout 转换为 Duration（便利方法）
     pub fn request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout_secs)
@@ -227,12 +259,13 @@ mod tests {
     use std::ffi::OsString;
     use std::sync::{Mutex, MutexGuard};
 
-    const DAEMON_ENV_KEYS: [&str; 5] = [
+    const DAEMON_ENV_KEYS: [&str; 6] = [
         "CW_DAEMON_SOCKET",
         "CW_DAEMON_REGISTRY_DB",
         "CW_DAEMON_DATA_ROOT",
         "CW_DAEMON_WORKERS",
         "CW_DAEMON_CODEGRAPH_DB_TEMPLATE",
+        "CW_DAEMON_TASK_DB",
     ];
     static DAEMON_ENV_LOCK: Mutex<()> = Mutex::new(());
 
@@ -302,6 +335,7 @@ mod tests {
             ),
             socket_group: String::from("callwarden-clients"),
             stage_toggle_db_path: PathBuf::from("/tmp/stage_toggle.db"),
+            task_db_path: PathBuf::from("/tmp/tasks.db"),
         };
         let json = serde_json::to_string_pretty(&original).unwrap();
         std::fs::write(&cfg_path, json).unwrap();
@@ -312,6 +346,56 @@ mod tests {
         assert_eq!(
             loaded.codegraph_db_path_template,
             original.codegraph_db_path_template
+        );
+        assert_eq!(loaded.task_db_path, PathBuf::from("/tmp/tasks.db"));
+    }
+
+    #[test]
+    fn test_old_config_without_task_db_path_still_loads() {
+        // P0 修复：旧配置 JSON 没有 task_db_path 字段，必须能反序列化（serde default）
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg_path = tmp.path().join("old_daemon.json");
+        std::fs::write(
+            &cfg_path,
+            r#"{"socket_path":"/tmp/x.sock","registry_db_path":"/tmp/reg.db","data_root":"/tmp/d","max_workers":4,"request_timeout_secs":30,"socket_mode":420,"snapshot_cache_capacity":8,"codegraph_db_path_template":"/tmp/cg/{workspace_instance_id}/codegraph.db"}"#,
+        )
+        .unwrap();
+        let loaded = DaemonConfig::load_from_file(&cfg_path).unwrap();
+        assert!(loaded.task_db_path.as_os_str().is_empty());
+        // 空 task_db_path 时回退为 registry_db_path 父目录下的 callwarden.db
+        assert_eq!(
+            loaded.resolve_task_db_path(),
+            PathBuf::from("/tmp/callwarden.db")
+        );
+    }
+
+    #[test]
+    fn test_resolve_task_db_path_prefers_explicit() {
+        let mut cfg = DaemonConfig::default();
+        cfg.registry_db_path = PathBuf::from("/tmp/reg/registry.db");
+        // 未注入 → 回退推导
+        assert_eq!(cfg.resolve_task_db_path(), PathBuf::from("/tmp/reg/callwarden.db"));
+        // 显式注入 → 优先使用
+        cfg.task_db_path = PathBuf::from("/home/user/.callwarden/callwarden.db");
+        assert_eq!(
+            cfg.resolve_task_db_path(),
+            PathBuf::from("/home/user/.callwarden/callwarden.db")
+        );
+    }
+
+    #[test]
+    fn test_apply_env_overrides_task_db() {
+        let env = IsolatedDaemonEnv::new();
+        env.set("CW_DAEMON_TASK_DB", "/home/user/.callwarden/callwarden.db");
+        let mut cfg = DaemonConfig::default();
+        cfg.apply_env_overrides().unwrap();
+        assert_eq!(
+            cfg.task_db_path,
+            PathBuf::from("/home/user/.callwarden/callwarden.db")
+        );
+        assert_eq!(
+            cfg.resolve_task_db_path(),
+            PathBuf::from("/home/user/.callwarden/callwarden.db")
         );
     }
 

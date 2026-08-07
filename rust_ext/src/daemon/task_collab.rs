@@ -13,7 +13,9 @@
 //! - `task.wait`
 //!
 //! 状态机直接整合 Call Warden 权威原生表（`tasks`、`task_steps`、`task_events`、`agent_registrations`），
-//! 不建立旁路 `daemon_tasks` 表。
+//! 不建立旁路 `daemon_tasks` 表。schema 由 `crate::sqlite_query::migrate_connection`
+//! 官方事务化迁移管理（与 Python `_migrate_schema` 同一版本审计，SCHEMA_VERSION=47），
+//! 本模块只做只读校验，不再内嵌旁路 DDL。
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -23,76 +25,13 @@ use rusqlite::{params, Connection};
 use serde_json::{Map, Value};
 
 use super::dispatch::{DaemonRpcError, PeerCredential};
+use crate::sqlite_query::{current_schema_version, migrate_connection, RUST_SCHEMA_VERSION};
 
 // ============================================
-// DDL
+// 官方迁移后必须存在的 Task 协同权威表（只读校验清单）
 // ============================================
 
-const TASK_COLLAB_DDL: &str = r#"
-CREATE TABLE IF NOT EXISTS tasks (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    creator TEXT NOT NULL DEFAULT 'agent',
-    status TEXT NOT NULL DEFAULT 'open',
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL,
-    applied_at REAL,
-    closed_at REAL,
-    parent_id TEXT DEFAULT '',
-    depth INTEGER NOT NULL DEFAULT 0,
-    sort_order INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE IF NOT EXISTS task_steps (
-    id TEXT PRIMARY KEY,
-    task_id TEXT NOT NULL,
-    step_index INTEGER NOT NULL,
-    action TEXT NOT NULL,
-    target_file TEXT DEFAULT '',
-    target_symbol TEXT DEFAULT '',
-    check_items TEXT DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'pending',
-    result TEXT DEFAULT '',
-    created_at REAL NOT NULL,
-    completed_at REAL,
-    FOREIGN KEY (task_id) REFERENCES tasks(id)
-);
-
-CREATE TABLE IF NOT EXISTS task_events (
-    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_id TEXT NOT NULL,
-    workspace_id TEXT DEFAULT '',
-    from_status TEXT NOT NULL,
-    to_status TEXT NOT NULL,
-    reason_code TEXT DEFAULT '',
-    reason TEXT DEFAULT '',
-    actor_identity TEXT NOT NULL,
-    agent_session_id TEXT DEFAULT '',
-    role TEXT DEFAULT '',
-    contract_hash TEXT DEFAULT '',
-    snapshot_id TEXT DEFAULT '',
-    monotonic_seq INTEGER NOT NULL,
-    authoritative_timestamp REAL NOT NULL,
-    evidence_path TEXT DEFAULT '',
-    evidence_hash TEXT DEFAULT ''
-);
-
-CREATE TABLE IF NOT EXISTS agent_registrations (
-    agent_id TEXT PRIMARY KEY,
-    agent_name TEXT NOT NULL,
-    owner_key TEXT NOT NULL,
-    capabilities TEXT DEFAULT '[]',
-    registered_at REAL NOT NULL,
-    last_heartbeat REAL NOT NULL,
-    status TEXT DEFAULT 'active'
-);
-
-CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
-CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id);
-CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
-"#;
+const TASK_COLLAB_TABLES: [&str; 4] = ["tasks", "task_steps", "task_events", "agent_registrations"];
 
 fn now_ts() -> f64 {
     SystemTime::now()
@@ -134,9 +73,9 @@ impl TaskCollabStore {
 
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;").ok();
 
-        conn.execute_batch(TASK_COLLAB_DDL).map_err(|e| {
-            DaemonRpcError::internal_error(format!("初始化 Task DDL 失败: {}", e))
-        })?;
+        // P1 修复：接入官方 schema migration（crate::sqlite_query::migrate_connection），
+        // 与 Python _migrate_schema 同一版本审计；不再内嵌旁路 DDL 建表。
+        Self::migrate_and_verify(&conn)?;
 
         let max_seq: i64 = conn
             .query_row("SELECT COALESCE(MAX(monotonic_seq), 0) FROM task_events", [], |r| r.get(0))
@@ -149,9 +88,8 @@ impl TaskCollabStore {
     }
 
     pub fn from_connection(conn: Connection) -> Result<Self, DaemonRpcError> {
-        conn.execute_batch(TASK_COLLAB_DDL).map_err(|e| {
-            DaemonRpcError::internal_error(format!("初始化 Task DDL 失败: {}", e))
-        })?;
+        // P1 修复：与 new() 同一迁移 + 只读校验路径
+        Self::migrate_and_verify(&conn)?;
 
         let max_seq: i64 = conn
             .query_row("SELECT COALESCE(MAX(monotonic_seq), 0) FROM task_events", [], |r| r.get(0))
@@ -161,6 +99,43 @@ impl TaskCollabStore {
             conn: Arc::new(Mutex::new(conn)),
             seq_counter: Arc::new(Mutex::new(max_seq)),
         })
+    }
+
+    /// 执行官方 schema migration 并做只读校验：
+    /// 1. `migrate_connection` 事务化迁移到当前 SCHEMA_VERSION（47，权威 db/schema.py）
+    /// 2. 校验实际 schema version 与编译期常量一致
+    /// 3. 只读校验 4 张 Task 权威表存在（不建表、不写库）
+    fn migrate_and_verify(conn: &Connection) -> Result<(), DaemonRpcError> {
+        let migrated = migrate_connection(conn).map_err(|e| {
+            DaemonRpcError::internal_error(format!("Task DB schema migration 失败: {}", e))
+        })?;
+        let actual = current_schema_version(conn).map_err(|e| {
+            DaemonRpcError::internal_error(format!("读取 Task DB schema version 失败: {}", e))
+        })?;
+        if actual != RUST_SCHEMA_VERSION {
+            return Err(DaemonRpcError::internal_error(format!(
+                "Task DB schema version 校验失败: 期望 {} 实际 {}（migrate 返回 {}）",
+                RUST_SCHEMA_VERSION, actual, migrated
+            )));
+        }
+        for table in TASK_COLLAB_TABLES {
+            let present: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    params![table],
+                    |r| r.get::<_, i64>(0).map(|v| v > 0),
+                )
+                .map_err(|e| {
+                    DaemonRpcError::internal_error(format!("校验权威表 {} 失败: {}", table, e))
+                })?;
+            if !present {
+                return Err(DaemonRpcError::internal_error(format!(
+                    "Task DB 缺少权威表 {}（官方 migration 未建齐 schema）",
+                    table
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn next_seq(&self) -> i64 {
@@ -834,5 +809,65 @@ mod tests {
         let events_res = store.handle_task_events(peer.clone(), &events_params).unwrap();
         let events = events_res["events"].as_array().unwrap();
         assert_eq!(events.len(), 3); // created, claimed, reported
+    }
+
+    #[test]
+    fn test_task_collab_migrates_v46_db_to_v47() {
+        // P1 修复：v46 旧库（无 task_events/agent_registrations、schema_version=46）
+        // 打开后必须走官方 migration 升级到 v47 并补齐权威任务表，完整 task RPC 可用
+        let (_dir, db_path) = temp_db();
+
+        // 1. 先建一个 v47 库，再人为降级为 v46（模拟旧版库形态）
+        {
+            let store = TaskCollabStore::new(&db_path).unwrap();
+            drop(store);
+        }
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS task_events;
+                 DROP TABLE IF EXISTS agent_registrations;
+                 DROP INDEX IF EXISTS idx_task_events_task;
+                 UPDATE schema_version SET version = 46 WHERE version >= 47;",
+            )
+            .unwrap();
+            let v: i64 = conn
+                .query_row("SELECT COALESCE(MAX(version),0) FROM schema_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(v, 46);
+        }
+
+        // 2. TaskCollabStore::new 应对 v46 库执行官方 migration 升级到 47
+        let store = TaskCollabStore::new(&db_path).unwrap();
+
+        // 3. 校验实际 schema version == 47（不再依赖编译时常量，读真实 schema_version 表）
+        let conn = Connection::open(&db_path).unwrap();
+        let v: i64 = conn
+            .query_row("SELECT COALESCE(MAX(version),0) FROM schema_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, RUST_SCHEMA_VERSION);
+        // 4. 权威任务表已被官方 migration 补齐
+        for table in TASK_COLLAB_TABLES {
+            let present: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    params![table],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(present, 1, "权威表 {} 未补齐", table);
+        }
+
+        // 5. 完整 task RPC 可用（创建 → 查询）
+        let peer = PeerCredential::new_unix(1000, 1000, 1234);
+        let create_params = serde_json::json!({
+            "title": "upgrade from v46",
+            "task_id": "T-V46-001"
+        });
+        let create_res = store.handle_task_create(peer.clone(), &create_params).unwrap();
+        assert_eq!(create_res["status"], "open");
+        let events_params = serde_json::json!({ "task_id": "T-V46-001" });
+        let events_res = store.handle_task_events(peer, &events_params).unwrap();
+        assert_eq!(events_res["events"].as_array().unwrap().len(), 1);
     }
 }
