@@ -41,6 +41,7 @@ from callwarden.config import (
 )
 from callwarden.server.daemon_protocol import (
     DEFAULT_MAX_MESSAGE_BYTES,
+    DaemonRemoteError,
     parse_response,
     recv_message,
     send_message,
@@ -1055,6 +1056,10 @@ def route_task_write(rpc_method: str, params: dict, fallback_func):
     rpc_client = UnixDaemonRpcClient()
     try:
         return rpc_client.call(rpc_method, params)
+    except DaemonRemoteError:
+        # 远端结构化业务错误（task_conflict / permission_denied / task_not_found 等）
+        # 原样透传，不得伪装成 "daemon 连接失败"，否则客户端无法区分业务冲突与连接故障
+        raise
     except Exception as exc:
         if is_daemon_required() or mode == "auto":
             raise DaemonUnavailableError(f"enterprise/auto 模式下任务写操作 daemon 连接失败: {exc}") from exc
@@ -1074,6 +1079,10 @@ def route_task_read(rpc_method: str, params: dict, fallback_func):
     rpc_client = UnixDaemonRpcClient()
     try:
         return rpc_client.call(rpc_method, params)
+    except DaemonRemoteError:
+        # 业务错误（task_not_found / permission_denied 等）原样透传：
+        # auto 模式下不得把"远端明确返回的业务结论"降级为本地读（数据可能不一致）
+        raise
     except Exception as exc:
         if is_daemon_required():
             raise DaemonUnavailableError(f"enterprise 模式下任务读操作 daemon 连接失败: {exc}") from exc

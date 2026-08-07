@@ -48,7 +48,7 @@ def register(mcp: FastMCP) -> None:
         return res
 
     @mcp.tool()
-    def task_next_step(task_id: str) -> Optional[dict]:
+    def task_next_step(task_id: str, agent_session_id: str = "") -> Optional[dict]:
         """领取任务的下一个待执行步骤
 
         Agent 必须通过此工具领取步骤，不能自由决定下一步操作。
@@ -62,6 +62,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             task_id: 任务 ID
+            agent_session_id: Agent 会话 ID（可选）。同一 Windows 用户多 Agent/多 IDE
+                并发认领同一任务时用于区分不同逻辑 Agent；缺省时 daemon 以连接身份为准。
 
         Returns:
             步骤详情，如果没有待执行步骤则返回 None
@@ -70,9 +72,12 @@ def register(mcp: FastMCP) -> None:
             db = get_db()
             return db.task_next_step(task_id=task_id)
 
+        _params = {"task_id": task_id}
+        if agent_session_id:
+            _params["agent_session_id"] = agent_session_id
         return route_task_write(
             "task.claim",
-            {"task_id": task_id},
+            _params,
             _local,
         )
 
@@ -88,7 +93,7 @@ def register(mcp: FastMCP) -> None:
             db = get_db()
             return db.work_next_job(task_id=task_id)
 
-        return route_task_read(
+        return route_task_write(
             "task.work_next",
             {"task_id": task_id},
             _local,

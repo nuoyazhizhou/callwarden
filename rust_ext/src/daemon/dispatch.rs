@@ -737,6 +737,15 @@ pub trait DaemonStateExt {
     fn handle_task_get_symbol_changes(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_get_symbol_changes(peer, params) } else { Err(DaemonRpcError::method_not_found("task.get_symbol_changes")) }
     }
+    fn handle_task_quality_findings(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_quality_findings(peer, params) } else { Err(DaemonRpcError::method_not_found("task.quality_findings")) }
+    }
+    fn handle_task_has_blocking_findings(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_has_blocking_findings(peer, params) } else { Err(DaemonRpcError::method_not_found("task.has_blocking_findings")) }
+    }
+    fn handle_task_get_commits(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_get_commits(peer, params) } else { Err(DaemonRpcError::method_not_found("task.get_commits")) }
+    }
 
     fn handle_collab_rpc(
         &mut self,
@@ -930,6 +939,8 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.create_subtask",
     "task.record_symbol_change",
     "task.link_edit_audit_symbols",
+    "task.work_next",
+    "task.completion_review",
     // ---- D0 后续任务预留（Req 14.6 列举的 Protected_Mutation 类型）----
     // verdict 封存
     "verdict.submit",
@@ -1155,6 +1166,9 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.record_symbol_change" => state.handle_task_record_symbol_change(peer, params),
         "task.link_edit_audit_symbols" => state.handle_task_link_edit_audit_symbols(peer, params),
         "task.get_symbol_changes" => state.handle_task_get_symbol_changes(peer, params),
+        "task.quality_findings" => state.handle_task_quality_findings(peer, params),
+        "task.has_blocking_findings" => state.handle_task_has_blocking_findings(peer, params),
+        "task.get_commits" => state.handle_task_get_commits(peer, params),
 
         // ---- Collab P1/P3 方法 ----
         "verdict.submit"

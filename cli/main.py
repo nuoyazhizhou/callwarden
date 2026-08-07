@@ -22,7 +22,7 @@ import sys
 import time
 
 from ..db import CodeGraphDB
-from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER
+from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode
 from ..server.watcher import FileWatcher
 from ..server.daemon_client import route_task_write, route_task_read, DaemonUnavailableError
 from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
@@ -1040,6 +1040,50 @@ def _get_subcommand_epilog(cmd: str, **kwargs) -> str:
     )
 
 
+class LazyDBProxy:
+    """延迟初始化 CodeGraphDB 的代理（P0-2 修复）。
+
+    ``CodeGraphDB.__init__`` 会执行 ``PRAGMA journal_mode=WAL``、schema 自动迁移等
+    本地 SQLite 写操作（创建/修改 ``-wal``/``-shm`` 文件）。在 enterprise/auto
+    模式下，task 命令经 daemon RPC 路由，本地 SQLite 不应被打开——否则 CLI 启动
+    阶段就会与 daemon 唯一写入协调点竞争同一个 ``~/.callwarden/callwarden.db``。
+
+    本代理将真实 CodeGraphDB 的实例化推迟到第一次实际访问本地方法时。而
+    ``route_task_write``/``route_task_read`` 的 local fallback 闭包只有在
+    ``local`` 模式下才会被调用，因此 enterprise/auto 的 task 命令全程不触达
+    底层 DB；只有 local 模式（或非 task 子命令实际使用本地方法）才惰性实例化。
+
+    Attributes:
+        _workspace_root: 工作区根目录
+        _is_readonly: 当前命令是否只读（flag 模式兼容）
+        _args: 解析后的参数（flag 模式兼容）
+        _db: 惰性实例化的 CodeGraphDB，None 表示尚未实例化
+    """
+
+    def __init__(self, workspace_root=None, is_readonly=False, args=None):
+        self._workspace_root = workspace_root
+        self._is_readonly = is_readonly
+        self._args = args
+        self._db = None
+
+    def _ensure_db(self):
+        """首次实际访问时实例化真实 CodeGraphDB（仅 local 路径或本地 fallback）"""
+        if self._db is None:
+            if self._workspace_root:
+                self._db = CodeGraphDB(workspace_root=self._workspace_root)
+            else:
+                self._db = CodeGraphDB()
+        return self._db
+
+    def __getattr__(self, name):
+        return getattr(self._ensure_db(), name)
+
+    def close(self):
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+
+
 def _run_subcommand_mode():
     """子命令模式入口：初始化 db 并调度代码守护者架构子命令
 
@@ -1070,15 +1114,25 @@ def _run_subcommand_mode():
         detected = detect_project_root(cwd)
         workspace_root = detected if detected else None
 
-    # 初始化数据库
-    db = CodeGraphDB(
-        workspace_root=workspace_root) if workspace_root else CodeGraphDB()
+    # 初始化数据库代理（P0-2：延迟实例化）
+    # enterprise/auto 模式下 task 命令经 daemon RPC 路由，本地 SQLite 不应被打开
+    # （CodeGraphDB.__init__ 的 PRAGMA WAL / schema 迁移本身就是写操作，会与
+    # daemon 唯一写入协调点竞争同一个 ~/.callwarden/callwarden.db）。
+    # 仅 local 模式（或非 task 子命令实际触达本地方法）才会惰性实例化真实 DB。
+    db = LazyDBProxy(workspace_root=workspace_root)
 
     try:
         # 自动注册工作区（与 --flag 模式行为一致）
         # 优化：只读子命令跳过 register/set_active_workspace 写操作，避免被 MCP Server 写锁卡住
         # （set_active_workspace 内部还会做 is_active 短路判断，已 active 时直接返回不写）
-        skip_workspace_write = _is_readonly_command(sys.argv[1], sub_argv)
+        # P0-2：enterprise/auto 的 task 命令走 daemon 路由，跳过 workspace 注册/激活
+        # 本地写操作（任务状态是 daemon 的 per-UID 权威协同事实，本地注册无意义且
+        # 会与 daemon writer 竞争）。
+        daemon_mode = get_daemon_mode()
+        remote_task_cmd = sys.argv[1] == "task" and daemon_mode in ("enterprise", "auto")
+        skip_workspace_write = (
+            _is_readonly_command(sys.argv[1], sub_argv) or remote_task_cmd
+        )
         if workspace_root and not skip_workspace_write:
             try:
                 ws_name = get_default_workspace_name(workspace_root)
@@ -3277,6 +3331,23 @@ def _handle_defect(args, db):
 # 任务管理 / 漏洞爆炸半径 / 符号 Git 历史
 # --------------------------------------------------------------------
 
+def _route_has_blocking_findings(db, task_id: str) -> bool:
+    """判断任务是否有阻塞性质量发现（enterprise/auto 走 daemon RPC）。
+
+    daemon RPC ``task.has_blocking_findings`` 返回 ``{has_blocking: bool}``；
+    local 模式（或 auto 降级）调用本地 ``task_has_blocking_findings``。
+    """
+    def _local():
+        if not hasattr(db, "task_has_blocking_findings"):
+            return False
+        return bool(db.task_has_blocking_findings(task_id))
+
+    res = route_task_read("task.has_blocking_findings", {"task_id": task_id}, _local)
+    if isinstance(res, dict):
+        return bool(res.get("has_blocking"))
+    return bool(res)
+
+
 def _handle_task(args, db):
     """处理 task 子命令（任务管理：create/next/report/rollback）"""
     parser = argparse.ArgumentParser(
@@ -3605,7 +3676,14 @@ def _handle_task(args, db):
         def _local_next():
             return db.task_next_step(opts.task_id)
 
-        result = route_task_write("task.claim", {"task_id": opts.task_id}, _local_next)
+        _claim_params = {"task_id": opts.task_id}
+        _claim_session = os.environ.get("CW_AGENT_SESSION_ID", "").strip()
+        if _claim_session:
+            # 同一 Windows 用户多 Agent/多 IDE 经 daemon 统一写入：
+            # 显式携带 agent_session_id，让 daemon 能区分"不同逻辑 Agent"的并发 claim
+            # （缺省时 daemon 以连接身份 owner_key 为准，多个入口会互相视为同一 Agent）。
+            _claim_params["agent_session_id"] = _claim_session
+        result = route_task_write("task.claim", _claim_params, _local_next)
 
         cprint(t("cli.messages.task_next_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -3698,11 +3776,13 @@ def _handle_task(args, db):
             _identity_reason_output(ireason, False)
             return True
         if identity:
-            ok, vreason = _validate_identity(db, identity)
+            # P0-2：enterprise/auto 模式不得实例化本地 DB 做身份校验
+            # （daemon RPC handler 内部已做 claimed_by/owner 权限校验）
+            ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
                 return True
-            if not _method_accepts_identity(db, "task_report_step"):
+            if not _method_accepts_identity_routed(db, "task_report_step"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
@@ -3792,11 +3872,12 @@ def _handle_task(args, db):
             return True
         apply_kwargs = {"reviewer": opts.reviewer}
         if identity:
-            ok, vreason = _validate_identity(db, identity)
+            # P0-2：enterprise/auto 模式不实例化本地 DB 做身份校验
+            ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
                 return True
-            if not _method_accepts_identity(db, "task_apply"):
+            if not _method_accepts_identity_routed(db, "task_apply"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
@@ -3844,11 +3925,12 @@ def _handle_task(args, db):
             return True
         close_kwargs = {"reviewer": opts.reviewer}
         if identity:
-            ok, vreason = _validate_identity(db, identity)
+            # P0-2：enterprise/auto 模式不实例化本地 DB 做身份校验
+            ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
                 return True
-            if not _method_accepts_identity(db, "task_close"):
+            if not _method_accepts_identity_routed(db, "task_close"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
@@ -3895,11 +3977,12 @@ def _handle_task(args, db):
             return True
         reopen_kwargs = {"reviewer": opts.reviewer, "reason": opts.reason}
         if identity:
-            ok, vreason = _validate_identity(db, identity)
+            # P0-2：enterprise/auto 模式不实例化本地 DB 做身份校验
+            ok, vreason = _validate_identity_routed(db, identity)
             if not ok:
                 _identity_reason_output(vreason, False)
                 return True
-            if not _method_accepts_identity(db, "task_reopen"):
+            if not _method_accepts_identity_routed(db, "task_reopen"):
                 _identity_reason_output({
                     "code": "E_IDENTITY_NOT_WIRED",
                     "message_key": "daemon_errors.error.identity_not_wired",
@@ -4128,10 +4211,16 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "findings":
-        # 查询任务质量发现
-        findings = db.get_task_quality_findings(
-            opts.task_id, status=opts.status, severity=opts.severity
-        )
+        # 查询任务质量发现（enterprise/auto 走 daemon RPC task.quality_findings）
+        def _local_findings():
+            return db.get_task_quality_findings(
+                opts.task_id, status=opts.status, severity=opts.severity)
+
+        findings = route_task_read("task.quality_findings", {
+            "task_id": opts.task_id,
+            "status": opts.status or "",
+            "severity": opts.severity or "",
+        }, _local_findings) or []
         cprint(t("cli.messages.task_findings_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
         print(t("cli.messages.task_findings_count", count=len(findings)))
@@ -4163,12 +4252,21 @@ def _handle_task(args, db):
         return True
 
     elif opts.action == "resolve-finding":
-        # 解决或豁免质量门禁发现
-        result = db.resolve_task_quality_finding(
-            opts.finding_id, resolution=opts.resolution, resolved_by=opts.by
-        )
+        # 解决或豁免质量门禁发现（enterprise/auto 走 daemon RPC task.resolve_quality_finding）
+        def _local_resolve_finding():
+            return db.resolve_task_quality_finding(
+                opts.finding_id, resolution=opts.resolution, resolved_by=opts.by)
+
+        result = route_task_write("task.resolve_quality_finding", {
+            "finding_id": opts.finding_id,
+            "resolution": opts.resolution,
+            "resolved_by": opts.by or "",
+        }, _local_resolve_finding) or {}
         cprint(t("cli.messages.task_resolve_finding_title"), "cyan", bold=True)
-        if result.get("success"):
+        # 本地返回 {success, finding_id, status, resolution}；daemon 返回
+        # {finding_id, status, updated} —— 统一按 updated/success 判定成功
+        ok = bool(result.get("success") if "success" in result else result.get("updated"))
+        if ok:
             cprint(
                 t("cli.messages.task_resolve_finding_ok",
                   id=result.get('finding_id', 0),
@@ -4176,7 +4274,7 @@ def _handle_task(args, db):
                 "green"
             )
             print(t("cli.messages.task_resolve_finding_resolution",
-                    resolution=result.get('resolution', '')))
+                    resolution=result.get('resolution', opts.resolution)))
         else:
             cprint(
                 t("cli.messages.task_resolve_finding_fail",
@@ -4188,10 +4286,21 @@ def _handle_task(args, db):
 
     elif opts.action == "list":
         # 列出任务（支持 --blocked 过滤 / 树形展示）
-        # 统一调用 db.task_list()，与 --task-list 走同一份数据源
+        # enterprise/auto 走 daemon RPC task.list；local 走 db.task_list()
+        # （与 --task-list 走同一份数据源）
+        def _local_task_list():
+            return db.task_list(status_filter=opts.status or None, limit=opts.limit)
+
         try:
-            status_filter = opts.status or None
-            tasks = db.task_list(status_filter=status_filter, limit=opts.limit)
+            _list_res = route_task_read("task.list", {
+                "status": opts.status or "",
+                "limit": opts.limit,
+            }, _local_task_list) or []
+            # daemon 返回 {tasks: [...]}；本地直接返回 list
+            if isinstance(_list_res, dict):
+                tasks = _list_res.get("tasks") or []
+            else:
+                tasks = _list_res
         except Exception:
             tasks = []
 
@@ -4223,8 +4332,7 @@ def _handle_task(args, db):
             title = task_node.get("title", "")
             status = task_node.get("status", "")
             # 若 --blocked，跳过无阻塞发现的任务（但仍递归其子任务）
-            blocking = db.task_has_blocking_findings(tid) if hasattr(
-                db, "task_has_blocking_findings") else False
+            blocking = _route_has_blocking_findings(db, tid)
             if opts.blocked and not blocking:
                 # 检查子任务是否有阻塞发现，没有则整体跳过
                 has_blocked_child = False
@@ -4232,7 +4340,7 @@ def _handle_task(args, db):
                 while stack:
                     cur_node = stack.pop()
                     cur_tid = cur_node.get("task_id") or cur_node.get("id", "")
-                    if db.task_has_blocking_findings(cur_tid) if hasattr(db, "task_has_blocking_findings") else False:
+                    if _route_has_blocking_findings(db, cur_tid):
                         has_blocked_child = True
                         break
                     stack.extend(children_map.get(cur_tid, []))
@@ -4262,10 +4370,9 @@ def _handle_task(args, db):
                 title = tk.get("title", "")
                 status = tk.get("status", "")
                 if opts.blocked:
-                    if not (db.task_has_blocking_findings(tid) if hasattr(db, "task_has_blocking_findings") else False):
+                    if not _route_has_blocking_findings(db, tid):
                         continue
-                blocking = db.task_has_blocking_findings(tid) if hasattr(
-                    db, "task_has_blocking_findings") else False
+                blocking = _route_has_blocking_findings(db, tid)
                 icon = "[!]" if blocking else "[ ]"
                 color = "red" if blocking else "white"
                 cprint(
@@ -4295,12 +4402,22 @@ def _handle_task(args, db):
 
     elif opts.action == "completion-review":
         # 运行任务完成质量审查（C9 新增）
-        if not hasattr(db, "run_task_completion_review"):
-            cprint(t("cli.messages.task_completion_review_unavailable",
-                     default="Task completion review not available"), "red")
-            return True
-        result = db.run_task_completion_review(
-            opts.task_id, step_id=opts.step_id)
+        # enterprise/auto 走 daemon RPC task.completion_review（与 MCP 同协议）；
+        # local 模式（或 auto 降级）才调用本地 run_task_completion_review。
+        # 注意：hasattr 检查必须放在 local 闭包内，避免 enterprise 模式触发
+        # LazyDBProxy 实例化本地 CodeGraphDB。
+        def _local_completion_review():
+            if not hasattr(db, "run_task_completion_review"):
+                return {"error": "run_task_completion_review not available"}
+            return db.run_task_completion_review(
+                opts.task_id, step_id=opts.step_id)
+
+        result = route_task_write("task.completion_review", {
+            "task_id": opts.task_id,
+            "step_id": opts.step_id,
+        }, _local_completion_review) or {}
+        if isinstance(result, str):
+            result = {"error": result}
         if "error" in result:
             cprint(t("cli.messages.task_completion_review_failed",
                      error=result["error"]), "red")
@@ -4348,11 +4465,15 @@ def _handle_task(args, db):
             return True
         with open(plan_path, encoding="utf-8") as f:
             plan_md = f.read()
-        # 验证任务存在
-        cur = db.conn.execute(
-            "SELECT title FROM tasks WHERE id = ?", (opts.task_id,))
-        task_row = cur.fetchone()
-        if not task_row:
+        # 验证任务存在（enterprise/auto 走 daemon RPC task.status，避免在路由
+        # 前通过 db.conn 触发本地 SQLite 打开/写入）
+        def _local_task_exists():
+            return db.task_status(opts.task_id)
+
+        task_info = route_task_read("task.status", {
+            "task_id": opts.task_id,
+        }, _local_task_exists)
+        if not task_info:
             cprint(t("cli.messages.task_not_found",
                    default="Task not found"), "red")
             print()
@@ -4485,8 +4606,12 @@ def _parse_plan_to_subtasks(plan_md: str):
 def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
     """打印任务详情，默认按树形递归展示子任务
 
+    enterprise/auto 模式走 daemon RPC（task.status / task.status_tree）；
+    local 模式（或 auto 降级）调用本地 db.task_status / db.task_status_tree。
+    P0-2：不得在 enterprise/auto 下通过 db 直接实例化本地 CodeGraphDB。
+
     Args:
-        db: CodeGraphDB 实例
+        db: CodeGraphDB 实例（或 LazyDBProxy）
         task_id: 任务 ID
         flat: True 时仅显示主任务（不递归子任务），False 时递归展示整棵树
 
@@ -4494,8 +4619,11 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
         True 表示处理完成
     """
     if flat:
-        # 扁平模式：使用 task_status 仅显示主任务
-        detail = db.task_status(task_id)
+        # 扁平模式：使用 task.status 仅显示主任务
+        def _local_status():
+            return db.task_status(task_id)
+
+        detail = route_task_read("task.status", {"task_id": task_id}, _local_status)
         if not detail:
             print(t("cli.messages.task_show_not_found", id=task_id))
             return True
@@ -4503,9 +4631,13 @@ def _print_task_show(db, task_id: str, flat: bool = False) -> bool:
         _print_task_link_section(db, task_id)
         return True
 
-    # 树形模式：使用 task_status_tree 递归展示
-    tree = db.task_status_tree(task_id) if hasattr(
-        db, "task_status_tree") else None
+    # 树形模式：使用 task.status_tree 递归展示
+    def _local_tree():
+        if not hasattr(db, "task_status_tree"):
+            return None
+        return db.task_status_tree(task_id)
+
+    tree = route_task_read("task.status_tree", {"task_id": task_id}, _local_tree)
     if not tree:
         print(t("cli.messages.task_show_not_found", id=task_id))
         return True
@@ -4522,16 +4654,34 @@ def _print_task_link_section(db, task_id: str):
     """打印任务的三角关联段（commits + symbol_changes）
 
     在 _print_task_show 末尾调用，展示 task → commit / task → symbol 关联。
-    fail-soft：方法不存在或查询失败时静默跳过。
+    enterprise/auto 走 daemon RPC（task.get_symbol_changes 已实现；
+    task.get_commits 尚未在 daemon 实现，auto 模式降级本地、enterprise 模式
+    fail-closed 静默跳过）。fail-soft：方法不存在或查询失败时静默跳过。
     """
     try:
-        commits = db.get_task_commits(task_id) if hasattr(
-            db, "get_task_commits") else []
+        # commits：daemon 无此 RPC，auto 降级本地读，enterprise 失败时静默跳过
+        def _local_commits():
+            if not hasattr(db, "get_task_commits"):
+                return []
+            return db.get_task_commits(task_id)
+
+        commits = route_task_read("task.get_commits", {"task_id": task_id}, _local_commits) or []
+        if isinstance(commits, dict):
+            commits = commits.get("commits") or []
     except Exception:
         commits = []
     try:
-        changes = db.get_task_symbol_changes(task_id, limit=20) if hasattr(
-            db, "get_task_symbol_changes") else []
+        def _local_changes():
+            if not hasattr(db, "get_task_symbol_changes"):
+                return []
+            return db.get_task_symbol_changes(task_id, limit=20)
+
+        changes = route_task_read("task.get_symbol_changes", {
+            "task_id": task_id,
+            "limit": 20,
+        }, _local_changes) or []
+        if isinstance(changes, dict):
+            changes = changes.get("changes") or []
     except Exception:
         changes = []
 
@@ -10523,32 +10673,8 @@ def main():
         if detected:
             workspace_root = detected
 
-    # 初始化数据库
-    db = CodeGraphDB(
-        workspace_root=workspace_root) if workspace_root else CodeGraphDB()
-
-    # 如果自动检测到了工作区，自动注册并设置为活动工作区
-    # 优化：只读命令（search/symbol/callers 等查询类）跳过 register/set_active_workspace 写操作，
-    # 避免被 MCP Server 写锁卡住。set_active_workspace 内部也有 is_active 短路判断。
-    if workspace_root and not _is_readonly_args(args):
-        try:
-            ws_name = get_default_workspace_name(workspace_root)
-            # 检查是否已注册
-            existing = None
-            for ws in db.list_workspaces():
-                if ws["root_path"] == workspace_root:
-                    existing = ws
-                    break
-            if not existing:
-                ws_id = db.register_workspace(ws_name, workspace_root)
-                db.set_active_workspace(ws_id)
-            elif not existing.get("is_active"):
-                db.set_active_workspace(existing["id"])
-        except sqlite3.OperationalError as e:
-            if "locked" in str(e).lower():
-                cprint(get_error("db_locked"), "red")
-                sys.exit(2)
-            raise
+    # 延迟初始化数据库代理（在 enterprise/auto 路由成功时避免打开 SQLite 或注册 workspace）
+    db = LazyDBProxy(workspace_root=workspace_root, is_readonly=_is_readonly_args(args), args=args)
 
     try:
         # 工作区管理命令
@@ -14352,6 +14478,33 @@ def _validate_identity(db, identity):
             "detail": f"身份校验异常: {exc}",
         }
     return bool(ok), (reason or {})
+
+
+def _validate_identity_routed(db, identity):
+    """P0-2：身份校验路由。
+
+    local 模式走本地 db；enterprise/auto 模式不得为身份校验实例化本地
+    CodeGraphDB（实例化即写操作，会与 daemon writer 竞争），统一按“未接线”
+    fail closed —— 与当前 db 层未提供 validate_action_identity 的行为一致；
+    daemon RPC handler 内部已做 claimed_by/owner 权限校验。
+    """
+    if get_daemon_mode() != "local":
+        return False, {
+            "code": "E_IDENTITY_NOT_WIRED",
+            "message_key": "daemon_errors.error.identity_not_wired",
+            "detail": "identity 校验尚未在 daemon RPC 侧接线",
+        }
+    return _validate_identity(db, identity)
+
+
+def _method_accepts_identity_routed(db, method_name: str) -> bool:
+    """P0-2：method 身份布线探测的路由版。
+
+    enterprise/auto 模式不实例化本地 DB，布线表统一视为未接线（fail closed）。
+    """
+    if get_daemon_mode() != "local":
+        return False
+    return _method_accepts_identity(db, method_name)
 
 
 def _method_accepts_identity(db, method_name: str) -> bool:

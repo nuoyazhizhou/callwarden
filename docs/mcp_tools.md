@@ -495,7 +495,7 @@ Call Warden 通过 MCP Server 暴露 237 个工具，按功能聚合为 12 个�
 
 ### `task_next_step`
 领取任务的下一个待执行步骤。Agent 必须通过此工具领取步骤，不能自由决定下一步。
-- **参数**：`task_id: str`
+- **参数**：`task_id: str`, `agent_session_id: str = ""`（可选。同一 Windows 用户多 Agent/多 IDE 并发认领同一任务时用于区分不同逻辑 Agent；缺省时 daemon 以连接身份为准）
 - **返回**：`dict | None` — 步骤详情，含 guardrail_alert/guardrail_warning/structured_instruction
 
 **Before-Edit Contract**：当步骤为编辑类操作时，系统自动调用护栏检查：
