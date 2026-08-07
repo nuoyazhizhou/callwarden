@@ -236,9 +236,14 @@ jobs:
           CARGO_TERM_COLOR: always
 
       - name: Install Python dependencies
+        # 与主 job 一致：仅安装审计白名单，避免全量 requirements.txt 中的
+        # semgrep 在 Windows runner 上无法构建（"Semgrep does not support
+        # Windows yet"）导致依赖安装失败、writer E2E 被 skip（P2-2 假通过）。
         run: |
           python -m pip install --upgrade pip --quiet
-          pip install -r requirements.txt --quiet
+          python -m pip install --prefer-binary --retries 5 --timeout 60 -r release/pyinstaller/requirements-runtime-local.txt --quiet
+          # pytest 供 daemon writer E2E 使用（发布验收 Enforce no-skipped）
+          python -m pip install --prefer-binary --retries 5 --timeout 60 pytest --quiet
 
       - name: Run daemon collaboration E2E
         run: |

@@ -120,6 +120,7 @@ packages = [
     "callwarden.i18n",
     "callwarden.parsers",
     "callwarden.server",
+    "callwarden.server.tools",
 ]
 # P0-3 修复：让 wheel 包含根目录的 Rust 扩展二进制（callwarden_core.pyd/.so）
 # setuptools 的 py-modules 只识别 .py 文件，不识别 .pyd/.so；
