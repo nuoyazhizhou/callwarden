@@ -651,6 +651,27 @@ fn stale_binding_not_current_capture_same_instance_rejected() {
 }
 
 #[test]
+fn caller_root_hash_instance_resolves_to_binding_workspace() {
+    // CLI 按 root 路径推导 instance（sha256(norm(root))[:16]），与 binding capture 的规范
+    // instance（ws-inst-1）字符串不同；解析到 workspace_id 后应通过（scheme 无关）。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1"); // binding instance=ws-inst-1, workspace_id=1, root=/tmp/ws-1
+    let caller_instance = sha256_hex("/tmp/ws-1".as_bytes())[..16].to_string();
+    let resp = evaluate_next_action(&conn, &caller_instance, "t-1")
+        .expect("root 哈希推导的 instance 应解析到同一 workspace");
+    assert!(resp.is_object(), "workspace 门禁通过后返回评估结果对象");
+}
+
+#[test]
+fn unresolvable_caller_instance_rejected() {
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-1");
+    let err = evaluate_next_action(&conn, "no-such-instance-xyz", "t-1")
+        .expect_err("不可解析的 instance 必须 fail-closed 拒绝");
+    assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
+}
+
+#[test]
 fn evaluate_is_strictly_read_only() {
     let mut conn = fresh_db();
     setup_task(&mut conn, "t-1");
