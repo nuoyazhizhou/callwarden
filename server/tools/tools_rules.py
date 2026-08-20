@@ -18,8 +18,9 @@ H3 compat worker（route_worker_call + handler + 白名单 + 模块级装配）�
 W3-1（T-1786861820150-bfe5e805）：list_build_contexts / get_build_context /
 get_active_build_context / get_resolved_edges / count_resolved_edges 已迁移
 rust_native（HTTP 模式经 daemon client 走 build_context.* RPC，主库只读 +
-require_bound_workspace_id fail-closed），已从 compat 白名单移除；剩
-list_toolchains / get_toolchain / get_workspace_toolchains 3 项保持 python_compat。
+require_bound_workspace_id fail-closed），已从 compat 白名单移除。
+S2 批次2（T-1787209948470-a59bcf9c）：list_toolchains / get_toolchain /
+get_workspace_toolchains 已迁移 rust_native（读权威 task DB），白名单清空。
 get_metrics 不依赖 db.conn（走 UnixDaemonRpcClient / 本地 MetricsCollector），
 不属于 SQLite 只读查询面，不接入 worker，维持 fail-closed。
 """
@@ -33,19 +34,8 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
-from ...db import CodeGraphDB
 from callwarden.config import is_http_transport_enabled
 from callwarden.server.daemon_client import route_worker_call
-
-# H4C-2 第三批（T-1786747295227-49c90d68）：rules 组只读工具接入 compat worker。
-# 注意：必须用顶层 `server.compat_registry` 导入，与 compat_worker.py 保持同一
-# 模块单例（模块单例风险，见 tools_query.py L41-49 注释）。
-from server.compat_registry import (  # noqa: E402
-    SCOPE_WORKSPACE,
-    CompatCallContext,
-    register_compat_routes,
-)
-
 from ..daemon_client import route_rpc as _route
 
 
@@ -176,91 +166,10 @@ def register(mcp: FastMCP) -> None:
 
 
 # ============================================================
-# H4C-2 第三批（T-1786747295227-49c90d68）：toolchain/edge 只读查询工具
-# worker handler（index 组，步骤#1）
-# ============================================================
-# 接入说明（遵循 tools_summary.py 已收口模式）：
-# - handler 定义在工具模块内，由 compat_worker.handle_frame 通用派发按 registry
-#   分发；本模块被 worker 装配 import 后模块级注册随之执行；
-# - db_toolchain 查询函数均为纯 SELECT（只读），直接用 ctx.conn（worker 的
-#   mode=ro 只读连接）调用；
-# - handler 跳过 init_toolchain_schema（executescript CREATE TABLE + commit，
-#   写操作，worker 只读连接无法承载；表已由本地/daemon 初始化过，见
-#   db_toolchain.open_toolchain_db 与工具函数体 _local 注释）；
-# - get_metrics 不依赖 db.conn（走 UnixDaemonRpcClient / 本地 MetricsCollector），
-#   不属于 SQLite 只读查询面，不接入 worker，维持 fail-closed（矩阵标注同步修正）。
-_RULES_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
-
-
-def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
-    """轻量只读绑定：绕过 CodeGraphDB.__init__，注入 worker 只读连接与显式 workspace。
-
-    与 tools_query.py / tools_summary.py 同款：ctx.conn 由 compat_worker 用
-    `file:{db_path}?mode=ro` 打开（read_only 契约）；active_workspace 注入
-    ctx.workspace_id，db 层查询基于 `_get_active_workspace_id()` 过滤；
-    workspace_root 从 workspaces 表解析。
-    """
-    db = object.__new__(CodeGraphDB)
-    db.conn = ctx.conn
-    db.active_workspace = {"id": ctx.workspace_id} if ctx.workspace_id else None
-    db.workspace_root = None
-    if ctx.workspace_id is not None:
-        try:
-            row = ctx.conn.execute(
-                "SELECT root_path FROM workspaces WHERE id = ?",
-                (ctx.workspace_id,),
-            ).fetchone()
-            if row is not None:
-                db.workspace_root = row["root_path"]
-        except Exception:
-            db.workspace_root = None
-    return db
-
-
-def _h_list_toolchains(ctx: CompatCallContext) -> Any:
-    """worker handler：列出所有工具链（只读，跳过 init_toolchain_schema 写操作）"""
-    from callwarden.db.db_toolchain import list_toolchains as _list
-    return [tc.to_dict() for tc in _list(ctx.conn)]
-
-
-def _h_get_toolchain(ctx: CompatCallContext) -> Any:
-    """worker handler：查询工具链详情（只读，跳过 init_toolchain_schema）"""
-    from callwarden.db.db_toolchain import get_toolchain as _get
-    name_or_id = ctx.params.get("name_or_id", "")
-    try:
-        key = int(name_or_id)
-    except (ValueError, TypeError):
-        key = name_or_id
-    tc = _get(ctx.conn, key)
-    return tc.to_dict() if tc else None
-
-
-def _h_get_workspace_toolchains(ctx: CompatCallContext) -> Any:
-    """worker handler：查询 workspace 绑定的工具链（只读，跳过 init_toolchain_schema）"""
-    from callwarden.db.db_toolchain import get_workspace_toolchains as _get_ws
-    tcs = _get_ws(
-        ctx.conn,
-        ctx.params.get("workspace_id", 0),
-        ctx.params.get("build_context_hash", ""),
-    )
-    return [tc.to_dict() for tc in tcs]
-
-
-# toolchain/edge 只读白名单（3 个）：list_build_contexts / get_build_context /
-# get_active_build_context / get_resolved_edges / count_resolved_edges 已 W3-1
-# （T-1786861820150-bfe5e805）迁移 rust_native 并从白名单移除。get_metrics 不依赖
-# db.conn（走 daemon RPC / 本地 MetricsCollector），不接入 worker，维持 fail-closed。
-_RULES_READ_ONLY_METHODS: Dict[str, Any] = {
-    "list_toolchains": _h_list_toolchains,
-    "get_toolchain": _h_get_toolchain,
-    "get_workspace_toolchains": _h_get_workspace_toolchains,
-}
-
-# 模块级注册：worker 装配 import 本模块时执行，注册到 compat_registry 单例并
-# 同步 RUST_COMPAT_ROUTE（Rust 侧 http_server.rs 白名单在步骤#2 同步）。
-register_compat_routes(
-    _RULES_READ_ONLY_METHODS,
-    workspace_scope=_RULES_COMPAT_SCOPE,
-    description="H4C-2 第三批 toolchain 组只读工具（3 个，T-1786747295227-49c90d68 步骤#1；"
-    "build_context 5 个已 W3-1 T-1786861820150-bfe5e805 迁移 rust_native）",
-)
+# 本模块的 compat 只读白名单（list_toolchains / get_toolchain /
+# get_workspace_toolchains / list_build_contexts / get_build_context /
+# get_active_build_context / get_resolved_edges / count_resolved_edges / get_metrics）
+# 已全部迁移 rust_native（S2 批次2 T-1787209948470-a59bcf9c / W3-1
+# T-1786861820150-bfe5e805），不再经 python_compat worker 注册，故无模块级
+# register_compat_routes 调用（空白名单会触发 register_read_only_batch 的
+# "methods 不能为空" fail-closed 校验）。
