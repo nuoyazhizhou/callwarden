@@ -596,6 +596,61 @@ fn workspace_instance_mismatch_authority_mismatch() {
 }
 
 #[test]
+fn two_instances_same_workspace_chain_continuity_per_instance() {
+    // 回归（整机单库迁移遗留）：同一 workspace_id 可并存多个实例链（旧单库模型的实例 id 与
+    // 规范 ws-{id}），capture_revision 在实例内单调。旧实现按 workspace_id 全局 COUNT==MAX，
+    // 会把双实例并存的连续链误判为断链（count>max）；新实现按 (workspace_id, instance) 限定。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // instance=ws-inst-1，capture rev1
+    let ws_legacy = WorkspaceCaptureInput {
+        workspace_id: 1,
+        daemon_workspace_id: 42,
+        workspace_instance_id: "legacy-inst".to_string(),
+        client_view_root_hash: "client-view-hash".to_string(),
+        host_real_root_hash: "host-root-hash".to_string(),
+        workspace_manifest_payload_json: "{\"kind\":\"a\"}".to_string(),
+        workspace_manifest_hash: "manifest-a".to_string(),
+        created_by: "test-creator".to_string(),
+    };
+    let input = CreateTaskInput {
+        task_id: "t-b".to_string(),
+        title: "task-t-b".to_string(),
+        description: "desc".to_string(),
+        creator: "test-creator".to_string(),
+    };
+    create_task(
+        &mut conn,
+        &frozen(),
+        &CreateLedgerKey {
+            workspace_instance_id: "legacy-inst".to_string(),
+            method: "task.create".to_string(),
+            request_id: "create-t-b".to_string(),
+        },
+        &input,
+        &ws_legacy,
+    )
+    .expect("legacy 实例 create_task 应成功");
+
+    // 旧实现：workspace 1 全局 count=2 max=1 → Err(断链 MISMATCH)；
+    // 新实现：按实例各 count=1 max=1 → workspace 门禁通过（后续合同缺失 → Ok(BLOCKED)）。
+    let resp = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect("双实例并存时 t-a 不应被判断链");
+    assert!(resp.is_object(), "workspace 门禁通过后返回评估结果对象");
+}
+
+#[test]
+fn stale_binding_not_current_capture_same_instance_rejected() {
+    // 「当前 capture」检查按实例限定后语义保持：同实例内 binding 引用的 capture 必须是
+    // 该实例最新 revision；旧 capture 引用仍拒绝（不因多实例放宽）。
+    let mut conn = fresh_db();
+    setup_task(&mut conn, "t-a"); // ws-inst-1 capture rev1
+    setup_task(&mut conn, "t-b"); // ws-inst-1 capture rev2（成为该实例新的当前 capture）
+    let err = evaluate_next_action(&conn, "ws-inst-1", "t-a")
+        .expect_err("binding 指向同实例非当前 capture 必须拒绝");
+    assert_eq!(err.code, ERR_WORKSPACE_AUTHORITY_MISMATCH);
+}
+
+#[test]
 fn evaluate_is_strictly_read_only() {
     let mut conn = fresh_db();
     setup_task(&mut conn, "t-1");

@@ -138,18 +138,24 @@ fn verify_capture(
         ));
     }
     // capture 链连续性：该 workspace 的 capture 行必须连续（COUNT == MAX，非空）。
+    // 按 (workspace_id, workspace_instance_id) 限定：整机单库迁移后同一 workspace_id 可能并存
+    // 多个实例链（旧单库模型的实例 id 与规范 `ws-{id}`），capture_revision 在实例内单调；
+    // 按 workspace_id 全局统计会把多实例并存的连续链误判为断链（count > max）。
     let (count, max): (i64, i64) = conn
         .query_row(
             "SELECT COUNT(*), COALESCE(MAX(capture_revision), 0) \
-             FROM workspace_authority_captures WHERE workspace_id = ?1",
-            [cap_workspace_id],
+             FROM workspace_authority_captures \
+             WHERE workspace_id = ?1 AND workspace_instance_id = ?2",
+            rusqlite::params![cap_workspace_id, cap_instance],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .map_err(|e| infra_error(&format!("workspace capture 链读取失败: {e}")))?;
     if count != max || max == 0 {
         return Err(DaemonRpcError::new(
             ERR_WORKSPACE_AUTHORITY_MISMATCH,
-            format!("workspace {cap_workspace_id} capture 链断链（count={count} max={max}）"),
+            format!(
+                "workspace {cap_workspace_id} instance {cap_instance} capture 链断链（count={count} max={max}）"
+            ),
         ));
     }
     // 请求的 workspace_instance_id 必须与 capture 一致（跨 workspace 拒绝）。
@@ -170,12 +176,13 @@ fn verify_capture(
             format!("capture {workspace_capture_id} 的 registry_identity_hash 无法复核（重算不一致）"),
         ));
     }
-    // task binding 引用的 capture 必须是该 workspace 的当前 authority capture。
+    // task binding 引用的 capture 必须是该 workspace（同 instance）的当前 authority capture。
     let current_capture: String = conn
         .query_row(
             "SELECT workspace_capture_id FROM workspace_authority_captures \
-             WHERE workspace_id = ?1 ORDER BY capture_revision DESC LIMIT 1",
-            [cap_workspace_id],
+             WHERE workspace_id = ?1 AND workspace_instance_id = ?2 \
+             ORDER BY capture_revision DESC LIMIT 1",
+            rusqlite::params![cap_workspace_id, cap_instance],
             |row| row.get(0),
         )
         .map_err(|e| infra_error(&format!("workspace 当前 capture 读取失败: {e}")))?;
@@ -184,7 +191,7 @@ fn verify_capture(
             ERR_WORKSPACE_AUTHORITY_MISMATCH,
             format!(
                 "task binding 引用的 capture {workspace_capture_id} 不是 workspace {cap_workspace_id} \
-                 的当前 authority capture {current_capture}"
+                 instance {cap_instance} 的当前 authority capture {current_capture}"
             ),
         ));
     }
