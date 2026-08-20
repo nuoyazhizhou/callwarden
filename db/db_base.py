@@ -2750,6 +2750,310 @@ def _migrate_v46_to_v47(conn: sqlite3.Connection):
         pass
 
 
+def _migrate_v47_to_v48(conn: sqlite3.Connection):
+    """v47 -> v48: guardrail_findings 增加 workspace_id 归属列（W2.3 P1-1）
+
+    背景：query.issues 的 guardrail 子查询按 file_path + symbol_hash 匹配，
+    表无 workspace_id 列，共享单库多 workspace 下同路径同内容的符号会命中
+    彼此的 finding（跨 workspace 数据泄露，复审 P1-1）。
+
+    迁移步骤：
+    1. guardrail_findings 增加 workspace_id INTEGER NOT NULL DEFAULT 0 列（幂等）。
+    2. 新增 idx_guardrail_findings_workspace / idx_guardrail_findings_ws_file 索引。
+    3. 旧数据无法安全归属（无法确定原始 workspace）：**禁止静默归入当前 workspace**。
+       将 workspace_id=0 且 status='open' 的旧行置为 status='orphaned'，查询层
+       fail-closed（不返回 orphan 行），直到用户显式迁移或清理。
+    4. 全新数据库已通过 SCHEMA_SQL 创建 workspace_id 列与索引，本迁移只补齐既有 v47 库。
+
+    幂等性：PRAGMA table_info 检测列、CREATE INDEX IF NOT EXISTS 保证可重复执行。
+    防御性：guardrail_findings 表不存在时跳过（兼容合成测试库）。
+    """
+    from .schema import GUARDRAIL_STATUS_ORPHANED
+
+    # 检查表是否存在（防御性：极简库可能没有此表）
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='guardrail_findings'"
+    )
+    if not cur.fetchone():
+        return
+
+    # 幂等：检测 workspace_id 列是否已存在
+    cur = conn.execute("PRAGMA table_info(guardrail_findings)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "workspace_id" not in cols:
+        conn.execute(
+            "ALTER TABLE guardrail_findings ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0"
+        )
+
+    # 索引（幂等）
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_workspace "
+        "ON guardrail_findings(workspace_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_ws_file "
+        "ON guardrail_findings(workspace_id, file_path, symbol_hash)"
+    )
+
+    # 旧数据 fail-closed：workspace_id=0 且 status='open' 的旧行置为 orphaned。
+    # 明确不将旧数据归入当前 workspace（无可靠归属依据），也不删除数据（可审计）。
+    conn.execute(
+        f"UPDATE guardrail_findings SET status = '{GUARDRAIL_STATUS_ORPHANED}' "
+        "WHERE workspace_id = 0 AND status = 'open'"
+    )
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _migrate_v48_to_v49(conn: sqlite3.Connection):
+    """v48 -> v49: 修复陈旧二进制抢先打标 v48 导致缺列库无法自愈（复审 P0-1）
+
+    背景：v48 版本号被陈旧 .pyd（内嵌 schema 无 workspace_id 列）抢先写入
+    schema_version，且 Rust storage `initialize_or_migrate` 在
+    current_version==expected_version 时只校验表名不校验列，主库永久停留
+    "v48 无列"状态，guardrail 隔离实际未生效。
+
+    迁移步骤：
+    1. 幂等补齐 guardrail_findings.workspace_id 列（若缺失）。
+    2. 补齐 idx_guardrail_findings_workspace / _ws_file 索引（幂等）。
+    3. workspace_id=0 且 status='open' 的旧行置为 orphaned（fail-closed）。
+
+    与 _migrate_v47_to_v48 功能等价，但作为独立版本号迁移存在，确保任何
+    已被陈旧二进制打标为 v48 的库在升级到 v49 时强制走本路径补齐列。
+    全新数据库已通过 SCHEMA_SQL 创建 workspace_id 列与索引，本迁移只补齐
+    既有 v48 库。幂等：PRAGMA table_info + CREATE INDEX IF NOT EXISTS。
+    """
+    from .schema import GUARDRAIL_STATUS_ORPHANED
+
+    cur = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='guardrail_findings'"
+    )
+    if not cur.fetchone():
+        return
+
+    cur = conn.execute("PRAGMA table_info(guardrail_findings)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "workspace_id" not in cols:
+        conn.execute(
+            "ALTER TABLE guardrail_findings ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0"
+        )
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_workspace "
+        "ON guardrail_findings(workspace_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_ws_file "
+        "ON guardrail_findings(workspace_id, file_path, symbol_hash)"
+    )
+    conn.execute(
+        f"UPDATE guardrail_findings SET status = '{GUARDRAIL_STATUS_ORPHANED}' "
+        "WHERE workspace_id = 0 AND status = 'open'"
+    )
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _migrate_v49_to_v50(conn: sqlite3.Connection):
+    """v49 -> v50: Agent Identity + Role Contract（agent-task-contract-design.md §4.1/4.2）
+
+    背景：v50 为 Agent 协同控制面（A2/A3）引入
+    1. agent_registrations 扩展 Agent Identity 最小字段（agent_instance_id /
+       client_id / provider / model_id / model_mode / system_fingerprint /
+       runtime_hash / session_id / role），用于独立性门禁与 provenance 审计。
+    2. 新增 role_contracts 冻结合同表（skill/prompt hash、allowed/forbidden
+       paths、handoff_to、independence），合同变更按 revision + is_current 审计。
+
+    幂等：PRAGMA table_info + CREATE TABLE IF NOT EXISTS + CREATE INDEX IF NOT EXISTS。
+    全新数据库已通过 SCHEMA_SQL 建齐，本迁移只补齐既有 v49 库。
+    """
+    # 1. agent_registrations 幂等补齐 identity 列（PRAGMA table_info 探测）
+    cur = conn.execute("PRAGMA table_info(agent_registrations)")
+    cols = {row[1] for row in cur.fetchall()}
+    for column in (
+        "agent_instance_id", "client_id", "provider", "model_id", "model_mode",
+        "system_fingerprint", "runtime_hash", "session_id", "role",
+    ):
+        if column not in cols:
+            conn.execute(f"ALTER TABLE agent_registrations ADD COLUMN {column} TEXT DEFAULT ''")
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_agent_registrations_instance "
+        "ON agent_registrations(agent_instance_id, role, status)"
+    )
+
+    # 2. role_contracts 冻结合同表（幂等建表 + 索引）
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS role_contracts ("
+        "  contract_id TEXT PRIMARY KEY,"
+        "  task_id TEXT NOT NULL,"
+        "  step_id TEXT DEFAULT '',"
+        "  role TEXT NOT NULL,"
+        "  skill_id TEXT DEFAULT '',"
+        "  skill_version TEXT DEFAULT '',"
+        "  prompt_template_id TEXT DEFAULT '',"
+        "  prompt_hash TEXT DEFAULT '',"
+        "  allowed_paths TEXT DEFAULT '[]',"
+        "  forbidden_paths TEXT DEFAULT '[]',"
+        "  commands TEXT DEFAULT '[]',"
+        "  acceptance_checks TEXT DEFAULT '[]',"
+        "  required_evidence TEXT DEFAULT '[]',"
+        "  handoff_to TEXT DEFAULT '',"
+        "  independence TEXT DEFAULT '{}',"
+        "  revision INTEGER DEFAULT 1,"
+        "  is_current INTEGER DEFAULT 1,"
+        "  created_at REAL NOT NULL,"
+        "  created_by TEXT DEFAULT ''"
+        ")"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_role_contracts_task "
+        "ON role_contracts(task_id, role, is_current)"
+    )
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _migrate_v50_to_v51(conn: sqlite3.Connection):
+    """v50 -> v51：为 workspace 固化 runtime deployment 策略。
+
+    ``self_bootstrap`` 仅用于 CallWarden 自举工作区；普通工作区保持
+    ``standard``，不会因为 daemon/RPC 文件变更而强制重启部署。
+    迁移幂等，旧工作区默认 standard，避免把外部项目误判为自举项目。
+    """
+    cur = conn.execute("PRAGMA table_info(workspaces)")
+    cols = {row[1] for row in cur.fetchall()}
+    if "runtime_policy" not in cols:
+        conn.execute(
+            "ALTER TABLE workspaces ADD COLUMN runtime_policy TEXT NOT NULL DEFAULT 'standard'"
+        )
+    conn.execute(
+        "UPDATE workspaces SET runtime_policy = 'standard' "
+        "WHERE runtime_policy IS NULL OR runtime_policy NOT IN ('standard', 'self_bootstrap')"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspaces_runtime_policy "
+        "ON workspaces(runtime_policy)"
+    )
+
+
+def _migrate_v51_to_v52(conn: sqlite3.Connection):
+    """v51 -> v52: Task-domain operation store（cw-role-handoff-task-loop.md §8.1.3/§8.1.4）
+
+    背景：v52 为 v1 task-domain mutation 的权威 operation/dedup ledger 引入
+    1. canonicalization_rule_sets / canonicalization_rule_revocations 规则 registry
+       （workspace capture、Role Contract 与 operation params 共用，append-only）。
+    2. task_operation_ledger 权威账本（key=(workspace_instance_id, method, request_id)）。
+    3. ('operation_params', 'operation-params-c14n/v1') 初始 rule row（1D1 独占追加，
+       原子校验其拥有的 row；hash 失配即 fail closed，禁止静默改写或重解释）。
+
+    幂等：CREATE TABLE IF NOT EXISTS + SELECT 探测 + INSERT OR IGNORE 语义。
+    全新数据库已通过 SCHEMA_SQL 建表，本迁移只补齐既有 v51 库并播种 operation_params
+    初始 rule row（Rust migrate_connection 负责 task-DB 侧的同样播种）。
+    """
+    # 1. 规则 registry + 撤销表（§8.1.3，幂等建表）
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS canonicalization_rule_sets ("
+        "  rule_set_id TEXT PRIMARY KEY,"
+        "  domain TEXT NOT NULL CHECK(domain IN ('workspace_capture', 'role_contract', 'operation_params')),"
+        "  canonicalization_version TEXT NOT NULL,"
+        "  rules_payload_json TEXT NOT NULL,"
+        "  rules_c14n_version TEXT NOT NULL,"
+        "  rules_hash TEXT NOT NULL,"
+        "  created_by TEXT NOT NULL,"
+        "  authoritative_created_at TEXT NOT NULL,"
+        "  UNIQUE(domain, canonicalization_version),"
+        "  UNIQUE(domain, rules_hash)"
+        ")"
+    )
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS canonicalization_rule_revocations ("
+        "  revocation_id TEXT PRIMARY KEY,"
+        "  rule_set_id TEXT NOT NULL UNIQUE REFERENCES canonicalization_rule_sets(rule_set_id),"
+        "  reason TEXT NOT NULL,"
+        "  revoked_by TEXT NOT NULL,"
+        "  authoritative_revoked_at TEXT NOT NULL"
+        ")"
+    )
+
+    # 2. task_operation_ledger 权威账本（§8.1.4，幂等建表）
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS task_operation_ledger ("
+        "  workspace_instance_id TEXT NOT NULL,"
+        "  method TEXT NOT NULL,"
+        "  request_id TEXT NOT NULL,"
+        "  params_canonicalization_version TEXT NOT NULL,"
+        "  params_canonicalization_rules_hash TEXT NOT NULL,"
+        "  canonical_params_hash TEXT NOT NULL,"
+        "  workspace_id INTEGER NULL REFERENCES workspaces(id),"
+        "  task_id TEXT NULL REFERENCES tasks(id),"
+        "  role_contract_revision_id TEXT NULL,"
+        "  role_contract_hash TEXT NULL,"
+        "  role_contract_canonicalization_version TEXT NULL,"
+        "  role_contract_canonicalization_rules_hash TEXT NULL,"
+        "  response_or_error_json TEXT NOT NULL,"
+        "  authoritative_created_at TEXT NOT NULL,"
+        "  PRIMARY KEY(workspace_instance_id, method, request_id)"
+        ")"
+    )
+
+    # 3. operation_params 初始 rule row（1D1 独占追加；原子校验，hash 失配 fail closed）
+    #    payload 与 hash 由 _gen_rules_seed.py 冻结生成，Rust operation_store 常量必须一致。
+    rules_payload = (
+        '{"canonicalization_version":"operation-params-c14n/v1",'
+        '"description":"Task-domain operation payload canonicalization for task_operation_ledger dedup",'
+        '"excluded_keys":["request_id","workspace_instance_id"],'
+        '"hash_algorithm":"sha256","hash_prefix":"sha256:",'
+        '"key_ordering":"unicode_code_point","normalization":"unicode_nfc",'
+        '"serialization":"rfc8785_json_canonicalization_scheme"}'
+    )
+    rules_hash = "sha256:8b7a902fd1463c8a79a6b687161b6be471ad62877d4920f4e874e11bbb2e495c"
+
+    cur = conn.execute(
+        "SELECT rules_payload_json, rules_hash FROM canonicalization_rule_sets "
+        "WHERE domain = 'operation_params' AND canonicalization_version = 'operation-params-c14n/v1'"
+    )
+    row = cur.fetchone()
+    if row is None:
+        import datetime as _datetime
+
+        conn.execute(
+            "INSERT INTO canonicalization_rule_sets "
+            "(rule_set_id, domain, canonicalization_version, rules_payload_json, "
+            " rules_c14n_version, rules_hash, created_by, authoritative_created_at) "
+            "VALUES (?, 'operation_params', 'operation-params-c14n/v1', ?, 'rules-c14n/v1', ?, "
+            " 'migration-v51-to-v52', ?)",
+            (
+                "operation-params-c14n/v1",
+                rules_payload,
+                rules_hash,
+                _datetime.datetime.now(_datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            ),
+        )
+    else:
+        # 已存在必须 payload 与 hash 完全一致；任何差异都 fail closed，禁止改写或重解释。
+        if row[0] != rules_payload or row[1] != rules_hash:
+            raise RuntimeError(
+                "operation-params-c14n/v1 rule row mismatch "
+                "(payload=%s hash=%s expected_payload=%s expected_hash=%s)"
+                % (row[0][:120], row[1], rules_payload[:120], rules_hash)
+            )
+
+    try:
+        conn.execute("ANALYZE")
+    except sqlite3.OperationalError:
+        pass
+
+
 class CodeGraphBase:
     """代码知识图谱数据库核心基类
 
@@ -3173,6 +3477,11 @@ class CodeGraphBase:
                 raise
 
             if rust_storage_imported:
+                # 复审 P0-2/P0-3 兜底：陈旧 .pyd（不含 missing_compat_columns）可能把
+                # 缺列库打标为当前版本号。无论 Rust 返回报告如何，Python 侧都做一次
+                # 列级 compat 校验+修复，确保 guardrail_findings.workspace_id 列存在，
+                # 否则读路径 workspace_id 过滤会直接 no such column。
+                self._ensure_compat_columns()
                 # 确保辅助扩展 schema（CREATE IF NOT EXISTS）幂等执行；这些
                 # 模块不属于核心 schema 版本表，但失败不能静默吞掉。
                 from .db_toolchain import init_toolchain_schema
@@ -3222,6 +3531,9 @@ class CodeGraphBase:
             # 需要迁移：按版本顺序执行增量迁移
             self._migrate_schema(current_version, SCHEMA_VERSION)
         # current_version == SCHEMA_VERSION: 无需操作
+        # 无论走哪条路径（Rust 或 Python 迁移），都做一次列级 compat 兜底修复，
+        # 防止陈旧二进制把缺列库打标为当前版本号后静默放行（复审 P0-1/P0-2）。
+        self._ensure_compat_columns()
 
         # Phase 6/7 扩展 schema（CREATE IF NOT EXISTS，幂等）
         # 这些 schema 由独立模块管理，不进入 SCHEMA_SQL 的版本化迁移流，
@@ -3241,6 +3553,67 @@ class CodeGraphBase:
             init_clone_groups_schema(self.conn)
         except Exception:
             pass
+
+    def _ensure_compat_columns(self):
+        """列级 compat 兜底修复（复审 P0-1/P0-2/P0-3 响应）
+
+        背景：陈旧二进制可能把"缺 workspace_id 列"的库打标为当前版本号，
+        且 Rust storage 短路路径 / 旧 .pyd 内嵌 schema 均不会补列 → 主库
+        guardrail 查询 workspace_id 过滤直接 no such column。
+
+        本方法在 _init_schema 的两条路径（Rust storage 路径 + Python 迁移路径）
+        之后都调用，幂等补齐已知的兼容列。无论版本号为何、由哪个二进制打标，
+        Python 侧都保证 guardrail_findings.workspace_id 与
+        workspaces.runtime_policy 列存在。
+
+        幂等性：PRAGMA table_info 检测列 + CREATE INDEX IF NOT EXISTS。
+        防御性：表不存在时跳过（兼容合成测试库）。
+        """
+        # Rust StorageService 可能使用旧的内嵌 schema 将数据库标记为当前版本；
+        # 因此 runtime_policy 也必须在 Rust 短路返回前按列级幂等方式补齐。
+        cur = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='workspaces'"
+        )
+        if cur.fetchone():
+            cols = {row[1] for row in self.conn.execute("PRAGMA table_info(workspaces)").fetchall()}
+            if "runtime_policy" not in cols:
+                self.conn.execute(
+                    "ALTER TABLE workspaces ADD COLUMN runtime_policy TEXT NOT NULL DEFAULT 'standard'"
+                )
+            self.conn.execute(
+                "UPDATE workspaces SET runtime_policy = 'standard' "
+                "WHERE runtime_policy IS NULL OR runtime_policy NOT IN ('standard', 'self_bootstrap')"
+            )
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workspaces_runtime_policy "
+                "ON workspaces(runtime_policy)"
+            )
+
+        cur = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='guardrail_findings'"
+        )
+        if not cur.fetchone():
+            return
+        cur = self.conn.execute("PRAGMA table_info(guardrail_findings)")
+        cols = {row[1] for row in cur.fetchall()}
+        if "workspace_id" not in cols:
+            self.conn.execute(
+                "ALTER TABLE guardrail_findings ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0"
+            )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_workspace "
+            "ON guardrail_findings(workspace_id)"
+        )
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_ws_file "
+            "ON guardrail_findings(workspace_id, file_path, symbol_hash)"
+        )
+        # 无归属 open 旧行置为 orphaned（fail-closed，不静默归入当前 workspace）
+        self.conn.execute(
+            "UPDATE guardrail_findings SET status = 'orphaned' "
+            "WHERE workspace_id = 0 AND status = 'open'"
+        )
+        self.conn.commit()
 
     def _create_indexes_after_build(self):
         """P12 优化：在 build_full_graph 入库完成后建立所有索引和触发器
@@ -3551,22 +3924,67 @@ class CodeGraphBase:
                 "description": t("cli.messages.migration_v47", default="Windows daemon TaskCollabStore authoritative tables: task_events + agent_registrations + indexes (idempotent)"),
                 "func": _migrate_v46_to_v47,
             },
+            48: {
+                "description": t("cli.messages.migration_v48", default="W2.3 P1-1 guardrail_findings workspace ownership: add workspace_id column + indexes, orphan unowned open rows (fail-closed, idempotent)"),
+                "func": _migrate_v47_to_v48,
+            },
+            49: {
+                "description": t("cli.messages.migration_v49", default="W2.3 P1-1 audit P0-1 fix: bump to v49 so stale-v48-stamped DBs (missing workspace_id column) self-heal via v48->v49 migration (idempotent)"),
+                "func": _migrate_v48_to_v49,
+            },
+            50: {
+                "description": t("cli.messages.migration_v50", default="Agent Identity + Role Contract: agent_registrations extended identity columns + role_contracts frozen contract table (idempotent)"),
+                "func": _migrate_v49_to_v50,
+            },
+            51: {
+                "description": t("cli.messages.migration_v51", default="Workspace runtime policy: self_bootstrap/standard deployment gate (idempotent)"),
+                "func": _migrate_v50_to_v51,
+            },
+            52: {
+                "description": t("cli.messages.migration_v52", default="Task-domain operation store: canonicalization_rule_sets/revocations registry + task_operation_ledger authority ledger + operation-params-c14n/v1 seed row (idempotent)"),
+                "func": _migrate_v51_to_v52,
+            },
         }
 
     def _init_workspace(self):
-        """初始化工作区：确保工作区存在，设置为活动工作区"""
-        # 检查是否已有活动工作区
-        cur = self.conn.execute(
-            "SELECT * FROM workspaces WHERE is_active = 1 ORDER BY id LIMIT 1"
-        )
-        row = cur.fetchone()
+        """初始化工作区：确保工作区存在，设置为活动工作区
+
+        fail-closed 优先：显式 `workspace_root` 的项目先按 root_path 精确匹配，
+        不静默绑定到其他项目遗留的全局 active workspace（“工作区身份混串”根因）；
+        仅当没有显式 workspace_root 时才复用全局 active workspace。
+        """
+        # 有显式 workspace_root 时优先按 root_path 匹配（不借用其他项目的 active）
+        row = None
+        if self.workspace_root and os.path.isdir(self.workspace_root):
+            cur = self.conn.execute(
+                "SELECT * FROM workspaces WHERE root_path = ?",
+                (norm_path(self.workspace_root),),
+            )
+            row = cur.fetchone()
+
+        if row is None and not (self.workspace_root and os.path.isdir(self.workspace_root)):
+            # 无显式 workspace_root：保留旧语义，复用全局 active workspace
+            cur = self.conn.execute(
+                "SELECT * FROM workspaces WHERE is_active = 1 ORDER BY id LIMIT 1"
+            )
+            row = cur.fetchone()
 
         if row:
-            self.active_workspace = dict(row)
+            # 找到匹配工作区，设为活动（幂等）；保持全局 is_active 语义与 find-or-create 一致
+            self.conn.execute(
+                "UPDATE workspaces SET is_active = 1 WHERE id = ?",
+                (row["id"],),
+            )
+            self.conn.commit()
             self.workspace_root = row["root_path"]
+            self._ensure_self_bootstrap_policy(row)
+            refreshed = self.conn.execute(
+                "SELECT * FROM workspaces WHERE id = ?", (row["id"],)
+            ).fetchone()
+            self.active_workspace = dict(refreshed or row)
             return
 
-        # 没有活动工作区，根据 workspace_root 创建或查找
+        # 没有匹配/可复用的活动工作区：根据 workspace_root 创建或查找
         workspace_name = get_default_workspace_name(self.workspace_root)
 
         cur = self.conn.execute(
@@ -3594,7 +4012,37 @@ class CodeGraphBase:
             row = cur.fetchone()
 
         self.conn.commit()
-        self.active_workspace = dict(row) if row else None
+        self._ensure_self_bootstrap_policy(row)
+        refreshed = None
+        if row:
+            refreshed = self.conn.execute(
+                "SELECT * FROM workspaces WHERE id = ?", (row["id"],)
+            ).fetchone()
+        self.active_workspace = dict(refreshed or row) if (refreshed or row) else None
+
+    def _ensure_self_bootstrap_policy(self, workspace_row: Optional[sqlite3.Row]) -> None:
+        """仅将 CallWarden 自身工作区标记为 self_bootstrap。
+
+        外部项目和普通工作区保持 ``standard``；该判断基于包根目录及自举入口
+        的稳定文件组合，不读取可由 Agent 临时修改的任务字段。
+        """
+        if not workspace_row or "runtime_policy" not in workspace_row.keys():
+            return
+        root = norm_path(workspace_row["root_path"] or "")
+        project_root = norm_path(PROJECT_ROOT)
+        is_self_bootstrap = (
+            root == project_root
+            and os.path.isfile(os.path.join(root, "AGENTS.md"))
+            and os.path.isfile(os.path.join(root, "cw.py"))
+        )
+        desired = "self_bootstrap" if is_self_bootstrap else "standard"
+        if workspace_row["runtime_policy"] == desired:
+            return
+        self.conn.execute(
+            "UPDATE workspaces SET runtime_policy = ? WHERE id = ?",
+            (desired, workspace_row["id"]),
+        )
+        self.conn.commit()
 
     def close(self):
         """关闭数据库连接，释放底层资源"""
@@ -3786,7 +4234,15 @@ class CodeGraphBase:
     # --------------------------------------------------------------------
 
     def _get_active_workspace_id(self) -> int:
-        """获取当前活动工作区 ID"""
-        if self.active_workspace:
-            return self.active_workspace.get("id", 1)
-        return 1
+        """获取当前活动工作区 ID（fail-closed：无 active workspace 时抛错）。
+
+        旧实现无 active workspace 时回退到 workspace `1`，在多 workspace 单库中会把
+        查询/任务归属错配到其他项目（“工作区身份混串”根因）。生产路径必须显式
+        指定 workspace，不得静默回退。
+        """
+        if self.active_workspace and self.active_workspace.get("id"):
+            return int(self.active_workspace["id"])
+        raise RuntimeError(
+            "没有 active workspace，拒绝推导 workspace_id（fail-closed）；"
+            "必须显式指定 workspace / workspace_root，禁止回退到 workspace 1"
+        )
