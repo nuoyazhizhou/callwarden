@@ -252,14 +252,10 @@ impl RuntimeOptions {
             DaemonMode::Auto if daemon_available => {
                 result_text_from_source(enterprise(), RouteUsed::Enterprise)
             }
-            DaemonMode::Auto => CommandResult::failure(
-                2,
-                format!(
-                    "auto mode write operation failed: daemon is unavailable at {}",
-                    self.socket_path.display()
-                ),
-                RouteUsed::None,
-            ),
+            // auto 模式在路由选择时才须感知 daemon 可用性：daemon 不可用时与读路径一致
+            // 回落本地（仅限"写入前"，见 execute_write_with 的"禁止跨源回退"约束）；
+            // daemon 可用但写入失败时则由上面的分支返回失败，不回退本地。
+            DaemonMode::Auto => result_text_from_source(local(), RouteUsed::Local),
         }
     }
 

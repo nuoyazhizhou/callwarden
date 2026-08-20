@@ -167,6 +167,46 @@ pub const E_REVOCATION_MODE_MISSING: ErrorCodeEntry = ErrorCodeEntry {
 };
 
 // ---------------------------------------------------------------------------
+// 收敛架构错误码（T01，cw-rust-client-convergence-design.md §8.6）
+// ---------------------------------------------------------------------------
+
+/// 工具显式废弃（路由矩阵 target_backend=declared_unavailable，仍占路由数）。
+/// 客户端收到后不得重试本地实现；结构化 code=E_TOOL_DEPRECATED。
+pub const E_TOOL_DEPRECATED: ErrorCodeEntry = ErrorCodeEntry {
+    code: "E_TOOL_DEPRECATED",
+    message_key: "error.tool_deprecated",
+    is_warning: false,
+    description: "Tool explicitly deprecated in convergence architecture; no local fallback",
+};
+
+/// daemon 模式废弃（local/legacy 仅 CW_TEST_MODE=1 下可用）。
+/// 生产环境显式配置 local/legacy 一律视为配置错误（fail-closed）。
+pub const E_MODE_DEPRECATED: ErrorCodeEntry = ErrorCodeEntry {
+    code: "E_MODE_DEPRECATED",
+    message_key: "error.mode_deprecated",
+    is_warning: false,
+    description: "Daemon mode local/legacy deprecated outside CW_TEST_MODE=1",
+};
+
+/// 工具迁移待定（路由矩阵已登记但 handler 尚未落地）。
+/// 与 E_TOOL_DEPRECATED 不同：本码表示路由存在但实现未完成，客户端应
+/// 稍后重试而非认为工具永久废弃。
+pub const E_TOOL_MIGRATION_PENDING: ErrorCodeEntry = ErrorCodeEntry {
+    code: "E_TOOL_MIGRATION_PENDING",
+    message_key: "error.tool_migration_pending",
+    is_warning: false,
+    description: "Tool route registered in matrix but native handler not yet landed",
+};
+
+/// HTTP daemon 不可用（fail-closed：绝不回退本地 SQLite/CodeGraphDB）。
+pub const E_HTTP_DAEMON_UNAVAILABLE: ErrorCodeEntry = ErrorCodeEntry {
+    code: "E_HTTP_DAEMON_UNAVAILABLE",
+    message_key: "error.http_daemon_unavailable",
+    is_warning: false,
+    description: "HTTP daemon unavailable; client must fail closed, no local fallback",
+};
+
+// ---------------------------------------------------------------------------
 // 错误码目录（全量）
 // ---------------------------------------------------------------------------
 
@@ -192,6 +232,11 @@ pub const ERROR_CODE_DIRECTORY: &[&ErrorCodeEntry] = &[
     &INDEPENDENCE_EXEMPTION_BY_POLICY,
     // Revocation_Mode
     &E_REVOCATION_MODE_MISSING,
+    // 收敛架构（T01）
+    &E_TOOL_DEPRECATED,
+    &E_MODE_DEPRECATED,
+    &E_TOOL_MIGRATION_PENDING,
+    &E_HTTP_DAEMON_UNAVAILABLE,
 ];
 
 /// 按错误码查找条目。
@@ -376,7 +421,20 @@ mod tests {
 
     #[test]
     fn test_total_directory_size() {
-        // 当前目录共 15 个条目
-        assert_eq!(ERROR_CODE_DIRECTORY.len(), 15);
+        // 当前目录共 19 个条目（15 个既有 + 4 个收敛架构 T01 新增）
+        assert_eq!(ERROR_CODE_DIRECTORY.len(), 19);
+    }
+
+    #[test]
+    fn test_convergence_codes_present() {
+        for code in [
+            "E_TOOL_DEPRECATED",
+            "E_MODE_DEPRECATED",
+            "E_TOOL_MIGRATION_PENDING",
+            "E_HTTP_DAEMON_UNAVAILABLE",
+        ] {
+            assert!(lookup_by_code(code).is_some(), "收敛架构错误码 {code} 缺失");
+        }
+        assert_eq!(lookup_by_code("E_TOOL_DEPRECATED").unwrap().message_key, "error.tool_deprecated");
     }
 }

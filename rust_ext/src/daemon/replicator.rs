@@ -869,9 +869,9 @@ impl SnapshotPublisher for SnapshotCachePublisher {
         // 获取或创建 SnapshotManager（per-workspace）
         let mgr = self.cache.get_or_create(workspace_instance_id);
 
-        // 调用 build_and_publish_blocking（返回 PyResult，但内部不持 GIL）。
+        // 调用 build_and_publish_blocking（T-1786574299601 后错误以 String 传播，不持 GIL）。
         // 成功路径：直接返回 (generation, symbol_count, call_count)
-        // 失败路径：用 Debug 格式化（不需要 GIL）将 PyErr 转为 String
+        // 失败路径：Err(String) 携带真实失败原因，直接输出不再被掩盖
         //
         // P1 修复（T-1785854423993）：cw-daemon 未嵌入 Python 解释器，pyo3 依赖的
         // 错误路径（构造 PyErr）会 panic。这里用 catch_unwind 把 panic 转为结构化
@@ -886,15 +886,10 @@ impl SnapshotPublisher for SnapshotCachePublisher {
                 symbol_count,
                 call_count,
             }),
-            Ok(Err(_)) => {
-                // 注意：pyo3 0.29 的 PyErr Debug/Display 都会 `Python::attach`（需要
-                // 解释器），daemon 未嵌入 Python 时格式化会再次 panic。只能丢弃 PyErr
-                // 并返回通用错误（原"Debug 不需要 GIL"注释在此版本不成立）。
-                Err(
-                    "build_and_publish_blocking failed (daemon 未嵌入 Python 解释器，\
-                     无法输出 PyErr 详情)"
-                        .to_string(),
-                )
+            Ok(Err(msg)) => {
+                // T-1786574299601：真实错误消息以 String 传播（不再构造 PyErr），
+                // 直接输出定位真实原因。
+                Err(format!("build_and_publish_blocking failed: {}", msg))
             }
             Err(_) => Err(
                 "snapshot publish panic: daemon 未嵌入 Python 解释器，Python 依赖的 \
@@ -2305,11 +2300,33 @@ mod tests {
         );
     }
 
-    // G11-T3：不存在的 DB 路径错误路径测试省略——build_and_publish_blocking
-    // 内部用 PyRuntimeError::new_err(...) 创建 PyErr，创建 PyErr 需要 Python
-    // 解释器初始化，而 cargo test 默认不初始化（auto-initialize feature 未启用）。
-    // 完整 E2E（含 Python 初始化）在 cw_daemon 集成测试中验证。
-    // 空 db_path 的提前返回路径由 test_snapshot_cache_publisher_rejects_empty_db_path 覆盖。
+    #[test]
+    fn test_snapshot_cache_publisher_reports_real_load_error() {
+        // T-1786574299601：内部加载错误改为 String 传播后，错误路径可在 cargo test
+        // （无 Python 解释器初始化）中直接验证。G11-T3 时代因错误是 PyErr、需要 Python
+        // 解释器才能创建，错误路径测试被省略；现在应返回 SQLite 真实失败原因。
+        let cache = Arc::new(crate::snapshot::SnapshotCache::new(4));
+        let publisher = SnapshotCachePublisher::new(cache);
+
+        // 空文件是合法空 SQLite 库：wal_checkpoint 可通过，但无 file_instances 表
+        let tmp = tempfile::tempdir().unwrap();
+        let empty_db = tmp.path().join("empty.db");
+        std::fs::write(&empty_db, b"").unwrap();
+
+        let result = publisher.publish_snapshot("ws_err", 0, empty_db.to_str().unwrap(), "ctx-err");
+        assert!(result.is_err(), "空库 publish 应失败");
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("no such table") || err_msg.contains("file_instances"),
+            "错误应携带真实 SQLite 加载失败原因，实际: {}",
+            err_msg
+        );
+        assert!(
+            !err_msg.contains("未嵌入 Python"),
+            "错误不应再被掩盖为误导性通用信息，实际: {}",
+            err_msg
+        );
+    }
 
     #[test]
     fn test_snapshot_cache_publisher_multiple_workspaces_independent() {

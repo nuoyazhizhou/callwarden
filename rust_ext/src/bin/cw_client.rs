@@ -176,7 +176,7 @@ enum Commands {
         /// build context hash（可选）
         #[arg(long, default_value = "")]
         build_context: String,
-        /// 跳过 WAL checkpoint（默认执行 PRAGMA wal_checkpoint(FULL)）
+        /// 跳过 WAL checkpoint（默认执行 PRAGMA busy_timeout=5000; wal_checkpoint(PASSIVE)，C4/S8 统一）
         #[arg(long)]
         skip_checkpoint: bool,
     },
@@ -577,7 +577,7 @@ fn run_mount(
 /// 执行 publish 子命令（snapshot.publish + SCM_RIGHTS FD 传递）。
 ///
 /// 对齐 Python `UnixDaemonRpcClient.publish_snapshot`：
-/// 1. WAL checkpoint（可选，默认执行 PRAGMA wal_checkpoint(FULL)）
+/// 1. WAL checkpoint（可选，默认执行 PRAGMA busy_timeout=5000; wal_checkpoint(PASSIVE)，C4/S8 统一）
 /// 2. 通过 SCM_RIGHTS 将 db_path 的只读 FD 传给 daemon
 ///
 /// Windows 上：UDS 不可用，仅输出参数构建结果（用于验证）
@@ -924,10 +924,9 @@ fn run_publish_unix(
 fn wal_checkpoint(db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     use rusqlite::Connection;
     let conn = Connection::open(db_path)?;
-    let busy: i32 = conn.query_row("PRAGMA wal_checkpoint(FULL)", [], |row| row.get(0))?;
-    if busy != 0 {
-        return Err("SQLite WAL checkpoint 被活动 writer 阻塞".into());
-    }
+    // C4/S8 统一：PASSIVE 双保险——busy_timeout 等待后 PASSIVE checkpoint，
+    // busy 时不 fail-fast，剩余 WAL 页由 daemon/内核后续 PASSIVE checkpoint 兜底。
+    conn.execute_batch("PRAGMA busy_timeout=5000; PRAGMA wal_checkpoint(PASSIVE);")?;
     Ok(())
 }
 

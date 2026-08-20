@@ -43,10 +43,15 @@ use super::protocol::{make_error_response, send_message, DEFAULT_MAX_MESSAGE_BYT
 use super::protocol::{make_error_response, DEFAULT_MAX_MESSAGE_BYTES};
 use super::transport::{TransportConnection, TransportListener, TransportPeerIdentity};
 
+// H1: HTTP MVP transport 异步运行时 + 配置类型（dev_loopback_unauthenticated overlay）
+use tokio::sync::Mutex as TokioMutex;
+use super::serialization::SerializationPoint;
+use super::http_server::HttpServerConfig;
+
 #[cfg(unix)]
 use super::peercred::{get_peer_cred, PeerCred};
 #[cfg(unix)]
-use super::protocol::{recv_message_with_fds, DEFAULT_MAX_FDS};
+use super::protocol::{recv_message_with_fds, ProtocolError, DEFAULT_MAX_FDS};
 #[cfg(unix)]
 use libc::mode_t;
 
@@ -74,6 +79,9 @@ pub struct ServerConfig {
     pub accept_timeout: Duration,
     /// P0-3 修复：socket 文件组名（非空时 chown 到该组，用于多用户 UDS 访问）
     pub socket_group: Option<String>,
+    /// H1: opt-in HTTP MVP transport 配置（仅 dev_loopback_unauthenticated）。
+    /// 为 None 时行为与现有 UDS server 完全一致。
+    pub http: Option<super::http_server::HttpServerConfig>,
 }
 
 #[cfg(unix)]
@@ -90,6 +98,7 @@ impl Default for ServerConfig {
             socket_mode: 0o660,
             accept_timeout: Duration::from_millis(200),
             socket_group: None,
+            http: None,
         }
     }
 }
@@ -117,6 +126,9 @@ pub struct ServerConfig {
     pub request_timeout: Duration,
     /// accept 循环的超时（用于响应 shutdown 信号）
     pub accept_timeout: Duration,
+    /// H1: opt-in HTTP MVP transport 配置（仅 dev_loopback_unauthenticated）。
+    /// 为 None 时行为与现有 Named Pipe server 完全一致。
+    pub http: Option<super::http_server::HttpServerConfig>,
 }
 
 #[cfg(windows)]
@@ -127,6 +139,7 @@ impl Default for ServerConfig {
             max_workers: 16,
             request_timeout: Duration::from_secs(30),
             accept_timeout: Duration::from_millis(200),
+            http: None,
         }
     }
 }
@@ -149,6 +162,8 @@ pub struct ServerHandle {
     socket_path: PathBuf,
     /// listener 的 raw fd（用于 shutdown 时打破 accept 阻塞）
     listener_fd: std::os::unix::io::RawFd,
+    /// 唯一串行化点（Req 14.6）：暴露给 HTTP MVP transport 复用（H1 P0-1）
+    serialization_point: Arc<SerializationPoint>,
 }
 
 #[cfg(unix)]
@@ -176,6 +191,11 @@ impl ServerHandle {
         }
         // 清理 socket 文件
         let _ = std::fs::remove_file(&self.socket_path);
+    }
+
+    /// 返回共享的唯一串行化点（Req 14.6），供 HTTP MVP transport 复用（H1 P0-1）。
+    pub fn serialization_point(&self) -> Arc<SerializationPoint> {
+        Arc::clone(&self.serialization_point)
     }
 }
 
@@ -232,7 +252,7 @@ fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
 pub fn start_server<F, S>(config: ServerConfig, state_factory: F) -> io::Result<ServerHandle>
 where
     F: Fn() -> io::Result<S> + Send + Sync + 'static,
-    S: DaemonStateExt + Send + 'static,
+    S: DaemonStateExt + Send + Sync + 'static,
 {
     prepare_socket_path(&config.socket_path)?;
 
@@ -393,6 +413,7 @@ where
         worker_handles,
         socket_path,
         listener_fd,
+        serialization_point,
     })
 }
 
@@ -520,8 +541,14 @@ where
     let (request, received_fds) = match recv_message_with_fds(stream, max_message_bytes, max_fds) {
         Ok((msg, fds)) => (msg, fds),
         Err(e) => {
-            // 协议错误：尝试回复错误响应（可能客户端已经断开）
-            let response = make_error_response("protocol_error", &e.to_string());
+            // 协议错误：尝试回复错误响应（可能客户端已经断开）。
+            // 任务 1D2：duplicate key 使用稳定 E_DUPLICATE_JSON_KEY 回显。
+            let response = match &e {
+                ProtocolError::DuplicateJsonKey(_) => {
+                    make_error_response("E_DUPLICATE_JSON_KEY", &e.to_string())
+                }
+                _ => make_error_response("protocol_error", &e.to_string()),
+            };
             let _ = send_message(stream, &response, max_message_bytes);
             // 关闭已接收的 FD（虽然出错时一般没收到）
             close_fds(&[]);
@@ -626,6 +653,8 @@ pub struct ServerHandle {
     worker_handles: Vec<thread::JoinHandle<()>>,
     /// 监听器（accept 线程独占；handle 保留引用以在 shutdown 时打断 accept 阻塞）
     listener: Option<Arc<std::sync::Mutex<Box<dyn TransportListener>>>>,
+    /// 唯一串行化点（Req 14.6）：暴露给 HTTP MVP transport 复用（H1 P0-1）
+    serialization_point: Arc<SerializationPoint>,
 }
 
 #[cfg(windows)]
@@ -653,6 +682,11 @@ impl ServerHandle {
             let _ = handle.join();
         }
     }
+
+    /// 返回共享的唯一串行化点（Req 14.6），供 HTTP MVP transport 复用（H1 P0-1）。
+    pub fn serialization_point(&self) -> Arc<SerializationPoint> {
+        Arc::clone(&self.serialization_point)
+    }
 }
 
 #[cfg(windows)]
@@ -679,7 +713,7 @@ impl Drop for ServerHandle {
 pub fn start_server<F, S>(config: ServerConfig, state_factory: F) -> io::Result<ServerHandle>
 where
     F: Fn() -> io::Result<S> + Send + Sync + 'static,
-    S: DaemonStateExt + Send + 'static,
+    S: DaemonStateExt + Send + Sync + 'static,
 {
     let transport_config = super::transport::TransportConfig {
         max_message_bytes: config.max_message_bytes,
@@ -743,6 +777,7 @@ where
         accept_thread: Some(accept_thread),
         worker_handles,
         listener: Some(listener),
+        serialization_point,
     })
 }
 
@@ -1086,7 +1121,20 @@ where
     };
 
 
-    // 3. 解析 method / params / id
+    // 3. 任务 1D2（Req 15/AC26）：raw frame bytes 先经 strict duplicate-key parser，
+    //    在转成 `Value` 前检测重复 key；命中时 fail-closed，不进入 dispatch/ledger。
+    if let Err(e) = crate::daemon::task_loop::strict_transport::parse_strict_envelope(&request_bytes)
+    {
+        if e.code == crate::daemon::task_loop::strict_transport::ERR_DUPLICATE_JSON_KEY {
+            let response = make_error_response("E_DUPLICATE_JSON_KEY", &e.message);
+            if let Ok(json_bytes) = serde_json::to_vec(&response) {
+                let _ = conn.send_message(&json_bytes);
+            }
+            return Ok(());
+        }
+    }
+
+    // 4. 解析 method / params / id
     let request: serde_json::Value = match serde_json::from_slice(&request_bytes) {
         Ok(v) => v,
         Err(e) => {
@@ -1098,7 +1146,7 @@ where
         }
     };
 
-    // 4. 解析 method / params / id
+    // 5. 解析 method / params / id
     let request_id = request.get("id").cloned();
     let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
     let params = request
@@ -1106,14 +1154,14 @@ where
         .cloned()
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
-    // 5. dispatch（Protected_Mutation 经串行化点，Req 14.6；无 FD，传空切片）
+    // 6. dispatch（Protected_Mutation 经串行化点，Req 14.6；无 FD，传空切片）
     let response = if method.is_empty() || !params.is_object() {
         make_error_response("invalid_request", "method/params 类型错误")
     } else {
         super::dispatch::dispatch_rpc(state, peer, method, &params, &[], serialization_point)
     };
 
-    // 6. 附加 request_id
+    // 7. 附加 request_id
     let final_response = if let Some(id) = request_id {
         let mut m = serde_json::Map::new();
         if let serde_json::Value::Object(obj) = response {
@@ -1593,4 +1641,55 @@ mod tests {
 
         let _response = read_response(&mut client);
     }
+}
+
+// ============================================
+// H1: HTTP MVP transport 启动（dev_loopback_unauthenticated overlay）
+//
+// 与既有 Named Pipe / UDS 传输并行运行；共享同一 `S` 类型与同一个
+// `SerializationPoint`（由调用方构造并传入）。仅在成功 loopback bind 之后，
+// 由 http_server::serve 内部原子发布 manifest。非 loopback 绑定在绑定前
+// fail-closed 返回 `E_HTTP_MVP_LOOPBACK_ONLY`，不建立 listener、不发布 manifest。
+// ============================================
+
+/// 在独立线程的 tokio runtime 中启动 HTTP MVP listener。
+///
+/// - `state`: 共享的 daemon state（与既有传输同一 `S` 类型），包装为 `Arc<TokioMutex<S>>`。
+/// - `sp`: 与既有传输共享的串行化点实例。
+/// - `config`: HTTP MVP 配置（`bind_spec` / `manifest_path` 等）。
+///
+/// 返回守护线程的 `JoinHandle`，调用方无需 join（随主线程退出而结束）。
+pub fn spawn_http_transport<S>(
+    state: Arc<TokioMutex<S>>,
+    sp: Arc<SerializationPoint>,
+    config: HttpServerConfig,
+) -> std::thread::JoinHandle<()>
+where
+    S: DaemonStateExt + Send + Sync + 'static,
+{
+    thread::Builder::new()
+        .name("cw-http-mvp".to_string())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    eprintln!("[cw_daemon] [ERROR] HTTP MVP tokio runtime init failed: {}", e);
+                    return;
+                }
+            };
+            rt.block_on(async {
+                match super::http_server::serve(state, sp, config).await {
+                    Ok(addr) => eprintln!(
+                        "[cw_daemon] [INFO] HTTP MVP listener bound at http://{}",
+                        addr
+                    ),
+                    Err(e) => eprintln!("[cw_daemon] [ERROR] HTTP MVP bind failed: {:?}", e),
+                }
+            });
+        })
+        .expect("spawn cw-http-mvp thread")
 }

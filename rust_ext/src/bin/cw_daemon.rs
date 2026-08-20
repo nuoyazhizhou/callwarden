@@ -60,11 +60,13 @@ mod unix {
 
     use callwarden_core::daemon::config::DaemonConfig;
     use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
-    use callwarden_core::daemon::server::{start_server, ServerConfig, ServerHandle};
+    use callwarden_core::daemon::server::{spawn_http_transport, start_server, ServerConfig, ServerHandle};
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
     use callwarden_core::daemon::SCHEMA_VERSION;
+    use callwarden_core::daemon::task_loop::capability_control::CapabilityMutationGate;
     use callwarden_core::snapshot::SnapshotCache;
+    use tokio::sync::Mutex as TokioMutex;
     use serde_json::json;
 
     /// cw_daemon CLI 参数
@@ -106,6 +108,13 @@ mod unix {
         /// --no-sd-notify 显式禁用，即使 NOTIFY_SOCKET 存在也不发送。
         #[arg(long, default_value_t = false)]
         no_sd_notify: bool,
+
+        /// HTTP transport 绑定地址（dev_loopback_unauthenticated，迁移期默认）。
+        /// 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only
+        /// HTTP 监听（127.0.0.1:0 动态端口 + manifest）；显式 CW_DAEMON_TRANSPORT=
+        /// named-pipe/uds 等回落旧通道（HTTP 不启用）。
+        #[arg(long)]
+        http_bind: Option<String>,
 
         /// 子命令（缺省 = serve）
         #[command(subcommand)]
@@ -167,6 +176,41 @@ mod unix {
         if let Err(e) = config.ensure_directories() {
             eprintln!("[cw_daemon] [ERROR] 创建数据目录失败: {}", e);
             return 1;
+        }
+
+        // 2a. 共存契约子任务4：校验本 daemon 内部存储路径无自冲突
+        //（task/registry/data_root/codegraph/stage_toggle 任两不得同路径）
+        if let Err(e) = config.validate_internal_storage() {
+            eprintln!("[cw_daemon] [ERROR] {}", e);
+            return 1;
+        }
+
+        // 2b. 共存契约子任务4：跨 authority 存储路径冲突检测（评审整改）。
+        // 通过 CW_PEER_DAEMON_CONFIG 指向另一个 daemon 的配置文件；若设置，
+        // 启动时加载并调用 validate_no_storage_overlap，检测到共享/父子目录
+        // 路径即 E_AUTHORITY_STORAGE_CONFLICT 并退出。
+        if let Ok(peer_config_path) = std::env::var("CW_PEER_DAEMON_CONFIG") {
+            if !peer_config_path.trim().is_empty() {
+                match DaemonConfig::load_from_file(std::path::Path::new(&peer_config_path)) {
+                    Ok(peer_config) => {
+                        if let Err(e) = config.validate_no_storage_overlap(&peer_config) {
+                            eprintln!("[cw_daemon] [ERROR] {}", e);
+                            return 1;
+                        }
+                        eprintln!(
+                            "[cw_daemon] [INFO] 跨 authority 存储路径校验通过（peer={})",
+                            peer_config_path
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] 加载 CW_PEER_DAEMON_CONFIG {} 失败: {}",
+                            peer_config_path, e
+                        );
+                        return 1;
+                    }
+                }
+            }
         }
 
         eprintln!(
@@ -260,10 +304,16 @@ mod unix {
             return 1;
         }
         // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
+        // M7：注入 daemon 权威时钟（AuthoritativeClock，单调不回退），
+        // 解除 E_LEASE_CLOCK_UNAVAILABLE（serve 装配必须 with_clock，禁止降级客户端时钟）。
         let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
             &callwarden_db_path,
         ) {
-            Ok(store) => Arc::new(store),
+            Ok(store) => Arc::new(
+                store.with_clock(Arc::new(
+                    callwarden_core::daemon::clock::AuthoritativeClock::new(),
+                )),
+            ),
             Err(e) => {
                 eprintln!(
                     "[cw_daemon] [ERROR] TaskCollabStore 打开失败: {}: {}",
@@ -273,6 +323,14 @@ mod unix {
                 return 1;
             }
         };
+        // 1D3B：组装 task_loop control-plane。gate 为 daemon 级共享串行化点（与
+        // SerializationPoint 配合，保证锁序 gate → authority-store → task-DB）；
+        // daemon_generation 取启动时刻 unix 纳秒，daemon 重启后 Public permit 失效。
+        let shared_loop_gate = Arc::new(CapabilityMutationGate::default());
+        let daemon_generation = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -284,8 +342,66 @@ mod unix {
             )
             .with_snapshot_publisher(Arc::clone(&shared_publisher))
             .with_codegraph_db_path_template(codegraph_db_path_template.clone())
-            .with_task_collab_store(Arc::clone(&shared_collab_store));
+            .with_task_collab_store(Arc::clone(&shared_collab_store))
+            .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation);
             Ok(state)
+        };
+
+        // H6: HTTP 默认 transport（迁移期，安全后置）——未显式指定 transport 时默认启用 HTTP。
+        // 显式 --http-bind 时用指定地址；CW_DAEMON_TRANSPORT=http/auto 或未设置时启用 HTTP
+        // （默认 127.0.0.1:0 动态端口）；显式指定其他 transport（named-pipe/uds/windows-bridge/
+        // cli-bridge）时回落旧通道（HTTP 不启用）。
+        // 绑定地址在绑定前做 loopback 校验：非 loopback 直接 fail-closed 退出。
+        let http_spec: Option<String> = if cli.http_bind.is_some() {
+            cli.http_bind.clone()
+        } else {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            // 迁移期默认 transport = http；显式指定非 http transport 时回落
+            if transport.is_empty() || transport == "http" || transport == "auto" {
+                Some(
+                    std::env::var("CW_DAEMON_HTTP_BIND")
+                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
+                )
+            } else {
+                None
+            }
+        };
+        // H6：HTTP 成为迁移期默认 transport；未显式指定具体 transport 时，
+        // 让 daemon 状态报告 transport=http（dispatch::transport_from_env 读取该环境变量）。
+        if http_spec.is_some() {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if transport.is_empty() || transport == "auto" {
+                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
+            }
+        }
+        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if let Some(spec) = http_spec.as_deref() {
+            // fail-closed 预校验：非 loopback 绑定必须被拒绝，且不发布 manifest
+            if let Err(e) = callwarden_core::daemon::http_server::validate_loopback_bind(spec) {
+                eprintln!(
+                    "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): {:?}",
+                    spec, e
+                );
+                return 1;
+            }
+            match state_factory() {
+                Ok(s) => {
+                    eprintln!(
+                        "[cw_daemon] [INFO] HTTP MVP transport enabled, binding {} (loopback-only)",
+                        spec
+                    );
+                    Some(Arc::new(TokioMutex::new(s)))
+                }
+                Err(e) => {
+                    eprintln!("[cw_daemon] [ERROR] HTTP MVP state init failed: {}", e);
+                    return 1;
+                }
+            }
+        } else {
+            None
         };
 
         // 6. 构造 ServerConfig
@@ -303,6 +419,7 @@ mod unix {
             } else {
                 Some(config.socket_group.clone())
             },
+            http: None,
         };
 
         // 7. 启动 server
@@ -318,6 +435,24 @@ mod unix {
             config.socket_path.display(),
             config.socket_mode
         );
+
+        // H1: 启动 HTTP MVP listener（与既有 UDS transport 并行；loopback-only）
+        // 仅在成功 loopback 绑定后由 http_server::serve 内部原子发布 manifest。
+        if let (Some(spec), Some(state)) = (http_spec.clone(), http_state) {
+            // P1-3 修复：authority-scoped manifest 文件名（与 H2 get_http_manifest_path 一致）。
+            // H6 修复：manifest 目录固定为 ~/.callwarden（http_manifest_dir，与 Python 权威
+            // 目录 get_http_manifest_dir 一致）；不随 config.data_root（默认 /var/lib/callwarden），
+            // 否则 Python 客户端按 get_http_manifest_path 读取不到。
+            let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+            let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+                callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+            );
+            let http_cfg =
+                callwarden_core::daemon::http_server::HttpServerConfig::new(spec, manifest_path);
+            // P0-1 修复：复用 start_server 的唯一串行化点，避免 HTTP 与 UDS mutation 并发。
+            let http_sp = handle.serialization_point();
+            spawn_http_transport(state, http_sp, http_cfg);
+        }
 
         // 8. 注册信号处理
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -1873,11 +2008,13 @@ mod windows {
 
     use callwarden_core::daemon::config::DaemonConfig;
     use callwarden_core::daemon::dispatch::{dispatch, PeerCredential};
-    use callwarden_core::daemon::server::{start_server, ServerConfig, ServerHandle};
+    use callwarden_core::daemon::server::{spawn_http_transport, start_server, ServerConfig, ServerHandle};
     use callwarden_core::daemon::snapshot_state::SnapshotDaemonState;
     use callwarden_core::daemon::workspace::WorkspaceRegistry;
     use callwarden_core::daemon::SCHEMA_VERSION;
+    use callwarden_core::daemon::task_loop::capability_control::CapabilityMutationGate;
     use callwarden_core::snapshot::SnapshotCache;
+    use tokio::sync::Mutex as TokioMutex;
     use serde_json::json;
 
     // Windows 控制台信号：signal-hook 是 cfg(unix) 专用依赖，Windows 分支用
@@ -1945,6 +2082,13 @@ mod windows {
         /// 兼容 Unix CLI（Windows 无 sd_notify，忽略）
         #[arg(long, default_value_t = false)]
         no_sd_notify: bool,
+
+        /// HTTP transport 绑定地址（dev_loopback_unauthenticated，迁移期默认）。
+        /// 缺省（未设置 --http-bind / CW_DAEMON_TRANSPORT）时默认启用 loopback-only
+        /// HTTP 监听（127.0.0.1:0 动态端口 + manifest）；显式 CW_DAEMON_TRANSPORT=
+        /// named-pipe/uds 等回落旧通道（HTTP 不启用）。
+        #[arg(long)]
+        http_bind: Option<String>,
 
         /// 子命令（缺省 = serve）
         #[command(subcommand)]
@@ -2017,6 +2161,33 @@ mod windows {
         if let Err(e) = config.ensure_directories() {
             eprintln!("[cw_daemon] [ERROR] 创建数据目录失败: {}", e);
             return 1;
+        }
+
+        // 2a. 共存契约子任务4：本 daemon 内部存储路径自冲突检查（Windows 启动路径）
+        if let Err(e) = config.validate_internal_storage() {
+            eprintln!("[cw_daemon] [ERROR] {}", e);
+            return 1;
+        }
+
+        // 2b. 共存契约子任务4：跨 authority 存储路径冲突检查（Windows 启动路径）
+        if let Ok(peer_config_path) = std::env::var("CW_PEER_DAEMON_CONFIG") {
+            if !peer_config_path.trim().is_empty() {
+                match DaemonConfig::load_from_file(std::path::Path::new(&peer_config_path)) {
+                    Ok(peer_config) => {
+                        if let Err(e) = config.validate_no_storage_overlap(&peer_config) {
+                            eprintln!("[cw_daemon] [ERROR] {}", e);
+                            return 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "[cw_daemon] [ERROR] 加载 CW_PEER_DAEMON_CONFIG {} 失败: {}",
+                            peer_config_path, e
+                        );
+                        return 1;
+                    }
+                }
+            }
         }
 
         eprintln!(
@@ -2101,10 +2272,16 @@ mod windows {
             return 1;
         }
         // 打开 Task 协同存储（复用 Call Warden 权威表 tasks/task_steps/task_events/agent_registrations）
+        // M7：注入 daemon 权威时钟（AuthoritativeClock，单调不回退），
+        // 解除 E_LEASE_CLOCK_UNAVAILABLE（serve 装配必须 with_clock，禁止降级客户端时钟）。
         let shared_collab_store = match callwarden_core::daemon::task_collab::TaskCollabStore::new(
             &callwarden_db_path,
         ) {
-            Ok(store) => Arc::new(store),
+            Ok(store) => Arc::new(
+                store.with_clock(Arc::new(
+                    callwarden_core::daemon::clock::AuthoritativeClock::new(),
+                )),
+            ),
             Err(e) => {
                 eprintln!(
                     "[cw_daemon] [ERROR] TaskCollabStore 打开失败: {}: {}",
@@ -2114,6 +2291,12 @@ mod windows {
                 return 1;
             }
         };
+        // 1D3B：组装 task_loop control-plane（gate 共享 + 启动 generation，重启后 permit 失效）。
+        let shared_loop_gate = Arc::new(CapabilityMutationGate::default());
+        let daemon_generation = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
         let state_factory = move || -> io::Result<SnapshotDaemonState> {
             let registry = WorkspaceRegistry::open(&registry_db_path)
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
@@ -2124,8 +2307,66 @@ mod windows {
             )
             .with_snapshot_publisher(Arc::clone(&shared_publisher))
             .with_codegraph_db_path_template(codegraph_db_path_template.clone())
-            .with_task_collab_store(Arc::clone(&shared_collab_store));
+            .with_task_collab_store(Arc::clone(&shared_collab_store))
+            .with_task_loop_control(Arc::clone(&shared_loop_gate), daemon_generation);
             Ok(state)
+        };
+
+        // H6: HTTP 默认 transport（迁移期，安全后置）——未显式指定 transport 时默认启用 HTTP。
+        // 显式 --http-bind 时用指定地址；CW_DAEMON_TRANSPORT=http/auto 或未设置时启用 HTTP
+        // （默认 127.0.0.1:0 动态端口）；显式指定其他 transport（named-pipe/uds/windows-bridge/
+        // cli-bridge）时回落旧通道（HTTP 不启用）。
+        // 绑定地址在绑定前做 loopback 校验：非 loopback 直接 fail-closed 退出。
+        let http_spec: Option<String> = if cli.http_bind.is_some() {
+            cli.http_bind.clone()
+        } else {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            // 迁移期默认 transport = http；显式指定非 http transport 时回落
+            if transport.is_empty() || transport == "http" || transport == "auto" {
+                Some(
+                    std::env::var("CW_DAEMON_HTTP_BIND")
+                        .unwrap_or_else(|_| "127.0.0.1:0".to_string()),
+                )
+            } else {
+                None
+            }
+        };
+        // H6：HTTP 成为迁移期默认 transport；未显式指定具体 transport 时，
+        // 让 daemon 状态报告 transport=http（dispatch::transport_from_env 读取该环境变量）。
+        if http_spec.is_some() {
+            let transport = std::env::var("CW_DAEMON_TRANSPORT")
+                .map(|v| v.trim().to_ascii_lowercase())
+                .unwrap_or_default();
+            if transport.is_empty() || transport == "auto" {
+                std::env::set_var("CW_DAEMON_TRANSPORT", "http");
+            }
+        }
+        let http_state: Option<Arc<TokioMutex<SnapshotDaemonState>>> = if let Some(spec) = http_spec.as_deref() {
+            // fail-closed 预校验：非 loopback 绑定必须被拒绝，且不发布 manifest
+            if let Err(e) = callwarden_core::daemon::http_server::validate_loopback_bind(spec) {
+                eprintln!(
+                    "[cw_daemon] [ERROR] HTTP MVP bind {} rejected (non-loopback): {:?}",
+                    spec, e
+                );
+                return 1;
+            }
+            match state_factory() {
+                Ok(s) => {
+                    eprintln!(
+                        "[cw_daemon] [INFO] HTTP MVP transport enabled, binding {} (loopback-only)",
+                        spec
+                    );
+                    Some(Arc::new(TokioMutex::new(s)))
+                }
+                Err(e) => {
+                    eprintln!("[cw_daemon] [ERROR] HTTP MVP state init failed: {}", e);
+                    return 1;
+                }
+            }
+        } else {
+            None
         };
 
         // 6. 构造 Windows ServerConfig（管道名/ACL 由 transport_windows 内部派生）
@@ -2134,6 +2375,7 @@ mod windows {
             max_workers: config.max_workers,
             request_timeout: config.request_timeout(),
             accept_timeout: Duration::from_millis(200),
+            http: None,
         };
 
         // 7. 启动 server（绑定 \\.\pipe\callwarden-<sid>，SDDL 仅授权 owner）
@@ -2145,6 +2387,24 @@ mod windows {
             }
         };
         eprintln!("[cw_daemon] [INFO] named pipe server listening");
+
+        // H1: 启动 HTTP MVP listener（与既有 Named Pipe transport 并行；loopback-only）
+        // 仅在成功 loopback 绑定后由 http_server::serve 内部原子发布 manifest。
+        if let (Some(spec), Some(state)) = (http_spec.clone(), http_state) {
+            // P1-3 修复：authority-scoped manifest 文件名（与 H2 get_http_manifest_path 一致）。
+            // H6 修复：manifest 目录固定为 ~/.callwarden（http_manifest_dir，与 Python 权威
+            // 目录 get_http_manifest_dir 一致）；不随 config.data_root（默认 /var/lib/callwarden），
+            // 否则 Python 客户端按 get_http_manifest_path 读取不到。
+            let authority_id = callwarden_core::daemon::http_server::http_authority_id();
+            let manifest_path = callwarden_core::daemon::http_server::http_manifest_dir().join(
+                callwarden_core::daemon::http_server::http_manifest_filename(&authority_id),
+            );
+            let http_cfg =
+                callwarden_core::daemon::http_server::HttpServerConfig::new(spec, manifest_path);
+            // P0-1 修复：复用 start_server 的唯一串行化点，避免 HTTP 与 Named Pipe mutation 并发。
+            let http_sp = handle.serialization_point();
+            spawn_http_transport(state, http_sp, http_cfg);
+        }
 
         // 8. 注册控制台 Ctrl+C / Ctrl+Break 优雅关闭
         register_console_ctrl_handler();

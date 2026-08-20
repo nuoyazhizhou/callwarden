@@ -183,6 +183,8 @@ pub fn cas_merge_to_codegraph<'py>(
             };
 
             dict.set_item("success", true)?;
+            dict.set_item("file_instance_id", merge_result.file_instance_id)?;
+            dict.set_item("merge_status", merge_result.merge_status.clone())?;
             dict.set_item("symbols_inserted", merge_result.symbols_inserted)?;
             dict.set_item("calls_inserted", merge_result.calls_inserted)?;
             dict.set_item("calls_resolved", calls_resolved)?;

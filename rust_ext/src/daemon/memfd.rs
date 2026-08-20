@@ -347,6 +347,12 @@ mod tests {
         let fd = tmp.as_raw_fd();
         let new_fd = unsafe { libc::dup(fd) };
         assert!(new_fd >= 0, "dup failed: {}", io::Error::last_os_error());
+        let offset = unsafe { libc::lseek(new_fd, 0, libc::SEEK_SET) };
+        assert!(
+            offset >= 0,
+            "rewind duplicated tempfile failed: {}",
+            io::Error::last_os_error()
+        );
         new_fd
     }
 
@@ -565,6 +571,13 @@ mod tests {
             std::mem::forget(file); // 不让 file drop 关闭 fd
         }
 
+        let offset = unsafe { libc::lseek(fd, 0, libc::SEEK_SET) };
+        assert!(
+            offset >= 0,
+            "rewind memfd failed: {}",
+            io::Error::last_os_error()
+        );
+
         // 校验 seals
         let result = verify_memfd_seals(fd);
         assert!(result.is_ok(), "seals check failed: {:?}", result.err());
@@ -621,7 +634,7 @@ mod tests {
 
         // 写入数据
         {
-            let file = unsafe { std::fs::File::from_raw_fd(fd) };
+            let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
             file.write_all(b"insufficient seals").unwrap();
             std::mem::forget(file);
         }

@@ -934,7 +934,26 @@ impl CasStore {
         }
     }
 
-    fn file_generation_seen_inner(
+    /// 确保 file_generations 表存在（幂等 DDL，供短连接 facade 复用）。
+    pub(crate) fn ensure_file_generations_table(
+        conn: &Connection,
+    ) -> Result<(), CasPublishError> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS file_generations (
+                workspace_id INTEGER NOT NULL,
+                rel_path TEXT NOT NULL,
+                latest_session_id TEXT DEFAULT '',
+                latest_session_epoch INTEGER DEFAULT 0,
+                latest_seq INTEGER DEFAULT 0,
+                latest_seen_generation TEXT DEFAULT '',
+                latest_committed_generation TEXT DEFAULT '',
+                PRIMARY KEY (workspace_id, rel_path)
+            );",
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn file_generation_seen_inner(
         conn: &Connection,
         workspace_id: i64,
         rel_path: &str,
@@ -1032,7 +1051,7 @@ impl CasStore {
         }
     }
 
-    fn file_generation_committed_inner(
+    pub(crate) fn file_generation_committed_inner(
         conn: &Connection,
         workspace_id: i64,
         rel_path: &str,
@@ -1077,7 +1096,7 @@ impl CasStore {
         }
     }
 
-    fn file_generation_uncommit_inner(
+    pub(crate) fn file_generation_uncommit_inner(
         conn: &Connection,
         workspace_id: i64,
         rel_path: &str,
@@ -1119,6 +1138,48 @@ impl CasStore {
         } else {
             Ok(None)
         }
+    }
+
+    /// 会话级重置：新 session 建立后把 workspace 所有 file_generations 的
+    /// 归属 session 更新并清零 seq/seen（新 session 的 seq 从 1 开始）。
+    ///
+    /// 对应 Python `server/replicator.py::daemon_handle_connect` 的重置 SQL
+    /// 与 Rust `daemon/replicator.rs::daemon_handle_connect_inner` 第 5 步。
+    pub fn file_generation_reset(
+        &self,
+        workspace_id: i64,
+        session_id: &str,
+        epoch: i64,
+    ) -> Result<(), CasPublishError> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = Self::file_generation_reset_inner(&conn, workspace_id, session_id, epoch);
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
+    /// 会话级重置 inner（供短连接 facade 复用，调用方负责事务）。
+    pub(crate) fn file_generation_reset_inner(
+        conn: &Connection,
+        workspace_id: i64,
+        session_id: &str,
+        epoch: i64,
+    ) -> Result<(), CasPublishError> {
+        conn.execute(
+            "UPDATE file_generations SET latest_session_id = ?1,
+             latest_session_epoch = ?2, latest_seq = 0,
+             latest_seen_generation = '' WHERE workspace_id = ?3",
+            params![session_id, epoch, workspace_id],
+        )?;
+        Ok(())
     }
 
     /// 统计 cas_file_cache 行数（用于测试）

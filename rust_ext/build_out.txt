@@ -1,0 +1,342 @@
+   Compiling callwarden-core v0.3.23 (C:\git_work\callwarden\rust_ext)
+error: expected `;`, found `"\"description\":\"Task-domain operation payload canonicalization for task_operation_ledger dedup\","`
+   --> src\sqlite_query.rs:158:70
+    |
+158 |         "{\"canonicalization_version\":\"operation-params-c14n/v1\","
+    |                                                                      ^ help: add `;` here
+159 |         "\"description\":\"Task-domain operation payload canonicalization for task_operation_ledger dedup\","
+    |         ----------------------------------------------------------------------------------------------------- unexpected token
+
+error: expected `;`, found `"\"excluded_keys\":[\"request_id\",\"workspace_instance_id\"],"`
+   --> src\sqlite_query.rs:159:110
+    |
+159 |         "\"description\":\"Task-domain operation payload canonicalization for task_operation_ledger dedup\","
+    |                                                                                                              ^ help: add `;` here
+160 |         "\"excluded_keys\":[\"request_id\",\"workspace_instance_id\"],"
+    |         --------------------------------------------------------------- unexpected token
+
+error: expected `;`, found `"\"hash_algorithm\":\"sha256\",\"hash_prefix\":\"sha256:\","`
+   --> src\sqlite_query.rs:160:72
+    |
+160 |         "\"excluded_keys\":[\"request_id\",\"workspace_instance_id\"],"
+    |                                                                        ^ help: add `;` here
+161 |         "\"hash_algorithm\":\"sha256\",\"hash_prefix\":\"sha256:\","
+    |         ------------------------------------------------------------ unexpected token
+
+error: expected `;`, found `"\"key_ordering\":\"unicode_code_point\",\"normalization\":\"unicode_nfc\","`
+   --> src\sqlite_query.rs:161:69
+    |
+161 |         "\"hash_algorithm\":\"sha256\",\"hash_prefix\":\"sha256:\","
+    |                                                                     ^ help: add `;` here
+162 |         "\"key_ordering\":\"unicode_code_point\",\"normalization\":\"unicode_nfc\","
+    |         ---------------------------------------------------------------------------- unexpected token
+
+error: expected `;`, found `"\"serialization\":\"rfc8785_json_canonicalization_scheme\"}"`
+   --> src\sqlite_query.rs:162:85
+    |
+162 |         "\"key_ordering\":\"unicode_code_point\",\"normalization\":\"unicode_nfc\","
+    |                                                                                     ^ help: add `;` here
+163 |         "\"serialization\":\"rfc8785_json_canonicalization_scheme\"}";
+    |         ------------------------------------------------------------- unexpected token
+
+warning: unused import: `DEFAULT_MAX_MESSAGE_BYTES`
+  --> src\daemon\client.rs:14:58
+   |
+14 | use super::protocol::{parse_response, DaemonRemoteError, DEFAULT_MAX_MESSAGE_BYTES};
+   |                                                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Arc`
+  --> src\daemon\gate_session.rs:21:17
+   |
+21 | use std::sync::{Arc, Mutex};
+   |                 ^^^
+
+warning: unused import: `HashMap`
+  --> src\frontier.rs:14:24
+   |
+14 | use std::collections::{HashMap, HashSet, VecDeque};
+   |                        ^^^^^^^
+
+warning: unused imports: `PyDict` and `PySet`
+  --> src\frontier.rs:17:19
+   |
+17 | use pyo3::types::{PyDict, PyList, PySet};
+   |                   ^^^^^^          ^^^^^
+
+warning: unused import: `params`
+  --> src\cas_write_query.rs:10:16
+   |
+10 | use rusqlite::{params, Connection};
+   |                ^^^^^^
+
+warning: unused imports: `PyDict` and `PyList`
+  --> src\toolchain.rs:13:19
+   |
+13 | use pyo3::types::{PyDict, PyList};
+   |                   ^^^^^^  ^^^^^^
+
+warning: unused import: `EventHandler`
+  --> src\watcher.rs:17:20
+   |
+17 |     Config, Event, EventHandler, RecommendedWatcher, RecursiveMode, Watcher,
+   |                    ^^^^^^^^^^^^
+
+warning: unused import: `std::thread`
+  --> src\watcher.rs:25:5
+   |
+25 | use std::thread;
+   |     ^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+  --> src\cli\output.rs:13:5
+   |
+13 | use std::collections::HashMap;
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `pyo3::prelude`
+  --> src\daemon\replicator.rs:18:5
+   |
+18 | use pyo3::prelude::*;
+   |     ^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:1071:13
+     |
+1071 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:1140:13
+     |
+1140 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:1475:13
+     |
+1475 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:1706:13
+     |
+1706 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:1897:13
+     |
+1897 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:2177:13
+     |
+2177 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `step_id`
+    --> src\daemon\task_collab.rs:2298:18
+     |
+2298 | ...   let (step_id, status, result) = row.map_err(|e| DaemonRpcError::internal_error(format!("读取 remediation 步骤失败: {}", e)))?;
+     |            ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_step_id`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:2403:13
+     |
+2403 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:2558:13
+     |
+2558 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:3437:13
+     |
+3437 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: value assigned to `final_status` is never read
+    --> src\daemon\task_collab.rs:3742:32
+     |
+3742 |         let mut final_status = String::new();
+     |                                ^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+     = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `status_val` is never read
+    --> src\daemon\task_collab.rs:3793:30
+     |
+3793 |         let mut status_val = String::new();
+     |                              ^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: value assigned to `parent_val` is never read
+    --> src\daemon\task_collab.rs:3794:30
+     |
+3794 |         let mut parent_val = String::new();
+     |                              ^^^^^^^^^^^^^
+     |
+     = help: maybe it is overwritten before being read?
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:3857:13
+     |
+3857 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:3908:13
+     |
+3908 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:4077:13
+     |
+4077 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:4143:13
+     |
+4143 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:4347:13
+     |
+4347 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:4516:13
+     |
+4516 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:4641:13
+     |
+4641 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:5008:13
+     |
+5008 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:5089:13
+     |
+5089 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `peer`
+    --> src\daemon\task_collab.rs:5193:9
+     |
+5193 |         peer: PeerCredential,
+     |         ^^^^ help: if this is intentional, prefix it with an underscore: `_peer`
+
+warning: variable does not need to be mutable
+    --> src\daemon\task_collab.rs:5237:13
+     |
+5237 |         let mut conn = self.conn.lock().unwrap();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: unused variable: `app`
+   --> src\daemon\http_server.rs:503:11
+    |
+503 |     State(app): State<AppState<S>>,
+    |           ^^^ help: if this is intentional, prefix it with an underscore: `_app`
+
+warning: value assigned to `core_version` is never read
+   --> src\daemon\parser_metrics.rs:286:32
+    |
+286 |         let mut core_version = String::new();
+    |                                ^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `py`
+   --> src\graph.rs:477:9
+    |
+477 |         py: Python<'_>,
+    |         ^^ help: if this is intentional, prefix it with an underscore: `_py`
+
+warning: unused variable: `py`
+   --> src\graph.rs:665:9
+    |
+665 |         py: Python<'_>,
+    |         ^^ help: if this is intentional, prefix it with an underscore: `_py`
+
+warning: unused variable: `fn_depth`
+    --> src\graph.rs:1180:17
+     |
+1180 |             let fn_depth = depth[fn_id as usize];
+     |                 ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_fn_depth`
+
+warning: unused variable: `name`
+    --> src\multi_lang.rs:1266:66
+     |
+1266 | fn extract_visibility(node: &Node, source: &[u8], lang_id: &str, name: &str, kind: &str) -> String {
+     |                                                                  ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `file_idx`
+    --> src\lib.rs:1439:18
+     |
+1439 |             for (file_idx, r) in results.iter().enumerate() {
+     |                  ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_file_idx`
+
+warning: `callwarden-core` (lib) generated 41 warnings
+error: could not compile `callwarden-core` (lib) due to 5 previous errors; 41 warnings emitted

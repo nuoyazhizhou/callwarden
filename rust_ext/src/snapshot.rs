@@ -261,13 +261,16 @@ impl SnapshotManager {
     /// 单库多 workspace 场景下 snapshot 混入其他 workspace 数据。
     ///
     /// 返回 (generation, symbol_count, call_count)
+    ///
+    /// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化），
+    /// pyo3 边界（build_and_publish）再转回 PyErr。
     pub fn build_and_publish_blocking(
         &self,
         db_path: &str,
         workspace_id: i64,
         build_context_hash: &str,
         snapshot_id: Option<String>,
-    ) -> PyResult<(Generation, usize, usize)> {
+    ) -> Result<(Generation, usize, usize), String> {
         let start = Instant::now();
 
         // G7-T6: wal_checkpoint 防止 GraphStore 用 immutable=1 读到旧 WAL 数据
@@ -495,12 +498,10 @@ impl PySnapshotManager {
         snapshot_id: Option<String>,
         workspace_id: i64,
     ) -> PyResult<(Generation, usize, usize)> {
-        self.inner.build_and_publish_blocking(
-            db_path,
-            workspace_id,
-            build_context_hash,
-            snapshot_id,
-        )
+        // T-1786574299601：内部以 String 传播错误，pyo3 边界转回 PyErr 保持 Python API 不变。
+        self.inner
+            .build_and_publish_blocking(db_path, workspace_id, build_context_hash, snapshot_id)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 
     /// GC 历史 generations，保留最近 `keep_last` 个（不含 current）。

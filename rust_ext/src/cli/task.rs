@@ -148,6 +148,8 @@ pub struct TaskCaptureResult {
     pub scan_id: i64,
     pub changed_files: Vec<ChangedFile>,
     pub linked_symbols: usize,
+    /// capture-diff 关联的符号变更明细（file_path, change_id），对齐 Python 契约输出
+    pub linked_change_ids: Vec<(String, String)>,
     pub quality_findings: Vec<TaskFinding>,
     pub quality_decision: String,
     pub next_action: String,
@@ -787,6 +789,7 @@ pub fn capture_task_diff(
             },
             changed_files,
             linked_symbols: 0,
+            linked_change_ids: Vec::new(),
             quality_findings: Vec::new(),
             quality_decision: String::new(),
             auto: false,
@@ -828,6 +831,7 @@ pub fn capture_task_diff(
     let scan_id = tx.last_insert_rowid();
 
     let mut linked_symbols = 0_usize;
+    let mut linked_change_ids: Vec<(String, String)> = Vec::new();
     for changed in &changed_files {
         let hash_before = tx
             .query_row(
@@ -841,12 +845,13 @@ pub fn capture_task_diff(
             .map_err(|error| format!("cannot query prior file hash: {error}"))?
             .unwrap_or_default();
         let hash_after = file_content_hash(&root.join(&changed.path)).unwrap_or_default();
+        let diff_text = compute_file_diff(&root, &changed.path, &changed.status, base);
         let change_id = generate_id("C")?;
         tx.execute(
             "INSERT INTO change_audit(
                  id, task_id, step_id, file_path, hash_before, hash_after,
                  diff, author, timestamp
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, '', 'capture-diff', ?7)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'capture-diff', ?8)",
             params![
                 change_id,
                 task_id,
@@ -854,10 +859,28 @@ pub fn capture_task_diff(
                 changed.path,
                 hash_before,
                 hash_after,
+                diff_text,
                 now
             ],
         )
         .map_err(|error| format!("cannot insert capture change audit: {error}"))?;
+
+        // 审计链签名（对齐 Python db_audit_chain.sign_audit_record，失败不吞错）
+        sign_audit_chain(
+            &tx,
+            "change_audit",
+            &change_id,
+            &serde_json::json!({
+                "task_id": task_id,
+                "step_id": step_id,
+                "file_path": changed.path,
+                "hash_before": hash_before,
+                "hash_after": hash_after,
+                "diff": "",
+                "author": "capture-diff",
+            }),
+        )
+        .map_err(|error| format!("cannot sign capture audit chain: {error}"))?;
 
         if table_exists(&tx, "task_symbol_changes")? {
             let change_type = match changed.status.as_str() {
@@ -888,6 +911,7 @@ pub fn capture_task_diff(
             )
             .map_err(|error| format!("cannot link capture symbol change: {error}"))?;
             linked_symbols += 1;
+            linked_change_ids.push((changed.path.clone(), change_id.clone()));
         }
     }
 
@@ -918,6 +942,7 @@ pub fn capture_task_diff(
         scan_id,
         changed_files,
         linked_symbols,
+        linked_change_ids,
         quality_findings,
         quality_decision,
         next_action: next_action.to_string(),
@@ -937,6 +962,7 @@ pub fn capture_task_diff_auto(conn: &mut Connection, workspace_root: &Path) -> T
         scan_id: 0,
         changed_files: Vec::new(),
         linked_symbols: 0,
+        linked_change_ids: Vec::new(),
         quality_findings: Vec::new(),
         quality_decision: String::new(),
         next_action: "noop".to_string(),
@@ -3613,6 +3639,139 @@ fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// 计算文件 diff（对齐 Python db_bootstrap._compute_file_diff 三分支）
+/// A/M/R/D 走 base..HEAD 或 HEAD；untracked 走 --no-index /dev/null；其余返回空串。
+fn compute_file_diff(root: &Path, rel_path: &str, status: &str, base: &str) -> String {
+    if status == "untracked" {
+        if let Some(abs) = root.join(rel_path).to_str() {
+            return git_stdout(root, &["diff", "--no-index", "/dev/null", abs]).unwrap_or_default();
+        }
+        return String::new();
+    }
+    let tracked = status.contains('A')
+        || status.contains('M')
+        || status.contains('R')
+        || status.contains('D')
+        || status.contains("modified")
+        || status.contains("worktree")
+        || status.contains("staged");
+    if tracked {
+        if !base.is_empty() && base != "HEAD" {
+            let range = format!("{}..HEAD", base);
+            let diff = git_stdout(root, &["diff", &range, "--", rel_path]).unwrap_or_default();
+            if !diff.is_empty() {
+                return diff;
+            }
+        }
+        return git_stdout(root, &["diff", "HEAD", "--", rel_path]).unwrap_or_default();
+    }
+    String::new()
+}
+
+/// canonical JSON（递归排序 key，对齐 Python json.dumps(sort_keys=True, separators=(",", ":"))）
+fn canonical_json_value(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<(String, serde_json::Value)> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), canonical_json_value(v)))
+                .collect();
+            entries.sort_by(|a, b| a.0.cmp(&b.0));
+            serde_json::Value::Object(entries.into_iter().collect())
+        }
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(canonical_json_value).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// 计算审计签名（对齐 Python db_audit_chain._compute_signature：HMAC-SHA256 或 SHA-256）
+fn audit_signature(prev_signature: &str, payload_hash: &str, hmac_key: Option<&[u8]>) -> String {
+    let message = format!("{}|{}", prev_signature, payload_hash);
+    match hmac_key {
+        Some(key) => {
+            use hmac::{Hmac, Mac};
+            type HmacSha256 = Hmac<Sha256>;
+            let mut mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 接受任意长度密钥");
+            mac.update(message.as_bytes());
+            hex::encode(mac.finalize().into_bytes())
+        }
+        None => sha256_hex(message.as_bytes()),
+    }
+}
+
+/// 获取当前活跃签名密钥（对齐 Python db_audit_chain._get_active_signing_key）
+/// 优先级：1) audit_key_rotations is_active=1；2) 环境变量 CALLWARDEN_AUDIT_HMAC_KEY；
+///         3) ~/.callwarden/audit.key 文件；4) 无密钥 → "local"（SHA-256 链）
+fn active_signing_key(conn: &Connection) -> (String, Option<Vec<u8>>) {
+    let from_table = conn
+        .query_row(
+            "SELECT key_id, key_secret FROM audit_key_rotations WHERE is_active = 1 LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .ok();
+    if let Some((key_id, secret)) = from_table {
+        return (key_id, Some(secret.into_bytes()));
+    }
+    if let Ok(key) = std::env::var("CALLWARDEN_AUDIT_HMAC_KEY") {
+        if !key.is_empty() {
+            return ("hmac".to_string(), Some(key.into_bytes()));
+        }
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let key_file = std::path::Path::new(&home).join(".callwarden").join("audit.key");
+        if let Ok(contents) = std::fs::read_to_string(&key_file) {
+            let key = contents.trim().to_string();
+            if !key.is_empty() {
+                return ("hmac".to_string(), Some(key.into_bytes()));
+            }
+        }
+    }
+    ("local".to_string(), None)
+}
+
+/// 为审计记录写入 audit_chain 签名（对齐 Python db_audit_chain.sign_audit_record）
+pub(crate) fn sign_audit_chain(
+    conn: &Connection,
+    table_name: &str,
+    record_id: &str,
+    payload: &serde_json::Value,
+) -> Result<(), String> {
+    let canonical = canonical_json_value(payload);
+    let payload_json = serde_json::to_string(&canonical)
+        .map_err(|error| format!("cannot serialize audit payload: {error}"))?;
+    let payload_hash = sha256_hex(payload_json.as_bytes());
+    let prev_signature: String = conn
+        .query_row(
+            "SELECT record_signature FROM audit_chain
+             WHERE table_name = ?1 ORDER BY id DESC LIMIT 1",
+            params![table_name],
+            |row| row.get(0),
+        )
+        .unwrap_or_default();
+    let (signing_key_id, hmac_key) = active_signing_key(conn);
+    let record_signature = audit_signature(&prev_signature, &payload_hash, hmac_key.as_deref());
+    conn.execute(
+        "INSERT INTO audit_chain(
+             table_name, record_id, operation, payload_hash,
+             prev_signature, record_signature, signing_key_id, signed_at
+         ) VALUES (?1, ?2, 'insert', ?3, ?4, ?5, ?6, ?7)",
+        params![
+            table_name,
+            record_id,
+            payload_hash,
+            prev_signature,
+            record_signature,
+            signing_key_id,
+            unix_timestamp()?
+        ],
+    )
+    .map_err(|error| format!("cannot insert audit chain: {error}"))?;
+    Ok(())
+}
+
 fn query_open_quality_findings_scoped(
     conn: &Connection,
     task_id: &str,
@@ -3732,6 +3891,17 @@ mod tests {
                  symbol_name TEXT DEFAULT '', symbol_hash_before TEXT,
                  symbol_hash_after TEXT, change_type TEXT, source TEXT,
                  source_commit_hash TEXT, metadata TEXT, created_at REAL
+             );
+             CREATE TABLE audit_chain(
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 table_name TEXT NOT NULL,
+                 record_id TEXT NOT NULL,
+                 operation TEXT NOT NULL DEFAULT 'insert',
+                 payload_hash TEXT NOT NULL,
+                 prev_signature TEXT DEFAULT '',
+                 record_signature TEXT NOT NULL,
+                 signing_key_id TEXT DEFAULT 'local',
+                 signed_at REAL NOT NULL
              );
              INSERT INTO tasks VALUES
                  ('root','Root','','agent','in_progress',1000,1000,NULL,NULL,'',0,0),

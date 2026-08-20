@@ -5,7 +5,7 @@
 //!
 //! 职责：
 //! 1. 成为 SQLite registry 数据库连接、WAL 模式设置、外键与超时预置的唯一真相源。
-//! 2. 全量内嵌 SCHEMA_VERSION = 43 的 Schema SQL 与版本升级 Migration 路径。
+//! 2. 全量内嵌 SCHEMA_VERSION = 52 的 Schema SQL 与版本升级 Migration 路径。
 //! 3. 提供完整性检查 (integrity_check)、迁移灾备备份 (backup_before_migration)、
 //!    WAL checkpoint 和事务 (BEGIN IMMEDIATE / COMMIT / ROLLBACK) 句柄管理。
 //! 4. 暴露 PyO3 接口供 Python db_base.py 的 Facade 安全调用。
@@ -20,8 +20,13 @@ use pyo3::types::PyDict;
 use rusqlite::{Connection, ErrorCode, OpenFlags, Transaction, TransactionBehavior};
 use sha2::{Digest, Sha256};
 
+use crate::sqlite_query::{
+    migrate_role_contract_legacy, seed_operation_params_rule, seed_role_contract_rule,
+    seed_verdict_normalization_rule,
+};
+
 /// Schema 版本号（真相源对齐 db/schema.py）
-pub const SCHEMA_VERSION: u32 = 44;
+pub const SCHEMA_VERSION: u32 = 52;
 
 // db/schema.py is the repository schema authority.  Embedding its SQL at
 // compile time keeps frozen Rust artifacts independent of a Python checkout
@@ -519,6 +524,37 @@ fn legacy_shape_migration_required(conn: &Connection) -> Result<Option<String>, 
     Ok(None)
 }
 
+/// 检测 canonical schema 中"后补列"是否已存在（P0-1 复审：短路径也校验列）。
+///
+/// 背景：v48 曾被陈旧 .pyd 抢先打标（内嵌 schema 无 workspace_id 列），
+/// initialize_or_migrate 在 current_version == expected_version 时只校验表名
+/// 不校验列，导致主库永久停留"版本已达成但缺列"状态。v50 引入
+/// agent_registrations Agent Identity 最小字段（agent-task-contract-design.md §4.1），
+/// 同样需要列级校验。此函数枚举已知的兼容列（与 sqlite_query.rs
+/// execute_existing_schema 的列级清单一致），缺列时返回需要补的列列表，
+/// 调用方应执行 compat 修复（而非静默放行）。
+fn missing_compat_columns(conn: &Connection) -> Result<Vec<(String, String, &'static str)>, rusqlite::Error> {
+    const COMPAT_COLUMNS: &[(&str, &str, &str)] = &[
+        ("guardrail_findings", "workspace_id", "INTEGER NOT NULL DEFAULT 0"),
+        ("agent_registrations", "agent_instance_id", "TEXT DEFAULT ''"),
+        ("agent_registrations", "client_id", "TEXT DEFAULT ''"),
+        ("agent_registrations", "provider", "TEXT DEFAULT ''"),
+        ("agent_registrations", "model_id", "TEXT DEFAULT ''"),
+        ("agent_registrations", "model_mode", "TEXT DEFAULT ''"),
+        ("agent_registrations", "system_fingerprint", "TEXT DEFAULT ''"),
+        ("agent_registrations", "runtime_hash", "TEXT DEFAULT ''"),
+        ("agent_registrations", "session_id", "TEXT DEFAULT ''"),
+        ("agent_registrations", "role", "TEXT DEFAULT ''"),
+    ];
+    let mut missing = Vec::new();
+    for (table, column, definition) in COMPAT_COLUMNS {
+        if table_exists(conn, table)? && !has_column(conn, table, column)? {
+            missing.push(((*table).to_string(), (*column).to_string(), *definition));
+        }
+    }
+    Ok(missing)
+}
+
 /// 查询当前 Schema 版本
 pub fn get_schema_version<P: AsRef<Path>>(path: P) -> Result<u32, rusqlite::Error> {
     if !path.as_ref().exists() {
@@ -543,6 +579,77 @@ fn has_column_tx(tx: &Transaction<'_>, table: &str, column: &str) -> Result<bool
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(columns.iter().any(|value| value == column))
+}
+
+/// v48（W2.3 P1-1）：为既有库补齐 guardrail_findings.workspace_id 归属列并
+/// 将无归属 open 旧行置为 orphaned（fail-closed）。
+///
+/// 设计原则：旧数据无法安全归属时**禁止静默归入当前 workspace**。workspace_id=0
+/// 且 status='open' 的旧行被标记为 'orphaned'，查询层不返回 orphan 行，直到用户
+/// 显式迁移或清理。CREATE TABLE IF NOT EXISTS 不会给已存在表加列，此函数在
+/// canonical SCHEMA_SQL 执行后调用，保证既有库与新库行为一致。
+fn apply_guardrail_findings_v48_compat(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    if !table_exists_tx(tx, "guardrail_findings")? {
+        return Ok(()); // 极简库没有此表，跳过
+    }
+    if !has_column_tx(tx, "guardrail_findings", "workspace_id")? {
+        tx.execute(
+            "ALTER TABLE guardrail_findings ADD COLUMN workspace_id INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_workspace
+         ON guardrail_findings(workspace_id)",
+        [],
+    )?;
+    tx.execute(
+        "CREATE INDEX IF NOT EXISTS idx_guardrail_findings_ws_file
+         ON guardrail_findings(workspace_id, file_path, symbol_hash)",
+        [],
+    )?;
+    tx.execute(
+        "UPDATE guardrail_findings SET status='orphaned'
+         WHERE workspace_id = 0 AND status = 'open'",
+        [],
+    )?;
+    Ok(())
+}
+
+/// v50（Agent-task-contract M1）：为既有库补齐 agent_registrations 的
+/// Agent Identity 最小字段（agent-task-contract-design.md §4.1）。
+///
+/// 背景：v50 在 agent_registrations 上扩展 9 个身份列（agent_instance_id /
+/// client_id / provider / model_id / model_mode / system_fingerprint /
+/// runtime_hash / session_id / role）。CREATE TABLE IF NOT EXISTS 不会给已存在
+/// 表加列，陈旧二进制可能把"缺列库"打标为 v50。此函数在 canonical SCHEMA_SQL
+/// 执行前调用，幂等补齐身份列，随后 SCHEMA_SQL 里的 CREATE INDEX
+/// idx_agent_registrations_instance 才能成功建立。全新库时表由 SCHEMA_SQL 建齐，
+/// 本函数探测到列已存在会跳过，无副作用。
+fn apply_agent_registrations_v50_compat(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
+    if !table_exists_tx(tx, "agent_registrations")? {
+        return Ok(()); // 极简库没有此表，跳过
+    }
+    const IDENTITY_COLUMNS: &[&str] = &[
+        "agent_instance_id",
+        "client_id",
+        "provider",
+        "model_id",
+        "model_mode",
+        "system_fingerprint",
+        "runtime_hash",
+        "session_id",
+        "role",
+    ];
+    for column in IDENTITY_COLUMNS {
+        if !has_column_tx(tx, "agent_registrations", column)? {
+            tx.execute(
+                &format!("ALTER TABLE agent_registrations ADD COLUMN {column} TEXT DEFAULT ''"),
+                [],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn migrate_legacy_v1_v3_tx(tx: &Transaction<'_>) -> Result<(), rusqlite::Error> {
@@ -1118,42 +1225,58 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
     }
 
     if current_version == expected_version {
-        match metadata_current.as_deref() {
-            Some(value) if value == checksum => return Ok(current_version),
-            Some(_value) => {
-                // 策略 A（T-1785831377544-d99b57de）：stored checksum 过期
-                // （例如 8/1 旧 pyd 在 a8580e9 前写入的 v46 记录），但 DB 实际
-                // 表结构可能已与 canonical schema 一致（Python 侧 v43-v46 迁移
-                // 已应用）。此时不再仅凭 checksum fail-closed，而是校验表结构
-                // 完整性：全部 canonical 表存在即视为 schema 一致，接受并重写
-                // stored checksum 为当前 canonical；存在缺失表（真正的 schema
-                // 漂移）才 fail-closed 阻断。
-                let shape_ok = schema_shape_matches_canonical(&conn).map_err(|e| {
-                    format!(
-                        "MIGRATION_FAILED: Failed to inspect schema shape for v{}: {}",
-                        expected_version, e
-                    )
-                })?;
-                if shape_ok {
-                    update_stored_checksum_to_canonical(&mut conn, expected_version).map_err(
-                        |e| {
-                            format!(
-                                "MIGRATION_FAILED: Failed to reconcile schema checksum for v{}: {}",
-                                expected_version, e
-                            )
-                        },
-                    )?;
-                    return Ok(current_version);
+        // 复审 P0-1：即使版本号已达成，也必须校验列级 compat。
+        // 陈旧二进制可能把缺列库打标为当前版本，只校验表名会静默放行。
+        let missing_columns = missing_compat_columns(&conn)
+            .map_err(|e| format!("MIGRATION_FAILED: Failed to inspect compat columns: {e}"))?;
+        if !missing_columns.is_empty() {
+            // 缺列 → 不能静默接受，落入下方迁移路径（apply_*_compat 补齐列）。
+            // 此时忽略 checksum 状态，强制走迁移事务。
+            // 注意：项目未引入 tracing/log 依赖，此处用 eprintln! 保持可见性
+            //（与 daemon 二进制日志风格一致），仅在"版本已达成但缺列"的
+            // 陈旧打标异常场景触发，属低频防御性路径。
+            eprintln!(
+                "callwarden-core: schema v{expected_version} stamp predates compat columns \
+                 {missing_columns:?}; forcing repair migration"
+            );
+        } else {
+            match metadata_current.as_deref() {
+                Some(value) if value == checksum => return Ok(current_version),
+                Some(_value) => {
+                    // 策略 A（T-1785831377544-d99b57de）：stored checksum 过期
+                    // （例如 8/1 旧 pyd 在 a8580e9 前写入的 v46 记录），但 DB 实际
+                    // 表结构可能已与 canonical schema 一致（Python 侧 v43-v46 迁移
+                    // 已应用）。此时不再仅凭 checksum fail-closed，而是校验表结构
+                    // 完整性：全部 canonical 表存在即视为 schema 一致，接受并重写
+                    // stored checksum 为当前 canonical；存在缺失表（真正的 schema
+                    // 漂移）才 fail-closed 阻断。
+                    let shape_ok = schema_shape_matches_canonical(&conn).map_err(|e| {
+                        format!(
+                            "MIGRATION_FAILED: Failed to inspect schema shape for v{}: {}",
+                            expected_version, e
+                        )
+                    })?;
+                    if shape_ok {
+                        update_stored_checksum_to_canonical(&mut conn, expected_version).map_err(
+                            |e| {
+                                format!(
+                                    "MIGRATION_FAILED: Failed to reconcile schema checksum for v{}: {}",
+                                    expected_version, e
+                                )
+                            },
+                        )?;
+                        return Ok(current_version);
+                    }
+                    return Err(format!(
+                        "MIGRATION_FAILED: schema checksum mismatch for v{}: stored={}, binary={}, \
+                         and DB schema shape differs from canonical (missing tables)",
+                        expected_version,
+                        metadata_current.unwrap_or_default(),
+                        checksum
+                    ));
                 }
-                return Err(format!(
-                    "MIGRATION_FAILED: schema checksum mismatch for v{}: stored={}, binary={}, \
-                     and DB schema shape differs from canonical (missing tables)",
-                    expected_version,
-                    metadata_current.unwrap_or_default(),
-                    checksum
-                ));
+                None => {}
             }
-            None => {}
         }
     }
 
@@ -1177,8 +1300,42 @@ pub fn initialize_or_migrate<P: AsRef<Path>>(
 
     tx.execute_batch(STORAGE_METADATA_SQL)
         .map_err(|e| format!("MIGRATION_FAILED: Failed to create storage metadata: {}", e))?;
+    // v48/v49（W2.3 P1-1）：既有库的 guardrail_findings 可能缺少 workspace_id 归属列
+    //（陈旧二进制打标）。**必须先补列，再执行 canonical SCHEMA_SQL**——否则 SCHEMA_SQL
+    // 里的 CREATE INDEX idx_guardrail_findings_workspace ON guardrail_findings(workspace_id)
+    // 会因列不存在而报 no such column，整个迁移事务失败。CREATE TABLE IF NOT EXISTS
+    // 对已存在的表不加列，必须显式 ALTER TABLE 补齐；随后把 workspace_id=0 的 open
+    // 旧行置为 orphaned（fail-closed，不静默归入当前 workspace）。
+    // 全新库时 guardrail_findings 表尚不存在，compat 函数检测到表不存在会跳过，无副作用。
+    apply_guardrail_findings_v48_compat(&tx).map_err(|e| {
+        format!("MIGRATION_FAILED: Failed to apply guardrail_findings v48 compat: {}", e)
+    })?;
+    // v50（Agent-task-contract M1）：既有库的 agent_registrations 可能缺少
+    // Agent Identity 身份列（陈旧二进制打标）。**必须先补列，再执行 canonical
+    // SCHEMA_SQL**——否则 SCHEMA_SQL 里的 CREATE INDEX idx_agent_registrations_instance
+    // ON agent_registrations(agent_instance_id, role, status) 会因列不存在而报
+    // no such column。全新库时表由 SCHEMA_SQL 建齐，compat 函数探测到列已存在
+    // 会跳过，无副作用。
+    apply_agent_registrations_v50_compat(&tx).map_err(|e| {
+        format!("MIGRATION_FAILED: Failed to apply agent_registrations v50 compat: {}", e)
+    })?;
     tx.execute_batch(&canonical_schema_sql()?)
         .map_err(|e| format!("SCHEMA_CREATE_FAILED: Failed to execute SCHEMA_SQL: {}", e))?;
+    // v52（1D1）：operation_params 初始 rule row 幂等播种（与 sqlite_query 同一真相源）。
+    // 幂等：重复迁移不重复播种；已存在但 payload/hash 失配则迁移失败回滚（fail closed）。
+    seed_operation_params_rule(&tx)
+        .map_err(|e| format!("MIGRATION_FAILED: Failed to seed operation_params rule row: {}", e))?;
+    // v55（1B）：role_contract 初始 rule row 幂等播种（与 sqlite_query 同一真相源）。
+    // 幂等：重复迁移不重复播种；已存在但 payload/hash 失配则迁移失败回滚（fail closed）。
+    seed_role_contract_rule(&tx)
+        .map_err(|e| format!("MIGRATION_FAILED: Failed to seed role_contract rule row: {}", e))?;
+    // v55（1B）：历史 role_contracts → lineage/revision 回填（歧义组跳过，保留旧行）。
+    migrate_role_contract_legacy(&tx)
+        .map_err(|e| format!("MIGRATION_FAILED: Failed to backfill role_contract legacy: {}", e))?;
+    // v57（1E）：verdict-normalization/v1 初始 rule row 幂等播种（与 sqlite_query 同一真相源）。
+    // 幂等：重复迁移不重复播种；已存在但 payload/hash 失配则迁移失败回滚（fail closed）。
+    seed_verdict_normalization_rule(&tx)
+        .map_err(|e| format!("MIGRATION_FAILED: Failed to seed verdict-normalization rule row: {}", e))?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|value| value.as_secs_f64())
@@ -1648,6 +1805,175 @@ mod tests {
             "expected fail-closed on shape mismatch, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_version_matches_but_compat_column_missing_repairs() {
+        // 复审 P0-1：陈旧二进制可能把"缺 workspace_id 列"的库打标为当前版本，
+        // 且 checksum 与 canonical 完全一致（陈旧二进制内嵌 schema 恰好是它自己
+        // 写入的）。旧代码在 checksum 匹配分支直接 return Ok，永不补列。本测试
+        // 验证新代码在 current_version==expected_version 且 checksum 匹配时仍
+        // 校验 compat 列，缺列则强制走迁移事务补齐并 orphan 旧 open 行。
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("stale_stamp.db");
+        let conn = open_connection(&db_path).unwrap();
+        // 手工构造"陈旧二进制打标"状态：schema_version=SCHEMA_VERSION、
+        // schema_migrations checksum=当前 canonical、guardrail_findings 无 workspace_id
+        conn.execute_batch(
+            &format!(
+                "
+                CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at REAL NOT NULL, description TEXT DEFAULT '');
+                INSERT INTO schema_version VALUES ({SCHEMA_VERSION}, 1, 'stale stamp');
+                CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, description TEXT NOT NULL, applied_at REAL NOT NULL);
+                INSERT INTO schema_migrations VALUES ({SCHEMA_VERSION}, '{}', 'stale binary', 1);
+                CREATE TABLE workspaces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    root_path TEXT UNIQUE NOT NULL,
+                    created_at REAL NOT NULL,
+                    is_active INTEGER DEFAULT 0,
+                    description TEXT DEFAULT '',
+                    active_task_id TEXT DEFAULT ''
+                );
+                INSERT INTO workspaces (id, name, root_path, created_at, is_active) VALUES (1, 'ws', '/ws', 1, 1);
+                CREATE TABLE guardrail_rules (
+                    rule_id TEXT PRIMARY KEY,
+                    category TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'warn',
+                    pattern TEXT NOT NULL,
+                    action TEXT NOT NULL DEFAULT 'warn',
+                    description TEXT DEFAULT '',
+                    is_builtin INTEGER DEFAULT 0,
+                    created_at REAL NOT NULL
+                );
+                INSERT INTO guardrail_rules VALUES ('r1','db_safety','warn','x','warn','',1,1);
+                CREATE TABLE guardrail_findings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rule_id TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    symbol_hash TEXT DEFAULT '',
+                    severity TEXT NOT NULL DEFAULT 'warn',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    message TEXT DEFAULT '',
+                    detected_at REAL NOT NULL,
+                    resolved_at REAL
+                );
+                INSERT INTO guardrail_findings (rule_id, file_path, symbol_hash, severity, status, message, detected_at)
+                    VALUES ('r1', 'a.py', 'h1', 'warn', 'open', 'legacy-open', 1.0);
+                ",
+                canonical_schema_checksum().unwrap()
+            ),
+        )
+        .unwrap();
+        drop(conn);
+
+        // 旧代码在此直接 return Ok(SCHEMA_VERSION)；新代码必须补列
+        let ver = initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+        assert_eq!(ver, SCHEMA_VERSION);
+
+        let conn = open_connection(&db_path).unwrap();
+        let has_column: bool = {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(guardrail_findings)")
+                .unwrap();
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+                .iter()
+                .any(|name| name == "workspace_id")
+        };
+        assert!(has_column, "workspace_id 列应被补齐");
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN
+                 ('idx_guardrail_findings_workspace','idx_guardrail_findings_ws_file')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 2, "两个新索引应补齐");
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM guardrail_findings WHERE message='legacy-open'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "orphaned", "无归属 open 旧行应置 orphaned");
+    }
+
+    #[test]
+    fn test_v50_stale_stamp_missing_identity_columns_repaired() {
+        // v50 对照场景：陈旧二进制把"缺 Agent Identity 身份列"的库打标为
+        // SCHEMA_VERSION。missing_compat_columns 必须报告缺列并强制走迁移事务，
+        // apply_agent_registrations_v50_compat 补齐 9 个身份列后 SCHEMA_SQL 的
+        // idx_agent_registrations_instance 才能建立。
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("stale_stamp_v50.db");
+        let conn = open_connection(&db_path).unwrap();
+        conn.execute_batch(
+            &format!(
+                "
+                CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at REAL NOT NULL, description TEXT DEFAULT '');
+                INSERT INTO schema_version VALUES ({SCHEMA_VERSION}, 1, 'stale stamp');
+                CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, checksum TEXT NOT NULL, description TEXT NOT NULL, applied_at REAL NOT NULL);
+                INSERT INTO schema_migrations VALUES ({SCHEMA_VERSION}, '{}', 'stale binary', 1);
+                CREATE TABLE agent_registrations (
+                    agent_id TEXT PRIMARY KEY,
+                    agent_name TEXT NOT NULL,
+                    owner_key TEXT NOT NULL,
+                    capabilities TEXT DEFAULT '[]',
+                    registered_at REAL NOT NULL,
+                    last_heartbeat REAL NOT NULL,
+                    status TEXT DEFAULT 'active'
+                );
+                INSERT INTO agent_registrations (agent_id, agent_name, owner_key, registered_at, last_heartbeat)
+                    VALUES ('a1', 'legacy-agent', 'owner', 1.0, 1.0);
+                ",
+                canonical_schema_checksum().unwrap()
+            ),
+        )
+        .unwrap();
+        drop(conn);
+
+        let ver = initialize_or_migrate(&db_path, SCHEMA_VERSION).unwrap();
+        assert_eq!(ver, SCHEMA_VERSION);
+
+        let conn = open_connection(&db_path).unwrap();
+        let mut columns = conn
+            .prepare("PRAGMA table_info(agent_registrations)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        columns.sort();
+        for column in [
+            "agent_instance_id", "client_id", "provider", "model_id", "model_mode",
+            "system_fingerprint", "runtime_hash", "session_id", "role",
+        ] {
+            assert!(
+                columns.contains(&column.to_string()),
+                "Agent Identity 列 {column} 应被补齐"
+            );
+        }
+        let index_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_agent_registrations_instance'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_count, 1, "idx_agent_registrations_instance 索引应补齐");
+        let agent_name: String = conn
+            .query_row(
+                "SELECT agent_name FROM agent_registrations WHERE agent_id='a1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(agent_name, "legacy-agent", "旧数据行应保留");
     }
 
     #[test]

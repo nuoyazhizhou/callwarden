@@ -6185,7 +6185,8 @@ mod tests {
                rule_id TEXT PRIMARY KEY,category TEXT,severity TEXT,pattern TEXT,action TEXT,
                description TEXT,is_builtin INTEGER,created_at REAL);
              CREATE TABLE guardrail_findings(
-               id INTEGER PRIMARY KEY,rule_id TEXT,file_path TEXT,symbol_hash TEXT,severity TEXT,
+               id INTEGER PRIMARY KEY,workspace_id INTEGER NOT NULL DEFAULT 0,
+               rule_id TEXT,file_path TEXT,symbol_hash TEXT,severity TEXT,
                status TEXT,message TEXT,detected_at REAL,resolved_at REAL);
              CREATE TABLE tasks(id TEXT PRIMARY KEY,status TEXT);
              CREATE TABLE change_audit(id TEXT PRIMARY KEY,task_id TEXT,file_path TEXT);

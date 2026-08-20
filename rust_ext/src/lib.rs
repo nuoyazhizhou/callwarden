@@ -1837,6 +1837,11 @@ fn callwarden_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m
     )?)?;
     m.add_function(wrap_pyfunction!(cas_write_query::cas_pin, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_write_query::cas_file_generation_seen, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_write_query::cas_file_generation_committed, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_write_query::cas_file_generation_uncommit, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_write_query::cas_file_generation_reset, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_write_query::cas_gc, m)?)?;
     // Phase 1-3: workspace manifest 查询与 Rust 生产写 API
     m.add_function(wrap_pyfunction!(manifest_query::manifest_init_schema, m)?)?;
     m.add_function(wrap_pyfunction!(manifest_query::manifest_upsert, m)?)?;

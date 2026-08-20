@@ -631,6 +631,37 @@ fn fetch_workspace_by_instance(
 // UID ACL 路径校验（对应 Python daemon_server.py:_validate_owned_path）
 // ============================================
 
+/// 路径规范化（与 Python `config.norm_path` 语义一致，W1-4-FIX 用）
+///
+/// 用于把 daemon registry 的 `client_view_root`（register 时客户端原样传入，
+/// 未经规范化）归一化后与 Python 侧 `workspaces.root_path`
+/// （`norm_path(os.path.abspath(...))` 规范化存储）做匹配：
+/// - 反斜杠 → 正斜杠（Windows 路径统一）
+/// - 去掉末尾斜杠（根目录 "/" 除外）
+/// - Windows 盘符统一小写（`C:\` 和 `c:\` 等价）
+pub fn normalize_path_key(path: &str) -> String {
+    if path.is_empty() {
+        return path.to_string();
+    }
+    let normalized = path.replace('\\', "/");
+    let normalized = if normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.trim_end_matches('/').to_string()
+    } else {
+        normalized
+    };
+    // Windows 盘符统一小写（如 C:/ → c:/）
+    if normalized.len() >= 2
+        && normalized.as_bytes()[1] == b':'
+        && normalized.as_bytes()[0].is_ascii_alphabetic()
+    {
+        let mut chars: Vec<char> = normalized.chars().collect();
+        chars[0] = chars[0].to_ascii_lowercase();
+        chars.into_iter().collect()
+    } else {
+        normalized
+    }
+}
+
 /// 校验路径存在且属于对端用户（跨平台 ACL，Req 14.5, 14.9）
 ///
 /// - require_file=true：要求是文件
@@ -687,10 +718,7 @@ pub fn validate_owned_path(
         let _ = peer_uid; // Windows 不使用 Unix UID
         if !is_current_user_admin() {
             let peer_sid = super::peercred::get_current_user_sid().map_err(|e| {
-                DaemonRpcError::new(
-                    "path_forbidden",
-                    format!("无法获取当前用户 SID: {}", e),
-                )
+                DaemonRpcError::new("path_forbidden", format!("无法获取当前用户 SID: {}", e))
             })?;
             let file_owner_sid = get_file_owner_sid(&real_path_str).map_err(|e| {
                 DaemonRpcError::new(
@@ -701,10 +729,7 @@ pub fn validate_owned_path(
             if file_owner_sid != peer_sid {
                 return Err(DaemonRpcError::new(
                     "path_forbidden",
-                    format!(
-                        "路径 owner_sid={}，peer_sid={}",
-                        file_owner_sid, peer_sid
-                    ),
+                    format!("路径 owner_sid={}，peer_sid={}", file_owner_sid, peer_sid),
                 ));
             }
         }
@@ -724,9 +749,7 @@ fn get_file_owner_sid(path: &str) -> Result<String, String> {
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
     };
-    use windows_sys::Win32::Security::{
-        GetSecurityDescriptorOwner, OWNER_SECURITY_INFORMATION,
-    };
+    use windows_sys::Win32::Security::{GetSecurityDescriptorOwner, OWNER_SECURITY_INFORMATION};
 
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
     let mut sd: *mut c_void = ptr::null_mut();
@@ -784,8 +807,7 @@ fn is_current_user_admin() -> bool {
     use std::ptr;
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::Security::{
-        AllocateAndInitializeSid, CheckTokenMembership, FreeSid,
-        SECURITY_NT_AUTHORITY, TOKEN_QUERY,
+        AllocateAndInitializeSid, CheckTokenMembership, FreeSid, SECURITY_NT_AUTHORITY, TOKEN_QUERY,
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -799,7 +821,12 @@ fn is_current_user_admin() -> bool {
             2,
             32,  // SECURITY_BUILTIN_DOMAIN_RID
             544, // DOMAIN_ALIAS_RID_ADMINS
-            0, 0, 0, 0, 0, 0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             &mut admin_sid,
         ) == 0
         {
@@ -1143,6 +1170,17 @@ impl WorkspaceDaemonState {
         store: Arc<super::task_collab::TaskCollabStore>,
     ) -> Self {
         self.base.task_collab_store = Some(store);
+        self
+    }
+
+    /// 注入 task_loop control-plane（1D3B：gate + Public permit store + daemon generation），
+    /// 透传到 base `DaemonState`。未注入时 `task_loop.public_promote` 与公共路由 fail-closed。
+    pub fn with_task_loop_control(
+        mut self,
+        gate: Arc<super::task_loop::capability_control::CapabilityMutationGate>,
+        daemon_generation: u64,
+    ) -> Self {
+        self.base = self.base.with_task_loop_control(gate, daemon_generation);
         self
     }
 
@@ -3657,10 +3695,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().to_str().unwrap();
         let file_owner = get_file_owner_sid(path);
-        assert!(file_owner.is_ok(), "获取文件 owner SID 失败: {:?}", file_owner.err());
+        assert!(
+            file_owner.is_ok(),
+            "获取文件 owner SID 失败: {:?}",
+            file_owner.err()
+        );
 
         let current_sid = crate::daemon::peercred::get_current_user_sid();
-        assert!(current_sid.is_ok(), "获取当前用户 SID 失败: {:?}", current_sid.err());
+        assert!(
+            current_sid.is_ok(),
+            "获取当前用户 SID 失败: {:?}",
+            current_sid.err()
+        );
 
         // 当前用户创建的临时目录，owner 应该是当前用户（或 Administrators）
         let owner = file_owner.unwrap();
@@ -3709,7 +3755,10 @@ mod tests {
         let params = json!({ "client_view_root": path });
         let resp = dispatch(&mut state, owner_peer, "workspace.register", &params, &[]);
         assert_eq!(resp["ok"], true, "owner 注册应成功: {:?}", resp);
-        let instance_id = resp["result"]["workspace_instance_id"].as_str().unwrap().to_string();
+        let instance_id = resp["result"]["workspace_instance_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
 
         // 用非 owner 尝试 status 查询
         let other_peer = make_other_peer();
@@ -6365,6 +6414,35 @@ mod tests {
             })
             .unwrap();
         assert_eq!(contents_count, 0, "孤儿 cas_symbol_contents 应被清理");
+    }
+
+    // ---- W1-4-FIX：normalize_path_key（与 Python config.norm_path 语义一致）----
+
+    #[test]
+    fn test_normalize_path_key_backslash_to_forward_slash() {
+        // 反斜杠 → 正斜杠（盘符统一小写，与 Python norm_path 一致）
+        assert_eq!(normalize_path_key(r"C:\repo\src"), "c:/repo/src");
+    }
+
+    #[test]
+    fn test_normalize_path_key_strips_trailing_slash() {
+        assert_eq!(normalize_path_key("/repo/src/"), "/repo/src");
+        assert_eq!(normalize_path_key(r"C:\repo\src\"), "c:/repo/src");
+        // 根目录 "/" 保留
+        assert_eq!(normalize_path_key("/"), "/");
+    }
+
+    #[test]
+    fn test_normalize_path_key_lowercases_drive_letter() {
+        assert_eq!(normalize_path_key(r"C:\repo"), "c:/repo");
+        assert_eq!(normalize_path_key("D:/repo"), "d:/repo");
+        // 非盘符路径不受影响
+        assert_eq!(normalize_path_key("/repo"), "/repo");
+    }
+
+    #[test]
+    fn test_normalize_path_key_empty_stays_empty() {
+        assert_eq!(normalize_path_key(""), "");
     }
 
     // ============================================

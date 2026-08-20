@@ -12,7 +12,14 @@
 
 use super::protocol::{make_error_response, make_ok_response};
 use serde_json::{Map, Value};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+/// M2.1（T-1786519351240-73127ab4）：query.file 越界路径结构化校验辅助。
+///
+/// 通过 `#[path]` 内联声明本子模块——`mod.rs` 不在 M2.1 所有权白名单（不可改），
+/// 故不能在 `mod.rs` 中声明。`query_handlers.rs` 与本文件同目录，相对路径可用。
+#[path = "query_handlers.rs"]
+mod query_handlers;
 
 /// peer credential（来自 SO_PEERCRED 或 Windows Named Pipe）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,15 +77,14 @@ impl PeerCredential {
         #[cfg(not(unix))]
         {
             if self.uid == u32::MAX {
-                crate::daemon::transport_windows::get_current_user_sid().unwrap_or_else(|_| "unknown".to_string())
+                crate::daemon::transport_windows::get_current_user_sid()
+                    .unwrap_or_else(|_| "unknown".to_string())
             } else {
                 self.uid.to_string()
             }
         }
     }
 }
-
-
 
 /// daemon 运行状态（基础方法用，高级方法由 DaemonStateExt trait 扩展）
 pub struct DaemonState {
@@ -90,6 +96,16 @@ pub struct DaemonState {
     pub pid: u32,
     /// Task 协同存储
     pub task_collab_store: Option<std::sync::Arc<super::task_collab::TaskCollabStore>>,
+    /// 共存契约（windows-wsl-daemon-coexistence-contract.md §3.1）：
+    /// 稳定 authority 标识 `<host-instance>/<platform>/<user-or-service>/<db-fingerprint>`。
+    pub authority_id: String,
+    /// 本 daemon 使用的 transport（named-pipe / uds / windows-bridge / cli-bridge）。
+    pub transport: String,
+    /// task 数据库指纹（sha256 of task_db realpath + size），用于客户端校验 authority 一致性。
+    pub task_db_fingerprint: String,
+    /// task_loop control-plane 组件（1D3B：gate + Public permit store + daemon generation）。
+    /// `None` = 能力未组装，`task_loop.public_promote` 与公共路由一律 fail-closed。
+    pub task_loop_control: Option<std::sync::Arc<crate::daemon::task_loop::promotion::TaskLoopControlPlane>>,
 }
 
 impl Default for DaemonState {
@@ -99,7 +115,29 @@ impl Default for DaemonState {
             schema_version: super::SCHEMA_VERSION,
             pid: std::process::id(),
             task_collab_store: None,
+            authority_id: authority_id_from_env(),
+            transport: transport_from_env(),
+            task_db_fingerprint: task_db_fingerprint_from_env(),
+            task_loop_control: None,
         }
+    }
+}
+
+impl DaemonState {
+    /// 注入 task_loop control-plane（1D3B：daemon 启动时组装一次）。
+    ///
+    /// `gate` 为 daemon 级共享 `CapabilityMutationGate`（0A/0B 落地时需与
+    /// Capability Authority / stage toggle 的写入路径共用同一实例，保持全局锁序）。
+    /// `daemon_generation` 必须随 daemon 重启变化（如启动时刻 unix 纳秒）。
+    pub fn with_task_loop_control(
+        mut self,
+        gate: std::sync::Arc<crate::daemon::task_loop::capability_control::CapabilityMutationGate>,
+        daemon_generation: u64,
+    ) -> Self {
+        self.task_loop_control = Some(std::sync::Arc::new(
+            crate::daemon::task_loop::promotion::TaskLoopControlPlane::new(gate, daemon_generation),
+        ));
+        self
     }
 }
 
@@ -155,6 +193,15 @@ impl std::fmt::Display for DaemonRpcError {
 
 impl std::error::Error for DaemonRpcError {}
 
+/// Authoritative_Clock 时间戳（Req 14.11）：ping 响应专用，供 lease 时钟读取。
+/// 秒级浮点 Unix 时间戳，与全库 now_ts() 契约一致。
+fn now_ts() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
 /// daemon 状态扩展 trait（高级方法 handler 由 R4-R6 实现）
 ///
 /// 默认实现返回 method_not_found，避免 R3 阶段编译失败。
@@ -174,6 +221,27 @@ pub trait DaemonStateExt {
         m.insert("status".to_string(), Value::String("ok".to_string()));
         m.insert("peer_uid".to_string(), Value::Number(peer.uid.into()));
         m.insert("pid".to_string(), Value::Number(state.pid.into()));
+        // 共存契约 §3.1/§5.3：ping/hello 必须返回 authority 身份，供客户端校验。
+        m.insert(
+            "authority_id".to_string(),
+            Value::String(state.authority_id.clone()),
+        );
+        m.insert(
+            "transport".to_string(),
+            Value::String(state.transport.clone()),
+        );
+        m.insert(
+            "task_db_fingerprint".to_string(),
+            Value::String(state.task_db_fingerprint.clone()),
+        );
+        m.insert("protocol_version".to_string(), Value::Number(1u32.into()));
+        // Authoritative_Clock（Req 14.11/14.12）：ping 必须返回 daemon 权威时间戳，
+        // 供 lease acquire/renew/release 的 _clock() 读取（fail-closed，不回退客户端时钟）。
+        let ts = now_ts();
+        m.insert(
+            "timestamp".to_string(),
+            Value::Number(serde_json::Number::from_f64(ts).unwrap()),
+        );
         Ok(Value::Object(m))
     }
 
@@ -330,6 +398,275 @@ pub trait DaemonStateExt {
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
         Err(DaemonRpcError::method_not_found("query.stats"))
+    }
+
+    // W2-1（T-1786840097330-dec66710）：query 面 stats HTTP native 迁移新增
+    // 三个 handler（query.uncommented_symbols / query.module_call_stats /
+    // query.semgrep_stats），默认 method_not_found，SnapshotDaemonState 重写。
+
+    fn handle_query_uncommented_symbols(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.uncommented_symbols"))
+    }
+
+    fn handle_query_module_call_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.module_call_stats"))
+    }
+
+    fn handle_query_semgrep_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.semgrep_stats"))
+    }
+
+    // W3-3（T-1786861820151-deb64c48）：get_semgrep_findings HTTP native 迁移
+    // 新增 handler（query.semgrep_findings），默认 method_not_found，
+    // SnapshotDaemonState 重写。
+
+    fn handle_query_semgrep_findings(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.semgrep_findings"))
+    }
+
+    // W4-1（T-1786886251769-22b94ee8-sub-1）：git 读组 5 工具
+    // （get_file_history / get_git_commits / get_commit_changes /
+    // get_git_stats / get_commit_tasks）HTTP native 迁移，新增 5 个
+    // handler（query.file_history / query.git_commits /
+    // query.git_commit_changes / query.git_stats / query.commit_tasks），
+    // 默认 method_not_found，SnapshotDaemonState 重写。
+
+    fn handle_query_file_history(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.file_history"))
+    }
+
+    fn handle_query_git_commits(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.git_commits"))
+    }
+
+    fn handle_query_git_commit_changes(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.git_commit_changes"))
+    }
+
+    fn handle_query_git_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.git_stats"))
+    }
+
+    fn handle_query_commit_tasks(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.commit_tasks"))
+    }
+
+    // W4-2（T-1786886251769-22b94ee8-sub-2）：coverage/review 读组迁移新增
+    // 两个 handler（query.coverage_for_symbol / query.diff_to_symbol），
+    // 默认 method_not_found，SnapshotDaemonState 重写。
+
+    fn handle_query_coverage_for_symbol(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.coverage_for_symbol"))
+    }
+
+    fn handle_query_diff_to_symbol(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.diff_to_symbol"))
+    }
+
+    // W4-3（T-1786886251769-22b94ee8-sub-3）：defect 读组迁移新增 5 个
+    // handler（query.defect_correlation / query.churn_analysis /
+    // query.defect_search / query.defect_suggest_fix /
+    // query.get_defect_correlation），默认 method_not_found，
+    // SnapshotDaemonState 重写。
+
+    fn handle_query_defect_correlation(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.defect_correlation"))
+    }
+
+    fn handle_query_churn_analysis(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.churn_analysis"))
+    }
+
+    fn handle_query_defect_search(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.defect_search"))
+    }
+
+    fn handle_query_defect_suggest_fix(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.defect_suggest_fix"))
+    }
+
+    fn handle_query_get_defect_correlation(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.get_defect_correlation"))
+    }
+
+    // W4-4（T-1786886251769-22b94ee8-sub-4）：分支差异读面迁移新增 handler
+    // （query.diff_branches），默认 method_not_found，SnapshotDaemonState 重写。
+    // diff_branches 是跨 workspace 语义（按分支名查 source/target 两个
+    // workspace），workspace_instance_id 仅用于连接级 ACL（owned_workspace +
+    // snapshot query_db_path），不注入目标分支的 workspace_instance_id。
+
+    fn handle_query_diff_branches(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("query.diff_branches"))
+    }
+
+    // W2-2（T-1786840097330-a9e0ec69）：task 面 stats HTTP native 迁移新增
+    // 三个 handler（task.clone_stats / task.job_stats / task.clone_group_stats），
+    // 默认 method_not_found，SnapshotDaemonState 重写。
+
+    fn handle_task_clone_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("task.clone_stats"))
+    }
+
+    fn handle_task_job_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("task.job_stats"))
+    }
+
+    fn handle_task_clone_group_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("task.clone_group_stats"))
+    }
+
+    // W3-2（T-1786861820151-f3cecf40）：job 读组 3 工具（get_job_status /
+    // list_jobs / wait_for_job）HTTP native 迁移新增 3 个 handler
+    // （task.job_status / task.list_jobs / task.wait_for_job），默认
+    // method_not_found，SnapshotDaemonState 重写。
+
+    fn handle_task_job_status(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("task.job_status"))
+    }
+
+    fn handle_task_list_jobs(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("task.list_jobs"))
+    }
+
+    fn handle_task_wait_for_job(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("task.wait_for_job"))
+    }
+
+    // W2-3（T-1786840097331-fd01a3f8）：defect/edit stats HTTP native 迁移新增
+    // 两个 handler（defect.stats / edit.stats），默认 method_not_found，
+    // SnapshotDaemonState 重写。
+
+    fn handle_defect_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("defect.stats"))
+    }
+
+    fn handle_edit_stats(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("edit.stats"))
     }
 
     fn handle_query_symbol(
@@ -598,153 +935,496 @@ pub trait DaemonStateExt {
 
     // ---- Agent & Task 协同 RPC ----
 
-    fn handle_agent_register(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_agent_register(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_agent_register(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("agent.register"))
         }
     }
-    fn handle_agent_heartbeat(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_agent_heartbeat(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_agent_heartbeat(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("agent.heartbeat"))
         }
     }
-    fn handle_task_create(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_create(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_create(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.create"))
         }
     }
-    fn handle_task_claim(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_claim(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_claim(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.claim"))
         }
     }
-    fn handle_task_work_next(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_claim_recover(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_claim_recover(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.claim.recover"))
+        }
+    }
+    fn handle_task_work_next(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_work_next(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.work_next"))
         }
     }
-    fn handle_task_report(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_report(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_report(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.report"))
         }
     }
-    fn handle_task_handoff(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_step_resolve(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_step_resolve(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.step.resolve"))
+        }
+    }
+    fn handle_task_remediation_create(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_remediation_create(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.remediation.create"))
+        }
+    }
+    fn handle_task_handoff(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_handoff(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.handoff"))
         }
     }
-    fn handle_task_status(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_contract_set(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_contract_set(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.contract_set"))
+        }
+    }
+    fn handle_task_contract_get(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_contract_get(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.contract_get"))
+        }
+    }
+    fn handle_task_status(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_status(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.status"))
         }
     }
-    fn handle_task_events(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    /// `task.next_action`：纯只读派工 evaluator（5A）。经 `with_conn` 只读查询，
+    /// 无任何 mutation；evaluator 内部 fail-closed（BLOCKED/NONE 也是合法响应）。
+    fn handle_task_next_action(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            let input = crate::daemon::task_loop::next_action::NextActionInput::from_params(params)?;
+            store.with_conn(|conn| {
+                crate::daemon::task_loop::next_action::evaluate_next_action(
+                    conn,
+                    &input.workspace_instance_id,
+                    &input.task_id,
+                )
+            })
+        } else {
+            Err(DaemonRpcError::method_not_found("task.next_action"))
+        }
+    }
+    fn handle_task_events(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_events(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.events"))
         }
     }
-    fn handle_task_wait(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_wait(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_wait(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.wait"))
         }
     }
-    fn handle_task_list(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_list(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_list(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.list"))
         }
     }
-    fn handle_task_rollback(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_rollback(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_rollback(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.rollback"))
         }
     }
-    fn handle_task_reopen(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_reopen(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_reopen(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.reopen"))
         }
     }
-    fn handle_task_apply(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_apply(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_apply(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.apply"))
         }
     }
-    fn handle_task_close(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_close(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_close(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.close"))
         }
     }
-    fn handle_task_capture_diff(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
+    fn handle_task_capture_diff(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
         if let Some(ref store) = self.daemon_state().task_collab_store {
             store.handle_task_capture_diff(peer, params)
         } else {
             Err(DaemonRpcError::method_not_found("task.capture_diff"))
         }
     }
-    fn handle_task_split(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_split(peer, params) } else { Err(DaemonRpcError::method_not_found("task.split")) }
+    fn handle_task_split(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_split(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.split"))
+        }
     }
-    fn handle_task_create_from_plan(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_create_from_plan(peer, params) } else { Err(DaemonRpcError::method_not_found("task.create_from_plan")) }
+    fn handle_task_create_from_plan(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_create_from_plan(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.create_from_plan"))
+        }
     }
-    fn handle_task_completion_review(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_completion_review(peer, params) } else { Err(DaemonRpcError::method_not_found("task.completion_review")) }
+    fn handle_task_completion_review(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_completion_review(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.completion_review"))
+        }
     }
-    fn handle_task_resolve_quality_finding(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_resolve_quality_finding(peer, params) } else { Err(DaemonRpcError::method_not_found("task.resolve_quality_finding")) }
+    fn handle_task_resolve_quality_finding(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_resolve_quality_finding(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.resolve_quality_finding",
+            ))
+        }
     }
-    fn handle_task_create_subtask(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_create_subtask(peer, params) } else { Err(DaemonRpcError::method_not_found("task.create_subtask")) }
+    fn handle_task_create_subtask(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_create_subtask(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.create_subtask"))
+        }
     }
-    fn handle_task_status_tree(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_status_tree(peer, params) } else { Err(DaemonRpcError::method_not_found("task.status_tree")) }
+    fn handle_task_status_tree(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_status_tree(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.status_tree"))
+        }
     }
-    fn handle_task_record_symbol_change(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_record_symbol_change(peer, params) } else { Err(DaemonRpcError::method_not_found("task.record_symbol_change")) }
+    fn handle_task_record_symbol_change(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_record_symbol_change(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.record_symbol_change",
+            ))
+        }
     }
-    fn handle_task_link_edit_audit_symbols(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_link_edit_audit_symbols(peer, params) } else { Err(DaemonRpcError::method_not_found("task.link_edit_audit_symbols")) }
+    fn handle_task_link_edit_audit_symbols(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_link_edit_audit_symbols(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.link_edit_audit_symbols",
+            ))
+        }
     }
-    fn handle_task_get_symbol_changes(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_get_symbol_changes(peer, params) } else { Err(DaemonRpcError::method_not_found("task.get_symbol_changes")) }
+    fn handle_task_get_symbol_changes(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_get_symbol_changes(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.get_symbol_changes"))
+        }
     }
-    fn handle_task_quality_findings(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_quality_findings(peer, params) } else { Err(DaemonRpcError::method_not_found("task.quality_findings")) }
+    fn handle_task_quality_findings(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_quality_findings(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.quality_findings"))
+        }
     }
-    fn handle_task_has_blocking_findings(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_has_blocking_findings(peer, params) } else { Err(DaemonRpcError::method_not_found("task.has_blocking_findings")) }
+    fn handle_task_has_blocking_findings(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_has_blocking_findings(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found(
+                "task.has_blocking_findings",
+            ))
+        }
     }
-    fn handle_task_get_commits(&mut self, peer: PeerCredential, params: &Value) -> Result<Value, DaemonRpcError> {
-        if let Some(ref store) = self.daemon_state().task_collab_store { store.handle_task_get_commits(peer, params) } else { Err(DaemonRpcError::method_not_found("task.get_commits")) }
+    fn handle_task_get_commits(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_task_get_commits(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("task.get_commits"))
+        }
+    }
+
+    // ---- task_loop 公共能力 control-plane（1D3B 落地）----
+
+    /// `task_loop.public_promote` control-plane mutation（§4.3）。
+    ///
+    /// 仅在 daemon 已组装 `TaskLoopControlPlane` 且 task-DB 可用时执行
+    /// `promote_public_capability`（幂等 dedupe + 权威账本 + 内存 permit 安装）。
+    /// 组件缺失一律 fail-closed：能力未发布，不产生任何审计写入。
+    fn handle_task_loop_public_promote(
+        &mut self,
+        _peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        use crate::daemon::task_loop::promotion::promote_public_capability;
+        use crate::daemon::task_loop::types::{FrozenAuthorityInput, ERR_CAPABILITY_DISABLED};
+
+        let state = self.daemon_state();
+        let control = state.task_loop_control.as_ref().ok_or_else(|| {
+            DaemonRpcError::new(
+                ERR_CAPABILITY_DISABLED,
+                "task_loop control-plane 未组装：daemon 未发布公共能力",
+            )
+        })?;
+        let collab = state.task_collab_store.as_ref().ok_or_else(|| {
+            DaemonRpcError::new(
+                ERR_CAPABILITY_DISABLED,
+                "task_loop 需要 task-DB：task_collab_store 未装配",
+            )
+        })?;
+        let frozen = FrozenAuthorityInput {
+            daemon_generation: control.daemon_generation,
+            authority_id: state.authority_id.clone(),
+            ..Default::default()
+        };
+        collab.with_conn(|conn| {
+            promote_public_capability(conn, &control.gate, &control.store, &frozen, params)
+        })
+    }
+
+    // ---- Lease Control Plane（M7；store 未装配时 method_not_found）----
+
+    fn handle_lease_acquire(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_lease_acquire(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("lease.acquire"))
+        }
+    }
+
+    fn handle_lease_extend(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_lease_extend(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("lease.extend"))
+        }
+    }
+
+    fn handle_lease_release(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_lease_release(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("lease.release"))
+        }
+    }
+
+    fn handle_lease_status(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_lease_status(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("lease.status"))
+        }
+    }
+
+    fn handle_lease_list_events(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            store.handle_lease_list_events(peer, params)
+        } else {
+            Err(DaemonRpcError::method_not_found("lease.list_events"))
+        }
     }
 
     fn handle_collab_rpc(
@@ -753,11 +1433,21 @@ pub trait DaemonStateExt {
         method: &str,
         params: &Value,
     ) -> Result<Value, DaemonRpcError> {
-        // S5：P1 collab RPC 的真相源在 Python DB 层（库层已实现，39+ 测试）。
-        // daemon 不持有这些方法的业务状态，诚实返回 method_not_found，
-        // 由 MCP client 的 _collab_rpc_call 兜底走 direct_read 直查 SQLite。
-        let _ = (peer, params);
-        Err(DaemonRpcError::method_not_found(method))
+        // P1：证据与 Gate 查询必须从 daemon authority 读取；不得再把
+        // Reviewer 依赖到 Python direct_read。尚未实现的 collab 方法仍
+        // 诚实返回 method_not_found，不做隐式 fallback。
+        if let Some(ref store) = self.daemon_state().task_collab_store {
+            match method {
+                "verdict.submit" => store.handle_verdict_submit(peer, params),
+                "evidence.append" => store.handle_evidence_append(peer, params),
+                "evidence.query" => store.handle_evidence_query(peer, params),
+                "gate.decision.query" => store.handle_gate_decision_query(peer, params),
+                "gate.decision.append" => store.handle_gate_decision_append(peer, params),
+                _ => Err(DaemonRpcError::method_not_found(method)),
+            }
+        } else {
+            Err(DaemonRpcError::method_not_found(method))
+        }
     }
 
     // ---- Build Context 管理（G1 Layer 2 实现）----
@@ -796,6 +1486,39 @@ pub trait DaemonStateExt {
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
         Err(DaemonRpcError::method_not_found("build_context.set_active"))
+    }
+
+    // W3-1（T-1786861820150-bfe5e805）：build 读组新增 3 个 HTTP native handler
+    // （build_context.active / build_context.resolved_edges /
+    // build_context.count_resolved_edges），默认 method_not_found，
+    // SnapshotDaemonState 重写。
+    fn handle_build_context_active(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("build_context.active"))
+    }
+
+    fn handle_build_context_resolved_edges(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found("build_context.resolved_edges"))
+    }
+
+    fn handle_build_context_count_resolved_edges(
+        &mut self,
+        peer: PeerCredential,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found(
+            "build_context.count_resolved_edges",
+        ))
     }
 
     fn handle_build_context_delete(
@@ -843,6 +1566,22 @@ pub trait DaemonStateExt {
     ) -> Result<Value, DaemonRpcError> {
         let _ = (peer, params);
         Err(DaemonRpcError::method_not_found("resolved_edges.replace"))
+    }
+
+    // ---- 收敛架构 RPC（T02：fs/metrics/job/admin/edit 下沉）----
+    // 单一 catch-all 钩子：所有 T02 新增 method（workspace.file.* / query.code_health /
+    // task.job_* / admin.* / edit.* / rule.* / gate.* / summary.generate 等）经
+    // dispatch_inner 的 CONVERGENCE_RPC_METHODS 匹配进入本方法。默认实现返回
+    // method_not_found；SnapshotDaemonState 重写后分发到 fs_handlers /
+    // metrics_handlers / job_runner / admin_handlers / edit_handlers。
+    fn handle_convergence_rpc(
+        &mut self,
+        peer: PeerCredential,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value, DaemonRpcError> {
+        let _ = (peer, params);
+        Err(DaemonRpcError::method_not_found(method))
     }
 }
 
@@ -926,12 +1665,16 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "agent.register",
     "task.create",
     "task.claim",
+    "task.claim.recover",
     "task.report",
+    "task.remediation.create",
+    "task.step.resolve",
     "task.handoff",
     "task.rollback",
     "task.reopen",
     "task.apply",
     "task.close",
+    "task.contract_set",
     "task.capture_diff",
     "task.split",
     "task.create_from_plan",
@@ -941,6 +1684,8 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "task.link_edit_audit_symbols",
     "task.work_next",
     "task.completion_review",
+    // task_loop 公共能力 promotion（1D3B cutover；写 promotion 审计账本 + 安装 Public permit）
+    "task_loop.public_promote",
     // ---- D0 后续任务预留（Req 14.6 列举的 Protected_Mutation 类型）----
     // verdict 封存
     "verdict.submit",
@@ -950,16 +1695,148 @@ pub const PROTECTED_MUTATION_METHODS: &[&str] = &[
     "evidence.append",
     // Gate decision
     "gate.decide",
+    // Task-owned runtime/evidence gate append（非 Verdict）
+    "gate.decision.append",
     // Lease 操作
     "lease.acquire",
     "lease.release",
     "lease.extend",
+    // lease.renew 是 lease.extend 的兼容别名（同为写操作，须经串行化点）
+    "lease.renew",
+    // ---- 收敛架构写面（T02：全部写操作经 daemon 权威路径）----
+    // 文件/构建面写
+    "workspace.build_graph",
+    "workspace.build_directory",
+    "workspace.file.remove",
+    "workspace.file.refresh_file",
+    // 异步长任务
+    "task.job_submit",
+    "task.job_cancel",
+    // admin 写面
+    "admin.gc_archive_import",
+    "admin.gc_policy_set",
+    "admin.audit_rotate_key",
+    "admin.cleanup_rule_sync_log",
+    "admin.clear_clones",
+    "admin.branch_register",
+    "admin.branch_switch",
+    "admin.assignment_create",
+    "admin.assignment_revoke",
+    "admin.record_action_identity",
+    "admin.register_attestation_revocation",
+    "admin.record_artifact_identity",
+    "admin.publish_interface",
+    "admin.select_interface_provider",
+    // 编辑/提案/规则写面
+    "edit.propose",
+    "edit.propose_range_patch",
+    "edit.propose_symbol_id_patch",
+    "edit.propose_symbol_patch",
+    "edit.revert",
+    "edit.restore_all_comments",
+    "edit.restore_comment",
+    "edit.record_token_savings",
+    "gate.resolve_findings",
+    "gate.run_check",
+    "rule.seed_bootstrap",
+    "rule.extract_candidates",
+    "rule.candidate_accept",
+    "rule.candidate_create",
+    "rule.candidate_reject",
+    "rule.insert_agents_md_block",
+    "rule.sync_agents_md",
+    "guardrail.add_rule",
+    "summary.generate",
 ];
 
 /// 判断方法是否为 Protected_Mutation（须经串行化点）。
 #[inline]
 pub fn is_protected_mutation(method: &str) -> bool {
     PROTECTED_MUTATION_METHODS.contains(&method)
+}
+
+/// 收敛架构 RPC method 清单（T02 下沉，target_backend ∈ {rust_native, task_rpc}）。
+///
+/// 与 `deliverables/software-company/tool_migration_matrix.json` 一致（由
+/// `scripts/verify_route_matrix.py` 机器核对）。这些 method 统一经
+/// `handle_convergence_rpc` 分发到 fs_handlers / metrics_handlers /
+/// job_runner / admin_handlers / edit_handlers。
+pub const CONVERGENCE_RPC_METHODS: &[&str] = &[
+    // 文件/构建面（T02-fs，9）
+    "workspace.build_graph",
+    "workspace.build_directory",
+    "workspace.file.read",
+    "workspace.file.grep",
+    "workspace.file.list",
+    "workspace.file.symbol_content",
+    "workspace.file.remove",
+    "workspace.file.health",
+    "workspace.file.refresh_file",
+    // 度量/状态面（T02-metrics，9）
+    "query.code_health",
+    "query.metrics_summary",
+    "query.complexity_hotspots",
+    "query.coupling_analysis",
+    "query.function_metrics",
+    "query.largest_functions",
+    "query.most_coupled_functions",
+    "query.status",
+    "query.symbol_content_by_hash",
+    // diff 读面（T02-edit 内 2 个只读）
+    "query.diff_callees",
+    "query.diff_callers",
+    // 异步长任务（T02-job，task_rpc）
+    "task.job_submit",
+    "task.job_cancel",
+    // GC/审计/运维（T02-admin，22）
+    "admin.gc_archive_import",
+    "admin.gc_archive_inspect",
+    "admin.gc_archive_list",
+    "admin.gc_audit_get",
+    "admin.gc_audit_list",
+    "admin.gc_policy_get",
+    "admin.gc_policy_set",
+    "admin.gc_retention",
+    "admin.audit_rotate_key",
+    "admin.cleanup_rule_sync_log",
+    "admin.clear_clones",
+    "admin.snapshot_compare",
+    "admin.metrics_get",
+    "admin.branch_register",
+    "admin.branch_switch",
+    "admin.assignment_create",
+    "admin.assignment_revoke",
+    "admin.record_action_identity",
+    "admin.register_attestation_revocation",
+    "admin.record_artifact_identity",
+    "admin.publish_interface",
+    "admin.select_interface_provider",
+    // 编辑/提案/规则写面（T02-edit，19 写 + 2 读）
+    "edit.propose",
+    "edit.propose_range_patch",
+    "edit.propose_symbol_id_patch",
+    "edit.propose_symbol_patch",
+    "edit.revert",
+    "edit.restore_all_comments",
+    "edit.restore_comment",
+    "edit.record_token_savings",
+    "gate.resolve_findings",
+    "gate.run_check",
+    "rule.seed_bootstrap",
+    "rule.extract_candidates",
+    "rule.candidate_accept",
+    "rule.candidate_create",
+    "rule.candidate_reject",
+    "rule.insert_agents_md_block",
+    "rule.sync_agents_md",
+    "guardrail.add_rule",
+    "summary.generate",
+];
+
+/// 判断 method 是否为收敛架构 RPC。
+#[inline]
+pub fn is_convergence_rpc(method: &str) -> bool {
+    CONVERGENCE_RPC_METHODS.contains(&method)
 }
 
 /// 生产入口：带串行化点的 dispatch（Req 14.6, 14.14）。
@@ -982,7 +1859,8 @@ pub fn dispatch_rpc<S: DaemonStateExt>(
 ) -> Value {
     if is_protected_mutation(method) {
         // Protected_Mutation 经唯一串行化点（Req 14.6）
-        match serialization_point.execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds))
+        match serialization_point
+            .execute(|| dispatch_inner(state, peer.clone(), method, params, received_fds))
         {
             Ok(value) => make_ok_response(value),
             Err(err) => make_error_response(&err.code, &err.message),
@@ -1007,7 +1885,8 @@ pub fn current_daemon_owner_key() -> String {
     }
     #[cfg(not(unix))]
     {
-        crate::daemon::transport_windows::get_current_user_sid().unwrap_or_else(|_| "unknown".to_string())
+        crate::daemon::transport_windows::get_current_user_sid()
+            .unwrap_or_else(|_| "unknown".to_string())
     }
 }
 
@@ -1022,15 +1901,129 @@ pub fn current_daemon_uid() -> u32 {
     }
 }
 
-/// 判断 peer 是否为管理员（root 或 daemon 进程自己，基于 owner_key）
+/// 获取 daemon 的 authority 标识（共存契约 §3.1）。
+///
+/// 优先级：
+/// 1. 环境变量 `CW_DAEMON_AUTHORITY_ID`（显式 pin，客户端 mismatch 时 fail-closed）；
+/// 2. 自动派生 `<host-instance>/<platform>/<user-or-service>/<db-fingerprint>`。
+///
+/// authority_id 不由客户端声称，由 daemon 在 ping/hello 响应中返回。
+pub fn authority_id_from_env() -> String {
+    if let Ok(v) = std::env::var("CW_DAEMON_AUTHORITY_ID") {
+        if !v.trim().is_empty() {
+            return v.trim().to_string();
+        }
+    }
+    let platform = if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else {
+        "linux"
+    };
+    let user = current_daemon_owner_key();
+    let fingerprint = task_db_fingerprint_from_env();
+    let host = hostname_or_fallback();
+    format!("{host}/{platform}/{user}/{fingerprint}")
+}
+
+/// 获取本 daemon 使用的 transport（共存契约 §3.2）。
+///
+/// 优先级：`CW_DAEMON_TRANSPORT` 环境变量，否则按平台默认。
+pub fn transport_from_env() -> String {
+    if let Ok(v) = std::env::var("CW_DAEMON_TRANSPORT") {
+        if !v.trim().is_empty() {
+            return v.trim().to_string();
+        }
+    }
+    if cfg!(windows) {
+        "named-pipe".to_string()
+    } else {
+        "uds".to_string()
+    }
+}
+
+/// 计算 task 数据库内容指纹（主库和 WAL 的规范路径及字节内容）。
+///
+/// 客户端通过比对 ping 返回的 fingerprint 与当前任务上下文一致来拒绝
+/// 指向不同 task DB 的 daemon。返回空串表示 daemon 未配置 task DB（如纯
+/// snapshot 测试 daemon），客户端应视为不可写 authority。
+pub fn task_db_fingerprint_from_env() -> String {
+    let path = match std::env::var("CW_DAEMON_TASK_DB") {
+        Ok(v) if !v.trim().is_empty() => v.trim().to_string(),
+        _ => {
+            // 未显式配置时，尝试从 HOME 默认路径派生；失败返回空。
+            let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+            match home {
+                Some(h) => std::path::PathBuf::from(h)
+                    .join(".callwarden")
+                    .join("callwarden.db")
+                    .to_string_lossy()
+                    .to_string(),
+                None => return String::new(),
+            }
+        }
+    };
+    let canonical =
+        std::fs::canonicalize(&path).unwrap_or_else(|_| std::path::PathBuf::from(&path));
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    // SQLite 的最新提交可能仅存在于 -wal；只 hash 主库路径+长度会让不同
+    // 内容产生相同 fingerprint，无法作为 authority pin。为避免分隔符歧义，
+    // 每个组成部分都写入路径、存在标志和内容长度后再写入字节。
+    for component in [
+        canonical.clone(),
+        std::path::PathBuf::from(format!("{}-wal", canonical.to_string_lossy())),
+    ] {
+        let display = component.to_string_lossy();
+        hasher.update((display.len() as u64).to_be_bytes());
+        hasher.update(display.as_bytes());
+        match std::fs::read(&component) {
+            Ok(bytes) => {
+                hasher.update([1u8]);
+                hasher.update((bytes.len() as u64).to_be_bytes());
+                hasher.update(bytes);
+            }
+            Err(_) => hasher.update([0u8]),
+        }
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+/// 获取主机实例名（hostname），失败时回退 "unknown-host"。
+fn hostname_or_fallback() -> String {
+    #[cfg(unix)]
+    {
+        let mut buf = [0u8; 256];
+        // gethostname 失败时返回 0 长度，走回退
+        let rc = unsafe { libc::gethostname(buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+        if rc == 0 {
+            let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+            if end > 0 {
+                return String::from_utf8_lossy(&buf[..end]).to_string();
+            }
+        }
+        "unknown-host".to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown-host".to_string())
+    }
+}
+
+/// 判断 peer 是否为管理员（root 或 daemon 进程自己，基于 owner_key）。
+///
+/// 与 P1-1 注释（current_daemon_uid）语义一致：Unix 上 peer.uid == daemon 自身 uid
+/// 时 owner_key() 即为 current_daemon_owner_key()，已走上面的 owner_key 分支；Windows
+/// 上 new_unix 测试 peer（uid=1000）的 owner_key() 是 "1000" 而非 daemon SID，须显式
+/// 补 `peer.uid == current_daemon_uid()` 这条同 uid 判定，窗口才与 Unix 语义对齐。
 pub fn is_admin(peer: &PeerCredential) -> bool {
     let key = peer.owner_key();
     if !key.is_empty() && key == current_daemon_owner_key() {
         return true;
     }
-    peer.uid == 0 || key == "root" || key == "0"
+    peer.uid == 0 || key == "root" || key == "0" || peer.uid == current_daemon_uid()
 }
-
 
 /// dispatch 内部实现（返回 Result<Value, DaemonRpcError>）
 fn dispatch_inner<S: DaemonStateExt>(
@@ -1088,15 +2081,115 @@ fn dispatch_inner<S: DaemonStateExt>(
 
         // ---- 查询方法（R6 实现）----
         "query.stats" => state.handle_query_stats(peer, params),
-        "query.symbol" => state.handle_query_symbol(peer, params),
+        // W2-1（T-1786840097330-dec66710）：query 面 stats HTTP native 迁移。
+        // get_uncommented_symbols / get_module_call_stats / get_semgrep_stats
+        // 从 python_compat 迁移为 rust_native，注册对应 native handler。
+        "query.uncommented_symbols" => state.handle_query_uncommented_symbols(peer, params),
+        "query.module_call_stats" => state.handle_query_module_call_stats(peer, params),
+        "query.semgrep_stats" => state.handle_query_semgrep_stats(peer, params),
+        // W3-3（T-1786861820151-deb64c48）：get_semgrep_findings 从
+        // python_compat 迁移为 rust_native，注册对应 native handler。
+        "query.semgrep_findings" => state.handle_query_semgrep_findings(peer, params),
+        // W4-1（T-1786886251769-22b94ee8-sub-1）：git 读组 5 工具
+        // （get_file_history / get_git_commits / get_commit_changes /
+        // get_git_stats / get_commit_tasks）从 python_compat/legacy 迁移为
+        // rust_native，注册对应 native handler。
+        "query.file_history" => state.handle_query_file_history(peer, params),
+        "query.git_commits" => state.handle_query_git_commits(peer, params),
+        "query.git_commit_changes" => state.handle_query_git_commit_changes(peer, params),
+        "query.git_stats" => state.handle_query_git_stats(peer, params),
+        "query.commit_tasks" => state.handle_query_commit_tasks(peer, params),
+        // W4-2（T-1786886251769-22b94ee8-sub-2）：coverage/review 读组迁移。
+        // get_coverage_for_symbol / diff_to_symbol 从 python_compat 迁移为
+        // rust_native，注册对应 native handler。
+        "query.coverage_for_symbol" => state.handle_query_coverage_for_symbol(peer, params),
+        "query.diff_to_symbol" => state.handle_query_diff_to_symbol(peer, params),
+        // W4-3（T-1786886251769-22b94ee8-sub-3）：defect 读组迁移。
+        // defect_correlation / churn_analysis / defect_search /
+        // defect_suggest_fix / get_defect_correlation 从 python_compat
+        // 迁移为 rust_native，注册对应 native handler。
+        "query.defect_correlation" => state.handle_query_defect_correlation(peer, params),
+        "query.churn_analysis" => state.handle_query_churn_analysis(peer, params),
+        "query.defect_search" => state.handle_query_defect_search(peer, params),
+        "query.defect_suggest_fix" => state.handle_query_defect_suggest_fix(peer, params),
+        "query.get_defect_correlation" => state.handle_query_get_defect_correlation(peer, params),
+        // W4-4（T-1786886251769-22b94ee8-sub-4）：diff_branches 从 python_compat
+        // 迁移为 rust_native，注册对应 native handler。
+        "query.diff_branches" => state.handle_query_diff_branches(peer, params),
+        // W2-2（T-1786840097330-a9e0ec69）：task 面 stats HTTP native 迁移。
+        // get_clone_stats / get_job_stats / get_clone_group_stats 从
+        // python_compat 迁移为 rust_native，注册对应 native handler。
+        "task.clone_stats" => state.handle_task_clone_stats(peer, params),
+        "task.job_stats" => state.handle_task_job_stats(peer, params),
+        "task.clone_group_stats" => state.handle_task_clone_group_stats(peer, params),
+        // W3-2（T-1786861820151-f3cecf40）：job 读组 3 工具（get_job_status /
+        // list_jobs / wait_for_job）从 python_compat 迁移为 rust_native，
+        // 注册对应 native handler。
+        "task.job_status" => state.handle_task_job_status(peer, params),
+        "task.list_jobs" => state.handle_task_list_jobs(peer, params),
+        "task.wait_for_job" => state.handle_task_wait_for_job(peer, params),
+        // W2-3（T-1786840097331-fd01a3f8）：defect/edit stats HTTP native 迁移。
+        // defect_stats / get_edit_stats 从 python_compat 迁移为 rust_native，
+        // 注册对应 native handler。
+        "defect.stats" => state.handle_defect_stats(peer, params),
+        "edit.stats" => state.handle_edit_stats(peer, params),
+        "query.symbol" => {
+            // M2.2（T-1786526643663-594ee010）：dispatch 层结构化前置校验。
+            // 空/纯空白/NUL → invalid_params。拒绝后不进入 handler；
+            // 合法符号名原样交给 SnapshotDaemonState 处理。
+            let qualified_name = require_str_param(params, "qualified_name")?;
+            let _ = query_handlers::validate_query_symbol_params(qualified_name)?;
+            state.handle_query_symbol(peer, params)
+        },
         "query.search" => state.handle_query_search(peer, params),
         "query.callers" => state.handle_query_callers(peer, params),
         "query.callees" => state.handle_query_callees(peer, params),
-        "query.file" => state.handle_query_file(peer, params),
+        "query.file" => {
+            // M2.1（T-1786519351240-73127ab4）：dispatch 层结构化前置校验。
+            // 空/NUL → invalid_params；`..` 向上穿越 → out_of_bounds。
+            // 拒绝后不进入 handler；合法路径原样交给 SnapshotDaemonState 处理。
+            let file_path = require_str_param(params, "file_path")?;
+            let _rel_path = query_handlers::validate_query_file_path(file_path)?;
+            state.handle_query_file(peer, params)
+        },
         "query.symbol_location" => state.handle_query_symbol_location(peer, params),
-        "query.grep" => state.handle_query_grep(peer, params),
-        "query.issues" => state.handle_query_issues(peer, params),
-        "query.tests" => state.handle_query_tests(peer, params),
+        "query.grep" => {
+            // M2.3（T-1786529505247-9d083e54）：dispatch 层结构化前置校验。
+            // 空数组 / 空或纯空白 pattern / NUL 字节 → invalid_params。
+            // 拒绝后不进入 handler；合法 patterns 原样交给 SnapshotDaemonState 处理。
+            let patterns = params
+                .get("patterns")
+                .and_then(Value::as_array)
+                .ok_or_else(|| DaemonRpcError::invalid_params("patterns 必须是字符串数组"))?;
+            let pattern_strs = patterns
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .ok_or_else(|| {
+                            DaemonRpcError::invalid_params("patterns 必须是字符串数组")
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            query_handlers::validate_query_grep_params(&pattern_strs)?;
+            state.handle_query_grep(peer, params)
+        },
+        "query.issues" => {
+            // M2.4（T-1786539379174-90f74174）：dispatch 层结构化前置校验。
+            // 空/纯空白/NUL → invalid_params。拒绝后不进入 handler；
+            // 合法符号名原样交给 SnapshotDaemonState 处理。
+            let qualified_name = require_str_param(params, "qualified_name")?;
+            let _ = query_handlers::validate_query_issues_params(qualified_name)?;
+            state.handle_query_issues(peer, params)
+        },
+        "query.tests" => {
+            // M2.5（T-1786584287058-7f712ff4）：dispatch 层结构化前置校验。
+            // 空/纯空白/NUL → invalid_params。拒绝后不进入 handler；
+            // 合法符号名原样交给 SnapshotDaemonState 处理。
+            let qualified_name = require_str_param(params, "qualified_name")?;
+            let _ = query_handlers::validate_query_tests_params(qualified_name)?;
+            state.handle_query_tests(peer, params)
+        },
 
         // ---- 高级查询方法（G7-T4 实现）----
         "query.call_chain_down" => state.handle_query_call_chain_down(peer, params),
@@ -1128,9 +2221,18 @@ fn dispatch_inner<S: DaemonStateExt>(
         "toolchain.list_bound" => state.handle_toolchain_list_bound(peer, params),
 
         // ---- Build Context 管理（G1 Layer 2 实现）----
+        // W3-1（T-1786861820150-bfe5e805）：build 读组 5 工具迁移 rust_native，
+        // list/get 复用下方 G1 路由（双模式：workspace_instance_id 走主库，
+        // workspace_id 走 ToolchainStore）；active/resolved_edges/
+        // count_resolved_edges 为 W3-1 新增 native 路由。
         "build_context.register" => state.handle_build_context_register(peer, params),
         "build_context.list" => state.handle_build_context_list(peer, params),
         "build_context.get" => state.handle_build_context_get(peer, params),
+        "build_context.active" => state.handle_build_context_active(peer, params),
+        "build_context.resolved_edges" => state.handle_build_context_resolved_edges(peer, params),
+        "build_context.count_resolved_edges" => {
+            state.handle_build_context_count_resolved_edges(peer, params)
+        }
         "build_context.set_active" => state.handle_build_context_set_active(peer, params),
         "build_context.delete" => state.handle_build_context_delete(peer, params),
 
@@ -1145,10 +2247,16 @@ fn dispatch_inner<S: DaemonStateExt>(
         "agent.heartbeat" => state.handle_agent_heartbeat(peer, params),
         "task.create" => state.handle_task_create(peer, params),
         "task.claim" => state.handle_task_claim(peer, params),
+        "task.claim.recover" => state.handle_task_claim_recover(peer, params),
         "task.work_next" => state.handle_task_work_next(peer, params),
         "task.report" => state.handle_task_report(peer, params),
+        "task.remediation.create" => state.handle_task_remediation_create(peer, params),
+        "task.step.resolve" => state.handle_task_step_resolve(peer, params),
+        // structured handoff 只能进入 daemon handler；handler 负责 envelope、lease/fencing
+        // 与 append-only ledger 校验，dispatch 层不提供本地或 legacy fallback。
         "task.handoff" => state.handle_task_handoff(peer, params),
         "task.status" => state.handle_task_status(peer, params),
+        "task.next_action" => state.handle_task_next_action(peer, params),
         "task.events" => state.handle_task_events(peer, params),
         "task.wait" => state.handle_task_wait(peer, params),
         "task.list" => state.handle_task_list(peer, params),
@@ -1156,6 +2264,8 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.reopen" => state.handle_task_reopen(peer, params),
         "task.apply" => state.handle_task_apply(peer, params),
         "task.close" => state.handle_task_close(peer, params),
+        "task.contract_set" => state.handle_task_contract_set(peer, params),
+        "task.contract_get" => state.handle_task_contract_get(peer, params),
         "task.capture_diff" => state.handle_task_capture_diff(peer, params),
         "task.split" => state.handle_task_split(peer, params),
         "task.create_from_plan" => state.handle_task_create_from_plan(peer, params),
@@ -1170,19 +2280,45 @@ fn dispatch_inner<S: DaemonStateExt>(
         "task.has_blocking_findings" => state.handle_task_has_blocking_findings(peer, params),
         "task.get_commits" => state.handle_task_get_commits(peer, params),
 
+        // ---- Lease Control Plane（M7；写操作经串行化点，只读直接执行）----
+        "lease.acquire" => state.handle_lease_acquire(peer, params),
+        // lease.renew 是 lease.extend 的兼容别名（同一 handler，docs + 测试记录）
+        "lease.extend" | "lease.renew" => state.handle_lease_extend(peer, params),
+        "lease.release" => state.handle_lease_release(peer, params),
+        "lease.status" => state.handle_lease_status(peer, params),
+        "lease.list_events" => state.handle_lease_list_events(peer, params),
+
         // ---- Collab P1/P3 方法 ----
         "verdict.submit"
         | "reveal.submit"
         | "gate.decide"
         | "role_view.get"
+        | "evidence.append"
         | "evidence.query"
         | "freshness.status"
-        | "gate.decision.query" => state.handle_collab_rpc(peer, method, params),
+        | "gate.decision.query"
+        | "gate.decision.append" => state.handle_collab_rpc(peer, method, params),
+
+        // ---- task_loop 公共能力（1D3B cutover）----
+        // 1D3B 已落地 Public permit：`task_loop.public_promote` 是 control-plane
+        // Protected_Mutation，由 handle_task_loop_public_promote 经 gate → task-DB
+        // 锁序执行 promote_public_capability（审计先提交后安装 permit）。
+        // 未组装 control-plane（task_loop_control == None）时 handler 返回
+        // fail-closed E_CAPABILITY_DISABLED。
+        "task_loop.public_promote" => state.handle_task_loop_public_promote(peer, params),
+
+        // ---- 收敛架构 RPC（T02：fs/metrics/job/admin/edit 下沉）----
+        // 全部新 method 统一进入 handle_convergence_rpc（SnapshotDaemonState 重写）。
+        m if is_convergence_rpc(m) => state.handle_convergence_rpc(peer, m, params),
 
         // ---- 未知方法 ----
         _ => Err(DaemonRpcError::method_not_found(method)),
     }
 }
+
+/// task_loop 公共能力的静态 foundation shim（1D0）已于 1D3B 移除：
+/// `task_loop.public_promote` 改由 `handle_task_loop_public_promote` 直接接管，
+/// 不再经过 route::dispatch_task_loop 包装。
 
 // ============================================
 // 参数解析工具函数
@@ -1245,7 +2381,21 @@ mod tests {
     }
 
     fn make_state() -> DaemonState {
-        DaemonState::default()
+        // 不直接调用 DaemonState::default()：default() 会执行
+        // task_db_fingerprint_from_env()，对 ~/.callwarden/callwarden.db 全量哈希
+        // （用户库可数百 MB，并行测试下磁盘 thrash 会拖到 100+s），
+        // 使 start_time.elapsed() 误报大 uptime。测试环境无需真实
+        // fingerprint/authority/transport，手动构造并全部用固定测试值占位。
+        DaemonState {
+            start_time: Instant::now(),
+            schema_version: super::super::SCHEMA_VERSION,
+            pid: std::process::id(),
+            task_collab_store: None,
+            authority_id: "test-authority".to_string(),
+            transport: "named-pipe".to_string(),
+            task_db_fingerprint: String::new(),
+            task_loop_control: None,
+        }
     }
 
     // ---- 基础方法测试 ----
@@ -1267,6 +2417,32 @@ mod tests {
     }
 
     #[test]
+    fn test_ping_returns_authoritative_timestamp() {
+        // Authoritative_Clock（Req 14.11/14.12）：ping 必须返回 daemon 权威时间戳，
+        // 供 lease acquire/renew/release 的 _clock() 读取（fail-closed，不回退客户端时钟）。
+        let mut state = make_state();
+        let peer = make_peer();
+        let params = json!({});
+        let response = dispatch(&mut state, peer, "ping", &params, &[]);
+
+        assert_eq!(response["ok"], true);
+        let ts = response["result"]["timestamp"].as_f64();
+        assert!(ts.is_some(), "ping 响应必须包含 timestamp 字段");
+        let ts = ts.unwrap();
+        // 秒级 Unix 时间戳：应大于 2024-01-01（1704067200）且小于 2100 年（4102444800）
+        assert!(
+            ts > 1_704_067_200.0,
+            "timestamp 应大于 2024 年: {}",
+            ts
+        );
+        assert!(
+            ts < 4_102_444_800.0,
+            "timestamp 应小于 2100 年: {}",
+            ts
+        );
+    }
+
+    #[test]
     fn test_health_returns_uptime_and_schema_version() {
         let mut state = make_state();
         let peer = make_peer();
@@ -1280,9 +2456,11 @@ mod tests {
             super::super::SCHEMA_VERSION
         );
         assert_eq!(response["result"]["workspace_count"], 0);
-        // uptime_seconds 应该 >= 0
+        // uptime_seconds 应该 >= 0 且为"刚启动"量级。
+        // 注：make_state() 已跳过 default() 的全量 DB 哈希（见 make_state 注释），
+        // 此处 uptime 应为亚秒级；保留 <5s 断言捕获真实的 uptime 漂移。
         let uptime = response["result"]["uptime_seconds"].as_u64().unwrap();
-        assert!(uptime < 5); // 刚启动，应该 < 5 秒
+        assert!(uptime < 5, "uptime 应处于刚启动量级，实际 {uptime}s");
     }
 
     #[test]
@@ -1608,13 +2786,14 @@ mod tests {
 
     #[test]
     fn test_daemon_state_default_pid_nonzero() {
-        let state = DaemonState::default();
+        // 用 make_state()（等价 default() 字段，但跳过全量 DB 哈希，见 make_state 注释）
+        let state = make_state();
         assert!(state.pid > 0); // 进程 ID 应该 > 0
     }
 
     #[test]
     fn test_daemon_state_default_schema_version() {
-        let state = DaemonState::default();
+        let state = make_state();
         assert_eq!(state.schema_version, super::super::SCHEMA_VERSION);
     }
 
@@ -1736,6 +2915,39 @@ mod tests {
         }
     }
 
+    struct CollabRouteMock {
+        base: DaemonState,
+    }
+
+    impl DaemonStateExt for CollabRouteMock {
+        fn daemon_state(&self) -> &DaemonState {
+            &self.base
+        }
+
+        fn handle_collab_rpc(
+            &mut self,
+            _peer: PeerCredential,
+            method: &str,
+            _params: &Value,
+        ) -> Result<Value, DaemonRpcError> {
+            Ok(json!({"routed_method": method}))
+        }
+    }
+
+    #[test]
+    fn test_verdict_submit_routes_to_native_collab_handler() {
+        let mut state = CollabRouteMock { base: make_state() };
+        let response = dispatch(
+            &mut state,
+            make_peer(),
+            "verdict.submit",
+            &json!({"request_id": "route-verdict-1"}),
+            &[],
+        );
+        assert_eq!(response["ok"], true);
+        assert_eq!(response["result"]["routed_method"], "verdict.submit");
+    }
+
     /// 自定义 DaemonState mock，用于测试 DaemonStateExt trait 扩展机制
     struct MockState {
         base: DaemonState,
@@ -1764,7 +2976,7 @@ mod tests {
     #[test]
     fn test_daemon_state_ext_trait_extension_works() {
         let mut state = MockState {
-            base: DaemonState::default(),
+            base: make_state(),
             workspace_count: 5,
         };
         let peer = make_peer();
@@ -1813,7 +3025,7 @@ mod tests {
     fn test_dispatch_rpc_protected_mutation_through_serialization() {
         use crate::daemon::serialization::SerializationPoint;
 
-        let mut state = DaemonState::default();
+        let mut state = make_state();
         let peer = make_peer();
         let sp = SerializationPoint::with_default_timeout();
 
@@ -1833,7 +3045,7 @@ mod tests {
     fn test_dispatch_rpc_non_protected_bypasses_serialization() {
         use crate::daemon::serialization::SerializationPoint;
 
-        let mut state = DaemonState::default();
+        let mut state = make_state();
         let peer = make_peer();
         let sp = SerializationPoint::with_default_timeout();
 
@@ -1858,7 +3070,7 @@ mod tests {
         // 在另一个线程通过 dispatch_rpc 调用 Protected_Mutation
         let sp2 = Arc::clone(&sp);
         let handle = std::thread::spawn(move || {
-            let mut state = DaemonState::default();
+            let mut state = make_state();
             let peer = PeerCredential::new_unix(1000, 1000, 1);
             let params = json!({});
             dispatch_rpc(&mut state, peer, "backup", &params, &[], &sp2)

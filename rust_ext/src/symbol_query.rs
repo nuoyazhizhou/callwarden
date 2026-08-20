@@ -82,6 +82,7 @@ pub fn query_symbol_detail(
 
     let issues = query_symbol_issues(
         conn,
+        workspace_id,
         file_instance_id,
         qualified_name,
         object
@@ -208,6 +209,7 @@ fn collect_rows<T>(
 
 fn query_symbol_issues(
     conn: &Connection,
+    workspace_id: i64,
     file_instance_id: i64,
     qualified_name: &str,
     start_line: i64,
@@ -257,13 +259,15 @@ fn query_symbol_issues(
                gf.status, gf.detected_at
         FROM guardrail_findings gf
         JOIN guardrail_rules gr ON gf.rule_id = gr.rule_id
-        WHERE gf.file_path = ?1
-          AND gf.symbol_hash = ?2
+        WHERE gf.workspace_id = ?1
+          AND gf.file_path = ?2
+          AND gf.symbol_hash = ?3
+          AND gf.status != 'orphaned'
           AND gf.severity != 'info'
         ORDER BY CASE gf.severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END
         ",
     ) {
-        if let Ok(rows) = stmt.query_map(params![file_path, symbol_hash], |row| {
+        if let Ok(rows) = stmt.query_map(params![workspace_id, file_path, symbol_hash], |row| {
             Ok(json!({
                 "rule_id": row.get::<_, String>(0)?,
                 "rule_name": row.get::<_, String>(1)?,
@@ -348,6 +352,7 @@ mod tests {
                 category TEXT NOT NULL
             );
             CREATE TABLE guardrail_findings (
+                workspace_id INTEGER NOT NULL DEFAULT 0,
                 rule_id TEXT NOT NULL,
                 file_path TEXT NOT NULL,
                 symbol_hash TEXT,
@@ -372,7 +377,7 @@ mod tests {
                  2, 2, 'eval(x)', 'use parser', 'a.alpha');
             INSERT INTO guardrail_rules VALUES ('guard.db', 'db_safety');
             INSERT INTO guardrail_findings VALUES
-                ('guard.db', 'a.py', 'hash-alpha', 'warn', 'open', 'unsafe SQL', 1.0);
+                (7, 'guard.db', 'a.py', 'hash-alpha', 'warn', 'open', 'unsafe SQL', 1.0);
             ",
         )
         .unwrap();

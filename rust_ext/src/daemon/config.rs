@@ -143,6 +143,9 @@ pub enum ConfigError {
     },
     #[error("环境变量 {name} 解析失败: {reason}")]
     EnvVar { name: String, reason: String },
+    /// 共存契约子任务4：daemon 存储路径冲突（跨 authority 或单 daemon 内部）
+    #[error("E_AUTHORITY_STORAGE_CONFLICT: {0}")]
+    StorageConflict(String),
 }
 
 impl DaemonConfig {
@@ -274,6 +277,114 @@ impl DaemonConfig {
     pub fn request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout_secs)
     }
+
+    /// 返回本 daemon 的存储路径集合（用于共存契约子任务4 的冲突检测）。
+    ///
+    /// 包含：task_db_path、registry_db_path、data_root、codegraph 模板推导的
+    /// codegraph.db、stage_toggle_db_path。每个元素为 (角色名, 规范化路径)。
+    ///
+    /// 规范化：尽量 realpath（存在时），否则使用原始路径的绝对化形式。
+    /// 不存在的路径无法 realpath，用 `std::path::absolute` 兜底，保证跨 daemon
+    /// 比较不因相对/绝对差异产生假冲突或漏报。
+    pub fn storage_paths(&self) -> Vec<(&'static str, PathBuf)> {
+        let mut out: Vec<(&'static str, PathBuf)> = Vec::new();
+        let normalize = |p: &std::path::Path| -> PathBuf {
+            std::fs::canonicalize(p).unwrap_or_else(|_| {
+                std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
+            })
+        };
+        let task_db = self.resolve_task_db_path();
+        if !task_db.as_os_str().is_empty() {
+            out.push(("task_db", normalize(&task_db)));
+        }
+        out.push(("registry", normalize(&self.registry_db_path)));
+        // data_root 覆盖 CAS（<data_root>/cas.db）、staging_log、snapshot 等派生存储。
+        // CAS/staging 无独立配置字段，永远位于 data_root 之下；因此校验 data_root
+        // 即校验 CAS/staging 的父目录——另一 daemon 若与 data_root 或其子目录冲突，
+        // paths_conflict 的父子目录检测会判定冲突。
+        out.push(("data_root", normalize(&self.data_root)));
+        if !self.codegraph_db_path_template.is_empty() {
+            // 模板含 {workspace_instance_id} 占位符，取模板目录作为代表性路径
+            let template_dir = self
+                .codegraph_db_path_template
+                .split(['/', '\\'])
+                .take_while(|seg| *seg != "{workspace_instance_id}")
+                .collect::<Vec<_>>()
+                .join("/");
+            let dir = if template_dir.is_empty() {
+                PathBuf::from(self.codegraph_db_path_template.clone())
+            } else {
+                PathBuf::from(template_dir)
+            };
+            out.push(("codegraph", normalize(&dir)));
+        }
+        if !self.stage_toggle_db_path.as_os_str().is_empty() {
+            out.push(("stage_toggle", normalize(&self.stage_toggle_db_path)));
+        }
+        out
+    }
+
+    /// 校验本 daemon 内部存储路径无自冲突。
+    ///
+    /// 例如 task_db 与 registry 指向同一路径（角色不同但落点相同）属于配置错误。
+    /// 冲突时返回 `E_AUTHORITY_STORAGE_CONFLICT`。
+    pub fn validate_internal_storage(&self) -> Result<(), ConfigError> {
+        let paths = self.storage_paths();
+        for i in 0..paths.len() {
+            for j in (i + 1)..paths.len() {
+                if paths[i].1 == paths[j].1 {
+                    return Err(ConfigError::StorageConflict(format!(
+                        "本 daemon 存储路径冲突: {} == {} == {}",
+                        paths[i].0,
+                        paths[j].0,
+                        paths[i].1.display()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 校验与另一个 daemon 的存储路径无交集（共存契约 §4.4 / 子任务4）。
+    ///
+    /// 两个 authority 的 task/registry/data_root/codegraph/stage_toggle 路径
+    /// 任一同等于另一方的任一路径、或互为父子目录（如 `C:\data` 与
+    /// `C:\data\workspaces`），即视为冲突，返回 `E_AUTHORITY_STORAGE_CONFLICT`。
+    pub fn validate_no_storage_overlap(&self, other: &DaemonConfig) -> Result<(), ConfigError> {
+        let mine = self.storage_paths();
+        let theirs = other.storage_paths();
+        for (my_role, my_path) in &mine {
+            for (their_role, their_path) in &theirs {
+                if paths_conflict(my_path, their_path) {
+                    return Err(ConfigError::StorageConflict(format!(
+                        "跨 authority 存储路径冲突: 本 daemon {my_role} {} 与 对方 {their_role} {} \
+                         相等或互为父子目录",
+                        my_path.display(),
+                        their_path.display()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// 判断两个规范化路径是否冲突：相等或互为祖先/后代目录。
+///
+/// 兼容 Windows 盘符/反斜杠（`C:\data` 与 `C:\data\workspaces`）与 Unix。
+/// 依赖路径已由 `storage_paths()` 规范化（realpath 或 absolute）。
+fn paths_conflict(a: &std::path::Path, b: &std::path::Path) -> bool {
+    if a == b {
+        return true;
+    }
+    // 逐组件比较祖先关系（避免字符串前缀误判，如 /data/foo 与 /data/foobar）
+    let a_components: Vec<_> = a.components().collect();
+    let b_components: Vec<_> = b.components().collect();
+    let short = a_components.len().min(b_components.len());
+    if a_components[..short] == b_components[..short] {
+        return true; // 一方是另一方的祖先（或相同）
+    }
+    false
 }
 
 #[cfg(test)]
@@ -547,5 +658,122 @@ mod tests {
         assert!(tmp.path().join("dataroot").exists());
         assert!(tmp.path().join("regdir").exists());
         assert!(tmp.path().join("subdir").exists());
+    }
+
+    // ---- 共存契约子任务4：双 daemon storage guard ----
+
+    fn cfg_with(root: &Path) -> DaemonConfig {
+        DaemonConfig {
+            socket_path: root.join("sock.sock"),
+            registry_db_path: root.join("registry.db"),
+            data_root: root.join("data"),
+            max_workers: 4,
+            request_timeout_secs: 30,
+            socket_mode: 0o660,
+            snapshot_cache_capacity: 8,
+            codegraph_db_path_template: root.join("ws/{workspace_instance_id}/codegraph.db").to_string_lossy().to_string(),
+            socket_group: String::new(),
+            stage_toggle_db_path: root.join("stage_toggle.db"),
+            task_db_path: root.join("tasks.db"),
+        }
+    }
+
+    #[test]
+    fn test_validate_internal_storage_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = cfg_with(tmp.path());
+        assert!(cfg.validate_internal_storage().is_ok());
+    }
+
+    #[test]
+    fn test_validate_internal_storage_conflict_task_registry() {
+        // task_db 与 registry 指向同一路径 → 自冲突
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = cfg_with(tmp.path());
+        cfg.task_db_path = cfg.registry_db_path.clone();
+        let err = cfg.validate_internal_storage().unwrap_err();
+        assert!(
+            err.to_string().contains("E_AUTHORITY_STORAGE_CONFLICT"),
+            "err={err}"
+        );
+    }
+
+    #[test]
+    fn test_validate_no_storage_overlap_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = cfg_with(&tmp.path().join("a"));
+        let b = cfg_with(&tmp.path().join("b"));
+        // 两个 daemon 使用不同根 → 无交集
+        assert!(a.validate_no_storage_overlap(&b).is_ok());
+    }
+
+    #[test]
+    fn test_validate_no_storage_overlap_conflict() {
+        // 两个 daemon 的 task_db 指向同一路径 → 跨 authority 冲突
+        let tmp = tempfile::tempdir().unwrap();
+        let shared_tasks = tmp.path().join("shared-tasks.db");
+        let mut a = cfg_with(&tmp.path().join("a"));
+        let mut b = cfg_with(&tmp.path().join("b"));
+        a.task_db_path = shared_tasks.clone();
+        b.task_db_path = shared_tasks.clone();
+        let err = a.validate_no_storage_overlap(&b).unwrap_err();
+        assert!(
+            err.to_string().contains("E_AUTHORITY_STORAGE_CONFLICT"),
+            "err={err}"
+        );
+        // 对称性
+        let err2 = b.validate_no_storage_overlap(&a).unwrap_err();
+        assert!(err2.to_string().contains("E_AUTHORITY_STORAGE_CONFLICT"));
+    }
+
+    #[test]
+    fn test_validate_no_storage_overlap_parent_child_dir() {
+        // 父子目录交集：C:\data 与 C:\data\workspaces 应冲突（评审新增）
+        let tmp = tempfile::tempdir().unwrap();
+        let mut a = cfg_with(&tmp.path().join("a"));
+        let mut b = cfg_with(&tmp.path().join("b"));
+        // a 的 data_root 是 b 的 data_root 的子目录
+        a.data_root = tmp.path().join("data").join("workspaces");
+        b.data_root = tmp.path().join("data");
+        // 分别规范化，确保二者保留父子关系
+        std::fs::create_dir_all(&a.data_root).unwrap();
+        std::fs::create_dir_all(&b.data_root).unwrap();
+        let err = a.validate_no_storage_overlap(&b).unwrap_err();
+        assert!(
+            err.to_string().contains("E_AUTHORITY_STORAGE_CONFLICT"),
+            "父子目录应判冲突, err={err}"
+        );
+    }
+
+    #[test]
+    fn test_paths_conflict_prefix_not_false_positive() {
+        // /data/foo 与 /data/foobar 不应因字符串前缀判冲突
+        assert!(!paths_conflict(
+            std::path::Path::new("/data/foo"),
+            std::path::Path::new("/data/foobar")
+        ));
+        // 真父子应判冲突
+        assert!(paths_conflict(
+            std::path::Path::new("/data"),
+            std::path::Path::new("/data/workspaces")
+        ));
+    }
+
+    #[test]
+    fn test_storage_paths_are_normalized() {
+        // realpath 规范化：相对/绝对差异不应造成假冲突或漏报
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let cfg = cfg_with(&root);
+        let paths = cfg.storage_paths();
+        let roles: Vec<&str> = paths.iter().map(|(r, _)| *r).collect();
+        assert!(roles.contains(&"task_db"));
+        assert!(roles.contains(&"registry"));
+        assert!(roles.contains(&"data_root"));
+        assert!(roles.contains(&"codegraph"));
+        assert!(roles.contains(&"stage_toggle"));
+        // data_root 实际存在，应 realpath 为绝对路径
+        assert!(paths.iter().any(|(r, p)| *r == "data_root" && p.is_absolute()));
     }
 }

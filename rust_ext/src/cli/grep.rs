@@ -188,7 +188,14 @@ fn run_rg(pattern: &str, fixed: bool, search_root: &Path) -> Result<RgOutcome, S
 
     let mut child = match command.spawn() {
         Ok(child) => child,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            // rg 是可选加速器；在 WSL 挂载 Windows 工作区等场景中，文件可能存在但不可执行。
+            // 这类外部工具不可用必须走受限源码回退，不能把正常查询变成 internal_error。
             return Ok(RgOutcome::Unavailable);
         }
         Err(error) => return Err(format!("cannot start rg: {error}")),

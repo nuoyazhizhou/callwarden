@@ -7,12 +7,29 @@
 use pyo3::exceptions::{PyIOError, PyKeyError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
+use rusqlite::{params, Connection};
 use std::thread;
 use std::time::Duration;
 
 use crate::daemon::cas::{
     CasImportInput, CasPublishError, CasPublishInput, CasRawCallInput, CasStore, CasSymbolInput,
 };
+
+/// 打开只含 file_generations 语义的短连接（不向目标 DB 注入 CAS_SCHEMA_DDL）。
+///
+/// 供 Python daemon（legacy replicator）对 workspace DB 的 file_generations
+/// 两阶段写复用 CasStore inner 逻辑；目标 DB 的 file_generations 表
+/// 由 Python `init_session_schema` 或本函数幂等创建。
+fn open_file_generations_conn(db_path: &str) -> Result<Connection, CasPublishError> {
+    let conn = Connection::open(db_path)
+        .map_err(|e| CasPublishError::Sqlite(e))?;
+    conn.busy_timeout(Duration::from_secs(5))
+        .map_err(|e| CasPublishError::Sqlite(e))?;
+    // WAL 模式：与 MCP/CLI 长连接并发安全（只读连接总能读到最新已提交数据）
+    let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+    CasStore::ensure_file_generations_table(&conn)?;
+    Ok(conn)
+}
 
 fn required_str(dict: &Bound<'_, PyDict>, key: &str) -> PyResult<String> {
     dict.get_item(key)?
@@ -261,8 +278,162 @@ pub fn cas_pin(db_path: &str, cas_key: &str, workspace_id: i64, ttl_seconds: f64
         .map_err(|e| PyIOError::new_err(format!("CAS pin 失败: {}", e)))
 }
 
+/// Local CAS 两阶段第一阶段 seen：原子记录代际，stale 时返回 false。
+///
+/// 对应 Python `db/db_cas.py::file_generation_seen` 的 Rust 语义
+/// （CasStore::file_generation_seen_inner，BEGIN IMMEDIATE 单事务）。
+/// 使用短连接直接操作目标 DB 的 file_generations 表（不注入 CAS_SCHEMA_DDL）。
+#[pyfunction]
+#[pyo3(signature = (db_path, workspace_id, rel_path, session_id, epoch, seq))]
+pub fn cas_file_generation_seen(
+    db_path: &str,
+    workspace_id: i64,
+    rel_path: &str,
+    session_id: &str,
+    epoch: i64,
+    seq: i64,
+) -> PyResult<bool> {
+    let incoming_gen = format!("{}:{}", epoch, seq);
+    let conn = open_file_generations_conn(db_path)
+        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+    let result = CasStore::file_generation_seen_inner(
+        &conn,
+        workspace_id,
+        rel_path,
+        session_id,
+        epoch,
+        seq,
+        &incoming_gen,
+    );
+    match result {
+        Ok(seen) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+            Ok(seen)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(PyIOError::new_err(format!("file_generation_seen 失败: {}", e)))
+        }
+    }
+}
+
+/// Local CAS 两阶段第二阶段 committed：条件 UPDATE 确认 manifest 已提交。
+///
+/// 返回 true=committed 更新成功，false=stale（其他 handler 已覆盖 seen）。
+#[pyfunction]
+#[pyo3(signature = (db_path, workspace_id, rel_path, epoch, seq))]
+pub fn cas_file_generation_committed(
+    db_path: &str,
+    workspace_id: i64,
+    rel_path: &str,
+    epoch: i64,
+    seq: i64,
+) -> PyResult<bool> {
+    let incoming_gen = format!("{}:{}", epoch, seq);
+    let conn = open_file_generations_conn(db_path)
+        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+    let result = CasStore::file_generation_committed_inner(
+        &conn,
+        workspace_id,
+        rel_path,
+        epoch,
+        seq,
+        &incoming_gen,
+    );
+    match result {
+        Ok(committed) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+            Ok(committed)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(PyIOError::new_err(format!("file_generation_committed 失败: {}", e)))
+        }
+    }
+}
+
+/// Local CAS 回滚 committed：仅清除 latest_committed_generation 匹配的行，
+/// 让同 seq 重试时 stale 检查不会拒绝。
+#[pyfunction]
+#[pyo3(signature = (db_path, workspace_id, rel_path))]
+pub fn cas_file_generation_uncommit(
+    db_path: &str,
+    workspace_id: i64,
+    rel_path: &str,
+) -> PyResult<bool> {
+    let conn = open_file_generations_conn(db_path)
+        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+    let result = CasStore::file_generation_uncommit_inner(&conn, workspace_id, rel_path);
+    match result {
+        Ok(uncommitted) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+            Ok(uncommitted)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(PyIOError::new_err(format!("file_generation_uncommit 失败: {}", e)))
+        }
+    }
+}
+
+/// 会话级重置：新 session 建立后把 workspace 所有 file_generations 的
+/// 归属 session 更新并清零 seq/seen（新 session 的 seq 从 1 开始）。
+#[pyfunction]
+#[pyo3(signature = (db_path, workspace_id, session_id, epoch))]
+pub fn cas_file_generation_reset(
+    db_path: &str,
+    workspace_id: i64,
+    session_id: &str,
+    epoch: i64,
+) -> PyResult<()> {
+    let conn = open_file_generations_conn(db_path)
+        .map_err(|e| PyIOError::new_err(format!("打开数据库失败: {}", e)))?;
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| PyIOError::new_err(format!("BEGIN IMMEDIATE 失败: {}", e)))?;
+    let result = CasStore::file_generation_reset_inner(&conn, workspace_id, session_id, epoch);
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| PyIOError::new_err(format!("COMMIT 失败: {}", e)))?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(PyIOError::new_err(format!("file_generation_reset 失败: {}", e)))
+        }
+    }
+}
+
+/// Global CAS 垃圾回收：回收超过 grace_days 未被引用的文件块。
+///
+/// 对应 Python `db/db_cas.py::cas_gc` 的 Rust 语义（CasStore::gc_unreferenced，
+/// flock + BEGIN IMMEDIATE）。返回回收的条目数。
+#[pyfunction]
+#[pyo3(signature = (db_path, grace_days=30))]
+pub fn cas_gc(db_path: &str, grace_days: u32) -> PyResult<u64> {
+    let store = CasStore::open(db_path)
+        .map_err(|e| PyIOError::new_err(format!("打开 CAS 数据库失败: {}", e)))?;
+    store
+        .gc_unreferenced(grace_days)
+        .map_err(|e| PyIOError::new_err(format!("CAS gc 失败: {}", e)))
+}
+
 pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(cas_publish_with_retry, m)?)?;
     m.add_function(wrap_pyfunction!(cas_pin, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_file_generation_seen, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_file_generation_committed, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_file_generation_uncommit, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_file_generation_reset, m)?)?;
+    m.add_function(wrap_pyfunction!(cas_gc, m)?)?;
     Ok(())
 }

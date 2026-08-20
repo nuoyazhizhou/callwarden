@@ -10,6 +10,10 @@ pub mod dispatch;
 /// Task 协同 RPC 模块（multi-llm-contract-collaboration D0/P1）
 pub mod task_collab;
 
+/// task_loop_public 能力 foundation（1D0：模块声明 / foundation 私有类型 /
+/// fail-closed stubs / 禁用 shim，cutover 前能力禁用）
+pub mod task_loop;
+
 
 /// 平台无关传输抽象（D0 3.1：TransportListener / TransportConnection trait）
 /// Unix: UDS + SO_PEERCRED；Windows: 命名管道 + ImpersonateNamedPipeClient
@@ -81,6 +85,15 @@ pub mod stage_toggle;
 /// Daemon server（跨平台：Unix UDS + Windows 命名管道，内部 cfg 分流）
 pub mod server;
 
+/// H1 HTTP MVP transport（Profile v1: dev_loopback_unauthenticated）
+/// 冻结栈：axum 0.8 + hyper 1 + tokio 1，仅 HTTP/1.1，loopback-only
+pub mod http_server;
+
+/// H3 Python compatibility worker adapter
+/// daemon 管理 worker 生命周期 + 帧协议 IPC + 兼容写锁
+/// 契约：docs/design/http-daemon-mvp-compatibility-contract.md §3.3
+pub mod compat_adapter;
+
 /// R6: SnapshotDaemonState —— 集成 SnapshotCache 的 daemon state 实现
 /// 实现 snapshot.publish / gc.snapshots / query.* handler
 /// 跨平台：query.* 和 gc.snapshots 纯逻辑，snapshot.publish 的 FD 模式仅 Unix
@@ -128,7 +141,32 @@ pub mod error_codes;
 /// workspace/file/generation/language
 pub mod parser_metrics;
 
+/// 3.14: 路由矩阵——239 工具单一真相源 Rust 镜像（T01 收敛架构）
+/// 数据来自 deliverables/software-company/tool_migration_matrix.json
+/// （由 scripts/gen_route_matrix.py --emit-json 生成，禁止手改）。
+pub mod route_matrix;
+
+/// 3.15: 文件/构建面 handler（workspace.build_graph / workspace.file.* 家族）
+/// 对应 18 个纯本地 SQL 工具中的文件面 9 个（T02-fs 批次）。
+pub mod fs_handlers;
+
+/// 3.16: 度量/状态面 handler（query.code_health / query.metrics_summary 等）
+/// 对应 18 个纯本地 SQL 工具中的度量面 9 个（T02-metrics 批次）。
+pub mod metrics_handlers;
+
+/// 3.17: 异步长任务 job 状态机（task.job_submit / task.job_cancel / job 执行器）
+/// 对应 61 个拒止工具中的异步长任务组 18 个（T02-job 批次，target_backend=task_rpc）。
+pub mod job_runner;
+
+/// 3.18: GC/审计/运维 handler（admin.gc_* / admin.audit_* / admin.branch_* 等）
+/// 对应 61 个拒止工具中的 GC/审计/运维/协同写面（T02-admin 批次）。
+pub mod admin_handlers;
+
+/// 3.19: 编辑/提案/规则写面 handler（edit.propose* / rule.* / gate.* / summary.generate）
+/// 对应 61 个拒止工具中的编辑/规则写面（T02-edit 批次，经 CAS + SerializationPoint）。
+pub mod edit_handlers;
+
 /// daemon schema 版本号（与 db/schema.py:SCHEMA_VERSION 保持同步）
 /// 用于 schema.version RPC 方法返回，以及 daemon 启动时 schema 兼容性检查。
 /// 更新 schema 时记得同步修改。
-pub const SCHEMA_VERSION: u32 = 47;
+pub const SCHEMA_VERSION: u32 = 51;

@@ -41,6 +41,13 @@ path = "src/bin/cw_client.rs"
 name = "cw-agent"
 path = "src/bin/cw_agent.rs"
 
+[[bin]]
+# 共存契约子任务2：cw-bridge（Windows 侧受限 bridge）
+# 监听 loopback TCP 供 WSL 客户端访问，转发 JSON-RPC 到当前用户 SID 的 Named Pipe。
+# Windows-only；非 Windows 平台打印错误退出。不打开 SQLite、不实现任务写逻辑。
+name = "cw-bridge"
+path = "src/bin/cw_bridge.rs"
+
 [features]
 # 默认开启 extension-module：cdylib 构建时不链接 libpython（由 Python host 提供）
 # 测试时使用 `cargo test --no-default-features` 关闭此 feature，让 PyO3 链接 libpython
@@ -112,6 +119,8 @@ thiserror = "1.0"
 base64 = "0.22"
 # G8 daemon: hex 用于解码客户端传来的 canonical_bytes_hex（agent_protocol.py 小文件默认路径）
 hex = "0.4"
+# 1D1 task-domain operation store: Unicode NFC 规范化（operation-params-c14n/v1）
+unicode-normalization = "0.1.25"
 # G6 CAS GC: fs2 提供跨平台文件锁（lock_exclusive），用于 CasStore::gc 和 gc_unreferenced
 # 多 daemon 实例并发 GC 时与 BEGIN IMMEDIATE 形成双保险，防跨进程 mark-sweep 数据竞态
 fs2 = "0.4"
@@ -126,6 +135,12 @@ toml = "0.8"
 # R7 cw_daemon binary + Phase 5-1 A.2 cw_cli binary：clap（CLI 参数解析）
 # 跨平台依赖（cw_cli 需在 Windows/macOS/Linux 上运行）
 clap = { version = "4", features = ["derive"] }
+
+# H1: HTTP MVP transport（frozen: axum 0.8.x + hyper 1.x + tokio 1.x, HTTP/1.1 only）
+# 仅用于 dev_loopback_unauthenticated 开发期 overlay；不启用 HTTP/2、WS、SSE、压缩。
+axum = "0.8"
+hyper = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "io-util"] }
 
 # R7 cw_daemon binary：signal-hook（SIGTERM/SIGINT 优雅关闭）
 # Linux-only 依赖，避免 Windows/macOS 编译时引入不必要的包

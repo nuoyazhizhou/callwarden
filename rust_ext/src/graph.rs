@@ -410,6 +410,7 @@ impl GraphStore {
         workspace_id: i64,
     ) -> PyResult<(usize, usize)> {
         py.detach(|| self._load_from_sqlite_stage(db_path, workspace_id, true))
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 
     /// 仅加载文件和符号索引，不读取 calls 表。
@@ -425,6 +426,7 @@ impl GraphStore {
     ) -> PyResult<usize> {
         py.detach(|| self._load_from_sqlite_stage(db_path, workspace_id, false))
             .map(|(symbols, _)| symbols)
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 
     /// 创建一个共享当前符号层的新 store，供后台仅构建调用图。
@@ -448,6 +450,7 @@ impl GraphStore {
         workspace_id: i64,
     ) -> PyResult<usize> {
         py.detach(|| self._load_calls_from_sqlite(db_path, workspace_id))
+            .map_err(pyo3::exceptions::PyRuntimeError::new_err)
     }
 
     /// 返回当前加载阶段，供 Python/daemon 选择查询路径。
@@ -461,308 +464,6 @@ impl GraphStore {
         }
     }
 
-    /// 内部共享加载路径，`include_calls=false` 时在符号索引完成后返回。
-    ///
-    /// P0-2 整改（2026-07-22 复审整改-v2）：`workspace_id` 参数过滤用户级
-    /// 单库多 workspace 数据。`workspace_id=0` 不过滤（兼容旧测试和单 workspace DB），
-    /// `workspace_id>0` 时在 SQL 层用 `WHERE workspace_id = ?` 过滤 file_instances
-    /// 和 symbols，避免 snapshot 混入其他 workspace 的符号。
-    fn _load_from_sqlite_stage(
-        &mut self,
-        db_path: &str,
-        workspace_id: i64,
-        include_calls: bool,
-    ) -> PyResult<(usize, usize)> {
-        self._load_from_sqlite_mode(db_path, workspace_id, include_calls, true)
-    }
-
-    /// 按需选择 immutable 或普通只读连接加载 GraphStore。
-    fn _load_from_sqlite_mode(
-        &mut self,
-        db_path: &str,
-        workspace_id: i64,
-        include_calls: bool,
-        immutable: bool,
-    ) -> PyResult<(usize, usize)> {
-        let conn = if immutable {
-            open_immutable_db(db_path)?
-        } else {
-            Connection::open_with_flags(
-                db_path,
-                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )
-            .map_err(|error| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "open readonly graph database failed: {error}"
-                ))
-            })?
-        };
-        // P0-2: 动态构建 WHERE 条件——workspace_id>0 时过滤，=0 时不过滤（兼容）
-        let ws_filter = if workspace_id > 0 {
-            format!("AND workspace_id = {}", workspace_id)
-        } else {
-            String::new()
-        };
-
-        // 1a. 先加载 file_paths（P3 优化：file_instance_id → rel_path 独立表）
-        // P4: 改为 pool + offsets，消除 20万 String 堆分配（省 11MB）
-        let mut file_paths_pool = String::new();
-        let mut file_paths_offsets: Vec<u32> = Vec::new();
-        {
-            let sql_files = format!(
-                "SELECT id, rel_path FROM file_instances WHERE status != 'archived' {} ORDER BY id",
-                ws_filter
-            );
-            let mut stmt_files = conn.prepare(&sql_files).map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!(
-                    "prepare file_instances query failed: {}",
-                    e
-                ))
-            })?;
-            let file_iter = stmt_files
-                .query_map([], |row| {
-                    Ok((row.get::<_, i64>(0)? as u32, row.get::<_, String>(1)?))
-                })
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "query file_instances failed: {}",
-                        e
-                    ))
-                })?;
-            // 用临时 Vec 收集 (fid, rel_path)，然后构建 pool
-            let mut file_list: Vec<(u32, String)> = Vec::new();
-            for row in file_iter {
-                let (fid, rel_path) = row.map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "read file_instance row failed: {}",
-                        e
-                    ))
-                })?;
-                file_list.push((fid, rel_path));
-            }
-            // 找到 max fid 确定 offsets 数组大小
-            let max_fid = file_list.iter().map(|(fid, _)| *fid).max().unwrap_or(0);
-            file_paths_offsets.resize(max_fid as usize + 2, 0);
-            for (fid, rel_path) in &file_list {
-                let offset = file_paths_pool.len() as u32;
-                file_paths_pool.push_str(rel_path);
-                file_paths_offsets[*fid as usize] = offset;
-            }
-            // 构建末尾哨兵 + 填充空洞（fid 不连续时空洞用前一个 offset）
-            let mut last_offset = 0u32;
-            for i in 0..file_paths_offsets.len() {
-                if file_paths_offsets[i] == 0 && i > 0 {
-                    file_paths_offsets[i] = last_offset;
-                } else if file_paths_offsets[i] > 0 {
-                    last_offset = file_paths_offsets[i];
-                }
-            }
-            // 末尾哨兵：最后一个元素指向 pool 末尾，供 file_rel_path 切片访问
-            let sentinel = file_paths_pool.len() as u32;
-            let last_idx = file_paths_offsets.len() - 1;
-            file_paths_offsets[last_idx] = sentinel;
-        }
-
-        // 1b. 加载符号（不再 JOIN file_instances，file_rel_path 从 file_paths 查）
-        // P7: name/qualified_name/module_path 改为 string pool，消除 600万 String 堆分配
-        let mut by_id = Vec::new();
-        // P7: 3 个全局 string pool
-        let mut name_pool = String::new();
-        let mut qname_pool = String::new();
-        let mut module_pool = String::new();
-
-        let sql_symbols = format!(
-            "SELECT s.id, s.file_instance_id, s.kind, s.name, s.qualified_name,
-                    s.module_path, s.start_line, s.end_line, s.depth
-             FROM symbols s
-             JOIN file_instances fi ON s.file_instance_id = fi.id
-             WHERE fi.status != 'archived' {}",
-            ws_filter
-        );
-        let mut stmt = conn.prepare(&sql_symbols).map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!(
-                "prepare symbols query failed: {}",
-                e
-            ))
-        })?;
-
-        let symbol_iter = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, i64>(0)? as u32, // id
-                    row.get::<_, i64>(1)? as u32, // file_instance_id
-                    row.get::<_, String>(2)?,     // kind
-                    row.get::<_, String>(3)?,     // name
-                    row.get::<_, String>(4)?,     // qualified_name
-                    row.get::<_, String>(5)?,     // module_path
-                    row.get::<_, i64>(6)? as u32, // start_line
-                    row.get::<_, i64>(7)? as u32, // end_line
-                    row.get::<_, i64>(8)? as i32, // depth
-                ))
-            })
-            .map_err(|e| {
-                pyo3::exceptions::PyRuntimeError::new_err(format!("query symbols failed: {}", e))
-            })?;
-
-        for row in symbol_iter {
-            let (id, fid, kind_str, name, qname, module, start_line, end_line, depth) = row
-                .map_err(|e| {
-                    pyo3::exceptions::PyRuntimeError::new_err(format!(
-                        "read symbol row failed: {}",
-                        e
-                    ))
-                })?;
-
-            // P7: 追加到 string pool，记录 offset + len
-            let name_offset = name_pool.len() as u32;
-            let name_len = name.len() as u32;
-            name_pool.push_str(&name);
-
-            let qname_offset = qname_pool.len() as u32;
-            let qname_len = qname.len() as u32;
-            qname_pool.push_str(&qname);
-
-            let module_offset = module_pool.len() as u32;
-            let module_len = module.len() as u32;
-            module_pool.push_str(&module);
-
-            let sym = GraphSymbol {
-                id,
-                file_instance_id: fid,
-                kind: SymbolKind::from_db_str(&kind_str),
-                name_offset,
-                name_len,
-                qname_offset,
-                qname_len,
-                module_offset,
-                module_len,
-                start_line,
-                end_line,
-                depth,
-            };
-
-            if id as usize >= by_id.len() {
-                by_id.resize(
-                    id as usize + 1,
-                    GraphSymbol {
-                        id: 0,
-                        file_instance_id: 0,
-                        kind: SymbolKind::Unknown,
-                        name_offset: 0,
-                        name_len: 0,
-                        qname_offset: 0,
-                        qname_len: 0,
-                        module_offset: 0,
-                        module_len: 0,
-                        start_line: 0,
-                        end_line: 0,
-                        depth: -1,
-                    },
-                );
-            }
-            by_id[id as usize] = sym;
-        }
-
-        let symbol_count = by_id.len();
-
-        // 直接排序 symbol_id 并从 pool 比较，加载期不再复制百万份 String。
-        let mut by_qname_sorted_ids: Vec<u32> = by_id
-            .iter()
-            .filter(|sym| sym.id != 0 || sym.name_len != 0)
-            .map(|sym| sym.id)
-            .collect();
-        by_qname_sorted_ids.sort_unstable_by(|a, b| {
-            let sa = &by_id[*a as usize];
-            let sb = &by_id[*b as usize];
-            let qa =
-                &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
-            let qb =
-                &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
-            qa.cmp(qb)
-        });
-        let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
-        by_simple_name_sorted_ids.sort_unstable_by(|a, b| {
-            let sa = &by_id[*a as usize];
-            let sb = &by_id[*b as usize];
-            let na = &name_pool[sa.name_offset as usize..(sa.name_offset + sa.name_len) as usize];
-            let nb = &name_pool[sb.name_offset as usize..(sb.name_offset + sb.name_len) as usize];
-            na.cmp(nb).then_with(|| a.cmp(b))
-        });
-
-        // P2: 构建搜索索引 — 所有 name + qname 的小写版本，\0 分隔
-        // memchr SIMD 一次扫描整个池，替代 N 次子串搜索
-        let mut search_pool_lower = String::new();
-        let mut search_entry_offsets: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
-        let mut search_entry_sym_ids: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
-        for sym in &by_id {
-            if sym.id == 0 && sym.name_len == 0 {
-                continue;
-            }
-            // name 条目
-            let name = name_pool
-                .get(sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize)
-                .unwrap_or("");
-            if !name.is_empty() {
-                search_entry_offsets.push(search_pool_lower.len() as u32);
-                search_entry_sym_ids.push(sym.id);
-                for c in name.chars() {
-                    search_pool_lower.push(c.to_ascii_lowercase());
-                }
-                search_pool_lower.push('\0'); // \0 分隔符，防止跨条目误匹配
-            }
-            // qname 条目（可能与 name 相同，但搜索时需要匹配 qualified_name）
-            let qname = qname_pool
-                .get(sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize)
-                .unwrap_or("");
-            if !qname.is_empty() && qname != name {
-                search_entry_offsets.push(search_pool_lower.len() as u32);
-                search_entry_sym_ids.push(sym.id);
-                for c in qname.chars() {
-                    search_pool_lower.push(c.to_ascii_lowercase());
-                }
-                search_pool_lower.push('\0');
-            }
-        }
-
-        let symbols = Arc::new(SymbolTable {
-            by_id,
-            by_qname_sorted_ids,
-            by_simple_name_sorted_ids,
-            file_paths_pool,
-            file_paths_offsets,
-            name_pool,
-            qname_pool,
-            module_pool,
-            search_pool_lower,
-            search_entry_offsets,
-            search_entry_sym_ids,
-        });
-
-        if !include_calls {
-            self.symbols = Some(symbols);
-            self.calls = None;
-            return Ok((symbol_count, 0));
-        }
-
-        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
-
-        self.symbols = Some(symbols);
-        self.calls = Some(Arc::new(calls));
-
-        Ok((symbol_count, edge_count))
-    }
-
-    fn _load_calls_from_sqlite(&mut self, db_path: &str, workspace_id: i64) -> PyResult<usize> {
-        let symbols = self
-            .symbols
-            .as_ref()
-            .ok_or_else(|| pyo3::exceptions::PyRuntimeError::new_err("symbols not ready"))?;
-        let conn = open_immutable_db(db_path)?;
-        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
-        self.calls = Some(Arc::new(calls));
-        Ok(edge_count)
-    }
 
     /// 查询谁调用了这个函数（对齐 Python db_query.get_callers）
     /// 入参：callee_name（简名，对齐 Python 接口）
@@ -1951,6 +1652,291 @@ impl GraphStore {
 // ============================================
 
 impl GraphStore {
+    /// 内部共享加载路径，`include_calls=false` 时在符号索引完成后返回。
+    ///
+    /// P0-2 整改（2026-07-22 复审整改-v2）：`workspace_id` 参数过滤用户级
+    /// 单库多 workspace 数据。`workspace_id=0` 不过滤（兼容旧测试和单 workspace DB），
+    /// `workspace_id>0` 时在 SQL 层用 `WHERE workspace_id = ?` 过滤 file_instances
+    /// 和 symbols，避免 snapshot 混入其他 workspace 的符号。
+    fn _load_from_sqlite_stage(
+        &mut self,
+        db_path: &str,
+        workspace_id: i64,
+        include_calls: bool,
+    ) -> Result<(usize, usize), String> {
+        self._load_from_sqlite_mode(db_path, workspace_id, include_calls, true)
+    }
+
+    /// 按需选择 immutable 或普通只读连接加载 GraphStore。
+    ///
+    /// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化），
+    /// pyo3 边界（load_from_sqlite 等 #[pymethods]）再转回 PyErr。
+    fn _load_from_sqlite_mode(
+        &mut self,
+        db_path: &str,
+        workspace_id: i64,
+        include_calls: bool,
+        immutable: bool,
+    ) -> Result<(usize, usize), String> {
+        let conn = if immutable {
+            open_immutable_db(db_path)?
+        } else {
+            Connection::open_with_flags(
+                db_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                    | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(|error| format!("open readonly graph database failed: {error}"))?
+        };
+        // P0-2: 动态构建 WHERE 条件——workspace_id>0 时过滤，=0 时不过滤（兼容）
+        let ws_filter = if workspace_id > 0 {
+            format!("AND workspace_id = {}", workspace_id)
+        } else {
+            String::new()
+        };
+
+        // 1a. 先加载 file_paths（P3 优化：file_instance_id → rel_path 独立表）
+        // P4: 改为 pool + offsets，消除 20万 String 堆分配（省 11MB）
+        let mut file_paths_pool = String::new();
+        let mut file_paths_offsets: Vec<u32> = Vec::new();
+        {
+            let sql_files = format!(
+                "SELECT id, rel_path FROM file_instances WHERE status != 'archived' {} ORDER BY id",
+                ws_filter
+            );
+            let mut stmt_files = conn.prepare(&sql_files).map_err(|e| {
+                format!("prepare file_instances query failed: {}", e)
+            })?;
+            let file_iter = stmt_files
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)? as u32, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| format!("query file_instances failed: {}", e))?;
+            // 用临时 Vec 收集 (fid, rel_path)，然后构建 pool
+            let mut file_list: Vec<(u32, String)> = Vec::new();
+            for row in file_iter {
+                let (fid, rel_path) =
+                    row.map_err(|e| format!("read file_instance row failed: {}", e))?;
+                file_list.push((fid, rel_path));
+            }
+            // 找到 max fid 确定 offsets 数组大小
+            let max_fid = file_list.iter().map(|(fid, _)| *fid).max().unwrap_or(0);
+            file_paths_offsets.resize(max_fid as usize + 2, 0);
+            for (fid, rel_path) in &file_list {
+                let offset = file_paths_pool.len() as u32;
+                file_paths_pool.push_str(rel_path);
+                file_paths_offsets[*fid as usize] = offset;
+            }
+            // 构建末尾哨兵 + 填充空洞（fid 不连续时空洞用前一个 offset）
+            let mut last_offset = 0u32;
+            for i in 0..file_paths_offsets.len() {
+                if file_paths_offsets[i] == 0 && i > 0 {
+                    file_paths_offsets[i] = last_offset;
+                } else if file_paths_offsets[i] > 0 {
+                    last_offset = file_paths_offsets[i];
+                }
+            }
+            // 末尾哨兵：最后一个元素指向 pool 末尾，供 file_rel_path 切片访问
+            let sentinel = file_paths_pool.len() as u32;
+            let last_idx = file_paths_offsets.len() - 1;
+            file_paths_offsets[last_idx] = sentinel;
+        }
+
+        // 1b. 加载符号（不再 JOIN file_instances，file_rel_path 从 file_paths 查）
+        // P7: name/qualified_name/module_path 改为 string pool，消除 600万 String 堆分配
+        let mut by_id = Vec::new();
+        // P7: 3 个全局 string pool
+        let mut name_pool = String::new();
+        let mut qname_pool = String::new();
+        let mut module_pool = String::new();
+
+        let sql_symbols = format!(
+            "SELECT s.id, s.file_instance_id, s.kind, s.name, s.qualified_name,
+                    s.module_path, s.start_line, s.end_line, s.depth
+             FROM symbols s
+             JOIN file_instances fi ON s.file_instance_id = fi.id
+             WHERE fi.status != 'archived' {}",
+            ws_filter
+        );
+        let mut stmt = conn.prepare(&sql_symbols).map_err(|e| {
+            format!("prepare symbols query failed: {}", e)
+        })?;
+
+        let symbol_iter = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u32, // id
+                    row.get::<_, i64>(1)? as u32, // file_instance_id
+                    row.get::<_, String>(2)?,     // kind
+                    row.get::<_, String>(3)?,     // name
+                    row.get::<_, String>(4)?,     // qualified_name
+                    row.get::<_, String>(5)?,     // module_path
+                    row.get::<_, i64>(6)? as u32, // start_line
+                    row.get::<_, i64>(7)? as u32, // end_line
+                    row.get::<_, i64>(8)? as i32, // depth
+                ))
+            })
+            .map_err(|e| format!("query symbols failed: {}", e))?;
+
+        for row in symbol_iter {
+            let (id, fid, kind_str, name, qname, module, start_line, end_line, depth) = row
+                .map_err(|e| format!("read symbol row failed: {}", e))?;
+
+            // P7: 追加到 string pool，记录 offset + len
+            let name_offset = name_pool.len() as u32;
+            let name_len = name.len() as u32;
+            name_pool.push_str(&name);
+
+            let qname_offset = qname_pool.len() as u32;
+            let qname_len = qname.len() as u32;
+            qname_pool.push_str(&qname);
+
+            let module_offset = module_pool.len() as u32;
+            let module_len = module.len() as u32;
+            module_pool.push_str(&module);
+
+            let sym = GraphSymbol {
+                id,
+                file_instance_id: fid,
+                kind: SymbolKind::from_db_str(&kind_str),
+                name_offset,
+                name_len,
+                qname_offset,
+                qname_len,
+                module_offset,
+                module_len,
+                start_line,
+                end_line,
+                depth,
+            };
+
+            if id as usize >= by_id.len() {
+                by_id.resize(
+                    id as usize + 1,
+                    GraphSymbol {
+                        id: 0,
+                        file_instance_id: 0,
+                        kind: SymbolKind::Unknown,
+                        name_offset: 0,
+                        name_len: 0,
+                        qname_offset: 0,
+                        qname_len: 0,
+                        module_offset: 0,
+                        module_len: 0,
+                        start_line: 0,
+                        end_line: 0,
+                        depth: -1,
+                    },
+                );
+            }
+            by_id[id as usize] = sym;
+        }
+
+        let symbol_count = by_id.len();
+
+        // 直接排序 symbol_id 并从 pool 比较，加载期不再复制百万份 String。
+        let mut by_qname_sorted_ids: Vec<u32> = by_id
+            .iter()
+            .filter(|sym| sym.id != 0 || sym.name_len != 0)
+            .map(|sym| sym.id)
+            .collect();
+        by_qname_sorted_ids.sort_unstable_by(|a, b| {
+            let sa = &by_id[*a as usize];
+            let sb = &by_id[*b as usize];
+            let qa =
+                &qname_pool[sa.qname_offset as usize..(sa.qname_offset + sa.qname_len) as usize];
+            let qb =
+                &qname_pool[sb.qname_offset as usize..(sb.qname_offset + sb.qname_len) as usize];
+            qa.cmp(qb)
+        });
+        let mut by_simple_name_sorted_ids = by_qname_sorted_ids.clone();
+        by_simple_name_sorted_ids.sort_unstable_by(|a, b| {
+            let sa = &by_id[*a as usize];
+            let sb = &by_id[*b as usize];
+            let na = &name_pool[sa.name_offset as usize..(sa.name_offset + sa.name_len) as usize];
+            let nb = &name_pool[sb.name_offset as usize..(sb.name_offset + sb.name_len) as usize];
+            na.cmp(nb).then_with(|| a.cmp(b))
+        });
+
+        // P2: 构建搜索索引 — 所有 name + qname 的小写版本，\0 分隔
+        // memchr SIMD 一次扫描整个池，替代 N 次子串搜索
+        let mut search_pool_lower = String::new();
+        let mut search_entry_offsets: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
+        let mut search_entry_sym_ids: Vec<u32> = Vec::with_capacity(by_id.len() * 2);
+        for sym in &by_id {
+            if sym.id == 0 && sym.name_len == 0 {
+                continue;
+            }
+            // name 条目
+            let name = name_pool
+                .get(sym.name_offset as usize..(sym.name_offset + sym.name_len) as usize)
+                .unwrap_or("");
+            if !name.is_empty() {
+                search_entry_offsets.push(search_pool_lower.len() as u32);
+                search_entry_sym_ids.push(sym.id);
+                for c in name.chars() {
+                    search_pool_lower.push(c.to_ascii_lowercase());
+                }
+                search_pool_lower.push('\0'); // \0 分隔符，防止跨条目误匹配
+            }
+            // qname 条目（可能与 name 相同，但搜索时需要匹配 qualified_name）
+            let qname = qname_pool
+                .get(sym.qname_offset as usize..(sym.qname_offset + sym.qname_len) as usize)
+                .unwrap_or("");
+            if !qname.is_empty() && qname != name {
+                search_entry_offsets.push(search_pool_lower.len() as u32);
+                search_entry_sym_ids.push(sym.id);
+                for c in qname.chars() {
+                    search_pool_lower.push(c.to_ascii_lowercase());
+                }
+                search_pool_lower.push('\0');
+            }
+        }
+
+        let symbols = Arc::new(SymbolTable {
+            by_id,
+            by_qname_sorted_ids,
+            by_simple_name_sorted_ids,
+            file_paths_pool,
+            file_paths_offsets,
+            name_pool,
+            qname_pool,
+            module_pool,
+            search_pool_lower,
+            search_entry_offsets,
+            search_entry_sym_ids,
+        });
+
+        if !include_calls {
+            self.symbols = Some(symbols);
+            self.calls = None;
+            return Ok((symbol_count, 0));
+        }
+
+        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
+
+        self.symbols = Some(symbols);
+        self.calls = Some(Arc::new(calls));
+
+        Ok((symbol_count, edge_count))
+    }
+
+    /// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化）。
+    fn _load_calls_from_sqlite(
+        &mut self,
+        db_path: &str,
+        workspace_id: i64,
+    ) -> Result<usize, String> {
+        let symbols = self
+            .symbols
+            .as_ref()
+            .ok_or_else(|| "symbols not ready".to_string())?;
+        let conn = open_immutable_db(db_path)?;
+        let (calls, edge_count) = load_call_graph(&conn, symbols.as_ref(), workspace_id)?;
+        self.calls = Some(Arc::new(calls));
+        Ok(edge_count)
+    }
+
     /// 创建共享符号层和调用图的查询视图，不复制大表。
     pub(crate) fn fork_shared(&self) -> Self {
         Self {
@@ -1980,20 +1966,22 @@ impl GraphStore {
     /// Rust 内部调用的阻塞加载入口，不需要 Python token。
     ///
     /// P0-2 整改：`workspace_id` 必传，过滤用户级单库多 workspace 数据。
+    /// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化）。
     pub(crate) fn load_from_sqlite_blocking(
         &mut self,
         db_path: &str,
         workspace_id: i64,
-    ) -> PyResult<(usize, usize)> {
+    ) -> Result<(usize, usize), String> {
         self._load_from_sqlite_stage(db_path, workspace_id, true)
     }
 
     /// 用普通只读连接加载完整图，确保 local CLI 能读取 WAL。
+    /// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化）。
     pub(crate) fn load_from_sqlite_readonly_blocking(
         &mut self,
         db_path: &str,
         workspace_id: i64,
-    ) -> PyResult<(usize, usize)> {
+    ) -> Result<(usize, usize), String> {
         self._load_from_sqlite_mode(db_path, workspace_id, true, false)
     }
 
@@ -2782,11 +2770,18 @@ fn build_callee_name_index(
 /// 从边列表构建 CSR 邻接表
 /// forward: 按 caller_id 排序
 /// backward: 按 callee_id 排序（用于 get_callers 反向查询）
-fn open_immutable_db(db_path: &str) -> PyResult<Connection> {
+/// T-1786574299601：错误以 String 传播（daemon 无解释器时 PyErr 无法格式化）。
+fn open_immutable_db(db_path: &str) -> Result<Connection, String> {
     let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
         | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX
         | rusqlite::OpenFlags::SQLITE_OPEN_URI;
-    let normalized = db_path.replace('\\', "/");
+    // M2.1（T-1786519351240-73127ab4，Coordinator 授权将 graph.rs 纳入白名单）：
+    // Windows `std::fs::canonicalize` 返回 `\\?\` 前缀的 extended-length path，
+    // 直接构造 URI 会得到 `//?/C:/...`（非法 URI），SQLite 报 unable to open
+    // database file（snapshot.publish 既有 Windows 生产缺陷）。剥离前缀后走标准
+    // `file:///C:/...?immutable=1`；Linux 路径无此前缀，行为不变。
+    let stripped = db_path.strip_prefix(r"\\?\").unwrap_or(db_path);
+    let normalized = stripped.replace('\\', "/");
     let uri = if normalized.starts_with("//") || normalized.starts_with("file:") {
         if normalized.contains('?') {
             format!("{}&immutable=1", normalized)
@@ -2801,16 +2796,15 @@ fn open_immutable_db(db_path: &str) -> PyResult<Connection> {
         };
         format!("{}{}?immutable=1", prefix, normalized)
     };
-    Connection::open_with_flags(&uri, flags).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("open db failed: {} (uri={})", e, uri))
-    })
+    Connection::open_with_flags(&uri, flags)
+        .map_err(|e| format!("open db failed: {} (uri={})", e, uri))
 }
 
 fn load_call_graph(
     conn: &Connection,
     symbols: &SymbolTable,
     workspace_id: i64,
-) -> PyResult<(CallGraph, usize)> {
+) -> Result<(CallGraph, usize), String> {
     let mut edges: Vec<CallEdge> = Vec::new();
     let mut callee_names_pool = String::new();
     let mut callee_names_offsets: Vec<u32> = Vec::new();
@@ -2830,9 +2824,9 @@ fn load_call_graph(
     } else {
         "SELECT caller_id, callee_id, callee_name, call_line, is_cross_file FROM calls".to_string()
     };
-    let mut stmt = conn.prepare(&sql_calls).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("prepare calls query failed: {}", e))
-    })?;
+    let mut stmt = conn
+        .prepare(&sql_calls)
+        .map_err(|e| format!("prepare calls query failed: {}", e))?;
     let call_iter = stmt
         .query_map([], |row| {
             Ok((
@@ -2843,14 +2837,11 @@ fn load_call_graph(
                 row.get::<_, i64>(4)? != 0,
             ))
         })
-        .map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("query calls failed: {}", e))
-        })?;
+        .map_err(|e| format!("query calls failed: {}", e))?;
 
     for call in call_iter {
-        let (caller_id, callee_id, callee_name, call_line, is_cross_file) = call.map_err(|e| {
-            pyo3::exceptions::PyRuntimeError::new_err(format!("read call row failed: {}", e))
-        })?;
+        let (caller_id, callee_id, callee_name, call_line, is_cross_file) = call
+            .map_err(|e| format!("read call row failed: {}", e))?;
         let callee_name_idx = match name_idx_map.get(&callee_name) {
             Some(&idx) => idx,
             None => {

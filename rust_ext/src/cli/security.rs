@@ -397,7 +397,7 @@ pub fn scan_guardrails(
     let now = now_epoch()?;
     let mut inserted = Vec::new();
     for finding in pending {
-        if let Some(finding) = insert_guardrail_finding(&tx, &finding, now, true)? {
+        if let Some(finding) = insert_guardrail_finding(&tx, workspace_id, &finding, now, true)? {
             inserted.push(finding);
         }
     }
@@ -515,7 +515,7 @@ pub fn run_check_gate(
     let mut inserted = Vec::new();
     for finding in pending {
         ensure_gate_rule(&tx, &finding, now)?;
-        if let Some(finding) = insert_guardrail_finding(&tx, &finding, now, false)? {
+        if let Some(finding) = insert_guardrail_finding(&tx, workspace_id, &finding, now, false)? {
             inserted.push(finding);
         }
     }
@@ -565,6 +565,7 @@ pub fn resolve_gate_findings(
             "task {task_id} has no change_audit evidence; resolve refused"
         ));
     }
+    let (workspace_id, _) = active_workspace(conn)?;
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| format!("cannot begin gate resolve transaction: {error}"))?;
@@ -574,9 +575,9 @@ pub fn resolve_gate_findings(
         resolved_count += tx
             .execute(
                 "UPDATE guardrail_findings SET status='resolved',resolved_at=?1
-                 WHERE file_path=?2 AND status='open' AND rule_id IN
+                 WHERE workspace_id=?2 AND file_path=?3 AND status='open' AND rule_id IN
                    (SELECT rule_id FROM guardrail_rules WHERE category='check_gate')",
-                params![now, file],
+                params![now, workspace_id, file],
             )
             .map_err(|error| format!("cannot resolve gate findings for {file}: {error}"))?
             as i64;
@@ -2218,6 +2219,7 @@ fn line_at(content: &str, byte_offset: usize) -> u32 {
 
 fn insert_guardrail_finding(
     tx: &rusqlite::Transaction<'_>,
+    workspace_id: i64,
     finding: &PendingFinding,
     now: f64,
     deduplicate: bool,
@@ -2226,8 +2228,8 @@ fn insert_guardrail_finding(
         let exists = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM guardrail_findings
-                 WHERE rule_id=?1 AND file_path=?2 AND message=?3 AND status='open')",
-                params![finding.rule_id, finding.file_path, finding.message],
+                 WHERE workspace_id=?1 AND rule_id=?2 AND file_path=?3 AND message=?4 AND status='open')",
+                params![workspace_id, finding.rule_id, finding.file_path, finding.message],
                 |row| row.get::<_, i64>(0),
             )
             .map_err(|error| format!("cannot deduplicate guardrail finding: {error}"))?;
@@ -2237,9 +2239,10 @@ fn insert_guardrail_finding(
     }
     tx.execute(
         "INSERT INTO guardrail_findings
-         (rule_id,file_path,symbol_hash,severity,status,message,detected_at)
-         VALUES (?1,?2,?3,?4,'open',?5,?6)",
+         (workspace_id,rule_id,file_path,symbol_hash,severity,status,message,detected_at)
+         VALUES (?1,?2,?3,?4,?5,'open',?6,?7)",
         params![
+            workspace_id,
             finding.rule_id,
             finding.file_path,
             finding.symbol_hash,
@@ -2703,8 +2706,8 @@ mod tests {
                rule_id TEXT PRIMARY KEY,category TEXT,severity TEXT,pattern TEXT,action TEXT,
                description TEXT,is_builtin INTEGER,created_at REAL);
              CREATE TABLE guardrail_findings(
-               id INTEGER PRIMARY KEY AUTOINCREMENT,rule_id TEXT,file_path TEXT,symbol_hash TEXT,
-               severity TEXT,status TEXT,message TEXT,detected_at REAL,resolved_at REAL);
+               id INTEGER PRIMARY KEY AUTOINCREMENT,workspace_id INTEGER,rule_id TEXT,file_path TEXT,
+               symbol_hash TEXT,severity TEXT,status TEXT,message TEXT,detected_at REAL,resolved_at REAL);
              CREATE TABLE tasks(id TEXT PRIMARY KEY,status TEXT DEFAULT 'open');
              CREATE TABLE change_audit(
                id TEXT PRIMARY KEY,task_id TEXT,step_id TEXT,file_path TEXT);

@@ -49,6 +49,8 @@ pub enum ProtocolError {
     AncillaryTruncated,
     #[error("当前平台不支持 SCM_RIGHTS")]
     ScmRightsUnsupported,
+    #[error("duplicate JSON key: {0}")]
+    DuplicateJsonKey(String),
     #[error("{0}")]
     Other(String),
 }
@@ -140,6 +142,14 @@ pub fn recv_message<R: Read>(reader: &mut R, max_bytes: usize) -> Result<Value, 
     }
     let payload = recv_exact(reader, size as usize)?;
     let s = String::from_utf8(payload)?;
+    // 任务 1D2（Req 15/AC26）：frame bytes 先经 strict duplicate-key parser，在转成
+    // `Value` 前检测重复 key；命中时 fail-closed 返回稳定 E_DUPLICATE_JSON_KEY。
+    if let Err(e) = crate::daemon::task_loop::strict_transport::parse_strict_envelope(s.as_bytes())
+    {
+        if e.code == crate::daemon::task_loop::strict_transport::ERR_DUPLICATE_JSON_KEY {
+            return Err(ProtocolError::DuplicateJsonKey(e.message));
+        }
+    }
     let message: Value = serde_json::from_str(&s)?;
     if !message.is_object() {
         return Err(ProtocolError::NotJsonObject);
@@ -379,6 +389,18 @@ mod unix {
         let mut payload = vec![0u8; size as usize];
         sock.read_exact(&mut payload)?;
         let s = String::from_utf8(payload)?;
+        // 任务 1D2（Req 15/AC26）：frame bytes 先经 strict duplicate-key parser。
+        if let Err(e) =
+            crate::daemon::task_loop::strict_transport::parse_strict_envelope(s.as_bytes())
+        {
+            if e.code == crate::daemon::task_loop::strict_transport::ERR_DUPLICATE_JSON_KEY {
+                // 关闭已接收的 FD
+                for fd in &received_fds {
+                    unsafe { libc::close(*fd) };
+                }
+                return Err(ProtocolError::DuplicateJsonKey(e.message));
+            }
+        }
         let message: Value = serde_json::from_str(&s)?;
         if !message.is_object() {
             // 关闭已接收的 FD
@@ -582,6 +604,37 @@ mod tests {
             Err(ProtocolError::JsonDecode(_)) => (),
             _ => panic!("期望 JsonDecode 错误，实际: {:?}", result),
         }
+    }
+
+    /// 任务 1D2：duplicate JSON key 在 frame bytes 边界被拒绝（稳定 E_DUPLICATE_JSON_KEY）
+    #[test]
+    fn test_duplicate_json_key_rejected() {
+        let payload = br#"{"method":"ping","method":"pong"}"#;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        buf.extend_from_slice(payload);
+        let mut cursor = Cursor::new(buf);
+        let result = recv_message(&mut cursor, DEFAULT_MAX_MESSAGE_BYTES);
+        match result {
+            Err(ProtocolError::DuplicateJsonKey(msg)) => {
+                assert!(msg.contains("method"), "msg: {}", msg);
+            }
+            _ => panic!("期望 DuplicateJsonKey 错误，实际: {:?}", result),
+        }
+    }
+
+    /// 任务 1D2：同 key 的正常重试（不同字段名）不受影响
+    #[test]
+    fn test_distinct_keys_still_ok() {
+        let payload = br#"{"id":"1","method":"ping","params":{"a":1,"A":2}}"#;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        buf.extend_from_slice(payload);
+        let mut cursor = Cursor::new(buf);
+        let received = recv_message(&mut cursor, DEFAULT_MAX_MESSAGE_BYTES).unwrap();
+        assert_eq!(received["method"], "ping");
+        assert_eq!(received["params"]["a"], 1);
+        assert_eq!(received["params"]["A"], 2);
     }
 
     /// 验证非 object 消息被拒绝

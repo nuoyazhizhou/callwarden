@@ -89,7 +89,10 @@ pub fn query_local_issues(
                gf.status, gf.detected_at
         FROM guardrail_findings gf
         JOIN guardrail_rules gr ON gf.rule_id = gr.rule_id
-        WHERE gf.file_path = ?1 AND gf.symbol_hash = ?2
+        WHERE gf.workspace_id = ?1
+          AND gf.file_path = ?2
+          AND gf.symbol_hash = ?3
+          AND gf.status != 'orphaned'
     "
     .to_string();
     if !include_info {
@@ -101,7 +104,7 @@ pub fn query_local_issues(
         ",
     );
     if let Ok(mut stmt) = conn.prepare(&guard_sql) {
-        if let Ok(rows) = stmt.query_map(params![file_path, symbol_hash], |row| {
+        if let Ok(rows) = stmt.query_map(params![workspace_id, file_path, symbol_hash], |row| {
             Ok(json!({
                 "rule_id": row.get::<_, String>(0)?,
                 "rule_name": row.get::<_, String>(1)?,
@@ -793,5 +796,98 @@ mod tests {
         let output = format_test_stability_output(&stability, "a.alpha").unwrap();
         assert!(output.find("test_flaky").unwrap() < output.find("test_stable").unwrap());
         assert!(output.contains("Pass rate:    66.7%"));
+    }
+
+    /// W2.3 P1-1：query_local_issues 的 guardrail 分支必须带 workspace 作用域。
+    /// 两个 workspace 使用相同 file_path + 相同 symbol_hash，A 有 finding，
+    /// 查询 A 只得到 A 的 finding；查询 B 得不到 A 的 finding。
+    #[test]
+    fn query_local_issues_guardrail_is_workspace_scoped() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE workspaces (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                is_active INTEGER DEFAULT 0,
+                description TEXT DEFAULT '',
+                active_task_id TEXT DEFAULT ''
+            );
+            INSERT INTO workspaces VALUES (1,'A','/a',0,1,'',''), (2,'B','/b',0,0,'','');
+            CREATE TABLE file_instances (
+                id INTEGER PRIMARY KEY,
+                workspace_id INTEGER NOT NULL,
+                rel_path TEXT NOT NULL,
+                abs_path TEXT NOT NULL,
+                status TEXT NOT NULL
+            );
+            INSERT INTO file_instances VALUES (1,1,'a.py','/a/a.py','active'), (2,2,'a.py','/b/a.py','active');
+            CREATE TABLE file_versions (
+                id INTEGER PRIMARY KEY,
+                file_instance_id INTEGER NOT NULL,
+                is_current INTEGER NOT NULL
+            );
+            INSERT INTO file_versions VALUES (10,1,1), (20,2,1);
+            CREATE TABLE file_symbol_versions (
+                file_version_id INTEGER NOT NULL,
+                symbol_hash TEXT NOT NULL,
+                qualified_name TEXT NOT NULL,
+                module_path TEXT,
+                start_line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                depth INTEGER NOT NULL,
+                is_deleted INTEGER NOT NULL
+            );
+            INSERT INTO file_symbol_versions VALUES
+                (10,'hash-alpha','a.alpha','a',1,2,0,0),
+                (20,'hash-alpha','a.alpha','a',1,2,0,0);
+            CREATE TABLE guardrail_rules (
+                rule_id TEXT PRIMARY KEY,
+                category TEXT NOT NULL
+            );
+            INSERT INTO guardrail_rules VALUES ('guard.db','db_safety');
+            CREATE TABLE guardrail_findings (
+                workspace_id INTEGER NOT NULL DEFAULT 0,
+                rule_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                symbol_hash TEXT DEFAULT '',
+                severity TEXT NOT NULL DEFAULT 'warn',
+                status TEXT NOT NULL DEFAULT 'open',
+                message TEXT DEFAULT '',
+                detected_at REAL NOT NULL
+            );
+            INSERT INTO guardrail_findings VALUES
+                (1,'guard.db','a.py','hash-alpha','warn','open','WS-A-ONLY',1.0),
+                (2,'guard.db','a.py','hash-alpha','warn','open','WS-B-ONLY',2.0),
+                (0,'guard.db','a.py','hash-alpha','warn','orphaned','ORPHAN',3.0);
+            ",
+        )
+        .unwrap();
+
+        // workspace A：只看到 A 的 finding，看不到 B 和 orphaned
+        let issues_a = query_local_issues(&conn, 1, "a.alpha", true).unwrap();
+        let arr = issues_a.as_array().unwrap();
+        let guard_msgs: Vec<&str> = arr
+            .iter()
+            .filter(|i| i["source"] == "guardrail")
+            .map(|i| i["message"].as_str().unwrap())
+            .collect();
+        assert!(guard_msgs.contains(&"WS-A-ONLY"), "{guard_msgs:?}");
+        assert!(!guard_msgs.contains(&"WS-B-ONLY"), "{guard_msgs:?}");
+        assert!(!guard_msgs.contains(&"ORPHAN"), "{guard_msgs:?}");
+
+        // workspace B：只看到 B 的 finding，看不到 A 的
+        let issues_b = query_local_issues(&conn, 2, "a.alpha", true).unwrap();
+        let guard_msgs_b: Vec<&str> = issues_b
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|i| i["source"] == "guardrail")
+            .map(|i| i["message"].as_str().unwrap())
+            .collect();
+        assert!(guard_msgs_b.contains(&"WS-B-ONLY"), "{guard_msgs_b:?}");
+        assert!(!guard_msgs_b.contains(&"WS-A-ONLY"), "{guard_msgs_b:?}");
     }
 }

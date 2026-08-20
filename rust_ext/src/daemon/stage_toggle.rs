@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use super::clock::AuthoritativeClock;
 use super::dispatch::DaemonRpcError;
+use super::task_loop::capability_control::CapabilityMutationGate;
 
 /// 产品化阶段。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -133,9 +134,16 @@ impl IndependencePolicy {
 ///
 /// 使用 rusqlite 持久化，支持 in-memory（测试）和文件（生产）。
 /// 每次变更记录 actor Peer_Identity 与 Authoritative_Clock 时间。
+///
+/// ## 锁序（计划 §3.3 / 0A 冻结，Requirement 15 AC 23）
+/// 每个写入口（`set_toggle`、`set_independence_policy`）在打开任何 DB 写事务
+/// **之前**取得 `CapabilityMutationGate`，并持续持有到全部写事务 commit 完成，
+/// 遵守全局锁序 `CapabilityMutationGate → authority store transaction →
+/// task-DB transaction`。本 store 只触碰 authority store，不触碰 task-DB。
 pub struct StageToggleStore {
     conn: Connection,
     clock: Arc<AuthoritativeClock>,
+    gate: Arc<CapabilityMutationGate>,
 }
 
 impl StageToggleStore {
@@ -143,7 +151,11 @@ impl StageToggleStore {
     pub fn open_in_memory(clock: Arc<AuthoritativeClock>) -> Result<Self, DaemonRpcError> {
         let conn = Connection::open_in_memory()
             .map_err(|e| DaemonRpcError::internal_error(format!("打开内存数据库失败: {}", e)))?;
-        let store = Self { conn, clock };
+        let store = Self {
+            conn,
+            clock,
+            gate: Arc::new(CapabilityMutationGate::default()),
+        };
         store.init_schema()?;
         Ok(store)
     }
@@ -152,9 +164,34 @@ impl StageToggleStore {
     pub fn open(path: &str, clock: Arc<AuthoritativeClock>) -> Result<Self, DaemonRpcError> {
         let conn = Connection::open(path)
             .map_err(|e| DaemonRpcError::internal_error(format!("打开配置数据库失败: {}", e)))?;
-        let store = Self { conn, clock };
+        let store = Self {
+            conn,
+            clock,
+            gate: Arc::new(CapabilityMutationGate::default()),
+        };
         store.init_schema()?;
         Ok(store)
+    }
+
+    /// 注入 daemon 全局共享的 `CapabilityMutationGate`（0B 接入点）。
+    ///
+    /// 默认实例为 store 私有门禁；daemon 组装时可用同一 gate 串行化
+    /// authority-store 与 task-DB 的写路径，避免不同实例破坏全局锁序。
+    pub fn attach_gate(&mut self, gate: Arc<CapabilityMutationGate>) {
+        self.gate = gate;
+    }
+
+    /// 从 scope 派生 workspace 归属键（gate 语义归属用）。
+    ///
+    /// - Global → `"global"`
+    /// - Workspace(id) → `"workspace:{id}"`
+    /// - Task(id) → `"task:{id}"`（任务级变更归其任务 scope）
+    fn scope_workspace_key(scope: &ToggleScope) -> String {
+        match scope {
+            ToggleScope::Global => "global".to_string(),
+            ToggleScope::Workspace(id) => format!("workspace:{}", id),
+            ToggleScope::Task(id) => format!("task:{}", id),
+        }
     }
 
     /// 初始化 schema。
@@ -204,6 +241,11 @@ impl StageToggleStore {
         enabled: bool,
         actor: &str,
     ) -> Result<(), DaemonRpcError> {
+        // 锁序：在打开任何 authority-store 写事务之前取得 CapabilityMutationGate，
+        // 并持续持有到全部写事务 commit 完成（计划 §3.3 / Requirement 15 AC 23）。
+        let workspace_key = Self::scope_workspace_key(scope);
+        let _gate = self.gate.acquire(&workspace_key)?;
+
         // 前置阶段校验（Req 13.13, 13.14）
         if enabled {
             for prereq in stage.prerequisites() {
@@ -382,6 +424,10 @@ impl StageToggleStore {
         policy: IndependencePolicy,
         actor: &str,
     ) -> Result<(), DaemonRpcError> {
+        // 锁序：在打开任何 authority-store 写事务之前取得 CapabilityMutationGate。
+        let workspace_key = Self::scope_workspace_key(scope);
+        let _gate = self.gate.acquire(&workspace_key)?;
+
         let scope_key = scope.scope_key();
         let now = self.clock.now_millis();
 
