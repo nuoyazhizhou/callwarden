@@ -114,6 +114,60 @@
 | 全量刷新 | `cw --refresh-all` | 增量刷新代码图谱 |
 | 强制全量刷新 | `cw --refresh-all --force` | 重新解析所有文件 |
 
+## 9. 阶段收口与共享 Runtime 刷新（Windows）
+
+阶段代码和测试通过后，使用 `scripts/refresh_shared_runtime.ps1` 统一切换
+Windows daemon/CLI 二进制，避免测试或 Reviewer 继续连接旧的 `cw-daemon.exe`。
+
+```powershell
+# 独立 target 编译 release，安装、启动并 ping 新 daemon
+pwsh -File .\scripts\refresh_shared_runtime.ps1 `
+  -TaskId T-... `
+  -RunSmokeTests
+
+# 同时停止仓库内 Call Warden MCP Server；MCP 不由脚本启动，交给 IDE supervisor 重连
+pwsh -File .\scripts\refresh_shared_runtime.ps1 `
+  -TaskId T-... `
+  -RestartMcp `
+  -RunSmokeTests
+
+# 同时启动 Windows bridge，供 WSL MCP/CLI 访问 Windows authority
+pwsh -File .\scripts\refresh_shared_runtime.ps1 `
+  -TaskId T-... `
+  -StartBridge `
+  -RestartBridge `
+  -RunSmokeTests
+```
+
+脚本边界：
+
+- 先在独立 `rust_ext/target/stage-refresh` 编译；构建失败不会停止现有服务。
+- 只匹配仓库路径下的 `cw-daemon.exe` 和 `cw.py server`，拒绝按名称杀任意 Python/daemon 进程。
+- 安装到 `%USERPROFILE%\.callwarden\runtime\current`，上一版本保留用于失败回滚。
+- 启动后等待真实 `cw daemon ping` 成功，并记录产物 SHA-256、Git HEAD、PID 和测试结果。
+- `refresh_shared_runtime.ps1` 强制使用 `C:\Python314\python.exe` 作为 `PYTHON`/
+  `PYO3_PYTHON`，并用 `dumpbin /dependents` 拒绝导入 `python310.dll`、`python311.dll`
+  等非 `python314.dll` 的 daemon。纯 Rust/Python-free daemon 可以合法不导入 Python DLL；
+  它仍必须记录该事实，不能把“无导入”误报为 Python 3.14 直接链接。
+- ping 后还会核验运行 PID 的 executable path 和 SHA-256 均等于
+  `%USERPROFILE%\.callwarden\runtime\current\cw-daemon.exe`。仅构建
+  `rust_ext\target\debug`、仅重建 `target\release`、或仅修改源码，均不构成部署成功。
+- 修改 Rust daemon/CLI/bridge 后，必须运行该脚本完成“release build → runtime/current
+  install → 精确停止旧 runtime daemon → restart → hash/PID/ping/health evidence”闭环，
+  再允许 Implementer 报告 `review` 或 Reviewer 采用 runtime 结果。
+- `-StartBridge` 会探测 WSL 默认网关，启动受 token 保护的 `cw-bridge`，固定写入
+  `%USERPROFILE%\.callwarden\bridge.manifest.json`、`bridge.token` 和
+  `bridge.wsl.env`；WSL 侧使用 `source /mnt/c/Users/<user>/.callwarden/bridge.wsl.env`
+  后，`cw daemon bridge` 必须返回 `ok=true`。
+- WSL MCP 必须使用已安装 MCP SDK 的 venv，不能使用系统 `/usr/bin/python3`：
+  `wsl.exe -d Ubuntu -- bash -lc "cd /mnt/c/git_work/callwarden && source /mnt/c/Users/<user>/.callwarden/bridge.wsl.env && exec /root/.callwarden/wsl-mcp-venv/bin/python cw.py server"`。
+  该 venv 位于 WSL ext4，不与 Windows Python 或 Windows `callwarden_core` 混用。
+- 成功后将 `CW_DAEMON_BIN` 写入用户环境变量，后续 MCP/Agent 可找到新二进制。
+- 脚本不会启动 stdio MCP Server；IDE 负责重连 MCP。若 IDE 不自动重连，只需重启 MCP Server，不需要重启 Agent 会话。
+- 失败时 fail-closed 并尝试恢复上一版本；禁止删除 `callwarden.db`、WAL/SHM 或直接写 SQLite。
+
+这一步是运行时切换，不等于任务 `apply/close`。实现 Agent 只能报告到 `review`，正式收口仍由 Coordinator 和 Independent Reviewer 完成。
+
 ## 可以用自带工具的场景
 
 | 场景 | 工具 | 理由 |
@@ -419,3 +473,13 @@ CLI 模式的"慢"是 Python 解释器启动 + 模块导入的固定成本，与
 
 所有操作经 Daemon_Endpoint 序列化点，不可绕过。daemon 不可用时 Governance_Write fail closed，
 输出 Structured_Reason（E_GOVERNANCE_WRITE_DEGRADED + 平台恢复指引），exit code 1。
+
+## 路由矩阵与收敛架构（T01/T05）
+
+239 个 MCP 工具的路由矩阵（单一真相源）：
+`deliverables/software-company/tool_migration_matrix.json`。
+daemon 自描述接口 `GET /v1/meta/tools` 返回工具级
+`{name, module, target_backend, rpc_method, op_class, batch, status}`；
+一致性由 `scripts/verify_route_matrix.py`（239/239）+ `scripts/check_client_purity.py`
+（0 业务 SQL）门禁。详见 `docs/design/rust-client-convergence-protocol.md` 与
+`docs/design/cw-rust-client-convergence-migration-guide.md`。

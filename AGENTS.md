@@ -1,3 +1,19 @@
+<!-- tokenslim-context-start -->
+# TokenSlim Project AI Context Pointer (AUTO-GENERATED)
+# DO NOT EDIT THIS BLOCK MANUALLY - run `tokenslim workspace --inject` to update
+
+Full TokenSlim workspace context lives in `.tokenslim-context.md`.
+Read that file before local command generation, environment debugging, or build/test/VCS work.
+
+Command policy:
+- Run `tokenslim workspace --format llm` before diagnosing this project on a new machine/session.
+- Use the `Detected Project Commands` section in `.tokenslim-context.md` as the source of truth.
+- If raw build/test/VCS commands appear elsewhere in this file, execute their `tokenslim run <command>` equivalent from `.tokenslim-context.md`.
+- Keep this pointer small to avoid duplicate context when multiple AI instruction files are read together.
+
+<!-- tokenslim-context-end -->
+
+
 # Call Warden Agent 规则（项目权威）
 
 ## 身份
@@ -5,6 +21,130 @@
 你是 **Call Warden 项目** 的开发助手。Call Warden 是面向 AI Agent 的代码知识图谱工具，基于 tree-sitter + SQLite + MCP 构建，提供 237 个 MCP 工具和 145+ CLI 命令。
 
 你的目标是帮助用户高效地使用、扩展和维护 Call Warden。
+
+## Agent 身份与技能选择协议
+
+每个 Agent 开始工作前，必须先在首条工作记录中声明：
+
+```text
+Role: <executor|reviewer|adjudicator>
+RuntimeRole: <legacy daemon role, if required>
+Task: <task_id>
+Skill: <skill_name 或 none>
+Allowed: <本轮允许的动作和路径>
+Forbidden: <本轮禁止的动作>
+Handoff: <完成后交给哪个角色>
+```
+
+不得根据任务标题自行推断更高权限。缺少 `Role`、`Task` 或适用 skill 时，先停下并请求用户澄清；不得无任务改代码、不得用“我是 Reviewer”代替真实注册身份。当前 daemon 仍可能只接受
+`planner`、`implementer`、`tester`、`evidence`、`independent_reviewer` 等 legacy 值；它们只是
+`RuntimeRole`，不增加第四种治理权限。
+
+### 角色职责矩阵
+
+| Role | 主要工作 | 可以做 | 禁止做 | 完成后交给 |
+|---|---|---|---|---|
+| `executor` | 将用户语言落实为需求、设计、代码、测试和证据 | 创建/修订计划、拆分步骤、按 scope 实现、测试、归档并报告 | apply/close、伪造证据、扩大已冻结 scope | Reviewer |
+| `reviewer` | 独立审核执行者产物 | 只读核验，且只输出 `PASS` 或 `BLOCKED` | 修改计划/代码/证据/任务状态、创建整改步骤、apply/close | Adjudicator（PASS）或 Executor（BLOCKED） |
+| `adjudicator` | 对 Reviewer 的 PASS 作独立最终复审 | 核验全部门禁；接受后以真实 lease 执行 apply/close，或退回执行者 | 制定整改计划、修改实现/证据、覆盖历史 verdict | 完成或 Executor |
+
+`planner`、`implementer`、`tester`、`evidence` 是 `executor` 的工作模式，不是治理角色；
+`independent_reviewer` 是 `reviewer` 的 legacy runtime 名称。`Coordinator` 不是治理角色；若代码或
+部署仍有此命名，它只能表示无决策权的机械调度/控制面，不得创建整改计划或裁决任务完成。
+
+### Skill 选择规则
+
+| 工作类型 | 必选 skill / 入口 |
+|---|---|
+| G0 Recovery、Batch Creator、Independent Reviewer、批次证据和盲审 | `g0-experiment`；先读 `docs/design/g0-experiment-protocol-v1.md` 和 role workflow |
+| 普通代码实现、Rust/Python 迁移、daemon、CLI | 以本文件、三份真相源和对应任务契约为准；没有专用 skill 时使用 `none`，不得套用 G0 流程 |
+| 需求/设计/任务计划文档 | `executor` 的规划工作模式；先创建任务并写明确 scope、禁止路径、验收命令 |
+| 只读代码审查 | `reviewer`；不得因为发现问题而直接修复 |
+
+skill 只能补充流程，不能覆盖本文件、代码和任务系统的权限规则。G0 或旧代码中的 `Coordinator`
+只是兼容命名；当涉及普通任务的 `apply/close` 时，仍必须由裁决者遵守真实 identity、reviewer lease
+和父子任务门禁。
+
+### 状态推进和交接
+
+1. Executor 只能通过 daemon/CLI 写入自己 scope 内的计划、实现、测试和证据结果并推进到 `review`。
+2. Reviewer 只输出 `PASS` 或 `BLOCKED`；PASS 不等于已 `applied` 或 `closed`，BLOCKED 不改变历史证据。
+3. Reviewer `BLOCKED` 直接交回 Executor，并在**同一主任务**追加一条带 source verdict/finding 与
+   `remediation_of_step_id` provenance 的 `fix_defect` step；任务回到 `in_progress`。普通整改不得创建
+   remediation child。只有能证明独立 ownership、独立 scope 且可并行验收的工作才允许创建子任务。
+4. Reviewer `PASS` 后才交给不同 instance/session 的 Adjudicator。Adjudicator 独立复核后只能接受完成，
+   或带具体缺口退回 Executor；不得自己补计划或修改实现。
+5. 只有接受完成的 Adjudicator 才可先用 `cw lease status <task_id> --role reviewer` 查看租约，并以真实
+   identity 取得 reviewer lease 后调用 `cw task apply`、`cw task close`。这些命令必须提供真实
+   `agent_id`、`session_id`、`model_id`、`role`；正确租约入口是 `cw lease status`。
+6. 关闭父任务前，Adjudicator 必须逐个核验所有子任务已 `closed`；任何 `open`/`in_progress`/`review`/
+   `applied` 子任务都会阻止父任务关闭。
+
+### 强制下一棒交接 envelope
+
+Executor、Reviewer 与 Adjudicator 的每一次面向用户、下游角色、已提交 `task.handoff` 的响应、verdict/
+裁决输出都必须包含；`task.report` 不是交接输出，且这些字段绝不得出现在其请求中：
+
+```text
+Handoff:
+  from_role: executor|reviewer|adjudicator
+  outcome: executor_ready_for_review|executor_blocked_to_user|reviewer_pass|reviewer_blocked|adjudicator_accepted|adjudicator_returned
+  next_role: executor|reviewer|adjudicator|complete|user
+  next_action: <下一棒可执行的明确动作>
+  reason: <finding、证据或现有合同约束>
+  independence_requirement: <required|not_required|not_applicable>
+```
+
+路由固定：Executor 的可审交付 → Reviewer；Reviewer `PASS` → Adjudicator；Reviewer `BLOCKED` →
+Executor；Adjudicator 接受 → `complete`；Adjudicator 退回 → Executor。`next_role: user` 只在缺少用户
+授权或无法获得必要事实时使用，且 `reason` 必须写明缺口。Executor→Reviewer、Reviewer PASS→Adjudicator
+为 `required`；Reviewer BLOCKED→Executor、Adjudicator return→Executor 为 `not_required`；accept→complete
+及 Executor→user 为 `not_applicable`。不得省略下一棒、猜测角色，或把 Reviewer/
+Adjudicator 的 finding 扩写为 Executor 才有权制定的新 scope、验收或 capture 方案。
+
+### `BLOCKED` 缺陷整改升级（强制）
+
+`BLOCKED` 是对当前证据/实现的真实结论，不得修改旧 verdict、旧证据或历史步骤来“补绿”。Reviewer
+只列出可复核 finding，随后直接 handoff 给 Executor。daemon 在同一主任务内追加 provenance-bound
+`fix_defect`；Executor 为该 step 冻结 allowed/excluded paths、验收命令和隔离 capture/commit 方案。
+Reviewer 与 Adjudicator 都不得创建整改步骤。历史 failed step、evidence、verdict 和 handoff 只追加、
+不得覆盖。共享工作树存在无关 dirty/untracked 文件时，
+Executor 必须在独立 worktree、冻结基线或逐路径 whitelist 中 capture，不得吸入未归属变更。
+
+只有 authority/identity/lease 不可验证、用户尚未授权的外部副作用，或没有足以限定安全路径的事实时，
+才可以保持 `BLOCKED`；Executor 必须说明具体缺口，不能用"没有 pending step"代替计划修订。
+
+### Req 15 三角色治理实施任务树（父任务 `T-1786983366974-8811ccec`）
+
+需求基线 `docs/design/requirements.md#Requirement 15`，设计基线
+`docs/design/cw-role-handoff-task-loop.md` 已冻结为实施基线（freeze_design）。以下子任务树是
+非重叠实施路线图，按设计文档 §7 分期交付组织：每项任务都是独立任务，各有 Role Contract、非重叠
+白名单、验收命令和独立 Reviewer handoff；**不得**由同一任务同时实现 Skill、daemon RPC、CLI adapter
+和测试，也**不得**把失败步骤 remediation 吸收进别的任务（失败步骤同归父任务
+`T-1786986333084-baf7e552` 及其实施子任务）。
+
+分期与所有权主线（各任务的白名单上限，见设计 §7）：
+
+- **0A** `T-1786988146-812072e0` Capability Authority 修订与前置规划：只改冻结三件套
+  （`requirements.md`、`multi-llm-contract-driven-collaboration-design.md`、`tasks.md`），不写生产代码；
+- **1D0** `T-1786988149-e2eb5430` task-loop foundation 与 fail-closed stubs：`canonicalization_rule_sets`、
+  `rust_ext/src/daemon/task_loop/*`、`dispatch.rs` disabled shim、`capability_control.rs` 等；
+- **0B** `T-1786988149-d14ed38d` existing authority 与 gate 接入；**0C** `T-1786988149-9c91949d` 独立验收；
+- **1D1** `T-1786988149-5f0669ef` operation ledger；**1D2** `T-1786988149-5796e718` strict transport parser；
+- **1A** `T-1786988151-35d039b8` workspace authority binding；**1B** `T-1786988151-08cf49cf` Role Contract lineage/c14n；
+  **1C** `T-1786988151-19b8a8ee` step binding；**1E** `T-1786988151-85daa06e` verdict/Gate schema；
+  **1F** `T-1786988151-cf364813` lifecycle/lease wrapper；
+- **2** `T-1786988152-fa79cd09` 原生 `task.handoff`/`task.report` fail-closed；**3** `T-1786988152-293a4048`
+  原生 `verdict.submit` 与 Evidence Gate；**4** `T-1786988152-7b00caa5` MCP/CLI/client 路由与旧路径拒绝；
+- **5** `T-1786988152-469ef1fd` `task.next_action` 交付父任务，其子任务 5A `T-1786988152-4101a212`、
+  5B `T-1786988153-6920f685`、5C `T-1786988153-36cce253`、5D `T-1786988153-b9ad0e62` 分别创建、领取与复审；
+- 其余权威一致/生命周期/证据子任务：`T-1786987073956-bb1b5ff9`（worktree authority）、
+  `T-1787005526041-ccc9fcbb`（结构化 handoff ledger）、`T-1787021151791-0e734579`（self-bootstrap runtime gate，
+  已 closed）、`T-1787046023643-ec89dbe4` 及 `sub-1`/`sub-2`/`sub-3`（租约清理/受保护恢复/回归）。
+
+实施前先核对该任务清单是否覆盖需求，避免重叠创建；发现 ownership 相交时拆分或串行，不得因"不同
+agent"默认安全。本父任务只负责实施编排，关闭前须所有直接子任务独立 review PASS、证据/Evidence Gate 通过，
+并由 Coordinator（非治理角色）机械 apply/close。
 
 ## 默认工作规则（强制遵守）
 
@@ -26,7 +166,7 @@
    **背景**：MCP Server 是 stdio 长连接，与 CLI 新进程并发时会触发 SQLite `database is locked`。已通过 `PRAGMA journal_mode=WAL` + `busy_timeout=5000` 缓解，但**写操作仍有 5% 撞锁概率**，故写操作永久走 CLI；只读操作在 MCP 激活后走 MCP（吃狗粮），未激活时走 CLI。
 
    **MCP 激活状态判断**：会话开始时若无法调用 `file_grep` 等 MCP 工具，则视为 MCP 未激活，全部走 CLI。MCP 激活由用户手工配置，不在 AGENTS.md 中自动判断。
-3. **任何任务必须在 cw 数据库创建任务记录**（强制）：无论大小任务，开始前必须用 `cw task create` 或 `cw task split` 在数据库创建对应任务。可以创建独立父任务，也可以挂载到已存在的父任务下（通过 Python API `task_create(parent_id=...)`）。禁止"无任务记录就开始编码"。
+3. **任何任务必须在 cw 数据库创建任务记录**（强制）：无论大小任务，开始前必须用 `cw task create` 或 `cw task split` 在数据库创建对应任务。主任务是 Jira 式工作线程；角色交付、BLOCKED 和整改默认追加 step/event/reply，不创建 child。只有明确独立 ownership/scope 的工作才可挂载子任务（通过 Python API `task_create(parent_id=...)`）。禁止"无任务记录就开始编码"。
 
    **子任务挂载方式**（重要）：
    - **CLI `cw task create` 当前不支持 `--parent` 参数**（只有 `--title`/`--desc`/`--steps`）
@@ -34,7 +174,7 @@
    - 脚本模板见 [docs/task_create_subtask.py](docs/task_create_subtask.py)
    - 或用 `cw task split --plan plan.md <parent_task_id>` 从 Markdown 计划拆分子任务
 
-4. **大任务必须拆分父子任务**：当任务涉及 3 个以上文件或 5 个以上步骤时，必须使用 `task_split` 拆分为父子任务树，通过 `task_next_step` 逐步执行，避免遗漏和遗忘。
+4. **大任务先拆步骤，子任务只表达独立 ownership**：涉及 3 个以上文件或 5 个以上步骤时，必须先形成可核验步骤和逐步骤白名单。若各步骤仍属于同一 ownership/交付线程，保留在同一主任务；只有独立 scope、可并行验收或不同 owner 时才使用 `task_split`。禁止用嵌套 remediation child 代替同一任务内的 `fix_defect` 回复。
 5. **开发阶段开启 watcher**：长时间开发时，使用 `cw --watch` 启动文件监控，修改后自动刷新数据库。
 6. **读不锁，写才锁**（CLI 锁优化原则）：所有只读命令（查询/搜索/统计/分析类）不得触发数据库写操作，只有写命令（refresh/task next/report/apply/close/rule sync 等）才允许持有写锁。
 
@@ -286,6 +426,44 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 
 31. **Windows/WSL 不得共用 Cargo target 目录**：从 WSL 在 `/mnt/c/...` 仓库运行 `cargo check/test` 时，共用 Windows 生成的 `target/` 会出现文件锁等待、跨文件系统极慢和工具超时后 `cargo` 子进程继续存活。Linux 验收必须设置 WSL 本地目标目录，例如 `CARGO_TARGET_DIR=/tmp/callwarden-target cargo check --manifest-path rust_ext/Cargo.toml --bin cw-agent`；工具超时后先用 `ps -ef | grep cargo` 检查并终止本轮遗留的精确 PID，再重试，禁止留下后台编译进程。
 
+42. **Windows 主机统一使用 Python 3.14 构建和运行 Call Warden**：Windows Agent、MCP、CLI、PyO3/Cargo 构建和测试必须显式使用 `C:\Python314\python.exe`，禁止依赖 `python`、`python3`、`py` 或 Agent 沙箱自带解释器。开始构建前在同一 PowerShell 会话执行：
+
+    ```powershell
+    $env:PYTHON = 'C:\Python314\python.exe'
+    $env:PYO3_PYTHON = 'C:\Python314\python.exe'
+    & $env:PYTHON -c "import sys; print(sys.executable); print(sys.version)"
+    ```
+
+    后续 Python 命令使用 `& $env:PYTHON ...`，Cargo/PyO3 命令继承同一会话的 `PYO3_PYTHON`。提交或部署前必须记录实际解释器路径、Python 主次版本和构建产物依赖；Windows `.pyd`/daemon 若使用 PyO3 链接 Python，必须用 `dumpbin /dependents <产物>` 或等价工具确认依赖的 `python314.dll` 与目标机器一致，发现 `python310.dll`、`python311.dll` 等旧依赖时立即判定构建无效并重新构建。不得用旧 runtime binary 冒充当前源码构建结果。
+
+    WSL/Linux 是独立环境：使用 Linux 自己的 `python3`/venv 和 WSL 本地 `CARGO_TARGET_DIR`，不得把 Windows 的 `PYO3_PYTHON`、`.pyd`、Cargo target 或 Python 依赖带入 WSL；Windows Python 与 WSL Python 的测试、构建和证据必须分别记录。
+
+43. **Windows daemon 修改后的“编译”不等于“已部署”**：Windows autostart 读取的是 `%USERPROFILE%\.callwarden\runtime\current\cw-daemon.exe`（或显式 `CW_DAEMON_BIN`），不是开发者刚刚编译的 `rust_ext\target\debug` 或 `rust_ext\target\release`。因此修改任何会影响 daemon/CLI/bridge 行为的 Rust 或 PyO3 代码后，必须在同一 Python 3.14 PowerShell 会话运行：
+
+    ```powershell
+    pwsh -File .\scripts\refresh_shared_runtime.ps1 `
+      -TaskId <真实任务 ID> `
+      -RestartMcp `
+      -RunSmokeTests
+    ```
+
+    该脚本必须完成 release 构建、安装到 `runtime\current`、精确停止仓库/runtime 范围内的旧 daemon、启动新 daemon，并验证：构建 hash = `runtime\current` hash = 运行 PID executable hash；运行路径确实在 `runtime\current`；`dumpbin /dependents` 若导入 Python DLL 则只能是 `python314.dll`（纯 Rust/Python-free daemon 允许无 Python DLL，但必须记录）；`cw daemon ping/health` 成功。对于 PyO3 `callwarden_core`，还必须构建 `--lib` 并发现同一 Python 3.14 的已安装 `cw.exe` 实际 import 的 extension；仓库根 source-path Pyd 与该 site-packages Pyd 都存在时必须原子部署、逐个核对 hash/依赖，并以已安装 `cw.exe lease status <TaskId> --role implementer` 不出现 migration checksum mismatch 为最终 gate。仅 `python cw.py ...` 成功不构成 authority recovery。任一项未满足均为 `UNVERIFIED`，不得把源码测试、debug binary、旧 release binary 或仅 ping 成功当作当前修复已部署。脚本失败时保留旧 runtime 回滚，不得删除数据库/WAL/SHM 或杀无关 Agent/MCP。
+
+    **项目范围限定**：上述 runtime deployment gate 默认只对 workspace 的
+    `runtime_policy=self_bootstrap` 生效（CallWarden 自举工作区）。普通项目的
+    daemon/CLI 变更默认只要求构建与测试；只有任务合同显式声明
+    `runtime_deployment_required`、`deployment:required` 或 `deploy_runtime=true`
+    时才启用同一部署门禁。任务引擎必须在 self-bootstrap 模式下自动追加并优先
+    领取 runtime deployment 步骤；缺少有效 runtime evidence 时返回
+    `E_RUNTIME_DEPLOYMENT_REQUIRED`，不得进入 review。Agent 不得通过临时修改
+    workspace policy 绕过该门禁。
+
+44. **schema checksum mismatch 是 authority 阻断，不是可重试的 lease 错误**：若 `cw lease status/acquire` 返回 `MIGRATION_FAILED: schema checksum mismatch for v<N>`，必须立即停止所有 lease、claim、task report/apply/close 和任何依赖 daemon authority 的写入；保留 stored/binary checksum、实际 `runtime\current` binary hash、运行 PID executable hash 与 migration 记录，按第 43 条通过受控 runtime/schema recovery 协调后再重试。禁止改写 migration checksum、直写 SQLite 或用本地 CLI fallback 取得/伪造 lease。
+
+45. **任务步骤的显示序号不是 mutation ID**：`cw task show` 的 `#0` 等人类可读编号和步骤标题不保证等于 `cw task report <task_id> <step_id>` 所需的持久化 `step_id`。首次 `task_step_not_found` 后必须停止猜测，先用当前 CLI 的 JSON/只读 RPC 或实现查询取得真实 step ID；不得把编号或标题反复当作 step ID 重试。
+
+46. **Windows 受控进程诊断必须拆分命令**：通过 `functions.exec` 启动 daemon/辅助进程时，禁止在一个复杂 PowerShell 字符串中嵌套 endpoint、重定向和多层变量展开；这类命令可能在 CreateProcess 前被策略拒绝。应先用独立只读命令解析 endpoint，再用单一 `Start-Process -WindowStyle Hidden` 调用启动，并用固定绝对日志路径单独读取 stdout/stderr；启动失败不得重试删除、杀进程或改数据库。
+
 ### 6.4 SQLite 锁与数据库并发
 
 7. **SQLite WAL 模式与只读连接**：GraphStore 用 `immutable=1` URI 打开 SQLite（跳过 WAL），因此新建数据库的 schema 和数据可能还在 WAL 中未被 checkpoint。`_get_graph_store()` 加载前必须先执行 `PRAGMA wal_checkpoint(PASSIVE)`，否则会读到旧数据（报 "no such table"）。同理，任何用 `immutable=1` 或只读模式打开 SQLite 的场景，都需确保写入方已 checkpoint。
@@ -319,6 +497,10 @@ code review 发现已 applied/closed 的任务有问题需要修复，或向已 
 32. **pre-commit 全库刷新卡死自动降级（hook 看门狗）**：Windows 上 `git commit` 的 pre-commit `cw --refresh-all` 偶尔会进入无 CPU、无 DB/WAL 进展的等待状态。**根因已修复（T-1785831377543-8d626745）**：`rust_ext` 4 个文件（cas_query / cas_merge_query / manifest_query / incremental_build_query）的 `open_readonly()` 不再执行 `PRAGMA wal_checkpoint(PASSIVE)`——只读连接经 WAL + `-shm` 总能读到最新已提交数据，checkpoint 冗余；且 Windows + WAL 下 register 写事务（590+ 文件）后 checkpoint 会进入 SQLite 内部 walIndexLock/recovery 的 sleep 循环，不受 `busy_timeout` 控制，导致无限阻塞。open 已改为 8s 有界超时 + 全局降级标记：超时后本次进程后续只读短连接快速失败，Python 侧 `_load_file_result_from_db_python` 用主连接降级查询，不挂死。**hook 看门狗仍作兜底**：每 10s 采样 `~/.callwarden/callwarden.db` 与 `-wal` 的 mtime，连续 9 次（90s）无进展即 `kill -9` 该进程，并自动降级为 `python cw.py refresh <git diff --cached --name-only>`（显式刷新本次提交的变更文件），降级成功即放行 commit（满足规则 1）。若仍遇到挂起：先确认没有残留 `cw.py --refresh-all` 孤儿进程（Get-Process 核对精确 PID），再手动 `python cw.py refresh <全部修改文件...>` 并用 `git commit --no-verify`。只有显式刷新覆盖全部修改文件时才允许跳过 hook，禁止未经刷新直接绕过。
 
 33. **`cw task report` 工具超时后先核对状态，禁止盲目重报**：`task_report_step` 会自动运行 check gate 和 completion review；在大型工作区中，CLI 可能尚未返回就超过桌面工具超时，但步骤状态随后仍会成功写入。遇到 `python cw.py task report ...` 超时时，先运行只读命令 `python cw.py task show <task_id>`，确认对应 step 是否已为 `done`/`blocked`；已落库则继续下一步，未落库且确认没有残留进程后才允许重试。不要因无输出直接重复 report，否则可能重复触发质量扫描、修复步骤或审计记录。
+
+34. **Windows daemon 是权威任务库的唯一写入口，WSL/VM 禁止直写**：Windows 用户级 `~/.callwarden/callwarden.db` 由 Windows `cw-daemon` 通过 Named Pipe 提供共享单写服务。Windows Agent/MCP 默认使用 `CW_DAEMON_MODE=auto` 与 `CW_TASK_WRITE_POLICY=shared`，任务创建、领取、回报、证据归属和状态变更必须经 daemon RPC；不得因为 daemon 暂时不可达而改成 `local` 或 `isolated` 绕过单写点。WSL/VM 通过 `/mnt/c`、FUSE 或共享挂载直接用 `sqlite3`/Python `sqlite3` 打开该 Windows 权威库，属于禁止路径，尤其不得执行 `BEGIN IMMEDIATE`、checkpoint、migration 或直接补录 `task_steps`/`task_events`/`change_audit`。WSL/VM 需要任务操作时，调用 Windows 侧 `C:\Python314\python.exe C:\git_work\callwarden\cw.py ...`、Windows `cw.exe`，或使用已实现的跨平台 daemon bridge；证据文件可以在隔离目录生成，但任务归属必须回到 Windows daemon。
+
+    **诊断边界**：在 WSL/FUSE 上对 Windows 权威库看到 `disk I/O error`，而同一挂载目录的新 SQLite 库可以写，通常说明跨操作系统文件句柄/WAL 竞争或绕过 daemon，不等于 Windows daemon 已损坏。`immutable=1` 只会跳过 WAL 读取旧快照，不能用于确认最新任务状态。先用 Windows 侧 `cw daemon health` 与 daemon RPC `task.status` 验证；不得删除 `.db`、`-wal`、`-shm`，不得手工 checkpoint，也不得为“解锁”杀掉其他 Agent/MCP。多个 Windows MCP 同时启动时，启动期探针和 `DaemonMutex` 只允许一个 daemon，其他进程应重连同一 Named Pipe。
 
 ### 6.5 Rust 开发规范
 

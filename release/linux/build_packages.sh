@@ -14,7 +14,7 @@
 # P0-3 修复（问题 4/5/9，2026-07-21 → 2026-07-22 重构）：
 #   - cw / cw-client / cw-agent 改用 PyInstaller --onedir 打包为自包含二进制，
 #     含 Python 解释器 + 全部依赖 + Rust 扩展，安装后不依赖系统 Python。
-#   - cw-daemon 是 Rust binary，由 cargo build --release --bin cw-daemon 产出。
+#   - cw-daemon 是 Rust binary，由 cargo build --release --no-default-features --bin cw-daemon 产出。
 #   - 支持 --offline-bundle-only flag 跳过 Step 1-5，仅构建 tar.zst 离线包。
 #   - 末尾复制 manifest.json 到 dist/，让 workflow upload-artifact 能匹配。
 #   - 删除 workflow 中的 || true，失败必须 fail-fast。
@@ -182,13 +182,13 @@ if [ "$OFFLINE_ONLY" = "0" ]; then
     echo "Step 1: Building Rust extension + cw-daemon binary"
     cd "$ROOT/rust_ext"
     # P0-3 修复（问题 5）：cw-daemon 是 Cargo [[bin]] name="cw-daemon"
-    cargo build --release --target "$TARGET" --bin cw-daemon
+    cargo build --release --target "$TARGET" --no-default-features --bin cw-daemon
 
     # 验证 cw-daemon binary 存在
     CW_DAEMON_BIN="$ROOT/rust_ext/target/$TARGET/release/cw-daemon"
     if [ ! -f "$CW_DAEMON_BIN" ]; then
         echo "  ERROR: cw-daemon binary not built at $CW_DAEMON_BIN" >&2
-        echo "  Run 'cargo build --release --target $TARGET --bin cw-daemon' first." >&2
+        echo "  Run 'cargo build --release --target $TARGET --no-default-features --bin cw-daemon' first." >&2
         exit 1
     fi
     echo "  [OK] cw-daemon binary built: $(basename "$CW_DAEMON_BIN")"

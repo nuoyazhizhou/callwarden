@@ -199,3 +199,5 @@ g0-reviewer-scratch/
 g0-batch/
 .workbuddy/
 .agents/
+rust_ext/target_cwcheck/
+rust_ext/target/

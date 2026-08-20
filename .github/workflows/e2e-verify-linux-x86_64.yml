@@ -104,6 +104,20 @@ jobs:
           # psutil 用于 step8 RSS 度量
           python -m pip install --prefer-binary --retries 5 --timeout 60 psutil
 
+      - name: Verify W2.3 five query methods through real Rust daemon UDS
+        env:
+          CW_DAEMON_BIN: ${{ github.workspace }}/rust_ext/target/release/cw-daemon
+        run: |
+          # W2.3 验收必须在 `pip install . --no-deps` 之后运行：
+          # 测试文件 from callwarden import ... 依赖已安装的包（package-dir={"callwarden"="."}
+          # 表示包即仓库根，干净 runner 上未安装时 collection 会 ModuleNotFoundError, exit 4）。
+          python -m pytest tests/test_w2_3_query_uds_e2e.py -q \
+            --junitxml=w2-3-query-uds-e2e.xml
+
+      - name: Enforce W2.3 query E2E has no skipped tests
+        run: |
+          python -c 'import xml.etree.ElementTree as ET; r=ET.parse("w2-3-query-uds-e2e.xml").getroot(); skipped=int(r.attrib.get("skipped", "0")); failures=int(r.attrib.get("failures", "0")); errors=int(r.attrib.get("errors", "0")); print(f"W2.3 query E2E: skipped={skipped}, failures={failures}, errors={errors}"); assert skipped == 0 and failures == 0 and errors == 0, "W2.3 real UDS E2E did not pass fail-closed"
+
       - name: Run PyInstaller (local + client/agent)
         run: python -m PyInstaller release/pyinstaller/callwarden.spec --noconfirm --clean
 
