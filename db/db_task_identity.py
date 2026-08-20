@@ -75,6 +75,34 @@ def _ok(**extra: Any) -> Dict[str, Any]:
     return result
 
 
+# authority 写路径未接入 gate 时的稳定错误码（0B fail-closed，计划 §3.3）。
+ERR_CAPABILITY_DISABLED = "E_TASK_LOOP_CAPABILITY_DISABLED"
+
+
+def _require_authority_gate() -> Optional[Tuple[bool, Dict[str, Any]]]:
+    """authority 写入口的 gate 前置校验（0B gate-first）。
+
+    - local 模式：无 daemon gate，保留 legacy 直写语义（不阻断）。
+    - enterprise/auto 模式：authority 写必须经 daemon `CapabilityMutationGate`
+      串行化（锁序 gate → authority store → task DB）；0B 阶段该 control-plane
+      route 未接入，稳定 fail-closed，禁止绕过 gate 直写。
+    """
+    from callwarden.config import get_daemon_mode
+
+    mode = get_daemon_mode()
+    if mode in ("enterprise", "auto"):
+        return False, _reason(
+            ERR_CAPABILITY_DISABLED,
+            "error.capability_disabled",
+            detail=(
+                "authority 写路径必须经 daemon CapabilityMutationGate 提交"
+                "（锁序 gate → authority store → task DB）；0B 阶段 gate 接入尚未"
+                "完成，拒绝直写（fail-closed），不回退本地 SQLite"
+            ),
+        )
+    return None
+
+
 # ============================================
 # Mixin
 # ============================================
@@ -561,6 +589,11 @@ class TaskIdentityMixin:
             (success, result_dict)
             缺 revocation_mode 时返回 Structured_Reason 拒绝，且**不追加任何记录**。
         """
+        # 0B gate-first：authority 写入口须经 CapabilityMutationGate，禁止绕过 gate 直写。
+        blocked = _require_authority_gate()
+        if blocked is not None:
+            return blocked
+
         # Revocation_Mode 必填且无默认值（Req 10.12）
         # 缺值时 Structured_Reason 拒绝，不追加记录
         if not revocation_mode or revocation_mode not in ("compromised", "rotated"):

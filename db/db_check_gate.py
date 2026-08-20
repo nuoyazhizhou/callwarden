@@ -224,8 +224,12 @@ class CheckGateMixin:
         """将门禁发现写入 guardrail_findings 表
 
         为每个发现自动创建或复用对应的 guardrail_rule（category='check_gate'）。
+
+        v48（W2.3 P1-1）：每条 finding 必须绑定当前 active workspace_id，
+        禁止插入 workspace_id=0 的 open finding（查询层 fail-closed）。
         """
         now = time.time()
+        ws_id = self._get_active_workspace_id()
         for f in findings:
             rule_id = f.get("rule_id") or f"gate_{f['check']}_{f['severity'].lower()}"
             # 插入规则（已存在则忽略）
@@ -247,11 +251,12 @@ class CheckGateMixin:
             self.conn.execute(
                 """
                 INSERT INTO guardrail_findings
-                    (rule_id, file_path, symbol_hash, severity, status, message,
+                    (workspace_id, rule_id, file_path, symbol_hash, severity, status, message,
                      detected_at)
-                VALUES (?, ?, '', ?, 'open', ?, ?)
+                VALUES (?, ?, ?, '', ?, 'open', ?, ?)
                 """,
                 (
+                    ws_id,
                     rule_id,
                     f["file"],
                     f["severity"],
@@ -282,14 +287,15 @@ class CheckGateMixin:
         files = [row["file_path"] for row in cur if row["file_path"]]
 
         resolved = 0
+        ws_id = self._get_active_workspace_id()
         for fp in files:
             cur = self.conn.execute(
                 """
                 UPDATE guardrail_findings
                 SET status = 'resolved', resolved_at = ?
-                WHERE file_path = ? AND status = 'open'
+                WHERE workspace_id = ? AND file_path = ? AND status = 'open'
                 """,
-                (now, fp),
+                (now, ws_id, fp),
             )
             resolved += cur.rowcount
         self.conn.commit()

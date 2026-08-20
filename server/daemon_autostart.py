@@ -117,9 +117,13 @@ def ensure_daemon(
             break
 
         # 首次连接失败时尝试唤起 daemon（仅一次）
-        if not launch_attempted:
+        # TCP bridge 由另一 authority（通常是 Windows）管理；WSL/Linux
+        # 不得把 bridge 端点误当成本地 daemon，启动 systemd/本地进程。
+        if not launch_attempted and not _is_tcp_endpoint(endpoint):
             launch_attempted = True
             _start_daemon_platform(endpoint)
+        elif _is_tcp_endpoint(endpoint):
+            launch_attempted = True
 
         # 指数退避，但不超过 deadline
         sleep_time = min(backoff, deadline - time.monotonic())
@@ -134,16 +138,96 @@ def ensure_daemon(
     return None
 
 
+def ensure_daemon_for_startup(
+    endpoint: str,
+    readiness_check: Optional[Callable[[object], bool]] = None,
+) -> bool:
+    """在宿主进程启动阶段确保 daemon 可用。
+
+    与请求期 autostart 共用同一个跨进程互斥。MCP 多实例同时启动时，
+    只有一个实例会真正唤起 daemon，其他实例等待同一个有界窗口。
+    """
+    from .daemon_mutex import DaemonMutex
+
+    conn = try_connect(endpoint)
+    if conn is not None:
+        try:
+            if readiness_check is None or readiness_check(conn):
+                return True
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    mutex = DaemonMutex(endpoint)
+    if mutex.try_acquire():
+        try:
+            conn = ensure_daemon(endpoint, readiness_check=readiness_check)
+        finally:
+            mutex.release()
+    else:
+        conn = ensure_daemon(endpoint, readiness_check=readiness_check)
+
+    if conn is None:
+        return False
+    try:
+        conn.close()
+    except Exception:
+        pass
+    return True
+
+
 def try_connect(endpoint: str) -> Optional[socket.socket]:
-    """尝试建立到 daemon endpoint 的连接。
+    r"""尝试建立到 daemon endpoint 的连接。
+
+    支持端点类型（共存契约 §3.2）：
+    - Windows Named Pipe：`\\.\pipe\callwarden-<sid>`
+    - Unix Domain Socket：绝对路径（如 `/run/callwarden/callwarden.sock`）
+    - TCP bridge：`tcp://host:port` 或 `host:port`（WSL 访问 Windows bridge）
 
     Returns:
         已连接的 socket，或 None（连接失败）。
     """
+    # TCP endpoint 优先于平台判断：即使 Windows 平台也走 TCP（bridge health 用）。
+    if _is_tcp_endpoint(endpoint):
+        return _try_connect_tcp(endpoint)
     if sys.platform == "win32":
         return _try_connect_windows(endpoint)
-    else:
-        return _try_connect_unix(endpoint)
+    return _try_connect_unix(endpoint)
+
+
+def _is_tcp_endpoint(endpoint: str) -> bool:
+    """判断 endpoint 是否为 TCP bridge 端点。"""
+    if endpoint.startswith("tcp://"):
+        return True
+    # 裸 host:port 形式（如 127.0.0.1:8456）且非 UDS 绝对路径
+    if ":" in endpoint and not endpoint.startswith("/"):
+        host, _, port = endpoint.rpartition(":")
+        if port.isdigit() and host:
+            return True
+    return False
+
+
+def _try_connect_tcp(endpoint: str) -> Optional[socket.socket]:
+    """TCP bridge 连接尝试（WSL 访问 Windows cw-bridge）。"""
+    host_port = endpoint.removeprefix("tcp://")
+    host, _, port = host_port.rpartition(":")
+    if not host or not port.isdigit():
+        return None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(CONNECT_TIMEOUT)
+        sock.connect((host, int(port)))
+        return sock
+    except (OSError, socket.error):
+        try:
+            sock.close()  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -438,12 +522,12 @@ def _find_daemon_binary() -> Optional[str]:
     """定位 cw_daemon 可执行文件。
 
     搜索顺序：
-    1. CW_DAEMON_BINARY 环境变量
+    1. CW_DAEMON_BIN / CW_DAEMON_BINARY 环境变量
     2. PATH 中的 cw_daemon（或 cw_daemon.exe）
-    3. 项目 rust_ext/target/release/ 下的构建产物
+    3. 项目 rust_ext/target/release/ 或 debug/ 下的构建产物
     """
     # 环境变量优先
-    env_bin = os.environ.get("CW_DAEMON_BINARY")
+    env_bin = os.environ.get("CW_DAEMON_BIN") or os.environ.get("CW_DAEMON_BINARY")
     if env_bin and os.path.isfile(env_bin):
         return env_bin
 
@@ -458,18 +542,19 @@ def _find_daemon_binary() -> Optional[str]:
         if found:
             return found
 
-    # 项目构建产物（开发环境）
+    # 项目构建产物（开发环境）。release 优先，debug 作为本地开发回退。
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if sys.platform == "win32":
-        candidates = [
-            os.path.join(project_root, "rust_ext", "target", "release", "cw-daemon.exe"),
-            os.path.join(project_root, "rust_ext", "target", "release", "cw_daemon.exe"),
-        ]
+        profiles = ("release", "debug")
+        names = ("cw-daemon.exe", "cw_daemon.exe")
     else:
-        candidates = [
-            os.path.join(project_root, "rust_ext", "target", "release", "cw-daemon"),
-            os.path.join(project_root, "rust_ext", "target", "release", "cw_daemon"),
-        ]
+        profiles = ("release", "debug")
+        names = ("cw-daemon", "cw_daemon")
+    candidates = [
+        os.path.join(project_root, "rust_ext", "target", profile, name)
+        for profile in profiles
+        for name in names
+    ]
     for candidate in candidates:
         if os.path.isfile(candidate):
             return candidate
@@ -560,3 +645,396 @@ def _get_windows_user_sid() -> str:
         return result or "unknown"
     except Exception:
         return "unknown"
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# HTTP MVP manifest 发现 / 校验（H2：Python thin client 发现层）
+# ────────────────────────────────────────────────────────────────────────────
+# 这些函数构成 client 的 endpoint 发现与 fail-closed 校验门禁。它们不启动任何
+# daemon 二进制（那是 H1 的职责），也不打开 SQLite；仅读取并校验 authority-scoped
+# manifest，或在显式 loopback endpoint 上做 loopback 校验。
+# 详见 docs/design/http-daemon-mvp-compatibility-contract.md §4.1。
+
+import json  # noqa: E402  (本段为 HTTP 发现层，独立导入)
+
+from callwarden.server.daemon_protocol import DaemonRemoteError  # noqa: E402
+
+
+def _pid_alive(pid: int) -> bool:
+    """判断 PID 是否仍存活（跨平台）。"""
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if sys.platform == "win32":
+        return _win_pid_alive(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # 进程存在但无信号权限 → 视为存活
+        return True
+    return True
+
+
+def _win_pid_alive(pid: int) -> bool:
+    """Windows：OpenProcess + GetExitCodeProcess，STILL_ACTIVE(259) 视为存活。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.GetExitCodeProcess.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)
+        ]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = wintypes.DWORD()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == 259  # STILL_ACTIVE
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return False
+
+
+def _pid_executable(pid: int) -> str:
+    """返回 PID 对应进程的可执行文件路径（用于与 manifest 交叉校验）。"""
+    if sys.platform == "win32":
+        return _win_pid_executable(pid)
+    try:
+        return os.readlink(f"/proc/{pid}/exe")
+    except OSError:
+        return ""
+
+
+def _win_pid_executable(pid: int) -> str:
+    """Windows：QueryFullProcessImageNameW 获取进程镜像路径。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        size = wintypes.DWORD(wintypes.MAX_PATH)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_wchar_p, ctypes.POINTER(wintypes.DWORD)
+        ]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return ""
+        try:
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+                return buf.value
+            return ""
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return ""
+
+
+def read_http_manifest(path: str) -> Dict[str, Any]:
+    """读取并解析 HTTP manifest 文件。
+
+    Raises:
+        DaemonRemoteError(E_HTTP_MANIFEST_MISSING): 文件不存在。
+        DaemonRemoteError(E_HTTP_MANIFEST_STALE): 读取/解析失败或非对象。
+    """
+    from callwarden.config import (
+        E_HTTP_MANIFEST_MISSING,
+        E_HTTP_MANIFEST_STALE,
+    )
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        raise DaemonRemoteError(
+            E_HTTP_MANIFEST_MISSING, f"HTTP manifest 文件不存在: {path}"
+        )
+    except (OSError, ValueError) as exc:
+        raise DaemonRemoteError(
+            E_HTTP_MANIFEST_STALE, f"HTTP manifest 读取/解析失败: {exc}"
+        )
+    if not isinstance(data, dict):
+        raise DaemonRemoteError(E_HTTP_MANIFEST_STALE, "HTTP manifest 不是 JSON 对象")
+    return data
+
+
+def validate_http_endpoint_loopback(endpoint: str) -> str:
+    """校验 endpoint 为显式 loopback http；返回规范化 endpoint（去尾斜杠）。
+
+    Raises:
+        DaemonRemoteError(E_HTTP_MVP_LOOPBACK_ONLY): scheme 非 http 或 host 非 loopback。
+    """
+    from callwarden.config import (
+        E_HTTP_MVP_LOOPBACK_ONLY,
+        HTTP_MVP_TRANSPORT_PROFILE,
+        is_loopback_host,
+        parse_http_endpoint_host,
+    )
+
+    try:
+        scheme, host, _port = parse_http_endpoint_host(endpoint)
+    except ValueError as exc:
+        raise DaemonRemoteError(E_HTTP_MVP_LOOPBACK_ONLY, str(exc))
+    if scheme != "http":
+        raise DaemonRemoteError(
+            E_HTTP_MVP_LOOPBACK_ONLY,
+            f"HTTP MVP 仅允许 http（dev-loopback profile），拒绝 scheme={scheme!r}",
+        )
+    if not host or not is_loopback_host(host):
+        raise DaemonRemoteError(
+            E_HTTP_MVP_LOOPBACK_ONLY,
+            f"HTTP MVP 仅允许 loopback endpoint，拒绝 host={host!r}",
+        )
+    return endpoint.rstrip("/")
+
+
+def validate_http_manifest(
+    manifest: Dict[str, Any], expected_authority_id: str = ""
+) -> Dict[str, Any]:
+    """联网前完整校验 manifest（frozen contract §4.1）。
+
+    依次校验：schema_version / manifest_hash / security_profile /
+    authority / 协议交集 / endpoint loopback / PID 存活 / executable 匹配。
+    任一不符抛结构化 DaemonRemoteError（fail-closed，不连接、不删除 manifest）。
+
+    Raises:
+        DaemonRemoteError: 任一校验失败时，code 为 E_HTTP_MANIFEST_* 或
+            E_PROTOCOL_VERSION_UNSUPPORTED / E_HTTP_MVP_LOOPBACK_ONLY。
+    """
+    from callwarden.config import (
+        E_HTTP_MANIFEST_HASH_MISMATCH,
+        E_HTTP_MANIFEST_STALE,
+        E_HTTP_MVP_LOOPBACK_ONLY,
+        E_PROTOCOL_VERSION_UNSUPPORTED,
+        HTTP_MANIFEST_SCHEMA_VERSION,
+        HTTP_MVP_TRANSPORT_PROFILE,
+        HTTP_PROTOCOL_VERSION,
+        SUPPORTED_HTTP_PROTOCOL_VERSIONS,
+        compute_http_manifest_hash,
+        norm_path,
+    )
+
+    if not isinstance(manifest, dict):
+        raise DaemonRemoteError(E_HTTP_MANIFEST_STALE, "manifest 不是 JSON 对象")
+
+    # schema_version
+    if manifest.get("manifest_version") != HTTP_MANIFEST_SCHEMA_VERSION:
+        raise DaemonRemoteError(
+            E_HTTP_MANIFEST_STALE,
+            f"manifest_version 不符: 期望 {HTTP_MANIFEST_SCHEMA_VERSION!r}, "
+            f"实际 {manifest.get('manifest_version')!r}",
+        )
+
+    # manifest_hash（排除自身后 canonical JSON 的 SHA-256）
+    if manifest.get("manifest_hash") != compute_http_manifest_hash(manifest):
+        raise DaemonRemoteError(
+            E_HTTP_MANIFEST_HASH_MISMATCH,
+            "manifest_hash 校验失败（可能被篡改或写入未落盘）",
+        )
+
+    # security_profile 必须严格等于 dev_loopback_unauthenticated
+    if manifest.get("security_profile") != HTTP_MVP_TRANSPORT_PROFILE:
+        raise DaemonRemoteError(
+            E_HTTP_MANIFEST_STALE,
+            f"security_profile 非 {HTTP_MVP_TRANSPORT_PROFILE!r}: "
+            f"{manifest.get('security_profile')!r}",
+        )
+
+    # authority 作用域
+    if expected_authority_id and manifest.get("authority_id") != expected_authority_id:
+        raise DaemonRemoteError(
+            E_HTTP_MANIFEST_STALE,
+            f"authority 不匹配: manifest={manifest.get('authority_id')!r}, "
+            f"expected={expected_authority_id!r}",
+        )
+
+    # 协议版本交集（客户端仅支持 v1）
+    svers = manifest.get("supported_protocol_versions") or []
+    if (not isinstance(svers, list)) or HTTP_PROTOCOL_VERSION not in svers:
+        raise DaemonRemoteError(
+            E_PROTOCOL_VERSION_UNSUPPORTED,
+            f"无协议交集: 客户端支持 v1, daemon supported={svers!r} "
+            f"(E_PROTOCOL_VERSION_UNSUPPORTED)",
+        )
+
+    # endpoint 必须为 loopback
+    validate_http_endpoint_loopback(manifest.get("endpoint", ""))
+
+    # PID 存活 + executable 匹配（stale-PID 规则）
+    pid = manifest.get("pid")
+    if pid is not None:
+        try:
+            pid = int(pid)
+        except (TypeError, ValueError):
+            pid = None
+    if pid is not None:
+        if not _pid_alive(pid):
+            raise DaemonRemoteError(
+                E_HTTP_MANIFEST_STALE,
+                f"manifest PID {pid} 已不存活（stale manifest）",
+            )
+        exe = manifest.get("daemon_executable")
+        if exe:
+            actual = _pid_executable(pid)
+            if actual and norm_path(actual) != norm_path(exe):
+                raise DaemonRemoteError(
+                    E_HTTP_MANIFEST_STALE,
+                    f"manifest executable 与存活 PID 不匹配: "
+                    f"manifest={exe!r}, pid={actual!r}",
+                )
+
+    return manifest
+
+
+def _load_manifest_for_authority(
+    manifest_path: Optional[str], authority_id: str
+) -> Optional[Dict[str, Any]]:
+    """按候选路径加载 authority-scoped manifest。
+
+    候选顺序：显式 manifest_path（若存在）→ 当前 authority 默认 manifest。
+    文件存在但损坏/非对象时向上抛出结构化错误（fail-closed）；
+    两个候选都不存在时返回 None（交由调用方决定）。"""
+    from callwarden.config import get_http_manifest_path
+
+    candidates: List[str] = []
+    if manifest_path:
+        candidates.append(manifest_path)
+    candidates.append(get_http_manifest_path(authority_id))
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return read_http_manifest(path)  # 缺失/损坏均抛结构化错误
+    return None
+
+
+def resolve_http_endpoint_and_manifest(
+    explicit_endpoint: Optional[str] = None,
+    manifest_path: Optional[str] = None,
+    authority_id: str = "",
+    validate: bool = True,
+) -> tuple:
+    """按 frozen contract §4.1 优先级解析 HTTP endpoint 与（可选）manifest。
+
+    优先级：
+        显式 CW_DAEMON_HTTP_ENDPOINT（仍须 loopback 校验）
+        > 显式 manifest_path
+        > 当前 authority 的默认 manifest。
+
+    显式 endpoint 本身是合法的独立发现路径（无需 manifest 文件存在），
+    但若存在 manifest 仍按其校验（fail-closed）。无显式 endpoint 且未找到
+    manifest 时抛 E_HTTP_MANIFEST_MISSING。
+
+    Returns:
+        (endpoint, manifest_or_None)
+
+    Raises:
+        DaemonRemoteError: loopback 校验失败 / manifest 缺失或校验不通过。
+    """
+    from callwarden.config import (
+        E_HTTP_MANIFEST_MISSING,
+        get_http_authority_id,
+        get_http_daemon_endpoint,
+    )
+
+    authority_id = authority_id or get_http_authority_id()
+    explicit = explicit_endpoint or get_http_daemon_endpoint()
+    if explicit:
+        # 显式 endpoint：必须 loopback，manifest 仅作可选权威校验
+        endpoint = validate_http_endpoint_loopback(explicit)
+        manifest = _load_manifest_for_authority(manifest_path, authority_id)
+        if manifest is not None and validate:
+            validate_http_manifest(manifest, authority_id)
+        return endpoint, manifest
+
+    # 仅经 manifest 发现
+    manifest = _load_manifest_for_authority(manifest_path, authority_id)
+    if manifest is None:
+        raise DaemonRemoteError(
+            E_HTTP_MANIFEST_MISSING,
+            "未设置 CW_DAEMON_HTTP_ENDPOINT 且未找到 authority-scoped manifest；"
+            "fail-closed（不回退 Named Pipe/UDS/SQLite）",
+        )
+    if validate:
+        validate_http_manifest(manifest, authority_id)
+    ep = manifest.get("endpoint", "")
+    ep = validate_http_endpoint_loopback(ep)
+    return ep, manifest
+
+
+def try_http_connect(endpoint: str, timeout: float = 2.0) -> bool:
+    """对 HTTP endpoint 做一次短超时连通性探针（仅 TCP connect + 读取首字节）。"""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(endpoint)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 80
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
+        sock.close()
+        return True
+    except OSError:
+        return False
+
+
+def ensure_http_daemon(
+    endpoint: str,
+    window: Optional[float] = None,
+    timeout: float = 2.0,
+    readiness_check: Optional[Callable[[str], bool]] = None,
+) -> Optional[str]:
+    """在 bounded 窗口内等待 HTTP daemon 就绪（不启动未知二进制）。
+
+    仅做 CONNECT/TCP 级或 readiness 级探针并重试；窗口耗尽返回 None。
+    与 ensure_daemon 的语义对齐，但面向 HTTP endpoint，不唤起任何进程。
+
+    Args:
+        endpoint: 已校验的 loopback http endpoint。
+        window: 有界等待窗口（秒），默认 10s。
+        timeout: 单次探针超时。
+        readiness_check: 可选（endpoint）-> bool 就绪判定（如 GET /health）。
+
+    Returns:
+        就绪时返回 endpoint，否则 None。
+    """
+    if window is None:
+        window = DEFAULT_WAIT_WINDOW
+    deadline = time.monotonic()
+    backoff = BACKOFF_BASE
+
+    def _ready(ep: str) -> bool:
+        if readiness_check is not None:
+            try:
+                return bool(readiness_check(ep))
+            except Exception:
+                return False
+        return try_http_connect(ep, timeout)
+
+    while True:
+        if _ready(endpoint):
+            return endpoint
+        now = time.monotonic()
+        if now >= deadline:
+            break
+        sleep_time = min(backoff, deadline - now)
+        if sleep_time <= 0:
+            break
+        time.sleep(sleep_time)
+        backoff = min(backoff * BACKOFF_FACTOR, BACKOFF_MAX)
+    return None

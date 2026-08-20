@@ -7,11 +7,13 @@ config.py
 
 import codecs
 import hashlib
+import json
 import os
 import re
+import socket
 import sys
 import tempfile
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # === PyInstaller 冻结环境检测 ===
 _IS_FROZEN = getattr(sys, 'frozen', False)
@@ -1407,6 +1409,10 @@ CONTAINER_MOUNT_MAPPINGS = {}
 # daemon 运行模式
 DAEMON_MODE = os.environ.get("CW_DAEMON_MODE", "auto")
 
+# 任务写入策略：共享用户库默认必须经过 daemon 单写点。
+# isolated 仅用于单进程测试、离线迁移或明确维护窗口。
+TASK_WRITE_POLICY = os.environ.get("CW_TASK_WRITE_POLICY", "shared")
+
 
 def resolve_container_path(path: str, container_mappings: dict = None) -> str:
     """将容器内路径解析为宿主机路径。"""
@@ -1421,16 +1427,215 @@ def resolve_container_path(path: str, container_mappings: dict = None) -> str:
 
 
 def get_daemon_mode() -> str:
-    """获取当前 daemon 模式。"""
+    """获取当前 daemon 模式（Q3：local/legacy 仅测试可用，生产 fail-closed）。
+
+    - `auto`（默认）：自动拉起 daemon；
+    - `http`：显式 HTTP transport；
+    - `enterprise`：强制 daemon（生产显式模式）；
+    - `local`/`legacy`：仅 `CW_TEST_MODE=1` 下可用，否则视为配置错误
+      （E_MODE_DEPRECATED，由 route_rpc / CLI 在调用时拒绝）。
+    """
     env_mode = os.environ.get("CW_DAEMON_MODE", "").lower()
-    if env_mode in ("local", "enterprise", "auto"):
+    if env_mode in ("http", "enterprise", "auto"):
         return env_mode
+    if env_mode in ("local", "legacy"):
+        if _is_test_mode():
+            return env_mode
+        return "local"  # 标记为 local；route_rpc/CLI 会在调用时抛 E_MODE_DEPRECATED
     return DAEMON_MODE
 
 
+def get_daemon_authority() -> str:
+    """获取 authority 配置（共存契约 §5.1）。
+
+    返回：auto | windows-host | wsl-local | linux-system
+    - auto: 按平台默认（Windows→windows-host，其余→wsl-local/linux-system）
+    - windows-host: 使用 Windows daemon（经 Named Pipe 或 bridge）
+    - wsl-local: 使用 WSL 本地 daemon（UDS）
+    - linux-system: 使用 Linux systemd daemon（UDS）
+    """
+    env = os.environ.get("CW_AUTHORITY", "").strip().lower()
+    if env in ("auto", "windows-host", "wsl-local", "linux-system"):
+        return env
+    # 未配置时按平台默认
+    if sys.platform == "win32":
+        return "windows-host"
+    # WSL 检测：/proc/version 含 microsoft 视为 WSL
+    try:
+        with open("/proc/version", "r", encoding="utf-8", errors="replace") as f:
+            if "microsoft" in f.read().lower():
+                return "wsl-local"
+    except OSError:
+        pass
+    return "linux-system"
+
+
+def get_daemon_transport() -> str:
+    """获取 transport 配置（共存契约 §5.1）。
+
+    返回：auto | http | named-pipe | uds | windows-bridge | cli-bridge
+    """
+    env = os.environ.get("CW_DAEMON_TRANSPORT", "").strip().lower()
+    if env in ("auto", "http", "named-pipe", "uds", "windows-bridge", "cli-bridge"):
+        return env
+    return "auto"
+
+
+def get_bridge_endpoint() -> str:
+    """获取 Windows bridge 端点（WSL 客户端访问 Windows daemon）。
+
+    优先级：
+    1. CW_BRIDGE_ENDPOINT（显式配置）
+    2. bridge manifest（~/.callwarden/bridge.manifest.json 或 CW_BRIDGE_MANIFEST）
+    3. CW_BRIDGE_ADDR / CW_DAEMON_ENDPOINT（若指向 tcp）
+    4. 无可用端点时返回空串；调用方必须以 E_AUTHORITY_UNRESOLVED fail-closed。
+
+    返回形如 `tcp://127.0.0.1:<port>` 或 `127.0.0.1:<port>`。
+    """
+    env = os.environ.get("CW_BRIDGE_ENDPOINT", "").strip()
+    if env:
+        return env
+    manifest_endpoint = _read_bridge_manifest_endpoint()
+    if manifest_endpoint:
+        return manifest_endpoint
+    for var in ("CW_BRIDGE_ADDR", "CW_DAEMON_ENDPOINT"):
+        value = os.environ.get(var, "").strip()
+        if value and ("tcp://" in value or ":" in value):
+            return value
+    return ""
+
+
+def _read_bridge_manifest() -> Dict[str, str]:
+    """从 bridge manifest 读取实际端点（P1：随机端口的消费机制）。
+
+    manifest 路径：CW_BRIDGE_MANIFEST 或 ~/.callwarden/bridge.manifest.json。
+    读取失败或 authority/transport 不匹配时返回空 dict。manifest 只能声明
+    Windows authority 的 windows-bridge/cli-bridge 端点，不能成为跨 authority
+    的隐式路由来源。
+    """
+    import json
+
+    path = os.environ.get("CW_BRIDGE_MANIFEST", "").strip()
+    if not path:
+        home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
+        path = os.path.join(home, ".callwarden", "bridge.manifest.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        authority = data.get("authority", "")
+        transport = data.get("transport", "")
+        endpoint = data.get("endpoint", "")
+        if (authority != "windows-host"
+                or transport not in ("windows-bridge", "cli-bridge")
+                or not isinstance(endpoint, str)
+                or not endpoint.strip()):
+            return {}
+        token_file = data.get("token_file", "")
+        return {
+            "endpoint": endpoint.strip(),
+            "token_file": token_file.strip() if isinstance(token_file, str) else "",
+        }
+    except (OSError, ValueError):
+        return {}
+
+
+def _read_bridge_manifest_endpoint() -> str:
+    """兼容入口：只返回已经过 authority/transport 校验的 manifest endpoint。"""
+    return _read_bridge_manifest().get("endpoint", "")
+
+
+def get_bridge_token() -> str:
+    """读取 bridge token（WSL 客户端注入请求用）。
+
+    优先级：CW_BRIDGE_TOKEN_FILE 指向的文件内容 > 默认 ~/.callwarden/bridge.token。
+    读取失败返回空串（调用方应 fail-closed，不发起未认证请求）。
+    """
+    path = os.environ.get("CW_BRIDGE_TOKEN_FILE", "").strip()
+    if not path:
+        # manifest 与 endpoint 必须来自同一份经校验的 authority 声明，避免 WSL
+        # client 把用户默认 token 注入错误 bridge。
+        path = _read_bridge_manifest().get("token_file", "")
+        # 显式 manifest 无效或缺 token_file 时不得回退到用户默认 token；否则
+        # WSL 进程可能用错误 authority 的旧凭据访问 bridge。
+        if not path and os.environ.get("CW_BRIDGE_MANIFEST", "").strip():
+            return ""
+    if not path:
+        home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
+        path = os.path.join(home, ".callwarden", "bridge.token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def is_bridge_transport() -> bool:
+    """当前配置是否使用 Windows bridge 作为 transport。"""
+    return get_daemon_transport() in ("windows-bridge", "cli-bridge")
+
+
+def resolve_daemon_endpoint_for_authority() -> str:
+    """按 authority + transport 解析最终 daemon endpoint。
+
+    规则（共存契约 §4.2 / §5.2，禁止回退 /mnt/c SQLite）：
+    - windows-host + windows-bridge → bridge endpoint
+    - windows-host + named-pipe → Windows Named Pipe（仅 Windows 进程可用）
+    - wsl-local / linux-system + uds → UDS
+    - 无法确定 authority → 抛 ValueError（E_AUTHORITY_UNRESOLVED 语义）
+    """
+    authority = get_daemon_authority()
+    transport = get_daemon_transport()
+
+    if authority == "windows-host":
+        if transport in ("windows-bridge", "cli-bridge"):
+            endpoint = get_bridge_endpoint()
+            if endpoint and endpoint not in ("127.0.0.1:0", "tcp://127.0.0.1:0"):
+                return endpoint
+            raise ValueError(
+                "E_AUTHORITY_UNRESOLVED: windows-host authority 缺少有效 bridge endpoint；"
+                "请设置 CW_BRIDGE_ENDPOINT 或提供 authority=windows-host、"
+                "transport=windows-bridge 的 CW_BRIDGE_MANIFEST"
+            )
+        if transport == "named-pipe" or sys.platform == "win32":
+            return get_default_daemon_endpoint()
+        # WSL 访问 Windows authority 但未指定 bridge → 明确不可用，禁止直连 /mnt/c
+        raise ValueError(
+            "E_AUTHORITY_UNRESOLVED: windows-host authority 在非 Windows 平台需要 "
+            "CW_DAEMON_TRANSPORT=windows-bridge 或 cli-bridge；禁止直连 /mnt/c SQLite"
+        )
+
+    if authority in ("wsl-local", "linux-system"):
+        return os.environ.get("CW_DAEMON_SOCKET", "/run/callwarden/callwarden.sock")
+
+    # auto：按平台默认 endpoint
+    return get_default_daemon_endpoint()
+
+
 def is_daemon_required() -> bool:
-    """是否强制要求 daemon。"""
-    return get_daemon_mode() == "enterprise"
+    """是否强制要求 daemon（Q3：除测试外全部模式 daemon 必须可用）。
+
+    - enterprise/http/auto → True（fail-closed，不降级本地执行）；
+    - local/legacy → 仅 CW_TEST_MODE=1 下 False（测试专用），生产视为配置错误。
+    """
+    mode = get_daemon_mode()
+    if mode in ("local", "legacy"):
+        return not _is_test_mode()
+    return True
+
+
+def get_task_write_policy() -> str:
+    """获取任务写入策略。
+
+    shared 是安全默认值：local 模式也不能绕过 daemon 写任务库。
+    isolated 是显式 opt-in，仅允许单进程维护或测试使用。
+    """
+    policy = os.environ.get("CW_TASK_WRITE_POLICY", "").lower()
+    if policy in ("shared", "isolated"):
+        return policy
+    policy = str(TASK_WRITE_POLICY).lower()
+    return policy if policy in ("shared", "isolated") else "shared"
 
 
 def is_daemon_available() -> bool:
@@ -1448,3 +1653,153 @@ def is_daemon_available() -> bool:
         return False
     return os.path.exists(endpoint)
 
+
+# ────────────────────────────────────────────────────────────────────────────
+# HTTP MVP (dev_loopback_unauthenticated) 配置
+# ────────────────────────────────────────────────────────────────────────────
+# 仅显式 CW_DAEMON_TRANSPORT=http 启用；不得作为 release/enterprise 默认。
+# 该 transport profile 是 Requirements 14.20 "无监听 TCP" 的唯一版本化例外，
+# 且仅覆盖开发机 loopback，不提供生产安全/跨用户 ACL/远程授权。
+# 详见 docs/design/http-daemon-mvp-compatibility-contract.md §2.1。
+
+# 冻结标识与唯一 profile 名称
+HTTP_MVP_TRANSPORT_PROFILE = "dev_loopback_unauthenticated"
+HTTP_PROTOCOL_VERSION = "1"
+SUPPORTED_HTTP_PROTOCOL_VERSIONS = ("1",)
+HTTP_MANIFEST_SCHEMA_VERSION = "callwarden-http-manifest/v1"
+
+# 默认同步超时（秒）与请求体上限（8 MiB，以原始 body bytes 计）
+HTTP_DEFAULT_TIMEOUT = 30.0
+HTTP_MAX_BODY_BYTES = 8 * 1024 * 1024
+
+# HTTP 层结构化错误码（客户端侧，映射 frozen contract §4.3 / §9）
+E_HTTP_MVP_LOOPBACK_ONLY = "E_HTTP_MVP_LOOPBACK_ONLY"
+E_HTTP_MANIFEST_MISSING = "E_HTTP_MANIFEST_MISSING"
+E_HTTP_MANIFEST_STALE = "E_HTTP_MANIFEST_STALE"
+E_HTTP_MANIFEST_HASH_MISMATCH = "E_HTTP_MANIFEST_HASH_MISMATCH"
+E_PROTOCOL_VERSION_UNSUPPORTED = "E_PROTOCOL_VERSION_UNSUPPORTED"
+E_HTTP_DAEMON_UNAVAILABLE = "E_HTTP_DAEMON_UNAVAILABLE"
+E_HTTP_REQUEST_TIMEOUT = "E_HTTP_REQUEST_TIMEOUT"
+E_REQUEST_TOO_LARGE = "E_REQUEST_TOO_LARGE"
+E_REQUEST_ID_REUSE_MISMATCH = "E_REQUEST_ID_REUSE_MISMATCH"
+
+# 收敛架构错误码（T01，与 rust_ext/src/daemon/error_codes.rs 对齐）
+E_TOOL_DEPRECATED = "E_TOOL_DEPRECATED"
+E_MODE_DEPRECATED = "E_MODE_DEPRECATED"
+E_TOOL_MIGRATION_PENDING = "E_TOOL_MIGRATION_PENDING"
+
+
+def _is_test_mode() -> bool:
+    """CW_TEST_MODE=1 时允许 local/legacy（Q3：local 降级为测试专用）。"""
+    return os.environ.get("CW_TEST_MODE", "") == "1"
+
+
+def is_http_transport_enabled() -> bool:
+    """HTTP transport 是否启用（H6 迁移期默认）。
+
+    未显式设置 CW_DAEMON_TRANSPORT（或为 http/auto）→ True（迁移期默认 HTTP）；
+    显式指定其他 transport（named-pipe/uds/windows-bridge/cli-bridge）→ False
+    （回落旧通道）。
+    """
+    env = os.environ.get("CW_DAEMON_TRANSPORT", "").strip().lower()
+    return env in ("", "http", "auto")
+
+
+def get_http_daemon_endpoint() -> str:
+    """显式 HTTP endpoint（CW_DAEMON_HTTP_ENDPOINT），未设置返回空串。
+
+    即使显式设置，client 仍须校验其为 loopback（frozen contract §4.1）。
+    """
+    return os.environ.get("CW_DAEMON_HTTP_ENDPOINT", "").strip()
+
+
+def get_http_authority_id() -> str:
+    """计算 HTTP dev-loopback 的本地 authority id（本机用户作用域）。
+
+    该 profile 仅限开发机 loopback，authority 即当前本地用户会话；
+    Windows 用 SID，Unix 用 uid。与 cw-daemon 的 authority 概念对齐，
+    但仅用于 manifest 作用域校验，不代表任何跨用户/远程授权。
+    """
+    if sys.platform == "win32":
+        return _get_windows_user_sid()
+    try:
+        import pwd
+        return f"uid-{pwd.getpwuid(os.getuid()).pw_uid}"
+    except Exception:
+        return f"uid-{os.getuid()}"
+
+
+def get_http_manifest_dir() -> str:
+    """HTTP manifest 所在目录（与权威任务库同根）。"""
+    return CALLWARDEN_DIR
+
+
+def get_http_manifest_path(authority_id: str = "") -> str:
+    """authority-scoped HTTP manifest 路径。
+
+    manifest 文件名嵌入 authority_id，保证不同本地用户/作用域的 manifest 隔离。
+    """
+    if not authority_id:
+        authority_id = get_http_authority_id()
+    safe = authority_id.replace("/", "_").replace("\\", "_").replace(":", "_")
+    return os.path.join(CALLWARDEN_DIR, f"http-daemon.{safe}.manifest.json")
+
+
+def get_default_http_manifest_path() -> str:
+    """当前 authority 的默认 HTTP manifest 路径。"""
+    return get_http_manifest_path(get_http_authority_id())
+
+
+def compute_http_manifest_hash(manifest: Dict[str, Any]) -> str:
+    """排除 manifest_hash 字段的 canonical JSON SHA-256。
+
+    canonical 规则：UTF-8 编码、按 key 排序、无多余空白（separators 紧凑）。
+    与 frozen contract §4.1 的 manifest_hash 计算方式一致。
+    """
+    stripped = {k: v for k, v in manifest.items() if k != "manifest_hash"}
+    canonical = json.dumps(
+        stripped, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def is_loopback_host(host: str) -> bool:
+    """判断 host 是否全部解析为 loopback（127.0.0.0/8 或 ::1）。
+
+    按 frozen contract §2.1：hostname 必须先解析且全部结果均为 loopback，
+    否则视为非 loopback（拒绝 0.0.0.0/::/LAN/远程地址）。
+    """
+    if not host:
+        return False
+    if host in ("localhost", "ip6-localhost", "ip6-loopback"):
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError, ValueError, OSError):
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        addr = info[4][0]
+        # IPv6 / IPv4 loopback 归一化
+        if addr in ("::1", "0:0:0:0:0:0:0:1", "127.0.0.1"):
+            continue
+        if addr.startswith("127."):
+            continue
+        # 任何非 loopback 结果 → 整体拒绝
+        return False
+    return True
+
+
+def parse_http_endpoint_host(endpoint: str) -> tuple:
+    """从 http(s)://host:port 解析 (scheme, host, port)。
+
+    Raises:
+        ValueError: endpoint 无 scheme 或无法解析。
+    """
+    from urllib.parse import urlparse
+
+    parsed = urlparse(endpoint)
+    if not parsed.scheme:
+        raise ValueError(f"endpoint 缺少 scheme: {endpoint}")
+    return parsed.scheme, (parsed.hostname or ""), (parsed.port or 0)

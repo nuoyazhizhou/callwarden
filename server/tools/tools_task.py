@@ -1,6 +1,22 @@
 """任务驱动编排（task_create/next/report/rollback/close 等，原 [L5]）
 
 拆分自 server/mcp_server.py（1591-3050 行区间），由 register(mcp) 注册。
+
+H4B-E（T-1786590214634-9e740cdc-h4b-unsupported-error）：governance/unsupported/error cutover
+- 任务工具已统一走 route_task_write/route_task_read（task.* 在 dispatch.rs 有真实
+  RPC 分支，HTTP 模式经 HttpDaemonRpcClient.call 透传，无伪路由），本任务不触碰。
+- get_symbol_issues / get_test_cases / get_tested_functions /
+  get_test_coverage_summary / get_test_stability 5 个工具曾直接调用
+  `_get_daemon_client()` 的便捷方法，而 HttpDaemonRpcClient 无这些便捷方法——
+  HTTP 模式必 AttributeError。已改为 HTTP 模式经通用 call 透传真实 RPC
+  query.issues / query.tests（dispatch.rs 真名，与 daemon_client.py 便捷方法
+  内部 _remote_query 同名对齐）；legacy 模式保持便捷方法调用，语义不变。
+- get_symbol_change_tasks / get_commit_tasks / task_plan_template 3 个工具曾因
+  route_task_read 直传 dispatch.rs 不存在的 RPC（task.get_change_tasks /
+  task.get_commit_tasks / task.plan_template）在 HTTP 模式必抛 method_not_found。
+  已按 H4C-2/3 方案改走 route_worker_call（Rust 白名单 + Python 镜像 handler
+  三端齐全），HTTP/enterprise 经 compat worker 执行（fail-closed）；local/auto
+  降级 _local() 本地 SQL，公开语义不变（T-1786716190783-ba187c88 整改 2）。
 """
 
 # [L5] 任务驱动编排工具（task_create / task_next_step / work_next_job 等）
@@ -10,7 +26,24 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 
 from .._mcp_common import _get_daemon_client, _get_db_path_for_daemon, get_db
-from callwarden.server.daemon_client import route_task_write, route_task_read, DaemonUnavailableError
+from callwarden.server.daemon_client import (
+    is_http_transport_enabled,
+    route_task_write,
+    route_task_read,
+    route_worker_call,
+)
+
+# H4C-3（T-1786716190783-ba187c88 步骤#1）：任务组只读工具接入 compat worker。
+# 必须用顶层 `server.compat_registry` 导入，与 compat_worker.py 保持同一模块
+# 单例（模块单例风险，见 tools_query.py 同款注释）。
+from ...db import CodeGraphDB
+from server.compat_registry import (  # noqa: E402
+    SCOPE_WORKSPACE,
+    CompatCallContext,
+    register_compat_routes,
+)
+
+from ..daemon_client import route_rpc as _route
 
 
 def register(mcp: FastMCP) -> None:
@@ -29,26 +62,10 @@ def register(mcp: FastMCP) -> None:
         Returns:
             task_id
         """
-        def _local():
-            db = get_db()
-            return db.task_create(title=title, description=description, steps=steps, creator=creator)
-
-        res = route_task_write(
-            "task.create",
-            {
-                "title": title,
-                "description": description,
-                "steps": steps or [],
-                "creator": creator,
-            },
-            _local,
-        )
-        if isinstance(res, dict) and "task_id" in res:
-            return res["task_id"]
-        return res
+        return _route('task.create', {"title": title, "description": description, "steps": steps, "creator": creator}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_next_step(task_id: str, agent_session_id: str = "") -> Optional[dict]:
+    def task_next_step(task_id: str, agent_session_id: str = "", identity: dict = None, contract_claim: dict = None) -> Optional[dict]:
         """领取任务的下一个待执行步骤
 
         Agent 必须通过此工具领取步骤，不能自由决定下一步操作。
@@ -60,26 +77,24 @@ def register(mcp: FastMCP) -> None:
         - 若返回 guardrail_warning（decision=warn）：步骤可执行，但需关注告警。
         - 否则正常执行。
 
+        A2/A3 合同领取（agent-task-contract-design.md §4.1/4.2）：
+        - identity: Agent 身份 JSON（agent_id/agent_instance_id/session_id/model_id/role 等）。
+          冻结 Role Contract 的任务必须携带 identity（fail-closed），未注册身份禁止领取。
+        - contract_claim: 声明本次领取使用的 skill_id/skill_version/prompt_hash；
+          与任务冻结合同不符时拒绝领取（E_CONTRACT_*_MISMATCH）。
+        - 领取成功时返回 role_contract（Task Envelope）供 Agent 遵守。
+
         Args:
             task_id: 任务 ID
             agent_session_id: Agent 会话 ID（可选）。同一 Windows 用户多 Agent/多 IDE
                 并发认领同一任务时用于区分不同逻辑 Agent；缺省时 daemon 以连接身份为准。
+            identity: Agent 身份 JSON（可选；合同任务必填）
+            contract_claim: 合同声明 JSON（可选）
 
         Returns:
             步骤详情，如果没有待执行步骤则返回 None
         """
-        def _local():
-            db = get_db()
-            return db.task_next_step(task_id=task_id)
-
-        _params = {"task_id": task_id}
-        if agent_session_id:
-            _params["agent_session_id"] = agent_session_id
-        return route_task_write(
-            "task.claim",
-            _params,
-            _local,
-        )
+        return _route('task.claim', {"task_id": task_id, "agent_session_id": agent_session_id, "identity": identity, "contract_claim": contract_claim}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def work_next_job(task_id: str) -> Optional[dict]:
@@ -89,15 +104,7 @@ def register(mcp: FastMCP) -> None:
         符号源码、调用上下文、文件健康、允许编辑范围、推荐 patch 工具
         和完成后汇报方式。
         """
-        def _local():
-            db = get_db()
-            return db.work_next_job(task_id=task_id)
-
-        return route_task_write(
-            "task.work_next",
-            {"task_id": task_id},
-            _local,
-        )
+        return _route('task.work_next', {"task_id": task_id}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_resolve_block(task_id: str, step_id: str, resolution: str = "ack") -> Optional[dict]:
@@ -114,18 +121,10 @@ def register(mcp: FastMCP) -> None:
         Returns:
             更新后的步骤详情，若步骤不存在或非 blocked 状态则返回 None
         """
-        def _local():
-            db = get_db()
-            return db.task_resolve_block(task_id=task_id, step_id=step_id, resolution=resolution)
-
-        return route_task_write(
-            "task.reopen",
-            {"task_id": task_id, "step_id": step_id, "reason": resolution},
-            _local,
-        )
+        return _route('task.reopen', {"task_id": task_id, "step_id": step_id, "resolution": resolution}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_report_step(task_id: str, step_id: str, result: str = "", success: bool = True, changes: list = None) -> Optional[dict]:
+    def task_report_step(task_id: str, step_id: str, result: str = "", success: bool = True, changes: list = None, identity: dict = None) -> Optional[dict]:
         """回报步骤执行结果
 
         如果失败，系统会自动插入"修复缺陷"步骤，Agent 无法跳过。
@@ -143,43 +142,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             下一步步骤信息（如果有）
         """
-        def _local():
-            db = get_db()
-            try:
-                identity_dict, id_reason = _resolve_identity_arg(db, identity)
-                if id_reason:
-                    return _identity_mcp_reason(
-                        id_reason.get("code", "E_IDENTITY_INVALID"),
-                        id_reason.get("message_key", "error.identity_incomplete"),
-                        id_reason.get("detail", "身份校验失败"),
-                    )
-                kwargs: Dict[str, Any] = {
-                    "task_id": task_id, "step_id": step_id,
-                    "result": result, "success": success, "changes": changes,
-                }
-                if identity_dict:
-                    if not _db_method_accepts_identity("task_report_step"):
-                        return _identity_mcp_reason(
-                            "E_IDENTITY_NOT_WIRED",
-                            "error.identity_not_wired",
-                            "task_report_step 尚不支持 identity 参数（8.6 接线后可用）",
-                        )
-                    kwargs["identity"] = identity_dict
-                return db.task_report_step(**kwargs)
-            except Exception as e:
-                return {"error": str(e)}
-
-        return route_task_write(
-            "task.report",
-            {
-                "task_id": task_id,
-                "step_id": step_id,
-                "summary": result,
-                "success": success,
-                "changes": changes,
-            },
-            _local,
-        )
+        return _route('task.report', {"task_id": task_id, "step_id": step_id, "result": result, "success": success, "changes": changes, "identity": identity}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def record_task_symbol_change(task_id: str, file_path: str, step_id: str = "",
@@ -189,144 +152,77 @@ def register(mcp: FastMCP) -> None:
                                   change_type: str = "modified", source: str = "manual",
                                   metadata: dict = None) -> dict:
         """记录任务/步骤到文件或符号版本变化的归因"""
-        def _local():
-            db = get_db()
-            return db.record_task_symbol_change(
-                task_id=task_id, file_path=file_path, step_id=step_id,
-                edit_audit_id=edit_audit_id, change_audit_id=change_audit_id,
-                qualified_name=qualified_name, symbol_name=symbol_name,
-                symbol_hash_before=symbol_hash_before, symbol_hash_after=symbol_hash_after,
-                change_type=change_type, source=source, metadata=metadata or {},
-            )
-        return route_task_write("task.record_symbol_change", {
-            "task_id": task_id, "file_path": file_path, "step_id": step_id,
-            "edit_audit_id": edit_audit_id, "change_audit_id": change_audit_id,
-            "qualified_name": qualified_name, "symbol_name": symbol_name,
-            "symbol_hash_before": symbol_hash_before, "symbol_hash_after": symbol_hash_after,
-            "change_type": change_type, "source": source, "metadata": metadata or {},
-        }, _local)
+        return _route('task.record_symbol_change', {"task_id": task_id, "file_path": file_path, "step_id": step_id, "edit_audit_id": edit_audit_id, "change_audit_id": change_audit_id, "qualified_name": qualified_name, "symbol_name": symbol_name, "symbol_hash_before": symbol_hash_before, "symbol_hash_after": symbol_hash_after, "change_type": change_type, "source": source, "metadata": metadata}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def link_edit_audit_symbols(audit_id: int, step_id: str = "") -> dict:
         """刷新图谱后，将某次 edit_audit 的 before/after 文件版本映射到符号变化"""
-        def _local():
-            db = get_db()
-            return db.link_edit_audit_symbols(audit_id=audit_id, step_id=step_id)
-        return route_task_write("task.link_edit_audit_symbols", {
-            "audit_id": audit_id, "step_id": step_id,
-        }, _local)
+        return _route('task.link_edit_audit_symbols', {"audit_id": audit_id, "step_id": step_id}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def get_task_symbol_changes(task_id: str, step_id: str = "", file_path: str = "", limit: int = 100) -> list:
         """查询任务或步骤归因到的文件/符号变化"""
-        def _local():
-            db = get_db()
-            return db.get_task_symbol_changes(task_id=task_id, step_id=step_id, file_path=file_path, limit=limit)
-        return route_task_read("task.get_symbol_changes", {
-            "task_id": task_id, "step_id": step_id, "file_path": file_path, "limit": limit,
-        }, _local)
+        return _route('task.get_symbol_changes', {"task_id": task_id, "step_id": step_id, "file_path": file_path, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_symbol_change_tasks(symbol_hash: str = "", qualified_name: str = "", limit: int = 50) -> list:
         """反查某个符号版本或符号名由哪些任务改变过"""
-        def _local():
-            db = get_db()
-            return db.get_symbol_change_tasks(symbol_hash=symbol_hash, qualified_name=qualified_name, limit=limit)
-        return route_task_read("task.get_change_tasks", {
-            "symbol_hash": symbol_hash, "qualified_name": qualified_name, "limit": limit,
-        }, _local)
+        return _route('get_symbol_change_tasks', {"symbol_hash": symbol_hash, "qualified_name": qualified_name, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_task_commits(task_id: str, include_commit_details: bool = True) -> list:
         """查询任务关联的所有 commit"""
-        def _local():
-            db = get_db()
-            if not hasattr(db, "get_task_commits"):
-                return [{"error": "get_task_commits not available"}]
-            return db.get_task_commits(task_id=task_id, include_commit_details=include_commit_details)
-        return route_task_read("task.get_commits", {
-            "task_id": task_id, "include_commit_details": include_commit_details,
-        }, _local)
+        return _route('task.get_commits', {"task_id": task_id, "include_commit_details": include_commit_details}, 'READ_ONLY')
 
     @mcp.tool()
     def get_commit_tasks(commit_hash: str, include_task_details: bool = True) -> list:
-        """查询 commit 关联的所有 task"""
-        def _local():
-            db = get_db()
-            if not hasattr(db, "get_commit_tasks"):
-                return [{"error": "get_commit_tasks not available"}]
-            return db.get_commit_tasks(commit_hash=commit_hash, include_task_details=include_task_details)
-        return route_task_read("task.get_commit_tasks", {
-            "commit_hash": commit_hash, "include_task_details": include_task_details,
-        }, _local)
+        """查询 commit 关联的所有 task
+
+        W4-1（T-1786886251769-22b94ee8-sub-1）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native query.commit_tasks，经
+        snapshot query_db_path 访问主库 task_symbol_changes LEFT JOIN tasks，
+        注入权威 workspace_instance_id）；local/legacy 模式保留原路由语义
+        （local 走本地 db 回退，enterprise/auto 走 compat worker）。
+        """
+        return _route('query.commit_tasks', {"commit_hash": commit_hash, "include_task_details": include_task_details}, 'READ_ONLY')
 
     @mcp.tool()
     def task_rollback(task_id: str, change_id: str = None, reason: str = "") -> dict:
         """回滚任务中的变更"""
-        def _local():
-            db = get_db()
-            return db.task_rollback(task_id=task_id, change_id=change_id, reason=reason)
-        return route_task_write("task.rollback", {
-            "task_id": task_id, "change_id": change_id, "reason": reason,
-        }, _local)
+        return _route('task.rollback', {"task_id": task_id, "change_id": change_id, "reason": reason}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_apply(task_id: str, reviewer: str = "reviewer", identity: str = "") -> dict:
-        """审核通过：将任务状态从 review 改为 applied"""
-        def _local():
-            db = get_db()
-            try:
-                identity_dict, id_reason = _resolve_identity_arg(db, identity)
-                if id_reason:
-                    return _identity_mcp_reason(
-                        id_reason.get("code", "E_IDENTITY_INVALID"),
-                        id_reason.get("message_key", "error.identity_incomplete"),
-                        id_reason.get("detail", "身份校验失败"),
-                    )
-                kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
-                if identity_dict:
-                    if not _db_method_accepts_identity("task_apply"):
-                        return _identity_mcp_reason(
-                            "E_IDENTITY_NOT_WIRED",
-                            "error.identity_not_wired",
-                            "task_apply 尚不支持 identity 参数",
-                        )
-                    kwargs["identity"] = identity_dict
-                return db.task_apply(**kwargs)
-            except Exception as e:
-                return {"error": str(e)}
-        return route_task_write("task.apply", {
-            "task_id": task_id, "reviewer": reviewer, "identity": identity,
-        }, _local)
+    def task_apply(
+        task_id: str,
+        reviewer: str = "reviewer",
+        identity: str = "",
+        lease_token: str = "",
+        fencing_counter: int = 0,
+    ) -> dict:
+        """审核通过：将任务状态从 review 改为 applied
+
+        enterprise/auto（daemon 权威路径）：必须携带完整 reviewer lease 凭证
+        （lease_token + fencing_counter，来自 lease_acquire 返回值），
+        否则 daemon 返回 E_LEASE_REQUIRED fail-closed。
+        local（本地开发兼容路径）：提供凭证时执行受保护写校验，缺省时跳过校验。
+        """
+        return _route('task.apply', {"task_id": task_id, "reviewer": reviewer, "identity": identity, "lease_token": lease_token, "fencing_counter": fencing_counter}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
-    def task_close(task_id: str, reviewer: str = "reviewer", identity: str = "") -> dict:
-        """关闭任务：将任务状态从 applied 改为 closed"""
-        def _local():
-            db = get_db()
-            try:
-                identity_dict, id_reason = _resolve_identity_arg(db, identity)
-                if id_reason:
-                    return _identity_mcp_reason(
-                        id_reason.get("code", "E_IDENTITY_INVALID"),
-                        id_reason.get("message_key", "error.identity_incomplete"),
-                        id_reason.get("detail", "身份校验失败"),
-                    )
-                kwargs: Dict[str, Any] = {"task_id": task_id, "reviewer": reviewer}
-                if identity_dict:
-                    if not _db_method_accepts_identity("task_close"):
-                        return _identity_mcp_reason(
-                            "E_IDENTITY_NOT_WIRED",
-                            "error.identity_not_wired",
-                            "task_close 尚不支持 identity 参数",
-                        )
-                    kwargs["identity"] = identity_dict
-                return db.task_close(**kwargs)
-            except Exception as e:
-                return {"error": str(e)}
-        return route_task_write("task.close", {
-            "task_id": task_id, "reviewer": reviewer, "identity": identity,
-        }, _local)
+    def task_close(
+        task_id: str,
+        reviewer: str = "reviewer",
+        identity: str = "",
+        lease_token: str = "",
+        fencing_counter: int = 0,
+    ) -> dict:
+        """关闭任务：将任务状态从 applied 改为 closed
+
+        enterprise/auto（daemon 权威路径）：必须携带完整 reviewer lease 凭证
+        （lease_token + fencing_counter），否则 daemon 返回 E_LEASE_REQUIRED fail-closed。
+        local（本地开发兼容路径）：提供凭证时执行受保护写校验，缺省时跳过校验。
+        """
+        return _route('task.close', {"task_id": task_id, "reviewer": reviewer, "identity": identity, "lease_token": lease_token, "fencing_counter": fencing_counter}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_capture_diff(
@@ -338,27 +234,7 @@ def register(mcp: FastMCP) -> None:
         skip_quality_review: bool = False,
     ) -> dict:
         """捕获外部 Agent 真实文件改动到 task/change/symbol/audit 闭环"""
-        def _local():
-            db = get_db()
-            try:
-                return db.task_capture_diff(
-                    task_id=task_id,
-                    step_id=step_id,
-                    base=base,
-                    dry_run=dry_run,
-                    source_commit_hash=source_commit_hash,
-                    skip_quality_review=skip_quality_review,
-                )
-            except Exception as e:
-                return {"error": str(e)}
-        return route_task_write("task.capture_diff", {
-            "task_id": task_id,
-            "step_id": step_id,
-            "base": base,
-            "dry_run": dry_run,
-            "source_commit_hash": source_commit_hash,
-            "skip_quality_review": skip_quality_review,
-        }, _local)
+        return _route('task.capture_diff', {"task_id": task_id, "step_id": step_id, "base": base, "dry_run": dry_run, "source_commit_hash": source_commit_hash, "skip_quality_review": skip_quality_review}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def audit_verify_chain(table_name: str = "", limit: int = 1000) -> dict:
@@ -387,11 +263,7 @@ def register(mcp: FastMCP) -> None:
                 "security_level": str,  # "hmac" 或 "hash_only"
             }
         """
-        db = get_db()
-        try:
-            return db.verify_audit_chain(table_name=table_name, limit=limit)
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('audit_verify_chain', {"table_name": table_name, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def rotate_audit_signing_key(key_id: str, key_secret: str = "") -> dict:
@@ -419,18 +291,7 @@ def register(mcp: FastMCP) -> None:
             }
             失败时：{"success": False, "error": str}
         """
-        db = get_db()
-        try:
-            # key_secret 为空时自动生成 32 字节随机密钥（hex 编码，64 字符）
-            if not key_secret:
-                import secrets as _secrets
-                key_secret = _secrets.token_hex(32)
-            return db.rotate_signing_key(
-                new_key_id=key_id,
-                new_key_secret=key_secret,
-            )
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        return _route('admin.audit_rotate_key', {"key_id": key_id, "key_secret": key_secret}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def list_audit_signing_keys() -> list:
@@ -446,11 +307,7 @@ def register(mcp: FastMCP) -> None:
             ]
             失败时：[{"error": str}]
         """
-        db = get_db()
-        try:
-            return db.list_signing_keys()
-        except Exception as e:
-            return [{"error": str(e)}]
+        return _route('list_audit_signing_keys', {}, 'READ_ONLY')
 
     @mcp.tool()
     def bootstrap_status() -> dict:
@@ -487,11 +344,7 @@ def register(mcp: FastMCP) -> None:
                 "recommended_next_action": str,
             }
         """
-        db = get_db()
-        try:
-            return db.bootstrap_status()
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('bootstrap_status', {}, 'READ_ONLY')
 
     @mcp.tool()
     def detect_clones(
@@ -530,15 +383,8 @@ def register(mcp: FastMCP) -> None:
                 "min_lines": int,
             }
         """
-        db = get_db()
-        try:
-            return db.detect_clones(
-                file_filter=file_filter,
-                min_lines=min_lines,
-                similarity_threshold=similarity_threshold,
-            )
-        except Exception as e:
-            return {"error": str(e)}
+        _res = _route('task.job_submit', {**{"file_filter": file_filter, "min_lines": min_lines, "similarity_threshold": similarity_threshold}, "job_type": "clone_detect", "sync": True}, 'PROTECTED_MUTATION')
+        return _res.get("result") if isinstance(_res, dict) and "result" in _res else _res
 
     @mcp.tool()
     def list_clones(
@@ -570,20 +416,17 @@ def register(mcp: FastMCP) -> None:
                 "file_a": str, "file_b": str,
             }
         """
-        db = get_db()
-        try:
-            return db.list_clones(
-                clone_type=clone_type,
-                min_similarity=min_similarity,
-                limit=limit,
-                symbol_id=symbol_id,
-            )
-        except Exception as e:
-            return [{"error": str(e)}]
+        return _route('list_clones', {"clone_type": clone_type, "min_similarity": min_similarity, "limit": limit, "symbol_id": symbol_id}, 'READ_ONLY')
 
     @mcp.tool()
     def get_clone_stats() -> dict:
         """获取克隆检测统计信息
+
+        W2-2（T-1786840097330-a9e0ec69）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native task.clone_stats，
+        经 snapshot query_db_path 访问主库 clone_pairs，注入权威
+        workspace_instance_id）；local/legacy 模式保留原路由语义
+        （local 走本地 db 回退，enterprise/auto 走 compat worker）。
 
         Returns:
             {
@@ -593,11 +436,7 @@ def register(mcp: FastMCP) -> None:
                 "affected_symbols": int,
             }
         """
-        db = get_db()
-        try:
-            return db.get_clone_stats()
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.clone_stats', {}, 'READ_ONLY')
 
     @mcp.tool()
     def clear_clones() -> dict:
@@ -606,12 +445,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             {"deleted": int} 被删除的记录数
         """
-        db = get_db()
-        try:
-            deleted = db.clear_clones()
-            return {"deleted": deleted}
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('admin.clear_clones', {}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def get_symbol_issues(qualified_name: str, include_info: bool = False) -> list:
@@ -639,15 +473,7 @@ def register(mcp: FastMCP) -> None:
                 "snippet": str, "fix": str (仅 semgrep),
             }
         """
-        client = _get_daemon_client()
-        try:
-            return client.get_symbol_issues(
-                qualified_name,
-                include_info=include_info,
-                db_path=_get_db_path_for_daemon(),
-            )
-        except Exception as e:
-            return [{"error": str(e)}]
+        return _route('query.issues', {"qualified_name": qualified_name, "include_info": include_info}, 'READ_ONLY')
 
     @mcp.tool()
     def get_test_cases(qualified_name: str) -> list:
@@ -669,13 +495,7 @@ def register(mcp: FastMCP) -> None:
                 "test_file": str, "test_start_line": int,
             }
         """
-        client = _get_daemon_client()
-        try:
-            return client.get_test_cases(
-                qualified_name, db_path=_get_db_path_for_daemon()
-            )
-        except Exception as e:
-            return [{"error": str(e)}]
+        return _route('query.tests', {"qualified_name": qualified_name}, 'READ_ONLY')
 
     @mcp.tool()
     def get_tested_functions(test_qualified_name: str) -> list:
@@ -695,17 +515,16 @@ def register(mcp: FastMCP) -> None:
                 "tested_file": str, "tested_start_line": int, "tested_end_line": int,
             }
         """
-        client = _get_daemon_client()
-        try:
-            return client.get_tested_functions(
-                test_qualified_name, db_path=_get_db_path_for_daemon()
-            )
-        except Exception as e:
-            return [{"error": str(e)}]
+        return _route('query.tests', {"test_qualified_name": test_qualified_name}, 'READ_ONLY')
 
     @mcp.tool()
     def get_test_coverage_summary(qualified_name: str) -> dict:
         """查询符号的测试覆盖情况摘要
+
+        M2.5（T-1786584287058-7f712ff4）：迁移到 daemon RPC query.tests
+        （DaemonClient.get_test_coverage_summary 聚合），fail-closed 语义：
+        enterprise/auto 模式下 daemon 不可用抛 DaemonUnavailableError，
+        不回退本地 SQLite；local 模式返回 None。
 
         Args:
             qualified_name: 被测函数的限定名
@@ -718,11 +537,7 @@ def register(mcp: FastMCP) -> None:
                 "tests": [...],  # 最多 10 条
             }
         """
-        db = get_db()
-        try:
-            return db.get_test_coverage_summary(qualified_name)
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('query.tests', {"qualified_name": qualified_name}, 'READ_ONLY')
 
     @mcp.tool()
     def get_test_stability(qualified_name: str, limit: int = 50) -> dict:
@@ -747,15 +562,7 @@ def register(mcp: FastMCP) -> None:
                 }
             }
         """
-        client = _get_daemon_client()
-        try:
-            return client.get_test_stability(
-                qualified_name,
-                limit=limit,
-                db_path=_get_db_path_for_daemon(),
-            )
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('query.tests', {"qualified_name": qualified_name, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_defect_correlation(qualified_name: str, window_commits: int = 5) -> dict:
@@ -777,12 +584,14 @@ def register(mcp: FastMCP) -> None:
                 "defect_rate": float,       # defect_count / change_count
                 "recent_defects": [...],   # 最近的关联缺陷
             }
+
+        W4-3（T-1786886251769-22b94ee8-sub-3）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native query.get_defect_correlation，
+        经 snapshot query_db_path 访问主库，注入权威 workspace_instance_id
+        做 workspace 隔离）；local/legacy 模式保留原路由语义（local 走本地
+        db 回退，enterprise/auto 走 compat worker）。
         """
-        db = get_db()
-        try:
-            return db.get_defect_correlation_by_qn(qualified_name, window_commits=window_commits)
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('query.get_defect_correlation', {"qualified_name": qualified_name, "window_commits": window_commits}, 'READ_ONLY')
 
     @mcp.tool()
     def detect_clones_async(
@@ -808,25 +617,7 @@ def register(mcp: FastMCP) -> None:
                 "message": "submitted",
             }
         """
-        db = get_db()
-        try:
-            from callwarden.server.job_executor_singleton import get_job_executor
-            executor = get_job_executor(db.db_path, db.workspace_root)
-            params = {
-                "file_filter": file_filter,
-                "min_lines": min_lines,
-                "similarity_threshold": similarity_threshold,
-            }
-            ws_id = db._get_active_workspace_id()
-            job = executor.submit("clone_detect", params, workspace_id=ws_id)
-            return {
-                "job_id": job.job_id,
-                "status": job.status,
-                "job_type": job.job_type,
-                "message": "submitted",
-            }
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.job_submit', {**{"file_filter": file_filter, "min_lines": min_lines, "similarity_threshold": similarity_threshold}, "job_type": "clone_detect", "sync": False}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def get_job_status(job_id: str) -> dict:
@@ -849,14 +640,7 @@ def register(mcp: FastMCP) -> None:
                 "finished_at": float,
             }
         """
-        db = get_db()
-        try:
-            job = db.get_job(job_id)
-            if not job:
-                return {"error": f"job not found: {job_id}"}
-            return job.to_dict()
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.job_status', {"job_id": job_id}, 'READ_ONLY')
 
     @mcp.tool()
     def cancel_job(job_id: str) -> dict:
@@ -873,12 +657,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             {"cancelled": bool, "job_id": str}
         """
-        db = get_db()
-        try:
-            ok = db.cancel_job(job_id)
-            return {"cancelled": ok, "job_id": job_id}
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.job_cancel', {"job_id": job_id}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def list_jobs(
@@ -896,20 +675,17 @@ def register(mcp: FastMCP) -> None:
         Returns:
             任务列表，按 created_at 降序
         """
-        db = get_db()
-        try:
-            jobs = db.list_jobs(
-                job_type=job_type or None,
-                status=status or None,
-                limit=limit,
-            )
-            return [j.to_dict() for j in jobs]
-        except Exception as e:
-            return [{"error": str(e)}]
+        return _route('task.list_jobs', {"job_type": job_type, "status": status, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_job_stats() -> dict:
         """获取任务统计信息
+
+        W2-2（T-1786840097330-a9e0ec69）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native task.job_stats，
+        经 snapshot query_db_path 访问主库 jobs，注入权威
+        workspace_instance_id）；local/legacy 模式保留原路由语义
+        （local 走本地 db 回退，enterprise/auto 走 compat worker）。
 
         Returns:
             {
@@ -918,11 +694,7 @@ def register(mcp: FastMCP) -> None:
                 "total": int,
             }
         """
-        db = get_db()
-        try:
-            return db.get_job_stats()
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.job_stats', {}, 'READ_ONLY')
 
     @mcp.tool()
     def wait_for_job(
@@ -950,38 +722,7 @@ def register(mcp: FastMCP) -> None:
                 "elapsed": float,          # 实际等待秒数
             }
         """
-        import time as _time
-
-        db = get_db()
-        start = _time.time()
-        try:
-            deadline = start + timeout
-            while _time.time() < deadline:
-                job = db.get_job(job_id)
-                if not job:
-                    return {"error": f"job not found: {job_id}"}
-                if job.is_terminal:
-                    return {
-                        "job_id": job_id,
-                        "status": job.status,
-                        "progress": job.progress,
-                        "result_summary": job.result_summary,
-                        "error": job.error,
-                        "elapsed": _time.time() - start,
-                    }
-                _time.sleep(poll_interval)
-            # 超时
-            job = db.get_job(job_id)
-            return {
-                "job_id": job_id,
-                "status": "timeout" if not job.is_terminal else job.status,
-                "progress": job.progress if job else 0.0,
-                "result_summary": job.result_summary if job else {},
-                "error": f"timeout after {timeout}s",
-                "elapsed": _time.time() - start,
-            }
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.wait_for_job', {"job_id": job_id, "timeout": timeout, "poll_interval": poll_interval}, 'READ_ONLY')
 
     @mcp.tool()
     def list_clone_groups(
@@ -1002,16 +743,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             clone group 列表，按相似度降序
         """
-        db = get_db()
-        try:
-            groups = db.list_clone_groups(
-                clone_type=clone_type,
-                min_similarity=min_similarity,
-                limit=limit,
-            )
-            return [g.to_dict() for g in groups]
-        except Exception as e:
-            return [{"error": str(e)}]
+        return _route('list_clone_groups', {"clone_type": clone_type, "min_similarity": min_similarity, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_clone_group_detail(
@@ -1031,21 +763,17 @@ def register(mcp: FastMCP) -> None:
                             "file_path", "start_line"}, ...]
             }
         """
-        db = get_db()
-        try:
-            detail = db.get_clone_group_detail(group_id, members_limit)
-            if not detail:
-                return {"error": f"group not found: {group_id}"}
-            return {
-                "group": detail.group.to_dict(),
-                "members": detail.members,
-            }
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('get_clone_group_detail', {"group_id": group_id, "members_limit": members_limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_clone_group_stats() -> dict:
         """获取 clone groups 统计信息
+
+        W2-2（T-1786840097330-a9e0ec69）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native task.clone_group_stats，
+        经 snapshot query_db_path 访问主库 clone_groups，注入权威
+        workspace_instance_id）；local/legacy 模式保留原路由语义
+        （local 走本地 db 回退，enterprise/auto 走 compat worker）。
 
         Returns:
             {
@@ -1054,11 +782,7 @@ def register(mcp: FastMCP) -> None:
                 "affected_files": int, "affected_symbols": int,
             }
         """
-        db = get_db()
-        try:
-            return db.get_clone_group_stats()
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.clone_group_stats', {}, 'READ_ONLY')
 
     @mcp.tool()
     def embed_symbols_async(
@@ -1083,21 +807,7 @@ def register(mcp: FastMCP) -> None:
                 "message": "submitted",
             }
         """
-        db = get_db()
-        try:
-            from callwarden.server.job_executor_singleton import get_job_executor
-            executor = get_job_executor(db.db_path, db.workspace_root)
-            params = {"batch_size": batch_size, "force": force}
-            ws_id = db._get_active_workspace_id()
-            job = executor.submit("vector_embed", params, workspace_id=ws_id)
-            return {
-                "job_id": job.job_id,
-                "status": job.status,
-                "job_type": job.job_type,
-                "message": "submitted",
-            }
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.job_submit', {**{"batch_size": batch_size, "force": force}, "job_type": "embed", "sync": False}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def semgrep_scan_async(
@@ -1124,21 +834,7 @@ def register(mcp: FastMCP) -> None:
                 "message": "submitted",
             }
         """
-        db = get_db()
-        try:
-            from callwarden.server.job_executor_singleton import get_job_executor
-            executor = get_job_executor(db.db_path, db.workspace_root)
-            params = {"config": config, "languages": languages, "timeout": timeout}
-            ws_id = db._get_active_workspace_id()
-            job = executor.submit("semgrep_scan", params, workspace_id=ws_id)
-            return {
-                "job_id": job.job_id,
-                "status": job.status,
-                "job_type": job.job_type,
-                "message": "submitted",
-            }
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('task.job_submit', {**{"config": config, "languages": languages, "timeout": timeout}, "job_type": "semgrep_scan", "sync": False}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def rule_seed_bootstrap(dry_run: bool = True) -> dict:
@@ -1170,11 +866,7 @@ def register(mcp: FastMCP) -> None:
                 ],
             }
         """
-        db = get_db()
-        try:
-            return db.rule_seed_bootstrap(dry_run=dry_run)
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('rule.seed_bootstrap', {"dry_run": dry_run}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def cleanup_agent_rule_sync_log(
@@ -1208,15 +900,7 @@ def register(mcp: FastMCP) -> None:
                 "error": str,              # 仅 success=False 时存在
             }
         """
-        db = get_db()
-        try:
-            return db.cleanup_sync_log(
-                older_than_days=older_than_days,
-                keep_latest=keep_latest,
-                dry_run=dry_run,
-            )
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('admin.cleanup_rule_sync_log', {"older_than_days": older_than_days, "keep_latest": keep_latest, "dry_run": dry_run}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_create_subtask(parent_task_id: str, title: str, description: str = "", steps: list = None, creator: str = "agent") -> str:
@@ -1235,89 +919,209 @@ def register(mcp: FastMCP) -> None:
         Returns:
             新建子任务的 task_id
         """
-        def _local():
-            db = get_db()
-            return db.task_create_subtask(
-                parent_task_id=parent_task_id, title=title, description=description, steps=steps, creator=creator,
-            )
-        return route_task_write("task.create_subtask", {
-            "parent_task_id": parent_task_id, "title": title, "description": description, "steps": steps or [], "creator": creator,
-        }, _local)
+        return _route('task.create_subtask', {"parent_task_id": parent_task_id, "title": title, "description": description, "steps": steps, "creator": creator}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_split(task_id: str, subtasks: list) -> list:
         """将大任务拆分为多个子任务"""
-        def _local():
-            db = get_db()
-            return db.task_split(task_id=task_id, subtasks=subtasks)
-        return route_task_write("task.split", {"task_id": task_id, "subtasks": subtasks}, _local)
+        return _route('task.split', {"task_id": task_id, "subtasks": subtasks}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_status_tree(task_id: str) -> Optional[dict]:
         """获取任务树详情（含子任务树和进度）"""
-        def _local():
-            db = get_db()
-            return db.task_status_tree(task_id=task_id)
-        return route_task_read("task.status_tree", {"task_id": task_id}, _local)
+        return _route('task.status_tree', {"task_id": task_id}, 'READ_ONLY')
 
     @mcp.tool()
     def task_create_from_plan(title: str, plan_md: str, description: str = "") -> str:
         """从 Markdown 任务计划自动创建父子任务树"""
-        def _local():
-            db = get_db()
-            return db.task_create_from_plan(title=title, plan_md=plan_md, description=description)
-        return route_task_write("task.create_from_plan", {
-            "title": title, "plan_md": plan_md, "description": description,
-        }, _local)
+        return _route('task.create_from_plan', {"title": title, "plan_md": plan_md, "description": description}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_plan_template() -> str:
         """获取 task_create_from_plan 的标准格式模板"""
-        def _local():
-            db = get_db()
-            return db.task_plan_template()
-        return route_task_read("task.plan_template", {}, _local)
+        return _route('task_plan_template', {}, 'READ_ONLY')
 
     @mcp.tool()
     def task_list(status_filter: str = None, limit: int = 20) -> list:
         """列出任务"""
-        def _local():
-            db = get_db()
-            return db.task_list(status_filter=status_filter, limit=limit)
-        return route_task_read("task.list", {"status": status_filter or "", "limit": limit}, _local)
+        return _route('task.list', {"status_filter": status_filter, "limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def task_status(task_id: str) -> Optional[dict]:
         """获取任务详情和所有步骤"""
-        def _local():
-            db = get_db()
-            return db.task_status(task_id=task_id)
-        return route_task_read("task.status", {"task_id": task_id}, _local)
+        return _route('task.status', {"task_id": task_id}, 'READ_ONLY')
 
     @mcp.tool()
     def task_completion_review(task_id: str, step_id: str = "") -> dict:
         """运行任务完成质量审查"""
-        def _local():
-            db = get_db()
-            return db.run_task_completion_review(task_id=task_id, step_id=step_id)
-        return route_task_write("task.completion_review", {"task_id": task_id, "step_id": step_id}, _local)
+        return _route('task.completion_review', {"task_id": task_id, "step_id": step_id}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def task_quality_findings(task_id: str, status: str = "open", severity: str = "") -> list:
         """查询任务质量门禁发现"""
-        def _local():
-            db = get_db()
-            return db.get_task_quality_findings(task_id=task_id, status=status, severity=severity)
-        return route_task_read("task.quality_findings", {
-            "task_id": task_id, "status": status, "severity": severity,
-        }, _local)
+        return _route('task.quality_findings', {"task_id": task_id, "status": status, "severity": severity}, 'READ_ONLY')
 
     @mcp.tool()
     def task_resolve_quality_finding(finding_id: int, resolution: str = "fixed", resolved_by: str = "agent") -> dict:
         """解决或豁免单条任务质量门禁发现"""
-        def _local():
-            db = get_db()
-            return db.resolve_task_quality_finding(finding_id=finding_id, resolution=resolution, resolved_by=resolved_by)
-        return route_task_write("task.resolve_quality_finding", {
-            "finding_id": finding_id, "resolution": resolution, "resolved_by": resolved_by,
-        }, _local)
+        return _route('task.resolve_quality_finding', {"finding_id": finding_id, "resolution": resolution, "resolved_by": resolved_by}, 'PROTECTED_MUTATION')
+
+
+# ============================================================
+# H4C-3（T-1786716190783-ba187c88 步骤#1）：任务组只读工具 worker handler
+# ============================================================
+# 接入说明（用户三项决策，见任务描述）：
+# - 仅接入**纯读**任务工具；写语义工具保持 fail-closed 不接入：
+#   detect_clones（UPSERT）、detect_clones_async / semgrep_scan_async（提交 job）、
+#   rule_seed_bootstrap（写 agent_rules）、cleanup_agent_rule_sync_log（DELETE）；
+# - governance_write 工具（task_create/next/report/apply/close 等）维持 fail-closed，
+#   不注册 worker handler（MVP 禁止 governance_write）；
+# - 轻量只读绑定复用 tools_query._bind_readonly_db 同款模式（object.__new__ +
+#   ctx.conn + ctx.workspace_id + workspace_root），由本模块独立实现避免跨模块
+#   耦合；
+# - bootstrap_status 依赖 workspace_root（_is_git_repo 检查 .git 目录），
+#   _bind_readonly_db 已从 workspaces 表解析注入。
+
+_TASK_COMPAT_SCOPE = SCOPE_WORKSPACE  # 矩阵 workspace_scoped
+
+
+def _bind_readonly_db(ctx: CompatCallContext) -> CodeGraphDB:
+    """轻量只读绑定（任务组副本）：绕过 CodeGraphDB.__init__，注入 worker 只读连接。
+
+    与 tools_query._bind_readonly_db 同款实现；两模块各自持有副本避免循环依赖。
+    """
+    db = object.__new__(CodeGraphDB)
+    db.conn = ctx.conn
+    db.active_workspace = {"id": ctx.workspace_id} if ctx.workspace_id else None
+    db.workspace_root = None
+    if ctx.workspace_id is not None:
+        try:
+            row = ctx.conn.execute(
+                "SELECT root_path FROM workspaces WHERE id = ?",
+                (ctx.workspace_id,),
+            ).fetchone()
+            if row is not None:
+                db.workspace_root = row["root_path"]
+        except Exception:
+            db.workspace_root = None
+    return db
+
+
+def _h_get_symbol_change_tasks(ctx: CompatCallContext) -> Any:
+    """worker handler：符号由哪些任务改变过（只读）"""
+    return _bind_readonly_db(ctx).get_symbol_change_tasks(
+        symbol_hash=ctx.params.get("symbol_hash", ""),
+        qualified_name=ctx.params.get("qualified_name", ""),
+        limit=ctx.params.get("limit", 50),
+    )
+
+
+def _h_audit_verify_chain(ctx: CompatCallContext) -> Any:
+    """worker handler：审计签名链验证（只读）"""
+    db = _bind_readonly_db(ctx)
+    try:
+        return db.verify_audit_chain(
+            table_name=ctx.params.get("table_name", ""),
+            limit=ctx.params.get("limit", 1000),
+        )
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _h_list_audit_signing_keys(ctx: CompatCallContext) -> Any:
+    """worker handler：列出签名密钥轮换记录（只读）"""
+    db = _bind_readonly_db(ctx)
+    try:
+        return db.list_signing_keys()
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+def _h_bootstrap_status(ctx: CompatCallContext) -> Any:
+    """worker handler：自举健康状态摘要（只读）"""
+    return _bind_readonly_db(ctx).bootstrap_status()
+
+
+def _h_list_clones(ctx: CompatCallContext) -> Any:
+    """worker handler：列出克隆对（只读）"""
+    db = _bind_readonly_db(ctx)
+    try:
+        return db.list_clones(
+            clone_type=ctx.params.get("clone_type", 0),
+            min_similarity=ctx.params.get("min_similarity", 0.0),
+            limit=ctx.params.get("limit", 100),
+            symbol_id=ctx.params.get("symbol_id", 0),
+        )
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+def _h_list_clone_groups(ctx: CompatCallContext) -> Any:
+    """worker handler：列出 clone groups（只读）"""
+    db = _bind_readonly_db(ctx)
+    try:
+        groups = db.list_clone_groups(
+            clone_type=ctx.params.get("clone_type", 0),
+            min_similarity=ctx.params.get("min_similarity", 0.0),
+            limit=ctx.params.get("limit", 100),
+        )
+        return [g.to_dict() for g in groups]
+    except Exception as e:
+        return [{"error": str(e)}]
+
+
+def _h_get_clone_group_detail(ctx: CompatCallContext) -> Any:
+    """worker handler：clone group 详情（只读）"""
+    db = _bind_readonly_db(ctx)
+    try:
+        detail = db.get_clone_group_detail(
+            ctx.params.get("group_id", 0),
+            ctx.params.get("members_limit", 100),
+        )
+        if not detail:
+            return {"error": f"group not found: {ctx.params.get('group_id', 0)}"}
+        return {
+            "group": detail.group.to_dict(),
+            "members": detail.members,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _h_task_plan_template(ctx: CompatCallContext) -> Any:
+    """worker handler：任务计划模板（只读，返回模板字符串）"""
+    return _bind_readonly_db(ctx).task_plan_template()
+
+
+# 任务组只读白名单（8 个）：跳过写语义 5 个（detect_clones / detect_clones_async /
+# semgrep_scan_async / rule_seed_bootstrap / cleanup_agent_rule_sync_log）与
+# governance_write 工具（task_create/next/report/apply/close 等），均保持 fail-closed；
+# get_clone_stats / get_job_stats / get_clone_group_stats 3 个已 W2-2 迁移 rust_native
+# （T-1786840097330-a9e0ec69），从本白名单移除（16->13）；
+# get_job_status / list_jobs / wait_for_job 3 个已 W3-2 迁移 rust_native
+# （T-1786861820151-f3cecf40），从本白名单移除（13->10）；
+# get_commit_tasks 已 W4-1 迁移 rust_native（T-1786886251769-22b94ee8-sub-1），
+# 从本白名单移除（10->9）；
+# get_defect_correlation 已 W4-3 迁移 rust_native（T-1786886251769-22b94ee8-sub-3），
+# 从本白名单移除（9->8）。
+_TASK_READ_ONLY_METHODS: Dict[str, Any] = {
+    "get_symbol_change_tasks": _h_get_symbol_change_tasks,
+    "audit_verify_chain": _h_audit_verify_chain,
+    "list_audit_signing_keys": _h_list_audit_signing_keys,
+    "bootstrap_status": _h_bootstrap_status,
+    "list_clones": _h_list_clones,
+    "list_clone_groups": _h_list_clone_groups,
+    "get_clone_group_detail": _h_get_clone_group_detail,
+    "task_plan_template": _h_task_plan_template,
+}
+
+# 模块级注册：worker 装配 import 本模块时执行（compat_worker.py L44-45），
+# 注册到 compat_registry 单例并同步 RUST_COMPAT_ROUTE（Rust 侧步骤#2 同步）。
+register_compat_routes(
+    _TASK_READ_ONLY_METHODS,
+    workspace_scope=_TASK_COMPAT_SCOPE,
+    description="H4C-3 任务组只读工具（8 个，T-1786716190783-ba187c88 步骤#1；"
+    "W3-2 T-1786861820151-f3cecf40 迁移 get_job_status/list_jobs/wait_for_job 后 13->10；"
+    "W4-1 T-1786886251769-22b94ee8-sub-1 迁移 get_commit_tasks 后 10->9；"
+    "W4-3 T-1786886251769-22b94ee8-sub-3 迁移 get_defect_correlation 后 9->8）",
+)

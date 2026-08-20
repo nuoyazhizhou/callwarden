@@ -22,9 +22,17 @@ import sys
 import time
 
 from ..db import CodeGraphDB
+from ..db.db_tasks import normalize_structured_handoff
 from ..config import detect_project_root, get_default_workspace_name, atomic_write_file, AUTO_SETUP_MARKER, get_daemon_mode
 from ..server.watcher import FileWatcher
-from ..server.daemon_client import route_task_write, route_task_read, DaemonUnavailableError
+from ..server.daemon_client import (
+    route_task_write,
+    route_task_read,
+    derive_workspace_instance_id,
+    DaemonRemoteError,
+    DaemonUnavailableError,
+    SharedTaskWriterRequiredError,
+)
 from ..i18n import t, set_language, get_arg_help, get_msg, get_error, DEFAULT_LANG
 from .console import cprint
 from .agent_registry import get_merged_specs
@@ -70,7 +78,7 @@ _SUBCOMMANDS = {"guardrail", "impact", "review", "evolution", "hotspot", "churn"
 
 # 只读子命令集合：这些命令不修改数据库，在 workspace 已激活时可跳过注册/激活写操作
 # 判断依据：子命令+action 组合是否涉及 INSERT/UPDATE/DELETE
-_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings"}
+_READONLY_TASK_ACTIONS = {"list", "show", "status-tree", "findings", "next-action"}
 _READONLY_RULE_ACTIONS = {"list", "candidate", "applicable", "extract"}
 # audit verify/keys 只读（只查询 audit_chain/audit_key_rotations 表，不写数据库）
 # audit rotate-key 是写（INSERT/UPDATE audit_key_rotations）
@@ -291,6 +299,8 @@ _MAIN_HELP_GROUPS = [
     ("cli.messages.help_group_task", [
         ("task create --title ... --steps ...", "cli.messages.help_task_create"),
         ("task next <TASK_ID>", "cli.messages.help_task_next"),
+        ("task next-action <TASK_ID> [--json]",
+         "cli.messages.help_task_next_action"),
         ("task report <TASK_ID> <STEP_ID>", "cli.messages.help_task_report"),
         ("task rollback <TASK_ID> <STEP_ID>", "cli.messages.help_task_rollback"),
         ("task apply <TASK_ID>", "cli.messages.help_task_apply"),
@@ -631,10 +641,12 @@ def _format_subcommand_help(usage: str, description: str, parameters: list,
 _SUBCOMMAND_HELP_SPECS = {
     "task": {
         "usage": "cw task <subcommand> [options]",
-        "description": "Task lifecycle: create / next / report / rollback / apply / close / list / show / findings / capture-diff / resolve-finding / completion-review / split / status-tree",
+        "description": "Task lifecycle: create / next / next-action / report / rollback / apply / close / list / show / findings / capture-diff / resolve-finding / completion-review / split / status-tree",
         "parameters": [
             ("create --title T --steps J", True, "Create task and steps"),
             ("next <task_id>", True, "Claim current pending step"),
+            ("next-action <task_id> [--json]", False,
+             "Query next governance action (read-only, daemon evaluator)"),
             ("report <task_id> <step_id> [--fail]",
              True, "Report step result"),
             ("rollback <task_id> <step_id>", True, "Roll back changes"),
@@ -654,6 +666,7 @@ _SUBCOMMAND_HELP_SPECS = {
         "examples": [
             "cw task create --title 'Add login feature' --steps '[{\"action\":\"annotate\",\"target_file\":\"a.py\"}]'",
             "cw task next T-1783350489327",
+            "cw task next-action T-1783350489327 --json",
             "cw task report T-1783350489327 S-1783350489328 --result 'done'",
             "cw task list --blocked",
             "cw task capture-diff --auto",
@@ -1438,6 +1451,9 @@ def _dispatch_subcommand(argv, db):
             return _handle_lease(argv, db)
         elif cmd == "assignment":
             return _handle_assignment(argv, db)
+    except SharedTaskWriterRequiredError as e:
+        cprint(t("cli.messages.subcommand_fail", cmd=cmd, error=e), "red")
+        raise SystemExit(2)
     except sqlite3.OperationalError as e:
         # 锁错误友好提示（写命令在 task report/apply 等执行时也可能遇到锁）
         if "locked" in str(e).lower():
@@ -3374,6 +3390,18 @@ def _handle_task(args, db):
     next_p.add_argument("task_id", help=t(
         "cli_task_arg_task_id", default="Task ID"))
 
+    # next-action：查询系统派工（只读，daemon evaluator 权威；5B）
+    next_action_p = sub.add_parser(
+        "next-action", help=t(
+            "cli_task_next_action_desc",
+            default="Query next governance action (read-only, daemon evaluator)"))
+    next_action_p.add_argument("task_id", help=t(
+        "cli_task_arg_task_id", default="Task ID"))
+    next_action_p.add_argument(
+        "--json", action="store_true",
+        help=t("cli_task_next_action_json",
+               default="Output raw daemon JSON (machine-readable)"))
+
     # report：回报步骤执行结果
     report_p = sub.add_parser("report", help=t(
         "cli_task_report_desc", default="Report step result"))
@@ -3385,6 +3413,61 @@ def _handle_task(args, db):
                           help=t("cli_task_arg_result", default="Result description"))
     report_p.add_argument("--fail", action="store_true", help=t(
         "cli_task_arg_fail", default="Mark as failed (default: success)"))
+    report_p.add_argument(
+        "--evidence-path", default="",
+        help="Task-bound evidence manifest path (daemon authority only)",
+    )
+    report_p.add_argument(
+        "--evidence-hash", default="",
+        help="SHA-256 of the task-bound evidence manifest",
+    )
+    report_p.add_argument(
+        "--changes-json", default="",
+        help="JSON array of explicit step-whitelisted file changes",
+    )
+
+    # handoff：结构化 Executor/Reviewer/Adjudicator 交接（仅 daemon 写入）
+    handoff_p = sub.add_parser(
+        "handoff", help="Append a structured task.handoff ledger event"
+    )
+    handoff_p.add_argument("task_id", help="Task ID")
+    for _name, _default in (
+        ("from-role", "Source governance role"),
+        ("outcome", "Structured handoff outcome"),
+        ("next-role", "Next governance role"),
+        ("next-action", "Next role action"),
+        ("reason", "Handoff reason"),
+        ("independence-requirement", "Independence requirement"),
+        ("request-id", "Stable request id"),
+        ("step-id", "Completed step id"),
+        ("report-request-id", "Task report request id"),
+        ("evidence-path", "Evidence path"),
+        ("evidence-hash", "Evidence hash"),
+    ):
+        handoff_p.add_argument("--" + _name, required=True, help=_default)
+
+    # step-resolve：失败步骤 remediation 后合法回审（仅 daemon 追加写入；
+    # append-only task_events ledger，original failed 行不可变）。baf7e552 S5。
+    step_resolve_p = sub.add_parser(
+        "step-resolve",
+        help="Resolve a failed step after remediation (daemon-only, task.step.resolve)"
+    )
+    step_resolve_p.add_argument("task_id", help="Task ID")
+    step_resolve_p.add_argument("failed_step_id", help="Original failed step id")
+    step_resolve_p.add_argument("remediation_step_id", help="done fix_defect step id")
+    step_resolve_p.add_argument("request_id", help="Stable request id (replay-safe)")
+    step_resolve_p.add_argument(
+        "--evidence-path", default="", required=True,
+        help="Resolution evidence path (mandatory)"
+    )
+    step_resolve_p.add_argument(
+        "--evidence-hash", default="", required=True,
+        help="SHA-256 of resolution evidence (mandatory)"
+    )
+    step_resolve_p.add_argument(
+        "--json", action="store_true",
+        help="Output raw daemon JSON (machine-readable)"
+    )
 
     # rollback：回滚变更
     rollback_p = sub.add_parser("rollback", help=t(
@@ -3432,10 +3515,12 @@ def _handle_task(args, db):
                default="Reason for reopening (optional)")
     )
 
-    # P3：task report/apply/close/reopen 接收结构化身份（Req 10.1-10.7）。
+    # P3：task next/report/apply/close/reopen 接收结构化身份（Req 10.1-10.7）。
     # --reviewer 自由文本不是身份证明（Req 10.5）；身份证明只能来自结构化
     # Identity 与 daemon 签发的 Attestation（Req 10.8, 14.13）。
-    for _identity_parser in (report_p, apply_p, close_p, reopen_p):
+    # next 也支持身份，保证 claim 与后续 report 使用同一显式 action identity
+    # （同一 session_id/agent_id/...），避免 SID 回退与 report session 不一致。
+    for _identity_parser in (next_p, report_p, handoff_p, step_resolve_p, apply_p, close_p, reopen_p):
         _identity_parser.add_argument(
             "--agent-id", default="", metavar="ID",
             help=t("cli_task_arg_agent_id", default="Agent ID (P3 Identity)"))
@@ -3452,7 +3537,7 @@ def _handle_task(args, db):
 
     # P4：task report/apply/close/reopen 支持受保护写 Lease 凭证（Req 11.8-11.9）。
     # 提供 --lease-token 时启用受保护写路径：过期/token 不匹配/旧 counter 在写入前拒绝。
-    for _lease_parser in (report_p, apply_p, close_p, reopen_p):
+    for _lease_parser in (report_p, handoff_p, step_resolve_p, apply_p, close_p, reopen_p):
         _lease_parser.add_argument(
             "--lease-token", default="", metavar="TOKEN",
             help=t("cli_task_arg_lease_token",
@@ -3676,13 +3761,28 @@ def _handle_task(args, db):
         def _local_next():
             return db.task_next_step(opts.task_id)
 
+        # P3：claim 支持结构化身份（与 report 使用同一显式 action identity）。
+        # 提供后必须四字段齐备，否则 fail closed（与 report/apply/close 一致）。
+        _claim_identity, _ireason = _collect_identity(opts)
+        if _ireason:
+            _identity_reason_output(_ireason, False)
+            return True
         _claim_params = {"task_id": opts.task_id}
-        _claim_session = os.environ.get("CW_AGENT_SESSION_ID", "").strip()
+        if _claim_identity:
+            _claim_params["identity"] = _claim_identity
+        # 显式 session 解析规则与 report 完全一致（CW_AGENT_SESSION_ID 优先，
+        # 其次 identity.session_id）；Windows SID 永不参与——daemon 仅在无显式
+        # session 时才回退 owner_key。保证 claim 与 report 落到同一 session，
+        # 避免 E_IDENTITY_SESSION_MISMATCH / 伪 task_conflict。
+        _claim_session = _resolve_action_session(_claim_identity)
         if _claim_session:
-            # 同一 Windows 用户多 Agent/多 IDE 经 daemon 统一写入：
-            # 显式携带 agent_session_id，让 daemon 能区分"不同逻辑 Agent"的并发 claim
-            # （缺省时 daemon 以连接身份 owner_key 为准，多个入口会互相视为同一 Agent）。
             _claim_params["agent_session_id"] = _claim_session
+        # A3 修复：合同任务 claim 必须携带 contract_claim（skill_id/version/prompt_hash）
+        # 与冻结合同一致，否则 daemon 报 E_CONTRACT_SKILL_MISMATCH（CLI 此前漏传该字段）。
+        _claim_role = (opts.role or "implementer")
+        _contract_claim = _fetch_contract_claim(opts.task_id, _claim_role)
+        if _contract_claim:
+            _claim_params["contract_claim"] = _contract_claim
         result = route_task_write("task.claim", _claim_params, _local_next)
 
         cprint(t("cli.messages.task_next_title"), "cyan", bold=True)
@@ -3768,8 +3868,99 @@ def _handle_task(args, db):
 
         return True
 
+    elif opts.action == "next-action":
+        # 5B：task.next_action 只读 adapter（薄壳转发 daemon evaluator）。
+        # evaluator 只在 Rust daemon 中实现；local 模式无 evaluator，fail-closed。
+        def _local_next_action_forbidden():
+            raise DaemonUnavailableError(
+                "task.next_action 仅由 daemon evaluator 计算；local 模式无 "
+                "evaluator，请使用 daemon 模式（cw daemon start）后重试"
+            )
+
+        _na_params = {"task_id": opts.task_id}
+        try:
+            _na_root = detect_project_root(os.getcwd()) or os.getcwd()
+            _na_params["workspace_instance_id"] = derive_workspace_instance_id(_na_root)
+        except Exception:
+            # 推导失败时不阻塞请求：daemon 侧按 binding 权威校验 fail-closed
+            pass
+
+        try:
+            result = route_task_read(
+                "task.next_action", _na_params, _local_next_action_forbidden)
+        except DaemonRemoteError as exc:
+            if getattr(opts, "json", False):
+                print(json.dumps(
+                    {"ok": False, "code": exc.code, "message": exc.message},
+                    ensure_ascii=False, indent=2))
+            else:
+                cprint(f"[next-action] {exc.code}: {exc.message}", "red")
+            return True
+        except DaemonUnavailableError as exc:
+            if getattr(opts, "json", False):
+                print(json.dumps(
+                    {"ok": False, "code": "E_DAEMON_UNAVAILABLE", "message": str(exc)},
+                    ensure_ascii=False, indent=2))
+            else:
+                cprint(f"[next-action] daemon 不可用: {exc}", "red")
+            return True
+
+        if getattr(opts, "json", False):
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return True
+
+        # 人类可读渲染（薄壳：只展示 daemon 决策，不重算任何业务逻辑）
+        cprint(t("cli.messages.task_next_action_title"), "cyan", bold=True)
+        print(t("cli.messages.task_id_label",
+                id=result.get("task_id") or opts.task_id))
+        print(t("cli.messages.task_next_action_decision",
+                decision=result.get("decision", "")))
+        print(t("cli.messages.task_next_action_action",
+                action=result.get("action", "")))
+        if result.get("required_role"):
+            print(t("cli.messages.task_next_action_role",
+                    role=result["required_role"]))
+        if result.get("step_id"):
+            print(t("cli.messages.task_step_id", id=result["step_id"]))
+        _routing = result.get("routing") or {}
+        if _routing.get("next_role"):
+            print(t("cli.messages.task_next_action_routing",
+                    role=_routing.get("next_role", ""),
+                    action=_routing.get("next_action", ""),
+                    origin=_routing.get("origin_kind", "")))
+        _ns = result.get("next_session") or {}
+        if _ns.get("role"):
+            print(t("cli.messages.task_next_action_session",
+                    role=_ns.get("role", ""),
+                    step=_ns.get("step_id", "-"),
+                    fresh=t("cli.messages.yes") if _ns.get("must_be_new_session")
+                    else t("cli.messages.no")))
+        _src = result.get("source") or {}
+        if _src.get("task_status"):
+            print(t("cli.messages.task_next_action_source",
+                    status=_src.get("task_status", ""),
+                    at=_src.get("evaluated_at", "")))
+        _blocking = result.get("blocking_conditions") or []
+        if _blocking:
+            cprint(t("cli.messages.task_next_action_blocked_title"), "red", bold=True)
+            for _b in _blocking:
+                print(t("cli.messages.task_next_action_blocked_item", cond=_b))
+        print()
+        return True
+
     elif opts.action == "report":
         success = not opts.fail
+        report_changes = []
+        if opts.changes_json:
+            try:
+                parsed_changes = json.loads(opts.changes_json)
+            except (TypeError, ValueError) as exc:
+                cprint(f"Invalid --changes-json: {exc}", "red")
+                return True
+            if not isinstance(parsed_changes, list):
+                cprint("Invalid --changes-json: expected a JSON array", "red")
+                return True
+            report_changes = parsed_changes
         # P3：收集并校验结构化身份（可选；提供后必须完整，否则 fail closed）
         identity, ireason = _collect_identity(opts)
         if ireason:
@@ -3794,15 +3985,40 @@ def _handle_task(args, db):
         if "error" in lease_kwargs:
             _lease_reason_output(lease_kwargs["error"], False)
             return True
+        # ec89dbe4 S1：本分支是 implementer 写路径，但 lease 凭证来自调用方
+        # （holder 已持有），CLI 自身不 acquire。任何 future executor-runner 若
+        # 在任务执行开始通过 lease.acquire 获取 implementer lease，必须用
+        # daemon_client.executor_lease 包住执行体，确保 normal/异常/取消/超时
+        # 四类终态都在 finally 幂等释放（release 失败不掩盖业务异常）。
         def _local_report():
             return db.task_report_step(
-                opts.task_id, opts.step_id, opts.result, success, None,
+                opts.task_id, opts.step_id, opts.result, success, report_changes,
                 **( {"identity": identity} if identity else {} ),
                 **lease_kwargs,
             )
-        result = route_task_write("task.report", {
+        # 显式 session 与 claim 同一解析规则（CW_AGENT_SESSION_ID 优先，
+        # 其次 identity.session_id），保证 daemon 端 report 与 claim 落到同一
+        # session，不再回退 Windows SID 造成 E_IDENTITY_SESSION_MISMATCH。
+        _report_session = _resolve_action_session(identity)
+        _report_payload = {
             "task_id": opts.task_id, "step_id": opts.step_id, "summary": opts.result, "success": success,
-        }, _local_report)
+            "identity": identity,
+        }
+        if report_changes:
+            _report_payload["changes"] = report_changes
+        if opts.evidence_path:
+            _report_payload["evidence_path"] = opts.evidence_path
+        if opts.evidence_hash:
+            _report_payload["evidence_hash"] = opts.evidence_hash
+        if _report_session:
+            _report_payload["agent_session_id"] = _report_session
+        # A3 修复：与 claim 对称，合同任务 report 也携带与冻结合同一致的 contract_claim，
+        # 保持 claim/report 合同信封一致（daemon 当前不校验 report 的 skill，但避免后续升级断裂）。
+        _report_role = (opts.role or "implementer")
+        _report_contract_claim = _fetch_contract_claim(opts.task_id, _report_role)
+        if _report_contract_claim:
+            _report_payload["contract_claim"] = _report_contract_claim
+        result = route_task_write("task.report", _report_payload, _local_report)
 
         cprint(t("cli.messages.task_report_title"), "cyan", bold=True)
         print(t("cli.messages.task_id_label", id=opts.task_id))
@@ -3812,6 +4028,14 @@ def _handle_task(args, db):
         print(t("cli.messages.task_report_result", result=result_str))
         if opts.result:
             print(t("cli.messages.task_result_desc", desc=opts.result))
+        runtime_gate = result.get("runtime_gate") if isinstance(result, dict) else None
+        if runtime_gate and runtime_gate.get("required") and not runtime_gate.get("passed"):
+            cprint(
+                f"Runtime deployment gate blocked: {runtime_gate.get('code', 'E_RUNTIME_DEPLOYMENT_REQUIRED')}",
+                "yellow",
+            )
+            if runtime_gate.get("runtime_step_id"):
+                print(f"Runtime deployment step: {runtime_gate['runtime_step_id']}")
         print()
 
         if result is None:
@@ -3824,6 +4048,133 @@ def _handle_task(args, db):
             if result.get("target_file"):
                 print(t("cli.messages.task_next_target_file",
                       file=result['target_file']))
+        print()
+        return True
+
+    elif opts.action == "handoff":
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, False)
+            return True
+        if not identity:
+            _identity_reason_output({
+                "code": "E_IDENTITY_REQUIRED",
+                "message_key": "daemon_errors.error.identity_required",
+                "detail": "结构化 task.handoff 必须携带完整 identity",
+            }, False)
+            return True
+
+        _handoff_payload = {
+            "task_id": opts.task_id,
+            "from_role": opts.from_role,
+            "outcome": opts.outcome,
+            "next_role": opts.next_role,
+            "next_action": opts.next_action,
+            "reason": opts.reason,
+            "independence_requirement": opts.independence_requirement,
+            "request_id": opts.request_id,
+            "step_id": opts.step_id,
+            "report_request_id": opts.report_request_id,
+            "evidence_path": opts.evidence_path,
+            "evidence_hash": opts.evidence_hash,
+            "lease_token": opts.lease_token,
+            "fencing_counter": opts.fencing_counter,
+            "identity": identity,
+        }
+        _handoff_session = _resolve_action_session(identity)
+        if _handoff_session:
+            _handoff_payload["agent_session_id"] = _handoff_session
+
+        try:
+            _handoff_payload = normalize_structured_handoff(_handoff_payload)
+        except ValueError as exc:
+            _identity_reason_output({
+                "code": str(exc).split(":", 1)[0],
+                "message_key": "daemon_errors.error.handoff_invalid",
+                "detail": str(exc),
+            }, False)
+            return True
+
+        def _local_handoff_forbidden():
+            raise DaemonUnavailableError(
+                "结构化 task.handoff 禁止 local SQLite fallback，必须通过 daemon authority"
+            )
+
+        result = route_task_write("task.handoff", _handoff_payload, _local_handoff_forbidden)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return True
+
+    elif opts.action == "step-resolve":
+        # baf7e552 S5：失败步骤 remediation 后合法回审（task.step.resolve）。
+        # 仅 daemon 追加写入（append-only task_events ledger），禁止 local SQLite
+        # fallback：resolution 校验（remediation provenance/lease/request_id 重放）
+        # 全部在 daemon authority 内完成。
+        identity, ireason = _collect_identity(opts)
+        if ireason:
+            _identity_reason_output(ireason, False)
+            return True
+        if not identity:
+            _identity_reason_output({
+                "code": "E_IDENTITY_REQUIRED",
+                "message_key": "daemon_errors.error.identity_required",
+                "detail": "task.step.resolve 必须携带完整 identity（resolution 记入 ledger）",
+            }, False)
+            return True
+        lease_kwargs = _collect_lease_creds(opts)
+        if "error" in lease_kwargs:
+            _lease_reason_output(lease_kwargs["error"], False)
+            return True
+
+        _resolve_payload = {
+            "task_id": opts.task_id,
+            "failed_step_id": opts.failed_step_id,
+            "remediation_step_id": opts.remediation_step_id,
+            "request_id": opts.request_id,
+            "evidence_path": opts.evidence_path,
+            "evidence_hash": opts.evidence_hash,
+            "identity": identity,
+            **lease_kwargs,
+        }
+        _resolve_session = _resolve_action_session(identity)
+        if _resolve_session:
+            _resolve_payload["agent_session_id"] = _resolve_session
+
+        def _local_step_resolve_forbidden():
+            raise DaemonUnavailableError(
+                "task.step.resolve 仅由 daemon authority 判定（local 模式无 "
+                "resolution 校验逻辑），请使用 daemon 模式（cw daemon start）后重试"
+            )
+
+        try:
+            result = route_task_write("task.step.resolve", _resolve_payload,
+                                      _local_step_resolve_forbidden)
+        except DaemonRemoteError as exc:
+            if getattr(opts, "json", False):
+                print(json.dumps(
+                    {"ok": False, "code": exc.code, "message": exc.message},
+                    ensure_ascii=False, indent=2))
+            else:
+                cprint(f"[step-resolve] {exc.code}: {exc.message}", "red")
+            return True
+        except DaemonUnavailableError as exc:
+            if getattr(opts, "json", False):
+                print(json.dumps(
+                    {"ok": False, "code": "E_DAEMON_UNAVAILABLE", "message": str(exc)},
+                    ensure_ascii=False, indent=2))
+            else:
+                cprint(f"[step-resolve] daemon 不可用: {exc}", "red")
+            return True
+
+        if getattr(opts, "json", False):
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return True
+
+        cprint(t("cli.messages.task_resolve_title"), "cyan", bold=True)
+        print(t("cli.messages.task_id_label", id=opts.task_id))
+        print(t("cli.messages.task_resolve_replayed", replayed=result.get("replayed", False)))
+        if result.get("resolution_event_id"):
+            print(t("cli.messages.task_resolve_event_id", id=result["resolution_event_id"]))
+        print(t("cli.messages.task_status_label", status=result.get("status", "")))
         print()
         return True
 
@@ -3898,8 +4249,14 @@ def _handle_task(args, db):
         def _local_apply():
             return db.task_apply(opts.task_id, **apply_kwargs)
 
+        # 缺陷修复：daemon RPC payload 必须原样携带 P4 lease 凭证
+        # （lease_token/fencing_counter），daemon 端 require_lease_params +
+        # validate_lease_for_mutation 负责 fail-closed；CLI 不得静默补默认值。
+        # lease_kwargs 为空 {} 时 daemon 收到缺字段 → E_LEASE_REQUIRED（fail-closed）。
         result = route_task_write("task.apply", {
             "task_id": opts.task_id, "reviewer": opts.reviewer,
+            "identity": identity,
+            **lease_kwargs,
         }, _local_apply)
 
         if "error" in result:
@@ -3950,8 +4307,12 @@ def _handle_task(args, db):
         def _local_close():
             return db.task_close(opts.task_id, **close_kwargs)
 
+        # 缺陷修复：daemon RPC payload 必须原样携带 P4 lease 凭证
+        # （lease_token/fencing_counter），daemon 端 fail-closed；同 apply。
         result = route_task_write("task.close", {
             "task_id": opts.task_id, "reviewer": opts.reviewer,
+            "identity": identity,
+            **lease_kwargs,
         }, _local_close)
 
         if "error" in result:
@@ -4002,8 +4363,11 @@ def _handle_task(args, db):
         def _local_reopen():
             return db.task_reopen(opts.task_id, **reopen_kwargs)
 
+        # 同一根因修复（apply/close 同源缺陷）：daemon payload 原样携带 lease 凭证。
         result = route_task_write("task.reopen", {
             "task_id": opts.task_id, "reviewer": opts.reviewer, "reason": opts.reason,
+            "identity": identity,
+            **lease_kwargs,
         }, _local_reopen)
         if "error" in result:
             cprint(t("cli.messages.task_reopen_failed",
@@ -4488,15 +4852,23 @@ def _handle_task(args, db):
         def _local_split():
             return db.task_split(opts.task_id, subtasks)
 
-        sub_ids = route_task_write("task.split", {
+        split_res = route_task_write("task.split", {
             "task_id": opts.task_id,
             "subtasks": subtasks,
             "plan_file": str(opts.plan),
         }, _local_split)
+        # daemon RPC 返回 {task_id, status, subtask_count, subtasks[]} dict；
+        # local fallback（db.task_split）返回子任务 id 列表。统一按结构分派取值。
+        if isinstance(split_res, dict):
+            sub_ids = split_res.get("subtasks") or []
+            count = split_res.get("subtask_count", len(sub_ids))
+        else:
+            sub_ids = split_res or []
+            count = len(sub_ids)
         cprint(t("cli.messages.task_split_success",
-                 task_id=opts.task_id, count=len(sub_ids)), "green", bold=True)
+                 task_id=opts.task_id, count=count), "green", bold=True)
         for i, sid in enumerate(sub_ids):
-            title = subtasks[i].get("title", "")
+            title = subtasks[i].get("title", "") if i < len(subtasks) else ""
             print(t("cli.messages.task_split_subtask_item",
                     idx=i + 1, id=sid, title=title))
         print()
@@ -10130,7 +10502,7 @@ def _handle_build_context(args, db):
 
     parser = argparse.ArgumentParser(
         prog="cw build-context",
-        description="Build context management (L5: 构建上下文感知)",
+        description="Build context management (构建上下文感知)",
     )
     sub = parser.add_subparsers(dest="action", required=True)
 
@@ -12849,7 +13221,7 @@ def run_daemon_mode(argv: list) -> int:
         print(
             "ERROR: cw_daemon binary not found.\n"
             "  Production: install callwarden-daemon package (provides cw-daemon).\n"
-            "  Development: run `cargo build --no-default-features --bin cw_daemon` "
+            "  Development: run `cargo build --no-default-features --bin cw-daemon` "
             "in rust_ext/ first.\n"
             "  Or set CW_DAEMON_BIN env var to the binary path.",
             file=_sys.stderr,
@@ -14428,6 +14800,26 @@ def _t_structured(message_key: str, default: str) -> str:
     return default
 
 
+def _resolve_action_session(identity):
+    """解析 task 生命周期写操作的显式 action session（claim/report 共享同一规则）。
+
+    优先级：
+    1. 环境变量 CW_AGENT_SESSION_ID（稳定、跨 CLI 调用一致）—— 优先；
+    2. 结构化 identity.session_id（--session-id 显式提供）；
+    3. 都没有 → 返回 ""（daemon 端回退 owner_key/SID，claim 与 report 两侧
+       以同样方式回退，保持一致）。
+
+    Windows SID 永不在此处参与解析，避免"以 SID 覆盖用户显式提供的 session"
+    导致的 E_IDENTITY_SESSION_MISMATCH 或伪 task_conflict。
+    """
+    session = os.environ.get("CW_AGENT_SESSION_ID", "").strip()
+    if session:
+        return session
+    if identity:
+        return (identity.get("session_id") or "").strip()
+    return ""
+
+
 def _collect_identity(opts):
     """从 CLI 选项收集结构化身份（Req 10.1）。
 
@@ -14452,6 +14844,86 @@ def _collect_identity(opts):
             "detail": "必须同时提供 agent_id/session_id/model_id/role 四个字段",
         }
     return parts, None
+
+
+def _local_contract_get(task_id, role):
+    """本地只读降级：从活跃库读取冻结 Role Contract 的 skill 相关字段。
+
+    仅用于 daemon 不可达时的 fallback；只读不写。读取经 sqlite 只读连接
+    （``mode=ro``），不绕过 daemon 权威写点（写仍由 task.claim/report RPC 执行）。
+
+    A3 决议声明的边界（见 docs/design/http-daemon-mvp-a3-resolution.md）：
+    1. 可达范围仅限 ``local``/``auto`` 模式：``route_task_read`` 在 ``enterprise``
+       模式下 daemon 不可达时硬 fail-closed（抛 ``DaemonUnavailableError``），
+       本降级闭包不会被调用；
+    2. 本函数只做只读查询，不持有写锁、不触发 workspace 激活、不改动任何状态；
+    3. HTTP profile（``HttpDaemonRpcClient``，``CW_DAEMON_TRANSPORT=http``）不经过
+       此路径：``_fetch_contract_claim`` 始终走 Named Pipe/UDS ``route_task_read``，
+       与 HTTP no-fallback 契约（http-daemon-mvp-compatibility-contract.md §2.1）
+       的边界不冲突；
+    4. 业务错误（``DaemonRemoteError``）在任何模式都不触发本降级，原样透传。
+    """
+    try:
+        from callwarden import config as _cfg
+        import sqlite3
+        dbp = getattr(_cfg, "DB_PATH", None) or os.environ.get("CALLWARDEN_DB")
+        if not dbp:
+            return {"contracts": []}
+        con = sqlite3.connect(f"file:{dbp}?mode=ro", uri=True)
+        try:
+            cur = con.cursor()
+            cur.execute(
+                "SELECT role, skill_id, skill_version, prompt_hash FROM role_contracts "
+                "WHERE task_id=? AND role=? AND is_current=1 ORDER BY revision DESC LIMIT 1",
+                (task_id, role),
+            )
+            row = cur.fetchone()
+        finally:
+            con.close()
+        if row and row[1]:
+            return {"contracts": [{
+                "role": row[0], "skill_id": row[1],
+                "skill_version": row[2] or "", "prompt_hash": row[3] or "",
+            }]}
+    except Exception:
+        pass
+    return {"contracts": []}
+
+
+def _fetch_contract_claim(task_id, role):
+    """A3 修复：为合同任务 claim/report 构造与冻结合同一致的 contract_claim。
+
+    优先走 daemon 只读 RPC task.contract_get（权威、与写入同源）；auto 模式 daemon
+    不可用时降级本地只读。返回 {"skill_id","skill_version","prompt_hash"} 或 None
+    （无冻结合同 / 合同 skill_id 为空时返回 None，表示无需携带 contract_claim）。
+
+    A3 决议声明的边界（与 _local_contract_get 同源，见
+    docs/design/http-daemon-mvp-a3-resolution.md）：
+    - 本路径始终经 Named Pipe/UDS ``route_task_read``，HTTP profile 不经过此处，
+      与 HTTP no-fallback 契约互不冲突；
+    - 降级仅发生在 daemon 不可达（连接层失败）时；``DaemonRemoteError`` 业务错误
+      永不降级，原样透传，保证 fail-closed 语义不被削弱。
+    """
+    try:
+        resp = route_task_read(
+            "task.contract_get",
+            {"task_id": task_id, "role": role},
+            lambda: _local_contract_get(task_id, role),
+        )
+    except DaemonRemoteError:
+        raise
+    except Exception:
+        resp = _local_contract_get(task_id, role)
+    if not isinstance(resp, dict):
+        return None
+    for c in (resp.get("contracts") or []):
+        if c.get("role") == role and c.get("skill_id"):
+            return {
+                "skill_id": c["skill_id"],
+                "skill_version": c.get("skill_version", ""),
+                "prompt_hash": c.get("prompt_hash", ""),
+            }
+    return None
 
 
 def _validate_identity(db, identity):
@@ -14489,11 +14961,9 @@ def _validate_identity_routed(db, identity):
     daemon RPC handler 内部已做 claimed_by/owner 权限校验。
     """
     if get_daemon_mode() != "local":
-        return False, {
-            "code": "E_IDENTITY_NOT_WIRED",
-            "message_key": "daemon_errors.error.identity_not_wired",
-            "detail": "identity 校验尚未在 daemon RPC 侧接线",
-        }
+        # enterprise/auto 不实例化本地 DB；daemon 在同一写事务中校验
+        # identity 并记录 action_identities/task_events。
+        return True, {"code": "OK", "detail": "identity routed to daemon"}
     return _validate_identity(db, identity)
 
 
@@ -14503,7 +14973,9 @@ def _method_accepts_identity_routed(db, method_name: str) -> bool:
     enterprise/auto 模式不实例化本地 DB，布线表统一视为未接线（fail closed）。
     """
     if get_daemon_mode() != "local":
-        return False
+        return method_name in {
+            "task_report_step", "task_apply", "task_close", "task_reopen",
+        }
     return _method_accepts_identity(db, method_name)
 
 
@@ -14649,6 +15121,19 @@ def _identity_revoke(db, opts, use_json):
             "role": opts.role,
         }
 
+    # 0B gate-first：authority 写必须经 daemon CapabilityMutationGate（计划 §3.3）。
+    # enterprise/auto 模式稳定 fail-closed，不实例化/回退本地 SQLite；
+    # local 模式保留 legacy 直写语义（无 daemon gate）。
+    if get_daemon_mode() != "local":
+        _identity_reason_output({
+            "code": "E_TASK_LOOP_CAPABILITY_DISABLED",
+            "message_key": "daemon_errors.error.capability_disabled",
+            "detail": ("authority 写路径必须经 daemon CapabilityMutationGate 提交"
+                       "（锁序 gate → authority store → task DB）；0B 阶段 gate 接入"
+                       "尚未完成，拒绝直写（fail-closed），不回退本地 SQLite"),
+        }, use_json)
+        return True
+
     register = getattr(db, "register_attestation_revocation", None)
     if register is None:
         _identity_reason_output({
@@ -14751,7 +15236,11 @@ def _collect_lease_creds(opts):
         dict：含 "error" 键表示凭证不完整；否则为透传给 db 方法的关键字参数
     """
     token = getattr(opts, "lease_token", "") or ""
-    counter = getattr(opts, "fencing_counter", -1) or -1
+    # 注意：fencing_counter=0 是合法值（原样透传给 daemon，由其按单调递增语义
+    # fail-closed），不得用 `or -1` 把它当成"未提供"。
+    counter = getattr(opts, "fencing_counter", -1)
+    if counter is None:
+        counter = -1
     if not token and counter < 0:
         return {}
     if not token:
@@ -14770,14 +15259,69 @@ def _collect_lease_creds(opts):
 
 
 def _lease_reason_output(reason: dict, use_json: bool):
-    """输出 Lease/Assignment 的结构化拒绝原因（与 _identity_reason_output 同风格）"""
+    """输出 Lease/Assignment 的结构化拒绝原因（与 _identity_reason_output 同风格）。
+
+    必须携带稳定错误码（E_LEASE_* / E_ASSIGNMENT_*），供脚本/自动化解析；
+    文案变化不得改变错误码。JSON 模式输出完整 reason。
+    """
+    code = reason.get("code", "E_LEASE_VALIDATION_FAILED")
     if use_json:
-        print(json.dumps(reason, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": False, "reason": reason},
+                         ensure_ascii=False, indent=2))
         return
     detail = reason.get("detail", "")
+    cprint(f"[REJECTED] {code}", "red")
     cprint(t("cli.messages.lease_denied", default="Lease 校验未通过"), "red")
     if detail:
         print(detail)
+
+
+def _route_lease_write(rpc_method, params, fallback_func):
+    """统一 Lease 写操作路由（P4 受保护写，与 route_task_write 同策略）。
+
+    1. local 模式 -> 直接执行 fallback_func（本地 SQLite，保持既有行为）；
+    2. enterprise / auto 模式 -> 通过 daemon RPC 执行（daemon 权威单写点）；
+    3. enterprise / auto 模式下若 daemon 不可用，禁止 fallback 本地 SQLite，
+       抛 DaemonUnavailableError（fail-closed，与任务写路由一致）。
+
+    返回 (ok, result_or_reason)：daemon 结构化业务错误（DaemonRemoteError）转
+    (False, reason)，供 _lease_reason_output 输出；连接级失败抛异常。
+    """
+    from callwarden.server.daemon_client import (
+        DaemonRemoteError,
+        UnixDaemonRpcClient,
+        HttpDaemonRpcClient,
+        is_daemon_required,
+        is_http_transport_enabled,
+    )
+    mode = get_daemon_mode()
+    if mode == "local":
+        return fallback_func()
+    if isinstance(params, dict) and "request_id" not in params:
+        import uuid
+        params["request_id"] = f"req-{uuid.uuid4().hex[:12]}"
+    rpc_client = HttpDaemonRpcClient.get_instance() if is_http_transport_enabled() else UnixDaemonRpcClient()
+    try:
+        call = (
+            rpc_client.call_with_autostart
+            if hasattr(rpc_client, "call_with_autostart")
+            else rpc_client.call
+        )
+        res = call(rpc_method, params)
+        return True, res
+    except DaemonRemoteError as exc:
+        # 远端结构化业务错误（E_LEASE_* / E_IDENTITY_* 等）转 reason，不伪装成连接故障
+        return False, {
+            "code": exc.code,
+            "message": exc.message,
+            "detail": f"{exc.code}: {exc.message}",
+        }
+    except Exception as exc:
+        if is_daemon_required() or mode == "auto":
+            raise DaemonUnavailableError(
+                f"enterprise/auto 模式下 lease 写操作 daemon 连接失败: {exc}"
+            ) from exc
+        raise
 
 
 def _handle_lease(args, db):
@@ -14906,8 +15450,16 @@ def _handle_lease(args, db):
         return True
 
     if opts.action == "acquire":
-        ok, result = db.acquire_lease(
-            opts.task_id, opts.role, identity, ttl_seconds=opts.ttl)
+        # 非 local 模式经 daemon RPC（lease.acquire），daemon 权威时钟 + 单写点；
+        # identity 需含 role（parse_action_identity 四字段齐备要求）。
+        _daemon_identity = {**identity, "role": opts.role} if identity else None
+        ok, result = _route_lease_write("lease.acquire", {
+            "task_id": opts.task_id,
+            "role": opts.role,
+            "identity": _daemon_identity,
+            "ttl_seconds": opts.ttl,
+        }, lambda: db.acquire_lease(
+            opts.task_id, opts.role, identity, ttl_seconds=opts.ttl))
         if not ok:
             _lease_reason_output(result, use_json)
             return True
@@ -14925,8 +15477,16 @@ def _handle_lease(args, db):
         return True
 
     if opts.action == "renew":
-        ok, result = db.renew_lease(
-            opts.task_id, opts.role, opts.token, identity=identity, ttl_seconds=opts.ttl)
+        # 非 local 模式经 daemon RPC（lease.renew → lease.extend 兼容别名）
+        _daemon_identity = {**identity, "role": opts.role} if identity else None
+        ok, result = _route_lease_write("lease.renew", {
+            "task_id": opts.task_id,
+            "role": opts.role,
+            "token": opts.token,
+            "identity": _daemon_identity,
+            "ttl_seconds": opts.ttl,
+        }, lambda: db.renew_lease(
+            opts.task_id, opts.role, opts.token, identity=identity, ttl_seconds=opts.ttl))
         if not ok:
             _lease_reason_output(result, use_json)
             return True
@@ -14940,8 +15500,15 @@ def _handle_lease(args, db):
         return True
 
     if opts.action == "release":
-        ok, result = db.release_lease(
-            opts.task_id, opts.role, opts.token, identity=identity)
+        # 非 local 模式经 daemon RPC（lease.release）
+        _daemon_identity = {**identity, "role": opts.role} if identity else None
+        ok, result = _route_lease_write("lease.release", {
+            "task_id": opts.task_id,
+            "role": opts.role,
+            "token": opts.token,
+            "identity": _daemon_identity,
+        }, lambda: db.release_lease(
+            opts.task_id, opts.role, opts.token, identity=identity))
         if not ok:
             _lease_reason_output(result, use_json)
             return True

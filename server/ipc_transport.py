@@ -30,6 +30,7 @@ import sys
 
 MAX_MSG_BYTES = 16 * 1024 * 1024  # 16 MB — 超过则走 memfd
 MAX_MEMFD_BYTES = 256 * 1024 * 1024  # 256 MB — 单 memfd 上限，防 OOM
+MAX_MEMFD_CONTROL_BYTES = 1 * 1024 * 1024  # memfd 控制帧只承载元数据
 
 # G10 inflight bytes 限制（规范：daemon-ipc-security.md §4）
 # S7 不变量：inflight bytes 超任一限制 → 暂停该连接 recv
@@ -305,16 +306,41 @@ def recv_via_memfd(sock, expected_canonical_len: int, expected_content_hash: str
 
 def _recv_msg_with_fd(sock):
     """接收 SCM_RIGHTS 传来的 FD（Linux）。"""
-    # 先接收消息头
-    header = _recv_exact(sock, 5)  # 1B msg_type + 4B payload_len
-    msg_type, payload_len = struct.unpack(">BI", header)
-    payload_json = _recv_exact(sock, payload_len).decode("utf-8")
+    # SCM_RIGHTS 必须在携带 ancillary data 的 recvmsg() 中捕获。
+    # 不能先用 recv() 读取 header，否则 stream 会把 FD 一并消费而丢弃，
+    # 随后的 recvmsg() 会永久等待下一条消息。
+    fds = array.array("i")
+    first_chunk, ancdata, flags, addr = sock.recvmsg(
+        5 + MAX_MEMFD_CONTROL_BYTES,
+        socket.CMSG_SPACE(fds.itemsize),
+    )
+    if not first_chunk:
+        raise ConnectionError("connection closed before memfd control frame")
+
+    data = bytearray(first_chunk)
+    while len(data) < 5:
+        chunk = sock.recv(5 - len(data))
+        if not chunk:
+            raise ConnectionError("connection closed during memfd header")
+        data.extend(chunk)
+
+    msg_type, payload_len = struct.unpack(">BI", data[:5])
+    if payload_len > MAX_MEMFD_CONTROL_BYTES:
+        raise ProtocolError(
+            f"memfd control payload exceeds limit: {payload_len}"
+        )
+
+    frame_len = 5 + payload_len
+    while len(data) < frame_len:
+        chunk = sock.recv(frame_len - len(data))
+        if not chunk:
+            raise ConnectionError("connection closed during memfd payload")
+        data.extend(chunk)
+
+    payload_json = bytes(data[5:frame_len]).decode("utf-8")
     msg = json.loads(payload_json)
 
-    # 接收 FD
-    fds = array.array("i")
-    msg_data, ancdata, flags, addr = sock.recvmsg(
-        0, socket.CMSG_LEN(fds.itemsize))
+    # FD ancillary data was captured by the first recvmsg() call.
     for cmsg_level, cmsg_type, cmsg_data in ancdata:
         if cmsg_level == socket.SOL_SOCKET and cmsg_type == socket.SCM_RIGHTS:
             fds.frombytes(cmsg_data[: fds.itemsize])

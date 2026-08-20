@@ -647,6 +647,10 @@ class EnterpriseDaemonService:
                 "replicator": replicator,
                 # 批次9：file.refresh / recover 时传给 replicator.replicate
                 "codegraph_db_path": codegraph_db_path,
+                # C3：file_generations 两阶段写走 Rust CasStore facade 时使用
+                "ws_db_path": ws_db_path,
+                # C4：CAS → CodeGraph merge 走 Rust facade 时使用
+                "cas_db_path": cas_db_path,
             }
             self._workspace_resources[workspace_id] = resources
             return resources
@@ -863,6 +867,7 @@ class EnterpriseDaemonService:
                     workspace_id=int(workspace["workspace_id"]),
                     requested_session_id=session_id,
                     ws_conn=res["ws_conn"],
+                    ws_db_path=res["ws_db_path"],
                 )
                 result["workspace_instance_id"] = workspace_id
                 return result
@@ -1073,6 +1078,9 @@ class EnterpriseDaemonService:
             return result
 
         # workspace.file.refresh：增量 refresh 经 CAS/Replicator
+        # C5 C1（收敛标注）：生产编排主链已由 Rust daemon workspace.rs
+        # （L1629-2257）承担，本 handler 为 compat/fallback 路径（Python
+        # Replicator.adapter），不承担生产写编排；Rust 主链不可用时的降级入口。
         if method == "workspace.file.refresh":
             from callwarden.server.replicator import daemon_handle_refresh
             res = self._get_workspace_resources(workspace_id)
@@ -1232,9 +1240,27 @@ class EnterpriseDaemonService:
                     # CAS → CodeGraph DB merge（断点 B 修复），让 publish_snapshot
                     # 加载到新文件符号。workspace_root_path 用于 workspaces.root_path。
                     codegraph_db_path=res.get("codegraph_db_path", ""),
+                    ws_db_path=res.get("ws_db_path", ""),
+                    cas_db_path=res.get("cas_db_path", ""),
                     workspace_root_path=str(
                         workspace.get("host_real_root") or ""),
                 )
+                # C6（S2）：generation 保护 blocked——不追加 staging、不 committed、
+                # 不 replicate，保护上一代好 snapshot（S2 验收点 5/7）。
+                if result.get("status") == "blocked":
+                    protection = result.get("protection") or {}
+                    repl_map = {
+                        "snapshot_published": False,
+                        "snapshot_warning": (
+                            f"generation 保护拦截：{protection.get('reason', '')} "
+                            f"(cas_state={result.get('cas_state', '')})，未追加 staging、"
+                            f"未 committed、未 replicate"
+                        ),
+                    }
+                    if protection:
+                        repl_map["protection"] = protection
+                    result["replication"] = repl_map
+                    return result
                 # 成功后追加 staging entry 并 replicate
                 if result.get("status") == "committed":
                     from callwarden.server.staging_log import create_staging_entry
@@ -1245,6 +1271,22 @@ class EnterpriseDaemonService:
                         language=params.get("language", ""),
                     )
                     res["staging_log"].append(entry)
+                    # C5 C2：merge 失败（Rust merge_ok 门控）时 append staging 为
+                    # pending 但不 replicate，同 seq 重试可恢复（对齐 Rust
+                    # workspace.rs L2141-2166：merge 失败 skip committed + replicate）。
+                    merge_info = result.get("merge") or {}
+                    merge_status = merge_info.get("merge_status", "")
+                    if merge_status in ("error", "cas_miss", "open_failed"):
+                        repl_map = {
+                            "snapshot_published": False,
+                            "snapshot_warning": (
+                                f"merge 失败（{merge_status}），未 committed 也未 "
+                                f"replicate，同 seq 可重试"
+                            ),
+                            "cas_merge": merge_info,
+                        }
+                        result["replication"] = repl_map
+                        return result
                     # 触发 replicate 发布新 generation
                     # 批次9（K4 snapshot 未发布修复）：传 db_path 才能触发
                     # snapshot_service.publish_snapshot，让 watcher→daemon→query
@@ -1304,6 +1346,8 @@ class EnterpriseDaemonService:
                 raise DaemonRpcError(err_code, str(e))
 
         # workspace.recover：崩溃恢复，重放 pending staging entries
+        # C5 C1（收敛标注）：生产恢复主链由 Rust daemon workspace.rs 承担，
+        # 本路径为 compat/fallback（Python Replicator.recover adapter）。
         if method == "workspace.recover":
             res = self._get_workspace_resources(workspace_id)
             try:

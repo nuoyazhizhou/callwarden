@@ -342,11 +342,13 @@ class GuardrailMixin:
 
         now = time.time()
         # 更新 finding 状态和 resolved_at（resolved_at 为处理时间，含 wontfix 情况）
+        # v48（W2.3 P1-1）：scope 到当前 active workspace，防止跨 workspace 操作
+        ws_id = self._get_active_workspace_id()
         cur = self.conn.execute(
             """UPDATE guardrail_findings
                SET status = ?, resolved_at = ?
-               WHERE id = ?""",
-            (resolution, now, finding_id),
+               WHERE id = ? AND workspace_id = ?""",
+            (resolution, now, finding_id, ws_id),
         )
         self.conn.commit()
         return cur.rowcount > 0
@@ -604,10 +606,16 @@ class GuardrailMixin:
         symbol_hash: str,
         severity: str,
         message: str,
+        workspace_id: Optional[int] = None,
     ) -> Optional[Dict]:
         """插入 finding 到数据库（不 commit，带去重）
 
-        去重规则：若已存在相同的 (rule_id, file_path, message) 且 status=open 的记录，则跳过。
+        去重规则：同一 workspace 内若已存在相同的 (rule_id, file_path, message)
+        且 status=open 的记录，则跳过。
+
+        v48（W2.3 P1-1）：每条 finding 必须绑定 workspace_id。调用方未显式传入时
+        使用当前 active workspace。禁止插入 workspace_id=0 的 open finding
+        （查询层 fail-closed 不返回 0 归属行）。
 
         Args:
             rule_id: 规则 ID
@@ -615,29 +623,33 @@ class GuardrailMixin:
             symbol_hash: 符号 hash（可为空）
             severity: 严重级别
             message: finding 描述
+            workspace_id: 归属 workspace ID（默认取当前 active workspace）
 
         Returns:
             插入的 finding dict（含 id 和 detected_at），重复时返回 None
         """
         now = time.time()
+        if workspace_id is None:
+            workspace_id = self._get_active_workspace_id()
 
-        # 去重：检查是否已存在相同的 open finding
+        # 去重：检查是否已存在相同的 open finding（同一 workspace 内）
         cur = self.conn.execute(
             """SELECT id FROM guardrail_findings
-               WHERE rule_id = ? AND file_path = ? AND message = ? AND status = ?""",
-            (rule_id, file_path, message, GUARDRAIL_STATUS_OPEN),
+               WHERE workspace_id = ? AND rule_id = ? AND file_path = ? AND message = ? AND status = ?""",
+            (workspace_id, rule_id, file_path, message, GUARDRAIL_STATUS_OPEN),
         )
         if cur.fetchone():
             return None
 
         cur = self.conn.execute(
             """INSERT INTO guardrail_findings
-               (rule_id, file_path, symbol_hash, severity, status, message, detected_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (rule_id, file_path, symbol_hash, severity, GUARDRAIL_STATUS_OPEN, message, now),
+               (workspace_id, rule_id, file_path, symbol_hash, severity, status, message, detected_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (workspace_id, rule_id, file_path, symbol_hash, severity, GUARDRAIL_STATUS_OPEN, message, now),
         )
         return {
             "id": cur.lastrowid,
+            "workspace_id": workspace_id,
             "rule_id": rule_id,
             "file_path": file_path,
             "symbol_hash": symbol_hash,

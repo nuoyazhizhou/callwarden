@@ -1156,17 +1156,23 @@ class BootstrapMixin:
                 pass
 
         # 4-5. quality findings 计数（直接查询 task_quality_findings 表）
+        # B2（T-1786590722456-db00d074-sub-2）：按 active workspace 过滤，
+        # 与 get_latest_scan_run / rule 查询的 workspace 隔离语义保持一致。
+        ws_id = self._get_active_workspace_id()
         open_findings_count = 0
         blocking_findings_count = 0
         try:
             cur = self.conn.execute(
-                "SELECT COUNT(*) as cnt FROM task_quality_findings WHERE status = 'open'"
+                "SELECT COUNT(*) as cnt FROM task_quality_findings "
+                "WHERE status = 'open' AND workspace_id = ?",
+                (ws_id,),
             )
             row = cur.fetchone()
             open_findings_count = row[0] if row else 0
             cur = self.conn.execute(
                 "SELECT COUNT(*) as cnt FROM task_quality_findings "
-                "WHERE status = 'open' AND severity = 'block'"
+                "WHERE status = 'open' AND severity = 'block' AND workspace_id = ?",
+                (ws_id,),
             )
             row = cur.fetchone()
             blocking_findings_count = row[0] if row else 0
@@ -1182,6 +1188,9 @@ class BootstrapMixin:
                 audit_verify = {"error": str(e)}
 
         # 7. tasks 按状态分组计数
+        # B2（T-1786590722456-db00d074-sub-2）：tasks 表 schema（db/schema.py L347-360）
+        # 无 workspace_id 字段——任务编排是用户级全局（task_create 不绑定 workspace，
+        # 父子任务树跨 workspace 编排），此处保持全局统计，不做 workspace 过滤。
         task_counts: Dict[str, int] = {
             "open": 0, "in_progress": 0, "review": 0, "applied": 0,
         }

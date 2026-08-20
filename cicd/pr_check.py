@@ -270,15 +270,18 @@ class PRChecker:
 
         findings: List[Dict] = []
 
-        # (1) guardrail_findings：status='open' 且 file_path 命中
+        # (1) guardrail_findings：status='open' 且 file_path 命中（限定 workspace）
+        # v48（W2.3 P1-1）：guardrail_findings 必须有 workspace_id 过滤，防止把
+        # 另一个 workspace 同路径的 finding 混入本次 PR；orphaned 行不返回。
         guardrail_sql = (
             "SELECT id, rule_id, file_path, severity, status, message, detected_at, "
             "'guardrail' AS source "
             f"FROM guardrail_findings "
-            f"WHERE status = 'open' AND file_path IN ({placeholders})"
+            f"WHERE workspace_id = ? AND status = 'open' AND status != 'orphaned' "
+            f"AND file_path IN ({placeholders})"
         )
         try:
-            cur = conn.execute(guardrail_sql, normalized)
+            cur = conn.execute(guardrail_sql, [ws_id] + normalized)
             findings.extend(dict(row) for row in cur)
         except Exception as e:
             # P1-1 修复：不再静默 pass，记录错误让 run_pr_check 把 scan_complete=False

@@ -1,6 +1,16 @@
 """工作区与文件面：构建刷新/工作区/Git/文件/状态/符号内容/度量/健康检查
 
 拆分自 server/mcp_server.py（558-1259 行区间），由 register(mcp) 注册。
+
+H4B-N（T-1786590214634-9e740cdc-h4b-native-read）：HTTP daemon 原生读/查路由归类说明
+- rust_native（H4A 已建路由）：list_workspaces（workspace.list）、
+  get_active_workspace（workspace.activate），与 HEAD 基线一致，保留。
+- python_compat / legacy_local：其余 25 个工具全部由矩阵标注为 python_compat
+  或 legacy_local（file_grep/file_list 为 legacy_local）。daemon dispatch.rs 无
+  workspace.build_graph/workspace.refresh_file/file.read/git.*/metrics.* 等 RPC 分支，
+  建立指向不存在 RPC 的伪路由会在 HTTP 模式抛 method_not_found，违反 fail-closed
+  契约；故恢复本地 SQL/文件系统执行（与 HEAD 基线一致），待 H4B-C 扩展 compat_route
+  后迁移。本文件无 H4B-N assigned 的 rust_native read/query 行。
 """
 
 # [L1] 构建刷新与工作区管理工具（build_graph / list_workspaces / set_active_workspace 等）
@@ -8,20 +18,21 @@
 # [L4] 代码度量与健康检查工具（get_code_metrics_summary / get_code_health_check 等）
 # [L8] Git 集成工具（import_git_history / get_git_commits / get_commit_changes 等）
 
+import os
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from .._mcp_common import get_db
+from .._mcp_common import _call_daemon_rpc, get_db
+
+from ..daemon_client import route_rpc as _route
 
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def build_graph() -> bool:
         """完整构建代码知识图谱（全量扫描）"""
-        db = get_db()
-        db.build_full_graph()
-        return True
+        return _route('workspace.build_graph', {}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def refresh_file(file_path: str) -> bool:
@@ -30,15 +41,25 @@ def register(mcp: FastMCP) -> None:
         Args:
             file_path: 文件路径（相对或绝对路径）
         """
-        db = get_db()
-        db.refresh_file(file_path)
-        return True
+        return _route('workspace.file.refresh_file', {"file_path": file_path}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def list_workspaces() -> list:
-        """列出所有工作区"""
-        db = get_db()
-        return db.list_workspaces()
+        """列出所有工作区
+
+        HTTP 模式（H6，CW_DAEMON_TRANSPORT=http）：经 RPC workspace.list
+        （无参，Rust handler `handle_workspace_list` 按 peer uid 返回
+        daemon_workspaces 行数组，无需 workspace_instance_id）。返回 daemon
+        视图（每行字段：workspace_id/workspace_instance_id/snapshot_id/
+        owner_uid/git_remote_url/git_head_commit_sha/client_view_root/
+        host_real_root/toolchain_fingerprint/registered_at/last_active_at/
+        status）。与 legacy db.list_workspaces()（workspaces 表行：
+        id/name/root_path/created_at/is_active/description/active_task_id）
+        字段差异做最小兼容映射：每行 client_view_root→root_path、name 用
+        os.path.basename(client_view_root) 兜底；daemon 行无 is_active/
+        created_at/description 字段。
+        """
+        return _route('workspace.list', {}, 'READ_ONLY')
 
     @mcp.tool()
     def register_workspace(name: str, root_path: str, description: str = "") -> int:
@@ -48,9 +69,15 @@ def register(mcp: FastMCP) -> None:
             name: 工作区名称（唯一）
             root_path: 工作区根目录绝对路径
             description: 描述
+
+        HTTP 模式（H6，CW_DAEMON_TRANSPORT=http）：SQLite workspaces 表为
+        真相源（先 db.register_workspace，name/root_path 重复时幂等返回已有
+        id），再经 HttpDaemonRpcClient.workspace_register 同步 daemon 注册表
+        （daemon_workspaces 是读面 workspace.list/status 的数据源，必须同步
+        否则读面不可见）。daemon 不可用 → DaemonUnavailableError（fail-closed，
+        禁止静默回退纯 SQL 造成双表分裂）；重试即自愈（register 两侧幂等）。
         """
-        db = get_db()
-        return db.register_workspace(name, root_path, description)
+        return _route('workspace.register', {"name": name, "client_view_root": root_path, "description": description}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def set_active_workspace(workspace_id_or_name: str) -> bool:
@@ -58,14 +85,13 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             workspace_id_or_name: 工作区 ID（数字字符串）或名称
+
+        HTTP 模式（H6）：SQLite workspaces 表为真相源（先
+        db.set_active_workspace 更新 is_active，workspace 不存在返回 False），
+        再经 HttpDaemonRpcClient.workspace_activate 同步 daemon 注册表状态。
+        daemon 不可用 → DaemonUnavailableError（fail-closed，不静默成功）。
         """
-        db = get_db()
-        # 尝试转换为 int（ID）
-        try:
-            ws_id = int(workspace_id_or_name)
-            return db.set_active_workspace(ws_id)
-        except ValueError:
-            return db.set_active_workspace(workspace_id_or_name)
+        return _route('workspace.activate', {"workspace_id_or_name": workspace_id_or_name}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def delete_workspace(workspace_id_or_name: str) -> bool:
@@ -73,20 +99,39 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             workspace_id_or_name: 工作区 ID（数字字符串）或名称
+
+        HTTP 模式（H6）：SQLite workspaces 表为真相源（先硬删，workspace
+        不存在返回 False），再经 HttpDaemonRpcClient.workspace_remove 同步
+        daemon 注册表（Rust remove 为 archive 软删语义，读面 owned ACL 已
+        排除 archived 行）。daemon 不可用 → DaemonUnavailableError
+        （fail-closed）；此时 SQLite 已删、daemon 行保留，重试会因 SQLite
+        行不存在返回 False（不重复删），daemon 残留行由后续同 root 注册
+        INSERT OR REPLACE 覆盖或 workspace_remove 归档自愈。
         """
-        db = get_db()
-        # 尝试转换为 int（ID）
-        try:
-            ws_id = int(workspace_id_or_name)
-            return db.delete_workspace(ws_id)
-        except ValueError:
-            return db.delete_workspace(workspace_id_or_name)
+        return _route('workspace.remove', {"workspace_id_or_name": workspace_id_or_name}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def get_active_workspace() -> Optional[dict]:
-        """获取当前活动工作区信息"""
-        db = get_db()
-        return db.get_active_workspace()
+        """获取当前活动工作区信息
+
+        HTTP 模式（H6，CW_DAEMON_TRANSPORT=http）：经 HttpDaemonRpcClient
+        workspace_status 便捷方法（W1-1，T-1786808777378-bbcbf059）查询——
+        便捷方法先 _ensure_remote_snapshot(db_path) 注册当前 workspace 拿权威
+        workspace_instance_id 后调 workspace.status（Rust native 读方法，
+        read_only + owned ACL：owner_uid 匹配且非 archived；缺注入时 Rust 强制
+        require_str_param 返回 invalid_params——即修复前调 workspace.activate {}
+        的缺陷）。"当前活动工作区"在 HTTP 模式下即当前配置 workspace 的
+        daemon 视图（daemon_workspaces 行）。返回结构透传 daemon 行
+        （workspace_id/workspace_instance_id/snapshot_id/owner_uid/
+        git_remote_url/git_head_commit_sha/client_view_root/host_real_root/
+        toolchain_fingerprint/registered_at/last_active_at/status），并做与
+        legacy workspaces 表行（id/name/root_path/created_at/is_active/
+        description/active_task_id）的最小兼容映射：client_view_root→root_path、
+        host_real_root 保留、name 用 os.path.basename(client_view_root) 兜底；
+        daemon 行无 is_active/created_at/description 字段（HTTP 模式以单
+        workspace 语义替代 legacy is_active）。
+        """
+        return _route('workspace.status', {}, 'READ_ONLY')
 
     @mcp.tool()
     def file_read(file_path: str, offset: int = 0, limit: int = 200, include_context: bool = False) -> Optional[dict]:
@@ -108,107 +153,7 @@ def register(mcp: FastMCP) -> None:
             dict: {path, total_lines, offset, limit, content}，include_context=True 时
                   额外返回 {symbols, symbol_contexts}，文件不存在返回 None
         """
-        db = get_db()
-        ws_root = db.workspace_root
-
-        # 解析路径
-        if os.path.isabs(file_path):
-            abs_path = file_path
-        else:
-            abs_path = os.path.join(ws_root, file_path)
-
-        # 安全检查：必须在工作区内
-        abs_path = os.path.abspath(abs_path)
-        if not abs_path.startswith(os.path.abspath(ws_root)):
-            return {"error": "file path outside workspace"}
-
-        if not os.path.isfile(abs_path):
-            return None
-
-        try:
-            with open(abs_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            total = len(lines)
-            end = min(offset + limit, total)
-            content = "".join(lines[offset:end])
-            result = {
-                "path": abs_path,
-                "total_lines": total,
-                "offset": offset,
-                "limit": limit,
-                "content": content,
-            }
-
-            # L4: include_context=True 时合并返回符号上下文
-            if include_context:
-                rel_path = os.path.relpath(abs_path, ws_root).replace("\\", "/")
-                try:
-                    symbols = db.get_file_symbols(rel_path)
-                    # 精简符号列表字段（只返回 Agent 需要的关键字段）
-                    result["symbols"] = [
-                        {
-                            "name": s.get("name", ""),
-                            "qualified_name": s.get("qualified_name", ""),
-                            "kind": s.get("kind", ""),
-                            "start_line": s.get("start_line", 0),
-                            "end_line": s.get("end_line", 0),
-                        }
-                        for s in symbols
-                    ]
-
-                    # 为每个函数/方法符号附加 callers/callees 摘要（top 3）
-                    # 限制最多 20 个符号避免响应过大
-                    fn_kinds = ("fn", "function", "method", "test_fn")
-                    symbol_contexts = []
-                    for sym in symbols[:20]:
-                        if sym.get("kind") not in fn_kinds:
-                            continue
-                        sym_name = sym.get("name", "")
-                        sym_qn = sym.get("qualified_name", "") or None
-                        if not sym_name:
-                            continue
-                        ctx = {
-                            "symbol": sym_name,
-                            "qualified_name": sym.get("qualified_name", ""),
-                            "start_line": sym.get("start_line", 0),
-                            "end_line": sym.get("end_line", 0),
-                        }
-                        # 调用方 top 3
-                        try:
-                            callers = db.get_callers(sym_name, sym_qn)
-                            ctx["callers_total"] = len(callers or [])
-                            ctx["callers"] = [
-                                {
-                                    "caller": c.get("caller_name", ""),
-                                    "file": c.get("caller_file", ""),
-                                }
-                                for c in (callers or [])[:3]
-                            ]
-                        except Exception:
-                            ctx["callers"] = []
-                            ctx["callers_total"] = 0
-                        # 被调用方 top 3
-                        try:
-                            callees = db.get_callees(sym_name, sym_qn)
-                            ctx["callees_total"] = len(callees or [])
-                            ctx["callees"] = [
-                                {
-                                    "callee": c.get("callee_name", ""),
-                                    "module": c.get("callee_module", ""),
-                                }
-                                for c in (callees or [])[:3]
-                            ]
-                        except Exception:
-                            ctx["callees"] = []
-                            ctx["callees_total"] = 0
-                        symbol_contexts.append(ctx)
-                    result["symbol_contexts"] = symbol_contexts
-                except Exception as e:
-                    result["symbol_contexts_error"] = str(e)
-
-            return result
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('workspace.file.read', {"file_path": file_path, "offset": offset, "limit": limit, "include_context": include_context}, 'READ_ONLY')
 
     @mcp.tool()
     def file_grep(pattern: str, path: str = "", glob: str = "", output_mode: str = "files_with_matches", head_limit: int = 50) -> dict:
@@ -227,94 +172,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             dict: {results, count}
         """
-        import re
-
-        db = get_db()
-        ws_root = db.workspace_root
-
-        # 解析路径
-        if path and os.path.isabs(path):
-            search_root = path
-        elif path:
-            search_root = os.path.join(ws_root, path)
-        else:
-            search_root = ws_root
-
-        search_root = os.path.abspath(search_root)
-        if not search_root.startswith(os.path.abspath(ws_root)):
-            return {"error": "search path outside workspace", "results": [], "count": 0}
-
-        if not os.path.isdir(search_root):
-            return {"error": "search path not a directory", "results": [], "count": 0}
-
-        try:
-            regex = re.compile(pattern, re.MULTILINE)
-        except re.error as e:
-            return {"error": f"invalid regex: {e}", "results": [], "count": 0}
-
-        # 编译 glob
-        import fnmatch
-
-        results = []
-        count = 0
-
-        for root, dirs, files in os.walk(search_root):
-            # 跳过常见忽略目录
-            dirs[:] = [d for d in dirs if d not in (".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build")]
-
-            for fname in files:
-                fpath = os.path.join(root, fname)
-                rel_path = os.path.relpath(fpath, ws_root)
-
-                # glob 过滤
-                if glob and not fnmatch.fnmatch(rel_path, glob):
-                    # 也试试 basename 匹配
-                    if not fnmatch.fnmatch(fname, glob):
-                        continue
-
-                try:
-                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                except Exception:
-                    continue
-
-                if output_mode == "files_with_matches":
-                    if regex.search(content):
-                        count += 1
-                        if len(results) < head_limit:
-                            results.append(rel_path)
-                elif output_mode == "count":
-                    matches = regex.findall(content)
-                    if matches:
-                        c = len(matches)
-                        count += c
-                        if len(results) < head_limit:
-                            results.append({"file": rel_path, "count": c})
-                elif output_mode == "content":
-                    lines = content.split("\n")
-                    for i, line in enumerate(lines):
-                        if regex.search(line):
-                            count += 1
-                            if len(results) < head_limit:
-                                results.append({
-                                    "file": rel_path,
-                                    "line": i + 1,
-                                    "content": line.rstrip(),
-                                })
-                else:
-                    return {"error": f"invalid output_mode: {output_mode}", "results": [], "count": 0}
-
-                if count > head_limit * 10:
-                    # 够多了，停止扫描
-                    break
-            if count > head_limit * 10:
-                break
-
-        return {
-            "results": results,
-            "count": count,
-            "truncated": count > head_limit,
-        }
+        return _route('workspace.file.grep', {"pattern": pattern, "path": path, "glob": glob, "output_mode": output_mode, "head_limit": head_limit}, 'READ_ONLY')
 
     @mcp.tool()
     def file_list(path: str = "", glob: str = "") -> list:
@@ -329,47 +187,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             文件/目录列表
         """
-        import fnmatch
-
-        db = get_db()
-        ws_root = db.workspace_root
-
-        if path and os.path.isabs(path):
-            dir_path = path
-        elif path:
-            dir_path = os.path.join(ws_root, path)
-        else:
-            dir_path = ws_root
-
-        dir_path = os.path.abspath(dir_path)
-        if not dir_path.startswith(os.path.abspath(ws_root)):
-            return []
-
-        if not os.path.isdir(dir_path):
-            return []
-
-        try:
-            entries = []
-            for name in sorted(os.listdir(dir_path)):
-                if name.startswith("."):
-                    continue
-                full = os.path.join(dir_path, name)
-                is_dir = os.path.isdir(full)
-                entry_type = "dir" if is_dir else "file"
-                rel = os.path.relpath(full, ws_root)
-
-                if glob and not is_dir:
-                    if not fnmatch.fnmatch(name, glob):
-                        continue
-
-                entries.append({
-                    "name": name,
-                    "path": rel,
-                    "type": entry_type,
-                })
-            return entries
-        except Exception:
-            return []
+        return _route('workspace.file.list', {"path": path, "glob": glob}, 'READ_ONLY')
 
     @mcp.tool()
     def file_symbol_content(file_path: str, symbol_name: str) -> Optional[dict]:
@@ -385,71 +203,17 @@ def register(mcp: FastMCP) -> None:
         Returns:
             dict: {symbol_name, file, start_line, end_line, content}
         """
-        db = get_db()
-        ws_root = db.workspace_root
-
-        # 先从数据库找符号
-        sym = db.get_symbol_by_name_and_file(symbol_name, file_path)
-        if not sym:
-            return None
-
-        # 读取文件内容
-        abs_path = os.path.join(ws_root, sym.get("file", "")) if not os.path.isabs(sym.get("file", "")) else sym.get("file")
-        if not os.path.isfile(abs_path):
-            return None
-
-        try:
-            with open(abs_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
-            start = sym.get("start_line", 1) - 1
-            end = sym.get("end_line", len(lines))
-            start = max(0, start)
-            end = min(len(lines), end)
-            content = "".join(lines[start:end])
-
-            # 注入 applicable_rules（fail-soft：无 AgentRulesMixin 或异常时降级为空列表）
-            # 上下文：file_path / qualified_name / kind / 推断 language / action=read
-            applicable_rules: list = []
-            try:
-                if hasattr(db, "get_applicable_rules_for_symbol"):
-                    # 先尝试 action=read 维度匹配；如果没匹配到，再退化为符号维度匹配
-                    # 这里直接构造带 action 的上下文，让 scope 含 actions 的规则也能命中
-                    ctx = db.build_rule_context_for_symbol(
-                        qualified_name=sym.get("qualified_name", ""),
-                        file_path=sym.get("file", ""),
-                        kind=sym.get("symbol_type", "") or sym.get("kind", ""),
-                    )
-                    ctx["action"] = "read"
-                    rules_raw = db.get_applicable_rules(ctx, limit=5)
-                    applicable_rules = [
-                        {
-                            "id": r.get("id", ""),
-                            "title": r.get("title", ""),
-                            "rule_text": r.get("rule_text", ""),
-                            "severity": r.get("severity", "info"),
-                            "matched_scope": r.get("matched_scope", []),
-                        }
-                        for r in rules_raw
-                    ]
-            except Exception:
-                applicable_rules = []
-
-            return {
-                "symbol_name": symbol_name,
-                "symbol_type": sym.get("symbol_type", ""),
-                "qualified_name": sym.get("qualified_name", ""),
-                "file": sym.get("file", ""),
-                "start_line": sym.get("start_line", 0),
-                "end_line": sym.get("end_line", 0),
-                "content": content,
-                "applicable_rules": applicable_rules,
-            }
-        except Exception as e:
-            return {"error": str(e)}
+        return _route('workspace.file.symbol_content', {"file_path": file_path, "symbol_name": symbol_name}, 'READ_ONLY')
 
     @mcp.tool()
     def import_git_history(max_commits: int = 100) -> dict:
         """导入 Git 历史记录到数据库
+
+        W4-4（T-1786886251769-22b94ee8-sub-4）：写面通道决策——本工具是
+        governance_write（INSERT OR IGNORE git_commits）+ 依赖 git 子进程
+        （workspace_root 下 .git + `git log`），不适合 rust_native 迁移；
+        HTTP 模式 fail-closed（明确写面不支持声明，见 ledger §9.25），
+        local/legacy 模式保持本地 SQL 语义（代码见下）。
 
         Args:
             max_commits: 最大导入 commit 数量（默认 100）
@@ -457,12 +221,17 @@ def register(mcp: FastMCP) -> None:
         Returns:
             导入结果，包含成功状态和导入数量
         """
-        db = get_db()
-        return db.import_git_history(max_commits=max_commits)
+        _res = _route('task.job_submit', {**{"max_commits": max_commits}, "job_type": "git_history", "sync": True}, 'PROTECTED_MUTATION')
+        return _res.get("result") if isinstance(_res, dict) and "result" in _res else _res
 
     @mcp.tool()
     def get_git_commits(limit: int = 20, offset: int = 0) -> list:
         """获取 Git commit 列表
+
+        W4-1（T-1786886251769-22b94ee8-sub-1）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native query.git_commits，经
+        snapshot query_db_path 访问主库 git_commits，注入权威
+        workspace_instance_id）；local/legacy 模式保留本地 SQL 语义。
 
         Args:
             limit: 返回数量限制（默认 20）
@@ -471,12 +240,16 @@ def register(mcp: FastMCP) -> None:
         Returns:
             commit 列表，按时间倒序排列
         """
-        db = get_db()
-        return db.get_git_commits(limit=limit, offset=offset)
+        return _route('query.git_commits', {"limit": limit, "offset": offset}, 'READ_ONLY')
 
     @mcp.tool()
     def get_commit_changes(commit_hash: str) -> dict:
         """获取指定 commit 的变更详情
+
+        W4-1（T-1786886251769-22b94ee8-sub-1）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native query.git_commit_changes，
+        经 snapshot query_db_path 访问主库 git_commits + git_file_changes，
+        注入权威 workspace_instance_id）；local/legacy 模式保留本地 SQL 语义。
 
         Args:
             commit_hash: commit 哈希值
@@ -484,18 +257,21 @@ def register(mcp: FastMCP) -> None:
         Returns:
             commit 详情和变更文件列表
         """
-        db = get_db()
-        return db.get_commit_changes(commit_hash)
+        return _route('query.git_commit_changes', {"commit_hash": commit_hash}, 'READ_ONLY')
 
     @mcp.tool()
     def get_git_stats() -> dict:
         """获取 Git 集成统计信息
 
+        W4-1（T-1786886251769-22b94ee8-sub-1）：HTTP 模式（默认）直连
+        HttpDaemonRpcClient 便捷方法（Rust native query.git_stats，经
+        snapshot query_db_path 访问主库 git_commits + git_file_changes，
+        注入权威 workspace_instance_id）；local/legacy 模式保留本地 SQL 语义。
+
         Returns:
             Git 相关统计数据（commit 数、文件变更数、变更类型分布）
         """
-        db = get_db()
-        return db.get_git_stats()
+        return _route('query.git_stats', {}, 'READ_ONLY')
 
     @mcp.tool()
     def get_status() -> dict:
@@ -507,8 +283,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             完整的状态概览字典
         """
-        db = get_db()
-        return db.get_status()
+        return _route('query.status', {}, 'READ_ONLY')
 
     @mcp.tool()
     def remove_file(file_path: str) -> bool:
@@ -520,8 +295,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             是否成功移除
         """
-        db = get_db()
-        return db.remove_file(file_path)
+        return _route('workspace.file.remove', {"file_path": file_path}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def build_directory(dir_path: str) -> dict:
@@ -533,8 +307,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             构建结果统计
         """
-        db = get_db()
-        return db.build_directory(dir_path)
+        return _route('workspace.build_directory', {"dir_path": dir_path}, 'PROTECTED_MUTATION')
 
     @mcp.tool()
     def get_symbol_content_by_hash(content_hash: str) -> Optional[dict]:
@@ -546,8 +319,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             符号内容详情，包含完整代码
         """
-        db = get_db()
-        return db.get_symbol_content_by_hash(content_hash)
+        return _route('query.symbol_content_by_hash', {"content_hash": content_hash}, 'READ_ONLY')
 
     @mcp.tool()
     def get_code_metrics_summary() -> dict:
@@ -559,8 +331,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             全局度量统计字典
         """
-        db = get_db()
-        return db.get_code_metrics_summary()
+        return _route('query.metrics_summary', {}, 'READ_ONLY')
 
     @mcp.tool()
     def get_complexity_hotspots(limit: int = 20, module_filter: str = "") -> list:
@@ -575,8 +346,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             按圈复杂度降序排列的函数列表
         """
-        db = get_db()
-        return db.get_complexity_hotspots(limit=limit, module_filter=module_filter)
+        return _route('query.complexity_hotspots', {"limit": limit, "module_filter": module_filter}, 'READ_ONLY')
 
     @mcp.tool()
     def get_coupling_analysis(limit: int = 30) -> list:
@@ -590,8 +360,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             按总耦合度降序排列的模块列表
         """
-        db = get_db()
-        return db.get_coupling_analysis(limit=limit)
+        return _route('query.coupling_analysis', {"limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_function_metrics(qualified_name: str) -> Optional[dict]:
@@ -603,8 +372,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             度量字典，包含圈复杂度、行数、扇入扇出、深度等
         """
-        db = get_db()
-        return db.get_function_metrics(qualified_name)
+        return _route('query.function_metrics', {"qualified_name": qualified_name}, 'READ_ONLY')
 
     @mcp.tool()
     def get_largest_functions(limit: int = 20, module_filter: str = "") -> list:
@@ -617,8 +385,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             按行数降序排列的函数列表
         """
-        db = get_db()
-        return db.get_largest_functions(limit=limit, module_filter=module_filter)
+        return _route('query.largest_functions', {"limit": limit, "module_filter": module_filter}, 'READ_ONLY')
 
     @mcp.tool()
     def get_most_coupled_functions(limit: int = 20) -> list:
@@ -630,8 +397,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             按总耦合度降序排列的函数列表
         """
-        db = get_db()
-        return db.get_most_coupled_functions(limit=limit)
+        return _route('query.most_coupled_functions', {"limit": limit}, 'READ_ONLY')
 
     @mcp.tool()
     def get_code_health_check(severity: str = "all") -> dict:
@@ -656,8 +422,7 @@ def register(mcp: FastMCP) -> None:
         Returns:
             健康检查报告，包含评分、问题分类列表和 Agent 指导
         """
-        db = get_db()
-        return db.get_code_health_check(severity=severity)
+        return _route('query.code_health', {"severity": severity}, 'READ_ONLY')
 
     @mcp.tool()
     def check_file_health(file_path: str) -> Optional[dict]:
@@ -679,5 +444,4 @@ def register(mcp: FastMCP) -> None:
         Returns:
             文件健康报告，包含大小、复杂度、是否建议先拆分等
         """
-        db = get_db()
-        return db.check_file_health(file_path)
+        return _route('workspace.file.health', {"file_path": file_path}, 'READ_ONLY')

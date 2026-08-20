@@ -46,6 +46,7 @@ import shutil
 import hashlib
 import secrets
 import sqlite3
+from pathlib import PureWindowsPath
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -136,6 +137,31 @@ def _decode_rust_json(value: str) -> Dict[str, Any]:
     return decoded
 
 
+def _validate_backup_id(backup_id: str) -> str:
+    r"""校验备份 ID（C8/P1：对齐 Rust `validate_backup_id`）。
+
+    Rust 规则（rust_ext/src/backup_restore.rs `validate_backup_id`）：
+    `Path::new(backup_id).components()` 必须恰好一个 `Normal` 组件。
+    等价拒绝条件（Python 侧显式实现）：
+    - 空值、`.`、`..`
+    - 含分隔符（`/` 或 `\`）→ 多级路径或 CurDir/ParentDir 特殊组件
+    - 盘符前缀（`C:`、`C:foo`）或根路径（`/`、`C:\`）→ 绝对路径
+
+    校验通过返回原 ID；否则抛 ValueError。Python fallback 在拼接
+    `os.path.join(self._backup_root, backup_id)` 前必须调用，防止路径穿越。
+    """
+    if not isinstance(backup_id, str) or not backup_id:
+        raise ValueError("backup_id 不能为空")
+    if backup_id in (".", ".."):
+        raise ValueError(f"非法 backup_id: {backup_id}")
+    if "/" in backup_id or "\\" in backup_id:
+        raise ValueError(f"非法 backup_id: {backup_id}")
+    p = PureWindowsPath(backup_id)
+    if p.drive or p.root:
+        raise ValueError(f"非法 backup_id: {backup_id}")
+    return backup_id
+
+
 # ============================================================
 # BackupManager
 # ============================================================
@@ -188,60 +214,75 @@ class BackupManager:
                     self._config.data_root,
                 )
             )
-        backup_dir = os.path.join(self._backup_root, backup_id)
-        os.makedirs(backup_dir, exist_ok=True)
+        final_dir, temp_dir = self._prepare_backup_dir_atomic(backup_id)
 
         files_info: List[Dict[str, Any]] = []
+        try:
+            # 备份 registry DB
+            registry_info = self._backup_file(
+                self._config.registry_db_path, temp_dir, "registry.db"
+            )
+            if registry_info:
+                files_info.append(registry_info)
 
-        # 备份 registry DB
-        registry_info = self._backup_file(
-            self._config.registry_db_path, backup_dir, "registry.db"
-        )
-        if registry_info:
-            files_info.append(registry_info)
+            # 备份 CAS DB
+            cas_info = self._backup_file(
+                self._config.cas_db_path, temp_dir, "cas.db"
+            )
+            if cas_info:
+                files_info.append(cas_info)
 
-        # 备份 CAS DB
-        cas_info = self._backup_file(
-            self._config.cas_db_path, backup_dir, "cas.db"
-        )
-        if cas_info:
-            files_info.append(cas_info)
+            # 备份 audit log DB
+            audit_info = self._backup_file(
+                self._config.audit_log_path, temp_dir, "audit.db"
+            )
+            if audit_info:
+                files_info.append(audit_info)
 
-        # 备份 audit log DB
-        audit_info = self._backup_file(
-            self._config.audit_log_path, backup_dir, "audit.db"
-        )
-        if audit_info:
-            files_info.append(audit_info)
+            # C8/B3：补齐 daemon 配置文件（回退布局与 Rust 默认布局一致）
+            daemon_info = self._backup_file(
+                os.path.join(self._config.data_root, "daemon.json"),
+                temp_dir,
+                "daemon.json",
+            )
+            if daemon_info:
+                files_info.append(daemon_info)
 
-        # 备份 snapshots 目录
-        snapshot_dir = os.path.join(self._config.data_root, "snapshots")
-        if os.path.isdir(snapshot_dir):
-            dest_snapshot_dir = os.path.join(backup_dir, "snapshots")
-            shutil.copytree(snapshot_dir, dest_snapshot_dir)
-            files_info.append({
-                "name": "snapshots/",
-                "type": "directory",
-                "file_count": sum(len(files) for _, _, files in os.walk(dest_snapshot_dir)),
-            })
+            # 备份 snapshots 目录
+            snapshot_dir = os.path.join(self._config.data_root, "snapshots")
+            if os.path.isdir(snapshot_dir):
+                dest_snapshot_dir = os.path.join(temp_dir, "snapshots")
+                shutil.copytree(snapshot_dir, dest_snapshot_dir)
+                files_info.append({
+                    "name": "snapshots/",
+                    "type": "directory",
+                    "file_count": sum(len(files) for _, _, files in os.walk(dest_snapshot_dir)),
+                })
 
-        # 生成元数据
-        meta = {
-            "backup_id": backup_id,
-            "timestamp": time.time(),
-            "backup_type": "full",
-            "daemon_version": "1.0.0",
-            "files": files_info,
-            "total_size": sum(f.get("size", 0) for f in files_info if "size" in f),
-        }
+            # 生成元数据
+            meta = {
+                "backup_id": backup_id,
+                "timestamp": time.time(),
+                "backup_type": "full",
+                "daemon_version": "1.0.0",
+                "files": files_info,
+                "total_size": sum(f.get("size", 0) for f in files_info if "size" in f),
+            }
 
-        # 计算整体校验和
-        meta["checksum"] = self._compute_meta_checksum(meta)
+            # 计算整体校验和
+            meta["checksum"] = self._compute_meta_checksum(meta)
 
-        # 写入元数据文件
-        meta_path = os.path.join(backup_dir, "backup_meta.json")
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2, ensure_ascii=False)
+            # 写入元数据文件（临时目录内）
+            meta_path = os.path.join(temp_dir, "backup_meta.json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+
+            # C8/B4：原子发布——rename 临时目录到最终目录
+            os.rename(temp_dir, final_dir)
+        except Exception:
+            # 对齐 Rust create_backup：失败时清理临时目录
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
 
         return meta
 
@@ -266,33 +307,39 @@ class BackupManager:
                     self._config.data_root,
                 )
             )
-        backup_dir = os.path.join(self._backup_root, backup_id)
-        os.makedirs(backup_dir, exist_ok=True)
+        final_dir, temp_dir = self._prepare_backup_dir_atomic(backup_id)
 
         files_info: List[Dict[str, Any]] = []
+        try:
+            for src_path, dest_name in [
+                (self._config.registry_db_path, "registry.db"),
+                (self._config.cas_db_path, "cas.db"),
+                (self._config.audit_log_path, "audit.db"),
+            ]:
+                info = self._backup_file(src_path, temp_dir, dest_name)
+                if info:
+                    files_info.append(info)
 
-        for src_path, dest_name in [
-            (self._config.registry_db_path, "registry.db"),
-            (self._config.cas_db_path, "cas.db"),
-            (self._config.audit_log_path, "audit.db"),
-        ]:
-            info = self._backup_file(src_path, backup_dir, dest_name)
-            if info:
-                files_info.append(info)
+            meta = {
+                "backup_id": backup_id,
+                "timestamp": time.time(),
+                "backup_type": "db_only",
+                "daemon_version": "1.0.0",
+                "files": files_info,
+                "total_size": sum(f.get("size", 0) for f in files_info if "size" in f),
+            }
+            meta["checksum"] = self._compute_meta_checksum(meta)
 
-        meta = {
-            "backup_id": backup_id,
-            "timestamp": time.time(),
-            "backup_type": "db_only",
-            "daemon_version": "1.0.0",
-            "files": files_info,
-            "total_size": sum(f.get("size", 0) for f in files_info if "size" in f),
-        }
-        meta["checksum"] = self._compute_meta_checksum(meta)
+            meta_path = os.path.join(temp_dir, "backup_meta.json")
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
 
-        meta_path = os.path.join(backup_dir, "backup_meta.json")
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(meta, f, indent=2, ensure_ascii=False)
+            # C8/B4：原子发布——rename 临时目录到最终目录
+            os.rename(temp_dir, final_dir)
+        except Exception:
+            # 对齐 Rust create_backup：失败时清理临时目录
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
 
         return meta
 
@@ -322,7 +369,20 @@ class BackupManager:
         return backups
 
     def get_backup_info(self, backup_id: str) -> Optional[Dict[str, Any]]:
-        """获取单个备份的元数据。"""
+        """获取单个备份的元数据。
+
+        C8/B1：Rust 可用时经 Rust `list_backups` 过滤实现（明确等价）——
+        Rust list_backups 与 Python 直读读的是同一 `backup_meta.json`，
+        无效 meta 在两侧均视为不存在（返回 None）；且 Rust 侧只扫描真实
+        备份目录，天然规避 backup_id 路径穿越。Rust 不可用时降级直读。
+        """
+        if _rust_backup_manager_available():
+            for meta in self.list_backups():
+                if meta.get("backup_id") == backup_id:
+                    return meta
+            return None
+        # C8/P1：fallback 直读前校验 backup_id，防止路径穿越
+        _validate_backup_id(backup_id)
         meta_path = os.path.join(self._backup_root, backup_id, "backup_meta.json")
         if not os.path.isfile(meta_path):
             return None
@@ -343,6 +403,8 @@ class BackupManager:
         """
         if _rust_backup_manager_available():
             return bool(_callwarden_core.delete_backup(self._backup_root, backup_id))
+        # C8/P1：fallback 删除前校验 backup_id，防止路径穿越
+        _validate_backup_id(backup_id)
         backup_dir = os.path.join(self._backup_root, backup_id)
         if not os.path.isdir(backup_dir):
             return False
@@ -374,11 +436,35 @@ class BackupManager:
 
     # ----- 内部方法 -----
 
+    def _prepare_backup_dir_atomic(self, backup_id: str) -> Tuple[str, str]:
+        """原子发布准备（C8/B4，对齐 Rust `create_backup`）。
+
+        返回 (final_dir, temp_dir)。最终目录已存在（重复 ID）或临时目录
+        已存在（上次失败残留）时抛 FileExistsError（fail-closed），
+        与 Rust 的「备份已存在 / 备份临时目录已存在」拒绝语义一致。
+        """
+        # C8/P1：fallback 路径先校验 backup_id，防止路径穿越逃出 backup_root
+        _validate_backup_id(backup_id)
+        final_dir = os.path.join(self._backup_root, backup_id)
+        if os.path.exists(final_dir):
+            raise FileExistsError(f"备份已存在: {final_dir}")
+        os.makedirs(self._backup_root, exist_ok=True)
+        temp_dir = os.path.join(self._backup_root, f".{backup_id}.partial")
+        if os.path.exists(temp_dir):
+            raise FileExistsError(f"备份临时目录已存在: {temp_dir}")
+        os.makedirs(temp_dir)
+        return final_dir, temp_dir
+
     def _backup_file(self, src_path: str, dest_dir: str, dest_name: str) -> Optional[Dict[str, Any]]:
         """备份单个文件。
 
-        对于 SQLite DB 文件，使用 VACUUM INTO 创建一致性备份，
-        而不是直接复制文件（避免复制到 WAL 中间状态）。
+        对于 SQLite DB 文件，使用 `sqlite3.Connection.backup` API 创建一致性
+        备份（在线备份，自动覆盖 WAL 内容），失败时降级为文件复制。
+
+        C8/B5：Python 回退路径的备份机制与 Rust 默认路径（VACUUM INTO，
+        先 passive checkpoint）是有意保留的差异——sqlite3 backup API 对
+        在线 DB 更稳健（无需写源库、自动处理 WAL），且回退路径仅在 Rust
+        不可用时触发，语义均为「一致性快照」，详见契约 §2.3 B5 记录。
 
         Args:
             src_path: 源文件路径
@@ -512,6 +598,8 @@ class RestoreManager:
                     self._config.data_root,
                 )
             )
+        # C8/P1：fallback 恢复前校验 backup_id，防止路径穿越
+        _validate_backup_id(backup_id)
         backup_dir = os.path.join(self._backup_root, backup_id)
         if not os.path.isdir(backup_dir):
             return {
@@ -634,6 +722,8 @@ class RestoreManager:
             return _decode_rust_json(
                 _callwarden_core.verify_backup(self._backup_root, backup_id)
             )
+        # C8/P1：fallback 校验前先校验 backup_id，防止路径穿越
+        _validate_backup_id(backup_id)
         backup_dir = os.path.join(self._backup_root, backup_id)
         if not os.path.isdir(backup_dir):
             return {
@@ -733,7 +823,18 @@ class RestoreManager:
         return None
 
     def _compute_file_sha256(self, file_path: str) -> str:
-        """计算文件的 SHA-256。"""
+        """计算文件的 SHA-256。
+
+        C8/B2：与 BackupManager 覆盖对齐——默认走 Rust
+        `callwarden_core.backup_compute_file_sha256`，rollback_config 中
+        feature=rust_daemon_backup_compute 置为 1 时回退 Python；
+        Rust 失败时 fail-soft 降级到 Python 纯计算路径。
+        """
+        if _rust_backup_available():
+            try:
+                return _callwarden_core.backup_compute_file_sha256(file_path)
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
         h = hashlib.sha256()
         with open(file_path, "rb") as f:
             while True:
@@ -744,7 +845,18 @@ class RestoreManager:
         return h.hexdigest()
 
     def _compute_meta_checksum(self, meta: Dict[str, Any]) -> str:
-        """计算元数据的校验和。"""
+        """计算元数据的校验和。
+
+        C8/B2：与 BackupManager 覆盖对齐——默认走 Rust
+        `callwarden_core.backup_compute_meta_checksum`（Rust 端负责排除
+        checksum 字段并重新稳定序列化），Rust 失败时 fail-soft 降级。
+        """
+        if _rust_backup_available():
+            try:
+                meta_json = json.dumps(meta, ensure_ascii=False)
+                return _callwarden_core.backup_compute_meta_checksum(meta_json)
+            except Exception:
+                pass  # fail-soft → 降级 Python 路径
         meta_copy = {k: v for k, v in meta.items() if k != "checksum"}
         content = json.dumps(meta_copy, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(content.encode("utf-8")).hexdigest()

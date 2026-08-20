@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+import re
 import secrets
+import sqlite3
 import time
 from typing import Any, Dict, List, Optional
 
@@ -52,6 +55,92 @@ def _gen_id(prefix: str) -> str:
     ts_ms = int(time.time() * 1000)
     rand8 = secrets.token_hex(4)  # 4 字节 = 8 个十六进制字符
     return f"{prefix}-{ts_ms}-{rand8}"
+
+
+STRUCTURED_HANDOFF_ROUTES = {
+    "executor_ready_for_review": ("executor", "reviewer", "required"),
+    "executor_blocked_to_user": ("executor", "user", "not_applicable"),
+    "reviewer_pass": ("reviewer", "adjudicator", "required"),
+    "reviewer_blocked": ("reviewer", "executor", "not_required"),
+    "adjudicator_accepted": ("adjudicator", "complete", "not_applicable"),
+    "adjudicator_returned": ("adjudicator", "executor", "not_required"),
+}
+
+# Self-bootstrap runtime policy.  These paths affect the live daemon/authority
+# and therefore require a fresh runtime deployment evidence event before review.
+RUNTIME_POLICY_STANDARD = "standard"
+RUNTIME_POLICY_SELF_BOOTSTRAP = "self_bootstrap"
+RUNTIME_DEPLOYMENT_ACTION = "runtime_deployment"
+RUNTIME_EVIDENCE_TYPE = "runtime_deployment"
+RUNTIME_AFFECTING_PATH_PREFIXES = (
+    "rust_ext/src/daemon/",
+    "rust_ext/src/bin/cw_daemon.rs",
+    "rust_ext/src/lib.rs",
+    "server/daemon_",
+    "server/daemon_client.py",
+    "config.py",
+)
+_RUNTIME_HASH_FIELDS = ("build_hash", "runtime_hash", "pid_hash")
+_RUNTIME_CHECK_FIELDS = ("daemon_ping", "rpc_round_trip")
+
+
+def _normalized_rel_path(path: str) -> str:
+    return str(path or "").replace("\\", "/").lstrip("./").lower()
+
+
+def _is_runtime_affecting_path(path: str) -> bool:
+    normalized = _normalized_rel_path(path)
+    return any(
+        normalized == prefix or normalized.startswith(prefix)
+        for prefix in RUNTIME_AFFECTING_PATH_PREFIXES
+    )
+
+
+def normalize_structured_handoff(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """校验并规范化 task.handoff 信封；不执行任何本地写入。
+
+    结构化 handoff 的唯一写入口是 daemon ``task.handoff``。此纯函数供
+    CLI/测试在发送前做同一套字段与路由校验；权威身份、lease、fencing
+    和 append-only 事件仍由 daemon 在同一事务中重新校验。
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("E_HANDOFF_STRUCTURED_REQUIRED: payload must be object")
+    required = (
+        "task_id", "from_role", "outcome", "next_role", "next_action", "reason",
+        "independence_requirement", "request_id", "step_id", "report_request_id",
+        "evidence_path", "evidence_hash",
+    )
+    missing = [name for name in required if not str(payload.get(name, "")).strip()]
+    if missing:
+        raise ValueError("E_HANDOFF_STRUCTURED_REQUIRED: missing " + ",".join(missing))
+    outcome = str(payload["outcome"]).strip()
+    expected = STRUCTURED_HANDOFF_ROUTES.get(outcome)
+    if expected is None:
+        raise ValueError("E_HANDOFF_OUTCOME_INVALID: " + outcome)
+    actual = (
+        str(payload["from_role"]).strip(),
+        str(payload["next_role"]).strip(),
+        str(payload["independence_requirement"]).strip(),
+    )
+    if actual != expected:
+        raise ValueError(
+            "E_HANDOFF_ROUTE_INVALID: expected " + repr(expected) + ", got " + repr(actual)
+        )
+    identity = payload.get("identity")
+    if not isinstance(identity, dict) or not all(
+        str(identity.get(name, "")).strip()
+        for name in ("agent_id", "session_id", "model_id", "role")
+    ):
+        raise ValueError("E_IDENTITY_REQUIRED: structured handoff identity incomplete")
+    runtime_role = {
+        "planner": "executor", "implementer": "executor", "tester": "executor",
+        "evidence": "executor", "executor": "executor",
+        "reviewer": "reviewer", "independent_reviewer": "reviewer",
+        "adjudicator": "adjudicator",
+    }.get(str(identity["role"]).strip(), "")
+    if runtime_role != actual[0]:
+        raise ValueError("E_HANDOFF_ROLE_IDENTITY_MISMATCH")
+    return dict(payload)
 
 
 def _gen_task_id() -> str:
@@ -501,6 +590,267 @@ class TaskMixin:
         )
         print(warning, file=sys.stderr)
 
+    def _runtime_policy_for_task(self, task_id: str) -> str:
+        """读取 task 所属 workspace 的不可变 runtime policy。
+
+        任务表历史上没有 workspace_id，因此优先使用 active_task_id 绑定，
+        再回退到当前 active workspace。旧 schema 无该列时按 standard 处理，
+        绝不把普通项目误判为 self-bootstrap。
+        """
+        try:
+            row = self.conn.execute(
+                "SELECT runtime_policy FROM workspaces "
+                "WHERE active_task_id = ? ORDER BY is_active DESC, id LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if not row:
+                row = self.conn.execute(
+                    "SELECT runtime_policy FROM workspaces "
+                    "WHERE is_active = 1 ORDER BY id LIMIT 1"
+                ).fetchone()
+            policy = str(row["runtime_policy"] if row else "").strip()
+            return policy if policy in (
+                RUNTIME_POLICY_STANDARD,
+                RUNTIME_POLICY_SELF_BOOTSTRAP,
+            ) else RUNTIME_POLICY_STANDARD
+        except (sqlite3.OperationalError, TypeError, KeyError):
+            # v50 及更旧数据库没有 runtime_policy，保持普通项目兼容语义。
+            return RUNTIME_POLICY_STANDARD
+
+    def _task_explicitly_requires_runtime(self, task_id: str) -> bool:
+        """普通项目仅在任务合同明确要求时才启用部署 gate。"""
+        try:
+            row = self.conn.execute(
+                "SELECT description FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        text = str(row["description"] if row else "").lower()
+        return any(marker in text for marker in (
+            "runtime_deployment_required",
+            "deployment:required",
+            "deploy_runtime=true",
+        ))
+
+    def _has_valid_runtime_evidence(self, task_id: str) -> bool:
+        """验证 runtime evidence 属于最近一次变更且内容可复核。
+
+        Evidence 表本身只保存 ``payload_hash``，不会把任意 JSON 当作已经
+        验证过的运行时证明。因此 runtime evidence 采用一个明确的、可重算
+        的 provenance envelope：``producer_identity`` 或 ``file_hashes`` 中
+        必须包含 ``runtime_provenance`` 对象，里面有 build/runtime/PID 三个
+        相同的 SHA-256，以及成功的 ping 和 RPC round-trip。payload_hash
+        必须等于该对象 canonical JSON 的 SHA-256。缺字段、格式不对、哈希
+        不一致或 JSON 不可解析时全部 fail-closed。
+        """
+
+        def _sha256_value(value: Any) -> Optional[str]:
+            text = str(value or "").strip().lower()
+            if text.startswith("sha256:"):
+                text = text[7:]
+            if not re.fullmatch(r"[0-9a-f]{64}", text):
+                return None
+            return text
+
+        def _json_object(value: Any) -> Optional[Dict[str, Any]]:
+            if isinstance(value, dict):
+                return value
+            if not isinstance(value, str) or not value.strip():
+                return None
+            try:
+                decoded = json.loads(value)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return None
+            return decoded if isinstance(decoded, dict) else None
+
+        def _runtime_provenance_is_valid(row: Any) -> bool:
+            provenance = None
+            for column in ("producer_identity", "file_hashes"):
+                decoded = _json_object(row[column])
+                if isinstance(decoded, dict):
+                    # The outer evidence object is deliberately not itself a
+                    # provenance envelope.  Requiring the named wrapper keeps
+                    # legacy/direct hash blobs from being treated as an
+                    # authoritative deployment proof.
+                    candidate = decoded.get("runtime_provenance")
+                    if isinstance(candidate, dict):
+                        provenance = candidate
+                        break
+            if not isinstance(provenance, dict):
+                return False
+
+            hashes = [_sha256_value(provenance.get(name)) for name in _RUNTIME_HASH_FIELDS]
+            if any(value is None for value in hashes) or len(set(hashes)) != 1:
+                return False
+            if any(provenance.get(name) is not True for name in _RUNTIME_CHECK_FIELDS):
+                return False
+
+            canonical = json.dumps(
+                provenance, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+            expected_payload_hash = hashlib.sha256(canonical).hexdigest()
+            actual_payload_hash = _sha256_value(row["payload_hash"])
+            return actual_payload_hash == expected_payload_hash
+
+        try:
+            change_rows = self.conn.execute(
+                "SELECT file_path, timestamp FROM change_audit WHERE task_id = ?",
+                (task_id,),
+            ).fetchall()
+            latest_runtime_change = max(
+                (
+                    float(row["timestamp"] or 0.0)
+                    for row in change_rows
+                    if _is_runtime_affecting_path(row["file_path"])
+                ),
+                default=0.0,
+            )
+            row = self.conn.execute(
+                """
+                SELECT e.*
+                FROM task_evidence_events e
+                WHERE e.task_id = ?
+                  AND e.evidence_type = ?
+                  AND e.event_type = 'evidence_appended'
+                  AND e.payload_hash != ''
+                  AND e.workspace_snapshot_id != ''
+                  AND e.produced_at >= ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM task_evidence_events i
+                      WHERE i.event_type = 'evidence_invalidated'
+                        AND i.original_evidence_ref = e.evidence_id
+                  )
+                ORDER BY e.id DESC LIMIT 1
+                """,
+                (task_id, RUNTIME_EVIDENCE_TYPE, latest_runtime_change),
+            ).fetchone()
+            return bool(row and _runtime_provenance_is_valid(row))
+        except sqlite3.OperationalError:
+            return False
+
+    def _runtime_gate_changed_files(
+        self,
+        task_id: str,
+        step_id: str,
+        action: str,
+        target_file: str,
+        reported_changes: Optional[List[Dict[str, Any]]],
+    ) -> List[str]:
+        """从报告、change_audit 和步骤目标合并 runtime gate 输入。
+
+        ``changes`` 是可选的展示字段，不能成为绕过 runtime gate 的开关。
+        已记录的审计路径和当前步骤 target_file 都参与判定；任一来源命中
+        runtime-affecting path 即按 self-bootstrap 规则拦截。
+        """
+        paths = {
+            str(change.get("file_path", ""))
+            for change in (reported_changes or [])
+            if change.get("file_path")
+        }
+        if target_file:
+            paths.update(
+                part.strip()
+                for part in str(target_file).split("+")
+                if part.strip()
+            )
+        try:
+            rows = self.conn.execute(
+                "SELECT file_path FROM change_audit WHERE task_id = ?",
+                (task_id,),
+            ).fetchall()
+            paths.update(str(row["file_path"] or "") for row in rows if row["file_path"])
+        except sqlite3.OperationalError:
+            # Missing audit table is not evidence that no runtime path changed.
+            if target_file:
+                return list(paths)
+        return list(paths)
+
+    def _runtime_deployment_gate(
+        self,
+        task_id: str,
+        changed_files: List[str],
+        action: str,
+    ) -> Dict[str, Any]:
+        """决定本次 report 是否必须先完成 runtime deployment。"""
+        required = (
+            self._runtime_policy_for_task(task_id) == RUNTIME_POLICY_SELF_BOOTSTRAP
+            or self._task_explicitly_requires_runtime(task_id)
+        )
+        # A missing path is not proof that the change was ordinary.  In the
+        # self-bootstrap/explicit-deployment modes, an empty provenance set
+        # must fail closed; otherwise a caller could omit ``changes`` and a
+        # missing target_file to bypass the deployment gate.  A non-empty set
+        # containing only ordinary paths is different: it proves that no
+        # runtime-affecting path was reported and therefore keeps the normal
+        # project behavior.
+        has_path_provenance = any(_normalized_rel_path(path) for path in changed_files)
+        affected = any(_is_runtime_affecting_path(path) for path in changed_files)
+        if not required:
+            return {"required": False, "passed": True, "code": ""}
+        if action != RUNTIME_DEPLOYMENT_ACTION and not has_path_provenance:
+            return {
+                "required": True,
+                "passed": False,
+                "code": "E_RUNTIME_DEPLOYMENT_REQUIRED",
+            }
+        if action != RUNTIME_DEPLOYMENT_ACTION and not affected:
+            return {"required": False, "passed": True, "code": ""}
+        if action == RUNTIME_DEPLOYMENT_ACTION:
+            passed = self._has_valid_runtime_evidence(task_id)
+            return {
+                "required": True,
+                "passed": passed,
+                "code": "" if passed else "E_RUNTIME_EVIDENCE_REQUIRED",
+            }
+        passed = self._has_valid_runtime_evidence(task_id)
+        return {
+            "required": True,
+            "passed": passed,
+            "code": "" if passed else "E_RUNTIME_DEPLOYMENT_REQUIRED",
+        }
+
+    def _ensure_runtime_step(self, task_id: str, now: float) -> str:
+        """为 self-bootstrap 任务追加唯一 runtime deployment 步骤。"""
+        row = self.conn.execute(
+            "SELECT id FROM task_steps WHERE task_id = ? AND action = ? "
+            "AND status IN (?, ?) ORDER BY created_at LIMIT 1",
+            (task_id, RUNTIME_DEPLOYMENT_ACTION,
+             STEP_STATUS_PENDING, STEP_STATUS_IN_PROGRESS),
+        ).fetchone()
+        if row:
+            return row["id"]
+        max_row = self.conn.execute(
+            "SELECT MAX(step_index) AS max_idx FROM task_steps WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        step_id = _gen_step_id()
+        self.conn.execute(
+            """
+            INSERT INTO task_steps
+                (id, task_id, step_index, action, target_file, target_symbol,
+                 check_items, status, result, created_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, '', ?, ?, '', ?, NULL)
+            """,
+            (
+                step_id, task_id,
+                (max_row["max_idx"] if max_row and max_row["max_idx"] is not None else -1) + 1,
+                RUNTIME_DEPLOYMENT_ACTION,
+                "scripts/refresh_shared_runtime.ps1",
+                _serialize_check_items({
+                    "required_evidence_type": RUNTIME_EVIDENCE_TYPE,
+                    "required_checks": [
+                        "build_hash_equals_runtime_hash",
+                        "runtime_hash_equals_running_pid_hash",
+                        "daemon_ping_health",
+                        "structured_rpc_round_trip",
+                    ],
+                }),
+                STEP_STATUS_PENDING,
+                now,
+            ),
+        )
+        return step_id
+
     def task_next_step(self, task_id: str) -> Optional[Dict[str, Any]]:
         """领取当前待执行的步骤
 
@@ -564,6 +914,36 @@ class TaskMixin:
             ).fetchone()
             if fix_row:
                 row = fix_row
+        except Exception:
+            pass
+
+        # Self-bootstrap runtime deployment 是进入 review 前的强制步骤，
+        # 优先于后续普通步骤，避免 task.claim 按 step_index 跳过部署门禁。
+        try:
+            runtime_row = self.conn.execute(
+                """
+                SELECT ts.id as step_id, ts.task_id, ts.step_index, ts.action,
+                       ts.target_file, ts.target_symbol, ts.check_items,
+                       t.title as task_title
+                FROM task_steps ts
+                JOIN tasks t ON ts.task_id = t.id
+                WHERE ts.task_id IN (
+                    WITH RECURSIVE task_tree(id) AS (
+                        SELECT id FROM tasks WHERE id = ?
+                        UNION ALL
+                        SELECT t.id FROM tasks t JOIN task_tree tt ON t.parent_id = tt.id
+                    )
+                    SELECT id FROM task_tree
+                )
+                AND ts.action = ?
+                AND ts.status = ?
+                ORDER BY ts.created_at ASC
+                LIMIT 1
+                """,
+                (task_id, RUNTIME_DEPLOYMENT_ACTION, STEP_STATUS_PENDING),
+            ).fetchone()
+            if runtime_row:
+                row = runtime_row
         except Exception:
             pass
 
@@ -1266,6 +1646,8 @@ class TaskMixin:
         - 记录 result 和 completed_at
         - 如果 changes 不为空，记录到 change_audit 表
         - 如果失败，自动插入一个 fix_defect 步骤（step_index 在当前之后）
+        - self-bootstrap workspace 的 daemon/RPC/PyO3 变更在缺少
+          runtime_deployment evidence 时保持任务 in_progress，并追加部署步骤
         - 如果成功且没有更多 pending 步骤，将任务状态改为 review
         - 父子任务支持：子任务完成后递归向上检查，所有子任务完成则父任务进入 review
         - task_id 可以是根任务 ID 或任意子任务 ID，通过 step_id 反查真实所属任务
@@ -1300,11 +1682,13 @@ class TaskMixin:
 
         # 通过 step_id 找到步骤实际所属的任务 ID（支持父子任务）
         cur = self.conn.execute(
-            "SELECT task_id FROM task_steps WHERE id = ?",
+            "SELECT task_id, action, target_file FROM task_steps WHERE id = ?",
             (step_id,),
         )
         step_row = cur.fetchone()
         actual_task_id = step_row["task_id"] if step_row else task_id
+        action = str(step_row["action"] if step_row else "")
+        target_file = str(step_row["target_file"] if step_row else "")
 
         # P3: 记录执行者 Identity（Req 10.1, 10.5-10.7）
         # Identity 仅作 actor attribution，不引入 assignment/lease 权限
@@ -1379,7 +1763,9 @@ class TaskMixin:
                     "change": change,
                 })
 
-        # 失败时自动插入"修复缺陷"步骤
+        # 失败时在同一主任务追加 provenance-bound fix_defect。失败步骤本身
+        # 保持 failed/result 不变；后续 resolution 通过 append-only
+        # step_resolved event 投影，不创建嵌套 remediation child。
         if not success:
             cur = self.conn.execute(
                 "SELECT MAX(step_index) as max_idx FROM task_steps WHERE task_id = ?",
@@ -1402,11 +1788,19 @@ class TaskMixin:
                     actual_task_id,
                     new_step_index,
                     "fix_defect",
-                    "",
+                    target_file,
                     "",
                     "",
                     STEP_STATUS_PENDING,
-                    "",
+                    json.dumps(
+                        {
+                            "remediation_of_step_id": step_id,
+                            "failed_target_file": target_file,
+                            "source_outcome": "executor_step_failed",
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    ),
                     now,
                     None,
                 ),
@@ -1566,14 +1960,65 @@ class TaskMixin:
             except Exception:
                 pass
 
-        # 成功且没有更多 pending 步骤时，将任务状态改为 review
+        # Self-bootstrap runtime deployment gate：daemon/RPC/PyO3/authority 变更
+        # 在 runtime/current 新二进制和真实进程证据出现前不得进入 review。
+        runtime_gate: Dict[str, Any] = {"required": False, "passed": True, "code": ""}
+        if success and not gate_failed:
+            changed_files = self._runtime_gate_changed_files(
+                actual_task_id, step_id, action, target_file, changes
+            )
+            runtime_gate = self._runtime_deployment_gate(
+                actual_task_id, changed_files, action
+            )
+            if runtime_gate.get("required") and not runtime_gate.get("passed"):
+                gate_failed = True
+                # 代码步骤本身可以完成，但必须追加唯一 runtime deployment 步骤；
+                # runtime 步骤自身若缺 evidence 则保持 in_progress，避免每次
+                # 重试都复制一个 deployment 步骤。调用方补齐 evidence 后可用
+                # 同一 step_id 重新 report；普通源码步骤则追加唯一 pending 步骤。
+                if action == RUNTIME_DEPLOYMENT_ACTION:
+                    self.conn.execute(
+                        "UPDATE task_steps SET status = ?, completed_at = NULL "
+                        "WHERE id = ?",
+                        (STEP_STATUS_IN_PROGRESS, step_id),
+                    )
+                    runtime_step_id = step_id
+                else:
+                    runtime_step_id = self._ensure_runtime_step(actual_task_id, now)
+                runtime_gate["runtime_step_id"] = runtime_step_id
+
+        # review 是从 append-only 历史计算的 projection。不能仅凭“没有
+        # pending”进入 review：in_progress 以及没有 step_resolved 事件的
+        # failed 历史都会保持任务 in_progress。
         if success and not gate_failed:
             cur = self.conn.execute(
-                "SELECT COUNT(*) as cnt FROM task_steps WHERE task_id = ? AND status = ?",
-                (actual_task_id, STEP_STATUS_PENDING),
+                "SELECT COUNT(*) as cnt FROM task_steps "
+                "WHERE task_id = ? AND status IN (?, ?)",
+                (actual_task_id, STEP_STATUS_PENDING, STEP_STATUS_IN_PROGRESS),
             )
-            pending_count = cur.fetchone()["cnt"]
-            if pending_count == 0:
+            active_count = cur.fetchone()["cnt"]
+            failed_ids = {
+                str(row["id"])
+                for row in self.conn.execute(
+                    "SELECT id FROM task_steps WHERE task_id = ? AND status = ?",
+                    (actual_task_id, STEP_STATUS_FAILED),
+                ).fetchall()
+            }
+            resolved_failed_ids = set()
+            for row in self.conn.execute(
+                "SELECT reason FROM task_events "
+                "WHERE task_id = ? AND reason_code = 'step_resolved'",
+                (actual_task_id,),
+            ).fetchall():
+                try:
+                    event = json.loads(str(row["reason"] or ""))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                failed_step_id = str(event.get("failed_step_id") or "").strip()
+                if failed_step_id:
+                    resolved_failed_ids.add(failed_step_id)
+            unresolved_failed = failed_ids - resolved_failed_ids
+            if active_count == 0 and not unresolved_failed:
                 cur = self.conn.execute(
                     "SELECT status FROM tasks WHERE id = ?",
                     (actual_task_id,),
@@ -1665,10 +2110,15 @@ class TaskMixin:
         next_row = self._find_next_pending_step_tree(task_id)
         if not next_row:
             # 即使没有下一步，若质量门禁或 Evidence Gate 阻断也返回对应信息
-            if quality_gate.get("blocked") or evidence_gate.get("decision") == "block":
+            if (
+                quality_gate.get("blocked")
+                or evidence_gate.get("decision") == "block"
+                or (runtime_gate.get("required") and not runtime_gate.get("passed"))
+            ):
                 return {
                     "quality_gate": quality_gate,
                     "evidence_gate": evidence_gate,
+                    "runtime_gate": runtime_gate,
                 }
             return None
 
@@ -1683,6 +2133,236 @@ class TaskMixin:
             "task_title": next_row["task_title"],
             "quality_gate": quality_gate,
             "evidence_gate": evidence_gate,
+            "runtime_gate": runtime_gate,
+        }
+
+    def task_append_remediation_step(
+        self,
+        task_id: str,
+        source_step_id: str,
+        request_id: str,
+        source_outcome: str = "failed_step",
+        source_verdict_id: str = "",
+        source_findings: Optional[List[Dict[str, Any]]] = None,
+        identity: Optional[Dict[str, Any]] = None,
+        lease_token: Optional[str] = None,
+        fencing_counter: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """在同一主任务追加 provenance-bound ``fix_defect``。
+
+        该兼容入口与 daemon ``task.remediation.create`` 保持相同领域语义：
+        只追加 remediation step/event 并 reopen task，不修改 source step、
+        verdict/evidence/history，也不创建 child task。
+        """
+        task_id = str(task_id or "").strip()
+        source_step_id = str(source_step_id or "").strip()
+        request_id = str(request_id or "").strip()
+        source_outcome = str(source_outcome or "failed_step").strip()
+        source_verdict_id = str(source_verdict_id or "").strip()
+        if not task_id or not source_step_id or not request_id:
+            return {"error": "E_REMEDIATION_PARAMS_REQUIRED"}
+        if source_outcome not in {
+            "failed_step",
+            "reviewer_blocked",
+            "adjudicator_returned",
+        }:
+            return {"error": "E_REMEDIATION_SOURCE_OUTCOME_INVALID"}
+        if not lease_token or fencing_counter is None or identity is None:
+            return {"error": "E_LEASE_REQUIRED"}
+        ok_lease, lease_reason = self.validate_lease_for_mutation(
+            task_id,
+            "implementer",
+            lease_token,
+            fencing_counter,
+            identity,
+        )
+        if not ok_lease:
+            return {"error": lease_reason["code"], "reason": lease_reason}
+
+        canonical_findings: Any = source_findings
+        fingerprint_payload = {
+            "task_id": task_id,
+            "source_step_id": source_step_id,
+            "source_outcome": source_outcome,
+            "source_verdict_id": source_verdict_id,
+            "source_findings": canonical_findings,
+        }
+        request_fingerprint = hashlib.sha256(
+            json.dumps(
+                fingerprint_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+
+        with self.conn:
+            task_row = self.conn.execute(
+                "SELECT status FROM tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+            if not task_row:
+                return {"error": "task_not_found"}
+            current_status = str(task_row["status"])
+
+            for event_row in self.conn.execute(
+                "SELECT event_id, reason FROM task_events "
+                "WHERE task_id = ? AND reason_code = 'remediation_created' "
+                "ORDER BY event_id DESC",
+                (task_id,),
+            ).fetchall():
+                try:
+                    event = json.loads(str(event_row["reason"] or ""))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                if event.get("request_id") != request_id:
+                    continue
+                if event.get("request_fingerprint") != request_fingerprint:
+                    return {"error": "E_REQUEST_ID_REUSE_MISMATCH"}
+                return {
+                    "task_id": task_id,
+                    "source_step_id": source_step_id,
+                    "source_outcome": source_outcome,
+                    "source_verdict_id": source_verdict_id,
+                    "remediation_step_id": event.get("remediation_step_id", ""),
+                    "remediation_event_id": event_row["event_id"],
+                    "request_id": request_id,
+                    "replayed": True,
+                }
+
+            source_row = self.conn.execute(
+                "SELECT status, target_file, target_symbol, check_items "
+                "FROM task_steps WHERE id = ? AND task_id = ?",
+                (source_step_id, task_id),
+            ).fetchone()
+            if not source_row:
+                return {"error": "E_REMEDIATION_SOURCE_STEP_INVALID"}
+
+            if source_outcome == "failed_step":
+                if source_row["status"] != STEP_STATUS_FAILED:
+                    return {"error": "E_FAILED_STEP_NOT_UNRESOLVED"}
+                if source_verdict_id or source_findings is not None:
+                    return {"error": "E_REMEDIATION_PROVENANCE_MISMATCH"}
+                canonical_findings = []
+            else:
+                if current_status != TASK_STATUS_REVIEW:
+                    return {"error": "E_REMEDIATION_REVIEW_STATE_REQUIRED"}
+                if not source_verdict_id or not isinstance(source_findings, list) or not source_findings:
+                    return {"error": "E_REMEDIATION_FINDINGS_REQUIRED"}
+                expected_overall = "block" if source_outcome == "reviewer_blocked" else "pass"
+                verdict_row = self.conn.execute(
+                    "SELECT findings FROM task_verdict_events "
+                    "WHERE task_id = ? AND verdict_id = ? AND overall = ?",
+                    (task_id, source_verdict_id, expected_overall),
+                ).fetchone()
+                if not verdict_row:
+                    return {"error": "E_REMEDIATION_VERDICT_REQUIRED"}
+                try:
+                    verdict_findings = json.loads(str(verdict_row["findings"] or "[]"))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    verdict_findings = []
+                if source_outcome == "reviewer_blocked" and verdict_findings != source_findings:
+                    return {"error": "E_REMEDIATION_PROVENANCE_MISMATCH"}
+
+            for row in self.conn.execute(
+                "SELECT result FROM task_steps "
+                "WHERE task_id = ? AND action = 'fix_defect'",
+                (task_id,),
+            ).fetchall():
+                try:
+                    metadata = json.loads(str(row["result"] or ""))
+                except (TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                same_source = (
+                    metadata.get("remediation_of_step_id") == source_step_id
+                    and metadata.get("source_outcome", "failed_step") == "failed_step"
+                ) if source_outcome == "failed_step" else (
+                    metadata.get("source_verdict_id", "") == source_verdict_id
+                )
+                if same_source:
+                    return {"error": "E_REMEDIATION_ALREADY_EXISTS"}
+
+            max_row = self.conn.execute(
+                "SELECT COALESCE(MAX(step_index), -1) AS max_idx "
+                "FROM task_steps WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            remediation_step_id = _gen_step_id()
+            now = time.time()
+            metadata = {
+                "remediation_of_step_id": source_step_id,
+                "source_outcome": source_outcome,
+                "source_verdict_id": source_verdict_id,
+                "source_findings": canonical_findings,
+                "source_target_file": str(source_row["target_file"] or ""),
+                "source_target_symbol": str(source_row["target_symbol"] or ""),
+                "source_check_items": str(source_row["check_items"] or ""),
+                "request_id": request_id,
+            }
+            self.conn.execute(
+                "INSERT INTO task_steps "
+                "(id, task_id, step_index, action, target_file, target_symbol, "
+                "check_items, status, result, created_at, completed_at) "
+                "VALUES (?, ?, ?, 'fix_defect', ?, ?, ?, ?, ?, ?, NULL)",
+                (
+                    remediation_step_id,
+                    task_id,
+                    int(max_row["max_idx"]) + 1,
+                    source_row["target_file"],
+                    source_row["target_symbol"],
+                    source_row["check_items"],
+                    STEP_STATUS_PENDING,
+                    json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+                    now,
+                ),
+            )
+            event_reason = {
+                "request_id": request_id,
+                "request_fingerprint": request_fingerprint,
+                "source_step_id": source_step_id,
+                "source_outcome": source_outcome,
+                "source_verdict_id": source_verdict_id,
+                "source_findings": canonical_findings,
+                "remediation_step_id": remediation_step_id,
+            }
+            seq_row = self.conn.execute(
+                "SELECT COALESCE(MAX(monotonic_seq), 0) AS seq FROM task_events"
+            ).fetchone()
+            actor = str(identity.get("agent_id") or "")
+            self.conn.execute(
+                "INSERT INTO task_events "
+                "(task_id, from_status, to_status, reason_code, reason, "
+                "actor_identity, agent_session_id, role, monotonic_seq, authoritative_timestamp) "
+                "VALUES (?, ?, ?, 'remediation_created', ?, ?, ?, ?, ?, ?)",
+                (
+                    task_id,
+                    current_status,
+                    TASK_STATUS_IN_PROGRESS,
+                    json.dumps(event_reason, ensure_ascii=False, sort_keys=True),
+                    actor,
+                    str(identity.get("session_id") or ""),
+                    str(identity.get("role") or ""),
+                    int(seq_row["seq"]) + 1,
+                    now,
+                ),
+            )
+            remediation_event_id = self.conn.execute(
+                "SELECT last_insert_rowid() AS event_id"
+            ).fetchone()["event_id"]
+            self.conn.execute(
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                (TASK_STATUS_IN_PROGRESS, now, task_id),
+            )
+
+        return {
+            "task_id": task_id,
+            "source_step_id": source_step_id,
+            "source_outcome": source_outcome,
+            "source_verdict_id": source_verdict_id,
+            "remediation_step_id": remediation_step_id,
+            "remediation_event_id": remediation_event_id,
+            "request_id": request_id,
+            "replayed": False,
         }
 
     def task_rollback(

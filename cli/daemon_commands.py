@@ -95,6 +95,11 @@ def _parser(include_serve: bool = True) -> argparse.ArgumentParser:
     sub.add_parser("health", help="检查 daemon 健康状态")
     sub.add_parser("schema-version", help="查询 registry DB schema 版本")
 
+    # 共存契约：Windows bridge 健康检查（bridge transport + 端口/token 配置）
+    bridge = sub.add_parser("bridge", help="检查 Windows bridge 配置与连通性")
+    bridge.add_argument("--endpoint", default="", help="覆盖 bridge 端点（tcp://host:port）")
+    bridge.add_argument("--token-file", default="", help="覆盖 bridge token 文件路径")
+
     backup = sub.add_parser("backup", help="备份 registry DB")
     backup.add_argument("--output", required=True, help="备份输出路径")
 
@@ -629,6 +634,46 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
         result = client.call(method, params)
     elif args.action == "health":
         result = client.call("health", {})
+    elif args.action == "bridge":
+        # 共存契约 §7.1：bridge health 检查（WSL 侧可执行）
+        from callwarden.config import (
+            get_bridge_endpoint,
+            get_bridge_token,
+        )
+        endpoint = args.endpoint or get_bridge_endpoint()
+        if args.token_file:
+            import os as _os
+
+            _os.environ["CW_BRIDGE_TOKEN_FILE"] = args.token_file
+        token = get_bridge_token()
+        # 复用函数顶部的 UnixDaemonRpcClient（避免局部 import 遮蔽导致
+        # 顶部 `client = UnixDaemonRpcClient(...)` UnboundLocalError）。
+        # transport_override="windows-bridge" 强制 token 注入，不依赖全局
+        # CW_DAEMON_TRANSPORT 环境变量。
+        bridge_client = client.__class__(
+            socket_path=endpoint,
+            transport_override="windows-bridge",
+            endpoint_override=True,
+        )
+
+        result = {
+            "authority": "windows-host",
+            "transport": "windows-bridge",
+            "endpoint": endpoint,
+            "token_configured": bool(token),
+            "reachable": False,
+        }
+        if not token:
+            result["error"] = "E_BRIDGE_TOKEN_MISSING: 未配置 bridge token"
+        else:
+            try:
+                # 顶层注入 token（与 call() 在 bridge transport 下的行为一致）
+                bridge_client.hello()
+                result["reachable"] = True
+            except Exception as exc:  # noqa: BLE001 - health 报告任何连接异常
+                result["error"] = f"bridge 不可达: {exc}"
+        # 归一化：返回 {ok, bridge:{...}}，避免 CLI 打印裸 dict
+        result = {"ok": bool(result["reachable"]), "bridge": result}
     elif args.action == "schema-version":
         result = client.call("schema.version", {})
     elif args.action == "backup":
@@ -678,6 +723,11 @@ def run_daemon_command(argv: Optional[Sequence[str]] = None,
     else:
         raise AssertionError(args.action)
     _print_json(result)
+    # 运维门禁：bridge health 检查失败（不可达/token 缺失）返回非零退出码
+    if args.action == "bridge":
+        bridge_info = result.get("bridge", {}) if isinstance(result, dict) else {}
+        if not bridge_info.get("reachable") or not bridge_info.get("token_configured"):
+            return 1
     return 0
 
 

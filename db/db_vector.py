@@ -25,6 +25,7 @@ D1 文档声明修正（评审报告 2026-07-20）：
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -37,6 +38,14 @@ try:
     import callwarden_core as _rust_core  # type: ignore
 except ImportError:
     _rust_core = None  # Rust 扩展未编译，使用 numpy 回退
+
+# 进程级嵌入模型缓存。_EMBEDDER_CACHE 缓存初始化结果（含 None=确认不可用），
+# _EMBEDDER_CACHE_TRIED 标记是否已尝试过，区分"未初始化"与"确认不可用"。
+# 背景：MCP 长连接走 get_db() 进程级单例，但 compat worker 走 _bind_readonly_db()
+# （每次新建 CodeGraphDB 实例），若用实例属性缓存，worker 每次调用 ask_codebase
+# 都会重新加载/下载 jina 模型，远超 HTTP 5s 超时。进程级缓存保证同一进程只初始化一次。
+_EMBEDDER_CACHE: Optional[Tuple[str, Any]] = None
+_EMBEDDER_CACHE_TRIED = False
 
 
 def _batch_cosine(
@@ -105,7 +114,8 @@ class VectorMixin:
     """向量嵌入与语义搜索功能 Mixin
 
     通过 self.conn 访问数据库连接，self._get_active_workspace_id() 获取当前工作区。
-    嵌入模型采用延迟加载并缓存到 self._embedder_instance。
+    嵌入模型采用延迟加载，缓存提升为模块级进程缓存（_EMBEDDER_CACHE），
+    避免 compat worker 每次新建实例重复加载/下载模型。
     """
 
     # 嵌入模型标识（写入 symbol_embeddings.model_version）
@@ -120,28 +130,53 @@ class VectorMixin:
     # ------------------------------------------------------------------
 
     def _get_embedder(self) -> Optional[Tuple[str, Any]]:
-        """延迟加载嵌入模型
+        """延迟加载嵌入模型（进程级缓存，同一进程内只初始化一次）
 
         优先级：
         1. sentence-transformers + jinaai/jina-embeddings-v2-base-code（本地，CPU）
         2. ollama API（本地服务，nomic-embed-text）
         3. 返回 None，语义搜索不可用
 
+        缓存说明：缓存为模块级进程缓存（_EMBEDDER_CACHE），而非实例属性。
+        compat worker 走 _bind_readonly_db()（每次新建 CodeGraphDB 实例），
+        实例级缓存会让 worker 每次调用重新加载/下载模型，远超 HTTP 5s 超时；
+        进程级缓存保证同一进程内只初始化一次，失败后缓存 None 不再重复尝试。
+
+        离线开关：CW_EMBED_LOCAL_ONLY=1 时 sentence-transformers 以
+        local_files_only=True 加载，禁止联网下载模型（CI/离线环境用）；
+        不设置时保持延迟加载 + 首次自动下载的默认行为。
+
         Returns:
             (后端类型, 模型对象) 元组；不可用时返回 None
         """
+        global _EMBEDDER_CACHE, _EMBEDDER_CACHE_TRIED
+        # 兼容注入点：调用方可设实例属性 _embedder_instance 显式指定/禁用
+        # embedder（单测常用 db._embedder_instance = None 预设不可用；
+        # _VectorEmbedWrapper 构造时设 None 延迟加载）。compat worker 的
+        # _bind_readonly_db() 每次新建实例不设置该属性，会走下方进程级缓存。
         if hasattr(self, "_embedder_instance"):
             return self._embedder_instance
+        if _EMBEDDER_CACHE_TRIED:
+            return _EMBEDDER_CACHE
+        _EMBEDDER_CACHE_TRIED = True
 
         # 方式1: sentence-transformers（本地）
         try:
             from sentence_transformers import SentenceTransformer
 
-            model = SentenceTransformer(
-                "jinaai/jina-embeddings-v2-base-code", device="cpu"
+            local_only = os.environ.get("CW_EMBED_LOCAL_ONLY", "").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
             )
-            self._embedder_instance = ("sentence-transformers", model)
-            return self._embedder_instance
+            model = SentenceTransformer(
+                "jinaai/jina-embeddings-v2-base-code",
+                device="cpu",
+                local_files_only=local_only,
+            )
+            _EMBEDDER_CACHE = ("sentence-transformers", model)
+            return _EMBEDDER_CACHE
         except Exception:
             pass
 
@@ -153,13 +188,13 @@ class VectorMixin:
                 f"{self._OLLAMA_BASE_URL}/api/tags", timeout=2
             )
             if resp.status_code == 200:
-                self._embedder_instance = ("ollama", None)
-                return self._embedder_instance
+                _EMBEDDER_CACHE = ("ollama", None)
+                return _EMBEDDER_CACHE
         except Exception:
             pass
 
-        # 方式3: 全部不可用
-        self._embedder_instance = None
+        # 方式3: 全部不可用（缓存 None，避免同一进程内重复尝试）
+        _EMBEDDER_CACHE = None
         return None
 
     def _embed_text(self, text: str) -> Optional[List[float]]:

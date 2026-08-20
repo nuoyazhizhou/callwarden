@@ -169,6 +169,51 @@ _EVIDENCE_BUNDLED_DEFAULTS: Dict[str, Dict[str, str]] = {
 }
 
 
+# ============================================
+# Authority gate 接入（0B：gate-first 写入口，计划 §3.3）
+# ============================================
+
+# authority 写路径未接入 gate 时的稳定错误码（0B fail-closed）。
+EVIDENCE_AUTHORITY_GATE_DISABLED = "E_TASK_LOOP_CAPABILITY_DISABLED"
+
+
+def _authority_gate_disabled_reason(detail: str) -> Dict[str, Any]:
+    """构造 authority gate 未接入的 Structured_Reason（0B fail-closed）。
+
+    `invalidate_evidence` / `revoke_verifier` 是 authority 写入口，按计划 §3.3
+    必须在 `CapabilityMutationGate` 内（锁序 gate → authority store → task DB）
+    提交，禁止存在绕过 gate 的直写入口。authority control-plane route 尚未
+    接入时稳定拒绝，不回退本地 SQLite。
+    """
+    return {
+        "success": False,
+        "error": EVIDENCE_AUTHORITY_GATE_DISABLED,
+        "code": EVIDENCE_AUTHORITY_GATE_DISABLED,
+        "message_key": "errors.evidence_capability_disabled",
+        "detail": detail,
+    }
+
+
+def _require_authority_gate() -> Optional[Dict[str, Any]]:
+    """authority 写入口的 gate 前置校验（0B gate-first）。
+
+    - local 模式：无 daemon gate，保留 legacy 直写语义（不阻断）。
+    - enterprise/auto 模式：authority 写必须经 daemon `CapabilityMutationGate`
+      串行化（锁序 gate → authority store → task DB）；0B 阶段该 control-plane
+      route 未接入，稳定 fail-closed，禁止绕过 gate 直写。
+    """
+    from callwarden.config import get_daemon_mode
+
+    mode = get_daemon_mode()
+    if mode in ("enterprise", "auto"):
+        return _authority_gate_disabled_reason(
+            "authority 写路径必须经 daemon CapabilityMutationGate 提交"
+            "（锁序 gate → authority store → task DB）；0B 阶段 gate 接入尚未"
+            "完成，拒绝直写（fail-closed），不回退本地 SQLite"
+        )
+    return None
+
+
 def _resolve_evidence_message(message_key: str, context: Dict[str, Any]) -> str:
     """解析 i18n 消息（与 db_task_contracts.py 同模式）。"""
     lang = t("current_locale", default="zh_CN") or "zh_CN"
@@ -471,6 +516,11 @@ class TaskEvidenceMixin:
         Returns:
             {success, event_id} 或 {success: False, error: ...}
         """
+        # 0B gate-first：authority 写入口须经 CapabilityMutationGate，禁止绕过 gate 直写。
+        blocked = _require_authority_gate()
+        if blocked is not None:
+            return blocked
+
         if not evidence_id:
             return {"success": False, "error": "evidence_id is required"}
 
@@ -767,6 +817,11 @@ class TaskEvidenceMixin:
         Returns:
             {success, revocation_id} 或 {success: False, error: ...}
         """
+        # 0B gate-first：authority 写入口须经 CapabilityMutationGate，禁止绕过 gate 直写。
+        blocked = _require_authority_gate()
+        if blocked is not None:
+            return blocked
+
         if not name or not version or not config_hash:
             return {"success": False, "error": "name, version, config_hash are required"}
         if not reason:

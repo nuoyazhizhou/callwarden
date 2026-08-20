@@ -11,6 +11,7 @@ mcp_server.py
 import os
 import sys
 import time
+import threading
 from typing import Any, Dict, Optional
 
 # 确保可以导入 callwarden 模块
@@ -52,41 +53,44 @@ def create_mcp_server():
 
 
 
-def _auto_sync_agents_md() -> Dict[str, Any]:
-    """启动时自动同步 AGENTS.md（fail-soft，不阻断启动）
-
-    把当前 active 的 Agent Rule Memory 同步到 AGENTS.md 标记区，
-    让无 MCP 的 Agent 也能从 AGENTS.md 看到已生效规则。
-
-    安全策略：
-    - 同步失败不阻断 MCP Server 启动（fail-soft）
-    - 使用 dry_run=False 实际写入文件，并记录 agent_rule_sync_log
-    - 标记区不存在时静默跳过（不插入标记块，避免改写用户文件）
-    - 所有输出走 stderr，不污染 stdio 协议
-
-    Returns:
-        dict: 同步结果摘要（含 success / rule_count / error 等字段）
-    """
+def _start_daemon_for_mcp_startup() -> None:
+    """MCP 启动时异步确保共享 daemon 可用，失败只记录不阻断 stdio。"""
     try:
-        db = get_db()
-        result = db.rule_sync_agents_md(
-            target_path="AGENTS.md",
-            dry_run=False,
-            actor="mcp_server_startup",
-        )
-        return result
+        from ..config import get_daemon_mode, resolve_daemon_endpoint_for_authority
+        if get_daemon_mode() == "local":
+            return
+
+        from .daemon_autostart import ensure_daemon_for_startup
+        from .daemon_client import is_http_transport_enabled
+
+        if is_http_transport_enabled():
+            from .daemon_client import HttpDaemonRpcClient
+            client = HttpDaemonRpcClient(timeout=1.0, verify_health=False, validate_manifest=False)
+            try:
+                client.health()
+                ready = True
+            except Exception:
+                ready = False
+        else:
+            from .daemon_client import UnixDaemonRpcClient
+            rpc = UnixDaemonRpcClient(timeout=1.0)
+            ready = ensure_daemon_for_startup(
+                resolve_daemon_endpoint_for_authority(),
+                readiness_check=rpc._probe_connection,
+            )
+        if not ready:
+            print("[Daemon] 启动期唤起失败，首次 RPC 将继续重试", file=sys.stderr)
     except Exception as exc:
-        # fail-soft：任何异常都不阻断启动，仅记录错误
-        return {
-            "success": False,
-            "dry_run": False,
-            "target_path": "AGENTS.md",
-            "rule_count": 0,
-            "rule_ids": [],
-            "before_hash": "",
-            "after_hash": "",
-            "error": str(exc),
-        }
+        print(f"[Daemon] 启动期探针失败，首次 RPC 将继续重试: {exc}", file=sys.stderr)
+
+
+def _launch_daemon_startup_probe() -> None:
+    """后台启动启动期探针，避免阻塞 MCP stdio 握手。"""
+    threading.Thread(
+        target=_start_daemon_for_mcp_startup,
+        name="cw-daemon-startup-probe",
+        daemon=True,
+    ).start()
 
 
 def _ensure_semgrep_rules_cache() -> None:
@@ -314,66 +318,24 @@ def _ensure_semgrep_rules_cache() -> None:
     monitor_thread.start()
 
 
-def _print_auto_sync_summary(result: Dict[str, Any]) -> None:
-    """打印 AGENTS.md 自动同步摘要到 stderr
-
-    MCP Server 使用 stdio 传输协议，所有日志必须走 stderr，
-    否则会污染协议输出导致 client 解析失败。
-
-    Args:
-        result: _auto_sync_agents_md() 返回的结果字典
-    """
-    if result.get("success"):
-        count = result.get("rule_count", 0)
-        print(
-            t(
-                "cli.messages.agents_md_auto_sync_success",
-                count=count,
-                default=f"[Auto Sync] AGENTS.md 已同步，共 {count} 条规则",
-            ),
-            file=sys.stderr,
-        )
-    else:
-        error = result.get("error", "")
-        # 标记区不存在时给出更友好的提示
-        if "marker" in error.lower() or "not found" in error.lower():
-            print(
-                t(
-                    "cli.messages.agents_md_auto_sync_no_marker",
-                    default="[Auto Sync] AGENTS.md 标记区不存在，跳过同步。请先运行 `cw rule insert-block` 插入标记块。",
-                ),
-                file=sys.stderr,
-            )
-        else:
-            print(
-                t(
-                    "cli.messages.agents_md_auto_sync_skipped",
-                    error=error,
-                    default=f"[Auto Sync] AGENTS.md 同步跳过：{error}",
-                ),
-                file=sys.stderr,
-            )
-
-
-
-
 def main():
-    """MCP 服务器入口
+    """MCP 服务器入口（T03 收敛：移除本地 AGENTS.md 写路径，业务写入全部经 daemon）
 
     启动流程：
     1. create_mcp_server() 创建服务器实例并注册所有 MCP 工具
     2. --check-imports 模式完成注册后立即退出，不触发数据库写入和网络下载
-    3. _auto_sync_agents_md() 自动同步 AGENTS.md（fail-soft，不阻断启动）
+    3. _launch_daemon_startup_probe() 后台确保共享 daemon 可用（fail-closed）
     4. _ensure_semgrep_rules_cache() 检查 semgrep 规则缓存（fail-soft）
     5. server.run() 启动 stdio 传输
+
+    说明：AGENTS.md 自动同步（rule.sync_agents_md）已下沉 daemon RPC，
+    不再在 MCP 启动时本地写文件（T03 收敛架构，写路径权威 daemon）。
     """
     server = create_mcp_server()
     if "--check-imports" in sys.argv[1:]:
         print("Call Warden MCP imports OK")
         return
-    # 启动时自动同步 AGENTS.md（C2 新增）
-    sync_result = _auto_sync_agents_md()
-    _print_auto_sync_summary(sync_result)
+    _launch_daemon_startup_probe()
     # 启动时检查 semgrep 规则缓存，缺失则预下载（避免首次扫描卡顿）
     _ensure_semgrep_rules_cache()
     server.run()
@@ -381,4 +343,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

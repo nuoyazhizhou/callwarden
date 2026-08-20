@@ -81,6 +81,8 @@ class StagingEntry:
     file_path: str                         # 变更文件路径
     content_hash: str                      # 文件内容 SHA-256
     language: str                          # 语言 ID
+    operation: str = "refresh"             # refresh / delete（C5 C3：对齐 Rust
+                                           # StagingEntry.operation，旧日志缺省按 refresh）
     parse_delta: Dict[str, Any] = field(default_factory=dict)      # 序列化的 ParseDelta
     resolve_delta: Dict[str, Any] = field(default_factory=dict)    # 序列化的 ResolveDelta
     frontier: Dict[str, Any] = field(default_factory=dict)         # 序列化的 AffectedFrontier
@@ -102,6 +104,7 @@ class StagingEntry:
             file_path=data["file_path"],
             content_hash=data["content_hash"],
             language=data["language"],
+            operation=data.get("operation", "refresh"),
             parse_delta=data.get("parse_delta", {}),
             resolve_delta=data.get("resolve_delta", {}),
             frontier=data.get("frontier", {}),
@@ -508,6 +511,7 @@ def create_staging_entry(
     file_path: str,
     content_hash: str,
     language: str,
+    operation: str = "refresh",  # C5 C3：refresh / delete，对齐 Rust StagingEntry.operation
     parse_delta: Optional[Dict[str, Any]] = None,
     resolve_delta: Optional[Dict[str, Any]] = None,
     frontier: Optional[Dict[str, Any]] = None,
@@ -527,6 +531,7 @@ def create_staging_entry(
         file_path=file_path,
         content_hash=content_hash,
         language=language,
+        operation=operation,
         parse_delta=parse_delta or {},
         resolve_delta=resolve_delta or {},
         frontier=frontier or {},

@@ -1130,20 +1130,25 @@ class QueryMixin:
         except Exception:
             pass  # fail-soft：表不存在或异常时降级为空
 
-        # 2. guardrail_findings：按 file_path + symbol_hash 匹配
+        # 2. guardrail_findings：按 workspace_id + file_path + symbol_hash 匹配
+        # v48（W2.3 P1-1）：必须带 workspace 作用域，防止跨 workspace 泄露；
+        # status != 'orphaned'（旧数据无归属时 fail-closed，不返回 orphan 行）
         guard_sql = """
             SELECT gf.rule_id, gr.category as rule_name, gf.severity, gf.message,
                    gf.status, gf.detected_at
             FROM guardrail_findings gf
             JOIN guardrail_rules gr ON gf.rule_id = gr.rule_id
-            WHERE gf.file_path = ? AND gf.symbol_hash = ?
+            WHERE gf.workspace_id = ?
+              AND gf.file_path = ?
+              AND gf.symbol_hash = ?
+              AND gf.status != 'orphaned'
         """
         if not include_info:
             guard_sql += " AND gf.severity != 'info'"
         guard_sql += " ORDER BY CASE gf.severity WHEN 'error' THEN 0 WHEN 'warn' THEN 1 ELSE 2 END"
         try:
             cur = self.conn.execute(
-                guard_sql, (sym["file_path"], sym["symbol_hash"]))
+                guard_sql, (ws_id, sym["file_path"], sym["symbol_hash"]))
             for row in cur:
                 d = dict(row)
                 d["source"] = "guardrail"
