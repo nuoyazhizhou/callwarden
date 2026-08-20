@@ -166,3 +166,36 @@ tests/_unified_*_report.json
 tests/_unified_*_report.md
 tests/_graphstore_*_report.json
 tests/_pytest_output.txt
+
+# ------------------------------------------
+# 调试/临时产物（不入库）
+# ------------------------------------------
+_cw_*.txt
+_qa_*.txt
+_g[0-9].txt
+_cw_*.log
+_inspect_*.py
+_q_task*.py
+_tmp_m*.log
+_tmp_m*.txt
+.tmp_*.py
+_qa_r*.txt
+_e2e_*/#
+.tmp_handoff_pytest/
+.e2e_5b/
+.e2e_5d/
+docs/design/g0_check_tasks.py
+docs/design/g0_create_review_task.py
+docs/design/g0_dump_views.py
+docs/design/g0_extract_diffs.py
+docs/design/g0_inspect_jsonl.py
+docs/design/g0_read_reveal.py
+_reg.py
+_dbg.py
+_h4bc_matrix.py
+_gen_rules_seed.py
+_cw1_verify.txt
+g0-reviewer-scratch/
+g0-batch/
+.workbuddy/
+.agents/

@@ -14,7 +14,10 @@ CREATE TABLE IF NOT EXISTS workspaces (
     created_at REAL NOT NULL,
     is_active INTEGER DEFAULT 0,
     description TEXT DEFAULT '',
-    active_task_id TEXT DEFAULT ''
+    active_task_id TEXT DEFAULT '',
+    -- runtime_policy: standard（普通项目）/ self_bootstrap（CallWarden 自举项目）。
+    -- 仅 self_bootstrap 对 daemon-affecting 任务强制 runtime deployment gate。
+    runtime_policy TEXT NOT NULL DEFAULT 'standard'
 );
 
 -- 文件内容表：按 content_hash 唯一存储，相同内容只存一次（hash 为主）
@@ -416,6 +419,10 @@ CREATE TABLE IF NOT EXISTS task_events (
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
 
 -- Agent 协同注册表：多 LLM Agent 协同元数据
+-- v50: 扩展 Agent Identity 最小字段（设计 docs/design/agent-task-contract-design.md §4.1）：
+--      agent_instance_id/client_id/provider/model_id/model_mode/system_fingerprint/
+--      runtime_hash/session_id/role。用于独立性门禁与 provenance 审计，
+--      不把 model_id 单独当作独立性的证明（§3 非目标）。
 CREATE TABLE IF NOT EXISTS agent_registrations (
     agent_id TEXT PRIMARY KEY,
     agent_name TEXT NOT NULL,
@@ -423,8 +430,47 @@ CREATE TABLE IF NOT EXISTS agent_registrations (
     capabilities TEXT DEFAULT '[]',
     registered_at REAL NOT NULL,
     last_heartbeat REAL NOT NULL,
-    status TEXT DEFAULT 'active'
+    status TEXT DEFAULT 'active',
+    agent_instance_id TEXT DEFAULT '',
+    client_id TEXT DEFAULT '',
+    provider TEXT DEFAULT '',
+    model_id TEXT DEFAULT '',
+    model_mode TEXT DEFAULT '',
+    system_fingerprint TEXT DEFAULT '',
+    runtime_hash TEXT DEFAULT '',
+    session_id TEXT DEFAULT '',
+    role TEXT DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS idx_agent_registrations_instance
+    ON agent_registrations(agent_instance_id, role, status);
+
+-- Agent 协同 Role Contract：Planner 生成、Coordinator 批准后冻结的角色合同
+-- （设计 §4.2）。allowed/forbidden_paths/commands/acceptance_checks/required_evidence/
+-- independence 均以 JSON 数组/对象文本存储；合同变更必须插入新 revision 并置旧版
+-- is_current=0（A3：合同变更生成新版本 + 审计事件）。
+CREATE TABLE IF NOT EXISTS role_contracts (
+    contract_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    step_id TEXT DEFAULT '',
+    role TEXT NOT NULL,
+    skill_id TEXT DEFAULT '',
+    skill_version TEXT DEFAULT '',
+    prompt_template_id TEXT DEFAULT '',
+    prompt_hash TEXT DEFAULT '',
+    allowed_paths TEXT DEFAULT '[]',
+    forbidden_paths TEXT DEFAULT '[]',
+    commands TEXT DEFAULT '[]',
+    acceptance_checks TEXT DEFAULT '[]',
+    required_evidence TEXT DEFAULT '[]',
+    handoff_to TEXT DEFAULT '',
+    independence TEXT DEFAULT '{}',
+    revision INTEGER DEFAULT 1,
+    is_current INTEGER DEFAULT 1,
+    created_at REAL NOT NULL,
+    created_by TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_role_contracts_task
+    ON role_contracts(task_id, role, is_current);
 
 -- ============================================
 -- v8: 文件所有权表
@@ -483,8 +529,11 @@ CREATE TABLE IF NOT EXISTS guardrail_rules (
 );
 
 -- 安全护栏发现表：规则扫描结果
+-- v48（P1-1 W2.3）：新增 workspace_id 归属列 + 索引。旧数据无法安全归属时
+-- workspace_id 保持 0，查询层 fail-closed（不返回 orphan 行），禁止静默归入当前 workspace。
 CREATE TABLE IF NOT EXISTS guardrail_findings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL DEFAULT 0,
     rule_id TEXT NOT NULL,
     file_path TEXT NOT NULL,
     symbol_hash TEXT DEFAULT '',
@@ -493,12 +542,15 @@ CREATE TABLE IF NOT EXISTS guardrail_findings (
     message TEXT DEFAULT '',
     detected_at REAL NOT NULL,
     resolved_at REAL,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
     FOREIGN KEY (rule_id) REFERENCES guardrail_rules(rule_id)
 );
 CREATE INDEX IF NOT EXISTS idx_guardrail_findings_rule ON guardrail_findings(rule_id);
 CREATE INDEX IF NOT EXISTS idx_guardrail_findings_file ON guardrail_findings(file_path);
 CREATE INDEX IF NOT EXISTS idx_guardrail_findings_severity ON guardrail_findings(severity);
 CREATE INDEX IF NOT EXISTS idx_guardrail_findings_status ON guardrail_findings(status);
+CREATE INDEX IF NOT EXISTS idx_guardrail_findings_workspace ON guardrail_findings(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_guardrail_findings_ws_file ON guardrail_findings(workspace_id, file_path, symbol_hash);
 
 -- 变更影响记录表：跨层影响分析结果
 CREATE TABLE IF NOT EXISTS change_impacts (
@@ -1097,6 +1149,11 @@ CREATE TABLE IF NOT EXISTS task_contract_revisions (
     envelope_payload TEXT NOT NULL,         -- 规范化 JSON（UTF-8，确定性字段排序）
     created_at REAL NOT NULL,               -- 发布时间（Authoritative_Clock）
     created_by TEXT DEFAULT '',             -- 创建者 session marker
+    -- v57（1E）Task Contract normalization binding（§4.2/§8.1.3）：该 Task Contract 引用
+    -- verdict_normalization_rules 的 (normalization_version, rules_hash)；Gate 与
+    -- next_action 只能使用此绑定版本，不能读取"当前最新"规则。
+    normalization_version TEXT DEFAULT '',
+    normalization_rules_hash TEXT DEFAULT '',
     UNIQUE(contract_id, revision)           -- 同一 contract_id 的 revision 唯一
 );
 
@@ -1146,7 +1203,19 @@ CREATE TABLE IF NOT EXISTS task_verdict_events (
     attestation TEXT DEFAULT '',            -- P1: 可用标识; P3: daemon 签发的 Attestation
     amendment_ref TEXT DEFAULT '',          -- post_reveal_amendment 引用的 sealed verdict_id
     submitted_at REAL NOT NULL,             -- 提交时间（Authoritative_Clock）
-    workspace_id INTEGER                    -- 工作区 ID
+    workspace_id INTEGER,                   -- 工作区 ID
+    -- v57（1E）Role Contract 绑定 provenance（§8.1.4/§8.1.5）：既有 contract_* 仅表示
+    -- Task Contract，不得复用/重命名为 Role Contract；Gate provenance 使用同一组字段。
+    step_id TEXT DEFAULT '',
+    role_contract_lineage_id TEXT DEFAULT '',
+    role_contract_revision_id TEXT DEFAULT '',
+    role_contract_revision INTEGER DEFAULT 0,
+    role_contract_hash TEXT DEFAULT '',
+    canonicalization_version TEXT DEFAULT '',
+    canonicalization_rules_hash TEXT DEFAULT '',
+    -- v57（1E）verdict-normalization 绑定：本次投影/写入所用 version/hash（§4.2）。
+    normalization_version TEXT DEFAULT '',
+    normalization_rules_hash TEXT DEFAULT ''
 );
 
 -- 4. task_evidence_events：append-only Evidence 与 invalidation 事件（Req 6.1-6.23, 1.7）
@@ -1209,7 +1278,19 @@ CREATE TABLE IF NOT EXISTS task_gate_decisions (
     independence_waiver_marker TEXT DEFAULT '', -- solo 豁免标记（不得表述为"独立性已证明"）
     event_type TEXT NOT NULL DEFAULT 'gate_decision', -- gate_decision/snapshot_changed_during_gate
     decision_time REAL NOT NULL,            -- 判定时间（Authoritative_Clock）
-    workspace_id INTEGER                    -- 工作区 ID
+    workspace_id INTEGER,                   -- 工作区 ID
+    -- v57（1E）Role Contract 绑定 provenance（§8.1.4/§8.1.5）：与 task_verdict_events
+    -- 同一组 Role Contract revision 字段；既有 contract_* 仍仅表示 Task Contract。
+    step_id TEXT DEFAULT '',
+    role_contract_lineage_id TEXT DEFAULT '',
+    role_contract_revision_id TEXT DEFAULT '',
+    role_contract_revision INTEGER DEFAULT 0,
+    role_contract_hash TEXT DEFAULT '',
+    canonicalization_version TEXT DEFAULT '',
+    canonicalization_rules_hash TEXT DEFAULT '',
+    -- v57（1E）verdict-normalization 绑定：本次 Gate decision 所用 version/hash（§4.2）。
+    normalization_version TEXT DEFAULT '',
+    normalization_rules_hash TEXT DEFAULT ''
 );
 
 -- 6. verifier_registry：可信 Verifier 注册表（Req 6.11-6.13）
@@ -1564,6 +1645,254 @@ CREATE INDEX IF NOT EXISTS idx_task_assignments_task ON task_assignments(workspa
 CREATE INDEX IF NOT EXISTS idx_task_leases_task ON task_leases(workspace_id, task_id, role);
 CREATE INDEX IF NOT EXISTS idx_task_lease_events_lease ON task_lease_events(workspace_id, lease_id);
 CREATE INDEX IF NOT EXISTS idx_task_lease_events_task ON task_lease_events(workspace_id, task_id, role);
+
+-- ============================================
+-- v52: Task-domain operation store（cw-role-handoff-task-loop.md §8.1.3/§8.1.4）
+-- ============================================
+-- Canonicalization rules registry（§8.1.3）：workspace capture、Role Contract 与
+-- operation params 共用 append-only registry。规则行永不 UPDATE；撤销只向
+-- canonicalization_rule_revocations 追加一条不可变记录，读取投影以 left join 得到
+-- revoked 状态。1D1 只追加 ('operation_params', 'operation-params-c14n/v1') 初始 row，
+-- 不得 ALTER table；同 version 不同 hash、重复 payload、缺 row 或 hash 不匹配均禁用
+-- 对应 capability。
+CREATE TABLE IF NOT EXISTS canonicalization_rule_sets (
+    rule_set_id TEXT PRIMARY KEY,
+    domain TEXT NOT NULL CHECK(domain IN ('workspace_capture', 'role_contract', 'operation_params')),
+    canonicalization_version TEXT NOT NULL,
+    rules_payload_json TEXT NOT NULL,
+    rules_c14n_version TEXT NOT NULL,
+    rules_hash TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    UNIQUE(domain, canonicalization_version),
+    UNIQUE(domain, rules_hash)
+);
+CREATE TABLE IF NOT EXISTS canonicalization_rule_revocations (
+    revocation_id TEXT PRIMARY KEY,
+    rule_set_id TEXT NOT NULL UNIQUE REFERENCES canonicalization_rule_sets(rule_set_id),
+    reason TEXT NOT NULL,
+    revoked_by TEXT NOT NULL,
+    authoritative_revoked_at TEXT NOT NULL
+);
+
+-- task-DB 权威 operation/dedup ledger（§4.3/§8.1.4）：v1 task-domain mutation 的
+-- 唯一权威 operation/dedup ledger。method scope 固定为 task.create/contract_set/claim/
+-- report/handoff/apply/close、lease.acquire/renew（含 alias extend）/release、
+-- verdict.submit/reveal.submit/evidence.append/gate.decide。
+-- key 固定为 (workspace_instance_id, method, request_id)；同 key 同 hash 只读重放
+-- 原结果且不追加事件，同 key 不同 hash 返回 E_REQUEST_ID_REUSE_MISMATCH 且绝不
+-- 修改该行。首次 request 的确定性领域拒绝可只提交该行错误结果；成功或非确定性
+-- 失败分别与全部 domain 写入同事务提交或回滚。
+CREATE TABLE IF NOT EXISTS task_operation_ledger (
+    workspace_instance_id TEXT NOT NULL,
+    method TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    params_canonicalization_version TEXT NOT NULL,
+    params_canonicalization_rules_hash TEXT NOT NULL,
+    canonical_params_hash TEXT NOT NULL,
+    workspace_id INTEGER NULL REFERENCES workspaces(id),
+    task_id TEXT NULL REFERENCES tasks(id),
+    role_contract_revision_id TEXT NULL,
+    role_contract_hash TEXT NULL,
+    role_contract_canonicalization_version TEXT NULL,
+    role_contract_canonicalization_rules_hash TEXT NULL,
+    response_or_error_json TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    PRIMARY KEY(workspace_instance_id, method, request_id)
+);
+
+-- ============================================
+-- v53: Task workspace authority binding（cw-role-handoff-task-loop.md §8.1.1，1A）
+-- ============================================
+-- append-only workspace authority capture（task DB 侧，不伪造跨库 FK）：每次受保护
+-- task.create 前由 daemon 以 workspace_instance_id 查找当前 daemon_workspace_id、
+-- 重算稳定 identity payload（workspace-capture-c14n/v1）后追加。revision n>1 必须以
+-- supersedes_capture_id 指向同 workspace/instance/identity hash 的 n-1，否则拒绝。
+-- 任一 root/manifest/instance identity 改变不是合法 liveness 更新，旧 task 必须
+-- UNVERIFIED，不得 UPDATE 原 binding。
+CREATE TABLE IF NOT EXISTS workspace_authority_captures (
+    workspace_capture_id TEXT PRIMARY KEY,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+    capture_revision INTEGER NOT NULL CHECK(capture_revision > 0),
+    supersedes_capture_id TEXT NULL,
+    daemon_workspace_id INTEGER NOT NULL,
+    workspace_instance_id TEXT NOT NULL,
+    capture_canonicalization_version TEXT NOT NULL,
+    capture_canonicalization_rules_hash TEXT NOT NULL,
+    registry_identity_payload_json TEXT NOT NULL,
+    registry_identity_hash TEXT NOT NULL,
+    workspace_manifest_payload_json TEXT NOT NULL,
+    workspace_manifest_hash TEXT NOT NULL,
+    client_view_root_hash TEXT NOT NULL,
+    host_real_root_hash TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    UNIQUE(workspace_id, workspace_instance_id, registry_identity_hash, capture_revision),
+    UNIQUE(supersedes_capture_id),
+    UNIQUE(workspace_capture_id, workspace_id)
+);
+
+-- 不可变 task→workspace 权威关系：每个新 task.create 必须与这条 binding 在同一
+-- task-DB transaction 写入；(workspace_capture_id, workspace_id) 必须指向已验证
+-- capture。task_steps 只经 task_id 继承 workspace，禁止独立 workspace 归属。
+-- 这里 workspace_id 是 task DB 的 workspaces.id INTEGER，不是 registry 同名整数，
+-- 也不是字符串 workspace_instance_id。
+CREATE TABLE IF NOT EXISTS task_workspace_bindings (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+    workspace_binding_id TEXT NOT NULL UNIQUE,
+    workspace_capture_id TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    UNIQUE(task_id, workspace_id),
+    FOREIGN KEY(workspace_capture_id, workspace_id)
+        REFERENCES workspace_authority_captures(workspace_capture_id, workspace_id)
+);
+
+-- v54: task_loop 公共能力 promotion 权威账本（cw-role-handoff-task-loop.md §4.3 / §8.1.5）。
+-- control-plane `task_loop.public_promote` 的每次决定性结果（authorized /
+-- deterministic_error）都必须在 task-DB 同一事务追加一条 append-only 事件；
+-- 仅当事件 commit 成功后 daemon 才在内存安装 PublicPreflightPermit
+-- （不跨重启恢复；schema/rules/authority/evidence 失效立即清除）。
+-- 同一 (workspace_id, request_id) 只允许一个 canonical 参数 hash 的结果：
+-- 同 hash 只读重放，不同 hash 返回 E_REQUEST_ID_REUSE_MISMATCH，绝不覆盖。
+CREATE TABLE IF NOT EXISTS task_loop_capability_promotion_events (
+    promotion_event_id TEXT PRIMARY KEY,
+    workspace_id INTEGER NOT NULL REFERENCES workspaces(id),
+    request_id TEXT NOT NULL,
+    action_identity TEXT NOT NULL,
+    authority_id TEXT NOT NULL,
+    authority_revision INTEGER NOT NULL,
+    fencing_counter INTEGER NOT NULL,
+    internal_permit_schema_fingerprint TEXT NOT NULL,
+    internal_permit_rules_hash TEXT NOT NULL,
+    internal_permit_daemon_generation INTEGER NOT NULL,
+    evidence_id TEXT NOT NULL,
+    evidence_hash TEXT NOT NULL,
+    schema_fingerprint TEXT NOT NULL,
+    rules_hash TEXT NOT NULL,
+    runtime_binary_hash TEXT NOT NULL,
+    daemon_generation INTEGER NOT NULL,
+    params_canonicalization_version TEXT NOT NULL,
+    params_canonicalization_rules_hash TEXT NOT NULL,
+    canonical_params_hash TEXT NOT NULL,
+    durable_authorization TEXT NOT NULL CHECK(durable_authorization IN ('authorized','deterministic_error')),
+    authorization_code TEXT NOT NULL DEFAULT '',
+    authorization_message TEXT NOT NULL DEFAULT '',
+    response_or_error_json TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    UNIQUE(workspace_id, request_id, canonical_params_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_promotion_events_workspace
+    ON task_loop_capability_promotion_events(workspace_id, request_id);
+
+-- ============================================
+-- v55: Role Contract lineage/c14n（cw-role-handoff-task-loop.md §8.1.2，1B）
+-- ============================================
+-- append-only lineage：一个 (task, workspace, role) 逻辑合同的稳定身份；task 的逻辑
+-- workspace 只来自不可变 task_workspace_bindings，不是 active workspace / active_task_id。
+-- UNIQUE(task_id, workspace_id, role) 保证三元组唯一；旧 role_contracts 仅作历史兼容
+-- 来源，不能再作为 v1 授权真相源。
+CREATE TABLE IF NOT EXISTS role_contract_lineages (
+    role_contract_lineage_id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    workspace_id INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    UNIQUE(task_id, workspace_id, role),
+    FOREIGN KEY(task_id, workspace_id)
+        REFERENCES task_workspace_bindings(task_id, workspace_id)
+);
+
+-- 不可变 revision：revision 1 的 supersedes_revision_id 为 NULL；n>1 必须指向同
+-- lineage 的 n-1，否则该 lineage 及其 binding 一律 UNVERIFIED。role_contract_hash 由
+-- role-contract-c14n/v1 冻结；binding/handoff/verdict/Gate 持久化 provenance 四元组
+-- （revision_id / hash / canonicalization_version / rules_hash），不得以"当前 revision"
+-- 回读替换历史值。
+CREATE TABLE IF NOT EXISTS role_contract_revisions (
+    role_contract_revision_id TEXT PRIMARY KEY,
+    role_contract_lineage_id TEXT NOT NULL
+        REFERENCES role_contract_lineages(role_contract_lineage_id),
+    revision INTEGER NOT NULL CHECK(revision > 0),
+    supersedes_revision_id TEXT NULL,
+    canonical_payload_json TEXT NOT NULL,
+    canonicalization_version TEXT NOT NULL,
+    canonicalization_rules_hash TEXT NOT NULL,
+    role_contract_hash TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    UNIQUE(role_contract_lineage_id, revision),
+    UNIQUE(role_contract_lineage_id, supersedes_revision_id)
+);
+
+-- ============================================
+-- v56: step→Role Contract binding（cw-role-handoff-task-loop.md §8.1.4，1C）
+-- ============================================
+-- 本协议唯一的 step→Role Contract 真相源；不复用 role_contracts.step_id
+-- （历史写空字符串，无可靠绑定语义）。不可变 payload：binding_revision>1 必须
+-- 指向同一 step 的 n-1（supersedes_binding_id），最高连续 revision 才是 current
+-- binding；跨 workspace、跨 task、分叉或断链一律拒绝写入，读到即 UNVERIFIED。
+-- 写入事务必须重检 (task_id, workspace_id) task workspace binding 与
+-- role_contract_revision 三方 task/workspace/role 一致。
+CREATE TABLE IF NOT EXISTS task_step_role_contract_bindings (
+    binding_id TEXT PRIMARY KEY,
+    workspace_id INTEGER NOT NULL,
+    task_id TEXT NOT NULL,
+    step_id TEXT NOT NULL,
+    role_contract_lineage_id TEXT NOT NULL,
+    role_contract_revision_id TEXT NOT NULL,
+    role_contract_revision INTEGER NOT NULL CHECK(role_contract_revision > 0),
+    role_contract_hash TEXT NOT NULL,
+    canonicalization_version TEXT NOT NULL,
+    canonicalization_rules_hash TEXT NOT NULL,
+    binding_revision INTEGER NOT NULL CHECK(binding_revision > 0),
+    supersedes_binding_id TEXT NULL,
+    created_by TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL,
+    UNIQUE(workspace_id, task_id, step_id, binding_revision),
+    FOREIGN KEY(task_id, workspace_id)
+        REFERENCES task_workspace_bindings(task_id, workspace_id),
+    FOREIGN KEY(role_contract_revision_id)
+        REFERENCES role_contract_revisions(role_contract_revision_id)
+);
+
+-- 固定索引：(workspace_id, task_id, step_id, binding_revision DESC) 定位 current
+-- binding；(role_contract_revision_id) 供 revision→binding 反查。
+CREATE INDEX IF NOT EXISTS idx_step_binding_current
+    ON task_step_role_contract_bindings(
+        workspace_id, task_id, step_id, binding_revision DESC
+    );
+
+CREATE INDEX IF NOT EXISTS idx_step_binding_revision_id
+    ON task_step_role_contract_bindings(role_contract_revision_id);
+
+-- ============================================
+-- v57: Verdict/Gate schema 与 legacy fail-closed（cw-role-handoff-task-loop.md §4.2/§8.1，1E）
+-- ============================================
+-- verdict_normalization_rules 是具体的 append-only registry（非 JSON 文本约定）：
+-- 'verdict-normalization/v1' 初始 row 由 1E 以 rules-c14n/v1 原子插入/校验。Task Contract、
+-- Gate decision 与 verdict projection 均保存该 row 的 version/hash；首次 evaluation 禁止
+-- 使用已撤销 row，历史读取只能按原 row 重放。缺 row、hash 不匹配或 revoked 时保持
+-- UNVERIFIED，不以"最新"规则替代（§4.2 / §8.1.3）。
+CREATE TABLE IF NOT EXISTS verdict_normalization_rules (
+    verdict_rule_set_id TEXT PRIMARY KEY,
+    normalization_version TEXT NOT NULL UNIQUE,
+    rules_payload_json TEXT NOT NULL,
+    rules_c14n_version TEXT NOT NULL,
+    rules_hash TEXT NOT NULL UNIQUE,
+    created_by TEXT NOT NULL,
+    authoritative_created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS verdict_normalization_rule_revocations (
+    revocation_id TEXT PRIMARY KEY,
+    verdict_rule_set_id TEXT NOT NULL UNIQUE
+        REFERENCES verdict_normalization_rules(verdict_rule_set_id),
+    reason TEXT NOT NULL,
+    revoked_by TEXT NOT NULL,
+    authoritative_revoked_at TEXT NOT NULL
+);
 """
 
 # Schema 版本号（用于迁移判断）
@@ -1647,7 +1976,49 @@ CREATE INDEX IF NOT EXISTS idx_task_lease_events_task ON task_lease_events(works
 #      task_leases 只存 token hash（sha256），时间一律权威时钟，fencing counter 单调递增，
 #      partial UNIQUE 索引保证同 task+role 只有一个当前 lease；
 #      task_lease_events append-only 审计，raw token 永不落库。
-SCHEMA_VERSION = 47
+# v47: Windows daemon 协同 TaskCollabStore 权威表（task_events / agent_registrations）
+# v48: W2.3 复审 P1-1 — guardrail_findings 增加 workspace_id 归属列 + 索引。
+#      修复 query.issues 的 guardrail 子查询缺少 workspace 过滤导致的跨 workspace
+#      数据泄露（同 file_path + 同 symbol_hash 命中彼此 finding）。
+#      旧数据（workspace_id=0）无法安全归属：查询层 fail-closed，migration 将
+#      open 旧行 status 置为 'orphaned'，禁止静默归入当前 workspace。
+# v49: 复审 P0-1 修复 — v48 版本号被陈旧二进制抢先打标（内嵌 schema 无
+#      workspace_id 列），且 initialize_or_migrate 在 current_version==expected_version
+#      时只校验表名不校验列，导致主库永久停留"v48 无列"状态。bump v49 强制走
+#      _migrate_v48_to_v49 迁移路径补齐列；storage.rs 短路路径增加列级校验，
+#      防止未来再出现"版本已达成但缺列"静默放行。
+# v50: Agent Identity + Role Contract（agent-task-contract-design.md §4.1/4.2）—
+#      agent_registrations 扩展 identity 最小字段；新增 role_contracts 冻结合同表。
+#      用于 A2 未注册身份 fail-closed、A3 角色独立性门禁与 skill/prompt hash 存证。
+# v51: Workspace runtime policy（self_bootstrap / standard），用于将 runtime
+#      deployment gate 限定在 CallWarden 自举项目，不影响普通项目。
+# v52: Task-domain operation store（cw-role-handoff-task-loop.md §8.1.3/§8.1.4）—
+#      canonicalization_rule_sets / canonicalization_rule_revocations 规则 registry
+#      与 task_operation_ledger 权威 operation/dedup ledger 三张表；1D1 独占
+#      ('operation_params', 'operation-params-c14n/v1') 初始 rule row。
+# v53: Task workspace authority binding（§8.1.1，1A）— workspace_authority_captures
+#      与不可变 task_workspace_bindings 两表；1A 独占 ('workspace_capture',
+#      'workspace-capture-c14n/v1') 初始 rule row。
+# v54: task_loop 公共能力 promotion（§4.3 / §8.1.5，1D3B）—
+#      task_loop_capability_promotion_events append-only 权威账本；promotion 每次
+#      决定性结果（authorized / deterministic_error）先 commit 审计事件，成功后
+#      daemon 才在内存安装 PublicPreflightPermit（不跨重启恢复）。
+# v55: Role Contract lineage/c14n（§8.1.2，1B）— role_contract_lineages 与
+#      role_contract_revisions 两表 + ('role_contract', 'role-contract-c14n/v1')
+#      初始 rule row；旧 role_contracts 仅作历史兼容来源，legacy migration 只
+#      在无歧义时按 (task_id, role) 回填有 provenance 的 lineage/revision 副本。
+# v56: step→Role Contract binding（§8.1.4，1C）— task_step_role_contract_bindings
+#      表 + 固定索引；本协议唯一 step→Role Contract 真相源，不复用
+#      role_contracts.step_id；写入重检 task/workspace/revision 三方一致。
+# v57: Verdict/Gate schema 与 legacy fail-closed（§4.2/§8.1，1E）—
+#      verdict_normalization_rules / verdict_normalization_rule_revocations 两表 +
+#      ('verdict-normalization/v1') 初始 rule row；task_contract_revisions 增加
+#      normalization_version/normalization_rules_hash 绑定；task_verdict_events /
+#      task_gate_decisions 增加 Role Contract 绑定 provenance 列（step_id、lineage/
+#      revision id/revision/hash、canonicalization version/hash）与所用
+#      normalization version/hash；历史 verdict/gate/contract 无绑定只读显示
+#      UNVERIFIED，不回填改写。
+SCHEMA_VERSION = 57
 
 
 # ============================================
@@ -1770,3 +2141,6 @@ GUARDRAIL_ACTION_WARN = "warn"
 GUARDRAIL_STATUS_OPEN = "open"
 GUARDRAIL_STATUS_RESOLVED = "resolved"
 GUARDRAIL_STATUS_WONTFIX = "wontfix"
+# v48：旧数据无 workspace 归属时 migration 将 open 旧行置为 orphaned，
+# 查询层 fail-closed（不返回 orphan 行），禁止静默归入当前 workspace。
+GUARDRAIL_STATUS_ORPHANED = "orphaned"
