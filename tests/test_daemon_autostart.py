@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from server.daemon_autostart import (
+from callwarden.server.daemon_autostart import (
     BACKOFF_BASE,
     BACKOFF_FACTOR,
     BACKOFF_MAX,
@@ -43,7 +43,7 @@ class TestEnsureDaemonBoundedWindow:
 
     def test_returns_none_when_window_expires(self):
         """窗口耗尽且无 daemon 时返回 None。"""
-        with mock.patch("server.daemon_autostart._start_daemon_platform", return_value=False):
+        with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=False):
             start = time.monotonic()
             result = ensure_daemon("/nonexistent/path.sock", window=0.5)
             elapsed = time.monotonic() - start
@@ -95,7 +95,7 @@ class TestEnsureDaemonBoundedWindow:
             t = threading.Thread(target=delayed_listen, daemon=True)
             t.start()
 
-            with mock.patch("server.daemon_autostart._start_daemon_platform", return_value=True):
+            with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=True):
                 conn = ensure_daemon(sock_path, window=3.0)
 
             assert conn is not None
@@ -135,7 +135,7 @@ class TestEnsureDaemonBoundedWindow:
             # 实际不睡，加速测试
             original_sleep(min(duration, 0.01))
 
-        with mock.patch("server.daemon_autostart._start_daemon_platform", return_value=False):
+        with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=False):
             with mock.patch("time.sleep", side_effect=mock_sleep):
                 ensure_daemon("/nonexistent.sock", window=1.0, backoff_base=0.1)
 
@@ -146,17 +146,24 @@ class TestEnsureDaemonBoundedWindow:
 
     def test_window_is_configurable(self):
         """窗口大小可通过参数配置。"""
-        with mock.patch("server.daemon_autostart._start_daemon_platform", return_value=False):
+        with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=False):
             start = time.monotonic()
             ensure_daemon("/nonexistent.sock", window=0.3)
             elapsed = time.monotonic() - start
 
         assert elapsed < 0.8  # 短窗口应快速返回
 
+    def test_tcp_bridge_does_not_start_local_daemon(self):
+        """bridge 不可达时也不能在 WSL 误启本地 systemd daemon。"""
+        launches = []
+        with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", side_effect=lambda endpoint: launches.append(endpoint)):
+            ensure_daemon("tcp://127.0.0.1:1", window=0.15, backoff_base=0.01)
+        assert launches == []
+
     def test_uses_client_clock_not_authoritative(self):
         """确认使用 time.monotonic（客户端时钟），不依赖 Authoritative_Clock。"""
         # ensure_daemon 内部使用 time.monotonic，不调用任何 daemon RPC
-        with mock.patch("server.daemon_autostart._start_daemon_platform", return_value=False):
+        with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=False):
             with mock.patch("time.monotonic", wraps=time.monotonic) as mock_mono:
                 ensure_daemon("/nonexistent.sock", window=0.3)
                 # time.monotonic 应被调用（用于 deadline 计算）
@@ -203,7 +210,7 @@ class TestStartDaemonWindows:
     """Windows 唤起：分离进程 [Req 14.24]。"""
 
     @mock.patch("sys.platform", "win32")
-    @mock.patch("server.daemon_autostart._find_daemon_binary", return_value="/usr/bin/cw_daemon.exe")
+    @mock.patch("callwarden.server.daemon_autostart._find_daemon_binary", return_value="/usr/bin/cw_daemon.exe")
     @mock.patch("subprocess.Popen")
     def test_starts_detached_process(self, mock_popen, mock_find):
         """Windows 使用 DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP 标志。"""
@@ -219,7 +226,7 @@ class TestStartDaemonWindows:
         assert flags & DETACHED_PROCESS
         assert flags & CREATE_NEW_PROCESS_GROUP
 
-    @mock.patch("server.daemon_autostart._find_daemon_binary", return_value=None)
+    @mock.patch("callwarden.server.daemon_autostart._find_daemon_binary", return_value=None)
     def test_returns_false_when_binary_not_found(self, mock_find):
         """找不到 daemon 二进制时返回 False。"""
         result = _start_daemon_windows(r"\\.\pipe\callwarden-test")
@@ -353,7 +360,7 @@ class TestGetDefaultEndpoint:
     @mock.patch("callwarden.server.daemon_autostart.sys.platform", "win32")
     def test_rpc_client_uses_windows_endpoint(self, mock_sid1, mock_sid2):
         """RPC client 默认 endpoint 必须与 autostart 使用同一命名管道。"""
-        from server.daemon_client import DaemonClient, UnixDaemonRpcClient
+        from callwarden.server.daemon_client import DaemonClient, UnixDaemonRpcClient
 
         client = UnixDaemonRpcClient()
         assert client.socket_path == r"\\.\pipe\callwarden-S-1-5-21-456"
@@ -376,7 +383,7 @@ class TestConfigConstants:
         with mock.patch.dict(os.environ, {}, clear=True):
             # 重新加载模块以获取无环境变量时的默认值
             import importlib
-            import server.daemon_autostart as mod
+            import callwarden.server.daemon_autostart as mod
             # DEFAULT_WAIT_WINDOW 在模块加载时读取环境变量
             # 这里直接验证常量值
             assert mod.DEFAULT_WAIT_WINDOW == 10.0 or "CW_DAEMON_AUTOSTART_WINDOW" in os.environ
@@ -445,7 +452,7 @@ class TestDaemonClientAutoRoute:
         client._remote_workspace_id = "ws-delayed"
         client._remote_snapshot_ready = True
         with mock.patch("callwarden.server.daemon_client.get_daemon_mode", return_value="auto"):
-            with mock.patch("server.daemon_autostart._start_daemon_platform", return_value=True):
+            with mock.patch("callwarden.server.daemon_autostart._start_daemon_platform", return_value=True):
                 result = client.get_stats(db_path=None)
 
         assert ready.is_set()

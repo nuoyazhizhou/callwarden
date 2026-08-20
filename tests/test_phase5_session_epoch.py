@@ -717,7 +717,9 @@ class TestDaemonParsePublishPipeline:
                 ws_conn=conn,
                 cas_conn=cas_conn,
             )
-            assert resp["status"] == "committed"
+            # C6（S2）：真实 CAS 主链下 ready 状态 committed；失败状态被
+            # generation 保护拦截为 blocked（不推进 latest_committed_generation）。
+            assert resp["status"] in ("committed", "blocked"), resp
             # 应该有 cas_key 和 cas_state
             assert "cas_key" in resp
             assert "cas_state" in resp
@@ -726,6 +728,13 @@ class TestDaemonParsePublishPipeline:
                 "ready_published", "parse_failed", "ready_cache_hit",
                 "publish_failed", "no_cas_conn",
             )
+            if resp["cas_state"] in ("ready_published", "ready_cache_hit"):
+                assert resp["status"] == "committed"
+            elif resp["cas_state"] != "no_cas_conn":
+                # C6：真实 CAS 主链下失败状态 → blocked
+                assert resp["status"] == "blocked"
+                protection = resp.get("protection") or {}
+                assert protection.get("blocked") is True
         finally:
             os.unlink(tmp_path)
 

@@ -89,7 +89,8 @@ def test_enterprise_mode_never_silently_falls_back(monkeypatch, tmp_path):
         "callwarden.server.daemon_client.get_daemon_mode", lambda: "enterprise"
     )
     client = DaemonClient(socket_path=missing_socket)
-    with pytest.raises(DaemonUnavailableError, match="enterprise 模式要求 daemon"):
+    # 规则 35：不断言单一自然语言全文，只匹配稳定前缀 + 结构化状态
+    with pytest.raises(DaemonUnavailableError, match="enterprise 模式要求"):
         client.get_stats(db_path=str(tmp_path / "callwarden.db"))
     assert client.sql_fallbacks == 0
 

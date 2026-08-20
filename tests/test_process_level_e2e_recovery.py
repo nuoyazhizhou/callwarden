@@ -142,11 +142,36 @@ class TestProcessLevelE2ERecovery:
 
         e2e_root = tmp_path / "daemon"
         e2e_root.mkdir()
-        socket_path = e2e_root / "callwarden.sock"
+        # pytest 的临时目录通常是 0700，非 root peer 无法穿透到 socket；
+        # socket 放在公共 tmp，registry/snapshot 数据仍留在隔离 e2e_root。
+        socket_path = Path(tempfile.gettempdir()) / f"callwarden-w2-{os.getpid()}.sock"
         registry_path = e2e_root / "registry.db"
         data_root = e2e_root / "data"
         home = e2e_root / "home"
         home.mkdir()
+        # 这个测试验证 daemon 的 SO_PEERCRED/workspace ACL，而不是发行包的
+        # systemd 用户组安装流程。临时 endpoint 显式使用 0666，避免 WSL/CI
+        # 中不存在 callwarden-clients 组时，内核权限在进入业务 ACL 前就拒绝
+        # 合成 UID；生产默认仍由 DaemonConfig 保持 0660 + callwarden-clients。
+        daemon_config = e2e_root / "daemon-test.json"
+        daemon_config.write_text(
+            json.dumps(
+                {
+                    "max_workers": 4,
+                    "request_timeout_secs": 30,
+                    "socket_mode": 0o666,
+                    "socket_group": "",
+                    "snapshot_cache_capacity": 8,
+                    "codegraph_db_path_template": str(
+                        data_root / "workspaces" / "{workspace_instance_id}" / "codegraph.db"
+                    ),
+                    "data_root": str(data_root),
+                    "registry_db_path": str(registry_path),
+                    "socket_path": str(socket_path),
+                }
+            ),
+            encoding="utf-8",
+        )
         env = os.environ.copy()
         env.update({
             "HOME": str(home),
@@ -159,7 +184,7 @@ class TestProcessLevelE2ERecovery:
         log_path = e2e_root / "daemon.log"
         with log_path.open("w", encoding="utf-8") as log:
             daemon = subprocess.Popen(
-                [daemon_bin, "--socket", str(socket_path), "--registry", str(registry_path), "serve"],
+                [daemon_bin, "--config", str(daemon_config), "serve"],
                 env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -192,8 +217,11 @@ class TestProcessLevelE2ERecovery:
             assert workspace_b["owner_uid"] == uid_b
             assert workspace_a["workspace_instance_id"] != workspace_b["workspace_instance_id"]
 
-            db_a = ws_a / "snapshot.db"
-            db_b = ws_b / "snapshot.db"
+            # publish_snapshot 在 UID 子进程内打开 DB 并通过 SCM_RIGHTS 发送 FD；
+            # pytest 私有临时目录的父路径是 0700，不能让另一个 UID 穿透。
+            # 将仅用于本次发布的 DB 放到公共 tmp，workspace 根目录仍保持隔离。
+            db_a = Path(tempfile.gettempdir()) / f"callwarden-w2-snapshot-a-{os.getpid()}.db"
+            db_b = Path(tempfile.gettempdir()) / f"callwarden-w2-snapshot-b-{os.getpid()}.db"
             self._create_snapshot_db(db_a, workspace_a["workspace_id"], ws_a, "app.stable")
             self._create_snapshot_db(db_b, workspace_b["workspace_id"], ws_b, "app.product_a_dirty")
             os.chown(db_a, uid_a, uid_a)
@@ -235,6 +263,20 @@ class TestProcessLevelE2ERecovery:
             if daemon.poll() is None:
                 daemon.kill()
                 daemon.wait(timeout=10)
+            for public_db in (
+                Path(tempfile.gettempdir()) / f"callwarden-w2-snapshot-a-{os.getpid()}.db",
+                Path(tempfile.gettempdir()) / f"callwarden-w2-snapshot-b-{os.getpid()}.db",
+            ):
+                try:
+                    public_db.unlink()
+                except FileNotFoundError:
+                    pass
+            try:
+                socket_path.unlink()
+            except UnboundLocalError:
+                pass
+            except FileNotFoundError:
+                pass
 
     def test_durable_log_crash_recovery_flow(self):
         """测试 Staging Log 写入未 commit，在 crash 恢复后能够重新拉取 pending 条目。"""

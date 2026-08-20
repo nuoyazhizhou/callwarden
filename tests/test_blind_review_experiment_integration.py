@@ -38,6 +38,7 @@ from experiments.blind_review_evaluator import (
     is_nontrivial_code_change, SampleRecord, EvaluatorError,
     EvaluatorErrorCode,
 )
+from callwarden.cli.main import _handle_experiment
 
 
 # ===================================================================
@@ -405,3 +406,153 @@ class TestJsonlIntegration:
         assert len(records) == 1
         assert records[0]["non_product_evidence"] is True
         assert records[0]["record_type"] == "blind_view"
+
+
+class TestExperimentAdmitCliGuards:
+    """命令级验证纳样门禁，避免只测底层 builder 而漏掉真实 CLI 接线。"""
+
+    @staticmethod
+    def _prepare_batch(tmp_path, monkeypatch, seed=17):
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        config_path = tmp_path / ".callwarden" / "experiments" / "batch_config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config = Experiment_Batch_Config(path=str(config_path))
+        batch = ExperimentBatch(
+            batch_id="B-cli-guard",
+            created_at="2026-01-01T00:00:00+00:00",
+            protocol=build_default_protocol(seed),
+        )
+        batch.lock_protocol()
+        config.put_batch(batch)
+        config.save()
+        return batch
+
+    @staticmethod
+    def _task(db, title):
+        return db.task_create(title=title, description="CLI guard task", steps=[])
+
+    @staticmethod
+    def _find_key(protocol, assignment):
+        for i in range(1000):
+            key = f"profile=code_change;risk=high;diff=medium;language=python;pair={i}"
+            if protocol.assign_group(key) == assignment:
+                return key
+        raise AssertionError(f"could not find deterministic {assignment} key")
+
+    def test_control_admit_rejects_blank_notes(self, temp_db, tmp_path, monkeypatch, capsys):
+        batch = self._prepare_batch(tmp_path, monkeypatch)
+        task_id = self._task(temp_db, "Control blank notes")
+        key = self._find_key(batch.protocol, GroupAssignment.CONTROL)
+        notes = tmp_path / "blank-notes.txt"
+        notes.write_text("   \r\n", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_experiment([
+                "admit", task_id, batch.batch_id, "--strata", key,
+                "--notes-file", str(notes), "--json",
+            ], temp_db)
+        assert exc_info.value.code == 1
+        assert "EXP_CONTROL_NOTES_MISSING" in capsys.readouterr().out
+
+    def test_admit_requires_scope_contract(self, temp_db, tmp_path, monkeypatch, capsys):
+        """新批次纳样没有范围契约时必须在写 JSONL 前拒绝。"""
+        batch = self._prepare_batch(tmp_path, monkeypatch)
+        task_id = self._task(temp_db, "Missing scope contract")
+        key = self._find_key(batch.protocol, GroupAssignment.TREATMENT)
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_experiment([
+                "admit", task_id, batch.batch_id, "--strata", key, "--json",
+            ], temp_db)
+        assert exc_info.value.code == 1
+        assert "EXP_SCOPE_CONTRACT_REQUIRED" in capsys.readouterr().out
+
+    def test_admit_rejects_outside_scope_before_blind_view_write(
+            self, temp_db, tmp_path, monkeypatch, capsys):
+        """scope-contract 的越界审计路径不能先写入 blind view 再失败。"""
+        batch = self._prepare_batch(tmp_path, monkeypatch)
+        task_id = self._task(temp_db, "Inspector scope drift")
+        key = self._find_key(batch.protocol, GroupAssignment.TREATMENT)
+        for file_path in ("release/inspect_pyinstaller_bundle.py", "rust_ext/src/lib.rs"):
+            temp_db.conn.execute(
+                "INSERT INTO change_audit "
+                "(task_id, step_id, file_path, hash_before, hash_after, author, timestamp, diff) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (task_id, "", file_path, "before", "after", "test", 0.0, "evidence"),
+            )
+        temp_db.conn.commit()
+        contract = tmp_path / "scope-contract.json"
+        contract.write_text(json.dumps({
+            "task_id": task_id,
+            "profile": "review",
+            "required_paths": ["release/inspect_pyinstaller_bundle.py"],
+            "allowed_paths": ["release/"],
+        }), encoding="utf-8")
+        jsonl_path = tmp_path / ".callwarden" / "experiments" / f"{batch.batch_id}.jsonl"
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_experiment([
+                "admit", task_id, batch.batch_id, "--strata", key,
+                "--scope-contract", str(contract), "--json",
+            ], temp_db)
+        assert exc_info.value.code == 1
+        assert "EXP_SCOPE_OUTSIDE_ALLOWED_PATHS" in capsys.readouterr().out
+        assert not jsonl_path.exists()
+
+    def test_treatment_admit_rejects_notes(self, temp_db, tmp_path, monkeypatch):
+        batch = self._prepare_batch(tmp_path, monkeypatch)
+        task_id = self._task(temp_db, "Treatment notes leak")
+        key = self._find_key(batch.protocol, GroupAssignment.TREATMENT)
+        notes = tmp_path / "notes.txt"
+        notes.write_text("real notes", encoding="utf-8")
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_experiment([
+                "admit", task_id, batch.batch_id, "--strata", key,
+                "--notes-file", str(notes), "--json",
+            ], temp_db)
+        assert exc_info.value.code == 1
+
+    def test_control_admit_accepts_nonblank_notes(self, temp_db, tmp_path, monkeypatch, capsys):
+        batch = self._prepare_batch(tmp_path, monkeypatch)
+        task_id = self._task(temp_db, "Control valid notes")
+        key = self._find_key(batch.protocol, GroupAssignment.CONTROL)
+        notes = tmp_path / "notes.txt"
+        notes.write_text("真实实现说明", encoding="utf-8")
+        temp_db.conn.execute(
+            "INSERT INTO change_audit "
+            "(task_id, step_id, file_path, hash_before, hash_after, author, timestamp, diff) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, "", "experiments/blind_review_protocol.py", "before", "after",
+             "test", 0.0, "implementation evidence"),
+        )
+        temp_db.conn.commit()
+        scope_contract = tmp_path / "scope-contract.json"
+        scope_contract.write_text(json.dumps({
+            "task_id": task_id,
+            "profile": "code_change",
+            "required_paths": ["experiments/blind_review_protocol.py"],
+            "allowed_paths": ["experiments/**"],
+        }), encoding="utf-8")
+        assert _handle_experiment([
+            "admit", task_id, batch.batch_id, "--strata", key,
+            "--notes-file", str(notes), "--scope-contract", str(scope_contract), "--json",
+        ], temp_db) is True
+        output = capsys.readouterr().out
+        assert '"group": "control"' in output
+        assert '"task_id"' in output
+
+    def test_report_surfaces_malformed_metrics_and_blocks(self, temp_db, tmp_path, monkeypatch, capsys):
+        batch = self._prepare_batch(tmp_path, monkeypatch)
+        jsonl_path = tmp_path / ".callwarden" / "experiments" / f"{batch.batch_id}.jsonl"
+        writer = ExperimentJsonlWriter(str(jsonl_path))
+        writer.append({
+            "record_type": "review_metrics",
+            "task_id": "T-malformed",
+            "batch_id": batch.batch_id,
+            "group": "control",
+            "verified_true_positives": "not-an-int",
+        })
+        assert _handle_experiment(["report", batch.batch_id, "--json"], temp_db) is True
+        report = json.loads(capsys.readouterr().out)
+        assert report["view_integrity"]["passed"] is False
+        assert any(r["condition"] == "malformed_review_metrics"
+                   for r in report["view_integrity"]["reasons"])
+        assert report["g0_decision"]["eligible_for_p1"] is False

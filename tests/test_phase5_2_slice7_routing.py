@@ -104,11 +104,19 @@ def test_d11_routing():
     finally:
         os.unlink(tmp_path)
 
-    # D11.3: run_client_mode 非 Linux 平台返回 2
-    name = "D11.3 run_client_mode returns 2 on non-Linux"
+    # D11.3：Windows client mode 已启用，并路由到 Python daemon client。
+    name = "D11.3 Windows client mode 路由到 Python"
     with mock.patch("sys.platform", "win32"):
-        rc = main_mod.run_client_mode(["ping"])
-        ok = rc == 2
+        called = {"python_called": False}
+
+        def fake_windows_run_daemon_command(argv, include_serve=True):
+            called["python_called"] = True
+            return 0
+
+        with mock.patch("callwarden.cli.daemon_commands.run_daemon_command",
+                        fake_windows_run_daemon_command):
+            rc = main_mod.run_client_mode(["ping"])
+        ok = rc == 0 and called["python_called"]
         results.append((name, ok))
         print(f"  {'PASS' if ok else 'FAIL'} {name}: rc={rc}")
 
@@ -182,6 +190,8 @@ def test_d11_routing():
                 called["python_called"] = True
                 return 0
 
+            # 这是路由差分测试，不应依赖本机是否正在运行 daemon；
+            # 真实 daemon round-trip 由 W2.3/W2.4 进程级 E2E 覆盖。
             with mock.patch("callwarden.cli.daemon_commands.run_daemon_command",
                             fake_run_daemon_command):
                 rc = main_mod.run_client_mode(["ping"])

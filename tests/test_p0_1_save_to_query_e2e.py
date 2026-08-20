@@ -322,9 +322,15 @@ class TestStep3DaemonHandleRefreshIntegration:
 
     def _make_cas_db_with_content(self, cas_key: str,
                                   content_hash: str, symbols: list,
-                                  raw_calls: list) -> sqlite3.Connection:
-        """构造含内容的 CAS DB。"""
-        conn = sqlite3.connect(":memory:")
+                                  raw_calls: list,
+                                  db_path: str = "") -> sqlite3.Connection:
+        """构造含内容的 CAS DB（db_path 为空时用 :memory:）。
+
+        C4：daemon refresh 的 merge 已切 Rust facade 短连接，CAS 必须落文件
+        才能被真实 Rust 路径打开，否则 cas_db_path 探测为空导致 merge 走
+        拒绝分支。
+        """
+        conn = sqlite3.connect(db_path or ":memory:")
         conn.row_factory = sqlite3.Row
         init_cas_schema(conn)
         conn.execute(
@@ -373,7 +379,8 @@ class TestStep3DaemonHandleRefreshIntegration:
 
         ws_conn = self._make_ws_conn(workspace_id)
         cas_conn = self._make_cas_db_with_content(
-            cas_key, content_hash, symbols, raw_calls
+            cas_key, content_hash, symbols, raw_calls,
+            db_path=str(tmp_path / "cas.db"),
         )
         # CodeGraph DB 文件路径（tmp_path 隔离）
         cg_db_path = str(tmp_path / "test_codegraph.db")
@@ -420,6 +427,13 @@ class TestStep3DaemonHandleRefreshIntegration:
             }
         mock_module.canonicalize_source_py = mock_canonicalize_source_py
         mock_module.parse_canonical_bytes_py = mock_parse_canonical_bytes_py
+        # C4：merge 走真实 Rust facade（CAS 已落文件），避免 mock 破坏 P0-1
+        # 数据链闭合——真实 merge 才能让 CodeGraph DB 断言成立。
+        try:
+            from callwarden_core import cas_merge_to_codegraph as _real_merge
+            mock_module.cas_merge_to_codegraph = _real_merge
+        except ImportError:
+            pass
         sys.modules["callwarden_core"] = mock_module
 
         # 直接调用 daemon_handle_refresh
@@ -496,8 +510,10 @@ class TestStep3DaemonHandleRefreshIntegration:
     def test_refresh_failure_does_not_mark_applied(self, tmp_path):
         """refresh 失败时不应追加 staging entry（§8.1 第 1 条）。
 
-        构造一个会让 merge 失败的场景（codegraph_db_path 不存在），
-        验证 daemon_handle_refresh 抛异常而非返回 committed。
+        C5 C2（2026-08-08）：对齐 Rust merge_ok 门控——Rust 可用但 merge
+        数据失败时不抛异常，返回 error merge_result（status=committed 表示
+        CAS 层已提交），latest_committed_generation 不推进，同 seq 可重试。
+        上层据此 append staging 为 pending 但不 replicate。
         """
         workspace_id = 200
         cas_key = "fail_cas_v1"
@@ -509,10 +525,11 @@ class TestStep3DaemonHandleRefreshIntegration:
 
         ws_conn = self._make_ws_conn(workspace_id)
         cas_conn = self._make_cas_db_with_content(
-            cas_key, content_hash, symbols, []
+            cas_key, content_hash, symbols, [],
+            db_path=str(tmp_path / "cas_fail.db"),
         )
         # CodeGraph DB 路径不存在（构造失败场景）
-        # 但 sqlite3.connect 会自动创建空 DB，所以需要 mock merge_cas_to_codegraph 抛异常
+        # 但 sqlite3.connect 会自动创建空 DB，所以需要 mock cas_merge_to_codegraph 抛异常
         import sys
         # 保存原模块对象，finally 中恢复（修复 sys.modules 污染）
         original_module = sys.modules.get("callwarden_core")
@@ -531,14 +548,11 @@ class TestStep3DaemonHandleRefreshIntegration:
                          "symbol_hash": "fn_hash"}],
             "raw_calls": [], "module_path": "m", "content_hash": h,
         }
+        # C4：mock Rust facade merge 抛异常，模拟生产 merge 失败
+        def _fail_merge(**kwargs):
+            raise RuntimeError("simulated merge failure")
+        mock_module.cas_merge_to_codegraph = _fail_merge
         sys.modules["callwarden_core"] = mock_module
-
-        # Mock merge_cas_to_codegraph 抛异常
-        from callwarden.db import db_cas_merge
-        original_merge = db_cas_merge.merge_cas_to_codegraph
-        db_cas_merge.merge_cas_to_codegraph = lambda **kwargs: (_ for _ in ()).throw(
-            Exception("simulated merge failure")
-        )
 
         msg = {
             "rel_path": "m.py",
@@ -559,17 +573,27 @@ class TestStep3DaemonHandleRefreshIntegration:
         cg_init_conn.close()
 
         try:
-            with pytest.raises(Exception, match="simulated merge failure"):
-                daemon_handle_refresh(
-                    peer_uid=1000,
-                    workspace_id=workspace_id,
-                    msg=msg,
-                    ws_conn=ws_conn,
-                    cas_conn=cas_conn,
-                    canonical_bytes=canonical_bytes,
-                    codegraph_db_path=cg_db_path_valid,
-                    workspace_root_path=str(tmp_path),
-                )
+            # C5 C2：merge 数据失败不再抛异常，返回 error merge_result
+            result = daemon_handle_refresh(
+                peer_uid=1000,
+                workspace_id=workspace_id,
+                msg=msg,
+                ws_conn=ws_conn,
+                cas_conn=cas_conn,
+                canonical_bytes=canonical_bytes,
+                codegraph_db_path=cg_db_path_valid,
+                workspace_root_path=str(tmp_path),
+            )
+            assert result["status"] == "committed", (
+                f"CAS 层已提交，status 应为 committed，实际: {result}"
+            )
+            merge_info = result.get("merge") or {}
+            assert merge_info.get("merge_status") == "error", (
+                f"merge 失败应返回 merge_status=error，实际: {merge_info}"
+            )
+            assert merge_info.get("error"), (
+                f"error merge_result 应携带 error 详情，实际: {merge_info}"
+            )
 
             # P0-2 整改（2026-07-22）：step 4（committed_generation）移到 step 5（merge）之后，
             # merge 失败时 latest_committed_generation 不应被提交。
@@ -585,7 +609,6 @@ class TestStep3DaemonHandleRefreshIntegration:
                 "merge 失败后 latest_committed_generation 不应被提交（P0-2 顺序调整）"
             )
         finally:
-            db_cas_merge.merge_cas_to_codegraph = original_merge
             # 恢复原模块对象（修复污染：原实现直接 pop 导致后续测试重新 import 失败）
             if original_module is not None:
                 sys.modules["callwarden_core"] = original_module
@@ -612,7 +635,8 @@ class TestStep3DaemonHandleRefreshIntegration:
 
         ws_conn = self._make_ws_conn(workspace_id)
         cas_conn = self._make_cas_db_with_content(
-            cas_key, content_hash, symbols, []
+            cas_key, content_hash, symbols, [],
+            db_path=str(tmp_path / "cas_retry.db"),
         )
         canonical_bytes = b"# test\ndef fn():\n    pass\n"
 
@@ -634,6 +658,17 @@ class TestStep3DaemonHandleRefreshIntegration:
                          "symbol_hash": "fn_hash"}],
             "raw_calls": [], "module_path": "m", "content_hash": h,
         }
+        # C4：第一次 merge 失败（模拟 Rust facade 异常），第二次转发真实 Rust
+        # facade 完成 merge——验证 merge 失败后同 seq 重试不判 stale（P0-2）。
+        from callwarden_core import cas_merge_to_codegraph as _real_merge
+        merge_fail = {"active": True}
+
+        def _flaky_merge(**kwargs):
+            if merge_fail["active"]:
+                raise RuntimeError("simulated merge failure (attempt 1)")
+            return _real_merge(**kwargs)
+
+        mock_module.cas_merge_to_codegraph = _flaky_merge
         sys.modules["callwarden_core"] = mock_module
 
         # 初始化 CodeGraph DB schema
@@ -644,13 +679,6 @@ class TestStep3DaemonHandleRefreshIntegration:
         cg_init_conn.commit()
         cg_init_conn.close()
 
-        # 第一次：mock merge 失败
-        from callwarden.db import db_cas_merge
-        original_merge = db_cas_merge.merge_cas_to_codegraph
-        db_cas_merge.merge_cas_to_codegraph = lambda **kwargs: (_ for _ in ()).throw(
-            Exception("simulated merge failure (attempt 1)")
-        )
-
         msg = {
             "rel_path": "m.py",
             "agent_session_id": "test-session",
@@ -659,19 +687,22 @@ class TestStep3DaemonHandleRefreshIntegration:
             "abs_path": str(tmp_path / "m.py"),
         }
 
+        # 第一次：merge 失败（Rust facade 抛异常 → C5 C2 返回 error merge_result）
         try:
-            # 第一次：merge 失败，异常抛出
-            with pytest.raises(Exception, match="simulated merge failure"):
-                daemon_handle_refresh(
-                    peer_uid=1000,
-                    workspace_id=workspace_id,
-                    msg=msg,
-                    ws_conn=ws_conn,
-                    cas_conn=cas_conn,
-                    canonical_bytes=canonical_bytes,
-                    codegraph_db_path=cg_db_path,
-                    workspace_root_path=str(tmp_path),
-                )
+            # 第一次：merge 失败，返回 error merge_result（不抛异常）
+            result1 = daemon_handle_refresh(
+                peer_uid=1000,
+                workspace_id=workspace_id,
+                msg=msg,
+                ws_conn=ws_conn,
+                cas_conn=cas_conn,
+                canonical_bytes=canonical_bytes,
+                codegraph_db_path=cg_db_path,
+                workspace_root_path=str(tmp_path),
+            )
+            assert result1.get("merge", {}).get("merge_status") == "error", (
+                f"第一次 merge 失败应返回 merge_status=error，实际: {result1}"
+            )
 
             # 验证 latest_committed_generation 未提交
             row = ws_conn.execute(
@@ -682,8 +713,8 @@ class TestStep3DaemonHandleRefreshIntegration:
             assert row is not None
             assert row["latest_committed_generation"] == ""
 
-            # 恢复 merge 函数
-            db_cas_merge.merge_cas_to_codegraph = original_merge
+            # 恢复 merge（第二次走真实 Rust facade）
+            merge_fail["active"] = False
 
             # 第二次：同一 seq 重试，应成功（不判 stale）
             result = daemon_handle_refresh(
@@ -700,7 +731,6 @@ class TestStep3DaemonHandleRefreshIntegration:
                 f"merge 失败后重试同一 seq 应成功，实际: {result}"
             )
         finally:
-            db_cas_merge.merge_cas_to_codegraph = original_merge
             # 恢复原模块对象（修复污染：原实现直接 pop 导致后续测试重新 import 失败）
             if original_module is not None:
                 sys.modules["callwarden_core"] = original_module
@@ -834,6 +864,13 @@ class TestStep4FullE2E:
             "module_path": "test_module",
             "content_hash": h,
         }
+        # C4：merge 走真实 Rust facade（_get_workspace_resources 已把 CAS 落文件，
+        # cas_db_path 有效），否则 CodeGraph DB 的 file_instances/symbols 断言无法闭合。
+        try:
+            from callwarden_core import cas_merge_to_codegraph as _real_merge
+            mock_module.cas_merge_to_codegraph = _real_merge
+        except ImportError:
+            pass
         sys.modules["callwarden_core"] = mock_module
 
         try:

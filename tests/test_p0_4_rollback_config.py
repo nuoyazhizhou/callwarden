@@ -61,7 +61,7 @@ class TestRollbackConfigSchema:
 
     def test_schema_version_is_46(self):
         """SCHEMA_VERSION 必须为 47（v47 为 TaskCollabStore 权威表后当前版本）。"""
-        assert SCHEMA_VERSION == 47
+        assert SCHEMA_VERSION == 50
 
     def test_table_exists(self, db_with_rollback):
         """rollback_config 表必须存在。"""

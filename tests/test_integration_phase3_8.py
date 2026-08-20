@@ -445,7 +445,9 @@ class TestPhase5DaemonIPCIntegration:
                 ws_conn=tmp_ws_conn,
                 cas_conn=tmp_cas_conn,
             )
-            assert resp["status"] == "committed"
+            # C6（S2）：真实 CAS 主链下，ready 状态才 committed；失败状态被
+            # generation 保护拦截为 blocked（不推进 latest_committed_generation）。
+            assert resp["status"] in ("committed", "blocked"), resp
             assert "cas_key" in resp
             assert "cas_state" in resp
             # cas_state 应该是 ready_published / ready_cache_hit / parse_failed 之一
@@ -459,20 +461,32 @@ class TestPhase5DaemonIPCIntegration:
 
             # 若 Rust 可用并成功发布，验证 CAS 表有记录
             if resp["cas_state"] in ("ready_published", "ready_cache_hit"):
+                assert resp["status"] == "committed"
                 cas_key = resp["cas_key"]
                 cas_row = cas_lookup(tmp_cas_conn, cas_key)
                 assert cas_row is not None, "CAS 表应有 ready 记录"
                 assert cas_row["state"] == "ready"
                 assert cas_row["language"] == "python"
+            else:
+                # C6：失败状态 → blocked（generation 保护），不得推进 committed
+                assert resp["status"] == "blocked", (
+                    f"cas_state={resp['cas_state']} 应为 blocked: {resp}"
+                )
+                protection = resp.get("protection") or {}
+                assert protection.get("blocked") is True
 
-            # 验证 file_generations 已 committed
+            # 验证 file_generations：ready → committed 推进；blocked → 仅 seen 推进
             gen_row = tmp_ws_conn.execute(
                 "SELECT latest_seen_generation, latest_committed_generation "
                 "FROM file_generations WHERE workspace_id=1 AND rel_path='test.py'"
             ).fetchone()
             assert gen_row is not None
             assert gen_row["latest_seen_generation"] == "1:1"
-            assert gen_row["latest_committed_generation"] == "1:1"
+            if resp["status"] == "committed":
+                assert gen_row["latest_committed_generation"] == "1:1"
+            else:
+                # C6 验收点 5：任一步失败时 latest_committed_generation 不得推进
+                assert gen_row["latest_committed_generation"] != "1:1"
         finally:
             os.unlink(tmp_path)
 

@@ -6,7 +6,7 @@
 - P1-2：禁止全局 `Stop-Process -Name 'cw-daemon','cw'`；只管理本测试自身创建的 PID；
         管道被其他进程占用时跳过（不杀他人进程）。
 - P2-1：task_events 校验无间隙序列 seqs[i+1] == seqs[i] + 1。
-- P2-2：fresh-binary 构建门禁（测试前 cargo build --bin cw-daemon）。
+- P2-2：fresh-binary 构建门禁（测试前 cargo build --no-default-features --bin cw-daemon）。
 
 Verification requirements:
 1. 真实入口并发：5 个真实 `python cw.py task next` 子进程 + 3 个真实 MCP `task_next_step` 并发抢占同一任务。
@@ -70,7 +70,7 @@ def _build_daemon_fresh():
         return None
     try:
         return subprocess.run(
-            [cargo, "build", "--manifest-path",
+            [cargo, "build", "--no-default-features", "--manifest-path",
              os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"), "--bin", "cw-daemon"],
             cwd=_REPO_ROOT, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=900,
@@ -426,6 +426,7 @@ def test_auto_enterprise_fail_closed_without_daemon():
 
     old_mode = os.environ.get("CW_DAEMON_MODE")
     old_endpoint = os.environ.get("CW_DAEMON_ENDPOINT")
+    old_task_write_policy = os.environ.get("CW_TASK_WRITE_POLICY")
     try:
         os.environ["CW_DAEMON_ENDPOINT"] = fake_endpoint
 
@@ -440,6 +441,7 @@ def test_auto_enterprise_fail_closed_without_daemon():
         assert not called_local, "auto 模式在指定写操作时底层异常绝不得 fallback 本地"
 
         os.environ["CW_DAEMON_MODE"] = "local"
+        os.environ["CW_TASK_WRITE_POLICY"] = "isolated"
         res = route_task_write("task.create", {"title": "local_test"}, mock_local)
         assert res == "local_written"
         assert called_local, "local 模式必须使用 local 闭包"
@@ -453,6 +455,10 @@ def test_auto_enterprise_fail_closed_without_daemon():
             os.environ["CW_DAEMON_ENDPOINT"] = old_endpoint
         else:
             os.environ.pop("CW_DAEMON_ENDPOINT", None)
+        if old_task_write_policy is not None:
+            os.environ["CW_TASK_WRITE_POLICY"] = old_task_write_policy
+        else:
+            os.environ.pop("CW_TASK_WRITE_POLICY", None)
 
 
 def test_route_task_preserves_daemon_remote_error_code():

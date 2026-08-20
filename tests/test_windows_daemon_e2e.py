@@ -7,7 +7,7 @@ r"""Windows daemon 最小可用协同闭环 - 真实进程级 E2E。
 
 前置条件（本机需满足）：
 1. Windows 平台（Named Pipe）
-2. 已构建 Rust 二进制：`cargo build --manifest-path rust_ext/Cargo.toml --bin cw-daemon --bin cw-client`
+2. 已构建 Rust 二进制：`cargo build --no-default-features --manifest-path rust_ext/Cargo.toml --bin cw-daemon --bin cw-client`
 3. 默认管道 `\\.\pipe\callwarden-<sid>` 未被其他 daemon 占用（占用则 skip）
 """
 
@@ -87,7 +87,7 @@ def ensure_fresh_binaries():
     """P2 门禁：显式构建 cw-daemon/cw-client，确保二进制由当前源码重建。
 
     此前测试只检查 exe 存在，源码改动后不重新构建会导致 E2E 用旧二进制误通过。
-    本 fixture 在模块内所有测试之前运行 `cargo build --bin cw-daemon --bin cw-client`：
+    本 fixture 在模块内所有测试之前运行 `cargo build --no-default-features --bin cw-daemon --bin cw-client`：
     - cargo 缺失 → skip（无法提供新鲜二进制）
     - 构建失败 → fail（源码编译回归，测试必须红）
     """
@@ -95,7 +95,7 @@ def ensure_fresh_binaries():
     if cargo is None:
         pytest.skip("未找到 cargo，无法构建新鲜二进制")
     build = subprocess.run(
-        [cargo, "build", "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
+        [cargo, "build", "--no-default-features", "--manifest-path", os.path.join(_REPO_ROOT, "rust_ext", "Cargo.toml"),
          "--bin", "cw-daemon", "--bin", "cw-client"],
         capture_output=True,
         text=True,
@@ -293,7 +293,7 @@ def test_schema_migration_v46_upgrade_via_named_pipe():
     try:
         task_db = os.path.join(tmp, "callwarden.db")
 
-        # 1. 先用 Python 建 v47 库，再人为降级为 v46（模拟旧版库：无 task_events/agent_registrations）
+        # 1. 先用 Python 建 v49 库，再人为降级为 v46（模拟旧版库：无 task_events/agent_registrations）
         db = CodeGraphDB(db_path=task_db)
         db.close()
         conn = sqlite3.connect(task_db)
@@ -320,11 +320,12 @@ def test_schema_migration_v46_upgrade_via_named_pipe():
         procs.append(proc)
         assert _wait_daemon(pipe, proc), "v46 库 daemon 未响应"
 
-        # 3. 校验实际 schema version == 47（读真实 schema_version 表）
+        # 3. 校验实际 schema version == 当前权威版本（读真实 schema_version 表）
+        from callwarden.db.schema import SCHEMA_VERSION
         conn = sqlite3.connect(task_db)
         v = conn.execute("SELECT COALESCE(MAX(version),0) FROM schema_version").fetchone()[0]
         conn.close()
-        assert v == 47, f"v46 库未升级到 47: schema_version={v}"
+        assert v == SCHEMA_VERSION, f"v46 库未升级到 {SCHEMA_VERSION}: schema_version={v}"
 
         # 4. 完整 task RPC 通过 Named Pipe 可用（创建 → 抢占 → 状态）
         r = _client(pipe, ["rpc", "task.create", json.dumps({"title": "v46 升级任务", "workspace_id": "ws-v46"})])
@@ -348,6 +349,105 @@ def test_schema_migration_v46_upgrade_via_named_pipe():
                     p.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     p.kill()
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+@requires_binaries
+def test_task_report_identity_writeback_via_named_pipe():
+    """D0：真实 Windows daemon 接受 identity 并完成 task 状态写回。
+
+    这条测试专门覆盖此前的 E_IDENTITY_NOT_WIRED 阻塞：请求必须经过真实
+    ``cw-client.exe``/Named Pipe，由 daemon 在同一事务内写入 task_events 和
+    action_identities；测试结束后再从隔离任务库核对持久化结果。
+    """
+    import sqlite3
+
+    from callwarden.db import CodeGraphDB
+    from callwarden.config import _get_windows_user_sid
+
+    tmp = tempfile.mkdtemp(prefix="cw_e2e_identity_")
+    proc = None
+    try:
+        task_db = os.path.join(tmp, "callwarden.db")
+        # TaskCollabStore 只负责 daemon 事务；先用权威 Python schema 建立一个
+        # workspace，使 identity 能绑定到真实 workspace_id，而不是绕过门禁。
+        db = CodeGraphDB(db_path=task_db)
+        db.close()
+
+        config = _daemon_config(tmp)
+        config["task_db_path"] = task_db
+        config_path = os.path.join(tmp, "daemon.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f)
+
+        pipe = rf"\\.\pipe\callwarden-{_get_windows_user_sid()}"
+        if _client(pipe, ["ping"], timeout=5)["code"] == 0:
+            pytest.skip(f"默认管道 {pipe} 已被其他 daemon 占用，跳过 identity E2E")
+
+        proc = _spawn_daemon(config_path, tmp, "identity")
+        assert _wait_daemon(pipe, proc), "identity daemon 未响应"
+
+        task_id = "T-WINDOWS-IDENTITY-E2E"
+        identity = {
+            "agent_id": "agent-windows-e2e",
+            "session_id": "session-windows-e2e",
+            "model_id": "model-windows-e2e",
+            "role": "implementer",
+        }
+
+        result = _client(pipe, ["rpc", "task.create", json.dumps({
+            "task_id": task_id,
+            "title": "Windows identity writeback",
+        })])
+        assert result["code"] == 0, result
+
+        result = _client(pipe, ["rpc", "task.claim", json.dumps({
+            "task_id": task_id,
+            "agent_session_id": identity["session_id"],
+        })])
+        assert result["code"] == 0, result
+
+        result = _client(pipe, ["rpc", "task.report", json.dumps({
+            "task_id": task_id,
+            "summary": "identity persisted",
+            "agent_session_id": identity["session_id"],
+            "identity": identity,
+        })])
+        assert result["code"] == 0, result
+        assert result["json"].get("status") == "review", result
+
+        result = _client(pipe, ["rpc", "task.events", json.dumps({"task_id": task_id})])
+        assert result["code"] == 0, result
+        events = result["json"].get("events", [])
+        assert any(
+            event.get("reason_code") == "reported"
+            and event.get("role") == "implementer"
+            and event.get("agent_session_id") == identity["session_id"]
+            for event in events
+        ), result
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if os.path.exists(os.path.join(tmp, "callwarden.db")):
+            conn = sqlite3.connect(os.path.join(tmp, "callwarden.db"))
+            try:
+                row = conn.execute(
+                    "SELECT agent_id, session_id, model_id, role FROM action_identities "
+                    "WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+                    ("T-WINDOWS-IDENTITY-E2E",),
+                ).fetchone()
+                assert row == (
+                    "agent-windows-e2e",
+                    "session-windows-e2e",
+                    "model-windows-e2e",
+                    "implementer",
+                ), row
+            finally:
+                conn.close()
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -443,7 +543,7 @@ def test_task_db_shared_with_real_cw_cli():
 
 @requires_binaries
 def test_schema_version_via_named_pipe(daemon):
-    """真实 Named Pipe：schema.version RPC 返回当前 SCHEMA_VERSION（47）。"""
+    """真实 Named Pipe：schema.version RPC 返回当前权威 SCHEMA_VERSION。"""
     from callwarden.db.schema import SCHEMA_VERSION
 
     r = _client(daemon["pipe"], ["schema-version"])

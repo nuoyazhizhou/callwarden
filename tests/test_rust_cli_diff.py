@@ -232,9 +232,9 @@ def _seed_stats_fixture(db: CodeGraphDB) -> int:
     )
     conn.execute(
         "INSERT INTO guardrail_findings("
-        "rule_id, file_path, symbol_hash, severity, status, message, detected_at"
-        ") VALUES ('guard.db', 'a.py', 'sym-a', 'warn', 'open', 'unsafe SQL', ?)",
-        (now,),
+        "workspace_id, rule_id, file_path, symbol_hash, severity, status, message, detected_at"
+        ") VALUES (?, 'guard.db', 'a.py', 'sym-a', 'warn', 'open', 'unsafe SQL', ?)",
+        (workspace_id, now),
     )
     conn.commit()
     return workspace_id
@@ -2447,9 +2447,9 @@ def _seed_security_cli_fixture(db: CodeGraphDB, workspace_root: Path) -> None:
         (now,),
     )
     db.conn.execute(
-        "INSERT INTO guardrail_findings(rule_id,file_path,symbol_hash,severity,status,message,detected_at) "
-        "VALUES('gate_existing','safe.py','','warn','open','existing gate finding',?)",
-        (now,),
+        "INSERT INTO guardrail_findings(workspace_id,rule_id,file_path,symbol_hash,severity,status,message,detected_at) "
+        "VALUES(?,'gate_existing','safe.py','','warn','open','existing gate finding',?)",
+        (workspace_id, now),
     )
     payload_hash = __import__("hashlib").sha256(b"audit-event").hexdigest()
     record_signature = __import__("hashlib").sha256(
@@ -2486,7 +2486,7 @@ def _security_cli_snapshot(db_path: Path) -> dict[str, list[tuple]]:
                 "FROM guardrail_rules WHERE category='db_safety' ORDER BY rule_id"
             ).fetchall(),
             "guardrail_findings": conn.execute(
-                "SELECT f.rule_id,f.file_path,f.severity,f.status,f.message "
+                "SELECT f.workspace_id,f.rule_id,f.file_path,f.severity,f.status,f.message "
                 "FROM guardrail_findings f JOIN guardrail_rules r ON r.rule_id=f.rule_id "
                 "WHERE r.category IN ('db_safety','check_gate') ORDER BY f.file_path,f.rule_id,f.message"
             ).fetchall(),

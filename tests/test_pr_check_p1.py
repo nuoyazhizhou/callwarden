@@ -263,6 +263,7 @@ def test_pr_check_query_open_findings_merges_semgrep_findings():
     conn.execute("""
         CREATE TABLE guardrail_findings (
             id INTEGER PRIMARY KEY,
+            workspace_id INTEGER NOT NULL DEFAULT 0,
             rule_id TEXT,
             file_path TEXT,
             severity TEXT,
@@ -312,8 +313,8 @@ def test_pr_check_query_open_findings_merges_semgrep_findings():
     )
     # guardrail_findings: 1 个 warning 级 finding
     conn.execute(
-        "INSERT INTO guardrail_findings (id, rule_id, file_path, severity, status, message, detected_at) "
-        "VALUES (1, 'G-001', 'src/main.py', 'warning', 'open', 'guardrail warn', 1000.0)"
+        "INSERT INTO guardrail_findings (id, workspace_id, rule_id, file_path, severity, status, message, detected_at) "
+        "VALUES (1, 1, 'G-001', 'src/main.py', 'warning', 'open', 'guardrail warn', 1000.0)"
     )
     # semgrep_findings: 1 个 error 级 finding（severity='error'）
     conn.execute(
@@ -354,7 +355,8 @@ def test_pr_check_semgrep_error_finding_blocks_pr():
     conn.row_factory = sqlite3.Row
     conn.execute("""
         CREATE TABLE guardrail_findings (
-            id INTEGER PRIMARY KEY, rule_id TEXT, file_path TEXT,
+            id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL DEFAULT 0,
+            rule_id TEXT, file_path TEXT,
             severity TEXT, status TEXT, message TEXT, detected_at REAL
         )
     """)
@@ -506,7 +508,8 @@ def test_p1_1_workspace_id_filter_prevents_cross_workspace_leak():
     conn.row_factory = sqlite3.Row
     conn.execute("""
         CREATE TABLE guardrail_findings (
-            id INTEGER PRIMARY KEY, rule_id TEXT, file_path TEXT,
+            id INTEGER PRIMARY KEY, workspace_id INTEGER NOT NULL DEFAULT 0,
+            rule_id TEXT, file_path TEXT,
             severity TEXT, status TEXT, message TEXT, detected_at REAL
         )
     """)
@@ -539,6 +542,12 @@ def test_p1_1_workspace_id_filter_prevents_cross_workspace_leak():
     conn.execute(
         "INSERT INTO semgrep_findings (id, file_instance_id, rule_id, severity, message, scanned_at) "
         "VALUES (100, 2, 'S-OTHER', 'error', 'other workspace finding', 3000.0)"
+    )
+    # v48（W2.3 P1-1）：guardrail_findings 的 workspace 隔离也要验证
+    conn.execute(
+        "INSERT INTO guardrail_findings "
+        "(id, workspace_id, rule_id, file_path, severity, status, message, detected_at) "
+        "VALUES (200, 2, 'G-OTHER', 'src/main.py', 'warning', 'open', 'other workspace guardrail', 3000.0)"
     )
     conn.commit()
     db.conn = conn
